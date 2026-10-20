@@ -525,16 +525,25 @@ al eerder, want die hebben alleen de job-queue uit fase 2 nodig.
   spiegelen, bijsnijden, metadata en GPS-locatie weghalen; pdf's samenvoegen, splitsen,
   pagina's draaien en comprimeren; video en audio inkorten en het volume gelijk trekken
 
-- [ ] Bediening: "Omzetten naar…" en "Bewerken" in het actiemenu, op meerdere bestanden
-  tegelijk, en een bestand naar een doelformaat slepen; dezelfde acties via de API voor de
-  apps
+- [ ] Bediening, gewoon in de bestandsverkenner van de cloud (geen aparte pagina):
+  "Omzetten naar…" en "Bewerken" in het actiemenu, op één bestand of een hele selectie;
+  dezelfde acties via de API voor de apps
+
+- [ ] Het schuifeffect van Tangerine: begin je een bestand (of selectie) te slepen, dan
+  schuift er een omzet-lade in vanaf de rand met de doelformaten die bij dat type passen,
+  gegroepeerd (bijv. "Afbeelding", "Document", "Kleiner maken"). Het doel onder je cursor
+  licht op en schuift wat open; loslaten start de omzetting en het bestand "vliegt" de lade
+  in, waarna de voortgang op die plek verschijnt. Zelf gebouwd met CSS-transities, geen
+  animatiebibliotheek; met `prefers-reduced-motion` zonder beweging. Op een telefoon of
+  tablet opent lang drukken dezelfde lade, en met het toetsenbord gaat het ook
 
 - [ ] Voorinstellingen voor wat vaak voorkomt, met één klik (bijv. "HEIC naar JPG",
   "video kleiner voor WhatsApp", "foto's zonder locatie")
 
 Klaar als: elke omzetting uit de lijst heeft een test; 100 foto's omzetten loopt als één
 batch met voortgang; het origineel blijft ongewijzigd tenzij je "vervangen" kiest, en dan
-is het als versie terug te zetten.
+is het als versie terug te zetten; slepen naar de lade werkt vloeiend in Chrome, Firefox
+en Safari, en lang drukken op een telefoon.
 
 ### Preview-pipeline per bestandstype
 
