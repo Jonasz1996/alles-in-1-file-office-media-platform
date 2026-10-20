@@ -1,25 +1,42 @@
 import { type FormEvent, useState } from "react";
 import { api, type TotpSetup, type User } from "./api";
 
-export function Account({ user, onChange }: { user: User; onChange: () => void }) {
+/**
+ * onChange: 2FA ging aan of uit, de gebruiker moet opnieuw opgehaald worden.
+ * onCodes: nieuwe herstelcodes; App toont ze (en ververst de gebruiker).
+ */
+export function Account({
+  user,
+  onChange,
+  onCodes,
+}: {
+  user: User;
+  onChange: () => void;
+  onCodes: (codes: string[]) => void;
+}) {
   return (
     <main>
       <h1>Account</h1>
       <p>
         {user.display_name} <span className="muted">({user.email})</span>
       </p>
+      {user.totp_setup_required && (
+        <p>
+          <strong>Op dit platform is 2FA verplicht.</strong> Zet het hieronder aan; daarna kun je bij je bestanden.
+        </p>
+      )}
       <section>
         <h2>Tweestapsverificatie (2FA)</h2>
-        {user.totp_enabled ? <TotpOn onChange={onChange} /> : <TotpOff onChange={onChange} />}
+        {user.totp_enabled ? <TotpOn onChange={onChange} onCodes={onCodes} /> : <TotpOff onEnabled={onCodes} />}
       </section>
     </main>
   );
 }
 
-function TotpOff({ onChange }: { onChange: () => void }) {
+function TotpOff({ onEnabled }: { onEnabled: (codes: string[]) => void }) {
   const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [code, setCode] = useState("");
-  const [codes, setCodes] = useState<string[] | null>(null);
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   async function start() {
@@ -34,14 +51,13 @@ function TotpOff({ onChange }: { onChange: () => void }) {
   async function enable(e: FormEvent) {
     e.preventDefault();
     try {
-      setCodes(await api.totpEnable(code));
+      const codes = await api.totpEnable(code, password);
       setError(null);
+      onEnabled(codes);
     } catch (err) {
-      setError((err as Error).message);
+      setError((err as Error).message); // ook "Te veel foute codes…" (429)
     }
   }
-
-  if (codes) return <RecoveryCodes codes={codes} onDone={onChange} />;
 
   if (!setup) {
     return (
@@ -75,6 +91,16 @@ function TotpOff({ onChange }: { onChange: () => void }) {
           onChange={(e) => setCode(e.target.value)}
         />
       </label>
+      <label>
+        3. Je wachtwoord, ter bevestiging
+        <input
+          type="password"
+          autoComplete="current-password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+      </label>
       <div className="toolbar">
         <button type="submit">Aanzetten</button>
         <button type="button" onClick={() => setSetup(null)}>
@@ -86,28 +112,28 @@ function TotpOff({ onChange }: { onChange: () => void }) {
   );
 }
 
-function TotpOn({ onChange }: { onChange: () => void }) {
+function TotpOn({ onChange, onCodes }: { onChange: () => void; onCodes: (codes: string[]) => void }) {
   const [mode, setMode] = useState<"idle" | "codes" | "off">("idle");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
-  const [codes, setCodes] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     try {
-      if (mode === "codes") setCodes(await api.totpRecoveryCodes(code));
-      else {
+      if (mode === "codes") {
+        const codes = await api.totpRecoveryCodes(code);
+        setError(null);
+        onCodes(codes);
+      } else {
         await api.totpDisable(password, code);
+        setError(null);
         onChange();
       }
-      setError(null);
     } catch (err) {
       setError((err as Error).message);
     }
   }
-
-  if (codes) return <RecoveryCodes codes={codes} onDone={() => setCodes(null)} />;
 
   return (
     <>
@@ -154,7 +180,7 @@ function TotpOn({ onChange }: { onChange: () => void }) {
   );
 }
 
-function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
+export function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
   function download() {
     const text = `Herstelcodes voor het platform. Elke code werkt één keer.\n\n${codes.join("\n")}\n`;
     const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));

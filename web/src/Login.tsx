@@ -47,7 +47,16 @@ export function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
         {setup && <p className="muted">Maak het eerste account aan; dat wordt de beheerder.</p>}
         <label>
           E-mailadres
-          <input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input
+            type="email"
+            autoComplete="username"
+            required
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setCode(null); // ander account: misschien zonder 2FA; de server vraagt het zo nodig opnieuw
+            }}
+          />
         </label>
         {setup && (
           <label>
@@ -70,8 +79,8 @@ export function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
         {code !== null && (
           <label>
             Code uit je authenticator-app
+            {/* Geen inputMode="numeric": herstelcodes hebben letters, en een cijferklavier kan die niet */}
             <input
-              inputMode="numeric"
               autoComplete="one-time-code"
               autoFocus
               required

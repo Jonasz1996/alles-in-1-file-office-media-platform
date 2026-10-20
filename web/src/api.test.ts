@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Api, ApiError, errorFromBody, formatBytes, tusMetadata } from "./api";
+import { type SendChunk, uploadFile } from "./upload";
 
 const user = { id: "u", email: "j@x.nl", display_name: "J", role: "admin", quota_bytes: 0, used_bytes: 0, root_id: "r" };
 const tokens = { access_token: "A1", refresh_token: "R", expires_in: 900, user };
@@ -48,6 +49,78 @@ describe("Api", () => {
     await expect(api.me()).rejects.toBeInstanceOf(ApiError);
     expect(loggedOut).toBe(true);
     expect(api.loggedIn).toBe(false);
+  });
+
+  it("een mislukte refresh tijdens een upload beëindigt de sessie", async () => {
+    let loggedOut = 0;
+    const seen: string[] = [];
+    const api = new Api(async (input, init) => {
+      const url = String(input);
+      seen.push(`${url} ${new Headers(init?.headers).get("Authorization") ?? "-"}`);
+      if (url.endsWith("/login")) return json(tokens);
+      if (url.endsWith("/refresh")) return json({ detail: "Ongeldig refresh-token" }, 401);
+      if (url === "/api/v1/tus") return new Response(null, { status: 201, headers: { Location: "/api/v1/tus/1" } });
+      return json({ detail: "Niet ingelogd" }, 401);
+    });
+    api.onLoggedOut = () => loggedOut++;
+    await api.login("j@x.nl", "geheim");
+    // Het access-token verloopt midden in de upload, en de login is intussen ingetrokken
+    const expired: SendChunk = async () => {
+      throw new ApiError(401, "Token verlopen");
+    };
+    await expect(uploadFile(api, "p", new File(["x"], "a.txt"), () => {}, { send: expired })).rejects.toThrow(
+      "Token verlopen",
+    );
+    expect(loggedOut).toBe(1);
+    expect(api.loggedIn).toBe(false);
+    expect(seen.filter((s) => s.startsWith("/api/v1/tus "))).toEqual(["/api/v1/tus Bearer A1"]);
+  });
+
+  it("zonder sessie (bij het openen van de pagina) is een mislukte refresh geen uitloggen", async () => {
+    let loggedOut = false;
+    const api = new Api(async () => json({ detail: "Geen refresh-token" }, 401));
+    api.onLoggedOut = () => (loggedOut = true);
+    expect(await api.refresh()).toBeNull();
+    expect(loggedOut).toBe(false);
+  });
+
+  it("gelijktijdige 401's verversen maar één keer", async () => {
+    let refreshes = 0;
+    const api = new Api(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/login")) return json(tokens);
+      if (url.endsWith("/refresh")) {
+        refreshes++;
+        // Elk refresh-token werkt één keer; een tweede keer trekt de server de login in
+        return refreshes === 1 ? json({ ...tokens, access_token: "A2" }) : json({ detail: "al gebruikt" }, 401);
+      }
+      const auth = new Headers(init?.headers).get("Authorization");
+      return auth === "Bearer A2" ? json(user) : json({ detail: "verlopen" }, 401);
+    });
+    await api.login("j@x.nl", "geheim");
+    await Promise.all([api.me(), api.me(), api.refresh()]);
+    expect(refreshes).toBe(1);
+    expect(api.loggedIn).toBe(true);
+  });
+
+  it("meldt het als de server eerst 2FA wil", async () => {
+    let asked = 0;
+    const api = new Api(async () =>
+      json({ detail: { message: "Zet eerst 2FA aan voor je account.", code: "totp_setup_required" } }, 403),
+    );
+    api.onSetupRequired = () => asked++;
+    await expect(api.root()).rejects.toMatchObject({ code: "totp_setup_required" });
+    expect(asked).toBe(1);
+  });
+
+  it("stuurt bij 2FA aanzetten ook het wachtwoord mee", async () => {
+    let body = "";
+    const api = new Api(async (_input, init) => {
+      body = String(init?.body);
+      return json({ recovery_codes: ["abcde-fghjk"] });
+    });
+    expect(await api.totpEnable("123456", "geheim")).toEqual(["abcde-fghjk"]);
+    expect(JSON.parse(body)).toEqual({ code: "123456", password: "geheim" });
   });
 
   it("geeft de foutmelding van de API door", async () => {

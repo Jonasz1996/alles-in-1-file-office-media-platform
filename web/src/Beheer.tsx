@@ -1,5 +1,13 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { api, formatBytes, formatDate, type HttpsStatus, type SystemStatus, type User } from "./api";
+import {
+  api,
+  formatBytes,
+  formatDate,
+  type HttpsStatus,
+  type SecurityConfig,
+  type SystemStatus,
+  type User,
+} from "./api";
 
 const CHECK_LABELS: Record<string, string> = {
   database: "Database",
@@ -94,6 +102,8 @@ export function Beheer({ currentUser }: { currentUser: User }) {
 
       {https && <Https status={https} onChange={setHttps} />}
 
+      <Security />
+
       <section>
         <h2>Gebruikers</h2>
         <div className="table-wrap">
@@ -118,6 +128,12 @@ export function Beheer({ currentUser }: { currentUser: User }) {
                   <td>{u.quota_bytes ? formatBytes(u.quota_bytes) : "onbeperkt"}</td>
                   <td>
                     {u.totp_enabled ? "aan" : "uit"}
+                    {u.totp_locked_until && (
+                      <>
+                        {" "}
+                        <span className="badge down">geblokkeerd tot {formatDate(u.totp_locked_until)}</span>
+                      </>
+                    )}
                     {u.totp_enabled && u.id !== currentUser.id && (
                       <>
                         {" "}
@@ -194,6 +210,54 @@ function NewUser({ onCreated }: { onCreated: () => void }) {
   );
 }
 
+function Security() {
+  const [config, setConfig] = useState<SecurityConfig | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .security()
+      .then(setConfig)
+      .catch((e: Error) => setError(e.message));
+  }, []);
+
+  async function change(require_2fa: boolean) {
+    setSaving(true); // één wijziging tegelijk, anders kan een oud antwoord het laatste woord krijgen
+    try {
+      setConfig(await api.setSecurity({ require_2fa }));
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section>
+      <h2>Beveiliging</h2>
+      {config && (
+        <div className="stack">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={config.require_2fa}
+              disabled={saving}
+              onChange={(e) => change(e.target.checked)}
+            />
+            2FA verplicht voor iedereen
+          </label>
+          <p className="muted">
+            Wie nog geen 2FA heeft, moet het na het inloggen eerst aanzetten en kan tot dan niets anders.
+          </p>
+        </div>
+      )}
+      {error && <p role="alert">{error}</p>}
+    </section>
+  );
+}
+
 const HTTPS_STATE: Record<HttpsStatus["state"], { label: string; badge: string }> = {
   uit: { label: "Uit: alleen http", badge: "degraded" },
   bezig: { label: "Certificaat wordt aangevraagd…", badge: "degraded" },
@@ -221,8 +285,9 @@ function Https({ status, onChange }: { status: HttpsStatus; onChange: (s: HttpsS
   async function retry() {
     try {
       onChange(await api.httpsRenew());
+      setError(null);
     } catch (err) {
-      setError((err as Error).message);
+      setError((err as Error).message); // bijv. te snel na de vorige poging (429)
     }
   }
 
@@ -237,10 +302,11 @@ function Https({ status, onChange }: { status: HttpsStatus; onChange: (s: HttpsS
           {status.staging && " (testmodus: browsers vertrouwen dit certificaat niet)"}
           {status.active && status.expires_at && <>; certificaat geldig tot {formatDate(status.expires_at)}</>}
           {status.active && status.renew_at && <>, wordt vanaf {formatDate(status.renew_at)} vanzelf vernieuwd</>}.
-          {status.active && !status.serving && " De https-poort start zo."}
+          {status.active && !status.serving && !status.listener_error && " De https-poort start zo."}
         </p>
       )}
       {status.error && <p role="alert">{status.error}</p>}
+      {status.listener_error && <p role="alert">{status.listener_error}</p>}
       {status.state === "fout" && status.next_check && (
         <p className="muted">Volgende poging om {formatDate(status.next_check)}.</p>
       )}

@@ -1,29 +1,25 @@
 import { type DragEvent, useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, api, type FileNode, formatBytes, formatDate, type Listing } from "./api";
+import { api, type FileNode, formatBytes, formatDate, type Listing } from "./api";
 import { navigate } from "./router";
-import { uploadFile } from "./upload";
-
-interface UploadItem {
-  key: string;
-  file: File;
-  parent: string;
-  progress: number;
-  error?: string;
-}
+import { uploadQueue, useUploads } from "./uploadQueue";
 
 export function Files({ folderId }: { folderId: string | null }) {
   const [listing, setListing] = useState<Listing | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const uploads = useUploads();
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const loads = useRef(0);
 
   const load = useCallback(async () => {
+    const seq = ++loads.current;
     try {
-      setListing(folderId ? await api.children(folderId) : await api.root());
+      const result = folderId ? await api.children(folderId) : await api.root();
+      if (seq !== loads.current) return; // intussen een nieuwere lijst gevraagd (andere map)
+      setListing(result);
       setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      if (seq === loads.current) setError((e as Error).message);
     }
   }, [folderId]);
 
@@ -33,47 +29,33 @@ export function Files({ folderId }: { folderId: string | null }) {
 
   const current = listing?.folder.id;
 
+  // Wat klaar is met wachten (upload, actie) gebruikt de load en map van nu, niet die van
+  // toen het begon: de gebruiker kan intussen naar een andere map zijn gegaan.
+  const latest = useRef({ load, current });
+  useEffect(() => {
+    latest.current = { load, current };
+  });
+
+  useEffect(
+    () =>
+      uploadQueue.onFinished((parent) => {
+        if (parent === latest.current.current) latest.current.load();
+      }),
+    [],
+  );
+
   async function act(fn: () => Promise<unknown>) {
     try {
       await fn();
-      await load();
+      await latest.current.load();
     } catch (e) {
       setError((e as Error).message);
     }
   }
 
-  const controllers = useRef(new Map<string, AbortController>());
-
-  async function runUpload(item: UploadItem) {
-    const controller = new AbortController();
-    controllers.current.set(item.key, controller);
-    const update = (change: Partial<UploadItem>) =>
-      setUploads((u) => u.map((x) => (x.key === item.key ? { ...x, ...change } : x)));
-    update({ error: undefined });
-    try {
-      await uploadFile(api, item.parent, item.file, (progress) => update({ progress }), {
-        signal: controller.signal,
-      });
-      setUploads((u) => u.filter((x) => x.key !== item.key));
-    } catch (e) {
-      if (e instanceof ApiError && e.code === "aborted") setUploads((u) => u.filter((x) => x.key !== item.key));
-      else update({ error: (e as Error).message });
-    } finally {
-      controllers.current.delete(item.key);
-    }
-    await load();
-  }
-
-  async function uploadFiles(files: FileList | File[]) {
+  function uploadFiles(files: FileList) {
     if (!current) return;
-    const items = Array.from(files).map((file) => ({
-      key: `${file.name}-${crypto.randomUUID()}`,
-      file,
-      parent: current,
-      progress: 0,
-    }));
-    setUploads((u) => [...u, ...items]);
-    for (const item of items) await runUpload(item);
+    uploadQueue.add(current, Array.from(files)).catch((e: Error) => setError(e.message));
   }
 
   function onDrop(e: DragEvent) {
@@ -154,22 +136,25 @@ export function Files({ folderId }: { folderId: string | null }) {
           {uploads.map((u) => (
             <li key={u.key}>
               <span className="upload-name">{u.file.name}</span>
-              {u.error ? (
+              {u.state === "failed" ? (
                 <>
                   <span role="alert">{u.error}</span>
-                  <button type="button" onClick={() => runUpload(u)}>
+                  <button type="button" onClick={() => uploadQueue.run(u.key)}>
                     Opnieuw proberen
                   </button>
-                  <button type="button" onClick={() => setUploads((x) => x.filter((y) => y.key !== u.key))}>
-                    Sluiten
+                  {/* Weggooien, niet alleen sluiten: anders houdt de server de ruimte tot 24 uur vast */}
+                  <button type="button" onClick={() => uploadQueue.discard(u.key)}>
+                    Weggooien
                   </button>
                 </>
+              ) : u.state === "discarding" ? (
+                <span className="muted">Weggooien…</span>
               ) : (
                 <>
                   <progress max={1} value={u.progress} />
                   <span className="muted">{Math.floor(u.progress * 100)} %</span>
-                  {controllers.current.has(u.key) && (
-                    <button type="button" onClick={() => controllers.current.get(u.key)?.abort()}>
+                  {u.state === "running" && (
+                    <button type="button" onClick={() => uploadQueue.cancel(u.key)}>
                       Annuleren
                     </button>
                   )}

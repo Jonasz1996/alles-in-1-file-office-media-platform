@@ -10,6 +10,10 @@ export interface User {
   used_bytes: number;
   root_id: string;
   totp_enabled: boolean;
+  /** 2FA is verplicht en staat voor deze gebruiker nog niet aan: alleen 2FA aanzetten werkt. */
+  totp_setup_required: boolean;
+  /** Na te veel foute codes: tot wanneer de tweede factor geblokkeerd is (ISO-tijd). */
+  totp_locked_until: string | null;
 }
 
 export interface Tokens {
@@ -65,11 +69,17 @@ export interface HttpsStatus {
   error: string | null;
   active: boolean;
   serving: boolean;
+  /** De https-poort kon niet open (bijv. bezet); http blijft werken. */
+  listener_error: string | null;
   cert_domain: string | null;
   expires_at: string | null;
   renew_at: string | null;
   last_attempt: string | null;
   next_check: string | null;
+}
+
+export interface SecurityConfig {
+  require_2fa: boolean;
 }
 
 export interface TotpSetup {
@@ -115,7 +125,10 @@ type Fetch = typeof fetch;
 
 export class Api {
   private token: string | null = null;
+  private refreshing: Promise<User | null> | null = null;
   onLoggedOut: () => void = () => {};
+  /** De server zegt dat eerst 2FA aan moet (bijv. omdat de beheerder het net verplicht maakte). */
+  onSetupRequired: () => void = () => {};
 
   constructor(private fetchFn: Fetch = (...args) => fetch(...args)) {}
 
@@ -149,7 +162,9 @@ export class Api {
         this.token = null;
         this.onLoggedOut();
       }
-      throw errorFromBody(res.status, body);
+      const error = errorFromBody(res.status, body);
+      if (res.status === 403 && error.code === "totp_setup_required") this.onSetupRequired();
+      throw error;
     }
     return res;
   }
@@ -172,14 +187,30 @@ export class Api {
     return tokens.user;
   }
 
-  /** Probeert in te loggen met het refresh-cookie; geeft de gebruiker of null. */
-  async refresh(): Promise<User | null> {
+  /**
+   * Probeert in te loggen met het refresh-cookie; geeft de gebruiker of null. Gelijktijdige
+   * aanroepen delen één verzoek: elk refresh-token werkt maar één keer, en hetzelfde token
+   * een tweede keer insturen trekt de hele login in.
+   */
+  refresh(): Promise<User | null> {
+    this.refreshing ??= this.renew().finally(() => {
+      this.refreshing = null;
+    });
+    return this.refreshing;
+  }
+
+  private async renew(): Promise<User | null> {
+    const wasLoggedIn = this.token !== null;
     const res = await this.fetchFn("/api/v1/auth/refresh", {
       method: "POST",
       credentials: "same-origin",
     });
     if (!res.ok) {
       this.token = null;
+      // Er was een sessie en die is nu voorbij (bijv. uitgelogd in een ander tabblad). Ook
+      // melden als dit niet via een gewoon verzoek liep (de upload ververst zelf), want
+      // zonder token komt er daarna geen 401 meer die dat nog doet.
+      if (wasLoggedIn) this.onLoggedOut();
       return null;
     }
     return this.accept((await res.json()) as Tokens);
@@ -199,8 +230,9 @@ export class Api {
   me = () => this.json<User>("/api/v1/auth/me");
 
   totpSetup = () => this.send<TotpSetup>("POST", "/api/v1/auth/2fa/setup");
-  totpEnable = async (code: string) =>
-    (await this.send<{ recovery_codes: string[] }>("POST", "/api/v1/auth/2fa/enable", { code })).recovery_codes;
+  totpEnable = async (code: string, password: string) =>
+    (await this.send<{ recovery_codes: string[] }>("POST", "/api/v1/auth/2fa/enable", { code, password }))
+      .recovery_codes;
   totpRecoveryCodes = async (code: string) =>
     (await this.send<{ recovery_codes: string[] }>("POST", "/api/v1/auth/2fa/recovery-codes", { code }))
       .recovery_codes;
@@ -231,6 +263,8 @@ export class Api {
   httpsConfigure = (config: { domain: string; email: string; staging: boolean }) =>
     this.send<HttpsStatus>("PUT", "/api/v1/admin/https", config);
   httpsRenew = () => this.send<HttpsStatus>("POST", "/api/v1/admin/https/renew");
+  security = () => this.json<SecurityConfig>("/api/v1/admin/security");
+  setSecurity = (config: SecurityConfig) => this.send<SecurityConfig>("PUT", "/api/v1/admin/security", config);
 
   /** Maakt een hervatbare upload (tus) aan; geeft de URL om naartoe te sturen. Bij een leeg
    * bestand is het meteen klaar en komt nodeId terug. */
