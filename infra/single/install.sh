@@ -118,16 +118,18 @@ cat <<KLAAR
 Klaar. Het platform draait op $url
 
 Open dat adres in je browser. Bij het eerste bezoek maak je het beheerdersaccount
-aan; doe dat voordat je de poort in je router openzet.
+aan en zet je 2FA aan (verplicht); doe dat voordat je de poort in je router openzet.
 
 Van buiten bereikbaar maken:
-  1. Zet 2FA aan (klik rechtsboven op je naam).
-  2. Laat je domein naar je publieke IP-adres wijzen en stuur in je router door:
+  1. Laat je domein naar je publieke IP-adres wijzen en stuur in je router door:
        poort 80  -> $ip:$PORT
        poort 443 -> $ip:$https_port
      Buiten moeten het echt 80 en 443 zijn: Let's Encrypt controleert altijd via
      poort 80, en http stuurt door naar https zonder poortnummer (dus 443).
-  3. Vul op /beheer bij HTTPS je domein in; het certificaat komt vanzelf.
+  2. Vul op /beheer bij HTTPS je domein in; het certificaat komt vanzelf.
+
+2FA kwijt en je bent de enige beheerder:
+  cd $SRC/infra/single && docker compose --env-file $ENV_FILE exec platform python -m app.cli reset-2fa <e-mailadres>
 
 Instellingen: $ENV_FILE
 Data:         $DATA_ROOT

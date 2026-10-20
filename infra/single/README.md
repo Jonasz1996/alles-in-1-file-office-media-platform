@@ -24,20 +24,20 @@ curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-m
 
 Het script installeert Docker, bouwt het platform en start het op poort 80. Open daarna
 `http://<ip-van-de-container>` in je browser: bij het eerste bezoek maak je het
-beheerdersaccount aan. Doe dat voordat je de poort in je router openzet, anders kan iemand
-anders je voor zijn.
+beheerdersaccount aan en zet je meteen 2FA aan (verplicht; houd een authenticator-app zoals
+Aegis of Google Authenticator bij de hand). Doe dat voordat je de poort in je router
+openzet, anders kan iemand anders je voor zijn.
 
 Een andere poort kiezen kan bij de eerste installatie met `PORT=8080 bash install.sh`, of
 later in `/opt/platform/.env` (daarna het script opnieuw draaien).
 
 ## Van buiten bereikbaar maken (HTTPS)
 
-1. Zet 2FA aan: klik rechtsboven op je naam en volg de stappen.
-2. Laat je domein (bijv. `app.voorbeeld.nl`) met een A-record naar je publieke IP-adres
+1. Laat je domein (bijv. `app.voorbeeld.nl`) met een A-record naar je publieke IP-adres
    wijzen en stuur in je router poort **80 en 443** door naar de container: publiek 80
    naar `PORT` en publiek 443 naar `HTTPS_PORT` van de container (standaard ook 80 en 443;
    zie `/opt/platform/.env`). Het installatiescript noemt aan het eind de juiste poorten.
-3. Vul op `/beheer` bij **HTTPS** het domein in en klik op Opslaan.
+2. Vul op `/beheer` bij **HTTPS** het domein in en klik op Opslaan.
 
 Buiten moeten het echt poort 80 en 443 zijn, ook als je in de container andere poorten
 gebruikt: Let's Encrypt controleert het domein altijd via poort 80, en het doorsturen van
@@ -76,6 +76,19 @@ cd /opt/platform/src/infra/single
 docker compose --env-file /opt/platform/.env ps
 docker compose --env-file /opt/platform/.env logs -f platform
 ```
+
+## 2FA kwijt
+
+Ben je je telefoon én je herstelcodes kwijt, dan kan een andere beheerder je 2FA uitzetten
+op `/beheer`. Ben je de enige beheerder, doe het dan in de console van de container:
+
+```bash
+cd /opt/platform/src/infra/single
+docker compose --env-file /opt/platform/.env exec platform python -m app.cli reset-2fa jij@voorbeeld.nl
+```
+
+Daarna log je in met alleen je wachtwoord en zet je 2FA opnieuw aan. Hetzelfde helpt als je
+2FA geblokkeerd is na te veel foute codes.
 
 ## Back-up
 

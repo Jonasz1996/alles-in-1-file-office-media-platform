@@ -37,6 +37,16 @@ describe("Api", () => {
     expect(meCalls).toBe(2);
   });
 
+  it("HEAD zonder body: 409 is een bezette naam, 413 het quotum", async () => {
+    let status = 409;
+    const api = new Api(async () => new Response(null, { status }));
+    await expect(api.tusStatus("/api/v1/tus/x")).rejects.toMatchObject({ status: 409, code: "name_taken" });
+    status = 413;
+    await expect(api.tusStatus("/api/v1/tus/x")).rejects.toMatchObject({ status: 413, message: "Onvoldoende quotum" });
+    status = 404;
+    await expect(api.tusStatus("/api/v1/tus/x")).rejects.toMatchObject({ status: 404 });
+  });
+
   it("meldt uitloggen als verversen niet lukt", async () => {
     let loggedOut = false;
     const api = new Api(async (input) => {

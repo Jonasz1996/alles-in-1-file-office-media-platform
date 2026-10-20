@@ -360,3 +360,56 @@ async def test_systemexit_van_https_stopt_http_niet(tmp_path, monkeypatch):
         await asyncio.sleep(0.5)  # een paar pogingen verder
         assert (await c.get("/health")).status_code == 200
         assert not certs.serving
+
+
+async def edge_with_body(body: bytes, done: bool, wait: float):
+    """Laat Edge een verzoek doorgeven met één stuk body; is de body niet af (`done`
+    False), dan komt er daarna niets meer. Na `wait` seconden sluit de client. Geeft de
+    berichten die de app zag."""
+    from app import main
+
+    first = {"type": "http.request", "body": body, "more_body": not done}
+    sent = False
+    seen: list[dict] = []
+
+    async def receive():
+        nonlocal sent
+        if not sent:
+            sent = True
+            return first
+        await asyncio.sleep(wait)
+        return {"type": "http.disconnect"}
+
+    async def inner(scope, receive, send):
+        while not seen or seen[-1]["type"] != "http.disconnect":
+            seen.append(await receive())
+
+    scope = {"type": "http", "app": app, "path": "/", "headers": [], "scheme": "http"}
+    await main.Edge(inner)(scope, receive, lambda message: asyncio.sleep(0))
+    return seen
+
+
+@pytest.mark.anyio
+async def test_stilgevallen_body_telt_als_verbroken(monkeypatch):
+    """Headers binnen, een stuk body, dan niets meer: na BODY_TIMEOUT ziet de app een
+    verbroken verbinding in plaats van eeuwig te wachten."""
+    from app import main
+
+    monkeypatch.setattr(main, "BODY_TIMEOUT", 0.2)
+    start = time.monotonic()
+    seen = await edge_with_body(b"{", done=False, wait=30)
+    assert time.monotonic() - start < 2
+    assert [m["type"] for m in seen] == ["http.request", "http.disconnect"]
+
+
+@pytest.mark.anyio
+async def test_na_de_body_wacht_receive_onbeperkt(monkeypatch):
+    """Is de body af, dan geldt de grens niet meer: een download die op het sluiten van
+    de verbinding wacht, wordt niet na BODY_TIMEOUT afgebroken."""
+    from app import main
+
+    monkeypatch.setattr(main, "BODY_TIMEOUT", 0.1)
+    start = time.monotonic()
+    seen = await edge_with_body(b"klaar", done=True, wait=0.5)
+    assert time.monotonic() - start >= 0.45
+    assert [m["type"] for m in seen] == ["http.request", "http.disconnect"]

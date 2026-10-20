@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote
 
+import anyio
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel
@@ -29,11 +30,39 @@ SECURITY_HEADERS = [
 ]
 HSTS = (b"strict-transport-security", b"max-age=31536000")
 ACME_PATH = "/.well-known/acme-challenge/"
+# Vangrail voor een body die stilvalt (headers binnen, daarna niets meer): zonder proxy
+# ervoor zou zo'n verbinding anders voor altijd openblijven. Uploads geven zelf al na 60 s
+# op (storage.CHUNK_TIMEOUT); dit geldt voor alle andere verzoeken.
+BODY_TIMEOUT = 90.0
 # Alleen voor de web-app zelf; gedownloade bestanden krijgen hun eigen beleid.
 WEB_CSP = (
     "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
     "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
 )
+
+
+def _bounded(receive):
+    """receive() met een tijdslimiet zolang de body nog binnenkomt. Daarna (een download
+    die op het sluiten van de verbinding let) wacht receive() weer onbeperkt."""
+    state = "body"
+
+    async def wrapped():
+        nonlocal state
+        if state == "weg":
+            return {"type": "http.disconnect"}
+        if state == "klaar":
+            return await receive()
+        try:
+            with anyio.fail_after(BODY_TIMEOUT):
+                message = await receive()
+        except TimeoutError:
+            state = "weg"  # de app ziet een verbroken verbinding en rondt af
+            return {"type": "http.disconnect"}
+        if message["type"] != "http.request" or not message.get("more_body", False):
+            state = "klaar"
+        return message
+
+    return wrapped
 
 
 def _host(scope) -> str:
@@ -47,7 +76,8 @@ def _host(scope) -> str:
 
 class Edge:
     """Wat voorheen Traefik deed: http doorsturen naar https zodra er een certificaat
-    is, HSTS over https, en beveiligingsheaders op elk antwoord."""
+    is, HSTS over https, beveiligingsheaders op elk antwoord en een grens aan een body
+    die stilvalt."""
 
     def __init__(self, app):
         self.app = app
@@ -85,7 +115,7 @@ class Edge:
                 ]
             await send(message)
 
-        await self.app(scope, receive, send_with_headers)
+        await self.app(scope, _bounded(receive), send_with_headers)
 
 
 @asynccontextmanager

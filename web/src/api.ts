@@ -279,7 +279,18 @@ export class Api {
   }
   /** Hoeveel bytes de server al heeft, en het bestand als de upload al klaar is. */
   async tusStatus(url: string): Promise<{ offset: number; nodeId: string | null }> {
-    const res = await this.raw(url, { method: "HEAD", headers: TUS });
+    let res: Response;
+    try {
+      res = await this.raw(url, { method: "HEAD", headers: TUS });
+    } catch (e) {
+      // HEAD heeft geen body: de server rondde de upload hier af en dat lukte niet.
+      // 409 kan dan alleen een bezette naam zijn, 413 alleen het quotum.
+      if (e instanceof ApiError && e.status === 409) {
+        throw new ApiError(409, "Er bestaat al iets met deze naam", "name_taken");
+      }
+      if (e instanceof ApiError && e.status === 413) throw new ApiError(413, "Onvoldoende quotum");
+      throw e;
+    }
     return { offset: Number(res.headers.get("Upload-Offset") ?? 0), nodeId: res.headers.get("Platform-Node-Id") };
   }
   async tusCancel(url: string): Promise<void> {

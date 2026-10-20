@@ -270,7 +270,7 @@ async def end_attempt(
         log.warning("Foute 2FA-poging van gebruiker %s vanaf %s (%d op rij)", user.id, ip, failures)
         if failures >= FREE_ATTEMPTS:
             log.error(
-                "2FA van gebruiker %s %d minuten geblokkeerd na %d foute pogingen op rij "
+                "2FA van gebruiker %s geblokkeerd voor %d min na %d foute pogingen op rij "
                 "(de laatste vanaf %s)",
                 user.id,
                 lock_time(failures) // timedelta(minutes=1),

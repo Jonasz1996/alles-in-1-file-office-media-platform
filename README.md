@@ -33,7 +33,7 @@ cd web && npm install && npm run dev
 docker compose up --build
 ```
 
-Bij het eerste bezoek maak je het beheerdersaccount aan.
+Bij het eerste bezoek maak je het beheerdersaccount aan en zet je 2FA aan (verplicht).
 
 Tests: `cd api && uv run pytest` en `cd web && npm test`. De HTTPS-test tegen Pebble (de
 test-CA van Let's Encrypt) heeft Go nodig: `cd api && eval "$(tests/pebble/start.sh)" && uv run pytest tests/test_acme_pebble.py`.
