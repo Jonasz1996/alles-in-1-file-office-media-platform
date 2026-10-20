@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import re
-from contextlib import asynccontextmanager
+import signal
+import threading
+from contextlib import asynccontextmanager, contextmanager, suppress
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated
@@ -138,6 +140,42 @@ class Edge:
         await self.app(scope, _bounded(receive), send_with_headers)
 
 
+@contextmanager
+def _streams_end_on_signal():
+    """Open gebeurtenisstromen afronden zodra het stoppen begint, met welke server dan ook.
+    Uvicorn wacht bij stoppen eerst op lopende antwoorden en sluit pas daarna de lifespan af;
+    een stroom liep zo door tot het token verliep, en `uvicorn --reload` bleef zolang op de
+    oude worker hangen. Uvicorn zet zijn signaalafhandeling vóór de lifespan neer: deze gaat
+    ervoor en roept daarna die van uvicorn aan. (python -m app.serve sluit de hub zelf ook.)"""
+    if threading.current_thread() is not threading.main_thread():
+        yield  # signalen komen alleen in de hoofdthread binnen
+        return
+    loop = asyncio.get_running_loop()
+    installed = {}
+
+    def chained(previous):
+        def handler(sig, frame):
+            hub = events.hub  # die van nu, niet een nieuwe van een volgende start
+            with suppress(RuntimeError):  # de loop is al dicht
+                loop.call_soon_threadsafe(hub.close)
+            previous(sig, frame)
+
+        return handler
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        previous = signal.getsignal(sig)
+        if callable(previous):  # bij SIG_DFL stopt het proces toch meteen, bij SIG_IGN nooit
+            handler = chained(previous)
+            signal.signal(sig, handler)
+            installed[sig] = handler, previous
+    try:
+        yield
+    finally:
+        for sig, (handler, previous) in installed.items():
+            if signal.getsignal(sig) is handler:  # niet weghalen wat een ander intussen neerzette
+                signal.signal(sig, previous)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -159,8 +197,9 @@ async def lifespan(app: FastAPI):
     runner = jobs.Runner(settings)
     await runner.start()
     log.info("Platform %s gestart (%s), data in %s", __version__, settings.mode, settings.data_dir)
-    yield
-    events.hub.close()  # open gebeurtenisstromen afronden (serve.py doet dit al eerder)
+    with _streams_end_on_signal():
+        yield
+    events.hub.close()  # wat nog openstond afronden (na een signaal al gebeurd)
     events.hub = events.Hub()  # een volgende start in hetzelfde proces (tests) kan weer
     await runner.stop()
     cleaner.cancel()

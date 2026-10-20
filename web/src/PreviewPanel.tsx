@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type FileNode, formatBytes, formatDate, type Preview } from "./api";
-import { category } from "./Thumb";
+import { api, type FileNode, formatBytes, formatDate, type Preview, type PreviewMeta } from "./api";
+import { category, type Category } from "./Thumb";
 
 /** 83 -> "1:23", 3723 -> "1:02:03". */
 export function formatDuration(seconds: number): string {
@@ -23,6 +23,29 @@ const DIALOG = {
 const FIT = { display: "block", maxWidth: "100%", maxHeight: "65vh", margin: "0 auto" } as const;
 
 /**
+ * Speler voor video of audio, tenzij de server in de inhoud iets anders vond (tekst of een
+ * archief): het soort komt nu nog van de naam, en die kan ernaast zitten.
+ */
+export function playerFor(kind: Category, meta: PreviewMeta): "video" | "audio" | null {
+  if (meta.text !== undefined || meta.entries !== undefined) return null;
+  return kind === "video" || kind === "audio" ? kind : null;
+}
+
+const RENEW_QUIET = 60_000;
+
+/**
+ * Mag de speler na een fout een nieuwe link? Hooguit drie kort na elkaar (dan is het bestand
+ * zelf het probleem), maar een link die na lang afspelen verliep, mag altijd weer.
+ */
+export function mayRenew(state: { count: number; at: number }, now: number): boolean {
+  if (now - state.at > RENEW_QUIET) state.count = 0;
+  if (state.count >= 3) return false;
+  state.count++;
+  state.at = now;
+  return true;
+}
+
+/**
  * Adres om af te spelen (de downloadlink met inline=true). Die verloopt na een paar minuten;
  * vraagt de speler later nog een stuk (doorspoelen) en mislukt dat, dan een nieuwe link en
  * verder waar hij was.
@@ -31,7 +54,7 @@ function useMediaUrl(nodeId: string, wanted: boolean) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const resumeAt = useRef(0);
-  const renewals = useRef(0);
+  const renewals = useRef({ count: 0, at: 0 });
 
   useEffect(() => {
     if (!wanted) return;
@@ -48,8 +71,8 @@ function useMediaUrl(nodeId: string, wanted: boolean) {
   const props = {
     src: url ?? undefined,
     onError: (e: { currentTarget: HTMLMediaElement }) => {
-      if (renewals.current >= 3) return setError("Afspelen lukt niet. Probeer het bestand te downloaden.");
-      renewals.current++;
+      if (!mayRenew(renewals.current, Date.now()))
+        return setError("Afspelen lukt niet. Probeer het bestand te downloaden.");
       resumeAt.current = e.currentTarget.currentTime;
       api
         .downloadUrl(nodeId, true)
@@ -78,7 +101,8 @@ export function PreviewPanel({
   const dialog = useRef<HTMLDialogElement>(null);
   const kind = category(node);
   const meta = preview?.meta ?? {};
-  const media = useMediaUrl(node.id, kind === "video" || kind === "audio");
+  const player = playerFor(kind, meta);
+  const media = useMediaUrl(node.id, player !== null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -97,13 +121,13 @@ export function PreviewPanel({
   }
 
   let body;
-  if (kind === "video") {
+  if (player === "video") {
     body = media.url ? (
       <video controls playsInline preload="metadata" poster={preview?.large ?? undefined} style={FIT} {...media.props} />
     ) : (
       <p className="muted">Laden…</p>
     );
-  } else if (kind === "audio") {
+  } else if (player === "audio") {
     body = (
       <div style={{ display: "grid", gap: "0.8rem", justifyItems: "center" }}>
         {preview?.large && <img src={preview.large} alt="Hoes" style={{ ...FIT, maxHeight: "16rem" }} />}

@@ -204,7 +204,10 @@ async def make(settings: Settings, payload: dict[str, Any]) -> None:
             raise
         stored = await _store(maker, blobs, sha, result, out)
     finally:
-        await anyio.to_thread.run_sync(shutil.rmtree, work, True)
+        # Ook na de tijdslimiet of bij stoppen: dan is de taak al afgebroken, en zonder schild
+        # breekt het opruimen zelf meteen mee af
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(shutil.rmtree, work, True)
     if stored:
         await announce(maker, sha)
 

@@ -202,6 +202,9 @@ def test_kapotte_en_te_grote_afbeeldingen_geen_preview(tmp_path):
     assert run_render(tmp_path, b"\xff\xd8\xff" + b"\x00" * 500, "kapot.jpg")[0]["state"] == "none"
     png = picture("PNG", (100, 100))
     assert run_render(tmp_path, png, "a.png", max_pixels=1000)[0]["state"] == "none"  # "bom"
+    # Tussen 1x en 2x de grens geeft Pillow zelf alleen een waarschuwing: ook geen preview
+    assert run_render(tmp_path, png, "b.png", max_pixels=6000)[0]["state"] == "none"
+    assert run_render(tmp_path, png, "c.png", max_pixels=10_000)[0]["state"] == "ready"
     truncated = picture("PNG", (400, 400), color="white")[:200]
     assert run_render(tmp_path, truncated, "half.png")[0]["state"] == "none"
 
@@ -608,6 +611,9 @@ async def test_te_lang_stopt_ook_ffmpeg(client, admin, settings, maker, monkeypa
     async with maker() as session:
         job = (await session.scalars(select(Job))).one()
     assert job.error == "Duurde langer dan 1 seconden" and job.status == "queued"
+    # De werkmap gaat ook na de tijdslimiet weg (en niet pas bij de volgende start)
+    tmp = previews.root(BlobStore(settings.blob_dir)) / ".tmp"
+    assert list(tmp.iterdir()) == []
     for pid in map(int, pids.read_text().split()):
         for _ in range(50):
             if process_gone(pid):

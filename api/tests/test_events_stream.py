@@ -1,16 +1,20 @@
 """GET /api/v1/events: de stroom met gebeurtenissen. De tests praten rechtstreeks met de
 ASGI-app (de testclient van httpx wacht op het hele antwoord, en een stroom eindigt niet),
-en één keer via serve.run: stoppen mag niet wachten op open stromen."""
+en via serve.run en een kale uvicorn: stoppen mag niet wachten op open stromen."""
 
 import asyncio
 import contextlib
+import signal
+import threading
 import time
 import uuid
 
 import httpx
 import pytest
+import uvicorn
 
 from app import events
+from app.config import get_settings
 from app.db import get_engine
 from app.main import app
 from app.routers import events as live
@@ -191,6 +195,7 @@ async def test_stoppen_wacht_niet_op_open_stromen(tmp_path, monkeypatch):
     opened: list[asyncio.Event] = [asyncio.Event(), asyncio.Event()]
     ended: list[bool] = []
     tasks = []
+    before = signal.getsignal(signal.SIGINT)
     try:
         async with platform(tmp_path, monkeypatch, free_port()) as c:
             app.state.security = SecurityPolicy(SecurityConfig(require_2fa=False))
@@ -218,8 +223,96 @@ async def test_stoppen_wacht_niet_op_open_stromen(tmp_path, monkeypatch):
         await asyncio.wait_for(asyncio.gather(*tasks), 5)
         assert ended == [True, True]
         assert not events.hub.closed  # een volgende start in dit proces kan weer
+        assert signal.getsignal(signal.SIGINT) is before  # de lifespan zette hem terug
     finally:
         for task in tasks:
             task.cancel()
         with contextlib.suppress(AttributeError):
             del app.state.security
+
+
+@contextlib.asynccontextmanager
+async def plain_uvicorn(tmp_path, monkeypatch):
+    """Het platform zoals `uvicorn app.main:app` het draait (de README met --reload, de image
+    van het cluster): met uvicorns eigen signaalafhandeling en zonder serve.run. Geeft de
+    server en een http-client."""
+    port = free_port()
+    for name, value in {
+        "PLATFORM_DATA_DIR": str(tmp_path),
+        "PLATFORM_WEB_DIST": str(tmp_path / "web"),
+        "PLATFORM_JWT_SECRET": "test" * 8,
+    }.items():
+        monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, lifespan="on", log_level="warning")
+    server = uvicorn.Server(config)
+    task = asyncio.create_task(server.serve())
+    try:
+        async with httpx.AsyncClient(
+            base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=5
+        ) as c:
+            for _ in range(200):
+                if server.started:
+                    break
+                assert not task.done(), "uvicorn stopte"
+                await asyncio.sleep(0.05)
+            yield server, task, c
+    finally:
+        events.hub.close()  # ook als de test faalt: niet blijven hangen
+        server.should_exit = True
+        await asyncio.wait_for(task, 20)
+        get_settings.cache_clear()
+        for name in ("certs", "security"):
+            with contextlib.suppress(AttributeError):
+                delattr(app.state, name)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT], ids=["SIGTERM", "SIGINT"])
+async def test_kale_uvicorn_stopt_ook_met_open_stromen(tmp_path, monkeypatch, sig):
+    """Ook zonder serve.run: uvicorn rondt de lifespan pas af als alle antwoorden klaar zijn,
+    dus moet een stroom al eindigen zodra het stoppen begint. Anders bleef de oude worker van
+    `uvicorn --reload` hangen tot het token verliep."""
+    if threading.current_thread() is not threading.main_thread():
+        pytest.skip("Signalen kan alleen de hoofdthread opvangen")
+
+    # Uvicorn stuurt het signaal na het stoppen opnieuw naar de handler van vóór hem: die mag
+    # pytest niet stoppen
+    def harmless(*_) -> None:
+        pass
+
+    previous = signal.signal(sig, harmless)
+    try:
+        async with plain_uvicorn(tmp_path, monkeypatch) as (server, task, c):
+            app.state.security = SecurityPolicy(SecurityConfig(require_2fa=False))
+            r = await c.post("/api/v1/auth/setup", json=ADMIN)
+            assert r.status_code == 201, r.text
+            headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
+            ready, ended = asyncio.Event(), asyncio.Event()
+
+            async def watch() -> None:
+                async with (
+                    httpx.AsyncClient(base_url=c.base_url, trust_env=False, timeout=30) as s,
+                    s.stream("GET", "/api/v1/events", headers=headers) as response,
+                ):
+                    assert response.status_code == 200
+                    async for chunk in response.aiter_text():
+                        if "retry:" in chunk:
+                            ready.set()
+                ended.set()
+
+            watcher = asyncio.create_task(watch())
+            try:
+                await asyncio.wait_for(ready.wait(), 5)
+                start = time.monotonic()
+                signal.raise_signal(sig)
+                done, _ = await asyncio.wait({task}, timeout=5)
+                assert done, "uvicorn wachtte op de open stroom"
+                assert time.monotonic() - start < 5
+                await asyncio.wait_for(ended.wait(), 5)
+                await watcher
+            finally:
+                watcher.cancel()
+        assert signal.getsignal(sig) is harmless  # niets van de lifespan achtergebleven
+    finally:
+        signal.signal(sig, previous)
