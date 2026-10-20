@@ -27,6 +27,12 @@ class User(Base):
     totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
     totp_pending: Mapped[str | None] = mapped_column(String(64), nullable=True)
     totp_last_step: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    # Foute pogingen voor de tweede factor op rij, en tot wanneer de gebruiker daardoor
+    # geblokkeerd is. Staat in de database, zodat een herstart de teller niet wist.
+    totp_failures: Mapped[int] = mapped_column(default=0, server_default="0")
+    totp_locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class RecoveryCode(Base):

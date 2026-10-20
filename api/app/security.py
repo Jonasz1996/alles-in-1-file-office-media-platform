@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import secrets
 import time
@@ -6,18 +7,25 @@ from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
+import anyio
+import anyio.to_thread
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import Session
-from app.models import User
+from app.models import Setting, User
 
 _hasher = PasswordHasher()  # argon2id met de aanbevolen standaardparameters
 _bearer = HTTPBearer(auto_error=False)
+# argon2 draait in een thread (het kost ~100 ms CPU en zou de event loop anders zo lang
+# stilzetten), maar hooguit 4 tegelijk: elke berekening gebruikt 64 MiB geheugen.
+_argon2_slots = anyio.CapacityLimiter(4)
 
 
 def hash_password(password: str) -> str:
@@ -29,6 +37,23 @@ def verify_password(password_hash: str, password: str) -> bool:
         return _hasher.verify(password_hash, password)
     except (VerifyMismatchError, InvalidHashError):
         return False
+
+
+# Voor onbekende e-mailadressen: met dezelfde parameters als echte hashes, zodat een login
+# even lang duurt en je aan de tijd niet ziet of een account bestaat.
+_DUMMY_HASH = hash_password(secrets.token_urlsafe(16))
+
+
+async def new_password_hash(password: str) -> str:
+    return await anyio.to_thread.run_sync(hash_password, password, limiter=_argon2_slots)
+
+
+async def check_password(password_hash: str | None, password: str) -> bool:
+    """Zonder hash (geen account) wordt tegen een nep-hash gerekend en is het antwoord nee."""
+    ok = await anyio.to_thread.run_sync(
+        verify_password, password_hash or _DUMMY_HASH, password, limiter=_argon2_slots
+    )
+    return ok and password_hash is not None
 
 
 def hash_token(token: str) -> str:
@@ -55,10 +80,12 @@ def _decode(settings: Settings, token: str, typ: str) -> dict:
     return claims
 
 
-def access_token(settings: Settings, user: User) -> str:
+def access_token(settings: Settings, user: User, family: uuid.UUID) -> str:
+    # fam: de login (refresh-family) waar dit token bij hoort, zodat bijvoorbeeld het
+    # aanzetten van 2FA alle andere logins kan intrekken en deze laat staan.
     return _encode(
         settings,
-        {"sub": str(user.id), "role": user.role, "typ": "access"},
+        {"sub": str(user.id), "role": user.role, "typ": "access", "fam": str(family)},
         settings.access_token_minutes,
     )
 
@@ -76,18 +103,89 @@ def read_download_token(settings: Settings, token: str) -> tuple[uuid.UUID, uuid
     return uuid.UUID(claims["sub"]), uuid.UUID(claims["node"])
 
 
-async def current_user(
-    session: Session,
+SECURITY_KEY = "security"
+
+
+class SecurityConfig(BaseModel):
+    # Beslissing B4: 2FA vanaf de eerste login. Wie nog geen 2FA heeft, kan dan alleen
+    # inloggen en 2FA aanzetten.
+    require_2fa: bool = True
+
+
+class SecurityPolicy:
+    """Beveiligingsinstellingen uit /beheer (tabel setting). Ze staan in het geheugen, zodat
+    de controle bij elk verzoek geen query kost; /admin/security werkt ze bij. Er draait één
+    proces, dus er is één kopie."""
+
+    def __init__(self, config: SecurityConfig | None = None):
+        self.config = config  # None = nog niet uit de database gelezen
+        self._lock = asyncio.Lock()
+
+    async def get(self, session: AsyncSession) -> SecurityConfig:
+        if self.config is None:
+            async with self._lock:
+                if self.config is None:
+                    row = await session.get(Setting, SECURITY_KEY)
+                    self.config = SecurityConfig.model_validate(row.value if row else {})
+        return self.config
+
+    async def save(self, session: AsyncSession, config: SecurityConfig) -> None:
+        # Onder de lock, zodat bij twee gelijktijdige wijzigingen het geheugen en de
+        # database dezelfde waarde houden.
+        async with self._lock:
+            row = await session.get(Setting, SECURITY_KEY)
+            if row is None:
+                session.add(Setting(key=SECURITY_KEY, value=config.model_dump()))
+            else:
+                row.value = config.model_dump()
+            await session.commit()
+            self.config = config
+
+
+def security_policy(app: FastAPI) -> SecurityPolicy:
+    policy = getattr(app.state, "security", None)
+    if policy is None:
+        policy = app.state.security = SecurityPolicy()
+    return policy
+
+
+async def security_config(request: Request, session: Session) -> SecurityConfig:
+    return await security_policy(request.app).get(session)
+
+
+Policy = Annotated[SecurityConfig, Depends(security_config)]
+
+
+async def access_claims(
     settings: Annotated[Settings, Depends(get_settings)],
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-) -> User:
+) -> dict:
     if creds is None:
         raise HTTPException(401, "Niet ingelogd")
-    claims = _decode(settings, creds.credentials, "access")
+    return _decode(settings, creds.credentials, "access")
+
+
+async def logged_in_user(session: Session, claims: Annotated[dict, Depends(access_claims)]) -> User:
+    """Ingelogd, ook als 2FA nog aangezet moet worden. Alleen voor /auth/me en het aanzetten
+    van 2FA; de rest gebruikt CurrentUser."""
     user = await session.get(User, uuid.UUID(claims["sub"]))
     if user is None:
         raise HTTPException(401, "Gebruiker bestaat niet meer")
     return user
+
+
+async def current_user(user: Annotated[User, Depends(logged_in_user)], policy: Policy) -> User:
+    if policy.require_2fa and user.totp_secret is None:
+        raise HTTPException(
+            403, {"message": "Zet eerst 2FA aan voor je account.", "code": "totp_setup_required"}
+        )
+    return user
+
+
+def token_family(claims: Annotated[dict, Depends(access_claims)]) -> uuid.UUID | None:
+    """De login waar het access-token bij hoort (None bij tokens van vóór deze versie)."""
+    family = claims.get("fam")
+    return uuid.UUID(family) if family else None
 
 
 async def admin_user(user: Annotated[User, Depends(current_user)]) -> User:
@@ -96,8 +194,10 @@ async def admin_user(user: Annotated[User, Depends(current_user)]) -> User:
     return user
 
 
+LoggedInUser = Annotated[User, Depends(logged_in_user)]
 CurrentUser = Annotated[User, Depends(current_user)]
 AdminUser = Annotated[User, Depends(admin_user)]
+TokenFamily = Annotated[uuid.UUID | None, Depends(token_family)]
 
 
 class RateLimiter:
@@ -132,8 +232,6 @@ class RateLimiter:
 
 
 login_limiter = RateLimiter(limit=10, window_seconds=300)
-# Per gebruiker, zodat 2FA-codes ook vanaf veel IP-adressen niet te raden zijn
-totp_limiter = RateLimiter(limit=10, window_seconds=300)
 
 
 def client_ip(request: Request) -> str:

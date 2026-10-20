@@ -35,6 +35,20 @@ def test_verify_venster_en_geen_hergebruik():
     assert totp.verify(secret, "abcdef", 0, now) is None
 
 
+def test_alleen_gewone_cijfers():
+    secret = totp.new_secret()
+    now = 1_700_000_000
+    code = totp.code_at(secret, totp.current_step(now))
+    # Volle breedte (Japanse invoer), Arabisch-Indisch en superscript: isdigit() is True,
+    # maar het zijn geen 0-9. Vroeger gaf dit een TypeError in hmac.compare_digest.
+    for offset in (0xFEE0, 0x0660 - ord("0")):
+        other = code.translate({ord(c): ord(c) + offset for c in "0123456789"})
+        assert totp.verify(secret, other, 0, now) is None
+    assert totp.verify(secret, "¹²³⁴⁵⁶", 0, now) is None
+    assert totp.normalize_recovery_code("ＡＢＣＤＥ-fghjk") == "fghjk"
+    assert totp.normalize_recovery_code(" AbCdE-FgHjK ") == "abcdefghjk"
+
+
 def test_geheim_en_uri():
     secret = totp.new_secret()
     assert len(secret) == 32 and "=" not in secret

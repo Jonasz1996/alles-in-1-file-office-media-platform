@@ -13,7 +13,7 @@ from app.cluster import ClusterStatus, Disk, NodeStatus, cluster_status
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Blob, Node, User
-from app.security import AdminUser
+from app.security import AdminUser, Policy, SecurityConfig, security_policy
 
 router = APIRouter(prefix="/api/v1/admin", tags=["beheer"])
 
@@ -90,6 +90,21 @@ async def admin_status(
         stored_bytes=int(stored or 0),
         logical_bytes=int(logical or 0),
     )
+
+
+@router.get("/security")
+async def security_get(_: AdminUser, policy: Policy) -> SecurityConfig:
+    """Beveiligingsinstellingen, zoals of 2FA verplicht is."""
+    return policy
+
+
+@router.put("/security")
+async def security_put(
+    body: SecurityConfig, _: AdminUser, request: Request, session: Session
+) -> SecurityConfig:
+    """2FA verplicht (standaard) of per gebruiker vrij. Geldt meteen, voor elk verzoek."""
+    await security_policy(request.app).save(session, body)
+    return body
 
 
 # Gewone hostnaam met minstens één punt; geen IP-adres (Let's Encrypt geeft daar geen

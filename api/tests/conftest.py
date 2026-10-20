@@ -5,7 +5,7 @@ from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.main import app
 from app.migrate import upgrade
-from app.security import login_limiter, totp_limiter
+from app.security import SecurityConfig, SecurityPolicy, login_limiter
 
 
 @pytest.fixture
@@ -30,12 +30,14 @@ def certs(settings):
 async def client(settings, certs):
     app.dependency_overrides[get_settings] = lambda: settings
     app.state.certs = certs
+    # De meeste tests gaan niet over 2FA: die draaien zonder verplichte 2FA
+    app.state.security = SecurityPolicy(SecurityConfig(require_2fa=False))
     login_limiter.reset()
-    totp_limiter.reset()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
     del app.state.certs
+    del app.state.security
 
 
 ADMIN = {"email": "jonas@example.nl", "display_name": "Jonas", "password": "lang-genoeg-123"}

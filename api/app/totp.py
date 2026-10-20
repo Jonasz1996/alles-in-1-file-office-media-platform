@@ -46,7 +46,9 @@ def verify(secret: str, code: str, last_step: int, now: float | None = None) -> 
     """Geeft de stap van de geldige code terug, of None. Een stap die al gebruikt is
     (<= last_step) telt niet: zo werkt een afgeluisterde code geen tweede keer."""
     code = "".join(code.split())
-    if len(code) != DIGITS or not code.isdigit():
+    # Alleen 0-9: isdigit() is ook True voor bijv. '１２３４５６', en daarmee kan
+    # hmac.compare_digest niet vergelijken.
+    if len(code) != DIGITS or not (code.isascii() and code.isdigit()):
         return None
     now_step = current_step(now)
     for step in range(now_step - WINDOW, now_step + WINDOW + 1):
@@ -76,7 +78,8 @@ def new_recovery_codes(count: int = 10) -> list[str]:
 
 
 def normalize_recovery_code(code: str) -> str:
-    return "".join(c for c in code.lower() if c.isalnum())
+    """Kleine letters, zonder streepjes en spaties; alleen ASCII telt mee."""
+    return "".join(c for c in code if c.isascii() and c.isalnum()).lower()
 
 
 def hash_recovery_code(code: str) -> str:
