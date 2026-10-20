@@ -1,13 +1,16 @@
 """De listeners van serve.py. Er zit geen proxy voor: een verbinding die geen headers
-stuurt gaat dicht, en een https-poort die niet open gaat stopt http niet."""
+stuurt of de tls-handshake niet doet gaat dicht, en een https-poort die niet open gaat
+stopt http niet."""
 
 import asyncio
 import contextlib
 import re
+import resource
 import socket
 import ssl
 import sys
 import time
+from typing import NamedTuple
 
 import httpx
 import pytest
@@ -37,24 +40,64 @@ async def echo(scope, receive, send):
     await send({"type": "http.response.body", "body": body})
 
 
-@pytest.fixture(params=IMPLEMENTATIONS, ids=lambda impl: impl.__name__)
-async def listener(request, tmp_path, monkeypatch):
-    """Een server zoals serve.py hem maakt, met een korte header-deadline en echo als
-    app. Geeft de poort."""
-    monkeypatch.setattr(serve, "HEADER_TIMEOUT", 0.3)
-    monkeypatch.setattr(serve, "app", echo)
-    config = serve._config(Settings(data_dir=tmp_path), 0, lifespan="off")
-    assert config.http is serve.GuardedHttp
-    config.http = request.param
+class Listener(NamedTuple):
+    port: int
+    server: serve.Server
+
+
+@contextlib.asynccontextmanager
+async def running(config):
+    """Start een server zoals serve.py dat doet: met een eigen socket."""
     server = serve.Server(config)
     ready = asyncio.Event()
     server.on_started = ready.set
     sock = serve._listen("127.0.0.1", 0)
     task = asyncio.create_task(server.serve(sockets=[sock]))
     await asyncio.wait_for(ready.wait(), 5)
-    yield sock.getsockname()[1]
-    server.should_exit = True
-    await asyncio.wait_for(task, 5)
+    try:
+        yield Listener(sock.getsockname()[1], server)
+    finally:
+        server.should_exit = True
+        await asyncio.wait_for(task, 5)
+
+
+@pytest.fixture(params=IMPLEMENTATIONS, ids=lambda impl: impl.__name__)
+async def listener(request, tmp_path, monkeypatch):
+    """Een server zoals serve.py hem maakt, met een korte header-deadline en echo als
+    app."""
+    monkeypatch.setattr(serve, "HEADER_TIMEOUT", 0.3)
+    monkeypatch.setattr(serve, "app", echo)
+    config = serve._config(Settings(data_dir=tmp_path), 0, lifespan="off")
+    assert config.http is serve.GuardedHttp
+    config.http = request.param
+    async with running(config) as started:
+        yield started
+
+
+@pytest.fixture
+async def tls_listener(tmp_path, monkeypatch):
+    """Als listener, maar met tls zoals de https-server."""
+    monkeypatch.setattr(serve, "HEADER_TIMEOUT", 0.3)
+    monkeypatch.setattr(serve, "app", echo)
+    settings = Settings(data_dir=tmp_path)
+    certs = CertManager(settings)
+    write_cert(certs, "platform.test")
+    assert certs.load_files()
+    config = serve._config(
+        settings,
+        0,
+        lifespan="off",
+        ssl_context_factory=lambda _config, _default: certs.server_context(),
+    )
+    async with running(config) as started:
+        yield started
+
+
+def client_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
 
 
 def request(method: str = "GET", path: str = "/", length: int | None = None) -> bytes:
@@ -80,7 +123,7 @@ async def closed_within(reader: asyncio.StreamReader, seconds: float) -> bool:
 
 @pytest.mark.anyio
 async def test_stille_verbinding_gaat_dicht(listener):
-    reader, writer = await asyncio.open_connection("127.0.0.1", listener)
+    reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
     start = time.monotonic()
     assert await closed_within(reader, 3)
     assert time.monotonic() - start >= 0.2
@@ -91,7 +134,7 @@ async def test_stille_verbinding_gaat_dicht(listener):
 async def test_druppelende_headers_gaan_dicht(listener):
     """Elke 0,1 s een headerregel: uvicorns eigen keep-alive-timer begint dan telkens
     opnieuw, de header-deadline niet."""
-    reader, writer = await asyncio.open_connection("127.0.0.1", listener)
+    reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
     writer.write(b"GET / HTTP/1.1\r\nHost: x\r\n")
     for i in range(30):
         try:
@@ -108,7 +151,7 @@ async def test_druppelende_headers_gaan_dicht(listener):
 
 @pytest.mark.anyio
 async def test_keep_alive_werkt_en_gaat_daarna_dicht(listener):
-    reader, writer = await asyncio.open_connection("127.0.0.1", listener)
+    reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
     for _ in range(3):
         writer.write(request())
         assert await response(reader) == (200, b"0")
@@ -120,7 +163,7 @@ async def test_keep_alive_werkt_en_gaat_daarna_dicht(listener):
 @pytest.mark.anyio
 async def test_langzame_upload_loopt_door(listener):
     """Een upload die veel langer duurt dan de deadline (een tus-PATCH van minuten)."""
-    reader, writer = await asyncio.open_connection("127.0.0.1", listener)
+    reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
     chunks = 20
     writer.write(request("PATCH", "/upload", chunks * 100))
     for _ in range(chunks):  # 2 seconden: bijna 7 keer de deadline
@@ -137,7 +180,7 @@ async def test_langzame_upload_loopt_door(listener):
 async def test_vroeg_antwoord_terwijl_de_body_nog_binnenkomt(listener):
     """Antwoordt de app al voordat de body binnen is, dan blijft de verbinding open tot
     de rest van de body er is; daarna kan het volgende request."""
-    reader, writer = await asyncio.open_connection("127.0.0.1", listener)
+    reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
     writer.write(request("PATCH", "/vroeg", 1000))
     assert await response(reader) == (200, b"0")
     for _ in range(10):  # 1 seconde, ruim langer dan de deadline
@@ -149,9 +192,50 @@ async def test_vroeg_antwoord_terwijl_de_body_nog_binnenkomt(listener):
     writer.close()
 
 
+@pytest.mark.anyio
+async def test_tls_zonder_handshake_gaat_dicht(tls_listener):
+    """Een kale tcp-verbinding die nooit een ClientHello stuurt: asyncio wacht daar
+    standaard 60 s op."""
+    reader, writer = await asyncio.open_connection("127.0.0.1", tls_listener.port)
+    assert await closed_within(reader, 3)
+    writer.close()
+
+
+@pytest.mark.anyio
+async def test_tls_stille_verbinding_gaat_dicht(tls_listener):
+    reader, writer = await asyncio.open_connection(
+        "127.0.0.1", tls_listener.port, ssl=client_context(), server_hostname="platform.test"
+    )
+    writer.write(request())
+    assert await response(reader) == (200, b"0")  # tls werkt
+    assert await closed_within(reader, 3)  # en daarna geldt de header-deadline
+    writer.close()
+
+
+@pytest.mark.anyio
+async def test_veel_stille_verbindingen_geen_503(listener, monkeypatch):
+    """Uvicorns limit_concurrency telt ook verbindingen die nog niets stuurden: met
+    meer dan zoveel stille verbindingen kreeg elk request 503, ook /health."""
+    count = 1100  # meer dan de 1000 van limit_concurrency eerst
+    serve._raise_fd_limit()  # client en server in hetzelfde proces: 2 per verbinding
+    if resource.getrlimit(resource.RLIMIT_NOFILE)[0] < 2 * count + 200:
+        pytest.skip("Te weinig open bestanden toegestaan")
+    monkeypatch.setattr(serve, "HEADER_TIMEOUT", 30)  # blijven open tijdens de test
+    idle = [await asyncio.open_connection("127.0.0.1", listener.port) for _ in range(count)]
+    try:
+        await until(lambda: len(listener.server.server_state.connections) >= count)
+        reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
+        writer.write(request())
+        assert await response(reader) == (200, b"0")
+        writer.close()
+    finally:
+        for _, idle_writer in idle:
+            idle_writer.close()
+
+
 def test_listener_instellingen(tmp_path):
     config = serve._config(Settings(data_dir=tmp_path), 8080)
-    assert config.limit_concurrency == serve.LIMIT_CONCURRENCY
+    assert config.limit_concurrency is None  # zie test_veel_stille_verbindingen_geen_503
     assert config.timeout_keep_alive == serve.KEEP_ALIVE
 
 
@@ -184,11 +268,8 @@ async def until(predicate, seconds: float = 10) -> None:
 
 
 def https_get(port: int, path: str) -> str:
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
     with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
-        with context.wrap_socket(raw) as tls:
+        with client_context().wrap_socket(raw) as tls:
             tls.sendall(f"GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n".encode())
             data = b""
             while chunk := tls.recv(65536):
@@ -235,7 +316,7 @@ async def platform(tmp_path, monkeypatch, https_port: int):
 
 
 @pytest.mark.anyio
-async def test_https_poort_bezet_http_werkt_door(tmp_path, monkeypatch):
+async def test_https_poort_bezet_http_werkt_door(tmp_path, monkeypatch, caplog):
     blocker = socket.create_server(("127.0.0.1", 0))
     port = blocker.getsockname()[1]
     try:
@@ -251,6 +332,10 @@ async def test_https_poort_bezet_http_werkt_door(tmp_path, monkeypatch):
             blocker.close()
             await until(lambda: certs.serving)
             assert certs.listener_error is None
+            # Ook in de log, net als de fout (info van "platform" komt daar niet)
+            assert any(
+                r.levelname == "WARNING" and "weer open" in r.getMessage() for r in caplog.records
+            )
             response = await asyncio.to_thread(https_get, port, "/health")
             assert response.startswith("HTTP/1.1 200")
     finally:

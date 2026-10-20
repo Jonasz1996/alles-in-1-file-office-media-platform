@@ -8,7 +8,8 @@ https-server deelt die en start pas als CertManager een certificaat heeft. Gaat 
 https-poort niet open, dan blijft http gewoon werken en staat de reden op /beheer.
 
 Er zit geen proxy voor: beide poorten staan rechtstreeks open naar internet. Daarom
-sluit elke verbinding die niet op tijd de headers van een request stuurt.
+sluit elke verbinding die niet op tijd de tls-handshake doet of de headers van een
+request stuurt.
 """
 
 import asyncio
@@ -19,7 +20,7 @@ import logging
 import resource
 import signal
 import socket
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import h11
 import uvicorn
@@ -34,10 +35,14 @@ except ImportError:  # zonder httptools gebruikt uvicorn h11
     HttpToolsProtocol = None
 
 log = logging.getLogger("platform")
+uvicorn_log = logging.getLogger("uvicorn.error")  # heeft een handler, ook voor info
 
-HEADER_TIMEOUT = 10.0  # seconden voor de headers van een request, ook tussen keep-alive door
+# Seconden voor de headers van een request, ook tussen keep-alive door, en voor de
+# tls-handshake. Samen met de limiet op open bestanden is dit de grens: geen
+# limit_concurrency, want uvicorn telt daarin ook stille verbindingen en geeft dan
+# iedereen 503, ook /health en Let's Encrypt.
+HEADER_TIMEOUT = 10.0
 KEEP_ALIVE = 5  # seconden dat een stille keep-alive-verbinding open blijft
-LIMIT_CONCURRENCY = 1000  # meer verbindingen of requests tegelijk: 503
 LISTENER_RETRY = 60.0  # https-poort ging niet open: zo vaak opnieuw proberen
 
 # Leesbare reden bij de fouten die je ziet als de https-poort niet open kan
@@ -133,9 +138,41 @@ class Server(uvicorn.Server):
         yield
 
     async def startup(self, sockets=None) -> None:
-        await super().startup(sockets=sockets)
+        if sockets is not None and self.config.ssl is not None:
+            await self._startup_tls(sockets)
+        else:
+            await super().startup(sockets=sockets)
         if self.started and self.on_started is not None:
             self.on_started()
+
+    async def _startup_tls(self, sockets: Sequence[socket.socket]) -> None:
+        """Wat uvicorn doet met sockets=[...], maar met een korte tls-handshake.
+        Asyncio wacht daar standaard 60 s op, en de header-deadline begint pas als de
+        handshake klaar is: een verbinding die nooit een ClientHello stuurt, hield zo
+        een minuut lang een file descriptor bezet."""
+        config = self.config
+        await self.lifespan.startup()  # https draait zonder lifespan
+        loop = asyncio.get_running_loop()
+
+        def create_protocol(_loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Protocol:
+            return config.http_protocol_class(
+                config=config,
+                server_state=self.server_state,
+                app_state=self.lifespan.state,
+                _loop=_loop,
+            )
+
+        self.servers = [
+            await loop.create_server(
+                create_protocol,
+                sock=sock,
+                ssl=config.ssl,
+                backlog=config.backlog,
+                ssl_handshake_timeout=HEADER_TIMEOUT,
+            )
+            for sock in sockets
+        ]
+        self.started = True
 
 
 def _config(settings: Settings, port: int, **extra) -> uvicorn.Config:
@@ -148,7 +185,7 @@ def _config(settings: Settings, port: int, **extra) -> uvicorn.Config:
         server_header=False,
         http=GuardedHttp,
         ws="none",  # de app heeft geen websockets
-        limit_concurrency=LIMIT_CONCURRENCY,
+        limit_concurrency=None,  # zie HEADER_TIMEOUT
         timeout_keep_alive=KEEP_ALIVE,
         **extra,
     )
@@ -180,8 +217,11 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
             nonlocal https
             https = server
             certs.serving = True
+            if certs.listener_error is not None:
+                log.warning("De https-poort %s is weer open; https werkt weer.", port)
             certs.listener_error = None
-            log.info("https op poort %s voor %s", port, certs.cert_domain)
+            # Met eigen sockets meldt uvicorn zelf niet dat hij draait
+            uvicorn_log.info("Https draait op poort %s voor %s", port, certs.cert_domain)
 
         while True:
             try:
