@@ -36,6 +36,12 @@ export interface FileNode {
   deleted_at: string | null;
   /** Alleen de eigen tags van wie ingelogd is. */
   tags: TagRef[];
+  /** Wat jij ermee mag. Oudere servers sturen het niet: dan is het van jou (permissionOf). */
+  permission?: Permission;
+  /** Van wie het is */
+  owner?: { id: string; display_name: string };
+  /** Er staat minstens één deling of link op (alleen voor de eigenaar). */
+  shared?: boolean;
 }
 
 export interface Listing {
@@ -196,6 +202,103 @@ export function tusMetadata(values: Record<string, string>): string {
 }
 
 type Fetch = typeof fetch;
+
+// --- S: delen ---
+
+/** Wat iemand met een map of bestand mag. */
+export type Permission = "owner" | "write" | "read";
+
+/** Wat een deling toestaat; upload alleen bij een link. */
+export type SharePermission = "read" | "write" | "upload";
+
+export interface Person {
+  id: string;
+  display_name: string;
+  email: string;
+}
+
+export interface GroupRef {
+  id: string;
+  name: string;
+  member_count: number;
+}
+
+export interface Group extends GroupRef {
+  members: Person[];
+}
+
+/** Zoeken naar mensen en groepen om mee te delen (nooit jezelf). */
+export interface Directory {
+  users: Person[];
+  groups: GroupRef[];
+}
+
+export interface Share {
+  id: string;
+  node_id: string;
+  type: "user" | "group" | "link";
+  permission: SharePermission;
+  created_at: string;
+  expires_at: string | null;
+  user: Person | null;
+  group: GroupRef | null;
+  /** url is het pad (/s/<token>); de link zelf is location.origin + url. */
+  link: { url: string; label: string | null; has_password: boolean } | null;
+}
+
+export interface NewLink {
+  permission: "read" | "upload";
+  password?: string;
+  expires_at?: string;
+  label?: string;
+}
+
+/** expires_at null haalt de vervaldatum weg, password "" het wachtwoord (links). */
+export interface ShareChange {
+  permission?: SharePermission;
+  expires_at?: string | null;
+  password?: string;
+  label?: string;
+}
+
+export interface SharedWithMe {
+  share_id: string;
+  node: FileNode;
+  permission: "read" | "write";
+  via: "user" | "group";
+  group?: { id: string; name: string } | null;
+  owner: { id: string; display_name: string };
+  created_at: string;
+}
+
+/** Een map of bestand zoals een publieke link het laat zien: zonder eigenaar, ouder of tags. */
+export interface PublicNode {
+  id: string;
+  name: string;
+  kind: "file" | "dir";
+  mime: string | null;
+  size: number;
+  etag: string;
+  modified_at: string;
+}
+
+export interface PublicShare {
+  kind: "file" | "dir";
+  name: string;
+  permission: "read" | "upload";
+  owner_name: string;
+  expires_at: string | null;
+  root: PublicNode;
+}
+
+export interface PublicListing {
+  folder: PublicNode;
+  /** Van de gedeelde map tot en met folder */
+  path: PublicNode[];
+  children: PublicNode[];
+}
+
+// --- einde S ---
 
 export class Api {
   private token: string | null = null;
@@ -399,6 +502,31 @@ export class Api {
   setTags = (id: string, tagIds: string[]) =>
     this.send<TagRef[]>("PUT", `/api/v1/files/${id}/tags`, { tag_ids: tagIds });
   // --- einde F ---
+
+  // --- S: delen ---
+  /** Mensen en groepen om mee te delen; q is een (deel van een) naam of e-mailadres. */
+  directory = (q: string) => this.json<Directory>(`/api/v1/directory?${new URLSearchParams({ q })}`);
+  /** De delingen en links van een map of bestand (alleen voor de eigenaar). */
+  shares = (nodeId: string) => this.json<Share[]>(`/api/v1/files/${nodeId}/shares`);
+  share = (
+    nodeId: string,
+    to: { user_id: string } | { group_id: string },
+    permission: "read" | "write",
+    expires_at?: string,
+  ) => this.send<Share>("POST", `/api/v1/files/${nodeId}/shares`, { ...to, permission, expires_at });
+  createLink = (nodeId: string, link: NewLink) => this.send<Share>("POST", `/api/v1/files/${nodeId}/links`, link);
+  changeShare = (id: string, change: ShareChange) => this.send<Share>("PATCH", `/api/v1/shares/${id}`, change);
+  /** Ook voor links: wie de link heeft, kan er daarna niet meer bij. */
+  deleteShare = (id: string) => this.send<void>("DELETE", `/api/v1/shares/${id}`);
+  sharedWithMe = () => this.json<SharedWithMe[]>("/api/v1/shared-with-me");
+  groups = () => this.json<Group[]>("/api/v1/groups");
+  createGroup = (name: string) => this.send<Group>("POST", "/api/v1/groups", { name });
+  renameGroup = (id: string, name: string) => this.send<Group>("PATCH", `/api/v1/groups/${id}`, { name });
+  deleteGroup = (id: string) => this.send<void>("DELETE", `/api/v1/groups/${id}`);
+  /** Vervangt de leden door deze gebruikers. */
+  setGroupMembers = (id: string, userIds: string[]) =>
+    this.send<Group>("PUT", `/api/v1/groups/${id}/members`, { user_ids: userIds });
+  // --- einde S ---
 
   adminStatus = () => this.json<SystemStatus>("/api/v1/admin/status");
   users = () => this.json<User[]>("/api/v1/users");

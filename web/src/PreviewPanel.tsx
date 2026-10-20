@@ -45,22 +45,32 @@ export function mayRenew(state: { count: number; at: number }, now: number): boo
   return true;
 }
 
+/** Waar de inhoud vandaan komt: een downloadadres, met inline=true om te tonen of af te spelen. */
+export type UrlSource = (inline: boolean) => Promise<string>;
+
+/** Wat de preview van een map of bestand laat zien (ook bij een publieke link). */
+export type Shown = Pick<FileNode, "id" | "name" | "kind" | "mime" | "size" | "modified_at">;
+
 /**
  * Adres om af te spelen (de downloadlink met inline=true). Die verloopt na een paar minuten;
  * vraagt de speler later nog een stuk (doorspoelen) en mislukt dat, dan een nieuwe link en
  * verder waar hij was.
  */
-function useMediaUrl(nodeId: string, wanted: boolean) {
+function useMediaUrl(nodeId: string, source: UrlSource, wanted: boolean) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const resumeAt = useRef(0);
   const renewals = useRef({ count: 0, at: 0 });
+  const latest = useRef(source);
+  useEffect(() => {
+    latest.current = source;
+  });
 
   useEffect(() => {
     if (!wanted) return;
     let current = true;
-    api
-      .downloadUrl(nodeId, true)
+    latest
+      .current(true)
       .then((u) => current && setUrl(u))
       .catch((e: Error) => current && setError(e.message));
     return () => {
@@ -74,8 +84,8 @@ function useMediaUrl(nodeId: string, wanted: boolean) {
       if (!mayRenew(renewals.current, Date.now()))
         return setError("Afspelen lukt niet. Probeer het bestand te downloaden.");
       resumeAt.current = e.currentTarget.currentTime;
-      api
-        .downloadUrl(nodeId, true)
+      latest
+        .current(true)
         .then(setUrl)
         .catch((err: Error) => setError(err.message));
     },
@@ -87,38 +97,50 @@ function useMediaUrl(nodeId: string, wanted: boolean) {
   return { url, error, props };
 }
 
-export function PreviewPanel({
+/** Een afbeelding zelf (het origineel): als er geen preview is en er ook geen komt, of altijd
+ * (always). Lukt dat niet (bijv. een soort die de browser niet kent), dan de preview. */
+function useOriginal(node: Shown, preview: Preview | undefined, source: UrlSource, always: boolean) {
+  const wanted =
+    category(node) === "image" &&
+    (always || (!preview?.large && (preview?.state === "none" || preview?.state === "failed")));
+  const [url, setUrl] = useState<string | null>(null);
+  const [broken, setBroken] = useState(false);
+  const latest = useRef(source);
+  useEffect(() => {
+    latest.current = source;
+  });
+  useEffect(() => {
+    if (!wanted) return;
+    let current = true;
+    latest
+      .current(true)
+      .then((u) => current && setUrl(u))
+      .catch(() => current && setBroken(true));
+    return () => {
+      current = false;
+    };
+  }, [node.id, wanted]);
+  return wanted && !broken ? { url, onError: () => setBroken(true) } : null;
+}
+
+/** De preview zelf: speler, tekst, inhoud van een archief of een afbeelding. original: bij een
+ * afbeelding het bestand zelf tonen in plaats van de (kleinere) preview. */
+export function PreviewBody({
   node,
   preview,
-  onClose,
-  onDownload,
+  source,
+  original: always = false,
 }: {
-  node: FileNode;
+  node: Shown;
   preview?: Preview;
-  onClose: () => void;
-  onDownload: () => void;
+  source: UrlSource;
+  original?: boolean;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const kind = category(node);
   const meta = preview?.meta ?? {};
   const player = playerFor(kind, meta);
-  const media = useMediaUrl(node.id, player !== null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Niet sluiten bij opruimen: dan zou het close-event het paneel meteen weer weghalen
-    if (dialog.current && !dialog.current.open) dialog.current.showModal();
-  }, []);
-
-  const close = () => dialog.current?.close(); // via het close-event naar onClose
-
-  async function openInTab() {
-    try {
-      window.open(await api.downloadUrl(node.id, true), "_blank", "noopener");
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
+  const media = useMediaUrl(node.id, source, player !== null);
+  const original = useOriginal(node, preview, source, always);
 
   let body;
   if (player === "video") {
@@ -185,8 +207,12 @@ export function PreviewPanel({
         )}
       </div>
     );
+  } else if (original?.url) {
+    body = <img src={original.url} alt={node.name} style={FIT} onError={original.onError} />;
   } else if (preview?.large) {
     body = <img src={preview.large} alt={node.name} style={FIT} />;
+  } else if (original) {
+    body = <p className="muted">Laden…</p>;
   } else if (!preview || preview.state === "pending") {
     body = <p className="muted">Het voorbeeld wordt gemaakt…</p>;
   } else {
@@ -199,13 +225,60 @@ export function PreviewPanel({
     );
   }
 
-  const details = [
+  return (
+    <>
+      {body}
+      {media.error && <p role="alert">{media.error}</p>}
+    </>
+  );
+}
+
+/** "1920 × 1080 · 2,1 MB · gewijzigd …" onder de preview. */
+export function previewDetails(node: Shown, meta: PreviewMeta): string {
+  return [
     meta.width && meta.height ? `${meta.width} × ${meta.height}` : null,
     meta.duration ? formatDuration(meta.duration) : null,
     meta.pages ? (meta.pages === 1 ? "1 pagina" : `${meta.pages} pagina's`) : null,
     formatBytes(node.size),
     `gewijzigd ${formatDate(node.modified_at)}`,
-  ].filter(Boolean);
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export function PreviewPanel({
+  node,
+  preview,
+  onClose,
+  onDownload,
+  source,
+}: {
+  node: Shown;
+  preview?: Preview;
+  onClose: () => void;
+  onDownload: () => void;
+  /** Standaard de downloadlink van een ingelogde gebruiker; een publieke link geeft zijn eigen. */
+  source?: UrlSource;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const kind = category(node);
+  const [error, setError] = useState<string | null>(null);
+  const urls: UrlSource = source ?? ((inline) => api.downloadUrl(node.id, inline));
+
+  useEffect(() => {
+    // Niet sluiten bij opruimen: dan zou het close-event het paneel meteen weer weghalen
+    if (dialog.current && !dialog.current.open) dialog.current.showModal();
+  }, []);
+
+  const close = () => dialog.current?.close(); // via het close-event naar onClose
+
+  async function openInTab() {
+    try {
+      window.open(await urls(true), "_blank", "noopener");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
 
   return (
     <dialog
@@ -226,9 +299,11 @@ export function PreviewPanel({
             Sluiten
           </button>
         </div>
-        <div style={{ margin: "1rem 0" }}>{body}</div>
+        <div style={{ margin: "1rem 0" }}>
+          <PreviewBody node={node} preview={preview} source={urls} />
+        </div>
         <p className="muted" style={{ margin: 0 }}>
-          {details.join(" · ")}
+          {previewDetails(node, preview?.meta ?? {})}
         </p>
         <div className="toolbar" style={{ marginBottom: 0 }}>
           <button type="button" onClick={onDownload}>
@@ -240,7 +315,7 @@ export function PreviewPanel({
             </button>
           )}
         </div>
-        {(error || media.error) && <p role="alert">{error ?? media.error}</p>}
+        {error && <p role="alert">{error}</p>}
       </div>
     </dialog>
   );

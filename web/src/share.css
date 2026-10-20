@@ -1,0 +1,193 @@
+/* Delen: de dialoog, merkjes in de lijsten en de publieke pagina (/s/<token>). */
+
+.share-section + .share-section {
+  margin-top: 1.2rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--line);
+}
+
+.share-section h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.share-new h4 {
+  margin: 0.8rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+.share-add {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.share-add input {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.share-suggestions {
+  max-height: 16rem;
+}
+
+.share-suggestions button {
+  overflow-wrap: anywhere;
+}
+
+.share-list {
+  margin: 0.5rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.share-list li {
+  display: flex;
+  gap: 0.4rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.share-list li:last-child {
+  border-bottom: 0;
+}
+
+.share-list li.share-link {
+  display: grid;
+  justify-content: stretch;
+}
+
+.share-who {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.share-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.share-url {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.share-form {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0.5rem 0;
+}
+
+.share-form label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.share-form label.check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.share-form input:not([type="checkbox"]),
+.share-form select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+/* Merkjes bij een naam in de lijst */
+.shared-mark {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  vertical-align: middle;
+}
+
+.owner-note {
+  margin-left: 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.folder-note {
+  margin: 0.3rem 0 0;
+}
+
+/* De publieke pagina */
+
+.public-head {
+  display: flex;
+  gap: 0.5rem 1rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.public-head h1 {
+  margin: 0.5rem 0;
+  font-size: 1.4rem;
+  overflow-wrap: anywhere;
+}
+
+.public-file {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.public-file img,
+.public-file video {
+  border-radius: 6px;
+}
+
+.dropzone {
+  display: grid;
+  gap: 0.6rem;
+  place-items: center;
+  padding: 2rem 1rem;
+  border: 2px dashed var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  text-align: center;
+}
+
+.dropzone.dropping {
+  border-color: var(--accent);
+}
+
+.arrived {
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--ok);
+  border-radius: 8px;
+  color: var(--ok);
+}
+
+.arrived ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.public-card {
+  width: min(24rem, 100%);
+  box-sizing: border-box;
+}
+
+/* Minder belangrijke kolommen weglaten op een smal scherm */
+@media (max-width: 40rem) {
+  .wide-only {
+    display: none;
+  }
+}

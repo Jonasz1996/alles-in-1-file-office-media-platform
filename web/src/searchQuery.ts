@@ -2,6 +2,7 @@
 // en je een zoekopdracht kunt bewaren. Losse functies, zonder React, zodat ze te testen zijn.
 
 import { type Category, type SearchHit, type SearchQuery, searchParams } from "./api";
+import { isShared } from "./sharing";
 
 export const CATEGORY_LABELS: Record<Category, string> = {
   folder: "Mappen",
@@ -44,14 +45,28 @@ export function hasFilter(query: SearchQuery): boolean {
   return Boolean(query.q || query.type || query.tag);
 }
 
-/** "Mijn bestanden / Foto's / 2026" voor het pad van een zoekresultaat. */
-export function pathLabel(path: SearchHit["path"]): string {
+/**
+ * "Mijn bestanden / Foto's / 2026" voor het pad van een zoekresultaat. Bij iets dat met je
+ * gedeeld is begint het pad van de server bij de gedeelde map: "Gedeeld met mij / Vakantie".
+ */
+export function pathLabel(path: SearchHit["path"], shared = false): string {
+  if (shared) return ["Gedeeld met mij", ...path.map((p) => p.name)].join(" / ");
   return path.map((p, i) => (i === 0 && p.name === "" ? "Mijn bestanden" : p.name)).join(" / ");
 }
 
-/** De map waar een resultaat in staat. */
+/** Het pad van de map waar een resultaat in staat; zonder het resultaat zelf (een gedeelde
+ * map die zelf gevonden wordt, staat bij sommige servers vooraan in zijn eigen pad). */
+export function hitPath(hit: SearchHit): SearchHit["path"] {
+  const path = hit.path;
+  return path.length && path[path.length - 1].id === hit.node.id ? path.slice(0, -1) : path;
+}
+
+/** De map waar een resultaat in staat. Wat boven een gedeelde map staat, zie je niet: dan
+ * naar Gedeeld met mij. */
 export function parentHref(hit: SearchHit): string {
-  return hit.path.length <= 1 ? "/" : `/map/${hit.path[hit.path.length - 1].id}`;
+  const path = hitPath(hit);
+  if (isShared(hit.node)) return path.length === 0 ? "/gedeeld" : `/map/${path[path.length - 1].id}`;
+  return path.length <= 1 ? "/" : `/map/${path[path.length - 1].id}`;
 }
 
 /** Waar een klik op een resultaat heen gaat: een map zelf, of de map waar een bestand in staat. */

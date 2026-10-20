@@ -37,7 +37,7 @@ const SIZE = 32;
 const BATCH = 500;
 
 /** Thumbnail als die er is, anders een icoon voor het soort bestand. */
-export function Thumb({ node, preview }: { node: FileNode; preview?: Preview }) {
+export function Thumb({ node, preview }: { node: Pick<FileNode, "kind" | "mime">; preview?: Preview }) {
   const [broken, setBroken] = useState<string | null>(null);
   const box = { width: SIZE, height: SIZE, flex: "none", marginRight: "0.5rem", verticalAlign: "middle" } as const;
   if (preview?.thumb && broken !== preview.thumb) {

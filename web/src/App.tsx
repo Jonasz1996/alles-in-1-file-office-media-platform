@@ -2,21 +2,37 @@ import { useCallback, useEffect, useState } from "react";
 import { Account, RecoveryCodes } from "./Account";
 import { api, type User } from "./api";
 import { Beheer } from "./Beheer";
+import { CurrentUser } from "./currentUser";
 import { liveEvents } from "./events";
 import { Files } from "./Files";
 import { Login } from "./Login";
+import { Public } from "./Public";
+import { linkToken } from "./publicApi";
 import { navigate, usePath } from "./router";
 import { Search } from "./Search";
+import { SharedWithMe } from "./SharedWithMe";
 import { Trash } from "./Trash";
 import { uploadQueue } from "./uploadQueue";
 
 export function App() {
+  const path = usePath();
+  // Een publieke link werkt zonder in te loggen: dan niets van de login (geen refresh, geen
+  // live stroom), ook niet als je toevallig ook ingelogd bent
+  if (path.startsWith("/s/")) {
+    const token = linkToken(path);
+    return <Public key={token ?? ""} token={token} />;
+  }
+  return <LoggedIn path={path} />;
+}
+
+function LoggedIn({ path }: { path: string }) {
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(true);
   // Nieuwe herstelcodes blijven staan tot "Ik heb ze bewaard", ook als intussen de
   // gebruiker ververst is en de rest van de app verschijnt.
   const [codes, setCodes] = useState<string[] | null>(null);
-  const path = usePath();
+  // De map die open staat is met je gedeeld (voor de navigatie)
+  const [folderShared, setFolderShared] = useState(false);
 
   const reloadUser = useCallback(() => {
     api
@@ -68,6 +84,8 @@ export function App() {
 
   // 2FA verplicht en nog niet aan: alleen 2FA aanzetten en uitloggen.
   const setupRequired = user.totp_setup_required;
+  // Gasten hebben geen eigen bestanden en geen prullenbak: zij zien wat met hen gedeeld is
+  const guest = user.role === "guest";
   const folder = path.match(/^\/map\/([0-9a-f-]+)/)?.[1] ?? null;
 
   let page;
@@ -85,11 +103,13 @@ export function App() {
       </main>
     );
   } else if (setupRequired) page = <Account user={user} onChange={reloadUser} onCodes={showCodes} />;
-  else if (path.startsWith("/prullenbak")) page = <Trash />;
+  else if (path.startsWith("/gedeeld")) page = <SharedWithMe />;
+  else if (path.startsWith("/prullenbak") && !guest) page = <Trash />;
   else if (path.startsWith("/zoeken")) page = <Search />;
   else if (path.startsWith("/beheer") && user.role === "admin") page = <Beheer currentUser={user} />;
   else if (path.startsWith("/account")) page = <Account user={user} onChange={reloadUser} onCodes={showCodes} />;
-  else page = <Files folderId={folder} />;
+  else if (guest && !folder) page = <SharedWithMe />;
+  else page = <Files folderId={folder} onShared={setFolderShared} />;
 
   const link = (to: string, label: string, active: boolean) => (
     <a
@@ -104,14 +124,19 @@ export function App() {
     </a>
   );
 
+  const other = /^\/(prullenbak|beheer|account|gedeeld|zoeken)/.test(path);
+  const inShared = path.startsWith("/gedeeld") || (folder !== null && (folderShared || guest)) || (guest && !other);
+  const inFiles = !guest && !inShared && !/^\/(prullenbak|beheer|account|gedeeld)/.test(path);
+
   return (
-    <>
+    <CurrentUser.Provider value={user}>
       <header className="topbar">
         <strong>Platform</strong>
         {!setupRequired && (
           <nav>
-            {link("/", "Bestanden", !/^\/(prullenbak|beheer|account)/.test(path))}
-            {link("/prullenbak", "Prullenbak", path.startsWith("/prullenbak"))}
+            {!guest && link("/", "Bestanden", inFiles)}
+            {link("/gedeeld", "Gedeeld met mij", inShared)}
+            {!guest && link("/prullenbak", "Prullenbak", path.startsWith("/prullenbak"))}
             {user.role === "admin" && link("/beheer", "Beheer", path.startsWith("/beheer"))}
           </nav>
         )}
@@ -126,6 +151,6 @@ export function App() {
         </button>
       </header>
       {page}
-    </>
+    </CurrentUser.Provider>
   );
 }

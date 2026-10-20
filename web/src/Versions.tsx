@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type FileNode, type FileVersion, formatBytes, formatDate } from "./api";
 import { Dialog } from "./Dialog";
+import { nodeActions } from "./sharing";
 
 /** Eerdere inhoud van een bestand: downloaden, terugzetten, verwijderen, of een nieuwe
- * versie uploaden (dan blijft de huidige hier bewaard). */
+ * versie uploaden (dan blijft de huidige hier bewaard). Wie alleen mag kijken, kan alleen
+ * downloaden; verwijderen kan alleen de eigenaar. */
 export function Versions({ node, onClose, onChanged }: { node: FileNode; onClose: () => void; onChanged: () => void }) {
   const [current, setCurrent] = useState(node);
+  const can = nodeActions(node);
   const [items, setItems] = useState<FileVersion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -53,27 +56,32 @@ export function Versions({ node, onClose, onChanged }: { node: FileNode; onClose
     <Dialog title={`Versies van "${current.name}"`} onClose={onClose}>
       <p className="muted">
         Nu: {formatBytes(current.size)}, gewijzigd {formatDate(current.modified_at)}. De 20 meest recente eerdere
-        versies blijven bewaard; ze tellen mee voor je quotum.
+        versies blijven bewaard; ze tellen mee voor {can.versionDelete ? "je quotum" : "het quotum van de eigenaar"}.
       </p>
-      <div className="toolbar">
-        <button type="button" disabled={busy || !node.parent_id} onClick={() => input.current?.click()}>
-          Nieuwe versie uploaden
-        </button>
-        <input
-          ref={input}
-          type="file"
-          hidden
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            e.target.value = "";
-            if (file && node.parent_id) act(() => api.replaceContent(node.parent_id!, current.name, file));
-          }}
-        />
-        {busy && <span className="muted">Bezig…</span>}
-      </div>
+      {can.versionWrite && (
+        <div className="toolbar">
+          <button type="button" disabled={busy || !node.parent_id} onClick={() => input.current?.click()}>
+            Nieuwe versie uploaden
+          </button>
+          <input
+            ref={input}
+            type="file"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file && node.parent_id) act(() => api.replaceContent(node.parent_id!, current.name, file));
+            }}
+          />
+          {busy && <span className="muted">Bezig…</span>}
+        </div>
+      )}
       {error && <p role="alert">{error}</p>}
       {items?.length === 0 && (
-        <p className="muted">Er zijn nog geen eerdere versies. Upload je een nieuwe versie, dan blijft de huidige hier bewaard.</p>
+        <p className="muted">
+          Er zijn nog geen eerdere versies.
+          {can.versionWrite && " Upload je een nieuwe versie, dan blijft de huidige hier bewaard."}
+        </p>
       )}
       {items && items.length > 0 && (
         <ul className="version-list" aria-label="Eerdere versies">
@@ -89,26 +97,30 @@ export function Versions({ node, onClose, onChanged }: { node: FileNode; onClose
                 <button type="button" onClick={() => download(v)}>
                   Downloaden
                 </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => {
-                    if (window.confirm("Deze versie terugzetten? Wat er nu in staat, blijft bewaard als versie."))
-                      act(() => api.restoreVersion(node.id, v.id));
-                  }}
-                >
-                  Terugzetten
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => {
-                    if (window.confirm("Deze versie definitief verwijderen?"))
-                      act(() => api.deleteVersion(node.id, v.id));
-                  }}
-                >
-                  Verwijderen
-                </button>
+                {can.versionWrite && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      if (window.confirm("Deze versie terugzetten? Wat er nu in staat, blijft bewaard als versie."))
+                        act(() => api.restoreVersion(node.id, v.id));
+                    }}
+                  >
+                    Terugzetten
+                  </button>
+                )}
+                {can.versionDelete && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      if (window.confirm("Deze versie definitief verwijderen?"))
+                        act(() => api.deleteVersion(node.id, v.id));
+                    }}
+                  >
+                    Verwijderen
+                  </button>
+                )}
               </div>
             </li>
           ))}

@@ -8,6 +8,7 @@ import {
   type SystemStatus,
   type User,
 } from "./api";
+import { BeheerGroups } from "./BeheerGroups";
 import { BeheerJobs } from "./BeheerJobs";
 
 const CHECK_LABELS: Record<string, string> = {
@@ -172,6 +173,8 @@ export function Beheer({ currentUser }: { currentUser: User }) {
         </div>
         <NewUser onCreated={load} />
       </section>
+
+      <BeheerGroups users={users} />
     </main>
   );
 }

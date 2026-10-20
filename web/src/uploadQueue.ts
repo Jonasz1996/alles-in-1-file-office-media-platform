@@ -24,7 +24,7 @@ export class UploadQueue {
   private items: UploadItem[] = [];
   private readonly controllers = new Map<string, AbortController>();
   private readonly listeners = new Set<() => void>();
-  private readonly finishedListeners = new Set<(parent: string) => void>();
+  private readonly finishedListeners = new Set<(parent: string, ok: boolean, file: File) => void>();
   private seq = 0;
 
   constructor(
@@ -41,8 +41,9 @@ export class UploadQueue {
 
   getSnapshot = () => this.items;
 
-  /** listener krijgt na elke upload (gelukt of niet) de map waar hij in moest. */
-  onFinished(listener: (parent: string) => void): () => void {
+  /** listener krijgt na elke upload (gelukt of niet) de map waar hij in moest, of hij lukte
+   * (niet bij mislukt of geannuleerd) en het bestand. */
+  onFinished(listener: (parent: string, ok: boolean, file: File) => void): () => void {
     this.finishedListeners.add(listener);
     return () => {
       this.finishedListeners.delete(listener);
@@ -94,6 +95,7 @@ export class UploadQueue {
     const controller = new AbortController();
     this.controllers.set(key, controller);
     this.change(key, { state: "running", error: undefined });
+    let ok = false;
     try {
       await uploadFile(this.api, item.parent, item.file, (progress) => this.change(key, { progress }), {
         ...this.options,
@@ -101,6 +103,7 @@ export class UploadQueue {
         url: item.url,
         onUrl: (url) => this.change(key, { url }),
       });
+      ok = true;
       this.remove(key);
     } catch (e) {
       if (e instanceof ApiError && e.code === "aborted") this.remove(key);
@@ -108,7 +111,7 @@ export class UploadQueue {
     } finally {
       this.controllers.delete(key);
     }
-    for (const listener of this.finishedListeners) listener(item.parent);
+    for (const listener of this.finishedListeners) listener(item.parent, ok, item.file);
   }
 
   /** Annuleren: de server gooit de upload weg. */

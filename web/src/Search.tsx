@@ -1,22 +1,28 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { api, type Category, formatBytes, formatDate, type SearchQuery, type SearchResult, type Tag } from "./api";
+import { isGuest, useCurrentUser } from "./currentUser";
 import { navigate } from "./router";
 import {
   CATEGORY_LABELS,
   folderHref,
   hasFilter,
+  hitPath,
   MAX_LIMIT,
   parentHref,
   pathLabel,
   readSearch,
   searchHref,
 } from "./searchQuery";
+import { isShared } from "./sharing";
 import { TagChips } from "./Tags";
 import "./files.css";
+import "./share.css";
 
 /** Zoekveld boven in de bestandenlijst; de resultaten staan op /zoeken. */
 export function SearchBox() {
   const [q, setQ] = useState("");
+  // Gasten hebben geen eigen bestanden; zoeken gaat dan door wat met hen gedeeld is
+  const label = isGuest(useCurrentUser()) ? "Zoeken in wat met je gedeeld is" : "Zoeken in je bestanden";
   return (
     <form
       role="search"
@@ -26,13 +32,7 @@ export function SearchBox() {
         if (q.trim()) navigate(searchHref({ q }));
       }}
     >
-      <input
-        type="search"
-        aria-label="Zoeken in je bestanden"
-        placeholder="Zoeken in je bestanden"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-      />
+      <input type="search" aria-label={label} placeholder={label} value={q} onChange={(e) => setQ(e.target.value)} />
       <button type="submit">Zoeken</button>
     </form>
   );
@@ -154,6 +154,8 @@ export function Search() {
               {result.results.map((hit) => {
                 const n = hit.node;
                 const parent = parentHref(hit);
+                // Van iemand anders: het pad begint bij de gedeelde map
+                const shared = isShared(n);
                 return (
                   <tr key={n.id}>
                     <td>
@@ -166,6 +168,7 @@ export function Search() {
                         {n.kind === "dir" ? "📁 " : "📄 "}
                         {n.name}
                       </button>
+                      {shared && n.owner && <span className="owner-note">van {n.owner.display_name}</span>}
                       <TagChips tags={n.tags} />
                     </td>
                     <td>
@@ -176,7 +179,7 @@ export function Search() {
                           navigate(parent);
                         }}
                       >
-                        {pathLabel(hit.path)}
+                        {pathLabel(hitPath(hit), shared)}
                       </a>
                     </td>
                     <td>{n.kind === "file" ? formatBytes(n.size) : ""}</td>

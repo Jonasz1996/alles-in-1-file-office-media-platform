@@ -217,23 +217,39 @@ export function useServerEvents(listener: (event: ServerEvent) => void): void {
   useEffect(() => liveEvents.subscribe((event) => latest.current(event)), []);
 }
 
-/** Of deze gebeurtenis de inhoud van map folderId verandert. */
-export function affectsFolder(event: ServerEvent, folderId: string | null | undefined): boolean {
+/** Een deling met jou kwam erbij, veranderde (andere rechten) of is weg. */
+export function isShareEvent(event: ServerEvent): boolean {
+  return event.type.startsWith("share.");
+}
+
+/**
+ * Of deze gebeurtenis de inhoud van map folderId verandert. shared: de map is met je gedeeld;
+ * dan ook bij elke wijziging van een deling, want daarmee kunnen je rechten veranderen of kun
+ * je er niet meer bij.
+ */
+export function affectsFolder(event: ServerEvent, folderId: string | null | undefined, shared = false): boolean {
   if (!folderId) return false;
   if (event.type === "connected") return true;
   if (event.type === "tags.changed") return true; // de tags in de lijst zijn hernoemd of weg
+  if (shared && isShareEvent(event)) return true;
   if (!event.type.startsWith("node.")) return false;
   const { id, parent_id, old_parent_id } = event.data;
   return [id, parent_id, old_parent_id].includes(folderId);
 }
 
-/** Laadt de map opnieuw als er iets in verandert; veel wijzigingen vlak na elkaar (een map
- * vol uploads) geven één keer opnieuw laden. */
-export function useFolderEvents(folderId: string | null | undefined, reload: () => void, delay = 250): void {
-  const latest = useRef({ folderId, reload });
+/** Of de lijst "Gedeeld met mij" (met deze mappen en bestanden erin) opnieuw moet. */
+export function affectsSharedWithMe(event: ServerEvent, nodeIds: ReadonlySet<string>): boolean {
+  if (event.type === "connected" || event.type === "tags.changed" || isShareEvent(event)) return true;
+  // Hernoemd, verplaatst of in de prullenbak door de eigenaar
+  return event.type.startsWith("node.") && nodeIds.has(String(event.data.id));
+}
+
+/** Roept reload aan als match een gebeurtenis herkent; veel vlak na elkaar geven één keer. */
+export function useReloadOn(match: (event: ServerEvent) => boolean, reload: () => void, delay = 250): void {
+  const latest = useRef({ match, reload });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    latest.current = { folderId, reload };
+    latest.current = { match, reload };
   });
   useEffect(
     () => () => {
@@ -242,10 +258,21 @@ export function useFolderEvents(folderId: string | null | undefined, reload: () 
     [],
   );
   useServerEvents((event) => {
-    if (!affectsFolder(event, latest.current.folderId) || timer.current !== null) return;
+    if (!latest.current.match(event) || timer.current !== null) return;
     timer.current = setTimeout(() => {
       timer.current = null;
       latest.current.reload();
     }, delay);
   });
+}
+
+/** Laadt de map opnieuw als er iets in verandert; veel wijzigingen vlak na elkaar (een map
+ * vol uploads) geven één keer opnieuw laden. */
+export function useFolderEvents(
+  folderId: string | null | undefined,
+  reload: () => void,
+  delay = 250,
+  shared = false,
+): void {
+  useReloadOn((event) => affectsFolder(event, folderId, shared), reload, delay);
 }
