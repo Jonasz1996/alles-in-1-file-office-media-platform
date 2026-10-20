@@ -11,3 +11,5 @@ dist/
 *.local
 infra/inventaris/*.txt
 *.tsbuildinfo
+infra/ansible/group_vars/all.local.yml
+infra/ansible/inventory/hosts.yml

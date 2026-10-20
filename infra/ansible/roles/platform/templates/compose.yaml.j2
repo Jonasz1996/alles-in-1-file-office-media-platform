@@ -1,0 +1,111 @@
+# Beheerd door Ansible: alle diensten van {{ inventory_hostname }}.
+# De datalaag (etcd, PostgreSQL, SeaweedFS) en Traefik draaien in het hostnetwerk
+# zodat ze elkaar op de node-IP's vinden; de eigen API en web-app draaien in een
+# eigen netwerk en worden door Traefik op alle nodes aangesproken.
+{% set ips = groups['nodes'] | map('extract', hostvars, 'ansible_host') | list %}
+{% set me = ansible_host %}
+name: platform
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  etcd:
+    <<: *restart
+    image: {{ etcd_image }}
+    network_mode: host
+    volumes:
+      - {{ data_root }}/etcd:/etcd-data
+    command:
+      - etcd
+      - --name={{ inventory_hostname }}
+      - --data-dir=/etcd-data
+      - --listen-peer-urls=http://{{ me }}:2380
+      - --listen-client-urls=http://{{ me }}:2379,http://127.0.0.1:2379
+      - --initial-advertise-peer-urls=http://{{ me }}:2380
+      - --advertise-client-urls=http://{{ me }}:2379
+      - --initial-cluster={% for h in groups['nodes'] %}{{ h }}=http://{{ hostvars[h].ansible_host }}:2380{{ "," if not loop.last }}{% endfor %}
+
+      - --initial-cluster-state=new
+      - --initial-cluster-token=platform-etcd
+      - --auto-compaction-retention=1
+
+  postgres:
+    <<: *restart
+    build:
+      context: ./postgres
+      args:
+        BASE_IMAGE: {{ postgres_base_image }}
+        PATRONI_VERSION: "{{ patroni_version }}"
+    image: platform-postgres:local
+    network_mode: host
+    shm_size: 256m
+    depends_on: [etcd]
+    volumes:
+      - {{ data_root }}/postgres:/data
+      - ./postgres/patroni.yml:/etc/patroni/patroni.yml:ro
+
+  seaweed-master:
+    <<: *restart
+    image: {{ seaweedfs_image }}
+    network_mode: host
+    volumes:
+      - {{ data_root }}/seaweedfs/master:/data
+    command: >-
+      master -ip={{ me }} -ip.bind={{ me }} -port=9333 -mdir=/data
+      -peers={{ ips | map('regex_replace', '$', ':9333') | join(',') }}
+      -defaultReplication=001 -volumeSizeLimitMB=1024 -metricsPort=9324
+
+  seaweed-volume:
+    <<: *restart
+    image: {{ seaweedfs_image }}
+    network_mode: host
+    depends_on: [seaweed-master]
+    volumes:
+      - {{ data_root }}/seaweedfs/volume:/data
+    command: >-
+      volume -ip={{ me }} -ip.bind={{ me }} -port=8080 -dir=/data -max=0
+      -mserver={{ ips | map('regex_replace', '$', ':9333') | join(',') }}
+      -dataCenter=thuis -rack=rack1 -metricsPort=9325
+
+  seaweed-filer:
+    <<: *restart
+    image: {{ seaweedfs_image }}
+    network_mode: host
+    depends_on: [seaweed-master]
+    volumes:
+      - {{ data_root }}/seaweedfs/filer:/data
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    command: >-
+      filer -ip={{ me }} -ip.bind={{ me }} -port=8888 -defaultStoreDir=/data
+      -master={{ ips | map('regex_replace', '$', ':9333') | join(',') }}
+      -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json -metricsPort=9326
+
+  traefik:
+    <<: *restart
+    image: {{ traefik_image }}
+    container_name: traefik
+    network_mode: host
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      - {{ data_root }}/traefik:/data
+
+  api:
+    <<: *restart
+    build: ./src/api
+    image: platform-api:local
+    ports:
+      - "{{ me }}:8000:8000"
+    environment:
+      PLATFORM_ENVIRONMENT: production
+      PLATFORM_NODE_NAME: {{ inventory_hostname }}
+      PLATFORM_CLUSTER_NODES: "{% for h in groups['nodes'] %}{{ h }}={{ hostvars[h].ansible_host }}{{ "," if not loop.last }}{% endfor %}"
+      PLATFORM_ADMIN_TOKEN: "{{ platform_admin_token }}"
+
+  web:
+    <<: *restart
+    build: ./src/web
+    image: platform-web:local
+    ports:
+      - "{{ me }}:8090:8080"

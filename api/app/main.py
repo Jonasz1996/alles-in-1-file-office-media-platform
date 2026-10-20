@@ -1,9 +1,13 @@
+import hmac
+from collections.abc import AsyncIterator
 from importlib.metadata import PackageNotFoundError, version
 from typing import Annotated
 
-from fastapi import Depends, FastAPI
+import httpx
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from app.cluster import ClusterStatus, cluster_status
 from app.config import Settings, get_settings
 
 try:
@@ -54,3 +58,28 @@ async def info(settings: Annotated[Settings, Depends(get_settings)]) -> Info:
         environment=settings.environment,
         node=settings.node_name,
     )
+
+
+async def http_client() -> AsyncIterator[httpx.AsyncClient]:
+    async with httpx.AsyncClient() as client:
+        yield client
+
+
+def require_admin(
+    settings: Annotated[Settings, Depends(get_settings)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> None:
+    if not settings.admin_token:
+        raise HTTPException(503, "Beheertoken is niet ingesteld")
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    if not hmac.compare_digest(token.encode(), settings.admin_token.encode()):
+        raise HTTPException(401, "Ongeldig beheertoken")
+
+
+@app.get("/api/v1/admin/status", tags=["beheer"], dependencies=[Depends(require_admin)])
+async def admin_status(
+    settings: Annotated[Settings, Depends(get_settings)],
+    client: Annotated[httpx.AsyncClient, Depends(http_client)],
+) -> ClusterStatus:
+    """Systeemstatus van alle nodes: database, opslag, rand en schijfruimte."""
+    return await cluster_status(client, settings.nodes())

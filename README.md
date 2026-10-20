@@ -10,7 +10,7 @@ Het volledige plan staat in [docs/stappenplan.md](docs/stappenplan.md).
 |-----|--------|
 | `api/` | Kern-API in Python 3.12 + FastAPI |
 | `web/` | Web-app in React + TypeScript + Vite |
-| `infra/` | Infrastructuur voor de 3 nodes: Ansible, k3s en Argo CD (fase 1) |
+| `infra/` | Infrastructuur voor de 3 nodes: LXC, Docker Compose en Ansible (fase 1) |
 | `apps/windows`, `apps/android`, `apps/webos` | Apps (fase 9) |
 | `docs/` | Stappenplan en beslissingen per fase |
 

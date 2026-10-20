@@ -1,3 +1,7 @@
+- name: Stoppen als de datadisk niet gekoppeld is
+  ansible.builtin.command: mountpoint -q {{ data_root }}
+  changed_when: false
+
 - name: Pakketten bijwerken
   ansible.builtin.apt:
     update_cache: true
@@ -7,12 +11,10 @@
 - name: Basispakketten installeren
   ansible.builtin.apt:
     name:
-      - chrony
+      - ca-certificates
       - curl
       - jq
-      - nfs-common
-      - open-iscsi
-      - ufw
+      - rsync
       - unattended-upgrades
     state: present
 
@@ -36,51 +38,3 @@
     mode: "0644"
     validate: /usr/sbin/sshd -t -f %s
   notify: Herstart ssh
-
-- name: Kernelinstellingen voor Kubernetes
-  ansible.posix.sysctl:
-    name: "{{ item.key }}"
-    value: "{{ item.value }}"
-    sysctl_file: /etc/sysctl.d/90-k3s.conf
-  loop: "{{ sysctls | dict2items }}"
-  vars:
-    sysctls:
-      net.ipv4.ip_forward: 1
-      fs.inotify.max_user_watches: 1048576
-      fs.inotify.max_user_instances: 8192
-
-- name: Firewall - SSH alleen vanaf het beheernetwerk
-  community.general.ufw:
-    rule: allow
-    port: "22"
-    proto: tcp
-    src: "{{ admin_cidr }}"
-
-- name: Firewall - web (80/443) vanaf overal
-  community.general.ufw:
-    rule: allow
-    port: "{{ item.port }}"
-    proto: "{{ item.proto }}"
-  loop:
-    - { port: "80", proto: tcp }
-    - { port: "443", proto: tcp }
-    - { port: "443", proto: udp }   # HTTP/3
-
-- name: Firewall - clusterverkeer alleen tussen de nodes
-  community.general.ufw:
-    rule: allow
-    src: "{{ cluster_cidr }}"
-
-- name: Firewall - pod- en servicenetwerk van k3s
-  community.general.ufw:
-    rule: allow
-    src: "{{ item }}"
-  loop:
-    - 10.42.0.0/16
-    - 10.43.0.0/16
-
-- name: Firewall aan, standaard alles dicht
-  community.general.ufw:
-    state: enabled
-    policy: deny
-    direction: incoming

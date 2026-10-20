@@ -6,23 +6,26 @@ Pas na een keuze de status aan en schrijf in één zin waarom.
 
 | # | Vraag | Voorstel | Status |
 |---|-------|----------|--------|
-| B1 | Orkestratie: k3s + cluster-forge of Docker Compose per node? | k3s op 3 VM's met Argo CD (app-of-apps) direct, zonder cluster-forge. cluster-forge blijkt de AMD Enterprise AI-stack uit te rollen (GPU/ML, Gitea, OpenBao) en past niet bij dit platform; het gebruikt zelf hetzelfde Argo CD-patroon. | standaard gekozen (fase 1) |
+| B1 | Orkestratie | Docker Compose per node in een unprivileged LXC-container, uitgerold met Ansible. Geen Kubernetes: dat kan in LXC alleen privileged met AppArmor uit, en Jonas kent Compose. Failover komt uit de datalaag zelf (Patroni, SeaweedFS) en keepalived. | besloten (Jonas, 2026-10-20) |
 | B2 | Objectopslag | SeaweedFS met replicatie 001 (≈ 1,0 TB netto); Garage RF3 als alternatief | voorstel |
 | B3 | Office-engine | OnlyOffice Document Server (community, max. 20 verbindingen); Collabora als terugval | voorstel |
-| B4 | Toegang van buiten | Geen WireGuard of VPN: alles publiek via de webinterface over HTTPS. Router stuurt alleen 80/443 door naar de VIP; SSH en de Kubernetes-API blijven alleen intern. Daarom komen TLS, security-headers en rate limiting al in fase 1, en 2FA vanaf de eerste login in fase 2. | besloten (Jonas, 2026-10-20) |
+| B4 | Toegang van buiten | Geen WireGuard of VPN: alles publiek via de webinterface over HTTPS. Router stuurt alleen 80/443 door naar de VIP; SSH en de interne diensten (database, opslag) blijven alleen in het LAN. Daarom komen TLS, security-headers en rate limiting al in fase 1, en 2FA vanaf de eerste login in fase 2. | besloten (Jonas, 2026-10-20) |
 | B5 | GPU voor transcoding | Intel iGPU (QSV/VAAPI) of een Intel Arc-kaart in één node; volgt uit de hardware-inventaris | open |
 | B6 | Offsite-backupdoel | Hetzner Storage Box of Backblaze B2 (append-only, restic) | open |
 | B7 | Aantal ontwikkelaars | Eén; app-sporen lopen dan na elkaar (LG TV, Windows, Android) | voorstel |
 | B8 | Frontend | React 19 + TypeScript + Vite, hergebruikt door webOS en Tauri | besloten (skelet staat in `/web`) |
-| B9 | Rol van cluster-forge | Alleen platformtools; app-deploys via Argo CD | voorstel |
+| B9 | Rol van cluster-forge | Vervalt (geen Kubernetes) | besloten |
 | B10 | Projectnaam en domein | nog te kiezen; werknaam "platform" | open |
-| B11 | Edge-ingress | Traefik (meegeleverd met k3s) in plaats van ingress-nginx: het ingress-nginx-project is in maart 2026 met pensioen gegaan en krijgt geen updates meer. nginx blijft binnen het platform (de web-container) voor X-Accel-Redirect en statische bestanden. | standaard gekozen (fase 1) |
-| B12 | Database-backups | CloudNativePG met barman naar de `backups`-bucket in SeaweedFS (in plaats van pgBackRest, dat CloudNativePG niet ondersteunt) | standaard gekozen, volgt in fase 1 deel 2 |
+| B11 | Edge | Traefik op elke node: TLS met Let's Encrypt, HTTP/2 en HTTP/3, security-headers en rate limiting. Gekozen boven nginx omdat het certificaten zelf aanvraagt. nginx blijft in de web-container. | standaard gekozen |
+| B12 | Database | PostgreSQL 17 met Patroni en etcd (3 nodes), synchronous_mode_strict: RPO 0. Geen HAProxy of PgBouncer: de API verbindt met alle 3 nodes en kiest zelf de primary (target_session_attrs). Backups met pgBackRest volgen in fase 1 deel 2. | standaard gekozen |
+| B13 | Virtualisatie | Alleen LXC-containers op Proxmox, geen VM's; unprivileged, met nesting en keyctl voor Docker. De 700 GB is een mount point op de ZFS-opslag van de host. | besloten (Jonas, 2026-10-20) |
+| B14 | Bestaande tools | Zo weinig mogelijk kant-en-klare tools; wat het platform specifiek nodig heeft bouwen we zelf. Hergebruikt worden alleen onderdelen die we niet kunnen winnen: PostgreSQL + Patroni + etcd, SeaweedFS, Traefik, keepalived, en later OnlyOffice en ffmpeg. Beheer en monitoring zitten in de eigen web-app (`/beheer`); geen Portainer, Grafana of Prometheus. | besloten (Jonas, 2026-10-20) |
 
 ## Vastgelegd in deze fase
 
+- Fase 1 is na B1, B13 en B14 herschreven van k3s naar Docker Compose; de k3s-versie staat nog in de git-geschiedenis.
 - Monorepo-structuur: `/api`, `/web`, `/infra`, `/apps/windows`, `/apps/android`, `/apps/webos`.
 - Backend: Python 3.12 + FastAPI, beheerd met `uv`.
 - CI: GitHub Actions met lint, tests en het bouwen van de API- en web-image.
 - Containers draaien als niet-root; de API heeft `/health` (liveness) en `/ready` (readiness)
-  voor de health-checks van k3s of Compose.
+  voor de health-checks van Traefik en Compose.

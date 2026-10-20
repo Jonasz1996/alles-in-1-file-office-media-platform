@@ -1,5 +1,0 @@
-apiVersion: v2
-name: platform
-description: Eigen platformonderdelen bovenop de gedeelde charts
-type: application
-version: 0.1.0

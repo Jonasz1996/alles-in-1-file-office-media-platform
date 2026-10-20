@@ -44,14 +44,14 @@ jobs:
       - run: npm run build
 
   infra:
-    name: Infra (lint en manifests)
+    name: Infra (lint, templates en images)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ansible ansible-lint yamllint pyyaml
+      - run: pip install ansible ansible-lint yamllint
       - run: yamllint -s .
       - name: Ansible lint
         working-directory: infra/ansible
@@ -59,19 +59,28 @@ jobs:
           cp inventory/hosts.example.yml inventory/hosts.yml
           ansible-playbook --syntax-check site.yml
           ansible-lint site.yml
-      - uses: azure/setup-helm@v4
-      - name: Versies controleren
-        run: infra/scripts/controleer-versies.sh
-      - name: Manifests renderen
-        run: python3 infra/scripts/valideer-k8s.py /tmp/manifests
-      - name: Manifests valideren (kubeconform)
+      - name: Templates renderen
+        working-directory: infra/ansible
+        run: ansible-playbook -i inventory/hosts.example.yml tests/render.yml -e render_dir=/tmp/render
+      - name: Compose-bestanden controleren
+        run: for n in /tmp/render/*/; do docker compose -f "$n/compose.yaml" config -q; done
+      - name: Images bestaan
         run: |
-          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz | tar xz
-          ./kubeconform -summary -ignore-missing-schemas \
-            -kubernetes-version 1.33.0 \
-            -schema-location default \
-            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            /tmp/manifests
+          grep -h 'image:' /tmp/render/*/compose.yaml | awk '{print $2}' | grep -v ':local$' | sort -u \
+            | while read -r img; do echo "$img"; docker manifest inspect "$img" > /dev/null; done
+      - name: PostgreSQL-image bouwen en Patroni-configuratie valideren
+        run: |
+          base=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['postgres_base_image'])")
+          patroni=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['patroni_version'])")
+          docker build -q -t platform-postgres:ci --build-arg BASE_IMAGE="$base" --build-arg PATRONI_VERSION="$patroni" /tmp/render/node1/postgres
+          for n in /tmp/render/*/; do
+            docker run --rm -v "$n/postgres/patroni.yml:/etc/patroni/patroni.yml:ro" \
+              platform-postgres:ci --validate-config /etc/patroni/patroni.yml
+          done
+      - name: keepalived-configuratie controleren
+        run: |
+          sudo apt-get install -y -q keepalived > /dev/null
+          for n in /tmp/render/*/; do sudo keepalived -t -f "$n/keepalived/keepalived.conf"; done
 
   images:
     name: Images bouwen

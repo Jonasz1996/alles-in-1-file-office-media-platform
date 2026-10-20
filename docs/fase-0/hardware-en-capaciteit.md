@@ -19,19 +19,18 @@ Vat de uitkomst hieronder samen (de ruwe `.txt`-bestanden blijven buiten git).
 | Datadisk (700 GB): type (SSD/HDD) | | | |
 | NIC-snelheid | | | |
 | GPU / iGPU, QSV of VAAPI | | | |
-| Rol | PostgreSQL primary | standby | standby |
+| Rol | start als PostgreSQL-primary, VIP-voorkeur | standby | standby |
 
-Minimum per VM als richtlijn: 4 vCPU, 16 GB RAM (OnlyOffice en transcoding vragen het meest).
+Per LXC-container als startpunt: 4 cores, 16 GB RAM, swap 0, rootfs 64 GB, mount point `/tank` van 700 GB (OnlyOffice en transcoding vragen het meest).
 
-## Capaciteitsplan per node (700 GB datadisk, ZFS)
+## Capaciteitsplan per node (700 GB mount point op ZFS)
 
 | Deel | Grootte | Inhoud |
 |------|---------|--------|
 | SeaweedFS volume | ≈ 560 GB | bestanden, versies, thumbnails (2 kopieën cluster-breed) |
 | PostgreSQL | 30 GB | metadata, gebruikers, bibliotheek, embeddings |
-| Typesense | 20 GB | zoekindex (Raft-replica) |
 | Transcode-cache | 60 GB | HLS-segmenten, lokaal, regenereerbaar |
-| Logs en metrics | 20 GB | Loki en Prometheus |
+| Logs | 20 GB | Docker-logs (geroteerd) |
 | Reserve | ≈ 10 GB | ZFS-snapshots en marge |
 
 Netto bruikbaar voor bestanden en media: ≈ 3 × 560 GB / 2 ≈ **0,84 TB** bij replicatie 001.
@@ -44,7 +43,7 @@ Alert bij disk > 80 %.
 |------|--------|
 | Cluster-VLAN (ID, subnet) | |
 | Vaste IP's node 1/2/3 | |
-| VIP (kube-vip of keepalived) | |
+| VIP (keepalived) | |
 | Interne DNS-zone | |
 | Externe domeinnaam | |
 | Toegang van buiten | publiek via HTTPS, router stuurt 80/443 door naar de VIP (zie B4) |
