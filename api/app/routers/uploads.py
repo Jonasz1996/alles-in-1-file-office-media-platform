@@ -7,6 +7,7 @@ zelf gebouwd met de extensies creation, termination en expiration.
    blijft wat binnen is bewaard.
 3. HEAD <location> vertelt hoeveel er binnen is; daar gaat de client verder.
 Zodra alle bytes binnen zijn, wordt het bestand in de map gezet (met ontdubbeling).
+Is dat toen misgegaan, dan gebeurt het alsnog bij de volgende HEAD.
 """
 
 import asyncio
@@ -14,6 +15,7 @@ import base64
 import binascii
 import hashlib
 import logging
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
@@ -22,28 +24,48 @@ from typing import Annotated
 
 import anyio
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import ClientDisconnect
 
 from app.config import Settings, get_settings
 from app.db import Session, get_engine
 from app.models import Node, Upload, User
-from app.routers.files import Store, clean_name, get_dir, is_trashed, place_file, room_left
+from app.routers.files import (
+    NameTaken,
+    Store,
+    clean_name,
+    get_dir,
+    is_trashed,
+    place_file,
+    room_left,
+    sibling,
+)
 from app.security import CurrentUser
-from app.storage import BlobStore, hash_file
+from app.storage import BlobStore, hash_file, with_timeout
 
 router = APIRouter(prefix="/api/v1/tus", tags=["bestanden"])
 log = logging.getLogger("platform.uploads")
 
 TUS_VERSION = "1.0.0"
 CONFLICTS = {"rename", "replace", "fail"}
+BUSY = {"message": "Er loopt al een verzoek voor deze upload", "code": "upload_busy"}
+# Een bestand in uploads/ zonder upload-rij (bijv. weg met zijn map) mag na zo lang weg;
+# een upload die net is aangemaakt wordt zo nooit geraakt.
+STRAY_AFTER = timedelta(hours=1)
 
-# Per upload één PATCH tegelijk, en de SHA-256 tot nu toe, zodat het bestand aan het
-# eind niet opnieuw gelezen hoeft te worden. Na een herstart wordt er gewoon opnieuw
-# gehasht.
+# Per upload één verzoek tegelijk (PATCH, afronden, DELETE, opruimen), en de SHA-256 tot nu
+# toe, zodat het bestand aan het eind niet opnieuw gelezen hoeft te worden. Na een herstart
+# wordt er gewoon opnieuw gehasht. Wie het slot krijgt, leest de upload opnieuw: hij kan
+# intussen af of weg zijn. Een slot verdwijnt pas met de rij.
 _locks: dict[uuid.UUID, asyncio.Lock] = {}
 _hashers: dict[uuid.UUID, tuple["hashlib._Hash", int]] = {}
+# Per gebruiker: quotum controleren en ruimte reserveren in één keer
+_user_locks: dict[uuid.UUID, asyncio.Lock] = {}
+
+
+def _lock(upload_id: uuid.UUID) -> asyncio.Lock:
+    return _locks.setdefault(upload_id, asyncio.Lock())
 
 
 def _forget(upload_id: uuid.UUID) -> None:
@@ -65,11 +87,14 @@ def upload_path(settings: Settings, upload_id: uuid.UUID) -> Path:
     return settings.upload_dir / upload_id.hex
 
 
+def _expires(upload: Upload) -> datetime:
+    return upload.expires_at.replace(tzinfo=upload.expires_at.tzinfo or UTC)
+
+
 def _headers(upload: Upload | None = None, **extra: str) -> dict[str, str]:
     headers = {"Tus-Resumable": TUS_VERSION, "Cache-Control": "no-store", **extra}
     if upload is not None:
-        expires = upload.expires_at.replace(tzinfo=upload.expires_at.tzinfo or UTC)
-        headers["Upload-Expires"] = format_datetime(expires, usegmt=True)
+        headers["Upload-Expires"] = format_datetime(_expires(upload), usegmt=True)
     return headers
 
 
@@ -89,10 +114,19 @@ def parse_metadata(header: str | None) -> dict[str, str]:
 
 
 async def get_upload(session: AsyncSession, user: User, upload_id: uuid.UUID) -> Upload:
-    upload = await session.get(Upload, upload_id)
+    # Altijd vers uit de database: na het wachten op een slot kan hij af of weg zijn
+    upload = await session.get(Upload, upload_id, populate_existing=True)
     if upload is None or upload.owner_id != user.id:
         raise HTTPException(404, "Upload niet gevonden", headers=_headers())
     return upload
+
+
+async def _drop(session: AsyncSession, settings: Settings, upload_id: uuid.UUID) -> None:
+    """Weg met de upload: de rij (als die er nog is), de bytes in uploads/ en wat we onthielden."""
+    await session.execute(delete(Upload).where(Upload.id == upload_id))
+    await session.commit()
+    await anyio.Path(upload_path(settings, upload_id)).unlink(missing_ok=True)
+    _forget(upload_id)
 
 
 def _offset(settings: Settings, upload: Upload) -> int:
@@ -142,20 +176,25 @@ async def create(
         raise HTTPException(400, "Upload-Length mag niet negatief zijn")
     if settings.max_upload_bytes and upload_length > settings.max_upload_bytes:
         raise HTTPException(413, "Bestand is te groot")
-    room = await room_left(session, user)
-    if room is not None and upload_length > room:
-        raise HTTPException(413, "Onvoldoende quotum")
+    if conflict == "fail" and await sibling(session, parent.id, name):
+        raise NameTaken(_headers())  # nu al, niet pas als alle bytes binnen zijn
 
-    upload = Upload(
-        owner_id=user.id,
-        parent_id=parent.id,
-        name=name,
-        conflict=conflict,
-        size=upload_length,
-        expires_at=datetime.now(UTC) + timedelta(hours=settings.upload_expiry_hours),
-    )
-    session.add(upload)
-    await session.commit()
+    # Controleren en reserveren in één keer; anders komen twee gelijktijdige uploads allebei
+    # door en blijkt pas als alle bytes binnen zijn dat er geen ruimte was
+    async with _user_locks.setdefault(user.id, asyncio.Lock()):
+        room = await room_left(session, user)
+        if room is not None and upload_length > room:
+            raise HTTPException(413, "Onvoldoende quotum")
+        upload = Upload(
+            owner_id=user.id,
+            parent_id=parent.id,
+            name=name,
+            conflict=conflict,
+            size=upload_length,
+            expires_at=datetime.now(UTC) + timedelta(hours=settings.upload_expiry_hours),
+        )
+        session.add(upload)
+        await session.commit()
     path = upload_path(settings, upload.id)
     await anyio.Path(path.parent).mkdir(parents=True, exist_ok=True)
     await anyio.Path(path).touch()
@@ -172,13 +211,26 @@ async def head(
     _: Tus,
     user: CurrentUser,
     session: Session,
+    blobs: Store,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Response:
     upload = await get_upload(session, user, upload_id)
-    headers = _headers(
-        upload,
-        **{"Upload-Offset": str(_offset(settings, upload)), "Upload-Length": str(upload.size)},
-    )
+    lock = _lock(upload.id)
+    if lock.locked() and upload.node_id is None and not upload_path(settings, upload.id).exists():
+        # Wie het slot heeft, verplaatst het bestand net (afronden of afbreken): wacht op de
+        # uitkomst, anders lijkt de upload ten onrechte verlopen
+        await session.commit()
+        async with lock:
+            upload = await get_upload(session, user, upload_id)
+    offset = _offset(settings, upload)
+    if upload.node_id is None and offset == upload.size and not lock.locked():
+        # Alle bytes binnen maar nog geen bestand: het afronden mislukte of de server stopte
+        # halverwege. Een gewone tus-client vraagt dan niets meer, dus nu afronden.
+        async with lock:
+            upload = await get_upload(session, user, upload_id)
+            if upload.node_id is None and _offset(settings, upload) == upload.size:
+                await finish(session, settings, blobs, user, upload)
+    headers = _headers(upload, **{"Upload-Offset": str(offset), "Upload-Length": str(upload.size)})
     if upload.node_id is not None:
         headers["Platform-Node-Id"] = str(upload.node_id)
     return Response(status_code=200, headers=headers)
@@ -199,10 +251,11 @@ async def patch(
     if (content_type or "").split(";")[0].strip() != "application/offset+octet-stream":
         raise HTTPException(415, "Content-Type moet application/offset+octet-stream zijn")
     upload = await get_upload(session, user, upload_id)
-    lock = _locks.setdefault(upload.id, asyncio.Lock())
+    lock = _lock(upload.id)
     if lock.locked():
-        raise HTTPException(409, "Er loopt al een verzoek voor deze upload", headers=_headers())
+        raise HTTPException(409, BUSY, headers=_headers())
     async with lock:
+        upload = await get_upload(session, user, upload_id)
         offset = _offset(settings, upload)
         if upload.node_id is not None and upload_offset == offset:
             # Al klaar; de client miste waarschijnlijk het vorige antwoord
@@ -223,10 +276,14 @@ async def patch(
         hasher, hashed = _hashers.get(upload.id, (None, -1))
         if hashed != offset:
             hasher = hashlib.sha256() if offset == 0 else None
+        # De bytes kunnen lang onderweg zijn: geen databaseverbinding vasthouden
+        await session.commit()
         received, too_much, gone = 0, False, False
         try:
-            async with await anyio.open_file(upload_path(settings, upload.id), "ab") as f:
-                async for chunk in request.stream():
+            # r+b en niet ab: een bestand dat er niet meer is, niet stilletjes opnieuw maken
+            async with await anyio.open_file(upload_path(settings, upload.id), "r+b") as f:
+                await f.seek(0, os.SEEK_END)
+                async for chunk in with_timeout(request.stream()):
                     if received + len(chunk) > remaining:
                         too_much = True
                         break
@@ -234,13 +291,22 @@ async def patch(
                     received += len(chunk)
                     if hasher is not None:
                         hasher.update(chunk)
-        except ClientDisconnect:
-            gone = True  # wat binnen is blijft staan; de client gaat later verder
+        except (ClientDisconnect, TimeoutError):
+            # Verbinding weg of stilgevallen: wat binnen is blijft staan, het slot komt vrij
+            # en de client gaat later verder
+            gone = True
         offset += received
         if hasher is not None:
             _hashers[upload.id] = (hasher, offset)
-        upload.expires_at = datetime.now(UTC) + timedelta(hours=settings.upload_expiry_hours)
+        expires = datetime.now(UTC) + timedelta(hours=settings.upload_expiry_hours)
+        result = await session.execute(
+            update(Upload).where(Upload.id == upload.id).values(expires_at=expires)
+        )
         await session.commit()
+        if result.rowcount == 0:
+            # Intussen weg: de map is definitief verwijderd en de upload met hem
+            await _drop(session, settings, upload.id)
+            raise HTTPException(404, "Upload niet gevonden", headers=_headers())
         if too_much:
             raise HTTPException(
                 413,
@@ -263,41 +329,56 @@ async def terminate(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Response:
     upload = await get_upload(session, user, upload_id)
-    lock = _locks.setdefault(upload.id, asyncio.Lock())
-    async with lock:
+    await session.commit()  # niet met een databaseverbinding op het slot wachten
+    # Een lopende PATCH of afronding gaat eerst door (een stilgevallen PATCH stopt vanzelf)
+    async with _lock(upload.id):
         # Een afgeronde upload verwijderen laat het bestand zelf staan
-        await session.delete(upload)
-        await session.commit()
-        await anyio.Path(upload_path(settings, upload_id)).unlink(missing_ok=True)
-    _forget(upload_id)
+        await _drop(session, settings, upload.id)
     return Response(status_code=204, headers=_headers())
 
 
 async def finish(
     session: AsyncSession, settings: Settings, blobs: BlobStore, user: User, upload: Upload
 ) -> Node:
-    """Alle bytes zijn binnen: inhoud naar de blob-opslag en het bestand in de map."""
-    path = upload_path(settings, upload.id)
-    hasher, hashed = _hashers.get(upload.id, (None, -1))
+    """Alle bytes zijn binnen: inhoud naar de blob-opslag en het bestand in de map. Draait
+    onder het slot van de upload (of voor een lege upload die nog niemand kent). Mislukt het,
+    dan blijft de upload zoals hij was en kan het opnieuw, behalve als dat geen zin heeft
+    (quotum op, naam bezet, upload weg)."""
+    upload_id, path = upload.id, upload_path(settings, upload.id)
+    await session.commit()  # geen databaseverbinding vasthouden tijdens het hashen
+    hasher, hashed = _hashers.get(upload_id, (None, -1))
     if hasher is not None and hashed == upload.size:
         sha = hasher.hexdigest()
     else:
         sha = await anyio.to_thread.run_sync(hash_file, path)
-    _forget(upload.id)
 
-    room = await room_left(session, user, exclude_upload=upload.id)
+    room = await room_left(session, user, exclude_upload=upload_id)
+    if room is not None and upload.size > room:
+        await _drop(session, settings, upload_id)
+        raise HTTPException(413, "Onvoldoende quotum", headers=_headers())
+    conflict = upload.conflict
     parent = await session.get(Node, upload.parent_id)
     if parent is None or parent.deleted_at is not None or await is_trashed(session, parent):
-        parent = await session.get(Node, user.root_id)  # map is weg: dan in de hoofdmap
-    if room is not None and upload.size > room:
-        await session.delete(upload)
-        await session.commit()
-        await anyio.Path(path).unlink(missing_ok=True)
-        raise HTTPException(413, "Onvoldoende quotum", headers=_headers())
-    await blobs.adopt(path, sha)
-    return await place_file(
-        session, blobs, user, parent, upload.name, upload.conflict, sha, upload.size, upload
-    )
+        # De map is weg: dan in de hoofdmap, en daar nooit iets vervangen of weigeren
+        # (replace en fail golden voor de map die de client koos)
+        parent = await session.get(Node, user.root_id)
+        conflict = "rename"
+    try:
+        node = await place_file(
+            session, blobs, user, parent, upload.name, conflict, sha, upload.size, path, upload
+        )
+    except NameTaken as e:
+        # Er kwam intussen iets met deze naam: opnieuw proberen heeft geen zin
+        await _drop(session, settings, upload_id)
+        raise NameTaken(_headers()) from e
+    except Exception:
+        if await session.scalar(select(Upload.id).where(Upload.id == upload_id)) is None:
+            # Intussen weg: de map is definitief verwijderd en de upload met hem
+            await _drop(session, settings, upload_id)
+            raise HTTPException(404, "Upload niet gevonden", headers=_headers()) from None
+        raise
+    _hashers.pop(upload_id, None)
+    return node
 
 
 async def remove_expired(settings: Settings) -> int:
@@ -306,23 +387,34 @@ async def remove_expired(settings: Settings) -> int:
     removed = 0
     async with maker() as session:
         now = datetime.now(UTC)
-        for upload in (await session.scalars(select(Upload))).all():
-            expires = upload.expires_at.replace(tzinfo=upload.expires_at.tzinfo or UTC)
-            lock = _locks.get(upload.id)
-            if expires < now and not (lock and lock.locked()):
-                await session.delete(upload)
-                await anyio.Path(upload_path(settings, upload.id)).unlink(missing_ok=True)
-                _forget(upload.id)
-                removed += 1
-        await session.commit()
+        uploads = (await session.scalars(select(Upload))).all()
+        expired = [u.id for u in uploads if _expires(u) < now]
+        await session.commit()  # niet met een databaseverbinding op een slot wachten
+        for upload_id in expired:
+            # Wacht op een lopend verzoek; een PATCH verlengt de upload misschien nog
+            async with _lock(upload_id):
+                upload = await session.get(Upload, upload_id, populate_existing=True)
+                if upload is not None and _expires(upload) < now:
+                    await _drop(session, settings, upload_id)
+                    removed += 1
+                else:
+                    await session.commit()
         known = {u.hex for u in (await session.scalars(select(Upload.id))).all()}
     if settings.upload_dir.exists():
-        cutoff = now - timedelta(hours=settings.upload_expiry_hours)
+        cutoff = now - STRAY_AFTER
         for path in settings.upload_dir.iterdir():
-            mtime = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+            try:
+                mtime = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+            except FileNotFoundError:
+                continue
             if path.name not in known and mtime < cutoff:
                 path.unlink(missing_ok=True)
                 removed += 1
+    # Wat we onthielden van uploads die er niet meer zijn (bijv. weg met hun map)
+    for upload_id in set(_locks) | set(_hashers):
+        lock = _locks.get(upload_id)
+        if upload_id.hex not in known and not (lock and lock.locked()):
+            _forget(upload_id)
     return removed
 
 

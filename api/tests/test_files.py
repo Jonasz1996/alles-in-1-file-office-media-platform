@@ -1,4 +1,15 @@
+import asyncio
+
+import anyio
 import pytest
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from app import storage
+from app.db import get_engine
+from app.models import Blob
+from app.routers.files import collect_garbage
+from app.storage import BlobStore
 
 
 async def root(client, headers):
@@ -183,3 +194,48 @@ async def test_html_draait_geen_scripts(client, admin):
     assert r.headers["content-security-policy"] == "sandbox"
     r = await client.get(f"/api/v1/files/{foto['id']}/content", headers=headers)
     assert "content-security-policy" not in r.headers
+
+
+@pytest.mark.anyio
+async def test_opruimen_laat_inhoud_staan_waar_een_bestand_naar_wijst(client, admin, settings):
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    node = (await put(client, headers, root_id, "a.txt", b"inhoud")).json()
+    sha = node["etag"].strip('"')
+    blobs = BlobStore(settings.blob_dir)
+    # ref_count klopt niet meer (0) terwijl a.txt er nog naar wijst; daarnaast een echte wees
+    orphan = "0" * 64
+    blobs.path(orphan).parent.mkdir(parents=True)
+    blobs.path(orphan).write_bytes(b"wees")
+    maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
+    async with maker() as session:
+        await session.execute(update(Blob).where(Blob.sha256 == sha).values(ref_count=0))
+        session.add(Blob(sha256=orphan, size=4, ref_count=0))
+        await session.commit()
+        await collect_garbage(session, blobs)
+        remaining = (await session.scalars(select(Blob.sha256))).all()
+    assert remaining == [sha]
+    assert blobs.path(sha).exists()
+    assert not blobs.path(orphan).exists()
+    r = await client.get(f"/api/v1/files/{node['id']}/content", headers=headers)
+    assert r.content == b"inhoud"
+
+
+@pytest.mark.anyio
+async def test_stilgevallen_upload_geeft_verbinding_vrij(client, admin, settings, monkeypatch):
+    monkeypatch.setattr(storage, "CHUNK_TIMEOUT", 0.3)
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    in_use = []
+
+    async def body():
+        yield b"x" * 100
+        in_use.append(get_engine(settings).pool.checkedout())  # terwijl de server wacht
+        await asyncio.Event().wait()  # valt stil zonder de verbinding te sluiten
+
+    with anyio.fail_after(5):
+        r = await put(client, headers, root_id, "stil", body())
+    assert r.status_code == 408
+    assert in_use == [0]
+    assert list((settings.blob_dir / ".tmp").iterdir()) == []
+    assert (await root(client, headers))["children"] == []

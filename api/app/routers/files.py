@@ -2,12 +2,14 @@ import mimetypes
 import re
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Literal
 
+import anyio
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
@@ -56,6 +58,15 @@ def store(settings: Annotated[Settings, Depends(get_settings)]) -> BlobStore:
 
 
 Store = Annotated[BlobStore, Depends(store)]
+
+
+class NameTaken(HTTPException):
+    """409 met code name_taken: opnieuw proberen heeft geen zin."""
+
+    def __init__(self, headers: dict[str, str] | None = None) -> None:
+        super().__init__(
+            409, {"message": "Er bestaat al iets met deze naam", "code": "name_taken"}, headers
+        )
 
 
 def clean_name(name: str) -> str:
@@ -186,6 +197,22 @@ async def room_left(
     return max(0, user.quota_bytes - await used_bytes(session, user.id) - int(reserved or 0))
 
 
+async def add_ref(session: AsyncSession, sha: str, size: int) -> None:
+    """ref_count + 1 in de database zelf, of een nieuwe blob-rij. Alleen onder BlobStore.lock."""
+    result = await session.execute(
+        update(Blob).where(Blob.sha256 == sha).values(ref_count=Blob.ref_count + 1)
+    )
+    if result.rowcount == 0:
+        session.add(Blob(sha256=sha, size=size, ref_count=1))
+
+
+async def drop_ref(session: AsyncSession, sha: str) -> None:
+    """ref_count - 1 in de database zelf. Alleen onder BlobStore.lock."""
+    await session.execute(
+        update(Blob).where(Blob.sha256 == sha).values(ref_count=Blob.ref_count - 1)
+    )
+
+
 async def place_file(
     session: AsyncSession,
     blobs: BlobStore,
@@ -195,51 +222,59 @@ async def place_file(
     conflict: str,
     sha: str,
     size: int,
+    source: Path,
     upload: Upload | None = None,
 ) -> Node:
-    """Zet opgeslagen inhoud (blob `sha`) als bestand `name` in map `parent`.
-    conflict: rename = nieuwe naam als het al bestaat, replace = vervangen, fail = 409.
-    Komt het van een hervatbare upload, dan wordt die in dezelfde transactie afgerond
-    (of bij een conflict verwijderd)."""
-    blob = await session.get(Blob, sha)
-    if blob is None:
-        blob = Blob(sha256=sha, size=size, ref_count=0)
-        session.add(blob)
-    blob.ref_count += 1
+    """Zet de inhoud in bestand `source` (SHA-256 `sha`) als bestand `name` in map `parent`.
+    conflict: rename = nieuwe naam als het al bestaat, replace = vervangen, fail = NameTaken.
+    Gelukt: `source` is weg (verplaatst naar de blob-opslag, of weggegooid omdat die inhoud
+    er al was). Mislukt: `source` staat er nog en de database is niet veranderd. Komt het van
+    een hervatbare upload, dan wordt die in dezelfde transactie afgerond."""
     mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
-
-    existing = await sibling(session, parent.id, name)
-    if existing and conflict == "fail":
-        blob.ref_count -= 1
-        if upload is not None:
-            await session.delete(upload)
-        await session.commit()
-        await collect_garbage(session, blobs)
-        raise HTTPException(409, "Er bestaat al iets met deze naam")
-    if existing and conflict == "replace" and existing.kind == "file":
-        old = await session.get(Blob, existing.blob_id) if existing.blob_id else None
-        if old:
-            old.ref_count -= 1
-        existing.blob_id, existing.size, existing.mime = sha, size, mime
-        existing.modified_at = datetime.now(UTC)
-        node = existing
-    else:
-        if existing:
-            name = await free_name(session, parent.id, name)
-        node = Node(
-            parent_id=parent.id,
-            owner_id=user.id,
-            name=name,
-            kind="file",
-            mime=mime,
-            size=size,
-            blob_id=sha,
-        )
-        session.add(node)
-    if upload is not None:
-        await session.flush()
-        upload.node_id = node.id
-    await session.commit()
+    moved = False
+    async with blobs.lock:
+        try:
+            existing = await sibling(session, parent.id, name)
+            if existing and conflict == "fail":
+                raise NameTaken
+            await add_ref(session, sha, size)
+            if existing and conflict == "replace" and existing.kind == "file":
+                if existing.blob_id:
+                    await drop_ref(session, existing.blob_id)
+                existing.blob_id, existing.size, existing.mime = sha, size, mime
+                existing.modified_at = datetime.now(UTC)
+                node = existing
+            else:
+                if existing:
+                    name = await free_name(session, parent.id, name)
+                node = Node(
+                    id=uuid.uuid4(),
+                    parent_id=parent.id,
+                    owner_id=user.id,
+                    name=name,
+                    kind="file",
+                    mime=mime,
+                    size=size,
+                    blob_id=sha,
+                )
+                session.add(node)
+            if upload is not None:
+                upload.node_id = node.id
+            await session.flush()
+            # Pas nu de schijf; wat hierna nog misgaat, draait give_back() terug
+            moved = await blobs.adopt(source, sha)
+            await session.commit()
+        except BaseException:
+            with anyio.CancelScope(shield=True):
+                await session.rollback()
+                # Terug waar het stond, tenzij de commit toch doorkwam (dan is er een rij)
+                if moved and not await session.scalar(
+                    select(Blob.sha256).where(Blob.sha256 == sha)
+                ):
+                    await blobs.give_back(source, sha)
+            raise
+    if not moved:
+        await anyio.Path(source).unlink(missing_ok=True)  # die inhoud stond er al
     await collect_garbage(session, blobs)
     return node
 
@@ -267,15 +302,21 @@ async def upload(
         if content_length is not None and content_length > room:
             raise HTTPException(413, "Onvoldoende quotum")
         limit = min(limit, room) if limit else room
-        if limit == 0 and content_length != 0:  # 0 betekent voor put() onbeperkt
+        if limit == 0 and content_length != 0:  # 0 betekent voor receive() onbeperkt
             raise HTTPException(413, "Onvoldoende quotum")
     if content_length is not None and limit and content_length > limit:
         raise HTTPException(413, "Bestand is te groot")
+    await session.commit()  # geen databaseverbinding vasthouden terwijl de body binnenkomt
     try:
-        sha, size = await blobs.put(request.stream(), limit)
+        tmp, sha, size = await blobs.receive(request.stream(), limit)
     except TooLarge as e:
         raise HTTPException(413, "Bestand is te groot of quotum is op") from e
-    node = await place_file(session, blobs, user, parent, name, conflict, sha, size)
+    except TimeoutError as e:
+        raise HTTPException(408, "Er kwam te lang niets binnen; probeer het opnieuw") from e
+    try:
+        node = await place_file(session, blobs, user, parent, name, conflict, sha, size, tmp)
+    finally:
+        await anyio.Path(tmp).unlink(missing_ok=True)  # alleen nog over als het misging
     return NodeOut.model_validate(node)
 
 
@@ -342,25 +383,38 @@ async def purge(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs: 
     node = await get_node(session, user, node_id)
     if node.deleted_at is None:
         raise HTTPException(422, "Verplaats het eerst naar de prullenbak")
-    for n in reversed(await descendants(session, node)):
-        if n.blob_id:
-            blob = await session.get(Blob, n.blob_id)
-            if blob:
-                blob.ref_count -= 1
-        await session.delete(n)
-        await session.flush()
-    await session.commit()
+    async with blobs.lock:
+        for n in reversed(await descendants(session, node)):
+            if n.blob_id:
+                await drop_ref(session, n.blob_id)
+            await session.delete(n)
+            await session.flush()
+        await session.commit()
     await collect_garbage(session, blobs)
 
 
 async def collect_garbage(session: AsyncSession, blobs: BlobStore) -> None:
-    """Verwijdert blobs waar niemand meer naar verwijst."""
-    orphans = (await session.scalars(select(Blob).where(Blob.ref_count <= 0))).all()
-    for blob in orphans:
-        await blobs.delete(blob.sha256)
-        await session.delete(blob)
-    if orphans:
+    """Verwijdert blobs waar niemand meer naar verwijst. De database beslist: alleen een rij
+    met ref_count 0 waar ook echt geen bestand naar wijst, gaat weg, en pas als dat vastligt
+    ook de inhoud op schijf."""
+    async with blobs.lock:
+        orphans = (await session.scalars(select(Blob.sha256).where(Blob.ref_count <= 0))).all()
+        gone = []
+        for sha in orphans:
+            result = await session.execute(
+                delete(Blob)
+                .where(
+                    Blob.sha256 == sha,
+                    Blob.ref_count <= 0,
+                    ~select(Node.id).where(Node.blob_id == sha).exists(),
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if result.rowcount:
+                gone.append(sha)
         await session.commit()
+        for sha in gone:
+            await blobs.delete(sha)
 
 
 class DownloadLink(BaseModel):

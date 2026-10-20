@@ -1,15 +1,20 @@
+import asyncio
 import base64
 import hashlib
 import os
+import uuid
 from datetime import UTC, datetime, timedelta
 
+import anyio
 import pytest
 from sqlalchemy import update
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app import storage
 from app.db import get_engine
 from app.models import Upload
-from app.routers import uploads
+from app.routers import files, uploads
+from app.storage import BlobStore
 
 TUS = {"Tus-Resumable": "1.0.0"}
 PATCH = {**TUS, "Content-Type": "application/offset+octet-stream"}
@@ -113,9 +118,10 @@ async def test_dedupe_en_naamconflict(client, admin, settings):
     blobs = [p for p in settings.blob_dir.rglob("*") if p.is_file() and ".tmp" not in p.parts]
     assert len(blobs) == 1
 
+    # Naam bezet en conflict=fail: meteen nee, niet pas als alle bytes binnen zijn
     r = await create(client, headers, parent, "a.txt", 3, conflict="fail")
-    r = await send(client, headers, r.headers["location"], 0, b"nee")
     assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "name_taken"
 
 
 @pytest.mark.anyio
@@ -250,10 +256,371 @@ async def test_verlopen_uploads_opruimen(client, admin, settings):
             update(Upload).values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
         )
         await session.commit()
+    # Bestanden zonder upload-rij (bijv. weg met hun map): na een uur weg, nieuwe blijven staan
     stray = settings.upload_dir / "verdwaald"
     stray.write_bytes(b"x")
-    old = (datetime.now(UTC) - timedelta(days=2)).timestamp()
+    old = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
     os.utime(stray, (old, old))
+    fresh = settings.upload_dir / "net-aangemaakt"
+    fresh.write_bytes(b"x")
     assert await uploads.remove_expired(settings) == 2
-    assert list(settings.upload_dir.iterdir()) == []
+    assert list(settings.upload_dir.iterdir()) == [fresh]
     assert (await client.head(location, headers={**headers, **TUS})).status_code == 404
+
+
+def blob_files(settings):
+    return [p for p in settings.blob_dir.rglob("*") if p.is_file() and ".tmp" not in p.parts]
+
+
+def upload_file(settings, location):
+    return uploads.upload_path(settings, uuid.UUID(location.rsplit("/", 1)[1]))
+
+
+async def put(client, headers, parent, name, data):
+    return await client.put(
+        f"/api/v1/files/{parent}/upload", params={"name": name}, content=data, headers=headers
+    )
+
+
+async def new_folder(client, headers, parent, name):
+    r = await client.post(f"/api/v1/files/{parent}/folders", json={"name": name}, headers=headers)
+    return r.json()["id"]
+
+
+async def purge(client, headers, node_id):
+    """Naar de prullenbak en daar definitief weg."""
+    await client.delete(f"/api/v1/files/{node_id}", headers=headers)
+    return await client.delete(f"/api/v1/trash/{node_id}", headers=headers)
+
+
+def hold(monkeypatch, module, name):
+    """Laat de eerstvolgende aanroep van module.name wachten tot `release` gezet is, zodat
+    een test er iets tussen kan doen. Geeft (entered, release)."""
+    entered, release = asyncio.Event(), asyncio.Event()
+    real = getattr(module, name)
+
+    async def held(*args, **kwargs):
+        if not entered.is_set():
+            entered.set()
+            await release.wait()
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(module, name, held)
+    return entered, release
+
+
+@pytest.mark.anyio
+async def test_naam_bezet_aan_het_eind(client, admin, settings):
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    r = await create(client, headers, parent, "b.txt", 3, conflict="fail")
+    location = r.headers["location"]
+    # Terwijl de upload loopt, komt er toch een b.txt
+    assert (await put(client, headers, parent, "b.txt", b"eerst")).status_code == 201
+    r = await send(client, headers, location, 0, b"nee")
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "name_taken"
+    # De upload is weg: opnieuw proberen heeft geen zin
+    assert (await client.head(location, headers={**headers, **TUS})).status_code == 404
+    assert not upload_file(settings, location).exists()
+    assert len(blob_files(settings)) == 1
+
+
+@pytest.mark.anyio
+async def test_map_weg_dan_nooit_vervangen_in_hoofdmap(client, admin):
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    original = (await put(client, headers, parent, "rapport.pdf", b"ROOT-ORIGINAL")).json()["id"]
+    folder = await new_folder(client, headers, parent, "m")
+    r = await create(client, headers, folder, "rapport.pdf", 3, conflict="replace")
+    replace = r.headers["location"]
+    r = await create(client, headers, folder, "rapport.pdf", 4, conflict="fail")
+    fail = r.headers["location"]
+    await client.delete(f"/api/v1/files/{folder}", headers=headers)
+
+    # Vervangen en weigeren golden voor map m; in de hoofdmap komt er een nieuwe naam
+    r = await send(client, headers, replace, 0, b"new")
+    assert r.status_code == 204
+    assert r.headers["platform-node-id"] != original
+    assert (await send(client, headers, fail, 0, b"ook!")).status_code == 204
+    assert await content(client, headers, original) == b"ROOT-ORIGINAL"
+    children = (await client.get("/api/v1/files/root", headers=headers)).json()["children"]
+    names = sorted(c["name"] for c in children)
+    assert names == ["rapport (1).pdf", "rapport (2).pdf", "rapport.pdf"]
+
+
+@pytest.mark.anyio
+async def test_stilgevallen_patch_geeft_slot_en_verbinding_vrij(
+    client, admin, settings, monkeypatch
+):
+    monkeypatch.setattr(storage, "CHUNK_TIMEOUT", 1.0)
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    data = os.urandom(1000)
+    location = (await create(client, headers, parent, "stil.bin", len(data))).headers["location"]
+    stalled = asyncio.Event()
+
+    async def body():
+        yield data[:100]
+        stalled.set()
+        await asyncio.Event().wait()  # valt stil zonder de verbinding te sluiten
+
+    with anyio.fail_after(5):
+        stalling = asyncio.create_task(
+            client.patch(
+                location, content=body(), headers={**headers, **PATCH, "Upload-Offset": "0"}
+            )
+        )
+        await stalled.wait()
+        # Terwijl hij wacht: geen databaseverbinding bezet, en een tweede PATCH hoort dat er
+        # al een verzoek loopt
+        assert get_engine(settings).pool.checkedout() == 0
+        r = await send(client, headers, location, 100, data[100:])
+        assert r.status_code == 409
+        assert r.json()["detail"]["code"] == "upload_busy"
+        assert (await client.head(location, headers={**headers, **TUS})).status_code == 200
+
+        # Na de time-out telt het als een verbroken verbinding: wat binnen is blijft staan
+        r = await stalling
+        assert r.status_code == 204
+        assert r.headers["upload-offset"] == "100"
+        r = await client.head(location, headers={**headers, **TUS})
+        assert r.headers["upload-offset"] == "100"
+        r = await send(client, headers, location, 100, data[100:])
+    assert r.status_code == 204
+    assert await content(client, headers, r.headers["platform-node-id"]) == data
+
+
+@pytest.mark.anyio
+async def test_head_rondt_volledige_upload_af(client, admin, settings):
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    location = (await create(client, headers, parent, "klaar.txt", 5)).headers["location"]
+    # Alle bytes staan er, maar de server stopte voordat het bestand gemaakt was
+    upload_file(settings, location).write_bytes(b"klaar")
+    r = await client.head(location, headers={**headers, **TUS})
+    assert r.status_code == 200
+    assert r.headers["upload-offset"] == "5"
+    node_id = r.headers["platform-node-id"]
+    assert await content(client, headers, node_id) == b"klaar"
+    # Nog eens vragen geeft hetzelfde bestand, geen kopie
+    r = await client.head(location, headers={**headers, **TUS})
+    assert r.headers["platform-node-id"] == node_id
+    children = (await client.get("/api/v1/files/root", headers=headers)).json()["children"]
+    assert [c["name"] for c in children] == ["klaar.txt"]
+
+
+@pytest.mark.parametrize("dedupe", [False, True])
+@pytest.mark.anyio
+async def test_fout_na_adopt_laat_niets_achter(client, admin, settings, monkeypatch, dedupe):
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    if dedupe:  # dezelfde inhoud staat er al
+        await put(client, headers, parent, "al", b"qwerty")
+    location = (await create(client, headers, parent, "z.bin", 6)).headers["location"]
+
+    # De commit na het verplaatsen naar de blob-opslag mislukt (bijv. database bezet)
+    real_adopt, real_commit = BlobStore.adopt, AsyncSession.commit
+    armed = False
+
+    async def adopt(self, path, sha):
+        nonlocal armed
+        armed = True
+        return await real_adopt(self, path, sha)
+
+    async def commit(self):
+        nonlocal armed
+        if armed:
+            armed = False
+            raise RuntimeError("database is locked")
+        return await real_commit(self)
+
+    monkeypatch.setattr(BlobStore, "adopt", adopt)
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+    with pytest.raises(RuntimeError):
+        await send(client, headers, location, 0, b"qwerty")
+    monkeypatch.undo()
+
+    # Geen blob zonder rij, en de upload staat er nog helemaal
+    assert len(blob_files(settings)) == (1 if dedupe else 0)
+    assert upload_file(settings, location).read_bytes() == b"qwerty"
+    r = await client.head(location, headers={**headers, **TUS})
+    assert r.status_code == 200
+    assert await content(client, headers, r.headers["platform-node-id"]) == b"qwerty"
+    assert len(blob_files(settings)) == 1
+
+
+@pytest.mark.anyio
+async def test_afbreken_wacht_op_afronden(client, admin, settings, monkeypatch):
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    location = (await create(client, headers, parent, "z.bin", 6)).headers["location"]
+    entered, release = hold(monkeypatch, uploads, "room_left")  # midden in finish()
+
+    with anyio.fail_after(5):
+        finishing = asyncio.create_task(send(client, headers, location, 0, b"qwerty"))
+        await entered.wait()
+        cancel = asyncio.create_task(client.delete(location, headers={**headers, **TUS}))
+        await asyncio.sleep(0.05)
+        assert not cancel.done()  # wacht tot het afronden klaar is
+        release.set()
+        r, d = await finishing, await cancel
+    assert r.status_code == 204 and d.status_code == 204
+    # Afgerond is afgerond: het bestand blijft, met inhoud
+    assert await content(client, headers, r.headers["platform-node-id"]) == b"qwerty"
+    assert len(blob_files(settings)) == 1
+
+
+@pytest.mark.anyio
+async def test_head_tijdens_afronden_wacht_op_uitkomst(client, admin, monkeypatch):
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    location = (await create(client, headers, parent, "z.bin", 6)).headers["location"]
+    real = BlobStore.adopt
+    moved, release = asyncio.Event(), asyncio.Event()
+
+    async def adopt(self, path, sha):
+        result = await real(self, path, sha)
+        moved.set()  # verplaatst naar de blob-opslag, nog niet vastgelegd
+        await release.wait()
+        return result
+
+    monkeypatch.setattr(BlobStore, "adopt", adopt)
+    with anyio.fail_after(5):
+        finishing = asyncio.create_task(send(client, headers, location, 0, b"qwerty"))
+        await moved.wait()
+        status = asyncio.create_task(client.head(location, headers={**headers, **TUS}))
+        await asyncio.sleep(0.05)
+        release.set()
+        r, h = await finishing, await status
+    # Niet ten onrechte 404 (de client zou dan zeggen dat de upload verlopen is)
+    assert h.status_code == 200
+    assert h.headers["platform-node-id"] == r.headers["platform-node-id"]
+
+
+@pytest.mark.anyio
+async def test_opruimen_wacht_op_slot(client, admin, settings):
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    location = (await create(client, headers, parent, "x.bin", 4)).headers["location"]
+    maker = async_sessionmaker(get_engine(settings))
+    async with maker() as session:
+        await session.execute(
+            update(Upload).values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+        )
+        await session.commit()
+    lock = uploads._locks.setdefault(uuid.UUID(location.rsplit("/", 1)[1]), asyncio.Lock())
+    with anyio.fail_after(5):
+        async with lock:  # er loopt een verzoek voor deze upload
+            cleanup = asyncio.create_task(uploads.remove_expired(settings))
+            await asyncio.sleep(0.05)
+            assert not cleanup.done()
+        assert await cleanup == 1
+    assert (await client.head(location, headers={**headers, **TUS})).status_code == 404
+
+
+@pytest.mark.anyio
+async def test_quotum_gelijktijdig_aanmaken(client, admin, monkeypatch):
+    headers, _ = admin
+    await client.post(
+        "/api/v1/users",
+        json={
+            "email": "q@example.nl",
+            "display_name": "Q",
+            "password": "lang-genoeg-456",
+            "quota_bytes": 100,
+        },
+        headers=headers,
+    )
+    r = await client.post(
+        "/api/v1/auth/login", json={"email": "q@example.nl", "password": "lang-genoeg-456"}
+    )
+    q = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    parent = await root_id(client, q)
+    real = uploads.room_left
+
+    async def slow(*args, **kwargs):
+        await asyncio.sleep(0.01)  # zodat beide verzoeken tegelijk controleren
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(uploads, "room_left", slow)
+    r1, r2 = await asyncio.gather(
+        create(client, q, parent, "a", 60), create(client, q, parent, "b", 60)
+    )
+    assert sorted([r1.status_code, r2.status_code]) == [201, 413]
+
+
+@pytest.mark.anyio
+async def test_map_definitief_weg_tijdens_patch(client, admin, settings):
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    folder = await new_folder(client, headers, parent, "m")
+    location = (await create(client, headers, folder, "x.bin", 4)).headers["location"]
+    sent, go = asyncio.Event(), asyncio.Event()
+
+    async def body():
+        yield b"ab"
+        sent.set()
+        await go.wait()
+
+    with anyio.fail_after(5):
+        patching = asyncio.create_task(
+            client.patch(
+                location, content=body(), headers={**headers, **PATCH, "Upload-Offset": "0"}
+            )
+        )
+        await sent.wait()
+        assert (await purge(client, headers, folder)).status_code == 204
+        go.set()
+        r = await patching
+    assert r.status_code == 404
+    assert not upload_file(settings, location).exists()
+    assert (await client.head(location, headers={**headers, **TUS})).status_code == 404
+
+
+@pytest.mark.anyio
+async def test_map_definitief_weg_tijdens_afronden(client, admin, settings, monkeypatch):
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    folder = await new_folder(client, headers, parent, "m")
+    location = (await create(client, headers, folder, "x.bin", 4)).headers["location"]
+    entered, release = hold(monkeypatch, uploads, "room_left")  # midden in finish()
+
+    with anyio.fail_after(5):
+        finishing = asyncio.create_task(send(client, headers, location, 0, b"abcd"))
+        await entered.wait()
+        assert (await purge(client, headers, folder)).status_code == 204
+        release.set()
+        r = await finishing
+    assert r.status_code == 404
+    assert not upload_file(settings, location).exists()
+    assert (await client.get("/api/v1/files/root", headers=headers)).json()["children"] == []
+    assert blob_files(settings) == []
+
+
+@pytest.mark.parametrize("via", ["tus", "put"])
+@pytest.mark.anyio
+async def test_ontdubbelen_tegelijk_met_opruimen(client, admin, settings, monkeypatch, via):
+    """Dezelfde inhoud komt binnen terwijl de enige andere kopie definitief wordt verwijderd."""
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    old = (await put(client, headers, parent, "old.txt", b"SAME")).json()["id"]
+    await client.delete(f"/api/v1/files/{old}", headers=headers)
+    if via == "tus":
+        location = (await create(client, headers, parent, "new.txt", 4)).headers["location"]
+        upload = send(client, headers, location, 0, b"SAME")
+    else:
+        upload = put(client, headers, parent, "new.txt", b"SAME")
+    entered, release = hold(monkeypatch, files, "sibling")  # na het ontdubbelen, voor de commit
+
+    with anyio.fail_after(5):
+        uploading = asyncio.create_task(upload)
+        await entered.wait()
+        purging = asyncio.create_task(client.delete(f"/api/v1/trash/{old}", headers=headers))
+        await asyncio.sleep(0.05)
+        release.set()
+        r, p = await uploading, await purging
+    assert r.status_code in (201, 204) and p.status_code == 204
+    node_id = r.json()["id"] if via == "put" else r.headers["platform-node-id"]
+    assert await content(client, headers, node_id) == b"SAME"
+    assert len(blob_files(settings)) == 1
