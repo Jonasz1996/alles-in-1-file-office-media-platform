@@ -10,7 +10,7 @@ Het volledige plan staat in [docs/stappenplan.md](docs/stappenplan.md).
 |-----|--------|
 | `api/` | Kern-API in Python 3.12 + FastAPI |
 | `web/` | Web-app in React + TypeScript + Vite |
-| `infra/` | Infrastructuur voor de 3 nodes (fase 1) |
+| `infra/` | Infrastructuur voor de 3 nodes: Ansible, k3s en Argo CD (fase 1) |
 | `apps/windows`, `apps/android`, `apps/webos` | Apps (fase 9) |
 | `docs/` | Stappenplan en beslissingen per fase |
 
@@ -35,8 +35,8 @@ Tests: `cd api && uv run pytest` en `cd web && npm test`.
 
 | Fase | Onderwerp | Status |
 |------|-----------|--------|
-| 0 | Kaders: beslissingen, monorepo, CI-skelet | bezig, zie [docs/fase-0](docs/fase-0/beslissingen.md) |
-| 1 | Infrastructuur (3 nodes, failover) | |
+| 0 | Kaders: beslissingen, monorepo, CI-skelet | klaar op de inventaris na, zie [docs/fase-0](docs/fase-0/beslissingen.md) |
+| 1 | Infrastructuur (3 nodes, failover) | deel 1 klaar om uit te rollen, zie [infra/README.md](infra/README.md) |
 | 2 | Core backend | |
 | 3 | Web-app | |
 | 4 | Office | |

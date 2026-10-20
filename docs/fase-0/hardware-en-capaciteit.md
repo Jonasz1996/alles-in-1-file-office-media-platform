@@ -47,7 +47,7 @@ Alert bij disk > 80 %.
 | VIP (kube-vip of keepalived) | |
 | Interne DNS-zone | |
 | Externe domeinnaam | |
-| Toegang van buiten | WireGuard (zie B4) |
+| Toegang van buiten | publiek via HTTPS, router stuurt 80/443 door naar de VIP (zie B4) |
 | Snelheid tussen nodes | 1 GbE werkt; 2,5 of 10 GbE aanbevolen |
 
 ## Niet-functionele eisen

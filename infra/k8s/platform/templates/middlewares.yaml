@@ -1,0 +1,36 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: security-headers
+  namespace: platform
+spec:
+  headers:
+    stsSeconds: 31536000
+    stsIncludeSubdomains: true
+    forceSTSHeader: true
+    contentTypeNosniff: true
+    frameDeny: true
+    referrerPolicy: strict-origin-when-cross-origin
+    browserXssFilter: true
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit
+  namespace: platform
+spec:
+  rateLimit:
+    average: {{ .Values.security.rateLimit.average }}
+    burst: {{ .Values.security.rateLimit.burst }}
+{{- with .Values.security.adminAllowCidrs }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: admin-allowlist
+  namespace: platform
+spec:
+  ipAllowList:
+    sourceRange:
+      {{- toYaml . | nindent 6 }}
+{{- end }}

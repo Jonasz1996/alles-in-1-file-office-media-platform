@@ -1,0 +1,31 @@
+# Installatiespecifieke waarden. Pas deze aan voordat je het cluster uitrolt.
+
+# Domein waaronder alles via de webinterface bereikbaar is (geen VPN).
+# Elke host hieronder heeft een DNS A-record nodig naar je publieke IP;
+# de router stuurt poort 80 en 443 door naar de cluster-VIP.
+domain: example.nl
+hosts:
+  app: app          # web-app (fase 3), bijv. app.example.nl
+  argocd: argocd    # deploys bekijken en beheren
+  grafana: grafana  # monitoring en logs
+
+# Let's Encrypt
+acme:
+  email: beheer@example.nl
+  # Begin met staging tot alles werkt; zet daarna op letsencrypt-prod.
+  issuer: letsencrypt-staging
+
+security:
+  # Optioneel: beheer-UI's (Argo CD, Grafana) alleen vanaf deze adressen.
+  # Leeg = bereikbaar vanaf overal, met hun eigen login.
+  adminAllowCidrs: []
+  rateLimit:
+    average: 50   # requests per seconde per IP
+    burst: 100
+
+postgres:
+  instances: 3
+  image: ghcr.io/cloudnative-pg/postgresql:17.5
+  storageSize: 30Gi
+  database: platform
+  owner: platform

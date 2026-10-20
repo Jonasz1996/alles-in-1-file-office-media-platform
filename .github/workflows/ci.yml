@@ -43,6 +43,36 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  infra:
+    name: Infra (lint en manifests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ansible ansible-lint yamllint pyyaml
+      - run: yamllint -s .
+      - name: Ansible lint
+        working-directory: infra/ansible
+        run: |
+          cp inventory/hosts.example.yml inventory/hosts.yml
+          ansible-playbook --syntax-check site.yml
+          ansible-lint site.yml
+      - uses: azure/setup-helm@v4
+      - name: Versies controleren
+        run: infra/scripts/controleer-versies.sh
+      - name: Manifests renderen
+        run: python3 infra/scripts/valideer-k8s.py /tmp/manifests
+      - name: Manifests valideren (kubeconform)
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz | tar xz
+          ./kubeconform -summary -ignore-missing-schemas \
+            -kubernetes-version 1.33.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /tmp/manifests
+
   images:
     name: Images bouwen
     runs-on: ubuntu-latest

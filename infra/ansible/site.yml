@@ -1,0 +1,20 @@
+- name: Basis en hardening
+  hosts: k3s_servers
+  roles:
+    - base
+
+- name: ZFS-datadisk en snapshots
+  hosts: k3s_servers
+  roles:
+    - zfs
+
+- name: Kubernetes-cluster (k3s) met VIP
+  hosts: k3s_servers
+  serial: 1
+  roles:
+    - k3s
+
+- name: Argo CD en geheimen
+  hosts: node1
+  roles:
+    - bootstrap

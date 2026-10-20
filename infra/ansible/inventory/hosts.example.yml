@@ -1,0 +1,15 @@
+# Kopieer naar inventory/hosts.yml en vul de echte adressen in.
+# node1 is de eerste k3s-server (cluster-init) en start als PostgreSQL-primary.
+all:
+  vars:
+    ansible_user: beheer
+    ansible_become: true
+  children:
+    k3s_servers:
+      hosts:
+        node1:
+          ansible_host: 192.168.50.11
+        node2:
+          ansible_host: 192.168.50.12
+        node3:
+          ansible_host: 192.168.50.13

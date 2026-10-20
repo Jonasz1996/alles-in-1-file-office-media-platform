@@ -1,0 +1,90 @@
+# Draait alleen op node1: zet de geheimen klaar die niet in git horen en installeert
+# Argo CD. Daarna beheert Argo CD alles onder infra/k8s vanuit git.
+- name: Namespaces
+  ansible.builtin.shell: |
+    set -o pipefail
+    k3s kubectl create namespace {{ item }} --dry-run=client -o yaml | k3s kubectl apply -f -
+  args:
+    executable: /bin/bash
+  loop: [argocd, monitoring, storage, database]
+  register: bootstrap_ns
+  changed_when: "'created' in bootstrap_ns.stdout"
+
+- name: Willekeurige geheimen aanmaken als ze nog niet bestaan
+  ansible.builtin.shell: |
+    set -o pipefail
+    if k3s kubectl -n {{ item.ns }} get secret {{ item.name }} >/dev/null 2>&1; then
+      echo bestaat
+    else
+      {{ item.create }}
+      echo aangemaakt
+    fi
+  args:
+    executable: /bin/bash
+  loop:
+    - ns: monitoring
+      name: grafana-admin
+      create: >-
+        k3s kubectl -n monitoring create secret generic grafana-admin
+        --from-literal=admin-user=admin
+        --from-literal=admin-password="$(openssl rand -base64 24)"
+    - ns: storage
+      name: seaweedfs-s3-config
+      create: >-
+        key="$(openssl rand -hex 16)"; secret="$(openssl rand -hex 32)";
+        jq -n --arg k "$key" --arg s "$secret"
+        '{identities: [{name: "platform", credentials: [{accessKey: $k, secretKey: $s}],
+        actions: ["Admin", "Read", "Write", "List", "Tagging"]}]}'
+        > /root/seaweedfs_s3_config.json &&
+        k3s kubectl -n storage create secret generic seaweedfs-s3-config
+        --from-file=seaweedfs_s3_config=/root/seaweedfs_s3_config.json &&
+        k3s kubectl -n storage create secret generic seaweedfs-s3-keys
+        --from-literal=AWS_ACCESS_KEY_ID="$key" --from-literal=AWS_SECRET_ACCESS_KEY="$secret" &&
+        rm -f /root/seaweedfs_s3_config.json
+  loop_control:
+    label: "{{ item.ns }}/{{ item.name }}"
+  register: bootstrap_secret
+  changed_when: "'aangemaakt' in bootstrap_secret.stdout"
+  no_log: true
+
+- name: Argo CD via de helm-controller van k3s
+  ansible.builtin.template:
+    src: argocd.yaml.j2
+    dest: /var/lib/rancher/k3s/server/manifests/argocd.yaml
+    mode: "0600"
+
+- name: Wachten op de Argo CD-CRD's
+  ansible.builtin.command: k3s kubectl get crd applications.argoproj.io
+  register: bootstrap_crd
+  until: bootstrap_crd.rc == 0
+  retries: 60
+  delay: 10
+  changed_when: false
+
+- name: Root-applicatie (app-of-apps) aanmaken
+  ansible.builtin.shell: |
+    set -o pipefail
+    cat <<'YAML' | k3s kubectl apply -f -
+    apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    metadata:
+      name: root
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: {{ gitops_repo_url }}
+        targetRevision: {{ gitops_revision }}
+        path: infra/k8s/apps
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: argocd
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+    YAML
+  args:
+    executable: /bin/bash
+  register: bootstrap_root_app
+  changed_when: "'unchanged' not in bootstrap_root_app.stdout"

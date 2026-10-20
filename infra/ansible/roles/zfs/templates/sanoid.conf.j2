@@ -1,0 +1,14 @@
+# Beheerd door Ansible. Snapshots zijn de "om de paar uur"-laag uit het stappenplan:
+# bescherming tegen verwijderen en ransomware, geen vervanging van replicatie of offsite-backup.
+[{{ zfs_pool }}/k3s]
+    use_template = platform
+    recursive = yes
+
+[template_platform]
+    frequently = 0
+    hourly = {{ sanoid_hourly }}
+    daily = {{ sanoid_daily }}
+    weekly = {{ sanoid_weekly }}
+    monthly = 0
+    autosnap = yes
+    autoprune = yes

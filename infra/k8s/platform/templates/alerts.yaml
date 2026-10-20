@@ -1,0 +1,39 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: platform
+      rules:
+        - alert: NodeDown
+          expr: up{job="node-exporter"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Node {{`{{ $labels.instance }}`}} is onbereikbaar"
+        - alert: DiskBijna80Procent
+          expr: |
+            (1 - node_filesystem_avail_bytes{fstype=~"zfs|ext4|xfs"}
+               / node_filesystem_size_bytes{fstype=~"zfs|ext4|xfs"}) > 0.80
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Disk {{`{{ $labels.mountpoint }}`}} op {{`{{ $labels.instance }}`}} is meer dan 80 % vol"
+        - alert: PostgresReplicatieLag
+          expr: max by (pod) (cnpg_pg_replication_lag) > 10
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Standby {{`{{ $labels.pod }}`}} loopt meer dan 10 s achter"
+        - alert: PostgresGeenSynchroneStandby
+          expr: max(cnpg_pg_replication_streaming_replicas) < 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Geen streaming standby: commits wachten of RPO 0 is niet gegarandeerd"
