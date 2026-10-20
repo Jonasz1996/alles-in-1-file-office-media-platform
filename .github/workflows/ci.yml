@@ -80,8 +80,10 @@ jobs:
             --listen-client-urls=http://127.0.0.1:2379 --advertise-client-urls=http://127.0.0.1:2379
           sleep 3
           for n in /tmp/render/*/; do
-            sed -i 's/^  hosts: .*/  hosts: 127.0.0.1:2379/' "$n/postgres/patroni.yml"
-            docker run --rm --network host -v "$n/postgres/patroni.yml:/etc/patroni/patroni.yml:ro" \
+            cfg="$RUNNER_TEMP/patroni-$(basename "$n").yml"
+            sed 's/^  hosts: .*/  hosts: 127.0.0.1:2379/' "$n/postgres/patroni.yml" > "$cfg"
+            chmod 644 "$cfg"
+            docker run --rm --network host -v "$cfg:/etc/patroni/patroni.yml:ro" \
               --entrypoint /opt/patroni/bin/patroni platform-postgres:ci \
               --validate-config --ignore-listen-port /etc/patroni/patroni.yml
           done
