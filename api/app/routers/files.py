@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app import events
+from app import events, previews
 from app.config import Settings, get_settings
 from app.db import Session
 from app.mime import read_head, sniff
@@ -342,14 +342,16 @@ async def room_left(
 
 
 async def add_ref(session: AsyncSession, sha: str, size: int, mime: str | None = None) -> None:
-    """ref_count + 1 in de database zelf, of een nieuwe blob-rij. Alleen onder BlobStore.lock."""
+    """ref_count + 1 in de database zelf, of een nieuwe blob-rij (en dan een taak voor de
+    preview, die begint zodra de aanroeper commit). Alleen onder BlobStore.lock."""
     result = await session.execute(
         update(Blob)
         .where(Blob.sha256 == sha)
         .values(ref_count=Blob.ref_count + 1, mime=func.coalesce(Blob.mime, mime))
     )
     if result.rowcount == 0:
-        session.add(Blob(sha256=sha, size=size, ref_count=1, mime=mime))
+        session.add(Blob(sha256=sha, size=size, ref_count=1, mime=mime, preview="pending"))
+        await previews.queue(session, sha)
 
 
 async def drop_ref(session: AsyncSession, sha: str) -> None:
@@ -746,6 +748,7 @@ async def collect_garbage(session: AsyncSession, blobs: BlobStore) -> None:
         await session.commit()
         for sha in gone:
             await blobs.delete(sha)
+            await previews.discard(blobs, sha)
 
 
 class UserRef(BaseModel):

@@ -18,6 +18,10 @@ dependencies = [
     "pydantic[email]>=2.14.1",
     "cryptography>=46",
     "segno>=1.6",
+    "pillow>=13.0.0",
+    "pillow-heif>=1.8.1",
+    "pypdfium2>=5.14.0",
+    "mutagen>=1.48.1",
 ]
 
 [dependency-groups]

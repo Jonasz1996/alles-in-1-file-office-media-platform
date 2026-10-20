@@ -26,6 +26,7 @@ import h11
 import uvicorn
 from uvicorn.protocols.http.h11_impl import H11Protocol
 
+from app import events
 from app.config import Settings, get_settings
 from app.main import app
 
@@ -259,7 +260,10 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
     # Https mag uitvallen zonder dat http stopt; alleen http of een signaal stopt alles
     await asyncio.wait({http_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
 
-    # Netjes stoppen: eerst https (zonder lifespan), dan http (die sluit de lifespan af)
+    # Netjes stoppen: eerst https (zonder lifespan), dan http (die sluit de lifespan af).
+    # Open gebeurtenisstromen eerst afronden: uvicorn wacht op lopende antwoorden voordat
+    # het de lifespan afsluit, en een stroom eindigt anders nooit.
+    events.hub.close()
     stop_task.cancel()
     if https is not None:
         https.should_exit = True

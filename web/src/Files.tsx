@@ -1,9 +1,12 @@
 import { type DragEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, type FileNode, formatBytes, formatDate, type Listing } from "./api";
+import { useFolderEvents } from "./events";
 import { NodeActions } from "./NodeActions";
+import { PreviewPanel } from "./PreviewPanel";
 import { navigate } from "./router";
 import { SearchBox } from "./Search";
 import { TagChips } from "./Tags";
+import { Thumb, usePreviews } from "./Thumb";
 import { uploadQueue, useUploads } from "./uploadQueue";
 
 export function Files({ folderId }: { folderId: string | null }) {
@@ -13,6 +16,8 @@ export function Files({ folderId }: { folderId: string | null }) {
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const loads = useRef(0);
+  const [shown, setShown] = useState<FileNode | null>(null);
+  const previews = usePreviews(listing?.children);
 
   const load = useCallback(async () => {
     const seq = ++loads.current;
@@ -46,6 +51,7 @@ export function Files({ folderId }: { folderId: string | null }) {
       }),
     [],
   );
+  useFolderEvents(current, () => latest.current.load()); // live: wijzigingen van elders
 
   async function act(fn: () => Promise<unknown>) {
     try {
@@ -67,9 +73,9 @@ export function Files({ folderId }: { folderId: string | null }) {
     if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
   }
 
-  async function open(node: FileNode) {
+  function open(node: FileNode) {
     if (node.kind === "dir") navigate(`/map/${node.id}`);
-    else window.open(await api.downloadUrl(node.id, true), "_blank", "noopener");
+    else setShown(node);
   }
 
   async function download(node: FileNode) {
@@ -186,7 +192,7 @@ export function Files({ folderId }: { folderId: string | null }) {
                 <tr key={n.id}>
                   <td>
                     <button type="button" className="link" onClick={() => open(n)}>
-                      {n.kind === "dir" ? "📁 " : "📄 "}
+                      <Thumb node={n} preview={previews[n.id]} />
                       {n.name}
                     </button>
                     <TagChips tags={n.tags} />
@@ -223,6 +229,15 @@ export function Files({ folderId }: { folderId: string | null }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {shown && (
+        <PreviewPanel
+          node={shown}
+          preview={previews[shown.id]}
+          onClose={() => setShown(null)}
+          onDownload={() => download(shown).catch((e: Error) => setError(e.message))}
+        />
       )}
     </main>
   );

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Account, RecoveryCodes } from "./Account";
 import { api, type User } from "./api";
 import { Beheer } from "./Beheer";
+import { liveEvents } from "./events";
 import { Files } from "./Files";
 import { Login } from "./Login";
 import { navigate, usePath } from "./router";
@@ -29,6 +30,7 @@ export function App() {
   useEffect(() => {
     api.onLoggedOut = () => {
       uploadQueue.stopAll();
+      liveEvents.stop();
       setCodes(null);
       setUser(null);
     };
@@ -39,11 +41,20 @@ export function App() {
       .finally(() => setChecking(false));
   }, [reloadUser]);
 
+  // Live gebeurtenissen zolang er iemand ingelogd is (en niet eerst 2FA moet aanzetten)
+  const live = user !== null && !user.totp_setup_required;
+  useEffect(() => {
+    if (!live) return;
+    liveEvents.start();
+    return () => liveEvents.stop();
+  }, [live]);
+
   if (checking) return <main className="center">Laden…</main>;
   if (!user) return <Login onLoggedIn={setUser} />;
 
   async function logout() {
     uploadQueue.stopAll(); // de uploads blijven op de server staan en gaan later verder
+    liveEvents.stop();
     await api.logout();
     setCodes(null);
     setUser(null);

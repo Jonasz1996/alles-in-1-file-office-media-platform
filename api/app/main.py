@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -11,10 +12,13 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel
 
+from app import events, jobs, previews
 from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.migrate import upgrade
 from app.routers import admin, auth, files, search, uploads
+from app.routers import events as live_events
+from app.routers import previews as preview_routes
 
 try:
     __version__ = version("platform-api")
@@ -22,6 +26,22 @@ except PackageNotFoundError:
     __version__ = "0.3.0"
 
 log = logging.getLogger("platform")
+
+# Downloadlinks en previewadressen dragen hun toegang in het adres (een <img> of <video> kan
+# geen header sturen); die waarde hoort niet in de toegangslog
+SECRET_PARAMS = re.compile(r"([?&](?:token|sig)=)[^&\s\"]*")
+
+
+class HideSecrets(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                SECRET_PARAMS.sub(r"\1***", a) if isinstance(a, str) else a for a in record.args
+            )
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(HideSecrets())
 
 SECURITY_HEADERS = [
     (b"x-content-type-options", b"nosniff"),
@@ -123,12 +143,26 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     await upgrade(settings)
+    if events.hub.closed:  # een eerdere keer gestopt in hetzelfde proces (tests)
+        events.hub = events.Hub()
     certs = CertManager(settings)
     await certs.start()
     app.state.certs = certs
     cleaner = asyncio.create_task(uploads.cleanup_loop(settings), name="uploads opruimen")
+    # Eerst wat bij een crash bleef liggen terug in de rij en previews voor oudere inhoud,
+    # dan pas de workers
+    await jobs.recover(settings)
+    try:
+        await previews.enqueue_missing(settings)
+    except Exception:  # noqa: BLE001 - zonder previews werkt de rest gewoon
+        log.exception("Previews klaarzetten voor bestaande bestanden mislukt")
+    runner = jobs.Runner(settings)
+    await runner.start()
     log.info("Platform %s gestart (%s), data in %s", __version__, settings.mode, settings.data_dir)
     yield
+    events.hub.close()  # open gebeurtenisstromen afronden (serve.py doet dit al eerder)
+    events.hub = events.Hub()  # een volgende start in hetzelfde proces (tests) kan weer
+    await runner.stop()
     cleaner.cancel()
     await certs.stop()
 
@@ -146,6 +180,8 @@ app.include_router(files.router)
 app.include_router(uploads.router)
 app.include_router(search.router)
 app.include_router(admin.router)
+app.include_router(preview_routes.router)
+app.include_router(live_events.router)
 
 
 class Status(BaseModel):

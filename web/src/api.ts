@@ -442,6 +442,62 @@ export class Api {
   async tusCancel(url: string): Promise<void> {
     await this.raw(url, { method: "DELETE", headers: TUS });
   }
+
+  // --- J: previews, achtergrondtaken en live gebeurtenissen ---
+  /** Previews van (hooguit 500) bestanden; wat niet bestaat of geen bestand is, ontbreekt. */
+  previews = (nodeIds: string[]) =>
+    this.send<Record<string, Preview>>("POST", "/api/v1/previews", { node_ids: nodeIds });
+  adminJobs = () => this.json<JobsOverview>("/api/v1/admin/jobs");
+  retryJob = (id: string) => this.send<void>("POST", `/api/v1/admin/jobs/${id}/retry`);
+  retryFailedJobs = async () =>
+    (await this.send<{ count: number }>("POST", "/api/v1/admin/jobs/retry-failed")).count;
+  /** De stroom met gebeurtenissen. Via fetch en niet via EventSource, zodat het token in de
+   * Authorization-header gaat en niet in het adres; een verlopen token ververst raw() zelf. */
+  eventStream = (signal: AbortSignal) =>
+    this.raw("/api/v1/events", { headers: { Accept: "text/event-stream" }, signal });
+}
+
+// --- J: typen voor previews en achtergrondtaken ---
+export interface PreviewMeta {
+  /** Afbeelding of video, rechtop. */
+  width?: number;
+  height?: number;
+  /** Video en audio, in seconden. */
+  duration?: number;
+  pages?: number;
+  title?: string;
+  artist?: string;
+  album?: string;
+  /** Tekst: de eerste regels (hooguit 50 regels of 4 KB). */
+  text?: string;
+  /** Er is meer dan text of entries laat zien. */
+  truncated?: boolean;
+  /** Archief: de eerste 200 bestanden; count is het totaal (zip). */
+  entries?: { name: string; size: number }[];
+  count?: number;
+  sizes?: number[];
+}
+
+export interface Preview {
+  state: "pending" | "ready" | "none" | "failed";
+  /** Ondertekende adressen voor een <img>; null als er (nog) geen afbeelding is. */
+  thumb: string | null;
+  large: string | null;
+  meta: PreviewMeta;
+}
+
+export interface FailedJob {
+  id: string;
+  type: string;
+  key: string | null;
+  attempts: number;
+  error: string | null;
+  finished_at: string | null;
+}
+
+export interface JobsOverview {
+  counts: { queued: number; running: number; done: number; failed: number };
+  failed: FailedJob[];
 }
 
 export const api = new Api();

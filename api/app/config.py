@@ -49,6 +49,15 @@ class Settings(BaseSettings):
     # Onafgemaakte hervatbare uploads worden na zoveel uur zonder activiteit opgeruimd
     upload_expiry_hours: int = 24
 
+    # Achtergrondtaken (zoals previews): zoveel tegelijk, en zo lang (seconden) mag één taak
+    # duren voordat hij als mislukt telt en later opnieuw gaat
+    job_workers: int = 2
+    job_timeout: float = 300
+    # Een preview wordt in een eigen proces gemaakt, met hooguit zoveel geheugen (MB, 0 = geen
+    # grens); afbeeldingen met meer pixels krijgen geen preview (bescherming tegen "bommen")
+    preview_memory_mb: int = 1536
+    preview_max_pixels: int = 100_000_000
+
     # Cluster (later): "node1=192.168.50.11,node2=..."
     cluster_nodes: str = ""
 

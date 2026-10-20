@@ -8,6 +8,7 @@ import {
   type SystemStatus,
   type User,
 } from "./api";
+import { BeheerJobs } from "./BeheerJobs";
 
 const CHECK_LABELS: Record<string, string> = {
   database: "Database",
@@ -103,6 +104,8 @@ export function Beheer({ currentUser }: { currentUser: User }) {
       {https && <Https status={https} onChange={setHttps} />}
 
       <Security />
+
+      <BeheerJobs />
 
       <section>
         <h2>Gebruikers</h2>
