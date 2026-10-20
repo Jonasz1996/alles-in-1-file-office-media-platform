@@ -15,11 +15,12 @@ from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import Session
-from app.models import Setting, User
+from app.models import RefreshToken, Setting, User
 
 _hasher = PasswordHasher()  # argon2id met de aanbevolen standaardparameters
 _bearer = HTTPBearer(auto_error=False)
@@ -165,12 +166,30 @@ async def access_claims(
     return _decode(settings, creds.credentials, "access")
 
 
+async def family_revoked(session: AsyncSession, family: uuid.UUID) -> bool:
+    """Een login (refresh-family) is voorbij zodra er één token van is ingetrokken: bij
+    uitloggen, hergebruik van een token, of na het wijzigen van het wachtwoord of 2FA.
+    Eén ingetrokken token is genoeg, zodat een token dat tegelijk met het intrekken werd
+    uitgegeven (en daardoor zelf niet is ingetrokken) toch niet meer werkt."""
+    revoked = await session.scalar(
+        select(RefreshToken.id)
+        .where(RefreshToken.family == family, RefreshToken.revoked_at.is_not(None))
+        .limit(1)
+    )
+    return revoked is not None
+
+
 async def logged_in_user(session: Session, claims: Annotated[dict, Depends(access_claims)]) -> User:
     """Ingelogd, ook als 2FA nog aangezet moet worden. Alleen voor /auth/me en het aanzetten
     van 2FA; de rest gebruikt CurrentUser."""
     user = await session.get(User, uuid.UUID(claims["sub"]))
     if user is None:
         raise HTTPException(401, "Gebruiker bestaat niet meer")
+    # Uitgelogd (ook vanaf een ander apparaat): dan werkt ook het access-token meteen niet
+    # meer, niet pas als het na een kwartier verloopt.
+    family = claims.get("fam")
+    if family and await family_revoked(session, uuid.UUID(family)):
+        raise HTTPException(401, "Je bent op dit apparaat uitgelogd; log opnieuw in")
     return user
 
 

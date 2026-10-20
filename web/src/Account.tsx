@@ -1,5 +1,7 @@
-import { type FormEvent, useState } from "react";
-import { api, type TotpSetup, type User } from "./api";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type Api, api, formatDate, type TotpSetup, type User } from "./api";
+
+export type AccountSession = Awaited<ReturnType<Api["sessions"]>>[number];
 
 /**
  * onChange: 2FA ging aan of uit, de gebruiker moet opnieuw opgehaald worden.
@@ -14,6 +16,10 @@ export function Account({
   onChange: () => void;
   onCodes: (codes: string[]) => void;
 }) {
+  // Na een nieuw wachtwoord (of 2FA aan of uit) zijn de andere sessies uitgelogd: de lijst
+  // opnieuw ophalen
+  const [passwordChanged, setPasswordChanged] = useState(0);
+
   return (
     <main>
       <h1>Account</h1>
@@ -29,7 +35,180 @@ export function Account({
         <h2>Tweestapsverificatie (2FA)</h2>
         {user.totp_enabled ? <TotpOn onChange={onChange} onCodes={onCodes} /> : <TotpOff onEnabled={onCodes} />}
       </section>
+      {!user.totp_setup_required && (
+        <>
+          <PasswordChange totpEnabled={user.totp_enabled} onChanged={() => setPasswordChanged((n) => n + 1)} />
+          <Sessions reload={`${passwordChanged}-${user.totp_enabled}`} />
+        </>
+      )}
     </main>
+  );
+}
+
+const MIN_PASSWORD = 10;
+
+function PasswordChange({ totpEnabled, onChanged }: { totpEnabled: boolean; onChanged: () => void }) {
+  const empty = { current: "", next: "", repeat: "", code: "" };
+  const [form, setForm] = useState(empty);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setDone(false);
+    if (form.next !== form.repeat) {
+      setError("De twee nieuwe wachtwoorden zijn niet gelijk.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.changePassword(form.current, form.next, totpEnabled ? form.code : undefined);
+      setForm(empty);
+      setError(null);
+      setDone(true);
+      onChanged();
+    } catch (err) {
+      setError((err as Error).message); // ook "Te veel foute …" (429)
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const field = (key: keyof typeof empty) => ({
+    value: form[key],
+    onChange: (e: { target: { value: string } }) => setForm({ ...form, [key]: e.target.value }),
+  });
+
+  return (
+    <section>
+      <h2>Wachtwoord wijzigen</h2>
+      <form className="stack" onSubmit={submit}>
+        <label>
+          Huidig wachtwoord
+          <input type="password" autoComplete="current-password" required {...field("current")} />
+        </label>
+        <label>
+          Nieuw wachtwoord
+          <input type="password" autoComplete="new-password" required minLength={MIN_PASSWORD} {...field("next")} />
+          <small className="muted">Minstens {MIN_PASSWORD} tekens.</small>
+        </label>
+        <label>
+          Nieuw wachtwoord nog een keer
+          <input type="password" autoComplete="new-password" required minLength={MIN_PASSWORD} {...field("repeat")} />
+        </label>
+        {totpEnabled && (
+          <label>
+            Code uit je app (of een herstelcode)
+            <input autoComplete="one-time-code" required {...field("code")} />
+          </label>
+        )}
+        <div className="toolbar">
+          <button type="submit" disabled={busy}>
+            Wachtwoord wijzigen
+          </button>
+        </div>
+        {done && (
+          <p>
+            <span className="badge ok">Je wachtwoord is gewijzigd.</span> Op je andere apparaten ben je uitgelogd.
+          </p>
+        )}
+        {error && <p role="alert">{error}</p>}
+      </form>
+    </section>
+  );
+}
+
+function Sessions({ reload }: { reload: string }) {
+  const [sessions, setSessions] = useState<AccountSession[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setSessions(await api.sessions());
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load, reload]);
+
+  async function end(s: AccountSession) {
+    if (s.current && !window.confirm("Dit is het apparaat dat je nu gebruikt. Hier uitloggen?")) return;
+    try {
+      await api.revokeSession(s.id, s.current); // de eigen sessie: de app logt uit
+      if (!s.current) await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function endOthers() {
+    if (!window.confirm("Op alle andere apparaten uitloggen?")) return;
+    try {
+      await api.revokeOtherSessions();
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  const others = sessions?.filter((s) => !s.current).length ?? 0;
+
+  return (
+    <section>
+      <h2>Apparaten en sessies</h2>
+      <p className="muted">
+        Hier ben je ingelogd. Herken je een apparaat niet, log het dan uit en wijzig je wachtwoord.
+      </p>
+      {error && <p role="alert">{error}</p>}
+      {sessions && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Apparaat</th>
+                <th>IP-adres</th>
+                <th>Laatst actief</th>
+                <th>Ingelogd sinds</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {sessions.map((s) => (
+                <tr key={s.id}>
+                  <td>
+                    {s.device}
+                    {s.current && (
+                      <>
+                        {" "}
+                        <span className="badge ok">Dit apparaat</span>
+                      </>
+                    )}
+                  </td>
+                  <td>{s.ip ?? "-"}</td>
+                  <td>{formatDate(s.last_active_at)}</td>
+                  <td>{formatDate(s.created_at)}</td>
+                  <td className="actions">
+                    <button type="button" onClick={() => end(s)}>
+                      Uitloggen
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="toolbar">
+        <button type="button" onClick={endOthers} disabled={others === 0}>
+          Overal anders uitloggen
+        </button>
+      </div>
+    </section>
   );
 }
 

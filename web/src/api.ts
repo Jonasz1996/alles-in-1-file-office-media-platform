@@ -239,6 +239,39 @@ export class Api {
   totpDisable = (password: string, code: string) =>
     this.send<void>("POST", "/api/v1/auth/2fa/disable", { password, code });
 
+  // --- account: wachtwoord wijzigen, sessies per apparaat, wachtwoord instellen (beheer) ---
+  /** Waar je ingelogd bent: één rij per login, de laatst actieve eerst. */
+  sessions = () =>
+    this.json<
+      {
+        /** De login (refresh-family) */
+        id: string;
+        /** Bijv. "Firefox op Windows" */
+        device: string;
+        ip: string | null;
+        /** Eerste login van deze sessie */
+        created_at: string;
+        last_active_at: string;
+        /** De sessie van deze app zelf */
+        current: boolean;
+      }[]
+    >("/api/v1/auth/sessions");
+  /** Logt die sessie uit. Is het deze sessie zelf, dan is de app daarna uitgelogd. */
+  revokeSession = async (id: string, current = false) => {
+    await this.send<void>("DELETE", `/api/v1/auth/sessions/${id}`);
+    if (current) {
+      await this.logout(); // ook het cookie weg
+      this.onLoggedOut();
+    }
+  };
+  revokeOtherSessions = () => this.send<void>("POST", "/api/v1/auth/sessions/revoke-others");
+  /** code: uit de authenticator-app of een herstelcode, als 2FA aan staat. Andere sessies worden uitgelogd. */
+  changePassword = (current_password: string, new_password: string, code?: string) =>
+    this.send<void>("POST", "/api/v1/auth/password", { current_password, new_password, code });
+  /** Alleen voor beheerders, niet voor je eigen account; logt die gebruiker overal uit. */
+  setUserPassword = (userId: string, new_password: string) =>
+    this.send<void>("PUT", `/api/v1/users/${userId}/password`, { new_password });
+
   root = () => this.json<Listing>("/api/v1/files/root");
   children = (id: string) => this.json<Listing>(`/api/v1/files/${id}/children`);
   mkdir = (parent: string, name: string) =>

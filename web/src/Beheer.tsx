@@ -116,6 +116,7 @@ export function Beheer({ currentUser }: { currentUser: User }) {
                 <th>Gebruikt</th>
                 <th>Quotum</th>
                 <th>2FA</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -154,6 +155,7 @@ export function Beheer({ currentUser }: { currentUser: User }) {
                       </>
                     )}
                   </td>
+                  <td className="actions">{u.id !== currentUser.id && <SetPassword user={u} />}</td>
                 </tr>
               ))}
             </tbody>
@@ -162,6 +164,39 @@ export function Beheer({ currentUser }: { currentUser: User }) {
         <NewUser onCreated={load} />
       </section>
     </main>
+  );
+}
+
+/** Nieuw wachtwoord voor iemand die het zijne kwijt is; die gebruiker is daarna overal uitgelogd. */
+function SetPassword({ user }: { user: User }) {
+  const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
+
+  async function set() {
+    const password = window.prompt(
+      `Nieuw wachtwoord voor ${user.display_name} (minstens 10 tekens). ` +
+        "Daarna is die gebruiker op alle apparaten uitgelogd.",
+    );
+    if (password === null) return;
+    if (password.length < 10) {
+      setMessage({ text: "Minstens 10 tekens", ok: false });
+      return;
+    }
+    try {
+      await api.setUserPassword(user.id, password);
+      setMessage({ text: "Ingesteld", ok: true });
+    } catch (e) {
+      setMessage({ text: (e as Error).message, ok: false });
+    }
+  }
+
+  return (
+    <>
+      <button type="button" onClick={set}>
+        Wachtwoord instellen
+      </button>
+      {message &&
+        (message.ok ? <span className="badge ok">{message.text}</span> : <span role="alert">{message.text}</span>)}
+    </>
   );
 }
 
