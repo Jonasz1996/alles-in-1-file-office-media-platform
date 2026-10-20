@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Installeert de eerste versie van het platform op één Debian- of Ubuntu-container.
-# Draai als root in de console van de container:
+# Installeert het platform op één Debian- of Ubuntu-container: één Docker-container
+# met API en web-app, data in /tank/platform. Draai als root in de console:
 #
 #   apt update && apt install -y curl
 #   curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | bash
 #
-# Opnieuw draaien werkt het platform bij; bestaande geheimen en data blijven staan.
-# Zonder vragen: DOMAIN=app.voorbeeld.nl ACME_EMAIL=jij@voorbeeld.nl bash install.sh
+# Opnieuw draaien werkt het platform bij; instellingen en data blijven staan.
+# Andere poort dan 80: PORT=8080 bash install.sh (later aan te passen in /opt/platform/.env)
 set -euo pipefail
 
 REPO=https://github.com/Jonasz1996/alles-in-1-file-office-media-platform.git
@@ -16,12 +16,6 @@ SRC=$PLATFORM_ROOT/src
 ENV_FILE=$PLATFORM_ROOT/.env
 
 stap() { printf '\n== %s\n' "$1"; }
-vraag() { # vraag <variabele> <tekst>
-  local var=$1 tekst=$2
-  if [ -z "${!var:-}" ] && [ -r /dev/tty ]; then
-    read -r -p "$tekst" "${var?}" < /dev/tty || true
-  fi
-}
 
 [ "$(id -u)" = 0 ] || { echo "Draai dit als root."; exit 1; }
 # shellcheck source=/dev/null
@@ -31,7 +25,7 @@ case "$ID" in debian | ubuntu) ;; *) echo "Alleen Debian en Ubuntu worden onders
 stap "Pakketten"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
-apt-get install -y -q ca-certificates curl git openssl unattended-upgrades >/dev/null
+apt-get install -y -q ca-certificates curl git unattended-upgrades >/dev/null
 
 stap "Docker"
 if ! command -v docker >/dev/null; then
@@ -66,146 +60,64 @@ echo "Versie $(git -C "$SRC" log -1 --format='%h %s')"
 
 stap "Instellingen"
 mkdir -p "$PLATFORM_ROOT"
-if mountpoint -q /tank; then DATA_ROOT=/tank; else
-  DATA_ROOT=$PLATFORM_ROOT/data
-  echo "Let op: /tank is niet gekoppeld; data komt in $DATA_ROOT op de rootdisk."
+if [ -f "$ENV_FILE" ] && grep -q '^POSTGRES_PASSWORD=' "$ENV_FILE"; then
+  # Instellingen van de eerste versie (met Traefik, PostgreSQL en SeaweedFS)
+  mv "$ENV_FILE" "$ENV_FILE.oud"
+  echo "Oude instellingen bewaard als $ENV_FILE.oud."
 fi
 if [ -f "$ENV_FILE" ]; then
   # shellcheck disable=SC1090
   . "$ENV_FILE"
   echo "Bestaande instellingen gebruikt ($ENV_FILE)."
 else
-  vraag DOMAIN "Domeinnaam voor het platform (bijv. app.voorbeeld.nl, leeg = alleen http in je LAN): "
-  if [ -n "${DOMAIN:-}" ]; then vraag ACME_EMAIL "E-mailadres voor Let's Encrypt: "; fi
-  umask 077
+  if mountpoint -q /tank; then DATA_ROOT=/tank/platform; else
+    DATA_ROOT=$PLATFORM_ROOT/data/platform
+    echo "Let op: /tank is niet gekoppeld; data komt in $DATA_ROOT op de rootdisk."
+  fi
   cat > "$ENV_FILE" <<ENV
-DOMAIN=${DOMAIN:-}
-ACME_EMAIL=${ACME_EMAIL:-}
-ACME_STAGING=${ACME_STAGING:-false}
 DATA_ROOT=$DATA_ROOT
-PLATFORM_ROOT=$PLATFORM_ROOT
 NODE_NAME=$(hostname)
-POSTGRES_PASSWORD=$(openssl rand -hex 24)
-S3_ACCESS_KEY=$(openssl rand -hex 16)
-S3_SECRET_KEY=$(openssl rand -hex 32)
-ADMIN_TOKEN=$(openssl rand -hex 24)
+PORT=${PORT:-80}
+SECURE_COOKIES=false
 ENV
   # shellcheck disable=SC1090
   . "$ENV_FILE"
 fi
-
-stap "Configuratie"
-mkdir -p "$DATA_ROOT"/{postgres,seaweedfs,traefik} "$PLATFORM_ROOT"/{seaweedfs,traefik/dynamic}
-chmod 700 "$DATA_ROOT/traefik"
-cat > "$PLATFORM_ROOT/seaweedfs/s3.json" <<JSON
-{"identities": [{"name": "platform",
-  "credentials": [{"accessKey": "$S3_ACCESS_KEY", "secretKey": "$S3_SECRET_KEY"}],
-  "actions": ["Admin", "Read", "Write", "List", "Tagging"]}]}
-JSON
-
-if [ -n "${DOMAIN:-}" ]; then
-  entry=websecure
-  rule="Host(\`$DOMAIN\`)"
-  ca=""
-  [ "${ACME_STAGING:-false}" = true ] && ca="      caServer: https://acme-staging-v02.api.letsencrypt.org/directory"
-  cat > "$PLATFORM_ROOT/traefik/traefik.yml" <<YML
-entryPoints:
-  web:
-    address: ":80"
-    http:
-      redirections:
-        entryPoint: { to: websecure, scheme: https }
-  websecure:
-    address: ":443"
-    http3: {}
-    http:
-      tls: { certResolver: le }
-  intern:
-    address: "127.0.0.1:8082"
-ping: { entryPoint: intern }
-providers:
-  file: { directory: /etc/traefik/dynamic, watch: true }
-certificatesResolvers:
-  le:
-    acme:
-      email: ${ACME_EMAIL:-}
-      storage: /data/acme.json
-$ca
-      httpChallenge: { entryPoint: web }
-accessLog: {}
-YML
-else
-  entry=web
-  rule="PathPrefix(\`/\`)"
-  cat > "$PLATFORM_ROOT/traefik/traefik.yml" <<YML
-entryPoints:
-  web:
-    address: ":80"
-  intern:
-    address: "127.0.0.1:8082"
-ping: { entryPoint: intern }
-providers:
-  file: { directory: /etc/traefik/dynamic, watch: true }
-accessLog: {}
-YML
-fi
-
-cat > "$PLATFORM_ROOT/traefik/dynamic/routes.yml" <<YML
-http:
-  routers:
-    api:
-      rule: "$rule && PathPrefix(\`/api\`)"
-      entryPoints: [$entry]
-      service: api
-      middlewares: [security-headers, rate-limit]
-    web:
-      rule: "$rule"
-      entryPoints: [$entry]
-      service: web
-      middlewares: [security-headers, rate-limit]
-  services:
-    api:
-      loadBalancer:
-        servers: [{ url: "http://127.0.0.1:8000" }]
-    web:
-      loadBalancer:
-        servers: [{ url: "http://127.0.0.1:8080" }]
-  middlewares:
-    security-headers:
-      headers:
-        stsSeconds: 31536000
-        contentTypeNosniff: true
-        frameDeny: true
-        referrerPolicy: strict-origin-when-cross-origin
-    rate-limit:
-      rateLimit: { average: 50, burst: 100 }
-YML
+# De app draait in de container als gebruiker 10001
+install -d -m 750 "$DATA_ROOT"
+chown 10001:10001 "$DATA_ROOT"
 
 stap "Platform bouwen en starten (de eerste keer duurt dit een paar minuten)"
 compose=(docker compose --project-directory "$SRC/infra/single" -f "$SRC/infra/single/compose.yaml" --env-file "$ENV_FILE")
 "${compose[@]}" up -d --build --remove-orphans
+docker image prune -f >/dev/null
 
-stap "S3-buckets"
 for _ in $(seq 1 30); do
-  if curl -fs -o /dev/null http://127.0.0.1:9333/cluster/status; then break; fi
+  if curl -fs -o /dev/null "http://127.0.0.1:$PORT/health"; then break; fi
   sleep 2
 done
-bestaand=$(echo "s3.bucket.list" | "${compose[@]}" exec -T seaweedfs weed shell -master=127.0.0.1:9333 2>/dev/null || true)
-for b in vault media thumbs cache backups; do
-  if ! grep -qw "$b" <<<"$bestaand"; then
-    echo "s3.bucket.create -name $b" | "${compose[@]}" exec -T seaweedfs weed shell -master=127.0.0.1:9333 >/dev/null
-    echo "aangemaakt: $b"
-  fi
-done
+if ! curl -fs -o /dev/null "http://127.0.0.1:$PORT/health"; then
+  echo "Het platform reageert niet. Laatste logregels:"
+  "${compose[@]}" logs --tail 50 platform
+  exit 1
+fi
 
 ip=$(hostname -I | awk '{print $1}')
-if [ -n "${DOMAIN:-}" ]; then url="https://$DOMAIN"; else url="http://$ip"; fi
+url="http://$ip"
+[ "$PORT" = 80 ] || url="$url:$PORT"
 cat <<KLAAR
 
 Klaar. Het platform draait op $url
-Beheer: $url/beheer
-Beheertoken: $ADMIN_TOKEN
-(staat ook in $ENV_FILE; bewaar het goed)
 
-Bijwerken: draai dit script opnieuw.
+Open dat adres in je browser. Bij het eerste bezoek maak je het beheerdersaccount
+aan; doe dat voordat je de poort in je router openzet.
+
+Instellingen: $ENV_FILE
+Data:         $DATA_ROOT
+Bijwerken:    draai dit script opnieuw.
 KLAAR
+for oud in postgres seaweedfs traefik; do
+  if [ -d "/tank/$oud" ] || [ -d "$PLATFORM_ROOT/data/$oud" ]; then
+    echo "Map '$oud' van de eerste versie wordt niet meer gebruikt; die mag weg."
+  fi
+done

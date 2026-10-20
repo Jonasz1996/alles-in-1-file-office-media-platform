@@ -3,6 +3,10 @@
 Fase 1: drie unprivileged LXC-containers op Proxmox, elk met Docker Compose, uitgerold
 met Ansible. Alles is van buiten bereikbaar via de webinterface over HTTPS; er is geen VPN.
 
+Dit is het ontwerp voor later. Nu draait het platform eerst standalone op één node, zonder
+Traefik, PostgreSQL en SeaweedFS: zie [single/README.md](single/README.md). Bij de overstap
+naar het cluster gaat de rol `platform` ook het ene platform-image gebruiken.
+
 ## Wat er per node draait
 
 Elke node draait hetzelfde (`ansible/roles/platform/templates/compose.yaml.j2`):

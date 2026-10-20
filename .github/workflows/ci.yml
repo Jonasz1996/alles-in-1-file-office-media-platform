@@ -102,14 +102,36 @@ jobs:
     needs: [api, web]
     strategy:
       matrix:
-        component: [api, web]
+        include:
+          - name: platform
+            context: .
+          - name: api
+            context: api
+          - name: web
+            context: web
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.component }}
+          context: ${{ matrix.context }}
           push: false
-          tags: platform-${{ matrix.component }}:ci
-          cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+          load: ${{ matrix.name == 'platform' }}
+          tags: platform-${{ matrix.name }}:ci
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - name: Platform-image starten en controleren
+        if: matrix.name == 'platform'
+        run: |
+          docker run -d --name platform-ci -p 8080:8080 platform-platform:ci
+          for _ in $(seq 1 30); do curl -fs -o /dev/null localhost:8080/health && break; sleep 1; done
+          curl -fsS localhost:8080/ | grep -q '<div id="root">'
+          curl -fsS localhost:8080/bestanden | grep -q '<div id="root">'
+          curl -fsS localhost:8080/api/v1/auth/status | grep -q '"setup_required":true'
+          curl -fsSI localhost:8080/ | grep -qi '^content-security-policy:'
+          curl -fsS -X POST localhost:8080/api/v1/auth/setup -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.com","display_name":"CI","password":"lang-genoeg-wachtwoord"}' \
+            | grep -q access_token
+      - name: Logs van de platform-container
+        if: always() && matrix.name == 'platform'
+        run: docker logs platform-ci || true

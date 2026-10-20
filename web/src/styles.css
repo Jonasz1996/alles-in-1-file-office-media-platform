@@ -1,17 +1,29 @@
 :root {
   --bg: #ffffff;
+  --surface: #f5f5f4;
   --fg: #1a1a1a;
   --muted: #5c5c5c;
+  --line: #d8d8d8;
+  --accent: #1d5fd1;
+  --ok: #1f7a3a;
+  --warn: #9a6200;
+  --bad: #b3261e;
   font-family: system-ui, sans-serif;
-  background: var(--bg);
   color: var(--fg);
+  background: var(--bg);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #121212;
+    --surface: #1e1e1e;
     --fg: #ececec;
     --muted: #a0a0a0;
+    --line: #3a3a3a;
+    --accent: #7aa7ff;
+    --ok: #6fcf8a;
+    --warn: #f0b95a;
+    --bad: #ff8a80;
   }
 }
 
@@ -23,46 +35,131 @@ body {
 main {
   max-width: 48rem;
   margin: 0 auto;
-  padding: 2rem 1rem;
-}
-
-main p {
-  color: var(--muted);
-}
-
-:root {
-  --ok: #1f7a3a;
-  --warn: #9a6200;
-  --bad: #b3261e;
-  --line: #d8d8d8;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ok: #6fcf8a;
-    --warn: #f0b95a;
-    --bad: #ff8a80;
-    --line: #3a3a3a;
-  }
+  padding: 1.5rem 1rem;
 }
 
 main.wide {
   max-width: 72rem;
 }
 
-.badge {
-  font-weight: 600;
+main.center {
+  display: grid;
+  place-items: center;
+  min-height: 80vh;
 }
-.badge.ok,
-td.up {
-  color: var(--ok);
+
+main.dropping {
+  outline: 2px dashed var(--accent);
+  outline-offset: -8px;
 }
-.badge.degraded {
-  color: var(--warn);
+
+a {
+  color: var(--accent);
 }
-.badge.down,
-td.down {
+
+.muted {
+  color: var(--muted);
+}
+
+[role="alert"] {
   color: var(--bad);
+}
+
+.topbar {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.topbar nav {
+  display: flex;
+  gap: 0.8rem;
+}
+
+.topbar nav a {
+  text-decoration: none;
+}
+
+.topbar nav a.active {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.spacer {
+  flex: 1;
+}
+
+button {
+  font: inherit;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  text-align: left;
+}
+
+input,
+select {
+  font: inherit;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.card {
+  display: grid;
+  gap: 0.8rem;
+  width: min(24rem, 100%);
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.card label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.toolbar,
+.inline-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+
+.inline-form h3 {
+  width: 100%;
+  margin: 0;
+}
+
+.crumbs {
+  font-size: 1.1rem;
+}
+
+.uploads {
+  padding-left: 1.2rem;
 }
 
 .table-wrap {
@@ -77,7 +174,27 @@ table {
 th,
 td {
   border-bottom: 1px solid var(--line);
-  padding: 0.4rem 0.6rem;
+  padding: 0.45rem 0.6rem;
   text-align: left;
   white-space: nowrap;
+}
+
+td.actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+
+.badge.ok,
+td.up {
+  color: var(--ok);
+}
+
+.badge.degraded {
+  color: var(--warn);
+}
+
+.badge.down,
+td.down {
+  color: var(--bad);
 }

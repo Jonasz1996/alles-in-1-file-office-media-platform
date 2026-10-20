@@ -1,17 +1,14 @@
-# Lokale ontwikkelomgeving: lege API en web-app.
-# Infrastructuur voor de 3 nodes volgt in fase 1 (zie infra/).
+# Lokaal draaien zoals in productie: één container met API en web-app op
+# http://localhost:8080. Voor ontwikkelen met hot reload: zie README.
 services:
-  api:
-    build: ./api
+  platform:
+    build: .
     environment:
-      PLATFORM_ENVIRONMENT: development
       PLATFORM_NODE_NAME: local
     ports:
-      - "8000:8000"
-
-  web:
-    build: ./web
-    ports:
       - "8080:8080"
-    depends_on:
-      - api
+    volumes:
+      - platform-data:/data
+
+volumes:
+  platform-data:

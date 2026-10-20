@@ -99,6 +99,7 @@ services:
       - "{{ me }}:8000:8000"
     environment:
       PLATFORM_ENVIRONMENT: production
+      PLATFORM_MODE: cluster
       PLATFORM_NODE_NAME: {{ inventory_hostname }}
       PLATFORM_CLUSTER_NODES: "{% for h in groups['nodes'] %}{{ h }}={{ hostvars[h].ansible_host }}{{ "," if not loop.last }}{% endfor %}"
       PLATFORM_ADMIN_TOKEN: "{{ platform_admin_token }}"

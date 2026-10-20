@@ -18,7 +18,6 @@ PORTS = {
     "patroni": 8008,
     "seaweed_master": 9333,
     "seaweed_volume": 8081,
-    "postgres": 5432,
     "traefik": 8082,
     "api": 8000,
 }
@@ -72,41 +71,6 @@ async def _ok(client: httpx.AsyncClient, url: str) -> bool:
     except httpx.HTTPError:
         return False
     return r.is_success
-
-
-async def _tcp_ok(ip: str, port: int) -> bool:
-    try:
-        _, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=2.0)
-    except (OSError, TimeoutError):
-        return False
-    writer.close()
-    return True
-
-
-async def single_node_status(client: httpx.AsyncClient, name: str, ip: str) -> NodeStatus:
-    """Eén node zonder etcd en Patroni: PostgreSQL wordt alleen op bereikbaarheid gecontroleerd."""
-    base = {k: f"http://{ip}:{p}" for k, p in PORTS.items()}
-    postgres, master, volume, traefik, api = await asyncio.gather(
-        _tcp_ok(ip, PORTS["postgres"]),
-        _get_json(client, f"{base['seaweed_master']}/cluster/status"),
-        _get_json(client, f"{base['seaweed_volume']}/status"),
-        _ok(client, f"{base['traefik']}/ping"),
-        _ok(client, f"{base['api']}/health"),
-    )
-    return NodeStatus(
-        name=name,
-        ip=ip,
-        checks={
-            "postgres": postgres,
-            "seaweed_master": master is not None,
-            "seaweed_volume": volume is not None,
-            "traefik": traefik,
-            "api": api,
-        },
-        db_role="primary" if postgres else None,
-        seaweed_leader=bool(master and master.get("IsLeader")),
-        disk=_disk(volume),
-    )
 
 
 def _disk(volume: dict | None) -> Disk | None:
@@ -187,24 +151,6 @@ def summarize(nodes: list[NodeStatus], members: list[DbMember]) -> tuple[str, li
     if not leaders or etcd_up * 2 <= len(nodes):
         return "down", messages
     return ("degraded" if messages else "ok"), messages
-
-
-def summarize_single(node: NodeStatus) -> tuple[str, list[str]]:
-    messages: list[str] = []
-    down = [k for k, ok in node.checks.items() if not ok]
-    if down:
-        messages.append(f"{node.name}: {', '.join(down)} onbereikbaar.")
-    if node.disk and node.disk.total_bytes and node.disk.used_bytes / node.disk.total_bytes > 0.8:
-        messages.append(f"{node.name}: datadisk meer dan 80 % vol.")
-    if not node.checks["postgres"]:
-        return "down", messages
-    return ("degraded" if messages else "ok"), messages
-
-
-async def single_status(client: httpx.AsyncClient, name: str, ip: str) -> ClusterStatus:
-    node = await single_node_status(client, name, ip)
-    status, messages = summarize_single(node)
-    return ClusterStatus(status=status, nodes=[node], database=[], messages=messages)
 
 
 async def cluster_status(client: httpx.AsyncClient, nodes: list[tuple[str, str]]) -> ClusterStatus:
