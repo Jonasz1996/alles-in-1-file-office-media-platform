@@ -23,7 +23,7 @@ eigen web-app (zie `docs/fase-0/beslissingen.md`, B14).
 
 Per Proxmox-host één container, **Create CT**:
 
-- Template: Ubuntu 24.04, **Unprivileged container aangevinkt**
+- Template: Debian 13 (of 12) of Ubuntu 24.04, **Unprivileged container aangevinkt**
 - Cores 4, Memory 16384 MB, **Swap 0**
 - Root disk 64 GB op je ZFS-opslag
 - Netwerk: vast IP, alle drie in hetzelfde subnet; houd één extra vrij IP apart voor de VIP
@@ -32,7 +32,7 @@ Per Proxmox-host één container, **Create CT**:
   - **Resources → Add → Mount Point:** 700 GB op je ZFS-opslag, pad `/tank`, *Backup* uit,
     *Skip replication* aan (het platform repliceert zelf)
   - **Options → Start at boot:** aan
-- In de container: maak een gebruiker `beheer` met jouw SSH-sleutel en sudo.
+- In de container (Console, als root): `apt update && apt install -y sudo openssh-server python3`, dan `adduser beheer`, `usermod -aG sudo beheer` en zet jouw publieke SSH-sleutel in `/home/beheer/.ssh/authorized_keys`.
 
 Proxmox 8.1 of nieuwer is nodig, zodat Docker zijn snelle opslagdriver (overlay2) op ZFS kan gebruiken.
 
