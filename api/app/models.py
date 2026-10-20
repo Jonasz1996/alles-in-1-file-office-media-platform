@@ -150,6 +150,15 @@ class Upload(Base):
     node_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # owner_id is van wie het bestand wordt (en wiens quotum het kost): bij uploaden in een
+    # gedeelde map de eigenaar van die map. created_by is wie uploadt; via een publieke
+    # uploadlink is dat niemand, en dan is share_id die link.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=True
+    )
+    share_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("share.id", ondelete="CASCADE"), nullable=True, index=True
+    )
 
 
 @event.listens_for(Node.name, "set")
@@ -176,12 +185,36 @@ class Version(Base):
     )
 
 
+class Group(Base):
+    """Een groep gebruikers (beheerd op /beheer), om in één keer met iedereen erin te delen."""
+
+    __tablename__ = "user_group"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class GroupMember(Base):
+    __tablename__ = "group_member"
+
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user_group.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+
+
 class Share(Base):
-    """Een map of bestand gedeeld met een gebruiker (grantee_id) of via een publieke link
-    (token)."""
+    """Een map of bestand gedeeld met precies één van: een gebruiker (grantee_id), een groep
+    (group_id) of een publieke link (token)."""
 
     __tablename__ = "share"
-    __table_args__ = (UniqueConstraint("node_id", "grantee_id"),)
+    __table_args__ = (
+        UniqueConstraint("node_id", "grantee_id"),
+        Index("uq_share_node_group", "node_id", "group_id", unique=True),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     node_id: Mapped[uuid.UUID] = mapped_column(
@@ -191,12 +224,17 @@ class Share(Base):
     grantee_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("user.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user_group.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
-    # Gebruiker: read of write. Link: read of upload (alleen uploaden, niets zien).
+    # Gebruiker of groep: read of write. Link: read of upload (alleen uploaden, niets zien).
     permission: Mapped[str] = mapped_column(String(8), default="read")
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # Alleen voor links: een naam voor de eigenaar ("voor de fotograaf")
+    label: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 class Tag(Base):
