@@ -42,7 +42,7 @@ from app.routers.files import (
     sibling,
 )
 from app.security import CurrentUser
-from app.storage import BlobStore, hash_file, with_timeout
+from app.storage import CHUNK_TIMEOUT, BlobStore, hash_file, with_timeout
 
 router = APIRouter(prefix="/api/v1/tus", tags=["bestanden"])
 log = logging.getLogger("platform.uploads")
@@ -53,6 +53,10 @@ BUSY = {"message": "Er loopt al een verzoek voor deze upload", "code": "upload_b
 # Een bestand in uploads/ zonder upload-rij (bijv. weg met zijn map) mag na zo lang weg;
 # een upload die net is aangemaakt wordt zo nooit geraakt.
 STRAY_AFTER = timedelta(hours=1)
+# Zo lang (seconden) wacht het opruimen op een lopend verzoek voor één upload. Een PATCH kan
+# uren duren (een groot bestand in één keer, of een client die heel traag stuurt); dan komt
+# die upload de volgende ronde aan de beurt, en wacht de rest niet.
+CLEANUP_WAIT = 2 * CHUNK_TIMEOUT
 
 # Per upload één verzoek tegelijk (PATCH, afronden, DELETE, opruimen), en de SHA-256 tot nu
 # toe, zodat het bestand aan het eind niet opnieuw gelezen hoeft te worden. Na een herstart
@@ -181,6 +185,7 @@ async def create(
 
     # Controleren en reserveren in één keer; anders komen twee gelijktijdige uploads allebei
     # door en blijkt pas als alle bytes binnen zijn dat er geen ruimte was
+    await session.commit()  # niet met een databaseverbinding op het slot wachten
     async with _user_locks.setdefault(user.id, asyncio.Lock()):
         room = await room_left(session, user)
         if room is not None and upload_length > room:
@@ -391,14 +396,23 @@ async def remove_expired(settings: Settings) -> int:
         expired = [u.id for u in uploads if _expires(u) < now]
         await session.commit()  # niet met een databaseverbinding op een slot wachten
         for upload_id in expired:
-            # Wacht op een lopend verzoek; een PATCH verlengt de upload misschien nog
-            async with _lock(upload_id):
+            # Wacht op een lopend verzoek (een PATCH verlengt de upload misschien nog), maar
+            # niet eindeloos. Overslaan kan: het slot blijft bestaan zolang de rij er is.
+            lock, acquired = _lock(upload_id), False
+            with anyio.move_on_after(CLEANUP_WAIT):
+                await lock.acquire()
+                acquired = True
+            if not acquired:
+                continue
+            try:
                 upload = await session.get(Upload, upload_id, populate_existing=True)
                 if upload is not None and _expires(upload) < now:
                     await _drop(session, settings, upload_id)
                     removed += 1
                 else:
                     await session.commit()
+            finally:
+                lock.release()
         known = {u.hex for u in (await session.scalars(select(Upload.id))).all()}
     if settings.upload_dir.exists():
         cutoff = now - STRAY_AFTER

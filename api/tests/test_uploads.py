@@ -7,12 +7,12 @@ from datetime import UTC, datetime, timedelta
 
 import anyio
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import storage
 from app.db import get_engine
-from app.models import Upload
+from app.models import Blob, Upload
 from app.routers import files, uploads
 from app.storage import BlobStore
 
@@ -410,13 +410,16 @@ async def test_head_rondt_volledige_upload_af(client, admin, settings):
     assert [c["name"] for c in children] == ["klaar.txt"]
 
 
-@pytest.mark.parametrize("dedupe", [False, True])
+@pytest.mark.parametrize("state", ["nieuw", "dedupe", "inhoud-kwijt"])
 @pytest.mark.anyio
-async def test_fout_na_adopt_laat_niets_achter(client, admin, settings, monkeypatch, dedupe):
+async def test_fout_na_adopt_laat_niets_achter(client, admin, settings, monkeypatch, state):
     headers, _ = admin
     parent = await root_id(client, headers)
-    if dedupe:  # dezelfde inhoud staat er al
+    if state != "nieuw":  # dezelfde inhoud staat er al
         await put(client, headers, parent, "al", b"qwerty")
+    if state == "inhoud-kwijt":  # wel een blob-rij, maar het bestand ontbreekt (oude fout)
+        for path in blob_files(settings):
+            path.unlink()
     location = (await create(client, headers, parent, "z.bin", 6)).headers["location"]
 
     # De commit na het verplaatsen naar de blob-opslag mislukt (bijv. database bezet)
@@ -442,7 +445,7 @@ async def test_fout_na_adopt_laat_niets_achter(client, admin, settings, monkeypa
     monkeypatch.undo()
 
     # Geen blob zonder rij, en de upload staat er nog helemaal
-    assert len(blob_files(settings)) == (1 if dedupe else 0)
+    assert len(blob_files(settings)) == (1 if state == "dedupe" else 0)
     assert upload_file(settings, location).read_bytes() == b"qwerty"
     r = await client.head(location, headers={**headers, **TUS})
     assert r.status_code == 200
@@ -517,6 +520,30 @@ async def test_opruimen_wacht_op_slot(client, admin, settings):
             assert not cleanup.done()
         assert await cleanup == 1
     assert (await client.head(location, headers={**headers, **TUS})).status_code == 404
+
+
+@pytest.mark.anyio
+async def test_opruimen_wacht_niet_eindeloos(client, admin, settings, monkeypatch):
+    monkeypatch.setattr(uploads, "CLEANUP_WAIT", 0.1)
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    busy = (await create(client, headers, parent, "lang.bin", 4)).headers["location"]
+    other = (await create(client, headers, parent, "ander.bin", 4)).headers["location"]
+    maker = async_sessionmaker(get_engine(settings))
+    async with maker() as session:
+        await session.execute(
+            update(Upload).values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+        )
+        await session.commit()
+    lock = uploads._lock(uuid.UUID(busy.rsplit("/", 1)[1]))
+    with anyio.fail_after(3):
+        async with lock:  # een PATCH die uren duurt (groot bestand in één keer)
+            # De andere upload wacht daar niet op; deze komt de volgende ronde aan de beurt
+            assert await uploads.remove_expired(settings) == 1
+            assert (await client.head(other, headers={**headers, **TUS})).status_code == 404
+            assert (await client.head(busy, headers={**headers, **TUS})).status_code == 200
+        assert await uploads.remove_expired(settings) == 1
+    assert (await client.head(busy, headers={**headers, **TUS})).status_code == 404
 
 
 @pytest.mark.anyio
@@ -624,3 +651,83 @@ async def test_ontdubbelen_tegelijk_met_opruimen(client, admin, settings, monkey
     node_id = r.json()["id"] if via == "put" else r.headers["platform-node-id"]
     assert await content(client, headers, node_id) == b"SAME"
     assert len(blob_files(settings)) == 1
+
+
+@pytest.mark.parametrize("via", ["tus", "put"])
+@pytest.mark.anyio
+async def test_ontdubbelen_tijdens_opruimen_van_inhoud(client, admin, settings, monkeypatch, via):
+    """Het opruimen heeft de blob-rij al weggehaald maar het bestand nog niet, en dan komt
+    dezelfde inhoud binnen: die mag zijn kopie niet weggooien omdat het oude bestand er nog
+    staat."""
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    old = (await put(client, headers, parent, "old.txt", b"SAME")).json()["id"]
+    await client.delete(f"/api/v1/files/{old}", headers=headers)
+    if via == "tus":
+        location = (await create(client, headers, parent, "new.txt", 4)).headers["location"]
+        upload = send(client, headers, location, 0, b"SAME")
+    else:
+        upload = put(client, headers, parent, "new.txt", b"SAME")
+    entered, release = hold(monkeypatch, BlobStore, "delete")  # rij weg, bestand nog niet
+
+    with anyio.fail_after(5):
+        purging = asyncio.create_task(client.delete(f"/api/v1/trash/{old}", headers=headers))
+        await entered.wait()
+        uploading = asyncio.create_task(upload)
+        await asyncio.sleep(0.05)
+        release.set()
+        p, r = await purging, await uploading
+    assert p.status_code == 204 and r.status_code in (201, 204)
+    node_id = r.json()["id"] if via == "put" else r.headers["platform-node-id"]
+    assert await content(client, headers, node_id) == b"SAME"
+    assert len(blob_files(settings)) == 1
+
+
+@pytest.mark.anyio
+async def test_wachten_op_slot_zonder_databaseverbinding(client, admin, settings):
+    """Wie op het blob-slot (of het quotumslot) wacht, houdt geen databaseverbinding vast;
+    anders kan wie het slot heeft er geen meer krijgen als er genoeg wachten."""
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    user_id = uuid.UUID((await client.get("/api/v1/auth/me", headers=headers)).json()["id"])
+    old = (await put(client, headers, parent, "old.txt", b"oud")).json()["id"]
+    await client.delete(f"/api/v1/files/{old}", headers=headers)
+    location = (await create(client, headers, parent, "tus.txt", 3)).headers["location"]
+    blob_lock = BlobStore(settings.blob_dir).lock
+    user_lock = uploads._user_locks.setdefault(user_id, asyncio.Lock())
+
+    with anyio.fail_after(5):
+        async with blob_lock, user_lock:
+            waiting = [
+                asyncio.create_task(send(client, headers, location, 0, b"tus")),
+                asyncio.create_task(client.delete(f"/api/v1/trash/{old}", headers=headers)),
+                asyncio.create_task(put(client, headers, parent, "put.txt", b"put")),
+                asyncio.create_task(create(client, headers, parent, "nieuw.txt", 1)),
+            ]
+            await asyncio.sleep(0.1)
+            assert not any(t.done() for t in waiting)
+            assert get_engine(settings).pool.checkedout() == 0
+        r = await asyncio.gather(*waiting)
+    assert [x.status_code for x in r] == [204, 204, 201, 201]
+
+
+@pytest.mark.anyio
+async def test_tegelijk_twee_keer_definitief_verwijderen(client, admin, settings, monkeypatch):
+    headers, _ = admin
+    parent = await root_id(client, headers)
+    await put(client, headers, parent, "blijft.txt", b"SAME")
+    old = (await put(client, headers, parent, "weg.txt", b"SAME")).json()["id"]
+    await client.delete(f"/api/v1/files/{old}", headers=headers)
+    entered, release = hold(monkeypatch, files, "descendants")  # de eerste is bezig
+
+    with anyio.fail_after(5):
+        first = asyncio.create_task(client.delete(f"/api/v1/trash/{old}", headers=headers))
+        await entered.wait()
+        second = asyncio.create_task(client.delete(f"/api/v1/trash/{old}", headers=headers))
+        await asyncio.sleep(0.05)
+        release.set()
+        a, b = await first, await second
+    # De tweede leest pas onder het slot, en ziet dat het al weg is
+    assert (a.status_code, b.status_code) == (204, 404)
+    async with async_sessionmaker(get_engine(settings))() as session:
+        assert (await session.scalars(select(Blob.ref_count))).all() == [1]

@@ -229,9 +229,12 @@ async def place_file(
     conflict: rename = nieuwe naam als het al bestaat, replace = vervangen, fail = NameTaken.
     Gelukt: `source` is weg (verplaatst naar de blob-opslag, of weggegooid omdat die inhoud
     er al was). Mislukt: `source` staat er nog en de database is niet veranderd. Komt het van
-    een hervatbare upload, dan wordt die in dezelfde transactie afgerond."""
+    een hervatbare upload, dan wordt die in dezelfde transactie afgerond. Sluit eerst de
+    transactie van de aanroeper af (die mag niets openstaan hebben): wie op het slot wacht,
+    houdt geen databaseverbinding vast, anders kan wie het slot heeft er geen meer krijgen."""
     mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
     moved = False
+    await session.commit()
     async with blobs.lock:
         try:
             existing = await sibling(session, parent.id, name)
@@ -261,15 +264,18 @@ async def place_file(
             if upload is not None:
                 upload.node_id = node.id
             await session.flush()
+            node_id = node.id  # na een rollback is het object verlopen
             # Pas nu de schijf; wat hierna nog misgaat, draait give_back() terug
             moved = await blobs.adopt(source, sha)
             await session.commit()
         except BaseException:
             with anyio.CancelScope(shield=True):
                 await session.rollback()
-                # Terug waar het stond, tenzij de commit toch doorkwam (dan is er een rij)
+                # Terug waar het stond, tenzij de commit toch doorkwam (dan wijst dit bestand
+                # naar die inhoud). Niet op de blob-rij afgaan: die kan er al zijn geweest
+                # terwijl de inhoud op schijf ontbrak.
                 if moved and not await session.scalar(
-                    select(Blob.sha256).where(Blob.sha256 == sha)
+                    select(Node.id).where(Node.id == node_id, Node.blob_id == sha)
                 ):
                     await blobs.give_back(source, sha)
             raise
@@ -380,10 +386,12 @@ async def restore(node_id: uuid.UUID, user: CurrentUser, session: Session) -> No
 @router.delete("/trash/{node_id}", status_code=204)
 async def purge(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs: Store) -> None:
     """Definitief verwijderen, inclusief alles eronder."""
-    node = await get_node(session, user, node_id)
-    if node.deleted_at is None:
-        raise HTTPException(422, "Verplaats het eerst naar de prullenbak")
+    await session.commit()  # niet met een databaseverbinding op het slot wachten
     async with blobs.lock:
+        # Pas onder het slot lezen: intussen kan het al weg of teruggezet zijn
+        node = await get_node(session, user, node_id)
+        if node.deleted_at is None:
+            raise HTTPException(422, "Verplaats het eerst naar de prullenbak")
         for n in reversed(await descendants(session, node)):
             if n.blob_id:
                 await drop_ref(session, n.blob_id)
