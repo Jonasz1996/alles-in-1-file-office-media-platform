@@ -494,6 +494,48 @@ geoefend.
 Zie de sectie Apps: drie sporen die na fase 5 kunnen starten zodra de
 media-API stabiel is.
 
+### Fase 10 — Omzetten en bewerken (2 weken)
+
+Doel: wat [Tangerine](https://tangerineformac.com/) op de Mac doet, maar dan in de web-app
+en dus op elk apparaat: een bestand met een paar klikken omzetten naar een ander formaat of
+snel bewerken, zonder dat het het platform verlaat. Geen Mac-app installeren; het werk
+draait als job in de eigen container, net als de previews.
+
+Volgorde: staat los van de productie-poort na fase 8 en kan starten na fase 5 (ffmpeg en
+hardware-acceleratie) en fase 4 (office-conversie). Afbeeldingen, audio en archieven kunnen
+al eerder, want die hebben alleen de job-queue uit fase 2 nodig.
+
+- [ ] Omzet-engine als job (de eigen job-queue uit fase 2): per brontype de mogelijke
+  doelen; het resultaat komt als nieuw bestand naast het origineel, of als nieuwe versie
+  als je "vervangen" kiest; voortgang en klaar-melding via de live events
+
+- [ ] Afbeeldingen: jpg, png, webp, avif, heic, gif, bmp, tiff en ico onderling, en naar pdf
+
+- [ ] Audio: mp3, aac/m4a, flac, ogg/opus en wav onderling, met keuze voor kwaliteit
+
+- [ ] Video: mp4 (H.264, HEVC), webm, mkv, mov en gif; alleen het geluid eruit halen
+
+- [ ] Documenten: docx, odt, rtf, txt, md en html naar pdf en onderling; xlsx, ods en csv
+  onderling; pptx en odp naar pdf (via de office-conversie uit fase 4)
+
+- [ ] Archieven: inpakken als zip, tar.gz of 7z (meerdere bestanden of een map) en
+  uitpakken naar een map
+
+- [ ] Bewerktools: verkleinen, comprimeren (op kwaliteit of doelgrootte), draaien,
+  spiegelen, bijsnijden, metadata en GPS-locatie weghalen; pdf's samenvoegen, splitsen,
+  pagina's draaien en comprimeren; video en audio inkorten en het volume gelijk trekken
+
+- [ ] Bediening: "Omzetten naar…" en "Bewerken" in het actiemenu, op meerdere bestanden
+  tegelijk, en een bestand naar een doelformaat slepen; dezelfde acties via de API voor de
+  apps
+
+- [ ] Voorinstellingen voor wat vaak voorkomt, met één klik (bijv. "HEIC naar JPG",
+  "video kleiner voor WhatsApp", "foto's zonder locatie")
+
+Klaar als: elke omzetting uit de lijst heeft een test; 100 foto's omzetten loopt als één
+batch met voortgang; het origineel blijft ongewijzigd tenzij je "vervangen" kiest, en dan
+is het als versie terug te zetten.
+
 ### Preview-pipeline per bestandstype
 
 | Type          | Extensies                                                                           | Thumbnail en preview                                | Bekijken of bewerken                         |
@@ -635,3 +677,6 @@ planning in weken · 9 fasen, 3 mijlpalen, 3 app-sporen
 Drie mijlpalen gelden als poort: de failover-test na fase 1, de web-MVP
 na fase 3 en productie na fase 8; de app-sporen kunnen al na fase 5
 starten als er een tweede ontwikkelaar is.
+
+Fase 10 (omzetten en bewerken) kwam er later bij, op verzoek van Jonas. Ze staat los van
+de mijlpalen en kan na fase 5 starten, net als de app-sporen.
