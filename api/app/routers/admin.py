@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import func, select, text
 
-from app.certs import CertManager, HttpsConfig, save_config
+from app.certs import CertManager, HttpsConfig, TooSoon, save_config
 from app.cluster import ClusterStatus, Disk, NodeStatus, cluster_status
 from app.config import Settings, get_settings
 from app.db import Session
@@ -108,8 +108,11 @@ async def security_put(
 
 
 # Gewone hostnaam met minstens één punt; geen IP-adres (Let's Encrypt geeft daar geen
-# certificaat voor), geen wildcard.
-DOMAIN = re.compile(r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+# certificaat voor), geen wildcard. Het topdomein mag ook punycode zijn (xn--p1ai).
+DOMAIN = re.compile(
+    r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"([a-z]{2,63}|xn--[a-z0-9-]{0,58}[a-z0-9])$"
+)
 
 
 def get_certs(request: Request) -> CertManager:
@@ -149,6 +152,7 @@ class HttpsStatus(BaseModel):
     error: str | None
     active: bool
     serving: bool
+    listener_error: str | None
     cert_domain: str | None
     expires_at: datetime | None
     renew_at: datetime | None
@@ -166,7 +170,8 @@ async def https_status(_: AdminUser, certs: Certs) -> HttpsStatus:
 async def https_configure(
     body: HttpsIn, _: AdminUser, session: Session, certs: Certs
 ) -> HttpsStatus:
-    """Domein instellen; het certificaat wordt meteen aangevraagd. Leeg domein = alleen http."""
+    """Domein instellen; bij een nieuwe instelling wordt het certificaat meteen aangevraagd.
+    Leeg domein = alleen http."""
     config = HttpsConfig(domain=body.domain, email=body.email or "", staging=body.staging)
     await save_config(session, config)
     certs.configure(config)
@@ -175,8 +180,16 @@ async def https_configure(
 
 @router.post("/https/renew", status_code=202)
 async def https_renew(_: AdminUser, certs: Certs) -> HttpsStatus:
-    """Nu (opnieuw) proberen, bijvoorbeeld na het aanpassen van de router."""
+    """Nu (opnieuw) proberen, bijvoorbeeld na het aanpassen van de router. Niet tijdens
+    een lopende poging en hooguit eens per minuut (429, code too_soon)."""
     if not certs.config.domain:
         raise HTTPException(409, "Stel eerst een domein in")
-    certs.configure(certs.config)
+    try:
+        certs.retry_now()
+    except TooSoon as e:
+        raise HTTPException(
+            429,
+            {"message": str(e), "code": "too_soon"},
+            headers={"Retry-After": str(e.retry_after)},
+        ) from None
     return HttpsStatus(**certs.status())

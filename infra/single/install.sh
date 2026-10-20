@@ -111,6 +111,8 @@ fi
 ip=$(hostname -I | awk '{print $1}')
 url="http://$ip"
 [ "$PORT" = 80 ] || url="$url:$PORT"
+# Een .env van een oudere versie heeft nog geen HTTPS_PORT; compose.yaml neemt dan 443
+https_port=${HTTPS_PORT:-443}
 cat <<KLAAR
 
 Klaar. Het platform draait op $url
@@ -120,8 +122,11 @@ aan; doe dat voordat je de poort in je router openzet.
 
 Van buiten bereikbaar maken:
   1. Zet 2FA aan (klik rechtsboven op je naam).
-  2. Laat je domein naar je publieke IP-adres wijzen en stuur in je router
-     poort 80 en 443 door naar $ip.
+  2. Laat je domein naar je publieke IP-adres wijzen en stuur in je router door:
+       poort 80  -> $ip:$PORT
+       poort 443 -> $ip:$https_port
+     Buiten moeten het echt 80 en 443 zijn: Let's Encrypt controleert altijd via
+     poort 80, en http stuurt door naar https zonder poortnummer (dus 443).
   3. Vul op /beheer bij HTTPS je domein in; het certificaat komt vanzelf.
 
 Instellingen: $ENV_FILE

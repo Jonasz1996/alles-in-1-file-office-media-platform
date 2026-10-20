@@ -34,14 +34,22 @@ later in `/opt/platform/.env` (daarna het script opnieuw draaien).
 
 1. Zet 2FA aan: klik rechtsboven op je naam en volg de stappen.
 2. Laat je domein (bijv. `app.voorbeeld.nl`) met een A-record naar je publieke IP-adres
-   wijzen en stuur in je router poort **80 en 443** door naar de container.
+   wijzen en stuur in je router poort **80 en 443** door naar de container: publiek 80
+   naar `PORT` en publiek 443 naar `HTTPS_PORT` van de container (standaard ook 80 en 443;
+   zie `/opt/platform/.env`). Het installatiescript noemt aan het eind de juiste poorten.
 3. Vul op `/beheer` bij **HTTPS** het domein in en klik op Opslaan.
+
+Buiten moeten het echt poort 80 en 443 zijn, ook als je in de container andere poorten
+gebruikt: Let's Encrypt controleert het domein altijd via poort 80, en het doorsturen van
+`http://` naar `https://` gaat naar het domein zonder poortnummer, dus naar 443.
 
 Het platform vraagt dan zelf een certificaat aan bij Let's Encrypt en vernieuwt het op tijd;
 er hoeft niets herstart te worden. Lukt het niet, dan staat op `/beheer` waarom (meestal
-DNS of de router) en probeert het platform het later vanzelf opnieuw. Met **Testmodus**
-probeer je het eerst bij de test-omgeving van Let's Encrypt; browsers vertrouwen dat
-certificaat niet, maar je loopt dan niet tegen de limieten aan.
+DNS of de router) en probeert het platform het later vanzelf opnieuw. Gaat de https-poort
+niet open (bijvoorbeeld omdat een ander programma hem gebruikt), dan blijft http gewoon
+werken en staat ook dat op `/beheer`. Met **Testmodus** probeer je het eerst bij de
+test-omgeving van Let's Encrypt; browsers vertrouwen dat certificaat niet, maar je loopt
+dan niet tegen de limieten aan.
 
 Zodra https werkt, gaat `http://<domein>` vanzelf naar `https://`. Via het IP-adres in je LAN
 blijft http werken.
@@ -50,7 +58,7 @@ blijft http werken.
 
 | Onderdeel | Waar |
 |-----------|------|
-| Platform (web-app en API) | poort 80 (http) en 443 (https) van de container, in Docker 8080 en 8443 |
+| Platform (web-app en API) | poort `PORT` (http, standaard 80) en `HTTPS_PORT` (https, standaard 443) van de container, in Docker 8080 en 8443 |
 | Database (SQLite) | `/tank/platform/platform.db` |
 | Bestanden | `/tank/platform/blobs`, op inhoud opgeslagen en ontdubbeld |
 | Uploads die nog lopen | `/tank/platform/uploads` |

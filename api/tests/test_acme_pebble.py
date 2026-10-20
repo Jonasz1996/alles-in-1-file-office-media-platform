@@ -13,7 +13,7 @@ import ssl
 import httpx
 import pytest
 
-from app import serve
+from app import serve, totp
 from app.config import get_settings
 from app.main import app
 from tests.conftest import ADMIN
@@ -81,6 +81,15 @@ async def test_certificaat_aanvragen_en_https(tmp_path, monkeypatch):
             await wait_for(up, 20, "http start")
             tokens = (await c.post("/api/v1/auth/setup", json=ADMIN)).json()
             headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+            # Eerst 2FA aan, zoals een beheerder dat moet voordat /beheer werkt
+            setup = (await c.post("/api/v1/auth/2fa/setup", headers=headers)).json()
+            code = totp.code_at(setup["secret"], totp.current_step())
+            r = await c.post(
+                "/api/v1/auth/2fa/enable",
+                json={"code": code, "password": ADMIN["password"]},
+                headers=headers,
+            )
+            assert r.status_code == 200, r.text
             r = await c.put(
                 "/api/v1/admin/https",
                 json={"domain": DOMAIN, "email": "ci@example.com"},
@@ -94,7 +103,7 @@ async def test_certificaat_aanvragen_en_https(tmp_path, monkeypatch):
                 return status if status["active"] and status["serving"] else None
 
             status = await wait_for(issued, 90, "certificaat van Pebble")
-            assert status["cert_domain"] == DOMAIN
+            assert status["cert_domain"] == DOMAIN and status["listener_error"] is None
 
             async with httpx.AsyncClient(verify=ssl.create_default_context(cafile=CA)) as m:
                 root = (await m.get("https://localhost:15000/roots/0")).text

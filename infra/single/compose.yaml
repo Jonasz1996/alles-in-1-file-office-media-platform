@@ -10,6 +10,11 @@ services:
       dockerfile: Dockerfile
     image: platform:local
     restart: unless-stopped
+    # Elke open verbinding kost een file descriptor; Docker geeft standaard maar 1024
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     ports:
       - "${PORT:-80}:8080"
       - "${HTTPS_PORT:-443}:8443"

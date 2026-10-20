@@ -9,6 +9,7 @@ verbindingen krijgen het meteen, lopende verbindingen merken er niets van.
 import asyncio
 import json
 import logging
+import math
 import os
 import ssl
 from datetime import UTC, datetime, timedelta
@@ -38,6 +39,10 @@ SETTING_KEY = "https"
 CHECK_INTERVAL = 6 * 3600  # ook zonder aanleiding elke 6 uur kijken
 RETRY_START = 600  # na een fout eerst 10 minuten wachten, daarna steeds dubbel
 RETRY_MAX = 6 * 3600
+RETRY_AFTER_MAX = 7 * 24 * 3600  # langer laten wachten dan een week geloven we niet
+# "Nu opnieuw proberen" hooguit eens per minuut: elke mislukte controle telt mee voor de
+# limiet van Let's Encrypt (5 per uur per domein).
+MANUAL_RETRY = 60
 
 # Uitleg bij de fouten die je het vaakst ziet als het domein of de router nog niet klopt
 HINTS = {
@@ -50,6 +55,14 @@ HINTS = {
     "het later vanzelf opnieuw.",
     "rejectedIdentifier": "Let's Encrypt geeft voor dit domein geen certificaat.",
 }
+
+
+class TooSoon(Exception):
+    """Handmatig opnieuw proberen mag nu niet; retry_after = seconden tot het wel mag."""
+
+    def __init__(self, message: str, retry_after: int):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class HttpsConfig(BaseModel):
@@ -99,6 +112,15 @@ def _hint(error: Exception) -> str:
     return f"Onverwachte fout: {error}"
 
 
+def _in_words(seconds: int) -> str:
+    if seconds <= 90:
+        return "1 seconde" if seconds == 1 else f"{seconds} seconden"
+    minutes = math.ceil(seconds / 60)
+    if minutes <= 90:
+        return f"{minutes} minuten"
+    return f"{math.ceil(minutes / 60)} uur"
+
+
 class CertManager:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -117,9 +139,13 @@ class CertManager:
         self.next_check: datetime | None = None
         # Zet serve.py zodra de https-listener draait; pas dan sturen we http door.
         self.serving = False
+        # Zet serve.py als de https-poort niet open gaat (http draait dan gewoon door)
+        self.listener_error: str | None = None
         self.has_cert = asyncio.Event()
         self._wake = asyncio.Event()
         self._failures = 0
+        # Tot wanneer Let's Encrypt ons laat wachten (Retry-After bij rateLimited)
+        self._retry_not_before: datetime | None = None
         self._task: asyncio.Task | None = None
 
     @property
@@ -213,9 +239,38 @@ class CertManager:
                 pass
 
     def configure(self, config: HttpsConfig) -> None:
+        """Instelling van /beheer. Alleen als er echt iets verandert, begint de wachttijd na
+        fouten opnieuw en komt er meteen een poging (ook als er nog een loopt: die is
+        dan voor de oude instelling)."""
+        if config == self.config:
+            return
         self.config = config
         self._failures = 0
+        self._retry_not_before = None
         self.error = None
+        self.wake()
+
+    def retry_now(self) -> None:
+        """Knop "Nu opnieuw proberen" op /beheer, bijvoorbeeld na het aanpassen van de router.
+        Niet tijdens een lopende poging, hooguit eens per MANUAL_RETRY seconden en niet
+        voordat Let's Encrypt het weer toestaat. De wachttijd na fouten blijft staan."""
+        if self.state == "bezig":
+            raise TooSoon("Er loopt al een poging; wacht tot die klaar is.", MANUAL_RETRY)
+        now = datetime.now(UTC)
+        if self._retry_not_before is not None and self._retry_not_before > now:
+            seconds = math.ceil((self._retry_not_before - now).total_seconds())
+            raise TooSoon(
+                f"Let's Encrypt laat je nog wachten. Probeer het over {_in_words(seconds)} "
+                "opnieuw.",
+                seconds,
+            )
+        if self.last_attempt is not None:
+            seconds = math.ceil(MANUAL_RETRY - (now - self.last_attempt).total_seconds())
+            if seconds > 0:
+                raise TooSoon(
+                    f"Je probeerde het net nog. Probeer het over {_in_words(seconds)} opnieuw.",
+                    seconds,
+                )
         self.wake()
 
     def wake(self) -> None:
@@ -243,17 +298,28 @@ class CertManager:
             return max(60.0, min(CHECK_INTERVAL, until_renewal))
         self.state = "bezig"
         self.last_attempt = datetime.now(UTC)
+        config = self.config
         try:
             await self.obtain()
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - elke fout wordt getoond op /beheer
+            log.warning("Certificaat voor %s niet gekregen: %s", config.domain, e)
+            if self.config is not config:
+                # Tijdens de poging een nieuwe instelling: telt niet mee, meteen opnieuw
+                return 0
             self._failures += 1
             self.state = "fout"
             self.error = _hint(e)
-            log.warning("Certificaat voor %s niet gekregen: %s", self.config.domain, e)
-            return min(RETRY_MAX, RETRY_START * 2 ** (self._failures - 1))
+            delay = min(RETRY_MAX, RETRY_START * 2 ** (self._failures - 1))
+            if isinstance(e, AcmeError) and e.retry_after:
+                # Let's Encrypt zegt zelf wanneer het weer mag
+                wait = min(e.retry_after, RETRY_AFTER_MAX)
+                self._retry_not_before = datetime.now(UTC) + timedelta(seconds=wait)
+                delay = max(delay, wait)
+            return delay
         self._failures = 0
+        self._retry_not_before = None
         self.error = None
         self.state = "actief"
         log.info("Certificaat voor %s binnen, geldig tot %s", self.cert_domain, self.not_after)
@@ -291,6 +357,7 @@ class CertManager:
             "error": self.error,
             "active": self.active,
             "serving": self.serving,
+            "listener_error": self.listener_error,
             "cert_domain": self.cert_domain,
             "expires_at": self.not_after,
             "renew_at": self.renew_at,

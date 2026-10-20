@@ -11,6 +11,8 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 
 import httpx
 from cryptography import x509
@@ -28,9 +30,11 @@ log = logging.getLogger("platform.acme")
 class AcmeError(Exception):
     """Fout van de ACME-server, met de uitleg die die zelf meestuurt."""
 
-    def __init__(self, message: str, problem: dict | None = None):
+    def __init__(self, message: str, problem: dict | None = None, retry_after: float | None = None):
         super().__init__(message)
         self.problem = problem or {}
+        # Seconden die de server ons laat wachten (Retry-After, vooral bij rateLimited)
+        self.retry_after = retry_after
 
     @property
     def type(self) -> str:
@@ -83,9 +87,12 @@ def sign_es256(key: ec.EllipticCurvePrivateKey, data: bytes) -> bytes:
 
 
 def csr_der(domain: str, key: ec.EllipticCurvePrivateKey) -> bytes:
+    # Een CN mag hooguit 64 tekens zijn; Let's Encrypt kijkt alleen naar de SAN, dus
+    # bij een langer domein laten we de CN weg.
+    subject = [x509.NameAttribute(NameOID.COMMON_NAME, domain)] if len(domain) <= 64 else []
     csr = (
         x509.CertificateSigningRequestBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domain)]))
+        .subject_name(x509.Name(subject))
         .add_extension(x509.SubjectAlternativeName([x509.DNSName(domain)]), critical=False)
         .sign(key, hashes.SHA256())
     )
@@ -157,7 +164,7 @@ class AcmeClient:
             problem = _problem(r)
             if problem.get("type") == "urn:ietf:params:acme:error:badNonce" and attempt < 2:
                 continue
-            raise AcmeError(_describe(problem, r.status_code), problem)
+            raise AcmeError(_describe(problem, r.status_code), problem, _retry_after(r))
         raise AcmeError("De ACME-server bleef de nonce weigeren")
 
     async def register(self, email: str | None) -> str:
@@ -176,7 +183,8 @@ class AcmeClient:
             if status in done:
                 return body
             if status == "invalid":
-                raise AcmeError(_invalid_reason(body, what), body.get("error"))
+                problem = _invalid_problem(body)
+                raise AcmeError(_invalid_reason(problem, what), problem)
             if waited >= self.poll_timeout:
                 raise AcmeError(f"{what}: geen antwoord van Let's Encrypt binnen de tijd")
             await asyncio.sleep(self.poll_interval)
@@ -236,11 +244,27 @@ def _describe(problem: dict, status: int) -> str:
     return f"{detail} ({kind})" if kind else detail
 
 
-def _invalid_reason(body: dict, what: str) -> str:
+def _retry_after(r: httpx.Response) -> float | None:
+    """Retry-After in seconden; de server mag ook een datum sturen."""
+    value = r.headers.get("Retry-After", "").strip()
+    if not value:
+        return None
+    if value.isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - datetime.now(UTC)).total_seconds())
+
+
+def _invalid_problem(body: dict) -> dict | None:
     """Zoekt de echte reden op: die staat bij de mislukte challenge, niet bij de authz."""
     errors = [c["error"] for c in body.get("challenges", []) if c.get("error")]
-    if body.get("error"):
-        errors.append(body["error"])
-    if errors:
-        return f"{what} mislukt: {_describe(errors[0], 400)}"
-    return f"{what} mislukt"
+    return errors[0] if errors else body.get("error")
+
+
+def _invalid_reason(problem: dict | None, what: str) -> str:
+    return f"{what} mislukt: {_describe(problem, 400)}" if problem else f"{what} mislukt"
