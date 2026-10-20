@@ -24,7 +24,7 @@ Vereist: [uv](https://docs.astral.sh/uv/), Node 22 en Docker.
 
 ```bash
 # API op http://localhost:8000 (docs op /api/docs), data in api/data
-cd api && uv sync && uv run uvicorn app.main:app --reload
+cd api && uv sync && uv run uvicorn app.main:app --reload --port 8000
 
 # Web-app met hot reload op http://localhost:5173, praat via een proxy met de API
 cd web && npm install && npm run dev
@@ -35,7 +35,8 @@ docker compose up --build
 
 Bij het eerste bezoek maak je het beheerdersaccount aan.
 
-Tests: `cd api && uv run pytest` en `cd web && npm test`.
+Tests: `cd api && uv run pytest` en `cd web && npm test`. De HTTPS-test tegen Pebble (de
+test-CA van Let's Encrypt) heeft Go nodig: `cd api && eval "$(tests/pebble/start.sh)" && uv run pytest tests/test_acme_pebble.py`.
 
 ## Voortgang
 
@@ -43,7 +44,7 @@ Tests: `cd api && uv run pytest` en `cd web && npm test`.
 |------|-----------|--------|
 | 0 | Kaders: beslissingen, monorepo, CI-skelet | klaar op de inventaris na, zie [docs/fase-0](docs/fase-0/beslissingen.md) |
 | 1 | Infrastructuur (3 nodes, failover) | deel 1 klaar om uit te rollen, zie [infra/README.md](infra/README.md) |
-| 2 | Core backend | deel 1 klaar: standalone app met login, bestanden, prullenbak en beheer, zie [docs/fase-2](docs/fase-2/README.md) |
+| 2 | Core backend | deel 1 en 2 klaar: standalone app met login, 2FA, bestanden, hervatbare uploads, HTTPS en beheer, zie [docs/fase-2](docs/fase-2/README.md) |
 | 3 | Web-app | basis staat (inloggen, bestandsbrowser, beheer) |
 | 4 | Office | |
 | 5 | Media en streaming | |

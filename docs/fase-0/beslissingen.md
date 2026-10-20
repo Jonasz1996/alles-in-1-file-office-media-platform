@@ -16,11 +16,12 @@ Pas na een keuze de status aan en schrijf in één zin waarom.
 | B8 | Frontend | React 19 + TypeScript + Vite, hergebruikt door webOS en Tauri | besloten (skelet staat in `/web`) |
 | B9 | Rol van cluster-forge | Vervalt (geen Kubernetes) | besloten |
 | B10 | Projectnaam en domein | nog te kiezen; werknaam "platform" | open |
-| B11 | Edge | Geen Traefik in de eerste versie: de app serveert zelf web-app en API op één poort en zet zelf de security-headers; login heeft eigen rate limiting. HTTPS voor toegang van buiten bouwen we in de app zelf (Let's Encrypt). Voor het cluster bekijken we het opnieuw; de Ansible-rol heeft Traefik nog. | besloten voor één node (Jonas, 2026-10-20) |
+| B11 | Edge | Geen Traefik: de app serveert zelf web-app en API, zet zelf de security-headers en doet zelf HTTPS. Een eigen ACME-client vraagt het certificaat aan bij Let's Encrypt (HTTP-01) en vernieuwt het; het domein stel je in op `/beheer`. Login en 2FA hebben eigen rate limiting. Voor het cluster bekijken we het opnieuw; de Ansible-rol heeft Traefik nog. | besloten voor één node (Jonas, 2026-10-20) |
 | B12 | Database | PostgreSQL 17 met Patroni en etcd (3 nodes), synchronous_mode_strict: RPO 0. Geen HAProxy of PgBouncer: de API verbindt met alle 3 nodes en kiest zelf de primary (target_session_attrs). Backups met pgBackRest volgen in fase 1 deel 2. | standaard gekozen |
 | B13 | Virtualisatie | Alleen LXC-containers op Proxmox, geen VM's; unprivileged, met nesting en keyctl voor Docker. De 700 GB is een mount point op de ZFS-opslag van de host. | besloten (Jonas, 2026-10-20) |
 | B14 | Bestaande tools | Zo weinig mogelijk kant-en-klare tools; wat het platform specifiek nodig heeft bouwen we zelf. Hergebruikt worden alleen onderdelen die we niet kunnen winnen: PostgreSQL + Patroni + etcd, SeaweedFS, Traefik, keepalived, en later OnlyOffice en ffmpeg. Beheer en monitoring zitten in de eigen web-app (`/beheer`); geen Portainer, Grafana of Prometheus. | besloten (Jonas, 2026-10-20) |
 | B15 | Standalone app | Het platform werkt als één container zonder andere diensten: SQLite en bestanden (content-addressed, met ontdubbeling) in `/data`. PostgreSQL en SeaweedFS komen pas met het cluster; de code is daar al op voorbereid (`PLATFORM_DATABASE_URL`, `PLATFORM_MODE=cluster`). | besloten (Jonas, 2026-10-20) |
+| B16 | 2FA en uploads | TOTP (RFC 6238) en het tus-protocol voor hervatbare uploads bouwen we zelf; geen Keycloak of tusd. Voor de QR-code gebruiken we de kleine bibliotheek segno (geen eigen QR-encoder), voor certificaten en sleutels `cryptography`. | standaard gekozen |
 
 ## Vastgelegd in deze fase
 

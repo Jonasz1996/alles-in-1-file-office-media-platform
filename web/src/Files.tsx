@@ -1,10 +1,12 @@
 import { type DragEvent, useCallback, useEffect, useRef, useState } from "react";
-import { api, type FileNode, formatBytes, formatDate, type Listing } from "./api";
+import { ApiError, api, type FileNode, formatBytes, formatDate, type Listing } from "./api";
 import { navigate } from "./router";
+import { uploadFile } from "./upload";
 
 interface UploadItem {
   key: string;
-  name: string;
+  file: File;
+  parent: string;
   progress: number;
   error?: string;
 }
@@ -40,21 +42,38 @@ export function Files({ folderId }: { folderId: string | null }) {
     }
   }
 
+  const controllers = useRef(new Map<string, AbortController>());
+
+  async function runUpload(item: UploadItem) {
+    const controller = new AbortController();
+    controllers.current.set(item.key, controller);
+    const update = (change: Partial<UploadItem>) =>
+      setUploads((u) => u.map((x) => (x.key === item.key ? { ...x, ...change } : x)));
+    update({ error: undefined });
+    try {
+      await uploadFile(api, item.parent, item.file, (progress) => update({ progress }), {
+        signal: controller.signal,
+      });
+      setUploads((u) => u.filter((x) => x.key !== item.key));
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "aborted") setUploads((u) => u.filter((x) => x.key !== item.key));
+      else update({ error: (e as Error).message });
+    } finally {
+      controllers.current.delete(item.key);
+    }
+    await load();
+  }
+
   async function uploadFiles(files: FileList | File[]) {
     if (!current) return;
-    for (const file of Array.from(files)) {
-      const key = `${file.name}-${crypto.randomUUID()}`;
-      setUploads((u) => [...u, { key, name: file.name, progress: 0 }]);
-      try {
-        await api.upload(current, file, (p) =>
-          setUploads((u) => u.map((x) => (x.key === key ? { ...x, progress: p } : x))),
-        );
-        setUploads((u) => u.filter((x) => x.key !== key));
-      } catch (e) {
-        setUploads((u) => u.map((x) => (x.key === key ? { ...x, error: (e as Error).message } : x)));
-      }
-      await load();
-    }
+    const items = Array.from(files).map((file) => ({
+      key: `${file.name}-${crypto.randomUUID()}`,
+      file,
+      parent: current,
+      progress: 0,
+    }));
+    setUploads((u) => [...u, ...items]);
+    for (const item of items) await runUpload(item);
   }
 
   function onDrop(e: DragEvent) {
@@ -134,11 +153,27 @@ export function Files({ folderId }: { folderId: string | null }) {
         <ul className="uploads">
           {uploads.map((u) => (
             <li key={u.key}>
-              {u.name}{" "}
+              <span className="upload-name">{u.file.name}</span>
               {u.error ? (
-                <span role="alert">{u.error}</span>
+                <>
+                  <span role="alert">{u.error}</span>
+                  <button type="button" onClick={() => runUpload(u)}>
+                    Opnieuw proberen
+                  </button>
+                  <button type="button" onClick={() => setUploads((x) => x.filter((y) => y.key !== u.key))}>
+                    Sluiten
+                  </button>
+                </>
               ) : (
-                <progress max={1} value={u.progress} />
+                <>
+                  <progress max={1} value={u.progress} />
+                  <span className="muted">{Math.floor(u.progress * 100)} %</span>
+                  {controllers.current.has(u.key) && (
+                    <button type="button" onClick={() => controllers.current.get(u.key)?.abort()}>
+                      Annuleren
+                    </button>
+                  )}
+                </>
               )}
             </li>
           ))}

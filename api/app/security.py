@@ -110,6 +110,8 @@ class RateLimiter:
 
     def check(self, key: str) -> None:
         now = time.monotonic()
+        if len(self._hits) > 10_000:
+            self.prune()
         hits = self._hits[key]
         while hits and now - hits[0] > self.window:
             hits.popleft()
@@ -120,8 +122,18 @@ class RateLimiter:
     def reset(self) -> None:
         self._hits.clear()
 
+    def prune(self) -> None:
+        """Vergeet sleutels zonder recente pogingen, zodat het geheugen niet groeit."""
+        now = time.monotonic()
+        for key in [
+            k for k, hits in self._hits.items() if not hits or now - hits[-1] > self.window
+        ]:
+            del self._hits[key]
+
 
 login_limiter = RateLimiter(limit=10, window_seconds=300)
+# Per gebruiker, zodat 2FA-codes ook vanaf veel IP-adressen niet te raden zijn
+totp_limiter = RateLimiter(limit=10, window_seconds=300)
 
 
 def client_ip(request: Request) -> str:

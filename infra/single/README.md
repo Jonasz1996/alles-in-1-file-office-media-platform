@@ -30,16 +30,31 @@ anders je voor zijn.
 Een andere poort kiezen kan bij de eerste installatie met `PORT=8080 bash install.sh`, of
 later in `/opt/platform/.env` (daarna het script opnieuw draaien).
 
-Er is nog geen HTTPS. Gebruik het voorlopig alleen in je LAN; HTTPS met Let's Encrypt komt
-in de app zelf.
+## Van buiten bereikbaar maken (HTTPS)
+
+1. Zet 2FA aan: klik rechtsboven op je naam en volg de stappen.
+2. Laat je domein (bijv. `app.voorbeeld.nl`) met een A-record naar je publieke IP-adres
+   wijzen en stuur in je router poort **80 en 443** door naar de container.
+3. Vul op `/beheer` bij **HTTPS** het domein in en klik op Opslaan.
+
+Het platform vraagt dan zelf een certificaat aan bij Let's Encrypt en vernieuwt het op tijd;
+er hoeft niets herstart te worden. Lukt het niet, dan staat op `/beheer` waarom (meestal
+DNS of de router) en probeert het platform het later vanzelf opnieuw. Met **Testmodus**
+probeer je het eerst bij de test-omgeving van Let's Encrypt; browsers vertrouwen dat
+certificaat niet, maar je loopt dan niet tegen de limieten aan.
+
+Zodra https werkt, gaat `http://<domein>` vanzelf naar `https://`. Via het IP-adres in je LAN
+blijft http werken.
 
 ## Wat er draait
 
 | Onderdeel | Waar |
 |-----------|------|
-| Platform (web-app en API) | poort 80 van de container, in Docker poort 8080 |
+| Platform (web-app en API) | poort 80 (http) en 443 (https) van de container, in Docker 8080 en 8443 |
 | Database (SQLite) | `/tank/platform/platform.db` |
 | Bestanden | `/tank/platform/blobs`, op inhoud opgeslagen en ontdubbeld |
+| Uploads die nog lopen | `/tank/platform/uploads` |
+| Certificaten | `/tank/platform/tls` |
 | Instellingen | `/opt/platform/.env` |
 
 Bijwerken: draai het installatiescript opnieuw. Had je de eerste versie met Traefik,

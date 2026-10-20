@@ -25,6 +25,33 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest -q
 
+  acme:
+    name: HTTPS (certificaat van Pebble, de test-CA van Let's Encrypt)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - name: Pebble starten en certificaat aanvragen
+        run: |
+          eval "$(tests/pebble/start.sh)"
+          test -n "$PEBBLE_DIRECTORY"
+          # Overgeslagen telt als mislukt: deze job bestaat juist voor deze test
+          uv run pytest -q tests/test_acme_pebble.py -rs | tee "$RUNNER_TEMP/pytest.txt"
+          grep -q "1 passed" "$RUNNER_TEMP/pytest.txt"
+      - name: Logs van Pebble
+        if: failure()
+        run: cat "${TMPDIR:-/tmp}/pebble/pebble.log" || true
+
   web:
     name: Web (typecheck, tests en build)
     runs-on: ubuntu-latest
@@ -52,7 +79,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ansible ansible-lint yamllint shellcheck-py
-      - run: shellcheck infra/single/install.sh infra/scripts/*.sh
+      - run: shellcheck infra/single/install.sh infra/scripts/*.sh api/tests/pebble/start.sh
       - run: yamllint -s .
       - name: Ansible lint
         working-directory: infra/ansible

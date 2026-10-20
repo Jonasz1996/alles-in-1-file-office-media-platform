@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import Session
-from app.models import Blob, Node, User
+from app.models import Blob, Node, Upload, User
 from app.routers.auth import used_bytes
 from app.security import CurrentUser, download_token, read_download_token
 from app.storage import BlobStore, TooLarge
@@ -170,35 +170,37 @@ async def new_folder(
     return NodeOut.model_validate(folder)
 
 
-@router.put("/files/{node_id}/upload", status_code=201)
-async def upload(
-    node_id: uuid.UUID,
-    request: Request,
-    user: CurrentUser,
-    session: Session,
-    blobs: Store,
-    settings: Annotated[Settings, Depends(get_settings)],
-    name: Annotated[str, Query(min_length=1, max_length=255)],
-    conflict: Literal["rename", "replace", "fail"] = "rename",
-    content_length: Annotated[int | None, Header()] = None,
-) -> NodeOut:
-    """Uploadt de request-body als bestand `name` in map `node_id`.
-    Dezelfde inhoud wordt maar één keer opgeslagen (SHA-256)."""
-    parent = await get_dir(session, user, node_id)
-    name = clean_name(name)
-    limit = settings.max_upload_bytes
-    if user.quota_bytes:
-        room = user.quota_bytes - await used_bytes(session, user.id)
-        if content_length is not None and content_length > room:
-            raise HTTPException(413, "Onvoldoende quotum")
-        limit = min(limit, room) if limit else room
-    if content_length is not None and limit and content_length > limit:
-        raise HTTPException(413, "Bestand is te groot")
-    try:
-        sha, size = await blobs.put(request.stream(), limit)
-    except TooLarge as e:
-        raise HTTPException(413, "Bestand is te groot of quotum is op") from e
+async def room_left(
+    session: AsyncSession, user: User, exclude_upload: uuid.UUID | None = None
+) -> int | None:
+    """Hoeveel bytes de gebruiker nog mag opslaan, of None bij onbeperkt. Lopende
+    hervatbare uploads tellen al mee, zodat twee uploads samen niet over het quotum gaan."""
+    if not user.quota_bytes:
+        return None
+    query = select(func.coalesce(func.sum(Upload.size), 0)).where(
+        Upload.owner_id == user.id, Upload.node_id.is_(None)
+    )
+    if exclude_upload:
+        query = query.where(Upload.id != exclude_upload)
+    reserved = await session.scalar(query)
+    return max(0, user.quota_bytes - await used_bytes(session, user.id) - int(reserved or 0))
 
+
+async def place_file(
+    session: AsyncSession,
+    blobs: BlobStore,
+    user: User,
+    parent: Node,
+    name: str,
+    conflict: str,
+    sha: str,
+    size: int,
+    upload: Upload | None = None,
+) -> Node:
+    """Zet opgeslagen inhoud (blob `sha`) als bestand `name` in map `parent`.
+    conflict: rename = nieuwe naam als het al bestaat, replace = vervangen, fail = 409.
+    Komt het van een hervatbare upload, dan wordt die in dezelfde transactie afgerond
+    (of bij een conflict verwijderd)."""
     blob = await session.get(Blob, sha)
     if blob is None:
         blob = Blob(sha256=sha, size=size, ref_count=0)
@@ -209,7 +211,10 @@ async def upload(
     existing = await sibling(session, parent.id, name)
     if existing and conflict == "fail":
         blob.ref_count -= 1
+        if upload is not None:
+            await session.delete(upload)
         await session.commit()
+        await collect_garbage(session, blobs)
         raise HTTPException(409, "Er bestaat al iets met deze naam")
     if existing and conflict == "replace" and existing.kind == "file":
         old = await session.get(Blob, existing.blob_id) if existing.blob_id else None
@@ -231,8 +236,46 @@ async def upload(
             blob_id=sha,
         )
         session.add(node)
+    if upload is not None:
+        await session.flush()
+        upload.node_id = node.id
     await session.commit()
     await collect_garbage(session, blobs)
+    return node
+
+
+@router.put("/files/{node_id}/upload", status_code=201)
+async def upload(
+    node_id: uuid.UUID,
+    request: Request,
+    user: CurrentUser,
+    session: Session,
+    blobs: Store,
+    settings: Annotated[Settings, Depends(get_settings)],
+    name: Annotated[str, Query(min_length=1, max_length=255)],
+    conflict: Literal["rename", "replace", "fail"] = "rename",
+    content_length: Annotated[int | None, Header()] = None,
+) -> NodeOut:
+    """Uploadt de request-body in één keer als bestand `name` in map `node_id`.
+    Voor grote bestanden is /api/v1/tus (hervatbaar) beter.
+    Dezelfde inhoud wordt maar één keer opgeslagen (SHA-256)."""
+    parent = await get_dir(session, user, node_id)
+    name = clean_name(name)
+    limit = settings.max_upload_bytes
+    room = await room_left(session, user)
+    if room is not None:
+        if content_length is not None and content_length > room:
+            raise HTTPException(413, "Onvoldoende quotum")
+        limit = min(limit, room) if limit else room
+        if limit == 0 and content_length != 0:  # 0 betekent voor put() onbeperkt
+            raise HTTPException(413, "Onvoldoende quotum")
+    if content_length is not None and limit and content_length > limit:
+        raise HTTPException(413, "Bestand is te groot")
+    try:
+        sha, size = await blobs.put(request.stream(), limit)
+    except TooLarge as e:
+        raise HTTPException(413, "Bestand is te groot of quotum is op") from e
+    node = await place_file(session, blobs, user, parent, name, conflict, sha, size)
     return NodeOut.model_validate(node)
 
 

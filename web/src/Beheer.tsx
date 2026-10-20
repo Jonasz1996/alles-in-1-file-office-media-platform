@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { api, formatBytes, type SystemStatus, type User } from "./api";
+import { api, formatBytes, formatDate, type HttpsStatus, type SystemStatus, type User } from "./api";
 
 const CHECK_LABELS: Record<string, string> = {
   database: "Database",
@@ -13,16 +13,18 @@ const CHECK_LABELS: Record<string, string> = {
 };
 const STATUS_LABELS = { ok: "Alles in orde", degraded: "Beperkt", down: "Storing" };
 
-export function Beheer() {
+export function Beheer({ currentUser }: { currentUser: User }) {
   const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [https, setHttps] = useState<HttpsStatus | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [s, u] = await Promise.all([api.adminStatus(), api.users()]);
+      const [s, u, h] = await Promise.all([api.adminStatus(), api.users(), api.httpsStatus()]);
       setStatus(s);
       setUsers(u);
+      setHttps(h);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -90,6 +92,8 @@ export function Beheer() {
         </section>
       )}
 
+      {https && <Https status={https} onChange={setHttps} />}
+
       <section>
         <h2>Gebruikers</h2>
         <div className="table-wrap">
@@ -101,6 +105,7 @@ export function Beheer() {
                 <th>Rol</th>
                 <th>Gebruikt</th>
                 <th>Quotum</th>
+                <th>2FA</th>
               </tr>
             </thead>
             <tbody>
@@ -111,6 +116,28 @@ export function Beheer() {
                   <td>{u.role}</td>
                   <td>{formatBytes(u.used_bytes)}</td>
                   <td>{u.quota_bytes ? formatBytes(u.quota_bytes) : "onbeperkt"}</td>
+                  <td>
+                    {u.totp_enabled ? "aan" : "uit"}
+                    {u.totp_enabled && u.id !== currentUser.id && (
+                      <>
+                        {" "}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!window.confirm(`2FA uitzetten voor ${u.display_name}?`)) return;
+                            try {
+                              await api.resetTotp(u.id);
+                              await load();
+                            } catch (e) {
+                              setError((e as Error).message);
+                            }
+                          }}
+                        >
+                          Uitzetten
+                        </button>
+                      </>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -164,5 +191,109 @@ function NewUser({ onCreated }: { onCreated: () => void }) {
       <button type="submit">Toevoegen</button>
       {error && <p role="alert">{error}</p>}
     </form>
+  );
+}
+
+const HTTPS_STATE: Record<HttpsStatus["state"], { label: string; badge: string }> = {
+  uit: { label: "Uit: alleen http", badge: "degraded" },
+  bezig: { label: "Certificaat wordt aangevraagd…", badge: "degraded" },
+  actief: { label: "Actief", badge: "ok" },
+  fout: { label: "Aanvragen mislukt", badge: "down" },
+};
+
+function Https({ status, onChange }: { status: HttpsStatus; onChange: (s: HttpsStatus) => void }) {
+  const [form, setForm] = useState({ domain: status.domain, email: status.email, staging: status.staging });
+  const [editing, setEditing] = useState(!status.domain);
+  const [error, setError] = useState<string | null>(null);
+  const state = HTTPS_STATE[status.state];
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    try {
+      onChange(await api.httpsConfigure(form));
+      setEditing(false);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function retry() {
+    try {
+      onChange(await api.httpsRenew());
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  return (
+    <section>
+      <h2>
+        HTTPS: <span className={`badge ${state.badge}`}>{state.label}</span>
+      </h2>
+      {status.domain && (
+        <p>
+          Domein <strong>{status.domain}</strong>
+          {status.staging && " (testmodus: browsers vertrouwen dit certificaat niet)"}
+          {status.active && status.expires_at && <>; certificaat geldig tot {formatDate(status.expires_at)}</>}
+          {status.active && status.renew_at && <>, wordt vanaf {formatDate(status.renew_at)} vanzelf vernieuwd</>}.
+          {status.active && !status.serving && " De https-poort start zo."}
+        </p>
+      )}
+      {status.error && <p role="alert">{status.error}</p>}
+      {status.state === "fout" && status.next_check && (
+        <p className="muted">Volgende poging om {formatDate(status.next_check)}.</p>
+      )}
+      {editing ? (
+        <form className="stack" onSubmit={save}>
+          <p className="muted">
+            Laat het domein (bijv. een A-record) naar je publieke IP-adres wijzen en stuur in je router poort 80 en
+            443 door naar deze container. Daarna vraagt het platform zelf een certificaat aan bij Let&apos;s Encrypt
+            en vernieuwt het op tijd. Leeg laten = alleen http in je LAN.
+          </p>
+          <label>
+            Domein
+            <input
+              placeholder="app.voorbeeld.nl"
+              value={form.domain}
+              onChange={(e) => setForm({ ...form, domain: e.target.value })}
+            />
+          </label>
+          <label>
+            E-mailadres voor Let&apos;s Encrypt (optioneel)
+            <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={form.staging}
+              onChange={(e) => setForm({ ...form, staging: e.target.checked })}
+            />
+            Testmodus: eerst proberen bij de test-omgeving van Let&apos;s Encrypt
+          </label>
+          <div className="toolbar">
+            <button type="submit">Opslaan</button>
+            {status.domain && (
+              <button type="button" onClick={() => setEditing(false)}>
+                Annuleren
+              </button>
+            )}
+          </div>
+          {error && <p role="alert">{error}</p>}
+        </form>
+      ) : (
+        <div className="toolbar">
+          <button type="button" onClick={() => setEditing(true)}>
+            Wijzigen
+          </button>
+          {status.state === "fout" && (
+            <button type="button" onClick={retry}>
+              Nu opnieuw proberen
+            </button>
+          )}
+          {error && <p role="alert">{error}</p>}
+        </div>
+      )}
+    </section>
   );
 }

@@ -1,11 +1,11 @@
 [project]
 name = "platform-api"
-version = "0.2.0"
+version = "0.3.0"
 description = "Kern-API van het alles-in-één file/office/media-platform"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
+    "uvicorn[standard]>=0.54",
     "pydantic-settings>=2.4",
     "httpx>=0.27",
     "sqlalchemy[asyncio]>=2.0",
@@ -16,6 +16,8 @@ dependencies = [
     "pyjwt>=2.15.1",
     "python-multipart>=0.0.32",
     "pydantic[email]>=2.14.1",
+    "cryptography>=46",
+    "segno>=1.6",
 ]
 
 [dependency-groups]

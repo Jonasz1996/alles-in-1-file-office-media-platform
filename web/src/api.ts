@@ -9,6 +9,7 @@ export interface User {
   quota_bytes: number;
   used_bytes: number;
   root_id: string;
+  totp_enabled: boolean;
 }
 
 export interface Tokens {
@@ -56,13 +57,58 @@ export interface SystemStatus {
   logical_bytes: number;
 }
 
+export interface HttpsStatus {
+  domain: string;
+  email: string;
+  staging: boolean;
+  state: "uit" | "bezig" | "actief" | "fout";
+  error: string | null;
+  active: boolean;
+  serving: boolean;
+  cert_domain: string | null;
+  expires_at: string | null;
+  renew_at: string | null;
+  last_attempt: string | null;
+  next_check: string | null;
+}
+
+export interface TotpSetup {
+  secret: string;
+  uri: string;
+  /** data-URI met de QR-code */
+  qr: string;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Machineleesbare reden, bijv. "totp_required" bij inloggen met 2FA. */
+    public code?: string,
   ) {
     super(message);
   }
+}
+
+/** Leest {"detail": "..."} of {"detail": {"message": "...", "code": "..."}} uit een fout. */
+export function errorFromBody(status: number, body: unknown): ApiError {
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (typeof detail === "string") return new ApiError(status, detail);
+  if (detail && typeof detail === "object" && "message" in detail) {
+    const d = detail as { message: string; code?: string };
+    return new ApiError(status, d.message, d.code);
+  }
+  if (Array.isArray(detail) && detail[0]?.msg) return new ApiError(status, String(detail[0].msg));
+  return new ApiError(status, `Fout ${status}`);
+}
+
+const TUS = { "Tus-Resumable": "1.0.0" };
+
+/** tus Upload-Metadata: sleutel en base64 van de UTF-8-waarde, gescheiden door komma's. */
+export function tusMetadata(values: Record<string, string>): string {
+  return Object.entries(values)
+    .map(([k, v]) => `${k} ${btoa(String.fromCharCode(...new TextEncoder().encode(v)))}`)
+    .join(",");
 }
 
 type Fetch = typeof fetch;
@@ -77,26 +123,33 @@ export class Api {
     return this.token !== null;
   }
 
+  /** Het huidige access-token, voor verzoeken die niet via fetch gaan (uploads). */
+  get accessToken(): string | null {
+    return this.token;
+  }
+
   private async raw(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
     const headers = new Headers(init.headers);
+    const hadToken = this.token !== null;
     if (this.token) headers.set("Authorization", `Bearer ${this.token}`);
     const res = await this.fetchFn(path, { ...init, headers, credentials: "same-origin" });
     if (res.status === 401 && retry && this.token && (await this.refresh())) {
       return this.raw(path, init, false);
     }
     if (!res.ok) {
-      let detail = `Fout ${res.status}`;
+      let body: unknown = null;
       try {
-        const body = await res.json();
-        if (typeof body.detail === "string") detail = body.detail;
+        body = await res.json();
       } catch {
         /* geen JSON */
       }
-      if (res.status === 401) {
+      // Een 401 terwijl we ingelogd waren (en verversen niet hielp): sessie is voorbij.
+      // Bij een mislukte login (nog geen token) is er niets om uit te loggen.
+      if (res.status === 401 && hadToken) {
         this.token = null;
         this.onLoggedOut();
       }
-      throw new ApiError(res.status, detail);
+      throw errorFromBody(res.status, body);
     }
     return res;
   }
@@ -136,13 +189,23 @@ export class Api {
     (await this.json<{ setup_required: boolean }>("/api/v1/auth/status")).setup_required;
   setup = async (email: string, display_name: string, password: string) =>
     this.accept(await this.send<Tokens>("POST", "/api/v1/auth/setup", { email, display_name, password }));
-  login = async (email: string, password: string) =>
-    this.accept(await this.send<Tokens>("POST", "/api/v1/auth/login", { email, password }));
+  /** code: uit de authenticator-app of een herstelcode, als 2FA aan staat. */
+  login = async (email: string, password: string, code?: string) =>
+    this.accept(await this.send<Tokens>("POST", "/api/v1/auth/login", { email, password, code }));
   async logout(): Promise<void> {
     await this.send("POST", "/api/v1/auth/logout").catch(() => {});
     this.token = null;
   }
   me = () => this.json<User>("/api/v1/auth/me");
+
+  totpSetup = () => this.send<TotpSetup>("POST", "/api/v1/auth/2fa/setup");
+  totpEnable = async (code: string) =>
+    (await this.send<{ recovery_codes: string[] }>("POST", "/api/v1/auth/2fa/enable", { code })).recovery_codes;
+  totpRecoveryCodes = async (code: string) =>
+    (await this.send<{ recovery_codes: string[] }>("POST", "/api/v1/auth/2fa/recovery-codes", { code }))
+      .recovery_codes;
+  totpDisable = (password: string, code: string) =>
+    this.send<void>("POST", "/api/v1/auth/2fa/disable", { password, code });
 
   root = () => this.json<Listing>("/api/v1/files/root");
   children = (id: string) => this.json<Listing>(`/api/v1/files/${id}/children`);
@@ -163,30 +226,30 @@ export class Api {
   users = () => this.json<User[]>("/api/v1/users");
   addUser = (u: { email: string; display_name: string; password: string; role: string; quota_bytes: number }) =>
     this.send<User>("POST", "/api/v1/users", u);
+  resetTotp = (userId: string) => this.send<void>("DELETE", `/api/v1/users/${userId}/2fa`);
+  httpsStatus = () => this.json<HttpsStatus>("/api/v1/admin/https");
+  httpsConfigure = (config: { domain: string; email: string; staging: boolean }) =>
+    this.send<HttpsStatus>("PUT", "/api/v1/admin/https", config);
+  httpsRenew = () => this.send<HttpsStatus>("POST", "/api/v1/admin/https/renew");
 
-  /** Uploadt één bestand met voortgang (XMLHttpRequest, want fetch meldt geen uploadvoortgang). */
-  upload(parent: string, file: File, onProgress: (fraction: number) => void): Promise<FileNode> {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("PUT", `/api/v1/files/${parent}/upload?name=${encodeURIComponent(file.name)}`);
-      if (this.token) xhr.setRequestHeader("Authorization", `Bearer ${this.token}`);
-      xhr.setRequestHeader("Content-Type", "application/octet-stream");
-      xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
-        else {
-          let detail = `Fout ${xhr.status}`;
-          try {
-            detail = JSON.parse(xhr.responseText).detail ?? detail;
-          } catch {
-            /* geen JSON */
-          }
-          reject(new ApiError(xhr.status, detail));
-        }
-      };
-      xhr.onerror = () => reject(new ApiError(0, "Netwerkfout"));
-      xhr.send(file);
+  /** Maakt een hervatbare upload (tus) aan; geeft de URL om naartoe te sturen. Bij een leeg
+   * bestand is het meteen klaar en komt nodeId terug. */
+  async tusCreate(parent: string, name: string, size: number): Promise<{ url: string; nodeId: string | null }> {
+    const res = await this.raw("/api/v1/tus", {
+      method: "POST",
+      headers: { ...TUS, "Upload-Length": String(size), "Upload-Metadata": tusMetadata({ filename: name, parent }) },
     });
+    const url = res.headers.get("Location");
+    if (!url) throw new ApiError(res.status, "Geen Location in het antwoord");
+    return { url, nodeId: res.headers.get("Platform-Node-Id") };
+  }
+  /** Hoeveel bytes de server al heeft, en het bestand als de upload al klaar is. */
+  async tusStatus(url: string): Promise<{ offset: number; nodeId: string | null }> {
+    const res = await this.raw(url, { method: "HEAD", headers: TUS });
+    return { offset: Number(res.headers.get("Upload-Offset") ?? 0), nodeId: res.headers.get("Platform-Node-Id") };
+  }
+  async tusCancel(url: string): Promise<void> {
+    await this.raw(url, { method: "DELETE", headers: TUS });
   }
 }
 

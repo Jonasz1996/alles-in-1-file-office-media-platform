@@ -25,17 +25,29 @@ class Settings(BaseSettings):
     # Gebouwde web-app die de API zelf serveert (leeg of niet aanwezig = alleen API)
     web_dist: Path = Path("web")
 
+    # Poorten in de container. https start pas zodra er een certificaat is; het domein
+    # stel je in op /beheer.
+    host: str = "0.0.0.0"
+    http_port: int = 8080
+    https_port: int = 8443
+    # Leeg = Let's Encrypt (of de staging-omgeving als testmodus aan staat). Voor tests
+    # met Pebble: eigen directory-URL en het CA-bestand om die te vertrouwen.
+    acme_directory: str = ""
+    acme_ca_file: str = ""
+
     # Tokens
     jwt_secret: str = ""
     access_token_minutes: int = 15
     refresh_token_days: int = 30
     download_token_minutes: int = 10
-    # Cookies alleen over https sturen; zet op true zodra er https is
+    # Cookies altijd met Secure sturen; over https gebeurt dat sowieso
     secure_cookies: bool = False
 
     # Standaardquotum voor nieuwe gebruikers (0 = onbeperkt)
     default_quota_bytes: int = 0
     max_upload_bytes: int = 50 * 1024**3
+    # Onafgemaakte hervatbare uploads worden na zoveel uur zonder activiteit opgeruimd
+    upload_expiry_hours: int = 24
 
     # Cluster (later): "node1=192.168.50.11,node2=..."
     cluster_nodes: str = ""
@@ -53,6 +65,14 @@ class Settings(BaseSettings):
     @property
     def blob_dir(self) -> Path:
         return self.data_dir / "blobs"
+
+    @property
+    def upload_dir(self) -> Path:
+        return self.data_dir / "uploads"
+
+    @property
+    def tls_dir(self) -> Path:
+        return self.data_dir / "tls"
 
     def secret(self) -> str:
         """JWT-geheim: uit de omgeving, of eenmalig gegenereerd en bewaard in data_dir."""

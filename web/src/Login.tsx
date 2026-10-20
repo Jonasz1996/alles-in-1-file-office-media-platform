@@ -1,11 +1,13 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { api, type User } from "./api";
+import { ApiError, api, type User } from "./api";
 
 export function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
   const [setup, setSetup] = useState<boolean | null>(null);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  // null = nog niet gevraagd; anders staat 2FA aan en is er een code nodig
+  const [code, setCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -21,9 +23,16 @@ export function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
     setBusy(true);
     setError(null);
     try {
-      onLoggedIn(setup ? await api.setup(email, name, password) : await api.login(email, password));
+      onLoggedIn(
+        setup ? await api.setup(email, name, password) : await api.login(email, password, code ?? undefined),
+      );
     } catch (err) {
-      setError((err as Error).message);
+      if (err instanceof ApiError && err.code === "totp_required") {
+        setCode("");
+        setError(null);
+      } else {
+        setError((err as Error).message);
+      }
     } finally {
       setBusy(false);
     }
@@ -58,6 +67,20 @@ export function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
           />
         </label>
         {setup && <small className="muted">Minstens 10 tekens.</small>}
+        {code !== null && (
+          <label>
+            Code uit je authenticator-app
+            <input
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              autoFocus
+              required
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+            />
+            <small className="muted">Telefoon kwijt? Gebruik een van je herstelcodes.</small>
+          </label>
+        )}
         {error && <p role="alert">{error}</p>}
         <button type="submit" disabled={busy}>
           {setup ? "Account aanmaken" : "Inloggen"}

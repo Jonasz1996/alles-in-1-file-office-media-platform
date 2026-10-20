@@ -83,6 +83,7 @@ else
 DATA_ROOT=$DATA_ROOT
 NODE_NAME=$(hostname)
 PORT=${PORT:-80}
+HTTPS_PORT=${HTTPS_PORT:-443}
 SECURE_COOKIES=false
 ENV
   # shellcheck disable=SC1090
@@ -116,6 +117,12 @@ Klaar. Het platform draait op $url
 
 Open dat adres in je browser. Bij het eerste bezoek maak je het beheerdersaccount
 aan; doe dat voordat je de poort in je router openzet.
+
+Van buiten bereikbaar maken:
+  1. Zet 2FA aan (klik rechtsboven op je naam).
+  2. Laat je domein naar je publieke IP-adres wijzen en stuur in je router
+     poort 80 en 443 door naar $ip.
+  3. Vul op /beheer bij HTTPS je domein in; het certificaat komt vanzelf.
 
 Instellingen: $ENV_FILE
 Data:         $DATA_ROOT

@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Uuid
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -22,6 +22,34 @@ class User(Base):
     quota_bytes: Mapped[int] = mapped_column(BigInteger, default=0)  # 0 = onbeperkt
     root_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # 2FA (TOTP): totp_secret is gezet zodra 2FA aan staat; totp_pending tijdens het instellen.
+    # totp_last_step voorkomt dat dezelfde code twee keer werkt.
+    totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    totp_pending: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    totp_last_step: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+
+
+class RecoveryCode(Base):
+    """Eenmalige herstelcodes voor als de telefoon met de authenticator-app kwijt is."""
+
+    __tablename__ = "recovery_code"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Setting(Base):
+    """Instellingen die je in /beheer aanpast, zoals het domein voor https."""
+
+    __tablename__ = "setting"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
 class RefreshToken(Base):
@@ -75,3 +103,22 @@ class Node(Base):
     @property
     def etag(self) -> str:
         return f'"{self.blob_id or self.id.hex}"'
+
+
+class Upload(Base):
+    """Een hervatbare upload (tus). Zolang hij loopt staan de bytes in uploads/<id> en is
+    de grootte van dat bestand de offset."""
+
+    __tablename__ = "upload"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    parent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("node.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255))
+    conflict: Mapped[str] = mapped_column(String(8), default="rename")
+    size: Mapped[int] = mapped_column(BigInteger)
+    # Gezet zodra het bestand gemaakt is. De rij blijft tot hij verloopt, zodat een client
+    # die het laatste antwoord miste nog kan opvragen welk bestand het werd.
+    node_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

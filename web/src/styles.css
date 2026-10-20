@@ -159,7 +159,21 @@ select {
 }
 
 .uploads {
-  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.4rem;
+  padding: 0;
+  list-style: none;
+}
+
+.uploads li {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.upload-name {
+  overflow-wrap: anywhere;
 }
 
 .table-wrap {
@@ -197,4 +211,43 @@ td.up {
 .badge.down,
 td.down {
   color: var(--bad);
+}
+
+.stack {
+  display: grid;
+  gap: 0.8rem;
+  max-width: 36rem;
+}
+
+.stack label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.stack label.check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.qr {
+  width: 12rem;
+  height: 12rem;
+  padding: 0.5rem;
+  background: #ffffff;
+  border-radius: 6px;
+}
+
+.codes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.4rem;
+  padding: 0;
+  list-style: none;
+  font-size: 1.1rem;
+}
+
+code {
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
 }

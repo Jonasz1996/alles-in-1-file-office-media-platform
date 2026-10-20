@@ -1,10 +1,11 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.main import app
 from app.migrate import upgrade
-from app.security import login_limiter
+from app.security import login_limiter, totp_limiter
 
 
 @pytest.fixture
@@ -20,12 +21,21 @@ async def settings(tmp_path):
 
 
 @pytest.fixture
-async def client(settings):
+def certs(settings):
+    """CertManager zonder achtergrondtaak; tests zetten zelf certificaten neer."""
+    return CertManager(settings)
+
+
+@pytest.fixture
+async def client(settings, certs):
     app.dependency_overrides[get_settings] = lambda: settings
+    app.state.certs = certs
     login_limiter.reset()
+    totp_limiter.reset()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
+    del app.state.certs
 
 
 ADMIN = {"email": "jonas@example.nl", "display_name": "Jonas", "password": "lang-genoeg-123"}

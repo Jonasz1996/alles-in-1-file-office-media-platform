@@ -1,5 +1,6 @@
 # Eerste versie op één node: het hele platform in één container. Wordt gestart door
-# install.sh, dat ook .env maakt. Alleen de webpoort is van buiten bereikbaar.
+# install.sh, dat ook .env maakt. Alleen poort 80 en 443 zijn van buiten bereikbaar;
+# https start vanzelf zodra je op /beheer een domein instelt.
 name: platform
 
 services:
@@ -11,6 +12,7 @@ services:
     restart: unless-stopped
     ports:
       - "${PORT:-80}:8080"
+      - "${HTTPS_PORT:-443}:8443"
     environment:
       PLATFORM_NODE_NAME: ${NODE_NAME:-node1}
       PLATFORM_SECURE_COOKIES: ${SECURE_COOKIES:-false}

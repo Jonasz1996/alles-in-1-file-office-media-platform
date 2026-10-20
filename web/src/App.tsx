@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Account } from "./Account";
 import { api, type User } from "./api";
 import { Beheer } from "./Beheer";
 import { Files } from "./Files";
@@ -29,9 +30,17 @@ export function App() {
   }
 
   const folder = path.match(/^\/map\/([0-9a-f-]+)/)?.[1] ?? null;
+  const reloadUser = () => {
+    api
+      .me()
+      .then(setUser)
+      .catch(() => {});
+  };
+
   let page;
   if (path.startsWith("/prullenbak")) page = <Trash />;
-  else if (path.startsWith("/beheer") && user.role === "admin") page = <Beheer />;
+  else if (path.startsWith("/beheer") && user.role === "admin") page = <Beheer currentUser={user} />;
+  else if (path.startsWith("/account")) page = <Account user={user} onChange={reloadUser} />;
   else page = <Files folderId={folder} />;
 
   const link = (to: string, label: string, active: boolean) => (
@@ -52,12 +61,12 @@ export function App() {
       <header className="topbar">
         <strong>Platform</strong>
         <nav>
-          {link("/", "Bestanden", !path.startsWith("/prullenbak") && !path.startsWith("/beheer"))}
+          {link("/", "Bestanden", !/^\/(prullenbak|beheer|account)/.test(path))}
           {link("/prullenbak", "Prullenbak", path.startsWith("/prullenbak"))}
           {user.role === "admin" && link("/beheer", "Beheer", path.startsWith("/beheer"))}
         </nav>
         <span className="spacer" />
-        <span className="muted">{user.display_name}</span>
+        {link("/account", user.display_name, path.startsWith("/account"))}
         <button type="button" onClick={logout}>
           Uitloggen
         </button>

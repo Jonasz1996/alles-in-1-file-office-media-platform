@@ -24,6 +24,7 @@ COPY --from=web /src/dist ./web
 RUN useradd --system --uid 10001 platform && install -d -o platform -g platform /data
 USER platform
 VOLUME /data
-EXPOSE 8080
+# 8080 = http (ook voor de Let's Encrypt-controle), 8443 = https zodra er een certificaat is
+EXPOSE 8080 8443
 HEALTHCHECK --interval=30s --timeout=3s CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health').status==200 else 1)"
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "app.serve"]

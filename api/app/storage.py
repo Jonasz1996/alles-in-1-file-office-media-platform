@@ -55,5 +55,24 @@ class BlobStore:
             await anyio.Path(tmp_name).unlink(missing_ok=True)
             raise
 
+    async def adopt(self, path: Path, sha256: str) -> None:
+        """Neemt een volledig bestand over dat al op dezelfde schijf staat (een afgeronde
+        hervatbare upload). Bestaat de inhoud al, dan wordt het bestand weggegooid."""
+        target = anyio.Path(self.path(sha256))
+        if await target.exists():
+            await anyio.Path(path).unlink()
+        else:
+            await target.parent.mkdir(parents=True, exist_ok=True)
+            await anyio.Path(path).rename(target)
+
     async def delete(self, sha256: str) -> None:
         await anyio.Path(self.path(sha256)).unlink(missing_ok=True)
+
+
+def hash_file(path: Path) -> str:
+    """SHA-256 van een bestand; draai dit in een thread."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(CHUNK):
+            digest.update(chunk)
+    return digest.hexdigest()

@@ -1,21 +1,24 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel
 
+from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.migrate import upgrade
-from app.routers import admin, auth, files
+from app.routers import admin, auth, files, uploads
 
 try:
     __version__ = version("platform-api")
 except PackageNotFoundError:
-    __version__ = "0.2.0"
+    __version__ = "0.3.0"
 
 log = logging.getLogger("platform")
 
@@ -24,6 +27,8 @@ SECURITY_HEADERS = [
     (b"x-frame-options", b"DENY"),
     (b"referrer-policy", b"same-origin"),
 ]
+HSTS = (b"strict-transport-security", b"max-age=31536000")
+ACME_PATH = "/.well-known/acme-challenge/"
 # Alleen voor de web-app zelf; gedownloade bestanden krijgen hun eigen beleid.
 WEB_CSP = (
     "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
@@ -31,8 +36,18 @@ WEB_CSP = (
 )
 
 
-class SecurityHeaders:
-    """Beveiligingsheaders op elk antwoord (voorheen deed Traefik dit)."""
+def _host(scope) -> str:
+    for key, value in scope.get("headers", []):
+        if key == b"host":
+            host = value.decode("latin-1").lower()
+            # [::1]:443 of voorbeeld.nl:80 -> zonder poort
+            return host.rsplit(":", 1)[0] if host.rfind(":") > host.rfind("]") else host
+    return ""
+
+
+class Edge:
+    """Wat voorheen Traefik deed: http doorsturen naar https zodra er een certificaat
+    is, HSTS over https, en beveiligingsheaders op elk antwoord."""
 
     def __init__(self, app):
         self.app = app
@@ -40,24 +55,52 @@ class SecurityHeaders:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        certs: CertManager | None = getattr(scope["app"].state, "certs", None)
+        secure = scope.get("scheme") == "https"
+        if (
+            not secure
+            and certs is not None
+            and certs.serving
+            and certs.active
+            and not scope["path"].startswith(ACME_PATH)
+            and _host(scope) == certs.config.domain
+        ):
+            path = scope.get("raw_path") or quote(scope["path"]).encode()
+            query = scope.get("query_string", b"")
+            url = f"https://{certs.config.domain}{path.decode('latin-1')}"
+            if query:
+                url += "?" + query.decode("latin-1")
+            return await RedirectResponse(url, status_code=308)(scope, receive, send)
+
+        extra = list(SECURITY_HEADERS)
+        if secure and certs is not None and certs.active:
+            extra.append(HSTS)
 
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
                 present = {k.lower() for k, _ in message.get("headers", [])}
-                extra = [(k, v) for k, v in SECURITY_HEADERS if k not in present]
-                message["headers"] = [*message.get("headers", []), *extra]
+                message["headers"] = [
+                    *message.get("headers", []),
+                    *((k, v) for k, v in extra if k not in present),
+                ]
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     await upgrade(settings)
+    certs = CertManager(settings)
+    await certs.start()
+    app.state.certs = certs
+    cleaner = asyncio.create_task(uploads.cleanup_loop(settings), name="uploads opruimen")
     log.info("Platform %s gestart (%s), data in %s", __version__, settings.mode, settings.data_dir)
     yield
+    cleaner.cancel()
+    await certs.stop()
 
 
 app = FastAPI(
@@ -67,9 +110,10 @@ app = FastAPI(
     docs_url="/api/docs",
     lifespan=lifespan,
 )
-app.add_middleware(SecurityHeaders)
+app.add_middleware(Edge)
 app.include_router(auth.router)
 app.include_router(files.router)
+app.include_router(uploads.router)
 app.include_router(admin.router)
 
 
@@ -100,6 +144,16 @@ async def info(settings: Annotated[Settings, Depends(get_settings)]) -> Info:
         node=settings.node_name,
         mode=settings.mode,
     )
+
+
+@app.get(ACME_PATH + "{token}", include_in_schema=False)
+async def acme_challenge(token: str, request: Request) -> PlainTextResponse:
+    """Antwoord op de HTTP-01-challenge van Let's Encrypt."""
+    certs: CertManager | None = getattr(request.app.state, "certs", None)
+    answer = certs.challenges.get(token) if certs else None
+    if answer is None:
+        raise HTTPException(404, "Onbekende challenge")
+    return PlainTextResponse(answer)
 
 
 @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
