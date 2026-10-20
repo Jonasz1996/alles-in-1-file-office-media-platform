@@ -1,10 +1,22 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, String, Uuid
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    event,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+from app.text import fold
 
 
 def now() -> datetime:
@@ -73,6 +85,8 @@ class RefreshToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Vanaf welk IP-adres dit token werd uitgegeven (voor het sessie-overzicht)
+    ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
 
 
 class Blob(Base):
@@ -84,6 +98,12 @@ class Blob(Base):
     size: Mapped[int] = mapped_column(BigInteger)
     ref_count: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # Soort volgens de inhoud zelf (niet de naam); None = nog niet bepaald
+    mime: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # None = nog niet aan begonnen, pending, ready, none (geen preview mogelijk), failed
+    preview: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Wat de preview opleverde: afmetingen, eerste regels tekst, inhoud van een archief, ...
+    preview_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class Node(Base):
@@ -105,6 +125,8 @@ class Node(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # De naam zonder hoofdletters en accenten, om op te zoeken; volgt name vanzelf
+    search_name: Mapped[str] = mapped_column(Text, default="", server_default="")
 
     @property
     def etag(self) -> str:
@@ -128,3 +150,92 @@ class Upload(Base):
     node_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+@event.listens_for(Node.name, "set")
+def _search_name(target: Node, value: str | None, _old, _initiator) -> None:
+    target.search_name = fold(value or "")
+
+
+class Version(Base):
+    """Een eerdere inhoud van een bestand. Telt als verwijzing naar de blob (ref_count)."""
+
+    __tablename__ = "version"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), index=True
+    )
+    blob_id: Mapped[str] = mapped_column(ForeignKey("blob.sha256"))
+    size: Mapped[int] = mapped_column(BigInteger)
+    # Wanneer deze inhoud gemaakt werd (modified_at van toen) en wanneer hij vervangen werd
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    replaced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    replaced_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class Share(Base):
+    """Een map of bestand gedeeld met een gebruiker (grantee_id) of via een publieke link
+    (token)."""
+
+    __tablename__ = "share"
+    __table_args__ = (UniqueConstraint("node_id", "grantee_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), index=True
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    grantee_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    # Gebruiker: read of write. Link: read of upload (alleen uploaden, niets zien).
+    permission: Mapped[str] = mapped_column(String(8), default="read")
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class Tag(Base):
+    __tablename__ = "tag"
+    __table_args__ = (UniqueConstraint("owner_id", "name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(50))
+    color: Mapped[str] = mapped_column(String(16), default="")
+
+
+class NodeTag(Base):
+    __tablename__ = "node_tag"
+
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    tag_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tag.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+
+
+class Job(Base):
+    """Werk op de achtergrond (previews, later meer). Mislukt na max_attempts = failed:
+    zichtbaar op /beheer en daar opnieuw te starten."""
+
+    __tablename__ = "job"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    type: Mapped[str] = mapped_column(String(32), index=True)
+    # Om dubbel werk te voorkomen, bijv. "preview:<sha256>"
+    key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    attempts: Mapped[int] = mapped_column(default=0)
+    max_attempts: Mapped[int] = mapped_column(default=3)
+    run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
