@@ -221,6 +221,7 @@ export function useServerEvents(listener: (event: ServerEvent) => void): void {
 export function affectsFolder(event: ServerEvent, folderId: string | null | undefined): boolean {
   if (!folderId) return false;
   if (event.type === "connected") return true;
+  if (event.type === "tags.changed") return true; // de tags in de lijst zijn hernoemd of weg
   if (!event.type.startsWith("node.")) return false;
   const { id, parent_id, old_parent_id } = event.data;
   return [id, parent_id, old_parent_id].includes(folderId);

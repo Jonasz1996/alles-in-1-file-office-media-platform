@@ -704,7 +704,17 @@ async def test_wachten_op_slot_zonder_databaseverbinding(client, admin, settings
                 asyncio.create_task(put(client, headers, parent, "put.txt", b"put")),
                 asyncio.create_task(create(client, headers, parent, "nieuw.txt", 1)),
             ]
-            await asyncio.sleep(0.1)
+
+            # Wachten tot alle vier op een slot staan (onder belasting duurt dat even), niet
+            # een vaste tijd: pas dan zegt het aantal open verbindingen iets
+            def parked() -> int:
+                return sum(len(lock._waiters or ()) for lock in (blob_lock, user_lock))
+
+            for _ in range(400):
+                if parked() == len(waiting):
+                    break
+                await asyncio.sleep(0.01)
+            assert parked() == len(waiting)
             assert not any(t.done() for t in waiting)
             assert get_engine(settings).pool.checkedout() == 0
         r = await asyncio.gather(*waiting)

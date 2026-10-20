@@ -220,5 +220,6 @@ describe("affectsFolder", () => {
     expect(affectsFolder(event("preview.ready", { node_ids: ["map"] }), "map")).toBe(false);
     expect(affectsFolder(event("connected", {}), "map")).toBe(true); // misschien iets gemist
     expect(affectsFolder(event("connected", {}), undefined)).toBe(false);
+    expect(affectsFolder(event("tags.changed", { id: "t" }), "map")).toBe(true); // chips in de lijst
   });
 });

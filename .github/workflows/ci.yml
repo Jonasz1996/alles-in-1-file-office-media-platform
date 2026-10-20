@@ -20,6 +20,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
+      - name: ffmpeg voor de previews van video's
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .

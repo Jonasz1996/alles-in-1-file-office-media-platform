@@ -182,6 +182,27 @@ async def test_stroom_stopt_als_het_token_verloopt(client, admin, hub, settings)
 
 
 @pytest.mark.anyio
+async def test_stroom_stopt_als_de_login_is_ingetrokken(client, admin, hub, monkeypatch):
+    """Uitgelogd (hier: deze sessie zelf beëindigd): binnen één ping geen gebeurtenissen meer,
+    niet pas als het access-token verloopt."""
+    monkeypatch.setattr(live, "PING", 0.1)
+    headers, tokens = admin
+    stream = Stream(headers)
+    await stream.open()
+    await stream.until("retry: 5000\n\n")
+    assert await stream.until("\n\n") == ": ping\n\n"  # nog ingelogd: de stroom loopt
+    sessions = (await client.get("/api/v1/auth/sessions", headers=headers)).json()
+    mine = next(s["id"] for s in sessions if s["current"])
+    assert (
+        await client.delete(f"/api/v1/auth/sessions/{mine}", headers=headers)
+    ).status_code == 204
+    await stream.end(seconds=2)
+    assert hub.listeners(user_id(tokens)) == 0
+    hub.publish([user_id(tokens)], "node.created", {"id": "te-laat"})
+    assert "te-laat" not in stream.text
+
+
+@pytest.mark.anyio
 async def test_zonder_token_geen_stroom(client, hub):
     assert (await client.get("/api/v1/events")).status_code == 401
     r = await client.get("/api/v1/events", headers={"Authorization": "Bearer onzin"})

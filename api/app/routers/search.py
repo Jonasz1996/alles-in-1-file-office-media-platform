@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app import events
 from app.db import Session
 from app.mime import ARCHIVE_TYPES, DOCUMENT_TYPES
 from app.models import Node, NodeTag, Tag, User
@@ -295,6 +296,8 @@ async def change_tag(
         except IntegrityError:
             await session.rollback()
             raise TagNameTaken from None
+    # Open lijsten tonen de tag als chip: die laden opnieuw
+    events.publish([user.id], "tags.changed", {"id": str(tag.id)})
     return await tag_out(session, user, tag)
 
 
@@ -307,6 +310,7 @@ async def delete_tag(tag_id: uuid.UUID, user: CurrentUser, session: Session) -> 
         await session.execute(delete(NodeTag).where(NodeTag.tag_id == tag.id))
         await session.delete(tag)
         await session.commit()
+    events.publish([user.id], "tags.changed", {"id": str(tag_id)})
 
 
 @router.put("/files/{node_id}/tags", tags=["tags"])

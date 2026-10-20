@@ -87,3 +87,21 @@ async def test_tijden_met_tijdzone(client, admin):
     assert datetime.fromisoformat(created["modified_at"]) == datetime.fromisoformat(
         listed["modified_at"]
     )
+
+
+@pytest.mark.anyio
+async def test_tag_hernoemen_of_weggooien_wordt_gemeld(client, admin, monkeypatch):
+    """Lijsten tonen tags als chips: na hernoemen of weggooien laden ze opnieuw."""
+    headers, tokens = admin
+    monkeypatch.setattr(events, "hub", Hub())
+    other = await new_user(client, headers, "t@example.nl")
+    other_id = uuid.UUID((await client.get("/api/v1/auth/me", headers=other)).json()["id"])
+    tag = (await client.post("/api/v1/tags", json={"name": "Werk"}, headers=headers)).json()["id"]
+    with (
+        events.hub.subscribe(uuid.UUID(tokens["user"]["id"])) as sub,
+        events.hub.subscribe(other_id) as others,
+    ):
+        await client.patch(f"/api/v1/tags/{tag}", json={"name": "Thuis"}, headers=headers)
+        await client.delete(f"/api/v1/tags/{tag}", headers=headers)
+        assert drain(sub) == [("tags.changed", {"id": tag}), ("tags.changed", {"id": tag})]
+        assert drain(others) == []  # tags zijn persoonlijk
