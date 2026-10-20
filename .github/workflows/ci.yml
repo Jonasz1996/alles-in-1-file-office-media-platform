@@ -73,8 +73,15 @@ jobs:
           base=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['postgres_base_image'])")
           patroni=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['patroni_version'])")
           docker build -q -t platform-postgres:ci --build-arg BASE_IMAGE="$base" --build-arg PATRONI_VERSION="$patroni" /tmp/render/node1/postgres
+          # De validatie controleert ook of etcd bereikbaar is: start er lokaal één
+          # en wijs de gerenderde configuratie daarheen.
+          etcd=$(grep -h 'image: quay.io/coreos/etcd' /tmp/render/node1/compose.yaml | awk '{print $2}')
+          docker run -d --rm --name etcd-ci --network host "$etcd" etcd \
+            --listen-client-urls=http://127.0.0.1:2379 --advertise-client-urls=http://127.0.0.1:2379
+          sleep 3
           for n in /tmp/render/*/; do
-            docker run --rm -v "$n/postgres/patroni.yml:/etc/patroni/patroni.yml:ro" \
+            sed -i 's/^  hosts: .*/  hosts: 127.0.0.1:2379/' "$n/postgres/patroni.yml"
+            docker run --rm --network host -v "$n/postgres/patroni.yml:/etc/patroni/patroni.yml:ro" \
               --entrypoint /opt/patroni/bin/patroni platform-postgres:ci \
               --validate-config --ignore-listen-port /etc/patroni/patroni.yml
           done
