@@ -64,7 +64,7 @@ services:
     volumes:
       - {{ data_root }}/seaweedfs/volume:/data
     command: >-
-      volume -ip={{ me }} -ip.bind={{ me }} -port=8080 -dir=/data -max=0
+      volume -ip={{ me }} -ip.bind={{ me }} -port=8081 -dir=/data -max=0
       -mserver={{ ips | map('regex_replace', '$', ':9333') | join(',') }}
       -dataCenter=thuis -rack=rack1 -metricsPort=9325
 

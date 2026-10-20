@@ -14,6 +14,10 @@ Het volledige plan staat in [docs/stappenplan.md](docs/stappenplan.md).
 | `apps/windows`, `apps/android`, `apps/webos` | Apps (fase 9) |
 | `docs/` | Stappenplan en beslissingen per fase |
 
+## Eerste versie installeren
+
+Op één Proxmox-container, vanuit de console: zie [infra/single/README.md](infra/single/README.md).
+
 ## Lokaal draaien
 
 Vereist: [uv](https://docs.astral.sh/uv/), Node 22 en Docker.

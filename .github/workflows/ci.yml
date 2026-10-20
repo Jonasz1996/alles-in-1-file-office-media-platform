@@ -51,7 +51,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ansible ansible-lint yamllint
+      - run: pip install ansible ansible-lint yamllint shellcheck-py
+      - run: shellcheck infra/single/install.sh infra/scripts/*.sh
       - run: yamllint -s .
       - name: Ansible lint
         working-directory: infra/ansible
@@ -63,10 +64,13 @@ jobs:
         working-directory: infra/ansible
         run: ansible-playbook -i inventory/hosts.example.yml tests/render.yml -e render_dir=/tmp/render
       - name: Compose-bestanden controleren
-        run: for n in /tmp/render/*/; do docker compose -f "$n/compose.yaml" config -q; done
+        run: |
+          for n in /tmp/render/*/; do docker compose -f "$n/compose.yaml" config -q; done
+          docker compose --project-directory infra/single -f infra/single/compose.yaml \
+            --env-file infra/single/.env.example config -q
       - name: Images bestaan
         run: |
-          grep -h 'image:' /tmp/render/*/compose.yaml | awk '{print $2}' | grep -v ':local$' | sort -u \
+          grep -h 'image:' /tmp/render/*/compose.yaml infra/single/compose.yaml | awk '{print $2}' | grep -v ':local$' | sort -u \
             | while read -r img; do echo "$img"; docker manifest inspect "$img" > /dev/null; done
       - name: PostgreSQL-image bouwen en Patroni-configuratie valideren
         run: |

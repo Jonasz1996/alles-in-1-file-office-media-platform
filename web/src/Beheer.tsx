@@ -77,6 +77,11 @@ export function Beheer() {
     );
   }
 
+  // Op één node zonder cluster ontbreken etcd en Patroni; toon alleen wat er is.
+  const checkKeys = Object.keys(CHECK_LABELS).filter((k) =>
+    status?.nodes.some((n) => k in n.checks),
+  );
+
   return (
     <main className="wide">
       <h1>Systeemstatus</h1>
@@ -96,8 +101,8 @@ export function Beheer() {
               <thead>
                 <tr>
                   <th>Node</th>
-                  {Object.values(CHECK_LABELS).map((l) => (
-                    <th key={l}>{l}</th>
+                  {checkKeys.map((k) => (
+                    <th key={k}>{CHECK_LABELS[k]}</th>
                   ))}
                   <th>Rol database</th>
                   <th>Datadisk</th>
@@ -111,7 +116,7 @@ export function Beheer() {
                       <br />
                       <small>{n.ip}</small>
                     </td>
-                    {Object.keys(CHECK_LABELS).map((k) => (
+                    {checkKeys.map((k) => (
                       <td key={k} className={n.checks[k] ? "up" : "down"}>
                         {n.checks[k] ? "ok" : "uit"}
                       </td>
@@ -127,7 +132,7 @@ export function Beheer() {
               </tbody>
             </table>
           </div>
-          <h2>Database</h2>
+          {status.database.length > 0 && <h2>Database</h2>}
           <ul>
             {status.database.map((m) => (
               <li key={m.name}>

@@ -11,6 +11,7 @@ echo "# Inventaris $(hostname) — $(date -Iseconds)"
 
 section "Systeem"
 uname -srm
+# shellcheck source=/dev/null
 [ -r /etc/os-release ] && . /etc/os-release && echo "OS: ${PRETTY_NAME:-onbekend}"
 have pveversion && pveversion
 

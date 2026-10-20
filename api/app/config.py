@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,6 +13,8 @@ class Settings(BaseSettings):
     environment: str = "development"
     node_name: str = "local"
     log_level: str = "info"
+    # single = één node zonder etcd/Patroni (eerste versie); cluster = 3 nodes
+    mode: Literal["single", "cluster"] = "cluster"
     # "node1=192.168.50.11,node2=192.168.50.12,..."; leeg = alleen deze node lokaal
     cluster_nodes: str = ""
     # Tijdelijk beheertoken voor /api/v1/admin tot de echte login er is (fase 2)

@@ -38,7 +38,7 @@ def fake_cluster(down: set[str] = frozenset()):
                 return httpx.Response(200, json={"members": members})
             case 9333, "/cluster/status":
                 return httpx.Response(200, json={"IsLeader": ip == primary})
-            case 8080, "/status":
+            case 8081, "/status":
                 return httpx.Response(
                     200,
                     json={
@@ -127,3 +127,26 @@ def test_nodes_parsen():
     s = Settings(cluster_nodes=" node1=10.0.0.1, node2=10.0.0.2 ")
     assert s.nodes() == [("node1", "10.0.0.1"), ("node2", "10.0.0.2")]
     assert Settings(node_name="n1").nodes() == [("n1", "127.0.0.1")]
+
+
+@pytest.mark.anyio
+async def test_single_node(monkeypatch):
+    async def tcp_ok(ip, port):
+        return True
+
+    monkeypatch.setattr("app.cluster._tcp_ok", tcp_ok)
+
+    async def fake_http_client():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(fake_cluster())) as c:
+            yield c
+
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        mode="single", node_name="node1", cluster_nodes="node1=10.0.0.1", admin_token="geheim"
+    )
+    app.dependency_overrides[http_client] = fake_http_client
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.get("/api/v1/admin/status", headers={"Authorization": "Bearer geheim"})
+    body = r.json()
+    assert body["status"] == "ok"
+    assert "etcd" not in body["nodes"][0]["checks"]
+    assert body["nodes"][0]["db_role"] == "primary"

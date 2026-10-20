@@ -1,0 +1,63 @@
+# Eerste versie op één node, zonder cluster. Wordt gestart door install.sh, dat
+# ook .env en de Traefik-configuratie maakt. Alles behalve Traefik luistert alleen
+# op 127.0.0.1; van buiten is alleen poort 80/443 open.
+name: platform
+
+x-restart: &restart
+  restart: unless-stopped
+  network_mode: host
+
+services:
+  postgres:
+    <<: *restart
+    image: postgres:17-bookworm
+    shm_size: 256m
+    environment:
+      POSTGRES_DB: platform
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1"]
+    volumes:
+      - ${DATA_ROOT:?}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "platform"]
+      interval: 10s
+
+  seaweedfs:
+    <<: *restart
+    image: chrislusf/seaweedfs:3.97
+    command: >-
+      server -ip=127.0.0.1 -ip.bind=127.0.0.1 -dir=/data
+      -master.port=9333 -master.defaultReplication=000
+      -volume.port=8081 -volume.max=0
+      -filer -filer.port=8888
+      -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    volumes:
+      - ${DATA_ROOT:?}/seaweedfs:/data
+      - ${PLATFORM_ROOT:?}/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+
+  traefik:
+    <<: *restart
+    image: traefik:v3.5
+    container_name: traefik
+    volumes:
+      - ${PLATFORM_ROOT:?}/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ${PLATFORM_ROOT:?}/traefik/dynamic:/etc/traefik/dynamic:ro
+      - ${DATA_ROOT:?}/traefik:/data
+
+  api:
+    <<: *restart
+    build: ../../api
+    image: platform-api:local
+    command: ["uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000", "--proxy-headers"]
+    environment:
+      PLATFORM_ENVIRONMENT: production
+      PLATFORM_MODE: single
+      PLATFORM_NODE_NAME: ${NODE_NAME:-node1}
+      PLATFORM_CLUSTER_NODES: ${NODE_NAME:-node1}=127.0.0.1
+      PLATFORM_ADMIN_TOKEN: ${ADMIN_TOKEN:?}
+
+  web:
+    <<: *restart
+    build: ../../web
+    image: platform-web:local

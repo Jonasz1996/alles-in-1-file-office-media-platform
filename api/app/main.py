@@ -7,7 +7,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from app.cluster import ClusterStatus, cluster_status
+from app.cluster import ClusterStatus, cluster_status, single_status
 from app.config import Settings, get_settings
 
 try:
@@ -82,4 +82,7 @@ async def admin_status(
     client: Annotated[httpx.AsyncClient, Depends(http_client)],
 ) -> ClusterStatus:
     """Systeemstatus van alle nodes: database, opslag, rand en schijfruimte."""
+    if settings.mode == "single":
+        name, ip = settings.nodes()[0]
+        return await single_status(client, name, ip)
     return await cluster_status(client, settings.nodes())
