@@ -223,6 +223,13 @@ async def test_na_5_foute_codes_geblokkeerd(client, admin, settings):
     }
     assert 55 <= int(r.headers["retry-after"]) <= 60
     assert (await client.get("/api/v1/auth/me", headers=headers)).json()["totp_locked_until"]
+    # Met alleen het wachtwoord hoor je het al vóór het intypen van een code; met een fout
+    # wachtwoord niet (dat verraadt niets over het account)
+    r = await login(client)
+    assert r.status_code == 429 and r.json()["detail"]["code"] == "totp_locked"
+    assert 55 <= int(r.headers["retry-after"]) <= 60
+    r = await login(client, {**LOGIN, "password": "fout-wachtwoord"})
+    assert r.status_code == 401 and r.json()["detail"] == "E-mailadres of wachtwoord klopt niet"
     assert (await user_row(settings)).totp_failures == 5
 
     # Na de wachttijd weer een fout: nu 2 minuten
@@ -300,6 +307,34 @@ async def test_blokkade_geldt_voor_elke_controle(client, admin, settings, monkey
     await wait_is_over(settings)
     r = await client.post("/api/v1/auth/2fa/disable", json=ok, headers=headers)
     assert r.status_code == 204
+
+
+@pytest.mark.anyio
+async def test_met_alleen_een_sessie_blijft_inloggen_geblokkeerd(client, admin, settings):
+    """Bewust zo gekozen (zie FREE_ATTEMPTS): wie alleen een sessie heeft, houdt met één foute
+    poging per dag ook het inloggen geblokkeerd. De beheerder of de CLI heft het op."""
+    headers, _ = admin
+    secret, recovery = await enable(client, headers)
+    async with async_sessionmaker(get_engine(settings))() as session:
+        await session.execute(
+            update(User).where(User.email == ADMIN["email"]).values(totp_failures=15)
+        )
+        await session.commit()
+    r = await client.post(
+        "/api/v1/auth/2fa/recovery-codes", json={"code": wrong_code(secret)}, headers=headers
+    )
+    assert r.status_code == 400
+    r = await login(client, code=recovery[0])
+    assert r.status_code == 429
+    assert "over 1440 minuten" in r.json()["detail"]["message"]
+    assert 86_390 <= int(r.headers["retry-after"]) <= 86_400
+
+    user_id = (await client.get("/api/v1/auth/me", headers=headers)).json()["id"]
+    r = await client.delete(f"/api/v1/users/{user_id}/2fa", headers=headers)
+    assert r.status_code == 204
+    row = await user_row(settings)
+    assert row.totp_failures == 0 and row.totp_locked_until is None
+    assert (await login(client)).status_code == 200
 
 
 @pytest.mark.anyio
@@ -455,10 +490,14 @@ async def test_gelijktijdig_aanpassen_houdt_geheugen_en_database_gelijk(client, 
     assert app.state.security.config == cached
 
 
-async def cli(settings, *args):
-    env = {**os.environ, "PLATFORM_DATA_DIR": str(settings.data_dir)}
+async def cli(settings, *args, python=()):
+    env = {
+        **os.environ,
+        "PLATFORM_DATA_DIR": str(settings.data_dir),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
     return await anyio.run_process(
-        [sys.executable, "-m", "app.cli", *args], cwd=API_DIR, env=env, check=False
+        [sys.executable, *python, "-m", "app.cli", *args], cwd=API_DIR, env=env, check=False
     )
 
 
@@ -479,5 +518,9 @@ async def test_cli_zet_2fa_uit_voor_de_laatste_beheerder(client, admin, settings
     assert (await login(client)).status_code == 200
 
     result = await cli(settings, "reset-2fa", "niemand@example.nl")
+    assert result.returncode == 1
+    assert "geen account" in result.stderr.decode()
+    # Ook onder python -OO (zonder docstrings)
+    result = await cli(settings, "reset-2fa", "niemand@example.nl", python=["-OO"])
     assert result.returncode == 1
     assert "geen account" in result.stderr.decode()

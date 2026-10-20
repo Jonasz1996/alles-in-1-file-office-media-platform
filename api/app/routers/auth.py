@@ -37,6 +37,12 @@ ISSUER = "Platform"  # naam in de authenticator-app; wordt de projectnaam zodra 
 # Foute pogingen voor de tweede factor: de eerste 5 op rij mogen direct achter elkaar. Na
 # de 5e is de gebruiker 1 minuut geblokkeerd, na elke volgende fout dubbel zo lang, tot
 # hooguit een dag. Raden komt zo al snel neer op één poging per dag.
+# De keerzijde is bewust gekozen: er is één teller per gebruiker en een blokkade geldt ook
+# voor de goede code. Wie het wachtwoord kent (foute codes bij /auth/login), of alleen een
+# geldige sessie heeft (een fout wachtwoord bij /auth/2fa/disable, een foute code bij
+# /auth/2fa/recovery-codes), kan de tweede factor zo met één foute poging per dag
+# geblokkeerd houden, ook voor inloggen. Dan helpt de beheerder (DELETE /users/{id}/2fa)
+# of op de server: python -m app.cli reset-2fa <e-mailadres>.
 FREE_ATTEMPTS = 5
 MAX_LOCK = timedelta(hours=24)
 
@@ -410,6 +416,10 @@ async def login(
         raise HTTPException(401, "E-mailadres of wachtwoord klopt niet")
     if user.totp_secret is not None:
         if not body.code:
+            # Het wachtwoord klopt al, dus de blokkade melden verraadt niets; zo hoort de
+            # gebruiker het vóór het intypen van een code. Telt niet als poging.
+            if until := locked_until(user):
+                raise locked_error(until)
             raise HTTPException(
                 401,
                 {"message": "Vul de code uit je authenticator-app in", "code": "totp_required"},

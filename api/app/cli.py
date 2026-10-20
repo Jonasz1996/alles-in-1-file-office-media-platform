@@ -2,9 +2,11 @@
 
     docker exec <container> python -m app.cli reset-2fa <e-mailadres>
 
-reset-2fa is er voor de laatste beheerder die zijn telefoon én de herstelcodes kwijt is:
-het zet 2FA uit, heft een blokkade na foute codes op en trekt alle logins van dat account
-in. Daarna log je in met alleen het wachtwoord en zet je 2FA opnieuw aan.
+reset-2fa is er voor de laatste beheerder die zijn telefoon én de herstelcodes kwijt is,
+of die niet meer binnenkomt omdat iemand anders de tweede factor met foute pogingen
+geblokkeerd houdt (zie FREE_ATTEMPTS in app/routers/auth.py). Het zet 2FA uit, heft de
+blokkade op en trekt alle logins van dat account in. Daarna log je in met alleen het
+wachtwoord en zet je 2FA opnieuw aan.
 """
 
 import argparse
@@ -34,7 +36,10 @@ async def reset_2fa(settings: Settings, email: str) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m app.cli", description=__doc__.split("\n")[0])
+    # Geen __doc__: dat is None onder python -OO
+    parser = argparse.ArgumentParser(
+        prog="python -m app.cli", description="Beheer vanaf de commandoregel"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     reset = commands.add_parser(
         "reset-2fa", help="2FA uitzetten voor een account waarvan de telefoon kwijt is"
