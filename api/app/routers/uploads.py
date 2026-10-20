@@ -8,6 +8,10 @@ zelf gebouwd met de extensies creation, termination en expiration.
 3. HEAD <location> vertelt hoeveel er binnen is; daar gaat de client verder.
 Zodra alle bytes binnen zijn, wordt het bestand in de map gezet (met ontdubbeling).
 Is dat toen misgegaan, dan gebeurt het alsnog bij de volgende HEAD.
+
+In een gedeelde map (met schrijfrecht) wordt het bestand van de eigenaar van die map en kost
+het diens quotum; alleen wie de upload begon, kan hem voortzetten. Via een uploadlink gaat
+hetzelfde protocol over /api/v1/public/tus (app/routers/public.py), met de sleutel van de link.
 """
 
 import asyncio
@@ -17,6 +21,9 @@ import hashlib
 import logging
 import os
 import uuid
+from collections import defaultdict
+from collections.abc import Collection
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
@@ -28,10 +35,12 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import ClientDisconnect
 
+from app import access
 from app.config import Settings, get_settings
 from app.db import Session, get_engine
-from app.models import Node, Upload, User
+from app.models import Node, Share, Upload, User
 from app.routers.files import (
+    Gone,
     NameTaken,
     Store,
     clean_name,
@@ -40,7 +49,9 @@ from app.routers.files import (
     place_file,
     room_left,
     sibling,
+    user_lock,
     user_locks,
+    writable,
 )
 from app.security import CurrentUser
 from app.storage import CHUNK_TIMEOUT, BlobStore, hash_file, with_timeout
@@ -65,9 +76,23 @@ CLEANUP_WAIT = 2 * CHUNK_TIMEOUT
 # intussen af of weg zijn. Een slot verdwijnt pas met de rij.
 _locks: dict[uuid.UUID, asyncio.Lock] = {}
 _hashers: dict[uuid.UUID, tuple["hashlib._Hash", int]] = {}
-# Per gebruiker: quotum controleren en ruimte reserveren in één keer (hetzelfde slot als
+# Per eigenaar: quotum controleren en ruimte reserveren in één keer (hetzelfde slot als
 # kopiëren in files.py, zodat ook die twee samen niet over het quotum gaan)
 _user_locks = user_locks
+
+
+@dataclass
+class Uploader:
+    """Wie de upload doet: een ingelogde gebruiker (user), of iemand met een uploadlink
+    (link). Via een link komen er geen ids van bestanden in de antwoorden."""
+
+    user: User | None = None
+    link: Share | None = None
+
+    def may(self, upload: Upload) -> bool:
+        if self.link is not None:
+            return upload.share_id == self.link.id
+        return upload.share_id is None and upload.created_by == self.user.id
 
 
 def _lock(upload_id: uuid.UUID) -> asyncio.Lock:
@@ -119,11 +144,18 @@ def parse_metadata(header: str | None) -> dict[str, str]:
     return result
 
 
-async def get_upload(session: AsyncSession, user: User, upload_id: uuid.UUID) -> Upload:
+async def get_upload(session: AsyncSession, who: Uploader, upload_id: uuid.UUID) -> Upload:
+    """Alleen voor wie hem begon (of met dezelfde link). In de map van een ander alleen zolang
+    hij daar nog mag schrijven."""
     # Altijd vers uit de database: na het wachten op een slot kan hij af of weg zijn
     upload = await session.get(Upload, upload_id, populate_existing=True)
-    if upload is None or upload.owner_id != user.id:
+    if upload is None or not who.may(upload):
         raise HTTPException(404, "Upload niet gevonden", headers=_headers())
+    if who.user is not None and upload.owner_id != who.user.id and upload.node_id is None:
+        folder = upload.parent_id
+        grant = (await access.resolve(session, who.user.id, [folder])).get(folder)
+        if grant is None or grant.permission != "write":
+            raise HTTPException(404, "Upload niet gevonden", headers=_headers())
     return upload
 
 
@@ -145,8 +177,7 @@ def _offset(settings: Settings, upload: Upload) -> int:
         raise HTTPException(404, "Upload niet gevonden", headers=_headers()) from e
 
 
-@router.options("")
-async def options(settings: Annotated[Settings, Depends(get_settings)]) -> Response:
+def capabilities(settings: Settings) -> Response:
     return Response(
         status_code=204,
         headers={
@@ -156,6 +187,55 @@ async def options(settings: Annotated[Settings, Depends(get_settings)]) -> Respo
             "Tus-Max-Size": str(settings.max_upload_bytes),
         },
     )
+
+
+@router.options("")
+async def options(settings: Annotated[Settings, Depends(get_settings)]) -> Response:
+    return capabilities(settings)
+
+
+def check_length(settings: Settings, upload_length: int) -> None:
+    if upload_length < 0:
+        raise HTTPException(400, "Upload-Length mag niet negatief zijn")
+    if settings.max_upload_bytes and upload_length > settings.max_upload_bytes:
+        raise HTTPException(413, "Bestand is te groot")
+
+
+async def start(
+    session: AsyncSession,
+    settings: Settings,
+    owner: User,
+    parent: Node,
+    name: str,
+    conflict: str,
+    size: int,
+    created_by: uuid.UUID | None,
+    share_id: uuid.UUID | None = None,
+) -> Upload:
+    """Ruimte reserveren in het quotum van de eigenaar (owner) en de upload aanmaken, in één
+    keer; anders komen twee gelijktijdige uploads allebei door en blijkt pas als alle bytes
+    binnen zijn dat er geen ruimte was."""
+    await session.commit()  # niet met een databaseverbinding op het slot wachten
+    async with user_lock(owner.id):
+        room = await room_left(session, owner)
+        if room is not None and size > room:
+            raise HTTPException(413, "Onvoldoende quotum")
+        upload = Upload(
+            owner_id=owner.id,
+            created_by=created_by,
+            share_id=share_id,
+            parent_id=parent.id,
+            name=name,
+            conflict=conflict,
+            size=size,
+            expires_at=datetime.now(UTC) + timedelta(hours=settings.upload_expiry_hours),
+        )
+        session.add(upload)
+        await session.commit()
+    path = upload_path(settings, upload.id)
+    await anyio.Path(path.parent).mkdir(parents=True, exist_ok=True)
+    await anyio.Path(path).touch()
+    return upload
 
 
 @router.post("", status_code=201)
@@ -174,40 +254,21 @@ async def create(
         parent_id = uuid.UUID(meta.get("parent", ""))
     except ValueError as e:
         raise HTTPException(400, "Upload-Metadata mist een geldige 'parent'") from e
-    parent = await get_dir(session, user, parent_id)
+    found = await get_dir(session, user, parent_id, "write")
+    parent = found.node
+    owner = user if found.owner else await session.get(User, parent.owner_id)
     conflict = meta.get("conflict", "rename")
     if conflict not in CONFLICTS:
         raise HTTPException(400, "conflict moet rename, replace of fail zijn")
-    if upload_length < 0:
-        raise HTTPException(400, "Upload-Length mag niet negatief zijn")
-    if settings.max_upload_bytes and upload_length > settings.max_upload_bytes:
-        raise HTTPException(413, "Bestand is te groot")
+    check_length(settings, upload_length)
     if conflict == "fail" and await sibling(session, parent.id, name):
         raise NameTaken(_headers())  # nu al, niet pas als alle bytes binnen zijn
-
-    # Controleren en reserveren in één keer; anders komen twee gelijktijdige uploads allebei
-    # door en blijkt pas als alle bytes binnen zijn dat er geen ruimte was
-    await session.commit()  # niet met een databaseverbinding op het slot wachten
-    async with _user_locks.setdefault(user.id, asyncio.Lock()):
-        room = await room_left(session, user)
-        if room is not None and upload_length > room:
-            raise HTTPException(413, "Onvoldoende quotum")
-        upload = Upload(
-            owner_id=user.id,
-            parent_id=parent.id,
-            name=name,
-            conflict=conflict,
-            size=upload_length,
-            expires_at=datetime.now(UTC) + timedelta(hours=settings.upload_expiry_hours),
-        )
-        session.add(upload)
-        await session.commit()
-    path = upload_path(settings, upload.id)
-    await anyio.Path(path.parent).mkdir(parents=True, exist_ok=True)
-    await anyio.Path(path).touch()
+    upload = await start(
+        session, settings, owner, parent, name, conflict, upload_length, created_by=user.id
+    )
     headers = _headers(upload, Location=f"/api/v1/tus/{upload.id}")
     if upload_length == 0:
-        node = await finish(session, settings, blobs, user, upload)
+        node = await finish(session, settings, blobs, Uploader(user=user), upload)
         headers["Platform-Node-Id"] = str(node.id)
     return Response(status_code=201, headers=headers)
 
@@ -221,24 +282,35 @@ async def head(
     blobs: Store,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Response:
-    upload = await get_upload(session, user, upload_id)
+    return await status(session, settings, blobs, Uploader(user=user), upload_id)
+
+
+async def status(
+    session: AsyncSession,
+    settings: Settings,
+    blobs: BlobStore,
+    who: Uploader,
+    upload_id: uuid.UUID,
+) -> Response:
+    """HEAD: hoeveel er binnen is."""
+    upload = await get_upload(session, who, upload_id)
     lock = _lock(upload.id)
     if lock.locked() and upload.node_id is None and not upload_path(settings, upload.id).exists():
         # Wie het slot heeft, verplaatst het bestand net (afronden of afbreken): wacht op de
         # uitkomst, anders lijkt de upload ten onrechte verlopen
         await session.commit()
         async with lock:
-            upload = await get_upload(session, user, upload_id)
+            upload = await get_upload(session, who, upload_id)
     offset = _offset(settings, upload)
     if upload.node_id is None and offset == upload.size and not lock.locked():
         # Alle bytes binnen maar nog geen bestand: het afronden mislukte of de server stopte
         # halverwege. Een gewone tus-client vraagt dan niets meer, dus nu afronden.
         async with lock:
-            upload = await get_upload(session, user, upload_id)
+            upload = await get_upload(session, who, upload_id)
             if upload.node_id is None and _offset(settings, upload) == upload.size:
-                await finish(session, settings, blobs, user, upload)
+                await finish(session, settings, blobs, who, upload)
     headers = _headers(upload, **{"Upload-Offset": str(offset), "Upload-Length": str(upload.size)})
-    if upload.node_id is not None:
+    if upload.node_id is not None and who.link is None:
         headers["Platform-Node-Id"] = str(upload.node_id)
     return Response(status_code=200, headers=headers)
 
@@ -255,24 +327,38 @@ async def patch(
     upload_offset: Annotated[int, Header()],
     content_type: Annotated[str | None, Header()] = None,
 ) -> Response:
+    who = Uploader(user=user)
+    return await receive(
+        session, settings, blobs, who, upload_id, request, upload_offset, content_type
+    )
+
+
+async def receive(
+    session: AsyncSession,
+    settings: Settings,
+    blobs: BlobStore,
+    who: Uploader,
+    upload_id: uuid.UUID,
+    request: Request,
+    upload_offset: int,
+    content_type: str | None,
+) -> Response:
+    """PATCH: een stuk erbij, en afronden zodra alles binnen is."""
     if (content_type or "").split(";")[0].strip() != "application/offset+octet-stream":
         raise HTTPException(415, "Content-Type moet application/offset+octet-stream zijn")
-    upload = await get_upload(session, user, upload_id)
+    upload = await get_upload(session, who, upload_id)
     lock = _lock(upload.id)
     if lock.locked():
         raise HTTPException(409, BUSY, headers=_headers())
     async with lock:
-        upload = await get_upload(session, user, upload_id)
+        upload = await get_upload(session, who, upload_id)
         offset = _offset(settings, upload)
         if upload.node_id is not None and upload_offset == offset:
             # Al klaar; de client miste waarschijnlijk het vorige antwoord
-            return Response(
-                status_code=204,
-                headers=_headers(
-                    upload,
-                    **{"Upload-Offset": str(offset), "Platform-Node-Id": str(upload.node_id)},
-                ),
-            )
+            headers = _headers(upload, **{"Upload-Offset": str(offset)})
+            if who.link is None:
+                headers["Platform-Node-Id"] = str(upload.node_id)
+            return Response(status_code=204, headers=headers)
         if upload_offset != offset:
             raise HTTPException(
                 409,
@@ -311,7 +397,8 @@ async def patch(
         )
         await session.commit()
         if result.rowcount == 0:
-            # Intussen weg: de map is definitief verwijderd en de upload met hem
+            # Intussen weg: de map is definitief verwijderd en de upload met hem (of de link
+            # of deling is ingetrokken)
             await _drop(session, settings, upload.id)
             raise HTTPException(404, "Upload niet gevonden", headers=_headers())
         if too_much:
@@ -322,8 +409,9 @@ async def patch(
             )
         headers = _headers(upload, **{"Upload-Offset": str(offset)})
         if offset == upload.size and not gone:
-            node = await finish(session, settings, blobs, user, upload)
-            headers["Platform-Node-Id"] = str(node.id)
+            node = await finish(session, settings, blobs, who, upload)
+            if who.link is None:
+                headers["Platform-Node-Id"] = str(node.id)
         return Response(status_code=204, headers=headers)
 
 
@@ -335,7 +423,14 @@ async def terminate(
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Response:
-    upload = await get_upload(session, user, upload_id)
+    return await cancel(session, settings, Uploader(user=user), upload_id)
+
+
+async def cancel(
+    session: AsyncSession, settings: Settings, who: Uploader, upload_id: uuid.UUID
+) -> Response:
+    """DELETE: de upload afbreken."""
+    upload = await get_upload(session, who, upload_id)
     await session.commit()  # niet met een databaseverbinding op het slot wachten
     # Een lopende PATCH of afronding gaat eerst door (een stilgevallen PATCH stopt vanzelf)
     async with _lock(upload.id):
@@ -344,14 +439,38 @@ async def terminate(
     return Response(status_code=204, headers=_headers())
 
 
+def _expires_at(share: Share) -> datetime:
+    return share.expires_at.replace(tzinfo=share.expires_at.tzinfo or UTC)
+
+
+def link_open(share_id: uuid.UUID, folder_id: uuid.UUID):
+    """Controle vlak voor het neerzetten (onder de sloten) van een upload via een link: de
+    link bestaat nog, is niet verlopen, en de map ligt niet in de prullenbak."""
+
+    async def check(session: AsyncSession) -> None:
+        share = await session.get(Share, share_id, populate_existing=True)
+        if (
+            share is None
+            or share.node_id != folder_id
+            or share.permission != "upload"
+            or (share.expires_at is not None and _expires_at(share) <= datetime.now(UTC))
+            or await access.trashed(session, folder_id)
+        ):
+            raise Gone
+
+    return check
+
+
 async def finish(
-    session: AsyncSession, settings: Settings, blobs: BlobStore, user: User, upload: Upload
+    session: AsyncSession, settings: Settings, blobs: BlobStore, who: Uploader, upload: Upload
 ) -> Node:
     """Alle bytes zijn binnen: inhoud naar de blob-opslag en het bestand in de map. Draait
     onder het slot van de upload (of voor een lege upload die nog niemand kent). Mislukt het,
     dan blijft de upload zoals hij was en kan het opnieuw, behalve als dat geen zin heeft
-    (quotum op, naam bezet, upload weg)."""
+    (quotum op, naam bezet, upload weg, map weg)."""
     upload_id, path = upload.id, upload_path(settings, upload.id)
+    # In je eigen bestanden; anders in een gedeelde map of via een link
+    own = upload.share_id is None and upload.created_by == upload.owner_id
     await session.commit()  # geen databaseverbinding vasthouden tijdens het hashen
     hasher, hashed = _hashers.get(upload_id, (None, -1))
     if hasher is not None and hashed == upload.size:
@@ -359,25 +478,54 @@ async def finish(
     else:
         sha = await anyio.to_thread.run_sync(hash_file, path)
 
-    room = await room_left(session, user, exclude_upload=upload_id)
+    if who.user is not None and who.user.id == upload.owner_id:
+        owner = who.user
+    else:
+        owner = await session.get(User, upload.owner_id)
+    room = await room_left(session, owner, exclude_upload=upload_id)
     if room is not None and upload.size > room:
         await _drop(session, settings, upload_id)
         raise HTTPException(413, "Onvoldoende quotum", headers=_headers())
     conflict = upload.conflict
     parent = await session.get(Node, upload.parent_id)
-    if parent is None or parent.deleted_at is not None or await is_trashed(session, parent):
-        # De map is weg: dan in de hoofdmap, en daar nooit iets vervangen of weigeren
-        # (replace en fail golden voor de map die de client koos)
-        parent = await session.get(Node, user.root_id)
-        conflict = "rename"
+    guard = None
+    if own:
+        if parent is None or parent.deleted_at is not None or await is_trashed(session, parent):
+            # De map is weg: dan in de hoofdmap, en daar nooit iets vervangen of weigeren
+            # (replace en fail golden voor de map die de client koos)
+            parent = await session.get(Node, owner.root_id)
+            conflict = "rename"
+    elif parent is None:
+        await _drop(session, settings, upload_id)
+        raise Gone(_headers())
+    elif who.link is not None:
+        guard = link_open(who.link.id, parent.id)
+    else:
+        # Nooit uitwijken naar de hoofdmap van een ander: is de map weg of in de prullenbak,
+        # of de deling ingetrokken, dan gaat de upload weg
+        guard = writable(who.user.id, parent.id)
     try:
         node = await place_file(
-            session, blobs, user, parent, upload.name, conflict, sha, upload.size, path, upload
+            session,
+            blobs,
+            owner,
+            parent,
+            upload.name,
+            conflict,
+            sha,
+            upload.size,
+            path,
+            upload,
+            actor=who.user,
+            guard=guard,
         )
     except NameTaken as e:
         # Er kwam intussen iets met deze naam: opnieuw proberen heeft geen zin
         await _drop(session, settings, upload_id)
         raise NameTaken(_headers()) from e
+    except Gone as e:
+        await _drop(session, settings, upload_id)
+        raise Gone(_headers()) from e
     except Exception:
         if await session.scalar(select(Upload.id).where(Upload.id == upload_id)) is None:
             # Intussen weg: de map is definitief verwijderd en de upload met hem
@@ -386,6 +534,51 @@ async def finish(
         raise
     _hashers.pop(upload_id, None)
     return node
+
+
+async def release(
+    session: AsyncSession, owner_id: uuid.UUID, user_ids: Collection[uuid.UUID]
+) -> int:
+    """Na het intrekken of beperken van een deling: lopende uploads van deze gebruikers in de
+    bestanden van owner_id, waar ze niet meer mogen schrijven, gaan weg. Zo komt de ruimte die
+    ze in het quotum van de eigenaar reserveerden meteen vrij. Een PATCH die nog loopt, merkt
+    het aan het eind (404); de bytes ruimt het gewone opruimen op. Commit zelf."""
+    users = set(user_ids) - {owner_id}  # eigen uploads van de eigenaar blijven altijd
+    if not users:
+        return 0
+    rows = (
+        await session.execute(
+            select(Upload.id, Upload.created_by, Upload.parent_id).where(
+                Upload.owner_id == owner_id,
+                Upload.node_id.is_(None),
+                Upload.share_id.is_(None),
+                Upload.created_by.in_(users),
+            )
+        )
+    ).all()
+    by_user: dict[uuid.UUID, list] = defaultdict(list)
+    for row in rows:
+        by_user[row.created_by].append(row)
+    lost = []
+    for user_id, mine in by_user.items():
+        grants = await access.resolve(session, user_id, {u.parent_id for u in mine})
+        for u in mine:
+            grant = grants.get(u.parent_id)
+            if grant is None or grant.permission != "write":
+                lost.append(u.id)
+    if lost:
+        await session.execute(delete(Upload).where(Upload.id.in_(lost)))
+    await session.commit()
+    return len(lost)
+
+
+async def release_link(session: AsyncSession, share_id: uuid.UUID) -> None:
+    """Een uploadlink is een leeslink geworden: zijn lopende uploads gaan weg (zoals bij het
+    weghalen van de link). Commit zelf."""
+    await session.execute(
+        delete(Upload).where(Upload.share_id == share_id, Upload.node_id.is_(None))
+    )
+    await session.commit()
 
 
 async def remove_expired(settings: Settings) -> int:

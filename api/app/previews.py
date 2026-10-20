@@ -35,7 +35,7 @@ import anyio.to_thread
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import events, jobs
+from app import access, events, jobs
 from app.config import Settings
 from app.db import get_engine
 from app.models import Blob, Node
@@ -242,17 +242,20 @@ async def _store(
 
 
 async def announce(maker: async_sessionmaker[AsyncSession], sha: str) -> None:
-    """preview.ready naar de eigenaren van bestanden met deze inhoud, elk met alleen de
-    eigen bestanden."""
+    """preview.ready naar de eigenaren van bestanden met deze inhoud en naar wie er een via
+    een deling kan zien, elk met alleen de bestanden die hij ziet."""
     async with maker() as session:
         rows = (
             await session.execute(select(Node.owner_id, Node.id).where(Node.blob_id == sha))
         ).all()
-    by_owner: dict[Any, list[str]] = defaultdict(list)
+        shared = await access.viewers_of(session, Node.blob_id == sha)
+    by_user: dict[Any, dict[str, None]] = defaultdict(dict)
     for owner_id, node_id in rows:
-        by_owner[owner_id].append(str(node_id))
-    for owner_id, node_ids in by_owner.items():
-        events.publish([owner_id], "preview.ready", {"sha": sha, "node_ids": node_ids})
+        by_user[owner_id][str(node_id)] = None
+    for user_id, node_ids in shared.items():
+        by_user[user_id].update((str(n), None) for n in node_ids)
+    for user_id, node_ids in by_user.items():
+        events.publish([user_id], "preview.ready", {"sha": sha, "node_ids": list(node_ids)})
 
 
 async def mark_failed(settings: Settings, payload: dict[str, Any], _error: str) -> None:

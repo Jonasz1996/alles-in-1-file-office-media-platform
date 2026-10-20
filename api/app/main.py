@@ -18,7 +18,7 @@ from app import events, jobs, previews
 from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.migrate import upgrade
-from app.routers import admin, auth, files, search, uploads
+from app.routers import admin, auth, files, groups, public, search, shares, uploads
 from app.routers import events as live_events
 from app.routers import previews as preview_routes
 
@@ -29,17 +29,21 @@ except PackageNotFoundError:
 
 log = logging.getLogger("platform")
 
-# Downloadlinks en previewadressen dragen hun toegang in het adres (een <img> of <video> kan
-# geen header sturen); die waarde hoort niet in de toegangslog
-SECRET_PARAMS = re.compile(r"([?&](?:token|sig)=)[^&\s\"]*")
+# Downloadlinks, previewadressen en de sleutel van een publieke link dragen hun toegang in
+# het adres (een <img> of <video> kan geen header sturen), en het adres van een publieke link
+# (/s/<token>) is de toegang zelf; die waarden horen niet in de toegangslog
+SECRET_PARAMS = re.compile(r"([?&](?:token|sig|key)=)[^&\s\"]*")
+LINK_PATH = re.compile(r"((?:^|[\s\"])/s/)[^/?#\s\"]+")
+
+
+def _hide(value: str) -> str:
+    return LINK_PATH.sub(r"\1***", SECRET_PARAMS.sub(r"\1***", value))
 
 
 class HideSecrets(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.args, tuple):
-            record.args = tuple(
-                SECRET_PARAMS.sub(r"\1***", a) if isinstance(a, str) else a for a in record.args
-            )
+            record.args = tuple(_hide(a) if isinstance(a, str) else a for a in record.args)
         return True
 
 
@@ -218,6 +222,9 @@ app.include_router(auth.router)
 app.include_router(files.router)
 app.include_router(uploads.router)
 app.include_router(search.router)
+app.include_router(shares.router)
+app.include_router(groups.router)
+app.include_router(public.router)
 app.include_router(admin.router)
 app.include_router(preview_routes.router)
 app.include_router(live_events.router)

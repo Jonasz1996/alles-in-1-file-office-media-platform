@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import math
 import secrets
 import time
 import uuid
@@ -109,6 +110,50 @@ def read_download_token(
     claims = _decode(settings, token, "download")
     version = uuid.UUID(claims["ver"]) if claims.get("ver") else None
     return uuid.UUID(claims["sub"]), uuid.UUID(claims["node"]), version
+
+
+# Zo lang (uren) werkt de sleutel van een geopende publieke link hooguit; daarna opent de
+# pagina de link opnieuw (en vraagt zo nodig weer het wachtwoord)
+LINK_KEY_HOURS = 12
+KEY_EXPIRED = {"message": "Open de link opnieuw", "code": "key_expired"}
+
+
+def password_print(password_hash: str | None) -> str:
+    """Vingerafdruk van het wachtwoord van een link: verandert het (of gaat het eraf), dan
+    werken sleutels van daarvoor niet meer."""
+    return hashlib.sha256((password_hash or "").encode()).hexdigest()[:32]
+
+
+def link_key(
+    settings: Settings, share_id: uuid.UUID, password_hash: str | None, until: datetime | None
+) -> tuple[str, int]:
+    """Sleutel voor een geopende publieke link (eigen typ: geen access-token), met hoe lang
+    hij geldt in seconden: 12 uur, of korter als de link eerder verloopt."""
+    now = datetime.now(UTC)
+    exp = now + timedelta(hours=LINK_KEY_HOURS)
+    if until is not None:
+        # SQLite geeft tijden zonder zone terug: die zijn UTC
+        exp = min(exp, until if until.tzinfo else until.replace(tzinfo=UTC))
+    claims = {
+        "sub": str(share_id),
+        "typ": "link",
+        "pw": password_print(password_hash),
+        "iat": now,
+        "exp": exp,
+    }
+    key = jwt.encode(claims, settings.secret(), algorithm="HS256")
+    return key, max(0, int((exp - now).total_seconds()))
+
+
+def read_link_key(settings: Settings, key: str) -> tuple[uuid.UUID, str]:
+    """(link, vingerafdruk van het wachtwoord); 401 key_expired als hij niet (meer) geldt."""
+    try:
+        claims = jwt.decode(key, settings.secret(), algorithms=["HS256"])
+        if claims.get("typ") != "link":
+            raise jwt.InvalidTokenError("verkeerd soort")
+        return uuid.UUID(claims["sub"]), str(claims.get("pw", ""))
+    except (jwt.PyJWTError, KeyError, ValueError) as e:
+        raise HTTPException(401, KEY_EXPIRED) from e
 
 
 SECURITY_KEY = "security"
@@ -227,14 +272,27 @@ TokenFamily = Annotated[uuid.UUID | None, Depends(token_family)]
 
 
 class RateLimiter:
-    """Eenvoudige limiet per sleutel (bijv. IP) binnen een tijdvenster, in het geheugen."""
+    """Eenvoudige limiet per sleutel (bijv. IP) binnen een tijdvenster, in het geheugen. 429
+    met Retry-After: over zoveel seconden mag het weer."""
 
-    def __init__(self, limit: int, window_seconds: float):
+    def __init__(
+        self,
+        limit: int,
+        window_seconds: float,
+        detail: str | dict = "Te veel pogingen, probeer het straks opnieuw",
+    ):
         self.limit = limit
         self.window = window_seconds
+        self.detail = detail
         self._hits: dict[str, deque[float]] = defaultdict(deque)
 
     def check(self, key: str) -> None:
+        """Telt deze poging, of 429 als de limiet al bereikt is."""
+        self.refuse(key)
+        self._hits[key].append(time.monotonic())
+
+    def refuse(self, key: str) -> None:
+        """429 als de limiet bereikt is, zonder deze poging te tellen (zie add)."""
         now = time.monotonic()
         if len(self._hits) > 10_000:
             self.prune()
@@ -242,8 +300,12 @@ class RateLimiter:
         while hits and now - hits[0] > self.window:
             hits.popleft()
         if len(hits) >= self.limit:
-            raise HTTPException(429, "Te veel pogingen, probeer het straks opnieuw")
-        hits.append(now)
+            wait = max(1, math.ceil(self.window - (now - hits[0])))
+            raise HTTPException(429, self.detail, headers={"Retry-After": str(wait)})
+
+    def add(self, key: str) -> None:
+        """Telt een poging, bijv. alleen de mislukte."""
+        self._hits[key].append(time.monotonic())
 
     def reset(self) -> None:
         self._hits.clear()

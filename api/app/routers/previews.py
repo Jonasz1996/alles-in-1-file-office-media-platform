@@ -10,11 +10,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app import jobs, previews
+from app import access, jobs, previews
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Blob, Job, Node
-from app.routers.files import get_node
 from app.security import AdminUser, CurrentUser
 from app.storage import BlobStore
 
@@ -43,21 +42,22 @@ async def preview_info(
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict[str, PreviewOut]:
-    """Previews van (hooguit 500) bestanden; wat niet bestaat of niet van jou is, ontbreekt
-    in het antwoord. thumb en large zijn ondertekende adressen voor een <img>."""
+    """Previews van (hooguit 500) bestanden; wat niet bestaat of wat je niet mag zien (niet
+    van jou en niet met je gedeeld), ontbreekt in het antwoord. thumb en large zijn
+    ondertekende adressen voor een <img>."""
     ids = list(dict.fromkeys(body.node_ids))
-    # Eén query; get_node (die de toegang controleert) vindt ze daarna in de sessie. De lijst
-    # houdt ze vast: de sessie onthoudt objecten alleen zolang iemand ernaar verwijst.
     loaded = (await session.scalars(select(Node).where(Node.id.in_(ids)))).all() if ids else []
-    nodes = []
-    for node_id in ids:
-        try:
-            node = await get_node(session, user, node_id)
-        except HTTPException:
-            continue
-        if node.kind == "file" and node.blob_id:
-            nodes.append(node)
-    del loaded
+    # Wat van een ander is: in één query nagaan wat met je gedeeld is
+    others = [n.id for n in loaded if n.owner_id != user.id]
+    grants = await access.resolve(session, user.id, others) if others else {}
+    visible = {
+        n.id: n
+        for n in loaded
+        if (n.owner_id == user.id and user.role != "guest") or n.id in grants
+    }
+    nodes = [
+        visible[i] for i in ids if i in visible and visible[i].kind == "file" and visible[i].blob_id
+    ]
     shas = {n.blob_id for n in nodes}
     blobs = {}
     if shas:

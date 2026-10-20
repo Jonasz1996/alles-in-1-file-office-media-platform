@@ -1,9 +1,9 @@
 """Zoeken op naam, soort en tag, en tags zelf (per gebruiker: een tag op een bestand ziet
 alleen wie hem maakte).
 
-Zoeken gaat met een recursieve CTE vanaf de gekozen map omlaag, en stopt bij wat in de
-prullenbak ligt: zo komt niets uit (of onder) de prullenbak in de resultaten. Werkt op
-SQLite en PostgreSQL.
+Zoeken gaat met een recursieve CTE vanaf de gekozen map omlaag (zonder map: vanaf de eigen
+hoofdmap en alles wat met je gedeeld is), en stopt bij wat in de prullenbak ligt: zo komt
+niets uit (of onder) de prullenbak in de resultaten. Werkt op SQLite en PostgreSQL.
 """
 
 import asyncio
@@ -18,18 +18,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app import events
+from app import access, events
 from app.db import Session
 from app.mime import ARCHIVE_TYPES, DOCUMENT_TYPES
 from app.models import Node, NodeTag, Tag, User
 from app.routers.files import (
     NodeOut,
     TagRef,
+    describe,
+    get_access,
     get_dir,
-    get_node,
     is_trashed,
-    node_out,
-    notify,
     tag_order,
     tags_by_node,
     tree,
@@ -65,7 +64,8 @@ class PathPart(BaseModel):
 
 class Hit(BaseModel):
     node: NodeOut
-    # Van de hoofdmap tot en met de map waar het in staat
+    # Van de hoofdmap tot en met de map waar het in staat; voor wat met je gedeeld is vanaf de
+    # gedeelde map (leeg als het de gedeelde map zelf is)
     path: list[PathPart]
 
 
@@ -123,6 +123,15 @@ async def paths(session: AsyncSession, nodes: list[Node]) -> dict[uuid.UUID, lis
     return result
 
 
+async def search_roots(session: AsyncSession, user: User) -> list[uuid.UUID]:
+    """Waar zoeken zonder map begint: de eigen hoofdmap (niet voor gasten) en de bovenste
+    gedeelde mappen van anderen."""
+    roots = [r.node_id for r in await access.shared_roots(session, user.id)]
+    if user.role != "guest":
+        roots.append(user.root_id)
+    return roots
+
+
 @router.get("/search")
 async def search(
     user: CurrentUser,
@@ -133,13 +142,18 @@ async def search(
     in_: Annotated[uuid.UUID | None, Query(alias="in")] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> SearchResult:
-    """Zoekt in map `in` (standaard de hoofdmap) en alles eronder. Elk woord van q moet in
-    de naam staan (hoofdletters en accenten tellen niet). Mappen eerst, dan op naam."""
-    start = await get_dir(session, user, in_ or user.root_id)
-    if await is_trashed(session, start):
-        raise HTTPException(404, "Map niet gevonden")
-    found = tree(start.id, live=True)
-    query = select(Node).join(found, Node.id == found.c.id).where(Node.id != start.id)
+    """Zoekt in map `in` en alles eronder, of zonder `in` in je eigen bestanden en alles wat
+    met je gedeeld is. Elk woord van q moet in de naam staan (hoofdletters en accenten tellen
+    niet). Mappen eerst, dan op naam. tag: alleen je eigen tags."""
+    if in_ is not None:
+        found = await get_dir(session, user, in_, "read")
+        if found.owner and await is_trashed(session, found.node):
+            raise HTTPException(404, "Map niet gevonden")
+        anchors, skip = [found.node.id], [found.node.id]
+    else:
+        anchors, skip = await search_roots(session, user), [user.root_id]
+    found = tree(anchors, live=True)
+    query = select(Node).join(found, Node.id == found.c.id).where(Node.id.not_in(skip))
     for word in fold(q).split()[:MAX_WORDS]:
         query = query.where(Node.search_name.contains(word, autoescape=True))
     if type_ is not None:
@@ -160,9 +174,21 @@ async def search(
     )
     more, rows = len(rows) > limit, rows[:limit]
     tags = await tags_by_node(session, user, [n.id for n in rows])
-    where = await paths(session, rows)
+    mine = [n for n in rows if n.owner_id == user.id]
+    where = await paths(session, mine)
+    # Van anderen: recht en pad in één query, het pad vanaf de gedeelde map
+    grants = await access.resolve(session, user.id, [n.id for n in rows if n.owner_id != user.id])
+    permissions = {n.id: "owner" for n in mine}
+    roots = set()
+    for node_id, grant in grants.items():
+        permissions[node_id] = grant.permission
+        where[node_id] = [PathPart(id=s.id, name=s.name) for s in grant.chain[:-1]]
+        if grant.root_id == node_id:
+            roots.add(node_id)
+    rows = [n for n in rows if n.id in permissions]  # wat intussen onzichtbaar werd
+    described = await describe(session, user, rows, permissions, tags=tags, roots=roots)
     return SearchResult(
-        results=[Hit(node=node_out(n, tags), path=where.get(n.id, [])) for n in rows],
+        results=[Hit(node=out, path=where.get(out.id, [])) for out in described],
         more=more,
     )
 
@@ -235,9 +261,10 @@ async def tag_out(session: AsyncSession, user: User, tag: Tag) -> TagOut:
 async def tag_counts(
     session: AsyncSession, user: User, tag_ids: list[uuid.UUID] | None = None
 ) -> dict[uuid.UUID, int]:
-    """Per tag het aantal mappen en bestanden in de boom van de gebruiker, zonder wat in de
-    prullenbak ligt; zo klopt het met wat zoeken op die tag vindt."""
-    found = tree(user.root_id, live=True)
+    """Per tag het aantal mappen en bestanden in de boom van de gebruiker en wat met hem
+    gedeeld is, zonder wat in de prullenbak ligt; zo klopt het met wat zoeken op die tag
+    vindt."""
+    found = tree(await search_roots(session, user), live=True)
     query = (
         select(NodeTag.tag_id, func.count())
         .join(found, found.c.id == NodeTag.node_id)
@@ -317,10 +344,12 @@ async def delete_tag(tag_id: uuid.UUID, user: CurrentUser, session: Session) -> 
 async def set_tags(
     node_id: uuid.UUID, body: TagSet, user: CurrentUser, session: Session
 ) -> list[TagRef]:
-    """Vervangt de tags (van deze gebruiker) op een map of bestand door deze set."""
+    """Vervangt de tags (van deze gebruiker) op een map of bestand door deze set. Kan ook op
+    wat met je gedeeld is (alleen kijken is genoeg): tags zijn persoonlijk."""
     await session.commit()  # niet met een databaseverbinding op het slot wachten
     async with _tag_lock(user.id):
-        node = await get_node(session, user, node_id)
+        found = await get_access(session, user, node_id, "read")
+        node = found.node
         wanted = set(body.tag_ids)
         tags = (
             (
@@ -344,5 +373,8 @@ async def set_tags(
             # Het bestand is intussen definitief verwijderd
             await session.rollback()
             raise HTTPException(404, "Niet gevonden") from None
-    notify(node, "node.changed")
+    # Alleen naar wie het deed: niemand anders ziet deze tags
+    hidden = found.grant is not None and found.grant.root_id == node.id
+    parent_id = str(node.parent_id) if node.parent_id and not hidden else None
+    events.publish([user.id], "node.changed", {"id": str(node.id), "parent_id": parent_id})
     return sorted((TagRef.model_validate(t) for t in tags), key=tag_order)
