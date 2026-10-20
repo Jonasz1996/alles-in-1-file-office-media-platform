@@ -3,6 +3,7 @@ import re
 import uuid
 from collections import Counter
 from collections.abc import Iterable
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from itertools import batched
 from pathlib import Path
@@ -13,7 +14,8 @@ import anyio.to_thread
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import AfterValidator, BaseModel, Field
-from sqlalchemy import Integer, Select, delete, func, literal, or_, select, update
+from sqlalchemy import Integer, Select, delete, func, insert, literal, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -29,8 +31,12 @@ from app.text import fold
 
 router = APIRouter(prefix="/api/v1", tags=["bestanden"])
 FORBIDDEN = re.compile(r"[/\\\x00-\x1f]")
+MAX_NAME = 255
 # Zoveel eerdere versies van een bestand blijven bewaard; de oudste gaan eerst
 MAX_VERSIONS = 20
+# Zoveel mappen en bestanden kopieert één verzoek hooguit: de kopie gebeurt in één transactie
+# (onder het blob-slot), en die mag andere schrijvers niet te lang laten wachten
+MAX_COPY = 10_000
 
 # Per gebruiker: quotum controleren en ruimte innemen in één keer (hervatbare uploads
 # reserveren, kopiëren maakt de kopie), zodat twee verzoeken samen niet over het quotum gaan
@@ -112,7 +118,7 @@ class NameTaken(HTTPException):
 
 def clean_name(name: str) -> str:
     name = name.strip()
-    if not name or name in (".", "..") or FORBIDDEN.search(name) or len(name) > 255:
+    if not name or name in (".", "..") or FORBIDDEN.search(name) or len(name) > MAX_NAME:
         raise HTTPException(422, "Ongeldige naam")
     return name
 
@@ -146,6 +152,14 @@ async def is_trashed(session: AsyncSession, node: Node) -> bool:
     return any(n.deleted_at is not None for n in await ancestors(session, node))
 
 
+async def get_live_dir(session: AsyncSession, user: User, node_id: uuid.UUID) -> Node:
+    """Een map waar iets in mag komen: ook niet ergens onder een map in de prullenbak."""
+    folder = await get_dir(session, user, node_id)
+    if await is_trashed(session, folder):
+        raise HTTPException(404, "Map niet gevonden")
+    return folder
+
+
 async def sibling(session: AsyncSession, parent_id: uuid.UUID, name: str) -> Node | None:
     # Vers uit de database: wie op een slot wachtte, mag niet op een oude kopie beslissen
     return await session.scalar(
@@ -159,14 +173,22 @@ async def sibling(session: AsyncSession, parent_id: uuid.UUID, name: str) -> Nod
     )
 
 
-async def free_name(session: AsyncSession, parent_id: uuid.UUID, name: str) -> str:
-    if await sibling(session, parent_id, name) is None:
-        return name
+def numbered(name: str, i: int) -> str:
+    """x.txt -> x (i).txt; een lange naam wordt ingekort tot het binnen MAX_NAME past."""
     stem, dot, ext = name.rpartition(".")
     if not stem:
         stem, dot, ext = name, "", ""
+    tail = f" ({i}){dot}{ext}"
+    if len(tail) > MAX_NAME // 2:  # een heel lange "extensie" is gewoon deel van de naam
+        stem, tail = name, f" ({i})"
+    return stem[: MAX_NAME - len(tail)].rstrip() + tail
+
+
+async def free_name(session: AsyncSession, parent_id: uuid.UUID, name: str) -> str:
+    if await sibling(session, parent_id, name) is None:
+        return name
     for i in range(1, 10_000):
-        candidate = f"{stem} ({i}){dot}{ext}"
+        candidate = numbered(name, i)
         if await sibling(session, parent_id, candidate) is None:
             return candidate
     raise HTTPException(409, "Geen vrije naam gevonden")
@@ -184,20 +206,26 @@ def tree(start_id: uuid.UUID, live: bool = False):
     return found.union_all(step)
 
 
-async def subtree(session: AsyncSession, node: Node, live: bool = False) -> list[Node]:
-    """node en alles eronder in één query, ouders voor hun kinderen."""
-    found = tree(node.id, live)
-    rows = await session.scalars(
-        select(Node)
-        .join(found, Node.id == found.c.id)
-        .order_by(found.c.depth)
-        .execution_options(populate_existing=True)
-    )
-    return list(rows.all())
+async def subtree_rows(
+    session: AsyncSession, node_id: uuid.UUID, *columns, live: bool = False, limit: int = 0
+) -> list:
+    """Deze kolommen van node_id en alles eronder in één query, ouders voor hun kinderen.
+    Rijen, geen ORM-objecten, en in stukken binnengehaald: duizenden rijen in één keer
+    omzetten houdt de event loop (en daarmee elk ander verzoek) te lang bezig. limit: hooguit
+    zoveel rijen."""
+    found = tree(node_id, live)
+    query = select(*columns).join(found, Node.id == found.c.id).order_by(found.c.depth)
+    if limit:
+        query = query.limit(limit)
+    rows = []
+    async for part in (await session.stream(query)).partitions(500):
+        rows.extend(part)
+    return rows
 
 
-async def descendants(session: AsyncSession, node: Node) -> list[Node]:
-    return await subtree(session, node)
+async def descendants(session: AsyncSession, node: Node) -> list:
+    """(id, blob_id) van node en alles eronder, ouders voor hun kinderen."""
+    return await subtree_rows(session, node.id, Node.id, Node.blob_id)
 
 
 async def tags_by_node(
@@ -282,13 +310,17 @@ async def info(node_id: uuid.UUID, user: CurrentUser, session: Session) -> NodeO
 async def new_folder(
     node_id: uuid.UUID, body: NewFolder, user: CurrentUser, session: Session
 ) -> NodeOut:
-    parent = await get_dir(session, user, node_id)
+    parent = await get_live_dir(session, user, node_id)
     name = clean_name(body.name)
     if await sibling(session, parent.id, name):
         raise HTTPException(409, "Er bestaat al iets met deze naam")
     folder = Node(parent_id=parent.id, owner_id=user.id, name=name, kind="dir")
     session.add(folder)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()  # de map is intussen definitief verwijderd
+        raise HTTPException(404, "Map niet gevonden") from None
     notify(folder, "node.created")
     return node_out(folder)
 
@@ -328,12 +360,18 @@ async def drop_ref(session: AsyncSession, sha: str) -> None:
 
 
 async def add_refs(session: AsyncSession, counts: Counter[str], sign: int = 1) -> None:
-    """ref_count + n (of - n met sign=-1) voor bestaande blobs, één update per blob. Alleen
-    onder BlobStore.lock."""
+    """ref_count + n (of - n met sign=-1) voor bestaande blobs: één update per aantal en per
+    500 blobs, niet per blob. Alleen onder BlobStore.lock."""
+    by_count: dict[int, list[str]] = {}
     for sha, n in counts.items():
-        await session.execute(
-            update(Blob).where(Blob.sha256 == sha).values(ref_count=Blob.ref_count + sign * n)
-        )
+        by_count.setdefault(n, []).append(sha)
+    for n, shas in by_count.items():
+        for chunk in batched(shas, 500):
+            await session.execute(
+                update(Blob)
+                .where(Blob.sha256.in_(chunk))
+                .values(ref_count=Blob.ref_count + sign * n)
+            )
 
 
 async def keep_version(session: AsyncSession, node: Node, user: User, now: datetime) -> None:
@@ -380,20 +418,31 @@ async def place_file(
     blijft als versie bewaard), fail = NameTaken.
     Gelukt: `source` is weg (verplaatst naar de blob-opslag, of weggegooid omdat die inhoud
     er al was). Mislukt: `source` staat er nog en de database is niet veranderd. Komt het van
-    een hervatbare upload, dan wordt die in dezelfde transactie afgerond. Sluit eerst de
-    transactie van de aanroeper af (die mag niets openstaan hebben): wie op het slot wacht,
-    houdt geen databaseverbinding vast, anders kan wie het slot heeft er geen meer krijgen."""
+    een hervatbare upload, dan wordt die in dezelfde transactie afgerond (het quotum is dan al
+    gereserveerd); anders wordt het quotum hier nog eens gecontroleerd, onder hetzelfde
+    gebruikersslot als kopiëren en reserveren. Sluit eerst de transactie van de aanroeper af
+    (die mag niets openstaan hebben): wie op het slot wacht, houdt geen databaseverbinding
+    vast, anders kan wie het slot heeft er geen meer krijgen."""
     # Het soort volgt uit de inhoud; de naam helpt alleen waar de inhoud niets zegt
     mime = sniff(await anyio.to_thread.run_sync(read_head, source), name)
     moved, created = False, False
     await session.commit()
-    async with blobs.lock:
+    async with user_lock(user.id) if upload is None else nullcontext(), blobs.lock:
         try:
+            if await session.scalar(select(Node.id).where(Node.id == parent.id)) is None:
+                raise HTTPException(404, "Map niet gevonden")  # intussen definitief verwijderd
             existing = await sibling(session, parent.id, name)
             if existing and conflict == "fail":
                 raise NameTaken
+            replacing = existing and conflict == "replace" and existing.kind == "file"
+            if upload is None and not (replacing and existing.blob_id == sha):
+                # Pas nu weet je wat anderen intussen innamen (de vorige inhoud blijft als
+                # versie staan, dus ook vervangen kost ruimte)
+                room = await room_left(session, user)
+                if room is not None and size > room:
+                    raise HTTPException(413, "Onvoldoende quotum")
             now = datetime.now(UTC)
-            if existing and conflict == "replace" and existing.kind == "file":
+            if replacing:
                 if existing.blob_id != sha:
                     await add_ref(session, sha, size, mime)
                     if existing.blob_id:
@@ -459,7 +508,7 @@ async def upload(
     Voor grote bestanden is /api/v1/tus (hervatbaar) beter.
     Dezelfde inhoud wordt maar één keer opgeslagen (SHA-256). Met conflict=replace blijft
     de vorige inhoud bewaard als versie."""
-    parent = await get_dir(session, user, node_id)
+    parent = await get_live_dir(session, user, node_id)
     name = clean_name(name)
     limit = settings.max_upload_bytes
     room = await room_left(session, user)
@@ -489,7 +538,8 @@ async def upload(
 async def change(
     node_id: uuid.UUID, body: Change, user: CurrentUser, session: Session, blobs: Store
 ) -> NodeOut:
-    """Hernoemen en/of verplaatsen."""
+    """Hernoemen en/of verplaatsen. modified_at blijft staan: dat gaat over de inhoud (zoals
+    bij een bestandssysteem), en een versie onthoudt het als het moment van die inhoud."""
     await session.commit()  # niet met een databaseverbinding op het slot wachten
     # Onder het blob-slot, net als definitief verwijderen: anders kan dat iets weggooien dat
     # net uit een weggegooide map werd gehaald, of iets missen dat er net in kwam
@@ -511,7 +561,6 @@ async def change(
         if other and other.id != node.id:
             raise HTTPException(409, "Er bestaat al iets met deze naam")
         node.name, node.parent_id = name, parent_id
-        node.modified_at = datetime.now(UTC)
         await session.commit()
     notify(node, "node.changed", old_parent_id)
     return await one_out(session, user, node)
@@ -521,9 +570,10 @@ async def change(
 async def copy(
     node_id: uuid.UUID, body: CopyTo, user: CurrentUser, session: Session, blobs: Store
 ) -> NodeOut:
-    """Kopieert een bestand, of een map met alles erin, naar map parent_id. Bestaat de naam
-    daar al, dan krijgt de kopie een vrije naam ("x (1)"). De inhoud zelf wordt niet nog eens
-    opgeslagen: de kopie wijst naar dezelfde blobs. Versies gaan niet mee."""
+    """Kopieert een bestand, of een map met alles erin (hooguit MAX_COPY mappen en
+    bestanden), naar map parent_id. Bestaat de naam daar al, dan krijgt de kopie een vrije
+    naam ("x (1)"). De inhoud zelf wordt niet nog eens opgeslagen: de kopie wijst naar
+    dezelfde blobs. Versies en tags gaan niet mee."""
     await session.commit()  # niet met een databaseverbinding op een slot wachten
     # Quotum controleren en de kopie maken in één keer, en onder het blob-slot: ref_count
     # ophogen gebeurt nooit tegelijk met opruimen. Pas onder de sloten lezen: intussen kan
@@ -539,33 +589,54 @@ async def copy(
         if any(a.deleted_at is not None for a in chain):
             raise HTTPException(404, "Map niet gevonden")
         name = clean_name(body.name) if body.name else node.name
-        originals = await subtree(session, node, live=True)
+        originals = await subtree_rows(
+            session,
+            node.id,
+            *(Node.id, Node.parent_id, Node.name, Node.kind, Node.mime, Node.size),
+            *(Node.blob_id, Node.modified_at),
+            live=True,
+            limit=MAX_COPY + 1,
+        )
+        if len(originals) > MAX_COPY:
+            most = f"{MAX_COPY:,}".replace(",", ".")
+            raise HTTPException(
+                422, f"Te veel om in één keer te kopiëren (meer dan {most} mappen en bestanden)"
+            )
         room = await room_left(session, user)
         if room is not None and sum(n.size for n in originals if n.kind == "file") > room:
             raise HTTPException(413, "Onvoldoende quotum")
         name = await free_name(session, target.id, name)
         now = datetime.now(UTC)
-        new_ids = {n.id: uuid.uuid4() for n in originals}
-        copies = [
-            Node(
-                id=new_ids[n.id],
-                parent_id=target.id if n.id == node.id else new_ids[n.parent_id],
-                owner_id=user.id,
-                name=name if n.id == node.id else n.name,
-                kind=n.kind,
-                mime=n.mime,
-                size=n.size,
-                blob_id=n.blob_id,
-                created_at=now,
-                modified_at=n.modified_at,
-            )
-            for n in originals
-        ]
-        session.add_all(copies)  # ouders voor kinderen
+        new_ids: dict[uuid.UUID, uuid.UUID] = {}
+
+        def copied(n) -> dict:
+            top = n.id == node.id
+            new_name = name if top else n.name
+            new_ids[n.id] = uuid.uuid4()
+            return {
+                "id": new_ids[n.id],
+                "parent_id": target.id if top else new_ids[n.parent_id],
+                "owner_id": user.id,
+                "name": new_name,
+                "search_name": fold(new_name),  # het attribuut-event loopt hier niet
+                "kind": n.kind,
+                "mime": n.mime,
+                "size": n.size,
+                "blob_id": n.blob_id,
+                "created_at": now,
+                "modified_at": n.modified_at,
+            }
+
+        # Rechtstreeks in stukken, ouders voor kinderen, en tussendoor de anderen even aan
+        # de beurt: één ORM-object per kopie houdt de event loop seconden bezig
+        for chunk in batched(originals, 500):
+            await session.execute(insert(Node), [copied(n) for n in chunk])
+            await asyncio.sleep(0)
         await add_refs(session, Counter(n.blob_id for n in originals if n.blob_id))
         await session.commit()
-    notify(copies[0], "node.created")
-    return node_out(copies[0])
+    top = await session.get(Node, new_ids[node.id])
+    notify(top, "node.created")
+    return node_out(top)
 
 
 @router.delete("/files/{node_id}", status_code=204)
@@ -588,7 +659,12 @@ async def list_trash(user: CurrentUser, session: Session) -> list[NodeOut]:
             .order_by(Node.deleted_at.desc())
         )
     ).all()
-    return [node_out(n) for n in rows]
+    tags = await tags_by_node(
+        session,
+        user,
+        select(Node.id).where(Node.owner_id == user.id, Node.deleted_at.is_not(None)),
+    )
+    return [node_out(n, tags) for n in rows]
 
 
 @router.post("/files/{node_id}/restore")
@@ -617,9 +693,9 @@ async def purge(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs: 
         node = await get_node(session, user, node_id)
         if node.deleted_at is None:
             raise HTTPException(422, "Verplaats het eerst naar de prullenbak")
-        nodes = await descendants(session, node)
-        ids = [n.id for n in nodes]
-        refs = Counter(n.blob_id for n in nodes if n.blob_id) + await drop_versions(session, ids)
+        rows = await descendants(session, node)
+        ids = [n.id for n in rows]
+        refs = Counter(n.blob_id for n in rows if n.blob_id) + await drop_versions(session, ids)
         await add_refs(session, refs, sign=-1)
         for chunk in batched(reversed(ids), 500):  # kinderen voor hun ouders
             await session.execute(
@@ -811,7 +887,6 @@ ACTIVE_TYPES = ("html", "xml", "svg", "javascript", "ecmascript")
 
 
 async def send_file(
-    session: AsyncSession,
     node: Node,
     settings: Settings,
     if_none_match: str | None,
@@ -820,19 +895,17 @@ async def send_file(
 ) -> Response:
     if node.kind != "file" or not node.blob_id:
         raise HTTPException(422, "Geen bestand")
-    sha, mime = node.blob_id, node.mime
-    if version is not None:
-        # Het soort van die inhoud zelf; de naam kan sindsdien veranderd zijn
-        sha, mime = (
-            version.blob_id,
-            await session.scalar(select(Blob.mime).where(Blob.sha256 == version.blob_id)),
-        )
+    sha = version.blob_id if version is not None else node.blob_id
     etag = f'"{sha}"'
     if if_none_match and etag in [t.strip() for t in if_none_match.split(",")]:
         return Response(status_code=304, headers={"ETag": etag})
     path = BlobStore(settings.blob_dir).path(sha)
     headers = {"ETag": etag, "Cache-Control": "private, max-age=0, must-revalidate"}
-    mime = mime or node.mime or "application/octet-stream"
+    if version is not None:
+        # Het soort van die inhoud zelf, met de naam van nu (zoals bij terugzetten)
+        mime = sniff(await anyio.to_thread.run_sync(read_head, path), node.name)
+    else:
+        mime = node.mime or "application/octet-stream"
     if any(t in mime for t in ACTIVE_TYPES):
         # Geüploade HTML/SVG mag geen scripts draaien onder het adres van het platform
         headers["Content-Security-Policy"] = "sandbox"
@@ -862,7 +935,7 @@ async def download(
         raise HTTPException(404, "Niet gevonden")
     node = await get_node(session, user, node_id)
     version = await get_version(session, node, version_id) if version_id else None
-    return await send_file(session, node, settings, if_none_match, inline, version)
+    return await send_file(node, settings, if_none_match, inline, version)
 
 
 @router.get("/files/{node_id}/content")
@@ -879,4 +952,4 @@ async def content(
     Met version: die eerdere inhoud."""
     node = await get_node(session, user, node_id)
     found = await get_version(session, node, version) if version else None
-    return await send_file(session, node, settings, if_none_match, inline, found)
+    return await send_file(node, settings, if_none_match, inline, found)

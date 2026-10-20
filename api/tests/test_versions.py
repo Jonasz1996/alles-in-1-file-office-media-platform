@@ -185,6 +185,49 @@ async def test_versie_downloaden(client, admin):
 
 
 @pytest.mark.anyio
+async def test_versie_heeft_het_soort_van_haar_eigen_inhoud(client, admin, settings):
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    a = (await put(client, headers, root_id, "a.html", b"<p>oud</p>")).json()
+    now = await replace(client, headers, root_id, "a.html", PNG)
+    assert now["mime"] == "image/png"
+    [old] = await versions(client, headers, a["id"])
+    # Een blob van voor de inhoudsherkenning weet zijn soort niet
+    async with AsyncSession(get_engine(settings)) as session:
+        await session.execute(
+            update(Blob).where(Blob.sha256 == sha(b"<p>oud</p>")).values(mime=None)
+        )
+        await session.commit()
+
+    link = (await version_link(client, headers, a["id"], old["id"])).json()
+    r = await client.get(link["url"])
+    assert r.headers["content-type"].startswith("text/html")
+    assert r.headers["content-security-policy"] == "sandbox"
+    r = await client.get(
+        f"/api/v1/files/{a['id']}/content", params={"version": old["id"]}, headers=headers
+    )
+    assert r.headers["content-type"].startswith("text/html")
+    # Het huidige bestand blijft gewoon een PNG
+    r = await client.get(f"/api/v1/files/{a['id']}/content", headers=headers)
+    assert r.headers["content-type"] == "image/png"
+
+
+@pytest.mark.anyio
+async def test_hernoemen_verandert_de_datum_van_een_versie_niet(client, admin):
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    folder = await mkdir(client, headers, root_id, "Map")
+    a = (await put(client, headers, root_id, "a.txt", b"een")).json()
+    await asyncio.sleep(0.01)
+    body = {"name": "b.txt", "parent_id": folder}
+    await client.patch(f"/api/v1/files/{a['id']}", json=body, headers=headers)
+    await replace(client, headers, folder, "b.txt", b"twee")
+    [old] = await versions(client, headers, a["id"])
+    # Wanneer die inhoud er kwam, niet wanneer het bestand hernoemd werd
+    assert old["created_at"] == a["modified_at"]
+
+
+@pytest.mark.anyio
 async def test_alleen_eigen_bestanden_en_alleen_bestanden(client, admin):
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]

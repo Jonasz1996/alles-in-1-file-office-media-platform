@@ -40,6 +40,10 @@ BMP += (40).to_bytes(4, "little") + b"\0" * 40
 ICO = b"\0\0\1\0\1\0" + b"\x10\x10\0\0\1\0\x20\0" + b"\0" * 16
 OOXML = [("[Content_Types].xml", b"<Types/>"), ("_rels/.rels", b"<x/>")]
 EBML = b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\x82\x84"
+# MPEG-TS: pakketten van 188 bytes, of 192 (m2ts/mts) met 4 bytes tijd ervoor
+TS_PACKET = b"\x47\x40\x00\x10" + b"\0" * 184
+MPEG_TS = TS_PACKET * 50
+M2TS = (b"\0\0\0\0" + TS_PACKET) * 50
 
 SAMPLES = [
     # (naam, inhoud, verwacht)
@@ -97,6 +101,11 @@ SAMPLES = [
     ("a.opus", b"OggS\0\x02" + b"\0" * 22 + b"OpusHead", "audio/ogg"),
     ("a.ogv", b"OggS\0\x02" + b"\0" * 22 + b"\x80theora", "video/ogg"),
     ("a.aac", b"\xff\xf1\x50\x80", "audio/aac"),
+    ("opname.ts", MPEG_TS, "video/mp2t"),
+    ("opname", MPEG_TS, "video/mp2t"),
+    ("opname.m2ts", M2TS, "video/mp2t"),
+    ("opname.mts", M2TS, "video/mp2t"),
+    ("kort.ts", TS_PACKET, "video/mp2t"),  # te kort om te herkennen: binair, dus de naam
     ("data.db", b"SQLite format 3\0", "application/vnd.sqlite3"),
     # Tekst: de naam zegt welk soort tekst
     ("notitie.txt", b"Gewoon tekst\n", "text/plain"),
@@ -110,6 +119,7 @@ SAMPLES = [
     ("logo.svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>", "image/svg+xml"),
     ("app.py", b"print('hoi')\n", "text/x-python"),
     ("app.ts", b"const a: number = 1;\n", "text/x-typescript"),
+    ("app.mts", b"export const a = 1;\n", "text/x-typescript"),
     ("main.go", b"package main\n", "text/x-go"),
     ("Makefile", b"all:\n\techo hoi\n", "text/plain"),
     ("tekst-zonder-extensie", b"hallo", "text/plain"),
@@ -133,7 +143,9 @@ EXPECTED_OFFICE = {
 }
 
 
-@pytest.mark.parametrize(("name", "data", "expected"), SAMPLES)
+@pytest.mark.parametrize(
+    ("name", "data", "expected"), SAMPLES, ids=[f"{i}-{s[0]}" for i, s in enumerate(SAMPLES)]
+)
 def test_sniff(name, data, expected):
     assert sniff(data[:HEAD], name) == (expected or EXPECTED_OFFICE[name])
 
@@ -170,6 +182,26 @@ def test_bmp_en_mp3_niet_bij_toeval():
 
 
 @pytest.mark.parametrize(
+    ("name", "data", "expected"),
+    [
+        # Tekst die begint zoals een binair formaat, is gewoon tekst
+        ("notitie.txt", b"ID3 tags uitgelegd\n", "text/plain"),
+        ("notitie.md", b"the ftyp box beschrijft het merk\n", "text/markdown"),
+        ("notitie.txt", b"OggS is de handtekening van Ogg\n", "text/plain"),
+        ("notitie.txt", b"fLaC staat aan het begin\n", "text/plain"),
+        ("notitie.txt", b"MThd is het begin van een MIDI-bestand\n", "text/plain"),
+        ("notitie.txt", b"8BPS zegt Photoshop\n", "text/plain"),
+        ("notitie.txt", b"x" * 257 + b"ustar  staat hier toevallig\n" + b"y" * 300, "text/plain"),
+        ("g.txt", b"G" * 2000, "text/plain"),
+        # Binaire inhoud met de naam van een soort tekst: geen tekst
+        ("onbekend.ts", b"\x00\x01\x02\x03", "video/mp2t"),
+    ],
+)
+def test_tekst_is_geen_handtekening(name, data, expected):
+    assert sniff(data, name) == expected
+
+
+@pytest.mark.parametrize(
     ("mime", "kind", "expected"),
     [
         (None, "dir", "folder"),
@@ -190,6 +222,7 @@ def test_bmp_en_mp3_niet_bij_toeval():
         ("application/vnd.rar", "file", "archive"),
         ("application/x-7z-compressed", "file", "archive"),
         ("application/x-tar", "file", "archive"),
+        ("video/mp2t", "file", "video"),
         ("application/octet-stream", "file", "other"),
         ("application/vnd.sqlite3", "file", "other"),
         (None, "file", "other"),

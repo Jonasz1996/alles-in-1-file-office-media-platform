@@ -1,12 +1,20 @@
 import asyncio
+import gc
 import uuid
+from collections import Counter
+from datetime import UTC, datetime
 
 import anyio
 import pytest
+from sqlalchemy import insert, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import events
+from app.db import get_engine
 from app.events import Hub
+from app.models import Blob, Node
 from app.routers import files, uploads
+from app.text import fold
 from tests.test_files import check_refs, mkdir, new_user, put, root
 from tests.test_uploads import create, hold
 
@@ -150,6 +158,8 @@ def meet_up(monkeypatch, *modules):
 
 @pytest.mark.anyio
 async def test_twee_kopieen_tegelijk_niet_over_het_quotum(client, admin, monkeypatch, settings):
+    """Twee kopieën gaan al na elkaar door het blob-slot; dit blijft staan als vangnet. Dat
+    het gebruikersslot werkt, tonen de tests met een reservering en een upload ernaast."""
     headers, _ = admin
     q = await new_user(client, headers, "q@example.nl", quota_bytes=20)
     qroot = (await root(client, q))["folder"]["id"]
@@ -171,6 +181,154 @@ async def test_kopie_en_reservering_tegelijk(client, admin, monkeypatch):
     # Elk past op zich (8 + 8 of 8 + 10), samen niet (8 + 8 + 10 = 26)
     r1, r2 = await asyncio.gather(copy(client, q, acht, qroot), create(client, q, qroot, "t", 10))
     assert sorted([r1.status_code, r2.status_code]) == [201, 413]
+
+
+@pytest.mark.anyio
+async def test_kopie_en_upload_tegelijk(client, admin, monkeypatch):
+    headers, _ = admin
+    q = await new_user(client, headers, "u@example.nl", quota_bytes=20)
+    qroot = (await root(client, q))["folder"]["id"]
+    acht = (await put(client, q, qroot, "acht", b"12345678")).json()["id"]
+    meet_up(monkeypatch, files)
+    # Elk past op zich (8 + 8), samen niet (8 + 8 + 8 = 24); de upload controleert het nog
+    # eens als de inhoud binnen is
+    r1, r2 = await asyncio.gather(
+        copy(client, q, acht, qroot), put(client, q, qroot, "nog acht", b"abcdefgh")
+    )
+    assert sorted([r1.status_code, r2.status_code]) == [201, 413]
+    assert (await client.get("/api/v1/auth/me", headers=q)).json()["used_bytes"] == 16
+
+
+@pytest.mark.anyio
+async def test_te_veel_in_een_keer(client, admin, monkeypatch):
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    a = await mkdir(client, headers, root_id, "A")
+    await mkdir(client, headers, a, "B")
+    await put(client, headers, a, "c.txt", b"c")
+    monkeypatch.setattr(files, "MAX_COPY", 3)
+    assert (await copy(client, headers, a, root_id)).status_code == 201  # precies 3
+    await put(client, headers, a, "d.txt", b"d")
+    r = await copy(client, headers, a, root_id)
+    assert r.status_code == 422 and "Te veel" in r.json()["detail"]
+    assert sorted(await children(client, headers, root_id)) == ["A", "A (1)"]
+
+
+@pytest.mark.anyio
+async def test_vrije_naam_blijft_binnen_de_grens(client, admin):
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    name = "x" * 251 + ".txt"
+    f = (await put(client, headers, root_id, name, b"x")).json()["id"]
+    r = await copy(client, headers, f, root_id)
+    assert r.status_code == 201
+    assert r.json()["name"] == "x" * 247 + " (1).txt"
+    r = await put(client, headers, root_id, name, b"y")
+    assert r.json()["name"] == "x" * 247 + " (2).txt"
+    folder = await mkdir(client, headers, root_id, "m" * 255)
+    r = await copy(client, headers, folder, root_id)
+    assert r.json()["name"] == "m" * 251 + " (1)"
+
+
+def test_genummerde_naam():
+    assert files.numbered("a.txt", 1) == "a (1).txt"
+    assert files.numbered(".bashrc", 2) == ".bashrc (2)"
+    assert files.numbered("map", 12) == "map (12)"
+    # Te lang: de naam wordt korter, de extensie en het nummer blijven
+    assert files.numbered("a" * 250 + ".jpeg", 3) == "a" * 246 + " (3).jpeg"
+    # Een "extensie" die bijna de hele naam is, hoort bij de naam
+    long_ext = "a." + "b" * 253
+    assert files.numbered(long_ext, 1) == long_ext[:251] + " (1)"
+    assert all(len(files.numbered("x" * 255, i)) <= 255 for i in (1, 99, 9999))
+
+
+async def worst_stall(coro):
+    """Voert coro uit en geeft (uitkomst, langste tijd dat de event loop intussen niets anders
+    kon doen). Zonder garbage collection: die duurt af en toe wat langer, wat de code ook doet."""
+    loop = asyncio.get_running_loop()
+    worst, done = 0.0, asyncio.Event()
+
+    async def tick():
+        nonlocal worst
+        while not done.is_set():
+            started = loop.time()
+            await asyncio.sleep(0.005)
+            worst = max(worst, loop.time() - started - 0.005)
+
+    gc.collect()
+    gc.disable()
+    ticker = asyncio.create_task(tick())
+    try:
+        await asyncio.sleep(0.02)
+        return await coro, worst
+    finally:
+        done.set()
+        await ticker
+        gc.enable()
+
+
+@pytest.mark.anyio
+async def test_grote_map_kopieren_houdt_de_rest_niet_op(client, admin, settings):
+    """Duizenden bestanden kopiëren en weggooien laat de event loop nooit lang stilstaan:
+    andere verzoeken gaan intussen gewoon door."""
+    headers, tokens = admin
+    owner = uuid.UUID(tokens["user"]["id"])
+    root_id = (await root(client, headers))["folder"]["id"]
+    top = await mkdir(client, headers, root_id, "Groot")
+    now, rows, refs = datetime.now(UTC), [], Counter()
+
+    def node(parent, name, kind, sha=None):
+        rows.append(
+            {
+                "id": uuid.uuid4(),
+                "parent_id": parent,
+                "owner_id": owner,
+                "name": name,
+                "search_name": fold(name),
+                "kind": kind,
+                "size": 1 if sha else 0,
+                "blob_id": sha,
+                "created_at": now,
+                "modified_at": now,
+            }
+        )
+        if sha:
+            refs[sha] += 1
+        return rows[-1]["id"]
+
+    for i in range(50):
+        sub = node(uuid.UUID(top), f"Map {i}", "dir")
+        for j in range(100):
+            node(sub, f"Foto {j}.jpg", "file", f"{(i * 100 + j) % 700:064x}")
+    maker = async_sessionmaker(get_engine(settings))
+    async with maker() as session:
+        await session.execute(
+            insert(Blob), [{"sha256": s, "size": 1, "ref_count": n} for s, n in refs.items()]
+        )
+        await session.execute(insert(Node), rows)
+        await session.commit()
+
+    async def ref_counts():
+        async with maker() as session:
+            return dict((await session.execute(select(Blob.sha256, Blob.ref_count))).all())
+
+    r, stall = await worst_stall(copy(client, headers, top, root_id))
+    assert r.status_code == 201, r.text
+    assert stall < 0.1, f"kopiëren hield de event loop {stall:.2f} s vast"
+    kopie = r.json()
+    assert kopie["name"] == "Groot (1)"
+    assert await ref_counts() == {sha: 2 * n for sha, n in refs.items()}
+    # Alles staat erin, ook vindbaar op naam (zoeknaam gezet zonder ORM-objecten)
+    params = {"q": "foto 42", "in": kopie["id"], "limit": 200}
+    found = (await client.get("/api/v1/search", params=params, headers=headers)).json()
+    assert len(found["results"]) == 50
+    assert {hit["path"][1]["name"] for hit in found["results"]} == {"Groot (1)"}
+
+    await client.delete(f"/api/v1/files/{kopie['id']}", headers=headers)
+    r, stall = await worst_stall(client.delete(f"/api/v1/trash/{kopie['id']}", headers=headers))
+    assert r.status_code == 204
+    assert stall < 0.1, f"definitief verwijderen hield de event loop {stall:.2f} s vast"
+    assert await ref_counts() == dict(refs)
 
 
 @pytest.mark.anyio

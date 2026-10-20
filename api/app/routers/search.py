@@ -39,9 +39,14 @@ from app.text import fold
 router = APIRouter(prefix="/api/v1", tags=["zoeken"])
 
 Category = Literal["folder", "image", "video", "audio", "pdf", "document", "archive", "other"]
-CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+# Stuurtekens (ook C1) en tekens die de schrijfrichting omdraaien (een naam die er anders
+# uitziet dan hij is); de zero-width joiner (U+200D) in samengestelde emoji mag wel
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 COLOR = re.compile(r"^(#[0-9a-f]{6})?$")
 MAX_WORDS = 10
+MAX_TAG_NAME = 50
+# Zoveel tags heeft een gebruiker hooguit (bij elke nieuwe naam worden ze allemaal vergeleken)
+MAX_TAGS = 500
 
 # Per gebruiker één wijziging aan tags tegelijk: of "Foto" en "foto" allebei vrij zijn, en
 # welke tags een bestand krijgt, moet vastliggen tot de wijziging erin staat
@@ -170,6 +175,8 @@ def _clean_tag_name(value: str) -> str:
     value = value.strip()
     if not value or CONTROL.search(value):
         raise ValueError("Ongeldige naam voor een tag")
+    if len(value) > MAX_TAG_NAME:  # pas na strip: spaties eromheen tellen niet
+        raise ValueError(f"Een tag mag hooguit {MAX_TAG_NAME} tekens hebben")
     return value
 
 
@@ -181,7 +188,8 @@ def _clean_color(value: str) -> str:
 
 
 class TagChange(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=50)
+    # De echte grens (MAX_TAG_NAME) geldt na het weghalen van spaties eromheen
+    name: str | None = Field(default=None, min_length=1, max_length=200)
     # Leeg = geen kleur
     color: str | None = Field(default=None, max_length=16)
 
@@ -197,7 +205,7 @@ class TagChange(BaseModel):
 
 
 class NewTag(TagChange):
-    name: str = Field(min_length=1, max_length=50)
+    name: str = Field(min_length=1, max_length=200)
     color: str = Field(default="", max_length=16)
 
 
@@ -212,7 +220,7 @@ class TagNameTaken(HTTPException):
 
 async def check_free(session: AsyncSession, user: User, name: str, skip: uuid.UUID | None = None):
     """Hoofdletters en accenten tellen niet mee. In Python vergeleken: lower() in SQLite kent
-    alleen ASCII. Een gebruiker heeft hooguit een paar honderd tags."""
+    alleen ASCII. Een gebruiker heeft hooguit MAX_TAGS tags."""
     names = await session.execute(select(Tag.id, Tag.name).where(Tag.owner_id == user.id))
     if any(fold(other) == fold(name) and tag_id != skip for tag_id, other in names):
         raise TagNameTaken
@@ -254,6 +262,11 @@ async def list_tags(user: CurrentUser, session: Session) -> list[TagOut]:
 async def create_tag(body: NewTag, user: CurrentUser, session: Session) -> TagOut:
     await session.commit()  # niet met een databaseverbinding op het slot wachten
     async with _tag_lock(user.id):
+        count = await session.scalar(
+            select(func.count()).select_from(Tag).where(Tag.owner_id == user.id)
+        )
+        if (count or 0) >= MAX_TAGS:
+            raise HTTPException(422, f"Je kunt hooguit {MAX_TAGS} tags hebben")
         await check_free(session, user, body.name)
         tag = Tag(owner_id=user.id, name=body.name, color=body.color)
         session.add(tag)

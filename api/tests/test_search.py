@@ -175,6 +175,18 @@ async def test_tags_beheren(client, admin):
         assert r.status_code == 409 and r.json()["detail"]["code"] == "name_taken"
     for bad in ({"name": ""}, {"name": "x" * 51}, {"name": "a", "color": "rood"}, {"name": "\x07"}):
         assert (await client.post("/api/v1/tags", json=bad, headers=headers)).status_code == 422
+    # Ook geen C1-stuurtekens en niets dat de schrijfrichting omdraait
+    for bad in ("a\u0085b", "\u202ekrow", "a\u2066b", "\u200fx"):
+        r = await client.post("/api/v1/tags", json={"name": bad}, headers=headers)
+        assert r.status_code == 422, bad
+    # De lengte telt zonder spaties eromheen; samengestelde emoji mogen
+    for good in (" " + "y" * 50 + " ", "\U0001f468\u200d\U0001f469\u200d\U0001f467 Familie"):
+        r = await client.post("/api/v1/tags", json={"name": good}, headers=headers)
+        assert r.status_code == 201, r.text
+        assert r.json()["name"] == good.strip()
+        await client.delete(f"/api/v1/tags/{r.json()['id']}", headers=headers)
+    r = await client.patch(f"/api/v1/tags/{werk['id']}", json={"name": "z" * 51}, headers=headers)
+    assert r.status_code == 422
     prive = (await client.post("/api/v1/tags", json={"name": "Privé"}, headers=headers)).json()
     assert prive["color"] == ""
 
@@ -252,6 +264,9 @@ async def test_tags_op_bestanden(client, admin, monkeypatch, settings):
     # In de prullenbak telt niet mee (ook niet wat in een weggegooide map staat)
     await client.put(f"/api/v1/files/{a}/tags", json={"tag_ids": [werk["id"]]}, headers=headers)
     await client.delete(f"/api/v1/files/{folder}", headers=headers)
+    # De prullenbak laat de tags ook zien
+    trash = (await client.get("/api/v1/trash", headers=headers)).json()
+    assert [(n["name"], [t["name"] for t in n["tags"]]) for n in trash] == [("Map", ["Werk"])]
     counts = {
         t["name"]: t["count"] for t in (await client.get("/api/v1/tags", headers=headers)).json()
     }
@@ -278,6 +293,20 @@ async def test_tags_op_bestanden(client, admin, monkeypatch, settings):
     # Weg met de tag: weg van de bestanden
     await client.delete(f"/api/v1/tags/{werk['id']}", headers=headers)
     assert (await client.get(f"/api/v1/files/{b}", headers=headers)).json()["tags"] == []
+
+
+@pytest.mark.anyio
+async def test_hooguit_zoveel_tags(client, admin, monkeypatch):
+    headers, _ = admin
+    monkeypatch.setattr(search_module, "MAX_TAGS", 2)
+    for name in ("a", "b"):
+        r = await client.post("/api/v1/tags", json={"name": name}, headers=headers)
+        assert r.status_code == 201
+    r = await client.post("/api/v1/tags", json={"name": "c"}, headers=headers)
+    assert r.status_code == 422 and r.json()["detail"] == "Je kunt hooguit 2 tags hebben"
+    # Andere gebruikers hebben hun eigen ruimte
+    z = await new_user(client, headers, "z@example.nl")
+    assert (await client.post("/api/v1/tags", json={"name": "c"}, headers=z)).status_code == 201
 
 
 @pytest.mark.anyio

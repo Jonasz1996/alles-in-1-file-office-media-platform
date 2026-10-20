@@ -50,7 +50,8 @@ OLE_BY_EXT = {
     "ppt": "application/vnd.ms-powerpoint",
     "msg": "application/vnd.ms-outlook",
 }
-# Tekst: de naam zegt welk soort. Gaat voor de tabel van Python (die kent .ts als video).
+# Tekst: de naam zegt welk soort. Alleen voor inhoud die tekst is (of leeg): een binaire .ts
+# is een MPEG-TS-video, geen TypeScript.
 TEXT_BY_EXT = {
     "txt": "text/plain",
     "md": "text/markdown",
@@ -73,6 +74,8 @@ TEXT_BY_EXT = {
     "jsx": "text/javascript",
     "ts": "text/x-typescript",
     "tsx": "text/x-typescript",
+    "mts": "text/x-typescript",
+    "cts": "text/x-typescript",
     "py": "text/x-python",
     "rb": "text/x-ruby",
     "php": "text/x-php",
@@ -116,6 +119,9 @@ MEDIA_BY_EXT = {
     "oga": "audio/ogg",
     "opus": "audio/ogg",
     "ogv": "video/ogg",
+    "ts": "video/mp2t",
+    "m2ts": "video/mp2t",
+    "mts": "video/mp2t",
     "m4a": "audio/mp4",
     "m4v": "video/mp4",
     "wav": "audio/wav",
@@ -189,10 +195,11 @@ def _ext(name: str) -> str:
     return suffix[1:] if suffix else ""
 
 
-def by_name(name: str) -> str | None:
-    """Alleen op de naam, voor als de inhoud niets zegt."""
+def by_name(name: str, text: bool = True) -> str | None:
+    """Alleen op de naam, voor als de inhoud niets zegt. text=False: de inhoud is binair, dus
+    geen soort tekst op grond van de extensie (een binaire .ts is een video)."""
     ext = _ext(name)
-    if ext in TEXT_BY_EXT:
+    if text and ext in TEXT_BY_EXT:
         return TEXT_BY_EXT[ext]
     if ext in ZIP_BY_EXT:
         return ZIP_BY_EXT[ext]
@@ -207,11 +214,15 @@ def by_name(name: str) -> str | None:
 
 
 def _ftyp(head: bytes, name: str) -> str | None:
-    """ISO-mediabestanden (mp4, mov, m4a, heic, avif): het merk staat in het ftyp-blok."""
+    """ISO-mediabestanden (mp4, mov, m4a, heic, avif): het merk staat in het ftyp-blok. Met
+    een redelijke grootte en een leesbaar merk, anders is een tekst met "ftyp" op plek 4 al
+    een video."""
     if head[4:8] != b"ftyp" or len(head) < 12:
         return None
     major = head[8:12]
     size = int.from_bytes(head[0:4], "big")
+    if not 8 <= size <= 4096 or not all(0x20 <= b < 0x7F for b in major):
+        return None
     brands = [major] + [head[i : i + 4] for i in range(16, min(size, len(head), 256) - 3, 4)]
     for brand in brands:  # een HEIF-bestand kan avif of heic als compatibel merk hebben
         if brand in (b"avif", b"avis"):
@@ -274,6 +285,42 @@ def _ebml(head: bytes, name: str) -> str:
     return "audio/x-matroska" if audio else "video/x-matroska"
 
 
+def _id3(head: bytes) -> bool:
+    """ID3v2: versie 2 tot 4, een revisie, en de grootte in 4 x 7 bits."""
+    return (
+        len(head) >= 10
+        and head.startswith(b"ID3")
+        and head[3] in (2, 3, 4)
+        and head[4] != 0xFF
+        and all(b < 0x80 for b in head[6:10])
+    )
+
+
+def _tar(head: bytes) -> bool:
+    """ustar op plek 257 en een kloppende controlesom van de header."""
+    if len(head) < 512 or head[257:263] not in (b"ustar\x00", b"ustar "):
+        return False
+    try:
+        stored = int(head[148:156].replace(b"\0", b" ").strip() or b"x", 8)
+    except ValueError:
+        return False
+    # Het veld van de controlesom telt mee als spaties; oude tars telden met tekens
+    rest = head[:148] + head[156:512]
+    unsigned = sum(rest) + 8 * 0x20
+    return stored in (unsigned, unsigned - 256 * sum(1 for b in rest if b >= 0x80))
+
+
+def _mpeg_ts(head: bytes) -> bool:
+    """MPEG-TS: pakketten van 188 bytes (192 bij m2ts/mts: 4 bytes tijd ervoor) die elk met
+    0x47 beginnen; minstens drie, en elk pakket in head. Tekst is het nooit (een tekst met
+    toevallig een G op die plekken)."""
+    for size, start in ((188, 0), (192, 4)):
+        offsets = range(start, len(head), size)
+        if len(offsets) >= 3 and all(head[i] == 0x47 for i in offsets):
+            return not _is_text(head)
+    return False
+
+
 def _ogg(head: bytes) -> str:
     if b"\x80theora" in head:
         return "video/ogg"
@@ -324,7 +371,7 @@ def _signature(head: bytes, name: str) -> str | None:
         return "image/bmp"
     if _ico(head):
         return "image/vnd.microsoft.icon"
-    if head.startswith(b"8BPS"):
+    if head.startswith(b"8BPS") and head[4:6] in (b"\0\x01", b"\0\x02"):  # psd, psb
         return "image/vnd.adobe.photoshop"
     if head.startswith(b"%PDF-"):
         return "application/pdf"
@@ -344,24 +391,26 @@ def _signature(head: bytes, name: str) -> str | None:
         return "application/x-xz"
     if head.startswith(b"\x28\xb5\x2f\xfd"):
         return "application/zstd"
-    if head[257:263] in (b"ustar\x00", b"ustar "):
+    if _tar(head):
         return "application/x-tar"
     if head.startswith(b"\x1a\x45\xdf\xa3"):
         return _ebml(head, name)
-    if head.startswith(b"ID3"):
+    if _id3(head):
         # Na de ID3-tag kan ook FLAC komen; de grootte staat in 4 x 7 bits
         size = (head[6] << 21) | (head[7] << 14) | (head[8] << 7) | head[9] if len(head) > 9 else 0
         return "audio/flac" if head[10 + size : 14 + size] == b"fLaC" else "audio/mpeg"
-    if head.startswith(b"fLaC"):
+    if head.startswith(b"fLaC") and head[4:5] in (b"\x00", b"\x80"):  # eerst STREAMINFO
         return "audio/flac"
-    if head.startswith(b"OggS"):
+    if head.startswith(b"OggS\0"):  # versie 0
         return _ogg(head)
-    if head.startswith(b"MThd"):
+    if head.startswith(b"MThd\0\0\0\x06"):
         return "audio/midi"
     if _mp3_frame(head):
         return "audio/mpeg"
     if len(head) > 2 and head[0] == 0xFF and head[1] & 0xF6 == 0xF0:
         return "audio/aac"  # ADTS
+    if _mpeg_ts(head):
+        return "video/mp2t"
     if head.startswith(b"SQLite format 3\0"):
         return "application/vnd.sqlite3"
     if head.startswith(b"\x7fELF"):
@@ -402,7 +451,8 @@ def sniff(head: bytes, name: str) -> str:
         return _text(name)
     if b"%PDF-" in head[:1024]:  # PDF met iets ervoor; een tekst die "%PDF-" noemt niet
         return "application/pdf"
-    return by_name(name) or "application/octet-stream"
+    # Binair (of leeg): alleen nog de naam
+    return by_name(name, text=not head) or "application/octet-stream"
 
 
 def category(mime: str | None, kind: str = "file") -> str:

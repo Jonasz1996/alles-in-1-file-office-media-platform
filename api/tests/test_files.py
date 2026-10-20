@@ -158,6 +158,12 @@ async def test_hernoemen_en_verplaatsen(client, admin):
         f"/api/v1/files/{b['id']}", json={"parent_id": root_id, "name": "B2"}, headers=headers
     )
     assert r.json()["parent_id"] == root_id and r.json()["name"] == "B2"
+    # Hernoemen en verplaatsen gaat niet over de inhoud: gewijzigd blijft staan
+    f = (await put(client, headers, root_id, "f.txt", b"f")).json()
+    r = await client.patch(
+        f"/api/v1/files/{f['id']}", json={"parent_id": a["id"], "name": "g.txt"}, headers=headers
+    )
+    assert r.json()["name"] == "g.txt" and r.json()["modified_at"] == f["modified_at"]
 
 
 @pytest.mark.anyio
@@ -202,6 +208,70 @@ async def test_quotum(client, admin):
     kroot = (await root(client, kh))["folder"]["id"]
     assert (await put(client, kh, kroot, "a", b"12345678")).status_code == 201
     assert (await put(client, kh, kroot, "b", b"12345")).status_code == 413
+
+
+@pytest.mark.anyio
+async def test_twee_uploads_tegelijk_niet_over_het_quotum(client, admin, monkeypatch, settings):
+    from app.routers import files
+    from tests.test_copy import meet_up
+
+    headers, _ = admin
+    q = await new_user(client, headers, "q@example.nl", quota_bytes=20)
+    qroot = (await root(client, q))["folder"]["id"]
+    await put(client, q, qroot, "acht", b"12345678")
+    meet_up(monkeypatch, files)
+    # Vooraf past elk (8 + 8); als de inhoud binnen is, wordt het nog eens gecontroleerd
+    r1, r2 = await asyncio.gather(
+        put(client, q, qroot, "een", b"abcdefgh"), put(client, q, qroot, "twee", b"ABCDEFGH")
+    )
+    assert sorted([r1.status_code, r2.status_code]) == [201, 413]
+    assert (await client.get("/api/v1/auth/me", headers=q)).json()["used_bytes"] == 16
+    await check_refs(settings)
+
+
+@pytest.mark.anyio
+async def test_niets_erbij_onder_een_map_in_de_prullenbak(client, admin):
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    weg = await mkdir(client, headers, root_id, "Weg")
+    sub = await mkdir(client, headers, weg, "Sub")
+    await client.delete(f"/api/v1/files/{weg}", headers=headers)
+    assert (await put(client, headers, sub, "x.txt", b"x")).status_code == 404
+    r = await client.post(f"/api/v1/files/{sub}/folders", json={"name": "N"}, headers=headers)
+    assert r.status_code == 404
+    assert (await client.get(f"/api/v1/files/{sub}/children", headers=headers)).json()[
+        "children"
+    ] == []
+
+
+@pytest.mark.anyio
+async def test_upload_terwijl_de_map_definitief_weggaat(client, admin, settings):
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    weg = await mkdir(client, headers, root_id, "Weg")
+    sub = await mkdir(client, headers, weg, "Sub")
+    await put(client, headers, sub, "x.txt", b"oud")
+    halfway = asyncio.Event()
+    go = asyncio.Event()
+
+    async def body():
+        yield b"nieuwe "
+        halfway.set()
+        await go.wait()
+        yield b"inhoud"
+
+    with anyio.fail_after(5):
+        uploading = asyncio.create_task(
+            put(client, headers, sub, "x.txt", body(), conflict="replace")
+        )
+        await halfway.wait()
+        await client.delete(f"/api/v1/files/{weg}", headers=headers)
+        assert (await client.delete(f"/api/v1/trash/{weg}", headers=headers)).status_code == 204
+        go.set()
+        r = await uploading
+    assert r.status_code == 404
+    assert (await root(client, headers))["children"] == []
+    await check_refs(settings)
 
 
 @pytest.mark.anyio
