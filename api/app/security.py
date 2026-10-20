@@ -91,17 +91,24 @@ def access_token(settings: Settings, user: User, family: uuid.UUID) -> str:
     )
 
 
-def download_token(settings: Settings, user_id: uuid.UUID, node_id: uuid.UUID) -> str:
-    return _encode(
-        settings,
-        {"sub": str(user_id), "node": str(node_id), "typ": "download"},
-        settings.download_token_minutes,
-    )
+def download_token(
+    settings: Settings, user_id: uuid.UUID, node_id: uuid.UUID, version: uuid.UUID | None = None
+) -> str:
+    """version: een eerdere inhoud van het bestand; zit in het token, zodat de link alleen
+    voor die versie werkt."""
+    claims = {"sub": str(user_id), "node": str(node_id), "typ": "download"}
+    if version is not None:
+        claims["ver"] = str(version)
+    return _encode(settings, claims, settings.download_token_minutes)
 
 
-def read_download_token(settings: Settings, token: str) -> tuple[uuid.UUID, uuid.UUID]:
+def read_download_token(
+    settings: Settings, token: str
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID | None]:
+    """(gebruiker, bestand, versie of None)"""
     claims = _decode(settings, token, "download")
-    return uuid.UUID(claims["sub"]), uuid.UUID(claims["node"])
+    version = uuid.UUID(claims["ver"]) if claims.get("ver") else None
+    return uuid.UUID(claims["sub"]), uuid.UUID(claims["node"]), version
 
 
 SECURITY_KEY = "security"

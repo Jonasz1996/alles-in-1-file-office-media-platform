@@ -34,6 +34,8 @@ export interface FileNode {
   created_at: string;
   modified_at: string;
   deleted_at: string | null;
+  /** Alleen de eigen tags van wie ingelogd is. */
+  tags: TagRef[];
 }
 
 export interface Listing {
@@ -41,6 +43,63 @@ export interface Listing {
   path: FileNode[];
   children: FileNode[];
 }
+
+// --- F: bestanden (kopiëren, versies, zoeken, tags) ---
+
+export interface TagRef {
+  id: string;
+  name: string;
+  /** "#rrggbb" of leeg */
+  color: string;
+}
+
+export interface Tag extends TagRef {
+  /** Op hoeveel mappen en bestanden (niet in de prullenbak) de tag staat. */
+  count: number;
+}
+
+export interface FileVersion {
+  id: string;
+  size: number;
+  /** Wanneer deze inhoud gemaakt werd */
+  created_at: string;
+  /** Wanneer en door wie hij vervangen werd */
+  replaced_at: string;
+  replaced_by: { id: string; display_name: string } | null;
+}
+
+export type Category = "folder" | "image" | "video" | "audio" | "pdf" | "document" | "archive" | "other";
+
+export interface SearchQuery {
+  q?: string;
+  type?: Category | "";
+  tag?: string;
+  /** Alleen in deze map (en alles eronder) */
+  in?: string;
+  limit?: number;
+}
+
+export interface SearchHit {
+  node: FileNode;
+  /** Van de hoofdmap (naam "") tot en met de map waar het in staat */
+  path: { id: string; name: string }[];
+}
+
+export interface SearchResult {
+  results: SearchHit[];
+  more: boolean;
+}
+
+/** Querystring voor /api/v1/search; lege velden laat hij weg. */
+export function searchParams(query: SearchQuery): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && String(value).trim() !== "") params.set(key, String(value).trim());
+  }
+  return params.toString();
+}
+
+// --- einde F ---
 
 export interface NodeStatus {
   name: string;
@@ -307,6 +366,39 @@ export class Api {
     const { url } = await this.send<{ url: string }>("POST", `/api/v1/files/${id}/download-link`);
     return inline ? `${url}&inline=true` : url;
   };
+
+  // --- F: kopiëren, versies, zoeken, tags ---
+  /** Kopie in map parentId; bestaat de naam daar al, dan krijgt de kopie "naam (1)". */
+  copy = (id: string, parentId: string, name?: string) =>
+    this.send<FileNode>("POST", `/api/v1/files/${id}/copy`, { parent_id: parentId, name });
+  /** Nieuwe inhoud voor een bestaand bestand; de vorige blijft bewaard als versie. */
+  replaceContent = (parentId: string, name: string, file: Blob) =>
+    this.json<FileNode>(`/api/v1/files/${parentId}/upload?${new URLSearchParams({ name, conflict: "replace" })}`, {
+      method: "PUT",
+      body: file,
+    });
+  versions = (id: string) => this.json<FileVersion[]>(`/api/v1/files/${id}/versions`);
+  restoreVersion = (id: string, versionId: string) =>
+    this.send<FileNode>("POST", `/api/v1/files/${id}/versions/${versionId}/restore`);
+  deleteVersion = (id: string, versionId: string) =>
+    this.send<void>("DELETE", `/api/v1/files/${id}/versions/${versionId}`);
+  versionDownloadUrl = async (id: string, versionId: string) =>
+    (
+      await this.send<{ url: string }>(
+        "POST",
+        `/api/v1/files/${id}/download-link?${new URLSearchParams({ version: versionId })}`,
+      )
+    ).url;
+  search = (query: SearchQuery) => this.json<SearchResult>(`/api/v1/search?${searchParams(query)}`);
+  tags = () => this.json<Tag[]>("/api/v1/tags");
+  createTag = (name: string, color = "") => this.send<Tag>("POST", "/api/v1/tags", { name, color });
+  changeTag = (id: string, change: { name?: string; color?: string }) =>
+    this.send<Tag>("PATCH", `/api/v1/tags/${id}`, change);
+  deleteTag = (id: string) => this.send<void>("DELETE", `/api/v1/tags/${id}`);
+  /** Vervangt de tags op een map of bestand door deze set; geeft de tags die het nu heeft. */
+  setTags = (id: string, tagIds: string[]) =>
+    this.send<TagRef[]>("PUT", `/api/v1/files/${id}/tags`, { tag_ids: tagIds });
+  // --- einde F ---
 
   adminStatus = () => this.json<SystemStatus>("/api/v1/admin/status");
   users = () => this.json<User[]>("/api/v1/users");

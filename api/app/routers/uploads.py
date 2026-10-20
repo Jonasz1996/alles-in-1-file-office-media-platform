@@ -40,6 +40,7 @@ from app.routers.files import (
     place_file,
     room_left,
     sibling,
+    user_locks,
 )
 from app.security import CurrentUser
 from app.storage import CHUNK_TIMEOUT, BlobStore, hash_file, with_timeout
@@ -64,8 +65,9 @@ CLEANUP_WAIT = 2 * CHUNK_TIMEOUT
 # intussen af of weg zijn. Een slot verdwijnt pas met de rij.
 _locks: dict[uuid.UUID, asyncio.Lock] = {}
 _hashers: dict[uuid.UUID, tuple["hashlib._Hash", int]] = {}
-# Per gebruiker: quotum controleren en ruimte reserveren in één keer
-_user_locks: dict[uuid.UUID, asyncio.Lock] = {}
+# Per gebruiker: quotum controleren en ruimte reserveren in één keer (hetzelfde slot als
+# kopiëren in files.py, zodat ook die twee samen niet over het quotum gaan)
+_user_locks = user_locks
 
 
 def _lock(upload_id: uuid.UUID) -> asyncio.Lock:

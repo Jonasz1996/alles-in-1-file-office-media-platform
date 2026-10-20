@@ -5,6 +5,7 @@ import { Beheer } from "./Beheer";
 import { Files } from "./Files";
 import { Login } from "./Login";
 import { navigate, usePath } from "./router";
+import { Search } from "./Search";
 import { Trash } from "./Trash";
 import { uploadQueue } from "./uploadQueue";
 
@@ -74,6 +75,7 @@ export function App() {
     );
   } else if (setupRequired) page = <Account user={user} onChange={reloadUser} onCodes={showCodes} />;
   else if (path.startsWith("/prullenbak")) page = <Trash />;
+  else if (path.startsWith("/zoeken")) page = <Search />;
   else if (path.startsWith("/beheer") && user.role === "admin") page = <Beheer currentUser={user} />;
   else if (path.startsWith("/account")) page = <Account user={user} onChange={reloadUser} onCodes={showCodes} />;
   else page = <Files folderId={folder} />;

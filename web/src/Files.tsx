@@ -1,6 +1,9 @@
 import { type DragEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, type FileNode, formatBytes, formatDate, type Listing } from "./api";
+import { NodeActions } from "./NodeActions";
 import { navigate } from "./router";
+import { SearchBox } from "./Search";
+import { TagChips } from "./Tags";
 import { uploadQueue, useUploads } from "./uploadQueue";
 
 export function Files({ folderId }: { folderId: string | null }) {
@@ -127,6 +130,7 @@ export function Files({ folderId }: { folderId: string | null }) {
           }}
         />
         <span className="muted">of sleep bestanden hierheen</span>
+        <SearchBox />
       </div>
 
       {error && <p role="alert">{error}</p>}
@@ -185,6 +189,7 @@ export function Files({ folderId }: { folderId: string | null }) {
                       {n.kind === "dir" ? "📁 " : "📄 "}
                       {n.name}
                     </button>
+                    <TagChips tags={n.tags} />
                   </td>
                   <td>{n.kind === "file" ? formatBytes(n.size) : ""}</td>
                   <td>{formatDate(n.modified_at)}</td>
@@ -206,6 +211,12 @@ export function Files({ folderId }: { folderId: string | null }) {
                     <button type="button" onClick={() => act(() => api.trash(n.id))}>
                       Verwijderen
                     </button>
+                    <NodeActions
+                      node={n}
+                      folderId={current ?? null}
+                      onChanged={() => latest.current.load()}
+                      onError={setError}
+                    />
                   </td>
                 </tr>
               ))}

@@ -1,4 +1,5 @@
 import asyncio
+from collections import Counter
 
 import anyio
 import pytest
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import storage
 from app.db import get_engine
-from app.models import Blob
+from app.models import Blob, Node, Version
 from app.routers.files import collect_garbage
 from app.storage import BlobStore
 
@@ -23,6 +24,41 @@ async def put(client, headers, parent, name, data: bytes, **params):
         content=data,
         headers=headers,
     )
+
+
+async def mkdir(client, headers, parent, name) -> str:
+    r = await client.post(f"/api/v1/files/{parent}/folders", json={"name": name}, headers=headers)
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+async def new_user(client, admin_headers, email, quota_bytes=None) -> dict:
+    """Maakt een gewone gebruiker aan en logt in; geeft de headers."""
+    body = {"email": email, "display_name": email.split("@")[0], "password": "lang-genoeg-123"}
+    if quota_bytes is not None:
+        body["quota_bytes"] = quota_bytes
+    assert (await client.post("/api/v1/users", json=body, headers=admin_headers)).status_code == 201
+    r = await client.post("/api/v1/auth/login", json={"email": email, "password": body["password"]})
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+def blob_files(settings) -> set[str]:
+    return {p.name for p in settings.blob_dir.rglob("*") if p.is_file() and ".tmp" not in p.parts}
+
+
+async def check_refs(settings) -> dict[str, int]:
+    """De boekhouding klopt: ref_count van elke blob is het aantal bestanden plus versies dat
+    ernaar wijst, er is geen blob zonder verwijzing, en op schijf staat precies wat in de
+    database staat. Geeft {sha: ref_count}."""
+    async with async_sessionmaker(get_engine(settings))() as session:
+        rows = dict((await session.execute(select(Blob.sha256, Blob.ref_count))).all())
+        nodes = Counter(
+            (await session.scalars(select(Node.blob_id).where(Node.blob_id.is_not(None)))).all()
+        )
+        versions = Counter((await session.scalars(select(Version.blob_id))).all())
+    assert rows == dict(nodes + versions)
+    assert blob_files(settings) == set(rows)
+    return rows
 
 
 @pytest.mark.anyio
@@ -42,10 +78,10 @@ async def test_mappen_en_upload(client, admin):
     )
     assert dup.status_code == 409
 
-    r = await put(client, headers, fotos, "zee.jpg", b"jpegdata")
+    r = await put(client, headers, fotos, "zee.jpg", b"\xff\xd8\xffjpeg")
     assert r.status_code == 201
     assert r.json()["mime"] == "image/jpeg"
-    assert r.json()["size"] == 8
+    assert r.json()["size"] == 7
 
     listing = (await client.get(f"/api/v1/files/{fotos}/children", headers=headers)).json()
     assert [c["name"] for c in listing["children"]] == ["zee.jpg"]
@@ -239,3 +275,91 @@ async def test_stilgevallen_upload_geeft_verbinding_vrij(client, admin, settings
     assert in_use == [0]
     assert list((settings.blob_dir / ".tmp").iterdir()) == []
     assert (await root(client, headers))["children"] == []
+
+
+async def purge_while(client, headers, folder, monkeypatch, other):
+    """Definitief verwijderen van `folder`, met `other()` ertussen terwijl dat bezig is (het
+    heeft de inhoud van de map net gelezen, maar nog niets weggehaald). Geeft (antwoord
+    purge, antwoord other)."""
+    from app.routers import files
+    from tests.test_uploads import hold
+
+    entered, release = hold(monkeypatch, files, "drop_versions")
+    with anyio.fail_after(5):
+        purging = asyncio.create_task(client.delete(f"/api/v1/trash/{folder}", headers=headers))
+        await entered.wait()
+        racing = asyncio.create_task(other())
+        await asyncio.sleep(0.05)
+        release.set()
+        return await purging, await racing
+
+
+@pytest.mark.anyio
+async def test_verplaatsen_tijdens_definitief_verwijderen(client, admin, settings, monkeypatch):
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    weg = await mkdir(client, headers, root_id, "Weg")
+    sub = await mkdir(client, headers, weg, "Sub")
+    x = (await put(client, headers, weg, "x.txt", b"x")).json()["id"]
+    y = (await put(client, headers, root_id, "y.txt", b"y")).json()["id"]
+    await client.delete(f"/api/v1/files/{weg}", headers=headers)
+    # Iets naar een map in de prullenbak verplaatsen kan niet
+    r = await client.patch(f"/api/v1/files/{y}", json={"parent_id": sub}, headers=headers)
+    assert r.status_code == 404
+
+    # x eruit halen terwijl de map definitief weggaat: of het lukt en x blijft, of x is weg
+    p, r = await purge_while(
+        client,
+        headers,
+        weg,
+        monkeypatch,
+        lambda: client.patch(f"/api/v1/files/{x}", json={"parent_id": root_id}, headers=headers),
+    )
+    assert p.status_code == 204
+    still_there = (await client.get(f"/api/v1/files/{x}", headers=headers)).status_code == 200
+    assert (r.status_code, still_there) in [(200, True), (404, False)]
+    await check_refs(settings)
+
+
+@pytest.mark.anyio
+async def test_verplaatsen_naar_map_die_definitief_weggaat(client, admin, settings, monkeypatch):
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    weg = await mkdir(client, headers, root_id, "Weg")
+    sub = await mkdir(client, headers, weg, "Sub")
+    await put(client, headers, sub, "z.txt", b"z")
+    y = (await put(client, headers, root_id, "y.txt", b"y")).json()["id"]
+    await client.delete(f"/api/v1/files/{weg}", headers=headers)
+    # Terwijl Weg definitief weggaat, iets naar Sub verplaatsen: dat moet daarna 404 geven,
+    # niet stilletjes mee weg (en dan zijn verwijzing laten tellen)
+    p, r = await purge_while(
+        client,
+        headers,
+        weg,
+        monkeypatch,
+        lambda: client.patch(f"/api/v1/files/{y}", json={"parent_id": sub}, headers=headers),
+    )
+    assert (p.status_code, r.status_code) == (204, 404)
+    assert (await client.get(f"/api/v1/files/{y}", headers=headers)).json()["parent_id"] == root_id
+    await check_refs(settings)
+
+
+@pytest.mark.anyio
+async def test_terugzetten_tijdens_definitief_verwijderen(client, admin, settings, monkeypatch):
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    weg = await mkdir(client, headers, root_id, "Weg")
+    c = (await put(client, headers, weg, "c.txt", b"c")).json()["id"]
+    await client.delete(f"/api/v1/files/{c}", headers=headers)
+    await client.delete(f"/api/v1/files/{weg}", headers=headers)
+    p, r = await purge_while(
+        client,
+        headers,
+        weg,
+        monkeypatch,
+        lambda: client.post(f"/api/v1/files/{c}/restore", headers=headers),
+    )
+    assert p.status_code == 204
+    still_there = (await client.get(f"/api/v1/files/{c}", headers=headers)).status_code == 200
+    assert (r.status_code, still_there) in [(200, True), (404, False)]
+    await check_refs(settings)

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import totp
 from app.config import Settings, get_settings
 from app.db import Session
-from app.models import Node, RecoveryCode, RefreshToken, User
+from app.models import Node, RecoveryCode, RefreshToken, User, Version
 from app.security import (
     AdminUser,
     CurrentUser,
@@ -118,11 +118,19 @@ class RecoveryCodes(BaseModel):
 
 
 async def used_bytes(session: Session, user_id: uuid.UUID) -> int:
-    total = await session.scalar(
-        select(func.coalesce(func.sum(Node.size), 0)).where(
-            Node.owner_id == user_id, Node.kind == "file"
-        )
+    """Bestanden (ook in de prullenbak) plus hun eerdere versies, in één query."""
+    files = (
+        select(func.coalesce(func.sum(Node.size), 0))
+        .where(Node.owner_id == user_id, Node.kind == "file")
+        .scalar_subquery()
     )
+    versions = (
+        select(func.coalesce(func.sum(Version.size), 0))
+        .join(Node, Node.id == Version.node_id)
+        .where(Node.owner_id == user_id)
+        .scalar_subquery()
+    )
+    total = await session.scalar(select(files + versions))
     return int(total or 0)
 
 

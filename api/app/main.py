@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.migrate import upgrade
-from app.routers import admin, auth, files, uploads
+from app.routers import admin, auth, files, search, uploads
 
 try:
     __version__ = version("platform-api")
@@ -144,6 +144,7 @@ app.add_middleware(Edge)
 app.include_router(auth.router)
 app.include_router(files.router)
 app.include_router(uploads.router)
+app.include_router(search.router)
 app.include_router(admin.router)
 
 
