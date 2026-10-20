@@ -1,0 +1,17 @@
+# Lokale ontwikkelomgeving: lege API en web-app.
+# Infrastructuur voor de 3 nodes volgt in fase 1 (zie infra/).
+services:
+  api:
+    build: ./api
+    environment:
+      PLATFORM_ENVIRONMENT: development
+      PLATFORM_NODE_NAME: local
+    ports:
+      - "8000:8000"
+
+  web:
+    build: ./web
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
