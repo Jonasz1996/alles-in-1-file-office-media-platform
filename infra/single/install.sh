@@ -18,6 +18,11 @@ ENV_FILE=$PLATFORM_ROOT/.env
 stap() { printf '\n== %s\n' "$1"; }
 
 [ "$(id -u)" = 0 ] || { echo "Draai dit als root."; exit 1; }
+if [ -d /etc/pve ] || command -v pveversion >/dev/null; then
+  echo "Dit is de Proxmox-host zelf. Draai het script in de Console van de container"
+  echo "(in Proxmox: container aanklikken, dan Console), niet in de Shell van de node."
+  exit 1
+fi
 # shellcheck source=/dev/null
 . /etc/os-release
 case "$ID" in debian | ubuntu) ;; *) echo "Alleen Debian en Ubuntu worden ondersteund (gevonden: $ID)."; exit 1 ;; esac
