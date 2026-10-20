@@ -75,7 +75,8 @@ jobs:
           docker build -q -t platform-postgres:ci --build-arg BASE_IMAGE="$base" --build-arg PATRONI_VERSION="$patroni" /tmp/render/node1/postgres
           for n in /tmp/render/*/; do
             docker run --rm -v "$n/postgres/patroni.yml:/etc/patroni/patroni.yml:ro" \
-              platform-postgres:ci --validate-config /etc/patroni/patroni.yml
+              --entrypoint /opt/patroni/bin/patroni platform-postgres:ci \
+              --validate-config --ignore-listen-port /etc/patroni/patroni.yml
           done
       - name: keepalived-configuratie controleren
         run: |
