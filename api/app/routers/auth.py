@@ -47,6 +47,14 @@ ISSUER = "Platform"  # naam in de authenticator-app; wordt de projectnaam zodra 
 # of op de server: python -m app.cli reset-2fa <e-mailadres>.
 FREE_ATTEMPTS = 5
 MAX_LOCK = timedelta(hours=24)
+# Tabbladen van één browser delen het refresh-cookie. Gaan ze tegelijk open (bijv. bij het
+# herstellen van de vorige sessie), dan verversen ze met hetzelfde token en wint er één.
+# Wie dat token binnen deze marge nog eens via het cookie aanbiedt, krijgt refresh_raced en
+# probeert het daarna opnieuw met het nieuwe cookie (zie renew() in web/src/api.ts); de
+# login blijft dan bestaan. Later, of via de body (een app houdt zijn eigen token bij), is
+# het hergebruik en eindigt de hele login. De web-app probeert het tot net na deze marge,
+# zodat ook een gestolen token dat eerder werd gebruikt de login alsnog laat intrekken.
+REFRESH_RACE = timedelta(seconds=5)
 
 
 class UserOut(BaseModel):
@@ -175,7 +183,13 @@ async def issue_tokens(
     user: User,
     device: str,
     family: uuid.UUID | None = None,
+    verified: tuple[str, str | None] | None = None,
 ) -> Tokens:
+    """verified: de wachtwoord-hash en het 2FA-geheim waarmee net is ingelogd. Zijn die
+    intussen gewijzigd, dan komt er geen login bij (401)."""
+    if verified is not None and not await credentials_unchanged(session, user.id, *verified):
+        await session.rollback()
+        raise HTTPException(401, "E-mailadres of wachtwoord klopt niet")
     refresh = new_refresh_token()
     family = family or uuid.uuid4()
     session.add(
@@ -204,6 +218,24 @@ async def issue_tokens(
         expires_in=settings.access_token_minutes * 60,
         user=await user_out(session, user, await security_config(request, session)),
     )
+
+
+async def credentials_unchanged(
+    session: AsyncSession, user_id: uuid.UUID, password_hash: str, totp_secret: str | None
+) -> bool:
+    """Of het wachtwoord en de 2FA waarmee net is ingelogd nog gelden. Een UPDATE die niets
+    verandert, zodat de gebruiker tot de commit vastligt (schrijfslot in SQLite, rijslot in
+    PostgreSQL). Een nieuw wachtwoord of een andere 2FA (die de logins in dezelfde of een
+    latere transactie intrekt) komt zo óf eerder, en dan klopt het hier niet meer, óf later,
+    en dan trekt die ook de login in die hier wordt uitgegeven."""
+    secret = User.totp_secret.is_(None) if totp_secret is None else User.totp_secret == totp_secret
+    result = await session.execute(
+        update(User)
+        .where(User.id == user_id, User.password_hash == password_hash, secret)
+        .values(password_hash=password_hash)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
 
 
 def lock_time(failures: int) -> timedelta:
@@ -258,7 +290,12 @@ async def start_attempt(session: AsyncSession, user: User, what: str = "codes") 
 
 
 async def end_attempt(
-    session: AsyncSession, user: User, request: Request, ok: bool, failures: int
+    session: AsyncSession,
+    user: User,
+    request: Request,
+    ok: bool,
+    failures: int,
+    label: str = "Foute 2FA-poging",
 ) -> None:
     """Bij succes de teller op nul. Een fout telde al mee; die wordt alleen gelogd."""
     if ok:
@@ -270,7 +307,7 @@ async def end_attempt(
         )
     else:
         ip = client_ip(request)
-        log.warning("Foute 2FA-poging van gebruiker %s vanaf %s (%d op rij)", user.id, ip, failures)
+        log.warning("%s van gebruiker %s vanaf %s (%d op rij)", label, user.id, ip, failures)
         if failures >= FREE_ATTEMPTS:
             log.error(
                 "2FA van gebruiker %s geblokkeerd voor %d min na %d foute pogingen op rij "
@@ -429,6 +466,9 @@ async def login(
     password_ok = await check_password(user.password_hash if user else None, body.password)
     if user is None or not password_ok:
         raise HTTPException(401, "E-mailadres of wachtwoord klopt niet")
+    # Wat hier klopte, moet nog gelden als de tokens worden uitgegeven (zie issue_tokens):
+    # een beheerder die intussen een nieuw wachtwoord instelde, logt deze login ook uit.
+    verified = (user.password_hash, user.totp_secret)
     if user.totp_secret is not None:
         if not body.code:
             # Het wachtwoord klopt al, dus de blokkade melden verraadt niets; zo hoort de
@@ -443,7 +483,7 @@ async def login(
             raise HTTPException(401, {"message": "De code klopt niet", "code": "totp_invalid"})
     # Zonder naam van de app: een label als "Firefox op Windows" voor het sessie-overzicht
     device = body.device.strip() or device_label(request.headers.get("user-agent"))
-    return await issue_tokens(session, settings, request, response, user, device)
+    return await issue_tokens(session, settings, request, response, user, device, verified=verified)
 
 
 @router.post("/auth/refresh")
@@ -459,6 +499,7 @@ async def refresh(
     raw = refresh_token or cookie
     if not raw:
         raise HTTPException(401, "Geen refresh-token")
+    shared = not refresh_token  # het cookie, dat de tabbladen van een browser delen
     row = await session.scalar(
         select(RefreshToken).where(RefreshToken.token_hash == hash_token(raw))
     )
@@ -466,6 +507,8 @@ async def refresh(
     if row is None or row.revoked_at is not None or await family_revoked(session, row.family):
         raise HTTPException(401, "Ongeldig refresh-token")
     if row.used_at is not None:
+        if shared and now - aware(row.used_at) <= REFRESH_RACE:
+            raise refresh_raced()
         # Hergebruik: iemand anders heeft dit token mogelijk ook. Trek de hele login in.
         await revoke_family(session, row.family, now)
         await session.commit()
@@ -474,9 +517,10 @@ async def refresh(
         raise HTTPException(401, "Refresh-token is verlopen")
     # Voorwaardelijk: is de login intussen ingetrokken (bijv. omdat net 2FA aanging), dan
     # werkt het token niet meer, ook al leek het hierboven nog geldig. En is het intussen
-    # door een ander verzoek gebruikt, dan is dat hergebruik zoals hierboven: zonder deze
-    # voorwaarde kregen beide een nieuw token en liep de login in twee takken verder,
-    # waarvan je de tweede nooit meer als hergebruik zou zien.
+    # door een ander verzoek gebruikt, dan krijgt alleen dat een nieuw token: zonder deze
+    # voorwaarde kregen beide er een en liep de login in twee takken verder, waarvan je de
+    # tweede nooit meer als hergebruik zou zien. Via het cookie is dat een ander tabblad
+    # (refresh_raced, zie REFRESH_RACE); via de body is het hergebruik zoals hierboven.
     result = await session.execute(
         update(RefreshToken)
         .where(
@@ -488,6 +532,12 @@ async def refresh(
         .execution_options(synchronize_session=False)
     )
     if result.rowcount != 1:
+        revoked = await session.scalar(
+            select(RefreshToken.revoked_at).where(RefreshToken.id == row.id)
+        )
+        if shared and revoked is None:
+            await session.rollback()
+            raise refresh_raced()
         await revoke_family(session, row.family, now)
         await session.commit()
         raise HTTPException(401, "Ongeldig refresh-token")
@@ -495,6 +545,16 @@ async def refresh(
     if user is None:
         raise HTTPException(401, "Gebruiker bestaat niet meer")
     return await issue_tokens(session, settings, request, response, user, row.device, row.family)
+
+
+def refresh_raced() -> HTTPException:
+    return HTTPException(
+        401,
+        {
+            "message": "Je sessie is net in een ander tabblad vernieuwd; probeer het opnieuw",
+            "code": "refresh_raced",
+        },
+    )
 
 
 @router.post("/auth/logout", status_code=204)
@@ -769,7 +829,8 @@ async def change_password(
     ok = await check_password(old_hash, body.current_password)
     if ok and totp_on:
         ok = await use_code(session, user, body.code or "")
-    await end_attempt(session, user, request, ok, failures)
+    wrong = "Fout wachtwoord of foute code" if totp_on else "Fout wachtwoord"
+    await end_attempt(session, user, request, ok, failures, f"{wrong} bij wachtwoord wijzigen")
     if not ok:
         raise HTTPException(
             400, "Wachtwoord of code klopt niet" if totp_on else "Je huidige wachtwoord klopt niet"

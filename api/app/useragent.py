@@ -2,8 +2,6 @@
 "Firefox op Windows", "Safari op iPhone". Geen bibliotheek: alleen de bekende browsers en
 systemen, de rest heet "Onbekend apparaat"."""
 
-import re
-
 UNKNOWN = "Onbekend apparaat"
 
 # Volgorde telt: Edge, Opera en Samsung noemen zichzelf ook Chrome en Safari, Chrome noemt
@@ -27,8 +25,19 @@ SYSTEMS = [
     ("Mac", ("Macintosh", "Mac OS X")),
     ("Linux", ("Linux", "X11")),
 ]
-# "Mozilla/5.0 (...)", "curl/8.5.0": zo begint een User-Agent, een zelfgekozen naam niet
-RAW_AGENT = re.compile(r"^[A-Za-z][\w.!#$%&'*+^`|~-]*/\d")
+# Vóór deze versie werd de hele User-Agent bewaard: van een browser, of van een bekend
+# programma. Alleen die krijgen achteraf een label; een naam die een app zelf meegaf (ook
+# een als "PlatformApp/1.0") blijft staan.
+OLD_AGENTS = (
+    "Mozilla/",
+    "Opera/",
+    "Dalvik/",
+    "curl/",
+    "Wget/",
+    "python-httpx/",
+    "python-requests/",
+    "okhttp/",
+)
 
 
 def _first(user_agent: str, table: list[tuple[str, tuple[str, ...]]]) -> str | None:
@@ -50,4 +59,4 @@ def shown_device(stored: str) -> str:
     stored = stored.strip()
     if not stored or stored == "setup":
         return UNKNOWN
-    return device_label(stored) if RAW_AGENT.match(stored) else stored
+    return device_label(stored) if stored.startswith(OLD_AGENTS) else stored

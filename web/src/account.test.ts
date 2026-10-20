@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Api } from "./api";
 
 const user = { id: "u", email: "j@x.nl", display_name: "J", role: "admin", quota_bytes: 0, used_bytes: 0, root_id: "r" };
@@ -112,5 +112,54 @@ describe("account", () => {
     const { api, seen } = await loggedIn();
     await api.setUserPassword("u2", "tijdelijk-wachtwoord");
     expect(seen).toEqual(['PUT /api/v1/users/u2/password {"new_password":"tijdelijk-wachtwoord"}']);
+  });
+});
+
+describe("twee tabbladen verversen tegelijk", () => {
+  const message = "Je sessie is net in een ander tabblad vernieuwd; probeer het opnieuw";
+  const raced = () => json({ detail: { message, code: "refresh_raced" } }, 401);
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("wint het andere tabblad, dan even later opnieuw (met het nieuwe cookie)", async () => {
+    vi.useFakeTimers();
+    let refreshes = 0;
+    const api = new Api(async () => (++refreshes === 1 ? raced() : json(tokens)));
+    let loggedOut = false;
+    api.onLoggedOut = () => (loggedOut = true);
+    const result = api.refresh();
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(result).resolves.toMatchObject({ email: "j@x.nl" });
+    expect(refreshes).toBe(2);
+    expect(api.loggedIn).toBe(true);
+    expect(loggedOut).toBe(false);
+  });
+
+  it("blijft het zo, dan stopt het pas na de marge van de server", async () => {
+    vi.useFakeTimers();
+    const times: number[] = [];
+    const api = new Api(async () => {
+      times.push(Date.now());
+      return raced();
+    });
+    const result = api.refresh();
+    await vi.runAllTimersAsync();
+    await expect(result).resolves.toBeNull();
+    expect(times).toHaveLength(4);
+    // De laatste poging valt na de 5 s van de server; dan trekt die bij hergebruik de login in
+    expect(times[3] - times[0]).toBeGreaterThan(5000);
+    expect(api.loggedIn).toBe(false);
+  });
+
+  it("een gewone 401 probeert het niet opnieuw", async () => {
+    let refreshes = 0;
+    const api = new Api(async () => {
+      refreshes++;
+      return json({ detail: "Refresh-token is al gebruikt; log opnieuw in" }, 401);
+    });
+    expect(await api.refresh()).toBeNull();
+    expect(refreshes).toBe(1);
   });
 });

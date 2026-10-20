@@ -114,6 +114,21 @@ export function errorFromBody(status: number, body: unknown): ApiError {
 
 const TUS = { "Tus-Resumable": "1.0.0" };
 
+/**
+ * Wachttijden (ms) als een ander tabblad tegelijk met hetzelfde cookie ververste en won. Samen
+ * net langer dan de marge van de server (REFRESH_RACE, 5 s): daarna is het hergebruik.
+ */
+const RACE_RETRIES = [500, 1500, 4000];
+
+async function raced(res: Response): Promise<boolean> {
+  if (res.status !== 401) return false;
+  try {
+    return errorFromBody(401, await res.clone().json()).code === "refresh_raced";
+  } catch {
+    return false;
+  }
+}
+
 /** tus Upload-Metadata: sleutel en base64 van de UTF-8-waarde, gescheiden door komma's. */
 export function tusMetadata(values: Record<string, string>): string {
   return Object.entries(values)
@@ -201,10 +216,16 @@ export class Api {
 
   private async renew(): Promise<User | null> {
     const wasLoggedIn = this.token !== null;
-    const res = await this.fetchFn("/api/v1/auth/refresh", {
-      method: "POST",
-      credentials: "same-origin",
-    });
+    const post = () => this.fetchFn("/api/v1/auth/refresh", { method: "POST", credentials: "same-origin" });
+    let res = await post();
+    // Tabbladen delen het cookie; ververste een ander tabblad net, dan heeft de browser even
+    // later het nieuwe cookie uit dat antwoord. Was het geen eigen tabblad, dan valt de laatste
+    // poging na de marge van de server en trekt die de login in (een gestolen token).
+    for (const wait of RACE_RETRIES) {
+      if (!(await raced(res))) break;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      res = await post();
+    }
     if (!res.ok) {
       this.token = null;
       // Er was een sessie en die is nu voorbij (bijv. uitgelogd in een ander tabblad). Ook

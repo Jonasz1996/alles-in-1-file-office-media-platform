@@ -155,7 +155,13 @@ export function Beheer({ currentUser }: { currentUser: User }) {
                       </>
                     )}
                   </td>
-                  <td className="actions">{u.id !== currentUser.id && <SetPassword user={u} />}</td>
+                  {u.id === currentUser.id ? (
+                    <td />
+                  ) : (
+                    <td className="actions">
+                      <SetPassword user={u} />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app import totp
 from app.db import get_engine
 from app.main import app
-from app.models import RefreshToken
+from app.models import RefreshToken, User
 from app.routers import auth
 from app.security import SecurityPolicy, login_limiter
 from app.useragent import device_label, shown_device
@@ -124,9 +124,30 @@ def test_oude_sessies_krijgen_alsnog_een_label():
     assert shown_device("curl/8.5.0") == "Onbekend apparaat"
     assert shown_device("setup") == "Onbekend apparaat"
     assert shown_device("  ") == "Onbekend apparaat"
-    # Een naam die de app zelf meegaf, blijft
-    assert shown_device("Werklaptop") == "Werklaptop"
-    assert shown_device("Platform-app op Pixel 8") == "Platform-app op Pixel 8"
+    assert shown_device("Dalvik/2.1.0 (Linux; U; Android 14; Pixel 8 Build/AP2A)") == "Android"
+    # Een naam die de app zelf meegaf, blijft, ook als die op een User-Agent lijkt
+    for name in ("Werklaptop", "Platform-app op Pixel 8", "PlatformApp/1.0", "Nextcloud-iOS/4.0"):
+        assert shown_device(name) == name
+
+
+async def stored_devices(settings, email=ADMIN["email"]) -> list[str]:
+    """Wat er per uitgegeven refresh-token als apparaat is opgeslagen, oudste eerst."""
+    async with async_sessionmaker(get_engine(settings))() as session:
+        return list(
+            await session.scalars(
+                select(RefreshToken.device)
+                .join(User, User.id == RefreshToken.user_id)
+                .where(User.email == email)
+                .order_by(RefreshToken.created_at)
+            )
+        )
+
+
+@pytest.mark.anyio
+async def test_setup_bewaart_een_apparaatlabel(client, settings):
+    r = await client.post("/api/v1/auth/setup", json=ADMIN, headers={"User-Agent": SAFARI_MAC})
+    assert r.status_code == 201, r.text
+    assert await stored_devices(settings) == ["Safari op Mac"]
 
 
 @pytest.mark.anyio
@@ -148,6 +169,13 @@ async def test_sessies_per_apparaat(client, admin, elsewhere, settings):
     assert [s["id"] for s in rows] == [family(t) for t in (iphone, laptop, firefox, tokens)]
     assert [s["ip"] for s in rows] == ["192.0.2.7", "127.0.0.1", "127.0.0.1", "127.0.0.1"]
     assert [s["current"] for s in rows] == [False, False, False, True]
+    # Opgeslagen wordt het label (of de naam van de app), niet de hele User-Agent
+    assert await stored_devices(settings) == [
+        "Onbekend apparaat",
+        "Firefox op Windows",
+        "Werklaptop",
+        "Safari op iPhone",
+    ]
     # Van een ander apparaat bekeken staat de markering daar
     assert [s["current"] for s in await sessions(client, firefox)] == [False, False, True, False]
     for s in rows:
@@ -647,5 +675,202 @@ async def test_geen_wachtwoorden_of_tokens_in_het_log(client, admin, caplog):
 
     assert "heeft het wachtwoord gewijzigd" in caplog.text
     assert "heeft een nieuw wachtwoord ingesteld" in caplog.text
+    # Zonder 2FA is een fout wachtwoord hier geen foute 2FA-poging
+    assert "Fout wachtwoord bij wachtwoord wijzigen van gebruiker" in caplog.text
+    assert "2FA-poging" not in caplog.text
     for secret in hidden:
         assert secret not in caplog.text
+
+
+def pause_after_login_check(monkeypatch):
+    """Laat de eerste wachtwoordcontrole (die van de login) wachten nadat het wachtwoord
+    goed is bevonden: vlak vóór het uitgeven van de tokens. Latere controles (bijv. bij
+    2FA aanzetten) lopen gewoon door."""
+    reached, release = asyncio.Event(), asyncio.Event()
+    real = auth.check_password
+    calls = 0
+
+    async def paused(password_hash, password):
+        nonlocal calls
+        calls += 1
+        ok = await real(password_hash, password)
+        if calls == 1:
+            reached.set()
+            async with asyncio.timeout(10):
+                await release.wait()
+        return ok
+
+    monkeypatch.setattr(auth, "check_password", paused)
+    return reached, release
+
+
+async def live_tokens(settings, email) -> list[RefreshToken]:
+    async with async_sessionmaker(get_engine(settings))() as session:
+        return list(
+            await session.scalars(
+                select(RefreshToken)
+                .join(User, User.id == RefreshToken.user_id)
+                .where(User.email == email, RefreshToken.revoked_at.is_(None))
+            )
+        )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("by", ["beheerder", "zelf"])
+async def test_login_tijdens_nieuw_wachtwoord_overleeft_het_niet(
+    client, admin, settings, monkeypatch, by
+):
+    """Een login met het oude wachtwoord die al voorbij de controle is terwijl het
+    wachtwoord wordt gewijzigd: daar mag geen sessie uit komen die het nieuwe wachtwoord
+    overleeft (bijv. als de beheerder een overgenomen account herstelt)."""
+    headers, _ = admin
+    an_id = await add_an(client, headers)
+    an = (await login(client, AN)).json()
+    reached, release = pause_after_login_check(monkeypatch)
+    pending = asyncio.create_task(login(client, AN))
+    async with asyncio.timeout(10):
+        await reached.wait()
+    if by == "beheerder":
+        r = await client.put(
+            f"/api/v1/users/{an_id}/password", json={"new_password": NEW}, headers=headers
+        )
+    else:
+        body = {"current_password": AN["password"], "new_password": NEW}
+        r = await client.post(PASSWORD, json=body, headers=bearer(an))
+    assert r.status_code == 204, r.text
+    release.set()
+    r = await pending
+    assert r.status_code == 401
+    assert r.json()["detail"] == "E-mailadres of wachtwoord klopt niet"
+    expected = [] if by == "beheerder" else [uuid.UUID(family(an))]
+    assert [t.family for t in await live_tokens(settings, AN["email"])] == expected
+
+
+@pytest.mark.anyio
+async def test_login_vlak_voor_nieuw_wachtwoord_wordt_ingetrokken(client, admin, monkeypatch):
+    """Andersom: komt de login met het oude wachtwoord net vóór het nieuwe wachtwoord in de
+    database, dan trekt het nieuwe wachtwoord ook die login in."""
+    headers, _ = admin
+    an_id = await add_an(client, headers)
+    checked, release_login = pause_after_login_check(monkeypatch)
+    pending = asyncio.create_task(login(client, AN))
+    async with asyncio.timeout(10):
+        await checked.wait()
+    hashing, release_reset = pause_hashing(monkeypatch, NEW)
+    reset = asyncio.create_task(
+        client.put(f"/api/v1/users/{an_id}/password", json={"new_password": NEW}, headers=headers)
+    )
+    async with asyncio.timeout(10):
+        await hashing.wait()
+    release_login.set()
+    r = await pending
+    assert r.status_code == 200, r.text
+    tokens = r.json()
+    release_reset.set()
+    assert (await reset).status_code == 204
+    monkeypatch.undo()
+    assert (await client.get("/api/v1/auth/me", headers=bearer(tokens))).status_code == 401
+    assert (await refresh(client, tokens)).status_code == 401
+
+
+@pytest.mark.anyio
+async def test_login_tijdens_2fa_aanzetten_overleeft_het_niet(client, admin, settings, monkeypatch):
+    """Ook 2FA aanzetten trekt alle andere logins in, ook een die er net tussendoor kwam
+    zonder code."""
+    headers, tokens = admin
+    reached, release = pause_after_login_check(monkeypatch)
+    pending = asyncio.create_task(login(client))
+    async with asyncio.timeout(10):
+        await reached.wait()
+    await enable(client, headers)
+    release.set()
+    r = await pending
+    assert r.status_code == 401
+    assert [t.family for t in await live_tokens(settings, ADMIN["email"])] == [
+        uuid.UUID(family(tokens))
+    ]
+
+
+def cookie(tokens) -> dict:
+    """Zoals een browser het refresh-token meestuurt: als cookie, niet in de body."""
+    return {"Cookie": f"{auth.REFRESH_COOKIE}={tokens['refresh_token']}"}
+
+
+@pytest.mark.anyio
+async def test_twee_tabbladen_verversen_tegelijk(client, admin, monkeypatch):
+    """Twee tabbladen van één browser gaan tegelijk open en verversen met hetzelfde cookie.
+    Eén krijgt nieuwe tokens; de ander refresh_raced, en de login blijft bestaan (vroeger
+    werd hij ingetrokken en was je in beide tabbladen uitgelogd)."""
+    headers, tokens = admin
+    client.cookies.clear()
+    barrier = asyncio.Barrier(2)
+    real = auth.family_revoked
+
+    async def together(session, fam):
+        # Beide hebben het token al gelezen (nog ongebruikt) voordat er één schrijft
+        async with asyncio.timeout(10):
+            await barrier.wait()
+        return await real(session, fam)
+
+    monkeypatch.setattr(auth, "family_revoked", together)
+    results = await asyncio.gather(
+        *(client.post("/api/v1/auth/refresh", headers=cookie(tokens)) for _ in range(2))
+    )
+    monkeypatch.undo()
+    assert sorted(r.status_code for r in results) == [200, 401]
+    lost = next(r for r in results if r.status_code == 401)
+    assert lost.json()["detail"] == {
+        "message": "Je sessie is net in een ander tabblad vernieuwd; probeer het opnieuw",
+        "code": "refresh_raced",
+    }
+    won = next(r for r in results if r.status_code == 200).json()
+    # Het winnende tabblad blijft ingelogd, en het andere lukt het met het nieuwe cookie
+    assert (await client.get("/api/v1/auth/me", headers=bearer(won))).status_code == 200
+    r = await client.post("/api/v1/auth/refresh", headers=cookie(won))
+    assert r.status_code == 200, r.text
+    assert (await client.get("/api/v1/auth/me", headers=bearer(won))).status_code == 200
+    assert (await client.get("/api/v1/auth/me", headers=bearer(r.json()))).status_code == 200
+
+
+@pytest.mark.anyio
+async def test_tabblad_net_te_laat_en_echt_hergebruik(client, admin, settings):
+    """Komt het tweede tabblad pas als het eerste al klaar is, dan ook refresh_raced. Wordt
+    hetzelfde token na de marge nog eens aangeboden, dan is dat hergebruik: de hele login
+    eindigt. Zo blijft een gestolen token opvallen."""
+    _, tokens = admin
+    client.cookies.clear()
+    r = await client.post("/api/v1/auth/refresh", headers=cookie(tokens))
+    assert r.status_code == 200
+    newest = r.json()
+    for _ in range(2):
+        r = await client.post("/api/v1/auth/refresh", headers=cookie(tokens))
+        assert r.status_code == 401
+        assert r.json()["detail"]["code"] == "refresh_raced"
+    assert (await client.get("/api/v1/auth/me", headers=bearer(newest))).status_code == 200
+
+    async with async_sessionmaker(get_engine(settings))() as session:
+        await session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.used_at.is_not(None))
+            .values(used_at=datetime.now(UTC) - auth.REFRESH_RACE - timedelta(seconds=1))
+        )
+        await session.commit()
+    r = await client.post("/api/v1/auth/refresh", headers=cookie(tokens))
+    assert r.status_code == 401
+    assert r.json()["detail"] == "Refresh-token is al gebruikt; log opnieuw in"
+    assert (await client.get("/api/v1/auth/me", headers=bearer(newest))).status_code == 401
+    assert (await client.post("/api/v1/auth/refresh", headers=cookie(newest))).status_code == 401
+
+
+@pytest.mark.anyio
+async def test_app_die_een_token_dubbel_gebruikt_is_hergebruik(client, admin):
+    """Een app stuurt het token in de body en houdt het zelf bij; daar is er geen marge."""
+    _, tokens = admin
+    client.cookies.clear()
+    r = await refresh(client, tokens)
+    assert r.status_code == 200
+    newest = r.json()
+    r = await refresh(client, tokens)
+    assert r.status_code == 401
+    assert r.json()["detail"] == "Refresh-token is al gebruikt; log opnieuw in"
+    assert (await client.get("/api/v1/auth/me", headers=bearer(newest))).status_code == 401
