@@ -1,0 +1,332 @@
+/* De onderdelen in ui/: knoppen, menu's, meldingen, tabbladen, velden en de rest. */
+
+.icon {
+  flex: none;
+  vertical-align: middle;
+}
+
+.btn {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0.3rem;
+}
+
+.icon-button[aria-pressed="true"] {
+  background: var(--selected);
+  color: var(--selected-fg);
+}
+
+/* Draaiertje en plaatshouders */
+.spinner-wrap {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 3s;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.skeleton-group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.skeleton {
+  display: block;
+  width: 100%;
+  height: 1em;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+}
+
+/* Menu's */
+.menu-root {
+  display: contents;
+}
+
+.menu {
+  position: fixed;
+  z-index: var(--z-menu);
+  min-width: 12rem;
+  max-width: min(22rem, calc(100vw - 1rem));
+  max-height: calc(100vh - 1rem);
+  margin: 0;
+  padding: var(--space-1) 0;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: var(--shadow-2);
+}
+
+.menu:focus {
+  outline: none;
+}
+
+.menu-item {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 2rem;
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+  user-select: none;
+}
+
+.menu-item:focus {
+  outline: none;
+  background: var(--selected);
+  color: var(--selected-fg);
+}
+
+.menu-item.danger {
+  color: var(--bad);
+}
+
+.menu-item.disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.menu-check {
+  display: inline-grid;
+  width: 1rem;
+  place-items: center;
+}
+
+.menu-label {
+  flex: 1;
+}
+
+.menu-shortcut {
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--text-s);
+}
+
+.menu-separator {
+  margin: var(--space-1) 0;
+  border-top: 1px solid var(--line);
+}
+
+/* Meldingen rechtsonder */
+.toasts {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: var(--z-toast);
+  display: grid;
+  gap: var(--space-2);
+  width: min(24rem, calc(100vw - 2rem));
+}
+
+.toast {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-m);
+  background: var(--bg);
+  box-shadow: var(--shadow-2);
+}
+
+.toast.ok {
+  border-left-color: var(--ok);
+}
+
+.toast.error {
+  border-left-color: var(--bad);
+}
+
+.toast[role="alert"] {
+  color: var(--fg);
+}
+
+.toast-message {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+/* Tabbladen */
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  margin: var(--space-4) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.tab.current {
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.tab-badge {
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: var(--text-s);
+}
+
+/* Velden */
+.field {
+  display: grid;
+  gap: 0.3rem;
+  margin: var(--space-2) 0;
+}
+
+.field-error {
+  margin: 0;
+}
+
+.switch {
+  margin: var(--space-2) 0;
+  padding: 0;
+  border: 0;
+}
+
+.switch legend {
+  margin-bottom: var(--space-1);
+}
+
+.switch label.check {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  margin-right: var(--space-4);
+}
+
+/* Lege staat */
+.empty-state {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: center;
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.empty-state h2 {
+  margin: 0;
+  font-size: var(--text-l);
+}
+
+.empty-state-icon {
+  color: var(--muted);
+}
+
+/* Paginakop */
+.page-title {
+  display: flex;
+  gap: var(--space-2) var(--space-4);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.page-title h1 {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Gebruikte ruimte */
+.usage-bar {
+  display: grid;
+  gap: var(--space-1);
+  max-width: 24rem;
+}
+
+.usage-bar meter {
+  width: 100%;
+}
+
+/* Sneltoetsen */
+.shortcut-group h3 {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-m);
+}
+
+.shortcut-list {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.shortcut-list > div {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.shortcut-list dt {
+  min-width: 8rem;
+}
+
+.shortcut-list dd {
+  margin: 0;
+}
+
+kbd {
+  padding: 0 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: var(--text-s);
+}
+
+.menu-shortcut {
+  border: 0;
+  background: none;
+}
+
+/* Gevirtualiseerde lijst: de rijen staan absoluut in een vlak van de volle hoogte */
+.virtual-list-body {
+  position: relative;
+}
+
+.dialog-message {
+  margin-bottom: var(--space-2);
+}
