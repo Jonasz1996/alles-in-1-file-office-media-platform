@@ -1,0 +1,146 @@
+/* Ontwerptokens: alleen custom properties. Licht is de standaard; donker via data-theme="dark"
+   op <html> (gezet door /boot.js en de themakeuze), of het systeem als er niets gekozen is.
+   Kleuren staan alleen hier; elk ander CSS-bestand gebruikt var(--…). */
+
+:root {
+  color-scheme: light dark;
+
+  /* Kleuren (licht) */
+  --bg: #ffffff;
+  --surface: #f5f5f4;
+  --surface-2: #e9e9e7;
+  --fg: #1a1a1a;
+  --muted: #5c5c5c;
+  --line: #d8d8d8;
+  --accent: #1d5fd1;
+  --accent-fg: #ffffff;
+  --ok: #1f7a3a;
+  --warn: #9a6200;
+  --bad: #b3261e;
+  --hover: rgb(0 0 0 / 0.05);
+  --selected: #dce8fb;
+  --selected-fg: #0b3a8c;
+  --danger-bg: #b3261e;
+  --backdrop: rgb(0 0 0 / 0.45);
+  --focus: #1d5fd1;
+  --focus-w: 2px;
+  /* Een QR-code moet op wit staan, ook in het donkere thema */
+  --qr-bg: #ffffff;
+
+  /* Tagkleuren (index 1..7, zie tagColors.ts) */
+  --tag-1: #1d5fd1;
+  --tag-2: #1f7a3a;
+  --tag-3: #c27c0e;
+  --tag-4: #b3261e;
+  --tag-5: #7b3fb5;
+  --tag-6: #0f7f86;
+  --tag-7: #6b6b6b;
+
+  /* Ruimte, vormen, tekst */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --radius-s: 4px;
+  --radius-m: 6px;
+  --radius-l: 10px;
+  --text-s: 0.875rem;
+  --text-m: 1rem;
+  --text-l: 1.15rem;
+  --text-xl: 1.4rem;
+  --leading: 1.45;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Diepte en lagen (een dialoog staat in de top layer, daar is geen z-index voor nodig) */
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.12), 0 1px 3px rgb(0 0 0 / 0.08);
+  --shadow-2: 0 6px 24px rgb(0 0 0 / 0.18), 0 2px 6px rgb(0 0 0 / 0.1);
+  --z-sticky: 10;
+  --z-menu: 100;
+  --z-toast: 200;
+
+  /* Beweging */
+  --motion: 150ms;
+
+  /* Lijsten en rasters */
+  --row-h: 44px;
+  --row-h-compact: 36px;
+  --cell-min: 160px;
+}
+
+/* Donker: expliciet gekozen */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121212;
+  --surface: #1e1e1e;
+  --surface-2: #2a2a2a;
+  --fg: #ececec;
+  --muted: #a0a0a0;
+  --line: #3a3a3a;
+  --accent: #7aa7ff;
+  --accent-fg: #0b1220;
+  --ok: #6fcf8a;
+  --warn: #f0b95a;
+  --bad: #ff8a80;
+  --hover: rgb(255 255 255 / 0.06);
+  --selected: #1f3557;
+  --selected-fg: #dce8fb;
+  --danger-bg: #ff8a80;
+  --backdrop: rgb(0 0 0 / 0.65);
+  --focus: #7aa7ff;
+  --tag-1: #7aa7ff;
+  --tag-2: #6fcf8a;
+  --tag-3: #f0b95a;
+  --tag-4: #ff8a80;
+  --tag-5: #c69bf0;
+  --tag-6: #5fd0d6;
+  --tag-7: #a8a8a8;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+  --shadow-2: 0 6px 24px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
+}
+
+/* Licht: expliciet gekozen (ook als het systeem donker is) */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+/* Niets gekozen: het systeem volgen */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121212;
+    --surface: #1e1e1e;
+    --surface-2: #2a2a2a;
+    --fg: #ececec;
+    --muted: #a0a0a0;
+    --line: #3a3a3a;
+    --accent: #7aa7ff;
+    --accent-fg: #0b1220;
+    --ok: #6fcf8a;
+    --warn: #f0b95a;
+    --bad: #ff8a80;
+    --hover: rgb(255 255 255 / 0.06);
+    --selected: #1f3557;
+    --selected-fg: #dce8fb;
+    --danger-bg: #ff8a80;
+    --backdrop: rgb(0 0 0 / 0.65);
+    --focus: #7aa7ff;
+    --tag-1: #7aa7ff;
+    --tag-2: #6fcf8a;
+    --tag-3: #f0b95a;
+    --tag-4: #ff8a80;
+    --tag-5: #c69bf0;
+    --tag-6: #5fd0d6;
+    --tag-7: #a8a8a8;
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+    --shadow-2: 0 6px 24px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion: 0ms;
+  }
+}

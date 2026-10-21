@@ -1,86 +1,14 @@
-/* Zoeken, kopiëren/verplaatsen, versies en tags (bij Bestanden). */
-
-.dialog {
-  box-sizing: border-box;
-  width: min(40rem, calc(100vw - 2rem));
-  max-width: calc(100vw - 2rem);
-  max-height: calc(100vh - 4rem);
-  padding: 1rem 1.2rem;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg);
-  color: var(--fg);
-  /* de dialoog staat in de DOM binnen een tabelcel en erft anders diens nowrap en uitlijning */
-  text-align: left;
-  white-space: normal;
-}
-
-.version-list {
-  margin: 0.5rem 0;
-  padding: 0;
-  list-style: none;
-}
-
-.version-list li {
-  display: flex;
-  gap: 0.5rem 1rem;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.version-actions {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-.dialog::backdrop {
-  background: rgb(0 0 0 / 0.4);
-}
-
-.dialog > header {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  margin-bottom: 0.5rem;
-}
-
-.dialog > header h2 {
-  flex: 1;
-  margin: 0;
-  font-size: 1.15rem;
-  overflow-wrap: anywhere;
-}
-
-.dialog-actions {
-  display: flex;
-  gap: 0.5rem;
-  justify-content: flex-end;
-  margin-top: 1rem;
-}
-
-button.primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--bg);
-}
-
-button:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
+/* Zoeken, kopiëren/verplaatsen en tags (bij Bestanden). De dialoog zelf staat in base.css,
+   de versies in versions.css. */
 
 .picker-list {
   max-height: 50vh;
-  margin: 0.5rem 0;
+  margin: var(--space-2) 0;
   padding: 0;
   overflow: auto;
   list-style: none;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
 }
 
 .picker-list li + li {
@@ -97,7 +25,7 @@ button:disabled {
 }
 
 .picker-list button:hover {
-  background: var(--surface);
+  background: var(--hover);
 }
 
 .search-box {
@@ -112,10 +40,10 @@ button:disabled {
 
 .search-form {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-2);
   align-items: center;
   flex-wrap: wrap;
-  margin: 1rem 0;
+  margin: var(--space-4) 0;
 }
 
 .search-form input[type="search"] {
@@ -126,7 +54,7 @@ button:disabled {
   display: inline-flex;
   gap: 0.3rem;
   flex-wrap: wrap;
-  margin-left: 0.5rem;
+  margin-left: var(--space-2);
   vertical-align: middle;
 }
 
@@ -173,4 +101,25 @@ a.tag:hover {
   display: flex;
   gap: 0.4rem;
   align-items: center;
+}
+
+/* Thumbnail of icoon voor een map of bestand in een lijst */
+.thumb {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin-right: var(--space-2);
+  vertical-align: middle;
+}
+
+img.thumb {
+  object-fit: cover;
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+span.thumb {
+  display: inline-block;
+  text-align: center;
+  line-height: 32px;
 }

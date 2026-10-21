@@ -1,4 +1,4 @@
-/* Delen: de dialoog, merkjes in de lijsten en de publieke pagina (/s/<token>). */
+/* Delen: de dialoog en merkjes in de lijsten. De publieke pagina staat in public.css. */
 
 .share-section + .share-section {
   margin-top: 1.2rem;
@@ -7,8 +7,8 @@
 }
 
 .share-section h3 {
-  margin: 0 0 0.5rem;
-  font-size: 1rem;
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-m);
 }
 
 .share-new h4 {
@@ -18,7 +18,7 @@
 
 .share-add {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
@@ -36,18 +36,18 @@
 }
 
 .share-list {
-  margin: 0.5rem 0;
+  margin: var(--space-2) 0;
   padding: 0;
   list-style: none;
 }
 
 .share-list li {
   display: flex;
-  gap: 0.4rem 1rem;
+  gap: 0.4rem var(--space-4);
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  padding: 0.5rem 0;
+  padding: var(--space-2) 0;
   border-bottom: 1px solid var(--line);
 }
 
@@ -76,14 +76,14 @@
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  font-family: ui-monospace, monospace;
+  font-family: var(--mono);
   font-size: 0.85rem;
 }
 
 .share-form {
   display: grid;
   gap: 0.7rem;
-  margin: 0.5rem 0;
+  margin: var(--space-2) 0;
 }
 
 .share-form label {
@@ -93,7 +93,7 @@
 
 .share-form label.check {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-2);
   align-items: center;
 }
 
@@ -107,7 +107,7 @@
 /* Merkjes bij een naam in de lijst */
 .shared-mark {
   display: inline-block;
-  margin-left: 0.5rem;
+  margin-left: var(--space-2);
   padding: 0 0.4rem;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -116,83 +116,6 @@
   vertical-align: middle;
 }
 
-.owner-note {
-  margin-left: 0.5rem;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
 .folder-note {
   margin: 0.3rem 0 0;
-}
-
-/* De publieke pagina */
-
-.public-head {
-  display: flex;
-  gap: 0.5rem 1rem;
-  align-items: baseline;
-  flex-wrap: wrap;
-}
-
-.public-head h1 {
-  margin: 0.5rem 0;
-  font-size: 1.4rem;
-  overflow-wrap: anywhere;
-}
-
-.public-file {
-  display: grid;
-  gap: 0.8rem;
-}
-
-.public-file img,
-.public-file video {
-  border-radius: 6px;
-}
-
-.dropzone {
-  display: grid;
-  gap: 0.6rem;
-  place-items: center;
-  padding: 2rem 1rem;
-  border: 2px dashed var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  text-align: center;
-}
-
-.dropzone.dropping {
-  border-color: var(--accent);
-}
-
-.arrived {
-  padding: 0.8rem 1rem;
-  border: 1px solid var(--ok);
-  border-radius: 8px;
-  color: var(--ok);
-}
-
-.arrived ul {
-  margin: 0.4rem 0 0;
-  padding-left: 1.2rem;
-  color: var(--fg);
-  overflow-wrap: anywhere;
-}
-
-.public-card {
-  width: min(24rem, 100%);
-  box-sizing: border-box;
-}
-
-/* Minder belangrijke kolommen weglaten op een smal scherm, en "van <eigenaar>" onder de naam */
-@media (max-width: 40rem) {
-  .wide-only {
-    display: none;
-  }
-
-  .owner-note {
-    display: block;
-    margin-left: 0;
-  }
 }

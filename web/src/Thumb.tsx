@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type FileNode, type Preview } from "./api";
 import { useServerEvents } from "./events";
+import "./files.css";
 
 export type Category = "folder" | "image" | "video" | "audio" | "pdf" | "document" | "archive" | "other";
 
@@ -39,7 +40,6 @@ const BATCH = 500;
 /** Thumbnail als die er is, anders een icoon voor het soort bestand. */
 export function Thumb({ node, preview }: { node: Pick<FileNode, "kind" | "mime">; preview?: Preview }) {
   const [broken, setBroken] = useState<string | null>(null);
-  const box = { width: SIZE, height: SIZE, flex: "none", marginRight: "0.5rem", verticalAlign: "middle" } as const;
   if (preview?.thumb && broken !== preview.thumb) {
     return (
       <img
@@ -49,13 +49,13 @@ export function Thumb({ node, preview }: { node: Pick<FileNode, "kind" | "mime">
         decoding="async"
         width={SIZE}
         height={SIZE}
-        style={{ ...box, objectFit: "cover", borderRadius: 4, background: "var(--surface)" }}
+        className="thumb"
         onError={() => setBroken(preview.thumb)} // bijv. verlopen adres: dan het icoon
       />
     );
   }
   return (
-    <span aria-hidden="true" style={{ ...box, display: "inline-block", textAlign: "center", lineHeight: `${SIZE}px` }}>
+    <span aria-hidden="true" className="thumb">
       {ICONS[category(node)]}
     </span>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type FileNode, formatBytes, formatDate, type Preview, type PreviewMeta } from "./api";
 import { category, type Category } from "./Thumb";
+import "./viewer/preview.css";
 
 /** 83 -> "1:23", 3723 -> "1:02:03". */
 export function formatDuration(seconds: number): string {
@@ -10,17 +11,6 @@ export function formatDuration(seconds: number): string {
   const s = String(total % 60).padStart(2, "0");
   return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
-
-const DIALOG = {
-  padding: 0,
-  border: "1px solid var(--line)",
-  borderRadius: 10,
-  background: "var(--bg)",
-  color: "var(--fg)",
-  width: "min(56rem, 94vw)",
-  maxHeight: "92vh",
-} as const;
-const FIT = { display: "block", maxWidth: "100%", maxHeight: "65vh", margin: "0 auto" } as const;
 
 /**
  * Speler voor video of audio, tenzij de server in de inhoud iets anders vond (tekst of een
@@ -151,38 +141,34 @@ export function PreviewBody({
   let body;
   if (player === "video") {
     body = media.url ? (
-      <video controls playsInline preload="metadata" poster={preview?.large ?? undefined} style={FIT} {...media.props} />
+      <video
+        controls
+        playsInline
+        preload="metadata"
+        poster={preview?.large ?? undefined}
+        className="preview-fit"
+        {...media.props}
+      />
     ) : (
       <p className="muted">Laden…</p>
     );
   } else if (player === "audio") {
     body = (
-      <div style={{ display: "grid", gap: "0.8rem", justifyItems: "center" }}>
-        {preview?.large && <img src={preview.large} alt="Hoes" style={{ ...FIT, maxHeight: "16rem" }} />}
+      <div className="preview-audio">
+        {preview?.large && <img src={preview.large} alt="Hoes" className="preview-fit cover" />}
         {(meta.title || meta.artist) && (
-          <p style={{ margin: 0 }}>
+          <p>
             <strong>{meta.title ?? node.name}</strong>
             {meta.artist && <> · {meta.artist}</>}
             {meta.album && <span className="muted"> ({meta.album})</span>}
           </p>
         )}
-        {media.url ? <audio controls preload="metadata" style={{ width: "100%" }} {...media.props} /> : <p>Laden…</p>}
+        {media.url ? <audio controls preload="metadata" {...media.props} /> : <p>Laden…</p>}
       </div>
     );
   } else if (meta.text !== undefined) {
     body = (
-      <pre
-        style={{
-          whiteSpace: "pre-wrap",
-          overflowWrap: "anywhere",
-          maxHeight: "60vh",
-          overflow: "auto",
-          margin: 0,
-          padding: "0.8rem",
-          background: "var(--surface)",
-          borderRadius: 6,
-        }}
-      >
+      <pre className="preview-text">
         {meta.text}
         {meta.truncated && "\n…"}
       </pre>
@@ -190,7 +176,7 @@ export function PreviewBody({
   } else if (meta.entries) {
     const more = (meta.count ?? meta.entries.length) - meta.entries.length;
     body = (
-      <div className="table-wrap" style={{ maxHeight: "60vh", overflow: "auto" }}>
+      <div className="table-wrap preview-entries">
         <table>
           <thead>
             <tr>
@@ -202,7 +188,7 @@ export function PreviewBody({
             {meta.entries.map((e, i) => (
               // Op volgorde: een naam kan in een archief dubbel voorkomen
               <tr key={i}>
-                <td style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>{e.name}</td>
+                <td className="name">{e.name}</td>
                 <td>{e.name.endsWith("/") ? "" : formatBytes(e.size)}</td>
               </tr>
             ))}
@@ -214,9 +200,9 @@ export function PreviewBody({
       </div>
     );
   } else if (original?.url) {
-    body = <img src={original.url} alt={node.name} style={FIT} onError={original.onError} />;
+    body = <img src={original.url} alt={node.name} className="preview-fit" onError={original.onError} />;
   } else if (preview?.large) {
-    body = <img src={preview.large} alt={node.name} style={FIT} />;
+    body = <img src={preview.large} alt={node.name} className="preview-fit" />;
   } else if (original) {
     body = <p className="muted">Laden…</p>;
   } else if (!preview || preview.state === "pending") {
@@ -291,27 +277,23 @@ export function PreviewPanel({
       ref={dialog}
       className="preview-dialog"
       aria-label={node.name}
-      style={DIALOG}
       onClose={onClose}
       onClick={(e) => {
         if (e.target === dialog.current) close(); // klik naast het paneel
       }}
     >
-      <style>{".preview-dialog::backdrop { background: rgb(0 0 0 / 0.6); }"}</style>
-      <div style={{ padding: "1rem 1.2rem" }}>
-        <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
-          <h2 style={{ margin: 0, flex: 1, fontSize: "1.15rem", overflowWrap: "anywhere" }}>{node.name}</h2>
+      <div className="preview-inner">
+        <div className="preview-head">
+          <h2>{node.name}</h2>
           <button type="button" onClick={close}>
             Sluiten
           </button>
         </div>
-        <div style={{ margin: "1rem 0" }}>
+        <div className="preview-body">
           <PreviewBody node={node} preview={preview} source={urls} />
         </div>
-        <p className="muted" style={{ margin: 0 }}>
-          {previewDetails(node, preview?.meta ?? {})}
-        </p>
-        <div className="toolbar" style={{ marginBottom: 0 }}>
+        <p className="muted preview-details">{previewDetails(node, preview?.meta ?? {})}</p>
+        <div className="toolbar">
           <button type="button" onClick={onDownload}>
             Downloaden
           </button>

@@ -84,7 +84,7 @@ export function BeheerGroups({ users }: { users: User[] }) {
               {groups.map((g) => (
                 <tr key={g.id}>
                   <td>{g.name}</td>
-                  <td style={{ whiteSpace: "normal" }}>
+                  <td className="wrap">
                     {memberCount(g.member_count)}
                     {g.members.length > 0 && (
                       <span className="muted">: {g.members.map((m) => m.display_name).join(", ")}</span>

@@ -76,7 +76,7 @@ export function BeheerJobs() {
                       <code title={job.key ?? undefined}>{subject(job.key)}</code>
                     </td>
                     <td>{job.attempts}</td>
-                    <td style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>{job.error}</td>
+                    <td className="wrap">{job.error}</td>
                     <td>{job.finished_at ? formatDate(job.finished_at) : ""}</td>
                     <td className="actions">
                       <button type="button" disabled={busy} onClick={() => act(() => api.retryJob(job.id))}>

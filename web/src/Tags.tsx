@@ -3,7 +3,7 @@ import { api, type FileNode, type Tag, type TagRef } from "./api";
 import { Dialog } from "./Dialog";
 import { navigate } from "./router";
 import { searchHref } from "./searchQuery";
-import { TAG_COLORS, tagStyle } from "./tagColors";
+import { TAG_COLORS, tagChip } from "./tagColors";
 import "./files.css";
 
 /** De tags van een map of bestand; een klik toont alles met die tag. */
@@ -16,8 +16,7 @@ export function TagChips({ tags }: { tags: TagRef[] | undefined }) {
         return (
           <a
             key={tag.id}
-            className="tag"
-            style={tagStyle(tag.color)}
+            {...tagChip(tag.color)}
             href={href}
             title={`Alles met de tag "${tag.name}"`}
             onClick={(e) => {
@@ -130,7 +129,7 @@ export function TagEditor({ node, onClose, onSaved }: { node: FileNode; onClose:
                   checked={chosen.has(tag.id)}
                   onChange={(e) => toggle(tag.id, e.target.checked)}
                 />
-                <span className="tag" style={tagStyle(tag.color)}>
+                <span {...tagChip(tag.color)}>
                   {tag.name}
                 </span>
               </label>
