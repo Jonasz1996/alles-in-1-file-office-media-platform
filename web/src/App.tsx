@@ -131,13 +131,16 @@ class PageBoundary extends Component<{ path: string; children: ReactNode }, { er
  * dezelfde Suspense als de pagina, dus loopt pas als die er staat. */
 function AfterNavigation({ route, path }: { route: Resolved; path: string }): null {
   const shown = useRef<string | null>(null);
-  const title = t(route.def.title);
+  const titleKey = route.def.title;
   useRestoreScroll(true);
   // Alleen bij een ander pad (niet bij ?bestand= of een filter)
   useEffect(() => {
     if (shown.current === path) return; // StrictMode draait het effect twee keer
     const first = shown.current === null;
     shown.current = path;
+    // Pas hier vertalen: tijdens het renderen kan het gebied van de pagina nog laden (deze
+    // component rendert naast de pagina die nog suspendt), het effect loopt pas als die er staat
+    const title = t(titleKey);
     document.title = t("shell.pageTitle", { title });
     if (first) {
       // De eerste pagina: geen focus verplaatsen of aankondigen (de browser doet dat al)
@@ -149,7 +152,7 @@ function AfterNavigation({ route, path }: { route: Resolved; path: string }): nu
       focusPage();
     }
     announce(t("shell.navigated", { title }));
-  }, [path, title]);
+  }, [path, titleKey]);
   return null;
 }
 
