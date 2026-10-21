@@ -239,8 +239,20 @@ export function affectsFolder(
   if (event.type === "tags.changed") return true; // de tags in de lijst zijn hernoemd of weg
   if (shared && isShareEvent(event)) return true;
   if (!event.type.startsWith("node.")) return false;
-  const { id, parent_id, old_parent_id } = event.data;
-  return [id, parent_id, old_parent_id].includes(folderId) || ancestors.includes(String(id));
+  const { parent_id, old_parent_id } = event.data;
+  const ids = eventIds(event);
+  return (
+    [parent_id, old_parent_id].includes(folderId) ||
+    ids.includes(folderId) ||
+    ids.some((id) => ancestors.includes(id))
+  );
+}
+
+/** De nodes van een gebeurtenis: gegroepeerd (data.ids, fase 3) of één (data.id). */
+export function eventIds(event: ServerEvent): string[] {
+  const ids = event.data.ids;
+  if (Array.isArray(ids)) return ids.map(String);
+  return event.data.id === undefined || event.data.id === null ? [] : [String(event.data.id)];
 }
 
 /** Of de lijst "Gedeeld met mij" (met deze mappen en bestanden erin) opnieuw moet. */
@@ -250,7 +262,7 @@ export function affectsSharedWithMe(event: ServerEvent, nodeIds: ReadonlySet<str
   // Hernoemd, verplaatst of in de prullenbak door de eigenaar. Zonder parent_id gaat het over
   // een gedeelde map zelf (de map erboven zie je niet): ook een die terugkomt uit de prullenbak
   // en dus nog niet in de lijst staat.
-  return nodeIds.has(String(event.data.id)) || event.data.parent_id === null;
+  return eventIds(event).some((id) => nodeIds.has(id)) || event.data.parent_id === null;
 }
 
 /** Roept reload aan als match een gebeurtenis herkent; veel vlak na elkaar geven één keer. */

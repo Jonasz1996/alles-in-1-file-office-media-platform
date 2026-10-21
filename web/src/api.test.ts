@@ -148,6 +148,27 @@ describe("fouten en metadata", () => {
     expect(errorFromBody(500, null).message).toBe("Fout 500");
   });
 
+  it("leest params, de nieuwe vorm van een validatiefout en een gewone tekst", () => {
+    const locked = errorFromBody(429, {
+      detail: { message: "Probeer het over 30 seconden", code: "totp_locked", params: { seconds: 30 } },
+    });
+    expect(locked.params).toEqual({ seconds: 30 });
+    const invalid = errorFromBody(422, {
+      detail: {
+        message: "Ongeldige invoer",
+        code: "invalid_input",
+        params: { field: "name" },
+        errors: [{ loc: ["body", "name"], msg: "te lang" }],
+      },
+    });
+    expect(invalid).toMatchObject({ status: 422, message: "Ongeldige invoer", code: "invalid_input" });
+    expect(invalid.params).toEqual({ field: "name" });
+    const plain = errorFromBody(404, { detail: "Niet gevonden" });
+    expect(plain.message).toBe("Niet gevonden");
+    expect(plain.code).toBeUndefined();
+    expect(plain.params).toBeUndefined();
+  });
+
   it("geeft 2FA-code mee bij inloggen zonder uit te loggen bij een 401", async () => {
     let body = "";
     let loggedOut = false;

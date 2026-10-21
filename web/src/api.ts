@@ -1,6 +1,9 @@
 // API-client. Het access-token staat alleen in het geheugen; het refresh-token zit in een
 // httpOnly-cookie, zodat JavaScript het niet kan lezen. Bij een 401 wordt één keer ververst.
 
+import { fmt } from "./i18n/fmt";
+import type { Locale } from "./i18n/types";
+
 export interface User {
   id: string;
   email: string;
@@ -14,6 +17,10 @@ export interface User {
   totp_setup_required: boolean;
   /** Na te veel foute codes: tot wanneer de tweede factor geblokkeerd is (ISO-tijd). */
   totp_locked_until: string | null;
+  /** De taal die bij het account hoort; null = die van het apparaat. Oudere servers sturen hem niet. */
+  locale?: Locale | null;
+  /** Geblokkeerd door een beheerder (alleen in de gebruikerslijst van beheer). */
+  disabled?: boolean;
 }
 
 export interface Tokens {
@@ -27,7 +34,8 @@ export interface FileNode {
   id: string;
   parent_id: string | null;
   name: string;
-  kind: "file" | "dir";
+  /** album: een album (fase 3), staat buiten de boom (parent_id null). */
+  kind: "file" | "dir" | "album";
   mime: string | null;
   size: number;
   etag: string;
@@ -160,20 +168,36 @@ export class ApiError extends Error {
     message: string,
     /** Machineleesbare reden, bijv. "totp_required" bij inloggen met 2FA. */
     public code?: string,
+    /** Gegevens bij de code, bijv. {until, seconds} bij totp_locked of {field} bij invalid_input. */
+    public params?: Record<string, unknown>,
   ) {
     super(message);
   }
 }
 
-/** Leest {"detail": "..."} of {"detail": {"message": "...", "code": "..."}} uit een fout. */
+/**
+ * Leest de fout uit een antwoord: {"detail": {"message", "code", "params"?}} (ook de 422 met
+ * "errors" erbij), het oude {"detail": "..."} en de standaard-422 van FastAPI (een lijst).
+ */
 export function errorFromBody(status: number, body: unknown): ApiError {
   const detail = (body as { detail?: unknown } | null)?.detail;
   if (typeof detail === "string") return new ApiError(status, detail);
-  if (detail && typeof detail === "object" && "message" in detail) {
-    const d = detail as { message: string; code?: string };
-    return new ApiError(status, d.message, d.code);
+  if (Array.isArray(detail)) {
+    return detail[0]?.msg ? new ApiError(status, String(detail[0].msg)) : new ApiError(status, `Fout ${status}`);
   }
-  if (Array.isArray(detail) && detail[0]?.msg) return new ApiError(status, String(detail[0].msg));
+  if (detail && typeof detail === "object" && "message" in detail) {
+    const d = detail as { message: unknown; code?: unknown; params?: unknown };
+    const params =
+      d.params && typeof d.params === "object" && !Array.isArray(d.params)
+        ? (d.params as Record<string, unknown>)
+        : undefined;
+    return new ApiError(
+      status,
+      typeof d.message === "string" && d.message ? d.message : `Fout ${status}`,
+      typeof d.code === "string" ? d.code : undefined,
+      params,
+    );
+  }
   return new ApiError(status, `Fout ${status}`);
 }
 
@@ -283,7 +307,8 @@ export interface PublicNode {
 }
 
 export interface PublicShare {
-  kind: "file" | "dir";
+  /** album: een gedeeld album (fase 3, P5); de pagina toont dan PublicAlbum. */
+  kind: "file" | "dir" | "album";
   name: string;
   permission: "read" | "upload";
   owner_name: string;
@@ -300,9 +325,20 @@ export interface PublicListing {
 
 // --- einde S ---
 
+/** Hoe de laatste /auth/refresh afliep (voor het inlogscherm en de schil). */
+export interface LastRefresh {
+  /** Uit de 401 (code not_logged_in, params.setup_required): moet het eerste account nog
+   * gemaakt worden? null als de server het niet zei (of er geen refresh was). */
+  setupRequired: boolean | null;
+  /** De fout als refresh mislukte, bijv. 403 account_disabled; null als het lukte of nog niet liep. */
+  error?: ApiError | null;
+}
+
 export class Api {
   private token: string | null = null;
   private refreshing: Promise<User | null> | null = null;
+  /** Hoe de laatste refresh afliep. */
+  lastRefresh: LastRefresh = { setupRequired: null, error: null };
   onLoggedOut: () => void = () => {};
   /** De server zegt dat eerst 2FA aan moet (bijv. omdat de beheerder het net verplicht maakte). */
   onSetupRequired: () => void = () => {};
@@ -316,6 +352,24 @@ export class Api {
   /** Het huidige access-token, voor verzoeken die niet via fetch gaan (uploads). */
   get accessToken(): string | null {
     return this.token;
+  }
+
+  /** Een verzoek met het token; geeft het Response (ook voor HEAD, streams en tus). Gooit een
+   * ApiError als het antwoord geen 2xx is. Na een 401 wordt één keer ververst. */
+  rawRequest(path: string, init: RequestInit = {}): Promise<Response> {
+    return this.raw(path, init);
+  }
+
+  /** Een JSON-verzoek: body wordt JSON, het antwoord ook (undefined bij 204). */
+  request<T>(method: string, path: string, body?: unknown, init: RequestInit = {}): Promise<T> {
+    const headers = new Headers(init.headers);
+    if (body !== undefined) headers.set("Content-Type", "application/json");
+    return this.json<T>(path, {
+      ...init,
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
   }
 
   private async raw(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
@@ -352,11 +406,7 @@ export class Api {
   }
 
   private send<T>(method: string, path: string, body?: unknown): Promise<T> {
-    return this.json<T>(path, {
-      method,
-      headers: body === undefined ? {} : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    return this.request<T>(method, path, body);
   }
 
   private accept(tokens: Tokens): User {
@@ -390,12 +440,22 @@ export class Api {
     }
     if (!res.ok) {
       this.token = null;
+      let body: unknown = null;
+      try {
+        body = await res.json();
+      } catch {
+        /* geen JSON */
+      }
+      const error = errorFromBody(res.status, body);
+      const setup = error.params?.setup_required;
+      this.lastRefresh = { setupRequired: typeof setup === "boolean" ? setup : null, error };
       // Er was een sessie en die is nu voorbij (bijv. uitgelogd in een ander tabblad). Ook
       // melden als dit niet via een gewoon verzoek liep (de upload ververst zelf), want
       // zonder token komt er daarna geen 401 meer die dat nog doet.
       if (wasLoggedIn) this.onLoggedOut();
       return null;
     }
+    this.lastRefresh = { setupRequired: false, error: null };
     return this.accept((await res.json()) as Tokens);
   }
 
@@ -411,6 +471,8 @@ export class Api {
     this.token = null;
   }
   me = () => this.json<User>("/api/v1/auth/me");
+  /** De taal bij het account bewaren; null = die van het apparaat volgen. */
+  setAccountLocale = (l: Locale | null) => this.send<User>("PATCH", "/api/v1/auth/me", { locale: l });
 
   totpSetup = () => this.send<TotpSetup>("POST", "/api/v1/auth/2fa/setup");
   totpEnable = async (code: string, password: string) =>
@@ -540,11 +602,21 @@ export class Api {
   setSecurity = (config: SecurityConfig) => this.send<SecurityConfig>("PUT", "/api/v1/admin/security", config);
 
   /** Maakt een hervatbare upload (tus) aan; geeft de URL om naartoe te sturen. Bij een leeg
-   * bestand is het meteen klaar en komt nodeId terug. */
-  async tusCreate(parent: string, name: string, size: number): Promise<{ url: string; nodeId: string | null }> {
+   * bestand is het meteen klaar en komt nodeId terug. meta: extra Upload-Metadata (bijv. mtime);
+   * filename en parent gaan altijd voor. */
+  async tusCreate(
+    parent: string,
+    name: string,
+    size: number,
+    meta?: Record<string, string>,
+  ): Promise<{ url: string; nodeId: string | null }> {
     const res = await this.raw("/api/v1/tus", {
       method: "POST",
-      headers: { ...TUS, "Upload-Length": String(size), "Upload-Metadata": tusMetadata({ filename: name, parent }) },
+      headers: {
+        ...TUS,
+        "Upload-Length": String(size),
+        "Upload-Metadata": tusMetadata({ ...meta, filename: name, parent }),
+      },
     });
     const url = res.headers.get("Location");
     if (!url) throw new ApiError(res.status, "Geen Location in het antwoord");
@@ -629,17 +701,12 @@ export interface JobsOverview {
 
 export const api = new Api();
 
+/** Compat: fmt.bytes (in de taal van de app). */
 export function formatBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let i = 0;
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024;
-    i++;
-  }
-  return `${value.toFixed(i === 0 ? 0 : 1).replace(".", ",")} ${units[i]}`;
+  return fmt.bytes(bytes);
 }
 
+/** Compat: fmt.dateTime (in de taal van de app). */
 export function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString("nl-NL", { dateStyle: "medium", timeStyle: "short" });
+  return fmt.dateTime(iso);
 }

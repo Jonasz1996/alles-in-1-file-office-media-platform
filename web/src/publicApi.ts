@@ -246,6 +246,12 @@ export class PublicLink implements TusApi {
     return (await (await this.raw(path, init)).json()) as T;
   }
 
+  /** Een JSON-verzoek met de sleutel van de link (voor de viewer en albums via een link). Na
+   * een verlopen sleutel opent hij de link één keer opnieuw. */
+  request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    return this.json<T>(path, init);
+  }
+
   /** Een map binnen de gedeelde map; zonder folder de gedeelde map zelf. */
   children = (folder?: string) =>
     this.json<PublicListing>(`/api/v1/public/children${folder ? `?${new URLSearchParams({ folder })}` : ""}`);
