@@ -309,17 +309,62 @@ async def test_hervatbare_upload_aanmaken_terwijl_hij_op_het_slot_wacht(
             creating = asyncio.create_task(create(client, anna, s["sub"], "x.bin", 4))
             await queued.wait()
             if how == "ingetrokken":
-                r = await client.delete(f"/api/v1/shares/{s['share']}", headers=jonas)
+                revoking = client.delete(f"/api/v1/shares/{s['share']}", headers=jonas)
             elif how == "alleen kijken":
-                r = await client.patch(
+                revoking = client.patch(
                     f"/api/v1/shares/{s['share']}", json={"permission": "read"}, headers=jonas
                 )
             else:
-                await client.delete(f"/api/v1/files/{s['gedeeld']}", headers=jonas)
-                r = await client.delete(f"/api/v1/trash/{s['gedeeld']}", headers=jonas)
-            assert r.status_code in (200, 204)
+
+                async def revoking_():
+                    await client.delete(f"/api/v1/files/{s['gedeeld']}", headers=jonas)
+                    return await client.delete(f"/api/v1/trash/{s['gedeeld']}", headers=jonas)
+
+                revoking = revoking_()
+            revoking = asyncio.create_task(revoking)
+            # Intrekken is vastgelegd en ruimt daarna, ook onder dit slot, de uploads op
+            for _ in range(500):
+                if revoking.done() or len(lock._waiters or ()) >= 2:
+                    break
+                await asyncio.sleep(0.01)
+        r = await revoking
+        assert r.status_code in (200, 204)
         r = await creating
     assert r.status_code == 404
+    assert await open_uploads(settings) == []
+
+
+@pytest.mark.parametrize("how", ["ingetrokken", "alleen kijken"])
+@pytest.mark.anyio
+async def test_intrekken_vlak_na_de_controle_laat_geen_reservering_achter(
+    client, shared, settings, monkeypatch, how
+):
+    """De deling gaat weg nádat het aanmaken zijn controle deed, maar vóór de upload-rij er
+    staat: het opruimen na het intrekken wacht op hetzelfde slot en haalt hem dan alsnog weg,
+    zodat er niets in het quotum van de eigenaar gereserveerd blijft."""
+    s = shared
+    jonas, anna = s["jonas"], s["anna"]
+    entered, release = hold(monkeypatch, uploads, "room_left")
+    with anyio.fail_after(5):
+        creating = asyncio.create_task(create(client, anna, s["sub"], "x.bin", 4))
+        await entered.wait()
+        if how == "ingetrokken":
+            revoking = client.delete(f"/api/v1/shares/{s['share']}", headers=jonas)
+        else:
+            revoking = client.patch(
+                f"/api/v1/shares/{s['share']}", json={"permission": "read"}, headers=jonas
+            )
+        revoking = asyncio.create_task(revoking)
+        jonas_id = (await client.get("/api/v1/auth/me", headers=jonas)).json()["id"]
+        lock = files.user_lock(uuid.UUID(jonas_id))
+        for _ in range(500):  # tot het intrekken vastligt en op het slot wacht
+            if len(lock._waiters or ()) >= 1:
+                break
+            await asyncio.sleep(0.01)
+        assert len(lock._waiters or ()) == 1
+        release.set()
+        assert (await creating).status_code == 201
+        assert (await revoking).status_code in (200, 204)
     assert await open_uploads(settings) == []
 
 

@@ -374,6 +374,34 @@ async def test_foute_wachtwoorden_tegelijk_niet_boven_de_limiet(client, tree):
 
 
 @pytest.mark.anyio
+async def test_veel_mensen_tegelijk_met_het_goede_wachtwoord(client, tree):
+    """Een link met wachtwoord die in een groepsapp rondgaat: velen openen hem tegelijk. Alleen
+    foute wachtwoorden tellen; wie het goede geeft, komt er altijd in, ook tussen foute door."""
+    t = tree
+    link = await new_link(client, t["jonas"], t["fotos"], permission="read", password="appeltaart")
+    others = [
+        AsyncClient(transport=ASGITransport(app=app, client=(f"10.0.1.{i}", 1234)), base_url=BASE)
+        for i in range(24)
+    ]
+
+    async def attempt(c, password):
+        r = await c.post(
+            "/api/v1/public/open", json={"token": token_of(link), "password": password}
+        )
+        return r.status_code
+
+    try:
+        results = await asyncio.gather(
+            *(attempt(c, "fout" if i % 4 == 0 else "appeltaart") for i, c in enumerate(others))
+        )
+    finally:
+        for c in others:
+            await c.aclose()
+    assert results.count(200) == 18
+    assert results.count(401) == 6  # zes fout: onder de limiet van tien
+
+
+@pytest.mark.anyio
 async def test_te_vaak_openen_vanaf_een_adres(client, tree):
     t = tree
     link = await new_link(client, t["jonas"], t["fotos"], permission="read")

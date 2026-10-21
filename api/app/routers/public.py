@@ -12,6 +12,7 @@ laat alleen uploaden (tus, zoals /api/v1/tus) in die ene map, en toont niets van
 staat: er komen ook geen ids van bestanden in de antwoorden.
 """
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -70,6 +71,9 @@ password_limiter = RateLimiter(
         "code": "rate_limited",
     },
 )
+# Per link één wachtwoordcontrole tegelijk: zo telt de limiet alleen echte fouten, ook als
+# veel mensen de link tegelijk openen (een poging die nog loopt, telt dan niet als fout)
+_password_locks: dict[uuid.UUID, asyncio.Lock] = {}
 
 
 class OpenLink(BaseModel):
@@ -216,13 +220,13 @@ async def open_link(
         password_limiter.refuse(str(share.id))
         if not body.password:
             raise HTTPException(401, PASSWORD_REQUIRED)
-        # De poging telt als fout vóórdat hij gecontroleerd wordt (argon2 duurt even), tot
-        # blijkt dat hij klopt: zo komen ook gelijktijdige pogingen niet boven de limiet
-        password_limiter.check(str(share.id))
-        if not await check_password(share.password_hash, body.password):
-            log.warning("Fout wachtwoord voor link %s vanaf %s", share.id, ip)
-            raise HTTPException(401, WRONG_PASSWORD)
-        password_limiter.forget(str(share.id))
+        await session.commit()  # niet met een databaseverbinding op het slot wachten
+        async with _password_locks.setdefault(share.id, asyncio.Lock()):
+            password_limiter.refuse(str(share.id))  # intussen kan de limiet bereikt zijn
+            if not await check_password(share.password_hash, body.password):
+                password_limiter.add(str(share.id))
+                log.warning("Fout wachtwoord voor link %s vanaf %s", share.id, ip)
+                raise HTTPException(401, WRONG_PASSWORD)
     owner = await session.get(User, share.owner_id)
     key, expires_in = link_key(settings, share.id, share.password_hash, share.expires_at)
     return Opened(

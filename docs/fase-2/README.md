@@ -66,6 +66,81 @@ SeaweedFS (beslissingen B11, B15 en B16). Installeren op één node: zie
 - **Opslag**: ontdubbelen en opruimen gebeuren nooit tegelijk, zodat definitief verwijderen
   nooit de inhoud weggooit van een bestand dat net met dezelfde inhoud binnenkwam.
 
+## Klaar (deel 3)
+
+- **Account**: je wachtwoord wijzig je op de accountpagina met je huidige wachtwoord en, als
+  2FA aan staat, een code of herstelcode. Foute pogingen tellen mee voor dezelfde blokkade als
+  2FA, zodat ook wie alleen een sessie heeft je wachtwoord niet kan raden. Daarna ben je op al
+  je andere apparaten uitgelogd. Onder "Apparaten en sessies" zie je waar je ingelogd bent
+  (bijv. "Firefox op Windows", met IP-adres en wanneer laatst actief) en log je één apparaat of
+  alle andere uit. Uitloggen werkt meteen, ook voor de live updates, niet pas na een kwartier.
+  Een beheerder kan op `/beheer` met "Wachtwoord instellen" iemand die zijn wachtwoord kwijt is
+  een nieuw geven; die is dan overal uitgelogd. Twee tabbladen die tegelijk openen blijven
+  allebei ingelogd.
+- **Soort bestand uit de inhoud**: het soort komt uit de eerste 8 KB, niet uit de naam (een
+  `.txt` die eigenlijk een PNG is, wordt een afbeelding). Bij tekst helpt de extensie (md, csv,
+  json, …).
+- **Kopiëren** van bestanden en hele mappen (hooguit 10.000 per keer). De inhoud wordt niet
+  nog eens opgeslagen, maar telt wel mee voor je quotum. Bestaat de naam al, dan wordt het
+  "x (1)".
+- **Versies**: een bestand vervangen (ook via een hervatbare upload) bewaart de vorige inhoud.
+  Hooguit 20 per bestand; bekijken, downloaden, terugzetten en verwijderen via Meer… →
+  Versies…. Versies tellen mee voor je quotum; definitief verwijderen ruimt ze op.
+- **Zoeken** op naam, met filters op soort (mappen, afbeeldingen, video, audio, pdf,
+  documenten, archieven) en tag. Hoofdletters en accenten tellen niet, de prullenbak doet niet
+  mee, en elk resultaat toont zijn pad. 20.000 bestanden doorzoeken duurt minder dan een
+  seconde. Zelf gebouwd op de database (geen Typesense, beslissing B17).
+- **Tags** met een naam en kleur, persoonlijk: alleen jij ziet je tags, ook op wat met je
+  gedeeld is. Ze staan als chips in de lijst; een klik zoekt erop.
+- **Previews en thumbnails** voor afbeeldingen (ook HEIC en AVIF), pdf (eerste pagina), video
+  (een beeld, met ffmpeg), audio (hoes, duur, titel, artiest), tekst (eerste 50 regels), zip en
+  tar (de inhoudslijst) en epub (de hoes). Een klik op een bestand opent het in een paneel met
+  een viewer. Ze worden gemaakt in een apart proces met een grens voor geheugen
+  (`PLATFORM_PREVIEW_MEMORY_MB`, standaard 1536) en pixels (`PLATFORM_PREVIEW_MAX_PIXELS`,
+  standaard 100 miljoen), zodat een kapot of kwaadaardig bestand de app niet plat legt. Eén
+  preview per inhoud; bestaande bestanden krijgen hun preview vanzelf na de update.
+- **Achtergrondtaken**: een eigen wachtrij in de database, met `PLATFORM_JOB_WORKERS` workers
+  (standaard 2) en een tijdslimiet per taak (`PLATFORM_JOB_TIMEOUT`, standaard 300 s). Een
+  mislukte taak gaat na 30 s opnieuw, daarna steeds dubbel zo lang, tot 3 pogingen; daarna
+  staat hij onder `/beheer` → Achtergrondtaken, met "Opnieuw" en "Alles opnieuw". Wat bij een
+  herstart bleef hangen, gaat terug in de rij.
+- **Live updates**: verandert er iets (een upload, een preview die klaar is, een nieuwe
+  deling), dan ziet elke open web-app het meteen, ook die van iemand met wie je deelt. Via
+  Server-Sent Events in plaats van WebSockets (beslissing B17); het token gaat in een header,
+  nooit in een adres.
+- **Delen met personen en groepen**: Meer… → Delen…. Zoek iemand op naam of e-mailadres, of
+  kies een groep, en geef "Kan bekijken" of "Kan bewerken". Wie iets gedeeld krijgt, ziet het
+  onder **Gedeeld met mij**, met van wie het is.
+  - Toegang wordt bij elk verzoek opnieuw berekend. Trek je een deling in, laat je hem
+    verlopen, gooi je de map (of een map erboven) in de prullenbak, of haal je iemand uit een
+    groep, dan kan die er meteen niet meer bij; ook een downloadlink die al uit was werkt dan
+    niet meer.
+  - Wie iets gedeeld kreeg, ziet niets van wat erboven ligt: niet in het pad, niet in
+    zoekresultaten, previews of live updates. Wat niet gedeeld is, bestaat voor die persoon
+    niet ("Niet gevonden").
+  - Wat een ander in jouw gedeelde map zet, is van jou en telt mee in jouw quotum. Vervangt
+    iemand een bestand, dan blijft de vorige versie bewaard, met wie hem verving. Wat een ander
+    weggooit, komt in jouw prullenbak. De gedeelde map zelf kan alleen jij hernoemen,
+    verplaatsen of weggooien; verplaatsen kan alleen binnen bestanden van dezelfde eigenaar
+    (kopiëren kan wel).
+  - **Groepen** maak je op `/beheer`; lid worden of eruit gaan werkt meteen.
+  - **Gasten** (rol gast) hebben geen eigen bestanden en zien alleen wat met hen gedeeld is,
+    ook om te bewerken. Zelf delen kunnen ze niet.
+- **Publieke links** (`/s/…`), in hetzelfde venster: om te bekijken (een bestand of een map
+  om door te bladeren en te downloaden) of, bij een map, om bestanden in te uploaden zonder
+  iets van de inhoud te zien. Optioneel met een wachtwoord (minstens 6 tekens), een
+  vervaldatum en een label. Wie de link opent, hoeft niet in te loggen. Uploaden via een link
+  is hervatbaar, net als gewoon uploaden, en gaat op jouw quotum.
+  - Na het openen krijgt de bezoeker een sleutel die hooguit 12 uur geldig is. Verander je het
+    wachtwoord of haal je het weg, dan moet iedereen de link opnieuw openen.
+  - Tegen raden: per adres hooguit 20 keer openen per minuut en 100 uploads per uur; na 10
+    foute wachtwoorden in 10 minuten gaat de link 10 minuten dicht. Wie het goede wachtwoord
+    geeft, telt niet mee, ook niet als veel mensen de link tegelijk openen.
+  - Wachtwoorden, tokens en sleutels komen nooit in het log; foute pogingen wel, met de link en
+    het adres.
+- **Namen** met onzichtbare stuur- of richtingtekens (bijv. om `factuur-exe.pdf` te laten
+  lijken op een pdf) worden geweigerd.
+
 ## Bekend
 
 - **Ontdubbelen verraadt dat inhoud er al is.** Inhoud wordt over alle gebruikers heen maar
@@ -77,8 +152,9 @@ SeaweedFS (beslissingen B11, B15 en B16). Installeren op één node: zie
 
 ## Nog te doen
 
-- Wachtwoord wijzigen en sessies per apparaat bekijken en intrekken
-- Thumbnails en previews, met een eigen job-queue
-- Zoeken op naam, pad en type
-- Delen met gebruikers en publieke links
-- WebSocket-events en versies van bestanden
+- Virusscan van uploads als achtergrondtaak (het stappenplan noemt ClamAV; eerst kijken of
+  dat past bij "zo weinig mogelijk bestaande tools")
+- Loadtest: 50 uploads tegelijk en 200 verzoeken per seconde op een maplijst
+- De OpenAPI-beschrijving gebruiken om de clients voor de apps te maken (TypeScript, Kotlin)
+- De hele testsuite ook tegen PostgreSQL draaien (nu alleen SQLite; de queries zijn wel
+  dialect-neutraal geschreven)

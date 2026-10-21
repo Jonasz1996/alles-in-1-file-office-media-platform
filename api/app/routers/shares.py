@@ -382,7 +382,7 @@ async def change_share(
         await session.rollback()  # net ingetrokken (bijv. in een ander tabblad)
         raise HTTPException(404, "Deling niet gevonden") from None
     if is_link and before == "upload" and share.permission != "upload":
-        await uploads.release_link(session, share.id)
+        await uploads.release_link(session, share.owner_id, share.id)
     if not is_link:
         receivers = await grantees(session, share)
         announce(receivers, "share.changed", share.id, share.node_id)

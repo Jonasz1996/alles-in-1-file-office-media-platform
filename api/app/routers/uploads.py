@@ -563,10 +563,18 @@ async def release(
     """Na het intrekken of beperken van een deling: lopende uploads van deze gebruikers in de
     bestanden van owner_id, waar ze niet meer mogen schrijven, gaan weg. Zo komt de ruimte die
     ze in het quotum van de eigenaar reserveerden meteen vrij. Een PATCH die nog loopt, merkt
-    het aan het eind (404); de bytes ruimt het gewone opruimen op. Commit zelf."""
+    het aan het eind (404); de bytes ruimt het gewone opruimen op. Commit zelf.
+    Onder het slot van de eigenaar, net als het aanmaken van een upload (start): anders kan een
+    upload die net vóór het intrekken zijn controle deed, pas hierna zijn rij neerzetten."""
     users = set(user_ids) - {owner_id}  # eigen uploads van de eigenaar blijven altijd
     if not users:
         return 0
+    await session.commit()  # niet met een databaseverbinding op het slot wachten
+    async with user_lock(owner_id):
+        return await _release(session, owner_id, users)
+
+
+async def _release(session: AsyncSession, owner_id: uuid.UUID, users: set[uuid.UUID]) -> int:
     rows = (
         await session.execute(
             select(Upload.id, Upload.created_by, Upload.parent_id).where(
@@ -593,13 +601,15 @@ async def release(
     return len(lost)
 
 
-async def release_link(session: AsyncSession, share_id: uuid.UUID) -> None:
+async def release_link(session: AsyncSession, owner_id: uuid.UUID, share_id: uuid.UUID) -> None:
     """Een uploadlink is een leeslink geworden: zijn lopende uploads gaan weg (zoals bij het
-    weghalen van de link). Commit zelf."""
-    await session.execute(
-        delete(Upload).where(Upload.share_id == share_id, Upload.node_id.is_(None))
-    )
-    await session.commit()
+    weghalen van de link). Commit zelf; onder het slot van de eigenaar, zie release()."""
+    await session.commit()  # niet met een databaseverbinding op het slot wachten
+    async with user_lock(owner_id):
+        await session.execute(
+            delete(Upload).where(Upload.share_id == share_id, Upload.node_id.is_(None))
+        )
+        await session.commit()
 
 
 async def remove_expired(settings: Settings) -> int:

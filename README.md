@@ -44,7 +44,7 @@ test-CA van Let's Encrypt) heeft Go nodig: `cd api && eval "$(tests/pebble/start
 |------|-----------|--------|
 | 0 | Kaders: beslissingen, monorepo, CI-skelet | klaar op de inventaris na, zie [docs/fase-0](docs/fase-0/beslissingen.md) |
 | 1 | Infrastructuur (3 nodes, failover) | deel 1 klaar om uit te rollen, zie [infra/README.md](infra/README.md) |
-| 2 | Core backend | deel 1 en 2 klaar: standalone app met login, 2FA, bestanden, hervatbare uploads, HTTPS en beheer, zie [docs/fase-2](docs/fase-2/README.md) |
+| 2 | Core backend | deel 1 t/m 3 klaar: standalone app met login, 2FA, sessies, bestanden, hervatbare uploads, versies, zoeken, tags, previews, live updates, delen met personen, groepen en links, HTTPS en beheer, zie [docs/fase-2](docs/fase-2/README.md) |
 | 3 | Web-app | basis staat (inloggen, bestandsbrowser, beheer) |
 | 4 | Office | |
 | 5 | Media en streaming | |

@@ -307,12 +307,6 @@ class RateLimiter:
         """Telt een poging, bijv. alleen de mislukte."""
         self._hits[key].append(time.monotonic())
 
-    def forget(self, key: str) -> None:
-        """Neemt een getelde poging terug (bijv. omdat hij toch klopte)."""
-        hits = self._hits.get(key)
-        if hits:
-            hits.pop()
-
     def reset(self) -> None:
         self._hits.clear()
 

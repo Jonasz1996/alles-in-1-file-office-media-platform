@@ -25,7 +25,7 @@ from app.routers import previews as preview_routes
 try:
     __version__ = version("platform-api")
 except PackageNotFoundError:
-    __version__ = "0.3.0"
+    __version__ = "0.4.0"
 
 log = logging.getLogger("platform")
 
