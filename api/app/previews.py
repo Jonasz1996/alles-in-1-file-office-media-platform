@@ -35,7 +35,7 @@ import anyio.to_thread
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import access, events, jobs
+from app import access, events, jobs, photodate
 from app.config import Settings
 from app.db import get_engine
 from app.models import Blob, Node
@@ -202,7 +202,7 @@ async def make(settings: Settings, payload: dict[str, Any]) -> None:
                 if await session.get(Blob, sha) is None:
                     return  # de inhoud werd tijdens het maken opgeruimd: niets meer te doen
             raise
-        stored = await _store(maker, blobs, sha, result, out)
+        stored = await _store(maker, blobs, sha, result, out, settings.timezone)
     finally:
         # Ook na de tijdslimiet of bij stoppen: dan is de taak al afgebroken, en zonder schild
         # breekt het opruimen zelf meteen mee af
@@ -218,9 +218,11 @@ async def _store(
     sha: str,
     result: dict[str, Any],
     out: Path,
+    tz: str,
 ) -> bool:
     """Zet de preview op zijn plek, onder hetzelfde slot als het opruimen: is de blob intussen
-    weg, dan ook geen preview (anders bleef die voor altijd staan)."""
+    weg, dan ook geen preview (anders bleef die voor altijd staan). De opnamedatum uit de
+    metadata gaat via photodate naar de blob en zijn bestanden (tz: settings.timezone)."""
     sizes = sorted(
         s for s in result.get("sizes", []) if s in SIZES and (out / f"{s}.webp").is_file()
     )
@@ -236,7 +238,9 @@ async def _store(
                 await anyio.Path(target.parent).mkdir(parents=True, exist_ok=True)
                 await anyio.Path(out).rename(target)
             blob.preview = result["state"]
+            capture = photodate.split_capture(meta)
             blob.preview_meta = meta
+            await photodate.on_blob_meta(session, blob, capture, None, tz)
             await session.commit()
     return True
 
@@ -299,6 +303,13 @@ async def enqueue_missing(settings: Settings) -> int:
             )
             await session.commit()
     return added
+
+
+async def enqueue_outdated(settings: Settings) -> int:
+    """Bij het starten: previews opnieuw laten maken voor inhoud met een oudere
+    Blob.render_version. Stub van P0 (zet niets klaar); P4 maakt er een keten van
+    (job-type preview.outdated, key preview:outdated). Geeft het aantal nieuwe taken."""
+    return 0
 
 
 jobs.register(TYPE, make, on_dead=mark_failed)

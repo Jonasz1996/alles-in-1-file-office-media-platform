@@ -36,7 +36,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import ClientDisconnect
 
-from app import access, errors
+from app import access, errors, photodate
 from app.config import Settings, get_settings
 from app.db import Session, get_engine
 from app.models import Node, Share, Upload, User
@@ -221,12 +221,14 @@ async def start(
     created_by: uuid.UUID | None,
     share_id: uuid.UUID | None = None,
     guard: Callable[[AsyncSession], Awaitable] | None = None,
+    client_mtime: datetime | None = None,
 ) -> Upload:
     """Ruimte reserveren in het quotum van de eigenaar (owner) en de upload aanmaken, in één
     keer; anders komen twee gelijktijdige uploads allebei door en blijkt pas als alle bytes
     binnen zijn dat er geen ruimte was. guard: nog een controle onder het slot (mag wie het
     doet er nog in?); op dat slot kan lang gewacht zijn, en intussen kan de deling of link zijn
-    ingetrokken of de map weg zijn. Dan Gone, en is er niets gereserveerd."""
+    ingetrokken of de map weg zijn. Dan Gone, en is er niets gereserveerd. client_mtime:
+    de lastModified bij de client (metadata lastmodified), voor de opnamedatum."""
     await session.commit()  # niet met een databaseverbinding op het slot wachten
     async with user_lock(owner.id):
         if guard is not None:
@@ -243,6 +245,7 @@ async def start(
             conflict=conflict,
             size=size,
             expires_at=datetime.now(UTC) + timedelta(hours=settings.upload_expiry_hours),
+            client_mtime=client_mtime,
         )
         session.add(upload)
         try:
@@ -292,6 +295,7 @@ async def create(
         upload_length,
         created_by=user.id,
         guard=guard,
+        client_mtime=photodate.from_ms(meta.get("lastmodified")),
     )
     headers = _headers(upload, Location=f"/api/v1/tus/{upload.id}")
     if upload_length == 0:
@@ -551,6 +555,7 @@ async def finish(
             upload,
             actor=who.user,
             guard=guard,
+            tz=settings.timezone,
         )
     except NameTaken as e:
         # Er kwam intussen iets met deze naam: opnieuw proberen heeft geen zin

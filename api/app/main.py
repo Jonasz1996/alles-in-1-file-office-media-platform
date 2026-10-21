@@ -4,7 +4,7 @@ import re
 import signal
 import threading
 from contextlib import asynccontextmanager, contextmanager, suppress
-from importlib.metadata import PackageNotFoundError, version
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote
@@ -15,18 +15,32 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel
 
-from app import errors, events, jobs, previews
+from app import __version__, errors, events, jobs, photometa, previews
 from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.migrate import upgrade
-from app.routers import admin, auth, files, groups, public, search, shares, uploads
+from app.routers import (
+    admin,
+    albums,
+    archive,
+    auth,
+    batch,
+    files,
+    folder_tree,
+    groups,
+    jobs_admin,
+    myshares,
+    photos,
+    public,
+    search,
+    shares,
+    trash,
+    uploads,
+    viewer,
+)
 from app.routers import events as live_events
 from app.routers import previews as preview_routes
-
-try:
-    __version__ = version("platform-api")
-except PackageNotFoundError:
-    __version__ = "0.4.0"
+from app.security import RateLimiter
 
 log = logging.getLogger("platform")
 
@@ -184,6 +198,10 @@ def _streams_end_on_signal():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    app.state.started_at = datetime.now(UTC)
+    RateLimiter.enabled = settings.rate_limits
+    if not settings.rate_limits:
+        log.warning("Rate limits staan uit (PLATFORM_RATE_LIMITS=false): alleen voor tests")
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     await upgrade(settings)
     if events.hub.closed:  # een eerdere keer gestopt in hetzelfde proces (tests)
@@ -199,6 +217,14 @@ async def lifespan(app: FastAPI):
         await previews.enqueue_missing(settings)
     except Exception:  # noqa: BLE001 - zonder previews werkt de rest gewoon
         log.exception("Previews klaarzetten voor bestaande bestanden mislukt")
+    try:
+        await previews.enqueue_outdated(settings)
+    except Exception:  # noqa: BLE001 - zie hierboven
+        log.exception("Verouderde previews klaarzetten mislukt")
+    try:
+        await photometa.enqueue_backfill(settings)
+    except Exception:  # noqa: BLE001 - zonder opnamedatums werkt de rest gewoon
+        log.exception("Metadata van bestaande foto's klaarzetten mislukt")
     runner = jobs.Runner(settings)
     await runner.start()
     log.info("Platform %s gestart (%s), data in %s", __version__, settings.mode, settings.data_dir)
@@ -222,6 +248,10 @@ app.add_middleware(Edge)
 app.add_exception_handler(RequestValidationError, errors.invalid_input)
 app.include_router(auth.router)
 app.include_router(files.router)
+app.include_router(trash.router)
+app.include_router(batch.router)
+app.include_router(archive.router)
+app.include_router(folder_tree.router)
 app.include_router(uploads.router)
 app.include_router(search.router)
 app.include_router(shares.router)
@@ -229,6 +259,11 @@ app.include_router(groups.router)
 app.include_router(public.router)
 app.include_router(admin.router)
 app.include_router(preview_routes.router)
+app.include_router(viewer.router)
+app.include_router(photos.router)
+app.include_router(albums.router)
+app.include_router(jobs_admin.router)
+app.include_router(myshares.router)
 app.include_router(live_events.router)
 
 

@@ -2,7 +2,7 @@ import asyncio
 import re
 import uuid
 from collections import Counter, defaultdict
-from collections.abc import Awaitable, Callable, Collection, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -20,14 +20,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app import access, errors, events, previews
+from app import access, errors, events, photodate, previews
 from app.access import Grant, Step
 from app.config import Settings, get_settings
 from app.db import Session
 from app.mime import read_head, sniff
 from app.models import Blob, GroupMember, Node, NodeTag, Share, Tag, Upload, User, Version
 from app.routers.auth import used_bytes
-from app.security import CurrentUser, download_token, read_download_token
+from app.security import CurrentUser, active_user, download_token, read_download_token
 from app.storage import BlobStore, TooLarge
 from app.text import CONTROL, fold
 
@@ -535,6 +535,61 @@ async def notify(
                 events.publish([user_id], type, {"id": str(root_id), "parent_id": None})
 
 
+async def notify_many(
+    session: AsyncSession,
+    nodes: Sequence[Node],
+    type: str,
+    *,
+    old_parents: Mapping[uuid.UUID, uuid.UUID | None] | None = None,
+    seen: dict[uuid.UUID, dict[uuid.UUID, int]] | None = None,
+    below: Mapping[uuid.UUID, dict[uuid.UUID, set[uuid.UUID]]] | None = None,
+) -> None:
+    """notify() voor veel nodes tegelijk (bulkacties), na de commit. Dezelfde ontvangers en
+    dezelfde zichtbaarheid van parent_id als notify(), maar één event per (ontvanger, ouder,
+    oude ouder) met {"ids": [≤500], "parent_id", "old_parent_id"?}; zit er maar één node in
+    zo'n groep, dan het oude formaat {"id", "parent_id", ...}. old_parents: per node de ouder
+    van voor het verplaatsen. seen: van access.watchers over de nodes en de oude ouders,
+    vooraf uitgerekend als de nodes na de commit weg zijn. below: per node het resultaat van
+    shared_below (bij weggooien, terugzetten en definitief verwijderen van mappen)."""
+    if not nodes:
+        return
+    old_parents = old_parents or {}
+    moved = {
+        n.id: old
+        for n in nodes
+        if (old := old_parents.get(n.id)) is not None and old != n.parent_id
+    }
+    if seen is None:
+        seen = await access.watchers(session, [*(n.id for n in nodes), *moved.values()])
+    groups: dict[tuple[uuid.UUID, uuid.UUID | None, uuid.UUID | None], list[uuid.UUID]]
+    groups = defaultdict(list)
+    told: dict[uuid.UUID, set[uuid.UUID]] = {}
+    for node in nodes:
+        old_parent_id = moved.get(node.id)
+        here = seen.get(node.id, {})
+        there = seen.get(old_parent_id, {}) if old_parent_id is not None else {}
+        groups[node.owner_id, node.parent_id, old_parent_id].append(node.id)
+        for user_id in (here.keys() | there.keys()) - {node.owner_id}:
+            # depth >= 1: gedeeld vanaf een map boven de node, dus die map ziet hij
+            parent_id = node.parent_id if here.get(user_id, 0) >= 1 else None
+            old_id = old_parent_id if user_id in there else None
+            groups[user_id, parent_id, old_id].append(node.id)
+        told[node.id] = here.keys() | there.keys() | {node.owner_id}
+    for node_id, users in (below or {}).items():
+        for user_id, roots in users.items():
+            if user_id not in told.get(node_id, set()):
+                groups[user_id, None, None].extend(roots)
+    for (user_id, parent_id, old_parent_id), ids in groups.items():
+        for chunk in batched(dict.fromkeys(ids), 500):
+            data: dict = (
+                {"id": str(chunk[0])} if len(chunk) == 1 else {"ids": [str(i) for i in chunk]}
+            )
+            data["parent_id"] = str(parent_id) if parent_id else None
+            if old_parent_id is not None:
+                data["old_parent_id"] = str(old_parent_id)
+            events.publish([user_id], type, data)
+
+
 @router.get("/files/root")
 async def root(user: CurrentUser, session: Session) -> Listing:
     return await listing(user.root_id, user, session)
@@ -735,6 +790,8 @@ async def place_file(
     actor: User | None = None,
     guard: Callable[[AsyncSession], Awaitable] | None = None,
     only: uuid.UUID | None = None,
+    client_mtime: datetime | None = None,
+    tz: str | None = None,
 ) -> Node:
     """Zet de inhoud in bestand `source` (SHA-256 `sha`) als bestand `name` in map `parent`.
     conflict: rename = nieuwe naam als het al bestaat, replace = vervangen (de oude inhoud
@@ -744,6 +801,9 @@ async def place_file(
     een controle onder de sloten, vlak voor het neerzetten (mag actor er nog in?). only: alleen
     dit bestand vervangen (met replace); heet het intussen anders of staat het ergens anders,
     dan 409 en verandert er niets.
+    Een afbeelding of video krijgt een opnamedatum (photodate.stamp): die uit de inhoud als
+    die al bekend is, anders client_mtime (de lastModified bij de client), anders nu; tz is
+    settings.timezone (standaard die van get_settings()).
     Gelukt: `source` is weg (verplaatst naar de blob-opslag, of weggegooid omdat die inhoud
     er al was). Mislukt: `source` staat er nog en de database is niet veranderd. Komt het van
     een hervatbare upload, dan wordt die in dezelfde transactie afgerond (het quotum is dan al
@@ -753,6 +813,7 @@ async def place_file(
     vast, anders kan wie het slot heeft er geen meer krijgen."""
     # Het soort volgt uit de inhoud; de naam helpt alleen waar de inhoud niets zegt
     mime = sniff(await anyio.to_thread.run_sync(read_head, source), name)
+    tz = tz or get_settings().timezone
     moved, created = False, False
     await session.commit()
     async with user_lock(owner.id) if upload is None else nullcontext(), blobs.lock:
@@ -800,6 +861,8 @@ async def place_file(
                 )
                 session.add(node)
                 created = True
+            blob_taken_at = await session.scalar(select(Blob.taken_at).where(Blob.sha256 == sha))
+            photodate.stamp(node, blob_taken_at=blob_taken_at, fallback=client_mtime or now, tz=tz)
             if upload is not None:
                 upload.node_id = node.id
             await session.flush()
@@ -835,10 +898,12 @@ async def upload(
     settings: Annotated[Settings, Depends(get_settings)],
     name: Annotated[str, Query(min_length=1, max_length=255)],
     conflict: Literal["rename", "replace", "fail"] = "rename",
+    mtime: int | None = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> NodeOut:
     """Uploadt de request-body in één keer als bestand `name` in map `node_id`.
-    Voor grote bestanden is /api/v1/tus (hervatbaar) beter.
+    Voor grote bestanden is /api/v1/tus (hervatbaar) beter. mtime: de lastModified van het
+    bestand bij de client in milliseconden, voor de opnamedatum van een foto of video.
     Dezelfde inhoud wordt maar één keer opgeslagen (SHA-256). Met conflict=replace blijft
     de vorige inhoud bewaard als versie. In een gedeelde map (met schrijfrecht) wordt het
     bestand van de eigenaar van die map, en kost het zijn quotum."""
@@ -852,7 +917,19 @@ async def upload(
     guard = None if found.owner else writable(user.id, parent.id)
     try:
         node = await place_file(
-            session, blobs, owner, parent, name, conflict, sha, size, tmp, actor=user, guard=guard
+            session,
+            blobs,
+            owner,
+            parent,
+            name,
+            conflict,
+            sha,
+            size,
+            tmp,
+            actor=user,
+            guard=guard,
+            client_mtime=photodate.from_ms(mtime),
+            tz=settings.timezone,
         )
     finally:
         await anyio.Path(tmp).unlink(missing_ok=True)  # alleen nog over als het misging
@@ -931,6 +1008,7 @@ async def replace_content(
             actor=user,
             guard=guard,
             only=node.id,
+            tz=settings.timezone,
         )
     finally:
         await anyio.Path(tmp).unlink(missing_ok=True)  # alleen nog over als het misging
@@ -1012,7 +1090,7 @@ async def copy(
             session,
             node.id,
             *(Node.id, Node.parent_id, Node.name, Node.kind, Node.mime, Node.size),
-            *(Node.blob_id, Node.modified_at),
+            *(Node.blob_id, Node.modified_at, Node.taken_at, Node.taken_day),
             live=True,
             limit=MAX_COPY + 1,
         )
@@ -1047,6 +1125,8 @@ async def copy(
                 "blob_id": n.blob_id,
                 "created_at": now,
                 "modified_at": n.modified_at,
+                "taken_at": n.taken_at,
+                "taken_day": n.taken_day,
             }
 
         # Rechtstreeks in stukken, ouders voor kinderen, en tussendoor de anderen even aan
@@ -1074,62 +1154,6 @@ async def trash(node_id: uuid.UUID, user: CurrentUser, session: Session) -> None
     node.deleted_at = datetime.now(UTC)
     await session.commit()
     await notify(session, node, "node.deleted", below=await shared_below(session, node))
-
-
-@router.get("/trash")
-async def list_trash(user: CurrentUser, session: Session) -> list[NodeOut]:
-    rows = (
-        await session.scalars(
-            select(Node)
-            .where(Node.owner_id == user.id, Node.deleted_at.is_not(None))
-            .order_by(Node.deleted_at.desc())
-        )
-    ).all()
-    scope = select(Node.id).where(Node.owner_id == user.id, Node.deleted_at.is_not(None))
-    return await describe(session, user, rows, "owner", scope=scope)
-
-
-@router.post("/files/{node_id}/restore")
-async def restore(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs: Store) -> NodeOut:
-    await session.commit()  # niet met een databaseverbinding op het slot wachten
-    async with blobs.lock:  # niet tegelijk met definitief verwijderen, zie change()
-        node = await get_node(session, user, node_id, "owner")
-        if node.deleted_at is None:
-            raise errors.fail(422, "not_trashed", "Staat niet in de prullenbak")
-        parent = await session.get(Node, node.parent_id)
-        if parent is None or await is_trashed(session, parent):
-            node.parent_id = user.root_id
-        node.name = await free_name(session, node.parent_id, node.name)
-        node.deleted_at = None
-        await session.commit()
-    await notify(session, node, "node.changed", below=await shared_below(session, node))
-    return await one_out(session, user, node)
-
-
-@router.delete("/trash/{node_id}", status_code=204)
-async def purge(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs: Store) -> None:
-    """Definitief verwijderen, inclusief alles eronder en alle versies (en de delingen en
-    links erop)."""
-    await session.commit()  # niet met een databaseverbinding op het slot wachten
-    async with blobs.lock:
-        # Pas onder het slot lezen: intussen kan het al weg of teruggezet zijn
-        node = await get_node(session, user, node_id, "owner")
-        if node.deleted_at is None:
-            raise errors.fail(422, "not_trashed", "Verplaats het eerst naar de prullenbak")
-        rows = await descendants(session, node)
-        ids = [n.id for n in rows]
-        # Wie het via een deling zag, nu het nog kan: daarna zijn node en delingen weg
-        seen = await access.watchers(session, [node.id])
-        below = await shared_below(session, node)
-        refs = Counter(n.blob_id for n in rows if n.blob_id) + await drop_versions(session, ids)
-        await add_refs(session, refs, sign=-1)
-        for chunk in batched(reversed(ids), 500):  # kinderen voor hun ouders
-            await session.execute(
-                delete(Node).where(Node.id.in_(chunk)).execution_options(synchronize_session=False)
-            )
-        await session.commit()
-    await notify(session, node, "node.deleted", seen=seen, below=below)
-    await collect_garbage(session, blobs)
 
 
 async def drop_versions(session: AsyncSession, node_ids: list[uuid.UUID]) -> Counter[str]:
@@ -1234,8 +1258,10 @@ async def restore_version(
     user: CurrentUser,
     session: Session,
     blobs: Store,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> NodeOut:
-    """Zet een eerdere inhoud terug; wat er nu in staat, wordt zelf een versie."""
+    """Zet een eerdere inhoud terug; wat er nu in staat, wordt zelf een versie. De
+    opnamedatum volgt de teruggezette inhoud (anders het moment van die versie)."""
     await session.commit()  # niet met een databaseverbinding op het slot wachten
     async with blobs.lock:
         node = await get_file(session, user, node_id, "write")
@@ -1260,6 +1286,10 @@ async def restore_version(
             node.blob_id, node.size = version.blob_id, version.size
             node.mime = sniff(head, node.name)
             node.modified_at = now
+            taken = await session.scalar(select(Blob.taken_at).where(Blob.sha256 == node.blob_id))
+            photodate.stamp(
+                node, blob_taken_at=taken, fallback=version.created_at, tz=settings.timezone
+            )
             await session.delete(version)
         await session.commit()
     if changed:
@@ -1360,9 +1390,8 @@ async def download(
     user_id, token_node, version_id = read_download_token(settings, token)
     if token_node != node_id:
         raise errors.fail(403, "wrong_token", "Token hoort bij een ander bestand")
-    user = await session.get(User, user_id)
-    if user is None:
-        raise errors.fail(404, "not_found", "Niet gevonden")
+    # Weg of geblokkeerd: 404, ook met een link die al uit was
+    user = await active_user(session, user_id)
     # Opnieuw: een deling die intussen is ingetrokken, stopt ook een link die al uit was
     node = await get_node(session, user, node_id, "read")
     version = await get_version(session, node, version_id) if version_id else None

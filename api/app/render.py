@@ -28,6 +28,8 @@ from pathlib import Path
 from urllib.parse import unquote
 from xml.etree import ElementTree
 
+from app import render_meta  # ook alleen de standaardbibliotheek
+
 SIZES = (1024, 256)  # groot eerst: de thumbnail wordt uit de grote gemaakt
 THUMB = 256
 HEAD = 8192
@@ -253,7 +255,7 @@ def render(request: dict) -> dict:
         return dict(NONE)
     try:
         if kind == "image":
-            return image(source, out, request["max_pixels"])
+            return image(source, out, request["max_pixels"], exif=True)
         if kind == "pdf":
             return pdf(source, out, request["max_pixels"])
         if kind == "video":
@@ -290,11 +292,18 @@ def _pillow(max_pixels: int):
     return Image
 
 
-def image(source: Path, out: Path, max_pixels: int, meta: dict | None = None) -> dict:
+def image(
+    source: Path, out: Path, max_pixels: int, meta: dict | None = None, *, exif: bool = False
+) -> dict:
+    """exif: ook de opnamedatum en camerametadata lezen (render_meta), alleen voor een foto
+    zelf, niet voor de hoes van een album of e-book of een frame van een video."""
     Image = _pillow(max_pixels)
     from PIL import ImageOps
 
+    meta = dict(meta or {})
     with Image.open(source, formats=IMAGE_FORMATS) as img:
+        if exif:
+            meta.update(render_meta.image_meta(img))
         width, height = img.size
         if img.getexif().get(0x0112, 1) in (5, 6, 7, 8):  # gedraaid: breedte en hoogte om
             width, height = height, width
@@ -302,7 +311,7 @@ def image(source: Path, out: Path, max_pixels: int, meta: dict | None = None) ->
         sizes = thumbnails(ImageOps.exif_transpose(img), out)
     return {
         "state": "ready",
-        "meta": {**(meta or {}), "width": width, "height": height},
+        "meta": {**meta, "width": width, "height": height},
         "sizes": sizes,
     }
 
@@ -388,6 +397,7 @@ def video(source: Path, head: bytes, out: Path, work: Path, max_pixels: int) -> 
         duration = 0.0
     if duration > 0:
         meta["duration"] = round(duration, 3)
+    meta.update(render_meta.video_meta(info))
     stream = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), None)
     if stream is None or not stream.get("width") or not stream.get("height"):
         return {"state": "ready" if meta else "none", "meta": meta, "sizes": []}
@@ -611,7 +621,10 @@ def main() -> None:
         if hard != resource.RLIM_INFINITY:
             limit = min(limit, hard)
         resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
-    result = render(request)
+    if request.get("mode") == "meta":
+        result = render_meta.run_meta(request)  # alleen metadata van veel bestanden (P5)
+    else:
+        result = render(request)
     sys.stdout.write(json.dumps(result))
     sys.stdout.flush()
 

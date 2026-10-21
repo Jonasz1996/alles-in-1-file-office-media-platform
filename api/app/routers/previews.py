@@ -1,7 +1,6 @@
-"""Previews opvragen en tonen, en de achtergrondtaken op /beheer."""
+"""Previews opvragen en tonen. De achtergrondtaken op /beheer staan in routers/jobs_admin.py."""
 
 import uuid
-from datetime import datetime
 from typing import Annotated, Any
 
 import anyio
@@ -10,11 +9,11 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app import access, errors, jobs, previews
+from app import access, errors, previews
 from app.config import Settings, get_settings
 from app.db import Session
-from app.models import Blob, Job, Node
-from app.security import AdminUser, CurrentUser
+from app.models import Blob, Node
+from app.security import CurrentUser
 from app.storage import BlobStore
 
 router = APIRouter(prefix="/api/v1", tags=["previews"])
@@ -87,50 +86,3 @@ async def preview_image(
     if not await anyio.Path(path).is_file():
         raise errors.fail(404, "no_preview", "Geen preview")
     return FileResponse(path, media_type="image/webp", headers={"Cache-Control": CACHE})
-
-
-class FailedJob(BaseModel):
-    id: uuid.UUID
-    type: str
-    key: str | None
-    attempts: int
-    error: str | None
-    finished_at: datetime | None
-
-    model_config = {"from_attributes": True}
-
-
-class JobsOverview(BaseModel):
-    counts: dict[str, int]
-    failed: list[FailedJob]
-
-
-class Retried(BaseModel):
-    count: int
-
-
-@router.get("/admin/jobs", tags=["beheer"])
-async def admin_jobs(_: AdminUser, session: Session) -> JobsOverview:
-    """Hoeveel taken er klaarstaan, lopen, klaar en mislukt zijn, en de laatste 100 mislukte."""
-    counts = await jobs.counts(session)
-    failed = [FailedJob.model_validate(j) for j in await jobs.failed(session, 100)]
-    return JobsOverview(counts=counts, failed=failed)
-
-
-@router.post("/admin/jobs/retry-failed", tags=["beheer"])
-async def retry_failed(_: AdminUser, session: Session) -> Retried:
-    """Alle mislukte taken opnieuw, elk weer met alle pogingen."""
-    count = await jobs.retry_failed(session)
-    await session.commit()
-    return Retried(count=count)
-
-
-@router.post("/admin/jobs/{job_id}/retry", tags=["beheer"], status_code=204)
-async def retry_job(job_id: uuid.UUID, _: AdminUser, session: Session) -> None:
-    if not await jobs.retry(session, job_id):
-        exists = await session.get(Job, job_id)
-        await session.commit()
-        if exists is None:
-            raise errors.fail(404, "job_not_found", "Taak niet gevonden")
-        raise errors.fail(409, "not_failed", "Deze taak is niet mislukt")
-    await session.commit()

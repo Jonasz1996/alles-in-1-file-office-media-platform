@@ -2,7 +2,7 @@ import logging
 import math
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
@@ -14,6 +14,7 @@ from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Node, RecoveryCode, RefreshToken, User, Version
 from app.security import (
+    ACCOUNT_DISABLED,
     AdminUser,
     CurrentUser,
     LoggedInUser,
@@ -70,6 +71,15 @@ class UserOut(BaseModel):
     totp_setup_required: bool = False
     # Na te veel foute codes: tot wanneer de tweede factor geblokkeerd is
     totp_locked_until: datetime | None = None
+    # Taal van de web-app voor dit account ("nl" of "en"); null = wat het apparaat kiest
+    locale: str | None = None
+    # Geblokkeerd door een beheerder
+    disabled: bool = False
+
+
+class MeChange(BaseModel):
+    # null: geen voorkeur meer (dan kiest het apparaat); weglaten laat hem staan
+    locale: Literal["nl", "en"] | None = None
 
 
 class Tokens(BaseModel):
@@ -156,6 +166,8 @@ async def user_out(session: Session, user: User, policy: SecurityConfig) -> User
         totp_enabled=user.totp_secret is not None,
         totp_setup_required=policy.require_2fa and user.totp_secret is None,
         totp_locked_until=locked_until(user),
+        locale=user.locale,
+        disabled=user.disabled_at is not None,
     )
 
 
@@ -488,6 +500,10 @@ async def login(
             raise errors.fail(401, "totp_required", "Vul de code uit je authenticator-app in")
         if not await second_factor(session, user, request, body.code):
             raise errors.fail(401, "totp_invalid", "De code klopt niet")
+    # Geblokkeerd: pas na het wachtwoord en de tweede factor, zodat je zonder die twee niet
+    # kunt aftasten of een account geblokkeerd is
+    if user.disabled_at is not None:
+        raise errors.fail(403, "account_disabled", ACCOUNT_DISABLED)
     # Zonder naam van de app: een label als "Firefox op Windows" voor het sessie-overzicht
     device = body.device.strip() or device_label(request.headers.get("user-agent"))
     return await issue_tokens(session, settings, request, response, user, device, verified=verified)
@@ -551,6 +567,11 @@ async def refresh(
     user = await session.get(User, row.user_id)
     if user is None:
         raise await not_logged_in(session, "Gebruiker bestaat niet meer")
+    if user.disabled_at is not None:
+        # Geblokkeerd: deze login is voorbij (ook voor een ander tabblad met hetzelfde cookie)
+        await revoke_family(session, row.family, now)
+        await session.commit()
+        raise errors.fail(403, "account_disabled", ACCOUNT_DISABLED)
     return await issue_tokens(session, settings, request, response, user, row.device, row.family)
 
 
@@ -589,6 +610,17 @@ async def logout(
 
 @router.get("/auth/me")
 async def me(user: LoggedInUser, session: Session, policy: Policy) -> UserOut:
+    return await user_out(session, user, policy)
+
+
+@router.patch("/auth/me", tags=["account"])
+async def change_me(
+    body: MeChange, user: LoggedInUser, session: Session, policy: Policy
+) -> UserOut:
+    """De taal van de web-app voor dit account ("nl", "en", of null voor geen voorkeur)."""
+    if "locale" in body.model_fields_set:
+        user.locale = body.locale
+        await session.commit()
     return await user_out(session, user, policy)
 
 

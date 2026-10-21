@@ -57,6 +57,18 @@ class Settings(BaseSettings):
     # grens); afbeeldingen met meer pixels krijgen geen preview (bescherming tegen "bommen")
     preview_memory_mb: int = 1536
     preview_max_pixels: int = 100_000_000
+    # PDF-pagina's voor de viewer: zoveel renderprocessen tegelijk, en hooguit zoveel MB aan
+    # gerenderde pagina's op schijf (de oudste gaan eerst)
+    page_render_workers: int = 2
+    page_cache_mb: int = 2048
+
+    # Tijdzone van de server, voor tijden die echt UTC zijn (zoals de opnametijd van een
+    # video) en voor de terugvaldatum van een foto zonder EXIF
+    timezone: str = "Europe/Amsterdam"
+
+    # Limieten op inloggen, links openen en dergelijke. Alleen uitzetten voor een testserver
+    # (PLATFORM_RATE_LIMITS=false); bij het starten staat dan een waarschuwing in het log.
+    rate_limits: bool = True
 
     # Cluster (later): "node1=192.168.50.11,node2=..."
     cluster_nodes: str = ""

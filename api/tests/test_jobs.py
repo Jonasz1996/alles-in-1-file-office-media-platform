@@ -37,9 +37,9 @@ async def get(maker, job_id) -> Job:
 
 async def put(maker, type, payload=None, key=None):
     async with maker() as session:
-        job = await jobs.enqueue(session, type, payload or {}, key=key)
+        job_id = await jobs.enqueue(session, type, payload or {}, key=key)
         await session.commit()
-        return job
+        return None if job_id is None else await session.get(Job, job_id)
 
 
 def aware(value):

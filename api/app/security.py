@@ -6,7 +6,7 @@ import time
 import uuid
 from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 import anyio
 import anyio.to_thread
@@ -243,6 +243,21 @@ async def logged_in_user(session: Session, claims: Annotated[dict, Depends(acces
     family = claims.get("fam")
     if family and await family_revoked(session, uuid.UUID(family)):
         raise errors.fail(401, "logged_out", "Je bent op dit apparaat uitgelogd; log opnieuw in")
+    # Geblokkeerd: ook een access-token dat al uit was, werkt meteen niet meer
+    if user.disabled_at is not None:
+        raise errors.fail(401, "account_disabled", ACCOUNT_DISABLED)
+    return user
+
+
+ACCOUNT_DISABLED = "Je account is geblokkeerd; vraag je beheerder"
+
+
+async def active_user(session: AsyncSession, user_id: uuid.UUID) -> User:
+    """De gebruiker van een download- of paginatoken (dat geen login heeft om in te trekken):
+    404 not_found als hij weg of geblokkeerd is, net als voor iets dat niet bestaat."""
+    user = await session.get(User, user_id)
+    if user is None or user.disabled_at is not None:
+        raise errors.fail(404, "not_found", "Niet gevonden")
     return user
 
 
@@ -272,7 +287,13 @@ TokenFamily = Annotated[uuid.UUID | None, Depends(token_family)]
 
 class RateLimiter:
     """Eenvoudige limiet per sleutel (bijv. IP) binnen een tijdvenster, in het geheugen. 429
-    met Retry-After: over zoveel seconden mag het weer."""
+    met Retry-After: over zoveel seconden mag het weer.
+
+    enabled geldt voor alle limieten samen: de lifespan van de app zet hem uit
+    settings.rate_limits (PLATFORM_RATE_LIMITS=false, alleen voor een testserver). Uit: check
+    en refuse doen niets."""
+
+    enabled: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -288,11 +309,15 @@ class RateLimiter:
 
     def check(self, key: str) -> None:
         """Telt deze poging, of 429 als de limiet al bereikt is."""
+        if not RateLimiter.enabled:
+            return
         self.refuse(key)
         self._hits[key].append(time.monotonic())
 
     def refuse(self, key: str) -> None:
         """429 als de limiet bereikt is, zonder deze poging te tellen (zie add)."""
+        if not RateLimiter.enabled:
+            return
         now = time.monotonic()
         if len(self._hits) > 10_000:
             self.prune()

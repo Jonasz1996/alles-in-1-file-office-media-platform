@@ -92,14 +92,47 @@ def _maker(settings: Settings) -> async_sessionmaker[AsyncSession]:
 
 
 async def enqueue(
-    session: AsyncSession, type: str, payload: dict[str, Any], key: str | None = None
-) -> Job | None:
-    """Zet een taak klaar in de transactie van de aanroeper. De workers worden gewekt zodra
-    die transactie commit. Staat er al een taak met deze key klaar of loopt hij nog, dan komt
-    er geen tweede bij (None)."""
+    session: AsyncSession,
+    type: str,
+    payload: dict[str, Any],
+    key: str | None = None,
+    *,
+    run_after: datetime | None = None,
+) -> uuid.UUID | None:
+    """Zet een taak klaar in de transactie van de aanroeper en geeft zijn id. De workers
+    worden gewekt zodra die transactie commit. Staat er al een taak met deze key klaar of loopt
+    hij nog, dan komt er geen tweede bij (None). run_after: niet eerder dan dan (standaard
+    meteen)."""
+    return await _add(session, type, payload, key, run_after, ACTIVE)
+
+
+async def chain(
+    session: AsyncSession,
+    type: str,
+    payload: dict[str, Any],
+    key: str,
+    *,
+    run_after: datetime | None = None,
+) -> uuid.UUID | None:
+    """Voor een taak die loopt en zijn opvolger klaarzet (een keten die in stukken door een
+    grote tabel gaat, met payload {"after": ...}): als enqueue, maar alleen ontdubbeld tegen
+    een taak met deze key die nog klaarstaat. De lopende taak zelf (status running, dezelfde
+    key) houdt de opvolger dus niet tegen; een tweede keten ernaast wel, omdat enqueue met
+    de key ook een lopende taak telt."""
+    return await _add(session, type, payload, key, run_after, ("queued",))
+
+
+async def _add(
+    session: AsyncSession,
+    type: str,
+    payload: dict[str, Any],
+    key: str | None,
+    run_after: datetime | None,
+    blocking: tuple[str, ...],
+) -> uuid.UUID | None:
     if key is not None:
         existing = await session.scalar(
-            select(Job.id).where(Job.key == key, Job.status.in_(ACTIVE)).limit(1)
+            select(Job.id).where(Job.key == key, Job.status.in_(blocking)).limit(1)
         )
         if existing is not None:
             return None
@@ -112,15 +145,19 @@ async def enqueue(
         status="queued",
         attempts=0,
         max_attempts=kind.max_attempts if kind else MAX_ATTEMPTS,
-        run_after=now(),
+        run_after=run_after or now(),
     )
     session.add(job)
     session.info[_KICK] = True
-    return job
+    return job.id
 
 
 async def enqueue_many(
-    session: AsyncSession, type: str, items: list[tuple[dict[str, Any], str]]
+    session: AsyncSession,
+    type: str,
+    items: list[tuple[dict[str, Any], str]],
+    *,
+    run_after: datetime | None = None,
 ) -> int:
     """Als enqueue, voor veel taken (payload, key) tegelijk: één query voor de controle op
     dubbele. Geeft het aantal nieuwe taken."""
@@ -145,7 +182,7 @@ async def enqueue_many(
                 status="queued",
                 attempts=0,
                 max_attempts=kind.max_attempts if kind else MAX_ATTEMPTS,
-                run_after=now(),
+                run_after=run_after or now(),
             )
         )
         added += 1

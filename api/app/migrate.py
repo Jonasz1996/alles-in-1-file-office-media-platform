@@ -23,6 +23,8 @@ async def upgrade(settings: Settings) -> None:
 
     def _run(connection) -> None:
         cfg.attributes["connection"] = connection
+        # Voor migraties die tijden omzetten (0006: de terugvaldatum van foto's)
+        cfg.attributes["timezone"] = settings.timezone
         command.upgrade(cfg, "head")
 
     async with get_engine(settings).begin() as conn:

@@ -1,3 +1,14 @@
+"""De tabellen.
+
+Opnamedatum (fase 3): een "zwevende" lokale tijd. Een foto zegt hoe laat de klok van de
+camera stond, niet in welke tijdzone; die kloktijd bewaren we als UTC-tijd met dezelfde
+cijfers (12:30 op de camera = 12:30 UTC in de kolom) en de web-app toont hem met
+timeZone "UTC". Een tijd die echt UTC is (zoals creation_time van een video) zet de API eerst
+om naar settings.timezone (zie app/photodate.py). Node.taken_day is dezelfde dag als
+JJJJMMDD-getal, om zonder SQL-dialect per dag of maand te groeperen. GPS en locatie slaan we
+in fase 3 nergens op; dat komt in fase 6.
+"""
+
 import uuid
 from datetime import UTC, datetime
 
@@ -7,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -45,6 +57,10 @@ class User(Base):
     totp_locked_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Taal van de web-app voor dit account ("nl" of "en"); None = wat het apparaat kiest
+    locale: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    # Geblokkeerd door een beheerder: kan niets meer, ook niet met een uitgegeven token
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class RecoveryCode(Base):
@@ -103,14 +119,28 @@ class Blob(Base):
     # None = nog niet aan begonnen, pending, ready, none (geen preview mogelijk), failed
     preview: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # Wat de preview opleverde: afmetingen, eerste regels tekst, inhoud van een archief, ...
+    # (en vanaf fase 3 onder "exif" camera, objectief en belichting; nooit GPS)
     preview_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Opnamedatum uit de inhoud zelf (EXIF, metadata van een video), als zwevende lokale tijd
+    taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Met welke versie van app/render_meta.py de metadata gelezen is (0 = nog niet)
+    meta_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Met welke versie van de previews (previews.RENDER_VERSION) die gemaakt zijn
+    render_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class Node(Base):
     """Een map of bestand in de boom. Prullenbak = deleted_at gezet."""
 
     __tablename__ = "node"
-    __table_args__ = (Index("ix_node_parent_name", "parent_id", "name"),)
+    __table_args__ = (
+        Index("ix_node_parent_name", "parent_id", "name"),
+        # De tijdlijn: per eigenaar op opnamedag
+        Index("ix_node_owner_taken", "owner_id", "taken_day", "taken_at", "id"),
+        Index("ix_node_blob", "blob_id"),
+        # Een map in de volgorde van de lijst (in pagina's)
+        Index("ix_node_parent_order", "parent_id", "kind", "search_name", "id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -118,7 +148,9 @@ class Node(Base):
     )
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(255))
-    kind: Mapped[str] = mapped_column(String(8))  # file, dir
+    # file, dir of album. Een album staat buiten de boom (parent_id NULL, geen hoofdmap: die
+    # vind je via User.root_id); wat erin zit, staat in album_item.
+    kind: Mapped[str] = mapped_column(String(8))
     mime: Mapped[str | None] = mapped_column(String(255), nullable=True)
     size: Mapped[int] = mapped_column(BigInteger, default=0)
     blob_id: Mapped[str | None] = mapped_column(ForeignKey("blob.sha256"), nullable=True)
@@ -127,6 +159,10 @@ class Node(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # De naam zonder hoofdletters en accenten, om op te zoeken; volgt name vanzelf
     search_name: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Alleen voor afbeeldingen en video's: de opnamedatum (zwevende lokale tijd, zie boven),
+    # en anders de lastModified van de client of het uploadmoment. taken_day = JJJJMMDD.
+    taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    taken_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     @property
     def etag(self) -> str:
@@ -159,6 +195,8 @@ class Upload(Base):
     share_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("share.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    # lastModified van het bestand bij de client (tus-metadata lastmodified), als die er was
+    client_mtime: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 @event.listens_for(Node.name, "set")
@@ -277,3 +315,36 @@ class Job(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class Album(Base):
+    """Wat een album meer heeft dan zijn Node (kind "album", buiten de boom): de beschrijving en
+    de omslag. Delen gaat zoals bij een map, via een Share op de node."""
+
+    __tablename__ = "album"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    description: Mapped[str] = mapped_column(Text, default="", server_default="")
+    cover_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("node.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class AlbumItem(Base):
+    """Een eigen foto of video in een album; er wordt niets gekopieerd."""
+
+    __tablename__ = "album_item"
+    __table_args__ = (Index("ix_album_item_node", "node_id"),)
+
+    album_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    added_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
