@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    name: API (lint en tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: ffmpeg voor de previews van video's
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest -q
+
+  acme:
+    name: HTTPS (certificaat van Pebble, de test-CA van Let's Encrypt)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - name: Pebble starten en certificaat aanvragen
+        run: |
+          eval "$(tests/pebble/start.sh)"
+          test -n "$PEBBLE_DIRECTORY"
+          # Overgeslagen telt als mislukt: deze job bestaat juist voor deze test
+          uv run pytest -q tests/test_acme_pebble.py -rs | tee "$RUNNER_TEMP/pytest.txt"
+          grep -q "1 passed" "$RUNNER_TEMP/pytest.txt"
+      - name: Logs van Pebble
+        if: failure()
+        run: cat "${TMPDIR:-/tmp}/pebble/pebble.log" || true
+
+  web:
+    name: Web (typecheck, tests en build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  infra:
+    name: Infra (lint, templates en images)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ansible ansible-lint yamllint shellcheck-py
+      - run: shellcheck infra/single/install.sh infra/scripts/*.sh api/tests/pebble/start.sh
+      - run: yamllint -s .
+      - name: Ansible lint
+        working-directory: infra/ansible
+        run: |
+          cp inventory/hosts.example.yml inventory/hosts.yml
+          ansible-playbook --syntax-check site.yml
+          ansible-lint site.yml
+      - name: Templates renderen
+        working-directory: infra/ansible
+        run: ansible-playbook -i inventory/hosts.example.yml tests/render.yml -e render_dir=/tmp/render
+      - name: Compose-bestanden controleren
+        run: |
+          for n in /tmp/render/*/; do docker compose -f "$n/compose.yaml" config -q; done
+          docker compose --project-directory infra/single -f infra/single/compose.yaml \
+            --env-file infra/single/.env.example config -q
+      - name: Images bestaan
+        run: |
+          grep -h 'image:' /tmp/render/*/compose.yaml infra/single/compose.yaml | awk '{print $2}' | grep -v ':local$' | sort -u \
+            | while read -r img; do echo "$img"; docker manifest inspect "$img" > /dev/null; done
+      - name: PostgreSQL-image bouwen en Patroni-configuratie valideren
+        run: |
+          base=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['postgres_base_image'])")
+          patroni=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['patroni_version'])")
+          docker build -q -t platform-postgres:ci --build-arg BASE_IMAGE="$base" --build-arg PATRONI_VERSION="$patroni" /tmp/render/node1/postgres
+          # De validatie controleert ook of etcd bereikbaar is: start er lokaal één
+          # en wijs de gerenderde configuratie daarheen.
+          etcd=$(grep -h 'image: quay.io/coreos/etcd' /tmp/render/node1/compose.yaml | awk '{print $2}')
+          docker run -d --rm --name etcd-ci --network host "$etcd" etcd \
+            --listen-client-urls=http://127.0.0.1:2379 --advertise-client-urls=http://127.0.0.1:2379
+          sleep 3
+          for n in /tmp/render/*/; do
+            cfg="$RUNNER_TEMP/patroni-$(basename "$n").yml"
+            sed 's/^  hosts: .*/  hosts: 127.0.0.1:2379/' "$n/postgres/patroni.yml" > "$cfg"
+            chmod 644 "$cfg"
+            docker run --rm --network host -v "$cfg:/etc/patroni/patroni.yml:ro" \
+              --entrypoint /opt/patroni/bin/patroni platform-postgres:ci \
+              --validate-config --ignore-listen-port /etc/patroni/patroni.yml
+          done
+      - name: keepalived-configuratie controleren
+        run: |
+          sudo apt-get install -y -q keepalived > /dev/null
+          for n in /tmp/render/*/; do sudo keepalived -t -f "$n/keepalived/keepalived.conf"; done
+
+  images:
+    name: Images bouwen
+    runs-on: ubuntu-latest
+    needs: [api, web]
+    strategy:
+      matrix:
+        include:
+          - name: platform
+            context: .
+          - name: api
+            context: api
+          - name: web
+            context: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: false
+          load: ${{ matrix.name == 'platform' }}
+          tags: platform-${{ matrix.name }}:ci
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - name: Platform-image starten en controleren
+        if: matrix.name == 'platform'
+        run: |
+          docker run -d --name platform-ci -p 8080:8080 platform-platform:ci
+          for _ in $(seq 1 30); do curl -fs -o /dev/null localhost:8080/health && break; sleep 1; done
+          curl -fsS localhost:8080/ | grep -q '<div id="root">'
+          curl -fsS localhost:8080/bestanden | grep -q '<div id="root">'
+          curl -fsS localhost:8080/api/v1/auth/status | grep -q '"setup_required":true'
+          curl -fsSI localhost:8080/ | grep -qi '^content-security-policy:'
+          curl -fsS -X POST localhost:8080/api/v1/auth/setup -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.com","display_name":"CI","password":"lang-genoeg-wachtwoord"}' \
+            | grep -q access_token
+      - name: Logs van de platform-container
+        if: always() && matrix.name == 'platform'
+        run: docker logs platform-ci || true

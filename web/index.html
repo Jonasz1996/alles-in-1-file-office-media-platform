@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#ffffff" />
+    <!-- Het adres van een publieke link (/s/<token>) is de toegang zelf: nooit naar een andere site sturen -->
+    <meta name="referrer" content="same-origin" />
+    <!-- Thema en taal vóór de eerste paint (een los bestand: de CSP staat geen inline scripts toe) -->
+    <script src="/boot.js"></script>
+    <title>Platform</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

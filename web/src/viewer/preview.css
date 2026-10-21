@@ -1,0 +1,93 @@
+/* Het voorbeeldpaneel (PreviewPanel) en de inhoud ervan; ook op de publieke pagina. */
+
+.preview-dialog {
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--bg);
+  color: var(--fg);
+  width: min(56rem, 94vw);
+  max-height: 92vh;
+  box-shadow: var(--shadow-2);
+}
+
+.preview-dialog::backdrop {
+  background: var(--backdrop);
+}
+
+.preview-inner {
+  padding: var(--space-4) 1.2rem;
+}
+
+.preview-head {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.preview-head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: var(--text-l);
+  overflow-wrap: anywhere;
+}
+
+.preview-body {
+  margin: var(--space-4) 0;
+}
+
+.preview-details {
+  margin: 0;
+}
+
+.preview-dialog .toolbar {
+  margin-bottom: 0;
+}
+
+/* Een afbeelding of video past in het paneel */
+.preview-fit {
+  display: block;
+  max-width: 100%;
+  max-height: 65vh;
+  margin: 0 auto;
+}
+
+.preview-fit.cover {
+  max-height: 16rem;
+}
+
+.preview-audio {
+  display: grid;
+  gap: 0.8rem;
+  justify-items: center;
+}
+
+.preview-audio p {
+  margin: 0;
+}
+
+.preview-audio audio {
+  width: 100%;
+}
+
+.preview-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 60vh;
+  overflow: auto;
+  margin: 0;
+  padding: 0.8rem;
+  background: var(--surface);
+  border-radius: var(--radius-m);
+  font-family: var(--mono);
+}
+
+.preview-entries {
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.preview-entries td.name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,64 @@
+# Beheerd door Ansible. 1 primary + 2 standbys; synchronous_mode_strict zorgt dat een
+# commit pas klaar is als een standby hem heeft (RPO 0), en dat failover alleen naar
+# die synchrone standby gaat.
+scope: platform
+name: {{ inventory_hostname }}
+
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: {{ ansible_host }}:8008
+
+etcd3:
+  hosts: {{ groups['nodes'] | map('extract', hostvars, 'ansible_host') | map('regex_replace', '$', ':2379') | join(',') }}
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    synchronous_mode: true
+    synchronous_mode_strict: true
+    synchronous_node_count: 1
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        wal_log_hints: "on"
+        max_connections: 200
+        max_wal_senders: 10
+        max_replication_slots: 10
+        shared_buffers: 512MB
+        password_encryption: scram-sha-256
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: {{ ansible_host }}:5432
+  data_dir: /data/pgdata
+  bin_dir: /usr/lib/postgresql/17/bin
+  pgpass: /tmp/pgpass
+  authentication:
+    superuser:
+      username: postgres
+      password: "{{ postgres_superuser_password }}"
+    replication:
+      username: replicator
+      password: "{{ postgres_replication_password }}"
+    rewind:
+      username: rewinder
+      password: "{{ postgres_rewind_password }}"
+  pg_hba:
+    - local all all trust
+    - host replication replicator {{ cluster_cidr }} scram-sha-256
+    - host all all {{ cluster_cidr }} scram-sha-256
+    - host all all 172.16.0.0/12 scram-sha-256
+    - host all all 127.0.0.1/32 scram-sha-256
+
+tags:
+  nofailover: false
+  noloadbalance: false

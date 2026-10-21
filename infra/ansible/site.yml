@@ -1,0 +1,11 @@
+- name: Basis en Docker
+  hosts: nodes
+  roles:
+    - base
+    - docker
+
+- name: Platform
+  hosts: nodes
+  roles:
+    - platform
+    - keepalived

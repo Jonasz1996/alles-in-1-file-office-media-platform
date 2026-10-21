@@ -1,0 +1,112 @@
+import secrets
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Instellingen uit omgevingsvariabelen met prefix PLATFORM_."""
+
+    model_config = SettingsConfigDict(env_prefix="PLATFORM_", env_file=".env", extra="ignore")
+
+    app_name: str = "platform-api"
+    environment: str = "development"
+    node_name: str = "local"
+    log_level: str = "info"
+
+    # standalone = één container met alles erin; cluster = 3 nodes (later)
+    mode: Literal["standalone", "cluster"] = "standalone"
+    # Map voor database (standalone), bestanden en geheimen
+    data_dir: Path = Path("data")
+    # Leeg = SQLite in data_dir; anders bijv. postgresql+asyncpg://user:pw@host/db
+    database_url: str = ""
+    # Gebouwde web-app die de API zelf serveert (leeg of niet aanwezig = alleen API)
+    web_dist: Path = Path("web")
+
+    # Poorten in de container. https start pas zodra er een certificaat is; het domein
+    # stel je in op /beheer.
+    host: str = "0.0.0.0"
+    http_port: int = 8080
+    https_port: int = 8443
+    # Leeg = Let's Encrypt (of de staging-omgeving als testmodus aan staat). Voor tests
+    # met Pebble: eigen directory-URL en het CA-bestand om die te vertrouwen.
+    acme_directory: str = ""
+    acme_ca_file: str = ""
+
+    # Tokens
+    jwt_secret: str = ""
+    access_token_minutes: int = 15
+    refresh_token_days: int = 30
+    download_token_minutes: int = 10
+    # Cookies altijd met Secure sturen; over https gebeurt dat sowieso
+    secure_cookies: bool = False
+
+    # Standaardquotum voor nieuwe gebruikers (0 = onbeperkt)
+    default_quota_bytes: int = 0
+    max_upload_bytes: int = 50 * 1024**3
+    # Onafgemaakte hervatbare uploads worden na zoveel uur zonder activiteit opgeruimd
+    upload_expiry_hours: int = 24
+
+    # Achtergrondtaken (zoals previews): zoveel tegelijk, en zo lang (seconden) mag één taak
+    # duren voordat hij als mislukt telt en later opnieuw gaat
+    job_workers: int = 2
+    job_timeout: float = 300
+    # Een preview wordt in een eigen proces gemaakt, met hooguit zoveel geheugen (MB, 0 = geen
+    # grens); afbeeldingen met meer pixels krijgen geen preview (bescherming tegen "bommen")
+    preview_memory_mb: int = 1536
+    preview_max_pixels: int = 100_000_000
+    # PDF-pagina's voor de viewer: zoveel renderprocessen tegelijk, en hooguit zoveel MB aan
+    # gerenderde pagina's op schijf (de oudste gaan eerst)
+    page_render_workers: int = 2
+    page_cache_mb: int = 2048
+
+    # Tijdzone van de server, voor tijden die echt UTC zijn (zoals de opnametijd van een
+    # video) en voor de terugvaldatum van een foto zonder EXIF
+    timezone: str = "Europe/Amsterdam"
+
+    # Limieten op inloggen, links openen en dergelijke. Alleen uitzetten voor een testserver
+    # (PLATFORM_RATE_LIMITS=false); bij het starten staat dan een waarschuwing in het log.
+    rate_limits: bool = True
+
+    # Cluster (later): "node1=192.168.50.11,node2=..."
+    cluster_nodes: str = ""
+
+    def nodes(self) -> list[tuple[str, str]]:
+        if not self.cluster_nodes:
+            return [(self.node_name, "127.0.0.1")]
+        pairs = (item.split("=", 1) for item in self.cluster_nodes.split(",") if item.strip())
+        return [(name.strip(), ip.strip()) for name, ip in pairs]
+
+    @property
+    def db_url(self) -> str:
+        return self.database_url or f"sqlite+aiosqlite:///{self.data_dir / 'platform.db'}"
+
+    @property
+    def blob_dir(self) -> Path:
+        return self.data_dir / "blobs"
+
+    @property
+    def upload_dir(self) -> Path:
+        return self.data_dir / "uploads"
+
+    @property
+    def tls_dir(self) -> Path:
+        return self.data_dir / "tls"
+
+    def secret(self) -> str:
+        """JWT-geheim: uit de omgeving, of eenmalig gegenereerd en bewaard in data_dir."""
+        if self.jwt_secret:
+            return self.jwt_secret
+        path = self.data_dir / "jwt.secret"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(secrets.token_hex(32))
+            path.chmod(0o600)
+        return path.read_text().strip()
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

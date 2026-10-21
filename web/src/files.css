@@ -1,0 +1,125 @@
+/* Zoeken, kopiëren/verplaatsen en tags (bij Bestanden). De dialoog zelf staat in base.css,
+   de versies in versions.css. */
+
+.picker-list {
+  max-height: 50vh;
+  margin: var(--space-2) 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+}
+
+.picker-list li + li {
+  border-top: 1px solid var(--line);
+}
+
+.picker-list button {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  text-align: left;
+}
+
+.picker-list button:hover {
+  background: var(--hover);
+}
+
+.search-box {
+  display: flex;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.search-box input {
+  width: min(16rem, 55vw);
+}
+
+.search-form {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+  margin: var(--space-4) 0;
+}
+
+.search-form input[type="search"] {
+  flex: 1 1 14rem;
+}
+
+.tags {
+  display: inline-flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  margin-left: var(--space-2);
+  vertical-align: middle;
+}
+
+.tag {
+  display: inline-flex;
+  gap: 0.3em;
+  align-items: center;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--tag, var(--line));
+  border-radius: 999px;
+  color: var(--fg);
+  font-size: 0.8rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.tag::before {
+  content: "";
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  background: var(--tag, var(--muted));
+}
+
+a.tag:hover {
+  border-color: var(--accent);
+}
+
+.tag-list {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0;
+  list-style: none;
+}
+
+.tag-list li {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.tag-list label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+/* Thumbnail of icoon voor een map of bestand in een lijst */
+.thumb {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin-right: var(--space-2);
+  vertical-align: middle;
+}
+
+img.thumb {
+  object-fit: cover;
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+span.thumb {
+  display: inline-block;
+  text-align: center;
+  line-height: 32px;
+}
