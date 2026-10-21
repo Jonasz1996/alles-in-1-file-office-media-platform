@@ -4,6 +4,7 @@
 import {
   type DragEvent,
   type FormEvent,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -14,16 +15,25 @@ import {
 } from "react";
 import { formatBytes, formatDate, type Preview, type PublicListing, type PublicNode, type PublicShare } from "./api";
 import { PreviewBody, PreviewPanel, previewDetails } from "./PreviewPanel";
-import { type LinkProblem, linkProblem, PublicLink } from "./publicApi";
+import { PublicAlbum } from "./photos";
+import { type LinkProblem, linkProblem, linkToken, PublicLink } from "./publicApi";
+import { type RouteProps, usePath } from "./router";
 import { expiryLabel } from "./sharing";
 import { category, Thumb } from "./Thumb";
 import { UploadQueue } from "./uploadQueue";
 import "./files.css";
-import "./share.css";
+import "./public.css";
 
 const BATCH = 500;
 /** Zo vaak (elke 3 s) vragen we een preview die nog gemaakt wordt opnieuw. */
 const PREVIEW_ROUNDS = 20;
+
+/** De route /s/:token (buiten de login). */
+export default function PublicPage(_: RouteProps) {
+  // Strenger dan het routepatroon: een token met vreemde tekens is meteen "bestaat niet"
+  const token = linkToken(usePath());
+  return <Public key={token ?? ""} token={token} />;
+}
 
 export function Public({ token }: { token: string | null }) {
   const link = useMemo(() => (token ? new PublicLink(token) : null), [token]);
@@ -111,7 +121,11 @@ export function Public({ token }: { token: string | null }) {
           Gedeeld door {share.owner_name}
           {expiry && ` · de link ${expiry}`}
         </p>
-        {share.permission === "upload" ? (
+        {share.kind === "album" ? (
+          <Suspense fallback={<p className="muted">Laden…</p>}>
+            <PublicAlbum link={link} share={share} />
+          </Suspense>
+        ) : share.permission === "upload" ? (
           <UploadView share={share} queue={queue} />
         ) : share.kind === "file" ? (
           <FileView link={link} node={share.root} />
@@ -238,10 +252,10 @@ function FileView({ link, node }: { link: PublicLink; node: PublicNode }) {
       <div>
         <PreviewBody node={node} preview={preview} source={source} original />
       </div>
-      <p className="muted" style={{ margin: 0 }}>
+      <p className="muted details">
         {previewDetails(node, preview?.meta ?? {})}
       </p>
-      <div className="toolbar" style={{ margin: 0 }}>
+      <div className="toolbar">
         <button
           type="button"
           className="primary"
@@ -434,7 +448,7 @@ function UploadView({ share, queue }: { share: PublicShare; queue: UploadQueue }
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
       >
-        <span aria-hidden="true" style={{ fontSize: "2rem" }}>
+        <span aria-hidden="true" className="dropzone-icon">
           ⬆️
         </span>
         <span>Sleep bestanden hierheen, of</span>

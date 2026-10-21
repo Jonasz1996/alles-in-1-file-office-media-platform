@@ -1,5 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { type Api, api, formatDate, type TotpSetup, type User } from "./api";
+import { useCurrentUser, useShellActions } from "./currentUser";
+import type { RouteProps } from "./router";
 
 export type AccountSession = Awaited<ReturnType<Api["sessions"]>>[number];
 
@@ -357,6 +359,14 @@ function TotpOn({ onChange, onCodes }: { onChange: () => void; onCodes: (codes: 
       )}
     </>
   );
+}
+
+/** De route /account: de ingelogde gebruiker en de acties van de schil. */
+export default function AccountPage(_: RouteProps) {
+  const user = useCurrentUser();
+  const shell = useShellActions();
+  if (!user) return null;
+  return <Account user={user} onChange={shell.reloadUser} onCodes={shell.showRecoveryCodes} />;
 }
 
 export function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {

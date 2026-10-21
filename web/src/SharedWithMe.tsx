@@ -1,24 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type FileNode, formatDate, type SharedWithMe as Row } from "./api";
 import { isGuest, useCurrentUser } from "./currentUser";
 import { affectsSharedWithMe, useReloadOn } from "./events";
 import { NodeActions } from "./NodeActions";
-import { PreviewPanel } from "./PreviewPanel";
-import { navigate } from "./router";
+import { navigate, type RouteProps } from "./router";
 import { SearchBox } from "./Search";
 import { PERMISSION_LABELS } from "./sharing";
 import { TagChips } from "./Tags";
 import { Thumb, usePreviews } from "./Thumb";
+import { useViewerParam, Viewer } from "./viewer";
 import "./share.css";
 
 /** Wat anderen met je gedeeld hebben, rechtstreeks of via een groep (/gedeeld). */
-export function SharedWithMe() {
+export default function SharedWithMe(_: RouteProps) {
   const guest = isGuest(useCurrentUser());
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [shown, setShown] = useState<FileNode | null>(null);
+  const [viewing, setViewing] = useViewerParam();
   const loads = useRef(0);
   const nodes = useMemo(() => rows?.map((r) => r.node), [rows]);
+  const files = useMemo(() => nodes?.filter((n) => n.kind === "file") ?? [], [nodes]);
+  const viewIndex = viewing ? files.findIndex((n) => n.id === viewing) : -1;
   const previews = usePreviews(nodes);
   const ids = useMemo(() => new Set(nodes?.map((n) => n.id)), [nodes]);
 
@@ -50,7 +52,7 @@ export function SharedWithMe() {
 
   function open(node: FileNode) {
     if (node.kind === "dir") navigate(`/map/${node.id}`);
-    else setShown(node);
+    else setViewing(node.id);
   }
 
   return (
@@ -109,13 +111,15 @@ export function SharedWithMe() {
         </div>
       )}
 
-      {shown && (
-        <PreviewPanel
-          node={shown}
-          preview={previews[shown.id]}
-          onClose={() => setShown(null)}
-          onDownload={() => download(shown).catch((e: Error) => setError(e.message))}
-        />
+      {viewIndex >= 0 && (
+        <Suspense fallback={null}>
+          <Viewer
+            items={files}
+            index={viewIndex}
+            onIndexChange={(i) => setViewing(files[i].id)}
+            onClose={() => setViewing(null)}
+          />
+        </Suspense>
       )}
     </main>
   );

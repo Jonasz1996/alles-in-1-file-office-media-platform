@@ -1,14 +1,15 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiError, api, type User } from "./api";
 
-export function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
+/** message: waarom je (weer) moet inloggen, bijv. "Dit account is uitgeschakeld" uit de refresh. */
+export function Login({ onLoggedIn, message }: { onLoggedIn: (u: User) => void; message?: string | null }) {
   const [setup, setSetup] = useState<boolean | null>(null);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   // null = nog niet gevraagd; anders staat 2FA aan en is er een code nodig
   const [code, setCode] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(message ?? null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type FileNode, type Listing } from "./api";
 import { isGuest, useCurrentUser } from "./currentUser";
 import { Dialog } from "./Dialog";
+import "./files.css";
 import { isShared } from "./sharing";
 
 /**

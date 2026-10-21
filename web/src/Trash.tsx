@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type FileNode, formatBytes, formatDate } from "./api";
+import type { RouteProps } from "./router";
 
-export function Trash() {
+export default function Trash(_: RouteProps) {
   const [items, setItems] = useState<FileNode[]>([]);
   const [error, setError] = useState<string | null>(null);
 

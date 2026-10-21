@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { api, type Category, formatBytes, formatDate, type SearchQuery, type SearchResult, type Tag } from "./api";
 import { isGuest, useCurrentUser } from "./currentUser";
-import { navigate } from "./router";
+import { navigate, type RouteProps } from "./router";
 import {
   CATEGORY_LABELS,
   folderHref,
@@ -38,11 +38,9 @@ export function SearchBox() {
   );
 }
 
-/** Naar een andere zoekopdracht. navigate() kijkt alleen naar het pad, en dat blijft /zoeken. */
+/** Naar een andere zoekopdracht (navigate vergelijkt ook de query: dezelfde doet niets). */
 function goTo(href: string) {
-  if (href === window.location.pathname + window.location.search) return;
-  window.history.pushState(null, "", href);
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  navigate(href);
 }
 
 /** De zoekopdracht uit de adresbalk; volgt terug en vooruit. */
@@ -56,7 +54,7 @@ function useSearchQuery(): SearchQuery {
   return query;
 }
 
-export function Search() {
+export default function Search(_: RouteProps) {
   const query = useSearchQuery();
   const [text, setText] = useState(query.q ?? "");
   const [result, setResult] = useState<SearchResult | null>(null);

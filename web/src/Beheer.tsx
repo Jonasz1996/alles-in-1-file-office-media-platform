@@ -10,6 +10,8 @@ import {
 } from "./api";
 import { BeheerGroups } from "./BeheerGroups";
 import { BeheerJobs } from "./BeheerJobs";
+import { useCurrentUser } from "./currentUser";
+import type { RouteProps } from "./router";
 
 const CHECK_LABELS: Record<string, string> = {
   database: "Database",
@@ -23,6 +25,12 @@ const CHECK_LABELS: Record<string, string> = {
 };
 const STATUS_LABELS = { ok: "Alles in orde", degraded: "Beperkt", down: "Storing" };
 const ROLE_LABELS: Record<string, string> = { admin: "Beheerder", user: "Gebruiker", guest: "Gast" };
+
+/** De route /beheer/:tab? (alleen beheerders; de schil controleert de rol). */
+export default function BeheerPage(_: RouteProps) {
+  const user = useCurrentUser();
+  return user ? <Beheer currentUser={user} /> : null;
+}
 
 export function Beheer({ currentUser }: { currentUser: User }) {
   const [status, setStatus] = useState<SystemStatus | null>(null);

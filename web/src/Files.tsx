@@ -1,38 +1,26 @@
-import { type DragEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type DragEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type FileNode, formatBytes, formatDate, type Listing } from "./api";
 import { isGuest, useCurrentUser } from "./currentUser";
 import { useFolderEvents } from "./events";
+import { Link } from "./links";
 import { NodeActions } from "./NodeActions";
-import { PreviewPanel } from "./PreviewPanel";
-import { navigate } from "./router";
+import { navigate, type RouteProps, useNavSection } from "./router";
 import { SearchBox } from "./Search";
 import { ShareDialog } from "./ShareDialog";
 import { crumbs, folderActions, isShared, nodeActions, PERMISSION_LABELS, permissionOf } from "./sharing";
 import { TagChips } from "./Tags";
 import { Thumb, usePreviews } from "./Thumb";
+import { hasFiles, UploadButtons, uploadDropped } from "./upload/index";
 import { uploadQueue, useUploads } from "./uploadQueue";
+import { useViewerParam, Viewer } from "./viewer";
 import "./share.css";
 
-/** Een link binnen de app, zonder de pagina te herladen. */
-export function Link({ to, children }: { to: string; children: ReactNode }) {
-  return (
-    <a
-      href={to}
-      onClick={(e) => {
-        e.preventDefault();
-        navigate(to);
-      }}
-    >
-      {children}
-    </a>
-  );
-}
-
 /**
- * Een map: van jezelf, of een map die met je gedeeld is. onShared: of de map die nu open
- * staat van iemand anders is (voor de navigatie bovenaan).
+ * Een map (/ of /map/:id): van jezelf, of een map die met je gedeeld is. In een gedeelde map
+ * staat in de navigatie bovenaan "Gedeeld met mij" gemarkeerd.
  */
-export function Files({ folderId, onShared }: { folderId: string | null; onShared?: (shared: boolean) => void }) {
+export default function Files({ params }: RouteProps) {
+  const folderId = params.id ?? null;
   const guest = isGuest(useCurrentUser());
   const [listing, setListing] = useState<Listing | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,13 +29,12 @@ export function Files({ folderId, onShared }: { folderId: string | null; onShare
   const [sharing, setSharing] = useState(false);
   const uploads = useUploads();
   const [dragging, setDragging] = useState(false);
-  const input = useRef<HTMLInputElement>(null);
   const loads = useRef(0);
   /** De laatst getoonde map, als die met je gedeeld was */
   const sharedFolder = useRef<string | null>(null);
   /** De mappen in het pad van de laatst getoonde map (ook als je er niet meer bij kunt) */
   const [path, setPath] = useState<{ folder: string | null; ids: string[] }>({ folder: null, ids: [] });
-  const [shown, setShown] = useState<FileNode | null>(null);
+  const [viewing, setViewing] = useViewerParam();
   const previews = usePreviews(listing?.children);
 
   /** Laadt de map; geeft false als hij weg is of je er niet (meer) bij kunt. */
@@ -84,9 +71,11 @@ export function Files({ folderId, onShared }: { folderId: string | null; onShare
   const shared = isShared(listing?.folder);
   const can = folderActions(listing?.folder);
 
-  useEffect(() => {
-    if (listing) onShared?.(isShared(listing.folder));
-  }, [listing, onShared]);
+  // Een map van iemand anders hoort bij "Gedeeld met mij" (gasten hebben alleen dat)
+  useNavSection(guest || shared ? "shared" : null);
+
+  const files = useMemo(() => listing?.children.filter((n) => n.kind === "file") ?? [], [listing]);
+  const viewIndex = viewing ? files.findIndex((n) => n.id === viewing) : -1;
 
   // Wat klaar is met wachten (upload, actie) gebruikt de load en map van nu, niet die van
   // toen het begon: de gebruiker kan intussen naar een andere map zijn gegaan.
@@ -120,22 +109,18 @@ export function Files({ folderId, onShared }: { folderId: string | null; onShare
     }
   }
 
-  function uploadFiles(files: FileList) {
-    if (!current) return;
-    uploadQueue.add(current, Array.from(files)).catch((e: Error) => setError(e.message));
-  }
-
   function onDrop(e: DragEvent) {
     e.preventDefault();
     setDragging(false);
-    if (!e.dataTransfer.files.length) return;
-    if (can.upload) uploadFiles(e.dataTransfer.files);
+    if (!hasFiles(e.dataTransfer)) return;
+    // Synchroon, vóór elke await: daarna is dataTransfer leeg
+    if (can.upload && current) uploadDropped(e.dataTransfer, current);
     else if (listing) setError("Je mag hier alleen kijken");
   }
 
   function open(node: FileNode) {
     if (node.kind === "dir") navigate(`/map/${node.id}`);
-    else setShown(node);
+    else setViewing(node.id);
   }
 
   async function download(node: FileNode) {
@@ -188,11 +173,7 @@ export function Files({ folderId, onShared }: { folderId: string | null; onShare
       )}
 
       <div className="toolbar">
-        {can.upload && (
-          <button type="button" onClick={() => input.current?.click()}>
-            Uploaden
-          </button>
-        )}
+        {current && <UploadButtons folderId={current} canUpload={can.upload} />}
         {can.mkdir && (
           <button
             type="button"
@@ -209,16 +190,6 @@ export function Files({ folderId, onShared }: { folderId: string | null; onShare
             Delen…
           </button>
         )}
-        <input
-          ref={input}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => {
-            if (e.target.files) uploadFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
         {can.upload && <span className="muted">of sleep bestanden hierheen</span>}
         <SearchBox />
       </div>
@@ -332,13 +303,15 @@ export function Files({ folderId, onShared }: { folderId: string | null; onShare
         <ShareDialog node={listing.folder} onClose={() => setSharing(false)} onChanged={() => latest.current.load()} />
       )}
 
-      {shown && (
-        <PreviewPanel
-          node={shown}
-          preview={previews[shown.id]}
-          onClose={() => setShown(null)}
-          onDownload={() => download(shown).catch((e: Error) => setError(e.message))}
-        />
+      {viewIndex >= 0 && (
+        <Suspense fallback={null}>
+          <Viewer
+            items={files}
+            index={viewIndex}
+            onIndexChange={(i) => setViewing(files[i].id)}
+            onClose={() => setViewing(null)}
+          />
+        </Suspense>
       )}
     </main>
   );
