@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import dialogSource from "./Dialog.tsx?raw";
 import { consumesKey, formatCombo, isTypingTarget, keyToMove, matchKey, moveIndex, ShortcutRegistry } from "./keys";
 
 type Fake = KeyboardEvent & { prevented: boolean };
@@ -274,5 +275,15 @@ describe("de hulp vanuit een menu", () => {
     r.pushScope("viewer");
     expect(r.dispatch(key("ArrowRight"))).toBe(true);
     expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("Dialog zet zijn scope in een layout-effect, vóór de gewone effecten van de kinderen", () => {
+    // Zonder DOM is Dialog hier niet te renderen; daarom een controle op de bron. Met een gewoon
+    // useEffect komt "dialog" bóven de useScope van een kind en werkt diens toets niet meer.
+    const layout = dialogSource.indexOf("useLayoutEffect(() => {");
+    const push = dialogSource.indexOf('pushScope("dialog")');
+    expect(layout).toBeGreaterThan(-1);
+    expect(push).toBeGreaterThan(layout);
+    expect(dialogSource.slice(layout, push)).not.toContain("useEffect(");
   });
 });

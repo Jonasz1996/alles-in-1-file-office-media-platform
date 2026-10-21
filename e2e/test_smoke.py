@@ -153,3 +153,48 @@ def test_bewaking_vangt_csp_en_i18n(browsers):
     assert any(p.startswith("csp: ") and "script-src" in p for p in problems), problems
     assert any(p.startswith("i18n: ") for p in problems), problems
     assert page.evaluate("window.__nietToegestaan") is None
+
+
+def test_bewaking_vangt_fouten(browsers):
+    """Een gelogde fout (zoals een foutgrens die logt) en een onafgevangen fout komen binnen."""
+    context = browsers.new_context()
+    page = context.new_page()
+    page.goto("/")
+    expect(page.get_by_role("heading", name="Inloggen", exact=True)).to_be_visible()
+    page.evaluate(
+        """() => {
+          console.error(new Error("gevangen door een foutgrens"), "\\n    in UploadSlot");
+          setTimeout(() => { throw new Error("niet gevangen"); }, 0);
+        }"""
+    )
+    guard = browsers.guard(context)
+    for _ in range(50):
+        if len(guard.problems) >= 2:
+            break
+        page.wait_for_timeout(100)
+    problems = guard.take()
+    assert any("gevangen door een foutgrens" in p for p in problems), problems
+    assert any("niet gevangen" in p for p in problems), problems
+
+
+def test_uploadlade_tijdens_een_trage_upload(new_context, user_factory):
+    """Zolang er een upload loopt, staat de lade (lazy, P3) in de schil. Die mag niet vallen: de
+    bewaking vangt de fout die een foutgrens logt (zoals React #306, een lazy die op een lazy
+    uitkomt)."""
+    user = user_factory(name="Trage Upload")
+    page = new_context().new_page()
+    login_via_form(page, user)
+
+    held = []
+
+    def hold(route):  # de tus-verzoeken ophouden: de wachtrij blijft zo bezig
+        held.append(route)
+
+    page.route("**/api/v1/tus**", hold)
+    with page.expect_file_chooser() as chooser:
+        page.get_by_role("button", name="Uploaden", exact=True).click()
+    chooser.value.set_files({"name": "traag.txt", "mimeType": "text/plain", "buffer": b"x" * 1000})
+    page.wait_for_timeout(1500)  # de lade laadt terwijl de upload wacht
+    assert held, "geen tus-verzoek gezien"
+    page.unroute("**/api/v1/tus**", hold)  # laat ook de opgehouden verzoeken verder gaan
+    expect(page.locator("#inhoud").get_by_text("traag.txt", exact=True)).to_have_count(1)

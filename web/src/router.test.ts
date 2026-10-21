@@ -138,6 +138,19 @@ describe("ScrollMemory", () => {
     expect(m.startRestore("B")).toBe(400);
   });
 
+  it("terug binnen dezelfde pagina (viewer dicht): de entry telt meteen weer", () => {
+    const { m, box } = memory();
+    m.pushed("map");
+    m.record("map", 3000);
+    m.leave("map", 3000); // navigate() naar ?bestand=
+    m.pushed("viewer");
+    m.stayed("map", 3000); // back(): zelfde pad, geen terugzetten
+    m.record("map", 3400); // verder scrollen telt
+    expect(m.get("map")).toBe(3400);
+    m.leave("map", 3500); // naar een andere map
+    expect(box.stored.map).toBe(3500);
+  });
+
   it("weggaan tijdens het terugzetten bewaart de oude plek", () => {
     const { m, box } = memory({ A: 2000 });
     m.popped();

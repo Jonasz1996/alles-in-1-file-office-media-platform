@@ -12,7 +12,7 @@ from sqlalchemy import update
 from app import events, totp
 from app.models import User
 from app.routers import events as live
-from app.routers import public
+from app.routers import files, public, uploads
 from app.routers.auth import revoke_other_logins
 from tests.factories import code_of, maker
 from tests.test_2fa import enable, login
@@ -171,6 +171,26 @@ async def test_publieke_links_van_een_geblokkeerde_eigenaar(client, admin, setti
     r = await client.get(f"/api/v1/public/download/{f['id']}", params={"key": read_key})
     assert (r.status_code, r.content) == (200, b"geheim")
     assert (await tus_create(client, upload_key, "x.txt", 3)).status_code == 201
+
+
+@pytest.mark.anyio
+async def test_linkupload_geblokkeerd_tijdens_de_laatste_bytes(
+    client, admin, settings, fresh_limits
+):
+    """De controle onder de sloten vlak voor het neerzetten (link_open) kijkt ook naar de
+    eigenaar: wordt die geblokkeerd terwijl de laatste PATCH al loopt, dan komt er niets bij."""
+    headers, _ = admin
+    anna, _ = await person(client, headers, EMAIL)
+    root_id = (await root(client, anna))["folder"]["id"]
+    folder = await mkdir(client, anna, root_id, "Map")
+    link = await new_link(client, anna, folder, permission="upload")
+    check = uploads.link_open(uuid.UUID(link["id"]), uuid.UUID(folder))
+    async with maker(settings)() as session:
+        await check(session)  # alles in orde: geen fout
+    await block(settings)
+    async with maker(settings)() as session:
+        with pytest.raises(files.Gone):
+            await check(session)
 
 
 @pytest.fixture

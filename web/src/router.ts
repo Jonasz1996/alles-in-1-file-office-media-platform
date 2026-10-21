@@ -241,6 +241,14 @@ export class ScrollMemory {
     this.pending = null;
   }
 
+  /** Terug of vooruit binnen dezelfde pagina (alleen de query of hash anders, zoals de viewer
+   * sluiten): niets terug te zetten, de pagina blijft staan en de entry telt meteen vanaf y. */
+  stayed(key: string, y: number): void {
+    this.active = key;
+    this.pending = null;
+    this.positions.set(key, y);
+  }
+
   /** Een nieuwe of vervangen entry: die is meteen actief (begint bovenaan). */
   pushed(key: string): void {
     this.active = key;
@@ -349,9 +357,16 @@ if (typeof window !== "undefined") {
   window.addEventListener("pagehide", saveScroll);
   // Terug of vooruit (ook het eigen event van navigate(); dat zet daarna zelf de entry actief).
   // De plek van de vorige entry staat dan al in het geheugen: elk scroll-event schreef hem weg.
+  // Blijft het pad hetzelfde, dan draait useRestoreScroll niet (alleen een ander pad telt): de
+  // entry moet dan hier al actief worden, anders telt er geen scroll meer tot het volgende pad.
+  let poppedPath = window.location.pathname;
   window.addEventListener("popstate", () => {
     stopRestoring();
-    scrolls.popped();
+    const path = window.location.pathname;
+    const s = historyState();
+    if (path === poppedPath && s) scrolls.stayed(s.key, window.scrollY);
+    else scrolls.popped();
+    poppedPath = path;
   });
   window.addEventListener(
     "scroll",

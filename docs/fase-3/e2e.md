@@ -127,7 +127,10 @@ twee keer aan).
 Elke context krijgt een `addInitScript` dat meeluistert naar:
 
 - `securitypolicyviolation` (elke CSP-schending, ook van een inline script of stijl);
-- `console.error`-regels die met `i18n:` beginnen (`t()` voor een gebied dat niet geladen is).
+- `console.error`-regels die met `i18n:` beginnen (`t()` voor een gebied dat niet geladen is);
+- gelogde fouten: een `console.error` met een `Error`-object of een React-fout (zo logt een
+  foutgrens als `ChunkBoundary` wat hij opving), plus onafgevangen fouten (`error`) en
+  onafgehandelde beloftes (`unhandledrejection`).
 
 De treffers komen via een binding naar Python. Eén treffer en de test faalt bij het opruimen,
 met de lijst en het adres van de pagina. Een test die er bewust een veroorzaakt, haalt ze weg

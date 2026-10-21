@@ -422,8 +422,14 @@ function PlainRecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => 
 }
 
 /** De uploadlade (upload/index.ts, P3), alleen als er iets in de wachtrij staat: anders hoeven
- * zijn chunk en dat van de wachtrij niet te laden. */
-const UploadTray = lazy(() => import("./upload/index").then((m) => ({ default: m.UploadTray })));
+ * zijn chunk en dat van de wachtrij niet te laden. m.UploadTray is zelf al lazy (lazyWithAreas)
+ * en React weigert een lazy die op een lazy uitkomt: daarom een gewone component eromheen. */
+const UploadTray = lazy(() =>
+  import("./upload/index").then((m) => {
+    const Tray = m.UploadTray;
+    return { default: () => <Tray /> };
+  }),
+);
 
 function UploadSlot(): JSX.Element | null {
   const busy = useSyncExternalStore(uploadStatus.subscribe, uploadStatus.busy, () => false);

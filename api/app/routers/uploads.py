@@ -480,15 +480,19 @@ def _expires_at(share: Share) -> datetime:
 
 def link_open(share_id: uuid.UUID, folder_id: uuid.UUID):
     """Controle vlak voor het neerzetten (onder de sloten) van een upload via een link: de
-    link bestaat nog, is niet verlopen, en de map ligt niet in de prullenbak."""
+    link bestaat nog, is niet verlopen, de eigenaar is niet geblokkeerd (beslissing 16; ook als
+    dat gebeurde terwijl de laatste bytes binnenkwamen) en de map ligt niet in de prullenbak."""
 
     async def check(session: AsyncSession) -> None:
         share = await session.get(Share, share_id, populate_existing=True)
+        owner = share and await session.get(User, share.owner_id, populate_existing=True)
         if (
             share is None
             or share.node_id != folder_id
             or share.permission != "upload"
             or (share.expires_at is not None and _expires_at(share) <= datetime.now(UTC))
+            or owner is None
+            or owner.disabled_at is not None
             or await access.trashed(session, folder_id)
         ):
             raise Gone

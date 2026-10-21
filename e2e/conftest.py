@@ -10,8 +10,9 @@ Wat hier staat, gebruiken ook de meetscripts in e2e/perf/ (die als los script dr
 Server, Account, Browsers, standalone() en de hulpjes voor 2FA en CDP.
 
 Bewaking: elke browsercontext krijgt een init-script dat CSP-schendingen
-(securitypolicyviolation) en console.error-regels die met "i18n:" beginnen doorgeeft. Eén
-treffer en de test faalt.
+(securitypolicyviolation), console.error-regels die met "i18n:" beginnen, gelogde fouten (een
+Error-object of een React-fout, zoals een foutgrens die logt) en onafgevangen fouten doorgeeft.
+Eén treffer en de test faalt; een test die er een verwacht, haalt hem weg met Guard.take().
 """
 
 from __future__ import annotations
@@ -331,7 +332,8 @@ def create_user(
 
 # --- de browser ---
 
-# Bewaking in elke context: CSP-schendingen en ontbrekende i18n-gebieden (console.error "i18n:")
+# Bewaking in elke context: CSP-schendingen, ontbrekende i18n-gebieden (console.error "i18n:")
+# en fouten
 GUARD_JS = r"""
 (() => {
   const report = (kind, text) => {
@@ -346,9 +348,20 @@ GUARD_JS = r"""
     const first = args.length ? String(args[0]) : "";
     if (first.startsWith("i18n:")) {
       report("i18n", args.map((a) => String(a)).join(" ").replace(/^i18n:\s*/, ""));
+    } else if (args.some((a) => a instanceof Error) || first.includes("React error")) {
+      // Een foutgrens (ChunkBoundary, PageBoundary) vangt de fout en logt hem; anders ziet
+      // niemand hem
+      const text = args.map((a) => (a instanceof Error ? a.stack || String(a) : String(a)));
+      report("fout", text.join(" "));
     }
     return original.apply(this, args);
   };
+  window.addEventListener("error", (e) => {
+    report("fout", `${e.message} (${e.filename || location.href}:${e.lineno || 0})`);
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    report("fout", `onafgehandelde belofte: ${e.reason && (e.reason.stack || e.reason)}`);
+  });
 })();
 """
 
