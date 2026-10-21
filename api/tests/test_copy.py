@@ -15,6 +15,7 @@ from app.events import Hub
 from app.models import Blob, Node
 from app.routers import files, uploads
 from app.text import fold
+from tests.factories import message_of
 from tests.test_files import check_refs, mkdir, new_user, put, root
 from tests.test_uploads import create, hold
 
@@ -123,7 +124,7 @@ async def test_quotum_en_andermans_bestanden(client, admin):
     kroot = (await root(client, k))["folder"]["id"]
     zes = (await put(client, k, kroot, "zes", b"123456")).json()["id"]
     r = await copy(client, k, zes, kroot)
-    assert r.status_code == 413 and r.json()["detail"] == "Onvoldoende quotum"
+    assert r.status_code == 413 and message_of(r) == "Onvoldoende quotum"
     vier = (await put(client, k, kroot, "vier", b"1234")).json()["id"]
     assert (await copy(client, k, vier, kroot)).status_code == 413  # 6 + 4 = 10, vol
     me = (await client.get("/api/v1/auth/me", headers=k)).json()
@@ -210,7 +211,7 @@ async def test_te_veel_in_een_keer(client, admin, monkeypatch):
     assert (await copy(client, headers, a, root_id)).status_code == 201  # precies 3
     await put(client, headers, a, "d.txt", b"d")
     r = await copy(client, headers, a, root_id)
-    assert r.status_code == 422 and "Te veel" in r.json()["detail"]
+    assert r.status_code == 422 and "Te veel" in message_of(r)
     assert sorted(await children(client, headers, root_id)) == ["A", "A (1)"]
 
 

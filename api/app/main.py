@@ -10,11 +10,12 @@ from typing import Annotated
 from urllib.parse import quote
 
 import anyio
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel
 
-from app import events, jobs, previews
+from app import errors, events, jobs, previews
 from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.migrate import upgrade
@@ -218,6 +219,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.add_middleware(Edge)
+app.add_exception_handler(RequestValidationError, errors.invalid_input)
 app.include_router(auth.router)
 app.include_router(files.router)
 app.include_router(uploads.router)
@@ -265,7 +267,7 @@ async def acme_challenge(token: str, request: Request) -> PlainTextResponse:
     certs: CertManager | None = getattr(request.app.state, "certs", None)
     answer = certs.challenges.get(token) if certs else None
     if answer is None:
-        raise HTTPException(404, "Onbekende challenge")
+        raise errors.fail(404, "not_found", "Onbekende challenge")
     return PlainTextResponse(answer)
 
 
@@ -273,11 +275,11 @@ async def acme_challenge(token: str, request: Request) -> PlainTextResponse:
 async def web_app(path: str, settings: Annotated[Settings, Depends(get_settings)]):
     """Serveert de gebouwde web-app; onbekende paden krijgen index.html (client-side routing)."""
     if path.startswith("api/"):
-        raise HTTPException(404, "Niet gevonden")
+        raise errors.fail(404, "not_found", "Niet gevonden")
     root = settings.web_dist.resolve()
     index = root / "index.html"
     if not index.exists():
-        raise HTTPException(404, "Web-app niet gebouwd")
+        raise errors.fail(404, "web_app_missing", "Web-app niet gebouwd")
     candidate = (root / path).resolve()
     if path and candidate.is_file() and candidate.is_relative_to(root):
         immutable = Path(path).parts[:1] == ("assets",)

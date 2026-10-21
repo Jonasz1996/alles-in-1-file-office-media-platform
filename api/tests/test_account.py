@@ -19,6 +19,7 @@ from app.routers import auth
 from app.security import SecurityPolicy, login_limiter
 from app.useragent import device_label, shown_device
 from tests.conftest import ADMIN
+from tests.factories import message_of
 from tests.test_2fa import (
     AN,
     LOGIN,
@@ -245,7 +246,7 @@ async def test_sessie_uitloggen(client, admin):
     for target in (family(an), str(uuid.uuid4())):
         r = await client.delete(f"{SESSIONS}/{target}", headers=headers)
         assert r.status_code == 404
-        assert r.json()["detail"] == "Sessie niet gevonden"
+        assert message_of(r) == "Sessie niet gevonden"
     assert (await client.get("/api/v1/auth/me", headers=bearer(an))).status_code == 200
 
     r = await client.delete(f"{SESSIONS}/{family(other)}", headers=headers)
@@ -253,7 +254,7 @@ async def test_sessie_uitloggen(client, admin):
     # Ook het access-token van dat apparaat werkt meteen niet meer
     r = await client.get("/api/v1/auth/me", headers=bearer(other))
     assert r.status_code == 401
-    assert r.json()["detail"] == "Je bent op dit apparaat uitgelogd; log opnieuw in"
+    assert message_of(r) == "Je bent op dit apparaat uitgelogd; log opnieuw in"
     assert (await refresh(client, other)).status_code == 401
     assert [s["id"] for s in await sessions(client, tokens)] == [family(tokens)]
     # Nog een keer (dubbelklik) is geen fout
@@ -300,7 +301,7 @@ async def test_wachtwoord_wijzigen(client, admin, settings):
     body = {"current_password": "fout-wachtwoord", "new_password": NEW}
     r = await client.post(PASSWORD, json=body, headers=headers)
     assert r.status_code == 400
-    assert r.json()["detail"] == "Je huidige wachtwoord klopt niet"
+    assert message_of(r) == "Je huidige wachtwoord klopt niet"
     assert (await user_row(settings)).totp_failures == 1
 
     for new, message in (
@@ -310,7 +311,7 @@ async def test_wachtwoord_wijzigen(client, admin, settings):
         body = {"current_password": ADMIN["password"], "new_password": new}
         r = await client.post(PASSWORD, json=body, headers=headers)
         assert r.status_code == 422
-        assert r.json()["detail"] == message
+        assert message_of(r) == message
     assert (await user_row(settings)).totp_failures == 1  # dat telde niet als poging
 
     body = {"current_password": ADMIN["password"], "new_password": NEW}
@@ -343,10 +344,8 @@ async def test_wachtwoord_raden_wordt_geblokkeerd(client, admin, settings, monke
     ok = {"current_password": ADMIN["password"], "new_password": NEW}
     r = await client.post(PASSWORD, json=ok, headers=headers)
     assert r.status_code == 429
-    assert r.json()["detail"] == {
-        "message": "Te veel foute pogingen. Probeer het over 1 minuut opnieuw.",
-        "code": "totp_locked",
-    }
+    assert message_of(r) == "Te veel foute pogingen. Probeer het over 1 minuut opnieuw."
+    assert r.json()["detail"]["code"] == "totp_locked"
     assert 55 <= int(r.headers["retry-after"]) <= 60
     monkeypatch.undo()
     # Zonder 2FA blokkeert dit het inloggen niet
@@ -407,7 +406,7 @@ async def test_wachtwoord_wijzigen_met_2fa(client, admin, settings):
     ):
         r = await client.post(PASSWORD, json=bad, headers=headers)
         assert r.status_code == 400
-        assert r.json()["detail"] == "Wachtwoord of code klopt niet"
+        assert message_of(r) == "Wachtwoord of code klopt niet"
     assert (await user_row(settings)).totp_failures == 2
 
     r = await client.post(PASSWORD, json={**body, "code": good}, headers=headers)
@@ -487,7 +486,7 @@ async def test_gelijktijdig_wachtwoord_wijzigen_wint_er_een(client, admin, monke
     )
     assert sorted(r.status_code for r in results) == [204, 409]
     loser = next(r for r in results if r.status_code == 409)
-    assert loser.json()["detail"] == "Je wachtwoord is net ergens anders gewijzigd; log opnieuw in"
+    assert message_of(loser) == "Je wachtwoord is net ergens anders gewijzigd; log opnieuw in"
     winner = passwords[[r.status_code for r in results].index(204)]
     monkeypatch.undo()
     for p in passwords:
@@ -533,12 +532,12 @@ async def test_beheerder_stelt_wachtwoord_in(client, admin):
     assert (await client.put(own, json=new, headers=bearer(first))).status_code == 403
     r = await client.put(own, json=new, headers=headers)
     assert r.status_code == 422
-    assert r.json()["detail"] == "Gebruik je accountpagina om je eigen wachtwoord te wijzigen"
+    assert message_of(r) == "Gebruik je accountpagina om je eigen wachtwoord te wijzigen"
     r = await client.put(f"/api/v1/users/{uuid.uuid4()}/password", json=new, headers=headers)
     assert r.status_code == 404
     r = await client.put(url, json={"new_password": "kort"}, headers=headers)
     assert r.status_code == 422
-    assert r.json()["detail"] == "Kies een wachtwoord van minstens 10 tekens"
+    assert message_of(r) == "Kies een wachtwoord van minstens 10 tekens"
     assert (await client.get("/api/v1/auth/me", headers=bearer(first))).status_code == 200
 
     r = await client.put(url, json={"new_password": NEW}, headers=headers)
@@ -741,7 +740,7 @@ async def test_login_tijdens_nieuw_wachtwoord_overleeft_het_niet(
     release.set()
     r = await pending
     assert r.status_code == 401
-    assert r.json()["detail"] == "E-mailadres of wachtwoord klopt niet"
+    assert message_of(r) == "E-mailadres of wachtwoord klopt niet"
     expected = [] if by == "beheerder" else [uuid.UUID(family(an))]
     assert [t.family for t in await live_tokens(settings, AN["email"])] == expected
 
@@ -857,7 +856,7 @@ async def test_tabblad_net_te_laat_en_echt_hergebruik(client, admin, settings):
         await session.commit()
     r = await client.post("/api/v1/auth/refresh", headers=cookie(tokens))
     assert r.status_code == 401
-    assert r.json()["detail"] == "Refresh-token is al gebruikt; log opnieuw in"
+    assert message_of(r) == "Refresh-token is al gebruikt; log opnieuw in"
     assert (await client.get("/api/v1/auth/me", headers=bearer(newest))).status_code == 401
     assert (await client.post("/api/v1/auth/refresh", headers=cookie(newest))).status_code == 401
 
@@ -872,5 +871,5 @@ async def test_app_die_een_token_dubbel_gebruikt_is_hergebruik(client, admin):
     newest = r.json()
     r = await refresh(client, tokens)
     assert r.status_code == 401
-    assert r.json()["detail"] == "Refresh-token is al gebruikt; log opnieuw in"
+    assert message_of(r) == "Refresh-token is al gebruikt; log opnieuw in"
     assert (await client.get("/api/v1/auth/me", headers=bearer(newest))).status_code == 401

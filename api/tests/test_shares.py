@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.db import get_engine
 from app.models import Share
+from tests.factories import message_of
 from tests.test_files import check_refs, mkdir, put, root
 from tests.test_uploads import TUS, create, send
 
@@ -313,18 +314,18 @@ async def test_quotum_van_de_eigenaar(client, admin, settings):
     # Anna zelf heeft geen quotum, maar het is de ruimte van Klein (en dat zegt de melding)
     full = "Er is niet genoeg ruimte meer bij Klein; vraag hem of haar om ruimte te maken"
     r = await put(client, anna, folder, "b", b"12345")
-    assert r.status_code == 413 and r.json()["detail"] == full
+    assert r.status_code == 413 and message_of(r) == full
     r = await create(client, anna, folder, "c", 5)
-    assert r.status_code == 413 and r.json()["detail"] == full
+    assert r.status_code == 413 and message_of(r) == full
     anna_root = (await root(client, anna))["folder"]["id"]
     eigen = (await put(client, anna, anna_root, "x", b"12345")).json()["id"]
     r = await client.post(f"/api/v1/files/{eigen}/copy", json={"parent_id": folder}, headers=anna)
-    assert r.status_code == 413 and r.json()["detail"] == full
+    assert r.status_code == 413 and message_of(r) == full
     assert (await get(client, klein, "/api/v1/auth/me"))["used_bytes"] == 8
     # Een upload van Anna reserveert ruimte bij Klein
     assert (await create(client, anna, folder, "d", 2)).status_code == 201
     r = await put(client, klein, kroot, "e", b"12")
-    assert r.status_code == 413 and r.json()["detail"] == "Onvoldoende quotum"
+    assert r.status_code == 413 and message_of(r) == "Onvoldoende quotum"
     await check_refs(settings)
 
 

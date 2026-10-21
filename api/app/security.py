@@ -13,12 +13,13 @@ import anyio.to_thread
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import errors
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import RefreshToken, Setting, User
@@ -76,9 +77,9 @@ def _decode(settings: Settings, token: str, typ: str) -> dict:
     try:
         claims = jwt.decode(token, settings.secret(), algorithms=["HS256"])
     except jwt.PyJWTError as e:
-        raise HTTPException(401, "Ongeldig of verlopen token") from e
+        raise errors.fail(401, "invalid_token", "Ongeldig of verlopen token") from e
     if claims.get("typ") != typ:
-        raise HTTPException(401, "Verkeerd soort token")
+        raise errors.fail(401, "wrong_token_type", "Verkeerd soort token")
     return claims
 
 
@@ -153,7 +154,7 @@ def read_link_key(settings: Settings, key: str) -> tuple[uuid.UUID, str]:
             raise jwt.InvalidTokenError("verkeerd soort")
         return uuid.UUID(claims["sub"]), str(claims.get("pw", ""))
     except (jwt.PyJWTError, KeyError, ValueError) as e:
-        raise HTTPException(401, KEY_EXPIRED) from e
+        raise errors.fail(401, **KEY_EXPIRED) from e
 
 
 SECURITY_KEY = "security"
@@ -214,7 +215,7 @@ async def access_claims(
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> dict:
     if creds is None:
-        raise HTTPException(401, "Niet ingelogd")
+        raise errors.fail(401, "not_logged_in", "Niet ingelogd")
     return _decode(settings, creds.credentials, "access")
 
 
@@ -236,20 +237,18 @@ async def logged_in_user(session: Session, claims: Annotated[dict, Depends(acces
     van 2FA; de rest gebruikt CurrentUser."""
     user = await session.get(User, uuid.UUID(claims["sub"]))
     if user is None:
-        raise HTTPException(401, "Gebruiker bestaat niet meer")
+        raise errors.fail(401, "user_gone", "Gebruiker bestaat niet meer")
     # Uitgelogd (ook vanaf een ander apparaat): dan werkt ook het access-token meteen niet
     # meer, niet pas als het na een kwartier verloopt.
     family = claims.get("fam")
     if family and await family_revoked(session, uuid.UUID(family)):
-        raise HTTPException(401, "Je bent op dit apparaat uitgelogd; log opnieuw in")
+        raise errors.fail(401, "logged_out", "Je bent op dit apparaat uitgelogd; log opnieuw in")
     return user
 
 
 async def current_user(user: Annotated[User, Depends(logged_in_user)], policy: Policy) -> User:
     if policy.require_2fa and user.totp_secret is None:
-        raise HTTPException(
-            403, {"message": "Zet eerst 2FA aan voor je account.", "code": "totp_setup_required"}
-        )
+        raise errors.fail(403, "totp_setup_required", "Zet eerst 2FA aan voor je account.")
     return user
 
 
@@ -261,7 +260,7 @@ def token_family(claims: Annotated[dict, Depends(access_claims)]) -> uuid.UUID |
 
 async def admin_user(user: Annotated[User, Depends(current_user)]) -> User:
     if user.role != "admin":
-        raise HTTPException(403, "Alleen voor beheerders")
+        raise errors.fail(403, "admin_only", "Alleen voor beheerders")
     return user
 
 
@@ -283,6 +282,7 @@ class RateLimiter:
     ):
         self.limit = limit
         self.window = window_seconds
+        # Een tekst, of {"message", "code"}; zonder code is het rate_limited
         self.detail = detail
         self._hits: dict[str, deque[float]] = defaultdict(deque)
 
@@ -301,7 +301,13 @@ class RateLimiter:
             hits.popleft()
         if len(hits) >= self.limit:
             wait = max(1, math.ceil(self.window - (now - hits[0])))
-            raise HTTPException(429, self.detail, headers={"Retry-After": str(wait)})
+            detail = self.detail if isinstance(self.detail, dict) else {}
+            raise errors.fail(
+                429,
+                detail.get("code", "rate_limited"),
+                detail.get("message", self.detail),
+                headers={"Retry-After": str(wait)},
+            )
 
     def add(self, key: str) -> None:
         """Telt een poging, bijv. alleen de mislukte."""

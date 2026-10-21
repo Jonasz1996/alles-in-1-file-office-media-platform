@@ -4,10 +4,11 @@ from datetime import datetime
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import func, select, text
 
+from app import errors
 from app.certs import CertManager, HttpsConfig, TooSoon, save_config
 from app.cluster import ClusterStatus, Disk, NodeStatus, cluster_status
 from app.config import Settings, get_settings
@@ -118,7 +119,7 @@ DOMAIN = re.compile(
 def get_certs(request: Request) -> CertManager:
     certs = getattr(request.app.state, "certs", None)
     if certs is None:
-        raise HTTPException(503, "Certificatenbeheer draait niet")
+        raise errors.fail(503, "certs_not_running", "Certificatenbeheer draait niet")
     return certs
 
 
@@ -183,13 +184,11 @@ async def https_renew(_: AdminUser, certs: Certs) -> HttpsStatus:
     """Nu (opnieuw) proberen, bijvoorbeeld na het aanpassen van de router. Niet tijdens
     een lopende poging en hooguit eens per minuut (429, code too_soon)."""
     if not certs.config.domain:
-        raise HTTPException(409, "Stel eerst een domein in")
+        raise errors.fail(409, "no_domain", "Stel eerst een domein in")
     try:
         certs.retry_now()
     except TooSoon as e:
-        raise HTTPException(
-            429,
-            {"message": str(e), "code": "too_soon"},
-            headers={"Retry-After": str(e.retry_after)},
+        raise errors.fail(
+            429, "too_soon", str(e), headers={"Retry-After": str(e.retry_after)}
         ) from None
     return HttpsStatus(**certs.status())

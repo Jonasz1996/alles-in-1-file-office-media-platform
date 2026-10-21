@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app import access, events, previews
+from app import access, errors, events, previews
 from app.access import Grant, Step
 from app.config import Settings, get_settings
 from app.db import Session
@@ -159,9 +159,8 @@ class NameTaken(HTTPException):
     """409 met code name_taken: opnieuw proberen heeft geen zin."""
 
     def __init__(self, headers: dict[str, str] | None = None) -> None:
-        super().__init__(
-            409, {"message": "Er bestaat al iets met deze naam", "code": "name_taken"}, headers
-        )
+        e = errors.fail(409, "name_taken", "Er bestaat al iets met deze naam", headers=headers)
+        super().__init__(e.status_code, e.detail, e.headers)
 
 
 class Gone(HTTPException):
@@ -169,7 +168,8 @@ class Gone(HTTPException):
     prullenbak, of de deling of link is ingetrokken."""
 
     def __init__(self, headers: dict[str, str] | None = None) -> None:
-        super().__init__(404, "Map niet gevonden", headers)
+        e = errors.fail(404, "folder_not_found", "Map niet gevonden", headers=headers)
+        super().__init__(e.status_code, e.detail, e.headers)
 
 
 def clean_name(name: str) -> str:
@@ -181,7 +181,7 @@ def clean_name(name: str) -> str:
         or CONTROL.search(name)
         or len(name) > MAX_NAME
     ):
-        raise HTTPException(422, "Ongeldige naam")
+        raise errors.fail(422, "invalid_name", "Ongeldige naam")
     return name
 
 
@@ -192,8 +192,8 @@ def share_root(found: "Access") -> HTTPException:
     """403 share_root: de vrager ziet dit via een deling op de node zelf."""
     grant = found.grant
     if grant is not None and grant.root_id == found.node.id and found.node.kind == "dir":
-        return HTTPException(403, SHARE_ROOT)
-    return HTTPException(403, SHARED_ITSELF)
+        return errors.fail(403, **SHARE_ROOT)
+    return errors.fail(403, **SHARED_ITSELF)
 
 
 @dataclass
@@ -230,18 +230,18 @@ async def get_access(
     wie het via een deling ziet niet."""
     node = await session.get(Node, node_id)
     if node is None:
-        raise HTTPException(404, "Niet gevonden")
+        raise errors.fail(404, "not_found", "Niet gevonden")
     if node.owner_id == user.id:
         if user.role == "guest":
-            raise HTTPException(403, GUEST)
+            raise errors.fail(403, **GUEST)
         return Access(node, "owner")
     grant = (await access.resolve(session, user.id, [node.id])).get(node.id)
     if grant is None:
-        raise HTTPException(404, "Niet gevonden")
+        raise errors.fail(404, "not_found", "Niet gevonden")
     if need == "owner":
-        raise HTTPException(403, OWNER_ONLY)
+        raise errors.fail(403, **OWNER_ONLY)
     if need == "write" and grant.permission != "write":
-        raise HTTPException(403, READ_ONLY)
+        raise errors.fail(403, **READ_ONLY)
     return Access(node, grant.permission, grant)
 
 
@@ -256,7 +256,7 @@ async def get_dir(
 ) -> Access:
     found = await get_access(session, user, node_id, need)
     if found.node.kind != "dir" or found.node.deleted_at is not None:
-        raise HTTPException(404, "Map niet gevonden")
+        raise errors.fail(404, "folder_not_found", "Map niet gevonden")
     return found
 
 
@@ -282,7 +282,7 @@ async def get_live_dir(
     found = await get_dir(session, user, node_id, need)
     # Via een deling is dat al gecontroleerd (de hele keten omhoog)
     if found.owner and await is_trashed(session, found.node):
-        raise HTTPException(404, "Map niet gevonden")
+        raise errors.fail(404, "folder_not_found", "Map niet gevonden")
     return found
 
 
@@ -330,7 +330,7 @@ async def free_name(session: AsyncSession, parent_id: uuid.UUID, name: str) -> s
         candidate = numbered(name, i)
         if await sibling(session, parent_id, candidate) is None:
             return candidate
-    raise HTTPException(409, "Geen vrije naam gevonden")
+    raise errors.fail(409, "no_free_name", "Geen vrije naam gevonden")
 
 
 def tree(start: uuid.UUID | Collection[uuid.UUID], live: bool = False):
@@ -611,7 +611,7 @@ async def new_folder(
     parent = found.node
     name = clean_name(body.name)
     if await sibling(session, parent.id, name):
-        raise HTTPException(409, "Er bestaat al iets met deze naam")
+        raise errors.fail(409, "name_taken", "Er bestaat al iets met deze naam")
     # In een gedeelde map is de nieuwe map van de eigenaar van die map
     folder = Node(parent_id=parent.id, owner_id=parent.owner_id, name=name, kind="dir")
     session.add(folder)
@@ -619,7 +619,7 @@ async def new_folder(
         await session.commit()
     except IntegrityError:
         await session.rollback()  # de map is intussen definitief verwijderd
-        raise HTTPException(404, "Map niet gevonden") from None
+        raise errors.fail(404, "folder_not_found", "Map niet gevonden") from None
     await notify(session, folder, "node.created")
     return await one_out(session, user, folder, found.child(folder))
 
@@ -645,11 +645,13 @@ def no_room(owner: User, actor_id: uuid.UUID | None) -> HTTPException:
     """413: het quotum is op. Doet een ander het (in een gedeelde map of via een uploadlink),
     dan staat erbij wiens ruimte op is."""
     if actor_id == owner.id:
-        return HTTPException(413, "Onvoldoende quotum")
-    return HTTPException(
+        return errors.fail(413, "no_room", "Onvoldoende quotum")
+    return errors.fail(
         413,
+        "no_room_owner",
         f"Er is niet genoeg ruimte meer bij {owner.display_name}; vraag hem of haar om ruimte "
         "te maken",
+        owner=owner.display_name,
     )
 
 
@@ -756,14 +758,15 @@ async def place_file(
     async with user_lock(owner.id) if upload is None else nullcontext(), blobs.lock:
         try:
             if await session.scalar(select(Node.id).where(Node.id == parent.id)) is None:
-                raise HTTPException(404, "Map niet gevonden")  # intussen definitief verwijderd
+                # Intussen definitief verwijderd
+                raise errors.fail(404, "folder_not_found", "Map niet gevonden")
             if guard is not None:
                 await guard(session)
             existing = await sibling(session, parent.id, name)
             if existing and conflict == "fail":
                 raise NameTaken
             if only is not None and (existing is None or existing.id != only):
-                raise HTTPException(409, MOVED)
+                raise errors.fail(409, **MOVED)
             replacing = existing and conflict == "replace" and existing.kind == "file"
             if upload is None and not (replacing and existing.blob_id == sha):
                 # Pas nu weet je wat anderen intussen innamen (de vorige inhoud blijft als
@@ -876,14 +879,16 @@ async def receive_body(
         if limit == 0 and content_length != 0:  # 0 betekent voor receive() onbeperkt
             raise no_room(owner, actor.id)
     if content_length is not None and limit and content_length > limit:
-        raise HTTPException(413, "Bestand is te groot")
+        raise errors.fail(413, "too_large", "Bestand is te groot")
     await session.commit()  # geen databaseverbinding vasthouden terwijl de body binnenkomt
     try:
         return await blobs.receive(request.stream(), limit)
     except TooLarge as e:
-        raise HTTPException(413, "Bestand is te groot of quotum is op") from e
+        raise errors.fail(413, "too_large_or_quota", "Bestand is te groot of quotum is op") from e
     except TimeoutError as e:
-        raise HTTPException(408, "Er kwam te lang niets binnen; probeer het opnieuw") from e
+        raise errors.fail(
+            408, "body_timeout", "Er kwam te lang niets binnen; probeer het opnieuw"
+        ) from e
 
 
 @router.put("/files/{node_id}/content")
@@ -903,9 +908,9 @@ async def replace_content(
     found = await get_access(session, user, node_id, "write")
     node = found.node
     if node.kind != "file":
-        raise HTTPException(422, "Alleen van een bestand kun je de inhoud vervangen")
+        raise errors.fail(422, "not_a_file", "Alleen van een bestand kun je de inhoud vervangen")
     if found.owner and await is_trashed(session, node):
-        raise HTTPException(422, "Zet het bestand eerst terug uit de prullenbak")
+        raise errors.fail(422, "trashed", "Zet het bestand eerst terug uit de prullenbak")
     parent = await session.get(Node, node.parent_id)
     owner = user if found.owner else await session.get(User, node.owner_id)
     tmp, sha, size = await receive_body(
@@ -946,7 +951,7 @@ async def change(
         found = await get_access(session, user, node_id, "write")
         node = found.node
         if node.parent_id is None:
-            raise HTTPException(422, "De hoofdmap kan niet worden gewijzigd")
+            raise errors.fail(422, "root", "De hoofdmap kan niet worden gewijzigd")
         if found.grant is not None and found.grant.direct:
             raise share_root(found)
         name = clean_name(body.name) if body.name else node.name
@@ -955,15 +960,17 @@ async def change(
         if body.parent_id:
             target = (await get_dir(session, user, body.parent_id, "write")).node
             if target.owner_id != node.owner_id:
-                raise HTTPException(422, CROSS_OWNER)
+                raise errors.fail(422, **CROSS_OWNER)
             chain = await ancestors(session, target)
             if any(a.id == node.id for a in chain):
-                raise HTTPException(422, "Een map kan niet in zichzelf worden geplaatst")
+                raise errors.fail(
+                    422, "into_itself", "Een map kan niet in zichzelf worden geplaatst"
+                )
             if any(a.deleted_at is not None for a in chain):
-                raise HTTPException(404, "Map niet gevonden")
+                raise errors.fail(404, "folder_not_found", "Map niet gevonden")
         other = await sibling(session, parent_id, name)
         if other and other.id != node.id:
-            raise HTTPException(409, "Er bestaat al iets met deze naam")
+            raise errors.fail(409, "name_taken", "Er bestaat al iets met deze naam")
         node.name, node.parent_id = name, parent_id
         await session.commit()
     await notify(session, node, "node.changed", old_parent_id)
@@ -989,14 +996,16 @@ async def copy(
         source = await get_access(session, user, node_id, "read")
         node = source.node
         if source.owner and await is_trashed(session, node):
-            raise HTTPException(422, "Wat in de prullenbak ligt, kan niet worden gekopieerd")
+            raise errors.fail(
+                422, "trashed", "Wat in de prullenbak ligt, kan niet worden gekopieerd"
+            )
         destination = await get_dir(session, user, body.parent_id, "write")
         target = destination.node
         chain = await ancestors(session, target)
         if any(a.id == node.id for a in chain):
-            raise HTTPException(422, "Een map kan niet in zichzelf worden gekopieerd")
+            raise errors.fail(422, "into_itself", "Een map kan niet in zichzelf worden gekopieerd")
         if any(a.deleted_at is not None for a in chain):
-            raise HTTPException(404, "Map niet gevonden")
+            raise errors.fail(404, "folder_not_found", "Map niet gevonden")
         owner = user if destination.owner else await session.get(User, target.owner_id)
         name = clean_name(body.name) if body.name else node.name
         originals = await subtree_rows(
@@ -1009,8 +1018,11 @@ async def copy(
         )
         if len(originals) > MAX_COPY:
             most = f"{MAX_COPY:,}".replace(",", ".")
-            raise HTTPException(
-                422, f"Te veel om in één keer te kopiëren (meer dan {most} mappen en bestanden)"
+            raise errors.fail(
+                422,
+                "too_many",
+                f"Te veel om in één keer te kopiëren (meer dan {most} mappen en bestanden)",
+                max=MAX_COPY,
             )
         room = await room_left(session, owner)
         if room is not None and sum(n.size for n in originals if n.kind == "file") > room:
@@ -1056,7 +1068,7 @@ async def trash(node_id: uuid.UUID, user: CurrentUser, session: Session) -> None
     found = await get_access(session, user, node_id, "write")
     node = found.node
     if node.parent_id is None:
-        raise HTTPException(422, "De hoofdmap kan niet worden verwijderd")
+        raise errors.fail(422, "root", "De hoofdmap kan niet worden verwijderd")
     if found.grant is not None and found.grant.direct:
         raise share_root(found)
     node.deleted_at = datetime.now(UTC)
@@ -1083,7 +1095,7 @@ async def restore(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs
     async with blobs.lock:  # niet tegelijk met definitief verwijderen, zie change()
         node = await get_node(session, user, node_id, "owner")
         if node.deleted_at is None:
-            raise HTTPException(422, "Staat niet in de prullenbak")
+            raise errors.fail(422, "not_trashed", "Staat niet in de prullenbak")
         parent = await session.get(Node, node.parent_id)
         if parent is None or await is_trashed(session, parent):
             node.parent_id = user.root_id
@@ -1103,7 +1115,7 @@ async def purge(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs: 
         # Pas onder het slot lezen: intussen kan het al weg of teruggezet zijn
         node = await get_node(session, user, node_id, "owner")
         if node.deleted_at is None:
-            raise HTTPException(422, "Verplaats het eerst naar de prullenbak")
+            raise errors.fail(422, "not_trashed", "Verplaats het eerst naar de prullenbak")
         rows = await descendants(session, node)
         ids = [n.id for n in rows]
         # Wie het via een deling zag, nu het nog kan: daarna zijn node en delingen weg
@@ -1182,14 +1194,14 @@ async def get_file(
 ) -> Node:
     node = await get_node(session, user, node_id, need)
     if node.kind != "file":
-        raise HTTPException(422, "Alleen bestanden hebben versies")
+        raise errors.fail(422, "not_a_file", "Alleen bestanden hebben versies")
     return node
 
 
 async def get_version(session: AsyncSession, node: Node, version_id: uuid.UUID) -> Version:
     version = await session.get(Version, version_id, populate_existing=True)
     if version is None or version.node_id != node.id:
-        raise HTTPException(404, "Versie niet gevonden")
+        raise errors.fail(404, "version_not_found", "Versie niet gevonden")
     return version
 
 
@@ -1228,7 +1240,7 @@ async def restore_version(
     async with blobs.lock:
         node = await get_file(session, user, node_id, "write")
         if await is_trashed(session, node):
-            raise HTTPException(422, "Zet het bestand eerst terug uit de prullenbak")
+            raise errors.fail(422, "trashed", "Zet het bestand eerst terug uit de prullenbak")
         version = await get_version(session, node, version_id)
         changed = version.blob_id != node.blob_id
         if changed:
@@ -1291,7 +1303,7 @@ async def download_link(
     De toegang wordt bij het downloaden opnieuw gecontroleerd."""
     node = await get_node(session, user, node_id, "read")
     if node.kind != "file":
-        raise HTTPException(422, "Alleen bestanden kunnen worden gedownload")
+        raise errors.fail(422, "not_a_file", "Alleen bestanden kunnen worden gedownload")
     if version is not None:
         await get_version(session, node, version)
     token = download_token(settings, user.id, node.id, version)
@@ -1312,7 +1324,7 @@ async def send_file(
     version: Version | None = None,
 ) -> Response:
     if node.kind != "file" or not node.blob_id:
-        raise HTTPException(422, "Geen bestand")
+        raise errors.fail(422, "not_a_file", "Geen bestand")
     sha = version.blob_id if version is not None else node.blob_id
     etag = f'"{sha}"'
     if if_none_match and etag in [t.strip() for t in if_none_match.split(",")]:
@@ -1347,10 +1359,10 @@ async def download(
 ) -> Response:
     user_id, token_node, version_id = read_download_token(settings, token)
     if token_node != node_id:
-        raise HTTPException(403, "Token hoort bij een ander bestand")
+        raise errors.fail(403, "wrong_token", "Token hoort bij een ander bestand")
     user = await session.get(User, user_id)
     if user is None:
-        raise HTTPException(404, "Niet gevonden")
+        raise errors.fail(404, "not_found", "Niet gevonden")
     # Opnieuw: een deling die intussen is ingetrokken, stopt ook een link die al uit was
     node = await get_node(session, user, node_id, "read")
     version = await get_version(session, node, version_id) if version_id else None

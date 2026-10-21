@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.db import get_engine
 from app.models import Share, Upload
 from app.routers import files, shares, uploads
+from tests.factories import message_of
 from tests.test_copy import meet_up
 from tests.test_files import blob_files, check_refs, mkdir, put, root
 from tests.test_shares import group_of, person, share_with
@@ -448,7 +449,7 @@ async def test_delen_met_een_groep_die_net_weggaat(client, shared, monkeypatch):
         assert (await client.delete(f"/api/v1/groups/{group}", headers=jonas)).status_code == 204
         go.set()
         r = await creating
-    assert r.status_code == 404 and r.json()["detail"] == "Groep niet gevonden"
+    assert r.status_code == 404 and message_of(r) == "Groep niet gevonden"
 
 
 @pytest.mark.anyio

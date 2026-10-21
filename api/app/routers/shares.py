@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
-from app import access, events
+from app import access, errors, events
 from app.db import Session
 from app.models import Group, GroupMember, Node, Share, User
 from app.routers import uploads
@@ -123,12 +123,13 @@ class Directory(BaseModel):
 
 
 def error(status: int, message: str, code: str) -> HTTPException:
-    return HTTPException(status, {"message": message, "code": code})
+    """Oude vorm (groups.py gebruikte hem); nieuwe code roept errors.fail zelf aan."""
+    return errors.fail(status, code, message)
 
 
 def no_guests(user: User) -> None:
     if user.role == "guest":
-        raise HTTPException(403, GUEST)
+        raise errors.fail(403, **GUEST)
 
 
 def future(value: datetime | None) -> datetime | None:
@@ -137,14 +138,16 @@ def future(value: datetime | None) -> datetime | None:
         return None
     value = to_utc(value)
     if value <= datetime.now(UTC):
-        raise error(422, "De vervaldatum ligt in het verleden", "expires_past")
+        raise errors.fail(422, "expires_past", "De vervaldatum ligt in het verleden")
     return value
 
 
 def clean_label(value: str | None) -> str | None:
     value = (value or "").strip()
     if len(value) > MAX_LABEL:
-        raise error(422, f"Een label mag hooguit {MAX_LABEL} tekens hebben", "label_too_long")
+        raise errors.fail(
+            422, "label_too_long", f"Een label mag hooguit {MAX_LABEL} tekens hebben", max=MAX_LABEL
+        )
     return value or None
 
 
@@ -153,10 +156,11 @@ async def password_hash_of(password: str | None) -> str | None:
     if not password:
         return None
     if len(password) < MIN_LINK_PASSWORD:
-        raise error(
+        raise errors.fail(
             422,
-            f"Een wachtwoord voor een link heeft minstens {MIN_LINK_PASSWORD} tekens",
             "password_too_short",
+            f"Een wachtwoord voor een link heeft minstens {MIN_LINK_PASSWORD} tekens",
+            min=MIN_LINK_PASSWORD,
         )
     return await new_password_hash(password)
 
@@ -167,9 +171,9 @@ async def shareable(session: AsyncSession, user: User, node_id: uuid.UUID) -> No
     no_guests(user)
     node = await get_node(session, user, node_id, "owner")
     if node.parent_id is None:
-        raise error(422, "Je hoofdmap kun je niet delen; deel een map erin", "root")
+        raise errors.fail(422, "root", "Je hoofdmap kun je niet delen; deel een map erin")
     if await is_trashed(session, node):
-        raise error(422, "Wat in de prullenbak ligt, kun je niet delen", "trashed")
+        raise errors.fail(422, "trashed", "Wat in de prullenbak ligt, kun je niet delen")
     return node
 
 
@@ -245,7 +249,7 @@ def announce(user_ids: set[uuid.UUID], type: str, share_id: uuid.UUID, node_id: 
 async def own_share(session: AsyncSession, user: User, share_id: uuid.UUID) -> Share:
     share = await session.get(Share, share_id, populate_existing=True)
     if share is None or share.owner_id != user.id:
-        raise HTTPException(404, "Deling niet gevonden")
+        raise errors.fail(404, "share_not_found", "Deling niet gevonden")
     return share
 
 
@@ -260,16 +264,16 @@ async def create_share(
     expires_at = future(body.expires_at)
     if body.user_id is not None:
         if body.user_id == user.id:
-            raise error(422, "Met jezelf delen hoeft niet: het is al van jou", "self")
+            raise errors.fail(422, "self", "Met jezelf delen hoeft niet: het is al van jou")
         if await session.get(User, body.user_id) is None:
-            raise HTTPException(404, "Gebruiker niet gevonden")
+            raise errors.fail(404, "user_not_found", "Gebruiker niet gevonden")
         taken = Share.grantee_id == body.user_id
     else:
         if await session.get(Group, body.group_id) is None:
-            raise HTTPException(404, "Groep niet gevonden")
+            raise errors.fail(404, "group_not_found", "Groep niet gevonden")
         taken = Share.group_id == body.group_id
     if await session.scalar(select(Share.id).where(Share.node_id == node.id, taken)):
-        raise error(409, "Al gedeeld met deze persoon of groep", "already_shared")
+        raise errors.fail(409, "already_shared", "Al gedeeld met deze persoon of groep")
     share = Share(
         node_id=node.id,
         owner_id=user.id,
@@ -286,12 +290,12 @@ async def create_share(
         # Intussen definitief weg: de map, de gebruiker of de groep; anders was iemand anders
         # net eerder met dezelfde deling
         if await session.get(Node, node_id) is None:
-            raise HTTPException(404, "Niet gevonden") from None
+            raise errors.fail(404, "not_found", "Niet gevonden") from None
         if body.user_id is not None and await session.get(User, body.user_id) is None:
-            raise HTTPException(404, "Gebruiker niet gevonden") from None
+            raise errors.fail(404, "user_not_found", "Gebruiker niet gevonden") from None
         if body.group_id is not None and await session.get(Group, body.group_id) is None:
-            raise HTTPException(404, "Groep niet gevonden") from None
-        raise error(409, "Al gedeeld met deze persoon of groep", "already_shared") from None
+            raise errors.fail(404, "group_not_found", "Groep niet gevonden") from None
+        raise errors.fail(409, "already_shared", "Al gedeeld met deze persoon of groep") from None
     announce(await grantees(session, share), "share.created", share.id, share.node_id)
     [out] = await shares_out(session, [share])
     return out
@@ -306,7 +310,7 @@ async def create_link(
     hebben. Het adres is /s/<token>."""
     node = await shareable(session, user, node_id)
     if body.permission == "upload" and node.kind != "dir":
-        raise error(422, "Een uploadlink kan alleen voor een map", "upload_folder_only")
+        raise errors.fail(422, "upload_folder_only", "Een uploadlink kan alleen voor een map")
     expires_at = future(body.expires_at)
     label = clean_label(body.label)
     password_hash = await password_hash_of(body.password)
@@ -324,7 +328,7 @@ async def create_link(
         await session.commit()
     except IntegrityError:
         await session.rollback()  # intussen definitief verwijderd
-        raise HTTPException(404, "Niet gevonden") from None
+        raise errors.fail(404, "not_found", "Niet gevonden") from None
     [out] = await shares_out(session, [share])
     return out
 
@@ -356,13 +360,15 @@ async def change_share(
     if body.permission is not None:
         allowed = ("read", "upload") if is_link else ("read", "write")
         if body.permission not in allowed:
-            raise error(422, "Dit recht past niet bij deze deling", "bad_permission")
+            raise errors.fail(422, "bad_permission", "Dit recht past niet bij deze deling")
         if body.permission == "upload":
             node = await session.get(Node, share.node_id)
             if node is None or node.kind != "dir":
-                raise error(422, "Een uploadlink kan alleen voor een map", "upload_folder_only")
+                raise errors.fail(
+                    422, "upload_folder_only", "Een uploadlink kan alleen voor een map"
+                )
     if not is_link and ({"password", "label"} & given):
-        raise error(422, "Een wachtwoord of label hoort alleen bij een link", "link_only")
+        raise errors.fail(422, "link_only", "Een wachtwoord of label hoort alleen bij een link")
     expires_at = future(body.expires_at) if "expires_at" in given else share.expires_at
     password_hash = share.password_hash
     if "password" in given:
@@ -380,7 +386,7 @@ async def change_share(
         await session.commit()
     except StaleDataError:
         await session.rollback()  # net ingetrokken (bijv. in een ander tabblad)
-        raise HTTPException(404, "Deling niet gevonden") from None
+        raise errors.fail(404, "share_not_found", "Deling niet gevonden") from None
     if is_link and before == "upload" and share.permission != "upload":
         await uploads.release_link(session, share.owner_id, share.id)
     if not is_link:

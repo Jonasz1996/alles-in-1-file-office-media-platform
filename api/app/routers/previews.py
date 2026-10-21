@@ -5,12 +5,12 @@ from datetime import datetime
 from typing import Annotated, Any
 
 import anyio
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app import access, jobs, previews
+from app import access, errors, jobs, previews
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Blob, Job, Node
@@ -80,12 +80,12 @@ async def preview_image(
     """De preview zelf, zonder inloggen maar alleen met een geldige handtekening (zo werkt
     een <img>). 403 bij een verkeerde of verlopen handtekening, 404 als hij er niet is."""
     if not previews.SHA.fullmatch(sha) or size not in previews.SIZES:
-        raise HTTPException(404, "Niet gevonden")
+        raise errors.fail(404, "not_found", "Niet gevonden")
     if not previews.valid(previews.url_key(settings), sha, size, exp, sig):
-        raise HTTPException(403, "Deze link is ongeldig of verlopen")
+        raise errors.fail(403, "link_invalid", "Deze link is ongeldig of verlopen")
     path = previews.directory(BlobStore(settings.blob_dir), sha) / f"{size}.webp"
     if not await anyio.Path(path).is_file():
-        raise HTTPException(404, "Geen preview")
+        raise errors.fail(404, "no_preview", "Geen preview")
     return FileResponse(path, media_type="image/webp", headers={"Cache-Control": CACHE})
 
 
@@ -131,6 +131,6 @@ async def retry_job(job_id: uuid.UUID, _: AdminUser, session: Session) -> None:
         exists = await session.get(Job, job_id)
         await session.commit()
         if exists is None:
-            raise HTTPException(404, "Taak niet gevonden")
-        raise HTTPException(409, {"message": "Deze taak is niet mislukt", "code": "not_failed"})
+            raise errors.fail(404, "job_not_found", "Taak niet gevonden")
+        raise errors.fail(409, "not_failed", "Deze taak is niet mislukt")
     await session.commit()

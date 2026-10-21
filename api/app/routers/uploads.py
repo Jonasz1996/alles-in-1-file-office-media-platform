@@ -30,13 +30,13 @@ from pathlib import Path
 from typing import Annotated
 
 import anyio
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import ClientDisconnect
 
-from app import access
+from app import access, errors
 from app.config import Settings, get_settings
 from app.db import Session, get_engine
 from app.models import Node, Share, Upload, User
@@ -108,8 +108,11 @@ def _forget(upload_id: uuid.UUID) -> None:
 
 def tus_version(tus_resumable: Annotated[str | None, Header()] = None) -> None:
     if tus_resumable != TUS_VERSION:
-        raise HTTPException(
-            412, "Alleen tus 1.0.0 wordt ondersteund", headers={"Tus-Version": TUS_VERSION}
+        raise errors.fail(
+            412,
+            "tus_version",
+            "Alleen tus 1.0.0 wordt ondersteund",
+            headers={"Tus-Version": TUS_VERSION},
         )
 
 
@@ -142,7 +145,9 @@ def parse_metadata(header: str | None) -> dict[str, str]:
         try:
             result[key] = base64.b64decode(value.strip(), validate=True).decode()
         except (binascii.Error, UnicodeDecodeError) as e:
-            raise HTTPException(400, f"Ongeldige Upload-Metadata voor '{key}'") from e
+            raise errors.fail(
+                400, "bad_metadata", f"Ongeldige Upload-Metadata voor '{key}'", key=key
+            ) from e
     return result
 
 
@@ -152,12 +157,12 @@ async def get_upload(session: AsyncSession, who: Uploader, upload_id: uuid.UUID)
     # Altijd vers uit de database: na het wachten op een slot kan hij af of weg zijn
     upload = await session.get(Upload, upload_id, populate_existing=True)
     if upload is None or not who.may(upload):
-        raise HTTPException(404, "Upload niet gevonden", headers=_headers())
+        raise errors.fail(404, "upload_not_found", "Upload niet gevonden", headers=_headers())
     if who.user is not None and upload.owner_id != who.user.id and upload.node_id is None:
         folder = upload.parent_id
         grant = (await access.resolve(session, who.user.id, [folder])).get(folder)
         if grant is None or grant.permission != "write":
-            raise HTTPException(404, "Upload niet gevonden", headers=_headers())
+            raise errors.fail(404, "upload_not_found", "Upload niet gevonden", headers=_headers())
     return upload
 
 
@@ -176,7 +181,9 @@ def _offset(settings: Settings, upload: Upload) -> int:
     try:
         return upload_path(settings, upload.id).stat().st_size
     except FileNotFoundError as e:
-        raise HTTPException(404, "Upload niet gevonden", headers=_headers()) from e
+        raise errors.fail(
+            404, "upload_not_found", "Upload niet gevonden", headers=_headers()
+        ) from e
 
 
 def capabilities(settings: Settings) -> Response:
@@ -198,9 +205,9 @@ async def options(settings: Annotated[Settings, Depends(get_settings)]) -> Respo
 
 def check_length(settings: Settings, upload_length: int) -> None:
     if upload_length < 0:
-        raise HTTPException(400, "Upload-Length mag niet negatief zijn")
+        raise errors.fail(400, "bad_length", "Upload-Length mag niet negatief zijn")
     if settings.max_upload_bytes and upload_length > settings.max_upload_bytes:
-        raise HTTPException(413, "Bestand is te groot")
+        raise errors.fail(413, "too_large", "Bestand is te groot")
 
 
 async def start(
@@ -264,13 +271,13 @@ async def create(
     try:
         parent_id = uuid.UUID(meta.get("parent", ""))
     except ValueError as e:
-        raise HTTPException(400, "Upload-Metadata mist een geldige 'parent'") from e
+        raise errors.fail(400, "bad_parent", "Upload-Metadata mist een geldige 'parent'") from e
     found = await get_dir(session, user, parent_id, "write")
     parent = found.node
     owner = user if found.owner else await session.get(User, parent.owner_id)
     conflict = meta.get("conflict", "rename")
     if conflict not in CONFLICTS:
-        raise HTTPException(400, "conflict moet rename, replace of fail zijn")
+        raise errors.fail(400, "bad_conflict", "conflict moet rename, replace of fail zijn")
     check_length(settings, upload_length)
     if conflict == "fail" and await sibling(session, parent.id, name):
         raise NameTaken(_headers())  # nu al, niet pas als alle bytes binnen zijn
@@ -365,11 +372,13 @@ async def receive(
 ) -> Response:
     """PATCH: een stuk erbij, en afronden zodra alles binnen is."""
     if (content_type or "").split(";")[0].strip() != "application/offset+octet-stream":
-        raise HTTPException(415, "Content-Type moet application/offset+octet-stream zijn")
+        raise errors.fail(
+            415, "bad_content_type", "Content-Type moet application/offset+octet-stream zijn"
+        )
     upload = await get_upload(session, who, upload_id)
     lock = _lock(upload.id)
     if lock.locked():
-        raise HTTPException(409, BUSY, headers=_headers())
+        raise errors.fail(409, **BUSY, headers=_headers())
     async with lock:
         upload = await get_upload(session, who, upload_id)
         offset = _offset(settings, upload)
@@ -380,8 +389,9 @@ async def receive(
                 headers["Platform-Node-Id"] = str(upload.node_id)
             return Response(status_code=204, headers=headers)
         if upload_offset != offset:
-            raise HTTPException(
+            raise errors.fail(
                 409,
+                "offset_mismatch",
                 "Upload-Offset klopt niet",
                 headers=_headers(upload, **{"Upload-Offset": str(offset)}),
             )
@@ -420,10 +430,11 @@ async def receive(
             # Intussen weg: de map is definitief verwijderd en de upload met hem (of de link
             # of deling is ingetrokken)
             await _drop(session, settings, upload.id)
-            raise HTTPException(404, "Upload niet gevonden", headers=_headers())
+            raise errors.fail(404, "upload_not_found", "Upload niet gevonden", headers=_headers())
         if too_much:
-            raise HTTPException(
+            raise errors.fail(
                 413,
+                "too_many_bytes",
                 "Meer bytes dan Upload-Length",
                 headers=_headers(upload, **{"Upload-Offset": str(offset)}),
             )
@@ -506,7 +517,8 @@ async def finish(
     if room is not None and upload.size > room:
         await _drop(session, settings, upload_id)
         refused = no_room(owner, who.user.id if who.user else None)
-        raise HTTPException(413, refused.detail, headers=_headers())
+        refused.headers = _headers()
+        raise refused
     conflict = upload.conflict
     parent = await session.get(Node, upload.parent_id)
     guard = None
@@ -551,7 +563,9 @@ async def finish(
         if await session.scalar(select(Upload.id).where(Upload.id == upload_id)) is None:
             # Intussen weg: de map is definitief verwijderd en de upload met hem
             await _drop(session, settings, upload_id)
-            raise HTTPException(404, "Upload niet gevonden", headers=_headers()) from None
+            raise errors.fail(
+                404, "upload_not_found", "Upload niet gevonden", headers=_headers()
+            ) from None
         raise
     _hashers.pop(upload_id, None)
     return node

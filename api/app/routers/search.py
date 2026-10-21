@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app import access, events
+from app import access, errors, events
 from app.db import Session
 from app.mime import ARCHIVE_TYPES, DOCUMENT_TYPES
 from app.models import Node, NodeTag, Tag, User
@@ -92,7 +92,7 @@ def of_category(category: str):
 async def own_tag(session: AsyncSession, user: User, tag_id: uuid.UUID) -> Tag:
     tag = await session.get(Tag, tag_id, populate_existing=True)
     if tag is None or tag.owner_id != user.id:
-        raise HTTPException(404, "Tag niet gevonden")
+        raise errors.fail(404, "tag_not_found", "Tag niet gevonden")
     return tag
 
 
@@ -145,7 +145,7 @@ async def search(
     if in_ is not None:
         found = await get_dir(session, user, in_, "read")
         if found.owner and await is_trashed(session, found.node):
-            raise HTTPException(404, "Map niet gevonden")
+            raise errors.fail(404, "folder_not_found", "Map niet gevonden")
         anchors, skip = [found.node.id], [found.node.id]
     else:
         anchors, skip = await search_roots(session, user), [user.root_id]
@@ -239,7 +239,8 @@ class TagSet(BaseModel):
 
 class TagNameTaken(HTTPException):
     def __init__(self) -> None:
-        super().__init__(409, {"message": "Je hebt al een tag met deze naam", "code": "name_taken"})
+        e = errors.fail(409, "name_taken", "Je hebt al een tag met deze naam")
+        super().__init__(e.status_code, e.detail, e.headers)
 
 
 async def check_free(session: AsyncSession, user: User, name: str, skip: uuid.UUID | None = None):
@@ -291,7 +292,9 @@ async def create_tag(body: NewTag, user: CurrentUser, session: Session) -> TagOu
             select(func.count()).select_from(Tag).where(Tag.owner_id == user.id)
         )
         if (count or 0) >= MAX_TAGS:
-            raise HTTPException(422, f"Je kunt hooguit {MAX_TAGS} tags hebben")
+            raise errors.fail(
+                422, "too_many_tags", f"Je kunt hooguit {MAX_TAGS} tags hebben", max=MAX_TAGS
+            )
         await check_free(session, user, body.name)
         tag = Tag(owner_id=user.id, name=body.name, color=body.color)
         session.add(tag)
@@ -358,7 +361,7 @@ async def set_tags(
             else []
         )
         if len(tags) != len(wanted):
-            raise HTTPException(404, "Tag niet gevonden")
+            raise errors.fail(404, "tag_not_found", "Tag niet gevonden")
         mine = select(Tag.id).where(Tag.owner_id == user.id)
         await session.execute(
             delete(NodeTag).where(NodeTag.node_id == node.id, NodeTag.tag_id.in_(mine))
@@ -369,7 +372,7 @@ async def set_tags(
         except IntegrityError:
             # Het bestand is intussen definitief verwijderd
             await session.rollback()
-            raise HTTPException(404, "Niet gevonden") from None
+            raise errors.fail(404, "not_found", "Niet gevonden") from None
     # Alleen naar wie het deed: niemand anders ziet deze tags
     hidden = found.grant is not None and found.grant.root_id == node.id
     parent_id = str(node.parent_id) if node.parent_id and not hidden else None

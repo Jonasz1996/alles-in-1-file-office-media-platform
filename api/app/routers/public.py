@@ -19,12 +19,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app import access, previews
+from app import access, errors, previews
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Blob, Node, Share, User
@@ -132,7 +132,7 @@ async def live_node(session: Session, share: Share) -> Node:
     """De gedeelde map of het bestand, als het er nog is en niet in de prullenbak ligt."""
     node = await session.get(Node, share.node_id)
     if node is None or await access.trashed(session, node.id):
-        raise HTTPException(404, LINK_NOT_FOUND)
+        raise errors.fail(404, **LINK_NOT_FOUND)
     return node
 
 
@@ -144,15 +144,15 @@ async def current_link(
 ) -> Link:
     raw = creds.credentials if creds is not None else key
     if not raw:
-        raise HTTPException(401, KEY_EXPIRED)
+        raise errors.fail(401, **KEY_EXPIRED)
     share_id, fingerprint = read_link_key(settings, raw)
     share = await session.get(Share, share_id, populate_existing=True)
     if share is None or share.token is None:
-        raise HTTPException(404, LINK_NOT_FOUND)
+        raise errors.fail(404, **LINK_NOT_FOUND)
     if expired(share):
-        raise HTTPException(410, LINK_EXPIRED)
+        raise errors.fail(410, **LINK_EXPIRED)
     if fingerprint != password_print(share.password_hash):
-        raise HTTPException(401, KEY_EXPIRED)  # wachtwoord veranderd: opnieuw openen
+        raise errors.fail(401, **KEY_EXPIRED)  # wachtwoord veranderd: opnieuw openen
     return Link(share, await live_node(session, share))
 
 
@@ -161,12 +161,12 @@ CurrentLink = Annotated[Link, Depends(current_link)]
 
 def readable(link: Link) -> None:
     if link.share.permission != "read":
-        raise HTTPException(403, UPLOAD_ONLY)
+        raise errors.fail(403, **UPLOAD_ONLY)
 
 
 def uploadable(link: Link) -> None:
     if link.share.permission != "upload" or link.node.kind != "dir":
-        raise HTTPException(403, READ_ONLY)
+        raise errors.fail(403, **READ_ONLY)
 
 
 async def inside(session: Session, link: Link, node_ids: list[uuid.UUID]) -> dict[uuid.UUID, list]:
@@ -211,22 +211,22 @@ async def open_link(
     open_limiter.check(ip)
     share = await session.scalar(select(Share).where(Share.token == body.token))
     if share is None or not body.token:
-        raise HTTPException(404, LINK_NOT_FOUND)
+        raise errors.fail(404, **LINK_NOT_FOUND)
     node = await live_node(session, share)
     if expired(share):
-        raise HTTPException(410, LINK_EXPIRED)
+        raise errors.fail(410, **LINK_EXPIRED)
     if share.password_hash is not None:
         # Eerst de blokkade: daarna wordt er voor deze link niets meer geprobeerd
         password_limiter.refuse(str(share.id))
         if not body.password:
-            raise HTTPException(401, PASSWORD_REQUIRED)
+            raise errors.fail(401, **PASSWORD_REQUIRED)
         await session.commit()  # niet met een databaseverbinding op het slot wachten
         async with _password_locks.setdefault(share.id, asyncio.Lock()):
             password_limiter.refuse(str(share.id))  # intussen kan de limiet bereikt zijn
             if not await check_password(share.password_hash, body.password):
                 password_limiter.add(str(share.id))
                 log.warning("Fout wachtwoord voor link %s vanaf %s", share.id, ip)
-                raise HTTPException(401, WRONG_PASSWORD)
+                raise errors.fail(401, **WRONG_PASSWORD)
     owner = await session.get(User, share.owner_id)
     key, expires_in = link_key(settings, share.id, share.password_hash, share.expires_at)
     return Opened(
@@ -250,15 +250,15 @@ async def children(
     """Wat er in een map binnen de gedeelde map staat (standaard de gedeelde map zelf)."""
     readable(link)
     if link.node.kind != "dir":
-        raise HTTPException(422, {"message": "Deze link is voor één bestand", "code": "file"})
+        raise errors.fail(422, "file", "Deze link is voor één bestand")
     target = folder or link.node.id
     chain = (await inside(session, link, [target])).get(target)
     if chain is None:
-        raise HTTPException(404, NOT_FOUND)
+        raise errors.fail(404, **NOT_FOUND)
     nodes = {n.id: n for n in (await session.scalars(select(Node).where(Node.id.in_(chain))))}
     current = nodes.get(target)
     if current is None or current.kind != "dir":
-        raise HTTPException(404, NOT_FOUND)
+        raise errors.fail(404, **NOT_FOUND)
     rows = (
         await session.scalars(
             select(Node)
@@ -286,10 +286,10 @@ async def download(
     ETag; geüploade HTML en SVG in een sandbox, zoals elke download."""
     readable(link)
     if node_id not in await inside(session, link, [node_id]):
-        raise HTTPException(404, NOT_FOUND)
+        raise errors.fail(404, **NOT_FOUND)
     node = await session.get(Node, node_id)
     if node is None or node.kind != "file":
-        raise HTTPException(404, NOT_FOUND)
+        raise errors.fail(404, **NOT_FOUND)
     return await send_file(node, settings, if_none_match, inline)
 
 
@@ -357,7 +357,7 @@ async def tus_create(
     uploads.check_length(settings, upload_length)
     owner = await session.get(User, link.share.owner_id)
     if owner is None:
-        raise HTTPException(404, LINK_NOT_FOUND)
+        raise errors.fail(404, **LINK_NOT_FOUND)
     try:
         upload = await uploads.start(
             session,
@@ -373,7 +373,7 @@ async def tus_create(
         )
     except Gone:
         # Terwijl dit wachtte, is de link weggehaald of verlopen, of de map weg
-        raise HTTPException(404, LINK_NOT_FOUND, headers=uploads._headers()) from None
+        raise errors.fail(404, **LINK_NOT_FOUND, headers=uploads._headers()) from None
     headers = uploads._headers(upload, Location=f"/api/v1/public/tus/{upload.id}")
     if upload_length == 0:
         await uploads.finish(session, settings, blobs, Uploader(link=link.share), upload)

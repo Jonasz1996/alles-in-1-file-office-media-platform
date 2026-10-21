@@ -18,6 +18,7 @@ from app.models import User
 from app.routers import auth
 from app.security import SecurityPolicy, login_limiter
 from tests.conftest import ADMIN
+from tests.factories import message_of
 
 LOGIN = {"email": ADMIN["email"], "password": ADMIN["password"]}
 AN = {"email": "an@example.nl", "display_name": "An", "password": "lang-genoeg-456"}
@@ -134,7 +135,7 @@ async def test_2fa_aanzetten_vraagt_wachtwoord_en_code(client, admin, settings):
     ):
         r = await client.post("/api/v1/auth/2fa/enable", json=body, headers=headers)
         assert r.status_code == 400, i
-        assert r.json()["detail"] == "Wachtwoord of code klopt niet"
+        assert message_of(r) == "Wachtwoord of code klopt niet"
     assert not (await client.get("/api/v1/auth/me", headers=headers)).json()["totp_enabled"]
     ok = {"code": code, "password": ADMIN["password"]}
     r = await client.post("/api/v1/auth/2fa/enable", json=ok, headers=headers)
@@ -160,12 +161,12 @@ async def test_2fa_uitzetten_en_nieuwe_herstelcodes(client, admin):
     bad = {"password": ADMIN["password"], "code": recovery[2]}
     r = await client.post("/api/v1/auth/2fa/disable", json=bad, headers=headers)
     assert r.status_code == 400
-    assert r.json()["detail"] == "Wachtwoord of code klopt niet"
+    assert message_of(r) == "Wachtwoord of code klopt niet"
     # Een fout wachtwoord geeft dezelfde melding: niet te zien wat er fout was
     bad = {"password": "fout-wachtwoord", "code": nieuw[0]}
     r = await client.post("/api/v1/auth/2fa/disable", json=bad, headers=headers)
     assert r.status_code == 400
-    assert r.json()["detail"] == "Wachtwoord of code klopt niet"
+    assert message_of(r) == "Wachtwoord of code klopt niet"
     ok = {"password": ADMIN["password"], "code": nieuw[0]}
     assert (
         await client.post("/api/v1/auth/2fa/disable", json=ok, headers=headers)
@@ -217,10 +218,8 @@ async def test_na_5_foute_codes_geblokkeerd(client, admin, settings):
     good = totp.code_at(secret, totp.current_step() + 1)
     r = await login(client, code=good)
     assert r.status_code == 429
-    assert r.json()["detail"] == {
-        "message": "Te veel foute codes. Probeer het over 1 minuut opnieuw.",
-        "code": "totp_locked",
-    }
+    assert message_of(r) == "Te veel foute codes. Probeer het over 1 minuut opnieuw."
+    assert r.json()["detail"]["code"] == "totp_locked"
     assert 55 <= int(r.headers["retry-after"]) <= 60
     assert (await client.get("/api/v1/auth/me", headers=headers)).json()["totp_locked_until"]
     # Met alleen het wachtwoord hoor je het al vóór het intypen van een code; met een fout
@@ -229,7 +228,7 @@ async def test_na_5_foute_codes_geblokkeerd(client, admin, settings):
     assert r.status_code == 429 and r.json()["detail"]["code"] == "totp_locked"
     assert 55 <= int(r.headers["retry-after"]) <= 60
     r = await login(client, {**LOGIN, "password": "fout-wachtwoord"})
-    assert r.status_code == 401 and r.json()["detail"] == "E-mailadres of wachtwoord klopt niet"
+    assert r.status_code == 401 and message_of(r) == "E-mailadres of wachtwoord klopt niet"
     assert (await user_row(settings)).totp_failures == 5
 
     # Na de wachttijd weer een fout: nu 2 minuten
@@ -386,7 +385,7 @@ async def test_onbekend_adres_draait_ook_argon2(client, admin, monkeypatch):
     monkeypatch.setattr(PasswordHasher, "verify", spy)
     r = await login(client, {"email": "niemand@example.nl", "password": ADMIN["password"]})
     assert r.status_code == 401
-    assert r.json()["detail"] == "E-mailadres of wachtwoord klopt niet"
+    assert message_of(r) == "E-mailadres of wachtwoord klopt niet"
     assert len(hashes) == 1 and hashes[0].startswith("$argon2id$")
     assert not await security.check_password(None, ADMIN["password"])
 

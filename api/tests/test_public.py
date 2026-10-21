@@ -18,6 +18,7 @@ from app.main import HideSecrets, app
 from app.models import Share, Upload
 from app.routers import files, public, uploads
 from app.security import _encode
+from tests.factories import message_of
 from tests.test_files import check_refs, mkdir, put, root
 from tests.test_shares import person
 from tests.test_uploads import PATCH, TUS, hold
@@ -556,7 +557,7 @@ async def test_uploadlink_weg_en_quotum(client, admin, settings):
     key = (await open_link(client, link))["key"]
     r = await tus_create(client, key, "groot.bin", 11)
     assert r.status_code == 413
-    assert r.json()["detail"].startswith("Er is niet genoeg ruimte meer bij Klein;")
+    assert message_of(r).startswith("Er is niet genoeg ruimte meer bij Klein;")
     location = (await tus_create(client, key, "a.bin", 8)).headers["location"]
     # Gereserveerd bij Klein
     r = await client.put(

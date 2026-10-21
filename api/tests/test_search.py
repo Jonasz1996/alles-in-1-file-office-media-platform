@@ -16,6 +16,7 @@ from app.mime import CATEGORIES, category
 from app.models import Node, NodeTag, Tag
 from app.routers import search as search_module
 from app.text import fold
+from tests.factories import message_of
 from tests.test_files import mkdir, new_user, put, root
 from tests.test_mime import zip_bytes
 
@@ -303,7 +304,7 @@ async def test_hooguit_zoveel_tags(client, admin, monkeypatch):
         r = await client.post("/api/v1/tags", json={"name": name}, headers=headers)
         assert r.status_code == 201
     r = await client.post("/api/v1/tags", json={"name": "c"}, headers=headers)
-    assert r.status_code == 422 and r.json()["detail"] == "Je kunt hooguit 2 tags hebben"
+    assert r.status_code == 422 and message_of(r) == "Je kunt hooguit 2 tags hebben"
     # Andere gebruikers hebben hun eigen ruimte
     z = await new_user(client, headers, "z@example.nl")
     assert (await client.post("/api/v1/tags", json={"name": "c"}, headers=z)).status_code == 201

@@ -11,10 +11,11 @@ from sqlalchemy import delete, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import errors
 from app.db import Session
 from app.models import Group, GroupMember, User
 from app.routers import uploads
-from app.routers.shares import announce_members, error, group_shares
+from app.routers.shares import announce_members, group_shares
 from app.security import AdminUser
 from app.text import fold
 
@@ -60,7 +61,7 @@ class Members(BaseModel):
 
 
 def name_taken() -> HTTPException:
-    return error(409, "Er bestaat al een groep met deze naam", "name_taken")
+    return errors.fail(409, "name_taken", "Er bestaat al een groep met deze naam")
 
 
 async def check_free(session: AsyncSession, name: str, skip: uuid.UUID | None = None) -> None:
@@ -74,7 +75,7 @@ async def check_free(session: AsyncSession, name: str, skip: uuid.UUID | None = 
 async def get_group(session: AsyncSession, group_id: uuid.UUID) -> Group:
     group = await session.get(Group, group_id, populate_existing=True)
     if group is None:
-        raise HTTPException(404, "Groep niet gevonden")
+        raise errors.fail(404, "group_not_found", "Groep niet gevonden")
     return group
 
 
@@ -170,7 +171,7 @@ async def set_members(
         if wanted:
             known = set((await session.scalars(select(User.id).where(User.id.in_(wanted)))).all())
             if known != wanted:
-                raise error(422, "Een of meer gebruikers bestaan niet", "unknown_user")
+                raise errors.fail(422, "unknown_user", "Een of meer gebruikers bestaan niet")
         current = set(
             (
                 await session.scalars(
@@ -196,7 +197,9 @@ async def set_members(
             await session.commit()
         except IntegrityError:
             await session.rollback()  # een gebruiker of de groep is intussen weg
-            raise HTTPException(404, "Groep of gebruiker niet gevonden") from None
+            raise errors.fail(
+                404, "group_or_user_not_found", "Groep of gebruiker niet gevonden"
+            ) from None
         shares = await group_shares(session, group.id)
     for owner_id, lost in announce_members(shares, added, removed).items():
         await uploads.release(session, owner_id, lost)

@@ -9,7 +9,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import totp
+from app import errors, totp
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Node, RecoveryCode, RefreshToken, User, Version
@@ -166,7 +166,7 @@ async def create_user(
     # aanmaken blijft zo kort.
     password_hash = await new_password_hash(password)
     if await session.scalar(select(User).where(func.lower(User.email) == email.lower())):
-        raise HTTPException(409, "Er bestaat al een account met dit e-mailadres")
+        raise errors.fail(409, "email_taken", "Er bestaat al een account met dit e-mailadres")
     user = User(
         email=email.lower(),
         display_name=name,
@@ -197,7 +197,7 @@ async def issue_tokens(
     intussen gewijzigd, dan komt er geen login bij (401)."""
     if verified is not None and not await credentials_unchanged(session, user.id, *verified):
         await session.rollback()
-        raise HTTPException(401, "E-mailadres of wachtwoord klopt niet")
+        raise errors.fail(401, "bad_credentials", "E-mailadres of wachtwoord klopt niet")
     refresh = new_refresh_token()
     family = family or uuid.uuid4()
     session.add(
@@ -253,16 +253,18 @@ def lock_time(failures: int) -> timedelta:
 
 
 def locked_error(until: datetime | None, what: str = "codes") -> HTTPException:
-    seconds = max(1, math.ceil((until - datetime.now(UTC)).total_seconds())) if until else 1
+    """429 totp_locked; params until (ISO-tijd, als bekend) en seconds (hoe lang nog)."""
+    now = datetime.now(UTC)
+    seconds = max(1, math.ceil((until - now).total_seconds())) if until else 1
     minutes = math.ceil(seconds / 60)
     wait = "1 minuut" if minutes == 1 else f"{minutes} minuten"
-    return HTTPException(
+    return errors.fail(
         429,
-        {
-            "message": f"Te veel foute {what}. Probeer het over {wait} opnieuw.",
-            "code": "totp_locked",
-        },
+        "totp_locked",
+        f"Te veel foute {what}. Probeer het over {wait} opnieuw.",
         headers={"Retry-After": str(seconds)},
+        until=(until or now + timedelta(seconds=seconds)).isoformat(),
+        seconds=seconds,
     )
 
 
@@ -454,7 +456,7 @@ async def setup(
     """Maakt de eerste gebruiker aan als beheerder. Werkt alleen zolang er nog niemand is."""
     login_limiter.check(client_ip(request))
     if await session.scalar(select(func.count()).select_from(User)):
-        raise HTTPException(409, "Er is al een beheerder")
+        raise errors.fail(409, "setup_done", "Er is al een beheerder")
     user = await create_user(session, body.email, body.display_name, body.password, "admin", 0)
     device = device_label(request.headers.get("user-agent"))
     return await issue_tokens(session, settings, request, response, user, device)
@@ -473,7 +475,7 @@ async def login(
     # Ook zonder account argon2 draaien: aan de tijd zie je dan niet of het adres bestaat
     password_ok = await check_password(user.password_hash if user else None, body.password)
     if user is None or not password_ok:
-        raise HTTPException(401, "E-mailadres of wachtwoord klopt niet")
+        raise errors.fail(401, "bad_credentials", "E-mailadres of wachtwoord klopt niet")
     # Wat hier klopte, moet nog gelden als de tokens worden uitgegeven (zie issue_tokens):
     # een beheerder die intussen een nieuw wachtwoord instelde, logt deze login ook uit.
     verified = (user.password_hash, user.totp_secret)
@@ -483,12 +485,9 @@ async def login(
             # gebruiker het vóór het intypen van een code. Telt niet als poging.
             if until := locked_until(user):
                 raise locked_error(until)
-            raise HTTPException(
-                401,
-                {"message": "Vul de code uit je authenticator-app in", "code": "totp_required"},
-            )
+            raise errors.fail(401, "totp_required", "Vul de code uit je authenticator-app in")
         if not await second_factor(session, user, request, body.code):
-            raise HTTPException(401, {"message": "De code klopt niet", "code": "totp_invalid"})
+            raise errors.fail(401, "totp_invalid", "De code klopt niet")
     # Zonder naam van de app: een label als "Firefox op Windows" voor het sessie-overzicht
     device = body.device.strip() or device_label(request.headers.get("user-agent"))
     return await issue_tokens(session, settings, request, response, user, device, verified=verified)
@@ -506,23 +505,23 @@ async def refresh(
     """Ruilt een refresh-token in voor een nieuw paar. Elk token werkt één keer."""
     raw = refresh_token or cookie
     if not raw:
-        raise HTTPException(401, "Geen refresh-token")
+        raise await not_logged_in(session, "Geen refresh-token")
     shared = not refresh_token  # het cookie, dat de tabbladen van een browser delen
     row = await session.scalar(
         select(RefreshToken).where(RefreshToken.token_hash == hash_token(raw))
     )
     now = datetime.now(UTC)
     if row is None or row.revoked_at is not None or await family_revoked(session, row.family):
-        raise HTTPException(401, "Ongeldig refresh-token")
+        raise await not_logged_in(session, "Ongeldig refresh-token")
     if row.used_at is not None:
         if shared and now - aware(row.used_at) <= REFRESH_RACE:
             raise refresh_raced()
         # Hergebruik: iemand anders heeft dit token mogelijk ook. Trek de hele login in.
         await revoke_family(session, row.family, now)
         await session.commit()
-        raise HTTPException(401, "Refresh-token is al gebruikt; log opnieuw in")
+        raise await not_logged_in(session, "Refresh-token is al gebruikt; log opnieuw in")
     if row.expires_at.replace(tzinfo=row.expires_at.tzinfo or UTC) < now:
-        raise HTTPException(401, "Refresh-token is verlopen")
+        raise await not_logged_in(session, "Refresh-token is verlopen")
     # Voorwaardelijk: is de login intussen ingetrokken (bijv. omdat net 2FA aanging), dan
     # werkt het token niet meer, ook al leek het hierboven nog geldig. En is het intussen
     # door een ander verzoek gebruikt, dan krijgt alleen dat een nieuw token: zonder deze
@@ -548,20 +547,25 @@ async def refresh(
             raise refresh_raced()
         await revoke_family(session, row.family, now)
         await session.commit()
-        raise HTTPException(401, "Ongeldig refresh-token")
+        raise await not_logged_in(session, "Ongeldig refresh-token")
     user = await session.get(User, row.user_id)
     if user is None:
-        raise HTTPException(401, "Gebruiker bestaat niet meer")
+        raise await not_logged_in(session, "Gebruiker bestaat niet meer")
     return await issue_tokens(session, settings, request, response, user, row.device, row.family)
 
 
+async def not_logged_in(session: AsyncSession, message: str) -> HTTPException:
+    """401 van /auth/refresh: (niet meer) ingelogd. setup_required: er is nog geen enkel
+    account, zodat de web-app meteen het formulier voor de eerste beheerder kan tonen."""
+    count = await session.scalar(select(func.count()).select_from(User))
+    return errors.fail(401, "not_logged_in", message, setup_required=not count)
+
+
 def refresh_raced() -> HTTPException:
-    return HTTPException(
+    return errors.fail(
         401,
-        {
-            "message": "Je sessie is net in een ander tabblad vernieuwd; probeer het opnieuw",
-            "code": "refresh_raced",
-        },
+        "refresh_raced",
+        "Je sessie is net in een ander tabblad vernieuwd; probeer het opnieuw",
     )
 
 
@@ -615,7 +619,7 @@ async def totp_setup(user: LoggedInUser, session: Session) -> TotpSetup:
     """Stap 1: nieuw geheim voor de authenticator-app (als QR-code). 2FA staat pas aan
     na /auth/2fa/enable met een code die klopt."""
     if user.totp_secret is not None:
-        raise HTTPException(409, "2FA staat al aan")
+        raise errors.fail(409, "totp_already_on", "2FA staat al aan")
     user.totp_pending = totp.new_secret()
     await session.commit()
     uri = totp.provisioning_uri(user.totp_pending, user.email, ISSUER)
@@ -633,11 +637,11 @@ async def totp_enable(
     """Stap 2: met het wachtwoord en een code uit de app 2FA aanzetten. Geeft eenmalig de
     herstelcodes. Andere logins van deze gebruiker worden ingetrokken."""
     if user.totp_secret is not None:
-        raise HTTPException(409, "2FA staat al aan")
+        raise errors.fail(409, "totp_already_on", "2FA staat al aan")
     if user.totp_pending is None:
-        raise HTTPException(409, "Begin eerst met /auth/2fa/setup")
+        raise errors.fail(409, "totp_setup_first", "Begin eerst met /auth/2fa/setup")
     if not await second_factor(session, user, request, body.code, body.password, enabling=True):
-        raise HTTPException(400, "Wachtwoord of code klopt niet")
+        raise errors.fail(400, "bad_password_or_code", "Wachtwoord of code klopt niet")
     codes = await new_recovery_codes(session, user)
     await revoke_other_logins(session, user.id, family)
     await session.commit()
@@ -650,9 +654,9 @@ async def totp_recovery_codes(
 ) -> RecoveryCodes:
     """Nieuwe herstelcodes; de oude werken daarna niet meer."""
     if user.totp_secret is None:
-        raise HTTPException(409, "2FA staat niet aan")
+        raise errors.fail(409, "totp_off", "2FA staat niet aan")
     if not await second_factor(session, user, request, body.code):
-        raise HTTPException(400, "De code klopt niet")
+        raise errors.fail(400, "totp_invalid", "De code klopt niet")
     codes = await new_recovery_codes(session, user)
     await session.commit()
     return RecoveryCodes(recovery_codes=codes)
@@ -669,9 +673,9 @@ async def totp_disable(
     """2FA uitzetten; vraagt het wachtwoord en een code. Een fout wachtwoord telt als foute
     poging, net als een foute code, en de melding zegt niet welke van de twee."""
     if user.totp_secret is None:
-        raise HTTPException(409, "2FA staat niet aan")
+        raise errors.fail(409, "totp_off", "2FA staat niet aan")
     if not await second_factor(session, user, request, body.code, body.password):
-        raise HTTPException(400, "Wachtwoord of code klopt niet")
+        raise errors.fail(400, "bad_password_or_code", "Wachtwoord of code klopt niet")
     await reset_totp(session, user, family)
 
 
@@ -704,7 +708,7 @@ async def admin_reset_totp(
     ook een blokkade op en trekt de logins van die gebruiker in."""
     user = await session.get(User, user_id)
     if user is None:
-        raise HTTPException(404, "Gebruiker niet gevonden")
+        raise errors.fail(404, "user_not_found", "Gebruiker niet gevonden")
     await reset_totp(session, user, family)
 
 
@@ -735,7 +739,12 @@ class NewPassword(BaseModel):
 
 def check_new_password(password: str) -> None:
     if len(password) < MIN_PASSWORD:
-        raise HTTPException(422, f"Kies een wachtwoord van minstens {MIN_PASSWORD} tekens")
+        raise errors.fail(
+            422,
+            "password_too_short",
+            f"Kies een wachtwoord van minstens {MIN_PASSWORD} tekens",
+            min=MIN_PASSWORD,
+        )
 
 
 @router.get("/auth/sessions", tags=["account"])
@@ -799,7 +808,7 @@ async def end_session(session_id: uuid.UUID, user: CurrentUser, session: Session
         .limit(1)
     )
     if exists is None:
-        raise HTTPException(404, "Sessie niet gevonden")
+        raise errors.fail(404, "session_not_found", "Sessie niet gevonden")
     await revoke_family(session, session_id, datetime.now(UTC))
     await session.commit()
 
@@ -824,14 +833,11 @@ async def change_password(
     je het wachtwoord zo niet raden. Daarna zijn alle andere sessies uitgelogd."""
     check_new_password(body.new_password)
     if body.new_password == body.current_password:
-        raise HTTPException(422, "Kies een ander wachtwoord dan je huidige")
+        raise errors.fail(422, "password_unchanged", "Kies een ander wachtwoord dan je huidige")
     totp_on = user.totp_secret is not None
     if totp_on and not body.code:
         # Telt niet als poging: er is nog niets gecontroleerd
-        raise HTTPException(
-            400,
-            {"message": "Vul ook de code uit je authenticator-app in", "code": "totp_required"},
-        )
+        raise errors.fail(400, "totp_required", "Vul ook de code uit je authenticator-app in")
     old_hash = user.password_hash
     failures = await start_attempt(session, user, "codes" if totp_on else "pogingen")
     ok = await check_password(old_hash, body.current_password)
@@ -840,9 +846,9 @@ async def change_password(
     wrong = "Fout wachtwoord of foute code" if totp_on else "Fout wachtwoord"
     await end_attempt(session, user, request, ok, failures, f"{wrong} bij wachtwoord wijzigen")
     if not ok:
-        raise HTTPException(
-            400, "Wachtwoord of code klopt niet" if totp_on else "Je huidige wachtwoord klopt niet"
-        )
+        if totp_on:
+            raise errors.fail(400, "bad_password_or_code", "Wachtwoord of code klopt niet")
+        raise errors.fail(400, "wrong_current_password", "Je huidige wachtwoord klopt niet")
     await session.commit()  # geen databaseverbinding vasthouden terwijl argon2 rekent
     new_hash = await new_password_hash(body.new_password)
     # Alleen als het wachtwoord nog hetzelfde is als wat hierboven klopte: van twee
@@ -855,7 +861,11 @@ async def change_password(
     )
     if result.rowcount != 1:
         await session.rollback()
-        raise HTTPException(409, "Je wachtwoord is net ergens anders gewijzigd; log opnieuw in")
+        raise errors.fail(
+            409,
+            "password_changed_elsewhere",
+            "Je wachtwoord is net ergens anders gewijzigd; log opnieuw in",
+        )
     await revoke_other_logins(session, user.id, family)
     await session.commit()
     log.info("Gebruiker %s heeft het wachtwoord gewijzigd vanaf %s", user.id, client_ip(request))
@@ -873,10 +883,14 @@ async def admin_set_password(
     die gebruiker worden beëindigd. Je eigen wachtwoord wijzig je op je accountpagina, met
     het huidige wachtwoord en je 2FA."""
     if user_id == admin.id:
-        raise HTTPException(422, "Gebruik je accountpagina om je eigen wachtwoord te wijzigen")
+        raise errors.fail(
+            422,
+            "own_password_via_account",
+            "Gebruik je accountpagina om je eigen wachtwoord te wijzigen",
+        )
     check_new_password(body.new_password)
     if await session.get(User, user_id) is None:
-        raise HTTPException(404, "Gebruiker niet gevonden")
+        raise errors.fail(404, "user_not_found", "Gebruiker niet gevonden")
     admin_id = admin.id
     await session.commit()  # geen databaseverbinding vasthouden terwijl argon2 rekent
     password_hash = await new_password_hash(body.new_password)
@@ -888,7 +902,7 @@ async def admin_set_password(
     )
     if result.rowcount != 1:
         await session.rollback()
-        raise HTTPException(404, "Gebruiker niet gevonden")
+        raise errors.fail(404, "user_not_found", "Gebruiker niet gevonden")
     await revoke_other_logins(session, user_id, None)
     await session.commit()
     log.warning(
