@@ -1,0 +1,67 @@
+// De schil: balk bovenaan, accountmenu, sneltoetsen, en de pagina's van P0. Altijd geladen.
+export default {
+  brand: "Platform",
+  skip: "Naar inhoud",
+  pageTitle: "{title} · Platform",
+  navigated: "{title}",
+  nav: {
+    label: "Hoofdmenu",
+    files: "Bestanden",
+    photos: "Foto's",
+    shared: "Gedeeld met mij",
+    trash: "Prullenbak",
+    admin: "Beheer",
+  },
+  account: {
+    menu: "Accountmenu van {name}",
+    account: "Account",
+    theme: "Thema",
+    language: "Taal",
+    shortcuts: "Sneltoetsen",
+    logout: "Uitloggen",
+  },
+  theme: {
+    label: "Thema",
+    light: "Licht",
+    dark: "Donker",
+    system: "Systeem",
+  },
+  language: {
+    label: "Taal",
+    nl: "Nederlands",
+    en: "English",
+  },
+  shortcuts: {
+    title: "Sneltoetsen",
+    open: "Sneltoetsen tonen",
+    empty: "Hier zijn geen sneltoetsen.",
+    scopes: {
+      global: "Overal",
+      dialog: "In een venster",
+      menu: "In een menu",
+      browser: "Bestanden",
+      viewer: "Bekijken",
+      photos: "Foto's",
+      trash: "Prullenbak",
+      page: "Deze pagina",
+    },
+  },
+  notFound: {
+    title: "Pagina niet gevonden",
+    text: "Deze pagina bestaat niet (meer).",
+    home: "Naar het begin",
+  },
+  noAccess: {
+    title: "Geen toegang",
+    text: "Je hebt geen toegang tot deze pagina.",
+  },
+  offline: {
+    title: "Geen verbinding",
+    text: "De server is niet te bereiken. Zodra je weer online bent, proberen we het vanzelf opnieuw.",
+  },
+  recoveryCodes: "Herstelcodes",
+  chunkError: {
+    title: "Deze pagina kon niet laden",
+    reload: "Pagina herladen",
+  },
+} as const;
