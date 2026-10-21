@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError } from "../api";
+import { ApiError, errorFromBody } from "../api";
 import {
   type Area,
   areasLoaded,
   collator,
+  type ErrorCatalog,
   errorText,
   fmt,
   fold,
+  initI18n,
   interpolate,
   loadAreas,
   locale,
@@ -238,6 +240,51 @@ describe("errorText", () => {
       "Try again in 30 seconds",
     );
     expect(errorText(new ApiError(400, "Iets nieuws", "brand_new"))).toBe("Iets nieuws");
+  });
+});
+
+describe("foutcatalogi (errors/*.ts)", () => {
+  // De echte catalogi, direct geladen; de app laadt ze lazy via initI18n (alleen in het Engels)
+  const catalogs = import.meta.glob<ErrorCatalog>("./errors/*.ts", { eager: true, import: "default" });
+
+  it("elk gebied met eigen foutcodes heeft een catalogus, elke code één keer en met een Engelse tekst", () => {
+    const names = Object.keys(catalogs).map((p) => p.replace(/^\.\/errors\/|\.ts$/g, ""));
+    expect(names).toEqual(
+      expect.arrayContaining(["common", "auth", "browser", "upload", "viewer", "photos", "admin", "sharing"]),
+    );
+    const seen = new Map<string, string>();
+    for (const [path, catalog] of Object.entries(catalogs)) {
+      for (const [code, entry] of Object.entries(catalog)) {
+        expect(seen.get(code), `${code} staat ook in ${seen.get(code)}`).toBeUndefined();
+        seen.set(code, path);
+        expect(entry.en.trim(), code).not.toBe("");
+      }
+    }
+    expect(seen.get("read_only")).toBe("./errors/common.ts");
+    expect(seen.get("account_disabled")).toBe("./errors/common.ts");
+  });
+
+  it("en: initI18n laadt de catalogi en errorText vertaalt een fout van de API op code", async () => {
+    resetI18nForTests("en");
+    await initI18n();
+    const body = (code: string, message: string, params?: Record<string, unknown>) => ({
+      detail: { message, code, ...(params ? { params } : {}) },
+    });
+    expect(errorText(errorFromBody(403, body("read_only", "Je mag hier alleen kijken")))).toBe(
+      "You can only view this",
+    );
+    expect(
+      errorText(errorFromBody(422, body("too_many", "Te veel om in één keer te kopiëren", { max: 10000 }))),
+    ).toBe("Too many items at once (more than 10,000)");
+    const full = body("no_room_owner", "Er is niet genoeg ruimte meer bij Bea", { owner: "Bea" });
+    expect(errorText(errorFromBody(413, full))).toBe("Bea has run out of storage space; ask them to make room");
+    expect(errorText(errorFromBody(400, body("brand_new", "Iets nieuws")))).toBe("Iets nieuws");
+  });
+
+  it("nl: de catalogi zijn niet nodig, de tekst van de server blijft", async () => {
+    await initI18n();
+    const body = { detail: { message: "Je mag hier alleen kijken", code: "read_only" } };
+    expect(errorText(errorFromBody(403, body))).toBe("Je mag hier alleen kijken");
   });
 });
 

@@ -602,8 +602,9 @@ export class Api {
   setSecurity = (config: SecurityConfig) => this.send<SecurityConfig>("PUT", "/api/v1/admin/security", config);
 
   /** Maakt een hervatbare upload (tus) aan; geeft de URL om naartoe te sturen. Bij een leeg
-   * bestand is het meteen klaar en komt nodeId terug. meta: extra Upload-Metadata (bijv. mtime);
-   * filename en parent gaan altijd voor. */
+   * bestand is het meteen klaar en komt nodeId terug. meta: extra Upload-Metadata, bijv.
+   * lastmodified (File.lastModified in ms, als tekst) en conflict; filename en parent gaan altijd
+   * voor. */
   async tusCreate(
     parent: string,
     name: string,

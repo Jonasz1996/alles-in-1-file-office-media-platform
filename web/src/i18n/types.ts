@@ -89,5 +89,9 @@ export interface Dictionaries {
 /** "browser.title", "common.close", "shell.nav.files": gebied, dan het pad in het woordenboek. */
 export type MessageKey = { [A in Area]: Leaves<Dictionaries[A], `${A}.`> }[Area];
 
-/** Een foutcatalogus (i18n/errors/<gebied>.ts): de Engelse tekst per foutcode van de API. */
+/**
+ * Een foutcatalogus (i18n/errors/<gebied>.ts): de Engelse tekst per foutcode van de API. De
+ * catalogi schrijven dit type uit (`satisfies Record<string, { en: string }>`, zonder imports):
+ * api/tests/test_error_catalog.py leest ze met een reguliere expressie.
+ */
 export type ErrorCatalog = Record<string, { en: string }>;

@@ -42,7 +42,8 @@ export const crossApi = {
   archiveLink(ids: string[], name: string): Promise<{ url: string; expires_in: number }> {
     return api.request<{ url: string; expires_in: number }>("POST", "/api/v1/archive/link", { ids, name });
   },
-  /** Terugzetten uit de prullenbak (P0: POST /api/v1/trash/restore; ≤ 10.000 ids). */
+  /** Terugzetten uit de prullenbak (P0: POST /api/v1/trash/restore; ≤ 10.000 ids). Eén
+   * resultaat per verschillend id, in de volgorde waarin het voor het eerst voorkomt. */
   restore(ids: string[]): Promise<BatchResult> {
     return api.request<BatchResult>("POST", "/api/v1/trash/restore", { ids });
   },
