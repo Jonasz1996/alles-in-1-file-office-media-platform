@@ -30,6 +30,7 @@ export default {
     label: "Taal",
     nl: "Nederlands",
     en: "English",
+    apply: "Taal wijzigen",
   },
   shortcuts: {
     title: "Sneltoetsen",
@@ -60,6 +61,8 @@ export default {
     text: "De server is niet te bereiken. Zodra je weer online bent, proberen we het vanzelf opnieuw.",
   },
   recoveryCodes: "Herstelcodes",
+  recoveryCodesKeep: "Bewaar deze codes op een veilige plek. Elke code werkt één keer.",
+  recoveryCodesDone: "Ik heb ze bewaard",
   chunkError: {
     title: "Deze pagina kon niet laden",
     reload: "Pagina herladen",

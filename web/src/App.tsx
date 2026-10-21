@@ -5,6 +5,7 @@ import {
   Component,
   type ErrorInfo,
   type JSX,
+  lazy,
   type ReactNode,
   Suspense,
   use,
@@ -19,7 +20,16 @@ import {
 import { ApiError, api, type User } from "./api";
 import { CurrentUser, ShellActionsContext } from "./currentUser";
 import { liveEvents } from "./events";
-import { applyAccountLocale, errorText, type Locale, lazyWithAreas, locale, setLocale, t } from "./i18n";
+import {
+  applyAccountLocale,
+  errorText,
+  isNetworkError,
+  type Locale,
+  lazyWithAreas,
+  locale,
+  setLocale,
+  t,
+} from "./i18n";
 import { Link } from "./links";
 import { Login } from "./Login";
 import { markReady } from "./perf";
@@ -43,8 +53,7 @@ import { ShortcutHelp, openShortcutHelp } from "./ui/ShortcutHelp";
 import { OfflineScreen } from "./ui/OfflineScreen";
 import { setTheme, type Theme, useTheme } from "./ui/theme";
 import { announce, ToastRegion } from "./ui/toast";
-import { UploadTray } from "./upload/index";
-import { uploadQueue } from "./uploadQueue";
+import { uploadStatus } from "./uploadStatus";
 
 // --- pagina's laden ---
 
@@ -127,6 +136,27 @@ class PageBoundary extends Component<{ path: string; children: ReactNode }, { er
   }
 }
 
+/** Voor een lazy onderdeel buiten de pagina (uploadlade, herstelcodes): lukt zijn chunk niet
+ * (bijv. een nieuwe versie uitgerold), dan fallback (standaard niets), maar nooit de hele app
+ * laten verdwijnen. Niet herladen: dat zou lopende uploads afbreken of de herstelcodes, die maar
+ * één keer te zien zijn, weggooien. Een mislukte lazy() blijft mislukt; de volgende navigatie
+ * naar een pagina herlaadt wel (PageBoundary). */
+class ChunkBoundary extends Component<{ children: ReactNode; fallback?: ReactNode }, { error: unknown }> {
+  state = { error: null as unknown };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error(error, info.componentStack);
+  }
+
+  render() {
+    return this.state.error === null ? this.props.children : (this.props.fallback ?? null);
+  }
+}
+
 /** Na elke navigatie (een ander pad): titel, focus naar de kop en een aankondiging. Staat in
  * dezelfde Suspense als de pagina, dus loopt pas als die er staat. */
 function AfterNavigation({ route, path }: { route: Resolved; path: string }): null {
@@ -155,6 +185,15 @@ function AfterNavigation({ route, path }: { route: Resolved; path: string }): nu
   }, [path, titleKey]);
   return null;
 }
+
+/** Een route die bestaat maar niet voor jouw rol is, als pagina (zie shellPages.tsx). */
+const NO_ACCESS: RouteDef = {
+  pattern: "*",
+  areas: [],
+  title: "shell.noAccess.title",
+  section: null,
+  load: () => Promise.resolve({ default: () => <NoAccess /> }),
+};
 
 function Loading(): JSX.Element {
   return <main className="center">{t("common.loading")}</main>;
@@ -214,7 +253,7 @@ type Boot = { state: "checking" } | { state: "offline" } | { state: "done"; mess
 
 /** Geen verbinding (fetch gooit) of de server zelf is er niet (502/503/504 van de proxy). */
 function isOffline(e: unknown): boolean {
-  return e instanceof TypeError || (e instanceof ApiError && e.status >= 502 && e.status <= 504);
+  return isNetworkError(e) || (e instanceof ApiError && e.status >= 502 && e.status <= 504);
 }
 
 function LoggedIn({ path }: { path: string }): JSX.Element {
@@ -258,7 +297,7 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
 
   useEffect(() => {
     api.onLoggedOut = () => {
-      uploadQueue.stopAll();
+      uploadStatus.stopAll();
       liveEvents.stop();
       setCodes(null);
       setUser(null);
@@ -305,7 +344,7 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
     );
 
   async function logout() {
-    uploadQueue.stopAll(); // de uploads blijven op de server staan en gaan later verder
+    uploadStatus.stopAll(); // de uploads blijven op de server staan en gaan later verder
     liveEvents.stop();
     await api.logout();
     setCodes(null);
@@ -317,31 +356,30 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
   const setupRequired = user.totp_setup_required;
   const route = setupRequired ? resolve("/account") : resolve(path);
 
+  function codesDone() {
+    setCodes(null);
+    reloadUser();
+  }
+
   let page: ReactNode;
   if (codes) {
     page = (
       <div id="inhoud" tabIndex={-1}>
-        <Suspense fallback={<Loading />}>
-          <main>
-            <h1>{t("shell.recoveryCodes")}</h1>
-            <RecoveryCodes
-              codes={codes}
-              onDone={() => {
-                setCodes(null);
-                reloadUser();
-              }}
-            />
-          </main>
-        </Suspense>
+        <main>
+          <h1>{t("shell.recoveryCodes")}</h1>
+          {/* Lukt het chunk niet, dan toch de codes: ze zijn maar één keer te zien */}
+          <ChunkBoundary fallback={<PlainRecoveryCodes codes={codes} onDone={codesDone} />}>
+            <Suspense fallback={<p>{t("common.loading")}</p>}>
+              <RecoveryCodes codes={codes} onDone={codesDone} />
+            </Suspense>
+          </ChunkBoundary>
+        </main>
       </div>
     );
   } else if (redirect) page = null;
-  else if (!allowed(route.def, user.role))
-    page = (
-      <div id="inhoud" tabIndex={-1}>
-        <NoAccess />
-      </div>
-    );
+  // Geen toegang gaat ook door PageArea: titel, focus naar de kop en de aankondiging zoals bij
+  // elke andere pagina
+  else if (!allowed(route.def, user.role)) page = <PageArea route={{ def: NO_ACCESS, params: {} }} path={path} />;
   else page = <PageArea route={route} path={setupRequired ? "/account" : path} />;
 
   return (
@@ -364,14 +402,38 @@ const RecoveryCodes = lazyWithAreas<{ codes: string[]; onDone: () => void }>(
   ["account"],
 );
 
-/** De uploadlade, alleen als er iets in de wachtrij staat (anders hoeft zijn chunk niet te laden). */
+/** De herstelcodes zonder het chunk van Account: alleen de lijst en de knop. */
+function PlainRecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }): JSX.Element {
+  return (
+    <div className="stack">
+      <p>{t("shell.recoveryCodesKeep")}</p>
+      <ul className="codes">
+        {codes.map((c) => (
+          <li key={c}>
+            <code>{c}</code>
+          </li>
+        ))}
+      </ul>
+      <button type="button" className="primary" onClick={onDone}>
+        {t("shell.recoveryCodesDone")}
+      </button>
+    </div>
+  );
+}
+
+/** De uploadlade (upload/index.ts, P3), alleen als er iets in de wachtrij staat: anders hoeven
+ * zijn chunk en dat van de wachtrij niet te laden. */
+const UploadTray = lazy(() => import("./upload/index").then((m) => ({ default: m.UploadTray })));
+
 function UploadSlot(): JSX.Element | null {
-  const busy = useSyncExternalStore(uploadQueue.subscribe, () => uploadQueue.getSnapshot().length > 0);
+  const busy = useSyncExternalStore(uploadStatus.subscribe, uploadStatus.busy, () => false);
   if (!busy) return null;
   return (
-    <Suspense fallback={null}>
-      <UploadTray />
-    </Suspense>
+    <ChunkBoundary>
+      <Suspense fallback={null}>
+        <UploadTray />
+      </Suspense>
+    </ChunkBoundary>
   );
 }
 
@@ -421,6 +483,7 @@ function TopBar({
         id: `theme-${o.value}`,
         label: o.label,
         checked: theme === o.value,
+        radio: true,
         onSelect: () => setTheme(o.value),
       })),
     },
@@ -432,6 +495,7 @@ function TopBar({
         id: `language-${o.value}`,
         label: o.label,
         checked: locale() === o.value,
+        radio: true,
         onSelect: () => {
           if (o.value !== locale()) void setLocale(o.value, { account: true });
         },

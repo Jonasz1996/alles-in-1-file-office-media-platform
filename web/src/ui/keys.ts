@@ -70,7 +70,10 @@ export function matchKey(e: KeyLike, c: Combo, isMac: boolean = isMacPlatform())
   const symbol = p.key.length === 1 && !/[a-z0-9]/.test(p.key);
   if (!symbol && e.shiftKey !== p.shift) return false;
   if (key === p.key) return true;
-  // Met Alt (Mac) of een ander toetsenbord geeft key soms een ander teken: dan de fysieke toets
+  // Is key zelf al een gewone letter of cijfer, dan geldt die (AZERTY: Ctrl+Q is fysiek KeyA en
+  // mag geen "mod+a" zijn)
+  if (/^[a-z0-9]$/.test(key)) return false;
+  // Met Alt (Mac) of een niet-Latijns toetsenbord geeft key een ander teken: dan de fysieke toets
   if (p.key.length === 1 && /[a-z]/.test(p.key) && e.code === `Key${p.key.toUpperCase()}`) return true;
   if (p.key.length === 1 && /[0-9]/.test(p.key) && e.code === `Digit${p.key}`) return true;
   return false;
@@ -127,6 +130,43 @@ export function isTypingTarget(t: EventTarget | null): boolean {
   if (tag !== "INPUT") return false;
   const type = (el.type ?? "text").toLowerCase();
   return !["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "image"].includes(type);
+}
+
+const NAV_KEYS = new Set(["arrowup", "arrowdown", "arrowleft", "arrowright", "home", "end", "pageup", "pagedown"]);
+const ACTIVATE_KEYS = new Set([" ", "enter"]);
+/** Invoertypes die de pijltjes, Home/End en PageUp/Down zelf gebruiken. */
+const NAV_INPUTS = new Set(["range", "radio", "number", "date", "time", "datetime-local", "month", "week"]);
+/** Invoertypes die Enter of Spatie zelf gebruiken (aanvinken, klikken). */
+const ACTIVATE_INPUTS = new Set(["checkbox", "radio", "button", "submit", "reset", "file", "color", "image"]);
+
+/**
+ * Gebruikt het element met de focus deze toets zelf (de standaardactie van de browser)? Een
+ * schuif, keuzerondjes, een cijferveld en een video of audio met bediening gebruiken de
+ * pijltjes, Home/End en PageUp/Down; knoppen, links, summary en vinkjes Enter en Spatie. Dan
+ * neemt een sneltoets zonder Ctrl/Cmd hem niet af (geen preventDefault). Eigen widgets met een
+ * ARIA-rol (grid, slider, tabs) handelen hun toetsen zelf af met preventDefault; dat respecteert
+ * dispatch al.
+ */
+export function consumesKey(
+  t: EventTarget | null,
+  e: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey">,
+): boolean {
+  if (!t || typeof t !== "object" || e.ctrlKey || e.metaKey) return false;
+  const key = (e.key ?? "").toLowerCase();
+  const nav = NAV_KEYS.has(key);
+  const activate = ACTIVATE_KEYS.has(key);
+  if (!nav && !activate) return false;
+  const el = t as { tagName?: string; type?: string; hasAttribute?: (name: string) => boolean };
+  const tag = (el.tagName ?? "").toUpperCase();
+  const has = (name: string) => el.hasAttribute?.(name) ?? false;
+  if (tag === "SELECT") return true;
+  if ((tag === "VIDEO" || tag === "AUDIO") && has("controls")) return true;
+  if (tag === "INPUT") {
+    const type = (el.type ?? "text").toLowerCase();
+    return nav ? NAV_INPUTS.has(type) : ACTIVATE_INPUTS.has(type);
+  }
+  if (activate) return tag === "BUTTON" || tag === "SUMMARY" || (tag === "A" && has("href"));
+  return false;
 }
 
 export interface Shortcut {
@@ -195,11 +235,13 @@ export class ShortcutRegistry {
     for (const l of this.listeners) l();
   }
 
-  /** De scopes die nu toetsen krijgen: van boven tot en met de eerste blokkerende. */
-  private reachable(): string[] {
+  /** De scopes die nu toetsen krijgen: van boven tot en met de eerste blokkerende. ignore: die
+   * scopes overslaan alsof ze er niet zijn (ook niet blokkerend). */
+  private reachable(ignore: readonly string[] = []): string[] {
     const out: string[] = [];
     for (let i = this.stack.length - 1; i >= 0; i--) {
       const scope = this.stack[i];
+      if (ignore.includes(scope)) continue;
       if (!out.includes(scope)) out.push(scope);
       if (BLOCKING.has(scope)) break;
     }
@@ -217,10 +259,11 @@ export class ShortcutRegistry {
   dispatch(e: KeyboardEvent): boolean {
     if (e.isComposing || e.defaultPrevented) return false;
     const typing = isTypingTarget(e.target);
+    const consumed = consumesKey(e.target, e);
     const mac = this.isMac();
     for (const scope of this.reachable()) {
       for (const b of this.bindingsIn(scope)) {
-        if (typing && !b.allowInInput) continue;
+        if ((typing || consumed) && !b.allowInInput) continue;
         const combos = Array.isArray(b.combo) ? b.combo : [b.combo];
         if (!combos.some((c) => matchKey(e, c, mac))) continue;
         if (b.when && !b.when()) continue;
@@ -232,10 +275,11 @@ export class ShortcutRegistry {
     return false;
   }
 
-  /** Voor de hulp: wat er nu werkt, met label. */
-  active(): { scope: string; combo: Combo; label: string }[] {
+  /** Voor de hulp: wat er nu werkt, met label. ignore: scopes die er zo meteen niet meer zijn
+   * (het menu waaruit de hulp werd geopend). */
+  active(o?: { ignore?: readonly string[] }): { scope: string; combo: Combo; label: string }[] {
     const out: { scope: string; combo: Combo; label: string }[] = [];
-    for (const scope of this.reachable()) {
+    for (const scope of this.reachable(o?.ignore)) {
       for (const b of this.bindingsIn(scope)) {
         if (!b.label || (b.when && !b.when())) continue;
         const combos = Array.isArray(b.combo) ? b.combo : [b.combo];
@@ -261,8 +305,8 @@ export function pushScope(name: string): () => void {
   return shortcuts.pushScope(name);
 }
 
-export function activeShortcuts(): { scope: string; combo: Combo; label: string }[] {
-  return shortcuts.active();
+export function activeShortcuts(o?: { ignore?: readonly string[] }): { scope: string; combo: Combo; label: string }[] {
+  return shortcuts.active(o);
 }
 
 /** Zet een scope bovenop zolang het component er staat (een pagina: "browser"; Dialog doet

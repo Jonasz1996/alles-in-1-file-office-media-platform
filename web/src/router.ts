@@ -104,8 +104,9 @@ export function navigate(href: string, opts?: { replace?: boolean }): void {
     lastNavigation = "push";
   }
   window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
-  // Na het event: de luisteraar hierboven zette het op "pop"
+  // Na het event: de luisteraars zetten het op "pop" en de entry op niet-actief
   lastNavigation = opts?.replace ? "replace" : "push";
+  scrolls.pushed((historyState() ?? ensureState()).key);
 }
 
 /** Eén stap terug binnen de app; was dit de eerste pagina (deep link), dan naar fallback. */
@@ -191,32 +192,175 @@ export function isPlainLeftClick(e: {
 // --- scrollpositie per history-entry ---
 
 const SCROLL_KEY = "platform-scroll";
-const scrolls = new Map<string, number>();
+/** Hooguit zoveel posities bewaren (in sessionStorage). */
+const SCROLL_KEEP = 50;
+/** Zo lang blijft een terugzetten wachten tot de pagina lang genoeg is. */
+const RESTORE_MS = 3000;
 
-function saveScroll(): void {
-  const s = historyState();
-  if (!s) return;
-  scrolls.set(s.key, window.scrollY);
-  try {
-    const all = Object.fromEntries([...scrolls].slice(-50)); // hooguit 50 bewaren
-    sessionStorage.setItem(SCROLL_KEY, JSON.stringify(all));
-  } catch {
-    /* opslag uit: alleen in het geheugen */
+/**
+ * De scrollposities per history-entry, zonder DOM (los te testen). Scroll-events tellen alleen
+ * voor de *actieve* entry: na terug/vooruit is er even geen actieve, tot het terugzetten klaar
+ * is. Zo overschrijft het inkorten van de pagina (de browser klemt scrollY) de bewaarde plek niet.
+ */
+export class ScrollMemory {
+  private positions = new Map<string, number>();
+  private active: string | null = null;
+  private pending: { key: string; y: number } | null = null;
+
+  constructor(
+    private readonly load: () => Record<string, number> = () => ({}),
+    private readonly store: (all: Record<string, number>) => void = () => {},
+  ) {}
+
+  /** De bewaarde plek van een entry (eerst het geheugen, dan de opslag). */
+  get(key: string): number | undefined {
+    if (this.positions.has(key)) return this.positions.get(key);
+    try {
+      const y = this.load()[key];
+      return typeof y === "number" ? y : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Een scroll-event: telt alleen voor de actieve entry. */
+  record(key: string, y: number): void {
+    if (key === this.active) this.positions.set(key, y);
+  }
+
+  /** Weg van deze entry (navigeren, pagehide): de plek bewaren, ook in de opslag. Loopt het
+   * terugzetten nog, dan blijft de oude plek staan. */
+  leave(key: string, y: number): void {
+    if (key === this.active) this.positions.set(key, y);
+    this.persist();
+  }
+
+  /** Terug of vooruit: geen actieve entry tot het terugzetten klaar is. */
+  popped(): void {
+    this.active = null;
+    this.pending = null;
+  }
+
+  /** Een nieuwe of vervangen entry: die is meteen actief (begint bovenaan). */
+  pushed(key: string): void {
+    this.active = key;
+    this.pending = null;
+  }
+
+  /** Begint het terugzetten voor deze entry: de plek om naartoe te scrollen, of undefined (niets
+   * bewaard; de entry is dan meteen actief). */
+  startRestore(key: string): number | undefined {
+    if (this.pending?.key === key) return this.pending.y;
+    if (this.active === key) return undefined; // al terug (bijv. StrictMode, tweede aanroep)
+    const y = this.get(key);
+    if (y === undefined) {
+      this.active = key;
+      return undefined;
+    }
+    this.pending = { key, y };
+    return y;
+  }
+
+  /** Stoppen met terugzetten (de wachttijd is om, of de gebruiker doet zelf iets): vanaf nu
+   * telt de entry weer. */
+  finish(key: string, scrollY: number): void {
+    if (this.pending?.key !== key) return;
+    this.pending = null;
+    this.active = key;
+    this.positions.set(key, scrollY);
+  }
+
+  isPending(key: string): boolean {
+    return this.pending?.key === key;
+  }
+
+  /** Naar de opslag: wat er al stond plus het geheugen, de laatste SCROLL_KEEP. */
+  private persist(): void {
+    let stored: Record<string, number> = {};
+    try {
+      stored = this.load();
+    } catch {
+      /* kapotte opslag: opnieuw beginnen */
+    }
+    const all = new Map(Object.entries(stored).filter(([, y]) => typeof y === "number"));
+    for (const [k, y] of this.positions) {
+      all.delete(k); // achteraan: het nieuwste
+      all.set(k, y);
+    }
+    try {
+      this.store(Object.fromEntries([...all].slice(-SCROLL_KEEP)));
+    } catch {
+      /* opslag uit: alleen in het geheugen */
+    }
   }
 }
 
-function savedScroll(key: string): number | undefined {
-  if (scrolls.has(key)) return scrolls.get(key);
-  try {
-    const all = JSON.parse(sessionStorage.getItem(SCROLL_KEY) ?? "{}") as Record<string, number>;
-    return typeof all[key] === "number" ? all[key] : undefined;
-  } catch {
-    return undefined;
-  }
+const scrolls = new ScrollMemory(
+  () => JSON.parse(sessionStorage.getItem(SCROLL_KEY) ?? "{}") as Record<string, number>,
+  (all) => sessionStorage.setItem(SCROLL_KEY, JSON.stringify(all)),
+);
+
+function saveScroll(): void {
+  const s = historyState();
+  if (s) scrolls.leave(s.key, window.scrollY);
+}
+
+/** Het lopende terugzetten (wacht tot de pagina lang genoeg is); stop() ruimt het op. */
+let restoring: { key: string; stop: () => void } | null = null;
+
+function stopRestoring(): void {
+  restoring?.stop();
+  restoring = null;
+}
+
+/** Scrolt naar y en blijft dat doen terwijl de pagina van hoogte verandert (de data komt
+ * binnen, een lege staat wordt een lange lijst), tot de gebruiker zelf iets doet of RESTORE_MS
+ * voorbij is. Ook als y al bereikt is: de inhoud kan daarna nog wisselen. Zolang telt geen
+ * scroll-event voor deze entry. */
+function restoreTo(key: string, y: number): void {
+  window.scrollTo(0, y);
+  if (restoring?.key === key) return; // wacht al; de poging hierboven was genoeg
+  stopRestoring();
+  const done = () => {
+    if (restoring?.key !== key) return;
+    stopRestoring();
+    scrolls.finish(key, window.scrollY);
+  };
+  const retry = () => {
+    if (Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
+  };
+  const observer = typeof ResizeObserver === "function" ? new ResizeObserver(retry) : null;
+  observer?.observe(document.body);
+  observer?.observe(document.documentElement);
+  const timer = window.setTimeout(done, RESTORE_MS);
+  const user = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+  for (const type of user) window.addEventListener(type, done, { passive: true, capture: true });
+  restoring = {
+    key,
+    stop: () => {
+      observer?.disconnect();
+      window.clearTimeout(timer);
+      for (const type of user) window.removeEventListener(type, done, { capture: true });
+    },
+  };
 }
 
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", saveScroll);
+  // Terug of vooruit (ook het eigen event van navigate(); dat zet daarna zelf de entry actief).
+  // De plek van de vorige entry staat dan al in het geheugen: elk scroll-event schreef hem weg.
+  window.addEventListener("popstate", () => {
+    stopRestoring();
+    scrolls.popped();
+  });
+  window.addEventListener(
+    "scroll",
+    () => {
+      const s = historyState();
+      if (s) scrolls.record(s.key, window.scrollY);
+    },
+    { passive: true },
+  );
   try {
     window.history.scrollRestoration = "manual";
   } catch {
@@ -226,9 +370,12 @@ if (typeof window !== "undefined") {
 
 /**
  * Zet de scrollpositie terug als je met terug/vooruit (of na herladen) op deze pagina komt, en
- * begint bovenaan na een gewone navigatie. ready: de inhoud staat er (anders is de pagina nog
- * te kort om naar de oude plek te scrollen). Alleen een ander pad telt: een andere query
- * (?bestand= van de viewer, een filter) laat de pagina staan waar hij was.
+ * begint bovenaan na een gewone navigatie. ready: de inhoud staat er. De schil roept dit al aan
+ * voor elke route (ready = true); het terugzetten blijft dan 3 s de plek vasthouden terwijl de
+ * pagina groeit (of tot de gebruiker zelf iets doet). Een pagina die zijn data later laadt, mag
+ * het ook zelf aanroepen met ready: binnen die tijd wordt het dan nog eens gezet. Alleen een ander
+ * pad telt: een andere query (?bestand= van de viewer, een filter) laat de pagina staan waar hij
+ * was.
  */
 export function useRestoreScroll(ready: boolean): void {
   const { path } = useLocation();
@@ -237,19 +384,12 @@ export function useRestoreScroll(ready: boolean): void {
     const s = ensureState();
     if (lastNavigation === "push") {
       window.scrollTo(0, 0);
+      scrolls.pushed(s.key);
       return;
     }
-    const y = savedScroll(s.key);
-    if (y !== undefined) window.scrollTo(0, y);
+    const y = scrolls.startRestore(s.key);
+    if (y !== undefined) restoreTo(s.key, y);
   }, [ready, path]);
-  useEffect(() => {
-    const onScroll = () => {
-      const s = historyState();
-      if (s) scrolls.set(s.key, window.scrollY);
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
 }
 
 // --- welk onderdeel van de navigatie gemarkeerd is ---

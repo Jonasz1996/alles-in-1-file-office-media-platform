@@ -9,6 +9,7 @@ export { Field, type FieldControlProps } from "./Field";
 export { ICON_NAMES, Icon, type IconName } from "./Icon";
 export {
   activeShortcuts,
+  consumesKey,
   type Combo,
   formatCombo,
   isTypingTarget,
@@ -44,7 +45,7 @@ export {
 export { ShortcutHelp, openShortcutHelp } from "./ShortcutHelp";
 export { Skeleton, Spinner } from "./Spinner";
 export { LanguageSwitch, ThemeSwitch } from "./switches";
-export { Tabs, type TabDef } from "./Tabs";
+export { Tabs, type TabDef, tabPanelProps } from "./Tabs";
 export { setTheme, type Theme, useTheme } from "./theme";
 export { announce, ToastRegion, toast } from "./toast";
 export { UsageBar } from "./UsageBar";

@@ -15,8 +15,12 @@ dat niet klopt, plus de volledige lijst van pydantic:
     {"detail": {"message": "Ongeldige invoer", "code": "invalid_input",
                 "params": {"field": "body.name"}, "errors": [...]}}
 
+Komt de eerste fout uit een eigen validator (een ValueError met een Nederlandse tekst, zoals
+"Kleur moet leeg zijn of zoals #1d5fd1"), dan is die tekst de message; de code blijft
+invalid_input, zodat een andere taal terugvalt op "Invalid input".
+
 Bulkacties geven per item een ItemResult: gelukt (ok, met het resultaat in node) of mislukt,
-met dezelfde codes als de losse endpoints.
+met dezelfde codes als de losse endpoints, en params als de tekst iets invult.
 """
 
 import uuid
@@ -48,11 +52,12 @@ class ItemResult(BaseModel):
     ok: bool
     code: str | None = None
     message: str | None = None
+    params: dict[str, Any] | None = None
     node: Any = None
 
 
-def item_fail(id: uuid.UUID, code: str, message: str) -> ItemResult:
-    return ItemResult(id=id, ok=False, code=code, message=message)
+def item_fail(id: uuid.UUID, code: str, message: str, **params: Any) -> ItemResult:
+    return ItemResult(id=id, ok=False, code=code, message=message, params=params or None)
 
 
 def item_of(id: uuid.UUID, error: HTTPException) -> ItemResult:
@@ -63,6 +68,7 @@ def item_of(id: uuid.UUID, error: HTTPException) -> ItemResult:
         ok=False,
         code=str(detail.get("code") or "error"),
         message=str(detail.get("message") or error.detail),
+        params=detail.get("params") or None,
     )
 
 
@@ -75,12 +81,21 @@ def _field(location: Any) -> str:
     return ".".join(str(part) for part in location or ())
 
 
+def _own_message(raw: list) -> str | None:
+    """De tekst van een eigen validator (ValueError) als die de eerste fout is."""
+    if not raw or raw[0].get("type") != "value_error":
+        return None
+    error = (raw[0].get("ctx") or {}).get("error")
+    return str(error) if isinstance(error, ValueError) and str(error) else None
+
+
 async def invalid_input(_request: Request, exc: RequestValidationError) -> JSONResponse:
     """422 voor een verzoek dat niet door de validatie komt, in de vorm van fail()."""
-    found = jsonable_encoder(exc.errors())
+    raw = list(exc.errors())
+    found = jsonable_encoder(raw)
     first = found[0] if found else {}
     detail = {
-        "message": INVALID_INPUT,
+        "message": _own_message(raw) or INVALID_INPUT,
         "code": "invalid_input",
         "params": {"field": _field(first.get("loc"))},
         "errors": found,

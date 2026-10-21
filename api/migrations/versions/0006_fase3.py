@@ -15,11 +15,10 @@ daar later de EXIF-datum overheen.
 
 from datetime import UTC, datetime
 from itertools import batched
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import sqlalchemy as sa
 from alembic import op
-
-from app.photodate import day_of, wall_clock
 
 revision = "0006"
 down_revision = "0005"
@@ -27,6 +26,25 @@ branch_labels = None
 depends_on = None
 
 BATCH = 500
+
+
+# Een migratie hangt niet af van code die later nog verandert: wall_clock en day_of staan hier
+# zelf, zoals app.photodate ze had toen deze migratie verscheen (tests/test_migration_0006.py
+# vergelijkt ze met app.photodate).
+def wall_clock(moment: datetime, tz: str) -> datetime:
+    """Een echt moment (zonder tijdzone: UTC) als kloktijd in tijdzone tz, met tzinfo UTC.
+    Een onbekende tijdzone: UTC."""
+    try:
+        zone = ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = UTC
+    aware = moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+    return aware.astimezone(zone).replace(tzinfo=UTC)
+
+
+def day_of(taken_at: datetime) -> int:
+    """De dag als JJJJMMDD (20240701)."""
+    return taken_at.year * 10000 + taken_at.month * 100 + taken_at.day
 
 
 def _timezone() -> str:

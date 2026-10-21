@@ -216,13 +216,27 @@ export function applyAccountLocale(l: Locale | null | undefined): boolean {
   return true;
 }
 
+/** Zo heet een mislukte fetch in Chromium, Firefox en Safari. */
+const FETCH_FAILED = /^(Failed to fetch|NetworkError when attempting to fetch resource\.?|Load failed|Network request failed)$/i;
+
+/**
+ * Geen verbinding? Een ApiError met code "network" (api.ts en publicApi.ts maken die van een
+ * mislukte fetch), of een kale TypeError met de tekst van een mislukte fetch. Een andere
+ * TypeError is een programmeerfout, geen verbindingsprobleem.
+ */
+export function isNetworkError(e: unknown): boolean {
+  if (e instanceof TypeError) return FETCH_FAILED.test(e.message);
+  return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "network";
+}
+
 /**
  * De tekst bij een fout. In het Nederlands de tekst van de server; in het Engels de vertaling
  * van de foutcode uit de catalogus (met de params ingevuld), anders toch de servertekst. Geen
- * verbinding (fetch gooit een TypeError) geeft een eigen melding.
+ * verbinding geeft een eigen melding (zie isNetworkError). Ook een ItemResult van een bulkactie
+ * ({code, message, params}) gaat hierdoor.
  */
 export function errorText(e: unknown): string {
-  if (e instanceof TypeError) return t("common.errors.network");
+  if (isNetworkError(e)) return t("common.errors.network");
   const err = (typeof e === "object" && e !== null ? e : {}) as {
     message?: unknown;
     code?: unknown;

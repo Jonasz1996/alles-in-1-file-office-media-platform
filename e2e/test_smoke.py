@@ -1,6 +1,10 @@
 """Rooktest (P0, frozen na P0): het hele rondje door de app zoals een gebruiker het doet.
 Inloggen → Bestanden → een bestand uploaden → openen in de viewer → thema wisselen →
-uitloggen. Plus een controle dat de bewaking (CSP, i18n) echt iets vangt."""
+uitloggen. Plus een controle dat de bewaking (CSP, i18n) echt iets vangt.
+
+De selectors volgen het rooktest-DOM-contract in docs/fase-3/e2e.md: alleen exacte
+toegankelijke namen en teksten, en geen rollen of elementen die een pakket mag veranderen
+(een rij is een <tr> of role=row, een bestand opent met een klik op zijn naam)."""
 
 from __future__ import annotations
 
@@ -13,14 +17,14 @@ DARK_BG = "#121212"
 
 def login_via_form(page, account) -> None:
     page.goto("/")
-    expect(page.get_by_role("heading", name="Inloggen")).to_be_visible()
-    page.get_by_label("E-mailadres").fill(account.email)
-    page.get_by_label("Wachtwoord").fill(account.password)
-    page.get_by_role("button", name="Inloggen").click()
+    expect(page.get_by_role("heading", name="Inloggen", exact=True)).to_be_visible()
+    page.get_by_label("E-mailadres", exact=True).fill(account.email)
+    page.get_by_label("Wachtwoord", exact=True).fill(account.password)
+    page.get_by_role("button", name="Inloggen", exact=True).click()
 
 
 def open_account_menu(page, account):
-    page.get_by_role("button", name=account.display_name).click()
+    page.get_by_role("button", name=account.display_name, exact=True).click()
     menu = page.get_by_role("menu", name=f"Accountmenu van {account.display_name}")
     expect(menu).to_be_visible()
     return menu
@@ -28,8 +32,8 @@ def open_account_menu(page, account):
 
 def choose_theme(page, account, label: str) -> None:
     menu = open_account_menu(page, account)
-    menu.get_by_role("menuitem", name="Thema").click()
-    page.get_by_role("menuitemcheckbox", name=label).click()
+    menu.get_by_role("menuitem", name="Thema", exact=True).click()
+    page.get_by_role("menuitemradio", name=label, exact=True).click()
 
 
 def css_var(page, name: str) -> str:
@@ -45,27 +49,32 @@ def test_rondje_door_de_app(new_context, user_factory, server):
     # Inloggen met het formulier (2FA staat uit: geen code)
     login_via_form(page, user)
     nav = page.get_by_role("navigation", name="Hoofdmenu")
-    expect(nav.get_by_role("link", name="Bestanden")).to_have_attribute("aria-current", "page")
+    expect(nav.get_by_role("link", name="Bestanden", exact=True)).to_have_attribute(
+        "aria-current", "page"
+    )
     expect(page).to_have_title(re.compile("Bestanden"))
-    expect(page.get_by_text("Deze map is leeg.")).to_be_visible()
+    expect(page.get_by_text("Deze map is leeg.", exact=True)).to_be_visible()
 
     # Uploaden via de knop (de bestandskiezer van de browser)
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Uploaden").click()
+        page.get_by_role("button", name="Uploaden", exact=True).click()
     chooser.value.set_files(
         {"name": "hallo.txt", "mimeType": "text/plain", "buffer": b"Hallo vanuit e2e\n"}
     )
-    row_button = page.get_by_role("button", name="hallo.txt", exact=True)
-    expect(row_button).to_be_visible()
+    # Rolneutraal: nu een knop (met een icoon ervoor), bij P2 een rij in een grid. Eén keer in
+    # de pagina (#inhoud) zodra de upload klaar is: de voortgangsregel is dan weg
+    item = page.locator("#inhoud").get_by_text("hallo.txt")
+    expect(item).to_have_count(1)
+    expect(item).to_be_visible()
     listing = server.call(user, "GET", "/api/v1/files/root", expect=200).json()
     assert [n["name"] for n in listing["children"]] == ["hallo.txt"]
 
     # Openen: de viewer (stub van P0) met ?bestand= in het adres; sluiten haalt het weg
-    row_button.click()
-    viewer = page.get_by_role("dialog", name="hallo.txt")
+    item.click()
+    viewer = page.get_by_role("dialog", name="hallo.txt", exact=True)
     expect(viewer).to_be_visible()
     expect(page).to_have_url(re.compile(r"[?&]bestand="))
-    viewer.get_by_role("button", name="Sluiten").click()
+    viewer.get_by_role("button", name="Sluiten", exact=True).click()
     expect(viewer).to_be_hidden()
     expect(page).not_to_have_url(re.compile(r"[?&]bestand="))
 
@@ -75,7 +84,7 @@ def test_rondje_door_de_app(new_context, user_factory, server):
     assert css_var(page, "--bg") == DARK_BG
     assert page.evaluate("localStorage.getItem('platform-theme')") == "dark"
     page.reload()
-    expect(page.get_by_role("button", name=user.display_name)).to_be_visible()
+    expect(page.get_by_role("button", name=user.display_name, exact=True)).to_be_visible()
     expect(page.locator("html")).to_have_attribute("data-theme", "dark")
     choose_theme(page, user, "Licht")
     expect(page.locator("html")).to_have_attribute("data-theme", "light")
@@ -85,10 +94,10 @@ def test_rondje_door_de_app(new_context, user_factory, server):
 
     # Uitloggen: terug bij het formulier, en herladen logt niet weer in
     menu = open_account_menu(page, user)
-    menu.get_by_role("menuitem", name="Uitloggen").click()
-    expect(page.get_by_role("heading", name="Inloggen")).to_be_visible()
+    menu.get_by_role("menuitem", name="Uitloggen", exact=True).click()
+    expect(page.get_by_role("heading", name="Inloggen", exact=True)).to_be_visible()
     page.reload()
-    expect(page.get_by_role("heading", name="Inloggen")).to_be_visible()
+    expect(page.get_by_role("heading", name="Inloggen", exact=True)).to_be_visible()
 
 
 def test_ingelogde_context(context_as, user_factory):
@@ -96,8 +105,8 @@ def test_ingelogde_context(context_as, user_factory):
     user = user_factory(name="Context Test")
     page = context_as(user).new_page()
     page.goto("/")
-    expect(page.get_by_role("button", name=user.display_name)).to_be_visible()
-    expect(page.get_by_text("Deze map is leeg.")).to_be_visible()
+    expect(page.get_by_role("button", name=user.display_name, exact=True)).to_be_visible()
+    expect(page.get_by_text("Deze map is leeg.", exact=True)).to_be_visible()
 
 
 def test_publieke_link_uit_seed(new_context, user_factory, seeded):
@@ -111,7 +120,9 @@ def test_publieke_link_uit_seed(new_context, user_factory, seeded):
     page = new_context().new_page()
     page.goto(url)
     expect(page.get_by_role("heading", level=1)).to_have_text(re.compile(r"^Openbaar "))
-    expect(page.locator("tbody tr")).to_have_count(200)
+    # Elk item is een rij (<tr> of role=row); een kopregel (met columnheader) telt niet mee
+    items = page.get_by_role("row").filter(has_not=page.get_by_role("columnheader"))
+    expect(items).to_have_count(200)
     expect(page).to_have_title(re.compile(r"^Openbaar "))
     page.wait_for_function(
         """() => [...document.images].some(
@@ -124,7 +135,7 @@ def test_bewaking_vangt_csp_en_i18n(browsers):
     context = browsers.new_context()
     page = context.new_page()
     page.goto("/")
-    expect(page.get_by_role("heading", name="Inloggen")).to_be_visible()
+    expect(page.get_by_role("heading", name="Inloggen", exact=True)).to_be_visible()
     page.evaluate(
         """() => {
           const s = document.createElement("script");

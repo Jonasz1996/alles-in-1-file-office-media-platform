@@ -84,7 +84,7 @@ def test_geen_themaflits(new_context, server, stored, scheme, attr, bg, path):
     page = context.new_page()
     page.goto(path)
     # Wachten tot de app er staat (het formulier); intussen kan de app nog flitsen
-    expect(page.get_by_label("E-mailadres")).to_be_visible()
+    expect(page.get_by_label("E-mailadres", exact=True)).to_be_visible()
     probe = page.evaluate("window.__themeProbe")
 
     first = probe["firstChild"]
@@ -121,13 +121,13 @@ def test_thema_volgt_na_wisselen_ook_bij_herladen(context_as, user_factory):
     context.add_init_script(PROBE_JS)
     page = context.new_page()
     page.goto("/")
-    expect(page.get_by_role("button", name=user.display_name)).to_be_visible()
-    page.get_by_role("button", name=user.display_name).click()
-    page.get_by_role("menuitem", name="Thema").click()
-    page.get_by_role("menuitemcheckbox", name="Donker").click()
+    expect(page.get_by_role("button", name=user.display_name, exact=True)).to_be_visible()
+    page.get_by_role("button", name=user.display_name, exact=True).click()
+    page.get_by_role("menuitem", name="Thema", exact=True).click()
+    page.get_by_role("menuitemradio", name="Donker", exact=True).click()
     expect(page.locator("html")).to_have_attribute("data-theme", "dark")
     page.reload()
-    expect(page.get_by_role("button", name=user.display_name)).to_be_visible()
+    expect(page.get_by_role("button", name=user.display_name, exact=True)).to_be_visible()
     probe = page.evaluate("window.__themeProbe")
     assert probe["firstChild"]["theme"] == "dark"
     assert color(probe["frame"]["bg"]) == DARK_BG

@@ -18,7 +18,7 @@ import {
 import { createPortal } from "react-dom";
 import { Icon, type IconName } from "./Icon";
 import { formatCombo, pushScope } from "./keys";
-import { type MenuItem, nextIndex, placeMenu, placeSubmenu, typeahead } from "./menu";
+import { itemRole, type MenuItem, nextIndex, placeMenu, placeSubmenu, typeahead } from "./menu";
 
 export type { MenuItem } from "./menu";
 
@@ -121,7 +121,11 @@ function MenuLevel({
   }, []);
 
   useEffect(() => {
-    if (pos && submenu === null) refs.current[active]?.focus({ preventScroll: true });
+    if (!pos || submenu !== null) return;
+    const el = refs.current[active];
+    el?.focus({ preventScroll: true });
+    // Een lang menu scrolt zelf (overflow); het menu is fixed, dus alleen het menu scrolt mee
+    el?.scrollIntoView?.({ block: "nearest" });
   }, [active, pos, submenu]);
 
   function activate(i: number) {
@@ -195,7 +199,7 @@ function MenuLevel({
               ref={(el) => {
                 refs.current[i] = el;
               }}
-              role={item.checked !== undefined ? "menuitemcheckbox" : "menuitem"}
+              role={itemRole(item)}
               aria-checked={item.checked}
               aria-disabled={item.disabled || undefined}
               aria-haspopup={item.items?.length ? "menu" : undefined}
@@ -247,7 +251,11 @@ function MenuLevel({
           nested
           onClose={(reason) => {
             setSubmenu(null);
-            if (reason === "escape") refs.current[submenu]?.focus({ preventScroll: true });
+            if (reason === "escape") {
+              const el = refs.current[submenu];
+              el?.focus({ preventScroll: true });
+              el?.scrollIntoView?.({ block: "nearest" });
+            }
             else onClose(reason); // gekozen, Tab of ergens anders geklikt: alles dicht
           }}
         />

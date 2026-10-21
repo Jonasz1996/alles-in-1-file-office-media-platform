@@ -25,5 +25,11 @@ export default {
     ofTotal: "{used} van {total}",
     usedOnly: "{used} gebruikt",
   },
+  /** Vervaldatum van een link (sharing.ts: expiryLabel), ook op de publieke pagina */
+  expires: {
+    on: "verloopt op {date}",
+    dateAt: "{date} om {time}",
+    past: "verlopen",
+  },
   items: { one: "{n} item", other: "{n} items" },
 } as const;

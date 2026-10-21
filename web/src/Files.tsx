@@ -10,6 +10,7 @@ import { ShareDialog } from "./ShareDialog";
 import { crumbs, folderActions, isShared, nodeActions, PERMISSION_LABELS, permissionOf } from "./sharing";
 import { TagChips } from "./Tags";
 import { Thumb, usePreviews } from "./Thumb";
+import { useScope } from "./ui/keys";
 import { hasFiles, UploadButtons, uploadDropped } from "./upload/index";
 import { uploadQueue, useUploads } from "./uploadQueue";
 import { useViewerParam, Viewer } from "./viewer";
@@ -20,6 +21,9 @@ import "./share.css";
  * staat in de navigatie bovenaan "Gedeeld met mij" gemarkeerd.
  */
 export default function Files({ params }: RouteProps) {
+  // De sneltoets-scope van de bestandsbrowser (P0): P3 (U, Shift+U) en P2 registreren hun
+  // toetsen in "browser"; P2 houdt deze regel
+  useScope("browser");
   const folderId = params.id ?? null;
   const guest = isGuest(useCurrentUser());
   const [listing, setListing] = useState<Listing | null>(null);

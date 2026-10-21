@@ -1,9 +1,11 @@
 // Meldingen (toasts) rechtsonder, en announce() voor schermlezers (aria-live). De logica zit
 // in ToastStore en LiveAnnouncer, zonder DOM, zodat ze te testen zijn.
 
-import { type JSX, useSyncExternalStore } from "react";
+import { type JSX, useEffect, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { t } from "../i18n";
 import { IconButton } from "./Button";
+import { modals } from "./topLayer";
 
 export interface ToastAction {
   label: string;
@@ -108,6 +110,8 @@ export class ToastStore {
 export class LiveAnnouncer {
   private state = { polite: "", assertive: "" };
   private readonly listeners = new Set<() => void>();
+  /** Wanneer er voor het laatst iets werd aangekondigd (ms). */
+  lastAt = 0;
 
   getSnapshot = () => this.state;
 
@@ -122,6 +126,7 @@ export class LiveAnnouncer {
     const prev = this.state[politeness];
     const text = prev === msg ? `${msg} ` : msg;
     this.state = { ...this.state, [politeness]: text };
+    this.lastAt = Date.now();
     for (const l of this.listeners) l();
   }
 }
@@ -129,8 +134,10 @@ export class LiveAnnouncer {
 export const toasts = new ToastStore();
 export const announcer = new LiveAnnouncer();
 
-/** Een melding rechtsonder; ook voorgelezen (een fout direct). Geeft de functie om hem te sluiten. */
+/** Een melding rechtsonder; ook voorgelezen via de vaste live-regio (een fout direct). Geeft de
+ * functie om hem te sluiten. */
 export function toast(msg: string, o?: ToastOptions): () => void {
+  announcer.announce(msg, o?.kind === "error" ? "assertive" : "polite");
   return toasts.show(msg, o);
 }
 
@@ -139,24 +146,50 @@ export function announce(msg: string, politeness: "polite" | "assertive" = "poli
   announcer.announce(msg, politeness);
 }
 
-/** De meldingen en de live-regio's; één keer in de app. */
-export function ToastRegion(): JSX.Element {
-  const items = useSyncExternalStore(toasts.subscribe, toasts.getSnapshot, toasts.getSnapshot);
+/** Hoe lang na het verhuizen van de live-regio's (een dialoog ging open of dicht) een tekst nog
+ * als nieuw telt en opnieuw wordt gezet. */
+const RECENT_MS = 2000;
+const NOTHING = { polite: "", assertive: "" };
+
+/** De twee live-regio's. Een regio die net in de DOM kwam, leest een schermlezer pas voor als
+ * de tekst daarna verandert: dus eerst leeg, en na een tel de tekst als die net nieuw was
+ * (bijv. "Opgeslagen" vlak voordat de dialoog sloot). Een oude tekst blijft weg. */
+function LiveRegions(): JSX.Element {
   const live = useSyncExternalStore(announcer.subscribe, announcer.getSnapshot, announcer.getSnapshot);
+  const [stale] = useState(() => (Date.now() - announcer.lastAt > RECENT_MS ? announcer.getSnapshot() : null));
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setReady(true), 100);
+    return () => clearTimeout(id);
+  }, []);
+  const shown = ready && live !== stale ? live : NOTHING;
   return (
     <>
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {live.polite}
+        {shown.polite}
       </div>
       <div className="sr-only" aria-live="assertive" aria-atomic="true">
-        {live.assertive}
+        {shown.assertive}
       </div>
+    </>
+  );
+}
+
+/** De meldingen en de live-regio's; één keer in de app. Staan in de bovenste open dialoog als die
+ * er is (anders zijn ze daaronder inert: niet te klikken en voor schermlezers weg), anders in
+ * body. De meldingen zelf hebben geen role=status/alert: het voorlezen gaat via de vaste
+ * live-regio (zie toast()). */
+export function ToastRegion(): JSX.Element {
+  const items = useSyncExternalStore(toasts.subscribe, toasts.getSnapshot, toasts.getSnapshot);
+  const host = useSyncExternalStore(modals.subscribe, modals.top, () => null);
+  const region = (
+    <>
+      <LiveRegions key={hostKey(host)} />
       <section className="toasts" aria-label={t("common.toast.region")}>
         {items.map((item) => (
           <div
             key={item.id}
             className={`toast ${item.kind}`}
-            role={item.kind === "error" ? "alert" : "status"}
             onMouseEnter={() => toasts.pause(item.id)}
             onMouseLeave={() => toasts.resume(item.id)}
             onFocus={() => toasts.pause(item.id)}
@@ -179,4 +212,17 @@ export function ToastRegion(): JSX.Element {
       </section>
     </>
   );
+  return createPortal(region, host ?? document.body);
+}
+
+const hostKeys = new WeakMap<object, string>();
+let hostSeq = 0;
+function hostKey(host: object | null): string {
+  if (host === null) return "body";
+  let key = hostKeys.get(host);
+  if (!key) {
+    key = `dialog-${++hostSeq}`;
+    hostKeys.set(host, key);
+  }
+  return key;
 }

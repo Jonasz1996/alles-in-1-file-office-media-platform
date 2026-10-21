@@ -2,6 +2,7 @@
 // React, zodat ze te testen zijn.
 
 import type { FileNode, NewLink, Permission, Share, ShareChange } from "./api";
+import { fmt, t } from "./i18n";
 
 /** Wat jij met een map of bestand mag. Oudere servers sturen het niet: dan is het van jou. */
 export function permissionOf(node: Pick<FileNode, "permission"> | null | undefined): Permission {
@@ -107,19 +108,21 @@ export function today(now = Date.now()): string {
   return dateInputValue(new Date(now).toISOString());
 }
 
-/** "31 oktober 2026", met de tijd erbij als het niet het eind van de dag is. */
+/** "31 oktober 2026", met de tijd erbij als het niet het eind van de dag is. Alleen sleutels uit
+ * common: dit draait ook op de publieke pagina /s/:token, die het gebied sharing niet laadt. */
 export function formatExpiry(iso: string): string {
   const at = new Date(iso);
-  const date = at.toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric" });
+  const date = fmt.date(at, "long");
   if (at.getHours() === 23 && at.getMinutes() === 59) return date;
-  return `${date} om ${at.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}`;
+  return t("common.expires.dateAt", { date, time: fmt.time(at) });
 }
 
-/** "verloopt op 31 oktober 2026", "verlopen", of null zonder vervaldatum. */
+/** "verloopt op 31 oktober 2026", "verlopen", of null zonder vervaldatum. Alleen sleutels uit
+ * common (zie formatExpiry; bouwontwerp regel 2). */
 export function expiryLabel(iso: string | null | undefined, now = Date.now()): string | null {
   if (!iso) return null;
-  if (new Date(iso).getTime() <= now) return "verlopen";
-  return `verloopt op ${formatExpiry(iso)}`;
+  if (new Date(iso).getTime() <= now) return t("common.expires.past");
+  return t("common.expires.on", { date: formatExpiry(iso) });
 }
 
 /** De link om te versturen: het adres van deze app plus /s/<token>. */

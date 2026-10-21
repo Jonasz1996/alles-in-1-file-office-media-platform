@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextIndex, placeMenu, placeSubmenu, typeahead } from "./menu";
+import { itemRole, nextIndex, placeMenu, placeSubmenu, typeahead } from "./menu";
 
 describe("nextIndex", () => {
   it("rondom, ook vanaf niets", () => {
@@ -77,5 +77,14 @@ describe("placeSubmenu", () => {
 
   it("schuift omhoog als het onder de rand valt", () => {
     expect(placeSubmenu({ x: 100, y: 750, width: 180, height: 36 }, size, viewport).y).toBe(642);
+  });
+});
+
+describe("itemRole", () => {
+  it("gewoon, vinkje en keuze uit een groep", () => {
+    expect(itemRole({})).toBe("menuitem");
+    expect(itemRole({ checked: false })).toBe("menuitemcheckbox");
+    expect(itemRole({ checked: true, radio: true })).toBe("menuitemradio");
+    expect(itemRole({ radio: true })).toBe("menuitem"); // radio zonder checked telt niet
   });
 });

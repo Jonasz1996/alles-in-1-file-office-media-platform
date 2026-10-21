@@ -5,6 +5,7 @@
 import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
 import { discardUpload, STOP, storageKey, type TusApi, type UploadOptions, uploadFile } from "./upload";
+import { uploadStatus } from "./uploadStatus";
 
 export interface UploadItem {
   /** Alleen binnen deze pagina (React-key). Een teller: crypto.randomUUID bestaat alleen via
@@ -143,6 +144,13 @@ export class UploadQueue {
 }
 
 export const uploadQueue = new UploadQueue(api);
+
+// De schil (App.tsx) kijkt via uploadStatus mee: zo hoort deze module niet bij de eerste lading
+uploadStatus.attach({
+  subscribe: uploadQueue.subscribe,
+  busy: () => uploadQueue.getSnapshot().length > 0,
+  stopAll: () => uploadQueue.stopAll(),
+});
 
 export function useUploads(): UploadItem[] {
   return useSyncExternalStore(uploadQueue.subscribe, uploadQueue.getSnapshot);

@@ -30,13 +30,18 @@ export function applyTheme(theme: Theme): void {
   if (theme === "system") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", theme);
   const dark = theme === "dark" || (theme === "system" && systemDark());
-  let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-  if (!meta) {
-    meta = document.createElement("meta");
+  // Elke theme-color, zonder media (zie boot.js): anders wint die van het systeemschema
+  let metas = [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')];
+  if (!metas.length) {
+    const meta = document.createElement("meta");
     meta.name = "theme-color";
     document.head.appendChild(meta);
+    metas = [meta];
   }
-  meta.content = dark ? THEME_COLOR.dark : THEME_COLOR.light;
+  for (const meta of metas) {
+    meta.content = dark ? THEME_COLOR.dark : THEME_COLOR.light;
+    meta.removeAttribute("media");
+  }
 }
 
 const listeners = new Set<() => void>();

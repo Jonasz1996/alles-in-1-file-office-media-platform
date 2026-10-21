@@ -86,6 +86,21 @@ export function scrollTarget(
   return null;
 }
 
+/**
+ * Waar de lijst begint binnen de inhoud van een eigen scroller (in px vanaf de bovenkant van zijn
+ * scrollbare inhoud). Uit de schermposities, niet uit offsetTop: offsetTop is relatief aan de
+ * dichtstbijzijnde gepositioneerde ouder, en dat is de scroller zelf vaak al (een <dialog>
+ * altijd). clientTop: de bovenrand van de scroller.
+ */
+export function listOffsetIn(listTop: number, scrollerTop: number, clientTop: number, scrollTop: number): number {
+  return listTop - scrollerTop - clientTop + scrollTop;
+}
+
+function offsetInScroller(list: HTMLElement | null, el: HTMLElement): number {
+  if (!list || list === el) return 0;
+  return listOffsetIn(list.getBoundingClientRect().top, el.getBoundingClientRect().top, el.clientTop, el.scrollTop);
+}
+
 export interface VirtualRowsOptions {
   count: number;
   rowHeight: number | ((i: number) => number);
@@ -131,8 +146,7 @@ export function useVirtualRows(o: VirtualRowsOptions): VirtualRows {
     }
     const el = scroller.current;
     if (!el) return { top: 0, viewport: 0 };
-    const listTop = list && list !== el ? list.offsetTop - el.offsetTop : 0;
-    return { top: el.scrollTop - listTop, viewport: el.clientHeight };
+    return { top: el.scrollTop - offsetInScroller(list, el), viewport: el.clientHeight };
   }, [listRef, scroller]);
 
   const compute = useCallback((): Range => {
@@ -163,9 +177,15 @@ export function useVirtualRows(o: VirtualRowsOptions): VirtualRows {
     };
     target.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", onScroll);
+    // Een eigen scroller kan van hoogte veranderen zonder dat het venster dat doet (een paneel
+    // dat opent, een dialoog die groeit)
+    const observer =
+      target !== window && typeof ResizeObserver === "function" ? new ResizeObserver(onScroll) : null;
+    if (observer) observer.observe(target as HTMLElement);
     return () => {
       target.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
+      observer?.disconnect();
       if (frame.current) cancelAnimationFrame(frame.current);
       frame.current = 0;
     };
@@ -184,10 +204,8 @@ export function useVirtualRows(o: VirtualRowsOptions): VirtualRows {
         const listTop = list ? list.getBoundingClientRect().top + window.scrollY : 0;
         window.scrollTo({ top: Math.max(0, listTop + y) });
       } else if (scroller.current) {
-        const list = listRef.current;
         const el = scroller.current;
-        const listTop = list && list !== el ? list.offsetTop - el.offsetTop : 0;
-        el.scrollTop = Math.max(0, listTop + y);
+        el.scrollTop = Math.max(0, offsetInScroller(listRef.current, el) + y);
       }
       update();
     },

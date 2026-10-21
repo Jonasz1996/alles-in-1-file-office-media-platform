@@ -1,8 +1,10 @@
 // API-aanroepen die meerdere pakketten gebruiken, met een vast contract. trash, move, copy en
 // archiveLink bouwt P2 (de endpoints), restore staat er al (P0, daarna P6), addToAlbum P5.
-// Tot een endpoint er is, geeft de server 404 of 501; de aanroep zelf blijft gelijk.
+// Tot een endpoint er is, geeft de server 405 (de stub-router bestaat, maar zonder die methode)
+// of 404 (geen route); de aanroep zelf blijft gelijk. Gebruik isNotBuilt(e) om dat te herkennen.
+// Een mislukt item toon je met errorText(item) uit i18n: die vertaalt op code, met params.
 
-import { api, type FileNode } from "./api";
+import { ApiError, api, type FileNode } from "./api";
 
 export interface ItemResult {
   id: string;
@@ -11,7 +13,14 @@ export interface ItemResult {
    * album, not_own, not_media, already */
   code?: string;
   message?: string;
+  /** Wat de tekst invult, bijv. {max} bij too_many of {owner} bij no_room_owner */
+  params?: Record<string, string | number> | null;
   node?: FileNode;
+}
+
+/** Bestaat dit endpoint nog niet (een later pakket bouwt het)? 404, 405 of 501 zonder code. */
+export function isNotBuilt(e: unknown): boolean {
+  return e instanceof ApiError && !e.code && (e.status === 404 || e.status === 405 || e.status === 501);
 }
 
 export interface BatchResult {

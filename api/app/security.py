@@ -238,14 +238,15 @@ async def logged_in_user(session: Session, claims: Annotated[dict, Depends(acces
     user = await session.get(User, uuid.UUID(claims["sub"]))
     if user is None:
         raise errors.fail(401, "user_gone", "Gebruiker bestaat niet meer")
+    # Geblokkeerd: ook een access-token dat al uit was, werkt meteen niet meer. Dit gaat vóór
+    # de ingetrokken login, want blokkeren trekt de logins ook in
+    if user.disabled_at is not None:
+        raise errors.fail(401, "account_disabled", ACCOUNT_DISABLED)
     # Uitgelogd (ook vanaf een ander apparaat): dan werkt ook het access-token meteen niet
     # meer, niet pas als het na een kwartier verloopt.
     family = claims.get("fam")
     if family and await family_revoked(session, uuid.UUID(family)):
         raise errors.fail(401, "logged_out", "Je bent op dit apparaat uitgelogd; log opnieuw in")
-    # Geblokkeerd: ook een access-token dat al uit was, werkt meteen niet meer
-    if user.disabled_at is not None:
-        raise errors.fail(401, "account_disabled", ACCOUNT_DISABLED)
     return user
 
 

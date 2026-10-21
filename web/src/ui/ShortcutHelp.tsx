@@ -50,8 +50,10 @@ export function ShortcutHelp(): JSX.Element | null {
 }
 
 function ShortcutList({ onClose }: { onClose(): void }) {
-  // De lijst van vóór het openen: de dialoog zelf zet een scope bovenop die de rest tegenhoudt
-  const [list] = useState(activeShortcuts);
+  // De lijst van vóór het openen: de dialoog zelf zet een scope bovenop die de rest tegenhoudt.
+  // Zonder "menu": vanuit het accountmenu staat dat nog even op de stapel (het sluit in een
+  // effect na deze render), en het zou alles eronder tegenhouden
+  const [list] = useState(() => activeShortcuts({ ignore: ["menu"] }));
   const groups = new Map<string, { combo: string; label: string }[]>();
   for (const s of list) {
     const group = groups.get(s.scope) ?? [];

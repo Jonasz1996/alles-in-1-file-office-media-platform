@@ -195,3 +195,27 @@ describe("formatBytes", () => {
     expect(formatBytes(700 * 1024 ** 3)).toBe("700,0 GB");
   });
 });
+
+describe("isNotBuilt (crossApi)", () => {
+  it("405 of 404 zonder code: het endpoint is er nog niet; een echte fout met code wel", async () => {
+    const { isNotBuilt } = await import("./crossApi");
+    expect(isNotBuilt(errorFromBody(405, { detail: "Method Not Allowed" }))).toBe(true);
+    expect(isNotBuilt(errorFromBody(404, { detail: "Not Found" }))).toBe(true);
+    expect(isNotBuilt(errorFromBody(404, { detail: { message: "Niet gevonden", code: "not_found" } }))).toBe(false);
+    expect(isNotBuilt(new TypeError("Failed to fetch"))).toBe(false);
+  });
+});
+
+describe("geen verbinding", () => {
+  it("een mislukte fetch wordt ApiError(0) met code network; afbreken niet", async () => {
+    const offline = new Api(() => Promise.reject(new TypeError("Failed to fetch")));
+    await expect(offline.rawRequest("/api/v1/x")).rejects.toMatchObject({ status: 0, code: "network" });
+    const abort = new DOMException("weg", "AbortError");
+    const aborted = new Api(() => Promise.reject(abort));
+    await expect(aborted.rawRequest("/api/v1/x")).rejects.toBe(abort);
+  });
+
+  it("een fout zonder tekst van de server heeft code http_error met de status", () => {
+    expect(errorFromBody(500, null)).toMatchObject({ message: "Fout 500", code: "http_error", params: { status: 500 } });
+  });
+});

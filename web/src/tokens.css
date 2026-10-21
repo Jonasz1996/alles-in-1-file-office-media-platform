@@ -12,6 +12,8 @@
   --fg: #1a1a1a;
   --muted: #5c5c5c;
   --line: #d8d8d8;
+  /* Rand van invoervelden: ≥ 3:1 op bg en surface (WCAG 1.4.11); --line is voor scheidingslijnen */
+  --line-strong: #858585;
   --accent: #1d5fd1;
   --accent-fg: #ffffff;
   --ok: #1f7a3a;
@@ -79,6 +81,7 @@
   --fg: #ececec;
   --muted: #a0a0a0;
   --line: #3a3a3a;
+  --line-strong: #707070;
   --accent: #7aa7ff;
   --accent-fg: #0b1220;
   --ok: #6fcf8a;
@@ -116,6 +119,7 @@
     --fg: #ececec;
     --muted: #a0a0a0;
     --line: #3a3a3a;
+    --line-strong: #707070;
     --accent: #7aa7ff;
     --accent-fg: #0b1220;
     --ok: #6fcf8a;

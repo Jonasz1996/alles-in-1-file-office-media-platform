@@ -32,6 +32,7 @@ const en: Translation<typeof nl> = {
     label: "Language",
     nl: "Nederlands",
     en: "English",
+    apply: "Change language",
   },
   shortcuts: {
     title: "Keyboard shortcuts",
@@ -62,6 +63,8 @@ const en: Translation<typeof nl> = {
     text: "The server cannot be reached. As soon as you are back online, we will try again automatically.",
   },
   recoveryCodes: "Recovery codes",
+  recoveryCodesKeep: "Keep these codes somewhere safe. Each code works once.",
+  recoveryCodesDone: "I have saved them",
   chunkError: {
     title: "This page could not load",
     reload: "Reload page",

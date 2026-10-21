@@ -1,7 +1,7 @@
 // Thema en taal kiezen (in het accountmenu staan ze als submenu; deze vorm is voor pagina's
 // zoals Account).
 
-import { type JSX, useId } from "react";
+import { type JSX, useId, useState } from "react";
 import { type Locale, locale, setLocale, t } from "../i18n";
 import { setTheme, type Theme, useTheme } from "./theme";
 
@@ -33,23 +33,35 @@ export function ThemeSwitch(): JSX.Element {
   );
 }
 
-/** Nederlands of Engels; bewaart het ook bij het account (account: true) en herlaadt. */
+/** Nederlands of Engels; bewaart het ook bij het account (account: true) en herlaadt. Pas met de
+ * knop: met de pijltjes door een dichte keuzelijst gaan geeft op Windows en Linux meteen een
+ * change, en dan zou de pagina al bij de eerste toets herladen (WCAG 3.2.2). */
 export function LanguageSwitch({ account = true }: { account?: boolean }): JSX.Element {
   const id = useId();
+  const [choice, setChoice] = useState<Locale>(locale);
   const options: { value: Locale; label: string }[] = [
     { value: "nl", label: t("shell.language.nl") },
     { value: "en", label: t("shell.language.en") },
   ];
   return (
-    <div className="switch">
+    <form
+      className="switch"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (choice !== locale()) void setLocale(choice, { account });
+      }}
+    >
       <label htmlFor={id}>{t("shell.language.label")}</label>{" "}
-      <select id={id} value={locale()} onChange={(e) => void setLocale(e.target.value as Locale, { account })}>
+      <select id={id} value={choice} onChange={(e) => setChoice(e.target.value as Locale)}>
         {options.map((o) => (
           <option key={o.value} value={o.value} lang={o.value}>
             {o.label}
           </option>
         ))}
-      </select>
-    </div>
+      </select>{" "}
+      <button type="submit" disabled={choice === locale()}>
+        {t("shell.language.apply")}
+      </button>
+    </form>
   );
 }

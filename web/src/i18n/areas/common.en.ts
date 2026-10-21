@@ -27,6 +27,12 @@ const en: Translation<typeof nl> = {
     ofTotal: "{used} of {total}",
     usedOnly: "{used} used",
   },
+  /** Vervaldatum van een link (sharing.ts: expiryLabel), ook op de publieke pagina */
+  expires: {
+    on: "expires on {date}",
+    dateAt: "{date} at {time}",
+    past: "expired",
+  },
   items: { one: "{n} item", other: "{n} items" },
 };
 

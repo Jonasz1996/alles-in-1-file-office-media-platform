@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { formatCombo, isTypingTarget, keyToMove, matchKey, moveIndex, ShortcutRegistry } from "./keys";
+import { consumesKey, formatCombo, isTypingTarget, keyToMove, matchKey, moveIndex, ShortcutRegistry } from "./keys";
 
 type Fake = KeyboardEvent & { prevented: boolean };
 
@@ -201,5 +201,78 @@ describe("keyToMove", () => {
     expect(keyToMove(k("PageDown"))).toBe("pagedown");
     expect(keyToMove(k("ArrowUp", true))).toBeNull();
     expect(keyToMove(k("a"))).toBeNull();
+  });
+});
+
+describe("AZERTY en andere toetsenborden", () => {
+  it("een gewone letter in key gaat voor de fysieke toets", () => {
+    // AZERTY: de toets op de plek van A (KeyA) geeft q
+    expect(matchKey(key("q", { ctrl: true, code: "KeyA" }), "mod+a", false)).toBe(false);
+    expect(matchKey(key("q", { code: "KeyA" }), "a", false)).toBe(false);
+    expect(matchKey(key("q", { ctrl: true, code: "KeyA" }), "mod+q", false)).toBe(true);
+    expect(matchKey(key("a", { code: "KeyQ" }), "a", false)).toBe(true);
+    // Niet-Latijns (Russisch: ф op KeyA) en Alt op een Mac: wel de fysieke toets
+    expect(matchKey(key("ф", { ctrl: true, code: "KeyA" }), "mod+a", false)).toBe(true);
+  });
+});
+
+describe("consumesKey", () => {
+  const el = (tagName: string, o: { type?: string; attrs?: string[] } = {}) =>
+    ({ tagName, type: o.type, hasAttribute: (n: string) => (o.attrs ?? []).includes(n) }) as unknown as EventTarget;
+
+  it("schuif, keuzerondjes, cijfers en media met bediening houden de pijltjes", () => {
+    for (const type of ["range", "radio", "number", "date"]) {
+      expect(consumesKey(el("INPUT", { type }), key("ArrowLeft"))).toBe(true);
+    }
+    expect(consumesKey(el("VIDEO", { attrs: ["controls"] }), key("ArrowRight"))).toBe(true);
+    expect(consumesKey(el("VIDEO"), key("ArrowRight"))).toBe(false);
+    expect(consumesKey(el("INPUT", { type: "checkbox" }), key("ArrowLeft"))).toBe(false);
+    expect(consumesKey(el("DIV"), key("Home"))).toBe(false);
+    expect(consumesKey(el("INPUT", { type: "range" }), key("ArrowLeft", { ctrl: true }))).toBe(false);
+  });
+
+  it("knoppen, links en vinkjes houden Enter en Spatie", () => {
+    expect(consumesKey(el("BUTTON"), key("Enter"))).toBe(true);
+    expect(consumesKey(el("A", { attrs: ["href"] }), key(" "))).toBe(true);
+    expect(consumesKey(el("A"), key("Enter"))).toBe(false);
+    expect(consumesKey(el("INPUT", { type: "checkbox" }), key(" "))).toBe(true);
+    expect(consumesKey(el("BUTTON"), key("ArrowDown"))).toBe(false);
+    expect(consumesKey(el("BUTTON"), key("Delete"))).toBe(false);
+  });
+
+  it("dan neemt een sneltoets de toets niet af", () => {
+    const r = new ShortcutRegistry(() => false);
+    const run = vi.fn();
+    r.register("global", () => [{ combo: "arrowleft", run }]);
+    for (const target of [el("INPUT", { type: "range" }), el("INPUT", { type: "radio" }), el("VIDEO", { attrs: ["controls"] })]) {
+      const e = key("ArrowLeft", { target });
+      expect(r.dispatch(e)).toBe(false);
+      expect(e.prevented).toBe(false);
+    }
+    expect(run).not.toHaveBeenCalled();
+    expect(r.dispatch(key("ArrowLeft", { target: el("DIV") }))).toBe(true);
+  });
+});
+
+describe("de hulp vanuit een menu", () => {
+  it("active({ignore}) slaat het menu over dat nog op de stapel staat", () => {
+    const r = new ShortcutRegistry(() => false);
+    r.register("global", () => [{ combo: "?", run: () => {}, label: "Sneltoetsen tonen" }]);
+    const pop = r.pushScope("menu");
+    expect(r.active()).toEqual([]);
+    expect(r.active({ ignore: ["menu"] }).map((a) => a.combo)).toEqual(["?"]);
+    pop();
+  });
+
+  it("een scope in een dialoog die erboven staat, krijgt de toets", () => {
+    // Zo staat de stapel als Dialog "dialog" in een layout-effect zet en het kind daarna
+    // useScope("viewer") doet
+    const r = new ShortcutRegistry(() => false);
+    const next = vi.fn();
+    r.register("viewer", () => [{ combo: "arrowright", run: next }]);
+    r.pushScope("dialog");
+    r.pushScope("viewer");
+    expect(r.dispatch(key("ArrowRight"))).toBe(true);
+    expect(next).toHaveBeenCalledTimes(1);
   });
 });

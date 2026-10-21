@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nodeHref } from "./links";
-import { isPlainLeftClick, match } from "./router";
+import { isPlainLeftClick, match, ScrollMemory } from "./router";
 import { allowed, isPublicPath, publicRoutes, resolve, routes } from "./routes";
 
 describe("match", () => {
@@ -81,5 +81,81 @@ describe("de routetabel", () => {
     expect(isPublicPath("/s")).toBe(true);
     expect(isPublicPath("/shared")).toBe(false);
     expect(isPublicPath("/")).toBe(false);
+  });
+});
+
+describe("ScrollMemory", () => {
+  function memory(stored: Record<string, number> = {}) {
+    const box = { stored };
+    const m = new ScrollMemory(
+      () => box.stored,
+      (all) => {
+        box.stored = all;
+      },
+    );
+    return { m, box };
+  }
+
+  it("terug naar een lange pagina: het inkorten tijdens het laden overschrijft de plek niet", () => {
+    const { m } = memory();
+    m.pushed("A");
+    m.record("A", 5000); // gescrold op A
+    m.leave("A", 5000); // navigate() naar B
+    m.pushed("B");
+    m.record("B", 0);
+    m.popped(); // terug naar A; de pagina is nog kort
+    m.record("A", 0); // de browser klemt scrollY: telt niet
+    expect(m.get("A")).toBe(5000);
+    expect(m.startRestore("A")).toBe(5000);
+    m.record("A", 800); // nog niet lang genoeg: telt niet
+    expect(m.get("A")).toBe(5000);
+    expect(m.startRestore("A")).toBe(5000); // de pagina zelf, nu met data: nog eens
+    m.finish("A", 5000); // de wachttijd is om (of de gebruiker scrolt)
+    m.record("A", 5100); // nu telt scrollen weer
+    expect(m.get("A")).toBe(5100);
+    expect(m.startRestore("A")).toBeUndefined(); // al klaar: niet opnieuw
+  });
+
+  it("geeft op na de wachttijd of als de gebruiker zelf scrolt", () => {
+    const { m } = memory({ A: 3000 });
+    m.popped();
+    expect(m.startRestore("A")).toBe(3000);
+    expect(m.isPending("A")).toBe(true);
+    m.finish("A", 1200);
+    expect(m.isPending("A")).toBe(false);
+    m.record("A", 1300);
+    expect(m.get("A")).toBe(1300);
+  });
+
+  it("zonder bewaarde plek is de entry meteen actief; StrictMode geeft dezelfde plek", () => {
+    const { m } = memory({ B: 400 });
+    m.popped();
+    expect(m.startRestore("A")).toBeUndefined();
+    m.record("A", 10);
+    expect(m.get("A")).toBe(10);
+    m.popped();
+    expect(m.startRestore("B")).toBe(400);
+    expect(m.startRestore("B")).toBe(400);
+  });
+
+  it("weggaan tijdens het terugzetten bewaart de oude plek", () => {
+    const { m, box } = memory({ A: 2000 });
+    m.popped();
+    m.startRestore("A");
+    m.leave("A", 0);
+    expect(box.stored.A).toBe(2000);
+  });
+
+  it("opslaan houdt wat er voor het herladen stond, en hooguit 50", () => {
+    const old: Record<string, number> = {};
+    for (let i = 0; i < 60; i++) old[`o${i}`] = i;
+    const { m, box } = memory(old);
+    m.pushed("nieuw");
+    m.leave("nieuw", 77);
+    const keys = Object.keys(box.stored);
+    expect(keys).toHaveLength(50);
+    expect(box.stored.nieuw).toBe(77);
+    expect(box.stored.o59).toBe(59); // van vóór het herladen, niet weggegooid
+    expect(keys.at(-1)).toBe("nieuw");
   });
 });

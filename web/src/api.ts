@@ -175,6 +175,30 @@ export class ApiError extends Error {
   }
 }
 
+/** De tekst bij geen verbinding (fetch gooit); in een andere taal vertaalt errorText op code. */
+export const NETWORK_MESSAGE = "Geen verbinding met de server. Probeer het opnieuw.";
+
+/** Een mislukte fetch (geen verbinding: een TypeError) als ApiError met code "network", zodat
+ * een programmeerfout (ook vaak een TypeError) er niet op lijkt. Afbreken (AbortError) en
+ * andere fouten gaan ongewijzigd door. */
+export function networkError(e: unknown): unknown {
+  return e instanceof TypeError ? new ApiError(0, NETWORK_MESSAGE, "network") : e;
+}
+
+/** fetch, maar een mislukte verbinding gooit ApiError(0, …, "network"). */
+export async function fetchOrNetworkError(fetchFn: typeof fetch, ...args: Parameters<typeof fetch>): Promise<Response> {
+  try {
+    return await fetchFn(...args);
+  } catch (e) {
+    throw networkError(e);
+  }
+}
+
+/** Een fout zonder bruikbare tekst van de server: "Fout 500", in het Engels "Error 500". */
+function httpError(status: number): ApiError {
+  return new ApiError(status, `Fout ${status}`, "http_error", { status });
+}
+
 /**
  * Leest de fout uit een antwoord: {"detail": {"message", "code", "params"?}} (ook de 422 met
  * "errors" erbij), het oude {"detail": "..."} en de standaard-422 van FastAPI (een lijst).
@@ -183,7 +207,7 @@ export function errorFromBody(status: number, body: unknown): ApiError {
   const detail = (body as { detail?: unknown } | null)?.detail;
   if (typeof detail === "string") return new ApiError(status, detail);
   if (Array.isArray(detail)) {
-    return detail[0]?.msg ? new ApiError(status, String(detail[0].msg)) : new ApiError(status, `Fout ${status}`);
+    return detail[0]?.msg ? new ApiError(status, String(detail[0].msg)) : httpError(status);
   }
   if (detail && typeof detail === "object" && "message" in detail) {
     const d = detail as { message: unknown; code?: unknown; params?: unknown };
@@ -191,6 +215,7 @@ export function errorFromBody(status: number, body: unknown): ApiError {
       d.params && typeof d.params === "object" && !Array.isArray(d.params)
         ? (d.params as Record<string, unknown>)
         : undefined;
+    if (!(typeof d.message === "string" && d.message) && typeof d.code !== "string") return httpError(status);
     return new ApiError(
       status,
       typeof d.message === "string" && d.message ? d.message : `Fout ${status}`,
@@ -198,7 +223,7 @@ export function errorFromBody(status: number, body: unknown): ApiError {
       params,
     );
   }
-  return new ApiError(status, `Fout ${status}`);
+  return httpError(status);
 }
 
 const TUS = { "Tus-Resumable": "1.0.0" };
@@ -376,7 +401,7 @@ export class Api {
     const headers = new Headers(init.headers);
     const hadToken = this.token !== null;
     if (this.token) headers.set("Authorization", `Bearer ${this.token}`);
-    const res = await this.fetchFn(path, { ...init, headers, credentials: "same-origin" });
+    const res = await fetchOrNetworkError(this.fetchFn, path, { ...init, headers, credentials: "same-origin" });
     if (res.status === 401 && retry && this.token && (await this.refresh())) {
       return this.raw(path, init, false);
     }
@@ -428,7 +453,8 @@ export class Api {
 
   private async renew(): Promise<User | null> {
     const wasLoggedIn = this.token !== null;
-    const post = () => this.fetchFn("/api/v1/auth/refresh", { method: "POST", credentials: "same-origin" });
+    const post = () =>
+      fetchOrNetworkError(this.fetchFn, "/api/v1/auth/refresh", { method: "POST", credentials: "same-origin" });
     let res = await post();
     // Tabbladen delen het cookie; ververste een ander tabblad net, dan heeft de browser even
     // later het nieuwe cookie uit dat antwoord. Was het geen eigen tabblad, dan valt de laatste
@@ -634,7 +660,7 @@ export class Api {
       if (e instanceof ApiError && e.status === 409) {
         throw new ApiError(409, "Er bestaat al iets met deze naam", "name_taken");
       }
-      if (e instanceof ApiError && e.status === 413) throw new ApiError(413, "Onvoldoende quotum");
+      if (e instanceof ApiError && e.status === 413) throw new ApiError(413, "Onvoldoende quotum", "no_room");
       throw e;
     }
     return { offset: Number(res.headers.get("Upload-Offset") ?? 0), nodeId: res.headers.get("Platform-Node-Id") };

@@ -25,14 +25,20 @@
     var dark =
       theme === "dark" ||
       (theme !== "light" && !!window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
-    var meta = document.querySelector('meta[name="theme-color"]');
-    if (!meta) {
-      meta = document.createElement("meta");
+    // Elke theme-color (index.html kan er een per kleurschema hebben, met media): allemaal de
+    // kleur van het gekozen thema en zonder media, anders wint die van het systeem. Dezelfde
+    // waarden als --bg in tokens.css; ui/theme.ts doet hetzelfde bij het wisselen.
+    var metas = document.querySelectorAll('meta[name="theme-color"]');
+    if (!metas.length) {
+      var meta = document.createElement("meta");
       meta.setAttribute("name", "theme-color");
       document.head.appendChild(meta);
+      metas = [meta];
     }
-    // Dezelfde waarden als --bg in tokens.css
-    meta.setAttribute("content", dark ? "#121212" : "#ffffff");
+    for (var i = 0; i < metas.length; i++) {
+      metas[i].setAttribute("content", dark ? "#121212" : "#ffffff");
+      metas[i].removeAttribute("media");
+    }
   } catch (e) {
     /* niets: de standaarden blijven staan */
   }

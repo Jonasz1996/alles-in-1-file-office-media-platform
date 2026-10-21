@@ -189,7 +189,7 @@ select,
 textarea {
   font: inherit;
   padding: 0.4rem var(--space-2);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-m);
   background: var(--bg);
   color: var(--fg);

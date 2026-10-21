@@ -104,15 +104,19 @@ describe("t", () => {
     expect(locale()).toBe("nl");
     expect(t("shell.brand")).toBe("Platform");
     expect(t("common.dialog.typeToConfirm", { text: "VERWIJDER" })).toBe("Typ VERWIJDER om te bevestigen.");
-    expect(t("auth.title")).toBe("Inloggen");
+    // auth is van P1: alleen dat het geladen is, niet de tekst zelf
+    expect(t("auth.title")).not.toBe("auth.title");
   });
 
   it("meervoud op vars.n, met getallen in de opmaak van de taal", async () => {
     expect(t("common.items", { n: 1 })).toBe("1 item");
     expect(t("common.items", { n: 0 })).toBe("0 items");
     expect(t("common.items", { n: 1234 })).toBe("1.234 items");
+    // Een gebied van een pakket (P2): alleen dat het laadt en {n} invult, niet de tekst zelf
     await loadAreas(["browser"]);
-    expect(t("browser.selected", { n: 3 })).toBe("3 geselecteerd");
+    const selected = t("browser.selected", { n: 3 });
+    expect(selected).not.toBe("browser.selected");
+    expect(selected).toContain("3");
   });
 
   it("een gebied dat niet geladen is: de sleutel, en een melding die met i18n: begint", () => {
@@ -149,7 +153,7 @@ describe("loadAreas", () => {
     const title = t("photos.title");
     await loadAreas(["photos"]);
     expect(t("photos.title")).toBe(title);
-    expect(title).toBe("Foto's");
+    expect(title).not.toBe("photos.title"); // de tekst zelf is van P5
   });
 
   it("al geladen: meteen klaar", async () => {
@@ -227,6 +231,11 @@ describe("errorText", () => {
   it("nl: de tekst van de server", () => {
     expect(errorText(new ApiError(403, "Je mag hier alleen kijken", "read_only"))).toBe("Je mag hier alleen kijken");
     expect(errorText(new TypeError("Failed to fetch"))).toBe(t("common.errors.network"));
+    expect(errorText(new ApiError(0, "Geen verbinding", "network"))).toBe(t("common.errors.network"));
+    // Een programmeerfout is geen verbindingsprobleem
+    expect(errorText(new TypeError("x.map is not a function"))).toBe("x.map is not a function");
+    // Een ItemResult van een bulkactie gaat ook door errorText
+    expect(errorText({ code: "read_only", message: "Je mag hier alleen kijken" })).toBe("Je mag hier alleen kijken");
   });
 
   it("en: de catalogus op code, met params; anders toch de servertekst", () => {
@@ -278,6 +287,16 @@ describe("foutcatalogi (errors/*.ts)", () => {
     ).toBe("Too many items at once (more than 10,000)");
     const full = body("no_room_owner", "Er is niet genoeg ruimte meer bij Bea", { owner: "Bea" });
     expect(errorText(errorFromBody(413, full))).toBe("Bea has run out of storage space; ask them to make room");
+    // Per item van een bulkactie (ItemResult met params) net zo
+    expect(errorText({ id: "x", ok: false, code: "too_many", message: "Te veel", params: { max: 500 } })).toBe(
+      "Too many items at once (more than 500)",
+    );
+    // Wat de web-app zelf maakt: geen verbinding, en een fout zonder tekst van de server
+    expect(errorText(new ApiError(0, "Geen verbinding met de server. Probeer het opnieuw.", "network"))).toBe(
+      "No connection to the server. Please try again.",
+    );
+    expect(errorText(errorFromBody(500, null))).toBe("Error 500");
+    expect(errorText(new ApiError(413, "Onvoldoende quotum", "no_room"))).toBe("Not enough storage quota");
     expect(errorText(errorFromBody(400, body("brand_new", "Iets nieuws")))).toBe("Iets nieuws");
   });
 

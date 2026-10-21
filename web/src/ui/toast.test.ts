@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { defaultTimeout, LiveAnnouncer, ToastStore } from "./toast";
+import { announcer, defaultTimeout, LiveAnnouncer, ToastStore, toast, toasts } from "./toast";
+import { LayerStack } from "./topLayer";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -116,5 +117,36 @@ describe("LiveAnnouncer", () => {
     expect(second.trim()).toBe("3 geselecteerd");
     expect(a.getSnapshot().polite).not.toBe(second);
     expect(l).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("toast() en de live-regio", () => {
+  it("elke toast gaat ook via de vaste live-regio; een fout direct", () => {
+    const close = toast("Opgeslagen");
+    expect(announcer.getSnapshot().polite).toBe("Opgeslagen");
+    const fail = toast("Mislukt", { kind: "error" });
+    expect(announcer.getSnapshot().assertive).toBe("Mislukt");
+    expect(announcer.lastAt).toBeGreaterThan(0);
+    close();
+    fail();
+    expect(toasts.getSnapshot()).toHaveLength(0);
+  });
+});
+
+describe("LayerStack", () => {
+  it("de bovenste open dialoog; sluiten in elke volgorde", () => {
+    const s = new LayerStack<string>();
+    const changed = vi.fn();
+    s.subscribe(changed);
+    expect(s.top()).toBeNull();
+    const a = s.open("a");
+    const b = s.open("b");
+    expect(s.top()).toBe("b");
+    a();
+    expect(s.top()).toBe("b");
+    b();
+    b(); // twee keer sluiten doet niets extra
+    expect(s.top()).toBeNull();
+    expect(changed).toHaveBeenCalledTimes(4);
   });
 });

@@ -5,7 +5,7 @@
 // niet opnieuw om het wachtwoord vraagt. Verloopt hij, dan opent de pagina de link opnieuw,
 // met het wachtwoord van eerder als dat er is; anders vraagt ze het opnieuw.
 
-import { ApiError, errorFromBody, type Preview, type PublicListing, type PublicShare, tusMetadata } from "./api";
+import { ApiError, errorFromBody, fetchOrNetworkError, type Preview, type PublicListing, type PublicShare, tusMetadata } from "./api";
 import { type SendChunk, type TusApi, xhrSend } from "./upload";
 
 type Fetch = typeof fetch;
@@ -163,7 +163,7 @@ export class PublicLink implements TusApi {
    * geheugen) om de link later stil opnieuw te openen. */
   async open(password?: string): Promise<PublicShare> {
     const body = password === undefined ? { token: this.token } : { token: this.token, password };
-    const res = await this.fetchFn("/api/v1/public/open", {
+    const res = await fetchOrNetworkError(this.fetchFn, "/api/v1/public/open", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -225,7 +225,7 @@ export class PublicLink implements TusApi {
     const key = await this.freshKey();
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${key}`);
-    const res = await this.fetchFn(path, { ...init, headers, credentials: "omit" });
+    const res = await fetchOrNetworkError(this.fetchFn, path, { ...init, headers, credentials: "omit" });
     if (res.status === 401 && retry) {
       // Verlopen, of het wachtwoord is veranderd: opnieuw openen en nog één keer
       if (this.key === key) this.key = null;
@@ -289,7 +289,7 @@ export class PublicLink implements TusApi {
       res = await this.raw(url, { method: "HEAD", headers: TUS });
     } catch (e) {
       // HEAD heeft geen body: 413 kan alleen het quotum van de eigenaar zijn
-      if (e instanceof ApiError && e.status === 413) throw new ApiError(413, "Onvoldoende quotum");
+      if (e instanceof ApiError && e.status === 413) throw new ApiError(413, "Onvoldoende quotum", "no_room");
       throw e;
     }
     const length = res.headers.get("Upload-Length");

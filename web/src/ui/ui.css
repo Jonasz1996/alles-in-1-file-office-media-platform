@@ -108,6 +108,12 @@
   color: var(--selected-fg);
 }
 
+/* Met het toetsenbord ook een rand: de achtergrond alleen heeft te weinig contrast (WCAG 1.4.11) */
+.menu-item:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: calc(-1 * var(--focus-w));
+}
+
 .menu-item.danger {
   color: var(--bad);
 }
@@ -169,7 +175,7 @@
   border-left-color: var(--bad);
 }
 
-.toast[role="alert"] {
+.toast.error {
   color: var(--fg);
 }
 

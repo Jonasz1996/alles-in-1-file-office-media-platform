@@ -241,3 +241,28 @@ async def test_album_als_node_met_items(settings):
         await session.commit()
         assert await session.scalar(count) == 0
         assert await session.scalar(sa.select(Album.id)) is None
+
+
+def test_migratie_rekent_zelf_zoals_photodate():
+    """0006 importeert app.photodate niet (die mag later veranderen, een migratie niet), maar
+    rekent wel hetzelfde."""
+    import importlib.util
+    from datetime import UTC
+    from pathlib import Path
+
+    from app import photodate
+
+    path = Path(__file__).resolve().parents[1] / "migrations" / "versions" / "0006_fase3.py"
+    assert "from app.photodate" not in path.read_text()
+    spec = importlib.util.spec_from_file_location("migratie_0006", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for moment in (
+        datetime(2024, 7, 1, 21, 30),  # zonder tijdzone: UTC (zo geeft SQLite het terug)
+        datetime(2024, 12, 31, 23, 30, tzinfo=UTC),
+        datetime(2024, 3, 31, 1, 30, tzinfo=UTC),  # zomertijd begint
+    ):
+        for tz in (TZ, "UTC", "America/New_York", "Bestaat/Niet"):
+            assert module.wall_clock(moment, tz) == photodate.wall_clock(moment, tz)
+            taken = module.wall_clock(moment, tz)
+            assert module.day_of(taken) == photodate.day_of(taken)

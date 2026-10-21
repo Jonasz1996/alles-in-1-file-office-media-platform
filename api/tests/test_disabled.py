@@ -1,17 +1,24 @@
 """Een geblokkeerd account (User.disabled_at, hier rechtstreeks in de database gezet): kan niet
-meer inloggen of verversen, een uitgegeven token werkt niet meer, en een downloadlink ook
-niet. Zonder het juiste wachtwoord (en de code) is niet te zien dat het geblokkeerd is."""
+meer inloggen of verversen, een uitgegeven token werkt niet meer, een downloadlink en zijn
+publieke links ook niet, en een open stroom met gebeurtenissen stopt. Zonder het juiste
+wachtwoord (en de code) is niet te zien dat het geblokkeerd is."""
 
+import uuid
 from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import update
 
-from app import totp
+from app import events, totp
 from app.models import User
+from app.routers import events as live
+from app.routers import public
+from app.routers.auth import revoke_other_logins
 from tests.factories import code_of, maker
 from tests.test_2fa import enable, login
-from tests.test_files import put, root
+from tests.test_events_stream import Stream
+from tests.test_files import mkdir, put, root
+from tests.test_public import bearer, new_link, open_link, token_of, tus_create
 from tests.test_shares import person
 
 EMAIL = "anna@example.nl"
@@ -97,3 +104,97 @@ async def test_uitgegeven_token_en_downloadlink_werken_niet_meer(client, admin, 
     assert (await client.get(link["url"])).status_code == 200
     me = (await client.get("/api/v1/auth/me", headers=anna)).json()
     assert me["disabled"] is False
+
+
+@pytest.mark.anyio
+async def test_blokkeren_met_ingetrokken_logins_geeft_account_disabled(client, admin, settings):
+    """Zoals het blokkeren in beheer: disabled_at plus alle logins ingetrokken. Toch krijgt
+    de web-app account_disabled (en niet not_logged_in of logged_out)."""
+    headers, _ = admin
+    await person(client, headers, EMAIL)
+    tokens = (await login(client, {"email": EMAIL, "password": PASSWORD})).json()
+    async with maker(settings)() as session:
+        await session.execute(
+            update(User).where(User.email == EMAIL).values(disabled_at=datetime.now(UTC))
+        )
+        await revoke_other_logins(session, uuid.UUID(tokens["user"]["id"]), None)
+        await session.commit()
+
+    me = await client.get("/api/v1/auth/me", headers=bearer(tokens["access_token"]))
+    assert (me.status_code, code_of(me)) == (401, "account_disabled")
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert (r.status_code, code_of(r)) == (403, "account_disabled")
+
+    # Gedeblokkeerd blijft de login ingetrokken: dan weer de gewone 401
+    await unblock(settings)
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert (r.status_code, code_of(r)) == (401, "not_logged_in")
+    me = await client.get("/api/v1/auth/me", headers=bearer(tokens["access_token"]))
+    assert (me.status_code, code_of(me)) == (401, "logged_out")
+
+
+@pytest.fixture
+def fresh_limits():
+    for limiter in (public.open_limiter, public.upload_limiter, public.password_limiter):
+        limiter.reset()
+    yield
+    for limiter in (public.open_limiter, public.upload_limiter, public.password_limiter):
+        limiter.reset()
+
+
+@pytest.mark.anyio
+async def test_publieke_links_van_een_geblokkeerde_eigenaar(client, admin, settings, fresh_limits):
+    """Openen, kijken, downloaden en uploaden via een link van een geblokkeerde eigenaar: 404
+    link_not_found, net als een link die niet bestaat. Ook met een al uitgegeven sleutel."""
+    headers, _ = admin
+    anna, _ = await person(client, headers, EMAIL)
+    root_id = (await root(client, anna))["folder"]["id"]
+    folder = await mkdir(client, anna, root_id, "Map")
+    f = (await put(client, anna, folder, "a.txt", b"geheim")).json()
+    read = await new_link(client, anna, folder, permission="read")
+    upload = await new_link(client, anna, folder, permission="upload")
+    read_key = (await open_link(client, read))["key"]
+    upload_key = (await open_link(client, upload))["key"]
+    await block(settings)
+
+    for link in (read, upload):
+        r = await client.post("/api/v1/public/open", json={"token": token_of(link)})
+        assert (r.status_code, code_of(r)) == (404, "link_not_found")
+    r = await client.get("/api/v1/public/children", headers=bearer(read_key))
+    assert (r.status_code, code_of(r)) == (404, "link_not_found")
+    r = await client.get(f"/api/v1/public/download/{f['id']}", params={"key": read_key})
+    assert (r.status_code, code_of(r)) == (404, "link_not_found")
+    r = await tus_create(client, upload_key, "x.txt", 3)
+    assert (r.status_code, code_of(r)) == (404, "link_not_found")
+
+    await unblock(settings)
+    r = await client.get(f"/api/v1/public/download/{f['id']}", params={"key": read_key})
+    assert (r.status_code, r.content) == (200, b"geheim")
+    assert (await tus_create(client, upload_key, "x.txt", 3)).status_code == 201
+
+
+@pytest.fixture
+def hub(monkeypatch):
+    fresh = events.Hub()
+    monkeypatch.setattr(events, "hub", fresh)
+    return fresh
+
+
+@pytest.mark.anyio
+async def test_stroom_stopt_als_het_account_geblokkeerd_is(
+    client, admin, settings, hub, monkeypatch
+):
+    """Geblokkeerd zonder de logins in te trekken: binnen één ping geen gebeurtenissen meer,
+    niet pas als het access-token verloopt."""
+    monkeypatch.setattr(live, "PING", 0.1)
+    headers, _ = admin
+    anna, anna_id = await person(client, headers, EMAIL)
+    stream = Stream(anna)
+    await stream.open()
+    await stream.until("retry: 5000\n\n")
+    assert await stream.until("\n\n") == ": ping\n\n"  # nog niet geblokkeerd: de stroom loopt
+    await block(settings)
+    await stream.end(seconds=2)
+    assert hub.listeners(uuid.UUID(anna_id)) == 0
+    hub.publish([uuid.UUID(anna_id)], "node.created", {"id": "te-laat"})
+    assert "te-laat" not in stream.text

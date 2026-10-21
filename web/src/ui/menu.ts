@@ -14,8 +14,11 @@ export interface MenuItem {
   /** Waarom het niet kan (bij disabled): als tooltip en voor schermlezers */
   reason?: string;
   danger?: boolean;
-  /** Een keuze (vinkje): role menuitemcheckbox */
+  /** Een keuze (vinkje): role menuitemcheckbox, of met radio menuitemradio */
   checked?: boolean;
+  /** Eén van een groep keuzes die elkaar uitsluiten (thema, taal): role menuitemradio. Alleen
+   * samen met checked. */
+  radio?: boolean;
   separatorBefore?: boolean;
   /** Een submenu */
   items?: readonly MenuItem[];
@@ -24,6 +27,12 @@ export interface MenuItem {
 
 /** Het volgende item omhoog of omlaag, rondom. Ook uitgeschakelde items krijgen de focus (dan
  * leest een schermlezer waarom het niet kan). */
+/** De rol van een item volgens WAI-ARIA. */
+export function itemRole(item: Pick<MenuItem, "checked" | "radio">): "menuitem" | "menuitemcheckbox" | "menuitemradio" {
+  if (item.checked === undefined) return "menuitem";
+  return item.radio ? "menuitemradio" : "menuitemcheckbox";
+}
+
 export function nextIndex(count: number, cur: number, dir: 1 | -1): number {
   if (count <= 0) return -1;
   if (cur < 0) return dir === 1 ? 0 : count - 1;

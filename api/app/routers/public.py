@@ -129,7 +129,12 @@ def expired(share: Share) -> bool:
 
 
 async def live_node(session: Session, share: Share) -> Node:
-    """De gedeelde map of het bestand, als het er nog is en niet in de prullenbak ligt."""
+    """De gedeelde map of het bestand, als het er nog is en niet in de prullenbak ligt, en de
+    eigenaar niet geblokkeerd is (beslissing 16). Een geblokkeerde eigenaar geeft dezelfde 404
+    als een link die er niet is: de blokkade is zo niet af te lezen."""
+    owner = await session.get(User, share.owner_id, populate_existing=True)
+    if owner is None or owner.disabled_at is not None:
+        raise errors.fail(404, **LINK_NOT_FOUND)
     node = await session.get(Node, share.node_id)
     if node is None or await access.trashed(session, node.id):
         raise errors.fail(404, **LINK_NOT_FOUND)

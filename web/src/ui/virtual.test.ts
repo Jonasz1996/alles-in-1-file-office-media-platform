@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { columnsFor, extraIndex, fixedRange, prefixOffsets, scrollTarget, variableRange } from "./virtual";
+import { columnsFor, extraIndex, fixedRange, listOffsetIn, prefixOffsets, scrollTarget, variableRange } from "./virtual";
 
 describe("fixedRange", () => {
   it("de zichtbare rijen plus overscan", () => {
@@ -82,5 +82,16 @@ describe("columnsFor", () => {
     expect(columnsFor(1000, 160, 8)).toEqual({ columns: 6, cellWidth: (1000 - 40) / 6 });
     expect(columnsFor(100, 160).columns).toBe(1);
     expect(columnsFor(0, 160)).toEqual({ columns: 1, cellWidth: 0 });
+  });
+});
+
+describe("listOffsetIn", () => {
+  it("een gepositioneerde scroller 400 px omlaag met de lijst 50 px erin, gescrold tot 1000", () => {
+    // Op het scherm: scroller op 400, lijst op 400 + 50 - 1000 = -550
+    expect(listOffsetIn(-550, 400, 0, 1000)).toBe(50);
+    // Met een rand van 2 px aan de bovenkant van de scroller
+    expect(listOffsetIn(-548, 400, 2, 1000)).toBe(50);
+    // Niet gescrold
+    expect(listOffsetIn(450, 400, 0, 0)).toBe(50);
   });
 });

@@ -137,7 +137,7 @@ Each line gives the default and why.
 
 | Bestand | Eigenaar |
 |---|---|
-| `App.tsx`, `routes.tsx`, `router.ts`, `links.ts`, `main.tsx`, `api.ts`, `api.test.ts`, `crossApi.ts`, `currentUser.ts`, `Dialog.tsx`, `perf.ts`, `ui/**`, `i18n/index.ts`, `i18n/fmt.ts`, `i18n/types.ts`, `i18n/areas/{common,shell}.*`, `i18n/errors/common.ts`, `tokens.css`, `base.css`, `viewer/types.ts`, `viewer/index.ts`, `viewer/param.ts`, `upload/index.ts` (signatures only, see P3), `package.json`, `tsconfig*.json`, `scripts/check-i18n.mjs` | P0 (frozen) |
+| `App.tsx`, `routes.tsx`, `router.ts`, `router.test.ts`, `links.ts`, `main.tsx`, `api.ts`, `api.test.ts`, `crossApi.ts`, `currentUser.ts`, `Dialog.tsx`, `perf.ts`, `shellPages.tsx`, `uploadStatus.ts`, `ui/**`, `i18n/index.ts`, `i18n/fmt.ts`, `i18n/types.ts`, `i18n/locale.ts`, `i18n/i18n.test.ts`, `i18n/areas/{common,shell}.*`, `i18n/errors/common.ts`, `tokens.css`, `base.css`, `viewer/types.ts`, `viewer/index.ts`, `viewer/param.ts`, `upload/index.ts` (signatures only, see P3), `package.json`, `tsconfig*.json`, `scripts/check-i18n.mjs` | P0 (frozen) |
 | `index.html`, `vite.config.ts`, `nginx.conf`, `Dockerfile`, `public/**` except `boot.js`, `scripts/budget.mjs`, `scripts/icons.mjs`, `src/pwa/**`, `Login.tsx`, `i18n/areas/{auth,pwa}.*`, `i18n/errors/auth.ts` | P1 |
 | `Files.tsx`, `NodeActions.tsx`, `FolderPicker.tsx`, `Search.tsx`, `searchQuery.ts`, `Tags.tsx`, `tagColors.ts`, `Thumb.tsx`, `events.ts`, `files.css`, `browser/**`, `files.test.ts`, `events.test.ts`, `thumb.test.ts`, `i18n/areas/browser.*`, `i18n/errors/browser.ts` | P2 |
 | `upload.ts`, `uploadQueue.ts`, `upload.test.ts`, `upload/**` (`index.ts`: implementation only, exports frozen), `i18n/areas/upload.*`, `i18n/errors/upload.ts` | P3 |
@@ -151,7 +151,7 @@ Each line gives the default and why.
 
 | Bestand | Eigenaar |
 |---|---|
-| `models.py`, `config.py`, `errors.py`, `__init__.py`, `migrations/versions/0006_fase3.py`, `db.py`, `events.py`, `storage.py`, `migrate.py`, `text.py`, `totp.py`, `routers/events.py`, `tests/conftest.py`, `tests/factories.py`, `tests/test_error_catalog.py`, `tests/test_migration_0006.py`, `tests/test_jobs_chain.py`, `tests/test_disabled.py`, `tests/test_rate_limits.py`, `tests/test_notify_many.py` | P0 (frozen) |
+| `models.py`, `config.py`, `errors.py`, `__init__.py`, `migrations/versions/0006_fase3.py`, `db.py`, `events.py`, `storage.py`, `migrate.py`, `text.py`, `totp.py`, `routers/events.py`, `tests/conftest.py`, `tests/factories.py`, `tests/test_error_catalog.py`, `tests/test_errors.py`, `tests/test_locale.py`, `tests/test_migration_0006.py`, `tests/test_jobs_chain.py`, `tests/test_disabled.py`, `tests/test_rate_limits.py`, `tests/test_notify_many.py`, `tests/test_trash_restore_bulk.py` | P0 (frozen) |
 | `main.py`, `tests/test_system.py`, `tests/test_web_app.py` | P1 |
 | `routers/files.py`, `routers/search.py`, `routers/batch.py`, `routers/archive.py`, tests `test_files.py`, `test_copy.py`, `test_files_events.py`, `test_search.py`, `test_versions.py`, `test_events*.py` | P2 |
 | `routers/uploads.py`, `routers/folder_tree.py`, `tests/test_uploads.py` | P3 |
@@ -164,7 +164,7 @@ Each line gives the default and why.
 | Bestand | Eigenaar |
 |---|---|
 | `.github/workflows/ci.yml`, `e2e/perf/lighthouse_like.py`, `e2e/perf/run_all.py` | P1 |
-| `e2e/conftest.py`, `e2e/seed.py`, `e2e/perf/first_view.py`, `e2e/perf/scroll.py`, `e2e/test_smoke.py`, `e2e/test_theme.py`, `docs/fase-3/e2e.md` | P0 (frozen) |
+| `e2e/conftest.py`, `e2e/seed.py`, `e2e/perf/first_view.py`, `e2e/perf/scroll.py`, `e2e/test_smoke.py`, `e2e/test_theme.py`, `e2e/pytest.ini`, `e2e/ruff.toml`, `docs/fase-3/e2e.md` | P0 (frozen) |
 | `e2e/test_<pkg>*.py`, `e2e/seed_<pkg>.py`, `docs/fase-3/<pkg>.md`, `docs/fase-3/toetsenbord-<pkg>.md` | each package its own |
 
 **Regels voor alle pakketten**
@@ -174,12 +174,18 @@ Each line gives the default and why.
    - `files.py`: `get_node`, `get_access`, `get_dir`, `get_live_dir`, `get_version`, `send_file`, `describe`, `one_out`, `notify`, `notify_many`, `shared_below`, `descendants`, `subtree_rows`, `tree`, `drop_versions`, `add_refs`, `collect_garbage`, `free_name`, `is_trashed`, `sibling`, `clean_name`, `user_lock`, `room_left`, `NodeOut`, `place_file`.
    - `public.py`: `current_link`, `CurrentLink`, `inside`, `readable`, `public_node`.
    - `uploads.py`: `release`, `_release`, `_drop`, `remove_expired`.
-   - `previews.py`: `url`, `url_key`, `expiry`, `info`, `directory`, `render`.
+   - `previews.py`: `url`, `url_key`, `expiry`, `info`, `directory`, `render`, `THUMB`, `LARGE`, and `RENDER_VERSION` once P4 adds it (an `int`; `e2e/seed.py` reads it with `getattr(…, 0)`).
+   - `render_meta.py`: `VERSION`, `image_meta`, `video_meta`, `run_meta`.
+   - `photodate.py`: `wall_clock`, `day_of`, `is_media`, `stamp`, `stamp_values`, `from_ms`, `split_capture`, `on_blob_meta` (used by `files.py`, `uploads.py`, `previews.py` and `e2e/seed.py`; migration 0006 has its own copy of `wall_clock` and `day_of`).
    - `security.py`: all current names plus `active_user`.
    - `jobs.py`: all current names plus `chain`.
-   - `errors.py`: `fail`, `item_fail`, `ItemResult`.
+   - `errors.py`: `fail`, `item_fail`, `item_of`, `ItemResult` (with `params`).
    - Web components and hooks: `NodeActions`, `Thumb`, `category`, `Category`, `usePreviews`, `TagChips`, `TagEditor`, `tagStyle`, `SearchBox`, `ShareDialog`, `Versions`, `useServerEvents`, `useReloadOn`.
+   - Used by the frozen shell (`App.tsx`): `events.ts` `liveEvents` (`start`, `stop`); `Login` with props `{onLoggedIn(user), message}`; `Account.tsx` the named export `RecoveryCodes({codes, onDone})`; `uploadQueue.ts` keeps registering the queue with `uploadStatus.attach({subscribe, busy, stopAll})` (the shell imports only `uploadStatus.ts`, so the queue and the tus client stay out of the first load).
+   - `photos/index.ts`: `AddToAlbumDialog`, `PublicAlbum` (exports frozen, implementation P5; used by P2 and P4).
+   - The route title keys in package areas that `routes.tsx` names (`browser.title`, `photos.title`, …): the key stays, the text is the package's.
    - Web helpers: `affectsFolder`, `affectsSharedWithMe`, `nodeActions`, `folderActions`, `crumbs`, `permissionOf`, `isShared`, `PERMISSION_LABELS`, `expiryLabel`, `folderHref`, `hitPath`, `parentHref`, `pathLabel`, `readSearch`, `searchHref`, `hasFilter`, `linkToken`.
+   - **`expiryLabel` and `formatExpiry` use only `common` keys** (`common.expires.*`, P0): they also run on `/s/:token`, which loads only `public` and `upload`.
    - **`UploadQueue`** (constructor, `TusApi`, methods):
      - `add(parent, files, opts?)` resolves only when every item of that batch has finished, failed or been discarded.
      - `getSnapshot()` returns a stable `readonly UploadItem[]` that is replaced (new array) on every change and equals `[]` when the queue is empty.
@@ -189,7 +195,7 @@ Each line gives the default and why.
 3. **No migrations and no `models.py` edits.** If you find a schema need, stop and report it; it becomes 0007 at integration.
 4. **UI text.** All new UI text goes through `t()` in your own area files, with an `en` translation (tsc enforces completeness). Never call `t()` at module level: export functions or getters. `npm run check:i18n -- --files <owned>` must report 0.
 5. **API errors.**
-   - Every error in API files you own goes through `errors.fail(status, code, message, **params)`; every per-item error through `errors.item_fail(id, code, message)`.
+   - Every error in API files you own goes through `errors.fail(status, code, message, **params)`; every per-item error through `errors.item_fail(id, code, message, **params)` (or `errors.item_of(id, http_exception)`, which keeps the params). The web shows an item error with `errorText(item)`, the same lookup as for an `ApiError`.
    - A new code goes in **your** `i18n/errors/<area>.ts` with an `en` text. A code may appear in only one catalog; P0 pre-registers every code a frozen contract mentions in `common.ts`.
    - `test_error_catalog.py` (P0) checks this and bans `HTTPException(` outside `errors.py`.
 6. **Database and blob rules:**
@@ -199,7 +205,7 @@ Each line gives the default and why.
    - authorization only via `app/access.py` and the `files.get_*` helpers; a download or page token is resolved through `security.active_user`;
    - events via `events.publish` after commit, to the owner plus every watcher (`access.watchers`), or via `files.notify`/`notify_many`;
    - no CPU-heavy work on the event loop (zip, gzip > 64 KiB, XML: in `anyio.to_thread` or the render child).
-7. **Keyboard.** Every new action is reachable by keyboard and registered with `useShortcuts` in a scope. Document it in `docs/fase-3/toetsenbord-<pkg>.md` and cover it in your e2e test.
+7. **Keyboard.** Every new action is reachable by keyboard and registered with `useShortcuts` in a scope. Document it in `docs/fase-3/toetsenbord-<pkg>.md` and cover it in your e2e test. P0's `Files.tsx` already pushes the scope `browser` (`useScope("browser")`), so P3's U/Shift+U work in P3's own branch; P2 keeps that line. A scope pushed inside a `Dialog` lands above the dialog's own scope (Dialog pushes in a layout effect).
 8. **Bundle and CSS.**
    - Lazy-load anything heavy (route, dialog, viewer module). A lazy component that others render uses `lazyWithAreas` for its own i18n areas.
    - No `<style>` elements, no inline scripts, no `setAttribute("style")`.
@@ -260,7 +266,7 @@ Each line gives the default and why.
 
 **Wijzigt (exclusief)**
 - `web/index.html`:
-  - the manifest link and theme-color metas;
+  - the manifest link and theme-color metas (per colour scheme with `media` is fine: `boot.js` and `ui/theme.ts` set **every** `meta[name=theme-color]` to the chosen theme's colour and remove `media`);
   - static shell markup inside `#root` (no text);
   - the apple-touch-icon and favicon links.
 - `web/vite.config.ts`:
@@ -412,6 +418,7 @@ Each line gives the default and why.
   - after "Naar prullenbak", a toast with "Ongedaan maken" → `crossApi.restore(ids)`;
   - "Delen" on a selection opens `ShareDialog nodes=` (≤ 100; above that, disabled with the reason "Deel de map in plaats van zoveel losse items");
   - `markReady("folder")` after the first rows paint; `useRestoreScroll`.
+  - keeps P0's `useScope("browser")` and the smoke DOM contract (§3.4): the empty-folder text "Deze map is leeg." and a click on a file's name opens the viewer.
 - `NodeActions.tsx`: becomes a `MenuButton` adapter on the registry (export kept).
 - `FolderPicker.tsx`: `exclude: Set<string>`, a check over the whole selection (cross-owner → move disabled with the reason, copy allowed), `?kind=dir`, "Nieuwe map", type-ahead.
 - `Search.tsx` and `searchQuery.ts`: FileList with a path column; Viewer for hits; `navigate()`.
@@ -501,7 +508,7 @@ Events (files.notify_many): { ids:[≤500], parent_id, old_parent_id? } per (ont
   - `uploadDropped(dt, folderId): void` snapshots `dt.items` → `webkitGetAsEntry()` entries and `Array.from(dt.files)` **synchronously**, then hands the snapshot to async code.
   - `index.ts` and `walk.ts` are static imports (no lazy load on the drop path).
   - `UploadTray` is `lazyWithAreas(() => import("./UploadTray"), ["upload"])`, rendered once the queue is non-empty.
-- `web/src/upload/UploadButtons.tsx`: "Uploaden" and "Map uploaden" (`webkitdirectory`); U and Shift+U in scope `browser`.
+- `web/src/upload/UploadButtons.tsx`: "Uploaden" and "Map uploaden" (`webkitdirectory`); U and Shift+U in scope `browser` (pushed by P0's `Files.tsx`). The button "Uploaden" keeps exactly that accessible name (smoke DOM contract, §3.4).
 - `web/src/upload/walk.ts`:
   - `collect(entries, files) → Promise<{files: {file, path}[], dirs: string[]}>`;
   - `readEntries` in a loop until `[]`;
@@ -677,6 +684,8 @@ POST /api/v1/files/{id}/folders/tree { paths: str[≤1000] }
 - `Public.tsx` and `publicApi.ts`:
   - the Viewer with `publicSource`; public preview, document and pages calls;
   - `useQueryParam("map")`; i18n; `markReady("public")`;
+  - the expiry sentence through a `public` key with `{expiry}` (e.g. `public.linkExpiry: " · de link {expiry}"`), not built by hand around `expiryLabel`;
+  - each listed item stays a row (`<tr>` or `role=row`; a header row has `columnheader`): smoke DOM contract, §3.4;
   - the album dispatch stays;
   - queue usage unchanged (rule 2).
 - `public.test.ts`.
@@ -905,7 +914,7 @@ Delen: bestaande POST /files/{album_id}/shares (alleen read), /links (alleen rea
 - `sharing.ts`:
   - `nodeActions(album)` returns only `open` (plus `share` for the owner);
   - `PERMISSION_LABELS` becomes an object with getters (`get read() { return t("sharing.perm.read") }`);
-  - `expiryLabel` uses `fmt` and `t()`.
+  - `expiryLabel` uses `fmt` and `t()` with `common.expires.*` keys only (P0 already does this; rule 2).
 - `share.css`, `account.test.ts`, `sharing.test.ts`.
 - `routers/auth.py`:
   - `PATCH /users/{id}` and `DELETE /users/{id}`;
@@ -1007,7 +1016,7 @@ It merges as one PR into the fase-3 base, tagged `fase3-basis`. The app looks an
 :focus-visible{outline:var(--focus-w) solid var(--focus);outline-offset:2px}
 .tag-c1 … .tag-c7 { --tag: var(--tag-1) … }       /* tagkleur via klasse, nooit via style-attribuut */
 ```
-`web/public/boot.js` (synchronous in `<head>`, try/catch): sets `data-theme`, `lang` and `<meta name=theme-color>` from `platform-theme`/`platform-locale`.
+`web/public/boot.js` (synchronous in `<head>`, try/catch): sets `data-theme`, `lang` and every `<meta name=theme-color>` (content set, `media` removed) from `platform-theme`/`platform-locale`. Tokens include `--line-strong` (the border of inputs, ≥ 3:1); `--line` stays for dividers.
 
 **Router** (`router.ts`, `routes.tsx`, `links.ts`): the signatures from revisie 1 are unchanged, with one addition to `RouteDef`:
 ```ts
@@ -1073,7 +1082,7 @@ export const collator: Intl.Collator;  export function fold(s: string): string;
   - `errors/common.ts` gets every existing generic code (from `get_access`, `clean_name`, `Gone`, `no_room`, `NameTaken`, quota, guest), plus every code a frozen contract names: the ItemResult codes (`not_found`, `read_only`, `share_root`, `cross_owner`, `name_taken`, `into_itself`, `trashed`, `too_many`, `album`, `not_own`, `not_media`, `already`), plus `account_disabled`, `invalid_input` and `not_logged_in`;
   - area-specific existing codes go to their area catalog (auth → `auth.ts`, public/shares → `photos.ts`/`sharing.ts`, uploads → `upload.ts`, previews/jobs → `viewer.ts`/`admin.ts`).
 
-**UI** (`ui/`): the signatures from revisie 1 are unchanged (Button, IconButton, IconName, Icon, MenuItem, Menu, MenuButton, useContextMenu, useLongPress, confirm, prompt, DialogHost, Dialog, toast, announce, ToastRegion, Tabs, Field, Spinner, Skeleton, EmptyState, PageTitle, UsageBar, ThemeSwitch, LanguageSwitch, ShortcutHelp, OfflineScreen, selection and keys). The virtualization API changes:
+**UI** (`ui/`): additions in P0: `Menu` items with `radio` (role `menuitemradio`; theme and language in the account menu); `Tabs` `idPrefix` plus `tabPanelProps(idPrefix, id)`; `activeShortcuts({ignore})`; `consumesKey` (a shortcut without Ctrl/Cmd never takes arrows/Home/End/PageUp/PageDown from a slider, radio, number field or media with controls, or Enter/Space from a button, link or checkbox); toasts and the live regions render in the top-most open dialog and every `toast()` is announced through the live region; `LanguageSwitch` applies with a button; the shell's icons are in `Icon.tsx`, the rest in its own chunk (`iconPaths.ts`). Otherwise the signatures from revisie 1 are unchanged (Button, IconButton, IconName, Icon, MenuItem, Menu, MenuButton, useContextMenu, useLongPress, confirm, prompt, DialogHost, Dialog, toast, announce, ToastRegion, Tabs, Field, Spinner, Skeleton, EmptyState, PageTitle, UsageBar, ThemeSwitch, LanguageSwitch, ShortcutHelp, OfflineScreen, selection and keys). The virtualization API changes:
 ```ts
 fixedRange(scrollTop, viewport, rowH, count, overscan): { start: number; end: number }
 variableRange(offsets: readonly number[], scrollTop, viewport, overscan): { start; end }
@@ -1092,7 +1101,10 @@ useRovingFocus(o: { count; index; setIndex(i); columns?; scrollToIndex(i); getEl
 - the topbar, account menu and skip link;
 - `<UploadTray/>` (P3, lazy), `<AppStatus/>` (P1), `<DialogHost/>`, `<ToastRegion/>`, `<ShortcutHelp/>`;
 - a network error → `<OfflineScreen>`;
-- a 403 `account_disabled` from refresh → back to Login with that message.
+- a 403 `account_disabled` from refresh → back to Login with that message;
+- a lazy part outside the page (upload tray, recovery codes) sits in a `ChunkBoundary`: a failed chunk shows its fallback (nothing; the recovery codes fall back to a plain list) without reloading (that would abort uploads or lose the codes), never a white page;
+- a route the role may not open renders `NoAccess` through `PageArea` (title, focus and announcement like any page);
+- scroll restoration: `useRestoreScroll` keeps a pop restore pending until the page is tall enough (≤ 3 s, or until the user scrolls), and scroll events do not overwrite the saved position meanwhile; the shell calls it for every route, a page may call it again with `ready`.
 
 **Other frozen modules**
 - `perf.ts`: `markReady(what)`.
@@ -1102,7 +1114,8 @@ useRovingFocus(o: { count; index; setIndex(i); columns?; scrollToIndex(i); getEl
   - `ApiError.params?`; `errorFromBody` reads the new validation shape and `params`;
   - `lastRefresh`; `setAccountLocale(l)`.
 - `PublicLink.request<T>` becomes public.
-- `crossApi.ts`: as revisie 1 (`trash`, `move`, `copy`, `archiveLink` P2; `restore` **P0 → P6**; `addToAlbum` P5), with `archiveLink(ids ≤ 10000)`.
+- `crossApi.ts`: as revisie 1 (`trash`, `move`, `copy`, `archiveLink` P2; `restore` **P0 → P6**; `addToAlbum` P5), with `archiveLink(ids ≤ 10000)`. `ItemResult.params?`. Until an endpoint exists the server answers 405 (a stub router without that method) or 404 (no route), without a code; `isNotBuilt(e)` recognises that (404/405/501 without code).
+- `api.ts`/`publicApi.ts`: a failed fetch becomes `ApiError(0, …, "network")` (`isNetworkError` in i18n; a programming `TypeError` is not a network error); a server error without text gets code `http_error` `{status}`; the HEAD 413 gets `no_room`.
 - `viewer/types.ts`, `viewer/index.ts`, `viewer/param.ts`: as revisie 1. `ViewerItem` keeps `size` and `modified_at` required, since PhotoItem now carries both. `Viewer = lazyWithAreas(() => import("./Viewer"), ["viewer"])`.
 - **Upload contract** (`upload/index.ts`, signatures frozen, implementation P3):
 ```ts
@@ -1159,18 +1172,24 @@ data:        node.taken_at/taken_day voor bestaande image/*|video/*-bestanden = 
 def fail(status: int, code: str, message: str, *, headers: dict | None = None, **params) -> HTTPException
     # detail = {"message", "code", "params"?}; main.py: RequestValidationError → 422
     # {"detail": {"message": "Ongeldige invoer", "code": "invalid_input", "params": {"field": "body.name"}, "errors": [...]}}
-class ItemResult(BaseModel): id: uuid.UUID; ok: bool; code: str | None = None; message: str | None = None; node: Any = None
-def item_fail(id: uuid.UUID, code: str, message: str) -> ItemResult
+    # komt de eerste fout uit een eigen validator (ValueError), dan is die Nederlandse tekst de message
+class ItemResult(BaseModel): id: uuid.UUID; ok: bool; code: str | None = None; message: str | None = None
+    params: dict | None = None; node: Any = None
+def item_fail(id: uuid.UUID, code: str, message: str, **params) -> ItemResult
+def item_of(id: uuid.UUID, error: HTTPException) -> ItemResult      # code, message en params uit detail
 # app/config.py: timezone: str = "Europe/Amsterdam"; page_render_workers: int = 2; page_cache_mb: int = 2048;
 #   rate_limits: bool = True
 # app/security.py (daarna van P6)
 class RateLimiter: enabled: ClassVar[bool] = True     # check/refuse doen niets als False; main.py-lifespan zet het uit settings
                                                       # en logt een waarschuwing bij False
 async def active_user(session: AsyncSession, user_id: uuid.UUID) -> User     # 404 not_found als weg of disabled_at gezet
-#   logged_in_user: disabled_at gezet → 401 account_disabled
+#   logged_in_user: disabled_at gezet → 401 account_disabled, vóór de controle op een ingetrokken login
 #   files.download gebruikt active_user (P0 past dat aan); pages (P4) en archive (P2) ook
 # app/routers/auth.py: login controleert disabled_at pas NA wachtwoord en 2FA → 403 account_disabled
-#   (een geblokkeerd account is zo niet af te tasten); refresh: disabled → 403 account_disabled en de family ingetrokken;
+#   (een geblokkeerd account is zo niet af te tasten); refresh: disabled → 403 account_disabled en de family ingetrokken,
+#   ook als het token al ingetrokken, gebruikt of verlopen was (blokkeren in P6 trekt de logins ook in);
+# app/routers/public.py: live_node → 404 link_not_found als de eigenaar geblokkeerd is (openen, kijken, downloaden, tus);
+# app/routers/events.py: de stroom stopt binnen een PING als de gebruiker weg of geblokkeerd is;
 #   UserOut.locale, UserOut.disabled; PATCH /api/v1/auth/me {locale: "nl"|"en"|null} → UserOut
 # app/jobs.py (daarna van P6)
 async def enqueue(session, type, payload, key=None, *, run_after: datetime | None = None) -> uuid.UUID | None
@@ -1190,6 +1209,8 @@ def day_of(taken_at: datetime) -> int                                         # 
 def is_media(mime: str | None) -> bool
 def stamp_values(mime, blob_taken_at, fallback: datetime, tz: str) -> dict
 def stamp(node: Node, *, blob_taken_at, fallback, tz) -> None
+def from_ms(value) -> datetime | None
+    # lastModified van de client (ms sinds 1970, getal of tekst) → echt moment in UTC; onzin of buiten 1900-2100 → None
 def split_capture(meta: dict) -> dict
     # haalt "taken_at", "taken_kind" en een eventuele "gps" uit meta (in place, gps wordt weggegooid) en geeft
     # {"taken_at", "taken_kind"} terug; meta houdt "exif"
@@ -1232,7 +1253,14 @@ async def notify_many(session, nodes, type, *, old_parents=None, seen=None, belo
   - `seed_folder(owner, n=10_000, blobs)`: rows round-robin over the blobs, with `search_name`, a mix of folders (5 %), images (50 %) and other files; `ref_count` adjusted;
   - `seed_public(owner)`: a folder of 200 items (50 images), a link without password, returning the `/s/<token>` URL.
 - `e2e/perf/first_view.py` and `scroll.py` (§4).
-- `e2e/test_smoke.py`: login → Files → upload → Viewer stub → theme switch → logout.
+- `e2e/test_smoke.py`: login → Files → upload → Viewer stub → theme switch → logout. It uses only exact accessible names and texts, so the packages can change everything else. **Smoke DOM contract** (P1, P2, P3, P4 keep these; also in `docs/fase-3/e2e.md`):
+  - login (P1): heading "Inloggen"; fields labelled exactly "E-mailadres" and "Wachtwoord" (a toggle "Wachtwoord tonen" is fine); button "Inloggen";
+  - shell (P0): navigation "Hoofdmenu" with link "Bestanden" (`aria-current=page`); the account button named after the user; menu "Accountmenu van <naam>" with "Thema" → `menuitemradio` "Licht"/"Donker"/"Systeem", and "Uitloggen";
+  - Files (P2): the text "Deze map is leeg." in an empty folder; a file shows its name as text exactly once inside `#inhoud` (an icon before it is fine), and a **click on the name opens the viewer** (the name is a link or button inside the row; a click elsewhere on the row may select);
+  - upload (P3): a button named exactly "Uploaden" that opens the file chooser;
+  - viewer (P4): a dialog named after the file with a button "Sluiten"; `?bestand=` in the address while it is open;
+  - public page (P4): an h1 starting with "Openbaar"; every item is a row (`<tr>` or `role=row`), a header row has `columnheader`.
+- **`e2e/pytest.ini`** runs with `--strict-markers` and registers `perf`, `slow` and `p1` … `p6`; a package uses only these markers.
 - **`e2e/test_theme.py`:** `platform-theme=dark` in localStorage; an `addInitScript` MutationObserver asserts that `<html data-theme="dark">` and the dark `--bg` are set before the first child of `<body>` is parsed.
 - Run with: `cd api && uv run --with playwright pytest ../e2e`.
 

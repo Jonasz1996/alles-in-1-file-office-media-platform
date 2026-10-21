@@ -46,4 +46,7 @@ export default {
   wrong_token: { en: "This link belongs to another file" },
   user_not_found: { en: "User not found" },
   group_not_found: { en: "Group not found" },
+  // Van de web-app zelf (api.ts): geen verbinding, en een fout zonder tekst van de server
+  network: { en: "No connection to the server. Please try again." },
+  http_error: { en: "Error {status}" },
 } satisfies Record<string, { en: string }>;

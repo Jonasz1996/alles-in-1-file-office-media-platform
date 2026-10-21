@@ -527,7 +527,17 @@ async def refresh(
         select(RefreshToken).where(RefreshToken.token_hash == hash_token(raw))
     )
     now = datetime.now(UTC)
-    if row is None or row.revoked_at is not None or await family_revoked(session, row.family):
+    if row is None:
+        raise await not_logged_in(session, "Ongeldig refresh-token")
+    # Geblokkeerd gaat vóór ingetrokken, gebruikt of verlopen: blokkeren trekt de logins ook
+    # in, en de web-app moet dan toch account_disabled zien. Dit krijgt alleen wie ooit een
+    # geldig token had, dus aftasten kan er niet mee.
+    owner = await session.get(User, row.user_id)
+    if owner is not None and owner.disabled_at is not None:
+        await revoke_family(session, row.family, now)
+        await session.commit()
+        raise errors.fail(403, "account_disabled", ACCOUNT_DISABLED)
+    if row.revoked_at is not None or await family_revoked(session, row.family):
         raise await not_logged_in(session, "Ongeldig refresh-token")
     if row.used_at is not None:
         if shared and now - aware(row.used_at) <= REFRESH_RACE:

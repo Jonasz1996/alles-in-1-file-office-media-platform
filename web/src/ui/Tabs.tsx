@@ -1,4 +1,4 @@
-import { type JSX, type KeyboardEvent, useRef } from "react";
+import { type JSX, type KeyboardEvent, useId, useRef } from "react";
 import { Link } from "../links";
 
 export interface TabDef {
@@ -9,22 +9,43 @@ export interface TabDef {
   badge?: string;
 }
 
+function tabId(prefix: string, id: string): string {
+  return `${prefix}-tab-${id}`;
+}
+
+function panelId(prefix: string, id: string): string {
+  return `${prefix}-panel-${id}`;
+}
+
+/** De props voor het paneel van een tabblad (WAI-ARIA tabs): geef Tabs hetzelfde idPrefix. */
+export function tabPanelProps(
+  idPrefix: string,
+  id: string,
+): { id: string; role: "tabpanel"; "aria-labelledby": string; tabIndex: 0 } {
+  return { id: panelId(idPrefix, id), role: "tabpanel", "aria-labelledby": tabId(idPrefix, id), tabIndex: 0 };
+}
+
 /**
  * Tabbladen. Met href zijn het links in een nav (elk een eigen pagina, aria-current); zonder
- * href een tablist met de pijltjes (WAI-ARIA tabs, automatisch activeren).
+ * href een tablist met de pijltjes (WAI-ARIA tabs, automatisch activeren). Met idPrefix wijst elk
+ * tabblad naar zijn paneel (aria-controls); render het paneel dan met tabPanelProps(idPrefix, id).
  */
 export function Tabs({
   label,
   tabs,
   current,
   onSelect,
+  idPrefix,
 }: {
   label: string;
   tabs: TabDef[];
   current: string;
   onSelect?(id: string): void;
+  idPrefix?: string;
 }): JSX.Element {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const ownId = useId();
+  const prefix = idPrefix ?? ownId;
 
   if (tabs.every((tab) => tab.href)) {
     return (
@@ -68,6 +89,8 @@ export function Tabs({
           }}
           type="button"
           role="tab"
+          id={tabId(prefix, tab.id)}
+          aria-controls={idPrefix ? panelId(idPrefix, tab.id) : undefined}
           className={tab.id === current ? "tab current" : "tab"}
           aria-selected={tab.id === current}
           tabIndex={tab.id === current ? 0 : -1}

@@ -17,7 +17,7 @@ via de P0-hotfix-lane.
 | `e2e/test_theme.py` | geen themaflits bij het laden |
 | `e2e/perf/first_view.py` | eerste weergave < 1,5 s (ontwerp §4.2) |
 | `e2e/perf/scroll.py` | 10.000 bestanden soepel scrollen (ontwerp §4.4) |
-| `e2e/pytest.ini` | marker `perf`; de meetscripts zijn ook testmodules |
+| `e2e/pytest.ini` | markers `perf`, `slow` en `p1` … `p6` (`--strict-markers`: een pakket gebruikt alleen deze); de meetscripts zijn ook testmodules |
 | `e2e/ruff.toml` | dezelfde ruff-regels als `api/` |
 
 ## Getest paar
@@ -164,6 +164,20 @@ adres) en sluiten → thema Donker (blijft na herladen), Licht, Systeem → uitl
 logt niet weer in). Daarnaast: `context_as` start ingelogd, de link van `seed_public` opent
 zonder inloggen met 200 items en echte thumbnails (via `seeded`), en de bewaking vangt echt
 een CSP-schending en een i18n-fout.
+
+### DOM-contract van de rooktest
+
+`test_smoke.py` en `test_theme.py` zoeken alleen op exacte toegankelijke namen en teksten
+(`exact=True`), zodat de pakketten de rest vrij kunnen veranderen. Wat blijft:
+
+| Van | Wat precies zo blijft |
+|---|---|
+| P1 (inloggen) | kop "Inloggen"; velden met het label precies "E-mailadres" en "Wachtwoord" (een knop "Wachtwoord tonen" ernaast mag); knop "Inloggen" |
+| P0 (schil) | navigatie "Hoofdmenu" met link "Bestanden" (`aria-current=page`); de accountknop met de naam van de gebruiker; menu "Accountmenu van <naam>" met "Thema" → `menuitemradio` "Licht", "Donker", "Systeem", en "Uitloggen" |
+| P2 (bestanden) | de tekst "Deze map is leeg." in een lege map; een bestand toont zijn naam één keer als tekst in `#inhoud` (een icoon ervoor mag), en een **klik op die naam opent de viewer** (de naam is een link of knop in de rij; klikken elders in de rij mag selecteren) |
+| P3 (uploaden) | een knop met precies de naam "Uploaden" die de bestandskiezer opent ("Map uploaden" ernaast mag) |
+| P4 (viewer) | een dialoog met de naam van het bestand en een knop "Sluiten"; `?bestand=` in het adres zolang hij open is |
+| P4 (publieke pagina) | een h1 die met "Openbaar" begint; elk item is een rij (`<tr>` of `role=row`), een kopregel heeft `columnheader` en telt niet mee |
 
 `test_theme.py` zet `platform-theme` in localStorage (en de voorkeur van het systeem via
 `color_scheme`) en kijkt met een MutationObserver uit een init-script mee:
