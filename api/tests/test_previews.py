@@ -154,14 +154,14 @@ def run_render(tmp_path: Path, data: bytes | Path, name: str, mime=None, max_pix
 def test_foto_rechtop_en_niet_vergroot(tmp_path):
     result, made = run_render(tmp_path, jpeg_rotated(), "foto.jpg")
     assert result["state"] == "ready"
-    assert result["meta"] == {"width": 3000, "height": 4000}
+    assert result["meta"] == {"width": 3000, "height": 4000, "animated": False}
     assert made == {1024: (768, 1024), 256: (192, 256)}
 
     # Kleiner dan een thumbnail: alleen 256.webp, op de eigen grootte
     result, made = run_render(
         tmp_path, picture("PNG", (100, 50), "RGBA", (0, 0, 255, 128)), "a.png"
     )
-    assert result["meta"] == {"width": 100, "height": 50}
+    assert result["meta"] == {"width": 100, "height": 50, "animated": False}
     assert made == {256: (100, 50)}
     # Tussen 256 en 1024: de grote is het origineel
     _, made = run_render(tmp_path, picture("GIF", (500, 300), "P"), "a.gif")
@@ -194,8 +194,8 @@ def test_heic(tmp_path):
     except Exception as e:  # noqa: BLE001 - zonder encoder kan het testbestand niet gemaakt
         pytest.skip(f"Geen HEIC-encoder: {e}")
     result, made = run_render(tmp_path, buf.getvalue(), "IMG_0001.HEIC")
-    assert result["meta"] == {"width": 640, "height": 480}
-    assert made == {1024: (640, 480), 256: (256, 192)}
+    assert result["meta"] == {"width": 640, "height": 480, "animated": False}
+    assert made == {1024: (640, 480), 256: (256, 192)}  # niet groter dan 1024: geen 2048
 
 
 def test_kapotte_en_te_grote_afbeeldingen_geen_preview(tmp_path):
@@ -226,7 +226,7 @@ def test_tekst_eerste_regels(tmp_path):
     text = result["meta"]["text"]
     assert text == "é" * 2048 and result["meta"]["truncated"]
     result, _ = run_render(tmp_path, b"kort", "a.txt")
-    assert result["meta"] == {"text": "kort", "truncated": False}
+    assert result["meta"] == {"text": "kort", "truncated": False, "encoding": "utf-8"}
     result, _ = run_render(tmp_path, b'{"a": 1}', "a.json", mime="application/json")
     assert result["meta"]["text"] == '{"a": 1}'
 
@@ -270,10 +270,10 @@ def test_epub_hoes(tmp_path):
     assert made == {1024: (300, 450), 256: (171, 256)}
 
 
-def test_geen_preview_voor_office_svg_en_onbekend(tmp_path):
+def test_geen_preview_voor_kapotte_office_svg_en_onbekend(tmp_path):
     docx = io.BytesIO()
     with zipfile.ZipFile(docx, "w") as z:
-        z.writestr("[Content_Types].xml", "<Types/>")
+        z.writestr("[Content_Types].xml", "<Types/>")  # geen word/document.xml
     assert run_render(tmp_path, docx.getvalue(), "brief.docx")[0]["state"] == "none"
     svg = b'<svg xmlns="http://www.w3.org/2000/svg"></svg>'
     assert run_render(tmp_path, svg, "logo.svg")[0]["state"] == "none"
@@ -285,7 +285,13 @@ def test_geen_preview_voor_office_svg_en_onbekend(tmp_path):
 @needs_ffmpeg
 def test_video_beeld_en_duur(tmp_path):
     result, made = run_render(tmp_path, make_video(tmp_path / "film.mp4", "1920x1080"), "film.mp4")
-    assert result["meta"] == {"duration": 2.0, "width": 1920, "height": 1080}
+    meta = result["meta"]
+    assert {k: meta[k] for k in ("duration", "width", "height")} == {
+        "duration": 2.0,
+        "width": 1920,
+        "height": 1080,
+    }
+    assert meta["video"]["codec"] in ("h264", "mpeg4") and meta["container"].startswith("mov")
     assert made == {1024: (1024, 576), 256: (256, 144)}
     result, made = run_render(tmp_path, make_video(tmp_path / "klein.webm", "160x120"), "a.webm")
     assert result["meta"]["width"] == 160 and made == {256: (160, 120)}
@@ -301,12 +307,11 @@ def test_soort_bepalen():
     assert render.kind_of("image/jpeg", b"", "x") == "image"
     assert render.kind_of("image/svg+xml", b"<svg", "x.svg") == ""
     assert render.kind_of("video/mp4", b"", "x") == "video"
-    assert (
-        render.kind_of(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document", b"", "x.docx"
-        )
-        == ""
-    )  # noqa: E501
+    docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    assert render.kind_of(docx, b"", "x.docx") == "office"
+    assert render.kind_of("application/msword", b"", "x.doc") == ""  # doc, xls, ppt: niet
+    odt = b"PK\x03\x04" + b"\x00" * 26 + b"mimetypeapplication/vnd.oasis.opendocument.text"
+    assert render.kind_of(None, odt, "x") == "office"
     assert render.kind_of("text/csv", b"", "x.csv") == "text"
     assert render.kind_of(None, b"BMW-onderhoud\n", "notities") == "text"  # geen BMP
     assert render.kind_of(None, b"II*\x00" + b"\x00" * 20, "IMG.CR2") == ""  # RAW
@@ -380,7 +385,7 @@ async def test_upload_geeft_thumbnail(client, admin, settings, hub):
 
     info = (await preview_of(client, headers, node["id"]))[node["id"]]
     assert info["state"] == "ready"
-    assert info["meta"] == {"width": 1200, "height": 1600, "sizes": [256, 1024]}
+    assert info["meta"] == {"width": 1200, "height": 1600, "animated": False, "sizes": [256, 1024]}
     assert "/256.webp?" in info["thumb"] and "/1024.webp?" in info["large"]
     r = await client.get(info["thumb"])  # zonder Authorization, zoals een <img>
     assert r.status_code == 200
@@ -665,9 +670,19 @@ async def test_preview_in_het_eigen_proces(client, admin, settings):
     foto, doc, lied, tekst, archief, brief = (info[n["id"]] for n in nodes)
     assert foto["meta"]["width"] == 3000 and foto["thumb"] and foto["large"]
     assert doc["meta"]["pages"] == 2 and doc["thumb"]
-    assert lied["meta"]["title"] == "Liedje" and lied["thumb"]
-    assert tekst["state"] == "ready" and tekst["meta"]["text"] == "hallo\nwereld\n"
+    assert lied["thumb"] and tekst["state"] == "ready" and archief["state"] == "ready"
     assert tekst["thumb"] is None and tekst["large"] is None
+    # De lijst is licht: geen tekst, archiefinhoud of tags; die geeft de viewer
+    for light in info.values():
+        assert set(light["meta"]) <= set(previews.LIGHT), light
+    detail = {}
+    for n in nodes:
+        r = await client.get(f"/api/v1/files/{n['id']}/preview", headers=headers)
+        assert r.status_code == 200, r.text
+        detail[n["id"]] = r.json()
+    lied, tekst, archief = (detail[n["id"]] for n in nodes[2:5])
+    assert lied["meta"]["title"] == "Liedje"
+    assert tekst["meta"]["text"] == "hallo\nwereld\n" and tekst["meta"]["encoding"] == "utf-8"
     assert [e["name"] for e in archief["meta"]["entries"]] == [
         "map/0.txt",
         "map/1.txt",

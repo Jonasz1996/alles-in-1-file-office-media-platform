@@ -5,8 +5,16 @@ pas als ze nodig zijn.
 
 Verzoek als JSON op stdin: {"source", "out", "work", "mime", "name", "max_pixels",
 "memory_mb"}. Antwoord als JSON op stdout: {"state": "ready" | "none", "meta": {...},
-"sizes": [1024, 256]}. De afbeeldingen komen in out/<grootte>.webp; work is voor
-tussenbestanden. Een onverwachte fout eindigt met een exitcode en de melding op stderr.
+"sizes": [1024, 256]}. De afbeeldingen komen in out/<grootte>.webp (HEIC, HEIF en TIFF ook
+2048.webp: die kan de browser zelf niet tonen); een kantoordocument geeft ook out/doc.json
+(app/office.py). work is voor tussenbestanden. Een onverwachte fout eindigt met een exitcode
+en de melding op stderr.
+
+Andere soorten verzoeken (veld "mode"):
+- "page": {"source", "out", "pages": [n, ...], "width"} -> pagina's van een PDF als
+  out/<n>.webp, zo breed als width (de viewer, routers/viewer.py);
+- "docinfo": {"source"} -> {"state", "pages", "page_sizes", "toc", "labels"} van een PDF;
+- "meta": alleen metadata van veel bestanden (render_meta.run_meta, P5).
 """
 
 import base64
@@ -31,6 +39,8 @@ from xml.etree import ElementTree
 from app import render_meta  # ook alleen de standaardbibliotheek
 
 SIZES = (1024, 256)  # groot eerst: de thumbnail wordt uit de grote gemaakt
+DISPLAY = 2048  # extra groot voor wat de browser zelf niet kan tonen
+DISPLAY_FORMATS = {"HEIF", "TIFF"}
 THUMB = 256
 HEAD = 8192
 TEXT_BYTES = 4096
@@ -42,6 +52,12 @@ FFMPEG_SECONDS = 60
 EMBEDDED_BYTES = 32 * 1024 * 1024  # hoes van een album of e-book
 XML_BYTES = 4 * 1024 * 1024
 WEBP_QUALITY = 80
+# PDF-pagina's voor de viewer
+PAGE_WIDTHS = (640, 1280, 1920, 2560)
+PAGE_PIXELS = 40_000_000  # een extreem lange pagina wordt minder scherp, niet enorm
+MAX_PAGES = 10_000
+MAX_TOC = 1000
+TOC_CHARS = 200
 
 # Alleen deze decoders van Pillow: andere (zoals EPS, dat Ghostscript start) nooit
 IMAGE_FORMATS = ["JPEG", "PNG", "GIF", "WEBP", "BMP", "TIFF", "ICO", "AVIF", "HEIF"]
@@ -85,6 +101,23 @@ TEXT_MIMES = {
 # Camera-RAW is vaak TIFF van binnen; daar maken we (nog) geen preview van
 RAW_EXTENSIONS = (".cr2", ".cr3", ".nef", ".nrw", ".arw", ".dng", ".orf", ".rw2", ".raf", ".pef")
 OFFICE_EXTENSIONS = (".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".docm", ".xlsm", ".pptm")
+# Kantoordocumenten die app/office.py leest (B21); doc, xls, ppt en rtf niet
+OFFICE_MIMES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.ms-word.document.macroenabled.12",
+    "application/vnd.ms-excel.sheet.macroenabled.12",
+    "application/vnd.ms-powerpoint.presentation.macroenabled.12",
+    "application/vnd.oasis.opendocument.text",
+    "application/vnd.oasis.opendocument.spreadsheet",
+    "application/vnd.oasis.opendocument.presentation",
+}
+ODF_PREFIXES = (
+    b"mimetypeapplication/vnd.oasis.opendocument.text",
+    b"mimetypeapplication/vnd.oasis.opendocument.spreadsheet",
+    b"mimetypeapplication/vnd.oasis.opendocument.presentation",
+)
 HEIF_BRANDS = {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1", b"msf1", b"avif"}
 HEIF_BRANDS |= {b"avis"}
 AUDIO_BRANDS = {b"M4A ", b"M4B ", b"M4P "}
@@ -102,7 +135,8 @@ NONE = {"state": "none", "meta": {}, "sizes": []}
 
 
 def sniff(head: bytes, name: str) -> str:
-    """Soort volgens de eerste bytes: image, pdf, video, audio, text, zip, tar, epub of ""."""
+    """Soort volgens de eerste bytes: image, pdf, video, audio, text, zip, tar, epub, office
+    of ""."""
     lower = name.lower()
     if head.startswith((b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF87a", b"GIF89a")):
         return "image"
@@ -126,10 +160,12 @@ def sniff(head: bytes, name: str) -> str:
     if head.startswith(b"PK\x03\x04"):
         if head[30:58] == b"mimetypeapplication/epub+zip" or lower.endswith(".epub"):
             return "epub"
+        if head[30:].startswith(ODF_PREFIXES):
+            return "office"  # OpenDocument: het eerste bestand heet mimetype
         if lower.endswith(OFFICE_EXTENSIONS) or b"[Content_Types].xml" in head[:200]:
-            return ""
+            return "office"
         if head[30:50] == b"mimetypeapplication/":
-            return ""  # OpenDocument en dergelijke
+            return ""  # andere OpenDocument-soorten (tekening, formule)
         return "zip"
     if head.startswith((b"\x1f\x8b", b"BZh", b"\xfd7zXZ\x00")) or head[257:262] == b"ustar":
         return "tar"
@@ -198,6 +234,8 @@ def kind_of(mime: str | None, head: bytes, name: str) -> str:
         return "video"
     if mime.startswith("audio/"):
         return "audio"
+    if mime in OFFICE_MIMES:
+        return "office"
     if mime in ("application/zip", "application/x-zip-compressed"):
         return "zip"
     if mime in TAR_MIMES:
@@ -270,6 +308,8 @@ def render(request: dict) -> dict:
             return tar_listing(source)
         if kind == "epub":
             return epub(source, out, work, request["max_pixels"])
+        if kind == "office":
+            return office(source, out, work, request["max_pixels"])
     except Exception as e:
         if is_unreadable(e):
             return dict(NONE)
@@ -304,11 +344,14 @@ def image(
     with Image.open(source, formats=IMAGE_FORMATS) as img:
         if exif:
             meta.update(render_meta.image_meta(img))
+            # Alleen bij een foto zelf: een video-frame of hoes beweegt nooit
+            meta["animated"] = bool(getattr(img, "is_animated", False))
         width, height = img.size
         if img.getexif().get(0x0112, 1) in (5, 6, 7, 8):  # gedraaid: breedte en hoogte om
             width, height = height, width
-        img.draft("RGB", (SIZES[0], SIZES[0]))  # JPEG meteen kleiner decoderen
-        sizes = thumbnails(ImageOps.exif_transpose(img), out)
+        wanted = (DISPLAY, *SIZES) if exif and img.format in DISPLAY_FORMATS else SIZES
+        img.draft("RGB", (wanted[0], wanted[0]))  # JPEG meteen kleiner decoderen
+        sizes = thumbnails(ImageOps.exif_transpose(img), out, wanted)
     return {
         "state": "ready",
         "meta": {**meta, "width": width, "height": height},
@@ -316,9 +359,10 @@ def image(
     }
 
 
-def thumbnails(img, out: Path) -> list[int]:
-    """256.webp en, als het origineel groter is, 1024.webp. Nooit vergroten; geen EXIF mee
-    (zoals de plek waar een foto is gemaakt)."""
+def thumbnails(img, out: Path, wanted: tuple[int, ...] = SIZES) -> list[int]:
+    """256.webp en, als het origineel groter is, 1024.webp (en 2048.webp als dat in wanted
+    staat en het origineel groter is dan 1024). Nooit vergroten; geen EXIF mee (zoals de plek
+    waar een foto is gemaakt)."""
     from PIL import Image
 
     if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
@@ -326,9 +370,10 @@ def thumbnails(img, out: Path) -> list[int]:
     elif img.mode != "RGB":
         img = img.convert("RGB")
     sizes = []
-    for size in SIZES:
-        if size != THUMB and max(img.size) <= THUMB:
-            continue  # een groot formaat heeft geen zin: dat is de thumbnail al
+    for i, size in enumerate(wanted):
+        smaller = wanted[i + 1] if i + 1 < len(wanted) else 0
+        if size != THUMB and max(img.size) <= smaller:
+            continue  # een groter formaat heeft geen zin: dat is het volgende al
         img.thumbnail((size, size), Image.Resampling.LANCZOS)
         img.save(out / f"{size}.webp", "WEBP", quality=WEBP_QUALITY, method=4)
         sizes.append(size)
@@ -398,6 +443,7 @@ def video(source: Path, head: bytes, out: Path, work: Path, max_pixels: int) -> 
     if duration > 0:
         meta["duration"] = round(duration, 3)
     meta.update(render_meta.video_meta(info))
+    meta.update(codecs_of(info))
     stream = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), None)
     if stream is None or not stream.get("width") or not stream.get("height"):
         return {"state": "ready" if meta else "none", "meta": meta, "sizes": []}
@@ -419,6 +465,39 @@ def video(source: Path, head: bytes, out: Path, work: Path, max_pixels: int) -> 
         if result.returncode == 0 and frame.exists() and frame.stat().st_size > 0:
             return {**image(frame, out, max_pixels), "meta": meta}
     return {"state": "ready", "meta": meta, "sizes": []}
+
+
+def _short(value, limit: int = 40) -> str | None:
+    return str(value)[:limit] if value not in (None, "", "unknown") else None
+
+
+def codecs_of(probe: dict) -> dict:
+    """Wat er in de video zit, als hint voor de browser (die beslist zelf of hij het kan
+    afspelen): meta.video {codec, profile, pix_fmt}, meta.audio {codec, channels,
+    sample_rate} en meta.container (zoals ffprobe het noemt, bijv. "matroska,webm")."""
+    meta: dict = {}
+    streams = probe.get("streams") or []
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    if video is not None:
+        info = {
+            "codec": _short(video.get("codec_name")),
+            "profile": _short(video.get("profile")),
+            "pix_fmt": _short(video.get("pix_fmt")),
+        }
+        meta["video"] = {k: v for k, v in info.items() if v is not None}
+    if audio is not None:
+        info = {"codec": _short(audio.get("codec_name"))}
+        try:
+            info["channels"] = int(audio.get("channels") or 0) or None
+            info["sample_rate"] = int(audio.get("sample_rate") or 0) or None
+        except (TypeError, ValueError):
+            pass
+        meta["audio"] = {k: v for k, v in info.items() if v is not None}
+    container = _short((probe.get("format") or {}).get("format_name"), 80)
+    if container:
+        meta["container"] = container
+    return meta
 
 
 def _rotation(stream: dict) -> int:
@@ -514,18 +593,32 @@ def _limit(data: bytes) -> bytes | None:
     return data if 0 < len(data) <= EMBEDDED_BYTES else None
 
 
+def encoding_of(data: bytes) -> tuple[str, str]:
+    """(naam voor de web-app, codec voor Python) van het begin van een tekstbestand: een BOM
+    voor UTF-8 of UTF-16, anders UTF-8 als dat klopt, en anders Windows-1252 (de tekst van
+    oudere Windows-programma's)."""
+    if data.startswith(codecs.BOM_UTF8):
+        return "utf-8", "utf-8-sig"
+    if data.startswith(codecs.BOM_UTF16_LE):
+        return "utf-16le", "utf-16"
+    if data.startswith(codecs.BOM_UTF16_BE):
+        return "utf-16be", "utf-16"
+    return ("utf-8", "utf-8") if is_utf8(data) else ("windows-1252", "cp1252")
+
+
 def text(source: Path) -> dict:
     with open(source, "rb") as f:
         data = f.read(TEXT_BYTES + 1)
     truncated = len(data) > TEXT_BYTES
     data = data[:TEXT_BYTES]
-    encoding = "utf-16" if data.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
+    name, codec = encoding_of(data)
     # Incrementeel: een teken dat op de grens van 4 KB is afgeknipt, valt weg
-    content = codecs.getincrementaldecoder(encoding)(errors="replace").decode(data, final=False)
+    content = codecs.getincrementaldecoder(codec)(errors="replace").decode(data, final=False)
     lines = content.replace("\x00", "").splitlines(keepends=True)
     if len(lines) > TEXT_LINES:
         lines, truncated = lines[:TEXT_LINES], True
-    return {"state": "ready", "meta": {"text": "".join(lines), "truncated": truncated}, "sizes": []}
+    meta = {"text": "".join(lines), "truncated": truncated, "encoding": name}
+    return {"state": "ready", "meta": meta, "sizes": []}
 
 
 def _entry(name: str, size: int) -> dict:
@@ -613,6 +706,110 @@ def epub(source: Path, out: Path, work: Path, max_pixels: int) -> dict:
     return {**image(path, out, max_pixels), "meta": meta}
 
 
+def office(source: Path, out: Path, work: Path, max_pixels: int) -> dict:
+    """Een kantoordocument (app/office.py): de inhoud als out/doc.json, de ingebedde
+    thumbnail als preview."""
+    from app import office as reader
+
+    try:
+        result = reader.read(source)
+    except reader.Unreadable:
+        return dict(NONE)
+    (out / "doc.json").write_bytes(reader.fit(result["doc"]))
+    meta = result["meta"]
+    if result["thumbnail"]:
+        path = work / "thumbnail"
+        path.write_bytes(result["thumbnail"])
+        try:
+            return {**image(path, out, max_pixels), "meta": meta}
+        except Exception as e:
+            if not is_unreadable(e):
+                raise
+    return {"state": "ready", "meta": meta, "sizes": []}
+
+
+def _open_pdf(source: Path, max_pixels: int):
+    import pypdfium2 as pdfium
+
+    _pillow(max_pixels)
+    return pdfium.PdfDocument(str(source))
+
+
+def docinfo(request: dict) -> dict:
+    """Paginagroottes (in punten), inhoudsopgave en paginalabels van een PDF."""
+    try:
+        document = _open_pdf(Path(request["source"]), request.get("max_pixels", 10**8))
+    except Exception as e:
+        if is_unreadable(e):
+            return {"state": "none"}
+        raise
+    try:
+        count = min(len(document), MAX_PAGES)
+        if count == 0:
+            return {"state": "none"}
+        sizes = []
+        for i in range(count):
+            try:
+                w, h = document.get_page_size(i)
+            except Exception:  # noqa: BLE001 - een kapotte pagina: A4 als plaatshouder
+                w, h = 595.0, 842.0
+            sizes.append([round(w, 2), round(h, 2)])
+        toc = []
+        for bookmark in document.get_toc(max_depth=8):
+            if len(toc) >= MAX_TOC:
+                break
+            dest = bookmark.get_dest()
+            index = dest.get_index() if dest is not None else None
+            if index is None or not 0 <= index < count:
+                continue
+            title = bookmark.get_title().replace("\x00", "").strip()[:TOC_CHARS]
+            toc.append({"title": title, "page": index + 1, "level": bookmark.level})
+        labels = [document.get_page_label(i)[:40] for i in range(count)]
+        if all(not label or label == str(i + 1) for i, label in enumerate(labels)):
+            labels = None
+        return {"state": "ready", "pages": count, "page_sizes": sizes, "toc": toc, "labels": labels}
+    finally:
+        document.close()
+
+
+def pages(request: dict) -> dict:
+    """Pagina's (vanaf 1) van een PDF als <n>.webp, width pixels breed."""
+    width = int(request["width"])
+    if width not in PAGE_WIDTHS:
+        raise ValueError("ongeldige breedte")
+    out = Path(request["out"])
+    try:
+        document = _open_pdf(Path(request["source"]), request.get("max_pixels", 10**8))
+    except Exception as e:
+        if is_unreadable(e):
+            return {"state": "none", "pages": []}
+        raise
+    done = []
+    try:
+        for n in request.get("pages", []):
+            if not 1 <= int(n) <= min(len(document), MAX_PAGES):
+                continue
+            page = document[int(n) - 1]
+            try:
+                w, h = page.get_size()
+                if w <= 0 or h <= 0:
+                    continue
+                scale = width / w
+                if (w * scale) * (h * scale) > PAGE_PIXELS:
+                    scale = (PAGE_PIXELS / (w * h)) ** 0.5
+                bitmap = page.render(scale=scale, may_draw_forms=True)
+                img = bitmap.to_pil()
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                img.save(out / f"{int(n)}.webp", "WEBP", quality=WEBP_QUALITY, method=2)
+                done.append(int(n))
+            finally:
+                page.close()
+    finally:
+        document.close()
+    return {"state": "ready", "pages": done}
+
+
 def main() -> None:
     request = json.loads(sys.stdin.buffer.read())
     if request.get("memory_mb"):
@@ -623,6 +820,10 @@ def main() -> None:
         resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
     if request.get("mode") == "meta":
         result = render_meta.run_meta(request)  # alleen metadata van veel bestanden (P5)
+    elif request.get("mode") == "page":
+        result = pages(request)
+    elif request.get("mode") == "docinfo":
+        result = docinfo(request)
     else:
         result = render(request)
     sys.stdout.write(json.dumps(result))

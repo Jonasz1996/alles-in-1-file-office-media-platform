@@ -3,8 +3,16 @@
 Eén preview per blob: dezelfde inhoud krijgt er maar één, ook als hij in tien mappen of bij
 verschillende gebruikers staat. Hij staat naast de blobs, in previews/<sha[:2]>/<sha>/, als
 256.webp (thumbnail) en 1024.webp (groot), voor zover dat zin heeft: nooit groter dan het
-origineel. Wat er verder uit komt (afmetingen, duur, eerste regels tekst, inhoud van een
-archief) staat in Blob.preview_meta.
+origineel; HEIC, HEIF en TIFF krijgen ook 2048.webp (DISPLAY: de browser kan het origineel
+niet tonen). Een kantoordocument krijgt doc.json (de inhoud voor de viewer, app/office.py),
+en de viewer zet gerenderde PDF-pagina's in pages/ (routers/viewer.py). Wat er verder uit
+komt (afmetingen, duur, eerste regels tekst, inhoud van een archief, codecs) staat in
+Blob.preview_meta. Lijsten krijgen daarvan alleen het lichte deel (info), de viewer alles
+(info met full=True, via GET /files/{id}/preview).
+
+RENDER_VERSION gaat omhoog als previews van bestaande inhoud opnieuw gemaakt moeten worden;
+bij het starten loopt dan een keten van taken (preview.outdated) door alle blobs met een
+lagere Blob.render_version.
 
 Het maken zelf gebeurt in een eigen proces (app/render.py) met een tijds- en geheugengrens:
 een kapot of kwaadaardig bestand kan de server zo niet laten crashen of vastlopen.
@@ -27,6 +35,7 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -42,8 +51,21 @@ from app.models import Blob, Node
 from app.storage import BlobStore
 
 TYPE = "preview"
-THUMB, LARGE = 256, 1024
-SIZES = (THUMB, LARGE)
+THUMB, LARGE, DISPLAY = 256, 1024, 2048
+SIZES = (THUMB, LARGE, DISPLAY)
+# Omhoog als bestaande previews opnieuw moeten. 1: kantoordocumenten (doc.json) en 2048 px
+# voor HEIC, HEIF en TIFF (fase 3)
+RENDER_VERSION = 1
+OUTDATED = "preview.outdated"
+OUTDATED_KEY = "preview:outdated"
+OUTDATED_BATCH = 200
+# Opnieuw maken wacht even: nieuwe uploads gaan voor
+RERENDER_DELAY = 60
+# Wat een lijst van de metadata krijgt; tekst, archiefinhoud, codecs en EXIF alleen de viewer
+LIGHT = ("width", "height", "duration", "pages", "animated", "sizes")
+# Nooit naar buiten, ook niet als een oudere versie het ooit bewaarde (locatie: fase 6)
+SECRET_META = ("gps", "location", "latitude", "longitude")
+DOC = "doc.json"
 SHA = re.compile(r"[0-9a-f]{64}")
 DONE = ("ready", "none")
 # Een adres blijft hetzelfde tot de volgende grens van 6 uur, en werkt daarna nog 6 uur:
@@ -114,8 +136,28 @@ def valid(secret: bytes, sha: str, size: int, exp: int, sig: str, at: float | No
     return hmac.compare_digest(expected, sig.encode())  # in constante tijd
 
 
-def info(secret: bytes, blob: Blob | None, exp: int) -> dict[str, Any]:
-    """Wat de web-app over de preview van deze inhoud te zien krijgt."""
+def doc_path(blobs: BlobStore, sha: str) -> Path:
+    """De inhoud van een kantoordocument voor de viewer (OfficeDoc, hooguit 512 KB)."""
+    return directory(blobs, sha) / DOC
+
+
+def clean_meta(meta: dict[str, Any]) -> dict[str, Any]:
+    """preview_meta zonder locatie (GPS hoort bij fase 6), ook niet in de EXIF."""
+    meta = {k: v for k, v in meta.items() if k not in SECRET_META}
+    exif = meta.get("exif")
+    if isinstance(exif, dict):
+        meta["exif"] = {
+            k: v
+            for k, v in exif.items()
+            if k not in SECRET_META and not k.lower().startswith("gps")
+        }
+    return meta
+
+
+def info(secret: bytes, blob: Blob | None, exp: int, full: bool = False) -> dict[str, Any]:
+    """Wat de web-app over de preview van deze inhoud te zien krijgt. Standaard licht (voor
+    lijsten: alleen afmetingen, duur, pagina's en of het beweegt); full=True geeft alle
+    metadata (zonder locatie) plus display, het adres van 2048.webp als dat er is."""
     state = (blob.preview if blob else None) or "pending"
     meta = dict((blob.preview_meta if blob else None) or {})
     sizes = meta.get("sizes", []) if state == "ready" and blob else []
@@ -123,7 +165,17 @@ def info(secret: bytes, blob: Blob | None, exp: int) -> dict[str, Any]:
     large = None
     if blob and sizes:
         large = url(secret, blob.sha256, LARGE if LARGE in sizes else THUMB, exp)
-    return {"state": state, "thumb": thumb, "large": large, "meta": meta}
+    if not full:
+        light = {k: meta[k] for k in LIGHT if k in meta}
+        return {"state": state, "thumb": thumb, "large": large, "meta": light}
+    display = url(secret, blob.sha256, DISPLAY, exp) if blob and DISPLAY in sizes else None
+    return {
+        "state": state,
+        "thumb": thumb,
+        "large": large,
+        "display": display,
+        "meta": clean_meta(meta),
+    }
 
 
 async def render(settings: Settings, request: dict[str, Any], cwd: Path) -> dict[str, Any]:
@@ -175,8 +227,10 @@ async def make(settings: Settings, payload: dict[str, Any]) -> None:
     maker = _maker(settings)
     async with maker() as session:
         blob = await session.get(Blob, sha)
-        if blob is None or blob.preview in DONE:
-            return  # intussen opgeruimd, of al gedaan (een dubbele taak)
+        if blob is None:
+            return  # intussen opgeruimd
+        if blob.preview in DONE and (blob.render_version or 0) >= RENDER_VERSION:
+            return  # al gedaan (een dubbele taak); een oudere versie wordt opnieuw gemaakt
         mime = blob.mime
         name = await session.scalar(select(Node.name).where(Node.blob_id == sha).limit(1))
     tmp = root(blobs) / ".tmp"
@@ -222,7 +276,8 @@ async def _store(
 ) -> bool:
     """Zet de preview op zijn plek, onder hetzelfde slot als het opruimen: is de blob intussen
     weg, dan ook geen preview (anders bleef die voor altijd staan). De opnamedatum uit de
-    metadata gaat via photodate naar de blob en zijn bestanden (tz: settings.timezone)."""
+    metadata gaat via photodate naar de blob en zijn bestanden (tz: settings.timezone). Bij
+    het opnieuw maken (een oudere RENDER_VERSION) blijft de oude preview staan tot hier."""
     sizes = sorted(
         s for s in result.get("sizes", []) if s in SIZES and (out / f"{s}.webp").is_file()
     )
@@ -234,10 +289,11 @@ async def _store(
                 return False
             target = directory(blobs, sha)
             await anyio.to_thread.run_sync(shutil.rmtree, target, True)
-            if sizes:
+            if sizes or await anyio.Path(out / DOC).is_file():
                 await anyio.Path(target.parent).mkdir(parents=True, exist_ok=True)
                 await anyio.Path(out).rename(target)
             blob.preview = result["state"]
+            blob.render_version = RENDER_VERSION
             capture = photodate.split_capture(meta)
             blob.preview_meta = meta
             await photodate.on_blob_meta(session, blob, capture, None, tz)
@@ -305,11 +361,65 @@ async def enqueue_missing(settings: Settings) -> int:
     return added
 
 
+def needs_rerender(mime: str | None) -> bool:
+    """Wordt een preview van deze soort anders met de huidige RENDER_VERSION? Kantoordocumenten
+    (nu een doc.json) en HEIC, HEIF en TIFF (nu 2048 px). De rest krijgt alleen het nieuwe
+    versienummer: video's, GIF's en tekst hebben dan nog geen codecs, animated of encoding,
+    en de web-app valt daarvoor terug op wat de browser zelf ziet."""
+    from app import render
+
+    mime = (mime or "").split(";")[0].strip().lower()
+    return mime in render.OFFICE_MIMES or mime in ("image/heic", "image/heif", "image/tiff")
+
+
 async def enqueue_outdated(settings: Settings) -> int:
-    """Bij het starten: previews opnieuw laten maken voor inhoud met een oudere
-    Blob.render_version. Stub van P0 (zet niets klaar); P4 maakt er een keten van
-    (job-type preview.outdated, key preview:outdated). Geeft het aantal nieuwe taken."""
-    return 0
+    """Bij het starten: als er inhoud is met een oudere Blob.render_version, de keten
+    preview.outdated klaarzetten (key preview:outdated; een keten die al klaarstaat of loopt,
+    krijgt er geen tweede naast). Geeft het aantal nieuwe taken (0 of 1)."""
+    async with _maker(settings)() as session:
+        outdated = await session.scalar(
+            select(Blob.sha256).where(Blob.render_version < RENDER_VERSION).limit(1)
+        )
+        if outdated is None:
+            return 0
+        job = await jobs.enqueue(session, OUTDATED, {"after": ""}, key=OUTDATED_KEY)
+        await session.commit()
+    return 0 if job is None else 1
+
+
+async def rerender_outdated(settings: Settings, payload: dict[str, Any]) -> None:
+    """Eén stuk van de keten: de volgende OUTDATED_BATCH blobs (op sha, na payload.after) met
+    een oudere render_version. Wat anders wordt, krijgt een previewtaak (na RERENDER_DELAY);
+    de rest alleen het nieuwe versienummer. Daarna de volgende schakel."""
+    after = str(payload.get("after") or "")
+    async with _maker(settings)() as session:
+        rows = (
+            await session.execute(
+                select(Blob.sha256, Blob.mime)
+                .where(Blob.render_version < RENDER_VERSION, Blob.sha256 > after)
+                .order_by(Blob.sha256)
+                .limit(OUTDATED_BATCH)
+            )
+        ).all()
+        if not rows:
+            return
+        again = [sha for sha, mime in rows if needs_rerender(mime)]
+        bump = [sha for sha, mime in rows if not needs_rerender(mime)]
+        if again:
+            later = jobs.now() + timedelta(seconds=RERENDER_DELAY)
+            await jobs.enqueue_many(
+                session, TYPE, [({"sha": sha}, key(sha)) for sha in again], run_after=later
+            )
+        if bump:
+            await session.execute(
+                update(Blob)
+                .where(Blob.sha256.in_(bump), Blob.render_version < RENDER_VERSION)
+                .values(render_version=RENDER_VERSION)
+            )
+        if len(rows) == OUTDATED_BATCH:
+            await jobs.chain(session, OUTDATED, {"after": rows[-1].sha256}, OUTDATED_KEY)
+        await session.commit()
 
 
 jobs.register(TYPE, make, on_dead=mark_failed)
+jobs.register(OUTDATED, rerender_outdated)
