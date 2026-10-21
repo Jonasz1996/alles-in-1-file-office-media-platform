@@ -225,23 +225,32 @@ export function isShareEvent(event: ServerEvent): boolean {
 /**
  * Of deze gebeurtenis de inhoud van map folderId verandert. shared: de map is met je gedeeld;
  * dan ook bij elke wijziging van een deling, want daarmee kunnen je rechten veranderen of kun
- * je er niet meer bij.
+ * je er niet meer bij. ancestors: de mappen in het pad erboven; is daar een hernoemd,
+ * verplaatst of weggegooid, dan klopt het pad niet meer (of kun je er niet meer bij).
  */
-export function affectsFolder(event: ServerEvent, folderId: string | null | undefined, shared = false): boolean {
+export function affectsFolder(
+  event: ServerEvent,
+  folderId: string | null | undefined,
+  shared = false,
+  ancestors: readonly string[] = [],
+): boolean {
   if (!folderId) return false;
   if (event.type === "connected") return true;
   if (event.type === "tags.changed") return true; // de tags in de lijst zijn hernoemd of weg
   if (shared && isShareEvent(event)) return true;
   if (!event.type.startsWith("node.")) return false;
   const { id, parent_id, old_parent_id } = event.data;
-  return [id, parent_id, old_parent_id].includes(folderId);
+  return [id, parent_id, old_parent_id].includes(folderId) || ancestors.includes(String(id));
 }
 
 /** Of de lijst "Gedeeld met mij" (met deze mappen en bestanden erin) opnieuw moet. */
 export function affectsSharedWithMe(event: ServerEvent, nodeIds: ReadonlySet<string>): boolean {
   if (event.type === "connected" || event.type === "tags.changed" || isShareEvent(event)) return true;
-  // Hernoemd, verplaatst of in de prullenbak door de eigenaar
-  return event.type.startsWith("node.") && nodeIds.has(String(event.data.id));
+  if (!event.type.startsWith("node.")) return false;
+  // Hernoemd, verplaatst of in de prullenbak door de eigenaar. Zonder parent_id gaat het over
+  // een gedeelde map zelf (de map erboven zie je niet): ook een die terugkomt uit de prullenbak
+  // en dus nog niet in de lijst staat.
+  return nodeIds.has(String(event.data.id)) || event.data.parent_id === null;
 }
 
 /** Roept reload aan als match een gebeurtenis herkent; veel vlak na elkaar geven één keer. */
@@ -266,13 +275,14 @@ export function useReloadOn(match: (event: ServerEvent) => boolean, reload: () =
   });
 }
 
-/** Laadt de map opnieuw als er iets in verandert; veel wijzigingen vlak na elkaar (een map
- * vol uploads) geven één keer opnieuw laden. */
+/** Laadt de map opnieuw als er iets in (of erboven) verandert; veel wijzigingen vlak na
+ * elkaar (een map vol uploads) geven één keer opnieuw laden. */
 export function useFolderEvents(
   folderId: string | null | undefined,
   reload: () => void,
   delay = 250,
   shared = false,
+  ancestors: readonly string[] = [],
 ): void {
-  useReloadOn((event) => affectsFolder(event, folderId, shared), reload, delay);
+  useReloadOn((event) => affectsFolder(event, folderId, shared, ancestors), reload, delay);
 }

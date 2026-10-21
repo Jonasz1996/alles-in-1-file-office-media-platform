@@ -45,18 +45,23 @@ export function Files({ folderId, onShared }: { folderId: string | null; onShare
   const loads = useRef(0);
   /** De laatst getoonde map, als die met je gedeeld was */
   const sharedFolder = useRef<string | null>(null);
+  /** De mappen in het pad van de laatst getoonde map (ook als je er niet meer bij kunt) */
+  const [path, setPath] = useState<{ folder: string | null; ids: string[] }>({ folder: null, ids: [] });
   const [shown, setShown] = useState<FileNode | null>(null);
   const previews = usePreviews(listing?.children);
 
-  const load = useCallback(async () => {
+  /** Laadt de map; geeft false als hij weg is of je er niet (meer) bij kunt. */
+  const load = useCallback(async (): Promise<boolean | undefined> => {
     const seq = ++loads.current;
     try {
       const result = folderId ? await api.children(folderId) : await api.root();
       if (seq !== loads.current) return; // intussen een nieuwere lijst gevraagd (andere map)
       sharedFolder.current = isShared(result.folder) ? result.folder.id : null;
       setListing(result);
+      setPath({ folder: folderId, ids: result.path.map((p) => p.id) });
       setError(null);
       setGone(null);
+      return true;
     } catch (e) {
       if (seq !== loads.current) return;
       if (e instanceof ApiError && e.status === 404 && folderId) {
@@ -66,6 +71,7 @@ export function Files({ folderId, onShared }: { folderId: string | null; onShare
             ? "Je hebt geen toegang meer tot deze map"
             : "Deze map bestaat niet (meer), of je hebt er geen toegang toe",
         );
+        return false;
       } else setError((e as Error).message);
     }
   }, [folderId]);
@@ -96,15 +102,20 @@ export function Files({ folderId, onShared }: { folderId: string | null; onShare
       }),
     [],
   );
-  // Live: wijzigingen van elders; in een gedeelde map ook als de deling verandert (andere
-  // rechten, of ingetrokken)
-  useFolderEvents(current, () => latest.current.load(), 250, shared);
+  // Live: wijzigingen van elders, ook in het pad erboven; in een gedeelde map ook als de
+  // deling verandert (andere rechten, of ingetrokken). Ook als je er even niet bij kon: komt
+  // de map terug of wordt hij opnieuw gedeeld, dan staat hij er weer.
+  const ancestors = path.folder === folderId ? path.ids : [];
+  useFolderEvents(folderId ?? current, () => latest.current.load(), 250, shared || gone !== null, ancestors);
 
   async function act(fn: () => Promise<unknown>) {
     try {
       await fn();
       await latest.current.load();
     } catch (e) {
+      // Niet gevonden: misschien is de map zelf weg, of kun je er niet meer bij; dan zegt de
+      // pagina dat al
+      if (e instanceof ApiError && e.status === 404 && (await latest.current.load()) === false) return;
       setError((e as Error).message); // ook "Je mag hier alleen kijken" en dergelijke
     }
   }
@@ -255,8 +266,8 @@ export function Files({ folderId, onShared }: { folderId: string | null; onShare
             <thead>
               <tr>
                 <th>Naam</th>
-                <th>Grootte</th>
-                <th>Gewijzigd</th>
+                <th className="wide-only">Grootte</th>
+                <th className="wide-only">Gewijzigd</th>
                 <th />
               </tr>
             </thead>
@@ -278,8 +289,8 @@ export function Files({ folderId, onShared }: { folderId: string | null; onShare
                       {isShared(n) && n.owner && <span className="owner-note">van {n.owner.display_name}</span>}
                       <TagChips tags={n.tags} />
                     </td>
-                    <td>{n.kind === "file" ? formatBytes(n.size) : ""}</td>
-                    <td>{formatDate(n.modified_at)}</td>
+                    <td className="wide-only">{n.kind === "file" ? formatBytes(n.size) : ""}</td>
+                    <td className="wide-only">{formatDate(n.modified_at)}</td>
                     <td className="actions">
                       {a.download && (
                         <button type="button" onClick={() => download(n)}>

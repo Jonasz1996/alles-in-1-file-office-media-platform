@@ -1,7 +1,7 @@
 import asyncio
 import re
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable, Collection, Iterable, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -25,14 +25,14 @@ from app.access import Grant, Step
 from app.config import Settings, get_settings
 from app.db import Session
 from app.mime import read_head, sniff
-from app.models import Blob, Node, NodeTag, Share, Tag, Upload, User, Version
+from app.models import Blob, GroupMember, Node, NodeTag, Share, Tag, Upload, User, Version
 from app.routers.auth import used_bytes
 from app.security import CurrentUser, download_token, read_download_token
 from app.storage import BlobStore, TooLarge
-from app.text import fold
+from app.text import CONTROL, fold
 
 router = APIRouter(prefix="/api/v1", tags=["bestanden"])
-FORBIDDEN = re.compile(r"[/\\\x00-\x1f]")
+FORBIDDEN = re.compile(r"[/\\]")
 MAX_NAME = 255
 # Zoveel eerdere versies van een bestand blijven bewaard; de oudste gaan eerst
 MAX_VERSIONS = 20
@@ -51,9 +51,20 @@ SHARE_ROOT = {
     "of verwijderen",
     "code": "share_root",
 }
+# Hetzelfde voor een gedeeld bestand, of een map in een gedeelde map die ook zelf met je
+# gedeeld is (dan is het voor jou niet "de gedeelde map")
+SHARED_ITSELF = {
+    "message": "Dit is zelf met je gedeeld; alleen de eigenaar kan het hernoemen, "
+    "verplaatsen of verwijderen",
+    "code": "share_root",
+}
 CROSS_OWNER = {
     "message": "Verplaatsen kan alleen binnen dezelfde eigenaar; kopieer het in plaats daarvan",
     "code": "cross_owner",
+}
+MOVED = {
+    "message": "Het bestand is intussen hernoemd, verplaatst of verwijderd; probeer het opnieuw",
+    "code": "moved",
 }
 
 # Per eigenaar: quotum controleren en ruimte innemen in één keer (hervatbare uploads
@@ -163,12 +174,26 @@ class Gone(HTTPException):
 
 def clean_name(name: str) -> str:
     name = name.strip()
-    if not name or name in (".", "..") or FORBIDDEN.search(name) or len(name) > MAX_NAME:
+    if (
+        not name
+        or name in (".", "..")
+        or FORBIDDEN.search(name)
+        or CONTROL.search(name)
+        or len(name) > MAX_NAME
+    ):
         raise HTTPException(422, "Ongeldige naam")
     return name
 
 
 Need = Literal["read", "write", "owner"]
+
+
+def share_root(found: "Access") -> HTTPException:
+    """403 share_root: de vrager ziet dit via een deling op de node zelf."""
+    grant = found.grant
+    if grant is not None and grant.root_id == found.node.id and found.node.kind == "dir":
+        return HTTPException(403, SHARE_ROOT)
+    return HTTPException(403, SHARED_ITSELF)
 
 
 @dataclass
@@ -263,8 +288,8 @@ async def get_live_dir(
 
 def writable(user_id: uuid.UUID, folder_id: uuid.UUID) -> Callable[[AsyncSession], Awaitable]:
     """Controle vlak voor het neerzetten (onder de sloten): mag deze gebruiker nog steeds in
-    deze map van een ander schrijven? De deling kan intussen zijn ingetrokken of de map in de
-    prullenbak zijn beland."""
+    deze map (of dit bestand) van een ander schrijven? De deling kan intussen zijn ingetrokken
+    of de map in de prullenbak zijn beland."""
 
     async def check(session: AsyncSession) -> None:
         grant = (await access.resolve(session, user_id, [folder_id])).get(folder_id)
@@ -450,18 +475,43 @@ async def one_out(
     return out
 
 
+async def shared_below(session: AsyncSession, node: Node) -> dict[uuid.UUID, set[uuid.UUID]]:
+    """Per gebruiker de mappen en bestanden onder deze map (niet de map zelf, en niets onder
+    iets in de prullenbak) met een deling voor hem of een groep van hem: zijn gedeelde mappen
+    daar. Eén query; voor een bestand geen."""
+    if node.kind != "dir":
+        return {}
+    found = tree(node.id, live=True)
+    rows = await session.execute(
+        select(Share.node_id, Share.grantee_id, GroupMember.user_id)
+        .select_from(Share)
+        .join(found, Share.node_id == found.c.id)
+        .outerjoin(GroupMember, GroupMember.group_id == Share.group_id)
+        .where(found.c.depth > 0, access.live_share())
+    )
+    result: dict[uuid.UUID, set[uuid.UUID]] = defaultdict(set)
+    for node_id, grantee_id, member_id in rows:
+        user_id = grantee_id or member_id
+        if user_id is not None and user_id != node.owner_id:
+            result[user_id].add(node_id)
+    return result
+
+
 async def notify(
     session: AsyncSession,
     node: Node,
     type: str,
     old_parent_id: uuid.UUID | None = None,
     seen: dict[uuid.UUID, dict[uuid.UUID, int]] | None = None,
+    below: dict[uuid.UUID, set[uuid.UUID]] | None = None,
 ) -> None:
     """Na de commit: open web-apps en apps laten weten dat de boom veranderde. Naar de
     eigenaar en naar iedereen die de node via een deling kan zien (bij verplaatsen ook wie de
     oude plek kon zien), ook als hij in de prullenbak ligt. Wie de map erboven niet ziet,
     krijgt parent_id null. seen: van access.watchers, vooraf uitgerekend als de node na de
-    commit weg is."""
+    commit weg is. below: van shared_below, bij weggooien, terugzetten en definitief
+    verwijderen van een map: wie alleen een gedeelde map daaronder heeft, raakt die kwijt of
+    krijgt hem terug, en hoort dat over die gedeelde map zelf (zonder iets erboven)."""
     moved = old_parent_id is not None and old_parent_id != node.parent_id
     if seen is None:
         seen = await access.watchers(session, [node.id, old_parent_id if moved else None])
@@ -478,6 +528,11 @@ async def notify(
         if user_id in there:
             part["old_parent_id"] = str(old_parent_id)
         events.publish([user_id], type, part)
+    told = here.keys() | there.keys() | {node.owner_id}
+    for user_id, roots in (below or {}).items():
+        if user_id not in told:
+            for root_id in roots:
+                events.publish([user_id], type, {"id": str(root_id), "parent_id": None})
 
 
 @router.get("/files/root")
@@ -517,18 +572,19 @@ async def listing(node_id: uuid.UUID, user: CurrentUser, session: Session) -> Li
             tags={},
             roots=found.roots,
         )
-        # Kinderen krijgen het recht van de map, of meer als ze zelf met hem gedeeld zijn
+        # Kinderen krijgen het recht van de map, of meer als ze zelf met hem gedeeld zijn (alleen
+        # wat niet in de prullenbak ligt: dat staat ook niet in de lijst)
+        live = select(Node.id).where(Node.parent_id == folder.id, Node.deleted_at.is_(None))
         own = await session.execute(
             select(Share.node_id, Share.permission).where(
-                Share.node_id.in_(select(Node.id).where(Node.parent_id == folder.id)),
-                access.live_share(),
-                access.for_user(user.id),
+                Share.node_id.in_(live), access.live_share(), access.for_user(user.id)
             )
         )
         permissions = {c.id: found.permission for c in children}
         permissions[folder.id] = found.permission
         for child_id, permission in own:
-            permissions[child_id] = access.better(permissions[child_id], permission)
+            if child_id in permissions:  # alleen wat in de lijst staat
+                permissions[child_id] = access.better(permissions[child_id], permission)
     described = await describe(
         session,
         user,
@@ -583,6 +639,18 @@ async def room_left(
         query = query.where(Upload.id != exclude_upload)
     reserved = await session.scalar(query)
     return max(0, user.quota_bytes - await used_bytes(session, user.id) - int(reserved or 0))
+
+
+def no_room(owner: User, actor_id: uuid.UUID | None) -> HTTPException:
+    """413: het quotum is op. Doet een ander het (in een gedeelde map of via een uploadlink),
+    dan staat erbij wiens ruimte op is."""
+    if actor_id == owner.id:
+        return HTTPException(413, "Onvoldoende quotum")
+    return HTTPException(
+        413,
+        f"Er is niet genoeg ruimte meer bij {owner.display_name}; vraag hem of haar om ruimte "
+        "te maken",
+    )
 
 
 async def add_ref(session: AsyncSession, sha: str, size: int, mime: str | None = None) -> None:
@@ -664,13 +732,16 @@ async def place_file(
     *,
     actor: User | None = None,
     guard: Callable[[AsyncSession], Awaitable] | None = None,
+    only: uuid.UUID | None = None,
 ) -> Node:
     """Zet de inhoud in bestand `source` (SHA-256 `sha`) als bestand `name` in map `parent`.
     conflict: rename = nieuwe naam als het al bestaat, replace = vervangen (de oude inhoud
     blijft als versie bewaard), fail = NameTaken.
     owner: van wie het bestand wordt en wiens quotum het kost (de eigenaar van parent); actor:
     wie het doet (anders dan owner in een gedeelde map, None via een uploadlink). guard: nog
-    een controle onder de sloten, vlak voor het neerzetten (mag actor er nog in?).
+    een controle onder de sloten, vlak voor het neerzetten (mag actor er nog in?). only: alleen
+    dit bestand vervangen (met replace); heet het intussen anders of staat het ergens anders,
+    dan 409 en verandert er niets.
     Gelukt: `source` is weg (verplaatst naar de blob-opslag, of weggegooid omdat die inhoud
     er al was). Mislukt: `source` staat er nog en de database is niet veranderd. Komt het van
     een hervatbare upload, dan wordt die in dezelfde transactie afgerond (het quotum is dan al
@@ -691,13 +762,15 @@ async def place_file(
             existing = await sibling(session, parent.id, name)
             if existing and conflict == "fail":
                 raise NameTaken
+            if only is not None and (existing is None or existing.id != only):
+                raise HTTPException(409, MOVED)
             replacing = existing and conflict == "replace" and existing.kind == "file"
             if upload is None and not (replacing and existing.blob_id == sha):
                 # Pas nu weet je wat anderen intussen innamen (de vorige inhoud blijft als
                 # versie staan, dus ook vervangen kost ruimte)
                 room = await room_left(session, owner)
                 if room is not None and size > room:
-                    raise HTTPException(413, "Onvoldoende quotum")
+                    raise no_room(owner, actor.id if actor else None)
             now = datetime.now(UTC)
             if replacing:
                 if existing.blob_id != sha:
@@ -770,27 +843,89 @@ async def upload(
     parent = found.node
     owner = user if found.owner else await session.get(User, parent.owner_id)
     name = clean_name(name)
-    limit = settings.max_upload_bytes
-    room = await room_left(session, owner)
-    if room is not None:
-        if content_length is not None and content_length > room:
-            raise HTTPException(413, "Onvoldoende quotum")
-        limit = min(limit, room) if limit else room
-        if limit == 0 and content_length != 0:  # 0 betekent voor receive() onbeperkt
-            raise HTTPException(413, "Onvoldoende quotum")
-    if content_length is not None and limit and content_length > limit:
-        raise HTTPException(413, "Bestand is te groot")
-    await session.commit()  # geen databaseverbinding vasthouden terwijl de body binnenkomt
-    try:
-        tmp, sha, size = await blobs.receive(request.stream(), limit)
-    except TooLarge as e:
-        raise HTTPException(413, "Bestand is te groot of quotum is op") from e
-    except TimeoutError as e:
-        raise HTTPException(408, "Er kwam te lang niets binnen; probeer het opnieuw") from e
+    tmp, sha, size = await receive_body(
+        session, settings, blobs, request, owner, user, content_length
+    )
     guard = None if found.owner else writable(user.id, parent.id)
     try:
         node = await place_file(
             session, blobs, owner, parent, name, conflict, sha, size, tmp, actor=user, guard=guard
+        )
+    finally:
+        await anyio.Path(tmp).unlink(missing_ok=True)  # alleen nog over als het misging
+    return await one_out(session, user, node)
+
+
+async def receive_body(
+    session: AsyncSession,
+    settings: Settings,
+    blobs: BlobStore,
+    request: Request,
+    owner: User,
+    actor: User,
+    content_length: int | None,
+) -> tuple[Path, str, int]:
+    """De request-body in een tijdelijk bestand: (pad, SHA-256, grootte). Niet meer dan de
+    upload-limiet en wat er nog in het quotum van owner past."""
+    limit = settings.max_upload_bytes
+    room = await room_left(session, owner)
+    if room is not None:
+        if content_length is not None and content_length > room:
+            raise no_room(owner, actor.id)
+        limit = min(limit, room) if limit else room
+        if limit == 0 and content_length != 0:  # 0 betekent voor receive() onbeperkt
+            raise no_room(owner, actor.id)
+    if content_length is not None and limit and content_length > limit:
+        raise HTTPException(413, "Bestand is te groot")
+    await session.commit()  # geen databaseverbinding vasthouden terwijl de body binnenkomt
+    try:
+        return await blobs.receive(request.stream(), limit)
+    except TooLarge as e:
+        raise HTTPException(413, "Bestand is te groot of quotum is op") from e
+    except TimeoutError as e:
+        raise HTTPException(408, "Er kwam te lang niets binnen; probeer het opnieuw") from e
+
+
+@router.put("/files/{node_id}/content")
+async def replace_content(
+    node_id: uuid.UUID,
+    request: Request,
+    user: CurrentUser,
+    session: Session,
+    blobs: Store,
+    settings: Annotated[Settings, Depends(get_settings)],
+    content_length: Annotated[int | None, Header()] = None,
+) -> NodeOut:
+    """Nieuwe inhoud voor dit bestand, in één keer (de vorige blijft bewaard als versie). Met
+    schrijfrecht op het bestand zelf: zo kan ook wie alleen dit ene bestand met zich gedeeld
+    kreeg (de map erboven ziet hij niet) er een nieuwe versie van zetten. Het blijft van de
+    eigenaar en kost diens quotum."""
+    found = await get_access(session, user, node_id, "write")
+    node = found.node
+    if node.kind != "file":
+        raise HTTPException(422, "Alleen van een bestand kun je de inhoud vervangen")
+    if found.owner and await is_trashed(session, node):
+        raise HTTPException(422, "Zet het bestand eerst terug uit de prullenbak")
+    parent = await session.get(Node, node.parent_id)
+    owner = user if found.owner else await session.get(User, node.owner_id)
+    tmp, sha, size = await receive_body(
+        session, settings, blobs, request, owner, user, content_length
+    )
+    guard = None if found.owner else writable(user.id, node.id)
+    try:
+        node = await place_file(
+            session,
+            blobs,
+            owner,
+            parent,
+            node.name,
+            "replace",
+            sha,
+            size,
+            tmp,
+            actor=user,
+            guard=guard,
+            only=node.id,
         )
     finally:
         await anyio.Path(tmp).unlink(missing_ok=True)  # alleen nog over als het misging
@@ -813,7 +948,7 @@ async def change(
         if node.parent_id is None:
             raise HTTPException(422, "De hoofdmap kan niet worden gewijzigd")
         if found.grant is not None and found.grant.direct:
-            raise HTTPException(403, SHARE_ROOT)
+            raise share_root(found)
         name = clean_name(body.name) if body.name else node.name
         old_parent_id = node.parent_id
         parent_id = body.parent_id or node.parent_id
@@ -879,7 +1014,7 @@ async def copy(
             )
         room = await room_left(session, owner)
         if room is not None and sum(n.size for n in originals if n.kind == "file") > room:
-            raise HTTPException(413, "Onvoldoende quotum")
+            raise no_room(owner, user.id)
         name = await free_name(session, target.id, name)
         now = datetime.now(UTC)
         new_ids: dict[uuid.UUID, uuid.UUID] = {}
@@ -923,10 +1058,10 @@ async def trash(node_id: uuid.UUID, user: CurrentUser, session: Session) -> None
     if node.parent_id is None:
         raise HTTPException(422, "De hoofdmap kan niet worden verwijderd")
     if found.grant is not None and found.grant.direct:
-        raise HTTPException(403, SHARE_ROOT)
+        raise share_root(found)
     node.deleted_at = datetime.now(UTC)
     await session.commit()
-    await notify(session, node, "node.deleted")
+    await notify(session, node, "node.deleted", below=await shared_below(session, node))
 
 
 @router.get("/trash")
@@ -955,7 +1090,7 @@ async def restore(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs
         node.name = await free_name(session, node.parent_id, node.name)
         node.deleted_at = None
         await session.commit()
-    await notify(session, node, "node.changed")
+    await notify(session, node, "node.changed", below=await shared_below(session, node))
     return await one_out(session, user, node)
 
 
@@ -973,6 +1108,7 @@ async def purge(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs: 
         ids = [n.id for n in rows]
         # Wie het via een deling zag, nu het nog kan: daarna zijn node en delingen weg
         seen = await access.watchers(session, [node.id])
+        below = await shared_below(session, node)
         refs = Counter(n.blob_id for n in rows if n.blob_id) + await drop_versions(session, ids)
         await add_refs(session, refs, sign=-1)
         for chunk in batched(reversed(ids), 500):  # kinderen voor hun ouders
@@ -980,7 +1116,7 @@ async def purge(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs: 
                 delete(Node).where(Node.id.in_(chunk)).execution_options(synchronize_session=False)
             )
         await session.commit()
-    await notify(session, node, "node.deleted", seen=seen)
+    await notify(session, node, "node.deleted", seen=seen, below=below)
     await collect_garbage(session, blobs)
 
 

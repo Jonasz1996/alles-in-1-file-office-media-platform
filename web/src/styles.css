@@ -194,10 +194,25 @@ td {
   white-space: nowrap;
 }
 
+/* Een gewone tabelcel (met flex sloten de lijnen tussen de rijen niet meer aan): de knoppen
+   staan rechts naast elkaar */
 td.actions {
-  display: flex;
-  gap: 0.4rem;
-  justify-content: flex-end;
+  text-align: right;
+}
+
+td.actions > * + * {
+  margin-left: 0.4rem;
+}
+
+/* Op een smal scherm mogen de knoppen onder elkaar, zodat de tabel past */
+@media (max-width: 40rem) {
+  td.actions {
+    white-space: normal;
+  }
+
+  td.actions > * {
+    margin-block: 0.15rem;
+  }
 }
 
 .badge.ok,

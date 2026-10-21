@@ -66,6 +66,15 @@ SeaweedFS (beslissingen B11, B15 en B16). Installeren op één node: zie
 - **Opslag**: ontdubbelen en opruimen gebeuren nooit tegelijk, zodat definitief verwijderen
   nooit de inhoud weggooit van een bestand dat net met dezelfde inhoud binnenkwam.
 
+## Bekend
+
+- **Ontdubbelen verraadt dat inhoud er al is.** Inhoud wordt over alle gebruikers heen maar
+  één keer opgeslagen, en de preview hoort bij die inhoud. Upload je een bestand dat iemand
+  anders op de server al heeft, dan is de preview meteen klaar; bij nieuwe inhoud staat hij
+  eerst op "wordt gemaakt". Wie een bestand precies kan namaken, kan zo nagaan of iemand het
+  al heeft (niet wie, en niets van de inhoud die hij nog niet had). Dat volgt uit één preview
+  per inhoud; voor een platform voor één huishouden of team is dat nu zo gelaten.
+
 ## Nog te doen
 
 - Wachtwoord wijzigen en sessies per apparaat bekijken en intrekken

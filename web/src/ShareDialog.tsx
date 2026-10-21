@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { api, type Directory, type FileNode, type Share } from "./api";
+import { ApiError, api, type Directory, type FileNode, type Share } from "./api";
 import { Dialog } from "./Dialog";
 import {
   dateInputValue,
@@ -85,6 +85,9 @@ function useAction(onDone: () => Promise<void>) {
         return true;
       } catch (e) {
         setError((e as Error).message);
+        // Een fout van de server (al gedeeld, intussen weg): dan klopt de lijst hier misschien
+        // niet meer, bijv. omdat het net vanaf een ander apparaat gebeurde
+        if (e instanceof ApiError) await onDone();
         return false;
       } finally {
         setBusy(false);

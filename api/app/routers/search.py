@@ -34,14 +34,11 @@ from app.routers.files import (
     tree,
 )
 from app.security import CurrentUser
-from app.text import fold
+from app.text import CONTROL, fold
 
 router = APIRouter(prefix="/api/v1", tags=["zoeken"])
 
 Category = Literal["folder", "image", "video", "audio", "pdf", "document", "archive", "other"]
-# Stuurtekens (ook C1) en tekens die de schrijfrichting omdraaien (een naam die er anders
-# uitziet dan hij is); de zero-width joiner (U+200D) in samengestelde emoji mag wel
-CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 COLOR = re.compile(r"^(#[0-9a-f]{6})?$")
 MAX_WORDS = 10
 MAX_TAG_NAME = 50

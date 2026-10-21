@@ -83,10 +83,16 @@ function useMediaUrl(nodeId: string, source: UrlSource, wanted: boolean) {
     onError: (e: { currentTarget: HTMLMediaElement }) => {
       if (!mayRenew(renewals.current, Date.now()))
         return setError("Afspelen lukt niet. Probeer het bestand te downloaden.");
-      resumeAt.current = e.currentTarget.currentTime;
+      const media = e.currentTarget;
+      resumeAt.current = media.currentTime;
       latest
         .current(true)
-        .then(setUrl)
+        .then((renewed) => {
+          // Hetzelfde adres (vlak na het vorige gemaakt, of de sleutel van een publieke link):
+          // dan laadt de speler niet vanzelf opnieuw, en komt er ook geen nieuwe fout
+          if (renewed === url) media.load();
+          else setUrl(renewed);
+        })
         .catch((err: Error) => setError(err.message));
     },
     onLoadedMetadata: (e: { currentTarget: HTMLMediaElement }) => {

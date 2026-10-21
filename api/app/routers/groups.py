@@ -3,10 +3,11 @@ eruit gaat, ziet dat meteen terug: toegang wordt bij elk verzoek opnieuw bereken
 
 import asyncio
 import uuid
+from itertools import batched
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import delete, select
+from sqlalchemy import delete, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -178,14 +179,20 @@ async def set_members(
             ).all()
         )
         added, removed = wanted - current, current - wanted
-        if removed:
-            await session.execute(
-                delete(GroupMember).where(
-                    GroupMember.group_id == group.id, GroupMember.user_id.in_(removed)
-                )
-            )
-        session.add_all(GroupMember(group_id=group.id, user_id=u) for u in added)
         try:
+            for chunk in batched(removed, 500):
+                await session.execute(
+                    delete(GroupMember).where(
+                        GroupMember.group_id == group.id, GroupMember.user_id.in_(chunk)
+                    )
+                )
+            # Rechtstreeks in stukken, en tussendoor de anderen even aan de beurt: één
+            # ORM-object per lid houdt de event loop bij duizenden leden te lang bezig
+            for chunk in batched(added, 500):
+                await session.execute(
+                    insert(GroupMember), [{"group_id": group.id, "user_id": u} for u in chunk]
+                )
+                await asyncio.sleep(0)
             await session.commit()
         except IntegrityError:
             await session.rollback()  # een gebruiker of de groep is intussen weg

@@ -341,7 +341,7 @@ function FolderView({ link, share }: { link: PublicLink; share: PublicShare }) {
             <thead>
               <tr>
                 <th>Naam</th>
-                <th>Grootte</th>
+                <th className="wide-only">Grootte</th>
                 <th className="wide-only">Gewijzigd</th>
                 <th />
               </tr>
@@ -355,7 +355,7 @@ function FolderView({ link, share }: { link: PublicLink; share: PublicShare }) {
                       {n.name}
                     </button>
                   </td>
-                  <td>{n.kind === "file" ? formatBytes(n.size) : ""}</td>
+                  <td className="wide-only">{n.kind === "file" ? formatBytes(n.size) : ""}</td>
                   <td className="wide-only">{formatDate(n.modified_at)}</td>
                   <td className="actions">
                     {n.kind === "file" && (

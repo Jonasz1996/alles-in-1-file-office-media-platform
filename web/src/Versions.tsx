@@ -60,7 +60,7 @@ export function Versions({ node, onClose, onChanged }: { node: FileNode; onClose
       </p>
       {can.versionWrite && (
         <div className="toolbar">
-          <button type="button" disabled={busy || !node.parent_id} onClick={() => input.current?.click()}>
+          <button type="button" disabled={busy} onClick={() => input.current?.click()}>
             Nieuwe versie uploaden
           </button>
           <input
@@ -70,7 +70,7 @@ export function Versions({ node, onClose, onChanged }: { node: FileNode; onClose
             onChange={(e) => {
               const file = e.target.files?.[0];
               e.target.value = "";
-              if (file && node.parent_id) act(() => api.replaceContent(node.parent_id!, current.name, file));
+              if (file) act(() => api.replaceContent(node.id, file));
             }}
           />
           {busy && <span className="muted">Bezig…</span>}

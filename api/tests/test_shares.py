@@ -275,6 +275,7 @@ async def test_schrijven_in_een_gedeelde_map(client, setup, settings):
     ]:
         r = await client.request(method, f"/api/v1/files/{s['gedeeld']}", headers=anna, **extra)
         assert r.status_code == 403 and code(r) == "share_root", r.text
+        assert r.json()["detail"]["message"].startswith("Dit is de gedeelde map zelf;")
 
     # Weggooien: naar de prullenbak van Jonas; Anna ziet het niet meer
     assert (await client.delete(f"/api/v1/files/{s['sub']}", headers=anna)).status_code == 204
@@ -309,18 +310,21 @@ async def test_quotum_van_de_eigenaar(client, admin, settings):
     folder = await mkdir(client, klein, kroot, "Samen")
     await share_with(client, klein, folder, user_id=anna_id, permission="write")
     assert (await put(client, anna, folder, "a", b"12345678")).status_code == 201
-    # Anna zelf heeft geen quotum, maar het is de ruimte van Klein
+    # Anna zelf heeft geen quotum, maar het is de ruimte van Klein (en dat zegt de melding)
+    full = "Er is niet genoeg ruimte meer bij Klein; vraag hem of haar om ruimte te maken"
     r = await put(client, anna, folder, "b", b"12345")
-    assert r.status_code == 413
-    assert (await create(client, anna, folder, "c", 5)).status_code == 413
+    assert r.status_code == 413 and r.json()["detail"] == full
+    r = await create(client, anna, folder, "c", 5)
+    assert r.status_code == 413 and r.json()["detail"] == full
     anna_root = (await root(client, anna))["folder"]["id"]
     eigen = (await put(client, anna, anna_root, "x", b"12345")).json()["id"]
     r = await client.post(f"/api/v1/files/{eigen}/copy", json={"parent_id": folder}, headers=anna)
-    assert r.status_code == 413
+    assert r.status_code == 413 and r.json()["detail"] == full
     assert (await get(client, klein, "/api/v1/auth/me"))["used_bytes"] == 8
     # Een upload van Anna reserveert ruimte bij Klein
     assert (await create(client, anna, folder, "d", 2)).status_code == 201
-    assert (await put(client, klein, kroot, "e", b"12")).status_code == 413
+    r = await put(client, klein, kroot, "e", b"12")
+    assert r.status_code == 413 and r.json()["detail"] == "Onvoldoende quotum"
     await check_refs(settings)
 
 
@@ -415,9 +419,14 @@ async def test_hoogste_recht_telt(client, setup):
     assert listing["children"][0]["permission"] == "write"
     assert (await put(client, anna, s["sub"], "x.txt", b"x")).status_code == 201
     assert (await put(client, anna, s["gedeeld"], "x.txt", b"x")).status_code == 403
-    # Sub draagt zelf een deling voor haar: niet weg te gooien of te hernoemen
+    # Sub draagt zelf een deling voor haar: niet weg te gooien of te hernoemen (en voor haar
+    # is het niet "de gedeelde map", dat is Gedeeld)
     r = await client.delete(f"/api/v1/files/{s['sub']}", headers=anna)
     assert r.status_code == 403 and code(r) == "share_root"
+    assert r.json()["detail"]["message"] == (
+        "Dit is zelf met je gedeeld; alleen de eigenaar kan het hernoemen, verplaatsen of "
+        "verwijderen"
+    )
     # Wat in Sub staat wel
     assert (await client.delete(f"/api/v1/files/{s['diep']}", headers=anna)).status_code == 204
 
@@ -438,6 +447,35 @@ async def test_hoogste_recht_telt(client, setup):
     assert [p["name"] for p in listing["path"]] == ["Sub"]
     items = await get(client, anna, "/api/v1/shared-with-me")
     assert [(i["node"]["name"], i["via"]) for i in items] == [("Sub", "user")]
+
+
+@pytest.mark.anyio
+async def test_gedeelde_map_in_de_prullenbak_breekt_de_lijst_erboven_niet(client, setup):
+    s = setup
+    jonas, anna = s["jonas"], s["anna"]
+    bram, bram_id = await person(client, jonas, "bram@example.nl")
+    group = await group_of(client, jonas, "Team", s["anna_id"])
+    await share_with(client, jonas, s["gedeeld"], user_id=s["anna_id"], permission="read")
+    await share_with(client, jonas, s["gedeeld"], user_id=bram_id, permission="write")
+    # Sub draagt zelf een deling voor Anna, rechtstreeks en via een groep
+    await share_with(client, jonas, s["sub"], user_id=s["anna_id"], permission="write")
+    await share_with(client, jonas, s["sub"], group_id=group, permission="write")
+    # Bram mag Sub weggooien: voor hem is het niet de gedeelde map
+    assert (await client.delete(f"/api/v1/files/{s['sub']}", headers=bram)).status_code == 204
+    listing = await get(client, anna, f"/api/v1/files/{s['gedeeld']}/children")
+    assert [(c["name"], c["permission"]) for c in listing["children"]] == [("a.txt", "read")]
+    await get(client, anna, f"/api/v1/files/{s['sub']}/children", expect=404)
+    # Ook als de eigenaar het weggooit en terugzet
+    assert (
+        await client.post(f"/api/v1/files/{s['sub']}/restore", headers=jonas)
+    ).status_code == 200
+    listing = await get(client, anna, f"/api/v1/files/{s['gedeeld']}/children")
+    assert {c["name"]: c["permission"] for c in listing["children"]} == {
+        "Sub": "write",
+        "a.txt": "read",
+    }
+    assert (await client.delete(f"/api/v1/files/{s['sub']}", headers=jonas)).status_code == 204
+    await get(client, anna, f"/api/v1/files/{s['gedeeld']}/children")
 
 
 @pytest.mark.anyio
@@ -709,6 +747,45 @@ async def test_tus_upload_alleen_voor_wie_hem_begon(client, setup):
     [share] = await get(client, jonas, f"/api/v1/files/{s['gedeeld']}/shares")
     await client.patch(f"/api/v1/shares/{share['id']}", json={"permission": "read"}, headers=jonas)
     assert (await send(client, anna, location, 0, b"1234")).status_code == 404
+
+
+@pytest.mark.anyio
+async def test_nieuwe_inhoud_voor_een_gedeeld_bestand(client, setup, settings):
+    """Kan bewerken op één bestand: de ontvanger ziet de map erboven niet, maar kan via het
+    bestand zelf een nieuwe versie zetten. Het blijft van de eigenaar."""
+    s = setup
+    jonas, anna = s["jonas"], s["anna"]
+    bert, _ = await person(client, jonas, "bert@example.nl")
+    url = f"/api/v1/files/{s['a']}/content"
+    share = await share_with(client, jonas, s["a"], user_id=s["anna_id"], permission="read")
+    r = await client.put(url, content=b"van anna", headers=anna)
+    assert r.status_code == 403 and code(r) == "read_only"
+    r = await client.patch(
+        f"/api/v1/shares/{share['id']}", json={"permission": "write"}, headers=jonas
+    )
+    assert r.status_code == 200
+    r = await client.put(url, content=b"van anna", headers=anna)
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert (out["id"], out["parent_id"], out["permission"]) == (s["a"], None, "write")
+    assert out["size"] == 8 and out["owner"]["display_name"] == "Jonas"
+    assert (await client.get(url, headers=jonas)).content == b"van anna"
+    [old] = await get(client, jonas, f"/api/v1/files/{s['a']}/versions")
+    assert old["size"] == 3 and old["replaced_by"]["display_name"] == "Anna"
+    listing = await get(client, jonas, f"/api/v1/files/{s['gedeeld']}/children")
+    assert [c["name"] for c in listing["children"]] == ["Sub", "a.txt"]
+    # De eigenaar kan het ook; dezelfde inhoud geeft geen nieuwe versie
+    r = await client.put(url, content=b"van anna", headers=jonas)
+    assert r.status_code == 200 and r.json()["permission"] == "owner"
+    assert len(await get(client, jonas, f"/api/v1/files/{s['a']}/versions")) == 1
+    # Niet zonder deling, niet voor een map, niet in de prullenbak
+    assert (await client.put(url, content=b"x", headers=bert)).status_code == 404
+    r = await client.put(f"/api/v1/files/{s['sub']}/content", content=b"x", headers=jonas)
+    assert r.status_code == 422
+    assert (await client.delete(f"/api/v1/files/{s['a']}", headers=jonas)).status_code == 204
+    assert (await client.put(url, content=b"x", headers=anna)).status_code == 404
+    assert (await client.put(url, content=b"x", headers=jonas)).status_code == 422
+    await check_refs(settings)
 
 
 @pytest.mark.anyio

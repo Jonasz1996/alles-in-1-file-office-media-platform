@@ -9,19 +9,21 @@ from datetime import UTC, datetime, timedelta
 
 import anyio
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.db import get_engine
-from app.main import HideSecrets
+from app.main import HideSecrets, app
 from app.models import Share, Upload
-from app.routers import public, uploads
+from app.routers import files, public, uploads
 from app.security import _encode
 from tests.test_files import check_refs, mkdir, put, root
 from tests.test_shares import person
 from tests.test_uploads import PATCH, TUS, hold
 
 TOKEN_PATH = "/s/"
+BASE = "http://test"
 
 
 @pytest.fixture(autouse=True)
@@ -343,6 +345,35 @@ async def test_te_vaak_een_fout_wachtwoord(client, tree):
 
 
 @pytest.mark.anyio
+async def test_foute_wachtwoorden_tegelijk_niet_boven_de_limiet(client, tree):
+    """Veel foute wachtwoorden tegelijk, vanaf verschillende adressen (elk met een eigen limiet
+    voor openen): er worden er hooguit 10 gecontroleerd, de rest krijgt meteen 429. Het goede
+    wachtwoord telt niet mee."""
+    t = tree
+    link = await new_link(client, t["jonas"], t["fotos"], permission="read", password="appeltaart")
+    for _ in range(5):
+        await open_link(client, link, password="appeltaart")
+    others = [
+        AsyncClient(transport=ASGITransport(app=app, client=(f"10.0.0.{i}", 1234)), base_url=BASE)
+        for i in range(5)
+    ]
+
+    async def attempt(c, n):
+        r = await c.post("/api/v1/public/open", json={"token": token_of(link), "password": f"x{n}"})
+        return r.status_code, detail_code(r)
+
+    try:
+        results = await asyncio.gather(
+            *(attempt(c, i * 100 + n) for i, c in enumerate(others) for n in range(20))
+        )
+    finally:
+        for c in others:
+            await c.aclose()
+    assert results.count((401, "wrong_password")) == 10
+    assert results.count((429, "rate_limited")) == 90
+
+
+@pytest.mark.anyio
 async def test_te_vaak_openen_vanaf_een_adres(client, tree):
     t = tree
     link = await new_link(client, t["jonas"], t["fotos"], permission="read")
@@ -458,8 +489,9 @@ async def test_uploadlink(client, tree, settings):
     # Een leeg bestand meteen
     r = await tus_create(client, key, "leeg.txt", 0)
     assert r.status_code == 201 and "platform-node-id" not in r.headers
-    # Ongeldige naam
+    # Ongeldige naam, ook een die er anders uitziet dan hij is (factuur-exe.pdf)
     assert (await tus_create(client, key, "../x", 1)).status_code == 422
+    assert (await tus_create(client, key, "factuur-\u202efdp.exe", 1)).status_code == 422
     await check_refs(settings)
 
     # Een leeslink kan niet uploaden
@@ -494,7 +526,9 @@ async def test_uploadlink_weg_en_quotum(client, admin, settings):
     folder = await mkdir(client, klein, kroot, "Inbox")
     link = await new_link(client, klein, folder, permission="upload")
     key = (await open_link(client, link))["key"]
-    assert (await tus_create(client, key, "groot.bin", 11)).status_code == 413
+    r = await tus_create(client, key, "groot.bin", 11)
+    assert r.status_code == 413
+    assert r.json()["detail"].startswith("Er is niet genoeg ruimte meer bij Klein;")
     location = (await tus_create(client, key, "a.bin", 8)).headers["location"]
     # Gereserveerd bij Klein
     r = await client.put(
@@ -562,6 +596,49 @@ async def test_uploadlink_map_weg_tijdens_afronden(client, tree, settings, monke
     names = [c["name"] for c in (await root(client, jonas))["children"]]
     assert names == ["Werk"]
     await check_refs(settings)
+
+
+@pytest.mark.parametrize("how", ["weg", "verlopen", "weg na de controle", "map weg"])
+@pytest.mark.anyio
+async def test_uploadlink_weg_terwijl_aanmaken_wacht(client, tree, settings, monkeypatch, how):
+    """Aanmaken wacht op het slot van de eigenaar (bijv. achter een grote kopie); is de link
+    of de map intussen weg, dan 404 link_not_found en niets gereserveerd."""
+    t = tree
+    jonas = t["jonas"]
+    link = await new_link(client, jonas, t["vakantie"], permission="upload")
+    key = (await open_link(client, link))["key"]
+    if how == "weg na de controle":
+        entered, release = hold(monkeypatch, uploads, "room_left")  # na de controle
+    else:
+        lock, release = files.user_lock(uuid.UUID(t["jonas_id"])), asyncio.Event()
+        await lock.acquire()
+        entered = asyncio.Event()
+        real = uploads.user_lock
+
+        def user_lock(user_id):
+            entered.set()
+            return real(user_id)
+
+        monkeypatch.setattr(uploads, "user_lock", user_lock)
+    with anyio.fail_after(5):
+        creating = asyncio.create_task(tus_create(client, key, "x.bin", 4))
+        await entered.wait()
+        if how == "verlopen":
+            await set_expiry(settings, link["id"], datetime.now(UTC) - timedelta(seconds=1))
+        elif how == "map weg":
+            await client.delete(f"/api/v1/files/{t['vakantie']}", headers=jonas)
+            await client.delete(f"/api/v1/trash/{t['vakantie']}", headers=jonas)
+        else:
+            r = await client.delete(f"/api/v1/shares/{link['id']}", headers=jonas)
+            assert r.status_code == 204
+        if how == "weg na de controle":
+            release.set()
+        else:
+            lock.release()
+        r = await creating
+    assert r.status_code == 404 and detail_code(r) == "link_not_found"
+    async with async_sessionmaker(get_engine(settings))() as session:
+        assert (await session.scalars(select(Upload))).all() == []
 
 
 def test_geheimen_niet_in_de_toegangslog():

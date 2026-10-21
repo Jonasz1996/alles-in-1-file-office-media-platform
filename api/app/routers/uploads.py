@@ -22,7 +22,7 @@ import logging
 import os
 import uuid
 from collections import defaultdict
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
@@ -32,6 +32,7 @@ from typing import Annotated
 import anyio
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import ClientDisconnect
 
@@ -46,6 +47,7 @@ from app.routers.files import (
     clean_name,
     get_dir,
     is_trashed,
+    no_room,
     place_file,
     room_left,
     sibling,
@@ -211,15 +213,20 @@ async def start(
     size: int,
     created_by: uuid.UUID | None,
     share_id: uuid.UUID | None = None,
+    guard: Callable[[AsyncSession], Awaitable] | None = None,
 ) -> Upload:
     """Ruimte reserveren in het quotum van de eigenaar (owner) en de upload aanmaken, in één
     keer; anders komen twee gelijktijdige uploads allebei door en blijkt pas als alle bytes
-    binnen zijn dat er geen ruimte was."""
+    binnen zijn dat er geen ruimte was. guard: nog een controle onder het slot (mag wie het
+    doet er nog in?); op dat slot kan lang gewacht zijn, en intussen kan de deling of link zijn
+    ingetrokken of de map weg zijn. Dan Gone, en is er niets gereserveerd."""
     await session.commit()  # niet met een databaseverbinding op het slot wachten
     async with user_lock(owner.id):
+        if guard is not None:
+            await guard(session)
         room = await room_left(session, owner)
         if room is not None and size > room:
-            raise HTTPException(413, "Onvoldoende quotum")
+            raise no_room(owner, created_by)
         upload = Upload(
             owner_id=owner.id,
             created_by=created_by,
@@ -231,7 +238,11 @@ async def start(
             expires_at=datetime.now(UTC) + timedelta(hours=settings.upload_expiry_hours),
         )
         session.add(upload)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()  # de map (of de link) is intussen definitief weg
+            raise Gone(_headers()) from None
     path = upload_path(settings, upload.id)
     await anyio.Path(path.parent).mkdir(parents=True, exist_ok=True)
     await anyio.Path(path).touch()
@@ -263,8 +274,17 @@ async def create(
     check_length(settings, upload_length)
     if conflict == "fail" and await sibling(session, parent.id, name):
         raise NameTaken(_headers())  # nu al, niet pas als alle bytes binnen zijn
+    guard = None if found.owner else writable(user.id, parent.id)
     upload = await start(
-        session, settings, owner, parent, name, conflict, upload_length, created_by=user.id
+        session,
+        settings,
+        owner,
+        parent,
+        name,
+        conflict,
+        upload_length,
+        created_by=user.id,
+        guard=guard,
     )
     headers = _headers(upload, Location=f"/api/v1/tus/{upload.id}")
     if upload_length == 0:
@@ -485,7 +505,8 @@ async def finish(
     room = await room_left(session, owner, exclude_upload=upload_id)
     if room is not None and upload.size > room:
         await _drop(session, settings, upload_id)
-        raise HTTPException(413, "Onvoldoende quotum", headers=_headers())
+        refused = no_room(owner, who.user.id if who.user else None)
+        raise HTTPException(413, refused.detail, headers=_headers())
     conflict = upload.conflict
     parent = await session.get(Node, upload.parent_id)
     guard = None

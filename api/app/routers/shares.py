@@ -13,11 +13,13 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
+import anyio.to_thread
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from app import access, events
 from app.db import Session
@@ -281,8 +283,14 @@ async def create_share(
         await session.commit()
     except IntegrityError:
         await session.rollback()
+        # Intussen definitief weg: de map, de gebruiker of de groep; anders was iemand anders
+        # net eerder met dezelfde deling
         if await session.get(Node, node_id) is None:
-            raise HTTPException(404, "Niet gevonden") from None  # intussen definitief weg
+            raise HTTPException(404, "Niet gevonden") from None
+        if body.user_id is not None and await session.get(User, body.user_id) is None:
+            raise HTTPException(404, "Gebruiker niet gevonden") from None
+        if body.group_id is not None and await session.get(Group, body.group_id) is None:
+            raise HTTPException(404, "Groep niet gevonden") from None
         raise error(409, "Al gedeeld met deze persoon of groep", "already_shared") from None
     announce(await grantees(session, share), "share.created", share.id, share.node_id)
     [out] = await shares_out(session, [share])
@@ -368,7 +376,11 @@ async def change_share(
     share.expires_at = expires_at
     share.password_hash = password_hash
     share.label = label
-    await session.commit()
+    try:
+        await session.commit()
+    except StaleDataError:
+        await session.rollback()  # net ingetrokken (bijv. in een ander tabblad)
+        raise HTTPException(404, "Deling niet gevonden") from None
     if is_link and before == "upload" and share.permission != "upload":
         await uploads.release_link(session, share.id)
     if not is_link:
@@ -457,13 +469,10 @@ async def directory(
             select(User.id, User.display_name, User.email).where(User.id != user.id)
         )
     ).all()
-    found = sorted(
-        (p for p in people if needle in fold(p.display_name) or needle in fold(p.email)),
-        key=lambda p: (fold(p.display_name), p.email),
-    )[:10]
     all_groups = (await session.execute(select(Group.id, Group.name))).all()
-    matching = sorted((g for g in all_groups if needle in fold(g.name)), key=lambda g: fold(g.name))
-    matching = matching[:10]
+    # Zonder accenten vergelijken kan SQLite niet; in een thread, zodat duizenden namen de
+    # event loop (en daarmee elk ander verzoek) niet ophouden
+    found, matching = await anyio.to_thread.run_sync(_directory_matches, needle, people, all_groups)
     counts = await member_counts(session, {g.id for g in matching})
     return Directory(
         users=[DirectoryUser(id=p.id, display_name=p.display_name, email=p.email) for p in found],
@@ -471,6 +480,17 @@ async def directory(
             ShareGroup(id=g.id, name=g.name, member_count=counts.get(g.id, 0)) for g in matching
         ],
     )
+
+
+def _directory_matches(needle: str, people: list, groups: list) -> tuple[list, list]:
+    """Hooguit 10 gebruikers en 10 groepen waarvan de naam (of het e-mailadres) needle
+    bevat, op naam."""
+    found = sorted(
+        (p for p in people if needle in fold(p.display_name) or needle in fold(p.email)),
+        key=lambda p: (fold(p.display_name), p.email),
+    )[:10]
+    matching = sorted((g for g in groups if needle in fold(g.name)), key=lambda g: fold(g.name))
+    return found, matching[:10]
 
 
 async def group_shares(session: AsyncSession, group_id: uuid.UUID) -> list[Share]:

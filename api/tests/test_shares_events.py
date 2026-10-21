@@ -158,3 +158,44 @@ async def test_preview_klaar_ook_voor_wie_het_ziet(client, admin, settings, hub)
     assert drain(b) == []
     r = await client.post("/api/v1/previews", json={"node_ids": [inside, outside]}, headers=anna)
     assert list(r.json()) == [inside] and r.json()[inside]["state"] == "ready"
+
+
+@pytest.mark.anyio
+async def test_map_boven_een_gedeelde_map_weg_en_terug(client, admin, hub):
+    """Wie alleen een gedeelde map (of bestand) diep in /Werk heeft, hoort het als /Werk in de
+    prullenbak gaat, terugkomt of definitief weggaat: over zijn gedeelde map, en niets over
+    wat erboven ligt. Wie /Werk zelf ziet, hoort het één keer, over /Werk."""
+    jonas, tokens = admin
+    jonas_id = tokens["user"]["id"]
+    root_id = (await root(client, jonas))["folder"]["id"]
+    werk = await mkdir(client, jonas, root_id, "Werk")
+    project = await mkdir(client, jonas, werk, "Project")
+    gedeeld = await mkdir(client, jonas, project, "Gedeeld")
+    notitie = (await put(client, jonas, project, "notitie.txt", b"n")).json()["id"]
+    _, anna_id = await person(client, jonas, "anna@example.nl")
+    _, bert_id = await person(client, jonas, "bert@example.nl")
+    _, dora_id = await person(client, jonas, "dora@example.nl")
+    team = await group_of(client, jonas, "Team", bert_id, jonas_id)
+    await share_with(client, jonas, gedeeld, user_id=anna_id, permission="read")
+    await share_with(client, jonas, notitie, group_id=team, permission="write")
+    await share_with(client, jonas, werk, user_id=dora_id, permission="read")
+    await share_with(client, jonas, gedeeld, user_id=dora_id, permission="write")
+
+    with (
+        hub.subscribe(uuid.UUID(jonas_id)) as j,
+        hub.subscribe(uuid.UUID(anna_id)) as a,
+        hub.subscribe(uuid.UUID(bert_id)) as b,
+        hub.subscribe(uuid.UUID(dora_id)) as d,
+    ):
+        for method, url, type in [
+            ("DELETE", f"/api/v1/files/{werk}", "node.deleted"),
+            ("POST", f"/api/v1/files/{werk}/restore", "node.changed"),
+            ("DELETE", f"/api/v1/files/{werk}", "node.deleted"),
+            ("DELETE", f"/api/v1/trash/{werk}", "node.deleted"),
+        ]:
+            r = await client.request(method, url, headers=jonas)
+            assert r.status_code in (200, 204), r.text
+            assert drain(a) == [(type, {"id": gedeeld, "parent_id": None})]
+            assert drain(b) == [(type, {"id": notitie, "parent_id": None})]
+            assert drain(d) == [(type, {"id": werk, "parent_id": None})]
+            assert drain(j) == [(type, {"id": werk, "parent_id": root_id})]

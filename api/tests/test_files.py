@@ -92,11 +92,23 @@ async def test_mappen_en_upload(client, admin):
 async def test_ongeldige_namen(client, admin):
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]
-    for name in ["..", "a/b", "a\\b", " "]:
+    # Ook geen stuurtekens of tekens die de schrijfrichting omdraaien: "factuur-\u202efdp.exe"
+    # ziet eruit als factuur-exe.pdf
+    bad = ["..", "a/b", "a\\b", " ", "a\x07b", "a\x7fb", "a\x85b", "factuur-\u202efdp.exe"]
+    for name in [*bad, "a\u2066b\u2069", "a\u200fb"]:
         r = await client.post(
             f"/api/v1/files/{root_id}/folders", json={"name": name}, headers=headers
         )
         assert r.status_code == 422, name
+        r = await put(client, headers, root_id, name, b"x")
+        assert r.status_code == 422, name
+    # Emoji met een zero-width joiner wel
+    r = await client.post(
+        f"/api/v1/files/{root_id}/folders",
+        json={"name": "Gezin \U0001f468\u200d\U0001f469"},
+        headers=headers,
+    )
+    assert r.status_code == 201
 
 
 @pytest.mark.anyio

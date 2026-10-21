@@ -274,6 +274,27 @@ describe("live gebeurtenissen bij delen", () => {
     expect(affectsSharedWithMe(event("node.created", { id: "x", parent_id: "r1" }), ids)).toBe(false);
     expect(affectsSharedWithMe(event("preview.ready", { node_ids: ["r1"] }), ids)).toBe(false);
   });
+
+  it("Gedeeld met mij: een gedeelde map die terugkomt uit de prullenbak (nog niet in de lijst)", () => {
+    const ids = new Set(["r1"]);
+    // Zonder parent_id: het gaat over een gedeelde map zelf
+    expect(affectsSharedWithMe(event("node.changed", { id: "r2", parent_id: null }), ids)).toBe(true);
+    expect(affectsSharedWithMe(event("node.changed", { id: "r2", parent_id: "p" }), ids)).toBe(false);
+  });
+
+  it("een map laadt opnieuw als een map erboven verandert of weggaat", () => {
+    // Gijs staat in Gedeeld/Project/Sub; Jonas gooit Project (de gedeelde map) weg of hernoemt hem
+    const ancestors = ["project", "sub"];
+    const deleted = event("node.deleted", { id: "project", parent_id: null });
+    expect(affectsFolder(deleted, "sub", true, ancestors)).toBe(true);
+    expect(affectsFolder(deleted, "sub", true)).toBe(false);
+    expect(affectsFolder(event("node.changed", { id: "project", parent_id: null }), "sub", true, ancestors)).toBe(true);
+    // Iets ernaast, of iets nieuws in een map erboven: niet
+    expect(affectsFolder(event("node.changed", { id: "ander", parent_id: "project" }), "sub", true, ancestors)).toBe(
+      false,
+    );
+    expect(affectsFolder(event("node.created", { id: "x", parent_id: "project" }), "sub", true, ancestors)).toBe(false);
+  });
 });
 
 interface Seen {

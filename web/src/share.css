@@ -185,9 +185,14 @@
   box-sizing: border-box;
 }
 
-/* Minder belangrijke kolommen weglaten op een smal scherm */
+/* Minder belangrijke kolommen weglaten op een smal scherm, en "van <eigenaar>" onder de naam */
 @media (max-width: 40rem) {
   .wide-only {
     display: none;
+  }
+
+  .owner-note {
+    display: block;
+    margin-left: 0;
   }
 }

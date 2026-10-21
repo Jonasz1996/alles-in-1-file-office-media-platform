@@ -474,12 +474,11 @@ export class Api {
   /** Kopie in map parentId; bestaat de naam daar al, dan krijgt de kopie "naam (1)". */
   copy = (id: string, parentId: string, name?: string) =>
     this.send<FileNode>("POST", `/api/v1/files/${id}/copy`, { parent_id: parentId, name });
-  /** Nieuwe inhoud voor een bestaand bestand; de vorige blijft bewaard als versie. */
-  replaceContent = (parentId: string, name: string, file: Blob) =>
-    this.json<FileNode>(`/api/v1/files/${parentId}/upload?${new URLSearchParams({ name, conflict: "replace" })}`, {
-      method: "PUT",
-      body: file,
-    });
+  /** Nieuwe inhoud voor een bestaand bestand; de vorige blijft bewaard als versie. Via het
+   * bestand zelf: zo kan het ook als alleen dit bestand met je gedeeld is (de map erboven zie
+   * je dan niet). */
+  replaceContent = (id: string, file: Blob) =>
+    this.json<FileNode>(`/api/v1/files/${id}/content`, { method: "PUT", body: file });
   versions = (id: string) => this.json<FileVersion[]>(`/api/v1/files/${id}/versions`);
   restoreVersion = (id: string, versionId: string) =>
     this.send<FileNode>("POST", `/api/v1/files/${id}/versions/${versionId}/restore`);

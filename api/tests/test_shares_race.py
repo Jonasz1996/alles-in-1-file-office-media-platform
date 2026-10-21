@@ -2,14 +2,19 @@
 verwijderen, intrekken en het quotum van de eigenaar."""
 
 import asyncio
+import uuid
 
 import anyio
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.routers import files, uploads
+from app.db import get_engine
+from app.models import Share, Upload
+from app.routers import files, shares, uploads
 from tests.test_copy import meet_up
 from tests.test_files import blob_files, check_refs, mkdir, put, root
-from tests.test_shares import person, share_with
+from tests.test_shares import group_of, person, share_with
 from tests.test_uploads import TUS, create, hold, send, upload_file
 
 
@@ -265,4 +270,160 @@ async def test_intrekken_geeft_gereserveerde_ruimte_vrij(client, admin, settings
     await client.put(f"/api/v1/groups/{group}/members", json={"user_ids": []}, headers=jonas)
     assert (await create(client, klein, kroot, "nog", 2)).status_code == 201
     assert (await client.head(location, headers={**anna, **TUS})).status_code == 404
+    await check_refs(settings)
+
+
+def queued_on_user_lock(monkeypatch, owner_id) -> tuple[asyncio.Lock, asyncio.Event]:
+    """Het gebruikersslot van owner_id, en een event dat gezet wordt zodra een tus-upload erop
+    gaat wachten. Wie het slot vasthoudt, laat die upload wachten (zoals achter een grote
+    kopie)."""
+    lock, queued = files.user_lock(uuid.UUID(owner_id)), asyncio.Event()
+    real = uploads.user_lock
+
+    def user_lock(user_id):
+        queued.set()
+        return real(user_id)
+
+    monkeypatch.setattr(uploads, "user_lock", user_lock)
+    return lock, queued
+
+
+async def open_uploads(settings) -> list[Upload]:
+    async with async_sessionmaker(get_engine(settings))() as session:
+        return list((await session.scalars(select(Upload).where(Upload.node_id.is_(None)))).all())
+
+
+@pytest.mark.parametrize("how", ["ingetrokken", "alleen kijken", "definitief weg"])
+@pytest.mark.anyio
+async def test_hervatbare_upload_aanmaken_terwijl_hij_op_het_slot_wacht(
+    client, shared, settings, monkeypatch, how
+):
+    """Terwijl het aanmaken op het slot van de eigenaar wacht, kan de deling weg zijn of de
+    map: dan 404, en blijft er niets gereserveerd in het quotum van de eigenaar."""
+    s = shared
+    jonas, anna = s["jonas"], s["anna"]
+    jonas_id = (await client.get("/api/v1/auth/me", headers=jonas)).json()["id"]
+    lock, queued = queued_on_user_lock(monkeypatch, jonas_id)
+    with anyio.fail_after(5):
+        async with lock:
+            creating = asyncio.create_task(create(client, anna, s["sub"], "x.bin", 4))
+            await queued.wait()
+            if how == "ingetrokken":
+                r = await client.delete(f"/api/v1/shares/{s['share']}", headers=jonas)
+            elif how == "alleen kijken":
+                r = await client.patch(
+                    f"/api/v1/shares/{s['share']}", json={"permission": "read"}, headers=jonas
+                )
+            else:
+                await client.delete(f"/api/v1/files/{s['gedeeld']}", headers=jonas)
+                r = await client.delete(f"/api/v1/trash/{s['gedeeld']}", headers=jonas)
+            assert r.status_code in (200, 204)
+        r = await creating
+    assert r.status_code == 404
+    assert await open_uploads(settings) == []
+
+
+@pytest.mark.anyio
+async def test_eigen_upload_aanmaken_terwijl_de_map_definitief_weggaat(
+    client, shared, settings, monkeypatch
+):
+    s = shared
+    jonas = s["jonas"]
+    jonas_id = (await client.get("/api/v1/auth/me", headers=jonas)).json()["id"]
+    lock, queued = queued_on_user_lock(monkeypatch, jonas_id)
+    with anyio.fail_after(5):
+        async with lock:
+            creating = asyncio.create_task(create(client, jonas, s["sub"], "x.bin", 4))
+            await queued.wait()
+            await client.delete(f"/api/v1/files/{s['gedeeld']}", headers=jonas)
+            r = await client.delete(f"/api/v1/trash/{s['gedeeld']}", headers=jonas)
+            assert r.status_code == 204
+        r = await creating
+    assert r.status_code == 404
+    assert await open_uploads(settings) == []
+
+
+@pytest.mark.anyio
+async def test_deling_aanpassen_terwijl_hij_wordt_ingetrokken(client, shared, monkeypatch):
+    """Twee tabbladen van de eigenaar: de een past de deling aan, de ander trekt hem net in.
+    Dan 404, geen 500."""
+    s = shared
+    jonas = s["jonas"]
+    real, reads = shares.own_share, []
+    entered, go = asyncio.Event(), asyncio.Event()
+
+    async def own_share(session, user, share_id):
+        found = await real(session, user, share_id)
+        reads.append(share_id)
+        if len(reads) == 2:  # opnieuw gelezen, vlak voor het opslaan
+            entered.set()
+            await go.wait()
+        return found
+
+    monkeypatch.setattr(shares, "own_share", own_share)
+    url = f"/api/v1/shares/{s['share']}"
+    with anyio.fail_after(5):
+        changing = asyncio.create_task(
+            client.patch(url, json={"permission": "read"}, headers=jonas)
+        )
+        await entered.wait()
+        monkeypatch.setattr(shares, "own_share", real)
+        assert (await client.delete(url, headers=jonas)).status_code == 204
+        go.set()
+        r = await changing
+    assert r.status_code == 404
+    assert (await client.get(f"/api/v1/files/{s['gedeeld']}/shares", headers=jonas)).json() == []
+
+
+@pytest.mark.anyio
+async def test_delen_met_een_groep_die_net_weggaat(client, shared, monkeypatch):
+    s = shared
+    jonas = s["jonas"]
+    anna_id = (await client.get("/api/v1/auth/me", headers=s["anna"])).json()["id"]
+    group = await group_of(client, jonas, "Team", anna_id)
+    real = AsyncSession.commit
+    entered, go = asyncio.Event(), asyncio.Event()
+
+    async def commit(self):
+        if not entered.is_set() and any(isinstance(o, Share) for o in self.new):
+            entered.set()
+            await go.wait()
+        return await real(self)
+
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+    with anyio.fail_after(5):
+        creating = asyncio.create_task(
+            client.post(
+                f"/api/v1/files/{s['sub']}/shares",
+                json={"group_id": group, "permission": "read"},
+                headers=jonas,
+            )
+        )
+        await entered.wait()
+        assert (await client.delete(f"/api/v1/groups/{group}", headers=jonas)).status_code == 204
+        go.set()
+        r = await creating
+    assert r.status_code == 404 and r.json()["detail"] == "Groep niet gevonden"
+
+
+@pytest.mark.anyio
+async def test_nieuwe_inhoud_terwijl_het_bestand_wordt_hernoemd(client, shared, settings):
+    """Vervangen gaat via het bestand zelf: heet het intussen anders, dan verandert er niets
+    (en komt er ook geen nieuw bestand met de oude naam)."""
+    s = shared
+    jonas, anna = s["jonas"], s["anna"]
+    f = (await put(client, jonas, s["gedeeld"], "plan.txt", b"oud")).json()["id"]
+    halfway, go = asyncio.Event(), asyncio.Event()
+    with anyio.fail_after(5):
+        replacing = asyncio.create_task(
+            client.put(f"/api/v1/files/{f}/content", content=slow_body(halfway, go), headers=anna)
+        )
+        await halfway.wait()
+        r = await client.patch(f"/api/v1/files/{f}", json={"name": "plan-2.txt"}, headers=jonas)
+        assert r.status_code == 200
+        go.set()
+        r = await replacing
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "moved"
+    assert await names(client, jonas, s["gedeeld"]) == ["Sub", "plan-2.txt"]
+    assert (await client.get(f"/api/v1/files/{f}/content", headers=jonas)).content == b"oud"
     await check_refs(settings)

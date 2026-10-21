@@ -103,12 +103,13 @@ describe("kopiëren, versies en tags", () => {
     expect(deleted.seen[0]).toMatchObject({ method: "DELETE", url: "/api/v1/files/n1/versions/v1" });
   });
 
-  it("een nieuwe versie uploaden vervangt het bestand met dezelfde naam", async () => {
+  it("een nieuwe versie uploaden vervangt de inhoud van het bestand zelf", async () => {
     const { api, seen } = recording({ id: "n1" });
     const file = new Blob(["nieuw"]);
-    await api.replaceContent("m1", "rapport & co.pdf", file);
+    await api.replaceContent("n1", file);
     expect(seen[0].method).toBe("PUT");
-    expect(seen[0].url).toBe("/api/v1/files/m1/upload?name=rapport+%26+co.pdf&conflict=replace");
+    // Via het bestand, niet via de map erboven: die ziet wie alleen dit bestand gedeeld kreeg niet
+    expect(seen[0].url).toBe("/api/v1/files/n1/content");
     expect(seen[0].body).toBe(file);
   });
 

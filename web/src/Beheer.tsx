@@ -22,6 +22,7 @@ const CHECK_LABELS: Record<string, string> = {
   api: "API",
 };
 const STATUS_LABELS = { ok: "Alles in orde", degraded: "Beperkt", down: "Storing" };
+const ROLE_LABELS: Record<string, string> = { admin: "Beheerder", user: "Gebruiker", guest: "Gast" };
 
 export function Beheer({ currentUser }: { currentUser: User }) {
   const [status, setStatus] = useState<SystemStatus | null>(null);
@@ -128,7 +129,7 @@ export function Beheer({ currentUser }: { currentUser: User }) {
                 <tr key={u.id}>
                   <td>{u.display_name}</td>
                   <td>{u.email}</td>
-                  <td>{u.role}</td>
+                  <td>{ROLE_LABELS[u.role] ?? u.role}</td>
                   <td>{formatBytes(u.used_bytes)}</td>
                   <td>{u.quota_bytes ? formatBytes(u.quota_bytes) : "onbeperkt"}</td>
                   <td>

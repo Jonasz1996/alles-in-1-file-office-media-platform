@@ -28,7 +28,7 @@ from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Blob, Node, Share, User
 from app.routers import uploads
-from app.routers.files import Store, Utc, clean_name, send_file
+from app.routers.files import Gone, Store, Utc, clean_name, send_file
 from app.routers.previews import PreviewOut, PreviewRequest
 from app.routers.uploads import Tus, Uploader
 from app.security import (
@@ -216,10 +216,13 @@ async def open_link(
         password_limiter.refuse(str(share.id))
         if not body.password:
             raise HTTPException(401, PASSWORD_REQUIRED)
+        # De poging telt als fout vóórdat hij gecontroleerd wordt (argon2 duurt even), tot
+        # blijkt dat hij klopt: zo komen ook gelijktijdige pogingen niet boven de limiet
+        password_limiter.check(str(share.id))
         if not await check_password(share.password_hash, body.password):
-            password_limiter.add(str(share.id))
             log.warning("Fout wachtwoord voor link %s vanaf %s", share.id, ip)
             raise HTTPException(401, WRONG_PASSWORD)
+        password_limiter.forget(str(share.id))
     owner = await session.get(User, share.owner_id)
     key, expires_in = link_key(settings, share.id, share.password_hash, share.expires_at)
     return Opened(
@@ -351,17 +354,22 @@ async def tus_create(
     owner = await session.get(User, link.share.owner_id)
     if owner is None:
         raise HTTPException(404, LINK_NOT_FOUND)
-    upload = await uploads.start(
-        session,
-        settings,
-        owner,
-        link.node,
-        name,
-        "rename",
-        upload_length,
-        created_by=None,
-        share_id=link.share.id,
-    )
+    try:
+        upload = await uploads.start(
+            session,
+            settings,
+            owner,
+            link.node,
+            name,
+            "rename",
+            upload_length,
+            created_by=None,
+            share_id=link.share.id,
+            guard=uploads.link_open(link.share.id, link.node.id),
+        )
+    except Gone:
+        # Terwijl dit wachtte, is de link weggehaald of verlopen, of de map weg
+        raise HTTPException(404, LINK_NOT_FOUND, headers=uploads._headers()) from None
     headers = uploads._headers(upload, Location=f"/api/v1/public/tus/{upload.id}")
     if upload_length == 0:
         await uploads.finish(session, settings, blobs, Uploader(link=link.share), upload)
