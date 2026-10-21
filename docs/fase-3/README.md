@@ -30,3 +30,5 @@ Het bouwontwerp staat in [bouwontwerp.md](bouwontwerp.md) (revisie 2; revisie 1 
 
 - P0 (API): foutcodes met catalogi, migratie 0006, de contracten voor de pakketten en hun
   tests.
+- P0 (e2e): het harnas met de echte server en Chromium, testdata in SQLite, de rooktest, de
+  themaflitstest en de metingen voor eerste weergave en scrollen; zie [e2e.md](e2e.md).
