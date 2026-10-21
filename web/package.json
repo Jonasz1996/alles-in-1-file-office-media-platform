@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "budget": "node scripts/budget.mjs"
   },
   "dependencies": {
     "react": "^19.3.1",
