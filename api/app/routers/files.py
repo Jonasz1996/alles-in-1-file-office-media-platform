@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import binascii
 import re
 import uuid
 from collections import Counter, defaultdict
@@ -15,7 +17,19 @@ import anyio.to_thread
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import AfterValidator, BaseModel, Field
-from sqlalchemy import Integer, Select, delete, func, insert, literal, or_, select, update
+from sqlalchemy import (
+    Integer,
+    Select,
+    Uuid,
+    delete,
+    func,
+    insert,
+    literal,
+    or_,
+    select,
+    tuple_,
+    update,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -132,6 +146,19 @@ class Listing(BaseModel):
     # Van de hoofdmap (of de gedeelde map) tot en met folder
     path: list[NodeOut]
     children: list[NodeOut]
+    # De cursor voor de volgende pagina (?after=), of null: dit was de laatste (of alles)
+    next: str | None = None
+    # Hoeveel kinderen er in totaal zijn (met ?kind= alleen van dat soort)
+    total: int = 0
+
+
+class Lookup(BaseModel):
+    ids: list[uuid.UUID] = Field(max_length=500)
+
+
+class Found(BaseModel):
+    # Wat de vrager nu kan zien; wat weg is, in de prullenbak ligt of onzichtbaar werd, ontbreekt
+    nodes: list[NodeOut]
 
 
 class NewFolder(BaseModel):
@@ -249,6 +276,76 @@ async def get_node(
     session: AsyncSession, user: User, node_id: uuid.UUID, need: Need = "owner"
 ) -> Node:
     return (await get_access(session, user, node_id, need)).node
+
+
+ALBUM = {
+    "message": "Een album is geen map of bestand in je bestanden; dat kan hier niet",
+    "code": "album",
+}
+
+
+async def get_tree_access(
+    session: AsyncSession, user: User, node_id: uuid.UUID, need: Need = "owner"
+) -> Access:
+    """get_access voor de endpoints van de boom (hernoemen, verplaatsen, kopiëren, prullenbak,
+    tags, versies, inhoud): een album staat buiten de boom en geeft 422 album. get_access zelf
+    laat albums door (delen gaat er wel mee)."""
+    found = await get_access(session, user, node_id, need)
+    if found.node.kind == "album":
+        raise errors.fail(422, **ALBUM)
+    return found
+
+
+async def get_tree_accesses(
+    session: AsyncSession, user: User, node_ids: Sequence[uuid.UUID], need: Need = "owner"
+) -> dict[uuid.UUID, Access | HTTPException]:
+    """get_tree_access voor veel ids tegelijk (bulkacties): per id de Access of de fout die
+    get_tree_access zou geven. Twee queries, hoeveel ids het ook zijn: de nodes zelf en één
+    access.resolve voor wat van anderen is."""
+    ids = list(dict.fromkeys(node_ids))
+    nodes = {}
+    for chunk in batched(ids, 1000):
+        rows = await session.scalars(select(Node).where(Node.id.in_(chunk)))
+        nodes.update({n.id: n for n in rows})
+    others = [n.id for n in nodes.values() if n.owner_id != user.id]
+    grants = await access.resolve(session, user.id, others) if others else {}
+    result: dict[uuid.UUID, Access | HTTPException] = {}
+    for node_id in ids:
+        node = nodes.get(node_id)
+        if node is None:
+            result[node_id] = errors.fail(404, "not_found", "Niet gevonden")
+            continue
+        if node.owner_id == user.id:
+            found: Access | HTTPException = (
+                errors.fail(403, **GUEST) if user.role == "guest" else Access(node, "owner")
+            )
+        else:
+            grant = grants.get(node_id)
+            if grant is None:
+                found = errors.fail(404, "not_found", "Niet gevonden")
+            elif need == "owner":
+                found = errors.fail(403, **OWNER_ONLY)
+            elif need == "write" and grant.permission != "write":
+                found = errors.fail(403, **READ_ONLY)
+            else:
+                found = Access(node, grant.permission, grant)
+        if isinstance(found, Access) and node.kind == "album":
+            found = errors.fail(422, **ALBUM)
+        result[node_id] = found
+    return result
+
+
+async def trashed_among(session: AsyncSession, node_ids: Collection[uuid.UUID]) -> set[uuid.UUID]:
+    """Welke van deze nodes zelf in de prullenbak liggen, of onder een map in de prullenbak (of
+    niet meer bestaan niet: die ontbreken gewoon). Eén recursieve query omhoog per 1000 ids."""
+    gone: set[uuid.UUID] = set()
+    for chunk in batched(list(node_ids), 1000):
+        up = access.ancestry(Node.id.in_(chunk))
+        rows = await session.scalars(
+            select(up.c.origin).where(up.c.deleted_at.is_not(None)).distinct()
+        )
+        gone.update(rows.all())
+    return gone
 
 
 async def get_dir(
@@ -443,15 +540,31 @@ async def describe(
     mine = any(n.owner_id == user.id for n in nodes)
     shared = await shared_ids(session, ids) if mine else set()
     result = []
+    construct = NodeOut.model_construct
     for node in nodes:
-        out = NodeOut.model_validate(node)
-        out.tags = tags.get(node.id, [])
-        out.permission = permission if isinstance(permission, str) else permission[node.id]
-        out.owner = owners.get(node.owner_id) or OwnerRef(id=node.owner_id, display_name="")
-        out.shared = node.owner_id == user.id and node.id in shared
-        if node.id in roots:
-            out.parent_id = None
-        result.append(out)
+        owner_id = node.owner_id
+        deleted_at = node.deleted_at
+        # Zonder validatie (model_construct): de waarden komen uit de database en hebben al
+        # het goede type; per node valideren kost bij 10.000 kinderen honderden ms. Dezelfde
+        # uitvoer als NodeOut.model_validate(node) (zie test_listing_paging.py).
+        result.append(
+            construct(
+                id=node.id,
+                parent_id=None if node.id in roots else node.parent_id,
+                name=node.name,
+                kind=node.kind,
+                mime=node.mime,
+                size=node.size,
+                etag=f'"{node.blob_id or node.id.hex}"',
+                created_at=_utc(node.created_at),
+                modified_at=_utc(node.modified_at),
+                deleted_at=None if deleted_at is None else _utc(deleted_at),
+                tags=tags.get(node.id, []),
+                permission=permission if isinstance(permission, str) else permission[node.id],
+                owner=owners.get(owner_id) or OwnerRef(id=owner_id, display_name=""),
+                shared=owner_id == user.id and node.id in shared,
+            )
+        )
     return result
 
 
@@ -590,24 +703,87 @@ async def notify_many(
             events.publish([user_id], type, data)
 
 
+MAX_PAGE = 5000
+SEP = "\x1f"
+
+
+def cursor_of(node: Node) -> str:
+    """De cursor na deze rij: base64url van "<kind>\\x1f<search_name>\\x1f<id>" (de volgorde
+    van de lijst), zonder opvulling."""
+    raw = f"{node.kind}{SEP}{node.search_name}{SEP}{node.id}".encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def read_cursor(cursor: str) -> tuple[str, str, uuid.UUID]:
+    """(kind, search_name, id) uit een cursor; 422 invalid_cursor als hij niet klopt."""
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+        kind, rest = raw.split(SEP, 1)
+        search_name, node_id = rest.rsplit(SEP, 1)
+        return kind, search_name, uuid.UUID(node_id)
+    except (ValueError, binascii.Error):
+        raise errors.fail(422, "invalid_cursor", "Ongeldige cursor voor de lijst") from None
+
+
+Limit = Annotated[int | None, Query(ge=1, le=MAX_PAGE)]
+KindFilter = Annotated[Literal["dir", "file"] | None, Query()]
+
+
 @router.get("/files/root")
-async def root(user: CurrentUser, session: Session) -> Listing:
-    return await listing(user.root_id, user, session)
+async def root(
+    user: CurrentUser,
+    session: Session,
+    limit: Limit = None,
+    after: str | None = None,
+    kind: KindFilter = None,
+) -> Listing:
+    return await listing(user.root_id, user, session, limit, after, kind)
 
 
 @router.get("/files/{node_id}/children")
-async def listing(node_id: uuid.UUID, user: CurrentUser, session: Session) -> Listing:
+async def listing(
+    node_id: uuid.UUID,
+    user: CurrentUser,
+    session: Session,
+    limit: Limit = None,
+    after: str | None = None,
+    kind: KindFilter = None,
+) -> Listing:
+    """De inhoud van een map: mappen eerst, dan op naam zonder hoofdletters en accenten (de
+    volgorde van de server). Met limit in pagina's: next is de cursor voor ?after= van de
+    volgende pagina (null bij de laatste), total het aantal kinderen. Zonder limit alles in
+    één keer (next null). kind: alleen mappen (dir) of alleen bestanden (file)."""
     found = await get_dir(session, user, node_id, "read")
     folder = found.node
-    children = (
-        await session.scalars(
-            select(Node)
-            .where(Node.parent_id == folder.id, Node.deleted_at.is_(None))
-            # Op de naam zonder hoofdletters en accenten: lower() in SQLite kent alleen ASCII
-            .order_by(Node.kind, Node.search_name, Node.id)
+    live = [Node.parent_id == folder.id, Node.deleted_at.is_(None)]
+    if kind is not None:
+        live.append(Node.kind == kind)
+    query = select(Node).where(*live)
+    if after is not None:
+        k, name, last = read_cursor(after)
+        query = query.where(
+            tuple_(Node.kind, Node.search_name, Node.id)
+            > tuple_(literal(k), literal(name), literal(last, Uuid))
         )
-    ).all()
-    scope = select(Node.id).where(or_(Node.parent_id == folder.id, Node.id == folder.id))
+    # Op de naam zonder hoofdletters en accenten: lower() in SQLite kent alleen ASCII
+    query = query.order_by(Node.kind, Node.search_name, Node.id)
+    if limit is not None:
+        query = query.limit(limit + 1)
+    children = list((await session.scalars(query)).all())
+    more = limit is not None and len(children) > limit
+    if more:
+        children = children[:limit]
+    if limit is None and after is None:
+        total = len(children)
+    else:
+        total = await session.scalar(select(func.count()).select_from(Node).where(*live)) or 0
+    if limit is None:
+        # Alles (of alles na de cursor): de tags in één query over de hele map
+        scope: Select | list[uuid.UUID] = select(Node.id).where(
+            or_(Node.parent_id == folder.id, Node.id == folder.id)
+        )
+    else:
+        scope = [folder.id, *(c.id for c in children)]
     tags = await tags_by_node(session, user, scope)
     permissions: str | dict[uuid.UUID, str] = found.permission
     if found.owner:
@@ -629,10 +805,10 @@ async def listing(node_id: uuid.UUID, user: CurrentUser, session: Session) -> Li
         )
         # Kinderen krijgen het recht van de map, of meer als ze zelf met hem gedeeld zijn (alleen
         # wat niet in de prullenbak ligt: dat staat ook niet in de lijst)
-        live = select(Node.id).where(Node.parent_id == folder.id, Node.deleted_at.is_(None))
+        live_ids = select(Node.id).where(Node.parent_id == folder.id, Node.deleted_at.is_(None))
         own = await session.execute(
             select(Share.node_id, Share.permission).where(
-                Share.node_id.in_(live), access.live_share(), access.for_user(user.id)
+                Share.node_id.in_(live_ids), access.live_share(), access.for_user(user.id)
             )
         )
         permissions = {c.id: found.permission for c in children}
@@ -647,9 +823,44 @@ async def listing(node_id: uuid.UUID, user: CurrentUser, session: Session) -> Li
         permissions,
         tags=tags,
         roots=found.roots,
-        scope=scope,
+        scope=scope if isinstance(scope, Select) else None,
     )
-    return Listing(folder=described[0], path=path, children=described[1:])
+    return Listing(
+        folder=described[0],
+        path=path,
+        children=described[1:],
+        next=cursor_of(children[-1]) if more else None,
+        total=total,
+    )
+
+
+@router.post("/files/lookup")
+async def lookup(body: Lookup, user: CurrentUser, session: Session) -> Found:
+    """Deze mappen en bestanden (hooguit 500) zoals de vrager ze nu ziet, met dezelfde toegang
+    als GET /files/{id}, maar zonder wat in de prullenbak ligt of onder een map in de prullenbak
+    (voor de lijst van een open map: zo komen live wijzigingen binnen zonder alles opnieuw te
+    laden). Wat er niet (meer) is of onzichtbaar werd, ontbreekt."""
+    ids = list(dict.fromkeys(body.ids))
+    if not ids:
+        return Found(nodes=[])
+    rows = (
+        await session.scalars(select(Node).where(Node.id.in_(ids), Node.deleted_at.is_(None)))
+    ).all()
+    mine = [n for n in rows if n.owner_id == user.id and user.role != "guest"]
+    # Eén query omhoog voor de eigen nodes: ligt er een map erboven in de prullenbak?
+    gone = await trashed_among(session, [n.id for n in mine]) if mine else set()
+    others = [n for n in rows if n.owner_id != user.id]
+    # Via een deling: access.resolve laat al weg wat in (of onder) de prullenbak ligt
+    grants = await access.resolve(session, user.id, [n.id for n in others]) if others else {}
+    permissions: dict[uuid.UUID, str] = {n.id: "owner" for n in mine if n.id not in gone}
+    roots = set()
+    for node_id, grant in grants.items():
+        permissions[node_id] = grant.permission
+        if grant.root_id == node_id:
+            roots.add(node_id)
+    order = {node_id: i for i, node_id in enumerate(ids)}
+    visible = sorted((n for n in rows if n.id in permissions), key=lambda n: order[n.id])
+    return Found(nodes=await describe(session, user, visible, permissions, roots=roots))
 
 
 @router.get("/files/{node_id}")
@@ -982,7 +1193,7 @@ async def replace_content(
     schrijfrecht op het bestand zelf: zo kan ook wie alleen dit ene bestand met zich gedeeld
     kreeg (de map erboven ziet hij niet) er een nieuwe versie van zetten. Het blijft van de
     eigenaar en kost diens quotum."""
-    found = await get_access(session, user, node_id, "write")
+    found = await get_tree_access(session, user, node_id, "write")
     node = found.node
     if node.kind != "file":
         raise errors.fail(422, "not_a_file", "Alleen van een bestand kun je de inhoud vervangen")
@@ -1026,7 +1237,7 @@ async def change(
     # Onder het blob-slot, net als definitief verwijderen: anders kan dat iets weggooien dat
     # net uit een weggegooide map werd gehaald, of iets missen dat er net in kwam
     async with blobs.lock:
-        found = await get_access(session, user, node_id, "write")
+        found = await get_tree_access(session, user, node_id, "write")
         node = found.node
         if node.parent_id is None:
             raise errors.fail(422, "root", "De hoofdmap kan niet worden gewijzigd")
@@ -1071,7 +1282,7 @@ async def copy(
     # ophogen gebeurt nooit tegelijk met opruimen. Pas onder de sloten lezen: intussen kan
     # er van alles veranderd zijn.
     async with user_lock(target_owner or user.id), blobs.lock:
-        source = await get_access(session, user, node_id, "read")
+        source = await get_tree_access(session, user, node_id, "read")
         node = source.node
         if source.owner and await is_trashed(session, node):
             raise errors.fail(
@@ -1145,7 +1356,7 @@ async def copy(
 async def trash(node_id: uuid.UUID, user: CurrentUser, session: Session) -> None:
     """Naar de prullenbak (van de eigenaar, ook als iemand met schrijfrecht het weggooit); de
     inhoud blijft bewaard tot de prullenbak wordt geleegd."""
-    found = await get_access(session, user, node_id, "write")
+    found = await get_tree_access(session, user, node_id, "write")
     node = found.node
     if node.parent_id is None:
         raise errors.fail(422, "root", "De hoofdmap kan niet worden verwijderd")
@@ -1216,7 +1427,7 @@ class VersionOut(BaseModel):
 async def get_file(
     session: AsyncSession, user: User, node_id: uuid.UUID, need: Need = "owner"
 ) -> Node:
-    node = await get_node(session, user, node_id, need)
+    node = (await get_tree_access(session, user, node_id, need)).node
     if node.kind != "file":
         raise errors.fail(422, "not_a_file", "Alleen bestanden hebben versies")
     return node
@@ -1331,7 +1542,7 @@ async def download_link(
     """Kortlevende link voor de browser (een <a>- of <video>-tag kan geen header meesturen).
     Met version: de link naar die eerdere inhoud; de versie zit in het ondertekende token.
     De toegang wordt bij het downloaden opnieuw gecontroleerd."""
-    node = await get_node(session, user, node_id, "read")
+    node = (await get_tree_access(session, user, node_id, "read")).node
     if node.kind != "file":
         raise errors.fail(422, "not_a_file", "Alleen bestanden kunnen worden gedownload")
     if version is not None:
@@ -1393,7 +1604,7 @@ async def download(
     # Weg of geblokkeerd: 404, ook met een link die al uit was
     user = await active_user(session, user_id)
     # Opnieuw: een deling die intussen is ingetrokken, stopt ook een link die al uit was
-    node = await get_node(session, user, node_id, "read")
+    node = (await get_tree_access(session, user, node_id, "read")).node
     version = await get_version(session, node, version_id) if version_id else None
     return await send_file(node, settings, if_none_match, inline, version)
 
@@ -1410,6 +1621,6 @@ async def content(
 ) -> Response:
     """Download met een gewone Authorization-header (voor apps); ondersteunt Range en ETag.
     Met version: die eerdere inhoud."""
-    node = await get_node(session, user, node_id, "read")
+    node = (await get_tree_access(session, user, node_id, "read")).node
     found = await get_version(session, node, version) if version else None
     return await send_file(node, settings, if_none_match, inline, found)

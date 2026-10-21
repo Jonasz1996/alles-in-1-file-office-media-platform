@@ -26,8 +26,8 @@ from app.routers.files import (
     NodeOut,
     TagRef,
     describe,
-    get_access,
     get_dir,
+    get_tree_access,
     is_trashed,
     tag_order,
     tags_by_node,
@@ -150,7 +150,12 @@ async def search(
     else:
         anchors, skip = await search_roots(session, user), [user.root_id]
     found = tree(anchors, live=True)
-    query = select(Node).join(found, Node.id == found.c.id).where(Node.id.not_in(skip))
+    # Een album (met je gedeeld) staat buiten de boom: geen zoekresultaat
+    query = (
+        select(Node)
+        .join(found, Node.id == found.c.id)
+        .where(Node.id.not_in(skip), Node.kind != "album")
+    )
     for word in fold(q).split()[:MAX_WORDS]:
         query = query.where(Node.search_name.contains(word, autoescape=True))
     if type_ is not None:
@@ -267,7 +272,8 @@ async def tag_counts(
         select(NodeTag.tag_id, func.count())
         .join(found, found.c.id == NodeTag.node_id)
         .join(Tag, Tag.id == NodeTag.tag_id)
-        .where(Tag.owner_id == user.id)
+        .join(Node, Node.id == NodeTag.node_id)
+        .where(Tag.owner_id == user.id, Node.kind != "album")
         .group_by(NodeTag.tag_id)
     )
     if tag_ids is not None:
@@ -348,7 +354,7 @@ async def set_tags(
     wat met je gedeeld is (alleen kijken is genoeg): tags zijn persoonlijk."""
     await session.commit()  # niet met een databaseverbinding op het slot wachten
     async with _tag_lock(user.id):
-        found = await get_access(session, user, node_id, "read")
+        found = await get_tree_access(session, user, node_id, "read")
         node = found.node
         wanted = set(body.tag_ids)
         tags = (
