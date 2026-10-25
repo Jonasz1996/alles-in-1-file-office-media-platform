@@ -42,6 +42,7 @@ Spatie kiest, Escape sluit (de focus gaat terug naar de rij).
 | Shift+A | Toevoegen aan album… (eigen foto's en video's) |
 | V | Versies… |
 | Delete of Mod+Backspace | Naar prullenbak (met "Ongedaan maken" in de melding) |
+| Mod+Z | Ongedaan maken (zolang die melding staat): terug uit de prullenbak |
 
 ## Op de pagina
 
@@ -67,5 +68,7 @@ Spatie kiest, Escape sluit (de focus gaat terug naar de rij).
 ## Getest
 
 `e2e/test_browser_keyboard.py` doet dit rondje alleen met het toetsenbord: pijltjes, Shift+End,
-Mod+A, Escape, Spatie, F2, N, Mod+X/Mod+V, Mod+C, Delete en Mod+Backspace met Ongedaan maken,
-Shift+F10, G, Mod+F en `?` (de acties staan in de hulp).
+Mod+A, Escape, Spatie, `?` (de acties staan in de hulp), F2, Enter (map openen), Mod+X/Mod+V,
+Mod+C, Delete met Mod+Z, Mod+Backspace, Shift+F10, G, Mod+F en N. Alleen het binnenkomen in de
+lijst gaat daar met `focus()` (één tabstop). `e2e/test_browser.py` doet daarnaast het
+contextmenu met rechtsklik en lang indrukken, en na wielscrollen plus ArrowDown de focus.

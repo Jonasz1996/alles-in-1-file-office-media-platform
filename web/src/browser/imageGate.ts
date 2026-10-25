@@ -1,26 +1,24 @@
 // Thumbnails tijdens snel scrollen: een nieuwe <img> (laden, decoderen, tekenen) kost op een
-// trage processor meer dan de rest van een rij bij elkaar. Zolang er gescrold wordt, krijgt per
-// stap maar één wachtende thumbnail toestemming om te laden, de nieuwste eerst (die staat het
-// langst in beeld); de rest ziet even een leeg vlak. Een stap is één frame zolang de frames op
-// tijd komen, en STEP_SLOW_MS als ze dat niet doen (een trage processor). Staat het scrollen
+// trage processor meer dan de rest van een rij bij elkaar. Zolang er gescrold wordt, mag er per
+// PX_PER_THUMB gescrolde pixels één wachtende thumbnail laden (hooguit één per frame), de
+// nieuwste eerst: die staat het langst in beeld. De rest ziet even een leeg vlak. Per afstand en
+// niet per tijd: dan laadt een trage processor er niet meer dan een snelle. Staat het scrollen
 // stil (IDLE_MS), dan mogen ze allemaal. Een adres dat al geladen werd, mag altijd meteen.
 
-const IDLE_MS = 120;
-/** Een frame dat later komt dan dit, telt als traag */
-const LATE_FRAME_MS = 25;
-/** Na een traag frame zo lang de langzame stap */
-const SLOW_FOR_MS = 3000;
-const STEP_SLOW_MS = 66;
+// Ruim: op een trage processor komen scroll-gebeurtenissen soms 100 ms of meer na elkaar
+const IDLE_MS = 250;
+const PX_PER_THUMB = 300;
+/** Zoveel tegoed spaart het scrollen hooguit op */
+const MAX_CREDIT = 3;
 /** Zoveel adressen onthouden als "al geladen" */
 const KEEP = 4000;
 
 const granted = new Set<string>();
 const waiting = new Set<Waiter>();
 let lastScroll = -Infinity;
+let lastY: number | null = null;
+let credit = 0;
 let frame: number | null = null;
-let lastFrame = 0;
-let lastGrant = 0;
-let slowUntil = 0;
 
 interface Waiter {
   url: string;
@@ -48,29 +46,22 @@ function grantAll(): void {
   }
 }
 
-/**
- * Eén lus per frame, zolang er gescrold wordt of iemand wacht: houdt bij of de frames op tijd
- * komen, en geeft er één toestemming per frame (of per STEP_SLOW_MS als ze dat niet doen).
- */
-function tick(at: number): void {
+/** Eén lus per frame zolang iemand wacht: geeft toestemming als er tegoed is (of alles bij stilstand). */
+function tick(): void {
   frame = null;
-  const busy = scrolling();
-  if (!busy && !waiting.size) {
-    lastFrame = 0; // de lus stopt: de pauze telt straks niet als een traag frame
+  if (!waiting.size) return;
+  if (!scrolling()) {
+    grantAll();
     return;
   }
-  if (lastFrame && at - lastFrame > LATE_FRAME_MS) slowUntil = at + SLOW_FOR_MS;
-  lastFrame = at;
-  if (!busy) {
-    grantAll();
-  } else if (waiting.size && (at >= slowUntil || at - lastGrant >= STEP_SLOW_MS)) {
+  if (credit >= 1) {
     // De nieuwste wachtende (achteraan in de Set)
     let last: Waiter | null = null;
     for (const w of waiting) last = w;
     if (last) {
+      credit -= 1;
       waiting.delete(last);
       remember(last.url);
-      lastGrant = at;
       last.grant();
     }
   }
@@ -78,7 +69,7 @@ function tick(at: number): void {
 }
 
 function schedule(): void {
-  if (frame !== null) return;
+  if (frame !== null || !waiting.size) return;
   if (typeof requestAnimationFrame !== "function") {
     grantAll();
     return;
@@ -90,8 +81,13 @@ if (typeof window !== "undefined") {
   window.addEventListener(
     "scroll",
     () => {
-      lastScroll = now();
-      schedule();
+      const at = now();
+      const y = window.scrollY;
+      if (lastY !== null && at - lastScroll < IDLE_MS) {
+        credit = Math.min(MAX_CREDIT, credit + Math.abs(y - lastY) / PX_PER_THUMB);
+      }
+      lastY = y;
+      lastScroll = at;
     },
     { capture: true, passive: true },
   );
@@ -120,9 +116,10 @@ export function resetImageGateForTests(): void {
   granted.clear();
   waiting.clear();
   lastScroll = -Infinity;
+  lastY = null;
+  credit = 0;
   if (frame !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
   frame = null;
-  lastFrame = lastGrant = slowUntil = 0;
 }
 
 /** Voor tests: doen alsof er net gescrold is. */
