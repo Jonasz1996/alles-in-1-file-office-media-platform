@@ -244,10 +244,10 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
     pick: (i) => {
       const node = get(i);
       if (!node) return [];
-      if (!selection.has(node.id)) {
-        selectOnly(node);
-        return [node];
-      }
+      // Een rij buiten de selectie sleept alleen zichzelf, en de selectie blijft zoals hij is:
+      // een selectiebalk die tijdens het slepen verschijnt, schuift de lijst onder de muis weg
+      // (en tijdens dragstart laat Chromium de sleep dan zelfs meteen afbreken)
+      if (!selection.has(node.id)) return [node];
       return selected;
     },
     folderId: folder?.id ?? folderId,
