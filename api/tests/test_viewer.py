@@ -161,6 +161,77 @@ async def test_nergens_een_locatie(client, admin, settings):
     r = await client.post("/api/v1/public/previews", json={"node_ids": [photo["id"]]}, headers=key)
     assert r.status_code == 200
     no_location(r.json())
+    r = await client.get("/api/v1/public/listing", headers=key)
+    assert r.status_code == 200
+    no_location(r.json())
+
+
+async def open_link(client, headers, node_id, permission="read"):
+    r = await client.post(f"/api/v1/files/{node_id}/links", json={"permission": permission},
+                          headers=headers)  # fmt: skip
+    assert r.status_code == 201, r.text
+    token = r.json()["link"]["url"].removeprefix("/s/")
+    opened = (await client.post("/api/v1/public/open", json={"token": token})).json()
+    return {"Authorization": f"Bearer {opened['key']}"}
+
+
+@pytest.mark.anyio
+async def test_publieke_map_met_previews_in_een_rondgang(client, admin, settings):
+    """GET /public/listing is GET /public/children plus POST /public/previews van de bestanden
+    erin, met dezelfde controles."""
+    jonas, _ = admin
+    root_id = (await root(client, jonas))["folder"]["id"]
+    folder = await mkdir(client, jonas, root_id, "Gedeeld")
+    sub = await mkdir(client, jonas, folder, "Binnen")
+    photo = await upload(client, jonas, "zee.jpg", picture("JPEG"), parent=folder)
+    note = await upload(client, jonas, "notitie.txt", b"hallo", parent=folder)
+    deep = await upload(client, jonas, "diep.jpg", picture("JPEG"), parent=sub)
+    outside = await mkdir(client, jonas, root_id, "Erbuiten")
+    await jobs.run_pending(settings)
+    key = await open_link(client, jonas, folder)
+
+    r = await client.get("/api/v1/public/listing", headers=key)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    children = (await client.get("/api/v1/public/children", headers=key)).json()
+    ids = [photo["id"], note["id"]]
+    shown = await client.post("/api/v1/public/previews", json={"node_ids": ids}, headers=key)
+    assert {k: got[k] for k in ("folder", "path", "children")} == children
+    # Alleen bestanden (geen map) en dezelfde previews als los gevraagd
+    assert set(got["previews"]) == set(ids)
+    assert (
+        got["previews"][photo["id"]]["state"] == "ready" and got["previews"][photo["id"]]["thumb"]
+    )
+    for i in ids:
+        assert {k: v for k, v in got["previews"][i].items() if k not in ("thumb", "large")} == {
+            k: v for k, v in shown.json()[i].items() if k not in ("thumb", "large")
+        }
+
+    # Alleen voor de bovenste items: de map telt mee, dus van 2 items alleen het eerste bestand
+    r = await client.get("/api/v1/public/listing", params={"previews": 2}, headers=key)
+    assert [n["name"] for n in r.json()["children"]] == ["Binnen", "notitie.txt", "zee.jpg"]
+    assert list(r.json()["previews"]) == [note["id"]]
+    r = await client.get("/api/v1/public/listing", params={"previews": 0}, headers=key)
+    assert r.json()["previews"] == {} and len(r.json()["children"]) == 3
+    r = await client.get("/api/v1/public/listing", params={"previews": 501}, headers=key)
+    assert r.status_code == 422
+
+    # Een submap; erbuiten niet
+    r = await client.get("/api/v1/public/listing", params={"folder": sub}, headers=key)
+    assert r.status_code == 200, r.text
+    assert [p["id"] for p in r.json()["path"]] == [folder, sub]
+    assert list(r.json()["previews"]) == [deep["id"]]
+    r = await client.get("/api/v1/public/listing", params={"folder": outside}, headers=key)
+    assert r.status_code == 404 and code_of(r) == "not_found"
+    # Zonder sleutel, met een uploadlink of een link naar één bestand: zoals /children
+    r = await client.get("/api/v1/public/listing")
+    assert r.status_code == 401
+    upload_key = await open_link(client, jonas, sub, permission="upload")
+    r = await client.get("/api/v1/public/listing", headers=upload_key)
+    assert r.status_code == 403 and code_of(r) == "upload_only"
+    file_key = await open_link(client, jonas, photo["id"])
+    r = await client.get("/api/v1/public/listing", headers=file_key)
+    assert r.status_code == 422 and code_of(r) == "file"
 
 
 @pytest.mark.anyio

@@ -12,6 +12,12 @@ import { type SendChunk, type TusApi, xhrSend } from "./upload";
 type Fetch = typeof fetch;
 export type KeyStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
+/** Een map binnen de link met de previews van de bovenste bestanden (GET /public/listing);
+ * die van de rest vraagt de pagina los met previews(). */
+export interface PublicFolder extends PublicListing {
+  previews: Record<string, Preview>;
+}
+
 interface Opened {
   key: string;
   expires_in: number;
@@ -260,6 +266,16 @@ export class PublicLink implements TusApi {
   /** Een map binnen de gedeelde map; zonder folder de gedeelde map zelf. */
   children = (folder?: string) =>
     this.json<PublicListing>(`/api/v1/public/children${folder ? `?${new URLSearchParams({ folder })}` : ""}`);
+
+  /** children() en previews() in één rondgang: op een mobiel netwerk telt elke rondgang.
+   * previews: voor hoeveel items van boven (mappen tellen mee) de previews meekomen. */
+  listing = (folder?: string, previews?: number) => {
+    const params = new URLSearchParams();
+    if (folder) params.set("folder", folder);
+    if (previews !== undefined) params.set("previews", String(previews));
+    const qs = params.toString();
+    return this.json<PublicFolder>(`/api/v1/public/listing${qs ? `?${qs}` : ""}`);
+  };
 
   previews = (nodeIds: string[]) =>
     this.json<Record<string, Preview>>("/api/v1/public/previews", {

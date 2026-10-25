@@ -79,6 +79,9 @@ class FakePublic {
     if (url.startsWith("/api/v1/public/children")) {
       return json({ folder: share.root, path: [share.root], children: [] });
     }
+    if (url.startsWith("/api/v1/public/listing")) {
+      return json({ folder: share.root, path: [share.root], children: [], previews: {} });
+    }
     if (url.startsWith("/api/v1/public/preview/")) {
       return json({ state: "ready", thumb: null, large: null, display: null, meta: {}, taken_at: null });
     }
@@ -306,6 +309,15 @@ describe("PublicLink: adressen", () => {
     await link.children();
     expect(server.bodies.at(-1)).toEqual({ node_ids: ["a", "b"] });
     expect(server.calls.at(-1)).toBe("GET /api/v1/public/children Bearer K1");
+  });
+
+  it("een map met de previews van de bovenste items in één verzoek", async () => {
+    const { server, link } = setup();
+    await link.open();
+    expect(await link.listing()).toEqual({ folder: share.root, path: [share.root], children: [], previews: {} });
+    expect(server.calls.at(-1)).toBe("GET /api/v1/public/listing Bearer K1");
+    await link.listing("sub", 24);
+    expect(server.calls.at(-1)).toBe("GET /api/v1/public/listing?folder=sub&previews=24 Bearer K1");
   });
 });
 

@@ -13,7 +13,10 @@ als afbeelding, gerenderd op de server (B20).
   settings.page_render_workers processen tegelijk; de pagina's blijven in
   previews/<sha>/pages/<w>/<n>.webp tot de cache boven settings.page_cache_mb komt (de
   langst niet gebruikte gaan eerst).
-- dezelfde drie onder /public/ voor een publieke leeslink (met de sleutel van de link).
+- dezelfde drie onder /public/ voor een publieke leeslink (met de sleutel van de link);
+- GET /public/listing?folder= -> een map binnen de link met de previews van zijn bestanden in
+  één antwoord (GET /public/children plus POST /public/previews): op een mobiel netwerk kost
+  elke rondgang meer dan een halve seconde.
 """
 
 import asyncio
@@ -40,9 +43,10 @@ from app import errors, jobs, previews, render
 from app.config import Settings, get_settings
 from app.db import Session, get_engine
 from app.models import Blob, Node
-from app.routers import files
+from app.routers import files, public
 from app.routers.files import Utc
-from app.routers.public import CurrentLink, inside, readable
+from app.routers.previews import MAX_NODES, PreviewOut, PreviewRequest
+from app.routers.public import CurrentLink, PublicListing, inside, readable
 from app.security import CurrentUser, active_user, download_token, read_download_token
 from app.storage import BlobStore
 
@@ -559,3 +563,34 @@ async def public_page(
     prullenbak en of het bestand binnen de gedeelde map ligt."""
     node = await _public_file(session, link, node_id)
     return await _page(session, settings, node.blob_id or "", node.name, n, w, if_none_match)
+
+
+class PublicFolder(PublicListing):
+    # Zoals POST /public/previews, voor de bestanden onder de eerste `previews` items van
+    # children (wat de pagina meteen toont); de rest vraagt de pagina los
+    previews: dict[str, PreviewOut]
+
+
+@router.get("/public/listing")
+async def public_listing(
+    link: CurrentLink,
+    session: Session,
+    settings: Annotated[Settings, Depends(get_settings)],
+    folder: uuid.UUID | None = None,
+    previews: Annotated[int, Query(ge=0, le=MAX_NODES)] = MAX_NODES,
+) -> PublicFolder:
+    """GET /public/children en POST /public/previews in één rondgang: de pagina van de link
+    toont de lijst meteen met thumbnails. Dezelfde controles en antwoorden als die twee.
+    previews: voor hoeveel items van boven (mappen tellen mee) de previews meekomen; de
+    adressen erin zijn ondertekend, dus dit antwoord wordt niet gecomprimeerd en blijft
+    zo klein als de pagina het nodig heeft."""
+    listing = await public.children(link, session, folder)
+    ids = [n.id for n in listing.children[:previews] if n.kind == "file"]
+    shown = (
+        await public.preview_info(PreviewRequest(node_ids=ids), link, session, settings)
+        if ids
+        else {}
+    )
+    return PublicFolder(
+        folder=listing.folder, path=listing.path, children=listing.children, previews=shown
+    )
