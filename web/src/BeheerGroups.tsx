@@ -1,33 +1,44 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { api, type Group, type User } from "./api";
-import { Dialog } from "./Dialog";
-import { memberCount } from "./sharing";
-import "./share.css";
+// /beheer/groepen: groepen maken, hernoemen, verwijderen en de leden kiezen. Delen met een groep
+// geldt meteen voor wie er nu in zit. N zet de focus in het veld voor een nieuwe groep.
 
-const byName = (a: { name: string }, b: { name: string }) =>
-  a.name.localeCompare(b.name, "nl", { sensitivity: "base" });
+import { type FormEvent, type JSX, useCallback, useEffect, useRef, useState } from "react";
+import { adminApi, type AdminUser } from "./admin/api";
+import { api, type Group } from "./api";
+import { collator, errorText, t } from "./i18n";
+import { Button } from "./ui/Button";
+import { Dialog } from "./ui/Dialog";
+import { confirm, prompt } from "./ui/dialogs";
+import { useShortcuts } from "./ui/keys";
 
-/** Groepen op /beheer: maken, hernoemen, verwijderen en de leden kiezen. Delen met een groep
- * geldt meteen voor wie er nu in zit. */
-export function BeheerGroups({ users }: { users: User[] }) {
+const byName = (a: { name: string }, b: { name: string }) => collator.compare(a.name, b.name);
+
+export function BeheerGroups(): JSX.Element {
   const [groups, setGroups] = useState<Group[] | null>(null);
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [name, setName] = useState("");
   const [members, setMembers] = useState<Group | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const input = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     try {
-      setGroups((await api.groups()).sort(byName));
+      const [g, u] = await Promise.all([api.groups(), adminApi.users()]);
+      setGroups(g.sort(byName));
+      setUsers(u);
       setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorText(e));
     }
   }, []);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
+
+  useShortcuts([{ combo: "n", label: t("admin.keys.newGroup"), run: () => input.current?.focus() }], {
+    scope: "admin",
+  });
 
   async function act(fn: () => Promise<unknown>): Promise<boolean> {
     setBusy(true);
@@ -37,7 +48,7 @@ export function BeheerGroups({ users }: { users: User[] }) {
       await load();
       return true;
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorText(e));
       return false;
     } finally {
       setBusy(false);
@@ -49,35 +60,43 @@ export function BeheerGroups({ users }: { users: User[] }) {
     if (name.trim() && (await act(() => api.createGroup(name.trim())))) setName("");
   }
 
-  function rename(group: Group) {
-    const newName = window.prompt("Nieuwe naam voor de groep", group.name)?.trim();
-    if (newName && newName !== group.name) act(() => api.renameGroup(group.id, newName));
+  async function rename(group: Group) {
+    const newName = (
+      await prompt({
+        title: t("admin.groups.renameTitle"),
+        label: t("admin.groups.renameLabel"),
+        initial: group.name,
+        confirm: t("common.save"),
+      })
+    )?.trim();
+    if (newName && newName !== group.name) await act(() => api.renameGroup(group.id, newName));
   }
 
-  function remove(group: Group) {
-    if (
-      window.confirm(
-        `Groep "${group.name}" verwijderen? Wat met deze groep gedeeld is, is daarna niet meer gedeeld met de leden.`,
-      )
-    )
-      act(() => api.deleteGroup(group.id));
+  async function remove(group: Group) {
+    const yes = await confirm({
+      title: t("admin.groups.removeTitle", { name: group.name }),
+      message: t("admin.groups.removeText"),
+      confirm: t("admin.groups.remove"),
+      danger: true,
+    });
+    if (yes) await act(() => api.deleteGroup(group.id));
   }
 
   return (
-    <section>
-      <h2>Groepen</h2>
-      <p className="muted">
-        Deel een map met een groep, dan kan iedereen in de groep erbij, ook wie er later bij komt.
-      </p>
-      {groups?.length === 0 && <p className="muted">Er zijn nog geen groepen.</p>}
+    <section aria-labelledby="admin-groups-title">
+      <h2 id="admin-groups-title">{t("admin.groups.title")}</h2>
+      <p className="muted">{t("admin.groups.help")}</p>
+      {groups?.length === 0 && <p className="muted">{t("admin.groups.none")}</p>}
       {groups && groups.length > 0 && (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Naam</th>
-                <th>Leden</th>
-                <th />
+                <th>{t("admin.groups.name")}</th>
+                <th>{t("admin.groups.members")}</th>
+                <th>
+                  <span className="sr-only">{t("admin.groups.editMembers")}</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -85,21 +104,21 @@ export function BeheerGroups({ users }: { users: User[] }) {
                 <tr key={g.id}>
                   <td>{g.name}</td>
                   <td className="wrap">
-                    {memberCount(g.member_count)}
+                    {t("admin.groups.memberCount", { n: g.member_count })}
                     {g.members.length > 0 && (
                       <span className="muted">: {g.members.map((m) => m.display_name).join(", ")}</span>
                     )}
                   </td>
                   <td className="actions">
-                    <button type="button" disabled={busy} onClick={() => setMembers(g)}>
-                      Leden…
-                    </button>
-                    <button type="button" disabled={busy} onClick={() => rename(g)}>
-                      Hernoemen
-                    </button>
-                    <button type="button" disabled={busy} onClick={() => remove(g)}>
-                      Verwijderen
-                    </button>
+                    <Button disabled={busy} onClick={() => setMembers(g)}>
+                      {t("admin.groups.editMembers")}
+                    </Button>
+                    <Button disabled={busy} onClick={() => void rename(g)}>
+                      {t("admin.groups.rename")}
+                    </Button>
+                    <Button disabled={busy} onClick={() => void remove(g)}>
+                      {t("admin.groups.remove")}
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -109,15 +128,17 @@ export function BeheerGroups({ users }: { users: User[] }) {
       )}
       <form className="inline-form" onSubmit={create}>
         <input
-          aria-label="Naam van een nieuwe groep"
-          placeholder="Nieuwe groep, bijv. Familie"
+          ref={input}
+          aria-label={t("admin.groups.newName")}
+          aria-keyshortcuts="n"
+          placeholder={t("admin.groups.newPlaceholder")}
           maxLength={100}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
-        <button type="submit" disabled={busy || !name.trim()}>
-          Groep maken
-        </button>
+        <Button type="submit" disabled={busy || !name.trim()}>
+          {t("admin.groups.create")}
+        </Button>
       </form>
       {error && <p role="alert">{error}</p>}
       {members && (
@@ -145,14 +166,14 @@ function GroupMembers({
   error,
 }: {
   group: Group;
-  users: User[];
+  users: AdminUser[];
   onClose: () => void;
   onSave: (userIds: string[]) => void;
   busy: boolean;
   error: string | null;
-}) {
+}): JSX.Element {
   const [chosen, setChosen] = useState(() => new Set(group.members.map((m) => m.id)));
-  const sorted = [...users].sort((a, b) => a.display_name.localeCompare(b.display_name, "nl", { sensitivity: "base" }));
+  const sorted = [...users].sort((a, b) => collator.compare(a.display_name, b.display_name));
 
   function toggle(id: string, on: boolean) {
     setChosen((prev) => {
@@ -164,15 +185,31 @@ function GroupMembers({
   }
 
   return (
-    <Dialog title={`Leden van "${group.name}"`} onClose={onClose}>
+    <Dialog
+      title={t("admin.groups.membersTitle", { name: group.name })}
+      onClose={onClose}
+      actions={
+        <>
+          <Button onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" busy={busy} onClick={() => onSave([...chosen])}>
+            {t("common.save")}
+          </Button>
+        </>
+      }
+    >
       {sorted.length === 0 ? (
-        <p className="muted">Er zijn nog geen gebruikers.</p>
+        <p className="muted">{t("admin.groups.noUsers")}</p>
       ) : (
-        <ul className="tag-list" aria-label="Gebruikers">
-          {sorted.map((u) => (
+        <ul className="admin-members" aria-label={t("admin.groups.usersLabel")}>
+          {sorted.map((u, i) => (
             <li key={u.id}>
-              <label>
-                <input type="checkbox" checked={chosen.has(u.id)} onChange={(e) => toggle(u.id, e.target.checked)} />
+              <label className="check">
+                <input
+                  type="checkbox"
+                  data-autofocus={i === 0 ? "" : undefined}
+                  checked={chosen.has(u.id)}
+                  onChange={(e) => toggle(u.id, e.target.checked)}
+                />
                 {u.display_name} <span className="muted">{u.email}</span>
               </label>
             </li>
@@ -180,14 +217,6 @@ function GroupMembers({
         </ul>
       )}
       {error && <p role="alert">{error}</p>}
-      <div className="dialog-actions">
-        <button type="button" onClick={onClose}>
-          Annuleren
-        </button>
-        <button type="button" className="primary" disabled={busy} onClick={() => onSave([...chosen])}>
-          Opslaan
-        </button>
-      </div>
     </Dialog>
   );
 }

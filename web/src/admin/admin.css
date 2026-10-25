@@ -1,0 +1,239 @@
+/* /beheer en zijn tabbladen. Alleen kleuren uit tokens.css. */
+
+.admin-panel {
+  margin-top: var(--space-4);
+}
+
+.admin-panel section + section {
+  margin-top: var(--space-5);
+}
+
+.admin-head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.admin-head h2,
+.admin-head h3 {
+  margin: 0;
+}
+
+/* Overzicht: kaarten */
+.admin-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(14rem, 100%), 1fr));
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.admin-card {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+}
+
+.admin-card h3 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-s);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.admin-card p {
+  margin: 0;
+}
+
+.admin-card p + p {
+  margin-top: var(--space-1);
+}
+
+.admin-notices {
+  display: grid;
+  gap: var(--space-1);
+  padding-left: var(--space-5);
+}
+
+.admin-notices li::marker {
+  color: var(--warn);
+}
+
+/* Gebruikers */
+.admin-search {
+  width: min(24rem, 100%);
+}
+
+.admin-user-blocked td:first-child {
+  text-decoration: line-through;
+  text-decoration-color: var(--muted);
+}
+
+td.admin-usage.warn {
+  color: var(--warn);
+}
+
+td.admin-usage.bad {
+  color: var(--bad);
+}
+
+.admin-user-form {
+  max-width: none;
+}
+
+.admin-user-usage,
+.admin-user-account {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.admin-user-account h3 {
+  margin: 0;
+  font-size: var(--text-m);
+}
+
+.admin-user-account .toolbar {
+  margin: var(--space-2) 0;
+}
+
+/* Opslag: een gestapelde balk per node */
+.admin-node {
+  margin: 0 0 var(--space-4);
+}
+
+.admin-node figcaption {
+  margin-bottom: var(--space-1);
+}
+
+.storage-bar {
+  display: flex;
+  height: 1.25rem;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+}
+
+.storage-seg {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+
+.storage-seg + .storage-seg {
+  border-left: 1px solid var(--bg);
+}
+
+.seg-blobs {
+  background: var(--tag-1);
+}
+
+.seg-previews {
+  background: var(--tag-6);
+}
+
+.seg-uploads {
+  background: var(--tag-3);
+}
+
+.seg-database {
+  background: var(--tag-5);
+}
+
+.seg-other {
+  background: var(--tag-7);
+}
+
+.seg-free {
+  background: var(--surface-2);
+}
+
+.storage-bar.warn {
+  border-color: var(--warn);
+}
+
+.storage-bar.bad {
+  border-color: var(--bad);
+}
+
+.storage-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-s);
+}
+
+.storage-values li {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.storage-swatch {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+}
+
+.admin-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(15rem, 100%), 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.admin-totals div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: var(--space-1);
+}
+
+.admin-totals dt {
+  color: var(--muted);
+}
+
+.admin-totals dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Taken */
+.admin-running {
+  padding-left: var(--space-5);
+}
+
+.admin-running code,
+.admin-panel td code {
+  font-family: var(--mono);
+  font-size: var(--text-s);
+}
+
+/* Groepen: leden kiezen */
+.admin-members {
+  display: grid;
+  gap: var(--space-1);
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin label.check,
+.admin-members label.check {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
