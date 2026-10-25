@@ -1,18 +1,21 @@
+import asyncio
 import logging
 import math
 import uuid
+import weakref
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import errors, totp
+from app import errors, jobs, totp, userdelete
 from app.config import Settings, get_settings
 from app.db import Session
-from app.models import Node, RecoveryCode, RefreshToken, User, Version
+from app.models import Job, Node, RecoveryCode, RefreshToken, User, Version
 from app.security import (
     ACCOUNT_DISABLED,
     AdminUser,
@@ -31,7 +34,8 @@ from app.security import (
     new_refresh_token,
     security_config,
 )
-from app.useragent import device_label, shown_device
+from app.usage import UserUsage, user_usage
+from app.useragent import device_label, device_parts, shown_device
 
 log = logging.getLogger("platform.auth")
 router = APIRouter(prefix="/api/v1", tags=["login"])
@@ -75,6 +79,27 @@ class UserOut(BaseModel):
     locale: str | None = None
     # Geblokkeerd door een beheerder
     disabled: bool = False
+    created_at: datetime | None = None
+    # Wat hij opslaat, uitgesplitst (used_bytes is de som)
+    usage: UserUsage | None = None
+    # Er loopt een taak die dit account verwijdert (DELETE /users/{id})
+    deleting: bool = False
+
+
+class UserChange(BaseModel):
+    """PATCH /users/{id}: alleen wat erin staat verandert."""
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=100)
+    email: EmailStr | None = None
+    role: Literal["admin", "user", "guest"] | None = None
+    # 0 = onbeperkt
+    quota_bytes: int | None = Field(default=None, ge=0)
+    # true blokkeert (en logt overal uit), false heft de blokkade op
+    disabled: bool | None = None
+
+
+class DeleteStarted(BaseModel):
+    job_id: uuid.UUID
 
 
 class MeChange(BaseModel):
@@ -154,20 +179,33 @@ def locked_until(user: User) -> datetime | None:
     return until if until and until > datetime.now(UTC) else None
 
 
-async def user_out(session: Session, user: User, policy: SecurityConfig) -> UserOut:
+async def user_out(
+    session: Session,
+    user: User,
+    policy: SecurityConfig,
+    usage: UserUsage | None = None,
+    deleting: bool = False,
+) -> UserOut:
+    """usage: al uitgerekend (de lijst op /beheer doet dat voor iedereen tegelijk); anders
+    hier, voor deze ene gebruiker."""
+    if usage is None:
+        usage = (await user_usage(session, [user.id])).get(user.id, UserUsage())
     return UserOut(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
         role=user.role,
         quota_bytes=user.quota_bytes,
-        used_bytes=await used_bytes(session, user.id),
+        used_bytes=usage.used_bytes,
         root_id=user.root_id,
         totp_enabled=user.totp_secret is not None,
         totp_setup_required=policy.require_2fa and user.totp_secret is None,
         totp_locked_until=locked_until(user),
         locale=user.locale,
         disabled=user.disabled_at is not None,
+        created_at=aware(user.created_at),
+        usage=usage,
+        deleting=deleting,
     )
 
 
@@ -634,10 +672,190 @@ async def change_me(
     return await user_out(session, user, policy)
 
 
+async def being_deleted(
+    session: AsyncSession, user_ids: list[uuid.UUID] | None = None
+) -> set[uuid.UUID]:
+    """Voor wie er een user.delete-taak klaarstaat of loopt (één query)."""
+    query = select(Job.key).where(Job.type == userdelete.TYPE, Job.status.in_(jobs.ACTIVE))
+    if user_ids is not None:
+        query = query.where(Job.key.in_([userdelete.key(i) for i in user_ids]))
+    found = set()
+    for key in await session.scalars(query):
+        if (user_id := userdelete.user_of(key)) is not None:
+            found.add(user_id)
+    return found
+
+
 @router.get("/users", tags=["beheer"])
 async def list_users(_: AdminUser, session: Session, policy: Policy) -> list[UserOut]:
-    users = (await session.scalars(select(User).order_by(User.created_at))).all()
-    return [await user_out(session, u, policy) for u in users]
+    """Alle gebruikers met hun gebruik. Een vast aantal query's, hoeveel gebruikers er ook
+    zijn (test_users_queries.py)."""
+    users = (await session.scalars(select(User).order_by(User.created_at, User.id))).all()
+    usage = await user_usage(session)
+    deleting = await being_deleted(session)
+    return [
+        await user_out(session, u, policy, usage.get(u.id, UserUsage()), u.id in deleting)
+        for u in users
+    ]
+
+
+# Wijzigingen die het aantal actieve beheerders kunnen verlagen (degraderen, blokkeren,
+# verwijderen) één voor één, binnen dit proces. In de database worden de rijen van de
+# beheerders daarbij ook vergrendeld (FOR UPDATE; SQLite schrijft toch al één voor één), zodat
+# twee beheerders die elkaar tegelijk blokkeren er nooit samen nul overhouden.
+# Eén slot per event loop (de tests draaien elk in een eigen loop)
+_admin_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def admin_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _admin_locks.get(loop)
+    if lock is None:
+        lock = _admin_locks[loop] = asyncio.Lock()
+    return lock
+
+
+async def lock_admins(session: AsyncSession) -> None:
+    """Vergrendelt de rijen van de actieve beheerders tot de commit (PostgreSQL)."""
+    await session.execute(
+        select(User.id).where(User.role == "admin", User.disabled_at.is_(None)).with_for_update()
+    )
+
+
+async def active_admins(session: AsyncSession) -> int:
+    count = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(User.role == "admin", User.disabled_at.is_(None))
+    )
+    return int(count or 0)
+
+
+def last_admin() -> HTTPException:
+    return errors.fail(409, "last_admin", "Er moet minstens één actieve beheerder overblijven")
+
+
+async def target_user(session: AsyncSession, user_id: uuid.UUID) -> User:
+    # Vers uit de database: wie op het slot wachtte, mag niet op een oude kopie beslissen
+    user = await session.get(User, user_id, populate_existing=True)
+    if user is None:
+        await session.rollback()
+        raise errors.fail(404, "user_not_found", "Gebruiker niet gevonden")
+    return user
+
+
+async def owns_files(session: AsyncSession, user: User) -> bool:
+    """Heeft hij iets eigens, behalve zijn (lege) hoofdmap: bestanden, mappen, albums."""
+    found = await session.scalar(
+        select(Node.id).where(Node.owner_id == user.id, Node.id != user.root_id).limit(1)
+    )
+    return found is not None
+
+
+def email_taken() -> HTTPException:
+    return errors.fail(409, "email_taken", "Er bestaat al een account met dit e-mailadres")
+
+
+async def apply_change(session: AsyncSession, user: User, body: UserChange) -> bool:
+    """Zet de wijziging op user (nog niet gecommit). Geeft True als hij nu geblokkeerd is."""
+    if body.email is not None and body.email.lower() != user.email:
+        email = body.email.lower()
+        taken = await session.scalar(
+            select(User.id).where(func.lower(User.email) == email, User.id != user.id)
+        )
+        if taken is not None:
+            raise email_taken()
+        user.email = email
+    if body.display_name is not None:
+        name = body.display_name.strip()
+        if not name:
+            raise errors.fail(422, "invalid_input", "Vul een naam in")
+        user.display_name = name
+    if body.role is not None and body.role != user.role:
+        if body.role == "guest" and await owns_files(session, user):
+            raise errors.fail(
+                409,
+                "guest_has_files",
+                "Een gast kan geen eigen bestanden hebben; verwijder of verplaats ze eerst",
+            )
+        user.role = body.role
+    if body.quota_bytes is not None:
+        user.quota_bytes = body.quota_bytes
+    if body.disabled is True and user.disabled_at is None:
+        user.disabled_at = datetime.now(UTC)
+        return True
+    if body.disabled is False and user.disabled_at is not None:
+        if await being_deleted(session, [user.id]):
+            raise errors.fail(409, "user_being_deleted", "Dit account wordt al verwijderd")
+        user.disabled_at = None
+    return False
+
+
+@router.patch("/users/{user_id}", tags=["beheer"])
+async def change_user(
+    user_id: uuid.UUID, body: UserChange, admin: AdminUser, session: Session, policy: Policy
+) -> UserOut:
+    """Naam, e-mailadres, rol, quotum of blokkade van een gebruiker. Er blijft altijd een
+    actieve beheerder over (409 last_admin); een gast kan geen eigen bestanden hebben (409
+    guest_has_files). Blokkeren logt hem overal uit, ook een open web-app."""
+    admin_id = admin.id
+    if body.disabled and user_id == admin_id:
+        raise errors.fail(422, "own_account", "Je kunt je eigen account niet blokkeren")
+    await session.commit()  # niet met een databaseverbinding op het slot wachten
+    async with admin_lock():
+        await lock_admins(session)
+        user = await target_user(session, user_id)
+        was_active_admin = user.role == "admin" and user.disabled_at is None
+        try:
+            blocked = await apply_change(session, user, body)
+            await session.flush()
+            if was_active_admin and await active_admins(session) == 0:
+                raise last_admin()
+        except HTTPException:
+            await session.rollback()
+            raise
+        except IntegrityError:  # tegelijk hetzelfde e-mailadres gekregen
+            await session.rollback()
+            raise email_taken() from None
+        if blocked:
+            await revoke_other_logins(session, user.id, None)
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            raise email_taken() from None
+    if blocked:
+        log.warning("Beheerder %s heeft gebruiker %s geblokkeerd", admin_id, user_id)
+    return await user_out(session, user, policy)
+
+
+@router.delete("/users/{user_id}", tags=["beheer"], status_code=202)
+async def remove_user(user_id: uuid.UUID, admin: AdminUser, session: Session) -> DeleteStarted:
+    """Verwijdert een geblokkeerde gebruiker met al zijn bestanden, albums en delingen, op de
+    achtergrond (taak user.delete). Eerst blokkeren (409 not_disabled): dat logt hem uit en
+    voorkomt dat hij tijdens het verwijderen nog iets doet. Loopt er al zo'n taak, dan komt
+    zijn id terug."""
+    admin_id = admin.id
+    if user_id == admin_id:
+        raise errors.fail(422, "own_account", "Je kunt je eigen account niet verwijderen")
+    await session.commit()  # niet met een databaseverbinding op het slot wachten
+    async with admin_lock():
+        await lock_admins(session)
+        user = await target_user(session, user_id)
+        if user.disabled_at is None:
+            await session.rollback()
+            raise errors.fail(409, "not_disabled", "Blokkeer het account eerst")
+        # Een geblokkeerde gebruiker telt al niet mee; zonder andere actieve beheerder kan
+        # niemand dit verzoek doen, maar de regel staat hier ook
+        if await active_admins(session) == 0:
+            await session.rollback()
+            raise last_admin()
+        job_id = await userdelete.start(session, user.id)
+        await session.commit()
+    log.warning("Beheerder %s verwijdert gebruiker %s (taak %s)", admin_id, user_id, job_id)
+    return DeleteStarted(job_id=job_id)
 
 
 @router.post("/users", tags=["beheer"], status_code=201)
@@ -766,6 +984,10 @@ class SessionOut(BaseModel):
     created_at: datetime  # eerste login van deze sessie
     last_active_at: datetime  # laatst ververst: het nieuwste token
     current: bool  # de sessie van dit verzoek
+    # Uit device ontleed, zodat de web-app het label in zijn eigen taal maakt; null als het
+    # een naam is die een app zelf meegaf, of onbekend
+    browser: str | None = None
+    os: str | None = None
 
 
 class PasswordChange(BaseModel):
@@ -830,6 +1052,8 @@ async def list_sessions(
         SessionOut(
             id=fam,
             device=shown_device(row.device),
+            browser=device_parts(row.device)[0],
+            os=device_parts(row.device)[1],
             ip=row.ip,
             created_at=aware(first.get(fam, row.created_at)),
             last_active_at=aware(row.created_at),

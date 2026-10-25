@@ -60,3 +60,26 @@ def shown_device(stored: str) -> str:
     if not stored or stored == "setup":
         return UNKNOWN
     return device_label(stored) if stored.startswith(OLD_AGENTS) else stored
+
+
+def device_parts(stored: str) -> tuple[str | None, str | None]:
+    """(browser, systeem) van een bewaard apparaat, zodat de web-app "Firefox op Windows" in
+    zijn eigen taal kan zetten. Een label van deze module ("Firefox op Windows", "Firefox",
+    "Android") en een oude, hele User-Agent worden ontleed; een naam die een app zelf meegaf,
+    of een onbekend apparaat, geeft (None, None)."""
+    stored = stored.strip()
+    if not stored or stored in ("setup", UNKNOWN):
+        return None, None
+    if stored.startswith(OLD_AGENTS):
+        agent = stored[:1000]
+        return _first(agent, BROWSERS), _first(agent, SYSTEMS)
+    browsers = {name for name, _ in BROWSERS}
+    systems = {name for name, _ in SYSTEMS}
+    browser, sep, system = stored.partition(" op ")
+    if sep and browser in browsers and system in systems:
+        return browser, system
+    if stored in browsers:
+        return stored, None
+    if stored in systems:
+        return None, stored
+    return None, None

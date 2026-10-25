@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import anyio
-from sqlalchemy import delete, event, func, select, update
+from sqlalchemy import and_, delete, event, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session as OrmSession
 
@@ -74,6 +74,32 @@ class Claimed:
 _kinds: dict[str, Kind] = {}
 # Eén per draaiende Runner; kick() wekt ze allemaal
 _wakers: set[Callable[[], None]] = set()
+# De Runners die nu draaien (voor runner_alive op /beheer)
+_runners: set["Runner"] = set()
+
+Hook = Callable[[Settings], Awaitable[Any]]
+
+
+@dataclass
+class Housekeeping:
+    """Werk dat de Runner om de zoveel seconden doet, naast de taken: opruimen, de cache van
+    het schijfgebruik verversen, de prullenbak legen na de bewaartermijn."""
+
+    name: str
+    run: Hook
+    every: float
+
+
+_housekeeping: dict[str, Housekeeping] = {}
+# Zo vaak (seconden) kijkt de Runner of er opruimwerk aan de beurt is
+HOUSEKEEPING_TICK = 60.0
+
+
+def housekeeping(name: str, run: Hook, every: float) -> None:
+    """Registreert opruimwerk: run(settings) eens per `every` seconden (de eerste keer kort na
+    het starten). Een fout wordt gelogd en stopt niets; de volgende keer gewoon opnieuw.
+    Opnieuw registreren met dezelfde naam vervangt het vorige."""
+    _housekeeping[name] = Housekeeping(name, run, every)
 
 
 def register(
@@ -397,6 +423,7 @@ class Runner:
         """Start de workers. Roep eerst recover() aan (bij het starten van de app)."""
         self._loop = asyncio.get_running_loop()
         _wakers.add(self.wake)
+        _runners.add(self)
         for i in range(max(1, self.settings.job_workers)):
             self._tasks.append(asyncio.create_task(self._work(), name=f"achtergrondtaken {i + 1}"))
         self._tasks.append(asyncio.create_task(self._housekeeping(), name="taken opruimen"))
@@ -404,10 +431,16 @@ class Runner:
     async def stop(self) -> None:
         """Lopende taken worden afgebroken en gaan terug in de rij."""
         _wakers.discard(self.wake)
+        _runners.discard(self)
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+
+    @property
+    def alive(self) -> bool:
+        """Draaien de workers nog (geen enkele gestopt door een fout)?"""
+        return bool(self._tasks) and not any(task.done() for task in self._tasks)
 
     async def _work(self) -> None:
         while True:
@@ -424,13 +457,42 @@ class Runner:
                 await self._wake.wait()
 
     async def _housekeeping(self) -> None:
+        last: dict[str, float] = {}
         while True:
-            try:
-                if removed := await remove_old(self.settings):
-                    log.info("%s oude achtergrondtaken opgeruimd", removed)
-            except Exception:  # noqa: BLE001 - opruimen mag de app nooit stoppen
-                log.exception("Opruimen van achtergrondtaken mislukt")
-            await asyncio.sleep(HOUSEKEEPING)
+            await run_housekeeping(self.settings, last)
+            await asyncio.sleep(HOUSEKEEPING_TICK)
+
+
+async def _remove_old(settings: Settings) -> None:
+    if removed := await remove_old(settings):
+        log.info("%s oude achtergrondtaken opgeruimd", removed)
+
+
+housekeeping("jobs.remove_old", _remove_old, HOUSEKEEPING)
+
+
+async def run_housekeeping(settings: Settings, last: dict[str, float] | None = None) -> list[str]:
+    """Draait het opruimwerk dat aan de beurt is (alles als last None is: voor tests). last:
+    per naam wanneer (time.monotonic) het voor het laatst liep; wordt bijgewerkt. Geeft de
+    namen van wat er liep."""
+    ran = []
+    clock = asyncio.get_running_loop().time()
+    for item in list(_housekeeping.values()):
+        if last is not None and item.name in last and clock - last[item.name] < item.every:
+            continue
+        if last is not None:
+            last[item.name] = clock
+        try:
+            await item.run(settings)
+        except Exception:  # noqa: BLE001 - opruimen mag de app nooit stoppen
+            log.exception("Opruimwerk %s mislukt", item.name)
+        ran.append(item.name)
+    return ran
+
+
+def runner_alive() -> bool:
+    """Draait er in dit proces een Runner met levende workers?"""
+    return any(runner.alive for runner in _runners)
 
 
 async def counts(session: AsyncSession) -> dict[str, int]:
@@ -440,17 +502,66 @@ async def counts(session: AsyncSession) -> dict[str, int]:
     return result
 
 
-async def failed(session: AsyncSession, limit: int = 100) -> list[Job]:
+async def failed(
+    session: AsyncSession, limit: int = 100, before: tuple[datetime, uuid.UUID] | None = None
+) -> list[Job]:
+    """Mislukte taken, de laatst mislukte eerst. before: (finished_at, id) van de laatste van
+    de vorige pagina; dan alleen wat daarna komt."""
+    query = select(Job).where(Job.status == "failed")
+    if before is not None:
+        at, job_id = before
+        query = query.where(or_(Job.finished_at < at, and_(Job.finished_at == at, Job.id < job_id)))
+    return list(
+        (
+            await session.scalars(
+                query.order_by(Job.finished_at.desc(), Job.id.desc()).limit(limit)
+            )
+        ).all()
+    )
+
+
+async def counts_by_type(session: AsyncSession) -> list[tuple[str, str, int]]:
+    """(soort, status, aantal) voor elke combinatie die voorkomt, in één query."""
+    rows = await session.execute(
+        select(Job.type, Job.status, func.count())
+        .group_by(Job.type, Job.status)
+        .order_by(Job.type, Job.status)
+    )
+    return [(type_, status, count) for type_, status, count in rows]
+
+
+async def running(session: AsyncSession, limit: int = 50) -> list[Job]:
+    """Wat nu loopt, het langst lopende eerst."""
     return list(
         (
             await session.scalars(
                 select(Job)
-                .where(Job.status == "failed")
-                .order_by(Job.finished_at.desc(), Job.created_at.desc())
+                .where(Job.status == "running")
+                .order_by(Job.started_at, Job.id)
                 .limit(limit)
             )
         ).all()
     )
+
+
+async def oldest_queued(session: AsyncSession) -> datetime | None:
+    """Sinds wanneer de oudste taak die nu al aan de beurt is, wacht (None: niets wacht). Taken
+    die bewust later moeten (run_after in de toekomst) tellen niet mee."""
+    at = await session.scalar(
+        select(func.min(Job.run_after)).where(Job.status == "queued", Job.run_after <= now())
+    )
+    return at.replace(tzinfo=at.tzinfo or UTC) if at is not None else None
+
+
+async def delete_failed(session: AsyncSession, job_id: uuid.UUID) -> bool:
+    """Een mislukte taak weggooien (niet opnieuw proberen). False als hij niet (meer) mislukt
+    is; de aanroeper commit."""
+    result = await session.execute(
+        delete(Job)
+        .where(Job.id == job_id, Job.status == "failed")
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
 
 
 def _retry_values() -> dict[str, Any]:

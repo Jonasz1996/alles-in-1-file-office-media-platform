@@ -45,11 +45,36 @@ class DbMember(BaseModel):
     lag_bytes: int | None = None
 
 
+class Notice(BaseModel):
+    """Een melding op /beheer: een vaste code met params (de web-app vertaalt op code) en de
+    Nederlandse tekst. messages in ClusterStatus zijn dezelfde teksten (compatibel)."""
+
+    code: str
+    params: dict[str, str | int | float] = {}
+    text: str
+
+
+def notice(code: str, text: str, **params: str | int | float) -> Notice:
+    return Notice(code=code, params=params, text=text)
+
+
+# Een datadisk is vol vanaf zoveel procent
+DISK_FULL = 80
+
+
+def disk_notice(node: str, disk: Disk | None) -> Notice | None:
+    if disk and disk.total_bytes and disk.used_bytes / disk.total_bytes > DISK_FULL / 100:
+        text = f"{node}: datadisk meer dan {DISK_FULL} % vol."
+        return notice("disk_full", text, node=node, percent=DISK_FULL)
+    return None
+
+
 class ClusterStatus(BaseModel):
     status: Literal["ok", "degraded", "down"]
     nodes: list[NodeStatus]
     database: list[DbMember]
     messages: list[str]
+    notices: list[Notice] = []
 
 
 async def _get_json(client: httpx.AsyncClient, url: str) -> dict | None:
@@ -127,30 +152,38 @@ async def database_members(
     return []
 
 
-def summarize(nodes: list[NodeStatus], members: list[DbMember]) -> tuple[str, list[str]]:
-    messages: list[str] = []
+def summarize(nodes: list[NodeStatus], members: list[DbMember]) -> tuple[str, list[Notice]]:
+    """De status van het cluster en de meldingen erbij (code, params en tekst)."""
+    notices: list[Notice] = []
     leaders = [m for m in members if m.role == "leader"]
     sync = [m for m in members if m.role in ("sync_standby", "quorum_standby")]
     etcd_up = sum(n.checks["etcd"] for n in nodes)
 
     if not leaders:
-        messages.append("De database heeft geen primary.")
+        notices.append(notice("db_no_primary", "De database heeft geen primary."))
     if leaders and not sync:
-        messages.append("Geen synchrone standby: schrijven wacht tot er een terug is.")
+        notices.append(
+            notice("db_no_sync", "Geen synchrone standby: schrijven wacht tot er een terug is.")
+        )
     if etcd_up * 2 <= len(nodes):
-        messages.append("etcd heeft geen meerderheid; failover is niet mogelijk.")
+        notices.append(
+            notice("etcd_no_quorum", "etcd heeft geen meerderheid; failover is niet mogelijk.")
+        )
     if not any(n.seaweed_leader for n in nodes):
-        messages.append("SeaweedFS heeft geen leidende master.")
+        notices.append(notice("storage_no_leader", "SeaweedFS heeft geen leidende master."))
     for n in nodes:
         down = [k for k, ok in n.checks.items() if not ok]
         if down:
-            messages.append(f"{n.name}: {', '.join(down)} onbereikbaar.")
-        if n.disk and n.disk.total_bytes and n.disk.used_bytes / n.disk.total_bytes > 0.8:
-            messages.append(f"{n.name}: datadisk meer dan 80 % vol.")
+            parts = ", ".join(down)
+            notices.append(
+                notice("node_down", f"{n.name}: {parts} onbereikbaar.", node=n.name, parts=parts)
+            )
+        if full := disk_notice(n.name, n.disk):
+            notices.append(full)
 
     if not leaders or etcd_up * 2 <= len(nodes):
-        return "down", messages
-    return ("degraded" if messages else "ok"), messages
+        return "down", notices
+    return ("degraded" if notices else "ok"), notices
 
 
 async def cluster_status(client: httpx.AsyncClient, nodes: list[tuple[str, str]]) -> ClusterStatus:
@@ -158,5 +191,11 @@ async def cluster_status(client: httpx.AsyncClient, nodes: list[tuple[str, str]]
         asyncio.gather(*(node_status(client, name, ip) for name, ip in nodes)),
         database_members(client, nodes),
     )
-    status, messages = summarize(list(statuses), members)
-    return ClusterStatus(status=status, nodes=list(statuses), database=members, messages=messages)
+    status, notices = summarize(list(statuses), members)
+    return ClusterStatus(
+        status=status,
+        nodes=list(statuses),
+        database=members,
+        messages=[n.text for n in notices],
+        notices=notices,
+    )

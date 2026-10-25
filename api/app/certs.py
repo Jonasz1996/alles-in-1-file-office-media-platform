@@ -97,7 +97,18 @@ def _write(path: Path, data: bytes, mode: int = 0o644) -> None:
     os.replace(tmp, path)
 
 
-def _hint(error: Exception) -> str:
+# De code bij elke uitleg in HINTS (de web-app vertaalt op code; params.detail is de fout zelf)
+HINT_CODES = {
+    "dns": "acme_dns",
+    "connection": "acme_connection",
+    "unauthorized": "acme_unauthorized",
+    "rateLimited": "acme_rate_limited",
+    "rejectedIdentifier": "acme_rejected",
+}
+
+
+def _problem(error: Exception) -> tuple[str, dict[str, str], str]:
+    """(code, params, Nederlandse tekst) bij een mislukte aanvraag, voor /beheer."""
     if isinstance(error, AcmeError):
         kinds = [error.type.rsplit(":", 1)[-1]]
         kinds += [
@@ -105,11 +116,19 @@ def _hint(error: Exception) -> str:
         ]
         for kind in kinds:
             if kind in HINTS:
-                return f"{HINTS[kind]} ({error})"
-        return str(error)
+                return HINT_CODES[kind], {"detail": str(error)}, f"{HINTS[kind]} ({error})"
+        return "acme_error", {"detail": str(error)}, str(error)
     if isinstance(error, httpx.HTTPError):
-        return f"Let's Encrypt is niet bereikbaar: {error}"
-    return f"Onverwachte fout: {error}"
+        return (
+            "acme_unreachable",
+            {"detail": str(error)},
+            f"Let's Encrypt is niet bereikbaar: {error}",
+        )
+    return "unexpected", {"detail": str(error)}, f"Onverwachte fout: {error}"
+
+
+def _hint(error: Exception) -> str:
+    return _problem(error)[2]
 
 
 def _in_words(seconds: int) -> str:
@@ -135,12 +154,17 @@ class CertManager:
         self.not_after: datetime | None = None
         self.state = "uit"  # uit, bezig, actief, fout
         self.error: str | None = None
+        # Dezelfde fout als code met params (de web-app vertaalt op code); None zonder fout
+        self.error_code: str | None = None
+        self.error_params: dict[str, str] = {}
         self.last_attempt: datetime | None = None
         self.next_check: datetime | None = None
         # Zet serve.py zodra de https-listener draait; pas dan sturen we http door.
         self.serving = False
         # Zet serve.py als de https-poort niet open gaat (http draait dan gewoon door)
         self.listener_error: str | None = None
+        self.listener_error_code: str | None = None
+        self.listener_error_params: dict[str, str | int] = {}
         self.has_cert = asyncio.Event()
         self._wake = asyncio.Event()
         self._failures = 0
@@ -247,7 +271,7 @@ class CertManager:
         self.config = config
         self._failures = 0
         self._retry_not_before = None
-        self.error = None
+        self.error, self.error_code, self.error_params = None, None, {}
         self.wake()
 
     def retry_now(self) -> None:
@@ -310,7 +334,7 @@ class CertManager:
                 return 0
             self._failures += 1
             self.state = "fout"
-            self.error = _hint(e)
+            self.error_code, self.error_params, self.error = _problem(e)
             delay = min(RETRY_MAX, RETRY_START * 2 ** (self._failures - 1))
             if isinstance(e, AcmeError) and e.retry_after:
                 # Let's Encrypt zegt zelf wanneer het weer mag
@@ -320,7 +344,7 @@ class CertManager:
             return delay
         self._failures = 0
         self._retry_not_before = None
-        self.error = None
+        self.error, self.error_code, self.error_params = None, None, {}
         self.state = "actief"
         log.info("Certificaat voor %s binnen, geldig tot %s", self.cert_domain, self.not_after)
         return CHECK_INTERVAL
@@ -355,9 +379,13 @@ class CertManager:
             "staging": self.config.staging,
             "state": self.state,
             "error": self.error,
+            "error_code": self.error_code,
+            "error_params": self.error_params,
             "active": self.active,
             "serving": self.serving,
             "listener_error": self.listener_error,
+            "listener_error_code": self.listener_error_code if self.listener_error else None,
+            "listener_error_params": self.listener_error_params if self.listener_error else {},
             "cert_domain": self.cert_domain,
             "expires_at": self.not_after,
             "renew_at": self.renew_at,

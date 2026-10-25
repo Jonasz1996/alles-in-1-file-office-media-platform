@@ -230,6 +230,8 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
             except OSError as e:
                 reason = BIND_ERRORS.get(e.errno, e.strerror or str(e))
                 error = f"De https-poort {port} gaat niet open: {reason}."
+                # Voor /beheer: dezelfde fout als code met params (de web-app vertaalt op code)
+                code: tuple[str, dict] = ("listener_bind", {"port": port, "reason": reason})
             else:
                 server = Server(
                     _config(
@@ -246,6 +248,7 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
                 except (Exception, SystemExit) as e:  # uvicorn stopt met sys.exit
                     detail = "zie de log" if isinstance(e, SystemExit) else str(e)
                     error = f"De https-server op poort {port} stopte: {detail}."
+                    code = ("listener_stopped", {"port": port, "detail": detail})
                 finally:
                     sock.close()
                     https = None
@@ -253,6 +256,7 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
             if error != certs.listener_error:
                 log.error("%s Http werkt gewoon door.", error)
             certs.listener_error = error
+            certs.listener_error_code, certs.listener_error_params = code
             await asyncio.sleep(LISTENER_RETRY)
 
     https_task = asyncio.create_task(serve_https(), name="https")
