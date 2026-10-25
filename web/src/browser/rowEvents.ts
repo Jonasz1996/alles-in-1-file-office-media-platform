@@ -57,12 +57,32 @@ export function rowElement(container: HTMLElement | null, i: number): HTMLElemen
   return container?.querySelector<HTMLElement>(`[data-index="${i}"]`) ?? null;
 }
 
+/**
+ * Mag een uitgestelde focusRow de focus nog verzetten? Alleen als hij niet intussen ergens anders
+ * heen ging: nog op dezelfde plek (from), in de lijst, of nergens (body, bijv. omdat de rij met de
+ * focus wegscrolde). Een menu of dialoog die in de tussentijd openging, houdt de focus.
+ */
+export function mayMoveFocus(
+  now: Element | null,
+  from: Element | null,
+  container: Pick<Node, "contains"> | null,
+  body: Element | null,
+): boolean {
+  return now === null || now === from || now === body || !!container?.contains(now);
+}
+
 /** Zet de focus op rij i zodra die er staat (na het scrollen: één of twee frames later). */
-export function focusRow(container: RefObject<HTMLElement | null>, i: number, tries = 4): void {
+export function focusRow(
+  container: RefObject<HTMLElement | null>,
+  i: number,
+  tries = 4,
+  from: Element | null = document.activeElement,
+): void {
   requestAnimationFrame(() => {
+    if (!mayMoveFocus(document.activeElement, from, container.current, document.body)) return;
     const el = rowElement(container.current, i);
     if (el) el.focus({ preventScroll: true });
-    else if (tries > 0) focusRow(container, i, tries - 1);
+    else if (tries > 0) focusRow(container, i, tries - 1, from);
   });
 }
 

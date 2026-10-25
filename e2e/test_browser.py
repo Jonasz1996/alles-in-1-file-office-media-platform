@@ -305,7 +305,7 @@ def test_delen_op_een_selectie_opent_de_deeldialoog(
     pick(page, "a.txt")
     bar = page.get_by_role("toolbar", name="Selectie")
     bar.get_by_role("button", name="Delen…", exact=True).click()
-    expect(page.get_by_role("dialog", name='"a.txt" delen')).to_be_visible()
+    expect(page.get_by_role("dialog", name="a.txt delen", exact=True)).to_be_visible()
 
 
 DROP_FILE_JS = """

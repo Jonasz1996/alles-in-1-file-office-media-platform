@@ -186,12 +186,13 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
     void action.run(nodes, { ...env, ui });
   }
 
-  function openMenu(nodes: readonly FileNode[], at: OpenMenu["at"]): void {
+  /** restore: waar de focus na Escape heen gaat (anders wat hem nu heeft). */
+  function openMenu(nodes: readonly FileNode[], at: OpenMenu["at"], restore?: Element | null): void {
     const items = actionMenuItems(nodes, env, (action) => runAction(action, nodes));
     if (!items.length) return;
     const label =
       nodes.length === 1 ? t("browser.row.actions", { name: nodes[0].name }) : t("browser.selection.menu");
-    setMenu({ items, at, label, restore: document.activeElement });
+    setMenu({ items, at, label, restore: restore ?? document.activeElement });
   }
 
   // --- selecteren en de focus ---
@@ -348,8 +349,10 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
       label: t("browser.keys.menu"),
       when: () => target.length > 0,
       run: () => {
+        // De rij met de focus, ook als die er pas in het volgende frame echt op staat (End en
+        // meteen Shift+F10): Escape zet hem daar terug
         const el = rowElement(listRef.current, focusIndex);
-        openMenu(target, el ?? listRef.current ?? document.body);
+        openMenu(target, el ?? listRef.current ?? document.body, el);
       },
     },
     {
