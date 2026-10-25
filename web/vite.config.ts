@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { dirname, join, relative, resolve } from "node:path";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import react from "@vitejs/plugin-react";
-import { build, defineConfig, type Plugin, type ResolvedConfig } from "vite";
+import { build, defineConfig, type Plugin, type ResolvedConfig, type Rolldown } from "vite";
 
 // De service worker en het voorcomprimeren draaien pas na de build van de app (closeBundle):
 // de service worker heeft de lijst van de schil nodig, en die staat pas in het manifest van
@@ -124,6 +124,43 @@ function swPlugin(): Plugin {
 /** Waar chunkGraph de graaf van de laatste build neerzet (buiten dist: wordt niet geserveerd). */
 export const CHUNK_GRAPH = "node_modules/.tmp/platform-chunks.json";
 
+/** De chunks van een bundel met hun modules en imports, als regels van de chunkgraaf. */
+function graphOf(root: string, bundle: Rolldown.OutputBundle): Record<string, unknown> {
+  const chunks: Record<string, unknown> = {};
+  for (const [fileName, item] of Object.entries(bundle)) {
+    if (item.type !== "chunk") continue;
+    chunks[fileName] = {
+      isEntry: item.isEntry,
+      isDynamicEntry: item.isDynamicEntry,
+      facade: item.facadeModuleId ? relative(root, item.facadeModuleId).split("\\").join("/") : null,
+      modules: item.moduleIds.map((id) => relative(root, id).split("\\").join("/")),
+      imports: item.imports,
+      dynamicImports: item.dynamicImports,
+      css: [...(item.viteMetadata?.importedCss ?? [])],
+    };
+  }
+  return chunks;
+}
+
+/** De chunks van de web workers (new Worker(new URL(...))). Vite bouwt elke worker in een
+ * eigen bundel die als asset in de app-build belandt; zonder deze regels kende de graaf
+ * die bestanden niet en kon het budget de worker niet meten. */
+const workerChunks: Record<string, unknown> = {};
+
+function workerGraph(): Plugin {
+  let root = "";
+  return {
+    name: "platform-worker-graph",
+    apply: "build",
+    configResolved(c) {
+      root = c.root;
+    },
+    generateBundle(_options, bundle) {
+      Object.assign(workerChunks, graphOf(root, bundle));
+    },
+  };
+}
+
 /** De chunks van de build met hun modules en imports, voor scripts/budget.mjs. */
 function chunkGraph(): Plugin {
   let config: ResolvedConfig;
@@ -133,20 +170,12 @@ function chunkGraph(): Plugin {
     configResolved(c) {
       config = c;
     },
+    buildStart() {
+      // De workers bouwt Vite pas tijdens deze build: wat er van een vorige build staat weg
+      for (const key of Object.keys(workerChunks)) delete workerChunks[key];
+    },
     writeBundle(_options, bundle) {
-      const chunks: Record<string, unknown> = {};
-      for (const [fileName, item] of Object.entries(bundle)) {
-        if (item.type !== "chunk") continue;
-        chunks[fileName] = {
-          isEntry: item.isEntry,
-          isDynamicEntry: item.isDynamicEntry,
-          facade: item.facadeModuleId ? relative(config.root, item.facadeModuleId).split("\\").join("/") : null,
-          modules: item.moduleIds.map((id) => relative(config.root, id).split("\\").join("/")),
-          imports: item.imports,
-          dynamicImports: item.dynamicImports,
-          css: [...(item.viteMetadata?.importedCss ?? [])],
-        };
-      }
+      const chunks = { ...workerChunks, ...graphOf(config.root, bundle) };
       const path = resolve(config.root, CHUNK_GRAPH);
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, JSON.stringify({ outDir: config.build.outDir, chunks }, null, 1));
@@ -191,6 +220,9 @@ function precompress(): Plugin {
 
 export default defineConfig({
   plugins: [react(), chunkGraph(), swPlugin(), precompress()],
+  worker: {
+    plugins: () => [workerGraph()],
+  },
   define: {
     "import.meta.env.VITE_SW": JSON.stringify(KILL_SWITCH ? "off" : "on"),
   },
