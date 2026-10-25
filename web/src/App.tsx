@@ -333,7 +333,14 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
     if (redirect) navigate("/gedeeld", { replace: true });
   }, [redirect]);
 
-  if (boot.state === "offline") return <OfflineScreen onRetry={check} />;
+  // Ook offline de overlays: de offline-balk van AppStatus (P1) hoort juist hier
+  if (boot.state === "offline")
+    return (
+      <>
+        <OfflineScreen onRetry={check} />
+        <Overlays />
+      </>
+    );
   if (boot.state === "checking") return <Loading />;
   if (!user)
     return (
