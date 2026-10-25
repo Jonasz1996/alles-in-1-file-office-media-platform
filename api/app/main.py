@@ -1,5 +1,8 @@
 import asyncio
+import gzip
 import logging
+import mimetypes
+import os
 import re
 import signal
 import threading
@@ -12,7 +15,7 @@ from urllib.parse import quote
 import anyio
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
 from app import __version__, errors, events, jobs, photometa, previews
@@ -68,6 +71,7 @@ SECURITY_HEADERS = [
     (b"x-content-type-options", b"nosniff"),
     (b"x-frame-options", b"DENY"),
     (b"referrer-policy", b"same-origin"),
+    (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
 ]
 HSTS = (b"strict-transport-security", b"max-age=31536000")
 ACME_PATH = "/.well-known/acme-challenge/"
@@ -75,11 +79,31 @@ ACME_PATH = "/.well-known/acme-challenge/"
 # ervoor zou zo'n verbinding anders voor altijd openblijven. Uploads geven zelf al na 60 s
 # op (storage.CHUNK_TIMEOUT); dit geldt voor alle andere verzoeken.
 BODY_TIMEOUT = 90.0
-# Alleen voor de web-app zelf; gedownloade bestanden krijgen hun eigen beleid.
+# Alleen voor de web-app zelf; gedownloade bestanden krijgen hun eigen beleid. Geen
+# 'unsafe-inline' voor stijlen: de app zet geen <style> of style-attribuut in de HTML (React
+# style-props lopen via CSSOM en vallen daar niet onder).
 WEB_CSP = (
-    "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
-    "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; object-src 'none'; "
+    "base-uri 'self'; frame-ancestors 'none'; manifest-src 'self'; worker-src 'self'"
 )
+# Bestanden van de web-app en hun media-type; de rest via mimetypes
+WEB_TYPES = {
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".css": "text/css",
+    ".html": "text/html",
+    ".svg": "image/svg+xml",
+    ".json": "application/json",
+    ".webmanifest": "application/manifest+json",
+    ".ico": "image/x-icon",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".woff2": "font/woff2",
+    ".txt": "text/plain",
+}
+# Voorgecomprimeerde varianten (vite.config.ts, precompress), in volgorde van voorkeur
+ENCODINGS = (("br", ".br"), ("gzip", ".gz"))
+IMMUTABLE = "public, max-age=31536000, immutable"
 
 
 def _bounded(receive):
@@ -157,6 +181,116 @@ class Edge:
             await send(message)
 
         await self.app(scope, _bounded(receive), send_with_headers)
+
+
+def _header(scope, name: bytes) -> str:
+    for key, value in scope.get("headers", []):
+        if key == name:
+            return value.decode("latin-1")
+    return ""
+
+
+def accepted_codings(header: str) -> dict[str, float]:
+    """Accept-Encoding als {codering: q}; "*" staat voor elke codering die niet genoemd is."""
+    out: dict[str, float] = {}
+    for part in header.split(","):
+        name, _, params = part.strip().partition(";")
+        name = name.strip().lower()
+        if not name:
+            continue
+        q = 1.0
+        for param in params.split(";"):
+            key, _, value = param.strip().partition("=")
+            if key.strip().lower() == "q":
+                try:
+                    q = float(value)
+                except ValueError:
+                    q = 0.0
+        out[name] = max(0.0, min(q, 1.0))
+    return out
+
+
+def accepts(codings: dict[str, float], coding: str) -> float:
+    """De q-waarde voor deze codering (0 = niet welkom)."""
+    if coding in codings:
+        return codings[coding]
+    return codings.get("*", 0.0)
+
+
+# --- JSON comprimeren (alleen lijsten zonder geheimen) ---
+
+# Alleen lijstantwoorden zonder tokens of ondertekende adressen (BREACH): nooit /auth, previews
+# of de live stroom
+JSON_COMPRESSIBLE = re.compile(
+    r"^/api/v1/(files/[^/]+/children|files/root|search|trash(/overview)?|shared-with-me"
+    r"|files/lookup)$"
+)
+JSON_MIN_BYTES = 8 * 1024
+# Daarboven comprimeert een thread (zlib laat de GIL los), niet de event loop
+JSON_THREAD_BYTES = 64 * 1024
+JSON_LEVEL = 6
+
+
+def _gzip(body: bytes) -> bytes:
+    # mtime=0: altijd dezelfde uitvoer, en gzip.compress laat het dan in één keer aan zlib over
+    return gzip.compress(body, compresslevel=JSON_LEVEL, mtime=0)
+
+
+class JsonCompression:
+    """Comprimeert grote JSON-lijsten met gzip als de client dat wil (bouwontwerp keuze 22)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] != "http"
+            or scope["method"] not in ("GET", "POST")
+            or not JSON_COMPRESSIBLE.match(scope["path"])
+            or accepts(accepted_codings(_header(scope, b"accept-encoding")), "gzip") <= 0
+        ):
+            return await self.app(scope, receive, send)
+
+        start: dict | None = None
+        parts: list[bytes] = []
+        passthrough = False
+
+        async def wrapped(message):
+            nonlocal start, passthrough
+            if passthrough:
+                return await send(message)
+            if message["type"] == "http.response.start":
+                headers = {k.lower(): v for k, v in message.get("headers", [])}
+                kind = headers.get(b"content-type", b"").split(b";")[0].strip()
+                if kind != b"application/json" or b"content-encoding" in headers:
+                    passthrough = True
+                    return await send(message)
+                start = message
+                return None
+            if message["type"] != "http.response.body" or start is None:
+                return await send(message)
+            parts.append(message.get("body", b""))
+            if message.get("more_body", False):
+                return None
+            body = b"".join(parts)
+            headers = [
+                (k, v) for k, v in start.get("headers", []) if k.lower() != b"content-length"
+            ]
+            if len(body) >= JSON_MIN_BYTES:
+                if len(body) > JSON_THREAD_BYTES:
+                    body = await anyio.to_thread.run_sync(_gzip, body)
+                else:
+                    body = _gzip(body)
+                vary = [v for k, v in headers if k.lower() == b"vary"]
+                headers = [(k, v) for k, v in headers if k.lower() != b"vary"]
+                vary_value = b", ".join([*vary, b"Accept-Encoding"])
+                headers += [(b"content-encoding", b"gzip"), (b"vary", vary_value)]
+            headers.append((b"content-length", str(len(body)).encode()))
+            await send({**start, "headers": headers})
+            await send({"type": "http.response.body", "body": body})
+            return None
+
+        await self.app(scope, receive, wrapped)
 
 
 @contextmanager
@@ -244,7 +378,8 @@ app = FastAPI(
     docs_url="/api/docs",
     lifespan=lifespan,
 )
-app.add_middleware(Edge)
+app.add_middleware(JsonCompression)
+app.add_middleware(Edge)  # de buitenste: beveiligingsheaders op elk antwoord
 app.add_exception_handler(RequestValidationError, errors.invalid_input)
 app.include_router(auth.router)
 app.include_router(files.router)
@@ -306,22 +441,75 @@ async def acme_challenge(token: str, request: Request) -> PlainTextResponse:
     return PlainTextResponse(answer)
 
 
+def _etag(st: os.stat_result) -> str:
+    return f'W/"{st.st_mtime_ns}-{st.st_size}"'
+
+
+def _etag_matches(header: str, etag: str) -> bool:
+    """If-None-Match vergelijkt zwak (W/ telt niet mee); "*" past altijd."""
+    wanted = etag.removeprefix("W/")
+    for tag in header.split(","):
+        tag = tag.strip()
+        if tag == "*" or tag.removeprefix("W/") == wanted:
+            return True
+    return False
+
+
+def _web_file(request: Request, file: Path, rel: str) -> Response:
+    """Eén bestand van de web-app: voorgecomprimeerd als dat kan, met ETag en 304."""
+    media_type = WEB_TYPES.get(file.suffix.lower()) or mimetypes.guess_type(file.name)[0]
+    immutable = Path(rel).parts[:1] == ("assets",)
+    headers = {
+        "Cache-Control": IMMUTABLE if immutable else "no-cache",
+        "Content-Security-Policy": WEB_CSP,
+    }
+    original = file.stat()
+    chosen, stat_result = file, original
+    variants = []
+    for coding, ext in ENCODINGS:
+        try:
+            st = file.with_name(file.name + ext).stat()
+        except OSError:
+            continue
+        # Een variant die ouder is dan het origineel (het origineel is daarna veranderd) niet
+        if st.st_mtime_ns >= original.st_mtime_ns:
+            variants.append((coding, file.with_name(file.name + ext), st))
+    if variants:
+        headers["Vary"] = "Accept-Encoding"
+        codings = accepted_codings(request.headers.get("accept-encoding", ""))
+        # Bij gelijke q houdt max() de eerste: br vóór gzip
+        coding, path, st = max(variants, key=lambda v: accepts(codings, v[0]))
+        if accepts(codings, coding) > 0:
+            chosen, stat_result = path, st
+            headers["Content-Encoding"] = coding
+    etag = _etag(stat_result)
+    headers["ETag"] = etag
+    if _etag_matches(request.headers.get("if-none-match", ""), etag):
+        return Response(status_code=304, headers=headers)
+    return FileResponse(
+        chosen,
+        media_type=media_type or "application/octet-stream",
+        headers=headers,
+        stat_result=stat_result,
+    )
+
+
 @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
-async def web_app(path: str, settings: Annotated[Settings, Depends(get_settings)]):
-    """Serveert de gebouwde web-app; onbekende paden krijgen index.html (client-side routing)."""
-    if path.startswith("api/"):
+async def web_app(
+    path: str, request: Request, settings: Annotated[Settings, Depends(get_settings)]
+):
+    """Serveert de gebouwde web-app; onbekende paden krijgen index.html (client-side routing).
+    Een ontbrekend bestand onder assets/ of met een extensie geeft 404: een oud chunk na een
+    nieuwe versie moet hard falen (de app herlaadt dan), niet als index.html terugkomen."""
+    if path == "api" or path.startswith("api/"):
         raise errors.fail(404, "not_found", "Niet gevonden")
     root = settings.web_dist.resolve()
     index = root / "index.html"
     if not index.exists():
         raise errors.fail(404, "web_app_missing", "Web-app niet gebouwd")
     candidate = (root / path).resolve()
-    if path and candidate.is_file() and candidate.is_relative_to(root):
-        immutable = Path(path).parts[:1] == ("assets",)
-        cache = "public, max-age=31536000, immutable" if immutable else "no-cache"
-        return FileResponse(
-            candidate, headers={"Cache-Control": cache, "Content-Security-Policy": WEB_CSP}
-        )
-    return FileResponse(
-        index, headers={"Cache-Control": "no-cache", "Content-Security-Policy": WEB_CSP}
-    )
+    if path and candidate.is_relative_to(root) and candidate.is_file():
+        return _web_file(request, candidate, path)
+    if Path(path).parts[:1] == ("assets",) or Path(path).suffix:
+        raise errors.fail(404, "not_found", "Niet gevonden")
+    return _web_file(request, index, "index.html")

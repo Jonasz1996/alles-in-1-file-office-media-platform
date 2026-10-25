@@ -41,4 +41,10 @@ async def test_beveiligingsheaders(client, settings):
     (settings.web_dist / "index.html").write_text("<html>app</html>")
     r = await client.head("/")
     assert r.status_code == 200
-    assert "default-src 'self'" in r.headers["content-security-policy"]
+    csp = r.headers["content-security-policy"]
+    assert csp == (
+        "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; object-src 'none'; "
+        "base-uri 'self'; frame-ancestors 'none'; manifest-src 'self'; worker-src 'self'"
+    )
+    assert "unsafe-inline" not in csp
+    assert r.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
