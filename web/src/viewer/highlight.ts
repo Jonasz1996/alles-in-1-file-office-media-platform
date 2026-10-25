@@ -102,21 +102,42 @@ function isDigit(c: number): boolean {
 }
 
 function lineStartsOf(text: string): { lineStarts: Uint32Array; lineCount: number } {
+  const n = text.length;
   let count = 1;
-  let at = text.indexOf("\n");
-  while (at >= 0) {
-    count++;
-    at = text.indexOf("\n", at + 1);
-  }
+  for (let i = 0; i < n; i++) if (text.charCodeAt(i) === 10) count++;
   const lineStarts = new Uint32Array(count + 1);
   let line = 1;
-  at = text.indexOf("\n");
-  while (at >= 0) {
-    lineStarts[line++] = at + 1;
-    at = text.indexOf("\n", at + 1);
-  }
-  lineStarts[count] = text.length + 1;
+  for (let i = 0; i < n; i++) if (text.charCodeAt(i) === 10) lineStarts[line++] = i + 1;
+  lineStarts[count] = n + 1;
   return { lineStarts, lineCount: count };
+}
+
+/** Snel nagaan of een woord een sleutelwoord kan zijn: lengte en eerste letter. */
+interface KeywordIndex {
+  min: number;
+  max: number;
+  first: Uint8Array;
+}
+
+const keywordIndexes = new WeakMap<ReadonlySet<string>, KeywordIndex>();
+
+function keywordIndex(lang: Lang): KeywordIndex {
+  let index = keywordIndexes.get(lang.keywords);
+  if (!index) {
+    index = { min: Infinity, max: 0, first: new Uint8Array(128) };
+    for (const word of lang.keywords) {
+      index.min = Math.min(index.min, word.length);
+      index.max = Math.min(LONGEST_KEYWORD, Math.max(index.max, word.length));
+      const c = word.charCodeAt(0);
+      if (c < 128) index.first[c] = 1;
+      if (lang.caseless) {
+        index.first[word.toUpperCase().charCodeAt(0)] = 1;
+        index.first[word.toLowerCase().charCodeAt(0)] = 1;
+      }
+    }
+    keywordIndexes.set(lang.keywords, index);
+  }
+  return index;
 }
 
 /** Verzamelt gekleurde stukken; een stuk dat aansluit op een van dezelfde soort, verlengt dat. */
@@ -192,9 +213,14 @@ function code(text: string, lang: Lang): Spans {
   // Op het eerste teken vooraf filteren: startsWith alleen als dat teken klopt
   const lineFirst = lang.line.map((p) => p.charCodeAt(0));
   const blockFirst = lang.block.map(([open]) => open.charCodeAt(0));
+  const kw = keywordIndex(lang);
   let i = 0;
   scan: while (i < n) {
     const c = text.charCodeAt(i);
+    if (c === 32 || c === 10 || c === 9 || c === 13) {
+      i++; // witruimte: niets te kleuren
+      continue;
+    }
     for (let p = 0; p < lineFirst.length; p++) {
       if (c === lineFirst[p] && text.startsWith(lang.line[p], i)) {
         let end = text.indexOf("\n", i);
@@ -249,7 +275,7 @@ function code(text: string, lang: Lang): Spans {
     if (isIdentStart(c)) {
       let j = i + 1;
       while (j < n && isIdent(text.charCodeAt(j))) j++;
-      if (j - i <= LONGEST_KEYWORD) {
+      if (j - i >= kw.min && j - i <= kw.max && c < 128 && kw.first[c]) {
         const word = text.slice(i, j);
         if (lang.keywords.has(lang.caseless ? word.toLowerCase() : word)) out.add(KEYWORD, i, j);
       }
