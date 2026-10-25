@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import io
 import re
+import time
 import zipfile
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -303,3 +306,128 @@ def test_delen_op_een_selectie_opent_de_deeldialoog(
     bar = page.get_by_role("toolbar", name="Selectie")
     bar.get_by_role("button", name="Delen…", exact=True).click()
     expect(page.get_by_role("dialog", name='"a.txt" delen')).to_be_visible()
+
+
+DROP_FILE_JS = """
+(name) => {
+  // Een bestand van buiten de browser loslaten op de pagina (synthetische DataTransfer)
+  const dt = new DataTransfer();
+  dt.items.add(new File(["gesleept"], name, { type: "text/plain" }));
+  const target = document.querySelector("#inhoud [role=grid]");
+  for (const type of ["dragenter", "dragover", "drop"]) {
+    const init = { bubbles: true, cancelable: true, dataTransfer: dt };
+    target.dispatchEvent(new DragEvent(type, init));
+  }
+  return dt.types.includes("Files");
+}
+"""
+
+
+def test_uploaden_met_knop_mapknop_en_loslaten_komt_in_de_lijst(
+    server: Server,
+    user_factory: Callable[..., Account],
+    context_as: Callable[..., Any],
+    tmp_path: Path,
+) -> None:
+    """Uploaden vanuit de bestandsbrowser (P3 in P2): wat klaar is, staat zonder herladen in de
+    lijst, en de lade (niet de pagina) toont de uploads."""
+    user = user_factory()
+    tree = small_tree(server, user)
+    page = open_folder(context_as(user), tree.work)
+
+    # De knop Uploaden
+    with page.expect_file_chooser() as chooser:
+        page.get_by_role("button", name="Uploaden", exact=True).click()
+    chooser.value.set_files([{"name": "los.txt", "mimeType": "text/plain", "buffer": b"los"}])
+    expect(row(page, "los.txt")).to_be_visible()
+
+    # De knop Map uploaden
+    root = tmp_path / "Reis"
+    (root / "Dag 1").mkdir(parents=True)
+    (root / "plan.txt").write_text("plan")
+    (root / "Dag 1" / "foto.txt").write_text("foto")
+    with page.expect_file_chooser() as chooser:
+        page.get_by_role("button", name="Map uploaden", exact=True).click()
+    assert chooser.value.element.get_attribute("webkitdirectory") is not None
+    chooser.value.set_files(root)
+    expect(row(page, "Reis")).to_be_visible()
+    lade = page.get_by_role("region", name="Uploads", exact=True)
+    expect(lade).to_have_count(0, timeout=30_000)
+    names = children(server, user, tree.work)
+    assert "Reis" in names and "los.txt" in names
+
+    # Loslaten van buiten de browser, op de lijst
+    assert page.evaluate(DROP_FILE_JS, "gesleept.txt") is True
+    expect(row(page, "gesleept.txt")).to_be_visible()
+    expect(lade).to_have_count(0, timeout=30_000)
+    assert "gesleept.txt" in children(server, user, tree.work)
+    assert page.locator("#inhoud .upload-name, #inhoud ul.uploads").count() == 0
+
+    # In de nieuwe map staat de inhoud, ook als lijst
+    row(page, "Reis").get_by_text("Reis", exact=True).click()
+    expect(row(page, "Dag 1")).to_be_visible()
+    expect(row(page, "plan.txt")).to_be_visible()
+
+
+def test_duizend_uploaden_geeft_een_children_verzoek_en_geen_eigen_lijst(
+    server: Server,
+    user_factory: Callable[..., Account],
+    context_as: Callable[..., Any],
+    tmp_path: Path,
+) -> None:
+    """Klaar-als van P2: 1.000 bestanden uploaden in de open map geeft één children-verzoek
+    (plus pagina's op de achtergrond); wat binnenkomt, komt via lookup in de lijst. De
+    bestandsbrowser toont zelf geen lijst van uploads: dat doet de lade (P3)."""
+    n = 1000
+    user = user_factory()
+    tree = small_tree(server, user)
+    names = [f"f-{i:04d}.txt" for i in range(n)]
+    for name in names:
+        (tmp_path / name).write_text(name)
+
+    context = context_as(user)
+    page = context.new_page()
+    first: list[str] = []  # children zonder after: het begin van een (her)laadronde
+    pages: list[str] = []  # children met after: pagina's op de achtergrond
+    lookups: list[str] = []
+    prefix = f"/api/v1/files/{tree.work}/children"
+
+    def seen(request: Any) -> None:
+        url = urlparse(request.url)
+        if request.method == "GET" and url.path == prefix:
+            (pages if "after" in parse_qs(url.query) else first).append(request.url)
+        elif request.method == "POST" and url.path == "/api/v1/files/lookup":
+            lookups.append(request.url)
+
+    page.on("request", seen)
+    page.goto(f"/map/{tree.work}")
+    expect(row(page, "a.txt")).to_be_visible()
+    assert len(first) == 1
+
+    with page.expect_file_chooser() as chooser:
+        page.get_by_role("button", name="Uploaden", exact=True).click()
+    chooser.value.set_files([tmp_path / name for name in names])
+    started = time.monotonic()
+
+    # De lade toont de uploads; de bestandsbrowser zelf niet (geen eigen lijst in #inhoud)
+    lade = page.get_by_role("region", name="Uploads", exact=True)
+    expect(lade).to_be_visible()
+    assert page.locator("#inhoud .upload-name, #inhoud ul.uploads").count() == 0
+
+    grid = page.locator("#inhoud [role=grid][aria-rowcount]")
+    total = 5 + n  # Doel, Archief, a.txt, b.txt, c.txt en de nieuwe
+    expect(grid).to_have_attribute("aria-rowcount", str(total + 1), timeout=180_000)
+    expect(lade).to_have_count(0, timeout=60_000)
+    assert len(children(server, user, tree.work)) == total
+    expect(row(page, "f-0000.txt")).to_be_visible()
+    assert page.locator(ROWS).count() <= 200
+    assert page.locator("#inhoud .upload-name, #inhoud ul.uploads").count() == 0
+
+    # Nog even wachten op late gebeurtenissen: ook die mogen geen herlaadronde geven
+    time.sleep(1)
+    elapsed = time.monotonic() - started
+    assert len(first) == 1, f"{len(first)} children-verzoeken zonder after: {first}"
+    # Gebeurtenissen worden 150 ms verzameld voor één lookup: hooguit één lookup per 150 ms
+    # (plus wat speling voor een lookup die al liep), niet één per bestand
+    assert 0 < len(lookups) <= elapsed / 0.15 + 10, f"{len(lookups)} lookups in {elapsed:.1f} s"
+    print(f"\nchildren: 1 + {len(pages)} achtergrond, lookups: {len(lookups)} in {elapsed:.1f} s")
