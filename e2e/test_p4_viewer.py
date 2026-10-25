@@ -266,6 +266,63 @@ def test_terug_sluit_en_deep_link(context_as, library: Library):
     expect(page).to_have_url(re.compile(f"/map/{library.folder}$"))
 
 
+def test_raster_opent_de_viewer_en_bladert_door_de_map(context_as, library: Library):
+    """Ook vanuit het raster van Bestanden (P2): openen, ← en → door de map, Terug sluit en
+    het raster blijft staan."""
+    page = open_folder(context_as, library)
+    page.keyboard.press("g")
+    grid = page.locator("#inhoud [data-view=grid]")
+    expect(grid).to_be_visible()
+    grid.get_by_text("foto.jpg", exact=True).click()
+    expect(page.get_by_role("dialog", name="foto.jpg", exact=True)).to_be_visible()
+    expect(page).to_have_url(re.compile(rf"bestand={library.ids['foto.jpg']}"))
+    page.keyboard.press("ArrowRight")
+    expect(page.get_by_role("dialog", name="liedje.mp3", exact=True)).to_be_visible()
+    expect(page).to_have_url(re.compile(rf"bestand={library.ids['liedje.mp3']}"))
+    page.keyboard.press("ArrowLeft")
+    page.keyboard.press("ArrowLeft")
+    expect(page.get_by_role("dialog", name="film.mp4", exact=True)).to_be_visible()
+    # Bladeren vervangt de stap in de geschiedenis: één keer Terug sluit
+    page.go_back()
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    expect(page).to_have_url(re.compile(f"/map/{library.folder}$"))
+    expect(grid).to_be_visible()
+
+
+def test_zoekresultaten_openen_de_viewer(context_as, library: Library):
+    """Vanuit Zoeken (P2): ← en → gaan door de resultaten, Terug sluit en de zoekopdracht
+    blijft; een link met ?bestand= opent meteen."""
+    page = context_as(library.owner).new_page()
+    page.goto("/zoeken?q=no")
+    results = page.locator("#inhoud")
+    expect(results.get_by_text("notities.md", exact=True)).to_be_visible()
+    expect(results.get_by_text("notulen.odt", exact=True)).to_be_visible()
+    names = [
+        n
+        for n in results.locator("[data-open]").all_inner_texts()
+        if n.strip() in ("notities.md", "notulen.odt")
+    ]
+    assert len(names) == 2, names
+    first, second = (n.strip() for n in names)
+    results.get_by_text(first, exact=True).click()
+    expect(page.get_by_role("dialog", name=first, exact=True)).to_be_visible()
+    page.keyboard.press("ArrowRight")
+    expect(page.get_by_role("dialog", name=second, exact=True)).to_be_visible()
+    expect(page).to_have_url(re.compile(rf"q=no.*bestand={library.ids[second]}"))
+    page.go_back()
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    expect(page).to_have_url(re.compile(r"/zoeken\?q=no$"))
+    expect(results.get_by_text(first, exact=True)).to_be_visible()
+    # Deep link: de viewer meteen, sluiten laat de resultaten staan
+    page.goto(f"/zoeken?q=no&bestand={library.ids['notulen.odt']}")
+    viewer = page.get_by_role("dialog", name="notulen.odt", exact=True)
+    expect(viewer).to_be_visible()
+    viewer.get_by_role("button", name="Sluiten", exact=True).click()
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    expect(page).to_have_url(re.compile(r"/zoeken\?q=no$"))
+    expect(results.get_by_text("notities.md", exact=True)).to_be_visible()
+
+
 def test_pdf_bladeren_en_inhoudsopgave(context_as, library: Library):
     page = open_folder(context_as, library)
     viewer = open_file(page, "boek.pdf")
