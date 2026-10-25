@@ -14,6 +14,7 @@ import { markReady } from "./perf";
 import { Button } from "./ui/Button";
 import { EmptyState } from "./ui/EmptyState";
 import { Field } from "./ui/Field";
+import { useScope, useShortcuts } from "./ui/keys";
 import { PageTitle } from "./ui/PageTitle";
 import { Spinner } from "./ui/Spinner";
 import "./login.css";
@@ -133,6 +134,22 @@ export function Login({ onLoggedIn, message }: { onLoggedIn: (u: User) => void; 
     // Terug in het wachtwoordveld (de knop zelf verdwijnt)
     requestAnimationFrame(() => passwordRef.current?.focus());
   }
+
+  // Sneltoetsen (docs/fase-3/toetsenbord-p1.md); ook vanuit de velden
+  useScope("login");
+  useShortcuts(
+    [
+      { combo: "escape", run: back, label: t("auth.back"), when: () => step === "code", allowInInput: true },
+      {
+        combo: "alt+shift+p",
+        run: () => setShowPassword((v) => !v),
+        label: t("auth.showPassword"),
+        when: () => step === "login",
+        allowInInput: true,
+      },
+    ],
+    { scope: "login" },
+  );
 
   if (offline) {
     return (
