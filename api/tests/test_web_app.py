@@ -168,3 +168,23 @@ def test_accept_encoding_lezen():
     assert accepts(codings, "br") == 0.0
     assert accepts(codings, "gzip") == 0.3
     assert accepts({}, "gzip") == 0.0
+
+
+def test_nginx_conf_heeft_dezelfde_headers():
+    """De losse web-image (web/nginx.conf) zet dezelfde CSP en beveiligingsheaders als de API,
+    in elke location (add_header in een location vervangt die van daarboven)."""
+    import re
+    from pathlib import Path
+
+    from app.main import SECURITY_HEADERS
+
+    conf = (Path(__file__).resolve().parents[2] / "web" / "nginx.conf").read_text()
+    locations = len(re.findall(r"^\s*location ", conf, re.M))
+    assert locations >= 4
+    assert conf.count(f'add_header Content-Security-Policy "{EXACT_CSP}" always;') == locations
+    for name, value in SECURITY_HEADERS:
+        header = "-".join(p.capitalize() for p in name.decode().split("-"))
+        line = f'add_header {header} "{value.decode()}" always;'
+        assert conf.count(line) == locations, line
+    assert "gzip_static on;" in conf
+    assert "try_files $uri =404;" in conf
