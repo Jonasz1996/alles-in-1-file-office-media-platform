@@ -71,8 +71,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: Teksten buiten t() (overzicht, faalt niet)
-        run: npm run check:i18n
+      - name: Teksten buiten t() (ontwerp §5.4, faalt bij een melding)
+        run: npm run check:i18n -- --strict
       - name: Groottebudget (ontwerp §4.1)
         run: npm run budget
 
