@@ -71,6 +71,76 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Teksten buiten t() (overzicht, faalt niet)
+        run: npm run check:i18n
+      - name: Groottebudget (ontwerp §4.1)
+        run: npm run budget
+
+  e2e:
+    name: e2e (Playwright tegen de echte server)
+    runs-on: ubuntu-latest
+    needs: [web]
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: ffmpeg voor de previews van video's
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --frozen
+      - name: Productie-build van de web-app (die serveert python -m app.serve)
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Chromium voor Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      - run: uv run --with playwright pytest ../e2e -m "not perf"
+
+  perf:
+    name: Prestaties (alleen rapport)
+    runs-on: ubuntu-latest
+    needs: [web]
+    # Runners zijn te wisselend voor een harde poort; in de sandbox en bij de integratie wel
+    continue-on-error: true
+    env:
+      E2E_PERF_REPORT_ONLY: "1"
+      E2E_PERF_OUT: ${{ github.workspace }}/perf-results
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: ffmpeg voor de previews van video's
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --frozen
+      - name: Productie-build van de web-app
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Chromium voor Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      - name: Alle prestatiepoorten (ontwerp §4)
+        run: uv run --with playwright python ../e2e/perf/run_all.py --out-dir "$E2E_PERF_OUT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prestaties
+          path: perf-results
+          if-no-files-found: warn
 
   infra:
     name: Infra (lint, templates en images)
@@ -138,6 +208,14 @@ jobs:
             context: api
           - name: web
             context: web
+    env:
+      # Exact de CSP van api/app/main.py (WEB_CSP) en web/nginx.conf
+      WEB_CSP: >-
+        default-src 'self'; img-src 'self' data: blob:; style-src 'self'; object-src 'none';
+        base-uri 'self'; frame-ancestors 'none'; manifest-src 'self'; worker-src 'self'
+      # import- of export-syntaxis (een service worker als klassiek script heeft die niet)
+      MODULE_SYNTAX: >-
+        (^|[;}])[[:space:]]*(import[[:space:]]*[{*"]|import[[:space:]]+[a-zA-Z_$]|export[[:space:]]*[{*]|export[[:space:]]+[a-z])
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -145,7 +223,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           push: false
-          load: ${{ matrix.name == 'platform' }}
+          load: ${{ matrix.name != 'api' }}
           tags: platform-${{ matrix.name }}:ci
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
@@ -157,10 +235,37 @@ jobs:
           curl -fsS localhost:8080/ | grep -q '<div id="root">'
           curl -fsS localhost:8080/bestanden | grep -q '<div id="root">'
           curl -fsS localhost:8080/api/v1/auth/status | grep -q '"setup_required":true'
-          curl -fsSI localhost:8080/ | grep -qi '^content-security-policy:'
+          curl -fsSI localhost:8080/ | tr -d '\r' | grep -qixF "content-security-policy: $WEB_CSP"
+          # Een ontbrekend chunk is 404, nooit index.html
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/assets/nope.js)" = 404
+          # De service worker: een los script zonder import of export, als text/javascript
+          curl -fsSI localhost:8080/sw.js | tr -d '\r' | grep -qi '^content-type: text/javascript'
+          curl -fsS localhost:8080/sw.js -o "$RUNNER_TEMP/sw.js"
+          if grep -Eq "$MODULE_SYNTAX" "$RUNNER_TEMP/sw.js"; then
+            echo "sw.js bevat een import of export" && exit 1
+          fi
+          # Voorgecomprimeerd: brotli als de browser het vraagt
+          curl -fsSI -H 'Accept-Encoding: br' localhost:8080/ | tr -d '\r' | grep -qi '^content-encoding: br'
           curl -fsS -X POST localhost:8080/api/v1/auth/setup -H 'Content-Type: application/json' \
             -d '{"email":"ci@example.com","display_name":"CI","password":"lang-genoeg-wachtwoord"}' \
             | grep -q access_token
       - name: Logs van de platform-container
         if: always() && matrix.name == 'platform'
         run: docker logs platform-ci || true
+      - name: Web-image starten en controleren
+        if: matrix.name == 'web'
+        run: |
+          docker run --rm platform-web:ci nginx -t
+          docker run -d --name web-ci -p 8081:8080 platform-web:ci
+          for _ in $(seq 1 30); do curl -fs -o /dev/null localhost:8081/ && break; sleep 1; done
+          curl -fsS localhost:8081/map/iets | grep -q '<div id="root">'
+          curl -fsSI localhost:8081/ | tr -d '\r' | grep -qixF "content-security-policy: $WEB_CSP"
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8081/assets/nope.js)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8081/nope.png)" = 404
+          curl -fsSI localhost:8081/sw.js | tr -d '\r' | grep -qi '^content-type: text/javascript'
+          curl -fsSI localhost:8081/sw.js | tr -d '\r' | grep -qi '^cache-control: no-cache'
+          curl -fsSI localhost:8081/manifest.webmanifest | tr -d '\r' | grep -qi '^content-type: application/manifest+json'
+          curl -fsSI -H 'Accept-Encoding: gzip' localhost:8081/ | tr -d '\r' | grep -qi '^content-encoding: gzip'
+      - name: Logs van de web-container
+        if: always() && matrix.name == 'web'
+        run: docker logs web-ci || true
