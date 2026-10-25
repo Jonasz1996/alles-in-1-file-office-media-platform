@@ -74,13 +74,47 @@ async def test_naam_bezet_en_map_weg(client, admin):
     await client.delete(f"/api/v1/files/{folder}", headers=jonas)
     await put(client, jonas, root_id, "x.txt", b"ander")
 
-    # x eerst: zijn map ligt nog in de prullenbak, dus naar de hoofdmap, met een vrije naam
-    r = await restore(client, jonas, [x, folder])
+    # x alleen: zijn map ligt nog in de prullenbak, dus naar de hoofdmap, met een vrije naam
+    r = await restore(client, jonas, [x])
     results = r.json()["results"]
-    assert [x["ok"] for x in results] == [True, True]
+    assert [x["ok"] for x in results] == [True]
     assert results[0]["node"]["parent_id"] == root_id
     assert results[0]["node"]["name"] == "x (1).txt"
-    assert results[1]["node"]["parent_id"] == root_id
+    r = await restore(client, jonas, [folder])
+    assert r.json()["results"][0]["node"]["parent_id"] == root_id
+
+
+@pytest.mark.anyio
+async def test_een_map_en_wat_erin_lag_samen_terug(client, admin, monkeypatch):
+    """Ligt een map en iets daaronder allebei in de prullenbak (in één batch/trash, met dezelfde
+    deleted_at), dan gaat de map eerst terug, in welke volgorde de ids ook komen: zo komt wat
+    erin lag terug in de map en niet in de hoofdmap. Ook over de stukken van 500 heen."""
+    jonas, _ = admin
+    monkeypatch.setattr(trash, "BATCH", 2)
+    root_id = (await root(client, jonas))["folder"]["id"]
+    reis = await mkdir(client, jonas, root_id, "Reis")
+    dag = await mkdir(client, jonas, reis, "Dag 1")
+    foto = (await put(client, jonas, dag, "Reis foto.txt", b"f")).json()["id"]
+    los = (await put(client, jonas, root_id, "los.txt", b"l")).json()["id"]
+    r = await client.post(
+        "/api/v1/batch/trash", json={"ids": [foto, dag, los, reis]}, headers=jonas
+    )
+    assert [x["ok"] for x in r.json()["results"]] == [True] * 4
+
+    r = await restore(client, jonas, [foto, dag, los, reis])
+    results = r.json()["results"]
+    # In de volgorde van het verzoek, elk op zijn oude plek
+    assert [x["id"] for x in results] == [foto, dag, los, reis]
+    assert [(x["ok"], x["node"]["parent_id"]) for x in results] == [
+        (True, dag),
+        (True, reis),
+        (True, root_id),
+        (True, root_id),
+    ]
+    assert [x["node"]["name"] for x in results] == ["Reis foto.txt", "Dag 1", "los.txt", "Reis"]
+    children = (await root(client, jonas))["children"]
+    assert sorted(c["name"] for c in children) == ["Reis", "los.txt"]
+    assert (await client.get("/api/v1/trash", headers=jonas)).json() == []
 
 
 @pytest.mark.anyio

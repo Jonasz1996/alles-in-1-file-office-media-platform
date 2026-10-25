@@ -73,6 +73,18 @@ async def restore_node(session: AsyncSession, user: User, node_id: uuid.UUID) ->
     return node
 
 
+async def depths(session: AsyncSession, user: User, ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+    """Hoe diep elk van deze ids (van user) onder de hoofdmap ligt. Eén query per 500 ids."""
+    found: dict[uuid.UUID, int] = {}
+    for chunk in batched(ids, BATCH):
+        up = access.ancestry(Node.id.in_(chunk) & (Node.owner_id == user.id))
+        rows = await session.execute(
+            select(up.c.origin, func.max(up.c.depth)).group_by(up.c.origin)
+        )
+        found.update({origin: depth for origin, depth in rows})
+    return found
+
+
 @router.get("/trash")
 async def list_trash(user: CurrentUser, session: Session) -> list[NodeOut]:
     rows = (
@@ -129,9 +141,13 @@ async def restore_many(
 ) -> Results:
     """Veel nodes tegelijk terugzetten: per id een ItemResult (ok met de node, of de code
     waarom niet). Per 500 één transactie onder BlobStore.lock; wat lukte blijft gelukt, ook
-    als een id verderop faalt."""
+    als een id verderop faalt. Ondiep voor diep: een map gaat terug vóór wat eronder ligt (en
+    ook in de prullenbak ligt), anders komt dat in de hoofdmap terecht."""
     results: dict[uuid.UUID, errors.ItemResult] = {}
-    for chunk in batched(dict.fromkeys(body.ids), BATCH):
+    ids = list(dict.fromkeys(body.ids))
+    depth = await depths(session, user, ids)
+    ids.sort(key=lambda node_id: depth.get(node_id, 0))
+    for chunk in batched(ids, BATCH):
         await session.commit()  # niet met een databaseverbinding op het slot wachten
         restored: list[Node] = []
         async with blobs.lock:
