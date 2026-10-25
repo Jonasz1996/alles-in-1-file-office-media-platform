@@ -16,9 +16,7 @@ const en: Translation<typeof nl> = {
   download: "Download",
   trash: "Move to trash",
   trashed: { one: "{n} item moved to the trash", other: "{n} items moved to the trash" },
-  trashTooMany: "At most {max} at a time can go to the trash (no bulk action yet)",
   undo: "Undo",
-  zipNotYet: "Downloading as a zip is not available on this server yet",
   empty: {
     title: "No photos yet",
     text: "Photos and videos you upload in Files appear here on the date they were taken.",

@@ -53,10 +53,14 @@ async def test_oude_foto_krijgt_exif_en_datum(client, admin, settings):
     assert node.taken_day == 20240701
     assert node.taken_at.replace(tzinfo=None) == datetime(2024, 7, 1, 12, 30, 5)
 
-    # De web-app ziet de EXIF (POST /previews), zonder GPS
+    # De viewer ziet de EXIF (GET /files/{id}/preview, P4), zonder GPS; de lijst (POST
+    # /previews) blijft licht en heeft geen exif
+    r = await client.get(f"/api/v1/files/{node_id}/preview", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["meta"]["exif"]["make"] == "Fabrikant"
+    no_gps(r.json())
     r = await client.post("/api/v1/previews", json={"node_ids": [str(node_id)]}, headers=headers)
-    meta = r.json()[str(node_id)]["meta"]
-    assert meta["exif"]["make"] == "Fabrikant"
+    assert "exif" not in r.json()[str(node_id)]["meta"]
     no_gps(r.json())
     # En de tijdlijn de nieuwe datum
     r = await client.get("/api/v1/photos", params={"month": "2024-07"}, headers=headers)

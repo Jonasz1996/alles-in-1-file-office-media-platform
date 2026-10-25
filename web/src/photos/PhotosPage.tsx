@@ -3,8 +3,7 @@
 // scrubber meteen kloppen; de foto's van een maand pas als hij in beeld komt.
 
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../api";
-import { crossApi, isNotBuilt } from "../crossApi";
+import { crossApi } from "../crossApi";
 import { useReloadOn } from "../events";
 import { errorText, t } from "../i18n";
 import { Link } from "../links";
@@ -27,8 +26,6 @@ import { buildLayout } from "./timeline";
 import "./photos.css";
 
 const HEADER_H = 48;
-/** Zoveel tegelijk naar de prullenbak zonder de bulk-API (P2) */
-const ONE_BY_ONE = 200;
 
 export default function PhotosPage(_: RouteProps): JSX.Element {
   useScope("photos");
@@ -103,33 +100,24 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
 
   async function trash(list: string[]) {
     if (list.length === 0) return;
-    let done = 0;
+    let done: string[];
     try {
       const r = await crossApi.trash(list);
-      done = r.results.filter((x) => x.ok).length;
+      done = r.results.filter((x) => x.ok).map((x) => x.id);
+      const failed = r.results.find((x) => !x.ok);
+      if (failed) toast(errorText(failed), { kind: "error" });
     } catch (e) {
-      if (!isNotBuilt(e) || list.length > ONE_BY_ONE) {
-        toast(isNotBuilt(e) ? t("photos.trashTooMany", { max: ONE_BY_ONE }) : errorText(e), { kind: "error" });
-        return;
-      }
-      // Nog zonder de bulk-API: één voor één
-      for (const id of list) {
-        try {
-          await api.trash(id);
-          done++;
-        } catch (err) {
-          toast(errorText(err), { kind: "error" });
-        }
-      }
+      toast(errorText(e), { kind: "error" });
+      return;
     }
     b.clear();
     void loadMonths();
-    if (done)
-      toast(t("photos.trashed", { n: done }), {
+    if (done.length)
+      toast(t("photos.trashed", { n: done.length }), {
         kind: "ok",
         action: {
           label: t("photos.undo"),
-          run: () => void crossApi.restore(list).then(loadMonths, (e: unknown) => toast(errorText(e))),
+          run: () => void crossApi.restore(done).then(loadMonths, (e: unknown) => toast(errorText(e))),
         },
       });
   }

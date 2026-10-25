@@ -15,9 +15,7 @@ export default {
   download: "Downloaden",
   trash: "Naar prullenbak",
   trashed: { one: "{n} item naar de prullenbak", other: "{n} items naar de prullenbak" },
-  trashTooMany: "Hooguit {max} tegelijk naar de prullenbak (nog zonder bulkactie)",
   undo: "Ongedaan maken",
-  zipNotYet: "Downloaden als zip kan nog niet op deze server",
   empty: {
     title: "Nog geen foto's",
     text: "Foto's en video's die je uploadt in Bestanden, verschijnen hier op de datum waarop ze gemaakt zijn.",

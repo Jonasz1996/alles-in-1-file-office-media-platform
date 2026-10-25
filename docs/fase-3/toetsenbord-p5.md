@@ -22,7 +22,7 @@ keer Tab gaat eruit. De pijltjes en Home/End handelt het raster zelf af (geen sc
 | Mod+A | Alles selecteren (hooguit 10.000; daarboven alleen het begin, met een melding) |
 | Escape | De selectie wissen |
 
-In de viewer (P4; nu de plaatshouder van P0) gaan ← / → naar de vorige en volgende foto van de
+In de viewer (P4) gaan ← / → naar de vorige en volgende foto van de
 tijdlijn; aan het eind van een geladen maand laadt de volgende maand en gaat hij verder.
 Sluiten zet de focus terug op de cel van de laatst bekeken foto.
 
@@ -84,6 +84,6 @@ In de dialoog staat de focus eerst op "Downloaden".
 
 `e2e/test_p5_photos.py` doet het meeste hiervan met het toetsenbord: Tab-stop, → , Spatie,
 Shift+→, Escape, A (toevoegen aan album), Enter en ←/→ in de viewer, End/Home op de scrubber,
-S (deeldialoog) op een album, Enter en ←/→ op de publieke albumpagina, en Delete met
+S (deeldialoog) en de zip (Downloaden) op een album, Enter en ←/→ op de publieke albumpagina, en Delete met
 Ongedaan maken op de tijdlijn. `e2e/perf/scroll.py` (tijdlijn) controleert ArrowDown, PageDown
 en End op 50.000 foto's.

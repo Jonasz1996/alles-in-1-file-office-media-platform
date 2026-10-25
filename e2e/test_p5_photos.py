@@ -3,12 +3,13 @@ Shift en Ctrl/Cmd, "Toevoegen aan album", de viewer met ←/→, een album delen
 gebruiker (alleen bekijken) en een publieke albumlink. Alles met het toetsenbord waar dat kan
 (docs/fase-3/toetsenbord-p5.md).
 
-De zip van een album maakt P2 (archive/link): zolang dat endpoint er niet is, meldt de pagina
-dat; met P2 erin komt er een download. Beide zijn goed."""
+De zip van een album gaat via P2's archive/link: de test downloadt hem en kijkt wat erin zit."""
 
 from __future__ import annotations
 
+import io
 import re
+import zipfile
 from datetime import timedelta
 
 import pytest
@@ -146,20 +147,18 @@ def test_tijdlijn_selecteren_album_en_delen(server, library, context_as, new_con
     ).to_have_count(4)
     page.locator(FOCUSED).focus()
     page.keyboard.press("s")
-    share = page.get_by_role("dialog", name='"Zomer" delen', exact=True)
+    share = page.get_by_role("dialog", name="Zomer delen", exact=True)
     expect(share).to_be_visible()
     page.keyboard.press("Escape")
     expect(share).to_be_hidden()
 
-    # Downloaden als zip: met P2 een download, zonder een melding
-    download_button = page.get_by_role("button", name="Downloaden", exact=True)
-    if _archive_built(server, fien):
-        with page.expect_download() as zipped:
-            download_button.click()
-        assert zipped.value.suggested_filename.endswith(".zip")
-    else:
-        download_button.click()
-        expect(toast(page, "Downloaden als zip kan nog niet op deze server")).to_be_visible()
+    # Downloaden als zip (P2: archive/link): het hele album, de vier foto's en niets anders
+    with page.expect_download() as zipped:
+        page.get_by_role("button", name="Downloaden", exact=True).click()
+    assert zipped.value.suggested_filename == "Zomer.zip"
+    with zipfile.ZipFile(zipped.value.path()) as zf:
+        assert zf.testzip() is None
+        assert sorted(zf.namelist()) == [f"foto-0000{i}.webp" for i in (5, 6, 7, 8)]
 
     # Delen met Bas (alleen bekijken; schrijven kan een album niet)
     r = server.call(
@@ -175,8 +174,10 @@ def test_tijdlijn_selecteren_album_en_delen(server, library, context_as, new_con
     # --- Bas: ziet het onder Gedeeld met mij en bekijkt een foto, zonder iets te wijzigen ---
     other = context_as(bas).new_page()
     other.goto("/gedeeld")
-    expect(other.get_by_role("button", name="Zomer", exact=True)).to_be_visible()
-    other.goto(f"/album/{album_id}")
+    # Een album opent op zijn eigen pagina (/album/:id), niet in de viewer
+    other.get_by_role("link", name="Zomer", exact=True).click()
+    expect(other).to_have_url(re.compile(f"/album/{album_id}$"))
+    expect(other.get_by_role("dialog")).to_have_count(0)
     expect(other.get_by_role("heading", name="Zomer", level=1)).to_be_visible()
     expect(other.get_by_text("van Fien Foto", exact=False)).to_be_visible()
     for name in ("Delen…", "Hernoemen", "Album verwijderen"):
@@ -193,6 +194,12 @@ def test_tijdlijn_selecteren_album_en_delen(server, library, context_as, new_con
     assert item == "0"
     ids = server.call(bas, "GET", f"/api/v1/albums/{album_id}/ids", expect=200).json()["ids"]
     server.call(bas, "POST", f"/api/v1/files/{ids[0]}/download-link", expect=200)
+    # Ook de zip van het album: de foto's zijn van Fien, Bas leest ze via het gedeelde album
+    url = server.call(
+        bas, "POST", "/api/v1/archive/link", json={"ids": ids, "name": "Zomer"}, expect=200
+    ).json()["url"]
+    with zipfile.ZipFile(io.BytesIO(server.request("GET", url, expect=200).content)) as zf:
+        assert sorted(zf.namelist()) == [f"foto-0000{i}.webp" for i in (5, 6, 7, 8)]
     for path in (f"/api/v1/albums/{album_id}/items", f"/api/v1/albums/{album_id}/items/remove"):
         r = server.call(bas, "POST", path, json={"node_ids": ids[:1]})
         assert r.status_code in (403, 404), (path, r.status_code)
@@ -219,12 +226,6 @@ def test_tijdlijn_selecteren_album_en_delen(server, library, context_as, new_con
     with anon.expect_download() as download:
         photo.get_by_role("button", name="Downloaden", exact=True).click()
     assert download.value.suggested_filename == "foto-00006.webp"
-
-
-def _archive_built(server, account) -> bool:
-    """Is archive/link (P2) er al? Dan downloadt de knop in plaats van een melding."""
-    r = server.call(account, "POST", "/api/v1/archive/link", json={"ids": [], "name": "x"})
-    return not (r.status_code in (404, 405, 501) and "code" not in (r.json() or {}))
 
 
 def test_naar_prullenbak_en_terug(server, library, context_as):

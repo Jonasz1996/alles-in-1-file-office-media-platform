@@ -14,7 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { crossApi, isNotBuilt, MAX_BATCH_IDS } from "../crossApi";
+import { crossApi, MAX_BATCH_IDS } from "../crossApi";
 import { errorText, t } from "../i18n";
 import { Button } from "../ui/Button";
 import { useShortcuts } from "../ui/keys";
@@ -160,6 +160,17 @@ export function usePhotoBrowser(o: PhotoBrowserOptions) {
     [control],
   );
 
+  // Na het sluiten de focus op de cel van de laatst bekeken foto. Pas als de viewer weg is: de
+  // viewer (P4) zet bij het verdwijnen zelf de focus terug op wat hij bij het openen vond, en
+  // zolang de modale dialoog open is, kan niets daarbuiten de focus krijgen.
+  const refocus = useRef<number | null>(null);
+  useEffect(() => {
+    if (viewIndex >= 0 || refocus.current === null) return;
+    const at = refocus.current;
+    refocus.current = null;
+    control.current?.focusItem(at);
+  }, [viewIndex, control]);
+
   const viewer =
     block && viewIndex >= 0 ? (
       <Suspense fallback={null}>
@@ -174,9 +185,9 @@ export function usePhotoBrowser(o: PhotoBrowserOptions) {
           }}
           onClose={() => {
             const at = viewIndex;
+            refocus.current = at;
             setViewing(null);
             follow(at);
-            control.current?.focusItem(at);
           }}
           onNeedMore={(direction) => {
             const s = direction === 1 ? block.b + 1 : block.a - 1;
@@ -235,7 +246,7 @@ export function usePhotoBrowser(o: PhotoBrowserOptions) {
   };
 }
 
-/** Een link maken voor een zip en die downloaden. */
+/** Een link maken voor een zip (P2: archive/link) en die downloaden. */
 export async function downloadZip(ids: string[], name: string): Promise<void> {
   if (ids.length === 0) return;
   try {
@@ -245,8 +256,7 @@ export async function downloadZip(ids: string[], name: string): Promise<void> {
     a.download = `${name}.zip`;
     a.click();
   } catch (e) {
-    if (isNotBuilt(e)) toast(t("photos.zipNotYet"));
-    else toast(errorText(e), { kind: "error" });
+    toast(errorText(e), { kind: "error" });
   }
 }
 

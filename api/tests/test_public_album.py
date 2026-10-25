@@ -54,8 +54,15 @@ async def test_album_via_link(client, world, settings):
         "/api/v1/public/previews", json={"node_ids": [w["a"], w["los"], w["album"]]}, headers=key
     )
     assert set(r.json()) == {w["a"]}
-    assert r.json()[w["a"]]["meta"]["exif"]["model"] == "Camera X1"
+    assert "exif" not in r.json()[w["a"]]["meta"]  # de lijst blijft licht (P4)
     no_gps(r.json())
+    # De EXIF komt in de viewer (GET /public/preview/{id}, P4), ook in een album, zonder GPS
+    r = await client.get(f"/api/v1/public/preview/{w['a']}", headers=key)
+    assert r.status_code == 200, r.text
+    assert r.json()["meta"]["exif"]["model"] == "Camera X1"
+    no_gps(r.json())
+    r = await client.get(f"/api/v1/public/preview/{w['los']}", headers=key)
+    assert r.status_code == 404
     # Geen map: children weigert
     r = await client.get("/api/v1/public/children", headers=key)
     assert r.status_code == 422 and code_of(r) == "album"

@@ -231,15 +231,29 @@ def test_bewegende_gif_als_origineel(context_as, library: Library):
 
 
 def test_gegevens_zonder_locatie(context_as, library: Library):
-    """I opent het paneel met gegevens; er staat geen locatie in."""
+    """I opent het paneel met gegevens: de camera-EXIF (P5's render_meta) staat in de groep
+    Foto, met Camera en Belichting; een locatie staat nergens, ook niet buiten het paneel."""
     page = open_folder(context_as, library)
     viewer = open_file(page, "foto.jpg")
     page.keyboard.press("i")
     info = viewer.get_by_role("complementary", name="Gegevens")
     expect(info).to_be_visible()
     expect(info.get_by_text(re.compile(r"^2\.?400 × 1\.?600 pixels$"))).to_be_visible()
-    expect(info).not_to_contain_text("Locatie")
-    expect(info).not_to_contain_text("GPS")
+    photo = info.locator("section").filter(has=page.get_by_role("heading", name="Foto"))
+    expect(photo).to_be_visible()
+
+    def value(label: str):
+        return photo.locator("div").filter(has=page.locator("dt", has_text=label)).locator("dd")
+
+    expect(value("Camera")).to_have_text("Testmerk Model X")
+    expect(value("Objectief")).to_have_text("Testlens 35mm")
+    expect(value("Belichting")).to_have_text("f/2,8 · 1/250 s · ISO 200 · 35 mm")
+    expect(value("Datum")).to_contain_text("2024")
+    # Geen locatie: niet in het paneel en nergens op de pagina (geen label, geen coördinaten)
+    whole = page.locator("body")
+    for text in ("Locatie", "Location", "GPS", "52°", "52,375", "52.375", "4°", "4,883", "4.883"):
+        expect(info).not_to_contain_text(text)
+        expect(whole).not_to_contain_text(text)
     page.keyboard.press("i")
     expect(info).to_be_hidden()
 
