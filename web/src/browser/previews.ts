@@ -4,7 +4,7 @@
 // eens per 100 ms (de eerste meteen), het laatst gevraagde eerst (waar de gebruiker nu kijkt).
 // preview.ready en connected (na een onderbreking) verversen wat nodig is.
 
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { api, type FileNode, type Preview } from "../api";
 import { eventIds, liveEvents, type ServerEvent } from "../events";
 
@@ -182,6 +182,51 @@ export function useVisiblePreviews(nodes: readonly (FileNode | undefined)[], key
     previewCache.want(nodes);
   }, [key]);
   return version;
+}
+
+/** Previews worden per blok van zoveel plekken gevraagd (één POST per blok, niet per frame). */
+export const PREVIEW_BLOCK = 200;
+
+/**
+ * Welk deel van een lijst previews moet hebben als [start, end) zichtbaar is: het blok waar
+ * start in valt en minstens het volgende (scrollen gaat meestal door). Verandert alleen als je
+ * een blokgrens passeert, zodat snel scrollen een handvol verzoeken geeft in plaats van één per
+ * frame.
+ */
+export function previewWindow(start: number, end: number, count: number, block = PREVIEW_BLOCK): { from: number; to: number } {
+  const from = Math.max(0, Math.floor(start / block) * block);
+  const to = Math.min(count, Math.max(from + 2 * block, Math.ceil(end / block) * block));
+  return { from, to };
+}
+
+/**
+ * Previews voor een gevirtualiseerde lijst: get(i) geeft de node op plek i, [start, end) is
+ * zichtbaar. Vraagt per blok (previewWindow), het zichtbare deel eerst. version: de lijst
+ * veranderde (nieuwe pagina, live wijziging).
+ */
+export function useWindowPreviews(
+  get: (i: number) => FileNode | undefined,
+  start: number,
+  end: number,
+  count: number,
+  version: number,
+): number {
+  const previews = usePreviewVersion();
+  const { from, to } = previewWindow(start, end, count);
+  const latest = { get, start, end };
+  const ref = useRef(latest);
+  ref.current = latest;
+  useEffect(() => {
+    const { get: at, start: s, end: e } = ref.current;
+    const nodes: (FileNode | undefined)[] = [];
+    const a = Math.max(from, Math.min(s, to));
+    const b = Math.max(a, Math.min(e, to));
+    for (let i = a; i < b; i++) nodes.push(at(i));
+    for (let i = b; i < to; i++) nodes.push(at(i));
+    for (let i = from; i < a; i++) nodes.push(at(i));
+    previewCache.want(nodes);
+  }, [from, to, version]);
+  return previews;
 }
 
 /** Compat (SharedWithMe, Public): previews van een lijst, als object id → preview. */

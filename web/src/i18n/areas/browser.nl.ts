@@ -27,6 +27,10 @@ export default {
     confirm: "Maken",
     created: "Map {name} gemaakt",
   },
+  folder: {
+    share: "Deze map delen…",
+    download: "Deze map downloaden als zip",
+  },
   view: {
     label: "Weergave",
     list: "Lijst",
@@ -145,7 +149,7 @@ export default {
     pdf: "PDF",
     document: "Documenten",
     archive: "Archieven",
-    other: "Overig",
+    rest: "Overig",
   },
   picker: {
     mine: "Mijn bestanden",

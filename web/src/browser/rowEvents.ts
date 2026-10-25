@@ -11,6 +11,7 @@ import {
   type MouseEvent,
   type PointerEvent,
   type RefObject,
+  useEffect,
   useRef,
 } from "react";
 import { keyToMove, moveIndex } from "../ui/keys";
@@ -166,4 +167,32 @@ export function useRowEvents(
       latest.current.drag?.onDragEnd();
     },
   };
+}
+
+/** Zo lang na de laatste scrollstap telt de lijst nog als "aan het scrollen". */
+const SCROLL_IDLE_MS = 150;
+
+/**
+ * Tijdens het scrollen krijgt de lijst de klasse "is-scrolling" (geen pointer-events): dan
+ * schuift de inhoud onder de muis door zonder hover-stijlen, hit-tests en muisgebeurtenissen per
+ * frame. 150 ms na de laatste stap gaat hij er weer af.
+ */
+export function useScrollingClass(ref: RefObject<HTMLElement | null>): void {
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const done = () => {
+      timer = null;
+      ref.current?.classList.remove("is-scrolling");
+    };
+    const onScroll = () => {
+      if (timer === null) ref.current?.classList.add("is-scrolling");
+      else clearTimeout(timer);
+      timer = setTimeout(done, SCROLL_IDLE_MS);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [ref]);
 }

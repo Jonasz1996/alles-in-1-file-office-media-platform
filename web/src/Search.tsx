@@ -1,96 +1,168 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
-import { api, type Category, formatBytes, formatDate, type SearchQuery, type SearchResult, type Tag } from "./api";
+// Zoeken (/zoeken): op naam, soort of tag, in de eigen bestanden en wat met je gedeeld is. De
+// resultaten staan in dezelfde lijst als een map (FileList), met een kolom voor de map waar ze in
+// staan; een bestand opent in de viewer, een map opent zelf. Acties (contextmenu, ⋯ en
+// sneltoetsen) komen uit hetzelfde register als in Bestanden.
+
+import { type FormEvent, type JSX, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { api, type Category, type FileNode, type SearchHit, type SearchResult, searchParams, type Tag } from "./api";
+import { actionShortcuts } from "./browser/actionKeys";
+import { type ActionEnv, actionMenuItems, availability, type BrowserAction } from "./browser/actions";
+import { clipboard } from "./browser/clipboard";
+import { FileList } from "./browser/FileList";
+import { useBrowserUi } from "./browser/useBrowserUi";
 import { isGuest, useCurrentUser } from "./currentUser";
-import { navigate, type RouteProps } from "./router";
+import { errorText, t } from "./i18n";
+import { navigate, type RouteProps, useLocation } from "./router";
 import {
-  CATEGORY_LABELS,
+  CATEGORIES,
+  categoryLabel,
   folderHref,
   hasFilter,
   hitPath,
   MAX_LIMIT,
   parentHref,
-  pathLabel,
+  pathText,
   readSearch,
   searchHref,
 } from "./searchQuery";
 import { isShared } from "./sharing";
-import { TagChips } from "./Tags";
+import { Button } from "./ui/Button";
+import { useScope, useShortcuts } from "./ui/keys";
+import { Menu } from "./ui/Menu";
+import type { MenuItem } from "./ui/menu";
+import { PageTitle } from "./ui/PageTitle";
+import { clickSelect, keySelect, SelectionStore, useSelection } from "./ui/selection";
+import { toast } from "./ui/toast";
+import { useViewerParam, Viewer } from "./viewer";
 import "./files.css";
 import "./share.css";
+import "./browser/browser.css";
 
-/** Zoekveld boven in de bestandenlijst; de resultaten staan op /zoeken. */
-export function SearchBox() {
-  const [q, setQ] = useState("");
-  // Gasten hebben geen eigen bestanden; zoeken gaat dan door wat met hen gedeeld is
-  const label = isGuest(useCurrentUser()) ? "Zoeken in wat met je gedeeld is" : "Zoeken in je bestanden";
-  return (
-    <form
-      role="search"
-      className="search-box"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (q.trim()) navigate(searchHref({ q }));
-      }}
-    >
-      <input type="search" aria-label={label} placeholder={label} value={q} onChange={(e) => setQ(e.target.value)} />
-      <button type="submit">Zoeken</button>
-    </form>
-  );
-}
+// Het zoekveld boven in Bestanden staat in een eigen module (klein, in het chunk van Bestanden)
+export { SEARCH_INPUT_ID, SearchBox } from "./browser/SearchBox";
 
-/** Naar een andere zoekopdracht (navigate vergelijkt ook de query: dezelfde doet niets). */
-function goTo(href: string) {
-  navigate(href);
-}
-
-/** De zoekopdracht uit de adresbalk; volgt terug en vooruit. */
-function useSearchQuery(): SearchQuery {
-  const [query, setQuery] = useState(() => readSearch(window.location.search));
-  useEffect(() => {
-    const update = () => setQuery(readSearch(window.location.search));
-    window.addEventListener("popstate", update);
-    return () => window.removeEventListener("popstate", update);
-  }, []);
-  return query;
-}
-
-export default function Search(_: RouteProps) {
-  const query = useSearchQuery();
+export default function Search(_: RouteProps): JSX.Element {
+  useScope("browser");
+  const location = useLocation();
+  // ?bestand= (de viewer) hoort niet bij de zoekopdracht
+  const key = searchParams(readSearch(location.search));
+  const query = useMemo(() => readSearch(`?${key}`), [key]);
+  const user = useCurrentUser();
+  const me = user?.id ?? null;
   const [text, setText] = useState(query.q ?? "");
   const [result, setResult] = useState<SearchResult | null>(null);
   const [tags, setTags] = useState<Tag[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [selection] = useState(() => new SelectionStore());
+  const sel = useSelection(selection);
+  const [focusIndex, setFocusIndex] = useState(-1);
+  const [menu, setMenu] = useState<{ items: readonly MenuItem[]; at: { x: number; y: number } | HTMLElement; restore: Element | null } | null>(null);
+  const [viewing, setViewing] = useViewerParam();
+  const clip = useSyncExternalStore(clipboard.subscribe, clipboard.getSnapshot, clipboard.getSnapshot);
   const searches = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    setText(query.q ?? "");
+  const run = useCallback(() => {
     const seq = ++searches.current;
     if (!hasFilter(query)) {
       setResult(null);
       return;
     }
-    api
-      .search(query)
-      .then((r) => {
+    api.search(query).then(
+      (r) => {
         if (seq !== searches.current) return; // intussen een nieuwere zoekopdracht
         setResult(r);
         setError(null);
-      })
-      .catch((e: Error) => {
-        if (seq === searches.current) setError(e.message);
-      });
+      },
+      (e: unknown) => {
+        if (seq === searches.current) setError(errorText(e));
+      },
+    );
   }, [query]);
 
   useEffect(() => {
-    api
-      .tags()
-      .then(setTags)
-      .catch(() => {});
+    setText(query.q ?? "");
+    selection.clear();
+    setFocusIndex(-1);
+    run();
+  }, [run, query, selection]);
+
+  useEffect(() => {
+    api.tags().then(setTags, () => {});
   }, []);
 
-  function go(change: Partial<SearchQuery>) {
+  const hits: readonly SearchHit[] = result?.results ?? [];
+  const nodes = useMemo(() => hits.map((h) => h.node), [hits]);
+  const ids = useMemo(() => nodes.map((n) => n.id), [nodes]);
+  const hitOf = useMemo(() => new Map(hits.map((h) => [h.node.id, h])), [hits]);
+  const get = useCallback((i: number) => nodes[i], [nodes]);
+  const selected = useMemo(() => nodes.filter((n) => sel.selected.has(n.id)), [nodes, sel.selected]);
+  const focused = focusIndex >= 0 ? nodes[focusIndex] : undefined;
+  const target = selected.length ? selected : focused ? [focused] : [];
+
+  const env: ActionEnv = { folder: null, clip, me, guest: isGuest(user) };
+  const { ui, dialogs } = useBrowserUi({
+    folder: null,
+    me,
+    // Kopiëren of verplaatsen begint in de map van het eerste resultaat
+    startId: null,
+    openFile: (n) => setViewing(n.id),
+    // Wat veranderde, kan nu wel of niet meer bij de zoekopdracht passen: opnieuw zoeken
+    onUpsert: run,
+    onRemove: run,
+    onRefresh: run,
+  });
+
+  function runAction(action: BrowserAction, list: readonly FileNode[]): void {
+    const a = availability(action, list, env);
+    if (!a.visible) return;
+    if (!a.enabled) {
+      if (a.reason) toast(a.reason);
+      return;
+    }
+    void action.run(list, { ...env, ui });
+  }
+
+  function openMenu(list: readonly FileNode[], at: { x: number; y: number } | HTMLElement): void {
+    const items = actionMenuItems(list, env, (action) => runAction(action, list));
+    if (items.length) setMenu({ items, at, restore: document.activeElement });
+  }
+
+  const inList = () => !!listRef.current?.contains(document.activeElement);
+  useShortcuts(
+    [
+      ...actionShortcuts(target, env, runAction, inList),
+      {
+        combo: " ",
+        label: t("browser.keys.toggle"),
+        when: () => inList() && !!focused,
+        run: () => focused && selection.toggle(focused.id),
+      },
+      {
+        combo: "mod+a",
+        label: t("browser.keys.selectAll"),
+        when: () => ids.length > 0,
+        run: () => selection.selectAll(ids),
+      },
+      {
+        combo: "escape",
+        label: t("browser.keys.clear"),
+        when: () => sel.selected.size > 0,
+        run: () => selection.clear(),
+      },
+      {
+        combo: ["shift+f10", "contextmenu"],
+        label: t("browser.keys.menu"),
+        when: () => target.length > 0,
+        run: () => openMenu(target, listRef.current?.querySelector<HTMLElement>(`[data-index="${focusIndex}"]`) ?? document.body),
+      },
+    ],
+    { scope: "browser" },
+  );
+
+  function go(change: Partial<typeof query>) {
     // Een nieuwe zoekopdracht begint weer bij de eerste resultaten
-    goTo(searchHref({ ...query, limit: undefined, ...change }));
+    navigate(searchHref({ ...query, limit: undefined, ...change }));
   }
 
   function submit(e: FormEvent) {
@@ -99,106 +171,147 @@ export default function Search(_: RouteProps) {
   }
 
   const limit = query.limit ?? 50;
+  const files = useMemo(() => nodes.filter((n) => n.kind === "file"), [nodes]);
+  const viewIndex = viewing ? files.findIndex((n) => n.id === viewing) : -1;
+
+  const pathOf = useCallback(
+    (node: FileNode) => {
+      const hit = hitOf.get(node.id);
+      if (!hit) return null;
+      const href = parentHref(hit);
+      return (
+        <a
+          href={href}
+          tabIndex={-1}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            navigate(href);
+          }}
+        >
+          {pathText(hitPath(hit), isShared(node))}
+        </a>
+      );
+    },
+    [hitOf],
+  );
 
   return (
-    <main className="wide">
-      <h1>Zoeken</h1>
+    <main className="wide browser">
+      <PageTitle>{t("browser.searchTitle")}</PageTitle>
       <form className="search-form" role="search" onSubmit={submit}>
         <input
           type="search"
-          aria-label="Zoekwoorden"
-          placeholder="Naam of een deel ervan"
+          aria-label={t("browser.search.words")}
+          placeholder={t("browser.search.wordsPlaceholder")}
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
         <select
-          aria-label="Soort"
+          aria-label={t("browser.search.type")}
           value={query.type ?? ""}
           onChange={(e) => go({ q: text, type: e.target.value as Category | "" })}
         >
-          <option value="">Alle soorten</option>
-          {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
+          <option value="">{t("browser.search.allTypes")}</option>
+          {CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {categoryLabel(c)}
             </option>
           ))}
         </select>
-        <select aria-label="Tag" value={query.tag ?? ""} onChange={(e) => go({ q: text, tag: e.target.value })}>
-          <option value="">Alle tags</option>
-          {tags.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name} ({t.count})
+        <select
+          aria-label={t("browser.search.tag")}
+          value={query.tag ?? ""}
+          onChange={(e) => go({ q: text, tag: e.target.value })}
+        >
+          <option value="">{t("browser.search.allTags")}</option>
+          {tags.map((tag) => (
+            <option key={tag.id} value={tag.id}>
+              {t("browser.search.tagCount", { name: tag.name, n: tag.count })}
             </option>
           ))}
         </select>
-        <button type="submit">Zoeken</button>
+        <Button type="submit" variant="primary">
+          {t("browser.search.submit")}
+        </Button>
       </form>
 
       {error && <p role="alert">{error}</p>}
-      {!hasFilter(query) && <p className="muted">Typ een (deel van een) naam, of kies een soort of tag.</p>}
-      {result && result.results.length === 0 && <p className="muted">Niets gevonden.</p>}
-      {result && result.results.length > 0 && (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Naam</th>
-                <th>Map</th>
-                <th>Grootte</th>
-                <th>Gewijzigd</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.results.map((hit) => {
-                const n = hit.node;
-                const parent = parentHref(hit);
-                // Van iemand anders: het pad begint bij de gedeelde map
-                const shared = isShared(n);
-                return (
-                  <tr key={n.id}>
-                    <td>
-                      <button
-                        type="button"
-                        className="link"
-                        title={n.kind === "dir" ? "Map openen" : "Map met dit bestand openen"}
-                        onClick={() => navigate(folderHref(hit))}
-                      >
-                        {n.kind === "dir" ? "📁 " : "📄 "}
-                        {n.name}
-                      </button>
-                      {shared && n.owner && <span className="owner-note">van {n.owner.display_name}</span>}
-                      <TagChips tags={n.tags} />
-                    </td>
-                    <td>
-                      <a
-                        href={parent}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          navigate(parent);
-                        }}
-                      >
-                        {pathLabel(hitPath(hit), shared)}
-                      </a>
-                    </td>
-                    <td>{n.kind === "file" ? formatBytes(n.size) : ""}</td>
-                    <td>{formatDate(n.modified_at)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      {!hasFilter(query) && <p className="muted">{t("browser.search.hint")}</p>}
+      {result && hits.length === 0 && <p className="muted">{t("browser.search.none")}</p>}
+      {hits.length > 0 && (
+        <div ref={listRef} className="browser-items">
+          <FileList
+            count={nodes.length}
+            get={get}
+            version={hits.length}
+            selected={sel.selected}
+            focusIndex={focusIndex}
+            ariaLabel={t("browser.results")}
+            pathOf={pathOf}
+            onSelect={(i, mods) => {
+              setFocusIndex(i);
+              selection.set(clickSelect(selection.getSnapshot(), ids, ids[i], mods));
+            }}
+            onToggle={(i) => {
+              setFocusIndex(i);
+              selection.toggle(ids[i]);
+            }}
+            onOpen={(i) => {
+              const hit = hits[i];
+              if (hit.node.kind === "file") setViewing(hit.node.id);
+              else navigate(folderHref(hit));
+            }}
+            onMenu={(i, at) => {
+              setFocusIndex(i);
+              const node = nodes[i];
+              if (!selection.has(node.id)) {
+                selection.set(clickSelect(selection.getSnapshot(), ids, node.id, { shift: false, toggle: false }));
+                openMenu([node], at);
+              } else openMenu(selected, at);
+            }}
+            onMove={(i, mods) => {
+              setFocusIndex(i);
+              selection.set(keySelect(selection.getSnapshot(), ids, ids[i], mods));
+            }}
+            onFocusRow={setFocusIndex}
+          />
         </div>
       )}
       {result?.more &&
         (limit < MAX_LIMIT ? (
           <p>
-            <button type="button" onClick={() => goTo(searchHref({ ...query, limit: MAX_LIMIT }))}>
-              Meer tonen
-            </button>
+            <Button onClick={() => navigate(searchHref({ ...query, limit: MAX_LIMIT }))}>
+              {t("browser.search.more")}
+            </Button>
           </p>
         ) : (
-          <p className="muted">Er zijn nog meer resultaten; maak je zoekopdracht specifieker.</p>
+          <p className="muted">{t("browser.search.tooMany")}</p>
         ))}
+
+      {menu && (
+        <Menu
+          items={menu.items}
+          anchor={menu.at}
+          label={t("browser.selection.menu")}
+          onClose={(reason) => {
+            const restore = menu.restore;
+            setMenu(null);
+            if (reason !== "outside" && restore instanceof HTMLElement && restore.isConnected) restore.focus();
+          }}
+        />
+      )}
+      {dialogs}
+      {viewIndex >= 0 && (
+        <Suspense fallback={null}>
+          <Viewer
+            items={files}
+            index={viewIndex}
+            onIndexChange={(i) => setViewing(files[i].id)}
+            onClose={() => setViewing(null)}
+          />
+        </Suspense>
+      )}
     </main>
   );
 }

@@ -21,7 +21,8 @@ export const CATEGORIES = Object.keys(CATEGORY_LABELS) as Category[];
 
 /** De naam van een soort in de taal van de app. */
 export function categoryLabel(c: Category): string {
-  return t(`browser.categories.${c}` as MessageKey);
+  // "other" kan geen sleutel zijn: een object met "other" is een meervoudsvorm
+  return t(`browser.categories.${c === "other" ? "rest" : c}` as MessageKey);
 }
 export const MAX_LIMIT = 200;
 

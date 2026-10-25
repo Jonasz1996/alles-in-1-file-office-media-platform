@@ -8,8 +8,8 @@ import { t } from "../i18n";
 import { Thumb } from "../Thumb";
 import { useColumns, useVirtualRows } from "../ui/virtual";
 import type { FileListProps } from "./FileList";
-import { previewCache, useVisiblePreviews } from "./previews";
-import { useRowEvents } from "./rowEvents";
+import { previewCache, useWindowPreviews } from "./previews";
+import { useRowEvents, useScrollingClass } from "./rowEvents";
 
 /** Minimale breedte van een cel (--cell-min) en de ruimte ertussen. */
 export const CELL_MIN = 160;
@@ -17,7 +17,6 @@ const GAP = 12;
 /** De naam onder de thumbnail */
 const NAME_H = 40;
 const OVERSCAN = 2;
-const AHEAD_ROWS = 12;
 
 export type FileGridProps = Omit<FileListProps, "sort" | "sortBlocked" | "onSort" | "headerMenu" | "pathOf">;
 
@@ -50,13 +49,11 @@ const Cell = memo(function Cell({ node, index, selected, tabbable, cut, drop, pr
       draggable
     >
       <Thumb node={node} preview={preview} size={180} />
-      <input
-        type="checkbox"
-        tabIndex={-1}
+      <span
+        role="checkbox"
+        className="row-check cell-checkbox"
         data-check=""
-        className="cell-checkbox"
-        checked={selected}
-        onChange={noop}
+        aria-checked={selected}
         aria-label={t("browser.row.select", { name: node.name })}
       />
       <button type="button" className="name" data-open="" tabIndex={-1}>
@@ -65,8 +62,6 @@ const Cell = memo(function Cell({ node, index, selected, tabbable, cut, drop, pr
     </div>
   );
 });
-
-function noop(): void {}
 
 export function FileGrid(p: FileGridProps): JSX.Element {
   const grid = useRef<HTMLDivElement>(null);
@@ -83,6 +78,7 @@ export function FileGrid(p: FileGridProps): JSX.Element {
     keepIndex: focusRowIndex,
   });
   if (p.scrollRef) p.scrollRef.current = (i) => rows.scrollToIndex(Math.floor(i / columns));
+  useScrollingClass(grid);
   const events = useRowEvents(grid, {
     ...p,
     columns,
@@ -90,10 +86,7 @@ export function FileGrid(p: FileGridProps): JSX.Element {
     scrollToIndex: (i) => rows.scrollToIndex(Math.floor(i / columns)),
   });
 
-  const wanted: (FileNode | undefined)[] = [];
-  const last = Math.min(p.count, (rows.end + AHEAD_ROWS) * columns);
-  for (let i = rows.start * columns; i < last; i++) wanted.push(p.get(i));
-  useVisiblePreviews(wanted, `${rows.start}:${rows.end}:${columns}:${p.version}`);
+  useWindowPreviews(p.get, rows.start * columns, rows.end * columns, p.count, p.version);
 
   const { get, selected, isCut, dropId, focusIndex, onFocusRow, count } = p;
   const out: JSX.Element[] = [];
@@ -105,7 +98,7 @@ export function FileGrid(p: FileGridProps): JSX.Element {
       const node = get(i);
       cells.push(
         <Cell
-          key={node?.id ?? `i${i}`}
+          key={`c${i}`}
           node={node}
           index={i}
           selected={node ? selected.has(node.id) : false}
@@ -123,7 +116,7 @@ export function FileGrid(p: FileGridProps): JSX.Element {
         aria-rowindex={r + 1}
         className="file-grid-row"
         style={{
-          transform: `translateY(${rows.offsetOf(r)}px)`,
+          top: rows.offsetOf(r),
           height: rowHeight - GAP,
           gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
         }}

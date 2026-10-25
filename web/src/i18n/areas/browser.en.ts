@@ -29,6 +29,10 @@ const en: Translation<typeof nl> = {
     confirm: "Create",
     created: "Folder {name} created",
   },
+  folder: {
+    share: "Share this folder…",
+    download: "Download this folder as zip",
+  },
   view: {
     label: "View",
     list: "List",
@@ -147,7 +151,7 @@ const en: Translation<typeof nl> = {
     pdf: "PDF",
     document: "Documents",
     archive: "Archives",
-    other: "Other",
+    rest: "Other",
   },
   picker: {
     mine: "My files",

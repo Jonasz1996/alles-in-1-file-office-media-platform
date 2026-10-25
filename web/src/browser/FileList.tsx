@@ -12,17 +12,14 @@ import { TagChips } from "../Tags";
 import { Thumb } from "../Thumb";
 import { Icon } from "../ui/Icon";
 import { useVirtualRows } from "../ui/virtual";
-import { previewCache, useVisiblePreviews } from "./previews";
-import { type RowCallbacks, useRowEvents } from "./rowEvents";
+import { previewCache, useWindowPreviews } from "./previews";
+import { type RowCallbacks, useRowEvents, useScrollingClass } from "./rowEvents";
 import type { Sort, SortKey } from "./sort";
 
 /** De hoogte van een rij (--row-h in tokens.css). */
 export const ROW_H = 44;
 /** Zoveel rijen boven en onder het beeld staan er ook (scrollen zonder gaten). */
 const OVERSCAN = 8;
-/** Previews vooruit vragen: zoveel rijen voor en na wat zichtbaar is. */
-const AHEAD = 80;
-const BEHIND = 20;
 
 export interface FileListProps extends Omit<RowCallbacks, "columns" | "rowHeight" | "scrollToIndex"> {
   get(i: number): FileNode | undefined;
@@ -59,7 +56,9 @@ interface RowProps {
 }
 
 const Row = memo(function Row({ node, index, top, selected, tabbable, cut, drop, preview, path, showPath }: RowProps) {
-  const style = { transform: `translateY(${top}px)` };
+  // top in plaats van transform: een rij beweegt nooit (key = plek), en zonder transform
+  // geen eigen transform-knoop per rij bij het tekenen
+  const style = { top };
   if (!node) {
     return (
       <div
@@ -90,12 +89,12 @@ const Row = memo(function Row({ node, index, top, selected, tabbable, cut, drop,
       draggable
     >
       <div role="gridcell" className="cell-check">
-        <input
-          type="checkbox"
-          tabIndex={-1}
+        {/* Een vinkje zonder <input>: goedkoper bij het scrollen; de rij zelf heeft aria-selected */}
+        <span
+          role="checkbox"
+          className="row-check"
           data-check=""
-          checked={selected}
-          onChange={noop}
+          aria-checked={selected}
           aria-label={t("browser.row.select", { name: node.name })}
         />
       </div>
@@ -124,7 +123,7 @@ const Row = memo(function Row({ node, index, top, selected, tabbable, cut, drop,
         {node.kind === "file" ? fmt.bytes(node.size) : ""}
       </div>
       <div role="gridcell" className="cell-date">
-        {fmt.dateTime(node.modified_at)}
+        {dateText(node.modified_at)}
       </div>
       <div role="gridcell" className="cell-more">
         <button
@@ -135,14 +134,24 @@ const Row = memo(function Row({ node, index, top, selected, tabbable, cut, drop,
           aria-haspopup="menu"
           aria-label={t("browser.row.actions", { name: node.name })}
         >
-          <Icon name="more" size={20} />
+          <span className="more-dots" aria-hidden="true" />
         </button>
       </div>
     </div>
   );
 });
 
-function noop(): void {}
+/** De datum als tekst, één keer per waarde (een lijst van 10.000 rijen met vaak dezelfde tijden). */
+const dates = new Map<string, string>();
+function dateText(iso: string): string {
+  let text = dates.get(iso);
+  if (text === undefined) {
+    if (dates.size > 5000) dates.clear();
+    text = fmt.dateTime(iso);
+    dates.set(iso, text);
+  }
+  return text;
+}
 
 function HeaderCell({
   label,
@@ -192,6 +201,7 @@ export function FileList(p: FileListProps): JSX.Element {
     keepIndex: p.focusIndex >= 0 ? p.focusIndex : null,
   });
   if (p.scrollRef) p.scrollRef.current = (i) => rows.scrollToIndex(i);
+  useScrollingClass(grid);
   const events = useRowEvents(grid, {
     ...p,
     columns: 1,
@@ -199,14 +209,8 @@ export function FileList(p: FileListProps): JSX.Element {
     scrollToIndex: (i) => rows.scrollToIndex(i),
   });
 
-  // Previews: wat zichtbaar is eerst, dan wat eraan komt (ook als er snel gescrold wordt)
-  const from = Math.max(0, rows.start - BEHIND);
-  const to = Math.min(p.count, rows.end + AHEAD);
-  const wanted: (FileNode | undefined)[] = [];
-  for (let i = rows.start; i < rows.end; i++) wanted.push(p.get(i));
-  for (let i = rows.end; i < to; i++) wanted.push(p.get(i));
-  for (let i = from; i < rows.start; i++) wanted.push(p.get(i));
-  useVisiblePreviews(wanted, `${from}:${to}:${p.version}`);
+  // Previews per blok: wat zichtbaar is eerst, dan wat eraan komt (ook bij snel scrollen)
+  useWindowPreviews(p.get, rows.start, rows.end, p.count, p.version);
 
   const { get, selected, isCut, dropId, focusIndex, pathOf } = p;
   const showPath = !!pathOf;
@@ -215,7 +219,7 @@ export function FileList(p: FileListProps): JSX.Element {
     const node = get(i);
     out.push(
       <Row
-        key={node?.id ?? `i${i}`}
+        key={`r${i}`}
         node={node}
         index={i}
         top={rows.offsetOf(i)}

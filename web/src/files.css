@@ -103,13 +103,22 @@ a.tag:hover {
   align-items: center;
 }
 
-/* Thumbnail of icoon voor een map of bestand in een lijst */
+/* Thumbnail of icoon voor een map of bestand: 32 px in een lijst, 180 px (de breedte van de
+   cel) in het raster. Beide gebruiken de thumbnail van 256 px. */
 .thumb {
   flex: none;
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+
+.thumb-32 {
   width: 32px;
   height: 32px;
-  margin-right: var(--space-2);
-  vertical-align: middle;
+}
+
+.thumb-180 {
+  width: 180px;
+  height: 180px;
 }
 
 img.thumb {
@@ -118,8 +127,45 @@ img.thumb {
   background: var(--surface);
 }
 
-span.thumb {
-  display: inline-block;
-  text-align: center;
-  line-height: 32px;
+.thumb-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.thumb-icon.thumb-180 {
+  border-radius: var(--radius-m);
+  background: var(--surface);
+}
+
+/* --- de mapkiezer --- */
+
+.picker-sources {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.picker-sources [aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.picker-crumbs {
+  font-size: var(--text-m);
+}
+
+.picker-list button {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.picker-list button:focus-visible {
+  outline-offset: -3px;
+}
+
+.picker-name {
+  overflow-wrap: anywhere;
 }
