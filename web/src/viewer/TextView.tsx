@@ -11,7 +11,7 @@ import { fixedRange } from "../ui/virtual";
 import type { ViewerDetail } from "./api";
 import { detectDelimiter, parseCsv } from "./csv";
 import { decodeChunks, detectEncoding, ENCODINGS, type Encoding, isEncoding } from "./decode";
-import { highlight, languageOf, type Line, MAX_HIGHLIGHT, plainLines, WORKER_FROM } from "./highlight";
+import { type Highlighted, highlight, languageOf, lineTokens, MAX_HIGHLIGHT, plain, WORKER_FROM } from "./highlight";
 import { markdown } from "./markdown";
 import type { Source } from "./source";
 import type { ViewerItem } from "./types";
@@ -32,17 +32,16 @@ function modesFor(item: ViewerItem): Mode[] {
 }
 
 /** Kleuren voor deze tekst: klein meteen, groot in een worker, heel groot niet. */
-function useLines(text: string, language: string | null): Line[] {
-  const plain = useMemo(() => plainLines(text), [text]);
+function useLines(text: string, language: string | null): Highlighted {
   const small = text.length < WORKER_FROM;
-  const sync = useMemo(() => (small && language ? highlight(text, language) : null), [text, language, small]);
-  const [worked, setWorked] = useState<{ text: string; lines: Line[] } | null>(null);
+  const now = useMemo(() => (small && language ? highlight(text, language) : plain(text)), [text, language, small]);
+  const [worked, setWorked] = useState<Highlighted | null>(null);
 
   useEffect(() => {
     if (small || !language || text.length > MAX_HIGHLIGHT || typeof Worker === "undefined") return;
     const worker = new Worker(new URL("./highlight.worker.ts", import.meta.url), { type: "module" });
-    worker.onmessage = (e: MessageEvent<{ lines: Line[] }>) => {
-      setWorked({ text, lines: e.data.lines });
+    worker.onmessage = (e: MessageEvent<{ result: Omit<Highlighted, "text"> }>) => {
+      setWorked({ ...e.data.result, text });
       worker.terminate();
     };
     worker.onerror = () => worker.terminate(); // dan blijft het gewone tekst
@@ -50,9 +49,7 @@ function useLines(text: string, language: string | null): Line[] {
     return () => worker.terminate();
   }, [text, language, small]);
 
-  if (sync) return sync;
-  if (worked && worked.text === text) return worked.lines;
-  return plain;
+  return worked && worked.text === text && !small ? worked : now;
 }
 
 export default function TextView({ item, detail, source }: { item: ViewerItem; detail: ViewerDetail; source: Source }): JSX.Element {
@@ -142,7 +139,7 @@ export default function TextView({ item, detail, source }: { item: ViewerItem; d
         </label>
         <span className="muted text-size">
           {complete
-            ? t("viewer.text.lines", { n: lines.length })
+            ? t("viewer.text.lines", { n: lines.lineCount })
             : t("viewer.text.partial", { n: Math.round(loadedBytes / 1024) })}
         </span>
       </div>
@@ -160,7 +157,7 @@ export default function TextView({ item, detail, source }: { item: ViewerItem; d
 }
 
 /** De regels, alleen wat in beeld is (vaste hoogte per regel). */
-function Lines({ lines }: { lines: Line[] }) {
+function Lines({ lines }: { lines: Highlighted }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ top: 0, h: 600 });
 
@@ -174,8 +171,28 @@ function Lines({ lines }: { lines: Line[] }) {
     return () => observer.disconnect();
   }, []);
 
-  const { start, end } = fixedRange(view.top, view.h, LINE_H, lines.length, 20);
-  const digits = String(lines.length).length;
+  const count = lines.lineCount;
+  const { start, end } = fixedRange(view.top, view.h, LINE_H, count, 20);
+  const digits = String(count).length;
+  const shown: JSX.Element[] = [];
+  for (let i = start; i < end; i++) {
+    shown.push(
+      <div key={i} className="text-line">
+        <span className="ln" aria-hidden="true">
+          {i + 1}
+        </span>
+        <code>
+          {lineTokens(lines, i, LINE_CHARS).map(([type, piece], j) =>
+            type === "plain" ? piece : (
+              <span key={j} className={`tok-${type}`}>
+                {piece}
+              </span>
+            ),
+          )}
+        </code>
+      </div>,
+    );
+  }
   return (
     <div
       ref={scroller}
@@ -188,26 +205,9 @@ function Lines({ lines }: { lines: Line[] }) {
         setView((v) => (v.top === top ? v : { ...v, top }));
       }}
     >
-      <div className={`text-lines digits-${Math.min(digits, 7)}`} style={{ height: `${lines.length * LINE_H}px` }}>
+      <div className={`text-lines digits-${Math.min(digits, 7)}`} style={{ height: `${count * LINE_H}px` }}>
         <div className="text-window" style={{ transform: `translateY(${start * LINE_H}px)` }}>
-          {lines.slice(start, end).map((line, k) => {
-            let left = LINE_CHARS;
-            return (
-              <div key={start + k} className="text-line">
-                <span className="ln" aria-hidden="true">
-                  {start + k + 1}
-                </span>
-                <code>
-                  {line.map(([type, piece], j) => {
-                    if (left <= 0) return null;
-                    const shown = piece.length > left ? `${piece.slice(0, left)}…` : piece;
-                    left -= piece.length;
-                    return type === "plain" ? shown : <span key={j} className={`tok-${type}`}>{shown}</span>;
-                  })}
-                </code>
-              </div>
-            );
-          })}
+          {shown}
         </div>
       </div>
     </div>
