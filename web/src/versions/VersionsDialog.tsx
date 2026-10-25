@@ -165,7 +165,13 @@ export default function VersionsDialog({ node, onClose, onChanged }: VersionsPro
       {can.versionWrite && (
         <div className="toolbar">
           {upload === null ? (
-            <Button icon="upload" disabled={busy} aria-keyshortcuts="u" onClick={() => input.current?.click()}>
+            <Button
+              icon="upload"
+              data-autofocus=""
+              disabled={busy}
+              aria-keyshortcuts="u"
+              onClick={() => input.current?.click()}
+            >
               {t("versions.upload")}
             </Button>
           ) : (
