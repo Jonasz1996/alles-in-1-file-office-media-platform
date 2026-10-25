@@ -18,10 +18,50 @@ export function isShared(node: Pick<FileNode, "permission"> | null | undefined):
   return permissionOf(node) !== "owner";
 }
 
-export const PERMISSION_LABELS: Record<"read" | "write", string> = {
-  read: "Kan bekijken",
-  write: "Kan bewerken",
+/** De namen van de rechten, in de taal van de app (getters: t() pas bij het lezen, nooit bij het
+ * laden van de module). */
+export const PERMISSION_LABELS: Readonly<Record<"read" | "write", string>> = {
+  get read() {
+    return t("sharing.perm.read");
+  },
+  get write() {
+    return t("sharing.perm.write");
+  },
 };
+
+/** Welke rechten je kunt geven: een album alleen bekijken. */
+export function sharePermissions(kind: FileNode["kind"]): ("read" | "write")[] {
+  return kind === "album" ? ["read"] : ["read", "write"];
+}
+
+/** Welke soorten link er zijn: uploaden alleen bij een map (niet bij een album of bestand). */
+export function linkKinds(kind: FileNode["kind"]): ("read" | "upload")[] {
+  return kind === "dir" ? ["read", "upload"] : ["read"];
+}
+
+/** Hooguit zoveel items tegelijk delen (de wachtrij voor live meldingen van de ontvanger). */
+export const MAX_MULTI_SHARE = 100;
+
+export interface MultiShare {
+  /** Wat gedeeld kan worden */
+  ok: FileNode[];
+  /** Wat niet, met de reden */
+  skipped: { node: FileNode; reason: string }[];
+  /** Meer dan MAX_MULTI_SHARE: dan niets */
+  tooMany: boolean;
+}
+
+/** Een selectie delen met personen of groepen: alleen wat van jou is (en niet je hoofdmap). */
+export function multiShare(nodes: readonly FileNode[], max = MAX_MULTI_SHARE): MultiShare {
+  const ok: FileNode[] = [];
+  const skipped: MultiShare["skipped"] = [];
+  for (const node of nodes) {
+    if (permissionOf(node) !== "owner") skipped.push({ node, reason: t("sharing.many.notOwn") });
+    else if (node.parent_id === null && node.kind !== "album") skipped.push({ node, reason: t("sharing.many.root") });
+    else ok.push(node);
+  }
+  return { ok, skipped, tooMany: nodes.length > max };
+}
 
 /** In de toolbar van een map: wat er mag in de map die open staat. */
 export function folderActions(folder: FileNode | null | undefined) {
@@ -42,8 +82,25 @@ export function folderActions(folder: FileNode | null | undefined) {
 export function nodeActions(node: FileNode, shareRoot = false) {
   const permission = permissionOf(node);
   const owner = permission === "owner";
+  if (node.kind === "album") {
+    // Een album open je (/album/:id); de eigenaar deelt het. De rest doet de albumpagina (P5).
+    return {
+      open: true,
+      download: false,
+      rename: false,
+      trash: false,
+      move: false,
+      copy: false,
+      tags: false,
+      versions: false,
+      versionWrite: false,
+      versionDelete: false,
+      share: owner,
+    };
+  }
   const change = canWrite(permission) && (owner || !shareRoot);
   return {
+    open: true,
     download: node.kind === "file",
     rename: change,
     trash: change,
@@ -74,12 +131,12 @@ export function crumbs(path: FileNode[]): Crumb[] {
   if (path.length === 0) return [];
   if (isShared(path[0])) {
     return [
-      { label: "Gedeeld met mij", href: "/gedeeld" },
+      { label: t("sharing.sharedWithMe"), href: "/gedeeld" },
       ...path.map((p) => ({ label: p.name, href: `/map/${p.id}` })),
     ];
   }
   return path.map((p, i) =>
-    i === 0 ? { label: "Mijn bestanden", href: "/" } : { label: p.name, href: `/map/${p.id}` },
+    i === 0 ? { label: t("sharing.crumbs.mine"), href: "/" } : { label: p.name, href: `/map/${p.id}` },
   );
 }
 
@@ -132,8 +189,8 @@ export function linkHref(share: Pick<Share, "link">, origin: string): string {
 
 /** Eén regel over een link: "Alleen bekijken · met wachtwoord · verloopt op …". */
 export function linkSummary(share: Share, now = Date.now()): string {
-  const parts = [share.permission === "upload" ? "Alleen uploaden" : "Alleen bekijken"];
-  if (share.link?.has_password) parts.push("met wachtwoord");
+  const parts = [share.permission === "upload" ? t("sharing.linkKind.upload") : t("sharing.linkKind.read")];
+  if (share.link?.has_password) parts.push(t("sharing.linkKind.password"));
   const expiry = expiryLabel(share.expires_at, now);
   if (expiry) parts.push(expiry);
   return parts.join(" · ");
@@ -141,7 +198,7 @@ export function linkSummary(share: Share, now = Date.now()): string {
 
 /** "1 lid", "3 leden" */
 export function memberCount(n: number): string {
-  return n === 1 ? "1 lid" : `${n} leden`;
+  return t("sharing.memberCount", { n });
 }
 
 /** Wat er in het formulier van een link staat (nieuw of wijzigen). */
@@ -160,20 +217,20 @@ export const MIN_LINK_PASSWORD = 6;
 export const MAX_LINK_PASSWORD = 200;
 
 function checkPassword(password: string): void {
-  if (password.length < MIN_LINK_PASSWORD) throw new Error(`Een wachtwoord heeft minstens ${MIN_LINK_PASSWORD} tekens`);
-  if (password.length > MAX_LINK_PASSWORD) throw new Error(`Een wachtwoord heeft hooguit ${MAX_LINK_PASSWORD} tekens`);
+  if (password.length < MIN_LINK_PASSWORD) throw new Error(t("sharing.check.passwordShort", { min: MIN_LINK_PASSWORD }));
+  if (password.length > MAX_LINK_PASSWORD) throw new Error(t("sharing.check.passwordLong", { max: MAX_LINK_PASSWORD }));
 }
 
 /** De vervaldatum uit het formulier: null zonder datum. Gooit bij een onzin- of oude datum. */
-function checkedExpiry(date: string, now: number): string | null {
+export function checkedExpiry(date: string, now = Date.now()): string | null {
   if (!date.trim()) return null;
   const iso = endOfDay(date);
-  if (!iso) throw new Error("Dat is geen geldige datum");
-  if (new Date(iso).getTime() <= now) throw new Error("Kies een datum vanaf vandaag");
+  if (!iso) throw new Error(t("sharing.check.badDate"));
+  if (new Date(iso).getTime() <= now) throw new Error(t("sharing.check.pastDate"));
   return iso;
 }
 
-/** De body voor een nieuwe link; gooit een Error met een Nederlandse melding als iets niet klopt. */
+/** De body voor een nieuwe link; gooit een Error met een (vertaalde) melding als iets niet klopt. */
 export function newLink(form: LinkForm, now = Date.now()): NewLink {
   const link: NewLink = { permission: form.permission };
   if (form.password) {

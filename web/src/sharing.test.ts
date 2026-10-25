@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Api, type FileNode, type SearchHit, type Share } from "./api";
 import { isGuest } from "./currentUser";
 import { affectsFolder, affectsSharedWithMe } from "./events";
+import { loadAreas, resetI18nForTests } from "./i18n";
 import { folderHref, hitPath, parentHref, pathLabel } from "./searchQuery";
 import {
   canWrite,
@@ -14,16 +15,32 @@ import {
   isShared,
   linkChange,
   linkHref,
+  linkKinds,
   linkSummary,
+  MAX_MULTI_SHARE,
+  memberCount,
+  multiShare,
   newLink,
   nodeActions,
+  PERMISSION_LABELS,
   permissionOf,
+  sharePermissions,
   today,
 } from "./sharing";
 import type { TusApi } from "./upload";
 import { UploadQueue } from "./uploadQueue";
 
 const jonas = { id: "u-jonas", display_name: "Jonas" };
+
+// De teksten komen uit het woordenboek "sharing" (t()); dat laadt de route ook
+beforeAll(async () => {
+  resetI18nForTests("nl");
+  await loadAreas(["sharing"]);
+});
+
+afterAll(() => {
+  resetI18nForTests("nl");
+});
 
 function node(change: Partial<FileNode> = {}): FileNode {
   return {
@@ -66,6 +83,7 @@ describe("rechten", () => {
   it("alleen kijken: downloaden, kopiëren, tags en versies bekijken; niets veranderen", () => {
     const file = node({ kind: "file", permission: "read" });
     expect(nodeActions(file)).toEqual({
+      open: true,
       download: true,
       rename: false,
       trash: false,
@@ -419,5 +437,62 @@ describe("UploadQueue meldt of een upload lukte", () => {
       ["p", true, "a.txt"],
       ["p", false, "b.txt"],
     ]);
+  });
+});
+
+describe("P6: rechten, albums en meerdere tegelijk", () => {
+  it("PERMISSION_LABELS volgt de taal (getters, geen tekst bij het laden van de module)", async () => {
+    expect(PERMISSION_LABELS.read).toBe("Kan bekijken");
+    expect(PERMISSION_LABELS.write).toBe("Kan bewerken");
+    expect(memberCount(1)).toBe("1 lid");
+    expect(memberCount(3)).toBe("3 leden");
+    resetI18nForTests("en");
+    await loadAreas(["common", "sharing"]);
+    expect(PERMISSION_LABELS.read).toBe("Can view");
+    expect(PERMISSION_LABELS.write).toBe("Can edit");
+    expect(memberCount(2)).toBe("2 members");
+    resetI18nForTests("nl");
+    await loadAreas(["sharing"]);
+  });
+
+  it("een album: alleen openen, en delen voor de eigenaar; geen kopiëren", () => {
+    const own = nodeActions(node({ kind: "album", parent_id: null }));
+    expect(own.open).toBe(true);
+    expect(own.share).toBe(true);
+    expect([own.copy, own.move, own.rename, own.trash, own.tags, own.download, own.versions]).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    const shared = nodeActions(node({ kind: "album", parent_id: null, permission: "read", owner: jonas }));
+    expect(shared).toMatchObject({ open: true, share: false, copy: false });
+    expect(nodeActions(node({ kind: "file" })).open).toBe(true);
+  });
+
+  it("een album deel je alleen om te bekijken en zonder uploadlink", () => {
+    expect(sharePermissions("album")).toEqual(["read"]);
+    expect(sharePermissions("dir")).toEqual(["read", "write"]);
+    expect(linkKinds("album")).toEqual(["read"]);
+    expect(linkKinds("file")).toEqual(["read"]);
+    expect(linkKinds("dir")).toEqual(["read", "upload"]);
+  });
+
+  it("meerdere tegelijk: hooguit 100, alleen wat van jou is", () => {
+    const mine = Array.from({ length: 3 }, (_, i) => node({ id: `m${i}`, name: `m${i}` }));
+    const theirs = node({ id: "t", permission: "write", owner: jonas });
+    const root = node({ id: "root", parent_id: null });
+    const plan = multiShare([...mine, theirs, root]);
+    expect(plan.tooMany).toBe(false);
+    expect(plan.ok.map((n) => n.id)).toEqual(["m0", "m1", "m2"]);
+    expect(plan.skipped.map((x) => x.node.id)).toEqual(["t", "root"]);
+    expect(plan.skipped[0].reason).toContain("eigenaar");
+    expect(MAX_MULTI_SHARE).toBe(100);
+    const many = Array.from({ length: 101 }, (_, i) => node({ id: `n${i}` }));
+    expect(multiShare(many).tooMany).toBe(true);
+    expect(multiShare(many.slice(0, 100)).tooMany).toBe(false);
   });
 });

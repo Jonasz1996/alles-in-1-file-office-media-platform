@@ -1,18 +1,27 @@
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type FileNode, formatDate, type SharedWithMe as Row } from "./api";
+// /gedeeld: wat anderen met je gedeeld hebben, rechtstreeks of via een groep. Een map of album
+// opent op zijn eigen adres (nodeHref), een bestand in de viewer. Live: een nieuwe of
+// ingetrokken deling, of de eigenaar hernoemt of verwijdert iets.
+
+import { type JSX, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, type FileNode, type SharedWithMe as Row } from "./api";
 import { isGuest, useCurrentUser } from "./currentUser";
 import { affectsSharedWithMe, useReloadOn } from "./events";
+import { errorText, fmt, t } from "./i18n";
+import { Link, nodeHref } from "./links";
 import { NodeActions } from "./NodeActions";
-import { navigate, type RouteProps } from "./router";
+import type { RouteProps } from "./router";
 import { SearchBox } from "./Search";
+import { SharedTabs } from "./shares/SharedTabs";
 import { PERMISSION_LABELS } from "./sharing";
 import { TagChips } from "./Tags";
 import { Thumb, usePreviews } from "./Thumb";
+import { Button } from "./ui/Button";
+import { EmptyState } from "./ui/EmptyState";
+import { PageTitle } from "./ui/PageTitle";
 import { useViewerParam, Viewer } from "./viewer";
 import "./share.css";
 
-/** Wat anderen met je gedeeld hebben, rechtstreeks of via een groep (/gedeeld). */
-export default function SharedWithMe(_: RouteProps) {
+export default function SharedWithMe(_: RouteProps): JSX.Element {
   const guest = isGuest(useCurrentUser());
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -32,49 +41,50 @@ export default function SharedWithMe(_: RouteProps) {
       setRows(result);
       setError(null);
     } catch (e) {
-      if (seq === loads.current) setError((e as Error).message);
+      if (seq === loads.current) setError(errorText(e));
     }
   }, []);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
-  // Live: een nieuwe of ingetrokken deling, of de eigenaar hernoemt of verwijdert iets
-  useReloadOn((event) => affectsSharedWithMe(event, ids), load);
+  useReloadOn((event) => affectsSharedWithMe(event, ids), () => void load());
 
   async function download(node: FileNode) {
-    const a = document.createElement("a");
-    a.href = await api.downloadUrl(node.id);
-    a.download = node.name;
-    a.click();
-  }
-
-  function open(node: FileNode) {
-    if (node.kind === "dir") navigate(`/map/${node.id}`);
-    else setViewing(node.id);
+    try {
+      const a = document.createElement("a");
+      a.href = await api.downloadUrl(node.id);
+      a.download = node.name;
+      a.click();
+    } catch (e) {
+      setError(errorText(e));
+    }
   }
 
   return (
     <main className="wide">
-      <h1>Gedeeld met mij</h1>
+      <PageTitle>{t("sharing.sharedWithMe")}</PageTitle>
+      {!guest && <SharedTabs current="withMe" />}
       <div className="toolbar">
         <SearchBox />
       </div>
-      {guest && <p className="muted">Als gast heb je geen eigen bestanden; hier staat wat anderen met je delen.</p>}
+      {guest && <p className="muted">{t("sharing.withMe.guestNote")}</p>}
       {error && <p role="alert">{error}</p>}
-      {rows?.length === 0 && <p className="muted">Er is nog niets met je gedeeld.</p>}
+      {rows?.length === 0 && <EmptyState icon="share" title={t("sharing.withMe.none")} />}
       {rows && rows.length > 0 && (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Naam</th>
-                <th>Van</th>
-                <th>Rechten</th>
-                <th className="wide-only">Via</th>
-                <th className="wide-only">Gedeeld op</th>
-                <th />
+                <th>{t("sharing.withMe.name")}</th>
+                <th>{t("sharing.withMe.from")}</th>
+                <th>{t("sharing.withMe.rights")}</th>
+                <th className="wide-only">{t("sharing.withMe.via")}</th>
+                <th className="wide-only">{t("sharing.withMe.sharedOn")}</th>
+                <th>
+                  <span className="sr-only">{t("sharing.withMe.download")}</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -83,25 +93,39 @@ export default function SharedWithMe(_: RouteProps) {
                 return (
                   <tr key={r.share_id}>
                     <td>
-                      <button type="button" className="link" onClick={() => open(n)}>
-                        <Thumb node={n} preview={previews[n.id]} />
-                        {n.name}
-                      </button>
+                      {n.kind === "file" ? (
+                        <button type="button" className="link" onClick={() => setViewing(n.id)}>
+                          <Thumb node={n} preview={previews[n.id]} />
+                          {n.name}
+                        </button>
+                      ) : (
+                        <Link to={nodeHref(n)} className="link">
+                          <Thumb node={n} preview={previews[n.id]} />
+                          {n.name}
+                        </Link>
+                      )}
                       <TagChips tags={n.tags} />
                     </td>
                     <td>{r.owner.display_name}</td>
                     <td>{PERMISSION_LABELS[r.permission]}</td>
                     <td className="wide-only">
-                      {r.via === "group" && r.group ? `Groep ${r.group.name}` : "Persoonlijk"}
+                      {r.via === "group" && r.group
+                        ? t("sharing.withMe.group", { name: r.group.name })
+                        : t("sharing.withMe.personal")}
                     </td>
-                    <td className="wide-only">{formatDate(r.created_at)}</td>
+                    <td className="wide-only">{fmt.dateTime(r.created_at)}</td>
                     <td className="actions">
                       {n.kind === "file" && (
-                        <button type="button" onClick={() => download(n).catch((e: Error) => setError(e.message))}>
-                          Download
-                        </button>
+                        <Button
+                          aria-label={t("sharing.withMe.downloadLabel", { name: n.name })}
+                          onClick={() => void download(n)}
+                        >
+                          {t("sharing.withMe.download")}
+                        </Button>
                       )}
-                      <NodeActions node={n} folderId={null} shareRoot onChanged={load} onError={setError} />
+                      {n.kind !== "album" && (
+                        <NodeActions node={n} folderId={null} shareRoot onChanged={load} onError={setError} />
+                      )}
                     </td>
                   </tr>
                 );

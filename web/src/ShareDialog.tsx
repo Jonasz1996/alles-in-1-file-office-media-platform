@@ -7,7 +7,8 @@ import { lazyWithAreas } from "./i18n";
 
 export interface ShareDialogProps {
   node: FileNode;
-  /** Een selectie delen met personen of groepen (P6; ≤ 100). Wordt nog genegeerd. */
+  /** Een selectie delen met personen of groepen (P6; ≤ 100, de aanroeper begrenst, de dialoog
+   * controleert nog eens). Met meer dan één item deelt de dialoog alleen met personen en groepen. */
   nodes?: FileNode[];
   onClose: () => void;
   onChanged: () => void;
