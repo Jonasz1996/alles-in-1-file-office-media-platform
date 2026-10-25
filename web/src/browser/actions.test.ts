@@ -65,7 +65,7 @@ describe("rechten over de hele selectie", () => {
     expect(availability(action("share"), many, env)).toEqual({
       visible: true,
       enabled: false,
-      reason: "Deel de map in plaats van zoveel losse items",
+      reason: "Hooguit 100 items tegelijk; deel liever de map",
     });
     expect(availability(action("share"), many.slice(0, MAX_SHARE), env).enabled).toBe(true);
     expect(availability(action("share"), [mine], { ...env, guest: true }).visible).toBe(false);

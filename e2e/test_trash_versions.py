@@ -137,10 +137,27 @@ def test_versie_uploaden_bekijken_terugzetten(context_as, server, user_factory):
     current = server.call(user, "GET", f"/api/v1/files/{node['id']}", expect=200).json()
     assert current["size"] == len(b"derde versie, langer\n" * 50)
 
-    # Bekijken opent de viewer (bovenop de dialoog); Sluiten brengt je terug
+    # Bekijken opent de viewer van P4 (bovenop de dialoog) met de inhoud van die versie, niet
+    # de huidige: de viewer vraagt alles op met ?version=<id>. Sluiten brengt je terug.
+    asked = []
+    page.on("request", lambda r: asked.append(r.url) if "version=" in r.url else None)
     versions.get_by_role("button", name=re.compile(r"^Versie van .* bekijken$")).first.click()
     viewer = page.get_by_role("dialog", name="verslag.txt", exact=True)
     expect(viewer).to_be_visible()
+    expect(viewer.locator(".viewer-title")).to_contain_text(re.compile(r"· Versie van "))
+    expect(viewer.get_by_text("1 / 2")).to_be_visible()
+    stage = viewer.locator(".viewer-stage")
+    expect(stage).to_have_attribute("data-kind", "text")
+    expect(stage).to_contain_text("tweede")
+    expect(stage).not_to_contain_text("derde versie")
+    # → naar de oudste versie: de eerste inhoud
+    page.keyboard.press("ArrowRight")
+    expect(viewer.get_by_text("2 / 2")).to_be_visible()
+    expect(stage).to_contain_text("eerste versie")
+    listed = server.call(user, "GET", f"/api/v1/files/{node['id']}/versions", expect=200).json()
+    assert {f"version={v['id']}" for v in listed} <= {
+        part for url in asked for part in url.replace("?", "&").split("&")
+    }
     viewer.get_by_role("button", name="Sluiten", exact=True).first.click()
     expect(viewer).to_be_hidden()
     expect(dialog).to_be_visible()

@@ -7,7 +7,7 @@
 
 import type { FileNode } from "../api";
 import { type MessageKey, t } from "../i18n";
-import { canWrite, isShared, nodeActions, permissionOf } from "../sharing";
+import { canWrite, isShared, MAX_MULTI_SHARE, nodeActions, permissionOf } from "../sharing";
 import type { IconName } from "../ui/Icon";
 import type { Combo } from "../ui/keys";
 import type { MenuItem } from "../ui/menu";
@@ -70,8 +70,8 @@ export interface BrowserAction {
   run(sel: readonly FileNode[], ctx: ActionContext): void | Promise<void>;
 }
 
-/** Hooguit zoveel items in één keer delen (ShareDialog nodes=). */
-export const MAX_SHARE = 100;
+/** Hooguit zoveel items in één keer delen (ShareDialog nodes=): dezelfde grens als de dialoog. */
+export const MAX_SHARE = MAX_MULTI_SHARE;
 
 const HIDDEN: Availability = { visible: false, enabled: false };
 const OK: Availability = { visible: true, enabled: true };
@@ -198,7 +198,7 @@ const BUILT_IN: BrowserAction[] = [
     shortcut: "s",
     when: (sel, _folder, env) => {
       if (sel.length === 0 || env.guest || !allowed(sel, "share")) return HIDDEN;
-      if (sel.length > MAX_SHARE) return no(t("browser.reasons.shareTooMany"));
+      if (sel.length > MAX_SHARE) return no(t("browser.reasons.shareTooMany", { max: MAX_SHARE }));
       return OK;
     },
     run: (sel, ctx) => ctx.ui.share(sel),

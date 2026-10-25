@@ -89,7 +89,7 @@ const en: Translation<typeof nl> = {
   reasons: {
     readOnly: "You can only view this",
     shareRoot: "This was shared with you; only the owner can rename, move or delete it",
-    shareTooMany: "Share the folder instead of this many separate items",
+    shareTooMany: "At most {max} items at once; share the folder instead",
     notMedia: "Only photos and videos can go in an album",
     crossOwner: "Moving only works within one owner's files; copy it instead",
     itself: "A folder cannot go inside itself",

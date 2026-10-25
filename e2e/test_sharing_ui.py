@@ -1,5 +1,7 @@
 """Delen in de browser (P6): een vervaldatum voor een persoon via de combobox (Alt+P, ↓,
-Enter), Gedeeld door mij, en een gedeeld album in Gedeeld met mij zonder Kopiëren."""
+Enter), Gedeeld door mij, en een gedeeld album in Gedeeld met mij zonder Kopiëren. Met de
+bestandsbrowser (P2) en de viewer (P4): een selectie van drie in één keer met een groep delen,
+de grens van 100 items met zijn reden, en Gedeeld met mij opent een bestand in de viewer."""
 
 from __future__ import annotations
 
@@ -12,9 +14,38 @@ from playwright.sync_api import expect
 
 pytestmark = pytest.mark.p6
 
+# De rijen van de bestandsbrowser (P2), zonder de kopregel
+ROWS = "#inhoud [role=grid] [role=row][aria-rowindex][data-index]"
+
 
 def toast(page, text: str):
     return page.get_by_role("region", name="Meldingen").get_by_text(text, exact=True)
+
+
+def browser_row(page, name: str):
+    return page.locator(ROWS).filter(has=page.get_by_text(name, exact=True))
+
+
+def pick(page, name: str, modifiers: list[str] | None = None) -> None:
+    """Een rij selecteren met een klik naast de naam (de naam zelf opent)."""
+    browser_row(page, name).locator(".cell-date").click(modifiers=modifiers or [])
+
+
+def mkdir(server, account, parent: str, name: str) -> str:
+    return server.call(
+        account, "POST", f"/api/v1/files/{parent}/folders", json={"name": name}, expect=201
+    ).json()["id"]
+
+
+def put_file(server, account, parent: str, name: str, body: bytes) -> str:
+    return server.call(
+        account,
+        "PUT",
+        f"/api/v1/files/{parent}/upload",
+        params={"name": name},
+        content=body,
+        expect=201,
+    ).json()["id"]
 
 
 def test_vervaldatum_voor_een_persoon_en_gedeeld_door_mij(context_as, server, user_factory):
@@ -146,3 +177,113 @@ def test_gedeeld_album_zonder_kopieren(context_as, server, user_factory, seeded)
     )
     expect(row).not_to_contain_text("Kopiëren")
     expect(row.get_by_role("combobox")).to_have_count(0)
+
+
+def test_selectie_van_drie_met_een_groep_delen_en_bekijken(context_as, server, admin, user_factory):
+    owner = user_factory(name="Selectie Deler")
+    bob = user_factory(name="Groep Lid")
+    team = f"Team {uuid.uuid4().hex[:6]}"
+    group = server.call(admin, "POST", "/api/v1/groups", json={"name": team}, expect=201).json()
+    server.call(
+        admin,
+        "PUT",
+        f"/api/v1/groups/{group['id']}/members",
+        json={"user_ids": [bob.id]},
+        expect=200,
+    )
+    work = mkdir(server, owner, owner.root_id, f"Werk {uuid.uuid4().hex[:6]}")
+    ids = {
+        n: put_file(server, owner, work, n, f"inhoud van {n}\n".encode())
+        for n in ("a.txt", "b.txt", "c.txt")
+    }
+
+    # De selectiebalk van P2 opent de deeldialoog van P6 met alle drie (nodes=[...])
+    page = context_as(owner).new_page()
+    page.goto(f"/map/{work}")
+    page.locator(ROWS).first.wait_for()
+    pick(page, "a.txt")
+    pick(page, "c.txt", ["Shift"])
+    bar = page.get_by_role("toolbar", name="Selectie")
+    expect(bar.locator(".selection-count")).to_have_text("3 geselecteerd")
+    bar.get_by_role("button", name="Delen…", exact=True).click()
+    dialog = page.get_by_role("dialog", name="3 items delen", exact=True)
+    expect(dialog).to_be_visible()
+    expect(dialog.get_by_text("Je deelt 3 items met dezelfde persoon of groep.")).to_be_visible()
+    items = dialog.get_by_role("list").filter(has_text="a.txt")
+    expect(items.get_by_role("listitem")).to_have_count(3)
+
+    page.keyboard.press("Alt+P")
+    box = dialog.get_by_role("combobox", name="Zoek een persoon of groep")
+    expect(box).to_be_focused()
+    box.press_sequentially(team, delay=20)
+    option = dialog.get_by_role("option", name=re.compile(re.escape(team)))
+    expect(option).to_be_visible()
+    page.keyboard.press("ArrowDown")
+    expect(option).to_have_attribute("aria-selected", "true")
+    page.keyboard.press("Enter")
+    expect(toast(page, "Gedeeld: 3 items.")).to_be_visible()
+    for node_id in ids.values():
+        shares = server.call(owner, "GET", f"/api/v1/files/{node_id}/shares", expect=200).json()
+        groups = [s for s in shares if s["type"] == "group"]
+        assert [g["group"]["id"] for g in groups] == [group["id"]]
+        assert groups[0]["permission"] == "read"
+    dialog.get_by_role("button", name="Sluiten", exact=True).last.click()
+    expect(dialog).to_be_hidden()
+
+    # Bob (lid van de groep) ziet ze in Gedeeld met mij; een bestand opent in de viewer (P4)
+    other = context_as(bob).new_page()
+    other.goto("/gedeeld")
+    for name in ids:
+        row = other.get_by_role("row").filter(has_text=name)
+        expect(row).to_have_count(1)
+        expect(row).to_contain_text(f"Groep {team}")
+    other.get_by_role("row").filter(has_text="b.txt").get_by_role(
+        "button", name="b.txt", exact=True
+    ).click()
+    viewer = other.get_by_role("dialog", name="b.txt", exact=True)
+    expect(viewer).to_be_visible()
+    expect(other).to_have_url(re.compile(rf"bestand={ids['b.txt']}"))
+    stage = viewer.locator(".viewer-stage")
+    expect(stage).to_have_attribute("data-kind", "text")
+    expect(stage).to_contain_text("inhoud van b.txt")
+    expect(viewer.get_by_text("2 / 3")).to_be_visible()
+    other.keyboard.press("ArrowRight")
+    viewer = other.get_by_role("dialog", name="c.txt", exact=True)
+    expect(viewer.locator(".viewer-stage")).to_contain_text("inhoud van c.txt")
+    other.keyboard.press("Escape")
+    expect(other.get_by_role("dialog")).to_have_count(0)
+
+
+def test_hooguit_honderd_items_tegelijk_delen(context_as, server, user_factory):
+    owner = user_factory(name="Veel Deler")
+    work = mkdir(server, owner, owner.root_id, f"Veel {uuid.uuid4().hex[:6]}")
+    for i in range(101):
+        put_file(server, owner, work, f"bestand-{i:03d}.txt", b"x")
+
+    page = context_as(owner).new_page()
+    page.goto(f"/map/{work}")
+    page.locator(ROWS).first.wait_for()
+    pick(page, "bestand-000.txt")
+    page.keyboard.press("ControlOrMeta+a")
+    bar = page.get_by_role("toolbar", name="Selectie")
+    expect(bar.locator(".selection-count")).to_have_text("101 geselecteerd")
+
+    # 101: Delen kan niet, en zegt waarom (de grens van de deeldialoog)
+    reason = "Hooguit 100 items tegelijk; deel liever de map"
+    share = bar.get_by_role("button", name="Delen…", exact=True)
+    expect(share).to_have_attribute("aria-disabled", "true")
+    expect(share).to_have_attribute("title", reason)
+    # aria-disabled (niet disabled): de knop blijft focusbaar en een klik geeft de reden
+    share.click(force=True)
+    expect(toast(page, reason)).to_be_visible()
+    expect(page.get_by_role("dialog")).to_have_count(0)
+
+    # Eén eraf: 100 mag wel
+    pick(page, "bestand-000.txt", ["ControlOrMeta"])
+    expect(bar.locator(".selection-count")).to_have_text("100 geselecteerd")
+    expect(share).not_to_have_attribute("aria-disabled", "true")
+    share.click()
+    dialog = page.get_by_role("dialog", name="100 items delen", exact=True)
+    expect(dialog).to_be_visible()
+    expect(dialog.get_by_text("Je deelt 100 items met dezelfde persoon of groep.")).to_be_visible()
+    expect(dialog.get_by_role("combobox", name="Zoek een persoon of groep")).to_be_visible()

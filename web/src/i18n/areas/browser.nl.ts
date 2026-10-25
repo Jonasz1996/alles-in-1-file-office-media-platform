@@ -87,7 +87,7 @@ export default {
   reasons: {
     readOnly: "Je mag hier alleen kijken",
     shareRoot: "Dit is met je gedeeld; alleen de eigenaar kan het hernoemen, verplaatsen of weggooien",
-    shareTooMany: "Deel de map in plaats van zoveel losse items",
+    shareTooMany: "Hooguit {max} items tegelijk; deel liever de map",
     notMedia: "Alleen foto's en video's kunnen in een album",
     crossOwner: "Verplaatsen kan alleen binnen dezelfde eigenaar; kopieer het in plaats daarvan",
     itself: "Een map kan niet in zichzelf",
