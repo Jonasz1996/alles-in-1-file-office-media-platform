@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { deviceLabel } from "./Account";
 import { Api } from "./api";
+import { loadAreas, resetI18nForTests } from "./i18n";
 
 const user = { id: "u", email: "j@x.nl", display_name: "J", role: "admin", quota_bytes: 0, used_bytes: 0, root_id: "r" };
 const tokens = { access_token: "A1", refresh_token: "R", expires_in: 900, user };
@@ -161,5 +163,20 @@ describe("twee tabbladen verversen tegelijk", () => {
     });
     expect(await api.refresh()).toBeNull();
     expect(refreshes).toBe(1);
+  });
+});
+
+describe("deviceLabel (apparaten op /account)", () => {
+  it("browser en systeem in de taal van de app, anders de tekst van de server", async () => {
+    resetI18nForTests("nl");
+    await loadAreas(["account"]);
+    expect(deviceLabel({ device: "Firefox op Windows", browser: "Firefox", os: "Windows" })).toBe("Firefox op Windows");
+    expect(deviceLabel({ device: "curl/8", browser: null, os: null })).toBe("curl/8");
+    expect(deviceLabel({ device: "", browser: null, os: "Linux" })).toBe("Linux");
+    expect(deviceLabel({ device: "" })).toBe("Onbekend apparaat");
+    resetI18nForTests("en");
+    await loadAreas(["common", "account"]);
+    expect(deviceLabel({ device: "Firefox op Windows", browser: "Firefox", os: "Windows" })).toBe("Firefox on Windows");
+    resetI18nForTests("nl");
   });
 });

@@ -1,9 +1,29 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { type Api, api, formatDate, type TotpSetup, type User } from "./api";
-import { useCurrentUser, useShellActions } from "./currentUser";
-import type { RouteProps } from "./router";
+// /account: je opslag, taal en thema, 2FA, je wachtwoord en waar je ingelogd bent. De
+// herstelcodes (RecoveryCodes) toont App na 2FA aanzetten of nieuwe codes.
 
-export type AccountSession = Awaited<ReturnType<Api["sessions"]>>[number];
+import { type FormEvent, type JSX, useCallback, useEffect, useState } from "react";
+import { type Api, api, type TotpSetup, type User } from "./api";
+import { useCurrentUser, useShellActions } from "./currentUser";
+import { errorText, fmt, t } from "./i18n";
+import type { RouteProps } from "./router";
+import { Button } from "./ui/Button";
+import { confirm } from "./ui/dialogs";
+import { Field } from "./ui/Field";
+import { LanguageSwitch, ThemeSwitch } from "./ui/switches";
+import { toast } from "./ui/toast";
+import { UsageBar } from "./ui/UsageBar";
+
+export type AccountSession = Awaited<ReturnType<Api["sessions"]>>[number] & {
+  /** Sinds P6: de browser en het besturingssysteem apart (null = onbekend) */
+  browser?: string | null;
+  os?: string | null;
+};
+
+/** Hoe een apparaat heet: "Firefox op Windows" in de taal van de app, anders de tekst van de server. */
+export function deviceLabel(s: Pick<AccountSession, "device" | "browser" | "os">): string {
+  if (s.browser && s.os) return t("account.sessions.deviceText", { browser: s.browser, os: s.os });
+  return s.browser || s.os || s.device || t("account.sessions.unknownDevice");
+}
 
 /**
  * onChange: 2FA ging aan of uit, de gebruiker moet opnieuw opgehaald worden.
@@ -17,24 +37,43 @@ export function Account({
   user: User;
   onChange: () => void;
   onCodes: (codes: string[]) => void;
-}) {
+}): JSX.Element {
   // Na een nieuw wachtwoord (of 2FA aan of uit) zijn de andere sessies uitgelogd: de lijst
   // opnieuw ophalen
   const [passwordChanged, setPasswordChanged] = useState(0);
 
   return (
-    <main>
-      <h1>Account</h1>
+    <main className="account">
+      <h1>{t("account.title")}</h1>
       <p>
         {user.display_name} <span className="muted">({user.email})</span>
       </p>
       {user.totp_setup_required && (
         <p>
-          <strong>Op dit platform is 2FA verplicht.</strong> Zet het hieronder aan; daarna kun je bij je bestanden.
+          <strong>{t("account.required2fa")}</strong> {t("account.required2faText")}
         </p>
       )}
-      <section>
-        <h2>Tweestapsverificatie (2FA)</h2>
+      {!user.totp_setup_required && (
+        <section aria-labelledby="account-storage">
+          <h2 id="account-storage">{t("account.storage.title")}</h2>
+          <UsageBar
+            label={t("account.storage.label")}
+            used={user.used_bytes}
+            total={user.quota_bytes > 0 ? user.quota_bytes : null}
+          />
+          {user.quota_bytes <= 0 && <p className="muted">{t("account.storage.unlimited")}</p>}
+        </section>
+      )}
+      <section aria-labelledby="account-look">
+        <h2 id="account-look">{t("account.look.title")}</h2>
+        <div className="stack">
+          <LanguageSwitch />
+          <ThemeSwitch />
+          <p className="muted">{t("account.look.themeHelp")}</p>
+        </div>
+      </section>
+      <section aria-labelledby="account-2fa">
+        <h2 id="account-2fa">{t("account.totp.title")}</h2>
         {user.totp_enabled ? <TotpOn onChange={onChange} onCodes={onCodes} /> : <TotpOff onEnabled={onCodes} />}
       </section>
       {!user.totp_setup_required && (
@@ -60,7 +99,7 @@ function PasswordChange({ totpEnabled, onChanged }: { totpEnabled: boolean; onCh
     e.preventDefault();
     setDone(false);
     if (form.next !== form.repeat) {
-      setError("De twee nieuwe wachtwoorden zijn niet gelijk.");
+      setError(t("account.password.mismatch"));
       return;
     }
     setBusy(true);
@@ -71,7 +110,7 @@ function PasswordChange({ totpEnabled, onChanged }: { totpEnabled: boolean; onCh
       setDone(true);
       onChanged();
     } catch (err) {
-      setError((err as Error).message); // ook "Te veel foute …" (429)
+      setError(errorText(err)); // ook "Te veel foute …" (429)
     } finally {
       setBusy(false);
     }
@@ -83,36 +122,49 @@ function PasswordChange({ totpEnabled, onChanged }: { totpEnabled: boolean; onCh
   });
 
   return (
-    <section>
-      <h2>Wachtwoord wijzigen</h2>
+    <section aria-labelledby="account-password">
+      <h2 id="account-password">{t("account.password.title")}</h2>
       <form className="stack" onSubmit={submit}>
-        <label>
-          Huidig wachtwoord
-          <input type="password" autoComplete="current-password" required {...field("current")} />
-        </label>
-        <label>
-          Nieuw wachtwoord
-          <input type="password" autoComplete="new-password" required minLength={MIN_PASSWORD} {...field("next")} />
-          <small className="muted">Minstens {MIN_PASSWORD} tekens.</small>
-        </label>
-        <label>
-          Nieuw wachtwoord nog een keer
-          <input type="password" autoComplete="new-password" required minLength={MIN_PASSWORD} {...field("repeat")} />
-        </label>
+        <Field label={t("account.password.current")}>
+          {(c) => <input {...c} type="password" autoComplete="current-password" required {...field("current")} />}
+        </Field>
+        <Field label={t("account.password.next")} hint={t("account.password.hint", { min: MIN_PASSWORD })}>
+          {(c) => (
+            <input
+              {...c}
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={MIN_PASSWORD}
+              {...field("next")}
+            />
+          )}
+        </Field>
+        <Field label={t("account.password.repeat")}>
+          {(c) => (
+            <input
+              {...c}
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={MIN_PASSWORD}
+              {...field("repeat")}
+            />
+          )}
+        </Field>
         {totpEnabled && (
-          <label>
-            Code uit je app (of een herstelcode)
-            <input autoComplete="one-time-code" required {...field("code")} />
-          </label>
+          <Field label={t("account.password.code")}>
+            {(c) => <input {...c} autoComplete="one-time-code" required {...field("code")} />}
+          </Field>
         )}
         <div className="toolbar">
-          <button type="submit" disabled={busy}>
-            Wachtwoord wijzigen
-          </button>
+          <Button type="submit" busy={busy}>
+            {t("account.password.submit")}
+          </Button>
         </div>
         {done && (
           <p>
-            <span className="badge ok">Je wachtwoord is gewijzigd.</span> Op je andere apparaten ben je uitgelogd.
+            <span className="badge ok">{t("account.password.done")}</span> {t("account.password.doneText")}
           </p>
         )}
         {error && <p role="alert">{error}</p>}
@@ -130,74 +182,94 @@ function Sessions({ reload }: { reload: string }) {
       setSessions(await api.sessions());
       setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorText(e));
     }
   }, []);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load, reload]);
 
   async function end(s: AccountSession) {
-    if (s.current && !window.confirm("Dit is het apparaat dat je nu gebruikt. Hier uitloggen?")) return;
+    if (s.current) {
+      const yes = await confirm({
+        title: t("account.sessions.currentTitle"),
+        message: t("account.sessions.currentText"),
+        confirm: t("account.sessions.signOut"),
+      });
+      if (!yes) return;
+    }
     try {
       await api.revokeSession(s.id, s.current); // de eigen sessie: de app logt uit
-      if (!s.current) await load();
+      if (!s.current) {
+        toast(t("account.sessions.signedOut", { device: deviceLabel(s) }), { kind: "ok" });
+        await load();
+      }
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorText(e));
     }
   }
 
   async function endOthers() {
-    if (!window.confirm("Op alle andere apparaten uitloggen?")) return;
+    const yes = await confirm({
+      title: t("account.sessions.othersTitle"),
+      message: t("account.sessions.othersText"),
+      confirm: t("account.sessions.othersConfirm"),
+      danger: true,
+    });
+    if (!yes) return;
     try {
       await api.revokeOtherSessions();
+      toast(t("account.sessions.othersDone"), { kind: "ok" });
       await load();
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorText(e));
     }
   }
 
   const others = sessions?.filter((s) => !s.current).length ?? 0;
 
   return (
-    <section>
-      <h2>Apparaten en sessies</h2>
-      <p className="muted">
-        Hier ben je ingelogd. Herken je een apparaat niet, log het dan uit en wijzig je wachtwoord.
-      </p>
+    <section aria-labelledby="account-sessions">
+      <h2 id="account-sessions">{t("account.sessions.title")}</h2>
+      <p className="muted">{t("account.sessions.help")}</p>
       {error && <p role="alert">{error}</p>}
       {sessions && (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Apparaat</th>
-                <th>IP-adres</th>
-                <th>Laatst actief</th>
-                <th>Ingelogd sinds</th>
-                <th />
+                <th>{t("account.sessions.device")}</th>
+                <th className="wide-only">{t("account.sessions.ip")}</th>
+                <th>{t("account.sessions.lastActive")}</th>
+                <th className="wide-only">{t("account.sessions.since")}</th>
+                <th>
+                  <span className="sr-only">{t("account.sessions.signOut")}</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {sessions.map((s) => (
                 <tr key={s.id}>
                   <td>
-                    {s.device}
+                    {deviceLabel(s)}
                     {s.current && (
                       <>
                         {" "}
-                        <span className="badge ok">Dit apparaat</span>
+                        <span className="badge ok">{t("account.sessions.current")}</span>
                       </>
                     )}
                   </td>
-                  <td>{s.ip ?? "-"}</td>
-                  <td>{formatDate(s.last_active_at)}</td>
-                  <td>{formatDate(s.created_at)}</td>
+                  <td className="wide-only">{s.ip ?? "–"}</td>
+                  <td>{fmt.dateTime(s.last_active_at)}</td>
+                  <td className="wide-only">{fmt.dateTime(s.created_at)}</td>
                   <td className="actions">
-                    <button type="button" onClick={() => end(s)}>
-                      Uitloggen
-                    </button>
+                    <Button
+                      aria-label={t("account.sessions.signOutLabel", { device: deviceLabel(s) })}
+                      onClick={() => void end(s)}
+                    >
+                      {t("account.sessions.signOut")}
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -206,9 +278,9 @@ function Sessions({ reload }: { reload: string }) {
         </div>
       )}
       <div className="toolbar">
-        <button type="button" onClick={endOthers} disabled={others === 0}>
-          Overal anders uitloggen
-        </button>
+        <Button onClick={() => void endOthers()} disabled={others === 0}>
+          {t("account.sessions.signOutOthers")}
+        </Button>
       </div>
     </section>
   );
@@ -225,7 +297,7 @@ function TotpOff({ onEnabled }: { onEnabled: (codes: string[]) => void }) {
       setSetup(await api.totpSetup());
       setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorText(e));
     }
   }
 
@@ -236,20 +308,15 @@ function TotpOff({ onEnabled }: { onEnabled: (codes: string[]) => void }) {
       setError(null);
       onEnabled(codes);
     } catch (err) {
-      setError((err as Error).message); // ook "Te veel foute codes…" (429)
+      setError(errorText(err)); // ook "Te veel foute codes…" (429)
     }
   }
 
   if (!setup) {
     return (
       <>
-        <p>
-          Met 2FA heb je bij het inloggen naast je wachtwoord ook een code uit een app op je telefoon nodig, zoals
-          Aegis, Google Authenticator of 1Password. Zet dit aan voordat het platform van buiten bereikbaar is.
-        </p>
-        <button type="button" onClick={start}>
-          2FA aanzetten
-        </button>
+        <p>{t("account.totp.intro")}</p>
+        <Button onClick={() => void start()}>{t("account.totp.turnOn")}</Button>
         {error && <p role="alert">{error}</p>}
       </>
     );
@@ -257,36 +324,40 @@ function TotpOff({ onEnabled }: { onEnabled: (codes: string[]) => void }) {
 
   return (
     <form className="stack" onSubmit={enable}>
-      <p>1. Scan deze QR-code met je authenticator-app.</p>
-      <img className="qr" alt="QR-code voor je authenticator-app" src={setup.qr} />
+      <p>{t("account.totp.scan")}</p>
+      <img className="qr" alt={t("account.totp.qrAlt")} src={setup.qr} />
       <p className="muted">
-        Scannen lukt niet? Vul deze sleutel met de hand in: <code>{groups(setup.secret)}</code>
+        {t("account.totp.manual")} <code>{groups(setup.secret)}</code>
       </p>
-      <label>
-        2. Vul de code in die de app nu toont
-        <input
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          required
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-        />
-      </label>
-      <label>
-        3. Je wachtwoord, ter bevestiging
-        <input
-          type="password"
-          autoComplete="current-password"
-          required
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-      </label>
+      <Field label={t("account.totp.code")}>
+        {(c) => (
+          <input
+            {...c}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            required
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+        )}
+      </Field>
+      <Field label={t("account.totp.password")}>
+        {(c) => (
+          <input
+            {...c}
+            type="password"
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        )}
+      </Field>
       <div className="toolbar">
-        <button type="submit">Aanzetten</button>
-        <button type="button" onClick={() => setSetup(null)}>
-          Annuleren
-        </button>
+        <Button type="submit" variant="primary">
+          {t("account.totp.enable")}
+        </Button>
+        <Button onClick={() => setSetup(null)}>{t("common.cancel")}</Button>
       </div>
       {error && <p role="alert">{error}</p>}
     </form>
@@ -312,47 +383,47 @@ function TotpOn({ onChange, onCodes }: { onChange: () => void; onCodes: (codes: 
         onChange();
       }
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorText(err));
     }
   }
 
   return (
     <>
       <p>
-        <span className="badge ok">2FA staat aan.</span> Bij het inloggen vraagt het platform om een code uit je app.
+        <span className="badge ok">{t("account.totp.on")}</span> {t("account.totp.onText")}
       </p>
       {mode === "idle" ? (
         <div className="toolbar">
-          <button type="button" onClick={() => setMode("codes")}>
-            Nieuwe herstelcodes
-          </button>
-          <button type="button" onClick={() => setMode("off")}>
-            2FA uitzetten
-          </button>
+          <Button onClick={() => setMode("codes")}>{t("account.totp.newCodes")}</Button>
+          <Button onClick={() => setMode("off")}>{t("account.totp.turnOff")}</Button>
         </div>
       ) : (
         <form className="stack" onSubmit={submit}>
           {mode === "off" && (
-            <label>
-              Wachtwoord
-              <input
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </label>
+            <Field label={t("account.totp.passwordLabel")}>
+              {(c) => (
+                <input
+                  {...c}
+                  data-autofocus=""
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              )}
+            </Field>
           )}
-          <label>
-            Code uit je app (of een herstelcode)
-            <input autoComplete="one-time-code" required value={code} onChange={(e) => setCode(e.target.value)} />
-          </label>
+          <Field label={t("account.totp.codeLabel")}>
+            {(c) => (
+              <input {...c} autoComplete="one-time-code" required value={code} onChange={(e) => setCode(e.target.value)} />
+            )}
+          </Field>
           <div className="toolbar">
-            <button type="submit">{mode === "off" ? "2FA uitzetten" : "Maak nieuwe codes"}</button>
-            <button type="button" onClick={() => setMode("idle")}>
-              Annuleren
-            </button>
+            <Button type="submit" variant={mode === "off" ? "danger" : "primary"}>
+              {mode === "off" ? t("account.totp.turnOff") : t("account.totp.makeCodes")}
+            </Button>
+            <Button onClick={() => setMode("idle")}>{t("common.cancel")}</Button>
           </div>
           {error && <p role="alert">{error}</p>}
         </form>
@@ -362,20 +433,20 @@ function TotpOn({ onChange, onCodes }: { onChange: () => void; onCodes: (codes: 
 }
 
 /** De route /account: de ingelogde gebruiker en de acties van de schil. */
-export default function AccountPage(_: RouteProps) {
+export default function AccountPage(_: RouteProps): JSX.Element | null {
   const user = useCurrentUser();
   const shell = useShellActions();
   if (!user) return null;
   return <Account user={user} onChange={shell.reloadUser} onCodes={shell.showRecoveryCodes} />;
 }
 
-export function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
+export function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }): JSX.Element {
   function download() {
-    const text = `Herstelcodes voor het platform. Elke code werkt één keer.\n\n${codes.join("\n")}\n`;
+    const text = `${t("account.codes.fileText")}\n\n${codes.join("\n")}\n`;
     const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = "herstelcodes.txt";
+    a.download = t("account.codes.fileName");
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
@@ -383,8 +454,7 @@ export function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () =
   return (
     <div className="stack">
       <p>
-        <strong>Bewaar deze herstelcodes op een veilige plek.</strong> Ben je je telefoon kwijt, dan log je met een
-        van deze codes in. Elke code werkt één keer, en je ziet ze maar één keer.
+        <strong>{t("account.codes.keep")}</strong> {t("account.codes.keepText")}
       </p>
       <ul className="codes">
         {codes.map((c) => (
@@ -394,12 +464,10 @@ export function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () =
         ))}
       </ul>
       <div className="toolbar">
-        <button type="button" onClick={download}>
-          Downloaden als tekstbestand
-        </button>
-        <button type="button" onClick={onDone}>
-          Ik heb ze bewaard
-        </button>
+        <Button onClick={download}>{t("account.codes.download")}</Button>
+        <Button variant="primary" onClick={onDone}>
+          {t("account.codes.done")}
+        </Button>
       </div>
     </div>
   );
