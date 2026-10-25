@@ -8,7 +8,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app import cli, events
+from app import cli, events, userdelete
 from app.events import Hub
 from app.models import Job, User
 from app.routers import events as live
@@ -257,3 +257,19 @@ async def test_cli_make_admin(settings):
     async with maker(settings)() as session:
         anna = await session.scalar(select(User).where(User.email == "anna@example.nl"))
         assert anna.role == "admin" and anna.disabled_at is None
+
+
+@pytest.mark.anyio
+async def test_cli_make_admin_niet_als_het_account_wordt_verwijderd(settings):
+    """Zoals PATCH /users/{id} (409 user_being_deleted): de taak zou anders doorgaan met het
+    verwijderen van wat dan een actieve beheerder is."""
+    async with maker(settings)() as session:
+        bas = await create_user(session, "bas@example.nl", disabled=True)
+        await session.commit()
+        await userdelete.start(session, bas.id)
+        await session.commit()
+    with pytest.raises(cli.BeingDeleted):
+        await cli.make_admin(settings, "bas@example.nl")
+    async with maker(settings)() as session:
+        bas = await session.get(User, bas.id)
+        assert bas.role == "user" and bas.disabled_at is not None

@@ -10,7 +10,8 @@ blokkade op en trekt alle logins van dat account in. Daarna log je in met alleen
 wachtwoord en zet je 2FA opnieuw aan.
 
 make-admin is er voor als er geen (actieve) beheerder meer is om het via /beheer te doen: het
-maakt het account beheerder en heft een blokkade op.
+maakt het account beheerder en heft een blokkade op. Niet voor een account dat al wordt
+verwijderd (een taak user.delete staat klaar of loopt): die taak zou gewoon doorgaan.
 """
 
 import argparse
@@ -23,7 +24,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.config import Settings, get_settings
 from app.db import get_engine
 from app.models import User
-from app.routers.auth import reset_totp
+from app.routers.auth import being_deleted, reset_totp
+
+
+class BeingDeleted(Exception):
+    """Voor dit account staat een taak user.delete klaar of loopt er een."""
 
 
 async def reset_2fa(settings: Settings, email: str) -> bool:
@@ -40,7 +45,9 @@ async def reset_2fa(settings: Settings, email: str) -> bool:
 
 
 async def make_admin(settings: Settings, email: str) -> bool:
-    """Maakt het account beheerder en heft een blokkade op. False als het er niet is."""
+    """Maakt het account beheerder en heft een blokkade op. False als het er niet is;
+    BeingDeleted als het al wordt verwijderd (zoals PATCH /users/{id}: 409
+    user_being_deleted)."""
     maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
     async with maker() as session:
         user = await session.scalar(
@@ -48,6 +55,8 @@ async def make_admin(settings: Settings, email: str) -> bool:
         )
         if user is None:
             return False
+        if await being_deleted(session, [user.id]):
+            raise BeingDeleted(email)
         user.role = "admin"
         user.disabled_at = None
         await session.commit()
@@ -78,7 +87,16 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             await get_engine(settings).dispose()
 
-    if not asyncio.run(run()):
+    try:
+        found = asyncio.run(run())
+    except BeingDeleted:
+        print(
+            f"Het account {args.email} wordt al verwijderd en kan geen beheerder meer worden. "
+            "Kies een ander account.",
+            file=sys.stderr,
+        )
+        return 1
+    if not found:
         print(f"Er is geen account met e-mailadres {args.email}.", file=sys.stderr)
         return 1
     if args.command == "make-admin":
