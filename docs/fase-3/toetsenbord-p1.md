@@ -20,7 +20,7 @@ server" de knop "Opnieuw proberen".
 
 | Toets | Wanneer | Wat |
 |---|---|---|
-| `Shift+R` | de melding "Nieuwe versie beschikbaar" staat er | De nieuwe versie laden (zelfde als de knop "Vernieuwen" in de melding) |
+| `Shift+N` | de melding "Nieuwe versie beschikbaar" staat er | De nieuwe versie laden (zelfde als de knop "Vernieuwen" in de melding). Niet `Shift+R`: dat is in Beheer > Taken "alles opnieuw" (P6) |
 
 De melding blijft staan tot je kiest (geen time-out). De knop "Vernieuwen" zit in het
 meldingengebied ("Meldingen") en is met `Tab` te bereiken.
@@ -35,7 +35,7 @@ bedienen. Komt de verbinding terug, dan verdwijnt hij vanzelf.
 - `e2e/test_login.py::test_inloggen_met_code_en_terug`: `Alt+Shift+P` vanuit het
   wachtwoordveld, `Escape` vanuit het codeveld, focus na "Terug", `Enter` in het codeveld.
 - `e2e/test_pwa.py::test_nieuwe_versie_en_vernieuwen`: eerst "Vernieuwen" met de muis, daarna
-  een tweede nieuwe versie met `Shift+R`.
+  een tweede nieuwe versie met `Shift+N`.
 
 ## Checklist voor de integratie (alleen toetsenbord)
 
@@ -45,4 +45,4 @@ bedienen. Komt de verbinding terug, dan verdwijnt hij vanzelf.
 4. `Escape`: terug op het eerste formulier, focus in het wachtwoordveld.
 5. `Enter`, de code typen, `Enter`: ingelogd.
 6. Een nieuwe build uitrollen terwijl de app open is: "Nieuwe versie beschikbaar" verschijnt;
-   `Shift+R` laadt hem.
+   `Shift+N` laadt hem.

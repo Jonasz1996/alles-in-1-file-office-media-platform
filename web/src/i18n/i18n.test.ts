@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, errorFromBody } from "../api";
 import {
   type Area,
+  applyAccountLocale,
   areasLoaded,
   collator,
   type ErrorCatalog,
@@ -314,5 +315,57 @@ describe("detectLocale", () => {
     expect(detectLocale(null, ["nl-BE"])).toBe("nl");
     expect(detectLocale("xx", ["fr-FR"])).toBe("en");
     expect(detectLocale(null, undefined)).toBe("nl");
+  });
+});
+
+describe("applyAccountLocale", () => {
+  function memory() {
+    const data = new Map<string, string>();
+    return {
+      data,
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => void data.set(k, v),
+      removeItem: (k: string) => void data.delete(k),
+    };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetI18nForTests("nl");
+  });
+
+  it("herlaadt één keer naar de taal van het account, ook bij een volgende login in hetzelfde tabblad", () => {
+    const local = memory();
+    const reload = vi.fn();
+    vi.stubGlobal("localStorage", local);
+    vi.stubGlobal("sessionStorage", memory());
+    vi.stubGlobal("window", { location: { reload } });
+    const stored = () => local.data.get("platform-locale");
+
+    // A (en) logt in op een Nederlandse browser: bewaren en herladen
+    resetI18nForTests("nl");
+    expect(applyAccountLocale("en")).toBe(true);
+    expect(stored()).toBe("en");
+    expect(reload).toHaveBeenCalledTimes(1);
+    // Na het herladen klopt het
+    resetI18nForTests("en");
+    expect(applyAccountLocale("en")).toBe(false);
+
+    // A kiest Nederlands (setLocale bewaart en herlaadt) en logt uit zonder te herladen
+    local.data.set("platform-locale", "nl");
+    resetI18nForTests("nl");
+    expect(applyAccountLocale("nl")).toBe(false);
+
+    // B (en) logt in in hetzelfde tabblad: weer naar het Engels
+    expect(applyAccountLocale("en")).toBe(true);
+    expect(stored()).toBe("en");
+    expect(reload).toHaveBeenCalledTimes(2);
+
+    // Komt de taal na dat herladen toch niet aan, dan niet eindeloos herladen (en niets bewaren)
+    resetI18nForTests("nl");
+    local.data.set("platform-locale", "nl");
+    expect(applyAccountLocale("en")).toBe(false);
+    expect(stored()).toBe("nl");
+    expect(reload).toHaveBeenCalledTimes(2);
   });
 });

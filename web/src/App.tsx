@@ -18,6 +18,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import { ApiError, api, type User } from "./api";
+import { clipboard } from "./browser/clipboard";
+import { clearUndo } from "./browser/undo";
 import { CurrentUser, ShellActionsContext } from "./currentUser";
 import { liveEvents } from "./events";
 import {
@@ -299,6 +301,10 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
     api.onLoggedOut = () => {
       uploadStatus.stopAll();
       liveEvents.stop();
+      // Wat de vorige gebruiker knipte of kopieerde, of nog ongedaan kon maken, is niet van de
+      // volgende die in dit tabblad inlogt
+      clipboard.clear();
+      clearUndo();
       setCodes(null);
       setUser(null);
     };
@@ -353,6 +359,8 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
   async function logout() {
     uploadStatus.stopAll(); // de uploads blijven op de server staan en gaan later verder
     liveEvents.stop();
+    clipboard.clear(); // zie api.onLoggedOut
+    clearUndo();
     await api.logout();
     setCodes(null);
     setUser(null);

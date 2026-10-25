@@ -200,18 +200,28 @@ const RELOAD_FLAG = "platform-locale-reload";
 
 /**
  * Na het inloggen: heeft het account een andere taal dan de app nu gebruikt, dan die bewaren en
- * één keer herladen. Geeft true als de pagina herlaadt. Lukt bewaren niet (opslag uit), dan
- * blijft de huidige taal staan: anders zou de pagina blijven herladen.
+ * één keer herladen. Geeft true als de pagina herlaadt. Lukt bewaren niet (opslag uit), of kwam
+ * de taal na dat ene herladen toch niet aan, dan blijft de huidige taal staan (en wordt er niets
+ * bewaard): anders zou de pagina blijven herladen. Klopt de taal, dan mag een volgende login in
+ * dit tabblad (een ander account) weer één keer herladen.
  */
 export function applyAccountLocale(l: Locale | null | undefined): boolean {
-  if (!isLocale(l) || l === currentLocale()) return false;
-  if (!storeLocale(l)) return false;
+  if (!isLocale(l)) return false;
+  if (l === currentLocale()) {
+    try {
+      sessionStorage.removeItem(RELOAD_FLAG);
+    } catch {
+      /* opslag uit */
+    }
+    return false;
+  }
   try {
     if (sessionStorage.getItem(RELOAD_FLAG) === l) return false; // al een keer geprobeerd
     sessionStorage.setItem(RELOAD_FLAG, l);
   } catch {
     return false;
   }
+  if (!storeLocale(l)) return false;
   window.location.reload();
   return true;
 }

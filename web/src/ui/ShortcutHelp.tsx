@@ -22,17 +22,28 @@ const SCOPES: Record<string, MessageKey> = {
   global: "shell.shortcuts.scopes.global",
   dialog: "shell.shortcuts.scopes.dialog",
   menu: "shell.shortcuts.scopes.menu",
+  login: "shell.shortcuts.scopes.login",
   browser: "shell.shortcuts.scopes.browser",
   viewer: "shell.shortcuts.scopes.viewer",
   photos: "shell.shortcuts.scopes.photos",
+  albums: "shell.shortcuts.scopes.albums",
+  album: "shell.shortcuts.scopes.album",
+  "public-album": "shell.shortcuts.scopes.album",
+  "public-view": "shell.shortcuts.scopes.photo",
   trash: "shell.shortcuts.scopes.trash",
+  share: "shell.shortcuts.scopes.share",
+  versions: "shell.shortcuts.scopes.versions",
+  "upload-conflict": "shell.shortcuts.scopes.uploadConflict",
+  admin: "shell.shortcuts.scopes.admin",
 };
 
 function scopeLabel(scope: string): string {
   return t(SCOPES[scope] ?? "shell.shortcuts.scopes.page");
 }
 
-/** Eén keer in de app: ? opent de hulp. */
+/** Eén keer in de app: ? opent de hulp, ook in een venster (een dialoog houdt de globale
+ * sneltoetsen tegen; dan staat ? ook in de scope "dialog" en toont de hulp wat in dat venster
+ * werkt). */
 export function ShortcutHelp(): JSX.Element | null {
   const isOpen = useSyncExternalStore(
     (cb) => {
@@ -44,7 +55,9 @@ export function ShortcutHelp(): JSX.Element | null {
     () => open,
     () => open,
   );
-  useShortcuts([{ combo: "?", label: t("shell.shortcuts.open"), run: () => setOpen(true) }]);
+  const help = [{ combo: "?", label: t("shell.shortcuts.open"), run: () => setOpen(true) }];
+  useShortcuts(help);
+  useShortcuts(help, { scope: "dialog" });
   if (!isOpen) return null;
   return <ShortcutList onClose={() => setOpen(false)} />;
 }

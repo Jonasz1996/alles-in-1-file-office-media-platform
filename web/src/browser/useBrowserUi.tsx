@@ -20,6 +20,7 @@ import { announce, toast } from "../ui/toast";
 import { Versions } from "../Versions";
 import type { BrowserUi } from "./actions";
 import { clipboard, ownerOf, planTransfer } from "./clipboard";
+import { offerUndo } from "./undo";
 
 export interface UiHooks {
   /** De map die open staat (begin van de kiezer, doel van plakken); null: geen (Zoeken) */
@@ -58,31 +59,6 @@ function follow(url: string, name: string): void {
   a.remove();
 }
 
-
-interface PendingUndo {
-  run(): void;
-  dismiss(): void;
-  until: number;
-}
-
-/** Zo lang kan Mod+Z de laatste keer "naar de prullenbak" nog terugdraaien (zo lang als de
- * melding met "Ongedaan maken" staat). */
-const UNDO_MS = 8000;
-let pendingUndo: PendingUndo | null = null;
-
-/** Is er iets om ongedaan te maken (de melding staat nog)? */
-export function canUndo(): boolean {
-  return pendingUndo !== null && Date.now() < pendingUndo.until;
-}
-
-/** Mod+Z: hetzelfde als "Ongedaan maken" in de melding (die gaat dan weg). */
-export function undoLast(): void {
-  const u = pendingUndo;
-  pendingUndo = null;
-  if (!u || Date.now() >= u.until) return;
-  u.dismiss();
-  u.run();
-}
 
 /** Meldt wat er misging bij een bulkactie (de eerste fout, vertaald op code). */
 export function reportFailures(results: readonly ItemResult[]): void {
@@ -240,21 +216,7 @@ export function useBrowserUi(h: UiHooks): BrowserUiResult {
               reportFailures(back);
             }, fail);
           };
-          const undo: PendingUndo = {
-            run: restore,
-            dismiss: () => {},
-            until: Date.now() + UNDO_MS,
-          };
-          undo.dismiss = toast(t("browser.trashed", { n: gone.length, name: first?.name ?? "" }), {
-            action: {
-              label: t("browser.undo"),
-              run: () => {
-                if (pendingUndo === undo) pendingUndo = null;
-                restore();
-              },
-            },
-          });
-          pendingUndo = undo;
+          offerUndo(t("browser.trashed", { n: gone.length, name: first?.name ?? "" }), t("browser.undo"), restore);
         } catch (e) {
           fail(e);
         }

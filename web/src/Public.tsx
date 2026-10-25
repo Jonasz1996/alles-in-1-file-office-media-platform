@@ -25,7 +25,6 @@ import { navigate, type RouteProps, usePath, useQueryParam } from "./router";
 import { expiryLabel } from "./sharing";
 import { Thumb } from "./Thumb";
 import { Button } from "./ui/Button";
-import { ShortcutHelp } from "./ui/ShortcutHelp";
 import { UploadQueue } from "./uploadQueue";
 import { useViewerParam, VIEWER_PARAM, Viewer } from "./viewer";
 import { formatDuration } from "./viewer/media";
@@ -160,7 +159,6 @@ export function Public({ token }: { token: string | null }) {
         <strong>{t("public.brand")}</strong>
       </header>
       {page}
-      <ShortcutHelp />
     </>
   );
 }

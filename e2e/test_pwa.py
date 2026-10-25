@@ -1,6 +1,6 @@
 """De PWA (P1): de service worker neemt de pagina over, offline werkt de schil (met de balk) en
 een lazy chunk dat je al eens opende, een nieuwe build geeft "Nieuwe versie beschikbaar" en
-"Vernieuwen" (of Shift+R) laadt hem, en het manifest en de iconen zijn op te halen.
+"Vernieuwen" (of Shift+N) laadt hem, en het manifest en de iconen zijn op te halen.
 
 Elke test heeft een eigen server met een eigen kopie van web/dist: die kan hij stoppen (offline)
 of aanpassen (een nieuwe build) zonder de andere tests te raken. 127.0.0.1 is net als localhost
@@ -207,13 +207,13 @@ def test_nieuwe_versie_en_vernieuwen(site: PwaSite):
     assert f"platform-shell-{first}" not in names, names  # de oude cache is opgeruimd
     expect(page.get_by_role("navigation", name="Hoofdmenu")).to_be_visible()
 
-    # Ronde 2: nog een build, nu met het toetsenbord (Shift+R)
+    # Ronde 2: nog een build, nu met het toetsenbord (Shift+N)
     third = site.rebuild("drie")
     page.evaluate(UPDATE_JS)
     expect(toasts(page).get_by_text(UPDATE_TEXT, exact=True)).to_be_visible(timeout=30_000)
     page.locator("body").focus()
     with page.expect_event("load"):
-        page.keyboard.press("Shift+R")
+        page.keyboard.press("Shift+N")
     expect(page.locator('meta[name="e2e-build"]')).to_have_attribute("content", "drie")
     page.wait_for_function(CONTROLLED_JS)
     assert page.evaluate(BUILD_JS) == third

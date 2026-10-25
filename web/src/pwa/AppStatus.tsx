@@ -35,8 +35,9 @@ export function AppStatus(): JSX.Element | null {
 
 function Status({ online, update }: { online: boolean; update: boolean }): JSX.Element | null {
   const ready = useAreas(AREAS);
-  // Shift+R laadt de nieuwe versie (de knop in de melding is ook met Tab te bereiken)
-  useShortcuts(ready && update ? [{ combo: "shift+r", run: () => applyUpdate(), label: t("pwa.reloadShortcut") }] : []);
+  // Shift+N (nieuwe versie) laadt hem (de knop in de melding is ook met Tab te bereiken). Niet
+  // Shift+R: dat is in Beheer > Taken "alles opnieuw", en één toets hoort één ding te doen.
+  useShortcuts(ready && update ? [{ combo: "shift+n", run: () => applyUpdate(), label: t("pwa.reloadShortcut") }] : []);
   useEffect(() => {
     if (!ready || !update) return;
     // Blijft staan tot hij gekozen of gesloten wordt
