@@ -78,7 +78,8 @@ const en: Translation<typeof nl> = {
     jobs_waiting: "The oldest background job has been waiting for {minutes} minutes.",
     https_error: "HTTPS: {reason}",
     https_listener: "HTTPS: {reason}",
-    https_expiring: "The certificate expires in {days} days.",
+    https_expiring: { one: "The certificate expires in {n} day.", other: "The certificate expires in {n} days." },
+    https_expires_today: "The certificate expires today.",
   },
   https: {
     title: "HTTPS",
@@ -259,6 +260,7 @@ const en: Translation<typeof nl> = {
       preview: "Preview",
       user_delete: "Delete user",
       photometa: "Photo metadata",
+      preview_outdated: "Re-render previews",
     },
   },
   groups: {

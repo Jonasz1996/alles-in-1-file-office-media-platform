@@ -77,7 +77,8 @@ export default {
     jobs_waiting: "De oudste achtergrondtaak wacht al {minutes} minuten.",
     https_error: "HTTPS: {reason}",
     https_listener: "HTTPS: {reason}",
-    https_expiring: "Het certificaat verloopt over {days} dagen.",
+    https_expiring: { one: "Het certificaat verloopt over {n} dag.", other: "Het certificaat verloopt over {n} dagen." },
+    https_expires_today: "Het certificaat verloopt vandaag.",
   },
   https: {
     title: "HTTPS",
@@ -260,6 +261,7 @@ export default {
       preview: "Preview",
       user_delete: "Gebruiker verwijderen",
       photometa: "Fotogegevens",
+      preview_outdated: "Previews opnieuw maken",
     },
   },
   groups: {

@@ -80,6 +80,22 @@ describe("noticeText (meldingen op code)", () => {
     ).toBe("HTTPS: The domain does not point at your public IP address (yet). Check the DNS setting. (NXDOMAIN)");
   });
 
+  it("het certificaat verloopt: enkelvoud, meervoud en vandaag", async () => {
+    resetI18nForTests("nl");
+    await loadAreas(["common", "admin"]);
+    const expiring = (days: number) => noticeText({ code: "https_expiring", params: { days }, text: "x" });
+    expect(expiring(1)).toBe("Het certificaat verloopt over 1 dag.");
+    expect(expiring(13)).toBe("Het certificaat verloopt over 13 dagen.");
+    expect(expiring(0)).toBe("Het certificaat verloopt vandaag.");
+    resetI18nForTests("en");
+    await loadAreas(["common", "admin"]);
+    expect(expiring(1)).toBe("The certificate expires in 1 day.");
+    expect(expiring(2)).toBe("The certificate expires in 2 days.");
+    expect(expiring(0)).toBe("The certificate expires today.");
+    resetI18nForTests("nl");
+    await loadAreas(["common", "admin"]);
+  });
+
   it("een onbekende code houdt de tekst van de server", () => {
     expect(noticeText({ code: "iets_nieuws", params: {}, text: "Iets nieuws" })).toBe("Iets nieuws");
     expect(noticeText({ code: "", params: {}, text: "Oud bericht" })).toBe("Oud bericht");
@@ -142,6 +158,8 @@ describe("taken", () => {
   it("soort en onderwerp", () => {
     expect(jobTypeLabel("preview")).toBe("Preview");
     expect(jobTypeLabel("user.delete")).toBe("Gebruiker verwijderen");
+    expect(jobTypeLabel("preview.outdated")).toBe("Previews opnieuw maken");
+    expect(jobTypeLabel("photometa")).toBe("Fotogegevens");
     expect(jobTypeLabel("iets.anders")).toBe("iets.anders");
     expect(jobSubject("preview:0123456789abcdef")).toBe("0123456789ab…");
     expect(jobSubject("user.delete:abc")).toBe("abc");

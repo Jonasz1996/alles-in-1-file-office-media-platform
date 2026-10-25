@@ -50,6 +50,10 @@ export function noticeText(n: Notice): string {
     const reason = httpsErrorText(String(n.params.error ?? ""), n.params, n.text);
     return t(`admin.notice.${n.code}` as MessageKey, { reason });
   }
+  if (n.code === "https_expiring") {
+    const days = Number(n.params.days ?? 0);
+    return days > 0 ? t("admin.notice.https_expiring", { n: days }) : t("admin.notice.https_expires_today");
+  }
   return t(`admin.notice.${n.code}` as MessageKey, n.params);
 }
 
@@ -116,11 +120,14 @@ export function quotaInput(bytes: number): string {
   return String(Math.round((bytes / GB) * 100) / 100);
 }
 
+/** De soorten taken van de server (app/previews.py, userdelete.py, photometa.py), met de punt
+ * als _: admin.jobs.types.<soort>. */
+const JOB_TYPES = new Set(["preview", "preview_outdated", "user_delete", "photometa"]);
+
 /** De soort taak voor in de tabel: bekende soorten vertaald, de rest zoals hij heet. */
 export function jobTypeLabel(type: string): string {
   const key = type.replace(/\./g, "_");
-  if (key === "preview" || key === "user_delete" || key === "photometa") return t(`admin.jobs.types.${key}` as MessageKey);
-  return type;
+  return JOB_TYPES.has(key) ? t(`admin.jobs.types.${key}` as MessageKey) : type;
 }
 
 /** Waar de taak over gaat, kort: bij een preview de eerste tekens van de inhoud (sha). */
