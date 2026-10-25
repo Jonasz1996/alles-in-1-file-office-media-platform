@@ -154,8 +154,8 @@ export class UploadQueue {
   /** Per item: grootte en opslagsleutel, één keer gelezen (geen herhaalde vraag aan de browser). */
   private readonly meta = new Map<string, { size: number; sk: string }>();
   private snapshot: readonly UploadItem[] | null = EMPTY;
+  /** Per lopende poging; abort(STOP) is pauzeren (ook als er intussen hervat is), abort() annuleren. */
   private readonly controllers = new Map<string, AbortController>();
-  private readonly pausing = new Set<string>();
   private readonly running = new Set<string>();
   private readonly waiters = new Map<string, (() => void)[]>();
   private readonly creates = new Map<string, (nodeId: string, item: UploadItem) => void>();
@@ -417,7 +417,9 @@ export class UploadQueue {
       });
       ok = true;
     } catch (e) {
-      paused = this.pausing.has(key) && this.items.has(key);
+      // Gestopt (pauzeren) is nooit annuleren, ook niet als hij intussen al hervat is: tusCreate
+      // en tusStatus lopen dan nog af, en hervatten zet hem hieronder weer in de rij.
+      paused = controller.signal.reason === STOP && this.items.has(key);
       if (!paused) {
         if ((e instanceof ApiError && e.code === "aborted") || controller.signal.aborted) {
           this.running.delete(key);
@@ -432,7 +434,6 @@ export class UploadQueue {
     } finally {
       this.controllers.delete(key);
       this.running.delete(key);
-      this.pausing.delete(key);
     }
     const onCreate = this.creates.get(key);
     if (ok) {
@@ -689,7 +690,6 @@ export class UploadQueue {
     const item = this.items.get(key);
     if (!item) return;
     if (item.state === "running") {
-      this.pausing.add(key);
       this.change(key, { state: "paused" });
       this.controllers.get(key)?.abort(STOP);
     } else if (item.state === "waiting") {
@@ -700,7 +700,6 @@ export class UploadQueue {
   resume(key: string): void {
     const item = this.items.get(key);
     if (!item || item.state !== "paused") return;
-    this.pausing.delete(key);
     this.change(key, { state: "waiting" });
     this.enqueueKey(key);
     this.pump();
@@ -710,7 +709,6 @@ export class UploadQueue {
     let any = false;
     for (const [key, item] of this.items) {
       if (item.state === "running") {
-        this.pausing.add(key);
         this.set(key, { state: "paused" });
         this.controllers.get(key)?.abort(STOP);
         any = true;
@@ -726,7 +724,6 @@ export class UploadQueue {
     let any = false;
     for (const [key, item] of this.items) {
       if (item.state !== "paused") continue;
-      this.pausing.delete(key);
       this.set(key, { state: "waiting" });
       this.enqueueKey(key);
       any = true;
@@ -742,7 +739,8 @@ export class UploadQueue {
     const item = this.items.get(key);
     if (!item) return;
     const controller = this.controllers.get(key);
-    if (controller && !this.pausing.has(key)) {
+    // Loopt hij nog af na pauzeren (ook als hij al hervat is), dan weggooien zoals gepauzeerd
+    if (controller && !controller.signal.aborted) {
       controller.abort();
       return;
     }
@@ -800,7 +798,6 @@ export class UploadQueue {
     this.meta.clear();
     this.byStorage.clear();
     this.creates.clear();
-    this.pausing.clear();
     this.counts = { waiting: 0, running: 0, paused: 0, failed: 0, discarding: 0 };
     this.resetTotals();
     this.changed();

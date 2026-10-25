@@ -189,6 +189,19 @@ export default function UploadTray(): JSX.Element | null {
   const pausable = active;
   const resumable = summary.paused > 0;
 
+  // Alles pauzeren en Alles hervatten zijn twee knoppen: verdwijnt de knop die je net indrukte,
+  // dan de focus op de andere (anders valt hij naar <body>)
+  const pauseButton = useRef<HTMLButtonElement>(null);
+  const resumeButton = useRef<HTMLButtonElement>(null);
+  const pressed = useRef<"pause" | "resume" | null>(null);
+  useEffect(() => {
+    if (pressed.current === null) return;
+    const [mine, other] = pressed.current === "pause" ? [pauseButton, resumeButton] : [resumeButton, pauseButton];
+    if (mine.current) return;
+    pressed.current = null;
+    other.current?.focus();
+  });
+
   // Weggaan terwijl er uploads lopen: de browser vraagt eerst of dat de bedoeling is
   useEffect(() => {
     if (!active && !summary.preparing) return;
@@ -240,8 +253,28 @@ export default function UploadTray(): JSX.Element | null {
         <div className="upload-tray-body">
           {items.length > 0 && (
             <div className="upload-tray-actions">
-              {pausable && <Button onClick={() => uploadQueue.pauseAll()}>{t("upload.tray.pauseAll")}</Button>}
-              {resumable && <Button onClick={() => uploadQueue.resumeAll()}>{t("upload.tray.resumeAll")}</Button>}
+              {pausable && (
+                <Button
+                  ref={pauseButton}
+                  onClick={() => {
+                    pressed.current = "pause";
+                    uploadQueue.pauseAll();
+                  }}
+                >
+                  {t("upload.tray.pauseAll")}
+                </Button>
+              )}
+              {resumable && (
+                <Button
+                  ref={resumeButton}
+                  onClick={() => {
+                    pressed.current = "resume";
+                    uploadQueue.resumeAll();
+                  }}
+                >
+                  {t("upload.tray.resumeAll")}
+                </Button>
+              )}
               {(active || resumable) && (
                 <Button onClick={() => uploadQueue.cancelAll()}>{t("upload.tray.cancelAll")}</Button>
               )}

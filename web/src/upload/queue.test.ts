@@ -268,6 +268,56 @@ describe("UploadQueue: pauzeren en hervatten", () => {
     expect(server.done.size).toBe(3);
   });
 
+  it("pauzeren en meteen hervatten terwijl het aanmaken nog loopt: de upload gaat gewoon door", async () => {
+    // tusCreate (en tusStatus) kennen het abort-signaal niet: de poging loopt dan nog af als
+    // hervatten al geweest is. Dat is geen annuleren.
+    const server = new Server();
+    let release = () => {};
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const create = server.tusCreate.bind(server);
+    server.tusCreate = async (...args) => {
+      await slow;
+      return create(...args);
+    };
+    const queue = new UploadQueue(server, { send: server.send, storage: memoryStorage() });
+    const finished: boolean[] = [];
+    queue.onFinished((_p, ok) => finished.push(ok));
+    const done = queue.add("p", [file("a", 5)]);
+    await tick();
+    const [item] = queue.getSnapshot();
+    queue.pause(item.key);
+    queue.resume(item.key);
+    release();
+    await done;
+    expect(queue.getSnapshot()).toEqual([]);
+    expect(server.done.size).toBe(1);
+    expect([...server.done.keys()]).toEqual(["/u/1"]); // dezelfde upload, verder waar hij was
+    expect(finished).toEqual([true]);
+  });
+
+  it("annuleren na pauzeren en hervatten terwijl het aanmaken nog loopt, annuleert wel", async () => {
+    const server = new Server();
+    let release = () => {};
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const create = server.tusCreate.bind(server);
+    server.tusCreate = async (...args) => {
+      await slow;
+      return create(...args);
+    };
+    const queue = new UploadQueue(server, { send: server.send, storage: memoryStorage() });
+    const done = queue.add("p", [file("a", 5)]);
+    await tick();
+    const [item] = queue.getSnapshot();
+    queue.pause(item.key);
+    queue.resume(item.key);
+    queue.cancel(item.key);
+    release();
+    await done;
+    await tick();
+    expect(queue.getSnapshot()).toEqual([]);
+    expect(server.done.size).toBe(0);
+  });
+
   it("annuleren van een gepauzeerde upload gooit hem op de server weg", async () => {
     const server = new Server();
     const gate = doors();

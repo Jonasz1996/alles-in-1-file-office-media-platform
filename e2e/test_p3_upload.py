@@ -166,6 +166,15 @@ def test_pauzeren_en_hervatten(context_as, user_factory, server, tmp_path: Path)
     expect(lade.get_by_role("button", name="Pauzeren: groot.bin")).to_be_visible()
     page.keyboard.press("Shift+P")  # en weer pauzeren
     expect(lade.get_by_role("button", name="Hervatten: groot.bin")).to_be_visible()
+    # Alles hervatten en Alles pauzeren met Enter: de focus gaat mee naar de andere knop (niet
+    # naar <body>), zodat nog eens Enter het weer omdraait
+    resume_all = lade.get_by_role("button", name="Alles hervatten", exact=True)
+    resume_all.focus()
+    page.keyboard.press("Enter")
+    expect(lade.get_by_role("button", name="Alles pauzeren", exact=True)).to_be_focused()
+    page.keyboard.press("Enter")
+    expect(resume_all).to_be_focused()
+    expect(lade.get_by_role("button", name="Hervatten: groot.bin")).to_be_visible()
     throttle(page, mbit=400)
     lade.get_by_role("button", name="Hervatten: groot.bin").click()
     wait_until(lambda: "groot.bin" in children(server, user), what="groot.bin")
