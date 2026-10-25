@@ -16,8 +16,8 @@ from dataclasses import dataclass
 import pytest
 from playwright.sync_api import expect
 
-from conftest import Account, Server, create_user
-from seed_p4 import GPS_LAT, samples
+from conftest import Account, Browsers, Server, create_user, make_admin
+from seed_p4 import GPS_LAT, outlined_pdf, samples
 
 pytestmark = pytest.mark.p4
 
@@ -467,3 +467,56 @@ def test_publieke_link_viewer(server: Server, new_context, library: Library):
     page.keyboard.press("Escape")
     expect(page.get_by_role("dialog")).to_have_count(0)
     expect(page).not_to_have_url(re.compile("bestand="))
+
+
+@pytest.mark.slow
+def test_pdf_pagina_s_na_het_verlopen_van_het_token(browser, tmp_path_factory):
+    """Klaar als: PDF-pagina's blijven laden na de levensduur van het token. Een eigen server
+    met download-tokens van 1 minuut; de viewer haalt halverwege een nieuw /document, dus een
+    pagina die pas na 70 s in beeld komt, laadt nog."""
+    server = Server(
+        tmp_path_factory.mktemp("p4-token") / "data",
+        env={"PLATFORM_DOWNLOAD_TOKEN_MINUTES": "1"},
+    )
+    server.start()
+    browsers = Browsers(browser, server)
+    try:
+        admin = make_admin(server)
+        owner = create_user(server, admin, name="Lezer")
+        pdf = outlined_pdf()
+        node = server.call(
+            owner,
+            "PUT",
+            f"/api/v1/files/{owner.root_id}/upload",
+            params={"name": "lang.pdf"},
+            content=pdf,
+            expect=201,
+        ).json()["id"]
+        wait_for_previews(server, owner, [node])
+        page = browsers.context_as(owner).new_page()
+        documents = []
+        page.on(
+            "request",
+            lambda r: documents.append(r.url) if "/document" in r.url else None,
+        )
+        page.goto(f"/?bestand={node}")
+        viewer = page.get_by_role("dialog", name="lang.pdf", exact=True)
+        expect(viewer.get_by_role("img", name="Pagina i", exact=True)).to_be_visible()
+        first_token = viewer.locator(".page img").first.get_attribute("src")
+        page.wait_for_timeout(70_000)
+        assert len(documents) >= 2, documents  # op tijd vernieuwd
+        box = viewer.get_by_role("spinbutton")
+        box.fill("9")
+        box.press("Enter")
+        page.wait_for_function(
+            """() => [...document.querySelectorAll(".page img")].some(
+              (i) => i.alt === "Pagina 7" && i.complete && i.naturalWidth > 0)""",
+            timeout=20_000,
+        )
+        late = viewer.get_by_role("img", name="Pagina 7", exact=True).get_attribute("src")
+        assert late and first_token and late.split("token=")[1] != first_token.split("token=")[1]
+        assert not viewer.locator(".page-failed").count()
+    finally:
+        problems = browsers.close_all()
+        server.stop()
+    assert not problems, problems
