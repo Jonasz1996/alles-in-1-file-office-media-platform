@@ -45,11 +45,38 @@ export function detectEncoding(bytes: Uint8Array, complete = true): Encoding {
   }
 }
 
+/** Windows-1252 voor 0x80..0x9F (de rest is gelijk aan Latin-1); 0 = niet in gebruik. */
+const CP1252_HIGH = [
+  0x20ac, 0, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0, 0x017d, 0,
+  0, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0, 0x017e, 0x0178,
+];
+
+/**
+ * Windows-1252 zelf: niet elke TextDecoder kent hem goed (Node zonder volledige ICU leest
+ * Latin-1, en dan worden € en de aanhalingstekens stuurtekens). Eén byte is één teken; in
+ * stukken van 8 KB naar een string, zodat er geen enorme argumentenlijst ontstaat.
+ */
+export function decodeCp1252(bytes: Uint8Array): string {
+  let out = "";
+  const codes = new Uint16Array(Math.min(bytes.length, 8192));
+  for (let start = 0; start < bytes.length; start += codes.length) {
+    const end = Math.min(bytes.length, start + codes.length);
+    for (let i = start; i < end; i++) {
+      const b = bytes[i];
+      // Wat in 1252 geen teken heeft, blijft het stuurteken met dat nummer (zoals de browser)
+      codes[i - start] = b >= 0x80 && b <= 0x9f ? CP1252_HIGH[b - 0x80] || b : b;
+    }
+    out += String.fromCharCode.apply(null, Array.from(codes.subarray(0, end - start)));
+  }
+  return out;
+}
+
 /**
  * Tekst uit stukken bytes (de eerste 512 KB, en wat "Meer laden" erbij haalt), in deze codering.
  * Ongeldige bytes worden het vervangingsteken; een BOM verdwijnt.
  */
 export function decodeChunks(chunks: readonly Uint8Array[], encoding: Encoding, complete = true): string {
+  if (encoding === "windows-1252") return chunks.map(decodeCp1252).join("");
   const decoder = new TextDecoder(encoding, { fatal: false, ignoreBOM: false });
   let text = "";
   chunks.forEach((chunk, i) => {

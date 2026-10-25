@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bom, completeUtf8, decodeChunks, detectEncoding, isEncoding } from "./decode";
+import { bom, completeUtf8, decodeChunks, decodeCp1252, detectEncoding, isEncoding } from "./decode";
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
 
@@ -63,5 +63,14 @@ describe("decodeChunks", () => {
     expect(isEncoding("windows-1252")).toBe(true);
     expect(isEncoding("latin1")).toBe(false);
     expect(isEncoding(undefined)).toBe(false);
+  });
+});
+
+describe("decodeCp1252", () => {
+  it("kent de tekens van 0x80 tot 0x9F", () => {
+    expect(decodeCp1252(Uint8Array.from([0x80, 0x93, 0x94, 0x85, 0x41, 0xe9]))).toBe("€“”…Aé");
+    expect(decodeCp1252(Uint8Array.from([0x81]))).toBe("\u0081");
+    const big = new Uint8Array(20_000).fill(0x80);
+    expect(decodeCp1252(big)).toBe("€".repeat(20_000));
   });
 });
