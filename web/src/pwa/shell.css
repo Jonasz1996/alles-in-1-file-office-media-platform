@@ -1,1 +1,63 @@
-/* Stijlen voor de PWA-schil (offline-balk, update-melding); P1 vult dit. */
+/* De PWA-schil (P1): de statische schil in index.html (staat er al vóór de JavaScript, zonder
+   tekst) en de offline-balk. Alleen tokens. Dit bestand zit in de eerste css, die de browser
+   vóór de eerste paint laadt. */
+
+/* De statische schil: het logo met een draaiertje, tot React #root vervangt */
+.boot {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-5);
+  min-height: 80vh;
+}
+
+.boot-logo {
+  display: block;
+  width: 128px;
+  height: 128px;
+}
+
+.boot-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: boot-spin 0.9s linear infinite;
+}
+
+@keyframes boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-spinner {
+    animation: none;
+  }
+}
+
+/* Offline: een balk onderaan die niets van de pagina bedekt dat je nodig hebt */
+.offline-banner {
+  position: fixed;
+  inset: auto var(--space-4) var(--space-4) var(--space-4);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: var(--surface-2);
+  color: var(--fg);
+  box-shadow: var(--shadow-2);
+}
+
+.offline-banner-text {
+  font-size: var(--text-s);
+  color: var(--muted);
+}

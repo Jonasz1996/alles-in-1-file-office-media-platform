@@ -1,0 +1,43 @@
+/* Het inlogscherm (Login.tsx, P1). Alleen tokens. */
+
+.login-card {
+  gap: var(--space-2);
+}
+
+.login-card .page-title h1 {
+  margin: 0;
+}
+
+.login-card .field {
+  margin: 0;
+}
+
+.login-logo {
+  display: block;
+  width: 48px;
+  height: 48px;
+}
+
+.login-toggle {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: var(--text-s);
+}
+
+.login-actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+}
+
+.login-error {
+  margin: 0;
+  color: var(--bad);
+}
+
+.login-forgot {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-s);
+}
