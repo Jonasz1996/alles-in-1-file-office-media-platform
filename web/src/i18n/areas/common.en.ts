@@ -9,8 +9,6 @@ const en: Translation<typeof nl> = {
   save: "Save",
   retry: "Try again",
   back: "Back",
-  comingSoon: "Coming soon",
-  comingSoonText: "This part is still being built.",
   errors: {
     network: "No connection to the server. Please try again.",
     unknown: "Something went wrong.",

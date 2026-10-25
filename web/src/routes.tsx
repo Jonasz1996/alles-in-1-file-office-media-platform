@@ -5,6 +5,7 @@ import type { ComponentType } from "react";
 import { preloadFolder } from "./browser/preload";
 import { type Area, loadAreas, type MessageKey } from "./i18n";
 import { match, type NavSection, type RouteDef, type RouteProps } from "./router";
+import NotFound from "./shellPages";
 
 type PageModule = { default: ComponentType<RouteProps> };
 
@@ -60,7 +61,8 @@ export const routes: readonly RouteDef[] = [
   route("/album/:id", () => import("./photos/AlbumPage"), photos, "photos.album", "photos"),
   route("/beheer/:tab?", () => import("./Beheer"), ["admin"], "admin.title", "admin", { roles: ["admin"] }),
   route("/account", () => import("./Account"), ["account"], "account.title", "account"),
-  route("*", () => import("./shellPages"), [], "shell.notFound.title", null),
+  // Deze pagina zit in de schil zelf (App gebruikt NoAccess uit hetzelfde bestand): geen chunk
+  route("*", () => Promise.resolve({ default: NotFound }), [], "shell.notFound.title", null),
 ];
 
 /** Pagina's buiten de login (een publieke link werkt zonder account, ook als je ingelogd bent). */

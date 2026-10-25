@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import * as compat from "../PreviewPanel";
 import { formatDuration, mayRenew, playerFor } from "./media";
 import { readRange, UrlMemo } from "./source";
 
@@ -28,14 +27,6 @@ describe("mayRenew", () => {
     expect([1, 2, 3, 4].map(() => mayRenew(state, (now += 1000)))).toEqual([true, true, true, false]);
     // Lang afspelen: de link verloopt elke tien minuten, dat blijft gewoon werken
     for (let i = 0; i < 5; i++) expect(mayRenew(state, (now += 10 * 60_000))).toBe(true);
-  });
-});
-
-describe("PreviewPanel (compat)", () => {
-  it("geeft dezelfde functies door", () => {
-    expect(compat.formatDuration).toBe(formatDuration);
-    expect(compat.mayRenew).toBe(mayRenew);
-    expect(compat.playerFor).toBe(playerFor);
   });
 });
 

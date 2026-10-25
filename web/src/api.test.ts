@@ -196,16 +196,6 @@ describe("formatBytes", () => {
   });
 });
 
-describe("isNotBuilt (crossApi)", () => {
-  it("405 of 404 zonder code: het endpoint is er nog niet; een echte fout met code wel", async () => {
-    const { isNotBuilt } = await import("./crossApi");
-    expect(isNotBuilt(errorFromBody(405, { detail: "Method Not Allowed" }))).toBe(true);
-    expect(isNotBuilt(errorFromBody(404, { detail: "Not Found" }))).toBe(true);
-    expect(isNotBuilt(errorFromBody(404, { detail: { message: "Niet gevonden", code: "not_found" } }))).toBe(false);
-    expect(isNotBuilt(new TypeError("Failed to fetch"))).toBe(false);
-  });
-});
-
 describe("geen verbinding", () => {
   it("een mislukte fetch wordt ApiError(0) met code network; afbreken niet", async () => {
     const offline = new Api(() => Promise.reject(new TypeError("Failed to fetch")));

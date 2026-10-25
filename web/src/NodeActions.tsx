@@ -18,15 +18,12 @@ export function NodeActions({
   folderId,
   onChanged,
   onError,
-  shareRoot: _shareRoot = false,
 }: {
   node: FileNode;
   /** De map die nu open staat; daar begint het kiezen van een doel. */
   folderId: string | null;
   onChanged: () => void;
   onError: (message: string) => void;
-  /** Compat: de gedeelde map (of het gedeelde bestand) zelf herkent het register zelf (geen ouder). */
-  shareRoot?: boolean;
 }) {
   const user = useCurrentUser();
   const clip = useSyncExternalStore(clipboard.subscribe, clipboard.getSnapshot, clipboard.getSnapshot);

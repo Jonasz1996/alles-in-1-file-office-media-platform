@@ -12,11 +12,11 @@ Metingen:
 | waar       | CPU | wat                                                               |
 | lade       | 1×  | na de keuze meteen naar /gedeeld: alleen de lade rendert (HARD)   |
 | lade       | 4×  | idem, informatief                                                 |
-| bestanden  | 1×  | de hele tijd op de bestandenpagina van deze tak, informatief      |
+| bestanden  | 1×  | de hele tijd op de bestandenpagina, informatief                   |
 | bestanden  | 4×  | idem                                                              |
-Op de bestandenpagina van deze tak rendert P0's Files.tsx (eigendom van P2) nog zelf een
-lijst van álle uploads, zonder virtualisatie; P2 vervangt die pagina. Die kosten horen niet
-bij de wachtrij en de lade, daarom is alleen de meting "lade, 1×" de poort.
+Op de bestandenpagina werkt ook de lijst van de map mee (Files.tsx van P2: de nieuwe mappen
+en bestanden komen binnen via de live-events). Die kosten horen niet bij de wachtrij en de
+lade, daarom is alleen de meting "lade, 1×" de poort.
 
 Poort (met E2E_PERF_REPORT_ONLY=1 nooit hard): langste long task van de app ≤ 200 ms.
 "Van de app" is het deel van een long task vanaf het change-event van de bestandskiezer. Het

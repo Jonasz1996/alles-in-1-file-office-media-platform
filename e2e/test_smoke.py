@@ -61,15 +61,15 @@ def test_rondje_door_de_app(new_context, user_factory, server):
     chooser.value.set_files(
         {"name": "hallo.txt", "mimeType": "text/plain", "buffer": b"Hallo vanuit e2e\n"}
     )
-    # Rolneutraal: nu een knop (met een icoon ervoor), bij P2 een rij in een grid. Eén keer in
-    # de pagina (#inhoud) zodra de upload klaar is: de voortgangsregel is dan weg
+    # Rolneutraal gezocht (het is een rij in het grid van de bestandsbrowser). Eén keer in de
+    # pagina (#inhoud) zodra de upload klaar is: de voortgangsregel is dan weg
     item = page.locator("#inhoud").get_by_text("hallo.txt")
     expect(item).to_have_count(1)
     expect(item).to_be_visible()
     listing = server.call(user, "GET", "/api/v1/files/root", expect=200).json()
     assert [n["name"] for n in listing["children"]] == ["hallo.txt"]
 
-    # Openen: de viewer (stub van P0) met ?bestand= in het adres; sluiten haalt het weg
+    # Openen: de viewer met ?bestand= in het adres; sluiten haalt het weg
     item.click()
     viewer = page.get_by_role("dialog", name="hallo.txt", exact=True)
     expect(viewer).to_be_visible()

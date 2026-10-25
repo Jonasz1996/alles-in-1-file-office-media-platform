@@ -6,9 +6,6 @@ const en: Translation<typeof nl> = {
   albums: "Albums",
   album: "Album",
   addToAlbum: "Add to album",
-  timelineSoon: "The timeline with all your photos and videos is coming soon.",
-  albumsSoon: "Creating and sharing albums is coming soon.",
-  publicAlbumSoon: "This album cannot be shown here yet.",
 
   timeline: "Timeline",
   scrubber: "Go to month",

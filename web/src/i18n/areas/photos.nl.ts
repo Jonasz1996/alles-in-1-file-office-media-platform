@@ -4,10 +4,6 @@ export default {
   albums: "Albums",
   album: "Album",
   addToAlbum: "Toevoegen aan album",
-  // Uit P0 (plaatshouders); niet meer gebruikt, maar andere pakketten kunnen ze nog tonen
-  timelineSoon: "De tijdlijn met al je foto's en video's komt eraan.",
-  albumsSoon: "Albums maken en delen komt eraan.",
-  publicAlbumSoon: "Dit album kan hier nog niet getoond worden.",
 
   timeline: "Tijdlijn",
   scrubber: "Naar maand",

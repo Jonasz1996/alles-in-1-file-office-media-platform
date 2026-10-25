@@ -2,7 +2,6 @@
 export default {
   sharedWithMe: "Gedeeld met mij",
   myShares: "Gedeeld door mij",
-  mySharesSoon: "Een overzicht van alles wat je deelt komt eraan.",
   tabs: "Gedeeld",
   perm: {
     read: "Kan bekijken",

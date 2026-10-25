@@ -124,7 +124,7 @@ export default function SharedWithMe(_: RouteProps): JSX.Element {
                         </Button>
                       )}
                       {n.kind !== "album" && (
-                        <NodeActions node={n} folderId={null} shareRoot onChanged={load} onError={setError} />
+                        <NodeActions node={n} folderId={null} onChanged={load} onError={setError} />
                       )}
                     </td>
                   </tr>

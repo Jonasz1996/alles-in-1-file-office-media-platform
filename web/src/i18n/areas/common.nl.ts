@@ -7,8 +7,6 @@ export default {
   save: "Opslaan",
   retry: "Opnieuw proberen",
   back: "Terug",
-  comingSoon: "Komt eraan",
-  comingSoonText: "Dit onderdeel wordt nog gebouwd.",
   errors: {
     network: "Geen verbinding met de server. Probeer het opnieuw.",
     unknown: "Er ging iets mis.",
