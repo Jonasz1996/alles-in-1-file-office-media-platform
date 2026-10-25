@@ -123,6 +123,18 @@ async def test_ongeldige_invoer(client, library):
     for params in ({"month": "2024-13"}, {"month": "juli"}, {"after": "!!!"}, {"limit": 501}):
         r = await client.get("/api/v1/photos", params=params, headers=headers)
         assert r.status_code == 422 and code_of(r) == "invalid_input", (params, r.text)
+    # Een dag die niet in een INTEGER van SQLite past (of ver buiten 1900-2100 valt): ook 422
+    good = (await client.get("/api/v1/photos", params={"limit": 1}, headers=headers)).json()
+    for day in ("99999999999999999999", "-99999999999999999999", "99991231", "18000101"):
+        _, taken, node_id = photos.read_cursor(good["next"])
+        raw = f"{day}|{taken.isoformat()}|{node_id}".encode()
+        bad = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+        for path, params in (
+            ("/api/v1/photos", {"after": bad}),
+            ("/api/v1/photos/ids", {"from": bad, "to": good["next"]}),
+        ):
+            r = await client.get(path, params=params, headers=headers)
+            assert r.status_code == 422 and code_of(r) == "invalid_input", (day, path, r.text)
 
 
 async def test_reeks_van_ids(client, library, monkeypatch):

@@ -30,6 +30,7 @@ from app import errors, previews
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Blob, Node, User
+from app.photodate import FIRST_YEAR, LAST_YEAR
 from app.routers.files import GUEST, Utc, shared_ids
 from app.security import CurrentUser
 
@@ -108,17 +109,24 @@ def cursor_of(day: int, taken_at: datetime, node_id: uuid.UUID) -> str:
     return base64.urlsafe_b64encode(raw.encode()).rstrip(b"=").decode()
 
 
+# Elke taken_day valt hierbinnen: photodate houdt het bij 1900-2100, als kloktijd in een andere
+# tijdzone hooguit een dag ernaast. Een grotere dag past ook niet in een INTEGER van SQLite.
+FIRST_DAY, LAST_DAY = (FIRST_YEAR - 1) * 10_000 + 101, (LAST_YEAR + 1) * 10_000 + 1231
+
+
 def read_cursor(value: str) -> tuple[int, datetime, uuid.UUID]:
     """(taken_day, taken_at, id) uit een cursor; onzin geeft 422 invalid_input."""
     try:
         raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)).decode()
         day, taken, node_id = raw.split("|")
+        if not FIRST_DAY <= int(day) <= LAST_DAY:
+            raise ValueError(day)
         return (
             int(day),
             _utc(datetime.fromisoformat(taken.replace("Z", "+00:00"))),
             uuid.UUID(node_id),
         )
-    except (ValueError, binascii.Error, UnicodeDecodeError):
+    except (ValueError, OverflowError, binascii.Error, UnicodeDecodeError):
         raise errors.fail(422, "invalid_input", "Ongeldige invoer", field="query.after") from None
 
 
