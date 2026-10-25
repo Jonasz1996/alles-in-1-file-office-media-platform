@@ -397,16 +397,21 @@ def writable(user_id: uuid.UUID, folder_id: uuid.UUID) -> Callable[[AsyncSession
 
 
 async def sibling(session: AsyncSession, parent_id: uuid.UUID, name: str) -> Node | None:
+    """Wat er in deze map al zo heet, zonder op hoofdletters te letten. In Python vergeleken:
+    lower() in SQLite kent alleen ASCII ("Übersicht.txt" zou dan nooit botsen). search_name
+    (zonder hoofdletters en accenten) kiest de kandidaten, lower() in Python beslist."""
     # Vers uit de database: wie op een slot wachtte, mag niet op een oude kopie beslissen
-    return await session.scalar(
+    found = await session.scalars(
         select(Node)
         .where(
             Node.parent_id == parent_id,
-            func.lower(Node.name) == name.lower(),
+            Node.search_name == fold(name),
             Node.deleted_at.is_(None),
         )
         .execution_options(populate_existing=True)
     )
+    lowered = name.lower()
+    return next((node for node in found if node.name.lower() == lowered), None)
 
 
 def numbered(name: str, i: int) -> str:

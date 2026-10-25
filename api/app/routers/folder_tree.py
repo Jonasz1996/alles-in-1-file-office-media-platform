@@ -19,7 +19,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app import access, errors
@@ -27,6 +27,7 @@ from app.db import Session
 from app.models import Node
 from app.routers.files import Gone, clean_name, get_live_dir, notify_many, sibling, user_lock
 from app.security import CurrentUser
+from app.text import fold
 
 router = APIRouter(prefix="/api/v1", tags=["bestanden"])
 
@@ -179,18 +180,20 @@ async def names_check(
     names = [n.strip() for n in body.names if n.strip()]
     if not names:
         return NamesOut(taken=[])
-    # Dezelfde vergelijking als sibling(): lower(name) in de database tegen lower() van de vraag
-    lowered = func.lower(Node.name)
+    # Dezelfde vergelijking als sibling(): kandidaten op search_name, dan lower() in Python
+    # (lower() in SQLite kent alleen ASCII)
     rows = (
         await session.execute(
-            select(lowered, Node.id, Node.kind).where(
+            select(Node.name, Node.id, Node.kind).where(
                 Node.parent_id == found.node.id,
-                lowered.in_({n.lower() for n in names}),
+                Node.search_name.in_({fold(n) for n in names}),
                 Node.deleted_at.is_(None),
             )
         )
     ).all()
-    by_lower = {low: (node_id, kind) for low, node_id, kind in rows}
+    by_lower: dict[str, tuple[uuid.UUID, str]] = {}
+    for name, node_id, kind in rows:
+        by_lower.setdefault(name.lower(), (node_id, kind))
     taken = [
         Taken(name=name, id=hit[0], kind=hit[1])
         for name in dict.fromkeys(names)
