@@ -2,6 +2,9 @@
 // verbinding weg, dan vraagt de client de server hoeveel er binnen is en gaat daar verder.
 // De upload-URL staat in localStorage, zodat dezelfde upload ook na herladen van de pagina
 // verdergaat: kies hetzelfde bestand opnieuw en hij begint waar hij was.
+//
+// Fouten die de client zelf maakt, hebben een code uit i18n/errors/upload.ts (connection_lost,
+// upload_expired, …), zodat errorText ze in het Engels vertaalt.
 
 import { ApiError, errorFromBody } from "./api";
 
@@ -16,7 +19,14 @@ export const STOP = "stop";
 export interface TusApi {
   readonly accessToken: string | null;
   refresh(): Promise<unknown>;
-  tusCreate(parent: string, name: string, size: number): Promise<{ url: string; nodeId: string | null }>;
+  /** meta: extra Upload-Metadata (conflict, lastmodified); een TusApi mag die negeren (een
+   * uploadlink kent geen conflictkeuze). */
+  tusCreate(
+    parent: string,
+    name: string,
+    size: number,
+    meta?: Record<string, string>,
+  ): Promise<{ url: string; nodeId: string | null }>;
   tusStatus(url: string): Promise<{ offset: number; nodeId: string | null }>;
   tusCancel(url: string): Promise<void>;
 }
@@ -48,6 +58,8 @@ export interface UploadOptions {
   url?: string;
   /** Krijgt de upload-URL zodra die bekend is, om de upload later weg te kunnen gooien. */
   onUrl?: (url: string) => void;
+  /** Extra Upload-Metadata bij het aanmaken (conflict, lastmodified). */
+  meta?: Record<string, string>;
 }
 
 /** XMLHttpRequest, want fetch meldt geen voortgang tijdens het versturen. */
@@ -87,7 +99,7 @@ export const xhrSend: SendChunk = (url, offset, chunk, token, onProgress, signal
         }
         reject(errorFromBody(xhr.status, body)); // met de code, bijv. upload_busy of name_taken
       });
-    xhr.onerror = () => settle(() => reject(new ApiError(0, "Netwerkfout")));
+    xhr.onerror = () => settle(() => reject(new ApiError(0, "Netwerkfout", "network")));
     xhr.ontimeout = xhr.onerror;
     xhr.onabort = () => settle(() => reject(new ApiError(0, "Geannuleerd", "aborted")));
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -176,7 +188,7 @@ export async function uploadFile(
     }
   }
   if (!url) {
-    const created = await api.tusCreate(parent, file.name, file.size);
+    const created = await api.tusCreate(parent, file.name, file.size, options.meta);
     url = created.url;
     nodeId = created.nodeId; // een leeg bestand is meteen klaar
     if (!nodeId) {
@@ -207,13 +219,15 @@ export async function uploadFile(
       const start = offset;
       const chunk = file.slice(start, start + chunkSize);
       const result = await send(url, start, chunk, api.accessToken, (sent) => report(start + sent), signal);
-      if (result.offset <= start && chunk.size > 0) throw new ApiError(0, "De server nam niets aan");
+      if (result.offset <= start && chunk.size > 0) {
+        throw new ApiError(0, "De server nam niets aan", "nothing_accepted");
+      }
       offset = result.offset;
       nodeId = result.nodeId;
       failures = 0;
       refreshed = false;
       report(offset);
-      if (nodeId === null && offset >= file.size) throw new ApiError(0, "Geen bestand terug");
+      if (nodeId === null && offset >= file.size) throw new ApiError(0, "Geen bestand terug", "no_file_returned");
     } catch (e) {
       const error = e instanceof ApiError ? e : new ApiError(0, String(e));
       if (error.code === "aborted" || signal?.aborted) break;
@@ -224,7 +238,7 @@ export async function uploadFile(
       }
       if (error.status === 404 || error.status === 410) {
         forget();
-        throw new ApiError(error.status, "De upload is verlopen; begin opnieuw");
+        throw new ApiError(error.status, "De upload is verlopen; begin opnieuw", "upload_expired");
       }
       if (isFinal(error)) {
         forget();
@@ -234,7 +248,11 @@ export async function uploadFile(
       if (failures > MAX_RETRIES) {
         // Steeds bezet: dan zegt de melding van de server meer dan "verbinding weg"
         if (error.code === "upload_busy") throw error;
-        throw new ApiError(0, "De verbinding is weg. Probeer het opnieuw; de upload gaat verder waar hij was");
+        throw new ApiError(
+          0,
+          "De verbinding is weg. Probeer het opnieuw; de upload gaat verder waar hij was",
+          "connection_lost",
+        );
       }
       needSync = true;
       // Een eerste 409 is meestal een offset die uit de pas liep (een stuk dat toch aankwam):
