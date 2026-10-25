@@ -1,5 +1,6 @@
 // De pagina achter een publieke link (/s/<token>). Werkt zonder in te loggen: deze pagina
-// gebruikt alleen de publieke API (publicApi.ts), nooit de login van de app.
+// gebruikt alleen de publieke API (publicApi.ts), nooit de login van de app. Bestanden openen in
+// de viewer (met publicSource), met ?bestand= in het adres; de map die open staat in ?map=.
 
 import {
   type DragEvent,
@@ -14,19 +15,26 @@ import {
   useSyncExternalStore,
 } from "react";
 import { formatBytes, formatDate, type Preview, type PublicListing, type PublicNode, type PublicShare } from "./api";
-import { PreviewBody, PreviewPanel, previewDetails } from "./PreviewPanel";
+import { errorText, t } from "./i18n";
+import { markReady } from "./perf";
 import { PublicAlbum } from "./photos";
 import { type LinkProblem, linkProblem, linkToken, PublicLink } from "./publicApi";
-import { type RouteProps, usePath } from "./router";
+import { navigate, type RouteProps, usePath, useQueryParam } from "./router";
 import { expiryLabel } from "./sharing";
-import { category, Thumb } from "./Thumb";
+import { Thumb } from "./Thumb";
+import { Button } from "./ui/Button";
+import { ShortcutHelp } from "./ui/ShortcutHelp";
 import { UploadQueue } from "./uploadQueue";
+import { useViewerParam, VIEWER_PARAM, Viewer } from "./viewer";
+import { formatDuration } from "./viewer/media";
+import { publicSource } from "./viewer/source";
 import "./files.css";
 import "./public.css";
 
 const BATCH = 500;
 /** Zo vaak (elke 3 s) vragen we een preview die nog gemaakt wordt opnieuw. */
 const PREVIEW_ROUNDS = 20;
+const FOLDER_PARAM = "map";
 
 /** De route /s/:token (buiten de login). */
 export default function PublicPage(_: RouteProps) {
@@ -40,9 +48,7 @@ export function Public({ token }: { token: string | null }) {
   // Uploads lopen door als de pagina even om het wachtwoord vraagt; daarna kun je verder
   const queue = useMemo(() => (link ? new UploadQueue(link, { send: link.send }) : null), [link]);
   const [share, setShare] = useState<PublicShare | null>(() => link?.share ?? null);
-  const [problem, setProblem] = useState<LinkProblem | null>(() =>
-    token ? null : { kind: "gone", message: "Deze link bestaat niet (meer)" },
-  );
+  const [problem, setProblem] = useState<LinkProblem | null>(() => (token ? null : { kind: "gone", message: null }));
   const [busy, setBusy] = useState(false);
   const started = useRef(false);
 
@@ -86,30 +92,39 @@ export function Public({ token }: { token: string | null }) {
   }, [link, open]);
 
   useEffect(() => {
-    document.title = share ? `${share.name} · gedeeld` : "Gedeelde link";
+    document.title = share ? t("public.pageTitle", { name: share.name }) : t("public.title");
   }, [share]);
+
+  // Iets te zien dat niet meer wacht op de server: een fout of het wachtwoordformulier
+  useEffect(() => {
+    if (problem) markReady("public");
+  }, [problem]);
 
   let page;
   if (problem?.kind === "password") {
     page = <PasswordForm message={problem.message} busy={busy} onSubmit={open} />;
   } else if (problem) {
+    const gone = problem.kind === "gone";
+    const heading = gone
+      ? (problem.message ?? (problem.expired ? t("public.expired") : t("public.gone")))
+      : t("public.failed");
     page = (
       <main>
-        <h1>{problem.kind === "gone" ? problem.message : "Dat lukte niet"}</h1>
-        {problem.kind === "gone" ? (
-          <p className="muted">Vraag wie de link stuurde om een nieuwe.</p>
+        <h1>{heading}</h1>
+        {gone ? (
+          <p className="muted">{t("public.askNew")}</p>
         ) : (
           <>
             <p role="alert">{problem.message}</p>
-            <button type="button" disabled={busy} onClick={() => open()}>
-              Opnieuw proberen
-            </button>
+            <Button disabled={busy} onClick={() => open()}>
+              {t("common.retry")}
+            </Button>
           </>
         )}
       </main>
     );
   } else if (!share || !link || !queue) {
-    page = <main className="center">Laden…</main>;
+    page = <main className="center">{t("common.loading")}</main>;
   } else {
     const expiry = expiryLabel(share.expires_at);
     page = (
@@ -118,11 +133,11 @@ export function Public({ token }: { token: string | null }) {
           <h1>{share.name}</h1>
         </div>
         <p className="muted">
-          Gedeeld door {share.owner_name}
-          {expiry && ` · de link ${expiry}`}
+          {t("public.sharedBy", { owner: share.owner_name })}
+          {expiry && t("public.linkExpiry", { expiry })}
         </p>
         {share.kind === "album" ? (
-          <Suspense fallback={<p className="muted">Laden…</p>}>
+          <Suspense fallback={<p className="muted">{t("common.loading")}</p>}>
             <PublicAlbum link={link} share={share} />
           </Suspense>
         ) : share.permission === "upload" ? (
@@ -139,9 +154,10 @@ export function Public({ token }: { token: string | null }) {
   return (
     <>
       <header className="topbar">
-        <strong>Platform</strong>
+        <strong>{t("public.brand")}</strong>
       </header>
       {page}
+      <ShortcutHelp />
     </>
   );
 }
@@ -165,10 +181,10 @@ function PasswordForm({
   return (
     <main className="center">
       <form className="card public-card" onSubmit={submit}>
-        <h1>Wachtwoord nodig</h1>
-        <p className="muted">Voor deze link is een wachtwoord nodig. Je krijgt het van wie de link stuurde.</p>
+        <h1>{t("public.password.title")}</h1>
+        <p className="muted">{t("public.password.intro")}</p>
         <label>
-          Wachtwoord
+          {t("public.password.label")}
           <input
             type="password"
             autoComplete="current-password"
@@ -179,9 +195,9 @@ function PasswordForm({
           />
         </label>
         {message && <p role="alert">{message}</p>}
-        <button type="submit" disabled={busy}>
-          Openen
-        </button>
+        <Button type="submit" variant="primary" disabled={busy}>
+          {t("public.password.open")}
+        </Button>
       </form>
     </main>
   );
@@ -231,74 +247,88 @@ async function download(link: PublicLink, node: PublicNode) {
   a.click();
 }
 
-/** Eén gedeeld bestand: bekijken (afbeelding, video, audio, eerste pagina van een pdf) en downloaden. */
+/** "1920 × 1080 · 2,1 MB · gewijzigd …" onder een gedeeld bestand. */
+function fileDetails(node: PublicNode, preview: Preview | undefined): string {
+  const meta = preview?.meta ?? {};
+  return [
+    meta.width && meta.height ? t("public.file.pixels", { w: meta.width, h: meta.height }) : null,
+    meta.duration ? formatDuration(meta.duration) : null,
+    meta.pages ? t("public.file.pages", { n: meta.pages }) : null,
+    formatBytes(node.size),
+    t("public.file.modified", { date: formatDate(node.modified_at) }),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** De viewer over deze bestanden, op ?bestand=. */
+function PublicViewer({ link, files }: { link: PublicLink; files: PublicNode[] }) {
+  const [viewing, setViewing] = useViewerParam();
+  const source = useMemo(() => publicSource(link), [link]);
+  const index = viewing ? files.findIndex((f) => f.id === viewing) : -1;
+  if (index < 0) return null;
+  return (
+    <Suspense fallback={null}>
+      <Viewer
+        items={files}
+        index={index}
+        onIndexChange={(i) => setViewing(files[i].id)}
+        onClose={() => setViewing(null)}
+        source={source}
+      />
+    </Suspense>
+  );
+}
+
+/** Eén gedeeld bestand: de preview, bekijken in de viewer en downloaden. */
 function FileView({ link, node }: { link: PublicLink; node: PublicNode }) {
   const nodes = useMemo(() => [node], [node]);
   const preview = usePublicPreviews(link, nodes)[node.id];
+  const [, setViewing] = useViewerParam();
   const [error, setError] = useState<string | null>(null);
-  const kind = category(node);
-  const source = useCallback((inline: boolean) => link.downloadUrl(node.id, inline), [link, node.id]);
 
-  async function openInTab() {
-    try {
-      window.open(await source(true), "_blank", "noopener");
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
+  useEffect(() => markReady("public"), []);
 
   return (
     <div className="public-file">
-      <div>
-        <PreviewBody node={node} preview={preview} source={source} original />
-      </div>
-      <p className="muted details">
-        {previewDetails(node, preview?.meta ?? {})}
-      </p>
+      <button type="button" className="public-preview" onClick={() => setViewing(node.id)}>
+        {preview?.large ? <img src={preview.large} alt="" /> : <Thumb node={node} preview={preview} />}
+        <span className="sr-only">{t("public.file.view")}</span>
+      </button>
+      <p className="muted details">{fileDetails(node, preview)}</p>
       <div className="toolbar">
-        <button
-          type="button"
-          className="primary"
-          onClick={() => download(link, node).catch((e: Error) => setError(e.message))}
-        >
-          Downloaden
-        </button>
-        {(kind === "pdf" || kind === "image") && (
-          <button type="button" onClick={openInTab}>
-            Openen in nieuw tabblad
-          </button>
-        )}
+        <Button variant="primary" icon="image" onClick={() => setViewing(node.id)}>
+          {t("public.file.view")}
+        </Button>
+        <Button icon="download" onClick={() => download(link, node).catch((e: unknown) => setError(errorText(e)))}>
+          {t("public.file.download")}
+        </Button>
       </div>
       {error && <p role="alert">{error}</p>}
+      <PublicViewer link={link} files={nodes} />
     </div>
   );
 }
 
-/** De map die open staat binnen een gedeelde map, in de adresbalk (?map=) voor terug en vooruit. */
-function useFolderParam(): [string | null, (id: string | null) => void] {
-  const read = () => new URLSearchParams(window.location.search).get("map");
-  const [folder, setFolder] = useState(read);
-  useEffect(() => {
-    const update = () => setFolder(read());
-    window.addEventListener("popstate", update);
-    return () => window.removeEventListener("popstate", update);
-  }, []);
-  const go = useCallback((id: string | null) => {
-    const href = id ? `${window.location.pathname}?${new URLSearchParams({ map: id })}` : window.location.pathname;
-    if (href !== window.location.pathname + window.location.search) window.history.pushState(null, "", href);
-    setFolder(id);
-  }, []);
-  return [folder, go];
-}
-
 /** Een gedeelde map bekijken: submappen openen, bestanden bekijken en downloaden. */
 function FolderView({ link, share }: { link: PublicLink; share: PublicShare }) {
-  const [folder, go] = useFolderParam();
+  const [folder] = useQueryParam(FOLDER_PARAM);
   const [listing, setListing] = useState<PublicListing | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [shown, setShown] = useState<PublicNode | null>(null);
+  const [, setViewing] = useViewerParam();
   const loads = useRef(0);
   const previews = usePublicPreviews(link, listing?.children);
+  const files = useMemo(() => (listing?.children ?? []).filter((n) => n.kind === "file"), [listing]);
+
+  /** Naar een andere map (een nieuwe stap in de geschiedenis); de viewer gaat dan dicht. */
+  const go = useCallback((id: string | null) => {
+    const params = new URLSearchParams(window.location.search);
+    params.delete(VIEWER_PARAM);
+    if (id) params.set(FOLDER_PARAM, id);
+    else params.delete(FOLDER_PARAM);
+    const qs = params.toString();
+    navigate(`${window.location.pathname}${qs ? `?${qs}` : ""}`);
+  }, []);
 
   useEffect(() => {
     const seq = ++loads.current;
@@ -309,19 +339,23 @@ function FolderView({ link, share }: { link: PublicLink; share: PublicShare }) {
         setListing(result);
         setError(null);
       })
-      .catch((e: Error) => {
+      .catch((e: unknown) => {
         if (seq !== loads.current) return;
         setListing(null);
-        setError(e.message);
+        setError(errorText(e));
       });
   }, [link, folder, share.root.id]);
 
-  const fail = (e: Error) => setError(e.message);
+  useEffect(() => {
+    if (listing || error) markReady("public");
+  }, [listing, error]);
+
+  const fail = (e: unknown) => setError(errorText(e));
 
   return (
     <>
       {listing && listing.path.length > 1 && (
-        <nav className="crumbs" aria-label="Pad">
+        <nav className="crumbs" aria-label={t("public.folder.crumbs")}>
           {listing.path.map((p, i) => (
             <span key={p.id}>
               {i > 0 && " / "}
@@ -342,29 +376,35 @@ function FolderView({ link, share }: { link: PublicLink; share: PublicShare }) {
           {folder && (
             <p>
               <button type="button" className="link" onClick={() => go(null)}>
-                Terug naar {share.name}
+                {t("public.folder.backTo", { name: share.name })}
               </button>
             </p>
           )}
         </>
       )}
-      {listing && listing.children.length === 0 && <p className="muted">Deze map is leeg.</p>}
+      {listing && listing.children.length === 0 && <p className="muted">{t("public.folder.empty")}</p>}
       {listing && listing.children.length > 0 && (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Naam</th>
-                <th className="wide-only">Grootte</th>
-                <th className="wide-only">Gewijzigd</th>
-                <th />
+                <th>{t("public.folder.name")}</th>
+                <th className="wide-only">{t("public.folder.size")}</th>
+                <th className="wide-only">{t("public.folder.modified")}</th>
+                <th>
+                  <span className="sr-only">{t("public.folder.actions")}</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {listing.children.map((n) => (
                 <tr key={n.id}>
                   <td>
-                    <button type="button" className="link" onClick={() => (n.kind === "dir" ? go(n.id) : setShown(n))}>
+                    <button
+                      type="button"
+                      className="link"
+                      onClick={() => (n.kind === "dir" ? go(n.id) : setViewing(n.id))}
+                    >
                       <Thumb node={n} preview={previews[n.id]} />
                       {n.name}
                     </button>
@@ -373,8 +413,12 @@ function FolderView({ link, share }: { link: PublicLink; share: PublicShare }) {
                   <td className="wide-only">{formatDate(n.modified_at)}</td>
                   <td className="actions">
                     {n.kind === "file" && (
-                      <button type="button" onClick={() => download(link, n).catch(fail)}>
-                        Download
+                      <button
+                        type="button"
+                        aria-label={t("public.folder.downloadName", { name: n.name })}
+                        onClick={() => download(link, n).catch(fail)}
+                      >
+                        {t("public.folder.download")}
                       </button>
                     )}
                   </td>
@@ -384,15 +428,7 @@ function FolderView({ link, share }: { link: PublicLink; share: PublicShare }) {
           </table>
         </div>
       )}
-      {shown && (
-        <PreviewPanel
-          node={shown}
-          preview={previews[shown.id]}
-          source={(inline) => link.downloadUrl(shown.id, inline)}
-          onClose={() => setShown(null)}
-          onDownload={() => download(link, shown).catch(fail)}
-        />
-      )}
+      <PublicViewer link={link} files={files} />
     </>
   );
 }
@@ -407,6 +443,8 @@ function UploadView({ share, queue }: { share: PublicShare; queue: UploadQueue }
   // De sleutel voor "hetzelfde bestand verder uploaden" (localStorage); niet het token
   const parent = `public:${share.root.id}`;
   const running = items.some((u) => u.state === "running" || u.state === "waiting");
+
+  useEffect(() => markReady("public"), []);
 
   useEffect(
     () =>
@@ -427,7 +465,7 @@ function UploadView({ share, queue }: { share: PublicShare; queue: UploadQueue }
   function add(files: FileList | null) {
     if (!files?.length) return;
     setError(null);
-    queue.add(parent, Array.from(files)).catch((e: Error) => setError(e.message));
+    queue.add(parent, Array.from(files)).catch((e: unknown) => setError(errorText(e)));
   }
 
   function onDrop(e: DragEvent) {
@@ -438,7 +476,7 @@ function UploadView({ share, queue }: { share: PublicShare; queue: UploadQueue }
 
   return (
     <>
-      <p>Hier kun je bestanden voor {share.owner_name} neerzetten. Wat er al in de map staat, zie je niet.</p>
+      <p>{t("public.upload.intro", { owner: share.owner_name })}</p>
       <div
         className={`dropzone${dragging ? " dropping" : ""}`}
         onDragOver={(e) => {
@@ -451,10 +489,10 @@ function UploadView({ share, queue }: { share: PublicShare; queue: UploadQueue }
         <span aria-hidden="true" className="dropzone-icon">
           ⬆️
         </span>
-        <span>Sleep bestanden hierheen, of</span>
-        <button type="button" className="primary" onClick={() => input.current?.click()}>
-          Bestanden kiezen
-        </button>
+        <span>{t("public.upload.drop")}</span>
+        <Button variant="primary" onClick={() => input.current?.click()}>
+          {t("public.upload.choose")}
+        </Button>
         <input
           ref={input}
           type="file"
@@ -465,9 +503,7 @@ function UploadView({ share, queue }: { share: PublicShare; queue: UploadQueue }
             e.target.value = "";
           }}
         />
-        <small className="muted">
-          Valt de verbinding weg, kies dan hetzelfde bestand opnieuw: het gaat verder waar het was.
-        </small>
+        <small className="muted">{t("public.upload.resume")}</small>
       </div>
       {error && <p role="alert">{error}</p>}
       {items.length > 0 && (
@@ -479,21 +515,21 @@ function UploadView({ share, queue }: { share: PublicShare; queue: UploadQueue }
                 <>
                   <span role="alert">{u.error}</span>
                   <button type="button" onClick={() => queue.run(u.key)}>
-                    Opnieuw proberen
+                    {t("public.upload.retry")}
                   </button>
                   <button type="button" onClick={() => queue.discard(u.key)}>
-                    Weggooien
+                    {t("public.upload.discard")}
                   </button>
                 </>
               ) : u.state === "discarding" ? (
-                <span className="muted">Weggooien…</span>
+                <span className="muted">{t("public.upload.discarding")}</span>
               ) : (
                 <>
                   <progress max={1} value={u.progress} />
-                  <span className="muted">{Math.floor(u.progress * 100)} %</span>
+                  <span className="muted">{t("public.upload.percent", { n: Math.floor(u.progress * 100) })}</span>
                   {u.state === "running" && (
                     <button type="button" onClick={() => queue.cancel(u.key)}>
-                      Annuleren
+                      {t("public.upload.cancel")}
                     </button>
                   )}
                 </>
@@ -504,7 +540,7 @@ function UploadView({ share, queue }: { share: PublicShare; queue: UploadQueue }
       )}
       {arrived.length > 0 && (
         <div className="arrived" role="status">
-          <strong>{items.length === 0 ? "Je bestanden zijn aangekomen" : "Al aangekomen"}</strong>
+          <strong>{items.length === 0 ? t("public.upload.arrived") : t("public.upload.arrivedSoFar")}</strong>
           <ul>
             {arrived.map((name, i) => (
               <li key={i}>{name}</li>

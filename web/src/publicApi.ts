@@ -6,6 +6,7 @@
 // met het wachtwoord van eerder als dat er is; anders vraagt ze het opnieuw.
 
 import { ApiError, errorFromBody, fetchOrNetworkError, type Preview, type PublicListing, type PublicShare, tusMetadata } from "./api";
+import { errorText } from "./i18n";
 import { type SendChunk, type TusApi, xhrSend } from "./upload";
 
 type Fetch = typeof fetch;
@@ -60,23 +61,27 @@ async function failure(res: Response): Promise<ApiError> {
   return errorFromBody(res.status, body);
 }
 
-/** Wat de pagina moet laten zien na een fout bij het openen (of later). */
+/**
+ * Wat de pagina moet laten zien na een fout bij het openen (of later). message is de tekst van
+ * de fout in de taal van de app (errorText); null bij "gone" zonder foutcode: dan zegt de pagina
+ * zelf dat de link er niet (meer) is, of (expired) verlopen is.
+ */
 export type LinkProblem =
   | { kind: "password"; message: string | null }
-  | { kind: "gone"; message: string }
+  | { kind: "gone"; message: string | null; expired?: boolean }
   | { kind: "busy"; message: string }
   | { kind: "error"; message: string };
 
 export function linkProblem(error: unknown): LinkProblem {
-  const e = error instanceof ApiError ? error : new ApiError(0, (error as Error)?.message ?? String(error));
+  if (!(error instanceof ApiError)) return { kind: "error", message: errorText(error) };
+  const e = error;
   if (e.code === "password_required") return { kind: "password", message: null };
-  if (e.code === "wrong_password") return { kind: "password", message: e.message };
-  if (e.code === "link_not_found" || e.code === "link_expired") return { kind: "gone", message: e.message };
-  if (e.status === 404) return { kind: "gone", message: "Deze link bestaat niet (meer)" };
-  if (e.status === 410) return { kind: "gone", message: "Deze link is verlopen" };
-  if (e.status === 429) return { kind: "busy", message: e.message };
-  if (e.status === 0) return { kind: "error", message: "Geen verbinding met de server. Probeer het opnieuw." };
-  return { kind: "error", message: e.message };
+  if (e.code === "wrong_password") return { kind: "password", message: errorText(e) };
+  if (e.code === "link_not_found" || e.code === "link_expired") return { kind: "gone", message: errorText(e) };
+  if (e.status === 404) return { kind: "gone", message: null };
+  if (e.status === 410) return { kind: "gone", message: null, expired: true };
+  if (e.status === 429) return { kind: "busy", message: errorText(e) };
+  return { kind: "error", message: errorText(e) };
 }
 
 /** Na deze fouten werkt de sleutel niet meer; de pagina moet iets anders laten zien. */

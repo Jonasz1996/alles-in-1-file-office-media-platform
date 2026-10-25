@@ -1,0 +1,601 @@
+/* De viewer (P4): het hele venster, met de weergaven per soort. Alleen kleuren uit tokens.css. */
+
+.viewer {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.viewer[open] {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.viewer::backdrop {
+  background: var(--backdrop);
+}
+
+.viewer-head {
+  display: flex;
+  gap: var(--space-2) var(--space-4);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.viewer-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-m);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.viewer-sub {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.viewer-tools {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.viewer-main {
+  display: flex;
+  min-height: 0;
+  position: relative;
+}
+
+.viewer-stage {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.viewer-stage:focus {
+  outline: none;
+}
+
+.viewer-stage:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: calc(-1 * var(--focus-w));
+}
+
+.viewer-error {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--line);
+  color: var(--bad);
+}
+
+.viewer-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  text-align: center;
+}
+
+.viewer-fallback,
+.media-poster {
+  max-width: 100%;
+  max-height: 60%;
+  object-fit: contain;
+}
+
+.viewer-scroll {
+  overflow: auto;
+  padding: var(--space-4);
+}
+
+.viewer-stage > .viewer-scroll {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+}
+
+.viewer-archive td.name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* --- het paneel met gegevens --- */
+
+.viewer-info {
+  width: 20rem;
+  flex: none;
+  overflow: auto;
+  padding: var(--space-3) var(--space-4);
+  border-left: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.viewer-info header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.viewer-info h3,
+.viewer-info h4 {
+  margin: var(--space-2) 0;
+  font-size: var(--text-m);
+}
+
+.viewer-info dl {
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.viewer-info dt {
+  color: var(--muted);
+  font-size: var(--text-s);
+}
+
+.viewer-info dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 44rem) {
+  .viewer-info {
+    position: absolute;
+    inset: auto 0 0 0;
+    width: auto;
+    max-height: 60%;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    box-shadow: var(--shadow-2);
+  }
+
+  .viewer-tools {
+    gap: 0;
+  }
+}
+
+/* --- afbeelding --- */
+
+.zoom {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.zoom-stage {
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+
+.zoom-stage.zoomed {
+  cursor: grab;
+}
+
+.zoom-stage.zoomed:active {
+  cursor: grabbing;
+}
+
+.zoom-img {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: none;
+  transform-origin: center;
+}
+
+.zoom-img.measuring {
+  visibility: hidden;
+}
+
+.zoom-tools,
+.pages-tools,
+.text-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1) var(--space-2);
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.pages-tools,
+.text-tools {
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+  justify-content: flex-start;
+}
+
+.zoom-percent {
+  min-width: 4.5ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- PDF --- */
+
+.pages {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.pages-body {
+  display: flex;
+  min-height: 0;
+}
+
+.pages-toc {
+  width: 16rem;
+  flex: none;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  border-right: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.pages-toc ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pages-toc li {
+  margin: var(--space-1) 0;
+}
+
+.pages-toc button {
+  text-align: left;
+}
+
+.pages-toc button[aria-current="page"] {
+  font-weight: 600;
+}
+
+.toc-level-1 {
+  padding-left: var(--space-3);
+}
+
+.toc-level-2 {
+  padding-left: var(--space-5);
+}
+
+.toc-level-3,
+.toc-level-4 {
+  padding-left: var(--space-6);
+}
+
+.pages-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  position: relative;
+}
+
+.pages-track {
+  position: relative;
+}
+
+.page {
+  position: absolute;
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.page img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.page-box {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.page-box input {
+  width: 5em;
+}
+
+@media (max-width: 44rem) {
+  .pages-toc {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 1;
+    box-shadow: var(--shadow-2);
+  }
+}
+
+/* --- video en audio --- */
+
+.media {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+}
+
+.media-video {
+  max-width: 100%;
+  max-height: 100%;
+  background: var(--bg);
+}
+
+.media-audio {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+  width: min(32rem, 100%);
+}
+
+.media-cover {
+  width: min(20rem, 70vw);
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--radius-m);
+}
+
+.media-cover.placeholder {
+  background: var(--surface);
+}
+
+.media-tags {
+  margin: 0;
+  text-align: center;
+}
+
+.media-audio audio {
+  width: 100%;
+}
+
+/* --- tekst en code --- */
+
+.text-view {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--bg);
+}
+
+.text-view .viewer-scroll {
+  min-height: 0;
+}
+
+.text-encoding {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.text-size {
+  margin-left: auto;
+}
+
+.text-scroll {
+  padding: var(--space-2) 0;
+  font-family: var(--mono);
+  font-size: var(--text-s);
+}
+
+.text-lines {
+  position: relative;
+  min-width: max-content;
+}
+
+.text-line {
+  height: 20px;
+  line-height: 20px;
+  white-space: pre;
+  padding-right: var(--space-4);
+}
+
+.text-line code {
+  font: inherit;
+}
+
+.ln {
+  display: inline-block;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  text-align: right;
+  color: var(--muted);
+  user-select: none;
+}
+
+.digits-1 .ln,
+.digits-2 .ln {
+  width: 3ch;
+}
+
+.digits-3 .ln {
+  width: 4ch;
+}
+
+.digits-4 .ln {
+  width: 5ch;
+}
+
+.digits-5 .ln {
+  width: 6ch;
+}
+
+.digits-6 .ln,
+.digits-7 .ln {
+  width: 8ch;
+}
+
+.ln,
+.text-line code {
+  box-sizing: content-box;
+}
+
+.tok-comment {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tok-string {
+  color: var(--ok);
+}
+
+.tok-number,
+.tok-attr {
+  color: var(--warn);
+}
+
+.tok-keyword {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tok-tag {
+  color: var(--accent);
+}
+
+.text-more {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.md {
+  line-height: var(--leading);
+}
+
+.md > * {
+  max-width: 48rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.md-code {
+  padding: var(--space-3);
+  background: var(--surface);
+  border-radius: var(--radius-m);
+  overflow: auto;
+  font-family: var(--mono);
+}
+
+.md blockquote {
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.md-image {
+  color: var(--muted);
+  font-style: italic;
+}
+
+table.csv td,
+table.csv th,
+.office-table td,
+.office-table th {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 24rem;
+}
+
+/* --- kantoordocumenten --- */
+
+.office {
+  line-height: var(--leading);
+}
+
+.office-note {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--warn);
+  background: var(--surface);
+  border-radius: var(--radius-s);
+}
+
+.office-doc {
+  max-width: 48rem;
+  margin: 0 auto;
+}
+
+.office-doc ul,
+.office-doc ol,
+.office-slide ul {
+  padding-left: var(--space-5);
+}
+
+.level-1 {
+  margin-left: var(--space-4);
+}
+
+.level-2 {
+  margin-left: var(--space-6);
+}
+
+.level-3,
+.level-4,
+.level-5 {
+  margin-left: calc(var(--space-6) * 1.5);
+}
+
+.office-table th[scope="row"],
+.office-table thead th {
+  color: var(--muted);
+  font-weight: 400;
+  background: var(--surface);
+}
+
+.office-slides {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  max-width: 48rem;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.office-slide {
+  aspect-ratio: 16 / 9;
+  overflow: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--bg);
+  box-shadow: var(--shadow-1);
+}
+
+.office-slides.narrow .office-slide {
+  aspect-ratio: 4 / 3;
+}
+
+.office-slide h3 {
+  margin: var(--space-2) 0;
+}
+
+.office-slide-n {
+  font-size: var(--text-s);
+}

@@ -1,0 +1,188 @@
+// Een kantoordocument (docx, xlsx, pptx en de ODF-varianten) zoals de server het las
+// (app/office.py): de tekst met koppen, lijsten en tabellen, de bladen van een rekenblad of de
+// dia's van een presentatie. Vereenvoudigd: zonder opmaak, afbeeldingen of formules.
+
+import { Fragment, type JSX, type ReactNode, useEffect, useState } from "react";
+import { errorText, t } from "../i18n";
+import { Spinner } from "../ui/Spinner";
+import { Tabs, tabPanelProps } from "../ui/Tabs";
+import type { OfficeBlock, OfficeDoc, Run, ViewerDetail } from "./api";
+import type { Source } from "./source";
+import type { ViewerItem } from "./types";
+
+function runs(list: Run[]): ReactNode[] {
+  return list.map((r, i) => {
+    let node: ReactNode = r.text;
+    if (r.i) node = <em>{node}</em>;
+    if (r.b) node = <strong>{node}</strong>;
+    return <Fragment key={i}>{node}</Fragment>;
+  });
+}
+
+/** Opeenvolgende lijstitems in één lijst; de rest los. */
+function groupBlocks(blocks: OfficeBlock[]): (OfficeBlock | Extract<OfficeBlock, { type: "li" }>[])[] {
+  const out: (OfficeBlock | Extract<OfficeBlock, { type: "li" }>[])[] = [];
+  for (const block of blocks) {
+    const last = out[out.length - 1];
+    if (block.type === "li" && Array.isArray(last) && last[0].ordered === block.ordered) last.push(block);
+    else out.push(block.type === "li" ? [block] : block);
+  }
+  return out;
+}
+
+function Table({ rows, header = false }: { rows: string[][]; header?: boolean }) {
+  const width = Math.max(0, ...rows.map((r) => r.length));
+  return (
+    <div className="table-wrap">
+      <table className="office-table">
+        {header && (
+          <thead>
+            <tr>
+              <th aria-hidden="true" />
+              {Array.from({ length: width }, (_, i) => (
+                <th key={i} scope="col">
+                  {columnName(i)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+        )}
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i}>
+              {header && <th scope="row">{i + 1}</th>}
+              {Array.from({ length: width }, (_, j) => (
+                <td key={j}>{row[j] ?? ""}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** 0 -> A, 25 -> Z, 26 -> AA */
+export function columnName(i: number): string {
+  let n = i + 1;
+  let name = "";
+  while (n > 0) {
+    const rest = (n - 1) % 26;
+    name = String.fromCharCode(65 + rest) + name;
+    n = Math.floor((n - 1) / 26);
+  }
+  return name;
+}
+
+function DocumentBody({ doc }: { doc: Extract<OfficeDoc, { type: "document" }> }) {
+  return (
+    <article className="office-doc">
+      {groupBlocks(doc.blocks).map((block, i) => {
+        if (Array.isArray(block)) {
+          const List = block[0].ordered ? "ol" : "ul";
+          return (
+            <List key={i}>
+              {block.map((li, j) => (
+                <li key={j} className={`level-${Math.min(li.level, 5)}`}>
+                  {runs(li.runs)}
+                </li>
+              ))}
+            </List>
+          );
+        }
+        if (block.type === "h") {
+          const H = `h${Math.min(6, Math.max(1, block.level) + 1)}` as "h2";
+          return <H key={i}>{runs(block.runs)}</H>;
+        }
+        if (block.type === "table") return <Table key={i} rows={block.rows} />;
+        if (block.type === "p") return <p key={i}>{runs(block.runs)}</p>;
+        return null;
+      })}
+    </article>
+  );
+}
+
+function SheetBody({ doc }: { doc: Extract<OfficeDoc, { type: "sheet" }> }) {
+  const [current, setCurrent] = useState(0);
+  const sheet = doc.sheets[current];
+  if (!sheet) return <p className="muted">{t("viewer.office.empty")}</p>;
+  const id = (i: number) => String(i);
+  return (
+    <div className="office-sheet">
+      {doc.sheets.length > 1 && (
+        <Tabs
+          label={t("viewer.office.sheets")}
+          idPrefix="blad"
+          tabs={doc.sheets.map((s, i) => ({ id: id(i), label: s.name || t("viewer.office.sheet", { n: i + 1 }) }))}
+          current={id(current)}
+          onSelect={(v: string) => setCurrent(Number(v))}
+        />
+      )}
+      <div {...(doc.sheets.length > 1 ? tabPanelProps("blad", id(current)) : {})}>
+        {sheet.rows.length ? <Table rows={sheet.rows} header /> : <p className="muted">{t("viewer.office.emptySheet")}</p>}
+        {sheet.truncated && <p className="muted">{t("viewer.office.sheetTruncated")}</p>}
+      </div>
+    </div>
+  );
+}
+
+function SlidesBody({ doc }: { doc: Extract<OfficeDoc, { type: "slides" }> }) {
+  const ratio = doc.size && doc.size[1] > 0 ? doc.size[0] / doc.size[1] : 16 / 9;
+  return (
+    <ol className={`office-slides${ratio < 1.5 ? " narrow" : ""}`}>
+      {doc.slides.map((slide, i) => (
+        <li key={i} className="office-slide">
+          <span className="muted office-slide-n">{t("viewer.office.slide", { n: i + 1 })}</span>
+          {slide.title && <h3>{slide.title}</h3>}
+          {slide.bullets.length > 0 && (
+            <ul>
+              {slide.bullets.map((b, j) => (
+                <li key={j} className={`level-${Math.min(b.level, 5)}`}>
+                  {b.text}
+                </li>
+              ))}
+            </ul>
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export default function OfficeView({ item, detail, source }: { item: ViewerItem; detail: ViewerDetail; source: Source }): JSX.Element {
+  const [doc, setDoc] = useState<OfficeDoc | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+
+  // Opnieuw zodra de preview klaar is (de inhoud komt mee met de preview)
+  useEffect(() => {
+    let live = true;
+    source.document(item).then(
+      (d) => live && setDoc(d.office),
+      (e: unknown) => live && setError(errorText(e)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [item, source, detail.state]);
+
+  let body: ReactNode;
+  if (error) body = <p role="alert">{error}</p>;
+  else if (doc === undefined) body = <Spinner label={t("viewer.loading")} />;
+  else if (doc === null)
+    body = (
+      <p className="muted">
+        {detail.state === "pending" ? t("viewer.pending") : detail.state === "failed" ? t("viewer.failed") : t("viewer.office.none")}
+      </p>
+    );
+  else if (doc.type === "document") body = <DocumentBody doc={doc} />;
+  else if (doc.type === "sheet") body = <SheetBody doc={doc} />;
+  else body = <SlidesBody doc={doc} />;
+
+  return (
+    <div className="viewer-scroll office">
+      <p className="office-note">{t("viewer.office.simplified")}</p>
+      {body}
+      {doc?.truncated && <p className="muted">{t("viewer.office.truncated")}</p>}
+    </div>
+  );
+}
