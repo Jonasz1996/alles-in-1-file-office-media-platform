@@ -24,7 +24,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app import access, errors, previews
+from app import access, errors, photodate, previews
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import AlbumItem, Blob, Node, Share, User
@@ -418,8 +418,9 @@ async def tus_create(
     upload_length: Annotated[int, Header()],
     upload_metadata: Annotated[str | None, Header()] = None,
 ) -> Response:
-    """Een upload naar de gedeelde map. Alleen filename telt; bestaat de naam al, dan krijgt
-    het bestand een vrije naam. Het kost het quotum van wie de map deelt."""
+    """Een upload naar de gedeelde map. Alleen filename telt (en lastmodified, voor de
+    opnamedatum zoals in de app); bestaat de naam al, dan krijgt het bestand een vrije naam.
+    Het kost het quotum van wie de map deelt."""
     uploadable(link)
     upload_limiter.check(client_ip(request))
     meta = uploads.parse_metadata(upload_metadata)
@@ -440,6 +441,7 @@ async def tus_create(
             created_by=None,
             share_id=link.share.id,
             guard=uploads.link_open(link.share.id, link.node.id),
+            client_mtime=photodate.from_ms(meta.get("lastmodified")),
         )
     except Gone:
         # Terwijl dit wachtte, is de link weggehaald of verlopen, of de map weg

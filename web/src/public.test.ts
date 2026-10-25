@@ -464,7 +464,7 @@ describe("uploaden via een link (tus)", () => {
   });
 
   it("de wachtrij: per bestand of het aankwam", async () => {
-    const { link } = setup();
+    const { server, link } = setup();
     await link.open();
     const queue = new UploadQueue(link, { send: link.send, storage: memoryStorage(), chunkSize: 10 });
     const arrived: string[] = [];
@@ -472,5 +472,7 @@ describe("uploaden via een link (tus)", () => {
     await queue.add("public:root-1", [file(15, "a.jpg"), file(5, "b.jpg")]);
     expect(arrived).toEqual(["a.jpg", "b.jpg"]);
     expect(queue.getSnapshot()).toEqual([]);
+    // lastmodified gaat mee (de opnamedatum van een foto zonder EXIF), conflict niet
+    expect(server.bodies.at(-1)).toBe(`filename ${btoa("b.jpg")},lastmodified ${btoa("1")}`);
   });
 });

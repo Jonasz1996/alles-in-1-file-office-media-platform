@@ -298,11 +298,19 @@ export class PublicLink implements TusApi {
     return `/api/v1/public/download/${nodeId}?${params}`;
   }
 
-  // tus via de link: het doel is altijd de gedeelde map, dus parent doet er niet toe.
-  async tusCreate(_parent: string, name: string, size: number): Promise<{ url: string; nodeId: string | null }> {
+  // tus via de link: het doel is altijd de gedeelde map, dus parent doet er niet toe, en een
+  // conflictkeuze kent een link niet. lastmodified wel: de opnamedatum van een foto zonder EXIF.
+  async tusCreate(
+    _parent: string,
+    name: string,
+    size: number,
+    meta?: Record<string, string>,
+  ): Promise<{ url: string; nodeId: string | null }> {
+    const values: Record<string, string> = { filename: name };
+    if (meta?.lastmodified !== undefined) values.lastmodified = meta.lastmodified;
     const res = await this.raw("/api/v1/public/tus", {
       method: "POST",
-      headers: { ...TUS, "Upload-Length": String(size), "Upload-Metadata": tusMetadata({ filename: name }) },
+      headers: { ...TUS, "Upload-Length": String(size), "Upload-Metadata": tusMetadata(values) },
     });
     const url = res.headers.get("Location");
     if (!url) throw new ApiError(res.status, "Geen Location in het antwoord");

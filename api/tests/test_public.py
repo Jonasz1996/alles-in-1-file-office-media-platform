@@ -20,8 +20,10 @@ from app.routers import files, public, uploads
 from app.security import _encode
 from tests.factories import message_of
 from tests.test_files import check_refs, mkdir, put, root
+from tests.test_previews import picture
 from tests.test_shares import person
 from tests.test_uploads import PATCH, TUS, hold
+from tests.test_uploads_list import SUMMER, ms, node_row
 
 TOKEN_PATH = "/s/"
 BASE = "http://test"
@@ -545,6 +547,25 @@ async def test_uploadlink(client, tree, settings):
     assert r.status_code == 404
     assert (await client.delete(location, headers={**bearer(key), **TUS})).status_code == 204
     assert (await client.head(location, headers={**bearer(key), **TUS})).status_code == 404
+
+
+@pytest.mark.anyio
+async def test_uploadlink_lastmodified_wordt_de_opnamedatum(client, tree, settings):
+    """Zoals in de app (B22): een foto zonder EXIF-datum krijgt de lastModified van de client,
+    ook als hij via een uploadlink binnenkomt."""
+    t = tree
+    link = await new_link(client, t["jonas"], t["vakantie"], permission="upload")
+    key = (await open_link(client, link))["key"]
+    data = picture("PNG", color="purple")
+    r = await tus_create(client, key, "p.png", len(data), lastmodified=str(ms(SUMMER)))
+    assert r.status_code == 201, r.text
+    assert (await tus_send(client, key, r.headers["location"], 0, data)).status_code == 204
+    listing = await client.get(f"/api/v1/files/{t['vakantie']}/children", headers=t["jonas"])
+    new = next(c for c in listing.json()["children"] if c["name"] == "p.png")
+    node = await node_row(settings, new["id"])
+    # De kloktijd in Amsterdam (zomertijd, +2): 2 juli 00:30
+    assert node.taken_at.replace(tzinfo=None) == datetime(2024, 7, 2, 0, 30)
+    assert node.taken_day == 20240702
 
 
 @pytest.mark.anyio

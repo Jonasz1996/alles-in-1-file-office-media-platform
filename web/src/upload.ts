@@ -19,7 +19,7 @@ export const STOP = "stop";
 export interface TusApi {
   readonly accessToken: string | null;
   refresh(): Promise<unknown>;
-  /** meta: extra Upload-Metadata (conflict, lastmodified); een TusApi mag die negeren (een
+  /** meta: extra Upload-Metadata (conflict, lastmodified); een TusApi mag een deel negeren (een
    * uploadlink kent geen conflictkeuze). */
   tusCreate(
     parent: string,
