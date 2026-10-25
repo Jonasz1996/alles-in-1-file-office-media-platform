@@ -3,6 +3,8 @@ import { ApiError, type PublicShare } from "./api";
 import { ARRIVED, keyName, linkProblem, linkToken, PublicLink } from "./publicApi";
 import { type SendChunk, uploadFile } from "./upload";
 import { UploadQueue } from "./uploadQueue";
+import { pageHref } from "./viewer/api";
+import { publicSource } from "./viewer/source";
 
 const TOKEN = "Tk_abc-123";
 
@@ -76,6 +78,23 @@ class FakePublic {
     if (!auth || !this.valid.has(auth.slice("Bearer ".length))) return json({ detail: "Sleutel verlopen" }, 401);
     if (url.startsWith("/api/v1/public/children")) {
       return json({ folder: share.root, path: [share.root], children: [] });
+    }
+    if (url.startsWith("/api/v1/public/preview/")) {
+      return json({ state: "ready", thumb: null, large: null, display: null, meta: {}, taken_at: null });
+    }
+    if (url.startsWith("/api/v1/public/document/")) {
+      const key = auth.slice("Bearer ".length);
+      return json({
+        kind: "pdf",
+        pages: 2,
+        page_sizes: [[595, 842], [595, 842]],
+        toc: [],
+        labels: null,
+        widths: [640, 1280, 1920, 2560],
+        page_url: `/api/v1/public/pages/${url.split("/").pop()}/{n}.webp?w={w}&key=${key}`,
+        token_expires_in: 30,
+        office: null,
+      });
     }
     if (url === "/api/v1/public/previews") {
       this.bodies.push(JSON.parse(String(init?.body)));
@@ -287,6 +306,28 @@ describe("PublicLink: adressen", () => {
     await link.children();
     expect(server.bodies.at(-1)).toEqual({ node_ids: ["a", "b"] });
     expect(server.calls.at(-1)).toBe("GET /api/v1/public/children Bearer K1");
+  });
+});
+
+describe("de viewer via een link (publicSource)", () => {
+  it("detail en document met de sleutel; een verlopen sleutel geeft een nieuwe in page_url", async () => {
+    let now = 1_000_000;
+    const { server, link } = setup({ now: () => now });
+    server.expiresIn = 120;
+    await link.open();
+    const source = publicSource(link);
+    expect(source.kind).toBe("public");
+    const item = { id: "n1", name: "boek.pdf", mime: "application/pdf", size: 1, modified_at: "2026-01-01T00:00:00Z" };
+    expect((await source.detail(item)).state).toBe("ready");
+    expect(server.calls.at(-1)).toBe("GET /api/v1/public/preview/n1 Bearer K1");
+    const doc = await source.document(item);
+    expect(pageHref(doc.page_url!, 2, 640)).toBe("/api/v1/public/pages/n1/2.webp?w=640&key=K1");
+    // Na de levensduur (min een minuut marge): opnieuw /document geeft een adres met een
+    // verse sleutel (de pagina opent de link stil opnieuw)
+    now += 90_000;
+    const fresh = await source.document(item);
+    expect(fresh.page_url).toContain("key=K2");
+    expect(await source.url(item, true)).toBe("/api/v1/public/download/n1?key=K2&inline=true");
   });
 });
 
