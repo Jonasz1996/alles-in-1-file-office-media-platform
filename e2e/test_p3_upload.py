@@ -12,8 +12,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import cdp_profile
 from playwright.sync_api import expect
+
+from conftest import cdp_profile
 
 pytestmark = pytest.mark.p3
 
@@ -101,8 +102,11 @@ def test_mapupload_met_shift_u_voegt_samen_en_toont_een_botsing(
     lade = tray(page)
     # De map onder het bestand "Strand" lukt niet: zichtbaar mislukt, met de reden en zonder
     # Opnieuw
-    expect(lade.get_by_text("Er staat al een bestand met de naam van map Vakantie/Strand")).to_be_visible()
+    expect(
+        lade.get_by_text("Er staat al een bestand met de naam van map Vakantie/Strand")
+    ).to_be_visible()
     expect(lade.get_by_role("button", name="Opnieuw: Vakantie/Strand/c.txt")).to_have_count(0)
+
     def arrived() -> bool:
         sub = children(server, user, vakantie).get("2024")
         return bool(sub) and "b.txt" in children(server, user, sub["id"])
@@ -145,7 +149,9 @@ def test_pauzeren_en_hervatten(context_as, user_factory, server, tmp_path: Path)
     lade = tray(page)
     pause = lade.get_by_role("button", name="Pauzeren: groot.bin")
     expect(pause).to_be_visible()
-    wait_until(lambda: pending(server, user) and pending(server, user)[0]["offset"] > 0, what="bytes")
+    wait_until(
+        lambda: pending(server, user) and pending(server, user)[0]["offset"] > 0, what="bytes"
+    )
     pause.click()
     expect(lade.get_by_text("Gepauzeerd", exact=True).first).to_be_visible()
     # Staat stil op de server, en blijft daar staan
@@ -181,7 +187,9 @@ def test_herladen_dan_onderbroken_uploads_en_opnieuw_kiezen(
     with page.expect_file_chooser() as chooser:
         page.get_by_role("button", name="Uploaden", exact=True).click()
     chooser.value.set_files(big)
-    wait_until(lambda: pending(server, user) and pending(server, user)[0]["offset"] > 0, what="bytes")
+    wait_until(
+        lambda: pending(server, user) and pending(server, user)[0]["offset"] > 0, what="bytes"
+    )
 
     page.reload()
     lade = tray(page)
@@ -232,10 +240,15 @@ def test_dubbele_bestanden_een_vraag_en_geen_tus_ervoor(context_as, user_factory
     expect(dialog).to_be_hidden()
     wait_until(lambda: "c.txt" in children(server, user), what="c.txt")
     wait_until(lambda: len(posts) == 3, what="drie uploads")
+    # Drie tegelijk: c.txt kan eerder klaar zijn dan het vervangen van a.txt en B.txt
+    expect(tray(page)).to_have_count(0)
     names = children(server, user)
     assert set(names) == {"a.txt", "B.txt", "c.txt"}  # vervangen, niets dubbel
-    versions = server.call(user, "GET", f"/api/v1/files/{names['a.txt']['id']}/versions", expect=200)
-    assert len(versions.json()) >= 1  # de vorige is een versie
+    for name in ("a.txt", "B.txt"):
+        versions = server.call(
+            user, "GET", f"/api/v1/files/{names[name]['id']}/versions", expect=200
+        )
+        assert len(versions.json()) >= 1, name  # de vorige is een versie
 
     # Nog eens, nu één voor één met het toetsenbord: B (beide houden), dan O (overslaan)
     with page.expect_file_chooser() as chooser:
@@ -255,7 +268,9 @@ def test_dubbele_bestanden_een_vraag_en_geen_tus_ervoor(context_as, user_factory
     before = len(posts)
     with page.expect_file_chooser() as chooser:
         page.get_by_role("button", name="Uploaden", exact=True).click()
-    chooser.value.set_files(files[2:] + [{"name": "d.txt", "mimeType": "text/plain", "buffer": b"d"}])
+    chooser.value.set_files(
+        files[2:] + [{"name": "d.txt", "mimeType": "text/plain", "buffer": b"d"}]
+    )
     dialog = page.get_by_role("dialog", name="1 bestand bestaat al")
     expect(dialog).to_be_visible()
     page.keyboard.press("Escape")
@@ -277,10 +292,14 @@ def test_de_lade_blijft_op_gedeeld(context_as, user_factory, server, tmp_path: P
     chooser.value.set_files(big)
     lade = tray(page)
     expect(lade.get_by_role("button", name="Pauzeren: onderweg.bin")).to_be_visible()
-    page.get_by_role("navigation", name="Hoofdmenu").get_by_role("link", name="Gedeeld met mij").click()
+    page.get_by_role("navigation", name="Hoofdmenu").get_by_role(
+        "link", name="Gedeeld met mij"
+    ).click()
     expect(page).to_have_url(re.compile(r"/gedeeld$"))
     expect(lade.get_by_role("button", name="Pauzeren: onderweg.bin")).to_be_visible()
-    expect(lade.locator("[aria-live=polite]")).to_contain_text(re.compile(r"0 van 1 · .* van 3,0 MB"))
+    expect(lade.locator("[aria-live=polite]")).to_contain_text(
+        re.compile(r"0 van 1 · .* van 3,0 MB")
+    )
     throttle(page, mbit=400)
     wait_until(lambda: "onderweg.bin" in children(server, user), what="onderweg.bin")
     expect(lade).to_have_count(0)
@@ -292,7 +311,11 @@ async (folderName) => {
   // webkitGetAsEntry (dat een synthetische DataTransfer niet voor mappen geeft) als nep-entry
   // met readEntries in stukken, zoals Chromium
   const make = (name, text) => new File([text], name, { type: "text/plain" });
-  const files = { "a.txt": make("a.txt", "a"), "b.txt": make("b.txt", "bb"), "los.txt": make("los.txt", "los") };
+  const files = {
+    "a.txt": make("a.txt", "a"),
+    "b.txt": make("b.txt", "bb"),
+    "los.txt": make("los.txt", "los"),
+  };
   const fileEntry = (path, file) => ({
     isFile: true, isDirectory: false, name: file.name, fullPath: path,
     file: (ok) => setTimeout(() => ok(file), 0),
@@ -301,7 +324,13 @@ async (folderName) => {
     isFile: false, isDirectory: true, name: path.split("/").pop(), fullPath: path,
     createReader() {
       let at = 0;
-      return { readEntries(ok) { const part = kids.slice(at, at + 1); at += part.length; setTimeout(() => ok(part), 0); } };
+      return {
+        readEntries(ok) {
+          const part = kids.slice(at, at + 1);
+          at += part.length;
+          setTimeout(() => ok(part), 0);
+        },
+      };
     },
   });
   const tree = dirEntry("/" + folderName, [
@@ -320,7 +349,8 @@ async (folderName) => {
   };
   const target = document.querySelector("main");
   for (const type of ["dragenter", "dragover", "drop"]) {
-    target.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+    const init = { bubbles: true, cancelable: true, dataTransfer: dt };
+    target.dispatchEvent(new DragEvent(type, init));
   }
   DataTransferItem.prototype.webkitGetAsEntry = original;
   return dt.types.includes("Files");
@@ -332,7 +362,10 @@ def test_een_map_slepen(context_as, user_factory, server):
     user = user_factory(name="Sleper")
     page = open_files(context_as, user)
     assert page.evaluate(DROP_JS, "Gesleept") is True
-    wait_until(lambda: "los.txt" in children(server, user) and "Gesleept" in children(server, user), what="drop")
+    wait_until(
+        lambda: "los.txt" in children(server, user) and "Gesleept" in children(server, user),
+        what="drop",
+    )
     top = children(server, user)
     assert set(top) == {"Gesleept", "los.txt"}
     inside = children(server, user, top["Gesleept"]["id"])
