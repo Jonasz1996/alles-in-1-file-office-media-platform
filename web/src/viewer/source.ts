@@ -103,8 +103,8 @@ export function defaultSource(): Source {
 export function publicSource(link: PublicLink): Source {
   return {
     kind: "public",
-    detail: (item) => link.request<ViewerDetail>(`/api/v1/public/preview/${item.id}`),
-    document: (item) => link.request<DocumentInfo>(`/api/v1/public/document/${item.id}`),
+    detail: (item) => link.preview<ViewerDetail>(item.id),
+    document: (item) => link.document<DocumentInfo>(item.id),
     url: (item, inline) => link.downloadUrl(item.id, inline),
     forget: () => {},
     async range(item, start, end) {

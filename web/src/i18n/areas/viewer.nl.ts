@@ -69,6 +69,7 @@ export default {
     fitPage: "Hele pagina",
     region: "Pagina's van het document",
     none: "Dit document heeft geen pagina's om te tonen.",
+    pageFailed: "Pagina {n} kon niet worden geladen.",
   },
   media: {
     unsupported: "Deze browser kan dit formaat niet afspelen",

@@ -268,6 +268,13 @@ export class PublicLink implements TusApi {
       body: JSON.stringify({ node_ids: nodeIds }),
     });
 
+  /** Alles wat de viewer over een bestand in de link wil weten (zoals /files/{id}/preview). */
+  preview = <T>(nodeId: string) => this.json<T>(`/api/v1/public/preview/${nodeId}`);
+
+  /** De pagina's van een PDF of de inhoud van een kantoordocument; page_url bevat de sleutel
+   * (opnieuw vragen geeft een adres met een verse sleutel). */
+  document = <T>(nodeId: string) => this.json<T>(`/api/v1/public/document/${nodeId}`);
+
   /** Adres om te downloaden of (inline) te tonen, met de sleutel erin. */
   async downloadUrl(nodeId: string, inline = false): Promise<string> {
     const params = new URLSearchParams({ key: await this.freshKey() });

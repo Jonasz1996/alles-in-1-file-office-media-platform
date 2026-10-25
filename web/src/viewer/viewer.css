@@ -599,3 +599,9 @@ table.csv th,
 .office-slide-n {
   font-size: var(--text-s);
 }
+
+.page-failed {
+  margin: 0;
+  padding: var(--space-4);
+  text-align: center;
+}

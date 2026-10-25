@@ -67,8 +67,16 @@ function useDetails(source: Source) {
 
 type Loaded = { key: string; detail?: ViewerDetail; error?: unknown };
 
-export default function Viewer({ items, index, onIndexChange, onClose, onNeedMore, source }: ViewerProps): JSX.Element | null {
+export default function Viewer({ items, index, onIndexChange, onClose: close, onNeedMore, source }: ViewerProps): JSX.Element | null {
   const src = sourceOf(source);
+  // Hooguit één keer sluiten: Esc komt zowel als sneltoets als als cancel van de <dialog>, en
+  // twee keer "terug" zou ook de pagina eronder verlaten
+  const closed = useRef(false);
+  const onClose = useCallback(() => {
+    if (closed.current) return;
+    closed.current = true;
+    close();
+  }, [close]);
   const item = items[index] as ViewerItem | undefined;
   const dialog = useRef<HTMLDialogElement>(null);
   const stage = useRef<HTMLDivElement>(null);

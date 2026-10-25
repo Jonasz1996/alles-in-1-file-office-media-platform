@@ -71,6 +71,7 @@ const en: Translation<typeof nl> = {
     fitPage: "Whole page",
     region: "Pages of the document",
     none: "This document has no pages to show.",
+    pageFailed: "Page {n} could not be loaded.",
   },
   media: {
     unsupported: "This browser cannot play this format",

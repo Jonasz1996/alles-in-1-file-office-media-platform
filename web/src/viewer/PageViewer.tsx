@@ -65,7 +65,11 @@ export default function PageViewer({ count, sizes, widths, url, toc = [], labels
   const [draft, setDraft] = useState<string | null>(null);
   const [, setFailures] = useState(0);
   // Pagina's die al geladen zijn, houden hun adres (ook als het token intussen vernieuwd is)
-  const used = useRef(new Map<number, { src: string; srcSet: string; done: boolean; from: PageViewerProps["url"] }>());
+  // (Ook een pagina die niet laadde: die wordt pas opnieuw gevraagd met een nieuw adres, anders
+  // zou een kapotte pagina eindeloos opnieuw laden.)
+  const used = useRef(
+    new Map<number, { src: string; srcSet: string; done: boolean; failed: boolean; from: PageViewerProps["url"] }>(),
+  );
   const anchor = useRef<{ page: number; frac: number } | null>(null);
 
   useLayoutEffect(() => {
@@ -134,7 +138,13 @@ export default function PageViewer({ count, sizes, widths, url, toc = [], labels
     if (hit && (hit.done || hit.from === url)) return hit;
     const width = dims[n - 1]?.[0] ?? 640;
     const best = widths.find((w) => w >= width) ?? widths[widths.length - 1] ?? 1280;
-    const made = { src: url(n, best), srcSet: widths.map((w) => `${url(n, w)} ${w}w`).join(", "), done: false, from: url };
+    const made = {
+      src: url(n, best),
+      srcSet: widths.map((w) => `${url(n, w)} ${w}w`).join(", "),
+      done: false,
+      failed: false,
+      from: url,
+    };
     used.current.set(n, made);
     return made;
   }
@@ -150,23 +160,27 @@ export default function PageViewer({ count, sizes, widths, url, toc = [], labels
         className="page"
         style={{ top: `${PAD + offsets[i]}px`, left: `${(trackW - w) / 2}px`, width: `${w}px`, height: `${h}px` }}
       >
-        <img
-          src={src.src}
-          srcSet={src.srcSet}
-          sizes={`${w}px`}
-          width={w}
-          height={h}
-          alt={t("viewer.pdf.pageAlt", { n: labels?.[i] || n })}
-          decoding="async"
-          onLoad={() => {
-            src.done = true;
-          }}
-          onError={() => {
-            used.current.delete(n);
-            setFailures((f) => f + 1);
-            onPageError?.(n);
-          }}
-        />
+        {src.failed ? (
+          <p className="page-failed muted">{t("viewer.pdf.pageFailed", { n: labels?.[i] || n })}</p>
+        ) : (
+          <img
+            src={src.src}
+            srcSet={src.srcSet}
+            sizes={`${w}px`}
+            width={w}
+            height={h}
+            alt={t("viewer.pdf.pageAlt", { n: labels?.[i] || n })}
+            decoding="async"
+            onLoad={() => {
+              src.done = true;
+            }}
+            onError={() => {
+              src.failed = true;
+              setFailures((f) => f + 1);
+              onPageError?.(n);
+            }}
+          />
+        )}
       </div>,
     );
   }
