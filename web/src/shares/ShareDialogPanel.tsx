@@ -217,7 +217,7 @@ function People({
       <div className="share-add">
         <PersonPicker
           exclude={{ users, groups }}
-          disabled={action.busy}
+          busy={action.busy}
           onPick={add}
           inputRef={search}
           onError={action.setError}
@@ -640,7 +640,7 @@ function MultiShareDialog({
               <div className="share-add">
                 <PersonPicker
                   exclude={{ users: empty, groups: empty }}
-                  disabled={progress !== null}
+                  busy={progress !== null}
                   onPick={share}
                   inputRef={search}
                   onError={setError}

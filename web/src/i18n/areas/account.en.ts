@@ -60,6 +60,8 @@ const en: Translation<typeof nl> = {
     signOutOthers: "Sign out everywhere else",
     currentTitle: "Sign out here?",
     currentText: "This is the device you are using now.",
+    deviceTitle: "Sign out {device}?",
+    deviceConfirmText: "That device will have to sign in again.",
     othersTitle: "Sign out on all other devices?",
     othersText: "You stay signed in only here.",
     othersConfirm: "Sign out everywhere else",

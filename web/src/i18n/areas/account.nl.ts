@@ -58,6 +58,8 @@ export default {
     signOutOthers: "Overal anders uitloggen",
     currentTitle: "Hier uitloggen?",
     currentText: "Dit is het apparaat dat je nu gebruikt.",
+    deviceTitle: "{device} uitloggen?",
+    deviceConfirmText: "Op dat apparaat moet daarna opnieuw worden ingelogd.",
     othersTitle: "Op alle andere apparaten uitloggen?",
     othersText: "Je blijft alleen hier ingelogd.",
     othersConfirm: "Overal anders uitloggen",

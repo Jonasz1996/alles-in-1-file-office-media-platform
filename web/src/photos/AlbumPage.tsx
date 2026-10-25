@@ -273,7 +273,7 @@ export default function AlbumPage({ params }: RouteProps): JSX.Element {
           />
         )}
       </div>
-      <SelectionBar count={selected.size} onClear={b.clear}>
+      <SelectionBar count={selected.size} onClear={b.clear} onGone={b.focusGrid}>
         <Button icon="download" onClick={() => void downloadZip(ids, album?.name ?? t("photos.album"))}>
           {t("photos.download")}
         </Button>

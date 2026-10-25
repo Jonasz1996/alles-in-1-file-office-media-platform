@@ -17,6 +17,7 @@ import {
 import { crossApi, MAX_BATCH_IDS } from "../crossApi";
 import { errorText, t } from "../i18n";
 import { Button } from "../ui/Button";
+import { useFocusBack } from "../ui/focusBack";
 import { useShortcuts } from "../ui/keys";
 import { toast } from "../ui/toast";
 import { useViewerParam, Viewer, type ViewerItem } from "../viewer";
@@ -126,6 +127,9 @@ export function usePhotoBrowser(o: PhotoBrowserOptions) {
     setSelection(NO_SELECTION);
   }, []);
 
+  /** De focus terug op de cel met de focus in het raster (na de selectiebalk) */
+  const focusGrid = useCallback(() => control.current?.focusItem(latest.current.focus), [control]);
+
   const selectAll = useCallback(() => {
     const total = latest.current.layout.total;
     if (total > 0) {
@@ -137,7 +141,16 @@ export function usePhotoBrowser(o: PhotoBrowserOptions) {
   // --- de viewer: de geladen secties rond de foto die open is ---
   const viewIndex = viewing ? store.indexOf(viewing) : -1;
   const block = useMemo(() => {
-    if (viewIndex < 0) return null;
+    if (viewIndex < 0) {
+      // Zijn maand (of het album) kreeg een ander aantal en wordt opnieuw geladen: de viewer
+      // blijft met de oude items open (geen nieuwe start van een video, de zoom blijft), en gaat
+      // pas dicht als het nieuwe er is zonder deze foto
+      const held = viewing ? store.held(viewing) : null;
+      if (!held) return null;
+      const s = held.section;
+      const items: readonly ViewerItem[] = held.items;
+      return { first: layout.firstItem[s] ?? 0, a: s, b: s, items, index: held.items.findIndex((it) => it.id === viewing) };
+    }
     const s = sectionOfItem(layout, viewIndex);
     let a = s;
     let b = s;
@@ -146,9 +159,10 @@ export function usePhotoBrowser(o: PhotoBrowserOptions) {
     const items: PhotoItem[] = [];
     for (let x = a; x <= b; x++) items.push(...(store.section(x) ?? []));
     const viewerItems: readonly ViewerItem[] = items;
-    return { first: layout.firstItem[a], a, b, items: viewerItems };
+    return { first: layout.firstItem[a], a, b, items: viewerItems, index: viewIndex - layout.firstItem[a] };
     // store.version: er is een sectie bij geladen
-  }, [viewIndex, layout, store, store.version]);
+  }, [viewIndex, viewing, layout, store, store.version]);
+  const showing = block !== null && block.index >= 0;
 
   const lastViewed = useRef(-1);
   const follow = useCallback(
@@ -165,18 +179,18 @@ export function usePhotoBrowser(o: PhotoBrowserOptions) {
   // zolang de modale dialoog open is, kan niets daarbuiten de focus krijgen.
   const refocus = useRef<number | null>(null);
   useEffect(() => {
-    if (viewIndex >= 0 || refocus.current === null) return;
+    if (showing || refocus.current === null) return;
     const at = refocus.current;
     refocus.current = null;
     control.current?.focusItem(at);
-  }, [viewIndex, control]);
+  }, [showing, control]);
 
   const viewer =
-    block && viewIndex >= 0 ? (
+    block && showing ? (
       <Suspense fallback={null}>
         <Viewer
           items={block.items}
-          index={viewIndex - block.first}
+          index={block.index}
           onIndexChange={(i) => {
             const it = block.items[i];
             if (!it) return;
@@ -184,7 +198,7 @@ export function usePhotoBrowser(o: PhotoBrowserOptions) {
             follow(block.first + i);
           }}
           onClose={() => {
-            const at = viewIndex;
+            const at = block.first + block.index;
             refocus.current = at;
             setViewing(null);
             follow(at);
@@ -240,9 +254,10 @@ export function usePhotoBrowser(o: PhotoBrowserOptions) {
     onCellClick,
     onShiftMove,
     clear,
+    focusGrid,
     selectAll,
     viewer,
-    viewing: viewIndex >= 0,
+    viewing: showing,
   };
 }
 
@@ -260,19 +275,25 @@ export async function downloadZip(ids: string[], name: string): Promise<void> {
   }
 }
 
-/** De balk met de selectie, onderaan in beeld. */
-export function SelectionBar({
-  count,
-  onClear,
-  children,
-}: {
+interface SelectionBarProps {
   count: number;
   onClear(): void;
+  /** De balk verdwijnt (niets meer geselecteerd) terwijl de focus erin stond: usePhotoBrowser().focusGrid */
+  onGone?(): void;
   children: ReactNode;
-}): JSX.Element | null {
-  if (count === 0) return null;
+}
+
+/** De balk met de selectie, onderaan in beeld. */
+export function SelectionBar(p: SelectionBarProps): JSX.Element | null {
+  if (p.count === 0) return null;
+  return <Bar {...p} />;
+}
+
+function Bar({ count, onClear, onGone, children }: SelectionBarProps): JSX.Element {
+  const bar = useRef<HTMLDivElement>(null);
+  useFocusBack(bar, onGone);
   return (
-    <div className="photo-selection" role="toolbar" aria-label={t("photos.select.toolbar")}>
+    <div ref={bar} className="photo-selection" role="toolbar" aria-label={t("photos.select.toolbar")}>
       <span className="photo-selection-count" aria-live="polite">
         {t("photos.select.count", { n: count })}
       </span>

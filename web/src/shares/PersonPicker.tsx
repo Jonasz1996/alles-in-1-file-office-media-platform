@@ -49,13 +49,16 @@ export function nextActive(current: number, count: number, step: 1 | -1): number
 
 export function PersonPicker({
   exclude,
-  disabled,
+  busy,
   onPick,
   inputRef,
   onError,
 }: {
   exclude: { users: ReadonlySet<string>; groups: ReadonlySet<string> };
-  disabled?: boolean;
+  /** Bezig met delen: niets te kiezen of te typen. Het veld wordt dan readOnly, niet disabled:
+   * een uitgeschakeld veld verliest de focus (naar <body>), en die moet er na het kiezen nog
+   * staan voor de volgende persoon. */
+  busy?: boolean;
   onPick(target: ShareTarget, name: string): Promise<boolean> | boolean;
   inputRef?: RefObject<HTMLInputElement | null>;
   onError(message: string): void;
@@ -99,7 +102,7 @@ export function PersonPicker({
   const expanded = open && options.length > 0;
 
   async function pick(o: Option) {
-    if (disabled) return;
+    if (busy) return;
     if (await onPick(o.target, o.name)) {
       setQ("");
       setFound(null);
@@ -151,7 +154,8 @@ export function PersonPicker({
         placeholder={t("sharing.people.placeholder")}
         maxLength={100}
         value={q}
-        disabled={disabled}
+        readOnly={busy}
+        aria-disabled={busy || undefined}
         onChange={(e) => {
           setQ(e.target.value);
           setOpen(true);

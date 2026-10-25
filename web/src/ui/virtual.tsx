@@ -242,7 +242,8 @@ export interface VirtualListProps<T> {
 }
 
 /** Een gevirtualiseerde lijst met vaste rijhoogte; de rijen staan absoluut in een vlak van de
- * volledige hoogte (aria-rowcount = count). */
+ * volledige hoogte (aria-rowcount = count, plus 1 voor een kopregel: die is rij 1 en de rijen
+ * tellen dan vanaf 2). */
 export function VirtualList<T>(p: VirtualListProps<T>): JSX.Element {
   const listRef = useRef<HTMLDivElement>(null);
   const rows = useVirtualRows({
@@ -281,7 +282,7 @@ export function VirtualList<T>(p: VirtualListProps<T>): JSX.Element {
       className="virtual-list"
       role={p.role}
       aria-label={p.ariaLabel}
-      aria-rowcount={p.role === "grid" ? p.count : undefined}
+      aria-rowcount={p.role === "grid" ? p.count + (p.header ? 1 : 0) : undefined}
     >
       {p.header}
       <div ref={listRef} className="virtual-list-body" style={{ height: rows.totalHeight }}>

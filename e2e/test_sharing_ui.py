@@ -94,6 +94,8 @@ def test_vervaldatum_voor_een_persoon_en_gedeeld_door_mij(context_as, server, us
     expect(option).to_have_attribute("aria-selected", "true")
     page.keyboard.press("Enter")
     expect(toast(page, "Gedeeld met Bob Ontvanger.")).to_be_visible()
+    # De focus blijft in het zoekveld (niet naar <body>): meteen de volgende typen
+    expect(box).to_be_focused()
     shared = dialog.get_by_role("list", name="Gedeeld met")
     expect(shared).to_contain_text("Bob Ontvanger")
     expect(shared).to_contain_text("verloopt op")

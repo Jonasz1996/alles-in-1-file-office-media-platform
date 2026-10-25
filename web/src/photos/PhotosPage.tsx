@@ -173,7 +173,7 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
       {months && months.length > 1 && (
         <Scrubber layout={layout} months={monthKeys} listTop={listTop} />
       )}
-      <SelectionBar count={selected.size} onClear={b.clear}>
+      <SelectionBar count={selected.size} onClear={b.clear} onGone={b.focusGrid}>
         <Button icon="album" onClick={() => setAdding(ids)}>
           {t("photos.addToAlbum")}
         </Button>

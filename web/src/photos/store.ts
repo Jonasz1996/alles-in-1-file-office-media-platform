@@ -13,6 +13,9 @@ export class SectionStore {
   private failed = new Set<number>();
   /** Geladen, maar misschien verouderd (na een wijziging): blijft staan tot het nieuwe er is */
   private stale = new Set<number>();
+  /** De oude items van een sectie die na setSections een ander aantal kreeg, tot hij opnieuw
+   * geladen is: zo houdt de viewer de foto vast die open is (zie held) */
+  private previous = new Map<number, PhotoItem[]>();
   private readonly listeners = new Set<() => void>();
   private ids = new Map<string, number>();
   /** Na setSections: oude antwoorden tellen niet meer */
@@ -55,6 +58,7 @@ export class SectionStore {
   /** Nieuwe secties (de maanden opnieuw gelezen). keep: secties waarvan de inhoud nog klopt. */
   setSections(counts: readonly number[], fetchPage: FetchPage = this.fetchPage, keep: (s: number) => number = () => -1) {
     const old = this.data;
+    const oldPrevious = this.previous;
     this.generation++;
     this.fetchPage = fetchPage;
     this.counts = counts;
@@ -63,6 +67,7 @@ export class SectionStore {
     this.loading = new Map();
     this.failed = new Set();
     this.stale = new Set();
+    this.previous = new Map();
     this.ids = new Map();
     for (let s = 0; s < counts.length; s++) {
       const from = keep(s);
@@ -70,6 +75,9 @@ export class SectionStore {
       if (items && items.length === counts[s]) {
         this.put(s, items);
         this.stale.add(s);
+      } else {
+        const before = from >= 0 ? (items ?? oldPrevious.get(from)) : undefined;
+        if (before) this.previous.set(s, before);
       }
     }
     this.changed();
@@ -78,6 +86,7 @@ export class SectionStore {
 
   private put(s: number, items: PhotoItem[]): void {
     this.data.set(s, items);
+    this.previous.delete(s);
     const start = this.starts[s] ?? 0;
     items.forEach((it, k) => this.ids.set(it.id, start + k));
   }
@@ -112,6 +121,15 @@ export class SectionStore {
   /** De plek van een geladen item, of -1. */
   indexOf(id: string): number {
     return this.ids.get(id) ?? -1;
+  }
+
+  /** Een item dat niet meer geladen is omdat zijn sectie een ander aantal kreeg en nog opnieuw
+   * geladen wordt (of dat mislukte): de sectie en de oude items. Null als hij geladen is, of
+   * als zijn sectie opnieuw geladen is zonder hem (dan is hij echt weg). */
+  held(id: string): { section: number; items: PhotoItem[] } | null {
+    if (this.ids.has(id)) return null;
+    for (const [section, items] of this.previous) if (items.some((it) => it.id === id)) return { section, items };
+    return null;
   }
 
   /** Moet sectie s (opnieuw) van de server komen? */

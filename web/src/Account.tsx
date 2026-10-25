@@ -191,14 +191,22 @@ function Sessions({ reload }: { reload: string }) {
   }, [load, reload]);
 
   async function end(s: AccountSession) {
-    if (s.current) {
-      const yes = await confirm({
-        title: t("account.sessions.currentTitle"),
-        message: t("account.sessions.currentText"),
-        confirm: t("account.sessions.signOut"),
-      });
-      if (!yes) return;
-    }
+    // Altijd eerst een vraag (ook voor een ander apparaat): een losse Enter op de knop logt zo
+    // niets uit
+    const yes = await confirm(
+      s.current
+        ? {
+            title: t("account.sessions.currentTitle"),
+            message: t("account.sessions.currentText"),
+            confirm: t("account.sessions.signOut"),
+          }
+        : {
+            title: t("account.sessions.deviceTitle", { device: deviceLabel(s) }),
+            message: t("account.sessions.deviceConfirmText"),
+            confirm: t("account.sessions.signOut"),
+          },
+    );
+    if (!yes) return;
     try {
       await api.revokeSession(s.id, s.current); // de eigen sessie: de app logt uit
       if (!s.current) {

@@ -54,6 +54,18 @@ export default function PublicAlbum({ link, share }: PublicAlbumProps): JSX.Elem
     setOpen(i);
   }, []);
 
+  // Na het sluiten scrollen en de focus naar de laatst getoonde foto. Pas als de dialoog weg is:
+  // zolang hij open is, kan niets daarbuiten de focus krijgen, en bij het sluiten zet Dialog de
+  // focus terug op wat hij bij het openen vond (de foto waarmee je begon).
+  const refocus = useRef<number | null>(null);
+  useEffect(() => {
+    if (open !== null || refocus.current === null) return;
+    const at = refocus.current;
+    refocus.current = null;
+    control.current?.scrollToItem(at, "center");
+    control.current?.focusItem(at);
+  }, [open]);
+
   useShortcuts(
     [
       {
@@ -97,10 +109,8 @@ export default function PublicAlbum({ link, share }: PublicAlbumProps): JSX.Elem
           index={open}
           onIndex={(i) => show(i)}
           onClose={() => {
-            const at = open;
+            refocus.current = open;
             setOpen(null);
-            control.current?.scrollToItem(at, "center");
-            control.current?.focusItem(at);
           }}
         />
       )}

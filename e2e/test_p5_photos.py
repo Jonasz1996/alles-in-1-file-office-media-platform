@@ -10,9 +10,10 @@ from __future__ import annotations
 import io
 import re
 import zipfile
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
+from PIL import Image
 from playwright.sync_api import expect
 
 import seed
@@ -226,6 +227,10 @@ def test_tijdlijn_selecteren_album_en_delen(server, library, context_as, new_con
     with anon.expect_download() as download:
         photo.get_by_role("button", name="Downloaden", exact=True).click()
     assert download.value.suggested_filename == "foto-00006.webp"
+    # Sluiten: de focus op de laatst getoonde foto (niet op die waarmee je begon)
+    anon.keyboard.press("Escape")
+    expect(photo).to_be_hidden()
+    expect(public_grid.locator('[role=gridcell][data-index="1"]')).to_be_focused()
 
 
 def test_naar_prullenbak_en_terug(server, library, context_as):
@@ -235,6 +240,12 @@ def test_naar_prullenbak_en_terug(server, library, context_as):
     page.goto("/fotos")
     expect(cell(page, 0)).to_be_visible()
     page.locator(FOCUSED).focus()
+    # Selectie wissen met de knop in de balk: de balk gaat weg, de focus terug in het raster
+    page.keyboard.press("Space")
+    selection_bar(page).get_by_role("button", name="Selectie wissen", exact=True).focus()
+    page.keyboard.press("Enter")
+    expect(selection_bar(page)).to_be_hidden()
+    expect(cell(page, 0)).to_be_focused()
     page.keyboard.press("Space")
     page.keyboard.press("Shift+ArrowRight")
     expect(selection_bar(page).get_by_text("2 geselecteerd", exact=True)).to_be_visible()
@@ -247,3 +258,34 @@ def test_naar_prullenbak_en_terug(server, library, context_as):
     assert total == PHOTOS - 2
     page.get_by_role("button", name="Ongedaan maken", exact=True).click()
     expect(cell(page, 0)).to_have_attribute("aria-label", re.compile(r"^foto-00000\.webp"))
+
+
+def test_viewer_blijft_open_als_zijn_maand_verandert(server, library, context_as):
+    """Een nieuwe foto in de maand die je bekijkt (een upload elders): de viewer blijft dezelfde
+    (geen nieuwe start van een video, de zoom blijft) terwijl de maand opnieuw laadt."""
+    fien = library["fien"]
+    first = server.call(fien, "GET", "/api/v1/photos", expect=200).json()["items"][0]
+    page = context_as(fien).new_page()
+    page.goto("/fotos")
+    expect(cell(page, 0)).to_be_visible()
+    cell(page, 0).focus()
+    page.keyboard.press("Enter")
+    viewer = page.get_by_role("dialog", name=first["name"], exact=True)
+    expect(viewer).to_be_visible()
+    viewer.evaluate("(el) => { el.dataset.e2eMark = 'zelfde'; }")
+
+    # Een foto in dezelfde maand, een minuut ouder dan die in de viewer
+    taken = datetime.fromisoformat(first["modified_at"].replace("Z", "+00:00"))
+    image = io.BytesIO()
+    Image.new("RGB", (8, 8), (200, 40, 40)).save(image, format="PNG")
+    mtime = int((taken - timedelta(minutes=1)).timestamp() * 1000)
+    server.call(
+        fien, "PUT", f"/api/v1/files/{fien.root_id}/upload",
+        params={"name": "erbij.png", "mtime": mtime}, content=image.getvalue(), expect=201,
+    )  # fmt: skip
+    # De tijdlijn achter de viewer laadt de maand opnieuw (met de nieuwe foto erin)
+    expect(page.locator('[role=gridcell][aria-label^="erbij.png"]')).to_have_count(1)
+    expect(viewer).to_be_visible()
+    assert viewer.evaluate("(el) => el.dataset.e2eMark") == "zelfde"
+    page.keyboard.press("ArrowRight")
+    expect(page.get_by_role("dialog", name="erbij.png", exact=True)).to_be_visible()

@@ -140,4 +140,37 @@ describe("de store per maand", () => {
     store.want([0]);
     await vi.waitFor(() => expect(store.item(0)?.name).toBe("v1"));
   });
+
+  it("een maand met een ander aantal: de oude items blijven vast te houden tot hij opnieuw geladen is", async () => {
+    // De viewer houdt zo de foto vast die open is (browse.tsx), ook als er in die maand een foto
+    // bij komt of af gaat; pas als de maand opnieuw geladen is zonder hem, is hij echt weg.
+    let server = all.slice(0, 8);
+    let fail = false;
+    const store = new SectionStore(async (s) => {
+      if (fail) throw new Error("offline");
+      return { items: server.slice(s * 4, s * 4 + 4), next: null };
+    }, [4, 4]);
+    await store.load(0);
+    await store.load(1);
+    expect(store.held("p1")).toBeNull(); // gewoon geladen
+
+    // Er komt een foto bij in maand 0, en het opnieuw laden mislukt eerst
+    server = [photo(99), ...all.slice(0, 8)];
+    fail = true;
+    store.setSections([5, 4], undefined, (s) => s);
+    expect(store.indexOf("p1")).toBe(-1);
+    expect(store.held("p1")).toEqual({ section: 0, items: all.slice(0, 4) });
+    await expect(store.load(0)).rejects.toThrow("offline");
+    expect(store.held("p1")?.section).toBe(0); // mislukt: nog steeds vast
+    // Nog een wijziging voor maand 0 is geladen: de oude items gaan mee
+    store.setSections([5, 4], undefined, (s) => s);
+    expect(store.held("p1")?.section).toBe(0);
+
+    fail = false;
+    server = [photo(99), ...all.slice(0, 1), ...all.slice(2, 8)]; // p1 is intussen weg
+    store.setSections([4, 4], undefined, (s) => s);
+    await store.load(0);
+    expect(store.indexOf("p0")).toBe(1);
+    expect(store.held("p1")).toBeNull(); // opnieuw geladen zonder hem: echt weg
+  });
 });

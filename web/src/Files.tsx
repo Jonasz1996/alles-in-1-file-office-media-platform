@@ -49,6 +49,7 @@ import { ShareDialog } from "./ShareDialog";
 import { canWrite, folderActions, isShared, permissionOf } from "./sharing";
 import { Button, IconButton } from "./ui/Button";
 import { prompt } from "./ui/dialogs";
+import { useFocusBack } from "./ui/focusBack";
 import { Icon } from "./ui/Icon";
 import { useScope, useShortcuts, type Shortcut } from "./ui/keys";
 import { Menu, MenuButton } from "./ui/Menu";
@@ -581,6 +582,7 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
           onRun={(action) => runAction(action, selected)}
           onMenu={(el) => openMenu(selected, el)}
           onClear={() => selection.clear()}
+          onGone={() => focusRow(listRef, Math.max(0, Math.min(focus.index, count - 1)))}
         />
       )}
 
@@ -655,14 +657,19 @@ function SelectionBar({
   onRun,
   onMenu,
   onClear,
+  onGone,
 }: {
   nodes: readonly FileNode[];
   env: ActionEnv;
   onRun(action: BrowserAction): void;
   onMenu(el: HTMLElement): void;
   onClear(): void;
+  /** De balk verdwijnt (niets meer geselecteerd) terwijl de focus erin stond */
+  onGone(): void;
 }): JSX.Element {
   const more = useRef<HTMLButtonElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  useFocusBack(bar, onGone);
   const buttons: JSX.Element[] = [];
   for (const id of BAR_ACTIONS) {
     const action = findAction(id);
@@ -683,7 +690,7 @@ function SelectionBar({
     );
   }
   return (
-    <div className="selection-bar" role="toolbar" aria-label={t("browser.selection.label")}>
+    <div ref={bar} className="selection-bar" role="toolbar" aria-label={t("browser.selection.label")}>
       <span className="selection-count" aria-live="polite">
         {t("browser.selected", { n: nodes.length })}
       </span>

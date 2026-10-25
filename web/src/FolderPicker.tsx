@@ -50,6 +50,10 @@ export function FolderPicker({
   const [error, setError] = useState<string | null>(null);
   const loads = useRef(0);
   const list = useRef<HTMLUListElement>(null);
+  const confirm = useRef<HTMLButtonElement>(null);
+  // Een map (of Gedeeld met mij) is net geladen: zie het effect hieronder
+  const landed = useRef(false);
+  const first = useRef(true);
   const typed = useRef({ text: "", at: 0 });
   const excluded = typeof exclude === "string" ? new Set([exclude]) : (exclude ?? new Set<string>());
 
@@ -58,6 +62,7 @@ export function FolderPicker({
     try {
       const result = await browserApi.page(id, { kind: "dir", limit: PAGE });
       if (seq !== loads.current) return; // intussen een andere map gekozen
+      landed.current = true;
       setPage(result);
       setFolders(result.children);
       setShared(null);
@@ -85,6 +90,7 @@ export function FolderPicker({
     try {
       const rows = await api.sharedWithMe();
       if (seq !== loads.current) return;
+      landed.current = true;
       setShared(rows.map((r) => r.node).filter((n) => n.kind === "dir"));
       setPage(null);
       setFolders([]);
@@ -99,6 +105,28 @@ export function FolderPicker({
     if (!startId && guest) openShared();
     else open(startId);
   }, [open, openShared, startId, guest]);
+
+  // Na het laden de focus op de eerste map: de eerste keer (data-autofocus van Dialog komt te
+  // vroeg, de mappen zijn er dan nog niet), en als de focus weg is omdat de knop van de map die
+  // je opende verdween (anders valt hij naar <body> en werken de pijltjes niet meer). Zonder
+  // mappen dan de knop om hier te kiezen, of anders Mijn bestanden / Gedeeld met mij.
+  const sources = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!landed.current) return;
+    landed.current = false;
+    const initial = first.current;
+    first.current = false;
+    const folder = list.current?.querySelector<HTMLButtonElement>("button");
+    const active = document.activeElement;
+    const lost = !active || active === document.body || !active.isConnected;
+    if (initial) {
+      folder?.focus();
+      return;
+    }
+    if (!lost) return;
+    const target = folder ?? (confirm.current?.disabled ? null : confirm.current) ?? sources.current?.querySelector("button");
+    target?.focus();
+  });
 
   const visible = (shared ?? folders).filter((f) => !excluded.has(f.id));
   const inShared = page ? isShared(page.path[0]) : shared !== null;
@@ -158,6 +186,7 @@ export function FolderPicker({
           )}
           <Button onClick={onClose}>{t("common.cancel")}</Button>
           <Button
+            ref={confirm}
             variant="primary"
             disabled={!page || excluded.has(page.folder.id) || reason !== null}
             title={reason ?? undefined}
@@ -168,7 +197,7 @@ export function FolderPicker({
         </>
       }
     >
-      <div className="picker-sources">
+      <div ref={sources} className="picker-sources">
         {!guest && (
           <Button aria-pressed={!inShared} onClick={() => open(null)}>
             {t("browser.picker.mine")}
@@ -202,9 +231,9 @@ export function FolderPicker({
       {page && visible.length === 0 && <p className="muted">{t("browser.picker.noFolders")}</p>}
       {visible.length > 0 && (
         <ul ref={list} className="picker-list" aria-label={t("browser.picker.folders")} onKeyDown={onKeyDown}>
-          {visible.map((f, i) => (
+          {visible.map((f) => (
             <li key={f.id}>
-              <button type="button" data-autofocus={i === 0 ? "" : undefined} onClick={() => open(f.id)}>
+              <button type="button" onClick={() => open(f.id)}>
                 <Icon name="folder" size={20} />
                 <span className="picker-name">{f.name}</span>
                 {shared && f.owner && (
