@@ -1,13 +1,16 @@
 """Hervatbare uploads volgens het tus-protocol 1.0.0 (https://tus.io/protocols/resumable-upload),
 zelf gebouwd met de extensies creation, termination en expiration.
 
-1. POST /api/v1/tus met Upload-Length en Upload-Metadata (filename, parent, conflict)
-   maakt een upload aan; het antwoord bevat de Location.
+1. POST /api/v1/tus met Upload-Length en Upload-Metadata (filename, parent, conflict en
+   eventueel lastmodified: File.lastModified in ms, voor de opnamedatum) maakt een upload
+   aan; het antwoord bevat de Location.
 2. PATCH <location> met Upload-Offset stuurt een stuk; valt de verbinding weg, dan
    blijft wat binnen is bewaard.
 3. HEAD <location> vertelt hoeveel er binnen is; daar gaat de client verder.
 Zodra alle bytes binnen zijn, wordt het bestand in de map gezet (met ontdubbeling).
 Is dat toen misgegaan, dan gebeurt het alsnog bij de volgende HEAD.
+GET /api/v1/tus geeft je eigen onderbroken uploads, zodat de web-app ze na herladen kan tonen
+("Onderbroken uploads") en je ze kunt hervatten of weggooien.
 
 In een gedeelde map (met schrijfrecht) wordt het bestand van de eigenaar van die map en kost
 het diens quotum; alleen wie de upload begon, kan hem voortzetten. Via een uploadlink gaat
@@ -31,6 +34,7 @@ from typing import Annotated
 
 import anyio
 from fastapi import APIRouter, Depends, Header, Request, Response
+from pydantic import BaseModel
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -196,6 +200,66 @@ def capabilities(settings: Settings) -> Response:
             "Tus-Max-Size": str(settings.max_upload_bytes),
         },
     )
+
+
+class Pending(BaseModel):
+    """Een eigen upload die nog niet af is (GET /api/v1/tus)."""
+
+    id: uuid.UUID
+    name: str
+    parent_id: uuid.UUID
+    size: int
+    offset: int
+    created_at: datetime
+    expires_at: datetime
+
+
+@router.get("")
+async def pending(
+    user: CurrentUser,
+    session: Session,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> list[Pending]:
+    """Je eigen uploads die nog niet af zijn: niet via een link (share_id NULL), nog geen
+    bestand (node_id NULL) en niet verlopen. De offset is wat er op schijf staat; staan de
+    bytes er niet (meer), dan hoort hij er niet bij. Oudste eerst."""
+    now = datetime.now(UTC)
+    rows = (
+        await session.scalars(
+            select(Upload)
+            .where(
+                Upload.created_by == user.id,
+                Upload.share_id.is_(None),
+                Upload.node_id.is_(None),
+            )
+            .order_by(Upload.created_at, Upload.id)
+        )
+    ).all()
+    await session.commit()  # geen databaseverbinding vasthouden tijdens het kijken op schijf
+
+    def offsets() -> dict[uuid.UUID, int]:
+        found = {}
+        for upload in rows:
+            try:
+                found[upload.id] = upload_path(settings, upload.id).stat().st_size
+            except FileNotFoundError:
+                continue
+        return found
+
+    sizes = await anyio.to_thread.run_sync(offsets)
+    return [
+        Pending(
+            id=u.id,
+            name=u.name,
+            parent_id=u.parent_id,
+            size=u.size,
+            offset=sizes[u.id],
+            created_at=u.created_at.replace(tzinfo=u.created_at.tzinfo or UTC),
+            expires_at=_expires(u),
+        )
+        for u in rows
+        if u.id in sizes and _expires(u) > now
+    ]
 
 
 @router.options("")
@@ -559,6 +623,7 @@ async def finish(
             upload,
             actor=who.user,
             guard=guard,
+            client_mtime=upload.client_mtime,
             tz=settings.timezone,
         )
     except NameTaken as e:
