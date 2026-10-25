@@ -283,6 +283,10 @@
   background: var(--surface-2);
 }
 
+.row-status:empty {
+  display: none;
+}
+
 .shared-mark {
   flex: none;
 }

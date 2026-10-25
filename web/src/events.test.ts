@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Api, ApiError } from "./api";
-import { affectsFolder, LiveEvents, type ServerEvent, SseParser, type StreamApi } from "./events";
+import { affectsFolder, folderEventIds, LiveEvents, type ServerEvent, SseParser, type StreamApi } from "./events";
 
 /** Een stroom zoals fetch die geeft: write() stuurt tekst, close() is de server die sluit;
  * afbreken via het signaal laat het lezen mislukken, net als bij een echte fetch. */
@@ -221,5 +221,24 @@ describe("affectsFolder", () => {
     expect(affectsFolder(event("connected", {}), "map")).toBe(true); // misschien iets gemist
     expect(affectsFolder(event("connected", {}), undefined)).toBe(false);
     expect(affectsFolder(event("tags.changed", { id: "t" }), "map")).toBe(true); // chips in de lijst
+  });
+});
+
+describe("folderEventIds", () => {
+  const ev = (type: string, data: Record<string, unknown>): ServerEvent => ({ type, data });
+
+  it("alle ids als de map de ouder of de oude ouder is", () => {
+    expect(folderEventIds(ev("node.created", { ids: ["a", "b"], parent_id: "map" }), "map")).toEqual(["a", "b"]);
+    expect(folderEventIds(ev("node.moved", { id: "a", parent_id: "elders", old_parent_id: "map" }), "map")).toEqual([
+      "a",
+    ]);
+  });
+
+  it("elders: alleen wat de lijst al kent; geen node-gebeurtenis of geen map: niets", () => {
+    const known = (id: string) => id === "b";
+    expect(folderEventIds(ev("node.updated", { ids: ["a", "b"], parent_id: null }), "map", known)).toEqual(["b"]);
+    expect(folderEventIds(ev("node.updated", { ids: ["a"], parent_id: "elders" }), "map")).toEqual([]);
+    expect(folderEventIds(ev("share.created", { id: "a", parent_id: "map" }), "map")).toEqual([]);
+    expect(folderEventIds(ev("node.created", { id: "a", parent_id: "map" }), null)).toEqual([]);
   });
 });

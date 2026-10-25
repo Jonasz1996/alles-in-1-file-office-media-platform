@@ -123,6 +123,8 @@ const Row = memo(function Row({
           <span className="owner-note">{t("browser.row.owner", { name: node.owner.display_name })}</span>
         )}
         <TagChips tags={node.tags} />
+        {/* Plek voor een status per rij (fase 10, bijv. omzetten); leeg = onzichtbaar */}
+        <span className="row-status" data-row-status="" />
       </div>
       {showPath && (
         <div role="gridcell" className="cell-path">
@@ -244,11 +246,8 @@ export function FileList(p: FileListProps): JSX.Element {
   // Rijen op vaste plekken: bij het scrollen worden bestaande elementen hergebruikt (slots.ts)
   const slotter = useRef<SlotAssigner | null>(null);
   slotter.current ??= new SlotAssigner();
-  // De rij met de tabstop (de focus, of zonder focus de eerste) houdt altijd hetzelfde element:
-  // krijgt hij de focus, dan valt die er niet af doordat zijn sleutel verandert
-  const tabStop = focusIndex >= 0 ? focusIndex : p.count > 0 ? 0 : null;
   const range = useDeferredRange(rows.start, rows.end, p.count, focusIndex >= 0 ? focusIndex : null);
-  for (const slot of slotter.current.assign(range.start, range.end, range.extra, tabStop)) add(slot.index, slot.key);
+  for (const slot of slotter.current.assign(range.start, range.end, range.extra)) add(slot.index, slot.key);
 
   // Een kortere lijst (filter, verwijderd): de focus blijft binnen de lijst
   const { onFocusRow, count } = p;
