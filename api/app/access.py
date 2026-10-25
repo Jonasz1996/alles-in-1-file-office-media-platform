@@ -10,6 +10,13 @@ Eén recursieve query omhoog (vanaf één of veel nodes tegelijk), samen met de 
 query per map erboven. De bovenste map met een deling voor die gebruiker is zijn gedeelde map
 (share root): wat daarboven ligt, ziet hij niet, ook de naam en het id niet.
 
+Albums (fase 3): een album is een node met kind "album" buiten de boom, gedeeld zoals een
+map. Wie een album via een deling mag zien, mag ook elk bestand erin lezen (alleen lezen, als
+gedeeld bestand: hij ziet er niets boven). Dat geldt alleen zolang het bestand zelf en alles
+erboven niet in de prullenbak ligt en het bestand van de eigenaar van het album is. watchers
+en viewers_of kijken alleen naar de boom: wie een bestand via een album ziet, krijgt geen
+node-events en geen preview.ready voor dat bestand (album.changed komt via het album zelf).
+
 Links (token gezet) geven hier nooit toegang: die gaan via app/routers/public.py.
 """
 
@@ -23,7 +30,7 @@ from sqlalchemy import ColumnElement, Integer, and_, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.models import GroupMember, Node, Share
+from app.models import AlbumItem, GroupMember, Node, Share
 
 RANK = {"read": 1, "write": 2, "owner": 3}
 
@@ -127,7 +134,42 @@ async def resolve(
             best = better(best, permission)
             steps.append(Step(node_id, name, best))
         result[origin] = Grant(best, chain[top][0], steps, chain[0][3] is not None)
+    # Geen deling in de boom (en niets in de prullenbak): misschien via een gedeeld album
+    rest = {
+        origin: chain[0][1]
+        for origin, chain in levels.items()
+        if origin not in result and not any(level[2] for level in chain.values())
+    }
+    if rest:
+        for node_id in await _via_albums(session, user_id, list(rest)):
+            step = Step(node_id, rest[node_id], "read")
+            result[node_id] = Grant("read", node_id, [step], direct=True)
     return result
+
+
+async def _via_albums(
+    session: AsyncSession, user_id: uuid.UUID, node_ids: list[uuid.UUID]
+) -> set[uuid.UUID]:
+    """Welke van deze bestanden in een album staan dat (nog) met deze gebruiker of een groep
+    van hem gedeeld is. Alleen bestanden van de eigenaar van dat album. Eén query."""
+    album, item = aliased(Node), aliased(Node)
+    rows = await session.scalars(
+        select(AlbumItem.node_id)
+        .join(Share, Share.node_id == AlbumItem.album_id)
+        .join(album, album.id == AlbumItem.album_id)
+        .join(item, item.id == AlbumItem.node_id)
+        .where(
+            AlbumItem.node_id.in_(node_ids),
+            live_share(),
+            for_user(user_id),
+            album.kind == "album",
+            album.deleted_at.is_(None),
+            item.kind == "file",
+            item.owner_id == album.owner_id,
+        )
+        .distinct()
+    )
+    return set(rows.all())
 
 
 async def trashed(session: AsyncSession, node_id: uuid.UUID) -> bool:

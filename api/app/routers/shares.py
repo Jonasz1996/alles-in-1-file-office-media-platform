@@ -1,5 +1,7 @@
 """Delen: met een gebruiker of groep (lezen of schrijven), en publieke links (bekijken of alleen
-uploaden, met wachtwoord en vervaldatum). Alleen de eigenaar deelt; wie wat mag, rekent
+uploaden, met wachtwoord en vervaldatum). Een album (kind "album") deel je op dezelfde manier,
+maar alleen om te bekijken: schrijven geeft 422 album_read_only, een uploadlink 422
+upload_folder_only. Alleen de eigenaar deelt; wie wat mag, rekent
 app/access.py bij elk verzoek uit. Publieke links openen gaat via app/routers/public.py.
 
 Gebeurtenissen (na de commit): share.created, share.changed en share.deleted met
@@ -165,11 +167,17 @@ async def password_hash_of(password: str | None) -> str | None:
     return await new_password_hash(password)
 
 
+ALBUM_READ_ONLY = "Een album kun je alleen delen om te bekijken"
+
+
 async def shareable(session: AsyncSession, user: User, node_id: uuid.UUID) -> Node:
-    """Een map of bestand van user dat gedeeld mag worden: niet de hoofdmap, niet in de
-    prullenbak."""
+    """Een map, bestand of album van user dat gedeeld mag worden: niet de hoofdmap, niet in de
+    prullenbak. Een album staat buiten de boom (parent_id NULL, maar geen hoofdmap) en wordt
+    alleen gedeeld om te bekijken."""
     no_guests(user)
     node = await get_node(session, user, node_id, "owner")
+    if node.kind == "album":
+        return node
     if node.parent_id is None:
         raise errors.fail(422, "root", "Je hoofdmap kun je niet delen; deel een map erin")
     if await is_trashed(session, node):
@@ -261,6 +269,8 @@ async def create_share(
     Alleen de eigenaar. Bestaat er al een deling met die persoon of groep, dan 409: pas die
     aan met PATCH /shares/{id}."""
     node = await shareable(session, user, node_id)
+    if node.kind == "album" and body.permission != "read":
+        raise errors.fail(422, "album_read_only", ALBUM_READ_ONLY)
     expires_at = future(body.expires_at)
     if body.user_id is not None:
         if body.user_id == user.id:
@@ -361,6 +371,10 @@ async def change_share(
         allowed = ("read", "upload") if is_link else ("read", "write")
         if body.permission not in allowed:
             raise errors.fail(422, "bad_permission", "Dit recht past niet bij deze deling")
+        if body.permission == "write":
+            node = await session.get(Node, share.node_id)
+            if node is not None and node.kind == "album":
+                raise errors.fail(422, "album_read_only", ALBUM_READ_ONLY)
         if body.permission == "upload":
             node = await session.get(Node, share.node_id)
             if node is None or node.kind != "dir":

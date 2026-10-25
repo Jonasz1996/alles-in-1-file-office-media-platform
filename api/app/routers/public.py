@@ -27,9 +27,11 @@ from sqlalchemy import select
 from app import access, errors, previews
 from app.config import Settings, get_settings
 from app.db import Session
-from app.models import Blob, Node, Share, User
-from app.routers import uploads
+from app.models import AlbumItem, Blob, Node, Share, User
+from app.routers import albums as albums_router
+from app.routers import photos, uploads
 from app.routers.files import Gone, Store, Utc, clean_name, send_file
+from app.routers.photos import PublicPhotoItem
 from app.routers.previews import PreviewOut, PreviewRequest
 from app.routers.uploads import Tus, Uploader
 from app.security import (
@@ -94,6 +96,7 @@ class PublicNode(BaseModel):
 
 
 class PublicShare(BaseModel):
+    # dir, file of album (een album: de foto's via GET /public/album/items)
     kind: str
     name: str
     permission: str
@@ -176,10 +179,16 @@ def uploadable(link: Link) -> None:
 
 async def inside(session: Session, link: Link, node_ids: list[uuid.UUID]) -> dict[uuid.UUID, list]:
     """Per node die binnen de gedeelde map ligt (en niet in de prullenbak): de ids van de
-    gedeelde map tot en met die node. Wat erbuiten ligt, ontbreekt. Eén query."""
+    gedeelde map tot en met die node. Wat erbuiten ligt, ontbreekt. Eén query.
+
+    Bij een album: het album zelf ([album_id]) en elk bestand dat erin staat, van de eigenaar
+    van het album is en waarvan niets in de keten in de prullenbak ligt ([album_id, id]). Twee
+    queries."""
     ids = list(dict.fromkeys(node_ids))
     if not ids:
         return {}
+    if link.node.kind == "album":
+        return await _in_album(session, link.node, ids)
     up = access.ancestry(Node.id.in_(ids))
     rows = await session.execute(select(up.c.origin, up.c.id, up.c.deleted_at, up.c.depth))
     chains: dict[uuid.UUID, dict[int, tuple]] = {}
@@ -196,6 +205,30 @@ async def inside(session: Session, link: Link, node_ids: list[uuid.UUID]) -> dic
             if node_id == link.node.id:
                 result[origin] = list(reversed(path))
                 break
+    return result
+
+
+async def _in_album(session: Session, album: Node, ids: list[uuid.UUID]) -> dict[uuid.UUID, list]:
+    result: dict[uuid.UUID, list] = {album.id: [album.id]} if album.id in ids else {}
+    members = (
+        await session.scalars(
+            select(AlbumItem.node_id)
+            .join(Node, Node.id == AlbumItem.node_id)
+            .where(
+                AlbumItem.album_id == album.id,
+                AlbumItem.node_id.in_(ids),
+                Node.owner_id == album.owner_id,
+                Node.kind == "file",
+            )
+        )
+    ).all()
+    if not members:
+        return result
+    up = access.ancestry(Node.id.in_(members))
+    gone = set(await session.scalars(select(up.c.origin).where(up.c.deleted_at.is_not(None))))
+    for node_id in members:
+        if node_id not in gone:
+            result[node_id] = [album.id, node_id]
     return result
 
 
@@ -254,6 +287,8 @@ async def children(
 ) -> PublicListing:
     """Wat er in een map binnen de gedeelde map staat (standaard de gedeelde map zelf)."""
     readable(link)
+    if link.node.kind == "album":
+        raise errors.fail(422, "album", "Deze link is voor een album, niet voor een map")
     if link.node.kind != "dir":
         raise errors.fail(422, "file", "Deze link is voor één bestand")
     target = folder or link.node.id
@@ -325,6 +360,36 @@ async def preview_info(
     return {
         str(n.id): PreviewOut(**previews.info(secret, blobs.get(n.blob_id), exp)) for n in nodes
     }
+
+
+class PublicPhotoPage(BaseModel):
+    items: list[PublicPhotoItem]
+    next: str | None
+
+
+@router.get("/album/items")
+async def album_items(
+    link: CurrentLink,
+    session: Session,
+    settings: Annotated[Settings, Depends(get_settings)],
+    after: Annotated[str | None, Query(max_length=300)] = None,
+    limit: Annotated[int, Query(ge=1, le=photos.MAX_PAGE)] = photos.MAX_PAGE,
+) -> PublicPhotoPage:
+    """De foto's en video's van een album achter een leeslink, nieuwste eerst, in pagina's
+    (zoals GET /api/v1/albums/{id}/items, zonder shared). Alleen wat nu levend in het album
+    staat; downloaden en previews gaan via /download en /previews van deze link."""
+    readable(link)
+    album = link.node
+    if album.kind != "album":
+        raise errors.fail(422, "not_an_album", "Deze link is niet voor een album")
+    root = await session.scalar(select(User.root_id).where(User.id == album.owner_id))
+    where = [*albums_router.live_items(album, root), *photos.page_where(after)]
+    rows = (await session.execute(photos.photo_query(*where).limit(limit))).all()
+    secret, exp = previews.url_key(settings), previews.expiry()
+    return PublicPhotoPage(
+        items=[PublicPhotoItem.model_construct(**photos.item_dict(r, secret, exp)) for r in rows],
+        next=photos.next_cursor(rows, limit),
+    )
 
 
 # --- uploaden via een link (tus) ------------------------------------------------------
