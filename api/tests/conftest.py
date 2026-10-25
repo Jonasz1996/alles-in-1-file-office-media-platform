@@ -1,6 +1,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app import db
 from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.main import app
@@ -17,7 +18,12 @@ def anyio_backend():
 async def settings(tmp_path):
     s = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8)
     await upgrade(s)
-    return s
+    yield s
+    # De engine van deze datamap dicht en uit de cache: anders blijven zijn verbindingen (elk met
+    # een eigen thread) en alles eromheen tot het eind van de run, en worden latere tests (de
+    # snelheidstests) trager naarmate de run langer is
+    await db.get_engine(s).dispose()
+    db._engine.cache_clear()
 
 
 @pytest.fixture
