@@ -2,8 +2,10 @@
 // en je een zoekopdracht kunt bewaren. Losse functies, zonder React, zodat ze te testen zijn.
 
 import { type Category, type SearchHit, type SearchQuery, searchParams } from "./api";
+import { type MessageKey, t } from "./i18n";
 import { isShared } from "./sharing";
 
+/** Compat: de Nederlandse namen. De app zelf gebruikt categoryLabel() (vertaald). */
 export const CATEGORY_LABELS: Record<Category, string> = {
   folder: "Mappen",
   image: "Afbeeldingen",
@@ -15,7 +17,12 @@ export const CATEGORY_LABELS: Record<Category, string> = {
   other: "Overig",
 };
 
-const CATEGORIES = Object.keys(CATEGORY_LABELS) as Category[];
+export const CATEGORIES = Object.keys(CATEGORY_LABELS) as Category[];
+
+/** De naam van een soort in de taal van de app. */
+export function categoryLabel(c: Category): string {
+  return t(`browser.categories.${c}` as MessageKey);
+}
 export const MAX_LIMIT = 200;
 
 /** Leest ?q=&type=&tag=&in=&limit= uit de adresbalk; onzin laat hij weg. */
@@ -49,9 +56,18 @@ export function hasFilter(query: SearchQuery): boolean {
  * "Mijn bestanden / Foto's / 2026" voor het pad van een zoekresultaat. Bij iets dat met je
  * gedeeld is begint het pad van de server bij de gedeelde map: "Gedeeld met mij / Vakantie".
  */
-export function pathLabel(path: SearchHit["path"], shared = false): string {
-  if (shared) return ["Gedeeld met mij", ...path.map((p) => p.name)].join(" / ");
-  return path.map((p, i) => (i === 0 && p.name === "" ? "Mijn bestanden" : p.name)).join(" / ");
+export function pathLabel(
+  path: SearchHit["path"],
+  shared = false,
+  labels: { mine: string; shared: string } = { mine: "Mijn bestanden", shared: "Gedeeld met mij" },
+): string {
+  if (shared) return [labels.shared, ...path.map((p) => p.name)].join(" / ");
+  return path.map((p, i) => (i === 0 && p.name === "" ? labels.mine : p.name)).join(" / ");
+}
+
+/** pathLabel met de vertaalde namen (voor in de app). */
+export function pathText(path: SearchHit["path"], shared = false): string {
+  return pathLabel(path, shared, { mine: t("browser.myFiles"), shared: t("browser.sharedWithMe") });
 }
 
 /** Het pad van de map waar een resultaat in staat; zonder het resultaat zelf (een gedeelde

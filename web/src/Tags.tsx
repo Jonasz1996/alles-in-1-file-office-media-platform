@@ -1,13 +1,16 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, memo, useCallback, useEffect, useState } from "react";
 import { api, type FileNode, type Tag, type TagRef } from "./api";
-import { Dialog } from "./Dialog";
+import { collator, errorText, t } from "./i18n";
 import { navigate } from "./router";
 import { searchHref } from "./searchQuery";
 import { TAG_COLORS, tagChip } from "./tagColors";
+import { Button } from "./ui/Button";
+import { Dialog } from "./ui/Dialog";
+import { confirm, prompt } from "./ui/dialogs";
 import "./files.css";
 
 /** De tags van een map of bestand; een klik toont alles met die tag. */
-export function TagChips({ tags }: { tags: TagRef[] | undefined }) {
+export const TagChips = memo(function TagChips({ tags }: { tags: TagRef[] | undefined }) {
   if (!tags?.length) return null;
   return (
     <span className="tags">
@@ -18,9 +21,11 @@ export function TagChips({ tags }: { tags: TagRef[] | undefined }) {
             key={tag.id}
             {...tagChip(tag.color)}
             href={href}
-            title={`Alles met de tag "${tag.name}"`}
+            tabIndex={-1}
+            title={t("browser.tags.chipTitle", { name: tag.name })}
             onClick={(e) => {
               e.preventDefault();
+              e.stopPropagation();
               navigate(href);
             }}
           >
@@ -30,14 +35,14 @@ export function TagChips({ tags }: { tags: TagRef[] | undefined }) {
       })}
     </span>
   );
-}
+});
 
-const byName = (a: Tag, b: Tag) => a.name.localeCompare(b.name, "nl", { sensitivity: "base" });
+const byName = (a: Tag, b: Tag) => collator.compare(a.name, b.name);
 
 /** Tags kiezen voor één map of bestand, en tags maken, hernoemen en verwijderen. */
 export function TagEditor({ node, onClose, onSaved }: { node: FileNode; onClose: () => void; onSaved: () => void }) {
   const [all, setAll] = useState<Tag[] | null>(null);
-  const [chosen, setChosen] = useState(() => new Set((node.tags ?? []).map((t) => t.id)));
+  const [chosen, setChosen] = useState(() => new Set((node.tags ?? []).map((tag) => tag.id)));
   const [name, setName] = useState("");
   const [color, setColor] = useState(TAG_COLORS[1].value);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +52,7 @@ export function TagEditor({ node, onClose, onSaved }: { node: FileNode; onClose:
     try {
       setAll((await api.tags()).sort(byName));
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorText(e));
     }
   }, []);
 
@@ -62,7 +67,7 @@ export function TagEditor({ node, onClose, onSaved }: { node: FileNode; onClose:
       setError(null);
       return true;
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorText(e));
       return false;
     } finally {
       setBusy(false);
@@ -90,7 +95,15 @@ export function TagEditor({ node, onClose, onSaved }: { node: FileNode; onClose:
   }
 
   async function rename(tag: Tag) {
-    const newName = window.prompt("Nieuwe naam voor de tag", tag.name)?.trim();
+    const newName = (
+      await prompt({
+        title: t("browser.tags.renameTitle"),
+        label: t("browser.tags.renameLabel"),
+        initial: tag.name,
+        confirm: t("browser.tags.rename"),
+        validate: (v) => (v.trim() ? null : t("common.dialog.required")),
+      })
+    )?.trim();
     if (!newName || newName === tag.name) return;
     if (await act(() => api.changeTag(tag.id, { name: newName }))) {
       await load();
@@ -99,8 +112,13 @@ export function TagEditor({ node, onClose, onSaved }: { node: FileNode; onClose:
   }
 
   async function remove(tag: Tag) {
-    const where = tag.count === 1 ? "1 map of bestand" : `${tag.count} mappen en bestanden`;
-    if (!window.confirm(`Tag "${tag.name}" verwijderen? Hij verdwijnt van ${where}.`)) return;
+    const ok = await confirm({
+      title: t("browser.tags.deleteTitle", { name: tag.name }),
+      message: t("browser.tags.deleteMessage", { n: tag.count }),
+      confirm: t("browser.tags.delete"),
+      danger: true,
+    });
+    if (!ok) return;
     if (await act(() => api.deleteTag(tag.id))) {
       toggle(tag.id, false);
       await load();
@@ -116,62 +134,64 @@ export function TagEditor({ node, onClose, onSaved }: { node: FileNode; onClose:
   }
 
   return (
-    <Dialog title={`Tags voor "${node.name}"`} onClose={onClose}>
-      {all === null && !error && <p className="muted">Laden…</p>}
-      {all?.length === 0 && <p className="muted">Je hebt nog geen tags. Maak er hieronder een.</p>}
+    <Dialog
+      title={t("browser.tags.title", { name: node.name })}
+      onClose={onClose}
+      actions={
+        <>
+          <Button onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={busy || all === null} onClick={save}>
+            {t("common.save")}
+          </Button>
+        </>
+      }
+    >
+      {all === null && !error && <p className="muted">{t("common.loading")}</p>}
+      {all?.length === 0 && <p className="muted">{t("browser.tags.none")}</p>}
       {all && all.length > 0 && (
         <ul className="tag-list">
-          {all.map((tag) => (
+          {all.map((tag, i) => (
             <li key={tag.id}>
               <label>
                 <input
                   type="checkbox"
+                  data-autofocus={i === 0 ? "" : undefined}
                   checked={chosen.has(tag.id)}
                   onChange={(e) => toggle(tag.id, e.target.checked)}
                 />
-                <span {...tagChip(tag.color)}>
-                  {tag.name}
-                </span>
+                <span {...tagChip(tag.color)}>{tag.name}</span>
               </label>
-              <span className="muted">{tag.count}×</span>
-              <button type="button" className="link" disabled={busy} onClick={() => rename(tag)}>
-                Hernoemen
-              </button>
-              <button type="button" className="link" disabled={busy} onClick={() => remove(tag)}>
-                Verwijderen
-              </button>
+              <span className="muted">{t("browser.tags.count", { n: tag.count })}</span>
+              <Button variant="link" disabled={busy} onClick={() => rename(tag)}>
+                {t("browser.tags.rename")}
+              </Button>
+              <Button variant="link" disabled={busy} onClick={() => remove(tag)}>
+                {t("browser.tags.delete")}
+              </Button>
             </li>
           ))}
         </ul>
       )}
       <form className="inline-form" onSubmit={create}>
         <input
-          aria-label="Naam van een nieuwe tag"
-          placeholder="Nieuwe tag"
+          aria-label={t("browser.tags.newName")}
+          placeholder={t("browser.tags.newPlaceholder")}
           maxLength={50}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
-        <select aria-label="Kleur" value={color} onChange={(e) => setColor(e.target.value)}>
+        <select aria-label={t("browser.tags.color")} value={color} onChange={(e) => setColor(e.target.value)}>
           {TAG_COLORS.map((c) => (
             <option key={c.value} value={c.value}>
-              {c.label}
+              {t(c.label)}
             </option>
           ))}
         </select>
-        <button type="submit" disabled={busy || !name.trim()}>
-          Toevoegen
-        </button>
+        <Button type="submit" disabled={busy || !name.trim()}>
+          {t("browser.tags.add")}
+        </Button>
       </form>
       {error && <p role="alert">{error}</p>}
-      <div className="dialog-actions">
-        <button type="button" onClick={onClose}>
-          Annuleren
-        </button>
-        <button type="button" className="primary" disabled={busy || all === null} onClick={save}>
-          Opslaan
-        </button>
-      </div>
     </Dialog>
   );
 }

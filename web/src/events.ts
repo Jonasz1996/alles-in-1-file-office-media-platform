@@ -255,6 +255,24 @@ export function eventIds(event: ServerEvent): string[] {
   return event.data.id === undefined || event.data.id === null ? [] : [String(event.data.id)];
 }
 
+/**
+ * Welke nodes van een node.*-gebeurtenis de inhoud van map folderId kunnen veranderen: alle,
+ * als de map de (oude) ouder is; anders alleen die de lijst al kent (known), zoals een gedeelde
+ * map in de lijst waarvan de ouder onzichtbaar is (parent_id null). Die vraag je op met
+ * POST /files/lookup: wat terugkomt met deze map als ouder, hoort erin; de rest niet (meer).
+ */
+export function folderEventIds(
+  event: ServerEvent,
+  folderId: string | null | undefined,
+  known?: (id: string) => boolean,
+): string[] {
+  if (!folderId || !event.type.startsWith("node.")) return [];
+  const ids = eventIds(event);
+  const { parent_id, old_parent_id } = event.data;
+  if (parent_id === folderId || old_parent_id === folderId) return ids;
+  return known ? ids.filter(known) : [];
+}
+
 /** Of de lijst "Gedeeld met mij" (met deze mappen en bestanden erin) opnieuw moet. */
 export function affectsSharedWithMe(event: ServerEvent, nodeIds: ReadonlySet<string>): boolean {
   if (event.type === "connected" || event.type === "tags.changed" || isShareEvent(event)) return true;

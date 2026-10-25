@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type FileNode, type Preview } from "./api";
-import { useServerEvents } from "./events";
+import { memo, useState } from "react";
+import type { FileNode, Preview } from "./api";
+import { usePreviewRecord } from "./browser/previews";
+import { Icon, type IconName } from "./ui/Icon";
 import "./files.css";
 
 export type Category = "folder" | "image" | "video" | "audio" | "pdf" | "document" | "archive" | "other";
@@ -23,90 +24,60 @@ export function category(node: Pick<FileNode, "kind" | "mime">): Category {
   return "other";
 }
 
-const ICONS: Record<Category, string> = {
-  folder: "📁",
-  image: "🖼️",
-  video: "🎬",
-  audio: "🎵",
-  pdf: "📕",
-  document: "📝",
-  archive: "🗜️",
-  other: "📄",
+const ICONS: Record<Category, IconName> = {
+  folder: "folder",
+  image: "image",
+  video: "video",
+  audio: "audio",
+  pdf: "pdf",
+  document: "document",
+  archive: "archive",
+  other: "file",
 };
 
-const SIZE = 32;
-const BATCH = 500;
+/** Het icoon voor een map, album of bestand. */
+export function iconOf(node: Pick<FileNode, "kind" | "mime">): IconName {
+  return node.kind === "album" ? "album" : ICONS[category(node)];
+}
 
-/** Thumbnail als die er is, anders een icoon voor het soort bestand. */
-export function Thumb({ node, preview }: { node: Pick<FileNode, "kind" | "mime">; preview?: Preview }) {
+/**
+ * Thumbnail als die er is, anders een icoon voor het soort bestand. size 32 (een rij in de
+ * lijst) of 180 (een cel in het raster); beide gebruiken de thumbnail van 256 px.
+ */
+export const Thumb = memo(function Thumb({
+  node,
+  preview,
+  size = 32,
+}: {
+  node: Pick<FileNode, "kind" | "mime">;
+  preview?: Preview;
+  size?: 32 | 180;
+}) {
   const [broken, setBroken] = useState<string | null>(null);
+  const cls = `thumb thumb-${size}`;
   if (preview?.thumb && broken !== preview.thumb) {
     return (
       <img
         src={preview.thumb}
         alt=""
-        loading="lazy"
         decoding="async"
-        width={SIZE}
-        height={SIZE}
-        className="thumb"
+        width={size}
+        height={size}
+        className={cls}
         onError={() => setBroken(preview.thumb)} // bijv. verlopen adres: dan het icoon
       />
     );
   }
   return (
-    <span aria-hidden="true" className="thumb">
-      {ICONS[category(node)]}
+    <span aria-hidden="true" className={`${cls} thumb-icon`}>
+      <Icon name={iconOf(node)} size={size === 180 ? 32 : 20} />
     </span>
   );
-}
+});
 
-/** Previews van de bestanden in een lijst. Vraagt alleen wat nieuw of veranderd is (andere
- * inhoud = andere etag) en ververst zodra de server meldt dat een preview klaar is. */
+/** Previews van de bestanden in een lijst (compat: SharedWithMe en anderen). Vraagt alleen wat
+ * nieuw of veranderd is (andere inhoud = andere etag) en ververst zodra de server meldt dat een
+ * preview klaar is; de cache (browser/previews.ts) deelt hij met de bestandsbrowser. */
 export function usePreviews(nodes: FileNode[] | undefined): Record<string, Preview> {
-  const [previews, setPreviews] = useState<Record<string, Preview>>({});
-  const files = useMemo(() => (nodes ?? []).filter((n) => n.kind === "file"), [nodes]);
-  const versions = files.map((n) => `${n.id}:${n.etag}`).join(",");
-  const shown = useRef(new Set<string>());
-  const asked = useRef(new Map<string, string>()); // id -> etag waarvoor we het vroegen
-
-  const fetchSome = useCallback(async (ids: string[]) => {
-    for (let i = 0; i < ids.length; i += BATCH) {
-      try {
-        const got = await api.previews(ids.slice(i, i + BATCH));
-        setPreviews((old) => {
-          const next = { ...old };
-          for (const [id, preview] of Object.entries(got)) if (shown.current.has(id)) next[id] = preview;
-          return next;
-        });
-      } catch {
-        /* geen previews: dan de iconen */
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    shown.current = new Set(files.map((n) => n.id));
-    for (const id of [...asked.current.keys()]) if (!shown.current.has(id)) asked.current.delete(id);
-    setPreviews((old) => Object.fromEntries(Object.entries(old).filter(([id]) => shown.current.has(id))));
-    const changed = files.filter((n) => asked.current.get(n.id) !== n.etag);
-    for (const n of changed) asked.current.set(n.id, n.etag);
-    if (changed.length) void fetchSome(changed.map((n) => n.id));
-    // Op versions en niet op files: een lijst die opnieuw geladen is maar niet veranderde,
-    // vraagt niets opnieuw
-  }, [versions, fetchSome]);
-
-  useServerEvents((event) => {
-    if (event.type === "preview.ready") {
-      const ids = (event.data.node_ids as string[] | undefined) ?? [];
-      const hit = ids.filter((id) => shown.current.has(id));
-      if (hit.length) void fetchSome(hit);
-    } else if (event.type === "connected") {
-      // Misschien kwam er een preview klaar terwijl de verbinding weg was
-      const waiting = [...shown.current].filter((id) => !previews[id] || previews[id].state === "pending");
-      if (waiting.length) void fetchSome(waiting);
-    }
-  });
-
-  return previews;
+  return usePreviewRecord(nodes);
 }

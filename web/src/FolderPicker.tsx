@@ -1,16 +1,29 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type FileNode, type Listing } from "./api";
+import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import { api, type FileNode } from "./api";
+import { browserApi, type Page } from "./browser/api";
 import { isGuest, useCurrentUser } from "./currentUser";
-import { Dialog } from "./Dialog";
+import { errorText, t } from "./i18n";
+import { canWrite, isShared, permissionOf } from "./sharing";
+import { Button } from "./ui/Button";
+import { Dialog } from "./ui/Dialog";
+import { prompt } from "./ui/dialogs";
+import { Icon } from "./ui/Icon";
+import { typeahead } from "./ui/menu";
 import "./files.css";
-import { isShared } from "./sharing";
+
+/** Zoveel mappen per keer in de kiezer. */
+const PAGE = 500;
+/** Zo lang (ms) telt getypte tekst als één zoekterm. */
+const TYPEAHEAD_MS = 700;
 
 /**
  * Kies een map om iets naartoe te kopiëren of te verplaatsen. Begint in startId (de map die
- * open staat). exclude: een map die je verplaatst of kopieert; daar kun je niet in, want
- * iets kan niet in zichzelf. check: waarom een map niet als doel kan (bijv. alleen kijken),
- * of null als het mag. Behalve je eigen bestanden staan ook de mappen die met je gedeeld
- * zijn erbij ("Gedeeld met mij"); gasten hebben alleen die.
+ * open staat). exclude: de mappen die je verplaatst of kopieert; daar kun je niet in, want iets
+ * kan niet in zichzelf. check: waarom een map niet als doel kan (bijv. alleen kijken, of een
+ * andere eigenaar bij verplaatsen), of null als het mag; over de hele selectie. Behalve je
+ * eigen bestanden staan ook de mappen die met je gedeeld zijn erbij ("Gedeeld met mij"); gasten
+ * hebben alleen die. Alleen mappen (?kind=dir); "Nieuwe map" maakt er een in de map die open
+ * staat; typen springt naar een map met die naam.
  */
 export function FolderPicker({
   title,
@@ -24,30 +37,48 @@ export function FolderPicker({
   title: string;
   action: string;
   startId: string | null;
-  exclude?: string;
+  exclude?: string | ReadonlySet<string>;
   check?: (folder: FileNode) => string | null;
-  onPick: (folderId: string) => void;
+  onPick: (folderId: string, folder: FileNode) => void;
   onClose: () => void;
 }) {
   const guest = isGuest(useCurrentUser());
-  const [listing, setListing] = useState<Listing | null>(null);
+  const [page, setPage] = useState<Page | null>(null);
+  const [folders, setFolders] = useState<FileNode[]>([]);
   // De lijst met wat met je gedeeld is, in plaats van een map
   const [shared, setShared] = useState<FileNode[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const loads = useRef(0);
+  const list = useRef<HTMLUListElement>(null);
+  const typed = useRef({ text: "", at: 0 });
+  const excluded = typeof exclude === "string" ? new Set([exclude]) : (exclude ?? new Set<string>());
 
   const open = useCallback(async (id: string | null) => {
     const seq = ++loads.current;
     try {
-      const result = id ? await api.children(id) : await api.root();
+      const result = await browserApi.page(id, { kind: "dir", limit: PAGE });
       if (seq !== loads.current) return; // intussen een andere map gekozen
-      setListing(result);
+      setPage(result);
+      setFolders(result.children);
       setShared(null);
       setError(null);
     } catch (e) {
-      if (seq === loads.current) setError((e as Error).message);
+      if (seq === loads.current) setError(errorText(e));
     }
   }, []);
+
+  const more = useCallback(async () => {
+    if (!page?.next) return;
+    const seq = loads.current;
+    try {
+      const result = await browserApi.page(page.folder.id, { kind: "dir", limit: PAGE, after: page.next });
+      if (seq !== loads.current) return;
+      setPage(result);
+      setFolders((old) => [...old, ...result.children]);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }, [page]);
 
   const openShared = useCallback(async () => {
     const seq = ++loads.current;
@@ -55,10 +86,11 @@ export function FolderPicker({
       const rows = await api.sharedWithMe();
       if (seq !== loads.current) return;
       setShared(rows.map((r) => r.node).filter((n) => n.kind === "dir"));
-      setListing(null);
+      setPage(null);
+      setFolders([]);
       setError(null);
     } catch (e) {
-      if (seq === loads.current) setError((e as Error).message);
+      if (seq === loads.current) setError(errorText(e));
     }
   }, []);
 
@@ -68,81 +100,127 @@ export function FolderPicker({
     else open(startId);
   }, [open, openShared, startId, guest]);
 
-  const folders = listing?.children.filter((c) => c.kind === "dir" && c.id !== exclude) ?? [];
-  const inShared = listing ? isShared(listing.path[0]) : shared !== null;
-  const reason = listing ? (check?.(listing.folder) ?? null) : null;
+  const visible = (shared ?? folders).filter((f) => !excluded.has(f.id));
+  const inShared = page ? isShared(page.path[0]) : shared !== null;
+  const reason = page ? (check?.(page.folder) ?? null) : null;
+  const canMkdir = page !== null && canWrite(permissionOf(page.folder));
+
+  async function newFolder() {
+    if (!page) return;
+    const name = await prompt({
+      title: t("browser.newFolder.title"),
+      label: t("browser.newFolder.label"),
+      confirm: t("browser.newFolder.confirm"),
+      validate: (v) => (v.trim() ? null : t("common.dialog.required")),
+    });
+    if (!name?.trim()) return;
+    try {
+      const made = await api.mkdir(page.folder.id, name.trim());
+      await open(made.id);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+
+  /** Pijltjes tussen de mappen, en typen springt naar een map met die naam. */
+  function onKeyDown(e: KeyboardEvent<HTMLUListElement>) {
+    const buttons = [...(list.current?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    const cur = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    let next = -1;
+    if (e.key === "ArrowDown") next = Math.min(buttons.length - 1, cur + 1);
+    else if (e.key === "ArrowUp") next = Math.max(0, cur - 1);
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = buttons.length - 1;
+    else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== " ") {
+      const now = Date.now();
+      typed.current = { text: now - typed.current.at > TYPEAHEAD_MS ? e.key : typed.current.text + e.key, at: now };
+      next = typeahead(
+        visible.map((f) => ({ label: f.name })),
+        cur,
+        typed.current.text,
+      );
+    } else return;
+    if (next < 0) return;
+    e.preventDefault();
+    buttons[next]?.focus();
+  }
 
   return (
-    <Dialog title={title} onClose={onClose}>
-      <div className="toolbar" style={{ marginTop: 0 }}>
+    <Dialog
+      title={title}
+      onClose={onClose}
+      actions={
+        <>
+          {canMkdir && (
+            <Button icon="new-folder" onClick={newFolder}>
+              {t("browser.picker.newFolder")}
+            </Button>
+          )}
+          <Button onClick={onClose}>{t("common.cancel")}</Button>
+          <Button
+            variant="primary"
+            disabled={!page || excluded.has(page.folder.id) || reason !== null}
+            title={reason ?? undefined}
+            onClick={() => page && onPick(page.folder.id, page.folder)}
+          >
+            {action}
+          </Button>
+        </>
+      }
+    >
+      <div className="picker-sources">
         {!guest && (
-          <button type="button" aria-pressed={!inShared} onClick={() => open(null)}>
-            Mijn bestanden
-          </button>
+          <Button aria-pressed={!inShared} onClick={() => open(null)}>
+            {t("browser.picker.mine")}
+          </Button>
         )}
-        <button type="button" aria-pressed={inShared} onClick={openShared}>
-          Gedeeld met mij
-        </button>
+        <Button aria-pressed={inShared} onClick={openShared}>
+          {t("browser.picker.shared")}
+        </Button>
       </div>
-      {listing && (
-        <nav className="crumbs" aria-label="Pad">
+      {page && (
+        <nav className="crumbs picker-crumbs" aria-label={t("browser.path")}>
           {inShared && (
             <span>
-              <button type="button" className="link" onClick={openShared}>
-                Gedeeld met mij
-              </button>
+              <Button variant="link" onClick={openShared}>
+                {t("browser.picker.shared")}
+              </Button>
             </span>
           )}
-          {listing.path.map((p, i) => (
+          {page.path.map((p, i) => (
             <span key={p.id}>
               {(i > 0 || inShared) && " / "}
-              <button type="button" className="link" onClick={() => open(p.id)}>
-                {i === 0 && !inShared ? "Mijn bestanden" : p.name}
-              </button>
+              <Button variant="link" onClick={() => open(p.id)}>
+                {i === 0 && !inShared ? t("browser.picker.mine") : p.name}
+              </Button>
             </span>
           ))}
         </nav>
       )}
       {error && <p role="alert">{error}</p>}
-      {shared && shared.length === 0 && <p className="muted">Er zijn geen mappen met je gedeeld.</p>}
-      {shared && shared.length > 0 && (
-        <ul className="picker-list">
-          {shared.map((f) => (
+      {shared && visible.length === 0 && <p className="muted">{t("browser.picker.noShared")}</p>}
+      {page && visible.length === 0 && <p className="muted">{t("browser.picker.noFolders")}</p>}
+      {visible.length > 0 && (
+        <ul ref={list} className="picker-list" aria-label={t("browser.picker.folders")} onKeyDown={onKeyDown}>
+          {visible.map((f, i) => (
             <li key={f.id}>
-              <button type="button" onClick={() => open(f.id)}>
-                📁 {f.name}
-                {f.owner && <span className="muted"> · van {f.owner.display_name}</span>}
+              <button type="button" data-autofocus={i === 0 ? "" : undefined} onClick={() => open(f.id)}>
+                <Icon name="folder" size={20} />
+                <span className="picker-name">{f.name}</span>
+                {shared && f.owner && (
+                  <span className="muted"> · {t("browser.picker.owner", { name: f.owner.display_name })}</span>
+                )}
               </button>
             </li>
           ))}
         </ul>
       )}
-      {listing && folders.length === 0 && <p className="muted">Hier zijn geen submappen.</p>}
-      {folders.length > 0 && (
-        <ul className="picker-list">
-          {folders.map((f) => (
-            <li key={f.id}>
-              <button type="button" onClick={() => open(f.id)}>
-                📁 {f.name}
-              </button>
-            </li>
-          ))}
-        </ul>
+      {page?.next && (
+        <Button variant="link" onClick={more}>
+          {t("browser.picker.more")}
+        </Button>
       )}
       {reason && <p className="muted">{reason}</p>}
-      <div className="dialog-actions">
-        <button type="button" onClick={onClose}>
-          Annuleren
-        </button>
-        <button
-          type="button"
-          className="primary"
-          disabled={!listing || listing.folder.id === exclude || reason !== null}
-          onClick={() => listing && onPick(listing.folder.id)}
-        >
-          {action}
-        </button>
-      </div>
     </Dialog>
   );
 }
