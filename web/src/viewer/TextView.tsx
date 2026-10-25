@@ -221,7 +221,7 @@ function CsvTable({ text, name }: { text: string; name: string }) {
   if (!head) return <p className="viewer-message muted">{t("viewer.text.empty")}</p>;
   return (
     <div className="viewer-scroll">
-      <div className="table-wrap">
+      <div className="table-wrap" tabIndex={0} role="region" aria-label={t("viewer.text.region")}>
         <table className="csv">
           <thead>
             <tr>

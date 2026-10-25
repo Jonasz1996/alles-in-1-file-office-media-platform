@@ -43,6 +43,18 @@ const PENDING_MS = 3000;
 /** Zo ver (px) vegen is naar het volgende bestand. */
 const SWIPE = 60;
 
+/** Kan het element met de focus (of een ouder ervan in de viewer) nog opzij scrollen in deze
+ * richting? Lange regels, een brede tabel of een ingezoomde PDF: dan zijn ← en → van dat gebied. */
+function scrollsSideways(from: Element | null, direction: -1 | 1): boolean {
+  for (let el = from; el && el.tagName !== "DIALOG" && !el.classList.contains("viewer-stage"); el = el.parentElement) {
+    if (el.scrollWidth <= el.clientWidth) continue;
+    const overflow = getComputedStyle(el).overflowX;
+    if (overflow !== "auto" && overflow !== "scroll") continue;
+    if (direction < 0 ? el.scrollLeft > 0 : el.scrollLeft + el.clientWidth < el.scrollWidth - 1) return true;
+  }
+  return false;
+}
+
 function keyOf(item: ViewerItem): string {
   return `${item.id}|${item.etag ?? ""}|${item.version?.id ?? ""}`;
 }
@@ -197,11 +209,14 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
   }
 
   const notZoomed = () => !zoomed.current;
+  // Kan het gebied met de focus nog opzij scrollen, dan scrollt de browser (Shift+← → wisselt
+  // altijd van bestand)
+  const switches = (direction: -1 | 1) => () => notZoomed() && !scrollsSideways(document.activeElement, direction);
   useShortcuts(
     [
       { combo: "escape", run: onClose, label: t("viewer.keys.close"), allowInInput: true },
-      { combo: "arrowleft", run: () => go(-1), when: notZoomed, label: t("viewer.keys.prev") },
-      { combo: "arrowright", run: () => go(1), when: notZoomed, label: t("viewer.keys.next") },
+      { combo: "arrowleft", run: () => go(-1), when: switches(-1), label: t("viewer.keys.prev") },
+      { combo: "arrowright", run: () => go(1), when: switches(1), label: t("viewer.keys.next") },
       { combo: "shift+arrowleft", run: () => go(-1), label: t("viewer.keys.prevAlways") },
       { combo: "shift+arrowright", run: () => go(1), label: t("viewer.keys.nextAlways") },
       { combo: "home", run: () => goTo(0), when: notZoomed, label: t("viewer.keys.first") },
@@ -368,7 +383,7 @@ function ArchiveList({ detail }: { detail: ViewerDetail }) {
   const more = (detail.meta.count ?? entries.length) - entries.length;
   return (
     <div className="viewer-scroll viewer-archive">
-      <div className="table-wrap">
+      <div className="table-wrap" tabIndex={0} role="region" aria-label={t("viewer.text.region")}>
         <table>
           <thead>
             <tr>

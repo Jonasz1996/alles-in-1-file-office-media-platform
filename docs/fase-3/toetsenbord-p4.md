@@ -15,7 +15,7 @@ van een element dat die zelf gebruikt (een speler met bediening, een knop): dat 
 | Toets | Wat |
 |---|---|
 | Esc | Viewer sluiten (terug naar de map; één keer) |
-| ← / → | Vorig / volgend bestand (bij een afbeelding alleen als hij passend staat) |
+| ← / → | Vorig / volgend bestand (bij een afbeelding alleen als hij passend staat; staat de focus in tekst, een tabel of een ingezoomde PDF die nog opzij kan scrollen, dan scrollt die) |
 | Shift+← / Shift+→ | Vorig / volgend bestand, ook als de afbeelding is ingezoomd |
 | Home / End | Eerste / laatste bestand (bij een afbeelding alleen als hij passend staat) |
 | F | Volledig scherm aan of uit |
@@ -65,7 +65,7 @@ pijltjes; de viewer neemt ze dan niet over.
 
 | Toets | Wat |
 |---|---|
-| Tab | Naar de knoppen "Met opmaak" / "Als tekst" / "Als tabel", de keuzelijst Tekencodering en de inhoud; in de inhoud scrollen de pijltjes en PgUp/PgDn (de inhoud is een focusbaar gebied) |
+| Tab | Naar de knoppen "Met opmaak" / "Als tekst" / "Als tabel", de keuzelijst Tekencodering en de inhoud; in de inhoud scrollen de pijltjes en PgUp/PgDn (de inhoud, ook een CSV-tabel of de lijst van een archief, is een focusbaar gebied) |
 | "Meer laden" (Enter) | De volgende 512 KB |
 
 ## Kantoordocumenten

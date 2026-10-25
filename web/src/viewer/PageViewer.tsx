@@ -128,9 +128,12 @@ export default function PageViewer({ count, sizes, widths, url, toc = [], labels
     { scope: "viewer" },
   );
 
+  // Een ander document. Niet bij een vernieuwd token: dan komt page_sizes als nieuwe array met
+  // dezelfde maten, en de pagina's die er al staan houden hun adres (geen nieuwe download).
+  const shape = useMemo(() => `${count}:${sizes.map((s) => s.join("x")).join(",")}`, [count, sizes]);
   useEffect(() => {
-    used.current.clear(); // een ander document
-  }, [count, sizes]);
+    used.current.clear();
+  }, [shape]);
 
   function pageSource(n: number) {
     const hit = used.current.get(n);

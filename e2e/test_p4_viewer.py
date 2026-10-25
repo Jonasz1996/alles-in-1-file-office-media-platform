@@ -576,6 +576,12 @@ def test_pdf_pagina_s_na_het_verlopen_van_het_token(browser, tmp_path_factory):
         first_token = viewer.locator(".page img").first.get_attribute("src")
         page.wait_for_timeout(70_000)
         assert len(documents) >= 2, documents  # op tijd vernieuwd
+        # Een pagina die er al stond, houdt zijn adres na het vernieuwen (geen nieuwe download),
+        # ook als de viewer daarna opnieuw tekent (een klein stukje scrollen)
+        viewer.locator(".page img").first.hover()
+        page.mouse.wheel(0, 40)
+        page.wait_for_timeout(500)
+        assert viewer.locator(".page img").first.get_attribute("src") == first_token
         box = viewer.get_by_role("spinbutton")
         box.fill("9")
         box.press("Enter")
