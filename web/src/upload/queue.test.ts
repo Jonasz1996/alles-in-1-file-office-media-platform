@@ -493,4 +493,57 @@ describe("UploadQueue.addTree", () => {
       "check root 500",
     ]);
   });
+
+  it("leest grootte en datum per bestand één keer, en geeft tussendoor de hoofdthread terug", async () => {
+    // In Chromium is elke lezing van size/lastModified van een gekozen bestand een synchrone
+    // vraag aan de browser: hier kost elke lezing 0,1 ms en telt hij mee
+    let reads = 0;
+    const slow = (name: string) => {
+      const f = file(name, 1);
+      const size = f.size;
+      const lastModified = f.lastModified;
+      const busy = () => {
+        reads++;
+        const end = performance.now() + 0.1;
+        while (performance.now() < end) {
+          /* een synchrone vraag */
+        }
+      };
+      Object.defineProperty(f, "size", { get: () => (busy(), size) });
+      Object.defineProperty(f, "lastModified", { get: () => (busy(), lastModified) });
+      return f;
+    };
+    const server = new Server();
+    // De uploads blijven hangen bij het aanmaken: dan staan ze er nog als we kijken
+    server.tusCreate = () => new Promise(() => {});
+    const queue = new UploadQueue(server, {
+      send: server.send,
+      storage: memoryStorage(),
+      requests: fakeRequests([], (paths) => ({ folders: {}, created: paths, errors: {} }), {}),
+      ask: async () => [],
+    });
+    const files = Array.from({ length: 1000 }, (_, i) => ({ file: slow(`f${i}`), path: `f${i}` }));
+    // Hoe lang de langste stap zonder onderbreking duurde (een taak in de browser)
+    let longest = 0;
+    let last = performance.now();
+    let watching = true;
+    const watch = () => {
+      const now = performance.now();
+      longest = Math.max(longest, now - last);
+      last = now;
+      if (watching) setTimeout(watch, 0);
+    };
+    setTimeout(watch, 0);
+    const done = queue.addTree("root", { dirs: [], files });
+    await vi.waitFor(() => expect(queue.getSummary().files).toBe(1000));
+    watching = false;
+    const before = reads;
+    // size en lastModified, elk één keer (2.000), plus wat de ene upload die al begon leest
+    expect(before).toBeGreaterThanOrEqual(2000);
+    expect(before).toBeLessThan(2010);
+    expect(longest).toBeLessThan(100); // 2.000 × 0,1 ms = 200 ms, maar in stukjes van ~30 ms
+    expect(queue.getSummary().bytes).toBe(1000);
+    queue.stopAll();
+    await done;
+  });
 });

@@ -116,7 +116,14 @@ function safeStorage(): UploadStorage | undefined {
 
 /** Eén upload per bestand en map: onder deze sleutel staat de upload-URL. */
 export function storageKey(parent: string, file: File): string {
-  return `platform-upload:${parent}:${file.name}:${file.size}:${file.lastModified}`;
+  return storageKeyFor(parent, file.name, file.size, file.lastModified);
+}
+
+/** Zoals storageKey, met grootte en datum die al gelezen zijn. In Chromium is elke lezing van
+ * size of lastModified van een gekozen bestand een synchrone vraag aan de browser; bij 5.000
+ * bestanden telt dat op (de wachtrij leest ze daarom één keer, in stukjes). */
+export function storageKeyFor(parent: string, name: string, size: number, lastModified: number): string {
+  return `platform-upload:${parent}:${name}:${size}:${lastModified}`;
 }
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

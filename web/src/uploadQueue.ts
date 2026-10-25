@@ -25,7 +25,7 @@ import { etaSeconds, RateMeter } from "./upload/eta";
 import { interrupted } from "./upload/interrupted";
 import { type ConflictChoice, findConflicts, nameKey, planConflicts } from "./upload/plan";
 import type { Collected } from "./upload/walk";
-import { discardUpload, STOP, storageKey, type TusApi, type UploadOptions, uploadFile } from "./upload";
+import { discardUpload, STOP, storageKey, storageKeyFor, type TusApi, type UploadOptions, uploadFile } from "./upload";
 import { uploadStatus } from "./uploadStatus";
 
 export type UploadState = "waiting" | "running" | "paused" | "failed" | "discarding";
@@ -112,8 +112,36 @@ interface Entry {
   url?: string;
 }
 
+/** Grootte en datum, één keer gelezen (zie storageKeyFor). */
+interface Meta {
+  size: number;
+  lastModified: number;
+}
+
 const EMPTY: readonly UploadItem[] = Object.freeze([]) as readonly UploadItem[];
 const BIG = 256 * 1024 * 1024;
+/** Zo lang mag het lezen van grootte en datum achter elkaar duren voor de wachtrij de
+ * hoofdthread even teruggeeft (addTree). */
+const SLICE_MS = 30;
+
+const metaOf = (file: File): Meta => ({ size: file.size, lastModified: file.lastModified });
+
+/** Even de hoofdthread teruggeven (een nieuwe taak, zodat de browser kan tekenen). */
+const yieldTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+/** metaOf voor elk bestand, in stukjes van hooguit SLICE_MS (geen lange taak bij 5.000). */
+async function readMeta(files: readonly File[]): Promise<Meta[]> {
+  const out: Meta[] = [];
+  let start = performance.now();
+  for (const file of files) {
+    out.push(metaOf(file));
+    if (performance.now() - start > SLICE_MS) {
+      await yieldTask();
+      start = performance.now();
+    }
+  }
+  return out;
+}
 
 function failureOf(e: unknown): UploadFailure {
   if (e instanceof ApiError) return { code: e.code, message: e.message, params: e.params };
@@ -123,6 +151,8 @@ function failureOf(e: unknown): UploadFailure {
 export class UploadQueue {
   private readonly items = new Map<string, UploadItem>();
   private readonly byStorage = new Map<string, string>();
+  /** Per item: grootte en opslagsleutel, één keer gelezen (geen herhaalde vraag aan de browser). */
+  private readonly meta = new Map<string, { size: number; sk: string }>();
   private snapshot: readonly UploadItem[] | null = EMPTY;
   private readonly controllers = new Map<string, AbortController>();
   private readonly pausing = new Set<string>();
@@ -259,8 +289,9 @@ export class UploadQueue {
   private progress(key: string, fraction: number): void {
     const item = this.items.get(key);
     if (!item) return;
-    const before = item.progress * item.file.size;
-    const after = fraction * item.file.size;
+    const size = this.sizeOf(key, item);
+    const before = item.progress * size;
+    const after = fraction * size;
     this.totals.sent += after - before;
     this.meter.add(this.totals.sent, this.now());
     this.change(key, { progress: fraction });
@@ -270,18 +301,20 @@ export class UploadQueue {
   private drop(key: string, done: boolean): void {
     const item = this.items.get(key);
     if (!item) return;
+    const size = this.sizeOf(key, item);
+    const sk = this.meta.get(key)?.sk ?? storageKey(item.parent, item.file);
     this.items.delete(key);
+    this.meta.delete(key);
     this.counts[item.state]--;
-    const sk = storageKey(item.parent, item.file);
     if (this.byStorage.get(sk) === key) this.byStorage.delete(sk);
     this.creates.delete(key);
     if (done) {
       this.totals.done++;
-      this.totals.sent += item.file.size * (1 - item.progress);
+      this.totals.sent += size * (1 - item.progress);
     } else {
       this.totals.files--;
-      this.totals.bytes -= item.file.size;
-      this.totals.sent -= item.file.size * item.progress;
+      this.totals.bytes -= size;
+      this.totals.sent -= size * item.progress;
     }
     if (this.items.size === 0) this.resetTotals();
     this.changed();
@@ -326,12 +359,16 @@ export class UploadQueue {
 
   // --- de planner ---
 
+  private sizeOf(key: string, item: UploadItem): number {
+    return this.meta.get(key)?.size ?? item.file.size;
+  }
+
   private canStart(item: UploadItem): boolean {
     if (this.running.size === 0) return true;
-    if (this.running.size >= this.concurrency || item.file.size > this.bigFile) return false;
+    if (this.running.size >= this.concurrency || this.sizeOf(item.key, item) > this.bigFile) return false;
     for (const key of this.running) {
       const other = this.items.get(key);
-      if (other && other.file.size > this.bigFile) return false;
+      if (other && this.sizeOf(key, other) > this.bigFile) return false;
     }
     return true;
   }
@@ -423,10 +460,17 @@ export class UploadQueue {
     return this.enqueue(entries, opts.onCreate);
   }
 
-  private enqueue(entries: readonly Entry[], onCreate?: AddOptions["onCreate"]): Promise<void> {
+  /** metas[i]: grootte en datum van entries[i], als die al gelezen zijn (addTree). */
+  private enqueue(
+    entries: readonly Entry[],
+    onCreate?: AddOptions["onCreate"],
+    metas?: readonly Meta[],
+  ): Promise<void> {
     const keys: string[] = [];
-    for (const e of entries) {
-      const sk = storageKey(e.parent, e.file);
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      const m = metas?.[i] ?? metaOf(e.file);
+      const sk = storageKeyFor(e.parent, e.file.name, m.size, m.lastModified);
       const same = this.byStorage.get(sk);
       const existing = same === undefined ? undefined : this.items.get(same);
       if (same !== undefined && existing) {
@@ -450,11 +494,12 @@ export class UploadQueue {
         url: e.url,
       };
       this.items.set(key, item);
+      this.meta.set(key, { size: m.size, sk });
       this.counts.waiting++;
       this.byStorage.set(sk, key);
       if (onCreate) this.creates.set(key, onCreate);
       this.totals.files++;
-      this.totals.bytes += e.file.size;
+      this.totals.bytes += m.size;
       this.enqueueKey(key);
       keys.push(key);
     }
@@ -466,8 +511,13 @@ export class UploadQueue {
 
   /** Bestanden die niet kunnen (hun map kon niet gemaakt worden): meteen mislukt, zichtbaar in
    * de lade, zonder Opnieuw. */
-  private addFailed(list: readonly { file: File; parent: string; path: string; failure: UploadFailure }[]): void {
-    for (const f of list) {
+  private addFailed(
+    list: readonly { file: File; parent: string; path: string; failure: UploadFailure }[],
+    metas?: readonly Meta[],
+  ): void {
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i];
+      const size = metas?.[i]?.size ?? f.file.size;
       const key = `${f.file.name}-${++this.seq}`;
       this.items.set(key, {
         key,
@@ -480,9 +530,10 @@ export class UploadQueue {
         failure: f.failure,
         retry: false,
       });
+      this.meta.set(key, { size, sk: `failed:${key}` }); // nooit in byStorage
       this.counts.failed++;
       this.totals.files++;
-      this.totals.bytes += f.file.size;
+      this.totals.bytes += size;
     }
     if (list.length) this.changed();
   }
@@ -595,11 +646,16 @@ export class UploadQueue {
       }
       const { create } = planConflicts(planned, taken, (_f, i) => choices.get(i) ?? "skip");
 
-      // 4. de uploads (eerst in de rij, dan pas niet meer "voorbereiden": de lade blijft staan)
-      this.addFailed(failed);
+      // 4. de uploads (eerst in de rij, dan pas niet meer "voorbereiden": de lade blijft staan).
+      // Grootte en datum eerst in stukjes lezen: dat is per bestand een synchrone vraag aan de
+      // browser, en 5.000 achter elkaar zou een lange taak zijn.
+      const failedMeta = await readMeta(failed.map((f) => f.file));
+      const createMeta = await readMeta(create.map((c) => c.file));
+      this.addFailed(failed, failedMeta);
       const done = this.enqueue(
         create.map((c) => ({ file: c.file, parent: c.parent, path: c.path, conflict: c.conflict })),
         opts.onCreate,
+        createMeta,
       );
       release();
       await done;
@@ -741,6 +797,7 @@ export class UploadQueue {
     for (const controller of this.controllers.values()) controller.abort(STOP);
     const keys = [...this.items.keys(), ...this.waiters.keys()];
     this.items.clear();
+    this.meta.clear();
     this.byStorage.clear();
     this.creates.clear();
     this.pausing.clear();
