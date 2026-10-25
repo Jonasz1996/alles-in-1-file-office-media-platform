@@ -102,6 +102,27 @@ async def test_fouten_bij_de_link(client, admin, settings, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_hooguit_zoveel_links_per_gebruiker(client, admin, monkeypatch):
+    """Elke link houdt tot 10.000 ids in het geheugen: per gebruiker staan er hooguit MAX_LINKS
+    tegelijk, een nieuwe duwt de oudste eruit (die is dan meestal al gedownload)."""
+    jonas, _ = admin
+    monkeypatch.setattr(archive, "MAX_LINKS", 3)
+    root_id = (await root(client, jonas))["folder"]["id"]
+    x = (await put(client, jonas, root_id, "x.txt", b"x")).json()["id"]
+    anna, _ = await person(client, jonas, "anna@example.nl")
+    y = (await put(client, anna, (await root(client, anna))["folder"]["id"], "y", b"y")).json()
+    van_anna = await link(client, anna, y["id"])
+
+    urls = [await link(client, jonas, x) for _ in range(5)]
+    for url in urls[:2]:
+        assert (await client.get(url)).status_code == 404
+    for url in urls[2:]:
+        assert (await download(client, url)).namelist() == ["x.txt"]
+    # Die van een ander blijft staan
+    assert (await download(client, van_anna)).namelist() == ["y"]
+
+
+@pytest.mark.anyio
 async def test_ingetrokken_of_geblokkeerd_geeft_404(client, admin, settings):
     jonas, _ = admin
     root_id = (await root(client, jonas))["folder"]["id"]

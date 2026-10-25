@@ -3,7 +3,9 @@ download (GET /archive?token=).
 
 - De link leeft LINK_TTL seconden in het geheugen van dit proces (één node is genoeg; in het
   cluster komt hier later iets gedeelds). Het token komt in het adres (zoals een downloadlink),
-  maar zegt zelf niets: zonder het geheugen van de server is het niets waard.
+  maar zegt zelf niets: zonder het geheugen van de server is het niets waard. Per gebruiker
+  staan er hooguit MAX_LINKS tegelijk (een nieuwe duwt de oudste eruit): zo kan niemand met
+  links van 10.000 ids het geheugen vullen.
 - Toegang in bulk, bij de link én bij het downloaden opnieuw: één query voor de nodes, één
   recursieve query omhoog voor de eigen nodes (prullenbak) en één access.resolve voor wat van
   anderen is, hoeveel ids het ook zijn. Een ingetrokken deling of een geblokkeerde gebruiker
@@ -53,6 +55,8 @@ router = APIRouter(prefix="/api/v1", tags=["bestanden"])
 MAX_IDS = 10_000
 MAX_ENTRIES = 50_000
 LINK_TTL = 600
+# Zoveel links per gebruiker tegelijk; elke link houdt tot MAX_IDS ids in het geheugen
+MAX_LINKS = 20
 # Zo groot is een stuk dat de schrijver doorgeeft, en zoveel stukken mogen er klaarstaan
 CHUNK = 256 * 1024
 BUFFERED = 8
@@ -140,6 +144,10 @@ async def archive_link(body: ArchiveRequest, user: CurrentUser, session: Session
     await checked(session, user, body.ids)
     now = time.monotonic()
     _purge(now)
+    # Op volgorde van aanmaken, dus ook van verlopen: de oudste eerst
+    own = [t for t, kept in _links.items() if kept.user_id == user.id]
+    for old in own[: max(0, len(own) - MAX_LINKS + 1)]:
+        del _links[old]
     token = secrets.token_urlsafe(32)
     ids = list(dict.fromkeys(body.ids))
     _links[token] = Link(user.id, ids, zip_name(body.name), now + LINK_TTL)
