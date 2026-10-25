@@ -52,7 +52,6 @@ const en: Translation<typeof nl> = {
     size: "Size",
     modified: "Modified",
     path: "Folder",
-    select: "Select",
   },
   list: "Contents of {name}",
   results: "Search results",

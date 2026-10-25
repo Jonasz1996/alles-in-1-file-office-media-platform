@@ -14,6 +14,7 @@ import { Icon } from "../ui/Icon";
 import { useVirtualRows } from "../ui/virtual";
 import { previewCache, useWindowPreviews } from "./previews";
 import { type RowCallbacks, useRowEvents, useScrollingClass } from "./rowEvents";
+import { SlotAssigner, useDeferredRange } from "./slots";
 import type { Sort, SortKey } from "./sort";
 
 /** De hoogte van een rij (--row-h in tokens.css). */
@@ -55,9 +56,20 @@ interface RowProps {
   showPath: boolean;
 }
 
-const Row = memo(function Row({ node, index, top, selected, tabbable, cut, drop, preview, path, showPath }: RowProps) {
-  // top in plaats van transform: een rij beweegt nooit (key = plek), en zonder transform
-  // geen eigen transform-knoop per rij bij het tekenen
+const Row = memo(function Row({
+  node,
+  index,
+  top,
+  selected,
+  tabbable,
+  cut,
+  drop,
+  preview,
+  path,
+  showPath,
+}: RowProps) {
+  // top in plaats van transform: zonder transform geen eigen transform-knoop per rij bij het
+  // tekenen
   const style = { top };
   if (!node) {
     return (
@@ -88,7 +100,7 @@ const Row = memo(function Row({ node, index, top, selected, tabbable, cut, drop,
       style={style}
       draggable
     >
-      <div role="gridcell" className="cell-check">
+      <div role="gridcell" className="cell-name">
         {/* Een vinkje zonder <input>: goedkoper bij het scrollen; de rij zelf heeft aria-selected */}
         <span
           role="checkbox"
@@ -97,9 +109,8 @@ const Row = memo(function Row({ node, index, top, selected, tabbable, cut, drop,
           aria-checked={selected}
           aria-label={t("browser.row.select", { name: node.name })}
         />
-      </div>
-      <div role="gridcell" className="cell-name">
         <Thumb node={node} preview={preview} size={32} />
+        {/* De naam: een klik opent (rowEvents.ts); met het toetsenbord Enter op de rij */}
         <button type="button" className="name" data-open="" tabIndex={-1}>
           {node.name}
         </button>
@@ -112,7 +123,6 @@ const Row = memo(function Row({ node, index, top, selected, tabbable, cut, drop,
           <span className="owner-note">{t("browser.row.owner", { name: node.owner.display_name })}</span>
         )}
         <TagChips tags={node.tags} />
-        <span className="row-status" data-row-status="" />
       </div>
       {showPath && (
         <div role="gridcell" className="cell-path">
@@ -128,14 +138,12 @@ const Row = memo(function Row({ node, index, top, selected, tabbable, cut, drop,
       <div role="gridcell" className="cell-more">
         <button
           type="button"
-          className="icon-button ghost"
+          className="icon-button ghost more-dots"
           data-menu=""
           tabIndex={-1}
           aria-haspopup="menu"
           aria-label={t("browser.row.actions", { name: node.name })}
-        >
-          <span className="more-dots" aria-hidden="true" />
-        </button>
+        />
       </div>
     </div>
   );
@@ -215,11 +223,11 @@ export function FileList(p: FileListProps): JSX.Element {
   const { get, selected, isCut, dropId, focusIndex, pathOf } = p;
   const showPath = !!pathOf;
   const out: JSX.Element[] = [];
-  const add = (i: number) => {
+  const add = (i: number, key: string) => {
     const node = get(i);
     out.push(
       <Row
-        key={`r${i}`}
+        key={key}
         node={node}
         index={i}
         top={rows.offsetOf(i)}
@@ -233,8 +241,14 @@ export function FileList(p: FileListProps): JSX.Element {
       />,
     );
   };
-  for (let i = rows.start; i < rows.end; i++) add(i);
-  if (rows.extra !== null) add(rows.extra);
+  // Rijen op vaste plekken: bij het scrollen worden bestaande elementen hergebruikt (slots.ts)
+  const slotter = useRef<SlotAssigner | null>(null);
+  slotter.current ??= new SlotAssigner();
+  // De rij met de tabstop (de focus, of zonder focus de eerste) houdt altijd hetzelfde element:
+  // krijgt hij de focus, dan valt die er niet af doordat zijn sleutel verandert
+  const tabStop = focusIndex >= 0 ? focusIndex : p.count > 0 ? 0 : null;
+  const range = useDeferredRange(rows.start, rows.end, p.count, focusIndex >= 0 ? focusIndex : null);
+  for (const slot of slotter.current.assign(range.start, range.end, range.extra, tabStop)) add(slot.index, slot.key);
 
   // Een kortere lijst (filter, verwijderd): de focus blijft binnen de lijst
   const { onFocusRow, count } = p;
@@ -255,9 +269,6 @@ export function FileList(p: FileListProps): JSX.Element {
     >
       <div role="rowgroup" className="file-head-group">
         <div role="row" aria-rowindex={1} className="file-row file-head">
-          <div role="columnheader" className="cell-check">
-            <span className="sr-only">{t("browser.columns.select")}</span>
-          </div>
           <HeaderCell
             label={t("browser.columns.name")}
             sortKey="name"

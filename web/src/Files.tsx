@@ -35,7 +35,7 @@ import { FILTER_INPUT_ID, FilterBox } from "./browser/FilterBox";
 import { filterIds } from "./browser/filter";
 import { focusRow, rowElement } from "./browser/rowEvents";
 import { isServerSort, nextSort, SERVER_SORT, type Sort, type SortKey, sortIds } from "./browser/sort";
-import { useBrowserUi } from "./browser/useBrowserUi";
+import { canUndo, undoLast, useBrowserUi } from "./browser/useBrowserUi";
 import { useDrag } from "./browser/useDrag";
 import { loadView, saveView, useFolderStore, type View } from "./browser/useFolder";
 import { isGuest, useCurrentUser } from "./currentUser";
@@ -351,6 +351,12 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
         const el = rowElement(listRef.current, focusIndex);
         openMenu(target, el ?? listRef.current ?? document.body);
       },
+    },
+    {
+      combo: "mod+z",
+      label: t("browser.undo"),
+      when: canUndo,
+      run: undoLast,
     },
     {
       combo: "g",

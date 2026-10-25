@@ -9,7 +9,7 @@ import { actionShortcuts } from "./browser/actionKeys";
 import { type ActionEnv, actionMenuItems, availability, type BrowserAction } from "./browser/actions";
 import { clipboard } from "./browser/clipboard";
 import { FileList } from "./browser/FileList";
-import { useBrowserUi } from "./browser/useBrowserUi";
+import { canUndo, undoLast, useBrowserUi } from "./browser/useBrowserUi";
 import { isGuest, useCurrentUser } from "./currentUser";
 import { errorText, t } from "./i18n";
 import { navigate, type RouteProps, useLocation } from "./router";
@@ -149,6 +149,12 @@ export default function Search(_: RouteProps): JSX.Element {
         label: t("browser.keys.clear"),
         when: () => sel.selected.size > 0,
         run: () => selection.clear(),
+      },
+      {
+        combo: "mod+z",
+        label: t("browser.undo"),
+        when: canUndo,
+        run: undoLast,
       },
       {
         combo: ["shift+f10", "contextmenu"],

@@ -1,7 +1,8 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import type { FileNode, Preview } from "./api";
+import { mayLoad, waitToLoad } from "./browser/imageGate";
 import { usePreviewRecord } from "./browser/previews";
-import { Icon, type IconName } from "./ui/Icon";
+import type { IconName } from "./ui/Icon";
 import "./files.css";
 
 export type Category = "folder" | "image" | "video" | "audio" | "pdf" | "document" | "archive" | "other";
@@ -55,24 +56,31 @@ export const Thumb = memo(function Thumb({
 }) {
   const [broken, setBroken] = useState<string | null>(null);
   const cls = `thumb thumb-${size}`;
-  if (preview?.thumb && broken !== preview.thumb) {
+  const url = preview?.thumb && broken !== preview.thumb ? preview.thumb : null;
+  // Tijdens snel scrollen wacht een nieuwe thumbnail even op zijn beurt (browser/imageGate.ts);
+  // tot dan een leeg vlak
+  const [allowed, setAllowed] = useState<string | null>(null);
+  const ready = url !== null && (allowed === url || mayLoad(url));
+  useEffect(() => {
+    if (url === null || ready) return;
+    return waitToLoad(url, () => setAllowed(url));
+  }, [url, ready]);
+  if (url !== null && !ready) return <span aria-hidden="true" className={`${cls} thumb-pending`} />;
+  if (url !== null) {
     return (
       <img
-        src={preview.thumb}
+        src={url}
         alt=""
         decoding="async"
         width={size}
         height={size}
         className={cls}
-        onError={() => setBroken(preview.thumb)} // bijv. verlopen adres: dan het icoon
+        onError={() => setBroken(url)} // bijv. een verlopen adres: dan het icoon
       />
     );
   }
-  return (
-    <span aria-hidden="true" className={`${cls} thumb-icon`}>
-      <Icon name={iconOf(node)} size={size === 180 ? 32 : 20} />
-    </span>
-  );
+  // Het icoon als masker in CSS (files.css): één element, geen svg per rij
+  return <span aria-hidden="true" className={`${cls} thumb-icon`} data-kind={iconOf(node)} />;
 });
 
 /** Previews van de bestanden in een lijst (compat: SharedWithMe en anderen). Vraagt alleen wat

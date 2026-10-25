@@ -50,7 +50,6 @@ export default {
     size: "Grootte",
     modified: "Gewijzigd",
     path: "Map",
-    select: "Selecteren",
   },
   list: "Inhoud van {name}",
   results: "Zoekresultaten",

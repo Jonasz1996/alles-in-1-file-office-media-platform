@@ -87,7 +87,7 @@
 
 .file-row {
   display: grid;
-  grid-template-columns: 2.5rem minmax(0, 1fr) 6.5rem 11rem 2.75rem;
+  grid-template-columns: minmax(0, 1fr) 6.5rem 11rem 2.75rem;
   align-items: center;
   height: var(--row-h);
   box-sizing: border-box;
@@ -95,7 +95,7 @@
 }
 
 .file-list.with-path .file-row {
-  grid-template-columns: 2.5rem minmax(0, 1fr) minmax(0, 14rem) 6.5rem 11rem 2.75rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 14rem) 6.5rem 11rem 2.75rem;
 }
 
 .file-head {
@@ -160,14 +160,9 @@
   text-overflow: ellipsis;
 }
 
-.file-row .cell-check {
-  display: flex;
-  justify-content: center;
-  padding: 0;
-}
-
-/* Het vinkje (een span met role=checkbox) */
+/* Het vinkje (een span met role=checkbox), vooraan in de cel met de naam */
 .row-check {
+  flex: none;
   display: inline-block;
   box-sizing: border-box;
   width: 1.1rem;
@@ -204,6 +199,12 @@
   display: flex;
   gap: var(--space-2);
   align-items: center;
+  padding-left: var(--space-3);
+}
+
+/* De kop van de naam begint waar de naam begint (na het vinkje en het icoon) */
+.file-head .cell-name {
+  padding-left: calc(var(--space-3) + 1.1rem + 32px + 2 * var(--space-2));
 }
 
 .file-row .cell-size,
@@ -238,7 +239,7 @@
   margin-left: 0;
 }
 
-/* De naam: een knop die eruitziet als tekst (een klik opent) */
+/* De naam: een knop die eruitziet als tekst (een klik opent, rowEvents.ts) */
 .file-row .name,
 .file-cell .name {
   min-width: 0;
@@ -282,10 +283,6 @@
   background: var(--surface-2);
 }
 
-.row-status:empty {
-  display: none;
-}
-
 .shared-mark {
   flex: none;
 }
@@ -294,7 +291,7 @@
 @media (max-width: 40rem) {
   .file-row,
   .file-list.with-path .file-row {
-    grid-template-columns: 2.5rem minmax(0, 1fr) 2.75rem;
+    grid-template-columns: minmax(0, 1fr) 2.75rem;
   }
 
   .file-row .cell-size,

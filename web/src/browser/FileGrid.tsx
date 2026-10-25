@@ -10,6 +10,7 @@ import { useColumns, useVirtualRows } from "../ui/virtual";
 import type { FileListProps } from "./FileList";
 import { previewCache, useWindowPreviews } from "./previews";
 import { useRowEvents, useScrollingClass } from "./rowEvents";
+import { SlotAssigner, useDeferredRange } from "./slots";
 
 /** Minimale breedte van een cel (--cell-min) en de ruimte ertussen. */
 export const CELL_MIN = 160;
@@ -90,7 +91,7 @@ export function FileGrid(p: FileGridProps): JSX.Element {
 
   const { get, selected, isCut, dropId, focusIndex, onFocusRow, count } = p;
   const out: JSX.Element[] = [];
-  const add = (r: number) => {
+  const add = (r: number, key: string) => {
     const cells: JSX.Element[] = [];
     for (let c = 0; c < columns; c++) {
       const i = r * columns + c;
@@ -98,7 +99,7 @@ export function FileGrid(p: FileGridProps): JSX.Element {
       const node = get(i);
       cells.push(
         <Cell
-          key={`c${i}`}
+          key={`c${c}`}
           node={node}
           index={i}
           selected={node ? selected.has(node.id) : false}
@@ -111,7 +112,7 @@ export function FileGrid(p: FileGridProps): JSX.Element {
     }
     out.push(
       <div
-        key={`r${r}`}
+        key={key}
         role="row"
         aria-rowindex={r + 1}
         className="file-grid-row"
@@ -125,8 +126,13 @@ export function FileGrid(p: FileGridProps): JSX.Element {
       </div>,
     );
   };
-  for (let r = rows.start; r < rows.end; r++) add(r);
-  if (rows.extra !== null) add(rows.extra);
+  // Rijen van het raster op vaste plekken (slots.ts): bestaande elementen worden hergebruikt
+  const slotter = useRef<SlotAssigner | null>(null);
+  slotter.current ??= new SlotAssigner();
+  // De rij met de tabstop houdt altijd hetzelfde element (zie FileList)
+  const tabStopRow = focusRowIndex ?? (p.count > 0 ? 0 : null);
+  const range = useDeferredRange(rows.start, rows.end, rowCount, focusRowIndex);
+  for (const slot of slotter.current.assign(range.start, range.end, range.extra, tabStopRow)) add(slot.index, slot.key);
 
   useEffect(() => {
     if (count > 0 && focusIndex >= count) onFocusRow(count - 1);
