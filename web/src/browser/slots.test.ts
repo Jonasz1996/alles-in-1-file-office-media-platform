@@ -5,7 +5,7 @@ const keyOf = (slots: Slot[], index: number) => slots.find((s) => s.index === in
 
 describe("vaste plekken", () => {
   it("elke rij één keer, sleutels uniek, in de volgorde van de plekken", () => {
-    const slots = new SlotAssigner().assign(10, 47, null, null);
+    const slots = new SlotAssigner().assign(10, 47, null);
     expect(slots.map((s) => s.index).sort((a, b) => a - b)).toEqual(Array.from({ length: 37 }, (_, i) => 10 + i));
     expect(new Set(slots.map((s) => s.key)).size).toBe(37);
     expect(slots.map((s) => s.key).slice(0, 3)).toEqual(["s0", "s1", "s2"]);
@@ -13,8 +13,8 @@ describe("vaste plekken", () => {
 
   it("wat blijft houdt zijn plek; wat erbij komt krijgt de plek van wat wegging", () => {
     const a = new SlotAssigner();
-    const before = a.assign(10, 47, null, null);
-    const after = a.assign(13, 50, null, null);
+    const before = a.assign(10, 47, null);
+    const after = a.assign(13, 50, null);
     for (let i = 13; i < 47; i++) expect(keyOf(after, i)).toBe(keyOf(before, i));
     const gone = [10, 11, 12].map((i) => keyOf(before, i));
     expect([47, 48, 49].map((i) => keyOf(after, i)).sort()).toEqual(gone.sort());
@@ -24,16 +24,18 @@ describe("vaste plekken", () => {
 
   it("dezelfde invoer twee keer: hetzelfde", () => {
     const a = new SlotAssigner();
-    a.assign(0, 20, null, null);
-    expect(a.assign(5, 25, null, null)).toEqual(a.assign(5, 25, null, null));
+    a.assign(0, 20, null);
+    expect(a.assign(5, 25, null)).toEqual(a.assign(5, 25, null));
   });
 
-  it("de rij met de focus houdt sleutel f, in en buiten beeld", () => {
+  it("de rij met de focus houdt zijn plek, ook buiten het bereik", () => {
     const a = new SlotAssigner();
-    expect(keyOf(a.assign(0, 30, null, 5), 5)).toBe("f");
-    const out = a.assign(100, 130, 5, 5);
-    expect(keyOf(out, 5)).toBe("f");
-    expect(out.filter((s) => s.key === "f")).toHaveLength(1);
+    const key = keyOf(a.assign(0, 30, null), 5);
+    const out = a.assign(100, 130, 5);
+    expect(keyOf(out, 5)).toBe(key);
     expect(out).toHaveLength(31);
+    expect(new Set(out.map((s) => s.key)).size).toBe(31);
+    // en terug in het bereik: nog steeds dezelfde
+    expect(keyOf(a.assign(0, 30, 5), 5)).toBe(key);
   });
 });

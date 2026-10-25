@@ -129,10 +129,8 @@ export function FileGrid(p: FileGridProps): JSX.Element {
   // Rijen van het raster op vaste plekken (slots.ts): bestaande elementen worden hergebruikt
   const slotter = useRef<SlotAssigner | null>(null);
   slotter.current ??= new SlotAssigner();
-  // De rij met de tabstop houdt altijd hetzelfde element (zie FileList)
-  const tabStopRow = focusRowIndex ?? (p.count > 0 ? 0 : null);
   const range = useDeferredRange(rows.start, rows.end, rowCount, focusRowIndex);
-  for (const slot of slotter.current.assign(range.start, range.end, range.extra, tabStopRow)) add(slot.index, slot.key);
+  for (const slot of slotter.current.assign(range.start, range.end, range.extra)) add(slot.index, slot.key);
 
   useEffect(() => {
     if (count > 0 && focusIndex >= count) onFocusRow(count - 1);

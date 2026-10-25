@@ -1,9 +1,11 @@
 // Vaste plekken (slots) voor de rijen van een gevirtualiseerde lijst. Bij het scrollen krijgt een
 // rij die erbij komt de plek van een rij die uit beeld ging: React werkt dan een bestaand element
 // bij in plaats van er een weg te gooien en een nieuw te maken (dat scheelt veel bij een trage
-// processor). De volgorde in de DOM is die van de plekken, niet van de rijen (dus geen
-// verplaatsingen); aria-rowindex zegt welke rij het is. De rij met de focus heeft een eigen
-// sleutel ("f"): die blijft hetzelfde element, ook buiten beeld, zodat de focus er niet af valt.
+// processor). Een rij die blijft, houdt zijn plek, dus zijn element: ook de rij met de focus
+// als hij buiten beeld raakt (extra), zodat de focus er niet af valt, en een rij die tijdens een
+// klik de focus krijgt (anders komt de klik bij een ander element aan). De volgorde in de DOM is
+// die van de plekken, niet van de rijen (dus geen verplaatsingen); aria-rowindex zegt welke rij
+// het is.
 
 import { useDeferredValue } from "react";
 
@@ -16,15 +18,17 @@ export class SlotAssigner {
   private slotOf = new Map<number, number>();
 
   /**
-   * De rijen start..end (zonder end) plus extra (de vastgehouden rij buiten beeld) op hun plek.
-   * keep is de rij met de focus (of null). Een rij die blijft, houdt zijn plek; een nieuwe rij
-   * krijgt de laagste vrije. Twee keer met dezelfde invoer geeft hetzelfde (StrictMode).
+   * De rijen start..end (zonder end) plus extra (de vastgehouden rij buiten het bereik) op hun
+   * plek. Een rij die blijft, houdt zijn plek; een nieuwe rij krijgt de laagste vrije. Twee
+   * keer met dezelfde invoer geeft hetzelfde (StrictMode).
    */
-  assign(start: number, end: number, extra: number | null, keep: number | null): Slot[] {
+  assign(start: number, end: number, extra: number | null): Slot[] {
+    const wanted: number[] = [];
+    for (let i = start; i < end; i++) wanted.push(i);
+    if (extra !== null && (extra < start || extra >= end)) wanted.push(extra);
     const next = new Map<number, number>();
     const used = new Set<number>();
-    for (let i = start; i < end; i++) {
-      if (i === keep) continue;
+    for (const i of wanted) {
       const s = this.slotOf.get(i);
       if (s !== undefined) {
         next.set(i, s);
@@ -32,19 +36,16 @@ export class SlotAssigner {
       }
     }
     let free = 0;
-    for (let i = start; i < end; i++) {
-      if (i === keep || next.has(i)) continue;
+    for (const i of wanted) {
+      if (next.has(i)) continue;
       while (used.has(free)) free++;
       next.set(i, free);
       used.add(free);
     }
     this.slotOf = next;
-    const out: Slot[] = [];
-    for (const [index, s] of next) out.push({ index, key: `s${s}` });
-    out.sort((a, b) => (next.get(a.index) ?? 0) - (next.get(b.index) ?? 0));
-    const focused = keep !== null && keep >= start && keep < end ? keep : extra;
-    if (focused !== null) out.push({ index: focused, key: "f" });
-    return out;
+    return [...next]
+      .sort((a, b) => a[1] - b[1])
+      .map(([index, s]) => ({ index, key: `s${s}` }));
   }
 }
 
