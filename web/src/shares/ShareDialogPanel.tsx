@@ -123,7 +123,6 @@ function SingleShareDialog({
   );
 }
 
-/** Een actie met een eigen foutmelding en bezig-stand. */
 /** Kwam de knop `to` net terug (shown) in de plaats van iets met de focus (een formulier dat
  * dichtging), dan de focus erop; anders zou hij op <body> staan, midden in de dialoog. */
 function useFocusOnReturn(shown: boolean, to: { current: HTMLElement | null }): void {
@@ -136,6 +135,7 @@ function useFocusOnReturn(shown: boolean, to: { current: HTMLElement | null }): 
   }, [shown, to]);
 }
 
+/** Een actie met een eigen foutmelding en bezig-stand. */
 function useAction(onDone: () => Promise<void>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
