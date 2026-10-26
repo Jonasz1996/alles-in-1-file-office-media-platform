@@ -8,8 +8,10 @@
 import {
   type DragEvent,
   type JSX,
+  memo,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -65,6 +67,9 @@ import "./browser/browser.css";
 
 /** Acties die in de selectiebalk een eigen knop hebben (de rest staat in het menu ⋯). */
 const BAR_ACTIONS = ["download", "share", "move", "copyTo", "trash"];
+/** Niets geselecteerd: altijd dezelfde lege lijst (de selectiebalk volgt met useDeferredValue en
+ * hoeft dan niet bij elke nieuwe pagina van de map opnieuw) */
+const NO_NODES: FileNode[] = [];
 
 export default function Files({ params }: RouteProps): JSX.Element {
   // De sneltoets-scope van de bestandsbrowser (P0): P3 (U, Shift+U) en P2 registreren hun
@@ -163,7 +168,7 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
       const n = snap.nodes.get(id);
       if (n) out.push(n);
     }
-    return out;
+    return out.length ? out : NO_NODES;
   }, [sel.selected, snap.version]);
   /** Waar een sneltoets op werkt: de selectie, of anders de rij met de focus. */
   const target = selected.length ? selected : focused ? [focused] : [];
@@ -481,6 +486,26 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
     <MenuButton icon="more" label={t("browser.selection.folderMenu")} items={folderItems} />
   );
 
+  // De selectiebalk met lage voorrang (useDeferredValue): een toets in de lijst (PageDown
+  // verplaatst ook de selectie) zet eerst de focus en de rijen, de balk volgt een frame later.
+  // De knoppen werken op wat nu geselecteerd is (latest), net als de sneltoetsen.
+  const barNodes = useDeferredValue(selected);
+  const barEnv = useMemo((): ActionEnv => ({ folder, clip, me, guest }), [folder, clip, me, guest]);
+  const latest = useRef({ selected, runAction, openMenu, focusIndex: focus.index, count });
+  latest.current = { selected, runAction, openMenu, focusIndex: focus.index, count };
+  const barActions = useMemo(
+    () => ({
+      onRun: (action: BrowserAction) => latest.current.runAction(action, latest.current.selected),
+      onMenu: (el: HTMLElement) => latest.current.openMenu(latest.current.selected, el),
+      onClear: () => selection.clear(),
+      onGone: () => {
+        const { focusIndex: i, count: n } = latest.current;
+        focusRow(listRef, Math.max(0, Math.min(i, n - 1)));
+      },
+    }),
+    [selection],
+  );
+
   const listProps = {
     ...rowCallbacks,
     get,
@@ -575,16 +600,7 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
         </div>
       )}
 
-      {sel.selected.size > 0 && (
-        <SelectionBar
-          nodes={selected}
-          env={env}
-          onRun={(action) => runAction(action, selected)}
-          onMenu={(el) => openMenu(selected, el)}
-          onClear={() => selection.clear()}
-          onGone={() => focusRow(listRef, Math.max(0, Math.min(focus.index, count - 1)))}
-        />
-      )}
+      {barNodes.length > 0 && <SelectionBar nodes={barNodes} env={barEnv} {...barActions} />}
 
       {ready && !snap.complete && (
         <p className="muted browser-progress" aria-live="polite">
@@ -650,8 +666,9 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
   );
 }
 
-/** De balk met de acties voor wat geselecteerd is. */
-function SelectionBar({
+/** De balk met de acties voor wat geselecteerd is (een memo: alleen opnieuw als de selectie of de
+ * omgeving verandert). */
+const SelectionBar = memo(function SelectionBar({
   nodes,
   env,
   onRun,
@@ -709,7 +726,7 @@ function SelectionBar({
       <IconButton icon="close" label={t("browser.selection.clear")} onClick={onClear} />
     </div>
   );
-}
+});
 
 function focusInput(id: string): void {
   const el = document.getElementById(id);

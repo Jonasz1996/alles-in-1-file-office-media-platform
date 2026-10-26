@@ -27,6 +27,8 @@ export class PreviewCache {
   /** id → etag, in volgorde van vragen (de laatste het eerst) */
   private readonly queue = new Map<string, string>();
   private readonly asking = new Set<string>();
+  /** Waar het laatste verzoek voor mislukte: daar komt (voorlopig) geen antwoord */
+  private readonly failed = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private inFlight = 0;
   private last = -Infinity;
@@ -52,6 +54,14 @@ export class PreviewCache {
     const e = this.entries.get(id);
     if (!e || (etag !== undefined && e.etag !== etag)) return undefined;
     return e.preview ?? undefined;
+  }
+
+  /** Is het antwoord voor id (deze inhoud) er nog niet? Dan toont een afbeelding een leeg vlak in
+   * plaats van eerst het icoon (Thumb). Na een mislukt verzoek niet meer: dan het icoon. */
+  pending(id: string, etag?: string): boolean {
+    const e = this.entries.get(id);
+    if (e && (etag === undefined || e.etag === etag)) return false;
+    return !this.failed.has(id);
   }
 
   private needs(node: FileNode): boolean {
@@ -121,12 +131,18 @@ export class PreviewCache {
       .then(
         (got) => {
           const at = this.now();
-          for (const [id, etag] of batch) this.entries.set(id, { etag, preview: got[id] ?? null, at });
+          for (const [id, etag] of batch) {
+            this.entries.set(id, { etag, preview: got[id] ?? null, at });
+            this.failed.delete(id);
+          }
           this.version++;
           for (const l of [...this.listeners]) l();
         },
         () => {
-          /* geen previews: dan de iconen */
+          // Geen previews: dan de iconen (en een volgende keer opnieuw vragen)
+          for (const id of ids) this.failed.add(id);
+          this.version++;
+          for (const l of [...this.listeners]) l();
         },
       )
       .finally(() => {

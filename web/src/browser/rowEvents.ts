@@ -189,13 +189,17 @@ export function useRowEvents(
   };
 }
 
-/** Zo lang na de laatste scrollstap telt de lijst nog als "aan het scrollen". */
-const SCROLL_IDLE_MS = 150;
+/** Zo lang na de laatste scrollstap telt de lijst nog als "aan het scrollen". Ruim: op een
+ * trage processor komen scrollstappen soms 150 tot 200 ms na elkaar, en elke keer dat de klasse
+ * eraf en er weer op gaat, krijgt de rij onder de muis een stel muisgebeurtenissen en een
+ * hover-stijl (net als imageGate.ts). */
+const SCROLL_IDLE_MS = 250;
 
 /**
- * Tijdens het scrollen krijgt de lijst de klasse "is-scrolling" (geen pointer-events): dan
- * schuift de inhoud onder de muis door zonder hover-stijlen, hit-tests en muisgebeurtenissen per
- * frame. 150 ms na de laatste stap gaat hij er weer af.
+ * Tijdens het scrollen krijgt de lijst de klasse "is-scrolling": dan ligt er een leeg vlak over
+ * de rijen (browser.css), en schuift de inhoud onder de muis door zonder hover-stijlen,
+ * hit-tests en muisgebeurtenissen per rij en per frame. SCROLL_IDLE_MS na de laatste stap gaat
+ * hij er weer af.
  */
 export function useScrollingClass(ref: RefObject<HTMLElement | null>): void {
   useEffect(() => {

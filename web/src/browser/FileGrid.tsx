@@ -10,7 +10,7 @@ import { useColumns, useVirtualRows } from "../ui/virtual";
 import type { FileListProps } from "./FileList";
 import { previewCache, useWindowPreviews } from "./previews";
 import { useRowEvents, useScrollingClass } from "./rowEvents";
-import { SlotAssigner, useDeferredRange } from "./slots";
+import { SlotAssigner, useDeferredRange, useNextStep } from "./slots";
 
 /** Minimale breedte van een cel (--cell-min) en de ruimte ertussen. */
 export const CELL_MIN = 160;
@@ -18,6 +18,8 @@ const GAP = 12;
 /** De naam onder de thumbnail */
 const NAME_H = 40;
 const OVERSCAN = 2;
+/** Hooguit zoveel nieuwe cellen per frame (in hele rijen van het raster; slots.ts) */
+const CELL_BUDGET = 18;
 
 export type FileGridProps = Omit<FileListProps, "sort" | "sortBlocked" | "onSort" | "headerMenu" | "pathOf">;
 
@@ -29,9 +31,11 @@ interface CellProps {
   cut: boolean;
   drop: boolean;
   preview: Preview | undefined;
+  /** Het antwoord over de preview is er nog niet (Thumb) */
+  pending: boolean;
 }
 
-const Cell = memo(function Cell({ node, index, selected, tabbable, cut, drop, preview }: CellProps) {
+const Cell = memo(function Cell({ node, index, selected, tabbable, cut, drop, preview, pending }: CellProps) {
   if (!node) {
     return (
       <div role="gridcell" data-index={index} tabIndex={tabbable ? 0 : -1} className="file-cell placeholder">
@@ -49,7 +53,7 @@ const Cell = memo(function Cell({ node, index, selected, tabbable, cut, drop, pr
       className={classes}
       draggable
     >
-      <Thumb node={node} preview={preview} size={180} />
+      <Thumb node={node} preview={preview} pending={pending} size={180} />
       <span
         role="checkbox"
         className="row-check cell-checkbox"
@@ -77,6 +81,7 @@ export function FileGrid(p: FileGridProps): JSX.Element {
     overscan: OVERSCAN,
     listRef: body,
     keepIndex: focusRowIndex,
+    transition: true,
   });
   if (p.scrollRef) p.scrollRef.current = (i) => rows.scrollToIndex(Math.floor(i / columns));
   useScrollingClass(grid);
@@ -107,6 +112,7 @@ export function FileGrid(p: FileGridProps): JSX.Element {
           cut={node ? (isCut?.(node.id) ?? false) : false}
           drop={!!node && node.id === dropId}
           preview={node && node.kind === "file" ? previewCache.get(node.id, node.etag) : undefined}
+          pending={!!node && node.kind === "file" && previewCache.pending(node.id, node.etag)}
         />,
       );
     }
@@ -130,7 +136,9 @@ export function FileGrid(p: FileGridProps): JSX.Element {
   const slotter = useRef<SlotAssigner | null>(null);
   slotter.current ??= new SlotAssigner();
   const range = useDeferredRange(rows.start, rows.end, rowCount, focusRowIndex);
-  for (const slot of slotter.current.assign(range.start, range.end, range.extra)) add(slot.index, slot.key);
+  const budget = Math.max(1, Math.floor(CELL_BUDGET / columns));
+  for (const slot of slotter.current.assign(range.start, range.end, range.extra, budget)) add(slot.index, slot.key);
+  useNextStep(slotter.current.pending);
 
   useEffect(() => {
     if (count > 0 && focusIndex >= count) onFocusRow(count - 1);

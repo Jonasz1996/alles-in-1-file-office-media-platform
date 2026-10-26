@@ -41,17 +41,25 @@ export function iconOf(node: Pick<FileNode, "kind" | "mime">): IconName {
   return node.kind === "album" ? "album" : ICONS[category(node)];
 }
 
+/** Soorten met (bijna) altijd een thumbnail: zolang het antwoord nog niet binnen is, een leeg vlak */
+const USUALLY_THUMB: readonly Category[] = ["image", "video", "pdf"];
+
 /**
  * Thumbnail als die er is, anders een icoon voor het soort bestand. size 32 (een rij in de
- * lijst) of 180 (een cel in het raster); beide gebruiken de thumbnail van 256 px.
+ * lijst) of 180 (een cel in het raster); beide gebruiken de thumbnail van 256 px. pending: het
+ * antwoord over de preview is er nog niet (browser/previews.ts); een afbeelding, video of pdf
+ * toont dan hetzelfde lege <img> als hieronder in plaats van eerst het icoon (geen wissel van
+ * element als de thumbnail komt, en geen icoon dat even verschijnt).
  */
 export const Thumb = memo(function Thumb({
   node,
   preview,
+  pending = false,
   size = 32,
 }: {
   node: Pick<FileNode, "kind" | "mime">;
   preview?: Preview;
+  pending?: boolean;
   size?: 32 | 180;
 }) {
   const [broken, setBroken] = useState<string | null>(null);
@@ -65,17 +73,18 @@ export const Thumb = memo(function Thumb({
     if (url === null || ready) return;
     return waitToLoad(url, () => setAllowed(url));
   }, [url, ready]);
-  if (url !== null && !ready) return <span aria-hidden="true" className={`${cls} thumb-pending`} />;
-  if (url !== null) {
+  if (url !== null || (pending && node.kind === "file" && USUALLY_THUMB.includes(category(node)))) {
+    // Hetzelfde <img> ook zolang hij wacht (zonder src: een leeg vlak), zodat er bij het
+    // scrollen geen element vervangen hoeft te worden
     return (
       <img
-        src={url}
+        src={url !== null && ready ? url : undefined}
         alt=""
         decoding="async"
         width={size}
         height={size}
         className={cls}
-        onError={() => setBroken(url)} // bijv. een verlopen adres: dan het icoon
+        onError={() => url !== null && setBroken(url)} // bijv. een verlopen adres: dan het icoon
       />
     );
   }

@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -110,6 +111,9 @@ export interface VirtualRowsOptions {
   /** Het element van de lijst zelf (voor de afstand tot de bovenkant van de scroller) */
   listRef: RefObject<HTMLElement | null>;
   keepIndex?: number | null;
+  /** Een nieuw bereik door scrollen met lage voorrang (startTransition): React rendert het in
+   * stukjes en één keer, in plaats van eerst dringend en dan nog eens uitgesteld */
+  transition?: boolean;
 }
 
 export interface VirtualRows {
@@ -124,7 +128,7 @@ export interface VirtualRows {
 
 /** De zichtbare rijen bij de huidige scrollpositie; herberekent bij scrollen en resizen (per frame). */
 export function useVirtualRows(o: VirtualRowsOptions): VirtualRows {
-  const { count, rowHeight, overscan = 6, scroller = "window", listRef, keepIndex = null } = o;
+  const { count, rowHeight, overscan = 6, scroller = "window", listRef, keepIndex = null, transition = false } = o;
   const fixed = typeof rowHeight === "number";
   const offsets = useMemo(
     () => (typeof rowHeight === "number" ? null : prefixOffsets(count, rowHeight)),
@@ -172,7 +176,8 @@ export function useVirtualRows(o: VirtualRowsOptions): VirtualRows {
       if (frame.current) return;
       frame.current = requestAnimationFrame(() => {
         frame.current = 0;
-        update();
+        if (transition) startTransition(update);
+        else update();
       });
     };
     target.addEventListener("scroll", onScroll, { passive: true });
@@ -189,7 +194,7 @@ export function useVirtualRows(o: VirtualRowsOptions): VirtualRows {
       if (frame.current) cancelAnimationFrame(frame.current);
       frame.current = 0;
     };
-  }, [scroller, update]);
+  }, [scroller, update, transition]);
 
   const scrollToIndex = useCallback(
     (i: number, align: "auto" | "start" | "center" = "auto") => {

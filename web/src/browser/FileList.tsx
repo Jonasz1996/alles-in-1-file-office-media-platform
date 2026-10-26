@@ -14,13 +14,16 @@ import { Icon } from "../ui/Icon";
 import { useVirtualRows } from "../ui/virtual";
 import { previewCache, useWindowPreviews } from "./previews";
 import { type RowCallbacks, useRowEvents, useScrollingClass } from "./rowEvents";
-import { SlotAssigner, useDeferredRange } from "./slots";
+import { SlotAssigner, useDeferredRange, useNextStep } from "./slots";
 import type { Sort, SortKey } from "./sort";
 
 /** De hoogte van een rij (--row-h in tokens.css). */
 export const ROW_H = 44;
 /** Zoveel rijen boven en onder het beeld staan er ook (scrollen zonder gaten). */
 const OVERSCAN = 8;
+/** Hooguit zoveel nieuwe rijen per frame (slots.ts): een wielstap brengt er een stuk of 9, een
+ * PageDown een beeld vol (in twee gelijke frames in plaats van een grote en een kleine). */
+const ROW_BUDGET = 10;
 
 export interface FileListProps extends Omit<RowCallbacks, "columns" | "rowHeight" | "scrollToIndex"> {
   get(i: number): FileNode | undefined;
@@ -52,6 +55,8 @@ interface RowProps {
   cut: boolean;
   drop: boolean;
   preview: Preview | undefined;
+  /** Het antwoord over de preview is er nog niet (Thumb) */
+  pending: boolean;
   path: ReactNode;
   showPath: boolean;
 }
@@ -65,6 +70,7 @@ const Row = memo(function Row({
   cut,
   drop,
   preview,
+  pending,
   path,
   showPath,
 }: RowProps) {
@@ -109,7 +115,7 @@ const Row = memo(function Row({
           aria-checked={selected}
           aria-label={t("browser.row.select", { name: node.name })}
         />
-        <Thumb node={node} preview={preview} size={32} />
+        <Thumb node={node} preview={preview} pending={pending} size={32} />
         {/* De naam: een klik opent (rowEvents.ts); met het toetsenbord Enter op de rij */}
         <button type="button" className="name" data-open="" tabIndex={-1}>
           {node.name}
@@ -209,6 +215,7 @@ export function FileList(p: FileListProps): JSX.Element {
     overscan: OVERSCAN,
     listRef: body,
     keepIndex: p.focusIndex >= 0 ? p.focusIndex : null,
+    transition: true,
   });
   if (p.scrollRef) p.scrollRef.current = (i) => rows.scrollToIndex(i);
   useScrollingClass(grid);
@@ -238,6 +245,7 @@ export function FileList(p: FileListProps): JSX.Element {
         cut={node ? (isCut?.(node.id) ?? false) : false}
         drop={!!node && node.id === dropId}
         preview={node && node.kind === "file" ? previewCache.get(node.id, node.etag) : undefined}
+        pending={!!node && node.kind === "file" && previewCache.pending(node.id, node.etag)}
         path={node && pathOf ? pathOf(node) : null}
         showPath={showPath}
       />,
@@ -247,7 +255,8 @@ export function FileList(p: FileListProps): JSX.Element {
   const slotter = useRef<SlotAssigner | null>(null);
   slotter.current ??= new SlotAssigner();
   const range = useDeferredRange(rows.start, rows.end, p.count, focusIndex >= 0 ? focusIndex : null);
-  for (const slot of slotter.current.assign(range.start, range.end, range.extra)) add(slot.index, slot.key);
+  for (const slot of slotter.current.assign(range.start, range.end, range.extra, ROW_BUDGET)) add(slot.index, slot.key);
+  useNextStep(slotter.current.pending);
 
   // Een kortere lijst (filter, verwijderd): de focus blijft binnen de lijst
   const { onFocusRow, count } = p;

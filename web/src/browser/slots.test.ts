@@ -39,3 +39,50 @@ describe("vaste plekken", () => {
     expect(keyOf(a.assign(0, 30, 5), 5)).toBe(key);
   });
 });
+
+describe("met een budget", () => {
+  it("hooguit zoveel nieuwe rijen per keer, die bij het midden eerst; dan de rest", () => {
+    const a = new SlotAssigner();
+    a.assign(0, 20, null);
+    // een sprong van een beeld: 20 nieuwe rijen, budget 8
+    const first = a.assign(40, 60, null, 8);
+    expect(a.pending).toBe(true);
+    const shown = first.map((s) => s.index).filter((i) => i >= 40);
+    expect(shown).toHaveLength(8);
+    // het dichtst bij het midden (49,5) eerst
+    expect(shown.sort((x, y) => x - y)).toEqual([46, 47, 48, 49, 50, 51, 52, 53]);
+    // de oude rijen blijven (buiten beeld) staan tot hun plek nodig is: geen nieuwe elementen
+    expect(first).toHaveLength(20);
+    const second = a.assign(40, 60, null, 8);
+    expect(a.pending).toBe(true);
+    expect(second.filter((s) => s.index >= 40)).toHaveLength(16);
+    const third = a.assign(40, 60, null, 8);
+    expect(a.pending).toBe(false);
+    expect(third.map((s) => s.index).sort((x, y) => x - y)).toEqual(Array.from({ length: 20 }, (_, i) => 40 + i));
+    // nog steeds dezelfde 20 plekken (sleutels), alleen hergebruikt
+    expect(new Set(third.map((s) => s.key))).toEqual(new Set(first.map((s) => s.key)));
+  });
+
+  it("wat al staat telt niet mee; binnen het budget in één keer", () => {
+    const a = new SlotAssigner();
+    const before = a.assign(10, 47, null, 10);
+    expect(a.pending).toBe(true);
+    a.assign(10, 47, null, 10);
+    a.assign(10, 47, null, 10);
+    a.assign(10, 47, null, 10);
+    expect(a.pending).toBe(false);
+    const after = a.assign(19, 56, null, 10);
+    expect(a.pending).toBe(false);
+    for (let i = 19; i < 47; i++) expect(keyOf(after, i)).toBeDefined();
+    expect(before).toHaveLength(10);
+  });
+
+  it("de rij met de focus gaat voor", () => {
+    const a = new SlotAssigner();
+    a.assign(0, 30, null);
+    const out = a.assign(100, 130, 200, 1);
+    expect(a.pending).toBe(true);
+    expect(out.map((s) => s.index)).toContain(200);
+    expect(out.filter((s) => s.index >= 100)).toHaveLength(1);
+  });
+});

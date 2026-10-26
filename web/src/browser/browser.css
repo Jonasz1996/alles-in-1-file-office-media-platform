@@ -86,16 +86,39 @@
 }
 
 .file-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 6.5rem 11rem 2.75rem;
+  display: flex;
   align-items: center;
   height: var(--row-h);
   box-sizing: border-box;
   border-bottom: 1px solid var(--line);
 }
 
-.file-list.with-path .file-row {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 14rem) 6.5rem 11rem 2.75rem;
+/* De kolommen als flex met vaste breedtes in plaats van een grid per rij: dat rekent minder
+   bij elke nieuwe rij (de kop gebruikt dezelfde breedtes) */
+.file-row > .cell-name {
+  flex: 1 1 0;
+}
+
+.file-row > .cell-path {
+  flex: 0 1 14rem;
+}
+
+.file-row > .cell-size {
+  flex: 0 0 6.5rem;
+}
+
+.file-row > .cell-date {
+  flex: 0 0 11rem;
+}
+
+.file-row > .cell-more {
+  flex: 0 0 2.75rem;
+}
+
+.file-row .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .file-head {
@@ -108,12 +131,20 @@
   position: relative;
   /* Een eigen layout-wortel: rijen erbij of eraf raken de rest van de pagina niet */
   contain: strict;
+  /* Een eigen laag: een frame met nieuwe rijen geeft alleen deze laag een nieuwe tekenlijst, niet
+     de hele pagina (de commit naar de compositor is dan ongeveer half zo duur) */
+  will-change: transform;
 }
 
-/* Tijdens het scrollen: geen hover, geen hit-tests (zie useScrollingClass) */
-.is-scrolling .file-body,
-.is-scrolling .file-grid-body {
-  pointer-events: none;
+/* Tijdens het scrollen: geen hover, geen hit-tests (zie useScrollingClass). Een leeg vlak over de
+   rijen in plaats van pointer-events: none op de lijst: pointer-events erft, dus aan en uit zetten
+   gaf elke keer een nieuwe stijlberekening voor alle rijen; dit vlak is één element. */
+.is-scrolling .file-body::after,
+.is-scrolling .file-grid-body::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
 }
 
 .file-body > .file-row {
@@ -189,10 +220,15 @@
   transform: rotate(45deg);
 }
 
+/* ⋯ als drie stippen: één stip met twee schaduwen (geen tekst met een font-fallback en geen
+   masker, dat per rij een eigen laag in de tekenlijst kost) */
 .more-dots::before {
-  content: "\22EF";
-  font-size: 1.25rem;
-  line-height: 1;
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: -6px 0 currentColor, 6px 0 currentColor;
 }
 
 .file-row .cell-name {
@@ -221,6 +257,14 @@
 
 .file-row .cell-size {
   text-align: right;
+}
+
+/* Grootte en datum passen altijd in hun kolom: geen eigen clip per cel (minder werk per rij bij
+   het tekenen) */
+.file-row > .cell-size,
+.file-row > .cell-date {
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .file-row .cell-path {
@@ -293,11 +337,6 @@
 
 /* Smal scherm: alleen het vinkje, de naam en ⋯ */
 @media (max-width: 40rem) {
-  .file-row,
-  .file-list.with-path .file-row {
-    grid-template-columns: minmax(0, 1fr) 2.75rem;
-  }
-
   .file-row .cell-size,
   .file-row .cell-date,
   .file-row .cell-path {

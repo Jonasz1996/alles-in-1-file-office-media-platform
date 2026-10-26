@@ -1,7 +1,7 @@
 // Eigen iconen: eenvoudige lijntekeningen op een raster van 24 px, in de tekstkleur
 // (currentColor), zodat ze in beide thema's werken. Geen iconenbibliotheek.
 
-import { type JSX, useEffect, useSyncExternalStore } from "react";
+import { type JSX, memo, useEffect, useSyncExternalStore } from "react";
 
 /** Alle namen (voor tests en een overzicht). */
 export const ICON_NAMES = [
@@ -126,8 +126,18 @@ if (typeof window !== "undefined") {
 }
 
 /** Een icoon. Zonder label is het versiering (aria-hidden); met label leest een schermlezer het.
- * Een icoon buiten de schil is één keer even leeg (zelfde maat) tot zijn chunk er is. */
-export function Icon({ name, size = 20, label }: { name: IconName; size?: 16 | 20 | 24 | 32; label?: string }): JSX.Element {
+ * Een icoon buiten de schil is één keer even leeg (zelfde maat) tot zijn chunk er is. Een memo:
+ * rendert een knop of werkbalk opnieuw (bijv. bij elke toets in de bestandslijst), dan blijft
+ * het icoon staan zolang naam, maat en label gelijk zijn. */
+export const Icon = memo(function Icon({
+  name,
+  size = 20,
+  label,
+}: {
+  name: IconName;
+  size?: 16 | 20 | 24 | 32;
+  label?: string;
+}): JSX.Element {
   const loaded = useSyncExternalStore(subscribe, () => more, () => more);
   const paths = SHELL_PATHS[name] ?? loaded?.[name];
   useEffect(() => {
@@ -154,4 +164,4 @@ export function Icon({ name, size = 20, label }: { name: IconName; size?: 16 | 2
       ))}
     </svg>
   );
-}
+});
