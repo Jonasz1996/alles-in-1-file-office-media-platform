@@ -15,6 +15,7 @@ maken" in de web-app). Daarbij (P6):
 import logging
 import uuid
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from itertools import batched
 
@@ -34,6 +35,7 @@ from app.routers import files
 from app.routers.files import NodeOut, Store
 from app.security import CurrentUser
 from app.storage import BlobStore
+from app.text import fold
 from app.usage import user_usage
 
 router = APIRouter(prefix="/api/v1", tags=["bestanden"])
@@ -56,11 +58,19 @@ class Results(BaseModel):
     results: list[errors.ItemResult]
 
 
-async def restore_node(session: AsyncSession, user: User, node_id: uuid.UUID) -> Node:
+async def restore_node(
+    session: AsyncSession,
+    user: User,
+    node_id: uuid.UUID,
+    node: Node | None = None,
+    taken: set[tuple[uuid.UUID, str]] | None = None,
+) -> Node:
     """Eén node uit de prullenbak terug, in de transactie van de aanroeper en alleen onder
     BlobStore.lock. Staat de map erboven niet meer (of zelf in de prullenbak), dan komt hij in
-    de hoofdmap; de naam wordt zo nodig genummerd."""
-    node = await files.get_node(session, user, node_id, "owner")
+    de hoofdmap; de naam wordt zo nodig genummerd. In bulk: node al opgehaald (van user), en
+    taken van taken_names (wordt bijgewerkt)."""
+    if node is None:
+        node = await files.get_node(session, user, node_id, "owner")
     if node.deleted_at is None:
         raise errors.fail(422, "not_trashed", "Staat niet in de prullenbak")
     parent = await session.get(Node, node.parent_id)
@@ -68,9 +78,35 @@ async def restore_node(session: AsyncSession, user: User, node_id: uuid.UUID) ->
     if parent is None or await files.is_trashed(session, parent):
         parent_id = user.root_id
     # Pas wijzigen als alles gelukt is: in bulk wordt de rest van de batch wel gecommit
-    name = await files.free_name(session, parent_id, node.name)
+    if taken is None or (parent_id, node.name.lower()) in taken:
+        name = await files.free_name(session, parent_id, node.name)
+    else:
+        name = node.name  # vrij: dat zei taken_names al (zonder query per node)
+    if taken is not None:
+        taken.add((parent_id, name.lower()))
     node.parent_id, node.name, node.deleted_at = parent_id, name, None
     return node
+
+
+async def taken_names(
+    session: AsyncSession, user: User, nodes: list[Node]
+) -> set[tuple[uuid.UUID, str]]:
+    """(map, naam in kleine letters) van wat er nu levend staat in de mappen waar deze nodes
+    terug kunnen komen (hun oude map of de hoofdmap), met een naam als die van een van hen
+    (de kandidaten van files.sibling). Eén query voor het hele stuk, in plaats van een
+    naamcontrole per node."""
+    if not nodes:
+        return set()
+    parents = {n.parent_id for n in nodes} | {user.root_id}
+    parents.discard(None)
+    rows = await session.execute(
+        select(Node.parent_id, Node.name).where(
+            Node.parent_id.in_(parents),
+            Node.search_name.in_({fold(n.name) for n in nodes}),
+            Node.deleted_at.is_(None),
+        )
+    )
+    return {(parent_id, name.lower()) for parent_id, name in rows}
 
 
 async def depths(session: AsyncSession, user: User, ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
@@ -151,14 +187,35 @@ async def restore_many(
         await session.commit()  # niet met een databaseverbinding op het slot wachten
         restored: list[Node] = []
         async with blobs.lock:
+            # Pas onder het slot lezen, en per stuk in één keer (niet per node): de eigen nodes
+            # (de rest via get_node, voor de juiste fout), de mappen erboven (vastgehouden: de
+            # identity map houdt ze anders niet, en dan haalt restore_node ze per node opnieuw)
+            # en de bezette namen
+            own: Sequence[Node] = []
+            if user.role != "guest":
+                own = (
+                    await session.scalars(
+                        select(Node).where(Node.id.in_(chunk), Node.owner_id == user.id)
+                    )
+                ).all()
+            mine = {n.id: n for n in own}
+            trashed = [n for n in own if n.deleted_at]
+            up = access.ancestry(Node.id.in_([n.id for n in trashed]))
+            above = (
+                await session.scalars(
+                    select(Node).where(Node.id.in_(select(up.c.id).where(up.c.depth > 0)))
+                )
+            ).all()
+            taken = await taken_names(session, user, trashed)
             for node_id in chunk:
                 try:
-                    node = await restore_node(session, user, node_id)
+                    node = await restore_node(session, user, node_id, mine.get(node_id), taken)
                 except HTTPException as e:
                     results[node_id] = errors.item_of(node_id, e)
                     continue
                 restored.append(node)
             await session.commit()
+            del above
         below = {node.id: await files.shared_below(session, node) for node in restored}
         await files.notify_many(session, restored, "node.changed", below=below)
         for out in await files.describe(session, user, restored, "owner"):

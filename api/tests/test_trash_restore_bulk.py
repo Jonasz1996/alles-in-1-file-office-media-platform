@@ -154,3 +154,42 @@ async def test_hooguit_10000_ids(client, admin):
     assert (r.status_code, code_of(r)) == (422, "invalid_input")
     r = await client.post("/api/v1/trash/restore", json={"ids": []}, headers=jonas)
     assert r.json() == {"results": []}
+
+
+@pytest.mark.anyio
+async def test_geen_query_per_node(client, admin, settings):
+    """Terugzetten kijkt de nodes en de bezette namen per stuk in één keer na (niet per node):
+    10.000 terug uit de prullenbak duurde anders ruim een minuut. Een naam die wel bezet is,
+    wordt nog steeds genummerd, ook tussen twee nodes uit hetzelfde stuk."""
+    from tests.test_search import count_queries
+
+    jonas, _ = admin
+    root_id = (await root(client, jonas))["folder"]["id"]
+
+    async def statements(n):
+        folder = await mkdir(client, jonas, root_id, f"Map {n}")
+        ids = [(await put(client, jonas, folder, f"{i}.txt", b"x")).json()["id"] for i in range(n)]
+        r = await client.post("/api/v1/batch/trash", json={"ids": ids}, headers=jonas)
+        assert all(x["ok"] for x in r.json()["results"])
+        with count_queries(settings) as seen:
+            r = await restore(client, jonas, ids)
+        assert [x["ok"] for x in r.json()["results"]] == [True] * n
+        assert [x["node"]["parent_id"] for x in r.json()["results"]] == [folder] * n
+        return len(seen)
+
+    assert await statements(3) == await statements(40)
+
+    # Bezet: door wat er nu staat, en door een node die in hetzelfde stuk eerder terugging
+    a = (await put(client, jonas, root_id, "zelfde.txt", b"a")).json()["id"]
+    await client.delete(f"/api/v1/files/{a}", headers=jonas)
+    b = (await put(client, jonas, root_id, "Zelfde.txt", b"b")).json()["id"]
+    await client.delete(f"/api/v1/files/{b}", headers=jonas)
+    await put(client, jonas, root_id, "ZELFDE.txt", b"c")
+    r = await restore(client, jonas, [a, b])
+    assert [x["node"]["name"] for x in r.json()["results"]] == ["zelfde (1).txt", "Zelfde (2).txt"]
+    c = (await put(client, jonas, root_id, "uniek.txt", b"d")).json()["id"]
+    await client.delete(f"/api/v1/files/{c}", headers=jonas)
+    d = (await put(client, jonas, root_id, "Uniek.txt", b"e")).json()["id"]
+    await client.delete(f"/api/v1/files/{d}", headers=jonas)
+    r = await restore(client, jonas, [c, d])
+    assert [x["node"]["name"] for x in r.json()["results"]] == ["uniek.txt", "Uniek (1).txt"]
