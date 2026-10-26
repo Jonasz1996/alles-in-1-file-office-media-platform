@@ -1,6 +1,6 @@
 // Een kantoordocument (docx, xlsx, pptx en de ODF-varianten) zoals de server het las
-// (app/office.py): de tekst met koppen, lijsten en tabellen, de bladen van een rekenblad of de
-// dia's van een presentatie. Vereenvoudigd: zonder opmaak, afbeeldingen of formules.
+// (app/office/reader.py): de tekst met koppen, lijsten en tabellen, de bladen van een rekenblad
+// of de dia's van een presentatie. Vereenvoudigd: zonder opmaak, afbeeldingen of formules.
 
 import { Fragment, type JSX, type ReactNode, useEffect, useState } from "react";
 import { errorText, t } from "../i18n";

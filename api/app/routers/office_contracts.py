@@ -23,7 +23,7 @@ OfficeKind = Literal["docx", "xlsx", "pptx"]
 # Wat de editor bewerkt en wat "Nieuw" maakt (Keuze 23 en 24), en de grens van DS zelf
 # (maxDownloadBytes)
 EDIT_FORMATS: list[str] = ["docx", "xlsx", "pptx"]
-NEW_KINDS: list[str] = ["docx", "xlsx", "pptx"]
+NEW_KINDS: list[OfficeKind] = ["docx", "xlsx", "pptx"]
 MAX_EDIT_BYTES = 104_857_600
 API_URL = "/office/web-apps/apps/api/documents/api.js"
 GATE_SECONDS = 7200
@@ -39,7 +39,7 @@ class OfficeStatus(BaseModel):
     editing: bool
     state: OfficeHealth
     edit_formats: list[str] = EDIT_FORMATS
-    new_kinds: list[str] = NEW_KINDS
+    new_kinds: list[OfficeKind] = NEW_KINDS
     max_bytes: int = MAX_EDIT_BYTES
 
 
