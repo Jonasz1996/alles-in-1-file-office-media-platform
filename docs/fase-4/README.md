@@ -1,6 +1,10 @@
 # Fase 4 — Office
 
-Status: **ontwerp** (bouwontwerp revisie 2, 26 oktober 2026). Er is nog niets gebouwd.
+Status: **in aanbouw** (bouwontwerp revisie 2, 26 oktober 2026). Van O0 staan de API-kant
+(migratie 0007, de contracten, de kern van proxy en tunnel, de invoercontrole, de gezondheid
+en de nep-DS) en de web-kant (de haken, de route `/bewerken/<id>` als stub, het tabblad
+Office) erin. De spike, de e2e met de nep-DS en de job `office` in CI volgen. Zonder
+office-instellingen werkt de app precies als in fase 3.
 
 ## Doel
 

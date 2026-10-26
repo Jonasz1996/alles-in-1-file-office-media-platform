@@ -58,5 +58,11 @@ van het tabblad is van O5; in O0 alleen de tekst dat het overzicht later komt.
       scope (`browser/actions.test.ts`: E alleen voor Bewerken; de test "elke actie met een
       sneltoets…" blijft groen).
 - [x] Elke tekst van de haken via `t()`, in het Nederlands en het Engels (`check:i18n --strict`).
-- [ ] Met office ingesteld en met alleen het toetsenbord: E, O en Alt+7 in de echte app. Dat kan
-      pas met de nep-DS in de e2e (O0-e2e en O2/O4/O5).
+- [x] Met office ingesteld en met alleen het toetsenbord: E en Alt+7 in de echte app. Nagelopen
+      bij het samenvoegen van O0 (de API en het web samen), met de nep-DS als proces en
+      `PLATFORM_OFFICE_DEV_UNGATED=1`, in een tijdelijke rooktest (niet in het repo): de status
+      zegt `ok`; Bewerken staat bij een docx en niet bij een txt; E in de lijst en E in de viewer
+      openen `/bewerken/<id>`; Terug is met Tab en Enter te bereiken; het tabblad Office staat er
+      en Alt+7 gaat erheen.
+- [ ] O (het menu Nieuw) met alleen het toetsenbord: pas als `office/newItems.ts` items geeft
+      (O4). De vaste e2e met de nep-DS komt met O0-e2e (`e2e/office_harness.py`).
