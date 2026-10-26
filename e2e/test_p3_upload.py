@@ -255,6 +255,7 @@ def test_herladen_dan_onderbroken_uploads_en_opnieuw_kiezen(
     onderbroken = lade.get_by_role("region", name="Onderbroken uploads")
     expect(onderbroken.get_by_text("film.bin", exact=True)).to_be_visible()
     expect(onderbroken.get_by_text(re.compile(r"van 6,0 MB"))).to_be_visible()
+    stale = stopped_upload(server, user)
 
     # Een ander bestand kiezen: dat zegt hij
     with page.expect_file_chooser() as chooser:
@@ -263,6 +264,7 @@ def test_herladen_dan_onderbroken_uploads_en_opnieuw_kiezen(
     expect(onderbroken.get_by_role("alert")).to_contain_text("Dat is een ander bestand")
 
     throttle(page, mbit=400)
+    sent = watch_tus(page)
     with page.expect_file_chooser() as chooser:
         onderbroken.get_by_role("button", name="Kies film.bin opnieuw").click()
     chooser.value.set_files(big)
@@ -270,6 +272,39 @@ def test_herladen_dan_onderbroken_uploads_en_opnieuw_kiezen(
     assert children(server, user)["film.bin"]["size"] == big.stat().st_size
     assert pending(server, user) == []
     expect(lade).to_have_count(0)
+    assert_resumed(sent, stale)
+
+
+def stopped_upload(server, user) -> dict:
+    """De ene onderbroken upload op de server, als hij stilstaat (het afgebroken verzoek van
+    vóór het herladen is verwerkt)."""
+    first = pending(server, user)
+    time.sleep(0.5)
+    again = pending(server, user)
+    assert len(again) == 1 and again == first, (first, again)
+    assert 0 < again[0]["offset"] < again[0]["size"], again
+    return again[0]
+
+
+def watch_tus(page) -> list[tuple[str, str, str | None]]:
+    """(methode, adres, Upload-Offset) van elk tus-verzoek vanaf nu."""
+    sent: list[tuple[str, str, str | None]] = []
+
+    def seen(request) -> None:
+        if "/api/v1/tus" in request.url and request.method in ("POST", "PATCH"):
+            sent.append((request.method, request.url, request.headers.get("upload-offset")))
+
+    page.on("request", seen)
+    return sent
+
+
+def assert_resumed(sent: list[tuple[str, str, str | None]], stale: dict) -> None:
+    """Na opnieuw kiezen: geen nieuwe upload, alleen stukken voor de oude, en de eerste begint
+    waar hij stond (niet opnieuw vanaf 0)."""
+    assert sent, "geen tus-verzoeken na opnieuw kiezen"
+    assert [m for m, _, _ in sent if m == "POST"] == [], sent
+    assert all(url.split("?")[0].endswith(f"/tus/{stale['id']}") for _, url, _ in sent), sent
+    assert sent[0][2] == str(stale["offset"]), (sent[0], stale)
 
 
 def test_dubbele_bestanden_een_vraag_en_geen_tus_ervoor(context_as, user_factory, server):

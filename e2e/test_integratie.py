@@ -247,6 +247,20 @@ def test_02_map_uploaden_met_botsing_en_hervatten_na_herladen(
     onderbroken = lade.get_by_role("region", name="Onderbroken uploads")
     expect(onderbroken.get_by_text("film.bin", exact=True)).to_be_visible()
     expect(onderbroken.get_by_text(re.compile(r"van 6,0 MB"))).to_be_visible()
+    # Waar hij stond: na opnieuw kiezen gaat dezelfde upload daar verder (niet vanaf 0)
+    stale = pending()
+    time.sleep(0.5)
+    assert pending() == stale and len(stale) == 1, stale
+    assert 0 < stale[0]["offset"] < stale[0]["size"], stale
+    sent: list[tuple[str, str, str | None]] = []
+    page.on(
+        "request",
+        lambda r: (
+            sent.append((r.method, r.url, r.headers.get("upload-offset")))
+            if "/api/v1/tus" in r.url and r.method in ("POST", "PATCH")
+            else None
+        ),
+    )
     cdp_profile(page.context, page, latency_ms=2, down_mbit=400, up_mbit=400)
     with page.expect_file_chooser() as chooser:
         onderbroken.get_by_role("button", name="Kies film.bin opnieuw").click()
@@ -257,6 +271,9 @@ def test_02_map_uploaden_met_botsing_en_hervatten_na_herladen(
     assert set(v.children(anna, dag)) == {"foto.txt", "film.bin"}
     assert pending() == []
     expect(lade).to_have_count(0)
+    assert sent and not [m for m, _, _ in sent if m == "POST"], sent
+    assert all(u.split("?")[0].endswith(f"/tus/{stale[0]['id']}") for _, u, _ in sent), sent
+    assert sent[0][2] == str(stale[0]["offset"]), (sent[0], stale)
     v.stand["reis"] = reis
     stap(v, "map uploaden")
 
@@ -625,10 +642,15 @@ def test_04_fotos_tijdlijn_album_delen_en_publieke_link(verhaal: Verhaal, tmp_pa
     expect(shared_row.get_by_role("link", name=re.compile("Reis 2024"))).to_have_attribute(
         "href", f"/album/{album_id}"
     )
-    expect(shared_row).not_to_contain_text("Kopiëren")
+    # Kopiëren naar… zit in het menu ⋯ (Acties voor …): een album heeft dat menu niet, en de
+    # server weigert het ook
+    expect(shared_row.get_by_role("button", name="Acties voor Reis 2024")).to_have_count(0)
+    expect(shared_row.get_by_role("button")).to_have_count(0)
     expect(shared_row.get_by_role("button", name="Reis 2024 downloaden")).to_have_count(0)
     r = v.api(bram, "POST", f"{API}/archive/link", json={"ids": [album_id], "name": "Reis 2024"})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "album", r.text
+    r = v.api(bram, "POST", f"{API}/batch/copy", json={"ids": [album_id], "parent_id": bram.root})
+    assert [x["code"] for x in r.json()["results"]] == ["album"], r.text
     shared_row.get_by_role("link", name=re.compile("Reis 2024")).click()
     expect(other.get_by_role("heading", name="Reis 2024", level=1)).to_be_visible()
     expect(other.get_by_text("van Anna Beheer", exact=False)).to_be_visible()

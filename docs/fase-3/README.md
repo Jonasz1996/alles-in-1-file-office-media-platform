@@ -51,7 +51,7 @@ licht en donker thema, en als PWA te installeren. Zonder nieuwe bibliotheken (B1
 | Lighthouse performance > 90 | echte Lighthouse 13.5.0: `/` 96 en `/s/<link>` 95 (mobiel), `/map/<10k>` 100 (desktop); de eigen meting binnen 3 punten ([prestaties.md](prestaties.md)) |
 | Eerste weergave < 1,5 s op LAN | `/`, `/map/<10k>` en `/s/<link>`, koud en warm, ruim onder de poort ([prestaties.md](prestaties.md)) |
 | Alle acties ook via het toetsenbord | de checklists [toetsenbord-p1](toetsenbord-p1.md) t/m [p6](toetsenbord-p6.md): p1 t/m p5 in `e2e/test_browser_keyboard.py` en stap 13 van het verhaal, p6 met alleen het toetsenbord in `e2e/test_toetsenbord_p6.py` (de tabbladen en Groepen in `test_admin`) |
-| 10.000 bestanden in één map scrollen soepel | lijst, raster en tijdlijn (50.000 foto's) bij 1× en 4× CPU binnen de poort ([prestaties.md](prestaties.md)) |
+| 10.000 bestanden in één map scrollen soepel | lijst, raster en tijdlijn (50.000 foto's) bij 1× en 4× CPU binnen de poort in de volledige runs op `8321db6` en `0661462` (3 van 3); bij 4× niet in elke losse run: op de opgeleverde code haalde één van de drie volledige runs alle poorten, en de lijst en de tijdlijn bij 4× een deel van de losse runs (zie de bekende grenzen hieronder en [prestaties.md](prestaties.md)) |
 
 ## Documenten
 
@@ -117,10 +117,11 @@ Zo werkt het nu:
 
 Meten en testen:
 
-- De lijst bij 4× CPU haalt de scrollpoort in ongeveer driekwart van de losse runs (46 van
-  61). Mislukt is bijna altijd één taak van 51–62 ms: ruis van de VM, die de vertraging vier
-  keer laat tellen. In een drukke periode van de VM valt ook de tijdlijn bij 4× zo uit, bij de
-  build van `897865b` even vaak als bij de eindstand. Van de drie volledige `run_all.py` bij het
+- De lijst bij 4× CPU haalde de scrollpoort bij `0661462` in ongeveer driekwart van de losse
+  runs (46 van 61), bij de slotcontrole op de opgeleverde code (`c6221f0`, een drukkere VM) in
+  2 en 4 van 10; de tijdlijn bij 4× daar in 5 en 1 van 10. Mislukt is bijna altijd één taak van
+  51–77 ms: ruis van de VM, die de vertraging vier keer laat tellen. De build van `897865b`
+  viel in die periode even vaak uit als de eindstand. Van de drie volledige `run_all.py` bij het
   afronden haalde de laatste alle poorten; de eerste had één koude eerste weergave van
   `/map/<10k>` van 8,5 s (de andere vier rond 650 ms, 40 koude herhalingen erna hooguit
   946 ms), waarvan de oorzaak niet gevonden is ([prestaties.md](prestaties.md),

@@ -177,8 +177,14 @@ def test_gedeeld_album_zonder_kopieren(context_as, server, user_factory, seeded)
     expect(row.get_by_role("link", name=re.compile("Vakantiealbum"))).to_have_attribute(
         "href", f"/album/{album_id}"
     )
-    expect(row).not_to_contain_text("Kopiëren")
+    # Kopiëren naar… zit in het menu ⋯ (Acties voor …): een album heeft dat menu niet
+    expect(row.get_by_role("button", name="Acties voor Vakantiealbum")).to_have_count(0)
+    expect(row.get_by_role("button")).to_have_count(0)
     expect(row.get_by_role("combobox")).to_have_count(0)
+    r = server.call(
+        bob, "POST", "/api/v1/batch/copy", json={"ids": [album_id], "parent_id": bob.root_id}
+    )
+    assert [x["code"] for x in r.json()["results"]] == ["album"], r.text
 
 
 def test_selectie_van_drie_met_een_groep_delen_en_bekijken(context_as, server, admin, user_factory):
