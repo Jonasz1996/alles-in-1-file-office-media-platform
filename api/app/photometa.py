@@ -4,8 +4,9 @@ stukken van 200 blobs door alles met een oude Blob.meta_version loopt.
 Eén keten (job-type "photometa", key "photometa:backfill"): elke run pakt de volgende 200
 blobs (op sha, na payload["after"]) met meta_version < render_meta.VERSION en een afbeelding
 of video als soort, leest ze in één renderproces (previews.render met mode "meta": alleen de
-headers), zet per blob de opnamedatum en EXIF via photodate.on_blob_meta, en zet dan zijn
-opvolger klaar met jobs.chain. Minder dan 200 gevonden: dit was de laatste.
+headers), zet per blob de opnamedatum en EXIF (photodate.set_blob_meta en retime_nodes: eerst
+alles uitrekenen, dan in een paar statements schrijven) en zet dan zijn opvolger klaar met
+jobs.chain. Minder dan 200 gevonden: dit was de laatste.
 
 Nieuwe uploads hebben dit niet nodig: de preview-taak leest dezelfde metadata (render.py roept
 render_meta aan) en zet meta_version al. Het schrijven gebeurt onder BlobStore.lock, net als
@@ -18,6 +19,7 @@ meta_version voor dat stuk toch op VERSION en gaat de keten verder: geen eindelo
 
 import shutil
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -104,8 +106,21 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
     results = await _read(settings, items)
     async with blobs.lock:
         async with maker() as session:
+            # Eerst alles lezen en uitrekenen, dan schrijven in een paar statements. SQLite
+            # heeft één schrijver: zolang deze transactie schrijft, wacht elk ander schrijvend
+            # verzoek (inloggen, /auth/refresh bij het openen van de app) op het slot. Per blob
+            # lezen en schrijven hield dat slot een halve seconde per stuk vast.
+            found = {
+                blob.sha256: blob
+                for blob in await session.scalars(
+                    select(Blob)
+                    .where(Blob.sha256.in_([sha for sha, _mime in batch]))
+                    .execution_options(populate_existing=True)
+                )
+            }
+            taken: list[tuple[str, datetime]] = []
             for sha, _mime in batch:
-                blob = await session.get(Blob, sha, populate_existing=True)
+                blob = found.get(sha)
                 if blob is None or blob.meta_version >= render_meta.VERSION:
                     continue  # opgeruimd, of de preview-taak was intussen al zo ver
                 meta = results.get(sha)
@@ -116,7 +131,11 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
                 meta = dict(meta)
                 capture = photodate.split_capture(meta)
                 exif = meta.get("exif") if isinstance(meta.get("exif"), dict) else None
-                await photodate.on_blob_meta(session, blob, capture, exif, settings.timezone)
+                at = photodate.set_blob_meta(blob, capture, exif, settings.timezone)
+                if at is not None:
+                    taken.append((sha, at))
+            await session.flush()
+            await photodate.retime_nodes(session, taken)
             if len(batch) == BATCH:
                 await jobs.chain(session, TYPE, {"after": batch[-1][0]}, KEY)
             await session.commit()

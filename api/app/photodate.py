@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import update
+from sqlalchemy import bindparam, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import render_meta
@@ -125,23 +125,43 @@ def captured_at(capture: dict, tz: str) -> datetime | None:
     return taken
 
 
-async def on_blob_meta(
-    session: AsyncSession, blob: Blob, capture: dict, exif: dict | None, tz: str
-) -> None:
-    """Na het lezen van de metadata van een blob (preview-taak of backfill), in de transactie
-    van de aanroeper: blob.taken_at en meta_version, en de opnamedatum naar alle bestanden met
-    deze inhoud die op de tijdlijn staan (taken_day gezet). Zonder datum in de inhoud houden
-    die hun terugvaldatum. exif gegeven: in preview_meta onder "exif" (een nieuwe dict, zodat
-    SQLAlchemy de wijziging ziet)."""
+def set_blob_meta(blob: Blob, capture: dict, exif: dict | None, tz: str) -> datetime | None:
+    """Het deel van on_blob_meta op de blob zelf, zonder database: taken_at, meta_version en
+    (exif gegeven) de EXIF in preview_meta, een nieuwe dict zodat SQLAlchemy de wijziging ziet.
+    Geeft de opnamedatum, of None als de inhoud er geen heeft."""
     taken = captured_at(capture, tz)
     blob.taken_at = taken
     blob.meta_version = render_meta.VERSION
     if exif is not None:
         blob.preview_meta = {**(blob.preview_meta or {}), "exif": exif}
+    return taken
+
+
+async def retime_nodes(session: AsyncSession, taken: list[tuple[str, datetime]]) -> None:
+    """De opnamedatum (sha, taken_at) naar alle bestanden met die inhoud die op de tijdlijn
+    staan (taken_day gezet), voor veel blobs in één statement (executemany): de backfill
+    houdt het schrijfslot van SQLite zo maar kort vast."""
+    if not taken:
+        return
+    node = Node.__table__
+    statement = (
+        update(node)
+        .where(node.c.blob_id == bindparam("b_sha"), node.c.taken_day.is_not(None))
+        .values(taken_at=bindparam("b_taken"), taken_day=bindparam("b_day"))
+    )
+    conn = await session.connection()
+    await conn.execute(
+        statement, [{"b_sha": sha, "b_taken": at, "b_day": day_of(at)} for sha, at in taken]
+    )
+
+
+async def on_blob_meta(
+    session: AsyncSession, blob: Blob, capture: dict, exif: dict | None, tz: str
+) -> None:
+    """Na het lezen van de metadata van een blob (preview-taak), in de transactie van de
+    aanroeper: blob.taken_at en meta_version (set_blob_meta), en de opnamedatum naar alle
+    bestanden met deze inhoud die op de tijdlijn staan (retime_nodes). Zonder datum in de
+    inhoud houden die hun terugvaldatum."""
+    taken = set_blob_meta(blob, capture, exif, tz)
     if taken is not None:
-        await session.execute(
-            update(Node)
-            .where(Node.blob_id == blob.sha256, Node.taken_day.is_not(None))
-            .values(taken_at=taken, taken_day=day_of(taken))
-            .execution_options(synchronize_session=False)
-        )
+        await retime_nodes(session, [(blob.sha256, taken)])
