@@ -73,6 +73,33 @@ class Settings(BaseSettings):
     # Cluster (later): "node1=192.168.50.11,node2=..."
     cluster_nodes: str = ""
 
+    # Office (fase 4): de document server van OnlyOffice in een eigen container op het
+    # interne netwerk. Leeg = geen office; de app is dan precies fase 3.
+    office_url: str = ""  # PLATFORM_OFFICE_URL, bijv. http://office
+    # PLATFORM_OFFICE_SECRET = JWT_SECRET van DS: minstens 32 tekens en nooit het app-geheim
+    office_secret: str = ""
+    # Hoe DS de app bereikt (de interne luisteraar), bijv. http://platform:8081
+    office_app_url: str = ""
+    office_internal_host: str = ""  # leeg = host
+    office_internal_port: int = 8081
+    office_convert_timeout: float = 120
+    office_max_pdf_bytes: int = 512 * 1024**2
+    # Grens op een download in de callback (Keuze 16)
+    office_max_save_bytes: int = 512 * 1024**2
+    # Groter: alleen omzetten op verzoek (Keuze 25)
+    office_auto_convert_bytes: int = 20 * 1024**2
+    # doc, xls, ppt en rtf (Keuze 23)
+    office_ole_max_bytes: int = 20 * 1024**2
+    office_max_tunnels: int = 1000
+    office_max_tunnels_user: int = 8
+    office_gate_cache_seconds: float = 15
+    office_health_seconds: float = 30
+    office_sweep_seconds: float = 30  # de e2e zet 1
+    office_recovery_seconds: float = 600  # de e2e zet 2
+    # Alleen O0, O2 en tests: proxy en tunnel zonder toegangscontrole. Na O1 doet hij niets
+    # meer; bij de integratie gaat hij weg.
+    office_dev_ungated: bool = False
+
     def nodes(self) -> list[tuple[str, str]]:
         if not self.cluster_nodes:
             return [(self.node_name, "127.0.0.1")]
@@ -94,6 +121,27 @@ class Settings(BaseSettings):
     @property
     def tls_dir(self) -> Path:
         return self.data_dir / "tls"
+
+    def office_problem(self) -> str | None:
+        """Waarom office niet ingesteld is, of None. Zonder office_url is er geen probleem:
+        dan staat office gewoon uit."""
+        if not self.office_url:
+            return None
+        if not self.office_url.startswith(("http://", "https://")):
+            return "PLATFORM_OFFICE_URL moet met http:// of https:// beginnen"
+        if not self.office_app_url.startswith(("http://", "https://")):
+            return "PLATFORM_OFFICE_APP_URL ontbreekt of begint niet met http:// of https://"
+        if len(self.office_secret) < 32:
+            return "PLATFORM_OFFICE_SECRET ontbreekt of is korter dan 32 tekens"
+        if self.office_secret == self.secret():
+            return "PLATFORM_OFFICE_SECRET mag niet gelijk zijn aan het geheim van de app"
+        return None
+
+    @property
+    def office_configured(self) -> bool:
+        """Office staat aan: een adres voor DS, een adres waarop DS de app bereikt en een
+        eigen, geldig geheim."""
+        return bool(self.office_url) and self.office_problem() is None
 
     def secret(self) -> str:
         """JWT-geheim: uit de omgeving, of eenmalig gegenereerd en bewaard in data_dir."""

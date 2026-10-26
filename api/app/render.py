@@ -7,7 +7,7 @@ Verzoek als JSON op stdin: {"source", "out", "work", "mime", "name", "max_pixels
 "memory_mb"}. Antwoord als JSON op stdout: {"state": "ready" | "none", "meta": {...},
 "sizes": [1024, 256]}. De afbeeldingen komen in out/<grootte>.webp (HEIC, HEIF en TIFF ook
 2048.webp: die kan de browser zelf niet tonen); een kantoordocument geeft ook out/doc.json
-(app/office.py). work is voor tussenbestanden. Een onverwachte fout eindigt met een exitcode
+(app/office/reader.py). work is voor tussenbestanden. Een onverwachte fout eindigt met een exitcode
 en de melding op stderr.
 
 Andere soorten verzoeken (veld "mode"):
@@ -101,7 +101,7 @@ TEXT_MIMES = {
 # Camera-RAW is vaak TIFF van binnen; daar maken we (nog) geen preview van
 RAW_EXTENSIONS = (".cr2", ".cr3", ".nef", ".nrw", ".arw", ".dng", ".orf", ".rw2", ".raf", ".pef")
 OFFICE_EXTENSIONS = (".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".docm", ".xlsm", ".pptm")
-# Kantoordocumenten die app/office.py leest (B21); doc, xls, ppt en rtf niet
+# Kantoordocumenten die app/office/reader.py leest (B21); doc, xls, ppt en rtf niet
 OFFICE_MIMES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -707,9 +707,9 @@ def epub(source: Path, out: Path, work: Path, max_pixels: int) -> dict:
 
 
 def office(source: Path, out: Path, work: Path, max_pixels: int) -> dict:
-    """Een kantoordocument (app/office.py): de inhoud als out/doc.json, de ingebedde
+    """Een kantoordocument (app/office/reader.py): de inhoud als out/doc.json, de ingebedde
     thumbnail als preview."""
-    from app import office as reader
+    from app.office import reader
 
     try:
         result = reader.read(source)

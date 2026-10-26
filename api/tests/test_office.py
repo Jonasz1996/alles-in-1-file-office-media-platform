@@ -1,4 +1,4 @@
-"""De vereenvoudigde lezer voor kantoordocumenten (app/office.py): de zes formaten, met
+"""De vereenvoudigde lezer voor kantoordocumenten (app/office/reader.py): de zes formaten, met
 testbestanden die hier met zipfile en XML-tekst gemaakt worden, en "bommen" die binnen de
 grenzen en de tijd moeten blijven."""
 
@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from app import office, render
+from app import render
+from app.office import reader as office
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 S_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
