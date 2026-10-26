@@ -13,9 +13,10 @@ let pending: { id: string | null; at: number; page: Promise<Page | null> } | nul
 
 export function preloadFolder(id: string | null): void {
   const page = (async () => {
-    // Nog niet ingelogd (het opstarten): refresh() deelt het verzoek met dat van de schil
-    if (!api.loggedIn && !(await api.refresh())) return null;
     try {
+      // Nog niet ingelogd (het opstarten): refresh() deelt het verzoek met dat van de schil.
+      // Ook die kan gooien (offline): de schil toont dat zelf, hier geen onafgehandelde belofte
+      if (!api.loggedIn && !(await api.refresh())) return null;
       return await api.request<Page>("GET", pagePath(id, { limit: FIRST_PAGE }));
     } catch {
       return null; // de store vraagt het zelf opnieuw en toont dan de fout
