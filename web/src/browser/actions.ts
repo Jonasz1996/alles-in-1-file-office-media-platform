@@ -1,21 +1,30 @@
 // Het register van acties op een selectie (de selectiebalk, het contextmenu, het menu ⋯ en de
 // sneltoetsen gebruiken allemaal dit). Een actie zegt zelf of hij zichtbaar is en kan (met de
 // reden als het niet kan), voor de hele selectie: de rechten van nodeActions() van elke node
-// samen. Groepen: openen, bewerken, delen, info, omzetten (gereserveerd, leeg: fase 10) en
-// prullenbak. registerAction() voegt er een toe (fase 10). Teksten gaan pas bij het tonen door
-// t(): nooit op moduleniveau.
+// samen. Groepen: openen, bewerken, delen, info, omzetten (fase 4: Downloaden als PDF; fase 10
+// meer) en prullenbak. registerAction() voegt er een toe (fase 10). Teksten gaan pas bij het
+// tonen door t(): nooit op moduleniveau.
+//
+// De haken van office (fase 4, van O0): "Bewerken" (E) en "Downloaden als PDF". Wanneer ze er
+// zijn, zeggen office/actions.ts (O2) en office/pdf.ts (O3), met de status van de server: zonder
+// office zijn ze er niet, precies zoals fase 3.
 
 import type { FileNode } from "../api";
-import { type MessageKey, t } from "../i18n";
+import { errorText, type MessageKey, t } from "../i18n";
+import { canEdit, openEditor } from "../office/actions";
+import { officeStatus } from "../office/api";
+import { canPdf, downloadPdf } from "../office/pdf";
+import type { HookState } from "../office/types";
 import { canWrite, isShared, MAX_MULTI_SHARE, nodeActions, permissionOf } from "../sharing";
 import type { IconName } from "../ui/Icon";
 import type { Combo } from "../ui/keys";
 import type { MenuItem } from "../ui/menu";
+import { toast } from "../ui/toast";
 import type { Clip } from "./clipboard";
 
 export type ActionGroup = "open" | "edit" | "share" | "info" | "convert" | "trash";
 
-/** De volgorde van de groepen in een menu; "convert" (omzetten) is voor fase 10. */
+/** De volgorde van de groepen in een menu; "convert" (omzetten): PDF (fase 4), meer in fase 10. */
 export const GROUPS: readonly ActionGroup[] = ["open", "edit", "share", "info", "convert", "trash"];
 
 export interface Availability {
@@ -107,6 +116,12 @@ function isMedia(node: FileNode): boolean {
   return node.kind === "file" && (mime.startsWith("image/") || mime.startsWith("video/"));
 }
 
+/** Een haak van office als beschikbaarheid: de reden in de woorden van Bestanden. */
+function hook(state: HookState): Availability {
+  if (!state.visible) return HIDDEN;
+  return state.reason ? no(t(`browser.office.reasons.${state.reason}`)) : OK;
+}
+
 const BUILT_IN: BrowserAction[] = [
   {
     id: "open",
@@ -115,6 +130,16 @@ const BUILT_IN: BrowserAction[] = [
     shortcut: "enter",
     when: (sel) => (single(sel) ? OK : HIDDEN),
     run: (sel, ctx) => ctx.ui.open(sel[0]),
+  },
+  {
+    // Office (fase 4): in de editor openen (een eigen pagina, /bewerken/<id>)
+    id: "edit",
+    labelKey: "browser.office.edit",
+    icon: "document",
+    group: "open",
+    shortcut: "e",
+    when: (sel) => (single(sel) ? hook(canEdit(sel[0], officeStatus.get())) : HIDDEN),
+    run: (sel) => openEditor(sel[0]),
   },
   {
     id: "download",
@@ -226,6 +251,21 @@ const BUILT_IN: BrowserAction[] = [
     run: (sel, ctx) => ctx.ui.versions(sel[0]),
   },
   {
+    // Office (fase 4): de omgezette PDF downloaden (Keuze 26)
+    id: "pdf",
+    labelKey: "browser.office.pdf",
+    icon: "pdf",
+    group: "convert",
+    when: (sel) => (single(sel) ? hook(canPdf(sel[0], officeStatus.get())) : HIDDEN),
+    run: async (sel) => {
+      try {
+        await downloadPdf(sel[0]);
+      } catch (e) {
+        toast(errorText(e), { kind: "error" });
+      }
+    },
+  },
+  {
     id: "trash",
     labelKey: "browser.actions.trash",
     icon: "trash",
@@ -240,6 +280,13 @@ const BUILT_IN: BrowserAction[] = [
 const registry: BrowserAction[] = [...BUILT_IN];
 const listeners = new Set<() => void>();
 let version = 0;
+
+// Een andere status van office (aan, uit, weg): de haken hierboven veranderen mee, dus wie het
+// register toont, tekent opnieuw
+officeStatus.subscribe(() => {
+  version++;
+  for (const l of [...listeners]) l();
+});
 
 /** Een actie erbij (fase 10: omzetten); geeft de functie om hem weer weg te halen. */
 export function registerAction(action: BrowserAction): () => void {

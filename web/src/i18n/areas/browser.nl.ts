@@ -203,4 +203,33 @@ export default {
     newFolder: "Nieuwe map",
     menu: "Menu met acties (ook Shift+F10)",
   },
+  // Fase 4, office (O0, frozen; bouwontwerp §2.0): de teksten van de haken in Bestanden en
+  // Zoeken: Bewerken, Downloaden als PDF, het menu Nieuw en waarom het niet kan.
+  office: {
+    edit: "Bewerken",
+    pdf: "Downloaden als PDF",
+    newMenu: "Nieuw",
+    new: {
+      folder: "Map",
+      docx: "Document",
+      xlsx: "Werkblad",
+      pptx: "Presentatie",
+      created: "{name} gemaakt",
+    },
+    keys: {
+      edit: "Bewerken in de editor",
+      newMenu: "Menu Nieuw (map, document, werkblad, presentatie)",
+    },
+    reasons: {
+      read_only: "Je mag dit bestand alleen bekijken",
+      format: "Dit soort bestand kan de editor niet bewerken (alleen docx, xlsx en pptx)",
+      too_large: "Te groot voor de editor (hooguit 100 MB)",
+      unsafe: "Dit bestand kwam niet door de controle; bewerken kan niet",
+      trashed: "Dit bestand staat in de prullenbak",
+      album: "Een album kan niet in de editor",
+      office_off: "Bewerken staat op deze server niet aan",
+      office_down: "De editor is nu niet bereikbaar; probeer het later opnieuw",
+      too_many: "Er bewerken nu te veel mensen tegelijk; probeer het later opnieuw",
+    },
+  },
 } as const;

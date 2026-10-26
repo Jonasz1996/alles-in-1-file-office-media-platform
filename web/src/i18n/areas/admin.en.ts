@@ -284,6 +284,10 @@ const en: Translation<typeof nl> = {
     removeTitle: "Delete group {name}?",
     removeText: "Whatever was shared with this group is then no longer shared with its members.",
   },
+  office: {
+    tab: "Office",
+    notReady: "The office overview comes later in phase 4.",
+  },
 };
 
 export default en;

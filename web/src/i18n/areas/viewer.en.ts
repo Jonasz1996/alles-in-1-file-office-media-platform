@@ -106,6 +106,22 @@ const en: Translation<typeof nl> = {
     slide: "Slide {n}",
     none: "The contents of this document cannot be shown.",
     truncated: "The document is longer; download it to see everything.",
+    edit: "Edit",
+    pdf: "Download as PDF",
+    keys: {
+      edit: "Edit in the editor",
+    },
+    reasons: {
+      read_only: "You can only view this file",
+      format: "The editor cannot edit this kind of file (only docx, xlsx and pptx)",
+      too_large: "Too large for the editor (at most 100 MB)",
+      unsafe: "This file did not pass the check; it cannot be edited",
+      trashed: "This file is in the trash",
+      album: "An album cannot be opened in the editor",
+      office_off: "Editing is not enabled on this server",
+      office_down: "The editor cannot be reached right now; try again later",
+      too_many: "Too many people are editing right now; try again later",
+    },
   },
   info: {
     title: "Details",

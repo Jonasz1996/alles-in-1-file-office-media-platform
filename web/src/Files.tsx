@@ -4,6 +4,8 @@
 // zonder alles opnieuw te laden. Selecteren met muis, aanraking en toetsenbord; acties uit één
 // register (browser/actions.ts) in de selectiebalk, het contextmenu en als sneltoets; slepen
 // naar een map in de lijst of in het pad; bestanden van buiten de browser loslaten = uploaden.
+// Met office (fase 4) wordt "Nieuwe map" het menu Nieuw (O): Map plus wat office/newItems.ts
+// geeft. Zonder office blijft het de knop van fase 3.
 
 import {
   type DragEvent,
@@ -45,6 +47,8 @@ import { loadView, saveView, useFolderStore, type View } from "./browser/useFold
 import { isGuest, useCurrentUser } from "./currentUser";
 import { errorText, t } from "./i18n";
 import { Link } from "./links";
+import { useOfficeStatus } from "./office";
+import { newItems } from "./office/newItems";
 import { markReady } from "./perf";
 import { type RouteProps, useNavSection, useRestoreScroll } from "./router";
 import { SEARCH_INPUT_ID, SearchBox } from "./browser/SearchBox";
@@ -86,6 +90,10 @@ interface OpenMenu {
   at: { x: number; y: number } | HTMLElement;
   label: string;
   restore: Element | null;
+  /** Waar de focus in het menu begint (standaard het eerste item) */
+  focus?: "first" | "last";
+  /** Het menu Nieuw van de werkbalk (voor aria-expanded op zijn knop) */
+  newMenu?: boolean;
 }
 
 function useActionsVersion(): number {
@@ -118,6 +126,8 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
   const [focus, setFocus] = useState<{ index: number; id: string | null }>({ index: -1, id: null });
   const listRef = useRef<HTMLDivElement>(null);
   const scrollTo = useRef<((i: number) => void) | null>(null);
+  const newButton = useRef<HTMLButtonElement>(null);
+  const office = useOfficeStatus();
 
   const setView = useCallback((v: View) => {
     setViewState(v);
@@ -306,6 +316,21 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
     }
   }
 
+  // --- het menu Nieuw (fase 4): Map plus de items van office; zonder die items de knop van fase 3 ---
+  const extraNew: MenuItem[] =
+    folder && can.mkdir ? newItems({ folder, status: office, added: (node) => store.upsert([node]) }) : [];
+  const newMenu = extraNew.length > 0;
+  const newMenuItems = (): MenuItem[] => [
+    { id: "new-folder", label: t("browser.office.new.folder"), icon: "new-folder", shortcut: "n", onSelect: () => void newFolder() },
+    ...extraNew,
+  ];
+  const newMenuOpen = menu?.newMenu === true;
+  function openNewMenu(focus: "first" | "last"): void {
+    const el = newButton.current;
+    if (!el) return;
+    setMenu({ items: newMenuItems(), at: el, label: t("browser.office.newMenu"), restore: el, focus, newMenu: true });
+  }
+
   // De rij met de focus gaat weg (naar de prullenbak, verplaatst, ook door iemand anders): de
   // focus valt dan naar <body>, waar de pijltjes en sneltoetsen van de lijst niet meer werken.
   // Stond de focus het laatst in de lijst, dan gaat hij naar de rij die nu op die plek staat.
@@ -399,6 +424,12 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
       run: () => void newFolder(),
     },
     {
+      combo: "o",
+      label: t("browser.office.keys.newMenu"),
+      when: () => newMenu && newButton.current !== null,
+      run: () => openNewMenu("first"),
+    },
+    {
       combo: "mod+f",
       label: t("browser.keys.filter"),
       // Staat de focus al in het filter, dan is een tweede Ctrl/Cmd+F weer van de browser
@@ -447,7 +478,9 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
 
   const folderItems = (): MenuItem[] => {
     const items: MenuItem[] = [];
-    if (can.mkdir)
+    // Met office het menu Nieuw als submenu (dezelfde items als in de werkbalk)
+    if (newMenu) items.push({ id: "new", label: t("browser.office.newMenu"), icon: "new-folder", items: newMenuItems() });
+    else if (can.mkdir)
       items.push({ id: "new-folder", label: t("browser.newFolder.button"), icon: "new-folder", shortcut: "n", onSelect: () => void newFolder() });
     const paste = findAction("paste");
     if (paste) {
@@ -597,9 +630,26 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
       {snap.status !== "gone" && (
         <div className="browser-toolbar" role="toolbar" aria-label={t("browser.toolbar")}>
           {folder && <UploadButtons folderId={folder.id} canUpload={can.upload} />}
-          {can.mkdir && (
+          {can.mkdir && !newMenu && (
             <Button icon="new-folder" onClick={() => void newFolder()}>
               {t("browser.newFolder.button")}
+            </Button>
+          )}
+          {can.mkdir && newMenu && (
+            <Button
+              ref={newButton}
+              icon="new-folder"
+              aria-haspopup="menu"
+              aria-expanded={newMenuOpen}
+              aria-keyshortcuts="O"
+              onClick={() => (newMenuOpen ? setMenu(null) : openNewMenu("first"))}
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+                e.preventDefault();
+                openNewMenu(e.key === "ArrowDown" ? "first" : "last");
+              }}
+            >
+              {t("browser.office.newMenu")}
             </Button>
           )}
           <span className="view-switch" role="group" aria-label={t("browser.view.label")}>
@@ -660,6 +710,7 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
           items={menu.items}
           anchor={menu.at}
           label={menu.label}
+          initialFocus={menu.focus}
           onClose={(reason) => {
             const restore = menu.restore;
             setMenu(null);

@@ -205,6 +205,33 @@ const en: Translation<typeof nl> = {
     newFolder: "New folder",
     menu: "Menu with actions (also Shift+F10)",
   },
+  office: {
+    edit: "Edit",
+    pdf: "Download as PDF",
+    newMenu: "New",
+    new: {
+      folder: "Folder",
+      docx: "Document",
+      xlsx: "Spreadsheet",
+      pptx: "Presentation",
+      created: "{name} created",
+    },
+    keys: {
+      edit: "Edit in the editor",
+      newMenu: "New menu (folder, document, spreadsheet, presentation)",
+    },
+    reasons: {
+      read_only: "You can only view this file",
+      format: "The editor cannot edit this kind of file (only docx, xlsx and pptx)",
+      too_large: "Too large for the editor (at most 100 MB)",
+      unsafe: "This file did not pass the check; it cannot be edited",
+      trashed: "This file is in the trash",
+      album: "An album cannot be opened in the editor",
+      office_off: "Editing is not enabled on this server",
+      office_down: "The editor cannot be reached right now; try again later",
+      too_many: "Too many people are editing right now; try again later",
+    },
+  },
 };
 
 export default en;

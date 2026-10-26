@@ -1,5 +1,7 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { loadAreas, resetI18nForTests } from "../i18n";
+import { officeStatus } from "../office/api";
+import type { OfficeStatus } from "../office/types";
 import {
   type ActionEnv,
   actionLabel,
@@ -8,10 +10,12 @@ import {
   availability,
   type BrowserAction,
   browserActions,
+  actionsVersion,
   findAction,
   GROUPS,
   MAX_SHARE,
   registerAction,
+  subscribeActions,
 } from "./actions";
 import { dirNode, fileNode } from "./testNodes";
 
@@ -106,7 +110,8 @@ describe("het register", () => {
     expect(GROUPS).toEqual(["open", "edit", "share", "info", "convert", "trash"]);
     const groups = browserActions().map((a) => GROUPS.indexOf(a.group));
     expect(groups).toEqual([...groups].sort((a, b) => a - b));
-    expect(browserActions().some((a) => a.group === "convert")).toBe(false);
+    // Omzetten heeft in fase 4 alleen "Downloaden als PDF" (de haak van office)
+    expect(browserActions().filter((a) => a.group === "convert").map((a) => a.id)).toEqual(["pdf"]);
   });
 
   it("labels: per selectie en pas bij het tonen vertaald", () => {
@@ -159,5 +164,88 @@ describe("het register", () => {
     expect(combos).toContain("mod+backspace");
     expect(combos).toContain("f2");
     expect(new Set(combos).size).toBe(combos.length);
+  });
+});
+
+describe("de haken van office (fase 4)", () => {
+  const on: OfficeStatus = {
+    enabled: true,
+    editing: true,
+    state: "ok",
+    edit_formats: ["docx", "xlsx", "pptx"],
+    new_kinds: ["docx", "xlsx", "pptx"],
+    max_bytes: 100,
+  };
+  const doc = fileNode({ id: "a", name: "Brief.DOCX", size: 10 });
+
+  afterEach(() => officeStatus.set(null));
+
+  it("zonder status (geen office, een oudere server, een fout): Bewerken en PDF zijn er niet", () => {
+    officeStatus.set(null);
+    expect(availability(action("edit"), [doc], env).visible).toBe(false);
+    expect(availability(action("pdf"), [doc], env).visible).toBe(false);
+    const ids = actionMenuItems([doc], env, () => {}).map((i) => i.id);
+    expect(ids).not.toContain("edit");
+    expect(ids).not.toContain("pdf");
+  });
+
+  it("office uit (ingesteld, maar uitgezet) of niet ingesteld: ook niet", () => {
+    officeStatus.set({ ...on, enabled: false, editing: false });
+    expect(availability(action("edit"), [doc], env).visible).toBe(false);
+    officeStatus.set({ ...on, enabled: false, editing: false, state: "off" });
+    expect(availability(action("edit"), [doc], env).visible).toBe(false);
+  });
+
+  it("Bewerken: één docx, xlsx of pptx met schrijfrecht, direct na Openen", () => {
+    officeStatus.set(on);
+    expect(availability(action("edit"), [doc], env)).toEqual({ visible: true, enabled: true });
+    expect(availability(action("edit"), [fileNode({ id: "x", name: "Lijst.xlsx" })], env).visible).toBe(true);
+    expect(availability(action("edit"), [fileNode({ id: "x", name: "notities.txt" })], env).visible).toBe(false);
+    expect(availability(action("edit"), [fileNode({ id: "x", name: "docx" })], env).visible).toBe(false);
+    expect(availability(action("edit"), [dirNode({ id: "d", name: "map.docx" })], env).visible).toBe(false);
+    expect(availability(action("edit"), [doc, fileNode({ id: "b", name: "b.docx" })], env).visible).toBe(false);
+    const readOnly = fileNode({ id: "r", name: "r.docx", owner: anna, permission: "read" });
+    expect(availability(action("edit"), [readOnly], env).visible).toBe(false);
+    const shared = fileNode({ id: "w", name: "w.docx", owner: anna, permission: "write" });
+    expect(availability(action("edit"), [shared], env).enabled).toBe(true);
+    const ids = actionMenuItems([doc], env, () => {}).map((i) => i.id);
+    expect(ids.slice(0, 2)).toEqual(["open", "edit"]);
+  });
+
+  it("wat even niet kan, staat er uitgeschakeld met de reden", () => {
+    officeStatus.set(on);
+    const big = fileNode({ id: "g", name: "g.pptx", size: 101 });
+    expect(availability(action("edit"), [big], env)).toEqual({
+      visible: true,
+      enabled: false,
+      reason: "Te groot voor de editor (hooguit 100 MB)",
+    });
+    const trashed = fileNode({ id: "t", name: "t.docx", deleted_at: "2026-10-02T10:00:00Z" });
+    expect(availability(action("edit"), [trashed], env).reason).toBe("Dit bestand staat in de prullenbak");
+    officeStatus.set({ ...on, editing: false, state: "down" });
+    expect(availability(action("edit"), [doc], env).reason).toMatch(/niet bereikbaar/);
+  });
+
+  it("de PDF-haak blijft in O0 verborgen (O3 vult hem)", () => {
+    officeStatus.set(on);
+    expect(availability(action("pdf"), [doc], env).visible).toBe(false);
+  });
+
+  it("een andere status: wie het register toont, hoort het", () => {
+    const heard = vi.fn();
+    const stop = subscribeActions(heard);
+    const before = actionsVersion();
+    officeStatus.set(on);
+    expect(heard).toHaveBeenCalledTimes(1);
+    expect(actionsVersion()).toBe(before + 1);
+    officeStatus.set({ ...on });
+    expect(heard).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("de sneltoets E is alleen voor Bewerken", () => {
+    expect(action("edit").shortcut).toBe("e");
+    const withE = browserActions().filter((a) => a.shortcut === "e" || (Array.isArray(a.shortcut) && a.shortcut.includes("e")));
+    expect(withE.map((a) => a.id)).toEqual(["edit"]);
   });
 });

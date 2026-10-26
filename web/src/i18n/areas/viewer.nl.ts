@@ -104,6 +104,24 @@ export default {
     slide: "Dia {n}",
     none: "De inhoud van dit document kan niet worden getoond.",
     truncated: "Het document is langer; download het om alles te zien.",
+    // Fase 4 (O0, frozen; bouwontwerp §2.0): de knoppen van de haak in de werkbalk van de
+    // viewer, met waarom het niet kan. De sleutels hierboven zijn van de weergave (B21).
+    edit: "Bewerken",
+    pdf: "Downloaden als PDF",
+    keys: {
+      edit: "Bewerken in de editor",
+    },
+    reasons: {
+      read_only: "Je mag dit bestand alleen bekijken",
+      format: "Dit soort bestand kan de editor niet bewerken (alleen docx, xlsx en pptx)",
+      too_large: "Te groot voor de editor (hooguit 100 MB)",
+      unsafe: "Dit bestand kwam niet door de controle; bewerken kan niet",
+      trashed: "Dit bestand staat in de prullenbak",
+      album: "Een album kan niet in de editor",
+      office_off: "Bewerken staat op deze server niet aan",
+      office_down: "De editor is nu niet bereikbaar; probeer het later opnieuw",
+      too_many: "Er bewerken nu te veel mensen tegelijk; probeer het later opnieuw",
+    },
   },
   info: {
     title: "Gegevens",

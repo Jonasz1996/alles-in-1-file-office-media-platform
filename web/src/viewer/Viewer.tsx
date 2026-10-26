@@ -5,6 +5,10 @@
 // Een eigen <dialog> (niet ui/Dialog): de toegankelijke naam is precies de bestandsnaam, en de
 // kop toont "naam · 3 / 120". Zoals ui/Dialog zet hij de scope "dialog" in een layout-effect,
 // en daarbovenop "viewer" voor zijn eigen sneltoetsen.
+//
+// De haak van office in de werkbalk (fase 4, van O0): "Bewerken" (E) en "Downloaden als PDF".
+// Of ze er zijn, zeggen office/actions.ts (O2) en office/pdf.ts (O3); nooit via een publieke
+// link en nooit bij een eerdere versie. Zonder office zijn ze er niet, precies zoals fase 3.
 
 import {
   type JSX,
@@ -19,6 +23,10 @@ import {
 } from "react";
 import { formatBytes } from "../api";
 import { errorText, t } from "../i18n";
+import { useOfficeStatus } from "../office";
+import { canEdit, openEditor } from "../office/actions";
+import { canPdf, downloadPdf } from "../office/pdf";
+import type { HookState, OfficeTarget } from "../office/types";
 import { Button, IconButton } from "../ui/Button";
 import { pushScope, useShortcuts } from "../ui/keys";
 import { openShortcutHelp } from "../ui/ShortcutHelp";
@@ -42,6 +50,8 @@ const PENDING_ROUNDS = 20;
 const PENDING_MS = 3000;
 /** Zo ver (px) vegen is naar het volgende bestand. */
 const SWIPE = 60;
+/** Een haak van office die er niet is. */
+const NO_HOOK: HookState = { visible: false, reason: null };
 
 /** Kan het element met de focus (of een ouder ervan in de viewer) nog opzij scrollen in deze
  * richting? Lange regels, een brede tabel of een ingezoomde PDF: dan zijn ← en → van dat gebied. */
@@ -99,6 +109,12 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
   const zoomed = useRef(false);
   const swipe = useRef<{ id: number; x: number; y: number } | null>(null);
   const key = item ? keyOf(item) : "";
+  // Office: alleen voor wie ingelogd is. Een item uit Bestanden is een FileNode (met kind en
+  // permission); zonder permission is het van jou, zoals overal
+  const office = useOfficeStatus(src.kind === "user");
+  const target = item as (ViewerItem & OfficeTarget) | undefined;
+  const editHook = target && src.kind === "user" ? canEdit(target, office) : NO_HOOK;
+  const pdfHook = target && src.kind === "user" ? canPdf(target, office) : NO_HOOK;
 
   useLayoutEffect(() => {
     const el = dialog.current;
@@ -203,6 +219,29 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
     }
   }
 
+  /** Waarom een haak van office nu niet kan, in de woorden van de viewer (null: hij kan). */
+  function hookReason(hook: HookState): string | null {
+    return hook.reason ? t(`viewer.office.reasons.${hook.reason}`) : null;
+  }
+
+  function edit() {
+    if (!item || !editHook.visible) return;
+    const reason = hookReason(editHook);
+    if (reason) setError(reason);
+    else openEditor(item);
+  }
+
+  async function pdf() {
+    if (!item || !pdfHook.visible) return;
+    const reason = hookReason(pdfHook);
+    if (reason) return setError(reason);
+    try {
+      await downloadPdf(item);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+
   function toggleFullscreen() {
     const done = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.();
     done?.catch(() => setError(t("viewer.fullscreenFailed")));
@@ -224,6 +263,7 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
       { combo: "f", run: toggleFullscreen, label: t("viewer.keys.fullscreen") },
       { combo: "i", run: () => setInfo((v) => !v), label: t("viewer.keys.info") },
       { combo: "d", run: () => void download(), label: t("viewer.keys.download") },
+      { combo: "e", run: edit, when: () => editHook.visible, label: t("viewer.office.keys.edit") },
       { combo: "?", run: openShortcutHelp, label: t("viewer.keys.help") },
     ],
     { scope: "viewer" },
@@ -333,7 +373,28 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
             disabled={index === items.length - 1 && !onNeedMore}
             onClick={() => go(1)}
           />
+          {editHook.visible && (
+            <IconButton
+              icon="document"
+              className="ghost"
+              label={t("viewer.office.edit")}
+              title={hookReason(editHook) ?? t("viewer.office.edit")}
+              aria-disabled={editHook.reason ? true : undefined}
+              aria-keyshortcuts="E"
+              onClick={edit}
+            />
+          )}
           <IconButton icon="download" className="ghost" label={t("viewer.download")} onClick={download} />
+          {pdfHook.visible && (
+            <IconButton
+              icon="pdf"
+              className="ghost"
+              label={t("viewer.office.pdf")}
+              title={hookReason(pdfHook) ?? t("viewer.office.pdf")}
+              aria-disabled={pdfHook.reason ? true : undefined}
+              onClick={() => void pdf()}
+            />
+          )}
           <IconButton icon="info" className="ghost" label={t("viewer.details")} pressed={info} onClick={() => setInfo((v) => !v)} />
           <IconButton icon="link" className="ghost" label={t("viewer.newTab")} onClick={openInTab} />
           <IconButton icon="fullscreen" className="ghost" label={t("viewer.fullscreen")} onClick={toggleFullscreen} />

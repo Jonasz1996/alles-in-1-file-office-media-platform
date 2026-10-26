@@ -285,4 +285,10 @@ export default {
     removeTitle: "Groep {name} verwijderen?",
     removeText: "Wat met deze groep gedeeld is, is daarna niet meer gedeeld met de leden.",
   },
+  // Fase 4, office (O0, frozen; bouwontwerp §2.0): het tabblad Office. Wat erin staat, is van
+  // O5 (admin/OfficeTab.tsx, met eigen teksten buiten dit blok).
+  office: {
+    tab: "Office",
+    notReady: "Het overzicht van office komt later in fase 4.",
+  },
 } as const;

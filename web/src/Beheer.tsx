@@ -4,6 +4,7 @@
 
 import type { JSX } from "react";
 import { Jobs } from "./admin/Jobs";
+import { OfficeTab } from "./admin/OfficeTab";
 import { Overview } from "./admin/Overview";
 import { SecurityTab } from "./admin/SecurityTab";
 import { Storage } from "./admin/Storage";
@@ -11,6 +12,8 @@ import { Users } from "./admin/Users";
 import { BeheerGroups } from "./BeheerGroups";
 import { useCurrentUser } from "./currentUser";
 import { type MessageKey, t } from "./i18n";
+import { useOfficeStatus } from "./office";
+import type { OfficeStatus } from "./office/types";
 import { navigate, type RouteProps } from "./router";
 import { useScope, useShortcuts } from "./ui/keys";
 import { PageTitle } from "./ui/PageTitle";
@@ -33,25 +36,37 @@ const TABS: readonly TabInfo[] = [
   { id: "security", path: "beveiliging", label: "admin.tabs.security" },
 ];
 
+/** Het zevende tabblad (fase 4), alleen met office ingesteld. */
+const OFFICE_TAB: TabInfo = { id: "office", path: "office", label: "admin.office.tab" };
+
+/** De tabbladen bij deze status: zonder office (of als de server het niet zegt) die van fase 3. */
+export function tabsFor(status: Pick<OfficeStatus, "state"> | null): readonly TabInfo[] {
+  return status && status.state !== "off" ? [...TABS, OFFICE_TAB] : TABS;
+}
+
 export function tabHref(path: string): string {
   return path ? `/beheer/${path}` : "/beheer";
 }
 
 /** Het tabblad bij het stuk van het adres; onbekend is het overzicht. */
-export function tabOf(path: string | undefined): TabInfo {
-  return TABS.find((tab) => tab.path === (path ?? "")) ?? TABS[0];
+export function tabOf(path: string | undefined, tabs: readonly TabInfo[] = TABS): TabInfo {
+  return tabs.find((tab) => tab.path === (path ?? "")) ?? tabs[0];
 }
 
 /** De route /beheer/:tab? */
 export default function BeheerPage({ params }: RouteProps): JSX.Element | null {
   const user = useCurrentUser();
-  const current = tabOf(params.tab);
+  const tabs = tabsFor(useOfficeStatus());
+  const current = tabOf(params.tab, tabs);
+  const hasOffice = tabs.length > TABS.length;
   useScope("admin");
   useShortcuts(
-    TABS.map((tab, i) => ({
+    [...TABS, OFFICE_TAB].map((tab, i) => ({
       combo: `alt+${i + 1}`,
       label: t("admin.keys.tab", { name: t(tab.label) }),
       run: () => navigate(tabHref(tab.path)),
+      // Alt+7 alleen met het tabblad Office; anders vangt hij de toets niet
+      when: tab === OFFICE_TAB ? () => hasOffice : undefined,
     })),
     { scope: "admin" },
   );
@@ -63,7 +78,7 @@ export default function BeheerPage({ params }: RouteProps): JSX.Element | null {
       <Tabs
         label={t("admin.tabs.label")}
         current={current.id}
-        tabs={TABS.map((tab) => ({ id: tab.id, label: t(tab.label), href: tabHref(tab.path) }))}
+        tabs={tabs.map((tab) => ({ id: tab.id, label: t(tab.label), href: tabHref(tab.path) }))}
       />
       <div className="admin-panel">
         {current.id === "overview" && <Overview />}
@@ -72,6 +87,7 @@ export default function BeheerPage({ params }: RouteProps): JSX.Element | null {
         {current.id === "jobs" && <Jobs />}
         {current.id === "groups" && <BeheerGroups />}
         {current.id === "security" && <SecurityTab />}
+        {current.id === "office" && <OfficeTab />}
       </div>
     </main>
   );
