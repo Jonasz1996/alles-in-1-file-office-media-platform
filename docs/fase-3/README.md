@@ -118,8 +118,13 @@ Zo werkt het nu:
 Meten en testen:
 
 - De lijst bij 4× CPU haalt de scrollpoort in ongeveer driekwart van de losse runs (46 van
-  61); elke volledige `run_all.py` was goed, raster en tijdlijn steeds. Mislukt is bijna altijd
-  één taak van 51–62 ms: ruis van de VM, die de vertraging vier keer laat tellen.
+  61). Mislukt is bijna altijd één taak van 51–62 ms: ruis van de VM, die de vertraging vier
+  keer laat tellen. In een drukke periode van de VM valt ook de tijdlijn bij 4× zo uit, bij de
+  build van `897865b` even vaak als bij de eindstand. Van de drie volledige `run_all.py` bij het
+  afronden haalde de laatste alle poorten; de eerste had één koude eerste weergave van
+  `/map/<10k>` van 8,5 s (de andere vier rond 650 ms, 40 koude herhalingen erna hooguit
+  946 ms), waarvan de oorzaak niet gevonden is ([prestaties.md](prestaties.md),
+  "Slotcontrole").
 - Ingelogd (`/map/<10k>`) meldt Lighthouse "The page loaded too slowly to finish within the
   time limit": de live-stroom `/api/v1/events` blijft open, dus het netwerk wordt nooit stil.
   Alle metingen zijn er wel (score 100).

@@ -1,7 +1,7 @@
 {
   "tool": "run_all",
-  "generated": "2026-10-26T02:55:39+00:00",
-  "commit": "0661462",
+  "generated": "2026-10-26T07:36:21+00:00",
+  "commit": "c6221f0",
   "dirty": false,
   "report_only": false,
   "data": {
@@ -10,17 +10,17 @@
     "photos": 50000
   },
   "timings": {
-    "seed_s": 14.5,
-    "first_view_s": 99.5,
-    "scroll_s": 79.2,
-    "lighthouse_like_s": 420.8
+    "seed_s": 15.6,
+    "first_view_s": 99.9,
+    "scroll_s": 82.4,
+    "lighthouse_like_s": 423.4
   },
   "errors": [],
   "ok": true,
   "results": {
     "first_view": {
       "tool": "first_view",
-      "server": "http://127.0.0.1:36231",
+      "server": "http://127.0.0.1:35045",
       "runs": 5,
       "profile": {
         "latency_ms": 2,
@@ -52,99 +52,99 @@
           },
           "cold": {
             "runs": [
-              309.4,
-              276.4,
-              359.1,
-              248,
-              272.7
+              281.5,
+              257.7,
+              385.4,
+              265,
+              254
             ],
-            "median_ms": 276.4,
-            "p95_ms": 359.1,
+            "median_ms": 265,
+            "p95_ms": 385.4,
             "gate_ok": true
           },
           "warm": {
             "runs": [
-              170.5,
-              127.8,
-              152.4,
-              138.5,
-              127.4
+              163.5,
+              148.4,
+              127.9,
+              159.2,
+              118
             ],
-            "median_ms": 138.5,
-            "p95_ms": 170.5,
+            "median_ms": 148.4,
+            "p95_ms": 163.5,
             "gate_ok": true
           },
           "details": {
             "cold": [
               {
-                "ms": 309.4,
+                "ms": 281.5,
                 "source": "mark:login",
-                "ttfb_ms": 5.7,
+                "ttfb_ms": 7.4,
                 "sw_before_ready": false,
                 "controlled": false
               },
               {
-                "ms": 276.4,
+                "ms": 257.7,
                 "source": "mark:login",
-                "ttfb_ms": 8.8,
+                "ttfb_ms": 6.7,
                 "sw_before_ready": false,
                 "controlled": false
               },
               {
-                "ms": 359.1,
+                "ms": 385.4,
                 "source": "mark:login",
-                "ttfb_ms": 4.8,
+                "ttfb_ms": 16,
                 "sw_before_ready": false,
                 "controlled": false
               },
               {
-                "ms": 248,
+                "ms": 265,
                 "source": "mark:login",
-                "ttfb_ms": 4.7,
+                "ttfb_ms": 4.9,
                 "sw_before_ready": false,
                 "controlled": false
               },
               {
-                "ms": 272.7,
+                "ms": 254,
                 "source": "mark:login",
-                "ttfb_ms": 5.5,
+                "ttfb_ms": 5.2,
                 "sw_before_ready": false,
                 "controlled": false
               }
             ],
             "warm": [
               {
-                "ms": 170.5,
+                "ms": 163.5,
                 "source": "mark:login",
-                "ttfb_ms": 10.9,
+                "ttfb_ms": 12.1,
                 "sw_before_ready": false,
                 "controlled": true
               },
               {
-                "ms": 127.8,
+                "ms": 148.4,
                 "source": "mark:login",
-                "ttfb_ms": 10.4,
+                "ttfb_ms": 8.8,
                 "sw_before_ready": false,
                 "controlled": true
               },
               {
-                "ms": 152.4,
+                "ms": 127.9,
                 "source": "mark:login",
-                "ttfb_ms": 9.7,
+                "ttfb_ms": 9.9,
                 "sw_before_ready": false,
                 "controlled": true
               },
               {
-                "ms": 138.5,
+                "ms": 159.2,
                 "source": "mark:login",
-                "ttfb_ms": 8,
+                "ttfb_ms": 10.2,
                 "sw_before_ready": false,
                 "controlled": true
               },
               {
-                "ms": 127.4,
+                "ms": 118,
                 "source": "mark:login",
-                "ttfb_ms": 10.9,
+                "ttfb_ms": 8.6,
                 "sw_before_ready": false,
                 "controlled": true
               }
@@ -153,7 +153,7 @@
           "problems": []
         },
         "folder": {
-          "url": "/map/cca24b53-be95-42a4-8805-020d255691ea",
+          "url": "/map/fcb8b0b1-b7ba-4f06-86db-233a74850b6c",
           "mark": "app:ready:folder",
           "owner": "P2",
           "status": "pass",
@@ -171,99 +171,99 @@
           },
           "cold": {
             "runs": [
-              741.7,
-              701.7,
-              600.1,
-              645,
-              665.2
+              672.6,
+              613.9,
+              593,
+              664.6,
+              671.6
             ],
-            "median_ms": 665.2,
-            "p95_ms": 741.7,
+            "median_ms": 664.6,
+            "p95_ms": 672.6,
             "gate_ok": true
           },
           "warm": {
             "runs": [
-              570,
-              491.6,
-              518.5,
-              504.9,
-              515.5
+              539.9,
+              526.9,
+              512.7,
+              488,
+              506.9
             ],
-            "median_ms": 515.5,
-            "p95_ms": 570,
+            "median_ms": 512.7,
+            "p95_ms": 539.9,
             "gate_ok": true
           },
           "details": {
             "cold": [
               {
-                "ms": 741.7,
+                "ms": 672.6,
                 "source": "mark:folder",
-                "ttfb_ms": 10.1,
+                "ttfb_ms": 7.3,
                 "sw_before_ready": false,
                 "controlled": false
               },
               {
-                "ms": 701.7,
+                "ms": 613.9,
+                "source": "mark:folder",
+                "ttfb_ms": 6.7,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 593,
+                "source": "mark:folder",
+                "ttfb_ms": 7,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 664.6,
+                "source": "mark:folder",
+                "ttfb_ms": 5.8,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 671.6,
                 "source": "mark:folder",
                 "ttfb_ms": 6.1,
-                "sw_before_ready": false,
-                "controlled": false
-              },
-              {
-                "ms": 600.1,
-                "source": "mark:folder",
-                "ttfb_ms": 4.9,
-                "sw_before_ready": false,
-                "controlled": false
-              },
-              {
-                "ms": 645,
-                "source": "mark:folder",
-                "ttfb_ms": 6.2,
-                "sw_before_ready": false,
-                "controlled": false
-              },
-              {
-                "ms": 665.2,
-                "source": "mark:folder",
-                "ttfb_ms": 4.7,
                 "sw_before_ready": false,
                 "controlled": false
               }
             ],
             "warm": [
               {
-                "ms": 570,
+                "ms": 539.9,
                 "source": "mark:folder",
-                "ttfb_ms": 14.4,
+                "ttfb_ms": 12.4,
                 "sw_before_ready": false,
                 "controlled": true
               },
               {
-                "ms": 491.6,
+                "ms": 526.9,
                 "source": "mark:folder",
-                "ttfb_ms": 8.7,
+                "ttfb_ms": 9.5,
                 "sw_before_ready": false,
                 "controlled": true
               },
               {
-                "ms": 518.5,
+                "ms": 512.7,
                 "source": "mark:folder",
-                "ttfb_ms": 11.5,
+                "ttfb_ms": 10.4,
                 "sw_before_ready": false,
                 "controlled": true
               },
               {
-                "ms": 504.9,
+                "ms": 488,
                 "source": "mark:folder",
-                "ttfb_ms": 12.7,
+                "ttfb_ms": 13.7,
                 "sw_before_ready": false,
                 "controlled": true
               },
               {
-                "ms": 515.5,
+                "ms": 506.9,
                 "source": "mark:folder",
-                "ttfb_ms": 12.7,
+                "ttfb_ms": 10.8,
                 "sw_before_ready": false,
                 "controlled": true
               }
@@ -272,7 +272,7 @@
           "problems": []
         },
         "public": {
-          "url": "/s/VIu5BQBCYLe6SrKDicGx1z_WaLvJX6ygVkuncsKYn_w",
+          "url": "/s/EertC0oLc4p5J1JY0uyLojR1DifqTAso3dewAfMkviw",
           "mark": "app:ready:public",
           "owner": "P4",
           "status": "pass",
@@ -290,99 +290,99 @@
           },
           "cold": {
             "runs": [
-              578.4,
-              536.9,
-              534,
-              528.1,
-              514
+              594.6,
+              562.8,
+              588.2,
+              580.8,
+              630.1
             ],
-            "median_ms": 534,
-            "p95_ms": 578.4,
+            "median_ms": 588.2,
+            "p95_ms": 630.1,
             "gate_ok": true
           },
           "warm": {
             "runs": [
-              447.4,
-              622.7,
-              458.9,
-              473.5,
-              472.8
+              473.9,
+              448.9,
+              505.9,
+              510.2,
+              522.8
             ],
-            "median_ms": 472.8,
-            "p95_ms": 622.7,
+            "median_ms": 505.9,
+            "p95_ms": 522.8,
             "gate_ok": true
           },
           "details": {
             "cold": [
               {
-                "ms": 578.4,
+                "ms": 594.6,
                 "source": "mark:public",
-                "ttfb_ms": 5.9,
+                "ttfb_ms": 6.1,
                 "sw_before_ready": false,
                 "controlled": false
               },
               {
-                "ms": 536.9,
+                "ms": 562.8,
                 "source": "mark:public",
-                "ttfb_ms": 4.7,
+                "ttfb_ms": 6.2,
                 "sw_before_ready": false,
                 "controlled": false
               },
               {
-                "ms": 534,
+                "ms": 588.2,
                 "source": "mark:public",
-                "ttfb_ms": 6.8,
+                "ttfb_ms": 9.4,
                 "sw_before_ready": false,
                 "controlled": false
               },
               {
-                "ms": 528.1,
+                "ms": 580.8,
                 "source": "mark:public",
-                "ttfb_ms": 6.6,
+                "ttfb_ms": 5,
                 "sw_before_ready": false,
                 "controlled": false
               },
               {
-                "ms": 514,
+                "ms": 630.1,
                 "source": "mark:public",
-                "ttfb_ms": 5.7,
+                "ttfb_ms": 5.1,
                 "sw_before_ready": false,
                 "controlled": false
               }
             ],
             "warm": [
               {
-                "ms": 447.4,
+                "ms": 473.9,
                 "source": "mark:public",
-                "ttfb_ms": 10,
+                "ttfb_ms": 10.3,
                 "sw_before_ready": false,
                 "controlled": true
               },
               {
-                "ms": 622.7,
+                "ms": 448.9,
                 "source": "mark:public",
-                "ttfb_ms": 9.6,
+                "ttfb_ms": 9.9,
                 "sw_before_ready": false,
                 "controlled": true
               },
               {
-                "ms": 458.9,
+                "ms": 505.9,
                 "source": "mark:public",
-                "ttfb_ms": 12.9,
+                "ttfb_ms": 9.1,
                 "sw_before_ready": false,
                 "controlled": true
               },
               {
-                "ms": 473.5,
+                "ms": 510.2,
                 "source": "mark:public",
-                "ttfb_ms": 9.6,
+                "ttfb_ms": 12.3,
                 "sw_before_ready": false,
                 "controlled": true
               },
               {
-                "ms": 472.8,
+                "ms": 522.8,
                 "source": "mark:public",
-                "ttfb_ms": 10.2,
+                "ttfb_ms": 10.7,
                 "sw_before_ready": false,
                 "controlled": true
               }
@@ -396,26 +396,26 @@
     },
     "scroll": {
       "tool": "scroll",
-      "server": "http://127.0.0.1:36231",
+      "server": "http://127.0.0.1:35045",
       "n": 10000,
       "blobs": 2000,
       "timeline_photos": 50000,
       "views": [
         {
-          "path": "/map/cca24b53-be95-42a4-8805-020d255691ea",
+          "path": "/map/fcb8b0b1-b7ba-4f06-86db-233a74850b6c",
           "mode": "list",
           "cpu": 1,
-          "load_s": 0.61,
+          "load_s": 0.69,
           "problems": [],
           "status": "pass",
           "reason": null,
           "virtualized": true,
           "focused_before": true,
-          "frames": 480,
+          "frames": 487,
           "longest_task_ms": null,
           "checks": {
             "frame_p95_ms": {
-              "value": 16.7,
+              "value": 16.8,
               "limit": 20,
               "ok": true
             },
@@ -464,20 +464,20 @@
           }
         },
         {
-          "path": "/map/cca24b53-be95-42a4-8805-020d255691ea",
+          "path": "/map/fcb8b0b1-b7ba-4f06-86db-233a74850b6c",
           "mode": "list",
           "cpu": 4,
-          "load_s": 0.6,
+          "load_s": 0.67,
           "problems": [],
           "status": "pass",
           "reason": null,
           "virtualized": true,
           "focused_before": true,
-          "frames": 472,
+          "frames": 469,
           "longest_task_ms": null,
           "checks": {
             "frame_p95_ms": {
-              "value": 33.3,
+              "value": 33.4,
               "limit": 34,
               "ok": true
             },
@@ -497,7 +497,7 @@
               "ok": true
             },
             "thumbnails": {
-              "value": 121,
+              "value": 122,
               "limit": 100,
               "ok": true
             },
@@ -526,20 +526,20 @@
           }
         },
         {
-          "path": "/map/cca24b53-be95-42a4-8805-020d255691ea",
+          "path": "/map/fcb8b0b1-b7ba-4f06-86db-233a74850b6c",
           "mode": "grid",
           "cpu": 1,
-          "load_s": 0.63,
+          "load_s": 0.66,
           "problems": [],
           "status": "pass",
           "reason": null,
           "virtualized": true,
           "focused_before": true,
-          "frames": 481,
+          "frames": 480,
           "longest_task_ms": null,
           "checks": {
             "frame_p95_ms": {
-              "value": 16.8,
+              "value": 16.7,
               "limit": 20,
               "ok": true
             },
@@ -588,20 +588,20 @@
           }
         },
         {
-          "path": "/map/cca24b53-be95-42a4-8805-020d255691ea",
+          "path": "/map/fcb8b0b1-b7ba-4f06-86db-233a74850b6c",
           "mode": "grid",
           "cpu": 4,
-          "load_s": 0.64,
+          "load_s": 0.62,
           "problems": [],
           "status": "pass",
           "reason": null,
           "virtualized": true,
           "focused_before": true,
-          "frames": 479,
+          "frames": 465,
           "longest_task_ms": null,
           "checks": {
             "frame_p95_ms": {
-              "value": 16.8,
+              "value": 33.4,
               "limit": 34,
               "ok": true
             },
@@ -653,7 +653,7 @@
           "path": "/fotos",
           "mode": "timeline",
           "cpu": 1,
-          "load_s": 0.66,
+          "load_s": 0.87,
           "problems": [],
           "status": "pass",
           "reason": null,
@@ -663,7 +663,7 @@
           "longest_task_ms": null,
           "checks": {
             "frame_p95_ms": {
-              "value": 16.8,
+              "value": 16.7,
               "limit": 20,
               "ok": true
             },
@@ -683,7 +683,7 @@
               "ok": true
             },
             "thumbnails": {
-              "value": 121,
+              "value": 117,
               "limit": 100,
               "ok": true
             },
@@ -692,7 +692,7 @@
                 "element": "div[gridcell]",
                 "in_row": true,
                 "rowindex": 3,
-                "rowcount": 7366,
+                "rowcount": 7377,
                 "visible": true
               },
               "limit": "in een rij",
@@ -702,8 +702,8 @@
               "value": {
                 "element": "div[gridcell]",
                 "in_row": true,
-                "rowindex": 7366,
-                "rowcount": 7366,
+                "rowindex": 7377,
+                "rowcount": 7377,
                 "visible": true
               },
               "limit": "laatste rij, zichtbaar",
@@ -715,17 +715,17 @@
           "path": "/fotos",
           "mode": "timeline",
           "cpu": 4,
-          "load_s": 0.66,
+          "load_s": 0.72,
           "problems": [],
           "status": "pass",
           "reason": null,
           "virtualized": true,
           "focused_before": true,
-          "frames": 468,
+          "frames": 456,
           "longest_task_ms": null,
           "checks": {
             "frame_p95_ms": {
-              "value": 16.8,
+              "value": 33.3,
               "limit": 34,
               "ok": true
             },
@@ -745,7 +745,7 @@
               "ok": true
             },
             "thumbnails": {
-              "value": 111,
+              "value": 115,
               "limit": 100,
               "ok": true
             },
@@ -754,7 +754,7 @@
                 "element": "div[gridcell]",
                 "in_row": true,
                 "rowindex": 3,
-                "rowcount": 7366,
+                "rowcount": 7377,
                 "visible": true
               },
               "limit": "in een rij",
@@ -764,8 +764,8 @@
               "value": {
                 "element": "div[gridcell]",
                 "in_row": true,
-                "rowindex": 7366,
-                "rowcount": 7366,
+                "rowindex": 7377,
+                "rowcount": 7377,
                 "visible": true
               },
               "limit": "laatste rij, zichtbaar",
@@ -779,7 +779,7 @@
     },
     "lighthouse_like": {
       "tool": "lighthouse_like",
-      "server": "http://127.0.0.1:36231",
+      "server": "http://127.0.0.1:35045",
       "runs": 5,
       "gate": 91,
       "weights": {
@@ -854,125 +854,95 @@
           },
           "owner": "P1",
           "status": "pass",
-          "score": 97,
+          "score": 96,
           "scores": [
+            94,
             96,
-            97,
-            97,
+            98,
             97,
             96
           ],
           "metrics": {
-            "fcp": 1316,
-            "si": 3919.2,
-            "lcp": 1316,
-            "tbt": 138.0,
+            "fcp": 1336,
+            "si": 3951.4,
+            "lcp": 1336,
+            "tbt": 143.0,
             "cls": 0.0
           },
           "errors": [],
           "details": [
             {
               "metrics": {
-                "fcp": 1316,
-                "si": 3924.7,
-                "lcp": 1316,
-                "tbt": 164.0,
+                "fcp": 1348,
+                "si": 4030.0,
+                "lcp": 1348,
+                "tbt": 225.0,
                 "cls": 0.0
               },
-              "tti": 2059.3,
+              "tti": 3999.1,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1727,
+                  192
+                ],
+                [
+                  1928,
+                  51
+                ],
+                [
+                  2008,
+                  116
+                ],
+                [
+                  3933,
+                  66
+                ]
+              ],
+              "frames": 84,
+              "marks": {
+                "app:ready:login": 4061.5
+              },
+              "score": 94,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.81,
+                "lcp": 1.0,
+                "tbt": 0.87,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1352,
+                "si": 3951.4,
+                "lcp": 1352,
+                "tbt": 143.0,
+                "cls": 0.0
+              },
+              "tti": 3935.8,
               "lcp_element": "img.boot-logo",
               "long_tasks": [
                 [
                   1718,
-                  140
+                  182
                 ],
                 [
-                  1860,
-                  58
-                ],
-                [
-                  1943,
-                  116
+                  3875,
+                  61
                 ]
               ],
               "frames": 81,
               "marks": {
-                "app:ready:login": 3934.9
+                "app:ready:login": 3971.7
               },
               "score": 96,
               "scores": {
                 "fcp": 0.98,
                 "si": 0.82,
                 "lcp": 1.0,
-                "tbt": 0.93,
-                "cls": 1.0
-              },
-              "problems": []
-            },
-            {
-              "metrics": {
-                "fcp": 1300,
-                "si": 3903.7,
-                "lcp": 1300,
-                "tbt": 138.0,
-                "cls": 0.0
-              },
-              "tti": 1995.9,
-              "lcp_element": "img.boot-logo",
-              "long_tasks": [
-                [
-                  1695,
-                  177
-                ],
-                [
-                  1935,
-                  61
-                ]
-              ],
-              "frames": 82,
-              "marks": {
-                "app:ready:login": 3923
-              },
-              "score": 97,
-              "scores": {
-                "fcp": 0.98,
-                "si": 0.83,
-                "lcp": 1.0,
-                "tbt": 0.96,
-                "cls": 1.0
-              },
-              "problems": []
-            },
-            {
-              "metrics": {
-                "fcp": 1308,
-                "si": 3876.4,
-                "lcp": 1308,
-                "tbt": 123.0,
-                "cls": 0.0
-              },
-              "tti": 1983.5,
-              "lcp_element": "img.boot-logo",
-              "long_tasks": [
-                [
-                  1704,
-                  165
-                ],
-                [
-                  1926,
-                  58
-                ]
-              ],
-              "frames": 81,
-              "marks": {
-                "app:ready:login": 3894.9
-              },
-              "score": 97,
-              "scores": {
-                "fcp": 0.98,
-                "si": 0.83,
-                "lcp": 1.0,
-                "tbt": 0.97,
+                "tbt": 0.95,
                 "cls": 1.0
               },
               "problems": []
@@ -980,31 +950,65 @@
             {
               "metrics": {
                 "fcp": 1336,
-                "si": 3919.2,
+                "si": 3902.6,
                 "lcp": 1336,
-                "tbt": 118.0,
+                "tbt": 95.0,
                 "cls": 0.0
               },
-              "tti": 2016.6,
+              "tti": 1990.6,
               "lcp_element": "img.boot-logo",
               "long_tasks": [
                 [
                   1730,
-                  149
+                  128
                 ],
                 [
-                  1948,
-                  69
+                  1924,
+                  67
                 ]
               ],
-              "frames": 81,
+              "frames": 79,
               "marks": {
-                "app:ready:login": 3939.3
+                "app:ready:login": 3918.8
+              },
+              "score": 98,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.83,
+                "lcp": 1.0,
+                "tbt": 0.98,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1320,
+                "si": 3893.2,
+                "lcp": 1320,
+                "tbt": 122.0,
+                "cls": 0.0
+              },
+              "tti": 1985.3,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1706,
+                  163
+                ],
+                [
+                  1926,
+                  59
+                ]
+              ],
+              "frames": 80,
+              "marks": {
+                "app:ready:login": 3904.2
               },
               "score": 97,
               "scores": {
                 "fcp": 0.98,
-                "si": 0.82,
+                "si": 0.83,
                 "lcp": 1.0,
                 "tbt": 0.97,
                 "cls": 1.0
@@ -1013,36 +1017,40 @@
             },
             {
               "metrics": {
-                "fcp": 1328,
-                "si": 3940.0,
-                "lcp": 1328,
-                "tbt": 179.0,
+                "fcp": 1324,
+                "si": 4005.8,
+                "lcp": 1324,
+                "tbt": 176.0,
                 "cls": 0.0
               },
-              "tti": 3918.4,
+              "tti": 3974.8,
               "lcp_element": "img.boot-logo",
               "long_tasks": [
                 [
-                  1706,
-                  195
+                  1708,
+                  173
                 ],
                 [
-                  1934,
-                  78
+                  1882,
+                  50
                 ],
                 [
-                  3862,
-                  56
+                  1961,
+                  73
+                ],
+                [
+                  3895,
+                  80
                 ]
               ],
-              "frames": 80,
+              "frames": 82,
               "marks": {
-                "app:ready:login": 3958.5
+                "app:ready:login": 4037.8
               },
               "score": 96,
               "scores": {
                 "fcp": 0.98,
-                "si": 0.82,
+                "si": 0.81,
                 "lcp": 1.0,
                 "tbt": 0.92,
                 "cls": 1.0
@@ -1053,7 +1061,7 @@
           "problems": []
         },
         "public": {
-          "url": "/s/VIu5BQBCYLe6SrKDicGx1z_WaLvJX6ygVkuncsKYn_w",
+          "url": "/s/EertC0oLc4p5J1JY0uyLojR1DifqTAso3dewAfMkviw",
           "profile": "mobile",
           "throttling": {
             "latency_ms": 562.5,
@@ -1070,19 +1078,19 @@
           },
           "owner": "P1",
           "status": "pass",
-          "score": 95,
+          "score": 94,
           "scores": [
-            95,
-            95,
             94,
-            95,
-            96
+            96,
+            96,
+            93,
+            89
           ],
           "metrics": {
             "fcp": 1332,
-            "si": 4344.3,
+            "si": 4381.9,
             "lcp": 1332,
-            "tbt": 169.0,
+            "tbt": 212.0,
             "cls": 0.0
           },
           "errors": [],
@@ -1090,171 +1098,38 @@
             {
               "metrics": {
                 "fcp": 1332,
-                "si": 4344.3,
+                "si": 4381.9,
                 "lcp": 1332,
-                "tbt": 169.0,
+                "tbt": 212.0,
                 "cls": 0.0
               },
-              "tti": 4891.8,
+              "tti": 4924.8,
               "lcp_element": "img.boot-logo",
               "long_tasks": [
                 [
-                  1708,
-                  180
+                  1704,
+                  222
                 ],
                 [
-                  1893,
-                  73
-                ],
-                [
-                  4826,
-                  66
-                ]
-              ],
-              "frames": 77,
-              "marks": {
-                "app:ready:route": 3245.6,
-                "app:ready:public": 4896.6
-              },
-              "score": 95,
-              "scores": {
-                "fcp": 0.98,
-                "si": 0.75,
-                "lcp": 1.0,
-                "tbt": 0.93,
-                "cls": 1.0
-              },
-              "problems": []
-            },
-            {
-              "metrics": {
-                "fcp": 1352,
-                "si": 4346.1,
-                "lcp": 1352,
-                "tbt": 166.0,
-                "cls": 0.0
-              },
-              "tti": 5001.3,
-              "lcp_element": "img.boot-logo",
-              "long_tasks": [
-                [
-                  1737,
-                  174
-                ],
-                [
-                  1913,
-                  58
-                ],
-                [
-                  4817,
-                  79
-                ],
-                [
-                  4946,
-                  55
-                ]
-              ],
-              "frames": 74,
-              "marks": {
-                "app:ready:route": 3241.6,
-                "app:ready:public": 4901.6
-              },
-              "score": 95,
-              "scores": {
-                "fcp": 0.98,
-                "si": 0.75,
-                "lcp": 1.0,
-                "tbt": 0.93,
-                "cls": 1.0
-              },
-              "problems": []
-            },
-            {
-              "metrics": {
-                "fcp": 1364,
-                "si": 4438.9,
-                "lcp": 1364,
-                "tbt": 215.0,
-                "cls": 0.0
-              },
-              "tti": 5165.3,
-              "lcp_element": "img.boot-logo",
-              "long_tasks": [
-                [
-                  1748,
-                  211
-                ],
-                [
-                  1966,
-                  75
+                  1929,
+                  72
                 ],
                 [
                   4857,
-                  69
-                ],
-                [
-                  4930,
-                  60
-                ],
-                [
-                  5115,
-                  50
+                  68
                 ]
               ],
-              "frames": 73,
+              "frames": 75,
               "marks": {
-                "app:ready:route": 3344,
-                "app:ready:public": 4994.4
+                "app:ready:route": 3303.5,
+                "app:ready:public": 4930.7
               },
               "score": 94,
               "scores": {
                 "fcp": 0.98,
-                "si": 0.74,
+                "si": 0.75,
                 "lcp": 1.0,
-                "tbt": 0.88,
-                "cls": 1.0
-              },
-              "problems": []
-            },
-            {
-              "metrics": {
-                "fcp": 1304,
-                "si": 4291.0,
-                "lcp": 1304,
-                "tbt": 171.0,
-                "cls": 0.0
-              },
-              "tti": 4961,
-              "lcp_element": "img.boot-logo",
-              "long_tasks": [
-                [
-                  1703,
-                  180
-                ],
-                [
-                  1887,
-                  65
-                ],
-                [
-                  4772,
-                  55
-                ],
-                [
-                  4890,
-                  71
-                ]
-              ],
-              "frames": 73,
-              "marks": {
-                "app:ready:route": 3219.6,
-                "app:ready:public": 4831.4
-              },
-              "score": 95,
-              "scores": {
-                "fcp": 0.98,
-                "si": 0.76,
-                "lcp": 1.0,
-                "tbt": 0.93,
+                "tbt": 0.89,
                 "cls": 1.0
               },
               "problems": []
@@ -1262,31 +1137,82 @@
             {
               "metrics": {
                 "fcp": 1332,
-                "si": 4327.8,
+                "si": 4296.4,
                 "lcp": 1332,
-                "tbt": 158.0,
+                "tbt": 142.0,
                 "cls": 0.0
               },
-              "tti": 4872.4,
+              "tti": 4934.9,
               "lcp_element": "img.boot-logo",
               "long_tasks": [
                 [
-                  1705,
-                  166
+                  1718,
+                  130
                 ],
                 [
-                  1876,
-                  80
+                  1850,
+                  85
                 ],
                 [
-                  4810,
-                  62
+                  4710,
+                  56
+                ],
+                [
+                  4768,
+                  58
+                ],
+                [
+                  4872,
+                  63
                 ]
               ],
-              "frames": 74,
+              "frames": 72,
               "marks": {
-                "app:ready:route": 3227.3,
-                "app:ready:public": 4874.3
+                "app:ready:route": 3214.5,
+                "app:ready:public": 4829.1
+              },
+              "score": 96,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.76,
+                "lcp": 1.0,
+                "tbt": 0.95,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1324,
+                "si": 4319.4,
+                "lcp": 1324,
+                "tbt": 162.0,
+                "cls": 0.0
+              },
+              "tti": 4971.3,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1698,
+                  176
+                ],
+                [
+                  1879,
+                  57
+                ],
+                [
+                  4789,
+                  57
+                ],
+                [
+                  4899,
+                  72
+                ]
+              ],
+              "frames": 73,
+              "marks": {
+                "app:ready:route": 3241.6,
+                "app:ready:public": 4849.7
               },
               "score": 96,
               "scores": {
@@ -1297,12 +1223,106 @@
                 "cls": 1.0
               },
               "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1344,
+                "si": 4451.7,
+                "lcp": 1344,
+                "tbt": 251.0,
+                "cls": 0.0
+              },
+              "tti": 5015.2,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1721,
+                  238
+                ],
+                [
+                  1966,
+                  97
+                ],
+                [
+                  4896,
+                  64
+                ],
+                [
+                  4963,
+                  52
+                ]
+              ],
+              "frames": 79,
+              "marks": {
+                "app:ready:route": 3339.4,
+                "app:ready:public": 5020.2
+              },
+              "score": 93,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.74,
+                "lcp": 1.0,
+                "tbt": 0.85,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1372,
+                "si": 4503.0,
+                "lcp": 1372,
+                "tbt": 355.0,
+                "cls": 0.0
+              },
+              "tti": 5239.2,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1744,
+                  187
+                ],
+                [
+                  1933,
+                  122
+                ],
+                [
+                  4878,
+                  93
+                ],
+                [
+                  4972,
+                  122
+                ],
+                [
+                  5107,
+                  54
+                ],
+                [
+                  5162,
+                  77
+                ]
+              ],
+              "frames": 75,
+              "marks": {
+                "app:ready:route": 3325.6,
+                "app:ready:public": 5095.8
+              },
+              "score": 89,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.73,
+                "lcp": 1.0,
+                "tbt": 0.73,
+                "cls": 1.0
+              },
+              "problems": []
             }
           ],
           "problems": []
         },
         "folder": {
-          "url": "/map/cca24b53-be95-42a4-8805-020d255691ea",
+          "url": "/map/fcb8b0b1-b7ba-4f06-86db-233a74850b6c",
           "profile": "desktop",
           "throttling": {
             "latency_ms": 40,
@@ -1328,9 +1348,9 @@
             100
           ],
           "metrics": {
-            "fcp": 144,
-            "si": 783.2,
-            "lcp": 144,
+            "fcp": 156,
+            "si": 862.0,
+            "lcp": 156,
             "tbt": 0.0,
             "cls": 0.0065
           },
@@ -1339,18 +1359,49 @@
             {
               "metrics": {
                 "fcp": 156,
-                "si": 787.0,
+                "si": 885.8,
                 "lcp": 156,
-                "tbt": 0.0,
+                "tbt": 3.0,
                 "cls": 0.0065
               },
-              "tti": 156,
+              "tti": 237.4,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  184,
+                  53
+                ]
+              ],
+              "frames": 23,
+              "marks": {
+                "app:ready:route": 809.7,
+                "app:ready:folder": 842.7
+              },
+              "score": 100,
+              "scores": {
+                "fcp": 1.0,
+                "si": 0.99,
+                "lcp": 1.0,
+                "tbt": 1.0,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 160,
+                "si": 850.3,
+                "lcp": 160,
+                "tbt": 0.0,
+                "cls": 0.0
+              },
+              "tti": 160,
               "lcp_element": "img.boot-logo",
               "long_tasks": [],
               "frames": 22,
               "marks": {
-                "app:ready:route": 730.8,
-                "app:ready:folder": 762.6
+                "app:ready:route": 762.5,
+                "app:ready:folder": 798.3
               },
               "score": 100,
               "scores": {
@@ -1365,7 +1416,7 @@
             {
               "metrics": {
                 "fcp": 144,
-                "si": 768.0,
+                "si": 862.0,
                 "lcp": 144,
                 "tbt": 0.0,
                 "cls": 0.0065
@@ -1373,10 +1424,10 @@
               "tti": 144,
               "lcp_element": "img.boot-logo",
               "long_tasks": [],
-              "frames": 23,
+              "frames": 24,
               "marks": {
-                "app:ready:route": 726.7,
-                "app:ready:folder": 757.5
+                "app:ready:route": 793.4,
+                "app:ready:folder": 837.6
               },
               "score": 100,
               "scores": {
@@ -1391,44 +1442,18 @@
             {
               "metrics": {
                 "fcp": 152,
-                "si": 920.0,
+                "si": 751.3,
                 "lcp": 152,
                 "tbt": 0.0,
-                "cls": 0.0
+                "cls": 0.0065
               },
               "tti": 152,
               "lcp_element": "img.boot-logo",
               "long_tasks": [],
               "frames": 22,
               "marks": {
-                "app:ready:route": 867.2,
-                "app:ready:folder": 901.4
-              },
-              "score": 100,
-              "scores": {
-                "fcp": 1.0,
-                "si": 0.98,
-                "lcp": 1.0,
-                "tbt": 1.0,
-                "cls": 1.0
-              },
-              "problems": []
-            },
-            {
-              "metrics": {
-                "fcp": 144,
-                "si": 766.1,
-                "lcp": 144,
-                "tbt": 0.0,
-                "cls": 0.0065
-              },
-              "tti": 144,
-              "lcp_element": "img.boot-logo",
-              "long_tasks": [],
-              "frames": 23,
-              "marks": {
-                "app:ready:route": 711.9,
-                "app:ready:folder": 741.8
+                "app:ready:route": 686.7,
+                "app:ready:folder": 725.9
               },
               "score": 100,
               "scores": {
@@ -1442,19 +1467,19 @@
             },
             {
               "metrics": {
-                "fcp": 144,
-                "si": 783.2,
-                "lcp": 144,
+                "fcp": 164,
+                "si": 862.0,
+                "lcp": 164,
                 "tbt": 0.0,
                 "cls": 0.0065
               },
-              "tti": 144,
+              "tti": 164,
               "lcp_element": "img.boot-logo",
               "long_tasks": [],
-              "frames": 24,
+              "frames": 23,
               "marks": {
-                "app:ready:route": 725.7,
-                "app:ready:folder": 769.7
+                "app:ready:route": 800,
+                "app:ready:folder": 837.3
               },
               "score": 100,
               "scores": {

@@ -3,8 +3,8 @@
 Gemaakt door `e2e/perf/run_all.py` (P1); niet met de hand bewerken, behalve het blok
 met de DevTools-runs onderaan. Alle getallen: `prestaties.json`.
 
-- Gemeten: 2026-10-26T02:55:39+00:00
-- Commit: `0661462`
+- Gemeten: 2026-10-26T07:36:21+00:00
+- Commit: `c6221f0`
 - Alleen rapporteren (E2E_PERF_REPORT_ONLY): nee
 - Data: 10000 bestanden over 2000 thumbnails, 50000 foto's
 
@@ -14,9 +14,9 @@ Poort: score ≥ 91, mediaan van 5.
 
 | Pagina | Profiel | Van | Status | Score | Runs | FCP | SI | LCP | TBT | CLS |
 |---|---|---|---|---|---|---|---|---|---|---|
-| login (`/`) | mobile | P1 | pass | 97 | 96, 97, 97, 97, 96 | 1316 ms | 3919 ms | 1316 ms | 138 ms | 0.0 |
-| public (`/s/VIu5BQBCYLe6SrKDi…`) | mobile | P1 | pass | 95 | 95, 95, 94, 95, 96 | 1332 ms | 4344 ms | 1332 ms | 169 ms | 0.0 |
-| folder (`/map/cca24b53-be95-4…`) | desktop | P2 | pass | 100 | 100, 100, 100, 100, 100 | 144 ms | 783 ms | 144 ms | 0.0 ms | 0.006 |
+| login (`/`) | mobile | P1 | pass | 96 | 94, 96, 98, 97, 96 | 1336 ms | 3951 ms | 1336 ms | 143 ms | 0.0 |
+| public (`/s/EertC0oLc4p5J1JY0…`) | mobile | P1 | pass | 94 | 94, 96, 96, 93, 89 | 1332 ms | 4382 ms | 1332 ms | 212 ms | 0.0 |
+| folder (`/map/fcb8b0b1-b7ba-4…`) | desktop | P2 | pass | 100 | 100, 100, 100, 100, 100 | 156 ms | 862 ms | 156 ms | 0.0 ms | 0.006 |
 
 ## Eerste weergave (§4.2)
 
@@ -24,9 +24,9 @@ Poort: mediaan < 1500 ms en p95 < 2000 ms, koud en warm.
 
 | Pagina | Van | Status | Koud mediaan / p95 | Warm mediaan / p95 | Bron | SW |
 |---|---|---|---|---|---|---|
-| login | P1 | pass | 276 / 359 ms | 138 / 170 ms | mark:login | ja |
-| folder | P2 | pass | 665 / 742 ms | 516 / 570 ms | mark:folder | ja |
-| public | P4 | pass | 534 / 578 ms | 473 / 623 ms | mark:public | ja |
+| login | P1 | pass | 265 / 385 ms | 148 / 164 ms | mark:login | ja |
+| folder | P2 | pass | 665 / 673 ms | 513 / 540 ms | mark:folder | ja |
+| public | P4 | pass | 588 / 630 ms | 506 / 523 ms | mark:public | ja |
 
 ## Scrollen (§4.4)
 
@@ -42,7 +42,9 @@ Poort: mediaan < 1500 ms en p95 < 2000 ms, koud en warm.
 ## DevTools-Lighthouse (harde acceptatie, handmatig)
 
 <!-- handmatig -->
-Ingevuld door de integrator op 26-10-2026, bij de run hierboven (commit `0661462`, schoon).
+Ingevuld door de integrator op 26-10-2026. De tabellen hierboven komen van de slotcontrole
+op `c6221f0` (schoon; zie "Slotcontrole" onderaan). De getallen in dit blok, de echte
+Lighthouse en de herijking horen bij de run op commit `0661462` (schoon).
 
 ### Machine
 
@@ -161,4 +163,37 @@ De rest was al goed; de echte Lighthouse vond daarna de layoutverschuiving.
 
 Open: de lijst bij 4× slaagt in ongeveer driekwart van de losse runs, niet altijd (zie
 Scrollen); de rest is één taak net boven 50 ms.
+
+### Slotcontrole bij het afronden (`c6221f0`)
+
+Na `897865b` kwamen er nog webwijzigingen bij: `03777dc` (de focus na een actie in de lijst en
+de prullenbak), `d9a7a78` (typen in de mappenkiezer) en `006b166` (de refresh in de try van
+`browser/preload.ts`), plus `77d4439` in het harnas (een vaste luisteraar voor de
+bestandskiezer op elke pagina). Daarom opnieuw `run_all.py`, drie keer na elkaar op `c6221f0`
+(web en api gelijk aan de eindstand; daarna is alleen dit document veranderd):
+
+| Klaar om (UTC) | Eerste weergave | Scrollen | lighthouse_like (/, /s, /map) |
+|---|---|---|---|
+| 06:36 | **fout**: `/map/<10k>` koud 636, 666, 639, 657 en één keer **8.547 ms**; die run zette zijn meetpunt pas na de terugval van 5 s, dus registreerde de worker ervóór ("sw.js vóór app:ready") | goed | 96, 95, 100 |
+| 07:02 | goed | **fout**: lijst 4× p95 50 ms en één taak van 51 ms; tijdlijn 4× één taak van 56 ms | 94, 92, 100 |
+| 07:36 | goed | goed | 96, 94, 100 (de tabellen hierboven) |
+
+Uitgezocht, op dezelfde machine en met dezelfde data (ook de 50.000 foto's):
+
+- **De uitschieter van 8,5 s** kwam niet terug: `/map/<10k>` nog 40 keer koud en 40 keer warm
+  (`first_view.measure_page`, 8 rondes van 5) gaf koud 626–946 ms en warm 491–613 ms. De
+  serverlog van die run is weg (tijdelijke map); de oorzaak is niet gevonden.
+- **Build tegen build:** `897865b` en `c6221f0` afwisselend op twee servers (2 rondes, toen
+  afgebroken): lijst 4× en tijdlijn 4× vielen bij beide builds even vaak uit, met taken van
+  51–77 ms. De eerste weergave was bij beide goed.
+- **Het harnas:** met en zonder de vaste luisteraar van `77d4439`, afwisselend, 10 rondes
+  elk: lijst 4× 2 en 4 van 10, tijdlijn 4× 5 en 1 van 10. Geen verschil dat op de luisteraar
+  wijst.
+- In die periode was de VM duidelijk drukker dan bij de meting op `0661462` (lijst 4× toen 46
+  van 61); ook lighthouse_like lag in de tweede run lager.
+
+Conclusie: geen achteruitgang door de wijzigingen na `897865b`. Bij een drukke VM komen de
+lijst en nu ook de tijdlijn bij 4× vaak net boven 50 ms; de derde run haalde alle poorten. De
+echte Lighthouse is niet opnieuw gedraaid: de wijzigingen raken het laden van de drie
+gemeten pagina's niet (de refresh in `preload.ts` doet online hetzelfde als eerst).
 <!-- /handmatig -->
