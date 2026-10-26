@@ -32,10 +32,13 @@ focustests die eerder `test_integratie.py` heetten, staan nu in `test_integratie
 | 10 Beheer | blokkeren: sessie, refresh, inloggen en een al uitgegeven downloadlink stoppen; verwijderen: de taak loopt, de blobs zijn weg; quotumbalk, opslag per node, taken | `test_admin`, `test_login::test_geblokkeerd_account` |
 | 11 Engels | 17 hoofdschermen, `?` en het accountmenu zonder Nederlandse tekst (ook niet in aria-labels); een API-fout in het Engels | `test_login::test_engels`, `test_admin::test_account_in_het_engels` |
 | 12 PWA | de SW neemt het over op localhost, offline herladen geeft de schil met de balk, weer online komt de app zelf terug, een nieuwe build geeft de melding en Shift+N laadt hem | `test_pwa`, `test_login::test_geen_verbinding*` |
-| 13 Toetsenbord | de checklists van `toetsenbord-p1` … `p5` die de stappen ervoor nog niet deden: inloggen met 2FA (Tab, Alt+Shift+P, Escape), N, F2, Mod+X en Mod+V, `?`, U met de vraag over een dubbel bestand, de viewer met Enter, D en Escape, selecteren in de tijdlijn | `test_browser_keyboard`, `test_integratie_focus`, `test_admin` (tabbladen, taken, groepen) |
+| 13 Toetsenbord | de checklists van `toetsenbord-p1` … `p5` die de stappen ervoor nog niet deden: inloggen met 2FA (Tab, Alt+Shift+P, Escape), N, F2, Mod+X en Mod+V, `?`, U met de vraag over een dubbel bestand, de viewer met Enter, D en Escape, selecteren in de tijdlijn | `test_browser_keyboard`, `test_integratie_focus`, `test_toetsenbord_p6` (de checklist van p6), `test_admin` (tabbladen, groepen) |
 
-De checklist van `toetsenbord-p6` zit in de stappen 4, 6, 7, 8 en 10 (Alt+P, Alt+L, de
-prullenbak, Versies, `/` bij Gebruikers, Alt+3 en Alt+4); de rest staat in `test_admin`.
+Van de checklist van `toetsenbord-p6` zitten Alt+P, Alt+L, de prullenbak, Versies, `/` bij
+Gebruikers, Alt+3 en Alt+4 in de stappen 4, 6, 7, 8 en 10, maar daar gaan het bevestigen,
+blokkeren, verwijderen en de taal nog met de muis. De hele checklist met alleen het
+toetsenbord, en waar de focus daarna staat, loopt `test_toetsenbord_p6` na (de tabbladen en
+Groepen `test_admin`).
 
 ## Gevonden met het verhaal en verholpen
 

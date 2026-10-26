@@ -44,6 +44,28 @@ export default function VersionsDialog({ node, onClose, onChanged }: VersionsPro
   const [upload, setUpload] = useState<Upload | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  // "Nieuwe versie uploaden" en "Upload annuleren" wisselen elkaar af: verdwijnt de knop met de
+  // focus, dan de focus op de andere (anders valt hij naar <body>, midden in de dialoog)
+  const uploadButton = useRef<HTMLButtonElement>(null);
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const uploading = upload !== null;
+  useEffect(() => {
+    const now = document.activeElement;
+    if (now !== null && now !== document.body) return;
+    (uploading ? cancelButton : uploadButton).current?.focus();
+  }, [uploading]);
+  // Terugzetten en Verwijderen staan uit zolang het bezig is (de focus valt dan naar <body>):
+  // daarna terug op die knop, of als die versie weg is op "Nieuwe versie uploaden"
+  const pressed = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (busy) return;
+    const el = pressed.current;
+    pressed.current = null;
+    const now = document.activeElement;
+    if (!el || (now !== null && now !== document.body)) return;
+    if (el.isConnected) el.focus();
+    else uploadButton.current?.focus();
+  }, [busy, items]);
 
   const load = useCallback(async () => {
     try {
@@ -78,7 +100,8 @@ export default function VersionsDialog({ node, onClose, onChanged }: VersionsPro
     { scope: "versions" },
   );
 
-  async function act(fn: () => Promise<FileNode | void>, done?: string): Promise<void> {
+  async function act(fn: () => Promise<FileNode | void>, from: Element | null, done?: string): Promise<void> {
+    pressed.current = from instanceof HTMLElement ? from : null;
     setBusy(true);
     try {
       const changed = await fn();
@@ -131,22 +154,24 @@ export default function VersionsDialog({ node, onClose, onChanged }: VersionsPro
   }
 
   async function restore(v: FileVersion) {
+    const from = document.activeElement;
     const yes = await confirm({
       title: t("versions.restoreTitle"),
       message: t("versions.restoreText"),
       confirm: t("versions.restore"),
     });
-    if (yes) await act(() => api.restoreVersion(node.id, v.id), t("versions.restored"));
+    if (yes) await act(() => api.restoreVersion(node.id, v.id), from, t("versions.restored"));
   }
 
   async function remove(v: FileVersion) {
+    const from = document.activeElement;
     const yes = await confirm({
       title: t("versions.removeTitle"),
       message: t("versions.removeText"),
       confirm: t("versions.remove"),
       danger: true,
     });
-    if (yes) await act(() => api.deleteVersion(node.id, v.id), t("versions.removed"));
+    if (yes) await act(() => api.deleteVersion(node.id, v.id), from, t("versions.removed"));
   }
 
   const viewItems = items ? items.map((v) => versionItem(current, v)) : [];
@@ -166,6 +191,7 @@ export default function VersionsDialog({ node, onClose, onChanged }: VersionsPro
         <div className="toolbar">
           {upload === null ? (
             <Button
+              ref={uploadButton}
               icon="upload"
               data-autofocus=""
               disabled={busy}
@@ -181,7 +207,9 @@ export default function VersionsDialog({ node, onClose, onChanged }: VersionsPro
               <span className="muted" aria-live="polite">
                 {t("versions.uploading", { percent: upload.percent })}
               </span>
-              <Button onClick={() => upload.abort.abort()}>{t("versions.cancelUpload")}</Button>
+              <Button ref={cancelButton} onClick={() => upload.abort.abort()}>
+                {t("versions.cancelUpload")}
+              </Button>
             </div>
           )}
           <input

@@ -124,6 +124,18 @@ function SingleShareDialog({
 }
 
 /** Een actie met een eigen foutmelding en bezig-stand. */
+/** Kwam de knop `to` net terug (shown) in de plaats van iets met de focus (een formulier dat
+ * dichtging), dan de focus erop; anders zou hij op <body> staan, midden in de dialoog. */
+function useFocusOnReturn(shown: boolean, to: { current: HTMLElement | null }): void {
+  const before = useRef(shown);
+  useEffect(() => {
+    const back = shown && !before.current;
+    before.current = shown;
+    const now = document.activeElement;
+    if (back && (now === null || now === document.body)) to.current?.focus();
+  }, [shown, to]);
+}
+
 function useAction(onDone: () => Promise<void>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -336,6 +348,8 @@ function LinkRow({ share, onChanged }: { share: Share; onChanged: () => Promise<
   const [copied, setCopied] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const editButton = useRef<HTMLButtonElement>(null);
+  useFocusOnReturn(!editing, editButton);
   const action = useAction(onChanged);
   const href = linkHref(share, window.location.origin);
   const title = share.link?.label || t("sharing.links.link");
@@ -392,7 +406,7 @@ function LinkRow({ share, onChanged }: { share: Share; onChanged: () => Promise<
       />
       <div className="share-actions">
         <Button onClick={() => void copy()}>{copied ? t("sharing.links.copied") : t("sharing.links.copy")}</Button>
-        <Button aria-expanded={editing} onClick={() => setEditing((v) => !v)}>
+        <Button ref={editButton} aria-expanded={editing} onClick={() => setEditing((v) => !v)}>
           {t("sharing.links.edit")}
         </Button>
         <Button disabled={action.busy} onClick={() => void remove()}>
@@ -446,10 +460,13 @@ function NewLinkForm({
   setOpen(v: boolean): void;
 }): JSX.Element {
   const action = useAction(onChanged);
+  // Na Link maken of Annuleren verdwijnt het formulier met de focus: dan op "Nieuwe link"
+  const newButton = useRef<HTMLButtonElement>(null);
+  useFocusOnReturn(!open, newButton);
   if (!open)
     return (
       <div className="toolbar">
-        <Button aria-keyshortcuts="Alt+L" onClick={() => setOpen(true)}>
+        <Button ref={newButton} aria-keyshortcuts="Alt+L" onClick={() => setOpen(true)}>
           {t("sharing.links.new")}
         </Button>
       </div>

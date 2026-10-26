@@ -50,7 +50,7 @@ licht en donker thema, en als PWA te installeren. Zonder nieuwe bibliotheken (B1
 |---|---|
 | Lighthouse performance > 90 | echte Lighthouse 13.5.0: `/` 96 en `/s/<link>` 95 (mobiel), `/map/<10k>` 100 (desktop); de eigen meting binnen 3 punten ([prestaties.md](prestaties.md)) |
 | Eerste weergave < 1,5 s op LAN | `/`, `/map/<10k>` en `/s/<link>`, koud en warm, ruim onder de poort ([prestaties.md](prestaties.md)) |
-| Alle acties ook via het toetsenbord | de checklists [toetsenbord-p1](toetsenbord-p1.md) t/m [p6](toetsenbord-p6.md), `e2e/test_browser_keyboard.py` en stap 13 van het verhaal |
+| Alle acties ook via het toetsenbord | de checklists [toetsenbord-p1](toetsenbord-p1.md) t/m [p6](toetsenbord-p6.md): p1 t/m p5 in `e2e/test_browser_keyboard.py` en stap 13 van het verhaal, p6 met alleen het toetsenbord in `e2e/test_toetsenbord_p6.py` (de tabbladen en Groepen in `test_admin`) |
 | 10.000 bestanden in één map scrollen soepel | lijst, raster en tijdlijn (50.000 foto's) bij 1× en 4× CPU binnen de poort ([prestaties.md](prestaties.md)) |
 
 ## Documenten

@@ -2,7 +2,7 @@
 // en de acties op het account: blokkeren of deblokkeren, verwijderen (alleen als geblokkeerd),
 // een nieuw wachtwoord instellen en 2FA uitzetten. Vragen gaan via confirm() van ui/dialogs.
 
-import { type FormEvent, type JSX, useState } from "react";
+import { type FormEvent, type JSX, useEffect, useRef, useState } from "react";
 import { api, type User } from "../api";
 import { errorText, fmt, t } from "../i18n";
 import { Button } from "../ui/Button";
@@ -71,7 +71,21 @@ export function UserDialog({ user, currentUser, onClose, onChanged }: UserDialog
     if (key === "password") setPasswordError(null);
   };
 
-  async function run(fn: () => Promise<unknown>): Promise<boolean> {
+  // Zolang het bezig is, staan de knoppen uit; de focus valt dan van de ingedrukte knop naar
+  // <body>. Daarna weer op die knop (na blokkeren heet hij "Blokkade opheffen"), als de focus
+  // intussen nergens anders staat.
+  const pressed = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (busy) return;
+    const el = pressed.current;
+    pressed.current = null;
+    const now = document.activeElement;
+    if (el?.isConnected && (now === null || now === document.body)) el.focus();
+  }, [busy]);
+
+  /** from: de knop waar het begon (vóór een vraag; anders waar de focus nu staat) */
+  async function run(fn: () => Promise<unknown>, from: Element | null = document.activeElement): Promise<boolean> {
+    pressed.current = from instanceof HTMLElement ? from : null;
     setBusy(true);
     try {
       await fn();
@@ -129,6 +143,7 @@ export function UserDialog({ user, currentUser, onClose, onChanged }: UserDialog
   async function block(disabled: boolean) {
     if (!user) return;
     const name = user.display_name;
+    const from = document.activeElement;
     if (disabled) {
       const yes = await confirm({
         title: t("admin.user.blockTitle", { name }),
@@ -138,7 +153,7 @@ export function UserDialog({ user, currentUser, onClose, onChanged }: UserDialog
       });
       if (!yes) return;
     }
-    if (await run(() => adminApi.changeUser(user.id, { disabled }))) {
+    if (await run(() => adminApi.changeUser(user.id, { disabled }), from)) {
       toast(disabled ? t("admin.user.blocked", { name }) : t("admin.user.unblocked", { name }), { kind: "ok" });
     }
   }
@@ -146,6 +161,7 @@ export function UserDialog({ user, currentUser, onClose, onChanged }: UserDialog
   async function remove() {
     if (!user) return;
     const name = user.display_name;
+    const from = document.activeElement;
     const yes = await confirm({
       title: t("admin.user.removeTitle", { name }),
       message: t("admin.user.removeText", { name }),
@@ -154,7 +170,7 @@ export function UserDialog({ user, currentUser, onClose, onChanged }: UserDialog
       typeToConfirm: user.email,
     });
     if (!yes) return;
-    if (await run(() => adminApi.deleteUser(user.id))) {
+    if (await run(() => adminApi.deleteUser(user.id), from)) {
       toast(t("admin.user.removeStarted", { name }), { kind: "ok" });
       onClose();
     }
@@ -163,13 +179,14 @@ export function UserDialog({ user, currentUser, onClose, onChanged }: UserDialog
   async function reset2fa() {
     if (!user) return;
     const name = user.display_name;
+    const from = document.activeElement;
     const yes = await confirm({
       title: t("admin.user.reset2faTitle", { name }),
       message: t("admin.user.reset2faText", { name }),
       confirm: t("admin.user.reset2fa"),
       danger: true,
     });
-    if (yes && (await run(() => api.resetTotp(user.id)))) {
+    if (yes && (await run(() => api.resetTotp(user.id), from))) {
       toast(t("admin.user.reset2faDone", { name }), { kind: "ok" });
     }
   }

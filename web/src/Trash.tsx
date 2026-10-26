@@ -75,6 +75,9 @@ export default function Trash(_: RouteProps): JSX.Element {
   async function run(fn: () => Promise<void>) {
     if (busy) return;
     setBusy(true);
+    // Al vanaf het begin: een live gebeurtenis (node.changed) laadt de lijst vaak eerder dan wij,
+    // en dan verdwijnt de rij met de focus al; anders stond de focus tot ons eigen laden op <body>
+    focusList();
     try {
       await fn();
       setError(null);
@@ -82,8 +85,8 @@ export default function Trash(_: RouteProps): JSX.Element {
       setError(errorText(e));
     } finally {
       setBusy(false);
-      await load();
       focusList();
+      await load();
     }
   }
 
