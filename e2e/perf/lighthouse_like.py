@@ -24,6 +24,11 @@ decimalen, gewogen tot een categoriescore 0–100 (geheel getal). Van 5 runs tel
 | TBT         | 0,30    | 200 / 600 ms         | 150 / 350 ms          |
 | CLS         | 0,25    | 0,10 / 0,25          | 0,10 / 0,25           |
 
+Een eigen Chromium met schuifbalken die ruimte innemen, zoals Lighthouse hem start (Playwright
+verbergt ze standaard): anders ziet deze meting niet dat een pagina opzij schuift zodra de
+schuifbalk verschijnt. Herijkt tegen Lighthouse 13.5.0 (oktober 2026): /map/<10k> gaf daar CLS
+0,27, hier 0,035.
+
 Vertraging via CDP, met de getallen zoals Lighthouse ze aan DevTools geeft (kbit = 1024 bit):
 - mobiel: 562,5 ms, 1474,56 kbit/s neer, 675 kbit/s op, CPU 4×, 412×823 bij DPR 1,75;
 - desktop: 40 ms, 10 Mbit/s (10240 kbit/s), CPU 1×, 1350×940.
@@ -43,10 +48,12 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import io
 import json
 import math
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,6 +68,7 @@ from conftest import (  # noqa: E402 - pas na het pad naar e2e/
     PerfData,
     Server,
     cdp_profile,
+    launch_chromium,
     median,
     prepare_perf,
     report_only,
@@ -511,6 +519,18 @@ def measure_page(
     }
 
 
+@contextlib.contextmanager
+def lighthouse_browser(browsers: Browsers) -> Iterator[Browsers]:
+    """Een eigen Chromium voor deze meting, met schuifbalken die ruimte innemen (zie boven)."""
+    browser = launch_chromium(browsers.browser.browser_type, scrollbars=True)
+    own = Browsers(browser, browsers.server)
+    try:
+        yield own
+    finally:
+        own.close_all()
+        browser.close()
+
+
 def measure(
     server: Server, browsers: Browsers, data: PerfData | None, runs: int = 5, pages=None
 ) -> dict[str, Any]:
@@ -528,10 +548,11 @@ def measure(
         "curves": CURVES,
         "pages": {},
     }
-    for name in wanted:
-        spec = PAGES[name]
-        owner = data.owner if data is not None else None
-        result["pages"][name] = measure_page(browsers, urls[name], spec, owner, runs)
+    with lighthouse_browser(browsers) as own:
+        for name in wanted:
+            spec = PAGES[name]
+            owner = data.owner if data is not None else None
+            result["pages"][name] = measure_page(own, urls[name], spec, owner, runs)
     pages_out = result["pages"].values()
     result["problems"] = [p for page in pages_out for p in page["problems"]]
     result["ok"] = all(p["status"] != "fail" for p in pages_out) and not result["problems"]

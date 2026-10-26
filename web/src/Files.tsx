@@ -602,11 +602,6 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
 
       {barNodes.length > 0 && <SelectionBar nodes={barNodes} env={barEnv} {...barActions} />}
 
-      {ready && !snap.complete && (
-        <p className="muted browser-progress" aria-live="polite">
-          {t("browser.loadingMore", { loaded: snap.ids.length, total: snap.total })}
-        </p>
-      )}
       {snap.status === "loading" && <p className="muted">{t("browser.loading")}</p>}
       {ready && snap.total === 0 && snap.ids.length === 0 && (
         <div className="browser-empty">
@@ -632,6 +627,13 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
             <FileGrid {...listProps} />
           )}
         </div>
+      )}
+      {/* Onder de lijst (browser.css: onderaan in beeld zolang hij laadt), niet erboven: een regel
+          die verdwijnt als alles er is, verschuift de rijen dan niet */}
+      {ready && !snap.complete && (
+        <p className="muted browser-progress" aria-live="polite">
+          {t("browser.loadingMore", { loaded: snap.ids.length, total: snap.total })}
+        </p>
       )}
 
       {menu && (

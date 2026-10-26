@@ -6,6 +6,9 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0 var(--space-1);
+  /* Ook leeg (de map laadt nog) één regel hoog: anders schuiven titel en lijst omlaag zodra het
+     pad er is (een layoutverschuiving) */
+  min-height: 1lh;
   margin: 0;
 }
 
@@ -67,9 +70,14 @@
   font-weight: 600;
 }
 
+/* Zolang de map laadt: onder de lijst, en met sticky onderaan in beeld */
 .browser-progress {
-  margin: 0 0 var(--space-2);
+  position: sticky;
+  bottom: 0;
+  margin: 0;
+  padding: var(--space-2) 0;
   font-size: var(--text-s);
+  background: var(--bg);
 }
 
 /* --- de lijst --- */

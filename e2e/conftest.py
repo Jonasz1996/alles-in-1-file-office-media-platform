@@ -379,11 +379,19 @@ def launch_browser(pw: Any) -> Any:
     from playwright.sync_api import expect
 
     expect.set_options(timeout=15_000)  # de standaard (5 s) is krap op een drukke runner
-    return pw.chromium.launch(
+    return launch_chromium(pw.chromium)
+
+
+def launch_chromium(browser_type: Any, *, scrollbars: bool = False) -> Any:
+    """Chromium zoals de e2e hem gebruiken. scrollbars: schuifbalken die ruimte innemen, zoals
+    in Chrome op een desktop en in Lighthouse (Playwright verbergt ze standaard,
+    --hide-scrollbars)."""
+    return browser_type.launch(
         executable_path=chromium_path(),
         # Zonder dit gaat Chromium via de proxy van de sandbox, ook voor 127.0.0.1
         args=["--no-proxy-server"],
         headless=os.environ.get("E2E_HEADED") != "1",
+        ignore_default_args=["--hide-scrollbars"] if scrollbars else None,
     )
 
 

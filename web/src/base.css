@@ -5,6 +5,10 @@
   line-height: var(--leading);
   color: var(--fg);
   background: var(--bg);
+  /* Altijd ruimte voor de schuifbalk, ook zolang er niets te scrollen valt: anders schuift de
+     hele pagina opzij zodra een lange lijst binnenkomt (een layoutverschuiving; Lighthouse gaf
+     /map/<10k> daardoor CLS 0,27). Met zwevende schuifbalken (mobiel, macOS) verandert er niets. */
+  scrollbar-gutter: stable;
 }
 
 body {
