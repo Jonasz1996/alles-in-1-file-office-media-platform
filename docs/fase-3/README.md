@@ -51,7 +51,7 @@ licht en donker thema, en als PWA te installeren. Zonder nieuwe bibliotheken (B1
 | Lighthouse performance > 90 | echte Lighthouse 13.5.0: `/` 96 en `/s/<link>` 95 (mobiel), `/map/<10k>` 100 (desktop); de eigen meting binnen 3 punten ([prestaties.md](prestaties.md)) |
 | Eerste weergave < 1,5 s op LAN | `/`, `/map/<10k>` en `/s/<link>`, koud en warm, ruim onder de poort ([prestaties.md](prestaties.md)) |
 | Alle acties ook via het toetsenbord | de checklists [toetsenbord-p1](toetsenbord-p1.md) t/m [p6](toetsenbord-p6.md): p1 t/m p5 in `e2e/test_browser_keyboard.py` en stap 13 van het verhaal, p6 met alleen het toetsenbord in `e2e/test_toetsenbord_p6.py` (de tabbladen en Groepen in `test_admin`) |
-| 10.000 bestanden in één map scrollen soepel | lijst, raster en tijdlijn (50.000 foto's) bij 1× en 4× CPU binnen de poort in de volledige runs op `8321db6` en `0661462` (3 van 3); bij 4× niet in elke losse run: op de opgeleverde code haalde één van de drie volledige runs alle poorten, en de lijst en de tijdlijn bij 4× een deel van de losse runs (zie de bekende grenzen hieronder en [prestaties.md](prestaties.md)) |
+| 10.000 bestanden in één map scrollen soepel | lijst, raster en tijdlijn (50.000 foto's) bij 1× CPU in elke volledige run binnen de poort, het raster ook bij 4×. Lijst en tijdlijn bij 4× niet in elke run: van de drie volledige runs op `25eadb9` haalden er twee alle poorten (de derde niet voor de lijst bij 4×), en in losse runs de lijst 3–8 en de tijdlijn 13 van 20, onder het doel van 18 (zie de bekende grenzen hieronder en [prestaties.md](prestaties.md)) |
 
 ## Documenten
 
@@ -66,11 +66,15 @@ licht en donker thema, en als PWA te installeren. Zonder nieuwe bibliotheken (B1
 - Testen en meten: [e2e.md](e2e.md) (het harnas), [integratie.md](integratie.md) (het verhaal
   van §5.4), [prestaties.md](prestaties.md) met [prestaties.json](prestaties.json).
 
+Dezelfde stappen als in CI, het budget en de e2e na de build. In CI zijn de prestatiepoorten
+alleen een rapport (`E2E_PERF_REPORT_ONLY=1`); zonder die variabele zijn ze een harde poort.
+
 ```sh
-cd api && uv run pytest -q                                          # API
-cd web && npm test && npm run build && npm run budget               # web
-cd api && uv run --with playwright pytest ../e2e -m "not perf"      # e2e, na npm run build
-cd api && uv run --with playwright python ../e2e/perf/run_all.py    # prestatiepoorten
+cd api && uv run ruff check . && uv run ruff format --check . && uv run pytest -q  # API
+cd web && npm run typecheck && npm test && npm run build                           # web
+cd web && npm run check:i18n -- --strict && npm run budget                         # i18n, budget
+cd api && uv run --with playwright pytest ../e2e -m "not perf"                     # e2e
+cd api && uv run --with playwright python ../e2e/perf/run_all.py                   # prestaties
 ```
 
 ## Bekende grenzen
@@ -117,15 +121,16 @@ Zo werkt het nu:
 
 Meten en testen:
 
-- De scrollpoort bij 4× CPU slaagt niet altijd voor de lijst en de tijdlijn. Hoe vaak wel,
-  hangt sterk af van hoe druk de VM is. De lijst haalde hem bij `0661462` in 46 van 61 losse
-  runs en later, met dezelfde lijstcode, in 3 tot 8 van 20. De tijdlijn ging in `ac4914d` van 6
-  naar 13 van 20 (20 runs per build, afwisselend). Het doel van 18 van 20 is voor geen van
-  beide gehaald. Volgens CDP-traces is het meeste werk van de app: lay-out en tekenen van
-  nieuwe rijen, in de lijst vooral hun tekst. In de lijst kwam ongeveer een derde van de lange
-  taken alleen door het gedrang in de VM boven 50 ms. Garbage collection speelde geen rol, en
-  steal van de host was 1–3 %. Van de drie `run_all.py` op `25eadb9` haalden er twee alle
-  poorten. In de andere faalde de lijst bij 4× (p95 50 ms, één taak van 51 ms)
+- De scrollpoort bij 4× CPU slaagt niet altijd voor de lijst en de tijdlijn. Hoe vaak wel, hangt
+  sterk af van hoe druk de VM is. De lijst haalde hem bij `0661462` in 46 van 61 losse runs en
+  later, met de lijst van nu (`c7012d5`), in 3 tot 8 van 20. De kleine wijzigingen aan de lijst
+  daartussen (focus, previews) gaven build tegen build geen duidelijk verschil. De tijdlijn ging
+  in `ac4914d` van 6 naar 13 van 20 (20 runs per build, afwisselend). Het doel van 18 van 20 is
+  voor geen van beide gehaald. Volgens CDP-traces is het meeste werk van de app: lay-out en
+  tekenen van nieuwe rijen, in de lijst vooral hun tekst. In de lijst kwam ongeveer een derde
+  van de lange taken alleen door het gedrang in de VM boven 50 ms. Garbage collection speelde
+  geen rol, en steal van de host was 1–3 %. Van de drie `run_all.py` op `25eadb9` haalden er
+  twee alle poorten. In de andere faalde de lijst bij 4× (p95 50 ms, één taak van 51 ms)
   ([prestaties.md](prestaties.md), "Scrollen bij 4× nader bekeken" en "Slotcontrole op
   `25eadb9`").
 - Bij de slotcontrole van de integratie (`c6221f0`) was één koude eerste weergave van

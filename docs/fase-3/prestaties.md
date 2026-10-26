@@ -51,7 +51,8 @@ tot en met "Wat er veranderde", de echte Lighthouse en de herijking horen bij de
 ### Machine
 
 Sandbox: 4 vCPU Intel Xeon @ 2,80 GHz (Firecracker-VM, kernel 6.18.44), 15 GB RAM. Python
-3.13.16, Node 22.22.0, Playwright 1.64.1 met Chromium 141.0.7390.37 uit `/opt/pw-browsers`.
+3.12.13 (de `.venv` van `api`, ook voor de server), Node 22.22.0, Playwright 1.64.1 met
+Chromium 141.0.7390.37 uit `/opt/pw-browsers`.
 Gemeten tegen de build van `npm run build` op deze commit (bit voor bit dezelfde bestanden
 als bij de Lighthouse-runs hieronder). Er draaide geen andere test tegelijk.
 
@@ -91,12 +92,14 @@ daar dus weinig; daarom staan bij Scrollen ook de slagingspercentages over veel 
 
 Over veel losse runs (`scroll.py`, afwisselend met andere builds op dezelfde machine):
 
-- **lijst 4×** op de uiteindelijke code: 46 van 61 runs (75 %) zonder één taak boven 50 ms en
-  met p95 ≤ 34 ms; mislukt is bijna altijd één taak van 51 tot 62 ms (een paar keer in een
-  drukke periode 66 tot 119 ms). Op `1d0e4c9` (vóór de fix): 1 van 9, met 3 tot 9 lange taken
-  tot 134 ms en p95 50 ms;
+- **lijst 4×** op `0661462`: 46 van 61 runs (75 %) zonder één taak boven 50 ms en met p95 ≤
+  34 ms (later, met de lijst van `c7012d5`, 3 tot 8 van 20: zie "Scrollen bij 4× nader
+  bekeken"; `5ed8da5` en `c7012d5` afwisselend, 5 runs elk, gaven 4 en 3 van 5); mislukt is
+  bijna altijd één taak van 51 tot 62 ms (een paar keer in een drukke periode 66 tot 119 ms).
+  Op `1d0e4c9` (vóór de fix): 1 van 9, met 3 tot 9 lange taken tot 134 ms en p95 50 ms;
 - raster 1× en 4×: 7 van 7; lijst 1×: 6 van 7 (één uitschieter met een taak van 142 ms);
-- volledige `run_all.py`: 3 van 3 alles goed (op `8321db6` en twee keer op `0661462`).
+- volledige `run_all.py`: 3 van 3 alles goed (op `8321db6` en twee keer op `0661462`); later 1
+  van 3 op `c6221f0` en 2 van 3 op `25eadb9` (de slotcontroles hieronder).
 
 ### Echte Lighthouse (harde acceptatie, §4.3)
 
@@ -328,7 +331,12 @@ twee schreven naar een map in de scratchpad, de derde naar dit document:
 
 Twee van de drie haalden alle poorten. De tweede haalde de lijst bij 4× niet, zoals hierboven
 beschreven. Raster en tijdlijn waren bij 1× en 4× alle drie keer goed. Geen van de 15 koude
-eerste weergaven van `/map/<10k>` kwam boven 725 ms. De echte Lighthouse is niet opnieuw
-gedraaid. De wijzigingen raken het laden van de drie gemeten pagina's niet: alleen de
-tijdlijn en de backfill zijn veranderd.
+eerste weergaven van `/map/<10k>` kwam boven 725 ms. Het groottebudget (`npm run budget`) op
+deze code: JS 93,8, CSS 3,4, route Bestanden 39,4, grootste lazy chunk 9,2 en sw.js 2,4 KB,
+alles binnen de grens.
+
+De echte Lighthouse is niet opnieuw gedraaid. Sinds `0661462` veranderde in de web-app vooral
+wat er na het laden gebeurt (focus en toetsen, uploads, delen, de viewer, previews na een andere
+volgorde, de tijdlijn); de refresh in `preload.ts` doet online hetzelfde als eerst.
+lighthouse_like gaf hier 97–98, 94–95 en 100, net als op `0661462` (97, 95, 100).
 <!-- /handmatig -->

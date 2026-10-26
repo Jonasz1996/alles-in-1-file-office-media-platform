@@ -21,9 +21,9 @@ focustests die eerder `test_integratie.py` heetten, staan nu in `test_integratie
 | Stap | Uit §5.4 | Verder in |
 |---|---|---|
 | 1 Eerste start | eerste account in het formulier, 2FA aan met een code; de beheerder maakt een tweede gebruiker en een gast, die ook eerst 2FA aanzetten | `test_login` (code, blokkade na vijf foute codes), `test_admin` |
-| 2 Map uploaden | Shift+U met submappen, een map met de naam van een bestand (zichtbaar mislukt), een groot bestand gaat na herladen verder | `test_p3_upload` |
+| 2 Map uploaden | Shift+U met submappen, een map met de naam van een bestand (zichtbaar mislukt), een groot bestand gaat na herladen verder (dezelfde upload, vanaf zijn offset) | `test_p3_upload` |
 | 3 Tienduizend (`slow`) | scrollen in lijst en raster, selecteren, in bulk verplaatsen, kopiëren, prullenbak + Mod+Z, zip, contextmenu, alleen toetsenbord met Mod+Backspace | `test_browser`, `test_browser_keyboard`, `e2e/perf` |
-| 4 Foto's | backfill van EXIF- en videodatum (23:30 UTC wordt 1 januari in Europe/Amsterdam), Camera/Belichting zonder locatie, album uit de tijdlijn, alleen-bekijken delen (geen Kopiëren, geen download als map), de gast ziet alleen dat, publieke link zonder GPS in enig antwoord, albumzip | `test_p5_photos`, `test_sharing_ui::test_gedeeld_album_zonder_kopieren`, `test_p4_viewer::test_geen_gps_in_enig_antwoord` |
+| 4 Foto's | backfill van EXIF- en videodatum (23:30 UTC wordt 1 januari in Europe/Amsterdam), Camera/Belichting zonder locatie, album uit de tijdlijn, alleen-bekijken delen (geen Kopiëren, ook niet via de API, geen download als map), de gast ziet alleen dat, publieke link zonder GPS in enig antwoord, albumzip | `test_p5_photos`, `test_sharing_ui::test_gedeeld_album_zonder_kopieren`, `test_p4_viewer::test_geen_gps_in_enig_antwoord` |
 | 5 Viewers | GIF (het origineel), HEIC, PDF van 50 pagina's, webm en mp3 spelen, mp4 de eerlijke melding, cp1252, md, csv, json, docx, xlsx, pptx, odt; achter elkaar met Shift+→ | `test_p4_viewer` |
 | 6 Groep | groep Familie, drie bestanden in één keer delen (S, Alt+P), beide leden zien ze, Gedeeld door mij | `test_sharing_ui` (ook de grens van 100) |
 | 7 Prullenbak | Mod+A, Delete; terug met Shift+↓ en Enter; Shift+L leegt; de blobs zijn van schijf, die van de teruggezette niet | `test_trash_versions` |
@@ -48,6 +48,11 @@ Groepen `test_admin`).
   (`d9a7a78`).
 - Mod+Z na 10.000 naar de prullenbak duurde 75 s (drie queries per node); nu 8 s (`7123796`).
 - Offline opstarten liet een onafgehandelde belofte achter (`browser/preload.ts`, `006b166`).
+
+Later vond CI (Chromium 156) nog twee gevallen waarin een snelle toets misging, ook verholpen
+en elk met een e2e die zonder de fix faalt: Alt+P meteen na S ging verloren zolang de delingen
+nog laadden (`842c368`, `test_integratie_focus`), en in de prullenbak breidde Shift+↓ meteen
+na ↓ de selectie niet uit (`c7012d5`, `test_toetsenbord_p6`).
 
 ## Niet gedekt in de sandbox, en waarom
 
