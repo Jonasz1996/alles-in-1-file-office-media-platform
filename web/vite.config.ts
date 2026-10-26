@@ -246,6 +246,10 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": "http://localhost:8000",
+      // De editor (fase 4, Keuze 33): dezelfde poort als /api, met de WebSocket van DS erbij.
+      // Gewone uvicorn heeft de tunnel van de app niet: start de API dan met python -m app.serve
+      // (zie docs/fase-4/e2e.md)
+      "/office": { target: "http://localhost:8000", ws: true },
     },
   },
 });

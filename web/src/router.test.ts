@@ -61,6 +61,14 @@ describe("de routetabel", () => {
     expect(resolve("/s/abc", publicRoutes)).toMatchObject({ params: { token: "abc" } });
   });
 
+  it("de editor (fase 4) heeft een eigen adres met het gebied office, voor elke rol", () => {
+    const r = resolve("/bewerken/abc%20d");
+    expect(r).toMatchObject({ def: { pattern: "/bewerken/:id", areas: ["office"], title: "office.title" }, params: { id: "abc d" } });
+    expect(r.def.section).toBeNull();
+    for (const role of ["admin", "user", "guest"] as const) expect(allowed(r.def, role)).toBe(true);
+    expect(resolve("/bewerken").def.pattern).toBe("*");
+  });
+
   it("alleen beheerders in Beheer; gasten niet in de prullenbak of Foto's", () => {
     const def = (p: string) => resolve(p).def;
     expect(allowed(def("/beheer"), "admin")).toBe(true);

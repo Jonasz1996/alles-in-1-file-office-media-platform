@@ -28,12 +28,14 @@ import {
   isNetworkError,
   type Locale,
   lazyWithAreas,
+  loadAreas,
   locale,
   setLocale,
   t,
 } from "./i18n";
 import { Link } from "./links";
 import { Login } from "./Login";
+import { officeListener } from "./office/listener";
 import { markReady } from "./perf";
 import { AppStatus } from "./pwa/AppStatus";
 import {
@@ -226,6 +228,14 @@ function PageArea({ route, path }: { route: Resolved; path: string }): JSX.Eleme
   );
 }
 
+// --- office (fase 4, Keuze 33) ---
+
+/** De meldingen van office (office/notices.ts) en hun woordenboek, pas bij de eerste
+ * gebeurtenis office.*: ze horen niet bij de eerste lading. */
+const officeEvents = officeListener(() =>
+  Promise.all([import("./office/notices"), loadAreas(["office"])]).then(([m]) => m),
+);
+
 // --- de app ---
 
 export function App(): JSX.Element {
@@ -317,8 +327,12 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
   const live = user !== null && !user.totp_setup_required;
   useEffect(() => {
     if (!live) return;
+    const stopOffice = liveEvents.subscribe(officeEvents);
     liveEvents.start();
-    return () => liveEvents.stop();
+    return () => {
+      liveEvents.stop();
+      stopOffice();
+    };
   }, [live]);
 
   const actions = useMemo(

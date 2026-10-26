@@ -5,8 +5,9 @@
 //   index.html uit de cache.
 // - "asset": een chunk onder /assets/ (de naam bevat zijn hash, dus nooit verouderd) of een vast
 //   bestand van de schil (boot.js, manifest, iconen): eerst de cache.
-// - null: niet aankomen. De API, /health, /.well-known, Range-verzoeken (video), alles behalve
-//   GET, en alles van een andere origin gaat gewoon naar het netwerk.
+// - null: niet aankomen. De API, de editor onder /office/, /health, /.well-known,
+//   Range-verzoeken (video), alles behalve GET, en alles van een andere origin gaat gewoon naar
+//   het netwerk.
 
 export type Route = "shell" | "asset" | null;
 
@@ -20,8 +21,10 @@ export interface RequestLike {
 /** Vaste bestanden van de schil (uit public/); de service worker heeft ze in de precache. */
 const SHELL_FILES = /^\/(boot\.js|manifest\.webmanifest|favicon\.(svg|ico)|icons\/[\w.-]+)$/;
 
-/** Paden die nooit door de service worker gaan, ook niet als navigatie. */
-const NEVER = /^\/(api(\/|$)|health$|ready$|\.well-known\/|sw\.js$)/;
+/** Paden die nooit door de service worker gaan, ook niet als navigatie. /office/ is de editor
+ * (DS, via de proxy in de app): die heeft zijn eigen service worker onder /office/<versie>/, en
+ * de onze komt er nooit aan, net als bij /api (Keuze 33). */
+const NEVER = /^\/(api(\/|$)|office(\/|$)|health$|ready$|\.well-known\/|sw\.js$)/;
 
 function header(headers: RequestLike["headers"], name: string): string | null {
   if (!headers) return null;

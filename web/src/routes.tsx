@@ -1,5 +1,6 @@
-// De routetabel (frozen na P0). Elke pagina is lazy: load() wacht op het chunk én op de
-// woordenboeken die de pagina nodig heeft, zodat t() meteen werkt bij de eerste render.
+// De routetabel (frozen na P0; fase 4 voegt /bewerken/:id toe, van O0). Elke pagina is lazy:
+// load() wacht op het chunk én op de woordenboeken die de pagina nodig heeft, zodat t() meteen
+// werkt bij de eerste render.
 
 import type { ComponentType } from "react";
 import { preloadFolder } from "./browser/preload";
@@ -61,6 +62,9 @@ export const routes: readonly RouteDef[] = [
   route("/album/:id", () => import("./photos/AlbumPage"), photos, "photos.album", "photos"),
   route("/beheer/:tab?", () => import("./Beheer"), ["admin"], "admin.title", "admin", { roles: ["admin"] }),
   route("/account", () => import("./Account"), ["account"], "account.title", "account"),
+  // De editor (fase 4, Keuze 32): een eigen pagina, zodat herladen en Terug werken. Zonder office
+  // is hij er niet (de pagina zegt dan "niet gevonden", zoals in fase 3)
+  route("/bewerken/:id", () => import("./office/EditorPage"), ["office"], "office.title", null),
   // Deze pagina zit in de schil zelf (App gebruikt NoAccess uit hetzelfde bestand): geen chunk
   route("*", () => Promise.resolve({ default: NotFound }), [], "shell.notFound.title", null),
 ];

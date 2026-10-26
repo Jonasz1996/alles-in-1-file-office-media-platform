@@ -45,6 +45,22 @@ describe("classify", () => {
     }
   });
 
+  it("office (fase 4) nooit: de editor, zijn websocket en zijn bestanden komen altijd van het net", () => {
+    for (const path of [
+      "/office",
+      "/office/",
+      "/office/web-apps/apps/api/documents/api.js",
+      "/office/9.0.0-abc/web-apps/apps/documenteditor/main/index.html",
+      "/office/cache/files/x/output.docx",
+    ]) {
+      expect(classify(req(path), ORIGIN)).toBeNull();
+      expect(classify(req(path, { mode: "navigate" }), ORIGIN)).toBeNull();
+    }
+    // Een pad dat alleen zo begint, is gewoon een pagina van de app
+    expect(classify(req("/officetuin", { mode: "navigate" }), ORIGIN)).toBe("shell");
+    expect(classify(req("/bewerken/abc", { mode: "navigate" }), ORIGIN)).toBe("shell");
+  });
+
   it("tus PATCH, POST en andere methoden nooit", () => {
     expect(classify(req("/api/v1/tus/abc", { method: "PATCH" }), ORIGIN)).toBeNull();
     expect(classify(req("/assets/x.js", { method: "POST" }), ORIGIN)).toBeNull();
