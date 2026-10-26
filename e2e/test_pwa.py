@@ -35,6 +35,27 @@ UPDATE_TEXT = "Nieuwe versie beschikbaar"
 UPDATE_JS = "() => navigator.serviceWorker.getRegistration().then((r) => r.update())"
 
 
+def rebuild(dist: Path, marker: str) -> str:
+    """Doet alsof er een nieuwe build is uitgerold in deze kopie van web/dist: een andere
+    build-id in sw.js (dus nieuwe caches) en een herkenbare index.html. Geeft de nieuwe
+    build-id. Ook voor het verhaal van de integratie (test_integratie.py)."""
+    sw = dist / "sw.js"
+    code = sw.read_text()
+    old = re.search(r"shell-([0-9a-f]{12})", code)
+    assert old, "geen build-id in sw.js"
+    new = marker.encode().hex()[:12].ljust(12, "0")
+    sw.write_text(code.replace(old.group(1), new))
+    index = dist / "index.html"
+    html = index.read_text()
+    html = re.sub(r'<meta name="e2e-build"[^>]*>', "", html)
+    meta = f'<meta name="e2e-build" content="{marker}">'
+    index.write_text(html.replace("</head>", f"{meta}</head>"))
+    for f in (sw, index):
+        for ext in (".br", ".gz"):
+            f.with_name(f.name + ext).unlink(missing_ok=True)
+    return new
+
+
 class PwaSite:
     def __init__(self, base: Path, browsers: Browsers):
         self.dist = base / "dist"
@@ -58,23 +79,7 @@ class PwaSite:
         return create_user(self.server, self.admin, name="Offline")
 
     def rebuild(self, marker: str) -> str:
-        """Doet alsof er een nieuwe build is uitgerold: een andere build-id in sw.js (dus nieuwe
-        caches) en een herkenbare index.html. Geeft de nieuwe build-id."""
-        sw = self.dist / "sw.js"
-        code = sw.read_text()
-        old = re.search(r"shell-([0-9a-f]{12})", code)
-        assert old, "geen build-id in sw.js"
-        new = marker.encode().hex()[:12].ljust(12, "0")
-        sw.write_text(code.replace(old.group(1), new))
-        index = self.dist / "index.html"
-        html = index.read_text()
-        html = re.sub(r'<meta name="e2e-build"[^>]*>', "", html)
-        meta = f'<meta name="e2e-build" content="{marker}">'
-        index.write_text(html.replace("</head>", f"{meta}</head>"))
-        for f in (sw, index):
-            for ext in (".br", ".gz"):
-                f.with_name(f.name + ext).unlink(missing_ok=True)
-        return new
+        return rebuild(self.dist, marker)
 
     def stop(self) -> None:
         self.server.stop()
