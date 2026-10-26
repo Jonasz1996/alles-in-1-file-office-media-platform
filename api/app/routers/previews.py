@@ -75,12 +75,15 @@ async def preview_image(
     settings: Annotated[Settings, Depends(get_settings)],
     exp: int = 0,
     sig: str = "",
+    v: int = 0,
 ) -> FileResponse:
     """De preview zelf, zonder inloggen maar alleen met een geldige handtekening (zo werkt
-    een <img>). 403 bij een verkeerde of verlopen handtekening, 404 als hij er niet is."""
+    een <img>). 403 bij een verkeerde of verlopen handtekening, 404 als hij er niet is. v is
+    de PDF-generatie van office (mee getekend, previews.url); de browser haalt zo een nieuwe
+    thumbnail na een nieuwe PDF."""
     if not previews.SHA.fullmatch(sha) or size not in previews.SIZES:
         raise errors.fail(404, "not_found", "Niet gevonden")
-    if not previews.valid(previews.url_key(settings), sha, size, exp, sig):
+    if not previews.valid(previews.url_key(settings), sha, size, exp, sig, v=v):
         raise errors.fail(403, "link_invalid", "Deze link is ongeldig of verlopen")
     path = previews.directory(BlobStore(settings.blob_dir), sha) / f"{size}.webp"
     if not await anyio.Path(path).is_file():

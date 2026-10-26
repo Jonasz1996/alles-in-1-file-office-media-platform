@@ -12,17 +12,34 @@ wachtwoord en zet je 2FA opnieuw aan.
 make-admin is er voor als er geen (actieve) beheerder meer is om het via /beheer te doen: het
 maakt het account beheerder en heft een blokkade op. Niet voor een account dat al wordt
 verwijderd (een taak user.delete staat klaar of loopt): die taak zou gewoon doorgaan.
+
+    docker exec <container> python -m app.cli db-downgrade <revisie> [--ja]
+    docker exec <container> python -m app.cli office-checkpoint [--wait 30]
+
+db-downgrade zet het schema van de database terug naar een eerdere revisie (Alembic
+downgrade), bijvoorbeeld 0006 vóór het terugzetten van een image van fase 3 (M19): een oudere
+app start niet op een nieuwer schema. Het vraagt eerst om bevestiging (typ "ja"), tenzij --ja.
+Wat alleen in de nieuwere kolommen en tabellen stond, is daarna weg. Stop de app eerst.
+
+office-checkpoint vraagt de document server om alle open documenten tussentijds op te slaan
+en wacht daar hooguit --wait seconden op (vóór het stoppen of bijwerken van office). Het
+zegt hoeveel documenten zijn opgeslagen.
 """
 
 import argparse
 import asyncio
 import sys
 
+from alembic import command
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from alembic.util import CommandError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.config import Settings, get_settings
 from app.db import get_engine
+from app.migrate import alembic_config
 from app.models import User
 from app.routers.auth import being_deleted, reset_totp
 
@@ -63,6 +80,113 @@ async def make_admin(settings: Settings, email: str) -> bool:
         return True
 
 
+class UnknownRevision(Exception):
+    """De revisie bestaat niet, of ligt niet vóór de huidige."""
+
+
+async def db_revision(settings: Settings) -> str | None:
+    """De revisie waar de database nu op staat (None: nog leeg)."""
+
+    def read(connection) -> str | None:
+        return MigrationContext.configure(connection).get_current_revision()
+
+    async with get_engine(settings).connect() as conn:
+        return await conn.run_sync(read)
+
+
+def check_downgrade(current: str | None, revision: str) -> None:
+    """UnknownRevision als revision geen eerdere revisie van current is."""
+    script = ScriptDirectory.from_config(alembic_config(""))
+    try:
+        script.get_revision(revision)
+    except CommandError as exc:
+        raise UnknownRevision(revision) from exc
+    if current is None or revision == current:
+        raise UnknownRevision(revision)
+    earlier = {r.revision for r in script.iterate_revisions(current, "base")}
+    if revision not in earlier:
+        raise UnknownRevision(revision)
+
+
+async def db_downgrade(settings: Settings, revision: str) -> None:
+    """Alembic downgrade naar revision, in één transactie."""
+    cfg = alembic_config(settings.db_url)
+
+    def run(connection) -> None:
+        cfg.attributes["connection"] = connection
+        cfg.attributes["timezone"] = settings.timezone
+        command.downgrade(cfg, revision)
+
+    async with get_engine(settings).begin() as conn:
+        await conn.run_sync(run)
+
+
+async def office_checkpoint(settings: Settings, wait: float) -> int:
+    """Tussentijds opslaan van alle open documenten (sweep.checkpoint_all); het aantal."""
+    from app.office import runtime, sweep
+
+    runtime.bind(None, settings)
+    try:
+        return await sweep.checkpoint_all(wait)
+    finally:
+        runtime.unbind()
+
+
+def _confirm(current: str | None, revision: str) -> bool:
+    print(
+        f"De database gaat van revisie {current} terug naar {revision}. Wat alleen in de "
+        "nieuwere kolommen en tabellen staat, is daarna weg. Is de app gestopt?"
+    )
+    try:
+        answer = input('Typ "ja" om door te gaan: ')
+    except EOFError:
+        return False
+    return answer.strip().lower() == "ja"
+
+
+def _downgrade(settings: Settings, revision: str, yes: bool) -> int:
+    async def current() -> str | None:
+        try:
+            return await db_revision(settings)
+        finally:
+            await get_engine(settings).dispose()
+
+    now = asyncio.run(current())
+    try:
+        check_downgrade(now, revision)
+    except UnknownRevision:
+        print(
+            f"Revisie {revision} bestaat niet of ligt niet vóór de huidige ({now}).",
+            file=sys.stderr,
+        )
+        return 1
+    if not yes and not _confirm(now, revision):
+        print("Niets gedaan.", file=sys.stderr)
+        return 1
+
+    async def run() -> None:
+        try:
+            await db_downgrade(settings, revision)
+        finally:
+            await get_engine(settings).dispose()
+
+    asyncio.run(run())
+    print(f"De database staat nu op revisie {revision}.")
+    return 0
+
+
+def _checkpoint(settings: Settings, wait: float) -> int:
+    async def run() -> int:
+        try:
+            return await office_checkpoint(settings, wait)
+        finally:
+            await get_engine(settings).dispose()
+
+    saved = asyncio.run(run())
+    print(f"Tussentijds opgeslagen: {saved} document(en).")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # Geen __doc__: dat is None onder python -OO
     parser = argparse.ArgumentParser(
@@ -77,8 +201,23 @@ def main(argv: list[str] | None = None) -> int:
         "make-admin", help="een account beheerder maken (en een blokkade opheffen)"
     )
     promote.add_argument("email", help="e-mailadres van het account")
+    down = commands.add_parser(
+        "db-downgrade", help="het schema van de database terugzetten naar een eerdere revisie"
+    )
+    down.add_argument("revision", metavar="revisie", help="bijvoorbeeld 0006")
+    down.add_argument("--ja", action="store_true", help="niet om bevestiging vragen")
+    checkpoint = commands.add_parser(
+        "office-checkpoint", help="alle open documenten in office tussentijds opslaan"
+    )
+    checkpoint.add_argument(
+        "--wait", type=float, default=30.0, help="hooguit zoveel seconden wachten (standaard 30)"
+    )
     args = parser.parse_args(argv)
     settings = get_settings()
+    if args.command == "db-downgrade":
+        return _downgrade(settings, args.revision, args.ja)
+    if args.command == "office-checkpoint":
+        return _checkpoint(settings, args.wait)
     action = make_admin if args.command == "make-admin" else reset_2fa
 
     async def run() -> bool:

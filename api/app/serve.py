@@ -10,6 +10,12 @@ https-poort niet open, dan blijft http gewoon werken en staat de reden op /behee
 Er zit geen proxy voor: beide poorten staan rechtstreeks open naar internet. Daarom
 sluit elke verbinding die niet op tijd de tls-handshake doet of de headers van een
 request stuurt.
+
+Met office (fase 4) komt er een derde luisteraar bij: de interne app (main.internal_app) op
+PLATFORM_OFFICE_INTERNAL_PORT, alleen voor de document server (Keuze 8). Die poort wordt
+niet gepubliceerd; hij start alleen als office ingesteld is en stopt als laatste. De
+publieke luisteraars krijgen ws=Tunnel: de enige WebSocket is de tunnel naar office
+(Keuze 6), al het andere krijgt 404.
 """
 
 import asyncio
@@ -28,7 +34,9 @@ from uvicorn.protocols.http.h11_impl import H11Protocol
 
 from app import events
 from app.config import Settings, get_settings
-from app.main import app
+from app.main import app, internal_app
+from app.office import sweep, tunnel
+from app.office.tunnel import Tunnel
 
 try:
     from uvicorn.protocols.http.httptools_impl import HttpToolsProtocol
@@ -62,6 +70,11 @@ class HeaderDeadline:
     zolang een antwoord nog loopt ook niet."""
 
     _deadline: asyncio.TimerHandle | None = None
+    # Na een upgrade naar de tunnel is het transport van de tunnel: dan geen deadline meer.
+    # Zonder deze vlag sloot de deadline een geüpgradede verbinding met httptools na
+    # HEADER_TIMEOUT (M1): on_message_complete zette _in_body terug, terwijl de deadline op
+    # het gedeelde transport doorliep.
+    _upgraded = False
 
     def _waiting_for_headers(self) -> bool:
         raise NotImplementedError
@@ -69,7 +82,15 @@ class HeaderDeadline:
     def _responses_done(self) -> bool:
         return self.cycle is None or self.cycle.response_complete
 
+    def handle_websocket_upgrade(self, *args) -> None:
+        self._upgraded = True
+        self._cancel_deadline()
+        super().handle_websocket_upgrade(*args)
+
     def _update_deadline(self) -> None:
+        if self._upgraded:
+            self._cancel_deadline()
+            return
         if not self._waiting_for_headers():
             self._cancel_deadline()
         elif self._deadline is None and not self.transport.is_closing():
@@ -185,10 +206,28 @@ def _config(settings: Settings, port: int, **extra) -> uvicorn.Config:
         proxy_headers=False,  # er zit geen proxy voor; X-Forwarded-For niet geloven
         server_header=False,
         http=GuardedHttp,
-        ws="none",  # de app heeft geen websockets
+        ws=Tunnel,  # alleen de tunnel naar office (Keuze 6); elke andere upgrade: 404
         limit_concurrency=None,  # zie HEADER_TIMEOUT
         timeout_keep_alive=KEEP_ALIVE,
         **extra,
+    )
+
+
+def _internal_config(settings: Settings) -> uvicorn.Config:
+    """De interne luisteraar voor de document server: alleen http, geen lifespan (de
+    publieke app heeft hem al gedraaid; internal_app deelt zijn state), geen WebSocket."""
+    return uvicorn.Config(
+        internal_app,
+        host=settings.office_internal_host or settings.host,
+        port=settings.office_internal_port,
+        log_level=settings.log_level,
+        proxy_headers=False,
+        server_header=False,
+        http=GuardedHttp,
+        ws="none",
+        lifespan="off",
+        limit_concurrency=None,
+        timeout_keep_alive=KEEP_ALIVE,
     )
 
 
@@ -259,14 +298,52 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
             certs.listener_error_code, certs.listener_error_params = code
             await asyncio.sleep(LISTENER_RETRY)
 
+    internal: Server | None = None
+    internal_task: asyncio.Task | None = None
+
+    async def serve_internal() -> None:
+        """Pas na de lifespan van http: die maakt OfficeState en de database klaar."""
+        nonlocal internal
+        while not http.started:
+            if http_task.done():
+                return
+            await asyncio.sleep(0.05)
+        try:
+            sock = _listen(internal_config.host, internal_config.port)
+        except OSError as e:
+            reason = BIND_ERRORS.get(e.errno, e.strerror or str(e))
+            log.error(
+                "De interne poort %s voor office gaat niet open: %s. Office werkt dan niet.",
+                internal_config.port,
+                reason,
+            )
+            return
+        internal = Server(internal_config)
+        try:
+            await internal.serve(sockets=[sock])
+        finally:
+            sock.close()
+
+    if settings.office_configured:
+        internal_config = _internal_config(settings)
+        internal_task = asyncio.create_task(serve_internal(), name="intern")
+
     https_task = asyncio.create_task(serve_https(), name="https")
     stop_task = asyncio.create_task(stop.wait())
     # Https mag uitvallen zonder dat http stopt; alleen http of een signaal stopt alles
     await asyncio.wait({http_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
 
-    # Netjes stoppen: eerst https (zonder lifespan), dan http (die sluit de lifespan af).
-    # Open gebeurtenisstromen eerst afronden: uvicorn wacht op lopende antwoorden voordat
-    # het de lifespan afsluit, en een stroom eindigt anders nooit.
+    # Netjes stoppen. Eerst office: alle open documenten tussentijds opslaan (hooguit 5 s,
+    # de callbacks komen binnen op de interne poort, die nog draait), dan de tunnels dicht.
+    # Dan de open gebeurtenisstromen afronden: uvicorn wacht op lopende antwoorden voordat
+    # het de lifespan afsluit, en een stroom eindigt anders nooit. Dan https (zonder
+    # lifespan), dan http (die sluit de lifespan af), en de interne luisteraar als laatste.
+    if settings.office_configured:
+        try:
+            await sweep.checkpoint_all(wait=5)
+        except Exception:  # noqa: BLE001 - stoppen gaat altijd door
+            log.exception("Tussentijds opslaan van office bij het stoppen mislukt")
+    tunnel.close_all()
     events.hub.close()
     stop_task.cancel()
     if https is not None:
@@ -277,6 +354,13 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
         await https_task
     http.should_exit = True
     await http_task
+    if internal_task is not None:
+        if internal is not None:
+            internal.should_exit = True
+        else:
+            internal_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await internal_task
 
 
 def _raise_fd_limit() -> None:

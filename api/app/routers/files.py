@@ -926,16 +926,32 @@ def no_room(owner: User, actor_id: uuid.UUID | None) -> HTTPException:
     )
 
 
-async def add_ref(session: AsyncSession, sha: str, size: int, mime: str | None = None) -> None:
+async def add_ref(
+    session: AsyncSession,
+    sha: str,
+    size: int,
+    mime: str | None = None,
+    pdf_state: str | None = None,
+) -> None:
     """ref_count + 1 in de database zelf, of een nieuwe blob-rij (en dan een taak voor de
-    preview, die begint zodra de aanroeper commit). Alleen onder BlobStore.lock."""
+    preview, die begint zodra de aanroeper commit). pdf_state geldt alleen voor een nieuwe
+    blob (fase 4: "ask" voor een upload via een link). Alleen onder BlobStore.lock."""
     result = await session.execute(
         update(Blob)
         .where(Blob.sha256 == sha)
         .values(ref_count=Blob.ref_count + 1, mime=func.coalesce(Blob.mime, mime))
     )
     if result.rowcount == 0:
-        session.add(Blob(sha256=sha, size=size, ref_count=1, mime=mime, preview="pending"))
+        session.add(
+            Blob(
+                sha256=sha,
+                size=size,
+                ref_count=1,
+                mime=mime,
+                preview="pending",
+                pdf_state=pdf_state,
+            )
+        )
         await previews.queue(session, sha)
 
 
@@ -1006,6 +1022,8 @@ async def place_file(
     actor: User | None = None,
     guard: Callable[[AsyncSession], Awaitable] | None = None,
     only: uuid.UUID | None = None,
+    exact: bool = False,
+    squash: str | None = None,
     client_mtime: datetime | None = None,
     tz: str | None = None,
 ) -> Node:
@@ -1017,6 +1035,12 @@ async def place_file(
     een controle onder de sloten, vlak voor het neerzetten (mag actor er nog in?). only: alleen
     dit bestand vervangen (met replace); heet het intussen anders of staat het ergens anders,
     dan 409 en verandert er niets.
+    exact (fase 4, alleen met only en replace): zoek het bestand op id, niet op naam en map;
+    hernoemd, verplaatst of in de prullenbak maakt dan niet uit, weg geeft 404 (opslaan uit
+    de editor, Keuze 16). squash: is de huidige inhoud deze sha, dan wordt die geen versie (de
+    verwijzing vervalt gewoon; Keuze 17); anders gaat alles zoals altijd.
+    Een nieuwe blob zonder actor (een upload via een link) krijgt pdf_state "ask": die gaat
+    nooit vanzelf naar de document server (Keuze 25).
     Een afbeelding of video krijgt een opnamedatum (photodate.stamp): die uit de inhoud als
     die al bekend is, anders client_mtime (de lastModified bij de client), anders nu; tz is
     settings.timezone (standaard die van get_settings()).
@@ -1027,42 +1051,62 @@ async def place_file(
     gebruikersslot als kopiëren en reserveren. Sluit eerst de transactie van de aanroeper af
     (die mag niets openstaan hebben): wie op het slot wacht, houdt geen databaseverbinding
     vast, anders kan wie het slot heeft er geen meer krijgen."""
+    if exact and (only is None or conflict != "replace"):
+        raise ValueError("exact kan alleen met only en conflict replace")
     # Het soort volgt uit de inhoud; de naam helpt alleen waar de inhoud niets zegt
     mime = sniff(await anyio.to_thread.run_sync(read_head, source), name)
     tz = tz or get_settings().timezone
+    pdf_state = "ask" if actor is None else None
     moved, created = False, False
     await session.commit()
     async with user_lock(owner.id) if upload is None else nullcontext(), blobs.lock:
         try:
-            if await session.scalar(select(Node.id).where(Node.id == parent.id)) is None:
-                # Intussen definitief verwijderd
-                raise errors.fail(404, "folder_not_found", "Map niet gevonden")
-            if guard is not None:
-                await guard(session)
-            existing = await sibling(session, parent.id, name)
-            if existing and conflict == "fail":
-                raise NameTaken
-            if only is not None and (existing is None or existing.id != only):
-                raise errors.fail(409, **MOVED)
+            if exact:
+                # Op id, vers uit de database: naam, map en prullenbak doen er niet toe
+                existing = await session.scalar(
+                    select(Node)
+                    .where(Node.id == only, Node.kind == "file")
+                    .execution_options(populate_existing=True)
+                )
+                if existing is None:
+                    raise errors.fail(404, "not_found", "Bestand niet gevonden")
+                if guard is not None:
+                    await guard(session)
+            else:
+                if await session.scalar(select(Node.id).where(Node.id == parent.id)) is None:
+                    # Intussen definitief verwijderd
+                    raise errors.fail(404, "folder_not_found", "Map niet gevonden")
+                if guard is not None:
+                    await guard(session)
+                existing = await sibling(session, parent.id, name)
+                if existing and conflict == "fail":
+                    raise NameTaken
+                if only is not None and (existing is None or existing.id != only):
+                    raise errors.fail(409, **MOVED)
             replacing = existing and conflict == "replace" and existing.kind == "file"
+            # De huidige inhoud is de tussenstand van deze sessie: die wordt geen versie
+            squashing = bool(replacing and squash is not None and existing.blob_id == squash != sha)
             if upload is None and not (replacing and existing.blob_id == sha):
                 # Pas nu weet je wat anderen intussen innamen (de vorige inhoud blijft als
-                # versie staan, dus ook vervangen kost ruimte)
+                # versie staan, dus ook vervangen kost ruimte; bij squash niet)
+                need = size - (existing.size or 0) if squashing else size
                 room = await room_left(session, owner)
-                if room is not None and size > room:
+                if room is not None and need > room:
                     raise no_room(owner, actor.id if actor else None)
             now = datetime.now(UTC)
             if replacing:
                 if existing.blob_id != sha:
-                    await add_ref(session, sha, size, mime)
-                    if existing.blob_id:
+                    await add_ref(session, sha, size, mime, pdf_state)
+                    if squashing:
+                        await drop_ref(session, existing.blob_id)
+                    elif existing.blob_id:
                         await keep_version(session, existing, actor, now)
                 # Dezelfde inhoud als nu: geen nieuwe versie
                 existing.blob_id, existing.size, existing.mime = sha, size, mime
                 existing.modified_at = now
                 node = existing
             else:
-                await add_ref(session, sha, size, mime)
+                await add_ref(session, sha, size, mime, pdf_state)
                 if existing:
                     name = await free_name(session, parent.id, name)
                 node = Node(

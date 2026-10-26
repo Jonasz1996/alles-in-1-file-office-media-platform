@@ -4,10 +4,10 @@ Eén preview per blob: dezelfde inhoud krijgt er maar één, ook als hij in tien
 verschillende gebruikers staat. Hij staat naast de blobs, in previews/<sha[:2]>/<sha>/, als
 256.webp (thumbnail) en 1024.webp (groot), voor zover dat zin heeft: nooit groter dan het
 origineel; HEIC, HEIF en TIFF krijgen ook 2048.webp (DISPLAY: de browser kan het origineel
-niet tonen). Een kantoordocument krijgt doc.json (de inhoud voor de viewer, app/office.py),
-en de viewer zet gerenderde PDF-pagina's in pages/ (routers/viewer.py). Wat er verder uit
-komt (afmetingen, duur, eerste regels tekst, inhoud van een archief, codecs) staat in
-Blob.preview_meta. Lijsten krijgen daarvan alleen het lichte deel (info), de viewer alles
+niet tonen). Een kantoordocument krijgt doc.json (de inhoud voor de viewer,
+app/office/reader.py), en de viewer zet gerenderde PDF-pagina's in pages/ (routers/viewer.py).
+Wat er verder uit komt (afmetingen, duur, eerste regels tekst, inhoud van een archief, codecs)
+staat in Blob.preview_meta. Lijsten krijgen daarvan alleen het lichte deel (info), de viewer alles
 (info met full=True, via GET /files/{id}/preview).
 
 RENDER_VERSION gaat omhoog als previews van bestaande inhoud opnieuw gemaakt moeten worden;
@@ -48,6 +48,7 @@ from app import access, events, jobs, photodate
 from app.config import Settings
 from app.db import get_engine
 from app.models import Blob, Node
+from app.office import convert
 from app.storage import BlobStore
 
 TYPE = "preview"
@@ -107,6 +108,7 @@ async def discard(blobs: BlobStore, sha: str) -> None:
     """Weg met de preview van opgeruimde inhoud. Onder BlobStore.lock, net als het opruimen
     zelf en het neerzetten van een nieuwe preview: zo blijft er nooit een achter."""
     await anyio.to_thread.run_sync(shutil.rmtree, directory(blobs, sha), True)
+    await convert.on_discard(blobs, sha)  # de PDF van office erbij (O3)
 
 
 def url_key(settings: Settings) -> bytes:
@@ -114,8 +116,11 @@ def url_key(settings: Settings) -> bytes:
     return hmac.new(settings.secret().encode(), b"platform-preview-url", hashlib.sha256).digest()
 
 
-def signature(secret: bytes, sha: str, size: int, exp: int) -> str:
-    mac = hmac.new(secret, f"{sha}/{size}/{exp}".encode(), hashlib.sha256).digest()
+def signature(secret: bytes, sha: str, size: int, exp: int, v: int = 0) -> str:
+    """v is de PDF-generatie van office (Keuze 25). Zonder (v 0) is de handtekening precies
+    die van fase 3, dus bestaande adressen blijven geldig."""
+    message = f"{sha}/{size}/{exp}" if v == 0 else f"{sha}/{size}/{exp}/{v}"
+    mac = hmac.new(secret, message.encode(), hashlib.sha256).digest()
     return base64.urlsafe_b64encode(mac).rstrip(b"=").decode()
 
 
@@ -125,14 +130,26 @@ def expiry(at: float | None = None) -> int:
     return -(-t // URL_PERIOD) * URL_PERIOD + URL_PERIOD
 
 
-def url(secret: bytes, sha: str, size: int, exp: int) -> str:
-    return f"/api/v1/previews/{sha}/{size}.webp?exp={exp}&sig={signature(secret, sha, size, exp)}"
+def url(secret: bytes, sha: str, size: int, exp: int, v: int = 0) -> str:
+    """Het getekende adres. v (de PDF-generatie, 0 zonder PDF) staat erin en is mee getekend:
+    een nieuwe PDF geeft een nieuw adres, anders hield de browser de oude thumbnail."""
+    sig = signature(secret, sha, size, exp, v)
+    part = f"&v={v}" if v else ""
+    return f"/api/v1/previews/{sha}/{size}.webp?exp={exp}{part}&sig={sig}"
 
 
-def valid(secret: bytes, sha: str, size: int, exp: int, sig: str, at: float | None = None) -> bool:
-    if exp < (time.time() if at is None else at):
+def valid(
+    secret: bytes,
+    sha: str,
+    size: int,
+    exp: int,
+    sig: str,
+    at: float | None = None,
+    v: int = 0,
+) -> bool:
+    if exp < (time.time() if at is None else at) or v < 0:
         return False
-    expected = signature(secret, sha, size, exp).encode()
+    expected = signature(secret, sha, size, exp, v).encode()
     return hmac.compare_digest(expected, sig.encode())  # in constante tijd
 
 
@@ -154,6 +171,13 @@ def clean_meta(meta: dict[str, Any]) -> dict[str, Any]:
     return meta
 
 
+def pdf_generation(blob: Blob | None) -> int:
+    """Het deel v van het adres: de pdf_version als office een PDF heeft gemaakt, anders 0."""
+    if blob is None or blob.pdf_state != "ready":
+        return 0
+    return blob.pdf_version or 0
+
+
 def info(secret: bytes, blob: Blob | None, exp: int, full: bool = False) -> dict[str, Any]:
     """Wat de web-app over de preview van deze inhoud te zien krijgt. Standaard licht (voor
     lijsten: alleen afmetingen, duur, pagina's en of het beweegt); full=True geeft alle
@@ -161,14 +185,15 @@ def info(secret: bytes, blob: Blob | None, exp: int, full: bool = False) -> dict
     state = (blob.preview if blob else None) or "pending"
     meta = dict((blob.preview_meta if blob else None) or {})
     sizes = meta.get("sizes", []) if state == "ready" and blob else []
-    thumb = url(secret, blob.sha256, THUMB, exp) if blob and THUMB in sizes else None
+    v = pdf_generation(blob)
+    thumb = url(secret, blob.sha256, THUMB, exp, v) if blob and THUMB in sizes else None
     large = None
     if blob and sizes:
-        large = url(secret, blob.sha256, LARGE if LARGE in sizes else THUMB, exp)
+        large = url(secret, blob.sha256, LARGE if LARGE in sizes else THUMB, exp, v)
     if not full:
         light = {k: meta[k] for k in LIGHT if k in meta}
         return {"state": state, "thumb": thumb, "large": large, "meta": light}
-    display = url(secret, blob.sha256, DISPLAY, exp) if blob and DISPLAY in sizes else None
+    display = url(secret, blob.sha256, DISPLAY, exp, v) if blob and DISPLAY in sizes else None
     return {
         "state": state,
         "thumb": thumb,
@@ -297,6 +322,7 @@ async def _store(
             capture = photodate.split_capture(meta)
             blob.preview_meta = meta
             await photodate.on_blob_meta(session, blob, capture, None, tz)
+            await convert.on_preview_done(session, blob)  # PDF van office nodig? (O3)
             await session.commit()
     return True
 

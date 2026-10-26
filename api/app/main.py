@@ -22,8 +22,16 @@ from app import __version__, errors, events, jobs, photometa, previews
 from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.migrate import upgrade
+from app.office import engine as office_engine
+from app.office import health as office_health
+from app.office import recovery as office_recovery
+from app.office import runtime as office_runtime
+from app.office import sweep as office_sweep
+from app.office.proxy import OfficeProxy
+from app.office.state import OfficeState
 from app.routers import (
     admin,
+    admin_office,
     albums,
     archive,
     auth,
@@ -33,6 +41,10 @@ from app.routers import (
     groups,
     jobs_admin,
     myshares,
+    office,
+    office_internal,
+    office_new,
+    office_pdf,
     photos,
     public,
     search,
@@ -49,8 +61,9 @@ log = logging.getLogger("platform")
 
 # Downloadlinks, previewadressen en de sleutel van een publieke link dragen hun toegang in
 # het adres (een <img> of <video> kan geen header sturen), en het adres van een publieke link
-# (/s/<token>) is de toegang zelf; die waarden horen niet in de toegangslog
-SECRET_PARAMS = re.compile(r"([?&](?:token|sig|key)=)[^&\s\"]*")
+# (/s/<token>) is de toegang zelf; die waarden horen niet in de toegangslog. Net zo de
+# opslaglinks van de document server (md5) en de keys van office (shardkey).
+SECRET_PARAMS = re.compile(r"([?&](?:token|sig|key|md5|shardkey)=)[^&\s\"]*")
 LINK_PATH = re.compile(r"((?:^|[\s\"])/s/)[^/?#\s\"]+")
 
 
@@ -329,6 +342,37 @@ def _streams_end_on_signal():
                 signal.signal(sig, previous)
 
 
+async def _office_start(app: FastAPI, settings: Settings) -> None:
+    """Office (fase 4), alleen als PLATFORM_OFFICE_URL gezet is: OfficeState, en met geldige
+    instellingen de taken gezondheid, ronde en herstel. Zonder office gebeurt hier niets."""
+    if not settings.office_url:
+        return
+    state = app.state.office = OfficeState(problem=settings.office_problem())
+    office_runtime.bind(app, settings)
+    if state.problem:
+        state.health = "misconfigured"
+        log.error("Office staat uit: %s", state.problem)
+        return
+    state.health = "starting"
+    if settings.office_dev_ungated:
+        log.warning(
+            "PLATFORM_OFFICE_DEV_UNGATED staat aan: /office/ zonder toegangscontrole; "
+            "alleen voor tests"
+        )
+    await office_health.start(app)
+    await office_sweep.start(app)
+    await office_recovery.start(app)
+
+
+async def _office_stop(app: FastAPI) -> None:
+    if getattr(app.state, "office", None) is None:
+        return
+    await office_health.stop(app)  # ook de taken van de ronde en het herstel
+    await office_engine.close()
+    office_runtime.unbind()
+    del app.state.office
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -361,11 +405,13 @@ async def lifespan(app: FastAPI):
         log.exception("Metadata van bestaande foto's klaarzetten mislukt")
     runner = jobs.Runner(settings)
     await runner.start()
+    await _office_start(app, settings)
     log.info("Platform %s gestart (%s), data in %s", __version__, settings.mode, settings.data_dir)
     with _streams_end_on_signal():
         yield
     events.hub.close()  # wat nog openstond afronden (na een signaal al gebeurd)
     events.hub = events.Hub()  # een volgende start in hetzelfde proces (tests) kan weer
+    await _office_stop(app)
     await runner.stop()
     cleaner.cancel()
     await certs.stop()
@@ -378,6 +424,9 @@ app = FastAPI(
     docs_url="/api/docs",
     lifespan=lifespan,
 )
+# De binnenste: /office/ naar de document server (alleen als office aan staat), vóór de
+# catch-all van de web-app
+app.add_middleware(OfficeProxy)
 app.add_middleware(JsonCompression)
 app.add_middleware(Edge)  # de buitenste: beveiligingsheaders op elk antwoord
 app.add_exception_handler(RequestValidationError, errors.invalid_input)
@@ -400,6 +449,27 @@ app.include_router(albums.router)
 app.include_router(jobs_admin.router)
 app.include_router(myshares.router)
 app.include_router(live_events.router)
+app.include_router(office.router)
+app.include_router(office_pdf.router)
+app.include_router(office_new.router)
+app.include_router(admin_office.router)
+
+# Wat de document server aanroept, op een eigen luisteraar (Keuze 8, app/serve.py): de
+# publieke poorten kennen /internal/ niet. Deelt app.state (database, blob-opslag,
+# OfficeState) met de hoofd-app.
+internal_app = FastAPI(title="Platform intern", openapi_url=None, docs_url=None, redoc_url=None)
+internal_app.add_middleware(Edge)
+internal_app.add_exception_handler(RequestValidationError, errors.invalid_input)
+internal_app.include_router(office_internal.router)
+internal_app.include_router(office_pdf.internal_router)
+internal_app.state = app.state
+
+ALL_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
+
+@internal_app.api_route("/{path:path}", methods=ALL_METHODS, include_in_schema=False)
+async def internal_unknown(path: str):
+    raise errors.fail(404, "not_found", "Niet gevonden")
 
 
 class Status(BaseModel):
@@ -494,6 +564,16 @@ def _web_file(request: Request, file: Path, rel: str) -> Response:
     )
 
 
+@app.api_route("/office", methods=ALL_METHODS, include_in_schema=False)
+@app.api_route("/office/{path:path}", methods=ALL_METHODS, include_in_schema=False)
+@app.api_route("/internal", methods=ALL_METHODS, include_in_schema=False)
+@app.api_route("/internal/{path:path}", methods=ALL_METHODS, include_in_schema=False)
+async def office_closed(path: str = ""):
+    """/office/ zonder proxy (office uit, of de proxy liet het door) en /internal/ op de
+    publieke poort: 404, wat de methode ook is."""
+    raise errors.fail(404, "not_found", "Niet gevonden")
+
+
 @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
 async def web_app(
     path: str, request: Request, settings: Annotated[Settings, Depends(get_settings)]
@@ -501,7 +581,7 @@ async def web_app(
     """Serveert de gebouwde web-app; onbekende paden krijgen index.html (client-side routing).
     Een ontbrekend bestand onder assets/ of met een extensie geeft 404: een oud chunk na een
     nieuwe versie moet hard falen (de app herlaadt dan), niet als index.html terugkomen."""
-    if path == "api" or path.startswith("api/"):
+    if path in ("api", "office", "internal") or path.startswith(("api/", "office/", "internal/")):
         raise errors.fail(404, "not_found", "Niet gevonden")
     root = settings.web_dist.resolve()
     index = root / "index.html"

@@ -1,3 +1,4 @@
+import logging
 import re
 import shutil
 import uuid
@@ -24,11 +25,14 @@ from app.cluster import (
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Blob, Node, Upload, User, Version
+from app.office import monitor as office_monitor
+from app.office.state import office_state
 from app.routers import trash
 from app.security import AdminUser, Policy, SecurityConfig, security_policy
 from app.usage import NodeStorage
 
 router = APIRouter(prefix="/api/v1/admin", tags=["beheer"])
+log = logging.getLogger("platform.admin")
 
 # Zo kort voor het verlopen van het certificaat wordt de status "degraded"
 HTTPS_WARN_DAYS = 14
@@ -163,6 +167,10 @@ async def system_info(
                     days=max(days, 0),
                 )
             )
+    try:  # de meldingen van office (O5); een fout daarin mag /beheer niet breken
+        notices.extend(await office_monitor.notices(office_state(request.app), session))
+    except Exception:
+        log.exception("Meldingen van office konden niet worden opgehaald")
     sqlite = settings.db_url.startswith("sqlite")
     info = SystemInfo(
         version=__version__,
