@@ -60,6 +60,9 @@ export interface UploadOptions {
   onUrl?: (url: string) => void;
   /** Extra Upload-Metadata bij het aanmaken (conflict, lastmodified). */
   meta?: Record<string, string>;
+  /** Gestopt (STOP) en intussen toch geannuleerd? Dan wordt de upload weggegooid, ook als hij
+   * pas na het stoppen ontstond (tusCreate kent het signaal niet). */
+  cancelled?: () => boolean;
 }
 
 /** XMLHttpRequest, want fetch meldt geen voortgang tijdens het versturen. */
@@ -272,7 +275,7 @@ export async function uploadFile(
 
   // Was het bestand al af toen er geannuleerd werd, dan is het er gewoon.
   if (nodeId === null && signal?.aborted) {
-    if (signal.reason !== STOP) {
+    if (signal.reason !== STOP || options.cancelled?.()) {
       forget();
       await api.tusCancel(url).catch(() => {});
     }

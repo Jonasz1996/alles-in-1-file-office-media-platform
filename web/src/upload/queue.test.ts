@@ -304,7 +304,8 @@ describe("UploadQueue: pauzeren en hervatten", () => {
       await slow;
       return create(...args);
     };
-    const queue = new UploadQueue(server, { send: server.send, storage: memoryStorage() });
+    const storage = memoryStorage();
+    const queue = new UploadQueue(server, { send: server.send, storage });
     const done = queue.add("p", [file("a", 5)]);
     await tick();
     const [item] = queue.getSnapshot();
@@ -316,6 +317,60 @@ describe("UploadQueue: pauzeren en hervatten", () => {
     await tick();
     expect(queue.getSnapshot()).toEqual([]);
     expect(server.done.size).toBe(0);
+    // De upload die het aanmaken nog opleverde, is op de server weggegooid (geen gereserveerde
+    // ruimte voor 24 uur) en staat niet meer in de opslag
+    expect(server.cancelled).toEqual(["/u/1"]);
+    expect(storage.data.size).toBe(0);
+  });
+
+  it("annuleren na pauzeren terwijl het aanmaken nog loopt: ook die upload wordt weggegooid", async () => {
+    const server = new Server();
+    let release = () => {};
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const create = server.tusCreate.bind(server);
+    server.tusCreate = async (...args) => {
+      await slow;
+      return create(...args);
+    };
+    const storage = memoryStorage();
+    const queue = new UploadQueue(server, { send: server.send, storage });
+    const done = queue.add("p", [file("a", 5)]);
+    await tick();
+    const [item] = queue.getSnapshot();
+    queue.pause(item.key);
+    queue.cancel(item.key);
+    await tick();
+    release();
+    await done;
+    for (let i = 0; i < 5; i++) await tick();
+    expect(queue.getSnapshot()).toEqual([]);
+    expect(server.done.size).toBe(0);
+    expect(server.cancelled).toEqual(["/u/1"]);
+    expect(storage.data.size).toBe(0);
+  });
+
+  it("alleen pauzeren terwijl het aanmaken nog loopt: de upload blijft staan om verder te gaan", async () => {
+    const server = new Server();
+    let release = () => {};
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const create = server.tusCreate.bind(server);
+    server.tusCreate = async (...args) => {
+      await slow;
+      return create(...args);
+    };
+    const storage = memoryStorage();
+    const queue = new UploadQueue(server, { send: server.send, storage });
+    const done = queue.add("p", [file("a", 5)]);
+    await tick();
+    const [item] = queue.getSnapshot();
+    queue.pause(item.key);
+    release();
+    for (let i = 0; i < 5; i++) await tick();
+    expect(server.cancelled).toEqual([]);
+    expect(queue.getSnapshot()[0]).toMatchObject({ state: "paused", url: "/u/1" });
+    queue.resume(item.key);
+    await done;
+    expect([...server.done.keys()]).toEqual(["/u/1"]);
   });
 
   it("annuleren van een gepauzeerde upload gooit hem op de server weg", async () => {

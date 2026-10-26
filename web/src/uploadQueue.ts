@@ -156,6 +156,9 @@ export class UploadQueue {
   private snapshot: readonly UploadItem[] | null = EMPTY;
   /** Per lopende poging; abort(STOP) is pauzeren (ook als er intussen hervat is), abort() annuleren. */
   private readonly controllers = new Map<string, AbortController>();
+  /** Pogingen die na pauzeren nog aflopen en intussen geannuleerd zijn: wat zo'n poging nog op
+   * de server aanmaakt (tusCreate liep nog), gooit hij zelf weg (uploadFile, cancelled) */
+  private readonly cancelledAttempts = new WeakSet<AbortController>();
   private readonly running = new Set<string>();
   private readonly waiters = new Map<string, (() => void)[]>();
   private readonly creates = new Map<string, (nodeId: string, item: UploadItem) => void>();
@@ -414,6 +417,7 @@ export class UploadQueue {
         url: this.items.get(key)?.url ?? item.url,
         onUrl: (url) => this.change(key, { url }),
         meta: { conflict: item.conflict ?? "rename", lastmodified: String(item.file.lastModified) },
+        cancelled: () => this.cancelledAttempts.has(controller),
       });
       ok = true;
     } catch (e) {
@@ -739,11 +743,13 @@ export class UploadQueue {
     const item = this.items.get(key);
     if (!item) return;
     const controller = this.controllers.get(key);
-    // Loopt hij nog af na pauzeren (ook als hij al hervat is), dan weggooien zoals gepauzeerd
     if (controller && !controller.signal.aborted) {
       controller.abort();
       return;
     }
+    // Loopt hij nog af na pauzeren (ook als hij al hervat is), dan weggooien zoals gepauzeerd,
+    // en wat die poging nog aanmaakt ook
+    if (controller) this.cancelledAttempts.add(controller);
     if (item.state === "waiting" && !item.url) {
       this.drop(key, false); // nog niet begonnen: er staat niets op de server
       return;
@@ -765,8 +771,12 @@ export class UploadQueue {
       this.drop(key, false); // er was nooit een upload
       return;
     }
-    // Loopt hij nog af na pauzeren, dan eerst dat
-    this.controllers.get(key)?.abort(STOP);
+    // Loopt hij nog af na pauzeren, dan eerst dat (en wat die poging nog aanmaakt, gaat ook weg)
+    const controller = this.controllers.get(key);
+    if (controller) {
+      controller.abort(STOP);
+      this.cancelledAttempts.add(controller);
+    }
     this.change(key, { state: "discarding" });
     try {
       await discardUpload(this.api, item.parent, item.file, item.url, this.options.storage);
