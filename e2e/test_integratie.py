@@ -1285,9 +1285,9 @@ UPDATE_JS = "() => navigator.serviceWorker.getRegistration().then((r) => r.updat
 
 
 def test_12_pwa_offline_en_een_nieuwe_versie(verhaal: Verhaal) -> None:
-    """De service worker bedient de app op localhost; offline herladen geeft de schil met de
-    balk, en weer online komt de app zelf terug; een nieuwe build geeft "Nieuwe versie
-    beschikbaar" en Shift+N laadt hem."""
+    """De service worker bedient de app op localhost; offline herladen (Anna in een eigen
+    context) geeft de schil met de balk, en weer online komt de app zelf terug; een nieuwe
+    build geeft "Nieuwe versie beschikbaar" en Shift+N laadt hem."""
     from test_pwa import rebuild
 
     v = verhaal
@@ -1298,24 +1298,32 @@ def test_12_pwa_offline_en_een_nieuwe_versie(verhaal: Verhaal) -> None:
     assert page.evaluate("() => location.hostname") == "localhost"
     page.wait_for_function(CONTROLLED_JS, timeout=30_000)
 
-    # Offline: de server even weg en de browser offline, zoals in test_pwa.py. Alleen
-    # set_offline is niet genoeg: in nieuwere Chromium (CI) gaan verzoeken die de worker
-    # doorlaat dan toch naar het netwerk. Daarna start de server weer op dezelfde poort en
-    # met dezelfde data, voor de rest van het verhaal.
-    v.server.stop()
-    page.context.set_offline(True)
+    # Offline herladen, met Anna in een eigen context op 127.0.0.1, zoals test_pwa.py: de
+    # server even weg en de browser offline. Op de pagina hierboven (localhost, het hele
+    # verhaal lang open) had set_offline in de Chromium van CI (156) geen effect: de
+    # verzoeken gingen gewoon door en navigator.onLine bleef true. Daarna start de server weer
+    # op dezelfde poort en met dezelfde data, voor de rest van het verhaal.
+    offline = v.context(v.mensen["anna"], origin=v.server.url)
     try:
-        page.reload()
-        expect(page.get_by_role("heading", name="Geen verbinding", exact=True)).to_be_visible()
-        expect(page.get_by_role("status").filter(has_text="Je bent offline")).to_be_visible()
-        assert page.evaluate("getComputedStyle(document.body).margin") == "0px"  # met opmaak
+        op = offline.new_page()
+        op.goto("/")
+        expect(op.get_by_role("navigation", name="Hoofdmenu")).to_be_visible()
+        op.wait_for_function(CONTROLLED_JS, timeout=30_000)
+        v.server.stop()
+        offline.set_offline(True)
+        try:
+            op.reload()
+            expect(op.get_by_role("heading", name="Geen verbinding", exact=True)).to_be_visible()
+            expect(op.get_by_role("status").filter(has_text="Je bent offline")).to_be_visible()
+            assert op.evaluate("getComputedStyle(document.body).margin") == "0px"  # met opmaak
+        finally:
+            v.server.start()
+            offline.set_offline(False)
+        # Weer online: het scherm probeert het zelf opnieuw ("online") en de app komt terug
+        expect(op.get_by_role("navigation", name="Hoofdmenu")).to_be_visible()
     finally:
-        v.server.start()
-        page.context.set_offline(False)
-    # Weer online: het scherm probeert het zelf opnieuw ("online"). Pas daarna herladen: wie
-    # herlaadt terwijl die refresh loopt, breekt hem af na de rotatie en houdt het oude cookie
-    # (dan hergebruik en uitgelogd, bewust: zie REFRESH_RACE en docs/fase-3/integratie.md)
-    expect(page.get_by_role("navigation", name="Hoofdmenu")).to_be_visible()
+        offline.close()
+    # De pagina op localhost overleeft de herstart van de server
     page.reload()
     expect(page.get_by_role("navigation", name="Hoofdmenu")).to_be_visible()
     page.wait_for_function(CONTROLLED_JS, timeout=30_000)

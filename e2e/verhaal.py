@@ -145,16 +145,19 @@ class Verhaal:
     def api(self, persoon: Persoon, method: str, path: str, **kw: Any) -> httpx.Response:
         return self.server.request(method, path, token=self.token(persoon), **kw)
 
-    def context(self, persoon: Persoon | None = None, **options: Any) -> Any:
-        """Een context op localhost; met persoon ingelogd (refresh-cookie via context.request,
-        met een 2FA-code)."""
-        context = self.browsers.new_context(base_url=self.base, **options)
+    def context(
+        self, persoon: Persoon | None = None, origin: str | None = None, **options: Any
+    ) -> Any:
+        """Een context op localhost (of op origin); met persoon ingelogd (refresh-cookie via
+        context.request, met een 2FA-code)."""
+        base = origin or self.base
+        context = self.browsers.new_context(base_url=base, **options)
         if persoon is not None:
             data: dict[str, Any] = {"email": persoon.email, "password": persoon.password}
             code = persoon.code()
             if code:
                 data["code"] = code
-            r = context.request.post(f"{self.base}{API}/auth/login", data=data)
+            r = context.request.post(f"{base}{API}/auth/login", data=data)
             assert r.ok, f"inloggen als {persoon.email} gaf {r.status}: {r.text()}"
         return context
 

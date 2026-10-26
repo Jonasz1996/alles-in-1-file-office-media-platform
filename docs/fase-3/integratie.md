@@ -56,8 +56,11 @@ prullenbak, Versies, `/` bij Gebruikers, Alt+3 en Alt+4); de rest staat in `test
   grens).
 - **Album via een publieke link:** geen zip en geen gegevenspaneel (bekende grens); de zip komt
   van de eigenaar.
-- **PWA:** offline is de browser (`set_offline`), niet het netwerk; installeren kan headless
-  niet. De SW registreert alleen op `localhost` (geen https in de sandbox).
+- **PWA:** offline is de browser (`set_offline`) met de server even uit, niet het netwerk;
+  installeren kan headless niet. De SW registreert alleen in een secure context (`localhost`
+  of `127.0.0.1`; geen https in de sandbox). Het offline herladen gebeurt in een eigen context
+  op `127.0.0.1`, zoals in `test_pwa`: op de pagina die het hele verhaal open stond (localhost)
+  had `set_offline` in de Chromium van CI (156) geen effect.
 - **2FA:** de codes komen uit het geheim (`app.totp`), zoals een authenticator-app ze maakt.
 - **Herladen terwijl de refresh na weer online loopt:** wie dan herlaadt, breekt een refresh af
   die de server al heeft gedraaid, en houdt het oude cookie. Na de marge van `REFRESH_RACE` is
