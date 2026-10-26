@@ -68,11 +68,11 @@ prullenbak, Versies, `/` bij Gebruikers, Alt+3 en Alt+4); de rest staat in `test
 
 ## Over het harnas
 
-- `chooser_ready()` (in `verhaal.py`) staat voor elke toets of klik die de bestandskiezer
-  opent. `expect_file_chooser` zet het onderscheppen pas aan bij zijn eerste luisteraar en
-  wacht daar niet op. Bij een drukke pagina kwam de toets soms eerder in de renderer aan:
-  ±1 op 6 in een herhaalde meting, gezien in het protocol. Dan opende de kiezer zonder
-  onderschepping en kwam er nooit een `filechooser`. Een vaste luisteraar plus één rondgang zet
-  het onderscheppen vooraf aan: daarna 0 op 48.
+- De bestandskiezer: `expect_file_chooser` zette het onderscheppen pas aan bij zijn eerste
+  luisteraar en wachtte daar niet op. Bij een drukke pagina kwam de toets soms eerder in de
+  renderer aan (gezien in het protocol), en dan kwam er nooit een `filechooser`: in het verhaal
+  bij U (stap 13), in de hele suite bij `test_trash_versions`, ±1 op 6 in een herhaalde meting.
+  Nu krijgt elke pagina in `Browsers.new_context` (conftest) meteen een vaste luisteraar
+  (`intercept_file_chooser`), zodat het onderscheppen al aan staat: daarna 0 op 48.
 - Elke login kost een code: een TOTP-stap die nog niet gebruikt is, anders een herstelcode
   (`Persoon.code()`).

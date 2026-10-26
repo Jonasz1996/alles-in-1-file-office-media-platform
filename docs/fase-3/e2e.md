@@ -117,6 +117,11 @@ Klaar is hij als `/health` 200 geeft. Stoppen gaat via zijn PID: SIGTERM, na 30 
 **`context_as(account)`** logt in met `context.request.post("/api/v1/auth/login")`: het
 refresh-cookie komt zo in de context, en de app start meteen ingelogd (geen TOTP).
 
+Elke pagina in een context van `browsers` onderschept de bestandskiezer vanaf het begin
+(`intercept_file_chooser`). `expect_file_chooser` zet het onderscheppen anders pas tegelijk met
+de toets of klik aan, en die kan eerder in de renderer aankomen: dan komt er geen
+`filechooser`.
+
 **2FA-gevallen** (P1) gebruiken elk een eigen gebruiker: `enable_2fa(server, account)` geeft
 `{"secret", "step", "recovery_codes"}`, en `totp_code(secret, after_step=step)` wacht op een
 nieuwe stap van 30 s voordat hij een volgende code geeft (de server neemt dezelfde stap geen

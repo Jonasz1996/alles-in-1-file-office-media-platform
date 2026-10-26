@@ -18,7 +18,6 @@ import io
 import re
 import shutil
 import time
-import weakref
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -265,22 +264,6 @@ def toasts(page: Page) -> Any:
 
 def toast(page: Page, text: str | re.Pattern[str]) -> Any:
     return toasts(page).get_by_text(text)
-
-
-_KIEZERS: weakref.WeakSet[Page] = weakref.WeakSet()
-
-
-def chooser_ready(page: Page) -> None:
-    """Vóór de toets of klik die de bestandskiezer opent. expect_file_chooser zet het
-    onderscheppen van de kiezer pas aan bij de eerste luisteraar en wacht daar niet op; de
-    toets erna kan de renderer eerder bereiken, dan opent de kiezer niet onderschept en komt er
-    nooit een filechooser (gezien in het protocol: het antwoord op de toets vóór dat op
-    Page.setInterceptFileChooserDialog). Een vaste luisteraar zet het één keer aan, en de
-    rondgang erna (dezelfde sessie naar de renderer) komt pas terug als het aan staat."""
-    if page not in _KIEZERS:
-        page.on("filechooser", lambda _chooser: None)
-        _KIEZERS.add(page)
-    page.evaluate("0")
 
 
 def blur(page: Page) -> None:

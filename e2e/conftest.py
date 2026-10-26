@@ -416,6 +416,17 @@ class Guard:
         return problems
 
 
+def intercept_file_chooser(page: Any) -> None:
+    """Elke pagina onderschept de bestandskiezer vanaf het begin (een vaste luisteraar).
+    expect_file_chooser zet dat anders pas aan bij zijn eerste luisteraar en wacht er niet op:
+    de toets of klik erna kwam soms eerder in de renderer aan (in het protocol het antwoord op
+    de toets vóór dat op Page.setInterceptFileChooserDialog). Dan opende de kiezer niet
+    onderschept en kwam er nooit een filechooser (U in Versies…, ±1 op 6 op een drukke pagina).
+    Nu staat het al aan voordat een test iets doet, en zet expect_file_chooser het niet meer aan
+    en uit."""
+    page.on("filechooser", lambda _chooser: None)
+
+
 class Browsers:
     """Contexts op de testserver, elk met bewaking. close_all() geeft de problemen terug."""
 
@@ -436,6 +447,7 @@ class Browsers:
         context.set_default_timeout(20_000)
         guard = Guard()
         guard.attach(context)
+        context.on("page", intercept_file_chooser)
         self._open.append((context, guard))
         return context
 

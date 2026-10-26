@@ -27,7 +27,6 @@ from verhaal import (
     Persoon,
     Verhaal,
     blur,
-    chooser_ready,
     enter_list,
     expect_focus,
     row,
@@ -226,7 +225,6 @@ def test_02_map_uploaden_met_botsing_en_hervatten_na_herladen(
     page.on("dialog", lambda d: d.accept())  # "Pagina verlaten?" bij het herladen
     cdp_profile(page.context, page, latency_ms=5, down_mbit=200, up_mbit=8)
     blur(page)
-    chooser_ready(page)
     with page.expect_file_chooser() as chooser:
         page.keyboard.press("Shift+U")
     assert chooser.value.element.get_attribute("webkitdirectory") is not None
@@ -250,7 +248,6 @@ def test_02_map_uploaden_met_botsing_en_hervatten_na_herladen(
     expect(onderbroken.get_by_text("film.bin", exact=True)).to_be_visible()
     expect(onderbroken.get_by_text(re.compile(r"van 6,0 MB"))).to_be_visible()
     cdp_profile(page.context, page, latency_ms=2, down_mbit=400, up_mbit=400)
-    chooser_ready(page)
     with page.expect_file_chooser() as chooser:
         onderbroken.get_by_role("button", name="Kies film.bin opnieuw").click()
     chooser.value.set_files(film)
@@ -993,7 +990,6 @@ def test_08_versies_uploaden_met_voortgang_bekijken_terugzetten(verhaal: Verhaal
 
     second = b"tweede versie, veel langer\n" * (3 * MB // 27)
     cdp_profile(page.context, page, latency_ms=5, down_mbit=200, up_mbit=4)
-    chooser_ready(page)
     with page.expect_file_chooser() as chooser:
         page.keyboard.press("u")
     chooser.value.set_files({"name": "verslag.txt", "mimeType": "text/plain", "buffer": second})
@@ -1443,7 +1439,6 @@ def test_13_alleen_het_toetsenbord(verhaal: Verhaal, tmp_path: Path) -> None:
 
     # P3: U, en nog een notitie.txt: de vraag (focus op Beide houden), B houdt beide
     blur(page)
-    chooser_ready(page)
     with page.expect_file_chooser() as chooser:
         page.keyboard.press("u")
     assert chooser.value.element.get_attribute("webkitdirectory") is None
