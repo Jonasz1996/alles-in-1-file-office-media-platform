@@ -184,6 +184,56 @@ def test_pauzeren_en_hervatten(context_as, user_factory, server, tmp_path: Path)
     expect(lade).to_have_count(0)
 
 
+def test_alles_pauzeren_pakt_later_de_focus_niet_af(
+    context_as, user_factory, server, tmp_path: Path
+):
+    """Alles pauzeren terwijl er net een bestand bijkomt: de knop blijft dan staan (er is weer
+    iets om te pauzeren). Werk je daarna verder in een ander veld, dan neemt de lade de focus
+    niet over als de knop later alsnog verdwijnt; Enter of Spatie zou anders Alles hervatten
+    indrukken."""
+    user = user_factory(name="Focus Pauze")
+    big = tmp_path / "groot.bin"
+    big.write_bytes(bytes(range(256)) * (6 * MB // 256))
+    page = open_files(context_as, user)
+    throttle(page, mbit=8)
+    with page.expect_file_chooser() as chooser:
+        page.get_by_role("button", name="Uploaden", exact=True).click()
+    chooser.value.set_files(big)
+    lade = tray(page)
+    pause_all = lade.get_by_role("button", name="Alles pauzeren", exact=True)
+    expect(pause_all).to_be_visible()
+    wait_until(
+        lambda: pending(server, user) and pending(server, user)[0]["offset"] > 0, what="bytes"
+    )
+    # In één taak: Alles pauzeren (met de focus erop, zoals met Enter) en een klein bestand
+    # erbij, voordat de lade opnieuw tekent
+    page.evaluate(
+        """() => {
+          const button = [...document.querySelectorAll(".upload-tray-actions button")]
+            .find((b) => b.textContent === "Alles pauzeren");
+          button.focus();
+          button.click();
+          const input = document.querySelector("input[type=file][multiple]:not([webkitdirectory])");
+          const files = new DataTransfer();
+          // Een halve MB: duurt bij 8 Mbit/s een halve seconde, genoeg om verder te werken
+          const body = new Uint8Array(512 * 1024);
+          files.items.add(new File([body], "klein.txt", { type: "text/plain" }));
+          input.files = files.files;
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        }"""
+    )
+    expect(lade.get_by_role("button", name="Hervatten: groot.bin")).to_be_visible()
+    search = page.locator("#zoekveld")
+    search.focus()
+    wait_until(lambda: "klein.txt" in children(server, user), what="klein.txt")
+    expect(pause_all).to_have_count(0)
+    expect(lade.get_by_role("button", name="Alles hervatten", exact=True)).to_be_visible()
+    page.wait_for_timeout(500)  # de lade tekent hooguit 4 keer per seconde
+    expect(search).to_be_focused()
+    lade.get_by_role("button", name="Annuleren: groot.bin").click()
+    expect(lade).to_have_count(0)
+
+
 def test_herladen_dan_onderbroken_uploads_en_opnieuw_kiezen(
     context_as, user_factory, server, tmp_path: Path
 ):

@@ -190,16 +190,22 @@ export default function UploadTray(): JSX.Element | null {
   const resumable = summary.paused > 0;
 
   // Alles pauzeren en Alles hervatten zijn twee knoppen: verdwijnt de knop die je net indrukte,
-  // dan de focus op de andere (anders valt hij naar <body>)
+  // dan de focus op de andere (anders valt hij naar <body>). Alleen als de focus met die knop
+  // verdween: blijft de knop nog staan (er kwamen intussen uploads bij) en ga je verder in een
+  // ander veld, dan is het indrukken voorbij en pakt de lade later de focus niet af.
   const pauseButton = useRef<HTMLButtonElement>(null);
   const resumeButton = useRef<HTMLButtonElement>(null);
   const pressed = useRef<"pause" | "resume" | null>(null);
   useEffect(() => {
     if (pressed.current === null) return;
     const [mine, other] = pressed.current === "pause" ? [pauseButton, resumeButton] : [resumeButton, pauseButton];
-    if (mine.current) return;
+    const focused = document.activeElement;
+    if (mine.current) {
+      if (focused !== mine.current) pressed.current = null;
+      return;
+    }
     pressed.current = null;
-    other.current?.focus();
+    if (focused === null || focused === document.body) other.current?.focus();
   });
 
   // Weggaan terwijl er uploads lopen: de browser vraagt eerst of dat de bedoeling is
