@@ -1,0 +1,1477 @@
+{
+  "tool": "run_all",
+  "generated": "2026-10-26T02:55:39+00:00",
+  "commit": "0661462",
+  "dirty": false,
+  "report_only": false,
+  "data": {
+    "n": 10000,
+    "blobs": 2000,
+    "photos": 50000
+  },
+  "timings": {
+    "seed_s": 14.5,
+    "first_view_s": 99.5,
+    "scroll_s": 79.2,
+    "lighthouse_like_s": 420.8
+  },
+  "errors": [],
+  "ok": true,
+  "results": {
+    "first_view": {
+      "tool": "first_view",
+      "server": "http://127.0.0.1:36231",
+      "runs": 5,
+      "profile": {
+        "latency_ms": 2,
+        "down_mbit": 100,
+        "up_mbit": 100,
+        "cpu": 1
+      },
+      "gate": {
+        "median_ms": 1500,
+        "p95_ms": 2000
+      },
+      "pages": {
+        "login": {
+          "url": "/",
+          "mark": "app:ready:login",
+          "owner": "P1",
+          "status": "pass",
+          "sources": [
+            "mark:login"
+          ],
+          "service_worker": true,
+          "sw_before_ready": false,
+          "profile": {
+            "latency_ms": 2,
+            "down_mbit": 100,
+            "up_mbit": 100,
+            "network": true,
+            "cpu": 1
+          },
+          "cold": {
+            "runs": [
+              309.4,
+              276.4,
+              359.1,
+              248,
+              272.7
+            ],
+            "median_ms": 276.4,
+            "p95_ms": 359.1,
+            "gate_ok": true
+          },
+          "warm": {
+            "runs": [
+              170.5,
+              127.8,
+              152.4,
+              138.5,
+              127.4
+            ],
+            "median_ms": 138.5,
+            "p95_ms": 170.5,
+            "gate_ok": true
+          },
+          "details": {
+            "cold": [
+              {
+                "ms": 309.4,
+                "source": "mark:login",
+                "ttfb_ms": 5.7,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 276.4,
+                "source": "mark:login",
+                "ttfb_ms": 8.8,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 359.1,
+                "source": "mark:login",
+                "ttfb_ms": 4.8,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 248,
+                "source": "mark:login",
+                "ttfb_ms": 4.7,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 272.7,
+                "source": "mark:login",
+                "ttfb_ms": 5.5,
+                "sw_before_ready": false,
+                "controlled": false
+              }
+            ],
+            "warm": [
+              {
+                "ms": 170.5,
+                "source": "mark:login",
+                "ttfb_ms": 10.9,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 127.8,
+                "source": "mark:login",
+                "ttfb_ms": 10.4,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 152.4,
+                "source": "mark:login",
+                "ttfb_ms": 9.7,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 138.5,
+                "source": "mark:login",
+                "ttfb_ms": 8,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 127.4,
+                "source": "mark:login",
+                "ttfb_ms": 10.9,
+                "sw_before_ready": false,
+                "controlled": true
+              }
+            ]
+          },
+          "problems": []
+        },
+        "folder": {
+          "url": "/map/cca24b53-be95-42a4-8805-020d255691ea",
+          "mark": "app:ready:folder",
+          "owner": "P2",
+          "status": "pass",
+          "sources": [
+            "mark:folder"
+          ],
+          "service_worker": true,
+          "sw_before_ready": false,
+          "profile": {
+            "latency_ms": 2,
+            "down_mbit": 100,
+            "up_mbit": 100,
+            "network": true,
+            "cpu": 1
+          },
+          "cold": {
+            "runs": [
+              741.7,
+              701.7,
+              600.1,
+              645,
+              665.2
+            ],
+            "median_ms": 665.2,
+            "p95_ms": 741.7,
+            "gate_ok": true
+          },
+          "warm": {
+            "runs": [
+              570,
+              491.6,
+              518.5,
+              504.9,
+              515.5
+            ],
+            "median_ms": 515.5,
+            "p95_ms": 570,
+            "gate_ok": true
+          },
+          "details": {
+            "cold": [
+              {
+                "ms": 741.7,
+                "source": "mark:folder",
+                "ttfb_ms": 10.1,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 701.7,
+                "source": "mark:folder",
+                "ttfb_ms": 6.1,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 600.1,
+                "source": "mark:folder",
+                "ttfb_ms": 4.9,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 645,
+                "source": "mark:folder",
+                "ttfb_ms": 6.2,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 665.2,
+                "source": "mark:folder",
+                "ttfb_ms": 4.7,
+                "sw_before_ready": false,
+                "controlled": false
+              }
+            ],
+            "warm": [
+              {
+                "ms": 570,
+                "source": "mark:folder",
+                "ttfb_ms": 14.4,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 491.6,
+                "source": "mark:folder",
+                "ttfb_ms": 8.7,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 518.5,
+                "source": "mark:folder",
+                "ttfb_ms": 11.5,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 504.9,
+                "source": "mark:folder",
+                "ttfb_ms": 12.7,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 515.5,
+                "source": "mark:folder",
+                "ttfb_ms": 12.7,
+                "sw_before_ready": false,
+                "controlled": true
+              }
+            ]
+          },
+          "problems": []
+        },
+        "public": {
+          "url": "/s/VIu5BQBCYLe6SrKDicGx1z_WaLvJX6ygVkuncsKYn_w",
+          "mark": "app:ready:public",
+          "owner": "P4",
+          "status": "pass",
+          "sources": [
+            "mark:public"
+          ],
+          "service_worker": true,
+          "sw_before_ready": false,
+          "profile": {
+            "latency_ms": 2,
+            "down_mbit": 100,
+            "up_mbit": 100,
+            "network": true,
+            "cpu": 1
+          },
+          "cold": {
+            "runs": [
+              578.4,
+              536.9,
+              534,
+              528.1,
+              514
+            ],
+            "median_ms": 534,
+            "p95_ms": 578.4,
+            "gate_ok": true
+          },
+          "warm": {
+            "runs": [
+              447.4,
+              622.7,
+              458.9,
+              473.5,
+              472.8
+            ],
+            "median_ms": 472.8,
+            "p95_ms": 622.7,
+            "gate_ok": true
+          },
+          "details": {
+            "cold": [
+              {
+                "ms": 578.4,
+                "source": "mark:public",
+                "ttfb_ms": 5.9,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 536.9,
+                "source": "mark:public",
+                "ttfb_ms": 4.7,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 534,
+                "source": "mark:public",
+                "ttfb_ms": 6.8,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 528.1,
+                "source": "mark:public",
+                "ttfb_ms": 6.6,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 514,
+                "source": "mark:public",
+                "ttfb_ms": 5.7,
+                "sw_before_ready": false,
+                "controlled": false
+              }
+            ],
+            "warm": [
+              {
+                "ms": 447.4,
+                "source": "mark:public",
+                "ttfb_ms": 10,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 622.7,
+                "source": "mark:public",
+                "ttfb_ms": 9.6,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 458.9,
+                "source": "mark:public",
+                "ttfb_ms": 12.9,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 473.5,
+                "source": "mark:public",
+                "ttfb_ms": 9.6,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 472.8,
+                "source": "mark:public",
+                "ttfb_ms": 10.2,
+                "sw_before_ready": false,
+                "controlled": true
+              }
+            ]
+          },
+          "problems": []
+        }
+      },
+      "problems": [],
+      "ok": true
+    },
+    "scroll": {
+      "tool": "scroll",
+      "server": "http://127.0.0.1:36231",
+      "n": 10000,
+      "blobs": 2000,
+      "timeline_photos": 50000,
+      "views": [
+        {
+          "path": "/map/cca24b53-be95-42a4-8805-020d255691ea",
+          "mode": "list",
+          "cpu": 1,
+          "load_s": 0.61,
+          "problems": [],
+          "status": "pass",
+          "reason": null,
+          "virtualized": true,
+          "focused_before": true,
+          "frames": 480,
+          "longest_task_ms": null,
+          "checks": {
+            "frame_p95_ms": {
+              "value": 16.7,
+              "limit": 20,
+              "ok": true
+            },
+            "long_tasks_over_50ms": {
+              "value": 0,
+              "limit": 0,
+              "ok": true
+            },
+            "rows_rendered": {
+              "value": 37,
+              "limit": 201,
+              "ok": true
+            },
+            "dom_nodes": {
+              "value": 500,
+              "limit": 4000,
+              "ok": true
+            },
+            "thumbnails": {
+              "value": 119,
+              "limit": 100,
+              "ok": true
+            },
+            "focus_after_arrow": {
+              "value": {
+                "element": "div[row]",
+                "in_row": true,
+                "rowindex": 3,
+                "rowcount": 10001,
+                "visible": true
+              },
+              "limit": "in een rij",
+              "ok": true
+            },
+            "end_focused_visible": {
+              "value": {
+                "element": "div[row]",
+                "in_row": true,
+                "rowindex": 10001,
+                "rowcount": 10001,
+                "visible": true
+              },
+              "limit": "laatste rij, zichtbaar",
+              "ok": true
+            }
+          }
+        },
+        {
+          "path": "/map/cca24b53-be95-42a4-8805-020d255691ea",
+          "mode": "list",
+          "cpu": 4,
+          "load_s": 0.6,
+          "problems": [],
+          "status": "pass",
+          "reason": null,
+          "virtualized": true,
+          "focused_before": true,
+          "frames": 472,
+          "longest_task_ms": null,
+          "checks": {
+            "frame_p95_ms": {
+              "value": 33.3,
+              "limit": 34,
+              "ok": true
+            },
+            "long_tasks_over_50ms": {
+              "value": 0,
+              "limit": 0,
+              "ok": true
+            },
+            "rows_rendered": {
+              "value": 37,
+              "limit": 201,
+              "ok": true
+            },
+            "dom_nodes": {
+              "value": 500,
+              "limit": 4000,
+              "ok": true
+            },
+            "thumbnails": {
+              "value": 121,
+              "limit": 100,
+              "ok": true
+            },
+            "focus_after_arrow": {
+              "value": {
+                "element": "div[row]",
+                "in_row": true,
+                "rowindex": 3,
+                "rowcount": 10001,
+                "visible": true
+              },
+              "limit": "in een rij",
+              "ok": true
+            },
+            "end_focused_visible": {
+              "value": {
+                "element": "div[row]",
+                "in_row": true,
+                "rowindex": 10001,
+                "rowcount": 10001,
+                "visible": true
+              },
+              "limit": "laatste rij, zichtbaar",
+              "ok": true
+            }
+          }
+        },
+        {
+          "path": "/map/cca24b53-be95-42a4-8805-020d255691ea",
+          "mode": "grid",
+          "cpu": 1,
+          "load_s": 0.63,
+          "problems": [],
+          "status": "pass",
+          "reason": null,
+          "virtualized": true,
+          "focused_before": true,
+          "frames": 481,
+          "longest_task_ms": null,
+          "checks": {
+            "frame_p95_ms": {
+              "value": 16.8,
+              "limit": 20,
+              "ok": true
+            },
+            "long_tasks_over_50ms": {
+              "value": 0,
+              "limit": 0,
+              "ok": true
+            },
+            "rows_rendered": {
+              "value": 10,
+              "limit": 201,
+              "ok": true
+            },
+            "dom_nodes": {
+              "value": 365,
+              "limit": 4000,
+              "ok": true
+            },
+            "thumbnails": {
+              "value": 130,
+              "limit": 100,
+              "ok": true
+            },
+            "focus_after_arrow": {
+              "value": {
+                "element": "div[gridcell]",
+                "in_row": true,
+                "rowindex": 2,
+                "rowcount": 1667,
+                "visible": true
+              },
+              "limit": "in een rij",
+              "ok": true
+            },
+            "end_focused_visible": {
+              "value": {
+                "element": "div[gridcell]",
+                "in_row": true,
+                "rowindex": 1667,
+                "rowcount": 1667,
+                "visible": true
+              },
+              "limit": "laatste rij, zichtbaar",
+              "ok": true
+            }
+          }
+        },
+        {
+          "path": "/map/cca24b53-be95-42a4-8805-020d255691ea",
+          "mode": "grid",
+          "cpu": 4,
+          "load_s": 0.64,
+          "problems": [],
+          "status": "pass",
+          "reason": null,
+          "virtualized": true,
+          "focused_before": true,
+          "frames": 479,
+          "longest_task_ms": null,
+          "checks": {
+            "frame_p95_ms": {
+              "value": 16.8,
+              "limit": 34,
+              "ok": true
+            },
+            "long_tasks_over_50ms": {
+              "value": 0,
+              "limit": 0,
+              "ok": true
+            },
+            "rows_rendered": {
+              "value": 10,
+              "limit": 201,
+              "ok": true
+            },
+            "dom_nodes": {
+              "value": 365,
+              "limit": 4000,
+              "ok": true
+            },
+            "thumbnails": {
+              "value": 133,
+              "limit": 100,
+              "ok": true
+            },
+            "focus_after_arrow": {
+              "value": {
+                "element": "div[gridcell]",
+                "in_row": true,
+                "rowindex": 2,
+                "rowcount": 1667,
+                "visible": true
+              },
+              "limit": "in een rij",
+              "ok": true
+            },
+            "end_focused_visible": {
+              "value": {
+                "element": "div[gridcell]",
+                "in_row": true,
+                "rowindex": 1667,
+                "rowcount": 1667,
+                "visible": true
+              },
+              "limit": "laatste rij, zichtbaar",
+              "ok": true
+            }
+          }
+        },
+        {
+          "path": "/fotos",
+          "mode": "timeline",
+          "cpu": 1,
+          "load_s": 0.66,
+          "problems": [],
+          "status": "pass",
+          "reason": null,
+          "virtualized": true,
+          "focused_before": true,
+          "frames": 481,
+          "longest_task_ms": null,
+          "checks": {
+            "frame_p95_ms": {
+              "value": 16.8,
+              "limit": 20,
+              "ok": true
+            },
+            "long_tasks_over_50ms": {
+              "value": 0,
+              "limit": 0,
+              "ok": true
+            },
+            "rows_rendered": {
+              "value": 13,
+              "limit": 201,
+              "ok": true
+            },
+            "dom_nodes": {
+              "value": 354,
+              "limit": 4000,
+              "ok": true
+            },
+            "thumbnails": {
+              "value": 121,
+              "limit": 100,
+              "ok": true
+            },
+            "focus_after_arrow": {
+              "value": {
+                "element": "div[gridcell]",
+                "in_row": true,
+                "rowindex": 3,
+                "rowcount": 7366,
+                "visible": true
+              },
+              "limit": "in een rij",
+              "ok": true
+            },
+            "end_focused_visible": {
+              "value": {
+                "element": "div[gridcell]",
+                "in_row": true,
+                "rowindex": 7366,
+                "rowcount": 7366,
+                "visible": true
+              },
+              "limit": "laatste rij, zichtbaar",
+              "ok": true
+            }
+          }
+        },
+        {
+          "path": "/fotos",
+          "mode": "timeline",
+          "cpu": 4,
+          "load_s": 0.66,
+          "problems": [],
+          "status": "pass",
+          "reason": null,
+          "virtualized": true,
+          "focused_before": true,
+          "frames": 468,
+          "longest_task_ms": null,
+          "checks": {
+            "frame_p95_ms": {
+              "value": 16.8,
+              "limit": 34,
+              "ok": true
+            },
+            "long_tasks_over_50ms": {
+              "value": 0,
+              "limit": 0,
+              "ok": true
+            },
+            "rows_rendered": {
+              "value": 13,
+              "limit": 201,
+              "ok": true
+            },
+            "dom_nodes": {
+              "value": 354,
+              "limit": 4000,
+              "ok": true
+            },
+            "thumbnails": {
+              "value": 111,
+              "limit": 100,
+              "ok": true
+            },
+            "focus_after_arrow": {
+              "value": {
+                "element": "div[gridcell]",
+                "in_row": true,
+                "rowindex": 3,
+                "rowcount": 7366,
+                "visible": true
+              },
+              "limit": "in een rij",
+              "ok": true
+            },
+            "end_focused_visible": {
+              "value": {
+                "element": "div[gridcell]",
+                "in_row": true,
+                "rowindex": 7366,
+                "rowcount": 7366,
+                "visible": true
+              },
+              "limit": "laatste rij, zichtbaar",
+              "ok": true
+            }
+          }
+        }
+      ],
+      "problems": [],
+      "ok": true
+    },
+    "lighthouse_like": {
+      "tool": "lighthouse_like",
+      "server": "http://127.0.0.1:36231",
+      "runs": 5,
+      "gate": 91,
+      "weights": {
+        "fcp": 0.1,
+        "si": 0.1,
+        "lcp": 0.25,
+        "tbt": 0.3,
+        "cls": 0.25
+      },
+      "curves": {
+        "mobile": {
+          "fcp": [
+            1800,
+            3000
+          ],
+          "si": [
+            3387,
+            5800
+          ],
+          "lcp": [
+            2500,
+            4000
+          ],
+          "tbt": [
+            200,
+            600
+          ],
+          "cls": [
+            0.1,
+            0.25
+          ]
+        },
+        "desktop": {
+          "fcp": [
+            934,
+            1600
+          ],
+          "si": [
+            1311,
+            2300
+          ],
+          "lcp": [
+            1200,
+            2400
+          ],
+          "tbt": [
+            150,
+            350
+          ],
+          "cls": [
+            0.1,
+            0.25
+          ]
+        }
+      },
+      "pages": {
+        "login": {
+          "url": "/",
+          "profile": "mobile",
+          "throttling": {
+            "latency_ms": 562.5,
+            "down_mbit": 1.50994944,
+            "up_mbit": 0.6912,
+            "cpu": 4,
+            "viewport": {
+              "width": 412,
+              "height": 823
+            },
+            "device_scale_factor": 1.75,
+            "is_mobile": true,
+            "has_touch": true
+          },
+          "owner": "P1",
+          "status": "pass",
+          "score": 97,
+          "scores": [
+            96,
+            97,
+            97,
+            97,
+            96
+          ],
+          "metrics": {
+            "fcp": 1316,
+            "si": 3919.2,
+            "lcp": 1316,
+            "tbt": 138.0,
+            "cls": 0.0
+          },
+          "errors": [],
+          "details": [
+            {
+              "metrics": {
+                "fcp": 1316,
+                "si": 3924.7,
+                "lcp": 1316,
+                "tbt": 164.0,
+                "cls": 0.0
+              },
+              "tti": 2059.3,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1718,
+                  140
+                ],
+                [
+                  1860,
+                  58
+                ],
+                [
+                  1943,
+                  116
+                ]
+              ],
+              "frames": 81,
+              "marks": {
+                "app:ready:login": 3934.9
+              },
+              "score": 96,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.82,
+                "lcp": 1.0,
+                "tbt": 0.93,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1300,
+                "si": 3903.7,
+                "lcp": 1300,
+                "tbt": 138.0,
+                "cls": 0.0
+              },
+              "tti": 1995.9,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1695,
+                  177
+                ],
+                [
+                  1935,
+                  61
+                ]
+              ],
+              "frames": 82,
+              "marks": {
+                "app:ready:login": 3923
+              },
+              "score": 97,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.83,
+                "lcp": 1.0,
+                "tbt": 0.96,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1308,
+                "si": 3876.4,
+                "lcp": 1308,
+                "tbt": 123.0,
+                "cls": 0.0
+              },
+              "tti": 1983.5,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1704,
+                  165
+                ],
+                [
+                  1926,
+                  58
+                ]
+              ],
+              "frames": 81,
+              "marks": {
+                "app:ready:login": 3894.9
+              },
+              "score": 97,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.83,
+                "lcp": 1.0,
+                "tbt": 0.97,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1336,
+                "si": 3919.2,
+                "lcp": 1336,
+                "tbt": 118.0,
+                "cls": 0.0
+              },
+              "tti": 2016.6,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1730,
+                  149
+                ],
+                [
+                  1948,
+                  69
+                ]
+              ],
+              "frames": 81,
+              "marks": {
+                "app:ready:login": 3939.3
+              },
+              "score": 97,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.82,
+                "lcp": 1.0,
+                "tbt": 0.97,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1328,
+                "si": 3940.0,
+                "lcp": 1328,
+                "tbt": 179.0,
+                "cls": 0.0
+              },
+              "tti": 3918.4,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1706,
+                  195
+                ],
+                [
+                  1934,
+                  78
+                ],
+                [
+                  3862,
+                  56
+                ]
+              ],
+              "frames": 80,
+              "marks": {
+                "app:ready:login": 3958.5
+              },
+              "score": 96,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.82,
+                "lcp": 1.0,
+                "tbt": 0.92,
+                "cls": 1.0
+              },
+              "problems": []
+            }
+          ],
+          "problems": []
+        },
+        "public": {
+          "url": "/s/VIu5BQBCYLe6SrKDicGx1z_WaLvJX6ygVkuncsKYn_w",
+          "profile": "mobile",
+          "throttling": {
+            "latency_ms": 562.5,
+            "down_mbit": 1.50994944,
+            "up_mbit": 0.6912,
+            "cpu": 4,
+            "viewport": {
+              "width": 412,
+              "height": 823
+            },
+            "device_scale_factor": 1.75,
+            "is_mobile": true,
+            "has_touch": true
+          },
+          "owner": "P1",
+          "status": "pass",
+          "score": 95,
+          "scores": [
+            95,
+            95,
+            94,
+            95,
+            96
+          ],
+          "metrics": {
+            "fcp": 1332,
+            "si": 4344.3,
+            "lcp": 1332,
+            "tbt": 169.0,
+            "cls": 0.0
+          },
+          "errors": [],
+          "details": [
+            {
+              "metrics": {
+                "fcp": 1332,
+                "si": 4344.3,
+                "lcp": 1332,
+                "tbt": 169.0,
+                "cls": 0.0
+              },
+              "tti": 4891.8,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1708,
+                  180
+                ],
+                [
+                  1893,
+                  73
+                ],
+                [
+                  4826,
+                  66
+                ]
+              ],
+              "frames": 77,
+              "marks": {
+                "app:ready:route": 3245.6,
+                "app:ready:public": 4896.6
+              },
+              "score": 95,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.75,
+                "lcp": 1.0,
+                "tbt": 0.93,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1352,
+                "si": 4346.1,
+                "lcp": 1352,
+                "tbt": 166.0,
+                "cls": 0.0
+              },
+              "tti": 5001.3,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1737,
+                  174
+                ],
+                [
+                  1913,
+                  58
+                ],
+                [
+                  4817,
+                  79
+                ],
+                [
+                  4946,
+                  55
+                ]
+              ],
+              "frames": 74,
+              "marks": {
+                "app:ready:route": 3241.6,
+                "app:ready:public": 4901.6
+              },
+              "score": 95,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.75,
+                "lcp": 1.0,
+                "tbt": 0.93,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1364,
+                "si": 4438.9,
+                "lcp": 1364,
+                "tbt": 215.0,
+                "cls": 0.0
+              },
+              "tti": 5165.3,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1748,
+                  211
+                ],
+                [
+                  1966,
+                  75
+                ],
+                [
+                  4857,
+                  69
+                ],
+                [
+                  4930,
+                  60
+                ],
+                [
+                  5115,
+                  50
+                ]
+              ],
+              "frames": 73,
+              "marks": {
+                "app:ready:route": 3344,
+                "app:ready:public": 4994.4
+              },
+              "score": 94,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.74,
+                "lcp": 1.0,
+                "tbt": 0.88,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1304,
+                "si": 4291.0,
+                "lcp": 1304,
+                "tbt": 171.0,
+                "cls": 0.0
+              },
+              "tti": 4961,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1703,
+                  180
+                ],
+                [
+                  1887,
+                  65
+                ],
+                [
+                  4772,
+                  55
+                ],
+                [
+                  4890,
+                  71
+                ]
+              ],
+              "frames": 73,
+              "marks": {
+                "app:ready:route": 3219.6,
+                "app:ready:public": 4831.4
+              },
+              "score": 95,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.76,
+                "lcp": 1.0,
+                "tbt": 0.93,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1332,
+                "si": 4327.8,
+                "lcp": 1332,
+                "tbt": 158.0,
+                "cls": 0.0
+              },
+              "tti": 4872.4,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1705,
+                  166
+                ],
+                [
+                  1876,
+                  80
+                ],
+                [
+                  4810,
+                  62
+                ]
+              ],
+              "frames": 74,
+              "marks": {
+                "app:ready:route": 3227.3,
+                "app:ready:public": 4874.3
+              },
+              "score": 96,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.76,
+                "lcp": 1.0,
+                "tbt": 0.94,
+                "cls": 1.0
+              },
+              "problems": []
+            }
+          ],
+          "problems": []
+        },
+        "folder": {
+          "url": "/map/cca24b53-be95-42a4-8805-020d255691ea",
+          "profile": "desktop",
+          "throttling": {
+            "latency_ms": 40,
+            "down_mbit": 10.48576,
+            "up_mbit": 10.48576,
+            "cpu": 1,
+            "viewport": {
+              "width": 1350,
+              "height": 940
+            },
+            "device_scale_factor": 1,
+            "is_mobile": false,
+            "has_touch": false
+          },
+          "owner": "P2",
+          "status": "pass",
+          "score": 100,
+          "scores": [
+            100,
+            100,
+            100,
+            100,
+            100
+          ],
+          "metrics": {
+            "fcp": 144,
+            "si": 783.2,
+            "lcp": 144,
+            "tbt": 0.0,
+            "cls": 0.0065
+          },
+          "errors": [],
+          "details": [
+            {
+              "metrics": {
+                "fcp": 156,
+                "si": 787.0,
+                "lcp": 156,
+                "tbt": 0.0,
+                "cls": 0.0065
+              },
+              "tti": 156,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [],
+              "frames": 22,
+              "marks": {
+                "app:ready:route": 730.8,
+                "app:ready:folder": 762.6
+              },
+              "score": 100,
+              "scores": {
+                "fcp": 1.0,
+                "si": 0.99,
+                "lcp": 1.0,
+                "tbt": 1.0,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 144,
+                "si": 768.0,
+                "lcp": 144,
+                "tbt": 0.0,
+                "cls": 0.0065
+              },
+              "tti": 144,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [],
+              "frames": 23,
+              "marks": {
+                "app:ready:route": 726.7,
+                "app:ready:folder": 757.5
+              },
+              "score": 100,
+              "scores": {
+                "fcp": 1.0,
+                "si": 0.99,
+                "lcp": 1.0,
+                "tbt": 1.0,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 152,
+                "si": 920.0,
+                "lcp": 152,
+                "tbt": 0.0,
+                "cls": 0.0
+              },
+              "tti": 152,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [],
+              "frames": 22,
+              "marks": {
+                "app:ready:route": 867.2,
+                "app:ready:folder": 901.4
+              },
+              "score": 100,
+              "scores": {
+                "fcp": 1.0,
+                "si": 0.98,
+                "lcp": 1.0,
+                "tbt": 1.0,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 144,
+                "si": 766.1,
+                "lcp": 144,
+                "tbt": 0.0,
+                "cls": 0.0065
+              },
+              "tti": 144,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [],
+              "frames": 23,
+              "marks": {
+                "app:ready:route": 711.9,
+                "app:ready:folder": 741.8
+              },
+              "score": 100,
+              "scores": {
+                "fcp": 1.0,
+                "si": 0.99,
+                "lcp": 1.0,
+                "tbt": 1.0,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 144,
+                "si": 783.2,
+                "lcp": 144,
+                "tbt": 0.0,
+                "cls": 0.0065
+              },
+              "tti": 144,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [],
+              "frames": 24,
+              "marks": {
+                "app:ready:route": 725.7,
+                "app:ready:folder": 769.7
+              },
+              "score": 100,
+              "scores": {
+                "fcp": 1.0,
+                "si": 0.99,
+                "lcp": 1.0,
+                "tbt": 1.0,
+                "cls": 1.0
+              },
+              "problems": []
+            }
+          ],
+          "problems": []
+        }
+      },
+      "problems": [],
+      "ok": true
+    }
+  }
+}
