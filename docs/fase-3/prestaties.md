@@ -3,8 +3,8 @@
 Gemaakt door `e2e/perf/run_all.py` (P1); niet met de hand bewerken, behalve het blok
 met de DevTools-runs onderaan. Alle getallen: `prestaties.json`.
 
-- Gemeten: 2026-10-26T07:36:21+00:00
-- Commit: `c6221f0`
+- Gemeten: 2026-10-26T13:19:18+00:00
+- Commit: `25eadb9`
 - Alleen rapporteren (E2E_PERF_REPORT_ONLY): nee
 - Data: 10000 bestanden over 2000 thumbnails, 50000 foto's
 
@@ -14,9 +14,9 @@ Poort: score ≥ 91, mediaan van 5.
 
 | Pagina | Profiel | Van | Status | Score | Runs | FCP | SI | LCP | TBT | CLS |
 |---|---|---|---|---|---|---|---|---|---|---|
-| login (`/`) | mobile | P1 | pass | 96 | 94, 96, 98, 97, 96 | 1336 ms | 3951 ms | 1336 ms | 143 ms | 0.0 |
-| public (`/s/EertC0oLc4p5J1JY0…`) | mobile | P1 | pass | 94 | 94, 96, 96, 93, 89 | 1332 ms | 4382 ms | 1332 ms | 212 ms | 0.0 |
-| folder (`/map/fcb8b0b1-b7ba-4…`) | desktop | P2 | pass | 100 | 100, 100, 100, 100, 100 | 156 ms | 862 ms | 156 ms | 0.0 ms | 0.006 |
+| login (`/`) | mobile | P1 | pass | 97 | 97, 96, 98, 96, 97 | 1336 ms | 3929 ms | 1336 ms | 122 ms | 0.0 |
+| public (`/s/Q0CpFYzkoeiY7wias…`) | mobile | P1 | pass | 95 | 96, 96, 95, 93, 95 | 1348 ms | 4359 ms | 1348 ms | 165 ms | 0.0 |
+| folder (`/map/654a8f2e-fa5c-4…`) | desktop | P2 | pass | 100 | 100, 100, 100, 100, 100 | 152 ms | 829 ms | 152 ms | 0.0 ms | 0.006 |
 
 ## Eerste weergave (§4.2)
 
@@ -24,9 +24,9 @@ Poort: mediaan < 1500 ms en p95 < 2000 ms, koud en warm.
 
 | Pagina | Van | Status | Koud mediaan / p95 | Warm mediaan / p95 | Bron | SW |
 |---|---|---|---|---|---|---|
-| login | P1 | pass | 265 / 385 ms | 148 / 164 ms | mark:login | ja |
-| folder | P2 | pass | 665 / 673 ms | 513 / 540 ms | mark:folder | ja |
-| public | P4 | pass | 588 / 630 ms | 506 / 523 ms | mark:public | ja |
+| login | P1 | pass | 244 / 344 ms | 137 / 147 ms | mark:login | ja |
+| folder | P2 | pass | 628 / 678 ms | 502 / 528 ms | mark:folder | ja |
+| public | P4 | pass | 573 / 591 ms | 491 / 615 ms | mark:public | ja |
 
 ## Scrollen (§4.4)
 
@@ -42,9 +42,11 @@ Poort: mediaan < 1500 ms en p95 < 2000 ms, koud en warm.
 ## DevTools-Lighthouse (harde acceptatie, handmatig)
 
 <!-- handmatig -->
-Ingevuld door de integrator op 26-10-2026. De tabellen hierboven komen van de slotcontrole
-op `c6221f0` (schoon; zie "Slotcontrole" onderaan). De getallen in dit blok, de echte
-Lighthouse en de herijking horen bij de run op commit `0661462` (schoon).
+Ingevuld door de integrator op 26-10-2026. De tabellen hierboven komen van de laatste van drie
+runs op `25eadb9` (schoon; zie "Slotcontrole op `25eadb9`" onderaan). De getallen van "Machine"
+tot en met "Wat er veranderde", de echte Lighthouse en de herijking horen bij de run op commit
+`0661462` (schoon). Daarna volgen de slotcontrole van de integratie (`c6221f0`) en wat er bij
+4× CPU en de koude eerste weergave nog is uitgezocht (`ac4914d`, `25eadb9`).
 
 ### Machine
 
@@ -161,10 +163,10 @@ De rest was al goed; de echte Lighthouse vond daarna de layoutverschuiving.
   pagina, het pad altijd één regel hoog, de voortgang onder de lijst (sticky onderaan); CLS van
   0,27 naar 0,0065. Plus de herijking van lighthouse_like.py hierboven.
 
-Open: de lijst bij 4× slaagt in ongeveer driekwart van de losse runs, niet altijd (zie
-Scrollen); de rest is één taak net boven 50 ms.
+Open: de lijst bij 4× slaagt niet altijd. Hoe vaak wel, hangt sterk af van hoe druk de VM is
+(zie Scrollen). Wat er in de mislukte runs zit, staat onder "Scrollen bij 4× nader bekeken".
 
-### Slotcontrole bij het afronden (`c6221f0`)
+### Slotcontrole bij het afronden van de integratie (`c6221f0`)
 
 Na `897865b` kwamen er nog webwijzigingen bij: `03777dc` (de focus na een actie in de lijst en
 de prullenbak), `d9a7a78` (typen in de mappenkiezer) en `006b166` (de refresh in de try van
@@ -182,7 +184,8 @@ Uitgezocht, op dezelfde machine en met dezelfde data (ook de 50.000 foto's):
 
 - **De uitschieter van 8,5 s** kwam niet terug: `/map/<10k>` nog 40 keer koud en 40 keer warm
   (`first_view.measure_page`, 8 rondes van 5) gaf koud 626–946 ms en warm 491–613 ms. De
-  serverlog van die run is weg (tijdelijke map); de oorzaak is niet gevonden.
+  serverlog van die run is weg (tijdelijke map); de oorzaak is niet gevonden. Of het aan
+  achtergrondtaken lag, staat verderop.
 - **Build tegen build:** `897865b` en `c6221f0` afwisselend op twee servers (2 rondes, toen
   afgebroken): lijst 4× en tijdlijn 4× vielen bij beide builds even vaak uit, met taken van
   51–77 ms. De eerste weergave was bij beide goed.
@@ -196,4 +199,136 @@ Conclusie: geen achteruitgang door de wijzigingen na `897865b`. Bij een drukke V
 lijst en nu ook de tijdlijn bij 4× vaak net boven 50 ms; de derde run haalde alle poorten. De
 echte Lighthouse is niet opnieuw gedraaid: de wijzigingen raken het laden van de drie
 gemeten pagina's niet (de refresh in `preload.ts` doet online hetzelfde als eerst).
+
+### Scrollen bij 4× nader bekeken (`ac4914d`)
+
+Waarom slaagden lijst en tijdlijn bij 4× niet altijd? Een harnas in de scratchpad (niet in het
+repo) roept `scroll.measure_view` ongewijzigd aan: dezelfde invoer, dezelfde drempels, 4× CPU.
+Per run neemt het een CDP-trace op en leest het `/proc/stat` (steal). Builds draaien
+afwisselend tegen een eigen server met dezelfde data als `run_all.py`. Elke lange taak uit de
+PerformanceObserver is gekoppeld aan die taak in de trace. Een trace kost zelf ook CPU: met
+trace slaagde de lijst bij 4× maar 1 van 18 keer. De traces laten dus zien wat er in de taken
+zit. Hoe vaak een run slaagt, staat in de tabel "Voor en na" (zonder trace).
+
+**De lijst.** In 18 getracete runs van de lijst met de code van `c7012d5` (17 mislukt, 9 met
+een lange taak) zaten 14 lange taken.
+
+- In 9 ervan had de hoofdthread de hele taak de CPU (tdur/dur ≥ 0,95). Het werk daarin, in
+  zelftijd: lay-out 9–26 ms, tekenen (PrePaint, Paint, Layerize) 12–29 ms, stijl 1–9 ms,
+  script 0–18 ms. Er zat geen garbage collection in.
+- In de andere 5 stond de thread 20–92 % van de taak stil. Met alleen de CPU-tijd was elk
+  van die 5 onder de 50 ms gebleven. Dat komt niet van de host: steal was in die runs
+  1,0–3,2 %. Het is het gedrang op de 4 vCPU's in de VM (de server, de compositor en de
+  driver draaien mee).
+- Tijdens het wielen is de hoofdthread ongeveer 75 % van de tijd bezig. Een frame met nieuwe
+  rijen kost gemiddeld 23 ms: lay-out 7,0, taak 4,7, Paint 3,4, Layerize 3,3, PrePaint 2,4 en
+  stijl 1,6. Een frame zonder nieuwe rijen kost 10 ms. React kost samen zo'n 225 ms per
+  seconde.
+- De lay-out van dezelfde ~78 vuile objecten varieert van 6,7 ms (p50) via 11,5 (p90) tot 30
+  ms (max), ook als de thread al die tijd CPU heeft. Daardoor schiet een deel van de frames
+  naar drie vsyncs (de p95 van 50 ms).
+- Wat die lay-out kost, is vooral de tekst van de nieuwe rijen. Een proefbuild met vaste
+  teksten (elke rij dezelfde naam, grootte en datum) slaagde 3 van 3 keer, met 56 ms per
+  seconde minder lay-out. Alleen de namen gelijk was nog 0 van 3.
+- Elk tegen dezelfde basis geprobeerd, en niets was meetbaar beter:
+  - een budget van 6 in plaats van 10 rijen per frame;
+  - geen clip, geen masker en geen afgeronde hoeken;
+  - `contain: strict` per rij;
+  - spans in plaats van knoppen, wat het tekenen juist duurder maakte;
+  - `text-rendering: optimizeSpeed`.
+- Daarnaast zijn er lege taken (`PostTaskToMainThread` zonder app-code erin, 1,2–1,6 ms
+  elk). Samen 48 ms per seconde in het wielen.
+
+Conclusie voor de lijst: het meeste is werk van de app, namelijk het opmaken en tekenen van
+nieuwe rijen met hun tekst. Dat zit bij 4× precies op de rand van het budget. De rest is
+gedrang in de VM. Die tekst weglaten kan niet, en de kleine wijzigingen hielpen niet. De lijst
+is daarom niet veranderd.
+
+**De tijdlijn.** Daar zaten twee oorzaken in de app (opgelost in `ac4914d`):
+
+- `.photo-grid[data-scrolling] { pointer-events: none }` erft naar elke cel. Elke wissel gaf
+  daardoor een stijlberekening voor alle cellen (172–325 elementen, 5–14 ms), vaak in het
+  eerste wielframe. Met 150 ms wisselde het bij 4× ook midden in het scrollen. Nu ligt er een
+  leeg vlak over de cellen, net als in de lijst, en reageert het raster pas na 250 ms weer op
+  de muis.
+- ArrowDown na het wielen springt terug naar de foto met de focus. Dat tekende een heel
+  scherm nieuwe cellen plus de marge in één frame: 302 van de 393 objecten vuil, 62 ms. Nu
+  komt eerst wat in beeld is en een frame later de marge (`firstStep` en `nextStep` in
+  `photos/rows.ts`).
+
+De resterende lange taken komen vooral bij PageDown. Een voorbeeld van 53 ms (tdur = dur):
+stijl 4,6, lay-out 11,1, PrePaint 4,7, de focus in een rAF 6,9, Paint 6,2 en Layerize 5,0. Dat
+is ook werk van de app. De focus in dezelfde taak zetten (variant `tlf`) maakte geen verschil.
+
+**Voor en na**, 20 runs per build per weergave, afwisselend op dezelfde machine, zonder trace
+(steal 0,9–2,3 %):
+
+| Build | Lijst 4× | Tijdlijn 4× | Lange taken tijdlijn (wiel / ArrowDown / PageDown / End) |
+|---|---|---|---|
+| `c7012d5` (voor) | 8 van 20 | 6 van 20 | 14 / 7 / 4 / 0 |
+| `ac4914d` (na) | 3 van 20 | **13 van 20** | 4 / 0 / 5 / 0 |
+| na, plus de focus in dezelfde taak (`tlf`, niet gehouden) | 6 van 20 | 13 van 20 | 4 / 0 / 3 / 1 |
+
+De lijstcode is in alle drie gelijk. 8, 3 en 6 van 20 laten dus zien hoe groot de spreiding
+is. Vooraf, in een run met alleen `c7012d5`: lijst 4 en tijdlijn 8 van 20.
+
+**Het doel van 18 van 20 is niet gehaald.** De lijst haalt 3–8 en de tijdlijn 13 van 20. Wat
+overblijft is niet aantoonbaar iets buiten de app. Het grootste deel van de lange taken is
+lay-out en tekenen terwijl de thread CPU heeft. Een kleiner deel valt alleen door het gedrang
+in de VM boven 50 ms. De drempels, de vertraging en de meting zelf zijn niet veranderd.
+
+### De koude eerste weergave van `/map/<10k>` en de achtergrondtaken (`25eadb9`)
+
+Was de koude weergave van 8,5 s in de slotcontrole van `c6221f0` het gevolg van
+achtergrondtaken die het kritieke pad ophouden? Dat kan via het schrijfslot van SQLite
+(`busy_timeout` 5000) of via een volle event loop. Zo nagespeeld:
+
+- dezelfde data als `run_all.py`;
+- `meta_version` en `render_version` van alle blobs op 0 en de server herstarten. Dan lopen
+  de backfill van de fotometadata en het opnieuw maken van de previews, zoals na een update;
+- 2 rondes van 20 koude eerste weergaven (`first_view.measure_once`), met de API-verzoeken
+  uit resource timing;
+- een probe die elke 200 ms `GET /health` en `GET /api/v1/auth/me` doet (alleen lezen).
+
+| | Tijdens de backfill | Daarna |
+|---|---|---|
+| `c7012d5`: eerste weergave (mediaan, min–max) | 1.046 ms (659–1.277), 12 runs | 658 ms (603–717), 28 runs |
+| `c7012d5`: `/auth/refresh` | mediaan 545 ms, max 752 | mediaan 152 ms |
+| `25eadb9`: eerste weergave | 740 ms (645–798), 8 runs | 652 ms (596–840), 32 runs |
+| `25eadb9`: `/auth/refresh` | mediaan 211 ms, max 243 | mediaan 156 ms |
+| backfill klaar na | `c7012d5` 10–12 s, `25eadb9` 6 s | |
+
+De lezende verzoeken van de probe werden tijdens de backfill niet trager (`/health` p50
+3,5–4,1 ms, `/auth/me` p50 39–55 ms). De event loop zat dus niet vol. De oorzaak was het
+schrijfslot. SQLite heeft één schrijver, en een stuk van de backfill (200 blobs) las en
+schreef per blob. Na de eerste UPDATE hield die transactie het slot vast over alle 200
+rondes. `/auth/refresh` schrijft de nieuwe refresh-token en moest daarop wachten. In
+`25eadb9` leest een stuk eerst alles. Daarna schrijft het in twee executemany's
+(`photodate.set_blob_meta` en `retime_nodes`). `test_een_stuk_schrijft_kort` telt de
+statements tussen de eerste schrijfactie en de COMMIT: nu 2, zonder de fix 71.
+
+Ter controle, zoals in `run_all.py`: alleen herstarten na het vullen. Dan staat er geen enkele
+taak in de wachtrij (alle tellers 0), en 40 koude runs gaven 618–811 ms. In `run_all.py` lopen
+dus geen achtergrondtaken. De vertraging hierboven is echt en opgelost, maar ze is hooguit
+0,6 s. Ze verklaart de 8,5 s niet. Die uitschieter kwam niet terug: niet in de 120 koude runs
+van deze proef (hooguit 1.277 ms) en niet in de drie `run_all.py` hieronder. Er is geen
+serverlog van, dus de oorzaak blijft onbekend.
+
+### Slotcontrole op `25eadb9`
+
+Na `ac4914d` (de tijdlijn) en `25eadb9` (de backfill) zijn er drie `run_all.py` na elkaar
+gedraaid op `25eadb9`, schoon en niet alleen-rapporteren. Er draaide niets anders. De eerste
+twee schreven naar een map in de scratchpad, de derde naar dit document:
+
+| Klaar om (UTC) | Eerste weergave (`/map/<10k>` koud, mediaan / p95 van 5) | Scrollen | lighthouse_like (/, /s, /map) |
+|---|---|---|---|
+| 12:58 | goed (688 / 715 ms) | goed | 97, 94, 100 |
+| 13:08 | goed (676 / 725 ms) | **fout**: lijst 4× p95 50 ms en één taak van 51 ms | 98, 94, 100 |
+| 13:19 | goed (628 / 678 ms) | goed | 97, 95, 100 (de tabellen hierboven) |
+
+Twee van de drie haalden alle poorten. De tweede haalde de lijst bij 4× niet, zoals hierboven
+beschreven. Raster en tijdlijn waren bij 1× en 4× alle drie keer goed. Geen van de 15 koude
+eerste weergaven van `/map/<10k>` kwam boven 725 ms. De echte Lighthouse is niet opnieuw
+gedraaid. De wijzigingen raken het laden van de drie gemeten pagina's niet: alleen de
+tijdlijn en de backfill zijn veranderd.
 <!-- /handmatig -->

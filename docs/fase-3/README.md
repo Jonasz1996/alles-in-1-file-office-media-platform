@@ -117,15 +117,23 @@ Zo werkt het nu:
 
 Meten en testen:
 
-- De lijst bij 4× CPU haalde de scrollpoort bij `0661462` in ongeveer driekwart van de losse
-  runs (46 van 61), bij de slotcontrole op de opgeleverde code (`c6221f0`, een drukkere VM) in
-  2 en 4 van 10; de tijdlijn bij 4× daar in 5 en 1 van 10. Mislukt is bijna altijd één taak van
-  51–77 ms: ruis van de VM, die de vertraging vier keer laat tellen. De build van `897865b`
-  viel in die periode even vaak uit als de eindstand. Van de drie volledige `run_all.py` bij het
-  afronden haalde de laatste alle poorten; de eerste had één koude eerste weergave van
-  `/map/<10k>` van 8,5 s (de andere vier rond 650 ms, 40 koude herhalingen erna hooguit
-  946 ms), waarvan de oorzaak niet gevonden is ([prestaties.md](prestaties.md),
-  "Slotcontrole").
+- De scrollpoort bij 4× CPU slaagt niet altijd voor de lijst en de tijdlijn. Hoe vaak wel,
+  hangt sterk af van hoe druk de VM is. De lijst haalde hem bij `0661462` in 46 van 61 losse
+  runs en later, met dezelfde lijstcode, in 3 tot 8 van 20. De tijdlijn ging in `ac4914d` van 6
+  naar 13 van 20 (20 runs per build, afwisselend). Het doel van 18 van 20 is voor geen van
+  beide gehaald. Volgens CDP-traces is het meeste werk van de app: lay-out en tekenen van
+  nieuwe rijen, in de lijst vooral hun tekst. In de lijst kwam ongeveer een derde van de lange
+  taken alleen door het gedrang in de VM boven 50 ms. Garbage collection speelde geen rol, en
+  steal van de host was 1–3 %. Van de drie `run_all.py` op `25eadb9` haalden er twee alle
+  poorten. In de andere faalde de lijst bij 4× (p95 50 ms, één taak van 51 ms)
+  ([prestaties.md](prestaties.md), "Scrollen bij 4× nader bekeken" en "Slotcontrole op
+  `25eadb9`").
+- Bij de slotcontrole van de integratie (`c6221f0`) was één koude eerste weergave van
+  `/map/<10k>` 8,5 s. De oorzaak is niet gevonden. Achtergrondtaken zijn het niet, want in
+  `run_all.py` lopen er geen. Wel hield de backfill van de fotometadata het schrijfslot van
+  SQLite zo lang vast dat `/auth/refresh` erop wachtte: na een update was de eerste weergave
+  1,0–1,3 s zolang de backfill liep. Dat is opgelost in `25eadb9` (nu 0,65–0,8 s). In 120
+  koude runs van die proef en 15 in de drie `run_all.py` kwam de 8,5 s niet terug.
 - Ingelogd (`/map/<10k>`) meldt Lighthouse "The page loaded too slowly to finish within the
   time limit": de live-stroom `/api/v1/events` blijft open, dus het netwerk wordt nooit stil.
   Alle metingen zijn er wel (score 100).
