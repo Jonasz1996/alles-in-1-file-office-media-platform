@@ -217,8 +217,10 @@ export function previewWindow(start: number, end: number, count: number, block =
 
 /**
  * Previews voor een gevirtualiseerde lijst: get(i) geeft de node op plek i, [start, end) is
- * zichtbaar. Vraagt per blok (previewWindow), het zichtbare deel eerst. version: de lijst
- * veranderde (nieuwe pagina, live wijziging).
+ * zichtbaar. Vraagt per blok (previewWindow), het zichtbare deel eerst. Opnieuw als het blok
+ * verandert, of de nodes erin: version (nieuwe pagina, live wijziging) of een nieuwe get (een
+ * andere volgorde of andere resultaten, ook met evenveel rijen). Anders zou een afbeelding die
+ * zo in beeld komt nooit een antwoord krijgen en een leeg vlak blijven (Thumb, pending).
  */
 export function useWindowPreviews(
   get: (i: number) => FileNode | undefined,
@@ -241,7 +243,7 @@ export function useWindowPreviews(
     for (let i = b; i < to; i++) nodes.push(at(i));
     for (let i = from; i < a; i++) nodes.push(at(i));
     previewCache.want(nodes);
-  }, [from, to, version]);
+  }, [from, to, version, get]);
   return previews;
 }
 

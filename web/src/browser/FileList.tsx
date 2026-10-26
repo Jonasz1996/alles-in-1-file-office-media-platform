@@ -26,6 +26,7 @@ const OVERSCAN = 8;
 const ROW_BUDGET = 10;
 
 export interface FileListProps extends Omit<RowCallbacks, "columns" | "rowHeight" | "scrollToIndex"> {
+  /** Een nieuwe functie als de nodes of hun volgorde veranderen (dan opnieuw previews) */
   get(i: number): FileNode | undefined;
   /** Verandert als de nodes veranderen (store-versie) */
   version: number;

@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from playwright.sync_api import Page, expect
 
-from conftest import Account, Server
+from conftest import Account, Server, create_user
 from seed_browser import BigFolder, big_name, children, seed_big, small_tree
 
 pytestmark = pytest.mark.p2
@@ -172,6 +172,76 @@ def test_contextmenu_rechtsklik_shift_f10_en_lang_indrukken(
     touch.wait_for_timeout(800)
     cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
     expect(touch.get_by_role("menu", name=f"Acties voor {name}")).to_be_visible()
+
+
+VISIBLE_PHOTOS = """() => {
+  const out = [];
+  for (const row of document.querySelectorAll("#inhoud [role=grid] [role=row][data-index]")) {
+    const box = row.getBoundingClientRect();
+    if (box.bottom <= 0 || box.top >= innerHeight) continue;
+    const name = row.querySelector(".name")?.textContent ?? "";
+    if (!name.startsWith("foto-")) continue;
+    const thumb = row.querySelector(".thumb");
+    out.push([name, !!thumb && thumb.tagName === "IMG" && !!thumb.getAttribute("src")]);
+  }
+  return out;
+}"""
+
+
+def photos_with_thumbnail(page: Page, at_least: int) -> list[str]:
+    """Wacht tot elke foto die in beeld is zijn thumbnail heeft (en dat het er minstens zoveel
+    zijn); geeft hun namen."""
+    end = time.monotonic() + 15
+    while True:
+        shown = page.evaluate(VISIBLE_PHOTOS)
+        if len(shown) >= at_least and all(ok for _, ok in shown):
+            return [name for name, _ in shown]
+        if time.monotonic() > end:
+            raise AssertionError(f"foto's zonder thumbnail: {shown}")
+        page.wait_for_timeout(200)
+
+
+def test_thumbnails_na_eigen_sortering_en_een_tweede_zoekopdracht(
+    server: Server, admin: Account, context_as: Callable[..., Any]
+) -> None:
+    """Previews worden per blok gevraagd. Ook als de nodes in dat blok veranderen zonder dat het
+    blok of het aantal verandert, komen hun thumbnails: na een eigen sortering (wat bovenaan
+    komt, lag buiten het eerste blok) en na een tweede zoekopdracht met evenveel resultaten.
+    Anders bleef zo'n foto een leeg vlak, zonder thumbnail en zonder icoon."""
+    import seed
+
+    owner = create_user(server, admin, name="Sorteerder")
+
+    def fill(data_dir: Path) -> str:
+        shas = seed.make_blobs(data_dir, 50)
+        return seed.seed_folder(data_dir, owner, 1000, shas, name="Duizend")
+
+    folder = server.seeded(fill)
+    page = open_folder(context_as(owner), folder)
+    wait_complete(page)
+
+    # Op naam aflopend (in de browser: de hele map is er): de mappen eerst, dan foto-00999 …;
+    # die stonden in de volgorde van de server achteraan
+    page.locator("#inhoud .file-head .cell-name .sort-button").click()
+    expect(page.locator("#inhoud .file-head .cell-name")).to_have_attribute(
+        "aria-sort", "descending"
+    )
+    page.mouse.move(640, 500)
+    for _ in range(6):
+        page.mouse.wheel(0, 300)
+        page.wait_for_timeout(100)
+    expect(row(page, "foto-00999.webp")).to_be_in_viewport()
+    assert "foto-00997.webp" in photos_with_thumbnail(page, 2)
+
+    # Twee zoekopdrachten met elk vijf resultaten
+    page.goto("/zoeken?q=foto-0001")
+    expect(row(page, "foto-00011.webp")).to_be_visible()
+    assert sorted(photos_with_thumbnail(page, 5)) == [f"foto-0001{i}.webp" for i in (1, 3, 5, 7, 9)]
+    box = page.get_by_role("searchbox", name="Zoekwoorden")
+    box.fill("foto-0002")
+    box.press("Enter")
+    expect(row(page, "foto-00021.webp")).to_be_visible()
+    assert sorted(photos_with_thumbnail(page, 5)) == [f"foto-0002{i}.webp" for i in (1, 3, 5, 7, 9)]
 
 
 # --- een kleine boom (acties die iets veranderen) ---
