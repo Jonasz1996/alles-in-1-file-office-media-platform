@@ -3,6 +3,7 @@ nooit GPS."""
 
 import io
 import json
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -61,11 +62,18 @@ def meta_of(data: bytes) -> dict:
         return render_meta.image_meta(img)
 
 
+# De coördinaten van camera_jpeg() (52.0 en 22.0) als losse getallen; niet de "22.0" in een
+# tijdstip als "09:33:22.006450Z" of in 1022.0
+COORDINATE = re.compile(r"(?<![\d:.])(52|22)\.0(?!\d)")
+
+
 def no_gps(value) -> None:
     """Nergens een GPS-waarde: geen sleutel gps/lat/lon/location, geen coördinaten."""
     text = json.dumps(value).lower()
-    for word in ("gps", "latitude", "longitude", '"lat"', '"lon"', "location", "52.0", "22.0"):
+    for word in ("gps", "latitude", "longitude", '"lat"', '"lon"', "location"):
         assert word not in text, (word, value)
+    found = COORDINATE.search(text)
+    assert found is None, (found and found.group(0), value)
 
 
 def test_exif_uit_een_jpeg():
