@@ -164,6 +164,40 @@ def test_zoekveld_houdt_de_focus_als_delen_mislukt(server, user_factory, context
     expect(box).to_be_focused()
 
 
+def test_alt_p_terwijl_de_delingen_nog_laden(server, user_factory, context_as):
+    """Wie meteen na S op Alt+P drukt, terwijl de bestaande delingen nog laden (het zoekveld is
+    er dan nog niet), komt in het zoekveld zodra het er is."""
+    owner = user_factory(name="Snelle Deler")
+    tree = small_tree(server, owner)
+    page = context_as(owner).new_page()
+    held = []
+
+    def hold(route):
+        held.append(route)
+
+    pattern = f"**/api/v1/files/{tree.files['c.txt']}/shares"
+    page.route(pattern, hold)
+    page.goto(f"/map/{tree.work}")
+    page.locator(ROWS).first.wait_for()
+    enter_list(page)
+    page.keyboard.press("End")
+    expect_focus(page, "c.txt")
+    page.keyboard.press("s")
+    dialog = page.get_by_role("dialog", name="c.txt delen", exact=True)
+    expect(dialog).to_be_visible()
+    deadline = time.monotonic() + 15
+    while not held and time.monotonic() < deadline:
+        page.wait_for_timeout(50)
+    assert held, "de delingen werden niet opgevraagd"
+    box = dialog.get_by_role("combobox", name="Zoek een persoon of groep")
+    expect(box).to_have_count(0)  # nog aan het laden
+    page.keyboard.press("Alt+P")
+    for r in held:
+        r.continue_()
+    page.unroute(pattern, hold)
+    expect(box).to_be_focused()
+
+
 def test_een_hulp_op_een_publieke_link(server, user_factory, new_context):
     owner = user_factory(name="Link Hulp")
     folder = mkdir(server, owner, owner.root_id, f"Openbaar {uuid.uuid4().hex[:6]}")

@@ -1298,7 +1298,11 @@ def test_12_pwa_offline_en_een_nieuwe_versie(verhaal: Verhaal) -> None:
     assert page.evaluate("() => location.hostname") == "localhost"
     page.wait_for_function(CONTROLLED_JS, timeout=30_000)
 
-    # Offline (de browser; de server draait door voor de rest van het verhaal)
+    # Offline: de server even weg en de browser offline, zoals in test_pwa.py. Alleen
+    # set_offline is niet genoeg: in nieuwere Chromium (CI) gaan verzoeken die de worker
+    # doorlaat dan toch naar het netwerk. Daarna start de server weer op dezelfde poort en
+    # met dezelfde data, voor de rest van het verhaal.
+    v.server.stop()
     page.context.set_offline(True)
     try:
         page.reload()
@@ -1306,6 +1310,7 @@ def test_12_pwa_offline_en_een_nieuwe_versie(verhaal: Verhaal) -> None:
         expect(page.get_by_role("status").filter(has_text="Je bent offline")).to_be_visible()
         assert page.evaluate("getComputedStyle(document.body).margin") == "0px"  # met opmaak
     finally:
+        v.server.start()
         page.context.set_offline(False)
     # Weer online: het scherm probeert het zelf opnieuw ("online"). Pas daarna herladen: wie
     # herlaadt terwijl die refresh loopt, breekt hem af na de rotatie en houdt het oude cookie

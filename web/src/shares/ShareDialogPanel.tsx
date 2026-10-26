@@ -56,6 +56,9 @@ function SingleShareDialog({
   const [error, setError] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const search = useRef<HTMLInputElement>(null);
+  /** Alt+P terwijl de delingen nog laden: het zoekveld is er dan nog niet. Hier staat waar de
+   * focus toen stond; zodra het veld er is en de focus daar nog staat, gaat hij naar het veld. */
+  const searchWanted = useRef<Element | null | undefined>(undefined);
 
   const load = useCallback(async () => {
     try {
@@ -72,11 +75,26 @@ function SingleShareDialog({
 
   useShortcuts(
     [
-      { combo: "alt+p", label: t("sharing.keys.people"), run: () => search.current?.focus(), allowInInput: true },
+      {
+        combo: "alt+p",
+        label: t("sharing.keys.people"),
+        run: () => {
+          if (search.current) search.current.focus();
+          else searchWanted.current = document.activeElement;
+        },
+        allowInInput: true,
+      },
       { combo: "alt+l", label: t("sharing.keys.newLink"), run: () => setLinkOpen(true), allowInInput: true },
     ],
     { scope: "share" },
   );
+
+  useEffect(() => {
+    const was = searchWanted.current;
+    if (shares === null || was === undefined) return;
+    searchWanted.current = undefined;
+    if (document.activeElement === was) search.current?.focus();
+  }, [shares]);
 
   /** Na een wijziging: de lijst hier en het "gedeeld"-merkje in de lijst met bestanden. */
   const changed = useCallback(async () => {
