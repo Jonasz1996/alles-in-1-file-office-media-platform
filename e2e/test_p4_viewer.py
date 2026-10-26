@@ -570,10 +570,20 @@ def test_pdf_pagina_s_na_het_verlopen_van_het_token(browser, tmp_path_factory):
             "request",
             lambda r: documents.append(r.url) if "/document" in r.url else None,
         )
+        pages: list[tuple[str, int]] = []
+        page.on(
+            "response",
+            lambda r: pages.append((r.url, r.status)) if "/pages/" in r.url else None,
+        )
         page.goto(f"/?bestand={node}")
         viewer = page.get_by_role("dialog", name="lang.pdf", exact=True)
         expect(viewer.get_by_role("img", name="Pagina i", exact=True)).to_be_visible()
+        page.wait_for_function(
+            """() => [...document.querySelectorAll(".page img")].every(
+              (i) => i.complete && i.naturalWidth > 0)"""
+        )
         first_token = viewer.locator(".page img").first.get_attribute("src")
+        loaded = len(pages)
         page.wait_for_timeout(70_000)
         assert len(documents) >= 2, documents  # op tijd vernieuwd
         # Een pagina die er al stond, houdt zijn adres na het vernieuwen (geen nieuwe download),
@@ -582,6 +592,21 @@ def test_pdf_pagina_s_na_het_verlopen_van_het_token(browser, tmp_path_factory):
         page.mouse.wheel(0, 40)
         page.wait_for_timeout(500)
         assert viewer.locator(".page img").first.get_attribute("src") == first_token
+        assert pages[loaded:] == [], pages[loaded:]
+        # Inzoomen na het verlopen van het eerste token: de browser kiest een bredere afbeelding
+        # uit srcset, en die komt met het nieuwe token (niet met het oude: dat gaf een 401 en
+        # "Pagina … kon niet worden geladen" tot de viewer opnieuw openging)
+        viewer.locator(".pages-scroll").focus()
+        page.keyboard.press("+")
+        page.keyboard.press("+")
+        page.wait_for_function(
+            """() => { const shown = [...document.querySelectorAll(".page img")];
+              return shown.length > 0
+                && shown.every((i) => i.complete && i.naturalWidth > 1280); }""",
+            timeout=20_000,
+        )
+        assert not viewer.locator(".page-failed").count()
+        assert [p for p in pages if p[1] != 200] == [], pages
         box = viewer.get_by_role("spinbutton")
         box.fill("9")
         box.press("Enter")

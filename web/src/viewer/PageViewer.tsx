@@ -35,6 +35,19 @@ const STEP = 1.25;
 
 type Fit = "width" | "page" | number;
 
+interface PageSource {
+  src: string;
+  /** [breedte, adres] voor elke breedte die de server maakt */
+  candidates: readonly (readonly [number, string])[];
+  srcSet: string;
+  /** Wat het laatst geladen is (de breedte en het adres zoals in srcSet) */
+  loaded: { w: number; href: string } | null;
+  failed: boolean;
+  from: PageViewerProps["url"];
+}
+
+const srcSetOf = (candidates: PageSource["candidates"]) => candidates.map(([w, href]) => `${href} ${w}w`).join(", ");
+
 /** Pixels per punt bij deze stand. */
 export function pageScale(fit: Fit, sizes: readonly (readonly [number, number])[], view: { w: number; h: number }): number {
   if (typeof fit === "number") return fit * ACTUAL;
@@ -64,12 +77,11 @@ export default function PageViewer({ count, sizes, widths, url, toc = [], labels
   const [tocOpen, setTocOpen] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
   const [, setFailures] = useState(0);
-  // Pagina's die al geladen zijn, houden hun adres (ook als het token intussen vernieuwd is)
-  // (Ook een pagina die niet laadde: die wordt pas opnieuw gevraagd met een nieuw adres, anders
-  // zou een kapotte pagina eindeloos opnieuw laden.)
-  const used = useRef(
-    new Map<number, { src: string; srcSet: string; done: boolean; failed: boolean; from: PageViewerProps["url"] }>(),
-  );
+  // De adressen per pagina. Een pagina die al geladen is, houdt het adres van die afbeelding
+  // ook als het token intussen vernieuwd is (geen nieuwe download); de andere breedtes krijgen
+  // het nieuwe token. (Een pagina die niet laadde, wordt pas opnieuw gevraagd met een nieuw
+  // adres, anders zou een kapotte pagina eindeloos opnieuw laden.)
+  const used = useRef(new Map<number, PageSource>());
   const anchor = useRef<{ page: number; frac: number } | null>(null);
 
   useLayoutEffect(() => {
@@ -135,16 +147,28 @@ export default function PageViewer({ count, sizes, widths, url, toc = [], labels
     used.current.clear();
   }, [shape]);
 
-  function pageSource(n: number) {
+  function pageSource(n: number): PageSource {
     const hit = used.current.get(n);
-    // Nog niet geladen en intussen een nieuw adres (token vernieuwd): dat nieuwe
-    if (hit && (hit.done || hit.from === url)) return hit;
+    if (hit && hit.from === url) return hit;
+    if (hit?.loaded) {
+      // Geladen, en intussen een nieuw token: die afbeelding houdt zijn adres, de andere
+      // breedtes (zoomen, een groter venster) komen met het nieuwe token. Met het oude zou de
+      // browser na het verlopen een 401 krijgen, en de pagina kon dan niet meer laden.
+      const { w: kept, href } = hit.loaded;
+      hit.candidates = widths.map((w) => [w, w === kept ? href : url(n, w)] as const);
+      hit.srcSet = srcSetOf(hit.candidates);
+      hit.from = url;
+      return hit;
+    }
+    // Nieuw, of nog niet geladen en intussen een nieuw adres (token vernieuwd): dat nieuwe
     const width = dims[n - 1]?.[0] ?? 640;
     const best = widths.find((w) => w >= width) ?? widths[widths.length - 1] ?? 1280;
-    const made = {
+    const candidates = widths.map((w) => [w, url(n, w)] as const);
+    const made: PageSource = {
       src: url(n, best),
-      srcSet: widths.map((w) => `${url(n, w)} ${w}w`).join(", "),
-      done: false,
+      candidates,
+      srcSet: srcSetOf(candidates),
+      loaded: null,
       failed: false,
       from: url,
     };
@@ -174,11 +198,16 @@ export default function PageViewer({ count, sizes, widths, url, toc = [], labels
             height={h}
             alt={t("viewer.pdf.pageAlt", { n: labels?.[i] || n })}
             decoding="async"
-            onLoad={() => {
-              src.done = true;
+            onLoad={(e) => {
+              const now = e.currentTarget.currentSrc;
+              const hit = src.candidates.find(([, href]) => new URL(href, document.baseURI).href === now);
+              src.loaded = hit ? { w: hit[0], href: hit[1] } : null;
             }}
             onError={() => {
-              src.failed = true;
+              // Was hij al geladen (een andere breedte, of weer in beeld na het verlopen van de
+              // cache), dan nog één keer met het adres van nu; anders wachten op een nieuw adres
+              if (src.loaded) used.current.delete(n);
+              else src.failed = true;
               setFailures((f) => f + 1);
               onPageError?.(n);
             }}
