@@ -1,0 +1,24 @@
+{
+ "bron": "Opgenomen met DS 10.0.0.1 (build 10.0.0.169) in de sandbox; tokens vervangen door <JWT>, md5 van secure links door …, van tokens alleen de claims (iat en exp als verschil). spike/logs/stub.log",
+ "headers": {
+  "Accept": "application/json, text/plain, */*",
+  "User-Agent": "DocumentServer",
+  "Connection": "Keep-Alive",
+  "Want-Repr-Digest": "sha-256=10",
+  "Want-Content-Digest": "sha-256=10",
+  "Accept-Encoding": "gzip, compress, deflate, br"
+ },
+ "token": {
+  "header": {
+   "alg": "HS256",
+   "typ": "JWT"
+  },
+  "claims": {
+   "payload": {
+    "url": "http://172.17.0.1:18766/doc/d-a6a48f88.docx"
+   },
+   "operation": "download",
+   "exp_minus_iat": 300
+  }
+ }
+}

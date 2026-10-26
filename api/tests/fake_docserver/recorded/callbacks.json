@@ -1,0 +1,592 @@
+{
+ "bron": "Opgenomen met DS 10.0.0.1 (build 10.0.0.169) in de sandbox; tokens vervangen door <JWT>, md5 van secure links door …, van tokens alleen de claims (iat en exp als verschil). spike/logs/stub.log en proef/stub.log",
+ "status_1_open": {
+  "body": {
+   "key": "akt-inv127-fffdd566b654",
+   "status": 1,
+   "users": [
+    "u1"
+   ],
+   "actions": [
+    {
+     "type": 1,
+     "userid": "u1"
+    }
+   ],
+   "token": "<JWT>"
+  },
+  "body_keys": [
+   "key",
+   "status",
+   "users",
+   "actions",
+   "token"
+  ],
+  "body_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "key": "akt-inv127-fffdd566b654",
+    "status": 1,
+    "users": [
+     "u1"
+    ],
+    "actions": [
+     {
+      "type": 1,
+      "userid": "u1"
+     }
+    ],
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "header_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "payload": {
+     "key": "akt-inv127-fffdd566b654",
+     "status": 1,
+     "users": [
+      "u1"
+     ],
+     "actions": [
+      {
+       "type": 1,
+       "userid": "u1"
+      }
+     ]
+    },
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "user_agent": "DocumentServer"
+ },
+ "status_6_button": {
+  "body": {
+   "key": "akt-inv127-fffdd566b654",
+   "status": 6,
+   "url": "http://127.0.0.1:18099/office/cache/files/data/akt-inv127-fffdd566b654_8251/output.docx/output.docx?md5=…&expires=1793042280&shardkey=akt-inv127-fffdd566b654&filename=output.docx",
+   "changesurl": "http://127.0.0.1:18099/office/cache/files/data/akt-inv127-fffdd566b654_8251/changes.zip/changes.zip?md5=…&expires=1793042280&shardkey=akt-inv127-fffdd566b654&filename=changes.zip",
+   "history": {
+    "serverVersion": "10.0.0",
+    "changes": [
+     {
+      "documentSha256": "f37562f4d5e05b76b782c52679543a99d2badfdccb6c5ae3400139e73d3ece20",
+      "created": "2026-10-26 19:02:58",
+      "user": {
+       "id": "u1",
+       "name": "Anna"
+      }
+     }
+    ]
+   },
+   "users": [
+    "u1"
+   ],
+   "actions": [
+    {
+     "type": 2,
+     "userid": "u1"
+    }
+   ],
+   "lastsave": "2026-10-26T19:02:58.000Z",
+   "forcesavetype": 1,
+   "token": "<JWT>",
+   "filetype": "docx"
+  },
+  "body_keys": [
+   "key",
+   "status",
+   "url",
+   "changesurl",
+   "history",
+   "users",
+   "actions",
+   "lastsave",
+   "forcesavetype",
+   "token",
+   "filetype"
+  ],
+  "body_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "key": "akt-inv127-fffdd566b654",
+    "status": 6,
+    "url": "http://127.0.0.1:18099/office/cache/files/data/akt-inv127-fffdd566b654_8251/output.docx/output.docx?md5=…&expires=1793042280&shardkey=akt-inv127-fffdd566b654&filename=output.docx",
+    "changesurl": "http://127.0.0.1:18099/office/cache/files/data/akt-inv127-fffdd566b654_8251/changes.zip/changes.zip?md5=…&expires=1793042280&shardkey=akt-inv127-fffdd566b654&filename=changes.zip",
+    "history": {
+     "serverVersion": "10.0.0",
+     "changes": [
+      {
+       "documentSha256": "f37562f4d5e05b76b782c52679543a99d2badfdccb6c5ae3400139e73d3ece20",
+       "created": "2026-10-26 19:02:58",
+       "user": {
+        "id": "u1",
+        "name": "Anna"
+       }
+      }
+     ]
+    },
+    "users": [
+     "u1"
+    ],
+    "actions": [
+     {
+      "type": 2,
+      "userid": "u1"
+     }
+    ],
+    "lastsave": "2026-10-26T19:02:58.000Z",
+    "forcesavetype": 1,
+    "filetype": "docx",
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "header_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "payload": {
+     "key": "akt-inv127-fffdd566b654",
+     "status": 6,
+     "url": "http://127.0.0.1:18099/office/cache/files/data/akt-inv127-fffdd566b654_8251/output.docx/output.docx?md5=…&expires=1793042280&shardkey=akt-inv127-fffdd566b654&filename=output.docx",
+     "changesurl": "http://127.0.0.1:18099/office/cache/files/data/akt-inv127-fffdd566b654_8251/changes.zip/changes.zip?md5=…&expires=1793042280&shardkey=akt-inv127-fffdd566b654&filename=changes.zip",
+     "history": {
+      "serverVersion": "10.0.0",
+      "changes": [
+       {
+        "documentSha256": "f37562f4d5e05b76b782c52679543a99d2badfdccb6c5ae3400139e73d3ece20",
+        "created": "2026-10-26 19:02:58",
+        "user": {
+         "id": "u1",
+         "name": "Anna"
+        }
+       }
+      ]
+     },
+     "users": [
+      "u1"
+     ],
+     "actions": [
+      {
+       "type": 2,
+       "userid": "u1"
+      }
+     ],
+     "lastsave": "2026-10-26T19:02:58.000Z",
+     "forcesavetype": 1,
+     "filetype": "docx"
+    },
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "user_agent": "DocumentServer"
+ },
+ "status_2": {
+  "body": {
+   "key": "akt-inv127-fffdd566b654",
+   "status": 2,
+   "url": "http://127.0.0.1:18099/office/cache/files/data/akt-inv127-fffdd566b654_4585/output.docx/output.docx?md5=…&expires=1793042327&shardkey=akt-inv127-fffdd566b654&filename=output.docx",
+   "changesurl": "http://127.0.0.1:18099/office/cache/files/data/akt-inv127-fffdd566b654_4585/changes.zip/changes.zip?md5=…&expires=1793042327&shardkey=akt-inv127-fffdd566b654&filename=changes.zip",
+   "history": {
+    "serverVersion": "10.0.0",
+    "changes": [
+     {
+      "documentSha256": "f37562f4d5e05b76b782c52679543a99d2badfdccb6c5ae3400139e73d3ece20",
+      "created": "2026-10-26 19:02:58",
+      "user": {
+       "id": "u1",
+       "name": "Anna"
+      }
+     }
+    ]
+   },
+   "users": [
+    "u1"
+   ],
+   "actions": [
+    {
+     "type": 0,
+     "userid": "u1"
+    }
+   ],
+   "lastsave": "2026-10-26T19:03:39.000Z",
+   "notmodified": false,
+   "token": "<JWT>",
+   "filetype": "docx"
+  },
+  "body_keys": [
+   "key",
+   "status",
+   "url",
+   "changesurl",
+   "history",
+   "users",
+   "actions",
+   "lastsave",
+   "notmodified",
+   "token",
+   "filetype"
+  ],
+  "body_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "key": "akt-inv127-fffdd566b654",
+    "status": 2,
+    "url": "http://127.0.0.1:18099/office/cache/files/data/akt-inv127-fffdd566b654_4585/output.docx/output.docx?md5=…&expires=1793042327&shardkey=akt-inv127-fffdd566b654&filename=output.docx",
+    "changesurl": "http://127.0.0.1:18099/office/cache/files/data/akt-inv127-fffdd566b654_4585/changes.zip/changes.zip?md5=…&expires=1793042327&shardkey=akt-inv127-fffdd566b654&filename=changes.zip",
+    "history": {
+     "serverVersion": "10.0.0",
+     "changes": [
+      {
+       "documentSha256": "f37562f4d5e05b76b782c52679543a99d2badfdccb6c5ae3400139e73d3ece20",
+       "created": "2026-10-26 19:02:58",
+       "user": {
+        "id": "u1",
+        "name": "Anna"
+       }
+      }
+     ]
+    },
+    "users": [
+     "u1"
+    ],
+    "actions": [
+     {
+      "type": 0,
+      "userid": "u1"
+     }
+    ],
+    "lastsave": "2026-10-26T19:03:39.000Z",
+    "notmodified": false,
+    "filetype": "docx",
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "header_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "payload": {
+     "key": "akt-inv127-fffdd566b654",
+     "status": 2,
+     "url": "http://127.0.0.1:18099/office/cache/files/data/akt-inv127-fffdd566b654_4585/output.docx/output.docx?md5=…&expires=1793042327&shardkey=akt-inv127-fffdd566b654&filename=output.docx",
+     "changesurl": "http://127.0.0.1:18099/office/cache/files/data/akt-inv127-fffdd566b654_4585/changes.zip/changes.zip?md5=…&expires=1793042327&shardkey=akt-inv127-fffdd566b654&filename=changes.zip",
+     "history": {
+      "serverVersion": "10.0.0",
+      "changes": [
+       {
+        "documentSha256": "f37562f4d5e05b76b782c52679543a99d2badfdccb6c5ae3400139e73d3ece20",
+        "created": "2026-10-26 19:02:58",
+        "user": {
+         "id": "u1",
+         "name": "Anna"
+        }
+       }
+      ]
+     },
+     "users": [
+      "u1"
+     ],
+     "actions": [
+      {
+       "type": 0,
+       "userid": "u1"
+      }
+     ],
+     "lastsave": "2026-10-26T19:03:39.000Z",
+     "notmodified": false,
+     "filetype": "docx"
+    },
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "user_agent": "DocumentServer"
+ },
+ "status_4": {
+  "body": {
+   "key": "akt-inv127-warm-804f239bd464",
+   "status": 4,
+   "actions": [
+    {
+     "type": 0,
+     "userid": "u1"
+    }
+   ],
+   "token": "<JWT>"
+  },
+  "body_keys": [
+   "key",
+   "status",
+   "actions",
+   "token"
+  ],
+  "body_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "key": "akt-inv127-warm-804f239bd464",
+    "status": 4,
+    "actions": [
+     {
+      "type": 0,
+      "userid": "u1"
+     }
+    ],
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "header_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "payload": {
+     "key": "akt-inv127-warm-804f239bd464",
+     "status": 4,
+     "actions": [
+      {
+       "type": 0,
+       "userid": "u1"
+      }
+     ]
+    },
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "user_agent": "DocumentServer"
+ },
+ "status_4_drop": {
+  "body": {
+   "key": "s14a-96e152aef32a",
+   "status": 4,
+   "token": "<JWT>"
+  },
+  "body_keys": [
+   "key",
+   "status",
+   "token"
+  ],
+  "body_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "key": "s14a-96e152aef32a",
+    "status": 4,
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "header_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "payload": {
+     "key": "s14a-96e152aef32a",
+     "status": 4
+    },
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "user_agent": "DocumentServer"
+ },
+ "status_1_close": {
+  "body": {
+   "key": "s14b-e3c2ced5bef7",
+   "status": 1,
+   "users": [
+    "u2"
+   ],
+   "actions": [
+    {
+     "type": 0,
+     "userid": "u2"
+    }
+   ],
+   "token": "<JWT>"
+  },
+  "body_keys": [
+   "key",
+   "status",
+   "users",
+   "actions",
+   "token"
+  ],
+  "body_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "key": "s14b-e3c2ced5bef7",
+    "status": 1,
+    "users": [
+     "u2"
+    ],
+    "actions": [
+     {
+      "type": 0,
+      "userid": "u2"
+     }
+    ],
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "header_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "payload": {
+     "key": "s14b-e3c2ced5bef7",
+     "status": 1,
+     "users": [
+      "u2"
+     ],
+     "actions": [
+      {
+       "type": 0,
+       "userid": "u2"
+      }
+     ]
+    },
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "user_agent": "DocumentServer"
+ },
+ "status_1_info": {
+  "body": {
+   "key": "s14b-e3c2ced5bef7",
+   "status": 1,
+   "users": [
+    "u2"
+   ],
+   "token": "<JWT>"
+  },
+  "body_keys": [
+   "key",
+   "status",
+   "users",
+   "token"
+  ],
+  "body_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "key": "s14b-e3c2ced5bef7",
+    "status": 1,
+    "users": [
+     "u2"
+    ],
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "header_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "payload": {
+     "key": "s14b-e3c2ced5bef7",
+     "status": 1,
+     "users": [
+      "u2"
+     ]
+    },
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "user_agent": "DocumentServer"
+ },
+ "status_6_command": {
+  "body": {
+   "key": "samen-e8fdb9a2c8",
+   "status": 6,
+   "url": "http://127.0.0.1:8091/cache/files/data/samen-e8fdb9a2c8_6029/output.docx/output.docx?md5=…&expires=1793029571&shardkey=samen-e8fdb9a2c8&filename=output.docx",
+   "changesurl": "http://127.0.0.1:8091/cache/files/data/samen-e8fdb9a2c8_6029/changes.zip/changes.zip?md5=…&expires=1793029571&shardkey=samen-e8fdb9a2c8&filename=changes.zip",
+   "history": {
+    "serverVersion": "10.0.0",
+    "changes": [
+     {
+      "documentSha256": "d9f7adfd56a7ec53e71a1a75509b0078186fe954c93ac8665ddc0f618e1a2aa1",
+      "created": "2026-10-26 15:31:01",
+      "user": {
+       "id": "u1",
+       "name": "Jonas"
+      }
+     },
+     {
+      "documentSha256": "d9f7adfd56a7ec53e71a1a75509b0078186fe954c93ac8665ddc0f618e1a2aa1",
+      "created": "2026-10-26 15:31:06",
+      "user": {
+       "id": "u2",
+       "name": "Gast"
+      }
+     }
+    ]
+   },
+   "users": [
+    "u2"
+   ],
+   "userdata": "proef-forcesave",
+   "lastsave": "2026-10-26T15:31:06.000Z",
+   "forcesavetype": 0,
+   "token": "<JWT>",
+   "filetype": "docx"
+  },
+  "body_keys": [
+   "key",
+   "status",
+   "url",
+   "changesurl",
+   "history",
+   "users",
+   "userdata",
+   "lastsave",
+   "forcesavetype",
+   "token",
+   "filetype"
+  ],
+  "user_agent": "DocumentServer"
+ }
+}

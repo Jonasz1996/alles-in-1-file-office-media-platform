@@ -1,0 +1,92 @@
+{
+ "bron": "Opgenomen met DS 10.0.0.1 (build 10.0.0.169) in de sandbox; tokens vervangen door <JWT>, md5 van secure links door …, van tokens alleen de claims (iat en exp als verschil). proef/cmd-results.jsonl",
+ "version": {
+  "http": 200,
+  "answer": {
+   "error": 0,
+   "version": "10.0.0.169"
+  }
+ },
+ "license": {
+  "http": 200,
+  "answer": {
+   "error": 0,
+   "license": {
+    "start_date": "2026-10-01T00:00:00.000Z",
+    "end_date": null,
+    "timelimited": false,
+    "trial": false,
+    "developer": false,
+    "branding": false,
+    "customization": false,
+    "advanced_api": false,
+    "connections": 2147483647,
+    "connections_view": 2147483647,
+    "users_count": 0,
+    "users_view_count": 0,
+    "users_expire": 1,
+    "customer_id": "",
+    "alias": "",
+    "multitenancy": false
+   },
+   "server": {
+    "workersCount": 1,
+    "resultType": 3,
+    "packageType": 0,
+    "buildDate": "2026-10-11T00:00:00.000Z",
+    "buildVersion": "10.0.0",
+    "buildNumber": 169
+   },
+   "quota": {
+    "users": [],
+    "users_view": []
+   }
+  }
+ },
+ "info": {
+  "http": 200,
+  "answer": {
+   "key": "bestaat-niet",
+   "error": 1
+  }
+ },
+ "forcesave": {
+  "http": 200,
+  "answer": {
+   "key": "bestaat-niet",
+   "error": 1
+  }
+ },
+ "drop": {
+  "http": 200,
+  "answer": {
+   "key": "bestaat-niet",
+   "error": 0
+  }
+ },
+ "meta": {
+  "http": 200,
+  "answer": {
+   "key": "bestaat-niet",
+   "error": 0
+  }
+ },
+ "version zonder token": {
+  "http": 200,
+  "answer": "{\"error\":6}"
+ },
+ "version token alleen in header": {
+  "http": 200,
+  "answer": {
+   "error": 0,
+   "version": "10.0.0.169"
+  }
+ },
+ "version token alleen in body": {
+  "http": 200,
+  "answer": {
+   "error": 0,
+   "version": "10.0.0.169"
+  }
+ }
+}
