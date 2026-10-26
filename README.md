@@ -35,7 +35,8 @@ docker compose up --build
 
 Bij het eerste bezoek maak je het beheerdersaccount aan en zet je 2FA aan (verplicht).
 
-Tests: `cd api && uv run pytest` en `cd web && npm test`. De HTTPS-test tegen Pebble (de
+Tests: `cd api && uv run pytest` en `cd web && npm test`; de e2e-tests met Playwright staan in
+[docs/fase-3/e2e.md](docs/fase-3/e2e.md). De HTTPS-test tegen Pebble (de
 test-CA van Let's Encrypt) heeft Go nodig: `cd api && eval "$(tests/pebble/start.sh)" && uv run pytest tests/test_acme_pebble.py`.
 
 ## Voortgang
@@ -45,7 +46,7 @@ test-CA van Let's Encrypt) heeft Go nodig: `cd api && eval "$(tests/pebble/start
 | 0 | Kaders: beslissingen, monorepo, CI-skelet | klaar op de inventaris na, zie [docs/fase-0](docs/fase-0/beslissingen.md) |
 | 1 | Infrastructuur (3 nodes, failover) | deel 1 klaar om uit te rollen, zie [infra/README.md](infra/README.md) |
 | 2 | Core backend | deel 1 t/m 3 klaar: standalone app met login, 2FA, sessies, bestanden, hervatbare uploads, versies, zoeken, tags, previews, live updates, delen met personen, groepen en links, HTTPS en beheer, zie [docs/fase-2](docs/fase-2/README.md) |
-| 3 | Web-app | basis staat (inloggen, bestandsbrowser, beheer) |
+| 3 | Web-app | klaar (versie 0.5.0): bestandsbrowser voor grote mappen, mapuploads, viewers, fototijdlijn en albums, beheer, account, delen, prullenbak en versies, Nederlands en Engels, PWA, zie [docs/fase-3](docs/fase-3/README.md) |
 | 4 | Office | |
 | 5 | Media en streaming | |
 | 6 | Zoeken en foto's | |

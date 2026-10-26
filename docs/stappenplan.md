@@ -337,29 +337,37 @@ werkende TypeScript- en Kotlin-client.
 
 Doel: dagelijks bruikbare web-app voor bestanden en foto's.
 
-- [ ] React + Vite + TypeScript, design-system (tokens, dark mode),
+- [x] React + Vite + TypeScript, design-system (tokens, dark mode),
   routing, auth-flows incl. 2FA
 
-- [ ] Bestandsbrowser: lijst en grid (virtualized), drag-and-drop,
-  bulkacties, contextmenu, sneltoetsen
+- [x] Bestandsbrowser: lijst en grid (virtualized), drag-and-drop,
+  bulkacties, contextmenu, sneltoetsen (slepen naar de navigatiebalk
+  niet)
 
-- [ ] Upload-UI: TUS, voortgang, pauze en hervat, mapupload
+- [x] Upload-UI: TUS, voortgang, pauze en hervat, mapupload
 
-- [ ] Viewers: afbeeldingen (zoom, EXIF), PDF (PDF.js), video (hls.js),
-  audio, tekst en code, office-preview
+- [x] Viewers: afbeeldingen (zoom, EXIF), PDF (PDF.js), video (hls.js),
+  audio, tekst en code, office-preview (zonder PDF.js en hls.js, B19
+  en B20: de server rendert PDF-pagina's, video speelt native;
+  HLS en transcoding in fase 5, de tekstlaag in fase 6)
 
-- [ ] Foto-tijdlijn op datum, albums, selectie en delen
+- [x] Foto-tijdlijn op datum, albums, selectie en delen
 
-- [ ] Delen-UI, prullenbak, versiegeschiedenis
+- [x] Delen-UI, prullenbak, versiegeschiedenis
 
-- [ ] PWA: installeerbaar, offline-shell; i18n NL en EN
+- [x] PWA: installeerbaar, offline-shell; i18n NL en EN
 
-- [ ] Admin: gebruikers, quota, jobs, systeemstatus, opslaggebruik per
-  node
+- [x] Admin: gebruikers, quota, jobs, systeemstatus, opslaggebruik per
+  node (standalone is er één node; de andere komen erbij met het
+  cluster)
 
 Klaar als: Lighthouse performance \> 90; eerste weergave \< 1,5 s op
 LAN; alle acties ook via toetsenbord; 10.000 bestanden in één map
 scrollen soepel.
+
+Gehaald in versie 0.5.0 (26-10-2026): de metingen staan in
+[docs/fase-3/prestaties.md](fase-3/prestaties.md), wat er is en de
+bekende grenzen in [docs/fase-3/README.md](fase-3/README.md).
 
 ### Fase 4 — Office (2 weken)
 
