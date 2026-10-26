@@ -666,6 +666,44 @@ async def test_status_4_en_drop(world):
 
 
 @pytest.mark.anyio
+async def test_commandos_op_een_open_key_zoals_gemeten(world):
+    """info, forcesave en drop op een open key, en info na de drop, met de antwoorden die de
+    spike van de echte DS opnam (recorded/commands.json)."""
+    rec = recorded("commands")
+
+    def want(name: str, key: str) -> dict:
+        return json.loads(json.dumps(rec[name]["answer"]).replace("<key>", key))
+
+    key = "k9-abc"
+    anna = world.editor(world.doc_config(key, "proef.docx", "u1", "Anna"))
+    await anna.open()
+    assert await world.command("info", key=key) == want("info open key", key)
+    answer = await world.command("forcesave", key=key, userdata="timer")
+    assert answer == want("forcesave zonder wijzigingen", key)
+    await anna.type("iets")
+    answer = await world.command("forcesave", key=key, userdata="timer")
+    assert answer == want("forcesave met wijzigingen", key)
+    six = (await world.side.wait(6))[0]
+    measured = rec["forcesave callback"]["body"]
+    assert set(measured) <= set(six)
+    assert (six["userdata"], six["forcesavetype"]) == (
+        measured["userdata"],
+        measured["forcesavetype"],
+    )
+    # Na drop van de enige gebruiker kent DS de key nog even, zonder gebruikers [gemeten]
+    world.config.save_delay = 5.0
+    assert await world.command("drop", key=key, users=["u1"]) == want("drop open key", key)
+    await anna.wait_for("drop")
+    deadline = time.monotonic() + 5
+    info = await world.command("info", key=key)
+    while info.get("users"):
+        assert time.monotonic() < deadline, info
+        await asyncio.sleep(0.02)
+        info = await world.command("info", key=key)
+    assert info == want("info na drop", key)
+
+
+@pytest.mark.anyio
 async def test_tokens_bij_het_verbinden(world):
     # Een token van een andere key, een ander geheim, verlopen: geweigerd na het eerste pakket
     other = world.doc_config("kB-abc", "proef.docx", "u1", "Anna")

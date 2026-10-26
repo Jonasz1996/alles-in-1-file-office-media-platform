@@ -1,5 +1,5 @@
 {
- "bron": "Opgenomen met DS 10.0.0.1 (build 10.0.0.169) in de sandbox; tokens vervangen door <JWT>, md5 van secure links door …, van tokens alleen de claims (iat en exp als verschil). proef/cmd-results.jsonl",
+ "bron": "Opgenomen met DS 10.0.0.1 (build 10.0.0.169) in de sandbox; tokens vervangen door <JWT>, md5 van secure links door …, van tokens alleen de claims (iat en exp als verschil). proef/cmd-results.jsonl; de open key, forgotten files (O2), het fout geheim en de callback na forcesave uit de spike (spike/recorded/commands.json): POST /command?shardkey=<key>, token in de body",
  "version": {
   "http": 200,
   "answer": {
@@ -87,6 +87,162 @@
   "answer": {
    "error": 0,
    "version": "10.0.0.169"
+  }
+ },
+ "info open key": {
+  "http": 200,
+  "request": {
+   "c": "info",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0,
+   "users": [
+    "u1"
+   ]
+  }
+ },
+ "forcesave zonder wijzigingen": {
+  "http": 200,
+  "request": {
+   "c": "forcesave",
+   "userdata": "timer",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 4
+  }
+ },
+ "forcesave met wijzigingen": {
+  "http": 200,
+  "request": {
+   "c": "forcesave",
+   "userdata": "timer",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0
+  }
+ },
+ "drop open key": {
+  "http": 200,
+  "request": {
+   "c": "drop",
+   "users": [
+    "u1"
+   ],
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0
+  }
+ },
+ "info na drop": {
+  "http": 200,
+  "request": {
+   "c": "info",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0,
+   "users": []
+  }
+ },
+ "version token met een fout geheim": {
+  "http": 200,
+  "request": {
+   "c": "version",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "error": 6
+  }
+ },
+ "getForgottenList": {
+  "http": 200,
+  "request": {
+   "c": "getForgottenList",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "error": 0,
+   "keys": [
+    "<key>"
+   ]
+  }
+ },
+ "getForgotten": {
+  "http": 200,
+  "request": {
+   "c": "getForgotten",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0,
+   "url": "http://127.0.0.1:18091/cache/files/forgotten/<key>/output.docx/output.docx?md5=…&expires=<unix>&shardkey=<key>&filename=output.docx"
+  }
+ },
+ "deleteForgotten": {
+  "http": 200,
+  "request": {
+   "c": "deleteForgotten",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0
+  }
+ },
+ "getForgotten na delete": {
+  "http": 200,
+  "request": {
+   "c": "getForgotten",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 1
+  }
+ },
+ "getForgotten onbekende key": {
+  "http": 200,
+  "request": {
+   "c": "getForgotten",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 1
+  }
+ },
+ "forcesave callback": {
+  "note": "de velden van de status 6 na forcesave met userdata (alleen deze velden opgenomen)",
+  "body": {
+   "key": "<key>",
+   "status": 6,
+   "users": [
+    "u1"
+   ],
+   "userdata": "timer",
+   "lastsave": "2026-10-26T19:53:18.000Z",
+   "forcesavetype": 0,
+   "token": "<JWT>",
+   "filetype": "docx"
   }
  }
 }

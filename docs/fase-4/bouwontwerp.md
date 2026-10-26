@@ -2256,19 +2256,34 @@ geldt de terugval van Keuze 20 (de sessie stoppen).
 Vanaf internet zijn alleen #1 en #3–#7 bereikbaar. #8, #9 en #13 staan op een poort die niet
 gepubliceerd is. #10–#12, #14 en #15 gaan van de app naar DS over het interne netwerk.
 
-### 3.10 Padbeleid van `/office/` (begin; de spike maakt het af)
+### 3.10 Padbeleid van `/office/` (definitief na de spike)
 
-Na normaliseren (prefix `/office` eraf, versiesegment `^\d+\.\d+\.\d+-[0-9a-f]{8,64}$` eraf):
+De spike heeft de lijst vastgelegd (stap 1, 2 en 17 van `docs/fase-4/spike.md`; opname in
+`api/tests/fake_docserver/recorded/paths.json`). Na normaliseren (prefix `/office` eraf,
+versiesegment `^\d+\.\d+\.\d+-[0-9a-f]{8,64}$` eraf). "Gemeten" = gezien in de runs van de spike;
+"niet gemeten" = afgeleid, nog niet gezien.
 
 | Klasse | Paden | Methoden | Toegang | Bron |
 |---|---|---|---|---|
-| statisch | onder `web-apps/…`, `sdkjs/…`, `sdkjs-plugins/…`, `fonts/…`, `dictionaries/…`: alles behalve HTML; `document_editor_service_worker.js`; `web-apps/apps/api/documents/api.js` | GET, HEAD | geen | [gemeten, M11] |
-| editorpagina | elke `*.html` (bijv. `web-apps/apps/documenteditor/main/index.html`), en een 302 die daarheen gaat | GET, HEAD | cookie; `Sec-Fetch-Dest` `iframe`, `frame` of `empty` als de kop er is | [gemeten: de iframe van de editor] |
-| documentdata | `cache/files/data/<key>_<n>/…` | GET | cookie + lid + recht van nu | [gemeten, M11] |
-| sessie | `doc/<key>/c/…` | GET, POST (polling), upgrade (tunnel) | cookie + lid + recht van nu; tunnel: ook het eerste pakket | [gemeten: GET en upgrade] |
-| editorinstellingen | `plugins.json`, `themes.json` | GET | cookie + lid van een open sessie | [gemeten, M11] |
-| editoracties | wat de spike vindt bij downloaden, afdrukken, afbeelding invoegen en opmerkingen (verwacht onder meer `downloadas/<key>`, `upload/<key>`, `printfile/<key>/…`) | volgens de spike | cookie + lid + recht van nu; POST: grens per gebruiker | [niet getest] |
-| geweigerd (404) | al het andere, met name `/` (welkomstpagina met `Clear-Site-Data`), `welcome`, `command`, `coauthoring/…`, `converter`, `ConvertService.ashx`, `docbuilder`, `info`, `internal`, `hosting/…`, `example`, `healthcheck`, `version`, `ai-proxy`, `cache/files/forgotten/…`, `cache/files/data/conv_…`, `favicon.ico` | — | — | [image: `ds-docservice.conf`] |
+| statisch | `web-apps/…`, `sdkjs/…`, `sdkjs-plugins/…`, `fonts/…`, `dictionaries/…`: alles behalve HTML (gezien: .js, .css, .json, .template, .svg, .png, .wasm, .bin, .aff, .dic, fonts zonder extensie); `document_editor_service_worker.js`; `web-apps/apps/api/documents/api.js` (ook zonder `<V>`) | GET, HEAD | geen | [gemeten, spike stap 1] |
+| editorpagina | precies `web-apps/apps/{documenteditor,spreadsheeteditor,presentationeditor}/main/index.html`; daarbij `…/mobile/index.html` voor `type: "mobile"` | GET, HEAD | cookie; `Sec-Fetch-Dest` `iframe`, `frame` of `empty` als de kop er is; volledige CSP | [`main` gemeten; `mobile` niet gemeten (api.js maakt dat pad)] |
+| documentdata | `cache/files/data/<key>_<n>/…` (uitvoer van downloaden en afdrukken) **en** `cache/files/data/<key>/…` (`Editor.bin/Editor.bin`, `media/<bestand>/<bestand>`) | GET | cookie + lid + recht van nu | [gemeten] |
+| sessie | `doc/<key>/c/…` | upgrade (tunnel); GET en POST alleen voor polling | cookie + lid + recht van nu; tunnel: ook de pakketten (spike stap 12) | [upgrade gemeten; polling niet gezien] |
+| editorinstellingen | `themes.json`; `plugins.json` | GET | cookie + lid van een open sessie | [`themes.json` gemeten; `plugins.json` niet gevraagd met `plugins: false`] |
+| editoracties | `downloadas/<key>` (downloaden en afdrukken; query `cmd` en `shardkey`; body tot ±250 KB); `upload/<key>` (afbeelding; `Authorization: Bearer <sessietoken>` door naar DS) | POST | cookie + lid + recht van nu; grens per gebruiker | [gemeten] |
+| geweigerd (404) | al het andere, met name: `/`, `index.html`, `<V>/index.html`, `welcome/…`, `web-apps/apps/api/documents/preload.html` en `cache-scripts.html`, `printfile/…`, `savefile/…`, `downloadfile/…`, `command`, `coauthoring/…`, `converter`, `converter/from-file`, `ConvertService.ashx`, `docbuilder`, `baseurl`, `dummyCallback`, `info/…`, `internal/…`, `hosting/…`, `example/…`, `meta/…`, `healthcheck`, `version`, `ai-proxy`, `robots.txt`, `cache/files/forgotten/…`, `cache/files/data/conv_…`, `favicon.ico` | — | — | [gemeten: DS en de spike-proxy] |
+
+Toelichting:
+- `printfile`, `savefile` en `downloadfile` bestaan in DS, maar de editor gebruikte ze in geen
+  enkele actie (afdrukken gaat via `downloadas/<key>` en `output.pdf`). Ze blijven dicht; vraagt de
+  integratie er toch om, dan beslist zij met een notitie.
+- `Authorization` gaat alleen op `upload/<key>` door naar DS, en alleen als het een geldig
+  sessietoken is (afgeleide sleutel, Keuze 11) met `document.key` = de key van het pad. Op alle
+  andere paden blijft het eruit.
+- De upgrade heeft nooit `Sec-Fetch-Dest`; de tunnel werkt zonder die kop (`Origin` en cookie).
+- `cmd` en `shardkey` gaan nooit in een log (`SECRET_PARAMS`).
+- `<V>` is per container anders en wisselt bij de font-herstart van een nieuwe container: alleen de
+  vorm controleren, nooit vastpinnen.
 
 ---
 
@@ -2664,6 +2679,18 @@ bleek onjuist. Waar ik een voorgestelde fix anders deed of een deel niet overnam
 | F13. De haak in `App.tsx` zit in de eerste lading, en daar is nog maar 6,2 KB ruimte. | Alleen een kleine luisteraar, die `office/notices.ts` en het gebied `office` pas bij de eerste gebeurtenis laadt. De schil importeert `office/index.ts` nooit. Een poort "eerste lading ≤ +0,5 KB" (Keuze 33, §3.8, §4.7). M18. |
 | F14. De dev-proxy wees naar poort 8000, maar `app.serve` luistert op 8080. | De dev-opdracht met `PLATFORM_HTTP_PORT=8000` en de office-variabelen, naast een `docker run` van DS (Keuze 33, `docs/fase-4/e2e.md`). |
 | F15. Terugrollen van de app kon niet: v0.5.0 start niet op een database op 0007. | `app.cli db-downgrade` (O0). "App terugrollen" in het runbook, liefst eerst `OFFICE=uit`. `test_migration_0007.py` en `test_cli_db.py` (Keuze 34, §3.1, §3.5, §2 O6). M19. |
+
+### Uitslag van de spike (O0)
+
+Geen kritiek, maar een meting: de spike (O0-spike, stap 1 tot 18; O0-e2e deed stap 2, 5 en 11
+opnieuw via de kern in de app) legde het padbeleid vast. §3.10 is daarom bijgewerkt naar de
+definitieve tabel van `docs/fase-4/spike.md`. Wat daardoor anders is dan hierboven bij S1 staat:
+de editorpagina is niet "elke `*.html` en een omleiding daarheen", maar precies de drie
+`…/main/index.html` (plus `…/mobile/index.html`); `/<V>/index.html` is een statuspagina van DS en
+blijft dicht. Verder: documentdata ook zonder `_<n>`, `upload/<key>` met `Authorization`, geen
+`printfile`, en `cmd` in `SECRET_PARAMS` (spike A2–A6 en A20). De andere afwijkingen van de spike
+(A1, A7–A19, en A21–A22 van de herhaling) staan in `docs/fase-4/spike.md`; de pakketten O1 tot O6
+verwerken ze.
 
 ### Afgewezen kritiek
 

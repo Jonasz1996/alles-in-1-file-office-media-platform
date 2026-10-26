@@ -101,7 +101,67 @@ jobs:
         run: npm ci && npm run build
       - name: Chromium voor Playwright
         run: uv run --with playwright python -m playwright install --with-deps chromium
-      - run: uv run --with playwright pytest ../e2e -m "not perf"
+      - run: uv run --with playwright pytest ../e2e -m "not perf and not office and not office_real"
+      - name: Office met de nep-DS (marker office, fase 4 §4.4; in elke run)
+        run: uv run --with playwright pytest ../e2e -m office
+
+  office:
+    name: Office (de echte DS 10.0.0.1, marker office_real)
+    runs-on: ubuntu-latest
+    needs: [web]
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      # Als eerste: DS bouwt zijn fonts terwijl de web-app bouwt (fase 4 §4.5, docs/fase-4/e2e.md).
+      # Op digest, eerst van mirror.gcr.io en dan van Docker Hub; de geheimen maakt het script zelf.
+      - name: DS starten
+        run: bash ../e2e/office_ds.sh start
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: uv sync --frozen
+      - name: Productie-build van de web-app
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Chromium voor Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      - name: Wachten op DS (gezond en na zijn font-herstart, hooguit 6 minuten)
+        run: bash ../e2e/office_ds.sh wait
+      - name: e2e met de echte DS
+        env:
+          E2E_REAL_DS: http://127.0.0.1:18080
+          E2E_REAL_DS_SECRET_FILE: ${{ runner.temp }}/office-ds/jwt.secret
+          E2E_ARTIFACTS: ${{ runner.temp }}/office-artefacten
+        run: |
+          set -o pipefail
+          uv run --with playwright pytest ../e2e -m office_real -rs | tee "$RUNNER_TEMP/pytest.txt"
+          # Overgeslagen telt als mislukt: deze job bestaat juist voor deze tests
+          if grep -Eq "[0-9]+ skipped" "$RUNNER_TEMP/pytest.txt"; then
+            echo "Tests met office_real overgeslagen" && exit 1
+          fi
+          grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/pytest.txt"
+      - name: Logs van DS
+        if: failure()
+        env:
+          E2E_ARTIFACTS: ${{ runner.temp }}/office-artefacten
+        run: bash ../e2e/office_ds.sh logs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: office
+          path: ${{ runner.temp }}/office-artefacten
+          if-no-files-found: ignore
+      - name: DS stoppen
+        if: always()
+        run: bash ../e2e/office_ds.sh stop
 
   perf:
     name: Prestaties (alleen rapport)
@@ -151,7 +211,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ansible ansible-lint yamllint shellcheck-py
-      - run: shellcheck infra/single/install.sh infra/scripts/*.sh api/tests/pebble/start.sh
+      - run: shellcheck infra/single/install.sh infra/scripts/*.sh api/tests/pebble/start.sh e2e/office_ds.sh
       - run: yamllint -s .
       - name: Ansible lint
         working-directory: infra/ansible

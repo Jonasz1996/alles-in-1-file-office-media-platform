@@ -13,6 +13,10 @@ Bewaking: elke browsercontext krijgt een init-script dat CSP-schendingen
 (securitypolicyviolation), console.error-regels die met "i18n:" beginnen, gelogde fouten (een
 Error-object of een React-fout, zoals een foutgrens die logt) en onafgevangen fouten doorgeeft.
 Eén treffer en de test faalt; een test die er een verwacht, haalt hem weg met Guard.take().
+
+Office (fase 4, O0-e2e): de fixtures office (nep-DS) en real_office (echte DS, E2E_REAL_DS),
+office_browsers en real_browsers, en de optie office_frames van de bewaking. Het harnas zelf
+staat in office_harness.py; uitleg in docs/fase-4/e2e.md.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import contextlib
 import itertools
 import math
 import os
+import re
 import shutil
 import signal
 import socket
@@ -34,6 +39,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -396,19 +402,38 @@ def launch_chromium(browser_type: Any, *, scrollbars: bool = False) -> Any:
 
 
 class Guard:
-    """Wat de bewaking in één context zag."""
+    """Wat de bewaking in één context zag. De bewaking draait ook in iframes; een melding
+    noemt het adres van de frame waar hij vandaan kwam.
 
-    def __init__(self) -> None:
+    office_frames="record" (alleen voor tests met de echte DS, marker office_real): meldingen
+    uit frames onder /office/ (de editor van OnlyOffice zelf) komen in office_records en laten
+    de test niet falen; de fixture schrijft ze als bijlage. Standaard ("fail") faalt alles,
+    ook met de nep-DS."""
+
+    def __init__(self, office_frames: str = "fail") -> None:
+        if office_frames not in ("fail", "record"):
+            raise ValueError(f"office_frames: fail of record, niet {office_frames!r}")
         self.problems: list[str] = []
+        self.office_frames = office_frames
+        self.office_records: list[str] = []
 
     def attach(self, context: Any) -> None:
         context.expose_binding("__e2eReport", self._report)
         context.add_init_script(GUARD_JS)
 
     def _report(self, source: dict, kind: str, text: str) -> None:
-        page = source.get("page")
-        where = page.url if page is not None else "?"
-        self.problems.append(f"{kind}: {text} [{where}]")
+        where = "?"
+        for name in ("frame", "page"):
+            origin = source.get(name)
+            if origin is not None:
+                with contextlib.suppress(Exception):
+                    where = origin.url
+                break
+        line = f"{kind}: {text} [{where}]"
+        if self.office_frames == "record" and urlsplit(where).path.startswith("/office/"):
+            self.office_records.append(line)
+        else:
+            self.problems.append(line)
 
     def take(self) -> list[str]:
         """De problemen tot nu toe, en daarna weer leeg (voor een test die er een verwacht)."""
@@ -430,10 +455,12 @@ def intercept_file_chooser(page: Any) -> None:
 class Browsers:
     """Contexts op de testserver, elk met bewaking. close_all() geeft de problemen terug."""
 
-    def __init__(self, browser: Any, server: Server):
+    def __init__(self, browser: Any, server: Server, office_frames: str = "fail"):
         self.browser = browser
         self.server = server
+        self.office_frames = office_frames
         self._open: list[tuple[Any, Guard]] = []
+        self.office_records: list[str] = []
 
     def new_context(self, **options: Any) -> Any:
         opts = {
@@ -445,7 +472,7 @@ class Browsers:
         }
         context = self.browser.new_context(**opts)
         context.set_default_timeout(20_000)
-        guard = Guard()
+        guard = Guard(self.office_frames)
         guard.attach(context)
         context.on("page", intercept_file_chooser)
         self._open.append((context, guard))
@@ -475,8 +502,21 @@ class Browsers:
                 del self._open[i]
                 with contextlib.suppress(Exception):
                     ctx.close()
+                self.office_records.extend(guard.office_records)
                 return guard.take()
         return []
+
+    def screenshots(self, out: Path, prefix: str) -> list[Path]:
+        """Een schermafdruk van elke open pagina (bij een fout, als bijlage)."""
+        written: list[Path] = []
+        out.mkdir(parents=True, exist_ok=True)
+        for n, (ctx, _guard) in enumerate(self._open):
+            for m, page in enumerate(ctx.pages):
+                path = out / f"{prefix}-{n}-{m}.png"
+                with contextlib.suppress(Exception):
+                    page.screenshot(path=str(path), full_page=False, timeout=10_000)
+                    written.append(path)
+        return written
 
     def close_all(self) -> list[str]:
         problems: list[str] = []
@@ -613,6 +653,8 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers", "perf: prestatiemeting (e2e/perf); overslaan met -m 'not perf'"
     )
+    config.addinivalue_line("markers", "office: e2e van office met de nep-DS")
+    config.addinivalue_line("markers", "office_real: e2e met de echte DS (E2E_REAL_DS)")
 
 
 @pytest.fixture(scope="session")
@@ -687,3 +729,106 @@ def seeded(server: Server) -> Callable[[Callable[[Path], Any]], Any]:
 @pytest.fixture(scope="session")
 def perf_data(server: Server, admin: Account) -> PerfData:
     return prepare_perf(server, admin)
+
+
+# --- office (fase 4, O0-e2e; zie docs/fase-4/e2e.md) ---
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> Any:
+    # De uitslag per fase aan het item, zodat een fixture bij het opruimen weet of de test
+    # faalde (voor schermafdrukken)
+    report = yield
+    setattr(item, f"rep_{report.when}", report)
+    return report
+
+
+def artifacts_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """$E2E_ARTIFACTS (CI uploadt die map bij een fout), anders een map onder de basetemp."""
+    configured = os.environ.get("E2E_ARTIFACTS")
+    out = Path(configured) if configured else tmp_path_factory.getbasetemp() / "artefacten"
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _failed(request: pytest.FixtureRequest) -> bool:
+    report = getattr(request.node, "rep_call", None)
+    return report is not None and report.failed
+
+
+def _office_teardown(request: pytest.FixtureRequest, browsers: Browsers, out: Path) -> list[str]:
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", request.node.name)[:80]
+    if _failed(request):
+        for path in browsers.screenshots(out, name):
+            print(f"schermafdruk: {path}", file=sys.stderr)
+    problems = browsers.close_all()
+    if browsers.office_records:
+        path = out / f"{name}-office-frames.txt"
+        path.write_text("\n".join(browsers.office_records) + "\n")
+        print(f"meldingen uit de editor van DS: {path}", file=sys.stderr)
+    return problems
+
+
+@pytest.fixture(scope="session")
+def office(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Any]:
+    """De nep-DS als proces, een DocStub en een eigen Server met office aan (§3.6)."""
+    from office_harness import start_fake_office
+
+    o = start_fake_office(tmp_path_factory.mktemp("office"))
+    try:
+        yield o
+    finally:
+        o.stop()
+
+
+@pytest.fixture(scope="session")
+def real_office(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Any]:
+    """Een eigen Server tegen de echte DS in E2E_REAL_DS (job office, §4.5). Het geheim komt
+    uit het bestand E2E_REAL_DS_SECRET_FILE (nooit uit de omgeving zelf). Zonder E2E_REAL_DS
+    wordt de test overgeslagen."""
+    url = os.environ.get("E2E_REAL_DS")
+    if not url:
+        pytest.skip("geen echte DS (E2E_REAL_DS staat niet; zie docs/fase-4/e2e.md)")
+    secret_file = os.environ.get("E2E_REAL_DS_SECRET_FILE")
+    if not secret_file or not Path(secret_file).is_file():
+        pytest.fail("E2E_REAL_DS staat, maar E2E_REAL_DS_SECRET_FILE wijst niet naar een bestand")
+    secret = Path(secret_file).read_text().strip()
+    from office_harness import start_real_office
+
+    o = start_real_office(tmp_path_factory.mktemp("office-echt"), url, secret)
+    try:
+        yield o
+    finally:
+        o.stop()
+
+
+@pytest.fixture
+def office_browsers(
+    browser: Any,
+    office: Any,
+    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[Browsers]:
+    """Contexts op de server van office (nep-DS). Elke melding, ook uit de editor, laat de
+    test falen."""
+    b = Browsers(browser, office.server)
+    yield b
+    problems = _office_teardown(request, b, artifacts_dir(tmp_path_factory))
+    if problems:
+        pytest.fail("Problemen in de browser:\n" + "\n".join(problems), pytrace=False)
+
+
+@pytest.fixture
+def real_browsers(
+    browser: Any,
+    real_office: Any,
+    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[Browsers]:
+    """Contexts op de server van de echte DS. Meldingen uit frames onder /office/ worden
+    bewaard (bijlage), niet als fout geteld; al het andere faalt zoals altijd."""
+    b = Browsers(browser, real_office.server, office_frames="record")
+    yield b
+    problems = _office_teardown(request, b, artifacts_dir(tmp_path_factory))
+    if problems:
+        pytest.fail("Problemen in de browser:\n" + "\n".join(problems), pytrace=False)

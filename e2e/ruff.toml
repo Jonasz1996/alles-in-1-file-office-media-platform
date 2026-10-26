@@ -2,4 +2,4 @@
 extend = "../api/pyproject.toml"
 
 [lint.isort]
-known-first-party = ["app", "conftest", "seed"]
+known-first-party = ["app", "conftest", "office_harness", "seed"]

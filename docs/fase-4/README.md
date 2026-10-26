@@ -3,8 +3,9 @@
 Status: **in aanbouw** (bouwontwerp revisie 2, 26 oktober 2026). Van O0 staan de API-kant
 (migratie 0007, de contracten, de kern van proxy en tunnel, de invoercontrole, de gezondheid
 en de nep-DS) en de web-kant (de haken, de route `/bewerken/<id>` als stub, het tabblad
-Office) erin. De spike, de e2e met de nep-DS en de job `office` in CI volgen. Zonder
-office-instellingen werkt de app precies als in fase 3.
+Office) erin, en ook de spike met de echte DS, de e2e met de nep-DS en de job `office` in CI
+(een rooktest tegen de echte DS op digest). Zonder office-instellingen werkt de app precies als
+in fase 3.
 
 ## Doel
 
@@ -72,3 +73,7 @@ er als eerste schuift als het uitloopt.
 - [bouwontwerp.md](bouwontwerp.md): het ontwerp (revisie 2, leidend); revisie 1 in
   [bouwontwerp-r1.md](bouwontwerp-r1.md). De keuzes staan als voorstel in B31–B38 in
   [beslissingen](../fase-0/beslissingen.md).
+- [spike.md](spike.md): wat de echte DS 10.0.0.1 deed (de spike van O0, en stap 2, 5 en 11 nog
+  een keer via de kern in de app), met de afwijkingen van het ontwerp.
+- [e2e.md](e2e.md): de e2e van office (nep-DS en echte DS), de job `office` in CI, en ontwikkelen
+  met een echte DS.

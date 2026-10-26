@@ -1,5 +1,5 @@
 {
- "bron": "Opgenomen met DS 10.0.0.1 (build 10.0.0.169) in de sandbox; tokens vervangen door <JWT>, md5 van secure links door …, van tokens alleen de claims (iat en exp als verschil). spike/logs/stub.log en proef/stub.log",
+ "bron": "Opgenomen met DS 10.0.0.1 (build 10.0.0.169) in de sandbox; tokens vervangen door <JWT>, md5 van secure links door …, van tokens alleen de claims (iat en exp als verschil). spike/logs/stub.log en proef/stub.log; status_3 en volgorde uit de spike (spike/recorded/callbacks.json)",
  "status_1_open": {
   "body": {
    "key": "akt-inv127-fffdd566b654",
@@ -588,5 +588,92 @@
    "filetype"
   ],
   "user_agent": "DocumentServer"
+ },
+ "status_3": {
+  "note": "spike stap 10: opgewekt door de cache van de key te wissen (of Editor.bin te breken) vlak voor het sluiten; geen url, geen changesurl en geen herstelbestand",
+  "body": {
+   "key": "spike-status3",
+   "status": 3,
+   "users": [
+    "u1"
+   ],
+   "actions": [
+    {
+     "type": 0,
+     "userid": "u1"
+    }
+   ],
+   "lastsave": "2026-10-26T19:52:31.000Z",
+   "notmodified": false,
+   "token": "<JWT>"
+  },
+  "body_keys": [
+   "key",
+   "status",
+   "users",
+   "actions",
+   "lastsave",
+   "notmodified",
+   "token"
+  ],
+  "body_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "key": "spike-status3",
+    "status": 3,
+    "users": [
+     "u1"
+    ],
+    "actions": [
+     {
+      "type": 0,
+      "userid": "u1"
+     }
+    ],
+    "lastsave": "2026-10-26T19:52:31.000Z",
+    "notmodified": false,
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "header_token": {
+   "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+   },
+   "claims": {
+    "payload": {
+     "key": "spike-status3",
+     "status": 3,
+     "users": [
+      "u1"
+     ],
+     "actions": [
+      {
+       "type": 0,
+       "userid": "u1"
+      }
+     ],
+     "lastsave": "2026-10-26T19:52:31.000Z",
+     "notmodified": false
+    },
+    "operation": "callback",
+    "exp_minus_iat": 300
+   }
+  },
+  "user_agent": "DocumentServer"
+ },
+ "volgorde": {
+  "note": "spike: de statussen van één sessie met twee keer opslaan via de knop, sluiten en een kapotte cache",
+  "statussen": [
+   1,
+   6,
+   6,
+   2,
+   3
+  ]
  }
 }

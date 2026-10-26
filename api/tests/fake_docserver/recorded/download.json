@@ -20,5 +20,7 @@
    "operation": "download",
    "exp_minus_iat": 300
   }
- }
+ },
+ "pad": "/internal/office/doc/{key} in de app (in de stub van de spike /doc/<naam>)",
+ "repr_digest": "DS vraagt Want-Repr-Digest: sha-256=10; een juiste Repr-Digest gaat goed, een foute geeft EBADDIGEST (3 pogingen) en dan -4"
 }
