@@ -59,6 +59,17 @@ export function typeahead(items: readonly Pick<MenuItem, "label">[], cur: number
   return -1;
 }
 
+/**
+ * De getypte tekst voor type-ahead na deze letter: erachter als de vorige letter minder dan ms
+ * geleden kwam, anders opnieuw. Een spatie telt alleen mee als er al getypt wordt ("Dag 1",
+ * "Map 2"); anders null: dan is hij voor de knop zelf (openen).
+ */
+export function typedText(prev: { text: string; at: number }, key: string, now: number, ms: number): string | null {
+  const going = prev.text !== "" && now - prev.at <= ms;
+  if (key === " " && !going) return null;
+  return going ? prev.text + key : key;
+}
+
 export interface Box {
   x: number;
   y: number;

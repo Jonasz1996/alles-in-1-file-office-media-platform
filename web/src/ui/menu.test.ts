@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { itemRole, nextIndex, placeMenu, placeSubmenu, typeahead } from "./menu";
+import { itemRole, nextIndex, placeMenu, placeSubmenu, typeahead, typedText } from "./menu";
 
 describe("nextIndex", () => {
   it("rondom, ook vanaf niets", () => {
@@ -38,6 +38,21 @@ describe("typeahead", () => {
     expect(typeahead(items, 0, "x")).toBe(-1);
     expect(typeahead(items, 0, "")).toBe(-1);
     expect(typeahead([], 0, "a")).toBe(-1);
+  });
+});
+
+describe("typedText", () => {
+  it("binnen de tijd erachter, daarna opnieuw", () => {
+    expect(typedText({ text: "", at: 0 }, "m", 1000, 700)).toBe("m");
+    expect(typedText({ text: "m", at: 1000 }, "a", 1500, 700)).toBe("ma");
+    expect(typedText({ text: "ma", at: 1000 }, "d", 1800, 700)).toBe("d");
+  });
+
+  it("een spatie telt alleen mee als er al getypt wordt (Map 2), anders is hij voor de knop", () => {
+    expect(typedText({ text: "map", at: 1000 }, " ", 1200, 700)).toBe("map ");
+    expect(typedText({ text: "map", at: 1000 }, " ", 1800, 700)).toBeNull();
+    expect(typedText({ text: "", at: 0 }, " ", 1000, 700)).toBeNull();
+    expect(typeahead([{ label: "Map 1" }, { label: "Map 2" }], 0, "map 2")).toBe(1);
   });
 });
 

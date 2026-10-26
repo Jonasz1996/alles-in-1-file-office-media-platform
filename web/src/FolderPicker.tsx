@@ -8,7 +8,7 @@ import { Button } from "./ui/Button";
 import { Dialog } from "./ui/Dialog";
 import { prompt } from "./ui/dialogs";
 import { Icon } from "./ui/Icon";
-import { typeahead } from "./ui/menu";
+import { typeahead, typedText } from "./ui/menu";
 import "./files.css";
 
 /** Zoveel mappen per keer in de kiezer. */
@@ -159,9 +159,13 @@ export function FolderPicker({
     else if (e.key === "ArrowUp") next = Math.max(0, cur - 1);
     else if (e.key === "Home") next = 0;
     else if (e.key === "End") next = buttons.length - 1;
-    else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== " ") {
+    else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const now = Date.now();
-      typed.current = { text: now - typed.current.at > TYPEAHEAD_MS ? e.key : typed.current.text + e.key, at: now };
+      const text = typedText(typed.current, e.key, now, TYPEAHEAD_MS);
+      if (text === null) return; // een spatie opent de map met de focus
+      typed.current = { text, at: now };
+      // Ook als niets past: de spatie in "Map 2" opent dan niet alsnog de map met de focus
+      if (e.key === " ") e.preventDefault();
       next = typeahead(
         visible.map((f) => ({ label: f.name })),
         cur,
