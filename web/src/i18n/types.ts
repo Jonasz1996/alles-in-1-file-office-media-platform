@@ -6,6 +6,7 @@ import type admin from "./areas/admin.nl";
 import type auth from "./areas/auth.nl";
 import type browser from "./areas/browser.nl";
 import type common from "./areas/common.nl";
+import type office from "./areas/office.nl";
 import type photos from "./areas/photos.nl";
 import type publicArea from "./areas/public.nl";
 import type pwa from "./areas/pwa.nl";
@@ -32,7 +33,8 @@ export type Area =
   | "account"
   | "sharing"
   | "trash"
-  | "versions";
+  | "versions"
+  | "office";
 
 /** Meervoudsvormen (Intl.PluralRules); "other" is altijd nodig. Een object met de sleutel
  * "other" is daarom altijd een meervoud, nooit een groep sleutels. */
@@ -84,6 +86,7 @@ export interface Dictionaries {
   sharing: typeof sharing;
   trash: typeof trash;
   versions: typeof versions;
+  office: typeof office;
 }
 
 /** "browser.title", "common.close", "shell.nav.files": gebied, dan het pad in het woordenboek. */

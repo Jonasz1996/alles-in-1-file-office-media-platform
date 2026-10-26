@@ -39,6 +39,7 @@ const AREAS: Area[] = [
   "sharing",
   "trash",
   "versions",
+  "office",
 ];
 
 /** Elke tekst met zijn pad; een meervoud ({one, other}) is één blad met al zijn vormen. */
