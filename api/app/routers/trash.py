@@ -190,12 +190,15 @@ async def restore_many(
             # Pas onder het slot lezen, en per stuk in één keer (niet per node): de eigen nodes
             # (de rest via get_node, voor de juiste fout), de mappen erboven (vastgehouden: de
             # identity map houdt ze anders niet, en dan haalt restore_node ze per node opnieuw)
-            # en de bezette namen
+            # en de bezette namen. Vers (populate_existing): de sessie houdt nodes van het vorige
+            # stuk nog vast, en die kunnen intussen weer weggegooid zijn
             own: Sequence[Node] = []
             if user.role != "guest":
                 own = (
                     await session.scalars(
-                        select(Node).where(Node.id.in_(chunk), Node.owner_id == user.id)
+                        select(Node)
+                        .where(Node.id.in_(chunk), Node.owner_id == user.id)
+                        .execution_options(populate_existing=True)
                     )
                 ).all()
             mine = {n.id: n for n in own}
@@ -203,7 +206,9 @@ async def restore_many(
             up = access.ancestry(Node.id.in_([n.id for n in trashed]))
             above = (
                 await session.scalars(
-                    select(Node).where(Node.id.in_(select(up.c.id).where(up.c.depth > 0)))
+                    select(Node)
+                    .where(Node.id.in_(select(up.c.id).where(up.c.depth > 0)))
+                    .execution_options(populate_existing=True)
                 )
             ).all()
             taken = await taken_names(session, user, trashed)

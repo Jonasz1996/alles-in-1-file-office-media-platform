@@ -7,7 +7,7 @@ import pytest
 
 from app import events
 from app.events import Hub
-from app.routers import trash
+from app.routers import files, trash
 from tests.factories import code_of
 from tests.test_files import mkdir, put, root
 from tests.test_files_events import drain
@@ -193,3 +193,38 @@ async def test_geen_query_per_node(client, admin, settings):
     await client.delete(f"/api/v1/files/{d}", headers=jonas)
     r = await restore(client, jonas, [c, d])
     assert [x["node"]["name"] for x in r.json()["results"]] == ["uniek.txt", "Uniek (1).txt"]
+
+
+@pytest.mark.anyio
+async def test_map_tussen_twee_stukken_weer_weggegooid(client, admin, monkeypatch):
+    """Het volgende stuk leest de mappen erboven vers onder het slot: een map die in het vorige
+    stuk terugging en intussen (zonder dat slot) weer is weggegooid, telt als weggegooid, ook
+    al houdt de sessie hem van het vorige stuk nog vast. Dan gaat wat erin lag naar de
+    hoofdmap, niet terug in een map in de prullenbak."""
+    jonas, _ = admin
+    monkeypatch.setattr(trash, "BATCH", 1)
+    root_id = (await root(client, jonas))["folder"]["id"]
+    f = await mkdir(client, jonas, root_id, "F")
+    c = (await put(client, jonas, f, "c.txt", b"c")).json()["id"]
+    r = await client.post("/api/v1/batch/trash", json={"ids": [c, f]}, headers=jonas)
+    assert all(x["ok"] for x in r.json()["results"])
+
+    real = files.notify_many
+    calls = 0
+
+    async def notify_then_trash(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        await real(*args, **kwargs)
+        if calls == 1:
+            # Tussen stuk 1 (F terug) en stuk 2 (c): een ander verzoek gooit F weer weg
+            assert (await client.delete(f"/api/v1/files/{f}", headers=jonas)).status_code == 204
+
+    monkeypatch.setattr(files, "notify_many", notify_then_trash)
+    r = await restore(client, jonas, [c, f])
+    results = r.json()["results"]
+    assert [x["ok"] for x in results] == [True, True]
+    assert results[0]["node"]["parent_id"] == root_id
+    assert results[0]["node"]["name"] == "c.txt"
+    names = [ch["name"] for ch in (await root(client, jonas))["children"]]
+    assert "c.txt" in names and "F" not in names
