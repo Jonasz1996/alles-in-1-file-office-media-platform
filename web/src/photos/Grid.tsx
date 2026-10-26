@@ -62,8 +62,11 @@ const IMAGES_PER_FRAME = 6;
 export const FAST_SCROLL = 1.5;
 /** Zo lang (ms) na het laatste snelle scrollen komen de thumbnails. */
 const SETTLE_MS = 250;
-/** Zo lang (ms) na het laatste scrollen reageert het raster weer op de muis. */
-const POINTER_MS = 150;
+/** Zo lang (ms) na het laatste scrollen reageert het raster weer op de muis. Ruim, zoals in de
+ * bestandslijst (browser/rowEvents.ts): op een trage processor komen scrollstappen soms 150 tot
+ * 200 ms na elkaar, en elke keer dat het vlak weggaat, krijgt de cel onder de muis een stel
+ * muisgebeurtenissen en een hover-stijl. */
+const POINTER_MS = 250;
 
 /**
  * De wachtrij van thumbnails. Een cel die er een wil tonen, vraagt een plek; de wachtrij geeft

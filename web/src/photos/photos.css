@@ -324,8 +324,14 @@
   }
 }
 
-/* Tijdens snel scrollen geen hover en geen muisgebeurtenissen: anders rekent de browser bij elk
-   frame uit welke cel onder de muis staat en tekent hij het vinkje opnieuw */
-.photo-grid[data-scrolling] {
-  pointer-events: none;
+/* Tijdens het scrollen geen hover en geen muisgebeurtenissen: anders rekent de browser bij elk
+   frame uit welke cel onder de muis staat en tekent hij het vinkje opnieuw. Een leeg vlak over de
+   cellen in plaats van pointer-events: none op het raster: pointer-events erft, dus aan en uit
+   zetten gaf elke keer een stijlberekening voor alle cellen (zoals in de bestandslijst,
+   browser.css); dit vlak is één element. */
+.photo-grid[data-scrolling] .photo-grid-body::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
 }
