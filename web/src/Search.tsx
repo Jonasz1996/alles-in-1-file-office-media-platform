@@ -279,7 +279,7 @@ export default function Search(_: RouteProps): JSX.Element {
             }}
             onMove={(i, mods) => {
               setFocusIndex(i);
-              selection.set(keySelect(selection.getSnapshot(), ids, ids[i], mods));
+              selection.set(keySelect(selection.getSnapshot(), ids, ids[i], mods, ids[focusIndex]));
             }}
             onFocusRow={setFocusIndex}
           />

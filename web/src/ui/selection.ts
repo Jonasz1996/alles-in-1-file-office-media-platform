@@ -47,16 +47,20 @@ export function clickSelect(
 
 /**
  * Met de pijltjes naar toId. Zonder modifier: alleen dat item geselecteerd. toggle (Ctrl/Cmd):
- * alleen de focus gaat mee, de selectie blijft (Spatie selecteert dan). shift: de reeks vanaf het anker.
+ * alleen de focus gaat mee, de selectie blijft (Spatie selecteert dan). shift: de reeks vanaf het
+ * anker. fromId: het item dat de focus had (kwam die er met Tab of een klik in de lijst, of is het
+ * anker weg omdat het item verplaatst of weggegooid is, dan begint de reeks daar).
  */
 export function keySelect(
   s: SelectionState,
   order: readonly string[],
   toId: string,
   m: { shift: boolean; toggle: boolean },
+  fromId?: string | null,
 ): SelectionState {
   if (m.shift) {
-    const anchor = s.anchor !== null && order.includes(s.anchor) ? s.anchor : (s.focus ?? toId);
+    const from = fromId != null && order.includes(fromId) ? fromId : null;
+    const anchor = s.anchor !== null && order.includes(s.anchor) ? s.anchor : (from ?? s.focus ?? toId);
     const selected = new Set(m.toggle ? s.selected : []);
     for (const x of range(order, anchor, toId)) selected.add(x);
     return { selected, anchor, focus: toId };

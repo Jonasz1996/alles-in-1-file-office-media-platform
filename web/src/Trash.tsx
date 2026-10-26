@@ -10,6 +10,7 @@ import {
   type MouseEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -86,12 +87,21 @@ export default function Trash(_: RouteProps): JSX.Element {
     }
   }
 
+  // Na een actie de focus terug in de lijst, op de rij die dan de tabstop is, pas als de nieuwe
+  // inhoud er staat. Een requestAnimationFrame komt soms eerder: dan krijgt een rij die zo
+  // verdwijnt (teruggezet, verwijderd) de focus, en valt die daarna naar <body>.
+  const refocus = useRef(false);
   function focusList() {
-    requestAnimationFrame(() => {
-      const row = listRef.current?.querySelector<HTMLElement>('[role="row"][tabindex="0"]');
-      row?.focus({ preventScroll: true });
-    });
+    refocus.current = true;
   }
+  useLayoutEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    const active = document.activeElement;
+    if (active && active !== document.body && !listRef.current?.contains(active)) return; // elders
+    const row = listRef.current?.querySelector<HTMLElement>('[role="row"][tabindex="0"]');
+    row?.focus({ preventScroll: true });
+  }, [data]);
 
   async function restore() {
     const ids = actionIds(order, store.getSnapshot().selected, store.getSnapshot().focus);
@@ -174,7 +184,8 @@ export default function Trash(_: RouteProps): JSX.Element {
     const next = moveIndex(i, move, order.length, 1, pageRows);
     if (next < 0 || next === i) return;
     e.preventDefault();
-    store.set(keySelect(store.getSnapshot(), order, order[next], { shift: e.shiftKey, toggle: e.ctrlKey || e.metaKey }));
+    const mods = { shift: e.shiftKey, toggle: e.ctrlKey || e.metaKey };
+    store.set(keySelect(store.getSnapshot(), order, order[next], mods, order[i]));
     requestAnimationFrame(() => {
       const row = listRef.current?.querySelector<HTMLElement>(`[data-index="${next}"]`);
       row?.focus();

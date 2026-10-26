@@ -72,6 +72,17 @@ describe("keySelect", () => {
     expect(sel(s)).toEqual(["b", "c"]);
   });
 
+  it("Shift+pijl zonder anker begint bij het item dat de focus had (fromId)", () => {
+    // De focus kwam met Tab op d (de store weet dat niet), het anker is weg (verplaatst)
+    const s = keySelect({ selected: new Set(), anchor: null, focus: null }, order, "c", shift, "d");
+    expect(sel(s)).toEqual(["c", "d"]);
+    expect(s.anchor).toBe("d");
+    const t2 = keySelect(s, order, "b", shift, "c");
+    expect(sel(t2)).toEqual(["b", "c", "d"]);
+    // Een fromId die er niet (meer) is, telt niet
+    expect(sel(keySelect(EMPTY_SELECTION, order, "c", shift, "weg"))).toEqual(["c"]);
+  });
+
   it("Shift+pijl zonder anker begint bij de focus", () => {
     const s = keySelect({ selected: new Set(), anchor: null, focus: "b" }, order, "d", shift);
     expect(sel(s)).toEqual(["b", "c", "d"]);

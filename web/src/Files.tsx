@@ -13,6 +13,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -238,8 +239,9 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
     },
     onMove(i: number, mods: { shift: boolean; toggle: boolean }) {
       const node = get(i);
+      const from = get(focusIndex)?.id;
       setFocus({ index: i, id: node?.id ?? null });
-      if (node) selection.set(keySelect(selection.getSnapshot(), viewIds, node.id, mods));
+      if (node) selection.set(keySelect(selection.getSnapshot(), viewIds, node.id, mods, from));
     },
     onFocusRow(i: number) {
       setFocus({ index: i, id: get(i)?.id ?? null });
@@ -303,6 +305,23 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
       toast(errorText(e), { kind: "error" });
     }
   }
+
+  // De rij met de focus gaat weg (naar de prullenbak, verplaatst, ook door iemand anders): de
+  // focus valt dan naar <body>, waar de pijltjes en sneltoetsen van de lijst niet meer werken.
+  // Stond de focus het laatst in de lijst, dan gaat hij naar de rij die nu op die plek staat.
+  const listHadFocus = useRef(false);
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      listHadFocus.current = !!listRef.current?.contains(e.target as Node);
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
+  useLayoutEffect(() => {
+    const active = document.activeElement;
+    if (!listHadFocus.current || count === 0 || (active && active !== document.body)) return;
+    focusRow(listRef, Math.max(0, Math.min(focusIndex, count - 1)));
+  }, [indexOf]);
 
   // Een nieuwe map (of ander doel van de focus) in beeld en met de focus, zodra hij in de lijst staat
   const wantFocus = useRef<string | null>(null);
