@@ -211,6 +211,32 @@ def test_account_taal_met_pijltjes_tab_en_enter(context_as, server, user_factory
     assert me["locale"] == "en"
 
 
+def test_prullenbak_shift_pijl_meteen_na_pijl(context_as, server, user_factory):
+    """↓ en meteen Shift+↓, in hetzelfde frame (een trage browser, of snel typen): de tweede
+    toets komt dan nog op de oude rij binnen, want de focus verhuist pas in het volgende frame.
+    De selectie groeit toch vanaf de nieuwe rij: twee geselecteerd."""
+    user = user_factory(name="Snel Prullenbak")
+    for name in ["a.txt", "b.txt", "c.txt", "d.txt"]:
+        node = upload(server, user, name, name.encode() * 10)
+        server.call(user, "DELETE", f"/api/v1/files/{node['id']}", expect=204)
+    page = context_as(user).new_page()
+    page.goto("/prullenbak")
+    grid = page.get_by_role("grid", name="Inhoud van de prullenbak")
+    expect(grid.get_by_role("row")).to_have_count(5)
+    grid.locator('[role=row][tabindex="0"]').focus()
+    page.evaluate(
+        """() => {
+          const el = document.activeElement;
+          const key = (shiftKey) => el.dispatchEvent(new KeyboardEvent("keydown", {
+            key: "ArrowDown", code: "ArrowDown", shiftKey, bubbles: true, cancelable: true,
+          }));
+          key(false);
+          key(true);
+        }"""
+    )
+    expect(page.get_by_text("2 geselecteerd", exact=True)).to_be_visible()
+
+
 def test_prullenbak_terugzetten_verwijderen_en_legen(context_as, server, user_factory):
     """Prullenbak: Tab naar de lijst, ↓ en Shift+↓, Enter zet terug; Mod+A en
     Shift+Mod+Backspace verwijderen (Tab, Enter in de vraag); Shift+L leegt."""

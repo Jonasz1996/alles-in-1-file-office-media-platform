@@ -175,7 +175,13 @@ export default function Trash(_: RouteProps): JSX.Element {
     { scope: "trash" },
   );
 
-  function onRowKey(e: KeyboardEvent<HTMLElement>, i: number) {
+  function onRowKey(e: KeyboardEvent<HTMLElement>, row: number) {
+    // Vanaf de rij uit de selectie, niet die van het event: de focus verhuist pas in het
+    // volgende frame, dus een toets snel na de vorige (Shift+↓ meteen na ↓) landt nog op de
+    // oude rij
+    const focus = store.getSnapshot().focus;
+    const at = focus === null ? -1 : order.indexOf(focus);
+    const i = at >= 0 ? at : row;
     if (e.key === " " && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       store.toggle(order[i]);
