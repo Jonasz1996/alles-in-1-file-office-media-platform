@@ -25,7 +25,7 @@ pagina. Ctrl+N, Ctrl+T en Ctrl+W gebruikt de app nooit.
    slaan.").
 2. **Per rij onder "Niet opgeslagen": Terugzetten en Verwijderen.** Hun naam voor een
    schermlezer is "<naam> terugzetten" en "<naam> verwijderen". Terugzetten is er niet als er
-   geen eigenaar meer is, of als de app de key niet kent.
+   geen eigenaar meer is, als het bestand definitief weg is, of als de app de key niet kent.
    - **Verwijderen** opent een bevestiging. De focus staat eerst op **Annuleren**; Tab naar
      **Verwijderen** en Enter verwijdert, Escape of Enter op Annuleren doet niets (de focus gaat
      terug naar de knop).
