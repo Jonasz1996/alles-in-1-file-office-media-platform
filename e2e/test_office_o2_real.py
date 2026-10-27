@@ -147,7 +147,17 @@ def open_via_button(page: Page, d: Duo, node: str, name: str) -> tuple[str, int]
     assert answer.value.status == 200, answer.value.text()
     expect(page).to_have_url(re.compile(rf"/bewerken/{node}$"))
     key = answer.value.json()["key"]
-    return key, ready(page)
+    reloads = ready(page)
+    # api.js zet op zijn iframe onmousewheel=""; onder onze CSP een schending, die Chrome 156
+    # meteen meldt (de bewaking vangt hem dan) en Chromium 141 pas als de handler gebruikt wordt.
+    # De editorpagina laat zulke attributen weg (withoutInlineHandlers in office/loadApi.ts).
+    handlers = page.evaluate(
+        """() => [...document.querySelectorAll("iframe")]
+            .flatMap((f) => [...f.attributes].map((a) => a.name))
+            .filter((n) => n.toLowerCase().startsWith("on"))"""
+    )
+    assert handlers == [], f"inline handlers op de iframe van de editor: {handlers}"
+    return key, reloads
 
 
 def info_users(office: Office, key: str) -> list[str]:

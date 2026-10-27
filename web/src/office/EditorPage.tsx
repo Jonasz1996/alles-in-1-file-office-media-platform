@@ -21,7 +21,7 @@ import { readTheme } from "../ui/theme";
 import { EditorSession, type EditorState, initialState, isLeaveKey, LEAVE_COMBO, sessionBody, statusText } from "./editor";
 import { keepGate } from "./gate";
 import { officeStatus, openSession, saveNow, useOfficeStatus } from "./index";
-import { loadApi } from "./loadApi";
+import { loadApi, withoutInlineHandlers } from "./loadApi";
 
 /** Het element dat DocEditor door zijn iframe vervangt. */
 const PLACEHOLDER = "office-editor";
@@ -130,7 +130,7 @@ function Editor({ id }: { id: string }): JSX.Element {
         placeholder.id = PLACEHOLDER;
         host.replaceChildren(placeholder);
         // Nooit onRequestSaveAs: dan toont DS "Kopie opslaan als", en dat bouwen we niet (A16)
-        const made = new docs.DocEditor(PLACEHOLDER, { ...out.config, events });
+        const made = withoutInlineHandlers(() => new docs.DocEditor(PLACEHOLDER, { ...out.config, events }));
         watchFrames();
         return made;
       },

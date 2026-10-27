@@ -35,6 +35,37 @@ function browserHost(): ScriptHost {
   };
 }
 
+/** Wat withoutInlineHandlers aanpast (in de browser HTMLIFrameElement.prototype). */
+export interface AttributeTarget {
+  setAttribute(name: string, value: string): void;
+}
+
+/**
+ * Doet make() (new DocEditor) terwijl setAttribute op een iframe elk attribuut on… overslaat.
+ * api.js zet op zijn iframe onmousewheel="" (een truc voor Safari). Onze CSP staat geen inline
+ * handlers toe (script-src-attr), dus het attribuut doet niets, maar Chrome 156 meldt het als
+ * CSP-schending (oudere Chromium pas als de handler gebruikt wordt). DocEditor maakt zijn iframe
+ * synchroon in de constructor; daarna staat setAttribute weer zoals het was.
+ */
+export function withoutInlineHandlers<T>(make: () => T, target: AttributeTarget = HTMLIFrameElement.prototype): T {
+  const own = Object.getOwnPropertyDescriptor(target, "setAttribute");
+  const original = target.setAttribute;
+  Object.defineProperty(target, "setAttribute", {
+    configurable: true,
+    writable: true,
+    value(this: AttributeTarget, name: string, value: string): void {
+      if (/^on/i.test(name)) return; // onder de CSP toch geblokkeerd
+      original.call(this, name, value);
+    },
+  });
+  try {
+    return make();
+  } finally {
+    if (own) Object.defineProperty(target, "setAttribute", own);
+    else Reflect.deleteProperty(target, "setAttribute");
+  }
+}
+
 let loading: Promise<DocsApi> | null = null;
 
 /** Laadt api.js (één keer) en geeft DocsAPI. */
