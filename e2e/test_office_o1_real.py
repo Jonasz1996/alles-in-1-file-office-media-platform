@@ -42,6 +42,7 @@ from test_office_o1 import (
     office_cookie,
     open_editor_page,
     probe,
+    session_closed,
     session_token,
     socket_path,
     upgrade_status,
@@ -119,10 +120,11 @@ def test_afscherming_met_de_echte_ds(real_office: Office, real_browsers) -> None
     assert bram.context.request.get(data_url).status == 200
 
     # Een socket op het pad van A: het eigen CONNECT-pakket van de editor komt verbonden; met
-    # het config-token van B (een tweede sessie van Bram) alleen het "0"-pakket, dan dicht
-    token_b = server.call(
-        d.bram, "POST", f"/api/v1/office/files/{other}/session", json={}, expect=200
-    ).json()["config"]["token"]
+    # het config-token van B (een tweede editor van Bram, in een eigen pagina; een sessie die
+    # pending blijft, houdt de conversies van O3 tegen) alleen het "0"-pakket, dan dicht
+    second = open_editor_page(bram.context, other, wait=ready)
+    assert second.key != bram.key
+    token_b = second.config["token"]
     connect = editor_connect(bram)
     good = probe(bram.page, path, first="40" + json.dumps(connect), until="40")
     assert good["opened"] is True and any(f.startswith("40{") for f in good["frames"]), good
@@ -145,6 +147,8 @@ def test_afscherming_met_de_echte_ds(real_office: Office, real_browsers) -> None
     assert r.status == 401 and gate_code(r) == "office_gate"
     me = uid(office, d.bram)
     wait_until(lambda: me not in info_users(office, bram.key), 30, "Bram niet meer bij DS")
+    for node in (d.node, other):
+        wait_until(lambda n=node: session_closed(office, d.anna, n), 60, "de sessie dicht")
 
 
 def test_de_echte_editor_over_http_en_https(browser: Any, tmp_path_factory) -> None:

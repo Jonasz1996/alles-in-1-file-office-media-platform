@@ -242,6 +242,12 @@ def fake_data(office: Office, key: str) -> int:
     )
 
 
+def session_closed(office: Office, account: Account, node: str) -> bool:
+    """Geen sessie meer die niet dicht is op dit bestand."""
+    r = office.server.call(account, "GET", f"/api/v1/office/files/{node}", expect=200)
+    return r.json()["open"] is None
+
+
 def open_account_menu(page: Page, name: str) -> Any:
     page.get_by_role("button", name=name, exact=True).click()
     menu = page.get_by_role("menu", name=f"Accountmenu van {name}")
@@ -462,10 +468,11 @@ def test_na_intrekken_geen_nieuwe_socket_met_het_oude_sessietoken(
 def test_socket_met_het_token_van_een_andere_key_gaat_dicht(
     office: Office, office_browsers
 ) -> None:
-    """Anna heeft twee documenten open (key A in de editor, key B via de API). Een socket op het
-    pad van A met het config-token van A komt verbonden ("40"); met het token van B krijgt de
+    """Anna heeft twee documenten open, elk in een eigen pagina (key A en key B). Een socket op
+    het pad van A met het config-token van A komt verbonden ("40"); met het token van B krijgt de
     browser alleen het "0"-pakket en gaat de socket dicht (de StreamGuard), zonder dat DS een
-    CONNECT op A ziet."""
+    CONNECT op A ziet. Daarna gaan beide editors dicht: een sessie die pending blijft, houdt de
+    conversies van O3 tegen (sessions.busy)."""
     d = duo(office)
     server = office.server
     other = server.call(
@@ -477,9 +484,9 @@ def test_socket_met_het_token_van_een_andere_key_gaat_dicht(
         expect=201,
     ).json()["id"]
     anna = open_editor_page(login(office_browsers, d.anna), d.node)
-    token_b = server.call(
-        d.anna, "POST", f"/api/v1/office/files/{other}/session", json={}, expect=200
-    ).json()["config"]["token"]
+    second = open_editor_page(anna.context, other)
+    assert second.key != anna.key
+    token_b = second.config["token"]
     path = socket_path(anna.version(), anna.key)
 
     good = probe(anna.page, path, first=connect_packet(anna.key, anna.config["token"]), until="40")
@@ -492,6 +499,10 @@ def test_socket_met_het_token_van_een_andere_key_gaat_dicht(
     assert fake_sockets(office, anna.key) == before
     # De editor van Anna merkte niets
     expect(frame_editor(anna.page).locator('textarea[aria-label="Nep-editor"]')).to_be_enabled()
+    for opened, node in ((anna, d.node), (second, other)):
+        opened.page.get_by_role("button", name="Sluiten", exact=True).click()
+        expect(opened.page).to_have_url(re.compile(rf"/map/{d.folder}$"))
+        wait_until(lambda n=node: session_closed(office, d.anna, n), 20, "de sessie dicht")
 
 
 # --- http en https ---
