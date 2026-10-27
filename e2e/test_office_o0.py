@@ -1,18 +1,21 @@
 """Office O0 met de nep-DS (marker office, §4.4 van docs/fase-4/bouwontwerp.md).
 
-O0 heeft de kern: proxy en tunnel (alleen met PLATFORM_OFFICE_DEV_UNGATED), de gezondheid en
-de status. Deze tests bewijzen die kern via de echte server, de echte proxy en tunnel en een
-echte Chromium. De interne routes van de app zijn in O0 nog stubs; de DocStub van het harnas
-speelt daarom de kant van de app voor DS (documenten en callbacks). De scenario's van O1 tot
-O5 komen in hun eigen test_office_o<N>.py.
+O0 heeft de kern: proxy en tunnel, de gezondheid en de status. Deze tests bewijzen die kern via
+de echte server, de echte proxy en tunnel en een echte Chromium. De DocStub van het harnas speelt
+de kant van de app voor DS (documenten en callbacks). Sinds O1 controleert de proxy elk pad en
+de tunnel elke upgrade met het poort-cookie: de editors openen daarom eerst een echte sessie
+(POST …/session in hun context, zoals de editorpagina), en gebruiken die key. De scenario's van
+O1 tot O5 komen in hun eigen test_office_o<N>.py.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from playwright.sync_api import expect
 
-from conftest import Account, Server
+from conftest import Account, Server, create_user
 from office_harness import (
     API_JS,
     Office,
@@ -21,7 +24,6 @@ from office_harness import (
     fake_info,
     fixture,
     frame_editor,
-    new_key,
     open_editor,
     type_in_editor,
     wait_callback,
@@ -66,17 +68,57 @@ def test_status_en_proxy_met_de_nep(office: Office) -> None:
     assert office.server.request("GET", "/internal/office/doc/abc").status_code == 404
 
 
+def _shared_session(office: Office, office_browsers) -> tuple[str, Any, Any]:
+    """Anna deelt een map met schrijfrecht met Bram; allebei openen een sessie op dezelfde docx
+    in hun eigen context (het poort-cookie komt zo in die context). (key, context A, context B)"""
+    server, admin = office.server, office.admin
+    anna = create_user(server, admin, name="Anna O0")
+    bram = create_user(server, admin, name="Bram O0")
+    folder = server.call(
+        anna, "POST", f"/api/v1/files/{anna.root_id}/folders", json={"name": "Samen"}, expect=201
+    ).json()["id"]
+    server.call(
+        anna,
+        "POST",
+        f"/api/v1/files/{folder}/shares",
+        json={"user_id": bram.id, "permission": "write"},
+        expect=201,
+    )
+    node = server.call(
+        anna,
+        "PUT",
+        f"/api/v1/files/{folder}/upload",
+        params={"name": "samen.docx"},
+        content=fixture("proef.docx"),
+        expect=201,
+    ).json()["id"]
+    keys, contexts = [], []
+    for account in (anna, bram):
+        context = office_browsers.new_context(service_workers="block")
+        r = context.request.post(
+            f"{server.url}/api/v1/office/files/{node}/session",
+            data={},
+            headers={"Authorization": f"Bearer {server.token(account)}"},
+        )
+        assert r.ok, r.text()
+        assert any(c["name"] == "office" for c in context.cookies())
+        keys.append(r.json()["key"])
+        contexts.append(context)
+    assert keys[0] == keys[1]
+    return keys[0], contexts[0], contexts[1]
+
+
 def test_twee_editors_via_proxy_en_tunnel(office: Office, office_browsers) -> None:
     """Anna en Bram op één key, elk in een eigen context: de tekst van Anna komt meteen bij
     Bram (via de tunnel naar dezelfde key), de nep-DS kent twee gebruikers, en na het sluiten
     komt status 2 met een docx die beide teksten heeft."""
-    key = new_key("o0-samen")
+    key, context_a, context_b = _shared_session(office, office_browsers)
     url = office.stub.put(f"{key}.docx", fixture("proef.docx"))
     anna = editor_config(office, key=key, url=url, user_id="anna-o0", user_name="Anna")
     bram = editor_config(office, key=key, url=url, user_id="bram-o0", user_name="Bram")
 
-    page_a = office_browsers.new_context(service_workers="block").new_page()
-    page_b = office_browsers.new_context(service_workers="block").new_page()
+    page_a = context_a.new_page()
+    page_b = context_b.new_page()
     open_editor(page_a, office, anna)
     open_editor(page_b, office, bram)
     # DS haalde het document één keer op, met het download-JWT
