@@ -194,7 +194,14 @@ def test_uploadlade_tijdens_een_trage_upload(new_context, user_factory):
     with page.expect_file_chooser() as chooser:
         page.get_by_role("button", name="Uploaden", exact=True).click()
     chooser.value.set_files({"name": "traag.txt", "mimeType": "text/plain", "buffer": b"x" * 1000})
-    page.wait_for_timeout(1500)  # de lade laadt terwijl de upload wacht
+    # Wachten op het tus-verzoek zelf, niet een vaste pauze: op een drukke CI-runner kwam het
+    # een keer pas na meer dan 1,5 s (lokaal, ook bij 6x CPU, na 0,6-0,7 s vanaf de klik)
+    for _ in range(150):
+        if held:
+            break
+        page.wait_for_timeout(100)
     assert held, "geen tus-verzoek gezien"
+    # De lade laadt terwijl de upload wacht
+    expect(page.get_by_role("region", name="Uploads", exact=True)).to_be_visible()
     page.unroute("**/api/v1/tus**", hold)  # laat ook de opgehouden verzoeken verder gaan
     expect(page.locator("#inhoud").get_by_text("traag.txt", exact=True)).to_have_count(1)
