@@ -9,8 +9,8 @@ Draait in de job office van CI, en lokaal zo (docs/fase-4/e2e.md):
       E2E_REAL_DS_SECRET_FILE=/tmp/office-ds/jwt.secret \\
       uv run --with playwright pytest ../e2e -m office_real
 
-Zonder E2E_REAL_DS wordt hij overgeslagen. De poort-controle van O1 is er nog niet: de harnas
-zet PLATFORM_OFFICE_DEV_UNGATED=1 (alleen in de test).
+Zonder E2E_REAL_DS wordt hij overgeslagen. Sinds O1 geldt de echte poort (het cookie office en
+het recht van nu); het harnas zet PLATFORM_OFFICE_DEV_UNGATED niet meer.
 """
 
 from __future__ import annotations

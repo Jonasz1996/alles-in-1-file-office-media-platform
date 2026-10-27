@@ -3,9 +3,9 @@ het deel van O2 van punt 9 in docs/fase-4/bouwontwerp.md).
 
 Alles gaat door de echte server: de editorpagina /bewerken/<id>, POST …/session, de proxy en
 de tunnel naar de nep-DS (als proces), en de interne routes van de app voor DS (document en
-callback). De poort-controle van O1 is er nog niet: de harnas zet PLATFORM_OFFICE_DEV_UNGATED=1
-(alleen in de test). Wie eruit gezet is, komt er hier niet weer in omdat de nep-editor na een
-drop stopt; dat elk pad naar DS het recht controleert, bewijst O1.
+callback). Sinds O1 geldt de echte poort: het cookie office uit POST …/session en het recht
+van nu, op elk pad en in de tunnel (het harnas zet PLATFORM_OFFICE_DEV_UNGATED niet meer). Dat
+wie eruit gezet is er niet weer in komt, bewijst test_office_o1.py.
 """
 
 from __future__ import annotations
