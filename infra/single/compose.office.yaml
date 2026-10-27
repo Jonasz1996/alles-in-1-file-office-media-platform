@@ -15,9 +15,11 @@ services:
     stop_grace_period: 30s
 
   office:
-    # De naam van Docker Hub, op digest. Na een pull van de mirror zet install.sh deze naam er
-    # lokaal op, zodat compose het image altijd zelf vindt. Een pin staat in .env (OFFICE_IMAGE).
-    image: ${OFFICE_IMAGE:-onlyoffice/documentserver:10.0.0.1@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3}
+    # De tag van Docker Hub. install.sh haalt het image op digest (Docker Hub of de mirror) en
+    # zet deze tag er bij elke run lokaal op, op precies die digest. Zo vindt compose het image
+    # zelf, ook op de klassieke image-opslag van Docker, waar na een pull van de mirror geen
+    # naam `tag@digest` onder Docker Hub bestaat. Een pin staat in .env (OFFICE_IMAGE).
+    image: ${OFFICE_IMAGE:-onlyoffice/documentserver:10.0.0.1}
     pull_policy: missing
     restart: unless-stopped
     depends_on: [platform]  # stopt eerst, zodat zijn laatste opslag de app nog vindt

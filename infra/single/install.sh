@@ -115,7 +115,9 @@ office_preflight() {
 }
 
 # Het image: een pin in .env gaat voor. Anders op digest, eerst Docker Hub, dan de mirror,
-# en daarna altijd de naam van Docker Hub erop (M19)
+# en daarna altijd de tag van Docker Hub erop (M19), op precies die digest. Compose krijgt de
+# tag: op de klassieke image-opslag (overlay2) is er na een pull van de mirror geen naam
+# `tag@digest` onder Docker Hub, en dan zou compose het image van Docker Hub halen (uitrol-1).
 office_image() {
   local hub="$OFFICE_REPO@$OFFICE_DIGEST" mirror="mirror.gcr.io/$OFFICE_REPO@$OFFICE_DIGEST" img
   if [ -n "${OFFICE_IMAGE:-}" ]; then
@@ -127,7 +129,7 @@ office_image() {
     for img in "$hub" "$mirror"; do
       if docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null 2>&1; then
         docker tag "$img" "$OFFICE_REPO:$OFFICE_TAG"
-        printf '%s' "$OFFICE_REPO:$OFFICE_TAG@$OFFICE_DIGEST"
+        printf '%s' "$OFFICE_REPO:$OFFICE_TAG"
         return 0
       fi
     done
@@ -206,6 +208,29 @@ office_config_changed() {
 
 # Het volledige id van een image, of niets
 image_id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null || true; }
+
+# Na de app: DS starten of bijwerken, en daarna de oude images weg. Compose vervangt DS alleen
+# als zijn image of instellingen veranderden. Breekt nooit af (Keuze 30): de app draait al. Lukt
+# het niet, dan zeggen OFFICE_ON en OFFICE_REASON het voor de eindtekst.
+office_start() {
+  local container=$1 previous=$2 pin=$3 started=0
+  if office_config_changed && [ -n "$container" ]; then
+    if OFFICE_IMAGE=$OFFICE_IMG "${compose[@]}" up -d --no-deps --force-recreate office; then started=1; fi
+  elif OFFICE_IMAGE=$OFFICE_IMG "${compose[@]}" up -d --no-deps office; then
+    started=1
+  fi
+  if [ "$started" = 1 ]; then
+    office_cleanup "$(image_id "$OFFICE_IMG")" "$previous" "$pin"
+    return 0
+  fi
+  if [ -n "$(office_running_image || true)" ]; then
+    OFFICE_REASON="DS kon niet opnieuw starten (de melding van Docker staat hierboven); de vorige DS draait door, draai het script later opnieuw"
+  else
+    OFFICE_ON=0
+    OFFICE_REASON="DS kon niet starten (de melding van Docker staat hierboven); het platform werkt zonder editor, draai het script later opnieuw"
+  fi
+  echo "Let op: $OFFICE_REASON."
+}
 
 # Oude images van DS weg die geen container meer gebruikt, behalve het huidige, het vorige
 # (voor terugrollen) en de pin (Keuze 30). Per naam, zodat een image met nog een andere naam
@@ -421,13 +446,7 @@ main() {
 
   if [ "$OFFICE_ON" = 1 ]; then
     stap "Office starten"
-    # Compose vervangt DS alleen als zijn image of instellingen veranderden; de app draait al
-    if office_config_changed && [ -n "$container" ]; then
-      OFFICE_IMAGE=$OFFICE_IMG "${compose[@]}" up -d --no-deps --force-recreate office
-    else
-      OFFICE_IMAGE=$OFFICE_IMG "${compose[@]}" up -d --no-deps office
-    fi
-    office_cleanup "$(image_id "$OFFICE_IMG")" "$previous" "$pin"
+    office_start "$container" "$previous" "$pin"
   fi
 
   slot

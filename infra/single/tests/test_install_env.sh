@@ -5,7 +5,10 @@
 #
 # Laadt install.sh met INSTALL_LIB=1: er wordt niets geïnstalleerd en er draait geen Docker.
 # `docker` is hier een nepfunctie die elke aanroep opschrijft en per scenario antwoordt. Draait
-# in de job infra van CI.
+# in de job infra van CI. De nep-docker vindt een image alleen onder precies de naam waaronder
+# het er is, zoals de klassieke image-opslag van Docker (driver overlay2): na `docker tag` van
+# een image van de mirror is er de tag, maar geen naam `tag@digest` (review uitrol-1).
+# test_image_store.sh doet hetzelfde met een echte dockerd.
 #
 # De variabelen en functies komen uit install.sh (shellcheck volgt de bron niet in CI):
 # shellcheck disable=SC2034,SC2153,SC2154
@@ -62,6 +65,7 @@ RUNNING_ID=""      # de container van DS, of leeg
 RUNNING_IMAGE=""
 IMAGES_TABLE=""    # uitvoer van `docker images` voor office_cleanup
 USED_IDS=""        # images die containers gebruiken
+COMPOSE_RC=0       # wat `docker compose` teruggeeft
 
 docker() {
   printf 'docker %s\n' "$*" >>"$LOG"
@@ -101,6 +105,7 @@ docker() {
       esac
       ;;
     images) printf '%s\n' "$IMAGES_TABLE" ;;
+    compose) return "$COMPOSE_RC" ;;
   esac
 }
 # Geen echte pauzes tussen de pogingen, en de ruimte apart getest (hieronder)
@@ -110,13 +115,14 @@ OFFICE_MIN_FREE_GB=0
 reset_docker() {
   : >"$LOG"
   LOCAL=" " PULLABLE=" " DRIVER=overlay2 LIMITS="true true" RUNNING_ID="" RUNNING_IMAGE=""
-  IMAGES_TABLE="" USED_IDS=""
+  IMAGES_TABLE="" USED_IDS="" COMPOSE_RC=0
   unset OFFICE_IMAGE
 }
 
 HUB="$OFFICE_REPO@$OFFICE_DIGEST"
 MIRROR="mirror.gcr.io/$OFFICE_REPO@$OFFICE_DIGEST"
-NAME="$OFFICE_REPO:$OFFICE_TAG@$OFFICE_DIGEST"
+# De naam die install.sh compose geeft: de tag, die het script elke run op de digest zet
+NAME="$OFFICE_REPO:$OFFICE_TAG"
 
 # --- .env ----------------------------------------------------------------------------------
 
@@ -232,26 +238,41 @@ if office_image >/dev/null; then fout "een pin die er niet is en niet te halen i
 check "en valt niet terug op de digest" test "$(grep -c "$OFFICE_DIGEST" "$LOG")" = 0
 
 echo "== office_image zonder pin: eerst Docker Hub, dan de mirror, daarna de naam van Docker Hub"
+# Niet in $(...): de nep-docker houdt in deze shell bij wat er lokaal is (ook na docker tag)
+name_of_image() {
+  office_image >"$work/img"
+  img=$(cat "$work/img")
+}
 reset_docker
 PULLABLE=" $HUB "
-check "van Docker Hub" test "$(office_image)" = "$NAME"
+name_of_image
+check "van Docker Hub" test "$img" = "$NAME"
 check "naam van Docker Hub erop" grep -qxF "docker tag $HUB $OFFICE_REPO:$OFFICE_TAG" "$LOG"
+check "die naam is lokaal te vinden" docker image inspect "$img"
 check "de mirror niet gevraagd" test "$(grep -c "mirror.gcr.io" "$LOG")" = 0
 reset_docker
 PULLABLE=" $MIRROR "
-img=$(office_image)
+name_of_image
 check "alleen de mirror: dezelfde naam" test "$img" = "$NAME"
 check "eerst Docker Hub geprobeerd" grep -qxF "docker pull -q $HUB" "$LOG"
 check "na de mirror de naam van Docker Hub erop (M19)" grep -qxF "docker tag $MIRROR $OFFICE_REPO:$OFFICE_TAG" "$LOG"
+check "die naam is lokaal te vinden, ook op de klassieke opslag (uitrol-1)" docker image inspect "$img"
 reset_docker
 LOCAL=" $HUB "
-check "al lokaal: geen pull" test "$(office_image)" = "$NAME"
+name_of_image
+check "al lokaal: geen pull" test "$img" = "$NAME"
 check "(geen pull in de log)" test "$(grep -c 'docker pull' "$LOG")" = 0
+reset_docker
+LOCAL=" $MIRROR "
+name_of_image
+check "alleen van de mirror en al lokaal: geen pull" test "$(grep -c "docker pull -q $MIRROR" "$LOG")" = 0
+check "(en de naam is te vinden)" docker image inspect "$img"
 
 echo "== de naam van install.sh is precies de standaard van compose.office.yaml"
 # shellcheck disable=SC2016  # de $ hoort bij de tekst van compose
 default=$(sed -n 's/.*\${OFFICE_IMAGE:-\([^}]*\)}.*/\1/p' "$compose_office")
 check "zelfde naam, dus een losse 'docker compose up' maakt office niet opnieuw" test "$default" = "$NAME"
+check "met pull_policy missing: compose haalt de tag niet opnieuw" grep -qE '^ +pull_policy: missing$' "$compose_office"
 check "e2e/office_ds.sh pint dezelfde digest" grep -q "OFFICE_DIGEST=$OFFICE_DIGEST" "$here/../../../e2e/office_ds.sh"
 
 echo "== een image dat niet te halen is, stopt het script niet (set -e, M13)"
@@ -328,6 +349,45 @@ check "de eerste keer: ja" office_config_changed
 if office_config_changed; then fout "ongewijzigd: nee"; else ok "ongewijzigd: nee"; fi
 echo '{"a": 1}' >"$cfg"
 check "andere inhoud: ja" office_config_changed
+
+echo "== DS starten na de app: een mislukte start stopt het script niet (Keuze 30, uitrol-1)"
+# Zoals main: set -e aan, en office_start niet in een if, && of || (daarin doet set -e niets,
+# ook niet in een functie of subshell). Dus start_office zelf ook nooit via check.
+start_office() {
+  set +e
+  (
+    set -e
+    office_start "$@"
+    printf 'ON=%s\nREASON=%s\n' "$OFFICE_ON" "$OFFICE_REASON"
+  ) >"$work/start.out" 2>&1
+  START_RC=$?
+  set -e
+}
+reset_docker
+compose_files 1
+OFFICE_ON=1 OFFICE_IMG=$NAME OFFICE_REASON=""
+start_office "" "" ""
+check "gelukt: geeft 0" test "$START_RC" = 0
+check "gelukt: compose start DS met de naam van install.sh" grep -q "^docker compose .* up -d --no-deps office$" "$LOG"
+check "gelukt: daarna de oude images opgeruimd" grep -q "^docker images" "$LOG"
+check "gelukt: geen melding" test "$(grep -c '^REASON=$' "$work/start.out")" = 1
+reset_docker
+compose_files 1
+OFFICE_ON=1 OFFICE_IMG=$NAME OFFICE_REASON="" COMPOSE_RC=1
+start_office "" "" ""
+check "mislukt zonder DS: geeft toch 0, het script gaat door" test "$START_RC" = 0
+check "met uitleg in het Nederlands" grep -q "DS kon niet starten" "$work/start.out"
+check "office uit voor de eindtekst" grep -qxF "ON=0" "$work/start.out"
+check "en de reden voor de eindtekst" grep -q "^REASON=DS kon niet starten.*draai het script later opnieuw" "$work/start.out"
+check "niets opgeruimd" test "$(grep -c '^docker images' "$LOG")" = 0
+reset_docker
+compose_files 1
+RUNNING_ID=c-office RUNNING_IMAGE=$NAME
+OFFICE_ON=1 OFFICE_IMG=$NAME OFFICE_REASON="" COMPOSE_RC=1
+start_office c-office "" ""
+check "mislukt terwijl de vorige DS draait: geeft 0" test "$START_RC" = 0
+check "office blijft aan, de vorige DS draait door" grep -qxF "ON=1" "$work/start.out"
+check "met die reden" grep -q "^REASON=.*de vorige DS draait door" "$work/start.out"
 
 echo "== oude images van DS weg, behalve het huidige, het vorige, de pin en wat in gebruik is"
 reset_docker

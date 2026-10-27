@@ -872,9 +872,13 @@ Elke keuze geeft de standaard en waarom.
       (forcesave bij het stoppen).
     - Vier benoemde volumes. Anders maakt Docker bij elke nieuwe container anonieme volumes
       [gemeten].
-    - Het image staat in compose onder de naam van Docker Hub, op digest. Komt het van de mirror,
-      dan zet `install.sh` die naam er lokaal op (`docker tag`, M19). Zo vindt elke `docker compose
-      up` het image, ook zonder `OFFICE_IMAGE` in de shell, en haalt hij niets van Docker Hub.
+    - Het image staat in compose onder de tag van Docker Hub (`onlyoffice/documentserver:10.0.0.1`).
+      `install.sh` haalt het op digest, van Docker Hub of de mirror, en zet die tag er bij elke run
+      lokaal op, op precies die digest (`docker tag`, M19). Zo vindt elke `docker compose up` het
+      image, ook zonder `OFFICE_IMAGE` in de shell, en haalt hij niets van Docker Hub. (Eerst stond
+      hier `tag@digest`; op de klassieke image-opslag van Docker bestaat die naam na een pull van
+      de mirror niet, en dan haalde compose het image toch van Docker Hub. Review van fase 4,
+      uitrol-1; zie het risico in §5.1.)
     - Instellingen zonder omgevingsvariabele via een alleen-lezen `local-production-linux.json`:
       `callbackBackoffOptions.retries: 8`, `docbuilderEnable: false`, `aiSettings.enable: false`,
       en `inputLimits` met ODF erbij (Keuze 23). Dat bestand laat het startscript van DS met rust
@@ -1609,9 +1613,9 @@ services:
     stop_grace_period: 30s
 
   office:
-    # De naam van Docker Hub, op digest. Na een pull van de mirror zet install.sh deze naam er
-    # lokaal op, zodat compose het image altijd zelf vindt. Een pin staat in .env (OFFICE_IMAGE).
-    image: ${OFFICE_IMAGE:-onlyoffice/documentserver:10.0.0.1@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3}
+    # De tag van Docker Hub. install.sh haalt het image op digest en zet deze tag er bij elke run
+    # lokaal op, op precies die digest (uitrol-1). Een pin staat in .env (OFFICE_IMAGE).
+    image: ${OFFICE_IMAGE:-onlyoffice/documentserver:10.0.0.1}
     pull_policy: missing
     restart: unless-stopped
     depends_on: [platform]           # stopt eerst, zodat zijn laatste opslag de app nog vindt
@@ -1716,7 +1720,7 @@ merge_env() {
 }
 
 # Het image: een pin in .env gaat voor. Anders op digest, eerst Docker Hub, dan de mirror,
-# en daarna altijd de naam van Docker Hub erop (M19)
+# en daarna altijd de tag van Docker Hub erop (M19); compose krijgt de tag (uitrol-1)
 office_image() {
   local hub="$OFFICE_REPO@$OFFICE_DIGEST" mirror="mirror.gcr.io/$OFFICE_REPO@$OFFICE_DIGEST" img
   if [ -n "${OFFICE_IMAGE:-}" ]; then
@@ -1727,7 +1731,7 @@ office_image() {
     for img in "$hub" "$mirror"; do
       if docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null 2>&1; then
         docker tag "$img" "$OFFICE_REPO:$OFFICE_TAG"
-        printf '%s' "$OFFICE_REPO:$OFFICE_TAG@$OFFICE_DIGEST"; return 0
+        printf '%s' "$OFFICE_REPO:$OFFICE_TAG"; return 0
       fi
     done
     sleep 5
@@ -1759,7 +1763,8 @@ Stappen, in deze volgorde:
    bestaande wachtlus op `/health`.
 10. **DS:** `OFFICE_IMAGE=$img "${compose[@]}" up -d office` (alleen als office meedoet; compose
     vervangt hem alleen als er iets veranderde). Daarna oude images van DS weg die geen container
-    gebruikt, behalve het vorige en de pin.
+    gebruikt, behalve het vorige en de pin. Ook dit breekt nooit af: lukt de start niet, dan zegt
+    het script dat en werkt het platform door (`office_start`, review van fase 4, uitrol-1).
 11. **Slot:** de eindtekst noemt office ("start op de achtergrond, over ±1 minuut klaar") of waarom
     het uit staat.
 
@@ -2659,7 +2664,7 @@ job met de echte DS.
 | Herstart van de app tijdens bewerken (update): de callback valt in het gat | middel | middel | forcesave vóór de update en bij het stoppen; 8 pogingen (±4 min); `saving` loopt af (Keuze 20); automatisch herstel (Keuze 21); spike stap 4 en 5 |
 | Herstart van de LXC: dockerd stopt alle containers tegelijk, niet in de volgorde van compose | middel | laag | DS slaat bij een nette stop op; is de app al weg, dan herstelt Keuze 21 het bij de start |
 | Docker Hub geeft 429 bij installeren, bijwerken of in CI | middel | laag | pull op digest met `mirror.gcr.io` als terugval, daarna `docker tag`; een pin in `.env`; de vorige DS blijft; het platform werkt altijd door |
-| De klassieke image-opslag van Docker vindt `naam:tag@digest` na `docker tag` niet | laag tot middel | laag | in de sandbox (containerd-opslag) lukt het wel [gemeten]; `install.sh` geeft compose altijd `OFFICE_IMAGE` mee; de checklist op de LXC controleert het; anders noemt O6 in compose de tag en controleert `install.sh` de image-id |
+| De klassieke image-opslag van Docker vindt `naam:tag@digest` na `docker tag` niet | laag tot middel | laag | in de sandbox (containerd-opslag) lukt het wel [gemeten]; op de klassieke opslag niet [gemeten in de review van fase 4, uitrol-1]: daarom noemen compose en `install.sh` nu de tag, die het script elke run op de digest zet; `test_image_store.sh` bewijst het met een eigen dockerd met die opslag, en de checklist op de LXC controleert de digest van de tag |
 | LXC: `vfs`-opslag, geen cgroup-limieten, het interne netwerk werkt anders in geneste Docker | laag | middel | `install.sh` controleert driver, ruimte en limieten; nooit een verzwakking op de host; checklist in het runbook |
 | Het bekende Proxmox-probleem met containerd en `ip_unprivileged_port_start` (nov. 2025) | laag | hoog | geldt voor elke container, niet alleen DS; `install.sh` test al met hello-world en zegt nu of de pull of de start faalt; "AppArmor unconfined" stellen we nooit voor |
 | Iemand met het office-geheim maakt callbacks na | laag | hoog | het geheim staat alleen in `.env` (600) en in de twee containers; callbacks alleen op de interne poort; elke opslag controleert het recht van een echte gebruiker; de grens op de download; de vorige inhoud blijft als versie |

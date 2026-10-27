@@ -201,8 +201,10 @@ git -C "$WORK/repo.git" show "$TO:infra/single/install.sh" >"$WORK/install.sh"
 digest=$(sed -n 's/^OFFICE_DIGEST=//p' "$WORK/install.sh")
 ds_repo=$(sed -n 's/^OFFICE_REPO=//p' "$WORK/install.sh")
 ds_tag=$(sed -n 's/^OFFICE_TAG=//p' "$WORK/install.sh")
-DS_DEFAULT=$ds_repo:$ds_tag@$digest
-DS_PIN=mirror.gcr.io/$ds_repo:$ds_tag@$digest
+# De tag die install.sh compose geeft (uitrol-1), en een pin zoals het runbook hem maakt: een
+# naam uit RepoDigests
+DS_DEFAULT=$ds_repo:$ds_tag
+DS_PIN=mirror.gcr.io/$ds_repo@$digest
 
 # --- images ----------------------------------------------------------------------------------
 
@@ -627,7 +629,8 @@ sha256sum "$ROOT/.env" | cut -d' ' -f1 >"$WORK/env-b.sha"
 office=$(cid office)
 app=$(cid platform)
 check "B: DS draait" running "$office"
-check "B: DS op de naam van Docker Hub, op digest" test "$(image_of "$office")" = "$DS_DEFAULT"
+check "B: DS op de tag van Docker Hub" test "$(image_of "$office")" = "$DS_DEFAULT"
+check "B: die tag wijst naar de digest van install.sh" grep -q "@$digest\$" <<<"$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$DS_DEFAULT")"
 check "B: Docker Hub geblokkeerd, dus van de mirror" in_log b-bijwerken "GEBLOKKEERD pull $ds_repo@$digest"
 check "B: daarna de naam van Docker Hub erop (M19)" in_log b-bijwerken "docker tag mirror.gcr.io/$ds_repo@$digest $ds_repo:$ds_tag"
 check "B: de app kent DS (PLATFORM_OFFICE_URL)" test "$(container_env "$app" PLATFORM_OFFICE_URL)" = http://office

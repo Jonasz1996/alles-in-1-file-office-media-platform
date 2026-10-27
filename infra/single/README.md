@@ -127,9 +127,9 @@ Het script laat eerst de open documenten opslaan en haalt dan de container van D
 platform werkt verder zoals in fase 3: geen knop Bewerken, voorbeelden zoals vroeger. De
 volumes van DS blijven staan. Weer aanzetten: hetzelfde commando met `OFFICE=aan`.
 
-Lukt het ophalen van het image niet (Docker Hub en `mirror.gcr.io` allebei onbereikbaar), dan
-breekt er niets: draait er al een DS, dan blijft die op zijn versie; anders start het platform
-zonder editor en zegt het script dat. Draai het later opnieuw.
+Lukt het ophalen van het image niet (Docker Hub en `mirror.gcr.io` allebei onbereikbaar), of
+start DS daarna niet, dan breekt er niets: draait er al een DS, dan blijft die op zijn versie;
+anders start het platform zonder editor en zegt het script dat. Draai het later opnieuw.
 
 **Waar de data staat.** De documenten zelf staan gewoon in het platform (`/tank/platform`):
 wat je in de editor opslaat, komt in het bestand. De PDF-voorbeelden staan in

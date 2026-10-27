@@ -23,12 +23,15 @@ Hieronder heet dat kortweg "het script"; een instelling zet je ervoor, zoals
    regeleinde bewaarde; een bestaande waarde blijft altijd staan.
 3. Het controleert de opslagdriver van Docker (`overlay2` of `overlayfs`) en of er 8 GB vrij is.
 4. Het image: een pin in `.env` (`OFFICE_IMAGE`) gaat voor. Anders de digest die het script
-   kent, eerst van Docker Hub, dan van `mirror.gcr.io`; daarna zet het de naam van Docker Hub er
-   lokaal op. Lukt niets: een draaiende DS blijft op zijn versie, en anders start het platform
-   zonder editor.
+   kent, eerst van Docker Hub, dan van `mirror.gcr.io`; daarna zet het de tag van Docker Hub
+   (`onlyoffice/documentserver:10.0.0.1`) er lokaal op, op precies die digest. Compose krijgt die
+   tag. Lukt niets: een draaiende DS blijft op zijn versie, en anders start het platform zonder
+   editor.
 5. Het laat de open documenten tussentijds opslaan (`app.cli office-checkpoint`).
 6. Het vervangt het platform en wacht tot `/health` antwoordt.
-7. Pas dan werkt het DS bij, alleen als het image of de instellingen veranderden.
+7. Pas dan werkt het DS bij, alleen als het image of de instellingen veranderden. Lukt dat niet,
+   dan staat de melding van Docker erboven en zegt het script aan het eind waarom; het platform
+   werkt door (zonder editor, of met de DS van vorige keer). Draai het script later opnieuw.
 8. Oude images van DS die geen container meer gebruikt, gaan weg, behalve het vorige (om terug
    te rollen) en de pin.
 
@@ -73,14 +76,23 @@ grenzen.
 
 ## DS terugrollen
 
-Zet het image dat je wilt houden als **pin** in `/opt/platform/.env`, op digest:
+Zet het image dat je wilt houden als **pin** in `/opt/platform/.env`, op digest. Zoek eerst de
+tag van dat image, en vraag dan zijn namen op digest:
 
 ```bash
-docker images --digests onlyoffice/documentserver
-echo 'OFFICE_IMAGE=onlyoffice/documentserver:<tag>@sha256:<digest>' >> /opt/platform/.env
+docker images onlyoffice/documentserver
+docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' onlyoffice/documentserver:<tag>
 ```
 
-en draai het script. Het gebruikt de pin zoals hij is, haalt dan geen ander image en gooit de pin
+Neem een van die regels (`…documentserver@sha256:…`) als pin:
+
+```bash
+echo 'OFFICE_IMAGE=<die regel>' >> /opt/platform/.env
+```
+
+en draai het script. Neem niet zelf `<tag>@<digest>` of de kolom DIGEST van `docker images`: kwam
+het image van `mirror.gcr.io`, dan vindt Docker zo'n naam op de klassieke opslag (`overlay2`)
+niet, en zou het script hem van Docker Hub willen halen. Het gebruikt de pin zoals hij is, haalt dan geen ander image en gooit de pin
 nooit weg. Het vorige image staat er na een update nog, dus terug kan zonder internet. Terug naar
 de gewone versie: haal de regel `OFFICE_IMAGE=` weer uit `.env` en draai het script.
 
@@ -183,10 +195,13 @@ Eén keer na de eerste installatie met office, en na elke wijziging aan de LXC:
    ```
    De driver is `overlay2` of `overlayfs`. Staan de grenzen op `false`, dan draait DS zonder
    grens op geheugen en cpu (het script laat `compose.office-limits.yaml` dan weg).
-2. **Het image** staat onder de naam van Docker Hub, op digest (zo vindt elke compose het):
+2. **Het image** staat onder de tag van Docker Hub (zo vindt elke compose het), en die tag wijst
+   naar de digest van het script:
    ```bash
-   docker image inspect onlyoffice/documentserver@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3 --format '{{.RepoTags}}'
+   docker image inspect onlyoffice/documentserver:10.0.0.1 --format '{{.Id}} {{.RepoDigests}}'
    ```
+   Een van de namen in `RepoDigests` eindigt op
+   `@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3`.
 3. **Het interne netwerk:** `docker network inspect platform_office --format '{{.Internal}}'`
    geeft `true`, en `docker port platform-office-1` geeft niets.
 4. **Wat er op de LXC luistert.** DS kan de LXC zelf bereiken via het gateway-adres van zijn

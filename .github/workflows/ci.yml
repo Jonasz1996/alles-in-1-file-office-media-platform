@@ -278,6 +278,10 @@ jobs:
             | grep -v ':local$' | sort -u > "$RUNNER_TEMP/single-images"
           test -s "$RUNNER_TEMP/single-images"
           while read -r img; do echo "$img"; bestaat "$img"; done < "$RUNNER_TEMP/single-images"
+          # DS ook op de digest van install.sh: compose noemt alleen de tag, die install.sh op die
+          # digest zet (review van fase 4, uitrol-1)
+          ds="$(sed -n 's/^OFFICE_REPO=//p' infra/single/install.sh)@$(sed -n 's/^OFFICE_DIGEST=//p' infra/single/install.sh)"
+          echo "$ds"; bestaat "$ds"
       - name: install.sh controleren (test_install_env.sh)
         run: bash infra/single/tests/test_install_env.sh
       - name: PostgreSQL-image bouwen en Patroni-configuratie valideren
