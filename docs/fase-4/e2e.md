@@ -244,6 +244,46 @@ Bij een gefaalde test maken beide fixtures een schermafdruk van elke open pagina
   pptx doet wat de editorpagina van O2 gaat doen (geen `onAppReady` binnen 20 s → één keer
   opnieuw laden), en schrijft het op als dat nodig was. Nooit vaker dan één keer.
 
+## De metingen (§4.7)
+
+De meetscripts van office staan naast die van fase 3 in `e2e/perf/`, met de marker `perf`. Ze
+staan niet in `python_files` van `pytest.ini`: de gewone e2e verzamelt ze dus niet, en CI draait
+ze niet. Draaien gaat met het pad (pytest verzamelt een bestand dat je noemt altijd) of als
+script. De uitslag en wat hij betekent: [metingen.md](metingen.md).
+
+| Script | Wat | DS |
+|---|---|---|
+| `office_bench.py` | gedeeld: een server met de timers van productie, `CallbackClock` (de tijd van elke callback), cpu en geheugen uit `/proc`, wachten tot de machine rustig is, de grenzen van de DS-container | |
+| `office_open.py` | koud en warm openen via de app (proxy en tunnel), de cpu van de app bij koud openen, de fases (schil, `POST …/session`, DS), en als controle hetzelfde rechtstreeks bij DS (`--no-direct` zet die uit) | echt |
+| `office_tunnels.py` | het geheugen van de app met 50 open tunnels | echt |
+| `office_save.py` | opslaan: van de callback tot de versie in de database, 1 MiB | echt |
+| `office_inspect.py` | de invoercontrole op een xlsx met 10 MB XML en een pptx met 80 MB foto's | nee |
+| `office_budget.py` | het groottebudget tegen 3ccee0a (eerste lading, editor, Bestanden) | nee |
+| `office_run.py` | alles na elkaar; schrijft `docs/fase-4/metingen.json` en de tabel in `metingen.md` | |
+
+```sh
+export OFFICE_DS_NAME=meet-ds OFFICE_DS_PORT=18150 OFFICE_DS_DIR=/tmp/meet-ds \
+  OFFICE_DS_CONFIG=$PWD/infra/single/office/local-production-linux.json
+bash e2e/office_ds.sh start && bash e2e/office_ds.sh wait
+cd web && npm run build && cd ../api
+E2E_REAL_DS=http://127.0.0.1:18150 E2E_REAL_DS_SECRET_FILE=/tmp/meet-ds/jwt.secret \
+  uv run --with playwright python ../e2e/perf/office_run.py            # alles, ±40 minuten
+uv run --with playwright python ../e2e/perf/office_run.py --only office_inspect,office_budget
+E2E_REAL_DS=… uv run --with playwright pytest ../e2e/perf/office_save.py -s   # één, via pytest
+cd .. && bash e2e/office_ds.sh stop   # met dezelfde variabelen als start
+```
+
+- Meet op een rustige machine: elk script wacht voor elke herhaling tot de hele machine onder
+  0,3 core zit (`wait_quiet`), maar een andere test of server die dan nog draait, maakt de
+  getallen slechter. Kijk vooraf met `ps` of `top`.
+- `E2E_PERF_TMP=<map>` zet de data van de servers daar (anders de standaard-tmp). Het profiel van
+  Chromium blijft in `/tmp`: Chromium stopt (SIGTRAP) met een lang pad voor zijn profiel.
+- `E2E_PERF_REPORT_ONLY=1` en `E2E_PERF_OUT=<map>` werken zoals bij `run_all.py`.
+- `office_budget.py` bouwt `web/` opnieuw (`npm run build`) en maakt een git worktree van
+  3ccee0a in de tmp, die hij aan het eind weer weghaalt.
+- De controle van `office_open.py` zet zijn gastpagina op een eigen kleine HTTP-server, niet via
+  `page.route`: een route zet de HTTP-cache van Chromium uit, en dan meet "warm" niets.
+
 ## CI
 
 ### Job `e2e`
