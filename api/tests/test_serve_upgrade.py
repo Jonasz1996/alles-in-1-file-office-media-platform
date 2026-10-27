@@ -251,7 +251,7 @@ async def test_interne_poort_kent_alleen_internal_office(tmp_path, impl):
                 # De routes van O2: zonder token van DS 401 office_token
                 ("GET", "/internal/office/doc/k1-abc", 401),
                 ("POST", "/internal/office/callback", 401),
-                ("GET", "/internal/office/src/abc", 503),
+                ("GET", "/internal/office/src/abc", 401),  # O3: zonder token van DS
                 ("GET", "/api/v1/health", 404),
                 ("GET", "/", 404),
                 ("GET", "/index.html", 404),
