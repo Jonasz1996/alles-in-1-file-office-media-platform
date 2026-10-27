@@ -7,9 +7,12 @@ ongetekende callback zou de app weigeren, en elke opslag zou stil een forgotten 
 
 Toestanden: starting (sinds de start van de app heeft DS nog nooit geantwoord, en nog geen
 STARTING_SECONDS: DS bouwt na een start tot ±280 s fonts), ok, down, misconfigured (DS eist
-geen tokens, of de instellingen kloppen niet). Gezond is pas gezond na een geslaagde grote
+geen tokens, DS weigert onze getekende commando's omdat het office-geheim niet klopt met zijn
+JWT_SECRET, of de instellingen kloppen niet). Gezond is pas gezond na een geslaagde grote
 controle. Bij "weer gezond": convert.on_healthy() en recovery.kick(). De melding office_down
-(down_too_long) komt na 2 minuten down; starting telt daar niet voor.
+(down_too_long) komt na 2 minuten down; starting telt daar niet voor (down_since begint pas
+als de toestand down wordt). Een fout geheim is geen uitval: geen down_since, en elke ronde
+opnieuw de grote controle, zodat een goed geheim (een nieuwe DS) meteen telt.
 """
 
 import asyncio
@@ -46,15 +49,36 @@ def _came_back() -> None:
 
 
 def _not_ok(state: OfficeState, now: datetime, was: str) -> None:
-    if state.down_since is None:
-        state.down_since = now
     starting = not state.ever_ok and now - state.checking_since < timedelta(
         seconds=STARTING_SECONDS
     )
     state.health = "starting" if starting else "down"
+    if starting:
+        state.down_since = None  # starten telt niet als weg (fonts)
+    elif state.down_since is None:
+        state.down_since = now
     state.deep_checked_at = None  # bij terugkomst altijd opnieuw controleren
     if was == "ok":
         log.warning("office: de document server is niet bereikbaar")
+
+
+SECRET_PROBLEM = (
+    "PLATFORM_OFFICE_SECRET klopt niet met JWT_SECRET van de document server: DS weigert "
+    "onze getekende commando's (error 6)"
+)
+
+
+def _wrong_secret(state: OfficeState, was: str, problem: str | None) -> None:
+    """DS leeft, maar weigert ons token: een fout in de instellingen (Keuze 10 en 28).
+    problem is de reden van de vorige ronde: alleen bij een overgang een regel in het log."""
+    if was != "misconfigured" or problem != SECRET_PROBLEM:
+        log.error("office: %s; bewerken en conversie staan uit", SECRET_PROBLEM)
+    state.health = "misconfigured"
+    state.problem = SECRET_PROBLEM
+    state.down_since = None
+    state.ever_ok = True  # hij antwoordde: weg is daarna down, niet starting
+    state.version = state.license_connections = state.tokens_enforced = None
+    state.deep_checked_at = None  # de volgende ronde opnieuw
 
 
 async def check_once(app, now: datetime | None = None) -> None:
@@ -69,8 +93,8 @@ async def check_once(app, now: datetime | None = None) -> None:
         state.problem = settings.office_problem()
         state.health = "misconfigured" if state.problem else "off"
         return
-    state.problem = None
     was = state.health
+    previous_problem, state.problem = state.problem, None
     try:
         ok = (await current.health(deep=False)).ok
     except Exception:  # noqa: BLE001 - elke fout is "niet gezond"
@@ -86,6 +110,9 @@ async def check_once(app, now: datetime | None = None) -> None:
         try:
             deep = await current.health(deep=True)
             enforced = await current.enforces_tokens()
+        except engine.TokenError:
+            _wrong_secret(state, was, previous_problem)
+            return
         except Exception:  # noqa: BLE001 - de volgende keer opnieuw
             log.warning("office: versie, licentie of tokencontrole mislukt", exc_info=True)
             deep = None

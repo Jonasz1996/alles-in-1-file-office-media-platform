@@ -147,11 +147,17 @@ async def test_starting_dan_down(world):
     await world.control.post("/__fake/health", json={"starting": True})
     assert await world.check(0) == "starting"
     state = world.state
-    assert state.down_since == at(0)
+    assert state.down_since is None  # starten telt niet als weg
     assert not health.down_too_long(state, at(250))  # starten duurt even (fonts)
     assert await world.check(250) == "starting"
-    assert await world.check(301) == "down"
-    assert health.down_too_long(state, at(301))
+    start = health.STARTING_SECONDS + 1
+    assert await world.check(start) == "down"
+    # De melding pas 2 minuten nadat het down werd, niet meteen na starting
+    assert state.down_since == at(start)
+    assert not health.down_too_long(state, at(start))
+    assert await world.check(start + 60) == "down"
+    assert not health.down_too_long(state, at(start + health.DOWN_NOTICE_SECONDS - 1))
+    assert health.down_too_long(state, at(start + health.DOWN_NOTICE_SECONDS))
     assert world.calls == []
     await world.control.post("/__fake/health", json={"ok": True})
     assert await world.check(330) == "ok"
@@ -180,6 +186,38 @@ async def test_jwt_off_geeft_misconfigured(world):
     # En weer terug naar misconfigured bij de volgende grote controle
     await world.control.post("/__fake/jwt-off", json={"off": True})
     assert await world.check(601 + 600) == "misconfigured"
+
+
+@pytest.mark.anyio
+async def test_ander_geheim_dan_ds_is_misconfigured(tmp_path, hooks, unbind, caplog):
+    """PLATFORM_OFFICE_SECRET klopt niet met JWT_SECRET van DS: /healthcheck is true, maar
+    DS weigert elk getekend commando (error 6). Dat is een fout in de instellingen, geen
+    uitval: misconfigured met de reden, nooit starting of down, en dus geen office_down."""
+    ds = create_app(FakeConfig(secret=secrets.token_urlsafe(32)))
+    transport = httpx.ASGITransport(app=ds)
+    app = await bind(office_settings(tmp_path, secrets.token_urlsafe(32)), transport)
+    w = World(app=app, calls=hooks, fake=ds.state.fake)
+    for t in (0, 30, 310, 600):
+        assert await w.check(t) == "misconfigured"
+        assert w.state.down_since is None and not health.down_too_long(w.state, at(t + 300))
+    state = w.state
+    assert state.problem and "PLATFORM_OFFICE_SECRET" in state.problem
+    assert state.version is None and state.tokens_enforced is None
+    assert w.calls == []
+    # Eén foutmelding bij de overgang, niet bij elke ronde, en zonder traceback
+    errors = [r for r in caplog.records if "PLATFORM_OFFICE_SECRET" in r.getMessage()]
+    assert len(errors) == 1 and errors[0].exc_info is None
+    # Elke ronde opnieuw proberen (één getekend version), zodat een goed geheim meteen telt
+    assert w.commands("version") == 4 and w.commands("license") == 0
+    # DS krijgt het goede geheim (bijvoorbeeld een nieuwe container met het vaste geheim)
+    w.fake.secret = runtime.settings().office_secret
+    assert await w.check(630) == "ok"
+    assert state.problem is None and state.tokens_enforced is True
+    assert w.calls == ["on_healthy", "kick"]
+    # Weer een ander geheim terwijl hij gezond was: meteen misconfigured, niet down
+    w.fake.secret = secrets.token_urlsafe(32)
+    assert await w.check(630 + 600) == "misconfigured"
+    assert state.down_since is None
 
 
 @pytest.mark.anyio

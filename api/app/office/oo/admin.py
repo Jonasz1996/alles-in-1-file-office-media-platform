@@ -1,7 +1,8 @@
 """Beheercommando's van OnlyOffice via DocServer.command (O0, af).
 
 Fouten van /command: 0 goed, 1 key onbekend, 4 geen wijzigingen, 5 fout commando, 6 fout
-token. Een ander antwoord dan verwacht geeft DocServerError.
+token. Een ander antwoord dan verwacht geeft DocServerError; error 6 op een getekend commando
+TokenRejected (het office-geheim klopt niet met JWT_SECRET van DS).
 """
 
 import secrets
@@ -14,9 +15,16 @@ NO_TOKEN_COMMAND = 6
 NO_TOKEN_CONVERT = -8
 
 
+class TokenRejected(DocServerError):
+    """DS weigerde ons getekende commando (error 6): het geheim klopt niet."""
+
+
 def _ok(answer: dict, what: str) -> dict:
-    if answer.get("error") != 0:
-        raise DocServerError(f"{what}: error {answer.get('error')}")
+    error = answer.get("error")
+    if error == NO_TOKEN_COMMAND:
+        raise TokenRejected(f"{what}: error {error} (DS weigert ons token)")
+    if error != 0:
+        raise DocServerError(f"{what}: error {error}")
     return answer
 
 

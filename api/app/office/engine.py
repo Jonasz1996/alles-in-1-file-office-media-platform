@@ -130,7 +130,9 @@ class Engine(Protocol):
         ...
 
     async def health(self, deep: bool = True) -> Health:
-        """deep=False: alleen of hij leeft; anders ook versie en licentie."""
+        """deep=False: alleen of hij leeft; anders ook versie en licentie. TokenError als de
+        editor ons getekende verzoek weigert: dan klopt het office-geheim niet met dat van de
+        editor (een fout in de instellingen, geen uitval)."""
         ...
 
     async def enforces_tokens(self) -> bool:

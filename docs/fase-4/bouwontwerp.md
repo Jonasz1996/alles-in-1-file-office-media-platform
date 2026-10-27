@@ -812,8 +812,9 @@ Elke keuze geeft de standaard en waarom.
     | Toestand | Wat er gebeurt |
     |---|---|
     | Niet ingesteld (`PLATFORM_OFFICE_URL` leeg) | geen interne luisteraar, `/office/` geeft 404, geen knoppen Bewerken en Nieuw document, previews alleen via B21. Precies fase 3. |
-    | Ingesteld, niet gezond | elke 30 s `GET /healthcheck` (moet `true` zijn). Openen geeft 503 `office_unavailable`; het PDF-voorbeeld en B21 blijven; conversies wachten. Na 2 minuten de melding `office_down`. Nieuw document werkt (het is een bestand). |
+    | Ingesteld, niet gezond | elke 30 s `GET /healthcheck` (moet `true` zijn). Openen geeft 503 `office_unavailable`; het PDF-voorbeeld en B21 blijven; conversies wachten. Na 2 minuten de melding `office_down`; de eerste 5 minuten na de start van de app (`starting`, DS bouwt fonts) tellen daar niet voor. Nieuw document werkt (het is een bestand). |
     | DS eist geen tokens (verkeerd image, verkeerde instelling) | bij elke overgang naar gezond en daarna elke 10 minuten stuurt de app `{"c": "version"}` en een conversie, allebei **zonder** token. Verwacht: `error 6` en `-8` [gemeten]. Iets anders: `state = misconfigured`, melding `office_misconfigured`, bewerken en conversie uit. Zonder deze controle zou elke opslag stil een forgotten file worden, want de app weigert ongetekende callbacks. |
+    | Ander geheim dan DS (`PLATFORM_OFFICE_SECRET` is niet de `JWT_SECRET` van DS, bijvoorbeeld een typfout in `.env` of een DS zonder vast geheim) | `/healthcheck` is `true`, maar elk getekend commando geeft `error 6` [gemeten]. Dat is een fout in de instellingen, geen uitval: `state = misconfigured` met de reden in `problem`, melding `office_misconfigured`, nooit `office_down`. De grote controle draait dan elke ronde opnieuw (één `version`), zodat een goed geheim meteen telt. |
     | Valt weg tijdens het bewerken | de editor toont waarschuwing -18 [gemeten]. Onze pagina zegt "De verbinding met de editor is weg. Wat het laatst is opgeslagen, staat in het bestand." met "Opnieuw laden". Een nette stop slaat alles op (status 2 binnen 1 s) [gemeten]. |
     | Weer gezond | sessies die DS niet meer kent, sluit de ronde (`lost`); conversies gaan verder (de inhaalronde); het herstel van Keuze 21 draait meteen. |
     | Herstart van de app tijdens het bewerken | de sockets breken; DS houdt de sessie in het geheugen. De editor probeert 50 keer met 2 s ertussen opnieuw te verbinden, dus ±100 s (M14). Lukt dat via de nieuwe tunnel en is er intussen opgeslagen, dan komt `onRequestRefreshFile` (M17). Onze pagina vraagt dan een nieuwe sessie en roept `refreshFile` aan. Om niets te verliezen: forcesave bij het stoppen (5 s), 8 pogingen van DS (±4 minuten), en daarna Keuze 21. |
@@ -2220,8 +2221,9 @@ geldt de terugval van Keuze 20 (de sessie stoppen).
   een vreemde methode, iets versleuteld en een bom in een ingebedde zip niet; een pptx met 80 MB
   foto's wel; doc boven 20 MB niet; de tijdgrens; de cache per sha.
 - `test_office_health.py`: gezond ↔ weg na 2 minuten; `version`, `license` en de tokencontrole bij
-  een overgang naar gezond; de nep-DS met `jwt-off` → `misconfigured`; `on_healthy` en `kick`
-  worden aangeroepen.
+  een overgang naar gezond; de nep-DS met `jwt-off` → `misconfigured`; een ander geheim dan de
+  nep-DS → `misconfigured`, nooit `down`; `starting` telt niet mee voor de 2 minuten van
+  `office_down`; `on_healthy` en `kick` worden aangeroepen.
 - `test_serve_upgrade.py`: een geüpgradede verbinding blijft open na `HEADER_TIMEOUT` (in de test
   0,5 s), met h11 **en** httptools (M1); een stille gewone verbinding sluit nog steeds; zonder
   `office_dev_ungated` geeft elke upgrade 404; de interne poort kent alleen `/internal/office/…`; de

@@ -9,7 +9,14 @@ from typing import Literal
 
 from app.config import Settings
 from app.office import urls
-from app.office.engine import CallbackEvent, Health, OpenContext, PathClass, StreamGuard
+from app.office.engine import (
+    CallbackEvent,
+    Health,
+    OpenContext,
+    PathClass,
+    StreamGuard,
+    TokenError,
+)
 from app.office.oo import admin, client, editor, paths, stream, tokens
 from app.office.oo import convert as conversion
 
@@ -51,12 +58,16 @@ class OnlyOffice:
         tokens.check_download(self.settings, authorization, url)
 
     async def health(self, deep: bool = True) -> Health:
-        """deep=False: alleen /healthcheck. Anders ook version en license."""
+        """deep=False: alleen /healthcheck. Anders ook version en license (getekend);
+        TokenError als DS die met error 6 weigert."""
         if not await admin.healthcheck():
             return Health(ok=False)
         if not deep:
             return Health(ok=True)
-        return Health(ok=True, version=await admin.version(), limit=await admin.license())
+        try:
+            return Health(ok=True, version=await admin.version(), limit=await admin.license())
+        except admin.TokenRejected as exc:
+            raise TokenError(str(exc)) from exc
 
     async def enforces_tokens(self) -> bool:
         return await admin.tokens_enforced()
