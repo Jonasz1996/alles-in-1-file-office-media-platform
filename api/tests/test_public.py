@@ -722,3 +722,27 @@ def test_geheimen_niet_in_de_toegangslog():
     )  # fmt: skip
     HideSecrets().filter(record)
     assert "/assets/s/index.js" in record.getMessage()
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        # Zoals de editor het stuurt: JSON, procent-gecodeerd (spike A6, extra bevinding 5)
+        "%7B%22c%22%3A%22save%22%2C%22id%22%3A%22k1%22%2C%22tokenSession%22%3A%22"
+        "eyJhbGciOiJIUzI1NiJ9.eyJkb2MiOjF9.SESSIETOKEN%22%2C%22outputformat%22%3A65%7D",
+        # En als een client de JSON rauw stuurt, met aanhalingstekens
+        '{"c":"save","tokenSession":"eyJhbGciOiJIUzI1NiJ9.eyJkb2MiOjF9.SESSIETOKEN"}',
+    ],
+)
+def test_sessietoken_van_downloadas_niet_in_de_toegangslog(cmd):
+    """downloadas/<key>?cmd=... draagt het sessietoken van DS (30 dagen geldig); cmd en
+    shardkey horen nooit in de log (bouwontwerp fase 4, §3.10)."""
+    path = f"/office/10.0.0-0123abcd/downloadas/k1?cmd={cmd}&shardkey=k1"
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
+        ("1.2.3.4", "POST", path, "1.1", 200), None,
+    )  # fmt: skip
+    HideSecrets().filter(record)
+    message = record.getMessage()
+    assert "SESSIETOKEN" not in message and "tokenSession" not in message
+    assert "?cmd=***&shardkey=***" in message and "/downloadas/k1" in message

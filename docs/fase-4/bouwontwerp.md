@@ -432,8 +432,8 @@ Elke keuze geeft de standaard en waarom.
       `typ` of `operation` wordt gecontroleerd.
 12. **Geen geheimen in URL's.** De interne URL's bevatten alleen een willekeurige id: de
     document-key, of een grant-id van 128 bit voor conversies. Toegang komt uit het JWT van DS.
-    `SECRET_PARAMS` in `main.py` krijgt er `md5` en `shardkey` bij, zodat de opslaglinks van DS
-    nooit in een log staan.
+    `SECRET_PARAMS` in `main.py` krijgt er `md5`, `shardkey` en `cmd` bij, zodat de opslaglinks
+    van DS en het sessietoken in `downloadas?cmd=` (spike A6) nooit in een log staan.
 
 ### SSRF
 
@@ -2050,7 +2050,8 @@ def url(secret: bytes, sha: str, size: int, exp: int, v: int = 0) -> str   # "&v
     `events.hub.close()`, dan zoals nu.
 - **`main.py`**:
   - `app.add_middleware(OfficeProxy)` binnen `JsonCompression` en `Edge`, vóór de catch-all;
-  - `SECRET_PARAMS` wordt `([?&](?:token|sig|key|md5|shardkey)=)`;
+  - `SECRET_PARAMS` wordt `([?&](?:token|sig|key|md5|shardkey|cmd)=)`; `cmd` loopt door tot `&`
+    of witruimte, ook over aanhalingstekens heen (spike A6);
   - de routers van office; `internal_app` met de interne routers en `internal_app.state = app.state`;
   - in `lifespan`, alleen als office ingesteld is: `OfficeState`, `runtime.bind(app)`, en drie
     taken: `health.start` (O0, af), `sweep.start` en `recovery.start` (stubs, O2 vult ze);

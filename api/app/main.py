@@ -62,8 +62,13 @@ log = logging.getLogger("platform")
 # Downloadlinks, previewadressen en de sleutel van een publieke link dragen hun toegang in
 # het adres (een <img> of <video> kan geen header sturen), en het adres van een publieke link
 # (/s/<token>) is de toegang zelf; die waarden horen niet in de toegangslog. Net zo de
-# opslaglinks van de document server (md5) en de keys van office (shardkey).
-SECRET_PARAMS = re.compile(r"([?&](?:token|sig|key|md5|shardkey)=)[^&\s\"]*")
+# opslaglinks van de document server (md5), de keys van office (shardkey) en cmd van
+# downloadas: die JSON draagt het sessietoken van DS (tokenSession, 30 dagen geldig; spike
+# A6). cmd loopt door tot & of witruimte, ook over aanhalingstekens heen, voor het geval een
+# client de JSON rauw stuurt.
+SECRET_PARAMS = re.compile(
+    r"([?&](?:token|sig|key|md5|shardkey|cmd)=)(?:(?<=cmd=)[^&\s]*|[^&\s\"]*)"
+)
 LINK_PATH = re.compile(r"((?:^|[\s\"])/s/)[^/?#\s\"]+")
 
 
