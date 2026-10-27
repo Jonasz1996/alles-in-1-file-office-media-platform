@@ -1,28 +1,54 @@
-"""De tunnel voor de WebSocket van de editor (Keuze 6). Kern van O0; O1 maakt hem af.
+"""De tunnel voor de WebSocket van de editor (Keuze 6 en 7, §3.9 #6).
 
 Uvicorn krijgt ws=Tunnel op de publieke luisteraars (app/serve.py). Bij een upgrade geeft
 uvicorn de herbouwde request (request-regel en koppen) als bytes aan data_received [gemeten,
-M3]. De tunnel leest alleen die kop (hooguit 16 KB), beslist, opent TCP naar DS en stuurt de
-herschreven upgrade door. Daarna pompt hij alleen bytes, in beide richtingen, met tegendruk
-(lezen pauzeren boven 1 MB in de schrijfbuffer van de andere kant, verder onder 256 KB) en
-dicht na IDLE_SECONDS zonder bytes. Dicht aan de ene kant is dicht aan de andere. Terwijl DS
-nog verbindt (tot CONNECT_SECONDS), bewaart hij hooguit PENDING_LIMIT van de browser en
-pauzeert hij daarna het lezen, tot DS er is.
+M3]. De app zelf heeft verder geen WebSockets (B17): elke andere upgrade krijgt 404.
 
-Weigeren gaat met een kale HTTP-regel en sluiten. De kern laat alleen door met
-office_dev_ungated (en office ingesteld), en alleen /office/<versie>/doc/<key>/c/; al het
-andere krijgt 404. De app zelf heeft dus nog steeds geen WebSockets (B17). Nog niet in de
-kern (O1): Origin, het poort-cookie, het recht van nu, de StreamGuard, de grenzen per
-gebruiker en per key, de regel voor poort 80 en de controle elke 15 s.
+Vóór er iets naar DS gaat, in deze volgorde (een kale HTTP-regel en dicht):
+- het pad: alleen een upgrade naar /office/<versie>/doc/<key>/c/ (Engine.classify met
+  upgrade, de klasse SESSION; office ingesteld). Anders 404;
+- Origin: moet er zijn en bij Host en het schema van deze verbinding horen. Anders 403;
+- poort 80: is er een certificaat en is de Host het domein, dan geen upgrade over http (dezelfde
+  regel als Edge). 403;
+- de toegang (gate.check met de key): het poort-cookie, lid van de sessie, niet banned, de
+  sessie niet dicht en nu schrijfrecht. Anders 401;
+- grenzen: meer dan office_max_tunnels_user (8) van deze gebruiker, of al max_editors andere
+  gebruikers op deze key: 429; boven office_max_tunnels (1000) in totaal: 503;
+- DS niet bereikbaar binnen CONNECT_SECONDS: 502.
+
+Daarna stuurt hij de herschreven upgrade naar DS (zonder /office, alleen vaste koppen, geen
+Cookie, Authorization of Sec-WebSocket-Extensions) en pompt hij bytes, in beide richtingen,
+met tegendruk (lezen pauzeren boven 1 MB in de schrijfbuffer van de andere kant, verder onder
+256 KB). Terwijl DS nog verbindt, bewaart hij hooguit PENDING_LIMIT van de browser en pauzeert
+hij daarna het lezen.
+
+De bytes van de browser gaan eerst langs de StreamGuard van de editor (Engine.stream_guard;
+bij OnlyOffice het CONNECT-pakket en het eerste auth-bericht, elk token over de key van het
+pad). Zegt die nee, dan gaat dat stuk niet door en sluit de tunnel; is hij na GUARD_SECONDS
+nog niet tevreden, ook. Daarna leest de tunnel niets meer.
+
+Elke RECHECK_SECONDS (15 s) kijkt hij of de gebruiker er nog in mag (gate.still, met de cache
+van 15 s): nee, of de controle mislukt, dan dicht. Na IDLE_SECONDS zonder bytes dicht. Dicht
+aan de ene kant is dicht aan de andere.
+
+Het register: OfficeState.tunnels (key -> gebruiker -> aantal) en OfficeState.peak (het hoogste
+totaal sinds de start), counts(), close_for(key, user) (de ronde, na banned) en close_all()
+(bij het stoppen van de app).
 """
 
 import asyncio
 import logging
 import re
 import time
+import uuid
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
-from app.office import keys, runtime
+from starlette.datastructures import Headers
+
+from app.office import engine, gate, keys, runtime, sessions
+from app.office.engine import PathClass
+from app.office.state import OfficeConfig, OfficeState, office_policy
 
 log = logging.getLogger("platform.office")
 
@@ -31,14 +57,17 @@ HIGH_WATER = 1024 * 1024
 LOW_WATER = 256 * 1024
 IDLE_SECONDS = 120.0
 CONNECT_SECONDS = 10.0
+GUARD_SECONDS = 10.0  # tot de StreamGuard tevreden is, vanaf de verbinding met DS
+RECHECK_SECONDS = 15.0
 PENDING_LIMIT = 64 * 1024  # van de browser terwijl DS nog verbindt; daarna lezen pauzeren
 PREFIX = b"/office"
 VERSION = r"\d+\.\d+\.\d+-[0-9a-f]{8,64}"
 SESSION_PATH = re.compile(rf"^/office/{VERSION}/doc/([0-9A-Za-z._=-]{{1,128}})/c/(?:\?.*)?$")
+DEFAULT_PORTS = {"http": 80, "https": 443}
 
 # Koppen van de browser die naar DS mogen; de rest (Cookie, Authorization, X-Forwarded-*,
 # Forwarded, Sec-WebSocket-Extensions) nooit. Zonder extensies is er geen compressie, zodat de
-# StreamGuard (O1) de frames kan lezen.
+# StreamGuard de frames kan lezen.
 PASS_HEADERS = {
     b"upgrade",
     b"connection",
@@ -122,6 +151,68 @@ def rewrite_upgrade(
     return b"\r\n".join(out) + b"\r\n\r\n"
 
 
+def _split_host(value: str, scheme: str) -> tuple[str, int] | None:
+    """(host, poort) van een Host-kop of het netloc van een Origin, met de standaardpoort."""
+    try:
+        parts = urlsplit(f"//{value}")
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.hostname is None or parts.username is not None or parts.path:
+        return None
+    return parts.hostname.lower(), port or DEFAULT_PORTS[scheme]
+
+
+def same_origin(origin: str, host: str, scheme: str) -> bool:
+    """Hoort Origin bij deze Host en dit schema (de standaardpoort telt als geen poort)?"""
+    try:
+        parts = urlsplit(origin)
+    except ValueError:
+        return False
+    if parts.scheme != scheme or parts.path or parts.query or parts.fragment:
+        return False
+    mine, theirs = _split_host(host, scheme), _split_host(parts.netloc, scheme)
+    return mine is not None and mine == theirs
+
+
+def _plain_host(host: str) -> str:
+    """De Host zonder poort, in kleine letters (zoals Edge hem vergelijkt)."""
+    host = host.lower()
+    return host.rsplit(":", 1)[0] if host.rfind(":") > host.rfind("]") else host
+
+
+def _https_only(host: str) -> bool:
+    """De regel van Edge voor poort 80: met een certificaat voor dit domein geen http."""
+    app = runtime.app()
+    certs = getattr(app.state, "certs", None) if app is not None else None
+    return bool(
+        certs is not None
+        and certs.serving
+        and certs.active
+        and _plain_host(host) == certs.config.domain
+    )
+
+
+async def _max_editors() -> int:
+    app = runtime.app()
+    if app is None:
+        return OfficeConfig().max_editors
+    policy = office_policy(app)
+    if policy.config is None:
+        async with sessions.maker()() as session:
+            await policy.get(session)
+            await session.commit()
+    assert policy.config is not None
+    return policy.config.max_editors
+
+
+def _user_id(user: uuid.UUID | str) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(user))
+    except ValueError:
+        return None
+
+
 class _Upstream(asyncio.Protocol):
     """De kant naar DS."""
 
@@ -160,10 +251,17 @@ class Tunnel(asyncio.Protocol):
         self.pending: list[bytes] = []  # van de browser terwijl DS nog verbindt
         self.held = 0  # bytes in pending
         self.held_paused = False  # lezen gepauzeerd omdat pending vol is
-        self.state = "head"  # head | connecting | open | closed
+        # head | checking (de poort) | connecting (DS) | open | closed
+        self.state = "head"
         self.key: str | None = None
+        self.user: gate.GateUser | None = None
+        self.office: OfficeState | None = None  # waar hij in het register staat
+        self.guard = None  # de StreamGuard tot hij "ok" zegt
         self.last = time.monotonic()
         self.idle: asyncio.TimerHandle | None = None
+        self.guard_timer: asyncio.TimerHandle | None = None
+        self.recheck: asyncio.TimerHandle | None = None
+        self.checking: asyncio.Task | None = None
         self.connecting: asyncio.Task | None = None
         self.loop: asyncio.AbstractEventLoop | None = _loop
 
@@ -180,9 +278,11 @@ class Tunnel(asyncio.Protocol):
     def data_received(self, data: bytes) -> None:
         self.last = time.monotonic()
         if self.state == "open":
+            if self.guard is not None and not self._guarded(data):
+                return
             self.upstream.transport.write(data)
             return
-        if self.state == "connecting":
+        if self.state in ("checking", "connecting"):
             self._hold(data)
             return
         if self.state != "head":
@@ -207,35 +307,74 @@ class Tunnel(asyncio.Protocol):
             self.refuse(400)
             return
         settings = runtime.settings()
-        key = session_key(target)
+        eng = engine.current() if settings.office_configured else None
+        try:
+            path = target.decode("ascii")
+        except UnicodeDecodeError:
+            path = ""
+        key = eng.session_key(path) if eng is not None and path else None
         if (
-            method != b"GET"
+            eng is None
+            or method != b"GET"
             or key is None
-            or not settings.office_configured
-            or not settings.office_dev_ungated
+            or eng.classify("GET", path, True) != PathClass.SESSION
         ):
+            if eng is not None:
+                log.warning("office: pad geweigerd upgrade %s", path.split("?", 1)[0][:200])
             self.refuse(404)
             return
-        self.key = key
         host = next((v for k, v in headers if k == b"host"), b"").decode("latin-1")
-        peer = self.transport.get_extra_info("peername")
+        origin = next((v for k, v in headers if k == b"origin"), b"").decode("latin-1")
         secure = self.transport.get_extra_info("sslcontext") is not None
+        scheme = "https" if secure else "http"
+        if not same_origin(origin, host, scheme):
+            self.refuse(403)
+            return
+        if not secure and _https_only(host):
+            self.refuse(403)
+            return
+        peer = self.transport.get_extra_info("peername")
         office = urlsplit(settings.office_url)
         try:
             request = rewrite_upgrade(
                 head,
                 ds_host=office.netloc,
                 host=host,
-                scheme="https" if secure else "http",
+                scheme=scheme,
                 client=peer[0] if isinstance(peer, tuple) else None,
             )
         except ValueError:
             self.refuse(400)
             return
+        self.key = key
         if rest:
             self._hold(rest)
+        self.state = "checking"
+        self.connecting = self.loop.create_task(self._admit(Headers(raw=headers), office, request))
+
+    async def _admit(self, headers: Headers, office, request: bytes) -> None:
+        """De poort en de grenzen, dan DS."""
+        assert self.key is not None
+        try:
+            user = await gate.check(headers, self.key)
+            limit = await _max_editors() if user is not None else 0
+        except Exception:  # noqa: BLE001 - de database: liever dicht dan open
+            log.exception("office: de toegangscontrole van de tunnel mislukte")
+            self.refuse(503)
+            return
+        if self.state != "checking":  # intussen dicht
+            return
+        if user is None:
+            self.refuse(401)
+            return
+        status = _limits(self.key, user.user_id, limit)
+        if status is not None:
+            log.info("office: tunnel geweigerd (%d)", status)
+            self.refuse(status)
+            return
+        self._register(user)
         self.state = "connecting"
-        self.connecting = self.loop.create_task(self._connect(office, request))
+        await self._connect(office, request)
 
     async def _connect(self, office, request: bytes) -> None:
         loop = asyncio.get_running_loop()
@@ -255,18 +394,47 @@ class Tunnel(asyncio.Protocol):
         if self.state != "connecting":  # intussen dicht
             upstream.transport.close()
             return
+        eng = engine.current()
+        if eng is None:
+            upstream.transport.close()
+            self.refuse(404)
+            return
         self.upstream = upstream
+        self.guard = eng.stream_guard(self.key)
+        self.state = "open"
         if self.held_paused:
             # Eerst weer lezen, dan schrijven: zo kan pause_writing van DS het nog stoppen
             self.held_paused = False
             self.pause_browser(False)
         upstream.transport.write(request)
-        for data in self.pending:
+        held, self.pending, self.held = self.pending, [], 0
+        for data in held:
+            if self.guard is not None and not self._guarded(data):
+                return
             upstream.transport.write(data)
-        self.pending.clear()
-        self.held = 0
-        self.state = "open"
+        if self.guard is not None:
+            self.guard_timer = self.loop.call_later(GUARD_SECONDS, self._guard_late)
         self._arm_idle()
+        self._arm_recheck()
+
+    def _guarded(self, data: bytes) -> bool:
+        """Mag dit stuk door de StreamGuard? Nee: de tunnel gaat dicht."""
+        verdict = self.guard.feed(data)
+        if verdict == "deny":
+            log.warning("office: het eerste socketpakket klopt niet; de tunnel gaat dicht")
+            self.close()
+            return False
+        if verdict == "ok":
+            self.guard = None
+            if self.guard_timer is not None:
+                self.guard_timer.cancel()
+                self.guard_timer = None
+        return True
+
+    def _guard_late(self) -> None:
+        if self.state == "open" and self.guard is not None:
+            log.warning("office: geen geldig eerste socketpakket op tijd; de tunnel gaat dicht")
+            self.close()
 
     def _hold(self, data: bytes) -> None:
         """Bewaren tot DS verbonden is; boven PENDING_LIMIT de browser niet meer lezen, zodat
@@ -308,7 +476,35 @@ class Tunnel(asyncio.Protocol):
         else:
             self.transport.resume_reading()
 
-    # --- beide ---
+    # --- het register ---
+
+    def _register(self, user: gate.GateUser) -> None:
+        assert self.key is not None
+        self.user = user
+        self.office = state = sessions.office()
+        users = state.tunnels.setdefault(self.key, {})
+        users[user.user_id] = users.get(user.user_id, 0) + 1
+        total = sum(sum(per.values()) for per in state.tunnels.values())
+        if state.peak is None or total > state.peak[0]:
+            state.peak = (total, datetime.now(UTC))
+
+    def _unregister(self) -> None:
+        state, user, key = self.office, self.user, self.key
+        self.office = None
+        if state is None or user is None or key is None:
+            return
+        users = state.tunnels.get(key)
+        if users is None:
+            return
+        left = users.get(user.user_id, 0) - 1
+        if left > 0:
+            users[user.user_id] = left
+        else:
+            users.pop(user.user_id, None)
+        if not users:
+            state.tunnels.pop(key, None)
+
+    # --- tijd: idle en de controle elke 15 s ---
 
     def _arm_idle(self) -> None:
         self.idle = self.loop.call_later(IDLE_SECONDS, self._check_idle)
@@ -322,17 +518,49 @@ class Tunnel(asyncio.Protocol):
         else:
             self.idle = self.loop.call_later(IDLE_SECONDS - quiet, self._check_idle)
 
+    def _arm_recheck(self) -> None:
+        if self.state == "open":
+            self.recheck = self.loop.call_later(RECHECK_SECONDS, self._start_recheck)
+
+    def _start_recheck(self) -> None:
+        if self.state == "open":
+            self.checking = self.loop.create_task(self._recheck())
+
+    async def _recheck(self) -> None:
+        assert self.user is not None and self.key is not None
+        try:
+            allowed = await gate.still(self.user, self.key)
+        except Exception:  # noqa: BLE001 - liever dicht dan open; de editor verbindt opnieuw
+            log.exception("office: de controle van een tunnel mislukte")
+            allowed = False
+        if self.state != "open":
+            return
+        if not allowed:
+            log.info("office: geen recht meer; de tunnel gaat dicht")
+            self.close()
+            return
+        self._arm_recheck()
+
+    # --- beide ---
+
     def close(self) -> None:
         if self.state == "closed":
             return
         self.state = "closed"
         _open.discard(self)
+        self._unregister()
         if self.server_state is not None:
             self.server_state.connections.discard(self)
-        if self.idle is not None:
-            self.idle.cancel()
-        if self.connecting is not None and not self.connecting.done():
-            self.connecting.cancel()
+        for timer in (self.idle, self.guard_timer, self.recheck):
+            if timer is not None:
+                timer.cancel()
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:  # buiten de loop (tests)
+            current = None
+        for task in (self.connecting, self.checking):
+            if task is not None and not task.done() and task is not current:
+                task.cancel()
         if self.upstream is not None and self.upstream.transport is not None:
             self.upstream.transport.close()
         if self.transport is not None and not self.transport.is_closing():
@@ -343,9 +571,37 @@ class Tunnel(asyncio.Protocol):
         self.close()
 
 
+def _limits(key: str, user_id: uuid.UUID, max_editors: int) -> int | None:
+    """429 of 503 als er geen tunnel meer bij mag, anders None."""
+    settings = runtime.settings()
+    admitted = [t for t in _open if t.office is not None and t.user is not None]
+    if len(admitted) >= settings.office_max_tunnels:
+        return 503
+    if sum(1 for t in admitted if t.user.user_id == user_id) >= settings.office_max_tunnels_user:
+        return 429
+    others = {t.user.user_id for t in admitted if t.key == key and t.user.user_id != user_id}
+    if len(others) >= max_editors:
+        return 429
+    return None
+
+
 def counts() -> dict[str, int]:
-    """Het aantal open tunnels (O1 voegt per key en per gebruiker toe)."""
-    return {"total": sum(1 for t in _open if t.state == "open")}
+    """Het aantal open tunnels, en op hoeveel keys en van hoeveel gebruikers."""
+    tunnels = [t for t in _open if t.state == "open" and t.user is not None]
+    return {
+        "total": len(tunnels),
+        "keys": len({t.key for t in tunnels}),
+        "users": len({t.user.user_id for t in tunnels}),
+    }
+
+
+def close_for(key: str, user: uuid.UUID | str) -> int:
+    """De tunnels van deze gebruiker op deze key dicht (de ronde, na banned). Het aantal."""
+    wanted = _user_id(user)
+    found = [t for t in _open if t.key == key and t.user is not None and t.user.user_id == wanted]
+    for tunnel in found:
+        tunnel.close()
+    return len(found)
 
 
 def close_all() -> int:
