@@ -137,8 +137,9 @@ start van de app. Elke open editor-tab is één verbinding.
 - DS mag hooguit 2 GB geheugen en 2 cores (als de kernel die grenzen kan zetten;
   `docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}'` geeft dan `true true`). Blijft DS
   vlak onder 2 GB, of staat hij lang op 200 % cpu, dan is het te veel.
-- De grens `max_editors` (standaard 20, op `/beheer` 1 tot 500) houdt nieuwe editors tegen als
-  hij bereikt is; het PDF-voorbeeld werkt dan gewoon. Zet hem lager als de meting dat zegt.
+- De grens `max_editors` (standaard 20, op `/beheer` 1 tot 500) geldt per document: zitten er al
+  zoveel mensen in één document, dan kan de volgende het niet openen (`office_too_many`); het
+  PDF-voorbeeld werkt dan gewoon. Zet hem lager als de meting dat zegt.
 - Na de eerste start van een nieuwe DS is hij ±5 minuten druk met fonts. Meet daarna.
 - Werd DS gestopt door een geheugentekort: `docker inspect --format '{{.State.OOMKilled}}'
   platform-office-1` geeft dan `true`.
