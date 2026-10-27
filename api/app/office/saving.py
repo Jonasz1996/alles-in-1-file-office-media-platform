@@ -355,6 +355,12 @@ async def store(row: OfficeSession, tmp: Path, sha: str, size: int, event: Callb
                 sessions.close(row, "saved")
             await session.commit()
             return "same"
+        if late and row.checkpoint == sha:
+            # Wat deze sessie het laatst opsloeg (een herstelkopie, of het origineel en daarna
+            # een upload eroverheen, en dan staat het bij Versies): een herhaling, geen kopie
+            _mark(row, event)
+            await session.commit()
+            return "same"
         if late and node.blob_id != row.blob_id:
             # Een late opslag terwijl het bestand intussen veranderde: nooit eroverheen
             return await save_copy(
@@ -506,6 +512,10 @@ async def save_copy(
     if isinstance(copy, str):
         return copy
     row = await sessions.find_by_key(session, row.key) or row
+    # Wat deze sessie het laatst opsloeg: een herhaling (DS opnieuw, of het herstel na een
+    # mislukte deleteForgotten) maakt dan geen tweede kopie. De sessie is (zo) dicht, dus de
+    # tussenstand telt niet meer voor squash of versies
+    row.checkpoint = sha
     final = event is None or event.kind in ("final", "failed")
     if event is not None:
         _mark(row, event)

@@ -134,6 +134,32 @@ async def test_veranderd_bestand_een_herstelkopie(world):
     }
 
 
+async def test_kopie_en_deleteforgotten_mislukt_een_keer_geen_tweede_kopie(world):
+    """De kopie is gemaakt, maar deleteForgotten mislukt: de volgende ronde ziet dat dit werk
+    al is opgeslagen en haalt de key alleen weg."""
+    anna = await world.user("anna@example.nl")
+    node = await world.docx(anna, None, "verslag.docx", ["Begin"])
+    key = await lost_with(world, anna, node, ["werk"])
+    await world.upload(anna, node, ["van buiten"])  # dus een kopie
+    real = world.fake.commands["deleteForgotten"]
+    calls: list[dict] = []
+
+    async def flaky(params):
+        calls.append(params)
+        if len(calls) == 1:
+            return {"key": params.get("key"), "error": 1}
+        return await real(params)
+
+    world.answer("deleteForgotten", flaky)
+    await world.recover()
+    assert key in world.forgotten()
+    await world.recover()
+    assert key not in world.forgotten()
+    copies = await world.find(anna, "verslag" + RECOVERED)
+    assert len(copies) == 1 and await world.paragraphs(copies[0]) == ["werk"]
+    assert len(world.event_data(anna, "office.recovered")) == 1
+
+
 async def test_niet_de_laatste_sessie_een_herstelkopie(world):
     anna = await world.user("anna@example.nl")
     node = await world.docx(anna, None, "verslag.docx", ["Begin"])

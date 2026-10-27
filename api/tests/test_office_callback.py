@@ -589,6 +589,24 @@ async def test_lost_late_opslag_na_een_wijziging_een_kopie(world, status):
     assert len(copies) == 1 and await world.paragraphs(copies[0]) == ["laat"]
 
 
+@pytest.mark.parametrize("status", [2, 3, 6])
+async def test_lost_late_kopie_herhaald_geeft_geen_tweede(world, status):
+    """DS herhaalt een callback waarvan het antwoord niet aankwam (hetzelfde merk mag, A9): de
+    herstelkopie staat er al, dus geen tweede."""
+    anna, node = await anna_file(world)
+    key = await world.begin(anna, node)
+    await world.set_session(key, state="closed", closed_reason="lost")
+    await world.upload(anna, node, ["van buiten"])
+    url = world.stage(key, body(["laat"]))
+    fields = world.saved_fields(key, 2 if status == 3 else status, url, [anna])
+    fields["status"] = status
+    assert (await world.callback(fields)).json() == OK
+    assert (await world.callback(fields)).json() == OK
+    copies = await world.find(anna, "verslag" + RECOVERED)
+    assert len(copies) == 1 and await world.paragraphs(copies[0]) == ["laat"]
+    assert await world.paragraphs(node) == ["van buiten"]
+
+
 async def test_lost_status_3_ongewijzigd_ook_een_kopie(world):
     """Status 3 is altijd een kopie, ook als late opslag (de inhoud kan kapot zijn)."""
     anna, node = await anna_file(world)

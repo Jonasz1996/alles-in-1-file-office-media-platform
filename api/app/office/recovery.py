@@ -7,7 +7,8 @@ afgehandelde keys. restore(key) en forget(key): de knoppen Terugzetten en Verwij
 
 Per key uit getForgottenList:
 1. ophalen (Keuze 13, hooguit office_max_save_bytes; het quotum beslist place_file);
-   dezelfde sha als het bestand nu -> alleen deleteForgotten;
+   dezelfde sha als het bestand nu, of als wat deze (dichte) sessie het laatst opsloeg (een
+   herstelkopie waarna deleteForgotten mislukte) -> alleen deleteForgotten;
 2. bestand of eigenaar definitief weg -> alleen deleteForgotten, niets schrijven;
 3. de sessie van deze key is de laatste van het bestand (ook als hij nog saving of lost is)
    en het bestand staat nog op wat deze sessie het laatst zag -> gewoon op het origineel,
@@ -125,7 +126,7 @@ async def _fetch(eng, key: str) -> tuple[Path, str, int]:
 async def _delete(eng, key: str) -> bool:
     try:
         await eng.delete_forgotten(key)
-    except Exception:  # noqa: BLE001 - de volgende ronde: dan is de sha gelijk
+    except Exception:  # noqa: BLE001 - de volgende ronde ziet dat het al is opgeslagen
         log.warning("office: deleteForgotten mislukt")
         return False
     _warned.discard(key)
@@ -171,7 +172,9 @@ async def _store(row: OfficeSession, tmp: Path, sha: str, size: int) -> str:
         if node is None or owner is None:
             return "kept"  # net weg: de volgende ronde ruimt op
         node_id = node.id
-        if node.blob_id == sha:
+        if node.blob_id == sha or (row.state == "closed" and row.checkpoint == sha):
+            # Staat er al, of deze sessie sloeg het al op (een herstelkopie waarna
+            # deleteForgotten mislukte): alleen nog weg uit DS
             _close(row)
             await session.commit()
             return "same"
