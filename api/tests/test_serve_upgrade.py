@@ -248,8 +248,9 @@ async def test_interne_poort_kent_alleen_internal_office(tmp_path, impl):
     with bound(settings):
         async with running(config) as listener:
             for method, path, status in (
-                ("GET", "/internal/office/doc/k1-abc", 503),  # O0-stub: office_off
-                ("POST", "/internal/office/callback", 503),
+                # De routes van O2: zonder token van DS 401 office_token
+                ("GET", "/internal/office/doc/k1-abc", 401),
+                ("POST", "/internal/office/callback", 401),
                 ("GET", "/internal/office/src/abc", 503),
                 ("GET", "/api/v1/health", 404),
                 ("GET", "/", 404),
