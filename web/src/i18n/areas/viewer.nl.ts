@@ -123,6 +123,15 @@ export default {
       too_many: "Er bewerken nu te veel mensen tegelijk; probeer het later opnieuw",
     },
   },
+  // Fase 4 (O3): het voorbeeld met opmaak, de PDF die de editor van een kantoordocument maakte
+  converted: {
+    label: "Voorbeeld",
+    labelHint: "Gemaakt door de editor; kleine verschillen met het origineel zijn mogelijk",
+    ask: "Voorbeeld met opmaak maken",
+    askHint: "Dit bestand wordt niet vanzelf omgezet. Maak een voorbeeld met opmaak als je het zo wilt zien.",
+    pending: "Voorbeeld met opmaak wordt gemaakt…",
+    making: "De PDF wordt gemaakt…",
+  },
   info: {
     title: "Gegevens",
     close: "Gegevens sluiten",

@@ -537,6 +537,27 @@ table.csv th,
   border-radius: var(--radius-s);
 }
 
+/* fase 4 (O3): de knop bij een bestand dat niet vanzelf wordt omgezet, en het label bij de
+   pagina's van een omgezet document */
+.office-ask {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+}
+
+.office-ask p {
+  margin: 0;
+  flex: 1 1 18rem;
+}
+
+.pages-note {
+  padding: 0 var(--space-2);
+  border-left: 3px solid var(--accent);
+  font-size: var(--text-s);
+  color: var(--muted);
+}
+
 .office-doc {
   max-width: 48rem;
   margin: 0 auto;

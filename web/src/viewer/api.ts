@@ -2,6 +2,7 @@
 // de pagina's van een PDF en de inhoud van een kantoordocument.
 
 import type { Preview, PreviewMeta } from "../api";
+import type { PdfState } from "../office/types";
 
 /** EXIF van een foto (P5 vult het); nooit een locatie. */
 export interface Exif {
@@ -31,6 +32,8 @@ export interface ViewerMeta extends PreviewMeta {
   office?: "document" | "sheet" | "slides";
   author?: string;
   format?: string;
+  /** De omgezette PDF van office (fase 4, O3); alleen met office aan of als die PDF er is */
+  pdf_state?: PdfState;
 }
 
 export interface ViewerDetail {
@@ -74,6 +77,11 @@ export type OfficeDoc =
 
 export interface DocumentInfo {
   kind: "pdf" | "office";
+  /** Waar de pagina's vandaan komen: het bestand zelf ("pdf") of de omgezette PDF van een
+   * kantoordocument ("office", fase 4); null zonder pagina's */
+  source?: "pdf" | "office" | null;
+  /** De omgezette PDF (fase 4): null zonder office of voor een soort die de editor niet omzet */
+  pdf_state?: PdfState | null;
   pages: number | null;
   /** Per pagina [breedte, hoogte] in punten */
   page_sizes: [number, number][] | null;

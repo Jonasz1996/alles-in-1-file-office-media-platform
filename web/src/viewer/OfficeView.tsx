@@ -1,12 +1,20 @@
 // Een kantoordocument (docx, xlsx, pptx en de ODF-varianten) zoals de server het las
 // (app/office/reader.py): de tekst met koppen, lijsten en tabellen, de bladen van een rekenblad
 // of de dia's van een presentatie. Vereenvoudigd: zonder opmaak, afbeeldingen of formules.
+//
+// Fase 4 (O3): heeft de editor er een PDF van gemaakt, dan de echte pagina's (PdfView, met het
+// label "Voorbeeld"). Wordt hij gemaakt, dan de eenvoudige weergave met een melding, en de
+// viewer kijkt af en toe opnieuw. Gaat een bestand niet vanzelf naar de editor (pdf_state ask),
+// dan een knop die het vraagt; nooit via een publieke link.
 
-import { Fragment, type JSX, type ReactNode, useEffect, useState } from "react";
+import { Fragment, type JSX, type ReactNode, useEffect, useRef, useState } from "react";
 import { errorText, t } from "../i18n";
+import { Button } from "../ui/Button";
 import { Spinner } from "../ui/Spinner";
 import { Tabs, tabPanelProps } from "../ui/Tabs";
-import type { OfficeBlock, OfficeDoc, Run, ViewerDetail } from "./api";
+import type { DocumentInfo, OfficeBlock, OfficeDoc, Run, ViewerDetail } from "./api";
+import { convertedView, pollDelay, requestPreview } from "./converted";
+import PdfView from "./PdfView";
 import type { Source } from "./source";
 import type { ViewerItem } from "./types";
 
@@ -149,27 +157,97 @@ function SlidesBody({ doc }: { doc: Extract<OfficeDoc, { type: "slides" }> }) {
   );
 }
 
-export default function OfficeView({ item, detail, source }: { item: ViewerItem; detail: ViewerDetail; source: Source }): JSX.Element {
-  const [doc, setDoc] = useState<OfficeDoc | null | undefined>(undefined);
-  const [error, setError] = useState<string | null>(null);
+/** Het label bij de pagina's van een omgezet document, met de uitleg ook voor schermlezers. */
+function ConvertedNote(): JSX.Element {
+  const hint = t("viewer.converted.labelHint");
+  return (
+    <span className="pages-note" title={hint}>
+      {t("viewer.converted.label")}
+      <span className="sr-only">: {hint}</span>
+    </span>
+  );
+}
 
-  // Opnieuw zodra de preview klaar is (de inhoud komt mee met de preview)
+/** Bij pdf_state ask: de knop die een voorbeeld met opmaak vraagt. */
+function AskPreview({ item, onAsked }: { item: ViewerItem; onAsked(): void }): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function ask() {
+    setBusy(true);
+    setError(null);
+    try {
+      await requestPreview(item);
+      onAsked();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="office-note office-ask">
+      <p>{t("viewer.converted.askHint")}</p>
+      <Button icon="document" busy={busy} onClick={() => void ask()}>
+        {t("viewer.converted.ask")}
+      </Button>
+      {error && <p role="alert">{error}</p>}
+    </div>
+  );
+}
+
+export default function OfficeView({ item, detail, source }: { item: ViewerItem; detail: ViewerDetail; source: Source }): JSX.Element {
+  const [info, setInfo] = useState<DocumentInfo | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  // Elke keer opnieuw kijken (zolang de PDF gemaakt wordt, of na de knop) is een nieuwe ronde
+  const [round, setRound] = useState(0);
+  const polls = useRef(0);
+  const shown = useRef(false);
+
+  // Opnieuw zodra de preview klaar is (de inhoud komt mee met de preview) en zodra de PDF van
+  // de editor er is (fase 4)
+  const pdfState = detail.meta.pdf_state;
   useEffect(() => {
     let live = true;
     source.document(item).then(
-      (d) => live && setDoc(d.office),
-      (e: unknown) => live && setError(errorText(e)),
+      (d) => {
+        if (!live) return;
+        shown.current = true;
+        setInfo(d);
+      },
+      (e: unknown) => {
+        // Lukt opnieuw kijken niet, dan blijft staan wat er stond
+        if (live && !shown.current) setError(errorText(e));
+      },
     );
     return () => {
       live = false;
     };
-  }, [item, source, detail.state]);
+  }, [item, source, detail.state, pdfState, round]);
 
+  const view = info ? convertedView(info, source.kind === "user") : null;
+  // Zolang de PDF gemaakt wordt: af en toe kijken, steeds minder vaak, en na ruim tien minuten
+  // niet meer (Sluiten en weer openen kijkt opnieuw)
+  useEffect(() => {
+    if (view !== "pending") return;
+    const delay = pollDelay(polls.current);
+    if (delay === null) return;
+    const timer = setTimeout(() => {
+      polls.current += 1;
+      setRound((r) => r + 1);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [info, view, round]);
+
+  if (info && view === "pages") return <PdfView item={item} source={source} initial={info} note={<ConvertedNote />} />;
+
+  const doc: OfficeDoc | null | undefined = info?.office;
+  // Een doc, xls, ppt of rtf heeft geen eigen inhoud: dan alleen de melding of de knop
+  const waiting = view === "pending" || view === "ask";
   let body: ReactNode;
   if (error) body = <p role="alert">{error}</p>;
-  else if (doc === undefined) body = <Spinner label={t("viewer.loading")} />;
-  else if (doc === null)
-    body = (
+  else if (info === undefined) body = <Spinner label={t("viewer.loading")} />;
+  else if (!doc)
+    body = waiting ? null : (
       <p className="muted">
         {detail.state === "pending" ? t("viewer.pending") : detail.state === "failed" ? t("viewer.failed") : t("viewer.office.none")}
       </p>
@@ -177,10 +255,26 @@ export default function OfficeView({ item, detail, source }: { item: ViewerItem;
   else if (doc.type === "document") body = <DocumentBody doc={doc} />;
   else if (doc.type === "sheet") body = <SheetBody doc={doc} />;
   else body = <SlidesBody doc={doc} />;
+  // Het vereenvoudigde voorbeeld zegt wat het is; niet zolang onbekend is wat er komt
+  const simple = (info !== undefined || error !== null) && !(waiting && !doc);
 
   return (
     <div className="viewer-scroll office">
-      <p className="office-note">{t("viewer.office.simplified")}</p>
+      {view === "pending" && (
+        <p className="office-note" role="status">
+          {t("viewer.converted.pending")}
+        </p>
+      )}
+      {view === "ask" && (
+        <AskPreview
+          item={item}
+          onAsked={() => {
+            polls.current = 0;
+            setRound((r) => r + 1);
+          }}
+        />
+      )}
+      {simple && <p className="office-note">{t("viewer.office.simplified")}</p>}
       {body}
       {doc?.truncated && <p className="muted">{t("viewer.office.truncated")}</p>}
     </div>

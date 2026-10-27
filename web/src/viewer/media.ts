@@ -48,6 +48,9 @@ const OFFICE = [
   "application/vnd.oasis.opendocument.spreadsheet",
   "application/vnd.oasis.opendocument.presentation",
 ];
+// Een PDF van de editor (fase 4, O3) die er is, gemaakt wordt of gevraagd kan worden: dan de
+// weergave van kantoordocumenten, ook voor doc, xls, ppt en rtf (zonder eigen voorbeeld)
+const CONVERTED: readonly string[] = ["ready", "pending", "ask"];
 const TEXT_MIMES = ["application/json", "application/xml", "application/javascript", "application/x-sh", "application/sql"];
 const TEXT_EXT =
   /\.(txt|md|markdown|csv|tsv|log|json|xml|ya?ml|toml|ini|cfg|conf|py|js|mjs|cjs|ts|tsx|jsx|css|scss|html?|java|c|h|cc|cpp|hpp|cs|go|rs|rb|php|sh|bash|zsh|sql|kt|swift|lua|pl|r|tex|srt|vtt|env|gitignore|dockerfile)$/i;
@@ -57,6 +60,7 @@ export function viewKind(item: { name: string; mime: string | null }, meta: View
   const mime = (item.mime ?? "").toLowerCase();
   const kind = category({ kind: "file", mime });
   if (meta.office || OFFICE.some((m) => mime.startsWith(m))) return "office";
+  if (meta.pdf_state && CONVERTED.includes(meta.pdf_state)) return "office";
   if (meta.entries !== undefined) return "archive";
   const player = playerFor(kind, meta);
   if (player) return player;

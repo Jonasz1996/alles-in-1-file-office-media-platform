@@ -123,6 +123,14 @@ const en: Translation<typeof nl> = {
       too_many: "Too many people are editing right now; try again later",
     },
   },
+  converted: {
+    label: "Preview",
+    labelHint: "Made by the editor; small differences from the original are possible",
+    ask: "Make a formatted preview",
+    askHint: "This file is not converted automatically. Make a formatted preview if you want to see it that way.",
+    pending: "Making the formatted preview…",
+    making: "Making the PDF…",
+  },
   info: {
     title: "Details",
     close: "Close details",

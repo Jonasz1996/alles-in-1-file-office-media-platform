@@ -46,6 +46,15 @@ describe("viewKind", () => {
     expect(viewKind(item("a.bin", "application/octet-stream"), {})).toBe("none");
   });
 
+  it("doc, xls, ppt en rtf: alleen met een PDF van de editor (fase 4) de weergave van kantoordocumenten", () => {
+    const doc = item("oud.doc", "application/msword");
+    expect(viewKind(doc, {})).toBe("none"); // zonder office: precies fase 3
+    for (const state of ["ready", "pending", "ask"] as const) expect(viewKind(doc, { pdf_state: state })).toBe("office");
+    for (const state of ["failed", "none", "unsafe"] as const) expect(viewKind(doc, { pdf_state: state })).toBe("none");
+    expect(viewKind(item("a.rtf", "application/rtf"), { pdf_state: "ready" })).toBe("office");
+    expect(viewKind(item("b.ppt", "application/vnd.ms-powerpoint"), { pdf_state: "pending" })).toBe("office");
+  });
+
   it("wat de browser zelf toont en wat beweegt", () => {
     expect(browserShows("image/jpeg")).toBe(true);
     expect(browserShows("image/heic")).toBe(false);

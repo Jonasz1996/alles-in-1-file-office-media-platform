@@ -4,7 +4,7 @@
 // scherm past. Passend op breedte of hele pagina, 50–400 %, een paginavak en een
 // inhoudsopgave.
 
-import { type JSX, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type JSX, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
 import { IconButton } from "../ui/Button";
 import { useShortcuts } from "../ui/keys";
@@ -23,6 +23,9 @@ export interface PageViewerProps {
   labels?: readonly string[] | null;
   /** Een pagina laadde niet (bijv. een verlopen token) */
   onPageError?(n: number): void;
+  /** Vooraan in de werkbalk: waar de pagina's vandaan komen (fase 4: "Voorbeeld" bij een
+   * omgezet kantoordocument) */
+  note?: ReactNode;
 }
 
 const GAP = 16;
@@ -70,7 +73,16 @@ function pageAt(offsets: readonly number[], y: number): number {
   return Math.max(0, lo);
 }
 
-export default function PageViewer({ count, sizes, widths, url, toc = [], labels, onPageError }: PageViewerProps): JSX.Element {
+export default function PageViewer({
+  count,
+  sizes,
+  widths,
+  url,
+  toc = [],
+  labels,
+  onPageError,
+  note,
+}: PageViewerProps): JSX.Element {
   const scroller = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ w: 0, h: 0, top: 0 });
   const [fit, setFit] = useState<Fit>("width");
@@ -221,6 +233,7 @@ export default function PageViewer({ count, sizes, widths, url, toc = [], labels
   return (
     <div className={`pages${tocOpen ? " with-toc" : ""}`}>
       <div className="pages-tools" role="toolbar" aria-label={t("viewer.pdf.tools")}>
+        {note}
         {toc.length > 0 && (
           <IconButton
             icon="list"
