@@ -53,18 +53,22 @@ CALLBACK = "/internal/office/callback"
 
 class Failing(httpx.AsyncBaseTransport):
     """Het transport van de nep naar de interne app: telt wat onderweg is, en geeft de volgende
-    `left` callbacks 503 zonder dat de app ze ziet."""
+    `left` callbacks 503 zonder dat de app ze ziet. De laatste geweigerde callback blijft
+    bewaard (last_refused), zodat een test hem later nog eens kan sturen (replay)."""
 
     def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
         self.inner = inner
         self.left = 0
         self.inflight = 0
         self.refused = 0
+        self.last_refused: tuple[str, str, list[tuple[bytes, bytes]], bytes] | None = None
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if request.url.path == CALLBACK and self.left > 0:
             self.left -= 1
             self.refused += 1
+            body = await request.aread()
+            self.last_refused = (request.method, str(request.url), request.headers.raw, body)
             return httpx.Response(503, json={})
         self.inflight += 1
         try:
@@ -458,6 +462,15 @@ class World:
     async def fail_callbacks(self, n: int) -> None:
         assert self.failing is not None
         self.failing.left = n
+
+    async def replay_refused(self) -> int:
+        """De laatste callback die fail_callbacks weigerde, nog één keer naar de app, precies
+        zoals de nep hem stuurde (een editor die een oude opslag later nog eens probeert)."""
+        assert self.failing is not None and self.failing.last_refused is not None
+        method, url, headers, body = self.failing.last_refused
+        request = httpx.Request(method, url, headers=headers, content=body)
+        response = await _buffered(self.failing.inner, request)
+        return response.status_code
 
     async def crash(self) -> None:
         assert self.http is not None

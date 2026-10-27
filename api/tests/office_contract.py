@@ -27,6 +27,9 @@ Afspraken voor elke Driver:
 - fail_callbacks(n): de app geeft de volgende n callbacks 503 (een testhaak in de app). Met
   GIVE_UP geeft de editor het op en bewaart hij het document als forgotten file. Een herstart
   van de app vergeet de haak.
+- replay_refused() stuurt de laatste callback die fail_callbacks weigerde nog één keer, precies
+  zoals de editor hem stuurde, en geeft de HTTP-status van de app. Zo komt een oude opslag ná
+  een nieuwere aan (bij een echte editor: de opgenomen body en kop opnieuw posten).
 - crash(): de editor stopt hard (kill, niets opgeslagen) en start daarna leeg weer op, zoals
   een container die herstart. Wat niet opgeslagen was, is weg.
 - restart_app(): de app stopt en start (dezelfde database en blobs; geheugen leeg).
@@ -74,6 +77,8 @@ class Driver(Protocol):
     async def reconnect(self, h: Handle) -> bool: ...
 
     async def fail_callbacks(self, n: int) -> None: ...
+
+    async def replay_refused(self) -> int: ...
 
     async def crash(self) -> None: ...
 
@@ -388,7 +393,8 @@ async def deling_ingetrokken(driver: Driver, app: App) -> None:
 
 
 async def oude_opslag_na_de_laatste(driver: Driver, app: App) -> None:
-    """De eerste tussenstand mislukt eerst en komt later nog eens: de laatste blijft."""
+    """De eerste tussenstand mislukt eerst en komt na de laatste opslag nog eens: de laatste
+    blijft, en er komt geen versie bij."""
     anna, node = await _one_file(app)
     h = await driver.open(anna, node)
     await driver.type(h, "eerste")
@@ -401,6 +407,12 @@ async def oude_opslag_na_de_laatste(driver: Driver, app: App) -> None:
     assert "laatste" in text
     session = await app.session(h.key)
     assert session is not None and session.state == "closed"
+    versions = await app.version_count(node)
+    # De geweigerde tussenstand komt nu pas, na de laatste opslag (de editor hield hem vast)
+    assert await driver.replay_refused() == 200
+    await app.settle()
+    assert "laatste" in await app.paragraphs(node)
+    assert await app.version_count(node) == versions
     await app.recover()
     assert "laatste" in await app.paragraphs(node)
 
