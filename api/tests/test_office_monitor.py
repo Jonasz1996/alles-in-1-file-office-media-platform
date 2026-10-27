@@ -13,7 +13,7 @@ from app.main import app
 from app.models import Blob, Node
 from app.office import health, monitor
 from app.office.state import OfficeState
-from tests.factories import maker
+from tests.factories import code_of, maker
 from tests.fake_docserver import docx
 from tests.office_world import office_world
 
@@ -108,6 +108,30 @@ async def test_versie_onbekend_telt_als_goed():
     assert monitor.version_ok(None)
     assert monitor.version_ok(monitor.PINNED_VERSION)
     assert not monitor.version_ok("9.4.0.1")
+
+
+@pytest.mark.parametrize(("version", "editing"), [("9.4.0.12", False), ("10.1.0.1", True)])
+async def test_onder_10_wordt_er_niet_bewerkt(world, version, editing):
+    """Keuze 1: de app weigert te bewerken bij een DS onder 10.0 (daar komt de limiet van 20
+    verbindingen terug, en de paden van oo/paths.py zijn er niet op gemeten). Omzetten naar PDF
+    blijft gewoon werken. Een andere versie vanaf 10.0 geeft alleen de melding."""
+    anna = await world.user("anna@example.nl")
+    node = await world.docx(anna, None, "verslag.docx", ["Begin"])
+    world.state.version = version
+    r = await world.client.get("/api/v1/office/status", headers=anna.headers)
+    assert (r.json()["enabled"], r.json()["editing"], r.json()["state"]) == (True, editing, "ok")
+    r = await world.client.get(f"/api/v1/office/files/{node}", headers=anna.headers)
+    assert r.json()["can_edit"] is editing
+    assert r.json()["reason"] == (None if editing else "office_down")
+    r = await world.open_config(anna, node)
+    if editing:
+        assert r.status_code == 200, r.text
+        await world.set_session(r.json()["key"], state="closed", closed_reason="lost")
+    else:
+        assert r.status_code == 503 and code_of(r) == "office_misconfigured"
+    r = await world.client.post(f"/api/v1/office/files/{node}/convert", headers=anna.headers)
+    assert r.status_code == 202, r.text
+    assert "office_version" in await codes(world)
 
 
 # --- de tokencontrole en de rest van de gezondheid ---

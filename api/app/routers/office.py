@@ -2,7 +2,8 @@
 
 status mag altijd: de web-app vraagt hem om te weten of Bewerken en Nieuw document er zijn.
 Zonder office-instellingen zegt hij enabled false, state off, en is de app precies fase 3; de
-andere routes geven dan 503 office_off.
+andere routes geven dan 503 office_off. Een DS onder 10.0 (Keuze 1, monitor.too_old) bewerkt
+niet: editing false, en de sessie 503 office_misconfigured; omzetten naar PDF blijft.
 
 files/{id}: mag deze gebruiker dit bestand nu bewerken, en zo niet, waarom niet.
 files/{id}/session: de rechten van Keuze 22, het formaat en de invoercontrole van Keuze 23,
@@ -22,7 +23,7 @@ from app import errors
 from app.config import Settings
 from app.db import Session
 from app.models import Blob, Node, OfficeSession, User
-from app.office import engine, gate, inspect, runtime, sessions, urls
+from app.office import engine, gate, inspect, monitor, runtime, sessions, urls
 from app.office.state import OfficeConfig, OfficeState, office_policy, office_state
 from app.routers.files import ALBUM, get_access, is_trashed
 from app.routers.office_contracts import (
@@ -83,9 +84,8 @@ async def status(user: CurrentUser, request: Request, session: Session) -> Offic
         return OfficeStatus(enabled=False, editing=False, state="misconfigured")
     config = await office_policy(request.app).get(session)
     health = state.health
-    return OfficeStatus(
-        enabled=config.enabled, editing=config.enabled and health == "ok", state=health
-    )
+    editing = config.enabled and health == "ok" and not monitor.too_old(state.version)
+    return OfficeStatus(enabled=config.enabled, editing=editing, state=health)
 
 
 # --- wat mag deze gebruiker met dit bestand ---
@@ -163,7 +163,7 @@ async def office_file(
     reason = await _blocker(session, user, node, found.permission)
     if reason is None and not cfg.enabled:
         reason = "office_off"
-    if reason is None and state.health != "ok":
+    if reason is None and (state.health != "ok" or monitor.too_old(state.version)):
         reason = "office_down"
     if reason is None and _too_many(row, state, user, cfg):
         reason = "too_many"
@@ -210,7 +210,7 @@ async def open_session(
     cfg = await office_policy(app).get(session)
     if not cfg.enabled:
         raise off()
-    if state.health == "misconfigured":
+    if state.health == "misconfigured" or monitor.too_old(state.version):
         raise errors.fail(503, "office_misconfigured", MISCONFIGURED)
     if state.health != "ok":
         raise errors.fail(503, "office_unavailable", UNAVAILABLE)

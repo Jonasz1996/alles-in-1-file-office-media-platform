@@ -160,13 +160,19 @@ def _parts(version: str) -> tuple[int, ...] | None:
         return None
 
 
+def too_old(version: str | None) -> bool:
+    """Onder 10.0 (Keuze 1)? Dan wordt er niet bewerkt (routers/office.py); omzetten blijft. Een
+    onbekende of onleesbare versie telt niet als te oud: die geeft alleen de melding."""
+    parts = _parts(version) if version is not None else None
+    return parts is not None and parts[: len(MINIMUM_VERSION)] < MINIMUM_VERSION
+
+
 def version_ok(version: str | None) -> bool:
     """De vastgepinde versie? Onbekend (nog niet gelezen) telt als goed: dan is er nog
     niets te melden."""
     if version is None:
         return True
-    parts = _parts(version)
-    if parts is None or parts[: len(MINIMUM_VERSION)] < MINIMUM_VERSION:
+    if _parts(version) is None or too_old(version):
         return False
     return version.strip() == PINNED_VERSION
 

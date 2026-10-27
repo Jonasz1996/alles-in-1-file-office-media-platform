@@ -63,7 +63,9 @@ nooit weg. Het vorige image staat er na een update nog, dus terug kan zonder int
 de gewone versie: haal de regel `OFFICE_IMAGE=` weer uit `.env` en draai het script.
 
 Let op: `/beheer` meldt een DS ouder dan 10.0 of een andere versie dan de vastgepinde (melding
-`office_version`). Een oudere DS kan andere grenzen hebben; houd een pin daarom kort.
+`office_version`). Een oudere DS kan andere grenzen hebben; houd een pin daarom kort. Onder 10.0
+kan niemand bewerken (de editor zegt dat hij niet goed ingesteld is); voorbeelden en PDF's komen
+er wel.
 
 ## De app terugrollen
 
