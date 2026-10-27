@@ -220,16 +220,38 @@ export function usePhotoBrowser(o: PhotoBrowserOptions) {
       </Suspense>
     ) : null;
 
-  const openFocused = useCallback(() => {
-    const it = store.item(latest.current.focus);
-    if (it) setViewing(it.id);
-  }, [store, setViewing]);
+  // Enter of Spatie op de cel met de focus. Laadt die cel nog (een plaatshouder: de tijdlijn
+  // tekent de cellen al voordat zijn maand er is), dan zodra de maand er is, als de focus dan
+  // nog op die cel in het raster staat. Anders ging de toets verloren.
+  const withFocused = useCallback(
+    (run: (i: number, it: PhotoItem) => void) => {
+      const i = latest.current.focus;
+      const it = store.item(i);
+      if (it) {
+        run(i, it);
+        return;
+      }
+      const s = sectionOfItem(latest.current.layout, i);
+      if (s < 0) return;
+      store
+        .load(s)
+        .then(() => {
+          const loaded = store.item(i);
+          if (loaded && latest.current.focus === i && inGrid()) run(i, loaded);
+        })
+        .catch(() => {
+          /* de store meldt het al (onError) */
+        });
+    },
+    [store],
+  );
 
-  const toggleFocused = useCallback(() => {
-    const i = latest.current.focus;
-    const it = store.item(i);
-    if (it) setSelection((s) => toggled(s, i, it.id));
-  }, [store]);
+  const openFocused = useCallback(() => withFocused((_, it) => setViewing(it.id)), [withFocused, setViewing]);
+
+  const toggleFocused = useCallback(
+    () => withFocused((i, it) => setSelection((s) => toggled(s, i, it.id))),
+    [withFocused],
+  );
 
   useShortcuts(
     [

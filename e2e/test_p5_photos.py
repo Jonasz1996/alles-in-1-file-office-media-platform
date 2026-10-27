@@ -289,3 +289,50 @@ def test_viewer_blijft_open_als_zijn_maand_verandert(server, library, context_as
     assert viewer.evaluate("(el) => el.dataset.e2eMark") == "zelfde"
     page.keyboard.press("ArrowRight")
     expect(page.get_by_role("dialog", name="erbij.png", exact=True)).to_be_visible()
+
+
+def test_enter_op_een_cel_die_nog_laadt(server, library, context_as):
+    """De tijdlijn tekent de cellen al voordat hun maand er is (een plaatshouder met "Laden…").
+    Enter of Spatie op zo'n cel gaat niet verloren: de viewer opent (of de cel wordt
+    geselecteerd) zodra de maand er is. Eerst deed de toets dan niets, en faalde de test
+    hierboven af en toe. De maanden worden hier vastgehouden tot na de toets."""
+    fien = library["fien"]
+    first = server.call(fien, "GET", "/api/v1/photos", expect=200).json()["items"][0]
+    # page.route met een service worker ziet niet alles (Chrome 156): die staat hier uit
+    context = context_as(fien, service_workers="block")
+    held: list = []
+    holding = True
+
+    def hold(route) -> None:
+        if holding and "/api/v1/photos?" in route.request.url:
+            held.append(route)
+        else:
+            route.continue_()
+
+    context.route("**/api/v1/**", hold)
+    page = context.new_page()
+    page.goto("/fotos")
+    expect(cell(page, 0)).to_have_attribute("aria-label", "Laden…")
+    assert held, "de maanden worden vastgehouden"
+    cell(page, 0).focus()
+    page.keyboard.press("Enter")
+    holding = False
+    for route in held:
+        route.continue_()
+    viewer = page.get_by_role("dialog", name=first["name"], exact=True)
+    expect(viewer).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(viewer).to_have_count(0)
+    expect(cell(page, 0)).to_be_focused()
+
+    # Spatie op een cel die nog laadt: geselecteerd zodra de maand er is
+    holding = True
+    held.clear()
+    page.reload()
+    expect(cell(page, 0)).to_have_attribute("aria-label", "Laden…")
+    cell(page, 0).focus()
+    page.keyboard.press(" ")
+    holding = False
+    for route in held:
+        route.continue_()
+    expect(cell(page, 0)).to_have_attribute("aria-selected", "true")
