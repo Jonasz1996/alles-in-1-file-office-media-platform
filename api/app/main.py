@@ -359,11 +359,6 @@ async def _office_start(app: FastAPI, settings: Settings) -> None:
         log.error("Office staat uit: %s", state.problem)
         return
     state.health = "starting"
-    if settings.office_dev_ungated:
-        log.warning(
-            "PLATFORM_OFFICE_DEV_UNGATED staat aan: /office/ zonder toegangscontrole; "
-            "alleen voor tests"
-        )
     await office_health.start(app)
     await office_sweep.start(app)
     await office_recovery.start(app)
