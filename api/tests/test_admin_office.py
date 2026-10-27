@@ -3,6 +3,7 @@ alleen voor beheerders, de grens en de andere waarden van OfficeConfig (opgeslag
 gebruikt), office uit en weer aan, terugzetten en verwijderen van forgotten files, eigenaar weg,
 mislukte conversies opnieuw en "Nu tussentijds opslaan"."""
 
+import time
 import uuid
 
 import pytest
@@ -257,6 +258,53 @@ async def test_grenzen_van_de_waarden(world, boss, change):
     r = await world.client.put(ADMIN, json=body, headers=boss)
     assert r.status_code == 422 and code_of(r) == "invalid_input"
     assert office_policy(app).config == OfficeConfig()
+
+
+def forcesaves(spy) -> list[dict]:
+    return [params for name, params in spy if name == "forcesave"]
+
+
+async def test_minuten_van_beheer_gelden_in_de_ronde_en_bij_het_opslaan(world, boss):
+    """checkpoint_minutes en version_minutes uit de PUT gebruikt O2 meteen: de klok van de ronde
+    (Keuze 18) en een versie per zoveel minuten in een lange sessie (Keuze 17)."""
+    await put_admin(world, boss, checkpoint_minutes=2, version_minutes=5)
+    anna = await world.user("anna@example.nl")
+
+    # De klok: forcesave na 2 minuten, niet na de standaard 5
+    node = await world.docx(anna, None, "klok.docx", ["Begin"])
+    h = await world.open(anna, node)
+    await world.type(h, "na twee minuten")
+    spy = world.spy()
+    await world.advance(1.9)
+    await world.sweep()
+    assert forcesaves(spy) == []
+    await world.advance(0.2)
+    await world.sweep()
+    assert forcesaves(spy) == [{"key": h.key, "userdata": "timer"}]
+    await world.settle()
+    assert "na twee minuten" in await world.paragraphs(node)
+
+    # De versies: een tweede na 5 minuten in dezelfde sessie, niet na de standaard 30
+    other = await world.docx(anna, None, "lang.docx", ["Begin"])
+    key = await world.begin(anna, other)
+    v0 = await world.version_count(other)
+
+    async def save(paragraphs, at):
+        url = world.stage(key, docx.make_docx(paragraphs))
+        r = await world.callback(world.saved_fields(key, 6, url, [anna], at=at))
+        assert r.status_code == 200 and r.json() == {"error": 0}, r.text
+
+    start = time.time()
+    await save(["een"], start)
+    assert await world.version_count(other) == v0 + 1
+    await world.advance(4.9)
+    await save(["twee"], start + 1)
+    assert await world.version_count(other) == v0 + 1
+    await world.advance(0.2)
+    await save(["drie"], start + 2)
+    assert await world.version_count(other) == v0 + 2
+    assert await world.paragraphs(other) == ["drie"]
+    await world.set_session(key, state="closed", closed_reason="lost")
 
 
 async def test_uit_en_weer_aan(world, boss):
