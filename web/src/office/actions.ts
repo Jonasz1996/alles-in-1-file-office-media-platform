@@ -1,9 +1,11 @@
 // Wanneer "Bewerken" er is (formaat, schrijfrecht, office aan), voor de haak in
-// browser/actions.ts en de knop in de viewer (Keuze 22, 23 en 32).
+// browser/actions.ts en de knop in de viewer (Keuze 22, 23 en 32). Van O2; de vorm (een
+// HookState, en openEditor naar /bewerken/<id>) is die van O0.
 //
-// Van O2. O0 zet dit als stub met de vaste vorm: canEdit() geeft een HookState, openEditor()
-// gaat naar de editorpagina (zolang O2 die niet heeft, zegt die "nog niet klaar"). O2 maakt de
-// regels af; de haken blijven zo.
+// Verborgen: office uit of onbekend, geen bestand (map, album), een eerdere versie, een ander
+// formaat dan de server bewerkt, of alleen leesrecht. Zichtbaar maar nu niet te doen (met de
+// reden): in de prullenbak, te groot, of de editor is er nu niet (DS weg of verkeerd ingesteld).
+// Wat alleen de server weet (de invoercontrole, te veel editors), zegt het openen zelf.
 
 import { canWrite, permissionOf } from "../sharing";
 import { navigate } from "../router";
