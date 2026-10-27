@@ -72,6 +72,26 @@ describe("canPdf (de actie in de lijst en de knop in de viewer)", () => {
 
   it("ook met office uit op /beheer: uit stopt alleen nieuwe PDF's, de server beslist", () => {
     expect(canPdf(target("a.docx"), { ...on, enabled: false, editing: false })).toEqual({ visible: true, reason: null });
+    // Uit op /beheer terwijl DS start of weg is: een PDF die er al is, werkt dan ook
+    for (const state of ["starting", "down"] as const) {
+      expect(canPdf(target("a.docx"), { ...on, enabled: false, editing: false, state })).toEqual({
+        visible: true,
+        reason: null,
+      });
+    }
+  });
+
+  it("met een adres maar zonder werkende instellingen: niet te zien, elke klik gaf 503 office_off", () => {
+    // Wat office/status zegt met PLATFORM_OFFICE_URL maar zonder motor (o5.md afwijking 9)
+    expect(canPdf(target("a.docx"), { ...on, enabled: false, editing: false, state: "misconfigured" })).toEqual({
+      visible: false,
+      reason: null,
+    });
+    // Aan op /beheer en DS weigert ons token: een PDF die er al is, werkt wel
+    expect(canPdf(target("a.docx"), { ...on, editing: false, state: "misconfigured" })).toEqual({
+      visible: true,
+      reason: null,
+    });
   });
 
   it("met leesrecht ook: downloaden mag wie mag lezen", () => {

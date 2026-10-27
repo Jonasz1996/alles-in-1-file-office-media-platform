@@ -8,6 +8,13 @@
 // staat, beslist de server: een PDF die er al is, werkt ook dan (uit stopt alleen nieuwe). Is de
 // PDF er nog niet, dan zet de server hem eerst om (hooguit een minuut); duurt het even, dan zegt
 // een melding "De PDF wordt gemaakt…".
+//
+// Niet te zien met een adres maar zonder werkende instellingen (enabled onwaar en state
+// "misconfigured", o5.md afwijking 9): dan heeft de server geen motor en geeft elke klik 503
+// office_off, ook voor een PDF die er al is. Met office aan en een DS die ons token weigert
+// (enabled waar, state "misconfigured") blijft de actie: een PDF die er al is, werkt dan wel.
+// Staat office dan ook nog uit op /beheer, dan is het antwoord hetzelfde als zonder motor, en is
+// de actie ook weg (de status houdt die twee niet uit elkaar; o5.md afwijking 19).
 
 import { loadAreas, t } from "../i18n";
 import { toast } from "../ui/toast";
@@ -57,6 +64,7 @@ export function pdfName(name: string): string {
 /** Is "Downloaden als PDF" er voor dit bestand, en kan het nu? */
 export function canPdf(target: OfficeTarget, status: OfficeStatus | null): HookState {
   if (!status || status.state === "off") return HIDDEN;
+  if (!status.enabled && status.state === "misconfigured") return HIDDEN;
   if (target.kind !== undefined && target.kind !== "file") return HIDDEN;
   if (target.version) return HIDDEN;
   if (!convertible(target.name)) return HIDDEN;
