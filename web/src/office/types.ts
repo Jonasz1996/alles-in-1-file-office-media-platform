@@ -136,6 +136,8 @@ export interface OfficeOpenDocument {
   owner: string;
   editors: string[];
   since: string;
+  /** pending, open of saving; pending en saving houden de conversies tegen */
+  state?: "pending" | "open" | "saving" | null;
 }
 
 export interface OfficeUnsaved {
@@ -166,6 +168,9 @@ export interface OfficeAdmin {
   /** De controle zonder token (Keuze 28) */
   tokens_enforced: boolean | null;
   max_editors: number;
+  /** De andere twee waarden van OfficeConfig, voor het formulier */
+  checkpoint_minutes: number;
+  version_minutes: number;
   connections: number;
   people: number;
   documents: number;

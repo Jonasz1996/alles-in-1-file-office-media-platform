@@ -135,6 +135,9 @@ class OfficeOpenDocument(BaseModel):
     owner: str
     editors: list[str]
     since: str
+    # pending (een config uitgegeven, nog niemand verbonden), open of saving; pending en saving
+    # houden de conversies tegen (sessions.busy), dus /beheer laat ze zien
+    state: Literal["pending", "open", "saving"] | None = None
 
 
 class OfficeUnsaved(BaseModel):
@@ -164,6 +167,9 @@ class OfficeAdmin(BaseModel):
     license_connections: int | None = None
     tokens_enforced: bool | None = None
     max_editors: int
+    # De andere twee waarden van OfficeConfig, zodat het formulier op /beheer ze kan tonen
+    checkpoint_minutes: int = 5
+    version_minutes: int = 30
     connections: int
     people: int
     documents: int
