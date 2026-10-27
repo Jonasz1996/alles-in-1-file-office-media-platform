@@ -433,6 +433,213 @@ async def test_conversie_zonder_token_geeft_min_8():
         assert r.json()["error"] != -8
 
 
+# --- conversie (O3): /converter zoals gemeten (recorded/convert.json) ---
+
+
+def converter_app(side: "AppSide") -> tuple[FakeConfig, httpx.AsyncClient, FastAPI]:
+    config = FakeConfig(secret=secret(), transport=httpx.ASGITransport(app=side.app))
+    client, app = asgi_client(config)
+    return config, client, app
+
+
+async def convert_call(client, config, **params) -> dict:
+    """Een getekend verzoek zoals oo/convert.py het stuurt (Accept: application/json)."""
+    params = {"async": False, "filetype": "docx", "outputtype": "pdf", "title": "document.docx",
+              "url": f"{APP}/internal/office/doc/proef.docx", **params}  # fmt: skip
+    body = {**params, "token": protocol.sign(config.secret, params, 300)}
+    r = await client.post(
+        "/converter", params={"shardkey": params["key"]}, json=body,
+        headers={"Accept": "application/json"},
+    )  # fmt: skip
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def pdf_page_count(data: bytes) -> int:
+    import pypdfium2
+
+    document = pypdfium2.PdfDocument(data)
+    try:
+        return len(document)
+    finally:
+        document.close()
+
+
+@pytest.mark.anyio
+async def test_conversie_zoals_gemeten():
+    import re
+
+    side = AppSide()
+    side.files["proef.docx"] = docx.make_docx(["Een"])
+    rec = recorded("convert")
+    config, client, app = converter_app(side)
+    async with client:
+        # async false: meteen het resultaat, met dezelfde velden als de echte
+        answer = await convert_call(client, config, key="k-sync")
+        assert keys_of(answer) == keys_of(rec["sync_ok"]["antwoord"])
+        assert (answer["fileType"], answer["percent"], answer["endConvert"]) == ("pdf", 100, True)
+        url = httpx.URL(answer["fileUrl"])
+        assert re.fullmatch(r"/cache/files/data/conv_k-sync_\d+/output\.pdf/document\.pdf",
+                            url.path)  # fmt: skip
+        query = dict(url.params)
+        assert set(query) == {"md5", "expires", "shardkey", "filename"}
+        assert query["shardkey"] == "k-sync" and query["filename"] == "document.pdf"
+        # async true: eerst "nog bezig", daarna hetzelfde soort antwoord
+        first = await convert_call(client, config, key="k-async", **{"async": True})
+        assert first == rec["async_first"]["antwoord"]
+        for _ in range(100):
+            later = await convert_call(client, config, key="k-async", **{"async": True})
+            if later.get("endConvert"):
+                break
+            assert later == rec["async_polls"][0]["antwoord"]
+            await asyncio.sleep(0.01)
+        assert keys_of(later) == keys_of(rec["async_polls"][-1]["antwoord"])
+        # De uitvoer: een PDF achter een secure link
+        r = await client.get(answer["fileUrl"])
+        assert r.status_code == 200 and r.content.startswith(b"%PDF-")
+        assert pdf_page_count(r.content) == 1
+        assert (await client.get(answer["fileUrl"].replace("md5=", "md5=x"))).status_code == 403
+        # De bron: met het download-JWT voor precies dat adres en Want-Repr-Digest
+        [download] = [d for d in side.downloads if d["name"] == "proef.docx"][:1]
+        headers = download["headers"]
+        claims = protocol.decode(config.secret, headers["authorization"].removeprefix("Bearer "))
+        assert claims["payload"]["url"] == f"{APP}/internal/office/doc/proef.docx"
+        assert headers["want-repr-digest"] == "sha-256=10"
+        kinds = [e["kind"] for e in app.state.fake.entries]
+        assert "convert_source" in kinds and "convert_file" in kinds
+
+
+@pytest.mark.anyio
+async def test_conversie_bron_en_digest_zoals_gemeten():
+    import base64
+    import hashlib
+
+    side = AppSide()
+    data = docx.make_docx(["Een"])
+    side.files["proef.docx"] = data
+    rec = recorded("convert")
+    config, client, _ = converter_app(side)
+    async with client:
+        # Zonder Repr-Digest: gewoon (digest_none)
+        assert keys_of(await convert_call(client, config, key="k1")) == keys_of(
+            rec["digest_none"]["antwoord"]
+        )
+        # Een Repr-Digest die klopt: ook (digest_ok); een die niet klopt: -4 (digest_bad)
+        good = base64.b64encode(hashlib.sha256(data).digest()).decode()
+        side.digest["proef.docx"] = f"sha-256=:{good}:"
+        assert "fileUrl" in await convert_call(client, config, key="k2")
+        side.digest["proef.docx"] = "sha-256=:" + "A" * 43 + "=:"
+        assert await convert_call(client, config, key="k3") == rec["digest_bad"]["antwoord"]
+        # Geen 200 bij het ophalen: -4 (download_404)
+        answer = await convert_call(
+            client, config, key="k4", url=f"{APP}/internal/office/doc/weg.docx"
+        )
+        assert answer == rec["download_404"]["antwoord"]
+        # Een adres dat niet eens een adres is: ook -4
+        assert await convert_call(client, config, key="k5", url="x") == {"error": -4}
+        # Alleen naar PDF
+        assert await convert_call(client, config, key="k6", outputtype="doc") == {"error": -3}
+        answer = await convert_call(client, config, key="k7", filetype="pptx", outputtype="ppt")
+        assert answer == {"error": -7}
+
+
+@pytest.mark.anyio
+async def test_dezelfde_key_geeft_hetzelfde_resultaat():
+    """Zoals de echte: dezelfde key geeft het antwoord van de eerste keer, ook voor een andere
+    bron, en ook als dat een fout was. Een kill of restart maakt het geheugen leeg."""
+    side = AppSide()
+    side.files["een.docx"] = docx.make_docx(["Een"])
+    pages = (
+        '<w:p><w:r><w:t>a</w:t></w:r></w:p><w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+        '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+    )
+    side.files["drie.docx"] = _docx_with_body(pages)
+    config, client, app = converter_app(side)
+    fake = app.state.fake
+    async with client:
+        first = await convert_call(
+            client, config, key="k", url=f"{APP}/internal/office/doc/een.docx"
+        )
+        again = await convert_call(
+            client, config, key="k", url=f"{APP}/internal/office/doc/drie.docx"
+        )
+        assert again == first
+        assert pdf_page_count((await client.get(first["fileUrl"])).content) == 1
+        other = await convert_call(
+            client, config, key="k-ander", url=f"{APP}/internal/office/doc/drie.docx"
+        )
+        assert pdf_page_count((await client.get(other["fileUrl"])).content) == 3
+        # Een fout blijft ook bij de key
+        await client.post("/__fake/convert", json={"fail": [-3]})
+        assert await convert_call(client, config, key="k-fout") == {"error": -3}
+        assert await convert_call(client, config, key="k-fout") == {"error": -3}
+        assert fake.conversions.config()["fail"] == []
+        # Een kill of restart: alles vergeten
+        await client.post("/__fake/restart")
+        assert fake.conversions.cache == {}
+        answer = await convert_call(
+            client, config, key="k-fout", url=f"{APP}/internal/office/doc/een.docx"
+        )
+        assert "fileUrl" in answer
+
+
+def _docx_with_body(body: str) -> bytes:
+    data = docx.make_docx(["Een"])
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(out, "w") as target:
+        for info in source.infolist():
+            content = source.read(info)
+            if info.filename == "word/document.xml":
+                content = content.replace(b"</w:body>", body.encode() + b"</w:body>")
+            target.writestr(info, content)
+    return out.getvalue()
+
+
+@pytest.mark.anyio
+async def test_conversie_sturen():
+    side = AppSide()
+    side.files["proef.docx"] = docx.make_docx(["Een"])
+    config, client, app = converter_app(side)
+    async with client:
+        r = await client.post("/__fake/convert", json={"pages": 4, "polls": 3})
+        assert r.json()["pages"] == 4 and r.json()["polls"] == 3
+        answer = await convert_call(client, config, key="k1")
+        assert pdf_page_count((await client.get(answer["fileUrl"])).content) == 4
+        # Een andere host in fileUrl, een map van een andere key, geen PDF
+        await client.post("/__fake/convert", json={"host": "elders:9", "pages": None})
+        answer = await convert_call(client, config, key="k2")
+        assert httpx.URL(answer["fileUrl"]).host == "elders"
+        await client.post("/__fake/convert", json={"host": None, "wrong_key": True})
+        answer = await convert_call(client, config, key="k3")
+        assert "/conv_ander_" in answer["fileUrl"]
+        await client.post("/__fake/convert", json={"wrong_key": False, "not_pdf": True})
+        answer = await convert_call(client, config, key="k4")
+        assert not (await client.get(answer["fileUrl"])).content.startswith(b"%PDF")
+        # -5 (een wachtwoord) en weer alles terug
+        await client.post("/__fake/convert", json={"fail": [-5]})
+        assert await convert_call(client, config, key="k5") == {"error": -5}
+        r = await client.post("/__fake/convert", json={"reset": True})
+        assert r.json()["keys"] == [] and r.json()["not_pdf"] is False
+        # hold: de conversie wacht (na het ophalen van de bron) tot hold weer uit gaat
+        await client.post("/__fake/convert", json={"hold": True})
+        first = await convert_call(client, config, key="k6", **{"async": True})
+        assert first["endConvert"] is False
+        await asyncio.sleep(0.05)
+        assert (await convert_call(client, config, key="k6", **{"async": True}))[
+            "endConvert"
+        ] is False
+        await client.post("/__fake/convert", json={"hold": False})
+        for _ in range(100):
+            later = await convert_call(client, config, key="k6", **{"async": True})
+            if later.get("endConvert"):
+                break
+            await asyncio.sleep(0.01)
+        assert "fileUrl" in later
+        # De log: zonder geheimen
+        log = json.dumps(app.state.fake.entries)
+        assert "eyJ" not in log and app.state.fake.link_secret not in log
+
+
 @pytest.mark.anyio
 async def test_kill_en_restart_zonder_socket():
     client, app = asgi_client(FakeConfig(secret=secret()))
