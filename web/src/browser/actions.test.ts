@@ -226,9 +226,13 @@ describe("de haken van office (fase 4)", () => {
     expect(availability(action("edit"), [doc], env).reason).toMatch(/niet bereikbaar/);
   });
 
-  it("de PDF-haak blijft in O0 verborgen (O3 vult hem)", () => {
+  it("de PDF-haak (O3): één bestand dat de editor omzet, in de groep omzetten vlak voor de prullenbak", () => {
     officeStatus.set(on);
-    expect(availability(action("pdf"), [doc], env).visible).toBe(false);
+    expect(availability(action("pdf"), [doc], env)).toEqual({ visible: true, enabled: true });
+    expect(availability(action("pdf"), [fileNode({ id: "x", name: "notities.txt" })], env).visible).toBe(false);
+    expect(availability(action("pdf"), [doc, fileNode({ id: "b", name: "b.docx" })], env).visible).toBe(false);
+    const ids = actionMenuItems([doc], env, () => {}).map((i) => i.id);
+    expect(ids.indexOf("pdf")).toBe(ids.indexOf("trash") - 1);
   });
 
   it("een andere status: wie het register toont, hoort het", () => {
