@@ -5,8 +5,9 @@ Punt 10 van §4.4 tegen de echte DS: de editorpagina als pagina is 404 (zonder e
 ook als de browser hem net in de iframe had, en met de service worker die de editor zet: die
 is van de app, niet van DS);
 zonder cookie geen DATA-pad en geen upgrade; een socket op het pad van key A met het token van
-key B gaat dicht na het eerste pakket; en na het intrekken van de deling lukt een nieuwe socket
-met het oude sessietoken niet (geweigerd bij de upgrade).
+key B gaat dicht na het eerste pakket, en ook een tweede auth-bericht over key B op een socket
+die al goed open is op A; en na het intrekken van de deling lukt een nieuwe socket met het oude
+sessietoken niet (geweigerd bij de upgrade).
 
 Draait in de job office van CI, en lokaal zo (docs/fase-4/e2e.md):
 
@@ -33,6 +34,7 @@ import httpx
 import pytest
 from playwright.sync_api import expect
 
+from app.office.oo import stream
 from app.office.oo.paths import OWN_SERVICE_WORKER
 from conftest import Browsers
 from office_harness import Office, fixture, type_in_editor
@@ -77,6 +79,47 @@ def with_token(packet: dict, token: str) -> str:
         data["jwtOpen"] = token
         data.pop("jwtSession", None)
     return "40" + json.dumps(out, separators=(",", ":"))
+
+
+def editor_auth(opened: Opened) -> dict:
+    """Het eerste auth-bericht dat de echte editor zelf stuurde."""
+    for raw in opened.sent:
+        if raw.startswith('42["message",{"type":"auth"'):
+            return json.loads(raw[2:])[1]
+    raise AssertionError(f"geen auth-bericht van de editor in {len(opened.sent)} frames")
+
+
+# Een socket vanuit de pagina die stap voor stap stuurt: steps is een lijst [begin, bericht];
+# komt er een frame dat zo begint, dan gaat het volgende bericht weg. Een ping van engine.io
+# krijgt een pong. Geeft {opened, frames, code, sent}.
+STEPS_JS = r"""
+([path, steps, wait]) => new Promise((resolve) => {
+  const scheme = location.protocol === "https:" ? "wss://" : "ws://";
+  const out = { opened: false, frames: [], code: null, sent: 0 };
+  const sock = new WebSocket(scheme + location.host + path);
+  const timer = setTimeout(() => {
+    out.code = "wacht";
+    sock.close();
+    resolve(out);
+  }, wait);
+  sock.onopen = () => { out.opened = true; };
+  sock.onmessage = (ev) => {
+    const text = String(ev.data);
+    out.frames.push(text);
+    if (text === "2") sock.send("3");
+    const step = steps[out.sent];
+    if (step && text.startsWith(step[0])) {
+      sock.send(step[1]);
+      out.sent += 1;
+    }
+  };
+  sock.onclose = (ev) => {
+    clearTimeout(timer);
+    out.code = ev.code;
+    resolve(out);
+  };
+})
+"""
 
 
 OFFICE_WORKERS = """async () => {
@@ -163,6 +206,63 @@ def test_afscherming_met_de_echte_ds(real_office: Office, real_browsers) -> None
     assert r.status == 401 and gate_code(r) == "office_gate"
     me = uid(office, d.bram)
     wait_until(lambda: me not in info_users(office, bram.key), 30, "Bram niet meer bij DS")
+    for node in (d.node, other):
+        wait_until(lambda n=node: session_closed(office, d.anna, n), 60, "de sessie dicht")
+
+
+def test_een_tweede_auth_over_een_andere_key_gaat_dicht(real_office: Office, real_browsers) -> None:
+    """Spike, open punt 2 (gemeten): DS verhuist een levende verbinding naar de key van een
+    nieuw auth-bericht; daarna leest en schrijft die verbinding in het andere document. Bram
+    had het sessietoken van B (hij zat er eerder in) en is weer weg; Anna werkt in B. Op een
+    socket die goed open is op A (CONNECT en auth van zijn eigen editor, en het antwoord van DS)
+    stuurt hij een tweede auth over B met dat token: de tunnel gaat dicht voordat DS het heeft,
+    en DS rekent hem niet bij B."""
+    office = real_office
+    d = duo(office)
+    other = office.server.call(
+        d.anna,
+        "PUT",
+        f"/api/v1/files/{d.folder}/upload",
+        params={"name": "ander.docx"},
+        content=fixture("proef.docx"),
+        expect=201,
+    ).json()["id"]
+    anna = open_editor_page(login(real_browsers, d.anna), other, wait=ready)
+    context = login(real_browsers, d.bram)
+    bram = open_editor_page(context, d.node, wait=ready)
+    earlier = open_editor_page(context, other, wait=ready)
+    assert earlier.key == anna.key != bram.key
+    token = session_token(office, earlier)
+    second = editor_auth(earlier)
+    second.pop("openCmd", None)
+    second.pop("jwtOpen", None)
+    second["jwtSession"] = token
+    earlier.page.get_by_role("button", name="Sluiten", exact=True).click()
+    expect(earlier.page).to_have_url(re.compile(rf"/map/{d.folder}$"))
+    me = uid(office, d.bram)
+    wait_until(lambda: me not in info_users(office, anna.key), 30, "Bram niet meer in B")
+    expect(anna.page.locator(".editor-status")).to_have_text("Bewerken", timeout=30_000)
+
+    steps = [
+        ["0{", "40" + json.dumps(editor_connect(bram))],
+        ["40{", '42["message",' + json.dumps(editor_auth(bram)) + "]"],
+        ['42["message",{"type":"auth"', '42["message",' + json.dumps(second) + "]"],
+    ]
+    path = socket_path(bram.version(), bram.key)
+    out = bram.page.evaluate(STEPS_JS, [path, steps, 15_000])
+    replies = [f for f in out["frames"] if f.startswith('42["message",{"type":"auth"')]
+    assert out["opened"] is True and out["sent"] == 3, out["frames"][:6]
+    assert len(replies) == 1, replies  # alleen het antwoord over A: met een sessietoken van A
+    reply = json.loads(replies[0][2:])[1]
+    assert stream.token_key(office.settings(), reply["jwt"], session_only=True) == bram.key
+    assert out["code"] == 1006, out["code"]
+    bram.page.wait_for_timeout(3000)  # DS heeft de tijd gehad
+    assert me not in info_users(office, anna.key)
+    assert anna.page.locator(".editor-status").text_content() == "Bewerken"
+
+    for opened in (anna, bram):
+        opened.page.get_by_role("button", name="Sluiten", exact=True).click()
+        expect(opened.page).to_have_url(re.compile(rf"/map/{d.folder}$"))
     for node in (d.node, other):
         wait_until(lambda n=node: session_closed(office, d.anna, n), 60, "de sessie dicht")
 

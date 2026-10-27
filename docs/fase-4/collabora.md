@@ -66,7 +66,7 @@ dezelfde rol. Per methode van `Engine`:
 | `Engine` | OnlyOffice (`oo/`) | Collabora (`cool/`) |
 |---|---|---|
 | `classify`, `session_key` | `oo/paths.py`: het padbeleid van `/office/` | `cool/paths.py`: `/office/browser/<hash>/cool.html`, de websocket `/office/cool/<WOPISrc>/ws`, statische bestanden; altijd geweigerd: `/cool/convert-to`, `/cool/adminws`, `/browser/dist/admin/` |
-| `stream_guard` | `oo/stream.py`: het eerste socketpakket | het eerste bericht op de websocket noemt de WOPISrc; die moet bij de key van de sessie horen |
+| `stream_guard` | `oo/stream.py`: het eerste socketpakket, en daarna elk nieuw `auth`-bericht (o1.md, afwijking 18) | het eerste bericht op de websocket noemt de WOPISrc; die moet bij de key van de sessie horen. De wacht krijgt de hele stroom: kan een later bericht een ander document openen, dan controleert hij dat ook |
 | `action_authorization` | uploads van de editor (`upload/<key>`) | geen: alles gaat via WOPI |
 | `editor_config` | `oo/editor.py`: de getekende config | de `urlsrc` uit discovery plus `access_token` en `access_token_ttl` (een formulier, geen JWT) |
 | `read_callback`, `callback_reply` | de callbacks van DS | geen callbacks: een nieuwe router `routers/wopi.py` roept bij PutFile het recept van `saving.py` aan. `callback_reply` wordt de vertaling naar HTTP: 200, 409 met 1010, 413 |

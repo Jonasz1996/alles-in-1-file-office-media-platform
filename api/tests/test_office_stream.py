@@ -1,10 +1,14 @@
 """De StreamGuard (oo/stream.py, spike stap 12, A1): het CONNECT-pakket en het eerste
-auth-bericht van de browser, als gemaskeerde WebSocket-frames, eventueel in stukken.
+auth-bericht van de browser, als gemaskeerde WebSocket-frames, eventueel in stukken, en daarna
+de rest van de stroom.
 
 Een token van key A op het pad van A gaat door; een token van key B op het pad van A, of een
 token met een ander geheim, gaat dicht; het sessietoken van DS (de afgeleide sleutel) gaat door;
-te groot of te traag dicht; frames in stukken en in fragmenten gaan door."""
+te groot of te traag dicht; frames in stukken en in fragmenten gaan door. Na de opening leest
+hij mee: gewoon verkeer gaat door, ook groot en binair, maar een nieuw auth-bericht of CONNECT
+over een andere key gaat dicht (DS verhuist een levende verbinding anders naar die key)."""
 
+import base64
 import json
 import os
 import secrets
@@ -55,7 +59,17 @@ def frame(
     if not masked:
         return head + data
     mask = os.urandom(4)
-    return head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+    return head + mask + xor(data, mask)
+
+
+def xor(data: bytes, mask: bytes) -> bytes:
+    """Het masker over de inhoud (RFC 6455, 5.3), los van de code van de wacht; groot in één
+    keer als getal."""
+    n = len(data)
+    if n < 4096:
+        return bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+    pad = (mask * (n // 4 + 1))[:n]
+    return (int.from_bytes(data, "little") ^ int.from_bytes(pad, "little")).to_bytes(n, "little")
 
 
 def config(settings: Settings, key: str = KEY, **extra) -> dict:
@@ -99,8 +113,9 @@ def test_eerste_verbinding_met_het_config_token(settings):
     connect, auth = opening(cfg)
     guard = stream.Guard(settings, KEY)
     assert run(guard, frame(connect), frame("3"), frame(auth)) == ["more", "more", "ok"]
-    # Daarna leest hij niets meer: wat er ook komt, het gaat door
-    assert guard.feed(b"\x00\x01kapot") == "ok"
+    # Daarna leest hij mee: gewoon verkeer gaat door, iets dat geen frame is niet
+    assert guard.feed(frame('42["message",{"type":"cursor","cursor":"1"}]')) == "ok"
+    assert guard.feed(b"\x00\x01kapot") == "deny"
 
 
 def test_herverbinden_met_het_sessietoken_van_ds(settings):
@@ -340,3 +355,182 @@ def test_token_key(settings):
     no_doc = jwt.encode({"exp": int(time.time()) + 60}, settings.office_secret)
     assert stream.token_key(settings, no_doc) is None
     assert stream.token_key(settings, None) is None
+
+
+# --- na de opening: meelezen (spike, open punt 2) ---
+
+
+def opened_guard(settings: Settings) -> stream.Guard:
+    """Een wacht na een goede opening over KEY (CONNECT en auth met het config-token)."""
+    connect, auth = opening(config(settings))
+    guard = stream.Guard(settings, KEY)
+    assert run(guard, frame(connect), frame(auth)) == ["more", "ok"]
+    return guard
+
+
+def message(data: dict, head: str = "42") -> str:
+    return head + '["message",' + json.dumps(data) + "]"
+
+
+def save_changes(size: int) -> str:
+    """Een saveChanges zoals de editor hem stuurt: de wijzigingen als JSON in een string, elk
+    "lengte;base64" (zonder aanhalingstekens of \\u)."""
+    change = f"{size};" + base64.b64encode(os.urandom(size * 3 // 4)).decode()
+    return message(
+        {
+            "type": "saveChanges",
+            "changes": json.dumps([change]),
+            "startSaveChanges": True,
+            "endSaveChanges": True,
+            "isCoAuthoring": True,
+            "isExcel": False,
+            "deleteIndex": None,
+            "excelAdditionalInfo": None,
+            "unlock": False,
+            "releaseLocks": False,
+        }
+    )
+
+
+def chunks(data: bytes, size: int) -> list[bytes]:
+    return [data[i : i + size] for i in range(0, len(data), size)]
+
+
+def other_auth(settings: Settings, **swaps) -> dict:
+    """Het auth-bericht van een herverbinding over OTHER, met het sessietoken van DS voor OTHER
+    (wat iemand overhoudt die eerder in OTHER zat; M14: 30 dagen geldig)."""
+    editor = EditorClient("ws://x", config(settings, OTHER))
+    editor.session = session_token(settings, OTHER)
+    data = editor._auth(False)
+    data.update(swaps)
+    return data
+
+
+def test_na_de_opening_gaat_gewoon_verkeer_door(settings, monkeypatch):
+    """Alles wat de editor na de opening stuurt, gaat door: ping en pong, berichten, een groot
+    saveChanges in stukken, in fragmenten en in één frame, binaire frames, 41, en een nieuwe
+    auth over dezelfde key. Zonder tijd- of totaalgrens."""
+    now = [1000.0]
+    monkeypatch.setattr(stream, "clock", lambda: now[0])
+    guard = opened_guard(settings)
+    now[0] += stream.SECONDS * 10
+    small = [
+        "2",
+        "3",
+        '42["message",{"type":"cursor","cursor":"1;2;3"}]',
+        message({"type": "message", "messages": [{"message": 'zei "auth" en \\u0041'}]}),
+        message({"type": "getLock", "block": [{"guid": "x", "type": 1}]}),
+        message({"type": "isSaveLock"}),
+        message({"type": "clientLog", "level": "log", "msg": "author"}),
+        save_changes(200),
+        '42["other",{"type":"auth","docid":"' + OTHER + '"}]',  # geen "message": DS leest het niet
+        "43[]",
+    ]
+    assert run(guard, *(frame(text) for text in small)) == ["ok"] * len(small)
+    assert guard.feed(frame(b"", 0x9) + frame(b"", 0xA)) == "ok"
+    # Groot: 1 MB in stukken die niet op 4 bytes vallen (het masker loopt door)
+    big = frame(save_changes(1024 * 1024))
+    assert set(run(guard, *chunks(big, 60_001))) == {"ok"}
+    # 5 MB in één frame, en in fragmenten van 100 KB met een ping ertussen
+    assert set(run(guard, *chunks(frame(save_changes(5 * 1024 * 1024)), 256 * 1024))) == {"ok"}
+    raw = save_changes(1024 * 1024).encode()
+    parts = chunks(raw, 100_000)
+    pieces = [frame(parts[0], 0x1, fin=False), frame(b"p", 0x9)]
+    pieces += [frame(part, 0x0, fin=False) for part in parts[1:-1]]
+    pieces.append(frame(parts[-1], 0x0))
+    assert run(guard, *pieces) == ["ok"] * len(pieces)
+    # Binair (binaryChanges van DS): het event met een plaatshouder, dan de bijlage, ook in
+    # fragmenten; de bijlage leest hij niet
+    binary_event = (
+        '451-["message",{"type":"saveChanges","changes":[{"_placeholder":true,"num":0}]}]'
+    )
+    attachment = b'"auth"\\u' + os.urandom(100_000)
+    assert (
+        run(
+            guard,
+            frame(binary_event),
+            frame(attachment, 0x2),
+            frame(attachment[:10], 0x2, fin=False),
+            frame(attachment[10:], 0x0),
+        )
+        == ["ok"] * 4
+    )
+    # Een nieuwe auth over dezelfde key (met het sessietoken van DS) en 41
+    _, again = opening(config(settings), session=session_token(settings))
+    assert run(guard, frame(again), frame("41")) == ["ok", "ok"]
+    assert guard.feed(frame("2") * 20_000) == "ok"  # samen ver boven LIMIT
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "andere key met zijn sessietoken",
+        "andere key met zijn config-token",
+        "eigen docid met het token van een andere key",
+        "zonder token",
+        "met een ack-id",
+        "met een namespace",
+        "binair event",
+        "type met een escape",
+        "type twee keer",
+        "bericht als string",
+        "nieuwe CONNECT na 41",
+        "groot met opvulling",
+        "groot met een escape",
+        "groot zonder event-kop",
+        "geen json",
+    ],
+)
+def test_een_tweede_auth_over_een_andere_key_gaat_dicht(settings, case):
+    """Gemeten met de echte DS (spike, open punt 2): een tweede auth-bericht op een levende
+    verbinding verhuist die verbinding naar de key van dat bericht. Dus: elk nieuw auth-bericht
+    of CONNECT moet over de key van het pad gaan, met kloppende tokens, in welke vorm ook."""
+    auth = other_auth(settings)
+    text = {
+        "andere key met zijn sessietoken": lambda: message(auth),
+        "andere key met zijn config-token": lambda: opening(config(settings, OTHER))[1],
+        "eigen docid met het token van een andere key": lambda: message(
+            other_auth(settings, docid=KEY)
+        ),
+        "zonder token": lambda: message(
+            {k: v for k, v in other_auth(settings, docid=KEY).items() if k != "jwtSession"}
+        ),
+        "met een ack-id": lambda: message(auth, "4217"),
+        "met een namespace": lambda: message(auth, "42/,"),
+        "binair event": lambda: message(auth, "451-"),
+        "type met een escape": lambda: message(auth).replace('"auth"', '"\\u0061uth"', 1),
+        "type twee keer": lambda: (
+            '42["message",' + json.dumps({**auth, "type": "cursor"})[:-1] + ', "type": "auth"}]'
+        ),
+        "bericht als string": lambda: '42["message",' + json.dumps(json.dumps(auth)) + "]",
+        "nieuwe CONNECT na 41": lambda: (
+            "40" + json.dumps({"data": auth, "session": auth["jwtSession"]})
+        ),
+        "groot met opvulling": lambda: message({**auth, "pad": "x" * (2 * stream.LIMIT)}),
+        "groot met een escape": lambda: message({"pad": "x" * (2 * stream.LIMIT), **auth}).replace(
+            '"auth"', '"\\u0061uth"', 1
+        ),
+        "groot zonder event-kop": lambda: "40" + "x" * (2 * stream.LIMIT),
+        "geen json": lambda: '42["message",{"type":"auth"',
+    }[case]()
+    guard = opened_guard(settings)
+    if case == "nieuwe CONNECT na 41":
+        assert guard.feed(frame("41")) == "ok"
+    data = frame(text)
+    # Wat vóór de laatste byte zit, mag door; het stuk met de laatste byte niet (DS krijgt het
+    # bericht nooit compleet). Groot: in stukken, de wacht zegt het al eerder
+    verdicts = run(guard, *chunks(data[:-1], 50_001), data[-1:])
+    assert verdicts[-1] == "deny", (case, verdicts)
+    assert guard.feed(frame("2")) == "deny"  # blijft dicht
+
+
+@pytest.mark.parametrize(("word", "first"), [('"auth"', 5), ("\\u0061", 1)])
+def test_een_groot_bericht_met_auth_op_de_grens_van_twee_stukken(settings, word, first):
+    """Een groot bericht wordt in stukken doorzocht; wat over de grens van twee stukken valt,
+    telt ook (het eind van het vorige stuk gaat mee). first: zoveel bytes van het woord in het
+    eerste stuk ("auth" met aanhalingstekens tot op de laatste byte, \\u tussen \\ en u)."""
+    text = '42["message",{"pad":"' + "x" * (2 * stream.LIMIT) + '","type":' + word + "}]"
+    data = frame(text)
+    at = len(data) - len(text) + text.index(word) + first
+    guard = opened_guard(settings)
+    assert run(guard, data[:at], data[at:-1], data[-1:]) == ["ok", "deny", "deny"]

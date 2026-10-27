@@ -16,6 +16,7 @@ import contextlib
 import dataclasses
 import functools
 import os
+import struct
 import time
 
 import httpx
@@ -475,18 +476,51 @@ async def test_streamguard_laat_alleen_een_goed_eerste_pakket_door(world, monkey
         writer.close()
         assert ds.count == 0
         await wait_until(lambda: tunnel.counts()["total"] == 0)
-        # Het goede pakket gaat door, en daarna leest de tunnel niets meer
+        # Het goede pakket gaat door, en wat de editor daarna stuurt ook
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         writer.write(upgrade(port, key, cookie=cookie))
         assert (await head_of(reader)).startswith(b"HTTP/1.1 101 ")
         connect, auth = opening(cfg)
         good = frame(connect) + frame(auth)
         writer.write(good)
-        writer.write(b"\x00vrij")
-        await wait_until(lambda: ds.count == len(good) + 5)
-        assert bytes(ds.received) == good + b"\x00vrij"
+        later = frame('42["message",{"type":"cursor","cursor":"1"}]') + frame("3")
+        writer.write(later)
+        await wait_until(lambda: ds.count == len(good) + len(later))
+        assert bytes(ds.received) == good + later
         assert not await closed_within(reader, HEADER)
+        # Daarna leest de tunnel mee: iets dat geen frame is, gaat niet door, en dicht
+        writer.write(b"\x00vrij")
+        assert await closed_within(reader, 3)
         writer.close()
+        assert ds.count == len(good) + len(later)
+
+
+async def test_een_tweede_auth_over_een_andere_key_gaat_dicht(world, monkeypatch):
+    """DS verhuist een levende verbinding naar de key van een nieuw auth-bericht (gemeten met
+    de echte DS, spike open punt 2). Een tweede auth over een andere key, met een geldig token
+    van die key, komt dus niet compleet bij DS, en de tunnel gaat dicht."""
+    anna, _, node, _ = await two_writers(world)
+    cfg, cookie = await opened(world, anna, node)
+    other = await world.docx(anna, None, "ander.docx", ["x"])
+    cfg_other, _ = await opened(world, anna, other)
+    key = cfg["document"]["key"]
+    async with raw_ds(world) as ds, public(monkeypatch) as listener:
+        reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
+        writer.write(upgrade(listener.port, key, cookie=cookie))
+        assert (await head_of(reader)).startswith(b"HTTP/1.1 101 ")
+        connect, auth = opening(cfg)
+        good = frame(connect) + frame(auth) + frame('42["message",{"type":"cursor","cursor":"1"}]')
+        writer.write(good)
+        await wait_until(lambda: ds.count == len(good))
+        assert tunnel.counts()["total"] == 1
+        _, auth_other = opening(cfg_other)
+        second = frame(auth_other)
+        writer.write(second)
+        assert await closed_within(reader, 3)
+        writer.close()
+        await wait_until(lambda: tunnel.counts()["total"] == 0)
+        assert len(good) <= ds.count < len(good) + len(second)
+        assert bytes(ds.received) == (good + second)[: ds.count]
 
 
 async def test_streamguard_te_laat_gaat_dicht(world, monkeypatch):
@@ -550,8 +584,9 @@ async def test_tegendruk_met_een_trage_lezer(world, monkeypatch):
 
 
 async def test_tegendruk_met_een_trage_ds(world, monkeypatch):
-    """De browser stuurt 64 MB naar een DS die even niet leest: de tunnel leest de browser dan
-    ook niet meer, en daarna komt alles bij DS aan."""
+    """De browser stuurt 64 MB naar een DS die even niet leest (één bericht van de editor in
+    één frame, zoals een groot saveChanges): de tunnel leest de browser dan ook niet meer, en
+    daarna komt alles bij DS aan."""
     total = 64 * 1024**2
     anna, _, node, _ = await two_writers(world)
     cfg, cookie = await opened(world, anna, node)
@@ -563,13 +598,20 @@ async def test_tegendruk_met_een_trage_ds(world, monkeypatch):
         first = frame(connect) + frame(auth)
         writer.write(first)
         sent = 0
+        # Een tekstframe van precies total bytes; met het masker 0 is de inhoud gelijk aan de
+        # tekst (de wacht van de tunnel leest hem mee)
+        opening_text = b'42["message",{"type":"saveChanges","changes":"'
+        closing = b'"}]'
+        size = total - 14
+        head = bytes([0x81, 0x80 | 127]) + struct.pack(">Q", size) + b"\x00" * 4
+        body = opening_text + b"b" * (size - len(opening_text) - len(closing)) + closing
 
         async def blast() -> None:
             nonlocal sent
-            chunk = b"b" * 65536
+            data = memoryview(head + body)
             while sent < total:
-                writer.write(chunk)
-                sent += len(chunk)
+                writer.write(data[sent : sent + 65536])
+                sent += len(data[sent : sent + 65536])
                 await writer.drain()
 
         task = asyncio.ensure_future(blast())

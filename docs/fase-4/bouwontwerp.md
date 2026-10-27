@@ -275,7 +275,10 @@ Elke keuze geeft de standaard en waarom.
      CONNECT-pakket van socket.io en het eerste `auth`-bericht (hooguit 64 KB en 10 s). Elk JWT
      daarin moet kloppen met het office-geheim (de config is van ons; het sessietoken van DS is
      met hetzelfde geheim getekend) en over de key van het pad gaan (`document.key`). Anders dicht.
-     Daarna pompt hij alleen bytes, en leest hij niets meer.
+     ~~Daarna pompt hij alleen bytes, en leest hij niets meer.~~ Daarna leest hij mee zolang de
+     tunnel open is: elk nieuw `auth`-bericht en elk nieuw CONNECT krijgt dezelfde controle,
+     want DS verhuist een levende verbinding naar de key van een nieuw `auth`-bericht
+     [gemeten bij de review]. Zie afwijking 18 in [o1.md](o1.md).
      - Waarom: DS neemt het document uit wat de verbinding meldt, niet uit het pad (M15). Zonder
        deze controle opent wie lid is van sessie A, met een oud token, sessie B.
      - Het lezen zit in de adapter (`oo/stream.py`, achter `Engine.stream_guard`). De vorm van de
@@ -1157,7 +1160,8 @@ nu mag, met de juiste koppen, over http én WebSocket, en tellen.
 - `app/office/oo/stream.py`: `StreamGuard` (§3.3). Leest de frames van de browser (gemaskeerd,
   eventueel in stukken) tot het CONNECT-pakket van socket.io en het eerste `auth`-bericht. Elk JWT
   daarin: HS256 met het office-geheim, en `document.key` gelijk aan de key van het pad. Hooguit
-  64 KB en 10 s. De vorm komt uit de spike (stap 12).
+  64 KB en 10 s. De vorm komt uit de spike (stap 12). Daarna leest hij mee, met dezelfde
+  controle op elk nieuw `auth`-bericht en CONNECT (afwijking 18 in [o1.md](o1.md)).
 - `app/office/gate.py`: `issue()` (O0-signatuur), `check(headers, key=None) -> GateUser | None`
   en `forget_user(user_id)`. De controle van Keuze 7: cookie, gebruiker, family, en met een key ook
   lid, niet `banned`, sessie niet dicht en nu schrijfrecht (`access.resolve`). Cache van 15 s
@@ -1920,8 +1924,8 @@ class CallbackEvent:
     explicit: bool             # opslaan op verzoek van een gebruiker (OnlyOffice: forcesavetype 1)
     filetype: str | None
     mark: str | None           # volgorde van de opslag, sorteerbaar (OnlyOffice: lastsave)
-class StreamGuard(Protocol):   # één per tunnel; leest alleen het begin van de stroom van de browser
-    def feed(self, data: bytes) -> Literal["more", "ok", "deny"]
+class StreamGuard(Protocol):   # één per tunnel; leest de stroom van de browser zolang de tunnel open is
+    def feed(self, data: bytes) -> Literal["more", "ok", "deny"]   # "ok": de opening is goed, blijf voeren
 class TokenError(Exception): ...
 class ConvertError(Exception): code: int; kind: Literal["new_key", "failed", "none", "retry", "misconfigured"]
 class Engine(Protocol):

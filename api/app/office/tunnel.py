@@ -22,10 +22,12 @@ met tegendruk (lezen pauzeren boven 1 MB in de schrijfbuffer van de andere kant,
 256 KB). Terwijl DS nog verbindt, bewaart hij hooguit PENDING_LIMIT van de browser en pauzeert
 hij daarna het lezen.
 
-De bytes van de browser gaan eerst langs de StreamGuard van de editor (Engine.stream_guard;
-bij OnlyOffice het CONNECT-pakket en het eerste auth-bericht, elk token over de key van het
-pad). Zegt die nee, dan gaat dat stuk niet door en sluit de tunnel; is hij na GUARD_SECONDS
-nog niet tevreden, ook. Daarna leest de tunnel niets meer.
+De bytes van de browser gaan langs de StreamGuard van de editor (Engine.stream_guard; bij
+OnlyOffice eerst het CONNECT-pakket en het eerste auth-bericht, elk token over de key van het
+pad). Zegt die nee, dan gaat dat stuk niet door en sluit de tunnel; is de opening na
+GUARD_SECONDS nog niet goed, ook. Daarna blijft hij meelezen, zolang de tunnel open is: DS
+verhuist een levende verbinding naar de key van elk nieuw auth-bericht, dus ook dat moet over
+de key van het pad gaan.
 
 Elke RECHECK_SECONDS (15 s) kijkt hij of de gebruiker er nog in mag (gate.still, met de cache
 van 15 s): nee, of de controle mislukt, dan dicht. Na IDLE_SECONDS zonder bytes dicht. Dicht
@@ -256,7 +258,7 @@ class Tunnel(asyncio.Protocol):
         self.key: str | None = None
         self.user: gate.GateUser | None = None
         self.office: OfficeState | None = None  # waar hij in het register staat
-        self.guard = None  # de StreamGuard tot hij "ok" zegt
+        self.guard = None  # de StreamGuard, zolang de tunnel open is
         self.last = time.monotonic()
         self.idle: asyncio.TimerHandle | None = None
         self.guard_timer: asyncio.TimerHandle | None = None
@@ -407,13 +409,13 @@ class Tunnel(asyncio.Protocol):
             self.held_paused = False
             self.pause_browser(False)
         upstream.transport.write(request)
+        # Tot de opening goed is; _guarded zet hem af bij "ok"
+        self.guard_timer = self.loop.call_later(GUARD_SECONDS, self._guard_late)
         held, self.pending, self.held = self.pending, [], 0
         for data in held:
             if self.guard is not None and not self._guarded(data):
                 return
             upstream.transport.write(data)
-        if self.guard is not None:
-            self.guard_timer = self.loop.call_later(GUARD_SECONDS, self._guard_late)
         self._arm_idle()
         self._arm_recheck()
 
@@ -421,18 +423,17 @@ class Tunnel(asyncio.Protocol):
         """Mag dit stuk door de StreamGuard? Nee: de tunnel gaat dicht."""
         verdict = self.guard.feed(data)
         if verdict == "deny":
-            log.warning("office: het eerste socketpakket klopt niet; de tunnel gaat dicht")
+            log.warning("office: de socket van de browser klopt niet; de tunnel gaat dicht")
             self.close()
             return False
-        if verdict == "ok":
-            self.guard = None
-            if self.guard_timer is not None:
-                self.guard_timer.cancel()
-                self.guard_timer = None
+        if verdict == "ok" and self.guard_timer is not None:  # de opening is goed
+            self.guard_timer.cancel()
+            self.guard_timer = None
         return True
 
     def _guard_late(self) -> None:
-        if self.state == "open" and self.guard is not None:
+        self.guard_timer = None
+        if self.state == "open":
             log.warning("office: geen geldig eerste socketpakket op tijd; de tunnel gaat dicht")
             self.close()
 

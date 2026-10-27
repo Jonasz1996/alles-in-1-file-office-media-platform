@@ -1000,7 +1000,14 @@ Toelichting:
    sessietoken nog geldig? Niet getest. Het zit in elke herverbinding. Belangrijk voor wie langer
    dan 2 uur bewerkt.
 2. Neemt DS een CONNECT met het token van key A aan, gevolgd door een `auth`-bericht met het token
-   van key B? Niet getest. De wacht eist daarom bij elk `auth`-bericht dezelfde key.
+   van key B? ~~Niet getest. De wacht eist daarom bij elk `auth`-bericht dezelfde key.~~
+   Gemeten bij de review van fase 4 (DS 10.0.0.1): ja. Een tweede `auth`-bericht met een geldig
+   sessietoken van B, op een verbinding die al goed open is op A, krijgt `result: 1`; DS rekent
+   de verbinding daarna bij B (`info` van B noemt de gebruiker, die van A niet meer), stuurt
+   haar de chat en de wijzigingen van B, en past haar wijzigingen toe op B. De `userid` in het
+   bericht telt niet: DS neemt hem uit het token. De wacht las eerst alleen het eerste
+   `auth`-bericht; nu leest hij de hele stroom en eist hij bij elk `auth`-bericht en elk nieuw
+   CONNECT dezelfde key (afwijking 18 in [o1.md](o1.md)).
 3. De XML-grens voor 2 GB is gemeten (stap 18 verder): 4, 2 en 10 MB. Open blijft een klein bestand
    met heel veel pagina's (3,9 MB pagina-einden: ±97 % van het geheugen), en odp en echte
    werkbladen met veel opmaak. De integratie meet opnieuw (§4.7).

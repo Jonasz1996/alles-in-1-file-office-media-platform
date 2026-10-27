@@ -75,7 +75,8 @@ class CallbackEvent:
 
 
 class StreamGuard(Protocol):
-    """Eén per tunnel; leest alleen het begin van de stroom van de browser."""
+    """Eén per tunnel; leest de stroom van de browser zolang de tunnel open is. "more": de
+    opening is nog niet compleet; "ok": de opening is goed (blijf voeren); "deny": dicht."""
 
     def feed(self, data: bytes) -> Literal["more", "ok", "deny"]: ...
 
