@@ -2,7 +2,8 @@
 
 Fouten van /command: 0 goed, 1 key onbekend, 4 geen wijzigingen, 5 fout commando, 6 fout
 token. Een ander antwoord dan verwacht geeft DocServerError; error 6 op een getekend commando
-TokenRejected (het office-geheim klopt niet met JWT_SECRET van DS).
+TokenRejected (het office-geheim klopt niet met JWT_SECRET van DS). fonts_pending gebruikt geen
+/command, maar twee HEAD's op statische bestanden.
 """
 
 import secrets
@@ -13,6 +14,34 @@ from app.office.oo.client import DocServerError, get
 # version zonder token en een conversie zonder token: zo weigert een DS die tokens eist
 NO_TOKEN_COMMAND = 6
 NO_TOKEN_CONVERT = -8
+
+# Statische bestanden van DS (nginx, met Last-Modified): api.js schrijft
+# documentserver-flush-cache bij elke start en na de fontbouw opnieuw; de fontbouw schrijft
+# fonts_thumbnail.png elke keer opnieuw (AllFonts.js niet als de fonts gelijk bleven [gemeten])
+API_JS = "/web-apps/apps/api/documents/api.js"
+FONTS_THUMBNAIL = "/sdkjs/common/Images/fonts_thumbnail.png"
+
+
+async def fonts_pending() -> bool:
+    """Komt de font-herstart van DS nog (spike, extra bevinding 1)?
+
+    Het startscript van DS schrijft eerst api.js (flush-cache) en bouwt dan de fonts
+    (GENERATE_FONTS staat standaard aan, en een nieuwe container bouwt altijd): allfontsgen
+    met fonts_thumbnail.png binnen een seconde, dan minuten aan thema's en caches, dan
+    supervisorctl restart van docservice en de converter (open sessies zijn dan weg, zonder
+    callback en zonder forgotten file), en pas dan opnieuw api.js. Tot die herstart voorbij is,
+    is fonts_thumbnail.png er dus niet (niet in het image) of niet ouder dan api.js [gemeten,
+    10.0.0.1, nieuwe container: api.js 17:55:05, de herstart 17:57:00-02, api.js 17:57:02;
+    dezelfde container opnieuw gestart: api.js en fonts_thumbnail.png 18:00:14, de herstart
+    18:02:06-08, api.js 18:02:08]. Zonder fontbouw (GENERATE_FONTS=false) is api.js nieuwer.
+    Zonder api.js (of zijn Last-Modified) is het niet te zien: False. Het plaatje zonder
+    Last-Modified telt als nog niet gebouwd (health.py wacht dan hooguit SETTLING_SECONDS)."""
+    server = get()
+    api = await server.modified(API_JS)
+    if api is None:
+        return False
+    fonts = await server.modified(FONTS_THUMBNAIL)
+    return fonts is None or fonts >= api
 
 
 class TokenRejected(DocServerError):

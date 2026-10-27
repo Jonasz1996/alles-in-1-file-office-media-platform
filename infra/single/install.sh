@@ -458,8 +458,8 @@ Van buiten bereikbaar maken:
 
 KLAAR
   if [ "$OFFICE_ON" = 1 ]; then
-    echo "Office: aan. De editor start op de achtergrond en is over ±1 minuut klaar"
-    echo "  (na de eerste start van een nieuwe DS nog ±3 minuten fonts)."
+    echo "Office: aan. De editor start op de achtergrond; bewerken kan over 2 à 3 minuten"
+    echo "  (DS bouwt eerst zijn fonts en herstart zichzelf; /beheer zegt zolang 'Start op')."
     [ -z "$OFFICE_REASON" ] || echo "  Let op: $OFFICE_REASON."
     echo "  Uit: OFFICE=uit bash install.sh"
   else

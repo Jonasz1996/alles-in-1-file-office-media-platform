@@ -64,7 +64,10 @@ cd .. && bash e2e/office_ds.sh stop   # de container weg; het image blijft
   minuten na de start (spike, extra bevinding 1). `wait` wacht daarom eerst op die herstart
   (in de log van supervisord `success: converter` na `stopped: converter`; docservice is dan al
   terug) en daarna op `/healthcheck == true`, hooguit 6 minuten. Een test die tijdens die
-  herstart draait, ziet een editor die even wegvalt.
+  herstart draait, ziet een editor die even wegvalt. De app wacht sinds de review van fase 4
+  zelf ook op die herstart (`starting` tot `api.js` nieuwer is dan `fonts_thumbnail.png`, zie
+  o6.md afwijking 17); de server van `real_office` wacht daarom bij de start tot 15 minuten op
+  `ok`.
 - Start DS als eerste, en bouw dan de web-app: dan bouwt DS zijn fonts in die tijd.
 
 ### De omgeving
@@ -307,5 +310,5 @@ npm run dev
 - In O0 laadt `api.js` zo via `/office/`, maar een document openen kan pas met O2: de interne
   routes zijn nog stubs.
 - Wacht na een nieuwe container 2,5 tot 3 minuten op de font-herstart voordat je een editor
-  opent.
+  opent (de app zegt zolang `starting` en opent niets).
 - Opruimen: `docker rm -f office-dev && rm -rf "$HOME/.office-dev"`. Het image blijft.

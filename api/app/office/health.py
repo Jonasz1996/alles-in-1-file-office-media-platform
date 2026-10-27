@@ -6,13 +6,17 @@ moeten error 6 en -8 geven). Eist DS geen tokens, dan is de toestand misconfigur
 ongetekende callback zou de app weigeren, en elke opslag zou stil een forgotten file worden.
 
 Toestanden: starting (sinds de start van de app heeft DS nog nooit geantwoord, en nog geen
-STARTING_SECONDS: DS bouwt na een start tot ±280 s fonts), ok, down, misconfigured (DS eist
-geen tokens, DS weigert onze getekende commando's omdat het office-geheim niet klopt met zijn
-JWT_SECRET, of de instellingen kloppen niet). Gezond is pas gezond na een geslaagde grote
-controle. Bij "weer gezond": convert.on_healthy() en recovery.kick(). De melding office_down
-(down_too_long) komt na 2 minuten down; starting telt daar niet voor (down_since begint pas
-als de toestand down wordt). Een fout geheim is geen uitval: geen down_since, en elke ronde
-opnieuw de grote controle, zodat een goed geheim (een nieuwe DS) meteen telt.
+STARTING_SECONDS; of DS leeft maar is settling: zijn font-herstart na een start komt nog,
+hooguit SETTLING_SECONDS), ok, down, misconfigured (DS eist geen tokens, DS weigert onze
+getekende commando's omdat het office-geheim niet klopt met zijn JWT_SECRET, of de instellingen
+kloppen niet). Gezond is pas gezond na een geslaagde grote controle en als DS niet meer
+settling is: die herstart gooit open sessies weg zonder callback (spike, extra bevinding 1),
+dus bewerken pas daarna. Settling kijkt elke ronde, ook als de toestand ok is: een DS die
+tussen twee rondes opnieuw opkwam, telt zo ook. Bij "weer gezond": convert.on_healthy() en
+recovery.kick(). De melding office_down (down_too_long) komt na 2 minuten down; starting telt
+daar niet voor (down_since begint pas als de toestand down wordt). Een fout geheim is geen
+uitval: geen down_since, en elke ronde opnieuw de grote controle, zodat een goed geheim (een
+nieuwe DS) meteen telt.
 """
 
 import asyncio
@@ -27,6 +31,9 @@ log = logging.getLogger("platform.office")
 
 DEEP_SECONDS = 600.0
 STARTING_SECONDS = 300.0
+# Zo lang wacht de app hooguit op de font-herstart (gemeten: 2 à 3 minuten na de start, op een
+# drukke machine 713 s); daarna mag bewerken toch, met een waarschuwing in het log
+SETTLING_SECONDS = 900.0
 # Zo lang onbereikbaar geeft de melding office_down (O5 leest down_too_long)
 DOWN_NOTICE_SECONDS = 120.0
 
@@ -53,6 +60,7 @@ def _not_ok(state: OfficeState, now: datetime, was: str) -> None:
         seconds=STARTING_SECONDS
     )
     state.health = "starting" if starting else "down"
+    state.settling_since = None  # bij terugkomst opnieuw tellen
     if starting:
         state.down_since = None  # starten telt niet als weg (fonts)
     elif state.down_since is None:
@@ -60,6 +68,33 @@ def _not_ok(state: OfficeState, now: datetime, was: str) -> None:
     state.deep_checked_at = None  # bij terugkomst altijd opnieuw controleren
     if was == "ok":
         log.warning("office: de document server is niet bereikbaar")
+
+
+def _settling(state: OfficeState, settling: bool, now: datetime, was: str) -> bool:
+    """Komt de font-herstart van DS nog? Dan starting (openen geeft 503 office_unavailable,
+    conversies wachten, down_since loopt niet), hooguit SETTLING_SECONDS na de eerste keer
+    dat de app het zag; daarna False, met een waarschuwing."""
+    if not settling:
+        state.settling_since = None
+        return False
+    if state.settling_since is None:
+        state.settling_since = now
+        log.info(
+            "office: de document server leeft, maar herstart zich nog voor de fonts; "
+            "bewerken wacht daarop"
+        )
+    if now - state.settling_since < timedelta(seconds=SETTLING_SECONDS):
+        state.health = "starting"
+        state.down_since = None
+        state.ever_ok = True  # hij antwoordde: weg is daarna down, niet starting
+        return True
+    if was != "ok":
+        log.warning(
+            "office: de font-herstart van de document server is na %d minuten nog niet "
+            "gezien; bewerken staat toch aan",
+            SETTLING_SECONDS // 60,
+        )
+    return False
 
 
 SECRET_PROBLEM = (
@@ -96,9 +131,10 @@ async def check_once(app, now: datetime | None = None) -> None:
     was = state.health
     previous_problem, state.problem = state.problem, None
     try:
-        ok = (await current.health(deep=False)).ok
+        shallow = await current.health(deep=False)
     except Exception:  # noqa: BLE001 - elke fout is "niet gezond"
-        ok = False
+        shallow = engine.Health(ok=False)
+    ok = shallow.ok
     # Terug van weg (of de eerste keer), of de vorige grote controle is 10 minuten oud
     returning = was not in ("ok", "misconfigured")
     stale = state.deep_checked_at is None or now - state.deep_checked_at >= timedelta(
@@ -140,6 +176,8 @@ async def check_once(app, now: datetime | None = None) -> None:
             return
     if was == "misconfigured" and deep is None:
         return  # blijft zo tot de volgende geslaagde controle
+    if _settling(state, shallow.settling, now, was):
+        return
     state.health = "ok"
     state.down_since = None
     state.ever_ok = True

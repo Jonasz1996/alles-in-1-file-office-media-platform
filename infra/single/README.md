@@ -114,8 +114,8 @@ via dezelfde poorten 80 en 443.
 **Wat het kost.** Het image is ±3,1 GB. Bij een update staan het oude en het nieuwe even naast
 elkaar; daarom wil het script minstens 8 GB vrij voor Docker. DS krijgt hooguit 2 GB geheugen
 en 2 cores, als de kernel van de container die grenzen kan zetten (anders zonder grens). In de
-proef was de piek 894 MB. Na de eerste start van een nieuwe DS maakt hij ±5 minuten zijn
-fonts; dan is hij even druk.
+proef was de piek 894 MB. Na elke start maakt DS 2 à 5 minuten zijn fonts; dan is hij even
+druk.
 
 **Aan en uit.** Office staat standaard aan (`OFFICE=aan` in `/opt/platform/.env`). Uitzetten:
 
@@ -146,10 +146,15 @@ veranderd, dan komt het werk gewoon in het bestand; anders als herstelkopie bij 
 Lukt ook dat niet (quotum vol, te groot), dan staat het op `/beheer` → Office onder **Niet
 opgeslagen**, met **Terugzetten** en **Verwijderen**.
 
-**Office start op.** Na een start of update is DS na 5 à 15 seconden gezond; bij de eerste start
-van een nieuw image duurt het door de fonts een paar minuten langer. Zolang kan bewerken nog
-niet, maar het PDF-voorbeeld en de rest van het platform werken gewoon. In de eerste 5 minuten
-geeft `/beheer` daar nog geen melding over.
+**Office start op.** Na elke start van DS (een update, office weer aan, een herstart van de
+machine) antwoordt hij na 5 à 15 seconden, maar dan bouwt hij nog zijn fonts. Daarna herstart
+hij zichzelf, 2 à 3 minuten na de start (op een drukke machine tot ±12 minuten), en wat dan
+open is in de editor, is weg. Daarom wacht het platform op die herstart: zolang zegt `/beheer`
+"Start op…", kan bewerken nog niet ("De editor is nu niet bereikbaar") en komen er geen nieuwe
+PDF-voorbeelden. Een PDF-voorbeeld dat er al is en de rest van het platform werken gewoon. In
+de eerste 5 minuten geeft `/beheer` geen melding als DS nog niet antwoordt. Ziet het platform
+de herstart na 15 minuten nog niet, dan kan bewerken toch weer (met een waarschuwing in het
+log van de app).
 
 **Office onbereikbaar.** Meldt `/beheer` dat office onbereikbaar is (na 2 minuten), kijk dan:
 

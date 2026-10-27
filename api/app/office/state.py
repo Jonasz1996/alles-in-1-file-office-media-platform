@@ -57,6 +57,9 @@ class OfficeState:
     # misconfigured); zo niet, en nog geen STARTING_SECONDS, dan is het "starting"
     checking_since: datetime | None = None
     ever_ok: bool = False
+    # Sinds wanneer DS onafgebroken settling is (de font-herstart komt nog); na
+    # SETTLING_SECONDS telt dat niet meer (health.py)
+    settling_since: datetime | None = None
     # De taken van de lifespan (health, sweep, recovery), om bij het stoppen te annuleren
     tasks: list[asyncio.Task] = field(default_factory=list)
     _locks: weakref.WeakValueDictionary = field(default_factory=weakref.WeakValueDictionary)

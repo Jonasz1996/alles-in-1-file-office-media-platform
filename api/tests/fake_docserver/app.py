@@ -12,7 +12,14 @@ Haken voor die delen (en voor tests):
 - fake.on_lost: async hook(doc, fields) als een opslag (status 2) de app niet bereikt
   (429 of 5xx na alle pogingen, of een antwoord {"error": 1}): dan hoort hij bij de
   forgotten files;
-- fake.on_reset: hook(reden) bij kill, stop en restart.
+- fake.on_reset: hook(reden) bij kill, stop en restart (en de font-herstart: kill).
+
+De fonts (spike, extra bevinding 1): api.js en fonts_thumbnail.png hebben een Last-Modified
+zoals bij nginx van DS. Standaard is de nep een DS die al lang draait (api.js nieuwer).
+/__fake/fonts {"pending": true} is een DS vlak na de start (allebei net geschreven, de
+font-herstart komt nog); {"pending": false} is die herstart zelf: alle sessies weg zonder
+callback (zoals kill, maar hij blijft op), daarna een nieuwe api.js. restart is een herstart
+zonder fontbouw (zoals GENERATE_FONTS=false): alleen een nieuwe api.js.
 
 In pytest gaat de nep met httpx.ASGITransport, of als echte server (uvicorn) voor de socket.
 Callbacks en downloads gaan naar de app met config.transport (in pytest een ASGITransport naar
@@ -49,6 +56,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from email.utils import formatdate
 from pathlib import Path
 from typing import Any
 
@@ -154,6 +162,9 @@ class FakeDocServer:
         self.entries: list[dict] = []
         self.up = True
         self.starting = False
+        # Wanneer api.js (flush-cache) en fonts_thumbnail.png (de fontbouw) geschreven zijn
+        self.flushed = time.time()
+        self.fonts_built = self.flushed - 3600
         self.jwt = True
         self.connections = config.connections
         self.counter = 1000 + secrets.randbelow(8000)
@@ -861,8 +872,24 @@ class FakeDocServer:
             self.link_secret = secrets.token_urlsafe(16)
         self.up = True
         self.starting = False
+        self._flush()  # het startscript schrijft api.js opnieuw; hier zonder fontbouw
         for hook in self.on_reset:
             hook("restart")
+
+    def _flush(self) -> None:
+        """api.js opnieuw geschreven: later dan de fontbouw (de tijden in hele seconden)."""
+        self.flushed = max(time.time(), self.fonts_built + 1)
+
+    async def fonts(self, pending: bool) -> None:
+        """pending: een DS vlak na de start (api.js en fonts_thumbnail.png in dezelfde seconde
+        [gemeten]); anders de font-herstart: docservice en de converter herstarten,
+        alle sessies weg zonder callback en zonder forgotten file [gemeten], en dan api.js."""
+        if pending:
+            self.flushed = self.fonts_built = time.time()
+            return
+        await self.kill()  # met de haken van kill
+        self.up = True
+        self._flush()
 
 
 def _down() -> Response:
@@ -914,17 +941,31 @@ def create_app(config: FakeConfig, parts: tuple[str, ...] = ("forgotten", "conve
             .replace("__V__", json.dumps(protocol.V))
             .replace("__JWT__", "true" if fake.jwt else "false")
         )
-        return Response(source, media_type="application/javascript; charset=utf-8")
+        return Response(
+            source,
+            media_type="application/javascript; charset=utf-8",
+            headers={"Last-Modified": formatdate(fake.flushed, usegmt=True)},
+        )
 
-    @app.get("/web-apps/apps/api/documents/api.js")
+    @app.api_route("/web-apps/apps/api/documents/api.js", methods=["GET", "HEAD"])
     async def api_root(request: Request) -> Response:
         return api_js(request)
 
-    @app.get("/{v}/web-apps/apps/api/documents/api.js")
+    @app.api_route("/{v}/web-apps/apps/api/documents/api.js", methods=["GET", "HEAD"])
     async def api_versioned(v: str, request: Request) -> Response:
         if v != protocol.V:
             return Response(status_code=404)
         return api_js(request)
+
+    @app.api_route("/sdkjs/common/Images/fonts_thumbnail.png", methods=["GET", "HEAD"])
+    async def fonts_thumbnail() -> Response:
+        if not fake.up:
+            return _down()
+        return Response(
+            b"\x89PNG\r\n\x1a\n",
+            media_type="image/png",
+            headers={"Last-Modified": formatdate(fake.fonts_built, usegmt=True)},
+        )
 
     @app.get("/{v}/web-apps/apps/{editor}/main/{name}")
     async def editor_page(v: str, editor: str, name: str) -> Response:
@@ -1055,6 +1096,14 @@ def create_app(config: FakeConfig, parts: tuple[str, ...] = ("forgotten", "conve
         body = await json_body(request)
         fake.starting = bool(body.get("starting")) or body.get("ok") is False
         return {"starting": fake.starting}
+
+    @app.post("/__fake/fonts")
+    async def fake_fonts(request: Request) -> dict:
+        """{"pending": true}: een nieuwe container die zijn font-herstart nog moet doen;
+        {"pending": false}: die herstart (sessies weg zonder callback, daarna een nieuwe api.js)."""
+        body = await json_body(request)
+        await fake.fonts(body.get("pending") is True)
+        return {"flushed": fake.flushed, "fonts_built": fake.fonts_built}
 
     @app.post("/__fake/license")
     async def fake_license(request: Request) -> dict:

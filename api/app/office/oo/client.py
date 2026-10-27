@@ -10,6 +10,8 @@ eerste get(), of maken zelf een DocServer met een transport.
 
 import hashlib
 import json
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -88,6 +90,23 @@ class DocServer:
         except httpx.HTTPError:
             return False
         return r.status_code == 200 and r.text.strip() == "true"
+
+    async def modified(self, path: str) -> datetime | None:
+        """HEAD op een statisch bestand van DS: zijn Last-Modified, of None als het er niet is
+        (404) of geen (leesbare) Last-Modified heeft. Een andere status: DocServerError."""
+        try:
+            r = await self.client.head(path, timeout=HEALTH_TIMEOUT)
+        except httpx.HTTPError as exc:
+            raise DocServerError(f"{path}: {type(exc).__name__}") from exc
+        if r.status_code == 404:
+            return None
+        if r.status_code != 200:
+            raise DocServerError(f"{path}: HTTP {r.status_code}", r.status_code)
+        try:
+            when = parsedate_to_datetime(r.headers.get("last-modified", ""))
+        except (TypeError, ValueError):
+            return None
+        return when if when.tzinfo else when.replace(tzinfo=UTC)
 
     async def command(self, c: str, *, signed: bool = True, **params) -> dict:
         """POST /command?shardkey=<key>. Het antwoord als dict ({"error": 0, ...})."""

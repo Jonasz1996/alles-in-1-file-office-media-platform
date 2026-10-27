@@ -1915,6 +1915,7 @@ def convert_key(sha: str, n: int = 1) -> str         # f"p{PDF_VERSION}-{sha}", 
 class PathClass(StrEnum): STATIC; PAGE; DATA; SESSION; SETTINGS; ACTION
 @dataclass(frozen=True)
 class Health: ok: bool; version: str | None; limit: int | None
+    settling: bool = False  # review fase 4: de font-herstart van DS komt nog (o6.md, afwijking 17)
 @dataclass(frozen=True)
 class OpenContext: key: str; ds_uid: str; user_name: str; title: str; file_type: str
     lang: str; region: str; theme: Literal["light", "dark"]; mobile: bool; doc_url: str

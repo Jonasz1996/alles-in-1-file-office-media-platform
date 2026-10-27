@@ -899,7 +899,10 @@ DS opent pptx met die herhaling.
    herstart van dezelfde container (dan komt er geen tweede herstart), niet bij een nieuwe. Gevolg:
    de bewering "een nette stop slaat alles op" geldt voor `docker stop`, niet voor deze herstart. De
    app moet een nieuwe DS pas "klaar voor bewerken" noemen als die herstart voorbij is. Hoe de app
-   dat ziet, is nog open.
+   dat ziet: open punt 4 (opgelost na de review van fase 4). Later gemeten (review van fase 4):
+   niet alleen een nieuwe container bouwt; met de standaard `GENERATE_FONTS=true` doet **elke**
+   start dat, ook `docker restart` van dezelfde container (start 18:00:14, herstart van
+   docservice en de converter 18:02:06 tot 18:02:08).
 2. **Een OOM van docservice** (stap 18) heeft hetzelfde gevolg: alle open sessies zijn weg. In de
    memory-runtime draait de converter in docservice. Een te groot bestand raakt dus iedereen.
 3. **Het versiesegment `<V>`** (`10.0.0-<32 hex>`) is per container anders. Bij ds2 was het
@@ -1011,10 +1014,18 @@ Toelichting:
 3. De XML-grens voor 2 GB is gemeten (stap 18 verder): 4, 2 en 10 MB. Open blijft een klein bestand
    met heel veel pagina's (3,9 MB pagina-einden: ±97 % van het geheugen), en odp en echte
    werkbladen met veel opmaak. De integratie meet opnieuw (§4.7).
-4. Hoe de app ziet dat de font-herstart van een nieuwe DS voorbij is. Voorstel om te meten: wachten
-   tot de `<V>` in `api.js` is gewisseld, of tot de container ±3 minuten draait en docservice één
-   keer is herstart. Voor CI is het opgelost met de log van supervisord (extra bevinding 11); de
-   app kan die log niet lezen.
+4. ~~Hoe de app ziet dat de font-herstart van een nieuwe DS voorbij is.~~ Opgelost na de review
+   van fase 4 (`oo/admin.fonts_pending`, `health.py`). Gemeten met 10.0.0.1 (`HEAD` op de
+   bestanden, `Last-Modified` van nginx): het startscript schrijft eerst `api.js`
+   (flush-cache), dan bouwt `allfontsgen` binnen een seconde
+   `sdkjs/common/Images/fonts_thumbnail.png`, en pas na `supervisorctl restart` schrijft het
+   `api.js` opnieuw. Een nieuwe container: `api.js` en het plaatje 17:55:05, de herstart
+   17:57:00–17:57:02, daarna `api.js` 17:57:02. Dezelfde container opnieuw gestart: `api.js` en
+   het plaatje 18:00:14 (`AllFonts.js` bleef van 17:55:05: dat schrijft hij alleen als de fonts
+   anders zijn), de herstart 18:02:06–18:02:08, `api.js` 18:02:08. Zolang het plaatje er niet is
+   of niet ouder is dan `api.js`, komt de herstart dus nog. `/healthcheck` bleef de hele tijd
+   `true` (elke 1 à 2 s gekeken). De `<V>` in `api.js` wisselt ook, maar alleen per minuut
+   (md5 van datum en minuut) en zonder te zeggen of er nog een herstart komt.
 5. `type: "mobile"` (`…/mobile/index.html`) is niet geopend. Paden en `Sec-Fetch-Dest` daarvan zijn
    niet gemeten.
 6. Stap 15: status 2 kwam niet binnen door het harnas (404 op de download van DS2). Niet opnieuw

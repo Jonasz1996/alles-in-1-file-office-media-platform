@@ -64,14 +64,21 @@ class OnlyOffice:
         tokens.check_download(self.settings, authorization, url)
 
     async def health(self, deep: bool = True) -> Health:
-        """deep=False: alleen /healthcheck. Anders ook version en license (getekend);
-        TokenError als DS die met error 6 weigert."""
+        """deep=False: alleen /healthcheck en of de font-herstart nog komt (settling, twee
+        HEAD's). Anders ook version en license (getekend); TokenError als DS die met error 6
+        weigert."""
         if not await admin.healthcheck():
             return Health(ok=False)
+        settling = await admin.fonts_pending()
         if not deep:
-            return Health(ok=True)
+            return Health(ok=True, settling=settling)
         try:
-            return Health(ok=True, version=await admin.version(), limit=await admin.license())
+            return Health(
+                ok=True,
+                version=await admin.version(),
+                limit=await admin.license(),
+                settling=settling,
+            )
         except admin.TokenRejected as exc:
             raise TokenError(str(exc)) from exc
 

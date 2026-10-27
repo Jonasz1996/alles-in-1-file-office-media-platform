@@ -34,6 +34,9 @@ class Health:
     ok: bool
     version: str | None = None
     limit: int | None = None  # gelijktijdige verbindingen volgens de licentie
+    # Hij leeft, maar herstart zichzelf nog (OnlyOffice: de font-herstart van een nieuwe
+    # container): dan is een open sessie weg, zonder callback. Nog niet bewerken
+    settling: bool = False
 
 
 @dataclass(frozen=True)
@@ -142,9 +145,9 @@ class Engine(Protocol):
         ...
 
     async def health(self, deep: bool = True) -> Health:
-        """deep=False: alleen of hij leeft; anders ook versie en licentie. TokenError als de
-        editor ons getekende verzoek weigert: dan klopt het office-geheim niet met dat van de
-        editor (een fout in de instellingen, geen uitval)."""
+        """deep=False: alleen of hij leeft (en of hij nog settling is); anders ook versie en
+        licentie. TokenError als de editor ons getekende verzoek weigert: dan klopt het
+        office-geheim niet met dat van de editor (een fout in de instellingen, geen uitval)."""
         ...
 
     async def enforces_tokens(self) -> bool:

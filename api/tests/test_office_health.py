@@ -1,6 +1,7 @@
 """De gezondheidslus van office (Keuze 28, §3.8): gezond en weg (na 2 minuten de melding),
 version, license en de tokencontrole bij een overgang naar gezond, de nep-DS met jwt-off geeft
-misconfigured, en bij weer gezond worden on_healthy en kick aangeroepen."""
+misconfigured, en bij weer gezond worden on_healthy en kick aangeroepen. Een DS die zijn
+font-herstart nog moet doen, is starting tot die voorbij is (hooguit SETTLING_SECONDS)."""
 
 import asyncio
 import json
@@ -13,10 +14,13 @@ import httpx
 import pytest
 
 from app.config import Settings
+from app.main import app as main_app
 from app.office import convert, engine, health, recovery, runtime
-from app.office.oo import client
+from app.office.oo import admin, client
 from app.office.state import office_state
+from tests.factories import code_of
 from tests.fake_docserver import FakeConfig, create_app, protocol
+from tests.office_world import office_world
 
 T0 = datetime(2026, 10, 26, 9, 0, tzinfo=UTC)
 
@@ -238,6 +242,8 @@ async def test_conversie_zonder_token_telt_ook(tmp_path, hooks, unbind):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/healthcheck":
             return httpx.Response(200, text="true")
+        if request.method == "HEAD":
+            return httpx.Response(404)  # api.js: de font-herstart is niet te zien
         body = json.loads(request.content)
         if request.url.path == "/converter":
             return httpx.Response(200, json={"error": -4})  # hij probeerde op te halen
@@ -261,6 +267,8 @@ async def test_mislukte_grote_controle(tmp_path, hooks, unbind):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/healthcheck":
             return httpx.Response(200, text="true")
+        if request.method == "HEAD":
+            return httpx.Response(404)  # api.js: de font-herstart is niet te zien
         if request.url.path == "/converter":
             return httpx.Response(200, json={"error": -8})
         body = json.loads(request.content)
@@ -350,3 +358,139 @@ async def test_de_lus_start_en_stopt(tmp_path, hooks):
         await engine.close()
         client.transport = None
         runtime.unbind()
+
+
+# --- de font-herstart van een nieuwe DS (spike, extra bevinding 1) ---
+
+
+@pytest.mark.anyio
+async def test_eerst_de_font_herstart_van_een_nieuwe_ds(world):
+    """Een nieuwe container is al gezond voordat hij docservice en de converter herstart voor
+    de fonts, en die herstart gooit open sessies weg zonder callback. Tot dan starting (openen
+    geeft 503 office_unavailable), zonder melding; daarna ok en de haken."""
+    await world.control.post("/__fake/fonts", json={"pending": True})
+    assert await world.check(0) == "starting"
+    state = world.state
+    assert state.down_since is None and not health.down_too_long(state, at(600))
+    assert state.version == protocol.BUILD  # de grote controle ging wel
+    assert world.calls == []
+    assert await world.check(120) == "starting"
+    await world.control.post("/__fake/fonts", json={"pending": False})
+    assert await world.check(150) == "ok"
+    assert state.settling_since is None
+    assert world.calls == ["on_healthy", "kick"]
+
+
+@pytest.mark.anyio
+async def test_nieuwe_ds_tussen_twee_rondes(world):
+    """De app zag DS niet weggaan (een nieuwe container binnen 30 s): ook dan wacht bewerken
+    op de font-herstart."""
+    assert await world.check(0) == "ok"
+    await world.control.post("/__fake/fonts", json={"pending": True})
+    assert await world.check(30) == "starting"
+    assert world.state.down_since is None
+    await world.control.post("/__fake/fonts", json={"pending": False})
+    assert await world.check(60) == "ok"
+    assert world.calls == ["on_healthy", "kick"] * 2
+
+
+@pytest.mark.anyio
+async def test_font_herstart_niet_gezien(world, caplog):
+    """Komt de herstart niet (of is hij niet te zien), dan na SETTLING_SECONDS toch ok, met
+    een waarschuwing; één keer."""
+    await world.control.post("/__fake/fonts", json={"pending": True})
+    assert await world.check(0) == "starting"
+    assert await world.check(health.SETTLING_SECONDS - 1) == "starting"
+    assert await world.check(health.SETTLING_SECONDS) == "ok"
+    assert await world.check(health.SETTLING_SECONDS + 30) == "ok"
+    warned = [r for r in caplog.records if "font-herstart" in r.getMessage()]
+    assert len(warned) == 1 and warned[0].levelname == "WARNING"
+    # Weg en terug: opnieuw tellen
+    await world.control.post("/__fake/kill")
+    assert await world.check(health.SETTLING_SECONDS + 60) == "down"
+    await world.control.post("/__fake/restart")
+    await world.control.post("/__fake/fonts", json={"pending": True})
+    assert await world.check(health.SETTLING_SECONDS + 90) == "starting"
+
+
+def _static(api: str | None, thumb: str | None):
+    """Een DS die gezond is en version, license en de tokencontrole goed beantwoordt, met
+    deze Last-Modified op api.js en fonts_thumbnail.png (None: 404; "": zonder kop)."""
+
+    def answer(value: str | None) -> httpx.Response:
+        if value is None:
+            return httpx.Response(404)
+        return httpx.Response(200, headers={"Last-Modified": value} if value else {})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/healthcheck":
+            return httpx.Response(200, text="true")
+        if request.url.path == admin.API_JS:
+            return answer(api)
+        if request.url.path == admin.FONTS_THUMBNAIL:
+            return answer(thumb)
+        if request.url.path == "/converter":
+            return httpx.Response(200, json={"error": -8})
+        body = json.loads(request.content)
+        if "token" not in body:
+            return httpx.Response(200, text='{"error":6}')
+        if body["c"] == "version":
+            return httpx.Response(200, json=protocol.version_answer())
+        return httpx.Response(200, json=protocol.license_answer(protocol.UNLIMITED))
+
+    return handler
+
+
+EARLY = "Tue, 27 Oct 2026 17:55:05 GMT"
+LATER = "Tue, 27 Oct 2026 17:57:02 GMT"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("api", "thumb", "expected"),
+    [
+        (EARLY, EARLY, "starting"),  # net gestart: allebei in dezelfde seconde [gemeten]
+        (EARLY, LATER, "starting"),  # de fontbouw na api.js
+        (EARLY, None, "starting"),  # de fontbouw heeft nog niets geschreven
+        (LATER, EARLY, "ok"),  # api.js na de fontbouw: de herstart is voorbij
+        (None, None, "ok"),  # geen api.js: niet te zien
+        ("", EARLY, "ok"),  # api.js zonder Last-Modified: niet te zien
+        (EARLY, "", "starting"),  # het plaatje zonder Last-Modified: als nog niet gebouwd
+    ],
+)
+async def test_settling_uit_de_tijden_van_ds(tmp_path, hooks, unbind, api, thumb, expected):
+    w = await mock_world(tmp_path, hooks, _static(api, thumb))
+    assert await w.check(0) == expected
+
+
+@pytest.mark.anyio
+async def test_settling_als_ds_de_tijden_niet_geeft(tmp_path, hooks, unbind):
+    """Een fout bij api.js (geen 200 of 404) is als elke fout van DS: niet gezond."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/healthcheck":
+            return httpx.Response(200, text="true")
+        return httpx.Response(502)
+
+    w = await mock_world(tmp_path, hooks, handler)
+    assert await w.check(0) == "starting"  # nog nooit gezond
+    assert w.state.version is None and w.calls == []
+
+
+@pytest.mark.anyio
+async def test_openen_wacht_op_de_font_herstart(client, settings):
+    """Met de echte app: zolang de font-herstart nog komt, geeft openen 503
+    office_unavailable; daarna gaat het."""
+    async with office_world(client, settings) as w:
+        anna = await w.user("anna@example.nl")
+        node = await w.docx(anna, await w.root(anna), "verslag.docx", ["Begin"])
+        await w.http.post("/__fake/fonts", json={"pending": True})
+        await health.check_once(main_app)
+        assert office_state(main_app).health == "starting"
+        r = await w.open_config(anna, node)
+        assert r.status_code == 503 and code_of(r) == "office_unavailable"
+        await w.http.post("/__fake/fonts", json={"pending": False})
+        await health.check_once(main_app)
+        assert office_state(main_app).health == "ok"
+        r = await w.open_config(anna, node)
+        assert r.status_code == 200, r.text

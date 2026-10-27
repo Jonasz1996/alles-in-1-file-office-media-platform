@@ -55,6 +55,9 @@ FAKE_TIME_SCALE = 0.05
 FAKE_SAVE_DELAY = 0.2
 # Een nieuwe DS is binnen 6 minuten gezond (§4.5 stap 3)
 REAL_DS_SECONDS = 360.0
+# Zo lang wacht de app hooguit op de font-herstart van DS voordat hij ok zegt
+# (health.SETTLING_SECONDS); office_ds.sh wait wacht daar meestal al op
+REAL_READY_SECONDS = 900.0
 API_JS = "/office/web-apps/apps/api/documents/api.js"
 HOST_PREFIX = "/__e2e/office"
 DOC_TYPES = {
@@ -530,7 +533,7 @@ def _start(
         office.stub.settings = office.settings()
         office.stub.start()
         office.csp = _app_csp(server)
-        office.wait_state("ok", 60)
+        office.wait_state("ok", REAL_READY_SECONDS if real else 60)
     except BaseException:
         server.stop()
         raise

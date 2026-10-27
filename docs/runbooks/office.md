@@ -43,6 +43,20 @@ terug. Stopte het platform midden in een conversie of een upload (een geheugente
 weg), dan ruimt het bij de volgende start de halve bestanden zelf op
 (`/tank/platform/office/.tmp` en `/tank/platform/blobs/.tmp`).
 
+Na elke start bouwt DS zijn fonts en herstart hij daarna docservice en de converter, 2 à 3
+minuten na de start (op een drukke machine tot ±12). Een document dat dan open is, is weg,
+zonder dat DS het opslaat. Daarom zegt het platform zolang "Start op…" op `/beheer`, kan
+bewerken nog niet en wachten de conversies. Het ziet het einde aan de tijden van twee bestanden
+van DS: na de herstart schrijft DS `api.js` opnieuw, later dan `fonts_thumbnail.png` van de
+fontbouw. Zelf kijken:
+
+```bash
+dc exec office sh -c 'grep -E "stopped|success" /var/log/supervisor/supervisord.log | tail -6'
+```
+
+Na `stopped: converter` en daarna `success: converter` is de herstart voorbij. Ziet het platform
+hem na 15 minuten nog niet, dan kan bewerken toch (met een waarschuwing in het log van de app).
+
 Voor wie het platform ontwikkelt: een nieuwe DS betekent een nieuwe digest op vier plaatsen,
 in één commit:
 
@@ -133,7 +147,7 @@ Haal de volumes van DS pas weg als die lijst leeg is:
 docker volume rm platform_office-lib platform_office-data platform_office-logs platform_office-fonts
 ```
 
-(alleen met office uit; daarna is de volgende start van DS weer een eerste start, met fonts).
+(alleen met office uit; daarna is de volgende start van DS weer een eerste start).
 
 ## De belasting meten
 
@@ -154,7 +168,7 @@ start van de app. Elke open editor-tab is één verbinding.
 - De grens `max_editors` (standaard 20, op `/beheer` 1 tot 500) geldt per document: zitten er al
   zoveel mensen in één document, dan kan de volgende het niet openen (`office_too_many`); het
   PDF-voorbeeld werkt dan gewoon. Zet hem lager als de meting dat zegt.
-- Na de eerste start van een nieuwe DS is hij ±5 minuten druk met fonts. Meet daarna.
+- Na elke start van DS is hij 2 à 5 minuten druk met fonts. Meet daarna.
 - Werd DS gestopt door een geheugentekort: `docker inspect --format '{{.State.OOMKilled}}'
   platform-office-1` geeft dan `true`.
 

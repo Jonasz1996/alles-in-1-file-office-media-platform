@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 import zipfile
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import httpx
@@ -1197,6 +1198,34 @@ async def test_stop_slaat_alles_op_binnen_een_seconde(world):
     await asyncio.sleep(0.4)
     assert len(side.callbacks) == count
     await world.http.post("/__fake/restart")
+
+
+@pytest.mark.anyio
+async def test_font_herstart_zoals_gemeten(world):
+    """Een DS vlak na de start: gezond, api.js en fonts_thumbnail.png in dezelfde seconde. De
+    font-herstart: open sessies weg zonder callback en zonder forgotten file, DS blijft op,
+    daarna een nieuwe api.js (spike, extra bevinding 1)."""
+    side = world.side
+    head = "/web-apps/apps/api/documents/api.js"
+    thumb = "/sdkjs/common/Images/fonts_thumbnail.png"
+    before = (await world.http.head(head)).headers["last-modified"]
+    assert (await world.http.head(thumb)).headers["last-modified"] != before  # al lang op
+    await world.http.post("/__fake/fonts", json={"pending": True})
+    assert (await world.http.get("/healthcheck")).text == "true"
+    pending = (await world.http.head(head)).headers["last-modified"]
+    assert (await world.http.head(thumb)).headers["last-modified"] == pending
+    anna = world.editor(world.doc_config("k15-abc", "proef.docx", "u1", "Anna"))
+    await anna.open()
+    await anna.type("weg na de fonts")
+    count = len(side.callbacks)
+    await world.http.post("/__fake/fonts", json={"pending": False})
+    await asyncio.sleep(0.4)
+    assert len(side.callbacks) == count
+    assert (await world.http.get("/healthcheck")).text == "true"
+    assert (await world.command("info", key="k15-abc"))["error"] == 1
+    assert (await world.command("getForgottenList"))["keys"] == []
+    after = (await world.http.head(head)).headers["last-modified"]
+    assert parsedate_to_datetime(after) > parsedate_to_datetime(pending)
 
 
 @pytest.mark.anyio
