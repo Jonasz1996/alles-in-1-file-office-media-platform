@@ -128,7 +128,10 @@ De gewone fixtures `server` en `admin` hebben geen office. Daarmee bewijst
 | `PLATFORM_OFFICE_SWEEP_SECONDS` | `1` | de ronde (§4.4) |
 | `PLATFORM_OFFICE_RECOVERY_SECONDS` | `2` | het herstel (§4.4) |
 | `PLATFORM_OFFICE_HEALTH_SECONDS` | `1` | zodat een test "DS weg" en "DS terug" binnen enkele seconden ziet |
-| `PLATFORM_OFFICE_DEV_UNGATED` | `1` | in O0 forwarden proxy en tunnel alleen hiermee; na O1 doet hij niets meer |
+
+`PLATFORM_OFFICE_DEV_UNGATED` zet het harnas niet meer: sinds O1 gaat elke e2e door de echte
+poort (het cookie `office` uit `POST …/session` en het recht van nu). De vlag doet niets meer en
+gaat bij de integratie weg uit `config.py`.
 
 Na de start wacht de fixture tot `/api/v1/office/status` `state: "ok"` zegt. Dat is de grote
 controle van de gezondheid (versie, licentie, tokens geëist) die slaagt.
@@ -288,13 +291,14 @@ Dan de API (in `api/`) en de web-app (in `web/`):
 PLATFORM_HTTP_PORT=8000 PLATFORM_OFFICE_URL=http://127.0.0.1:18080 \
   PLATFORM_OFFICE_SECRET="$(cat "$HOME/.office-dev/jwt.secret")" \
   PLATFORM_OFFICE_APP_URL=http://host.docker.internal:8081 \
-  PLATFORM_OFFICE_INTERNAL_HOST=0.0.0.0 PLATFORM_OFFICE_DEV_UNGATED=1 \
+  PLATFORM_OFFICE_INTERNAL_HOST=0.0.0.0 \
   uv run python -m app.serve
 npm run dev
 ```
 
-- `PLATFORM_OFFICE_DEV_UNGATED=1` is nodig tot O1: zonder gaat `/office/` niet door. Na O1 doet
-  hij niets meer; bij de integratie gaat hij weg. Nooit in productie.
+- Sinds O1 gaat `/office/` alleen door met het poort-cookie: open een bestand via
+  `/bewerken/<id>` (dat doet `POST …/session` en zet het cookie). `PLATFORM_OFFICE_DEV_UNGATED`
+  doet niets meer; bij de integratie gaat hij weg.
 - De interne luisteraar luistert met `0.0.0.0` op alle adressen van je machine, op poort 8081.
   Doe dit alleen op een machine waar dat mag (of zet een firewall op 8081).
 - In O0 laadt `api.js` zo via `/office/`, maar een document openen kan pas met O2: de interne

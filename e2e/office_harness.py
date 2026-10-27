@@ -406,7 +406,8 @@ def office_env(
     *, ds_url: str, secret: str, internal_port: int, app_host: str, internal_host: str = ""
 ) -> dict[str, str]:
     """PLATFORM_OFFICE_* voor een Server (§3.6). De ronde op 1 s, het herstel op 2 s en de
-    gezondheid elke seconde, zodat een test DS weg en terug snel ziet."""
+    gezondheid elke seconde, zodat een test DS weg en terug snel ziet. Geen
+    PLATFORM_OFFICE_DEV_UNGATED: sinds O1 geldt in elke e2e de echte poort (cookie en recht)."""
     env = {
         "PLATFORM_OFFICE_URL": ds_url,
         "PLATFORM_OFFICE_SECRET": secret,
@@ -415,7 +416,6 @@ def office_env(
         "PLATFORM_OFFICE_SWEEP_SECONDS": "1",
         "PLATFORM_OFFICE_RECOVERY_SECONDS": "2",
         "PLATFORM_OFFICE_HEALTH_SECONDS": "1",
-        "PLATFORM_OFFICE_DEV_UNGATED": "1",
     }
     if internal_host:
         env["PLATFORM_OFFICE_INTERNAL_HOST"] = internal_host
