@@ -5,7 +5,7 @@
 //
 // Van O5 (bouwontwerp §2, O5). Beheer.tsx toont het tabblad alleen als office ingesteld is.
 
-import { type FormEvent, type JSX, useEffect, useState } from "react";
+import { type FormEvent, type JSX, type RefObject, useEffect, useRef, useState } from "react";
 import { errorText, fmt, t } from "../i18n";
 import { checkpointAll, deleteUnsaved, getAdmin, putAdmin, restoreUnsaved, retryConversions } from "../office/api";
 import type { OfficeAdmin, OfficeOpenDocument, OfficeUnsaved } from "../office/types";
@@ -84,6 +84,29 @@ function Body({
   );
 }
 
+/**
+ * De focus na een knop die iets deed. Gaat de knop uit of weg (Verwijderen staat uit zolang het
+ * bezig is, de rij is weg na Terugzetten, Mislukte opnieuw verdwijnt), dan valt de focus naar
+ * <body> en begint Tab weer boven aan de pagina. Daarom, als de focus dan nergens anders staat:
+ * terug op de knop als hij er nog is, en anders op de kop van het blok. press() onthoudt de knop;
+ * roep het aan vóór een vraag (de bevestiging), zolang de focus nog op de knop staat.
+ */
+function useFocusAfter(busy: boolean, heading: RefObject<HTMLElement | null>): () => void {
+  const pressed = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (busy) return;
+    const el = pressed.current;
+    pressed.current = null;
+    const now = document.activeElement;
+    if (el === null || (now !== null && now !== document.body)) return;
+    (el.isConnected ? el : heading.current)?.focus();
+  }, [busy, heading]);
+  return () => {
+    const now = document.activeElement;
+    pressed.current = now instanceof HTMLElement ? now : null;
+  };
+}
+
 function Facts({ data }: { data: OfficeAdmin }): JSX.Element {
   const version =
     data.version === null
@@ -142,8 +165,11 @@ function Now({ data }: { data: OfficeAdmin }): JSX.Element {
 function OpenDocuments({ data, reload }: { data: OfficeAdmin; reload(): Promise<void> }): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const press = useFocusAfter(busy, heading);
 
   async function checkpoint() {
+    press();
     setBusy(true);
     try {
       const out = await checkpointAll();
@@ -163,7 +189,9 @@ function OpenDocuments({ data, reload }: { data: OfficeAdmin; reload(): Promise<
   return (
     <section aria-labelledby="admin-office-open">
       <div className="admin-head">
-        <h3 id="admin-office-open">{t("admin.officeTab.open")}</h3>
+        <h3 id="admin-office-open" ref={heading} tabIndex={-1}>
+          {t("admin.officeTab.open")}
+        </h3>
         {data.configured && (
           <Button busy={busy} disabled={data.open.length === 0} onClick={() => void checkpoint()}>
             {t("admin.officeTab.checkpoint")}
@@ -216,6 +244,8 @@ function OpenRow({ doc }: { doc: OfficeOpenDocument }): JSX.Element {
 function Unsaved({ data, reload }: { data: OfficeAdmin; reload(): Promise<void> }): JSX.Element {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const press = useFocusAfter(busy !== null, heading);
 
   async function act(key: string, fn: () => Promise<string>) {
     setBusy(key);
@@ -232,6 +262,7 @@ function Unsaved({ data, reload }: { data: OfficeAdmin; reload(): Promise<void> 
   }
 
   function restore(item: OfficeUnsaved) {
+    press();
     void act(item.key, async () => {
       const copy = await restoreUnsaved(item.key);
       return t("admin.officeTab.restored", { name: copy.name });
@@ -239,6 +270,7 @@ function Unsaved({ data, reload }: { data: OfficeAdmin; reload(): Promise<void> 
   }
 
   async function remove(item: OfficeUnsaved, name: string) {
+    press();
     const yes = await confirm({
       title: t("admin.officeTab.removeTitle"),
       message: t("admin.officeTab.removeText", { name }),
@@ -254,7 +286,9 @@ function Unsaved({ data, reload }: { data: OfficeAdmin; reload(): Promise<void> 
 
   return (
     <section aria-labelledby="admin-office-unsaved">
-      <h3 id="admin-office-unsaved">{t("admin.officeTab.unsaved")}</h3>
+      <h3 id="admin-office-unsaved" ref={heading} tabIndex={-1}>
+        {t("admin.officeTab.unsaved")}
+      </h3>
       <p className="muted">{t("admin.officeTab.unsavedHelp")}</p>
       {error && <p role="alert">{error}</p>}
       {data.unsaved.length === 0 ? (
@@ -318,8 +352,11 @@ function Unsaved({ data, reload }: { data: OfficeAdmin; reload(): Promise<void> 
 function Conversions({ data, reload }: { data: OfficeAdmin; reload(): Promise<void> }): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const press = useFocusAfter(busy, heading);
 
   async function retry() {
+    press();
     setBusy(true);
     try {
       const out = await retryConversions();
@@ -336,7 +373,9 @@ function Conversions({ data, reload }: { data: OfficeAdmin; reload(): Promise<vo
   return (
     <section aria-labelledby="admin-office-conversions">
       <div className="admin-head">
-        <h3 id="admin-office-conversions">{t("admin.officeTab.conversions")}</h3>
+        <h3 id="admin-office-conversions" ref={heading} tabIndex={-1}>
+          {t("admin.officeTab.conversions")}
+        </h3>
         {data.configured && data.conversions.failed > 0 && (
           <Button busy={busy} onClick={() => void retry()}>
             {t("admin.officeTab.retry")}

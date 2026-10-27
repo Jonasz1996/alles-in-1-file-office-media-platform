@@ -4,7 +4,9 @@ docs/fase-4/bouwontwerp.md).
 - Het tabblad Office met Alt+7. Terwijl Anna en Bram één docx bewerken (zoals punt 1), toont
   het 2 verbindingen, 2 mensen en 1 document; daarna weer 0, en de piek blijft.
 - De grens op 1 (met het formulier op het tabblad): de tweede bewerker krijgt de melding.
-- Een niet-opgeslagen document (quotum vol) terugzetten na het vrijmaken van ruimte.
+- Twee niet-opgeslagen documenten (quotum vol): het ene verwijderen (met de bevestiging), het
+  andere terugzetten na het vrijmaken van ruimte. Alles met het toetsenbord.
+- Office uit en weer aan met alleen het toetsenbord, en het tabblad in het Engels.
 
 Elke sessie die een test opent, gaat ook weer dicht (Sluiten in de editor): een sessie die
 open blijft, houdt de conversies van de andere tests tegen (sessions.busy is globaal).
@@ -233,10 +235,14 @@ def test_niet_opgeslagen_terugzetten_na_ruimte(office: Office, office_browsers) 
         expect(toast(tab, "Verwijderd.")).to_be_visible()
         expect(tab.get_by_role("row").filter(has_text=other)).to_have_count(0)
         assert key_other not in forgotten(office)
+        # De rij met de knop is weg: de focus staat op de kop van het blok, niet op <body>
+        heading = tab.get_by_role("heading", name="Niet opgeslagen", exact=True)
+        expect(heading).to_be_focused()
 
-        # Zonder ruimte lukt Terugzetten ook niet: de fout staat erbij, de rij blijft
-        start(tab)
-        tab_to(tab, restore, limit=60)
+        # Zonder ruimte lukt Terugzetten ook niet: de fout staat erbij, de rij blijft. Vanaf de
+        # kop is Terugzetten de volgende Tab.
+        tab.keyboard.press("Tab")
+        expect(restore).to_be_focused()
         tab.keyboard.press("Enter")
         unsaved = tab.get_by_role("region", name="Niet opgeslagen", exact=True)
         expect(unsaved.get_by_role("alert")).to_have_text("Onvoldoende quotum")
@@ -249,6 +255,7 @@ def test_niet_opgeslagen_terugzetten_na_ruimte(office: Office, office_browsers) 
         expect(toast(tab, re.compile(r"^Teruggezet als vol-"))).to_be_visible()
         expect(row).to_have_count(0, timeout=10_000)
         expect(tab.get_by_text("Alles uit de editor is opgeslagen.", exact=True)).to_be_visible()
+        expect(heading).to_be_focused()
         assert key not in forgotten(office)
     finally:
         set_quota(office, anna.id, 0)
