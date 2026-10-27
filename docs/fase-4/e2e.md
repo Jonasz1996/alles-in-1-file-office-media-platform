@@ -48,7 +48,8 @@ nodig. De gewone e2e (`-m "not perf"`) draait deze tests ook.
 ### Met de echte DS
 
 ```sh
-bash e2e/office_ds.sh start     # image op digest ophalen en een nieuwe container starten
+OFFICE_DS_CONFIG=$PWD/infra/single/office/local-production-linux.json \
+  bash e2e/office_ds.sh start   # image op digest ophalen en een nieuwe container starten
 bash e2e/office_ds.sh wait      # wachten tot DS gezond is en zijn font-herstart voorbij is
 cd api
 E2E_REAL_DS=http://127.0.0.1:18080 E2E_REAL_DS_SECRET_FILE=/tmp/office-ds/jwt.secret \
@@ -88,10 +89,11 @@ Voor `office_ds.sh`:
 | `OFFICE_DS_CONFIG` | leeg | een `local-production-linux.json` voor DS, read-only gemount. Na O6 is dat `infra/single/office/local-production-linux.json` (§4.5 stap 2) |
 | `OFFICE_DS_WAIT_SECONDS` | `360` | hoe lang `wait` wacht |
 
-Zonder `OFFICE_DS_CONFIG` draait DS met zijn eigen standaard. Het verschil dat er nu toe doet:
-**3 pogingen voor een callback** (±7 s), niet de 8 (±255 s) uit de spike. Een test die de app
-langer dan een paar seconden weg laat, gebruikt tot O6 een eigen configuratie (zoals de
-herhaling van stap 5 in [spike.md](spike.md)), of verwacht de forgotten files.
+De job `office` start DS sinds O6 met `infra/single/office/local-production-linux.json`, net als
+de installatie; doe lokaal hetzelfde. Zonder `OFFICE_DS_CONFIG` draait DS met zijn eigen
+standaard: **3 pogingen voor een callback** (±7 s) in plaats van 8 (±255 s), en de grenzen van DS
+zelf (50 MB XML, niets voor ODF) in plaats van die van de invoercontrole.
+`test_office_o6_real.py` controleert juist die grenzen en faalt dan.
 
 Het image: eerst `mirror.gcr.io/onlyoffice/documentserver@sha256:ca17…`, dan Docker Hub, drie
 rondes. Daarna zet het script de naam `onlyoffice/documentserver:10.0.0.1` erop (`docker tag`),
@@ -251,8 +253,9 @@ fout in office staat zo apart in de uitslag. Vindt `-m office` geen enkele test,
 
 Zoals §4.5, met `e2e/office_ds.sh`:
 
-1. `office_ds.sh start` als eerste stap: het image op digest (mirror, dan Docker Hub, drie rondes)
-   en een nieuwe container. Zo bouwt DS zijn fonts terwijl de web-app bouwt.
+1. `office_ds.sh start` als eerste stap, met `OFFICE_DS_CONFIG` op
+   `infra/single/office/local-production-linux.json`: het image op digest (mirror, dan Docker
+   Hub, drie rondes) en een nieuwe container. Zo bouwt DS zijn fonts terwijl de web-app bouwt.
 2. uv, Node, `uv sync --frozen`, de web-app bouwen, Chromium zoals in de job `e2e`.
 3. `office_ds.sh wait`: gezond en de font-herstart voorbij, hooguit 6 minuten.
 4. `pytest ../e2e -m office_real -rs` met `E2E_REAL_DS`, `E2E_REAL_DS_SECRET_FILE` en

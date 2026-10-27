@@ -119,6 +119,10 @@ jobs:
       # Op digest, eerst van mirror.gcr.io en dan van Docker Hub; de geheimen maakt het script zelf.
       - name: DS starten
         run: bash ../e2e/office_ds.sh start
+        env:
+          # De instellingen van de installatie (O6, §4.5 stap 2, spike A21): 8 pogingen voor een
+          # callback, docbuilder en AI uit, en de grenzen van de invoercontrole
+          OFFICE_DS_CONFIG: ${{ github.workspace }}/infra/single/office/local-production-linux.json
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
