@@ -1,6 +1,7 @@
 > Werkdocument: het bouwontwerp van fase 4 (office), revisie 2. Revisie 2 is leidend. Revisie 1
 > staat in [bouwontwerp-r1.md](bouwontwerp-r1.md).
-> Nog niet besloten: de editorkeuze ligt bij Jonas (Vraag 1).
+> Besloten door Jonas (2026-10-26): OnlyOffice (Vraag 1) en de editor op hetzelfde adres als de
+> app (Vraag 3). Vraag 2, 4 en 5 lopen op de standaard.
 
 # Fase 4 (office): bouwontwerp, revisie 2
 
@@ -993,7 +994,7 @@ Elke keuze geeft de standaard en waarom.
 
 ### Vragen voor Jonas
 
-1. **Welke editor?** (de open beslissingskaart) Standaard: **OnlyOffice** (dit ontwerp). Collabora
+1. **Welke editor?** **Besloten (Jonas, 2026-10-26): OnlyOffice** (dit ontwerp). Collabora
    CODE noemt zichzelf "not recommended for production", toont bij elke start een welkomstvenster
    dat niet uit kan, en heeft een conversie-eindpunt zonder authenticatie [doc, gemeten]. Bij
    Collabora veranderen de adapter (`app/office/oo/` wordt een WOPI-host), het padbeleid en de
@@ -1004,7 +1005,8 @@ Elke keuze geeft de standaard en waarom.
    van DS ±5 minuten 1–2 cores [gemeten]. Uit: `OFFICE=uit bash install.sh`, of `OFFICE=uit` in
    `/opt/platform/.env` en het script opnieuw draaien. Bij nee start het script DS pas na
    `OFFICE=aan`.
-3. **Het restrisico van DS op hetzelfde adres accepteren?** (Keuze 9) Standaard: **ja**. Wat
+3. **Het restrisico van DS op hetzelfde adres accepteren?** (Keuze 9) **Besloten (Jonas,
+   2026-10-26): ja.** Wat
    overblijft:
    - een fout in DS kan handelen namens een ingelogde bewerker;
    - een kwaadaardig bestand dat onze invoercontrole doorstaat, kan een fout in de converter van

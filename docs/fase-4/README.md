@@ -21,12 +21,11 @@ de rest van het platform. Uit het stappenplan:
 Klaar als: twee gebruikers bewerken tegelijk één docx; opslaan maakt een nieuwe versie;
 office-preview werkt zonder de editor te openen.
 
-## De editor: nog open bij Jonas
+## De editor: OnlyOffice
 
-De keuze ligt op een open beslissingskaart (Vraag 1 in het ontwerp).
+Jonas koos op 26 oktober 2026 voor OnlyOffice (Vraag 1 in het ontwerp, B3 en B31).
 
-- **Standaard: OnlyOffice Docs Community 10.0.0.1**, vastgepind op digest. Het ontwerp gaat
-  hiervan uit. Het draait als **optionele tweede container** naast de app. Zonder die container
+- **OnlyOffice Docs Community 10.0.0.1**, vastgepind op digest. Het draait als **optionele tweede container** naast de app. Zonder die container
   werkt alles zoals in fase 3; alleen bewerken kan dan niet, en voorbeelden komen uit de eigen
   lezer (B21).
 - **Collabora** blijft de terugval. Sessies, opslaan, versies, toegang en voorbeelden zitten in
@@ -60,10 +59,10 @@ er als eerste schuift als het uitloopt.
 
 ## Vragen voor Jonas
 
-1. Welke editor? Standaard OnlyOffice.
+1. Welke editor? **Besloten: OnlyOffice** (Jonas, 2026-10-26).
 2. Office meteen aan bij installeren en bijwerken? Standaard ja (±1 GB downloaden, ±4 GB schijf).
-3. Het restrisico van de editor op hetzelfde adres als de app accepteren? Standaard ja, met de
-   beperkingen uit het ontwerp en later een eigen hostnaam (fase 8).
+3. Het restrisico van de editor op hetzelfde adres als de app accepteren? **Besloten: ja**
+   (Jonas, 2026-10-26), met de beperkingen uit het ontwerp en later een eigen hostnaam (fase 8).
 4. Hoeveel versies maakt de editor? Standaard één per bewerksessie, plus één per 30 minuten, en
    hooguit 10 per sessie.
 5. De Collabora-adapter nu bouwen? Standaard nee, alleen klaarzetten.
@@ -71,8 +70,8 @@ er als eerste schuift als het uitloopt.
 ## Documenten
 
 - [bouwontwerp.md](bouwontwerp.md): het ontwerp (revisie 2, leidend); revisie 1 in
-  [bouwontwerp-r1.md](bouwontwerp-r1.md). De keuzes staan als voorstel in B31–B38 in
-  [beslissingen](../fase-0/beslissingen.md).
+  [bouwontwerp-r1.md](bouwontwerp-r1.md). De keuzes staan in B31–B38 in
+  [beslissingen](../fase-0/beslissingen.md): B31 en B32 besloten, de rest voorstel.
 - [spike.md](spike.md): wat de echte DS 10.0.0.1 deed (de spike van O0, en stap 2, 5 en 11 nog
   een keer via de kern in de app), met de afwijkingen van het ontwerp.
 - [e2e.md](e2e.md): de e2e van office (nep-DS en echte DS), de job `office` in CI, en ontwikkelen
