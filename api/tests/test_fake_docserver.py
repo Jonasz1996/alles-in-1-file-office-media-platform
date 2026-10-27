@@ -994,6 +994,98 @@ async def test_log_zonder_geheimen(world):
     assert {"socket", "callback", "download", "change", "http"} <= kinds
 
 
+# --- forgotten files (O2, Keuze 21) ---
+
+
+async def forgotten_keys(world) -> dict:
+    return (await world.http.get("/__fake/forgotten")).json()["keys"]
+
+
+@pytest.mark.anyio
+async def test_forgotten_files_zoals_gemeten(world):
+    """Een opslag die de app niet aannam ({"error": 1}) wordt een forgotten file met dezelfde
+    inhoud; getForgottenList, getForgotten en deleteForgotten antwoorden zoals de opname
+    (recorded/commands.json), de link volgt het linkgeheim, en ze overleven kill en restart."""
+    rec = recorded("commands")
+    side = world.side
+
+    def want(name: str, key: str) -> dict:
+        return json.loads(json.dumps(rec[name]["answer"]).replace("<key>", key))
+
+    assert await world.command("getForgottenList") == {"error": 0, "keys": []}
+    key = "kf1-abc"
+    cor = world.editor(world.doc_config(key, "proef.docx", "u3", "Cor"))
+    await cor.open()
+    await cor.type("vergeten tekst")
+    side.answers = [(200, {"error": 1})]
+    await cor.close()
+    await side.wait(2)
+    deadline = time.monotonic() + 5
+    while key not in await forgotten_keys(world):
+        assert time.monotonic() < deadline
+        await asyncio.sleep(0.02)
+    assert await world.command("getForgottenList") == want("getForgottenList", key)
+    got = await world.command("getForgotten", key=key)
+    recorded_url = httpx.URL(want("getForgotten", key)["url"])
+    url = httpx.URL(got["url"])
+    assert set(got) == {"key", "error", "url"} and got["key"] == key and got["error"] == 0
+    assert url.path == recorded_url.path
+    assert list(url.params) == list(recorded_url.params)
+    assert url.params["shardkey"] == key and url.params["filename"] == "output.docx"
+    link = f"http://127.0.0.1:{world.port}{url.path}?{url.query.decode()}"
+    r = await world.http.get(link)
+    assert r.status_code == 200
+    assert docx.paragraphs(r.content)[-1] == "vergeten tekst"
+    assert (await world.http.get(link.replace("md5=", "md5=x"))).status_code == 403
+    # Het volume van DS: kill en restart laten hem staan, een oude link geeft 403
+    await world.http.post("/__fake/kill")
+    assert (await world.http.get(link)).status_code == 503  # DS is weg
+    await world.http.post("/__fake/restart")
+    assert (await world.http.get(link)).status_code == 403
+    assert await world.command("getForgottenList") == want("getForgottenList", key)
+    fresh = httpx.URL((await world.command("getForgotten", key=key))["url"])
+    r = await world.http.get(f"http://127.0.0.1:{world.port}{fresh.path}?{fresh.query.decode()}")
+    assert r.status_code == 200 and docx.paragraphs(r.content)[-1] == "vergeten tekst"
+    # Weg
+    assert await world.command("deleteForgotten", key=key) == want("deleteForgotten", key)
+    assert await world.command("getForgotten", key=key) == want("getForgotten na delete", key)
+    assert await world.command("getForgotten", key="nooit-abc") == want(
+        "getForgotten onbekende key", "nooit-abc"
+    )
+    assert (await world.command("deleteForgotten", key=key))["error"] == 1
+    assert await world.command("getForgottenList") == {"error": 0, "keys": []}
+
+
+@pytest.mark.anyio
+async def test_forgotten_na_alle_pogingen_en_zelf_neerzetten(world):
+    """Na 5xx op alle pogingen ook een forgotten file; add() zet er zelf een neer."""
+    from tests.fake_docserver import forgotten
+
+    side = world.side
+    key = "kf2-abc"
+    dirk = world.editor(world.doc_config(key, "proef.docx", "u4", "Dirk"))
+    await dirk.open()
+    await dirk.type("na pogingen")
+    side.answers = [(500, {})] * 4
+    await dirk.close()
+    deadline = time.monotonic() + 5
+    while key not in await forgotten_keys(world):
+        assert time.monotonic() < deadline
+        await asyncio.sleep(0.02)
+    forgotten.add(world.fake, "kf3-abc", b"PK zelf", "output.xlsx")
+    keys = await forgotten_keys(world)
+    assert set(keys) == {key, "kf3-abc"} and keys["kf3-abc"] == len(b"PK zelf")
+    got = await world.command("getForgotten", key="kf3-abc")
+    assert httpx.URL(got["url"]).path == "/cache/files/forgotten/kf3-abc/output.xlsx/output.xlsx"
+    # Een andere naam onder dezelfde key: de md5 dekt het pad, dus 403
+    other = got["url"].replace("output.xlsx/output.xlsx", "output.xlsx/ander.xlsx")
+    other_url = httpx.URL(other)
+    r = await world.http.get(
+        f"http://127.0.0.1:{world.port}{other_url.path}?{other_url.query.decode()}"
+    )
+    assert r.status_code == 403
+
+
 def test_als_proces(tmp_path):
     """python -m tests.fake_docserver: draait, spreekt het protocol, en stopt op PID."""
     secret_file = tmp_path / "geheim"
