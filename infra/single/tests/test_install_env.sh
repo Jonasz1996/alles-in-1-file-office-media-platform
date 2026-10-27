@@ -448,6 +448,18 @@ office_cleanup sha256:nu sha256:vorig sha256:pin >/dev/null
 removed=$({ grep '^docker image rm' "$LOG" || true; } | sort | tr '\n' ' ')
 check "alleen de twee oude namen" test "$removed" = "docker image rm mirror.gcr.io/onlyoffice/documentserver@sha256:oud2 docker image rm onlyoffice/documentserver:9.4.0.1 "
 
+echo "== de eindtekst noemt het commando zoals Jonas het draait: curl … | bash (uitrol-5)"
+# Na `curl … | bash` staat er geen install.sh in de werkmap
+script_url=https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh
+PORT=80 HTTPS_PORT=443 DATA_ROOT=/tank/platform
+OFFICE_ON=1 OFFICE_REASON=""
+out=$(slot)
+check "office aan: uitzetten met curl" grep -qF "curl -fsSL $script_url | OFFICE=uit bash" <<<"$out"
+OFFICE_ON=0 OFFICE_REASON="OFFICE=uit in $ENV_FILE"
+out=$(slot)
+check "office uit: aanzetten met curl" grep -qF "curl -fsSL $script_url | OFFICE=aan bash" <<<"$out"
+check "nergens 'bash install.sh'" test "$(grep -c 'bash install.sh' <<<"$out")" = 0
+
 echo "== curl | bash: geen commando leest de rest van het script van stdin"
 # Bij `curl … | bash` leest bash het script van stdin. Een `docker run` of `compose exec` die
 # stdin openhoudt, eet de rest van het script op; dan stopt het zonder melding.

@@ -7,8 +7,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | bash
 #
 # Opnieuw draaien werkt het platform bij; instellingen en data blijven staan.
-# Andere poort dan 80: PORT=8080 bash install.sh (later aan te passen in /opt/platform/.env)
-# Office uit: OFFICE=uit bash install.sh (of: curl … | OFFICE=uit bash). Weer aan: OFFICE=aan.
+# Andere poort dan 80: curl … | PORT=8080 bash (later aan te passen in /opt/platform/.env)
+# Office uit: curl … | OFFICE=uit bash. Weer aan: OFFICE=aan.
 #
 # Voor tests (Jonas heeft ze niet nodig): PLATFORM_REPO (ook een lokaal pad of file://),
 # PLATFORM_SRC_REF (een commit of tag in plaats van de branch) en PLATFORM_ROOT (in plaats van
@@ -461,7 +461,8 @@ main() {
 }
 
 slot() {
-  local ip url https_port
+  # Zo draait Jonas het script (curl … | bash): dan staat er geen install.sh in de werkmap
+  local ip url https_port script="curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh"
   ip=$(hostname -I | awk '{print $1}')
   url="http://$ip"
   [ "$PORT" = 80 ] || url="$url:$PORT"
@@ -490,10 +491,10 @@ KLAAR
     echo "Office: aan. De editor start op de achtergrond; bewerken kan over 2 à 3 minuten"
     echo "  (DS bouwt eerst zijn fonts en herstart zichzelf; /beheer zegt zolang 'Start op')."
     [ -z "$OFFICE_REASON" ] || echo "  Let op: $OFFICE_REASON."
-    echo "  Uit: OFFICE=uit bash install.sh"
+    echo "  Uit: $script | OFFICE=uit bash"
   else
     echo "Office: uit, want $OFFICE_REASON."
-    office_supported && echo "  Aan: OFFICE=aan bash install.sh"
+    office_supported && echo "  Aan: $script | OFFICE=aan bash"
   fi
   cat <<KLAAR
 

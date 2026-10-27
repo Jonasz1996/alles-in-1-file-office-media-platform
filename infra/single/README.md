@@ -29,8 +29,9 @@ beheerdersaccount aan en zet je meteen 2FA aan (verplicht; houd een authenticato
 Aegis of Google Authenticator bij de hand). Doe dat voordat je de poort in je router
 openzet, anders kan iemand anders je voor zijn.
 
-Een andere poort kiezen kan bij de eerste installatie met `PORT=8080 bash install.sh`, of
-later in `/opt/platform/.env` (daarna het script opnieuw draaien).
+Een andere poort kiezen kan bij de eerste installatie met `curl … | PORT=8080 bash` (het
+commando hierboven, met `PORT=8080` vóór `bash`), of later in `/opt/platform/.env` (daarna het
+script opnieuw draaien).
 
 ## Van buiten bereikbaar maken (HTTPS)
 
