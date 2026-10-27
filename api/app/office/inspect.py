@@ -3,10 +3,19 @@
 DS leest wat wij hem geven met zijn eigen code, op onze origin (Keuze 9). Daarom kijkt de app
 eerst zelf of een bestand veilig genoeg is, met alleen zipfile en zlib, in een thread:
 
+- de inhoud beslist, niet de naam: DS kijkt zelf naar de bytes en negeert de opgegeven soort
+  [gemeten]. Een zip-formaat moet met PK\x03\x04 beginnen, doc, xls en ppt met de kop van
+  OLE, rtf met {\rtf; anders "format" (een zip met de naam .doc kreeg vroeger alleen de
+  controle op grootte);
 - zip-formaten (OOXML en ODF): elk onderdeel echt uitpakken en de bytes tellen. De opgegeven
   grootte geloven we niet; wijkt die af van wat eruit komt, dan is het bestand niet in orde.
   Stoppen zodra een grens bereikt is;
-- de XML-delen (*.xml, *.rels) samen hooguit 50 MB, voor werkbladen (xlsx, ods) 150 MB;
+- de XML samen hooguit XML_BYTES (OOXML-tekst en -presentaties), XML_BYTES_ODF (elk
+  ODF-document) of XML_BYTES_SHEET (een OOXML-werkblad). Ook hier de inhoud: XML is elk
+  onderdeel dat op .xml of .rels eindigt, en elk ander onderdeel dat (na een BOM en witruimte)
+  met < begint, want in OOXML mag het hoofddeel elke naam hebben. De grens is de kleinste van
+  wat de naam en wat de inhoud zegt: alleen een bestand dat echt een werkblad is (het
+  hoofddeel in [Content_Types].xml, en geen tekst of presentatie) krijgt de ruimere grens;
 - alles samen hooguit 512 MB en hooguit 10.000 onderdelen; boven 64 MB uitgepakt hooguit
   100 keer zo groot als het bestand;
 - alleen de methoden stored en deflate, niets versleuteld (ook geen versleuteld OOXML, dat
@@ -15,6 +24,15 @@ eerst zelf of een bestand veilig genoeg is, met alleen zipfile en zlib, in een t
 - hooguit 20 s;
 - doc, xls, ppt en rtf (geen zip): hooguit office_ole_max_bytes (20 MB).
 
+De XML-grenzen komen uit een meting bij 2 GB geheugen (DS 10.0.0.1, omzetten naar PDF,
+docs/fase-4/spike.md A11): x2t liep vast (OOM, error -3) op een docx met 10 MB XML, een odt
+met 7 MB en een xlsx met 30 MB; een docx met 7 MB, een odt met 5 MB en een xlsx met 20 MB
+gingen nog, maar op 85 tot 100 % van het geheugen. De grenzen liggen daar ruim onder (4, 2 en
+10 MB: hooguit ±1,3 GB). De integratie meet ze opnieuw (§4.7). Let op: de grootte van de XML
+is maar een maat. Een docx met 3,9 MB aan alleen pagina-einden (±95.000 pagina's) ging nog,
+maar op ±97 %; daarvoor zijn de geheugengrens van de container (x2t gaat dood, docservice
+blijft) en de twee pogingen van een conversie (Keuze 25).
+
 De uitslag staat per sha (en extensie) een uur in het geheugen.
 
 Redenen: too_big, ratio, entries, method, encrypted, time, en daarnaast corrupt (geen
@@ -22,6 +40,7 @@ geldige zip, of een onderdeel dat over zijn grootte liegt) en format (geen soort
 ons krijgt).
 """
 
+import re
 import struct
 import tempfile
 import time
@@ -40,8 +59,10 @@ TOTAL_BYTES = 512 * MB
 MAX_ENTRIES = 10_000
 RATIO = 100
 RATIO_FROM = 64 * MB  # CONTENT_BYTES van B21
-XML_BYTES = 50 * MB
-XML_BYTES_SHEET = 150 * MB
+# Gemeten bij 2 GB (zie boven); de integratie meet opnieuw (§4.7)
+XML_BYTES = 4 * MB  # OOXML-tekst en -presentaties (vast bij 10 MB, docx)
+XML_BYTES_ODF = 2 * MB  # elk ODF-document (vast bij 7 MB, odt)
+XML_BYTES_SHEET = 10 * MB  # een echt OOXML-werkblad (vast bij 30 MB, xlsx)
 SECONDS = 20.0
 CACHE_SECONDS = 3600.0
 CACHE_SIZE = 4096
@@ -52,12 +73,27 @@ SPOOL_BYTES = 8 * MB
 WORD = {"docx", "docm", "dotx", "dotm", "odt", "ott"}
 SLIDES = {"pptx", "pptm", "potx", "potm", "ppsx", "ppsm", "odp", "otp"}
 SHEETS = {"xlsx", "xlsm", "xltx", "xltm", "ods", "ots"}
+ODF = {"odt", "ott", "odp", "otp", "ods", "ots"}
 ZIP_FORMATS = WORD | SLIDES | SHEETS
 OLE_FORMATS = {"doc", "xls", "ppt", "rtf"}
 
 ZIP_MAGIC = b"PK\x03\x04"
 OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+RTF_MAGIC = b"{\\rtf"
 LOCAL_HEADER = struct.Struct("<4sHHHHHIIIHH")
+
+# Wat vóór het eerste teken van XML mag staan: witruimte, NUL (UTF-16 en UTF-32) en de bytes
+# van een BOM. Vier NUL's achter elkaar komen in geen enkele codering van XML voor: dan is het
+# geen XML (zo telt een onderdeel vol nullen niet als XML)
+LEADING = b" \t\r\n\x00\xef\xbb\xbf\xfe\xff"
+NULS = b"\x00" * 4
+# Onderdelen die zeggen wat voor document het is; ze blijven zo groot in het geheugen
+CONTENT_TYPES = "[content_types].xml"
+ODF_MARKERS = {"mimetype", "content.xml", "meta-inf/manifest.xml"}
+CAPTURE_BYTES = 1 * MB
+# Het hoofddeel in [Content_Types].xml (kleine letters, zoals de inhoud na lower())
+SHEET_MAIN = re.compile(rb"(?:spreadsheetml|ms-excel)\.[a-z.]*main")
+OTHER_MAIN = re.compile(rb"(?:wordprocessingml|presentationml|ms-word|ms-powerpoint)\.[a-z.]*main")
 
 
 @dataclass(frozen=True)
@@ -76,7 +112,8 @@ class Refused(Exception):
 
 
 class _Budget:
-    """Wat het hele bestand samen mag (ook de ingebedde zips)."""
+    """Wat het hele bestand samen mag (ook de ingebedde zips). Onderweg geldt de XML-grens van
+    de naam; na het lezen de kleinste van die en wat de inhoud zegt (_content_limit)."""
 
     def __init__(self, file_size: int, xml_limit: int, deadline: float) -> None:
         self.file_size = max(file_size, 1)
@@ -85,6 +122,9 @@ class _Budget:
         self.total = 0
         self.xml = 0
         self.entries = 0
+        # Wat het document over zichzelf zegt (alleen het buitenste niveau)
+        self.content_types: list[bytes | None] = []  # None: groter dan CAPTURE_BYTES
+        self.odf = False
 
     def tick(self) -> None:
         if time.monotonic() > self.deadline:
@@ -132,6 +172,30 @@ def _is_xml(name: str) -> bool:
     return lower.endswith((".xml", ".rels"))
 
 
+class _Sniff:
+    """Is een onderdeel XML? Beslist op het eerste teken na witruimte, NUL's en een BOM: < is
+    XML. Het stuk waarin dat teken staat, telt al naar die uitslag; stukken met alleen
+    witruimte daarvóór tellen als XML (voorzichtig)."""
+
+    def __init__(self) -> None:
+        self.xml: bool | None = None
+        self.tail = b""
+
+    def feed(self, data: bytes) -> bool:
+        """Telt dit stuk als XML?"""
+        if self.xml is None:
+            rest = data.lstrip(LEADING)
+            lead = self.tail + data[: len(data) - len(rest)]
+            if NULS in lead:
+                self.xml = False
+            elif rest:
+                self.xml = rest[:1] == b"<"
+            else:
+                self.tail = lead[-3:]
+                return True
+        return self.xml
+
+
 def _data_offset(fp: IO[bytes], info: zipfile.ZipInfo) -> int:
     fp.seek(info.header_offset)
     header = fp.read(LOCAL_HEADER.size)
@@ -158,13 +222,13 @@ def _entry(
     fp.seek(start)
     left = info.compress_size
     inflate = zlib.decompressobj(-15) if info.compress_type == zipfile.ZIP_DEFLATED else None
-    xml = _is_xml(info.filename)
+    sniff = None if _is_xml(info.filename) else _Sniff()
     size = 0
 
     def take(data: bytes) -> None:
         nonlocal size
         size += len(data)
-        budget.count(len(data), xml)
+        budget.count(len(data), sniff is None or sniff.feed(data))
         if keep is not None:
             keep.write(data)
 
@@ -223,11 +287,21 @@ def _zip(fp: IO[bytes], end: int, budget: _Budget, nested: bool) -> None:
             if nested:
                 _entry(fp, info, budget, end, None)
                 continue
+            name = info.filename.lower()
+            if name in ODF_MARKERS:
+                budget.odf = True
             with tempfile.SpooledTemporaryFile(max_size=SPOOL_BYTES) as inner:
                 _entry_with_peek(fp, info, budget, end, inner)
+                if name == CONTENT_TYPES:
+                    size = inner.tell()
+                    inner.seek(0)
+                    budget.content_types.append(
+                        inner.read(CAPTURE_BYTES) if size <= CAPTURE_BYTES else None
+                    )
+                    continue
                 if inner.tell():
                     inner.seek(0)
-                    if info.filename == "META-INF/manifest.xml":
+                    if name == "meta-inf/manifest.xml":
                         _odf_encryption(inner)
                         continue
                     _zip(inner, inner.seek(0, 2), budget, nested=True)
@@ -237,8 +311,9 @@ def _entry_with_peek(
     fp: IO[bytes], info: zipfile.ZipInfo, budget: _Budget, end: int, inner: IO[bytes]
 ) -> None:
     """Als _entry, maar bewaart de inhoud als het een ingebedde zip is (of het manifest van
-    ODF, om versleuteling te zien). inner blijft leeg als het niets van beide is."""
-    if info.filename == "META-INF/manifest.xml":
+    ODF, om versleuteling te zien, of [Content_Types].xml, om de soort te zien). inner blijft
+    leeg als het niets daarvan is."""
+    if info.filename.lower() in ("meta-inf/manifest.xml", CONTENT_TYPES):
         _entry(fp, info, budget, end, inner)
         return
     start = _data_offset(fp, info)
@@ -269,20 +344,54 @@ def _odf_encryption(manifest: IO[bytes]) -> None:
         tail = chunk[-len(needle) :]
 
 
+def _name_limit(ext: str) -> int:
+    if ext in ODF:
+        return XML_BYTES_ODF
+    return XML_BYTES_SHEET if ext in SHEETS else XML_BYTES
+
+
+def _is_sheet(content_types: bytes | None) -> bool:
+    """Een OOXML-werkblad volgens [Content_Types].xml: een hoofddeel van een werkblad, en geen
+    van tekst of presentatie. Alleen platte tekst zonder entiteiten; wat we niet zeker kunnen
+    lezen, is geen werkblad."""
+    if content_types is None or b"&" in content_types or b"\x00" in content_types:
+        return False
+    lower = content_types.lower()
+    return SHEET_MAIN.search(lower) is not None and OTHER_MAIN.search(lower) is None
+
+
+def _content_limit(budget: _Budget) -> int:
+    """De XML-grens volgens de inhoud. Twijfel geeft de strengste."""
+    if budget.odf:
+        return XML_BYTES_ODF
+    if budget.content_types and all(_is_sheet(c) for c in budget.content_types):
+        return XML_BYTES_SHEET
+    return XML_BYTES
+
+
 def _inspect(path: Path, ext: str, ole_max: int) -> Verdict:
     ext = ext.lower().lstrip(".")
     try:
-        size = path.stat().st_size
-        if ext in OLE_FORMATS:
-            return OK if size <= ole_max else Verdict(False, "too_big")
-        if ext not in ZIP_FORMATS:
+        if ext not in ZIP_FORMATS and ext not in OLE_FORMATS:
             return Verdict(False, "format")
-        limit = XML_BYTES_SHEET if ext in SHEETS else XML_BYTES
-        budget = _Budget(size, limit, time.monotonic() + SECONDS)
+        size = path.stat().st_size
         with path.open("rb") as fp:
-            if fp.read(len(OLE_MAGIC)) == OLE_MAGIC:
+            head = fp.read(len(OLE_MAGIC))
+            if ext in OLE_FORMATS:
+                # Geen zip: DS kijkt naar de inhoud, dus een zip met de naam .doc zou anders
+                # zonder de controles hieronder bij DS komen
+                magic = RTF_MAGIC if ext == "rtf" else OLE_MAGIC
+                if not head.startswith(magic):
+                    return Verdict(False, "format")
+                return OK if size <= ole_max else Verdict(False, "too_big")
+            if head.startswith(OLE_MAGIC):
                 return Verdict(False, "encrypted")  # versleuteld OOXML is een OLE-bestand
+            if not head.startswith(ZIP_MAGIC):
+                return Verdict(False, "corrupt")
+            budget = _Budget(size, _name_limit(ext), time.monotonic() + SECONDS)
             _zip(fp, size, budget, nested=False)
+            if budget.xml > min(_name_limit(ext), _content_limit(budget)):
+                return Verdict(False, "too_big")
     except Refused as refused:
         return Verdict(False, refused.reason)
     except OSError:

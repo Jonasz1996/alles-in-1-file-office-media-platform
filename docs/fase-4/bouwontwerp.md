@@ -682,17 +682,29 @@ Elke keuze geeft de standaard en waarom.
     - **De invoercontrole** (`app/office/inspect.py`, O0). Vóór elke sessie en vóór elke conversie
       kijkt de app zelf of het bestand veilig genoeg is voor DS. In een thread, met alleen
       `zipfile` en `zlib` uit de standaardbibliotheek:
+      - de inhoud beslist, niet de naam: DS kijkt zelf naar de bytes en negeert de opgegeven soort
+        [gemeten: een zip met de naam .doc wordt als docx gelezen]. Een zip-formaat moet met
+        `PK\x03\x04` beginnen, doc, xls en ppt met de kop van OLE, rtf met `{\rtf`; anders
+        `format`;
       - zip-formaten (OOXML en ODF): elk onderdeel echt uitpakken en de bytes tellen
         (`zlib.decompressobj`). De opgegeven grootte geloven we niet. Stoppen bij de grens;
-      - de XML-delen (`*.xml`, `*.rels`) samen hooguit 50 MB voor docx, pptx, odt, odp en hun
-        macro- en sjabloonvormen, en 150 MB voor xlsx en ods. Dat is de grens van DS zelf of lager
-        (M14). DS heeft voor ODF geen grens;
+      - de XML samen hooguit 4 MB voor docx, pptx en hun macro- en sjabloonvormen, 2 MB voor elk
+        ODF-document (odt, ods, odp) en 10 MB voor een echt OOXML-werkblad. Gemeten bij 2 GB
+        (spike A11, "stap 18 verder"): x2t liep vast op een docx met 10 MB XML, een odt met 7 MB en
+        een xlsx met 30 MB. DS zelf staat 50 MB toe (M14), en voor ODF niets. XML is elk onderdeel
+        op `.xml` of `.rels`, en elk ander onderdeel dat (na een BOM en witruimte) met `<` begint:
+        in OOXML mag het hoofddeel elke naam hebben. De ruimere grens krijgt alleen een bestand
+        waarvan `[Content_Types].xml` een werkblad als hoofddeel noemt en geen tekst of presentatie;
+        verder geldt de kleinste van wat de naam en wat de inhoud zegt;
       - alles samen hooguit 512 MB en hooguit 10.000 onderdelen. Boven 64 MB uitgepakt
         (`CONTENT_BYTES` van B21) mag het hele bestand hooguit 100 keer kleiner zijn dan uitgepakt;
       - alleen de methoden `stored` en `deflate`, niets versleuteld. Een ingebedde zip
         (`embeddings/`, `Object …/`) telt één niveau diep mee;
       - hooguit 20 s;
       - doc, xls, ppt en rtf (geen zip): hooguit 20 MB.
+      - De grootte van de XML is maar een maat: een docx met 3,9 MB aan alleen pagina-einden kwam
+        binnen de grens, maar op ±97 % van 2 GB. Daarvoor zijn de geheugengrens van de container
+        (x2t gaat dood, docservice blijft) en de twee pogingen van een conversie (Keuze 25).
     - Weigert de controle, dan geeft bewerken 422 `office_unsafe` en wordt conversie
       `pdf_state = unsafe`. B21 blijft werken: die lezer heeft zijn eigen grenzen, in een
       afgeschermd proces.
@@ -2219,7 +2231,10 @@ geldt de terugval van Keuze 20 (de sessie stoppen).
 - `test_office_inspect.py`: een gewone docx, xlsx, pptx, odt en de lege bestanden van O4 gaan door;
   een bom (klein, gigabytes uitgepakt), een zip die over zijn grootte liegt, te veel onderdelen,
   een vreemde methode, iets versleuteld en een bom in een ingebedde zip niet; een pptx met 80 MB
-  foto's wel; doc boven 20 MB niet; de tijdgrens; de cache per sha.
+  foto's wel; doc boven 20 MB niet; de tijdgrens; de cache per sha. De inhoud beslist: een zip,
+  een leeg bestand of XML met de naam doc, xls, ppt of rtf krijgt `format`; XML onder een andere
+  naam (`word/main.dat`, met BOM, UTF-16) telt mee; de grens van een werkblad alleen voor een
+  echt werkblad; ODF de strengste grens.
 - `test_office_health.py`: gezond ↔ weg na 2 minuten; `version`, `license` en de tokencontrole bij
   een overgang naar gezond; de nep-DS met `jwt-off` → `misconfigured`; een ander geheim dan de
   nep-DS → `misconfigured`, nooit `down`; `starting` telt niet mee voor de 2 minuten van
@@ -2528,7 +2543,8 @@ Drie bewijzen die elkaar dekken.
 | Cpu van de app bij koud openen | ≤ 1 core-seconde | 253 verzoeken, 8,7 MB [gemeten] |
 | Geheugen van de app met 50 tunnels | ≤ +20 MB | |
 | Opslaan: callback tot versie in de database | ≤ 2 s voor 1 MB | |
-| Invoercontrole: docx met 50 MB XML | ≤ 1 s cpu, in een thread | Keuze 23 |
+| Invoercontrole: een xlsx met 10 MB XML, een pptx met 80 MB foto's | ≤ 1 s cpu, in een thread | Keuze 23 |
+| XML-grens bij 2 GB opnieuw meten: docx en pptx 4 MB, odt, ods en odp 2 MB, xlsx 10 MB, ook met echte opmaak en formules en een document met heel veel pagina's | geen OOM van x2t; docservice blijft | spike A11 ("stap 18 verder") |
 | Conversie klein / 401 pagina's | ±1 s / ≤ 60 s (22 s gemeten) | |
 | Conversie van 401 pagina's terwijl een editor opent | openen ≤ 10 s; `/healthcheck` blijft `true` | Keuze 25, spike stap 16 |
 | 20 bewerkers (5 documenten × 4), 60 s typen | alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd | basis voor `max_editors` (Keuze 27) |
@@ -2703,7 +2719,7 @@ verwerken ze.
 | S2 punt 3: "Zet `token.session.expires` op 2 uur, en geef `config.token` een `exp` van 10 minuten." | Het sessietoken korter maken kan werk kosten: verloopt het terwijl iemand bewerkt, dan kan zijn editor niet opnieuw verbinden, tenzij DS het vernieuwt (M15). Spike stap 15 meet dat; alleen bij ja komt `"2h"` erin. Voor de veiligheid is het niet nodig: de tunnel kijkt naar het recht van nu, wat het token ook zegt. `config.token` krijgt wel een `exp`, maar 2 uur, gelijk aan het poort-cookie. Na een start van DS duren de fonts tot 280 s, en een tab op de achtergrond kan laat verbinden. Met 10 minuten opent de editor dan niet, zonder dat het iets beschermt. |
 | S2 punt 4: "Bij elke intrekking: forcesave, `drop` voor iedereen, de sessie dicht en een nieuwe key." | Dat gooit bij elke intrekking alle andere bewerkers uit de editor. Nodig is het alleen als de ingetrokken gebruiker bij de volgende ronde nog verbonden is, of als het lezen van het eerste socketpakket niet lukt. Dan doen we het wel (Keuze 20). |
 | S2 punt 6: "Laat uitloggen de cache van de poort leegmaken." | Dat vraagt een haak in `auth.py`, een bestand van fase 3. Met 15 s cache en een controle elke 15 s is uitloggen binnen 30 s uit de tunnel. Dat is genoeg, en de tekst zegt nu "binnen 30 s". |
-| S4 punt 2: "Samen hooguit 64 MB uitgepakt, en hooguit 100 keer kleiner dan uitgepakt." | Te streng: een pptx met 80 MB foto's is gewoon, en zou dan nooit een voorbeeld of editor krijgen. We tellen de echte bytes, met een grens per soort op de XML (50 MB, en 150 MB voor werkbladen), 512 MB in totaal, 10.000 onderdelen, en de verhouding pas boven 64 MB (Keuze 23). Een bom houdt dat net zo goed tegen. |
+| S4 punt 2: "Samen hooguit 64 MB uitgepakt, en hooguit 100 keer kleiner dan uitgepakt." | Te streng: een pptx met 80 MB foto's is gewoon, en zou dan nooit een voorbeeld of editor krijgen. We tellen de echte bytes, met een grens per soort op de XML (gemeten: 4 MB, 2 MB voor ODF, 10 MB voor een echt werkblad), 512 MB in totaal, 10.000 onderdelen, en de verhouding pas boven 64 MB (Keuze 23). Een bom houdt dat net zo goed tegen. |
 | S5: "Houd een `crash_count` per sha bij, in de metadata van `pdf_state`." | De rij van taken telt de pogingen al (`attempts`, `max_attempts`, `on_dead`). Een tweede teller is dubbel, en kan uit de pas lopen. Het gedrag is gelijk: hooguit twee kansen, dan `failed` en een melding. |
 | S11: "Herstelkopieën alleen bij een automatische bewaartermijn; forgotten files van een verwijderde eigenaar na N dagen weg." | De bewaartermijn haalt alleen weg wat de eigenaar zelf in de prullenbak zette. Ook dat is zijn keuze. Een verschil maken vraagt bovendien een haak in `trash.py`. Daarom: na elk definitief verwijderen geen kopie. Forgotten files van een verwijderde eigenaar gaan **meteen** weg, niet na N dagen: er is niemand meer om ze aan terug te geven. |
 | F1, de andere opties: "de beheer-GET van O5 in O0", of "een testpagina in de e2e van O1 die zelf een config tekent." | Met de dunne aanroepen in O0 en tellen via `fake_info` heeft O2 niets van O5 nodig. Een eigen testpagina test een andere pagina dan gebruikers krijgen. O2 vóór O1 samenvoegen is eenvoudiger en test het echte pad. |

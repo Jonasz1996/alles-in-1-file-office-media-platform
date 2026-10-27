@@ -1,7 +1,9 @@
 """De invoercontrole vóór DS (Keuze 23, §3.8): een gewone docx, xlsx, pptx en odt en de lege
 bestanden gaan door; een bom, een zip die over zijn grootte liegt, te veel onderdelen, een
 vreemde methode, iets versleuteld en een bom in een ingebedde zip niet; een pptx met 80 MB
-foto's wel; doc boven 20 MB niet; de tijdgrens; de cache per sha."""
+foto's wel; doc boven 20 MB niet; de tijdgrens; de cache per sha. En de inhoud beslist, niet
+de naam: een zip onder de naam .doc, XML in een onderdeel dat niet op .xml eindigt, en een
+docx die zich werkblad noemt."""
 
 import io
 import os
@@ -19,6 +21,25 @@ from tests.test_office import docx_bytes, odf, odt_bytes, ooxml, pptx_bytes, xls
 
 MB = 1024**2
 ZEROS = bytes(MB)
+PARAGRAPH = b"<w:p><w:r><w:t>tekst</w:t></w:r></w:p>" * 4096
+JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00"
+CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+OOXML_MAIN = "application/vnd.openxmlformats-officedocument"
+SHEET_TYPES = (
+    f'<?xml version="1.0"?><Types xmlns="{CT_NS}">'
+    '<Default Extension="xml" ContentType="application/xml"/>'
+    '<Override PartName="/xl/workbook.xml" '
+    f'ContentType="{OOXML_MAIN}.spreadsheetml.sheet.main+xml"/>'
+    # een ingebedde docx noemt het type van tekst, maar niet als hoofddeel
+    f'<Default Extension="docx" ContentType="{OOXML_MAIN}.wordprocessingml.document"/>'
+    "</Types>"
+)
+WORD_TYPES = (
+    f'<?xml version="1.0"?><Types xmlns="{CT_NS}">'
+    '<Override PartName="/word/main.dat" '
+    f'ContentType="{OOXML_MAIN}.wordprocessingml.document.main+xml"/>'
+    "</Types>"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -56,6 +77,19 @@ def write_big(archive: zipfile.ZipFile, name: str, chunk: bytes, count: int) -> 
     with archive.open(name, "w") as target:
         for _ in range(count):
             target.write(chunk)
+
+
+def big_xml(part: str, megabytes: float, types: str = "<Types/>", extra: int = 0) -> bytes:
+    """Een zip met zoveel MB echte XML in part (en extra bytes erbij)."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
+        archive.writestr("[Content_Types].xml", types)
+        with archive.open(part, "w") as target:
+            left = int(megabytes * MB) + extra
+            while left > 0:
+                target.write(PARAGRAPH[:left])
+                left -= len(PARAGRAPH)
+    return out.getvalue()
 
 
 def bomb(megabytes: int = 128) -> bytes:
@@ -117,20 +151,44 @@ def test_pptx_met_80_mb_fotos(tmp_path):
         for n in range(8):
             info = zipfile.ZipInfo(f"ppt/media/image{n}.jpeg")
             info.compress_type = zipfile.ZIP_STORED
-            archive.writestr(info, os.urandom(10 * MB))
+            archive.writestr(info, JPEG + os.urandom(10 * MB))
     data = out.getvalue()
     assert len(data) > 80 * MB
     assert verdict(tmp_path, data, "pptx") == inspect.OK
 
 
-def test_xlsx_met_60_mb_xml(tmp_path):
-    """Voor werkbladen mag de XML tot 150 MB (en 60 MB ligt onder de grens voor de ratio)."""
+def test_veel_kleine_fotos_tellen_niet_als_xml(tmp_path):
+    """Een onderdeel dat geen XML blijkt, telt vanaf het eerste stuk niet mee: 400 foto's van
+    20 KB (samen ruim boven XML_BYTES) zijn geen XML."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("ppt/presentation.xml", "<p:presentation/>")
+        for n in range(400):
+            archive.writestr(f"ppt/media/image{n}.jpeg", JPEG + os.urandom(20 * 1024))
+    assert 400 * 20 * 1024 > inspect.XML_BYTES
+    assert verdict(tmp_path, out.getvalue(), "pptx") == inspect.OK
+
+
+def test_een_echt_werkblad_krijgt_de_ruimere_grens(tmp_path):
+    """Tot XML_BYTES_SHEET, maar alleen als de inhoud een werkblad is (het hoofddeel in
+    [Content_Types].xml), niet omdat de naam op .xlsx eindigt."""
     row = b"<row><c><v>1</v></c></row>" * 4096
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
-        archive.writestr("[Content_Types].xml", "<Types/>")
-        write_big(archive, "xl/worksheets/sheet1.xml", row, 60 * MB // len(row))
-    assert verdict(tmp_path, out.getvalue(), "xlsx") == inspect.OK
+        archive.writestr("[Content_Types].xml", SHEET_TYPES)
+        write_big(archive, "xl/worksheets/sheet1.xml", row, inspect.XML_BYTES_SHEET // len(row))
+    sheet = out.getvalue()
+    assert inspect.XML_BYTES < inspect.XML_BYTES_SHEET
+    assert verdict(tmp_path, sheet, "xlsx") == inspect.OK
+    # Dezelfde inhoud onder de naam van een docx: de naam geeft de strengere grens
+    assert verdict(tmp_path, sheet, "docx") == inspect.Verdict(False, "too_big")
+    # Boven XML_BYTES_SHEET ook als werkblad niet (x2t liep bij 2 GB vast op 30 MB)
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
+        archive.writestr("[Content_Types].xml", SHEET_TYPES)
+        write_big(archive, "xl/worksheets/sheet1.xml", row, inspect.XML_BYTES_SHEET // len(row) + 1)
+    assert verdict(tmp_path, out.getvalue(), "xlsx") == inspect.Verdict(False, "too_big")
 
 
 # Geweigerd
@@ -143,15 +201,96 @@ def test_bom(tmp_path):
 
 
 def test_te_veel_xml_in_een_docx(tmp_path):
-    body = b"<w:p><w:r><w:t>tekst</w:t></w:r></w:p>" * 4096
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
-        archive.writestr("[Content_Types].xml", "<Types/>")
-        write_big(archive, "word/document.xml", body, 51 * MB // len(body) + 1)
-    data = out.getvalue()
+    """De spike (A11) zag bij 2 GB een docx met 42 MB XML docservice laten vastlopen, en de
+    meting van de fixer van O0 x2t al bij 10 MB: zo ver komt het niet meer."""
+    limit = inspect.XML_BYTES - len("<Types/>")
+    assert verdict(tmp_path, big_xml("word/document.xml", 0, extra=limit), "docx") == inspect.OK
+    over = big_xml("word/document.xml", 0, extra=limit + 1)
+    assert verdict(tmp_path, over, "docx") == inspect.Verdict(False, "too_big")
+    for megabytes in (11, 42):
+        data = big_xml("word/document.xml", megabytes)
+        assert len(data) < MB  # klein bestand, veel XML
+        assert verdict(tmp_path, data, "docx") == inspect.Verdict(False, "too_big")
+    # Ook de naam van een werkblad helpt niet: de inhoud is geen werkblad
+    assert verdict(tmp_path, over, "xlsx") == inspect.Verdict(False, "too_big")
+    assert verdict(tmp_path, over, "pptx") == inspect.Verdict(False, "too_big")
+
+
+def test_xml_onder_een_andere_naam_telt_mee(tmp_path):
+    """In OOXML mag het hoofddeel elke naam hebben, zolang [Content_Types].xml en de relaties
+    ernaar wijzen; DS leest het dan gewoon (review S2: word/main.dat met 60 MB XML)."""
+    small = big_xml("word/main.dat", 0, WORD_TYPES, extra=1000)
+    assert verdict(tmp_path, small, "docx") == inspect.OK
+    over = inspect.XML_BYTES + 1
+    data = big_xml("word/main.dat", 0, WORD_TYPES, extra=over)
     assert verdict(tmp_path, data, "docx") == inspect.Verdict(False, "too_big")
-    # Hetzelfde als werkblad mag wel (tot 150 MB)
-    assert verdict(tmp_path, data, "xlsx") == inspect.OK
+    assert verdict(tmp_path, big_xml("word/main.dat", 60, WORD_TYPES), "docx") == inspect.Verdict(
+        False, "too_big"
+    )
+    # Een BOM, witruimte (ook veel) en UTF-16 houden het niet tegen
+    utf16 = PARAGRAPH.decode().encode("utf-16-le")
+    for body in (
+        b"\xef\xbb\xbf" + PARAGRAPH,
+        b" \r\n" * 50_000 + PARAGRAPH,
+        b"\xff\xfe" + utf16,
+        utf16,  # zonder BOM: < en dan een NUL
+    ):
+        data = build(
+            {"[Content_Types].xml": WORD_TYPES, "word/main.dat": body * (over // len(body) + 1)}
+        )
+        assert verdict(tmp_path, data, "docx") == inspect.Verdict(False, "too_big"), body[:4]
+    # Wat geen XML is (een foto, nullen), telt niet als XML
+    photo = build({"[Content_Types].xml": WORD_TYPES, "word/media/a.jpg": JPEG + b"<" * over})
+    assert verdict(tmp_path, photo, "docx") == inspect.OK
+    nul = build({"[Content_Types].xml": WORD_TYPES, "word/media/a.bin": bytes(over)})
+    assert verdict(tmp_path, nul, "docx") == inspect.OK
+
+
+def test_odf_heeft_een_eigen_strengere_grens(tmp_path):
+    """odt met 21 MB XML liet x2t vastlopen (spike stap 18); ook ods krijgt geen ruimere
+    grens (niet gemeten)."""
+    assert inspect.XML_BYTES_ODF <= inspect.XML_BYTES
+    body = "<text:p>tekst</text:p>" * (inspect.XML_BYTES_ODF // 22 + 1)
+    for kind, ext in (("text", "odt"), ("spreadsheet", "ods"), ("presentation", "odp")):
+        data = odf(kind, f"<office:body>{body}</office:body>")
+        assert verdict(tmp_path, data, ext) == inspect.Verdict(False, "too_big"), ext
+    # Een docx-naam maakt van een ODF-inhoud geen OOXML: ook dan de grens van ODF
+    assert verdict(tmp_path, data, "docx") == inspect.Verdict(False, "too_big")
+    assert verdict(tmp_path, data, "xlsx") == inspect.Verdict(False, "too_big")
+    # Net onder de grens mag
+    small = odf("text", "<office:body>" + "<text:p>x</text:p>" * 1000 + "</office:body>")
+    assert verdict(tmp_path, small, "odt") == inspect.OK
+
+
+@pytest.mark.parametrize(
+    "types",
+    [
+        b"<Types/>",  # zegt niets
+        WORD_TYPES.encode(),  # een docx die zich werkblad noemt
+        SHEET_TYPES.replace("</Types>", WORD_TYPES[WORD_TYPES.index("<Override") :]).encode(),
+        SHEET_TYPES.replace("ms-excel", "x").replace("sheet.main", "sheet.m&#97;in").encode(),
+        SHEET_TYPES.encode("utf-16"),  # een codering die we niet lezen
+    ],
+    ids=["leeg", "tekst", "allebei", "entiteit", "utf-16"],
+)
+def test_alleen_een_echt_werkblad_krijgt_de_ruimere_grens(tmp_path, monkeypatch, types):
+    monkeypatch.setattr(inspect, "XML_BYTES", MB)
+    monkeypatch.setattr(inspect, "XML_BYTES_SHEET", 4 * MB)
+    sheet_xml = b"<row><c><v>1</v></c></row>" * (2 * MB // 26)
+    data = build({"[Content_Types].xml": types, "xl/worksheets/sheet1.xml": sheet_xml})
+    assert verdict(tmp_path, data, "xlsx") == inspect.Verdict(False, "too_big")
+    # Het echte werkblad wel, ook met [content_types].xml in kleine letters
+    for name in ("[Content_Types].xml", "[content_types].xml"):
+        data = build({name: SHEET_TYPES, "xl/worksheets/sheet1.xml": sheet_xml})
+        assert verdict(tmp_path, data, "xlsx") == inspect.OK, name
+    # Twee keer [Content_Types].xml: allebei moeten een werkblad zeggen
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", SHEET_TYPES)
+        with pytest.warns(UserWarning):  # zipfile waarschuwt voor een dubbele naam
+            archive.writestr("[Content_Types].xml", WORD_TYPES)
+        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    assert verdict(tmp_path, out.getvalue(), "xlsx") == inspect.Verdict(False, "too_big")
 
 
 def test_alles_samen_te_groot(tmp_path, monkeypatch):
@@ -253,18 +392,34 @@ def test_ingebedde_zip_telt_mee_voor_onderdelen(tmp_path, monkeypatch):
     assert verdict(tmp_path, data, "docx") == inspect.Verdict(False, "entries")
 
 
-def test_ole_formaten_alleen_op_grootte(tmp_path):
-    small = put(tmp_path, b"{\\rtf1 hallo}")
-    for ext in ("doc", "xls", "ppt", "rtf"):
-        assert inspect._inspect(small, ext, 20 * MB) == inspect.OK
+OLE = inspect.OLE_MAGIC + bytes(504)
+RTF = b"{\\rtf1\\ansi hallo}"
+
+
+def test_ole_formaten_op_grootte(tmp_path):
+    for ext in ("doc", "xls", "ppt"):
+        assert verdict(tmp_path, OLE, ext) == inspect.OK
+    assert verdict(tmp_path, RTF, "rtf") == inspect.OK
     big = tmp_path / "groot.doc"
     with big.open("wb") as f:
+        f.write(inspect.OLE_MAGIC)
         f.truncate(20 * MB + 1)  # spaarzaam bestand: snel
     assert inspect._inspect(big, "doc", 20 * MB) == inspect.Verdict(False, "too_big")
     exact = tmp_path / "precies.doc"
     with exact.open("wb") as f:
+        f.write(inspect.OLE_MAGIC)
         f.truncate(20 * MB)
     assert inspect._inspect(exact, "doc", 20 * MB) == inspect.OK
+
+
+@pytest.mark.parametrize("ext", ["doc", "xls", "ppt", "rtf"])
+def test_ole_formaten_volgens_de_inhoud(tmp_path, ext):
+    """DS kijkt naar de inhoud: een zip onder de naam .doc zette hij gewoon om als docx (review
+    K1 en S4), en kreeg hier vroeger alleen de controle op grootte."""
+    for data in (bomb(), docx_bytes(), b"", b"<w:document/>", b"\x00" * 512):
+        assert verdict(tmp_path, data, ext) == inspect.Verdict(False, "format")
+    other = OLE if ext == "rtf" else RTF
+    assert verdict(tmp_path, other, ext) == inspect.Verdict(False, "format")
 
 
 def test_de_tijdgrens(tmp_path, monkeypatch):
@@ -339,5 +494,5 @@ async def test_cache_verloopt_en_blijft_begrensd(tmp_path, office, monkeypatch):
 @pytest.mark.anyio
 async def test_ole_grens_uit_de_instellingen(tmp_path):
     settings = Settings(data_dir=tmp_path, jwt_secret="test" * 8, office_ole_max_bytes=100)
-    path = put(tmp_path, bytes(101))
+    path = put(tmp_path, inspect.OLE_MAGIC + bytes(93))
     assert await inspect.check(settings, path, "doc", "c" * 64) == inspect.Verdict(False, "too_big")

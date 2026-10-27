@@ -19,7 +19,9 @@ onderaan in "Afwijkingen van het ontwerp". De zeven belangrijkste:
    `cache/files/data/<key>/media/…`.
 5. `'unsafe-eval'` blijft in de CSP. Zonder start de editor niet.
 6. Een bestand onder de grens van 50 MB XML kan DS laten vastlopen op geheugen (2 GB). Bij een
-   docx van 42 MB XML ging docservice zelf eruit (OOM), en daarmee alle open sessies.
+   docx van 42 MB XML ging docservice zelf eruit (OOM), en daarmee alle open sessies. Een latere
+   meting (stap 18 verder) zag x2t al vastlopen bij 10 MB XML in een docx; de invoercontrole
+   heeft nu 4 MB (OOXML-tekst en -presentaties), 2 MB (ODF) en 10 MB (een echt werkblad).
 7. Twee à drie minuten na de start van een **nieuwe** container herstart DS zichzelf (fonts). Open
    sessies zijn dan weg, zonder callback en zonder herstelbestand.
 
@@ -680,6 +682,55 @@ of DS krijgt meer geheugen. De veilige grens is niet gemeten. Tussen 2,6 MB (goe
 ligt hij ergens; bij de integratie moet hij gezocht worden (10, 15, 20 MB). Tot dan is de veiligere
 keuze 10 MB XML voor tekst- en presentatieformaten. xlsx (300 MB) en ods (150 MB) zijn niet getest.
 
+### Stap 18 verder: de XML-grens bij 2 GB (fixer van O0)
+
+**Opzet.** DS 10.0.0.1 (digest uit `e2e/office_ds.sh`) met `--memory 2g --memory-swap 2g`, na de
+font-herstart. Elk bestand gaat via `POST /converter?shardkey=<key>` (`async: false`, naar PDF)
+en wordt van een kleine http-server op de host gehaald. Per bestand: de tijd, het antwoord, de
+piek van de cgroup (`memory.max_usage_in_bytes`, met de paginacache erbij, dus een bovengrens) en
+`oom_kill` uit `memory.oom_control`. De bestanden komen uit de fixtures: een docx en odt met veel
+korte alinea's, een xlsx met rijen van tien getallen, een docx met alleen pagina-einden, een pptx
+met veel dia's, een ods met rijen van tien getallen.
+
+```
+bestand        XML      tijd   antwoord   piek     oom_kill
+d3.docx        3 MB     23 s   PDF        1092 MB  0
+d5.docx        5 MB     41 s   PDF        1284 MB  0
+d7.docx        7 MB     56 s   PDF        1758 MB  0
+d10.docx      10 MB     84 s   -3         2048 MB  1  (x2t)
+o3.odt         3 MB     32 s   PDF        1221 MB  0
+o5.odt         5 MB     57 s   PDF        1723 MB  0
+o7.odt         7 MB     61 s   -3         2048 MB  1  (x2t)
+o10.odt       10 MB     50 s   -3         2048 MB  1  (x2t)
+x10.xlsx      10 MB     38 s   PDF        1273 MB  0
+x20.xlsx      20 MB     75 s   PDF        2047 MB  0
+x30.xlsx      30 MB     97 s   -3         2048 MB  1  (x2t)
+x40.xlsx      40 MB    131 s   -3         2048 MB  1  (x2t)
+pb200k.docx  0,2 MB      4 s   PDF         596 MB  0  (±4.800 pagina-einden)
+pb1000k.docx   1 MB      9 s   PDF         886 MB  0  (±24.000)
+pb4000k.docx 3,9 MB     33 s   PDF        1993 MB  0  (±95.000)
+p350.pptx    1,2 MB      5 s   PDF         593 MB  0  (350 dia's)
+p1400.pptx   4,5 MB     12 s   PDF         766 MB  0  (1.400 dia's)
+s1.ods         1 MB      2 s   PDF         580 MB  0
+s2.ods         2 MB      3 s   PDF         590 MB  0
+s4.ods         4 MB      5 s   PDF         623 MB  0
+```
+
+Na elke OOM gaf `/healthcheck` nog `true`: de kernel koos x2t (het grootste proces), docservice
+bleef. Dat is anders dan `middel-40.docx` hierboven, waar docservice zelf ging.
+
+**Betekenis.** De invoercontrole krijgt de grenzen 4 MB XML voor OOXML-tekst en -presentaties,
+2 MB voor elk ODF-document en 10 MB voor een echt OOXML-werkblad (`app/office/inspect.py`).
+Dat is ruim onder de eerste fout (10, 7 en 30 MB) en onder de bestanden die al op 85 tot 100 %
+zaten (d7, o5, x20). Twee dingen blijven open:
+
+- de grootte van de XML is maar een maat. Een docx met 3,9 MB aan alleen pagina-einden kwam
+  binnen de grens, maar op ±97 % van het geheugen. Wat dan helpt: de geheugengrens van de
+  container (x2t gaat dood, docservice blijft), en de twee pogingen van een conversie (Keuze 25);
+- pptx en ods kosten per MB veel minder dan docx en odt; ze hebben toch de strengere grens. odp
+  en echte werkbladen met veel opmaak of formules zijn niet gemeten. De integratie meet opnieuw
+  (§4.7).
+
 ## Stap 2, 5 en 11 opnieuw, via de kern in de app (O0-e2e)
 
 **Opzet.** Nu niet de spike-proxy, maar de app zelf: `python -m app.serve` met office aan en
@@ -880,7 +931,7 @@ Toelichting:
 | A8 | O2: status 3 (herstel uit `url`) | status 3 heeft geen `url` en geen herstelbestand | status 3 = dicht als verloren; nep-DS idem |
 | A9 | het merk: `lastsave` hoger | `lastsave` heeft hele seconden; `history.changes` niet cumulatief | aannemen bij `>=`, gelijk merk → de sha beslist |
 | A10 | M15: DS vernieuwt het sessietoken bij een levende verbinding | niet gezien in 5 min met `"2m"`; herverbinden na verloop: 4005 | geen `"2h"`; standaard blijft |
-| A11 | Keuze 23 en O6: 50 MB XML voor docx, pptx, odt, odp | bij 2 GB: odt 21 MB XML → x2t OOM; docx 42 MB XML → docservice OOM, alle sessies weg | grens omlaag (veilige waarde nog meten) of meer geheugen |
+| A11 | Keuze 23 en O6: 50 MB XML voor docx, pptx, odt, odp | bij 2 GB: odt 21 MB XML → x2t OOM; docx 42 MB XML → docservice OOM, alle sessies weg; later gemeten: x2t OOM bij docx 10 MB, odt 7 MB, xlsx 30 MB | grens omlaag: 4 MB (OOXML-tekst en -presentaties), 2 MB (ODF), 10 MB (OOXML-werkblad), naar de inhoud (stap 18 verder) |
 | A12 | Keuze 23: conversie wacht op een sessie; "openen gebruikt de converter waarschijnlijk ook" | bevestigd, en omgekeerd: openen wacht op een lopende conversie (24 s); `maxprocesscount` helpt niet | blijft; melding bij lang openen |
 | A13 | §0.1, §5.1: "een nette stop slaat alles op" | de font-herstart van een nieuwe container (2:37–2:52) gooit open sessies weg zonder callback | pas bewerken als die herstart voorbij is |
 | A14 | §3.10: `<V>` als vaste vorm | `<V>` is per container anders en wisselt bij de font-herstart | nooit vastpinnen; alleen de vorm |
@@ -902,8 +953,9 @@ Toelichting:
    dan 2 uur bewerkt.
 2. Neemt DS een CONNECT met het token van key A aan, gevolgd door een `auth`-bericht met het token
    van key B? Niet getest. De wacht eist daarom bij elk `auth`-bericht dezelfde key.
-3. De veilige XML-grens voor 2 GB is niet gemeten (ergens tussen 2,6 en 21 MB voor odt; docx 42 MB
-   is te veel). Ook xlsx en ods zijn niet getest.
+3. De XML-grens voor 2 GB is gemeten (stap 18 verder): 4, 2 en 10 MB. Open blijft een klein bestand
+   met heel veel pagina's (3,9 MB pagina-einden: ±97 % van het geheugen), en odp en echte
+   werkbladen met veel opmaak. De integratie meet opnieuw (§4.7).
 4. Hoe de app ziet dat de font-herstart van een nieuwe DS voorbij is. Voorstel om te meten: wachten
    tot de `<V>` in `api.js` is gewisseld, of tot de container ±3 minuten draait en docservice één
    keer is herstart. Voor CI is het opgelost met de log van supervisord (extra bevinding 11); de
