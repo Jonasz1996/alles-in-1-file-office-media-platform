@@ -172,27 +172,43 @@ def after_recovery_round(office: Office) -> None:
     time.sleep(0.3)  # de ronde loopt nog even (ophalen, het quotum is vol)
 
 
-def test_niet_opgeslagen_terugzetten_na_ruimte(office: Office, office_browsers) -> None:
-    server, admin = office.server, office.admin
-    tag = uuid.uuid4().hex[:6]
-    name = f"vol-{tag}.docx"
-    anna = create_user(server, admin, name=f"Anna {tag}")
-    node = server.call(
-        anna,
+def upload(office: Office, account: Any, name: str) -> str:
+    return office.server.call(
+        account,
         "PUT",
-        f"/api/v1/files/{anna.root_id}/upload",
+        f"/api/v1/files/{account.root_id}/upload",
         params={"name": name},
         content=fixture("proef.docx"),
         expect=201,
     ).json()["id"]
+
+
+def lose(office: Office, browsers: Any, account: Any, node: str, words: str) -> str:
+    """Bewerken met een vol quotum en sluiten: de opslag past niet, de app weigert hem, en de
+    nep-DS bewaart hem als forgotten file. Geeft de key."""
+    page, key = open_page(browsers, account, node)
+    type_in_editor(page, words)
+    wait_until(lambda: fake_info(office, key).get("dirty"), 10, "de tekst bij de nep-DS")
+    close_editor(page)
+    wait_until(lambda: key in forgotten(office), 30, "de forgotten file")
+    return key
+
+
+def test_niet_opgeslagen_terugzetten_na_ruimte(office: Office, office_browsers) -> None:
+    """Anna bewerkt twee documenten met een vol quotum: allebei niet opgeslagen. Het tabblad
+    toont ze met de reden. Terugzetten zonder ruimte geeft de fout; na het vrijmaken van ruimte
+    zet Terugzetten het eerste terug als kopie bij Anna. Het tweede gaat weg met Verwijderen
+    (en de bevestiging). Alles met het toetsenbord."""
+    server, admin = office.server, office.admin
+    tag = uuid.uuid4().hex[:6]
+    name, other = f"vol-{tag}.docx", f"weg-{tag}.docx"
+    anna = create_user(server, admin, name=f"Anna {tag}")
+    node = upload(office, anna, name)
+    second = upload(office, anna, other)
     set_quota(office, anna.id, used_bytes(office, anna.id))  # vol: geen byte erbij
     try:
-        page, key = open_page(office_browsers, anna, node)
-        type_in_editor(page, f"past niet {tag}")
-        wait_until(lambda: fake_info(office, key).get("dirty"), 10, "de tekst bij de nep-DS")
-        close_editor(page)
-        # De opslag past niet: de app weigert hem, en de nep-DS bewaart hem (forgotten file)
-        wait_until(lambda: key in forgotten(office), 30, "de forgotten file")
+        key = lose(office, office_browsers, anna, node, f"past niet {tag}")
+        key_other = lose(office, office_browsers, anna, second, f"mag weg {tag}")
 
         tab = office_tab(office, office_browsers)
         row = tab.get_by_role("row").filter(has_text=name)
@@ -202,8 +218,23 @@ def test_niet_opgeslagen_terugzetten_na_ruimte(office: Office, office_browsers) 
         # De melding op het overzicht
         status = office.server.call(admin, "GET", "/api/v1/admin/status", expect=200).json()
         assert "office_unsaved" in [n["code"] for n in status["notices"]]
-        # Zonder ruimte lukt het ook met de knop niet: de fout staat erbij, de rij blijft. Met
-        # het toetsenbord: Tab naar Terugzetten, Enter
+
+        # Verwijderen: Tab naar de knop, Enter; in de bevestiging staat de focus op Annuleren,
+        # Tab naar Verwijderen en Enter
+        start(tab)
+        tab_to(tab, tab.get_by_role("button", name=f"{other} verwijderen", exact=True), limit=60)
+        tab.keyboard.press("Enter")
+        dialog = tab.get_by_role("dialog", name="Niet-opgeslagen werk verwijderen?")
+        expect(dialog).to_contain_text(other)
+        expect(dialog.get_by_role("button", name="Annuleren", exact=True)).to_be_focused()
+        tab.keyboard.press("Tab")
+        expect(dialog.get_by_role("button", name="Verwijderen", exact=True)).to_be_focused()
+        tab.keyboard.press("Enter")
+        expect(toast(tab, "Verwijderd.")).to_be_visible()
+        expect(tab.get_by_role("row").filter(has_text=other)).to_have_count(0)
+        assert key_other not in forgotten(office)
+
+        # Zonder ruimte lukt Terugzetten ook niet: de fout staat erbij, de rij blijft
         start(tab)
         tab_to(tab, restore, limit=60)
         tab.keyboard.press("Enter")
@@ -217,6 +248,7 @@ def test_niet_opgeslagen_terugzetten_na_ruimte(office: Office, office_browsers) 
         tab.keyboard.press("Enter")
         expect(toast(tab, re.compile(r"^Teruggezet als vol-"))).to_be_visible()
         expect(row).to_have_count(0, timeout=10_000)
+        expect(tab.get_by_text("Alles uit de editor is opgeslagen.", exact=True)).to_be_visible()
         assert key not in forgotten(office)
     finally:
         set_quota(office, anna.id, 0)
@@ -229,6 +261,8 @@ def test_niet_opgeslagen_terugzetten_na_ruimte(office: Office, office_browsers) 
     assert f"past niet {tag}" in docx_text(content.content)
     original = server.call(anna, "GET", f"/api/v1/files/{node}/content", expect=200)
     assert f"past niet {tag}" not in docx_text(original.content)
+    gone = server.call(anna, "GET", f"/api/v1/files/{second}/content", expect=200)
+    assert f"mag weg {tag}" not in docx_text(gone.content)
 
 
 # --- §4.4 punt 9, het deel van O5: alleen het toetsenbord, en in het Engels ---
