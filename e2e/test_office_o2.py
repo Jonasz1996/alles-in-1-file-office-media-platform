@@ -306,22 +306,51 @@ def test_deling_ingetrokken_terwijl_alleen_bram_bewerkt(office: Office, office_b
     assert copy["id"] not in page.content()
 
 
-def test_definitief_verwijderd_terwijl_bram_bewerkt(office: Office, office_browsers) -> None:
-    """Anna verwijdert het bestand definitief terwijl Bram bewerkt: de ronde zet hem eruit (drop)
-    en sluit de sessie; er komt geen kopie."""
+def test_definitief_verwijderd_terwijl_er_bewerkt_wordt(office: Office, office_browsers) -> None:
+    """Anna (eigenaar) en Bram bewerken samen. Anna zet het bestand in de prullenbak: de ronde zet
+    Bram eruit (hij heeft geen toegang meer), Anna blijft. Dan verwijdert ze het definitief: de
+    ronde zet iedereen eruit (drop) en sluit de sessie; er komt geen kopie.
+
+    Eerst bewerkte alleen Bram, en verwijderde Anna meteen na de prullenbak definitief. Viel er
+    een ronde (elke 1 s) tussen die twee, dan was Bram er al uit vóór het definitief verwijderen:
+    zijn editor dicht met de melding (en de controle op de nep-editor faalde), en zijn werk een
+    herstelkopie bij Anna, zoals Keuze 19 dat bij de prullenbak wil. Nu wacht de test op die
+    ronde: wie bij het definitief verwijderen nog bewerkt, is de eigenaar, en dat is altijd zo."""
     d = duo(office)
-    page, key = open_page(office_browsers, d.bram, d.node)
-    type_in_editor(page, "dit gaat weg")
+    page_a, key = open_page(office_browsers, d.anna, d.node)
+    page_b, key_b = open_page(office_browsers, d.bram, d.node)
+    assert key_b == key
+    type_in_editor(page_b, "Bram was hier")
+    type_in_editor(page_a, "dit gaat weg")
     wait_until(lambda: fake_info(office, key).get("dirty"), 10, "de tekst bij de nep-DS")
 
+    trashed_at = time.time()
     office.server.call(d.anna, "DELETE", f"/api/v1/files/{d.node}", expect=204)
+    # De ronde: Bram is uit de editor, met de melding; de eigenaar mag blijven
+    expect(page_b.get_by_role("alert")).to_have_text(
+        "Je hebt geen toegang meer; de editor is gesloten.", timeout=10_000
+    )
+    wait_until(lambda: len(fake_info(office, key)["users"]) == 1, 10, "alleen Anna bij de nep-DS")
+    # En de app weet dat Bram weg is (status 1 van zijn vertrek), anders stopt de volgende ronde
+    # de hele sessie (Keuze 20, stap 3) en bewerkt bij het definitief verwijderen niemand meer
+    wait_until(
+        lambda: any(
+            e.get("status") == 1 and e.get("http") == 200 and e.get("t", 0) >= trashed_at
+            for e in office.fake.callbacks(key)
+        ),
+        10,
+        "status 1 na het vertrek van Bram",
+    )
+    expect(frame_editor(page_a).locator(FAKE_TEXT)).to_be_enabled()
+
     office.server.call(d.anna, "DELETE", f"/api/v1/trash/{d.node}", expect=204)
-    expect(frame_editor(page).locator(FAKE_TEXT)).to_be_disabled(timeout=10_000)
+    expect(frame_editor(page_a).locator(FAKE_TEXT)).to_be_disabled(timeout=10_000)
     callback(office, key, 2)  # de app nam hem aan en schreef niets
     assert fake_info(office, key)["open"] is False
-    page.wait_for_timeout(3000)  # ook het herstel (elke 2 s) maakt niets
-    names = [n["name"] for n in children(office, d.anna, d.anna.root_id)]
-    assert not [n for n in names if "hersteld" in n], names
+    page_a.wait_for_timeout(3000)  # ook het herstel (elke 2 s) maakt niets
+    for account in (d.anna, d.bram):
+        names = [n["name"] for n in children(office, account, account.root_id)]
+        assert not [n for n in names if "hersteld" in n], names
     assert office.server.call(d.anna, "GET", f"/api/v1/files/{d.node}").status_code == 404
 
 
