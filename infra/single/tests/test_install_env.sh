@@ -275,6 +275,25 @@ check "zelfde naam, dus een losse 'docker compose up' maakt office niet opnieuw"
 check "met pull_policy missing: compose haalt de tag niet opnieuw" grep -qE '^ +pull_policy: missing$' "$compose_office"
 check "e2e/office_ds.sh pint dezelfde digest" grep -q "OFFICE_DIGEST=$OFFICE_DIGEST" "$here/../../../e2e/office_ds.sh"
 
+echo "== e2e/office_ds.sh start DS met de afscherming en grenzen van compose (uitrol-3)"
+# De job office van CI start DS met dat script; zo ziet een nieuwe digest daar dezelfde
+# rechten en grenzen als bij Jonas. (Het netwerk blijft daar bewust de standaardbridge, §4.5.)
+office_ds=$here/../../../e2e/office_ds.sh
+limits_yaml=$here/../compose.office-limits.yaml
+yaml_value() { sed -n "s/^ *$1: *//p" "$2" | head -n 1; }
+want_caps=$(yaml_value cap_add "$compose_office" | tr -d '[] ' | tr ',' '\n' | sort)
+ds_caps=$({ grep -oE -- '--cap-add [A-Z_]+' "$office_ds" || true; } | cut -d' ' -f2 | sort)
+check "compose noemt capabilities" test -n "$want_caps"
+check "precies de capabilities van compose (--cap-add)" test "$ds_caps" = "$want_caps"
+check "cap_drop ALL" test "$(yaml_value cap_drop "$compose_office")" = "[ALL]"
+check "--cap-drop ALL" grep -qF -- "--cap-drop ALL" "$office_ds"
+check "security_opt no-new-privileges" test "$(yaml_value security_opt "$compose_office")" = '["no-new-privileges:true"]'
+check "--security-opt no-new-privileges:true" grep -qF -- "--security-opt no-new-privileges:true" "$office_ds"
+check "--pids-limit zoals compose" grep -qF -- "--pids-limit $(yaml_value pids_limit "$compose_office")" "$office_ds"
+check "--memory, --memory-swap en --cpus zoals compose.office-limits.yaml" grep -qF -- \
+  "--memory $(yaml_value mem_limit "$limits_yaml") --memory-swap $(yaml_value memswap_limit "$limits_yaml") --cpus $(yaml_value cpus "$limits_yaml")" "$office_ds"
+check "de grenzen alleen als de kernel ze kan (zoals install.sh)" grep -qF "{{.MemoryLimit}} {{.CPUCfsQuota}}" "$office_ds"
+
 echo "== een image dat niet te halen is, stopt het script niet (set -e, M13)"
 reset_docker
 OFFICE=aan

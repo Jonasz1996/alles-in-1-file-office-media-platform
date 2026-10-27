@@ -69,7 +69,10 @@ in één commit:
 - het standaardimage in `infra/single/compose.office.yaml` (en het voorbeeld in `.env.example`);
 - `OFFICE_TAG` en de digest in `e2e/office_ds.sh` (de job `office` in CI).
 
-Die commit moet door de job `office` (de echte DS, marker `office_real`). Kijk bij een nieuwe
+Die commit moet door de job `office` (de echte DS, marker `office_real`; die start DS met de
+rechten en grenzen van compose), en vóór een release ook door de installatietest
+(`infra/single/tests/test_install_update.sh`, in de sandbox): alleen die start DS via
+install.sh op het interne netwerk. Kijk bij een nieuwe
 versie ook of `infra/single/office/local-production-linux.json` nog klopt met `default.json` van
 het nieuwe image: dat bestand vervangt hele lijsten (zoals `inputLimits`), dus een soort die
 DS erbij krijgt, valt anders buiten de grenzen. `e2e/test_office_o6_real.py` controleert de

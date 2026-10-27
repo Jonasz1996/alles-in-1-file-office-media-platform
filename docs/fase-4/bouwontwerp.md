@@ -2527,6 +2527,10 @@ Tests:
 
 Verschil met productie: in CI hangt DS aan de standaardbridge (met uitgang), niet aan het interne
 netwerk. Proxy, tunnel, cookie en tokens zijn gelijk. Het interne netwerk bewijst §4.6 punt 3.
+De rechten en grenzen zijn ook gelijk: `office_ds.sh` start DS met de afscherming van Keuze 29
+(`cap_drop` ALL, de zeven capabilities, `no-new-privileges`, `pids_limit` 512) en, als de kernel
+het kan, 2 GB en 2 cores; `test_install_env.sh` houdt dat gelijk aan compose (review van fase 4,
+uitrol-3).
 
 Deze job is een **harde poort**, net als de e2e (B29). Valt hij door een pull van het image, dan
 opnieuw draaien; het image is op digest vastgepind.

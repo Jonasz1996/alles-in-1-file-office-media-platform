@@ -271,7 +271,12 @@ opnieuw draaien; het image is op digest vastgepind. Tot O6 draait DS er met zijn
 (zie boven).
 
 Verschil met productie: in CI hangt DS aan de standaardbridge (met uitgang), niet aan het
-interne netwerk. Proxy, tunnel, cookie en tokens zijn gelijk.
+interne netwerk. Proxy, tunnel, cookie en tokens zijn gelijk, en ook de rechten en grenzen:
+`office_ds.sh` start DS zoals `compose.office.yaml` (`--cap-drop ALL`, alleen de zeven
+capabilities, `no-new-privileges`, `--pids-limit 512`) en, als `docker info` zegt dat de kernel
+het kan, met 2 GB geheugen en 2 cores zoals `compose.office-limits.yaml`. Zo valt een nieuwe
+digest die meer rechten of processen wil, al in de job `office` op. `test_install_env.sh` (job
+`infra`) controleert dat die vlaggen gelijk blijven aan compose.
 
 ## Ontwikkelen met een echte DS (Keuze 33)
 

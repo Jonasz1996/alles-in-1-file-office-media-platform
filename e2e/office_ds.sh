@@ -66,12 +66,22 @@ start() {
   mkdir -p "$DIR"
   chmod 700 "$DIR"
   (umask 077 && hex >"$DIR/jwt.secret" && hex >"$DIR/link.secret")
+  # De afscherming van infra/single/compose.office.yaml en de grenzen van
+  # compose.office-limits.yaml (Keuze 29), zodat een nieuwe digest hier dezelfde rechten en
+  # grenzen krijgt als bij Jonas (review van fase 4, uitrol-3). De grenzen alleen als de kernel
+  # ze kan, zoals install.sh. test_install_env.sh controleert dat dit gelijk blijft aan compose.
+  local harden=(--cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID
+    --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add NET_BIND_SERVICE --cap-add KILL
+    --security-opt no-new-privileges:true --pids-limit 512)
+  if [ "$(docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}' 2>/dev/null)" = "true true" ]; then
+    harden+=(--memory 2g --memory-swap 2g --cpus 2)
+  fi
   # Zoals §4.5 stap 2. De standaardbridge (met uitgang): het interne netwerk bewijst de
   # integratie (§4.6 punt 3). host.docker.internal is de host, voor de interne luisteraar van
   # de app en de bronnen van de tests.
   JWT_SECRET="$(cat "$DIR/jwt.secret")" SECURE_LINK_SECRET="$(cat "$DIR/link.secret")" \
     docker run -d --name "$NAME" -p "127.0.0.1:$PORT:80" \
-    --add-host=host.docker.internal:host-gateway \
+    --add-host=host.docker.internal:host-gateway "${harden[@]}" \
     -e JWT_ENABLED=true -e JWT_SECRET -e JWT_HEADER=Authorization -e SECURE_LINK_SECRET \
     -e WELCOME_PAGE_ENABLED=false -e PLUGINS_ENABLED=false \
     "${mount[@]}" "$img" >/dev/null
