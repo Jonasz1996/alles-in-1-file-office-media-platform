@@ -24,6 +24,7 @@ De klok is sessions.now(): de tests zetten hem vooruit.
 """
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from datetime import datetime, timedelta
@@ -355,11 +356,16 @@ async def _prune() -> None:
 
 
 async def checkpoint_counts(wait: float) -> tuple[int, int]:
-    """(verstuurd, opgeslagen): forcesave voor elke open sessie, dan hooguit wait seconden
-    wachten tot hun opslag binnen is (saved_at verder, of de sessie dicht)."""
+    """(verstuurd, opgeslagen): forcesave voor elke open sessie en wachten tot hun opslag binnen
+    is (saved_at verder, of de sessie dicht), alles samen hooguit wait seconden. Ook de
+    forcesaves zelf: een DS die verbindingen aanneemt maar niet antwoordt (en nog gezond heet),
+    hield anders de knop op /beheer en het stoppen van de app (serve.py) per sessie de leestijd
+    van een commando vast."""
     eng = engine.current()
     if eng is None:
         return 0, 0
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + wait
     async with sessions.maker()() as session:
         rows = (
             await session.scalars(select(OfficeSession).where(OfficeSession.state == "open"))
@@ -367,22 +373,25 @@ async def checkpoint_counts(wait: float) -> tuple[int, int]:
         before = {row.key: row.saved_at for row in rows}
         await session.commit()
     sent: dict = {}
-    for key, saved_at in before.items():
-        answer = await _ds(eng.checkpoint(key, "stop"), "forcesave voor alles")
-        if answer == "sent":
-            sent[key] = saved_at
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout_at(deadline):
+            for key, saved_at in before.items():
+                answer = await _ds(eng.checkpoint(key, "stop"), "forcesave voor alles")
+                if answer == "sent":
+                    sent[key] = saved_at
     saved: set[str] = set()
-    rounds = max(1, int(wait / POLL_SECONDS))
-    for _ in range(rounds):
-        if len(saved) == len(sent):
-            break
-        await asyncio.sleep(POLL_SECONDS)
+    while len(saved) < len(sent):
+        left = deadline - loop.time()
+        if left > 0:
+            await asyncio.sleep(min(POLL_SECONDS, left))
         async with sessions.maker()() as session:
             for key in set(sent) - saved:
                 row = await sessions.find_by_key(session, key)
                 if row is None or row.state == "closed" or row.saved_at != sent[key]:
                     saved.add(key)
             await session.commit()
+        if left <= POLL_SECONDS:
+            break  # de tijd is op (na deze laatste blik)
     return len(sent), len(saved)
 
 

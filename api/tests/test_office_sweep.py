@@ -497,6 +497,26 @@ async def test_checkpoint_all_wacht_hooguit_wait(world):
     await world.fail_callbacks(0)
 
 
+async def test_checkpoint_all_ook_met_een_ds_die_hangt_hooguit_wait(world):
+    """DS neemt verbindingen aan maar antwoordt niet (en heet nog gezond): de forcesaves samen
+    houden de knop op /beheer en het stoppen van de app (serve.py, 5 s) niet langer vast dan
+    wait. Eerst wachtte elke forcesave op zijn eigen leestijd, na elkaar."""
+    anna = await world.user("anna@example.nl")
+    nodes = [await world.docx(anna, None, f"d{n}.docx", ["Begin"]) for n in range(3)]
+    handles = [await world.open(anna, node) for node in nodes]
+
+    async def hangs(params: dict) -> dict:
+        await asyncio.sleep(30)
+        return {"error": 0}
+
+    world.answer("forcesave", hangs)
+    start = time.monotonic()
+    assert await sweep.checkpoint_counts(1) == (0, 0)
+    assert time.monotonic() - start < 2.5
+    for h in handles:
+        assert (await world.row(h.key)).state == "open"
+
+
 async def test_checkpoint_all_zonder_open_sessies(world):
     assert await sweep.checkpoint_counts(1) == (0, 0)
     assert sessions.office() is world.state
