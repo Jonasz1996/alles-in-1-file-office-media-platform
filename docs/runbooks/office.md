@@ -36,6 +36,13 @@ Hieronder heet dat kortweg "het script"; een instelling zet je ervoor, zoals
 Een nieuwe DS komt met een nieuwe versie van het platform: het script kent de digest. Draai het
 script; meer hoeft niet. Het vorige image blijft staan.
 
+Terwijl DS opnieuw start, wachten de PDF-voorbeelden: een conversie die DS onderbrak, gaat
+verder zodra DS terug is, tot 10 minuten lang, zonder dat er iets mislukt. Is DS langer weg,
+dan staan die documenten op `/beheer` → Office als mislukt (code 2); **Mislukte opnieuw** zet ze
+terug. Stopte het platform midden in een conversie of een upload (een geheugentekort, de stroom
+weg), dan ruimt het bij de volgende start de halve bestanden zelf op
+(`/tank/platform/office/.tmp` en `/tank/platform/blobs/.tmp`).
+
 Voor wie het platform ontwikkelt: een nieuwe DS betekent een nieuwe digest op vier plaatsen,
 in één commit:
 
