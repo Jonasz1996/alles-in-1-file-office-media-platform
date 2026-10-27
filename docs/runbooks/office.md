@@ -110,8 +110,11 @@ het bestand; anders als herstelkopie bij de eigenaar.
 
 Wat ook dan niet lukt (quotum vol, document te groot, eigenaar weg), staat op `/beheer` → Office
 onder **Niet opgeslagen**, met de naam en de eigenaar. **Terugzetten** maakt de herstelkopie
-alsnog (als er nu ruimte is); **Verwijderen** gooit het werk weg. Een document dat het platform
-niet kent (een andere database), staat er als "onbekend". Een document dat wel bij het platform
+alsnog (als er nu ruimte is); **Verwijderen** gooit het werk weg. Heeft de eigenaar het
+bestand intussen definitief verwijderd (prullenbak geleegd), dan staat er "het bestand bestaat
+niet meer" en is er geen Terugzetten: de eigenaar wilde het weg, en het herstel ruimt het in zijn
+volgende ronde zelf op. Een document dat het platform niet kent (een andere database), staat er
+als "onbekend". Een document dat wel bij het platform
 hoort, blijft daar staan tot het opgeslagen is of tot je het verwijdert, ook na 30 dagen: het
 platform ruimt een oude sessie pas op als DS het werk niet meer heeft.
 

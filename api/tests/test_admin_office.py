@@ -3,6 +3,7 @@ alleen voor beheerders, de grens en de andere waarden van OfficeConfig (opgeslag
 gebruikt), office uit en weer aan, terugzetten en verwijderen van forgotten files, eigenaar weg,
 mislukte conversies opnieuw en "Nu tussentijds opslaan"."""
 
+import asyncio
 import re
 import time
 import uuid
@@ -394,6 +395,51 @@ async def test_eigenaar_weg_is_409(world, boss):
     assert key in world.forgotten()
     r = await world.client.delete(f"{ADMIN}/unsaved/{key}", headers=boss)
     assert r.status_code == 204
+    assert key not in world.forgotten()
+
+
+async def files_of(world, owner_id) -> list[str]:
+    async with maker(world.base_settings)() as session:
+        rows = await session.scalars(
+            select(Node.name).where(Node.owner_id == owner_id, Node.kind == "file")
+        )
+        return sorted(rows.all())
+
+
+async def test_bestand_definitief_weg_is_409(world, boss):
+    """Anna gooide het document weg en leegde haar prullenbak voordat het herstel de forgotten
+    file deed. Dan wilde ze het weg (Keuze 19): geen Terugzetten, en geen kopie met de inhoud
+    die ze net definitief verwijderde. Op het tabblad de reden "het bestand bestaat niet meer"."""
+    anna = await world.user("anna@example.nl")
+    node = await world.docx(anna, None, "geheim.docx", ["Begin"])
+    key = await lost(world, anna, node, ["geheime tekst"])
+    await world.trash(anna, node)
+    await world.purge(anna, node)
+    [item] = (await get_admin(world, boss))["unsaved"]
+    assert (item["key"], item["owner"], item["reason"]) == (key, "Anna", "gone")
+    r = await world.client.post(f"{ADMIN}/unsaved/{key}/restore", headers=boss)
+    assert r.status_code == 409 and code_of(r) == "office_owner_gone"
+    assert await files_of(world, anna.id) == []
+    assert key in world.forgotten()
+
+
+async def test_twee_keer_tegelijk_terugzetten_geeft_een_kopie(world, boss):
+    """Twee tabbladen (of twee beheerders) klikken tegelijk op Terugzetten: één kopie, niet twee
+    die elk het quotum van de eigenaar kosten."""
+    anna = await world.user("anna@example.nl")
+    node = await world.docx(anna, None, "verslag.docx", ["Begin"])
+    key = await lost(world, anna, node, ["terug"])
+    await world.room(anna, 0)
+    await world.recover()  # quotum vol: de ronde maakt niets
+    await world.room(anna, None)
+    first, second = await asyncio.gather(
+        world.client.post(f"{ADMIN}/unsaved/{key}/restore", headers=boss),
+        world.client.post(f"{ADMIN}/unsaved/{key}/restore", headers=boss),
+    )
+    assert first.status_code in (200, 404) and second.status_code in (200, 404)
+    assert 200 in (first.status_code, second.status_code), (first.text, second.text)
+    copies = [n for n in await files_of(world, anna.id) if "hersteld" in n]
+    assert len(copies) == 1, copies
     assert key not in world.forgotten()
 
 

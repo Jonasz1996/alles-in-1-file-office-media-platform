@@ -110,6 +110,9 @@ describe("het tabblad Office", () => {
     expect(canRestore({ owner: null, reason: "no_room" })).toBe(false);
     expect(canRestore({ owner: null, reason: "unknown" })).toBe(false);
     expect(canRestore({ owner: "Anna", reason: "owner_gone" })).toBe(false);
+    // Het bestand is definitief weg (de eigenaar leegde de prullenbak): de server weigert (409)
+    expect(unsavedReason("gone")).toBe("het bestand bestaat niet meer");
+    expect(canRestore({ owner: "Anna", reason: "gone" })).toBe(false);
   });
 
   it("de instellingen: hele getallen binnen de grenzen van de server", () => {

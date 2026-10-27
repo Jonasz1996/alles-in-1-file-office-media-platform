@@ -257,7 +257,8 @@ async def _unsaved(session, key: str, node_id: uuid.UUID | None) -> None:
 async def restore(key: str) -> Node:
     """Terugzetten: een herstelkopie bij de eigenaar (stap 4), als er nu ruimte is. Zette de
     ronde dit werk al neer (de key stond nog in DS), dan niet nog eens: het antwoord is waar het
-    staat. Fouten: 404 not_found (geen rij), office_owner_gone, 413 no_room, 503
+    staat. Is het bestand of de eigenaar definitief weg, dan niet (stap 2: de eigenaar wilde het
+    weg). Fouten: 404 not_found (geen rij), office_owner_gone, 413 no_room, 503
     office_unavailable."""
     eng = engine.current()
     if eng is None:
@@ -268,7 +269,7 @@ async def restore(key: str) -> Node:
         if row is None:
             raise errors.fail(404, "not_found", NOT_FOUND)
         node, owner = await saving.alive(session, row)
-        if owner is None:
+        if node is None or owner is None:
             raise errors.fail(404, "office_owner_gone", OWNER_GONE)
         await session.commit()
     try:
@@ -277,11 +278,10 @@ async def restore(key: str) -> Node:
         log.warning("office: ophalen van een forgotten file mislukt")
         raise errors.fail(503, "office_unavailable", UNAVAILABLE) from None
     try:
-        lock = sessions.office().node_lock(node.id) if node is not None else asyncio.Lock()
-        async with lock, sessions.maker()() as session:
+        async with sessions.office().node_lock(node.id), sessions.maker()() as session:
             row = await sessions.find_by_key(session, key) or row
             node, owner = await saving.alive(session, row)
-            if owner is None:
+            if node is None or owner is None:
                 raise errors.fail(404, "office_owner_gone", OWNER_GONE)
             stored = await _stored(session, row, node, owner.id, sha)
             if stored is not None:
@@ -299,9 +299,7 @@ async def restore(key: str) -> Node:
                 _close(row)
                 row.last_error = None
                 await session.commit()
-                await sessions.publish_recovered(
-                    session, row, copy, node.id if node else None, "forgotten"
-                )
+                await sessions.publish_recovered(session, row, copy, node.id, "forgotten")
                 await session.commit()
     finally:
         await anyio.Path(tmp).unlink(missing_ok=True)

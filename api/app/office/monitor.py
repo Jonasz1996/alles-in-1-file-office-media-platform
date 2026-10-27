@@ -204,8 +204,9 @@ async def open_documents(session: AsyncSession, state: OfficeState) -> list[Open
 
 async def unsaved(session: AsyncSession, keys: list[str]) -> list[Unsaved]:
     """De forgotten files met wat de app ervan weet. Een key zonder rij is onbekend (reason
-    unknown); reason is anders de laatste fout van de sessie (no_room, ...), of None als het
-    herstel hem nog niet probeerde."""
+    unknown); is de eigenaar of het bestand definitief weg, dan owner_gone of gone (het herstel
+    gooit hem in zijn volgende ronde weg, en Terugzetten weigert); reason is anders de laatste
+    fout van de sessie (no_room, ...), of None als het herstel hem nog niet probeerde."""
     if not keys:
         return []
     rows = {
@@ -222,13 +223,18 @@ async def unsaved(session: AsyncSession, keys: list[str]) -> list[Unsaved]:
             found.append(Unsaved(key=key, name="", owner=None, at=None, reason="unknown"))
             continue
         at = row.closed_at or row.updated_at
+        reason = row.last_error
+        if row.owner_id is None:
+            reason = "owner_gone"
+        elif row.node_id is None:
+            reason = "gone"
         found.append(
             Unsaved(
                 key=key,
                 name=row.name,
                 owner=names.get(row.owner_id) if row.owner_id else None,
                 at=sessions.utc(at) if at else None,
-                reason=row.last_error,
+                reason=reason,
             )
         )
     found.sort(key=lambda u: u.at or datetime.min.replace(tzinfo=UTC), reverse=True)

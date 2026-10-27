@@ -215,9 +215,13 @@ export function unsavedReason(reason: string | null): string {
   return REASONS.has(reason) ? t(`admin.officeTab.reasons.${reason}` as MessageKey) : reason;
 }
 
-/** Kan Terugzetten iets doen? Niet zonder eigenaar, en niet voor een key die de app niet kent. */
+/**
+ * Kan Terugzetten iets doen? Niet zonder eigenaar, niet voor een key die de app niet kent, en niet
+ * als de eigenaar of het bestand definitief weg is (dan wilde de eigenaar het weg; de server
+ * weigert met 409).
+ */
 export function canRestore(item: { owner: string | null; reason: string | null }): boolean {
-  return item.owner !== null && item.reason !== "unknown" && item.reason !== "owner_gone";
+  return item.owner !== null && !["unknown", "owner_gone", "gone"].includes(item.reason ?? "");
 }
 
 /** Een veld van de instellingen als heel getal binnen zijn grenzen; anders undefined. */
