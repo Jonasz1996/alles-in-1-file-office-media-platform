@@ -113,6 +113,12 @@ class Engine(Protocol):
 
     def stream_guard(self, key: str) -> StreamGuard: ...
 
+    def action_authorization(self, path: str, query: str, authorization: str | None) -> str | None:
+        """Een editoractie (PathClass.ACTION): TokenError als de query over een andere key gaat
+        dan het pad; anders de Authorization die mee mag naar de editor, of None (OnlyOffice:
+        alleen een geldig sessietoken van die key, op upload/<key>; spike A2)."""
+        ...
+
     def editor_config(self, ctx: OpenContext) -> dict:
         """De editorconfig, getekend, met exp."""
         ...

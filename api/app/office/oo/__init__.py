@@ -45,6 +45,9 @@ class OnlyOffice:
     def stream_guard(self, key: str) -> StreamGuard:
         return stream.Guard(self.settings, key)
 
+    def action_authorization(self, path: str, query: str, authorization: str | None) -> str | None:
+        return paths.action_authorization(self.settings, path, query, authorization)
+
     def editor_config(self, ctx: OpenContext) -> dict:
         return editor.editor_config(self.settings, ctx)
 
