@@ -260,7 +260,9 @@ def response_headers(
     return out
 
 
-def _refused(kind: str, method: str, path: str) -> None:
+def refused(kind: str, method: str, path: str) -> None:
+    """De logregel bij een geweigerd pad (ook voor de tunnel), hooguit
+    REFUSED_LOG_PER_MINUTE per minuut."""
     now = time.monotonic()
     while _refused_log and now - _refused_log[0] > 60:
         _refused_log.popleft()
@@ -312,7 +314,7 @@ class OfficeProxy:
         path = raw_path(scope)
         kind = eng.classify(method, path, False) if ds_target(scope) is not None else None
         if kind is None:
-            _refused("geen", method, path)
+            refused("geen", method, path)
             return await self.app(scope, receive, send)  # de catch-all geeft 404
         headers = Headers(scope=scope)
         extra: list[tuple[str, str]] = []
@@ -321,7 +323,7 @@ class OfficeProxy:
             if kind == PathClass.PAGE:
                 dest = headers.get("sec-fetch-dest")
                 if dest is not None and dest.strip().lower() not in PAGE_DESTS:
-                    _refused("page", method, path)
+                    refused("page", method, path)
                     return await self.app(scope, receive, send)
                 if await gate.check(headers) is None:
                     return await self.app(scope, receive, send)  # 404: geen hint
@@ -348,7 +350,7 @@ class OfficeProxy:
                     if length.isdigit() and int(length) > action_bytes.left(budget):
                         return await _over(budget)(scope, receive, send)
             elif kind != PathClass.STATIC:
-                _refused(str(kind), method, path)
+                refused(str(kind), method, path)
                 return await self.app(scope, receive, send)
         except HTTPException as exc:  # de grens per gebruiker (429)
             return await _response(exc)(scope, receive, send)

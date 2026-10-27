@@ -46,7 +46,7 @@ from urllib.parse import urlsplit
 
 from starlette.datastructures import Headers
 
-from app.office import engine, gate, keys, runtime, sessions
+from app.office import engine, gate, keys, proxy, runtime, sessions
 from app.office.engine import PathClass
 from app.office.state import OfficeConfig, OfficeState, office_policy
 
@@ -320,7 +320,7 @@ class Tunnel(asyncio.Protocol):
             or eng.classify("GET", path, True) != PathClass.SESSION
         ):
             if eng is not None:
-                log.warning("office: pad geweigerd upgrade %s", path.split("?", 1)[0][:200])
+                proxy.refused("upgrade", method.decode("latin-1"), path.split("?", 1)[0])
             self.refuse(404)
             return
         host = next((v for k, v in headers if k == b"host"), b"").decode("latin-1")

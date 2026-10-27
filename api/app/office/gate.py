@@ -62,9 +62,10 @@ class _Entry:
     user: GateUser
 
 
-# (sha-256 van het cookie, key of "") -> wie, tot wanneer (clock)
-_by_cookie: dict[tuple[str, str], _Entry] = {}
-# (gebruiker, login, key of "") -> tot wanneer; voor still()
+# (sha-256 van het cookie, key of None) -> wie, tot wanneer (clock). None is "zonder key", en
+# nooit gelijk aan een key (ook niet aan een lege)
+_by_cookie: dict[tuple[str, str | None], _Entry] = {}
+# (gebruiker, login, key) -> tot wanneer; voor still()
 _by_user: dict[tuple[uuid.UUID, uuid.UUID | None, str], _Entry] = {}
 
 
@@ -131,7 +132,7 @@ async def check(headers: Headers, key: str | None = None) -> GateUser | None:
         left = exp - time.time()
         if left <= 0:
             continue
-        slot = (hashlib.sha256(token.encode()).hexdigest(), key or "")
+        slot = (hashlib.sha256(token.encode()).hexdigest(), key)
         now = clock()
         hit = _by_cookie.get(slot)
         if hit is not None and hit.until > now:
