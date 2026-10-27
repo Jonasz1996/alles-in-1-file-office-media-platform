@@ -201,6 +201,16 @@ def pdf_path(blobs: BlobStore, sha: str) -> Path:
     return office_dir(blobs) / "pdf" / sha[:2] / f"{sha}.pdf"
 
 
+async def clean_tmp(settings: Settings) -> None:
+    """Bij het starten, vóór de workers: de tussenbestanden van een vorige keer weg. Een kill
+    (OOM, de stroom weg) midden in een conversie liet de PDF in office/.tmp staan, en midden in
+    het ophalen van een opgeslagen document (saving, recovery) of een upload in blobs/.tmp. Zo
+    vroeg gebruikt niets ze nog."""
+    blobs = BlobStore(settings.blob_dir)
+    for tmp in (office_dir(blobs) / ".tmp", blobs.tmp):
+        await anyio.to_thread.run_sync(shutil.rmtree, tmp, True)
+
+
 async def office_pdf(settings: Settings, blob: Blob | None) -> tuple[Path, int] | None:
     """(pad, pdf_version) van de omgezette PDF van deze inhoud, of None als die er niet is.
     Hangt niet af van DS: een PDF die er is, blijft te zien."""

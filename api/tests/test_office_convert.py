@@ -1427,3 +1427,23 @@ async def test_uitgezet_op_beheer(client, admin, office):
     await convert.start_backfill(s)
     await run_later(s)
     assert await office_jobs(s) == [] and office.log() == []
+
+
+@pytest.mark.anyio
+async def test_bij_het_starten_weg_wat_een_crash_liet_staan(tmp_path, monkeypatch):
+    """Stopte het proces midden in een conversie of in het ophalen van een opgeslagen document
+    (een kill, OOM, de stroom weg), dan bleef het tussenbestand staan, tot 512 MB per keer, en
+    niets ruimde het op. Bij het starten gaat het nu weg; de PDF's zelf blijven."""
+    from tests.test_rate_limits import started
+
+    blobs = BlobStore(Settings(data_dir=tmp_path).blob_dir)
+    stray = [convert.office_dir(blobs) / ".tmp" / "tmpabc" / "out.pdf", blobs.tmp / "tmpdef"]
+    for path in stray:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF-1.7 half")
+    pdf = convert.pdf_path(blobs, "a" * 64)
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.7")
+    async with started(tmp_path, monkeypatch):
+        assert [path for path in stray if path.exists()] == []
+    assert pdf.is_file()

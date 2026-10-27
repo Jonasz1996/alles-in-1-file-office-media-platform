@@ -22,6 +22,7 @@ from app import __version__, errors, events, jobs, photometa, previews
 from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.migrate import upgrade
+from app.office import convert as office_convert
 from app.office import engine as office_engine
 from app.office import health as office_health
 from app.office import recovery as office_recovery
@@ -388,8 +389,12 @@ async def lifespan(app: FastAPI):
     await certs.start()
     app.state.certs = certs
     cleaner = asyncio.create_task(uploads.cleanup_loop(settings), name="uploads opruimen")
-    # Eerst wat bij een crash bleef liggen terug in de rij en previews voor oudere inhoud,
-    # dan pas de workers
+    # Eerst wat bij een crash bleef liggen terug in de rij (en weg, voor tussenbestanden) en
+    # previews voor oudere inhoud, dan pas de workers
+    try:
+        await office_convert.clean_tmp(settings)
+    except Exception:  # noqa: BLE001 - dan blijven ze nog even staan
+        log.exception("Tussenbestanden van een vorige keer opruimen mislukt")
     await jobs.recover(settings)
     try:
         await previews.enqueue_missing(settings)
