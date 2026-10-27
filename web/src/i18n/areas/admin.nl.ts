@@ -311,7 +311,9 @@ export default {
     },
     notConfigured:
       "PLATFORM_OFFICE_URL staat, maar de andere instellingen van office kloppen niet. Zie het log van de app; tot het klopt, kan niemand bewerken.",
-    downSince: "Niet bereikbaar sinds {time} ({ago}).",
+    downSince: "Niet bereikbaar sinds {time}.",
+    // Naast de melding, niet erin: hij verandert bij elke ververs
+    downAgo: "({ago})",
     disabled:
       "Bewerken staat uit: niemand opent een document in de editor, Nieuw maakt geen documenten en er komen geen PDF's bij.",
     facts: "De document server",

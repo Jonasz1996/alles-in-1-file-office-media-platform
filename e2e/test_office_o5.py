@@ -194,6 +194,30 @@ def test_na_opslaan_ziet_de_eigen_app_het_meteen(office: Office, office_browsers
         office.server.call(office.admin, "PUT", ADMIN, json=DEFAULTS, expect=200)
 
 
+def test_niet_bereikbaar_leest_de_schermlezer_een_keer_voor(
+    office: Office, office_browsers
+) -> None:
+    """Met DS weg staat "Niet bereikbaar sinds …" als melding (role alert) op het tabblad. Het
+    tabblad ververst elke 5 s; stond "… geleden" in de melding, dan las een schermlezer hem elke
+    keer opnieuw voor. Nu staat in de melding alleen de vaste tijd, en "geleden" ernaast."""
+    assert office.fake is not None
+    office.fake.stop()
+    try:
+        office.wait_state("down", 15)
+        page = office_browsers.context_as(office.admin, service_workers="block").new_page()
+        page.goto("/beheer/office")
+        expect(
+            page.get_by_role("heading", name="Office: Niet bereikbaar", exact=True)
+        ).to_be_visible(timeout=20_000)
+        alert = page.get_by_role("alert").filter(has_text="Niet bereikbaar sinds")
+        expect(alert).to_have_count(1)
+        expect(alert).not_to_contain_text("geleden")
+        expect(page.get_by_text(re.compile(r"geleden"))).to_be_visible()
+    finally:
+        office.fake.start()
+    office.wait_state("ok", 30)
+
+
 # --- §4.4 punt 7: niet opgeslagen (quotum vol), terugzetten na het vrijmaken van ruimte ---
 
 

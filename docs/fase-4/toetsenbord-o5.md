@@ -78,5 +78,6 @@ typt.
       console.
 - [x] Geen nieuwe sneltoets; Alt+7 is van O0. Geen Ctrl+N, Ctrl+T of Ctrl+W.
 - [x] Fouten en meldingen worden voorgelezen: fouten met `role=alert`, gelukt in het
-      meldingengebied.
+      meldingengebied. "Niet bereikbaar sinds …" wordt één keer voorgelezen, niet bij elke
+      ververs (5 s): hoe lang geleden staat naast de melding, niet erin.
 - [x] Geen inline handlers of `style`-attributen (de CSP van de app blijft).

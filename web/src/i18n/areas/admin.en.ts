@@ -309,7 +309,9 @@ const en: Translation<typeof nl> = {
     },
     notConfigured:
       "PLATFORM_OFFICE_URL is set, but the other office settings are not right. See the app log; until they are, nobody can edit.",
-    downSince: "Unreachable since {time} ({ago}).",
+    downSince: "Unreachable since {time}.",
+    // Next to the alert, not in it: it changes on every refresh
+    downAgo: "({ago})",
     disabled: "Editing is off: nobody opens a document in the editor, New creates no documents and no PDFs are made.",
     facts: "The document server",
     version: "Version",

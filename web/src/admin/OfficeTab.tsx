@@ -80,8 +80,11 @@ function Body({
     <>
       {!data.configured && <p role="alert">{t("admin.officeTab.notConfigured")}</p>}
       {data.state === "down" && data.down_since && (
-        <p role="alert">
-          {t("admin.officeTab.downSince", { time: fmt.dateTime(data.down_since), ago: ago(data.down_since) })}
+        // Alleen de vaste tijd in de melding: "… geleden" verandert bij elke ververs (5 s), en een
+        // melding die verandert, leest een schermlezer elke keer opnieuw voor
+        <p>
+          <span role="alert">{t("admin.officeTab.downSince", { time: fmt.dateTime(data.down_since) })}</span>{" "}
+          <span className="muted">{t("admin.officeTab.downAgo", { ago: ago(data.down_since) })}</span>
         </p>
       )}
       {!data.enabled && <p className="muted">{t("admin.officeTab.disabled")}</p>}
