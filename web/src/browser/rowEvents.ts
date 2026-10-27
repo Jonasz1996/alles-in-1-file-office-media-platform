@@ -71,19 +71,38 @@ export function mayMoveFocus(
   return now === null || now === from || now === body || !!container?.contains(now);
 }
 
-/** Zet de focus op rij i zodra die er staat (na het scrollen: één of twee frames later). */
+/** Het nummer van de laatste vraag om de focus (focusRow of focusRowNow), voor alle lijsten samen:
+ * er is maar één focus. Een eerdere focusRow die nog op een frame wacht, doet dan niets meer.
+ * Anders zet hij na een snelle tweede toets de focus terug op zijn rij, onFocus zet de focusindex
+ * daar ook heen, en de volgende toets begint weer van daar (Shift+PageUp vier keer achter elkaar
+ * selecteerde dan soms maar drie pagina's). */
+let latestRequest = 0;
+
+/** Zet de focus op rij i zodra die er staat (na het scrollen: één of twee frames later), tenzij er
+ * intussen een nieuwere vraag om de focus kwam. */
 export function focusRow(
   container: RefObject<HTMLElement | null>,
   i: number,
   tries = 4,
   from: Element | null = document.activeElement,
+  request: number = ++latestRequest,
 ): void {
   requestAnimationFrame(() => {
+    if (request !== latestRequest) return;
     if (!mayMoveFocus(document.activeElement, from, container.current, document.body)) return;
     const el = rowElement(container.current, i);
     if (el) el.focus({ preventScroll: true });
-    else if (tries > 0) focusRow(container, i, tries - 1, from);
+    else if (tries > 0) focusRow(container, i, tries - 1, from, request);
   });
+}
+
+/** Voor een toets in de lijst: staat rij i er al, dan meteen de focus erop (dan staat de focus
+ * waar de focusindex staat, en een wachtende focusRow vervalt); anders zodra hij er staat. */
+export function focusRowNow(container: RefObject<HTMLElement | null>, i: number): void {
+  const el = rowElement(container.current, i);
+  if (!el) return focusRow(container, i);
+  latestRequest += 1;
+  el.focus({ preventScroll: true });
 }
 
 export function useRowEvents(
@@ -154,7 +173,7 @@ export function useRowEvents(
       if (next === c.focusIndex) return;
       c.onMove(next, { shift: e.shiftKey, toggle: e.ctrlKey || e.metaKey });
       c.scrollToIndex(next);
-      focusRow(container, next);
+      focusRowNow(container, next);
     },
     onFocus(e: FocusEvent<HTMLDivElement>) {
       const i = indexOf(e.target);
