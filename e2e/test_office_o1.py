@@ -357,9 +357,10 @@ def test_alleen_lezen_ziet_geen_bewerken_en_komt_niet_bij_ds(
 
 def test_uitloggen_in_een_andere_context_sluit_de_editor(office: Office, office_browsers) -> None:
     """Bram bewerkt in context A. Dezelfde login (de cookies van A) logt in context B uit, via
-    het accountmenu. Binnen 30 s is Bram uit de editor (de controle van de tunnel elke 15 s;
-    de pagina blijft staan en zegt "Verbinding weg"), en daarna geeft het DATA-pad 401
-    office_gate en de upgrade 401, ook vanuit de pagina zelf."""
+    het accountmenu. Binnen 10 s is Bram uit de editor (uitloggen sluit de tunnels van die
+    login meteen; eerst was het de controle van de tunnel elke 15 s, gemeten 14,5 s; de pagina
+    blijft staan en zegt "Verbinding weg"), en daarna geeft het DATA-pad 401 office_gate en de
+    upgrade 401, ook vanuit de pagina zelf."""
     d = duo(office)
     context = login(office_browsers, d.bram)
     bram = open_editor_page(context, d.node)
@@ -382,9 +383,9 @@ def test_uitloggen_in_een_andere_context_sluit_de_editor(office: Office, office_
     t0 = time.monotonic()
 
     me = uid(office, d.bram)
-    wait_until(lambda: me not in fake_info(office, bram.key)["users"], 30, "Bram uit de editor")
+    wait_until(lambda: me not in fake_info(office, bram.key)["users"], 10, "Bram uit de editor")
     took = time.monotonic() - t0
-    assert took <= 30, took
+    assert took <= 10, took
     # Dicht door de tunnel: de editorpagina staat er nog, de nep-editor kan niet terug
     expect(bram.page.locator(".editor-status")).to_have_text("Verbinding weg", timeout=10_000)
     expect(bram.page).to_have_url(re.compile(rf"/bewerken/{d.node}$"))

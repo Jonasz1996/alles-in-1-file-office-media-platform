@@ -691,6 +691,59 @@ async def test_uitloggen_sluit_binnen_de_controle(world, monkeypatch, clock):
         assert tunnel.counts()["total"] == 0
 
 
+async def login(world, account) -> tuple:
+    """Een echte login (een eigen family): het account met dat access-token, en de tokens."""
+    r = await world.client.post(
+        "/api/v1/auth/login", json={"email": account.email, "password": PASSWORD}
+    )
+    assert r.status_code == 200, r.text
+    world.client.cookies.clear()
+    tokens = r.json()
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    return dataclasses.replace(account, headers=headers), tokens
+
+
+async def test_ingetrokken_logins_sluiten_de_tunnel_meteen(world, monkeypatch):
+    """routers/auth.py trekt logins in: overal anders uitloggen, uitloggen, blokkeren. De
+    tunnels van die logins gaan meteen dicht, niet pas bij de controle van 15 s (plus de
+    cache); een login die blijft, houdt zijn tunnel."""
+    assert tunnel.RECHECK_SECONDS == 15.0
+    anna, bram, node, _ = await two_writers(world)
+    admin = await world.user("beheer@example.nl", role="admin")
+    here, tokens = await login(world, bram)
+    there, _ = await login(world, bram)
+    cfg_a, cookie_a = await opened(world, anna, node)
+    cfg_here, cookie_here = await opened(world, here, node)
+    cfg_there, cookie_there = await opened(world, there, node)
+    async with public(monkeypatch) as listener:
+        a = editor(world, listener, cfg_a, cookie_a)
+        b_here = editor(world, listener, cfg_here, cookie_here)
+        b_there = editor(world, listener, cfg_there, cookie_there)
+        for found in (a, b_here, b_there):
+            await found.open(load=False)
+        assert tunnel.counts()["total"] == 3
+        # Overal anders uitloggen: de andere login van Bram is meteen dicht, deze blijft
+        r = await world.client.post("/api/v1/auth/sessions/revoke-others", headers=here.headers)
+        assert r.status_code == 204, r.text
+        await closed(b_there, 2)
+        assert b_here.reading and a.reading
+        # Uitloggen: ook deze login
+        r = await world.client.post(
+            "/api/v1/auth/logout", json={"refresh_token": tokens["refresh_token"]}
+        )
+        assert r.status_code == 204
+        world.client.cookies.clear()
+        await closed(b_here, 2)
+        assert a.reading
+        # Blokkeren door de beheerder: alle logins van Anna
+        r = await world.client.patch(
+            f"/api/v1/users/{anna.id}", json={"disabled": True}, headers=admin.headers
+        )
+        assert r.status_code == 200, r.text
+        await closed(a, 2)
+        assert tunnel.counts()["total"] == 0
+
+
 async def test_de_controle_kapot_is_dicht(world, monkeypatch):
     monkeypatch.setattr(tunnel, "RECHECK_SECONDS", 0.1)
     anna, _, node, _ = await two_writers(world)

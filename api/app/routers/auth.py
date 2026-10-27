@@ -16,6 +16,9 @@ from app import errors, jobs, totp, userdelete
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Job, Node, RecoveryCode, RefreshToken, User, Version
+from app.office import gate as office_gate
+from app.office import runtime as office_runtime
+from app.office import tunnel as office_tunnel
 from app.security import (
     ACCOUNT_DISABLED,
     AdminUser,
@@ -458,7 +461,8 @@ async def revoke_other_logins(
 ) -> None:
     """Trekt alle logins (refresh-families) van de gebruiker in, behalve keep. Na het aan-
     of uitzetten van 2FA of een nieuw wachtwoord moet wie al een sessie had dus opnieuw
-    inloggen; ook zijn access-token werkt dan niet meer (zie security.family_revoked)."""
+    inloggen; ook zijn access-token werkt dan niet meer (zie security.family_revoked), en zijn
+    editor van office is meteen dicht."""
     query = update(RefreshToken).where(
         RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None)
     )
@@ -467,16 +471,18 @@ async def revoke_other_logins(
     await session.execute(
         query.values(revoked_at=datetime.now(UTC)).execution_options(synchronize_session=False)
     )
+    office_tunnel.close_user(user_id, keep)
 
 
 async def revoke_family(session: AsyncSession, family: uuid.UUID, now: datetime) -> None:
-    """Eén login intrekken (uitloggen, of hergebruik van een token)."""
+    """Eén login intrekken (uitloggen, of hergebruik van een token), ook in office."""
     await session.execute(
         update(RefreshToken)
         .where(RefreshToken.family == family, RefreshToken.revoked_at.is_(None))
         .values(revoked_at=now)
         .execution_options(synchronize_session=False)
     )
+    office_tunnel.close_login(family)
 
 
 async def new_recovery_codes(session: Session, user: User) -> list[str]:
@@ -654,6 +660,8 @@ async def logout(
             await revoke_family(session, row.family, datetime.now(UTC))
             await session.commit()
     response.delete_cookie(REFRESH_COOKIE, path="/api/v1/auth")
+    if office_runtime.settings().office_configured:  # het poort-cookie (Keuze 7)
+        response.delete_cookie(office_gate.GATE_COOKIE, path="/office/")
 
 
 @router.get("/auth/me")

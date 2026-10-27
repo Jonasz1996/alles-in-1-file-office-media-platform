@@ -301,7 +301,8 @@ Elke keuze geeft de standaard en waarom.
      aan de andere.
    - **Elke 15 s** controleert de tunnel de toegang van zijn verbinding opnieuw (Keuze 7, met de
      cache van 15 s). Nee → dicht. Zo is uitloggen of een ingetrokken recht binnen 30 s uit de
-     tunnel.
+     tunnel. Een ingetrokken login (uitloggen, blokkeren, wachtwoord, 2FA) sluit sinds de review
+     zijn tunnels meteen: zie afwijking 14 in [o1.md](o1.md).
    - Een register van open tunnels: per key en per gebruiker. Daaruit komen de tellers van Keuze 27.
      `close_for(key, user)` en `close_all()` bij het stoppen van de app.
    - **De fix van M1:** `HeaderDeadline` overschrijft `handle_websocket_upgrade`. Bij een upgrade
@@ -612,7 +613,7 @@ Elke keuze geeft de standaard en waarom.
     | De eigenaar zet het in de prullenbak | doet de eigenaar mee: opgeslagen in het bestand in de prullenbak (`exact`), dus terugzetten brengt het werk terug. Deelnemers via een deling verliezen hun toegang (zie "deling ingetrokken"). Nieuwe sessies op een bestand in de prullenbak: 422 `trashed`. |
     | Definitief verwijderd (door de eigenaar of de bewaartermijn) | de ronde stuurt `drop` voor iedereen en sluit de sessie (`gone`). Een callback daarna schrijft niets (`{"error": 0}`). **Geen herstelkopie:** de eigenaar wilde het weg. Forgotten files van die key gaan weg. |
     | Nieuwe inhoud via upload of "versie terugzetten" | de editor wint: zijn inhoud wordt de nieuwste, de andere inhoud blijft als versie. Wie de editor intussen opent, doet mee met de lopende sessie en ziet "Dit bestand is buiten de editor veranderd" (`stale: true`). |
-    | Deling ingetrokken, gebruiker geblokkeerd of uitgelogd | bij zijn volgende verzoek naar DS weigert de app (hooguit 15 s cache). Binnen 30 s zet de ronde hem uit de editor (`drop`), sluit zijn tunnels op die key en zet hem op `banned`. Opnieuw verbinden lukt niet: elk pad naar DS controleert het recht. Is hij bij de volgende ronde toch nog verbonden, dan stopt de hele sessie (Keuze 20). Wat hij deed, slaat op als iemand anders nog schrijfrecht heeft; anders een herstelkopie bij de eigenaar. Hij krijgt alleen `office.dropped`, zonder naam. Uitloggen: binnen 30 s uit de tunnel. |
+    | Deling ingetrokken, gebruiker geblokkeerd of uitgelogd | bij zijn volgende verzoek naar DS weigert de app (hooguit 15 s cache). Binnen 30 s zet de ronde hem uit de editor (`drop`), sluit zijn tunnels op die key en zet hem op `banned`. Opnieuw verbinden lukt niet: elk pad naar DS controleert het recht. Is hij bij de volgende ronde toch nog verbonden, dan stopt de hele sessie (Keuze 20). Wat hij deed, slaat op als iemand anders nog schrijfrecht heeft; anders een herstelkopie bij de eigenaar. Hij krijgt alleen `office.dropped`, zonder naam. Uitloggen: binnen 30 s uit de tunnel (sinds de review meteen: afwijking 14 in [o1.md](o1.md)). |
     | Quotum van de eigenaar vol | tussenstand: `{"error": 1}` en een melding in de editorpagina. Laatste opslag: ook de kopie lukt niet → forgotten file → Keuze 21. |
     | Eigenaar verwijderd | zijn bestanden gaan mee weg. De ronde stuurt `drop` voor iedereen en sluit de sessie (`gone`). De forgotten files van zijn keys gaan meteen weg. Geen kopie. |
 
@@ -2452,7 +2453,8 @@ tunnel, het echte poort-cookie en een echte Chromium. De harnas zet de ronde op 
 3. **Rechten** (O1, met de editor van O2):
    - een `read`-gebruiker ziet geen Bewerken en krijgt 403;
    - uitgelogd → 401 op `cache/files` en een geweigerde upgrade;
-   - uitloggen in een andere context sluit de open editor van die login binnen 30 s.
+   - uitloggen in een andere context sluit de open editor van die login binnen 30 s (sinds de
+     review binnen 10 s; afwijking 14 in [o1.md](o1.md)).
 4. **Voorbeeld zonder editor** (O3): een docx en een doc uploaden → de thumbnail krijgt een nieuw
    adres en de viewer toont pagina's. De log van de nep-DS heeft geen enkele editorverbinding. Een
    odt-bom komt nooit bij de nep-DS.
@@ -2758,7 +2760,7 @@ faalt.
 | S1: "Eis `Sec-Fetch-Dest: iframe` of `frame` op elke HTML van DS." | Over http in het LAN stuurt de browser geen `Sec-Fetch-*` (M16), en de service worker van DS vraagt met `empty`. Met die eis opent de editor in het LAN zonder domein nooit. Wat we wel doen: het cookie is altijd verplicht, en dat gaat door `SameSite=Strict` nooit mee met een link van een andere site. Is de kop er, dan geven `document` en andere waarden 404. |
 | S2 punt 3: "Zet `token.session.expires` op 2 uur, en geef `config.token` een `exp` van 10 minuten." | Het sessietoken korter maken kan werk kosten: verloopt het terwijl iemand bewerkt, dan kan zijn editor niet opnieuw verbinden, tenzij DS het vernieuwt (M15). Spike stap 15 meet dat; alleen bij ja komt `"2h"` erin. Voor de veiligheid is het niet nodig: de tunnel kijkt naar het recht van nu, wat het token ook zegt. `config.token` krijgt wel een `exp`, maar 2 uur, gelijk aan het poort-cookie. Na een start van DS duren de fonts tot 280 s, en een tab op de achtergrond kan laat verbinden. Met 10 minuten opent de editor dan niet, zonder dat het iets beschermt. |
 | S2 punt 4: "Bij elke intrekking: forcesave, `drop` voor iedereen, de sessie dicht en een nieuwe key." | Dat gooit bij elke intrekking alle andere bewerkers uit de editor. Nodig is het alleen als de ingetrokken gebruiker bij de volgende ronde nog verbonden is, of als het lezen van het eerste socketpakket niet lukt. Dan doen we het wel (Keuze 20). |
-| S2 punt 6: "Laat uitloggen de cache van de poort leegmaken." | Dat vraagt een haak in `auth.py`, een bestand van fase 3. Met 15 s cache en een controle elke 15 s is uitloggen binnen 30 s uit de tunnel. Dat is genoeg, en de tekst zegt nu "binnen 30 s". |
+| S2 punt 6: "Laat uitloggen de cache van de poort leegmaken." | Dat vraagt een haak in `auth.py`, een bestand van fase 3. Met 15 s cache en een controle elke 15 s is uitloggen binnen 30 s uit de tunnel. Dat is genoeg, en de tekst zegt nu "binnen 30 s". Bij de review van fase 4 toch gedaan, in de twee functies van `auth.py` die een login intrekken: zie afwijking 14 in [o1.md](o1.md). |
 | S4 punt 2: "Samen hooguit 64 MB uitgepakt, en hooguit 100 keer kleiner dan uitgepakt." | Te streng: een pptx met 80 MB foto's is gewoon, en zou dan nooit een voorbeeld of editor krijgen. We tellen de echte bytes, met een grens per soort op de XML (gemeten: 4 MB, 2 MB voor ODF, 10 MB voor een echt werkblad), 512 MB in totaal, 10.000 onderdelen, en de verhouding pas boven 64 MB (Keuze 23). Een bom houdt dat net zo goed tegen. |
 | S5: "Houd een `crash_count` per sha bij, in de metadata van `pdf_state`." | De rij van taken telt de pogingen al (`attempts`, `max_attempts`, `on_dead`). Een tweede teller is dubbel, en kan uit de pas lopen. Het gedrag is gelijk: hooguit twee kansen, dan `failed` en een melding. |
 | S11: "Herstelkopieën alleen bij een automatische bewaartermijn; forgotten files van een verwijderde eigenaar na N dagen weg." | De bewaartermijn haalt alleen weg wat de eigenaar zelf in de prullenbak zette. Ook dat is zijn keuze. Een verschil maken vraagt bovendien een haak in `trash.py`. Daarom: na elk definitief verwijderen geen kopie. Forgotten files van een verwijderde eigenaar gaan **meteen** weg, niet na N dagen: er is niemand meer om ze aan terug te geven. |

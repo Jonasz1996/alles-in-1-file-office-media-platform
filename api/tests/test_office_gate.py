@@ -183,6 +183,40 @@ async def test_uitgelogd(world, clock):
     assert await gate.still(gate.GateUser(anna.id, family), key) is False
 
 
+async def test_uitloggen_vergeet_de_poort_meteen(world, clock):
+    """Uitloggen trekt de login in, en de poort vergeet hem meteen, niet pas na de cache van
+    15 s (o1.md, afwijking 14); het cookie office gaat ook weg."""
+    anna = await world.user("anna@example.nl")
+    node = await world.docx(anna, None, "a.docx", ["x"])
+    r = await world.client.post(
+        "/api/v1/auth/login", json={"email": "anna@example.nl", "password": PASSWORD}
+    )
+    assert r.status_code == 200, r.text
+    tokens = r.json()
+    world.client.cookies.clear()
+    logged_in = dataclasses.replace(
+        anna, headers={"Authorization": f"Bearer {tokens['access_token']}"}
+    )
+    key, cookie = await begin(world, logged_in, node)
+    family = uuid.UUID(claims_of(world, cookie)["fam"])
+    # Alle drie in de cache
+    assert await gate.check(cookies(cookie), key) is not None
+    assert await gate.check(cookies(cookie)) is not None
+    assert await gate.still(gate.GateUser(anna.id, family), key) is True
+    r = await world.client.post(
+        "/api/v1/auth/logout", json={"refresh_token": tokens["refresh_token"]}
+    )
+    assert r.status_code == 204
+    gone = [h for h in r.headers.get_list("set-cookie") if h.startswith(f"{gate.GATE_COOKIE}=")]
+    assert len(gone) == 1 and "max-age=0" in gone[0].lower(), gone
+    assert "path=/office/" in gone[0].lower(), gone
+    world.client.cookies.clear()
+    # Zonder de klok vooruit te zetten
+    assert await gate.check(cookies(cookie), key) is None
+    assert await gate.check(cookies(cookie)) is None
+    assert await gate.still(gate.GateUser(anna.id, family), key) is False
+
+
 async def test_geblokkeerd(world, clock):
     s = await shared(world)
     assert await gate.check(cookies(s.b), s.key) is not None

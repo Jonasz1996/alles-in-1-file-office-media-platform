@@ -17,7 +17,8 @@ check(headers, key=None) -> GateUser | None, bij elk verzoek naar DS:
 
 Een ja staat hooguit office_gate_cache_seconds (15 s) in het geheugen, met als sleutel de
 sha-256 van het cookie plus de key, en nooit langer dan het cookie geldig is. Een nee wordt
-niet bewaard. forget_user(user_id) vergeet alles van één gebruiker (de ronde, na banned).
+niet bewaard. forget_user(user_id) vergeet alles van één gebruiker (de ronde, na banned; een
+ingetrokken login), forget_login(family) alles van één login (uitgelogd).
 
 still(user, key): dezelfde controle voor een open tunnel, op de gebruiker en login van toen
 (niet op het cookie: dat vernieuwt de pagina elke 30 minuten, de tunnel blijft). Ook 15 s in
@@ -167,6 +168,13 @@ def forget_user(user_id: uuid.UUID | str) -> None:
         return
     for cache in (_by_cookie, _by_user):
         for slot in [s for s, entry in cache.items() if entry.user.user_id == wanted]:
+            cache.pop(slot, None)
+
+
+def forget_login(family: uuid.UUID) -> None:
+    """Alles van deze login (family) uit de cache: uitgelogd of ingetrokken."""
+    for cache in (_by_cookie, _by_user):
+        for slot in [s for s, entry in cache.items() if entry.user.family == family]:
             cache.pop(slot, None)
 
 
