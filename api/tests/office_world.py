@@ -34,7 +34,7 @@ from app import access, events, security
 from app.config import Settings
 from app.main import app, internal_app
 from app.models import Node, OfficeSession, User, Version
-from app.office import engine, inspect, recovery, runtime, saving, sessions, sweep
+from app.office import engine, inspect, monitor, recovery, runtime, saving, sessions, sweep
 from app.office.oo import client as ds_client
 from app.office.state import OfficeConfig, OfficeState, office_policy
 from app.routers import office as office_router
@@ -180,6 +180,7 @@ class World:
         office_policy(app).config = OfficeConfig()
         sweep.forget()
         recovery._warned.clear()
+        monitor.forget_cache()
         office_router.session_limiter.reset()
         inspect.forget()
 

@@ -111,7 +111,9 @@ het bestand; anders als herstelkopie bij de eigenaar.
 Wat ook dan niet lukt (quotum vol, document te groot, eigenaar weg), staat op `/beheer` → Office
 onder **Niet opgeslagen**, met de naam en de eigenaar. **Terugzetten** maakt de herstelkopie
 alsnog (als er nu ruimte is); **Verwijderen** gooit het werk weg. Een document dat het platform
-niet kent (een andere database), staat er als "onbekend".
+niet kent (een andere database), staat er als "onbekend". Een document dat wel bij het platform
+hoort, blijft daar staan tot het opgeslagen is of tot je het verwijdert, ook na 30 dagen: het
+platform ruimt een oude sessie pas op als DS het werk niet meer heeft.
 
 Haal de volumes van DS pas weg als die lijst leeg is:
 

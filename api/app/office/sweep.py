@@ -18,7 +18,8 @@ slot van het bestand, en nooit een slot vast tijdens een aanroep naar DS:
    na elkaar niemand -> dicht (lost); saving ouder dan 6 minuten -> info: error 1 of niemand
    -> lost, wel iemand -> weer open;
 6. tussentijds opslaan na checkpoint_minutes (userdata "timer"; error 4 is goed);
-7. dichte rijen ouder dan 30 dagen weg.
+7. dichte rijen ouder dan 30 dagen weg, behalve die van een key die DS nog als forgotten file
+   heeft (die zijn nog op te slaan).
 De klok is sessions.now(): de tests zetten hem vooruit.
 """
 
@@ -30,7 +31,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import delete, select
 
 from app.models import Node, OfficeSession, User
-from app.office import engine, gate, runtime, saving, sessions, tunnel
+from app.office import engine, gate, monitor, runtime, saving, sessions, tunnel
 from app.office.state import OfficeConfig, office_state
 
 log = logging.getLogger("platform.office")
@@ -331,14 +332,22 @@ async def _timer(eng, row: _Row, now: datetime, cfg: OfficeConfig) -> None:
 
 
 async def _prune() -> None:
-    """Stap 7: dichte rijen ouder dan 30 dagen weg."""
+    """Stap 7: dichte rijen ouder dan 30 dagen weg. Niet de rij van een key die DS nog als
+    forgotten file heeft (een laatste opslag die niet paste): zonder rij kunnen het herstel en
+    Terugzetten dat werk nooit meer opslaan. Is die lijst niet te weten (DS weg en nog nooit
+    gelezen), dan gaat er deze ronde niets weg."""
     before = sessions.now() - timedelta(days=KEEP_DAYS)
+    old = (OfficeSession.state == "closed", OfficeSession.closed_at < before)
     async with sessions.maker()() as session:
-        await session.execute(
-            delete(OfficeSession).where(
-                OfficeSession.state == "closed", OfficeSession.closed_at < before
-            )
-        )
+        found = await session.scalar(select(OfficeSession.key).where(*old).limit(1))
+        await session.commit()
+    if found is None:
+        return
+    keep = await monitor.forgotten(sessions.office())  # onthouden: geen extra vraag per ronde
+    if keep is None:
+        return
+    async with sessions.maker()() as session:
+        await session.execute(delete(OfficeSession).where(*old, OfficeSession.key.not_in(keep)))
         await session.commit()
 
 

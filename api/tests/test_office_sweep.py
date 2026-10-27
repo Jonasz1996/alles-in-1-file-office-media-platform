@@ -12,7 +12,7 @@ from sqlalchemy import update
 
 from app.main import app
 from app.models import User
-from app.office import runtime, sessions, sweep
+from app.office import monitor, runtime, sessions, sweep
 from app.office.state import OfficeConfig, office_policy
 from tests.factories import maker
 from tests.office_contract import RECOVERED
@@ -375,6 +375,48 @@ async def test_dichte_rijen_ouder_dan_30_dagen_gaan_weg(world):
     await world.sweep()
     assert await world.row(h1.key) is None
     assert await world.row(h2.key) is not None
+
+
+async def test_een_forgotten_file_houdt_zijn_rij_ook_na_30_dagen(world):
+    """De laatste opslag past niet (quotum vol): de rij is dicht (refused) en DS bewaart het werk
+    als forgotten file. Ook na 30 dagen blijft de rij, zodat het herstel (en Terugzetten) het nog
+    opslaat zodra er ruimte is."""
+    anna = await world.user("anna@example.nl")
+    node = await world.docx(anna, None, "verslag.docx", ["Begin"])
+    h = await world.open(anna, node)
+    await world.type(h, "belangrijk werk")
+    await world.room(anna, 0)
+    await world.close(h)
+    await world.settle()
+    assert (await world.row(h.key)).closed_reason == "refused"
+    assert h.key in world.forgotten()
+    await world.advance(31 * DAY)
+    await world.sweep()
+    assert await world.row(h.key) is not None
+    await world.room(anna, None)
+    await world.recover()
+    assert h.key not in world.forgotten()
+    assert "belangrijk werk" in await world.paragraphs(node)
+    monitor.forget_cache()  # de lijst van DS wordt office_health_seconds onthouden
+    await world.sweep()  # nu geen forgotten file meer: de rij mag weg
+    assert await world.row(h.key) is None
+
+
+async def test_zonder_de_lijst_van_ds_blijven_oude_rijen_staan(world):
+    anna = await world.user("anna@example.nl")
+    node = await world.docx(anna, None, "een.docx", ["een"])
+    h = await world.open(anna, node)
+    await world.close(h)
+    await world.settle()
+    await world.advance(31 * DAY)
+    await world.http.post("/__fake/kill")
+    try:
+        await sweep.run_once()
+    finally:
+        await world.http.post("/__fake/restart")
+    assert await world.row(h.key) is not None
+    await world.sweep()
+    assert await world.row(h.key) is None
 
 
 # --- de ronde zelf ---
