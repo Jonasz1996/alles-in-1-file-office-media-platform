@@ -70,6 +70,10 @@ describe("canPdf (de actie in de lijst en de knop in de viewer)", () => {
     expect(canPdf(target("a.docx"), { ...on, editing: false, state: "down" })).toEqual({ visible: true, reason: null });
   });
 
+  it("ook met office uit op /beheer: uit stopt alleen nieuwe PDF's, de server beslist", () => {
+    expect(canPdf(target("a.docx"), { ...on, enabled: false, editing: false })).toEqual({ visible: true, reason: null });
+  });
+
   it("met leesrecht ook: downloaden mag wie mag lezen", () => {
     expect(canPdf(target("a.docx", { permission: "read" }), on)).toEqual({ visible: true, reason: null });
     // Een item van de viewer heeft geen kind

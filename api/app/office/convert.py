@@ -747,12 +747,12 @@ async def request(
     """Een voorbeeld met opmaak op verzoek. node is al gecontroleerd op leesrecht (de router);
     sha is de inhoud van een eerdere versie, of None voor die van node. Commit zelf.
 
+    Een PDF die er al is, is ready, ook met office uit op /beheer (uit stopt alleen nieuwe).
+
     Fouten: 503 office_off | office_unavailable; 422 not_a_file | office_format |
     office_unsafe; 413 office_too_large; 502 office_convert_failed {code}; 429 rate_limited."""
     office = _office_on()
     settings = runtime.settings()
-    if not await _enabled(session):
-        raise errors.fail(503, "office_off", OFF)
     sha = sha or node.blob_id
     if node.kind != "file" or not sha:
         raise errors.fail(422, "not_a_file", "Alleen bestanden kunnen worden omgezet")
@@ -766,6 +766,8 @@ async def request(
         )
     if await office_pdf(settings, blob) is not None and blob.pdf_version >= keys.PDF_VERSION:
         return "ready"
+    if not await _enabled(session):
+        raise errors.fail(503, "office_off", OFF)
     if blob.pdf_state == "unsafe":
         raise unsafe()
     if blob.pdf_state in ("failed", "none"):

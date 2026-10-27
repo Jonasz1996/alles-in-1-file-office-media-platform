@@ -13,7 +13,7 @@ from app import jobs
 from app.config import Settings
 from app.main import app
 from app.office import convert
-from app.office.state import office_state
+from app.office.state import OfficeConfig, office_policy, office_state
 from app.security import download_token
 from tests.factories import code_of
 from tests.test_office_convert import (  # noqa: F401
@@ -54,6 +54,29 @@ async def test_downloaden_als_pdf(client, admin, office):  # noqa: F811
     office_state(app).health = "down"
     link = (await pdf_link(client, jonas, node["id"])).json()
     assert (await client.get(link["url"])).status_code == 200
+
+
+@pytest.mark.anyio
+async def test_met_office_uit_op_beheer_een_pdf_die_er_is(client, admin, office):  # noqa: F811
+    """Uit op /beheer stopt nieuwe PDF's, niet het downloaden van een PDF die er al is (net als
+    met DS weg). Een bestand zonder PDF krijgt dan geen conversie: 503 office_off."""
+    jonas, _ = admin
+    s = office.settings
+    node = await upload(client, jonas, "Rapport.docx", docx_with_pages(2))
+    await jobs.run_pending(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    office_policy(app).config = OfficeConfig(enabled=False)
+    link = (await pdf_link(client, jonas, node["id"])).json()
+    r = await client.get(link["url"])
+    assert r.status_code == 200 and r.content.startswith(b"%PDF-")
+    r = await client.post(f"/api/v1/office/files/{node['id']}/convert", headers=jonas)
+    assert r.status_code == 202 and r.json() == {"pdf_state": "ready"}
+    other = await upload(client, jonas, "Nieuw.docx", docx_with_pages(3))
+    await jobs.run_pending(s)
+    r = await pdf_link(client, jonas, other["id"], expect=503)
+    assert code_of(r) == "office_off"
+    r = await client.post(f"/api/v1/office/files/{other['id']}/convert", headers=jonas)
+    assert r.status_code == 503 and code_of(r) == "office_off"
 
 
 @pytest.mark.anyio

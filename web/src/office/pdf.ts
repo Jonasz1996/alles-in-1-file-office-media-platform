@@ -1,12 +1,13 @@
 // "Downloaden als PDF" (Keuze 26): wanneer de actie er is, en het downloaden zelf. Voor de haak in
 // browser/actions.ts (groep omzetten) en de knop in de viewer. Van O3.
 //
-// De actie is er met office aan (status.enabled) voor een bestand dat de editor naar PDF omzet
-// (op de extensie, zoals app/office/convert.py op het soort inhoud), niet voor een map of een
-// eerdere versie, en nooit via een publieke link (de viewer vraagt de haak dan niet). In de
-// prullenbak: zichtbaar, maar het kan niet. Of de editor nu bereikbaar is, beslist de server: een
-// PDF die er al is, werkt ook zonder. Is de PDF er nog niet, dan zet de server hem eerst om
-// (hooguit een minuut); duurt het even, dan zegt een melding "De PDF wordt gemaakt…".
+// De actie is er als office ingesteld is (status.state niet "off") voor een bestand dat de editor
+// naar PDF omzet (op de extensie, zoals app/office/convert.py op het soort inhoud), niet voor een
+// map of een eerdere versie, en nooit via een publieke link (de viewer vraagt de haak dan niet). In
+// de prullenbak: zichtbaar, maar het kan niet. Of de editor nu bereikbaar is of op /beheer uit
+// staat, beslist de server: een PDF die er al is, werkt ook dan (uit stopt alleen nieuwe). Is de
+// PDF er nog niet, dan zet de server hem eerst om (hooguit een minuut); duurt het even, dan zegt
+// een melding "De PDF wordt gemaakt…".
 
 import { loadAreas, t } from "../i18n";
 import { toast } from "../ui/toast";
@@ -55,7 +56,7 @@ export function pdfName(name: string): string {
 
 /** Is "Downloaden als PDF" er voor dit bestand, en kan het nu? */
 export function canPdf(target: OfficeTarget, status: OfficeStatus | null): HookState {
-  if (!status?.enabled) return HIDDEN;
+  if (!status || status.state === "off") return HIDDEN;
   if (target.kind !== undefined && target.kind !== "file") return HIDDEN;
   if (target.version) return HIDDEN;
   if (!convertible(target.name)) return HIDDEN;
