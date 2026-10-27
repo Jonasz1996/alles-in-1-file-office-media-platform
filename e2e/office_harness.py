@@ -782,7 +782,9 @@ def is_fake(page: Any) -> bool:
 
 def type_in_editor(page: Any, text: str, *, new_paragraph: bool = True) -> None:
     """Tekst typen zoals een gebruiker. Nep: in de textarea. Echt: klik in het documentvlak
-    (#id_main_view in de iframe frameEditor [gemeten]), naar het eind, Enter en keyboard.type."""
+    (#id_main_view in de iframe frameEditor [gemeten]), naar het eind, Enter en keyboard.type.
+    Echt gaat de eerste toets soms verloren (o2.md, afwijking 32): zoek daarna dus naar een
+    deel van text (een willekeurig woord erin), nooit naar text zelf of zijn eerste teken."""
     frame = frame_editor(page)
     fake = frame.locator('textarea[aria-label="Nep-editor"]')
     if fake.count():
