@@ -26,7 +26,11 @@ velden van callbacks, downloads en commando's zijn wel zoals gemeten):
 - Editor.bin is JSON (de alinea's en de teksten), op een echte secure link;
 - "documentSaved" {time} naar iedereen na een geslaagde opslag; een editor die opnieuw
   verbindt met een oudere lastOtherSaveTime, of opent op een key die al is opgeslagen
-  (status 2), krijgt "refreshFile" en meldt onRequestRefreshFile (M17);
+  (status 2), krijgt "refreshFile" en meldt onRequestRefreshFile (M17). Herverbinden (met
+  het sessietoken) op een key die DS al dichtdeed, geeft wel zoals gemeten "refreshToken" en
+  error 4008 "Update Version error"; op een key die DS niet (meer) kent, bijvoorbeeld na een
+  herstart, "refreshToken" en error 4009 "Other error" (spike stap 14 en 15). De nep-editor
+  meldt dan onRequestRefreshFile, zoals de echte;
 - de knop Opslaan stuurt "forceSaveStart"; het antwoord is "forceSave" {messages: {ended,
   success}};
 - drop stuurt "drop" en sluit de socket; de nep-editor verbindt dan niet zelf opnieuw;
@@ -62,6 +66,11 @@ EDITORS = ("documenteditor", "spreadsheeteditor", "presentationeditor")
 PREFIX_RE = re.compile(r"^(?:/[A-Za-z0-9._~-]+)*$")
 HOST_RE = re.compile(r"^[A-Za-z0-9.\-]+(?::\d{1,5})?$|^\[[0-9A-Fa-f:.]+\](?::\d{1,5})?$")
 RECEIVE_SECONDS = 10.0
+# Zoveel dichte keys onthoudt de nep (de echte kent ze nog lang na het sluiten [gemeten])
+DONE_KEYS = 10_000
+# Herverbinden op een dichte of onbekende key [gemeten, spike stap 14 en 15]
+UPDATE_VERSION = (4008, "Update Version error")
+OTHER_ERROR = (4009, "Other error")
 # Wat nooit in de log komt
 SECRET_QUERY = re.compile(r"((?:^|[?&])(?:md5|token)=)[^&]*")
 
@@ -136,6 +145,11 @@ class FakeDocServer:
         self.link_secret = config.link_secret or secrets.token_urlsafe(16)
         self.docs: dict[str, Doc] = {}
         self.saved: dict[str, float] = {}  # keys met een geaccepteerde status 2
+        # Keys die DS dichtdeed (status 2 of 4) en nog kent: info geeft dan error 0 zonder
+        # gebruikers (en een status 4), forcesave error 4 [gemeten]. Niet na een opslag die
+        # de app niet bereikte (forgotten file: error 1, zoals de echte), en niet na een kill
+        # of restart (een leeg geheugen)
+        self.done: dict[str, Doc] = {}
         self.files: dict[str, dict[str, bytes]] = {}  # "<key>_<n>" -> {naam: inhoud}
         self.entries: list[dict] = []
         self.up = True
@@ -191,6 +205,12 @@ class FakeDocServer:
         self.entries.append(entry)
         if len(self.entries) > 5000:
             del self.entries[:1000]
+
+    def remember(self, doc: Doc) -> None:
+        self.done.pop(doc.key, None)
+        self.done[doc.key] = doc
+        while len(self.done) > DONE_KEYS:
+            del self.done[next(iter(self.done))]
 
     def next_part(self, key: str) -> str:
         self.counter += 1
@@ -384,13 +404,15 @@ class FakeDocServer:
 
     async def finish(self, doc: Doc, action: tuple[int, str] | None) -> None:
         """De laatste is weg (of drop, of stop): status 2 als er ooit iets veranderde (met
-        notmodified als alles al was opgeslagen), anders status 4. Daarna is de key weg."""
+        notmodified als alles al was opgeslagen), anders status 4. Daarna is de key dicht: DS
+        kent hem nog (self.done), tot de opslag de app niet bereikt (forgotten file)."""
         async with doc.lock:
             if doc.finished:
                 return
             doc.finished = True
             if self.docs.get(doc.key) is doc:
                 del self.docs[doc.key]
+            self.remember(doc)
             if not doc.ever:
                 await self.post_callback(doc, protocol.closed(doc.key, action))
                 return
@@ -410,6 +432,8 @@ class FakeDocServer:
             if await self.post_callback(doc, fields):
                 self.saved[doc.key] = time.time() * 1000
                 return
+            if self.done.get(doc.key) is doc:
+                del self.done[doc.key]  # info en forcesave geven dan error 1 [gemeten]
             for hook in self.on_lost:
                 await hook(doc, fields)
 
@@ -504,6 +528,24 @@ class FakeDocServer:
         }
         known = auth.get("lastOtherSaveTime")
         known = known if isinstance(known, int | float) else -1
+        if reconnect and key not in self.docs:
+            # Herverbinden op een key die DS dichtdeed (4008) of niet meer kent (4009, na een
+            # herstart): eerst een nieuw sessietoken, dan de fout, dan dicht [gemeten]
+            code, text = UPDATE_VERSION if key in self.done else OTHER_ERROR
+            self.record("socket", key=key, error=code)
+            permissions = document.get("permissions") if isinstance(document, dict) else None
+            claims = protocol.session_claims(
+                key, dict(permissions or {}), user, -1, str(editor.get("mode") or "edit")
+            )
+            token = protocol.sign(
+                protocol.session_secret(self.secret), claims, protocol.SESSION_SECONDS
+            )
+            await ws.send_text(protocol.message({"type": "refreshToken", "messages": token}))
+            await ws.send_text(
+                protocol.message({"type": "error", "description": text, "code": code})
+            )
+            await ws.close(code=1000)
+            return
         if (
             key in self.saved
             and key not in self.docs
@@ -704,7 +746,13 @@ class FakeDocServer:
         key = params.get("key")
         doc = self.docs.get(key) if isinstance(key, str) else None
         if doc is None:
-            return {"key": key, "error": protocol.CMD_KEY}
+            gone = self.done.get(key) if isinstance(key, str) else None
+            if gone is None:
+                return {"key": key, "error": protocol.CMD_KEY}
+            # Een dichte key: geen gebruikers, en elke info stuurt een status 4 zonder actions
+            # en zonder users, ook na een status 2 [gemeten]
+            self.spawn(self.send(gone, protocol.closed(gone.key)))
+            return {"key": key, "error": protocol.CMD_OK, "users": []}
         users = doc.users()
         self.spawn(self.send(doc, protocol.editing(doc.key, users)))
         return {"key": key, "error": protocol.CMD_OK, "users": users}
@@ -713,7 +761,9 @@ class FakeDocServer:
         key = params.get("key")
         doc = self.docs.get(key) if isinstance(key, str) else None
         if doc is None or doc.finished:
-            return {"key": key, "error": protocol.CMD_KEY}
+            # Op een dichte key error 4 (niets te bewaren), op een onbekende error 1 [gemeten]
+            done = isinstance(key, str) and key in self.done
+            return {"key": key, "error": protocol.CMD_NO_CHANGES if done else protocol.CMD_KEY}
         if not doc.dirty:
             return {"key": key, "error": protocol.CMD_NO_CHANGES}
         userdata = params.get("userdata")
@@ -726,7 +776,13 @@ class FakeDocServer:
 
     async def _drop(self, params: dict) -> dict:
         """Met users: die eruit; zonder: iedereen eruit en de key dicht (status 2 of 4). Een
-        onbekende key geeft error 0, zoals de echte [gemeten]. drop onthoudt niemand (M15)."""
+        onbekende of dichte key geeft error 0, zoals de echte [gemeten]. drop onthoudt niemand
+        (M15).
+
+        De callbacks zijn die van gewoon weggaan [gemeten]: met users en de laatste eruit:
+        status 2 of 4 met actions type 0 van hem (na save_delay); zonder users gaan ze eruit
+        van de laatste verbinding naar de eerste, met status 1 (actions type 0) voor elk
+        behalve de laatste, en dan meteen status 2 of 4 met actions type 0 van de laatste."""
         key = params.get("key")
         doc = self.docs.get(key) if isinstance(key, str) else None
         if doc is None or doc.finished:
@@ -737,10 +793,19 @@ class FakeDocServer:
                 await self.close_conn(conn, "drop")
             return {"key": key, "error": protocol.CMD_OK}
         doc.dropping = True
-        for conn in list(doc.conns):
+        conns = list(doc.conns)
+        for conn in conns:
             await self.close_conn(conn, "drop")
         doc.conns.clear()
-        self.spawn(self.finish(doc, None))
+        leaving = list(reversed(conns))
+        staying = list(conns)
+        for conn in leaving[:-1]:
+            staying.remove(conn)
+            users = list(dict.fromkeys(c.user["id"] for c in staying))
+            action = (protocol.DISCONNECT, conn.user["id"])
+            self.spawn(self.send(doc, protocol.editing(doc.key, users, action)))
+        last = (protocol.DISCONNECT, leaving[-1].user["id"]) if leaving else None
+        self.spawn(self.finish(doc, last))
         return {"key": key, "error": protocol.CMD_OK}
 
     async def _version(self, params: dict) -> dict:
@@ -756,6 +821,7 @@ class FakeDocServer:
         self.up = False
         docs = list(self.docs.values())
         self.docs.clear()
+        self.done.clear()
         for doc in docs:
             doc.finished = True
             if doc.closing is not None:
@@ -790,6 +856,7 @@ class FakeDocServer:
         if self.up:
             await self.kill()
         self.docs.clear()
+        self.done.clear()
         if not self.config.link_secret:
             self.link_secret = secrets.token_urlsafe(16)
         self.up = True
@@ -951,7 +1018,13 @@ def create_app(config: FakeConfig, parts: tuple[str, ...] = ("forgotten", "conve
     async def fake_info(key: str) -> dict:
         doc = fake.docs.get(key)
         if doc is None:
-            return {"key": key, "open": False, "users": [], "saved": key in fake.saved}
+            return {
+                "key": key,
+                "open": False,
+                "users": [],
+                "saved": key in fake.saved,
+                "closed": key in fake.done,
+            }
         return {
             "key": key,
             "open": True,

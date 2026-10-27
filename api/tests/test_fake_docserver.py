@@ -636,13 +636,29 @@ async def test_status_4_en_drop(world):
     await anna.close()
     four = (await side.wait(4))[0]
     assert set(four) == set(rec["status_4"]["body_keys"])
-    # drop zonder users: iedereen eruit en de key dicht (status 4 zonder actions)
+    # drop zonder users: iedereen eruit en de key dicht, met de callbacks van gewoon
+    # weggaan: status 4 met actions type 0 van de laatste [gemeten, review C4]
     bram = world.editor(world.doc_config("k5-abc", "proef.docx", "u2", "Bram"))
     await bram.open()
     assert (await world.command("drop", key="k5-abc")) == {"key": "k5-abc", "error": 0}
     await bram.wait_for("drop")
     drop = (await side.wait(4, 2))[1]
     assert set(drop) == set(rec["status_4_drop"]["body_keys"])
+    assert drop["actions"] == [{"type": 0, "userid": "u2"}]
+    # Met twee: eerst status 1 voor de laatste verbinding, dan status 2 voor de eerste
+    eva = world.editor(world.doc_config("k5b-abc", "proef.docx", "u1", "Eva"))
+    fem = world.editor(world.doc_config("k5b-abc", "proef.docx", "u2", "Fem"))
+    await eva.open()
+    await fem.open()
+    await eva.type("Eva was hier")
+    count = len(side.callbacks)
+    assert (await world.command("drop", key="k5b-abc"))["error"] == 0
+    two = (await side.wait(2))[0]
+    assert set(two) == set(rec["status_2_drop"]["body_keys"])
+    after = [b for b in side.bodies()[count:] if b["key"] == "k5b-abc"]
+    want = rec["drop_twee_gebruikers"]["callbacks"]
+    assert [(b["status"], b["users"]) for b in after] == [(w["status"], w["users"]) for w in want]
+    assert [b["actions"] for b in after] == [w["actions"] for w in want]
     # drop met users: alleen die eruit; hij kan opnieuw verbinden (M15)
     cor = world.editor(world.doc_config("k6-abc", "proef.docx", "u3", "Cor"))
     dirk = world.editor(world.doc_config("k6-abc", "proef.docx", "u4", "Dirk"))
@@ -661,7 +677,7 @@ async def test_status_4_en_drop(world):
     assert (await world.command("info", key="k6-abc"))["users"] == ["u3", "u4"]
     await cor.close()
     await dirk.close()
-    two = (await side.wait(2))[0]
+    two = (await side.wait(2, 2))[1]
     assert two["key"] == "k6-abc"
 
 
@@ -701,6 +717,133 @@ async def test_commandos_op_een_open_key_zoals_gemeten(world):
         await asyncio.sleep(0.02)
         info = await world.command("info", key=key)
     assert info == want("info na drop", key)
+
+
+@pytest.mark.anyio
+async def test_een_dichte_key_zoals_gemeten(world):
+    """Na het sluiten kent DS de key nog: info geeft error 0 zonder gebruikers en stuurt elke
+    keer een status 4 zonder actions en users, forcesave geeft error 4, drop error 0 zonder
+    callback. Na een opslag die de app niet aannam (forgotten file) en na een herstart: error
+    1 (review C2; recorded/commands.json en callbacks.json)."""
+    rec = recorded("commands")
+    calls = recorded("callbacks")
+    side = world.side
+
+    def want(name: str, key: str) -> dict:
+        return json.loads(json.dumps(rec[name]["answer"]).replace("<key>", key))
+
+    def of(key: str) -> list[dict]:
+        return [b for b in side.bodies() if b["key"] == key]
+
+    async def closed(key: str, status: int) -> None:
+        deadline = time.monotonic() + 5
+        while status not in [b["status"] for b in of(key)]:
+            assert time.monotonic() < deadline, of(key)
+            await asyncio.sleep(0.02)
+
+    # Dicht na status 2
+    key = "kd1-abc"
+    anna = world.editor(world.doc_config(key, "proef.docx", "u1", "Anna"))
+    await anna.open()
+    assert await world.command("info", key=key) == want("info open key", key)
+    await anna.type("iets")
+    await anna.close()
+    await closed(key, 2)
+    assert await world.command("info", key=key) == want("info na sluiten", key)
+    deadline = time.monotonic() + 5
+    while len(of(key)) < 4:
+        assert time.monotonic() < deadline, of(key)
+        await asyncio.sleep(0.02)
+    four = of(key)[3]
+    assert four["status"] == 4
+    assert set(four) == set(calls["status_4_info"]["body_keys"])  # zonder users en actions
+    assert await world.command("forcesave", key=key, userdata="x") == want(
+        "forcesave na sluiten", key
+    )
+    assert await world.command("drop", key=key) == want("drop na sluiten", key)
+    await asyncio.sleep(0.1)
+    assert [b["status"] for b in of(key)] == calls["na_sluiten"]["statussen"]
+
+    # Dicht na status 4 (niets veranderd): ook daar error 0, een status 4 en error 4
+    key = "kd2-abc"
+    bram = world.editor(world.doc_config(key, "proef.docx", "u2", "Bram"))
+    await bram.open()
+    await bram.close()
+    await closed(key, 4)
+    count = len(of(key))
+    assert await world.command("info", key=key) == want("info na sluiten", key)
+    deadline = time.monotonic() + 5
+    while len(of(key)) == count:
+        assert time.monotonic() < deadline
+        await asyncio.sleep(0.02)
+    assert set(of(key)[-1]) == set(calls["status_4_info"]["body_keys"])
+    assert (await world.command("forcesave", key=key))["error"] == 4
+
+    # De app nam status 2 niet aan ({"error": 1}): forgotten file, DS kent de key niet meer
+    key = "kd3-abc"
+    cor = world.editor(world.doc_config(key, "proef.docx", "u3", "Cor"))
+    await cor.open()
+    await cor.type("weg")
+    side.answers = [(200, {"error": 1})]
+    await cor.close()
+    await closed(key, 2)
+    await asyncio.sleep(0.05)
+    count = len(of(key))
+    assert await world.command("info", key=key) == want("info na forgotten", key)
+    assert await world.command("forcesave", key=key, userdata="x") == want(
+        "forcesave na forgotten", key
+    )
+    await asyncio.sleep(0.1)
+    assert len(of(key)) == count  # geen callback
+
+    # Een key die DS nooit opende, en een dichte key na een herstart: error 1
+    assert (await world.command("info", key="nooit-abc"))["error"] == 1
+    await world.http.post("/__fake/restart")
+    assert (await world.command("info", key="kd1-abc"))["error"] == 1
+    assert (await world.command("forcesave", key="kd1-abc"))["error"] == 1
+
+
+@pytest.mark.anyio
+async def test_herverbinden_op_een_dichte_key(world):
+    """Een editor die opnieuw verbindt met zijn sessietoken op een key die DS dichtdeed (hier na
+    drop van de enige gebruiker) krijgt een nieuw sessietoken en error 4008; na een herstart
+    van DS error 4009 (review C3; spike stap 14 en 15, recorded/socket.json)."""
+    rec = recorded("socket")
+    calls = recorded("callbacks")
+    side = world.side
+    anna = world.editor(world.doc_config("kr1-abc", "proef.docx", "u1", "Anna"))
+    await anna.open()
+    old = anna.session
+    assert (await world.command("drop", key="kr1-abc", users=["u1"]))["error"] == 0
+    await anna.wait_for("drop")
+    four = (await side.wait(4))[0]
+    assert set(four) == set(calls["status_4_drop_user"]["body_keys"])
+    assert four["actions"] == [{"type": 0, "userid": "u1"}]
+    start = len(anna.messages)
+    with pytest.raises(Refused) as caught:
+        await anna.reconnect()
+    assert caught.value.code == 4008
+    got = [m for m in anna.messages[start:] if m.get("type") in ("refreshToken", "error")]
+    measured = rec["herverbinden_op_een_dichte_key"]["s2c_na_auth"]
+    assert [m["type"] for m in got] == [m["type"] for m in measured]
+    assert got[1] == measured[1]
+    assert anna.session and anna.session != old  # het nieuwe sessietoken
+    claims = protocol.decode(protocol.session_secret(world.config.secret), anna.session)
+    assert claims["document"]["key"] == "kr1-abc"
+    assert not [b for b in side.bodies() if b["key"] == "kr1-abc" and b["status"] == 1][1:]
+
+    # Na een herstart van DS kent hij de key niet meer: 4009
+    bram = world.editor(world.doc_config("kr2-abc", "proef.docx", "u2", "Bram"))
+    await bram.open()
+    await world.http.post("/__fake/restart")
+    start = len(bram.messages)
+    with pytest.raises(Refused) as caught:
+        await bram.reconnect()
+    assert caught.value.code == 4009
+    got = [m for m in bram.messages[start:] if m.get("type") in ("refreshToken", "error")]
+    measured = rec["herverbinden_na_een_herstart_van_ds"]["s2c_na_auth"]
+    assert [m["type"] for m in got] == [m["type"] for m in measured]
+    assert got[1] == measured[1]
 
 
 @pytest.mark.anyio

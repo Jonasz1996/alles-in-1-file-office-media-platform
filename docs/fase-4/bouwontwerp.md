@@ -624,10 +624,19 @@ Elke keuze geeft de standaard en waarom.
     - bestand of eigenaar definitief weg → `drop` voor iedereen, dicht met `gone`;
     - elke 2 minuten `info` per open key, en per `pending` ouder dan 1 minuut. `error 1` (DS kent
       de key niet meer, bijvoorbeeld na een herstart van DS) → dicht met `lost`, zodat de volgende
-      opener een nieuwe key krijgt;
+      opener een nieuwe key krijgt. `error 0` zonder gebruikers bij twee rondes na elkaar → ook
+      dicht met `lost`: DS deed de key dicht (of doet dat zo), en een lege `open`-sessie zou
+      anders voor altijd 409 `office_busy` geven (Keuze 14);
     - `saving` ouder dan 6 minuten (de 8 pogingen van DS plus marge) → `info`. `error 1`: DS gaf het
       op en bewaarde het als forgotten file → dicht met `lost`; het herstel (Keuze 21) slaat het
-      dan gewoon op het origineel op. `error 0`: terug naar `open`;
+      dan gewoon op het origineel op [gemeten: na `{"error": 1}` op status 2 staat de key in
+      `getForgottenList` en geven `info` en `forcesave` `error 1`]. `error 0` **met** gebruikers:
+      terug naar `open`. `error 0` **zonder** gebruikers: DS deed de key dicht en heeft geen
+      forgotten file (de app nam de opslag dus aan) → dicht met `lost` [gemeten: na status 2 of
+      4 kent DS de key nog; `info` geeft `{"error": 0, "users": []}`, `forcesave` `error 4`];
+    - let op: **elke** `info` op een dichte key laat DS een status 4 sturen, zonder `users` en
+      zonder `actions` [gemeten]. Die komt dus ook na een eigen eindopslag binnen; de tabel van
+      Keuze 15 geeft daar `{"error": 0}`;
     - tussentijds opslaan (Keuze 18);
     - gesloten rijen ouder dan 30 dagen weg.
 
@@ -2123,7 +2132,7 @@ Hij is in drie delen gesplitst, zodat een gat erin niet de hele golf ophoudt:
 | callbacks | token in de body (platte velden, `operation`, `iat`, `exp` = +300 s) en in de header (`payload`-omhulsel, zonder `history`). Status 1 bij elke socket die opent of sluit; status 6 bij forcesave (knop: type 1, commando: type 0, met `userdata`) met `url`, `changesurl`, `history`, `filetype`, `users`, `lastsave`; status 2 na de laatste sluiter plus `--save-delay` (standaard 5 s, in tests 0,2 s), ook met `lastsave`; status 4 als er nooit iets veranderde. | kern |
 | fouten van de app | 429 of 5xx: opnieuw na 1, 2 en 4 s (maal `--time-scale`, of `retries` uit de instellingen); `{"error": 1}`: niet opnieuw; beide daarna naar de forgotten files | kern (de forgotten files: O2) |
 | `/cache/files/…` | links op de host van de aanvrager, met een echte `md5` over `expires + pad + linkgeheim`; fout 403, verlopen 403. De app moet de host dus herschrijven, net als bij de echte. | kern |
-| `POST /command` | token in body of header, anders `error 6`; een config-token ook `error 6`. `info` (gebruikers, en een status-1-callback), `forcesave` (`error 4` zonder wijzigingen), `drop` (met of zonder `users`; zonder: iedereen eruit en status 2), `version` (`10.0.0.169`), `license` (instelbaar, standaard 2147483647); onbekende key → `error 1`. `drop` onthoudt niemand, net als de echte (M15): een gedropte browser kan opnieuw verbinden. | kern |
+| `POST /command` | token in body of header, anders `error 6`; een config-token ook `error 6`. `info` (gebruikers, en een status-1-callback), `forcesave` (`error 4` zonder wijzigingen), `drop` (met of zonder `users`; zonder: iedereen eruit, met de callbacks van gewoon weggaan: status 1 per verbinding, de laatste eerst, dan status 2 of 4 met `actions` type 0 van de laatste), `version` (`10.0.0.169`), `license` (instelbaar, standaard 2147483647); onbekende key → `error 1`. Een key die DS dichtdeed (status 2 of 4) kent hij nog: `info` geeft `error 0` zonder gebruikers en stuurt elke keer een status 4 zonder `users` en `actions`, `forcesave` `error 4`; na een opslag die de app niet aannam (forgotten file) en na `kill` of `restart` `error 1` [gemeten]. `drop` onthoudt niemand, net als de echte (M15): een gedropte browser kan opnieuw verbinden zolang de sessie open is; is de key dicht, dan geeft herverbinden een nieuw sessietoken en error 4008, na een herstart 4009 (spike stap 14 en 15), en de nep-editor meldt `onRequestRefreshFile`. | kern |
 | `getForgottenList`, `getForgotten`, `deleteForgotten` | zoals gemeten (§4.3 van `editors.md`) | O2 |
 | `POST /converter` | zonder `Accept: application/json` geen JSON; zonder token -8; bron ophalen met het download-JWT (anders -4); docx → doc -3, pptx → ppt -7; uitvoer een kleine geldige PDF met N pagina's (`pdf.py`, stdlib); `async`: eerst `{endConvert: false}`, daarna klaar; **dezelfde key geeft hetzelfde resultaat, ook voor een ander bestand**; een vlag om -5 te geven; elke conversie in de log, zodat een test kan zien dat een bestand nooit aankwam | O3 |
 | opgeslagen bestand | docx: een nieuwe docx met één alinea per gebruiker (stdlib `zipfile`), zodat de test de inhoud kan lezen; xlsx en pptx: het origineel plus `customXml/fake.xml` met de tekst | kern |

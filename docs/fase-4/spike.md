@@ -579,6 +579,51 @@ de toegang in de app: elke tunnel controleert het recht van nu, en het eerste pa
 van het pad horen. Ook `drop` op een key die DS niet kent, geeft `{"error": 0}`; de app kan aan dat
 antwoord dus niet zien of er iemand is weggezet.
 
+### Stap 14 verder: na het sluiten en na `drop` (fixer van O0)
+
+**Wat.** Wat geven `info`, `forcesave` en `drop` op een key die DS al dichtdeed? Welke callbacks
+geeft `drop`, met en zonder `users`? (Review C2, C3 en C4.)
+
+**Bewijs.** DS 10.0.0.1 uit `e2e/office_ds.sh`, de app als `real_office` met de DocStub van het
+harnas, een echte editor per gebruiker (twee scratch-tests, niet in de repo). Per geval de
+callbacks die de DocStub kreeg, zonder tokens.
+
+```
+A  één gebruiker, getypt, gesloten → status 2; dan:
+   info      → {"error": 0, "users": []}  en een callback {key, status: 4} (zonder users en actions)
+   forcesave → {"error": 4}               geen callback
+   drop      → {"error": 0}               geen callback; statussen samen: 1, 1, 2, 4
+B  één gebruiker, niets getypt, gesloten → status 4; info → error 0, users [] en weer een status 4;
+   forcesave → error 4
+C  getypt, de app antwoordt {"error": 1} op status 2 → de key staat in getForgottenList;
+   info → {"error": 1}, forcesave → {"error": 1}, geen callback
+D  drop users=[u1], u1 alleen, niets getypt   → status 4, actions [{type 0, u1}]
+E  drop users=[u1], u1 alleen, getypt          → status 2, users [u1], actions [{type 0, u1}]
+F  drop zonder users, u1 alleen, getypt        → status 2, users [u1], actions [{type 0, u1}]
+G1 drop zonder users, u1 alleen, niets getypt  → status 4, actions [{type 0, u1}]
+G2 drop zonder users, u1 (getypt) en u2        → status 1, users [u1], actions [{type 0, u2}];
+                                                 dan status 2, users [u1], actions [{type 0, u1}]
+G3 drop users=[u2] van u1 en u2                → status 1, users [u1], actions [{type 0, u2}]
+```
+
+In D, E en F verbond de echte editor na `drop` niet zelf opnieuw (events `connected`,
+`disconnected`, verder niets in 20 s).
+
+**Betekenis.**
+- Na het sluiten kent DS de key nog: `info` geeft `error 0` zonder gebruikers, en **elke** `info`
+  laat DS een status 4 sturen. `forcesave` geeft `error 4`. Alleen een key die naar de forgotten
+  files ging, kent DS niet meer (`error 1`). De ronde (Keuze 20) kan dus aan `error 1` zien dat
+  er een forgotten file is, en aan `error 0` zonder gebruikers dat de key dicht is; het ontwerp
+  is daarop aangepast.
+- `drop` geeft de callbacks van gewoon weggaan, ook zonder `users`: elke verbinding gaat eruit
+  (de laatste eerst), met `actions` type 0. De status 4 zonder `actions` uit stap 14
+  (`recorded/callbacks.json`, nu `status_4_info`) kwam niet van `drop`, maar van de `info`
+  daarna.
+- De nep-DS doet nu hetzelfde (`test_een_dichte_key_zoals_gemeten`,
+  `test_herverbinden_op_een_dichte_key`, `test_status_4_en_drop`), en herverbinden op een dichte
+  key geeft er, zoals stap 14 opnam, een nieuw sessietoken en error 4008; op een key die DS na een
+  herstart niet meer kent, error 4009 (stap 15-a).
+
 ## Stap 15. Het sessietoken
 
 **Wat.** Met `token.session.expires: "2m"` een editor 5 minuten open. Vernieuwt DS het token? Lukt
@@ -943,6 +988,7 @@ Toelichting:
 | A20 | §3.10: upgrade met `Sec-Fetch-Dest` | de upgrade heeft nooit `Sec-Fetch-Dest` | tunnel zonder die kop toestaan (`Origin` en cookie) |
 | A21 | Spike stap 5: na een herstart van de app geen `onRequestRefreshFile`, niets kwijt | via de app: kan DS zijn status 2 kwijt vóór de herverbinding, dan is de sessie dicht en komt `onRequestRefreshFile`; met de standaardconfig (3 pogingen) na ±12 s uitval een forgotten file | O2: `onRequestRefreshFile` altijd afhandelen, en §4.5 punt 4 vindt beide uitkomsten goed; O6: `retries: 8` in de config, en de job `office` gebruikt die (`OFFICE_DS_CONFIG`) |
 | A22 | Spike stap 11: via de proxy niet trager | ±0,3 s trager dan DS zelf; een pptx opent 4 van 22 keer niet (`ColorPaletteExt.js`: `define([])` zonder afhankelijkheid op `BaseView`); rechtstreeks 0 van 17 | O1: de wachttijd per verzoek in de proxy bekijken; O2: geen `onAppReady` binnen 20 s → de iframe één keer opnieuw laden, daarna een melding |
+| A23 | Keuze 20: `saving` ouder dan 6 minuten → `info`; `error 0` → terug naar `open` | na status 2 of 4 geeft `info` `error 0` zonder gebruikers (en een status 4 bij elke `info`); alleen na een forgotten file `error 1`; `drop` geeft de callbacks van gewoon weggaan, ook zonder `users` | O2: `error 0` zonder gebruikers → dicht (`lost`), ook bij een open key na twee rondes; een status 4 op een dichte sessie → `{"error": 0}` (stap 14 verder) |
 
 ---
 
@@ -979,14 +1025,17 @@ Toelichting:
 Opnames, in `api/tests/fake_docserver/recorded/` (tokens vervangen door `<JWT>`, `md5` door `…`;
 geen geheimen). De nep-DS en `tests/test_fake_docserver.py` gebruiken ze:
 - `socket.json`: de eerste frames van een eerste verbinding en van een herverbinding, met
-  gedecodeerde claims en de controle van de afgeleide sleutel (stap 12);
-- `callbacks.json`: callbacks 1 (openen, sluiten, `info`), 6 (knop en commando), 2, 4 (ook na
-  `drop`) en 3 (stap 10), elk met body, de claims van het body- en het headertoken en de koppen;
-  plus de volgorde van één sessie;
+  gedecodeerde claims en de controle van de afgeleide sleutel (stap 12); en wat DS antwoordt op
+  een herverbinding op een dichte key (4008, stap 14) en na zijn herstart (4009, stap 15);
+- `callbacks.json`: callbacks 1 (openen, sluiten, `info`), 6 (knop en commando), 2, 4 en 3
+  (stap 10), elk met body, de claims van het body- en het headertoken en de koppen; de status 4
+  na `info` op een dichte key; de callbacks van `drop` met en zonder `users` (stap 14 verder,
+  alleen de body); plus de volgorde van één sessie;
 - `download.json`: de GET van DS naar de interne luisteraar (koppen, claims, `Want-Repr-Digest`);
 - `commands.json`: antwoorden van `/command` (version, license, info, forcesave, drop en meta; ook
-  op een open key; zonder token, met het token in de header of in de body, met een fout geheim;
-  getForgottenList, getForgotten en deleteForgotten voor O2) en de callback na een forcesave;
+  op een open key, na het sluiten en na een forgotten file; zonder token, met het token in de
+  header of in de body, met een fout geheim; getForgottenList, getForgotten en deleteForgotten
+  voor O2) en de callback na een forcesave;
 - `convert.json`: antwoorden van `/converter` (gewoon, digest goed en fout, grens -10, zonder token
   -8, token in de header, bron 404 → -4, async met polling), voor O3;
 - `paths.json`: de padinventaris van stap 1, 2 en 17, voor O1.

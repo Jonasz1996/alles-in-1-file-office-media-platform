@@ -235,6 +235,18 @@
         setStatus("Er is intussen opgeslagen");
         post("onRequestRefreshFile");
         break;
+      case "refreshToken":
+        if (typeof m.messages === "string") session = m.messages;
+        break;
+      case "error":
+        // Herverbinden op een dichte key (4008) of een key die DS niet meer kent (4009): de
+        // echte editor meldt dan onRequestRefreshFile (spike stap 5, 14 en 15)
+        if (m.code === 4008 || m.code === 4009) {
+          stop();
+          setStatus("Er is intussen opgeslagen");
+          post("onRequestRefreshFile");
+        }
+        break;
       case "drop":
         stop();
         setStatus("De verbinding is verbroken door de server");

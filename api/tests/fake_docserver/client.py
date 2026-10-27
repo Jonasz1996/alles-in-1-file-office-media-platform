@@ -7,7 +7,8 @@ de nep-DS, of via de tunnel van de app (base met /office, plus de koppen van de 
     await editor.open()            # CONNECT met het token, auth, documentOpen, Editor.bin
     await editor.type("tekst")     # zijn eigen tekst, live naar de anderen
     await editor.save()            # de knop Opslaan (status 6, forcesavetype 1)
-    await editor.reconnect()       # zoals na een breuk: met het sessietoken
+    await editor.reconnect()       # zoals na een breuk: met het sessietoken (Refused met
+                                   # code 4008 of 4009 als DS de key dichtdeed of vergat)
     await editor.close()
 """
 
@@ -149,6 +150,10 @@ class EditorClient:
                         self.messages.append(data)
                         if data.get("type") == "documentSaved":
                             self.known_save = data.get("time", self.known_save)
+                        elif data.get("type") == "refreshToken" and isinstance(
+                            data.get("messages"), str
+                        ):
+                            self.session = data["messages"]
                     elif kind == "connect_error":
                         self.messages.append({"type": "connect_error", **(data or {})})
                     self._new.notify_all()
@@ -160,12 +165,15 @@ class EditorClient:
                 self.reading = False
                 self._new.notify_all()
 
-    async def wait_for(self, kind: str, seconds: float = 5.0, after: int = 0) -> dict:
-        """Het eerste bericht van deze soort (vanaf index after)."""
+    async def wait_for(
+        self, kind: str | tuple[str, ...], seconds: float = 5.0, after: int = 0
+    ) -> dict:
+        """Het eerste bericht van deze soort (of een van deze soorten), vanaf index after."""
+        kinds = (kind,) if isinstance(kind, str) else kind
 
         def found() -> dict | None:
             for m in self.messages[after:]:
-                if m.get("type") == kind:
+                if m.get("type") in kinds:
                     return m
             return None
 
@@ -207,7 +215,10 @@ class EditorClient:
             code = (errors[0].get("data") or {}).get("code") if errors else None
             raise Refused(code=code) from exc
         await self.send_message(self._auth(not (session and self.session)))
-        reply = await self.wait_for("auth", after=start)
+        reply = await self.wait_for(("auth", "error"), after=start)
+        if reply.get("type") == "error":
+            # Bijvoorbeeld 4008 (de key is dicht) of 4009 (DS kent hem niet meer) [gemeten]
+            raise Refused(code=reply.get("code"))
         if reply.get("jwt"):
             self.session = reply["jwt"]
         self.session_id = reply.get("sessionId")

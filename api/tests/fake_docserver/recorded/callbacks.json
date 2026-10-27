@@ -382,7 +382,7 @@
   },
   "user_agent": "DocumentServer"
  },
- "status_4_drop": {
+ "status_4_info": {
   "body": {
    "key": "s14a-96e152aef32a",
    "status": 4,
@@ -419,7 +419,87 @@
     "exp_minus_iat": 300
    }
   },
-  "user_agent": "DocumentServer"
+  "user_agent": "DocumentServer",
+  "note": "de status 4 die DS stuurt bij elke info op een key die hij al dichtdeed (ook na een status 2): zonder users en zonder actions. Spike stap 14: na info-A-na-script (de key was dicht na drop en status 2); eerder als 'status 4 na drop' gelezen"
+ },
+ "status_4_drop": {
+  "note": "drop zonder users, één gebruiker, niets veranderd: status 4 met actions type 0 van hem",
+  "bron": "fixer O0, 2026-10-27, DS 10.0.0.1 (e2e/office_ds.sh), via de DocStub van e2e/office_harness.py",
+  "body": {
+   "key": "fxg-29aeff70b9224f3c",
+   "status": 4,
+   "actions": [
+    {
+     "type": 0,
+     "userid": "u1"
+    }
+   ],
+   "token": "<JWT>"
+  },
+  "body_keys": [
+   "key",
+   "status",
+   "actions",
+   "token"
+  ]
+ },
+ "status_4_drop_user": {
+  "note": "drop met users van de enige gebruiker, niets veranderd: status 4 met actions type 0 van hem, zoals gewoon weggaan",
+  "bron": "fixer O0, 2026-10-27, DS 10.0.0.1 (e2e/office_ds.sh), via de DocStub van e2e/office_harness.py",
+  "body": {
+   "key": "fxd-f3a17cadcf9143e4",
+   "status": 4,
+   "actions": [
+    {
+     "type": 0,
+     "userid": "u1"
+    }
+   ],
+   "token": "<JWT>"
+  },
+  "body_keys": [
+   "key",
+   "status",
+   "actions",
+   "token"
+  ]
+ },
+ "status_2_drop": {
+  "note": "drop zonder users, één gebruiker met een wijziging: status 2 met actions type 0 van hem (url, changesurl en history zoals bij status_2)",
+  "bron": "fixer O0, 2026-10-27, DS 10.0.0.1 (e2e/office_ds.sh), via de DocStub van e2e/office_harness.py",
+  "body": {
+   "key": "fxf-46d529d054774a83",
+   "status": 2,
+   "url": "<url>",
+   "changesurl": "<changesurl>",
+   "history": "<history>",
+   "users": [
+    "u1"
+   ],
+   "actions": [
+    {
+     "type": 0,
+     "userid": "u1"
+    }
+   ],
+   "lastsave": "2026-10-27T01:08:46.000Z",
+   "notmodified": false,
+   "token": "<JWT>",
+   "filetype": "docx"
+  },
+  "body_keys": [
+   "key",
+   "status",
+   "url",
+   "changesurl",
+   "history",
+   "users",
+   "actions",
+   "lastsave",
+   "notmodified",
+   "token",
+   "filetype"
+  ]
  },
  "status_1_close": {
   "body": {
@@ -674,6 +754,47 @@
    6,
    2,
    3
+  ]
+ },
+ "drop_twee_gebruikers": {
+  "note": "drop zonder users met u1 (eerst geopend, met een wijziging) en u2: eerst status 1 voor u2 (de laatste verbinding eerst), dan status 2 met actions type 0 van u1",
+  "bron": "fixer O0, 2026-10-27, DS 10.0.0.1 (e2e/office_ds.sh), via de DocStub van e2e/office_harness.py",
+  "callbacks": [
+   {
+    "status": 1,
+    "users": [
+     "u1"
+    ],
+    "actions": [
+     {
+      "type": 0,
+      "userid": "u2"
+     }
+    ]
+   },
+   {
+    "status": 2,
+    "users": [
+     "u1"
+    ],
+    "actions": [
+     {
+      "type": 0,
+      "userid": "u1"
+     }
+    ],
+    "notmodified": false
+   }
+  ]
+ },
+ "na_sluiten": {
+  "note": "callbacks van één sessie (één gebruiker, met een wijziging): openen, info, sluiten, en dan info, forcesave en drop op de dichte key; alleen info stuurt nog iets (status 4)",
+  "bron": "fixer O0, 2026-10-27, DS 10.0.0.1 (e2e/office_ds.sh), via de DocStub van e2e/office_harness.py",
+  "statussen": [
+   1,
+   1,
+   2,
+   4
   ]
  }
 }

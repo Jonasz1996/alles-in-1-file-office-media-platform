@@ -801,5 +801,33 @@
     }
    ]
   }
- ]
+ ],
+ "herverbinden_op_een_dichte_key": {
+  "note": "spike stap 14 (logs/ws.log, tunnel 5): een script verbindt opnieuw met het sessietoken van u1 nadat drop hem als enige eruit zette (de key is dicht, status 2). Na CONNECT, license en het auth-bericht van de browser: een nieuw sessietoken en de fout 4008; dan dicht. De echte editor meldt in dat geval onRequestRefreshFile (spike stap 5, A21)",
+  "s2c_na_auth": [
+   {
+    "type": "refreshToken",
+    "messages": "<JWT session>"
+   },
+   {
+    "type": "error",
+    "description": "Update Version error",
+    "code": 4008
+   }
+  ]
+ },
+ "herverbinden_na_een_herstart_van_ds": {
+  "note": "spike stap 15-a (logs/step15-a.out): de editor verbindt opnieuw na de herstart van docservice; DS kent de key niet meer. Een nieuw sessietoken (afgeleide sleutel, 120 s met expires 2m) en de fout 4009; de editor meldt onRequestRefreshFile",
+  "s2c_na_auth": [
+   {
+    "type": "refreshToken",
+    "messages": "<JWT session>"
+   },
+   {
+    "type": "error",
+    "description": "Other error",
+    "code": 4009
+   }
+  ]
+ }
 }
