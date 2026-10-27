@@ -172,8 +172,7 @@ async def _store(row: OfficeSession, tmp: Path, sha: str, size: int) -> str:
             return "kept"  # net weg: de volgende ronde ruimt op
         node_id = node.id
         if node.blob_id == sha:
-            if row.state != "closed":
-                sessions.close(row, "saved")
+            _close(row)
             await session.commit()
             return "same"
         newest = await sessions.latest(session, node.id)
@@ -200,8 +199,7 @@ async def _store(row: OfficeSession, tmp: Path, sha: str, size: int) -> str:
                     if result != "saved":
                         return "kept"
                     row = await sessions.find_by_key(session, key) or row
-                    if row.state != "closed":
-                        sessions.close(row, "saved")
+                    _close(row)
                     row.last_error = None
                     await session.commit()
                     await sessions.publish_recovered(session, row, node, node.id, "forgotten")
@@ -218,11 +216,19 @@ async def _store(row: OfficeSession, tmp: Path, sha: str, size: int) -> str:
         if result != "copy":
             return "kept"
         row = await sessions.find_by_key(session, key) or row
-        if row.state != "closed":
-            sessions.close(row, "copy")
+        _close(row)
         row.last_error = None
         await session.commit()
         return "copy"
+
+
+def _close(row: OfficeSession) -> None:
+    """Een rij die nog niet dicht was, sluit als verloren (lost), niet als eigen eindopslag.
+    DS laat de key van een forgotten file weer openen (gemeten): een editor die bleef of opnieuw
+    verbond, kan daarna nog opslaan. Met lost is dat een late opslag (policy.late) en geen
+    herhaling die niets schrijft. Een dichte rij houdt zijn reden."""
+    if row.state != "closed":
+        sessions.close(row, "lost")
 
 
 async def _unsaved(session, key: str, node_id: uuid.UUID | None) -> None:
@@ -276,8 +282,7 @@ async def restore(key: str) -> Node:
             if isinstance(copy, str):
                 raise errors.fail(503, "office_unavailable", UNAVAILABLE)
             row = await sessions.find_by_key(session, key) or row
-            if row.state != "closed":
-                sessions.close(row, "copy")
+            _close(row)
             row.last_error = None
             await session.commit()
             await sessions.publish_recovered(

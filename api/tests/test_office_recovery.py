@@ -4,6 +4,7 @@ schrijver), bestand of eigenaar weg, quotum vol, een onbekende key, bij de start
 en de knoppen Terugzetten en Verwijderen van /beheer (restore en forget)."""
 
 import asyncio
+import time
 
 import pytest
 from fastapi import HTTPException
@@ -46,7 +47,8 @@ async def test_dezelfde_sha_alleen_weg(world):
     assert await world.version_count(node) == v0
     assert world.event_data(anna, "office.recovered") == []
     row = await world.row(key)
-    assert row.state == "closed" and row.closed_reason == "saved"
+    # Liep de sessie nog: dicht als lost, zodat een latere opslag op deze key nog telt
+    assert row.state == "closed" and row.closed_reason == "lost"
 
 
 @pytest.mark.parametrize("state", ["closed", "saving", "open"])
@@ -61,12 +63,35 @@ async def test_ongewijzigd_bestand_gewoon_op_het_origineel(world, state):
     assert await world.version_count(node) == v0 + 1  # wat er stond, blijft als versie
     assert await world.find(anna, "verslag" + RECOVERED) == []
     row = await world.row(key)
-    # Een dichte rij houdt zijn reden (hoe de sessie eindigde); een die nog liep, sluit nu
-    reason = "lost" if state == "closed" else "saved"
-    assert row.state == "closed" and row.closed_reason == reason and row.last_error is None
+    # Een dichte rij houdt zijn reden (hier lost); een die nog liep, sluit nu als lost (een
+    # latere opslag op deze key telt dan nog: een late opslag, geen herhaling)
+    assert row.state == "closed" and row.closed_reason == "lost" and row.last_error is None
     assert world.event_data(anna, "office.recovered") == [
         {"node_id": str(node), "copy_id": str(node), "name": "verslag.docx", "reason": "forgotten"}
     ]
+
+
+async def test_een_sessie_die_nog_liep_een_nieuwere_opslag_komt_er_ook_in(world):
+    """De app was weg en DS maakte van de laatste opslag een forgotten file, terwijl de editor
+    open bleef: de rij is nog open, met Anna erin. DS laat de key weer openen (gemeten met DS
+    10.0), en de key blijft dan in getForgottenList staan. Het herstel zet het werk op het
+    origineel; wat Anna daarna nog deed (een nieuwere opslag op dezelfde key) is geen herhaling
+    en komt er ook in, met wat er stond als versie."""
+    anna = await world.user("anna@example.nl")
+    node = await world.docx(anna, None, "verslag.docx", ["Begin"])
+    key = await world.begin(anna, node)
+    world.forgotten()[key] = ("output.docx", docx.make_docx(["Begin", "voor de crash"]))
+    await world.recover()
+    assert key not in world.forgotten()
+    assert await world.paragraphs(node) == ["Begin", "voor de crash"]
+    later = docx.make_docx(["Begin", "voor de crash", "na de herstart"])
+    fields = world.saved_fields(
+        key, 2, world.stage(key, later), [anna], users=[], at=time.time() + 60
+    )
+    assert (await world.callback(fields)).json() == {"error": 0}
+    assert await world.paragraphs(node) == ["Begin", "voor de crash", "na de herstart"]
+    assert await world.version_paragraphs(node) == [["Begin"], ["Begin", "voor de crash"]]
+    assert world.event_data(anna, "office.unsaved") == []
 
 
 async def test_herstel_vervangt_nooit_een_tussenstand(world):
