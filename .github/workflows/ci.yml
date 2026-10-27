@@ -259,7 +259,8 @@ jobs:
           '
       - name: Images bestaan
         run: |
-          grep -h 'image:' /tmp/render/*/compose.yaml | awk '{print $2}' | sort -u \
+          # De eigen images (:local) bouwt de node zelf; die staan in geen registry
+          grep -h 'image:' /tmp/render/*/compose.yaml | awk '{print $2}' | grep -v ':local$' | sort -u \
             | while read -r img; do echo "$img"; docker manifest inspect "$img" > /dev/null; done
           # infra/single: de images volgens compose zelf, met office (zonder het eigen image).
           # Docker Hub weigert soms (429): dan een paar pogingen, en mirror.gcr.io als terugval,
