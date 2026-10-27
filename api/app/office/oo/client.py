@@ -51,6 +51,13 @@ def _json(response: httpx.Response) -> dict:
     return data
 
 
+def _sharded(path: str, params: dict) -> str:
+    """?shardkey=<key> erbij als er een key is: zo blijft een document op één DS (A18)."""
+    if isinstance(params.get("key"), str):
+        return path + "?shardkey=" + quote(params["key"], safe="")
+    return path
+
+
 async def _remove(path: Path) -> None:
     with anyio.CancelScope(shield=True):
         await anyio.Path(path).unlink(missing_ok=True)
@@ -86,11 +93,8 @@ class DocServer:
         body = {"c": c, **params}
         if signed:
             body = tokens.command_body(self.settings, body)
-        url = "/command"
-        if isinstance(params.get("key"), str):
-            url += "?shardkey=" + quote(params["key"], safe="")
         try:
-            r = await self.client.post(url, json=body)
+            r = await self.client.post(_sharded("/command", params), json=body)
         except httpx.HTTPError as exc:
             raise DocServerError(f"command {c}: {type(exc).__name__}") from exc
         if r.status_code != 200:
@@ -98,11 +102,12 @@ class DocServer:
         return _json(r)
 
     async def convert(self, *, signed: bool = True, **params) -> dict:
-        """POST /converter met Accept: application/json (anders antwoordt DS in XML)."""
+        """POST /converter?shardkey=<key> met Accept: application/json (anders antwoordt DS in
+        XML). Zonder shardkey gaf DS soms de shardkey van een ander verzoek in fileUrl (A18)."""
         body = tokens.command_body(self.settings, params) if signed else dict(params)
         try:
             r = await self.client.post(
-                "/converter", json=body, headers={"Accept": "application/json"}
+                _sharded("/converter", params), json=body, headers={"Accept": "application/json"}
             )
         except httpx.HTTPError as exc:
             raise DocServerError(f"converter: {type(exc).__name__}") from exc

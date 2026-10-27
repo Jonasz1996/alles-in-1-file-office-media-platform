@@ -1946,7 +1946,7 @@ def ds_user_id(settings, user_id: uuid.UUID) -> str
 class DocServer:
     async def healthy(self) -> bool                           # GET /healthcheck == "true"
     async def command(self, c: str, *, signed: bool = True, **params) -> dict   # POST /command?shardkey=<key>
-    async def convert(self, *, signed: bool = True, **params) -> dict           # POST /converter, Accept: application/json
+    async def convert(self, *, signed: bool = True, **params) -> dict           # POST /converter?shardkey=<key>, Accept: application/json (A18)
     async def fetch(self, url: str, dest: Path, limit: int) -> tuple[str, int]   # al herschreven URL
 
 # app/office/urls.py

@@ -580,7 +580,13 @@ async def test_command_en_convert(bound):
             await server.command(c)
     converted = await server.convert(filetype="docx", outputtype="pdf")
     assert seen[-1].headers["accept"] == "application/json"
+    assert seen[-1].url.raw_path == b"/converter"
     assert protocol.decode(bound.office_secret, converted["echo"]["token"])["filetype"] == "docx"
+    # Met een key ook op /converter de shardkey (A18), net als bij /command
+    await server.convert(key="conv_k1/x", filetype="docx", outputtype="pdf")
+    assert seen[-1].url.raw_path == b"/converter?shardkey=conv_k1%2Fx"
+    await server.convert(signed=False, key="k2")
+    assert seen[-1].url.raw_path == b"/converter?shardkey=k2"
 
 
 @pytest.mark.anyio
