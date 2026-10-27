@@ -6,8 +6,8 @@ bestand (POST /api/v1/office/new), opent /bewerken/<id> en de nep-editor is klaa
 zonder te typen geeft status 4 en geen versie. Ook via de knop Nieuw (Tab, ↑) in het Engels,
 en via het submenu Nieuw in het contextmenu van de map, met een naam die al bestaat.
 
-De poort-controle van O1 is er nog niet: de harnas zet PLATFORM_OFFICE_DEV_UNGATED=1 (alleen in
-de test).
+Sinds O1 geldt de echte poort: het cookie office uit POST …/session en het recht van nu (het
+harnas zet PLATFORM_OFFICE_DEV_UNGATED niet meer).
 """
 
 from __future__ import annotations

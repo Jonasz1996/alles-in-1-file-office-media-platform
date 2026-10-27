@@ -8,8 +8,8 @@ naar PDF lukt (pdf_state ready en een PDF met een pagina). Bij de docx ook A17: 
 docx" in de editor geeft geen melding over het nieuwe formaat (compatibilityMode 15).
 
 Draaien: zie test_office_o2_real.py en docs/fase-4/e2e.md. Zonder E2E_REAL_DS wordt hij
-overgeslagen. De poort-controle van O1 is er nog niet: de harnas zet
-PLATFORM_OFFICE_DEV_UNGATED=1 (alleen in de test).
+overgeslagen. Sinds O1 geldt de echte poort (het cookie office en het recht van nu), ook voor
+"Downloaden als" (een editoractie); het harnas zet PLATFORM_OFFICE_DEV_UNGATED niet meer.
 """
 
 from __future__ import annotations
