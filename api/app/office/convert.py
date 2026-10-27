@@ -24,7 +24,9 @@ deze volgorde:
 3. office uit (niet ingesteld, of uitgezet op /beheer): pdf_state terug (leeg, of ask);
 4. DS niet gezond: pdf_state terug en klaar, zonder poging; de inhaalronde neemt hem terug.
    Mislukte er al een poging (DS ging tijdens een conversie onderuit en is nog niet terug),
-   dan telt dit wel: zo krijgt een bestand dat DS laat vastlopen hooguit twee kansen;
+   dan wacht de tweede poging zolang DS start of korter dan 10 minuten weg is (een herstart
+   of update van DS), elke 30 s zonder poging; daarna telt dit wel. Zo krijgt een bestand dat
+   DS laat vastlopen hooguit twee kansen, en kost een herstart van DS geen document;
 5. een sessie die opent of opslaat (sessions.busy): de taak over 5 s opnieuw in de rij. Loopt
    er al een conversie (één slot in dit proces): over 60 s, maar wie het slot vrijgeeft, zet
    de eerste die wacht meteen klaar (_next). Beide zonder poging; een worker wacht nooit;
@@ -49,9 +51,11 @@ komt elke taak na hooguit 60 s gewoon terug.
 
 De fouten van DS (oo/convert.py): new_key (-2, -4) -> een nieuwe taak met n + 1 over 30 s
 (jobs.chain, met dezelfde ask en r), hooguit drie nieuwe keys; failed -> failed; none -> none;
-retry -> een gewone poging (JobError); misconfigured (-8) -> pdf_state terug, en meteen de grote
-controle van health.py (die zet misconfigured; de melding staat dan op /beheer). Blijvend
-mislukt (failed) staat ook als mislukte taak op /beheer, met de code in de melding: "(code -3)".
+retry -> een gewone poging (JobError), en antwoordde DS niet (code 2), dan eerst meteen de
+controle van health.py: zo verliest wat op het slot wacht niet elk een poging tegen een DS die
+weg is; misconfigured (-8) -> pdf_state terug, en meteen de grote controle van health.py (die
+zet misconfigured; de melding staat dan op /beheer). Blijvend mislukt (failed) staat ook als
+mislukte taak op /beheer, met de code in de melding: "(code -3)".
 
 De inhaalronde (payload {after}): in stukken van 200 blobs op volgorde van sha, alleen inhoud
 van een bestand (geen eerdere versie) waarvan de preview klaar is. Hij neemt NULL (groter dan
@@ -117,6 +121,11 @@ SLOT_SECONDS = 60.0
 # Zo lang (s) gaat een conversie op verzoek voor bij het slot (langer dan de viewer kijkt)
 ASKED_SECONDS = 900.0
 NEW_KEY_SECONDS = 30.0  # na -2 of -4
+# Na een mislukte poging is DS weg: zo lang (s) wacht de tweede poging tot hij terug is (een
+# herstart of update duurt 2 tot 5 minuten), en zo vaak kijkt hij
+OUTAGE_SECONDS = 600.0
+OUTAGE_WAIT = 30.0
+NO_ANSWER = 2  # de code van oo/convert.py als DS niet (bruikbaar) antwoordde
 MAX_KEY = 4  # de eerste key en hooguit drie nieuwe (-a2 tot en met -a4)
 # Zo groot mag een zip-formaat op verzoek zijn: wat DS zelf nog ophaalt (maxDownloadBytes)
 ZIP_MAX_BYTES = 104_857_600
@@ -223,6 +232,21 @@ def shown_state(blob: Blob | None, ready: bool, version: bool) -> str | None:
 def _healthy() -> bool:
     app = runtime.app()
     return app is not None and office_state(app).healthy
+
+
+def _restarting() -> bool:
+    """Is DS even weg: aan het starten, of korter dan OUTAGE_SECONDS onbereikbaar?"""
+    app = runtime.app()
+    if app is None:
+        return False
+    state = office_state(app)
+    if state.health == "starting":
+        return True
+    return (
+        state.health == "down"
+        and state.down_since is not None
+        and jobs.now() - state.down_since < timedelta(seconds=OUTAGE_SECONDS)
+    )
 
 
 async def _enabled(session: AsyncSession) -> bool:
@@ -468,6 +492,9 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
         return
     if not _healthy():
         if await _attempts(maker, sha) > 1:
+            if _restarting():  # de tweede kans pas als DS terug is
+                await _postpone(maker, sha, OUTAGE_WAIT)
+                return
             raise jobs.JobError("De document server is niet gezond na een mislukte poging")
         await _release(maker, sha, asked, r)
         return
@@ -538,6 +565,8 @@ async def _convert_error(
     error: engine.ConvertError,
 ) -> None:
     if error.kind == "retry":
+        if error.code == NO_ANSWER:
+            await _recheck()  # is DS weg, dan weet de rij dat nu, niet pas bij de volgende ronde
         raise jobs.JobError(f"{_failed_message(error.code)}; later opnieuw") from error
     if error.kind == "none":
         await _give_up(maker, sha, "none", error.code)
@@ -564,6 +593,7 @@ async def _convert_error(
 
 
 async def _recheck() -> None:
+    """Meteen de controle van health.py (na -8 of als DS niet antwoordde)."""
     app = runtime.app()
     if app is None:
         return
@@ -573,7 +603,7 @@ async def _recheck() -> None:
     try:
         await health.check_once(app)
     except Exception:  # noqa: BLE001 - de lus van health.py kijkt straks gewoon weer
-        log.warning("office: opnieuw controleren na -8 mislukte", exc_info=True)
+        log.warning("office: de gezondheid opnieuw controleren mislukte", exc_info=True)
 
 
 async def _store(

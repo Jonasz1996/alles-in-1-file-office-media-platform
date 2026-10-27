@@ -653,6 +653,74 @@ async def test_kill_tijdens_een_conversie(client, admin, office):
 
 
 @pytest.mark.anyio
+async def test_een_herstart_van_ds_kost_geen_pogingen(client, admin, office):
+    """DS gaat onderuit tijdens een conversie (een update van de container). De app kijkt dan
+    meteen of DS nog gezond is: wat op het slot wacht, gaat zonder poging terug in plaats van
+    elk een poging te verliezen tegen een DS die weg is. De conversie die liep, wacht met zijn
+    tweede poging tot DS terug is. Daarna is alles gewoon klaar, niets is mislukt."""
+    jonas, _ = admin
+    s = office.settings
+    office_state(app).ever_ok = True  # DS draaide al: weg is down, niet starting
+    office.conversions.configure({"hold": True})
+    first = await upload(client, jonas, "een.docx", docx_with_pages(2))
+    await jobs.run_one(s)  # de preview
+    task = office.background(jobs.run_one(s))  # de conversie loopt
+    await until(lambda: office.log("convert_source"))
+    others = [
+        await upload(client, jonas, f"rij{n}.docx", docx_with_pages(2, f"Rij{n}")) for n in range(3)
+    ]
+    await jobs.run_pending(s)  # de previews; de conversies wachten op het slot
+    await office.fake.kill()
+    await task
+    assert office_state(app).health == "down"
+    async with maker(s)() as session:  # alles wat wacht is nu aan de beurt
+        await session.execute(
+            update(Job).where(Job.type == convert.TYPE).values(run_after=jobs.now())
+        )
+        await session.commit()
+    await jobs.run_pending(s)
+    assert (await blob_of(s, first["id"])).pdf_state == "pending"
+    for node in others:
+        assert (await blob_of(s, node["id"])).pdf_state is None  # terug, zonder poging
+    async with maker(s)() as session:
+        assert await jobs.failed(session) == []
+    [job] = [j for j in await office_jobs(s) if j.status == "queued"]
+    assert job.attempts == 1  # de tweede poging wacht
+    # DS terug: de tweede poging, en de inhaalronde neemt de rest
+    office.conversions.configure({"hold": False})
+    await office.fake.restart()
+    await health.check_once(app)
+    assert office_state(app).healthy
+    await asyncio.gather(*list(convert._tasks))
+    await run_later(s)
+    for node in [first, *others]:
+        assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    async with maker(s)() as session:
+        assert await jobs.failed(session) == []
+
+
+@pytest.mark.anyio
+async def test_lang_weg_na_een_mislukte_poging_is_failed(client, admin, office):
+    """Is DS na een mislukte poging al langer dan tien minuten weg, dan wacht de tweede poging
+    niet meer: failed, zoals een bestand dat DS laat vastlopen."""
+    jonas, _ = admin
+    s = office.settings
+    office_state(app).ever_ok = True
+    office.conversions.configure({"hold": True})
+    node = await upload(client, jonas, "zwaar.docx", docx_with_pages(2))
+    task = office.background(jobs.run_pending(s))
+    await until(lambda: office.log("convert_source"))
+    await office.fake.kill()
+    await task
+    assert office_state(app).health == "down"
+    office_state(app).down_since = jobs.now() - timedelta(minutes=11)
+    await run_later(s, 60)
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+    [job] = await office_jobs(s)
+    assert (job.status, job.attempts) == ("failed", 2)
+
+
+@pytest.mark.anyio
 async def test_ds_niet_gezond_dan_geen_poging(client, admin, office):
     jonas, _ = admin
     s = office.settings
