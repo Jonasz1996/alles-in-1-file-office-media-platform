@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pytest
 from playwright.sync_api import expect
 
@@ -108,6 +109,24 @@ def _shared_session(office: Office, office_browsers) -> tuple[str, Any, Any]:
     return keys[0], contexts[0], contexts[1]
 
 
+def _close_app_session(office: Office, key: str) -> None:
+    """De sessie van de app (voor het poort-cookie) hoort niets van DS: de callbacks van deze
+    editors gaan naar de DocStub. Daarom hier wat DS stuurt als er niets veranderd is: status 4
+    naar de interne callback van de app, getekend met het office-geheim. Anders blijft de sessie
+    5 minuten pending, en dat houdt de conversies van O3 tegen (sessions.busy)."""
+    from tests.fake_docserver import protocol
+
+    body, authorization = protocol.callback_request(office.secret, protocol.closed(key))
+    r = httpx.post(
+        f"http://127.0.0.1:{office.internal_port}/internal/office/callback",
+        json=body,
+        headers={"Authorization": authorization},
+        trust_env=False,
+        timeout=10,
+    )
+    assert r.status_code == 200 and r.json() == {"error": 0}, r.text
+
+
 def test_twee_editors_via_proxy_en_tunnel(office: Office, office_browsers) -> None:
     """Anna en Bram op één key, elk in een eigen context: de tekst van Anna komt meteen bij
     Bram (via de tunnel naar dezelfde key), de nep-DS kent twee gebruikers, en na het sluiten
@@ -146,6 +165,7 @@ def test_twee_editors_via_proxy_en_tunnel(office: Office, office_browsers) -> No
     # Elke callback had een geldig token; de stub weigerde er geen
     assert all("refused" not in c for c in office.stub.callbacks(key))
     assert not fake_info(office, key)["open"]
+    _close_app_session(office, key)
 
 
 def test_ds_weg_en_terug(office: Office) -> None:
