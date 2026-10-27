@@ -2419,6 +2419,7 @@ class Driver(Protocol):            # nu één: de nep-DS van OnlyOffice
     async def close(self, h: Handle) -> None
     async def reconnect(self, h: Handle) -> bool     # zoals een browser na een breuk; False = geweigerd
     async def fail_callbacks(self, n: int) -> None   # de app geeft de volgende n callbacks 503 (testhaak)
+    async def replay_refused(self) -> int            # de laatst geweigerde callback nog eens (status)
     async def crash(self) -> None                    # kill zonder opslaan
     async def restart_app(self) -> None
 ```
@@ -2430,8 +2431,8 @@ Scenario's:
 - hernoemen, verplaatsen, prullenbak, upload ertussen, quotum vol;
 - definitief verwijderd → niets geschreven, geen kopie;
 - deling ingetrokken → eruit, en `reconnect` geeft `False`;
-- een oude opslag die na de laatste aankomt (`fail_callbacks(1)` op de eerste tussenstand) → de
-  laatste blijft;
+- een oude opslag die na de laatste aankomt (`fail_callbacks(1)` op de eerste tussenstand, en na
+  het sluiten `replay_refused()`) → de laatste blijft, en er komt geen versie bij;
 - de app weg tijdens status 2, en een sessie die in `saving` blijft hangen → het herstel zet het op
   het origineel, en de volgende opener krijgt een nieuwe key;
 - crash.

@@ -80,7 +80,8 @@ dezelfde rol. Per methode van `Engine`:
 
 Ook: `oo/tokens.py` (de JWT-vormen van OnlyOffice) en `oo/admin.py` vallen weg; `oo/client.py`
 blijft de enige weg naar de editor, met een ander adres. De contracttests krijgen een tweede
-`Driver` (een nep-Collabora), met dezelfde scenario's.
+`Driver` (een nep-Collabora), met dezelfde scenario's. Die moet ook `replay_refused()` kunnen:
+een geweigerde PutFile later nog eens sturen, zoals de editor hem stuurde.
 
 ## De installatie
 

@@ -835,7 +835,8 @@ def test_contract_vorm():
         if pyinspect.iscoroutinefunction(value)
     }
     assert methods == {
-        "open", "type", "save", "close", "reconnect", "fail_callbacks", "crash", "restart_app"
+        "open", "type", "save", "close", "reconnect", "fail_callbacks", "replay_refused",
+        "crash", "restart_app",
     }  # fmt: skip
     assert len(office_contract.SCENARIOS) == len(set(office_contract.SCENARIOS)) >= 13
     for scenario in office_contract.SCENARIOS:
