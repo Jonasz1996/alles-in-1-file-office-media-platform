@@ -112,7 +112,7 @@ naar internet: alleen het platform praat ermee, en de browser komt er via het pl
 via dezelfde poorten 80 en 443.
 
 **Wat het kost.** Het image is ±3,1 GB. Bij een update staan het oude en het nieuwe even naast
-elkaar; daarom wil het script minstens 8 GB vrij voor Docker. DS krijgt hooguit 2 GB geheugen
+elkaar; daarom wil het script minstens 8 GB vrij voor Docker als het een image moet ophalen. DS krijgt hooguit 2 GB geheugen
 en 2 cores, als de kernel van de container die grenzen kan zetten (anders zonder grens). In de
 proef was de piek 894 MB. Na elke start maakt DS 2 à 5 minuten zijn fonts; dan is hij even
 druk.

@@ -332,6 +332,27 @@ check "met uitleg" grep -q "GB vrij voor Docker" <<<"$out"
 OFFICE_MIN_FREE_GB=0
 check "genoeg ruimte" office_preflight
 
+echo "== het image is er al: dan hoeft er geen ruimte voor een download te zijn (uitrol-6)"
+OFFICE_MIN_FREE_GB=999999
+reset_docker
+LOCAL=" $HUB "
+check "van Docker Hub er al: geen controle van de ruimte" office_preflight
+reset_docker
+LOCAL=" $MIRROR "
+check "van de mirror er al: ook niet" office_preflight
+reset_docker
+LOCAL=" $pin "
+OFFICE_IMAGE=$pin
+check "de pin er al: ook niet" office_preflight
+reset_docker
+OFFICE_IMAGE=$pin
+if office_preflight >/dev/null; then fout "de pin er niet: wel de controle"; else ok "de pin er niet: wel de controle"; fi
+reset_docker
+LOCAL=" $HUB " DRIVER=vfs
+if office_preflight >/dev/null; then fout "de driver telt altijd"; else ok "de driver telt altijd"; fi
+reset_docker
+OFFICE_MIN_FREE_GB=0
+
 echo "== de compose-bestanden"
 reset_docker
 compose_files 0

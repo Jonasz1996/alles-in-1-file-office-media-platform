@@ -95,8 +95,19 @@ free_gb() {
   df --output=avail -B1G "$dir" | tail -n 1 | tr -d ' '
 }
 
-# Vóór het ophalen van het image: de opslagdriver en de ruimte. Niet goed: uitleg op stdout,
-# en office blijft zoals het was (Keuze 30).
+# Is het image dat office_image zou nemen er al? Dan hoeft er niets opgehaald te worden.
+office_image_local() {
+  if [ -n "${OFFICE_IMAGE:-}" ]; then
+    docker image inspect "$OFFICE_IMAGE" >/dev/null 2>&1
+  else
+    docker image inspect "$OFFICE_REPO@$OFFICE_DIGEST" >/dev/null 2>&1 ||
+      docker image inspect "mirror.gcr.io/$OFFICE_REPO@$OFFICE_DIGEST" >/dev/null 2>&1
+  fi
+}
+
+# Vóór het ophalen van het image: de opslagdriver en de ruimte. De ruimte alleen als er een
+# image opgehaald moet worden (uitrol-6). Niet goed: uitleg op stdout, en office blijft zoals
+# het was (Keuze 30).
 office_preflight() {
   local driver free
   driver=$(docker info --format '{{.Driver}}' 2>/dev/null || true)
@@ -106,6 +117,7 @@ office_preflight() {
     echo "'nesting' aan en gebruik een rootdisk op ZFS of ext4."
     return 1
   fi
+  if office_image_local; then return 0; fi
   free=$(free_gb)
   if [ "${free:-0}" -lt "$OFFICE_MIN_FREE_GB" ]; then
     echo "Er is maar $free GB vrij voor Docker; office vraagt er $OFFICE_MIN_FREE_GB (het oude"

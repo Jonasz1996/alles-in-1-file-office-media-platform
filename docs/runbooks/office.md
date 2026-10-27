@@ -21,7 +21,8 @@ Hieronder heet dat kortweg "het script"; een instelling zet je ervoor, zoals
 2. Ontbrekende sleutels komen in `.env` (`OFFICE=aan`, `OFFICE_JWT_SECRET`,
    `OFFICE_LINK_SECRET`), elk op een eigen regel, ook als je editor de laatste regel zonder
    regeleinde bewaarde; een bestaande waarde blijft altijd staan.
-3. Het controleert de opslagdriver van Docker (`overlay2` of `overlayfs`) en of er 8 GB vrij is.
+3. Het controleert de opslagdriver van Docker (`overlay2` of `overlayfs`) en, als het image van
+   DS nog opgehaald moet worden, of er 8 GB vrij is.
 4. Het image: een pin in `.env` (`OFFICE_IMAGE`) gaat voor. Anders de digest die het script
    kent, eerst van Docker Hub, dan van `mirror.gcr.io`; daarna zet het de tag van Docker Hub
    (`onlyoffice/documentserver:10.0.0.1`) er lokaal op, op precies die digest. Compose krijgt die
