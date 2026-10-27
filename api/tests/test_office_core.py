@@ -589,6 +589,47 @@ async def test_command_en_convert(bound):
     assert seen[-1].url.raw_path == b"/converter?shardkey=k2"
 
 
+
+
+@pytest.mark.anyio
+async def test_open_stuurt_precies_het_pad(bound):
+    """S6: open stuurt DS het pad byte voor byte, of niets."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, text="ok")
+
+    mock(handler)
+    server = client.get()
+    for path, sent in (
+        ("/", b"/"),
+        ("/sdkjs/a.js", b"/sdkjs/a.js"),
+        ("/a/%2e%2e/b%2F?x=1", b"/a/%2e%2e/b%2F?x=1"),
+        ('/d/k1?cmd={"c":1}', b"/d/k1?cmd={%22c%22:1}"),  # de query mag httpx coderen
+    ):
+        response = await server.open("GET", path, [])
+        await response.aclose()
+        assert seen[-1].url.raw_path == sent and seen[-1].url.host == "office", path
+    count = len(seen)
+    for path in (
+        "",
+        "sdkjs/a.js",
+        "//sdkjs/healthcheck",
+        "//evil/x",
+        "/a/../command",
+        "/./a",
+        "/a/.",
+        "/a#b",
+        "/a b",
+        "/a{b}",
+        "/café",
+    ):
+        with pytest.raises(ValueError):
+            await server.open("GET", path, [])
+    assert len(seen) == count
+
+
 @pytest.mark.anyio
 async def test_healthy_en_onbereikbaar(bound):
     def handler(request: httpx.Request) -> httpx.Response:

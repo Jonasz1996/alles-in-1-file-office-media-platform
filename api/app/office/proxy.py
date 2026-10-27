@@ -7,8 +7,9 @@ MAX_BODY), gzip blijft gzip. Van het antwoord gaan Set-Cookie, Clear-Site-Data, 
 Service-Worker-Allowed en de X-Frame-Options en CSP van DS weg; erbij komen X-Frame-Options:
 SAMEORIGIN (anders zet Edge DENY en laadt de iframe van de editor niet), op HTML de CSP van
 Keuze 9 en op al het andere Cross-Origin-Resource-Policy: same-origin. Location blijft alleen
-als hij relatief is of naar onze eigen host wijst. DS niet bereikbaar: 502
-office_unavailable.
+als hij relatief is of naar onze eigen host wijst. Het pad gaat byte
+voor byte naar DS; kan dat niet ('//', '.', '..', een prefix in procenttekens), dan 404. DS
+niet bereikbaar: 502 office_unavailable.
 
 De kern heeft nog geen padbeleid en geen toegangscontrole (O1: klassen, poort-cookie, recht
 van nu, Sec-Fetch-Dest, grenzen per gebruiker). Daarom laat hij alleen door met
@@ -107,12 +108,20 @@ def request_headers(scope) -> list[tuple[str, str]]:
     return out
 
 
-def ds_target(scope) -> str:
-    """Pad en query aan de kant van DS: zonder het prefix, met de bytes van de browser."""
+def ds_target(scope) -> str | None:
+    """Pad en query aan de kant van DS: de bytes van de browser zonder het prefix. None als
+    de rauwe bytes zelf niet met /office beginnen (zoals /%6fffice/…): ours() keek naar het
+    gedecodeerde pad, en DS zou dan iets anders krijgen dan wat we zagen."""
     raw = scope.get("raw_path") or quote(scope["path"]).encode()
-    path = raw.decode("latin-1")[len(PREFIX) :] or "/"
+    prefix = PREFIX.encode()
+    if raw == prefix:
+        path = b"/"
+    elif raw.startswith(prefix + b"/"):
+        path = raw[len(prefix) :]
+    else:
+        return None
     query = scope.get("query_string", b"")
-    return path + ("?" + query.decode("latin-1") if query else "")
+    return path.decode("latin-1") + ("?" + query.decode("latin-1") if query else "")
 
 
 def _own_location(location: str, host: str) -> bool:
@@ -165,6 +174,9 @@ class OfficeProxy:
         await self.forward(scope, receive, send)
 
     async def forward(self, scope, receive, send) -> None:
+        target = ds_target(scope)
+        if target is None:
+            return await self.app(scope, receive, send)  # de catch-all geeft 404
         length = _header(scope, b"content-length")
         if length.isdigit() and int(length) > MAX_BODY:
             return await _too_large()(scope, receive, send)
@@ -176,7 +188,10 @@ class OfficeProxy:
         if server is None:
             return await _unavailable()(scope, receive, send)
         try:
-            upstream = await server.open(method, ds_target(scope), request_headers(scope), body)
+            upstream = await server.open(method, target, request_headers(scope), body)
+        except ValueError:
+            # Een pad dat DS anders zou krijgen dan wij het zien ('//', '.', '..'): nooit naar DS
+            return await self.app(scope, receive, send)
         except BodyTooLarge:
             return await _too_large()(scope, receive, send)
         except httpx.HTTPError as exc:

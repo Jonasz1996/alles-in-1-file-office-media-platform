@@ -69,6 +69,7 @@ class DocServer:
     ) -> None:
         self.settings = settings
         self.base = settings.office_url.rstrip("/")
+        self._base_path = httpx.URL(self.base).raw_path.rstrip(b"/")
         self.client = httpx.AsyncClient(
             base_url=self.base,
             transport=transport,
@@ -154,8 +155,20 @@ class DocServer:
         self, method: str, path: str, headers: list[tuple[str, str]], content=None
     ) -> httpx.Response:
         """Een verzoek voor de proxy, met een gestreamd antwoord (de aanroeper sluit het).
-        path is pad en query aan de kant van DS."""
-        request = self.client.build_request(method, path, headers=headers, content=content)
+        path is pad en query aan de kant van DS.
+
+        DS krijgt precies dat pad, byte voor byte, want daarop beslist de proxy. Kan dat niet,
+        dan ValueError en gaat er niets weg: een pad dat niet met precies één '/' begint (httpx
+        leest '//x/…' als host en laat die weg), en een pad dat httpx anders zou sturen ('.' en
+        '..' weggewerkt, opnieuw gecodeerd, een '#'). De query mag httpx wel coderen: die
+        betekent daarna hetzelfde."""
+        if not path.startswith("/") or path.startswith("//"):
+            raise ValueError("pad zonder precies één '/' vooraan")
+        url = httpx.URL(self.base + path)
+        wanted = self._base_path + path.partition("?")[0].encode()
+        if url.raw_path.partition(b"?")[0] != wanted:
+            raise ValueError("httpx zou DS een ander pad sturen")
+        request = self.client.build_request(method, url, headers=headers, content=content)
         return await self.client.send(request, stream=True)
 
 

@@ -6,6 +6,7 @@ precies fase 3."""
 import json
 import secrets
 import uuid
+from urllib.parse import unquote
 
 import httpx
 import pytest
@@ -308,6 +309,74 @@ async def test_proxy_corp_svg_en_location(client, ungated):
     assert "location" not in (await client.get("/office/schema-loos")).headers
     assert (await client.get("/office/hier")).headers["location"] == "http://test/office/y"
     assert (await client.get("/office/relatief")).headers["location"] == "/office/z"
+
+
+@pytest.mark.anyio
+async def test_proxy_stuurt_ds_precies_het_pad_dat_hij_ziet(client, ungated):
+    """S6: DS krijgt het pad van de browser zonder /office, byte voor byte. Een pad waarvoor dat
+    niet kan, komt nooit bij DS: 404."""
+    seen = ungated(lambda request: respond(200, {"Content-Type": "text/plain"}, b"ok"))
+    for path, sent in (
+        ("/office", b"/"),
+        ("/office/", b"/"),
+        ("/office/sdkjs/a.js", b"/sdkjs/a.js"),
+        ("/office/a/b%2Fc/%2e%2e/d", b"/a/b%2Fc/%2e%2e/d"),
+        (
+            "/office/x/downloadas/k1?cmd=%7B%22c%22%3A1%7D&shardkey=k1",
+            b"/x/downloadas/k1?cmd=%7B%22c%22%3A1%7D&shardkey=k1",
+        ),
+    ):
+        r = await client.get(path)
+        assert r.status_code == 200 and seen[-1].url.raw_path == sent, path
+    count = len(seen)
+    for path in (
+        "/office//sdkjs/healthcheck",  # httpx las //sdkjs als host: DS kreeg /healthcheck
+        "/office//evil.example/x",
+        "/%6fffice/web-apps/apps/api/documents/api.js",  # ging als ce/web-apps/… naar DS
+        "/%6Fffice",
+    ):
+        r = await client.get(path)
+        assert r.status_code == 404 and code_of(r) == "not_found", path
+    assert len(seen) == count
+    # Wat httpx zelf zou wegwerken (een test-client normaliseert dat al): rechtstreeks via ASGI
+    for raw in (
+        b"/office/web-apps/../command",
+        b"/office/./healthcheck",
+        b"/office/a/..",
+        b"/office/a#b",
+        b"/office/a{b}",
+    ):
+        status = await asgi_get(raw)
+        assert status == 404, raw
+    assert len(seen) == count
+
+
+async def asgi_get(raw_path: bytes) -> int:
+    """Een GET met precies deze rauwe bytes, zoals uvicorn hem doorgeeft. De status."""
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": unquote(raw_path.decode("latin-1")),
+        "raw_path": raw_path,
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"test")],
+        "client": ("127.0.0.1", 50000),
+        "server": ("test", 80),
+    }
+    messages: list[dict] = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    await app(scope, receive, send)
+    return next(m["status"] for m in messages if m["type"] == "http.response.start")
 
 
 @pytest.mark.anyio

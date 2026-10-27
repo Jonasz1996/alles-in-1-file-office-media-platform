@@ -183,7 +183,8 @@ def current() -> Engine | None:
 
 
 class Upstream(Protocol):
-    """De http-verbinding met de editor, voor de proxy (gestreamd; de aanroeper sluit)."""
+    """De http-verbinding met de editor, voor de proxy (gestreamd; de aanroeper sluit). open
+    stuurt path byte voor byte, of geeft ValueError als dat niet kan."""
 
     async def open(
         self, method: str, path: str, headers: list[tuple[str, str]], content=None
