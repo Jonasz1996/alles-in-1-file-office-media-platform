@@ -288,7 +288,8 @@ def test_office_problem(tmp_path):
 
 def test_office_standaardwaarden(tmp_path):
     settings = Settings(data_dir=tmp_path)
-    assert settings.office_url == "" and not settings.office_dev_ungated
+    assert settings.office_url == ""
+    assert "office_dev_ungated" not in Settings.model_fields  # weg bij de integratie (§5 punt 4)
     assert settings.office_internal_port == 8081
     assert settings.office_ole_max_bytes == 20 * 1024**2
     assert settings.office_max_save_bytes == 512 * 1024**2

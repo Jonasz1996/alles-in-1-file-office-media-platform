@@ -4,8 +4,8 @@ docs/fase-4/bouwontwerp.md, en de editor over http en over https).
 Alles gaat door de echte server en de echte poort: het poort-cookie office uit POST …/session,
 de proxy (elk pad een klasse, met de controle van Keuze 7) en de tunnel (Origin, cookie en recht
 vóór de upgrade, daarna de StreamGuard en de controle elke 15 s). Het harnas zet
-PLATFORM_OFFICE_DEV_UNGATED niet meer, en de vlag doet sinds O1 niets meer (test_office_gate.py
-bewijst het): hier geldt de echte poort.
+PLATFORM_OFFICE_DEV_UNGATED niet meer, en sinds de integratie is de vlag weg (test_office_gate.py
+bewijst dat de variabele niets opent): hier geldt de echte poort.
 
 De hulpjes (open_editor_page, probe, upgrade_status, session_token) gebruikt ook
 test_office_o1_real.py, tegen de echte DS.

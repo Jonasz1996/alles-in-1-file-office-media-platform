@@ -1899,6 +1899,7 @@ office_sweep_seconds: float = 30   # de e2e zet 1
 office_recovery_seconds: float = 600  # de e2e zet 2
 office_dev_ungated: bool = False   # alleen O0, O2 en tests: proxy en tunnel zonder toegangscontrole;
                                    # na O1 doet hij niets meer, bij de integratie gaat hij weg
+                                   # (gedaan: het veld is weg, zie o1.md)
 
 @property
 def office_configured(self) -> bool  # url, app_url en een geldig geheim
@@ -2625,7 +2626,8 @@ van Docker Hub met digest (§5.1), de start van DS, één sessie met twee gebrui
      `docs/fase-4/integratie.md`, ook het bijwerken van een `.env` van v0.5.0 en het terugrollen
      naar v0.5.0 met `db-downgrade`;
    - de metingen van §4.7, en `max_editors` daarop gezet;
-   - `office_dev_ungated` weg uit `config.py` en de harnas;
+   - `office_dev_ungated` weg uit `config.py` en de harnas (gedaan: het harnas bij het
+     samenvoegen van O1, het veld bij de integratie; zie o1.md);
    - `docs/fase-4/README.md` met wat er is en de bekende grenzen; de vinkjes van fase 4 in het
      stappenplan, en de regels over "eigen Postgres, Redis en RabbitMQ" en de limiet van 20
      bijgewerkt met de reden; B3 en B31 en verder definitief na de keuze van Jonas;

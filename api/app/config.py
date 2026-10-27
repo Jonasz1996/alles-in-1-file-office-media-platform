@@ -96,9 +96,6 @@ class Settings(BaseSettings):
     office_health_seconds: float = 30
     office_sweep_seconds: float = 30  # de e2e zet 1
     office_recovery_seconds: float = 600  # de e2e zet 2
-    # Alleen O0, O2 en tests: proxy en tunnel zonder toegangscontrole. Na O1 doet hij niets
-    # meer; bij de integratie gaat hij weg.
-    office_dev_ungated: bool = False
 
     def nodes(self) -> list[tuple[str, str]]:
         if not self.cluster_nodes:

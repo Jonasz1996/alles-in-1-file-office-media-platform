@@ -410,8 +410,9 @@ def office_env(
     *, ds_url: str, secret: str, internal_port: int, app_host: str, internal_host: str = ""
 ) -> dict[str, str]:
     """PLATFORM_OFFICE_* voor een Server (§3.6). De ronde op 1 s, het herstel op 2 s en de
-    gezondheid elke seconde, zodat een test DS weg en terug snel ziet. Geen
-    PLATFORM_OFFICE_DEV_UNGATED: sinds O1 geldt in elke e2e de echte poort (cookie en recht)."""
+    gezondheid elke seconde, zodat een test DS weg en terug snel ziet. De oude
+    PLATFORM_OFFICE_DEV_UNGATED bestaat niet meer: in elke e2e geldt de echte poort (cookie en
+    recht)."""
     env = {
         "PLATFORM_OFFICE_URL": ds_url,
         "PLATFORM_OFFICE_SECRET": secret,

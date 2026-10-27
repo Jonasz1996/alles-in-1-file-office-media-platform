@@ -134,9 +134,10 @@ De gewone fixtures `server` en `admin` hebben geen office. Daarmee bewijst
 | `PLATFORM_OFFICE_RECOVERY_SECONDS` | `2` | het herstel (§4.4) |
 | `PLATFORM_OFFICE_HEALTH_SECONDS` | `1` | zodat een test "DS weg" en "DS terug" binnen enkele seconden ziet |
 
-`PLATFORM_OFFICE_DEV_UNGATED` zet het harnas niet meer: sinds O1 gaat elke e2e door de echte
-poort (het cookie `office` uit `POST …/session` en het recht van nu). De vlag doet niets meer en
-gaat bij de integratie weg uit `config.py`.
+`PLATFORM_OFFICE_DEV_UNGATED` bestaat niet meer: sinds O1 gaat elke e2e door de echte poort (het
+cookie `office` uit `POST …/session` en het recht van nu), en bij de integratie is het veld weg
+uit `config.py`. Wie de variabele nog zet, opent er niets mee
+(`api/tests/test_office_gate.py::test_platform_office_dev_ungated_opent_niets`).
 
 Na de start wacht de fixture tot `/api/v1/office/status` `state: "ok"` zegt. Dat is de grote
 controle van de gezondheid (versie, licentie, tokens geëist) die slaagt.
@@ -309,7 +310,7 @@ npm run dev
 
 - Sinds O1 gaat `/office/` alleen door met het poort-cookie: open een bestand via
   `/bewerken/<id>` (dat doet `POST …/session` en zet het cookie). `PLATFORM_OFFICE_DEV_UNGATED`
-  doet niets meer; bij de integratie gaat hij weg.
+  bestaat niet meer en opent niets.
 - De interne luisteraar luistert met `0.0.0.0` op alle adressen van je machine, op poort 8081.
   Doe dit alleen op een machine waar dat mag (of zet een firewall op 8081).
 - In O0 laadt `api.js` zo via `/office/`, maar een document openen kan pas met O2: de interne

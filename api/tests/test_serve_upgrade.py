@@ -1,8 +1,8 @@
 """De upgrade naar de tunnel in serve.py (Keuze 6 en 8, §3.8, M1): een geüpgradede verbinding
 blijft open na HEADER_TIMEOUT, met h11 en met httptools; een stille gewone verbinding sluit
 nog steeds; elke upgrade naar een ander pad (of zonder office) geeft 404, en zonder
-poort-cookie 401, ook met de oude vlag office_dev_ungated; de interne poort kent alleen
-/internal/office/…, de publieke poort geeft 404 op /internal/….
+poort-cookie 401, ook met de oude variabele PLATFORM_OFFICE_DEV_UNGATED; de interne poort kent
+alleen /internal/office/…, de publieke poort geeft 404 op /internal/….
 
 Waar het hier om serve.py gaat (de deadline, 502, een echte socket), laten de poort en de
 StreamGuard van O1 iedereen door (fixture open_gate); die staan zelf in test_office_tunnel.py,
@@ -195,24 +195,29 @@ async def test_stille_gewone_verbinding_sluit_nog_steeds(tmp_path, monkeypatch, 
 @pytest.mark.parametrize("impl", IMPLEMENTATIONS, ids=lambda impl: impl.__name__)
 async def test_zonder_cookie_of_buiten_het_pad_geen_upgrade(tmp_path, monkeypatch, ds, impl):
     """Ander pad of geen office: 404. Het goede pad zonder poort-cookie: 401, met of zonder de
-    oude vlag office_dev_ungated (die opent niets meer). DS krijgt nooit iets."""
-    cases = [
-        (office(tmp_path, ds.port), UPGRADE_PATH, 401),  # office aan, geen cookie
-        (office(tmp_path, ds.port, office_dev_ungated=True), UPGRADE_PATH, 401),  # de vlag
-        (Settings(data_dir=tmp_path, office_dev_ungated=True), UPGRADE_PATH, 404),  # geen office
-        (office(tmp_path, ds.port, office_dev_ungated=True), "/api/v1/events", 404),  # ander pad
-        (office(tmp_path, ds.port, office_dev_ungated=True), "/office/x/doc/k1-abc/c/", 404),
-        (office(tmp_path, ds.port), f"/office/{VERSION}/doc/../c/", 404),
-        (office(tmp_path, ds.port), "/", 404),
-    ]
-    for settings, path, status in cases:
-        async with public(settings, impl, monkeypatch) as listener:
-            reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
-            writer.write(upgrade(path))
-            head = await head_of(reader)
-            assert head.startswith(b"HTTP/1.1 %d " % status), (path, head)
-            assert await closed_within(reader, 2)
-            writer.close()
+    oude variabele PLATFORM_OFFICE_DEV_UNGATED in de omgeving (het veld is weg, hij opent
+    niets). DS krijgt nooit iets."""
+    for env in (None, "1"):
+        if env is None:
+            monkeypatch.delenv("PLATFORM_OFFICE_DEV_UNGATED", raising=False)
+        else:
+            monkeypatch.setenv("PLATFORM_OFFICE_DEV_UNGATED", env)
+        cases = [
+            (office(tmp_path, ds.port), UPGRADE_PATH, 401),  # office aan, geen cookie
+            (Settings(data_dir=tmp_path), UPGRADE_PATH, 404),  # geen office
+            (office(tmp_path, ds.port), "/api/v1/events", 404),  # ander pad
+            (office(tmp_path, ds.port), "/office/x/doc/k1-abc/c/", 404),
+            (office(tmp_path, ds.port), f"/office/{VERSION}/doc/../c/", 404),
+            (office(tmp_path, ds.port), "/", 404),
+        ]
+        for settings, path, status in cases:
+            async with public(settings, impl, monkeypatch) as listener:
+                reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
+                writer.write(upgrade(path))
+                head = await head_of(reader)
+                assert head.startswith(b"HTTP/1.1 %d " % status), (env, path, head)
+                assert await closed_within(reader, 2)
+                writer.close()
     assert ds.heads == []  # DS kreeg nooit iets
 
 

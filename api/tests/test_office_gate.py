@@ -8,8 +8,8 @@ forget_user(), tegen de echte database van de app.
   mag nog, een deelnemer niet), de sessie dicht; zonder key: lid van een sessie die niet dicht is;
 - de cache: een ja hooguit 15 s en nooit langer dan het cookie geldt, een nee nooit;
   forget_user() leegt hem;
-- office_dev_ungated opent niets meer: niet in de proxy, niet in de tunnel, en geen code leest
-  de vlag nog."""
+- de oude vlag office_dev_ungated is weg (§5 punt 4): PLATFORM_OFFICE_DEV_UNGATED=1 in de
+  omgeving opent niets, niet in de proxy en niet in de tunnel, en geen code kent hem nog."""
 
 import dataclasses
 import time
@@ -393,12 +393,19 @@ async def test_still_voor_een_open_tunnel(world, clock):
     assert await gate.still(gate.GateUser(s.anna.id, None), s.key) is True
 
 
-# --- office_dev_ungated opent niets meer ---
+# --- de oude vlag office_dev_ungated is weg ---
 
 
-async def test_office_dev_ungated_opent_niets(world, monkeypatch):
+async def test_platform_office_dev_ungated_opent_niets(world, monkeypatch):
+    """O0 had PLATFORM_OFFICE_DEV_UNGATED: proxy en tunnel zonder poort. Sinds O1 deed hij niets
+    meer, en bij de integratie is het veld weg uit config.py. Wie de variabele nog in zijn
+    omgeving heeft, krijgt dus niets open: geen editorpagina, geen DATA, geen editoracties, en
+    geen tunnel zonder poort-cookie."""
     s = await shared(world)
-    rebind(world, office_dev_ungated=True)
+    monkeypatch.setenv("PLATFORM_OFFICE_DEV_UNGATED", "1")
+    settings = rebind(world)  # de instellingen opnieuw uit de omgeving, zoals bij een start
+    assert "office_dev_ungated" not in type(settings).model_fields
+    assert not hasattr(settings, "office_dev_ungated")
     seen: list[str] = []
 
     def record(request: httpx.Request) -> httpx.Response:
@@ -431,16 +438,15 @@ async def test_office_dev_ungated_opent_niets(world, monkeypatch):
     # Statisch blijft voor iedereen
     r = await client.get("/office/web-apps/apps/api/documents/api.js")
     assert r.status_code == 200 and seen == ["/web-apps/apps/api/documents/api.js"]
-    # De tunnel: zonder cookie 401, ook met de vlag
+    # De tunnel: zonder cookie 401, ook met de variabele
     async with raw_ds(world) as ds, public(monkeypatch) as listener:
-        assert world.settings.office_dev_ungated
         assert await status_of(listener.port, upgrade(listener.port, s.key)) == 401
         assert ds.heads == []
-    # En geen code leest de vlag nog (alleen config.py kent hem)
+    # En geen code kent de vlag nog, ook config.py niet
     root = Path(app_package.__file__).parent
     readers = sorted(
         str(p.relative_to(root))
         for p in root.rglob("*.py")
-        if "office_dev_ungated" in p.read_text(encoding="utf-8")
+        if "dev_ungated" in p.read_text(encoding="utf-8").lower()
     )
-    assert readers == ["config.py"]
+    assert readers == []
