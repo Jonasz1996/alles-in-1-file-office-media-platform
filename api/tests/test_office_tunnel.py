@@ -18,15 +18,22 @@ import functools
 import os
 import struct
 import time
+import uuid
 
 import httpx
+import jwt
 import pytest
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session as OrmSession
+from starlette.datastructures import Headers
 from websockets.asyncio.client import connect as ws_connect
 
 from app import serve
 from app.certs import HttpsConfig
 from app.config import Settings
 from app.main import app
+from app.models import RefreshToken
 from app.office import engine, gate, runtime, sessions, tunnel
 from app.office.state import OfficeConfig, office_policy
 from tests.factories import PASSWORD
@@ -742,6 +749,122 @@ async def test_ingetrokken_logins_sluiten_de_tunnel_meteen(world, monkeypatch):
         assert r.status_code == 200, r.text
         await closed(a, 2)
         assert tunnel.counts()["total"] == 0
+
+
+_REVOKED = "tests.login_revoked"  # in session.info: deze transactie trekt een login in
+
+
+@contextlib.asynccontextmanager
+async def in_the_gap(monkeypatch, between):
+    """between() draait één keer precies in het gat: een login is ingetrokken (de UPDATE op
+    refresh_tokens is gedaan), maar nog niet gecommit. Een ander verzoek ziet dan nog de oude
+    stand. Geeft een lijst die één element krijgt als het gat er was."""
+    ran: list[bool] = []
+
+    def mark(state) -> None:
+        table = getattr(state.statement, "table", None)
+        if state.is_update and getattr(table, "name", None) == RefreshToken.__tablename__:
+            state.session.info[_REVOKED] = True
+
+    real = AsyncSession.commit
+
+    async def commit(self) -> None:
+        if self.info.pop(_REVOKED, False) and not ran:
+            ran.append(True)
+            await between()
+        await real(self)
+
+    event.listen(OrmSession, "do_orm_execute", mark)
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+    try:
+        yield ran
+    finally:
+        monkeypatch.setattr(AsyncSession, "commit", real)
+        event.remove(OrmSession, "do_orm_execute", mark)
+
+
+async def end_access(world, flow: str, here, admin, bram, family, tokens) -> httpx.Response:
+    """Eén manier waarop routers/auth.py de login family van Bram intrekt."""
+    client = world.client
+    if flow == "uitloggen":
+        r = await client.post(
+            "/api/v1/auth/logout", json={"refresh_token": tokens["refresh_token"]}
+        )
+    elif flow == "een sessie uitloggen":
+        r = await client.delete(f"/api/v1/auth/sessions/{family}", headers=here.headers)
+    elif flow == "overal anders uitloggen":
+        r = await client.post("/api/v1/auth/sessions/revoke-others", headers=here.headers)
+    elif flow == "wachtwoord":
+        body = {"current_password": PASSWORD, "new_password": "een heel ander wachtwoord"}
+        r = await client.post("/api/v1/auth/password", json=body, headers=here.headers)
+    elif flow == "wachtwoord door de beheerder":
+        body = {"new_password": "een heel ander wachtwoord"}
+        r = await client.put(f"/api/v1/users/{bram.id}/password", json=body, headers=admin.headers)
+    elif flow == "2fa uit door de beheerder":
+        r = await client.delete(f"/api/v1/users/{bram.id}/2fa", headers=admin.headers)
+    else:
+        assert flow == "blokkeren"
+        r = await client.patch(
+            f"/api/v1/users/{bram.id}", json={"disabled": True}, headers=admin.headers
+        )
+    client.cookies.clear()
+    return r
+
+
+@pytest.mark.parametrize(
+    "flow",
+    [
+        "uitloggen",
+        "een sessie uitloggen",
+        "overal anders uitloggen",
+        "wachtwoord",
+        "wachtwoord door de beheerder",
+        "2fa uit door de beheerder",
+        "blokkeren",
+    ],
+)
+async def test_een_verzoek_vlak_voor_de_commit_houdt_geen_toegang(world, monkeypatch, flow):
+    """Een verzoek dat precies tussen het intrekken van een login en de commit daarvan komt, ziet
+    nog de oude stand: de poort laat hem door en onthoudt dat (15 s), en een editor die dan
+    opnieuw verbindt, krijgt een tunnel. Na het antwoord van het intrekken moet dat allemaal weg
+    zijn, zonder de klok vooruit te zetten. Eerst wiste routers/auth.py de cache en sloot het de
+    tunnels vóór de commit: dan bleef wat in het gat kwam nog tot 15 s (plus de controle) open."""
+    anna, bram, node, _ = await two_writers(world)
+    admin = await world.user("beheer@example.nl", role="admin")
+    here, _ = await login(world, bram)
+    there, tokens = await login(world, bram)
+    cfg, cookie = await opened(world, there, node)
+    key = cfg["document"]["key"]
+    family = uuid.UUID(jwt.decode(cookie, world.settings.secret(), algorithms=["HS256"])["fam"])
+    who = gate.GateUser(bram.id, family)
+    headers = Headers({"cookie": f"office={cookie}"})
+    async with public(monkeypatch) as listener:
+        before = editor(world, listener, cfg, cookie)
+        await before.open(load=False)
+        late = editor(world, listener, cfg, cookie)
+        seen: dict = {}
+
+        async def between() -> None:
+            seen["check"] = await gate.check(headers, key)
+            seen["page"] = await gate.check(headers)
+            seen["still"] = await gate.still(who, key)
+            await late.open(load=False)  # opnieuw verbonden in het gat
+
+        async with in_the_gap(monkeypatch, between) as ran:
+            r = await end_access(world, flow, here, admin, bram, family, tokens)
+        assert r.status_code in (200, 204), r.text
+        assert ran == [True]
+        # In het gat: nog de oude stand
+        assert seen == {"check": who, "page": who, "still": True}
+        # Na het antwoord: de poort zegt nee, en beide tunnels zijn dicht
+        assert await gate.check(headers, key) is None
+        assert await gate.check(headers) is None
+        assert await gate.still(who, key) is False
+        await closed(before, 2)
+        await closed(late, 2)
+        with pytest.raises(Refused) as refused:
+            await late.reconnect()
+        assert refused.value.status == 401
 
 
 async def test_de_controle_kapot_is_dicht(world, monkeypatch):

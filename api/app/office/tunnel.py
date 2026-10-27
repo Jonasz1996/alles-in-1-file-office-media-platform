@@ -35,8 +35,8 @@ aan de ene kant is dicht aan de andere.
 
 Het register: OfficeState.tunnels (key -> gebruiker -> aantal) en OfficeState.peak (het hoogste
 totaal sinds de start), counts(), close_for(key, user) (de ronde, na banned), close_login(family)
-en close_user(user, keep) (routers/auth.py, een ingetrokken login) en close_all() (bij het
-stoppen van de app).
+en close_user(user, keep) (routers/auth.py, een ingetrokken login, na de commit daarvan) en
+close_all() (bij het stoppen van de app).
 """
 
 import asyncio
@@ -608,8 +608,8 @@ def close_for(key: str, user: uuid.UUID | str) -> int:
 
 def close_login(family: uuid.UUID) -> int:
     """Eén login is ingetrokken (uitloggen, een sessie beëindigen, een hergebruikt token;
-    routers/auth.py): de poort vergeet hem, en zijn tunnels gaan meteen dicht, niet pas bij de
-    volgende controle (15 s, plus de cache). Het aantal."""
+    routers/auth.py, na de commit daarvan): de poort vergeet hem, en zijn tunnels gaan meteen
+    dicht, niet pas bij de volgende controle (15 s, plus de cache). Het aantal."""
     gate.forget_login(family)
     found = [t for t in _open if t.user is not None and t.user.family == family]
     for tunnel in found:
@@ -619,8 +619,9 @@ def close_login(family: uuid.UUID) -> int:
 
 def close_user(user: uuid.UUID, keep: uuid.UUID | None = None) -> int:
     """Alle logins van een gebruiker behalve keep zijn ingetrokken (wachtwoord, 2FA, blokkeren,
-    overal anders uitloggen): de poort vergeet de gebruiker (keep wordt dus opnieuw
-    gecontroleerd), en de tunnels van de andere logins gaan meteen dicht. Het aantal."""
+    overal anders uitloggen; routers/auth.py, na de commit): de poort vergeet de gebruiker
+    (keep wordt dus opnieuw gecontroleerd), en de tunnels van de andere logins gaan meteen
+    dicht. Het aantal."""
     gate.forget_user(user)
     found = [
         t

@@ -1,16 +1,19 @@
 import asyncio
+import functools
 import logging
 import math
 import uuid
 import weakref
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, event, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session as OrmSession
 
 from app import errors, jobs, totp, userdelete
 from app.config import Settings, get_settings
@@ -456,13 +459,39 @@ async def second_factor(
     return ok
 
 
+# In session.info: wat na de commit van deze transactie in office dicht moet
+_OFFICE_CLOSE = "platform.auth.office_close"
+
+
+def close_office_after_commit(session: AsyncSession, close: Callable[[], object]) -> None:
+    """close() (de cache van de poort wissen en de tunnels sluiten) pas als het intrekken
+    gecommit is. Ervoor zag een verzoek dat in het gat kwam nog de oude stand: de poort liet het
+    door en onthield dat weer 15 s, en een editor die dan opnieuw verbond, hield zijn tunnel.
+    Draait de transactie terug, dan is er niets ingetrokken en gebeurt er niets."""
+    session.info.setdefault(_OFFICE_CLOSE, []).append(close)
+
+
+@event.listens_for(OrmSession, "after_commit")
+def _close_office(session: OrmSession) -> None:
+    for close in session.info.pop(_OFFICE_CLOSE, []):
+        try:
+            close()
+        except Exception:  # noqa: BLE001 - de controle van de tunnel (15 s) vangt het nog
+            log.exception("office: de editors van een ingetrokken login sluiten mislukte")
+
+
+@event.listens_for(OrmSession, "after_rollback")
+def _keep_office(session: OrmSession) -> None:
+    session.info.pop(_OFFICE_CLOSE, None)
+
+
 async def revoke_other_logins(
     session: AsyncSession, user_id: uuid.UUID, keep: uuid.UUID | None
 ) -> None:
     """Trekt alle logins (refresh-families) van de gebruiker in, behalve keep. Na het aan-
     of uitzetten van 2FA of een nieuw wachtwoord moet wie al een sessie had dus opnieuw
     inloggen; ook zijn access-token werkt dan niet meer (zie security.family_revoked), en zijn
-    editor van office is meteen dicht."""
+    editor van office gaat dicht zodra dit gecommit is (close_office_after_commit)."""
     query = update(RefreshToken).where(
         RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None)
     )
@@ -471,18 +500,19 @@ async def revoke_other_logins(
     await session.execute(
         query.values(revoked_at=datetime.now(UTC)).execution_options(synchronize_session=False)
     )
-    office_tunnel.close_user(user_id, keep)
+    close_office_after_commit(session, functools.partial(office_tunnel.close_user, user_id, keep))
 
 
 async def revoke_family(session: AsyncSession, family: uuid.UUID, now: datetime) -> None:
-    """Eén login intrekken (uitloggen, of hergebruik van een token), ook in office."""
+    """Eén login intrekken (uitloggen, of hergebruik van een token), ook in office: daar na de
+    commit (close_office_after_commit)."""
     await session.execute(
         update(RefreshToken)
         .where(RefreshToken.family == family, RefreshToken.revoked_at.is_(None))
         .values(revoked_at=now)
         .execution_options(synchronize_session=False)
     )
-    office_tunnel.close_login(family)
+    close_office_after_commit(session, functools.partial(office_tunnel.close_login, family))
 
 
 async def new_recovery_codes(session: Session, user: User) -> list[str]:
