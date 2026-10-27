@@ -7,7 +7,15 @@
 
 import { type FormEvent, type JSX, type RefObject, useEffect, useRef, useState } from "react";
 import { errorText, fmt, t } from "../i18n";
-import { checkpointAll, deleteUnsaved, getAdmin, putAdmin, restoreUnsaved, retryConversions } from "../office/api";
+import {
+  checkpointAll,
+  deleteUnsaved,
+  getAdmin,
+  officeStatus,
+  putAdmin,
+  restoreUnsaved,
+  retryConversions,
+} from "../office/api";
 import type { OfficeAdmin, OfficeOpenDocument, OfficeUnsaved } from "../office/types";
 import { Button } from "../ui/Button";
 import { confirm } from "../ui/dialogs";
@@ -439,6 +447,9 @@ function Settings({ data, onChange }: { data: OfficeAdmin; onChange(d: OfficeAdm
       setForm(formOf(out));
       setError(null);
       onChange(out);
+      // De status van office in de rest van de app (Bewerken, Nieuw, PDF) meteen opnieuw, niet
+      // pas na STATUS_TTL: anders zag de beheerder in Bestanden nog een minuut de oude stand
+      void officeStatus.load();
       toast(t("admin.officeTab.saved"), { kind: "ok" });
     } catch (err) {
       setError(errorText(err));
