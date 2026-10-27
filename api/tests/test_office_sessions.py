@@ -402,10 +402,31 @@ async def test_licentie_van_ds_vol(world):
 async def test_stale_na_een_upload(world):
     anna = await world.user("anna@example.nl")
     node = await a_docx(world, anna)
-    key = (await opened(world, anna, node))["key"]
+    key = await world.begin(anna, node)  # open, met Anna erin: de editor heeft de oude inhoud
     await world.upload(anna, node, ["van buiten"])
     again = await opened(world, anna, node)
     assert again["key"] == key and again["stale"] is True
+
+
+async def test_pending_na_een_upload_een_nieuwe_key_met_de_nieuwe_inhoud(world):
+    """Nog niemand opende de key (de tab ging dicht voor de editor er was), en daarna kwam er
+    een upload. DS heeft de oude inhoud nog niet geladen: de volgende opener krijgt een nieuwe key
+    met de nieuwe inhoud, en de upload komt niet in Versies terecht alsof de editor won."""
+    anna = await world.user("anna@example.nl")
+    node = await a_docx(world, anna, text=["Oud"])
+    first = (await opened(world, anna, node))["key"]
+    await world.upload(anna, node, ["Nieuw"])
+    again = await opened(world, anna, node)
+    assert again["key"] != first and again["stale"] is False
+    old = await world.row(first)
+    assert old.state == "closed" and old.closed_reason == "lost"
+    h = world.editor(again["config"])
+    await h.open()
+    await h.type("bewerkt")
+    await h.close()
+    await world.settle()
+    assert await world.paragraphs(node) == ["Nieuw", "bewerkt"]
+    assert await world.version_paragraphs(node) == [["Oud"], ["Nieuw"]]
 
 
 async def test_banned_met_weer_recht_doet_weer_mee(world):

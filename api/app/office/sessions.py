@@ -204,13 +204,13 @@ async def open_session(
 ) -> tuple[OfficeSession, bool]:
     """Wie welke key krijgt (Keuze 14), onder het slot van het bestand en in één transactie:
 
-    | de sessie van dit bestand            | de opener krijgt                              |
-    | geen, of closed                      | een nieuwe key                                |
-    | pending, jonger dan 5 minuten        | dezelfde key                                  |
-    | pending, ouder                       | de oude dicht (lost) en een nieuwe key        |
-    | open, met iemand erin                | dezelfde key                                  |
-    | open zonder iemand (DS gaat opslaan) | 409 office_busy                               |
-    | saving                               | wachten op het slot; na 15 s 409 office_busy  |
+    | de sessie van dit bestand              | de opener krijgt                             |
+    | geen, of closed                        | een nieuwe key                               |
+    | pending, jonger dan 5 minuten          | dezelfde key                                 |
+    | pending, ouder, of de inhoud is anders | de oude dicht (lost) en een nieuwe key       |
+    | open, met iemand erin                  | dezelfde key                                 |
+    | open zonder iemand (DS gaat opslaan)   | 409 office_busy                              |
+    | saving                                 | wachten op het slot; na 15 s 409 office_busy |
 
     De opener komt in members en gaat uit banned. stale: het bestand veranderde buiten de
     editor terwijl de sessie liep (een upload of "versie terugzetten")."""
@@ -234,9 +234,12 @@ async def open_session(
                 raise busy_error()
             if row.state == "open" and not row.connected:
                 raise busy_error()
-            if row.state == "pending" and at - utc(row.updated_at) >= timedelta(
-                minutes=PENDING_MINUTES
+            if row.state == "pending" and (
+                at - utc(row.updated_at) >= timedelta(minutes=PENDING_MINUTES)
+                or row.blob_id != fresh.blob_id
             ):
+                # Te oud, of de inhoud veranderde voordat iemand hem opende: een nieuwe key met
+                # de inhoud van nu (anders laadt DS de oude, en wint die van de upload)
                 close(row, "lost")
                 await session.flush()  # eerst dicht, dan pas de nieuwe rij (de unieke index)
                 row = None
