@@ -65,6 +65,16 @@ def toast(page: Page, text: str | re.Pattern[str]) -> Any:
     return page.get_by_role("region", name="Meldingen").get_by_text(text)
 
 
+def save_with_enter(page: Page, field: Any) -> None:
+    """Enter in een veld van het formulier, en wachten op het antwoord van de PUT zelf. De toast
+    van een vorige keer opslaan kan nog staan (5 s): die zegt niet dat deze keer klaar is."""
+    with page.expect_response(
+        lambda r: r.request.method == "PUT" and r.url.split("?", 1)[0].endswith(ADMIN)
+    ) as put:
+        field.press("Enter")
+    assert put.value.status == 200, put.value.text()
+
+
 def close_editor(page: Page) -> None:
     page.get_by_role("button", name="Sluiten", exact=True).click()
     expect(page).not_to_have_url(re.compile(r"/bewerken/"))
@@ -119,7 +129,7 @@ def test_grens_op_1_de_tweede_bewerker_krijgt_de_melding(office: Office, office_
     try:
         # Met het toetsenbord: invullen en Enter (het formulier)
         limit.fill("1")
-        limit.press("Enter")
+        save_with_enter(tab, limit)
         expect(toast(tab, "Instellingen opgeslagen.")).to_be_visible()
         assert office.server.call(office.admin, "GET", ADMIN).json()["max_editors"] == 1
 
@@ -136,7 +146,7 @@ def test_grens_op_1_de_tweede_bewerker_krijgt_de_melding(office: Office, office_
 
         # Terug naar 20 met het formulier: Bram kan weer
         limit.fill("20")
-        limit.press("Enter")
+        save_with_enter(tab, limit)
         expect(toast(tab, "Instellingen opgeslagen.").last).to_be_visible()
         assert office.server.call(office.admin, "GET", ADMIN).json()["max_editors"] == 20
     finally:
