@@ -173,4 +173,65 @@ describe("de store per maand", () => {
     expect(store.indexOf("p0")).toBe(1);
     expect(store.held("p1")).toBeNull(); // opnieuw geladen zonder hem: echt weg
   });
+
+  /** Een server die pas antwoordt als de test dat zegt; calls: [maand, after] per verzoek. */
+  function slowServer(months: { current: string[] }) {
+    const calls: [string, string | null][] = [];
+    const waiting: ((page: PhotoPage) => void)[] = [];
+    const fetch = (s: number, after: string | null) => {
+      calls.push([months.current[s], after]);
+      return new Promise<PhotoPage>((resolve) => waiting.push(resolve));
+    };
+    return { calls, waiting, fetch };
+  }
+
+  it("de maanden steeds opnieuw gelezen terwijl een maand laadt: hij komt toch in beeld", async () => {
+    // Een reeks preview.ready-events leest de maanden om de halve seconde opnieuw. Duurde een
+    // maand langer, dan gooide elk setSections zijn antwoord weg en bleef de tijdlijn op Laden…
+    const months = { current: ["2024-07"] };
+    const server = slowServer(months);
+    const store = new SectionStore(server.fetch, [4]);
+    store.want([0]);
+    for (let k = 0; k < 3; k++) store.setSections([4], undefined, (s) => s);
+    expect(server.calls).toEqual([["2024-07", null]]); // het verzoek loopt door, geen tweede ernaast
+    server.waiting[0]({ items: all.slice(0, 4), next: null });
+    await vi.waitFor(() => expect(store.isLoaded(0)).toBe(true));
+    expect(store.item(3)?.id).toBe("p3");
+    // Het begon vóór het opnieuw lezen, dus verouderd: nog een keer van de server, en tot dan
+    // blijft het staan, ook als de maanden weer opnieuw gelezen worden
+    await vi.waitFor(() => expect(server.calls).toHaveLength(2));
+    store.setSections([4], undefined, (s) => s);
+    expect(store.item(3)?.id).toBe("p3");
+  });
+
+  it("een maand die laadt en een andere plek krijgt: de volgende pagina is van dezelfde maand", async () => {
+    const months = { current: ["2024-07"] };
+    const server = slowServer(months);
+    const store = new SectionStore(server.fetch, [4]);
+    store.want([0]);
+    // Een nieuwe maand vooraan; juli is nu sectie 1 en houdt zijn aantal
+    months.current = ["2024-08", "2024-07"];
+    store.setSections([1, 4], undefined, (s) => s - 1);
+    server.waiting[0]({ items: all.slice(0, 2), next: "c" });
+    await vi.waitFor(() => expect(server.calls).toContainEqual(["2024-07", "c"]));
+    server.waiting[server.calls.findIndex((c) => c[1] === "c")]({ items: all.slice(2, 4), next: null });
+    await vi.waitFor(() => expect(store.isLoaded(1)).toBe(true));
+    expect(store.section(1)?.map((it) => it.id)).toEqual(["p0", "p1", "p2", "p3"]);
+    expect(store.isLoaded(0)).toBe(false); // augustus laadt apart
+  });
+
+  it("een maand die laadt en een ander aantal krijgt: dat antwoord telt niet meer", async () => {
+    const months = { current: ["2024-07"] };
+    const server = slowServer(months);
+    const store = new SectionStore(server.fetch, [4]);
+    store.want([0]);
+    store.setSections([5], undefined, (s) => s);
+    expect(server.calls).toHaveLength(2); // meteen opnieuw, het oude antwoord klopt niet meer
+    server.waiting[0]({ items: all.slice(0, 4), next: null });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(store.isLoaded(0)).toBe(false);
+    server.waiting[1]({ items: [photo(99), ...all.slice(0, 4)], next: null });
+    await vi.waitFor(() => expect(store.isLoaded(0)).toBe(true));
+    expect(store.item(0)?.id).toBe("p99");
+  });
 });

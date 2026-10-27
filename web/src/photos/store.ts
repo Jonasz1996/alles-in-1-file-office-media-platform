@@ -6,9 +6,13 @@ import type { PhotoItem, PhotoPage } from "./api";
 
 export type FetchPage = (section: number, after: string | null) => Promise<PhotoPage>;
 
+/** Een sectie die geladen wordt. section: waar het antwoord heen gaat (na setSections de nieuwe
+ * plek van dezelfde maand), of null als het niet meer telt; gen: de generatie bij het begin. */
+type Job = { section: number | null; gen: number; promise: Promise<PhotoItem[]> };
+
 export class SectionStore {
   private data = new Map<number, PhotoItem[]>();
-  private loading = new Map<number, Promise<PhotoItem[]>>();
+  private loading = new Map<number, Job>();
   private wanted: number[] = [];
   private failed = new Set<number>();
   /** Geladen, maar misschien verouderd (na een wijziging): blijft staan tot het nieuwe er is */
@@ -55,10 +59,15 @@ export class SectionStore {
     this.starts = starts;
   }
 
-  /** Nieuwe secties (de maanden opnieuw gelezen). keep: secties waarvan de inhoud nog klopt. */
+  /** Nieuwe secties (de maanden opnieuw gelezen). keep: secties waarvan de inhoud nog klopt.
+   * Een maand die nog laadt en hetzelfde aantal houdt, laadt door: wat dat geeft, telt als
+   * verouderd (het begon vóór het opnieuw lezen). Zonder dat laadde een maand nooit zolang de
+   * maanden sneller opnieuw gelezen werden dan hij duurde (veel preview.ready achter elkaar). */
   setSections(counts: readonly number[], fetchPage: FetchPage = this.fetchPage, keep: (s: number) => number = () => -1) {
     const old = this.data;
     const oldPrevious = this.previous;
+    const oldLoading = this.loading;
+    const oldCounts = this.counts;
     this.generation++;
     this.fetchPage = fetchPage;
     this.counts = counts;
@@ -78,8 +87,15 @@ export class SectionStore {
       } else {
         const before = from >= 0 ? (items ?? oldPrevious.get(from)) : undefined;
         if (before) this.previous.set(s, before);
+        const job = from >= 0 && !items ? oldLoading.get(from) : undefined;
+        if (job && counts[s] === oldCounts[from]) {
+          job.section = s;
+          this.loading.set(s, job);
+          oldLoading.delete(from);
+        }
       }
     }
+    for (const job of oldLoading.values()) job.section = null;
     this.changed();
     this.pump();
   }
@@ -158,42 +174,49 @@ export class SectionStore {
     const have = this.data.get(s);
     if (have && !(fresh && this.stale.has(s))) return Promise.resolve(have);
     const busy = this.loading.get(s);
-    if (busy) return busy;
-    const gen = this.generation;
+    if (busy) return busy.promise;
+    const job: Job = { section: s, gen: this.generation, promise: Promise.resolve([]) };
     const run = async () => {
       const items: PhotoItem[] = [];
       let after: string | null = null;
       do {
-        const page: PhotoPage = await this.fetchPage(s, after);
+        // De volgende pagina van dezelfde maand, ook als die intussen een andere plek kreeg
+        const page: PhotoPage = await this.fetchPage(job.section ?? s, after);
         items.push(...page.items);
         after = page.next;
-      } while (after !== null && gen === this.generation);
+      } while (after !== null && job.section !== null);
       return items;
     };
-    const p = run().then(
+    job.promise = run().then(
       (items) => {
-        if (gen !== this.generation) return items;
-        this.loading.delete(s);
-        this.stale.delete(s);
-        this.put(s, items);
-        this.failed.delete(s);
-        if (items.length !== this.counts[s]) this.onMismatch(s, items.length);
-        this.changed();
+        const at = job.section;
+        if (at === null) return items;
+        this.loading.delete(at);
+        const current = job.gen === this.generation;
+        if (current || items.length === this.counts[at]) {
+          if (current) this.stale.delete(at);
+          else this.stale.add(at); // tonen, en straks nog een keer van de server
+          this.put(at, items);
+          this.failed.delete(at);
+          if (current && items.length !== this.counts[at]) this.onMismatch(at, items.length);
+          this.changed();
+        }
         this.pump();
         return items;
       },
       (e: unknown) => {
-        if (gen === this.generation) {
-          this.loading.delete(s);
-          this.failed.add(s);
+        const at = job.section;
+        if (at !== null) {
+          this.loading.delete(at);
+          this.failed.add(at);
           this.onError(e);
           this.pump();
         }
         throw e;
       },
     );
-    this.loading.set(s, p);
-    return p;
+    this.loading.set(s, job);
+    return job.promise;
   }
 
   /** Mislukte secties weer proberen (bijv. weer online). */
