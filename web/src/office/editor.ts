@@ -14,7 +14,9 @@
 // - onWarning -18: "verbinding weg" (Keuze 28);
 // - office.unsaved met final false: een melding in de pagina (de rest doet notices.ts);
 // - office.presence en node.changed: de statusregel ("Bewerken met 2 anderen", "Opgeslagen
-//   om 10:42");
+//   om 10:42"). node.changed telt alleen als opslag als modified_at van het bestand verder is
+//   dan wat de pagina kende: hernoemen, verplaatsen, een label of terugzetten uit de prullenbak
+//   sturen hem ook, en laten modified_at staan;
 // - het cookie elke 30 minuten vernieuwen (gate.ts), en bij het verlaten destroyEditor().
 
 import { ApiError } from "../api";
@@ -79,6 +81,8 @@ export interface Timers {
 export interface Deps {
   /** POST …/session */
   open(): Promise<SessionOut>;
+  /** modified_at van het bestand (GET …/files/{id}): wanneer de inhoud het laatst veranderde */
+  modifiedAt(): Promise<string>;
   /** api.js laden en new DocsAPI.DocEditor(…, config met events) maken */
   mount(session: SessionOut, events: EditorEvents): Promise<DocEditor>;
   /** POST …/save */
@@ -168,6 +172,8 @@ export class EditorSession {
   private mounts = 0;
   private refreshing = false;
   private destroyed = false;
+  /** De laatste modified_at die de pagina kent (ms); null: nog niet gelezen */
+  private modified: number | null = null;
 
   constructor(
     private readonly nodeId: string,
@@ -220,7 +226,25 @@ export class EditorSession {
     if (!session || this.destroyed) return;
     this.accept(session);
     this.stopGate = this.deps.keepGate();
+    void this.readModified().then((at) => this.newer(at));
     await this.mount();
+  }
+
+  /** modified_at van het bestand nu (ms); null als het niet te lezen is. */
+  private async readModified(): Promise<number | null> {
+    try {
+      const at = Date.parse(await this.deps.modifiedAt());
+      return Number.isNaN(at) ? null : at;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Is at nieuwer dan wat de pagina kende? Dan onthoudt hij het. Nog niets bekend: ja. */
+  private newer(at: number | null): boolean {
+    if (at === null || (this.modified !== null && at <= this.modified)) return false;
+    this.modified = at;
+    return true;
   }
 
   /** POST …/session; bij office_busy elke 3 s opnieuw, hooguit 30 s. null: de pagina is weg. */
@@ -410,14 +434,22 @@ export class EditorSession {
       }
       case "node.changed": {
         if (!aboutNode(event, this.nodeId) || this.state.phase !== "ready") return;
-        this.timers.clear(this.savingTimer);
-        this.clearNotice("unsaved");
-        this.set({ saving: false, savedAt: this.now() });
+        void this.changed();
         return;
       }
       default:
         return;
     }
+  }
+
+  /** node.changed: alleen een opslag als de inhoud nieuwer is dan wat de pagina kende (lukte
+   * het lezen bij het openen niet, dan telt de eerste zoals vroeger). */
+  private async changed(): Promise<void> {
+    const at = await this.readModified();
+    if (!this.newer(at) || this.destroyed || this.state.phase !== "ready") return;
+    this.timers.clear(this.savingTimer);
+    this.clearNotice("unsaved");
+    this.set({ saving: false, savedAt: this.now() });
   }
 
   // --- weg ---

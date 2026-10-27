@@ -79,6 +79,8 @@ function session(key = "k1", extra: Partial<SessionOut> = {}): SessionOut {
 interface World {
   deps: Deps;
   clock: Clock;
+  /** modified_at van het bestand zoals GET …/files/{id} hem geeft; saved() zet hem verder */
+  file: { modified: string };
   open: ReturnType<typeof vi.fn<() => Promise<SessionOut>>>;
   editors: { destroyEditor: ReturnType<typeof vi.fn>; refreshFile: ReturnType<typeof vi.fn> }[];
   events: EditorEvents[];
@@ -92,8 +94,10 @@ function world(open?: () => Promise<SessionOut>): World {
   const events: EditorEvents[] = [];
   const stopGate = vi.fn();
   const openFn = vi.fn(open ?? (async () => session()));
+  const file = { modified: "2026-10-27T09:00:00Z" };
   const deps: Deps = {
     open: openFn,
+    modifiedAt: vi.fn(async () => file.modified),
     mount: vi.fn(async (_s: SessionOut, ev: EditorEvents) => {
       events.push(ev);
       const made = { destroyEditor: vi.fn(), refreshFile: vi.fn() };
@@ -108,7 +112,12 @@ function world(open?: () => Promise<SessionOut>): World {
     timers: clock,
     now: () => clock.now,
   };
-  return { deps, clock, open: openFn, editors, events, stopGate, ed: new EditorSession("n1", deps) };
+  return { deps, clock, file, open: openFn, editors, events, stopGate, ed: new EditorSession("n1", deps) };
+}
+
+/** Het bestand kreeg nieuwe inhoud (een opslag): modified_at een minuut verder. */
+function saved(w: World): void {
+  w.file.modified = new Date(Date.parse(w.file.modified) + 60_000).toISOString();
 }
 
 const busy = () => new ApiError(409, "Dit document wordt net opgeslagen", "office_busy");
@@ -244,16 +253,43 @@ describe("tijdens het bewerken", () => {
     expect(statusText(w.ed.getState())).toBe("Bewerken met 1 ander");
   });
 
-  it("node.changed voor dit bestand: Opgeslagen om …", async () => {
+  it("node.changed voor dit bestand met nieuwe inhoud: Opgeslagen om …", async () => {
     const w = world();
     await ready(w);
+    saved(w);
     w.ed.onServerEvent({ type: "node.changed", data: { id: "ander", parent_id: "p" } });
+    await flush();
     expect(w.ed.getState().savedAt).toBeNull();
     w.ed.onServerEvent({ type: "node.changed", data: { id: "n1", parent_id: "p" } });
+    await flush();
     expect(w.ed.getState().savedAt).toBe(w.clock.now);
     expect(statusText(w.ed.getState())).toMatch(/^Bewerken · Opgeslagen om \d{1,2}:\d{2}$/);
+    await w.clock.advance(60_000);
+    saved(w);
     w.ed.onServerEvent({ type: "node.changed", data: { ids: ["x", "n1"], parent_id: "p" } });
+    await flush();
     expect(w.ed.getState().savedAt).toBe(w.clock.now);
+  });
+
+  it("node.changed zonder nieuwe inhoud (hernoemen, verplaatsen, een label): geen Opgeslagen, en de melding blijft", async () => {
+    const w = world();
+    await ready(w);
+    w.ed.onServerEvent({ type: "office.unsaved", data: { node_id: "n1", name: "x", reason: "no_room", final: false } });
+    await w.ed.save();
+    w.ed.onServerEvent({ type: "node.changed", data: { id: "n1", parent_id: "p" } });
+    await flush();
+    expect(w.ed.getState().savedAt).toBeNull();
+    expect(w.ed.getState().saving).toBe(true);
+    expect(w.ed.getState().notices.map((n) => n.kind)).toEqual(["unsaved"]);
+    // Kan het bestand niet gelezen worden: ook niets beweren
+    vi.mocked(w.deps.modifiedAt).mockRejectedValueOnce(new ApiError(503, "weg", "unavailable"));
+    w.ed.onServerEvent({ type: "node.changed", data: { id: "n1", parent_id: "p" } });
+    await flush();
+    expect(w.ed.getState().savedAt).toBeNull();
+    saved(w);
+    w.ed.onServerEvent({ type: "node.changed", data: { id: "n1", parent_id: "p" } });
+    await flush();
+    expect(w.ed.getState()).toMatchObject({ saving: false, savedAt: w.clock.now, notices: [] });
   });
 
   it("Nu opslaan: Opslaan… tot het bestand verandert, of hooguit 10 s", async () => {
@@ -262,7 +298,9 @@ describe("tijdens het bewerken", () => {
     await w.ed.save();
     expect(w.deps.saveNow).toHaveBeenCalledTimes(1);
     expect(statusText(w.ed.getState())).toBe("Opslaan…");
+    saved(w);
     w.ed.onServerEvent({ type: "node.changed", data: { id: "n1" } });
+    await flush();
     expect(w.ed.getState().saving).toBe(false);
     await w.ed.save();
     await w.clock.advance(SAVING_MS);
@@ -315,7 +353,9 @@ describe("tijdens het bewerken", () => {
     w.ed.onServerEvent({ type: "office.unsaved", data: { node_id: "n1", name: "x", reason: "no_room", final: false } });
     expect(w.ed.getState().notices).toEqual([{ kind: "unsaved", text: expect.stringContaining("quotum van de eigenaar is vol"), reload: false }]);
     // Daarna wel opgeslagen: de melding weg
+    saved(w);
     w.ed.onServerEvent({ type: "node.changed", data: { id: "n1" } });
+    await flush();
     expect(w.ed.getState().notices).toEqual([]);
   });
 });

@@ -120,6 +120,7 @@ function Editor({ id }: { id: string }): JSX.Element {
 
     const session = new EditorSession(id, {
       open: () => openSession(id, sessionBody(readTheme(), media("(prefers-color-scheme: dark)"), media(NARROW))),
+      modifiedAt: () => api.request<FileNode>("GET", `/api/v1/files/${encodeURIComponent(id)}`).then((n) => n.modified_at),
       mount: async (out, events) => {
         const docs = await loadApi(out.api_url);
         const host = box.current;
