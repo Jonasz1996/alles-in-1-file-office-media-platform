@@ -723,9 +723,12 @@ Elke keuze geeft de standaard en waarom.
         (x2t gaat dood, docservice blijft) en de twee pogingen van een conversie (Keuze 25).
     - Weigert de controle, dan geeft bewerken 422 `office_unsafe` en wordt conversie
       `pdf_state = unsafe`. B21 blijft werken: die lezer heeft zijn eigen grenzen, in een
-      afgeschermd proces.
-    - De uitslag staat per sha een uur in het geheugen. Het kost bij 64 MB XML ±0,5 s cpu, in een
-      thread, dus nooit op de event loop.
+      afgeschermd proces. Behalve als de controle het bestand nu niet kon bekijken (`time`: de
+      20 s op, of `io`: niet te lezen). Dat zegt iets over de machine, niet over de inhoud: een
+      conversie telt het als een gewone poging (na twee `failed`, de knop op /beheer zet hem
+      terug), een verzoek geeft 503 `office_unavailable` (review fase 4, o3.md afwijking 20).
+    - De uitslag staat per sha een uur in het geheugen (`time` en `io` niet). Het kost bij 64 MB
+      XML ±0,5 s cpu, in een thread, dus nooit op de event loop.
     - Ook DS zelf krijgt grenzen voor ODF: `inputLimits` voor odt, ods en odp in
       `local-production-linux.json`. Een lijst vervangt daar de hele lijst, dus alle regels van
       `default.json` staan erin, plus de nieuwe [niet getest, spike stap 18].
@@ -1986,8 +1989,9 @@ def rewrite(settings, url: str, *, key: str, kind: Literal["data", "conv", "forg
 
 # app/office/inspect.py (Keuze 23; in een thread, alleen zipfile en zlib)
 @dataclass(frozen=True)
-class Verdict: ok: bool; reason: str | None     # too_big | ratio | entries | method | encrypted | time
-async def check(settings, path: Path, ext: str, sha: str) -> Verdict   # een uur in het geheugen per sha
+class Verdict: ok: bool; reason: str | None     # too_big | ratio | entries | method | encrypted | time | io | ...
+TRANSIENT = frozenset({"time", "io"})            # de machine, niet de inhoud: niet bewaard, niet unsafe
+async def check(settings, path: Path, ext: str, sha: str) -> Verdict   # een uur in het geheugen per sha (TRANSIENT niet)
 
 # app/office/health.py (de enige gezondheidslus; schrijft OfficeState)
 async def start(app) -> None

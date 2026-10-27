@@ -496,6 +496,45 @@ async def test_te_groot_voor_een_verzoek(client, admin, office, monkeypatch):
     assert office.converted() == []
 
 
+@pytest.mark.anyio
+async def test_een_trage_controle_is_niet_blijvend_unsafe(client, admin, office, monkeypatch):
+    """De tijdgrens van de invoercontrole (of een leesfout) zegt iets over de machine, niet over
+    het bestand: de taak telt het als een gewone poging (failed na twee), niet als unsafe. Dan
+    zet de knop Mislukte opnieuw op /beheer hem terug, en komt de PDF er alsnog."""
+    jonas, _ = admin
+    s = office.settings
+    monkeypatch.setattr(inspect, "SECONDS", -1)  # een drukke machine: altijd te laat
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+    [job] = await office_jobs(s, "failed")
+    assert job.attempts == 2 and "invoercontrole" in job.error
+    assert office.converted() == []  # DS zag niets
+    monkeypatch.setattr(inspect, "SECONDS", 20.0)  # zonder inspect.forget: niets bewaard
+    r = await client.post(RETRY, headers=jonas)
+    assert r.status_code == 200 and r.json() == {"queued": 1}
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+
+
+@pytest.mark.anyio
+async def test_een_trage_controle_bij_een_verzoek_is_503(client, admin, office, monkeypatch):
+    """Op verzoek: 503 office_unavailable (zo opnieuw proberen), en de inhoud wordt niet
+    unsafe; de volgende vraag kijkt opnieuw en zet hem om."""
+    jonas, _ = admin
+    s = office.settings
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))  # nog geen taak gedaan
+    monkeypatch.setattr(inspect, "SECONDS", -1)
+    r = await ask(client, jonas, node["id"], expect=503)
+    assert code_of(r) == "office_unavailable"
+    assert (await blob_of(s, node["id"])).pdf_state is None
+    monkeypatch.setattr(inspect, "SECONDS", 20.0)
+    r = await ask(client, jonas, node["id"])
+    assert r.json() == {"pdf_state": "pending"}
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+
+
 # --- uploads via een link en verzoeken -----------------------------------------------------
 
 

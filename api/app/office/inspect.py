@@ -33,13 +33,16 @@ is maar een maat. Een docx met 3,9 MB aan alleen pagina-einden (±95.000 pagina'
 maar op ±97 %; daarvoor zijn de geheugengrens van de container (x2t gaat dood, docservice
 blijft) en de twee pogingen van een conversie (Keuze 25).
 
-De uitslag staat per sha (en extensie) een uur in het geheugen.
+De uitslag staat per sha (en extensie) een uur in het geheugen, behalve time en io.
 
-Redenen: too_big, ratio, entries, method, encrypted, time, en daarnaast corrupt (geen
-geldige zip, of een onderdeel dat over zijn grootte liegt) en format (geen soort die DS van
-ons krijgt).
+Redenen over de inhoud: too_big, ratio, entries, method, encrypted, corrupt (geen geldige zip,
+of een onderdeel dat over zijn grootte liegt) en format (geen soort die DS van ons krijgt).
+Wie ze krijgt, is blijvend unsafe. Redenen over de machine (TRANSIENT): time (de 20 s op, op
+een drukke machine of een trage schijf) en io (het bestand niet te lezen); die blijven niet
+bewaard, en de aanroeper probeert het later opnieuw.
 """
 
+import errno
 import re
 import struct
 import tempfile
@@ -103,6 +106,8 @@ class Verdict:
 
 
 OK = Verdict(True)
+# Over de machine, niet over de inhoud: niet bewaren, en later opnieuw (niet unsafe)
+TRANSIENT = frozenset({"time", "io"})
 
 
 class Refused(Exception):
@@ -394,8 +399,9 @@ def _inspect(path: Path, ext: str, ole_max: int) -> Verdict:
                 return Verdict(False, "too_big")
     except Refused as refused:
         return Verdict(False, refused.reason)
-    except OSError:
-        return Verdict(False, "corrupt")
+    except OSError as exc:
+        # EINVAL: zoeken naar een plek die de zip zelf onmogelijk opgeeft (voor het begin)
+        return Verdict(False, "corrupt" if exc.errno == errno.EINVAL else "io")
     return OK
 
 
@@ -403,13 +409,16 @@ _cache: dict[tuple[str, str], tuple[Verdict, float]] = {}
 
 
 async def check(settings: Settings, path: Path, ext: str, sha: str) -> Verdict:
-    """Mag dit bestand (inhoud sha, soort ext) naar DS? In een thread; een uur bewaard."""
+    """Mag dit bestand (inhoud sha, soort ext) naar DS? In een thread; een uur bewaard (een
+    reden uit TRANSIENT niet)."""
     key = (sha, ext.lower().lstrip("."))
     now = time.monotonic()
     cached = _cache.get(key)
     if cached is not None and cached[1] > now:
         return cached[0]
     verdict = await anyio.to_thread.run_sync(_inspect, path, ext, settings.office_ole_max_bytes)
+    if verdict.reason in TRANSIENT:
+        return verdict
     if len(_cache) >= CACHE_SIZE:
         for old in [k for k, (_, expires) in _cache.items() if expires <= now] or [
             next(iter(_cache))

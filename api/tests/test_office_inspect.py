@@ -3,7 +3,7 @@ bestanden gaan door; een bom, een zip die over zijn grootte liegt, te veel onder
 vreemde methode, iets versleuteld en een bom in een ingebedde zip niet; een pptx met 80 MB
 foto's wel; doc boven 20 MB niet; de tijdgrens; de cache per sha. En de inhoud beslist, niet
 de naam: een zip onder de naam .doc, XML in een onderdeel dat niet op .xml eindigt, en een
-docx die zich werkblad noemt."""
+docx die zich werkblad noemt. time en io (de machine, niet de inhoud) blijven niet bewaard."""
 
 import io
 import os
@@ -453,9 +453,18 @@ def test_onbekende_soort(tmp_path, ext):
 
 
 def test_bestand_weg(tmp_path):
-    assert inspect._inspect(tmp_path / "bestaat-niet", "docx", MB) == inspect.Verdict(
-        False, "corrupt"
-    )
+    # Niet te lezen zegt niets over de inhoud: io, niet corrupt (dat zou blijvend unsafe zijn)
+    assert inspect._inspect(tmp_path / "bestaat-niet", "docx", MB) == inspect.Verdict(False, "io")
+
+
+def test_een_onmogelijke_plek_in_de_zip_blijft_corrupt(tmp_path):
+    # De centrale map zegt dat ze 100 bytes verder begint: het eerste onderdeel komt zo op
+    # plek -100, en zoeken daarheen geeft een OSError (EINVAL). Dat komt door de inhoud
+    data = bytearray(docx_bytes())
+    end = data.rfind(b"PK\x05\x06")
+    offset = struct.unpack_from("<I", data, end + 16)[0]
+    struct.pack_into("<I", data, end + 16, offset + 100)
+    assert verdict(tmp_path, bytes(data), "docx") == inspect.Verdict(False, "corrupt")
 
 
 # De cache
@@ -489,6 +498,22 @@ async def test_cache_verloopt_en_blijft_begrensd(tmp_path, office, monkeypatch):
     for n in range(10):
         await inspect.check(office, path, "docx", f"{n:064d}")
     assert len(inspect._cache) <= 3
+
+
+@pytest.mark.anyio
+async def test_tijd_en_io_blijven_niet_bewaard(tmp_path, office, monkeypatch):
+    """time en io zeggen iets over de machine, niet over de inhoud: de volgende keer opnieuw
+    kijken, ook binnen het uur van de cache."""
+    path = tmp_path / "komt-straks"
+    sha = "d" * 64
+    assert await inspect.check(office, path, "docx", sha) == inspect.Verdict(False, "io")
+    path.write_bytes(docx_bytes())
+    assert await inspect.check(office, path, "docx", sha) == inspect.OK
+    monkeypatch.setattr(inspect, "SECONDS", -1)
+    assert await inspect.check(office, path, "docx", "e" * 64) == inspect.Verdict(False, "time")
+    monkeypatch.setattr(inspect, "SECONDS", 20.0)
+    assert await inspect.check(office, path, "docx", "e" * 64) == inspect.OK
+    assert inspect.TRANSIENT == {"time", "io"}
 
 
 @pytest.mark.anyio

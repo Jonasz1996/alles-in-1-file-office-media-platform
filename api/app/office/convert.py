@@ -31,7 +31,9 @@ deze volgorde:
    er al een conversie (één slot in dit proces): over 60 s, maar wie het slot vrijgeeft, zet
    de eerste die wacht meteen klaar (_next). Beide zonder poging; een worker wacht nooit;
 6. het slot: de invoercontrole (Keuze 23) weigert: unsafe, klaar. Zo kost wachten op het slot
-   geen controle, alleen het omzetten;
+   geen controle, alleen het omzetten. Kon de controle het bestand nu niet bekijken (time of
+   io: de machine, niet de inhoud), dan een gewone poging (JobError), niet unsafe: na twee
+   failed, en de knop Mislukte opnieuw zet hem terug;
 7. omzetten: een grant, engine.convert, de PDF naar data_dir/office/.tmp, controle op %PDF-
    (de grootte begrenst het ophalen), dan onder blobs.lock op zijn plek als de blob er nog is,
    previews/<sha>/pages/ leeg, ready met de nieuwe pdf_version. Dan het slot vrij;
@@ -520,6 +522,10 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
     _converting.add(sha)  # geen await sinds de controle hierboven: dit is het slot
     try:
         verdict = await inspect.check(settings, blobs.path(sha), ext, sha)
+        if verdict.reason in inspect.TRANSIENT:  # de machine, niet het bestand: een poging
+            raise jobs.JobError(
+                f"De invoercontrole kon het bestand nu niet bekijken ({verdict.reason})"
+            )
         if not verdict.ok:
             await _set_state(maker, sha, "unsafe")
             log.info("office: %s gaat niet naar DS (%s)", sha[:12], verdict.reason)
@@ -892,6 +898,8 @@ async def request(
     path = BlobStore(settings.blob_dir).path(sha)
     await session.commit()  # geen databaseverbinding vasthouden tijdens de invoercontrole
     verdict = await inspect.check(settings, path, ext, sha)
+    if verdict.reason in inspect.TRANSIENT:  # de machine, niet het bestand: zo opnieuw
+        raise errors.fail(503, "office_unavailable", UNAVAILABLE)
     if not verdict.ok:
         await session.execute(
             update(Blob)
