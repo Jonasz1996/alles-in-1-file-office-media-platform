@@ -17,20 +17,22 @@ Haken van O0:
 - on_healthy(): in health.py bij "weer gezond" (ook de eerste keer na de start): de
   inhaalronde.
 
-De taak office.pdf (payload {sha, n, ask?, r?}, max_attempts 2, on_dead -> failed), in deze
-volgorde:
+De taak office.pdf (payload {sha, n, ask?, r?, b?}, max_attempts 2, on_dead -> failed), in
+deze volgorde:
 1. de blob is weg: klaar;
 2. de PDF er al, met de juiste pdf_version: alleen de thumbnails opnieuw (zonder DS);
 3. office uit (niet ingesteld, of uitgezet op /beheer): pdf_state terug (leeg, of ask);
-4. de invoercontrole (Keuze 23) weigert: unsafe, klaar;
-5. DS niet gezond: pdf_state terug en klaar, zonder poging; de inhaalronde neemt hem terug.
+4. DS niet gezond: pdf_state terug en klaar, zonder poging; de inhaalronde neemt hem terug.
    Mislukte er al een poging (DS ging tijdens een conversie onderuit en is nog niet terug),
    dan telt dit wel: zo krijgt een bestand dat DS laat vastlopen hooguit twee kansen;
-6. een sessie die opent of opslaat (sessions.busy), of er loopt al een conversie (één slot
-   in dit proces): de taak over 5 s opnieuw in de rij, zonder poging. Een worker wacht nooit;
+5. een sessie die opent of opslaat (sessions.busy): de taak over 5 s opnieuw in de rij. Loopt
+   er al een conversie (één slot in dit proces): over 60 s, maar wie het slot vrijgeeft, zet
+   de eerste die wacht meteen klaar (_next). Beide zonder poging; een worker wacht nooit;
+6. het slot: de invoercontrole (Keuze 23) weigert: unsafe, klaar. Zo kost wachten op het slot
+   geen controle, alleen het omzetten;
 7. omzetten: een grant, engine.convert, de PDF naar data_dir/office/.tmp, controle op %PDF-
    (de grootte begrenst het ophalen), dan onder blobs.lock op zijn plek als de blob er nog is,
-   previews/<sha>/pages/ leeg, ready met de nieuwe pdf_version;
+   previews/<sha>/pages/ leeg, ready met de nieuwe pdf_version. Dan het slot vrij;
 8. de thumbnails 256 en 1024 uit pagina 1 in het renderproces; ze vervangen de webp's,
    preview_meta.sizes erbij; previews.announce. Een doc, xls, ppt of rtf (zonder preview
    van B21) krijgt zo zijn eerste preview.
@@ -39,6 +41,11 @@ Wachten zonder poging gaat niet via jobs.chain maar door de eigen rij terug in d
 zetten (status queued, attempts - 1): een nieuwe taak zou weer bij 0 pogingen beginnen, en dan
 kreeg een bestand meer dan twee kansen. jobs.execute zet daarna niets meer op done, want het
 zet alleen een rij die nog running is.
+
+Wie op het slot wacht (_waiting, alleen in dit proces), is aan de beurt in deze volgorde: een
+conversie op verzoek (request, het kwartier daarna), dan een upload, dan de inhaalronde
+(payload b); elk op volgorde van aankomst. Na een herstart weet het proces dat niet meer; dan
+komt elke taak na hooguit 60 s gewoon terug.
 
 De fouten van DS (oo/convert.py): new_key (-2, -4) -> een nieuwe taak met n + 1 over 30 s
 (jobs.chain, met dezelfde ask en r), hooguit drie nieuwe keys; failed -> failed; none -> none;
@@ -49,8 +56,10 @@ mislukt (failed) staat ook als mislukte taak op /beheer, met de code in de meldi
 De inhaalronde (payload {after}): in stukken van 200 blobs op volgorde van sha, alleen inhoud
 van een bestand (geen eerdere versie) waarvan de preview klaar is. Hij neemt NULL (groter dan
 office_auto_convert_bytes: ask), en bij een hogere PDF_VERSION ook ready en failed; nooit
-ask, unsafe of none. Elk stuk krijgt run_after +60 s, en het volgende stuk ook: nieuwe uploads
-gaan altijd voor. Met DS niet gezond stopt de ronde; on_healthy start hem opnieuw.
+ask, unsafe of none. Elk stuk krijgt run_after +60 s, en het volgende stuk ook. Staan er nog
+200 of meer conversies klaar, dan komt er geen nieuw stuk bij: dezelfde plek over 60 s opnieuw.
+Zo staat nooit de hele bibliotheek in de rij, en gaan nieuwe uploads voor (ook bij het slot).
+Met DS niet gezond stopt de ronde; on_healthy start hem opnieuw.
 
 Mislukte opnieuw (retry_failed, de knop op /beheer): elke failed meteen een eigen taak met r (8
 hex-tekens), en pending. r komt in de key (keys.convert_key): DS bewaart ook een fout onder de
@@ -62,23 +71,26 @@ niet meer langs een sha vóór zijn plek.
 Op verzoek (request): POST /api/v1/office/files/{id}/convert en /pdf, alleen ingelogd met
 leesrecht. Per gebruiker hooguit 10 per 10 minuten (429 rate_limited); hooguit 100 MB voor
 zip-formaten en office_ole_max_bytes voor doc, xls, ppt en rtf (413 office_too_large). De
-taak krijgt een run_after in het verleden, en staat dus vooraan. Ook voor een eerdere versie.
+taak krijgt een run_after in het verleden, en staat dus vooraan; moet hij toch op het slot
+wachten, dan is hij de eerste die het daarna krijgt. Ook voor een eerdere versie.
 """
 
 import asyncio
+import itertools
 import logging
 import os
 import re
 import secrets
 import shutil
 import tempfile
+import time
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
 
 import anyio
 import anyio.to_thread
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import errors, jobs, previews
@@ -99,7 +111,11 @@ BACKFILL_KEY = "office.pdf.backfill"
 MAX_ATTEMPTS = 2
 BATCH = 200
 BACKFILL_DELAY = 60.0  # zoals previews.RERENDER_DELAY
-WAIT_SECONDS = 5.0  # een sessie die opent of opslaat, of het slot is bezet
+WAIT_SECONDS = 5.0  # een sessie die opent of opslaat
+# Het slot is bezet: wie het vrijgeeft, zet de volgende meteen klaar (_next); dit is de terugval
+SLOT_SECONDS = 60.0
+# Zo lang (s) gaat een conversie op verzoek voor bij het slot (langer dan de viewer kijkt)
+ASKED_SECONDS = 900.0
 NEW_KEY_SECONDS = 30.0  # na -2 of -4
 MAX_KEY = 4  # de eerste key en hooguit drie nieuwe (-a2 tot en met -a4)
 # Zo groot mag een zip-formaat op verzoek zijn: wat DS zelf nog ophaalt (maxDownloadBytes)
@@ -145,6 +161,11 @@ OFF = "Bewerken van documenten staat op deze server niet aan"
 
 # De conversie die nu loopt (hooguit één per proces; DS heeft er één plek voor, M14)
 _converting: set[str] = set()
+# Wie op het slot wacht: sha -> (volgnummer van aankomst, uit de inhaalronde)
+_waiting: dict[str, tuple[int, bool]] = {}
+_arrivals = itertools.count()
+# Conversies op verzoek: sha -> tot wanneer (time.monotonic) hij voorgaat
+_asked: dict[str, float] = {}
 # Taken van on_healthy, zodat ze niet halverwege worden opgeruimd
 _tasks: set[asyncio.Task] = set()
 
@@ -321,16 +342,49 @@ async def _own_job(maker: async_sessionmaker[AsyncSession], sha: str, **values: 
         await session.commit()
 
 
-async def _postpone(maker: async_sessionmaker[AsyncSession], sha: str) -> None:
-    """Over WAIT_SECONDS opnieuw, zonder dat deze poging telt."""
+async def _postpone(maker: async_sessionmaker[AsyncSession], sha: str, seconds: float) -> None:
+    """Over seconds opnieuw, zonder dat deze poging telt."""
     await _own_job(
         maker,
         sha,
         status="queued",
         started_at=None,
         attempts=Job.attempts - 1,
-        run_after=jobs.now() + timedelta(seconds=WAIT_SECONDS),
+        run_after=jobs.now() + timedelta(seconds=seconds),
     )
+
+
+def _rank(sha: str) -> tuple[int, int]:
+    """De beurt bij het slot: op verzoek, dan een upload, dan de inhaalronde; dan aankomst."""
+    arrival, backfill = _waiting[sha]
+    asked = _asked.get(sha, 0.0) > time.monotonic()
+    return (0 if asked else 2 if backfill else 1), arrival
+
+
+async def _next(maker: async_sessionmaker[AsyncSession]) -> None:
+    """Het slot is vrij: de eerste die erop wacht, is meteen aan de beurt (run_after in het
+    verleden, de workers gewekt), niet pas na SLOT_SECONDS. Lukt dat niet, dan blijft het bij
+    die SLOT_SECONDS."""
+    now = time.monotonic()
+    for sha in [sha for sha, until in _asked.items() if until <= now]:
+        del _asked[sha]
+    try:
+        while _waiting:
+            sha = min(_waiting, key=_rank)
+            async with maker() as session:
+                result = await session.execute(
+                    update(Job)
+                    .where(Job.type == TYPE, Job.key == job_key(sha), Job.status == "queued")
+                    .values(run_after=jobs.now() - timedelta(hours=1))
+                    .execution_options(synchronize_session=False)
+                )
+                await session.commit()
+            if result.rowcount:
+                jobs.kick()
+                return
+            _waiting.pop(sha, None)  # wacht niet meer (klaar, of loopt al)
+    except Exception:  # noqa: BLE001 - de terugval van SLOT_SECONDS blijft
+        log.warning("office: de volgende conversie klaarzetten mislukte", exc_info=True)
 
 
 async def _attempts(maker: async_sessionmaker[AsyncSession], sha: str) -> int:
@@ -394,6 +448,7 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
     blobs = BlobStore(settings.blob_dir)
     maker = _maker(settings)
     office = engine.current()
+    place = _waiting.pop(sha, None)  # wacht hij straks weer op het slot, dan op dezelfde plek
     async with maker() as session:
         blob = await session.get(Blob, sha)
         if blob is None:
@@ -411,26 +466,29 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
     if office is None or not enabled or ext is None or ext not in office.convert_formats:
         await _release(maker, sha, asked, r)
         return
-    verdict = await inspect.check(settings, blobs.path(sha), ext, sha)
-    if not verdict.ok:
-        await _set_state(maker, sha, "unsafe")
-        log.info("office: %s gaat niet naar DS (%s)", sha[:12], verdict.reason)
-        return
     if not _healthy():
         if await _attempts(maker, sha) > 1:
             raise jobs.JobError("De document server is niet gezond na een mislukte poging")
         await _release(maker, sha, asked, r)
         return
     async with maker() as session:
-        waiting = await sessions.busy(session)
-    if waiting or _converting:
-        await _postpone(maker, sha)
+        busy = await sessions.busy(session)
+    if busy or _converting:
+        _waiting[sha] = place or (next(_arrivals), bool(payload.get("b")))
+        await _postpone(maker, sha, WAIT_SECONDS if busy else SLOT_SECONDS)
         return
     _converting.add(sha)  # geen await sinds de controle hierboven: dit is het slot
     try:
+        verdict = await inspect.check(settings, blobs.path(sha), ext, sha)
+        if not verdict.ok:
+            await _set_state(maker, sha, "unsafe")
+            log.info("office: %s gaat niet naar DS (%s)", sha[:12], verdict.reason)
+            return
         converted = await _convert(settings, office, sha, ext, n, asked, r)
     finally:
         _converting.discard(sha)
+        with anyio.CancelScope(shield=True), anyio.move_on_after(10):
+            await _next(maker)
     if converted:
         await thumbnails(settings, sha)
 
@@ -652,6 +710,14 @@ async def backfill(settings: Settings, payload: dict[str, Any]) -> None:
     async with _maker(settings)() as session:
         if not await _enabled(session):
             return
+        at = jobs.now() + timedelta(seconds=BACKFILL_DELAY)
+        queued = await session.scalar(
+            select(func.count()).where(Job.type == TYPE, Job.status == "queued")
+        )
+        if (queued or 0) >= BATCH:  # de rij is nog lang genoeg: dit stuk straks opnieuw
+            await jobs.chain(session, BACKFILL, {"after": after}, BACKFILL_KEY, run_after=at)
+            await session.commit()
+            return
         is_content = select(Node.id).where(Node.blob_id == Blob.sha256).exists()
         rows = (
             await session.execute(
@@ -673,14 +739,13 @@ async def backfill(settings: Settings, payload: dict[str, Any]) -> None:
                 .limit(BATCH)
             )
         ).all()
-        at = jobs.now() + timedelta(seconds=BACKFILL_DELAY)
         limit = settings.office_auto_convert_bytes
         ask = {sha for sha, size, state in rows if state != "ready" and size > limit}
         convert = [(sha, state) for sha, _, state in rows if sha not in ask]
         await jobs.enqueue_many(
             session,
             TYPE,
-            [({"sha": sha, "n": 1}, job_key(sha)) for sha, _ in convert],
+            [({"sha": sha, "n": 1, "b": True}, job_key(sha)) for sha, _ in convert],
             run_after=at,
         )
         if ask:
@@ -801,6 +866,7 @@ async def request(
         raise errors.fail(404, "not_found", "Niet gevonden")
     asked = blob.pdf_state == "ask"
     first = jobs.now() - timedelta(hours=1)  # vooraan in de rij
+    _asked[sha] = time.monotonic() + ASKED_SECONDS  # en de eerste bij het slot
     job = await session.scalar(
         select(Job)
         .where(Job.key == job_key(sha), Job.status.in_(jobs.ACTIVE))

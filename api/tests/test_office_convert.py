@@ -104,6 +104,8 @@ async def office(client, settings, monkeypatch):
     inspect.forget()
     grants.clear()
     convert._converting.clear()
+    convert._waiting.clear()
+    convert._asked.clear()
     world = Office(s, fake_app.state.fake, fake_app, transport)
     yield world
     if world.conversions.hold is not None:
@@ -122,6 +124,8 @@ async def office(client, settings, monkeypatch):
     engine.reset()
     convert.ASKS.reset()
     convert._converting.clear()
+    convert._waiting.clear()
+    convert._asked.clear()
     inspect.forget()
     grants.clear()
     for name in ("office", "office_policy"):
@@ -754,6 +758,153 @@ async def test_een_tweede_conversie_wacht_op_het_slot(client, admin, office):
     assert len(office.converted()) == 2
 
 
+@pytest.mark.anyio
+async def test_het_slot_staat_niet_stil(client, admin, office, monkeypatch):
+    """Komt het slot vrij, dan is de conversie die erop wacht meteen aan de beurt, niet pas na
+    de wachttijd. Wachten op het slot doet geen invoercontrole: die komt pas als hij omzet."""
+    jonas, _ = admin
+    s = office.settings
+    checked: list[str] = []
+    check = inspect.check
+
+    async def counting(settings, path, ext, sha):
+        checked.append(sha)
+        return await check(settings, path, ext, sha)
+
+    monkeypatch.setattr(inspect, "check", counting)
+    office.conversions.configure({"hold": True})
+    first = await upload(client, jonas, "een.docx", docx_with_pages(2))
+    await jobs.run_one(s)  # de preview
+    task = office.background(jobs.run_one(s))  # de eerste conversie blijft lopen
+    await until(lambda: office.log("convert_source"))
+    second = await upload(client, jonas, "twee.docx", docx_with_pages(3))
+    await jobs.run_pending(s)  # de preview; de conversie wacht op het slot
+    sha = (await blob_of(s, second["id"])).sha256
+    [waiting] = [j for j in await office_jobs(s) if j.status == "queued"]
+    assert waiting.run_after.replace(tzinfo=None) > jobs.now().replace(tzinfo=None)
+    assert sha not in checked
+    office.conversions.configure({"hold": False})
+    await task
+    assert (await blob_of(s, first["id"])).pdf_state == "ready"
+    # Nu meteen, niet pas over een paar seconden
+    assert await jobs.run_pending(s) == 1
+    assert (await blob_of(s, second["id"])).pdf_state == "ready"
+    assert checked.count(sha) == 1
+
+
+@pytest.mark.anyio
+async def test_gevraagd_gaat_voor_ook_na_uitstel(client, admin, office):
+    """Een conversie op verzoek is de volgende zodra het slot vrijkomt, ook als een worker hem
+    al oppakte terwijl het slot bezet was (en hij dus moest wachten)."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"hold": True})
+    await upload(client, jonas, "een.docx", docx_with_pages(2))
+    await jobs.run_one(s)  # de preview
+    task = office.background(jobs.run_one(s))  # de eerste conversie blijft lopen
+    await until(lambda: office.log("convert_source"))
+    for n in range(5):
+        await upload(client, jonas, f"rij{n}.docx", docx_with_pages(2, f"Rij{n}"))
+    wanted = await upload(client, jonas, "gevraagd.docx", docx_with_pages(2, "Gevraagd"))
+    await jobs.run_pending(s)  # de previews; de conversies wachten op het slot
+    await ask(client, jonas, wanted["id"])
+    await jobs.run_pending(s)  # opgepakt terwijl het slot nog bezet is: hij wacht ook
+    office.conversions.configure({"hold": False})
+    await task
+    await run_later(s, 120)
+    blob = await blob_of(s, wanted["id"])
+    assert blob.pdf_state == "ready"
+    order = office.converted()
+    assert len(order) == 7
+    assert order.index(keys.convert_key(blob.sha256)) == 1
+
+
+@pytest.mark.anyio
+async def test_een_upload_gaat_voor_de_inhaalronde(client, admin, office):
+    """Wachten ze allebei op het slot, dan krijgt een nieuwe upload het eerder dan de inhaalronde,
+    ook als die er al langer op wacht."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"hold": True})
+    await upload(client, jonas, "een.docx", docx_with_pages(2))
+    await jobs.run_one(s)  # de preview
+    task = office.background(jobs.run_one(s))  # de eerste conversie blijft lopen
+    await until(lambda: office.log("convert_source"))
+    async with maker(s)() as session:
+        owner = await session.scalar(select(User))
+        for n in range(3):
+            node = await create_file(
+                session,
+                owner,
+                name=f"oud{n}.docx",
+                data=docx_with_pages(2, f"Oud{n}"),
+                mime=DOCX,
+                blobs=BlobStore(s.blob_dir),
+            )
+            (await session.get(Blob, node.blob_id)).preview = "ready"
+        await session.commit()
+    await convert.start_backfill(s)
+    await step(s)
+    async with maker(s)() as session:  # de inhaalronde is aan de beurt, en wacht op het slot
+        await session.execute(
+            update(Job).where(Job.type == convert.TYPE).values(run_after=jobs.now())
+        )
+        await session.commit()
+    await jobs.run_pending(s)
+    new = await upload(client, jonas, "nieuw.docx", docx_with_pages(2, "Nieuw"))
+    await jobs.run_pending(s)  # de preview; de conversie wacht op het slot
+    office.conversions.configure({"hold": False})
+    await task
+    await run_later(s, 120)
+    blob = await blob_of(s, new["id"])
+    assert blob.pdf_state == "ready"
+    order = office.converted()
+    assert len(order) == 5
+    assert order.index(keys.convert_key(blob.sha256)) == 1
+
+
+@pytest.mark.anyio
+async def test_een_rij_conversies_loopt_door(client, admin, office, monkeypatch):
+    """Met de echte workers: vijf conversies in de rij zijn na elkaar klaar, zonder dat het slot
+    tussendoor seconden leeg staat (vroeger één per WAIT_SECONDS)."""
+    jonas, _ = admin
+    s = office.settings
+
+    async def no_thumbnails(_settings, _sha):
+        return False  # alleen het omzetten telt hier
+
+    monkeypatch.setattr(convert, "thumbnails", no_thumbnails)
+    nodes = [
+        await upload(client, jonas, f"d{n}.docx", docx_with_pages(2, f"Doc{n}")) for n in range(5)
+    ]
+    convert._converting.add("0" * 64)  # het slot bezet: de previews lopen, de conversies wachten
+    await jobs.run_pending(s)
+    convert._converting.clear()
+    assert len(await office_jobs(s, "queued")) == 5
+    async with maker(s)() as session:
+        await session.execute(
+            update(Job).where(Job.type == convert.TYPE).values(run_after=jobs.now())
+        )
+        await session.commit()
+
+    async def states() -> list[str | None]:
+        return [(await blob_of(s, node["id"])).pdf_state for node in nodes]
+
+    runner = jobs.Runner(s)
+    started = asyncio.get_running_loop().time()
+    await runner.start()
+    try:
+        for _ in range(500):
+            if await states() == ["ready"] * 5:
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        await runner.stop()
+    took = asyncio.get_running_loop().time() - started
+    assert await states() == ["ready"] * 5, f"na {took:.1f} s"
+    assert took < convert.WAIT_SECONDS
+
+
 # --- foutcodes en adressen -----------------------------------------------------------------
 
 
@@ -1042,6 +1193,64 @@ async def step(s: Settings) -> Job:
     return job
 
 
+async def convert_queued(s: Settings, keep: int = 0) -> None:
+    """Alsof de conversies die klaarstaan liepen (op keep na): hun taken op done."""
+    async with maker(s)() as session:
+        ids = (
+            await session.scalars(
+                select(Job.id)
+                .where(Job.type == convert.TYPE, Job.status == "queued")
+                .order_by(Job.created_at)
+            )
+        ).all()
+        done = ids[: max(0, len(ids) - keep)]
+        await session.execute(update(Job).where(Job.id.in_(done)).values(status="done"))
+        await session.commit()
+
+
+@pytest.mark.anyio
+async def test_de_inhaalronde_wacht_tot_de_rij_korter_is(client, admin, office, monkeypatch):
+    """Het volgende stuk komt pas als er minder dan een stuk aan conversies klaarstaat. Zo
+    staat na het installeren nooit de hele bibliotheek in de rij."""
+    monkeypatch.setattr(convert, "BATCH", 3)
+    s = office.settings
+    async with maker(s)() as session:
+        owner = await session.scalar(select(User))
+        for n in range(8):
+            node = await create_file(
+                session, owner, name=f"d{n}.docx", data=b"docx %d" % n, mime=DOCX
+            )
+            (await session.get(Blob, node.blob_id)).preview = "ready"
+        await session.commit()
+    assert await convert.start_backfill(s)
+    first = await step(s)
+    assert len(await office_jobs(s, "queued")) == 3
+    # Drie in de rij: geen nieuw stuk, maar dezelfde plek over 60 s opnieuw
+    before = jobs.now().replace(tzinfo=None)
+    waited = await step(s)
+    assert waited.payload != first.payload
+    assert len(await office_jobs(s, "queued")) == 3
+    async with maker(s)() as session:
+        again = await session.scalar(
+            select(Job).where(Job.type == convert.BACKFILL, Job.status == "queued")
+        )
+    assert again.payload == waited.payload
+    assert again.run_after.replace(tzinfo=None) - before >= timedelta(seconds=59)
+    # Nog één in de rij: wel het volgende stuk
+    await convert_queued(s, keep=1)
+    await step(s)
+    assert len(await office_jobs(s, "queued")) == 4
+    await convert_queued(s)
+    await step(s)
+    assert len(await office_jobs(s)) == 8
+    async with maker(s)() as session:
+        assert (
+            await session.scalar(
+                select(func.count()).where(Job.type == convert.BACKFILL, Job.status == "queued")
+            )
+        ) == 0
+
+
 @pytest.mark.anyio
 async def test_de_inhaalronde_in_stukken(client, admin, office):
     s = office.settings
@@ -1075,6 +1284,7 @@ async def test_de_inhaalronde_in_stukken(client, admin, office):
         job = await step(s)
         times.append(job.run_after.replace(tzinfo=None))
         counts.append(len(await office_jobs(s)))
+        await convert_queued(s)  # zo is er plek voor het volgende stuk
     assert counts == [200, 400, 450]
     async with maker(s)() as session:
         assert (await session.scalar(select(func.count()).where(Job.type == convert.BACKFILL))) == 3
