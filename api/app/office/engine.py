@@ -111,6 +111,11 @@ class Engine(Protocol):
         """De key in een pad van een sessie, documentdata of editoractie."""
         ...
 
+    def own_file(self, path: str) -> tuple[str, bytes] | None:
+        """Een statisch pad dat de app zelf beantwoordt in plaats van de editor: (Content-Type,
+        inhoud), of None (OnlyOffice: de eigen service worker; docs/fase-4/o1.md)."""
+        ...
+
     def stream_guard(self, key: str) -> StreamGuard: ...
 
     def action_authorization(self, path: str, query: str, authorization: str | None) -> str | None:

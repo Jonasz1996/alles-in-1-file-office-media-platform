@@ -18,18 +18,21 @@ Per verzoek:
    - ACTION ook: de query gaat over dezelfde key (Engine.action_authorization; anders 401),
      per gebruiker hooguit 60 per minuut en 200 MB per 10 minuten (429 rate_limited), en
      alleen op upload/<key> gaat een geldig sessietoken als Authorization mee (A2).
-3. Doorgeven. Het prefix /office gaat eraf; naar DS gaan alleen een vaste lijst verzoekkoppen
-   plus X-Forwarded-Prefix, -Host, -Proto en -For (nooit Cookie, Authorization behalve 2.,
-   Referer, Forwarded of X-Forwarded-* van de client). Het pad gaat byte voor byte naar DS; kan
-   dat niet ('//', '.', '..', een prefix in procenttekens), dan 404. Bodies gaan in stukken in
-   beide richtingen (hooguit MAX_BODY: 413 office_too_large), gzip blijft gzip. DS niet
-   bereikbaar: 502 office_unavailable.
+3. Doorgeven (behalve wat de app zelf geeft, Engine.own_file: bij OnlyOffice een eigen service
+   worker in plaats van die van DS, zie oo/paths.py). Het prefix /office gaat eraf; naar DS gaan
+   alleen een vaste lijst verzoekkoppen plus X-Forwarded-Prefix, -Host, -Proto en -For (nooit
+   Cookie, Authorization behalve 2., Referer, Forwarded of X-Forwarded-* van de client). Het pad
+   gaat byte voor byte naar DS; kan dat niet ('//', '.', '..', een prefix in procenttekens), dan
+   404. Bodies gaan in stukken in beide richtingen (hooguit MAX_BODY: 413 office_too_large),
+   gzip blijft gzip. DS niet bereikbaar: 502 office_unavailable.
 4. Het antwoord: Set-Cookie, Clear-Site-Data, HSTS, Server, Service-Worker-Allowed en de
    X-Frame-Options en CSP van DS gaan weg. Erbij: X-Frame-Options: SAMEORIGIN (anders zet Edge
    DENY en laadt de iframe van de editor niet); op de editorpagina de CSP van Keuze 9; op al
    het andere Cross-Origin-Resource-Policy: same-origin, en op HTML, XML en svg daarbuiten
-   Content-Security-Policy: sandbox (zoals send_file bij svg). Location blijft alleen als hij
-   relatief is of naar onze eigen host wijst (een '\\' telt als '/').
+   Content-Security-Policy: sandbox (zoals send_file bij svg). Op de editorpagina en documentdata
+   een eigen Cache-Control (CACHE): de browser mag ze nooit buiten de poort om uit zijn cache
+   halen. Location blijft alleen als hij relatief is of naar onze eigen host wijst (een '\\'
+   telt als '/').
 """
 
 import logging
@@ -56,8 +59,15 @@ MAX_BODY = 100 * 1024**2
 ACTIONS_PER_MINUTE = 60
 ACTION_BYTES = 200 * 1024**2
 ACTION_BYTES_SECONDS = 600.0
-# Sec-Fetch-Dest op de editorpagina (spike stap 17): iframe koud, empty via de service worker
+# Sec-Fetch-Dest op de editorpagina (spike stap 17): iframe; empty is een fetch() van de eigen
+# origin (zoals de service worker van DS deed; die van de app heeft geen fetch-handler)
 PAGE_DESTS = frozenset({"iframe", "frame", "empty"})
+# Cache-Control in plaats van die van DS. De editorpagina: de browser vraagt elke keer opnieuw
+# (langs de poort; DS geeft 304), want DS zegt een jaar immutable, en een pagina uit de cache
+# ziet de poort nooit, ook niet als pagina. Documentdata: nooit bewaren (DS zegt niets, dus zou
+# de browser hem op schijf houden, ook na uitloggen)
+CACHE = {PathClass.PAGE: "private, no-cache", PathClass.DATA: "private, no-store"}
+FRESHNESS = frozenset({"cache-control", "expires", "pragma"})
 # Logregels over geweigerde paden: hooguit zoveel per minuut
 REFUSED_LOG_PER_MINUTE = 60
 
@@ -238,18 +248,21 @@ def _own_location(location: str, host: str) -> bool:
 
 
 def response_headers(
-    headers: httpx.Headers, host: str, page: bool = False
+    headers: httpx.Headers, host: str, page: bool = False, cache: str | None = None
 ) -> list[tuple[bytes, bytes]]:
-    """De koppen naar de browser. page: de editorpagina (de CSP van Keuze 9)."""
+    """De koppen naar de browser. page: de editorpagina (de CSP van Keuze 9); cache: een eigen
+    Cache-Control in plaats van die van DS (CACHE)."""
     kind = headers.get("content-type", "").split(";")[0].strip().lower()
     out = []
     for key, value in headers.multi_items():
         name = key.lower()
-        if name in DROP_RESPONSE:
+        if name in DROP_RESPONSE or (cache is not None and name in FRESHNESS):
             continue
         if name == "location" and not _own_location(value, host):
             continue
         out.append((name.encode("latin-1"), value.encode("latin-1")))
+    if cache is not None:
+        out.append((b"cache-control", cache.encode()))
     out.append((b"x-frame-options", b"SAMEORIGIN"))
     if page:
         out.append((b"content-security-policy", EDITOR_CSP.encode()))
@@ -357,8 +370,17 @@ class OfficeProxy:
         except Exception:  # noqa: BLE001 - de database: liever dicht dan open
             log.exception("office: de toegangscontrole mislukte")
             return await _busy()(scope, receive, send)
+        own = eng.own_file(path) if kind == PathClass.STATIC else None
+        if own is not None:
+            return await _own_file(scope, send, *own)
         await self.forward(
-            scope, receive, send, page=kind == PathClass.PAGE, extra=extra, budget=budget
+            scope,
+            receive,
+            send,
+            page=kind == PathClass.PAGE,
+            cache=CACHE.get(kind),
+            extra=extra,
+            budget=budget,
         )
 
     async def forward(
@@ -368,6 +390,7 @@ class OfficeProxy:
         send,
         *,
         page: bool = False,
+        cache: str | None = None,
         extra: list[tuple[str, str]] | None = None,
         budget: str | None = None,
     ) -> None:
@@ -405,7 +428,7 @@ class OfficeProxy:
                     "type": "http.response.start",
                     "status": upstream.status_code,
                     "headers": response_headers(
-                        upstream.headers, _header(scope, b"host"), page=page
+                        upstream.headers, _header(scope, b"host"), page=page, cache=cache
                     ),
                 }
             )
@@ -419,6 +442,20 @@ class OfficeProxy:
             await send({"type": "http.response.body", "body": b""})
         finally:
             await upstream.aclose()
+
+
+async def _own_file(scope, send, kind: str, content: bytes) -> None:
+    """Een bestand van de app zelf (Engine.own_file), met de koppen van al het statische."""
+    headers = [
+        (b"content-type", kind.encode("latin-1")),
+        (b"content-length", str(len(content)).encode()),
+        (b"cache-control", b"no-cache"),
+        (b"x-frame-options", b"SAMEORIGIN"),
+        (b"cross-origin-resource-policy", b"same-origin"),
+    ]
+    await send({"type": "http.response.start", "status": 200, "headers": headers})
+    body = b"" if scope["method"] == "HEAD" else content
+    await send({"type": "http.response.body", "body": body})
 
 
 async def _body(receive, budget: str | None = None):

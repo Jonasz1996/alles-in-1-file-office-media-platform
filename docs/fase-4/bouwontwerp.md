@@ -253,7 +253,8 @@ Elke keuze geeft de standaard en waarom.
      - op een svg ook `Content-Security-Policy: sandbox`, zoals `send_file` al doet.
 
      Edge laat die staan en voegt de rest toe. `Cache-Control` van DS blijft (`api.js`
-     `no-store`, versiepaden `immutable`).
+     `no-store`, versiepaden `immutable`), behalve op de editorpagina (`private, no-cache`) en
+     documentdata (`private, no-store`): zie afwijking 17 in [o1.md](o1.md).
    - `Location` alleen als die relatief is of naar onze eigen origin wijst. Anders weg.
    - Bodies in stukken, hooguit 100 MB (zoals de nginx van DS). Gzip blijft gzip.
    - Alleen een vaste lijst padklassen gaat door; de rest geeft 404 (§3.10). Wie wat mag per
@@ -311,13 +312,14 @@ Elke keuze geeft de standaard en waarom.
    - De waarde is een JWT met het **app-geheim**: `typ: office_gate`, gebruiker, login-family,
      2 uur geldig. DS ziet dit cookie nooit, want de proxy stuurt geen `Cookie` door.
    - **Per padklasse** (§3.10):
-     - **statisch** (js, css, fonts, afbeeldingen, json, de service worker van DS, `api.js`):
+     - **statisch** (js, css, fonts, afbeeldingen, json, de service worker, `api.js`; de
+       service worker is van de app zelf, niet van DS: afwijking 16 in [o1.md](o1.md)):
        zonder cookie. Daar zit nooit HTML bij. Die bestanden zijn op elke DS gelijk en bevatten
        geen gebruikersdata. Een js-bestand als pagina openen, voert niets uit.
      - **editorpagina** (elke `*.html` onder `/office/`, en een omleiding die daarheen gaat):
        cookie verplicht. Stuurt de browser `Sec-Fetch-Dest`, dan alleen `iframe`, `frame` of
-       `empty` (de service worker van DS); `document` en de rest geven 404. Over http in het LAN
-       stuurt de browser die kop niet (M16). Dan beslist het cookie alleen. Omdat dat
+       `empty` (een `fetch()` van de eigen origin); `document` en de rest geven 404. Over http
+       in het LAN stuurt de browser die kop niet (M16). Dan beslist het cookie alleen. Omdat dat
        `SameSite=Strict` is, gaat het nooit mee met een link van een andere site.
      - **documentdata** (`cache/files/data/<key>_<n>/…`), **sessie** (`doc/<key>/c/…`, ook de
        tunnel) en **editoracties met een key in het pad**: cookie, lid van de sessie van die key,

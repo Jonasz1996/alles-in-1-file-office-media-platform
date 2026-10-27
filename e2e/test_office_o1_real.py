@@ -1,7 +1,9 @@
 """O1 (toegang) met de echte DS (marker office_real; §4.5 punt 5 van docs/fase-4/bouwontwerp.md,
 en de echte editor via /office/ over http en over https).
 
-Punt 10 van §4.4 tegen de echte DS: de editorpagina als pagina is 404 (zonder en met cookie);
+Punt 10 van §4.4 tegen de echte DS: de editorpagina als pagina is 404 (zonder en met cookie,
+ook als de browser hem net in de iframe had, en met de service worker die de editor zet: die
+is van de app, niet van DS);
 zonder cookie geen DATA-pad en geen upgrade; een socket op het pad van key A met het token van
 key B gaat dicht na het eerste pakket; en na het intrekken van de deling lukt een nieuwe socket
 met het oude sessietoken niet (geweigerd bij de upgrade).
@@ -31,6 +33,7 @@ import httpx
 import pytest
 from playwright.sync_api import expect
 
+from app.office.oo.paths import OWN_SERVICE_WORKER
 from conftest import Browsers
 from office_harness import Office, fixture, type_in_editor
 from test_office_o1 import (
@@ -76,6 +79,18 @@ def with_token(packet: dict, token: str) -> str:
     return "40" + json.dumps(out, separators=(",", ":"))
 
 
+OFFICE_WORKERS = """async () => {
+  const out = [];
+  for (const r of await navigator.serviceWorker.getRegistrations()) {
+    const w = r.active || r.waiting || r.installing;
+    if (w && new URL(r.scope).pathname.startsWith("/office/")) out.push(w.scriptURL);
+  }
+  return out;
+}"""
+DS_CACHES = """async () =>
+  (await caches.keys()).filter((name) => name.startsWith("document_editor_"))"""
+
+
 def test_afscherming_met_de_echte_ds(real_office: Office, real_browsers) -> None:
     """§4.5 punt 5: punt 10 van §4.4 tegen de echte DS, met de echte editor van Bram open."""
     office = real_office
@@ -98,7 +113,8 @@ def test_afscherming_met_de_echte_ds(real_office: Office, real_browsers) -> None
     cookie = office_cookie(bram.context)
     assert cookie is not None
 
-    # De editorpagina als pagina: 404 zonder cookie, en ook met het cookie van Bram
+    # De editorpagina als pagina: 404 zonder cookie, en ook met het cookie van Bram (en dus niet
+    # uit de cache van de browser, die hem net in de iframe had: proxy.CACHE)
     fresh = real_browsers.new_context(service_workers="block")
     page = fresh.new_page()
     r = page.goto(src)
@@ -149,6 +165,31 @@ def test_afscherming_met_de_echte_ds(real_office: Office, real_browsers) -> None
     wait_until(lambda: me not in info_users(office, bram.key), 30, "Bram niet meer bij DS")
     for node in (d.node, other):
         wait_until(lambda n=node: session_closed(office, d.anna, n), 60, "de sessie dicht")
+
+
+def test_de_service_worker_van_de_editor_is_van_de_app(real_office: Office, real_browsers) -> None:
+    """Met service workers aan, zoals in een gewone browser: de editor zet er een onder
+    /office/<V>/, en dat is die van de app, zonder fetch-handler. Die van DS gaf de editorpagina
+    en documentdata uit Cache Storage terug, ook als pagina en na uitloggen (docs/fase-4/o1.md).
+    De editorpagina als pagina blijft 404, en er staan geen caches van DS."""
+    office = real_office
+    d = duo(office)
+    context = real_browsers.context_as(d.anna)
+    anna = open_editor_page(context, d.node, wait=ready)
+    workers = wait_until(
+        lambda: anna.page.evaluate(OFFICE_WORKERS), 30, "de service worker onder /office/"
+    )
+    for url in workers:
+        assert urlsplit(url).path.endswith("/document_editor_service_worker.js"), url
+        assert context.request.get(url).body() == OWN_SERVICE_WORKER, url
+    own = context.new_page()
+    r = own.goto(anna.editor_url())
+    assert r is not None and r.status == 404
+    own.close()
+    assert anna.page.evaluate(DS_CACHES) == []
+    anna.page.get_by_role("button", name="Sluiten", exact=True).click()
+    expect(anna.page).to_have_url(re.compile(rf"/map/{d.folder}$"))
+    wait_until(lambda: session_closed(office, d.anna, d.node), 60, "de sessie dicht")
 
 
 def test_de_echte_editor_over_http_en_https(browser: Any, tmp_path_factory) -> None:

@@ -26,6 +26,7 @@ import pytest
 
 from app.main import app
 from app.office import gate, proxy
+from app.office.oo import paths
 from app.security import RateLimiter
 from tests.factories import code_of
 from tests.fake_docserver import protocol
@@ -154,7 +155,6 @@ async def test_klassen_en_toegang(world, ds):
         ("GET", "/office/web-apps/apps/api/documents/api.js", None, {}, 200, None),
         ("GET", f"/office/{V}/sdkjs/word/sdk-all-min.js", None, {}, 200, None),
         ("HEAD", f"/office/{V}/fonts/000", None, {}, 200, None),
-        ("GET", f"/office/{V}/document_editor_service_worker.js", None, {}, 200, None),
         ("POST", f"/office/{V}/sdkjs/word/sdk-all-min.js", s.a, {}, 404, "not_found"),
         # PAGE: het cookie van een lid, en niet als pagina
         ("GET", PAGE, None, {}, 404, "not_found"),
@@ -298,7 +298,9 @@ DS_HEADERS = {
     "Content-Type": "application/octet-stream",
     "Content-Length": "5",
     "ETag": '"abc"',
-    "Cache-Control": "private, max-age=60",
+    "Cache-Control": "public, max-age=31536000, immutable",
+    "Expires": "Thu, 31 Dec 2037 23:55:55 GMT",
+    "Pragma": "public",
     "Last-Modified": "Wed, 21 Oct 2015 07:28:00 GMT",
     "Content-Disposition": 'attachment; filename="Editor.bin"',
     "Accept-Ranges": "bytes",
@@ -327,11 +329,12 @@ async def test_koppen_terug_als_vaste_verwachting(world, ds):
         "content-type": "application/octet-stream",
         "content-length": "5",
         "etag": '"abc"',
-        "cache-control": "private, max-age=60",
         "last-modified": "Wed, 21 Oct 2015 07:28:00 GMT",
         "content-disposition": 'attachment; filename="Editor.bin"',
         "accept-ranges": "bytes",
         "vary": "Accept-Encoding",
+        # Documentdata blijft nooit in de browser (proxy.CACHE), wat DS ook zegt
+        "cache-control": "private, no-store",
         "x-frame-options": "SAMEORIGIN",
         "cross-origin-resource-policy": "same-origin",
         # Van Edge, voor elk antwoord van de app
@@ -353,6 +356,31 @@ async def test_koppen_terug_als_vaste_verwachting(world, ds):
     for name in ("set-cookie", "clear-site-data", "service-worker-allowed", "server"):
         assert name not in r.headers
     assert "frame-ancestors 'self'" in proxy.EDITOR_CSP and "object-src 'none'" in proxy.EDITOR_CSP
+    # Elke keer langs de poort: DS zegt een jaar immutable, de browser vraagt toch opnieuw
+    assert r.headers.get_list("cache-control") == ["private, no-cache"]
+    assert "expires" not in r.headers and "pragma" not in r.headers
+    # Statisch: de Cache-Control van DS blijft
+    r = await world.client.get(f"/office/{V}/sdkjs/word/sdk-all-min.js")
+    assert r.status_code == 200
+    assert r.headers.get_list("cache-control") == ["public, max-age=31536000, immutable"]
+    assert r.headers["expires"] == "Thu, 31 Dec 2037 23:55:55 GMT"
+
+
+async def test_de_editorpagina_opnieuw_vragen_gaat_langs_de_poort(world, ds):
+    """Met If-None-Match (de browser had hem nog): de poort beslist, en DS mag 304 geven."""
+    s = await shared(world)
+    ds.reply = lambda request: respond(304, {"ETag": '"abc"', "Cache-Control": "max-age=9"})
+    r = await world.client.get(
+        PAGE, headers=office(s.a, Sec_Fetch_Dest="iframe", If_None_Match='"abc"')
+    )
+    assert r.status_code == 304
+    assert r.headers.get_list("cache-control") == ["private, no-cache"]
+    assert ds.seen[-1].headers["if-none-match"] == '"abc"'
+    before = len(ds.seen)
+    r = await world.client.get(
+        PAGE, headers=office(s.a, Sec_Fetch_Dest="document", If_None_Match='"abc"')
+    )
+    assert r.status_code == 404 and len(ds.seen) == before
 
 
 @pytest.mark.parametrize(
@@ -377,6 +405,23 @@ async def test_statisch_corp_en_sandbox_op_markup(world, ds, kind, sandbox):
     assert r.headers["cross-origin-resource-policy"] == "same-origin"
     assert r.headers["x-frame-options"] == "SAMEORIGIN"
     assert r.headers.get("content-security-policy") == ("sandbox" if sandbox else None)
+
+
+async def test_de_service_worker_komt_van_de_app(world, ds):
+    """Nooit die van DS (docs/fase-4/o1.md): DS ziet het verzoek niet, ook niet als HEAD."""
+    path = f"/office/{V}/document_editor_service_worker.js"
+    r = await world.client.get(path)
+    assert r.status_code == 200
+    assert r.content == paths.OWN_SERVICE_WORKER
+    assert r.headers["content-type"] == "text/javascript; charset=utf-8"
+    assert r.headers["cache-control"] == "no-cache"
+    assert r.headers["cross-origin-resource-policy"] == "same-origin"
+    assert r.headers["x-frame-options"] == "SAMEORIGIN"
+    assert "service-worker-allowed" not in r.headers
+    head = await world.client.head(path)
+    assert head.status_code == 200 and head.content == b""
+    assert (await world.client.post(path)).status_code == 404
+    assert ds.seen == []
 
 
 async def test_location_alleen_naar_onze_host(world, ds):

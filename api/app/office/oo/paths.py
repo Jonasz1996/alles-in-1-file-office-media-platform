@@ -12,7 +12,8 @@ controletekens, een '%' zonder twee hex-tekens, en procentcodes die een '/', '\\
 
 De klassen (§3.10; A3, A4, A5, A14, A20 van de spike):
 - STATIC (GET, HEAD): web-apps/, sdkjs/, sdkjs-plugins/, fonts/, dictionaries/ (alles behalve
-  HTML en XML), document_editor_service_worker.js, web-apps/apps/api/documents/api.js;
+  HTML en XML), document_editor_service_worker.js (van de app zelf: own_file), en
+  web-apps/apps/api/documents/api.js;
 - PAGE (GET, HEAD): precies web-apps/apps/{documenteditor,spreadsheeteditor,presentationeditor}/
   {main,mobile}/index.html; elk ander HTML-pad is dicht (ook /<V>/index.html, preload.html);
 - DATA (GET): cache/files/data/<key>_<n>/… en cache/files/data/<key>/…, nooit conv_… of
@@ -44,6 +45,25 @@ VERSION = re.compile(r"\d+\.\d+\.\d+-[0-9a-f]{8,64}")
 EDITORS = frozenset({"documenteditor", "spreadsheeteditor", "presentationeditor"})
 STATIC_ROOTS = frozenset({"web-apps", "sdkjs", "sdkjs-plugins", "fonts", "dictionaries"})
 SERVICE_WORKER = "document_editor_service_worker.js"
+# De app geeft op SERVICE_WORKER een eigen service worker, nooit die van DS: die zet de editorpagina
+# (web-apps/) en documentdata (cache/files/data/) in Cache Storage en geeft ze daarna zelf terug,
+# zonder dat de proxy het verzoek ziet: als pagina, en na uitloggen of het intrekken van een
+# deling (docs/fase-4/o1.md). Deze heeft geen fetch-handler (alles gaat langs de poort), neemt
+# meteen de plaats in van een oude van DS, en ruimt de caches van DS op (document_editor_*).
+OWN_SERVICE_WORKER = b"""// Van het platform, niet van OnlyOffice (docs/fase-4/o1.md)
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys().then((names) =>
+      Promise.all(
+        names
+          .filter((name) => name.startsWith("document_editor_"))
+          .map((name) => caches.delete(name)),
+      ),
+    ),
+  );
+});
+"""
 SETTINGS = frozenset({"themes.json", "plugins.json"})
 # Wat een browser als pagina met scripts kan tonen: nooit statisch
 MARKUP = (".html", ".htm", ".xhtml", ".xht", ".shtml", ".mht", ".mhtml", ".xml", ".xsl", ".xslt")
@@ -151,6 +171,15 @@ def classify(method: str, path: str, upgrade: bool) -> PathClass | None:
 def key_of(path: str) -> str | None:
     parsed = _parse(path)
     return _key(*parsed) if parsed is not None else None
+
+
+def own_file(path: str) -> tuple[str, bytes] | None:
+    """Wat de app zelf geeft in plaats van DS: (Content-Type, inhoud) op de service worker, anders
+    None."""
+    parsed = _parse(path)
+    if parsed is not None and parsed[1] == [SERVICE_WORKER]:
+        return "text/javascript; charset=utf-8", OWN_SERVICE_WORKER
+    return None
 
 
 def _bearer(authorization: str | None) -> str | None:

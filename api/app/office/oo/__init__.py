@@ -42,6 +42,9 @@ class OnlyOffice:
     def session_key(self, path: str) -> str | None:
         return paths.key_of(path)
 
+    def own_file(self, path: str) -> tuple[str, bytes] | None:
+        return paths.own_file(path)
+
     def stream_guard(self, key: str) -> StreamGuard:
         return stream.Guard(self.settings, key)
 

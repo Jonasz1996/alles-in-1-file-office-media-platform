@@ -216,6 +216,32 @@ def test_elk_html_pad_is_page_of_dicht_nooit_statisch():
     )
 
 
+def test_de_service_worker_is_van_de_app():
+    """Op document_editor_service_worker.js een eigen service worker, nooit die van DS: die gaf
+    de editorpagina en documentdata uit Cache Storage terug, buiten de poort (docs/fase-4/o1.md)."""
+    for path in (
+        f"/office/{V}/document_editor_service_worker.js",
+        "/office/document_editor_service_worker.js",
+        f"/office/{V}/Document_Editor_Service_Worker.JS?v=1",
+    ):
+        assert paths.classify("GET", path, False) == PathClass.STATIC, path
+        kind, content = paths.own_file(path)
+        assert kind == "text/javascript; charset=utf-8"
+        assert content == paths.OWN_SERVICE_WORKER
+    script = paths.OWN_SERVICE_WORKER.decode()
+    assert "fetch" not in script  # geen fetch-handler: alles gaat langs de poort
+    assert 'addEventListener("install", () => self.skipWaiting())' in script
+    assert 'name.startsWith("document_editor_")' in script and "caches.delete(name)" in script
+    for path in (
+        f"/office/{V}/sdkjs/word/document_editor_service_worker.js",
+        "/office/x/document_editor_service_worker.js",
+        f"/office/{V}/web-apps/apps/api/documents/api.js",
+        f"/office/{V}/web-apps/apps/documenteditor/main/index.html",
+        f"/office/{V}/%2e%2e/document_editor_service_worker.js",
+    ):
+        assert paths.own_file(path) is None, path
+
+
 def test_methoden_per_klasse():
     js = f"/office/{V}/sdkjs/word/sdk-all-min.js"
     data = f"/office/cache/files/data/{KEY}/Editor.bin/Editor.bin"
