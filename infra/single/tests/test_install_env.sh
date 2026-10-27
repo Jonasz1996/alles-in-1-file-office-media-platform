@@ -474,10 +474,38 @@ PORT=80 HTTPS_PORT=443 DATA_ROOT=/tank/platform
 OFFICE_ON=1 OFFICE_REASON=""
 out=$(slot)
 check "office aan: uitzetten met curl" grep -qF "curl -fsSL $script_url | OFFICE=uit bash" <<<"$out"
-OFFICE_ON=0 OFFICE_REASON="OFFICE=uit in $ENV_FILE"
+OFFICE=uit OFFICE_ON=0 OFFICE_REASON="OFFICE=uit in $ENV_FILE"
 out=$(slot)
 check "office uit: aanzetten met curl" grep -qF "curl -fsSL $script_url | OFFICE=aan bash" <<<"$out"
 check "nergens 'bash install.sh'" test "$(grep -c 'bash install.sh' <<<"$out")" = 0
+OFFICE=ja OFFICE_ON=0 OFFICE_REASON="OFFICE in $ENV_FILE moet aan of uit zijn (nu: ja)"
+out=$(slot)
+check "OFFICE geen aan of uit: aanzetten met curl" grep -qF "curl -fsSL $script_url | OFFICE=aan bash" <<<"$out"
+
+echo "== na een mislukte start van DS zegt de eindtekst niet 'zet office aan': het staat al aan"
+# OFFICE=aan (de standaard), maar DS kwam niet op: opnieuw proberen of uitzetten helpt, de
+# hint OFFICE=aan niet
+OFFICE=aan
+reset_docker
+compose_files 1
+OFFICE_ON=1 OFFICE_IMG=$NAME OFFICE_REASON="" COMPOSE_RC=1
+start_office "" "" ""
+OFFICE_ON=$(sed -n 's/^ON=//p' "$work/start.out") OFFICE_REASON=$(sed -n 's/^REASON=//p' "$work/start.out")
+check "de start mislukte: office uit voor de eindtekst" test "$OFFICE_ON" = 0
+out=$(slot)
+check "mislukte start: de reden" grep -qF "Office: uit, want DS kon niet starten" <<<"$out"
+check "mislukte start: geen OFFICE=aan" not grep -qF "OFFICE=aan" <<<"$out"
+check "mislukte start: opnieuw proberen met curl" grep -qxF "  Opnieuw proberen: curl -fsSL $script_url | bash" <<<"$out"
+check "mislukte start: uitzetten met curl" grep -qF "curl -fsSL $script_url | OFFICE=uit bash" <<<"$out"
+for reason in "de controle van Docker gaf een probleem (zie boven)" \
+  "het image van DS was niet op te halen (Docker Hub en mirror.gcr.io); het platform werkt zonder editor, draai het script later opnieuw"; do
+  OFFICE_ON=0 OFFICE_REASON=$reason
+  out=$(slot)
+  check "office aan maar niet gestart ($reason): geen OFFICE=aan" not grep -qF "OFFICE=aan" <<<"$out"
+  check "office aan maar niet gestart ($reason): opnieuw proberen" grep -qxF "  Opnieuw proberen: curl -fsSL $script_url | bash" <<<"$out"
+done
+reset_docker
+unset OFFICE
 
 echo "== curl | bash: geen commando leest de rest van het script van stdin"
 # Bij `curl … | bash` leest bash het script van stdin. Een `docker run` of `compose exec` die

@@ -492,6 +492,12 @@ KLAAR
     echo "  (DS bouwt eerst zijn fonts en herstart zichzelf; /beheer zegt zolang 'Start op')."
     [ -z "$OFFICE_REASON" ] || echo "  Let op: $OFFICE_REASON."
     echo "  Uit: $script | OFFICE=uit bash"
+  elif office_supported && [ "${OFFICE:-aan}" = aan ]; then
+    # Office staat al aan, maar DS kwam niet op (Docker, het image, de start): OFFICE=aan helpt
+    # dan niet, opnieuw proberen wel
+    echo "Office: uit, want $OFFICE_REASON."
+    echo "  Opnieuw proberen: $script | bash"
+    echo "  Uit: $script | OFFICE=uit bash"
   else
     echo "Office: uit, want $OFFICE_REASON."
     office_supported && echo "  Aan: $script | OFFICE=aan bash"
