@@ -196,30 +196,26 @@ compose_files() {
   fi
 }
 
-# Is de instelling van DS (local-production-linux.json) anders dan bij de vorige run? Compose
-# ziet een andere inhoud van een gekoppeld bestand niet; dan maakt het script DS opnieuw.
-office_config_changed() {
-  local now old state=$PLATFORM_ROOT/office-config.sha256
-  now=$(sha256sum "$SRC/infra/single/office/local-production-linux.json" | cut -d' ' -f1)
-  old=$(cat "$state" 2>/dev/null || true)
-  printf '%s\n' "$now" >"$state"
-  [ "$now" != "$old" ]
-}
-
 # Het volledige id van een image, of niets
 image_id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null || true; }
 
 # Na de app: DS starten of bijwerken, en daarna de oude images weg. Compose vervangt DS alleen
-# als zijn image of instellingen veranderden. Breekt nooit af (Keuze 30): de app draait al. Lukt
-# het niet, dan zeggen OFFICE_ON en OFFICE_REASON het voor de eindtekst.
+# als zijn image of instellingen veranderden. Een andere inhoud van het gekoppelde
+# local-production-linux.json ziet compose niet; daarom houdt het script de sha256 ervan bij
+# en maakt het DS dan opnieuw. Die sha256 komt pas na een gelukte start in het bestand, anders
+# zou de volgende run DS met de oude instelling laten draaien (uitrol-4). Breekt nooit af
+# (Keuze 30): de app draait al. Lukt het niet, dan zeggen OFFICE_ON en OFFICE_REASON het voor
+# de eindtekst.
 office_start() {
-  local container=$1 previous=$2 pin=$3 started=0
-  if office_config_changed && [ -n "$container" ]; then
+  local container=$1 previous=$2 pin=$3 state=$PLATFORM_ROOT/office-config.sha256 now started=0
+  now=$(sha256sum "$SRC/infra/single/office/local-production-linux.json" | cut -d' ' -f1)
+  if [ -n "$container" ] && [ "$now" != "$(cat "$state" 2>/dev/null || true)" ]; then
     if OFFICE_IMAGE=$OFFICE_IMG "${compose[@]}" up -d --no-deps --force-recreate office; then started=1; fi
   elif OFFICE_IMAGE=$OFFICE_IMG "${compose[@]}" up -d --no-deps office; then
     started=1
   fi
   if [ "$started" = 1 ]; then
+    printf '%s\n' "$now" >"$state"
     office_cleanup "$(image_id "$OFFICE_IMG")" "$previous" "$pin"
     return 0
   fi

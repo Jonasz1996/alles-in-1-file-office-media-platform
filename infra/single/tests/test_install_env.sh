@@ -342,13 +342,9 @@ LIMITS="false true"
 compose_files 1
 check "zonder cgroup-grenzen geen limits-bestand" test "${compose[*]: -2}" = "-f $SRC/infra/single/compose.office.yaml"
 
-echo "== de instelling van DS veranderd?"
 cfg=$SRC/infra/single/office/local-production-linux.json
+state=$PLATFORM_ROOT/office-config.sha256
 echo '{}' >"$cfg"
-check "de eerste keer: ja" office_config_changed
-if office_config_changed; then fout "ongewijzigd: nee"; else ok "ongewijzigd: nee"; fi
-echo '{"a": 1}' >"$cfg"
-check "andere inhoud: ja" office_config_changed
 
 echo "== DS starten na de app: een mislukte start stopt het script niet (Keuze 30, uitrol-1)"
 # Zoals main: set -e aan, en office_start niet in een if, && of || (daarin doet set -e niets,
@@ -388,6 +384,34 @@ start_office c-office "" ""
 check "mislukt terwijl de vorige DS draait: geeft 0" test "$START_RC" = 0
 check "office blijft aan, de vorige DS draait door" grep -qxF "ON=1" "$work/start.out"
 check "met die reden" grep -q "^REASON=.*de vorige DS draait door" "$work/start.out"
+
+echo "== DS opnieuw maken als zijn instelling veranderde, ook na een mislukte start (uitrol-4)"
+# Compose ziet een andere inhoud van het gekoppelde local-production-linux.json niet
+not() { ! "$@"; }
+hash_of_cfg() { sha256sum "$cfg" | cut -d' ' -f1; }
+reset_docker
+compose_files 1
+rm -f "$state"
+echo '{}' >"$cfg"
+OFFICE_ON=1 OFFICE_IMG=$NAME OFFICE_REASON=""
+start_office "" "" ""
+check "nog geen DS: gewoon starten" not grep -q -- --force-recreate "$LOG"
+check "de instelling bewaard" test "$(cat "$state")" = "$(hash_of_cfg)"
+: >"$LOG"
+start_office c-office "" ""
+check "ongewijzigd: DS blijft (geen --force-recreate)" not grep -q -- --force-recreate "$LOG"
+old=$(hash_of_cfg)
+echo '{"a": 1}' >"$cfg"
+: >"$LOG"
+COMPOSE_RC=1
+start_office c-office "" ""
+check "veranderd: DS opnieuw maken" grep -q -- "--force-recreate office$" "$LOG"
+check "mislukt: de vorige instelling blijft bewaard" test "$(cat "$state")" = "$old"
+: >"$LOG"
+COMPOSE_RC=0 OFFICE_ON=1 OFFICE_REASON=""
+start_office c-office "" ""
+check "de volgende run maakt DS alsnog opnieuw" grep -q -- "--force-recreate office$" "$LOG"
+check "en bewaart dan de nieuwe instelling" test "$(cat "$state")" = "$(hash_of_cfg)"
 
 echo "== oude images van DS weg, behalve het huidige, het vorige, de pin en wat in gebruik is"
 reset_docker
