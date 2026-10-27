@@ -475,14 +475,18 @@ async def test_beheerder_zet_verplichte_2fa_uit(client, verplicht):
 
 @pytest.mark.anyio
 async def test_gelijktijdig_aanpassen_houdt_geheugen_en_database_gelijk(client, admin):
+    """Vijf keer tegelijk aan en uit: daarna zegt de database hetzelfde als het geheugen. De
+    beheerder heeft zelf 2FA. Zonder 2FA kreeg een PUT die zijn controle deed terwijl een andere
+    2FA net verplicht had gemaakt terecht 403 totp_setup_required (in CI gezien, 1 op de zoveel)."""
     headers, _ = admin
+    await enable(client, headers)  # de login waarmee 2FA aanging, blijft geldig
     results = await asyncio.gather(
         *(
             client.put("/api/v1/admin/security", json={"require_2fa": v}, headers=headers)
             for v in (False, True, False, True, False)
         )
     )
-    assert all(r.status_code == 200 for r in results)
+    assert [r.status_code for r in results] == [200] * 5, [r.text for r in results]
     cached = app.state.security.config
     app.state.security = SecurityPolicy()  # opnieuw uit de database
     await client.get("/api/v1/auth/me", headers=headers)
