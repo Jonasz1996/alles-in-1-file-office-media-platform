@@ -62,12 +62,22 @@ dc exec office sh -c 'grep -E "stopped|success" /var/log/supervisor/supervisord.
 Na `stopped: converter` en daarna `success: converter` is de herstart voorbij. Ziet het platform
 hem na 15 minuten nog niet, dan kan bewerken toch (met een waarschuwing in het log van de app).
 
-Voor wie het platform ontwikkelt: een nieuwe DS betekent een nieuwe digest op vier plaatsen,
-in één commit:
+Voor wie het platform ontwikkelt: een nieuwe DS betekent een nieuwe tag en digest, en een
+nieuwe versie, op deze plaatsen, in één commit:
 
 - `OFFICE_TAG` en `OFFICE_DIGEST` in `infra/single/install.sh`;
-- het standaardimage in `infra/single/compose.office.yaml` (en het voorbeeld in `.env.example`);
-- `OFFICE_TAG` en de digest in `e2e/office_ds.sh` (de job `office` in CI).
+- het standaardimage (de tag) in `infra/single/compose.office.yaml`, en het voorbeeld van de pin
+  in `.env.example`;
+- `OFFICE_TAG` en de digest in `e2e/office_ds.sh` (de job `office` in CI);
+- de versie die `command version` van het nieuwe image geeft (bij 10.0.0.1 is dat `10.0.0.169`;
+  `/beheer` → Office toont hem): `PINNED_VERSION` in `api/app/office/monitor.py` en in
+  `web/src/admin/format.ts`, en `PINNED` in `e2e/test_office_o5_real.py`. Vergeet je er een,
+  dan meldt `/beheer` bij elke installatie "andere versie dan vastgepind" (`office_version`), of
+  faalt de job `office`;
+- de nep-DS volgt de echte: `VERSION` en `BUILD_NUMBER` in
+  `api/tests/fake_docserver/protocol.py` (de API-tests vergelijken die met `PINNED_VERSION`) en
+  de versie in `e2e/test_office_o5.py`. Neem bij een nieuwe DS ook de sporen in
+  `api/tests/fake_docserver/recorded/` opnieuw op (`docs/fase-4/spike.md`).
 
 Die commit moet door de job `office` (de echte DS, marker `office_real`; die start DS met de
 rechten en grenzen van compose), en vóór een release ook door de installatietest
