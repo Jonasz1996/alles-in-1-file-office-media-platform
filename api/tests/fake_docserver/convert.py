@@ -9,8 +9,12 @@
   (digest_none in de opname);
 - alleen naar PDF: een andere outputtype geeft -3 (docx naar doc), of -7 voor pptx en ppt;
 - de key is een cache: dezelfde key geeft het antwoord van de eerste keer, ook voor een andere
-  bron, en ook als dat een fout was (zoals de echte [gemeten]). Een kill of restart maakt het
-  geheugen leeg;
+  bron [gemeten]. Een fout ook, behalve -4 en -10 (NOT_KEPT): die bewaart de echte niet
+  [gemeten in de review van fase 4, sync en async: na -4 omdat de bron 404 gaf, en na -10,
+  zette dezelfde key de volgende keer gewoon om]. Of DS -1, -2, -3 en -6 bewaart, is niet
+  gemeten (DS zette elk kapot bestand dat we probeerden toch om, dus -3 en -1 kwamen niet); de
+  nep-DS bewaart ze, het strengste geval, zodat de app er niet op rekent. Een kill of restart
+  maakt het geheugen leeg;
 - de uitvoer: een PDF (pdf.py) met N pagina's. N volgt de bron: de dia's van een pptx, de
   bladen van een xlsx, de pagina-einden plus 1 van een docx; anders 1;
 - fileUrl is een secure link op de host van het verzoek:
@@ -47,6 +51,8 @@ from . import pdf, protocol
 
 MAX_PAGES = 50
 STEM = re.compile(r"[^A-Za-z0-9_-]+")
+# Fouten die DS niet onder de key bewaart [gemeten]: dezelfde key wordt daarna opnieuw omgezet
+NOT_KEPT = {-4, -10}
 
 
 @dataclass(eq=False)
@@ -157,6 +163,8 @@ class Conversions:
             return JSONResponse({"percent": 0, "endConvert": False})
         assert job.result is not None
         if "error" in job.result:
+            if job.result["error"] in NOT_KEPT and self.cache.get(key) is job:
+                del self.cache[key]  # gemeld; de volgende vraag met deze key begint opnieuw
             return _error(request, job.result["error"])
         return JSONResponse(job.result)
 

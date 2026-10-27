@@ -546,7 +546,9 @@ async def test_conversie_bron_en_digest_zoals_gemeten():
 @pytest.mark.anyio
 async def test_dezelfde_key_geeft_hetzelfde_resultaat():
     """Zoals de echte: dezelfde key geeft het antwoord van de eerste keer, ook voor een andere
-    bron, en ook als dat een fout was. Een kill of restart maakt het geheugen leeg."""
+    bron [gemeten]. Een fout ook (-3 hier), behalve -4 en -10: die bewaart DS niet (gemeten in
+    de review van fase 4), zie test_min_4_en_min_10_blijven_niet_bij_de_key. Een kill of restart
+    maakt het geheugen leeg."""
     side = AppSide()
     side.files["een.docx"] = docx.make_docx(["Een"])
     pages = (
@@ -581,6 +583,33 @@ async def test_dezelfde_key_geeft_hetzelfde_resultaat():
             client, config, key="k-fout", url=f"{APP}/internal/office/doc/een.docx"
         )
         assert "fileUrl" in answer
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_min_4_en_min_10_blijven_niet_bij_de_key(asynchronous):
+    """Gemeten tegen DS 10.0.0.1 (review fase 4, sync en async): na -4 (de bron gaf 404) en na
+    -10 (boven inputLimits) zet DS dezelfde key de volgende keer gewoon om, als de bron dan
+    goed is. De nep-DS vergeet die twee dus; de andere fouten (niet gemeten) bewaart hij nog,
+    het strengste geval."""
+    side = AppSide()
+    side.files["een.docx"] = docx.make_docx(["Een"])
+    good = f"{APP}/internal/office/doc/een.docx"
+    config, client, _ = converter_app(side)
+
+    async def answer(key: str, url: str) -> dict:
+        for _ in range(50):  # async: opnieuw vragen tot het resultaat er is, zoals de app
+            result = await convert_call(client, config, key=key, url=url, **{"async": asynchronous})
+            if result.get("endConvert") is not False:
+                return result
+        raise AssertionError("de conversie werd niet klaar")
+
+    async with client:
+        assert await answer("k-404", f"{APP}/internal/office/doc/weg.docx") == {"error": -4}
+        assert "fileUrl" in await answer("k-404", good)
+        await client.post("/__fake/convert", json={"fail": [-10]})
+        assert await answer("k-groot", good) == {"error": -10}
+        assert "fileUrl" in await answer("k-groot", good)
 
 
 def _docx_with_body(body: str) -> bytes:

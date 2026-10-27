@@ -9,8 +9,8 @@ DS, en "." of ".." mag daar nooit staan.
 Een conversie heeft een eigen key per inhoud (sha) en per PDF_VERSION. DS geeft bij dezelfde
 key het oude resultaat terug, ook voor een ander bestand: daarom staat de sha erin. Na een
 fout waarbij DS een nieuwe key vraagt (-2 of -4) komt er "-a<n>" achter. "Mislukte opnieuw" op
-/beheer zet er "-r<r>" tussen: DS bewaart ook een fout onder de key, dus met de oude keys kwam
-dezelfde fout terug.
+/beheer zet er "-r<r>" tussen: of DS een fout als -3 of -1 onder de key bewaart, is niet
+gemeten, en met een nieuwe key maakt dat niet uit (-4 en -10 bewaart hij niet, gemeten).
 """
 
 import re

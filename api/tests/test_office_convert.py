@@ -385,10 +385,10 @@ RETRY = "/api/v1/admin/office/conversions/retry"
 
 @pytest.mark.anyio
 async def test_mislukte_opnieuw_krijgt_eigen_keys(client, admin, office):
-    """DS bewaart het antwoord per key, ook een fout (de nep-DS ook). Na -4 op alle vier keys
-    (DS kon de bron even niet ophalen) moet "Mislukte opnieuw" op /beheer andere keys vragen:
-    met de oude kwam dezelfde -4 uit de cache, en bleef het failed. Een -4 in die ronde geeft
-    een nieuwe key binnen dezelfde ronde."""
+    """Na -4 op alle vier keys (DS kon de bron even niet ophalen) vraagt "Mislukte opnieuw" op
+    /beheer andere keys: of DS een fout onder de key bewaart, maakt dan niet uit (-4 bewaart
+    hij niet, gemeten; -1, -2, -3 en -6 niet gemeten, en de nep-DS bewaart die). Een -4 in die
+    ronde geeft een nieuwe key binnen dezelfde ronde."""
     jonas, _ = admin
     s = office.settings
     office.conversions.configure({"fail": [-4, -4, -4, -4]})

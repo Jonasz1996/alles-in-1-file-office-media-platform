@@ -11,8 +11,8 @@ resultaat.
 Elke fout wordt een ConvertError(code, kind), zoals de naad belooft (engine.Engine.convert):
 
     code  van           kind           wat de kern doet
-    -2    DS (tijd)     new_key        later opnieuw met een nieuwe key (DS bewaart dit antwoord)
-    -4    DS (download) new_key
+    -2    DS (tijd)     new_key        later opnieuw met een nieuwe key (bewaart DS -2? onbekend)
+    -4    DS (download) new_key        (DS bewaart -4 niet [gemeten]; een nieuwe key kan geen kwaad)
     -3, -7, -9, -10     failed         blijvend mislukt
     -5    DS (wachtwoord) none         dit bestand kan niet
     -1, -6              retry          een gewone poging

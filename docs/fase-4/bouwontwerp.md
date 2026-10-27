@@ -768,8 +768,9 @@ Elke keuze geeft de standaard en waarom.
     - Conversie-key bij DS: `p<PDF_VERSION>-<sha>`. Die key is een cache bij DS: dezelfde key geeft
       hetzelfde antwoord, ook voor een ander bestand [gemeten]. Met de sha erin kan dat niet
       misgaan. Een nieuwe key (`-a<n>`) alleen als DS zelf -2 of -4 meldde, want dat antwoord
-      bewaart hij onder de key. Na onze eigen tijdslimiet vragen we later dezelfde key opnieuw:
-      DS werkt gewoon door.
+      bewaart hij onder de key (voor -4 niet waar, gemeten in de review van fase 4: DS zet
+      dezelfde key daarna gewoon om; een nieuwe key kan geen kwaad, o3.md afwijking 21). Na onze
+      eigen tijdslimiet vragen we later dezelfde key opnieuw: DS werkt gewoon door.
     - **Vóór het versturen**, in deze volgorde:
       1. de invoercontrole (Keuze 23). Weigert hij: `pdf_state = unsafe`, klaar;
       2. DS gezond? Nee: `pdf_state` blijft leeg en de taak stopt. De inhaalronde zet hem terug
