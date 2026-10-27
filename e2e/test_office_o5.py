@@ -159,10 +159,12 @@ def test_grens_op_1_de_tweede_bewerker_krijgt_de_melding(office: Office, office_
 def test_na_opslaan_ziet_de_eigen_app_het_meteen(office: Office, office_browsers) -> None:
     """Zet de beheerder office uit en gaat hij meteen (zonder te herladen) naar Bestanden, dan is
     Nieuw er niet meer, alleen Nieuwe map; weer aan en terug: Nieuw is er meteen weer. De status
-    van office in de app gold eerst nog tot een minuut na het opslaan."""
+    van office in de app gold eerst nog tot een minuut na het opslaan. Uit met de knop Opslaan,
+    weer aan met Enter in het formulier."""
     tab = office_tab(office, office_browsers)
     nav = tab.get_by_role("navigation", name="Hoofdmenu")
     switch = tab.get_by_label("Bewerken en omzetten naar PDF aan", exact=True)
+    limit = tab.get_by_label("Hooguit zoveel bewerkers op één document", exact=True)
     save = tab.get_by_role("button", name="Opslaan", exact=True)
     new = tab.get_by_role("button", name="Nieuw", exact=True)
     folder = tab.get_by_role("button", name="Nieuwe map", exact=True)
@@ -185,7 +187,8 @@ def test_na_opslaan_ziet_de_eigen_app_het_meteen(office: Office, office_browsers
             "link", name="Office", exact=True
         ).click()
         switch.check()
-        save.click()
+        # Wachten op de PUT zelf: de toast van de eerste keer opslaan kan nog staan (5 s)
+        save_with_enter(tab, limit)
         expect(toast(tab, "Instellingen opgeslagen.").last).to_be_visible()
         nav.get_by_role("link", name="Bestanden", exact=True).click()
         expect(new).to_be_visible()
