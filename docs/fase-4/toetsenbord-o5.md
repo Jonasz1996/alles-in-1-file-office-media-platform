@@ -72,8 +72,8 @@ typt.
 - [x] Elke knop in een tabel heeft een naam met het document erin ("<naam> terugzetten").
 - [x] De bevestiging van Verwijderen begint op Annuleren (de veilige knop), en Escape sluit hem.
 - [x] Elke tekst via `t()`, in het Nederlands en het Engels (`check:i18n --strict`: 0
-      meldingen). Alleen de commando's `OFFICE=uit bash install.sh` en
-      `OFFICE=aan bash install.sh` staan letterlijk in de code: dat typt de beheerder zo in de
+      meldingen). Alleen de commando's `curl -fsSL …/install.sh | OFFICE=uit bash` en
+      `… | OFFICE=aan bash` staan letterlijk in de code: dat typt de beheerder zo in de
       console.
 - [x] Geen nieuwe sneltoets; Alt+7 is van O0. Geen Ctrl+N, Ctrl+T of Ctrl+W.
 - [x] Fouten en meldingen worden voorgelezen: fouten met `role=alert`, gelukt in het

@@ -324,7 +324,7 @@ def test_toetsenbord_en_engels(office: Office, office_browsers) -> None:
         expect(
             tab.get_by_role("heading", name="Turning office on or off on the server")
         ).to_be_visible()
-        expect(tab.locator("code").filter(has_text="OFFICE=uit bash install.sh")).to_be_visible()
+        expect(tab.locator("code").filter(has_text="install.sh | OFFICE=uit bash")).to_be_visible()
         expect(tab.locator("html")).to_have_attribute("lang", "en")
     finally:
         office.server.call(office.admin, "PATCH", "/api/v1/auth/me", json={"locale": None})

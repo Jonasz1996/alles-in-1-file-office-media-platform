@@ -27,9 +27,13 @@ import {
 } from "./format";
 import { usePolling } from "./usePolling";
 
-// Het commando op de server; geen tekst om te vertalen
-const SERVER_OFF = "OFFICE=uit bash install.sh";
-const SERVER_ON = "OFFICE=aan bash install.sh";
+// Het commando in de console van de server, zoals in infra/single/README.md (O6): het script
+// van GitHub via curl, want op de server staat geen install.sh in de map waar je inlogt. Geen
+// tekst om te vertalen.
+const INSTALL =
+  "curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh";
+const SERVER_OFF = `${INSTALL} | OFFICE=uit bash`;
+const SERVER_ON = `${INSTALL} | OFFICE=aan bash`;
 
 export function OfficeTab(): JSX.Element {
   const polled = usePolling(getAdmin, 5000);
