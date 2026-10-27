@@ -211,7 +211,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ansible ansible-lint yamllint shellcheck-py
-      - run: shellcheck infra/single/install.sh infra/scripts/*.sh api/tests/pebble/start.sh e2e/office_ds.sh
+      - run: shellcheck infra/single/install.sh infra/single/tests/*.sh infra/scripts/*.sh api/tests/pebble/start.sh e2e/office_ds.sh
       - run: yamllint -s .
       - name: Ansible lint
         working-directory: infra/ansible
@@ -227,10 +227,54 @@ jobs:
           for n in /tmp/render/*/; do docker compose -f "$n/compose.yaml" config -q; done
           docker compose --project-directory infra/single -f infra/single/compose.yaml \
             --env-file infra/single/.env.example config -q
+          # infra/single met office (Keuze 31): de geheimen zijn leeg in .env.example (install.sh
+          # vult ze), dus hier een kopie met eenmalige waarden, alleen voor deze job
+          env_file="$RUNNER_TEMP/single.env"
+          sed -e "s/^OFFICE_JWT_SECRET=$/OFFICE_JWT_SECRET=$(openssl rand -hex 32)/" \
+            -e "s/^OFFICE_LINK_SECRET=$/OFFICE_LINK_SECRET=$(openssl rand -hex 32)/" \
+            infra/single/.env.example > "$env_file"
+          single=(docker compose --project-directory infra/single --env-file "$env_file" -f infra/single/compose.yaml)
+          "${single[@]}" config -q
+          "${single[@]}" -f infra/single/compose.office.yaml config -q
+          "${single[@]}" -f infra/single/compose.office.yaml -f infra/single/compose.office-limits.yaml config -q
+          # De afscherming van DS zoals ontworpen: geen poort naar buiten, een intern netwerk,
+          # cap_drop ALL met alleen deze capabilities, no-new-privileges en pids_limit
+          "${single[@]}" -f infra/single/compose.office.yaml -f infra/single/compose.office-limits.yaml \
+            config --format json | python3 -c '
+          import json, sys
+          c = json.load(sys.stdin)
+          o = c["services"]["office"]
+          caps = {"CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER", "NET_BIND_SERVICE", "KILL"}
+          assert not o.get("ports") and not o.get("expose"), "DS mag geen poort hebben"
+          assert o.get("cap_drop") == ["ALL"] and set(o.get("cap_add", [])) == caps, (o.get("cap_drop"), o.get("cap_add"))
+          assert o.get("security_opt") == ["no-new-privileges:true"] and o.get("pids_limit") == 512
+          assert not o.get("privileged") and "network_mode" not in o
+          assert list(o["networks"]) == ["office"] and c["networks"]["office"].get("internal") is True
+          assert "office" in c["services"]["platform"]["networks"]
+          print("afscherming van DS: goed")
+          '
       - name: Images bestaan
         run: |
-          grep -h 'image:' /tmp/render/*/compose.yaml infra/single/compose.yaml | awk '{print $2}' | grep -v ':local$' | sort -u \
+          grep -h 'image:' /tmp/render/*/compose.yaml | awk '{print $2}' | sort -u \
             | while read -r img; do echo "$img"; docker manifest inspect "$img" > /dev/null; done
+          # infra/single: de images volgens compose zelf, met office (zonder het eigen image).
+          # Docker Hub weigert soms (429): dan een paar pogingen, en mirror.gcr.io als terugval,
+          # zoals install.sh ook doet
+          bestaat() {
+            for i in 1 2 3; do
+              docker manifest inspect "$1" > /dev/null && return 0
+              docker manifest inspect "mirror.gcr.io/$1" > /dev/null && echo "  (via mirror.gcr.io)" && return 0
+              sleep $((i * 10))
+            done
+            return 1
+          }
+          docker compose --project-directory infra/single --env-file "$RUNNER_TEMP/single.env" \
+            -f infra/single/compose.yaml -f infra/single/compose.office.yaml config --images \
+            | grep -v ':local$' | sort -u > "$RUNNER_TEMP/single-images"
+          test -s "$RUNNER_TEMP/single-images"
+          while read -r img; do echo "$img"; bestaat "$img"; done < "$RUNNER_TEMP/single-images"
+      - name: install.sh controleren (test_install_env.sh)
+        run: bash infra/single/tests/test_install_env.sh
       - name: PostgreSQL-image bouwen en Patroni-configuratie valideren
         run: |
           base=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['postgres_base_image'])")
@@ -306,6 +350,13 @@ jobs:
           fi
           # Voorgecomprimeerd: brotli als de browser het vraagt
           curl -fsSI -H 'Accept-Encoding: br' localhost:8080/ | tr -d '\r' | grep -qi '^content-encoding: br'
+          # Office (fase 4): zonder DS is /office/ 404 (nooit de web-app), en /internal/ bestaat
+          # niet op de publieke poort, voor geen enkele methode
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/office/)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/office/web-apps/apps/api/documents/api.js)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/internal/)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/internal/office/callback)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/internal/office/doc/x)" = 404
           curl -fsS -X POST localhost:8080/api/v1/auth/setup -H 'Content-Type: application/json' \
             -d '{"email":"ci@example.com","display_name":"CI","password":"lang-genoeg-wachtwoord"}' \
             | grep -q access_token
