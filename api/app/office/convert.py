@@ -495,7 +495,10 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
             if _restarting():  # de tweede kans pas als DS terug is
                 await _postpone(maker, sha, OUTAGE_WAIT)
                 return
-            raise jobs.JobError("De document server is niet gezond na een mislukte poging")
+            raise jobs.JobError(
+                f"{_failed_message(NO_ANSWER)}; de document server is niet gezond na een "
+                "mislukte poging"
+            )
         await _release(maker, sha, asked, r)
         return
     async with maker() as session:

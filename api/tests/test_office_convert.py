@@ -718,6 +718,11 @@ async def test_lang_weg_na_een_mislukte_poging_is_failed(client, admin, office):
     assert (await blob_of(s, node["id"])).pdf_state == "failed"
     [job] = await office_jobs(s)
     assert (job.status, job.attempts) == ("failed", 2)
+    # De viewer en /beheer noemen code 2 (DS antwoordde niet), niet een onbekende 0
+    assert "(code 2)" in job.error
+    office_state(app).health = "ok"
+    r = await ask(client, jonas, node["id"], expect=502)
+    assert code_of(r) == "office_convert_failed" and params_of(r) == {"code": 2}
 
 
 @pytest.mark.anyio
