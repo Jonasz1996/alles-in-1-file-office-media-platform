@@ -1,12 +1,18 @@
 """De upgrade naar de tunnel in serve.py (Keuze 6 en 8, §3.8, M1): een geüpgradede verbinding
 blijft open na HEADER_TIMEOUT, met h11 en met httptools; een stille gewone verbinding sluit
-nog steeds; zonder office_dev_ungated geeft elke upgrade 404; de interne poort kent alleen
-/internal/office/…, de publieke poort geeft 404 op /internal/…."""
+nog steeds; elke upgrade naar een ander pad (of zonder office) geeft 404, en zonder
+poort-cookie 401, ook met de oude vlag office_dev_ungated; de interne poort kent alleen
+/internal/office/…, de publieke poort geeft 404 op /internal/….
+
+Waar het hier om serve.py gaat (de deadline, 502, een echte socket), laten de poort en de
+StreamGuard van O1 iedereen door (fixture open_gate); die staan zelf in test_office_tunnel.py,
+test_office_gate.py en test_office_stream.py."""
 
 import asyncio
 import contextlib
 import secrets
 import socket
+import uuid
 
 import pytest
 import uvicorn
@@ -14,7 +20,8 @@ from websockets.asyncio.client import connect
 
 from app import serve
 from app.config import Settings
-from app.office import runtime, tunnel
+from app.office import engine, gate, runtime, tunnel
+from app.office.oo import stream
 from tests.fake_docserver import FakeConfig, create_app, protocol
 from tests.test_serve import closed_within, echo, request, response, running
 
@@ -89,13 +96,26 @@ def office(tmp_path, port: int, **extra) -> Settings:
     )
 
 
+@pytest.fixture
+def open_gate(monkeypatch):
+    """De poort en de StreamGuard van O1 laten iedereen door."""
+
+    async def anyone(headers, key=None):
+        return gate.GateUser(uuid.uuid4(), None)
+
+    monkeypatch.setattr(gate, "check", anyone)
+    monkeypatch.setattr(stream.Guard, "feed", lambda self, data: "ok")
+
+
 @contextlib.contextmanager
 def bound(settings: Settings):
     runtime.bind(None, settings)
+    engine.reset()
     try:
         yield settings
     finally:
         runtime.unbind()
+        engine.reset()
         tunnel.close_all()
 
 
@@ -117,8 +137,8 @@ async def head_of(reader: asyncio.StreamReader) -> bytes:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("impl", IMPLEMENTATIONS, ids=lambda impl: impl.__name__)
-async def test_tunnel_blijft_open_na_de_header_deadline(tmp_path, monkeypatch, ds, impl):
-    settings = office(tmp_path, ds.port, office_dev_ungated=True)
+async def test_tunnel_blijft_open_na_de_header_deadline(tmp_path, monkeypatch, ds, impl, open_gate):
+    settings = office(tmp_path, ds.port)
     async with public(settings, impl, monkeypatch) as listener:
         reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
         writer.write(
@@ -158,7 +178,7 @@ async def test_tunnel_blijft_open_na_de_header_deadline(tmp_path, monkeypatch, d
 @pytest.mark.anyio
 @pytest.mark.parametrize("impl", IMPLEMENTATIONS, ids=lambda impl: impl.__name__)
 async def test_stille_gewone_verbinding_sluit_nog_steeds(tmp_path, monkeypatch, ds, impl):
-    settings = office(tmp_path, ds.port, office_dev_ungated=True)
+    settings = office(tmp_path, ds.port)
     async with public(settings, impl, monkeypatch) as listener:
         reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
         assert await closed_within(reader, TIMEOUT * 6)
@@ -173,32 +193,35 @@ async def test_stille_gewone_verbinding_sluit_nog_steeds(tmp_path, monkeypatch, 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("impl", IMPLEMENTATIONS, ids=lambda impl: impl.__name__)
-async def test_zonder_dev_ungated_geeft_elke_upgrade_404(tmp_path, monkeypatch, ds, impl):
+async def test_zonder_cookie_of_buiten_het_pad_geen_upgrade(tmp_path, monkeypatch, ds, impl):
+    """Ander pad of geen office: 404. Het goede pad zonder poort-cookie: 401, met of zonder de
+    oude vlag office_dev_ungated (die opent niets meer). DS krijgt nooit iets."""
     cases = [
-        (office(tmp_path, ds.port), UPGRADE_PATH),  # office aan, de vlag niet
-        (Settings(data_dir=tmp_path, office_dev_ungated=True), UPGRADE_PATH),  # geen office
-        (office(tmp_path, ds.port, office_dev_ungated=True), "/api/v1/events"),  # ander pad
-        (office(tmp_path, ds.port, office_dev_ungated=True), "/office/x/doc/k1-abc/c/"),
-        (office(tmp_path, ds.port, office_dev_ungated=True), f"/office/{VERSION}/doc/../c/"),
-        (office(tmp_path, ds.port, office_dev_ungated=True), "/"),
+        (office(tmp_path, ds.port), UPGRADE_PATH, 401),  # office aan, geen cookie
+        (office(tmp_path, ds.port, office_dev_ungated=True), UPGRADE_PATH, 401),  # de vlag
+        (Settings(data_dir=tmp_path, office_dev_ungated=True), UPGRADE_PATH, 404),  # geen office
+        (office(tmp_path, ds.port, office_dev_ungated=True), "/api/v1/events", 404),  # ander pad
+        (office(tmp_path, ds.port, office_dev_ungated=True), "/office/x/doc/k1-abc/c/", 404),
+        (office(tmp_path, ds.port), f"/office/{VERSION}/doc/../c/", 404),
+        (office(tmp_path, ds.port), "/", 404),
     ]
-    for settings, path in cases:
+    for settings, path, status in cases:
         async with public(settings, impl, monkeypatch) as listener:
             reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
             writer.write(upgrade(path))
             head = await head_of(reader)
-            assert head.startswith(b"HTTP/1.1 404 "), (path, head)
+            assert head.startswith(b"HTTP/1.1 %d " % status), (path, head)
             assert await closed_within(reader, 2)
             writer.close()
     assert ds.heads == []  # DS kreeg nooit iets
 
 
 @pytest.mark.anyio
-async def test_ds_onbereikbaar_geeft_502(tmp_path, monkeypatch):
+async def test_ds_onbereikbaar_geeft_502(tmp_path, monkeypatch, open_gate):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]  # na het sluiten luistert hier niemand
-    settings = office(tmp_path, port, office_dev_ungated=True)
+    settings = office(tmp_path, port)
     async with public(settings, serve.GuardedH11, monkeypatch) as listener:
         reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
         writer.write(upgrade())
@@ -207,7 +230,7 @@ async def test_ds_onbereikbaar_geeft_502(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_een_echte_websocket_naar_de_nep_ds(tmp_path, monkeypatch):
+async def test_een_echte_websocket_naar_de_nep_ds(tmp_path, monkeypatch, open_gate):
     """Door de tunnel naar de nep-DS (uvicorn met websockets): het eerste pakket komt aan,
     en na HEADER_TIMEOUT gaan er nog steeds frames heen en terug."""
     fake = create_app(FakeConfig(secret=secrets.token_urlsafe(32)))
@@ -221,11 +244,12 @@ async def test_een_echte_websocket_naar_de_nep_ds(tmp_path, monkeypatch):
             if ds_server.started:
                 break
             await asyncio.sleep(0.01)
-        settings = office(tmp_path, sock.getsockname()[1], office_dev_ungated=True)
+        settings = office(tmp_path, sock.getsockname()[1])
         async with public(settings, serve.GuardedHttpTools, monkeypatch) as listener:
             path = f"/office/{protocol.V}/doc/k1-abc/c/?EIO=4&transport=websocket"
             url = f"ws://127.0.0.1:{listener.port}{path}"
-            async with connect(url, compression=None, open_timeout=5) as ws:
+            origin = f"http://127.0.0.1:{listener.port}"
+            async with connect(url, compression=None, open_timeout=5, origin=origin) as ws:
                 first = await asyncio.wait_for(ws.recv(), 5)
                 assert protocol.parse(first)[0] == "open"
                 await asyncio.sleep(TIMEOUT * 2)
@@ -275,7 +299,7 @@ async def test_interne_poort_kent_alleen_internal_office(tmp_path, impl):
 async def test_publieke_poort_geeft_404_op_internal(tmp_path, monkeypatch, ds, impl):
     from app.main import app
 
-    settings = office(tmp_path, ds.port, office_dev_ungated=True)
+    settings = office(tmp_path, ds.port)
     monkeypatch.setattr("app.config.get_settings", lambda: settings)
     async with public(settings, impl, monkeypatch, app=app) as listener:
         for method, path in (

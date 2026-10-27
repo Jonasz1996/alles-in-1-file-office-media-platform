@@ -374,7 +374,7 @@ def test_refusal_en_tellen():
         b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     )
     assert tunnel.refusal(418).startswith(b"HTTP/1.1 418 Error\r\n")
-    assert tunnel.counts() == {"total": 0}
+    assert tunnel.counts() == {"total": 0, "keys": 0, "users": 0}
     assert tunnel.close_all() == 0
 
 
@@ -411,12 +411,20 @@ class Browser:
 @pytest.mark.anyio
 async def test_tunnel_pauzeert_de_browser_terwijl_ds_verbindt(tmp_path, monkeypatch):
     """S8: zolang DS niet antwoordt, bewaart de tunnel hooguit PENDING_LIMIT en leest hij de
-    browser niet meer. Daarna komt alles aan, in volgorde, en leest hij weer."""
+    browser niet meer. Daarna komt alles aan, in volgorde, en leest hij weer. (De poort en de
+    StreamGuard van O1 laten hier iedereen door: dit gaat over het wachten op DS.)"""
+    from app.office.oo import stream
+
+    async def anyone(headers, key=None):
+        return gate.GateUser(uuid.uuid4(), None)
+
+    monkeypatch.setattr(gate, "check", anyone)
+    monkeypatch.setattr(stream.Guard, "feed", lambda self, data: "ok")
     received = bytearray()
     enough = asyncio.Event()
     head = (
         b"GET /office/10.0.0-0123abcd/doc/k1/c/?EIO=4 HTTP/1.1\r\nHost: test\r\n"
-        b"Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+        b"Origin: http://test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
     )
     chunks = [bytes([65 + i % 26]) * 1024 for i in range(100)]
     total = len(b"".join(chunks)) + 1000
@@ -430,8 +438,9 @@ async def test_tunnel_pauzeert_de_browser_terwijl_ds_verbindt(tmp_path, monkeypa
 
     server = await asyncio.start_server(ds, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    settings = office(tmp_path, office_url=f"http://127.0.0.1:{port}", office_dev_ungated=True)
+    settings = office(tmp_path, office_url=f"http://127.0.0.1:{port}")
     runtime.bind(None, settings)
+    engine.reset()
     loop = asyncio.get_running_loop()
     connect = asyncio.Event()
     real = loop.create_connection
@@ -446,6 +455,10 @@ async def test_tunnel_pauzeert_de_browser_terwijl_ds_verbindt(tmp_path, monkeypa
     try:
         t.connection_made(browser)
         t.data_received(head + b"x" * 1000)
+        for _ in range(100):  # eerst de poort (een taak), dan het verbinden met DS
+            if t.state != "checking":
+                break
+            await asyncio.sleep(0.01)
         assert t.state == "connecting" and not browser.paused
         for chunk in chunks:
             if browser.paused:
@@ -468,6 +481,7 @@ async def test_tunnel_pauzeert_de_browser_terwijl_ds_verbindt(tmp_path, monkeypa
         server.close()
         await server.wait_closed()
         runtime.unbind()
+        engine.reset()
 
 
 # --- previews met de PDF-generatie (Keuze 25) ---

@@ -1,7 +1,7 @@
 """De routes van office in O0 (§3.3, §3.4): status is af, de rest zijn stubs die 503
 office_off geven; /api/v1/admin/office alleen voor beheerders; /internal/ alleen op de
-interne app; en /office/ via de proxy alleen met office_dev_ungated. Zonder office is de app
-precies fase 3."""
+interne app; en /office/ via de proxy alleen met office aan, en dan alleen wat het padbeleid
+van O1 toelaat (office_dev_ungated opent niets meer). Zonder office is de app precies fase 3."""
 
 import json
 import secrets
@@ -204,21 +204,49 @@ async def test_internal_alleen_op_de_interne_app(client, settings):
 
 @pytest.mark.anyio
 async def test_office_zonder_proxy_is_404(client, with_office):
-    """Zonder office, en met office maar zonder office_dev_ungated: /office/ is 404."""
-    for _ in range(2):
-        for method in ("GET", "POST", "PUT", "DELETE", "OPTIONS"):
-            for path in ("/office", "/office/", "/office/web-apps/apps/api/documents/api.js"):
-                r = await client.request(method, path)
-                assert r.status_code == 404, (method, path)
-        with_office()
+    """Zonder office is /office/ 404, wat de methode ook is. Met office (ook met de oude vlag
+    office_dev_ungated, die niets meer opent) blijven /office en /office/ 404, en gaat api.js
+    alleen met GET naar DS (het padbeleid van O1)."""
+    methods = ("GET", "POST", "PUT", "DELETE", "OPTIONS")
+    api_js = "/office/web-apps/apps/api/documents/api.js"
+    for method in methods:
+        for path in ("/office", "/office/", api_js):
+            r = await client.request(method, path)
+            assert r.status_code == 404, (method, path)
+    with_office(office_dev_ungated=True)
+    ds_client.transport = httpx.MockTransport(
+        lambda request: respond(200, {"Content-Type": "application/javascript"}, b"1")
+    )
+    for method in methods:
+        for path in ("/office", "/office/"):
+            r = await client.request(method, path)
+            assert r.status_code == 404 and code_of(r) == "not_found", (method, path)
+        r = await client.request(method, api_js)
+        assert r.status_code == (200 if method == "GET" else 404), method
 
 
 # --- de proxy (kern) ---
 
 
 @pytest.fixture
-def ungated(with_office):
-    settings = with_office(office_dev_ungated=True)
+def ungated(with_office, monkeypatch):
+    """De kern van de proxy zonder het padbeleid en de poort van O1 (vroeger:
+    office_dev_ungated): elk pad is statisch, een *.html de editorpagina, en de poort laat
+    iedereen door. Deze tests gaan alleen over het doorgeven; het padbeleid en de poort zelf
+    staan in test_office_paths.py, test_office_proxy.py en test_office_gate.py."""
+    from app.office import gate
+    from app.office.engine import PathClass
+    from app.office.oo import paths
+
+    def open_policy(method: str, path: str, upgrade: bool) -> PathClass:
+        return PathClass.PAGE if path.split("?")[0].endswith(".html") else PathClass.STATIC
+
+    async def anyone(headers, key=None):
+        return gate.GateUser(uuid.uuid4(), None)
+
+    monkeypatch.setattr(paths, "classify", open_policy)
+    monkeypatch.setattr(gate, "check", anyone)
+    settings = with_office()
     seen: list[httpx.Request] = []
 
     def use(handler) -> list[httpx.Request]:
