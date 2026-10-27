@@ -110,6 +110,9 @@ def test_tabblad_office_toont_twee_verbindingen(office: Office, office_browsers)
     expect(row).to_contain_text("Open")
     admin = office.server.call(office.admin, "GET", ADMIN, expect=200).json()
     assert (admin["connections"], admin["people"], admin["documents"]) == (2, 2, 1), admin
+    # Nu tussentijds opslaan zonder wijzigingen: niets nieuws, maar er stond wel iets open
+    tab.get_by_role("button", name="Nu tussentijds opslaan", exact=True).click()
+    expect(toast(tab, "Er was niets nieuws om op te slaan.")).to_be_visible()
 
     # Allebei sluiten: weer 0, de piek blijft
     close_editor(page_a)

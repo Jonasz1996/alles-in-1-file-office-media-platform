@@ -21,7 +21,8 @@ pagina. Ctrl+N, Ctrl+T en Ctrl+W gebruikt de app nooit.
 **De volgorde van Tab** (na de rij tabbladen):
 
 1. **Nu tussentijds opslaan.** Staat uit (en wordt overgeslagen) als er geen document open is.
-   Daarna meldt het meldingengebied "Opgeslagen: x van y".
+   Daarna meldt het meldingengebied "Opgeslagen: x van y" (of "Er was niets nieuws om op te
+   slaan.").
 2. **Per rij onder "Niet opgeslagen": Terugzetten en Verwijderen.** Hun naam voor een
    schermlezer is "<naam> terugzetten" en "<naam> verwijderen". Terugzetten is er niet als er
    geen eigenaar meer is, of als de app de key niet kent.

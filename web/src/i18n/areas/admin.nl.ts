@@ -343,7 +343,7 @@ export default {
     nobody: "niemand",
     checkpoint: "Nu tussentijds opslaan",
     checkpointDone: "Opgeslagen: {saved} van {sent}.",
-    checkpointNone: "Er stond niets open om op te slaan.",
+    checkpointNone: "Er was niets nieuws om op te slaan.",
     unsaved: "Niet opgeslagen",
     unsavedHelp:
       "Wat de editor niet bij de app kwijt kon. Het herstel probeert het zelf. Lukt dat niet (bijvoorbeeld bij een vol quotum), zet het dan hier terug als kopie bij de eigenaar, of verwijder het.",

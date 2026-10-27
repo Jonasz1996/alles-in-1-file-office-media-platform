@@ -340,7 +340,7 @@ const en: Translation<typeof nl> = {
     nobody: "nobody",
     checkpoint: "Save all now",
     checkpointDone: "Saved: {saved} of {sent}.",
-    checkpointNone: "Nothing was open to save.",
+    checkpointNone: "There was nothing new to save.",
     unsaved: "Not saved",
     unsavedHelp:
       "What the editor could not hand over to the app. Recovery tries by itself. If that fails (for example with a full quota), restore it here as a copy for the owner, or delete it.",
