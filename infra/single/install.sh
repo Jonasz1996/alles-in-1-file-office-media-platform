@@ -280,7 +280,7 @@ JSON
     echo "(te veel verzoeken), wacht dan even en draai dit opnieuw."
     exit 1
   fi
-  if ! docker run --rm "$img" >/dev/null 2>&1; then
+  if ! docker run --rm "$img" </dev/null >/dev/null 2>&1; then
     echo "Docker kan geen containers starten. Zet in Proxmox bij deze container"
     echo "Options -> Features 'nesting' en 'keyctl' aan, herstart de container en draai dit opnieuw."
     exit 1
@@ -348,12 +348,13 @@ ENV
 }
 
 # Vóór het vervangen van de app: alle open documenten tussentijds opslaan. Een oudere app kent
-# het commando niet; dan gaat het script gewoon door.
+# het commando niet; dan gaat het script gewoon door. </dev/null: bij `curl … | bash` is stdin
+# de rest van dit script, en `compose exec` zou die anders opeten.
 checkpoint() {
   local id
   id=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" --filter label=com.docker.compose.service=platform | head -n 1)
   [ -n "$id" ] || return 0
-  if "${compose[@]}" exec -T platform python -m app.cli office-checkpoint --wait 30 >/dev/null 2>&1; then
+  if "${compose[@]}" exec -T platform python -m app.cli office-checkpoint --wait 30 </dev/null >/dev/null 2>&1; then
     echo "Open documenten zijn tussentijds opgeslagen."
   fi
 }

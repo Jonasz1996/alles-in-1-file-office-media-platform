@@ -331,6 +331,13 @@ office_cleanup sha256:nu sha256:vorig sha256:pin >/dev/null
 removed=$({ grep '^docker image rm' "$LOG" || true; } | sort | tr '\n' ' ')
 check "alleen de twee oude namen" test "$removed" = "docker image rm mirror.gcr.io/onlyoffice/documentserver@sha256:oud2 docker image rm onlyoffice/documentserver:9.4.0.1 "
 
+echo "== curl | bash: geen commando leest de rest van het script van stdin"
+# Bij `curl … | bash` leest bash het script van stdin. Een `docker run` of `compose exec` die
+# stdin openhoudt, eet de rest van het script op; dan stopt het zonder melding.
+readers=$(grep -nE '(docker run|compose\[@\]\}" exec) ' "$install_sh" | grep -v '</dev/null' || true)
+check "elke docker run en compose exec krijgt </dev/null" test -z "$readers"
+[ -z "$readers" ] || printf '      %s\n' "$readers"
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails controle(s) mislukt."
