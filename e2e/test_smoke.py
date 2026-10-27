@@ -9,6 +9,7 @@ toegankelijke namen en teksten, en geen rollen of elementen die een pakket mag v
 from __future__ import annotations
 
 import re
+from urllib.parse import urlsplit
 
 from playwright.sync_api import expect
 
@@ -180,15 +181,34 @@ def test_bewaking_vangt_fouten(browsers):
 def test_uploadlade_tijdens_een_trage_upload(new_context, user_factory):
     """Zolang er een upload loopt, staat de lade (lazy, P3) in de schil. Die mag niet vallen: de
     bewaking vangt de fout die een foutgrens logt (zoals React #306, een lazy die op een lazy
-    uitkomt)."""
+    uitkomt).
+
+    Zonder service worker: de test houdt de tus-verzoeken op met page.route, en bij een eerste
+    bezoek neemt de worker de pagina pas over (clients.claim) als hij zijn precache binnen heeft,
+    dus soms net tijdens deze upload. Playwright raadt bij onderscheppen service_workers="block"
+    aan, en om de worker gaat het hier niet (die heeft test_pwa.py)."""
     user = user_factory(name="Trage Upload")
-    page = new_context().new_page()
+    page = new_context(service_workers="block").new_page()
+    # Voor de melding als het misgaat: welke API-verzoeken de pagina deed en of hij herlaadde
+    seen: list[str] = []
+
+    def request(r) -> None:
+        path = urlsplit(r.url).path
+        if path.startswith("/api/"):
+            seen.append(f"{r.method} {path}")
+
+    page.on("request", request)
+    loads: list[str] = []
+    page.on("load", lambda p: loads.append(urlsplit(p.url).path))
     login_via_form(page, user)
 
     held = []
 
     def hold(route):  # de tus-verzoeken ophouden: de wachtrij blijft zo bezig
         held.append(route)
+
+    def posted() -> bool:  # GET /tus (onderbroken uploads) telt niet: pas de POST is de upload
+        return any(r.request.method == "POST" for r in held)
 
     page.route("**/api/v1/tus**", hold)
     with page.expect_file_chooser() as chooser:
@@ -197,10 +217,15 @@ def test_uploadlade_tijdens_een_trage_upload(new_context, user_factory):
     # Wachten op het tus-verzoek zelf, niet een vaste pauze: op een drukke CI-runner kwam het
     # een keer pas na meer dan 1,5 s (lokaal, ook bij 6x CPU, na 0,6-0,7 s vanaf de klik)
     for _ in range(150):
-        if held:
+        if posted():
             break
         page.wait_for_timeout(100)
-    assert held, "geen tus-verzoek gezien"
+    if not posted():
+        notes = page.get_by_role("region", name="Meldingen").all_inner_texts()
+        raise AssertionError(
+            f"geen tus-upload gezien; opgehouden: {[r.request.method for r in held]}, "
+            f"API-verzoeken: {seen}, geladen: {loads}, meldingen: {notes}"
+        )
     # De lade laadt terwijl de upload wacht
     expect(page.get_by_role("region", name="Uploads", exact=True)).to_be_visible()
     page.unroute("**/api/v1/tus**", hold)  # laat ook de opgehouden verzoeken verder gaan
