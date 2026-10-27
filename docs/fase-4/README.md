@@ -1,11 +1,12 @@
 # Fase 4 — Office
 
-Status: **in aanbouw** (bouwontwerp revisie 2, 26 oktober 2026). Van O0 staan de API-kant
-(migratie 0007, de contracten, de kern van proxy en tunnel, de invoercontrole, de gezondheid
-en de nep-DS) en de web-kant (de haken, de route `/bewerken/<id>` als stub, het tabblad
-Office) erin, en ook de spike met de echte DS, de e2e met de nep-DS en de job `office` in CI
-(een rooktest tegen de echte DS op digest). Zonder office-instellingen werkt de app precies als
-in fase 3.
+Status: **in aanbouw** (bouwontwerp revisie 2, 26 oktober 2026). Alle pakketten zijn
+samengevoegd (27 oktober 2026, in de volgorde O2, O3, O1, O4, O5, O6): het fundament
+(O0), de toegang via `/office/` (O1), bewerken en opslaan (O2), PDF-voorbeelden (O3), Nieuw
+document (O4), het tabblad Office op `/beheer` (O5) en de uitrol met `install.sh` (O6). Wat elk
+pakket bouwde en openliet, staat in [o1.md](o1.md) tot en met [o6.md](o6.md). Nog te doen: de
+integratie (§5 stap 4), met de installatietest in de sandbox, de metingen en versie 0.6.0.
+Zonder office-instellingen werkt de app precies als in fase 3.
 
 ## Doel
 
