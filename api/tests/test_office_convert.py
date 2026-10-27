@@ -26,7 +26,7 @@ from app import jobs, previews
 from app.config import Settings, get_settings
 from app.main import app, internal_app
 from app.mime import DOCX
-from app.models import Blob, Job, Node, User, Version
+from app.models import Blob, Job, Node, OfficeSession, User, Version
 from app.office import convert, engine, grants, health, inspect, keys, runtime, sessions
 from app.office.oo import client as ds_client
 from app.office.oo import convert as oo_convert
@@ -611,35 +611,57 @@ async def test_ds_niet_gezond_dan_geen_poging(client, admin, office):
     assert office.converted() == [keys.convert_key(blob.sha256)]
 
 
+async def set_session_state(s: Settings, key: str, state: str) -> None:
+    async with maker(s)() as session:
+        await session.execute(
+            update(OfficeSession).where(OfficeSession.key == key).values(state=state)
+        )
+        await session.commit()
+
+
 @pytest.mark.anyio
-async def test_een_sessie_die_opent_of_opslaat_laat_de_conversie_wachten(
-    client, admin, office, monkeypatch
-):
+async def test_een_sessie_die_opent_of_opslaat_laat_de_conversie_wachten(client, admin, office):
+    """Met de echte sessies van O2: een sessie die opent (pending, de config is uitgegeven) of
+    opslaat (saving, de laatste is weg en DS slaat op) laat de conversie wachten, zonder poging.
+    Een open sessie (iemand bewerkt) en een dichte niet."""
     jonas, _ = admin
     s = office.settings
-    busy = {"now": True}
-
-    async def fake_busy(_session) -> bool:
-        return busy["now"]
-
-    monkeypatch.setattr(sessions, "busy", fake_busy)
+    edited = await upload(client, jonas, "bewerkt.docx", docx_with_pages(1, "Bewerkt"))
+    r = await client.post(f"/api/v1/office/files/{edited['id']}/session", json={}, headers=jonas)
+    assert r.status_code == 200, r.text
+    key = r.json()["key"]
+    async with maker(s)() as session:
+        assert (await sessions.find_by_key(session, key)).state == "pending"
+        assert await sessions.busy(session)
     node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
     photo = await upload(client, jonas, "foto.png", picture("PNG", (300, 200)))
     before = jobs.now()
     await jobs.run_pending(s)
-    # De foto kreeg zijn preview; de conversie wacht, zonder poging
+    # De foto kreeg zijn preview; de conversies wachten, zonder poging
     assert (await blob_of(s, photo["id"])).preview == "ready"
     assert (await blob_of(s, node["id"])).pdf_state == "pending"
-    [job] = await office_jobs(s)
-    assert (job.status, job.attempts) == ("queued", 0)
-    wait = job.run_after.replace(tzinfo=None) - before.replace(tzinfo=None)
-    assert timedelta(seconds=4) < wait < timedelta(seconds=30)
+    waiting = await office_jobs(s)
+    assert len(waiting) == 2
+    for job in waiting:
+        assert (job.status, job.attempts) == ("queued", 0)
+        wait = job.run_after.replace(tzinfo=None) - before.replace(tzinfo=None)
+        assert timedelta(seconds=4) < wait < timedelta(seconds=30)
     assert office.converted() == []
-    busy["now"] = False
+    # De laatste bewerker is weg en DS slaat op: nog steeds wachten
+    await set_session_state(s, key, "saving")
+    await run_later(s, 10)
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    assert [(j.status, j.attempts) for j in await office_jobs(s)] == [("queued", 0)] * 2
+    assert office.converted() == []
+    # Open (iemand bewerkt, er wordt niets geopend of opgeslagen): de conversie loopt
+    await set_session_state(s, key, "open")
+    async with maker(s)() as session:
+        assert not await sessions.busy(session)
     await run_later(s, 10)
     assert (await blob_of(s, node["id"])).pdf_state == "ready"
-    [job] = await office_jobs(s)
-    assert (job.status, job.attempts) == ("done", 1)
+    assert (await blob_of(s, edited["id"])).pdf_state == "ready"
+    assert [(j.status, j.attempts) for j in await office_jobs(s)] == [("done", 1)] * 2
+    assert len(office.converted()) == 2
 
 
 @pytest.mark.anyio
