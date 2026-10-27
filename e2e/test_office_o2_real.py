@@ -28,7 +28,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from conftest import Account, artifacts_dir, create_user, enable_2fa, totp_code
-from office_harness import Office, docx_text, fixture, type_in_editor
+from office_harness import Office, docx_text, fixture, session_row, type_in_editor
 
 pytestmark = pytest.mark.office_real
 
@@ -277,14 +277,21 @@ def test_herstart_van_de_app_terwijl_anna_bewerkt(real_office: Office, real_brow
 def test_werkblad_en_presentatie_openen(real_office: Office, real_browsers, name: str) -> None:
     """Een xlsx en een pptx openen in de echte editor via de app (A22: een pptx opende in de
     spike 4 van 22 keer niet via de proxy; de pagina laadt de iframe dan zelf opnieuw). Sluiten
-    zonder wijziging: geen versie erbij."""
+    zonder wijziging: de sessie gaat dicht met status 4 (no_changes), geen versie erbij."""
     office = real_office
     d = duo(office, name=name, data=fixture(name))
     page = real_browsers.context_as(d.anna, service_workers="block").new_page()
-    _, reloads = open_via_button(page, d, d.node, name)
+    key, reloads = open_via_button(page, d, d.node, name)
     expect(page.locator("iframe[name=frameEditor]")).to_have_attribute("title", f"Editor: {name}")
     page.get_by_role("button", name="Sluiten", exact=True).click()
     expect(page).to_have_url(re.compile(rf"/map/{d.folder}\?bestand={d.node}$"))
-    page.wait_for_timeout(8000)  # status 4 komt na de wachttijd van DS
+
+    def closed() -> bool:
+        r = office.server.call(d.anna, "GET", f"/api/v1/office/files/{d.node}", expect=200)
+        return r.json()["open"] is None
+
+    # Status 4 komt na de wachttijd van DS; pas dan zegt "geen versie" iets
+    wait_until(closed, 60, "status 4 en de sessie dicht")
+    assert session_row(office.server, key) == ("closed", "no_changes")
     assert versions(office, d.anna, d.node) == []
     print(f"{name}: opnieuw geladen (A22) {reloads}", file=sys.stderr)

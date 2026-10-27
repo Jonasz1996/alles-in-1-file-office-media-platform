@@ -30,6 +30,7 @@ import os
 import re
 import secrets
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -559,6 +560,17 @@ def start_fake_office(base: Path) -> Office:
     except BaseException:
         fake.stop()
         raise
+
+
+def session_row(server: Server, key: str) -> tuple[str, str | None]:
+    """(state, closed_reason) van de sessie, uit de database van de server (alleen lezen)."""
+    db = server.data_dir / "platform.db"
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10) as conn:
+        row = conn.execute(
+            "SELECT state, closed_reason FROM office_session WHERE key = ?", (key,)
+        ).fetchone()
+    assert row is not None, f"geen sessie met key {key}"
+    return row[0], row[1]
 
 
 def wait_real_ds(url: str, seconds: float = REAL_DS_SECONDS) -> None:

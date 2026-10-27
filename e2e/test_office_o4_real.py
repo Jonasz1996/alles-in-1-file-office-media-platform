@@ -15,7 +15,6 @@ overgeslagen. Sinds O1 geldt de echte poort (het cookie office en het recht van 
 from __future__ import annotations
 
 import re
-import sqlite3
 import sys
 import time
 import zipfile
@@ -27,7 +26,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from conftest import Account, Server, artifacts_dir, create_user
-from office_harness import Office, frame_editor
+from office_harness import Office, frame_editor, session_row
 from test_office_o2 import start
 from test_office_o2_real import ready, versions, wait_until
 from test_office_o3 import detail, mkdir
@@ -48,17 +47,6 @@ PDF_SECONDS = 90
 
 def content(server: Server, account: Account, node: str) -> bytes:
     return server.call(account, "GET", f"/api/v1/files/{node}/content", expect=200).content
-
-
-def session_row(server: Server, key: str) -> tuple[str, str | None]:
-    """(state, closed_reason) van de sessie, uit de database van de server (alleen lezen)."""
-    db = server.data_dir / "platform.db"
-    with sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10) as conn:
-        row = conn.execute(
-            "SELECT state, closed_reason FROM office_session WHERE key = ?", (key,)
-        ).fetchone()
-    assert row is not None, f"geen sessie met key {key}"
-    return row[0], row[1]
 
 
 def no_error(page: Page) -> None:
