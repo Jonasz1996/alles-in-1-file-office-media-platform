@@ -2717,8 +2717,31 @@ de editorpagina is niet "elke `*.html` en een omleiding daarheen", maar precies 
 `…/main/index.html` (plus `…/mobile/index.html`); `/<V>/index.html` is een statuspagina van DS en
 blijft dicht. Verder: documentdata ook zonder `_<n>`, `upload/<key>` met `Authorization`, geen
 `printfile`, en `cmd` in `SECRET_PARAMS` (spike A2–A6 en A20). De andere afwijkingen van de spike
-(A1, A7–A19, en A21–A22 van de herhaling) staan in `docs/fase-4/spike.md`; de pakketten O1 tot O6
-verwerken ze.
+(A1, A7–A19, A21–A22 van de herhaling en A23 van de review) staan in `docs/fase-4/spike.md`; de
+pakketten O1 tot O6 verwerken ze.
+
+### Review van O0 (vóór de tag `fase4-basis`)
+
+Drie reviewers lazen de code van O0 na (S1–S8, C1–C6, K1–K5; dezelfde vondst kwam soms twee of
+drie keer). Elk punt is eerst nagespeeld; waar het klopte, staat er een test die zonder de fix
+faalt.
+
+| Kritiek | Uitkomst |
+|---|---|
+| S1, C5, K2: `cmd` van `downloadas` (met het sessietoken van DS) kwam in de toegangslog | `cmd` in `SECRET_PARAMS`, ook over aanhalingstekens heen (§3.5); test in `test_public.py`. |
+| S2: XML onder een andere naam (`word/main.dat`) telde niet mee | XML op de inhoud: elk onderdeel dat na een BOM en witruimte met `<` begint (ook UTF-16), naast `*.xml` en `*.rels` (Keuze 23). |
+| S3, K4: 50 MB XML liet x2t en zelfs docservice vastlopen | Gemeten bij 2 GB: x2t OOM bij docx 10 MB, odt 7 MB, xlsx 30 MB. Nu 4 MB (OOXML-tekst en -presentaties), 2 MB (ODF), 10 MB (een echt werkblad volgens `[Content_Types].xml`); spike "stap 18 verder", A11. De integratie meet opnieuw (§4.7). |
+| S4, K1: een zip met de naam .doc, .xls, .ppt of .rtf kreeg alleen de controle op grootte, en DS leest op de inhoud | De inhoud beslist: doc, xls en ppt alleen met de kop van OLE, rtf alleen met `{\rtf`, zip-formaten alleen met `PK\x03\x04`; anders `format`. De XML-grens volgt ook de inhoud, niet de naam. Gevolg voor O3: een "xls" die eigenlijk HTML of XML is, krijgt `unsafe` (geen voorbeeld via DS; B21 blijft). |
+| S5, C1: een ander geheim dan DS gaf `starting` en dan `down` | `error 6` op een getekend commando is `misconfigured` met de reden, nooit `office_down` (Keuze 28, tabel "Bewaken en uitval"). |
+| C6: `office_down` kwam meteen na `starting` | `down_since` begint pas als de toestand `down` wordt. |
+| S6: de proxy stuurde DS een ander pad dan hij zag (`//`, `/%6fffice/…`) | Het pad gaat byte voor byte naar DS; kan dat niet, dan 404 en gaat er niets weg (`proxy.py`, `oo/client.py`). |
+| K3: `/converter` zonder `?shardkey=` (A18) | `DocServer.convert` zet hem erbij, zoals `command` (§3.3). |
+| S7: `Location: /\evil.example/…` bleef staan | Eerst `\` als `/`, en een Location met witruimte of controletekens blijft nooit staan. |
+| S8: de tunnel bewaarde onbegrensd terwijl DS nog verbond | Boven 64 KB pauzeert hij het lezen van de browser tot DS er is. |
+| C2: de nep-DS vergat een key na het sluiten, de echte niet | Gemeten (spike "stap 14 verder", A23): na status 2 of 4 geeft `info` `error 0` zonder gebruikers en een status 4 bij elke `info`, `forcesave` `error 4`; alleen na een forgotten file `error 1`. De nep doet nu hetzelfde. De regel van de ronde (Keuze 20, O2) is daarop aangepast: `error 0` zonder gebruikers is dicht, niet open. |
+| C3: herverbinden op een dichte key opende in de nep opnieuw | Zoals opgenomen: een nieuw sessietoken en error 4008; na een herstart van DS error 4009. De nep-editor meldt `onRequestRefreshFile`, zoals de echte (A21). |
+| C4: "na `drop` van de laatste gebruiker stuurt DS geen `actions`" | Klopt niet: gemeten geeft `drop` met en zonder `users` de callbacks van gewoon weggaan, met `actions` type 0. De opname zonder `actions` was de status 4 na een `info` (nu `status_4_info`). Wel was de nep fout bij `drop` zonder `users` (geen `actions`, geen status 1 per verbinding); dat is rechtgezet. |
+| K5: `office_ds.sh wait` keek eerst naar gezond, dan naar de herstart | Eerst de herstart (tot `success: converter` na `stopped: converter`), dan gezond. |
 
 ### Afgewezen kritiek
 
