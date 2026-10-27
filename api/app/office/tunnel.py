@@ -5,7 +5,9 @@ uvicorn de herbouwde request (request-regel en koppen) als bytes aan data_receiv
 M3]. De tunnel leest alleen die kop (hooguit 16 KB), beslist, opent TCP naar DS en stuurt de
 herschreven upgrade door. Daarna pompt hij alleen bytes, in beide richtingen, met tegendruk
 (lezen pauzeren boven 1 MB in de schrijfbuffer van de andere kant, verder onder 256 KB) en
-dicht na IDLE_SECONDS zonder bytes. Dicht aan de ene kant is dicht aan de andere.
+dicht na IDLE_SECONDS zonder bytes. Dicht aan de ene kant is dicht aan de andere. Terwijl DS
+nog verbindt (tot CONNECT_SECONDS), bewaart hij hooguit PENDING_LIMIT van de browser en
+pauzeert hij daarna het lezen, tot DS er is.
 
 Weigeren gaat met een kale HTTP-regel en sluiten. De kern laat alleen door met
 office_dev_ungated (en office ingesteld), en alleen /office/<versie>/doc/<key>/c/; al het
@@ -29,6 +31,7 @@ HIGH_WATER = 1024 * 1024
 LOW_WATER = 256 * 1024
 IDLE_SECONDS = 120.0
 CONNECT_SECONDS = 10.0
+PENDING_LIMIT = 64 * 1024  # van de browser terwijl DS nog verbindt; daarna lezen pauzeren
 PREFIX = b"/office"
 VERSION = r"\d+\.\d+\.\d+-[0-9a-f]{8,64}"
 SESSION_PATH = re.compile(rf"^/office/{VERSION}/doc/([0-9A-Za-z._=-]{{1,128}})/c/(?:\?.*)?$")
@@ -155,6 +158,8 @@ class Tunnel(asyncio.Protocol):
         self.upstream: _Upstream | None = None
         self.head = bytearray()
         self.pending: list[bytes] = []  # van de browser terwijl DS nog verbindt
+        self.held = 0  # bytes in pending
+        self.held_paused = False  # lezen gepauzeerd omdat pending vol is
         self.state = "head"  # head | connecting | open | closed
         self.key: str | None = None
         self.last = time.monotonic()
@@ -178,7 +183,7 @@ class Tunnel(asyncio.Protocol):
             self.upstream.transport.write(data)
             return
         if self.state == "connecting":
-            self.pending.append(data)
+            self._hold(data)
             return
         if self.state != "head":
             return
@@ -228,7 +233,7 @@ class Tunnel(asyncio.Protocol):
             self.refuse(400)
             return
         if rest:
-            self.pending.append(rest)
+            self._hold(rest)
         self.state = "connecting"
         self.connecting = self.loop.create_task(self._connect(office, request))
 
@@ -251,12 +256,26 @@ class Tunnel(asyncio.Protocol):
             upstream.transport.close()
             return
         self.upstream = upstream
+        if self.held_paused:
+            # Eerst weer lezen, dan schrijven: zo kan pause_writing van DS het nog stoppen
+            self.held_paused = False
+            self.pause_browser(False)
         upstream.transport.write(request)
         for data in self.pending:
             upstream.transport.write(data)
         self.pending.clear()
+        self.held = 0
         self.state = "open"
         self._arm_idle()
+
+    def _hold(self, data: bytes) -> None:
+        """Bewaren tot DS verbonden is; boven PENDING_LIMIT de browser niet meer lezen, zodat
+        een DS die niet antwoordt geen onbegrensde buffer geeft."""
+        self.pending.append(data)
+        self.held += len(data)
+        if self.held > PENDING_LIMIT and not self.held_paused:
+            self.held_paused = True
+            self.pause_browser(True)
 
     def refuse(self, status: int) -> None:
         if self.transport is not None and not self.transport.is_closing():

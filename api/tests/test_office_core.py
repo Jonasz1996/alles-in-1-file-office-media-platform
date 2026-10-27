@@ -378,6 +378,98 @@ def test_refusal_en_tellen():
     assert tunnel.close_all() == 0
 
 
+class Browser:
+    """De transport van de browser, zoals de tunnel hem van uvicorn krijgt."""
+
+    def __init__(self) -> None:
+        self.paused = False
+        self.written = bytearray()
+        self.closing = False
+
+    def pause_reading(self) -> None:
+        self.paused = True
+
+    def resume_reading(self) -> None:
+        self.paused = False
+
+    def write(self, data: bytes) -> None:
+        self.written += data
+
+    def is_closing(self) -> bool:
+        return self.closing
+
+    def close(self) -> None:
+        self.closing = True
+
+    def set_write_buffer_limits(self, high=None, low=None) -> None:
+        pass
+
+    def get_extra_info(self, name, default=None):
+        return ("127.0.0.1", 50000) if name == "peername" else default
+
+
+@pytest.mark.anyio
+async def test_tunnel_pauzeert_de_browser_terwijl_ds_verbindt(tmp_path, monkeypatch):
+    """S8: zolang DS niet antwoordt, bewaart de tunnel hooguit PENDING_LIMIT en leest hij de
+    browser niet meer. Daarna komt alles aan, in volgorde, en leest hij weer."""
+    received = bytearray()
+    enough = asyncio.Event()
+    head = (
+        b"GET /office/10.0.0-0123abcd/doc/k1/c/?EIO=4 HTTP/1.1\r\nHost: test\r\n"
+        b"Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+    )
+    chunks = [bytes([65 + i % 26]) * 1024 for i in range(100)]
+    total = len(b"".join(chunks)) + 1000
+
+    async def ds(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        while data := await reader.read(65536):
+            received.extend(data)
+            if len(received) >= total and b"\r\n\r\n" in received:
+                enough.set()
+        writer.close()
+
+    server = await asyncio.start_server(ds, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    settings = office(tmp_path, office_url=f"http://127.0.0.1:{port}", office_dev_ungated=True)
+    runtime.bind(None, settings)
+    loop = asyncio.get_running_loop()
+    connect = asyncio.Event()
+    real = loop.create_connection
+
+    async def slow(*args, **kwargs):  # een DS die het verbinden laat wachten
+        await connect.wait()
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(loop, "create_connection", slow)
+    t = tunnel.Tunnel(_loop=loop)
+    browser = Browser()
+    try:
+        t.connection_made(browser)
+        t.data_received(head + b"x" * 1000)
+        assert t.state == "connecting" and not browser.paused
+        for chunk in chunks:
+            if browser.paused:
+                break
+            t.data_received(chunk)
+        assert browser.paused
+        assert t.held <= tunnel.PENDING_LIMIT + 1024
+        sent = sum(map(len, t.pending))
+        connect.set()
+        await t.connecting
+        assert t.state == "open" and not browser.paused and t.pending == []
+        for chunk in chunks[(sent - 1000) // 1024 :]:  # de rest, nu de browser weer leest
+            t.data_received(chunk)
+        await asyncio.wait_for(enough.wait(), 5)
+        request, _, body = bytes(received).partition(b"\r\n\r\n")
+        assert request.startswith(b"GET /10.0.0-0123abcd/doc/k1/c/?EIO=4 HTTP/1.1")
+        assert body == b"x" * 1000 + b"".join(chunks)
+    finally:
+        t.close()
+        server.close()
+        await server.wait_closed()
+        runtime.unbind()
+
+
 # --- previews met de PDF-generatie (Keuze 25) ---
 
 
@@ -587,8 +679,6 @@ async def test_command_en_convert(bound):
     assert seen[-1].url.raw_path == b"/converter?shardkey=conv_k1%2Fx"
     await server.convert(signed=False, key="k2")
     assert seen[-1].url.raw_path == b"/converter?shardkey=k2"
-
-
 
 
 @pytest.mark.anyio
