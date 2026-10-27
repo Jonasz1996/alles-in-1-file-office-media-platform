@@ -1,7 +1,9 @@
 // Losse functies voor /beheer, zonder React (te testen): meldingen op code vertalen, de
-// verdeling van een schijf in stukken, het quotumveld en labels voor taken.
+// verdeling van een schijf in stukken, het quotumveld, labels voor taken en de teksten van het
+// tabblad Office.
 
 import { fmt, type MessageKey, t } from "../i18n";
+import type { OfficeHealth } from "../office/types";
 import type { HttpsDetails, Notice, StorageParts } from "./api";
 
 const NOTICES = new Set([
@@ -18,7 +20,17 @@ const NOTICES = new Set([
   "https_error",
   "https_listener",
   "https_expiring",
+  // Fase 4, office (app/office/monitor.py)
+  "office_down",
+  "office_misconfigured",
+  "office_version",
+  "office_limit",
+  "office_unsaved",
+  "office_convert_failed",
 ]);
+
+/** Meldingen met een aantal in params.count: die tekst heeft een enkelvoud en een meervoud. */
+const COUNTED = new Set(["office_unsaved", "office_convert_failed"]);
 
 const HTTPS_ERRORS = new Set([
   "acme_dns",
@@ -54,6 +66,7 @@ export function noticeText(n: Notice): string {
     const days = Number(n.params.days ?? 0);
     return days > 0 ? t("admin.notice.https_expiring", { n: days }) : t("admin.notice.https_expires_today");
   }
+  if (COUNTED.has(n.code)) return t(`admin.notice.${n.code}` as MessageKey, { n: Number(n.params.count ?? 0) });
   return t(`admin.notice.${n.code}` as MessageKey, n.params);
 }
 
@@ -120,9 +133,16 @@ export function quotaInput(bytes: number): string {
   return String(Math.round((bytes / GB) * 100) / 100);
 }
 
-/** De soorten taken van de server (app/previews.py, userdelete.py, photometa.py), met de punt
- * als _: admin.jobs.types.<soort>. */
-const JOB_TYPES = new Set(["preview", "preview_outdated", "user_delete", "photometa"]);
+/** De soorten taken van de server (app/previews.py, userdelete.py, photometa.py en
+ * office/convert.py), met de punt als _: admin.jobs.types.<soort>. */
+const JOB_TYPES = new Set([
+  "preview",
+  "preview_outdated",
+  "user_delete",
+  "photometa",
+  "office_pdf",
+  "office_pdf_backfill",
+]);
 
 /** De soort taak voor in de tabel: bekende soorten vertaald, de rest zoals hij heet. */
 export function jobTypeLabel(type: string): string {
@@ -148,4 +168,63 @@ export function matchesUser(u: { display_name: string; email: string }, q: strin
   const needle = fold(q.trim());
   if (!needle) return true;
   return fold(u.display_name).includes(needle) || fold(u.email).includes(needle);
+}
+
+// --- het tabblad Office ---
+
+/** Vanaf dit aantal is de licentie van de document server "geen limiet" (command license). */
+export const UNLIMITED = 2_147_483_647;
+
+/** Wat command version van de vastgepinde document server geeft (zoals PINNED_VERSION in
+ * app/office/monitor.py); een andere versie geeft daar de melding office_version. */
+export const PINNED_VERSION = "10.0.0.169";
+
+/** De grenzen van de instellingen (OfficeAdminIn op de server). */
+export const OFFICE_LIMITS = {
+  max_editors: { min: 1, max: 500 },
+  checkpoint_minutes: { min: 1, max: 60 },
+  version_minutes: { min: 5, max: 1440 },
+} as const;
+
+export type OfficeNumber = keyof typeof OFFICE_LIMITS;
+
+/** De kleur van de toestand: gezond groen, opstarten en uit geel, de rest rood. */
+export function officeBadge(state: OfficeHealth): "ok" | "degraded" | "down" {
+  if (state === "ok") return "ok";
+  return state === "starting" || state === "off" ? "degraded" : "down";
+}
+
+/** De licentie van de document server: onbekend, geen limiet of een aantal verbindingen. */
+export function licenseText(connections: number | null): string {
+  if (connections === null) return t("admin.officeTab.unknown");
+  if (connections <= 0 || connections >= UNLIMITED) return t("admin.officeTab.noLimit");
+  return t("admin.officeTab.licenseLimit", { n: connections });
+}
+
+/** Of de document server tokens eist (de controle zonder token, Keuze 28). */
+export function tokensText(enforced: boolean | null): string {
+  if (enforced === null) return t("admin.officeTab.unknown");
+  return enforced ? t("admin.officeTab.tokensOn") : t("admin.officeTab.tokensOff");
+}
+
+const REASONS = new Set(["no_room", "too_large", "owner_gone", "no_writer", "gone", "error_status", "unknown"]);
+
+/** Waarom iets uit de editor niet opgeslagen is (de laatste fout van de sessie). */
+export function unsavedReason(reason: string | null): string {
+  if (reason === null) return t("admin.officeTab.reasons.none");
+  return REASONS.has(reason) ? t(`admin.officeTab.reasons.${reason}` as MessageKey) : reason;
+}
+
+/** Kan Terugzetten iets doen? Niet zonder eigenaar, en niet voor een key die de app niet kent. */
+export function canRestore(item: { owner: string | null; reason: string | null }): boolean {
+  return item.owner !== null && item.reason !== "unknown" && item.reason !== "owner_gone";
+}
+
+/** Een veld van de instellingen als heel getal binnen zijn grenzen; anders undefined. */
+export function parseOfficeNumber(field: OfficeNumber, text: string): number | undefined {
+  const s = text.trim();
+  if (!/^\d+$/.test(s)) return undefined;
+  const n = Number(s);
+  const { min, max } = OFFICE_LIMITS[field];
+  return n >= min && n <= max ? n : undefined;
 }
