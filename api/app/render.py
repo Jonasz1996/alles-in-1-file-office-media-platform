@@ -10,6 +10,9 @@ Verzoek als JSON op stdin: {"source", "out", "work", "mime", "name", "max_pixels
 (app/office/reader.py). work is voor tussenbestanden. Een onverwachte fout eindigt met een exitcode
 en de melding op stderr.
 
+Met een veld "pdf" (een pad) maakt hij de thumbnails uit die PDF in plaats van uit de bron:
+de omgezette PDF van een kantoordocument (fase 4, app/office/convert.py).
+
 Andere soorten verzoeken (veld "mode"):
 - "page": {"source", "out", "pages": [n, ...], "width"} -> pagina's van een PDF als
   out/<n>.webp, zo breed als width (de viewer, routers/viewer.py);
@@ -282,6 +285,15 @@ def is_unreadable(error: BaseException) -> bool:
 
 
 def render(request: dict) -> dict:
+    if request.get("pdf"):
+        # De omgezette PDF van een kantoordocument (fase 4, O3): alleen de pdf-tak, met dat
+        # bestand als bron in plaats van de blob zelf
+        try:
+            return pdf(Path(request["pdf"]), Path(request["out"]), request["max_pixels"])
+        except Exception as e:
+            if is_unreadable(e):
+                return dict(NONE)
+            raise
     source = Path(request["source"])
     out = Path(request["out"])
     work = Path(request["work"])
