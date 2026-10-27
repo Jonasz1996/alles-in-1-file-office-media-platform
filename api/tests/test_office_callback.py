@@ -299,7 +299,7 @@ async def test_quotum_vol_bij_het_neerzetten(world, monkeypatch):
     key = await world.begin(anna, node)
     await world.room(anna, 0)
 
-    async def no_limit(session, settings, owner):
+    async def no_limit(session, settings, owner, current=0):
         return settings.office_max_save_bytes, False
 
     monkeypatch.setattr(saving, "limit_for", no_limit)

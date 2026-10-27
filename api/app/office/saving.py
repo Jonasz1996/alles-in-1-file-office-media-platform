@@ -11,11 +11,12 @@ inhoud al gedownload is. De aanroeper houdt het slot van het bestand vast.
 
 Het recept (Keuze 16): het merk en de regels voor een dichte sessie eerst; dan het slot van het
 bestand (altijd vóór user_lock en blobs.lock); bij status 2 of 3 de sessie op saving en
-committen; meteen downloaden, hooguit min(office_max_save_bytes, de ruimte van de eigenaar);
-het bestand vers laden (weg: niets schrijven); wie slaat op (policy.choose_actor); dan
-place_file(..., "replace", exact=True, only=node.id, squash=...) of een herstelkopie bij de
-eigenaar; tot slot merk, tussenstand, tijd en versies bijwerken en committen, en pas dan het
-antwoord. Gebeurtenissen gaan pas na de commit.
+committen; meteen downloaden, hooguit min(office_max_save_bytes, de ruimte van de eigenaar plus
+de grootte van wat er nu staat: een squash geeft die vrij); het bestand vers laden (weg: niets
+schrijven); wie slaat op (policy.choose_actor); dan place_file(..., "replace", exact=True,
+only=node.id, squash=...) of een herstelkopie bij de eigenaar; tot slot merk, tussenstand, tijd
+en versies bijwerken en committen, en pas dan het antwoord. Gebeurtenissen gaan pas na de
+commit.
 """
 
 import asyncio
@@ -128,13 +129,17 @@ async def alive(session: AsyncSession, row: OfficeSession) -> tuple[Node | None,
     return node, owner
 
 
-async def limit_for(session: AsyncSession, settings: Settings, owner: User) -> tuple[int, bool]:
+async def limit_for(
+    session: AsyncSession, settings: Settings, owner: User, current: int = 0
+) -> tuple[int, bool]:
     """(grens, door het quotum): de kleinste van office_max_save_bytes en de ruimte van de
-    eigenaar (Keuze 16, stap 4)."""
+    eigenaar plus current, de grootte van wat er nu staat (Keuze 16, stap 4). Vervangt de opslag
+    de vorige tussenstand (squash), dan komt die ruimte vrij; of dat zo is, en wat het precies
+    kost, rekent place_file onder de sloten."""
     room = await room_left(session, owner)
     cap = settings.office_max_save_bytes
-    if room is not None and room < cap:
-        return room, True
+    if room is not None and room + current < cap:
+        return room + current, True
     return cap, False
 
 
@@ -288,7 +293,7 @@ async def _save(session: AsyncSession, row: OfficeSession, event: CallbackEvent)
                 sessions.close(row, "gone")
                 await session.commit()
             return "ignored"
-        limit, by_room = await limit_for(session, settings, owner)
+        limit, by_room = await limit_for(session, settings, owner, node.size or 0)
         await session.commit()  # geen transactie open tijdens het downloaden
         try:
             tmp, sha, size = await download(settings, row.key, event.url, limit)

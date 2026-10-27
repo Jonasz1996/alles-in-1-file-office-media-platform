@@ -3,6 +3,7 @@ voor rij, plus de volgorde van callbacks (S7), een herstart van de app midden in
 DS die het na 8 pogingen opgeeft. Met de nep-DS en echte editors (tests/office_world.py)."""
 
 import asyncio
+import secrets
 import time
 
 import pytest
@@ -276,6 +277,33 @@ async def test_quotum_vol_tussenstand_en_laatste_opslag(world):
     await world.recover()
     assert h.key not in world.forgotten()
     assert "past niet" in await world.paragraphs(node)
+
+
+async def test_bijna_vol_quotum_ook_de_volgende_opslagen_passen(world):
+    """Ruimte voor één keer het document: de eerste tussenstand past (de inhoud van vóór de
+    sessie wordt een versie). De volgende tussenstand en de laatste opslag vervangen die
+    tussenstand (squash) en kosten dus bijna niets. De grens van de download rekent dat mee;
+    place_file rekent precies."""
+    anna = await world.user("anna@example.nl")
+    words = [secrets.token_urlsafe(1500) for _ in range(100)]  # niet in te pakken: ±150 KB
+    node = await world.docx(anna, None, "verslag.docx", words)
+    key = await world.begin(anna, node)
+    first = docx.make_docx([*words, "eerste"])
+    await world.room(anna, len(first) + 1000)
+    r = await world.callback(world.saved_fields(key, 6, world.stage(key, first), [anna]))
+    assert r.json() == OK
+    second = docx.make_docx([*words, "eerste", "tweede"])
+    r = await world.callback(world.saved_fields(key, 6, world.stage(key, second), [anna]))
+    assert r.json() == OK
+    assert (await world.row(key)).last_error is None
+    last = docx.make_docx([*words, "eerste", "tweede", "derde"])
+    fields = world.saved_fields(key, 2, world.stage(key, last), [anna], users=[])
+    assert (await world.callback(fields)).json() == OK
+    row = await world.row(key)
+    assert row.state == "closed" and row.closed_reason == "saved" and row.last_error is None
+    assert (await world.paragraphs(node))[-3:] == ["eerste", "tweede", "derde"]
+    assert await world.version_paragraphs(node) == [words]
+    assert world.event_data(anna, "office.unsaved") == []
 
 
 async def test_eigenaar_verwijderd(world):
