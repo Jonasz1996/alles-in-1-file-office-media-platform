@@ -86,4 +86,7 @@ na ↓ de selectie niet uit (`c7012d5`, `test_toetsenbord_p6`).
   Nu krijgt elke pagina in `Browsers.new_context` (conftest) meteen een vaste luisteraar
   (`intercept_file_chooser`), zodat het onderscheppen al aan staat: daarna 0 op 48.
 - Elke login kost een code: een TOTP-stap die nog niet gebruikt is, anders een herstelcode
-  (`Persoon.code()`).
+  (`Persoon.code()`). Vlak voor de grens van een stap (minder dan 5 s over) neemt hij niet de
+  stap vóór nu: die neemt de server na de grens niet meer aan, en dan faalde een login op de
+  code in plaats van op wat de test wilde zien (`test_10`, `account_disabled`). Na de review
+  van fase 4 (ontwerp-5); test: `e2e/test_verhaal_harnas.py`.

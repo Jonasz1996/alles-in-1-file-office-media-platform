@@ -34,6 +34,9 @@ ROWS = "#inhoud [role=grid] [role=row][aria-rowindex][data-index]"  # zonder de 
 MOD = "ControlOrMeta"
 # Zo lang gaat een access-token hier mee voordat het verhaal opnieuw inlogt (server: 15 min)
 TOKEN_SECONDS = 10 * 60
+# Een code van de stap vóór nu neemt de server alleen nog de rest van deze stap aan; met minder
+# dan zoveel seconden over is dat te krap voor de weg naar de server
+TOTP_MARGIN = 5
 
 
 @dataclass
@@ -61,13 +64,17 @@ class Persoon:
 
     def code(self) -> str | None:
         """Een code voor de volgende login: TOTP van een stap die nog niet gebruikt is (de
-        server neemt één stap ervoor en erna ook aan), anders een herstelcode."""
+        server neemt één stap ervoor en erna ook aan), anders een herstelcode. Vlak voor de
+        grens van een stap niet de stap ervoor: die geldt dan bij de server al niet meer."""
         if self.secret is None:
             return None
         from app import totp
 
-        now = totp.current_step()
+        moment = time.time()
+        now = totp.current_step(moment)
         step = max(now - totp.WINDOW, self.last_step + 1)
+        if step < now and moment % totp.STEP > totp.STEP - TOTP_MARGIN:
+            step = max(now, self.last_step + 1)
         if step <= now + totp.WINDOW:
             self.last_step = step
             return totp.code_at(self.secret, step)
