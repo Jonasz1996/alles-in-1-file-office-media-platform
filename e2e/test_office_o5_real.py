@@ -2,8 +2,10 @@
 
 Het tabblad Office (Alt+7) toont wat health.py bij de echte DS 10.0.0.1 las: de vastgepinde
 versie (command version: 10.0.0.169), de licentie als "geen limiet" (2147483647) en dat DS
-tokens eist; geen melding van office op het overzicht. Terwijl Anna en Bram één docx in de
-echte editor bewerken, staan er 2 verbindingen, 2 mensen en 1 document; na het sluiten weer 0.
+tokens eist; geen melding van office op het overzicht, behalve forgotten files die andere
+tests met een eigen server in de gedeelde DS achterlieten (die zijn hier "onbekend"). Terwijl
+Anna en Bram één docx in de echte editor bewerken, staan er 2 verbindingen, 2 mensen en 1
+document; na het sluiten weer 0.
 
 Lokaal zo (docs/fase-4/e2e.md), met een eigen container:
 
@@ -52,9 +54,22 @@ def test_beheer_met_de_echte_ds(real_office: Office, real_browsers, tmp_path_fac
     assert admin["version"] == PINNED, admin
     assert admin["license_connections"] == UNLIMITED, admin
     assert admin["tokens_enforced"] is True, admin
-    status = office.server.call(office.admin, "GET", "/api/v1/admin/status", expect=200).json()
-    found = {n["code"] for n in status["notices"]} & OFFICE_NOTICES
-    assert not found, status["notices"]
+
+    # De echte DS is van alle office_real-tests samen. Een test met een eigen server (de https
+    # van O1) stopt die server vóór de laatste callback; DS bewaart dat als forgotten file van
+    # een andere database. Dat hoort hier "onbekend" te zijn (Keuze 21, stap 7), en dan telt
+    # office_unsaved precies die. Van deze server zelf mag er niets niet-opgeslagen zijn, en
+    # verder geen melding van office.
+    def notices() -> tuple[dict, list] | None:
+        status = office.server.call(office.admin, "GET", "/api/v1/admin/status", expect=200)
+        listed = office.server.call(office.admin, "GET", ADMIN, expect=200).json()["unsaved"]
+        found = {n["code"]: n["params"] for n in status.json()["notices"]}
+        count = found.get("office_unsaved", {"count": 0})["count"]
+        return (found, listed) if count == len(listed) else None
+
+    found, unsaved = wait_until(notices, 30, "dezelfde forgotten files op beide plekken")
+    assert not (set(found) & OFFICE_NOTICES) - {"office_unsaved"}, found
+    assert all(u["reason"] == "unknown" and u["owner"] is None for u in unsaved), unsaved
 
     tab = office_tab(office, real_browsers)
     facts = tab.get_by_role("list", name="De document server", exact=True)
