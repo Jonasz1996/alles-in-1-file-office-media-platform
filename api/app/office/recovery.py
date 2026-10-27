@@ -31,11 +31,13 @@ from pathlib import Path
 
 import anyio
 from fastapi import HTTPException
+from sqlalchemy import select
 
 from app import errors
 from app.models import Node, OfficeSession
 from app.office import engine, runtime, saving, sessions
 from app.office.state import office_state
+from app.routers.files import is_trashed
 from app.storage import BlobStore
 
 log = logging.getLogger("platform.office")
@@ -253,8 +255,10 @@ async def _unsaved(session, key: str, node_id: uuid.UUID | None) -> None:
 
 
 async def restore(key: str) -> Node:
-    """Terugzetten: een herstelkopie bij de eigenaar (stap 4), als er nu ruimte is. Fouten:
-    404 not_found (geen rij), office_owner_gone, 413 no_room, 503 office_unavailable."""
+    """Terugzetten: een herstelkopie bij de eigenaar (stap 4), als er nu ruimte is. Zette de
+    ronde dit werk al neer (de key stond nog in DS), dan niet nog eens: het antwoord is waar het
+    staat. Fouten: 404 not_found (geen rij), office_owner_gone, 413 no_room, 503
+    office_unavailable."""
     eng = engine.current()
     if eng is None:
         raise errors.fail(503, "office_unavailable", UNAVAILABLE)
@@ -279,23 +283,51 @@ async def restore(key: str) -> Node:
             node, owner = await saving.alive(session, row)
             if owner is None:
                 raise errors.fail(404, "office_owner_gone", OWNER_GONE)
-            copy = await saving.place_copy(
-                session, settings, row, node, owner, tmp, sha, size, "forgotten", None
-            )
-            if isinstance(copy, str):
-                raise errors.fail(503, "office_unavailable", UNAVAILABLE)
-            row = await sessions.find_by_key(session, key) or row
-            _close(row)
-            row.last_error = None
-            await session.commit()
-            await sessions.publish_recovered(
-                session, row, copy, node.id if node else None, "forgotten"
-            )
-            await session.commit()
+            stored = await _stored(session, row, node, owner.id, sha)
+            if stored is not None:
+                # De ronde was eerst (en deleteForgotten mislukte, of loopt nog): niet nog eens
+                await session.commit()
+                copy = stored
+            else:
+                copy = await saving.place_copy(
+                    session, settings, row, node, owner, tmp, sha, size, "forgotten", None
+                )
+                if isinstance(copy, str):
+                    raise errors.fail(503, "office_unavailable", UNAVAILABLE)
+                row = await sessions.find_by_key(session, key) or row
+                row.checkpoint = sha  # wat deze sessie het laatst opsloeg (zie saving.save_copy)
+                _close(row)
+                row.last_error = None
+                await session.commit()
+                await sessions.publish_recovered(
+                    session, row, copy, node.id if node else None, "forgotten"
+                )
+                await session.commit()
     finally:
         await anyio.Path(tmp).unlink(missing_ok=True)
     await _delete(eng, key)
     return copy
+
+
+async def _stored(
+    session, row: OfficeSession, node: Node | None, owner_id: uuid.UUID, sha: str
+) -> Node | None:
+    """Waar dit werk al staat: het origineel, of de herstelkopie die deze (dichte) sessie het
+    laatst maakte. None: nog nergens, of die kopie is weg of in de prullenbak."""
+    if node is not None and node.blob_id == sha:
+        return node
+    if row.state != "closed" or row.checkpoint != sha:
+        return None
+    found = await session.scalars(
+        select(Node)
+        .where(Node.owner_id == owner_id, Node.kind == "file", Node.blob_id == sha)
+        .order_by(Node.created_at.desc())
+        .limit(5)
+    )
+    for candidate in found.all():
+        if not await is_trashed(session, candidate):
+            return candidate
+    return None
 
 
 async def forget(key: str) -> None:

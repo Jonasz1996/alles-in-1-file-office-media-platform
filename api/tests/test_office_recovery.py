@@ -134,13 +134,8 @@ async def test_veranderd_bestand_een_herstelkopie(world):
     }
 
 
-async def test_kopie_en_deleteforgotten_mislukt_een_keer_geen_tweede_kopie(world):
-    """De kopie is gemaakt, maar deleteForgotten mislukt: de volgende ronde ziet dat dit werk
-    al is opgeslagen en haalt de key alleen weg."""
-    anna = await world.user("anna@example.nl")
-    node = await world.docx(anna, None, "verslag.docx", ["Begin"])
-    key = await lost_with(world, anna, node, ["werk"])
-    await world.upload(anna, node, ["van buiten"])  # dus een kopie
+def delete_fails_once(world) -> None:
+    """De volgende deleteForgotten geeft error 1; daarna weer gewoon."""
     real = world.fake.commands["deleteForgotten"]
     calls: list[dict] = []
 
@@ -151,6 +146,16 @@ async def test_kopie_en_deleteforgotten_mislukt_een_keer_geen_tweede_kopie(world
         return await real(params)
 
     world.answer("deleteForgotten", flaky)
+
+
+async def test_kopie_en_deleteforgotten_mislukt_een_keer_geen_tweede_kopie(world):
+    """De kopie is gemaakt, maar deleteForgotten mislukt: de volgende ronde ziet dat dit werk
+    al is opgeslagen en haalt de key alleen weg."""
+    anna = await world.user("anna@example.nl")
+    node = await world.docx(anna, None, "verslag.docx", ["Begin"])
+    key = await lost_with(world, anna, node, ["werk"])
+    await world.upload(anna, node, ["van buiten"])  # dus een kopie
+    delete_fails_once(world)
     await world.recover()
     assert key in world.forgotten()
     await world.recover()
@@ -320,6 +325,41 @@ async def test_terugzetten_maakt_een_kopie(world):
     row = await world.row(key)
     assert row.state == "closed" and row.closed_reason == "lost" and row.last_error is None
     assert world.event_data(anna, "office.recovered")[-1]["copy_id"] == str(copy.id)
+
+
+@pytest.mark.parametrize("changed", [False, True])
+async def test_terugzetten_na_de_ronde_geen_tweede_keer(world, changed):
+    """De ronde zette het werk al op (het origineel, of een kopie als het bestand veranderde),
+    maar deleteForgotten mislukte, dus de key staat nog op /beheer. Terugzetten zet het dan niet
+    nog eens neer: het antwoord is waar het al staat."""
+    anna = await world.user("anna@example.nl")
+    node = await world.docx(anna, None, "verslag.docx", ["Begin"])
+    key = await lost_with(world, anna, node, ["terug"])
+    if changed:
+        await world.upload(anna, node, ["van buiten"])
+    delete_fails_once(world)
+    await world.recover()
+    assert key in world.forgotten()
+    copies = await world.find(anna, "verslag" + RECOVERED)
+    where = await recovery.restore(key)
+    assert key not in world.forgotten()
+    assert await world.find(anna, "verslag" + RECOVERED) == copies
+    assert where.id == (copies[0] if changed else node)
+    assert await world.paragraphs(where.id) == ["terug"]
+    assert len(world.event_data(anna, "office.recovered")) == 1
+
+
+async def test_terugzetten_en_deleteforgotten_mislukt_de_ronde_geen_tweede_kopie(world):
+    anna = await world.user("anna@example.nl")
+    node = await world.docx(anna, None, "verslag.docx", ["Begin"])
+    key = await lost_with(world, anna, node, ["terug"])
+    delete_fails_once(world)
+    copy = await recovery.restore(key)
+    assert key in world.forgotten()
+    await world.recover()
+    assert key not in world.forgotten()
+    assert await world.find(anna, "verslag" + RECOVERED) == [copy.id]
+    assert await world.paragraphs(node) == ["Begin"]
 
 
 async def test_terugzetten_zonder_rij_of_zonder_ruimte(world):
