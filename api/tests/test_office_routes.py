@@ -311,6 +311,36 @@ async def test_proxy_corp_svg_en_location(client, ungated):
     assert (await client.get("/office/relatief")).headers["location"] == "/office/z"
 
 
+@pytest.mark.parametrize(
+    ("location", "kept"),
+    [
+        ("/office/z", True),
+        ("z?a=b", True),
+        ("http://test/office/y", True),
+        ("HTTPS://TEST/office/y", True),
+        ("//evil.example/x", False),
+        # Een browser leest bij http(s) een backslash als '/': dit zijn andere hosts
+        ("/\\evil.example/x", False),
+        ("\\\\evil.example/x", False),
+        ("\\/evil.example/x", False),
+        ("http:\\\\evil.example/x", False),
+        # Tabs, regeleinden en spaties aan de randen laat een browser weg
+        ("/\t/evil.example/x", False),
+        ("/\n/evil.example/x", False),
+        (" //evil.example/x", False),
+        ("/office/a b", False),
+        ("/office/\x7f", False),
+        ("https:evil.example", False),
+        ("javascript:alert(1)", False),
+        ("http://test@evil.example/", False),
+        ("http://evil.example\\@test/", False),
+    ],
+)
+def test_location_alleen_relatief_of_eigen_host(location, kept):
+    """S7: Location blijft alleen staan als een browser hem bij ons laat uitkomen."""
+    assert proxy._own_location(location, "test") is kept
+
+
 @pytest.mark.anyio
 async def test_proxy_stuurt_ds_precies_het_pad_dat_hij_ziet(client, ungated):
     """S6: DS krijgt het pad van de browser zonder /office, byte voor byte. Een pad waarvoor dat

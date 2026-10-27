@@ -7,7 +7,7 @@ MAX_BODY), gzip blijft gzip. Van het antwoord gaan Set-Cookie, Clear-Site-Data, 
 Service-Worker-Allowed en de X-Frame-Options en CSP van DS weg; erbij komen X-Frame-Options:
 SAMEORIGIN (anders zet Edge DENY en laadt de iframe van de editor niet), op HTML de CSP van
 Keuze 9 en op al het andere Cross-Origin-Resource-Policy: same-origin. Location blijft alleen
-als hij relatief is of naar onze eigen host wijst. Het pad gaat byte
+als hij relatief is of naar onze eigen host wijst (een '\\' telt als '/'). Het pad gaat byte
 voor byte naar DS; kan dat niet ('//', '.', '..', een prefix in procenttekens), dan 404. DS
 niet bereikbaar: 502 office_unavailable.
 
@@ -125,6 +125,13 @@ def ds_target(scope) -> str | None:
 
 
 def _own_location(location: str, host: str) -> bool:
+    """Relatief, of naar onze eigen host. Een browser leest bij http(s) een '\\' als '/' en
+    laat tabs, regeleinden en spaties aan de randen weg; '/\\evil.example/x' is dus een andere
+    host. Daarom eerst '\\' gelijk aan '/', en een Location met witruimte of controletekens
+    blijft nooit staan."""
+    if any(ch <= " " or ch == "\x7f" for ch in location):
+        return False
+    location = location.replace("\\", "/")
     parts = urlsplit(location)
     if not parts.scheme and not parts.netloc:
         return not location.startswith("//")
