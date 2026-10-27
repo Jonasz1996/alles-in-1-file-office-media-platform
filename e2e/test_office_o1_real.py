@@ -258,6 +258,9 @@ def test_de_echte_editor_over_http_en_https(browser: Any, tmp_path_factory) -> N
         for opened in (a, b):
             opened.page.get_by_role("button", name="Sluiten", exact=True).click()
             expect(opened.page).to_have_url(re.compile(rf"/map/{d.folder}$"))
+        # De laatste callback van DS moet deze server nog halen. Stopt hij eerder, dan houdt de
+        # gedeelde DS een forgotten file die geen andere server kent (docs/fase-4/o5.md).
+        wait_until(lambda: session_closed(office, d.anna, d.node), 60, "de sessie dicht")
     finally:
         problems = browsers.close_all()
         if browsers.office_records:
