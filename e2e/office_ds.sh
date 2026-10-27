@@ -83,9 +83,16 @@ healthy() {
   [ "$(curl -fsS -m 5 "http://127.0.0.1:$PORT/healthcheck" 2>/dev/null || true)" = true ]
 }
 
-# De font-herstart is voorbij als supervisord de converter een tweede keer startte
+# De font-herstart is voorbij als supervisord de converter een tweede keer startte en die
+# weer draait. De volgorde in de log [gemeten]: stopped: docservice, spawned en success:
+# docservice, dan stopped: converter, spawned: converter en success: converter. Na die laatste
+# regel zijn beide terug.
 restarted() {
-  docker exec "$NAME" grep -q "stopped: converter" /var/log/supervisor/supervisord.log 2>/dev/null
+  docker exec "$NAME" awk '
+    /stopped: converter/ { stopped = 1 }
+    stopped && /success: converter entered RUNNING/ { done = 1 }
+    END { exit !done }
+  ' /var/log/supervisor/supervisord.log 2>/dev/null
 }
 
 wait_ready() {
@@ -93,7 +100,9 @@ wait_ready() {
   start=$(cat "$DIR/started" 2>/dev/null || date +%s)
   while :; do
     now=$(date +%s)
-    if healthy && restarted; then
+    # Eerst de herstart, dan gezond: andersom kan een gezonde DS van vlak vóór de herstart
+    # meetellen (review K5)
+    if restarted && healthy; then
       echo "DS is gezond en de font-herstart is voorbij ($((now - start)) s na de start)"
       return 0
     fi

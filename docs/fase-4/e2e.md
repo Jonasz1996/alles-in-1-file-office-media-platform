@@ -60,9 +60,10 @@ cd .. && bash e2e/office_ds.sh stop   # de container weg; het image blijft
   `OFFICE_DS_DIR` (standaard `$RUNNER_TEMP/office-ds`, anders `/tmp/office-ds`). Ze staan nooit op
   de opdrachtregel en nooit in een log. `stop` haalt ze weer weg.
 - Een nieuwe container bouwt zijn fonts en herstart daarna docservice en de converter, 2,5 tot 3
-  minuten na de start (spike, extra bevinding 1). `wait` wacht daarom op `/healthcheck == true`
-  én op die herstart (`stopped: converter` in de log van supervisord), hooguit 6 minuten. Een
-  test die tijdens die herstart draait, ziet een editor die even wegvalt.
+  minuten na de start (spike, extra bevinding 1). `wait` wacht daarom eerst op die herstart
+  (in de log van supervisord `success: converter` na `stopped: converter`; docservice is dan al
+  terug) en daarna op `/healthcheck == true`, hooguit 6 minuten. Een test die tijdens die
+  herstart draait, ziet een editor die even wegvalt.
 - Start DS als eerste, en bouw dan de web-app: dan bouwt DS zijn fonts in die tijd.
 
 ### De omgeving

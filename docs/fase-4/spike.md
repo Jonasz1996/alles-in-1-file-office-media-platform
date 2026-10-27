@@ -931,9 +931,11 @@ DS opent pptx met die herhaling.
 10. **Een kapotte docx** (geen zip) zette DS zonder fout om naar een PDF van 640 KB (als tekst). De
     invoercontrole van de app (Keuze 23) moet zo'n bestand dus zelf weigeren.
 11. **De font-herstart zien** (open punt 4, voor CI opgelost). `e2e/office_ds.sh wait` wacht tot
-    `/healthcheck` `true` is en `supervisord.log` in de container `stopped: converter` noemt. In de
-    runs van O0-e2e kwam dat 165 s en 713 s (een drukke sandbox) na de start. Voor de app zelf is
-    het nog open.
+    `supervisord.log` in de container na `stopped: converter` ook `success: converter` noemt, en
+    daarna tot `/healthcheck` `true` is (in die volgorde: review K5). De volgorde in de log:
+    `stopped: docservice`, `spawned` en `success: docservice`, `stopped: converter`, `spawned` en
+    `success: converter`, samen ±3 s. In de runs van O0-e2e kwam dat 165 s en 713 s (een drukke
+    sandbox) na de start, bij de fixer van O0 179 s. Voor de app zelf is het nog open.
 
 ---
 
