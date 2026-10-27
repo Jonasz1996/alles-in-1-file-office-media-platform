@@ -22,6 +22,7 @@ import uuid
 import pytest
 from playwright.sync_api import expect
 
+from conftest import artifacts_dir
 from office_harness import Office
 from test_office_o2_real import duo, info_users, open_via_button, uid, wait_until
 from test_office_o5 import ADMIN, count, office_tab
@@ -40,7 +41,7 @@ OFFICE_NOTICES = {
 }
 
 
-def test_beheer_met_de_echte_ds(real_office: Office, real_browsers) -> None:
+def test_beheer_met_de_echte_ds(real_office: Office, real_browsers, tmp_path_factory) -> None:
     office = real_office
     name = f"beheer-{uuid.uuid4().hex[:6]}.docx"
     d = duo(office, name)
@@ -78,6 +79,7 @@ def test_beheer_met_de_echte_ds(real_office: Office, real_browsers) -> None:
     expect(row).to_contain_text(f"{d.anna.display_name}, {d.bram.display_name}")
     admin = office.server.call(office.admin, "GET", ADMIN, expect=200).json()
     assert (admin["connections"], admin["people"], admin["documents"]) == (2, 2, 1), admin
+    tab.screenshot(path=str(artifacts_dir(tmp_path_factory) / "o5-echt-beheer.png"), full_page=True)
 
     # Allebei sluiten: de sessie dicht, weer 0 verbindingen
     for page in (page_a, page_b):

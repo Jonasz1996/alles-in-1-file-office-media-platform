@@ -22,7 +22,17 @@ from playwright.sync_api import Page, expect
 
 from conftest import create_user
 from office_harness import Office, docx_text, fake_info, fixture, type_in_editor
-from test_office_o2 import callback, children, duo, forgotten, is_session, open_page, wait_until
+from test_office_o2 import (
+    callback,
+    children,
+    duo,
+    forgotten,
+    is_session,
+    open_page,
+    start,
+    tab_to,
+    wait_until,
+)
 
 pytestmark = pytest.mark.office
 
@@ -192,15 +202,19 @@ def test_niet_opgeslagen_terugzetten_na_ruimte(office: Office, office_browsers) 
         # De melding op het overzicht
         status = office.server.call(admin, "GET", "/api/v1/admin/status", expect=200).json()
         assert "office_unsaved" in [n["code"] for n in status["notices"]]
-        # Zonder ruimte lukt het ook met de knop niet: de fout staat erbij, de rij blijft
-        restore.click()
+        # Zonder ruimte lukt het ook met de knop niet: de fout staat erbij, de rij blijft. Met
+        # het toetsenbord: Tab naar Terugzetten, Enter
+        start(tab)
+        tab_to(tab, restore, limit=60)
+        tab.keyboard.press("Enter")
         unsaved = tab.get_by_role("region", name="Niet opgeslagen", exact=True)
         expect(unsaved.get_by_role("alert")).to_have_text("Onvoldoende quotum")
         assert key in forgotten(office)
 
         after_recovery_round(office)
         set_quota(office, anna.id, 0)  # ruimte vrij (onbeperkt)
-        restore.click()
+        expect(restore).to_be_focused()
+        tab.keyboard.press("Enter")
         expect(toast(tab, re.compile(r"^Teruggezet als vol-"))).to_be_visible()
         expect(row).to_have_count(0, timeout=10_000)
         assert key not in forgotten(office)
@@ -215,3 +229,62 @@ def test_niet_opgeslagen_terugzetten_na_ruimte(office: Office, office_browsers) 
     assert f"past niet {tag}" in docx_text(content.content)
     original = server.call(anna, "GET", f"/api/v1/files/{node}/content", expect=200)
     assert f"past niet {tag}" not in docx_text(original.content)
+
+
+# --- §4.4 punt 9, het deel van O5: alleen het toetsenbord, en in het Engels ---
+
+
+def test_toetsenbord_en_engels(office: Office, office_browsers) -> None:
+    """Het tabblad met alleen het toetsenbord: Tab naar de schakelaar, Spatie zet office uit,
+    Enter in een veld slaat op; en weer aan. Daarna het tabblad in het Engels."""
+    tab = office_tab(office, office_browsers)
+    switch = tab.get_by_label("Bewerken en omzetten naar PDF aan", exact=True)
+    save = tab.get_by_role("button", name="Opslaan", exact=True)
+    try:
+        start(tab)
+        tab_to(tab, switch, limit=60)
+        expect(switch).to_be_checked()
+        tab.keyboard.press("Space")
+        expect(switch).not_to_be_checked()
+        tab_to(tab, save)  # langs de drie velden
+        tab.keyboard.press("Enter")
+        expect(toast(tab, "Instellingen opgeslagen.")).to_be_visible()
+        expect(tab.get_by_text("Bewerken staat uit:", exact=False)).to_be_visible()
+        status = office.server.call(office.admin, "GET", "/api/v1/office/status").json()
+        assert (status["enabled"], status["editing"]) == (False, False), status
+
+        # Weer aan: Shift+Tab terug naar de schakelaar, Spatie, en Enter in het eerste veld
+        tab_to(tab, switch, back=True)
+        tab.keyboard.press("Space")
+        expect(switch).to_be_checked()
+        tab.keyboard.press("Tab")
+        expect(
+            tab.get_by_label("Hooguit zoveel bewerkers op één document", exact=True)
+        ).to_be_focused()
+        tab.keyboard.press("Enter")
+        expect(tab.get_by_text("Bewerken staat uit:", exact=False)).to_have_count(0)
+        status = office.server.call(office.admin, "GET", "/api/v1/office/status").json()
+        assert (status["enabled"], status["editing"]) == (True, True), status
+
+        # In het Engels: dezelfde plek, Alt+7 vanaf het overzicht
+        office.server.call(
+            office.admin, "PATCH", "/api/v1/auth/me", json={"locale": "en"}, expect=200
+        )
+        tab.goto("/beheer")
+        tabs = tab.get_by_role("navigation", name="Admin sections")
+        expect(tabs.get_by_role("link", name="Office", exact=True)).to_be_visible()
+        tab.keyboard.press("Alt+7")
+        expect(tab).to_have_url(re.compile(r"/beheer/office$"))
+        expect(tab.get_by_role("heading", name="Office: Healthy", exact=True)).to_be_visible()
+        facts = tab.get_by_role("list", name="The document server", exact=True)
+        expect(facts).to_contain_text("no limit")
+        expect(facts).to_contain_text("required")
+        expect(tab.get_by_label("Editing and PDF conversion on", exact=True)).to_be_checked()
+        expect(
+            tab.get_by_role("heading", name="Turning office on or off on the server")
+        ).to_be_visible()
+        expect(tab.locator("code").filter(has_text="OFFICE=uit bash install.sh")).to_be_visible()
+        expect(tab.locator("html")).to_have_attribute("lang", "en")
+    finally:
+        office.server.call(office.admin, "PATCH", "/api/v1/auth/me", json={"locale": None})
+        office.server.call(office.admin, "PUT", ADMIN, json=DEFAULTS, expect=200)
