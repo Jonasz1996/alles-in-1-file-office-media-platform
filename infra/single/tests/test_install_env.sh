@@ -147,6 +147,18 @@ check "de geheimen blijven" test "$(value OFFICE_JWT_SECRET)" = "$jwt"
 merge_env aan
 check "en weer aan" has_line "OFFICE=aan"
 
+echo "== een .env zonder regeleinde na de laatste regel (met de hand bewerkt)"
+fase3_env
+printf '%s' "$(cat "$ENV_FILE")" >"$ENV_FILE"
+merge_env ""
+check "de laatste instelling blijft zoals hij was" has_line "SECURE_COOKIES=false"
+check "OFFICE=aan op een eigen regel" has_line "OFFICE=aan"
+check "OFFICE_JWT_SECRET op een eigen regel" is_hex64 "$(value OFFICE_JWT_SECRET)"
+merge_env ""
+check "na een tweede run OFFICE=aan één keer" test "$(grep -c 'OFFICE=aan' "$ENV_FILE")" = 1
+check "en elke sleutel van office op een eigen regel" test "$(grep -c '^OFFICE' "$ENV_FILE")" = 3
+check "precies acht regels" test "$(wc -l <"$ENV_FILE")" = 8
+
 echo "== want_office vóór het lezen van .env (de volgorde van main, M13)"
 fase3_env
 merge_env ""

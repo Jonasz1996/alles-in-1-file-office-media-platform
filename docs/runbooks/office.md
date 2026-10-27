@@ -19,7 +19,8 @@ Hieronder heet dat kortweg "het script"; een instelling zet je ervoor, zoals
 
 1. Het leest `OFFICE` uit de omgeving vóór `/opt/platform/.env` (alleen `aan` of `uit`).
 2. Ontbrekende sleutels komen in `.env` (`OFFICE=aan`, `OFFICE_JWT_SECRET`,
-   `OFFICE_LINK_SECRET`); een bestaande waarde blijft altijd staan.
+   `OFFICE_LINK_SECRET`), elk op een eigen regel, ook als je editor de laatste regel zonder
+   regeleinde bewaarde; een bestaande waarde blijft altijd staan.
 3. Het controleert de opslagdriver van Docker (`overlay2` of `overlayfs`) en of er 8 GB vrij is.
 4. Het image: een pin in `.env` (`OFFICE_IMAGE`) gaat voor. Anders de digest die het script
    kent, eerst van Docker Hub, dan van `mirror.gcr.io`; daarna zet het de naam van Docker Hub er

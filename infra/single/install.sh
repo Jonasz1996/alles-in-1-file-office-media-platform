@@ -40,13 +40,15 @@ hex() { od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; }
 set_key() { sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"; }
 
 # Een ontbrekende sleutel toevoegen; een lege waarde (zoals in .env.example) vullen. Een
-# bestaande waarde blijft altijd staan.
+# bestaande waarde blijft altijd staan. Eindigt .env niet op een regeleinde (met de hand
+# bewerkt), dan eerst dat, anders plakt de sleutel aan de laatste instelling vast.
 add_key() {
   if grep -q "^$1=." "$ENV_FILE"; then
     return 0
   elif grep -q "^$1=" "$ENV_FILE"; then
     set_key "$1" "$2"
   else
+    [ ! -s "$ENV_FILE" ] || [ -z "$(tail -c 1 "$ENV_FILE")" ] || printf '\n' >>"$ENV_FILE"
     printf '%s=%s\n' "$1" "$2" >>"$ENV_FILE"
   fi
 }
