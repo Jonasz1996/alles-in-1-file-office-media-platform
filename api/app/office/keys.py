@@ -8,7 +8,9 @@ DS, en "." of ".." mag daar nooit staan.
 
 Een conversie heeft een eigen key per inhoud (sha) en per PDF_VERSION. DS geeft bij dezelfde
 key het oude resultaat terug, ook voor een ander bestand: daarom staat de sha erin. Na een
-fout waarbij DS een nieuwe key vraagt (-2 of -4) komt er "-a<n>" achter.
+fout waarbij DS een nieuwe key vraagt (-2 of -4) komt er "-a<n>" achter. "Mislukte opnieuw" op
+/beheer zet er "-r<r>" tussen: DS bewaart ook een fout onder de key, dus met de oude keys kwam
+dezelfde fout terug.
 """
 
 import re
@@ -27,9 +29,10 @@ def new_key(node_id: uuid.UUID) -> str:
     return f"{node_id.hex}-{secrets.token_hex(8)}"
 
 
-def convert_key(sha: str, n: int = 1) -> str:
-    """De key van de conversie van inhoud sha; n is de poging met een nieuwe key (vanaf 2)."""
-    key = f"p{PDF_VERSION}-{sha}"
+def convert_key(sha: str, n: int = 1, r: str = "") -> str:
+    """De key van de conversie van inhoud sha; n is de poging met een nieuwe key (vanaf 2), r de
+    ronde van "Mislukte opnieuw" (leeg: geen; dan precies de key van vroeger)."""
+    key = f"p{PDF_VERSION}-{sha}" + (f"-r{r}" if r else "")
     return key if n < 2 else f"{key}-a{n}"
 
 

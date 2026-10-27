@@ -17,7 +17,8 @@ Haken van O0:
 - on_healthy(): in health.py bij "weer gezond" (ook de eerste keer na de start): de
   inhaalronde.
 
-De taak office.pdf (payload {sha, n}, max_attempts 2, on_dead -> failed), in deze volgorde:
+De taak office.pdf (payload {sha, n, ask?, r?}, max_attempts 2, on_dead -> failed), in deze
+volgorde:
 1. de blob is weg: klaar;
 2. de PDF er al, met de juiste pdf_version: alleen de thumbnails opnieuw (zonder DS);
 3. office uit (niet ingesteld, of uitgezet op /beheer): pdf_state terug (leeg, of ask);
@@ -40,16 +41,23 @@ kreeg een bestand meer dan twee kansen. jobs.execute zet daarna niets meer op do
 zet alleen een rij die nog running is.
 
 De fouten van DS (oo/convert.py): new_key (-2, -4) -> een nieuwe taak met n + 1 over 30 s
-(jobs.chain), hooguit drie nieuwe keys; failed -> failed; none -> none; retry -> een gewone
-poging (JobError); misconfigured (-8) -> pdf_state terug, en meteen de grote controle van
-health.py (die zet misconfigured; de melding staat dan op /beheer). Blijvend mislukt (failed)
-staat ook als mislukte taak op /beheer, met de code in de melding: "(code -3)".
+(jobs.chain, met dezelfde ask en r), hooguit drie nieuwe keys; failed -> failed; none -> none;
+retry -> een gewone poging (JobError); misconfigured (-8) -> pdf_state terug, en meteen de grote
+controle van health.py (die zet misconfigured; de melding staat dan op /beheer). Blijvend
+mislukt (failed) staat ook als mislukte taak op /beheer, met de code in de melding: "(code -3)".
 
 De inhaalronde (payload {after}): in stukken van 200 blobs op volgorde van sha, alleen inhoud
 van een bestand (geen eerdere versie) waarvan de preview klaar is. Hij neemt NULL (groter dan
 office_auto_convert_bytes: ask), en bij een hogere PDF_VERSION ook ready en failed; nooit
 ask, unsafe of none. Elk stuk krijgt run_after +60 s, en het volgende stuk ook: nieuwe uploads
 gaan altijd voor. Met DS niet gezond stopt de ronde; on_healthy start hem opnieuw.
+
+Mislukte opnieuw (retry_failed, de knop op /beheer): elke failed meteen een eigen taak met r (8
+hex-tekens), en pending. r komt in de key (keys.convert_key): DS bewaart ook een fout onder de
+key, dus met de oude keys kwam dezelfde fout terug. Kan zo'n taak niet omzetten zonder poging
+(office uit, DS niet gezond, -8), dan gaat de inhoud terug naar failed, niet naar leeg: de
+inhaalronde zou dan de oude key nemen. Niet via de inhaalronde: loopt er al een, dan komt die
+niet meer langs een sha vóór zijn plek.
 
 Op verzoek (request): POST /api/v1/office/files/{id}/convert en /pdf, alleen ingelogd met
 leesrecht. Per gebruiker hooguit 10 per 10 minuten (429 rate_limited); hooguit 100 MB voor
@@ -61,6 +69,7 @@ import asyncio
 import logging
 import os
 import re
+import secrets
 import shutil
 import tempfile
 from datetime import timedelta
@@ -101,6 +110,7 @@ PDF_WAIT = 60.0
 PDF_POLL = 0.5
 TITLE = "document"  # DS krijgt nooit de naam van het bestand
 SHA = re.compile(r"[0-9a-f]{64}")
+RETRY = re.compile(r"[0-9a-f]{8}")  # de r van Mislukte opnieuw
 CODE = re.compile(r"\(code (-?\d+)\)")
 # Per gebruiker, conversies op verzoek (Keuze 25)
 ASKS = RateLimiter(
@@ -289,9 +299,14 @@ async def _set_state(
         await session.commit()
 
 
-async def _release(maker: async_sessionmaker[AsyncSession], sha: str, asked: bool) -> None:
-    """Niet omgezet en geen poging: pending terug naar leeg (of ask, als erom gevraagd was)."""
-    await _set_state(maker, sha, "ask" if asked else None, only=("pending",))
+async def _release(
+    maker: async_sessionmaker[AsyncSession], sha: str, asked: bool, r: str = ""
+) -> None:
+    """Niet omgezet en geen poging: pending terug naar leeg (of ask, als erom gevraagd was). Een
+    taak van Mislukte opnieuw (r) terug naar failed: leeg nam de inhaalronde hem met de oude key,
+    en die geeft bij DS de oude fout."""
+    state = "failed" if r else "ask" if asked else None
+    await _set_state(maker, sha, state, only=("pending",))
 
 
 async def _own_job(maker: async_sessionmaker[AsyncSession], sha: str, **values: Any) -> None:
@@ -374,6 +389,8 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
         raise jobs.JobError("Ongeldige taak: n is geen getal") from exc
     n = min(max(n, 1), MAX_KEY)
     asked = bool(payload.get("ask"))
+    r = str(payload.get("r") or "")
+    r = r if RETRY.fullmatch(r) else ""
     blobs = BlobStore(settings.blob_dir)
     maker = _maker(settings)
     office = engine.current()
@@ -392,7 +409,7 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
         await thumbnails(settings, sha)
         return
     if office is None or not enabled or ext is None or ext not in office.convert_formats:
-        await _release(maker, sha, asked)
+        await _release(maker, sha, asked, r)
         return
     verdict = await inspect.check(settings, blobs.path(sha), ext, sha)
     if not verdict.ok:
@@ -402,7 +419,7 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
     if not _healthy():
         if await _attempts(maker, sha) > 1:
             raise jobs.JobError("De document server is niet gezond na een mislukte poging")
-        await _release(maker, sha, asked)
+        await _release(maker, sha, asked, r)
         return
     async with maker() as session:
         waiting = await sessions.busy(session)
@@ -411,7 +428,7 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
         return
     _converting.add(sha)  # geen await sinds de controle hierboven: dit is het slot
     try:
-        converted = await _convert(settings, office, sha, ext, n, asked)
+        converted = await _convert(settings, office, sha, ext, n, asked, r)
     finally:
         _converting.discard(sha)
     if converted:
@@ -419,12 +436,12 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
 
 
 async def _convert(
-    settings: Settings, office: engine.Engine, sha: str, ext: str, n: int, asked: bool
+    settings: Settings, office: engine.Engine, sha: str, ext: str, n: int, asked: bool, r: str
 ) -> bool:
     """Omzetten en de PDF neerzetten; True als hij er nu staat."""
     blobs = BlobStore(settings.blob_dir)
     maker = _maker(settings)
-    key = keys.convert_key(sha, n)
+    key = keys.convert_key(sha, n, r)
     grant_id = grants.grant(sha)
     src = urls.internal_url(settings, f"/internal/office/src/{grant_id}")
     tmp = office_dir(blobs) / ".tmp"
@@ -437,7 +454,7 @@ async def _convert(
                 src, ext, key, f"{TITLE}.{ext}", out, settings.office_max_pdf_bytes
             )
         except engine.ConvertError as e:
-            await _convert_error(settings, maker, sha, n, asked, e)
+            await _convert_error(settings, maker, sha, n, asked, r, e)
             return False
 
         def head() -> bytes:
@@ -459,6 +476,7 @@ async def _convert_error(
     sha: str,
     n: int,
     asked: bool,
+    r: str,
     error: engine.ConvertError,
 ) -> None:
     if error.kind == "retry":
@@ -472,13 +490,18 @@ async def _convert_error(
             await jobs.chain(
                 session,
                 TYPE,
-                {"sha": sha, "n": n + 1, **({"ask": True} if asked else {})},
+                {
+                    "sha": sha,
+                    "n": n + 1,
+                    **({"ask": True} if asked else {}),
+                    **({"r": r} if r else {}),
+                },
                 job_key(sha),
                 run_after=jobs.now() + timedelta(seconds=NEW_KEY_SECONDS),
             )
             await session.commit()
     else:  # misconfigured: geen poging; health.py kijkt meteen opnieuw (en zet de melding)
-        await _release(maker, sha, asked)
+        await _release(maker, sha, asked, r)
         await _recheck()
 
 
@@ -684,17 +707,24 @@ async def backfill(settings: Settings, payload: dict[str, Any]) -> None:
 
 
 async def retry_failed(session: AsyncSession) -> int:
-    """Voor de knop op /beheer (O5): elke failed weer leeg, en de inhaalronde. Geeft het aantal.
-    De aanroeper commit."""
-    result = await session.execute(
-        update(Blob)
-        .where(Blob.pdf_state == "failed")
-        .values(pdf_state=None)
-        .execution_options(synchronize_session=False)
+    """Voor de knop Mislukte opnieuw op /beheer (O5): elke failed meteen een taak met een eigen
+    r (nieuwe keys bij DS) en pending; zie boven. Geeft het aantal. De aanroeper commit."""
+    shas = list(
+        (await session.scalars(select(Blob.sha256).where(Blob.pdf_state == "failed"))).all()
     )
-    if result.rowcount:
-        await jobs.enqueue(session, BACKFILL, {"after": ""}, key=BACKFILL_KEY)
-    return int(result.rowcount or 0)
+    r = secrets.token_hex(4)
+    for start in range(0, len(shas), BATCH):
+        part = shas[start : start + BATCH]
+        await jobs.enqueue_many(
+            session, TYPE, [({"sha": sha, "n": 1, "r": r}, job_key(sha)) for sha in part]
+        )
+        await session.execute(
+            update(Blob)
+            .where(Blob.sha256.in_(part), Blob.pdf_state == "failed")
+            .values(pdf_state="pending")
+            .execution_options(synchronize_session=False)
+        )
+    return len(shas)
 
 
 # --- op verzoek -----------------------------------------------------------------------------

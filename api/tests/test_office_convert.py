@@ -376,6 +376,64 @@ async def test_hooguit_drie_nieuwe_keys(client, admin, office):
     assert code_of(r) == "office_convert_failed" and params_of(r) == {"code": -4}
 
 
+RETRY = "/api/v1/admin/office/conversions/retry"
+
+
+@pytest.mark.anyio
+async def test_mislukte_opnieuw_krijgt_eigen_keys(client, admin, office):
+    """DS bewaart het antwoord per key, ook een fout (de nep-DS ook). Na -4 op alle vier keys
+    (DS kon de bron even niet ophalen) moet "Mislukte opnieuw" op /beheer andere keys vragen:
+    met de oude kwam dezelfde -4 uit de cache, en bleef het failed. Een -4 in die ronde geeft
+    een nieuwe key binnen dezelfde ronde."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"fail": [-4, -4, -4, -4]})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "failed"
+    before = office.converted()
+    assert before == [keys.convert_key(blob.sha256, n) for n in (1, 2, 3, 4)]
+
+    office.conversions.configure({"fail": [-4]})  # nog één keer, daarna is de storing voorbij
+    r = await client.post(RETRY, headers=jonas)
+    assert r.status_code == 200 and r.json() == {"queued": 1}
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    first, second = office.converted()[len(before) :]
+    assert first.startswith(f"{keys.convert_key(blob.sha256)}-r") and first not in before
+    assert second == f"{first}-a2"
+
+
+@pytest.mark.anyio
+async def test_mislukte_opnieuw_met_ds_weg_blijft_failed(client, admin, office):
+    """Is DS niet gezond als de taak van "Mislukte opnieuw" aan de beurt is, dan gaat de inhoud
+    terug naar failed, niet naar leeg: de inhaalronde zou anders de oude key nemen en de oude
+    fout terugkrijgen. Met DS weg weigert de knop zelf (503)."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"fail": [-3]})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+    r = await client.post(RETRY, headers=jonas)
+    assert r.json() == {"queued": 1}
+    tried = len(office.converted())
+    office_state(app).health = "down"
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+    assert len(office.converted()) == tried
+    r = await client.post(RETRY, headers=jonas)
+    assert r.status_code == 503 and code_of(r) == "office_unavailable"
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+    office_state(app).health = "ok"
+    office_policy(app).config = OfficeConfig(enabled=False)
+    r = await client.post(RETRY, headers=jonas)
+    assert r.status_code == 503 and code_of(r) == "office_off"
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+
+
 # --- de invoercontrole ---------------------------------------------------------------------
 
 

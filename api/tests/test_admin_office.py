@@ -3,12 +3,14 @@ alleen voor beheerders, de grens en de andere waarden van OfficeConfig (opgeslag
 gebruikt), office uit en weer aan, terugzetten en verwijderen van forgotten files, eigenaar weg,
 mislukte conversies opnieuw en "Nu tussentijds opslaan"."""
 
+import re
 import time
 import uuid
 
 import pytest
 from sqlalchemy import delete, select, update
 
+from app import jobs
 from app.config import Settings
 from app.main import app
 from app.models import Blob, Job, Node, Setting
@@ -433,7 +435,18 @@ async def test_ds_weg_bij_terugzetten(world, boss):
 # --- conversies en tussentijds opslaan ---
 
 
+async def pdf_jobs(world) -> list[Job]:
+    async with maker(world.base_settings)() as session:
+        rows = await session.scalars(
+            select(Job).where(Job.type == convert.TYPE, Job.status == "queued")
+        )
+        return list(rows.all())
+
+
 async def test_mislukte_conversies_opnieuw(world, boss):
+    """Elke failed meteen weer in de rij (pending, een taak met een eigen r voor nieuwe keys bij
+    DS), ook als er al een inhaalronde loopt die voorbij deze inhoud is: die kwam er niet meer
+    langs, en dan stond hij nergens meer (niet failed en niet wachtend)."""
     anna = await world.user("anna@example.nl")
     one = await world.docx(anna, None, "een.docx", ["een"])
     two = await world.docx(anna, None, "twee.docx", ["twee"])
@@ -442,12 +455,20 @@ async def test_mislukte_conversies_opnieuw(world, boss):
     out = await get_admin(world, boss)
     assert out["conversions"]["failed"] == 1 and out["conversions"]["unsafe"] == 1
     await no_backfill(world)
+    async with maker(world.base_settings)() as session:
+        # Een keten die al voorbij sha_one is (het volgende stuk staat klaar)
+        await jobs.enqueue(session, convert.BACKFILL, {"after": "f" * 64}, key=convert.BACKFILL_KEY)
+        await session.commit()
     r = await world.client.post(f"{ADMIN}/conversions/retry", headers=boss)
     assert r.status_code == 200 and r.json() == {"queued": 1}
-    assert await pdf_state(world, sha_one) is None
+    assert await pdf_state(world, sha_one) == "pending"
     assert await pdf_state(world, sha_two) == "unsafe"  # de invoercontrole blijft gelden
-    assert await backfills(world) == 1
-    assert (await get_admin(world, boss))["conversions"]["failed"] == 0
+    [job] = await pdf_jobs(world)
+    assert job.key == convert.job_key(sha_one)
+    assert job.payload["sha"] == sha_one and job.payload["n"] == 1
+    assert re.fullmatch(r"[0-9a-f]{8}", job.payload["r"])
+    out = (await get_admin(world, boss))["conversions"]
+    assert (out["failed"], out["queued"]) == (0, 1)
     r = await world.client.post(f"{ADMIN}/conversions/retry", headers=boss)
     assert r.json() == {"queued": 0}
 

@@ -15,7 +15,9 @@ office_misconfigured.
   dan doet health.py dat bij "weer gezond".
 - POST /checkpoint: forcesave voor elke open sessie (sweep.checkpoint_counts), en hooguit
   CHECKPOINT_WAIT seconden wachten op de opslag.
-- POST /conversions/retry: failed weer leeg en de inhaalronde (convert.retry_failed).
+- POST /conversions/retry: elke failed meteen opnieuw, met nieuwe keys bij DS
+  (convert.retry_failed). Alleen met office aan en een gezonde DS (anders 503): een taak die dan
+  niet kan omzetten, gaat terug naar failed.
 - Terugzetten en Verwijderen: recovery.restore en recovery.forget (O2), alleen voor een key
   die nu in getForgottenList staat.
 """
@@ -160,8 +162,12 @@ async def checkpoint(_: AdminUser, request: Request) -> CheckpointOut:
 
 
 @router.post("/conversions/retry")
-async def retry_conversions(_: AdminUser, session: Session) -> RetryOut:
+async def retry_conversions(_: AdminUser, request: Request, session: Session) -> RetryOut:
     _engine()
+    if not (await office_policy(request.app).get(session)).enabled:
+        raise errors.fail(503, "office_off", OFF)
+    if not office_state(request.app).healthy:
+        raise errors.fail(503, "office_unavailable", UNAVAILABLE)
     queued = await convert.retry_failed(session)
     await session.commit()
     return RetryOut(queued=queued)
