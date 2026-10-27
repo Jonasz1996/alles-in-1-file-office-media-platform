@@ -15,6 +15,7 @@ import base64
 import hashlib
 import io
 import time
+import uuid
 import zipfile
 from collections.abc import Callable
 from typing import Any
@@ -143,7 +144,10 @@ def test_voorbeeld_zonder_editor(office: Office, office_browsers) -> None:
     t0 = time.time()
     owner = create_user(server, office.admin, name="Voorbeeld O3")
     folder = mkdir(server, owner, "Kantoor")
-    docx, doc, bomb = fixture("proef.docx"), fixture("proef.doc"), odt_bomb()
+    # Een eigen inhoud: een andere test (O2) kan proef.docx in deze server al omgezet hebben,
+    # en dan wordt hij nooit pending
+    docx = _with_extra(fixture("proef.docx"), f"docProps/o3-{uuid.uuid4().hex[:8]}.xml")
+    doc, bomb = fixture("proef.doc"), odt_bomb()
 
     # De nep-DS houdt de conversies even vast: dan is de thumbnail van B21 er nog
     office.fake.control("convert", {"hold": True})
@@ -312,7 +316,7 @@ def test_publieke_link_en_uploadlink(office: Office, office_browsers) -> None:
     assert [e for e in fake_log(office, t0) if e["kind"] in EDITOR_KINDS] == []
 
 
-def _with_extra(data: bytes) -> bytes:
+def _with_extra(data: bytes, part: str = "docProps/extra.xml") -> bytes:
     """Dezelfde docx met een extra onderdeel: andere bytes, dezelfde tekst."""
     out = io.BytesIO()
     with (
@@ -321,7 +325,7 @@ def _with_extra(data: bytes) -> bytes:
     ):
         for info in source.infolist():
             target.writestr(info, source.read(info))
-        target.writestr("docProps/extra.xml", "<extra/>")
+        target.writestr(part, "<extra/>")
     return out.getvalue()
 
 

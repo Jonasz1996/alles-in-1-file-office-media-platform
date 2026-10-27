@@ -331,9 +331,18 @@ def test_definitief_verwijderd_terwijl_bram_bewerkt(office: Office, office_brows
 def test_ds_weg_en_weer_terug(office: Office, office_browsers) -> None:
     """De nep-DS stoppen (op PID): Bewerken zegt dat de editor niet bereikbaar is, het
     voorbeeld in de viewer blijft. Weer starten: de editor werkt weer, zonder de app te
-    herstarten."""
+    herstarten.
+
+    Het voorbeeld is het voorbeeld met opmaak van O3: de PDF is gemaakt toen DS er nog was, en
+    staat bij ons. De pagina's komen dan uit ons renderproces, ook zonder DS."""
     assert office.fake is not None
     d = duo(office)
+
+    def pdf_ready() -> bool:
+        r = office.server.call(d.anna, "GET", f"/api/v1/files/{d.node}/preview", expect=200)
+        return r.json()["meta"].get("pdf_state") == "ready"
+
+    wait_until(pdf_ready, 60, "het voorbeeld met opmaak van verslag.docx")
     page = office_browsers.context_as(d.anna, service_workers="block").new_page()
     office.fake.stop()
     try:
@@ -343,8 +352,12 @@ def test_ds_weg_en_weer_terug(office: Office, office_browsers) -> None:
 
         page.goto(f"/map/{d.folder}?bestand={d.node}")
         viewer = page.get_by_role("dialog", name="verslag.docx", exact=True)
-        expect(viewer.get_by_text("Vereenvoudigd voorbeeld zonder opmaak")).to_be_visible()
-        expect(viewer.get_by_text("Proefdocument van het platform").first).to_be_visible()
+        expect(viewer.locator(".pages-note")).to_contain_text("Voorbeeld")
+        # Een pagina als afbeelding uit ons renderproces (de PDF staat bij ons)
+        page.wait_for_function(
+            """() => [...document.querySelectorAll("dialog .page img")].some((i) =>
+              i.complete && i.naturalWidth > 0 && (i.currentSrc || i.src).includes("/pages/"))"""
+        )
         edit = viewer.get_by_role("button", name="Bewerken", exact=True)
         expect(edit).to_have_attribute("aria-disabled", "true")
         expect(edit).to_have_attribute(
