@@ -25,6 +25,9 @@ En wat §2 M4 en Keuze 22–23 er voor onze playlists bij zeggen:
 
 - `EXTINF` met drie decimalen; bij transcode `TARGETDURATION` 2, bij remux het langste segment
   naar boven afgerond;
+- bij transcode (na de spike) mag alleen het eerste segment langer zijn dan 2 s: het loopt van 0
+  tot `origin + 2`, met `origin` waar de video begint. `TARGETDURATION` is dan die duur afgerond,
+  en elk ander segment blijft afgerond ≤ 2 (`extinf_grid`);
 - bij transcode `EXT-X-INDEPENDENT-SEGMENTS` in de master (behalve voor `webos-5`): elk segment
   begint met een IDR;
 - `RESOLUTION`, `FRAME-RATE` (drie decimalen) en `VIDEO-RANGE` (`SDR`, `PQ` of `HLG`) in de
