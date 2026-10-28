@@ -45,8 +45,10 @@ curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-m
 
 Het adres kiest het script en `PLATFORM_BRANCH` de code die het ophaalt; laat geen van beide
 weg. Zonder `PLATFORM_BRANCH` haalt het script `main` op, en daar staat nog niets; draai het dan
-gewoon opnieuw met `PLATFORM_BRANCH`. De eindtekst van het script noemt de commando's van `main`;
-zet daar zolang hetzelfde adres en `PLATFORM_BRANCH=…` in. Een instelling erbij gaat net zo:
+gewoon opnieuw met `PLATFORM_BRANCH`. De eindtekst van het script noemt de commando's met het
+adres en `PLATFORM_BRANCH` van de branch waarmee je het draaide; die kun je zo overnemen. Het
+tabblad **Office** op `/beheer` noemt altijd de commando's van `main`: zet daar zolang hetzelfde
+adres en `PLATFORM_BRANCH=…` in. Een instelling erbij gaat net zo:
 `… | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 OFFICE=uit bash`.
 
 Kijk vóór het bijwerken één keer of Docker in de container office aankan (één commando, in

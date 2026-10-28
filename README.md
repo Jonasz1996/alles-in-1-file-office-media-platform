@@ -29,6 +29,8 @@ curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-m
 ```
 
 Het adres kiest het script, `PLATFORM_BRANCH` de code die het ophaalt; laat geen van beide weg.
+De commando's in de eindtekst van het script hebben dan ook dat adres en `PLATFORM_BRANCH`; die
+op `/beheer` → Office noemen `main`, dus zet daar zolang hetzelfde in.
 Staat 0.6.0 op `main`, dan is het weer het gewone commando uit
 [infra/single/README.md](infra/single/README.md), zonder `PLATFORM_BRANCH`.
 

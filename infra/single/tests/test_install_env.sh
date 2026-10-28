@@ -515,6 +515,29 @@ done
 reset_docker
 unset OFFICE
 
+echo "== de eindtekst noemt de branch waar de run van kwam, en buiten main ook PLATFORM_BRANCH"
+# Zolang 0.6.0 niet op main staat, werkt Jonas bij met het adres van de branch en
+# PLATFORM_BRANCH; een commando met main haalt dan niets of de verkeerde code op
+branch_url=https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/proef/infra/single/install.sh
+saved_branch=$BRANCH
+BRANCH=claude/proef
+OFFICE_ON=1 OFFICE_REASON=""
+out=$(slot)
+check "branch, office aan: uitzetten met dezelfde branch" grep -qxF "  Uit: curl -fsSL $branch_url | PLATFORM_BRANCH=claude/proef OFFICE=uit bash" <<<"$out"
+OFFICE=aan OFFICE_ON=0 OFFICE_REASON="DS kon niet starten"
+out=$(slot)
+check "branch, mislukte start: opnieuw proberen met dezelfde branch" grep -qxF "  Opnieuw proberen: curl -fsSL $branch_url | PLATFORM_BRANCH=claude/proef bash" <<<"$out"
+check "branch, mislukte start: uitzetten met dezelfde branch" grep -qxF "  Uit: curl -fsSL $branch_url | PLATFORM_BRANCH=claude/proef OFFICE=uit bash" <<<"$out"
+OFFICE=uit OFFICE_ON=0 OFFICE_REASON="OFFICE=uit in $ENV_FILE"
+out=$(slot)
+check "branch, office uit: aanzetten met dezelfde branch" grep -qxF "  Aan: curl -fsSL $branch_url | PLATFORM_BRANCH=claude/proef OFFICE=aan bash" <<<"$out"
+check "branch: nergens het adres van main" not grep -qF "/main/infra/single/install.sh" <<<"$out"
+BRANCH=main
+out=$(slot)
+check "main: geen PLATFORM_BRANCH" not grep -qF "PLATFORM_BRANCH" <<<"$out"
+BRANCH=$saved_branch
+unset OFFICE
+
 echo "== curl | bash: geen commando leest de rest van het script van stdin"
 # Bij `curl … | bash` leest bash het script van stdin. Een `docker run` of `compose exec` die
 # stdin openhoudt, eet de rest van het script op; dan stopt het zonder melding.

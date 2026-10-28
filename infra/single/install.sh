@@ -461,8 +461,11 @@ main() {
 }
 
 slot() {
-  # Zo draait Jonas het script (curl … | bash): dan staat er geen install.sh in de werkmap
-  local ip url https_port script="curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh"
+  # Zo draait Jonas het script (curl … | bash): dan staat er geen install.sh in de werkmap. Het
+  # script en de code van de branch waar deze run van kwam: buiten main ook met PLATFORM_BRANCH,
+  # anders haalt het volgende commando de code van main op
+  local ip url https_port pre="" script="curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/$BRANCH/infra/single/install.sh"
+  [ "$BRANCH" = main ] || pre="PLATFORM_BRANCH=$BRANCH "
   ip=$(hostname -I | awk '{print $1}')
   url="http://$ip"
   [ "$PORT" = 80 ] || url="$url:$PORT"
@@ -491,16 +494,16 @@ KLAAR
     echo "Office: aan. De editor start op de achtergrond; bewerken kan over 2 à 3 minuten"
     echo "  (DS bouwt eerst zijn fonts en herstart zichzelf; /beheer zegt zolang 'Start op')."
     [ -z "$OFFICE_REASON" ] || echo "  Let op: $OFFICE_REASON."
-    echo "  Uit: $script | OFFICE=uit bash"
+    echo "  Uit: $script | ${pre}OFFICE=uit bash"
   elif office_supported && [ "${OFFICE:-aan}" = aan ]; then
     # Office staat al aan, maar DS kwam niet op (Docker, het image, de start): OFFICE=aan helpt
     # dan niet, opnieuw proberen wel
     echo "Office: uit, want $OFFICE_REASON."
-    echo "  Opnieuw proberen: $script | bash"
-    echo "  Uit: $script | OFFICE=uit bash"
+    echo "  Opnieuw proberen: $script | ${pre}bash"
+    echo "  Uit: $script | ${pre}OFFICE=uit bash"
   else
     echo "Office: uit, want $OFFICE_REASON."
-    office_supported && echo "  Aan: $script | OFFICE=aan bash"
+    office_supported && echo "  Aan: $script | ${pre}OFFICE=aan bash"
   fi
   cat <<KLAAR
 
