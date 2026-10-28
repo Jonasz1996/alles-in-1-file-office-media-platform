@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../api";
 import * as media from "./api";
 import { StatusStore } from "./index";
-import type { ClientProfile, PlayIn } from "./types";
+import type { ErrorCatalog } from "../i18n/types";
+import { type ClientProfile, MEDIA_ERROR_CODES, MEDIA_ERROR_STATUS, MEDIA_NOTICES, type PlayIn } from "./types";
+
+// De catalogus van M0-api (i18n/errors/media.ts); leeg zolang die er in deze worktree niet is
+const catalogs = import.meta.glob<ErrorCatalog>("../i18n/errors/media.ts", { eager: true, import: "default" });
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -198,5 +202,22 @@ describe("het tabblad Media op /beheer", () => {
     expect(media.adminMediaStatus).toBeInstanceOf(StatusStore);
     expect(await media.adminMediaStatus.load()).toBeNull();
     expect(request).toHaveBeenCalledWith("GET", "/api/v1/admin/media");
+  });
+});
+
+describe("de codes van §3.4", () => {
+  it("25 codes, elk met zijn status; media_off is 503 (ook de stub)", () => {
+    expect(MEDIA_ERROR_CODES).toHaveLength(25);
+    expect(new Set(MEDIA_ERROR_CODES).size).toBe(25);
+    for (const code of MEDIA_ERROR_CODES) expect(MEDIA_ERROR_STATUS[code]).toBeGreaterThanOrEqual(400);
+    expect(MEDIA_ERROR_STATUS.media_off).toBe(503);
+    expect(MEDIA_ERROR_STATUS.media_session_gone).toBe(410);
+  });
+
+  it.skipIf(!catalogs["../i18n/errors/media.ts"])("i18n/errors/media.ts kent precies deze codes (en de meldingen)", () => {
+    const keys = Object.keys(catalogs["../i18n/errors/media.ts"]);
+    for (const code of MEDIA_ERROR_CODES) expect(keys).toContain(code);
+    const known = new Set<string>([...MEDIA_ERROR_CODES, ...MEDIA_NOTICES]);
+    expect(keys.filter((k) => !known.has(k))).toEqual([]);
   });
 });
