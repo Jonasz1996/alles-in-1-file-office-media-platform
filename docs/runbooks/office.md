@@ -13,7 +13,31 @@ curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-m
 ```
 
 Hieronder heet dat kortweg "het script"; een instelling zet je ervoor, zoals
-`curl … | OFFICE=uit bash`.
+`curl … | OFFICE=uit bash`. Zolang 0.6.0 nog niet op `main` staat, gebruik je het adres van de
+branch en `PLATFORM_BRANCH`, zoals in `infra/single/README.md` ("Bijwerken naar 0.6.0").
+
+## Vóór het bijwerken naar 0.6.0
+
+Eén controle op de LXC, vóór de eerste run met office:
+
+```bash
+docker info --format '{{.Driver}} {{.MemoryLimit}} {{.CPUCfsQuota}}'
+```
+
+- Het eerste woord is `overlay2` (de klassieke opslag van Docker) of `overlayfs` (Docker 29 met
+  de opslag van containerd): goed.
+- Een ander woord (zoals `vfs`, `btrfs`, `zfs` of `fuse-overlayfs`): het script laat office dan
+  uit en zegt waarom; het platform werkt als 0.5.0. Zet in Proxmox bij deze container
+  **nesting** aan, gebruik een rootdisk op ZFS of ext4, en draai het script daarna opnieuw.
+- Daarna `true true`: de kernel kan grenzen zetten, en DS krijgt er een van 2 GB geheugen en 2
+  cores.
+- Staat er een `false` achter het woord: DS draait zonder die grens (het script laat
+  `compose.office-limits.yaml` weg). Dat werkt; kijk dan af en toe met `docker stats` (zie "De
+  belasting meten").
+
+Het script wil verder 8 GB vrij waar Docker zijn images bewaart (`df -h /var/lib/docker`). Is er
+minder, dan blijft office die run uit en zegt het script het. De rest van de controle doe je
+ná het bijwerken ("Controle van de LXC").
 
 ## Wat het script bij elke run met office doet
 
@@ -87,6 +111,21 @@ versie ook of `infra/single/office/local-production-linux.json` nog klopt met `d
 het nieuwe image: dat bestand vervangt hele lijsten (zoals `inputLimits`), dus een soort die
 DS erbij krijgt, valt anders buiten de grenzen. `e2e/test_office_o6_real.py` controleert de
 grenzen.
+
+## DS komt na een harde stop niet meer op
+
+Na een `docker kill`, een geheugentekort of de stroom weg komt DS soms niet meer op: de
+container draait, maar `dc ps office` wordt niet `healthy` en `/beheer` → Office zegt na 2
+minuten dat DS weg is. De oorzaak is dan een oud pid-bestand van supervisord in de container
+(`docs/fase-4/metingen.md`, bevinding 7). Herstel:
+
+```bash
+dc exec office rm -f /var/run/supervisord.pid
+dc restart office
+```
+
+of `dc up -d --force-recreate office` (alles van DS staat in volumes). Daarna 2 à 3 minuten voor
+de fonts.
 
 ## DS terugrollen
 

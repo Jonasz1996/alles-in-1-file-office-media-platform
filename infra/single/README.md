@@ -33,6 +33,42 @@ Een andere poort kiezen kan bij de eerste installatie met `curl … | PORT=8080 
 commando hierboven, met `PORT=8080` vóór `bash`), of later in `/opt/platform/.env` (daarna het
 script opnieuw draaien).
 
+## Bijwerken naar 0.6.0 (met office)
+
+Versie 0.6.0 (fase 4) staat nog niet op `main`, maar op de branch
+`claude/stappenplan-uitwerken-lu4uv3`. Tot hij op `main` staat, werk je zo bij (en geldt dit ook
+voor elk ander commando hieronder met `curl … | bash`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
+```
+
+Het adres kiest het script en `PLATFORM_BRANCH` de code die het ophaalt; laat geen van beide
+weg. Zonder `PLATFORM_BRANCH` haalt het script `main` op, en daar staat nog niets; draai het dan
+gewoon opnieuw met `PLATFORM_BRANCH`. De eindtekst van het script noemt de commando's van `main`;
+zet daar zolang hetzelfde adres en `PLATFORM_BRANCH=…` in. Een instelling erbij gaat net zo:
+`… | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 OFFICE=uit bash`.
+
+Kijk vóór het bijwerken één keer of Docker in de container office aankan (één commando, in
+`docs/runbooks/office.md`, "Vóór het bijwerken naar 0.6.0").
+
+Wat er bij het bijwerken van 0.5.0 naar 0.6.0 gebeurt:
+
+- het script laat open werk opslaan (in 0.5.0 is er nog niets), bouwt het nieuwe platform en
+  start het; de database gaat bij de start vanzelf naar het nieuwe schema;
+- **office staat daarna aan**: `OFFICE=aan` en twee nieuwe geheimen komen in
+  `/opt/platform/.env` (rechten 600), het image van OnlyOffice wordt opgehaald (±1 GB, eerst van
+  Docker Hub, anders van `mirror.gcr.io`; het script wil 8 GB vrij) en start als tweede
+  container. Liever niet: zet `OFFICE=uit` ervoor; het platform werkt dan precies als 0.5.0,
+  en weer aan kan later met `OFFICE=aan`;
+- na 2 à 3 minuten (de fonts van OnlyOffice; zolang zegt `/beheer` "Start op…") kun je
+  bewerken: **Bewerken** bij docx, xlsx en pptx, **Nieuw** → Document, Werkblad of Presentatie,
+  PDF-voorbeelden met opmaak, **Downloaden als PDF**, en het tabblad **Office** op `/beheer`;
+- bestaande kantoordocumenten tot 20 MB krijgen op de achtergrond een PDF-voorbeeld, één voor
+  één; OnlyOffice is dan een tijd druk (een groter document krijgt het als iemand erom vraagt);
+- inloggen, 2FA, je bestanden en hun versies blijven gelijk. Terug naar 0.5.0: liever office uit;
+  anders de stappen in het runbook ("De app terugrollen").
+
 ## Van buiten bereikbaar maken (HTTPS)
 
 1. Laat je domein (bijv. `app.voorbeeld.nl`) met een A-record naar je publieke IP-adres
@@ -71,10 +107,11 @@ blijft http werken.
 | Gegevens van office | de Docker-volumes `platform_office-lib`, `platform_office-data`, `platform_office-logs` en `platform_office-fonts` (niet in `/tank`) |
 | Instellingen van office | `/opt/platform/.env`: `OFFICE`, `OFFICE_JWT_SECRET`, `OFFICE_LINK_SECRET` en eventueel `OFFICE_IMAGE` (de pin) |
 
-Bijwerken: draai het installatiescript opnieuw. Het laat eerst de open documenten opslaan,
-vervangt dan het platform en werkt pas daarna office bij. Had je de eerste versie met Traefik,
-PostgreSQL en SeaweedFS al geïnstalleerd, dan ruimt het script die containers op; de oude
-mappen `/tank/postgres`, `/tank/seaweedfs` en `/tank/traefik` mag je daarna weghalen.
+Bijwerken: draai het installatiescript opnieuw (naar 0.6.0: zie hierboven). Het laat eerst de
+open documenten opslaan, vervangt dan het platform en werkt pas daarna office bij. Had je de
+eerste versie met Traefik, PostgreSQL en SeaweedFS al geïnstalleerd, dan ruimt het script die
+containers op; de oude mappen `/tank/postgres`, `/tank/seaweedfs` en `/tank/traefik` mag je
+daarna weghalen.
 
 Handige commando's. Plak eerst dit in de console (of zet het in `/root/.bashrc`); `dc` is dan
 `docker compose` met precies de bestanden die het installatiescript gebruikt:
