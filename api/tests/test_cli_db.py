@@ -1,4 +1,4 @@
-"""python -m app.cli db-downgrade en office-checkpoint (§3.5, §3.8): db-downgrade 0006 vraagt
+"""python -m app.cli db-downgrade en office-checkpoint (§3.5, §3.8): db-downgrade 0007 vraagt
 om bevestiging en doet daarna precies dat; een onbekende of latere revisie doet niets."""
 
 import os
@@ -61,38 +61,39 @@ def test_check_downgrade():
 
 @pytest.mark.anyio
 async def test_downgrade_vraagt_om_bevestiging(settings):
-    assert await revision(settings) == "0007"
+    assert await revision(settings) == "0008"
 
-    result = await run_cli(settings, "db-downgrade", "0006", stdin=b"nee\n")
+    result = await run_cli(settings, "db-downgrade", "0007", stdin=b"nee\n")
     assert result.returncode == 1
     out = result.stdout.decode()
-    assert "van revisie 0007 terug naar 0006" in out
+    assert "van revisie 0008 terug naar 0007" in out
     assert 'Typ "ja" om door te gaan' in out
     assert "Niets gedaan." in result.stderr.decode()
-    assert await revision(settings) == "0007"
+    assert await revision(settings) == "0008"
 
     # Zonder invoer (EOF) ook niet
-    result = await run_cli(settings, "db-downgrade", "0006")
+    result = await run_cli(settings, "db-downgrade", "0007")
     assert result.returncode == 1
-    assert await revision(settings) == "0007"
+    assert await revision(settings) == "0008"
 
-    result = await run_cli(settings, "db-downgrade", "0006", stdin=b"ja\n")
+    result = await run_cli(settings, "db-downgrade", "0007", stdin=b"ja\n")
     assert result.returncode == 0, result.stderr.decode()
-    assert "De database staat nu op revisie 0006." in result.stdout.decode()
-    assert await revision(settings) == "0006"
-    assert not await has_table(settings, "office_session")
+    assert "De database staat nu op revisie 0007." in result.stdout.decode()
+    assert await revision(settings) == "0007"
+    assert not await has_table(settings, "media_library")
+    assert await has_table(settings, "office_session")
 
     # Een latere of onbekende revisie: niets
-    for target in ("0007", "9999"):
+    for target in ("0008", "9999"):
         result = await run_cli(settings, "db-downgrade", target, "--ja")
         assert result.returncode == 1
-        assert "bestaat niet of ligt niet vóór de huidige (0006)" in result.stderr.decode()
-    assert await revision(settings) == "0006"
+        assert "bestaat niet of ligt niet vóór de huidige (0007)" in result.stderr.decode()
+    assert await revision(settings) == "0007"
 
     # De app zet hem bij het starten weer op head
     await upgrade(settings)
-    assert await revision(settings) == "0007"
-    assert await has_table(settings, "office_session")
+    assert await revision(settings) == "0008"
+    assert await has_table(settings, "media_library")
 
 
 @pytest.mark.anyio

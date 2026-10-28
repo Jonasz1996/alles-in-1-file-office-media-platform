@@ -1,8 +1,10 @@
 import secrets
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -97,6 +99,29 @@ class Settings(BaseSettings):
     office_sweep_seconds: float = 30  # de e2e zet 1
     office_recovery_seconds: float = 600  # de e2e zet 2
 
+    # Media (fase 5, bouwontwerp §3.2). Uit tenzij PLATFORM_MEDIA_ENABLED=true: zonder die
+    # vlag start er geen worker, geeft elk media-eindpunt 503 media_off, en is de app precies
+    # 0.6.0 (plus F1–F4). Aan, dan nog uit te zetten op /beheer (MediaConfig.enabled).
+    media_enabled: bool = False
+    # De socket van de worker-container; leeg = de app start zelf een lokale worker (Keuze 13)
+    media_worker: str = ""
+    media_max_transcodes: int = 3  # plafond; /beheer kan alleen lager (Keuze 26)
+    media_job_memory_mb: int = 1200  # RLIMIT_DATA per ffmpeg voor live en sprites (Keuze 12)
+    media_job_workers: int = 1  # workers van de rij media (Keuze 14)
+    # ffmpeg en ffprobe samen in de worker; het harnas en de belastingtest zetten 3 (Keuze 12)
+    media_max_procs: int = 10
+    media_loadtest: bool = False  # Op.SYNTH en LoadtestFile toestaan (§4.6)
+    media_scan_tick: float = 30  # de lus van de scanner (tests: 0.5)
+    media_access_cache: float = 15  # seconden dat een toegangscontrole meegaat (Keuze 21)
+    media_segment_wait: float = 20  # seconden wachten op een segment (Keuze 25)
+    media_bench_fixed: bool = False  # tests: de kostentabel van de proef, geen meting
+    media_tmdb_url: str = "https://api.themoviedb.org"
+    media_tmdb_image_url: str = "https://image.tmdb.org"
+    media_musicbrainz_url: str = "https://musicbrainz.org"
+    media_caa_url: str = "https://coverartarchive.org"
+    # Alleen tests: de nep-providers op 127.0.0.1 (Keuze 39)
+    media_provider_private_ok: bool = False
+
     def nodes(self) -> list[tuple[str, str]]:
         if not self.cluster_nodes:
             return [(self.node_name, "127.0.0.1")]
@@ -118,6 +143,20 @@ class Settings(BaseSettings):
     @property
     def tls_dir(self) -> Path:
         return self.data_dir / "tls"
+
+    @property
+    def media_dir(self) -> Path:
+        """De cache van media (sessies, audio, sprites, art) en de socket van de lokale
+        worker (Keuze 13, 31). Systeemruimte, geen quotum van een gebruiker."""
+        return self.data_dir / "media"
+
+    @property
+    def media_socket(self) -> Path:
+        """Waar de app de worker bereikt: de socket van de container, of die van de lokale
+        worker in data_dir/media/run."""
+        if self.media_worker:
+            return Path(self.media_worker)
+        return self.media_dir / "run" / "worker.sock"
 
     def office_problem(self) -> str | None:
         """Waarom office niet ingesteld is, of None. Zonder office_url is er geen probleem:
@@ -150,6 +189,35 @@ class Settings(BaseSettings):
             path.write_text(secrets.token_hex(32))
             path.chmod(0o600)
         return path.read_text().strip()
+
+
+class BenchResult(BaseModel):
+    """De uitkomst van de meting (Keuze 26): f = cores voor 1,0× hier / de referentie, en
+    f_dec voor het decoderen van de bron. Alleen de worker meet; /beheer leest."""
+
+    f: float = Field(gt=0, le=20)
+    f_dec: float = Field(gt=0, le=20)
+    at: datetime
+
+
+class MediaConfig(BaseModel):
+    """De instellingen van media op /beheer (Keuze 45), in de tabel setting onder de sleutel
+    "media" en in het geheugen (media.state.MediaPolicy), zoals SecurityPolicy en
+    OfficeConfig. max_transcodes kan niet hoger dan PLATFORM_MEDIA_MAX_TRANSCODES
+    (MediaPolicy.effective houdt dat aan)."""
+
+    enabled: bool = True
+    cpu_budget: float = Field(default=3.0, ge=0.5, le=16)
+    max_transcodes: int = Field(default=3, ge=0, le=16)
+    max_user_transcodes: int = Field(default=2, ge=1, le=16)
+    # Mag een publieke link transcoderen (Vraag 5); standaard nee
+    public_transcode: bool = False
+    # HDR live op 1080 als iemand het kiest; anders alleen 720 (Keuze 27)
+    hdr_1080: bool = False
+    cache_gb: int = Field(default=20, ge=1, le=10_000)
+    musicbrainz: bool = False
+    # Alleen lezen: de laatste meting (Keuze 26); None = nog niet gemeten (f = 1,0)
+    bench: BenchResult | None = None
 
 
 @lru_cache

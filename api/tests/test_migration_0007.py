@@ -207,8 +207,8 @@ async def test_van_0006_naar_0007_en_terug(tmp_path):
         assert await conn.scalar(sa.text("SELECT count(*) FROM blob")) == 1
         assert await conn.scalar(sa.text("SELECT count(*) FROM user")) == 1
 
-    # En weer omhoog gaat ook
-    await migrate(settings, command.upgrade, "head")
+    # En weer omhoog gaat ook (tot 0007; 0008 heeft een eigen test)
+    await migrate(settings, command.upgrade, "0007")
     assert (await schema(settings))["alembic_version"] == ["0007"]
 
 
@@ -237,7 +237,7 @@ async def test_modellen_gelijk_aan_de_migratie(tmp_path):
 @pytest.mark.anyio
 async def test_lege_database_naar_0007(tmp_path):
     settings = settings_at(tmp_path, "leeg")
-    await migrate(settings, command.upgrade, "head")
+    await migrate(settings, command.upgrade, "0007")
     found = await schema(settings)
     assert "office_session" in found
     assert found["alembic_version"] == ["0007"]

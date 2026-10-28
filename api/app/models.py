@@ -10,21 +10,27 @@ in fase 3 nergens op; dat komt in fase 6.
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
+    Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
     Uuid,
     event,
+    false,
     text,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -426,3 +432,252 @@ class OfficeSession(Base):
     # Ook: sinds wanneer de sessie in 'saving' staat (Keuze 20)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# --- Media (fase 5, bouwontwerp §3.1) ------------------------------------------------------
+#
+# De analyse hangt aan de inhoud (media_probe, per sha): twee kopieën delen één probe, één
+# keyframe-index, één set ondertitels en sprites. Het item en de voortgang hangen aan de node:
+# een kopie in een andere map is een eigen item (Keuze 6). Waarden in het Engels, zoals de rest
+# van het schema; de web-app vertaalt ze.
+
+
+class MediaLibrary(Base):
+    """Een map van de boom die een bibliotheek is (Keuze 1, 4). Wie de map mag lezen, ziet de
+    bibliotheek. Weg met de eigenaar of de map (CASCADE); de bestanden blijven."""
+
+    __tablename__ = "media_library"
+    __table_args__ = (
+        UniqueConstraint("root_id", name="uq_media_library_root"),
+        Index("ix_media_library_owner", "owner_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    root_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("node.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(8))  # movies | shows | music | videos
+    name: Mapped[str] = mapped_column(String(255))
+    language: Mapped[str] = mapped_column(String(16), default="nl-NL", server_default="nl-NL")
+    # Online opzoeken bij TMDB en MusicBrainz (Keuze 39)
+    online: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # idle | queued | running | failed
+    scan_state: Mapped[str] = mapped_column(String(8), default="idle", server_default="idle")
+    scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    item_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MediaProbe(Base):
+    """De analyse van één inhoud (Keuze 15), gemaakt door de worker. version is
+    analysis.PROBE_VERSION: een hogere versie mag opnieuw proben. state: ready | failed.
+
+    Per stap een eigen staat; een mislukte stap houdt de rest niet tegen (Keuze 14):
+    - keyframes_state: none | ready | sparse (Cues met gaten > 20 s) | failed (Keuze 17);
+      keyframes is zlib(varint-delta's in ms), hooguit 48 KB;
+    - subs_state, trick_state, audio_state: none | pending | ready | failed | skip.
+    truncated zegt wat de grens van 64 wegliet: {streams, chapters, attachments} (Keuze 12)."""
+
+    __tablename__ = "media_probe"
+
+    blob_sha: Mapped[str] = mapped_column(
+        ForeignKey("blob.sha256", ondelete="CASCADE"), primary_key=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(8))
+    # mp4 | mov | m4v | matroska | webm | avi | mpegts | m2ts | mp3 | flac | ogg | …
+    container: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bit_rate: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # start_time van de bron (S, Keuze 22)
+    start_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    streams: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    chapters: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    tags: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    keyframes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    keyframes_state: Mapped[str] = mapped_column(String(8), default="none", server_default="none")
+    max_gop_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    subs_state: Mapped[str] = mapped_column(String(8), default="none", server_default="none")
+    trick_state: Mapped[str] = mapped_column(String(8), default="none", server_default="none")
+    # {interval, w, h, cols, rows, count} (Keuze 30)
+    trick: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    audio_state: Mapped[str] = mapped_column(String(8), default="none", server_default="none")
+    # {rate, samples, delay, padding, source} (Keuze 18)
+    audio: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    truncated: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    error: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    probed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MediaShow(Base):
+    """Een serie in een bibliotheek: de map van de serie (Keuze 8). match_state: local |
+    matched | review | manual; candidates zijn de 5 beste bij review (Keuze 42)."""
+
+    __tablename__ = "media_show"
+    __table_args__ = (UniqueConstraint("library_id", "folder_id", name="uq_media_show_folder"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    library_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("media_library.id", ondelete="CASCADE")
+    )
+    folder_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("node.id", ondelete="SET NULL"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(255))
+    sort_title: Mapped[str] = mapped_column(String(255))
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overview: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ids: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")  # {tmdb, imdb, tvdb}
+    art: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    locked: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    match_state: Mapped[str] = mapped_column(String(8), default="local", server_default="local")
+    candidates: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+
+
+class MediaAlbum(Base):
+    """Een album in een muziekbibliotheek. key is de genormaliseerde albumartiest|titel
+    (Keuze 37)."""
+
+    __tablename__ = "media_album"
+    __table_args__ = (UniqueConstraint("library_id", "key", name="uq_media_album_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    library_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("media_library.id", ondelete="CASCADE")
+    )
+    key: Mapped[str] = mapped_column(String(255))
+    title: Mapped[str] = mapped_column(String(255))
+    sort_title: Mapped[str] = mapped_column(String(255))
+    album_artist: Mapped[str] = mapped_column(String(255))
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    compilation: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    mbid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    art: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    match_state: Mapped[str] = mapped_column(String(8), default="local", server_default="local")
+    track_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class MediaItem(Base):
+    """Eén bestand in een bibliotheek (per node). kind: movie | episode | track | video |
+    extra; extra: trailer | featurette | deleted | behind | sample | other, met parent_id de
+    film. present 0 = in de prullenbak: zo blijft een lijst één index-scan (Keuze 5).
+    season is NULL bij absolute nummering (Keuze 7, 8). source: name | nfo | tags | provider.
+    locked: velden die een gebruiker zelf zette en die niets meer overschrijft."""
+
+    __tablename__ = "media_item"
+    __table_args__ = (
+        Index("ix_media_item_lib", "library_id", "present", "kind", "sort_title"),
+        Index("ix_media_item_added", "library_id", "present", "added_at"),
+        Index("ix_media_item_show", "show_id", "season", "episode"),
+        Index("ix_media_item_album", "album_id", "disc", "track"),
+        Index("ix_media_item_parent", "parent_id"),
+    )
+
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    library_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("media_library.id", ondelete="CASCADE")
+    )
+    kind: Mapped[str] = mapped_column(String(8))
+    extra: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("media_item.node_id", ondelete="SET NULL"), nullable=True
+    )
+    present: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    title: Mapped[str] = mapped_column(String(255))
+    sort_title: Mapped[str] = mapped_column(String(255))
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    show_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("media_show.id", ondelete="SET NULL"), nullable=True
+    )
+    season: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    episode: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    episode_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    absolute: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    aired: Mapped[date | None] = mapped_column(Date, nullable=True)
+    album_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("media_album.id", ondelete="SET NULL"), nullable=True
+    )
+    disc: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    track: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    artist: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    part: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    edition: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    overview: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ids: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    # {poster: {node} | {art}, backdrop: …}
+    art: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    # Externe ondertitels: [{node, lang, forced, sdh, default}]
+    subs: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    source: Mapped[str] = mapped_column(String(8), default="name", server_default="name")
+    confidence: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    # NAMES_VERSION bij het laatste ontleden (Keuze 7)
+    names_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    match_state: Mapped[str] = mapped_column(String(8), default="local", server_default="local")
+    candidates: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PlaybackState(Base):
+    """De voortgang per gebruiker, profiel en bestand (Keuze 36). profile is in fase 5 altijd
+    '' (Vraag 6). blob_sha zonder FK: alleen om een vervangen bestand te zien. origin en seq:
+    het tabblad of apparaat van de laatste stand en zijn laatste volgnummer, zodat een late tik
+    niets terugzet."""
+
+    __tablename__ = "playback_state"
+    __table_args__ = (Index("ix_playback_recent", "user_id", "profile", "watched", "updated_at"),)
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    profile: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default="", server_default=""
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    position_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    watched: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    play_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    audio: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    subtitle: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    blob_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    origin: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # started_at van de sessie van de laatste stand
+    play_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # De laatste overgang naar gezien of end
+    watched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MediaPlaylist(Base):
+    """Een afspeellijst, alleen van de eigenaar (M9)."""
+
+    __tablename__ = "media_playlist"
+    __table_args__ = (Index("ix_media_playlist_owner", "owner_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MediaPlaylistItem(Base):
+    """Een regel van een afspeellijst; weg met het bestand (CASCADE)."""
+
+    __tablename__ = "media_playlist_item"
+    __table_args__ = (Index("ix_media_playlist_item", "playlist_id", "position"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    playlist_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("media_playlist.id", ondelete="CASCADE")
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("node.id", ondelete="CASCADE"))
+    position: Mapped[int] = mapped_column(Integer)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
