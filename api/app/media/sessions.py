@@ -11,9 +11,9 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import Request
+from fastapi import Depends, Request
 
 from app.media import errors as media_errors
 from app.media import runtime
@@ -74,6 +74,17 @@ async def guard(request: Request, sid: str) -> Session:
     if not runtime.enabled(request.app):
         raise media_errors.off()
     raise media_errors.session_gone()
+
+
+async def guarded(request: Request, sid: str) -> Session:
+    """De dependency van elke router onder /api/v1/stream/ (regel 6): als dependency van de
+    router zelf loopt hij vóór alles van de route, ook vóór de controle van de andere
+    parameters. Een route die de sessie nodig heeft, neemt hem als parameter (Guarded); FastAPI
+    roept guard dan één keer aan."""
+    return await guard(request, sid)
+
+
+Guarded = Annotated[Session, Depends(guarded)]
 
 
 async def guarded_body(session: Session, chunks: AsyncIterator[bytes]) -> AsyncIterator[bytes]:

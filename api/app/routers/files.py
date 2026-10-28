@@ -1639,7 +1639,8 @@ async def send_file(
 
 
 # F2 (fase 5): ook HEAD; FileResponse stuurt dan alleen de koppen (Range en 304 net als GET)
-@router.api_route("/download/{node_id}", methods=["GET", "HEAD"])
+@router.get("/download/{node_id}")
+@router.head("/download/{node_id}", include_in_schema=False)  # één operatie in de OpenAPI
 async def download(
     node_id: uuid.UUID,
     token: str,
@@ -1662,7 +1663,8 @@ async def download(
     return await send_file(node, settings, if_none_match, inline, version)
 
 
-@router.api_route("/files/{node_id}/content", methods=["GET", "HEAD"])
+@router.get("/files/{node_id}/content")
+@router.head("/files/{node_id}/content", include_in_schema=False)  # F2 (fase 5)
 async def content(
     node_id: uuid.UUID,
     user: CurrentUser,

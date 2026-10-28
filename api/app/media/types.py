@@ -397,20 +397,6 @@ class StreamInfo(BaseModel):
     subtitles: list[dict] = Field(default_factory=list)
 
 
-class Card(BaseModel):
-    """Een kaart op /media/home (Keuze 36): een item met zijn voortgang."""
-
-    node_id: uuid.UUID
-    library_id: uuid.UUID | None = None
-    title: str
-    kind: str
-    poster: str | None = None
-    position_ms: int = 0
-    duration_ms: int | None = None
-    watched: bool = False
-    updated_at: datetime | None = None
-
-
 class LoadtestFile(BaseModel):
     """Een bron voor de belastingtest (§4.6): een bestand in media/loadtest/ dat de worker met
     synth maakte. Alleen met PLATFORM_MEDIA_LOADTEST en een beheerder."""
@@ -419,3 +405,750 @@ class LoadtestFile(BaseModel):
     path: Path
     size: int
     sha: str  # een eigen sleutel (geen blob), zodat de cache per bron werkt
+
+
+# --- De vormen van de API (§2 en §3.4) -----------------------------------------------------------
+#
+# Wat de eindpunten van de pakketten nemen en geven. web/src/media/types.ts heeft dezelfde namen
+# en velden. M0 zet de routes met deze vormen neer (503 media_off tot het pakket hem vult);
+# fake_stream.py geeft precies deze vormen. Tijden in ms mediatijd, datums ISO 8601 in UTC.
+
+LibraryKind = Literal["movies", "shows", "music", "videos"]
+LIBRARY_KINDS: tuple[str, ...] = LibraryKind.__args__  # type: ignore[attr-defined]
+ScanState = Literal["idle", "queued", "running", "failed"]
+ItemKind = Literal["movie", "episode", "track", "video", "extra"]
+CardKind = Literal["movie", "episode", "track", "video", "extra", "show"]
+ExtraKind = Literal["trailer", "featurette", "deleted", "behind", "sample", "other"]
+MatchState = Literal["local", "matched", "review", "manual"]
+AnalysisStep = Literal["probe", "keyframes", "subs", "sprites", "audio_info"]
+AnalysisState = Literal["none", "pending", "ready", "sparse", "failed", "skip"]
+Mode = Literal["direct", "remux", "transcode", "audio"]
+Quality = Literal["auto", "source", 1080, 720, 480]
+QUALITIES: tuple = ("auto", "source", 1080, 720, 480)
+SubtitleState = Literal["ready", "pending", "failed", "burn"]
+ProgressKind = Literal["tick", "pause", "seek", "stop", "end"]
+Provider = Literal["tmdb", "musicbrainz"]
+WorkerHealthState = Literal["starting", "ok", "down", "ffmpeg_missing"]
+ImportState = Literal["queued", "running", "done", "failed", "stopped"]
+BusyReason = Literal["cpu", "disk", "user", "link", "worker"]
+
+PROGRESS_BATCH_MAX = 1000
+PLAYLIST_MAX = 5000
+ITEMS_PAGE = 60  # standaard limit van /libraries/{id}/items
+INIT_HEADER = "X-Init"
+
+
+# M2: bibliotheken en items
+
+
+class Library(BaseModel):
+    """GET /api/v1/media/libraries (een regel)."""
+
+    id: uuid.UUID
+    name: str
+    kind: LibraryKind
+    root_id: uuid.UUID  # de map in de boom
+    mine: bool  # van jou; anders zie je hem via een deling van de map
+    item_count: int = 0
+    scan_state: ScanState = "idle"
+    scanned_at: datetime | None = None
+    online: bool = False  # online opzoeken (Keuze 39)
+
+
+class LibraryIn(BaseModel):
+    """POST /api/v1/media/libraries → 201 Library."""
+
+    root_id: uuid.UUID
+    kind: LibraryKind
+    name: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    online: bool | None = None
+
+
+class LibraryPatch(BaseModel):
+    """PATCH /api/v1/media/libraries/{id} → 200 Library."""
+
+    name: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    online: bool | None = None
+    language: Annotated[str, Field(pattern=r"^[a-z]{2,3}(-[A-Z]{2})?$")] | None = None
+
+
+class CardProgress(BaseModel):
+    position_ms: int
+    duration_ms: int
+
+
+class Card(BaseModel):
+    """Een kaart in een lijst (§2 M2): {node_id, title, year, kind, poster, progress, watched},
+    plus de bibliotheek, en bij een serie of aflevering de serie. node_id: het bestand; bij een
+    serie de map van de serie (None als die er niet meer is). progress None: nog niet begonnen
+    of gezien. Ook de rijen van progress.home_rows (M7)."""
+
+    node_id: uuid.UUID | None
+    library_id: uuid.UUID | None = None
+    title: str
+    year: int | None = None
+    kind: CardKind
+    poster: str | None = None  # een ondertekend adres (previews.info of art/)
+    progress: CardProgress | None = None
+    watched: bool = False
+    show_id: uuid.UUID | None = None
+    season: int | None = None
+    episode: int | None = None
+
+
+class MediaHome(BaseModel):
+    """GET /api/v1/media/home. continue is een sleutelwoord in Python: het veld heet
+    continue_ en gaat als "continue" over de API."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    libraries: list[Library] = Field(default_factory=list)
+    continue_: list[Card] = Field(default_factory=list, alias="continue")
+    next_up: list[Card] = Field(default_factory=list)
+    recent: list[Card] = Field(default_factory=list)
+
+
+class CardPage(BaseModel):
+    """GET /api/v1/media/libraries/{id}/items; next: de cursor, of None aan het eind."""
+
+    items: list[Card] = Field(default_factory=list)
+    next: str | None = None
+
+
+class StreamBrief(BaseModel):
+    index: int
+    type: Literal["video", "audio", "subtitle"]
+    codec: str
+    lang: str | None = None
+    title: str | None = None
+
+
+class SubtitleBrief(BaseModel):
+    """Een ondertitel bij een item: ingebed (e<index>) of los (x<i>, Keuze 29). image: alleen
+    ingebrand (PGS, VobSub, DVB)."""
+
+    id: Annotated[str, Field(pattern=r"^[ex][0-9]{1,3}$")]
+    lang: str | None = None
+    label: str
+    forced: bool = False
+    sdh: bool = False
+    kind: Literal["text", "image"]
+
+
+class ItemPart(BaseModel):
+    node_id: uuid.UUID
+    part: int
+
+
+class Item(Card):
+    """GET /api/v1/media/items/{node_id}: Card plus de details (§2 M2)."""
+
+    node_id: uuid.UUID
+    library_id: uuid.UUID
+    overview: str | None = None
+    backdrop: str | None = None
+    duration_ms: int | None = None
+    streams: list[StreamBrief] = Field(default_factory=list)
+    subtitles: list[SubtitleBrief] = Field(default_factory=list)
+    chapters: list[Chapter] = Field(default_factory=list)
+    match_state: MatchState = "local"
+    can_edit: bool = False  # mag verbeteren en koppelen (schrijfrecht, Keuze 43)
+    parts: list[ItemPart] = Field(default_factory=list)
+    analysis: dict[AnalysisStep, AnalysisState] = Field(default_factory=dict)
+    extra: ExtraKind | None = None
+    error: str | None = None  # de reden bij een mislukte probe (Keuze 46)
+
+
+class Show(BaseModel):
+    id: uuid.UUID
+    library_id: uuid.UUID
+    title: str
+    year: int | None = None
+    overview: str | None = None
+    poster: str | None = None
+    backdrop: str | None = None
+    match_state: MatchState = "local"
+    can_edit: bool = False
+
+
+class ShowSeason(BaseModel):
+    season: int | None  # None: absolute nummering (Keuze 8)
+    episodes: list[Card] = Field(default_factory=list)
+
+
+class ShowDetail(BaseModel):
+    """GET /api/v1/media/shows/{show_id}."""
+
+    show: Show
+    seasons: list[ShowSeason] = Field(default_factory=list)
+
+
+# M3: profiel, afspelen en sessies
+
+
+class CodecsOut(BaseModel):
+    """GET /api/v1/media/{node_id}/codecs: de vaste kandidaten plus de strings van dit item."""
+
+    candidates: list[str] = Field(default_factory=list)
+    item: list[str] = Field(default_factory=list)
+
+
+class PlayIn(BaseModel):
+    """POST /api/v1/media/{node_id}/play en /api/v1/public/media/{node_id}/play (de body).
+    replace: de sid van de sessie die in dezelfde beurt dichtgaat (ander spoor of andere
+    kwaliteit)."""
+
+    profile: ClientProfile
+    audio: int | None = Field(default=None, ge=0, le=999)
+    subtitle: Annotated[str, Field(pattern=r"^[ex][0-9]{1,3}$")] | None = None
+    quality: Quality = "auto"
+    start_ms: int = Field(default=0, ge=0)
+    hdr: Literal["raw"] | None = None
+    replace: Annotated[str, Field(max_length=200)] | None = None
+
+    def choice(self) -> Choice:
+        return Choice(
+            audio=self.audio,
+            subtitle=self.subtitle,
+            quality=self.quality,
+            start_ms=self.start_ms,
+            hdr="raw" if self.hdr == "raw" else "tonemap",
+        )
+
+
+class AudioTrack(BaseModel):
+    index: int
+    lang: str | None = None
+    title: str | None = None
+    codec: str
+    channels: int | None = None
+    default: bool = False
+
+
+class SubtitleTrack(BaseModel):
+    """Een ondertitel in de sessie: subs/{id}.vtt geeft 202 met Retry-After: 5 zolang hij
+    pending is; burn: een beeldspoor, alleen ingebrand."""
+
+    id: Annotated[str, Field(pattern=r"^[ex][0-9]{1,3}$")]
+    lang: str | None = None
+    label: str
+    forced: bool = False
+    sdh: bool = False
+    default: bool = False
+    state: SubtitleState = "ready"
+
+
+class TrickInfo(BaseModel):
+    """De sprites voor de zoekbalk (Keuze 30): trick.vtt met relatieve adressen."""
+
+    url: str
+    interval_s: float
+    width: int
+    height: int
+
+
+class Gapless(BaseModel):
+    """Voorloop en lengte in samples (Keuze 18, 38). MP3 als audio/mpeg: delay = enc_delay,
+    zonder +529 (spike punt 13)."""
+
+    rate: int
+    delay: int
+    samples: int
+
+
+class PlayUrls(BaseModel):
+    """Onder /api/v1/stream/{sid}/: file (direct), map en master (MSE en native HLS, remux en
+    transcode), of audio (mode audio)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str | None = None
+    map: str | None = None
+    master: str | None = None
+    audio: str | None = None
+
+
+class PlayTracks(BaseModel):
+    audio: list[AudioTrack] = Field(default_factory=list)
+    subtitles: list[SubtitleTrack] = Field(default_factory=list)
+
+
+class QualityInfo(BaseModel):
+    current: Quality
+    options: list[Quality] = Field(default_factory=list)
+
+
+class PlayOut(BaseModel):
+    """POST …/play → 200. sid: <naam van de node>.<24 willekeurige bytes>, een sleutel in het
+    pad; nooit in een log. offset: de timestampOffset van de speler (−1: tfdt = mediatijd + 1 s,
+    spike punt 17). started_at gaat mee met elke PUT van de voortgang (Keuze 36)."""
+
+    sid: str
+    mode: Mode
+    reasons: list[Reason] = Field(default_factory=list)
+    urls: PlayUrls
+    mime: str
+    duration_ms: int
+    start_ms: int = 0
+    offset: float = 0
+    tracks: PlayTracks = Field(default_factory=PlayTracks)
+    chapters: list[Chapter] = Field(default_factory=list)
+    credits_ms: int | None = None
+    trick: TrickInfo | None = None
+    forced_available: str | None = None
+    quality: QualityInfo
+    gapless: Gapless | None = None
+    started_at: datetime
+    expires_at: datetime
+
+
+class MediaMap(BaseModel):
+    """GET /api/v1/stream/{sid}/map.json (no-store). segments: het rooster bij transcode, of
+    [begin_ms, duur_ms] per segment uit de keyframe-index bij remux (Keuze 22, 23)."""
+
+    gen: int
+    mime: str
+    offset: float
+    init: str  # "init.mp4?g=1", relatief aan /api/v1/stream/{sid}/
+    segments: SegmentGrid | list[tuple[int, int]]
+
+
+# M7: voortgang
+
+
+class ProgressIn(BaseModel):
+    """PUT /api/v1/media/progress/{node_id} → 204 | 429 rate_limited | 404 not_found."""
+
+    position_ms: int = Field(ge=0)
+    duration_ms: int = Field(ge=0)
+    event: ProgressKind
+    origin: Annotated[str, Field(min_length=1, max_length=64)]
+    seq: int = Field(ge=0)
+    started_at: datetime
+    audio: int | None = None
+    subtitle: Annotated[str, Field(pattern=r"^[ex][0-9]{1,3}$")] | None = None
+
+
+class ProgressBatchIn(BaseModel):
+    """POST /api/v1/media/progress/batch: node_ids (≤ 1.000), of een serie met een seizoen."""
+
+    node_ids: Annotated[list[uuid.UUID], Field(max_length=PROGRESS_BATCH_MAX)] | None = None
+    show_id: uuid.UUID | None = None
+    season: int | None = None
+    watched: bool
+
+    @model_validator(mode="after")
+    def _een_van_beide(self) -> ProgressBatchIn:
+        if (self.node_ids is None) == (self.show_id is None):
+            raise ValueError("node_ids of show_id, niet allebei")
+        if self.season is not None and self.show_id is None:
+            raise ValueError("season hoort bij show_id")
+        return self
+
+
+class ProgressBatchOut(BaseModel):
+    updated: int
+
+
+class PlaybackProgressEvent(BaseModel):
+    """playback.progress, alleen naar de gebruiker zelf (Keuze 36)."""
+
+    node_id: uuid.UUID
+    position_ms: int
+    duration_ms: int
+    watched: bool
+    origin: str
+    updated_at: datetime
+
+
+# M8: metadata online
+
+
+class MatchCandidate(BaseModel):
+    """GET /api/v1/media/items/{node_id}/candidates?q=&year= (een regel)."""
+
+    provider: Provider
+    id: str
+    title: str
+    year: int | None = None
+    original_title: str | None = None
+    overview: str | None = None
+    poster: str | None = None
+
+
+class MatchIn(BaseModel):
+    """POST …/items/{node_id}/match en …/shows/{show_id}/match. id bijvoorbeeld "movie:603"."""
+
+    provider: Provider
+    id: Annotated[str, Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9:_-]+$")]
+
+
+class ItemPatch(BaseModel):
+    """PATCH /api/v1/media/items/{node_id} → Item. unlock: velden die weer vrij mogen."""
+
+    title: Annotated[str, Field(min_length=1, max_length=500)] | None = None
+    sort_title: Annotated[str, Field(max_length=500)] | None = None
+    year: int | None = Field(default=None, ge=1800, le=2200)
+    overview: Annotated[str, Field(max_length=10_000)] | None = None
+    season: int | None = Field(default=None, ge=0, le=9999)
+    episode: int | None = Field(default=None, ge=0, le=99_999)
+    unlock: list[str] | None = None
+
+
+# M9: muziek
+
+
+class AlbumCard(BaseModel):
+    id: uuid.UUID
+    library_id: uuid.UUID
+    title: str
+    album_artist: str
+    year: int | None = None
+    compilation: bool = False
+    cover: str | None = None
+    track_count: int = 0
+    duration_ms: int = 0
+
+
+class AlbumPage(BaseModel):
+    """GET /api/v1/media/libraries/{id}/albums?sort=&cursor=."""
+
+    items: list[AlbumCard] = Field(default_factory=list)
+    next: str | None = None
+
+
+class Track(BaseModel):
+    node_id: uuid.UUID
+    title: str
+    artist: str | None = None
+    album_id: uuid.UUID | None = None
+    disc: int | None = None
+    track: int | None = None
+    duration_ms: int | None = None
+
+
+class AlbumInfo(AlbumCard):
+    mbid: str | None = None
+    match_state: MatchState = "local"
+
+
+class AlbumDetail(BaseModel):
+    """GET /api/v1/media/albums/{id}."""
+
+    album: AlbumInfo
+    tracks: list[Track] = Field(default_factory=list)
+
+
+class Artist(BaseModel):
+    """GET /api/v1/media/libraries/{id}/artists (een regel); key genormaliseerd (Keuze 37)."""
+
+    key: str
+    name: str
+    album_count: int = 0
+
+
+class ArtistDetail(BaseModel):
+    """GET /api/v1/media/artists/{key}?library=."""
+
+    name: str
+    albums: list[AlbumCard] = Field(default_factory=list)
+
+
+class Playlist(BaseModel):
+    id: uuid.UUID
+    name: str
+    item_count: int = 0
+    duration_ms: int = 0
+
+
+class PlaylistIn(BaseModel):
+    """POST /api/v1/media/playlists → 201 Playlist, en PATCH …/{id}."""
+
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+
+
+class PlaylistItem(BaseModel):
+    id: uuid.UUID
+    node_id: uuid.UUID
+    track: Track
+
+
+class PlaylistDetail(BaseModel):
+    """GET /api/v1/media/playlists/{id}; een nummer dat je niet meer mag lezen staat er niet in."""
+
+    playlist: Playlist
+    items: list[PlaylistItem] = Field(default_factory=list)
+
+
+class PlaylistItemsIn(BaseModel):
+    """POST /api/v1/media/playlists/{id}/items → {items} | 409 media_playlist_full {max}."""
+
+    node_ids: Annotated[list[uuid.UUID], Field(min_length=1, max_length=PLAYLIST_MAX)]
+    position: int | None = Field(default=None, ge=0)
+
+
+class PlaylistItemsOut(BaseModel):
+    items: list[PlaylistItem] = Field(default_factory=list)
+
+
+class PlaylistOrderIn(BaseModel):
+    """PUT /api/v1/media/playlists/{id}/order → 204."""
+
+    item_ids: Annotated[list[uuid.UUID], Field(max_length=PLAYLIST_MAX)]
+
+
+# M10: beheer
+
+
+class MediaConfigIn(BaseModel):
+    """PUT /api/v1/admin/media/config: MediaConfig zonder bench (alleen lezen), elk veld los."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool | None = None
+    cpu_budget: float | None = Field(default=None, ge=0.5, le=16)
+    max_transcodes: int | None = Field(default=None, ge=0, le=16)
+    max_user_transcodes: int | None = Field(default=None, ge=1, le=16)
+    public_transcode: bool | None = None
+    hdr_1080: bool | None = None
+    cache_gb: int | None = Field(default=None, ge=1, le=10_000)
+    musicbrainz: bool | None = None
+
+
+class UserRef(BaseModel):
+    id: uuid.UUID
+    display_name: str
+
+
+class AdminSessionView(SessionView):
+    """Een sessie op /beheer: SessionView plus wat M10 erbij zet (Keuze 45)."""
+
+    user: UserRef | None = None
+    title: str | None = None
+    speed: float | None = None  # × realtime
+    ahead_s: float | None = None  # voorsprong in mediatijd
+
+
+class Selftest(BaseModel):
+    ok: bool
+    sandbox: Literal["on", "off"]
+    problems: list[str] = Field(default_factory=list)
+
+
+class PlaceUse(BaseModel):
+    used: int = 0
+    max: int = 0
+
+
+class WorkerView(BaseModel):
+    mode: Literal["container", "local"]
+    state: WorkerHealthState
+    since: datetime
+    selftest: Selftest | None = None
+    places: dict[str, PlaceUse] = Field(default_factory=dict)  # per WorkClass
+
+
+class FfmpegView(BaseModel):
+    version: str | None = None
+    encoders: list[str] = Field(default_factory=list)
+    filters: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    hwaccel: list[str] = Field(default_factory=list)
+    gpu: str | None = None
+
+
+class BudgetUse(BaseModel):
+    used: float = 0
+    total: float = 0
+    ds_starting: bool = False  # B − 1,0 zolang de document server start (Keuze 26)
+
+
+class ReasonDay(BaseModel):
+    day: str  # YYYY-MM-DD
+    counts: dict[Reason, int] = Field(default_factory=dict)
+
+
+class JobCounts(BaseModel):
+    queued: int = 0
+    running: int = 0
+    failed: int = 0
+
+
+class AdminLibrary(Library):
+    owner: UserRef
+    errors: int = 0
+    low_confidence: int = 0
+
+
+class CacheParts(BaseModel):
+    sessions: int = 0
+    subs: int = 0
+    trick: int = 0
+    art: int = 0
+    audio: int = 0
+
+
+class CacheView(BaseModel):
+    parts: CacheParts = Field(default_factory=CacheParts)
+    free_bytes: int = 0
+
+
+class ProviderView(BaseModel):
+    name: Literal["tmdb", "musicbrainz", "caa"]
+    key_set: bool = False
+    last_ok: datetime | None = None
+    last_error: str | None = None
+    breaker: Literal["closed", "open", "half_open"] = "closed"
+
+
+class SkippedItem(BaseModel):
+    path: str
+    reason: str
+
+
+class ImportView(BaseModel):
+    """De import van Keuze 2; ook de data van het event media.import (zonder de lijsten)."""
+
+    job: uuid.UUID
+    state: ImportState
+    source: str
+    target_id: uuid.UUID
+    owner_id: uuid.UUID
+    move: bool = False
+    done: int = 0
+    total: int = 0
+    skipped: int = 0
+    bytes: int = 0
+    skipped_items: list[SkippedItem] = Field(default_factory=list)
+
+
+class NoticeView(BaseModel):
+    code: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    text: str
+
+
+class MediaAdmin(BaseModel):
+    """GET /api/v1/admin/media (Keuze 45)."""
+
+    worker: WorkerView
+    ffmpeg: FfmpegView | None = None
+    bench: dict[str, Any] | None = None  # MediaConfig.bench: {f, f_dec, at}
+    budget: BudgetUse = Field(default_factory=BudgetUse)
+    sessions: list[AdminSessionView] = Field(default_factory=list)
+    reasons: list[ReasonDay] = Field(default_factory=list)
+    jobs: JobCounts = Field(default_factory=JobCounts)
+    libraries: list[AdminLibrary] = Field(default_factory=list)
+    cache: CacheView = Field(default_factory=CacheView)
+    providers: list[ProviderView] = Field(default_factory=list)
+    import_: ImportView | None = Field(default=None, alias="import")
+    config: dict[str, Any] = Field(default_factory=dict)  # MediaConfig
+    notices: list[NoticeView] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
+class CacheClearIn(BaseModel):
+    """POST /api/v1/admin/media/cache/clear."""
+
+    what: Literal["sessions", "audio", "trick"]
+
+
+class TmdbKeyIn(BaseModel):
+    """PUT /api/v1/admin/media/tmdb: de sleutel komt nooit terug (Keuze 40)."""
+
+    key: Annotated[str, Field(min_length=1, max_length=1000)]
+
+
+class ImportSource(BaseModel):
+    """GET /api/v1/admin/media/import/sources (een regel); path ten opzichte van /data/import."""
+
+    path: str
+    files: int = 0
+    bytes: int = 0
+    unreadable: int = 0
+    unmovable: int = 0
+
+
+class ImportIn(BaseModel):
+    """POST /api/v1/admin/media/import → 202 {job} | 409 media_import_busy | 422
+    media_import_path."""
+
+    source: Annotated[str, Field(min_length=1, max_length=4096)]
+    target_id: uuid.UUID
+    owner_id: uuid.UUID
+    move: bool = False
+
+
+class LoadtestIn(BaseModel):
+    """POST /api/v1/admin/media/loadtest (§4.6) → 202 | 409 media_bench_busy."""
+
+    streams: int = Field(default=3, ge=1, le=3)
+    seconds: int = Field(default=300, ge=30, le=600)
+    codec: Literal["h264", "vp9"] = "h264"
+    sources: list[uuid.UUID] | None = None
+
+
+class LoadtestView(BaseModel):
+    """GET /api/v1/admin/media/loadtest: de laatste of lopende belastingtest."""
+
+    state: Literal["idle", "making_sources", "running", "done", "failed", "stopped"] = "idle"
+    phase: Literal["a", "b", "c", "d"] | None = None
+    started_at: datetime | None = None
+    report: dict[str, Any] | None = None
+
+
+class Accepted(BaseModel):
+    """Een antwoord met een taak (202)."""
+
+    job: uuid.UUID
+
+
+# Gebeurtenissen (SSE, via events.publish, na de commit; §3.4). affectsFolder in de web-app
+# negeert ze: node.changed komt al van files.notify.
+
+
+class LibraryEvent(BaseModel):
+    """media.library, naar wie de bibliotheek ziet."""
+
+    library_id: uuid.UUID
+    scan_state: ScanState
+    item_count: int
+
+
+class ItemEvent(BaseModel):
+    """media.item, naar wie de bibliotheek ziet."""
+
+    node_id: uuid.UUID
+    library_id: uuid.UUID
+
+
+class ImportEvent(BaseModel):
+    """media.import, naar beheerders."""
+
+    job: uuid.UUID
+    state: ImportState
+    done: int
+    total: int
+    skipped: int
+    bytes: int
+
+
+EVENT_PROGRESS = "playback.progress"
+EVENT_LIBRARY = "media.library"
+EVENT_ITEM = "media.item"
+EVENT_IMPORT = "media.import"
+EVENTS: dict[str, type[BaseModel]] = {
+    EVENT_PROGRESS: PlaybackProgressEvent,
+    EVENT_LIBRARY: LibraryEvent,
+    EVENT_ITEM: ItemEvent,
+    EVENT_IMPORT: ImportEvent,
+}
+
+
+def event_data(type: str, data: BaseModel) -> dict[str, Any]:
+    """De data van een gebeurtenis als JSON, gecontroleerd tegen de vorm van dat type."""
+    model = EVENTS[type]
+    if not isinstance(data, model):
+        raise TypeError(f"{type} verwacht {model.__name__}")
+    return data.model_dump(mode="json")

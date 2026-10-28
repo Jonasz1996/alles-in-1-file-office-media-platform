@@ -32,6 +32,7 @@ from app.office.proxy import OfficeProxy
 from app.office.state import OfficeState
 from app.routers import (
     admin,
+    admin_media,
     admin_office,
     albums,
     archive,
@@ -41,6 +42,12 @@ from app.routers import (
     folder_tree,
     groups,
     jobs_admin,
+    media_library,
+    media_match,
+    media_music,
+    media_play,
+    media_progress,
+    media_subs,
     myshares,
     office,
     office_internal,
@@ -48,8 +55,12 @@ from app.routers import (
     office_pdf,
     photos,
     public,
+    public_media,
     search,
     shares,
+    stream,
+    stream_audio,
+    stream_file,
     trash,
     uploads,
     viewer,
@@ -200,6 +211,39 @@ class Edge:
             await send(message)
 
         await self.app(scope, _bounded(receive), send_with_headers)
+
+
+STREAM_PREFIX = "/api/v1/stream/"
+CORP = (b"cross-origin-resource-policy", b"same-origin")
+NO_STORE = (b"cache-control", b"no-store")
+
+
+class StreamHeaders:
+    """De koppen van Keuze 35 op elk antwoord onder /api/v1/stream/, ook op een fout:
+    Cross-Origin-Resource-Policy: same-origin, nooit Content-Disposition, en no-store als de
+    route zelf geen Cache-Control zet (de routes van M3, M4, M5 en M9 zetten hun eigen)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not scope["path"].startswith(STREAM_PREFIX):
+            return await self.app(scope, receive, send)
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = [
+                    (k, v)
+                    for k, v in message.get("headers", [])
+                    if k.lower() not in (b"content-disposition", CORP[0])
+                ]
+                headers.append(CORP)
+                if not any(k.lower() == NO_STORE[0] for k, _ in headers):
+                    headers.append(NO_STORE)
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 def _header(scope, name: bytes) -> str:
@@ -433,6 +477,7 @@ app = FastAPI(
 # catch-all van de web-app
 app.add_middleware(OfficeProxy)
 app.add_middleware(JsonCompression)
+app.add_middleware(StreamHeaders)
 app.add_middleware(Edge)  # de buitenste: beveiligingsheaders op elk antwoord
 app.add_exception_handler(RequestValidationError, errors.invalid_input)
 app.include_router(auth.router)
@@ -458,6 +503,19 @@ app.include_router(office.router)
 app.include_router(office_pdf.router)
 app.include_router(office_new.router)
 app.include_router(admin_office.router)
+# Media (fase 5, §2.0): stubs van M0 die 503 media_off geven tot hun pakket ze vult. Alles onder
+# /api/v1/stream/ gaat eerst langs sessions.guard (regel 6, de dependency van elke router)
+app.include_router(media_library.router)
+app.include_router(media_play.router)
+app.include_router(public_media.router)
+app.include_router(media_progress.router)
+app.include_router(media_match.router)
+app.include_router(media_music.router)
+app.include_router(admin_media.router)
+app.include_router(stream.router)
+app.include_router(media_subs.router)
+app.include_router(stream_audio.router)
+app.include_router(stream_file.router)
 
 # Wat de document server aanroept, op een eigen luisteraar (Keuze 8, app/serve.py): de
 # publieke poorten kennen /internal/ niet. Deelt app.state (database, blob-opslag,

@@ -313,7 +313,8 @@ async def children(
     )
 
 
-@router.api_route("/download/{node_id}", methods=["GET", "HEAD"])  # F2 (fase 5)
+@router.get("/download/{node_id}")
+@router.head("/download/{node_id}", include_in_schema=False)  # F2 (fase 5)
 async def download(
     node_id: uuid.UUID,
     link: CurrentLink,
