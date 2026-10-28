@@ -55,11 +55,24 @@ Run = Callable[[Settings, dict[str, Any]], Awaitable[None]]
 OnDead = Callable[[Settings, dict[str, Any], str], Awaitable[None]]
 
 
+class Defer(Exception):
+    """Terug in de rij na `seconds`; de poging telt niet. Voor: de mediaworker is druk of weg,
+    een provider remt af, er is geen netwerk (fase 5, Keuze 14)."""
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(f"opnieuw over {seconds:g} s")
+        self.seconds = seconds
+
+
 @dataclass
 class Kind:
     run: Run
     on_dead: OnDead | None = None
     max_attempts: int = MAX_ATTEMPTS
+    # De rij en de tijdgrens van dit soort (fase 5, Keuze 14). Leeg: de rij default en
+    # settings.job_timeout, zoals in fase 3 en 4.
+    lane: str = "default"
+    timeout: float | None = None
 
 
 @dataclass
@@ -103,10 +116,18 @@ def housekeeping(name: str, run: Hook, every: float) -> None:
 
 
 def register(
-    type: str, run: Run, on_dead: OnDead | None = None, max_attempts: int = MAX_ATTEMPTS
+    type: str,
+    run: Run,
+    on_dead: OnDead | None = None,
+    max_attempts: int = MAX_ATTEMPTS,
+    *,
+    lane: str = "default",
+    timeout: float | None = None,
 ) -> None:
-    """Wat er gebeurt bij een taak van dit soort; on_dead als hij definitief mislukt is."""
-    _kinds[type] = Kind(run, on_dead, max_attempts)
+    """Wat er gebeurt bij een taak van dit soort; on_dead als hij definitief mislukt is.
+    lane: de rij met een eigen Runner; timeout: in plaats van settings.job_timeout (Keuze 14
+    van fase 5)."""
+    _kinds[type] = Kind(run, on_dead, max_attempts, lane, timeout)
 
 
 def now() -> datetime:
