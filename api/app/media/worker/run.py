@@ -233,7 +233,9 @@ class Child:
 
     async def stop(self, grace: float = STOP_GRACE) -> Exit:
         """SIGTERM op de procesgroep, na `grace` s SIGKILL; wacht tot waitpid. Ook als de taak
-        zelf gestopt wordt: het kind telt mee tot hier."""
+        zelf (nog eens) gestopt wordt: dan meteen SIGKILL, en toch eerst wachten tot het kind
+        weg is; de CancelledError komt daarna. Zo telt het kind mee tot waitpid."""
+        cancelled = False
         if self.running:
             self.signal_group(signal.SIGTERM)
             try:
@@ -241,16 +243,19 @@ class Child:
                     await asyncio.shield(self._exit)
             except TimeoutError:
                 self.signal_group(signal.SIGKILL)
+            except asyncio.CancelledError:
+                cancelled = True
+                self.signal_group(signal.SIGKILL)
         while True:
             try:
-                return await self.wait()
+                result = await self.wait()
+                break
             except asyncio.CancelledError:
-                # Nogmaals gestopt terwijl we wachten: eerst het kind weg, dan pas verder
+                cancelled = True
                 self.signal_group(signal.SIGKILL)
-                if not self.running:
-                    await self._drain()
-                    raise
-                continue
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
     async def __aenter__(self) -> Child:
         return self

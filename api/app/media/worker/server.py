@@ -251,12 +251,17 @@ class Worker:
                     return  # de app is al weg
                 task = asyncio.create_task(self._execute(ctx, run))
 
-                def gone() -> None:
-                    nonlocal closed
-                    closed = True
-                    task.cancel()
-
                 loop = asyncio.get_running_loop()
+
+                def gone() -> None:
+                    # Eén keer: EOF blijft leesbaar, en elke extra cancel zou het wachten op
+                    # het kind afbreken (run.Child.stop)
+                    nonlocal closed
+                    loop.remove_reader(sock.fileno())
+                    if not closed:
+                        closed = True
+                        task.cancel()
+
                 loop.add_reader(sock.fileno(), gone)
                 try:
                     reply = await task

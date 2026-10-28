@@ -42,3 +42,11 @@ select = ["E", "F", "I", "B", "UP", "ASYNC"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Fase 5: de tests met ffmpeg (media), de metingen (media_perf) en de echte providers
+# (provider_real, alleen met de hand) draaien niet standaard; `-m media` kiest ze (§4.8)
+markers = [
+    "media: met de lokale mediaworker en echte ffmpeg (job api-media)",
+    "media_perf: prestatiemeting van media; alleen een rapport",
+    "provider_real: tegen de echte metadata-providers, met een sleutel; nooit in CI",
+]
+addopts = "--strict-markers -m 'not media and not media_perf and not provider_real'"
