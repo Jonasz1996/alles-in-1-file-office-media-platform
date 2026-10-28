@@ -41,6 +41,21 @@
       "generated": "2026-10-28T01:40:08+00:00",
       "commit": "ea647e4",
       "imported": "office_convert.json"
+    },
+    "office_editors": {
+      "generated": "2026-10-28T03:47:47+00:00",
+      "commit": "1761998",
+      "imported": "office_editors_1x20.json"
+    },
+    "office_outage_stop": {
+      "generated": "2026-10-28T02:39:40+00:00",
+      "commit": "1761998",
+      "imported": "outage-stop.json"
+    },
+    "office_outage_kill": {
+      "generated": "2026-10-28T03:35:15+00:00",
+      "commit": "1761998",
+      "imported": "outage-kill.json"
     }
   },
   "rows": [
@@ -131,23 +146,23 @@
     {
       "what": "20 bewerkers (5 documenten × 4), 60 s typen",
       "goal": "alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd",
-      "result": "–",
-      "met": "niet gemeten",
-      "how": "office_editors.py: niet gemeten"
+      "result": "2 (1 × 2): 145/145 woorden opgeslagen (3 rondes), open 6/6, openen mediaan 4,4 s (3,9–4,5, n=3), DS 0,02 cores (piek 0,07), DS 367 MB, app 0,02 cores en 162 MB, browser 1208 MB, minst vrij 13887 MB; 8 (2 × 4): 532/532 woorden opgeslagen (van de woorden die de editor zelf had: 0 niet opgeslagen; 0 getypte woorden kwamen nooit in de editor) (3 rondes), open 24/24, openen mediaan 15,1 s (14,2–16,3, n=3), DS 0,06 cores (piek 0,22), DS 404 MB, app 0,04 cores en 140 MB, browser 4211 MB, minst vrij 10908 MB; 20 (1 × 20): 1014/1033 woorden opgeslagen (van de woorden die de editor zelf had: 0 niet opgeslagen; 19 getypte woorden kwamen nooit in de editor) (3 rondes), open 60/60, openen mediaan 56,2 s (56,1–56,5, n=3), DS 0,06 cores (piek 0,29), DS 419 MB, app 0,05 cores en 218 MB, browser 8472 MB, minst vrij 6982 MB; 20 (5 × 4): 1033/1043 woorden opgeslagen (van de woorden die de editor zelf had: 0 niet opgeslagen; 10 getypte woorden kwamen nooit in de editor) (3 rondes), open 60/60, openen mediaan 58,2 s (52,8–58,5, n=3), DS 0,05 cores (piek 0,19), DS 422 MB, app 0,04 cores en 273 MB, browser 7840 MB, minst vrij 7569 MB",
+      "met": "ja",
+      "how": "office_editors.py, opgeschaald 2 → 8 → 20 bewerkers, elk 3 rondes (nieuwe documenten van ±150 kB XML), één Chromium met een context per bewerker, elk typt eigen woorden in een eigen alinea (110 ms per toets, 0,8–1,6 s pauze), daarna Sluiten; opgeslagen = het woord staat in de docx na status 2; wat de editor zelf had = zijn eigen tekst (sdkjs) vlak voor Sluiten; cpu: de cgroup van DS en utime + stime van de app, elke seconde; RAM: rss van de cgroup van DS, VmRSS van de app, PSS van de browser; ook 1x20 op één document (voor max_editors)"
     },
     {
       "what": "Stoppen met open editors",
       "goal": "alles opgeslagen; docker stop ≤ 60 s",
-      "result": "–",
-      "met": "niet gemeten",
-      "how": "office_outage.py --mode stop: niet gemeten"
+      "result": "docker stop 30,5 s (30,5–30,5, n=3), 0× gekild (137); opgeslagen meteen na de stop 149/149 woorden, na de herstart 149/149; status 2 kwam 1,3 s (0,9–1,9, n=6) na het begin van de stop; van de tekst die elke editor zelf had: 0 niet opgeslagen, 0 getypte woorden nooit in de editor; bewerken kon weer 123 s (120–123, n=3) na docker start",
+      "met": "ja",
+      "how": "office_outage.py --mode stop, 3 rondes: 2 documenten × 2 bewerkers typen 30 s, 3 s later `docker stop -t 60` op de container van DS (zoals compose met stop_grace_period 60 s); daarna de inhoud in de app, DS weer starten, wachten tot de app DS weer ok vindt, dan 90 s en nog eens"
     },
     {
       "what": "Kill van DS met open editors",
       "goal": "verlies ≤ de tijd sinds het laatste tussentijds opslaan (≤ 5 min)",
-      "result": "–",
-      "met": "niet gemeten",
-      "how": "office_outage.py --mode kill: niet gemeten"
+      "result": "van vóór de forcesave van de klok bewaard: 1463/1463 woorden; van erna 0/719 (weg: 730; na de herstart in totaal 1465/2195); verloren venster 32, 30, 152, 150, 287, 285 s (het eerste verloren woord was 1,1–2,2 s vóór de forcesave getypt: het zat nog niet in die opslag); de klok sloeg 325 s (323–328, n=6) na het openen; 1× kwam DS na docker start niet terug (zie bevindingen); bewerken kon weer 126 s (114–982, n=3) na docker start",
+      "met": "ja",
+      "how": "office_outage.py --mode kill, 3 rondes: 2 documenten × 2 bewerkers typen tot de klok (checkpoint_minutes 5) een forcesave (status 6, timer) gaf, dan nog 30, 150 of 285 s, dan `docker kill`; daarna DS starten, wachten tot de app DS weer ok vindt, dan 150 s; verloren venster = van de forcesave tot de kill; ‘bewaard’ = het woord staat in de docx van de app, vóór = getypt tot 3 s vóór de forcesave"
     }
   ],
   "errors": [
@@ -159,7 +174,13 @@
     "office_xml: docx_pages: 3 OOM-kill(s) (x2t, x2t, x2t)",
     "office_xml: docx_pages: /healthcheck 7 keer niet true",
     "office_xml: docx_pages: 0 van 3 omgezet (failed, failed, failed)",
-    "office_xml: docx_pages: 2 van 3 geopend in de editor"
+    "office_xml: docx_pages: 2 van 3 geopend in de editor",
+    "office_editors: 20 bewerkers: ronde 1: 3 van 345 woorden niet opgeslagen (0 met één teken verschil, 3 had de editor zelf al niet)",
+    "office_editors: 20 bewerkers: ronde 2: 5 van 350 woorden niet opgeslagen (0 met één teken verschil, 5 had de editor zelf al niet)",
+    "office_editors: 20 bewerkers: ronde 3: 2 van 348 woorden niet opgeslagen (0 met één teken verschil, 2 had de editor zelf al niet)",
+    "office_editors: 1x20 bewerkers: ronde 1: 11 van 351 woorden niet opgeslagen (0 met één teken verschil, 11 had de editor zelf al niet)",
+    "office_editors: 1x20 bewerkers: ronde 2: 3 van 338 woorden niet opgeslagen (0 met één teken verschil, 3 had de editor zelf al niet)",
+    "office_editors: 1x20 bewerkers: ronde 3: 5 van 344 woorden niet opgeslagen (1 met één teken verschil, 5 had de editor zelf al niet)"
   ],
   "errors_by_tool": {
     "office_open": [
@@ -180,7 +201,17 @@
       "docx_pages: 0 van 3 omgezet (failed, failed, failed)",
       "docx_pages: 2 van 3 geopend in de editor"
     ],
-    "office_convert": []
+    "office_convert": [],
+    "office_editors": [
+      "20 bewerkers: ronde 1: 3 van 345 woorden niet opgeslagen (0 met één teken verschil, 3 had de editor zelf al niet)",
+      "20 bewerkers: ronde 2: 5 van 350 woorden niet opgeslagen (0 met één teken verschil, 5 had de editor zelf al niet)",
+      "20 bewerkers: ronde 3: 2 van 348 woorden niet opgeslagen (0 met één teken verschil, 2 had de editor zelf al niet)",
+      "1x20 bewerkers: ronde 1: 11 van 351 woorden niet opgeslagen (0 met één teken verschil, 11 had de editor zelf al niet)",
+      "1x20 bewerkers: ronde 2: 3 van 338 woorden niet opgeslagen (0 met één teken verschil, 3 had de editor zelf al niet)",
+      "1x20 bewerkers: ronde 3: 5 van 344 woorden niet opgeslagen (1 met één teken verschil, 5 had de editor zelf al niet)"
+    ],
+    "office_outage_stop": [],
+    "office_outage_kill": []
   },
   "ok": false,
   "results": {
@@ -10458,6 +10489,4640 @@
           ],
           "ready": 3
         }
+      },
+      "ok": true
+    },
+    "office_editors": {
+      "tool": "office_editors",
+      "scales": {
+        "2": {
+          "tool": "office_editors",
+          "docs": 1,
+          "per_doc": 2,
+          "editors": 2,
+          "seconds": 60.0,
+          "rounds": 3,
+          "budget_xml_bytes": 150000,
+          "gate": {
+            "all_saved": true
+          },
+          "round_results": [
+            {
+              "round": 1,
+              "docs": 1,
+              "per_doc": 2,
+              "editors": 2,
+              "opened": 2,
+              "opened_s": {
+                "n": 2,
+                "median": 3.92,
+                "min": 3.82,
+                "max": 4.03,
+                "spread": 0.21,
+                "values": [
+                  3.82,
+                  4.03
+                ]
+              },
+              "open_errors": [],
+              "typing_errors": [],
+              "page_errors": 0,
+              "typed_s": 64.4,
+              "save_s": 6.1,
+              "low_memory": false,
+              "per_doc_results": [
+                {
+                  "doc": 1,
+                  "editors": 2,
+                  "opened": 2,
+                  "words": {
+                    "typed": 48,
+                    "saved": 48,
+                    "glued": 1,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.089
+                  ],
+                  "close_to_callback_s": [
+                    6.04
+                  ]
+                }
+              ],
+              "typed": 48,
+              "saved": 48,
+              "missing_near": 0,
+              "phases": {
+                "open": {
+                  "ds": {
+                    "samples": 5,
+                    "seconds": 4.0,
+                    "cpu_s": 0.2,
+                    "cores_avg": 0.05,
+                    "cores_max_1s": 0.12,
+                    "usage_mb_max": 495,
+                    "rss_mb_start": 299,
+                    "rss_mb_max": 300,
+                    "rss_mb_end": 300,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 190,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 5,
+                    "seconds": 4.0,
+                    "app_cpu_s": 1.65,
+                    "app_cores_avg": 0.41,
+                    "app_cores_max_1s": 0.78,
+                    "app_rss_mb_start": 161.7,
+                    "app_rss_mb_max": 161.7,
+                    "app_rss_mb_end": 119.6,
+                    "browser_cores_avg": 2.6,
+                    "browser_pss_mb_max": 881,
+                    "browser_procs_max": 9,
+                    "machine_cores_avg": 3.34,
+                    "machine_cores_max_1s": 3.52,
+                    "mem_available_mb_min": 14202
+                  }
+                },
+                "typing": {
+                  "ds": {
+                    "samples": 64,
+                    "seconds": 63.0,
+                    "cpu_s": 1.47,
+                    "cores_avg": 0.02,
+                    "cores_max_1s": 0.07,
+                    "usage_mb_max": 498,
+                    "rss_mb_start": 300,
+                    "rss_mb_max": 303,
+                    "rss_mb_end": 303,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 193,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 64,
+                    "seconds": 63.0,
+                    "app_cpu_s": 0.95,
+                    "app_cores_avg": 0.02,
+                    "app_cores_max_1s": 0.06,
+                    "app_rss_mb_start": 119.7,
+                    "app_rss_mb_max": 119.8,
+                    "app_rss_mb_end": 119.8,
+                    "browser_cores_avg": 0.68,
+                    "browser_pss_mb_max": 1188,
+                    "browser_procs_max": 9,
+                    "machine_cores_avg": 0.87,
+                    "machine_cores_max_1s": 1.61,
+                    "mem_available_mb_min": 13905
+                  }
+                },
+                "save": {
+                  "ds": {
+                    "samples": 6,
+                    "seconds": 5.0,
+                    "cpu_s": 0.54,
+                    "cores_avg": 0.11,
+                    "cores_max_1s": 0.53,
+                    "usage_mb_max": 564,
+                    "rss_mb_start": 302,
+                    "rss_mb_max": 367,
+                    "rss_mb_end": 367,
+                    "x2t_runs": 1,
+                    "x2t_mb_max": 96,
+                    "docservice_mb_max": 195,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 6,
+                    "seconds": 5.0,
+                    "app_cpu_s": 0.09,
+                    "app_cores_avg": 0.02,
+                    "app_cores_max_1s": 0.07,
+                    "app_rss_mb_start": 120.2,
+                    "app_rss_mb_max": 120.5,
+                    "app_rss_mb_end": 120.5,
+                    "browser_cores_avg": 0.04,
+                    "browser_pss_mb_max": 1133,
+                    "browser_procs_max": 9,
+                    "machine_cores_avg": 0.24,
+                    "machine_cores_max_1s": 0.62,
+                    "mem_available_mb_min": 13887
+                  }
+                }
+              },
+              "ds": {
+                "samples": 79,
+                "seconds": 78.0,
+                "cpu_s": 2.29,
+                "cores_avg": 0.03,
+                "cores_max_1s": 0.53,
+                "usage_mb_max": 564,
+                "rss_mb_start": 299,
+                "rss_mb_max": 367,
+                "rss_mb_end": 367,
+                "x2t_runs": 1,
+                "x2t_mb_max": 96,
+                "docservice_mb_max": 195,
+                "converter_mb_max": 103,
+                "kernel_peak_mb": 608,
+                "limit_cgroup": true,
+                "oom_kills": 0,
+                "oom_victims": [],
+                "docservice_restarted": false,
+                "converter_restarted": false,
+                "health": {
+                  "n": 40,
+                  "not_true": 0,
+                  "ms_median": 4.9,
+                  "ms_max": 7.5,
+                  "first_bad_s": null
+                }
+              },
+              "browser": "141.0.7390.37"
+            },
+            {
+              "round": 2,
+              "docs": 1,
+              "per_doc": 2,
+              "editors": 2,
+              "opened": 2,
+              "opened_s": {
+                "n": 2,
+                "median": 4.54,
+                "min": 4.36,
+                "max": 4.72,
+                "spread": 0.36,
+                "values": [
+                  4.36,
+                  4.72
+                ]
+              },
+              "open_errors": [],
+              "typing_errors": [],
+              "page_errors": 0,
+              "typed_s": 65.7,
+              "save_s": 6.2,
+              "low_memory": false,
+              "per_doc_results": [
+                {
+                  "doc": 1,
+                  "editors": 2,
+                  "opened": 2,
+                  "words": {
+                    "typed": 49,
+                    "saved": 49,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.066
+                  ],
+                  "close_to_callback_s": [
+                    5.97
+                  ]
+                }
+              ],
+              "typed": 49,
+              "saved": 49,
+              "missing_near": 0,
+              "phases": {
+                "open": {
+                  "ds": {
+                    "samples": 5,
+                    "seconds": 4.0,
+                    "cpu_s": 0.2,
+                    "cores_avg": 0.05,
+                    "cores_max_1s": 0.1,
+                    "usage_mb_max": 501,
+                    "rss_mb_start": 305,
+                    "rss_mb_max": 305,
+                    "rss_mb_end": 304,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 195,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 5,
+                    "seconds": 4.0,
+                    "app_cpu_s": 2.0,
+                    "app_cores_avg": 0.5,
+                    "app_cores_max_1s": 0.71,
+                    "app_rss_mb_start": 121.5,
+                    "app_rss_mb_max": 122.1,
+                    "app_rss_mb_end": 122.1,
+                    "browser_cores_avg": 2.38,
+                    "browser_pss_mb_max": 808,
+                    "browser_procs_max": 10,
+                    "machine_cores_avg": 3.2,
+                    "machine_cores_max_1s": 3.59,
+                    "mem_available_mb_min": 14273
+                  }
+                },
+                "typing": {
+                  "ds": {
+                    "samples": 66,
+                    "seconds": 65.0,
+                    "cpu_s": 1.57,
+                    "cores_avg": 0.02,
+                    "cores_max_1s": 0.06,
+                    "usage_mb_max": 501,
+                    "rss_mb_start": 304,
+                    "rss_mb_max": 305,
+                    "rss_mb_end": 304,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 195,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 66,
+                    "seconds": 65.0,
+                    "app_cpu_s": 0.99,
+                    "app_cores_avg": 0.02,
+                    "app_cores_max_1s": 0.06,
+                    "app_rss_mb_start": 122.1,
+                    "app_rss_mb_max": 122.1,
+                    "app_rss_mb_end": 122.1,
+                    "browser_cores_avg": 0.81,
+                    "browser_pss_mb_max": 1163,
+                    "browser_procs_max": 9,
+                    "machine_cores_avg": 1.01,
+                    "machine_cores_max_1s": 2.88,
+                    "mem_available_mb_min": 13916
+                  }
+                },
+                "save": {
+                  "ds": {
+                    "samples": 6,
+                    "seconds": 5.0,
+                    "cpu_s": 0.27,
+                    "cores_avg": 0.05,
+                    "cores_max_1s": 0.26,
+                    "usage_mb_max": 558,
+                    "rss_mb_start": 304,
+                    "rss_mb_max": 360,
+                    "rss_mb_end": 360,
+                    "x2t_runs": 1,
+                    "x2t_mb_max": 89,
+                    "docservice_mb_max": 195,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 6,
+                    "seconds": 5.0,
+                    "app_cpu_s": 0.13,
+                    "app_cores_avg": 0.03,
+                    "app_cores_max_1s": 0.11,
+                    "app_rss_mb_start": 122.2,
+                    "app_rss_mb_max": 122.2,
+                    "app_rss_mb_end": 122.2,
+                    "browser_cores_avg": 0.14,
+                    "browser_pss_mb_max": 1085,
+                    "browser_procs_max": 9,
+                    "machine_cores_avg": 0.28,
+                    "machine_cores_max_1s": 0.77,
+                    "mem_available_mb_min": 13984
+                  }
+                }
+              },
+              "ds": {
+                "samples": 82,
+                "seconds": 81.0,
+                "cpu_s": 3.14,
+                "cores_avg": 0.04,
+                "cores_max_1s": 1.07,
+                "usage_mb_max": 558,
+                "rss_mb_start": 305,
+                "rss_mb_max": 360,
+                "rss_mb_end": 335,
+                "x2t_runs": 2,
+                "x2t_mb_max": 89,
+                "docservice_mb_max": 195,
+                "converter_mb_max": 103,
+                "kernel_peak_mb": 609,
+                "limit_cgroup": true,
+                "oom_kills": 0,
+                "oom_victims": [],
+                "docservice_restarted": false,
+                "converter_restarted": false,
+                "health": {
+                  "n": 41,
+                  "not_true": 0,
+                  "ms_median": 4.6,
+                  "ms_max": 12.7,
+                  "first_bad_s": null
+                }
+              },
+              "browser": "141.0.7390.37"
+            },
+            {
+              "round": 3,
+              "docs": 1,
+              "per_doc": 2,
+              "editors": 2,
+              "opened": 2,
+              "opened_s": {
+                "n": 2,
+                "median": 4.37,
+                "min": 4.18,
+                "max": 4.56,
+                "spread": 0.38,
+                "values": [
+                  4.18,
+                  4.56
+                ]
+              },
+              "open_errors": [],
+              "typing_errors": [],
+              "page_errors": 0,
+              "typed_s": 65.0,
+              "save_s": 6.2,
+              "low_memory": false,
+              "per_doc_results": [
+                {
+                  "doc": 1,
+                  "editors": 2,
+                  "opened": 2,
+                  "words": {
+                    "typed": 48,
+                    "saved": 48,
+                    "glued": 1,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.073
+                  ],
+                  "close_to_callback_s": [
+                    6.01
+                  ]
+                }
+              ],
+              "typed": 48,
+              "saved": 48,
+              "missing_near": 0,
+              "phases": {
+                "open": {
+                  "ds": {
+                    "samples": 5,
+                    "seconds": 4.0,
+                    "cpu_s": 0.21,
+                    "cores_avg": 0.05,
+                    "cores_max_1s": 0.1,
+                    "usage_mb_max": 501,
+                    "rss_mb_start": 304,
+                    "rss_mb_max": 304,
+                    "rss_mb_end": 304,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 195,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 5,
+                    "seconds": 4.0,
+                    "app_cpu_s": 1.98,
+                    "app_cores_avg": 0.49,
+                    "app_cores_max_1s": 0.73,
+                    "app_rss_mb_start": 123.4,
+                    "app_rss_mb_max": 124.0,
+                    "app_rss_mb_end": 124.0,
+                    "browser_cores_avg": 2.42,
+                    "browser_pss_mb_max": 816,
+                    "browser_procs_max": 9,
+                    "machine_cores_avg": 3.27,
+                    "machine_cores_max_1s": 3.55,
+                    "mem_available_mb_min": 14242
+                  }
+                },
+                "typing": {
+                  "ds": {
+                    "samples": 65,
+                    "seconds": 64.0,
+                    "cpu_s": 1.48,
+                    "cores_avg": 0.02,
+                    "cores_max_1s": 0.07,
+                    "usage_mb_max": 502,
+                    "rss_mb_start": 304,
+                    "rss_mb_max": 305,
+                    "rss_mb_end": 304,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 195,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 65,
+                    "seconds": 64.0,
+                    "app_cpu_s": 1.03,
+                    "app_cores_avg": 0.02,
+                    "app_cores_max_1s": 0.08,
+                    "app_rss_mb_start": 124.0,
+                    "app_rss_mb_max": 124.1,
+                    "app_rss_mb_end": 124.1,
+                    "browser_cores_avg": 0.79,
+                    "browser_pss_mb_max": 1208,
+                    "browser_procs_max": 9,
+                    "machine_cores_avg": 1.0,
+                    "machine_cores_max_1s": 2.88,
+                    "mem_available_mb_min": 13892
+                  }
+                },
+                "save": {
+                  "ds": {
+                    "samples": 6,
+                    "seconds": 5.0,
+                    "cpu_s": 0.28,
+                    "cores_avg": 0.06,
+                    "cores_max_1s": 0.27,
+                    "usage_mb_max": 504,
+                    "rss_mb_start": 304,
+                    "rss_mb_max": 305,
+                    "rss_mb_end": 305,
+                    "x2t_runs": 1,
+                    "x2t_mb_max": 5,
+                    "docservice_mb_max": 195,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 6,
+                    "seconds": 5.0,
+                    "app_cpu_s": 0.13,
+                    "app_cores_avg": 0.03,
+                    "app_cores_max_1s": 0.12,
+                    "app_rss_mb_start": 124.2,
+                    "app_rss_mb_max": 124.3,
+                    "app_rss_mb_end": 124.3,
+                    "browser_cores_avg": 0.08,
+                    "browser_pss_mb_max": 1139,
+                    "browser_procs_max": 9,
+                    "machine_cores_avg": 0.25,
+                    "machine_cores_max_1s": 0.7,
+                    "mem_available_mb_min": 13948
+                  }
+                }
+              },
+              "ds": {
+                "samples": 81,
+                "seconds": 80.1,
+                "cpu_s": 3.12,
+                "cores_avg": 0.04,
+                "cores_max_1s": 1.11,
+                "usage_mb_max": 504,
+                "rss_mb_start": 304,
+                "rss_mb_max": 305,
+                "rss_mb_end": 305,
+                "x2t_runs": 1,
+                "x2t_mb_max": 5,
+                "docservice_mb_max": 195,
+                "converter_mb_max": 103,
+                "kernel_peak_mb": 610,
+                "limit_cgroup": true,
+                "oom_kills": 0,
+                "oom_victims": [],
+                "docservice_restarted": false,
+                "converter_restarted": false,
+                "health": {
+                  "n": 41,
+                  "not_true": 0,
+                  "ms_median": 4.8,
+                  "ms_max": 13.9,
+                  "first_bad_s": null
+                }
+              },
+              "browser": "141.0.7390.37"
+            }
+          ],
+          "machine": {
+            "cpus": 4,
+            "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+            "mem_total_bytes": 16872808448,
+            "mem_available_bytes": 15666937856,
+            "kernel": "6.18.44-fc-v180",
+            "python": "3.12.13",
+            "load_avg": [
+              1.58,
+              1.16,
+              0.98
+            ],
+            "ds": {
+              "url": "http://127.0.0.1:18150",
+              "name": "meet-ds",
+              "image": "mirror.gcr.io/onlyoffice/documentserver@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+              "image_id": "sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+              "memory_bytes": 2147483648,
+              "memory_swap_bytes": 2147483648,
+              "cpus": 2.0,
+              "pids_limit": 512,
+              "limits_applied": true
+            }
+          },
+          "summary": {
+            "rounds": 3,
+            "opened": [
+              2,
+              2,
+              2
+            ],
+            "editors": 2,
+            "typed": [
+              48,
+              49,
+              48
+            ],
+            "saved": [
+              48,
+              49,
+              48
+            ],
+            "all_saved": true,
+            "missing": 0,
+            "missing_near": 0,
+            "opened_s_median": {
+              "n": 3,
+              "median": 4.37,
+              "min": 3.92,
+              "max": 4.54,
+              "spread": 0.62,
+              "values": [
+                3.92,
+                4.54,
+                4.37
+              ]
+            },
+            "opened_s_max": 4.72,
+            "save_s": {
+              "n": 3,
+              "median": 6.2,
+              "min": 6.1,
+              "max": 6.2,
+              "spread": 0.1,
+              "values": [
+                6.1,
+                6.2,
+                6.2
+              ]
+            },
+            "ds_cores_typing": {
+              "n": 3,
+              "median": 0.02,
+              "min": 0.02,
+              "max": 0.02,
+              "spread": 0.0,
+              "values": [
+                0.02,
+                0.02,
+                0.02
+              ]
+            },
+            "ds_cores_typing_max": {
+              "n": 3,
+              "median": 0.07,
+              "min": 0.06,
+              "max": 0.07,
+              "spread": 0.01,
+              "values": [
+                0.07,
+                0.06,
+                0.07
+              ]
+            },
+            "ds_cores_open": {
+              "n": 3,
+              "median": 0.05,
+              "min": 0.05,
+              "max": 0.05,
+              "spread": 0.0,
+              "values": [
+                0.05,
+                0.05,
+                0.05
+              ]
+            },
+            "ds_cores_open_max": {
+              "n": 3,
+              "median": 0.1,
+              "min": 0.1,
+              "max": 0.12,
+              "spread": 0.02,
+              "values": [
+                0.12,
+                0.1,
+                0.1
+              ]
+            },
+            "ds_rss_mb_max": 367,
+            "ds_rss_mb_start": {
+              "n": 3,
+              "median": 304,
+              "min": 299,
+              "max": 305,
+              "spread": 6,
+              "values": [
+                299,
+                305,
+                304
+              ]
+            },
+            "app_cores_typing": {
+              "n": 3,
+              "median": 0.02,
+              "min": 0.02,
+              "max": 0.02,
+              "spread": 0.0,
+              "values": [
+                0.02,
+                0.02,
+                0.02
+              ]
+            },
+            "app_cores_open": {
+              "n": 3,
+              "median": 0.49,
+              "min": 0.41,
+              "max": 0.5,
+              "spread": 0.09,
+              "values": [
+                0.41,
+                0.5,
+                0.49
+              ]
+            },
+            "app_cores_open_max": {
+              "n": 3,
+              "median": 0.73,
+              "min": 0.71,
+              "max": 0.78,
+              "spread": 0.07,
+              "values": [
+                0.78,
+                0.71,
+                0.73
+              ]
+            },
+            "app_rss_mb_max": 161.7,
+            "browser_pss_mb_max": 1208,
+            "machine_cores_typing": {
+              "n": 3,
+              "median": 1.0,
+              "min": 0.87,
+              "max": 1.01,
+              "spread": 0.14,
+              "values": [
+                0.87,
+                1.01,
+                1.0
+              ]
+            },
+            "mem_available_mb_min": 13887,
+            "health_not_true": 0,
+            "low_memory": false,
+            "oom_kills": 0
+          },
+          "ok": true
+        },
+        "8": {
+          "tool": "office_editors",
+          "docs": 2,
+          "per_doc": 4,
+          "editors": 8,
+          "seconds": 60.0,
+          "rounds": 3,
+          "budget_xml_bytes": 150000,
+          "gate": {
+            "all_saved": true
+          },
+          "round_results": [
+            {
+              "round": 1,
+              "docs": 2,
+              "per_doc": 4,
+              "editors": 8,
+              "opened": 8,
+              "opened_s": {
+                "n": 8,
+                "median": 14.15,
+                "min": 6.85,
+                "max": 15.59,
+                "spread": 8.74,
+                "values": [
+                  6.85,
+                  9.86,
+                  13.11,
+                  13.86,
+                  14.44,
+                  15.59,
+                  15.12,
+                  14.54
+                ]
+              },
+              "open_errors": [],
+              "typing_errors": [],
+              "page_errors": 0,
+              "typed_s": 67.8,
+              "save_s": 7.5,
+              "low_memory": false,
+              "per_doc_results": [
+                {
+                  "doc": 1,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 87,
+                    "shown": 87,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 87,
+                    "saved": 87,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.086
+                  ],
+                  "close_to_callback_s": [
+                    6.26
+                  ]
+                },
+                {
+                  "doc": 2,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 89,
+                    "shown": 89,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 89,
+                    "saved": 89,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.097
+                  ],
+                  "close_to_callback_s": [
+                    7.31
+                  ]
+                }
+              ],
+              "typed": 176,
+              "saved": 176,
+              "missing_near": 0,
+              "shown_known": 176,
+              "not_shown": 0,
+              "lost_saving": 0,
+              "phases": {
+                "open": {
+                  "ds": {
+                    "samples": 19,
+                    "seconds": 18.1,
+                    "cpu_s": 0.7,
+                    "cores_avg": 0.04,
+                    "cores_max_1s": 0.09,
+                    "usage_mb_max": 509,
+                    "rss_mb_start": 302,
+                    "rss_mb_max": 305,
+                    "rss_mb_end": 304,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 195,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 19,
+                    "seconds": 18.0,
+                    "app_cpu_s": 10.07,
+                    "app_cores_avg": 0.56,
+                    "app_cores_max_1s": 1.11,
+                    "app_rss_mb_start": 118.7,
+                    "app_rss_mb_max": 125.4,
+                    "app_rss_mb_end": 125.4,
+                    "browser_cores_avg": 2.91,
+                    "browser_pss_mb_max": 2879,
+                    "browser_procs_max": 15,
+                    "machine_cores_avg": 3.79,
+                    "machine_cores_max_1s": 3.99,
+                    "mem_available_mb_min": 12254
+                  }
+                },
+                "typing": {
+                  "ds": {
+                    "samples": 68,
+                    "seconds": 67.0,
+                    "cpu_s": 4.34,
+                    "cores_avg": 0.06,
+                    "cores_max_1s": 0.21,
+                    "usage_mb_max": 523,
+                    "rss_mb_start": 304,
+                    "rss_mb_max": 317,
+                    "rss_mb_end": 317,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 208,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 68,
+                    "seconds": 67.0,
+                    "app_cpu_s": 2.58,
+                    "app_cores_avg": 0.04,
+                    "app_cores_max_1s": 0.16,
+                    "app_rss_mb_start": 125.4,
+                    "app_rss_mb_max": 125.7,
+                    "app_rss_mb_end": 125.7,
+                    "browser_cores_avg": 3.34,
+                    "browser_pss_mb_max": 4105,
+                    "browser_procs_max": 15,
+                    "machine_cores_avg": 3.71,
+                    "machine_cores_max_1s": 3.99,
+                    "mem_available_mb_min": 11082
+                  }
+                },
+                "save": {
+                  "ds": {
+                    "samples": 8,
+                    "seconds": 7.0,
+                    "cpu_s": 2.81,
+                    "cores_avg": 0.4,
+                    "cores_max_1s": 1.4,
+                    "usage_mb_max": 524,
+                    "rss_mb_start": 317,
+                    "rss_mb_max": 317,
+                    "rss_mb_end": 308,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 208,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 8,
+                    "seconds": 7.0,
+                    "app_cpu_s": 1.35,
+                    "app_cores_avg": 0.19,
+                    "app_cores_max_1s": 0.71,
+                    "app_rss_mb_start": 126.7,
+                    "app_rss_mb_max": 133.7,
+                    "app_rss_mb_end": 133.7,
+                    "browser_cores_avg": 0.54,
+                    "browser_pss_mb_max": 3720,
+                    "browser_procs_max": 15,
+                    "machine_cores_avg": 1.41,
+                    "machine_cores_max_1s": 3.47,
+                    "mem_available_mb_min": 11422
+                  }
+                }
+              },
+              "ds": {
+                "samples": 99,
+                "seconds": 98.1,
+                "cpu_s": 7.93,
+                "cores_avg": 0.08,
+                "cores_max_1s": 1.4,
+                "usage_mb_max": 524,
+                "rss_mb_start": 302,
+                "rss_mb_max": 317,
+                "rss_mb_end": 308,
+                "x2t_runs": 0,
+                "x2t_mb_max": 0,
+                "docservice_mb_max": 208,
+                "converter_mb_max": 103,
+                "kernel_peak_mb": 627,
+                "limit_cgroup": true,
+                "oom_kills": 0,
+                "oom_victims": [],
+                "docservice_restarted": false,
+                "converter_restarted": false,
+                "health": {
+                  "n": 50,
+                  "not_true": 0,
+                  "ms_median": 4.2,
+                  "ms_max": 9.4,
+                  "first_bad_s": null
+                }
+              },
+              "browser": "141.0.7390.37"
+            },
+            {
+              "round": 2,
+              "docs": 2,
+              "per_doc": 4,
+              "editors": 8,
+              "opened": 8,
+              "opened_s": {
+                "n": 8,
+                "median": 15.11,
+                "min": 7.22,
+                "max": 16.11,
+                "spread": 8.89,
+                "values": [
+                  7.22,
+                  10.37,
+                  14.81,
+                  14.13,
+                  15.83,
+                  16.11,
+                  15.4,
+                  16.1
+                ]
+              },
+              "open_errors": [],
+              "typing_errors": [],
+              "page_errors": 0,
+              "typed_s": 66.7,
+              "save_s": 7.8,
+              "low_memory": false,
+              "per_doc_results": [
+                {
+                  "doc": 1,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 89,
+                    "shown": 89,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 89,
+                    "saved": 89,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.086
+                  ],
+                  "close_to_callback_s": [
+                    7.66
+                  ]
+                },
+                {
+                  "doc": 2,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 90,
+                    "shown": 90,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 90,
+                    "saved": 90,
+                    "glued": 1,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.09
+                  ],
+                  "close_to_callback_s": [
+                    6.55
+                  ]
+                }
+              ],
+              "typed": 179,
+              "saved": 179,
+              "missing_near": 0,
+              "shown_known": 179,
+              "not_shown": 0,
+              "lost_saving": 0,
+              "phases": {
+                "open": {
+                  "ds": {
+                    "samples": 20,
+                    "seconds": 19.1,
+                    "cpu_s": 0.69,
+                    "cores_avg": 0.04,
+                    "cores_max_1s": 0.1,
+                    "usage_mb_max": 515,
+                    "rss_mb_start": 307,
+                    "rss_mb_max": 308,
+                    "rss_mb_end": 307,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 198,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 20,
+                    "seconds": 19.0,
+                    "app_cpu_s": 10.14,
+                    "app_cores_avg": 0.53,
+                    "app_cores_max_1s": 1.1,
+                    "app_rss_mb_start": 134.8,
+                    "app_rss_mb_max": 135.2,
+                    "app_rss_mb_end": 135.2,
+                    "browser_cores_avg": 2.96,
+                    "browser_pss_mb_max": 2973,
+                    "browser_procs_max": 15,
+                    "machine_cores_avg": 3.79,
+                    "machine_cores_max_1s": 3.98,
+                    "mem_available_mb_min": 12143
+                  }
+                },
+                "typing": {
+                  "ds": {
+                    "samples": 67,
+                    "seconds": 66.0,
+                    "cpu_s": 4.21,
+                    "cores_avg": 0.06,
+                    "cores_max_1s": 0.2,
+                    "usage_mb_max": 528,
+                    "rss_mb_start": 307,
+                    "rss_mb_max": 321,
+                    "rss_mb_end": 318,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 211,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 67,
+                    "seconds": 66.0,
+                    "app_cpu_s": 2.57,
+                    "app_cores_avg": 0.04,
+                    "app_cores_max_1s": 0.17,
+                    "app_rss_mb_start": 135.2,
+                    "app_rss_mb_max": 135.2,
+                    "app_rss_mb_end": 135.2,
+                    "browser_cores_avg": 3.21,
+                    "browser_pss_mb_max": 4036,
+                    "browser_procs_max": 15,
+                    "machine_cores_avg": 3.6,
+                    "machine_cores_max_1s": 3.99,
+                    "mem_available_mb_min": 11133
+                  }
+                },
+                "save": {
+                  "ds": {
+                    "samples": 8,
+                    "seconds": 7.0,
+                    "cpu_s": 2.19,
+                    "cores_avg": 0.31,
+                    "cores_max_1s": 1.3,
+                    "usage_mb_max": 617,
+                    "rss_mb_start": 318,
+                    "rss_mb_max": 404,
+                    "rss_mb_end": 392,
+                    "x2t_runs": 2,
+                    "x2t_mb_max": 138,
+                    "docservice_mb_max": 209,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 8,
+                    "seconds": 7.0,
+                    "app_cpu_s": 1.15,
+                    "app_cores_avg": 0.16,
+                    "app_cores_max_1s": 0.65,
+                    "app_rss_mb_start": 135.2,
+                    "app_rss_mb_max": 137.0,
+                    "app_rss_mb_end": 137.0,
+                    "browser_cores_avg": 0.45,
+                    "browser_pss_mb_max": 3512,
+                    "browser_procs_max": 15,
+                    "machine_cores_avg": 1.14,
+                    "machine_cores_max_1s": 3.65,
+                    "mem_available_mb_min": 11596
+                  }
+                }
+              },
+              "ds": {
+                "samples": 100,
+                "seconds": 99.1,
+                "cpu_s": 8.34,
+                "cores_avg": 0.08,
+                "cores_max_1s": 1.3,
+                "usage_mb_max": 617,
+                "rss_mb_start": 307,
+                "rss_mb_max": 404,
+                "rss_mb_end": 392,
+                "x2t_runs": 3,
+                "x2t_mb_max": 138,
+                "docservice_mb_max": 211,
+                "converter_mb_max": 103,
+                "kernel_peak_mb": 630,
+                "limit_cgroup": true,
+                "oom_kills": 0,
+                "oom_victims": [],
+                "docservice_restarted": false,
+                "converter_restarted": false,
+                "health": {
+                  "n": 50,
+                  "not_true": 0,
+                  "ms_median": 5.0,
+                  "ms_max": 29.7,
+                  "first_bad_s": null
+                }
+              },
+              "browser": "141.0.7390.37"
+            },
+            {
+              "round": 3,
+              "docs": 2,
+              "per_doc": 4,
+              "editors": 8,
+              "opened": 8,
+              "opened_s": {
+                "n": 8,
+                "median": 16.31,
+                "min": 9.01,
+                "max": 17.41,
+                "spread": 8.4,
+                "values": [
+                  9.01,
+                  12.62,
+                  15.87,
+                  16.26,
+                  17.41,
+                  17.05,
+                  16.41,
+                  16.36
+                ]
+              },
+              "open_errors": [],
+              "typing_errors": [],
+              "page_errors": 0,
+              "typed_s": 67.2,
+              "save_s": 7.6,
+              "low_memory": false,
+              "per_doc_results": [
+                {
+                  "doc": 1,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 89,
+                    "shown": 89,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 89,
+                    "saved": 89,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.083
+                  ],
+                  "close_to_callback_s": [
+                    7.28
+                  ]
+                },
+                {
+                  "doc": 2,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 88,
+                    "shown": 88,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 88,
+                    "saved": 88,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.128
+                  ],
+                  "close_to_callback_s": [
+                    6.16
+                  ]
+                }
+              ],
+              "typed": 177,
+              "saved": 177,
+              "missing_near": 0,
+              "shown_known": 177,
+              "not_shown": 0,
+              "lost_saving": 0,
+              "phases": {
+                "open": {
+                  "ds": {
+                    "samples": 21,
+                    "seconds": 20.1,
+                    "cpu_s": 0.82,
+                    "cores_avg": 0.04,
+                    "cores_max_1s": 0.11,
+                    "usage_mb_max": 519,
+                    "rss_mb_start": 310,
+                    "rss_mb_max": 310,
+                    "rss_mb_end": 306,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 200,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 21,
+                    "seconds": 20.1,
+                    "app_cpu_s": 10.77,
+                    "app_cores_avg": 0.54,
+                    "app_cores_max_1s": 1.03,
+                    "app_rss_mb_start": 138.2,
+                    "app_rss_mb_max": 138.9,
+                    "app_rss_mb_end": 138.9,
+                    "browser_cores_avg": 2.95,
+                    "browser_pss_mb_max": 2918,
+                    "browser_procs_max": 16,
+                    "machine_cores_avg": 3.82,
+                    "machine_cores_max_1s": 3.98,
+                    "mem_available_mb_min": 12209
+                  }
+                },
+                "typing": {
+                  "ds": {
+                    "samples": 67,
+                    "seconds": 66.0,
+                    "cpu_s": 4.05,
+                    "cores_avg": 0.06,
+                    "cores_max_1s": 0.22,
+                    "usage_mb_max": 531,
+                    "rss_mb_start": 306,
+                    "rss_mb_max": 322,
+                    "rss_mb_end": 320,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 213,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 67,
+                    "seconds": 66.0,
+                    "app_cpu_s": 2.52,
+                    "app_cores_avg": 0.04,
+                    "app_cores_max_1s": 0.13,
+                    "app_rss_mb_start": 138.9,
+                    "app_rss_mb_max": 138.9,
+                    "app_rss_mb_end": 138.9,
+                    "browser_cores_avg": 3.19,
+                    "browser_pss_mb_max": 4211,
+                    "browser_procs_max": 15,
+                    "machine_cores_avg": 3.57,
+                    "machine_cores_max_1s": 3.99,
+                    "mem_available_mb_min": 10908
+                  }
+                },
+                "save": {
+                  "ds": {
+                    "samples": 8,
+                    "seconds": 7.0,
+                    "cpu_s": 3.08,
+                    "cores_avg": 0.44,
+                    "cores_max_1s": 1.36,
+                    "usage_mb_max": 579,
+                    "rss_mb_start": 320,
+                    "rss_mb_max": 367,
+                    "rss_mb_end": 367,
+                    "x2t_runs": 3,
+                    "x2t_mb_max": 96,
+                    "docservice_mb_max": 210,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 8,
+                    "seconds": 7.0,
+                    "app_cpu_s": 1.21,
+                    "app_cores_avg": 0.17,
+                    "app_cores_max_1s": 0.62,
+                    "app_rss_mb_start": 139.1,
+                    "app_rss_mb_max": 139.8,
+                    "app_rss_mb_end": 139.8,
+                    "browser_cores_avg": 0.61,
+                    "browser_pss_mb_max": 3923,
+                    "browser_procs_max": 16,
+                    "machine_cores_avg": 1.46,
+                    "machine_cores_max_1s": 3.36,
+                    "mem_available_mb_min": 11106
+                  }
+                }
+              },
+              "ds": {
+                "samples": 101,
+                "seconds": 100.1,
+                "cpu_s": 8.02,
+                "cores_avg": 0.08,
+                "cores_max_1s": 1.36,
+                "usage_mb_max": 579,
+                "rss_mb_start": 310,
+                "rss_mb_max": 367,
+                "rss_mb_end": 367,
+                "x2t_runs": 3,
+                "x2t_mb_max": 96,
+                "docservice_mb_max": 213,
+                "converter_mb_max": 103,
+                "kernel_peak_mb": 631,
+                "limit_cgroup": true,
+                "oom_kills": 0,
+                "oom_victims": [],
+                "docservice_restarted": false,
+                "converter_restarted": false,
+                "health": {
+                  "n": 51,
+                  "not_true": 0,
+                  "ms_median": 4.4,
+                  "ms_max": 21.7,
+                  "first_bad_s": null
+                }
+              },
+              "browser": "141.0.7390.37"
+            }
+          ],
+          "machine": {
+            "cpus": 4,
+            "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+            "mem_total_bytes": 16872808448,
+            "mem_available_bytes": 15559610368,
+            "kernel": "6.18.44-fc-v180",
+            "python": "3.12.13",
+            "load_avg": [
+              8.54,
+              7.55,
+              4.93
+            ],
+            "ds": {
+              "url": "http://127.0.0.1:18150",
+              "name": "meet-ds",
+              "image": "mirror.gcr.io/onlyoffice/documentserver@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+              "image_id": "sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+              "memory_bytes": 2147483648,
+              "memory_swap_bytes": 2147483648,
+              "cpus": 2.0,
+              "pids_limit": 512,
+              "limits_applied": true
+            }
+          },
+          "summary": {
+            "rounds": 3,
+            "opened": [
+              8,
+              8,
+              8
+            ],
+            "editors": 8,
+            "typed": [
+              176,
+              179,
+              177
+            ],
+            "saved": [
+              176,
+              179,
+              177
+            ],
+            "all_saved": true,
+            "missing": 0,
+            "missing_near": 0,
+            "shown_known": 532,
+            "not_shown": 0,
+            "lost_saving": 0,
+            "none_lost_saving": true,
+            "opened_s_median": {
+              "n": 3,
+              "median": 15.11,
+              "min": 14.15,
+              "max": 16.31,
+              "spread": 2.16,
+              "values": [
+                14.15,
+                15.11,
+                16.31
+              ]
+            },
+            "opened_s_max": 17.41,
+            "save_s": {
+              "n": 3,
+              "median": 7.6,
+              "min": 7.5,
+              "max": 7.8,
+              "spread": 0.3,
+              "values": [
+                7.5,
+                7.8,
+                7.6
+              ]
+            },
+            "ds_cores_typing": {
+              "n": 3,
+              "median": 0.06,
+              "min": 0.06,
+              "max": 0.06,
+              "spread": 0.0,
+              "values": [
+                0.06,
+                0.06,
+                0.06
+              ]
+            },
+            "ds_cores_typing_max": {
+              "n": 3,
+              "median": 0.21,
+              "min": 0.2,
+              "max": 0.22,
+              "spread": 0.02,
+              "values": [
+                0.21,
+                0.2,
+                0.22
+              ]
+            },
+            "ds_cores_open": {
+              "n": 3,
+              "median": 0.04,
+              "min": 0.04,
+              "max": 0.04,
+              "spread": 0.0,
+              "values": [
+                0.04,
+                0.04,
+                0.04
+              ]
+            },
+            "ds_cores_open_max": {
+              "n": 3,
+              "median": 0.1,
+              "min": 0.09,
+              "max": 0.11,
+              "spread": 0.02,
+              "values": [
+                0.09,
+                0.1,
+                0.11
+              ]
+            },
+            "ds_rss_mb_max": 404,
+            "ds_rss_mb_start": {
+              "n": 3,
+              "median": 307,
+              "min": 302,
+              "max": 310,
+              "spread": 8,
+              "values": [
+                302,
+                307,
+                310
+              ]
+            },
+            "app_cores_typing": {
+              "n": 3,
+              "median": 0.04,
+              "min": 0.04,
+              "max": 0.04,
+              "spread": 0.0,
+              "values": [
+                0.04,
+                0.04,
+                0.04
+              ]
+            },
+            "app_cores_open": {
+              "n": 3,
+              "median": 0.54,
+              "min": 0.53,
+              "max": 0.56,
+              "spread": 0.03,
+              "values": [
+                0.56,
+                0.53,
+                0.54
+              ]
+            },
+            "app_cores_open_max": {
+              "n": 3,
+              "median": 1.1,
+              "min": 1.03,
+              "max": 1.11,
+              "spread": 0.08,
+              "values": [
+                1.11,
+                1.1,
+                1.03
+              ]
+            },
+            "app_rss_mb_max": 139.8,
+            "browser_pss_mb_max": 4211,
+            "machine_cores_typing": {
+              "n": 3,
+              "median": 3.6,
+              "min": 3.57,
+              "max": 3.71,
+              "spread": 0.14,
+              "values": [
+                3.71,
+                3.6,
+                3.57
+              ]
+            },
+            "mem_available_mb_min": 10908,
+            "health_not_true": 0,
+            "low_memory": false,
+            "oom_kills": 0
+          },
+          "ok": true
+        },
+        "20": {
+          "tool": "office_editors",
+          "docs": 5,
+          "per_doc": 4,
+          "editors": 20,
+          "seconds": 60.0,
+          "rounds": 3,
+          "budget_xml_bytes": 150000,
+          "gate": {
+            "all_saved": true
+          },
+          "round_results": [
+            {
+              "round": 1,
+              "docs": 5,
+              "per_doc": 4,
+              "editors": 20,
+              "opened": 20,
+              "opened_s": {
+                "n": 20,
+                "median": 58.45,
+                "min": 7.61,
+                "max": 68.9,
+                "spread": 61.29,
+                "values": [
+                  7.61,
+                  14.3,
+                  29.19,
+                  49.23,
+                  50.35,
+                  57.33,
+                  58.84,
+                  56.15,
+                  58.06,
+                  57.29,
+                  60.45,
+                  65.33,
+                  60.03,
+                  68.9,
+                  64.38,
+                  65.07,
+                  65.36,
+                  67.26,
+                  63.23,
+                  44.23
+                ]
+              },
+              "open_errors": [],
+              "typing_errors": [],
+              "page_errors": 0,
+              "typed_s": 84.9,
+              "save_s": 11.0,
+              "low_memory": false,
+              "per_doc_results": [
+                {
+                  "doc": 1,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 70,
+                    "shown": 70,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 70,
+                    "saved": 70,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.086
+                  ],
+                  "close_to_callback_s": [
+                    8.44
+                  ]
+                },
+                {
+                  "doc": 2,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 72,
+                    "shown": 72,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 72,
+                    "saved": 72,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.205
+                  ],
+                  "close_to_callback_s": [
+                    6.18
+                  ]
+                },
+                {
+                  "doc": 3,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 68,
+                    "shown": 68,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 68,
+                    "saved": 68,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.13
+                  ],
+                  "close_to_callback_s": [
+                    7.24
+                  ]
+                },
+                {
+                  "doc": 4,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 68,
+                    "shown": 67,
+                    "not_shown": [
+                      "r1d4u4w004"
+                    ],
+                    "not_shown_n": 1,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 68,
+                    "saved": 67,
+                    "glued": 0,
+                    "missing": [
+                      "r1d4u4w004"
+                    ],
+                    "missing_n": 1,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.098
+                  ],
+                  "close_to_callback_s": [
+                    9.56
+                  ]
+                },
+                {
+                  "doc": 5,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 67,
+                    "shown": 65,
+                    "not_shown": [
+                      "r1d5u1w003",
+                      "r1d5u1w004"
+                    ],
+                    "not_shown_n": 2,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 67,
+                    "saved": 65,
+                    "glued": 1,
+                    "missing": [
+                      "r1d5u1w003",
+                      "r1d5u1w004"
+                    ],
+                    "missing_n": 2,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.076
+                  ],
+                  "close_to_callback_s": [
+                    10.6
+                  ]
+                }
+              ],
+              "typed": 345,
+              "saved": 342,
+              "missing_near": 0,
+              "shown_known": 345,
+              "not_shown": 3,
+              "lost_saving": 0,
+              "phases": {
+                "open": {
+                  "ds": {
+                    "samples": 77,
+                    "seconds": 76.5,
+                    "cpu_s": 2.09,
+                    "cores_avg": 0.03,
+                    "cores_max_1s": 0.13,
+                    "usage_mb_max": 522,
+                    "rss_mb_start": 300,
+                    "rss_mb_max": 310,
+                    "rss_mb_end": 302,
+                    "x2t_runs": 1,
+                    "x2t_mb_max": 42,
+                    "docservice_mb_max": 194,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 77,
+                    "seconds": 76.1,
+                    "app_cpu_s": 27.67,
+                    "app_cores_avg": 0.36,
+                    "app_cores_max_1s": 1.12,
+                    "app_rss_mb_start": 120.4,
+                    "app_rss_mb_max": 189.9,
+                    "app_rss_mb_end": 132.0,
+                    "browser_cores_avg": 3.21,
+                    "browser_pss_mb_max": 6148,
+                    "browser_procs_max": 28,
+                    "machine_cores_avg": 3.9,
+                    "machine_cores_max_1s": 4.0,
+                    "mem_available_mb_min": 9139
+                  }
+                },
+                "typing": {
+                  "ds": {
+                    "samples": 85,
+                    "seconds": 84.1,
+                    "cpu_s": 4.57,
+                    "cores_avg": 0.05,
+                    "cores_max_1s": 0.19,
+                    "usage_mb_max": 529,
+                    "rss_mb_start": 302,
+                    "rss_mb_max": 318,
+                    "rss_mb_end": 305,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 208,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 85,
+                    "seconds": 84.0,
+                    "app_cpu_s": 3.73,
+                    "app_cores_avg": 0.04,
+                    "app_cores_max_1s": 0.23,
+                    "app_rss_mb_start": 132.0,
+                    "app_rss_mb_max": 132.2,
+                    "app_rss_mb_end": 132.2,
+                    "browser_cores_avg": 3.27,
+                    "browser_pss_mb_max": 7494,
+                    "browser_procs_max": 27,
+                    "machine_cores_avg": 3.73,
+                    "machine_cores_max_1s": 4.0,
+                    "mem_available_mb_min": 7893
+                  }
+                },
+                "save": {
+                  "ds": {
+                    "samples": 11,
+                    "seconds": 10.0,
+                    "cpu_s": 5.6,
+                    "cores_avg": 0.56,
+                    "cores_max_1s": 1.33,
+                    "usage_mb_max": 624,
+                    "rss_mb_start": 305,
+                    "rss_mb_max": 408,
+                    "rss_mb_end": 392,
+                    "x2t_runs": 5,
+                    "x2t_mb_max": 144,
+                    "docservice_mb_max": 200,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 11,
+                    "seconds": 10.0,
+                    "app_cpu_s": 4.98,
+                    "app_cores_avg": 0.5,
+                    "app_cores_max_1s": 0.87,
+                    "app_rss_mb_start": 133.3,
+                    "app_rss_mb_max": 145.2,
+                    "app_rss_mb_end": 145.2,
+                    "browser_cores_avg": 1.32,
+                    "browser_pss_mb_max": 6496,
+                    "browser_procs_max": 27,
+                    "machine_cores_avg": 2.82,
+                    "machine_cores_max_1s": 3.86,
+                    "mem_available_mb_min": 8692
+                  }
+                }
+              },
+              "ds": {
+                "samples": 180,
+                "seconds": 179.6,
+                "cpu_s": 14.45,
+                "cores_avg": 0.08,
+                "cores_max_1s": 1.33,
+                "usage_mb_max": 638,
+                "rss_mb_start": 300,
+                "rss_mb_max": 422,
+                "rss_mb_end": 422,
+                "x2t_runs": 7,
+                "x2t_mb_max": 161,
+                "docservice_mb_max": 208,
+                "converter_mb_max": 103,
+                "kernel_peak_mb": 640,
+                "limit_cgroup": true,
+                "oom_kills": 0,
+                "oom_victims": [],
+                "docservice_restarted": false,
+                "converter_restarted": false,
+                "health": {
+                  "n": 90,
+                  "not_true": 0,
+                  "ms_median": 4.8,
+                  "ms_max": 127.3,
+                  "first_bad_s": null
+                }
+              },
+              "browser": "141.0.7390.37"
+            },
+            {
+              "round": 2,
+              "docs": 5,
+              "per_doc": 4,
+              "editors": 20,
+              "opened": 20,
+              "opened_s": {
+                "n": 20,
+                "median": 52.84,
+                "min": 8.85,
+                "max": 63.23,
+                "spread": 54.38,
+                "values": [
+                  8.85,
+                  13.54,
+                  29.11,
+                  32.54,
+                  52.06,
+                  52.12,
+                  51.43,
+                  52.69,
+                  52.99,
+                  52.0,
+                  58.08,
+                  50.72,
+                  56.05,
+                  62.94,
+                  63.23,
+                  59.74,
+                  60.55,
+                  60.07,
+                  61.28,
+                  55.48
+                ]
+              },
+              "open_errors": [],
+              "typing_errors": [],
+              "page_errors": 0,
+              "typed_s": 76.4,
+              "save_s": 11.0,
+              "low_memory": false,
+              "per_doc_results": [
+                {
+                  "doc": 1,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 70,
+                    "shown": 70,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 70,
+                    "saved": 70,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.079
+                  ],
+                  "close_to_callback_s": [
+                    6.03
+                  ]
+                },
+                {
+                  "doc": 2,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 70,
+                    "shown": 70,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 70,
+                    "saved": 70,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.086
+                  ],
+                  "close_to_callback_s": [
+                    7.0
+                  ]
+                },
+                {
+                  "doc": 3,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 70,
+                    "shown": 70,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 70,
+                    "saved": 70,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.099
+                  ],
+                  "close_to_callback_s": [
+                    10.43
+                  ]
+                },
+                {
+                  "doc": 4,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 71,
+                    "shown": 67,
+                    "not_shown": [
+                      "r2d4u1w001",
+                      "r2d4u3w001",
+                      "r2d4u3w002",
+                      "r2d4u3w003"
+                    ],
+                    "not_shown_n": 4,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 71,
+                    "saved": 67,
+                    "glued": 1,
+                    "missing": [
+                      "r2d4u1w001",
+                      "r2d4u3w001",
+                      "r2d4u3w002",
+                      "r2d4u3w003"
+                    ],
+                    "missing_n": 4,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.084
+                  ],
+                  "close_to_callback_s": [
+                    9.36
+                  ]
+                },
+                {
+                  "doc": 5,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 69,
+                    "shown": 68,
+                    "not_shown": [
+                      "r2d5u1w001"
+                    ],
+                    "not_shown_n": 1,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 69,
+                    "saved": 68,
+                    "glued": 0,
+                    "missing": [
+                      "r2d5u1w001"
+                    ],
+                    "missing_n": 1,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.106
+                  ],
+                  "close_to_callback_s": [
+                    8.02
+                  ]
+                }
+              ],
+              "typed": 350,
+              "saved": 345,
+              "missing_near": 0,
+              "shown_known": 350,
+              "not_shown": 5,
+              "lost_saving": 0,
+              "phases": {
+                "open": {
+                  "ds": {
+                    "samples": 72,
+                    "seconds": 71.5,
+                    "cpu_s": 1.99,
+                    "cores_avg": 0.03,
+                    "cores_max_1s": 0.13,
+                    "usage_mb_max": 527,
+                    "rss_mb_start": 307,
+                    "rss_mb_max": 309,
+                    "rss_mb_end": 309,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 200,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 72,
+                    "seconds": 71.2,
+                    "app_cpu_s": 29.39,
+                    "app_cores_avg": 0.41,
+                    "app_cores_max_1s": 1.12,
+                    "app_rss_mb_start": 145.2,
+                    "app_rss_mb_max": 272.7,
+                    "app_rss_mb_end": 148.7,
+                    "browser_cores_avg": 3.17,
+                    "browser_pss_mb_max": 6361,
+                    "browser_procs_max": 28,
+                    "machine_cores_avg": 3.92,
+                    "machine_cores_max_1s": 4.0,
+                    "mem_available_mb_min": 8621
+                  }
+                },
+                "typing": {
+                  "ds": {
+                    "samples": 76,
+                    "seconds": 75.0,
+                    "cpu_s": 3.75,
+                    "cores_avg": 0.05,
+                    "cores_max_1s": 0.19,
+                    "usage_mb_max": 538,
+                    "rss_mb_start": 309,
+                    "rss_mb_max": 321,
+                    "rss_mb_end": 321,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 211,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 77,
+                    "seconds": 76.0,
+                    "app_cpu_s": 3.34,
+                    "app_cores_avg": 0.04,
+                    "app_cores_max_1s": 0.26,
+                    "app_rss_mb_start": 148.7,
+                    "app_rss_mb_max": 148.8,
+                    "app_rss_mb_end": 148.7,
+                    "browser_cores_avg": 3.43,
+                    "browser_pss_mb_max": 7759,
+                    "browser_procs_max": 27,
+                    "machine_cores_avg": 3.89,
+                    "machine_cores_max_1s": 4.0,
+                    "mem_available_mb_min": 7577
+                  }
+                },
+                "save": {
+                  "ds": {
+                    "samples": 11,
+                    "seconds": 10.0,
+                    "cpu_s": 6.04,
+                    "cores_avg": 0.6,
+                    "cores_max_1s": 1.36,
+                    "usage_mb_max": 593,
+                    "rss_mb_start": 308,
+                    "rss_mb_max": 374,
+                    "rss_mb_end": 346,
+                    "x2t_runs": 4,
+                    "x2t_mb_max": 109,
+                    "docservice_mb_max": 199,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 10,
+                    "seconds": 9.0,
+                    "app_cpu_s": 4.9,
+                    "app_cores_avg": 0.54,
+                    "app_cores_max_1s": 0.89,
+                    "app_rss_mb_start": 149.3,
+                    "app_rss_mb_max": 151.9,
+                    "app_rss_mb_end": 151.9,
+                    "browser_cores_avg": 1.34,
+                    "browser_pss_mb_max": 7471,
+                    "browser_procs_max": 28,
+                    "machine_cores_avg": 2.92,
+                    "machine_cores_max_1s": 3.85,
+                    "mem_available_mb_min": 7760
+                  }
+                }
+              },
+              "ds": {
+                "samples": 167,
+                "seconds": 166.5,
+                "cpu_s": 13.65,
+                "cores_avg": 0.08,
+                "cores_max_1s": 1.36,
+                "usage_mb_max": 640,
+                "rss_mb_start": 306,
+                "rss_mb_max": 421,
+                "rss_mb_end": 421,
+                "x2t_runs": 5,
+                "x2t_mb_max": 163,
+                "docservice_mb_max": 211,
+                "converter_mb_max": 103,
+                "kernel_peak_mb": 642,
+                "limit_cgroup": true,
+                "oom_kills": 0,
+                "oom_victims": [],
+                "docservice_restarted": false,
+                "converter_restarted": false,
+                "health": {
+                  "n": 84,
+                  "not_true": 0,
+                  "ms_median": 4.7,
+                  "ms_max": 95.8,
+                  "first_bad_s": null
+                }
+              },
+              "browser": "141.0.7390.37"
+            },
+            {
+              "round": 3,
+              "docs": 5,
+              "per_doc": 4,
+              "editors": 20,
+              "opened": 20,
+              "opened_s": {
+                "n": 20,
+                "median": 58.2,
+                "min": 8.78,
+                "max": 64.11,
+                "spread": 55.33,
+                "values": [
+                  8.78,
+                  19.76,
+                  29.25,
+                  51.32,
+                  56.35,
+                  54.6,
+                  55.97,
+                  55.56,
+                  57.58,
+                  58.42,
+                  58.95,
+                  59.96,
+                  57.97,
+                  64.11,
+                  62.81,
+                  61.2,
+                  60.86,
+                  62.55,
+                  62.99,
+                  60.38
+                ]
+              },
+              "open_errors": [],
+              "typing_errors": [],
+              "page_errors": 0,
+              "typed_s": 75.6,
+              "save_s": 11.3,
+              "low_memory": false,
+              "per_doc_results": [
+                {
+                  "doc": 1,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 70,
+                    "shown": 70,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 70,
+                    "saved": 70,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.088
+                  ],
+                  "close_to_callback_s": [
+                    6.35
+                  ]
+                },
+                {
+                  "doc": 2,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 71,
+                    "shown": 70,
+                    "not_shown": [
+                      "r3d2u1w001"
+                    ],
+                    "not_shown_n": 1,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 71,
+                    "saved": 70,
+                    "glued": 1,
+                    "missing": [
+                      "r3d2u1w001"
+                    ],
+                    "missing_n": 1,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.125
+                  ],
+                  "close_to_callback_s": [
+                    7.44
+                  ]
+                },
+                {
+                  "doc": 3,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 68,
+                    "shown": 68,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 68,
+                    "saved": 68,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.127
+                  ],
+                  "close_to_callback_s": [
+                    9.82
+                  ]
+                },
+                {
+                  "doc": 4,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 74,
+                    "shown": 74,
+                    "not_shown": [],
+                    "not_shown_n": 0,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 74,
+                    "saved": 74,
+                    "glued": 0,
+                    "missing": [],
+                    "missing_n": 0,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.144
+                  ],
+                  "close_to_callback_s": [
+                    8.69
+                  ]
+                },
+                {
+                  "doc": 5,
+                  "editors": 4,
+                  "opened": 4,
+                  "words": {
+                    "shown_known": 65,
+                    "shown": 64,
+                    "not_shown": [
+                      "r3d5u2w002"
+                    ],
+                    "not_shown_n": 1,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 65,
+                    "saved": 64,
+                    "glued": 1,
+                    "missing": [
+                      "r3d5u2w002"
+                    ],
+                    "missing_n": 1,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.094
+                  ],
+                  "close_to_callback_s": [
+                    10.95
+                  ]
+                }
+              ],
+              "typed": 348,
+              "saved": 346,
+              "missing_near": 0,
+              "shown_known": 348,
+              "not_shown": 2,
+              "lost_saving": 0,
+              "phases": {
+                "open": {
+                  "ds": {
+                    "samples": 75,
+                    "seconds": 74.3,
+                    "cpu_s": 2.09,
+                    "cores_avg": 0.03,
+                    "cores_max_1s": 0.1,
+                    "usage_mb_max": 524,
+                    "rss_mb_start": 302,
+                    "rss_mb_max": 304,
+                    "rss_mb_end": 303,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 195,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 75,
+                    "seconds": 74.2,
+                    "app_cpu_s": 29.48,
+                    "app_cores_avg": 0.4,
+                    "app_cores_max_1s": 1.09,
+                    "app_rss_mb_start": 151.6,
+                    "app_rss_mb_max": 215.9,
+                    "app_rss_mb_end": 152.4,
+                    "browser_cores_avg": 3.16,
+                    "browser_pss_mb_max": 6454,
+                    "browser_procs_max": 27,
+                    "machine_cores_avg": 3.89,
+                    "machine_cores_max_1s": 4.0,
+                    "mem_available_mb_min": 8610
+                  }
+                },
+                "typing": {
+                  "ds": {
+                    "samples": 76,
+                    "seconds": 75.1,
+                    "cpu_s": 3.82,
+                    "cores_avg": 0.05,
+                    "cores_max_1s": 0.19,
+                    "usage_mb_max": 540,
+                    "rss_mb_start": 303,
+                    "rss_mb_max": 319,
+                    "rss_mb_end": 319,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 210,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 76,
+                    "seconds": 75.0,
+                    "app_cpu_s": 3.22,
+                    "app_cores_avg": 0.04,
+                    "app_cores_max_1s": 0.21,
+                    "app_rss_mb_start": 152.4,
+                    "app_rss_mb_max": 152.4,
+                    "app_rss_mb_end": 152.4,
+                    "browser_cores_avg": 3.38,
+                    "browser_pss_mb_max": 7840,
+                    "browser_procs_max": 27,
+                    "machine_cores_avg": 3.83,
+                    "machine_cores_max_1s": 4.0,
+                    "mem_available_mb_min": 7569
+                  }
+                },
+                "save": {
+                  "ds": {
+                    "samples": 11,
+                    "seconds": 10.0,
+                    "cpu_s": 6.06,
+                    "cores_avg": 0.61,
+                    "cores_max_1s": 1.23,
+                    "usage_mb_max": 616,
+                    "rss_mb_start": 305,
+                    "rss_mb_max": 392,
+                    "rss_mb_end": 310,
+                    "x2t_runs": 5,
+                    "x2t_mb_max": 126,
+                    "docservice_mb_max": 201,
+                    "converter_mb_max": 103
+                  },
+                  "machine": {
+                    "samples": 11,
+                    "seconds": 10.0,
+                    "app_cpu_s": 5.62,
+                    "app_cores_avg": 0.56,
+                    "app_cores_max_1s": 0.86,
+                    "app_rss_mb_start": 152.4,
+                    "app_rss_mb_max": 153.3,
+                    "app_rss_mb_end": 153.3,
+                    "browser_cores_avg": 1.54,
+                    "browser_pss_mb_max": 6912,
+                    "browser_procs_max": 31,
+                    "machine_cores_avg": 3.11,
+                    "machine_cores_max_1s": 3.76,
+                    "mem_available_mb_min": 8248
+                  }
+                }
+              },
+              "ds": {
+                "samples": 169,
+                "seconds": 168.4,
+                "cpu_s": 13.04,
+                "cores_avg": 0.08,
+                "cores_max_1s": 1.23,
+                "usage_mb_max": 637,
+                "rss_mb_start": 302,
+                "rss_mb_max": 413,
+                "rss_mb_end": 413,
+                "x2t_runs": 6,
+                "x2t_mb_max": 151,
+                "docservice_mb_max": 210,
+                "converter_mb_max": 103,
+                "kernel_peak_mb": 645,
+                "limit_cgroup": true,
+                "oom_kills": 0,
+                "oom_victims": [],
+                "docservice_restarted": false,
+                "converter_restarted": false,
+                "health": {
+                  "n": 85,
+                  "not_true": 0,
+                  "ms_median": 4.3,
+                  "ms_max": 123.8,
+                  "first_bad_s": null
+                }
+              },
+              "browser": "141.0.7390.37"
+            }
+          ],
+          "machine": {
+            "cpus": 4,
+            "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+            "mem_total_bytes": 16872808448,
+            "mem_available_bytes": 15395786752,
+            "kernel": "6.18.44-fc-v180",
+            "python": "3.12.13",
+            "load_avg": [
+              21.23,
+              22.22,
+              14.2
+            ],
+            "ds": {
+              "url": "http://127.0.0.1:18150",
+              "name": "meet-ds",
+              "image": "mirror.gcr.io/onlyoffice/documentserver@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+              "image_id": "sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+              "memory_bytes": 2147483648,
+              "memory_swap_bytes": 2147483648,
+              "cpus": 2.0,
+              "pids_limit": 512,
+              "limits_applied": true
+            }
+          },
+          "summary": {
+            "rounds": 3,
+            "opened": [
+              20,
+              20,
+              20
+            ],
+            "editors": 20,
+            "typed": [
+              345,
+              350,
+              348
+            ],
+            "saved": [
+              342,
+              345,
+              346
+            ],
+            "all_saved": false,
+            "missing": 10,
+            "missing_near": 0,
+            "shown_known": 1043,
+            "not_shown": 10,
+            "lost_saving": 0,
+            "none_lost_saving": true,
+            "opened_s_median": {
+              "n": 3,
+              "median": 58.2,
+              "min": 52.84,
+              "max": 58.45,
+              "spread": 5.61,
+              "values": [
+                58.45,
+                52.84,
+                58.2
+              ]
+            },
+            "opened_s_max": 68.9,
+            "save_s": {
+              "n": 3,
+              "median": 11.0,
+              "min": 11.0,
+              "max": 11.3,
+              "spread": 0.3,
+              "values": [
+                11.0,
+                11.0,
+                11.3
+              ]
+            },
+            "ds_cores_typing": {
+              "n": 3,
+              "median": 0.05,
+              "min": 0.05,
+              "max": 0.05,
+              "spread": 0.0,
+              "values": [
+                0.05,
+                0.05,
+                0.05
+              ]
+            },
+            "ds_cores_typing_max": {
+              "n": 3,
+              "median": 0.19,
+              "min": 0.19,
+              "max": 0.19,
+              "spread": 0.0,
+              "values": [
+                0.19,
+                0.19,
+                0.19
+              ]
+            },
+            "ds_cores_open": {
+              "n": 3,
+              "median": 0.03,
+              "min": 0.03,
+              "max": 0.03,
+              "spread": 0.0,
+              "values": [
+                0.03,
+                0.03,
+                0.03
+              ]
+            },
+            "ds_cores_open_max": {
+              "n": 3,
+              "median": 0.13,
+              "min": 0.1,
+              "max": 0.13,
+              "spread": 0.03,
+              "values": [
+                0.13,
+                0.13,
+                0.1
+              ]
+            },
+            "ds_rss_mb_max": 422,
+            "ds_rss_mb_start": {
+              "n": 3,
+              "median": 302,
+              "min": 300,
+              "max": 306,
+              "spread": 6,
+              "values": [
+                300,
+                306,
+                302
+              ]
+            },
+            "app_cores_typing": {
+              "n": 3,
+              "median": 0.04,
+              "min": 0.04,
+              "max": 0.04,
+              "spread": 0.0,
+              "values": [
+                0.04,
+                0.04,
+                0.04
+              ]
+            },
+            "app_cores_open": {
+              "n": 3,
+              "median": 0.4,
+              "min": 0.36,
+              "max": 0.41,
+              "spread": 0.05,
+              "values": [
+                0.36,
+                0.41,
+                0.4
+              ]
+            },
+            "app_cores_open_max": {
+              "n": 3,
+              "median": 1.12,
+              "min": 1.09,
+              "max": 1.12,
+              "spread": 0.03,
+              "values": [
+                1.12,
+                1.12,
+                1.09
+              ]
+            },
+            "app_rss_mb_max": 272.7,
+            "browser_pss_mb_max": 7840,
+            "machine_cores_typing": {
+              "n": 3,
+              "median": 3.83,
+              "min": 3.73,
+              "max": 3.89,
+              "spread": 0.16,
+              "values": [
+                3.73,
+                3.89,
+                3.83
+              ]
+            },
+            "mem_available_mb_min": 7569,
+            "health_not_true": 0,
+            "low_memory": false,
+            "oom_kills": 0
+          },
+          "ok": false
+        },
+        "1x20": {
+          "tool": "office_editors",
+          "docs": 1,
+          "per_doc": 20,
+          "editors": 20,
+          "seconds": 60.0,
+          "rounds": 3,
+          "budget_xml_bytes": 150000,
+          "gate": {
+            "all_saved": true
+          },
+          "round_results": [
+            {
+              "round": 1,
+              "docs": 1,
+              "per_doc": 20,
+              "editors": 20,
+              "opened": 20,
+              "opened_s": {
+                "n": 20,
+                "median": 56.16,
+                "min": 8.01,
+                "max": 62.0,
+                "spread": 53.99,
+                "values": [
+                  8.01,
+                  10.42,
+                  22.39,
+                  27.61,
+                  29.74,
+                  48.19,
+                  54.36,
+                  52.48,
+                  57.42,
+                  56.65,
+                  52.87,
+                  58.34,
+                  58.56,
+                  58.16,
+                  55.66,
+                  61.59,
+                  60.47,
+                  62.0,
+                  61.45,
+                  59.43
+                ]
+              },
+              "open_errors": [],
+              "typing_errors": [],
+              "page_errors": 0,
+              "typed_s": 74.2,
+              "save_s": 9.2,
+              "low_memory": false,
+              "per_doc_results": [
+                {
+                  "doc": 1,
+                  "editors": 20,
+                  "opened": 20,
+                  "words": {
+                    "shown_known": 351,
+                    "shown": 340,
+                    "not_shown": [
+                      "r1d1u6w001",
+                      "r1d1u6w002",
+                      "r1d1u6w003",
+                      "r1d1u8w001",
+                      "r1d1u8w002",
+                      "r1d1u9w001",
+                      "r1d1u10w001",
+                      "r1d1u10w002",
+                      "r1d1u14w001",
+                      "r1d1u14w002",
+                      "r1d1u17w001"
+                    ],
+                    "not_shown_n": 11,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 351,
+                    "saved": 340,
+                    "glued": 2,
+                    "missing": [
+                      "r1d1u6w001",
+                      "r1d1u6w002",
+                      "r1d1u6w003",
+                      "r1d1u8w001",
+                      "r1d1u8w002",
+                      "r1d1u9w001",
+                      "r1d1u10w001",
+                      "r1d1u10w002",
+                      "r1d1u14w001",
+                      "r1d1u14w002",
+                      "r1d1u17w001"
+                    ],
+                    "missing_n": 11,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.212
+                  ],
+                  "close_to_callback_s": [
+                    8.89
+                  ]
+                }
+              ],
+              "typed": 351,
+              "saved": 340,
+              "missing_near": 0,
+              "shown_known": 351,
+              "not_shown": 11,
+              "lost_saving": 0,
+              "phases": {
+                "open": {
+                  "ds": {
+                    "samples": 71,
+                    "seconds": 70.7,
+                    "cpu_s": 1.86,
+                    "cores_avg": 0.03,
+                    "cores_max_1s": 0.09,
+                    "usage_mb_max": 681,
+                    "rss_mb_start": 303,
+                    "rss_mb_max": 309,
+                    "rss_mb_end": 307,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 226,
+                    "converter_mb_max": 139
+                  },
+                  "machine": {
+                    "samples": 71,
+                    "seconds": 71.1,
+                    "app_cpu_s": 28.67,
+                    "app_cores_avg": 0.4,
+                    "app_cores_max_1s": 1.08,
+                    "app_rss_mb_start": 118.6,
+                    "app_rss_mb_max": 192.8,
+                    "app_rss_mb_end": 134.9,
+                    "browser_cores_avg": 3.14,
+                    "browser_pss_mb_max": 6173,
+                    "browser_procs_max": 28,
+                    "machine_cores_avg": 3.92,
+                    "machine_cores_max_1s": 4.0,
+                    "mem_available_mb_min": 8927
+                  }
+                },
+                "typing": {
+                  "ds": {
+                    "samples": 74,
+                    "seconds": 73.0,
+                    "cpu_s": 4.7,
+                    "cores_avg": 0.06,
+                    "cores_max_1s": 0.24,
+                    "usage_mb_max": 700,
+                    "rss_mb_start": 307,
+                    "rss_mb_max": 327,
+                    "rss_mb_end": 327,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 244,
+                    "converter_mb_max": 139
+                  },
+                  "machine": {
+                    "samples": 74,
+                    "seconds": 73.0,
+                    "app_cpu_s": 3.68,
+                    "app_cores_avg": 0.05,
+                    "app_cores_max_1s": 0.28,
+                    "app_rss_mb_start": 134.9,
+                    "app_rss_mb_max": 135.6,
+                    "app_rss_mb_end": 135.6,
+                    "browser_cores_avg": 3.47,
+                    "browser_pss_mb_max": 7824,
+                    "browser_procs_max": 27,
+                    "machine_cores_avg": 3.99,
+                    "machine_cores_max_1s": 4.0,
+                    "mem_available_mb_min": 7544
+                  }
+                },
+                "save": {
+                  "ds": {
+                    "samples": 9,
+                    "seconds": 8.0,
+                    "cpu_s": 1.31,
+                    "cores_avg": 0.16,
+                    "cores_max_1s": 1.19,
+                    "usage_mb_max": 794,
+                    "rss_mb_start": 317,
+                    "rss_mb_max": 419,
+                    "rss_mb_end": 419,
+                    "x2t_runs": 1,
+                    "x2t_mb_max": 145,
+                    "docservice_mb_max": 234,
+                    "converter_mb_max": 139
+                  },
+                  "machine": {
+                    "samples": 10,
+                    "seconds": 9.0,
+                    "app_cpu_s": 3.45,
+                    "app_cores_avg": 0.38,
+                    "app_cores_max_1s": 0.93,
+                    "app_rss_mb_start": 135.9,
+                    "app_rss_mb_max": 143.2,
+                    "app_rss_mb_end": 143.2,
+                    "browser_cores_avg": 1.19,
+                    "browser_pss_mb_max": 7753,
+                    "browser_procs_max": 30,
+                    "machine_cores_avg": 2.28,
+                    "machine_cores_max_1s": 3.96,
+                    "mem_available_mb_min": 7533
+                  }
+                }
+              },
+              "ds": {
+                "samples": 162,
+                "seconds": 161.8,
+                "cpu_s": 8.41,
+                "cores_avg": 0.05,
+                "cores_max_1s": 1.19,
+                "usage_mb_max": 794,
+                "rss_mb_start": 303,
+                "rss_mb_max": 419,
+                "rss_mb_end": 385,
+                "x2t_runs": 2,
+                "x2t_mb_max": 145,
+                "docservice_mb_max": 244,
+                "converter_mb_max": 139,
+                "kernel_peak_mb": 797,
+                "limit_cgroup": true,
+                "oom_kills": 0,
+                "oom_victims": [],
+                "docservice_restarted": false,
+                "converter_restarted": false,
+                "health": {
+                  "n": 81,
+                  "not_true": 0,
+                  "ms_median": 4.8,
+                  "ms_max": 143.9,
+                  "first_bad_s": null
+                }
+              },
+              "browser": "141.0.7390.37"
+            },
+            {
+              "round": 2,
+              "docs": 1,
+              "per_doc": 20,
+              "editors": 20,
+              "opened": 20,
+              "opened_s": {
+                "n": 20,
+                "median": 56.09,
+                "min": 7.04,
+                "max": 63.49,
+                "spread": 56.45,
+                "values": [
+                  7.04,
+                  16.88,
+                  25.96,
+                  47.14,
+                  48.69,
+                  56.74,
+                  56.44,
+                  53.18,
+                  54.82,
+                  54.29,
+                  61.05,
+                  56.58,
+                  59.18,
+                  63.49,
+                  57.53,
+                  51.22,
+                  58.74,
+                  55.97,
+                  56.2,
+                  57.44
+                ]
+              },
+              "open_errors": [],
+              "typing_errors": [],
+              "page_errors": 0,
+              "typed_s": 76.7,
+              "save_s": 10.2,
+              "low_memory": false,
+              "per_doc_results": [
+                {
+                  "doc": 1,
+                  "editors": 20,
+                  "opened": 20,
+                  "words": {
+                    "shown_known": 338,
+                    "shown": 335,
+                    "not_shown": [
+                      "r2d1u8w002",
+                      "r2d1u9w003",
+                      "r2d1u18w002"
+                    ],
+                    "not_shown_n": 3,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 338,
+                    "saved": 335,
+                    "glued": 3,
+                    "missing": [
+                      "r2d1u8w002",
+                      "r2d1u9w003",
+                      "r2d1u18w002"
+                    ],
+                    "missing_n": 3,
+                    "missing_near": 0,
+                    "near_found": {},
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.155
+                  ],
+                  "close_to_callback_s": [
+                    9.86
+                  ]
+                }
+              ],
+              "typed": 338,
+              "saved": 335,
+              "missing_near": 0,
+              "shown_known": 338,
+              "not_shown": 3,
+              "lost_saving": 0,
+              "phases": {
+                "open": {
+                  "ds": {
+                    "samples": 71,
+                    "seconds": 70.5,
+                    "cpu_s": 1.8,
+                    "cores_avg": 0.03,
+                    "cores_max_1s": 0.1,
+                    "usage_mb_max": 689,
+                    "rss_mb_start": 315,
+                    "rss_mb_max": 316,
+                    "rss_mb_end": 314,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 232,
+                    "converter_mb_max": 139
+                  },
+                  "machine": {
+                    "samples": 71,
+                    "seconds": 70.0,
+                    "app_cpu_s": 29.15,
+                    "app_cores_avg": 0.42,
+                    "app_cores_max_1s": 1.05,
+                    "app_rss_mb_start": 144.0,
+                    "app_rss_mb_max": 209.0,
+                    "app_rss_mb_end": 151.3,
+                    "browser_cores_avg": 3.14,
+                    "browser_pss_mb_max": 6510,
+                    "browser_procs_max": 28,
+                    "machine_cores_avg": 3.9,
+                    "machine_cores_max_1s": 4.0,
+                    "mem_available_mb_min": 8467
+                  }
+                },
+                "typing": {
+                  "ds": {
+                    "samples": 76,
+                    "seconds": 75.0,
+                    "cpu_s": 4.52,
+                    "cores_avg": 0.06,
+                    "cores_max_1s": 0.29,
+                    "usage_mb_max": 704,
+                    "rss_mb_start": 314,
+                    "rss_mb_max": 330,
+                    "rss_mb_end": 327,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 247,
+                    "converter_mb_max": 139
+                  },
+                  "machine": {
+                    "samples": 77,
+                    "seconds": 76.1,
+                    "app_cpu_s": 3.48,
+                    "app_cores_avg": 0.05,
+                    "app_cores_max_1s": 0.18,
+                    "app_rss_mb_start": 151.3,
+                    "app_rss_mb_max": 151.6,
+                    "app_rss_mb_end": 151.6,
+                    "browser_cores_avg": 3.45,
+                    "browser_pss_mb_max": 8472,
+                    "browser_procs_max": 27,
+                    "machine_cores_avg": 3.95,
+                    "machine_cores_max_1s": 4.0,
+                    "mem_available_mb_min": 6982
+                  }
+                },
+                "save": {
+                  "ds": {
+                    "samples": 10,
+                    "seconds": 9.0,
+                    "cpu_s": 1.38,
+                    "cores_avg": 0.15,
+                    "cores_max_1s": 1.22,
+                    "usage_mb_max": 690,
+                    "rss_mb_start": 315,
+                    "rss_mb_max": 317,
+                    "rss_mb_end": 315,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 234,
+                    "converter_mb_max": 139
+                  },
+                  "machine": {
+                    "samples": 10,
+                    "seconds": 9.0,
+                    "app_cpu_s": 3.32,
+                    "app_cores_avg": 0.37,
+                    "app_cores_max_1s": 0.91,
+                    "app_rss_mb_start": 151.6,
+                    "app_rss_mb_max": 153.4,
+                    "app_rss_mb_end": 153.4,
+                    "browser_cores_avg": 1.29,
+                    "browser_pss_mb_max": 8384,
+                    "browser_procs_max": 28,
+                    "machine_cores_avg": 2.25,
+                    "machine_cores_max_1s": 3.93,
+                    "mem_available_mb_min": 7195
+                  }
+                }
+              },
+              "ds": {
+                "samples": 165,
+                "seconds": 164.5,
+                "cpu_s": 8.51,
+                "cores_avg": 0.05,
+                "cores_max_1s": 1.22,
+                "usage_mb_max": 787,
+                "rss_mb_start": 315,
+                "rss_mb_max": 411,
+                "rss_mb_end": 411,
+                "x2t_runs": 1,
+                "x2t_mb_max": 142,
+                "docservice_mb_max": 247,
+                "converter_mb_max": 139,
+                "kernel_peak_mb": 802,
+                "limit_cgroup": true,
+                "oom_kills": 0,
+                "oom_victims": [],
+                "docservice_restarted": false,
+                "converter_restarted": false,
+                "health": {
+                  "n": 83,
+                  "not_true": 0,
+                  "ms_median": 5.2,
+                  "ms_max": 161.0,
+                  "first_bad_s": null
+                }
+              },
+              "browser": "141.0.7390.37"
+            },
+            {
+              "round": 3,
+              "docs": 1,
+              "per_doc": 20,
+              "editors": 20,
+              "opened": 20,
+              "opened_s": {
+                "n": 20,
+                "median": 56.45,
+                "min": 12.62,
+                "max": 67.71,
+                "spread": 55.09,
+                "values": [
+                  12.62,
+                  25.7,
+                  32.85,
+                  50.44,
+                  50.25,
+                  50.05,
+                  67.71,
+                  59.46,
+                  53.91,
+                  59.89,
+                  54.28,
+                  56.89,
+                  57.52,
+                  56.02,
+                  58.35,
+                  59.48,
+                  59.39,
+                  57.98,
+                  57.16,
+                  55.8
+                ]
+              },
+              "open_errors": [],
+              "typing_errors": [],
+              "page_errors": 0,
+              "typed_s": 76.4,
+              "save_s": 8.7,
+              "low_memory": false,
+              "per_doc_results": [
+                {
+                  "doc": 1,
+                  "editors": 20,
+                  "opened": 20,
+                  "words": {
+                    "shown_known": 344,
+                    "shown": 339,
+                    "not_shown": [
+                      "r3d1u13w001",
+                      "r3d1u14w001",
+                      "r3d1u14w002",
+                      "r3d1u14w003",
+                      "r3d1u18w005"
+                    ],
+                    "not_shown_n": 5,
+                    "lost_saving": [],
+                    "lost_saving_n": 0,
+                    "typed": 344,
+                    "saved": 339,
+                    "glued": 2,
+                    "missing": [
+                      "r3d1u13w001",
+                      "r3d1u14w001",
+                      "r3d1u14w002",
+                      "r3d1u14w003",
+                      "r3d1u18w005"
+                    ],
+                    "missing_n": 5,
+                    "missing_near": 1,
+                    "near_found": {
+                      "r3d1u18w005": "3d1u18w005"
+                    },
+                    "after_n": 0,
+                    "after_saved": 0
+                  },
+                  "status2": 1,
+                  "callback_s": [
+                    0.164
+                  ],
+                  "close_to_callback_s": [
+                    8.0
+                  ]
+                }
+              ],
+              "typed": 344,
+              "saved": 339,
+              "missing_near": 1,
+              "shown_known": 344,
+              "not_shown": 5,
+              "lost_saving": 0,
+              "phases": {
+                "open": {
+                  "ds": {
+                    "samples": 72,
+                    "seconds": 71.4,
+                    "cpu_s": 1.84,
+                    "cores_avg": 0.03,
+                    "cores_max_1s": 0.11,
+                    "usage_mb_max": 669,
+                    "rss_mb_start": 291,
+                    "rss_mb_max": 295,
+                    "rss_mb_end": 294,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 212,
+                    "converter_mb_max": 139
+                  },
+                  "machine": {
+                    "samples": 72,
+                    "seconds": 71.3,
+                    "app_cpu_s": 30.66,
+                    "app_cores_avg": 0.43,
+                    "app_cores_max_1s": 1.18,
+                    "app_rss_mb_start": 153.3,
+                    "app_rss_mb_max": 218.4,
+                    "app_rss_mb_end": 154.7,
+                    "browser_cores_avg": 3.11,
+                    "browser_pss_mb_max": 6618,
+                    "browser_procs_max": 28,
+                    "machine_cores_avg": 3.89,
+                    "machine_cores_max_1s": 4.0,
+                    "mem_available_mb_min": 8421
+                  }
+                },
+                "typing": {
+                  "ds": {
+                    "samples": 76,
+                    "seconds": 75.2,
+                    "cpu_s": 4.5,
+                    "cores_avg": 0.06,
+                    "cores_max_1s": 0.19,
+                    "usage_mb_max": 685,
+                    "rss_mb_start": 293,
+                    "rss_mb_max": 311,
+                    "rss_mb_end": 311,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 228,
+                    "converter_mb_max": 139
+                  },
+                  "machine": {
+                    "samples": 76,
+                    "seconds": 75.1,
+                    "app_cpu_s": 3.62,
+                    "app_cores_avg": 0.05,
+                    "app_cores_max_1s": 0.26,
+                    "app_rss_mb_start": 154.7,
+                    "app_rss_mb_max": 154.7,
+                    "app_rss_mb_end": 154.7,
+                    "browser_cores_avg": 3.42,
+                    "browser_pss_mb_max": 8253,
+                    "browser_procs_max": 27,
+                    "machine_cores_avg": 3.94,
+                    "machine_cores_max_1s": 4.0,
+                    "mem_available_mb_min": 7110
+                  }
+                },
+                "save": {
+                  "ds": {
+                    "samples": 9,
+                    "seconds": 8.0,
+                    "cpu_s": 1.51,
+                    "cores_avg": 0.19,
+                    "cores_max_1s": 1.29,
+                    "usage_mb_max": 675,
+                    "rss_mb_start": 299,
+                    "rss_mb_max": 301,
+                    "rss_mb_end": 301,
+                    "x2t_runs": 0,
+                    "x2t_mb_max": 0,
+                    "docservice_mb_max": 218,
+                    "converter_mb_max": 139
+                  },
+                  "machine": {
+                    "samples": 8,
+                    "seconds": 7.0,
+                    "app_cpu_s": 2.92,
+                    "app_cores_avg": 0.41,
+                    "app_cores_max_1s": 0.96,
+                    "app_rss_mb_start": 155.0,
+                    "app_rss_mb_max": 155.8,
+                    "app_rss_mb_end": 155.8,
+                    "browser_cores_avg": 1.24,
+                    "browser_pss_mb_max": 7469,
+                    "browser_procs_max": 28,
+                    "machine_cores_avg": 2.53,
+                    "machine_cores_max_1s": 3.93,
+                    "mem_available_mb_min": 7791
+                  }
+                }
+              },
+              "ds": {
+                "samples": 165,
+                "seconds": 164.6,
+                "cpu_s": 9.63,
+                "cores_avg": 0.06,
+                "cores_max_1s": 1.29,
+                "usage_mb_max": 790,
+                "rss_mb_start": 291,
+                "rss_mb_max": 414,
+                "rss_mb_end": 414,
+                "x2t_runs": 1,
+                "x2t_mb_max": 161,
+                "docservice_mb_max": 228,
+                "converter_mb_max": 139,
+                "kernel_peak_mb": 792,
+                "limit_cgroup": true,
+                "oom_kills": 0,
+                "oom_victims": [],
+                "docservice_restarted": false,
+                "converter_restarted": false,
+                "health": {
+                  "n": 83,
+                  "not_true": 0,
+                  "ms_median": 5.0,
+                  "ms_max": 155.6,
+                  "first_bad_s": null
+                }
+              },
+              "browser": "141.0.7390.37"
+            }
+          ],
+          "machine": {
+            "cpus": 4,
+            "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+            "mem_total_bytes": 16872808448,
+            "mem_available_bytes": 15406714880,
+            "kernel": "6.18.44-fc-v180",
+            "python": "3.12.13",
+            "load_avg": [
+              24.82,
+              22.12,
+              12.22
+            ],
+            "ds": {
+              "url": "http://127.0.0.1:18150",
+              "name": "meet-ds",
+              "image": "mirror.gcr.io/onlyoffice/documentserver@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+              "image_id": "sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+              "memory_bytes": 2147483648,
+              "memory_swap_bytes": 2147483648,
+              "cpus": 2.0,
+              "pids_limit": 512,
+              "limits_applied": true
+            }
+          },
+          "summary": {
+            "rounds": 3,
+            "opened": [
+              20,
+              20,
+              20
+            ],
+            "editors": 20,
+            "typed": [
+              351,
+              338,
+              344
+            ],
+            "saved": [
+              340,
+              335,
+              339
+            ],
+            "all_saved": false,
+            "missing": 19,
+            "missing_near": 1,
+            "shown_known": 1033,
+            "not_shown": 19,
+            "lost_saving": 0,
+            "none_lost_saving": true,
+            "opened_s_median": {
+              "n": 3,
+              "median": 56.16,
+              "min": 56.09,
+              "max": 56.45,
+              "spread": 0.36,
+              "values": [
+                56.16,
+                56.09,
+                56.45
+              ]
+            },
+            "opened_s_max": 67.71,
+            "save_s": {
+              "n": 3,
+              "median": 9.2,
+              "min": 8.7,
+              "max": 10.2,
+              "spread": 1.5,
+              "values": [
+                9.2,
+                10.2,
+                8.7
+              ]
+            },
+            "ds_cores_typing": {
+              "n": 3,
+              "median": 0.06,
+              "min": 0.06,
+              "max": 0.06,
+              "spread": 0.0,
+              "values": [
+                0.06,
+                0.06,
+                0.06
+              ]
+            },
+            "ds_cores_typing_max": {
+              "n": 3,
+              "median": 0.24,
+              "min": 0.19,
+              "max": 0.29,
+              "spread": 0.1,
+              "values": [
+                0.24,
+                0.29,
+                0.19
+              ]
+            },
+            "ds_cores_open": {
+              "n": 3,
+              "median": 0.03,
+              "min": 0.03,
+              "max": 0.03,
+              "spread": 0.0,
+              "values": [
+                0.03,
+                0.03,
+                0.03
+              ]
+            },
+            "ds_cores_open_max": {
+              "n": 3,
+              "median": 0.1,
+              "min": 0.09,
+              "max": 0.11,
+              "spread": 0.02,
+              "values": [
+                0.09,
+                0.1,
+                0.11
+              ]
+            },
+            "ds_rss_mb_max": 419,
+            "ds_rss_mb_start": {
+              "n": 3,
+              "median": 303,
+              "min": 291,
+              "max": 315,
+              "spread": 24,
+              "values": [
+                303,
+                315,
+                291
+              ]
+            },
+            "app_cores_typing": {
+              "n": 3,
+              "median": 0.05,
+              "min": 0.05,
+              "max": 0.05,
+              "spread": 0.0,
+              "values": [
+                0.05,
+                0.05,
+                0.05
+              ]
+            },
+            "app_cores_open": {
+              "n": 3,
+              "median": 0.42,
+              "min": 0.4,
+              "max": 0.43,
+              "spread": 0.03,
+              "values": [
+                0.4,
+                0.42,
+                0.43
+              ]
+            },
+            "app_cores_open_max": {
+              "n": 3,
+              "median": 1.08,
+              "min": 1.05,
+              "max": 1.18,
+              "spread": 0.13,
+              "values": [
+                1.08,
+                1.05,
+                1.18
+              ]
+            },
+            "app_rss_mb_max": 218.4,
+            "browser_pss_mb_max": 8472,
+            "machine_cores_typing": {
+              "n": 3,
+              "median": 3.95,
+              "min": 3.94,
+              "max": 3.99,
+              "spread": 0.05,
+              "values": [
+                3.99,
+                3.95,
+                3.94
+              ]
+            },
+            "mem_available_mb_min": 6982,
+            "health_not_true": 0,
+            "low_memory": false,
+            "oom_kills": 0
+          },
+          "ok": false
+        }
+      },
+      "machine": {
+        "cpus": 4,
+        "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+        "mem_total_bytes": 16872808448,
+        "mem_available_bytes": 15406714880,
+        "kernel": "6.18.44-fc-v180",
+        "python": "3.12.13",
+        "load_avg": [
+          24.82,
+          22.12,
+          12.22
+        ],
+        "ds": {
+          "url": "http://127.0.0.1:18150",
+          "name": "meet-ds",
+          "image": "mirror.gcr.io/onlyoffice/documentserver@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+          "image_id": "sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+          "memory_bytes": 2147483648,
+          "memory_swap_bytes": 2147483648,
+          "cpus": 2.0,
+          "pids_limit": 512,
+          "limits_applied": true
+        }
+      },
+      "highest_ok": 20
+    },
+    "office_outage_stop": {
+      "tool": "office_outage",
+      "mode": "stop",
+      "docs": 2,
+      "per_doc": 2,
+      "gate": {
+        "stop_s": 60.0,
+        "loss_s": 300.0
+      },
+      "round_results": [
+        {
+          "round": 1,
+          "editors": 4,
+          "opened": 4,
+          "typed_s": 36.4,
+          "stop": {
+            "seconds": 30.46,
+            "ok": true,
+            "exit_code": 0,
+            "killed_after_grace": false,
+            "oom_killed": true
+          },
+          "restart": {
+            "ok": true,
+            "healthy_s": 4.3,
+            "fonts_done_s": 0.3,
+            "app_ok_s": 116.2
+          },
+          "per_doc_results": [
+            {
+              "doc": 1,
+              "opened": 2,
+              "right_after_stop": {
+                "shown_known": 26,
+                "shown": 26,
+                "not_shown": [],
+                "not_shown_n": 0,
+                "lost_saving": [],
+                "lost_saving_n": 0,
+                "typed": 26,
+                "saved": 26,
+                "glued": 0,
+                "missing": [],
+                "missing_n": 0,
+                "missing_near": 0,
+                "near_found": {},
+                "after_n": 0,
+                "after_saved": 0
+              },
+              "after_restart": {
+                "shown_known": 26,
+                "shown": 26,
+                "not_shown": [],
+                "not_shown_n": 0,
+                "lost_saving": [],
+                "lost_saving_n": 0,
+                "typed": 26,
+                "saved": 26,
+                "glued": 0,
+                "missing": [],
+                "missing_n": 0,
+                "missing_near": 0,
+                "near_found": {},
+                "after_n": 0,
+                "after_saved": 0
+              },
+              "callbacks": [
+                {
+                  "status": 2,
+                  "after_stop_s": 0.89,
+                  "answer_s": 0.1,
+                  "http": 200
+                }
+              ]
+            },
+            {
+              "doc": 2,
+              "opened": 2,
+              "right_after_stop": {
+                "shown_known": 25,
+                "shown": 25,
+                "not_shown": [],
+                "not_shown_n": 0,
+                "lost_saving": [],
+                "lost_saving_n": 0,
+                "typed": 25,
+                "saved": 25,
+                "glued": 0,
+                "missing": [],
+                "missing_n": 0,
+                "missing_near": 0,
+                "near_found": {},
+                "after_n": 0,
+                "after_saved": 0
+              },
+              "after_restart": {
+                "shown_known": 25,
+                "shown": 25,
+                "not_shown": [],
+                "not_shown_n": 0,
+                "lost_saving": [],
+                "lost_saving_n": 0,
+                "typed": 25,
+                "saved": 25,
+                "glued": 0,
+                "missing": [],
+                "missing_n": 0,
+                "missing_near": 0,
+                "near_found": {},
+                "after_n": 0,
+                "after_saved": 0
+              },
+              "callbacks": [
+                {
+                  "status": 2,
+                  "after_stop_s": 1.7,
+                  "answer_s": 0.083,
+                  "http": 200
+                }
+              ]
+            }
+          ],
+          "typed": 51,
+          "saved_right_after": 51,
+          "saved_after_restart": 51,
+          "lost_saving": 0,
+          "not_shown": 0,
+          "machine": {
+            "samples": 49,
+            "seconds": 48.0,
+            "app_cpu_s": 5.32,
+            "app_cores_avg": 0.11,
+            "app_cores_max_1s": 0.88,
+            "app_rss_mb_start": 118.8,
+            "app_rss_mb_max": 121.8,
+            "app_rss_mb_end": 121.8,
+            "browser_cores_avg": 1.66,
+            "browser_pss_mb_max": 1931,
+            "browser_procs_max": 11,
+            "machine_cores_avg": 2.04,
+            "machine_cores_max_1s": 3.91,
+            "mem_available_mb_min": 13122
+          }
+        },
+        {
+          "round": 2,
+          "editors": 4,
+          "opened": 4,
+          "typed_s": 35.9,
+          "stop": {
+            "seconds": 30.47,
+            "ok": true,
+            "exit_code": 0,
+            "killed_after_grace": false,
+            "oom_killed": false
+          },
+          "restart": {
+            "ok": true,
+            "healthy_s": 4.3,
+            "fonts_done_s": 0.3,
+            "app_ok_s": 118.4
+          },
+          "per_doc_results": [
+            {
+              "doc": 1,
+              "opened": 2,
+              "right_after_stop": {
+                "shown_known": 24,
+                "shown": 24,
+                "not_shown": [],
+                "not_shown_n": 0,
+                "lost_saving": [],
+                "lost_saving_n": 0,
+                "typed": 24,
+                "saved": 24,
+                "glued": 0,
+                "missing": [],
+                "missing_n": 0,
+                "missing_near": 0,
+                "near_found": {},
+                "after_n": 0,
+                "after_saved": 0
+              },
+              "after_restart": {
+                "shown_known": 24,
+                "shown": 24,
+                "not_shown": [],
+                "not_shown_n": 0,
+                "lost_saving": [],
+                "lost_saving_n": 0,
+                "typed": 24,
+                "saved": 24,
+                "glued": 0,
+                "missing": [],
+                "missing_n": 0,
+                "missing_near": 0,
+                "near_found": {},
+                "after_n": 0,
+                "after_saved": 0
+              },
+              "callbacks": [
+                {
+                  "status": 2,
+                  "after_stop_s": 0.94,
+                  "answer_s": 0.099,
+                  "http": 200
+                }
+              ]
+            },
+            {
+              "doc": 2,
+              "opened": 2,
+              "right_after_stop": {
+                "shown_known": 25,
+                "shown": 25,
+                "not_shown": [],
+                "not_shown_n": 0,
+                "lost_saving": [],
+                "lost_saving_n": 0,
+                "typed": 25,
+                "saved": 25,
+                "glued": 0,
+                "missing": [],
+                "missing_n": 0,
+                "missing_near": 0,
+                "near_found": {},
+                "after_n": 0,
+                "after_saved": 0
+              },
+              "after_restart": {
+                "shown_known": 25,
+                "shown": 25,
+                "not_shown": [],
+                "not_shown_n": 0,
+                "lost_saving": [],
+                "lost_saving_n": 0,
+                "typed": 25,
+                "saved": 25,
+                "glued": 0,
+                "missing": [],
+                "missing_n": 0,
+                "missing_near": 0,
+                "near_found": {},
+                "after_n": 0,
+                "after_saved": 0
+              },
+              "callbacks": [
+                {
+                  "status": 2,
+                  "after_stop_s": 1.64,
+                  "answer_s": 0.091,
+                  "http": 200
+                }
+              ]
+            }
+          ],
+          "typed": 49,
+          "saved_right_after": 49,
+          "saved_after_restart": 49,
+          "lost_saving": 0,
+          "not_shown": 0,
+          "machine": {
+            "samples": 48,
+            "seconds": 47.0,
+            "app_cpu_s": 5.13,
+            "app_cores_avg": 0.11,
+            "app_cores_max_1s": 0.98,
+            "app_rss_mb_start": 131.6,
+            "app_rss_mb_max": 131.6,
+            "app_rss_mb_end": 124.2,
+            "browser_cores_avg": 1.67,
+            "browser_pss_mb_max": 1889,
+            "browser_procs_max": 12,
+            "machine_cores_avg": 2.07,
+            "machine_cores_max_1s": 3.99,
+            "mem_available_mb_min": 13116
+          }
+        },
+        {
+          "round": 3,
+          "editors": 4,
+          "opened": 4,
+          "typed_s": 35.5,
+          "stop": {
+            "seconds": 30.47,
+            "ok": true,
+            "exit_code": 0,
+            "killed_after_grace": false,
+            "oom_killed": false
+          },
+          "restart": {
+            "ok": true,
+            "healthy_s": 4.3,
+            "fonts_done_s": 0.3,
+            "app_ok_s": 118.7
+          },
+          "per_doc_results": [
+            {
+              "doc": 1,
+              "opened": 2,
+              "right_after_stop": {
+                "shown_known": 24,
+                "shown": 24,
+                "not_shown": [],
+                "not_shown_n": 0,
+                "lost_saving": [],
+                "lost_saving_n": 0,
+                "typed": 24,
+                "saved": 24,
+                "glued": 0,
+                "missing": [],
+                "missing_n": 0,
+                "missing_near": 0,
+                "near_found": {},
+                "after_n": 0,
+                "after_saved": 0
+              },
+              "after_restart": {
+                "shown_known": 24,
+                "shown": 24,
+                "not_shown": [],
+                "not_shown_n": 0,
+                "lost_saving": [],
+                "lost_saving_n": 0,
+                "typed": 24,
+                "saved": 24,
+                "glued": 0,
+                "missing": [],
+                "missing_n": 0,
+                "missing_near": 0,
+                "near_found": {},
+                "after_n": 0,
+                "after_saved": 0
+              },
+              "callbacks": [
+                {
+                  "status": 2,
+                  "after_stop_s": 1.02,
+                  "answer_s": 0.105,
+                  "http": 200
+                }
+              ]
+            },
+            {
+              "doc": 2,
+              "opened": 2,
+              "right_after_stop": {
+                "shown_known": 25,
+                "shown": 25,
+                "not_shown": [],
+                "not_shown_n": 0,
+                "lost_saving": [],
+                "lost_saving_n": 0,
+                "typed": 25,
+                "saved": 25,
+                "glued": 0,
+                "missing": [],
+                "missing_n": 0,
+                "missing_near": 0,
+                "near_found": {},
+                "after_n": 0,
+                "after_saved": 0
+              },
+              "after_restart": {
+                "shown_known": 25,
+                "shown": 25,
+                "not_shown": [],
+                "not_shown_n": 0,
+                "lost_saving": [],
+                "lost_saving_n": 0,
+                "typed": 25,
+                "saved": 25,
+                "glued": 0,
+                "missing": [],
+                "missing_n": 0,
+                "missing_near": 0,
+                "near_found": {},
+                "after_n": 0,
+                "after_saved": 0
+              },
+              "callbacks": [
+                {
+                  "status": 2,
+                  "after_stop_s": 1.89,
+                  "answer_s": 0.078,
+                  "http": 200
+                }
+              ]
+            }
+          ],
+          "typed": 49,
+          "saved_right_after": 49,
+          "saved_after_restart": 49,
+          "lost_saving": 0,
+          "not_shown": 0,
+          "machine": {
+            "samples": 47,
+            "seconds": 46.0,
+            "app_cpu_s": 5.14,
+            "app_cores_avg": 0.11,
+            "app_cores_max_1s": 0.96,
+            "app_rss_mb_start": 124.7,
+            "app_rss_mb_max": 125.7,
+            "app_rss_mb_end": 125.7,
+            "browser_cores_avg": 1.7,
+            "browser_pss_mb_max": 1913,
+            "browser_procs_max": 12,
+            "machine_cores_avg": 2.07,
+            "machine_cores_max_1s": 3.98,
+            "mem_available_mb_min": 13076
+          }
+        }
+      ],
+      "machine": {
+        "cpus": 4,
+        "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+        "mem_total_bytes": 16872808448,
+        "mem_available_bytes": 15631101952,
+        "kernel": "6.18.44-fc-v180",
+        "python": "3.12.13",
+        "load_avg": [
+          0.91,
+          2.19,
+          6.04
+        ],
+        "ds": {
+          "url": "http://127.0.0.1:18150",
+          "name": "meet-ds",
+          "image": "mirror.gcr.io/onlyoffice/documentserver@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+          "image_id": "sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+          "memory_bytes": 2147483648,
+          "memory_swap_bytes": 2147483648,
+          "cpus": 2.0,
+          "pids_limit": 512,
+          "limits_applied": true
+        }
+      },
+      "summary": {
+        "rounds": 3,
+        "stop_s": {
+          "n": 3,
+          "median": 30.5,
+          "min": 30.5,
+          "max": 30.5,
+          "spread": 0.0,
+          "values": [
+            30.5,
+            30.5,
+            30.5
+          ]
+        },
+        "killed_after_grace": 0,
+        "typed": [
+          51,
+          49,
+          49
+        ],
+        "saved_right_after": [
+          51,
+          49,
+          49
+        ],
+        "saved_after_restart": [
+          51,
+          49,
+          49
+        ],
+        "all_saved": true,
+        "all_saved_right_after": true,
+        "lost_saving": 0,
+        "not_shown": 0,
+        "restart_s": {
+          "n": 3,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "spread": 0.0,
+          "values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "editable_s": {
+          "n": 3,
+          "median": 123.0,
+          "min": 120.0,
+          "max": 123.0,
+          "spread": 2.0,
+          "values": [
+            120.0,
+            123.0,
+            123.0
+          ]
+        },
+        "restart_failed": 0,
+        "callback_after_stop_s": {
+          "n": 6,
+          "median": 1.33,
+          "min": 0.89,
+          "max": 1.89,
+          "spread": 1.0,
+          "values": [
+            0.89,
+            1.7,
+            0.94,
+            1.64,
+            1.02,
+            1.89
+          ]
+        }
+      },
+      "ok": true
+    },
+    "office_outage_kill": {
+      "tool": "office_outage",
+      "mode": "kill",
+      "docs": 2,
+      "per_doc": 2,
+      "gate": {
+        "stop_s": 60.0,
+        "loss_s": 300.0
+      },
+      "round_results": [
+        {
+          "round": 1,
+          "offset_s": 30.0,
+          "editors": 4,
+          "opened": 4,
+          "kill": {
+            "seconds": 0.45,
+            "ok": true
+          },
+          "restart": {
+            "ok": true,
+            "healthy_s": 4.3,
+            "fonts_done_s": 113.1,
+            "app_ok_s": 1.1
+          },
+          "sessions_after": [
+            {
+              "state": "closed",
+              "closed_reason": "lost"
+            },
+            {
+              "state": "closed",
+              "closed_reason": "lost"
+            }
+          ],
+          "per_doc_results": [
+            {
+              "doc": 1,
+              "opened": 2,
+              "checkpoint_after_open_s": 322.8,
+              "checkpoint_http": 200,
+              "checkpoint_answer_s": 0.147,
+              "loss_window_s": 32.0,
+              "typed": 268,
+              "before_checkpoint": 242,
+              "before_saved": 242,
+              "after_checkpoint": 24,
+              "after_saved": 0,
+              "lost": 26,
+              "lost_span_s": 33.3,
+              "lost_first_after_checkpoint_s": -1.5,
+              "saved_after_restart": 242,
+              "near_missing_before": 0
+            },
+            {
+              "doc": 2,
+              "opened": 2,
+              "checkpoint_after_open_s": 324.8,
+              "checkpoint_http": 200,
+              "checkpoint_answer_s": 0.116,
+              "loss_window_s": 30.0,
+              "typed": 269,
+              "before_checkpoint": 243,
+              "before_saved": 243,
+              "after_checkpoint": 24,
+              "after_saved": 0,
+              "lost": 26,
+              "lost_span_s": 31.8,
+              "lost_first_after_checkpoint_s": -2.2,
+              "saved_after_restart": 243,
+              "near_missing_before": 0
+            }
+          ],
+          "machine": {
+            "samples": 355,
+            "seconds": 354.1,
+            "app_cpu_s": 13.14,
+            "app_cores_avg": 0.04,
+            "app_cores_max_1s": 0.95,
+            "app_rss_mb_start": 118.6,
+            "app_rss_mb_max": 124.5,
+            "app_rss_mb_end": 124.5,
+            "browser_cores_avg": 1.62,
+            "browser_pss_mb_max": 2165,
+            "browser_procs_max": 11,
+            "machine_cores_avg": 1.97,
+            "machine_cores_max_1s": 3.95,
+            "mem_available_mb_min": 12854
+          }
+        },
+        {
+          "round": 2,
+          "offset_s": 150.0,
+          "editors": 4,
+          "opened": 4,
+          "kill": {
+            "seconds": 0.5,
+            "ok": true
+          },
+          "restart": {
+            "ok": false,
+            "healthy_s": null,
+            "fonts_done_s": null,
+            "app_ok_s": 501.6
+          },
+          "sessions_after": [
+            {
+              "state": "closed",
+              "closed_reason": "lost"
+            },
+            {
+              "state": "closed",
+              "closed_reason": "lost"
+            }
+          ],
+          "per_doc_results": [
+            {
+              "doc": 1,
+              "opened": 2,
+              "checkpoint_after_open_s": 324.0,
+              "checkpoint_http": 200,
+              "checkpoint_answer_s": 0.18,
+              "loss_window_s": 151.9,
+              "typed": 363,
+              "before_checkpoint": 245,
+              "before_saved": 245,
+              "after_checkpoint": 116,
+              "after_saved": 0,
+              "lost": 117,
+              "lost_span_s": 151.2,
+              "lost_first_after_checkpoint_s": -1.1,
+              "saved_after_restart": 246,
+              "near_missing_before": 0
+            },
+            {
+              "doc": 2,
+              "opened": 2,
+              "checkpoint_after_open_s": 325.9,
+              "checkpoint_http": 200,
+              "checkpoint_answer_s": 0.096,
+              "loss_window_s": 150.0,
+              "typed": 359,
+              "before_checkpoint": 243,
+              "before_saved": 243,
+              "after_checkpoint": 114,
+              "after_saved": 0,
+              "lost": 116,
+              "lost_span_s": 150.1,
+              "lost_first_after_checkpoint_s": -1.2,
+              "saved_after_restart": 243,
+              "near_missing_before": 0
+            }
+          ],
+          "machine": {
+            "samples": 476,
+            "seconds": 475.1,
+            "app_cpu_s": 15.63,
+            "app_cores_avg": 0.03,
+            "app_cores_max_1s": 0.92,
+            "app_rss_mb_start": 124.8,
+            "app_rss_mb_max": 125.6,
+            "app_rss_mb_end": 125.6,
+            "browser_cores_avg": 1.69,
+            "browser_pss_mb_max": 2308,
+            "browser_procs_max": 11,
+            "machine_cores_avg": 2.0,
+            "machine_cores_max_1s": 3.97,
+            "mem_available_mb_min": 12639
+          }
+        },
+        {
+          "round": 3,
+          "offset_s": 285.0,
+          "editors": 4,
+          "opened": 4,
+          "kill": {
+            "seconds": 0.45,
+            "ok": true
+          },
+          "restart": {
+            "ok": true,
+            "healthy_s": 4.3,
+            "fonts_done_s": 109.0,
+            "app_ok_s": 17.3
+          },
+          "sessions_after": [
+            {
+              "state": "closed",
+              "closed_reason": "lost"
+            },
+            {
+              "state": "closed",
+              "closed_reason": "lost"
+            }
+          ],
+          "per_doc_results": [
+            {
+              "doc": 1,
+              "opened": 2,
+              "checkpoint_after_open_s": 326.0,
+              "checkpoint_http": 200,
+              "checkpoint_answer_s": 0.11,
+              "loss_window_s": 286.7,
+              "typed": 470,
+              "before_checkpoint": 246,
+              "before_saved": 246,
+              "after_checkpoint": 221,
+              "after_saved": 0,
+              "lost": 223,
+              "lost_span_s": 287.7,
+              "lost_first_after_checkpoint_s": -1.2,
+              "saved_after_restart": 247,
+              "near_missing_before": 0
+            },
+            {
+              "doc": 2,
+              "opened": 2,
+              "checkpoint_after_open_s": 327.6,
+              "checkpoint_http": 200,
+              "checkpoint_answer_s": 0.099,
+              "loss_window_s": 285.0,
+              "typed": 466,
+              "before_checkpoint": 244,
+              "before_saved": 244,
+              "after_checkpoint": 220,
+              "after_saved": 0,
+              "lost": 222,
+              "lost_span_s": 286.1,
+              "lost_first_after_checkpoint_s": -1.5,
+              "saved_after_restart": 244,
+              "near_missing_before": 0
+            }
+          ],
+          "machine": {
+            "samples": 613,
+            "seconds": 612.2,
+            "app_cpu_s": 18.25,
+            "app_cores_avg": 0.03,
+            "app_cores_max_1s": 0.95,
+            "app_rss_mb_start": 125.8,
+            "app_rss_mb_max": 127.5,
+            "app_rss_mb_end": 126.2,
+            "browser_cores_avg": 1.6,
+            "browser_pss_mb_max": 2164,
+            "browser_procs_max": 12,
+            "machine_cores_avg": 1.89,
+            "machine_cores_max_1s": 3.97,
+            "mem_available_mb_min": 12783
+          }
+        }
+      ],
+      "machine": {
+        "cpus": 4,
+        "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+        "mem_total_bytes": 16872808448,
+        "mem_available_bytes": 15621562368,
+        "kernel": "6.18.44-fc-v180",
+        "python": "3.12.13",
+        "load_avg": [
+          0.34,
+          1.39,
+          1.67
+        ],
+        "ds": {
+          "url": "http://127.0.0.1:18150",
+          "name": "meet-ds",
+          "image": "mirror.gcr.io/onlyoffice/documentserver@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+          "image_id": "sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+          "memory_bytes": 2147483648,
+          "memory_swap_bytes": 2147483648,
+          "cpus": 2.0,
+          "pids_limit": 512,
+          "limits_applied": true
+        }
+      },
+      "summary": {
+        "rounds": 3,
+        "errors": [],
+        "loss_window_s": [
+          32.0,
+          30.0,
+          151.9,
+          150.0,
+          286.7,
+          285.0
+        ],
+        "checkpoint_after_open_s": {
+          "n": 6,
+          "median": 325.4,
+          "min": 322.8,
+          "max": 327.6,
+          "spread": 4.8,
+          "values": [
+            322.8,
+            324.8,
+            324.0,
+            325.9,
+            326.0,
+            327.6
+          ]
+        },
+        "before_checkpoint": 1463,
+        "before_saved": 1463,
+        "after_checkpoint": 719,
+        "after_saved": 0,
+        "lost": 730,
+        "typed": 2195,
+        "saved_after_restart": 1465,
+        "lost_first_after_checkpoint_s": [
+          -1.5,
+          -2.2,
+          -1.1,
+          -1.2,
+          -1.2,
+          -1.5
+        ],
+        "restart_s": {
+          "n": 3,
+          "median": 109.0,
+          "min": 0,
+          "max": 113.0,
+          "spread": 113.0,
+          "values": [
+            113.0,
+            0,
+            109.0
+          ]
+        },
+        "editable_s": {
+          "n": 3,
+          "median": 126.0,
+          "min": 114.0,
+          "max": 982.0,
+          "spread": 867.0,
+          "values": [
+            114.0,
+            982.0,
+            126.0
+          ]
+        },
+        "restart_failed": 1,
+        "sessions_after": [
+          {
+            "state": "closed",
+            "closed_reason": "lost"
+          },
+          {
+            "state": "closed",
+            "closed_reason": "lost"
+          },
+          {
+            "state": "closed",
+            "closed_reason": "lost"
+          },
+          {
+            "state": "closed",
+            "closed_reason": "lost"
+          },
+          {
+            "state": "closed",
+            "closed_reason": "lost"
+          },
+          {
+            "state": "closed",
+            "closed_reason": "lost"
+          }
+        ]
       },
       "ok": true
     }

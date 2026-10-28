@@ -3,13 +3,15 @@
 De metingen van §4.7 van het [bouwontwerp](bouwontwerp.md), in de sandbox, bij de integratie.
 **Deel 1**: openen, de cpu en het geheugen van de app, opslaan, de invoercontrole en het
 groottebudget. **Deel 2**: de XML-grens bij 2 GB, conversies, veel bewerkers tegelijk, stoppen en
-een kill van DS. Wat nog niet gemeten is, staat onderaan.
+een kill van DS, en de keuze van `max_editors`.
 
 Het blok tussen `<!-- gemeten -->` en `<!-- /gemeten -->` schrijft `e2e/perf/office_run.py`;
 alle getallen staan in [metingen.json](metingen.json). De rest is handwerk. Opnieuw meten: zie
 "De metingen (§4.7)" in [e2e.md](e2e.md).
 
 ## Kort
+
+Deel 1:
 
 - **Gehaald:** koud openen via de app (2,6–3,0 s, doel 5 s), de cpu van de app bij koud openen
   (0,87–0,94 core-seconde, doel 1; krap bij docx), het geheugen met 50 tunnels (+14,8 MB, doel
@@ -22,6 +24,23 @@ alle getallen staan in [metingen.json](metingen.json). De rest is handwerk. Opni
   ingebouwde thema's niet (404 op `themes//themes.js`), elke opening via een link wacht ±0,3 s
   op React, en de fout A22 (de pptx-editor komt niet klaar) zit in DS zelf. Zie
   [Bevindingen](#bevindingen).
+
+Deel 2:
+
+- **Gehaald:** conversie klein (1,1 s) en van 401 pagina's (10,2 s, doel 60 s); 401 pagina's
+  omzetten terwijl iemand opent (openen 7,6–8,1 s, doel 10 s, `/healthcheck` steeds `true`);
+  20 bewerkers (5 × 4) 60 s typen: alles wat de editors hadden, is opgeslagen, en DS gebruikte
+  daarbij 0,05 core en +120 MB van zijn 2 cpu's en 2 GB; stoppen met open editors (alles
+  opgeslagen, `docker stop` 30,5 s, doel 60 s); een kill van DS (weg is wat na het laatste
+  tussentijds opslaan getypt is, plus ±2 s; hooguit 287 s, doel 5 min).
+- **Niet gehaald:** de XML-grens bij 2 GB voor een docx met heel veel pagina's: bij 96.937 lege
+  pagina's stopte de kernel x2t 3 van de 3 keer (OOM, 1,72 GB); docservice bleef wel.
+- **`max_editors`:** de standaard van 20 per document kan blijven; zie
+  [max_editors](#max_editors-keuze-27).
+- **Wat deel 2 verder liet zien:** een docx met veel opmaak net onder de grens opent niet in de
+  editor (bevinding 4); één trage `/healthcheck` zet DS 30 s op down (5); met veel bewerkers op
+  een volle machine vallen soms de eerste woorden weg in de editor zelf (6); en na een kill kwam DS
+  één keer niet meer op door een oud pid-bestand van supervisord (7).
 
 ## Omstandigheden
 
@@ -46,6 +65,23 @@ alle getallen staan in [metingen.json](metingen.json). De rest is handwerk. Opni
   (`wait_quiet`): in de uitslag hieronder was dat hooguit 0,12 core (60 keer bij openen, 6 bij de
   tunnels, 2 bij de invoercontrole; opslaan wacht ook, maar legt het niet vast). Tijdens de tweede
   set (de tabel) deed de sessie zelf niets; zie [Herhaling](#herhaling) voor de eerste set.
+- **Deel 2** (28 oktober, 01:10–04:00 UTC): dezelfde machine en dezelfde container `meet-ds`,
+  met dezelfde grenzen (`docker inspect`: `Memory` en `MemorySwap` 2147483648, `NanoCpus` 2e9,
+  `PidsLimit` 512; `docker info`: cgroup v1, cgroupfs, `MemoryLimit` en `CPUCfsQuota` true). De
+  OOM-kills van x2t in `dmesg` tonen dat de grens echt gold. De app op dezelfde code als deel 1:
+  sinds `e2c47d9` is er niets veranderd in `api/`, `web/` of `infra/`, alleen in `e2e/perf/` en
+  `docs/`. Elke zware meting liep onder `office_watchdog.py` (stopt de meting bij minder dan
+  2 GiB vrij); die greep nergens in, het minst vrije geheugen was 7,6 GB (20 bewerkers). Vóór
+  elke meting `ps`, `top` en `free -m`: alleen dockerd, containerd, DS en de sessie, geen
+  Chromium van een eerdere run. De metingen van stoppen en killen stopten, killden en startten de
+  container zelf (6 keer); één keer heb ik hem met de hand weer op gang gebracht (bevinding 7).
+  Elk proefbestand is per run nieuw (een seed), zodat DS niets uit zijn cache van conversies
+  haalt.
+- **Een eerdere poging van deel 2** stopte met exitcode 137 en een herstart van de hele sandbox
+  (ook dockerd). Daarna met de waakhond en `free -m` herhaald: bij de proef met 2 bewerkers kwam
+  de cgroup van de sessie tot 1,1 GB (minst vrij 14,1 GB), bij 20 bewerkers bleef er minstens
+  7,6 GB vrij. Het geheugen van de editors was het dus niet; wat die herstart wel deed, is niet
+  meer na te gaan (de `dmesg` van daarvoor is weg).
 
 ## Uitslag
 
@@ -60,6 +96,9 @@ Gemaakt door `e2e/perf/office_run.py`; niet met de hand bewerken. Alle getallen:
 - office_budget: 2026-10-27T23:40:30+00:00, commit `e2c47d9`
 - office_xml: 2026-10-28T01:28:02+00:00, commit `08f45fb`
 - office_convert: 2026-10-28T01:40:08+00:00, commit `ea647e4`
+- office_editors: 2026-10-28T03:47:47+00:00, commit `1761998`
+- office_outage_stop: 2026-10-28T02:39:40+00:00, commit `1761998`
+- office_outage_kill: 2026-10-28T03:35:15+00:00, commit `1761998`
 
 - Machine: 4 cpu's (Intel(R) Xeon(R) Processor @ 2.10GHz), 15,7 GiB RAM, kernel 6.18.44-fc-v165, Python 3.12.13
 - Chromium 141.0.7390.37 (Playwright, headless)
@@ -79,9 +118,9 @@ Gemaakt door `e2e/perf/office_run.py`; niet met de hand bewerken. Alle getallen:
 | XML-grens bij 2 GB: net onder de grens per soort, ook opmaak, formules, veel pagina's | geen OOM van x2t; docservice blijft | docx (opmaak, tabellen) 3,98 MiB XML (355 hoofdstukken, 355 tabellen): 3/3 omgezet, tot klaar of mislukt 22,5 s (22,5–23,5, n=3), x2t tot 539 MB, DS tot 1028 MB, OOM 0; docx (heel veel pagina's) 3,98 MiB XML (96937 pagina's): 0/3 omgezet, tot klaar of mislukt 29,4 s (26,8–66,5, n=3), x2t tot 1722 MB, DS tot 2048 MB, OOM 3; pptx 3,97 MiB XML (401 dia's): 3/3 omgezet, tot klaar of mislukt 8,5 s (8,3–9,4, n=3), x2t tot 411 MB, DS tot 853 MB, OOM 0; xlsx (formules) 9,98 MiB XML (15376 rijen, 6 formules per rij): 3/3 omgezet, tot klaar of mislukt 18,5 s (18,5–18,5, n=3), x2t tot 576 MB, DS tot 1105 MB, OOM 0; odt 1,98 MiB XML (235 hoofdstukken): 3/3 omgezet, tot klaar of mislukt 12,5 s (12,3–13,5, n=3), x2t tot 453 MB, DS tot 950 MB, OOM 0; ods 1,98 MiB XML (1392 rijen, 4 formules per rij): 3/3 omgezet, tot klaar of mislukt 3,4 s (3,3–3,4, n=3), x2t tot 190 MB, DS tot 671 MB, OOM 0; odp 1,98 MiB XML (955 dia's): 3/3 omgezet, tot klaar of mislukt 12,5 s (11,4–12,5, n=3), x2t tot 587 MB, DS tot 1096 MB, OOM 0. docservice bleef hetzelfde proces: ja. Geopend in de editor (hooguit 120 s): docx 0/3, docx_pages 2/3 (5,0 s (4,8–5,1, n=2)), pptx 3/3 (4,2 s (4,1–4,3, n=3)), xlsx 3/3 (3,6 s (3,5–4,0, n=3)) | nee | office_xml.py, 3 rondes × 7 bestanden (elke ronde nieuwe bestanden, net onder de grens van inspect: 16 KiB eronder), via de app: upload → voorbeeld → pdf-taak → DS /converter; DsWatch elke 0,25 s (geheugen van de cgroup van DS, rss van x2t, OOM-kills uit dmesg, het proces van docservice, /healthcheck); daarna elk bewerkbaar bestand openen in de editor |
 | Conversie klein / 401 pagina's | ±1 s / ≤ 60 s (22 s in de proef) | docx 1,1 s (1,02–1,12, n=5) (DS alleen 0,54 s); xlsx 1,1 s (1,03–1,11, n=5) (DS alleen 0,64 s); pptx 1,11 s (1,02–1,12, n=5) (DS alleen 0,54 s); 401 pagina's 10,2 s (9,1–10,2, n=3) (DS alleen 9,5 s (9,0–9,7, n=3); elke PDF 401/401/401 pagina's, x2t tot 405 MB) | ja | office_convert.py: klein 5× per soort (proef.docx/.xlsx/.pptx, elke keer een ander bestand), 401 pagina's 3× (een docx van 61,8 kB met 2,48 MiB XML); via de app gemeten van het ophalen van de bron door DS (/internal/office/src) tot de pdf in de app staat (de pagina vraagt elke 0,1 s), ‘DS alleen’ is hetzelfde bestand rechtstreeks naar /converter (async, elke 0,1 s gevraagd) |
 | Conversie van 401 pagina's terwijl een editor opent | openen ≤ 10 s; /healthcheck blijft true | conversie eerst: openen 7,8 s (7,6–8,1, n=3) (3/3), conversie 11,3 s (10,9–11,3, n=3); editor eerst: openen 2,9 s (2,9–2,9, n=3) (3/3), conversie 9,1 s (9,1–10,1, n=3); /healthcheck 169× gevraagd, 0× niet true, traagste 51 ms | ja | office_convert.py, 3× per volgorde: ‘conversie eerst’ = upload van de docx van 401 pagina's, wachten tot DS de bron ophaalt, 2 s later een proef.docx openen; ‘editor eerst’ = openen en uploaden zodra de sessie er is; /healthcheck elke 0,5 s |
-| 20 bewerkers (5 documenten × 4), 60 s typen | alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd | – | niet gemeten | office_editors.py: niet gemeten |
-| Stoppen met open editors | alles opgeslagen; docker stop ≤ 60 s | – | niet gemeten | office_outage.py --mode stop: niet gemeten |
-| Kill van DS met open editors | verlies ≤ de tijd sinds het laatste tussentijds opslaan (≤ 5 min) | – | niet gemeten | office_outage.py --mode kill: niet gemeten |
+| 20 bewerkers (5 documenten × 4), 60 s typen | alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd | 2 (1 × 2): 145/145 woorden opgeslagen (3 rondes), open 6/6, openen mediaan 4,4 s (3,9–4,5, n=3), DS 0,02 cores (piek 0,07), DS 367 MB, app 0,02 cores en 162 MB, browser 1208 MB, minst vrij 13887 MB; 8 (2 × 4): 532/532 woorden opgeslagen (van de woorden die de editor zelf had: 0 niet opgeslagen; 0 getypte woorden kwamen nooit in de editor) (3 rondes), open 24/24, openen mediaan 15,1 s (14,2–16,3, n=3), DS 0,06 cores (piek 0,22), DS 404 MB, app 0,04 cores en 140 MB, browser 4211 MB, minst vrij 10908 MB; 20 (1 × 20): 1014/1033 woorden opgeslagen (van de woorden die de editor zelf had: 0 niet opgeslagen; 19 getypte woorden kwamen nooit in de editor) (3 rondes), open 60/60, openen mediaan 56,2 s (56,1–56,5, n=3), DS 0,06 cores (piek 0,29), DS 419 MB, app 0,05 cores en 218 MB, browser 8472 MB, minst vrij 6982 MB; 20 (5 × 4): 1033/1043 woorden opgeslagen (van de woorden die de editor zelf had: 0 niet opgeslagen; 10 getypte woorden kwamen nooit in de editor) (3 rondes), open 60/60, openen mediaan 58,2 s (52,8–58,5, n=3), DS 0,05 cores (piek 0,19), DS 422 MB, app 0,04 cores en 273 MB, browser 7840 MB, minst vrij 7569 MB | ja | office_editors.py, opgeschaald 2 → 8 → 20 bewerkers, elk 3 rondes (nieuwe documenten van ±150 kB XML), één Chromium met een context per bewerker, elk typt eigen woorden in een eigen alinea (110 ms per toets, 0,8–1,6 s pauze), daarna Sluiten; opgeslagen = het woord staat in de docx na status 2; wat de editor zelf had = zijn eigen tekst (sdkjs) vlak voor Sluiten; cpu: de cgroup van DS en utime + stime van de app, elke seconde; RAM: rss van de cgroup van DS, VmRSS van de app, PSS van de browser; ook 1x20 op één document (voor max_editors) |
+| Stoppen met open editors | alles opgeslagen; docker stop ≤ 60 s | docker stop 30,5 s (30,5–30,5, n=3), 0× gekild (137); opgeslagen meteen na de stop 149/149 woorden, na de herstart 149/149; status 2 kwam 1,3 s (0,9–1,9, n=6) na het begin van de stop; van de tekst die elke editor zelf had: 0 niet opgeslagen, 0 getypte woorden nooit in de editor; bewerken kon weer 123 s (120–123, n=3) na docker start | ja | office_outage.py --mode stop, 3 rondes: 2 documenten × 2 bewerkers typen 30 s, 3 s later `docker stop -t 60` op de container van DS (zoals compose met stop_grace_period 60 s); daarna de inhoud in de app, DS weer starten, wachten tot de app DS weer ok vindt, dan 90 s en nog eens |
+| Kill van DS met open editors | verlies ≤ de tijd sinds het laatste tussentijds opslaan (≤ 5 min) | van vóór de forcesave van de klok bewaard: 1463/1463 woorden; van erna 0/719 (weg: 730; na de herstart in totaal 1465/2195); verloren venster 32, 30, 152, 150, 287, 285 s (het eerste verloren woord was 1,1–2,2 s vóór de forcesave getypt: het zat nog niet in die opslag); de klok sloeg 325 s (323–328, n=6) na het openen; 1× kwam DS na docker start niet terug (zie bevindingen); bewerken kon weer 126 s (114–982, n=3) na docker start | ja | office_outage.py --mode kill, 3 rondes: 2 documenten × 2 bewerkers typen tot de klok (checkpoint_minutes 5) een forcesave (status 6, timer) gaf, dan nog 30, 150 of 285 s, dan `docker kill`; daarna DS starten, wachten tot de app DS weer ok vindt, dan 150 s; verloren venster = van de forcesave tot de kill; ‘bewaard’ = het woord staat in de docx van de app, vóór = getypt tot 3 s vóór de forcesave |
 
 Waar de tijd van openen zit (medianen in s; DS = van het verzoek om api.js tot klaar):
 
@@ -105,6 +144,12 @@ Wat faalt:
 - office_xml: docx_pages: /healthcheck 7 keer niet true
 - office_xml: docx_pages: 0 van 3 omgezet (failed, failed, failed)
 - office_xml: docx_pages: 2 van 3 geopend in de editor
+- office_editors: 20 bewerkers: ronde 1: 3 van 345 woorden niet opgeslagen (0 met één teken verschil, 3 had de editor zelf al niet)
+- office_editors: 20 bewerkers: ronde 2: 5 van 350 woorden niet opgeslagen (0 met één teken verschil, 5 had de editor zelf al niet)
+- office_editors: 20 bewerkers: ronde 3: 2 van 348 woorden niet opgeslagen (0 met één teken verschil, 2 had de editor zelf al niet)
+- office_editors: 1x20 bewerkers: ronde 1: 11 van 351 woorden niet opgeslagen (0 met één teken verschil, 11 had de editor zelf al niet)
+- office_editors: 1x20 bewerkers: ronde 2: 3 van 338 woorden niet opgeslagen (0 met één teken verschil, 3 had de editor zelf al niet)
+- office_editors: 1x20 bewerkers: ronde 3: 5 van 344 woorden niet opgeslagen (1 met één teken verschil, 5 had de editor zelf al niet)
 <!-- /gemeten -->
 
 "Via de app" is de hele weg van een link naar de editor: `page.goto("/bewerken/<id>")` tot de
@@ -277,6 +322,130 @@ is niet nagegaan. x2t gebruikte hooguit 405 MB, de container 822 MB.
 - `/healthcheck` van DS elke 0,5 s: 169 keer gevraagd, altijd `true`, het traagste antwoord 51 ms.
 - De conversie zelf duurde 9,1–11,3 s; de PDF had steeds 401 pagina's.
 
+### 20 bewerkers (5 documenten × 4), 60 s typen: ja
+
+Opgeschaald in drie stappen, elke stap 3 rondes met nieuwe documenten (een docx van ±150 kB XML,
+±25 pagina's). Elke bewerker is een eigen account in een eigen context van één Chromium, opent
+het document via de app (`/office/`, proxy en tunnel), typt 60 s eigen woorden (`r1d2u3w004`:
+ronde, document, bewerker, woord) in een eigen alinea, en klikt op Sluiten. Vlak voor Sluiten
+leest het script ook de tekst die de editor zelf had (uit sdkjs); daarna kijkt het welke woorden
+na status 2 in de docx van de app staan.
+
+| Bewerkers | Open | Openen (mediaan per ronde) | Opgeslagen | DS cpu bij typen (piek) | DS RAM | App cpu typen / openen (piek) | App RAM | Browser | Minst vrij |
+|---|---|---|---|---|---|---|---|---|---|
+| 2 (1 × 2) | 6/6 | 4,4 s (3,9–4,5) | 145/145 | 0,02 (0,07) | 367 MB | 0,02 / 0,49 (0,78) | 162 MB | 1,2 GB | 13,9 GB |
+| 8 (2 × 4) | 24/24 | 15,1 s (14,2–16,3) | 532/532 | 0,06 (0,22) | 404 MB | 0,04 / 0,54 (1,11) | 140 MB | 4,2 GB | 10,9 GB |
+| 20 (5 × 4) | 60/60 | 58,2 s (52,8–58,5) | 1033/1043 | 0,05 (0,19) | 422 MB | 0,04 / 0,40 (1,12) | 273 MB | 7,8 GB | 7,6 GB |
+| 20 (1 × 20) | 60/60 | 56,2 s (56,1–56,5) | 1014/1033 | 0,06 (0,29) | 419 MB | 0,05 / 0,42 (1,18) | 218 MB | 8,5 GB | 7,0 GB |
+
+Cpu in cores (gemiddeld over de fase, piek = de drukste seconde), RAM is het hoogste: rss van de
+cgroup van DS, VmRSS van de app, PSS van alle processen van Chromium. DS begon elke ronde op
+±300 MB. De laatste regel (20 op één document) is een extra meting voor `max_editors`; het doel
+van §4.7 is de regel 5 × 4.
+
+- **Opgeslagen: ja.** Van elk woord dat de editor zelf had, stond na status 2 elk woord in de docx:
+  bij 20 bewerkers 1033 van de 1033 (en 1014 van de 1014 met 20 op één document), bij 8 532 van
+  de 532. De 10 woorden die bij 20 ontbreken,
+  kwamen nooit in de editor: ze staan ook niet in zijn eigen tekst vlak voor Sluiten, dus ze zijn
+  niet bij het opslaan verloren. Alle 10 waren het eerste tot vierde woord van een bewerker
+  (`w001`–`w004`), getypt vlak na het openen terwijl de machine op 3,8 van zijn 4 cores zat (de
+  20 tabbladen van Chromium). Zie bevinding 6. Ook een eerdere ronde van 8 (vóór het lezen van de
+  eigen tekst) miste 3 eerste woorden van één bewerker.
+- **DS doet bijna niets.** Met 20 bewerkers tegelijk gebruikte DS 0,05 core bij typen (piek 0,19)
+  en 0,03 bij openen, van zijn 2 cpu's; zijn geheugen ging van ±300 naar hooguit 422 MB, van
+  zijn 2 GB. Het drukste moment is het opslaan na Sluiten: x2t bouwt dan de 5 docx tegelijk
+  (0,6 core gemiddeld, 1,2–1,4 in de drukste seconde, x2t tot 144 MB). Geen OOM, `/healthcheck`
+  elke 2 s gevraagd en steeds `true`.
+- **De app ook niet bij typen** (0,04 core; het verkeer van de WebSockets door de tunnel). Bij
+  openen wel: elke koude opening haalt de statische bestanden van de editor door de proxy (deel 1:
+  ±0,9 core-seconde per opening), dus 20 tegelijk gaven tot 1,1 core in de drukste seconde. Het
+  geheugen van de app bleef onder 273 MB.
+- **Het openen duurt lang, maar dat is de sandbox.** 20 editors die tegelijk openen (elke 0,5 s
+  één) vragen 20 keer de editor van Chromium op 4 cores; de machine zat dan vol (3,9 cores bij
+  openen, 3,8 bij typen, bijna alles Chromium), terwijl DS en de app samen onder 0,5 core
+  bleven. Al bij 2 bewerkers zat de machine bij openen op 3,3 cores. In het echt heeft elke
+  bewerker een eigen computer. Geen doel van §4.7.
+- **Van Sluiten tot alles opgeslagen:** 6,2 s (2), 7,6 s (8), 11,0 s (20). DS wacht na de laatste
+  bewerker eerst een paar seconden en bouwt dan de docx.
+- **Hoe:** `office_editors.py --docs 1 --per-doc 2`, `--docs 2 --per-doc 4` en `--docs 5
+  --per-doc 4`, elk met `--rounds 3 --seconds 60`, onder de waakhond (geen ingreep, `free -m`
+  elke seconde bijgehouden). 110 ms per toets, 0,8–1,6 s pauze tussen woorden.
+
+### Stoppen met open editors: ja
+
+- **Opgeslagen: alles.** 3 rondes: 2 documenten × 2 bewerkers typen 30 s, 3 s later
+  `docker stop -t 60 meet-ds` (zoals `stop_grace_period: 60s` in `compose.office.yaml`; compose
+  stopt DS vóór de app, dus de app draait door, zoals hier). Van de 149 getypte woorden stonden
+  er 149 in de docx van de app meteen na de stop, en nog steeds na de herstart. Ook de tekst die
+  elke editor zelf had vlak voor de stop: 0 woorden die er niet in kwamen, 0 die niet bewaard
+  werden.
+- **`docker stop` 30,5 s** (30,46–30,47 s, 3 keer), exitcode 0, nooit gekild (137). Status 2
+  (opgeslagen) kwam voor elk document 0,9–1,9 s na het begin van de stop; de app antwoordde in
+  0,08–0,11 s.
+- **Waar de 30 s heen gaan:** het startscript van DS vangt SIGTERM en roept
+  `documentserver-prepare4shutdown` aan, een `PUT /internal/cluster/inactive` op docservice.
+  Docservice begint meteen ("start shutdown:true", "active connections: 4"), slaat elk open
+  document op (de status 2 hierboven), maar het verzoek komt pas na 30,0 s terug (de log van de
+  container: "Preparing for shutdown" om 02:35:34,708, "Done" om 02:36:04,749). Met open editors
+  duurt een stop dus altijd ±30 s; de 60 s van Keuze 29 laat 30 s over.
+- **Na de herstart** antwoordde DS na 4,3 s op `/healthcheck`, maar bewerken kon pas weer
+  120–123 s na `docker start`: elke start doet de font-herstart (±110 s na de start,
+  `ds:converter: started` in de log), en de app wacht daarop (`health.py`, settling), want die
+  herstart gooit open sessies weg. Zo bedoeld (ontwerp-1), wel goed om te weten bij een update:
+  ±2 minuten geen editor.
+- In ronde 1 zei docker `OOMKilled: true`: dat is de OOM van x2t uit de XML-meting in hetzelfde
+  leven van de container (docker houdt die vlag tot de volgende start), niet de stop.
+- **Hoe:** `office_outage.py --mode stop` onder de waakhond (15 min, geen ingreep, minst vrij
+  12,8 GB). Na de stop leest het script de inhoud via de app, start DS (`docker start`), wacht tot
+  de app DS weer ok vindt, wacht 90 s (de ronde en het herstel van Keuze 21) en leest nog eens.
+
+### Kill van DS met open editors: ja
+
+- **Wat er weg is, is wat na het laatste tussentijds opslaan getypt is.** 3 rondes: 2 documenten
+  × 2 bewerkers typen tot de klok van de app (`checkpoint_minutes` 5) voor elk document een
+  forcesave gaf (status 6, `userdata` timer, 323–328 s na het openen), dan nog 30, 150 of 285 s,
+  dan `docker kill meet-ds`. Van de woorden die tot 3 s vóór die forcesave getypt waren, stonden
+  er 1463 van de 1463 in de docx van de app; van wat erna kwam 0 van de 719. Het verloren venster
+  was 30–32, 150–152 en 285–287 s, dus nooit meer dan 5 minuten.
+- **Plus ±2 s.** Het eerste verloren woord was telkens 1,1–2,2 s vóór de forcesave getypt: de editor
+  stuurt zijn wijzigingen in stukjes, en wat nog onderweg was, zat niet in die opslag. Het verlies
+  is dus "de tijd sinds het laatste tussentijds opslaan, plus de laatste ±2 s ervoor"; binnen de
+  5 minuten van Keuze 18.
+- **Na de herstart:** de ronde sloot alle 6 sessies als `lost` (Keuze 21), en er kwam niets meer
+  bij: meteen na de kill en na de herstart stonden dezelfde 1465 woorden in de documenten (de
+  1463 en 2 uit de laatste 3 s vóór een forcesave). De kill zelf duurde 0,45–0,5 s.
+- **Ronde 2: DS kwam na `docker start` niet terug** (bevinding 7). De container draaide, maar
+  supervisord startte niet, dus docservice en de converter ook niet; nginx gaf 502 op
+  `/healthcheck`. Na 14 minuten heb ik het oude pid-bestand weggehaald en de container
+  herstart (`rm /var/run/supervisord.pid`, `docker restart`); daarna liep alles. Het verlies van
+  ronde 2 is gemeten vóór de herstart en telt gewoon. Bewerken kon weer 114 en 126 s na
+  `docker start` (ronde 1 en 3); in ronde 2 pas na 982 s, door die ingreep.
+- **Hoe:** `office_outage.py --mode kill` onder de waakhond (52 min, geen ingreep van de
+  waakhond, minst vrij 12,6 GB). Na de kill leest het script de inhoud via de app (welke woorden
+  staan erin, met het moment waarop elk woord getypt is), start DS, wacht tot de app DS weer ok
+  vindt, wacht 150 s (de ronde) en leest nog eens.
+
+### max_editors (Keuze 27)
+
+**Aanbeveling: de standaard van 20 per document laten staan.** Niet veranderd; dat is een keuze
+voor het ontwerp, en de meting geeft geen reden om hem te veranderen.
+
+- **20 op één document gaat.** In 3 rondes kwamen alle 20 open, en van wat de editors zelf hadden,
+  ging bij het opslaan niets verloren (1014 van de 1014). DS gebruikte bij typen 0,06 core (piek
+  0,29) en hooguit 419 MB, bij het opslaan na Sluiten 1,2–1,3 core in de drukste seconde; de app
+  0,05 core bij typen en tot 1,2 core bij het openen, hooguit 218 MB. Dat is evenveel als 20
+  bewerkers over 5 documenten: voor DS kost een bewerker bij typen ±0,003 core en ±6 MB.
+- **Waarom niet hoger:** boven 20 is niet gemeten, en hier ook niet te meten: de 20 tabbladen van
+  Chromium hielden de 4 cores van de sandbox vol (3,95) en namen 8,5 GB. Wat met het aantal
+  meegroeit, is het openen: elke koude opening gaat met ±0,9 core-seconde door de proxy van de
+  app (deel 1), dus 20 mensen die tegelijk openen, geven de app tot 1,2 core. En bij 20 vielen
+  vaker de eerste woorden in de editor zelf weg dan bij 2 of 8 (bevinding 6). Een hogere
+  standaard zou dus een niet-gemeten belofte zijn.
+- **Waarom niet lager:** DS (2 cpu's, 2 GB) houdt bij 20 ruim over: hooguit 15 % van zijn cpu bij
+  typen en 21 % van zijn geheugen. Een lagere grens beschermt hier niets.
+- `max_editors` geldt per document; het totaal over alle documenten begrenst hij niet. Gemeten is
+  hooguit 20 tegelijk in totaal.
+
 ## Bevindingen
 
 1. **De presentatie-editor krijgt via de app de ingebouwde thema's niet.** De pptx-editor vraagt
@@ -329,6 +498,38 @@ is niet nagegaan. x2t gebruikte hooguit 405 MB, de container 822 MB.
    ronde 3 van de XML-meting. Voorstel: pas down na twee mislukte controles na elkaar, of na een
    mislukte controle na 5 s opnieuw kijken. Niet veranderd: de toestanden van Keuze 28 en hun
    tests horen bij een eigen stap.
+6. **Met veel bewerkers en een volle machine vallen soms de eerste woorden weg, in de editor
+   zelf.** Bij 20 bewerkers (5 × 4) ontbraken 10 van de 1043 getypte woorden (3, 5 en 2 per
+   ronde). Geen van die 10 stond in de tekst die de editor zelf had vlak voor Sluiten (gelezen
+   uit sdkjs met `asc_EditSelectAll` en `pluginMethod_GetSelectedText`), en elk woord dat daar
+   wel stond, zat na status 2 in de docx: het opslaan verloor niets. Alle 10 waren het eerste tot
+   vierde woord van een bewerker (bijvoorbeeld `r2d4u3w001`–`w003`), getypt in de eerste
+   seconden na het openen, terwijl de 20 tabbladen van Chromium de 4 cores vol hielden. Met 20
+   op één document hetzelfde: 19 van de 1033, allemaal `w001`–`w005`. Bij 2 bewerkers 0 van 145,
+   bij 8 0 van 532; een eerdere ronde van 8 miste 3 eerste woorden van één bewerker. Dat is dezelfde soort als afwijking 32 van [o2.md](o2.md) (de editor laat vlak na
+   het openen een toets vallen), maar dan hele woorden. Een echte gebruiker ziet het woord niet
+   verschijnen; het is geen stil verlies. Niet onderzocht waar in de editor de toetsen heen
+   gaan; de app ziet ze nooit.
+7. **Na een kill kwam DS één keer niet meer op: een oud pid-bestand van supervisord.** Na de
+   tweede `docker kill` (ronde 2 van de kill-meting, 03:01 UTC) draaide de container, maar zonder
+   supervisord, dus zonder docservice en converter; nginx gaf 502 op `/healthcheck`, 14 minuten
+   lang. In de log van de container staat "Starting supervisor: " zonder "supervisord.", en
+   `/var/run/supervisord.pid` was nog van het vorige leven (pid 123, 02:48:48). Het startscript
+   van het image doet `service supervisor start`, en dat is `start-stop-daemon --start --pidfile
+   /var/run/supervisord.pid --startas …`, zonder `--exec`: bestaat er een proces met dat nummer,
+   dan denkt het dat supervisord al draait en start het niets. In een nieuwe container lopen de
+   nummers elke keer bijna gelijk op (supervisord kreeg in deze container pid 131, 129, 129, 129
+   en 123), dus de kans dat het oude nummer net bezet is, is groot. Het bestand blijft na elke
+   stop staan (ook na `docker stop`: de kernel stopt supervisord, niemand ruimt op); de andere 5
+   herstarts van vannacht gingen goed. Na `rm /var/run/supervisord.pid` en `docker restart` kwam
+   hij gewoon op. Gevolg in productie: `restart: unless-stopped` start de container wel opnieuw,
+   maar DS blijft weg tot iemand ingrijpt; de app meldt na 2 minuten `office_down` (O5), editors
+   openen niet. Herstel: `docker compose exec office rm -f /var/run/supervisord.pid` en
+   `docker compose restart office`, of `docker compose up -d --force-recreate office` (alles van
+   DS staat in volumes). Voorstel: in `compose.office.yaml` een `entrypoint` die eerst dat
+   bestand weghaalt en dan `/app/ds/run-document-server.sh` start, met een test die DS een paar
+   keer killt en start; en de herstelregel in het runbook. Niet veranderd in deze stap: het is
+   infra, en zonder die test is het niet aangetoond.
 
 ## Herhaling
 
@@ -346,11 +547,3 @@ hetzelfde beeld:
 In die eerste set werkte de sessie zelf soms tegelijk (het proces van de sessie zat op dat moment
 op ±1 core); de warme docx van 4,76 s viel in zo'n moment. Daarom is de tweede set gemeten
 terwijl de sessie alleen wachtte.
-
-## Nog niet gemeten
-
-| Wat | Doel |
-|---|---|
-| 20 bewerkers (5 documenten × 4), 60 s typen | alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd |
-| Stoppen met open editors | alles opgeslagen; `docker stop` ≤ 60 s |
-| Kill van DS met open editors | verlies ≤ de tijd sinds het laatste tussentijds opslaan (≤ 5 min) |
