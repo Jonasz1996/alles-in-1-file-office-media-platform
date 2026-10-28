@@ -31,7 +31,7 @@ vervangt settings.job_timeout.
 import asyncio
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -128,6 +128,11 @@ def housekeeping(name: str, run: Hook, every: float) -> None:
     het starten). Een fout wordt gelogd en stopt niets; de volgende keer gewoon opnieuw.
     Opnieuw registreren met dezelfde naam vervangt het vorige."""
     _housekeeping[name] = Housekeeping(name, run, every)
+
+
+def forget_housekeeping(name: str) -> None:
+    """Haalt opruimwerk weer weg (media bij het stoppen: daarna is de app weer die van 0.6.0)."""
+    _housekeeping.pop(name, None)
 
 
 def register(
@@ -562,10 +567,17 @@ class Runner:
             await asyncio.sleep(HOUSEKEEPING_TICK)
 
 
-async def start_runners(settings: Settings) -> list[Runner]:
-    """Een Runner per rij (LANES), het opruimwerk alleen in default. Roep eerst recover()
-    aan."""
-    runners = [Runner(settings, lane=lane) for lane in LANES]
+def active_lanes(settings: Settings) -> tuple[str, ...]:
+    """De rijen die draaien. De rijen naast default zijn allemaal van media: zonder
+    PLATFORM_MEDIA_ENABLED draait alleen default, precies zoals in 0.6.0. Een taak van media
+    blijft dan in de rij staan tot media weer aan gaat (default pakt hem niet)."""
+    return LANES if settings.media_enabled else (DEFAULT_LANE,)
+
+
+async def start_runners(settings: Settings, lanes: Sequence[str] | None = None) -> list[Runner]:
+    """Een Runner per rij (active_lanes), het opruimwerk alleen in default. Roep eerst
+    recover() aan."""
+    runners = [Runner(settings, lane=lane) for lane in (lanes or active_lanes(settings))]
     for runner in runners:
         await runner.start()
     return runners

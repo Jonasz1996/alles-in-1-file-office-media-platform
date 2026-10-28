@@ -61,11 +61,12 @@ async def until(predicate, seconds: float = 5.0) -> float:
 
 @pytest.fixture
 async def runners(settings):
-    """Start een Runner per rij; stopt ze na de test."""
+    """Start een Runner per rij (met media aan: anders alleen default); stopt ze na de test."""
     started: list[jobs.Runner] = []
 
     async def start(s=None):
-        started.extend(await jobs.start_runners(s or settings))
+        s = (s or settings).model_copy(update={"media_enabled": True})
+        started.extend(await jobs.start_runners(s))
         return started
 
     yield start
@@ -141,6 +142,30 @@ async def test_opruimwerk_een_keer_per_periode_met_alle_runners(settings, runner
     assert [r.housekeeping for r in started] == [True, False, False, False, False]
     await asyncio.sleep(0.3)
     assert len(calls) == 1  # niet vijf keer (één per Runner)
+
+
+@pytest.mark.anyio
+async def test_zonder_media_alleen_de_rij_default(settings, maker, kind):
+    """Zonder PLATFORM_MEDIA_ENABLED draait alleen default, zoals in 0.6.0; een taak van media
+    blijft dan staan (default pakt hem niet)."""
+    ran = []
+
+    async def note(_s, payload):
+        ran.append(payload["n"])
+
+    name = kind("test.media-uit", note, lane="media")
+    assert not settings.media_enabled
+    assert jobs.active_lanes(settings) == ("default",)
+    started = await jobs.start_runners(settings)
+    try:
+        assert [r.lane for r in started] == ["default"]
+        [job_id] = await put(maker, name)
+        jobs.kick()
+        await asyncio.sleep(0.3)
+        assert ran == []
+        assert (await get(maker, job_id)).status == "queued"
+    finally:
+        await jobs.stop_runners(started)
 
 
 @pytest.mark.anyio
