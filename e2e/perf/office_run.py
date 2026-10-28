@@ -76,6 +76,9 @@ PART2 = (
     "office_outage_kill",
 )
 TOOLS = PART1 + PART2
+# Alleen over te nemen (--import), geen eigen regel: de grens van x2t voor een docx met alleen
+# pagina-einden (office_xml.py --pages) staat bij de regel van de XML-grens
+IMPORT_ONLY = ("office_xml_pages",)
 NEEDS_DS = {"office_open", "office_tunnels", "office_save", *PART2}
 SCALES = (2, 8, 20)
 BLOCK = re.compile(r"^<!-- gemeten -->$.*?^<!-- /gemeten -->$", re.S | re.M)
@@ -359,6 +362,17 @@ def rows2(results: dict[str, Any]) -> list[dict[str, str]]:
         if opens:
             value += f". Geopend in de editor (hooguit {int(office_xml.OPEN_WAIT_S)} s): "
             value += ", ".join(opens)
+        probe = (results.get("office_xml_pages") or {}).get("summary")
+        if probe:
+            value += (
+                ". Grens van x2t bij alleen pagina-einden (rechtstreeks naar DS): "
+                + "; ".join(
+                    f"{int(n):_} pagina's".replace("_", ".")
+                    + f" ({_n(k['xml_bytes'] / 1024**2, 2)} MiB XML): {k['ready']}/{k['n']}"
+                    f" omgezet, x2t tot {_n(k['x2t_mb']['max'], 0)} MB, OOM {k['oom_kills']}"
+                    for n, k in probe.items()
+                )
+            )
         add(
             what,
             goal,
@@ -773,6 +787,8 @@ def imported(tool: str, path: Path, results: dict[str, Any]) -> dict[str, Any]:
 
 
 def found_in(tool: str, result: dict[str, Any]) -> list[str]:
+    if tool in IMPORT_ONLY:
+        return []
     checks = {
         "office_open": office_open.check,
         "office_tunnels": office_tunnels.check,
@@ -830,7 +846,8 @@ def main(argv: list[str] | None = None) -> int:
     pairs = []
     for item in args.imports:
         tool, _, path = item.partition("=")
-        if not path or (tool not in TOOLS and not re.fullmatch(r"office_editors_(\d+x)?\d+", tool)):
+        known = tool in TOOLS or tool in IMPORT_ONLY
+        if not path or (not known and not re.fullmatch(r"office_editors_(\d+x)?\d+", tool)):
             parser.error(f"--import {item}: verwacht TOOL=PAD met een bekende meting")
         pairs.append((tool, Path(path)))
 

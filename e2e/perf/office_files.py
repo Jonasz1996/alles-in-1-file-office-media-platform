@@ -475,13 +475,16 @@ def make_docx(seed: int, budget: int) -> tuple[bytes, dict[str, Any]]:
     return data, {"chapters": counter["h"], "tables": counter["tables"]}
 
 
-def make_docx_pages(seed: int, budget: int) -> tuple[bytes, dict[str, Any]]:
-    """Alleen pagina-einden: één alinea per pagina, zoals pb4000k.docx van de spike."""
+def make_docx_pages(
+    seed: int, budget: int, pages: int | None = None
+) -> tuple[bytes, dict[str, Any]]:
+    """Alleen pagina-einden: één alinea per pagina, zoals pb4000k.docx van de spike. Met pages
+    precies zoveel pagina's (dan telt budget niet): voor het zoeken van de grens van x2t."""
     title = f"Pagina's {seed}"
     head = _para(_run(f"Heel veel pagina's, meting {seed}"), "Title")
     brk = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
     fixed = _docx_fixed(title) + len(head.encode())
-    n = max(0, (budget - fixed) // len(brk))
+    n = max(0, (budget - fixed) // len(brk)) if pages is None else max(0, pages - 1)
     data = _docx(head + brk * n, title)
     return data, {"pages": n + 1}
 

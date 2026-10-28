@@ -24,6 +24,10 @@ Methode
   Bewerken zegt, en weer sluiten: dan zet x2t het om naar het formaat van de editor.
 - Herhaling: ROUNDS rondes (standaard 3), elke ronde alle soorten.
 
+Met --pages 25000,50000,75000 zoekt het script in plaats daarvan de grens van x2t voor een docx
+met alleen pagina-einden: per aantal pagina's --rounds keer rechtstreeks naar /converter (niet
+via de app: het gaat om x2t), met DsWatch; de uitslag heet office_xml_pages.
+
 Draai dit altijd onder de waakhond (office_watchdog.py): een document in de editor kost ook in
 Chromium veel geheugen.
 
@@ -294,13 +298,86 @@ def test_office_xml() -> None:
     assert not errors, "\n".join(errors)
 
 
+def pages_probe(url: str, secret: str, pages: tuple[int, ...], rounds: int) -> dict[str, Any]:
+    """De grens van x2t voor een docx met alleen pagina-einden: per aantal pagina's rounds keer
+    rechtstreeks naar /converter, met de piek van x2t en de OOM-kills."""
+    import office_convert as ocv
+
+    ds_name = ob.ds_container(url).get("name")
+    if not ds_name:
+        raise SystemExit("de container van DS is niet te vinden (docker ps op de poort)")
+    files = ocv.Files()
+    rows: list[dict[str, Any]] = []
+    try:
+        for i, n in enumerate(pages):
+            for r in range(rounds):
+                seed = 10_000 * of.run_seed() + 1000 * (5 + i) + r
+                data, made = of.make_docx_pages(seed, 0, pages=n)
+                ob.wait_quiet()
+                watch = ob.DsWatch(ds_name, url, interval=0.25, health_every=0.5).start()
+                res = ocv.direct(url, secret, files, data, "docx")
+                ds = watch.stop()
+                rows.append(
+                    {
+                        "pages": made["pages"],
+                        "round": r + 1,
+                        "xml_bytes": of.xml_size(data),
+                        "file_bytes": len(data),
+                        **res,
+                        "ds": ds,
+                    }
+                )
+                print(
+                    f"{made['pages']} pagina's, ronde {r + 1}: fout {res.get('error')}, pdf"
+                    f" {res.get('pdf_pages')} pagina's in {res.get('seconds')} s, x2t"
+                    f" {ds.get('x2t_mb_max')} MB, oom {ds.get('oom_kills')}",
+                    file=sys.stderr,
+                )
+    finally:
+        files.stop()
+    summary = {}
+    for n in pages:
+        mine = [x for x in rows if x["pages"] == n]
+        summary[str(n)] = {
+            "n": len(mine),
+            "xml_bytes": mine[0]["xml_bytes"],
+            "ready": sum(1 for x in mine if x.get("pdf_pages") == n),
+            "errors": [x.get("error") for x in mine],
+            "seconds": ob.stats([x["seconds"] for x in mine], 1),
+            "x2t_mb": ob.stats([x["ds"].get("x2t_mb_max") or 0 for x in mine], 0),
+            "oom_kills": sum(x["ds"].get("oom_kills") or 0 for x in mine),
+            "docservice_restarted": any(x["ds"].get("docservice_restarted") for x in mine),
+        }
+    return {
+        "tool": "office_xml_pages",
+        "rounds": rounds,
+        "pages": list(pages),
+        "rows": rows,
+        "summary": summary,
+        "machine": ob.machine(url),
+        "ok": True,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="De XML-grens bij 2 GB (§4.7 deel 2)")
     parser.add_argument("--rounds", type=int, default=ROUNDS)
     parser.add_argument("--kinds", default=",".join(of.KINDS))
+    parser.add_argument(
+        "--pages", help="de grens van x2t zoeken: aantallen pagina's, bv. 25000,50000"
+    )
     parser.add_argument("--out", type=Path, help="JSON ook naar dit bestand")
     args = parser.parse_args(argv)
     url, secret = ob.need_real_ds()
+    if args.pages:
+        pages = tuple(int(p) for p in args.pages.split(",") if p.strip())
+        probe = pages_probe(url, secret, pages, args.rounds)
+        text = json.dumps(probe, indent=2, ensure_ascii=False)
+        print(text)
+        if args.out:
+            args.out.write_text(text + "\n")
+        write_result("office_xml_pages", probe)
+        return 0
     kinds = tuple(k.strip() for k in args.kinds.split(",") if k.strip())
     result = measure(url, secret, args.rounds, kinds)
     text = json.dumps(result, indent=2, ensure_ascii=False)
