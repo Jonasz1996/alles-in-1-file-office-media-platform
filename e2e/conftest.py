@@ -17,6 +17,11 @@ Eén treffer en de test faalt; een test die er een verwacht, haalt hem weg met G
 Office (fase 4, O0-e2e): de fixtures office (nep-DS) en real_office (echte DS, E2E_REAL_DS),
 office_browsers en real_browsers, en de optie office_frames van de bewaking. Het harnas zelf
 staat in office_harness.py; uitleg in docs/fase-4/e2e.md.
+
+Media (fase 5, M0-e2e): de fixtures media_app en media (een eigen Server met media aan en de
+lokale worker), fake_providers, ffmpeg_count, media_browser en media_browsers, en de deadline
+per mediatest (media_deadline, autouse). Het harnas zelf staat in media_harness.py; uitleg in
+docs/fase-5/e2e.md.
 """
 
 from __future__ import annotations
@@ -139,24 +144,7 @@ class Server:
         # Dezelfde poort na een herstart (seeded): open contexts en adressen blijven kloppen
         self.port = self.port or free_port()
         self.https_port = self.https_port or free_port()
-        # Niets van een PLATFORM_* uit de omgeving van de ontwikkelaar; leeg overschrijft ook
-        # wat een api/.env zou zetten (database_url leeg = SQLite in de datamap)
-        inherited = {k: v for k, v in os.environ.items() if not k.startswith("PLATFORM_")}
-        env = {
-            **inherited,
-            "PLATFORM_MODE": "standalone",
-            "PLATFORM_DATABASE_URL": "",
-            "PLATFORM_JWT_SECRET": "",
-            "PLATFORM_CLUSTER_NODES": "",
-            "PLATFORM_DATA_DIR": str(self.data_dir),
-            "PLATFORM_WEB_DIST": str(self.web_dist),
-            "PLATFORM_HOST": "127.0.0.1",
-            "PLATFORM_HTTP_PORT": str(self.port),
-            "PLATFORM_HTTPS_PORT": str(self.https_port),
-            "PLATFORM_RATE_LIMITS": "false",
-            "PLATFORM_ENVIRONMENT": "e2e",
-            **self.extra_env,
-        }
+        env = self.environment()
         log = open(self.log_path, "ab")
         try:
             self.proc = subprocess.Popen(
@@ -173,6 +161,27 @@ class Server:
         except BaseException:
             self.stop()
             raise
+
+    def environment(self) -> dict[str, str]:
+        """De omgeving van de server (ook voor `python -m app.cli` naast hem, zoals media)."""
+        # Niets van een PLATFORM_* uit de omgeving van de ontwikkelaar; leeg overschrijft ook
+        # wat een api/.env zou zetten (database_url leeg = SQLite in de datamap)
+        inherited = {k: v for k, v in os.environ.items() if not k.startswith("PLATFORM_")}
+        return {
+            **inherited,
+            "PLATFORM_MODE": "standalone",
+            "PLATFORM_DATABASE_URL": "",
+            "PLATFORM_JWT_SECRET": "",
+            "PLATFORM_CLUSTER_NODES": "",
+            "PLATFORM_DATA_DIR": str(self.data_dir),
+            "PLATFORM_WEB_DIST": str(self.web_dist),
+            "PLATFORM_HOST": "127.0.0.1",
+            "PLATFORM_HTTP_PORT": str(self.port),
+            "PLATFORM_HTTPS_PORT": str(self.https_port),
+            "PLATFORM_RATE_LIMITS": "false",
+            "PLATFORM_ENVIRONMENT": "e2e",
+            **self.extra_env,
+        }
 
     def _wait_ready(self, seconds: float = 60) -> None:
         with httpx.Client(trust_env=False, timeout=2) as probe:
@@ -655,6 +664,9 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line("markers", "office: e2e van office met de nep-DS")
     config.addinivalue_line("markers", "office_real: e2e met de echte DS (E2E_REAL_DS)")
+    config.addinivalue_line("markers", "media: e2e van media met de lokale worker en ffmpeg")
+    config.addinivalue_line("markers", "media_perf: prestatiemeting van media (rapport)")
+    config.addinivalue_line("markers", "provider_real: tegen de echte metadata-providers")
 
 
 @pytest.fixture(scope="session")
@@ -683,15 +695,22 @@ def user_factory(server: Server, admin: Account) -> Callable[..., Account]:
 
 
 @pytest.fixture(scope="session")
-def browser() -> Iterator[Any]:
+def pw() -> Iterator[Any]:
+    """Eén Playwright per sessie: de browser van de e2e en die van media (andere vlaggen)
+    starten er allebei uit."""
     from playwright.sync_api import sync_playwright
 
-    with sync_playwright() as pw:
-        b = launch_browser(pw)
-        try:
-            yield b
-        finally:
-            b.close()
+    with sync_playwright() as playwright:
+        yield playwright
+
+
+@pytest.fixture(scope="session")
+def browser(pw: Any) -> Iterator[Any]:
+    b = launch_browser(pw)
+    try:
+        yield b
+    finally:
+        b.close()
 
 
 @pytest.fixture
@@ -756,7 +775,9 @@ def _failed(request: pytest.FixtureRequest) -> bool:
     return report is not None and report.failed
 
 
-def _office_teardown(request: pytest.FixtureRequest, browsers: Browsers, out: Path) -> list[str]:
+def _browsers_teardown(request: pytest.FixtureRequest, browsers: Browsers, out: Path) -> list[str]:
+    """Schermafdrukken bij een fout, de meldingen uit DS als bijlage, en de problemen van de
+    bewaking (office en media)."""
     name = re.sub(r"[^A-Za-z0-9_.-]+", "_", request.node.name)[:80]
     if _failed(request):
         for path in browsers.screenshots(out, name):
@@ -813,7 +834,7 @@ def office_browsers(
     test falen."""
     b = Browsers(browser, office.server)
     yield b
-    problems = _office_teardown(request, b, artifacts_dir(tmp_path_factory))
+    problems = _browsers_teardown(request, b, artifacts_dir(tmp_path_factory))
     if problems:
         pytest.fail("Problemen in de browser:\n" + "\n".join(problems), pytrace=False)
 
@@ -829,6 +850,137 @@ def real_browsers(
     bewaard (bijlage), niet als fout geteld; al het andere faalt zoals altijd."""
     b = Browsers(browser, real_office.server, office_frames="record")
     yield b
-    problems = _office_teardown(request, b, artifacts_dir(tmp_path_factory))
+    problems = _browsers_teardown(request, b, artifacts_dir(tmp_path_factory))
+    if problems:
+        pytest.fail("Problemen in de browser:\n" + "\n".join(problems), pytrace=False)
+
+
+# --- media (fase 5, M0-e2e; zie docs/fase-5/e2e.md) ---
+
+
+def _media_kind(item: pytest.Item) -> str | None:
+    """media_perf, media, of None voor een test zonder media."""
+    for name in ("media_perf", "media"):
+        if item.get_closest_marker(name) is not None:
+            return name
+    return None
+
+
+@pytest.fixture(autouse=True)
+def media_deadline(request: pytest.FixtureRequest) -> Iterator[Any]:
+    """Elke mediatest een eigen deadline (§4.2: 90 s, 300 s voor media_perf). Verloopt hij,
+    dan een dump van alle draden, de app en de worker weg op pid, en de test faalt."""
+    kind = _media_kind(request.node)
+    if kind is None:
+        yield None
+        return
+    from media_harness import DEADLINE_PERF_S, DEADLINE_S, Deadline
+
+    seconds = DEADLINE_PERF_S if kind == "media_perf" else DEADLINE_S
+    deadline = Deadline(seconds).start()
+    yield deadline
+    deadline.cancel()
+    if deadline.expired:
+        stopped = ", ".join(deadline.stopped) or "niets"
+        pytest.fail(
+            f"De deadline van {seconds:.0f} s verliep. Op pid gestopt: {stopped}.\n{deadline.dump}",
+            pytrace=False,
+        )
+
+
+@pytest.fixture(scope="session")
+def fake_providers(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Any]:
+    """De nep-providers (TMDB, plaatjes, MusicBrainz, CAA) als proces op 127.0.0.1 (§3.6)."""
+    from media_harness import start_fake_providers
+
+    fake = start_fake_providers(tmp_path_factory.mktemp("nep-providers"))
+    try:
+        yield fake
+    finally:
+        fake.stop()
+
+
+@pytest.fixture(scope="session")
+def media_app(tmp_path_factory: pytest.TempPathFactory, fake_providers: Any) -> Iterator[Any]:
+    """Een eigen Server met media aan en de lokale worker (§3.6), voor de hele sessie."""
+    from tests.media import fixtures
+
+    if not fixtures.available():
+        pytest.skip("geen ffmpeg en ffprobe: de fixtures en de lokale worker hebben ze nodig")
+    from media_harness import start_media
+
+    app = start_media(tmp_path_factory.mktemp("media"), fake_providers)
+    try:
+        yield app
+    finally:
+        left = app.stop()
+        if left:
+            print(f"na het stoppen van media op pid weggehaald: {left}", file=sys.stderr)
+
+
+@pytest.fixture
+def media(media_app: Any, request: pytest.FixtureRequest) -> Any:
+    """De app van media voor deze test: weer gestart na een deadline, en voor media_perf de
+    worker op 3 cores (taskset -c 0-2, regel 14)."""
+    from media_harness import PERF_CPUS
+
+    media_app.ensure_running()
+    media_app.pin(PERF_CPUS if _media_kind(request.node) == "media_perf" else None)
+    return media_app
+
+
+@pytest.fixture
+def ffmpeg_count(media: Any) -> Iterator[Any]:
+    """Een draad telt elke 0,5 s ffmpeg en ffprobe in de boom van de app; de test faalt bij
+    een vierde tegelijk, en als er na de test (na hooguit 15 s) nog een is (regel 13)."""
+    from media_harness import FfmpegWatch
+
+    watch = FfmpegWatch(
+        lambda: [pid] if (pid := media.pid) else [],
+        cpus=lambda: media.cpus,
+        pinned=media.worker_pid,
+    )
+    watch.start()
+    yield watch
+    watch.stop()
+    left = watch.wait_zero()
+    killed = watch.kill_left() if left else []
+    problems = []
+    if watch.over:
+        problems.append("Meer dan 3 ffmpeg tegelijk (regel 13):\n" + "\n".join(watch.over))
+    if watch.affinity:
+        problems.append("ffmpeg buiten de cores van de worker: " + ", ".join(watch.affinity))
+    if left:
+        problems.append(f"Na de test nog {len(left)} ffmpeg; op pid gestopt: {killed}")
+    if problems:
+        pytest.fail("\n".join(problems), pytrace=False)
+
+
+@pytest.fixture(scope="session")
+def media_browser(pw: Any) -> Iterator[Any]:
+    """Chromium met --autoplay-policy=no-user-gesture-required (§3.6)."""
+    from media_harness import launch_media_browser
+
+    b = launch_media_browser(pw)
+    try:
+        yield b
+    finally:
+        b.close()
+
+
+@pytest.fixture
+def media_browsers(
+    media_browser: Any,
+    media: Any,
+    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[Any]:
+    """Contexts op de app van media, met de bewaking en FRAME_JS; voor media_perf 40 Mbit/s
+    en 20 ms op elke pagina (CDP)."""
+    from media_harness import MediaBrowsers
+
+    b = MediaBrowsers(media_browser, media.server, perf=_media_kind(request.node) == "media_perf")
+    yield b
+    problems = _browsers_teardown(request, b, artifacts_dir(tmp_path_factory))
     if problems:
         pytest.fail("Problemen in de browser:\n" + "\n".join(problems), pytrace=False)
