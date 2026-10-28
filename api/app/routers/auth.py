@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session as OrmSession
 from app import errors, jobs, totp, userdelete
 from app.config import Settings, get_settings
 from app.db import Session
+from app.media import sessions as media_sessions
 from app.models import Job, Node, RecoveryCode, RefreshToken, User, Version
 from app.office import gate as office_gate
 from app.office import runtime as office_runtime
@@ -467,7 +468,8 @@ def close_office_after_commit(session: AsyncSession, close: Callable[[], object]
     """close() (de cache van de poort wissen en de tunnels sluiten) pas als het intrekken
     gecommit is. Ervoor zag een verzoek dat in het gat kwam nog de oude stand: de poort liet het
     door en onthield dat weer 15 s, en een editor die dan opnieuw verbond, hield zijn tunnel.
-    Draait de transactie terug, dan is er niets ingetrokken en gebeurt er niets."""
+    Draait de transactie terug, dan is er niets ingetrokken en gebeurt er niets. Sinds fase 5
+    gaan ook de afspeelsessies van media zo dicht (media.sessions.close_user en close_login)."""
     session.info.setdefault(_OFFICE_CLOSE, []).append(close)
 
 
@@ -477,6 +479,7 @@ def _close_office(session: OrmSession) -> None:
         try:
             close()
         except Exception:  # noqa: BLE001 - de controle van de tunnel (15 s) vangt het nog
+            # (en bij media de guard, per verzoek)
             log.exception("office: de editors van een ingetrokken login sluiten mislukte")
 
 
@@ -501,6 +504,8 @@ async def revoke_other_logins(
         query.values(revoked_at=datetime.now(UTC)).execution_options(synchronize_session=False)
     )
     close_office_after_commit(session, functools.partial(office_tunnel.close_user, user_id, keep))
+    # Ook de afspeelsessies van media (fase 5, Keuze 21), na dezelfde commit
+    close_office_after_commit(session, functools.partial(media_sessions.close_user, user_id, keep))
 
 
 async def revoke_family(session: AsyncSession, family: uuid.UUID, now: datetime) -> None:
@@ -513,6 +518,7 @@ async def revoke_family(session: AsyncSession, family: uuid.UUID, now: datetime)
         .execution_options(synchronize_session=False)
     )
     close_office_after_commit(session, functools.partial(office_tunnel.close_login, family))
+    close_office_after_commit(session, functools.partial(media_sessions.close_login, family))
 
 
 async def new_recovery_codes(session: Session, user: User) -> list[str]:

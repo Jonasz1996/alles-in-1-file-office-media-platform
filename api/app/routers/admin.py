@@ -24,6 +24,7 @@ from app.cluster import (
 )
 from app.config import Settings, get_settings
 from app.db import Session
+from app.media import monitor as media_monitor
 from app.models import Blob, Node, Upload, User, Version
 from app.office import monitor as office_monitor
 from app.office.state import office_state
@@ -171,6 +172,10 @@ async def system_info(
         notices.extend(await office_monitor.notices(office_state(request.app), session))
     except Exception:
         log.exception("Meldingen van office konden niet worden opgehaald")
+    try:  # de meldingen van media (fase 5, M10 vult ze); net zo: /beheer breekt er niet op
+        notices.extend(await media_monitor.notices(request.app, session))
+    except Exception:
+        log.exception("Meldingen van media konden niet worden opgehaald")
     sqlite = settings.db_url.startswith("sqlite")
     info = SystemInfo(
         version=__version__,

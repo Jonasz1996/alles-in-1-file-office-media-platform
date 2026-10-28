@@ -47,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app import access, events, jobs, photodate
 from app.config import Settings
 from app.db import get_engine
+from app.media import hooks as media_hooks
 from app.models import Blob, Node
 from app.office import convert
 from app.storage import BlobStore
@@ -109,6 +110,8 @@ async def discard(blobs: BlobStore, sha: str) -> None:
     zelf en het neerzetten van een nieuwe preview: zo blijft er nooit een achter."""
     await anyio.to_thread.run_sync(shutil.rmtree, directory(blobs, sha), True)
     await convert.on_discard(blobs, sha)  # de PDF van office erbij (O3)
+    # Media (fase 5): eerst de sessies op die sha dicht, dan de cache van M4 en M5; faalt nooit
+    await media_hooks.on_discard(sha)
 
 
 def url_key(settings: Settings) -> bytes:

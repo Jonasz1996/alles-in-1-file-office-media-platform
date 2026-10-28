@@ -38,6 +38,7 @@ from app import access, errors, events, photodate, previews
 from app.access import Grant, Step
 from app.config import Settings, get_settings
 from app.db import Session
+from app.media import hooks as media_hooks
 from app.mime import read_head, sniff
 from app.models import Blob, GroupMember, Node, NodeTag, Share, Tag, Upload, User, Version
 from app.routers.auth import used_bytes
@@ -622,6 +623,8 @@ async def notify(
     old_parent_id: uuid.UUID | None = None,
     seen: dict[uuid.UUID, dict[uuid.UUID, int]] | None = None,
     below: dict[uuid.UUID, set[uuid.UUID]] | None = None,
+    *,
+    media_type: str | None = None,
 ) -> None:
     """Na de commit: open web-apps en apps laten weten dat de boom veranderde. Naar de
     eigenaar en naar iedereen die de node via een deling kan zien (bij verplaatsen ook wie de
@@ -629,7 +632,12 @@ async def notify(
     krijgt parent_id null. seen: van access.watchers, vooraf uitgerekend als de node na de
     commit weg is. below: van shared_below, bij weggooien, terugzetten en definitief
     verwijderen van een map: wie alleen een gedeelde map daaronder heeft, raakt die kwijt of
-    krijgt hem terug, en hoort dat over die gedeelde map zelf (zonder iets erboven)."""
+    krijgt hem terug, en hoort dat over die gedeelde map zelf (zonder iets erboven).
+
+    media_type: wat media hoort als het iets anders is dan type: "node.version" bij nieuwe
+    inhoud (het event blijft node.changed). Media sluit dan de afspeelsessies op die node."""
+    # De haak van media (fase 5, §3.5): synchroon, zonder I/O; zonder media doet hij niets
+    media_hooks.touched([node.id], media_type or type)
     moved = old_parent_id is not None and old_parent_id != node.parent_id
     if seen is None:
         seen = await access.watchers(session, [node.id, old_parent_id if moved else None])
@@ -671,6 +679,7 @@ async def notify_many(
     shared_below (bij weggooien, terugzetten en definitief verwijderen van mappen)."""
     if not nodes:
         return
+    media_hooks.touched([n.id for n in nodes], type)  # de haak van media, zoals in notify()
     old_parents = old_parents or {}
     moved = {
         n.id: old
@@ -1141,7 +1150,13 @@ async def place_file(
                 ):
                     await blobs.give_back(source, sha)
             raise
-    await notify(session, node, "node.created" if created else "node.changed")
+    # Bestond hij al, dan is dit nieuwe inhoud: een nieuwe versie (voor media)
+    await notify(
+        session,
+        node,
+        "node.created" if created else "node.changed",
+        media_type=None if created else "node.version",
+    )
     if not moved:
         await anyio.Path(source).unlink(missing_ok=True)  # die inhoud stond er al
     await collect_garbage(session, blobs)
@@ -1553,7 +1568,7 @@ async def restore_version(
             await session.delete(version)
         await session.commit()
     if changed:
-        await notify(session, node, "node.changed")
+        await notify(session, node, "node.changed", media_type="node.version")
     return await one_out(session, user, node)
 
 

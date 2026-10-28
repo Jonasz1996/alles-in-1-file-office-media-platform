@@ -179,17 +179,26 @@ class _Scan:
     previews: int
     uploads: int
     disk: Disk | None
+    media: int = 0
+
+
+def media_bytes(settings: Settings) -> int:
+    """De haak voor het deel media (fase 5): de cache onder <data_dir>/media. M10 meet het en
+    zet het in StorageParts; tot dan 0, en /beheer is precies dat van 0.6.0. Draait in de
+    thread van _scan."""
+    return 0
 
 
 def _scan(settings: Settings) -> _Scan:
     previews = dir_bytes(settings.data_dir / "previews")
     uploads = dir_bytes(settings.upload_dir)
+    media = media_bytes(settings)
     try:
         found = shutil.disk_usage(settings.data_dir)
         disk = Disk(total_bytes=found.total, used_bytes=found.used, free_bytes=found.free)
     except OSError:
         disk = None
-    return _Scan(previews, uploads, disk)
+    return _Scan(previews, uploads, disk, media)
 
 
 async def measure(settings: Settings) -> NodeStorage:
@@ -200,7 +209,7 @@ async def measure(settings: Settings) -> NodeStorage:
         database = await database_bytes(session, settings)
         await session.commit()
     scan = await anyio.to_thread.run_sync(_scan, settings)
-    known = blobs + scan.previews + scan.uploads + database
+    known = blobs + scan.previews + scan.uploads + database + scan.media
     other = max(0, scan.disk.used_bytes - known) if scan.disk else 0
     return NodeStorage(
         name=settings.node_name,
