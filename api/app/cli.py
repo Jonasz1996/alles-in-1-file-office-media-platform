@@ -24,16 +24,34 @@ Wat alleen in de nieuwere kolommen en tabellen stond, is daarna weg. Stop de app
 office-checkpoint vraagt de document server om alle open documenten tussentijds op te slaan
 en wacht daar hooguit --wait seconden op (vóór het stoppen of bijwerken van office). Het
 zegt hoeveel documenten zijn opgeslagen.
+
+Media (fase 5), elk een dunne aanroep van een functie in app/media (de pakketten bouwen ze; tot
+dan zegt een stub dat media uit staat):
+
+    python -m app.cli media-import /data/import/Films --naar /Films --eigenaar <e-mail>
+                                    [--verplaats]
+    python -m app.cli media-parse <pad>…
+    python -m app.cli media-status [--wait 20] [--sessions]
+    python -m app.cli media-provider-check [--opnemen]
+    python -m app.cli media-loadtest [--sessies 3] [--duur 300] [--codec h264] [--json uit.json]
+                                     [--extern <adres>]
+
+Een fout van media (zoals 503 media_off) geeft de melding en exitcode 1.
 """
 
 import argparse
 import asyncio
+import json
 import sys
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import Any
 
 from alembic import command
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util import CommandError
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -187,6 +205,113 @@ def _checkpoint(settings: Settings, wait: float) -> int:
     return 0
 
 
+def _media_failed(exc: HTTPException) -> int:
+    detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+    code = detail.get("code")
+    print(f"{detail.get('message')}" + (f" ({code})" if code else ""), file=sys.stderr)
+    return 1
+
+
+def _media_run(settings: Settings, run: Callable[[], Awaitable[Any]]) -> Any:
+    """Een functie van media; daarna de database dicht (zoals de andere commando's)."""
+
+    async def wrapped() -> Any:
+        try:
+            return await run()
+        finally:
+            await get_engine(settings).dispose()
+
+    return asyncio.run(wrapped())
+
+
+def _media(settings: Settings, args: argparse.Namespace) -> int:
+    from app.media import importer, loadtest, names, providers, status
+
+    try:
+        if args.command == "media-parse":
+            for path in args.paths:
+                print(json.dumps({"pad": path, **names.parse(path)}, ensure_ascii=False))
+            return 0
+        if args.command == "media-import":
+            job = _media_run(
+                settings,
+                lambda: importer.start_cli(
+                    settings, args.source, args.naar, args.eigenaar, move=args.verplaats
+                ),
+            )
+            print(f"De import staat klaar (taak {job}). Volg hem op /beheer → Media.")
+            return 0
+        if args.command == "media-status":
+            found = _media_run(
+                settings,
+                lambda: status.collect(settings, sessions=args.sessions, wait=args.wait),
+            )
+            for line in found.get("lines", []):
+                print(line)
+            return 0 if found.get("ok", False) else 1
+        if args.command == "media-provider-check":
+            found = _media_run(settings, lambda: providers.check(settings, record=args.opnemen))
+            for name, state in found.items():
+                print(f"{name}: {state}")
+            return 1 if any(s in ("auth", "unavailable") for s in found.values()) else 0
+        # media-loadtest
+        result = _media_run(
+            settings,
+            lambda: loadtest.run_cli(
+                settings,
+                streams=args.sessies,
+                seconds=args.duur,
+                codec=args.codec,
+                external=args.extern,
+            ),
+        )
+        text = json.dumps(result, ensure_ascii=False, indent=2, default=str)
+        if args.json:
+            Path(args.json).write_text(text + "\n")
+            print(f"De uitkomst staat in {args.json}.")
+        else:
+            print(text)
+        return 0 if result.get("passed", True) else 1
+    except HTTPException as exc:
+        return _media_failed(exc)
+
+
+MEDIA_COMMANDS = (
+    "media-import",
+    "media-parse",
+    "media-status",
+    "media-provider-check",
+    "media-loadtest",
+)
+
+
+def _media_parsers(commands) -> None:
+    imp = commands.add_parser("media-import", help="een map uit /data/import importeren")
+    imp.add_argument("source", metavar="bron", help="bijvoorbeeld /data/import/Films")
+    imp.add_argument("--naar", required=True, help="de doelmap, bijvoorbeeld /Films")
+    imp.add_argument("--eigenaar", required=True, help="e-mailadres van de eigenaar")
+    imp.add_argument("--verplaats", action="store_true", help="verplaatsen in plaats van kopiëren")
+    parse = commands.add_parser("media-parse", help="laten zien wat de parser in een naam ziet")
+    parse.add_argument("paths", metavar="pad", nargs="+")
+    stat = commands.add_parser("media-status", help="de staat van media")
+    stat.add_argument(
+        "--wait", type=float, default=0.0, help="hooguit zoveel seconden op de worker wachten"
+    )
+    stat.add_argument("--sessions", action="store_true", help="ook wie er nu kijkt")
+    check = commands.add_parser(
+        "media-provider-check", help="de providers van metadata nakijken (TMDB, MusicBrainz)"
+    )
+    check.add_argument(
+        "--opnemen", action="store_true", help="de vorm van de antwoorden bewaren (§4.4)"
+    )
+    load = commands.add_parser("media-loadtest", help="de belastingtest van media (§4.6)")
+    load.add_argument("--sessies", type=int, default=3)
+    load.add_argument("--duur", type=int, default=300, help="seconden")
+    load.add_argument("--codec", choices=("h264", "vp9"), default="h264")
+    load.add_argument("--json", metavar="pad", help="de uitkomst naar dit bestand")
+    load.add_argument("--extern", metavar="adres", help="spelers buiten de app, tegen dit adres")
+
+
 def main(argv: list[str] | None = None) -> int:
     # Geen __doc__: dat is None onder python -OO
     parser = argparse.ArgumentParser(
@@ -212,8 +337,11 @@ def main(argv: list[str] | None = None) -> int:
     checkpoint.add_argument(
         "--wait", type=float, default=30.0, help="hooguit zoveel seconden wachten (standaard 30)"
     )
+    _media_parsers(commands)
     args = parser.parse_args(argv)
     settings = get_settings()
+    if args.command in MEDIA_COMMANDS:
+        return _media(settings, args)
     if args.command == "db-downgrade":
         return _downgrade(settings, args.revision, args.ja)
     if args.command == "office-checkpoint":
