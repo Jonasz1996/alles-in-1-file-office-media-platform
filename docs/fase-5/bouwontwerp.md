@@ -3665,6 +3665,22 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
   het harnas bij de start maakt met echte ffmpeg. Precies het contract van §3.4. Zo kan M6 bouwen
   voordat M3 en M4 klaar zijn. `media_contract.py` beschrijft de scenario's: M0 draait ze tegen de
   nep, M4 tegen het echte (`test_media_contract.py`).
+- *Noot bij de bouw van M0 (M0-e2e):* de nep-worker, `record.py`, `worker_contract.py`, de
+  nep-stroom en `media_contract.py` zijn er zo, met deze keuzes ([m0.md](m0.md), afwijkingen
+  21–27):
+  - de vooraf gemaakte uitvoer van `stream` zijn fixtures: `stream_src.mkv` (20 s H.264 + AAC) en
+    `stream_h264.mp4` en `stream_vp9.mp4`, gemaakt met de transcode van §3.3 op 360p, plus een
+    `_alt` op 480×270 voor `new_stsd`. Een eigen kleine lezer, `tests/media/boxes.py`, knipt ze;
+  - de nep zoekt de bron van `probe` op zijn inhoud (sha256) tussen de fixtures. De opnames zijn
+    van ffmpeg 6.1.1 (de sandbox), niet van 7.1.5;
+  - de tijden hebben één referentie: mediatijd. Ook bij remux begint segment 0 op 0 en niet op het
+    eerste keyframe. Zo is de som van de `EXTINF`'s tot segment n precies het begin `b_n`;
+  - `urls` in het antwoord van `play` zijn relatief aan `/api/v1/stream/{sid}/`, net als `init` in
+    `map.json`;
+  - het contract heeft een haak `pace(speed)`. Een sprong is alleen een herstart als de producent
+    er nog niet is; M4 zet daarvoor `fake_worker.speed`;
+  - bij MPEG-TS eist het contract na een sprong alleen dat het segment in zijn eigen vak van het
+    rooster valt en met een keyframe begint (Keuze 22).
 - **`api/tests/media/fake_providers/`:** de nep-server voor TMDB, het plaatjeshost, MusicBrainz en
   de Cover Art Archive (§4.4). M0 maakt de kern (server, fouten op bestelling, logboek, laden van
   data); M8 vult hem. (M0) Eén Starlette-app, gerouteerd op de `Host` of een padvoorvoegsel; in
@@ -3809,10 +3825,13 @@ S11 VP9 = 1,0 × x264, `d_codec` VP9 0,18 en AV1 0,25, VP9 met HDR hooguit 720; 
   `docs/fase-5/README.md` heeft een skelet.
 - Tag `fase5-basis`.
 
-*Stand na het samenvoegen van M0-api, M0-web en M0-los* ([m0.md](m0.md), "Open"): nog niet
-gebouwd zijn de nep-worker, `worker_contract.py`, `record.py`, `recorded/`, de nep-stream en
-`media_contract.py` (M0-e2e), het deel van `test_media_logs.py` met de nep-stream, de jobs
-`api-media`, `e2e-media`, `e2e-media-perf` en `media-image`, en de tag. De selftest op 7.1 komt
+*Stand na het samenvoegen van M0-api, M0-web en M0-los* ([m0.md](m0.md), "Open"): M0-e2e
+bouwde daarna de nep-worker, `worker_contract.py` (tegen de nep, en tegen de lokale worker voor
+`caps`, `probe` en stoppen), `record.py` met `recorded/`, de nep-stroom, `media_contract.py` en
+het deel van `test_media_logs.py` met de nep-stroom. Nog niet gebouwd zijn het deel van het
+harnas in `e2e/` (`media_harness.py`, de fixture `media`, `ffmpeg_count`, de markers in
+`e2e/pytest.ini`), de jobs `api-media`, `e2e-media`, `e2e-media-perf` en `media-image`, en de
+tag. De selftest op 7.1 komt
 met `media-image` (M1 bouwt `--selftest`). De fixtures zijn lokaal in 26 s gemaakt; in CI pas
 met `api-media`. Het artefact `spike.json` is van de run op `f713169`, niet van de laatste
 commit van M0. De rest van de lijst hierboven is groen.
