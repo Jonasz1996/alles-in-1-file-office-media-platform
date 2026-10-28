@@ -48,6 +48,7 @@ MIN_FREE = int(1.5 * 1024**3)
 KEY_DELAY_MS = 110
 PAUSE_S = (0.8, 1.6)
 READY_TIMEOUT_MS = 180_000
+CLOSE_S = 15.0
 WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -199,6 +200,40 @@ class Editor:
         return f"{self.tag}d{self.doc}u{self.user}w"
 
 
+async def _within(aw: Any, seconds: float) -> tuple[bool, Any]:
+    """aw als eigen taak, hooguit seconds: (klaar zonder fout, uitslag). Niet asyncio.wait_for:
+    die wacht na de tijd tot de geannuleerde aanroep terugkomt, en een aanroep van Playwright bij
+    een renderer die vastzit, komt pas terug als die renderer weer antwoordt."""
+    task = asyncio.ensure_future(aw)
+    done, _ = await asyncio.wait({task}, timeout=seconds)
+    if not done:
+        task.cancel()
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        return False, None
+    if task.cancelled() or task.exception() is not None:
+        return False, None
+    return True, task.result()
+
+
+async def _bounded(aw: Any, seconds: float) -> bool:
+    """aw afwachten, hooguit seconds; False bij een fout of als het te lang duurt."""
+    return (await _within(aw, seconds))[0]
+
+
+def _chrome_main() -> int | None:
+    """Het hoofdproces van de browser die deze Python net startte (via de driver van Playwright)."""
+    pids = ob.office_watchdog.descendants(os.getpid())
+    comm = {p: ob._read(f"/proc/{p}/comm").strip() for p in pids}
+    for p in pids:
+        if comm[p] != "chrome":
+            continue
+        stat = ob._read(f"/proc/{p}/stat")
+        ppid = int(stat.rsplit(")", 1)[1].split()[1]) if stat else 0
+        if comm.get(ppid) != "chrome":
+            return p
+    return None
+
+
 class Crowd:
     """Eén Chromium met veel editors (async Playwright)."""
 
@@ -209,6 +244,11 @@ class Crowd:
         self._pw: Any = None
         self.browser: Any = None
         self.version: str | None = None
+        self._chrome: int | None = None
+        self.killed: list[int] = []
+        self.teardown: dict[str, Any] = {}
+        self._pending: list[asyncio.Task] = []
+        self.ready_s = READY_TIMEOUT_MS / 1000
 
     async def __aenter__(self) -> Crowd:
         from playwright.async_api import async_playwright
@@ -220,16 +260,38 @@ class Crowd:
             headless=os.environ.get("E2E_HEADED") != "1",
         )
         self.version = self.browser.version
+        self._chrome = _chrome_main()
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
-        for e in self.editors:
-            with contextlib.suppress(Exception):
-                await e.context.close()
-        with contextlib.suppress(Exception):
-            await self.browser.close()
-        with contextlib.suppress(Exception):
-            await self._pw.stop()
+        # Een renderer die vastzit (een enorm document dat de editor niet kan opbouwen) laat
+        # close() minutenlang wachten. Dus: elke stap een eigen tijd, en lukt het niet, dan de
+        # browser (zijn hoofdproces, op PID) zelf stoppen.
+        t0 = time.monotonic()
+        # Een editor die niet open kwam, heeft vaak een renderer die vastzit: dan elke close
+        # overslaan en meteen de browser stoppen (voor DS is dat een tabblad dat dichtgaat).
+        stuck = any(e.opened_s is None for e in self.editors)
+        ok = not (stuck and self._chrome)
+        for e in self.editors if ok else ():
+            if e.context is not None:
+                ok = await _bounded(e.context.close(), CLOSE_S) and ok
+        t1 = time.monotonic()
+        if ok:
+            ok = await _bounded(self.browser.close(), 2 * CLOSE_S)
+        t2 = time.monotonic()
+        if not ok and self._chrome:
+            self.killed = ob.office_watchdog.kill_tree(self._chrome)
+        for task in self._pending:
+            if not task.done():
+                task.cancel()
+        await _bounded(self._pw.stop(), 2 * CLOSE_S)
+        self.teardown = {
+            "contexts_s": round(t1 - t0, 1),
+            "browser_s": round(t2 - t1, 1),
+            "total_s": round(time.monotonic() - t0, 1),
+            "killed": bool(self.killed),
+            "stuck": stuck,
+        }
 
     @property
     def low(self) -> bool:
@@ -261,22 +323,34 @@ class Crowd:
 
         page.on("pageerror", on_error)
         t0 = time.monotonic()
-        try:
+
+        async def ready() -> Any:
             await page.goto(f"/bewerken/{editor.node}")
             await page.wait_for_function(
                 "() => window.__officeOpen && (window.__officeOpen.ready !== null"
                 " || window.__officeOpen.failed)",
-                timeout=READY_TIMEOUT_MS,
+                timeout=self.ready_s * 1000,
             )
-            probe = await page.evaluate("() => window.__officeOpen")
+            return await page.evaluate("() => window.__officeOpen")
+
+        try:
+            # De tijd van Playwright alleen is niet genoeg: een renderer die vastzit, laat ook
+            # goto en evaluate wachten, en een geannuleerde aanroep van Playwright komt pas terug
+            # als de renderer weer antwoordt (asyncio.wait_for wacht daarop). Daarom: de hele weg
+            # als eigen taak, hooguit ready_s, en daarna niet meer op die taak wachten; __aexit__
+            # stopt dan de browser, en daarmee eindigt ook de taak.
+            task = asyncio.create_task(ready())
+            self._pending.append(task)
+            done, _ = await asyncio.wait({task}, timeout=self.ready_s)
+            if not done:
+                raise TimeoutError
+            probe = task.result()  # een fout van Playwright komt hier naar boven
             if probe.get("failed"):
                 editor.error = f"de editorpagina meldt: {str(probe['failed'])[:200]}"
             else:
                 editor.opened_s = round(time.monotonic() - t0, 2)
         except Exception as exc:  # noqa: BLE001 - de uitslag zegt wat er misging
-            editor.error = (
-                f"niet klaar binnen {READY_TIMEOUT_MS / 1000:.0f} s: {type(exc).__name__}"
-            )
+            editor.error = f"niet klaar binnen {self.ready_s:.0f} s: {type(exc).__name__}"
         return editor
 
     async def open_all(self, editors: list[Editor], stagger: float = 0.25) -> None:
@@ -346,8 +420,11 @@ class Crowd:
         return time.monotonic() - t0
 
     async def status(self, editor: Editor) -> str:
+        """De laatste statusregel; een renderer die vastzit antwoordt niet, dus hooguit 5 s."""
         with contextlib.suppress(Exception):
-            probe = await editor.page.evaluate("() => window.__officeOpen")
+            ok, probe = await _within(editor.page.evaluate("() => window.__officeOpen"), 5)
+            if not ok:
+                return ""
             statuses = probe.get("statuses") or []
             editor.statuses = statuses[-5:]
             return statuses[-1] if statuses else ""

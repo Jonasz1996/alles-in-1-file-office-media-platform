@@ -1033,6 +1033,11 @@ def docker(*args: str, timeout: float = 120) -> subprocess.CompletedProcess:
     )
 
 
+def ds_running(name: str) -> bool:
+    r = docker("inspect", "--format", "{{.State.Running}}", name, timeout=30)
+    return r.stdout.strip() == "true"
+
+
 def converter_starts(name: str) -> int:
     """Hoe vaak supervisord in de container de converter (opnieuw) startte: de font-herstart
     na een start is de tweede keer."""

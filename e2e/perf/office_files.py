@@ -36,8 +36,10 @@ Verder: docx_401() (de docx van 401 pagina's uit de proef, groot.docx: veel deze
 from __future__ import annotations
 
 import io
+import os
 import random
 import re
+import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -1383,6 +1385,18 @@ def _with_comment(data: bytes, comment: str) -> bytes:
             dst.writestr(info, src.read(info.filename), compress_type=info.compress_type)
         dst.comment = comment.encode()
     return out.getvalue()
+
+
+_RUN: list[int] = []
+
+
+def run_seed() -> int:
+    """Eén getal per run (E2E_PERF_SEED, anders de klok), voor in de seeds: elke run maakt zo
+    nieuwe bestanden. DS bewaart conversies onder de key, en die volgt de sha (keys.convert_key):
+    hetzelfde bestand nog eens komt meteen uit zijn cache, zonder x2t."""
+    if not _RUN:
+        _RUN.append(int(os.environ.get("E2E_PERF_SEED") or time.time()) % 1_000_000)
+    return _RUN[0]
 
 
 def small(name: str, seed: int | str) -> bytes:
