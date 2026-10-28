@@ -8,9 +8,11 @@ import pytest
 
 from app.main import WEB_CSP, accepted_codings, accepts
 
+# media-src 'self' blob: sinds fase 5 (F4): de speler zet een object-URL in video.src
 EXACT_CSP = (
-    "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; object-src 'none'; "
-    "base-uri 'self'; frame-ancestors 'none'; manifest-src 'self'; worker-src 'self'"
+    "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
+    "style-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; "
+    "manifest-src 'self'; worker-src 'self'"
 )
 
 

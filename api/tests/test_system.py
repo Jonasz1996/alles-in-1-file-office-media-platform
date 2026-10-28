@@ -42,9 +42,11 @@ async def test_beveiligingsheaders(client, settings):
     r = await client.head("/")
     assert r.status_code == 200
     csp = r.headers["content-security-policy"]
+    # media-src 'self' blob: sinds fase 5 (F4)
     assert csp == (
-        "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; object-src 'none'; "
-        "base-uri 'self'; frame-ancestors 'none'; manifest-src 'self'; worker-src 'self'"
+        "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
+        "style-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; "
+        "manifest-src 'self'; worker-src 'self'"
     )
     assert "unsafe-inline" not in csp
     assert r.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
