@@ -879,7 +879,14 @@ def main(argv: list[str] | None = None) -> int:
         results[tool] = result
         errors[tool] = found_in(tool, result)
         stamp = datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(timespec="seconds")
-        runs[tool] = {"generated": stamp, "commit": commit, "imported": path.name}
+        runs[tool] = {
+            "generated": stamp,
+            "commit": commit,
+            # Net als bij een gewone meting: was de werkmap niet schoon, dan zegt de commit niet
+            # precies met welke scripts het gemeten en uitgerekend is.
+            "dirty": bool(_git("status", "--porcelain", "--untracked-files=no")),
+            "imported": path.name,
+        }
         print(f"{tool}: overgenomen uit {path}", file=sys.stderr)
 
     flat = [f"{tool}: {e}" for tool in TOOLS for e in errors.get(tool, [])]

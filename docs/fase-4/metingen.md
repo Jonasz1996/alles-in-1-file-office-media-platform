@@ -76,7 +76,8 @@ Deel 2:
   OOM-kills van x2t in `dmesg` tonen dat de grens echt gold. De app op dezelfde code als deel 1:
   sinds `e2c47d9` is er niets veranderd in `api/`, `web/` of `infra/`, alleen in `e2e/perf/` en
   `docs/`. Elke zware meting liep onder `office_watchdog.py` (stopt de meting bij minder dan
-  2 GiB vrij); die greep nergens in, het minst vrije geheugen was 7,6 GB (20 bewerkers). Vóór
+  2 GiB vrij); die greep nergens in, het minst vrije geheugen was 7,0 GB (20 bewerkers op één
+  document, 1 × 20; bij 5 × 4 was het 7,6 GB). Vóór
   elke meting `ps`, `top` en `free -m`: alleen dockerd, containerd, DS en de sessie, geen
   Chromium van een eerdere run. De metingen van stoppen en killen stopten, killden en startten de
   container zelf (6 keer); één keer heb ik hem met de hand weer op gang gebracht (bevinding 7).
@@ -85,8 +86,17 @@ Deel 2:
 - **Een eerdere poging van deel 2** stopte met exitcode 137 en een herstart van de hele sandbox
   (ook dockerd). Daarna met de waakhond en `free -m` herhaald: bij de proef met 2 bewerkers kwam
   de cgroup van de sessie tot 1,1 GB (minst vrij 14,1 GB), bij 20 bewerkers bleef er minstens
-  7,6 GB vrij. Het geheugen van de editors was het dus niet; wat die herstart wel deed, is niet
-  meer na te gaan (de `dmesg` van daarvoor is weg).
+  7,0 GB vrij (1 × 20; bij 5 × 4 7,6 GB). Het geheugen van de editors was het dus niet; wat die
+  herstart wel deed, is niet meer na te gaan (de `dmesg` van daarvoor is weg).
+- **De commit bij de uitslag:** bij office_editors, office_outage_stop en office_outage_kill staat
+  `1761998`. Dat is de commit waarop de uitkomsten in `metingen.json` zijn gezet (`--import`),
+  niet de precieze versie van de scripts: die stonden toen nog deels niet in een commit, en een
+  import legt dat niet vast. Pas `1cd3d52` (03:50, na de laatste import om 03:47) zette de
+  scripts erin zoals ze hier gebruikt zijn: "opgeslagen" telt wat de editor zelf had, 1 × 20
+  krijgt een eigen naam, `editable_s` na een stop of kill, en het wachten op de font-herstart
+  kijkt in de log van de container. Wie opnieuw meet, neemt dus `1cd3d52` of later; op
+  `1761998` mist de uitslag een deel van wat hieronder staat. Een import zet er nu ook bij of de
+  werkmap schoon was (`dirty`), net als een gewone meting.
 
 ## Uitslag
 
@@ -289,8 +299,10 @@ gewoon. Het doel "geen OOM van x2t" is dus niet gehaald; "docservice blijft" wel
   gezondheidslus van de app viel net in dat moment, zette DS op down, en de editor die het
   script daarna opende, meldde "De editor is nu niet bereikbaar" (bevinding 5).
 - **Openen in de editor** (geen doel van §4.7, wel gemeten, hooguit 120 s): de pptx en de xlsx
-  net onder de grens in 3,5–4,3 s, de docx met de pagina's in ±5 s (x2t maakt daarvoor
-  `Editor.bin` van 77 MB; het zware is de PDF van 97.000 pagina's). De docx met opmaak kwam 0
+  net onder de grens in 3,5–4,3 s, de docx met de pagina's 2 van de 3 keer, in ±5 s (x2t maakt
+  daarvoor `Editor.bin` van 77 MB; het zware is de PDF van 97.000 pagina's). De derde keer
+  meldde de editorpagina "De editor is nu niet bereikbaar": dat was de ronde waarin de OOM DS
+  op down had gezet (hierboven). De docx met opmaak kwam 0
   van de 3 keer klaar (bevinding 4).
 - **Waar de grens ligt** (`office_xml.py --pages 25000,50000,75000`, 3 keer elk, rechtstreeks
   naar `/converter`): x2t groeit met ±21 KB per pagina. 25.000 lege pagina's (1,03 MiB XML):
