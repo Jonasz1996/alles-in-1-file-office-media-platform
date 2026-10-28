@@ -351,6 +351,8 @@ WANT: dict[str, Want] = {
                           start_ms=1460),
     "fps23976.mkv": Want("matroska", "h264", (640, 360), "avc1.", ("aac",), fps=23.976),
     "late_video.mkv": Want("matroska", "h264", (320, 240), "avc1.", ("aac",), fps=24),
+    "stream_src.mkv": Want("matroska", "h264", (640, 360), "avc1.", ("aac",), duration_ms=20000,
+                           fps=24),
     "multi_audio.mkv": Want("matroska", "h264", (640, 360), "avc1.", ("aac", "aac"),
                             ("subrip",), langs=("nld", "eng")),
     "subs_text.mkv": Want("matroska", "h264", (320, 180), "avc1.", (), ("subrip", "ass")),
@@ -382,6 +384,7 @@ WANT: dict[str, Want] = {
 def test_elke_fixture_staat_in_de_tabel():
     """Elke fixture van §3.6 wordt geprobed: in WANT, of een nette fout, of zwaar."""
     covered = {n.partition("/")[0] for n in WANT} | F.UNREADABLE | F.LOOSE_SUBTITLES | F.HEAVY
+    covered |= F.WORKER_OUTPUT  # de uitvoer van stream, geen bron
     assert covered == set(F.NAMES)
 
 

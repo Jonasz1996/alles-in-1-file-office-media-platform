@@ -1,0 +1,55 @@
+{
+ "data": {
+  "bit_rate": 12057789,
+  "chapters": [],
+  "container": "mp4",
+  "duration_ms": 6000,
+  "error": null,
+  "start_ms": 0,
+  "state": "ready",
+  "streams": [
+   {
+    "attached_pic": false,
+    "bit_depth": 8,
+    "bitrate": 12048824,
+    "channels": null,
+    "codec": "h264",
+    "codec_string": "avc1.42c028",
+    "color": {
+     "matrix": null,
+     "primaries": null,
+     "transfer": null
+    },
+    "default": true,
+    "duration_ms": 6000,
+    "dv_profile": null,
+    "forced": false,
+    "fps": 240.0,
+    "hdr": "none",
+    "hdr_meta": null,
+    "hearing_impaired": false,
+    "height": 360,
+    "index": 0,
+    "interlaced": false,
+    "lang": "und",
+    "last_frame_ms": 5996,
+    "layout": null,
+    "level": 40,
+    "pix_fmt": "yuv420p",
+    "profile": "Constrained Baseline",
+    "sample_rate": null,
+    "start_ms": 0,
+    "title": null,
+    "type": "video",
+    "width": 640
+   }
+  ],
+  "tags": {
+   "compatible_brands": "isomiso2avc1mp41",
+   "encoder": "Lavf60.16.100",
+   "major_brand": "isom",
+   "minor_version": "512"
+  },
+  "truncated": {}
+ }
+}

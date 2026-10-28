@@ -1,0 +1,83 @@
+{
+ "data": {
+  "bit_rate": 2422022,
+  "chapters": [],
+  "container": "matroska",
+  "duration_ms": 7999,
+  "error": null,
+  "start_ms": 0,
+  "state": "ready",
+  "streams": [
+   {
+    "attached_pic": false,
+    "bit_depth": 8,
+    "bitrate": null,
+    "channels": null,
+    "codec": "h264",
+    "codec_string": "avc1.64001f",
+    "color": {
+     "matrix": null,
+     "primaries": null,
+     "transfer": null
+    },
+    "default": false,
+    "duration_ms": 7999,
+    "dv_profile": null,
+    "forced": false,
+    "fps": 24.0,
+    "hdr": "none",
+    "hdr_meta": null,
+    "hearing_impaired": false,
+    "height": 720,
+    "index": 0,
+    "interlaced": false,
+    "lang": null,
+    "last_frame_ms": 7958,
+    "layout": null,
+    "level": 31,
+    "pix_fmt": "yuv420p",
+    "profile": "High",
+    "sample_rate": null,
+    "start_ms": 0,
+    "title": null,
+    "type": "video",
+    "width": 1280
+   },
+   {
+    "attached_pic": false,
+    "bit_depth": null,
+    "bitrate": null,
+    "channels": null,
+    "codec": "hdmv_pgs_subtitle",
+    "codec_string": null,
+    "color": null,
+    "default": false,
+    "duration_ms": 7000,
+    "dv_profile": null,
+    "forced": false,
+    "fps": null,
+    "hdr": "none",
+    "hdr_meta": null,
+    "hearing_impaired": false,
+    "height": null,
+    "index": 1,
+    "interlaced": false,
+    "lang": "nld",
+    "last_frame_ms": null,
+    "layout": null,
+    "level": null,
+    "pix_fmt": null,
+    "profile": null,
+    "sample_rate": null,
+    "start_ms": 2000,
+    "title": null,
+    "type": "subtitle",
+    "width": null
+   }
+  ],
+  "tags": {
+   "encoder": "Lavf60.16.100"
+  },
+  "truncated": {}
+ }
+}

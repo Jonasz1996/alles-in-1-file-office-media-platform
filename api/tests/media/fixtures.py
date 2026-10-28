@@ -183,6 +183,55 @@ def itunsmpb(work: Path, out: Path, *, tracks: list[int], samples: int) -> None:
         tags.save()
 
 
+def stream_output(
+    work: Path, out: Path, *, source: str, codec: str, width: int, height: int
+) -> None:
+    """De uitvoer van stream zoals de worker hem naar pipe:1 schrijft: de transcode van §3.3
+    vanaf 0, op het rooster van 2 s, met -copyts en -output_ts_offset (1 − S). Voor de
+    nep-worker en de nep-stream (§3.6). Dezelfde argv als §3.3, alleen met het pad als invoer in
+    plaats van fd 3 (dit is geen bron van een gebruiker) en zonder nice."""
+    found = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=start_time", "-of", "csv=p=0", source],
+        capture_output=True, text=True, timeout=60, check=True, env=_env(),
+    )  # fmt: skip
+    start = float(found.stdout.strip() or 0)
+    if codec == "libx264":
+        video = [
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-maxrate", "1000k",
+            "-bufsize", "2000k", "-profile:v", "high", "-level:v", "3.0", "-threads", "4",
+            "-sc_threshold", "0", "-g", "100000", "-force_key_frames", "expr:gte(t,n_forced*2)",
+            "-forced-idr", "1",
+        ]  # fmt: skip
+        audio = ["-c:a", "aac", "-ac", "2", "-b:a", "160k"]
+    else:
+        video = [
+            "-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1",
+            "-b:v", "1000k", "-maxrate", "1000k", "-crf", "32", "-threads", "4",
+            "-sc_threshold", "0", "-g", "100000", "-force_key_frames", "expr:gte(t,n_forced*2)",
+        ]  # fmt: skip
+        audio = ["-c:a", "libopus", "-b:a", "128k", "-ac", "2", "-ar", "48000"]
+    argv = [
+        "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-max_alloc", "536870912",
+        "-max_pixels", "35389440", "-f", "matroska", "-i", source, "-copyts",
+        "-map", "0:0", "-map", "0:1", "-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1",
+        "-vf", f"scale=w={width}:h={height}:flags=bicubic,format=yuv420p", "-fpsmax", "60",
+        *video, *audio,
+        "-output_ts_offset", f"{1 - start:.6f}", "-avoid_negative_ts", "disabled",
+        "-f", "mp4", "-movflags",
+        "+frag_keyframe+empty_moov+default_base_moof+skip_trailer+frag_discont"
+        "+negative_cts_offsets",
+        "-fflags", "+bitexact", "pipe:1",
+    ]  # fmt: skip
+    with open(out, "wb") as handle:
+        done = subprocess.run(
+            argv, stdin=subprocess.DEVNULL, stdout=handle, stderr=subprocess.PIPE,
+            timeout=STEP_TIMEOUT, check=False, env=_env(),
+        )  # fmt: skip
+    if done.returncode != 0:
+        tail = done.stderr.decode("utf-8", "replace")[-1500:]
+        raise RuntimeError(f"stream_output: ffmpeg stopte met {done.returncode}: {tail}")
+
+
 def _count_packets(path: Path) -> int:
     argv = ["ffprobe", "-v", "error", "-select_streams", "a:0", "-count_packets",
             "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(path)]  # fmt: skip
@@ -306,6 +355,27 @@ RECIPES: dict[str, Recipe] = {
     )),
     # Het rooster hangt aan het eerste videobeeld (Keuze 22, spike.md "Extra"): video vanaf
     # 0,5 s, audio vanaf 0 (S = −0,021), dus origin 521 ms en een lang eerste segment
+    # De bron van de nep-worker en de nep-stream (§3.6): 20 s 360p, H.264 + AAC (S = −0,021,
+    # dus origin 21 ms), en de uitvoer van stream daaruit, met een tweede maat voor new_stsd
+    "stream_src.mkv": Recipe((
+        Ff((*video("640x360", 24, 20), *tone(440, 20), *X264, "-g", "48", *AAC, "{out}")),
+    )),
+    "stream_h264.mp4": Recipe((
+        Py(stream_output, {"source": "{fx:stream_src.mkv}", "codec": "libx264", "width": 640,
+                           "height": 360}),
+    )),
+    "stream_h264_alt.mp4": Recipe((
+        Py(stream_output, {"source": "{fx:stream_src.mkv}", "codec": "libx264", "width": 480,
+                           "height": 270}),
+    )),
+    "stream_vp9.mp4": Recipe((
+        Py(stream_output, {"source": "{fx:stream_src.mkv}", "codec": "libvpx-vp9", "width": 640,
+                           "height": 360}),
+    )),
+    "stream_vp9_alt.mp4": Recipe((
+        Py(stream_output, {"source": "{fx:stream_src.mkv}", "codec": "libvpx-vp9",
+                           "width": 480, "height": 270}),
+    )),
     "late_video.mkv": Recipe((
         Ff(("-itsoffset", "0.5", *video("320x240", 24, 10), *tone(440, 10), "-map", "0:v",
             "-map", "1:a", *X264, "-g", "12", *AAC, "{out}")),
@@ -402,6 +472,10 @@ HEAVY = frozenset(name for name, r in RECIPES.items() if r.heavy)
 # Wat de probe niet kan lezen: een nette fout, geen probe
 UNREADABLE = frozenset({"broken.mp4", "random.mkv", "empty.mkv"})
 LOOSE_SUBTITLES = frozenset({"nl.srt", "en.ass", "film.nl.forced.srt", "bom.srt"})
+# De uitvoer van stream (fMP4 zoals op pipe:1), geen bron: de probe slaat ze over
+WORKER_OUTPUT = frozenset(
+    {"stream_h264.mp4", "stream_h264_alt.mp4", "stream_vp9.mp4", "stream_vp9_alt.mp4"}
+)
 
 
 def _deps(recipe: Recipe) -> list[str]:
