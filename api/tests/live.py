@@ -20,7 +20,7 @@ from app import db, serve
 from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.main import app
-from app.security import SecurityConfig, SecurityPolicy
+from app.security import RateLimiter, SecurityConfig, SecurityPolicy
 
 ADMIN = {"email": "jonas@example.nl", "display_name": "Jonas", "password": "lang-genoeg-123"}
 
@@ -91,6 +91,9 @@ async def live(tmp_path, monkeypatch, *, https: bool = False, **env: str):
         monkeypatch.setenv(key, value)
     get_settings.cache_clear()
     settings = get_settings()
+    # De lifespan zet RateLimiter.enabled (een klasse-attribuut) op PLATFORM_RATE_LIMITS; na
+    # de test weer zoals het was, anders rekenen de tests hierna buiten de limieten
+    limits = RateLimiter.enabled
     if https:
         from tests.test_certs import write_cert
 
@@ -123,6 +126,7 @@ async def live(tmp_path, monkeypatch, *, https: bool = False, **env: str):
         with contextlib.suppress(Exception):
             await asyncio.wait_for(task, 30)
         get_settings.cache_clear()
+        RateLimiter.enabled = limits
         for name in ("certs", "security", "media", "media_policy"):
             with contextlib.suppress(AttributeError, KeyError):
                 delattr(app.state, name)
