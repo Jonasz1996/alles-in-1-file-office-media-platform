@@ -44,8 +44,9 @@ export interface ViewerPlayerProps {
 
 const ViewerPlayer = lazy(() => import("../player/ViewerPlayer"));
 
-/** Lukt het chunk van de speler niet (een nieuwe versie uitgerold, geen verbinding): dan de
- * <video> van fase 3, nooit een lege viewer. */
+/** Lukt het chunk van de speler niet (een nieuwe versie uitgerold, geen verbinding) of faalt de
+ * speler zelf: dan de <video> van fase 3, nooit een lege viewer. De fout gaat naar console.error
+ * (zoals ChunkBoundary in App.tsx), zodat de bewaking van de e2e hem ziet. */
 class PlayerBoundary extends Component<{ fallback: () => JSX.Element; children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
 
@@ -54,7 +55,7 @@ class PlayerBoundary extends Component<{ fallback: () => JSX.Element; children: 
   }
 
   componentDidCatch(error: unknown) {
-    console.warn("viewer: de speler laadde niet", error);
+    console.error(error);
   }
 
   render() {

@@ -78,9 +78,9 @@ De schil vraagt de status één keer na het inloggen (de balk bovenaan). In M0 g
 |---|---|---|
 | eerste lading | 100 KB | 95,6 KB (was 94,1 KB op `f713169`) |
 | route Bestanden | 45 KB | 42,6 KB (was 42,4) |
-| elke mediapagina (`mediaRoute`) | 45 KB | 0,7–0,8 KB |
-| speler (`player`, alles uit `src/player/`) | 35 KB | 0,7 KB |
-| muziek (`music`, alles uit `src/music/`) | 40 KB | 1,6 KB |
+| elke mediapagina (`mediaRoute`) | 45 KB | 0,8–0,9 KB |
+| speler (`player`, alles uit `src/player/`) | 35 KB | 0,8 KB |
+| muziek (`music`, alles uit `src/music/`) | 40 KB | 1,7 KB |
 
 Elke regel telt wat er bij het openen bovenop de eerste lading binnenkomt: de chunks met hun
 statische imports en het Nederlandse woordenboek. Een module uit `src/media/`, `src/player/` of
