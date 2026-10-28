@@ -457,6 +457,13 @@ voor het ontwerp, en de meting geeft geen reden om hem te veranderen.
 - `max_editors` geldt per document; het totaal over alle documenten begrenst hij niet. Gemeten is
   hooguit 20 tegelijk in totaal.
 
+**In 0.6.0 blijft de standaard 20** (`OfficeConfig.max_editors` in `api/app/office/state.py`;
+de beheerder kan hem op `/beheer` → Office op 1 tot 500 zetten). De meting steunt 20 en niet
+meer, en geeft geen reden om lager te gaan; daarom is niets veranderd aan de instellingen, de
+contracten, de web-app, de tests (ook niet de "20" in `e2e/test_office_o5.py`) of het runbook.
+Wil Jonas meer dan 20 mensen in één document, dan is dat eerst een meting op zijn LXC, met de
+cijfers van `/beheer` → Office en `docker stats` (runbook, "De belasting meten").
+
 ## Bevindingen
 
 1. **De presentatie-editor krijgt via de app de ingebouwde thema's niet.** De pptx-editor vraagt

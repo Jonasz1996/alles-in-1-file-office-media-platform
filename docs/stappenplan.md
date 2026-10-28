@@ -44,7 +44,7 @@ standaard-API's (S3, WebDAV, OpenAPI).
 | Onderdeel                          | Beslissing                                                                                    | Waarom                                                                                                                                            |
 |------------------------------------|-----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
 | Kern (API, bestanden, bibliotheek) | Zelf bouwen in FastAPI                                                                        | Eén datamodel voor bestanden én media; volledige controle over snelheid en features                                                               |
-| Office-bewerking                   | OnlyOffice Document Server (community) inbouwen via de JS-API en een save-callback            | Een office-suite zelf bouwen is onhaalbaar; de community-versie is beperkt tot 20 gelijktijdige verbindingen, genoeg voor thuis of een klein team |
+| Office-bewerking                   | OnlyOffice Document Server (community) inbouwen via de JS-API en een save-callback            | Een office-suite zelf bouwen is onhaalbaar; de community-versie had een limiet van 20 gelijktijdige verbindingen, maar 10.0 heeft die niet meer (fase 4: de app telt zelf, met een eigen grens per document) |
 | Video en audio                     | Eigen bibliotheek + ffmpeg (HLS/CMAF); direct play waar de client het aankan                  | Plex-functionaliteit zonder Plex; transcoderen alleen als het moet                                                                                |
 | Object storage                     | SeaweedFS (S3-API) met 2 synchrone kopieën; Garage als alternatief                            | MinIO community wordt sinds begin 2026 niet meer onderhouden; de S3-API houdt de laag uitwisselbaar                                               |
 | Database                           | PostgreSQL 17: 1 primary + 2 standbys, synchrone replicatie                                   | Eén master zoals gewenst, zonder dataverlies bij failover                                                                                         |
@@ -184,7 +184,7 @@ zonder de rest aan te raken.
 | Object storage           | SeaweedFS (master ×3, volume server per node, S3-gateway)                                                                  | Garage, Ceph RGW              | Buckets: vault, media, thumbs, cache                                      |
 | Cache, pub/sub           | Redis 7 met Sentinel (3)                                                                                                   | Valkey                        | Sessies, rate limits, events, Celery-broker                               |
 | Zoeken                   | Typesense 3-node cluster                                                                                                   | Meilisearch (single node)     | Full-text, facetten, typo-tolerantie                                      |
-| Office                   | OnlyOffice Document Server (community)                                                                                     | Collabora Online (WOPI)       | DS gekoppeld aan eigen Postgres/Redis/RabbitMQ zodat hij verplaatsbaar is |
+| Office                   | OnlyOffice Document Server (community)                                                                                     | Collabora Online (WOPI)       | Geen eigen Postgres/Redis/RabbitMQ: Community 10.0 draait als één proces (fase 4) |
 | Media                    | ffmpeg 7 + ffprobe, HLS/CMAF (fMP4), VAAPI/QSV/NVENC; guessit voor bestandsnamen; TMDB/TVDB/MusicBrainz                    | —                             | Direct play eerst, dan remux, dan transcode                               |
 | Afbeeldingen en previews | libvips (pyvips), libheif, rawpy, exiftool; poppler voor PDF; OnlyOffice-conversie of LibreOffice headless voor office     | ImageMagick                   | Thumbnails 256/1024 px als WebP/AVIF                                      |
 | Tekst en OCR             | Apache Tika of unstructured; ocrmypdf + tesseract (nld, eng)                                                               | —                             | Draait als job, nooit in de request                                       |
@@ -373,22 +373,42 @@ bekende grenzen in [docs/fase-3/README.md](fase-3/README.md).
 
 Doel: documenten bekijken, maken en samen bewerken.
 
-- [ ] OnlyOffice Document Server uitrollen met JWT-secret en eigen
-  Postgres, Redis en RabbitMQ zodat hij op elke node kan starten
+- [x] OnlyOffice Document Server uitrollen met JWT-secret (OnlyOffice
+  Docs Community 10.0.0.1 op digest, als tweede container met
+  `install.sh`, op een intern netwerk zonder poort; een eigen geheim en
+  JWT in elke richting). Geen eigen Postgres, Redis en RabbitMQ:
+  Community draait sinds 9.4 als één proces met de bewerkstatus in het
+  geheugen, en heeft ze niet nodig. Op een andere node starten komt met
+  het cluster
 
-- [ ] Editor-integratie: config vanuit de API, document-key per versie,
-  callback-endpoint (save en forcesave), co-editing
+- [x] Editor-integratie: config vanuit de API, document-key per versie,
+  callback-endpoint (save en forcesave), co-editing (een nieuwe key na
+  elke afgesloten sessie, niet na tussentijds opslaan; via de eigen
+  proxy en tunnel op `/office/`)
 
-- [ ] Nieuw document (docx, xlsx, pptx) vanuit sjablonen
+- [x] Nieuw document (docx, xlsx, pptx), uit eigen lege bestanden in
+  plaats van de sjablonen van de editor (B36)
 
-- [ ] Conversie-API gebruiken voor previews en PDF-export van
-  office-bestanden
+- [x] Conversie-API gebruiken voor previews en PDF-export van
+  office-bestanden (ook odt, ods, odp, doc, xls, ppt en rtf)
 
-- [ ] Limiet community-editie (20 verbindingen) meten en bewaken;
-  Collabora als terugvaloptie klaarzetten
+- [x] Limiet community-editie meten en bewaken; Collabora als
+  terugvaloptie klaarzetten. De limiet van 20 verbindingen bestaat in
+  OnlyOffice 10.0 Community niet meer (`license` geeft geen limiet):
+  de app telt zelf, toont het op `/beheer`, en heeft een eigen grens
+  van 20 bewerkers per document (`max_editors`, gemeten). Collabora is
+  klaargezet, niet gebouwd: de kern kent OnlyOffice niet, en
+  [docs/fase-4/collabora.md](fase-4/collabora.md) zegt hoe omschakelen
+  gaat
 
 Klaar als: twee gebruikers bewerken tegelijk één docx; opslaan maakt een
 nieuwe versie; office-preview werkt zonder editor te openen.
+
+Gehaald in versie 0.6.0 (28-10-2026): het bewijs met de echte editor
+staat in [docs/fase-4/klaar.md](fase-4/klaar.md), de installatietest in
+[docs/fase-4/integratie.md](fase-4/integratie.md), de metingen in
+[docs/fase-4/metingen.md](fase-4/metingen.md), wat er is en de bekende
+grenzen in [docs/fase-4/README.md](fase-4/README.md).
 
 ### Fase 5 — Media en streaming (5 weken)
 
@@ -646,7 +666,7 @@ datalagen en harde fasecriteria.
 | Replicatie om de paar uur geeft dataverlies bij failover       | hoog zonder maatregel | hoog   | synchrone DB-replicatie en 2 synchrone objectkopieën; de uursync alleen als snapshotlaag                               |
 | Split-brain na een netwerkpartitie (twee masters)              | middel                | hoog   | quorum via etcd of Kubernetes; nooit handmatig een tweede primary; fencing in de failover-runbook                      |
 | 1,0 TB netto is te klein voor een mediabibliotheek             | hoog                  | middel | replicatie 001 voor media, groeipad met extra disks; herdownloadbare content krijgt geen derde kopie of offsite-backup |
-| OnlyOffice community-limiet van 20 verbindingen                | laag thuis            | middel | limiet bewaken; Collabora als klaarstaand alternatief                                                                  |
+| OnlyOffice community-limiet van 20 verbindingen                | geen (10.0)           | middel | de limiet bestaat in 10.0 niet meer; de app telt zelf en meldt het als een image toch een limiet heeft; Collabora klaar |
 | Transcoding te zwaar voor CPU's van 5 jaar oud                 | middel                | middel | direct play maximaliseren; goedkope Intel Arc-kaart voor QSV (ook AV1); pre-transcoding 's nachts                      |
 | Afhankelijkheid die stopt (zoals MinIO community)              | middel                | middel | standaard-API's als abstractie: SeaweedFS, Garage en Ceph zijn uitwisselbaar achter S3                                 |
 | Scope creep: Nextcloud + Plex + OnlyOffice is groot            | hoog                  | hoog   | fasen met "klaar als"-criteria; web-MVP in fase 3 vóór media; backlog met dropdowns, niet in de fasen                  |
