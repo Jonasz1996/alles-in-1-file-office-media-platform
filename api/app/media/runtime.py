@@ -8,21 +8,31 @@ Met media aan:
 - PLATFORM_MEDIA_WORKER leeg: de app start zelf een lokale worker (local.py, Keuze 13);
 - PLATFORM_MEDIA_WORKER gezet: de app verbindt met die socket, en valt nooit stil terug op
   lokaal (dat zou de afscherming uitzetten);
-- health.py houdt MediaState.worker bij met caps (telt niet mee in de plaatsen).
+- health.py houdt MediaState.worker bij met caps (telt niet mee in de plaatsen);
+- de map media/sessions/ (de stukken van lopende sessies) gaat leeg: na een herstart is elke
+  sessie weg;
+- het opruimwerk media.sweep komt in de rij default (cache.sweep, M4 en M5); stop haalt het
+  weer weg.
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
 
+import anyio.to_thread
 from fastapi import Request
 
+from app import jobs
 from app.config import Settings, get_settings
 from app.media import client
 from app.media import errors as media_errors
 from app.media.state import MediaState, media_policy, media_state
 
 log = logging.getLogger("platform.media")
+
+SWEEP = "media.sweep"
+SWEEP_EVERY = 300.0  # seconden
 
 _app = None
 _settings: Settings | None = None
@@ -59,6 +69,8 @@ async def start(app, settings: Settings) -> MediaState:
     if not state.enabled:
         return state
     state.mode = "container" if settings.media_worker else "local"
+    await anyio.to_thread.run_sync(clear_sessions, settings)
+    jobs.housekeeping(SWEEP, _sweep, SWEEP_EVERY)
     client.bind(settings.media_socket)
     if state.mode == "local":
         try:
@@ -73,6 +85,7 @@ async def start(app, settings: Settings) -> MediaState:
 async def stop(app) -> None:
     from app.media import health, local
 
+    jobs.forget_housekeeping(SWEEP)
     await health.stop(getattr(app.state, "media_health", None))
     app.state.media_health = None
     worker = getattr(app.state, "media_local", None)
@@ -80,6 +93,26 @@ async def stop(app) -> None:
         await local.stop(worker)
         app.state.media_local = None
     client.bind(None)
+
+
+def sessions_dir(settings: Settings):
+    """<data_dir>/media/sessions: de stukken van lopende sessies (M4)."""
+    return settings.data_dir / "media" / "sessions"
+
+
+def clear_sessions(settings: Settings) -> None:
+    """Bij het starten: wat van een vorige keer bleef staan weg (draai in een thread)."""
+    shutil.rmtree(sessions_dir(settings), ignore_errors=True)
+
+
+async def _sweep(settings: Settings) -> None:
+    """Het opruimwerk van media; alleen zolang media aan staat."""
+    bound = app()
+    if bound is None or not enabled(bound):
+        return
+    from app.media import cache
+
+    await cache.sweep(settings)
 
 
 def enabled(app) -> bool:

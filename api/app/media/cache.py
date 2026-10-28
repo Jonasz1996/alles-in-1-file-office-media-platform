@@ -8,3 +8,9 @@ KINDS = ("sessions", "audio", "trick", "art")
 def sizes() -> dict[str, int]:
     """Bytes per soort, voor /beheer."""
     return dict.fromkeys(KINDS, 0)
+
+
+async def sweep(settings) -> None:
+    """Het opruimwerk van de cache (media.sweep, elke 5 minuten in de rij default zolang media
+    aan staat): verlopen sessies en wat boven cache_gb komt weg. De stub doet niets."""
+    return None

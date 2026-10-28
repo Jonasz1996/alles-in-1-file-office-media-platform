@@ -21,6 +21,8 @@ from pydantic import BaseModel
 from app import __version__, errors, events, jobs, photometa, previews
 from app.certs import CertManager
 from app.config import Settings, get_settings
+from app.media import analysis as media_analysis  # noqa: F401 - registreert media.analyse
+from app.media import runtime as media_runtime
 from app.migrate import upgrade
 from app.office import convert as office_convert
 from app.office import engine as office_engine
@@ -82,10 +84,14 @@ SECRET_PARAMS = re.compile(
     r"([?&](?:token|sig|key|md5|shardkey|cmd)=)(?:(?<=cmd=)[^&\s]*|[^&\s\"]*)"
 )
 LINK_PATH = re.compile(r"((?:^|[\s\"])/s/)[^/?#\s\"]+")
+# De sid van een afspeelsessie staat in het pad (fase 5, Keuze 35): /api/v1/stream/<id>.<geheim>/…
+# Het deel na de eerste punt is de toegang zelf; het id ervoor mag blijven (om te volgen)
+STREAM_PATH = re.compile(r"(/api/v1/stream/[^/.\s\"]+\.)[^/?\s\"]+")
 
 
 def _hide(value: str) -> str:
-    return LINK_PATH.sub(r"\1***", SECRET_PARAMS.sub(r"\1***", value))
+    value = SECRET_PARAMS.sub(r"\1***", value)
+    return STREAM_PATH.sub(r"\1***", LINK_PATH.sub(r"\1***", value))
 
 
 class HideSecrets(logging.Filter):
@@ -458,6 +464,10 @@ async def lifespan(app: FastAPI):
     # Een Runner per rij (Keuze 14 van fase 5); het opruimwerk alleen in default
     runners = await jobs.start_runners(settings)
     await _office_start(app, settings)
+    # Media (fase 5): zonder PLATFORM_MEDIA_ENABLED gebeurt hier niets (geen worker, elk
+    # media-eindpunt 503 media_off)
+    media_runtime.bind(app, settings)
+    await media_runtime.start(app, settings)
     log.info("Platform %s gestart (%s), data in %s", __version__, settings.mode, settings.data_dir)
     with _streams_end_on_signal():
         yield
@@ -465,8 +475,11 @@ async def lifespan(app: FastAPI):
     events.hub = events.Hub()  # een volgende start in hetzelfde proces (tests) kan weer
     await _office_stop(app)
     await jobs.stop_runners(runners)
+    await media_runtime.stop(app)  # na de rijen: een taak van media gebruikt de worker nog
+    media_runtime.unbind()
     cleaner.cancel()
     await certs.stop()
+    log.info("Platform %s gestopt", __version__)
 
 
 app = FastAPI(
