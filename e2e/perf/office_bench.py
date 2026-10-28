@@ -36,7 +36,10 @@ from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
+
+import office_watchdog  # noqa: E402
 
 from conftest import (  # noqa: E402 - pas na het pad naar e2e/
     Account,
@@ -306,6 +309,12 @@ class Exchange:
     answered: float | None = None
     status: int | None = None
     callback_status: int | None = None  # het veld status van een callback
+    # Ook uit de callback (geen geheim): de key (alleen in het geheugen, om te koppelen aan een
+    # bestand; de metingen schrijven hem niet weg), forcesavetype (0 commando, 1 knop, 2 klok
+    # van DS) en userdata (bij de klok van de app "timer", bij het stoppen "stop")
+    key: str | None = None
+    forcesavetype: int | None = None
+    userdata: str | None = None
 
     def seconds(self) -> float | None:
         return None if self.answered is None else self.answered - self.started
@@ -381,9 +390,16 @@ class _Conn:
             return
         ex.body_done = now
         if ex.path.startswith("/internal/office/callback") and self.req:
-            # Alleen het veld status; het token blijft hier en komt nergens in de uitvoer
-            with contextlib.suppress(ValueError, AttributeError):
-                ex.callback_status = int(json.loads(bytes(self.req)).get("status"))
+            # Alleen status, key, forcesavetype en userdata; het token blijft hier en komt
+            # nergens in de uitvoer
+            with contextlib.suppress(ValueError, AttributeError, TypeError):
+                body = json.loads(bytes(self.req))
+                ex.callback_status = int(body.get("status"))
+                ex.key = body.get("key") if isinstance(body.get("key"), str) else None
+                if isinstance(body.get("forcesavetype"), int):
+                    ex.forcesavetype = body["forcesavetype"]
+                if isinstance(body.get("userdata"), str):
+                    ex.userdata = body["userdata"][:32]
         self.req = bytearray()
         self.pending.append(ex)
         self.clock._record(ex)
@@ -705,3 +721,385 @@ def access_lines(server: Server, start: int, end: int | None = None) -> list[str
         if line.startswith("INFO:") and '"' in line and ' HTTP/1.1" ' in line:
             out.append(line.split('"', 1)[1])
     return out
+
+
+def upload(server: Server, account: Account, folder: str, name: str, data: bytes) -> str:
+    """Een bestand in een map; geeft het id."""
+    return server.call(
+        account,
+        "PUT",
+        f"/api/v1/files/{folder}/upload",
+        params={"name": name},
+        content=data,
+        expect=201,
+    ).json()["id"]
+
+
+def pdf_state(server: Server, node: str) -> str | None:
+    """blob.pdf_state van de inhoud van een bestand (alleen lezen)."""
+    with _db(server) as conn:
+        row = conn.execute(
+            "SELECT b.pdf_state FROM node n JOIN blob b ON b.sha256 = n.blob_id WHERE n.id = ?",
+            (uuid.UUID(node).hex,),
+        ).fetchone()
+    return row[0] if row else None
+
+
+def office_jobs(server: Server, node: str) -> list[dict[str, Any]]:
+    """De taken office.pdf van de inhoud van een bestand: status, pogingen en de fout."""
+    blob, _size = node_blob(server, node)
+    if blob is None:
+        return []
+    with _db(server) as conn:
+        rows = conn.execute(
+            "SELECT status, attempts, error FROM job WHERE type = 'office.pdf' AND key = ?",
+            (f"office.pdf:{blob}",),
+        ).fetchall()
+    return [{"status": s, "attempts": a, "error": (e or "")[:200]} for s, a, e in rows]
+
+
+def mem_available() -> int:
+    """MemAvailable van de machine, in bytes."""
+    for line in _read("/proc/meminfo").splitlines():
+        if line.startswith("MemAvailable:"):
+            return int(line.split()[1]) * 1024
+    return 0
+
+
+# --- de container van DS: geheugen, cpu, processen, gezondheid ---
+
+
+def _cgroup(cid: str) -> dict[str, Any] | None:
+    """De mappen van de cgroup van een container (v1 met cgroupfs of systemd, of v2)."""
+    root = Path("/sys/fs/cgroup")
+    for memory, cpu in (
+        (root / "memory/docker" / cid, root / "cpuacct/docker" / cid),
+        (
+            root / f"memory/system.slice/docker-{cid}.scope",
+            root / f"cpuacct/system.slice/docker-{cid}.scope",
+        ),
+    ):
+        if (memory / "memory.usage_in_bytes").is_file():
+            return {"v2": False, "memory": memory, "cpu": cpu}
+    for path in (root / f"system.slice/docker-{cid}.scope", root / "docker" / cid):
+        if (path / "memory.current").is_file():
+            return {"v2": True, "memory": path, "cpu": path}
+    return None
+
+
+def container_id(name: str) -> str | None:
+    try:
+        out = subprocess.run(
+            ["docker", "inspect", "--format", "{{.Id}}", name],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out or None
+
+
+class DsWatch:
+    """Meet de container van DS zolang hij loopt: elke interval s het geheugen van de cgroup
+    (met en zonder paginacache), de cpu (cpuacct), en van elk proces in de container de naam en
+    VmRSS (zo zie je x2t, docservice en de converter apart). Daarnaast elke health_every s
+    GET /healthcheck. Na stop(): summary(). Een OOM staat in memory.oom_control (oom_kill)."""
+
+    def __init__(
+        self, name: str, url: str, *, interval: float = 0.2, health_every: float | None = 0.5
+    ) -> None:
+        self.name, self.url = name, url.rstrip("/")
+        self.interval, self.health_every = interval, health_every
+        cid = container_id(name)
+        self.cg = _cgroup(cid) if cid else None
+        self.samples: list[dict[str, Any]] = []
+        self.health: list[tuple[float, bool, float]] = []  # (t, true?, ms)
+        self._stop = threading.Event()
+        self._threads: list[threading.Thread] = []
+        self.started = self.stopped = 0.0
+        self.oom0 = self.oom1 = 0
+        self.pids0: dict[str, set[int]] = {}
+        self.pids1: dict[str, set[int]] = {}
+        self.boot0 = 0.0
+        self.victims: list[dict[str, Any]] = []
+
+    # metingen van de cgroup
+    def _file(self, kind: str, name: str) -> str:
+        assert self.cg is not None
+        return _read(str(self.cg[kind] / name))
+
+    def _stat(self) -> dict[str, int]:
+        out = {}
+        for line in self._file("memory", "memory.stat").splitlines():
+            k, _, v = line.partition(" ")
+            with contextlib.suppress(ValueError):
+                out[k] = int(v)
+        return out
+
+    def usage(self) -> int:
+        if self.cg is None:
+            return 0
+        name = "memory.current" if self.cg["v2"] else "memory.usage_in_bytes"
+        return int(self._file("memory", name) or 0)
+
+    def rss(self) -> int:
+        """Anoniem geheugen van de cgroup (zonder paginacache)."""
+        if self.cg is None:
+            return 0
+        st = self._stat()
+        return st.get("anon", 0) if self.cg["v2"] else st.get("total_rss", st.get("rss", 0))
+
+    def cpu_seconds(self) -> float:
+        if self.cg is None:
+            return 0.0
+        if self.cg["v2"]:
+            for line in self._file("cpu", "cpu.stat").splitlines():
+                if line.startswith("usage_usec "):
+                    return int(line.split()[1]) / 1e6
+            return 0.0
+        return int(self._file("cpu", "cpuacct.usage") or 0) / 1e9
+
+    def oom_kills(self) -> int:
+        if self.cg is None:
+            return 0
+        text = self._file("memory", "memory.events" if self.cg["v2"] else "memory.oom_control")
+        for line in text.splitlines():
+            if line.startswith("oom_kill "):
+                return int(line.split()[1])
+        return 0
+
+    def reset_peak(self) -> None:
+        """De piek van de kernel terug naar nu (alleen v1; v2 telt alleen de steekproeven)."""
+        if self.cg is not None and not self.cg["v2"]:
+            with contextlib.suppress(OSError):
+                (self.cg["memory"] / "memory.max_usage_in_bytes").write_text("0")
+
+    def kernel_peak(self) -> int | None:
+        if self.cg is None:
+            return None
+        name = "memory.peak" if self.cg["v2"] else "memory.max_usage_in_bytes"
+        text = self._file("memory", name).strip()
+        return int(text) if text.isdigit() else None
+
+    def processes(self) -> list[tuple[int, str, int]]:
+        """(pid, naam, VmRSS) van elk proces in de container."""
+        if self.cg is None:
+            return []
+        out = []
+        for pid_text in self._file("memory", "cgroup.procs").split():
+            pid = int(pid_text)
+            comm = _read(f"/proc/{pid}/comm").strip()
+            rss = 0
+            for line in _read(f"/proc/{pid}/status").splitlines():
+                if line.startswith("VmRSS:"):
+                    rss = int(line.split()[1]) * 1024
+            if comm:
+                out.append((pid, comm, rss))
+        return out
+
+    def _pids(self) -> dict[str, set[int]]:
+        found: dict[str, set[int]] = {}
+        for pid, comm, _rss in self.processes():
+            if comm in ("docservice", "converter"):
+                found.setdefault(comm, set()).add(pid)
+        return found
+
+    # de lussen
+    def _sample(self) -> None:
+        while not self._stop.is_set():
+            t = time.monotonic()
+            procs = self.processes()
+            x2t = [rss for _pid, comm, rss in procs if comm == "x2t"]
+            by = {comm: rss for _pid, comm, rss in procs if comm in ("docservice", "converter")}
+            self.samples.append(
+                {
+                    "t": t,
+                    "usage": self.usage(),
+                    "rss": self.rss(),
+                    "cpu": self.cpu_seconds(),
+                    "x2t": len(x2t),
+                    "x2t_rss": max(x2t, default=0),
+                    "x2t_pids": [pid for pid, comm, _ in procs if comm == "x2t"],
+                    "docservice_rss": by.get("docservice", 0),
+                    "converter_rss": by.get("converter", 0),
+                }
+            )
+            self._stop.wait(max(0.0, self.interval - (time.monotonic() - t)))
+
+    def _health(self) -> None:
+        import httpx
+
+        assert self.health_every is not None
+        with httpx.Client(trust_env=False, timeout=5) as client:
+            while not self._stop.is_set():
+                t = time.monotonic()
+                ok = False
+                with contextlib.suppress(httpx.HTTPError):
+                    r = client.get(self.url + "/healthcheck")
+                    ok = r.status_code == 200 and r.text.strip() == "true"
+                self.health.append((t, ok, (time.monotonic() - t) * 1000))
+                self._stop.wait(max(0.0, self.health_every - (time.monotonic() - t)))
+
+    def start(self) -> DsWatch:
+        self.reset_peak()
+        self.boot0 = office_watchdog.uptime()
+        self.oom0 = self.oom_kills()
+        self.pids0 = self._pids()
+        self.started = time.monotonic()
+        loops = [self._sample] + ([self._health] if self.health_every else [])
+        for loop in loops:
+            th = threading.Thread(target=loop, name=f"ds-watch-{loop.__name__}", daemon=True)
+            th.start()
+            self._threads.append(th)
+        return self
+
+    def stop(self) -> dict[str, Any]:
+        self._stop.set()
+        for th in self._threads:
+            th.join(timeout=10)
+        self.stopped = time.monotonic()
+        self.oom1 = self.oom_kills()
+        self.pids1 = self._pids()
+        self.victims = office_watchdog.oom_kills(self.boot0)
+        return self.summary()
+
+    def between(self, t0: float, t1: float) -> dict[str, Any]:
+        """Een samenvatting van de steekproeven tussen twee momenten (time.monotonic)."""
+        rows = [s for s in self.samples if t0 <= s["t"] <= t1]
+        if len(rows) < 2:
+            return {"samples": len(rows)}
+        mb = 1024**2
+        span = rows[-1]["t"] - rows[0]["t"]
+        # cpu per seconde, over vensters van ±1 s
+        cores, i = [], 0
+        for j in range(1, len(rows)):
+            if rows[j]["t"] - rows[i]["t"] >= 1.0:
+                cores.append((rows[j]["cpu"] - rows[i]["cpu"]) / (rows[j]["t"] - rows[i]["t"]))
+                i = j
+        return {
+            "samples": len(rows),
+            "seconds": round(span, 1),
+            "cpu_s": round(rows[-1]["cpu"] - rows[0]["cpu"], 2),
+            "cores_avg": round((rows[-1]["cpu"] - rows[0]["cpu"]) / span, 2) if span else None,
+            "cores_max_1s": round(max(cores), 2) if cores else None,
+            "usage_mb_max": round(max(s["usage"] for s in rows) / mb),
+            "rss_mb_start": round(rows[0]["rss"] / mb),
+            "rss_mb_max": round(max(s["rss"] for s in rows) / mb),
+            "rss_mb_end": round(rows[-1]["rss"] / mb),
+            "x2t_runs": len({p for s in rows for p in s["x2t_pids"]}),
+            "x2t_mb_max": round(max(s["x2t_rss"] for s in rows) / mb),
+            "docservice_mb_max": round(max(s["docservice_rss"] for s in rows) / mb),
+            "converter_mb_max": round(max(s["converter_rss"] for s in rows) / mb),
+        }
+
+    def summary(self) -> dict[str, Any]:
+        peak = self.kernel_peak()
+        bad = [h for h in self.health if not h[1]]
+        out = {
+            **self.between(self.started, self.stopped or time.monotonic()),
+            "kernel_peak_mb": None if peak is None else round(peak / 1024**2),
+            "limit_cgroup": self.cg is not None,
+            "oom_kills": self.oom1 - self.oom0,
+            # Wie de OOM-killer doodde (kernellog), bijv. x2t; leeg als dmesg niet te lezen is
+            "oom_victims": [
+                {k: v[k] for k in ("comm", "pid", "anon_rss_mib", "cgroup")} for v in self.victims
+            ],
+            "docservice_restarted": bool(self.pids0.get("docservice"))
+            and self.pids0.get("docservice") != self.pids1.get("docservice"),
+            "converter_restarted": bool(self.pids0.get("converter"))
+            and self.pids0.get("converter") != self.pids1.get("converter"),
+        }
+        if self.health_every:
+            out["health"] = {
+                "n": len(self.health),
+                "not_true": len(bad),
+                "ms_median": round(statistics.median(h[2] for h in self.health), 1)
+                if self.health
+                else None,
+                "ms_max": round(max((h[2] for h in self.health), default=0), 1),
+                "first_bad_s": round(bad[0][0] - self.started, 1) if bad else None,
+            }
+        return out
+
+
+# --- DS stoppen, killen en weer starten (alleen de eigen container van de meting) ---
+
+
+def docker(*args: str, timeout: float = 120) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["docker", *args], capture_output=True, text=True, timeout=timeout, check=False
+    )
+
+
+def converter_starts(name: str) -> int:
+    """Hoe vaak supervisord in de container de converter (opnieuw) startte: de font-herstart
+    na een start is de tweede keer."""
+    r = docker(
+        "exec",
+        name,
+        "grep",
+        "-c",
+        "success: converter entered RUNNING",
+        "/var/log/supervisor/supervisord.log",
+        timeout=30,
+    )
+    return int(r.stdout.strip() or 0) if r.returncode in (0, 1) else -1
+
+
+def ds_stop(name: str, grace: int = 60) -> dict[str, Any]:
+    """docker stop -t grace (zoals stop_grace_period in compose.office.yaml); de duur en of
+    hij netjes stopte (exitcode van de container, en of docker moest killen)."""
+    t0 = time.monotonic()
+    r = docker("stop", "-t", str(grace), name, timeout=grace + 60)
+    took = time.monotonic() - t0
+    state = docker("inspect", "--format", "{{.State.ExitCode}} {{.State.OOMKilled}}", name)
+    code, _, oom = state.stdout.strip().partition(" ")
+    return {
+        "seconds": round(took, 2),
+        "ok": r.returncode == 0,
+        "exit_code": int(code) if code.lstrip("-").isdigit() else None,
+        # 137 = SIGKILL: docker moest na grace seconden killen
+        "killed_after_grace": code == "137",
+        "oom_killed": oom == "true",
+    }
+
+
+def ds_kill(name: str) -> dict[str, Any]:
+    """docker kill (SIGKILL), zoals een stroomstoring of de OOM-killer voor de hele container."""
+    t0 = time.monotonic()
+    r = docker("kill", name, timeout=60)
+    return {"seconds": round(time.monotonic() - t0, 2), "ok": r.returncode == 0}
+
+
+def ds_start(name: str, url: str, timeout: float = 480) -> dict[str, Any]:
+    """docker start, dan wachten tot DS gezond is en zijn font-herstart achter de rug heeft
+    (elke start doet die, ook een herstart van dezelfde container: spike, extra bevinding 1)."""
+    import httpx
+
+    before = converter_starts(name)
+    t0 = time.monotonic()
+    r = docker("start", name, timeout=120)
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or r.stdout).strip()[:300]}
+    healthy_at = fonts_at = None
+    end = t0 + timeout
+    with httpx.Client(trust_env=False, timeout=5) as client:
+        while time.monotonic() < end:
+            ok = False
+            with contextlib.suppress(httpx.HTTPError):
+                h = client.get(url.rstrip("/") + "/healthcheck")
+                ok = h.status_code == 200 and h.text.strip() == "true"
+            if ok and healthy_at is None:
+                healthy_at = time.monotonic() - t0
+            if fonts_at is None and converter_starts(name) >= before + 2:
+                fonts_at = time.monotonic() - t0
+            if ok and fonts_at is not None:
+                break
+            time.sleep(2)
+    return {
+        "ok": healthy_at is not None and fonts_at is not None,
+        "healthy_s": None if healthy_at is None else round(healthy_at, 1),
+        "fonts_done_s": None if fonts_at is None else round(fonts_at, 1),
+    }
