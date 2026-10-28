@@ -127,19 +127,26 @@ De app blijft dan de nieuwe versie en werkt zoals in fase 3; DS is weg, zijn vol
 Weer aan met `OFFICE=aan`.
 
 **Moet de code echt terug** naar een versie zonder office (fase 3, bijvoorbeeld v0.5.0), dan moet
-eerst de database terug naar revisie 0006, want een oudere app start niet op een nieuwer schema:
+eerst de database terug naar revisie 0006, want een oudere app start niet op een nieuwer schema.
+Zet office eerst uit met de versie van nu, en pas daarna de app: zo stopt DS terwijl de app nog
+draait, en komt wat er nog open was in de bestanden. (`dc stop platform` stopt alleen de app,
+niet DS. Stopt DS pas daarna, dan vindt zijn laatste opslag geen app meer; dat werk blijft dan
+in het volume van DS, en na het terugzetten van het schema kent het platform het niet meer.)
 
-1. Laat alles opslaan:
+1. Kijk op `/beheer` → Office: geen open documenten meer (vraag wie nog bewerkt om te sluiten),
+   en **Niet opgeslagen** is leeg (zie hieronder). Die lijst komt van DS: kijk dus terwijl
+   office nog aan staat.
+2. Zet office uit, met de versie van nu:
    ```bash
-   dc exec -T platform python -m app.cli office-checkpoint --wait 30
+   curl -fsSL …/install.sh | OFFICE=uit bash
    ```
-2. Wacht tot `/beheer` → Office → **Niet opgeslagen** leeg is (zie hieronder).
+   Het script laat eerst alles tussentijds opslaan en stopt dan DS, terwijl de app nog draait.
 3. Stop de app en zet het schema terug (het commando vraagt om "ja"):
    ```bash
    dc stop platform
    dc run --rm --no-deps platform python -m app.cli db-downgrade 0006
    ```
-4. Installeer de oude versie, met office uit:
+4. Installeer de oude versie (office blijft uit):
    ```bash
    curl -fsSL …/install.sh | PLATFORM_SRC_REF=<oude commit of tag> OFFICE=uit bash
    ```
@@ -148,7 +155,20 @@ eerst de database terug naar revisie 0006, want een oudere app start niet op een
 
 Daarna zijn de sessies van office en de staat van de PDF's weg (die stonden in de nieuwe
 kolommen en tabellen). De PDF's in `/tank/platform/office/` mogen weg. De volumes van DS blijven
-staan tot je ze zelf weghaalt (hieronder).
+staan tot je ze zelf weghaalt (hieronder). De bestanden, hun versies, de accounts (ook 2FA) en de
+geheimen van office in `.env` blijven.
+
+**Weer vooruit:** draai het script zonder `PLATFORM_SRC_REF`, met office weer aan:
+
+```bash
+curl -fsSL …/install.sh | OFFICE=aan bash
+```
+
+De app zet het schema bij zijn start zelf weer op de nieuwe revisie. DS start opnieuw op zijn
+volumes en met dezelfde geheimen; na 2 à 3 minuten (de fonts) kan er weer bewerkt worden.
+
+Zo nagelopen in de installatietest (`infra/single/tests/test_install_update.sh`, stappen R en
+V; uitslag in `docs/fase-4/integratie.md`).
 
 ## Niet-opgeslagen werk
 
