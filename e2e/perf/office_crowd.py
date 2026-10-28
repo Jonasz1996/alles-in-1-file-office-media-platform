@@ -47,6 +47,7 @@ from office_harness import docx_text  # noqa: E402
 MIN_FREE = int(1.5 * 1024**3)
 KEY_DELAY_MS = 110
 PAUSE_S = (0.8, 1.6)
+START_PAUSE_S = 2.0
 READY_TIMEOUT_MS = 180_000
 CLOSE_S = 15.0
 WORD = re.compile(r"[a-z0-9]+")
@@ -387,8 +388,11 @@ class Crowd:
             raise AssertionError("geen documentvlak in de editor")
         await editor.page.keyboard.press("Control+End")
         await editor.page.keyboard.press("Enter")
-        # Een woord dat niet meetelt: de eerste toets valt soms weg (o2.md, afwijking 32)
+        # Een woord dat niet meetelt: de eerste toets valt soms weg (o2.md, afwijking 32). Ook
+        # vlak na de eerste wijziging liet de editor soms een toets vallen (gemeten: de spatie
+        # na "start", of de eerste letter van het eerste woord), dus daarna even wachten.
         await editor.page.keyboard.type("start ", delay=KEY_DELAY_MS)
+        await asyncio.sleep(START_PAUSE_S)
 
     async def type_for(
         self, editor: Editor, seconds: float, stop: asyncio.Event, seed: int = 0
@@ -442,38 +446,61 @@ class Crowd:
             return False
 
 
-def near(word: str, tokens: set[str]) -> bool:
-    """Staat er een woord dat één teken verschilt (weg, erbij of anders)?"""
+def near_token(word: str, tokens: set[str]) -> str | None:
+    """Een woord in tokens dat één teken verschilt (weg, erbij of anders), of None."""
     for n in range(len(word)):
         if word[:n] + word[n + 1 :] in tokens:
-            return True
+            return word[:n] + word[n + 1 :]
     for t in tokens:
         if len(t) == len(word) + 1 and any(t[:n] + t[n + 1 :] == word for n in range(len(t))):
-            return True
+            return t
         if len(t) == len(word) and sum(a != b for a, b in zip(t, word, strict=True)) == 1:
-            return True
-    return False
+            return t
+    return None
+
+
+def near(word: str, tokens: set[str]) -> bool:
+    return near_token(word, tokens) is not None
+
+
+def saved_text(data: bytes) -> tuple[str, set[str]]:
+    """De tekst van een docx (kleine letters) en zijn woorden."""
+    text = docx_text(data).lower()
+    return text, set(WORD.findall(text))
+
+
+def is_saved(word: str, text: str) -> bool:
+    """Staat het woord in de tekst? Als deel van een langer woord telt ook: de editor laat soms
+    een spatie vallen ("startpd1u1w001": de spatie na "start" weg), en dan is het woord er wel.
+    De woorden zijn uniek (voorvoegsel plus 3 cijfers), dus een deel is nooit een ander woord."""
+    return word in text
 
 
 def check_words(data: bytes, editors: list[Editor], *, before: float | None = None) -> dict:
     """Welke getypte woorden in de docx staan. before (time.monotonic): alleen de woorden die
-    vóór dat moment getypt waren (de rest apart als after)."""
-    text = docx_text(data)
-    tokens = set(WORD.findall(text.lower()))
+    vóór dat moment getypt waren (de rest apart als after). Een woord dat er niet staat, maar
+    wel met één teken verschil (near), is een toets die de editor anders kreeg (o2.md, afwijking
+    32), geen verlies bij het opslaan; near_found zegt wat er dan wel staat."""
+    text, tokens = saved_text(data)
     typed = [(w, t) for e in editors for w, t in e.words]
     if before is not None:
         early = [w for w, t in typed if t <= before]
         late = [w for w, t in typed if t > before]
     else:
         early, late = [w for w, _ in typed], []
-    missing = [w for w in early if w not in tokens]
-    late_saved = [w for w in late if w in tokens]
+    missing = [w for w in early if not is_saved(w, text)]
+    late_saved = [w for w in late if is_saved(w, text)]
+    # Een ander getypt woord telt niet als "bijna": w003 weg en w002 er, is gewoon weg
+    others = tokens - {w for w, _ in typed}
+    found = {w: near_token(w, others) for w in missing}
     return {
         "typed": len(early),
         "saved": len(early) - len(missing),
+        "glued": sum(1 for w in early if w not in tokens and is_saved(w, text)),
         "missing": missing[:20],
         "missing_n": len(missing),
-        "missing_near": sum(1 for w in missing if near(w, tokens)),
+        "missing_near": sum(1 for f in found.values() if f),
+        "near_found": {w: f for w, f in list(found.items())[:20] if f},
         "after_n": len(late),
         "after_saved": len(late_saved),
     }

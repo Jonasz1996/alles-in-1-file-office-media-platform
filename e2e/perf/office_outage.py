@@ -79,9 +79,14 @@ def contents(bench: ob.Bench, squad: ob.Team, nodes: list[str]) -> dict[str, byt
 def words_by_time(
     data: bytes, editors: list[oc.Editor], until: float | None = None
 ) -> dict[str, Any]:
-    """check_words, en voor elk woord of het erin staat, met zijn tijd."""
-    tokens = set(oc.WORD.findall(oc.docx_text(data).lower()))
-    rows = [(t, w, w in tokens) for e in editors for w, t in e.words if until is None or t <= until]
+    """check_words, en voor elk woord of het erin staat (oc.is_saved), met zijn tijd."""
+    text, tokens = oc.saved_text(data)
+    rows = [
+        (t, w, oc.is_saved(w, text))
+        for e in editors
+        for w, t in e.words
+        if until is None or t <= until
+    ]
     return {"rows": rows, "tokens": tokens}
 
 
@@ -289,12 +294,11 @@ def kill_round(
                 if not lost or c is None
                 else round(min(r[0] for r in lost) - c, 1),
                 "saved_after_restart": sum(1 for r in rows_later if r[2]),
-                "near_missing_before": sum(
-                    1
-                    for r in before
-                    if not r[2]
-                    and oc.near(r[1], set(oc.WORD.findall(oc.docx_text(right_after[node]).lower())))
-                ),
+                "near_missing_before": oc.check_words(right_after[node], mine, before=c)[
+                    "missing_near"
+                ]
+                if c is not None
+                else 0,
             }
         )
     out.update(
