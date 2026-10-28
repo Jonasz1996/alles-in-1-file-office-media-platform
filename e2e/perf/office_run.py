@@ -1,13 +1,24 @@
-"""De metingen van office (fase 4, §4.7 deel 1) in één keer, zoals run_all.py voor fase 3.
+"""De metingen van office (fase 4, §4.7) in één keer, zoals run_all.py voor fase 3.
 
-Na elkaar, elk met een eigen server (de timers van productie) en nooit twee tegelijk:
+Na elkaar, elk met een eigen server (de timers van productie) en nooit twee tegelijk.
+Deel 1:
 - office_open.py: koud en warm openen via de app, en de cpu van de app bij koud openen;
 - office_tunnels.py: het geheugen van de app met 50 open tunnels;
 - office_save.py: opslaan, van de callback tot de versie in de database (1 MiB);
 - office_inspect.py: de invoercontrole op een xlsx met 10 MB XML en een pptx met 80 MB foto's;
 - office_budget.py: het groottebudget tegen 3ccee0a (eerste lading, editor, Bestanden).
-De eerste drie hebben een echte DS nodig (E2E_REAL_DS en E2E_REAL_DS_SECRET_FILE, zie
-docs/fase-4/e2e.md); zonder DS staan ze als "niet gemeten".
+Deel 2 (zwaar: draai office_run.py dan onder office_watchdog.py):
+- office_xml.py: de XML-grens bij 2 GB (conversie en openen, net onder de grens per soort);
+- office_convert.py: conversie klein en van 401 pagina's, en 401 pagina's terwijl een editor
+  opent;
+- office_editors.py: veel bewerkers tegelijk (--scale, standaard 2, 8 en 20: 1 × 2, 2 × 4 en
+  5 × 4), 60 s typen; stopt met opschalen als de sandbox te weinig geheugen vrij had;
+- office_outage_stop en office_outage_kill (office_outage.py): DS stoppen en killen met open
+  editors.
+Alles behalve office_inspect en office_budget heeft een echte DS nodig (E2E_REAL_DS en
+E2E_REAL_DS_SECRET_FILE, zie docs/fase-4/e2e.md); zonder DS staan ze als "niet gemeten".
+Met --import tool=pad neemt hij de JSON van een los gedraaid script over (bijv. onder de
+waakhond, met E2E_PERF_OUT), zonder opnieuw te meten.
 
 Uitvoer: docs/fase-4/metingen.json (alles) en in docs/fase-4/metingen.md het blok tussen
 <!-- gemeten --> en <!-- /gemeten --> (de tabel). De rest van metingen.md is handwerk (wat de
@@ -43,17 +54,30 @@ sys.path.insert(0, str(HERE.parent))
 
 import office_bench as ob  # noqa: E402 - pas na het pad naar e2e/perf
 import office_budget  # noqa: E402
+import office_convert  # noqa: E402
+import office_editors  # noqa: E402
 import office_inspect  # noqa: E402
 import office_open  # noqa: E402
+import office_outage  # noqa: E402
 import office_save  # noqa: E402
 import office_tunnels  # noqa: E402
+import office_xml  # noqa: E402
 
 from conftest import report_only, write_result  # noqa: E402
 
 ROOT = HERE.parents[1]
 DOCS = ROOT / "docs" / "fase-4"
-TOOLS = ("office_open", "office_tunnels", "office_save", "office_inspect", "office_budget")
-NEEDS_DS = {"office_open", "office_tunnels", "office_save"}
+PART1 = ("office_open", "office_tunnels", "office_save", "office_inspect", "office_budget")
+PART2 = (
+    "office_xml",
+    "office_convert",
+    "office_editors",
+    "office_outage_stop",
+    "office_outage_kill",
+)
+TOOLS = PART1 + PART2
+NEEDS_DS = {"office_open", "office_tunnels", "office_save", *PART2}
+SCALES = (2, 8, 20)
 BLOCK = re.compile(r"^<!-- gemeten -->$.*?^<!-- /gemeten -->$", re.S | re.M)
 SKELETON = """# Metingen fase 4
 
@@ -263,6 +287,243 @@ def rows(results: dict[str, Any]) -> list[dict[str, str]]:
             ("Budget: route Bestanden", "groeit < 1 KB"),
         ):
             add(what, goal, "–", None, "office_budget.py: niet gemeten")
+    return out + rows2(results)
+
+
+def _mb(n: Any) -> str:
+    return _n((n or 0) / 1e6, 1)
+
+
+KIND_LABEL = {
+    "docx": "docx (opmaak, tabellen)",
+    "docx_pages": "docx (heel veel pagina's)",
+    "pptx": "pptx",
+    "xlsx": "xlsx (formules)",
+    "odt": "odt",
+    "ods": "ods",
+    "odp": "odp",
+}
+
+
+MADE_LABEL = {
+    "pages": "pagina's",
+    "slides": "dia's",
+    "rows": "rijen",
+    "chapters": "hoofdstukken",
+    "tables": "tabellen",
+    "formulas_per_row": "formules per rij",
+}
+
+
+def rows2(results: dict[str, Any]) -> list[dict[str, str]]:
+    """De regels van §4.7 deel 2."""
+    out: list[dict[str, str]] = []
+
+    def add(what: str, goal: str, value: str, ok: bool | None, how: str) -> None:
+        out.append({"what": what, "goal": goal, "result": value, "met": _yes(ok), "how": how})
+
+    what = "XML-grens bij 2 GB: net onder de grens per soort, ook opmaak, formules, veel pagina's"
+    goal = "geen OOM van x2t; docservice blijft"
+    xm = results.get("office_xml")
+    if xm:
+        parts, opens, ok, stayed = [], [], True, True
+        for kind, k in xm["kinds"].items():
+            extra = ", ".join(
+                f"{v} {MADE_LABEL.get(n, n)}" for n, v in (k.get("made") or {}).items()
+            )
+            parts.append(
+                f"{KIND_LABEL.get(kind, kind)} {_n(k['xml_bytes'] / 1024**2, 2)} MiB XML"
+                f"{f' ({extra})' if extra else ''}: {k['ready']}/{k['n']} omgezet, tot klaar of"
+                f" mislukt {_spread(k['src_to_end_s'], ' s', 1)}, x2t tot"
+                f" {_n(k['x2t_mb']['max'], 0)} MB, DS tot {_n(k['peak_mb']['max'], 0)} MB,"
+                f" OOM {k['oom_kills']}"
+            )
+            o = k.get("open")
+            if o:
+                opens.append(
+                    f"{kind} {o['opened']}/{o['n']}"
+                    + (f" ({_spread(o['opened_s'], ' s', 1)})" if o["opened"] else "")
+                )
+                ok = ok and not o["oom_kills"]
+                stayed = stayed and not o["docservice_restarted"]
+            ok = ok and not k["oom_kills"]
+            stayed = stayed and not k["docservice_restarted"]
+        value = (
+            "; ".join(parts) + f". docservice bleef hetzelfde proces: {'ja' if stayed else 'nee'}"
+        )
+        if opens:
+            value += f". Geopend in de editor (hooguit {int(office_xml.OPEN_WAIT_S)} s): "
+            value += ", ".join(opens)
+        add(
+            what,
+            goal,
+            value,
+            ok and stayed,
+            f"office_xml.py, {xm['rounds']} rondes × {len(xm['kinds'])} bestanden (elke ronde"
+            " nieuwe bestanden, net onder de grens van inspect: 16 KiB eronder), via de app:"
+            " upload → voorbeeld → pdf-taak → DS /converter; DsWatch elke 0,25 s (geheugen van de"
+            " cgroup van DS, rss van x2t, OOM-kills uit dmesg, het proces van docservice,"
+            " /healthcheck); daarna elk bewerkbaar bestand openen in de editor",
+        )
+    else:
+        add(what, goal, "–", None, "office_xml.py: niet gemeten (geen echte DS)")
+
+    cv = results.get("office_convert")
+    s = (cv or {}).get("summary") or {}
+    if cv and (s.get("small") or s.get("large")):
+        parts, ok = [], True
+        for name, k in s.get("small", {}).items():
+            parts.append(
+                f"{name.rsplit('.', 1)[1]} {_spread(k['app_s'])} (DS alleen"
+                f" {_n(k['direct_s']['median'])} s)"
+            )
+            ok = ok and k["ready"] == k["n"]
+            ok = ok and (k["app_s"]["median"] or 99) <= office_convert.SMALL_OK_S
+        lg = s.get("large")
+        if lg:
+            parts.append(
+                f"401 pagina's {_spread(lg['app_s'], ' s', 1)} (DS alleen"
+                f" {_spread(lg['direct_s'], ' s', 1)}; pagina's {lg['pages']}, x2t tot"
+                f" {_n(lg['x2t_mb']['max'], 0)} MB)"
+            )
+            ok = ok and lg["ready"] == lg["n"]
+            ok = ok and (lg["app_s"]["max"] or 999) <= office_convert.GATE["large_s"]
+        add(
+            "Conversie klein / 401 pagina's",
+            "±1 s / ≤ 60 s (22 s in de proef)",
+            "; ".join(parts),
+            ok if s.get("small") and lg else None,
+            f"office_convert.py: klein {cv['runs_small']}× per soort (proef.docx/.xlsx/.pptx, elke"
+            f" keer een ander bestand), 401 pagina's {cv['runs']}× (een docx van"
+            f" {_mb(lg['file_bytes'] if lg else 0)} MB); via de app gemeten van het ophalen van het"
+            " bron door DS (/internal/office/src) tot de pdf in de app staat, ‘DS alleen’ is"
+            " hetzelfde bestand rechtstreeks naar /converter (async, elke 0,1 s gevraagd)",
+        )
+    else:
+        add("Conversie klein / 401 pagina's", "±1 s / ≤ 60 s", "–", None, "office_convert.py")
+
+    if cv and (s.get("conversie eerst") or s.get("editor eerst")):
+        parts, ok, asked, worst = [], True, 0, 0
+        for order in ("conversie eerst", "editor eerst"):
+            k = s.get(order)
+            if not k:
+                ok = False
+                continue
+            parts.append(
+                f"{order}: openen {_spread(k['opened_s'], ' s', 1)} ({k['opened']}/{k['n']}),"
+                f" conversie {_spread(k['conversion_s'], ' s', 1)}"
+            )
+            ok = ok and k["opened"] == k["n"] and k["health_not_true"] == 0
+            ok = ok and (k["opened_s"]["max"] or 999) <= office_convert.GATE["open_during_s"]
+            asked += k["health_n"]
+            worst = max(worst, k["health_ms_max"] or 0)
+        not_true = sum(
+            (s.get(o) or {}).get("health_not_true", 0) for o in ("conversie eerst", "editor eerst")
+        )
+        parts.append(f"/healthcheck {asked}× gevraagd, {not_true}× niet true, traagste {worst} ms")
+        add(
+            "Conversie van 401 pagina's terwijl een editor opent",
+            "openen ≤ 10 s; /healthcheck blijft true",
+            "; ".join(parts),
+            ok,
+            f"office_convert.py, {cv['runs']}× per volgorde: ‘conversie eerst’ = upload van de"
+            " docx van 401 pagina's, wachten tot DS het bron ophaalt, 2 s later een proef.docx"
+            " openen; ‘editor eerst’ = openen en uploaden zodra de sessie er is; /healthcheck"
+            " elke 0,5 s",
+        )
+    else:
+        add(
+            "Conversie van 401 pagina's terwijl een editor opent",
+            "openen ≤ 10 s; /healthcheck blijft true",
+            "–",
+            None,
+            "office_convert.py: niet gemeten",
+        )
+
+    ed = results.get("office_editors")
+    what = "20 bewerkers (5 documenten × 4), 60 s typen"
+    goal = "alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd"
+    if ed and ed.get("scales"):
+        parts = []
+        for n, r in sorted(ed["scales"].items(), key=lambda kv: int(kv[0])):
+            m = r["summary"]
+            parts.append(
+                f"{n} ({r['docs']} × {r['per_doc']}): {sum(m['saved'])}/{sum(m['typed'])} woorden"
+                f" opgeslagen ({m['rounds']} rondes), DS {_n(m['ds_cores_typing']['median'])}"
+                f" cores (piek {_n(m['ds_cores_typing_max']['max'])}),"
+                f" DS {_n(m['ds_rss_mb_max'], 0)} MB,"
+                f" app {_n(m['app_cores_typing']['median'])} cores en"
+                f" {_n(m['app_rss_mb_max'], 0)} MB, browser {_n(m['browser_pss_mb_max'], 0)} MB,"
+                f" minst vrij {_n(m['mem_available_mb_min'], 0)} MB"
+            )
+        top = ed["scales"].get("20")
+        ok = None if not top else top["summary"]["all_saved"] and not top["summary"]["low_memory"]
+        if ed.get("stopped"):
+            parts.append(f"gestopt met opschalen: {ed['stopped']}")
+        add(
+            what,
+            goal,
+            "; ".join(parts),
+            ok,
+            "office_editors.py, opgeschaald 2 → 8 → 20 bewerkers, elk 3 rondes (nieuwe"
+            " documenten van ±150 kB XML), één Chromium met een context per bewerker, elk typt"
+            " eigen woorden in een eigen alinea (110 ms per toets, 0,8–1,6 s pauze), daarna"
+            " Sluiten; opgeslagen = het woord staat in de docx na status 2; cpu: de cgroup van DS"
+            " en utime + stime van de app, elke seconde; RAM: rss van de cgroup van DS, VmRSS van"
+            " de app, PSS van de browser",
+        )
+    else:
+        add(what, goal, "–", None, "office_editors.py: niet gemeten")
+
+    st = results.get("office_outage_stop")
+    what, goal = "Stoppen met open editors", "alles opgeslagen; docker stop ≤ 60 s"
+    if st:
+        m = st["summary"]
+        add(
+            what,
+            goal,
+            f"docker stop {_spread(m['stop_s'], ' s', 1)}, {m['killed_after_grace']}× gekild"
+            f" (137); opgeslagen meteen na de stop {sum(m['saved_right_after'])}/{sum(m['typed'])}"
+            f" woorden, na de herstart {sum(m['saved_after_restart'])}/{sum(m['typed'])};"
+            f" status 2 kwam {_spread(m['callback_after_stop_s'], ' s', 1)} na het begin van de"
+            " stop",
+            m["all_saved"]
+            and not m["killed_after_grace"]
+            and (m["stop_s"]["max"] or 999) <= office_outage.GATE["stop_s"],
+            f"office_outage.py --mode stop, {m['rounds']} rondes: {st['docs']} documenten ×"
+            f" {st['per_doc']} bewerkers typen 30 s, 3 s later `docker stop -t 60` op de"
+            " container van DS (zoals compose met stop_grace_period 60 s); daarna de inhoud in de"
+            " app, DS weer starten, 90 s wachten en nog eens",
+        )
+    else:
+        add(what, goal, "–", None, "office_outage.py --mode stop: niet gemeten")
+
+    kl = results.get("office_outage_kill")
+    what = "Kill van DS met open editors"
+    goal = "verlies ≤ de tijd sinds het laatste tussentijds opslaan (≤ 5 min)"
+    if kl:
+        m = kl["summary"]
+        windows = [w for w in m["loss_window_s"] if w is not None]
+        add(
+            what,
+            goal,
+            f"van vóór de forcesave van de klok bewaard: {m['before_saved']}/"
+            f"{m['before_checkpoint']} woorden; van erna {m['after_saved']}/"
+            f"{m['after_checkpoint']} (weg: {m['lost']}; na de herstart in totaal"
+            f" {m.get('saved_after_restart')}/{m.get('typed')}); verloren venster"
+            f" {', '.join(_n(w, 0) for w in m['loss_window_s'])} s; de klok sloeg"
+            f" {_spread(m['checkpoint_after_open_s'], ' s', 0)} na het openen",
+            m["before_saved"] == m["before_checkpoint"]
+            and bool(windows)
+            and max(windows) <= office_outage.GATE["loss_s"],
+            f"office_outage.py --mode kill, {m['rounds']} rondes: {kl['docs']} documenten ×"
+            f" {kl['per_doc']} bewerkers typen tot de klok (checkpoint_minutes 5) een forcesave"
+            " (status 6, timer) gaf, dan nog 30, 150 of 285 s, dan `docker kill`; daarna DS"
+            " starten en 150 s wachten; verloren venster = van de forcesave tot het laatst"
+            " getypte woord dat weg is",
+        )
+    else:
+        add(what, goal, "–", None, "office_outage.py --mode kill: niet gemeten")
     return out
 
 
@@ -381,15 +642,106 @@ def run_tool(tool: str, args: argparse.Namespace) -> tuple[dict[str, Any], list[
     if tool == "office_inspect":
         result = office_inspect.run(args.runs)
         return result, office_inspect.check(result)
-    result = office_budget.measure()
-    return result, office_budget.check(result)
+    if tool == "office_budget":
+        result = office_budget.measure()
+        return result, office_budget.check(result)
+    if tool == "office_xml":
+        result = office_xml.measure(url, secret, args.rounds)
+        return result, office_xml.check(result)
+    if tool == "office_convert":
+        result = office_convert.measure(url, secret, args.rounds, args.runs)
+        return result, office_convert.check(result)
+    if tool == "office_editors":
+        return editors(url, secret, args)
+    mode = tool.rsplit("_", 1)[1]
+    result = office_outage.measure(url, secret, mode, args.rounds)
+    return result, office_outage.check(result)
+
+
+def scale(n: int) -> tuple[int, int]:
+    """Het aantal bewerkers als documenten × bewerkers per document (§4.7: 20 = 5 × 4)."""
+    per_doc = 2 if n <= 2 else 4
+    return max(1, n // per_doc), per_doc
+
+
+def editors(url: str, secret: str, args: argparse.Namespace) -> tuple[dict[str, Any], list[str]]:
+    """office_editors.py opgeschaald (2 → 8 → 20): stopt zodra een stap te weinig geheugen vrij
+    had of niet iedereen open kreeg; de hoogste stap die wel lukte, staat in "highest_ok"."""
+    result: dict[str, Any] = {"tool": "office_editors", "scales": {}, "stopped": None}
+    errors: list[str] = []
+    for n in [int(x) for x in args.scale.split(",") if x.strip()]:
+        docs, per_doc = scale(n)
+        r = office_editors.measure(url, secret, docs, per_doc, rounds=args.rounds)
+        write_result(f"office_editors_{n}", r)
+        result["scales"][str(n)] = r
+        found = office_editors.check(r)
+        errors += [f"{n} bewerkers: {e}" for e in found]
+        result["machine"] = r.get("machine")
+        if r["summary"]["low_memory"] or any(
+            x["opened"] != x["editors"] for x in r["round_results"]
+        ):
+            result["stopped"] = f"bij {n} bewerkers (te weinig geheugen vrij of niet alles open)"
+            break
+        result["highest_ok"] = n
+    return result, errors
+
+
+def imported(tool: str, path: Path, results: dict[str, Any]) -> dict[str, Any]:
+    """De JSON van een los gedraaid script overnemen; office_editors_<n> gaat onder
+    office_editors.scales."""
+    data = json.loads(path.read_text())
+    if tool.startswith("office_editors_"):
+        n = tool.rsplit("_", 1)[1]
+        merged = dict(results.get("office_editors") or {"tool": "office_editors", "scales": {}})
+        merged["scales"] = {**merged.get("scales", {}), n: data}
+        merged["machine"] = data.get("machine") or merged.get("machine")
+        ok = [int(k) for k, v in merged["scales"].items() if not v["summary"]["low_memory"]]
+        merged["highest_ok"] = max(ok, default=None)
+        return merged
+    return data
+
+
+def found_in(tool: str, result: dict[str, Any]) -> list[str]:
+    checks = {
+        "office_open": office_open.check,
+        "office_tunnels": office_tunnels.check,
+        "office_save": office_save.check,
+        "office_inspect": office_inspect.check,
+        "office_budget": office_budget.check,
+        "office_xml": office_xml.check,
+        "office_convert": office_convert.check,
+        "office_outage_stop": office_outage.check,
+        "office_outage_kill": office_outage.check,
+    }
+    if tool == "office_editors":
+        return [
+            f"{n} bewerkers: {e}"
+            for n, r in result.get("scales", {}).items()
+            for e in office_editors.check(r)
+        ]
+    return checks[tool](result)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="De metingen van office (§4.7 deel 1)")
-    parser.add_argument("--only", default=",".join(TOOLS), help="bijv. office_open,office_save")
-    parser.add_argument("--runs", type=int, default=5, help="office_open en office_inspect")
-    parser.add_argument("--rounds", type=int, default=3, help="office_tunnels en office_save")
+    parser = argparse.ArgumentParser(description="De metingen van office (§4.7)")
+    parser.add_argument(
+        "--only", help="bijv. office_open,office_save (standaard alles, met --import niets)"
+    )
+    parser.add_argument(
+        "--runs", type=int, default=5, help="office_open, office_inspect, klein van office_convert"
+    )
+    parser.add_argument("--rounds", type=int, default=3, help="rondes van de andere metingen")
+    parser.add_argument(
+        "--scale", default=",".join(map(str, SCALES)), help="office_editors: aantal bewerkers"
+    )
+    parser.add_argument(
+        "--import",
+        dest="imports",
+        action="append",
+        default=[],
+        metavar="TOOL=PAD",
+        help="de JSON van een los gedraaid script overnemen (office_editors_<n> voor één stap)",
+    )
     parser.add_argument("--kinds", default=",".join(office_open.KINDS))
     parser.add_argument("--out-dir", type=Path, default=DOCS)
     parser.add_argument(
@@ -398,10 +750,17 @@ def main(argv: list[str] | None = None) -> int:
         help="niets meten: alleen het blok in metingen.md opnieuw schrijven uit metingen.json",
     )
     args = parser.parse_args(argv)
-    tools = [] if args.rewrite else [t.strip() for t in args.only.split(",") if t.strip()]
+    only = args.only if args.only is not None else ("" if args.imports else ",".join(TOOLS))
+    tools = [] if args.rewrite else [t.strip() for t in only.split(",") if t.strip()]
     unknown = set(tools) - set(TOOLS)
     if unknown:
         parser.error(f"onbekende metingen: {', '.join(sorted(unknown))}")
+    pairs = []
+    for item in args.imports:
+        tool, _, path = item.partition("=")
+        if not path or (tool not in TOOLS and not re.fullmatch(r"office_editors_\d+", tool)):
+            parser.error(f"--import {item}: verwacht TOOL=PAD met een bekende meting")
+        pairs.append((tool, Path(path)))
 
     json_path = args.out_dir / "metingen.json"
     old = json.loads(json_path.read_text()) if json_path.exists() else {}
@@ -425,6 +784,14 @@ def main(argv: list[str] | None = None) -> int:
             "seconds": round(time.monotonic() - started, 1),
         }
         print(f"{tool}: {'goed' if not found else f'{len(found)} fout(en)'}", file=sys.stderr)
+    for tool, path in pairs:
+        result = imported(tool, path, results)
+        tool = "office_editors" if tool.startswith("office_editors_") else tool
+        results[tool] = result
+        errors[tool] = found_in(tool, result)
+        stamp = datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(timespec="seconds")
+        runs[tool] = {"generated": stamp, "commit": commit, "imported": path.name}
+        print(f"{tool}: overgenomen uit {path}", file=sys.stderr)
 
     flat = [f"{tool}: {e}" for tool in TOOLS for e in errors.get(tool, [])]
     report = {

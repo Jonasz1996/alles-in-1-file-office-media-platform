@@ -1,9 +1,9 @@
 # Metingen fase 4
 
 De metingen van §4.7 van het [bouwontwerp](bouwontwerp.md), in de sandbox, bij de integratie.
-Dit is **deel 1**: openen, de cpu en het geheugen van de app, opslaan, de invoercontrole en het
-groottebudget. Deel 2 (de XML-grens bij 2 GB, conversies, 20 bewerkers, stoppen en een kill van
-DS) volgt; die regels staan onderaan als "nog niet gemeten".
+**Deel 1**: openen, de cpu en het geheugen van de app, opslaan, de invoercontrole en het
+groottebudget. **Deel 2**: de XML-grens bij 2 GB, conversies, veel bewerkers tegelijk, stoppen en
+een kill van DS. Wat nog niet gemeten is, staat onderaan.
 
 Het blok tussen `<!-- gemeten -->` en `<!-- /gemeten -->` schrijft `e2e/perf/office_run.py`;
 alle getallen staan in [metingen.json](metingen.json). De rest is handwerk. Opnieuw meten: zie
@@ -58,6 +58,7 @@ Gemaakt door `e2e/perf/office_run.py`; niet met de hand bewerken. Alle getallen:
 - office_save: 2026-10-27T23:39:52+00:00, commit `e2c47d9`
 - office_inspect: 2026-10-27T23:40:10+00:00, commit `e2c47d9`
 - office_budget: 2026-10-27T23:40:30+00:00, commit `e2c47d9`
+- office_xml: 2026-10-28T01:28:02+00:00, commit `08f45fb`
 
 - Machine: 4 cpu's (Intel(R) Xeon(R) Processor @ 2.10GHz), 15,7 GiB RAM, kernel 6.18.44-fc-v165, Python 3.12.13
 - Chromium 141.0.7390.37 (Playwright, headless)
@@ -74,6 +75,12 @@ Gemaakt door `e2e/perf/office_run.py`; niet met de hand bewerken. Alle getallen:
 | Budget: eerste lading | groeit ≤ 0,5 KB | 93,75 → 94,12 KB (+0,37 KB) | ja | office_budget.py: npm run build en budget.mjs --json, 3ccee0a en e2c47d9 |
 | Budget: chunk van de editor | < 50 KB gzip | 3,94 KB | ja | office_budget.py: npm run build en budget.mjs --json, 3ccee0a en e2c47d9 |
 | Budget: route Bestanden | groeit < 1 KB | 39,42 → 42,36 KB (+2,94 KB) | nee | office_budget.py: npm run build en budget.mjs --json, 3ccee0a en e2c47d9 |
+| XML-grens bij 2 GB: net onder de grens per soort, ook opmaak, formules, veel pagina's | geen OOM van x2t; docservice blijft | docx (opmaak, tabellen) 3,98 MiB XML (355 hoofdstukken, 355 tabellen): 3/3 omgezet, tot klaar of mislukt 22,5 s (22,5–23,5, n=3), x2t tot 539 MB, DS tot 1028 MB, OOM 0; docx (heel veel pagina's) 3,98 MiB XML (96937 pagina's): 0/3 omgezet, tot klaar of mislukt 29,4 s (26,8–66,5, n=3), x2t tot 1722 MB, DS tot 2048 MB, OOM 3; pptx 3,97 MiB XML (401 dia's): 3/3 omgezet, tot klaar of mislukt 8,5 s (8,3–9,4, n=3), x2t tot 411 MB, DS tot 853 MB, OOM 0; xlsx (formules) 9,98 MiB XML (15376 rijen, 6 formules per rij): 3/3 omgezet, tot klaar of mislukt 18,5 s (18,5–18,5, n=3), x2t tot 576 MB, DS tot 1105 MB, OOM 0; odt 1,98 MiB XML (235 hoofdstukken): 3/3 omgezet, tot klaar of mislukt 12,5 s (12,3–13,5, n=3), x2t tot 453 MB, DS tot 950 MB, OOM 0; ods 1,98 MiB XML (1392 rijen, 4 formules per rij): 3/3 omgezet, tot klaar of mislukt 3,4 s (3,3–3,4, n=3), x2t tot 190 MB, DS tot 671 MB, OOM 0; odp 1,98 MiB XML (955 dia's): 3/3 omgezet, tot klaar of mislukt 12,5 s (11,4–12,5, n=3), x2t tot 587 MB, DS tot 1096 MB, OOM 0. docservice bleef hetzelfde proces: ja. Geopend in de editor (hooguit 120 s): docx 0/3, docx_pages 2/3 (5,0 s (4,8–5,1, n=2)), pptx 3/3 (4,2 s (4,1–4,3, n=3)), xlsx 3/3 (3,6 s (3,5–4,0, n=3)) | nee | office_xml.py, 3 rondes × 7 bestanden (elke ronde nieuwe bestanden, net onder de grens van inspect: 16 KiB eronder), via de app: upload → voorbeeld → pdf-taak → DS /converter; DsWatch elke 0,25 s (geheugen van de cgroup van DS, rss van x2t, OOM-kills uit dmesg, het proces van docservice, /healthcheck); daarna elk bewerkbaar bestand openen in de editor |
+| Conversie klein / 401 pagina's | ±1 s / ≤ 60 s | – | niet gemeten | office_convert.py |
+| Conversie van 401 pagina's terwijl een editor opent | openen ≤ 10 s; /healthcheck blijft true | – | niet gemeten | office_convert.py: niet gemeten |
+| 20 bewerkers (5 documenten × 4), 60 s typen | alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd | – | niet gemeten | office_editors.py: niet gemeten |
+| Stoppen met open editors | alles opgeslagen; docker stop ≤ 60 s | – | niet gemeten | office_outage.py --mode stop: niet gemeten |
+| Kill van DS met open editors | verlies ≤ de tijd sinds het laatste tussentijds opslaan (≤ 5 min) | – | niet gemeten | office_outage.py --mode kill: niet gemeten |
 
 Waar de tijd van openen zit (medianen in s; DS = van het verzoek om api.js tot klaar):
 
@@ -92,6 +99,11 @@ Wat faalt:
 - office_open: xlsx: warm openen mediaan 2.537 s > 2.0 s
 - office_open: pptx: warm openen mediaan 2.343 s > 2.0 s
 - office_budget: route Bestanden +2.94 KB, niet < 1.0 KB
+- office_xml: docx: 0 van 3 geopend in de editor
+- office_xml: docx_pages: 3 OOM-kill(s) (x2t, x2t, x2t)
+- office_xml: docx_pages: /healthcheck 7 keer niet true
+- office_xml: docx_pages: 0 van 3 omgezet (failed, failed, failed)
+- office_xml: docx_pages: 2 van 3 geopend in de editor
 <!-- /gemeten -->
 
 "Via de app" is de hele weg van een link naar de editor: `page.goto("/bewerken/<id>")` tot de
@@ -208,6 +220,35 @@ dan dit (1,6 MB voor 10 MiB XML) kost iets meer, maar dezelfde orde.
   2,6 KB ruimte. Wie de 1 KB wil halen, laadt `pdf.ts` en `actions.ts` pas bij het eerste gebruik
   en de status van office in een kleiner stuk; dat is een keuze, niet gedaan in deze stap.
 
+### XML-grens bij 2 GB: nee, door de docx met heel veel pagina's
+
+Zes van de zeven soorten houden bij 2 GB ruim: net onder de grens (16 KiB eronder) zette DS ze 3
+van de 3 keer om, x2t gebruikte hooguit 587 MB en de hele container hooguit 1,1 GB van zijn 2 GB.
+Ook met echte opmaak (een docx met 355 hoofdstukken en tabellen), formules (een xlsx van
+15.376 rijen met 6 formules per rij) en 401 dia's. De uitzondering is een docx met alleen
+pagina-einden: 96.937 lege pagina's in 3,98 MiB XML (zoals `pb4000k.docx` van de spike). Daar
+stopte de kernel x2t 3 van de 3 keer op de grens van de cgroup, bij 1,72 GB
+(`Memory cgroup out of memory: Killed process … (x2t) … anon-rss:1763184kB` in `dmesg`, ook in
+het log van de waakhond). Docservice bleef elke keer hetzelfde proces, de app zette de pdf-taak
+op mislukt (`Omzetten naar PDF mislukt (code -3)`, één poging) en de volgende bestanden gingen
+gewoon. Het doel "geen OOM van x2t" is dus niet gehaald; "docservice blijft" wel.
+
+- **Wat de OOM verder deed:** in de derde ronde gaf `/healthcheck` van DS 7 keer geen `true` (de
+  traagste 5,0 s): de container zat op zijn grens en alles in hem wachtte op geheugen. De
+  gezondheidslus van de app viel net in dat moment, zette DS op down, en de editor die het
+  script daarna opende, meldde "De editor is nu niet bereikbaar" (bevinding 5).
+- **Openen in de editor** (geen doel van §4.7, wel gemeten, hooguit 120 s): de pptx en de xlsx
+  net onder de grens in 3,5–4,3 s, de docx met de pagina's in ±5 s (x2t maakt daarvoor
+  `Editor.bin` van 77 MB; het zware is de PDF van 97.000 pagina's). De docx met opmaak kwam 0
+  van de 3 keer klaar (bevinding 4).
+- **De rest heeft ruimte:** een ods van 1,98 MiB XML kostte x2t maar 190 MB, een odt en odp
+  ±450–590 MB. De ODF-grens van 2 MB is dus voorzichtig (de spike zag x2t pas bij een odt van
+  7 MB vastlopen). Niet veranderd: dat is een keuze voor het ontwerp, niet voor een meting.
+- **Hoe:** `office_xml.py --rounds 3` onder de waakhond (16 min, geen ingreep, minst vrij 13,2 GB).
+  Elke ronde nieuwe bestanden (een seed per run): DS bewaart conversies onder een key die de sha
+  volgt, en een tweede keer hetzelfde bestand kwam in een eerdere poging meteen uit zijn cache
+  (ook de fout -3), zonder x2t.
+
 ## Bevindingen
 
 1. **De presentatie-editor krijgt via de app de ingebouwde thema's niet.** De pptx-editor vraagt
@@ -241,6 +282,26 @@ dan dit (1,6 MB voor 10 MiB XML) kost iets meer, maar dezelfde orde.
    `onAppReady`, dan laadt de editorpagina de editor één keer opnieuw (O2), en een warme opening
    duurt ±1,8 s. Dat de pagina die herhaling heeft, blijft dus nodig.
 
+4. **Een docx met veel opmaak net onder de grens opent niet in de editor.** De docx van
+   3,98 MiB XML (355 hoofdstukken, elk met kopjes, gekleurde en gemarkeerde tekst en een tabel)
+   kwam in de sandbox 0 van 3 keer klaar binnen 120 s. DS deed zijn deel snel (`Editor.bin` 2 s na
+   het openen, x2t 54–73 MB); de renderer van Chromium bleef daarna op 100 % van één core staan
+   met ±1 GB geheugen, en DS sloot na 45 s de WebSocket (`/doc/<key>/c/` 101, 45,0 s in de log
+   van DS). In een eerdere poging stond de renderer na 8 minuten nog zo. Pptx en xlsx net onder
+   hun grens openen wel (3,5–4,3 s). Of een snellere machine hem wel opent, is niet gemeten. De
+   grens van 4 MB beschermt DS (geen OOM), maar is voor een docx met zoveel opmaak te ruim om
+   hem ook te bewerken. Niet veranderd in deze stap. Bijvangst in het meetscript: een
+   geannuleerde aanroep van Playwright komt pas terug als de renderer weer antwoordt, dus
+   `office_crowd.py` stopt de browser dan zelf (op PID).
+5. **Eén trage `/healthcheck` zet DS 30 s op down.** De gezondheidslus (`app/office/health.py`)
+   kijkt elke 30 s, en één mislukte controle is genoeg voor down; terug naar ok kan pas bij de
+   volgende ronde. Een OOM van x2t maakt de hele container een paar seconden traag (hierboven:
+   7 keer geen `true`, tot 5,0 s); valt de ronde daarin, dan kan tot 30 s niemand een editor
+   openen ("De editor is nu niet bereikbaar"), terwijl DS na de OOM gewoon doorwerkt. Gezien in
+   ronde 3 van de XML-meting. Voorstel: pas down na twee mislukte controles na elkaar, of na een
+   mislukte controle na 5 s opnieuw kijken. Niet veranderd: de toestanden van Keuze 28 en hun
+   tests horen bij een eigen stap.
+
 ## Herhaling
 
 De tabel is de tweede set (`office_run.py`, alle vijf de scripts na elkaar, 23:20–23:40 UTC). Een
@@ -258,11 +319,10 @@ In die eerste set werkte de sessie zelf soms tegelijk (het proces van de sessie 
 op ±1 core); de warme docx van 4,76 s viel in zo'n moment. Daarom is de tweede set gemeten
 terwijl de sessie alleen wachtte.
 
-## Deel 2: nog niet gemeten
+## Nog niet gemeten
 
 | Wat | Doel |
 |---|---|
-| XML-grens bij 2 GB opnieuw meten (docx en pptx 4 MB, odt, ods en odp 2 MB, xlsx 10 MB, met echte opmaak en formules, en een document met heel veel pagina's) | geen OOM van x2t; docservice blijft |
 | Conversie klein / 401 pagina's | ±1 s / ≤ 60 s |
 | Conversie van 401 pagina's terwijl een editor opent | openen ≤ 10 s; `/healthcheck` blijft `true` |
 | 20 bewerkers (5 documenten × 4), 60 s typen | alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd |

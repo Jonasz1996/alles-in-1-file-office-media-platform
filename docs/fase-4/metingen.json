@@ -31,6 +31,11 @@
       "commit": "e2c47d9",
       "dirty": true,
       "seconds": 20.6
+    },
+    "office_xml": {
+      "generated": "2026-10-28T01:28:02+00:00",
+      "commit": "08f45fb",
+      "imported": "office_xml.json"
     }
   },
   "rows": [
@@ -96,13 +101,60 @@
       "result": "39,42 → 42,36 KB (+2,94 KB)",
       "met": "nee",
       "how": "office_budget.py: npm run build en budget.mjs --json, 3ccee0a en e2c47d9"
+    },
+    {
+      "what": "XML-grens bij 2 GB: net onder de grens per soort, ook opmaak, formules, veel pagina's",
+      "goal": "geen OOM van x2t; docservice blijft",
+      "result": "docx (opmaak, tabellen) 3,98 MiB XML (355 hoofdstukken, 355 tabellen): 3/3 omgezet, tot klaar of mislukt 22,5 s (22,5–23,5, n=3), x2t tot 539 MB, DS tot 1028 MB, OOM 0; docx (heel veel pagina's) 3,98 MiB XML (96937 pagina's): 0/3 omgezet, tot klaar of mislukt 29,4 s (26,8–66,5, n=3), x2t tot 1722 MB, DS tot 2048 MB, OOM 3; pptx 3,97 MiB XML (401 dia's): 3/3 omgezet, tot klaar of mislukt 8,5 s (8,3–9,4, n=3), x2t tot 411 MB, DS tot 853 MB, OOM 0; xlsx (formules) 9,98 MiB XML (15376 rijen, 6 formules per rij): 3/3 omgezet, tot klaar of mislukt 18,5 s (18,5–18,5, n=3), x2t tot 576 MB, DS tot 1105 MB, OOM 0; odt 1,98 MiB XML (235 hoofdstukken): 3/3 omgezet, tot klaar of mislukt 12,5 s (12,3–13,5, n=3), x2t tot 453 MB, DS tot 950 MB, OOM 0; ods 1,98 MiB XML (1392 rijen, 4 formules per rij): 3/3 omgezet, tot klaar of mislukt 3,4 s (3,3–3,4, n=3), x2t tot 190 MB, DS tot 671 MB, OOM 0; odp 1,98 MiB XML (955 dia's): 3/3 omgezet, tot klaar of mislukt 12,5 s (11,4–12,5, n=3), x2t tot 587 MB, DS tot 1096 MB, OOM 0. docservice bleef hetzelfde proces: ja. Geopend in de editor (hooguit 120 s): docx 0/3, docx_pages 2/3 (5,0 s (4,8–5,1, n=2)), pptx 3/3 (4,2 s (4,1–4,3, n=3)), xlsx 3/3 (3,6 s (3,5–4,0, n=3))",
+      "met": "nee",
+      "how": "office_xml.py, 3 rondes × 7 bestanden (elke ronde nieuwe bestanden, net onder de grens van inspect: 16 KiB eronder), via de app: upload → voorbeeld → pdf-taak → DS /converter; DsWatch elke 0,25 s (geheugen van de cgroup van DS, rss van x2t, OOM-kills uit dmesg, het proces van docservice, /healthcheck); daarna elk bewerkbaar bestand openen in de editor"
+    },
+    {
+      "what": "Conversie klein / 401 pagina's",
+      "goal": "±1 s / ≤ 60 s",
+      "result": "–",
+      "met": "niet gemeten",
+      "how": "office_convert.py"
+    },
+    {
+      "what": "Conversie van 401 pagina's terwijl een editor opent",
+      "goal": "openen ≤ 10 s; /healthcheck blijft true",
+      "result": "–",
+      "met": "niet gemeten",
+      "how": "office_convert.py: niet gemeten"
+    },
+    {
+      "what": "20 bewerkers (5 documenten × 4), 60 s typen",
+      "goal": "alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd",
+      "result": "–",
+      "met": "niet gemeten",
+      "how": "office_editors.py: niet gemeten"
+    },
+    {
+      "what": "Stoppen met open editors",
+      "goal": "alles opgeslagen; docker stop ≤ 60 s",
+      "result": "–",
+      "met": "niet gemeten",
+      "how": "office_outage.py --mode stop: niet gemeten"
+    },
+    {
+      "what": "Kill van DS met open editors",
+      "goal": "verlies ≤ de tijd sinds het laatste tussentijds opslaan (≤ 5 min)",
+      "result": "–",
+      "met": "niet gemeten",
+      "how": "office_outage.py --mode kill: niet gemeten"
     }
   ],
   "errors": [
     "office_open: docx: warm openen mediaan 2.474 s > 2.0 s",
     "office_open: xlsx: warm openen mediaan 2.537 s > 2.0 s",
     "office_open: pptx: warm openen mediaan 2.343 s > 2.0 s",
-    "office_budget: route Bestanden +2.94 KB, niet < 1.0 KB"
+    "office_budget: route Bestanden +2.94 KB, niet < 1.0 KB",
+    "office_xml: docx: 0 van 3 geopend in de editor",
+    "office_xml: docx_pages: 3 OOM-kill(s) (x2t, x2t, x2t)",
+    "office_xml: docx_pages: /healthcheck 7 keer niet true",
+    "office_xml: docx_pages: 0 van 3 omgezet (failed, failed, failed)",
+    "office_xml: docx_pages: 2 van 3 geopend in de editor"
   ],
   "errors_by_tool": {
     "office_open": [
@@ -115,6 +167,13 @@
     "office_inspect": [],
     "office_budget": [
       "route Bestanden +2.94 KB, niet < 1.0 KB"
+    ],
+    "office_xml": [
+      "docx: 0 van 3 geopend in de editor",
+      "docx_pages: 3 OOM-kill(s) (x2t, x2t, x2t)",
+      "docx_pages: /healthcheck 7 keer niet true",
+      "docx_pages: 0 van 3 omgezet (failed, failed, failed)",
+      "docx_pages: 2 van 3 geopend in de editor"
     ]
   },
   "ok": false,
@@ -6456,6 +6515,2400 @@
           0.88,
           0.98
         ]
+      },
+      "ok": false
+    },
+    "office_xml": {
+      "tool": "office_xml",
+      "rounds": 3,
+      "gate": {
+        "oom_kills": 0
+      },
+      "limits": {
+        "docx": 4194304,
+        "docx_pages": 4194304,
+        "pptx": 4194304,
+        "xlsx": 10485760,
+        "odt": 2097152,
+        "ods": 2097152,
+        "odp": 2097152
+      },
+      "margin": 16384,
+      "run_seed": 149920,
+      "runs": [
+        {
+          "kind": "docx",
+          "node": "fb7a8f15-0f68-45f0-9c40-2f1140323f9b",
+          "made": {
+            "ext": "docx",
+            "seed": 1499201000,
+            "budget": 4177920,
+            "limit": 4194304,
+            "xml_bytes": 4177863,
+            "file_bytes": 430735,
+            "chapters": 355,
+            "tables": 355
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 22.77,
+          "src_to_end_s": 22.52,
+          "pdf_pages": 408,
+          "ds": {
+            "samples": 91,
+            "seconds": 22.5,
+            "cpu_s": 27.02,
+            "cores_avg": 1.2,
+            "cores_max_1s": 1.7,
+            "usage_mb_max": 1016,
+            "rss_mb_start": 297,
+            "rss_mb_max": 789,
+            "rss_mb_end": 296,
+            "x2t_runs": 1,
+            "x2t_mb_max": 539,
+            "docservice_mb_max": 188,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 1016,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 46,
+              "not_true": 0,
+              "ms_median": 4.7,
+              "ms_max": 9.0,
+              "first_bad_s": null
+            }
+          },
+          "open": {
+            "opened_s": null,
+            "error": "niet klaar binnen 120 s: TimeoutError",
+            "page_errors": 0,
+            "browser": "141.0.7390.37",
+            "teardown": {
+              "contexts_s": 0.0,
+              "browser_s": 0.0,
+              "total_s": 0.1,
+              "killed": true,
+              "stuck": true
+            },
+            "seconds": 125.9,
+            "session_closed": true,
+            "ds": {
+              "samples": 504,
+              "seconds": 125.9,
+              "cpu_s": 1.48,
+              "cores_avg": 0.01,
+              "cores_max_1s": 0.36,
+              "usage_mb_max": 552,
+              "rss_mb_start": 296,
+              "rss_mb_max": 327,
+              "rss_mb_end": 298,
+              "x2t_runs": 1,
+              "x2t_mb_max": 63,
+              "docservice_mb_max": 190,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 581,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 252,
+                "not_true": 0,
+                "ms_median": 4.6,
+                "ms_max": 13.6,
+                "first_bad_s": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "docx_pages",
+          "node": "a508e63d-4c8d-42d7-98e9-3a8980b5e661",
+          "made": {
+            "ext": "docx",
+            "seed": 1499201001,
+            "budget": 4177920,
+            "limit": 4194304,
+            "xml_bytes": 4177910,
+            "file_bytes": 16835,
+            "pages": 96937
+          },
+          "pdf_state": "failed",
+          "jobs": [
+            {
+              "status": "failed",
+              "attempts": 1,
+              "error": "Omzetten naar PDF mislukt (code -3)"
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 27.0,
+          "src_to_end_s": 26.82,
+          "pdf_pages": null,
+          "ds": {
+            "samples": 108,
+            "seconds": 26.8,
+            "cpu_s": 34.85,
+            "cores_avg": 1.3,
+            "cores_max_1s": 1.84,
+            "usage_mb_max": 2048,
+            "rss_mb_start": 298,
+            "rss_mb_max": 2021,
+            "rss_mb_end": 299,
+            "x2t_runs": 1,
+            "x2t_mb_max": 1722,
+            "docservice_mb_max": 190,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 2048,
+            "limit_cgroup": true,
+            "oom_kills": 1,
+            "oom_victims": [
+              {
+                "comm": "x2t",
+                "pid": 23735,
+                "anon_rss_mib": 1722,
+                "cgroup": true
+              }
+            ],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 53,
+              "not_true": 0,
+              "ms_median": 4.7,
+              "ms_max": 1382.1,
+              "first_bad_s": null
+            }
+          },
+          "open": {
+            "opened_s": 5.11,
+            "error": null,
+            "page_errors": 0,
+            "closed": true,
+            "browser": "141.0.7390.37",
+            "teardown": {
+              "contexts_s": 0.0,
+              "browser_s": 0.1,
+              "total_s": 0.1,
+              "killed": false,
+              "stuck": false
+            },
+            "seconds": 6.2,
+            "session_closed": true,
+            "ds": {
+              "samples": 25,
+              "seconds": 6.0,
+              "cpu_s": 0.43,
+              "cores_avg": 0.07,
+              "cores_max_1s": 0.32,
+              "usage_mb_max": 469,
+              "rss_mb_start": 299,
+              "rss_mb_max": 346,
+              "rss_mb_end": 298,
+              "x2t_runs": 1,
+              "x2t_mb_max": 77,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 100,
+              "kernel_peak_mb": 484,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 13,
+                "not_true": 0,
+                "ms_median": 5.2,
+                "ms_max": 7.4,
+                "first_bad_s": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "pptx",
+          "node": "bd27edb2-4a09-436a-9ce8-3cd99623443d",
+          "made": {
+            "ext": "pptx",
+            "seed": 1499201002,
+            "budget": 4177920,
+            "limit": 4194304,
+            "xml_bytes": 4167578,
+            "file_bytes": 757462,
+            "slides": 401
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 9.72,
+          "src_to_end_s": 9.37,
+          "pdf_pages": 401,
+          "ds": {
+            "samples": 39,
+            "seconds": 9.5,
+            "cpu_s": 12.58,
+            "cores_avg": 1.32,
+            "cores_max_1s": 1.75,
+            "usage_mb_max": 845,
+            "rss_mb_start": 298,
+            "rss_mb_max": 663,
+            "rss_mb_end": 298,
+            "x2t_runs": 1,
+            "x2t_mb_max": 410,
+            "docservice_mb_max": 187,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 853,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 20,
+              "not_true": 0,
+              "ms_median": 4.7,
+              "ms_max": 6.5,
+              "first_bad_s": null
+            }
+          },
+          "open": {
+            "opened_s": 4.22,
+            "error": null,
+            "page_errors": 0,
+            "closed": true,
+            "browser": "141.0.7390.37",
+            "teardown": {
+              "contexts_s": 0.0,
+              "browser_s": 0.1,
+              "total_s": 0.1,
+              "killed": false,
+              "stuck": false
+            },
+            "seconds": 5.6,
+            "session_closed": true,
+            "ds": {
+              "samples": 23,
+              "seconds": 5.5,
+              "cpu_s": 0.78,
+              "cores_avg": 0.14,
+              "cores_max_1s": 0.61,
+              "usage_mb_max": 535,
+              "rss_mb_start": 298,
+              "rss_mb_max": 354,
+              "rss_mb_end": 299,
+              "x2t_runs": 1,
+              "x2t_mb_max": 90,
+              "docservice_mb_max": 188,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 537,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 12,
+                "not_true": 0,
+                "ms_median": 4.4,
+                "ms_max": 7.9,
+                "first_bad_s": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "xlsx",
+          "node": "51516444-e7f0-4233-b865-0be0a9afcabd",
+          "made": {
+            "ext": "xlsx",
+            "seed": 1499201003,
+            "budget": 10469376,
+            "limit": 10485760,
+            "xml_bytes": 10468644,
+            "file_bytes": 1806391,
+            "rows": 15376,
+            "formulas_per_row": 6,
+            "customers": 15376
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 18.75,
+          "src_to_end_s": 18.53,
+          "pdf_pages": 906,
+          "ds": {
+            "samples": 75,
+            "seconds": 18.5,
+            "cpu_s": 21.83,
+            "cores_avg": 1.18,
+            "cores_max_1s": 1.6,
+            "usage_mb_max": 1046,
+            "rss_mb_start": 299,
+            "rss_mb_max": 828,
+            "rss_mb_end": 297,
+            "x2t_runs": 1,
+            "x2t_mb_max": 576,
+            "docservice_mb_max": 189,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 1105,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 38,
+              "not_true": 0,
+              "ms_median": 4.4,
+              "ms_max": 7.5,
+              "first_bad_s": null
+            }
+          },
+          "open": {
+            "opened_s": 3.95,
+            "error": null,
+            "page_errors": 0,
+            "closed": true,
+            "browser": "141.0.7390.37",
+            "teardown": {
+              "contexts_s": 0.0,
+              "browser_s": 0.1,
+              "total_s": 0.1,
+              "killed": false,
+              "stuck": false
+            },
+            "seconds": 5.0,
+            "session_closed": true,
+            "ds": {
+              "samples": 20,
+              "seconds": 4.8,
+              "cpu_s": 0.67,
+              "cores_avg": 0.14,
+              "cores_max_1s": 0.44,
+              "usage_mb_max": 540,
+              "rss_mb_start": 297,
+              "rss_mb_max": 325,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 61,
+              "docservice_mb_max": 187,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 548,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 10,
+                "not_true": 0,
+                "ms_median": 4.6,
+                "ms_max": 6.3,
+                "first_bad_s": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "odt",
+          "node": "4d4ed6cc-b234-40fb-8f90-a93edcbeb421",
+          "made": {
+            "ext": "odt",
+            "seed": 1499201004,
+            "budget": 2080768,
+            "limit": 2097152,
+            "xml_bytes": 2080754,
+            "file_bytes": 254521,
+            "chapters": 235
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 13.73,
+          "src_to_end_s": 13.53,
+          "pdf_pages": 294,
+          "ds": {
+            "samples": 55,
+            "seconds": 13.5,
+            "cpu_s": 16.45,
+            "cores_avg": 1.22,
+            "cores_max_1s": 1.82,
+            "usage_mb_max": 935,
+            "rss_mb_start": 297,
+            "rss_mb_max": 701,
+            "rss_mb_end": 297,
+            "x2t_runs": 1,
+            "x2t_mb_max": 453,
+            "docservice_mb_max": 188,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 950,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 28,
+              "not_true": 0,
+              "ms_median": 4.6,
+              "ms_max": 47.2,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "kind": "ods",
+          "node": "36283e2d-49ee-4956-a4e7-9458aad6e95e",
+          "made": {
+            "ext": "ods",
+            "seed": 1499201005,
+            "budget": 2080768,
+            "limit": 2097152,
+            "xml_bytes": 2079384,
+            "file_bytes": 154877,
+            "rows": 1392,
+            "formulas_per_row": 4
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 3.69,
+          "src_to_end_s": 3.34,
+          "pdf_pages": 50,
+          "ds": {
+            "samples": 15,
+            "seconds": 3.5,
+            "cpu_s": 3.87,
+            "cores_avg": 1.1,
+            "cores_max_1s": 1.49,
+            "usage_mb_max": 664,
+            "rss_mb_start": 297,
+            "rss_mb_max": 436,
+            "rss_mb_end": 297,
+            "x2t_runs": 1,
+            "x2t_mb_max": 190,
+            "docservice_mb_max": 187,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 670,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 8,
+              "not_true": 0,
+              "ms_median": 5.3,
+              "ms_max": 8.4,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "kind": "odp",
+          "node": "858f62c8-f5f0-4cc2-9416-e9efd77df60b",
+          "made": {
+            "ext": "odp",
+            "seed": 1499201006,
+            "budget": 2080768,
+            "limit": 2097152,
+            "xml_bytes": 2078556,
+            "file_bytes": 287190,
+            "slides": 955
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 12.72,
+          "src_to_end_s": 12.51,
+          "pdf_pages": 955,
+          "ds": {
+            "samples": 51,
+            "seconds": 12.5,
+            "cpu_s": 14.73,
+            "cores_avg": 1.18,
+            "cores_max_1s": 1.74,
+            "usage_mb_max": 942,
+            "rss_mb_start": 297,
+            "rss_mb_max": 696,
+            "rss_mb_end": 297,
+            "x2t_runs": 1,
+            "x2t_mb_max": 449,
+            "docservice_mb_max": 188,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 961,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 26,
+              "not_true": 0,
+              "ms_median": 5.0,
+              "ms_max": 10.4,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "kind": "docx",
+          "node": "ee0fe491-3fdc-46a1-98f1-c98144f0db52",
+          "made": {
+            "ext": "docx",
+            "seed": 1499202000,
+            "budget": 4177920,
+            "limit": 4194304,
+            "xml_bytes": 4177898,
+            "file_bytes": 432031,
+            "chapters": 354,
+            "tables": 354
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 23.77,
+          "src_to_end_s": 23.52,
+          "pdf_pages": 407,
+          "ds": {
+            "samples": 95,
+            "seconds": 23.5,
+            "cpu_s": 28.31,
+            "cores_avg": 1.2,
+            "cores_max_1s": 1.75,
+            "usage_mb_max": 1028,
+            "rss_mb_start": 297,
+            "rss_mb_max": 790,
+            "rss_mb_end": 297,
+            "x2t_runs": 1,
+            "x2t_mb_max": 539,
+            "docservice_mb_max": 188,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 1028,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 48,
+              "not_true": 0,
+              "ms_median": 4.6,
+              "ms_max": 27.4,
+              "first_bad_s": null
+            }
+          },
+          "open": {
+            "opened_s": null,
+            "error": "niet klaar binnen 120 s: TimeoutError",
+            "page_errors": 0,
+            "browser": "141.0.7390.37",
+            "teardown": {
+              "contexts_s": 0.0,
+              "browser_s": 0.0,
+              "total_s": 0.1,
+              "killed": true,
+              "stuck": true
+            },
+            "seconds": 125.9,
+            "session_closed": true,
+            "ds": {
+              "samples": 504,
+              "seconds": 125.9,
+              "cpu_s": 1.44,
+              "cores_avg": 0.01,
+              "cores_max_1s": 0.37,
+              "usage_mb_max": 574,
+              "rss_mb_start": 297,
+              "rss_mb_max": 338,
+              "rss_mb_end": 298,
+              "x2t_runs": 1,
+              "x2t_mb_max": 73,
+              "docservice_mb_max": 188,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 590,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 252,
+                "not_true": 0,
+                "ms_median": 4.7,
+                "ms_max": 10.1,
+                "first_bad_s": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "docx_pages",
+          "node": "b1926a97-b204-4df0-8d7f-009b4b3c54f8",
+          "made": {
+            "ext": "docx",
+            "seed": 1499202001,
+            "budget": 4177920,
+            "limit": 4194304,
+            "xml_bytes": 4177910,
+            "file_bytes": 16834,
+            "pages": 96937
+          },
+          "pdf_state": "failed",
+          "jobs": [
+            {
+              "status": "failed",
+              "attempts": 1,
+              "error": "Omzetten naar PDF mislukt (code -3)"
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 29.61,
+          "src_to_end_s": 29.41,
+          "pdf_pages": null,
+          "ds": {
+            "samples": 119,
+            "seconds": 29.5,
+            "cpu_s": 39.76,
+            "cores_avg": 1.35,
+            "cores_max_1s": 1.97,
+            "usage_mb_max": 2048,
+            "rss_mb_start": 298,
+            "rss_mb_max": 2021,
+            "rss_mb_end": 299,
+            "x2t_runs": 1,
+            "x2t_mb_max": 1721,
+            "docservice_mb_max": 189,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 2048,
+            "limit_cgroup": true,
+            "oom_kills": 1,
+            "oom_victims": [
+              {
+                "comm": "x2t",
+                "pid": 25091,
+                "anon_rss_mib": 1721,
+                "cgroup": true
+              }
+            ],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 52,
+              "not_true": 0,
+              "ms_median": 4.5,
+              "ms_max": 4559.7,
+              "first_bad_s": null
+            }
+          },
+          "open": {
+            "opened_s": 4.85,
+            "error": null,
+            "page_errors": 0,
+            "closed": true,
+            "browser": "141.0.7390.37",
+            "teardown": {
+              "contexts_s": 0.0,
+              "browser_s": 0.1,
+              "total_s": 0.1,
+              "killed": false,
+              "stuck": false
+            },
+            "seconds": 6.0,
+            "session_closed": true,
+            "ds": {
+              "samples": 24,
+              "seconds": 5.8,
+              "cpu_s": 0.48,
+              "cores_avg": 0.08,
+              "cores_max_1s": 0.39,
+              "usage_mb_max": 452,
+              "rss_mb_start": 299,
+              "rss_mb_max": 345,
+              "rss_mb_end": 299,
+              "x2t_runs": 1,
+              "x2t_mb_max": 76,
+              "docservice_mb_max": 184,
+              "converter_mb_max": 100,
+              "kernel_peak_mb": 468,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 12,
+                "not_true": 0,
+                "ms_median": 4.4,
+                "ms_max": 6.1,
+                "first_bad_s": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "pptx",
+          "node": "57182d27-0161-4294-ac26-4e6ca506313d",
+          "made": {
+            "ext": "pptx",
+            "seed": 1499202002,
+            "budget": 4177920,
+            "limit": 4194304,
+            "xml_bytes": 4167907,
+            "file_bytes": 756911,
+            "slides": 401
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 8.68,
+          "src_to_end_s": 8.32,
+          "pdf_pages": 401,
+          "ds": {
+            "samples": 35,
+            "seconds": 8.5,
+            "cpu_s": 11.44,
+            "cores_avg": 1.35,
+            "cores_max_1s": 1.8,
+            "usage_mb_max": 841,
+            "rss_mb_start": 300,
+            "rss_mb_max": 665,
+            "rss_mb_end": 299,
+            "x2t_runs": 1,
+            "x2t_mb_max": 411,
+            "docservice_mb_max": 188,
+            "converter_mb_max": 100,
+            "kernel_peak_mb": 849,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 18,
+              "not_true": 0,
+              "ms_median": 4.5,
+              "ms_max": 10.8,
+              "first_bad_s": null
+            }
+          },
+          "open": {
+            "opened_s": 4.27,
+            "error": null,
+            "page_errors": 0,
+            "closed": true,
+            "browser": "141.0.7390.37",
+            "teardown": {
+              "contexts_s": 0.0,
+              "browser_s": 0.1,
+              "total_s": 0.1,
+              "killed": false,
+              "stuck": false
+            },
+            "seconds": 5.7,
+            "session_closed": true,
+            "ds": {
+              "samples": 23,
+              "seconds": 5.5,
+              "cpu_s": 0.73,
+              "cores_avg": 0.13,
+              "cores_max_1s": 0.53,
+              "usage_mb_max": 526,
+              "rss_mb_start": 299,
+              "rss_mb_max": 347,
+              "rss_mb_end": 299,
+              "x2t_runs": 1,
+              "x2t_mb_max": 79,
+              "docservice_mb_max": 189,
+              "converter_mb_max": 100,
+              "kernel_peak_mb": 533,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 12,
+                "not_true": 0,
+                "ms_median": 4.4,
+                "ms_max": 7.1,
+                "first_bad_s": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "xlsx",
+          "node": "48ee7ee0-d97c-492f-a485-d228fd8c643c",
+          "made": {
+            "ext": "xlsx",
+            "seed": 1499202003,
+            "budget": 10469376,
+            "limit": 10485760,
+            "xml_bytes": 10468864,
+            "file_bytes": 1806933,
+            "rows": 15377,
+            "formulas_per_row": 6,
+            "customers": 15377
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 18.75,
+          "src_to_end_s": 18.53,
+          "pdf_pages": 906,
+          "ds": {
+            "samples": 75,
+            "seconds": 18.5,
+            "cpu_s": 21.48,
+            "cores_avg": 1.16,
+            "cores_max_1s": 1.55,
+            "usage_mb_max": 1087,
+            "rss_mb_start": 299,
+            "rss_mb_max": 829,
+            "rss_mb_end": 296,
+            "x2t_runs": 1,
+            "x2t_mb_max": 576,
+            "docservice_mb_max": 189,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 1105,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 38,
+              "not_true": 0,
+              "ms_median": 4.5,
+              "ms_max": 8.5,
+              "first_bad_s": null
+            }
+          },
+          "open": {
+            "opened_s": 3.65,
+            "error": null,
+            "page_errors": 0,
+            "closed": true,
+            "browser": "141.0.7390.37",
+            "teardown": {
+              "contexts_s": 0.0,
+              "browser_s": 0.1,
+              "total_s": 0.1,
+              "killed": false,
+              "stuck": false
+            },
+            "seconds": 4.7,
+            "session_closed": true,
+            "ds": {
+              "samples": 19,
+              "seconds": 4.5,
+              "cpu_s": 0.63,
+              "cores_avg": 0.14,
+              "cores_max_1s": 0.55,
+              "usage_mb_max": 530,
+              "rss_mb_start": 296,
+              "rss_mb_max": 316,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 53,
+              "docservice_mb_max": 185,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 546,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 10,
+                "not_true": 0,
+                "ms_median": 4.7,
+                "ms_max": 6.7,
+                "first_bad_s": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "odt",
+          "node": "387037e3-34d8-4f56-9250-d165c9244ed3",
+          "made": {
+            "ext": "odt",
+            "seed": 1499202004,
+            "budget": 2080768,
+            "limit": 2097152,
+            "xml_bytes": 2080741,
+            "file_bytes": 254345,
+            "chapters": 235
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 12.51,
+          "src_to_end_s": 12.31,
+          "pdf_pages": 294,
+          "ds": {
+            "samples": 50,
+            "seconds": 12.3,
+            "cpu_s": 15.53,
+            "cores_avg": 1.27,
+            "cores_max_1s": 1.73,
+            "usage_mb_max": 919,
+            "rss_mb_start": 297,
+            "rss_mb_max": 686,
+            "rss_mb_end": 296,
+            "x2t_runs": 1,
+            "x2t_mb_max": 439,
+            "docservice_mb_max": 186,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 935,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 25,
+              "not_true": 0,
+              "ms_median": 4.4,
+              "ms_max": 8.1,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "kind": "ods",
+          "node": "9c96d31d-fe3b-4228-8a1f-77db125884f3",
+          "made": {
+            "ext": "ods",
+            "seed": 1499202005,
+            "budget": 2080768,
+            "limit": 2097152,
+            "xml_bytes": 2079580,
+            "file_bytes": 155132,
+            "rows": 1392,
+            "formulas_per_row": 4
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 3.66,
+          "src_to_end_s": 3.4,
+          "pdf_pages": 50,
+          "ds": {
+            "samples": 15,
+            "seconds": 3.5,
+            "cpu_s": 3.84,
+            "cores_avg": 1.1,
+            "cores_max_1s": 1.6,
+            "usage_mb_max": 659,
+            "rss_mb_start": 296,
+            "rss_mb_max": 432,
+            "rss_mb_end": 297,
+            "x2t_runs": 1,
+            "x2t_mb_max": 186,
+            "docservice_mb_max": 186,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 671,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 8,
+              "not_true": 0,
+              "ms_median": 5.1,
+              "ms_max": 7.8,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "kind": "odp",
+          "node": "f9bb3531-49a4-41b5-8d4a-a35ab1071cf3",
+          "made": {
+            "ext": "odp",
+            "seed": 1499202006,
+            "budget": 2080768,
+            "limit": 2097152,
+            "xml_bytes": 2079541,
+            "file_bytes": 287570,
+            "slides": 961
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 12.72,
+          "src_to_end_s": 12.53,
+          "pdf_pages": 961,
+          "ds": {
+            "samples": 51,
+            "seconds": 12.5,
+            "cpu_s": 15.58,
+            "cores_avg": 1.25,
+            "cores_max_1s": 1.7,
+            "usage_mb_max": 1093,
+            "rss_mb_start": 297,
+            "rss_mb_max": 833,
+            "rss_mb_end": 297,
+            "x2t_runs": 1,
+            "x2t_mb_max": 587,
+            "docservice_mb_max": 186,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 1096,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 26,
+              "not_true": 0,
+              "ms_median": 4.5,
+              "ms_max": 7.9,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "kind": "docx",
+          "node": "6cd18f71-d65c-419c-a8e0-60b630916beb",
+          "made": {
+            "ext": "docx",
+            "seed": 1499203000,
+            "budget": 4177920,
+            "limit": 4194304,
+            "xml_bytes": 4177831,
+            "file_bytes": 432620,
+            "chapters": 354,
+            "tables": 354
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 22.77,
+          "src_to_end_s": 22.52,
+          "pdf_pages": 408,
+          "ds": {
+            "samples": 91,
+            "seconds": 22.5,
+            "cpu_s": 26.9,
+            "cores_avg": 1.19,
+            "cores_max_1s": 1.71,
+            "usage_mb_max": 1014,
+            "rss_mb_start": 297,
+            "rss_mb_max": 778,
+            "rss_mb_end": 296,
+            "x2t_runs": 1,
+            "x2t_mb_max": 529,
+            "docservice_mb_max": 186,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 1015,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 46,
+              "not_true": 0,
+              "ms_median": 4.8,
+              "ms_max": 11.0,
+              "first_bad_s": null
+            }
+          },
+          "open": {
+            "opened_s": null,
+            "error": "niet klaar binnen 120 s: TimeoutError",
+            "page_errors": 0,
+            "browser": "141.0.7390.37",
+            "teardown": {
+              "contexts_s": 0.0,
+              "browser_s": 0.0,
+              "total_s": 0.1,
+              "killed": true,
+              "stuck": true
+            },
+            "seconds": 126.0,
+            "session_closed": true,
+            "ds": {
+              "samples": 504,
+              "seconds": 125.9,
+              "cpu_s": 1.45,
+              "cores_avg": 0.01,
+              "cores_max_1s": 0.36,
+              "usage_mb_max": 552,
+              "rss_mb_start": 296,
+              "rss_mb_max": 318,
+              "rss_mb_end": 298,
+              "x2t_runs": 1,
+              "x2t_mb_max": 54,
+              "docservice_mb_max": 188,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 591,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 252,
+                "not_true": 0,
+                "ms_median": 4.6,
+                "ms_max": 45.5,
+                "first_bad_s": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "docx_pages",
+          "node": "271b5f28-8d9e-4288-9c6a-325689cb508c",
+          "made": {
+            "ext": "docx",
+            "seed": 1499203001,
+            "budget": 4177920,
+            "limit": 4194304,
+            "xml_bytes": 4177910,
+            "file_bytes": 16836,
+            "pages": 96937
+          },
+          "pdf_state": "failed",
+          "jobs": [
+            {
+              "status": "failed",
+              "attempts": 1,
+              "error": "Omzetten naar PDF mislukt (code -3)"
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 66.62,
+          "src_to_end_s": 66.45,
+          "pdf_pages": null,
+          "ds": {
+            "samples": 267,
+            "seconds": 66.6,
+            "cpu_s": 107.74,
+            "cores_avg": 1.62,
+            "cores_max_1s": 2.03,
+            "usage_mb_max": 2048,
+            "rss_mb_start": 298,
+            "rss_mb_max": 2020,
+            "rss_mb_end": 298,
+            "x2t_runs": 1,
+            "x2t_mb_max": 1719,
+            "docservice_mb_max": 189,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 2048,
+            "limit_cgroup": true,
+            "oom_kills": 1,
+            "oom_victims": [
+              {
+                "comm": "x2t",
+                "pid": 26483,
+                "anon_rss_mib": 1718,
+                "cgroup": true
+              }
+            ],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 62,
+              "not_true": 7,
+              "ms_median": 4.9,
+              "ms_max": 5017.9,
+              "first_bad_s": 28.8
+            }
+          },
+          "open": {
+            "opened_s": null,
+            "error": "de editorpagina meldt: De editor is nu niet bereikbaar; probeer het zo opnieuwOpnieuw laden",
+            "page_errors": 0,
+            "browser": "141.0.7390.37",
+            "teardown": {
+              "contexts_s": 0.0,
+              "browser_s": 0.0,
+              "total_s": 0.1,
+              "killed": true,
+              "stuck": true
+            },
+            "seconds": 1.3,
+            "session_closed": true,
+            "ds": {
+              "samples": 6,
+              "seconds": 1.3,
+              "cpu_s": 0.01,
+              "cores_avg": 0.01,
+              "cores_max_1s": 0.01,
+              "usage_mb_max": 362,
+              "rss_mb_start": 298,
+              "rss_mb_max": 298,
+              "rss_mb_end": 298,
+              "x2t_runs": 0,
+              "x2t_mb_max": 0,
+              "docservice_mb_max": 185,
+              "converter_mb_max": 100,
+              "kernel_peak_mb": 362,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 4.7,
+                "ms_max": 5.5,
+                "first_bad_s": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "pptx",
+          "node": "8f82c643-1d8b-4751-9018-8189d811f181",
+          "made": {
+            "ext": "pptx",
+            "seed": 1499203002,
+            "budget": 4177920,
+            "limit": 4194304,
+            "xml_bytes": 4167832,
+            "file_bytes": 756943,
+            "slides": 401
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            },
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 79.09,
+          "src_to_end_s": 8.47,
+          "pdf_pages": 401,
+          "ds": {
+            "samples": 317,
+            "seconds": 79.1,
+            "cpu_s": 12.35,
+            "cores_avg": 0.16,
+            "cores_max_1s": 1.72,
+            "usage_mb_max": 829,
+            "rss_mb_start": 298,
+            "rss_mb_max": 663,
+            "rss_mb_end": 299,
+            "x2t_runs": 1,
+            "x2t_mb_max": 408,
+            "docservice_mb_max": 187,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 832,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 159,
+              "not_true": 0,
+              "ms_median": 4.8,
+              "ms_max": 174.1,
+              "first_bad_s": null
+            }
+          },
+          "open": {
+            "opened_s": 4.08,
+            "error": null,
+            "page_errors": 0,
+            "closed": true,
+            "browser": "141.0.7390.37",
+            "teardown": {
+              "contexts_s": 0.0,
+              "browser_s": 0.1,
+              "total_s": 0.1,
+              "killed": false,
+              "stuck": false
+            },
+            "seconds": 5.4,
+            "session_closed": true,
+            "ds": {
+              "samples": 22,
+              "seconds": 5.3,
+              "cpu_s": 0.73,
+              "cores_avg": 0.14,
+              "cores_max_1s": 0.62,
+              "usage_mb_max": 515,
+              "rss_mb_start": 299,
+              "rss_mb_max": 343,
+              "rss_mb_end": 298,
+              "x2t_runs": 1,
+              "x2t_mb_max": 76,
+              "docservice_mb_max": 187,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 525,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 11,
+                "not_true": 0,
+                "ms_median": 4.5,
+                "ms_max": 7.3,
+                "first_bad_s": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "xlsx",
+          "node": "afa3f701-f953-4d60-a01c-d146353b8bec",
+          "made": {
+            "ext": "xlsx",
+            "seed": 1499203003,
+            "budget": 10469376,
+            "limit": 10485760,
+            "xml_bytes": 10468972,
+            "file_bytes": 1805790,
+            "rows": 15378,
+            "formulas_per_row": 6,
+            "customers": 15378
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 18.74,
+          "src_to_end_s": 18.52,
+          "pdf_pages": 906,
+          "ds": {
+            "samples": 75,
+            "seconds": 18.5,
+            "cpu_s": 21.12,
+            "cores_avg": 1.14,
+            "cores_max_1s": 1.67,
+            "usage_mb_max": 1059,
+            "rss_mb_start": 298,
+            "rss_mb_max": 825,
+            "rss_mb_end": 297,
+            "x2t_runs": 1,
+            "x2t_mb_max": 573,
+            "docservice_mb_max": 188,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 1093,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 38,
+              "not_true": 0,
+              "ms_median": 4.2,
+              "ms_max": 57.7,
+              "first_bad_s": null
+            }
+          },
+          "open": {
+            "opened_s": 3.52,
+            "error": null,
+            "page_errors": 0,
+            "closed": true,
+            "browser": "141.0.7390.37",
+            "teardown": {
+              "contexts_s": 0.0,
+              "browser_s": 0.1,
+              "total_s": 0.1,
+              "killed": false,
+              "stuck": false
+            },
+            "seconds": 4.6,
+            "session_closed": true,
+            "ds": {
+              "samples": 19,
+              "seconds": 4.5,
+              "cpu_s": 0.54,
+              "cores_avg": 0.12,
+              "cores_max_1s": 0.44,
+              "usage_mb_max": 532,
+              "rss_mb_start": 297,
+              "rss_mb_max": 319,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 55,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 538,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 10,
+                "not_true": 0,
+                "ms_median": 4.6,
+                "ms_max": 8.6,
+                "first_bad_s": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "odt",
+          "node": "fc499ac7-c6b1-4532-ac6e-178b3ddeece8",
+          "made": {
+            "ext": "odt",
+            "seed": 1499203004,
+            "budget": 2080768,
+            "limit": 2097152,
+            "xml_bytes": 2080751,
+            "file_bytes": 253836,
+            "chapters": 236
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 12.7,
+          "src_to_end_s": 12.51,
+          "pdf_pages": 294,
+          "ds": {
+            "samples": 51,
+            "seconds": 12.5,
+            "cpu_s": 15.91,
+            "cores_avg": 1.27,
+            "cores_max_1s": 1.76,
+            "usage_mb_max": 919,
+            "rss_mb_start": 298,
+            "rss_mb_max": 693,
+            "rss_mb_end": 297,
+            "x2t_runs": 1,
+            "x2t_mb_max": 446,
+            "docservice_mb_max": 187,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 935,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 26,
+              "not_true": 0,
+              "ms_median": 4.4,
+              "ms_max": 10.6,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "kind": "ods",
+          "node": "3b099162-90a0-4b66-8f89-2df744646e92",
+          "made": {
+            "ext": "ods",
+            "seed": 1499203005,
+            "budget": 2080768,
+            "limit": 2097152,
+            "xml_bytes": 2079457,
+            "file_bytes": 155221,
+            "rows": 1392,
+            "formulas_per_row": 4
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 3.67,
+          "src_to_end_s": 3.43,
+          "pdf_pages": 50,
+          "ds": {
+            "samples": 15,
+            "seconds": 3.5,
+            "cpu_s": 3.66,
+            "cores_avg": 1.05,
+            "cores_max_1s": 1.64,
+            "usage_mb_max": 656,
+            "rss_mb_start": 297,
+            "rss_mb_max": 436,
+            "rss_mb_end": 298,
+            "x2t_runs": 1,
+            "x2t_mb_max": 189,
+            "docservice_mb_max": 186,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 662,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 8,
+              "not_true": 0,
+              "ms_median": 4.1,
+              "ms_max": 7.3,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "kind": "odp",
+          "node": "96e66210-a3c6-4447-938b-5cc01c5619b0",
+          "made": {
+            "ext": "odp",
+            "seed": 1499203006,
+            "budget": 2080768,
+            "limit": 2097152,
+            "xml_bytes": 2079302,
+            "file_bytes": 287187,
+            "slides": 960
+          },
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "done",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "src_fetches": 1,
+          "upload_to_end_s": 11.52,
+          "src_to_end_s": 11.36,
+          "pdf_pages": 960,
+          "ds": {
+            "samples": 47,
+            "seconds": 11.5,
+            "cpu_s": 13.98,
+            "cores_avg": 1.21,
+            "cores_max_1s": 1.71,
+            "usage_mb_max": 937,
+            "rss_mb_start": 297,
+            "rss_mb_max": 699,
+            "rss_mb_end": 297,
+            "x2t_runs": 1,
+            "x2t_mb_max": 453,
+            "docservice_mb_max": 186,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 955,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 24,
+              "not_true": 0,
+              "ms_median": 4.4,
+              "ms_max": 7.0,
+              "first_bad_s": null
+            }
+          }
+        }
+      ],
+      "machine": {
+        "cpus": 4,
+        "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+        "mem_total_bytes": 16872808448,
+        "mem_available_bytes": 15648546816,
+        "kernel": "6.18.44-fc-v180",
+        "python": "3.12.13",
+        "load_avg": [
+          0.98,
+          1.14,
+          1.09
+        ],
+        "ds": {
+          "url": "http://127.0.0.1:18150",
+          "name": "meet-ds",
+          "image": "mirror.gcr.io/onlyoffice/documentserver@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+          "image_id": "sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+          "memory_bytes": 2147483648,
+          "memory_swap_bytes": 2147483648,
+          "cpus": 2.0,
+          "pids_limit": 512,
+          "limits_applied": true
+        }
+      },
+      "kinds": {
+        "docx": {
+          "n": 3,
+          "xml_bytes": 4177863,
+          "file_bytes": {
+            "n": 3,
+            "median": 432031,
+            "min": 430735,
+            "max": 432620,
+            "spread": 1885,
+            "values": [
+              430735,
+              432031,
+              432620
+            ]
+          },
+          "made": {
+            "chapters": 355,
+            "tables": 355
+          },
+          "ready": 3,
+          "states": [
+            "ready",
+            "ready",
+            "ready"
+          ],
+          "src_to_end_s": {
+            "n": 3,
+            "median": 22.5,
+            "min": 22.5,
+            "max": 23.5,
+            "spread": 1.0,
+            "values": [
+              22.5,
+              23.5,
+              22.5
+            ]
+          },
+          "pdf_pages": [
+            408,
+            407,
+            408
+          ],
+          "peak_mb": {
+            "n": 3,
+            "median": 1016,
+            "min": 1015,
+            "max": 1028,
+            "spread": 13,
+            "values": [
+              1016,
+              1028,
+              1015
+            ]
+          },
+          "x2t_mb": {
+            "n": 3,
+            "median": 539,
+            "min": 529,
+            "max": 539,
+            "spread": 10,
+            "values": [
+              539,
+              539,
+              529
+            ]
+          },
+          "oom_kills": 0,
+          "oom_victims": [],
+          "docservice_restarted": false,
+          "health_not_true": 0,
+          "open": {
+            "opened": 0,
+            "n": 3,
+            "opened_s": {
+              "n": 0,
+              "median": null,
+              "min": null,
+              "max": null,
+              "spread": null
+            },
+            "x2t_mb": {
+              "n": 3,
+              "median": 63,
+              "min": 54,
+              "max": 73,
+              "spread": 19,
+              "values": [
+                63,
+                73,
+                54
+              ]
+            },
+            "peak_mb": {
+              "n": 3,
+              "median": 590,
+              "min": 581,
+              "max": 591,
+              "spread": 10,
+              "values": [
+                581,
+                590,
+                591
+              ]
+            },
+            "oom_kills": 0,
+            "errors": [
+              "niet klaar binnen 120 s: TimeoutError",
+              "niet klaar binnen 120 s: TimeoutError",
+              "niet klaar binnen 120 s: TimeoutError"
+            ],
+            "docservice_restarted": false
+          }
+        },
+        "docx_pages": {
+          "n": 3,
+          "xml_bytes": 4177910,
+          "file_bytes": {
+            "n": 3,
+            "median": 16835,
+            "min": 16834,
+            "max": 16836,
+            "spread": 2,
+            "values": [
+              16835,
+              16834,
+              16836
+            ]
+          },
+          "made": {
+            "pages": 96937
+          },
+          "ready": 0,
+          "states": [
+            "failed",
+            "failed",
+            "failed"
+          ],
+          "src_to_end_s": {
+            "n": 3,
+            "median": 29.4,
+            "min": 26.8,
+            "max": 66.5,
+            "spread": 39.6,
+            "values": [
+              26.8,
+              29.4,
+              66.5
+            ]
+          },
+          "pdf_pages": [
+            null,
+            null,
+            null
+          ],
+          "peak_mb": {
+            "n": 3,
+            "median": 2048,
+            "min": 2048,
+            "max": 2048,
+            "spread": 0,
+            "values": [
+              2048,
+              2048,
+              2048
+            ]
+          },
+          "x2t_mb": {
+            "n": 3,
+            "median": 1721,
+            "min": 1719,
+            "max": 1722,
+            "spread": 3,
+            "values": [
+              1722,
+              1721,
+              1719
+            ]
+          },
+          "oom_kills": 3,
+          "oom_victims": [
+            "x2t",
+            "x2t",
+            "x2t"
+          ],
+          "docservice_restarted": false,
+          "health_not_true": 7,
+          "open": {
+            "opened": 2,
+            "n": 3,
+            "opened_s": {
+              "n": 2,
+              "median": 5.0,
+              "min": 4.8,
+              "max": 5.1,
+              "spread": 0.3,
+              "values": [
+                5.1,
+                4.8
+              ]
+            },
+            "x2t_mb": {
+              "n": 3,
+              "median": 76,
+              "min": 0,
+              "max": 77,
+              "spread": 77,
+              "values": [
+                77,
+                76,
+                0
+              ]
+            },
+            "peak_mb": {
+              "n": 3,
+              "median": 468,
+              "min": 362,
+              "max": 484,
+              "spread": 122,
+              "values": [
+                484,
+                468,
+                362
+              ]
+            },
+            "oom_kills": 0,
+            "errors": [
+              "de editorpagina meldt: De editor is nu niet bereikbaar; probeer het zo opnieuwOpnieuw laden"
+            ],
+            "docservice_restarted": false
+          }
+        },
+        "pptx": {
+          "n": 3,
+          "xml_bytes": 4167578,
+          "file_bytes": {
+            "n": 3,
+            "median": 756943,
+            "min": 756911,
+            "max": 757462,
+            "spread": 551,
+            "values": [
+              757462,
+              756911,
+              756943
+            ]
+          },
+          "made": {
+            "slides": 401
+          },
+          "ready": 3,
+          "states": [
+            "ready",
+            "ready",
+            "ready"
+          ],
+          "src_to_end_s": {
+            "n": 3,
+            "median": 8.5,
+            "min": 8.3,
+            "max": 9.4,
+            "spread": 1.0,
+            "values": [
+              9.4,
+              8.3,
+              8.5
+            ]
+          },
+          "pdf_pages": [
+            401,
+            401,
+            401
+          ],
+          "peak_mb": {
+            "n": 3,
+            "median": 849,
+            "min": 832,
+            "max": 853,
+            "spread": 21,
+            "values": [
+              853,
+              849,
+              832
+            ]
+          },
+          "x2t_mb": {
+            "n": 3,
+            "median": 410,
+            "min": 408,
+            "max": 411,
+            "spread": 3,
+            "values": [
+              410,
+              411,
+              408
+            ]
+          },
+          "oom_kills": 0,
+          "oom_victims": [],
+          "docservice_restarted": false,
+          "health_not_true": 0,
+          "open": {
+            "opened": 3,
+            "n": 3,
+            "opened_s": {
+              "n": 3,
+              "median": 4.2,
+              "min": 4.1,
+              "max": 4.3,
+              "spread": 0.2,
+              "values": [
+                4.2,
+                4.3,
+                4.1
+              ]
+            },
+            "x2t_mb": {
+              "n": 3,
+              "median": 79,
+              "min": 76,
+              "max": 90,
+              "spread": 14,
+              "values": [
+                90,
+                79,
+                76
+              ]
+            },
+            "peak_mb": {
+              "n": 3,
+              "median": 533,
+              "min": 525,
+              "max": 537,
+              "spread": 12,
+              "values": [
+                537,
+                533,
+                525
+              ]
+            },
+            "oom_kills": 0,
+            "errors": [],
+            "docservice_restarted": false
+          }
+        },
+        "xlsx": {
+          "n": 3,
+          "xml_bytes": 10468644,
+          "file_bytes": {
+            "n": 3,
+            "median": 1806391,
+            "min": 1805790,
+            "max": 1806933,
+            "spread": 1143,
+            "values": [
+              1806391,
+              1806933,
+              1805790
+            ]
+          },
+          "made": {
+            "rows": 15376,
+            "formulas_per_row": 6
+          },
+          "ready": 3,
+          "states": [
+            "ready",
+            "ready",
+            "ready"
+          ],
+          "src_to_end_s": {
+            "n": 3,
+            "median": 18.5,
+            "min": 18.5,
+            "max": 18.5,
+            "spread": 0.0,
+            "values": [
+              18.5,
+              18.5,
+              18.5
+            ]
+          },
+          "pdf_pages": [
+            906,
+            906,
+            906
+          ],
+          "peak_mb": {
+            "n": 3,
+            "median": 1105,
+            "min": 1093,
+            "max": 1105,
+            "spread": 12,
+            "values": [
+              1105,
+              1105,
+              1093
+            ]
+          },
+          "x2t_mb": {
+            "n": 3,
+            "median": 576,
+            "min": 573,
+            "max": 576,
+            "spread": 3,
+            "values": [
+              576,
+              576,
+              573
+            ]
+          },
+          "oom_kills": 0,
+          "oom_victims": [],
+          "docservice_restarted": false,
+          "health_not_true": 0,
+          "open": {
+            "opened": 3,
+            "n": 3,
+            "opened_s": {
+              "n": 3,
+              "median": 3.6,
+              "min": 3.5,
+              "max": 4.0,
+              "spread": 0.4,
+              "values": [
+                4.0,
+                3.6,
+                3.5
+              ]
+            },
+            "x2t_mb": {
+              "n": 3,
+              "median": 55,
+              "min": 53,
+              "max": 61,
+              "spread": 8,
+              "values": [
+                61,
+                53,
+                55
+              ]
+            },
+            "peak_mb": {
+              "n": 3,
+              "median": 546,
+              "min": 538,
+              "max": 548,
+              "spread": 10,
+              "values": [
+                548,
+                546,
+                538
+              ]
+            },
+            "oom_kills": 0,
+            "errors": [],
+            "docservice_restarted": false
+          }
+        },
+        "odt": {
+          "n": 3,
+          "xml_bytes": 2080754,
+          "file_bytes": {
+            "n": 3,
+            "median": 254345,
+            "min": 253836,
+            "max": 254521,
+            "spread": 685,
+            "values": [
+              254521,
+              254345,
+              253836
+            ]
+          },
+          "made": {
+            "chapters": 235
+          },
+          "ready": 3,
+          "states": [
+            "ready",
+            "ready",
+            "ready"
+          ],
+          "src_to_end_s": {
+            "n": 3,
+            "median": 12.5,
+            "min": 12.3,
+            "max": 13.5,
+            "spread": 1.2,
+            "values": [
+              13.5,
+              12.3,
+              12.5
+            ]
+          },
+          "pdf_pages": [
+            294,
+            294,
+            294
+          ],
+          "peak_mb": {
+            "n": 3,
+            "median": 935,
+            "min": 935,
+            "max": 950,
+            "spread": 15,
+            "values": [
+              950,
+              935,
+              935
+            ]
+          },
+          "x2t_mb": {
+            "n": 3,
+            "median": 446,
+            "min": 439,
+            "max": 453,
+            "spread": 14,
+            "values": [
+              453,
+              439,
+              446
+            ]
+          },
+          "oom_kills": 0,
+          "oom_victims": [],
+          "docservice_restarted": false,
+          "health_not_true": 0,
+          "open": null
+        },
+        "ods": {
+          "n": 3,
+          "xml_bytes": 2079384,
+          "file_bytes": {
+            "n": 3,
+            "median": 155132,
+            "min": 154877,
+            "max": 155221,
+            "spread": 344,
+            "values": [
+              154877,
+              155132,
+              155221
+            ]
+          },
+          "made": {
+            "rows": 1392,
+            "formulas_per_row": 4
+          },
+          "ready": 3,
+          "states": [
+            "ready",
+            "ready",
+            "ready"
+          ],
+          "src_to_end_s": {
+            "n": 3,
+            "median": 3.4,
+            "min": 3.3,
+            "max": 3.4,
+            "spread": 0.1,
+            "values": [
+              3.3,
+              3.4,
+              3.4
+            ]
+          },
+          "pdf_pages": [
+            50,
+            50,
+            50
+          ],
+          "peak_mb": {
+            "n": 3,
+            "median": 670,
+            "min": 662,
+            "max": 671,
+            "spread": 9,
+            "values": [
+              670,
+              671,
+              662
+            ]
+          },
+          "x2t_mb": {
+            "n": 3,
+            "median": 189,
+            "min": 186,
+            "max": 190,
+            "spread": 4,
+            "values": [
+              190,
+              186,
+              189
+            ]
+          },
+          "oom_kills": 0,
+          "oom_victims": [],
+          "docservice_restarted": false,
+          "health_not_true": 0,
+          "open": null
+        },
+        "odp": {
+          "n": 3,
+          "xml_bytes": 2078556,
+          "file_bytes": {
+            "n": 3,
+            "median": 287190,
+            "min": 287187,
+            "max": 287570,
+            "spread": 383,
+            "values": [
+              287190,
+              287570,
+              287187
+            ]
+          },
+          "made": {
+            "slides": 955
+          },
+          "ready": 3,
+          "states": [
+            "ready",
+            "ready",
+            "ready"
+          ],
+          "src_to_end_s": {
+            "n": 3,
+            "median": 12.5,
+            "min": 11.4,
+            "max": 12.5,
+            "spread": 1.2,
+            "values": [
+              12.5,
+              12.5,
+              11.4
+            ]
+          },
+          "pdf_pages": [
+            955,
+            961,
+            960
+          ],
+          "peak_mb": {
+            "n": 3,
+            "median": 961,
+            "min": 955,
+            "max": 1096,
+            "spread": 141,
+            "values": [
+              961,
+              1096,
+              955
+            ]
+          },
+          "x2t_mb": {
+            "n": 3,
+            "median": 453,
+            "min": 449,
+            "max": 587,
+            "spread": 138,
+            "values": [
+              449,
+              587,
+              453
+            ]
+          },
+          "oom_kills": 0,
+          "oom_victims": [],
+          "docservice_restarted": false,
+          "health_not_true": 0,
+          "open": null
+        }
       },
       "ok": false
     }

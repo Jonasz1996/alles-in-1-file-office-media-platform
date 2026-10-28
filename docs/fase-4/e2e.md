@@ -259,7 +259,14 @@ script. De uitslag en wat hij betekent: [metingen.md](metingen.md).
 | `office_save.py` | opslaan: van de callback tot de versie in de database, 1 MiB | echt |
 | `office_inspect.py` | de invoercontrole op een xlsx met 10 MB XML en een pptx met 80 MB foto's | nee |
 | `office_budget.py` | het groottebudget tegen 3ccee0a (eerste lading, editor, Bestanden) | nee |
-| `office_run.py` | alles na elkaar; schrijft `docs/fase-4/metingen.json` en de tabel in `metingen.md` | |
+| `office_watchdog.py` | de waakhond (deel 2): start een meting als kind, logt elke seconde het vrije geheugen, de cgroup en de grootste processen, en de OOM-kills uit `dmesg`; zakt MemAvailable onder 2 GiB, dan stopt hij de hele procesboom van de meting (op PID) en zegt hij dat | |
+| `office_files.py` | gedeeld (deel 2): grote proefbestanden met echte opmaak, net onder de XML-grens van de invoercontrole (docx, docx met heel veel pagina's, pptx, xlsx met formules, odt, ods, odp), de docx van 401 pagina's, en een seed per run (`E2E_PERF_SEED`), zodat DS niets uit zijn cache van conversies haalt | nee |
+| `office_crowd.py` | gedeeld (deel 2): veel echte editors in één Chromium (async), typen in een menselijk tempo, cpu en geheugen van app, browser en machine elke seconde, en welke getypte woorden in het opgeslagen bestand staan | |
+| `office_xml.py` | de XML-grens bij 2 GB: per soort een bestand net onder de grens via de app omzetten (en de bewerkbare openen), met het geheugen van DS, x2t en de OOM-kills | echt |
+| `office_convert.py` | conversie klein en van 401 pagina's (via de app en rechtstreeks bij DS), en 401 pagina's terwijl een editor opent (`/healthcheck` elke 0,5 s) | echt |
+| `office_editors.py` | veel bewerkers tegelijk (`--docs`, `--per-doc`), 60 s typen; alles opgeslagen, cpu en RAM van DS en app | echt |
+| `office_outage.py` | DS stoppen (`--mode stop`) of killen (`--mode kill`) met open editors: wat is opgeslagen, hoe lang `docker stop` duurt, wat er na een kill weg is | echt (wordt gestopt en weer gestart) |
+| `office_run.py` | alles na elkaar; schrijft `docs/fase-4/metingen.json` en de tabel in `metingen.md`; `--scale` voor de bewerkers (standaard 2, 8, 20), `--import tool=pad` neemt een los gedraaide uitslag over | |
 
 ```sh
 export OFFICE_DS_NAME=meet-ds OFFICE_DS_PORT=18150 OFFICE_DS_DIR=/tmp/meet-ds \
@@ -269,6 +276,11 @@ cd web && npm run build && cd ../api
 E2E_REAL_DS=http://127.0.0.1:18150 E2E_REAL_DS_SECRET_FILE=/tmp/meet-ds/jwt.secret \
   uv run --with playwright python ../e2e/perf/office_run.py            # alles, ±40 minuten
 uv run --with playwright python ../e2e/perf/office_run.py --only office_inspect,office_budget
+# deel 2: elk zwaar script onder de waakhond, en dan overnemen in metingen.md
+E2E_REAL_DS=… E2E_PERF_OUT=/tmp/meet-uit uv run --with playwright python \
+  ../e2e/perf/office_watchdog.py --log /tmp/meet-uit/xml.log -- \
+  uv run --with playwright python ../e2e/perf/office_xml.py
+uv run python ../e2e/perf/office_run.py --import office_xml=/tmp/meet-uit/office_xml.json
 E2E_REAL_DS=… uv run --with playwright pytest ../e2e/perf/office_save.py -s   # één, via pytest
 cd .. && bash e2e/office_ds.sh stop   # met dezelfde variabelen als start
 ```
@@ -283,6 +295,13 @@ cd .. && bash e2e/office_ds.sh stop   # met dezelfde variabelen als start
   3ccee0a in de tmp, die hij aan het eind weer weghaalt.
 - De controle van `office_open.py` zet zijn gastpagina op een eigen kleine HTTP-server, niet via
   `page.route`: een route zet de HTTP-cache van Chromium uit, en dan meet "warm" niets.
+- Deel 2 is zwaar (20 editors zijn ±10 GB Chromium; x2t mag 2 GB). Draai elk script onder
+  `office_watchdog.py`: die stopt de meting voordat de sandbox zelf geheugen tekortkomt, en zijn
+  log zegt achteraf wat er gebeurde. `office_outage.py` stopt en killt de container van DS
+  (`E2E_REAL_DS`) en start hem weer; draai het alleen tegen een eigen DS.
+- Een editor die een enorm document niet kan opbouwen (de renderer zit vast op 100 % cpu),
+  houdt ook `close()` van Playwright minutenlang op. `office_crowd.py` stopt de browser dan zelf,
+  op PID.
 
 ## CI
 
