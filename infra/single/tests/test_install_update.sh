@@ -998,16 +998,19 @@ check "F: de app praat weer met DS" ds_version
 
 echo
 echo "== R: terug naar $FROM (fase 3), zoals het runbook"
-# 1. Op /beheer → Office: niemand bewerkt nog, en Niet opgeslagen is leeg. Die lijst komt van
+# 1. Eerst kijken of de oude versie er is, vóór er iets stopt (met de commando's van het runbook)
+old_ref_there() { git -C "$ROOT/src" fetch -q origin && git -C "$ROOT/src" cat-file -e "$FROM^{commit}"; }
+check "R0: de oude versie is er, vóór er iets stopt (runbook, stap 1)" old_ref_there
+# 2. Op /beheer → Office: niemand bewerkt nog, en Niet opgeslagen is leeg. Die lijst komt van
 #    DS, dus eerst wachten tot office werkt (F startte een nieuwe DS)
 check "R1: office werkt (ok), dus de lijsten op /beheer kloppen" api wait ok "$DS_SECONDS"
 check "R1: geen open documenten op /beheer → Office" test "$(api get /api/v1/admin/office open)" = "[]"
 check "R1: Niet opgeslagen is leeg" test "$(api get /api/v1/admin/office unsaved)" = "[]"
-# 2. Office uit met de huidige versie: DS stopt (en slaat op) terwijl de app nog draait
+# 3. Office uit met de huidige versie: DS stopt (en slaat op) terwijl de app nog draait
 step r-office-uit PLATFORM_SRC_REF="$TO" OFFICE=uit || fout "R2: install.sh gaf een fout"
 check "R2: DS is weg" no_office
 check "R2: de app draait (nog deze versie, zonder office)" app_up
-# 3. De app stoppen en het schema terug naar 0006 (dc is nu zonder office: er is geen DS meer)
+# 4. De app stoppen en het schema terug naar 0006 (dc is nu zonder office: er is geen DS meer)
 if docker compose "${base_args[@]}" stop platform >"$WORK/logs/r3-stop.log" 2>&1; then
   ok "R3: dc stop platform"
 else
@@ -1021,7 +1024,7 @@ else
   tail -n 20 "$WORK/logs/r3-downgrade.log"
 fi
 check "R3: het commando zegt dat het schema op 0006 staat" grep -qF "De database staat nu op revisie 0006." "$WORK/logs/r3-downgrade.log"
-# 4. De oude versie installeren, met office uit
+# 5. De oude versie installeren, met office uit
 step r-fase3 PLATFORM_SRC_REF="$FROM" OFFICE=uit || fout "R4: install.sh gaf een fout"
 check "R: de app draait op poort $PORT" app_up
 check "R: de broncode staat op $FROM" test "$(git -C "$ROOT/src" rev-parse HEAD)" = "$(git -C "$WORK/repo.git" rev-parse "$FROM^{commit}")"

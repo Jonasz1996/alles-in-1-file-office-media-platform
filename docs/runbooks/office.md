@@ -174,29 +174,39 @@ curl -fsSL …/install.sh | OFFICE=uit bash
 De app blijft dan de nieuwe versie en werkt zoals in fase 3; DS is weg, zijn volumes blijven.
 Weer aan met `OFFICE=aan`.
 
-**Moet de code echt terug** naar een versie zonder office (fase 3, bijvoorbeeld v0.5.0), dan moet
+**Moet de code echt terug** naar een versie zonder office (fase 3: versie 0.5.0 is commit
+`3ccee0a`; een tag `v0.5.0` bestaat niet), dan moet
 eerst de database terug naar revisie 0006, want een oudere app start niet op een nieuwer schema.
 Zet office eerst uit met de versie van nu, en pas daarna de app: zo stopt DS terwijl de app nog
 draait, en komt wat er nog open was in de bestanden. (`dc stop platform` stopt alleen de app,
 niet DS. Stopt DS pas daarna, dan vindt zijn laatste opslag geen app meer; dat werk blijft dan
 in het volume van DS, en na het terugzetten van het schema kent het platform het niet meer.)
 
-1. Kijk op `/beheer` → Office: geen open documenten meer (vraag wie nog bewerkt om te sluiten),
+1. Kijk eerst of de oude versie er is, vóór je iets stopt:
+   ```bash
+   git -C /opt/platform/src fetch -q origin
+   git -C /opt/platform/src cat-file -e '3ccee0a^{commit}' && echo "goed: 3ccee0a is er"
+   ```
+   Zegt dit niet "goed", stop dan hier. Met een versie die niet bestaat, faalt stap 5 pas
+   nadat de app gestopt is en het schema terug is, en dan draait het platform niet tot je het
+   script met een goede versie draait. Wil je een andere oude versie, zet dan die commit in
+   beide commando's.
+2. Kijk op `/beheer` → Office: geen open documenten meer (vraag wie nog bewerkt om te sluiten),
    en **Niet opgeslagen** is leeg (zie hieronder). Die lijst komt van DS: kijk dus terwijl
    office nog aan staat.
-2. Zet office uit, met de versie van nu:
+3. Zet office uit, met de versie van nu:
    ```bash
    curl -fsSL …/install.sh | OFFICE=uit bash
    ```
    Het script laat eerst alles tussentijds opslaan en stopt dan DS, terwijl de app nog draait.
-3. Stop de app en zet het schema terug (het commando vraagt om "ja"):
+4. Stop de app en zet het schema terug (het commando vraagt om "ja"):
    ```bash
    dc stop platform
    dc run --rm --no-deps platform python -m app.cli db-downgrade 0006
    ```
-4. Installeer de oude versie (office blijft uit):
+5. Installeer de oude versie (office blijft uit), met de commit uit stap 1:
    ```bash
-   curl -fsSL …/install.sh | PLATFORM_SRC_REF=<oude commit of tag> OFFICE=uit bash
+   curl -fsSL …/install.sh | PLATFORM_SRC_REF=3ccee0a OFFICE=uit bash
    ```
    Gebruik hiervoor het script van nu (via curl), niet het oude: alleen het nieuwe kent
    `PLATFORM_SRC_REF`, en het ziet zelf dat de oude versie geen office heeft.
