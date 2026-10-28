@@ -389,3 +389,70 @@ jobs:
       - name: Logs van de web-container
         if: always() && matrix.name == 'web'
         run: docker logs web-ci || true
+
+  # De spike van fase 5 (bouwontwerp §3.7): de stappen die het echte image nodig hebben (S1, S2,
+  # S3, S5, S7 en S10). Zonder needs, en alleen als de spike of het Dockerfile veranderde. De job
+  # faalt alleen als een script crasht of een image niet bouwt; de uitkomst staat in spike.json.
+  media-spike:
+    name: Media-spike (fase 5)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Veranderde de spike of het Dockerfile?
+        id: diff
+        env:
+          BASIS: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # zonder bruikbare basis (een nieuwe branch, een mislukte fetch) draait de spike gewoon
+          if [ -n "$BASIS" ] && [ "$BASIS" != 0000000000000000000000000000000000000000 ] \
+            && { git cat-file -e "$BASIS^{commit}" 2>/dev/null \
+              || git fetch --no-tags --depth=1 origin "$BASIS"; }; then
+            veranderd="$(git diff --name-only "$BASIS" HEAD -- api/tests/media/spike Dockerfile)"
+          else
+            veranderd="(geen basis)"
+          fi
+          echo "veranderd: ${veranderd:-niets}"
+          if [ -n "$veranderd" ]; then
+            echo "draaien=ja" >> "$GITHUB_OUTPUT"
+          else
+            echo "draaien=nee" >> "$GITHUB_OUTPUT"
+            echo "De spike en het Dockerfile zijn niet veranderd: niets te doen."
+          fi
+      - uses: docker/setup-buildx-action@v3
+        if: steps.diff.outputs.draaien == 'ja'
+      - name: Platform-image bouwen (zoals de job images)
+        if: steps.diff.outputs.draaien == 'ja'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: platform:ci
+          cache-from: type=gha,scope=platform
+          cache-to: type=gha,mode=max,scope=platform,ignore-error=true
+      - name: Afgeleid image voor S3 bouwen (de drie regels van Keuze 47)
+        if: steps.diff.outputs.draaien == 'ja'
+        # de builder default ziet platform:ci, de builder van setup-buildx niet
+        run: |
+          docker buildx build --builder default --load --build-arg BASE=platform:ci \
+            -t platform-spike:ci api/tests/media/spike
+      - name: Spike draaien (elke container onder --cpus 3)
+        if: steps.diff.outputs.draaien == 'ja'
+        run: |
+          python3 -I api/tests/media/spike/ci.py --uit "$RUNNER_TEMP/spike/spike.json" \
+            --image platform:ci --worker-image platform-spike:ci
+      - name: spike.json tonen
+        if: always() && steps.diff.outputs.draaien == 'ja'
+        run: |
+          echo "=== spike.json ==="
+          cat "$RUNNER_TEMP/spike/spike.json" || echo "(geen spike.json)"
+          echo "=== einde spike.json ==="
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.diff.outputs.draaien == 'ja'
+        with:
+          name: spike
+          path: ${{ runner.temp }}/spike/spike.json
+          if-no-files-found: warn
