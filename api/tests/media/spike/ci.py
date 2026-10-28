@@ -528,7 +528,25 @@ def main() -> int:
     for s in uit["samenvatting"]:
         anders = ("anders: " + "; ".join(s["anders"])) if s.get("anders") else ""
         log(f"{s['stap']:>4}  {s['uitkomst']}  {anders}")
+    with open(os.path.join(os.path.dirname(os.path.abspath(args.uit)), "kort.txt"), "w") as f:
+        f.write(kort(uit))
     return 1 if crash else 0
+
+
+def kort(uit: dict) -> str:
+    """De afwijkingen kort, voor het eind van het log: de logs van een job zijn alleen van achteren
+    te lezen, en spike.json is daar te lang voor."""
+    regels = []
+    for s in uit["stappen"]:
+        gemeten = str(s.get("gemeten"))[:600]
+        regels.append(f"{s.get('stap')}: {s.get('uitkomst')} | gemeten: {gemeten}")
+        for c in s.get("checks") or []:
+            if not c.get("ok"):
+                regels.append(
+                    f"  - {c.get('naam')}: verwacht {str(c.get('verwacht'))[:300]}"
+                    f" | gemeten {str(c.get('gemeten'))[:600]}"
+                )
+    return "\n".join(regels) + "\n"
 
 
 if __name__ == "__main__":

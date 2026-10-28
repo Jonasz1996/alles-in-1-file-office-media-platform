@@ -450,6 +450,9 @@ jobs:
           echo "=== spike.json ==="
           cat "$RUNNER_TEMP/spike/spike.json" || echo "(geen spike.json)"
           echo "=== einde spike.json ==="
+          echo "=== kort ==="
+          cat "$RUNNER_TEMP/spike/kort.txt" || echo "(geen kort.txt)"
+          echo "=== einde kort ==="
       - uses: actions/upload-artifact@v4
         if: always() && steps.diff.outputs.draaien == 'ja'
         with:
