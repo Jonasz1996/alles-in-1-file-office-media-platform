@@ -34,11 +34,26 @@ INSTALL_TEST_UV=pypi INSTALL_TEST_DIR=<lege map> INSTALL_TEST_LOGS=<map> \
 | 1 | `8782669` (de app; de test van `c036c50` stond nog niet in een commit) | 148 goed, 1 mislukt | 16 min 22 s |
 | 2 | `c036c50` | **149 goed, 0 mislukt** | 13 min 53 s |
 | 3 | `c036c50` | **149 goed, 0 mislukt** | 13 min 43 s |
+| 4 | `35fa9da` | **149 goed, 0 mislukt** | 14 min 32 s |
+| 5 | `0dd8fe1` (afronding: entrypoint van DS, eindtekst, R0) | **152 goed, 0 mislukt** | 16 min 59 s |
+| 6 | `8902859` (afronding: de gezondheidslus) | **152 goed, 0 mislukt** | 17 min 22 s |
 
-Alle drie in de sandbox (zie "De sandbox"), met de build-cache van eerdere runs. Tussen
+Alle in de sandbox (zie "De sandbox"), met de build-cache van eerdere runs. Tussen
 `8782669` en `c036c50` veranderden alleen de test, de twee hulpjes in `e2e/` en het runbook; de
 app, install.sh en de compose-bestanden zijn dezelfde. Run 3 gaf elke regel een tijd mee (zie
-"De tijd per stap").
+"De tijd per stap"). Run 4 was op de laatste commit van de integratiestap (`35fa9da`; na
+`c036c50` alleen documentatie). Daarna veranderde vóór de afronding buiten de documentatie
+alleen de versie (`baaeb3a`: `api/app/__init__.py`, `pyproject.toml`, `uv.lock`,
+`web/package.json` en `package-lock.json`) en de e2e met de echte DS, die deze test niet
+gebruikt.
+
+Bij de afronding veranderden `compose.office.yaml` (een eigen `entrypoint` voor DS, o6.md
+afwijking 24), de eindtekst van install.sh (afwijking 25), de proxy (o1.md afwijking 19) en de
+test zelf: R0 (de oude versie is er, vóór er iets stopt, zoals het runbook nu zegt) en twee
+controles in S (een oud pid-bestand, en toch weer supervisord). Dat is run 5. Daarna kwam nog de
+gezondheidslus (`app/office/health.py`: na een mislukte controle na 5 s opnieuw; metingen.md,
+bevinding 5): run 6, op de commit waarop ook de andere checks van de afronding draaiden. Run 5
+liep naast de checks van web, infra en API, run 6 naast de e2e; daarom duurden ze langer.
 
 Run 1 vond een fout in het hulpje, niet in het platform: `install_api.py login-zonder-code`
 las het veld `code` bovenaan het antwoord, maar de API zet het in `detail` (`{"detail":
@@ -47,7 +62,8 @@ nog tijdens run 1 (de test roept het hulpje elke keer opnieuw aan); daarom slaag
 controle in stap R van run 1 wel. In run 2 en 3 slaagden alle controles.
 
 Dit document en de wijziging in `o6.md` kwamen in de commit na `c036c50`. Die commit verandert
-alleen documentatie.
+alleen documentatie. Zo ook de regels van run 4 tot en met 6: ze kwamen in de commit na
+`8902859`, en die verandert alleen documentatie.
 
 ## De tijd per stap
 
@@ -83,7 +99,8 @@ De tijden komen uit de uitvoer van run 3, met een tijd voor elke regel:
 
 ## Wat elke stap doet en wat hij bewees
 
-Aantallen uit run 2 en 3 (gelijk).
+Aantallen uit run 5 en 6 (gelijk). Run 2 tot en met 4 hadden er 3 minder: R0 en de twee
+controles van het pid-bestand in S kwamen er bij de afronding bij.
 
 ### A — fase 3 installeren (10 controles)
 
@@ -131,7 +148,7 @@ DS van de mirror. Bewezen:
 Zonder `OFFICE_IMAGE`, zoals iemand na een herstart met de hand doet: niets opgehaald, niets
 opnieuw gemaakt.
 
-### S — `docker compose stop` met de echte editor open (14 controles)
+### S — `docker compose stop` met de echte editor open (16 controles)
 
 `e2e/install_editor.py` logt in Chromium in met wachtwoord en 2FA-code, opent `verslag.docx` in
 de viewer en drukt op Bewerken. Als de editor klaar is, typt het "Voor de stop gestopt<willekeurig>"
@@ -143,7 +160,10 @@ de test alles met `docker compose stop` (precies de bestanden van install.sh). B
 - daarna gaat de browser dicht (zonder fout), dan `docker compose start`: dezelfde containers;
 - **het getypte woord staat in het bestand, als nieuwe versie**: één versie meer dan vóór de
   sessie, en die oudere versie is precies het bestand van vóór de sessie;
-- DS komt weer op en de app zegt weer `ok`.
+- DS komt weer op en de app zegt weer `ok`;
+- sinds de afronding: vóór de stop zet de test in DS een pid-bestand van supervisord dat naar
+  pid 1 wijst (een nummer dat bij de start zeker bezet is), en na de start draait supervisord
+  toch. Met het entrypoint van het image blijft DS dan weg (o6.md, afwijking 24).
 
 Compose stopt eerst DS en pas daarna de app (dat bewijst de test met de tijden waarop de
 containers stopten). Volgens metingen.md (deel 2, "Stoppen met open editors") vangt DS de
@@ -172,10 +192,12 @@ standaard, 3 + 2 + 1), D (`OFFICE=uit`: DS weg, volumes blijven, 6), E (weer aan
 halen: het platform werkt zonder editor, 5) en F (weer aan: DS terug op dezelfde volumes,
 afgeschermd en gezond, 7).
 
-### R — terug naar v0.5.0 zoals het runbook (3 + 2 + 3 + 16 controles)
+### R — terug naar v0.5.0 zoals het runbook (1 + 3 + 2 + 3 + 16 controles)
 
 Precies "De app terugrollen" in `docs/runbooks/office.md`:
 
+0. **R0** (sinds de afronding): de oude versie (`3ccee0a`) is er, met de commando's van stap 1
+   van het runbook (`git fetch` en `git cat-file -e`), vóór er iets stopt.
 1. **R1**: office werkt (`ok`), er zijn geen open documenten en "Niet opgeslagen" is leeg
    (`/api/v1/admin/office`, wat `/beheer` → Office laat zien).
 2. **R2**: `install.sh` met de versie van nu en `OFFICE=uit`. Het script laat alles tussentijds
