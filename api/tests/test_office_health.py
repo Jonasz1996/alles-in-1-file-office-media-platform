@@ -360,6 +360,66 @@ async def test_de_lus_start_en_stopt(tmp_path, hooks):
         runtime.unbind()
 
 
+@pytest.mark.anyio
+async def test_na_een_mislukte_controle_sneller_opnieuw(world):
+    """Eén trage /healthcheck zette DS een hele ronde (30 s) op down (metingen.md fase 4,
+    bevinding 5). Down blijft meteen down; alleen de volgende controle komt eerder, tot de
+    melding office_down geldt."""
+    interval = runtime.settings().office_health_seconds
+    assert health.RECHECK_SECONDS < interval
+    assert await world.check(0) == "ok"
+    assert health.pause(world.state, at(0)) == interval
+    await world.control.post("/__fake/kill")
+    assert await world.check(30) == "down"
+    assert health.pause(world.state, at(30)) == health.RECHECK_SECONDS
+    assert health.pause(world.state, at(30 + health.DOWN_NOTICE_SECONDS - 1)) == (
+        health.RECHECK_SECONDS
+    )
+    # Na 2 minuten weg (de melding geldt): weer het gewone tempo
+    assert health.pause(world.state, at(30 + health.DOWN_NOTICE_SECONDS)) == interval
+    await world.control.post("/__fake/restart")
+    assert await world.check(35) == "ok"
+    assert health.pause(world.state, at(35)) == interval
+    # Starting (nog nooit gezond, of de font-herstart) houdt het gewone tempo
+    world.state.health, world.state.down_since = "starting", None
+    assert health.pause(world.state, at(40)) == interval
+
+
+@pytest.mark.anyio
+async def test_de_lus_is_na_een_korte_storing_snel_weer_gezond(tmp_path, hooks, monkeypatch):
+    """Met een ronde van 60 s: na één mislukte controle is DS niet pas na 60 s weer gezond,
+    maar bij de eerstvolgende snelle controle."""
+    monkeypatch.setattr(health, "RECHECK_SECONDS", 0.02)
+    secret = secrets.token_urlsafe(32)
+    ds = create_app(FakeConfig(secret=secret))
+    transport = httpx.ASGITransport(app=ds)
+    settings = office_settings(tmp_path, secret, office_health_seconds=60)
+    app = await bind(settings, transport)
+    control = httpx.AsyncClient(transport=transport, base_url="http://ds")
+    try:
+        await control.post("/__fake/kill")
+        state = office_state(app)
+        state.ever_ok = True  # hij was al gezond: weg is down, niet starting
+        await health.start(app)
+        for _ in range(100):
+            if state.health == "down":
+                break
+            await asyncio.sleep(0.01)
+        assert state.health == "down"
+        await control.post("/__fake/restart")
+        for _ in range(300):
+            if state.health == "ok":
+                break
+            await asyncio.sleep(0.01)
+        assert state.health == "ok"
+    finally:
+        await health.stop(app)
+        await control.aclose()
+        await engine.close()
+        client.transport = None
+        runtime.unbind()
+
+
 # --- de font-herstart van een nieuwe DS (spike, extra bevinding 1) ---
 
 

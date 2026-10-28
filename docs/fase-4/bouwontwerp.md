@@ -862,7 +862,7 @@ Elke keuze geeft de standaard en waarom.
     | Toestand | Wat er gebeurt |
     |---|---|
     | Niet ingesteld (`PLATFORM_OFFICE_URL` leeg) | geen interne luisteraar, `/office/` geeft 404, geen knoppen Bewerken en Nieuw document, previews alleen via B21. Precies fase 3. |
-    | Ingesteld, niet gezond | elke 30 s `GET /healthcheck` (moet `true` zijn). Openen geeft 503 `office_unavailable`; het PDF-voorbeeld en B21 blijven; conversies wachten. Na 2 minuten de melding `office_down`; de eerste 5 minuten na de start van de app (`starting`, DS bouwt fonts) tellen daar niet voor. Nieuw document werkt (het is een bestand). |
+    | Ingesteld, niet gezond | elke 30 s `GET /healthcheck` (moet `true` zijn; integratie: na een mislukte controle na 5 s opnieuw, de eerste 2 minuten, metingen.md bevinding 5). Openen geeft 503 `office_unavailable`; het PDF-voorbeeld en B21 blijven; conversies wachten. Na 2 minuten de melding `office_down`; de eerste 5 minuten na de start van de app (`starting`, DS bouwt fonts) tellen daar niet voor. Nieuw document werkt (het is een bestand). |
     | DS eist geen tokens (verkeerd image, verkeerde instelling) | bij elke overgang naar gezond en daarna elke 10 minuten stuurt de app `{"c": "version"}` en een conversie, allebei **zonder** token. Verwacht: `error 6` en `-8` [gemeten]. Iets anders: `state = misconfigured`, melding `office_misconfigured`, bewerken en conversie uit. Zonder deze controle zou elke opslag stil een forgotten file worden, want de app weigert ongetekende callbacks. |
     | Ander geheim dan DS (`PLATFORM_OFFICE_SECRET` is niet de `JWT_SECRET` van DS, bijvoorbeeld een typfout in `.env` of een DS zonder vast geheim) | `/healthcheck` is `true`, maar elk getekend commando geeft `error 6` [gemeten]. Dat is een fout in de instellingen, geen uitval: `state = misconfigured` met de reden in `problem`, melding `office_misconfigured`, nooit `office_down`. De grote controle draait dan elke ronde opnieuw (één `version`), zodat een goed geheim meteen telt. |
     | Valt weg tijdens het bewerken | de editor toont waarschuwing -18 [gemeten]. Onze pagina zegt "De verbinding met de editor is weg. Wat het laatst is opgeslagen, staat in het bestand." met "Opnieuw laden". Een nette stop slaat alles op (status 2 binnen 1 s) [gemeten]. |
@@ -2033,6 +2033,8 @@ async def check(settings, path: Path, ext: str, sha: str) -> Verdict   # een uur
 async def start(app) -> None
     # elke office_health_seconds: healthcheck; bij een overgang naar gezond en elke 10 min:
     # version, license, tokens_enforced; bij "weer gezond": convert.on_healthy(), recovery.kick()
+    # integratie: na een mislukte controle na 5 s opnieuw, tot de melding office_down geldt
+    # (pause, RECHECK_SECONDS; metingen.md, bevinding 5); de toestanden blijven zo
 
 # app/office/state.py (op app.state.office; één proces)
 class OfficeState:

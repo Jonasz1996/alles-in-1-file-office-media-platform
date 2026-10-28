@@ -42,7 +42,8 @@ Deel 2:
 - **`max_editors`:** de standaard van 20 per document kan blijven; zie
   [max_editors](#max_editors-keuze-27).
 - **Wat deel 2 verder liet zien:** een docx met veel opmaak net onder de grens opent niet in de
-  editor (bevinding 4); één trage `/healthcheck` zet DS 30 s op down (5); met veel bewerkers op
+  editor (bevinding 4); één trage `/healthcheck` zette DS 30 s op down (5; bij de afronding
+  hersteld: na een mislukte controle kijkt de app na 5 s opnieuw); met veel bewerkers op
   een volle machine vallen soms de eerste woorden weg in de editor zelf (6); en na een kill kwam DS
   één keer niet meer op door een oud pid-bestand van supervisord (7; bij de afronding hersteld,
   o6.md afwijking 24).
@@ -545,8 +546,16 @@ cijfers van `/beheer` → Office en `docker stats` (runbook, "De belasting meten
    7 keer geen `true`, tot 5,0 s); valt de ronde daarin, dan kan tot 30 s niemand een editor
    openen ("De editor is nu niet bereikbaar"), terwijl DS na de OOM gewoon doorwerkt. Gezien in
    ronde 3 van de XML-meting. Voorstel: pas down na twee mislukte controles na elkaar, of na een
-   mislukte controle na 5 s opnieuw kijken. Niet veranderd: de toestanden van Keuze 28 en hun
-   tests horen bij een eigen stap.
+   mislukte controle na 5 s opnieuw kijken. ~~Niet veranderd: de toestanden van Keuze 28 en hun
+   tests horen bij een eigen stap.~~ Bij de afronding van de integratie het tweede gebouwd, want
+   dat laat de toestanden van Keuze 28 zoals ze zijn: na een mislukte controle is DS meteen down
+   (er opent geen editor op een DS die niet antwoordt), maar de lus kijkt dan na 5 s opnieuw
+   (`RECHECK_SECONDS`, `health.pause`), zolang de melding `office_down` nog niet geldt (2
+   minuten); daarna weer elke 30 s. Een korte storing houdt bewerken zo ±5 s tegen in plaats van
+   tot 30 s. Twee keer mislukt vóór down had een DS die echt weg is 30 s langer als gezond laten
+   zien. Bewijs: `test_office_health.py::test_de_lus_is_na_een_korte_storing_snel_weer_gezond`
+   (ronde van 60 s; zonder de wijziging blijft de lus down) en
+   `::test_na_een_mislukte_controle_sneller_opnieuw`.
 6. **Met veel bewerkers en een volle machine vallen soms de eerste woorden weg, in de editor
    zelf.** Bij 20 bewerkers (5 × 4) ontbraken 10 van de 1043 getypte woorden (3, 5 en 2 per
    ronde). Geen van die 10 stond in de tekst die de editor zelf had vlak voor Sluiten (gelezen

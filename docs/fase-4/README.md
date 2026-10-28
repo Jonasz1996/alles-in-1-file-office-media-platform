@@ -207,7 +207,8 @@ Voorbeelden en PDF:
 
 Beheer:
 
-- Eén mislukte `/healthcheck` zet DS tot 30 s op down; zolang opent niemand een editor
+- Eén mislukte `/healthcheck` zet DS meteen op down; de app kijkt dan na 5 s opnieuw (eerst
+  pas na 30 s), dus na een korte storing opent er ±5 s geen editor
   ([metingen.md](metingen.md#bevindingen), bevinding 5).
 - Niet opgeslagen toont ook even een document dat het herstel zo zelf opslaat (hooguit 10
   minuten) ([o5.md](o5.md), open problemen).

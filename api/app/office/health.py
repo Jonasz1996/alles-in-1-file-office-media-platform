@@ -13,10 +13,11 @@ kloppen niet). Gezond is pas gezond na een geslaagde grote controle en als DS ni
 settling is: die herstart gooit open sessies weg zonder callback (spike, extra bevinding 1),
 dus bewerken pas daarna. Settling kijkt elke ronde, ook als de toestand ok is: een DS die
 tussen twee rondes opnieuw opkwam, telt zo ook. Bij "weer gezond": convert.on_healthy() en
-recovery.kick(). De melding office_down (down_too_long) komt na 2 minuten down; starting telt
-daar niet voor (down_since begint pas als de toestand down wordt). Een fout geheim is geen
-uitval: geen down_since, en elke ronde opnieuw de grote controle, zodat een goed geheim (een
-nieuwe DS) meteen telt.
+recovery.kick(). Na een mislukte controle kijkt de lus na RECHECK_SECONDS opnieuw (pause),
+zodat één trage /healthcheck bewerken niet een hele ronde uitzet. De melding office_down
+(down_too_long) komt na 2 minuten down; starting telt daar niet voor (down_since begint pas als
+de toestand down wordt). Een fout geheim is geen uitval: geen down_since, en elke ronde opnieuw
+de grote controle, zodat een goed geheim (een nieuwe DS) meteen telt.
 """
 
 import asyncio
@@ -36,6 +37,10 @@ STARTING_SECONDS = 300.0
 SETTLING_SECONDS = 900.0
 # Zo lang onbereikbaar geeft de melding office_down (O5 leest down_too_long)
 DOWN_NOTICE_SECONDS = 120.0
+# Na een mislukte controle kijkt de lus zo snel opnieuw, tot de melding office_down geldt. Eén
+# trage /healthcheck (een OOM van x2t maakt de hele container even traag) houdt bewerken zo
+# hooguit een paar seconden tegen, niet een hele ronde (metingen.md fase 4, bevinding 5).
+RECHECK_SECONDS = 5.0
 
 
 def down_too_long(state: OfficeState, now: datetime | None = None) -> bool:
@@ -45,6 +50,19 @@ def down_too_long(state: OfficeState, now: datetime | None = None) -> bool:
         return False
     now = now or datetime.now(UTC)
     return now - state.down_since >= timedelta(seconds=DOWN_NOTICE_SECONDS)
+
+
+def pause(state: OfficeState, now: datetime | None = None) -> float:
+    """Hoe lang de lus wacht tot de volgende controle: office_health_seconds, maar na een
+    mislukte controle RECHECK_SECONDS, zolang DS nog geen DOWN_NOTICE_SECONDS weg is. Down
+    blijft meteen down (bewerken uit); alleen de terugkeer komt zo eerder."""
+    interval = runtime.settings().office_health_seconds
+    if state.health != "down" or state.down_since is None:
+        return interval
+    now = now or datetime.now(UTC)
+    if now - state.down_since >= timedelta(seconds=DOWN_NOTICE_SECONDS):
+        return interval
+    return min(interval, RECHECK_SECONDS)
 
 
 def _came_back() -> None:
@@ -192,7 +210,7 @@ async def _loop(app) -> None:
             await check_once(app)
         except Exception:  # noqa: BLE001 - de lus blijft draaien
             log.exception("office: gezondheidscontrole mislukt")
-        await asyncio.sleep(runtime.settings().office_health_seconds)
+        await asyncio.sleep(pause(office_state(app)))
 
 
 async def start(app) -> None:
