@@ -504,9 +504,24 @@ export interface PlayOut {
   expires_at: string;
 }
 
-/** De segmenten in map.json: het rooster van 2 s bij transcode, of [begin_ms, duur_ms] per
- * segment uit de keyframe-index bij remux (Keuze 22 en 23). */
-export type SegmentGrid = { grid_ms: number; count: number } | [number, number][];
+/**
+ * Het rooster van 2 s bij transcode (Keuze 22), zoals app/media/types.py SegmentGrid. De
+ * referentie is mediatijd (spike punt 12): segment k loopt van origin_ms + k·grid_ms tot het
+ * volgende, en map.json en EXTINF tellen allebei vanaf 0 in mediatijd. Met een starttijd S ≠ 0
+ * vallen de keyframes op mediatijd 2k − S: origin_ms = −S, dus het eerste segment is korter.
+ * count komt uit de tijd van het laatste videobeeld (spike punt 10); een fragment voorbij count
+ * hoort bij het laatste segment. Rekenen: segmentStart en segmentOf in ./api.
+ */
+export interface GridSegments {
+  grid_ms: number;
+  origin_ms: number;
+  count: number;
+  last_frame_ms: number;
+}
+
+/** De segmenten in map.json: het rooster bij transcode, of [begin_ms, duur_ms] per segment (in
+ * mediatijd) uit de keyframe-index bij remux (Keuze 22 en 23). */
+export type SegmentGrid = GridSegments | [number, number][];
 
 /** GET /api/v1/stream/{sid}/map.json (Cache-Control: no-store), voor de MSE-speler. */
 export interface MediaMap {
@@ -692,22 +707,36 @@ export interface MediaConfig {
 /** PUT /api/v1/admin/media/config (body): alles behalve bench. */
 export type MediaConfigIn = Partial<Omit<MediaConfig, "bench">>;
 
-/** Een lopende sessie op /beheer (sessions.list()). */
+/** Een trede van de ladder (Keuze 24), zoals app/media/types.py Rung. */
+export interface Rung {
+  height: number;
+  preset: "veryfast" | "superfast";
+  codec: "h264" | "vp9";
+}
+
+/** Een lopende sessie op /beheer. De velden tot en met reasons zijn die van
+ * app/media/types.py SessionView (sessions.list(); nooit de sid zelf, Keuze 35); de rest zet
+ * M10 erbij voor Keuze 45 (gebruiker, titel, snelheid, voorsprong). */
 export interface SessionView {
   /** Het uuid van de sessie (niet de sid): DELETE /admin/media/sessions/{id} */
   id: string;
-  user: { id: string; display_name: string } | null;
+  user_id: string;
+  node_id: string | null;
   /** Bij een publieke link */
-  link: boolean;
-  title: string;
+  link_id: string | null;
   mode: PlayMode;
-  /** "720 veryfast", of null bij direct en remux */
-  rung: string | null;
+  /** null bij direct, remux en audio */
+  rung: Rung | null;
+  /** Sinds */
+  created_at: string;
+  last_seen: string;
+  reasons: string[];
+  user?: { id: string; display_name: string } | null;
+  title?: string | null;
   /** Hoe snel de producent loopt (× realtime) */
-  speed: number | null;
+  speed?: number | null;
   /** Voorsprong in seconden mediatijd */
-  ahead_s: number | null;
-  started_at: string;
+  ahead_s?: number | null;
 }
 
 /** De import van Keuze 2. */

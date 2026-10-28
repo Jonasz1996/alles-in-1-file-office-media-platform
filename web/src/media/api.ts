@@ -45,6 +45,7 @@ import type {
   ProgressBatchIn,
   ProgressBatchOut,
   ProgressIn,
+  SegmentGrid,
   ShowDetail,
   TmdbKeyIn,
 } from "./types";
@@ -140,6 +141,38 @@ export async function getMap(sid: string, fetchFn: typeof fetch = (...a) => fetc
   const res = await fetchFn(streamUrl(sid, "map.json"), { credentials: "omit", cache: "no-store" });
   if (!res.ok) throw res;
   return (await res.json()) as MediaMap;
+}
+
+/** Hoeveel segmenten map.json beschrijft. */
+export function segmentCount(segments: SegmentGrid): number {
+  return Array.isArray(segments) ? segments.length : segments.count;
+}
+
+/** Het begin van segment k in ms mediatijd (zoals SegmentGrid.start_of in app/media/types.py):
+ * bij het rooster origin_ms + k·grid_ms, nooit onder 0; bij remux het begin uit de lijst. */
+export function segmentStart(segments: SegmentGrid, k: number): number {
+  if (Array.isArray(segments)) {
+    if (segments.length === 0) return 0;
+    return segments[Math.max(0, Math.min(segments.length - 1, k))][0];
+  }
+  return Math.max(0, segments.origin_ms + k * segments.grid_ms);
+}
+
+/** Het segment bij tijd t in ms mediatijd (zoals SegmentGrid.segment_of): nooit voor het eerste
+ * en nooit voorbij het laatste (een fragment voorbij count hoort bij het laatste, spike punt 10). */
+export function segmentOf(segments: SegmentGrid, t: number): number {
+  if (Array.isArray(segments)) {
+    // Het laatste segment dat op of voor t begint
+    let lo = 0;
+    let hi = segments.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (segments[mid][0] <= t) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }
+  return Math.min(segments.count - 1, Math.max(0, Math.floor((t - segments.origin_ms) / segments.grid_ms)));
 }
 
 // --- M7: voortgang ---

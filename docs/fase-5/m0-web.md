@@ -133,11 +133,24 @@ de haken en de muziekbalk in de schil. Er blijft 4,4 KB over.
   zonder dat de test verandert, gooi dan die map weg, anders blijft de test lokaal overslaan. In CI
   (een schone `npm ci`) speelt dat niet.
 
-## Nog na te lopen bij het samenvoegen met M0-api
+## Naast M0-api gelegd (stand van `1c020e5` in de worktree van M0-api)
 
-- De velden van de vormen die §2 niet helemaal vastlegt, naast `app/media/types.py` leggen:
-  `Card` (`node_id` kan leeg zijn voor een serie, met `show_id`, `season` en `episode`),
-  `CardProgress`, `TrickInfo`, `SubtitleBrief.kind`, `SessionView`, `ImportView` en `MediaAdmin`.
-  Wat de Python-kant anders noemt, wint; `types.ts` volgt in dezelfde commit.
-- Of de stub van `GET /api/v1/media/libraries` 503 `media_off` geeft (dan staat media uit in de
-  web-e2e). Een 404 werkt ook.
+- **De catalogus** `i18n/errors/media.ts` heeft precies de 25 codes van `MEDIA_ERROR_CODES`; de
+  test in `media/api.test.ts` slaagt ermee.
+- **De stubs** geven 503 `media_off` op `GET /api/v1/media/libraries` en `GET /api/v1/admin/media`:
+  in M0 staat media dus uit, zoals bedoeld.
+- **Gelijkgetrokken met `app/media/types.py`:**
+  - het rooster in `map.json` (`GridSegments`): `{grid_ms, origin_ms, count, last_frame_ms}` in
+    mediatijd (spike punten 10 en 12), met `segmentStart`, `segmentOf` en `segmentCount` in
+    `media/api.ts`, die rekenen zoals `start_of` en `segment_of`;
+  - `Rung` (`{height, preset, codec}`) en `SessionView` (de velden van `sessions.list()`, plus
+    wat M10 erbij zet voor Keuze 45).
+- **Nog verschillend, voor het samenvoegen:** `Card`. §2 (M2) zegt
+  `{node_id, title, year, kind, poster, progress, watched}`, en zo staat hij in `types.ts`.
+  `types.py` heeft `{node_id, library_id, title, kind, poster, position_ms, duration_ms, watched,
+  updated_at}`: zonder `year` en met de voortgang plat. Eén van de twee moet om, in de hotfix-lane
+  en aan beide kanten tegelijk. Voorstel: `types.py` volgt §2 (`year`, en `progress:
+  {position_ms, duration_ms} | null`), en `library_id` komt er in allebei bij.
+- De andere vormen die §2 niet helemaal vastlegt (`CardProgress`, `TrickInfo`,
+  `SubtitleBrief.kind`, `ImportView`, `MediaAdmin`) staan niet in `types.py`: die maken de
+  routers van M2, M5 en M10. Wat die anders noemen, gaat in dezelfde commit naar `types.ts`.

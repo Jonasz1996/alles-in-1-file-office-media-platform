@@ -171,13 +171,14 @@ describe("de aanroepen van §2 (M2, M3, M7, M8, M9, M10)", () => {
     const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/map.json")) {
-        return new Response(JSON.stringify({ gen: 1, mime: "video/mp4", offset: -1, init: "init.mp4?g=1", segments: { grid_ms: 2000, count: 3 } }));
+        const segments = { grid_ms: 2000, origin_ms: 0, count: 3, last_frame_ms: 5960 };
+        return new Response(JSON.stringify({ gen: 1, mime: "video/mp4", offset: -1, init: "init.mp4?g=1", segments }));
       }
       return new Response(null, { status: 204 });
     });
     await media.closeSession("film.mkv.abc", fetchFn as typeof fetch);
     const map = await media.getMap("film.mkv.abc", fetchFn as typeof fetch);
-    expect(map.segments).toEqual({ grid_ms: 2000, count: 3 });
+    expect(map.segments).toEqual({ grid_ms: 2000, origin_ms: 0, count: 3, last_frame_ms: 5960 });
     expect(fetchFn.mock.calls).toEqual([
       ["/api/v1/stream/film.mkv.abc", { method: "DELETE", credentials: "omit", keepalive: true }],
       ["/api/v1/stream/film.mkv.abc/map.json", { credentials: "omit", cache: "no-store" }],
@@ -202,6 +203,45 @@ describe("het tabblad Media op /beheer", () => {
     expect(media.adminMediaStatus).toBeInstanceOf(StatusStore);
     expect(await media.adminMediaStatus.load()).toBeNull();
     expect(request).toHaveBeenCalledWith("GET", "/api/v1/admin/media");
+  });
+});
+
+describe("de segmenten van map.json (mediatijd, spike punten 10 en 12)", () => {
+  it("het rooster: zoals SegmentGrid in app/media/types.py", () => {
+    const grid = { grid_ms: 2000, origin_ms: 0, count: 3, last_frame_ms: 5960 };
+    expect(media.segmentCount(grid)).toBe(3);
+    expect([0, 1, 2].map((k) => media.segmentStart(grid, k))).toEqual([0, 2000, 4000]);
+    expect(media.segmentOf(grid, 0)).toBe(0);
+    expect(media.segmentOf(grid, 1999)).toBe(0);
+    expect(media.segmentOf(grid, 2000)).toBe(1);
+    // Een fragment voorbij count hoort bij het laatste segment; voor het begin bij het eerste
+    expect(media.segmentOf(grid, 6100)).toBe(2);
+    expect(media.segmentOf(grid, -50)).toBe(0);
+  });
+
+  it("met een starttijd S = 0,4 s: origin_ms = −400, het eerste segment is korter", () => {
+    const grid = { grid_ms: 2000, origin_ms: -400, count: 4, last_frame_ms: 7000 };
+    expect([0, 1, 2, 3].map((k) => media.segmentStart(grid, k))).toEqual([0, 1600, 3600, 5600]);
+    expect(media.segmentOf(grid, 1599)).toBe(0);
+    expect(media.segmentOf(grid, 1600)).toBe(1);
+    expect(media.segmentOf(grid, 5600)).toBe(3);
+  });
+
+  it("remux: de lijst [begin_ms, duur_ms] uit de keyframe-index", () => {
+    const list: [number, number][] = [
+      [0, 6006],
+      [6006, 6006],
+      [12012, 8008],
+    ];
+    expect(media.segmentCount(list)).toBe(3);
+    expect(media.segmentStart(list, 2)).toBe(12012);
+    expect(media.segmentStart(list, 9)).toBe(12012);
+    expect(media.segmentOf(list, 0)).toBe(0);
+    expect(media.segmentOf(list, 6005)).toBe(0);
+    expect(media.segmentOf(list, 6006)).toBe(1);
+    expect(media.segmentOf(list, 99_999)).toBe(2);
+    expect(media.segmentOf([], 10)).toBe(0);
+    expect(media.segmentStart([], 0)).toBe(0);
   });
 });
 
