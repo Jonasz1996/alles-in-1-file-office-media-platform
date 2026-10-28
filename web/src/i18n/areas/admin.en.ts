@@ -92,6 +92,12 @@ const en: Translation<typeof nl> = {
       one: "{n} document could not be converted to PDF; see the Office tab.",
       other: "{n} documents could not be converted to PDF; see the Office tab.",
     },
+    media_worker_down: "The media worker cannot be reached; video and music do not play right now.",
+    media_ffmpeg_missing: "ffmpeg is missing or not working in the media worker.",
+    media_cache_full: "The media cache is full; converting is slower until there is room.",
+    media_sandbox_off: "The media worker runs without isolation (locally, inside the app).",
+    media_provider_auth: "The key for online metadata no longer works.",
+    media_provider_failing: "Looking up online metadata has been failing for a while.",
   },
   https: {
     title: "HTTPS",

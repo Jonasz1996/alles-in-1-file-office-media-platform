@@ -27,6 +27,13 @@ const NOTICES = new Set([
   "office_limit",
   "office_unsaved",
   "office_convert_failed",
+  // Fase 5, media (app/media/monitor.py NOTICES; MEDIA_NOTICES in media/types.ts)
+  "media_worker_down",
+  "media_ffmpeg_missing",
+  "media_cache_full",
+  "media_sandbox_off",
+  "media_provider_auth",
+  "media_provider_failing",
 ]);
 
 /** Meldingen met een aantal in params.count: die tekst heeft een enkelvoud en een meervoud. */

@@ -127,30 +127,38 @@ de haken en de muziekbalk in de schil. Er blijft 4,4 KB over.
   vervangen ze.
 - `media/index.test.ts` en `media/api.test.ts`: de tests van de eigen bestanden van M0, onder het
   patroon `media/*.test.ts` van M2. Ze testen alleen `index.ts` en `api.ts`.
-- `i18n/errors/media.ts` maakt M0-api. `media/api.test.ts` legt de codes van `types.ts` ernaast
-  zodra hij er is (tot dan slaat die test over). Let op: vitest bewaart zijn transformaties in
-  `node_modules/.vitest-cache`, ook het resultaat van `import.meta.glob`. Komt de catalogus erbij
-  zonder dat de test verandert, gooi dan die map weg, anders blijft de test lokaal overslaan. In CI
-  (een schone `npm ci`) speelt dat niet.
+- `i18n/errors/media.ts` maakt M0-api. `media/api.test.ts` importeert die catalogus en legt de
+  codes van `types.ts` ernaast.
+- `admin/format.ts` en `i18n/areas/admin.*`: de zes meldingen van media (`admin.notice.media_*`),
+  zodat `/beheer` ze op code vertaalt, net als die van office (`admin/mediaNotices.test.ts`).
 
-## Naast M0-api gelegd (stand van `1c020e5` in de worktree van M0-api)
+## Gelijk met M0-api (bij het samenvoegen van M0)
 
-- **De catalogus** `i18n/errors/media.ts` heeft precies de 25 codes van `MEDIA_ERROR_CODES`; de
-  test in `media/api.test.ts` slaagt ermee.
-- **De stubs** geven 503 `media_off` op `GET /api/v1/media/libraries` en `GET /api/v1/admin/media`:
-  in M0 staat media dus uit, zoals bedoeld.
-- **Gelijkgetrokken met `app/media/types.py`:**
-  - het rooster in `map.json` (`GridSegments`): `{grid_ms, origin_ms, count, last_frame_ms}` in
-    mediatijd (spike punten 10 en 12), met `segmentStart`, `segmentOf` en `segmentCount` in
-    `media/api.ts`, die rekenen zoals `start_of` en `segment_of`;
-  - `Rung` (`{height, preset, codec}`) en `SessionView` (de velden van `sessions.list()`, plus
-    wat M10 erbij zet voor Keuze 45).
-- **Nog verschillend, voor het samenvoegen:** `Card`. §2 (M2) zegt
-  `{node_id, title, year, kind, poster, progress, watched}`, en zo staat hij in `types.ts`.
-  `types.py` heeft `{node_id, library_id, title, kind, poster, position_ms, duration_ms, watched,
-  updated_at}`: zonder `year` en met de voortgang plat. Eén van de twee moet om, in de hotfix-lane
-  en aan beide kanten tegelijk. Voorstel: `types.py` volgt §2 (`year`, en `progress:
-  {position_ms, duration_ms} | null`), en `library_id` komt er in allebei bij.
-- De andere vormen die §2 niet helemaal vastlegt (`CardProgress`, `TrickInfo`,
-  `SubtitleBrief.kind`, `ImportView`, `MediaAdmin`) staan niet in `types.py`: die maken de
-  routers van M2, M5 en M10. Wat die anders noemen, gaat in dezelfde commit naar `types.ts`.
+De vormen van `types.ts` en `api.ts` zijn naast de routes en modellen van M0-api gelegd
+(`app/media/types.py`, `app/config.py`, de routers onder `app/routers/`):
+
+- **Paden en methoden**: elk eindpunt van `api.ts` bestaat met dezelfde methode en hetzelfde pad
+  (de OpenAPI van de app). `POST /admin/media/bench` geeft 202 `{job}` (`Accepted`). Alleen
+  `GET /api/v1/media/art/{sha}/{size}.webp` heeft geen functie: dat adres komt ondertekend mee in
+  `poster`, `backdrop` en `cover`.
+- **De catalogus** `i18n/errors/media.ts` heeft precies de 25 codes van `MEDIA_ERROR_CODES`, met de
+  status van `app/media/errors.py`. De params volgen die functies: `media_unsupported` heeft
+  alleen `reasons` (ook `too_large`), `media_probe_pending` en `media_unavailable` altijd een
+  `reason`. Bij het stoppen van de app (F3) geeft `/api/v1/stream/` 503 `media_busy` met
+  `{reason: "worker", retry_after: 2}`.
+- **Het rooster** (`GridSegments`): `{grid_ms, origin_ms, count, last_frame_ms}` in mediatijd.
+  `origin_ms` is de start van het videospoor min S, altijd ≥ 0. Segment 0 begint op 0 en loopt tot
+  `origin_ms + grid_ms`, segment k ≥ 1 begint op `origin_ms + k·grid_ms` (Keuze 22, spike.md
+  "Extra"). `segmentStart`, `segmentOf` en `segmentCount` rekenen zoals `SegmentGrid.start_of`
+  en `segment_of`; `api/tests/test_media_types.py` en `media/api.test.ts` gebruiken dezelfde
+  getallen.
+- **`Card`** volgt §2 aan beide kanten: `{node_id, library_id, title, year, kind, poster,
+  progress: {position_ms, duration_ms} | null, watched}`, plus `show_id`, `season` en `episode`.
+- **`ClientProfile.client.kind`** is `web`, `tv`, `android`, `windows` of `other`, zoals
+  `ProfileClient`; iOS is `web` met `base: "ios-safari"`. Een andere waarde geeft 422.
+- **`MediaConfig.bench`** en `MediaAdmin.bench` zijn `BenchResult` uit `app/config.py`:
+  `{f, f_dec, at}` (niet `factor`).
+- **`Chapter.title`** kan `null` zijn; `MediaAdmin.worker.places` kan een soort missen.
+- De andere vormen (`TrickInfo`, `SubtitleBrief.kind`, `ImportView`, `MediaAdmin`,
+  `CardProgress`, `SessionView`) zijn veld voor veld gelijk aan `types.py`. Een pakket dat er
+  een verandert, doet dat in de hotfix-lane aan beide kanten tegelijk.

@@ -75,9 +75,10 @@ export const MEDIA_ERROR_STATUS: Readonly<Record<MediaErrorCode, number>> = {
 /** De extra velden (params) per code; een code zonder regel heeft er geen. Retry-After staat
  * als kop in het antwoord, retry_after (seconden) ook in de params waar §3.4 het noemt. */
 export interface MediaErrorParams {
-  media_probe_pending: { reason?: "probe" | "keyframes" };
-  media_unavailable: { reason?: string };
-  media_unsupported: { reasons?: PlanReason[]; reason?: "too_large" };
+  media_probe_pending: { reason: "probe" | "keyframes" };
+  media_unavailable: { reason: string };
+  /** Ook too_large (een bron boven 8192×4320) staat in reasons */
+  media_unsupported: { reasons: PlanReason[] };
   media_hdr: { can_raw: boolean; reason: "too_large" | "dolby_vision" | "no_tonemap" };
   media_busy: { reason: BusyReason; retry_after: number };
   media_session_gone: { reason?: "replaced" };
@@ -213,10 +214,12 @@ export interface CardProgress {
   duration_ms: number;
 }
 
-/** Card = {node_id, title, year, kind, poster, progress, watched} (§2 M2). */
+/** Card = {node_id, title, year, kind, poster, progress, watched} (§2 M2), plus de bibliotheek
+ * (zoals app/media/types.py Card). */
 export interface Card {
   /** De node van het bestand; bij een serie de map van de serie (null als die er niet meer is) */
   node_id: string | null;
+  library_id: string | null;
   title: string;
   year: number | null;
   kind: CardKind;
@@ -282,7 +285,7 @@ export interface SubtitleBrief {
 export interface Chapter {
   start_ms: number;
   end_ms: number;
-  title: string;
+  title: string | null;
 }
 
 /** De stappen van de analyse en hun staat (media_probe, Keuze 15). */
@@ -362,7 +365,8 @@ export type BaseProfile = "web" | "ios-safari" | "webos-5" | "android-exo" | "wi
 export interface ClientProfile {
   v: 1;
   base: BaseProfile;
-  client: { kind: "web" | "tv" | "android" | "ios" | "windows"; name: string; app: string };
+  /** iOS en Safari zijn kind "web" met base "ios-safari" (app/media/types.py ProfileClient) */
+  client: { kind: "web" | "tv" | "android" | "windows" | "other"; name: string; app: string };
   engines: { mse: boolean; mms: boolean; native_hls: boolean };
   /** De mime-types die <video src> of <audio src> zelf speelt */
   file: string[];
@@ -506,11 +510,12 @@ export interface PlayOut {
 
 /**
  * Het rooster van 2 s bij transcode (Keuze 22), zoals app/media/types.py SegmentGrid. De
- * referentie is mediatijd (spike punt 12): segment k loopt van origin_ms + k·grid_ms tot het
- * volgende, en map.json en EXTINF tellen allebei vanaf 0 in mediatijd. Met een starttijd S ≠ 0
- * vallen de keyframes op mediatijd 2k − S: origin_ms = −S, dus het eerste segment is korter.
- * count komt uit de tijd van het laatste videobeeld (spike punt 10); een fragment voorbij count
- * hoort bij het laatste segment. Rekenen: segmentStart en segmentOf in ./api.
+ * referentie is mediatijd (spike punt 12), en het rooster hangt aan het eerste videobeeld:
+ * origin_ms = de start van het videospoor − S, altijd ≥ 0 (meestal 21, de voorloop van AAC).
+ * Segment 0 loopt van 0 tot origin_ms + grid_ms (iets langer), segment k ≥ 1 van
+ * origin_ms + k·grid_ms tot het volgende; map.json en EXTINF tellen allebei zo. count komt uit
+ * de tijd van het laatste videobeeld (spike punt 10); een fragment voorbij count hoort bij het
+ * laatste segment. Rekenen: segmentStart en segmentOf in ./api.
  */
 export interface GridSegments {
   grid_ms: number;
@@ -688,7 +693,15 @@ export type WorkClass = "transcode" | "remux" | "background" | "short" | "contro
 
 export type WorkerState = "starting" | "ok" | "down" | "ffmpeg_missing";
 
-/** MediaConfig in Setting "media" (Keuze 45); bench alleen lezen. */
+/** De uitkomst van de meting (Keuze 26), zoals app/config.py BenchResult: f = cores voor 1,0× hier
+ * gedeeld door de referentie, f_dec voor het decoderen van de bron. */
+export interface BenchResult {
+  f: number;
+  f_dec: number;
+  at: string;
+}
+
+/** MediaConfig in Setting "media" (Keuze 45); bench alleen lezen (null: nog niet gemeten, f = 1,0). */
 export interface MediaConfig {
   enabled: boolean;
   /** 0,5–16 cores */
@@ -701,7 +714,7 @@ export interface MediaConfig {
   hdr_1080: boolean;
   cache_gb: number;
   musicbrainz: boolean;
-  readonly bench: { factor: number; f_dec: number | null; at: string | null } | null;
+  readonly bench: BenchResult | null;
 }
 
 /** PUT /api/v1/admin/media/config (body): alles behalve bench. */
@@ -766,7 +779,8 @@ export interface MediaAdmin {
     since: string;
     /** De uitkomst van de zelftest (Keuze 11); sandbox off bij de lokale worker */
     selftest: { ok: boolean; sandbox: "on" | "off"; problems: string[] } | null;
-    places: Record<WorkClass, { used: number; max: number }>;
+    /** Per soort (een soort zonder plaatsen kan ontbreken) */
+    places: Partial<Record<WorkClass, { used: number; max: number }>>;
   };
   ffmpeg: {
     version: string | null;
@@ -776,7 +790,7 @@ export interface MediaAdmin {
     hwaccel: string[];
     gpu: string | null;
   } | null;
-  bench: { factor: number; f_dec: number | null; at: string | null } | null;
+  bench: BenchResult | null;
   budget: { used: number; total: number; ds_starting: boolean };
   sessions: SessionView[];
   /** Per dag de redenen van de beslissing (Keuze 19), de laatste 7 dagen */

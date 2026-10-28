@@ -91,6 +91,12 @@ export default {
       one: "{n} document kon niet naar PDF worden omgezet; zie het tabblad Office.",
       other: "{n} documenten konden niet naar PDF worden omgezet; zie het tabblad Office.",
     },
+    media_worker_down: "De mediaworker is niet bereikbaar; video en muziek spelen nu niet af.",
+    media_ffmpeg_missing: "ffmpeg ontbreekt of werkt niet in de mediaworker.",
+    media_cache_full: "De cache van media is vol; omzetten gaat langzamer tot er ruimte is.",
+    media_sandbox_off: "De mediaworker draait zonder afscherming (lokaal, in de app zelf).",
+    media_provider_auth: "De sleutel van de online metadata werkt niet meer.",
+    media_provider_failing: "Online metadata opzoeken mislukt al een tijd.",
   },
   https: {
     title: "HTTPS",

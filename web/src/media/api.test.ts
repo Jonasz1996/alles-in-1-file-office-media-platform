@@ -2,11 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../api";
 import * as media from "./api";
 import { StatusStore } from "./index";
-import type { ErrorCatalog } from "../i18n/types";
+import mediaCatalog from "../i18n/errors/media";
 import { type ClientProfile, MEDIA_ERROR_CODES, MEDIA_ERROR_STATUS, MEDIA_NOTICES, type PlayIn } from "./types";
-
-// De catalogus van M0-api (i18n/errors/media.ts); leeg zolang die er in deze worktree niet is
-const catalogs = import.meta.glob<ErrorCatalog>("../i18n/errors/media.ts", { eager: true, import: "default" });
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -207,24 +204,26 @@ describe("het tabblad Media op /beheer", () => {
 });
 
 describe("de segmenten van map.json (mediatijd, spike punten 10 en 12)", () => {
-  it("het rooster: zoals SegmentGrid in app/media/types.py", () => {
-    const grid = { grid_ms: 2000, origin_ms: 0, count: 3, last_frame_ms: 5960 };
+  it("het rooster: zoals SegmentGrid in app/media/types.py (test_media_types.py)", () => {
+    // Video op 0, audio op −0,021 (S = −0,021): origin 21 ms, segment 0 is 2,021 s
+    const grid = { grid_ms: 2000, origin_ms: 21, count: 3, last_frame_ms: 5980 };
     expect(media.segmentCount(grid)).toBe(3);
-    expect([0, 1, 2].map((k) => media.segmentStart(grid, k))).toEqual([0, 2000, 4000]);
+    expect([0, 1, 2].map((k) => media.segmentStart(grid, k))).toEqual([0, 2021, 4021]);
     expect(media.segmentOf(grid, 0)).toBe(0);
-    expect(media.segmentOf(grid, 1999)).toBe(0);
-    expect(media.segmentOf(grid, 2000)).toBe(1);
+    expect(media.segmentOf(grid, 2020)).toBe(0);
+    expect(media.segmentOf(grid, 2021)).toBe(1);
+    expect(media.segmentOf(grid, 4021)).toBe(2);
     // Een fragment voorbij count hoort bij het laatste segment; voor het begin bij het eerste
     expect(media.segmentOf(grid, 6100)).toBe(2);
     expect(media.segmentOf(grid, -50)).toBe(0);
   });
 
-  it("met een starttijd S = 0,4 s: origin_ms = −400, het eerste segment is korter", () => {
-    const grid = { grid_ms: 2000, origin_ms: -400, count: 4, last_frame_ms: 7000 };
-    expect([0, 1, 2, 3].map((k) => media.segmentStart(grid, k))).toEqual([0, 1600, 3600, 5600]);
-    expect(media.segmentOf(grid, 1599)).toBe(0);
-    expect(media.segmentOf(grid, 1600)).toBe(1);
-    expect(media.segmentOf(grid, 5600)).toBe(3);
+  it("een late videostart (origin 521): segment 0 is langer, de rest ligt op het rooster", () => {
+    const grid = { grid_ms: 2000, origin_ms: 521, count: 5, last_frame_ms: 9479 };
+    expect([0, 1, 2, 3, 4].map((k) => media.segmentStart(grid, k))).toEqual([0, 2521, 4521, 6521, 8521]);
+    expect(media.segmentOf(grid, 2520)).toBe(0);
+    expect(media.segmentOf(grid, 2521)).toBe(1);
+    expect(media.segmentOf(grid, 9479)).toBe(4);
   });
 
   it("remux: de lijst [begin_ms, duur_ms] uit de keyframe-index", () => {
@@ -254,8 +253,8 @@ describe("de codes van §3.4", () => {
     expect(MEDIA_ERROR_STATUS.media_session_gone).toBe(410);
   });
 
-  it.skipIf(!catalogs["../i18n/errors/media.ts"])("i18n/errors/media.ts kent precies deze codes (en de meldingen)", () => {
-    const keys = Object.keys(catalogs["../i18n/errors/media.ts"]);
+  it("i18n/errors/media.ts kent precies deze codes (en hooguit de meldingen)", () => {
+    const keys = Object.keys(mediaCatalog);
     for (const code of MEDIA_ERROR_CODES) expect(keys).toContain(code);
     const known = new Set<string>([...MEDIA_ERROR_CODES, ...MEDIA_NOTICES]);
     expect(keys.filter((k) => !known.has(k))).toEqual([]);

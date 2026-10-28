@@ -149,13 +149,14 @@ export function segmentCount(segments: SegmentGrid): number {
 }
 
 /** Het begin van segment k in ms mediatijd (zoals SegmentGrid.start_of in app/media/types.py):
- * bij het rooster origin_ms + k·grid_ms, nooit onder 0; bij remux het begin uit de lijst. */
+ * bij het rooster 0 voor het eerste segment en origin_ms + k·grid_ms voor de rest; bij remux het
+ * begin uit de lijst. */
 export function segmentStart(segments: SegmentGrid, k: number): number {
   if (Array.isArray(segments)) {
     if (segments.length === 0) return 0;
     return segments[Math.max(0, Math.min(segments.length - 1, k))][0];
   }
-  return Math.max(0, segments.origin_ms + k * segments.grid_ms);
+  return k <= 0 ? 0 : segments.origin_ms + k * segments.grid_ms;
 }
 
 /** Het segment bij tijd t in ms mediatijd (zoals SegmentGrid.segment_of): nooit voor het eerste
@@ -288,9 +289,9 @@ export function putConfig(body: MediaConfigIn): Promise<MediaConfig> {
   return api.request<MediaConfig>("PUT", `${ADMIN}/config`, body);
 }
 
-/** POST /admin/media/bench → 202 | 409 media_bench_busy */
-export function startBench(): Promise<void> {
-  return api.request<void>("POST", `${ADMIN}/bench`);
+/** POST /admin/media/bench → 202 {job} | 409 media_bench_busy */
+export function startBench(): Promise<Accepted> {
+  return api.request<Accepted>("POST", `${ADMIN}/bench`);
 }
 
 /** DELETE /admin/media/sessions/{id}: Stop (de speler krijgt 403 media_access_gone, stopped). */
