@@ -76,6 +76,8 @@ export default {
     network: "Afspelen lukt nu niet. Probeer het opnieuw of download het bestand.",
     codecs: "Formaat: {codecs}",
     cover: "Hoes",
+    // Fase 5 (M0, frozen): de haak die de speler laadt (M6)
+    loadingPlayer: "De speler laden…",
   },
   text: {
     tools: "Tekst",

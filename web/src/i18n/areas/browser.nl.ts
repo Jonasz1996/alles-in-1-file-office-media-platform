@@ -232,4 +232,12 @@ export default {
       too_many: "Er bewerken nu te veel mensen tegelijk; probeer het later opnieuw",
     },
   },
+  // Fase 5, media (M0, frozen; bouwontwerp §2.0): de haak "Als bibliotheek gebruiken" in het
+  // menu van een map. De dialoog zelf (het soort kiezen) is van M2, met de teksten in "media".
+  media: {
+    useAsLibrary: "Als bibliotheek gebruiken",
+    reasons: {
+      already: "Deze map is al de bibliotheek {name}",
+    },
+  },
 } as const;

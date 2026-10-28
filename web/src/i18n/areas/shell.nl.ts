@@ -11,6 +11,9 @@ export default {
     shared: "Gedeeld met mij",
     trash: "Prullenbak",
     admin: "Beheer",
+    // Fase 5 (M0): alleen als media aan staat
+    media: "Media",
+    music: "Muziek",
   },
   account: {
     menu: "Accountmenu van {name}",

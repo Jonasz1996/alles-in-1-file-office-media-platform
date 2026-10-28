@@ -78,6 +78,7 @@ const en: Translation<typeof nl> = {
     network: "Playing does not work right now. Try again or download the file.",
     codecs: "Format: {codecs}",
     cover: "Cover",
+    loadingPlayer: "Loading the player…",
   },
   text: {
     tools: "Text",

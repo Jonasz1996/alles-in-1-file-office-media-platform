@@ -13,6 +13,8 @@ const en: Translation<typeof nl> = {
     shared: "Shared with me",
     trash: "Trash",
     admin: "Admin",
+    media: "Media",
+    music: "Music",
   },
   account: {
     menu: "Account menu for {name}",

@@ -232,6 +232,12 @@ const en: Translation<typeof nl> = {
       too_many: "Too many people are editing right now; try again later",
     },
   },
+  media: {
+    useAsLibrary: "Use as library",
+    reasons: {
+      already: "This folder is already the library {name}",
+    },
+  },
 };
 
 export default en;

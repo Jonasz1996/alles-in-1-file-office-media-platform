@@ -393,6 +393,10 @@ const en: Translation<typeof nl> = {
     tab: "Office",
     notReady: "The office overview comes later in phase 4.",
   },
+  media: {
+    tab: "Media",
+    notReady: "The media overview comes later in phase 5.",
+  },
 };
 
 export default en;

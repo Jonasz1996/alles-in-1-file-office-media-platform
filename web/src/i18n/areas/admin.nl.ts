@@ -398,4 +398,10 @@ export default {
     tab: "Office",
     notReady: "Het overzicht van office komt later in fase 4.",
   },
+  // Fase 5, media (M0, frozen; bouwontwerp §2.0): het tabblad Media (Alt+8). Wat erin staat, is
+  // van M10 (admin/MediaTab.tsx, met eigen teksten in dit blok na deze twee).
+  media: {
+    tab: "Media",
+    notReady: "Het overzicht van media komt later in fase 5.",
+  },
 } as const;
