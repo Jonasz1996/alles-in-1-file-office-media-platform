@@ -283,8 +283,9 @@ def test_twee_gebruikers_een_docx(real_office: Office, real_browsers, tmp_path_f
 
     wait_until(closed, 30, "status 2 en de sessie dicht")
     proof["sluiten_tot_status_2_s"] = round(time.monotonic() - closed_from, 1)
-    # open is None: de sessie is dicht (sessions.live). Dicht als saved doet alleen status 2;
-    # status 4 geeft no_changes (saving.py)
+    # open is None: de sessie is dicht (sessions.live). Dicht als saved doet alleen een callback
+    # bij het sluiten mét bestand: status 2, of status 3 met een url (saving.py: final is
+    # "final" of "failed"); status 4 en status 3 zonder url geven no_changes en lost
     assert session_row(office.server, key) == ("closed", "saved")
     proof["sessie"] = list(session_row(office.server, key))
     listed = versions(office, d.anna, d.node)

@@ -315,7 +315,9 @@ def test_definitief_verwijderd_terwijl_er_bewerkt_wordt(office: Office, office_b
     een ronde (elke 1 s) tussen die twee, dan was Bram er al uit vóór het definitief verwijderen:
     zijn editor dicht met de melding (en de controle op de nep-editor faalde), en zijn werk een
     herstelkopie bij Anna, zoals Keuze 19 dat bij de prullenbak wil. Nu wacht de test op die
-    ronde: wie bij het definitief verwijderen nog bewerkt, is de eigenaar, en dat is altijd zo."""
+    ronde: na de ronde is alleen de eigenaar er nog. Verwijdert de eigenaar definitief vóór de
+    ronde (in productie elke 30 s), dan bewerkt een deelnemer nog; dat geval dekt de API-test
+    tests/test_office_races.py::test_definitief_verwijderd."""
     d = duo(office)
     page_a, key = open_page(office_browsers, d.anna, d.node)
     page_b, key_b = open_page(office_browsers, d.bram, d.node)
