@@ -333,9 +333,11 @@ def test_herstart_van_de_app_terwijl_anna_bewerkt(real_office: Office, real_brow
     with page.expect_response(is_session(d.node)) as answer:
         page.reload()
     assert answer.value.status in (200, 409), answer.value.text()
+    # Nu lezen: drukt ready op Opnieuw laden (A22, window.location.reload), dan is de body weg.
+    new_key = answer.value.json().get("key")
     ready(page)
     print(
-        f"herstart: oude key {key}, nieuwe {answer.value.json().get('key')}, "
+        f"herstart: oude key {key}, nieuwe {new_key}, "
         f"versies {len(versions(office, d.anna, d.node))}",
         file=sys.stderr,
     )
