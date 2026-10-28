@@ -36,6 +36,11 @@
       "generated": "2026-10-28T01:28:02+00:00",
       "commit": "08f45fb",
       "imported": "office_xml.json"
+    },
+    "office_convert": {
+      "generated": "2026-10-28T01:40:08+00:00",
+      "commit": "ea647e4",
+      "imported": "office_convert.json"
     }
   },
   "rows": [
@@ -63,7 +68,7 @@
     {
       "what": "Geheugen van de app met 50 tunnels",
       "goal": "≤ +20 MB",
-      "result": "+14,82 MB (14,18–15,12, n=3) open, +14,88 MB (14,23–15,15, n=3) na 30,0 s; alle 50 open: ja",
+      "result": "+14,82 MB (14,18–15,12, n=3) open, +14,88 MB (14,23–15,15, n=3) na 30 s; alle 50 open: ja",
       "met": "ja",
       "how": "office_tunnels.py, 3 rondes (elk een nieuwe server), 10 gebruikers × 5 docx, VmRSS mediaan van 3; de eerste keer per server telt"
     },
@@ -111,17 +116,17 @@
     },
     {
       "what": "Conversie klein / 401 pagina's",
-      "goal": "±1 s / ≤ 60 s",
-      "result": "–",
-      "met": "niet gemeten",
-      "how": "office_convert.py"
+      "goal": "±1 s / ≤ 60 s (22 s in de proef)",
+      "result": "docx 1,1 s (1,02–1,12, n=5) (DS alleen 0,54 s); xlsx 1,1 s (1,03–1,11, n=5) (DS alleen 0,64 s); pptx 1,11 s (1,02–1,12, n=5) (DS alleen 0,54 s); 401 pagina's 10,2 s (9,1–10,2, n=3) (DS alleen 9,5 s (9,0–9,7, n=3); elke PDF 401/401/401 pagina's, x2t tot 405 MB)",
+      "met": "ja",
+      "how": "office_convert.py: klein 5× per soort (proef.docx/.xlsx/.pptx, elke keer een ander bestand), 401 pagina's 3× (een docx van 61,8 kB met 2,48 MiB XML); via de app gemeten van het ophalen van de bron door DS (/internal/office/src) tot de pdf in de app staat (de pagina vraagt elke 0,1 s), ‘DS alleen’ is hetzelfde bestand rechtstreeks naar /converter (async, elke 0,1 s gevraagd)"
     },
     {
       "what": "Conversie van 401 pagina's terwijl een editor opent",
       "goal": "openen ≤ 10 s; /healthcheck blijft true",
-      "result": "–",
-      "met": "niet gemeten",
-      "how": "office_convert.py: niet gemeten"
+      "result": "conversie eerst: openen 7,8 s (7,6–8,1, n=3) (3/3), conversie 11,3 s (10,9–11,3, n=3); editor eerst: openen 2,9 s (2,9–2,9, n=3) (3/3), conversie 9,1 s (9,1–10,1, n=3); /healthcheck 169× gevraagd, 0× niet true, traagste 51 ms",
+      "met": "ja",
+      "how": "office_convert.py, 3× per volgorde: ‘conversie eerst’ = upload van de docx van 401 pagina's, wachten tot DS de bron ophaalt, 2 s later een proef.docx openen; ‘editor eerst’ = openen en uploaden zodra de sessie er is; /healthcheck elke 0,5 s"
     },
     {
       "what": "20 bewerkers (5 documenten × 4), 60 s typen",
@@ -174,7 +179,8 @@
       "docx_pages: /healthcheck 7 keer niet true",
       "docx_pages: 0 van 3 omgezet (failed, failed, failed)",
       "docx_pages: 2 van 3 geopend in de editor"
-    ]
+    ],
+    "office_convert": []
   },
   "ok": false,
   "results": {
@@ -8911,6 +8917,1549 @@
         }
       },
       "ok": false
+    },
+    "office_convert": {
+      "tool": "office_convert",
+      "runs": 3,
+      "runs_small": 5,
+      "gate": {
+        "small_s": 1.0,
+        "large_s": 60.0,
+        "open_during_s": 10.0
+      },
+      "run_seed": 151291,
+      "small": {
+        "proef.docx": [
+          {
+            "name": "klein-0-proef.docx",
+            "node": "0087a1af-48ef-4ac0-972c-c180061ce700",
+            "bytes": 5700,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.27,
+            "src_to_ready_s": 1.1,
+            "pdf_pages": 1,
+            "ds": {
+              "samples": 6,
+              "seconds": 1.3,
+              "cpu_s": 0.78,
+              "cores_avg": 0.63,
+              "cores_max_1s": 0.78,
+              "usage_mb_max": 511,
+              "rss_mb_start": 297,
+              "rss_mb_max": 379,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 125,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 515,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 4.3,
+                "ms_max": 5.5,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "docx",
+              "bytes": 5700,
+              "seconds": 0.53,
+              "error": null,
+              "pdf_pages": 1,
+              "pdf_bytes": 33850
+            }
+          },
+          {
+            "name": "klein-1-proef.docx",
+            "node": "0ecfb7c5-cb75-4cfe-b74d-0863313c8b30",
+            "bytes": 5700,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.26,
+            "src_to_ready_s": 1.12,
+            "pdf_pages": 1,
+            "ds": {
+              "samples": 6,
+              "seconds": 1.3,
+              "cpu_s": 0.63,
+              "cores_avg": 0.51,
+              "cores_max_1s": 0.62,
+              "usage_mb_max": 519,
+              "rss_mb_start": 297,
+              "rss_mb_max": 380,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 128,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 522,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 5.5,
+                "ms_max": 6.7,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "docx",
+              "bytes": 5700,
+              "seconds": 0.64,
+              "error": null,
+              "pdf_pages": 1,
+              "pdf_bytes": 33850
+            }
+          },
+          {
+            "name": "klein-2-proef.docx",
+            "node": "2c714dc3-8368-4c98-8ebd-098b60f2c97c",
+            "bytes": 5700,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.16,
+            "src_to_ready_s": 1.02,
+            "pdf_pages": 1,
+            "ds": {
+              "samples": 5,
+              "seconds": 1.0,
+              "cpu_s": 0.69,
+              "cores_avg": 0.69,
+              "cores_max_1s": 0.69,
+              "usage_mb_max": 517,
+              "rss_mb_start": 297,
+              "rss_mb_max": 378,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 126,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 520,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 6.1,
+                "ms_max": 7.5,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "docx",
+              "bytes": 5700,
+              "seconds": 0.54,
+              "error": null,
+              "pdf_pages": 1,
+              "pdf_bytes": 33850
+            }
+          },
+          {
+            "name": "klein-3-proef.docx",
+            "node": "50210a39-0aea-4f3f-bfa9-da8637c6a3f6",
+            "bytes": 5700,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.17,
+            "src_to_ready_s": 1.02,
+            "pdf_pages": 1,
+            "ds": {
+              "samples": 5,
+              "seconds": 1.0,
+              "cpu_s": 0.59,
+              "cores_avg": 0.58,
+              "cores_max_1s": 0.58,
+              "usage_mb_max": 519,
+              "rss_mb_start": 297,
+              "rss_mb_max": 380,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 130,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 522,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 4.8,
+                "ms_max": 6.3,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "docx",
+              "bytes": 5700,
+              "seconds": 0.53,
+              "error": null,
+              "pdf_pages": 1,
+              "pdf_bytes": 33850
+            }
+          },
+          {
+            "name": "klein-4-proef.docx",
+            "node": "0d71ac6c-c1de-49e6-994e-7ffce3086948",
+            "bytes": 5700,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.29,
+            "src_to_ready_s": 1.1,
+            "pdf_pages": 1,
+            "ds": {
+              "samples": 6,
+              "seconds": 1.3,
+              "cpu_s": 0.74,
+              "cores_avg": 0.59,
+              "cores_max_1s": 0.73,
+              "usage_mb_max": 509,
+              "rss_mb_start": 297,
+              "rss_mb_max": 370,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 117,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 522,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 6.4,
+                "ms_max": 6.8,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "docx",
+              "bytes": 5700,
+              "seconds": 0.64,
+              "error": null,
+              "pdf_pages": 1,
+              "pdf_bytes": 33850
+            }
+          }
+        ],
+        "proef.xlsx": [
+          {
+            "name": "klein-0-proef.xlsx",
+            "node": "0e623712-230b-4d5f-8611-96162b52a53e",
+            "bytes": 5478,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.26,
+            "src_to_ready_s": 1.11,
+            "pdf_pages": 1,
+            "ds": {
+              "samples": 6,
+              "seconds": 1.3,
+              "cpu_s": 0.66,
+              "cores_avg": 0.53,
+              "cores_max_1s": 0.65,
+              "usage_mb_max": 529,
+              "rss_mb_start": 297,
+              "rss_mb_max": 382,
+              "rss_mb_end": 296,
+              "x2t_runs": 1,
+              "x2t_mb_max": 131,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 547,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 6.8,
+                "ms_max": 7.3,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "xlsx",
+              "bytes": 5478,
+              "seconds": 0.54,
+              "error": null,
+              "pdf_pages": 1,
+              "pdf_bytes": 50364
+            }
+          },
+          {
+            "name": "klein-1-proef.xlsx",
+            "node": "05848c81-7497-4470-a0d6-cea8d049a11f",
+            "bytes": 5478,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.26,
+            "src_to_ready_s": 1.1,
+            "pdf_pages": 1,
+            "ds": {
+              "samples": 6,
+              "seconds": 1.3,
+              "cpu_s": 0.55,
+              "cores_avg": 0.44,
+              "cores_max_1s": 0.54,
+              "usage_mb_max": 546,
+              "rss_mb_start": 297,
+              "rss_mb_max": 398,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 148,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 548,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 8.4,
+                "ms_max": 9.3,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "xlsx",
+              "bytes": 5478,
+              "seconds": 0.53,
+              "error": null,
+              "pdf_pages": 1,
+              "pdf_bytes": 50364
+            }
+          },
+          {
+            "name": "klein-2-proef.xlsx",
+            "node": "657111af-70f9-4a64-a528-9888c9a297a4",
+            "bytes": 5478,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.26,
+            "src_to_ready_s": 1.08,
+            "pdf_pages": 1,
+            "ds": {
+              "samples": 6,
+              "seconds": 1.3,
+              "cpu_s": 0.62,
+              "cores_avg": 0.49,
+              "cores_max_1s": 0.61,
+              "usage_mb_max": 533,
+              "rss_mb_start": 297,
+              "rss_mb_max": 386,
+              "rss_mb_end": 296,
+              "x2t_runs": 1,
+              "x2t_mb_max": 135,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 549,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 5.2,
+                "ms_max": 5.5,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "xlsx",
+              "bytes": 5478,
+              "seconds": 0.64,
+              "error": null,
+              "pdf_pages": 1,
+              "pdf_bytes": 50364
+            }
+          },
+          {
+            "name": "klein-3-proef.xlsx",
+            "node": "b1afe350-8f33-4843-9a55-314f319f08c5",
+            "bytes": 5478,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.26,
+            "src_to_ready_s": 1.11,
+            "pdf_pages": 1,
+            "ds": {
+              "samples": 6,
+              "seconds": 1.3,
+              "cpu_s": 0.59,
+              "cores_avg": 0.47,
+              "cores_max_1s": 0.58,
+              "usage_mb_max": 546,
+              "rss_mb_start": 297,
+              "rss_mb_max": 398,
+              "rss_mb_end": 296,
+              "x2t_runs": 1,
+              "x2t_mb_max": 147,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 549,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 6.8,
+                "ms_max": 7.7,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "xlsx",
+              "bytes": 5478,
+              "seconds": 0.65,
+              "error": null,
+              "pdf_pages": 1,
+              "pdf_bytes": 50364
+            }
+          },
+          {
+            "name": "klein-4-proef.xlsx",
+            "node": "1734ec7e-26ac-42b2-a7ed-d2d839dd1672",
+            "bytes": 5478,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.16,
+            "src_to_ready_s": 1.03,
+            "pdf_pages": 1,
+            "ds": {
+              "samples": 5,
+              "seconds": 1.0,
+              "cpu_s": 0.62,
+              "cores_avg": 0.62,
+              "cores_max_1s": 0.62,
+              "usage_mb_max": 542,
+              "rss_mb_start": 297,
+              "rss_mb_max": 394,
+              "rss_mb_end": 298,
+              "x2t_runs": 1,
+              "x2t_mb_max": 143,
+              "docservice_mb_max": 187,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 549,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 4.2,
+                "ms_max": 4.9,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "xlsx",
+              "bytes": 5478,
+              "seconds": 0.65,
+              "error": null,
+              "pdf_pages": 1,
+              "pdf_bytes": 50364
+            }
+          }
+        ],
+        "proef.pptx": [
+          {
+            "name": "klein-0-proef.pptx",
+            "node": "462f9366-0e2e-41c9-a2bf-9d3fc1a00bdd",
+            "bytes": 10140,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.26,
+            "src_to_ready_s": 1.12,
+            "pdf_pages": 2,
+            "ds": {
+              "samples": 6,
+              "seconds": 1.3,
+              "cpu_s": 0.59,
+              "cores_avg": 0.47,
+              "cores_max_1s": 0.58,
+              "usage_mb_max": 526,
+              "rss_mb_start": 296,
+              "rss_mb_max": 372,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 121,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 530,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 4.4,
+                "ms_max": 10.0,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "pptx",
+              "bytes": 10140,
+              "seconds": 0.54,
+              "error": null,
+              "pdf_pages": 2,
+              "pdf_bytes": 49852
+            }
+          },
+          {
+            "name": "klein-1-proef.pptx",
+            "node": "d996719e-3de9-47e5-a5dd-0f775b4dad2a",
+            "bytes": 10140,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.15,
+            "src_to_ready_s": 1.02,
+            "pdf_pages": 2,
+            "ds": {
+              "samples": 5,
+              "seconds": 1.0,
+              "cpu_s": 0.58,
+              "cores_avg": 0.58,
+              "cores_max_1s": 0.58,
+              "usage_mb_max": 528,
+              "rss_mb_start": 297,
+              "rss_mb_max": 373,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 122,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 531,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 5.2,
+                "ms_max": 6.3,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "pptx",
+              "bytes": 10140,
+              "seconds": 0.54,
+              "error": null,
+              "pdf_pages": 2,
+              "pdf_bytes": 49852
+            }
+          },
+          {
+            "name": "klein-2-proef.pptx",
+            "node": "8c4d1e03-d7d7-4af2-a5b8-aca7b0927bff",
+            "bytes": 10140,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.26,
+            "src_to_ready_s": 1.11,
+            "pdf_pages": 2,
+            "ds": {
+              "samples": 6,
+              "seconds": 1.3,
+              "cpu_s": 0.61,
+              "cores_avg": 0.49,
+              "cores_max_1s": 0.6,
+              "usage_mb_max": 528,
+              "rss_mb_start": 297,
+              "rss_mb_max": 372,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 120,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 531,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 5.9,
+                "ms_max": 7.6,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "pptx",
+              "bytes": 10140,
+              "seconds": 0.65,
+              "error": null,
+              "pdf_pages": 2,
+              "pdf_bytes": 49852
+            }
+          },
+          {
+            "name": "klein-3-proef.pptx",
+            "node": "36eef9d0-a633-4406-a3dd-c50df8232888",
+            "bytes": 10140,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.26,
+            "src_to_ready_s": 1.11,
+            "pdf_pages": 2,
+            "ds": {
+              "samples": 6,
+              "seconds": 1.3,
+              "cpu_s": 0.61,
+              "cores_avg": 0.49,
+              "cores_max_1s": 0.6,
+              "usage_mb_max": 528,
+              "rss_mb_start": 297,
+              "rss_mb_max": 372,
+              "rss_mb_end": 297,
+              "x2t_runs": 1,
+              "x2t_mb_max": 120,
+              "docservice_mb_max": 186,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 531,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 4.7,
+                "ms_max": 5.4,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "pptx",
+              "bytes": 10140,
+              "seconds": 0.53,
+              "error": null,
+              "pdf_pages": 2,
+              "pdf_bytes": 49852
+            }
+          },
+          {
+            "name": "klein-4-proef.pptx",
+            "node": "bffc1d8d-1fc9-4172-a0d1-c7ac77b1cf0a",
+            "bytes": 10140,
+            "pdf_state": "ready",
+            "jobs": [
+              {
+                "status": "running",
+                "attempts": 1,
+                "error": ""
+              }
+            ],
+            "upload_to_ready_s": 1.15,
+            "src_to_ready_s": 1.02,
+            "pdf_pages": 2,
+            "ds": {
+              "samples": 5,
+              "seconds": 1.0,
+              "cpu_s": 0.54,
+              "cores_avg": 0.54,
+              "cores_max_1s": 0.54,
+              "usage_mb_max": 531,
+              "rss_mb_start": 298,
+              "rss_mb_max": 376,
+              "rss_mb_end": 299,
+              "x2t_runs": 1,
+              "x2t_mb_max": 123,
+              "docservice_mb_max": 187,
+              "converter_mb_max": 103,
+              "kernel_peak_mb": 533,
+              "limit_cgroup": true,
+              "oom_kills": 0,
+              "oom_victims": [],
+              "docservice_restarted": false,
+              "converter_restarted": false,
+              "health": {
+                "n": 3,
+                "not_true": 0,
+                "ms_median": 4.7,
+                "ms_max": 8.1,
+                "first_bad_s": null
+              }
+            },
+            "direct": {
+              "ext": "pptx",
+              "bytes": 10140,
+              "seconds": 0.54,
+              "error": null,
+              "pdf_pages": 2,
+              "pdf_bytes": 49852
+            }
+          }
+        ]
+      },
+      "large": [
+        {
+          "name": "groot-0.docx",
+          "node": "2be3101e-592b-4aa1-b614-e840b2131665",
+          "bytes": 61771,
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "running",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "upload_to_ready_s": 10.36,
+          "src_to_ready_s": 10.17,
+          "pdf_pages": 401,
+          "ds": {
+            "samples": 42,
+            "seconds": 10.3,
+            "cpu_s": 12.0,
+            "cores_avg": 1.17,
+            "cores_max_1s": 1.63,
+            "usage_mb_max": 807,
+            "rss_mb_start": 298,
+            "rss_mb_max": 645,
+            "rss_mb_end": 299,
+            "x2t_runs": 1,
+            "x2t_mb_max": 393,
+            "docservice_mb_max": 188,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 808,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 21,
+              "not_true": 0,
+              "ms_median": 4.6,
+              "ms_max": 8.0,
+              "first_bad_s": null
+            }
+          },
+          "direct": {
+            "ext": "docx",
+            "bytes": 61770,
+            "seconds": 9.74,
+            "error": null,
+            "pdf_pages": 401,
+            "pdf_bytes": 416230
+          },
+          "made": {
+            "paragraphs": 19240,
+            "xml_bytes": 2595949,
+            "file_bytes": 61771
+          }
+        },
+        {
+          "name": "groot-1.docx",
+          "node": "06e7a052-09b1-4f32-9ce1-f4a0d4fadacb",
+          "bytes": 61769,
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "running",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "upload_to_ready_s": 10.36,
+          "src_to_ready_s": 10.15,
+          "pdf_pages": 401,
+          "ds": {
+            "samples": 42,
+            "seconds": 10.3,
+            "cpu_s": 12.43,
+            "cores_avg": 1.21,
+            "cores_max_1s": 1.6,
+            "usage_mb_max": 821,
+            "rss_mb_start": 299,
+            "rss_mb_max": 657,
+            "rss_mb_end": 300,
+            "x2t_runs": 1,
+            "x2t_mb_max": 404,
+            "docservice_mb_max": 188,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 821,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 21,
+              "not_true": 0,
+              "ms_median": 4.8,
+              "ms_max": 12.8,
+              "first_bad_s": null
+            }
+          },
+          "direct": {
+            "ext": "docx",
+            "bytes": 61769,
+            "seconds": 8.97,
+            "error": null,
+            "pdf_pages": 401,
+            "pdf_bytes": 416230
+          },
+          "made": {
+            "paragraphs": 19240,
+            "xml_bytes": 2595949,
+            "file_bytes": 61769
+          }
+        },
+        {
+          "name": "groot-2.docx",
+          "node": "01c5151b-7868-4b06-a52d-fac3a5b8a8ea",
+          "bytes": 61770,
+          "pdf_state": "ready",
+          "jobs": [
+            {
+              "status": "running",
+              "attempts": 1,
+              "error": ""
+            }
+          ],
+          "upload_to_ready_s": 9.35,
+          "src_to_ready_s": 9.12,
+          "pdf_pages": 401,
+          "ds": {
+            "samples": 38,
+            "seconds": 9.3,
+            "cpu_s": 11.83,
+            "cores_avg": 1.28,
+            "cores_max_1s": 1.62,
+            "usage_mb_max": 821,
+            "rss_mb_start": 300,
+            "rss_mb_max": 657,
+            "rss_mb_end": 299,
+            "x2t_runs": 1,
+            "x2t_mb_max": 405,
+            "docservice_mb_max": 189,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 822,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 19,
+              "not_true": 0,
+              "ms_median": 4.6,
+              "ms_max": 11.2,
+              "first_bad_s": null
+            }
+          },
+          "direct": {
+            "ext": "docx",
+            "bytes": 61770,
+            "seconds": 9.52,
+            "error": null,
+            "pdf_pages": 401,
+            "pdf_bytes": 416230
+          },
+          "made": {
+            "paragraphs": 19240,
+            "xml_bytes": 2595949,
+            "file_bytes": 61770
+          }
+        }
+      ],
+      "together": [
+        {
+          "order": "conversie eerst",
+          "opened_s": 7.59,
+          "open_error": null,
+          "open_started_after_src_s": 2.02,
+          "src_after_open_s": -2.02,
+          "pdf_state": "ready",
+          "src_to_ready_s": 11.34,
+          "pdf_pages": 401,
+          "seconds": 11.6,
+          "made": {
+            "paragraphs": 19240,
+            "xml_bytes": 2595949,
+            "file_bytes": 61770
+          },
+          "ds": {
+            "samples": 47,
+            "seconds": 11.5,
+            "cpu_s": 12.71,
+            "cores_avg": 1.1,
+            "cores_max_1s": 1.68,
+            "usage_mb_max": 826,
+            "rss_mb_start": 300,
+            "rss_mb_max": 652,
+            "rss_mb_end": 300,
+            "x2t_runs": 1,
+            "x2t_mb_max": 399,
+            "docservice_mb_max": 189,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 826,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 24,
+              "not_true": 0,
+              "ms_median": 4.6,
+              "ms_max": 43.5,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "order": "editor eerst",
+          "opened_s": 2.85,
+          "open_error": null,
+          "open_started_after_src_s": -6.73,
+          "src_after_open_s": 6.73,
+          "pdf_state": "ready",
+          "src_to_ready_s": 10.13,
+          "pdf_pages": 401,
+          "seconds": 16.9,
+          "made": {
+            "paragraphs": 19240,
+            "xml_bytes": 2595949,
+            "file_bytes": 61768
+          },
+          "ds": {
+            "samples": 68,
+            "seconds": 16.8,
+            "cpu_s": 13.0,
+            "cores_avg": 0.78,
+            "cores_max_1s": 1.77,
+            "usage_mb_max": 864,
+            "rss_mb_start": 299,
+            "rss_mb_max": 674,
+            "rss_mb_end": 299,
+            "x2t_runs": 2,
+            "x2t_mb_max": 421,
+            "docservice_mb_max": 189,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 865,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 34,
+              "not_true": 0,
+              "ms_median": 5.1,
+              "ms_max": 39.3,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "order": "conversie eerst",
+          "opened_s": 7.83,
+          "open_error": null,
+          "open_started_after_src_s": 2.01,
+          "src_after_open_s": -2.01,
+          "pdf_state": "ready",
+          "src_to_ready_s": 10.95,
+          "pdf_pages": 401,
+          "seconds": 11.2,
+          "made": {
+            "paragraphs": 19240,
+            "xml_bytes": 2595949,
+            "file_bytes": 61769
+          },
+          "ds": {
+            "samples": 45,
+            "seconds": 11.0,
+            "cpu_s": 12.49,
+            "cores_avg": 1.13,
+            "cores_max_1s": 1.66,
+            "usage_mb_max": 841,
+            "rss_mb_start": 300,
+            "rss_mb_max": 651,
+            "rss_mb_end": 300,
+            "x2t_runs": 1,
+            "x2t_mb_max": 398,
+            "docservice_mb_max": 188,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 841,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 23,
+              "not_true": 0,
+              "ms_median": 4.8,
+              "ms_max": 42.3,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "order": "editor eerst",
+          "opened_s": 2.88,
+          "open_error": null,
+          "open_started_after_src_s": -6.53,
+          "src_after_open_s": 6.53,
+          "pdf_state": "ready",
+          "src_to_ready_s": 9.09,
+          "pdf_pages": 401,
+          "seconds": 15.6,
+          "made": {
+            "paragraphs": 19240,
+            "xml_bytes": 2595949,
+            "file_bytes": 61770
+          },
+          "ds": {
+            "samples": 63,
+            "seconds": 15.5,
+            "cpu_s": 11.86,
+            "cores_avg": 0.76,
+            "cores_max_1s": 1.67,
+            "usage_mb_max": 838,
+            "rss_mb_start": 300,
+            "rss_mb_max": 647,
+            "rss_mb_end": 300,
+            "x2t_runs": 1,
+            "x2t_mb_max": 393,
+            "docservice_mb_max": 189,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 838,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 32,
+              "not_true": 0,
+              "ms_median": 5.0,
+              "ms_max": 27.7,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "order": "conversie eerst",
+          "opened_s": 8.13,
+          "open_error": null,
+          "open_started_after_src_s": 2.02,
+          "src_after_open_s": -2.02,
+          "pdf_state": "ready",
+          "src_to_ready_s": 11.31,
+          "pdf_pages": 401,
+          "seconds": 11.6,
+          "made": {
+            "paragraphs": 19240,
+            "xml_bytes": 2595949,
+            "file_bytes": 61769
+          },
+          "ds": {
+            "samples": 47,
+            "seconds": 11.5,
+            "cpu_s": 12.34,
+            "cores_avg": 1.07,
+            "cores_max_1s": 1.6,
+            "usage_mb_max": 839,
+            "rss_mb_start": 300,
+            "rss_mb_max": 647,
+            "rss_mb_end": 300,
+            "x2t_runs": 2,
+            "x2t_mb_max": 394,
+            "docservice_mb_max": 189,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 839,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 24,
+              "not_true": 0,
+              "ms_median": 5.3,
+              "ms_max": 51.2,
+              "first_bad_s": null
+            }
+          }
+        },
+        {
+          "order": "editor eerst",
+          "opened_s": 2.94,
+          "open_error": null,
+          "open_started_after_src_s": -6.57,
+          "src_after_open_s": 6.57,
+          "pdf_state": "ready",
+          "src_to_ready_s": 9.08,
+          "pdf_pages": 401,
+          "seconds": 15.7,
+          "made": {
+            "paragraphs": 19240,
+            "xml_bytes": 2595949,
+            "file_bytes": 61769
+          },
+          "ds": {
+            "samples": 63,
+            "seconds": 15.5,
+            "cpu_s": 11.8,
+            "cores_avg": 0.76,
+            "cores_max_1s": 1.66,
+            "usage_mb_max": 842,
+            "rss_mb_start": 299,
+            "rss_mb_max": 650,
+            "rss_mb_end": 395,
+            "x2t_runs": 1,
+            "x2t_mb_max": 398,
+            "docservice_mb_max": 189,
+            "converter_mb_max": 103,
+            "kernel_peak_mb": 843,
+            "limit_cgroup": true,
+            "oom_kills": 0,
+            "oom_victims": [],
+            "docservice_restarted": false,
+            "converter_restarted": false,
+            "health": {
+              "n": 32,
+              "not_true": 0,
+              "ms_median": 5.4,
+              "ms_max": 12.4,
+              "first_bad_s": null
+            }
+          }
+        }
+      ],
+      "machine": {
+        "cpus": 4,
+        "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+        "mem_total_bytes": 16872808448,
+        "mem_available_bytes": 15570755584,
+        "kernel": "6.18.44-fc-v180",
+        "python": "3.12.13",
+        "load_avg": [
+          1.36,
+          0.89,
+          0.82
+        ],
+        "ds": {
+          "url": "http://127.0.0.1:18150",
+          "name": "meet-ds",
+          "image": "mirror.gcr.io/onlyoffice/documentserver@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+          "image_id": "sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3",
+          "memory_bytes": 2147483648,
+          "memory_swap_bytes": 2147483648,
+          "cpus": 2.0,
+          "pids_limit": 512,
+          "limits_applied": true
+        }
+      },
+      "summary": {
+        "small": {
+          "proef.docx": {
+            "app_s": {
+              "n": 5,
+              "median": 1.1,
+              "min": 1.02,
+              "max": 1.12,
+              "spread": 0.1,
+              "values": [
+                1.1,
+                1.12,
+                1.02,
+                1.02,
+                1.1
+              ]
+            },
+            "upload_to_ready_s": {
+              "n": 5,
+              "median": 1.26,
+              "min": 1.16,
+              "max": 1.29,
+              "spread": 0.13,
+              "values": [
+                1.27,
+                1.26,
+                1.16,
+                1.17,
+                1.29
+              ]
+            },
+            "direct_s": {
+              "n": 5,
+              "median": 0.54,
+              "min": 0.53,
+              "max": 0.64,
+              "spread": 0.11,
+              "values": [
+                0.53,
+                0.64,
+                0.54,
+                0.53,
+                0.64
+              ]
+            },
+            "ready": 5,
+            "n": 5
+          },
+          "proef.xlsx": {
+            "app_s": {
+              "n": 5,
+              "median": 1.1,
+              "min": 1.03,
+              "max": 1.11,
+              "spread": 0.08,
+              "values": [
+                1.11,
+                1.1,
+                1.08,
+                1.11,
+                1.03
+              ]
+            },
+            "upload_to_ready_s": {
+              "n": 5,
+              "median": 1.26,
+              "min": 1.16,
+              "max": 1.26,
+              "spread": 0.1,
+              "values": [
+                1.26,
+                1.26,
+                1.26,
+                1.26,
+                1.16
+              ]
+            },
+            "direct_s": {
+              "n": 5,
+              "median": 0.64,
+              "min": 0.53,
+              "max": 0.65,
+              "spread": 0.12,
+              "values": [
+                0.54,
+                0.53,
+                0.64,
+                0.65,
+                0.65
+              ]
+            },
+            "ready": 5,
+            "n": 5
+          },
+          "proef.pptx": {
+            "app_s": {
+              "n": 5,
+              "median": 1.11,
+              "min": 1.02,
+              "max": 1.12,
+              "spread": 0.1,
+              "values": [
+                1.12,
+                1.02,
+                1.11,
+                1.11,
+                1.02
+              ]
+            },
+            "upload_to_ready_s": {
+              "n": 5,
+              "median": 1.26,
+              "min": 1.15,
+              "max": 1.26,
+              "spread": 0.11,
+              "values": [
+                1.26,
+                1.15,
+                1.26,
+                1.26,
+                1.15
+              ]
+            },
+            "direct_s": {
+              "n": 5,
+              "median": 0.54,
+              "min": 0.53,
+              "max": 0.65,
+              "spread": 0.12,
+              "values": [
+                0.54,
+                0.54,
+                0.65,
+                0.53,
+                0.54
+              ]
+            },
+            "ready": 5,
+            "n": 5
+          }
+        },
+        "large": {
+          "app_s": {
+            "n": 3,
+            "median": 10.2,
+            "min": 9.1,
+            "max": 10.2,
+            "spread": 1.1,
+            "values": [
+              10.2,
+              10.2,
+              9.1
+            ]
+          },
+          "direct_s": {
+            "n": 3,
+            "median": 9.5,
+            "min": 9.0,
+            "max": 9.7,
+            "spread": 0.8,
+            "values": [
+              9.7,
+              9.0,
+              9.5
+            ]
+          },
+          "pages": [
+            401,
+            401,
+            401
+          ],
+          "direct_pages": [
+            401,
+            401,
+            401
+          ],
+          "peak_mb": {
+            "n": 3,
+            "median": 821,
+            "min": 808,
+            "max": 822,
+            "spread": 14,
+            "values": [
+              808,
+              821,
+              822
+            ]
+          },
+          "x2t_mb": {
+            "n": 3,
+            "median": 404,
+            "min": 393,
+            "max": 405,
+            "spread": 12,
+            "values": [
+              393,
+              404,
+              405
+            ]
+          },
+          "ready": 3,
+          "n": 3,
+          "xml_bytes": 2595949,
+          "file_bytes": 61771
+        },
+        "conversie eerst": {
+          "opened_s": {
+            "n": 3,
+            "median": 7.8,
+            "min": 7.6,
+            "max": 8.1,
+            "spread": 0.5,
+            "values": [
+              7.6,
+              7.8,
+              8.1
+            ]
+          },
+          "opened": 3,
+          "n": 3,
+          "conversion_s": {
+            "n": 3,
+            "median": 11.3,
+            "min": 10.9,
+            "max": 11.3,
+            "spread": 0.4,
+            "values": [
+              11.3,
+              10.9,
+              11.3
+            ]
+          },
+          "health_not_true": 0,
+          "health_n": 71,
+          "health_ms_max": 51.2,
+          "src_after_open_s": [
+            -2.02,
+            -2.01,
+            -2.02
+          ],
+          "ready": 3
+        },
+        "editor eerst": {
+          "opened_s": {
+            "n": 3,
+            "median": 2.9,
+            "min": 2.9,
+            "max": 2.9,
+            "spread": 0.1,
+            "values": [
+              2.9,
+              2.9,
+              2.9
+            ]
+          },
+          "opened": 3,
+          "n": 3,
+          "conversion_s": {
+            "n": 3,
+            "median": 9.1,
+            "min": 9.1,
+            "max": 10.1,
+            "spread": 1.1,
+            "values": [
+              10.1,
+              9.1,
+              9.1
+            ]
+          },
+          "health_not_true": 0,
+          "health_n": 98,
+          "health_ms_max": 39.3,
+          "src_after_open_s": [
+            6.73,
+            6.53,
+            6.57
+          ],
+          "ready": 3
+        }
+      },
+      "ok": true
     }
   }
 }

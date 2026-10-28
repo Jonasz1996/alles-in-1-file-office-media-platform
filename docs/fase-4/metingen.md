@@ -59,6 +59,7 @@ Gemaakt door `e2e/perf/office_run.py`; niet met de hand bewerken. Alle getallen:
 - office_inspect: 2026-10-27T23:40:10+00:00, commit `e2c47d9`
 - office_budget: 2026-10-27T23:40:30+00:00, commit `e2c47d9`
 - office_xml: 2026-10-28T01:28:02+00:00, commit `08f45fb`
+- office_convert: 2026-10-28T01:40:08+00:00, commit `ea647e4`
 
 - Machine: 4 cpu's (Intel(R) Xeon(R) Processor @ 2.10GHz), 15,7 GiB RAM, kernel 6.18.44-fc-v165, Python 3.12.13
 - Chromium 141.0.7390.37 (Playwright, headless)
@@ -69,15 +70,15 @@ Gemaakt door `e2e/perf/office_run.py`; niet met de hand bewerken. Alle getallen:
 | Koud openen via de app | ≤ 5,0 s | docx 2,97 s (2,74–3,02, n=5); xlsx 2,87 s (2,79–3,06, n=5); pptx 2,61 s (2,5–2,96, n=5) | ja | office_open.py, 5× per soort (proef.docx/.xlsx/.pptx, elke keer een nieuw bestand), page.goto(/bewerken/<id>) tot de statusregel Bewerken zegt; koud: een nieuw browserprofiel, warm: het tweede bestand in datzelfde profiel (profiel disk); mediaan (kleinste–grootste) |
 | Warm openen | ≤ 2,0 s | docx 2,47 s (2,26–2,61, n=5); xlsx 2,54 s (2,37–2,56, n=5); pptx 2,34 s (2,17–2,62, n=5) | nee | office_open.py, dezelfde runs (zie koud openen) |
 | Cpu van de app bij koud openen | ≤ 1 core-seconde | docx 0,94 s (0,82–1,12, n=5) (322 verzoeken, 21,5 MB); xlsx 0,87 s (0,82–0,91, n=5) (306 verzoeken, 10,2 MB); pptx 0,9 s (0,73–0,94, n=5) (299 verzoeken, 9,8 MB) | ja | office_open.py, dezelfde koude runs: utime + stime van het serverproces van vóór page.goto tot 2 s zonder nieuw verzoek, min het verbruik in rust; verzoeken: de toegangslog van de server, bytes: Resource Timing (mediaan) |
-| Geheugen van de app met 50 tunnels | ≤ +20 MB | +14,82 MB (14,18–15,12, n=3) open, +14,88 MB (14,23–15,15, n=3) na 30,0 s; alle 50 open: ja | ja | office_tunnels.py, 3 rondes (elk een nieuwe server), 10 gebruikers × 5 docx, VmRSS mediaan van 3; de eerste keer per server telt |
+| Geheugen van de app met 50 tunnels | ≤ +20 MB | +14,82 MB (14,18–15,12, n=3) open, +14,88 MB (14,23–15,15, n=3) na 30 s; alle 50 open: ja | ja | office_tunnels.py, 3 rondes (elk een nieuwe server), 10 gebruikers × 5 docx, VmRSS mediaan van 3; de eerste keer per server telt |
 | Opslaan: callback tot versie in de database | ≤ 2 s voor 1 MB | Nu opslaan (6) 0,088 s (0,073–0,107, n=9); sluiten (2) 0,106 s (0,092–0,113, n=3) | ja | office_save.py, docx van 1,05 MiB (een foto), 3 rondes × (3× Nu opslaan + sluiten) in de echte editor; CallbackClock: van de eerste byte van de callback tot de kop van het antwoord (de app antwoordt na de commit) |
 | Invoercontrole: xlsx 10 MB XML, pptx 80 MB foto's | ≤ 1 s cpu, in een thread | xlsx 0,015 s (0,015–0,016, n=5) cpu, lus max 1,2 ms; pptx 0,293 s (0,257–0,328, n=5) cpu, lus max 2,2 ms | ja | office_inspect.py, 5× per bestand, inspect.check() zoals de app hem aanroept (cache leeg), cpu = time.thread_time() van de controle; xlsx 10,0 MiB XML (net onder de grens van 10 MiB) in 1,6 MB, pptx 20 foto's (JPEG, deflate) 80,6 MB |
 | Budget: eerste lading | groeit ≤ 0,5 KB | 93,75 → 94,12 KB (+0,37 KB) | ja | office_budget.py: npm run build en budget.mjs --json, 3ccee0a en e2c47d9 |
 | Budget: chunk van de editor | < 50 KB gzip | 3,94 KB | ja | office_budget.py: npm run build en budget.mjs --json, 3ccee0a en e2c47d9 |
 | Budget: route Bestanden | groeit < 1 KB | 39,42 → 42,36 KB (+2,94 KB) | nee | office_budget.py: npm run build en budget.mjs --json, 3ccee0a en e2c47d9 |
 | XML-grens bij 2 GB: net onder de grens per soort, ook opmaak, formules, veel pagina's | geen OOM van x2t; docservice blijft | docx (opmaak, tabellen) 3,98 MiB XML (355 hoofdstukken, 355 tabellen): 3/3 omgezet, tot klaar of mislukt 22,5 s (22,5–23,5, n=3), x2t tot 539 MB, DS tot 1028 MB, OOM 0; docx (heel veel pagina's) 3,98 MiB XML (96937 pagina's): 0/3 omgezet, tot klaar of mislukt 29,4 s (26,8–66,5, n=3), x2t tot 1722 MB, DS tot 2048 MB, OOM 3; pptx 3,97 MiB XML (401 dia's): 3/3 omgezet, tot klaar of mislukt 8,5 s (8,3–9,4, n=3), x2t tot 411 MB, DS tot 853 MB, OOM 0; xlsx (formules) 9,98 MiB XML (15376 rijen, 6 formules per rij): 3/3 omgezet, tot klaar of mislukt 18,5 s (18,5–18,5, n=3), x2t tot 576 MB, DS tot 1105 MB, OOM 0; odt 1,98 MiB XML (235 hoofdstukken): 3/3 omgezet, tot klaar of mislukt 12,5 s (12,3–13,5, n=3), x2t tot 453 MB, DS tot 950 MB, OOM 0; ods 1,98 MiB XML (1392 rijen, 4 formules per rij): 3/3 omgezet, tot klaar of mislukt 3,4 s (3,3–3,4, n=3), x2t tot 190 MB, DS tot 671 MB, OOM 0; odp 1,98 MiB XML (955 dia's): 3/3 omgezet, tot klaar of mislukt 12,5 s (11,4–12,5, n=3), x2t tot 587 MB, DS tot 1096 MB, OOM 0. docservice bleef hetzelfde proces: ja. Geopend in de editor (hooguit 120 s): docx 0/3, docx_pages 2/3 (5,0 s (4,8–5,1, n=2)), pptx 3/3 (4,2 s (4,1–4,3, n=3)), xlsx 3/3 (3,6 s (3,5–4,0, n=3)) | nee | office_xml.py, 3 rondes × 7 bestanden (elke ronde nieuwe bestanden, net onder de grens van inspect: 16 KiB eronder), via de app: upload → voorbeeld → pdf-taak → DS /converter; DsWatch elke 0,25 s (geheugen van de cgroup van DS, rss van x2t, OOM-kills uit dmesg, het proces van docservice, /healthcheck); daarna elk bewerkbaar bestand openen in de editor |
-| Conversie klein / 401 pagina's | ±1 s / ≤ 60 s | – | niet gemeten | office_convert.py |
-| Conversie van 401 pagina's terwijl een editor opent | openen ≤ 10 s; /healthcheck blijft true | – | niet gemeten | office_convert.py: niet gemeten |
+| Conversie klein / 401 pagina's | ±1 s / ≤ 60 s (22 s in de proef) | docx 1,1 s (1,02–1,12, n=5) (DS alleen 0,54 s); xlsx 1,1 s (1,03–1,11, n=5) (DS alleen 0,64 s); pptx 1,11 s (1,02–1,12, n=5) (DS alleen 0,54 s); 401 pagina's 10,2 s (9,1–10,2, n=3) (DS alleen 9,5 s (9,0–9,7, n=3); elke PDF 401/401/401 pagina's, x2t tot 405 MB) | ja | office_convert.py: klein 5× per soort (proef.docx/.xlsx/.pptx, elke keer een ander bestand), 401 pagina's 3× (een docx van 61,8 kB met 2,48 MiB XML); via de app gemeten van het ophalen van de bron door DS (/internal/office/src) tot de pdf in de app staat (de pagina vraagt elke 0,1 s), ‘DS alleen’ is hetzelfde bestand rechtstreeks naar /converter (async, elke 0,1 s gevraagd) |
+| Conversie van 401 pagina's terwijl een editor opent | openen ≤ 10 s; /healthcheck blijft true | conversie eerst: openen 7,8 s (7,6–8,1, n=3) (3/3), conversie 11,3 s (10,9–11,3, n=3); editor eerst: openen 2,9 s (2,9–2,9, n=3) (3/3), conversie 9,1 s (9,1–10,1, n=3); /healthcheck 169× gevraagd, 0× niet true, traagste 51 ms | ja | office_convert.py, 3× per volgorde: ‘conversie eerst’ = upload van de docx van 401 pagina's, wachten tot DS de bron ophaalt, 2 s later een proef.docx openen; ‘editor eerst’ = openen en uploaden zodra de sessie er is; /healthcheck elke 0,5 s |
 | 20 bewerkers (5 documenten × 4), 60 s typen | alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd | – | niet gemeten | office_editors.py: niet gemeten |
 | Stoppen met open editors | alles opgeslagen; docker stop ≤ 60 s | – | niet gemeten | office_outage.py --mode stop: niet gemeten |
 | Kill van DS met open editors | verlies ≤ de tijd sinds het laatste tussentijds opslaan (≤ 5 min) | – | niet gemeten | office_outage.py --mode kill: niet gemeten |
@@ -249,6 +250,33 @@ gewoon. Het doel "geen OOM van x2t" is dus niet gehaald; "docservice blijft" wel
   volgt, en een tweede keer hetzelfde bestand kwam in een eerdere poging meteen uit zijn cache
   (ook de fout -3), zonder x2t.
 
+### Conversie klein / 401 pagina's: ja
+
+Een klein bestand (proef.docx, .xlsx, .pptx, elke keer met een ander zip-commentaar, dus een
+nieuwe sha) staat via de app 1,02–1,12 s na het ophalen van de bron door DS als PDF in de app
+(mediaan 1,1 s, 5 keer per soort). "±1 s" lezen we als: rond 1 s, en dat is het. DS zelf doet het
+in 0,53–0,65 s (hetzelfde soort bestand rechtstreeks naar `/converter`, elke 0,1 s gevraagd). Het
+verschil is vooral de vraagronde van de app: `oo/convert.py` vraagt DS elke 1,0 s
+(`POLL_SECONDS`) of hij klaar is, dus een conversie van 0,6 s telt als ±1 s. Een eerste vraag na
+0,25 s zou ±0,4 s per klein bestand schelen; niet veranderd, het doel is gehaald.
+
+De docx van 401 pagina's (zoals `groot.docx` van de proef: 19.240 korte alinea's, 2,48 MiB XML)
+kost via de app 9,1–10,2 s (mediaan 10,2 s, 3 keer), rechtstreeks 9,0–9,7 s, en elke PDF had 401
+pagina's. Ruim onder de 60 s, en sneller dan de 22 s van de proef; waar dat verschil vandaan komt,
+is niet nagegaan. x2t gebruikte hooguit 405 MB, de container 822 MB.
+
+### Conversie van 401 pagina's terwijl een editor opent: ja
+
+- **Conversie eerst** (de echte botsing: upload van de docx van 401 pagina's, DS haalt de bron,
+  2 s later opent een gebruiker proef.docx): openen 7,6–8,1 s, tegen 2,6–3,0 s koud zonder
+  conversie (deel 1). DS gebruikte dan tot 1,6–1,8 van zijn 2 cpu's (de drukste seconde). Binnen
+  de 10 s, maar de editor merkt de conversie wel.
+- **Editor eerst** (openen, en de upload zodra de sessie er is): openen 2,9 s, als zonder
+  conversie. De app laat de conversie wachten zolang een sessie opent (`sessions.busy`, Keuze 25):
+  DS haalde de bron pas 6,5–6,7 s na het begin van het openen.
+- `/healthcheck` van DS elke 0,5 s: 169 keer gevraagd, altijd `true`, het traagste antwoord 51 ms.
+- De conversie zelf duurde 9,1–11,3 s; de PDF had steeds 401 pagina's.
+
 ## Bevindingen
 
 1. **De presentatie-editor krijgt via de app de ingebouwde thema's niet.** De pptx-editor vraagt
@@ -323,8 +351,6 @@ terwijl de sessie alleen wachtte.
 
 | Wat | Doel |
 |---|---|
-| Conversie klein / 401 pagina's | ±1 s / ≤ 60 s |
-| Conversie van 401 pagina's terwijl een editor opent | openen ≤ 10 s; `/healthcheck` blijft `true` |
 | 20 bewerkers (5 documenten × 4), 60 s typen | alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd |
 | Stoppen met open editors | alles opgeslagen; `docker stop` ≤ 60 s |
 | Kill van DS met open editors | verlies ≤ de tijd sinds het laatste tussentijds opslaan (≤ 5 min) |

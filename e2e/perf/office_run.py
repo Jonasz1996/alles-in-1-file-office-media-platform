@@ -101,7 +101,7 @@ def _n(value: Any, digits: int = 2) -> str:
     if value is None:
         return "–"
     if isinstance(value, float):
-        value = round(value, digits)
+        value = round(value, digits) if digits else round(value)
     return str(value).replace(".", ",")
 
 
@@ -383,7 +383,8 @@ def rows2(results: dict[str, Any]) -> list[dict[str, str]]:
         if lg:
             parts.append(
                 f"401 pagina's {_spread(lg['app_s'], ' s', 1)} (DS alleen"
-                f" {_spread(lg['direct_s'], ' s', 1)}; pagina's {lg['pages']}, x2t tot"
+                f" {_spread(lg['direct_s'], ' s', 1)}; elke PDF {'/'.join(map(str, lg['pages']))}"
+                f" pagina's, x2t tot"
                 f" {_n(lg['x2t_mb']['max'], 0)} MB)"
             )
             ok = ok and lg["ready"] == lg["n"]
@@ -395,8 +396,10 @@ def rows2(results: dict[str, Any]) -> list[dict[str, str]]:
             ok if s.get("small") and lg else None,
             f"office_convert.py: klein {cv['runs_small']}× per soort (proef.docx/.xlsx/.pptx, elke"
             f" keer een ander bestand), 401 pagina's {cv['runs']}× (een docx van"
-            f" {_mb(lg['file_bytes'] if lg else 0)} MB); via de app gemeten van het ophalen van het"
-            " bron door DS (/internal/office/src) tot de pdf in de app staat, ‘DS alleen’ is"
+            f" {_n((lg['file_bytes'] if lg else 0) / 1000, 1)} kB met"
+            f" {_n((lg['xml_bytes'] if lg else 0) / 1024**2, 2)} MiB XML); via de app gemeten van"
+            " het ophalen van de bron door DS (/internal/office/src) tot de pdf in de app staat"
+            " (de pagina vraagt elke 0,1 s), ‘DS alleen’ is"
             " hetzelfde bestand rechtstreeks naar /converter (async, elke 0,1 s gevraagd)",
         )
     else:
@@ -420,14 +423,16 @@ def rows2(results: dict[str, Any]) -> list[dict[str, str]]:
         not_true = sum(
             (s.get(o) or {}).get("health_not_true", 0) for o in ("conversie eerst", "editor eerst")
         )
-        parts.append(f"/healthcheck {asked}× gevraagd, {not_true}× niet true, traagste {worst} ms")
+        parts.append(
+            f"/healthcheck {asked}× gevraagd, {not_true}× niet true, traagste {_n(worst, 0)} ms"
+        )
         add(
             "Conversie van 401 pagina's terwijl een editor opent",
             "openen ≤ 10 s; /healthcheck blijft true",
             "; ".join(parts),
             ok,
             f"office_convert.py, {cv['runs']}× per volgorde: ‘conversie eerst’ = upload van de"
-            " docx van 401 pagina's, wachten tot DS het bron ophaalt, 2 s later een proef.docx"
+            " docx van 401 pagina's, wachten tot DS de bron ophaalt, 2 s later een proef.docx"
             " openen; ‘editor eerst’ = openen en uploaden zodra de sessie er is; /healthcheck"
             " elke 0,5 s",
         )
