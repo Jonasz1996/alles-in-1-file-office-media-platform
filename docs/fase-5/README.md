@@ -1,6 +1,9 @@
 # Fase 5 — Media en streaming
 
-Status: **ontwerp** (bouwontwerp revisie 2, 28 oktober 2026). Er is nog niets gebouwd.
+Status: **M0 in aanbouw** (bouwontwerp revisie 2, 28 oktober 2026). Het fundament staat er
+(migratie 0008, de contracten, de kern van de worker, F1–F4, de rijen en de haken), maar media
+staat nog uit: zonder `PLATFORM_MEDIA_ENABLED` is de app precies 0.6.0 plus F1–F4. Wat M0 bouwde
+en wat nog open is, staat in [m0.md](m0.md).
 
 ## Doel
 
@@ -83,3 +86,8 @@ worker, de kosten van de bron, de tijden van fMP4, en de eerste start op 3 cores
   [beslissingen](../fase-0/beslissingen.md).
 - [haalbaarheid.md](haalbaarheid.md): de metingen in de sandbox bij revisie 2 (V1–V8), met de
   commando's.
+- [spike.md](spike.md): de spike van M0 (S1–S13), met een uitkomst per stap en de commando's van
+  de worker na de spike.
+- [m0.md](m0.md): wat M0 bouwde, waar het van het ontwerp afwijkt, en wat nog open is;
+  [m0-web.md](m0-web.md) voor het webdeel, [toetsenbord-m0.md](toetsenbord-m0.md) voor het
+  toetsenbord.

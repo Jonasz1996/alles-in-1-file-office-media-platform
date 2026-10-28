@@ -529,6 +529,12 @@ Elke invoer:
 ```
 `lavfi` en `hevc` staan nooit in deze lijst (S1).
 
+*Gebouwd in M0* (`app/media/worker/run.py`, `args.py`, `ops/probe.py`; [m0.md](m0.md), afwijking
+10): `RLIMIT_FSIZE` 0 voor elk kind behalve `synth`, dat een bestand schrijft; `RLIMIT_DATA`
+1.200 MB voor `stream`, `remux_audio`, `sprites`, `bench` en `synth`, 512 MB voor de rest;
+`-threads 4` ook bij ffprobe. De probe draait zijn ffprobes na elkaar op dezelfde fd, met
+`lseek(0)` vóór elke start.
+
 Transcode, vanaf 0 of na een sprong naar segment k (720p, SDR, audio naar AAC):
 ```
 nice -n 5 ffmpeg {invoer, met -ss (origin + 2k) als k > 0} -copyts
@@ -640,7 +646,9 @@ afscherming van Keuze 11.
 - **HDR met VP9 op 7.1.5**, en de snelheid van de keten met `zscale` en `tonemap` op 7.1.5, zijn
   alleen op 6.1.1 gemeten.
 - **De referentie van `bench`** en van `f_dec` meet M1 in de sandbox.
-- **Het rooster bij een late videostart** is op 6.1.1 nagemeten, niet op 7.1.5. Het gedrag van
+- **Het rooster bij een late videostart** is op 6.1.1 nagemeten, niet op 7.1.5. De fixture
+  `late_video.mkv` staat sinds het samenvoegen in `fixtures.py` (`test_media_probe.py` ziet
+  `origin` 521 ms), en `SegmentGrid` in `app/media/types.py` rekent met dit rooster. Het gedrag van
   `-force_key_frames` met `t` vanaf het eerste beeld is in beide gelijk volgens J4 en S2; S2 op
   7.1.5 zag het rooster na een herstart gelijk bij elke bron waarvan de video binnen één frame
   na S begint (alleen `interlaced.ts` week af, door het zoeken in TS).

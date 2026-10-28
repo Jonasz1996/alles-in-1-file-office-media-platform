@@ -550,6 +550,10 @@ onderaan.
     - Hetzelfde image `platform:local`, een ander commando:
       `python -I -m app.media.worker --socket /run/media/worker.sock`. Eén keer bouwen, dus
       dezelfde ffmpeg, of de worker nu een container is of een kindproces (Keuze 13).
+      *Noot bij de bouw van M0:* zo vindt Python `app` niet (het project is niet geïnstalleerd,
+      en `-I` laat de werkmap en `PYTHONPATH` weg). De lokale worker start als
+      `python -I -c <BOOT> <api-map> …`; M1 kiest hetzelfde of installeert het project in het
+      image ([m0.md](m0.md), afwijking 3).
     - **Een eigen gebruiker.** De app (uid 10001) is eigenaar van elke blob (modus 0600, uit
       `mkstemp`). Draait ffmpeg ook als 10001, dan kan hij een fd die alleen lezen is via
       `/proc/self/fd/3` opnieuw openen om te schrijven, en zo een blob veranderen (V1). De blobs
@@ -679,6 +683,9 @@ onderaan.
         geen kosten);
       - `nice -n 5` live, `nice -n 15` en `ionice -c 3` op de achtergrond. `ionice` helpt alleen
         met de BFQ-scheduler; op ZFS weinig [doc].
+      - *Noot bij de bouw van M0:* `RLIMIT_FSIZE` 0 voor elk kind behalve `synth` (dat schrijft
+        een bestand); `RLIMIT_DATA` 1.200 MB voor `stream`, `remux_audio`, `sprites`, `bench` en
+        `synth`, 512 MB voor de rest ([m0.md](m0.md), afwijking 10).
     - **Geheugen per job:** `RLIMIT_DATA` is de harde grens, ook zonder cgroups. Een bron die
       tussen twee metingen GB's vraagt, krijgt een fout van `malloc` en stopt. De worker leest
       daarnaast elke 2 s `VmRSS` voor `/beheer` (gemeten: 140–568 MB per proces). De grens van de
@@ -714,7 +721,8 @@ onderaan.
       asyncio-transport krijgt na een kill geen EOF (S6).
 13. **Zonder sandbox, en als de worker weg is.**
     - `PLATFORM_MEDIA_WORKER` leeg: de app start zelf een lokale worker. Dat is een kindproces
-      `python -I -m app.media.worker --socket <data_dir>/media/run/worker.sock`, met een kale
+      `python -I -m app.media.worker --socket <data_dir>/media/run/worker.sock` (gebouwd als
+      `python -I -c <BOOT> <api-map> --socket …`, [m0.md](m0.md) afwijking 3), met een kale
       omgeving, een eigen procesgroep en herstart met backoff. Hetzelfde protocol en dezelfde
       code; alleen de afscherming ontbreekt. De lokale worker draait als de app zelf (10001); de
       zelftest meldt dat als `sandbox: off`, niet als fout.
@@ -2030,6 +2038,11 @@ rebaset.
 M0 zet elke module van een ander pakket als stub met de signaturen van §3.3, zodat alles compileert
 en de app zonder media precies 0.6.0 is, plus de reparaties F1–F4.
 
+*Noot bij de bouw van M0:* `MediaConfig` en `BenchResult` staan in `app/config.py`
+(`media/admin.py` geeft `MediaConfig` door), en `media/local.py` en `media/health.py` van M1
+bestaan al als kleine versie, zodat de kern zonder Docker werkt ([m0.md](m0.md), afwijking 2
+en 17).
+
 **Web** (paden onder `web/src/`)
 
 | Bestand | Eigenaar |
@@ -2188,6 +2201,11 @@ de previews van video's gaan erdoorheen.
   volumes:
     media-run:
   ```
+  *Noot bij de bouw van M0:* het `command` en de `healthcheck` met `python -I -m
+  app.media.worker` vinden `app` niet in het image (`WORKDIR /srv`, niets geïnstalleerd). M1
+  start de worker zoals `media/local.py` (`python -I -c <BOOT> /srv …`) of installeert het
+  project, en zet `PLATFORM_MEDIA_ENABLED: "true"` bij `platform` ([m0.md](m0.md), afwijking 1
+  en 3).
 - `infra/single/compose.media-limits.yaml`:
   ```yaml
   # Grenzen voor de worker. Alleen als `docker info` "true true" zegt (zoals office).
@@ -2910,6 +2928,10 @@ M0 raakt alle hotspots en legt de contracten vast. Werkers:
 Eén PR op de fase-5-branch, getagd `fase5-basis`. Daarna is de app zonder worker, of met
 `MediaConfig.enabled = false`, precies 0.6.0 plus F1–F4.
 
+*Noot bij de bouw van M0:* de schakelaar is `PLATFORM_MEDIA_ENABLED` (standaard uit). Zonder die
+vlag start er geen worker en geen rij van media, en geeft elk eindpunt van media 503 `media_off`
+(`test_media_off.py`). Wat M0 bouwde en waar het afwijkt, staat in [m0.md](m0.md).
+
 ### 3.1 Migratie 0008 (`0008_media.py`, down_revision `0007`)
 
 Alleen nieuwe tabellen. Geen batch, geen backfill. Met een downgrade. Alle tabellen beginnen met
@@ -3095,6 +3117,9 @@ media_musicbrainz_url: str = "https://musicbrainz.org"
 media_caa_url: str = "https://coverartarchive.org"
 media_provider_private_ok: bool = False   # alleen tests: de nep-providers op 127.0.0.1 (Keuze 39)
 ```
+- *Noot bij de bouw van M0:* daarboven staat `media_enabled: bool = False`
+  (`PLATFORM_MEDIA_ENABLED`): media staat alleen aan met die vlag ([m0.md](m0.md), afwijking 1).
+  `media_worker` houdt de betekenis hierboven.
 - `max_upload_bytes` bestaat al. Compose zet hem uit `.env`:
   `PLATFORM_MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-53687091200}` (M10).
 - In `.env` komen alleen `MEDIA_SANDBOX` en `MAX_UPLOAD_BYTES` (M10). Geen geheim.
@@ -3253,6 +3278,14 @@ def register(type: str, run: Run, on_dead: OnDead | None = None, max_attempts: i
 class Defer(Exception):                  # terug in de rij na `seconds`; de poging telt niet
     def __init__(self, seconds: float) -> None
 ```
+
+*Noot bij de bouw van M0:* de contracten hierboven staan er zo, met een paar additieve velden en
+functies (onder meer `Stream.last_frame_ms`, `client.call(inputs=, fds=)`, `MediaState.enabled`,
+`VideoEncode.burn_start_s`, `wire.Code.not_built`, `sessions.close_all`, `runtime.until_stopped`
+en `jobs.active_lanes`); de lijst staat in [m0.md](m0.md), afwijking 4. `types.py` heeft ook
+`SegmentGrid` (het rooster van Keuze 22, met `origin_ms ≥ 0` en `start_of(0) = 0`) en de modellen
+van de eindpunten van §2. `VideoEncode.level` kent 3.0 tot en met 5.1, zoals de tabel van
+Keuze 24.
 
 **De commando's van de worker.** Frozen na S1 en S2 (§3.7). `{…}` vult de worker uit gevalideerde
 argumenten. Dit zijn de commando's van ontwerp A met de twee fouten van J4 eruit.
@@ -3423,7 +3456,9 @@ De eindpunten staan bij de pakketten (§2). M0 zet ze als routes met de juiste v
 in `app/media/types.py` en `web/src/media/types.ts`. Een stub geeft 503 `media_off` tot het pakket
 hem vult. `fake_stream.py` geeft precies dezelfde vorm (§3.6).
 
-**Codes**, allemaal in `web/src/i18n/errors/media.ts` (nl en en; `test_error_catalog.py`):
+**Codes**, allemaal in `web/src/i18n/errors/media.ts` (nl en en; `test_error_catalog.py`;
+*gebouwd:* alleen Engels, zoals elke catalogus in het repo, want het Nederlands komt van de
+server, [m0.md](m0.md) afwijking 13):
 
 | Code | Status | Extra | Wanneer |
 |---|---|---|---|
@@ -3434,7 +3469,7 @@ hem vult. `fake_stream.py` geeft precies dezelfde vorm (§3.6).
 | `media_unavailable` | 409 | `reason` | de probe mislukte |
 | `media_unsupported` | 415 | `reasons` (ook `too_large`) | geen enkele weg naar deze client; of een bron boven 8192×4320 |
 | `media_hdr` | 422 | `can_raw`, `reason` (`too_large`, `dolby_vision`, `no_tonemap`) | HDR kan niet omgezet worden (Keuze 27) |
-| `media_busy` | 503 | `reason` (`cpu`, `disk`, `user`, `link`, `worker`), `retry_after` | de toelating zegt nee (Keuze 26), of de worker heeft geen plaats (Keuze 12) |
+| `media_busy` | 503 | `reason` (`cpu`, `disk`, `user`, `link`, `worker`), `retry_after` | de toelating zegt nee (Keuze 26), of de worker heeft geen plaats (Keuze 12); (gebouwd) ook onder `/stream/` zodra de app stopt, met `worker` en `Retry-After: 2` (F3) |
 | `media_session_gone` | 410 | `reason?` (`replaced`) | de sid is onbekend of verlopen, of het bestand is vervangen; de speler vraagt stil een nieuwe |
 | `media_access_gone` | 403 | `reason` (`revoked`, `stopped`, `blocked`) | de toegang is weg, of de app sloot de sessie; de speler stopt |
 | `media_timeout` | 503 | `Retry-After` | een segment niet binnen 20 s |
@@ -3482,6 +3517,8 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
   - `/api/v1/stream/{sid}/file` volgt dezelfde regel (regel 8).
 - **F2. `HEAD` op de downloadroutes** (N2). `api_route(…, methods=["GET", "HEAD"])`. De
   `FileResponse` van Starlette stuurt bij HEAD alleen de koppen [doc]. `test_download_head.py`.
+  *Gebouwd* als `@router.get` met `@router.head(include_in_schema=False)`, zodat de
+  operation-id's uniek blijven ([m0.md](m0.md), afwijking 11).
 - (spike) S12 mat F1 en F2 vóór de reparatie: 16 gepauzeerde streams gaven na 30,01 s een 500 op
   `GET /files/root` (3 van 3; met 14 streams 200 in 0,02 s), en `HEAD` gaf 404 op alle drie de
   routes. Beide zijn nodig zoals hierboven.
@@ -3498,6 +3535,12 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
     `compose.office.yaml` al doet);
   - test: stoppen met één gepauzeerde stream; de logregel van de lifespan verschijnt binnen de
     grace-periode. De speler vernieuwt zelf (Keuze 32).
+  - *Noot bij de bouw van M0:* `runtime.begin_stop(app)` loopt als eerste (ook vanuit het
+    signaal); daarna geeft `/api/v1/stream/` 503 `media_busy {reason: worker}` met
+    `Retry-After: 2`, en een wachten in `runtime.until_stopped` wordt afgebroken. De interne
+    listener van office krijgt ook 10 s, en de lifespan van http wacht eerst op https.
+    `compose.media.yaml` (met `stop_grace_period: 30s`) komt van M1 ([m0.md](m0.md),
+    afwijking 12; `test_serve_stop.py`).
 - **F4. `media-src 'self' blob:`** in de CSP (N5). Zonder `blob:` speelt geen enkele MSE-video:
   `video.src` is dan een object-URL. De CSP staat op drie plekken, en alle drie gaan mee:
   - `WEB_CSP` in `main.py`;
@@ -3522,6 +3565,9 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
     rij `media` loopt een nieuwe scan binnen één tik; elke housekeeping loopt één keer per
     periode, met alle Runners aan; `Defer` telt niet; de timeout per soort; de bestaande soorten
     veranderen niet.
+  - *Noot bij de bouw van M0:* de rijen `media_scan`, `media`, `media_net` en `import` starten
+    alleen met media aan (`jobs.active_lanes`); met media uit loopt alleen `default`, zoals in
+    0.6.0 ([m0.md](m0.md), afwijking 9).
 - **De haken** (één regel elk):
   - `files.notify` en `notify_many` roepen `media.hooks.touched(nodes, type)` aan (synchroon, geen
     I/O). Bij een nieuwe versie, de prullenbak en weghalen sluit die ook de sessies op die node
@@ -3533,6 +3579,11 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
     eerst de sessies op die sha (`close_sha`);
   - `usage.py` en `routers/admin.py`: een lege haak voor het deel `media` en de meldingen (M10
     vult ze).
+  - *Noot bij de bouw van M0:* `files.notify` geeft nieuwe inhoud (een nieuwe of teruggezette
+    versie) aan de haak door als `node.version` (de SSE blijft `node.changed`); `node.deleted` en
+    `node.version` sluiten de sessies. `usage.media_bytes` geeft 0, zonder nieuw veld in
+    `StorageParts`. De web-app vertaalt de meldingen op code (`admin.notice.media_*`)
+    ([m0.md](m0.md), afwijking 8 en 14).
 - **`main.py`**:
   - de routers (stubs);
   - in de lifespan: `media.runtime.bind(app)`. Dat start de lokale worker of de gezondheidslus,
@@ -3544,7 +3595,9 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
 - **`cli.py`**: `media-import`, `media-parse`, `media-status`, `media-provider-check` en
   `media-loadtest`, elk als dunne aanroep van een functie in het pakket (stub tot dan).
 - **`config.py`** en **`models.py`**: §3.1 en §3.2.
-- **`pyproject.toml`** en **`package.json`**: ongewijzigd.
+- **`pyproject.toml`** en **`package.json`**: ongewijzigd. (Gebouwd: `pyproject.toml` krijgt
+  alleen de markers `media`, `media_perf` en `provider_real` en `addopts` van pytest, geen
+  afhankelijkheid; [m0.md](m0.md), afwijking 16.)
 - **Web**:
   - `routes.tsx`: lazy routes `/media`, `/media/bibliotheek/:id`, `/media/item/:node`,
     `/media/serie/:id`, `/kijken/:node`, `/muziek`, `/muziek/album/:id`, `/muziek/artiest/:key`,
@@ -3577,7 +3630,7 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
   | `subs_text.mkv` (SRT en ASS), losse `nl.srt` (CP1252), `en.ass`, `.nl.forced.srt`, een SRT in UTF-8 met BOM | ondertitels |
   | `pgs.mkv` (via de eigen `.sup`-schrijver) en `vobsub.mkv` (de eigen `.sup` met `-c:s dvdsub`: beeld naar beeld; uit een SRT kan het niet, V8). (spike) De `.sup` muxen met `-copyts` (anders 2 s te vroeg); VobSub met `-fix_sub_duration` (anders gaat een ondertitel nooit weg; S9) | inbranden |
   | `fps240.mp4` (640×360, 240 fps, 6 s) | één IDR per 2 s en `-fpsmax 60` (V5) |
-  | (spike) `late_video.mkv` (video vanaf 0,5 s met `-itsoffset 0.5`, audio vanaf 0; het recept komt nog in `fixtures.py`, dat van M0 is) | het rooster aan `origin`, het lange eerste segment, de herstart met `-ss (origin + 2k)` (Keuze 22) |
+  | (spike) `late_video.mkv` (video vanaf 0,5 s met `-itsoffset 0.5`, audio vanaf 0; in `fixtures.py` sinds het samenvoegen van M0, en `test_media_probe.py` ziet `origin` 521 ms) | het rooster aan `origin`, het lange eerste segment, de herstart met `-ss (origin + 2k)` (Keuze 22) |
   | `noaudio.mp4` (H.264 zonder audio) | een plan zonder audio, een mime met alleen video, de lint |
   | `h264_hi10p.mkv` (x264 High 10) | Hi10P in decide (Keuze 19) |
   | `a.ts` en `a.m2ts` (H.264 en HEVC, Annex-B) | de codec-strings (Keuze 16) |
@@ -3755,6 +3808,14 @@ S11 VP9 = 1,0 × x264, `d_codec` VP9 0,18 en AV1 0,25, VP9 met HDR hooguit 720; 
 - De keuzes staan als B39 en verder in `docs/fase-0/beslissingen.md` (voorstel), en
   `docs/fase-5/README.md` heeft een skelet.
 - Tag `fase5-basis`.
+
+*Stand na het samenvoegen van M0-api, M0-web en M0-los* ([m0.md](m0.md), "Open"): nog niet
+gebouwd zijn de nep-worker, `worker_contract.py`, `record.py`, `recorded/`, de nep-stream en
+`media_contract.py` (M0-e2e), het deel van `test_media_logs.py` met de nep-stream, de jobs
+`api-media`, `e2e-media`, `e2e-media-perf` en `media-image`, en de tag. De selftest op 7.1 komt
+met `media-image` (M1 bouwt `--selftest`). De fixtures zijn lokaal in 26 s gemaakt; in CI pas
+met `api-media`. Het artefact `spike.json` is van de run op `f713169`, niet van de laatste
+commit van M0. De rest van de lijst hierboven is groen.
 
 ### 3.9 Elk verzoekpad, met bewijs en controle
 
