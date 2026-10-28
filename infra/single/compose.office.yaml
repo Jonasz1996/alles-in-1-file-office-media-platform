@@ -26,6 +26,13 @@ services:
     networks: [office]
     # Een nette stop slaat alles op; die duurde 30 s [gemeten]
     stop_grace_period: 60s
+    # Eerst een oud pid-bestand van supervisord weg, dan precies het entrypoint van het image.
+    # Bij een herstart van dezelfde container (de LXC of Docker opnieuw gestart, docker restart)
+    # bleef /var/run/supervisord.pid van het vorige leven staan, en het init-script van het
+    # image ziet elk proces met dat pid als "draait al": dan startte DS zonder supervisord, dus
+    # zonder docservice en converter (docs/fase-4/metingen.md, deel 2, bevinding 7). Een echte
+    # machine begint met een lege /run; dit doet hetzelfde voor dat ene bestand.
+    entrypoint: ["/bin/sh", "-c", "rm -f /var/run/supervisord.pid && exec /app/ds/run-document-server.sh"]
     # Gemeten met DS 10.0.0.1: met precies deze rechten start en werkt DS (Keuze 29). Geen
     # privileged, geen AppArmor-aanpassing, geen extra rechten op de host.
     cap_drop: [ALL]

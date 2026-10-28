@@ -322,9 +322,10 @@ cd .. && bash e2e/office_ds.sh stop   # met dezelfde variabelen als start
 - Deel 2 is zwaar (20 editors zijn ±10 GB Chromium; x2t mag 2 GB). Draai elk script onder
   `office_watchdog.py`: die stopt de meting voordat de sandbox zelf geheugen tekortkomt, en zijn
   log zegt achteraf wat er gebeurde. `office_outage.py` stopt en killt de container van DS
-  (`E2E_REAL_DS`) en start hem weer; draai het alleen tegen een eigen DS. Blijft DS na een start
-  op 502 staan zonder supervisord (bevinding 7 van [metingen.md](metingen.md)), dan helpt
-  `docker exec <naam> rm -f /var/run/supervisord.pid` en `docker restart <naam>`.
+  (`E2E_REAL_DS`) en start hem weer; draai het alleen tegen een eigen DS. Bleef DS na een start
+  op 502 staan zonder supervisord (bevinding 7 van [metingen.md](metingen.md)), dan hielp
+  `docker exec <naam> rm -f /var/run/supervisord.pid` en `docker restart <naam>`. Sinds o6.md
+  afwijking 24 doet `office_ds.sh` dat bij elke start zelf (het `entrypoint` van compose).
 - Een editor die een enorm document niet kan opbouwen (de renderer zit vast op 100 % cpu),
   houdt ook `close()` van Playwright minutenlang op. `office_crowd.py` stopt de browser dan zelf,
   op PID.

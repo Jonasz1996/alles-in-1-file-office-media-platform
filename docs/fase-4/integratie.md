@@ -227,10 +227,12 @@ geheugen, 15 GB vrij voor Docker. Verschillen met Jonas' LXC, en hoe de test erm
 - geen container kan example.com opzoeken: daarom de tegenproef met pypi.org in stap B;
 - `/tank` is niet gekoppeld: de data staat in de werkmap;
 - stap S doet één gebruiker in de browser, niet twee;
-- **een herstart van dezelfde DS-container** (stap S) kan in zeldzame gevallen blijven hangen op
-  een oud `/var/run/supervisord.pid` (metingen.md, deel 2, punt 7; daar ±1 op 6). In de drie runs
-  gebeurde het niet. Gebeurt het, dan faalt "S: DS komt weer op" en laat de test het pid-bestand
-  zien. Het is in deze stap niet opgelost.
+- **een herstart van dezelfde DS-container** (stap S) kon in zeldzame gevallen blijven hangen op
+  een oud `/var/run/supervisord.pid` (metingen.md, deel 2, punt 7; daar ±1 op 6). In de vier runs
+  gebeurde het niet. ~~Het is in deze stap niet opgelost.~~ Bij de afronding opgelost met een
+  eigen `entrypoint` ([o6.md](o6.md), afwijking 24). Stap S zet nu vóór de stop zelf een
+  pid-bestand dat bij de start naar een levend proces wijst (pid 1), en controleert dat DS
+  daarna toch opkomt en supervisord draait; zonder dat entrypoint faalt S dan altijd.
 
 ## Alleen op Jonas' LXC na te gaan
 

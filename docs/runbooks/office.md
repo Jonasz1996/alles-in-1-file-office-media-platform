@@ -93,6 +93,11 @@ nieuwe versie, op deze plaatsen, in één commit:
 - het standaardimage (de tag) in `infra/single/compose.office.yaml`, en het voorbeeld van de pin
   in `.env.example`;
 - `OFFICE_TAG` en de digest in `e2e/office_ds.sh` (de job `office` in CI);
+- het `entrypoint` in `infra/single/compose.office.yaml` en `e2e/office_ds.sh`: dat roept na
+  het weghalen van het oude pid-bestand `/app/ds/run-document-server.sh` aan, het entrypoint van
+  10.0.0.1. Kijk of het nieuwe image dat nog heeft: `docker image inspect --format
+  '{{json .Config.Entrypoint}} {{json .Config.Cmd}}' <image>` moet
+  `["/app/ds/run-document-server.sh"] null` geven (`docs/fase-4/o6.md`, afwijking 24);
 - de versie die `command version` van het nieuwe image geeft (bij 10.0.0.1 is dat `10.0.0.169`;
   `/beheer` → Office toont hem): `PINNED_VERSION` in `api/app/office/monitor.py` en in
   `web/src/admin/format.ts`, en `PINNED` in `e2e/test_office_o5_real.py`. Vergeet je er een,
@@ -112,12 +117,16 @@ het nieuwe image: dat bestand vervangt hele lijsten (zoals `inputLimits`), dus e
 DS erbij krijgt, valt anders buiten de grenzen. `e2e/test_office_o6_real.py` controleert de
 grenzen.
 
-## DS komt na een harde stop niet meer op
+## DS komt na een herstart niet meer op
 
-Na een `docker kill`, een geheugentekort of de stroom weg komt DS soms niet meer op: de
-container draait, maar `dc ps office` wordt niet `healthy` en `/beheer` → Office zegt na 2
-minuten dat DS weg is. De oorzaak is dan een oud pid-bestand van supervisord in de container
-(`docs/fase-4/metingen.md`, bevinding 7). Herstel:
+De container draait, maar `dc ps office` wordt niet `healthy` en `/beheer` → Office zegt na 2
+minuten dat DS weg is. Vóór de afronding van 0.6.0 kon dat na elke herstart van dezelfde
+container gebeuren: een gewone herstart van de LXC of van Docker, `dc restart office`, een
+`docker kill`, een geheugentekort of de stroom weg. De oorzaak was een oud pid-bestand van
+supervisord in de container (`docs/fase-4/metingen.md`, bevinding 7). Sinds 0.6.0 haalt de start
+van DS (het `entrypoint` in `compose.office.yaml`) dat bestand eerst weg, dus hoort dit niet meer
+te gebeuren. Zie je het toch (in `dc logs office` staat "Starting supervisor: " zonder
+"supervisord."), dan herstel je het zo:
 
 ```bash
 dc exec office rm -f /var/run/supervisord.pid

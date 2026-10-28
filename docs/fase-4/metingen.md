@@ -42,7 +42,8 @@ Deel 2:
 - **Wat deel 2 verder liet zien:** een docx met veel opmaak net onder de grens opent niet in de
   editor (bevinding 4); één trage `/healthcheck` zet DS 30 s op down (5); met veel bewerkers op
   een volle machine vallen soms de eerste woorden weg in de editor zelf (6); en na een kill kwam DS
-  één keer niet meer op door een oud pid-bestand van supervisord (7).
+  één keer niet meer op door een oud pid-bestand van supervisord (7; bij de afronding hersteld,
+  o6.md afwijking 24).
 
 ## Omstandigheden
 
@@ -553,7 +554,14 @@ cijfers van `/beheer` → Office en `docker stats` (runbook, "De belasting meten
    DS staat in volumes). Voorstel: in `compose.office.yaml` een `entrypoint` die eerst dat
    bestand weghaalt en dan `/app/ds/run-document-server.sh` start, met een test die DS een paar
    keer killt en start; en de herstelregel in het runbook. Niet veranderd in deze stap: het is
-   infra, en zonder die test is het niet aangetoond.
+   infra, en zonder die test is het niet aangetoond. Bij de afronding van de integratie zo
+   gebouwd ([o6.md](o6.md), afwijking 24): het `entrypoint` van `compose.office.yaml` en
+   `e2e/office_ds.sh` haalt het bestand weg en start dan het script van het image. Het bewijs
+   maakt het oude nummer zeker bezet (een pid-bestand met `1`, dan `docker restart`): met het
+   entrypoint van het image bleef `/healthcheck` 502 en was er geen supervisord, met het nieuwe
+   was hij na 36 s 200. De installatietest doet dat in stap S, met `docker compose stop` en
+   `start`. Het bestand blijft niet alleen na een kill staan, maar na elke stop: het risico gold
+   dus elke herstart van dezelfde container, ook een gewone herstart van de LXC.
 
 ## Herhaling
 

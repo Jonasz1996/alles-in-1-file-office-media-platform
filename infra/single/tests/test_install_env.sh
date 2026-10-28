@@ -293,6 +293,14 @@ check "--pids-limit zoals compose" grep -qF -- "--pids-limit $(yaml_value pids_l
 check "--memory, --memory-swap en --cpus zoals compose.office-limits.yaml" grep -qF -- \
   "--memory $(yaml_value mem_limit "$limits_yaml") --memory-swap $(yaml_value memswap_limit "$limits_yaml") --cpus $(yaml_value cpus "$limits_yaml")" "$office_ds"
 check "de grenzen alleen als de kernel ze kan (zoals install.sh)" grep -qF "{{.MemoryLimit}} {{.CPUCfsQuota}}" "$office_ds"
+# Het entrypoint: eerst een oud pid-bestand van supervisord weg, dan dat van het image
+# (metingen.md, deel 2, bevinding 7)
+entry='rm -f /var/run/supervisord.pid && exec /app/ds/run-document-server.sh'
+check "compose: entrypoint haalt eerst het oude pid-bestand weg" test \
+  "$(yaml_value entrypoint "$compose_office")" = "[\"/bin/sh\", \"-c\", \"$entry\"]"
+check "--entrypoint /bin/sh met hetzelfde commando als compose" grep -qF -- "local entry='$entry'" "$office_ds"
+# shellcheck disable=SC2016  # de $ hoort bij de tekst van office_ds.sh
+check "--entrypoint /bin/sh" grep -qF -- '--entrypoint /bin/sh "$img" -c "$entry"' "$office_ds"
 
 echo "== een image dat niet te halen is, stopt het script niet (set -e, M13)"
 reset_docker

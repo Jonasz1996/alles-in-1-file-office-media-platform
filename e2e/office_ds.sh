@@ -76,6 +76,9 @@ start() {
   if [ "$(docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}' 2>/dev/null)" = "true true" ]; then
     harden+=(--memory 2g --memory-swap 2g --cpus 2)
   fi
+  # Het entrypoint van compose.office.yaml: eerst een oud pid-bestand van supervisord weg (na
+  # een herstart van dezelfde container kwam DS anders soms zonder supervisord op)
+  local entry='rm -f /var/run/supervisord.pid && exec /app/ds/run-document-server.sh'
   # Zoals §4.5 stap 2. De standaardbridge (met uitgang): het interne netwerk bewijst de
   # integratie (§4.6 punt 3). host.docker.internal is de host, voor de interne luisteraar van
   # de app en de bronnen van de tests.
@@ -84,7 +87,7 @@ start() {
     --add-host=host.docker.internal:host-gateway "${harden[@]}" \
     -e JWT_ENABLED=true -e JWT_SECRET -e JWT_HEADER=Authorization -e SECURE_LINK_SECRET \
     -e WELCOME_PAGE_ENABLED=false -e PLUGINS_ENABLED=false \
-    "${mount[@]}" "$img" >/dev/null
+    "${mount[@]}" --entrypoint /bin/sh "$img" -c "$entry" >/dev/null
   date +%s >"$DIR/started"
   echo "DS start als $NAME op http://127.0.0.1:$PORT (geheim in $DIR/jwt.secret)"
 }

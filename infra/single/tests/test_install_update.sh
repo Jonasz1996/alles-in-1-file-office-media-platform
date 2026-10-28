@@ -11,7 +11,7 @@
 # (bijwerken; /api/v1/office/status zegt starting tot de font-herstart van DS voorbij is, dan
 # ok; het interne netwerk met een tegenproef), B2 (een losse compose up), S (docker compose stop
 # met de echte editor open en getypte tekst; na de start staat die tekst als nieuwe versie in
-# het bestand), K (een ander geheim aan één kant geeft misconfigured, terug geeft ok), C, H, G,
+# het bestand, en DS komt op ondanks een oud pid-bestand van supervisord), K (een ander geheim aan één kant geeft misconfigured, terug geeft ok), C, H, G,
 # D, E, F (opnieuw, geblokkeerd, pin, uit, aan), R (terug naar fase 3 met db-downgrade, zoals
 # docs/runbooks/office.md) en V (weer vooruit naar deze versie). Uitslag en uitleg:
 # docs/fase-4/integratie.md.
@@ -842,6 +842,13 @@ check "S: de echte editor is open (inloggen met 2FA, Bewerken), met getypte teks
 if [ -z "$word" ]; then
   tail -n 20 "$WORK/logs/s-editor.log"
 else
+  # Een oud pid-bestand van supervisord dat bij de volgende start naar een levend proces wijst
+  # (pid 1 leeft altijd). Zonder het entrypoint van compose.office.yaml kwam DS daarna zonder
+  # supervisord op, zoals soms na een gewone herstart (metingen.md, deel 2, bevinding 7); zo
+  # hangt die herstart hier niet meer af van welk pid er toevallig vrij is
+  docker exec "$office" sh -c 'echo 1 >/var/run/supervisord.pid' </dev/null || true
+  check "S: een oud pid-bestand van supervisord dat naar pid 1 wijst" \
+    docker exec "$office" grep -qx 1 /var/run/supervisord.pid </dev/null
   # Zoals de README en het runbook: dc, met precies de bestanden van install.sh. Compose stopt DS
   # eerst (depends_on); DS slaat bij een nette stop alles op, de app draait dan nog
   t0=$(date +%s.%N)
@@ -879,6 +886,8 @@ else
 fi
 if api wait ok "$DS_SECONDS"; then
   ok "S: DS komt weer op en de app zegt weer ok"
+  check "S: supervisord draait weer, ondanks het oude pid-bestand" \
+    docker exec "$office" pgrep -x supervisord </dev/null
 else
   fout "S: DS komt weer op en de app zegt weer ok"
   # Na een stop blijft /var/run/supervisord.pid van het vorige leven staan (metingen.md, deel 2,

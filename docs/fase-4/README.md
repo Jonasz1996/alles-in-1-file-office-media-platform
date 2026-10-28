@@ -219,10 +219,12 @@ Beheer:
 
 Uitrol en DS:
 
-- Na een harde stop komt DS soms niet meer op door een oud pid-bestand van supervisord; het
-  [runbook](../runbooks/office.md#ds-komt-na-een-harde-stop-niet-meer-op) zegt hoe je hem
-  herstelt ([metingen.md](metingen.md#bevindingen), bevinding 7;
-  [integratie.md](integratie.md#de-sandbox)).
+- DS start via een eigen `entrypoint` die eerst een oud pid-bestand van supervisord weghaalt
+  (anders kwam DS na een herstart van dezelfde container soms niet meer op). Bij een nieuwe DS
+  moet het entrypoint van het image nog hetzelfde zijn; het
+  [runbook](../runbooks/office.md#ds-bijwerken) zegt hoe je dat ziet, en
+  [wat te doen als DS toch niet opkomt](../runbooks/office.md#ds-komt-na-een-herstart-niet-meer-op)
+  ([o6.md](o6.md), afwijking 24; [metingen.md](metingen.md#bevindingen), bevinding 7).
 - Stopte je DS zelf en is er bij een nieuw image te weinig ruimte, dan is office die run uit
   ([o6.md](o6.md), open problemen).
 - Na een herstart van de machine wacht bewerken 2 à 3 minuten op de fonts van DS
