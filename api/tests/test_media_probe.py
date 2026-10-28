@@ -20,7 +20,7 @@ import pytest
 from app.config import Settings
 from app.media import client, local, wire
 from app.media.client import WorkerFailed
-from app.media.types import Probe
+from app.media.types import Probe, SegmentGrid
 from app.media.wire import Code
 from app.media.worker.ops import probe as P
 from tests.media import fixtures as F
@@ -350,6 +350,7 @@ WANT: dict[str, Want] = {
     "interlaced.ts": Want("mpegts", "h264", (720, 576), "avc1.", ("aac",), interlaced=True,
                           start_ms=1460),
     "fps23976.mkv": Want("matroska", "h264", (640, 360), "avc1.", ("aac",), fps=23.976),
+    "late_video.mkv": Want("matroska", "h264", (320, 240), "avc1.", ("aac",), fps=24),
     "multi_audio.mkv": Want("matroska", "h264", (640, 360), "avc1.", ("aac", "aac"),
                             ("subrip",), langs=("nld", "eng")),
     "subs_text.mkv": Want("matroska", "h264", (320, 180), "avc1.", (), ("subrip", "ass")),
@@ -458,6 +459,18 @@ async def test_probe_details(worker):
     v = ts.video()
     assert v is not None and v.start_ms is not None and 0 <= v.start_ms < 100
     assert ts.start_ms > 1000
+    # Een late videostart: het rooster hangt aan het eerste videobeeld (Keuze 22), origin =
+    # de start van het videospoor − S, hier 0,5 s + 0,021 s (spike.md, "Extra")
+    late = await client.probe(path("late_video.mkv"))
+    v = late.video()
+    assert v is not None and v.start_ms is not None and near(v.start_ms, 521, 30)
+    assert v.last_frame_ms is not None
+    grid = SegmentGrid(
+        origin_ms=v.start_ms,
+        count=SegmentGrid.count_for(v.start_ms, v.last_frame_ms),
+        last_frame_ms=v.last_frame_ms,
+    )
+    assert grid.count == 5 and grid.start_of(1) == v.start_ms + 2000
     cues = await client.probe(path("no_cues.mkv"))  # naar een pipe gemuxt: geen duur
     assert cues.duration_ms is None and cues.video().last_frame_ms is None
 

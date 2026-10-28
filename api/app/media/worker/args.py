@@ -164,8 +164,10 @@ class VideoEncode(_Args):
     width: int = Field(ge=64, le=3840, multiple_of=2)
     height: int = Field(ge=64, le=2160, multiple_of=2)
     preset: Literal["veryfast", "superfast"] = "veryfast"
-    # Alleen bij libx264 (spike punt 16: 3.0 is te laag bij 30 fps en meer)
-    level: Literal["3.1", "4.0", "4.1", "4.2", "5.0", "5.1"] | None = None
+    # Alleen bij libx264: de levels van de tabel van Keuze 24 (480: 3.0, of 3.1 boven 25 fps,
+    # spike punt 16; 720: 3.1, of 3.2 boven 30 fps; 1080: 4.0, of 4.2 boven 30 fps) en wat
+    # erboven ligt
+    level: Literal["3.0", "3.1", "3.2", "4.0", "4.1", "4.2", "5.0", "5.1"] | None = None
     maxrate_k: int = Field(ge=100, le=60_000)
     fps_max: int = Field(default=60, ge=1, le=60)
     tonemap: Literal["pq", "hlg"] | None = None
@@ -193,10 +195,11 @@ class AudioEncode(_Args):
 class StreamArgs(_Args):
     """Remux of transcode naar fMP4 op pipe:1 (Keuze 22–27).
 
-    start_s is 2k (transcode) of b_k − 0,5 (remux), en 0 vanaf het begin. Met -copyts en
-    -output_ts_offset 1 − S is de tijd in de uitvoer mediatijd + 1 s; de app rekent alles in
-    mediatijd (zie types.SegmentGrid). TS heeft geen index: na -ss begint de uitvoer pas op het
-    volgende keyframe (spike punt 11), dus de app gaat daar niet van exact zoeken uit."""
+    start_s is origin + 2k (transcode; met 2k schuift het rooster, zie types.SegmentGrid) of
+    b_k − 0,5 (remux), en 0 vanaf het begin. Met -copyts en -output_ts_offset 1 − S is de tijd
+    in de uitvoer mediatijd + 1 s; de app rekent alles in mediatijd. TS heeft geen index: na -ss
+    begint de uitvoer pas op het volgende keyframe (spike punt 11), dus de app gaat daar niet
+    van exact zoeken uit."""
 
     mode: Literal["remux", "transcode"]
     demuxer: Demuxer

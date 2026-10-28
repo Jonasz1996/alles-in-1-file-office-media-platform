@@ -6,7 +6,7 @@ wat over de API gaat.
 Tijd: alles in mediatijd, in ms vanaf het begin van de bron na het aftrekken van de start S
 (start_time van ffprobe). De uitvoer van de worker staat op mediatijd + 1 s (-output_ts_offset
 1 − S, §3.3); de app trekt die 1 s er weer af. EXTINF, map.json en de voortgang gebruiken
-allemaal mediatijd (spike punt 12, zie SegmentGrid).
+allemaal mediatijd (spike punt 12, zie SegmentGrid: het rooster hangt aan het eerste videobeeld).
 """
 
 from __future__ import annotations
@@ -360,23 +360,33 @@ class SessionView(BaseModel):
 
 
 class SegmentGrid(BaseModel):
-    """Het rooster van een stroom (spike punten 10 en 12).
+    """Het rooster van een stroom bij transcode (Keuze 22; spike punten 10 en 12, en "Extra" in
+    docs/fase-5/spike.md).
 
-    De referentie is mediatijd: segment k loopt van origin_ms + k·grid_ms tot het volgende, en
-    EXTINF en map.json tellen vanaf 0 in mediatijd. Met S ≠ 0 en -copyts vallen de keyframes op
-    brontijd 2k, dus op mediatijd 2k − S: origin_ms = −S (in ms). Het eerste segment is dan
-    korter (of k begint bij 1 als −S < 0 het eerste leeg maakt); count komt uit de tijd van het
-    laatste videobeeld, en een fragment voorbij count hoort bij het laatste segment."""
+    De referentie is mediatijd. Het rooster van 2 s hangt aan het eerste videobeeld: origin_ms =
+    start_time van het videospoor − S, in hele ms naar beneden, en dus altijd ≥ 0 (meestal 21,
+    de voorloop van AAC). Segment 0 loopt van 0 tot origin_ms + grid_ms (iets langer dan 2 s),
+    segment k ≥ 1 van origin_ms + k·grid_ms tot het volgende; een herstart op k begint met
+    -ss (origin + 2k). EXTINF en map.json tellen in mediatijd met dit rooster. count komt uit de
+    tijd van het laatste videobeeld: ⌊(last_frame_ms − origin_ms) / grid_ms⌋ + 1 (count_for);
+    een fragment voorbij count hoort bij het laatste segment."""
 
-    grid_ms: int = 2000
-    origin_ms: int = 0
-    count: int
-    last_frame_ms: int
+    grid_ms: int = Field(default=2000, gt=0)
+    origin_ms: int = Field(default=0, ge=0)
+    count: int = Field(ge=1)
+    last_frame_ms: int = Field(ge=0)
+
+    @staticmethod
+    def count_for(origin_ms: int, last_frame_ms: int, grid_ms: int = 2000) -> int:
+        """N uit het laatste videobeeld (spike punt 10), niet uit de duur van het formaat."""
+        return max(0, last_frame_ms - origin_ms) // grid_ms + 1
 
     def start_of(self, k: int) -> int:
-        return max(0, self.origin_ms + k * self.grid_ms)
+        """Het begin van segment k in mediatijd: 0 voor het eerste, anders op het rooster."""
+        return 0 if k <= 0 else self.origin_ms + k * self.grid_ms
 
     def segment_of(self, t_ms: int) -> int:
+        """Het segment bij tijd t (mediatijd): nooit voor het eerste, nooit voorbij het laatste."""
         return min(self.count - 1, max(0, (t_ms - self.origin_ms) // self.grid_ms))
 
 

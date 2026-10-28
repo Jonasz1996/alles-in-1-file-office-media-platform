@@ -304,6 +304,12 @@ RECIPES: dict[str, Recipe] = {
     "fps23976.mkv": Recipe((
         Ff((*video("640x360", "24000/1001", 8), *tone(440, 8), *X264, *AAC, "{out}")),
     )),
+    # Het rooster hangt aan het eerste videobeeld (Keuze 22, spike.md "Extra"): video vanaf
+    # 0,5 s, audio vanaf 0 (S = −0,021), dus origin 521 ms en een lang eerste segment
+    "late_video.mkv": Recipe((
+        Ff(("-itsoffset", "0.5", *video("320x240", 24, 10), *tone(440, 10), "-map", "0:v",
+            "-map", "1:a", *X264, "-g", "12", *AAC, "{out}")),
+    )),
     "multi_audio.mkv": Recipe((
         Py(write_text, {"name": "forced.srt", "text": FORCED_SRT}),
         Ff((*video("640x360", 24, 6), *tone(440, 6), *tone(660, 6), "-i", "{dir}/forced.srt",

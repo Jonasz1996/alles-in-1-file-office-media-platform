@@ -332,6 +332,16 @@ def test_stream_regels():
                       "maxrate_k": 1500})  # fmt: skip
 
 
+@pytest.mark.parametrize("level", ["3.0", "3.1", "3.2", "4.0", "4.2"])
+def test_stream_kent_elk_level_van_de_ladder(level):
+    """Keuze 24: 480 met 3.0 (3.1 boven 25 fps), 720 met 3.1 (3.2 boven 30 fps), 1080 met 4.0
+    (4.2 boven 30 fps). Een level dat de tabel kan geven, mag de worker niet weigeren."""
+    video = {"codec": "libx264", "width": 854, "height": 480, "level": level, "maxrate_k": 1500}
+    assert stream(video=video).video.level == level
+    with pytest.raises(ValueError):
+        stream(video={**video, "level": "2.1"})
+
+
 def test_soort_processen_en_fds():
     remux = A.StreamArgs.model_validate(
         {"mode": "remux", "demuxer": "mov", "video_index": 0, "video": "copy", "audio": "none"}
