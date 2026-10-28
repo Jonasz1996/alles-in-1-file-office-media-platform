@@ -105,15 +105,16 @@ andere browsers, een echt certificaat), staat in [klaar.md](klaar.md).
 
 1. Welke editor? **Besloten: OnlyOffice** (Jonas, 2026-10-26; B3 en B31).
 2. Office meteen aan bij installeren en bijwerken? **Standaard ja**, en zo gebouwd (±1 GB
-   downloaden, het image ±3,1 GB op schijf; B37). Jonas koos niet anders; kan nog veranderen.
+   downloaden, het image ±3,1 GB op schijf; B37). Jonas heeft nog niet gekozen; zegt hij nee,
+   dan verandert dat nog.
 3. Het restrisico van de editor op hetzelfde adres als de app accepteren? **Besloten: ja**
    (Jonas, 2026-10-26; B32), met de beperkingen uit het ontwerp en later een eigen hostnaam
    (fase 8).
 4. Hoeveel versies maakt de editor? **Standaard** één per bewerksessie, plus één per 30 minuten,
-   hooguit 10 per sessie, en zo gebouwd (B34). Jonas koos niet anders; kan nog veranderen
+   hooguit 10 per sessie, en zo gebouwd (B34). Jonas heeft nog niet gekozen; het kan nog veranderen
    (`/beheer` → Office heeft de minuten).
 5. De Collabora-adapter nu bouwen? **Standaard nee**, alleen klaargezet
-   ([collabora.md](collabora.md)). Jonas koos niet anders; kan nog veranderen.
+   ([collabora.md](collabora.md)). Jonas heeft nog niet gekozen; het kan nog veranderen.
 
 ## Documenten
 

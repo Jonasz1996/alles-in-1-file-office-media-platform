@@ -1036,8 +1036,8 @@ Elke keuze geeft de standaard en waarom.
    ±4 GB schijf (8 GB vrij tijdens een update), ±0,5 GB RAM in rust (grens 2 GB), en na elke start
    van DS ±5 minuten 1–2 cores [gemeten]. Uit: `OFFICE=uit bash install.sh`, of `OFFICE=uit` in
    `/opt/platform/.env` en het script opnieuw draaien. Bij nee start het script DS pas na
-   `OFFICE=aan`. *Stand bij 0.6.0:* de standaard (aan) is in gebruik; Jonas koos niet anders,
-   en het kan nog veranderen (B37).
+   `OFFICE=aan`. *Stand bij 0.6.0:* de standaard (aan) is in gebruik; Jonas heeft nog niet
+   gekozen, en zijn keuze kan het nog veranderen (B37).
 3. **Het restrisico van DS op hetzelfde adres accepteren?** (Keuze 9) **Besloten (Jonas,
    2026-10-26): ja.** Wat
    overblijft:
@@ -1062,13 +1062,13 @@ Elke keuze geeft de standaard en waarom.
    inhoud van vóór een sessie terug te halen tot er 20 nieuwere versies zijn. Eén sessie maakt er
    hooguit 10, dus die ene sessie duwt hem er nooit uit. Bij "elke opslag een versie" duwt één
    middag bewerken alle geschiedenis eruit (max. 20). *Stand bij 0.6.0:* de standaard is in
-   gebruik; Jonas koos niet anders, en het kan nog veranderen (B34).
+   gebruik; Jonas heeft nog niet gekozen, en zijn keuze kan het nog veranderen (B34).
 5. **De Collabora-adapter nu bouwen?** Standaard: **nee, alleen klaarzetten** (Keuze 3): de naad,
    de motor-neutrale contracttests en `docs/fase-4/collabora.md`. Omschakelen kost dan later ±1 week.
    Bij ja: ±3 dagen extra (een WOPI-host zonder locks, een nep-Collabora, en de echte CODE één keer
    in de sandbox), en dat past niet in twee weken naast de rest. *Stand bij 0.6.0:* de standaard
-   (alleen klaargezet, [collabora.md](collabora.md)) is in gebruik; Jonas koos niet anders, en
-   het kan nog veranderen.
+   (alleen klaargezet, [collabora.md](collabora.md)) is in gebruik; Jonas heeft nog niet
+   gekozen, en zijn keuze kan het nog veranderen.
 
 ---
 
@@ -2664,9 +2664,9 @@ van Docker Hub met digest (§5.1), de start van DS, één sessie met twee gebrui
      samenvoegen van O1, het veld bij de integratie; zie o1.md);
    - `docs/fase-4/README.md` met wat er is en de bekende grenzen; de vinkjes van fase 4 in het
      stappenplan, en de regels over "eigen Postgres, Redis en RabbitMQ" en de limiet van 20
-     bijgewerkt met de reden; B3 en B31 en verder definitief na de keuze van Jonas (gedaan: B3,
-     B31 en B32 koos Jonas; B33–B38 zijn de standaard in gebruik sinds 0.6.0, Jonas koos niet
-     anders);
+     bijgewerkt met de reden; B3 en B31 en verder definitief na de keuze van Jonas (deels: B3,
+     B31 en B32 koos Jonas; B33–B38 zijn zo gebouwd en de standaard in 0.6.0, maar Jonas heeft
+     nog niet gekozen, dus staan ze nog op voorstel; dit punt is nog open);
    - versie 0.6.0 in `pyproject.toml`, `app/__init__.py` en `package.json` (gedaan).
 
 **Eerlijk over de tijd.** O0 ±4 dagen, de golf ±5 dagen, de integratie ±2 dagen: samen **±11
