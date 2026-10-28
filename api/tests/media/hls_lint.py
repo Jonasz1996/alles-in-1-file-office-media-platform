@@ -707,12 +707,25 @@ def _media(p: Parsed, ctx: Context, out: _Collector) -> None:
 
     if p.target is not None:
         longest = max(s.duration for s in segments)
-        if ctx.mode == "transcode" and p.target != 2:
+        # Het eerste segment loopt van 0 tot origin + 2 s (origin: waar de video begint, in
+        # mediatijd; Keuze 22 na de spike). Alleen daardoor mag het langer zijn dan 2 s.
+        wanted = max(2, _round(segments[0].duration))
+        if ctx.mode == "transcode" and p.target != wanted:
             out.add(
                 "target_transcode",
                 target_line.number if target_line else 0,
-                f"TARGETDURATION is {p.target}; bij transcode 2 (Keuze 22)",
+                f"TARGETDURATION is {p.target}; bij transcode {wanted} (2, of het eerste "
+                "segment afgerond als de video laat begint; Keuze 22)",
             )
+        if ctx.mode == "transcode":
+            for s in segments[1:]:
+                if _round(s.duration) > 2:
+                    out.add(
+                        "extinf_grid",
+                        s.line,
+                        f"EXTINF {s.duration:.3f} na het eerste segment; bij transcode hooguit "
+                        "2 s afgerond (het rooster, Keuze 22)",
+                    )
         if ctx.mode == "remux" and p.target != math.ceil(longest - 1e-9):
             out.add(
                 "target_remux",

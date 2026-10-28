@@ -98,6 +98,8 @@ def codes(problems: list[Problem]) -> set[str]:
          TRANSCODE_CTX),
         ("eerste segment 2,021 s (S ≠ 0, spike punt 12)", media([2.021, 2.0, 1.5]),
          TRANSCODE_CTX),
+        ("video begint 0,521 s na het audio: eerste segment 2,521 s, target 3",
+         media([2.521, 2.0, 2.0, 1.5], target=3), TRANSCODE_CTX),
     ],
 )  # fmt: skip
 def test_good(name, playlist, ctx):
@@ -185,6 +187,10 @@ BROKEN = [
     ("target twee keer", sub(SHORT, "#EXT-X-PLAYLIST-TYPE", "#EXT-X-TARGETDURATION:2\n"
                              "#EXT-X-PLAYLIST-TYPE"), TRANSCODE_CTX, "tag_count"),
     ("transcode met target 6", media([2.0, 2.0], target=6), TRANSCODE_CTX, "target_transcode"),
+    ("transcode met target 3 zonder lang eerste segment", media([2.021, 2.0], target=3),
+     TRANSCODE_CTX, "target_transcode"),
+    ("transcode: een lang segment na het eerste", media([2.6, 2.6, 1.0], target=3),
+     TRANSCODE_CTX, "extinf_grid"),
     ("remux met target te groot", media([6.0, 5.2], target=7), REMUX_CTX, "target_remux"),
     ("remux met target afgerond i.p.v. naar boven", media([6.4, 5.0], target=6), REMUX_CTX,
      "target_remux"),
@@ -329,8 +335,8 @@ def test_set_missing_size_and_target():
 
 def test_set_prefixes_the_name():
     problems = lint_set({"master.m3u8": MASTER, "v.m3u8": media([2.0, 3.0])}, TRANSCODE_CTX)
-    assert [p.code for p in problems] == ["extinf_too_long"]
-    assert problems[0].message.startswith("v.m3u8: ")
+    assert [p.code for p in problems] == ["extinf_too_long", "extinf_grid"]
+    assert all(p.message.startswith("v.m3u8: ") for p in problems)
 
 
 def test_peak_window_of_rfc():
