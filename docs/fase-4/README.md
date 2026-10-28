@@ -160,8 +160,10 @@ Bewerken:
   32; [metingen.md](metingen.md#bevindingen), bevinding 6).
 - De pptx-editor van DS komt soms niet klaar (A22, een fout in DS zelf); de editorpagina laadt
   hem dan één keer opnieuw ([metingen.md](metingen.md#bevindingen), bevinding 3).
-- Na een kill of OOM van DS is weg wat sinds het laatste tussentijds opslaan getypt is (hooguit
-  5 minuten plus ±2 s); een nette stop slaat alles op
+- Na een kill of OOM van DS is weg wat sinds het laatste tussentijds opslaan getypt is, plus de
+  laatste ±2 s ervoor. De klok slaat pas op bij de eerste ronde (elke 30 s) na 5 minuten, dus
+  dat is hooguit ±5,5 minuten; gemeten zijn kills 30, 150 en 285 s na het opslaan, het slechtste
+  geval vlak voor het volgende opslaan niet. Een nette stop slaat alles op
   ([metingen.md](metingen.md#kill-van-ds-met-open-editors-ja)).
 - Na elke start van DS kan er ±2 minuten niet bewerkt worden (de font-herstart), en `docker
   stop` met open editors duurt ±30 s ([metingen.md](metingen.md#stoppen-met-open-editors-ja),

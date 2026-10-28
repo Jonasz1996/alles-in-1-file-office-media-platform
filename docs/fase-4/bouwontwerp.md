@@ -602,7 +602,8 @@ Elke keuze geeft de standaard en waarom.
     - **Klok van de app:** bij elke ronde (Keuze 20) kijkt de app naar open sessies met iemand erin.
       Is de laatste opslag ouder dan `checkpoint_minutes` (standaard 5), dan stuurt hij `forcesave` met
       `userdata: "timer"`. `error 4` betekent "geen wijzigingen" en is goed [gemeten]. Een kill of
-      OOM verliest zo hooguit 5 minuten.
+      OOM verliest zo hooguit 5 minuten. (Bij de afronding: hooguit ±5,5 minuten plus ±2 s, want
+      de ronde kijkt elke 30 s; `docs/fase-4/metingen.md`, Kill van DS.)
     - **Knop Opslaan in de editor** (`customization.forcesave: true`): status 6 met
       `forcesavetype 1` [doc, de spike controleert het].
     - **Knop "Nu opslaan"** in de kopbalk van onze editorpagina: `POST

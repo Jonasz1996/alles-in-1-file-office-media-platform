@@ -265,7 +265,10 @@ start van de app. Elke open editor-tab is één verbinding.
   PDF-voorbeeld werkt dan gewoon. Zet hem lager als de meting dat zegt.
 - Na elke start van DS is hij 2 à 5 minuten druk met fonts. Meet daarna.
 - Werd DS gestopt door een geheugentekort: `docker inspect --format '{{.State.OOMKilled}}'
-  platform-office-1` geeft dan `true`.
+  platform-office-1` geeft dan `true`. Wat sinds het laatste tussentijds opslaan getypt was, is
+  dan weg: hooguit ±5,5 minuten (de app laat elke 5 minuten opslaan, en kijkt daarvoor elke
+  30 s), plus de laatste ±2 s. Een nette stop (`dc stop`, het script) slaat alles op
+  (`docs/fase-4/metingen.md`, Kill van DS).
 
 ## Controle van de LXC
 

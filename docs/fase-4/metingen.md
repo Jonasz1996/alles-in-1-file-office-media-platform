@@ -33,7 +33,9 @@ Deel 2:
   20 bewerkers (5 × 4) 60 s typen: alles wat de editors hadden, is opgeslagen, en DS gebruikte
   daarbij 0,05 core en +120 MB van zijn 2 cpu's en 2 GB; stoppen met open editors (alles
   opgeslagen, `docker stop` 30,5 s, doel 60 s); een kill van DS (weg is wat na het laatste
-  tussentijds opslaan getypt is, plus ±2 s; hooguit 287 s, doel 5 min).
+  tussentijds opslaan getypt is, plus ±2 s; gemeten tot 287 s). De grens zelf is niet 5 maar
+  ±5,5 minuten: de klok slaat op bij de eerste ronde (elke 30 s) na 5 minuten; het slechtste
+  geval is niet gemeten (zie [Kill van DS](#kill-van-ds-met-open-editors-ja)).
 - **Niet gehaald:** de XML-grens bij 2 GB voor een docx met heel veel pagina's: bij 96.937 lege
   pagina's stopte de kernel x2t 3 van de 3 keer (OOM, 1,72 GB); docservice bleef wel. x2t kan er
   bij 2 GB ±75.000 aan; de grens van 4 MiB XML laat er ±97.000 toe.
@@ -123,7 +125,7 @@ Gemaakt door `e2e/perf/office_run.py`; niet met de hand bewerken. Alle getallen:
 | Conversie van 401 pagina's terwijl een editor opent | openen ≤ 10 s; /healthcheck blijft true | conversie eerst: openen 7,8 s (7,6–8,1, n=3) (3/3), conversie 11,3 s (10,9–11,3, n=3); editor eerst: openen 2,9 s (2,9–2,9, n=3) (3/3), conversie 9,1 s (9,1–10,1, n=3); /healthcheck 169× gevraagd, 0× niet true, traagste 51 ms | ja | office_convert.py, 3× per volgorde: ‘conversie eerst’ = upload van de docx van 401 pagina's, wachten tot DS de bron ophaalt, 2 s later een proef.docx openen; ‘editor eerst’ = openen en uploaden zodra de sessie er is; /healthcheck elke 0,5 s |
 | 20 bewerkers (5 documenten × 4), 60 s typen | alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd | 2 (1 × 2): 145/145 woorden opgeslagen (3 rondes), open 6/6, openen mediaan 4,4 s (3,9–4,5, n=3), DS 0,02 cores (piek 0,07), DS 367 MB, app 0,02 cores en 162 MB, browser 1208 MB, minst vrij 13887 MB; 8 (2 × 4): 532/532 woorden opgeslagen (van de woorden die de editor zelf had: 0 niet opgeslagen; 0 getypte woorden kwamen nooit in de editor) (3 rondes), open 24/24, openen mediaan 15,1 s (14,2–16,3, n=3), DS 0,06 cores (piek 0,22), DS 404 MB, app 0,04 cores en 140 MB, browser 4211 MB, minst vrij 10908 MB; 20 (1 × 20): 1014/1033 woorden opgeslagen (van de woorden die de editor zelf had: 0 niet opgeslagen; 19 getypte woorden kwamen nooit in de editor) (3 rondes), open 60/60, openen mediaan 56,2 s (56,1–56,5, n=3), DS 0,06 cores (piek 0,29), DS 419 MB, app 0,05 cores en 218 MB, browser 8472 MB, minst vrij 6982 MB; 20 (5 × 4): 1033/1043 woorden opgeslagen (van de woorden die de editor zelf had: 0 niet opgeslagen; 10 getypte woorden kwamen nooit in de editor) (3 rondes), open 60/60, openen mediaan 58,2 s (52,8–58,5, n=3), DS 0,05 cores (piek 0,19), DS 422 MB, app 0,04 cores en 273 MB, browser 7840 MB, minst vrij 7569 MB | ja | office_editors.py, opgeschaald 2 → 8 → 20 bewerkers, elk 3 rondes (nieuwe documenten van ±150 kB XML), één Chromium met een context per bewerker, elk typt eigen woorden in een eigen alinea (110 ms per toets, 0,8–1,6 s pauze), daarna Sluiten; opgeslagen = het woord staat in de docx na status 2; wat de editor zelf had = zijn eigen tekst (sdkjs) vlak voor Sluiten; cpu: de cgroup van DS en utime + stime van de app, elke seconde; RAM: rss van de cgroup van DS, VmRSS van de app, PSS van de browser; ook 1x20 op één document (voor max_editors) |
 | Stoppen met open editors | alles opgeslagen; docker stop ≤ 60 s | docker stop 30,5 s (30,5–30,5, n=3), 0× gekild (137); opgeslagen meteen na de stop 149/149 woorden, na de herstart 149/149; status 2 kwam 1,3 s (0,9–1,9, n=6) na het begin van de stop; van de tekst die elke editor zelf had: 0 niet opgeslagen, 0 getypte woorden nooit in de editor; bewerken kon weer 123 s (120–123, n=3) na docker start | ja | office_outage.py --mode stop, 3 rondes: 2 documenten × 2 bewerkers typen 30 s, 3 s later `docker stop -t 60` op de container van DS (zoals compose met stop_grace_period 60 s); daarna de inhoud in de app, DS weer starten, wachten tot de app DS weer ok vindt, dan 90 s en nog eens |
-| Kill van DS met open editors | verlies ≤ de tijd sinds het laatste tussentijds opslaan (≤ 5 min) | van vóór de forcesave van de klok bewaard: 1463/1463 woorden; van erna 0/719 (weg: 730; na de herstart in totaal 1465/2195); verloren venster 32, 30, 152, 150, 287, 285 s (het eerste verloren woord was 1,1–2,2 s vóór de forcesave getypt: het zat nog niet in die opslag); de klok sloeg 325 s (323–328, n=6) na het openen; 1× kwam DS na docker start niet terug (zie bevindingen); bewerken kon weer 126 s (114–982, n=3) na docker start | ja | office_outage.py --mode kill, 3 rondes: 2 documenten × 2 bewerkers typen tot de klok (checkpoint_minutes 5) een forcesave (status 6, timer) gaf, dan nog 30, 150 of 285 s, dan `docker kill`; daarna DS starten, wachten tot de app DS weer ok vindt, dan 150 s; verloren venster = van de forcesave tot de kill; ‘bewaard’ = het woord staat in de docx van de app, vóór = getypt tot 3 s vóór de forcesave |
+| Kill van DS met open editors | verlies ≤ de tijd sinds het laatste tussentijds opslaan (≤ 5 min) | (review bij de afronding: die tijd is hooguit ±5,5 min, want de klok slaat op bij de eerste ronde van 30 s na 5 min; het slechtste geval is niet gemeten) van vóór de forcesave van de klok bewaard: 1463/1463 woorden; van erna 0/719 (weg: 730; na de herstart in totaal 1465/2195); verloren venster 32, 30, 152, 150, 287, 285 s (het eerste verloren woord was 1,1–2,2 s vóór de forcesave getypt: het zat nog niet in die opslag); de klok sloeg 325 s (323–328, n=6) na het openen; 1× kwam DS na docker start niet terug (zie bevindingen); bewerken kon weer 126 s (114–982, n=3) na docker start | ja | office_outage.py --mode kill, 3 rondes: 2 documenten × 2 bewerkers typen tot de klok (checkpoint_minutes 5) een forcesave (status 6, timer) gaf, dan nog 30, 150 of 285 s, dan `docker kill`; daarna DS starten, wachten tot de app DS weer ok vindt, dan 150 s; verloren venster = van de forcesave tot de kill; ‘bewaard’ = het woord staat in de docx van de app, vóór = getypt tot 3 s vóór de forcesave |
 
 Waar de tijd van openen zit (medianen in s; DS = van het verzoek om api.js tot klaar):
 
@@ -419,11 +421,21 @@ van §4.7 is de regel 5 × 4.
   forcesave gaf (status 6, `userdata` timer, 323–328 s na het openen), dan nog 30, 150 of 285 s,
   dan `docker kill meet-ds`. Van de woorden die tot 3 s vóór die forcesave getypt waren, stonden
   er 1463 van de 1463 in de docx van de app; van wat erna kwam 0 van de 719. Het verloren venster
-  was 30–32, 150–152 en 285–287 s, dus nooit meer dan 5 minuten.
+  was 30–32, 150–152 en 285–287 s: precies de tijd sinds de forcesave.
 - **Plus ±2 s.** Het eerste verloren woord was telkens 1,1–2,2 s vóór de forcesave getypt: de editor
   stuurt zijn wijzigingen in stukjes, en wat nog onderweg was, zat niet in die opslag. Het verlies
-  is dus "de tijd sinds het laatste tussentijds opslaan, plus de laatste ±2 s ervoor"; binnen de
-  5 minuten van Keuze 18.
+  is dus "de tijd sinds het laatste tussentijds opslaan, plus de laatste ±2 s ervoor".
+- **Hoe lang dat hooguit is (review bij de afronding).** ~~binnen de 5 minuten van Keuze 18~~:
+  niet 5 minuten. De klok van de app (`sweep.py`, `_timer`) kijkt alleen bij een ronde, elke
+  `office_sweep_seconds` (30 s), en stuurt de forcesave bij de eerste ronde waarin de laatste
+  opslag 5 minuten (`checkpoint_minutes`) of ouder is. Dat zie je ook hier: de eerste forcesave
+  kwam 323–328 s na het openen, niet na 300 s. Tussen twee forcesaves van de klok zit dus tot
+  ±5,5 minuten (5 minuten plus één ronde, plus de ±0,7 s die DS nodig heeft), en een kill vlak
+  vóór de volgende verliest zoveel, plus de ±2 s. Gemeten zijn kills 30, 150 en 285 s na de
+  forcesave; het slechtste geval, vlak vóór de tweede forcesave, is **niet** gemeten. Het volgt
+  uit dezelfde regel als de drie metingen (weg is precies wat na de laatste forcesave kwam).
+  Gehaald blijft "verlies is de tijd sinds het laatste tussentijds opslaan" (plus ±2 s); de
+  "≤ 5 min" van het doel is ±5,5 min.
 - **Na de herstart:** de ronde sloot alle 6 sessies als `lost` (Keuze 21), en er kwam niets meer
   bij: meteen na de kill en na de herstart stonden dezelfde 1465 woorden in de documenten (de
   1463 en 2 uit de laatste 3 s vóór een forcesave). De kill zelf duurde 0,45–0,5 s.

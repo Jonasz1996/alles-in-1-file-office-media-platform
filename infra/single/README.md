@@ -204,7 +204,9 @@ dc logs --tail 100 office
 ```
 
 - Draait de container niet, of start hij steeds opnieuw: draai het installatiescript opnieuw.
-  Niets van de documenten gaat verloren; open werk komt via "Niet-opgeslagen werk" terug.
+  Wat opgeslagen is, blijft. Wat in een open editor na het laatste tussentijds opslaan getypt
+  was (hooguit ±5,5 minuten), is na een crash of geheugentekort van DS weg; werk dat DS nog had
+  maar niet kwijt kon, staat op `/beheer` → Office onder "Niet opgeslagen".
 - Meldt `/beheer` dat office verkeerd ingesteld is: het geheim van DS en dat van het platform
   verschillen. Beide komen uit `OFFICE_JWT_SECRET` in `/opt/platform/.env`; verander dat niet
   met de hand, en draai het installatiescript opnieuw.
