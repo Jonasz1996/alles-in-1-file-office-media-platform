@@ -2,6 +2,9 @@
 > Revisie 1 staat in [bouwontwerp-r1.md](bouwontwerp-r1.md).
 > Nog niet besloten. De vragen aan Jonas staan onder "Vragen voor Jonas". Tot hij antwoordt,
 > bouwen we op de standaard die daar staat.
+> Bijgewerkt na de spike (M0, 28 oktober 2026). Wat de spike veranderde, staat erin met
+> "(spike)"; de uitkomsten per stap staan in [spike.md](spike.md), het overzicht in §6
+> ("Uitslag van de spike (M0)"). Revisie 2 blijft verder de tekst.
 
 # Fase 5 (media en streaming): bouwontwerp, revisie 2
 
@@ -597,8 +600,20 @@ onderaan.
       dat een container op een `internal: true`-netwerk de host bereikt via de gateway, en de app
       luistert intern op 8081. Ook een alleen-lezen koppeling van alle blobs valt weg: een lek
       leest dan elke film. Die koppeling blijft alleen de terugval als S3 op de LXC faalt (§3.7).
+      (spike) S3 slaagde in CI met het echte image: 17 van 17 controles, met deze afscherming. De
+      terugval is niet nodig; op de LXC bewijst de zelftest het.
 12. **Het protocol: getypte opdrachten, file descriptors over een Unix-socket.**
     - Eén verbinding per opdracht. De eerste boodschap draagt de fd's als `SCM_RIGHTS`.
+    - **(spike) Een fd uit `SCM_RIGHTS` deelt zijn positie** (de file offset) met de app en met
+      elk kind. In S3 stond hij na ffprobe op 65536, en ffmpeg las `fd:` vanaf daar (rc 183).
+      Daarom:
+      - de app opent de blob per opdracht opnieuw, en geeft een fd nooit aan twee opdrachten;
+      - de worker ontvangt met `recvmsg` en `MSG_CMSG_CLOEXEC` (`socket.recv_fds` zet geen
+        CLOEXEC);
+      - vóór elke exec `os.lseek(fd, 0, SEEK_SET)` op elke invoer-fd, en nooit twee kinderen
+        tegelijk op dezelfde fd;
+      - `dup2` van de bron naar fd 3 (en 4) alleen in het kind, nooit in de asyncio-ouder: daar
+        kan fd 3 de epoll van de event loop zijn (S6).
     - Boodschappen: 4 bytes lengte (big endian), dan JSON, hooguit 64 KB. Wat groter kan worden,
       past daar toch in:
       - de keyframe-index komt al in de opgeslagen vorm terug (zlib, varint-delta's, base64). Is
@@ -632,11 +647,14 @@ onderaan.
       Die heeft geen invoer-fd, maar een bron uit een vaste lijst van `lavfi`-bronnen met vaste
       parameters (`testsrc2` en `cellauto`, elk met een andere seed). Er gaat geen vrije string
       naar `lavfi`. De worker zet `lavfi` dan alleen voor die opdracht in de whitelist.
+      (spike) `lavfi` is in ffmpeg 7.1 een invoerapparaat: het staat onder `ffmpeg -devices`, niet
+      onder `-demuxers` (S1). `caps` en de zelftest zoeken het daar. Alleen `synth` en `bench`
+      gebruiken het, zonder invoer-fd; in de witte lijst van een invoer-fd komt het nooit.
     - **De opdrachten:**
 
       | op | fd's | doet |
       |---|---|---|
-      | `caps` | — | versie van ffmpeg, encoders, filters (`zscale`, `tonemap`, `bwdif`, `overlay`), hwaccels, `/dev/dri`, `PROTOCOL` |
+      | `caps` | — | versie van ffmpeg, encoders, filters (`zscale`, `tonemap`, `bwdif`, `overlay`), demuxers (`lavfi` uit `-devices`; spike), hwaccels, `/dev/dri`, `PROTOCOL` |
       | `bench` | — | korte `testsrc2` met ruis per trede, zonder invoer; geeft cores voor 1,0× (Keuze 26) |
       | `probe` | in | ffprobe JSON (format, streams, chapters), bij HDR ook de side data van het eerste frame; plus de codec-strings (Keuze 16) |
       | `keyframes` | in | tijden van keyframes: eigen lezers voor Matroska-Cues en MP4-`stss`; terugval: ffprobe op pakketten |
@@ -653,11 +671,12 @@ onderaan.
     - De worker start ffmpeg met:
       - een eigen procesgroep en een kale omgeving (`PATH`, `LC_ALL=C`, `HOME=/tmp`);
       - grenzen via `resource` vóór `exec`: `RLIMIT_CORE` 0, `RLIMIT_NOFILE` 256, en
-        `RLIMIT_FSIZE` 0 als de spike laat zien dat ffmpeg dat verdraagt (hij schrijft geen
-        bestanden; S10). `RLIMIT_AS` kan niet: ffmpeg reserveert veel virtueel geheugen voor
+        `RLIMIT_FSIZE` 0 (spike, S10: ffmpeg verdraagt het; een bestand schrijven geeft SIGXFSZ
+        en 0 bytes). `RLIMIT_AS` kan niet: ffmpeg reserveert veel virtueel geheugen voor
         threads (N8). **`RLIMIT_DATA` kan wel** (V6): `job_memory_mb` (1.200) voor live en
         sprites, 512 MB voor `probe`, `keyframes`, `frame`, `meta`, `nfo` en `audio_info`;
-      - `-threads 4` als bovengrens per proces [kosten niet gemeten; S10];
+      - `-threads 4` als bovengrens per proces (spike, S10: 0,744 cores tegen 0,743 zonder, dus
+        geen kosten);
       - `nice -n 5` live, `nice -n 15` en `ionice -c 3` op de achtergrond. `ionice` helpt alleen
         met de BFQ-scheduler; op ZFS weinig [doc].
     - **Geheugen per job:** `RLIMIT_DATA` is de harde grens, ook zonder cgroups. Een bron die
@@ -691,7 +710,8 @@ onderaan.
       die stopt, één die start), en telt de stoppende mee in de plaatsen. Een test doet 10 keer
       zoeken in 1 s.
     - Uitvoer altijd via pipes die de app maakt (D7), ook voor ondertitels. De app leest ze met
-      asyncio.
+      asyncio. (spike) Stopt de app een producent, dan sluit hij de pipe zelf: een gepauzeerde
+      asyncio-transport krijgt na een kill geen EOF (S6).
 13. **Zonder sandbox, en als de worker weg is.**
     - `PLATFORM_MEDIA_WORKER` leeg: de app start zelf een lokale worker. Dat is een kindproces
       `python -I -m app.media.worker --socket <data_dir>/media/run/worker.sock`, met een kale
@@ -807,10 +827,13 @@ onderaan.
 18. **Gapless-gegevens.** Per nummer het precieze aantal geldige samples, en hoeveel er aan het
     begin en eind af moeten. Eigen lezers in de worker (`audio_info`), begrensd:
     - MP3: de LAME- of Lavc-header in het Xing/Info-frame (`enc_delay`, `enc_padding`), plus de
-      vaste vertraging van de decoder (529 samples). mutagen leest de Lavc-tag niet (N20);
+      vaste vertraging van de decoder (529 samples). mutagen leest de Lavc-tag niet (N20).
+      (spike) De 529 telt niet mee: delay = `enc_delay` is exact in Chromium 141, met +529 gaan
+      er 529 samples te veel weg (S8). Firefox en Safari zijn niet getest;
     - AAC in MP4: `iTunSMPB` (voorloop, opvulling, lengte); anders de `elst` en de duur;
     - Opus: `pre_skip` uit de `OpusHead`, en de laatste granulepositie (alleen de laatste
-      Ogg-pagina);
+      Ogg-pagina). (spike) Opus gaat via `remux_audio` naar FLAC (Keuze 38): dan is de delay 0,
+      en `samples` = laatste granule − `pre_skip` (S8);
     - FLAC: `total_samples` uit `STREAMINFO`. Geen voorloop;
     - Vorbis en WAV: geen voorloop.
 
@@ -996,15 +1019,35 @@ onderaan.
         x264 elke 250 beelden een extra IDR, dus bij een bron boven 125 fps midden in een segment
         (V5);
       - `-fpsmax 60`: een bron van 240 fps wordt 60 fps. Zo klopt het level van de tabel;
-      - segment k loopt van 2k tot 2k+2 s mediatijd. Het aantal is vooraf bekend:
-        `N = ceil(D/2)`. Het laatste is korter;
+      - (spike) het rooster hangt aan het eerste videobeeld: `origin` = `start_time` van het
+        videospoor − S, altijd ≥ 0 (S2, en nagemeten in spike.md, "Extra"). Segment 0 loopt van
+        mediatijd 0 tot `origin + 2`, segment k (k ≥ 1) van `origin + 2k` tot `origin + 2k + 2`.
+        Meestal is `origin` 0,021 s (de voorloop van AAC), minder dan één beeld. Revisie 2 zei:
+        segment k van 2k tot 2k + 2;
+      - (spike) het aantal komt uit het laatste videobeeld: `N = ⌊(laatste − origin) / 2⌋ + 1`,
+        met `laatste` de pts van het laatste videobeeld in mediatijd (`last_frame_ms` uit de
+        probe). Revisie 2 zei `N = ceil(D/2)` met de duur van het formaat; dat klopte in 0 van de
+        10 runs van S2. Het laatste segment loopt tot het eind van de producent en is korter. Een
+        fragment voorbij N (`-fpsmax` vult het eind aan) hoort bij het laatste segment;
       - de knipper deelt fragmenten in op de pts van hun eerste sample, net als bij remux
         (Keuze 23). Normaal is elk fragment één segment. Komt er toch een extra keyframe, dan
         hoort dat fragment bij hetzelfde segment. `fps240.mp4` in S2 eist precies één IDR per 2 s;
-      - `TARGETDURATION` is 2. `EXTINF` is 2,000; de echte grens valt op het eerste frame na 2k,
-        dus hooguit één frame later. De tijden in `tfdt` zijn de waarheid voor de speler;
-      - herstarten gebeurt alleen op een grens (2k). Dan geeft dezelfde uitdrukking hetzelfde
-        rooster, want `t` telt vanaf het begin van de uitvoer (J4).
+      - `TARGETDURATION` is 2, of (spike) de afgeronde duur van segment 0 als die vanaf 2,5 s is
+        (een late videostart). `EXTINF` is 2,000, behalve (spike) segment 0 (`origin + 2`, meestal
+        2,021) en het laatste (tot het eind); de echte grens valt op het eerste frame na
+        `origin + 2k`, dus hooguit één frame later. (spike) `EXTINF` en `map.json` tellen in
+        mediatijd met dit rooster; de HLS-lint (§3.6) eist dat. De tijden in `tfdt` zijn de
+        waarheid voor de speler;
+      - herstarten gebeurt alleen op een grens, (spike) met `-ss (origin + 2k)` vóór de invoer
+        (revisie 2: `-ss 2k`). Dan geeft dezelfde uitdrukking hetzelfde rooster, want `t` telt
+        vanaf het eerste videobeeld van de uitvoer (J4; nagemeten), en `-ss` vóór de invoer telt
+        in mediatijd. Met `-ss 2k` schuift het rooster `origin` op. `origin` gaat in hele ms naar
+        beneden, zodat `-ss` het eerste beeld van het segment niet overslaat;
+      - (spike) **MPEG-TS zoekt niet precies.** Zonder index begint de uitvoer na `-ss` op de
+        volgende keyframe van de bron (S2: `interlaced.ts` 1,02 s te laat). Een herstart mist dan
+        tot één GOP. Het contract gaat voor TS niet uit van exact zoeken; M4 kiest de aanpak
+        (bijvoorbeeld eerder beginnen en weggooien wat vóór de grens ligt, of TS altijd vanaf een
+        keyframe uit de index).
     - **Waarom overal 2 s, en niet eerst 2 s en dan 6 s:**
       - een segment kan pas weg als het af is. Een segment van 6 s direct na het eerste vraagt dat
         de producent 3× realtime haalt. Bij 3 × 720p haalt hij 1,7–2,4×, en dan hapert de speler
@@ -1023,6 +1066,10 @@ onderaan.
       voor (V4). Met de vlag is het `trun` versie 1, en is de pts van het eerste beeld gelijk aan
       `tfdt`. De knipper leest de offsets dus getekend.
       - Chromium speelt `trun` v1 [niet getest in een browser; S2 meet het].
+        (spike) S2 zag `trun` versie 1 in de uitvoer (H.264 met B-frames bij transcode, HEVC bij
+        remux), met de pts van het eerste beeld gelijk aan `tfdt` (V4, binnen één beeld). In een
+        browser is het nog niet getest: de Chromium van Playwright heeft geen H.264, en VP9 heeft
+        geen B-frames (S4). Dat komt met S13 in `e2e-media-perf`.
       - Safari kunnen we hier niet testen. Dat wordt een apparaattest in fase 9, en staat bij de
         risico's. Speelt native HLS v1 niet goed, dan krijgt alleen native HLS de offsets van v0,
         met een `elst` in de init die de vertraging terugzet [niet getest].
@@ -1036,10 +1083,17 @@ onderaan.
       - Native HLS kan die kop niet lezen. Daar sluit de app de sessie met 410 op die plek, en de
         speler laadt opnieuw. `/beheer` telt het. Verwacht: nooit.
       - Of `elst` mee moet in de vergelijking, beslist de spike (S5).
+        (spike) Niet: er staat geen `elst` in de init, en na elke herstart is de `stsd` per spoor
+        gelijk (S5). De vergelijking is de `stsd` per spoor. Een andere `stsd` (een andere
+        trede) speelt in Chromium in dezelfde SourceBuffer, na de nieuwe init (S4).
     - `map.json` voor de MSE-speler:
       `{"gen": 1, "mime": "video/mp4; codecs=\"avc1.64001f,mp4a.40.2\"", "offset": -1.0,
       "init": "init.mp4?g=1", "segments": {"grid_ms": 2000, "count": 3600}}`. Bij remux staat er een
       lijst `[[begin_ms, duur_ms], …]` uit de index.
+      (spike) Bij transcode staan `origin_ms` en `last_frame_ms` erbij: `"segments": {"grid_ms":
+      2000, "origin_ms": 21, "count": 3600, "last_frame_ms": 7199979}` (een film van 2 uur op
+      24 fps, video vanaf 0, S = −0,021). Begin van segment k ≥ 1: `origin_ms + k × grid_ms`;
+      segment 0 begint op 0.
     - `master.m3u8` en `v.m3u8` voor native HLS: de app schrijft ze zelf (§2 M4). Een test eist dat
       `map.json` en `v.m3u8` dezelfde segmenten beschrijven.
 23. **Remux van echte keyframes.**
@@ -1048,6 +1102,8 @@ onderaan.
       boven afgerond. De grenzen staan vooraf vast; de playlist klopt dus precies.
     - Remux haalt tientallen keren realtime (het eerste segment na 0,15 s, video kopiëren plus
       audio omzetten 21×, feasibility §3.2). Daarom mag het hier 6 s zijn.
+      (spike) Zonder `-readrate`: met tegendruk was het eerste segment er na 0,10 s, met
+      `-readrate 1` pas na 7,46 s (S6). De knipper kost 1,2 ms CPU per MB.
     - ffmpeg kopieert; elke GOP is een fragment (D5). De app voegt fragmenten samen tot de grens
       van het volgende segment. Welk fragment bij welk segment hoort, beslist de pts van zijn
       eerste sample: `tfdt` plus de compositie-offset uit de `trun`, getekend (versie 1, met
@@ -1055,6 +1111,13 @@ onderaan.
       decodeertijd.
     - Een herstart op segment k: `-ss (b_k − 0,5)` vóór de invoer, want met kopiëren begint ffmpeg
       op de keyframe ervoor (N11). De app gooit fragmenten met een pts vóór `b_k` weg.
+      (spike) Bij MPEG-TS niet: zonder index begint de uitvoer na `-ss` op de volgende keyframe
+      (S2). Met `b_k − 0,5` is dat meestal `b_k` zelf, maar zeker is het niet; M4 test het met
+      `interlaced.ts` (Keuze 22, MPEG-TS).
+    - (spike) Een HEVC-bron met open GOP heeft CRA-keyframes, geen IDR. Die staan in de index als
+      keyframe, en remux knipt er ook. De controle "elk fragment begint met een IDR" geldt alleen
+      voor transcode. Na een sprong naar zo'n segment kunnen de eerste beelden (RASL) wegvallen
+      [niet getest in een browser].
     - HEVC krijgt `-tag:v hvc1` (Apple wil `hvc1`, nooit `hev1` [doc]).
     - Audio: kopiëren als de client de codec kan en hij in mp4 past (AAC, Opus, FLAC; AC-3 en
       E-AC-3 alleen als het profiel ze kan). Anders AAC-LC stereo 160 kbit/s (`-c:a aac -ac 2
@@ -1072,7 +1135,7 @@ onderaan.
     | 1080 superfast | idem | idem | idem | idem | 0,95 | 1,57 [geschat] |
     | 720 veryfast | ≤ 1280×720 | 3500k / 7000k | 3.1 (3.2 boven 30 fps) | `avc1.64001f` | 0,74 | 1,21 [gemeten] |
     | 720 superfast | idem | idem | idem | idem | 0,62 | 1,02 [geschat] |
-    | 480 veryfast | ≤ 854×480 | 1500k / 3000k | 3.0 | `avc1.64001e` | 0,56 | 0,92 [geschat] |
+    | 480 veryfast | ≤ 854×480 | 1500k / 3000k | 3.0 (3.1 boven 25 fps; spike) | `avc1.64001e` (`avc1.64001f` bij 3.1) | 0,56 | 0,92 [geschat] |
 
     - De SDR-kosten zijn gemeten met een H.264-bron van 1080p24, de HDR-kosten met een
       HEVC10-bron van 1080p24 (N16, N17). Waar HDR niet gemeten is, geldt de factor 1,65 op de
@@ -1080,6 +1143,11 @@ onderaan.
       (Keuze 26).
     - De tabel is gemeten op 24 fps. Meer beelden per seconde (tot 60, door `-fpsmax 60`) kosten
       naar verhouding meer: × fps/24 [geschat; S11]. De toelating rekent dat mee (Keuze 26).
+      (spike) S11 mat × 1,20–1,23 voor 30 tegen 24 fps (de regel geeft × 1,25): de regel blijft.
+      Met echte inhoud kost x264 minder dan de tabel (0,89 / 0,59 / 0,43 voor 1080 / 720 / 480
+      veryfast, tegen een bron met ruis voor de tabel). De tabel is dus een bovengrens.
+    - (spike) Level 3.0 is voor 480 te laag vanaf 30 fps: 854×480 is 1.620 macroblokken, en 3.0
+      haalt er 40.500 per seconde, dus 25 fps. Boven 25 fps wordt het 3.1.
 
     - Nooit vergroten. Een trede boven de bron valt weg. Een bron onder 480 houdt zijn eigen hoogte
       (even).
@@ -1096,14 +1164,20 @@ onderaan.
       evenveel als x264 veryfast (0,57–0,59 tegen 0,60, V3). De toelating rekent VP9 dus als 1,0×
       x264. S11 meet het opnieuw in de sandbox, waar VP9 gebruikt wordt. AV1 coderen bouwen we
       niet.
+      (spike) S11: VP9 tegen x264 0,82–1,05 per trede, dus 1,0× blijft. **VP9 met HDR haalt op
+      1080 geen realtime** op 3 cores (0,99×): een client zonder H.264 met een HDR-bron krijgt
+      hooguit 720.
     - Interlaced: eerst `bwdif=mode=send_frame:parity=auto:deint=interlaced`.
-    - Een beeldondertitel inbranden: `overlay` vóór het schalen (Keuze 29).
+    - (spike) Een beeldondertitel inbranden: eerst het beeld schalen, de ondertitel naar W×H
+      schalen, dan `overlay` (S9: getest, en goedkoper dan `overlay` vóór het schalen, wat
+      revisie 2 hier zei). De ondertitels komen uit een tweede fd (Keuze 29, §3.3).
 25. **Zoeken: herstarten op een segmentgrens.**
     - De speler vraagt segment n.
     - Staat het in de cache van de sessie: meteen.
     - Loopt de producent en ligt n hooguit 3 segmenten (6 s) voor op wat er is: wachten.
     - Anders: de producent stoppen (de verbinding dicht) en een nieuwe starten op de grens van n
-      (`-ss 2n` bij transcode, `-ss (b_n − 0,5)` bij remux). De nieuwe start pas als de oude weg
+      (`-ss (origin + 2n)` bij transcode (spike; revisie 2: `-ss 2n`), `-ss (b_n − 0,5)` bij remux;
+      bij MPEG-TS niet exact, Keuze 22). De nieuwe start pas als de oude weg
       is (`waitpid`, na 2 s SIGKILL), en zoekverzoeken binnen 300 ms worden één herstart
       (Keuze 12). Wat al in de cache staat, blijft geldig: hetzelfde rooster en, als de `stsd`
       gelijk is, dezelfde init.
@@ -1111,6 +1185,8 @@ onderaan.
       elkaar gaat de sessie dicht.
     - Het verschil in audio na een herstart (32–54 ms, D4) vangt de speler op door over het gat te
       springen (Keuze 32).
+      (spike) Chromium springt niet zelf: een gat van 54 ms gaf ≥ 10 s stilstand (S4). De
+      springer is dus nodig. Een natuurlijke herstart gaf in S4 overlap (39,8 ms), geen gat.
 26. **Toelating en het CPU-budget.**
     - **De kosten van een plan tellen de bron mee.** Decoderen van een 4K- of HEVC10-bron kost
       apart (V3): 4K HEVC10 alleen decoderen is al 1,31 cores. Daarom:
@@ -1119,11 +1195,14 @@ onderaan.
 
       - `tabel(trede, hdr)`: de cores van Keuze 24;
       - `d(bron)` = `d_codec` × (breedte × hoogte × fps) / (1920 × 1080 × 24). `d_codec` is 0,18
-        voor H.264 en 0,31 voor HEVC [gemeten V3]; VP9, AV1 en de rest 0,31 [geschat; S11];
+        voor H.264 en 0,31 voor HEVC [gemeten V3]; (spike) VP9 0,18 en AV1 0,25 (8 bit; S11 mat
+        0,150 en 0,222; revisie 2: 0,31); 10 bit en de rest 0,31 [geschat];
       - `d(ref)` = wat in de tabel al zit: 0,18 (H.264 1080p24) voor SDR, 0,31 (HEVC10 1080p24)
         voor HDR;
-      - `extra`: inbranden +0,15, deinterlacen +0,2 [geschat; S11];
-      - VP9 kost hetzelfde als x264 (V3); remux kost 0,02, alleen audio omzetten 0,05.
+      - `extra`: inbranden +0,15, deinterlacen +0,2 [geschat; S11]. (spike) S9 mat +0,1 voor
+        inbranden bij 720 (0,69 tegen 0,585 cores); de +0,15 blijft;
+      - VP9 kost hetzelfde als x264 (V3; spike, S11: 0,82–1,05); remux kost 0,02, alleen audio
+        omzetten 0,05.
 
       Nagerekend tegen de metingen (V3 en de critici):
       - 4K HEVC → 1080 veryfast: 1,42 + 1,24 − 0,18 = 2,48 (gemeten 2,42);
@@ -1135,12 +1214,18 @@ onderaan.
       4K-bron wel, en blijft er plaats voor precies één kijker meer.
     - **Zelf meten.** De opdracht `bench` draait 10 s `testsrc2` met ruis, 1080p naar 720p
       veryfast. Dat geeft de factor `f` = (cores voor 1,0× hier) / 0,74 (de sandbox).
+      (spike) Niet 0,74: dat is de tabelprijs van 720 veryfast van een bestand, niet van deze
+      bench. Met 0,74 kwam `f` op de runner op 2,1, waar hij ±1 hoort te zijn (S7). Het wordt
+      `f` = (cores voor 1,0× hier) / (de cores van dezelfde bench in de sandbox). M1 meet die
+      referentie in de sandbox, en ook die van `f_dec`.
       - Daarnaast decodeert `bench` 4 s HEVC10 van 1080p, die hij eerst zelf met libx265 maakt
         (naar een pipe, niet naar schijf). Dat geeft `f_dec` voor `d(bron)`.
       - Alle kosten × `f` (en `d` × `f_dec`).
       - Bij de eerste start en met de knop "Opnieuw meten" op `/beheer`, alleen als er niets
         draait (anders 409 `media_bench_busy`).
       - Opgeslagen in `Setting "media"`. De spike meet de spreiding (S7).
+        (spike) Op de runner: `f` 0,7 % en `f_dec` 1,9 % over drie runs. Eén run per meting is
+        genoeg.
     - **Het budget** `B` = de cpu-grens van de worker, en anders het aantal cores − 1. Op de LXC is
       dat 3,0. `/beheer` kan het lager zetten.
       - OnlyOffice mag zelf 2 cores gebruiken. Samen is dat 5 op 4 cores. Meestal doet DS weinig.
@@ -1182,6 +1267,8 @@ onderaan.
     - **Afremmen door tegendruk** (D6): de app leest de pipe niet verder als de producent 60 s
       voor ligt op het laatste verzoek van de speler. Dat telt in seconden mediatijd, niet in
       segmenten (een remux-segment is 6 s of langer). ffmpeg blokkeert dan en kost niets.
+      (spike) Daarom geen `-readrate`, ook niet bij transcode: de tegendruk zet ffmpeg stil (S2,
+      S6), en `-readrate 1` levert het eerste segment pas na zijn hele lengte.
     - **Startvoorrang.** Zolang een sessie nog geen segment 0 heeft, lezen de andere producenten
       hooguit 10 s vooruit. Een nieuwkomer hoeft dan niet te vechten met producenten die hun
       buffer vullen. Na een herstart vragen alle spelers tegelijk een nieuwe sessie; ook dan
@@ -1194,12 +1281,15 @@ onderaan.
 27. **HDR naar SDR, en wat als het niet kan.**
     - De worker kijkt bij het starten (`caps`) of `zscale` en `tonemap` er zijn. Debian bouwt
       ffmpeg met libzimg [doc, pakketgegevens]; de spike controleert het in het image (S1).
+      (spike) Bevestigd: in 7.1.5 zijn `zscale` en `tonemap` er, en de keten PQ en HLG naar SDR
+      draait (S1).
     - De keten, op de doelgrootte, met de bron expliciet:
       `zscale=w=W:h=H:tin=smpte2084:min=bt2020nc:pin=bt2020:rin=tv:t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p`,
       plus `-color_primaries bt709 -color_trc bt709 -colorspace bt709`. Bij HLG
       `tin=arib-std-b67`. Dolby Vision profiel 7 en 8 gebruiken hun basislaag.
     - `auto` bij HDR is 720 (1,21 cores). 1080 alleen als iemand hem kiest en het budget het
-      toelaat (2,30 cores).
+      toelaat (2,30 cores). (spike) Met VP9 (een client zonder H.264) nooit 1080: VP9 met HDR
+      haalt daar geen realtime (S11).
     - **4K HDR live nooit, en dat is een regel in decide.** Een HDR-bron groter dan 1920×1088
       geeft 422 `media_hdr` met reden `too_large` (ook 2,28 cores naar 720 is te veel naast
       anderen, V3). `can_raw` is dan alleen `true` als direct of remux kan: een client met een
@@ -1259,8 +1349,9 @@ onderaan.
       - Een `x<i>` buiten de lijst geeft 404. Tests in `test_media_sessions.py`: de node-id van
         een ondertitel van een ander geeft 404; een los bestand buiten de publieke link staat niet
         in de lijst.
-    - De speler maakt er `<track kind="subtitles" srclang label>` van. Dat werkt met MSE, en hoort te
-      werken met native HLS [niet getest in Safari].
+    - De speler maakt er `<track kind="subtitles" srclang label>` van. Dat werkt met MSE (spike,
+      S4: de cues gaan 1–8 ms na hun tijd af), en hoort te werken met native HLS [niet getest in
+      Safari].
     - **Geforceerd:** heeft de gebruiker geen ondertitel gekozen, en is er een geforceerd
       **tekst**spoor in de taal van het audiospoor, dan staat dat aan. Een geforceerd
       **beeld**spoor (meestal PGS op een Blu-ray-rip) gaat nooit vanzelf aan: dat zou direct play
@@ -1274,6 +1365,15 @@ onderaan.
       voor een ingebed spoor (uit de ene invoer-fd). Losse `.sup`, `.sub` en `.idx` koppelen we in
       fase 5 niet (Keuze 5). De speler zegt bij de keuze "wordt ingebrand, kost omzetten". Dit
       schuift als eerste als het uitloopt (§5).
+      - (spike) **De ondertitels komen uit een tweede invoer-fd** van dezelfde blob, die op
+        `max(0, T − 30)` begint: `[1:{N}]scale=W:H[s];[v][s]overlay=eof_action=pass` (§3.3). Met
+        één invoer mist na een herstart een ondertitel die vóór de keyframe van het zoeken begon
+        (S9: met `-ss 4` ontbrak die van 2,0 s). De app opent de blob daarvoor twee keer (twee
+        fd's, elk een eigen positie; Keuze 12). Het blijft alleen voor een ingebed spoor.
+      - (spike) Technisch werkt het, voor PGS en VobSub (S9). De terugval "inbranden schuift" van
+        §3.7 is dus niet nodig; als de planning uitloopt, schuift het nog steeds als eerste.
+      - (spike) Een ondertitel die langer dan 30 s staat, mist na een herstart nog steeds. Netter
+        is de begintijd uit de stap `subs`; dat is een open punt voor M5.
     - Niet in fase 5: tekst inbranden (libass en lettertypen in de worker), gesegmenteerde
       VTT-playlists voor native spelers, en ondertitels als HLS-rendities. `<track>` volstaat.
 30. **Sprites en hoofdstukken.**
@@ -1353,9 +1453,12 @@ onderaan.
       - buffert 30 s vooruit en gooit weg wat meer dan 60 s achter ligt. Bij `QuotaExceededError`:
         eerst achter weggooien, dan vooruit tot 10 s, en opnieuw;
       - zoeken: `abort()`, het juiste segment berekenen, ophalen;
-      - een nieuwe init als `X-Init` verandert;
-      - **springt over gaten** tot 0,5 s in `buffered` (een kleine "gap jumper": `currentTime` loopt
-        1 s niet terwijl er verderop gebufferd is);
+      - een nieuwe init als `X-Init` verandert, (spike) in dezelfde SourceBuffer: ook een andere
+        `stsd` (een andere trede) speelt daar zonder stilstand (S4);
+      - **springt over gaten** tot 0,5 s in `buffered`. (spike) Bij `waiting`: ligt het begin van
+        het volgende gebufferde stuk binnen 0,5 s, dan na 250 ms daarheen. Revisie 2 zei: als
+        `currentTime` 1 s niet loopt. Chromium springt niet zelf (S4: een gat van 54 ms gaf
+        ≥ 10 s stilstand; met de springer na 250 ms was het 260 ms);
       - **na 2 haperingen in 60 s** bij transcode: één trede lager (een nieuwe sessie met
         `replace`). Geen automatische ABR.
     - **Foutgedrag per code:**
@@ -1542,10 +1645,17 @@ onderaan.
     - Bij `play` van een nummer: mode `direct` (`<audio src>`), of mode `audio` voor de MSE-speler:
       - `GET /api/v1/stream/{sid}/audio.mp4`: het hele nummer als fMP4;
       - gemaakt met `remux_audio`: `-c:a copy -f mp4 -movflags
-        +frag_keyframe+empty_moov+default_base_moof -frag_duration 10000000 -use_editlist 0`;
+        +frag_keyframe+empty_moov+default_base_moof -frag_duration 10000000 -use_editlist 0`.
+        (spike) `-c:a {copy | flac}`: `copy` voor FLAC en AAC, `flac` voor Opus, ALAC en WAV;
       - in de cache `audio/<sha>.mp4`, en geserveerd terwijl het groeit. Remuxen kost minder dan
-        1 s per nummer;
+        1 s per nummer. (spike) Behalve Opus naar FLAC: 1,8 s CPU voor een nummer van 4 minuten,
+        en 23,5 MB tegen 2,65 MB in de cache (8,9 ×; S8). Met 20 s vooruit laden is de tijd geen
+        probleem;
       - ALAC en WAV worden FLAC in fMP4 (verliesvrij);
+      - (spike) **Opus ook.** Opus in fMP4 is in Chromium 141 niet gapless: +631 en +619 samples
+        per overgang, de opvulling van het laatste frame, ondanks `appendWindowEnd`. Via FLAC is
+        het exact, met delay 0 (S8). WebM gaf 1 ms overlap; dat is een terugval als de cache te
+        groot wordt (een nieuw contract);
       - MP3 gaat rauw als `audio/mpeg`, want MSE kent MP3 in MP4 niet [gemeten].
     - Het antwoord geeft `gapless: {rate, delay, samples}`, uit `audio_info` (Keuze 18).
     - `-use_editlist 0`: de browser krijgt alle samples, ook de voorloop. Wij knippen zelf, en
@@ -1556,17 +1666,21 @@ onderaan.
       - `appendWindowStart = T_i` en `appendWindowEnd = T_i + samples_i/rate`;
       - `changeType()` als de codec wisselt;
       - MP3 als `audio/mpeg` draagt geen tijden in de stroom. Daar staat de buffer op
-        `mode = "sequence"` [doc: MSE byte stream formats]; S8 legt de precieze `delay` vast;
+        `mode = "sequence"` [doc: MSE byte stream formats]; S8 legt de precieze `delay` vast.
+        (spike) delay = `enc_delay` (576 bij LAME), zonder de 529 van de decoder: exact in
+        Chromium 141 (S8);
       - het volgende nummer alvast laden als er 20 s over is. Alleen het huidige en het volgende
         staan in de buffer.
     - Een ander nummer kiezen of ver zoeken: een nieuwe MediaSource.
     - Terugval zonder MSE of MMS, of als MSE de codec niet kent: `<audio>` per nummer, met het
       volgende alvast geladen. Dan is er een gat van tientallen ms, en de speler zegt het.
     - **Eerlijk:**
-      - precies voor FLAC en Opus, en voor AAC met `iTunSMPB`;
+      - precies voor FLAC en Opus (spike: Opus via FLAC, S8), en voor AAC met `iTunSMPB`;
       - AAC uit ffmpeg zonder `iTunSMPB` houdt een gat van 15,6 ms (688 samples), want het aantal
         echte samples staat nergens [gemeten];
       - MP3 via MSE met de LAME-header: [niet getest] (S8). De test is de waarheid, niet deze tekst.
+        (spike) Exact in Chromium 141 met delay = `enc_delay` (S8); Firefox en Safari zijn niet
+        getest.
 
 ### Metadata online
 
@@ -1945,7 +2059,8 @@ en de app zonder media precies 0.6.0 is, plus de reparaties F1–F4.
 2. Geen migraties en geen `models.py` buiten M0. Een schemawens gaat naar de hotfix-lane.
 3. **Geen nieuwe pakketten** in `pyproject.toml` of `package.json`, ook geen dev-deps.
 4. **Geen ffmpeg of ffprobe buiten `app/media/worker/`.** `test_media_no_ffmpeg_outside.py`
-   controleert het (M1). Vanaf M1 geldt het ook voor `render.py`.
+   controleert het (M1). Vanaf M1 geldt het ook voor `render.py`. (spike) De regel gaat over
+   `app/`: de spike-scripts en de fixtures onder `api/tests/` roepen ffmpeg zelf aan.
 5. **Bytes van gebruikersbestanden ontleden gebeurt alleen in de worker.** Ook de
    codec-strings, de keyframe-index, NFO, ondertitels en gapless-koppen. De app leest alleen wat de
    worker teruggeeft (fMP4-boxen, VTT, JPEG, JSON), en altijd met een grens. De import en direct
@@ -2003,13 +2118,18 @@ de previews van video's gaan erdoorheen.
   - `nice`, `ionice`, de andere `RLIMIT`'s van Keuze 12, de procesgroep, de kale omgeving;
   - de plaatsen per soort en het totaal `PLATFORM_MEDIA_MAX_PROCS`, met stoppende processen erbij;
   - één producent per sessie: de nieuwe pas na `waitpid` van de oude, en 300 ms samenvoegen;
+  - (spike) vóór elke exec `lseek(fd, 0)` op elke invoer-fd, nooit twee kinderen tegelijk op één
+    fd, en `dup2` naar fd 3 (en 4) alleen in het kind (Keuze 12, S3);
   - `prctl(PR_SET_DUMPABLE, 0)` bij de start van de worker.
 - `app/media/worker/ops/frame.py`, `meta.py` en `bench.py` (Keuze 12, 26).
 - `app/media/worker/selftest.py`: `python -I -m app.media.worker --selftest`. Dat controleert:
   - versie 7.1.x;
-  - de encoders `libx264`, `aac`, `libopus`, `libvpx-vp9`, `mjpeg`;
+  - de encoders `libx264`, `aac`, `libopus`, `libvpx-vp9`, `mjpeg`, en (spike) `libx265` (voor
+    `bench`) en `flac` (voor Opus in `remux_audio`);
   - de filters `zscale`, `tonemap`, `bwdif`, `overlay`, `scale`, `fps`, `tile`;
   - de protocollen `fd` en `pipe`;
+  - (spike) de demuxers van de witte lijst in `ffmpeg -demuxers`, en `lavfi` in `ffmpeg -devices`
+    (S1); een weigering door `-format_whitelist` en door `-protocol_whitelist`;
   - `nice` en `ionice` in het image;
   - een transcode van 4 s `testsrc2` naar fMP4 op een pipe: twee fragmenten, `tfdt` op 1,000 en
     3,000 (`+frag_discont`, J4), `trun` versie 1 en de eerste offset 0 (`+negative_cts_offsets`,
@@ -2323,7 +2443,11 @@ tegendruk en de cache.
     zolang een andere sessie nog geen segment 0 heeft (startvoorrang, Keuze 26).
   - Vergelijkt de `stsd` van elke nieuwe init (Keuze 22).
   - Herstart bij een sprong (Keuze 25), en één keer na een fout of "vast" (Keuze 46).
-- `grid.py`: het rooster van 2 s en het rooster uit keyframes (Keuze 22, 23).
+- `grid.py`: het rooster van 2 s en het rooster uit keyframes (Keuze 22, 23). (spike) Het rooster
+  van 2 s hangt aan `origin` (het eerste videobeeld), N komt uit `last_frame_ms`, en een fragment
+  voorbij N hoort bij het laatste segment (`SegmentGrid` in `app/media/types.py`). Een herstart
+  op segment k gebruikt `-ss (origin + 2k)`. Voor MPEG-TS kiest M4 hoe een herstart toch het
+  hele segment levert (Keuze 22).
 - `hls.py`: `map.json`, `master.m3u8`, `v.m3u8`.
 - `cache.py`: de mappen, het venster in bytes per sessie, de housekeeping `media.sweep` (elke 5
   minuten), en leegmaken bij de start (Keuze 31).
@@ -2342,7 +2466,8 @@ tegendruk en de cache.
   ```
 
 **Playlists** (`hls.py`). Bij transcode geen `EXT-X-INDEPENDENT-SEGMENTS` voor `webos-5` [doc]; voor
-de rest wel, want elk segment begint met een IDR. Bij remux nooit: de bron kan open GOP's hebben.
+de rest wel, want elk segment begint met een IDR. Bij remux nooit: de bron kan open GOP's hebben
+(spike: HEVC met open GOP geeft CRA-keyframes).
 ```
 #EXTM3U
 #EXT-X-VERSION:7
@@ -2357,7 +2482,7 @@ v.m3u8
 #EXT-X-PLAYLIST-TYPE:VOD
 #EXT-X-MEDIA-SEQUENCE:0
 #EXT-X-MAP:URI="init.mp4?g=1"
-#EXTINF:2.000,
+#EXTINF:2.021,
 0.m4s
 #EXTINF:2.000,
 1.m4s
@@ -2366,6 +2491,9 @@ v.m3u8
 3599.m4s
 #EXT-X-ENDLIST
 ```
+- (spike) `EXTINF` van segment 0 is `origin + 2`: hier 2,021 (video vanaf 0, S = −0,021).
+  Begint de video laat (`origin + 2` ≥ 2,5), dan is `TARGETDURATION` de afgeronde duur van
+  segment 0; alle andere segmenten blijven ≤ 2 na afronden. De HLS-lint eist dat (§3.6).
 - `BANDWIDTH` = (maxrate plus audio) × 1,1. `AVERAGE-BANDWIDTH` = een schatting uit de trede.
 - Bij remux: de echte piek uit de index (de grootste som van samplegroottes in een venster van
   6 s), en `EXTINF` met 3 decimalen.
@@ -2375,7 +2503,8 @@ v.m3u8
   waar geen budget voor is.
 
 **Tests**
-- `test_media_grid.py`: het rooster van 2 s; `N` voor duren rond de grenzen; de remuxregel met lange
+- `test_media_grid.py`: het rooster van 2 s; `N` voor duren rond de grenzen (spike: met `origin`,
+  ook bij een late videostart, en `last_frame_ms`; een fragment voorbij N); de remuxregel met lange
   GOP's, de laatste keyframe, en B-frames (pts tegen `tfdt`); een extra keyframe midden in een
   segment blijft in dat segment.
 - `test_media_fmp4.py`: boxen in stukken van 1 byte, te groot, afgekapt, `size` 0 en 1, `tfdt`
@@ -2384,7 +2513,9 @@ v.m3u8
   segment 5 geven dezelfde videotijden per segment; `tfdt` begint op mediatijd + 1 (J4); de pts
   van het eerste sample (`tfdt` plus de offset) is de brontijd + 1 s, binnen één frame, voor
   H.264 met B-frames (transcode) en voor HEVC (remux) (V4); `fps240.mp4` geeft precies één IDR
-  per 2 s en 60 fps (V5); het verschil in audio is ≤ 100 ms.
+  per 2 s en 60 fps (V5); het verschil in audio is ≤ 100 ms. (spike) De herstart met
+  `-ss (origin + 2k)`, ook voor een bron waarvan de video laat begint; `interlaced.ts` met de
+  aanpak die M4 voor MPEG-TS kiest.
 - `test_media_producer.py` (nep-worker):
   - tegendruk bij 60 s voorsprong (de nep meldt dat schrijven blokkeert);
   - herstart bij een sprong;
@@ -2454,9 +2585,12 @@ aftiteling.
 - `test_media_chapters.py`: titels, de aftiteling in het Nederlands en Engels, geen hoofdstukken.
 - e2e `test_media_m5.py`: SRT en de ASS-cue met `\an8` (boven in beeld) als `<track>`; PGS inbranden
   (de pixels op de plek van de ondertitel veranderen, gemeten in een canvas); sprites bij hover.
+  (spike) Ook inbranden na een sprong naar een plek waar een ondertitel al loopt (S9: `-ss 4`
+  met een ondertitel van 2,0 tot 5,0 s), met de tweede fd van Keuze 29.
 
 **Klaar als.** Elke tekstondertitel van de fixtures staat goed in beeld, op de goede tijd (±1 frame).
-Het inbranden van PGS is bewezen, of geschoven met de reden (§5).
+Het inbranden van PGS is bewezen, of geschoven met de reden (§5). (spike) S9 bewees het technisch,
+voor PGS en VobSub; schuiven kan alleen nog om de planning.
 
 ---
 
@@ -2475,7 +2609,8 @@ ondertitels, PiP en toetsenbord. Binnen het budget, zonder bibliotheek (B19).
   - `keys.test.ts`: elke toets, en niets als de focus in een veld staat; de combinaties van de
     scopes global, viewer, player en `/kijken` zijn uniek of bewust overschreven (Keuze 33);
   - `mse.test.ts` (pure delen): het segment voor tijd t, wat er weg mag, `gen` wisselen, de
-    beslissing over een gat;
+    beslissing over een gat (spike: bij `waiting` na 250 ms, als het volgende stuk binnen 0,5 s
+    begint; S4);
   - `session.test.ts`: vernieuwen bij 410 op de juiste positie, stoppen bij 403, geen lus (hooguit
     3 keer per minuut); 30 s netwerkfouten en 503 zonder code: de speler blijft proberen
     (1, 2, 4, 8, 10, 10 s) en loopt daarna door;
@@ -2604,7 +2739,8 @@ alleen in de header naar TMDB.
 - `playlists.py`.
 - `worker/ops/audio_info.py` (Keuze 18): eigen lezers, begrensd. Leest alleen de kop en de laatste
   pagina van Ogg. M9 registreert de stap `audio_info`.
-- `worker/ops/remux_audio.py` (Keuze 38).
+- `worker/ops/remux_audio.py` (Keuze 38). (spike) `-c:a copy` voor FLAC en AAC, `-c:a flac` voor
+  Opus, ALAC en WAV (S8).
 - `routers/media_music.py`:
   ```
   GET    /api/v1/media/libraries/{id}/albums?sort=title|year|added&cursor=   → {items: [AlbumCard], next}
@@ -2630,11 +2766,13 @@ alleen in de header naar TMDB.
 **Tests**
 - Groeperen: compilatie, geen albumartiest, meerdere discs, dezelfde albumnaam bij twee artiesten.
 - `audio_info` op fixtures: FLAC 882.000 samples, MP3 met LAME 882.000, Opus met pre-skip, AAC met en
-  zonder `iTunSMPB`; fuzz.
+  zonder `iTunSMPB`; fuzz. (spike) MP3: delay = `enc_delay`, zonder +529; Opus: `samples` =
+  laatste granule − `pre_skip`, en delay 0 na FLAC (S8).
 - Afspeellijsten: alleen van jezelf, 5.000, de volgorde, en een verwijderd bestand (CASCADE).
 - e2e `test_media_m9.py`, gapless: een album van 3 FLAC- en 3 Opus-nummers uit één doorlopende sinus.
   De uitvoer gaat via een `MediaElementAudioSourceNode` naar een AudioWorklet. Bij elke overgang mag
   de fase niet springen (fout ≤ 1 sample). MP3 en AAC: het resultaat wordt vastgelegd, niet geëist.
+  (spike) In S8 was MP3 met delay = `enc_delay` exact in Chromium 141; de e2e legt het vast.
   Werkt een AudioWorklet headless niet, dan de terugval: `buffered` is één bereik, en de grenzen van
   `appendWindow` kloppen op het sample [niet getest].
 - De muziekbalk blijft spelen bij navigeren.
@@ -2980,12 +3118,14 @@ async def receive(sock) -> tuple[dict, list[int]]                       # weiger
 class StreamArgs(BaseModel):
     mode: Literal["remux", "transcode"]
     demuxer: Demuxer                      # uit de witte lijst (render.container plus mp3, flac, aac)
-    start_s: float                        # 2k (transcode) of b_k − 0,5 (remux); 0 vanaf het begin
+    start_s: float                        # origin + 2k (transcode; spike, was 2k) of b_k − 0,5 (remux); 0 vanaf het begin
     source_start_s: float                 # S, de start_time van de bron
     video_index: int
     audio_index: int | None               # None: de bron heeft geen audio (geen -map en geen -c:a)
     video: Literal["copy"] | VideoEncode  # codec (libx264 | libvpx-vp9), width, height, preset (veryfast | superfast),
                                           #   level, maxrate_k, fps_max (60), tonemap (pq | hlg | None), deinterlace, burn_index
+                                          #   (spike) burn_index komt uit een tweede fd van dezelfde blob, vanaf
+                                          #   burn_start_s = max(0, start_s − 30) (Keuze 29)
     audio: Literal["copy", "none"] | AudioEncode  # codec (aac | libopus), channels (2), bitrate_k
     grid: Literal["2s"] | None            # None bij remux: dan groepeert de app (Keuze 23)
     hvc1: bool = False                    # -tag:v hvc1 bij HEVC
@@ -3009,6 +3149,8 @@ class Job:
 async def call(op: Op, args: BaseModel, *, source: Path | None = None, outputs: int = 0) -> tuple[Job, list[int]]
     # opent source zelf (O_RDONLY | O_NOFOLLOW | O_CLOEXEC), maakt `outputs` pipes, stuurt de
     # schrijfkanten mee, sluit de eigen kopieën, en geeft de leeskanten terug (D7)
+    # (spike) per opdracht een eigen open(), bij inbranden twee (elk een eigen positie); een fd
+    # gaat nooit naar twee opdrachten (S3, Keuze 12)
 async def caps() -> WorkerCaps
 async def probe(source: Path) -> Probe
 
@@ -3115,6 +3257,12 @@ class Defer(Exception):                  # terug in de rij na `seconds`; de pogi
 **De commando's van de worker.** Frozen na S1 en S2 (§3.7). `{…}` vult de worker uit gevalideerde
 argumenten. Dit zijn de commando's van ontwerp A met de twee fouten van J4 eruit.
 
+(spike) S1 en S2 draaiden op 7.1.5, in het echte image: de commando's blijven in de kern gelijk.
+Wat de spike veranderde, staat hieronder met "(spike)": het begin van een herstart
+(`-ss (origin + 2k)`), de positie van de fd, het level van 480, inbranden met twee invoeren, VP9
+met HDR, geen `-readrate`, Opus via `flac`, en de referentie van `bench`. Dezelfde lijst staat in
+[spike.md](spike.md) ("De commando's van de worker na de spike").
+
 Elke invoer:
 ```
 -nostdin -hide_banner -loglevel error -progress pipe:2 -nostats -max_alloc 536870912
@@ -3122,10 +3270,20 @@ Elke invoer:
 ```
 - `-max_alloc` (512 MB per blok) en `-max_pixels` (8192×4320) begrenzen wat een kwade bron vraagt.
   4K decodeert er gewoon mee (V6). Daarbovenop zet de worker `RLIMIT_DATA` (Keuze 12).
+- (spike) `{lijst}` is `mov,matroska,avi,wav,flv,ogg,asf,mpegts,mpeg,mp3,flac,aac`. `lavfi` en
+  `hevc` komen er nooit in. `lavfi` is in 7.1 een invoerapparaat: het staat onder
+  `ffmpeg -devices`, niet onder `-demuxers` (S1). Alleen `bench` en `synth` gebruiken het,
+  zonder invoer-fd. `hevc` (rauw) alleen in de meting van `f_dec`, op een pipe van de worker.
+- (spike) **De positie van de fd.** Een fd uit `SCM_RIGHTS` deelt zijn positie met de app en met
+  elk kind. Na ffprobe stond hij op 65536, en ffmpeg las `fd:` vanaf daar (rc 183, S3). De worker
+  doet daarom `os.lseek(fd, 0, SEEK_SET)` op elke invoer-fd vóór elke exec, start nooit twee
+  kinderen tegelijk op dezelfde fd, en zet de bron met `dup2` op fd 3 (en 4) alleen in het kind.
+  De app opent de blob per opdracht opnieuw (Keuze 12).
+- (spike) `-ss` staat vóór `-i` en telt in mediatijd (vanaf S).
 
 Transcode, vanaf 0 of na een sprong naar segment k (720p, SDR, audio naar AAC):
 ```
-nice -n 5 ffmpeg {invoer, met -ss 2k vóór -i als k > 0} -copyts
+nice -n 5 ffmpeg {invoer, met -ss (origin + 2k) vóór -i als k > 0 (spike)} -copyts
   -map 0:{V} [-map 0:{A}] -sn -dn -map_metadata -1 -map_chapters -1
   -vf "scale=w={W}:h={H}:flags=bicubic,format=yuv420p" -fpsmax 60
   -c:v libx264 -preset {veryfast|superfast} -crf 23 -maxrate {R}k -bufsize {2R}k
@@ -3144,18 +3302,40 @@ nice -n 5 ffmpeg {invoer, met -ss 2k vóór -i als k > 0} -copyts
   beeld 104 ms na het geluid (V4).
 - `t` telt vanaf het begin van de uitvoer (J4). Een herstart gebeurt alleen op 2k. Zo geeft
   dezelfde uitdrukking hetzelfde rooster, vanaf 0 en na elke sprong.
+  (spike) Preciezer: `t` telt vanaf het eerste videobeeld van de uitvoer. Het rooster ligt dus op
+  mediatijd `origin + 2k`, met `origin` = `start_time` van het videospoor − S (uit de probe, in
+  hele ms naar beneden). Een herstart begint met `-ss (origin + 2k)`; met `-ss 2k` schuift het
+  rooster `origin` op (spike.md, "Extra"). N komt uit het laatste videobeeld (Keuze 22).
+- (spike) Bij MPEG-TS begint de uitvoer na `-ss` op de volgende keyframe van de bron (S2:
+  1,02 s te laat): een herstart mist tot één GOP. M4 kiest de aanpak (Keuze 22).
 - `+frag_discont` is nodig: zonder begint `tfdt` op 0, ook met `-copyts` (J4). Met de vlag is
   `tfdt` = mediatijd + 1 s.
 - `-forced-idr 1`: elk geforceerd keyframe is een IDR. Dan begint elk segment echt opnieuw, en mag
-  `EXT-X-INDEPENDENT-SEGMENTS` (S2 controleert NAL-type 5).
-- `-threads 4` is een bovengrens per proces. De kosten meet S10.
-- HDR: `-vf` wordt de keten van Keuze 27. Interlaced: `bwdif=…` ervoor.
+  `EXT-X-INDEPENDENT-SEGMENTS` (S2 controleert NAL-type 5; spike: zo gemeten).
+- `-threads 4` is een bovengrens per proces. De kosten meet S10. (spike) S10: 0,744 cores tegen
+  0,743 zonder; geen kosten.
+- (spike) `{L}`: 1080 4.0 (4.2 boven 30 fps), 720 3.1 (3.2 boven 30 fps), 480 3.0 (3.1 boven
+  25 fps). 3.0 is voor 480 te laag vanaf 30 fps (Keuze 24).
+- HDR: `-vf` wordt de keten van Keuze 27. Interlaced: `bwdif=…` ervoor. (spike) S1: `zscale` en
+  `tonemap` zijn er in 7.1.5, en de keten draait.
 - Inbranden:
   `-filter_complex "[0:{V}]{filters}[v];[0:{N}]scale={W}:{H}[s];[v][s]overlay=eof_action=pass,format=yuv420p[out]" -map "[out]"`.
+  (spike) Zo mist na een herstart een ondertitel die vóór de keyframe begon (S9). Het wordt twee
+  invoeren van dezelfde blob, elk een eigen fd:
+  ```
+  nice -n 5 ffmpeg {invoer A: -ss (origin + 2k), -fd 3} {invoer B: -ss max(0, origin + 2k − 30), -fd 4} -copyts
+    -filter_complex "[0:{V}]{filters}[v];[1:{N}]scale={W}:{H}[s];[v][s]overlay=eof_action=pass,format=yuv420p[out]"
+    -map "[out]" [-map 0:{A}] -sn -dn -map_metadata -1 -map_chapters -1 -fpsmax 60
+    {de video, de audio en de staart van de transcode}
+  ```
+  Eerst het beeld schalen, de ondertitel naar W×H, dan `overlay` (S9; Keuze 24). De CPU blijft
+  gelijk aan één invoer.
 - Zonder H.264 bij de client: `-c:v libvpx-vp9 -deadline realtime -cpu-used 8 -row-mt 1 -b:v
   {R}k -maxrate {R}k -crf 32 -g 100000` en `-c:a libopus -b:a 128k -ac 2 -ar 48000`. VP9 kent
   alleen echte keyframes; `-forced-idr` valt dan weg. Gemeten liggen de keyframes van VP9 ook
-  zonder `-g` op 0, 2, 4 en 6 s (V5); `-g 100000` staat er voor de zekerheid.
+  zonder `-g` op 0, 2, 4 en 6 s (V5); `-g 100000` staat er voor de zekerheid. (spike) VP9 met HDR
+  hooguit 720: op 1080 haalt het geen realtime op 3 cores (S11).
+- (spike) Geen `-readrate`: de tegendruk is genoeg (S6).
 
 Remux (video kopiëren, audio kopiëren of omzetten):
 ```
@@ -3169,6 +3349,8 @@ ffmpeg {invoer, met -ss (b_k − 0,5) vóór -i als k > 0} -copyts
 - Elke GOP is een fragment. De app groepeert op de pts van het eerste sample, met de getekende
   offset uit `trun` v1 (Keuze 23), en gooit na een herstart weg wat vóór `b_k` ligt.
 - Zonder `+negative_cts_offsets` komt het eerste beeld 83 ms na het geluid (V4).
+- (spike) Geen `-readrate`: met tegendruk was het eerste segment er na 0,10 s, met `-readrate 1`
+  pas na 7,46 s (S6). Bij MPEG-TS begint de uitvoer na `-ss` op de volgende keyframe (S2).
 
 Ondertitels (alle tekstsporen in één run, Keuze 29):
 ```
@@ -3202,6 +3384,8 @@ ffmpeg {invoer} -map 0:a:0 -vn -sn -dn -map_metadata -1 -c:a {copy | flac}
   -f mp4 -movflags +frag_keyframe+empty_moov+default_base_moof -frag_duration 10000000
   -use_editlist 0 pipe:1
 ```
+(spike) `copy` voor FLAC en AAC; `flac` voor Opus (S8: Opus in fMP4 is niet gapless), ALAC en
+WAV. MP3 gaat rauw als `audio/mpeg`.
 
 De meting (Keuze 26), zonder invoer:
 ```
@@ -3209,7 +3393,8 @@ ffmpeg -f lavfi -i "testsrc2=size=1920x1080:rate=24,noise=alls=20:allf=t" -t 10
   -vf "scale=-2:720" -c:v libx264 -preset veryfast -threads 4 -f null -
 ```
 De worker meet de CPU-tijd van het proces (`getrusage` van het kind). Cores voor 1,0× = CPU-tijd /
-10 s.
+10 s. (spike) `f` = cores voor 1,0× / de cores van dezelfde bench in de sandbox; die referentie
+meet M1. Niet 0,74: dat is de tabelprijs van een bestand, en de bench kost ±2 × zoveel (S7).
 
 En het decoderen van HEVC10 (voor `f_dec`), twee processen met een pipe die de worker maakt:
 ```
@@ -3217,7 +3402,8 @@ ffmpeg -f lavfi -i "testsrc2=size=1920x1080:rate=24" -t 4 -c:v libx265 -preset u
   -pix_fmt yuv420p10le -f hevc pipe:1
 ffmpeg -f hevc -i pipe:0 -f null -
 ```
-Alleen de CPU-tijd van het tweede proces telt. `f_dec` = (CPU-tijd / 4 s) / 0,31.
+Alleen de CPU-tijd van het tweede proces telt. `f_dec` = (CPU-tijd / 4 s) / 0,31. (spike) Ook
+voor `f_dec` meet M1 de referentie van deze bench in de sandbox (S7: 0,82–0,86 op de runner).
 
 Een bron voor de belastingtest (`synth`, §4.6), naar een fd die de app opent in
 `media/loadtest/`:
@@ -3296,6 +3482,9 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
   - `/api/v1/stream/{sid}/file` volgt dezelfde regel (regel 8).
 - **F2. `HEAD` op de downloadroutes** (N2). `api_route(…, methods=["GET", "HEAD"])`. De
   `FileResponse` van Starlette stuurt bij HEAD alleen de koppen [doc]. `test_download_head.py`.
+- (spike) S12 mat F1 en F2 vóór de reparatie: 16 gepauzeerde streams gaven na 30,01 s een 500 op
+  `GET /files/root` (3 van 3; met 14 streams 200 in 0,02 s), en `HEAD` gaf 404 op alle drie de
+  routes. Beide zijn nodig zoals hierboven.
 - **F3. Netjes stoppen binnen de grace-periode** (N6). Nu stopt `serve.py` eerst https en pas
   daarna http, en http sluit de lifespan af (`serve.py:337–363`). Zonder office geeft Docker 10 s.
   Een lange stream op https gebruikt die 10 s helemaal, en dan stopt Docker de app met SIGKILL
@@ -3382,12 +3571,13 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
   | `hevc10_hdr10.mkv` (x265 Main10, PQ, mastering-gegevens, AC-3 5.1, AAC nl, SRT nl, ASS met `\an8`, 3 hoofdstukken) | transcode, tone-mapping, ondertitels |
   | `h264_ac3_51.mkv` | video kopiëren, audio omzetten |
   | `xvid_mp3.avi` | transcode (oud) |
-  | `interlaced.ts` (`-flags +ilme+ildct -top 1`, `start_time` 1,4 s) | bwdif, de verschuiving `S` |
+  | `interlaced.ts` (`-flags +ilme+ildct -top 1`, `start_time` 1,4 s) | bwdif, de verschuiving `S`; (spike) zoeken in MPEG-TS zonder index (S2) |
   | `fps23976.mkv` (H.264 op 24000/1001) | het rooster na een herstart (S2) |
   | `multi_audio.mkv` (nl en en, een geforceerd ondertitelspoor) | audiospoor, geforceerd |
   | `subs_text.mkv` (SRT en ASS), losse `nl.srt` (CP1252), `en.ass`, `.nl.forced.srt`, een SRT in UTF-8 met BOM | ondertitels |
-  | `pgs.mkv` (via de eigen `.sup`-schrijver) en `vobsub.mkv` (de eigen `.sup` met `-c:s dvdsub`: beeld naar beeld; uit een SRT kan het niet, V8) | inbranden |
+  | `pgs.mkv` (via de eigen `.sup`-schrijver) en `vobsub.mkv` (de eigen `.sup` met `-c:s dvdsub`: beeld naar beeld; uit een SRT kan het niet, V8). (spike) De `.sup` muxen met `-copyts` (anders 2 s te vroeg); VobSub met `-fix_sub_duration` (anders gaat een ondertitel nooit weg; S9) | inbranden |
   | `fps240.mp4` (640×360, 240 fps, 6 s) | één IDR per 2 s en `-fpsmax 60` (V5) |
+  | (spike) `late_video.mkv` (video vanaf 0,5 s met `-itsoffset 0.5`, audio vanaf 0; het recept komt nog in `fixtures.py`, dat van M0 is) | het rooster aan `origin`, het lange eerste segment, de herstart met `-ss (origin + 2k)` (Keuze 22) |
   | `noaudio.mp4` (H.264 zonder audio) | een plan zonder audio, een mime met alleen video, de lint |
   | `h264_hi10p.mkv` (x264 High 10) | Hi10P in decide (Keuze 19) |
   | `a.ts` en `a.m2ts` (H.264 en HEVC, Annex-B) | de codec-strings (Keuze 16) |
@@ -3401,7 +3591,8 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
 
 - **`api/tests/media/sup.py`:** een eigen schrijver voor PGS (`.sup`). Hij schrijft de segmenten
   PCS, WDS, PDS, ODS en END met een RLE-bitmap van een blok tekst. ffmpeg heeft geen PGS-encoder,
-  maar wel een `sup`-demuxer en kan kopiëren naar mkv [doc; S9].
+  maar wel een `sup`-demuxer en kan kopiëren naar mkv [doc; S9]. (spike) S9: werkt, voor PGS en
+  VobSub, met `-copyts` bij het muxen.
 - **`api/tests/media/fake_worker.py`:** spreekt het protocol van §3.3, over een echte Unix-socket.
   - `probe` geeft opgenomen antwoorden van de echte worker voor elke fixture
     (`tests/media/recorded/probe/*.json`). `python -m tests.media.record` neemt ze opnieuw op als
@@ -3423,7 +3614,9 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
   nep, M4 tegen het echte (`test_media_contract.py`).
 - **`api/tests/media/fake_providers/`:** de nep-server voor TMDB, het plaatjeshost, MusicBrainz en
   de Cover Art Archive (§4.4). M0 maakt de kern (server, fouten op bestelling, logboek, laden van
-  data); M8 vult hem.
+  data); M8 vult hem. (M0) Eén Starlette-app, gerouteerd op de `Host` of een padvoorvoegsel; in
+  de API-tests via `httpx.ASGITransport`, in de e2e als proces (`process.py`) over http op
+  127.0.0.1 (dus met `PLATFORM_MEDIA_PROVIDER_PRIVATE_OK=true`).
 - **`api/tests/media/hls_lint.py`:** een eigen lint voor onze playlists, naar RFC 8216 en de regels
   van Apple en LG [doc]:
   - `#EXTM3U` eerst, LF, UTF-8 zonder BOM;
@@ -3433,6 +3626,12 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
     audio heeft; `BANDWIDTH` ≥ de piek;
   - geen `EXT-X-INDEPENDENT-SEGMENTS` met het basisprofiel `webos-5`, en nooit bij remux;
   - alleen relatieve URI's; geen query behalve `g=`.
+  - (spike) bij transcode mag alleen het eerste segment langer zijn dan 2 s (`origin + 2`), en
+    is `TARGETDURATION` 2 of die duur afgerond; elk ander segment is afgerond ≤ 2
+    (`extinf_grid`). Verder eist hij wat §2 M4 zegt: `EXTINF` met 3 decimalen, bij remux
+    `TARGETDURATION` = het langste segment naar boven afgerond, één variant met `RESOLUTION`,
+    `FRAME-RATE` en `VIDEO-RANGE`, en `EXT-X-INDEPENDENT-SEGMENTS` bij transcode (behalve
+    `webos-5`).
 
   Met eigen tests (goede en kapotte playlists). `test_media_hls.py` (M4) gebruikt hem.
 - **`e2e/media_harness.py`** en **`e2e/conftest.py`**:
@@ -3492,6 +3691,15 @@ contracten bevriezen die op 7.1.5 nooit draaiden. Nu:
 | S12 | sandbox | F1 en F2: 16 gepauzeerde streams vóór en na; `HEAD` | de reparatie |
 | S13 | CI | Chrome for Testing 156 in de job `e2e-media-perf`: de browserversie, en wat `isTypeSupported` zegt voor `avc1.640028` en `mp4a.40.2` (in het artefact) | of de e2e-job `MEDIA_REQUIRE_H264=1` zet (§4.8) |
 
+(spike) **De uitkomst** (28 oktober 2026; [spike.md](spike.md)): elke stap is gedraaid behalve
+S13, die later in `e2e-media-perf` draait. Geen enkele stap heeft een terugval hieronder nodig.
+S1–S12 in het kort: S1 alles er, `lavfi` onder `-devices`; S2 60 van 64 zoals verwacht, N uit het
+laatste videobeeld, TS zoekt niet precies; S3 17 van 17, de fd deelt zijn positie; S4 MSE werkt,
+ook met een andere `stsd`, maar een springer is nodig; S5 alleen de `stsd`; S6 0,007 core, geen
+`-readrate`; S7 spreiding 0,7 % en 1,9 %, de referentie van `bench` meet M1; S8 FLAC exact, Opus
+via FLAC, MP3 met `enc_delay`; S9 inbranden werkt, met een tweede fd; S10 alle grenzen aan;
+S11 VP9 = 1,0 × x264, `d_codec` VP9 0,18 en AV1 0,25, VP9 met HDR hooguit 720; S12 F1 en F2 nodig.
+
 **Als een stap faalt:**
 - **S2** (`tfdt` of het rooster gedraagt zich anders op 7.1.5): de knipper zet `tfdt` zelf. Hij
   leest de `moof` toch al, en een vaste verschuiving per run is een paar regels. Valt een keyframe
@@ -3517,6 +3725,9 @@ contracten bevriezen die op 7.1.5 nooit draaiden. Nu:
 - **S13:** zegt CfT 156 nee tegen H.264 of AAC, dan blijft `MEDIA_REQUIRE_H264` uit in CI.
   `spike.md` zegt dat, en H.264 wordt bewezen op de LXC (§4.7, Ma).
 
+(spike) Geen van deze terugvallen is nodig: S2, S3, S4, S9 en S10 slaagden; S5 gaat over Safari
+(fase 9); S13 komt later.
+
 ### 3.8 Klaar als (M0)
 
 - Alle bestaande tests groen; ruff, tsc, build en budget schoon. De eerste lading blijft ≤ 100 KB.
@@ -3538,6 +3749,8 @@ contracten bevriezen die op 7.1.5 nooit draaiden. Nu:
 - De job `media-image` is groen, met de selftest op 7.1 (ook de afscherming van Keuze 11).
 - De spike is gedaan. Het artefact `spike.json` van `media-spike` hoort bij de laatste commit van
   M0. `docs/fase-5/spike.md` heeft een uitkomst per stap, en de commando's van §3.3 liggen vast.
+  (spike) `spike.md` is er, met S13 als open stap voor `e2e-media-perf`; §3.3 en de Keuzes zijn
+  bijgewerkt (§6, "Uitslag van de spike (M0)").
 - De jobs `api-media` en `e2e-media` bestaan, met `timeout-minutes: 20` (§4.8).
 - De keuzes staan als B39 en verder in `docs/fase-0/beslissingen.md` (voorstel), en
   `docs/fase-5/README.md` heeft een skelet.
@@ -3690,7 +3903,7 @@ met metingen op 4 cores, en dan valt de eerste start te mooi uit (V7).
 | Mg | De API onder belasting | p95 van `GET /api/v1/files/root` en `/api/v1/media/home` tijdens Md | ≤ 200 ms | — |
 | Mh | Geheugen | de hoogste RSS van de worker tijdens Md en Mf | ≤ 3 GB | 0,75–1,3 GB |
 | Mi | Voortgang synchroniseren | PUT in A tot het event in B, 20 keer | p95 ≤ 2 s | < 0,1 s (de hub zit in het geheugen) |
-| Mj | Kosten van het knippen | de CPU van de app per stroom (S6) | ≤ 0,05 core | niet gemeten |
+| Mj | Kosten van het knippen | de CPU van de app per stroom (S6) | ≤ 0,05 core | niet gemeten; (spike) het prototype in S6: ≈ 0,007 core voor 3 × 6 Mbit/s, 1,2 ms CPU per MB bij remux |
 | Mk | De factor `f` | voorspelde snelheid tegen gemeten, per trede | binnen 15 % | — |
 | Ml | Scannen | een bibliotheek van 1.000 bestanden, zonder analyse | ≤ 60 s | niet gemeten |
 | Mm | Tegendruk | de CPU van een producent die 30 segmenten voor ligt | ≈ 0 | 0,14 s CPU in 4 s (D6) |
@@ -3887,17 +4100,17 @@ containers) kan anders uitvallen.
 |---|---|---|---|
 | Een lek in ffmpeg via een kwaadaardig bestand | laag tot middel | hoog | Keuze 11 en 12: geen netwerk, geen data, alleen lezen, geen rechten, een eigen uid (10002), `protocol_whitelist fd,pipe`, `format_whitelist`, `-max_alloc`, `-max_pixels` en `RLIMIT_DATA`, een argv uit vaste lijsten; ffmpeg uit Debian met beveiligingsupdates via het image |
 | Een gekraakte ffmpeg schrijft in een blob, of leest of stoort een andere job | laag | middel | Keuze 11 (V1, V2): de worker is uid 10002, dus een blob van 10001 gaat via `/proc/self/fd` niet open om te schrijven; ffmpeg is 0711 en de worker zet `PR_SET_DUMPABLE 0`, dus `/proc/<pid>/fd` van een buur is dicht; de app maakt elke pipe; de zelftest in het image (S3) controleert het. Wat overblijft: een job kan een andere job van dezelfde uid een signaal sturen (hinder, geen lek); per job een uid is te zwaar; staat in het runbook |
-| fd's tussen containers werken niet op de LXC, of het benoemde volume krijgt de verkeerde eigenaar | middel | middel | J1 en V2 werkten in de sandbox, ook in Docker (de map 2750 `media:platform`, de socket 0660); S3 met het echte image; de terugval in drie stappen (§3.7), de eerste met een bindkoppeling die `install.sh` maakt; `install.sh` stopt nooit |
-| ffmpeg 7.1.5 gedraagt zich anders dan 6.1.1 (`tfdt`, `frag_discont`, `force_key_frames`, `fd:`) | middel | middel | S1 en S2 in het image; de selftest is een harde poort in CI; de argv als golden files; de terugval "de knipper zet `tfdt`" |
+| fd's tussen containers werken niet op de LXC, of het benoemde volume krijgt de verkeerde eigenaar | middel | middel | J1 en V2 werkten in de sandbox, ook in Docker (de map 2750 `media:platform`, de socket 0660); S3 met het echte image; de terugval in drie stappen (§3.7), de eerste met een bindkoppeling die `install.sh` maakt; `install.sh` stopt nooit. (spike) S3 slaagde in CI (17 van 17); op de LXC bewijst de zelftest het. De fd deelt zijn positie: `lseek` vóór elke exec (Keuze 12) |
+| ffmpeg 7.1.5 gedraagt zich anders dan 6.1.1 (`tfdt`, `frag_discont`, `force_key_frames`, `fd:`) | middel | middel | S1 en S2 in het image; de selftest is een harde poort in CI; de argv als golden files; de terugval "de knipper zet `tfdt`". (spike) S1 en S2 draaiden: `tfdt`, `frag_discont`, `force_key_frames` en `fd:` zoals verwacht; anders waren N (nu uit het laatste videobeeld), zoeken in MPEG-TS, en `lavfi` onder `-devices` |
 | De CPU van Jonas is trager dan de sandbox | middel | middel | `bench` en de factor `f`; de toelating valt een trede terug; de belastingtest op de LXC; Vraag 2 en 3 |
 | OnlyOffice en drie transcodes tegelijk: haperen | middel | middel | het budget 3,0; `B − 1,0` zolang DS start of fonts maakt (Keuze 26); de reserve in de toelating; de tegendruk in seconden; `cpus: 3.0` op de worker; Md meet het samen met OnlyOffice, ook met een herstart van DS (fase d van de belastingtest) |
-| Het rooster van 2 s geeft meer verzoeken (één per 2 s per kijker) en een playlist van ±70 KB | hoog | laag | de sessie staat in het geheugen; geen database per segment; Mj meet de app; gzip op de playlist |
-| Een keyframe valt na een herstart één frame anders (23,976 fps) | middel | laag | S2 met `fps23976.mkv`; MSE overschrijft een frame, de speler springt over een gat van één frame |
-| Een gat in de audio na een herstart (32–54 ms, D4) | hoog | laag | de speler springt over gaten tot 0,5 s; S4 |
-| De init verandert na een herstart, en native HLS raakt in de war | laag tot middel | middel | de vergelijking van de `stsd` (S5); bij native HLS een nieuwe sessie op die plek (410); `/beheer` telt het |
+| Het rooster van 2 s geeft meer verzoeken (één per 2 s per kijker) en een playlist van ±70 KB | hoog | laag | de sessie staat in het geheugen; geen database per segment; Mj meet de app; gzip op de playlist. (spike) Het knippen kostte in S6 ≈ 0,007 core voor drie streams |
+| Een keyframe valt na een herstart één frame anders (23,976 fps) | middel | laag | S2 met `fps23976.mkv`; MSE overschrijft een frame, de speler springt over een gat van één frame. (spike) S2: na een herstart hetzelfde rooster bij elke bron waarvan de video binnen één frame na S begint, ook `fps23976.mkv`; een late videostart vraagt `-ss (origin + 2k)` (Keuze 22) |
+| Een gat in de audio na een herstart (32–54 ms, D4) | hoog | laag | de speler springt over gaten tot 0,5 s; S4. (spike) Chromium springt niet zelf: 54 ms gaf ≥ 10 s stilstand. De springer na 250 ms is dus nodig, en werkt (260 ms; Keuze 32) |
+| De init verandert na een herstart, en native HLS raakt in de war | laag tot middel | middel | de vergelijking van de `stsd` (S5); bij native HLS een nieuwe sessie op die plek (410); `/beheer` telt het. (spike) S5: de `stsd` is na elke herstart gelijk; een andere `stsd` speelt in Chromium in dezelfde SourceBuffer (S4) |
 | Safari, iOS, webOS en Firefox zijn niet getest | hoog | middel | het profiel komt uit de browser zelf; basisprofielen met vlaggen per toestel; de playlists volgen RFC 8216 en de regels van Apple en LG, met een eigen lint; echte toestellen in fase 9 |
-| De codecs van Chrome for Testing 156 in CI zijn anders dan verwacht | middel | laag | S13 legt in `e2e-media-perf` vast wat CfT 156 zegt over `avc1` en `mp4a`; bij ja zet de e2e-job `MEDIA_REQUIRE_H264=1`, en dan faalt een H.264-test in plaats van over te slaan; bij nee bewijst de LXC H.264 (Ma); VP9, AV1 en Opus dekken de speler |
-| Tone-mapping ontbreekt in het image (geen libzimg) | laag | middel | S1; dan 422 `media_hdr` met "zonder kleurcorrectie" (Keuze 27) |
+| De codecs van Chrome for Testing 156 in CI zijn anders dan verwacht | middel | laag | S13 legt in `e2e-media-perf` vast wat CfT 156 zegt over `avc1` en `mp4a`; bij ja zet de e2e-job `MEDIA_REQUIRE_H264=1`, en dan faalt een H.264-test in plaats van over te slaan; bij nee bewijst de LXC H.264 (Ma); VP9, AV1 en Opus dekken de speler. (spike) S13 is nog niet gedraaid |
+| Tone-mapping ontbreekt in het image (geen libzimg) | laag | middel | S1; dan 422 `media_hdr` met "zonder kleurcorrectie" (Keuze 27). (spike) S1: `zscale` en `tonemap` zijn er in 7.1.5, en de keten draait; de selftest houdt het zo |
 | Lange streams houden de databaseverbindingen vast | was hoog | hoog | F1; regel 8; `test_download_pool.py` |
 | Een update midden in een film | middel | laag | F3: https en http stoppen samen binnen 10 s, de mediasessies eerst, `stop_grace_period: 30s`; de speler probeert het opnieuw zolang er buffer is plus 120 s en kijkt naar `/api/v1/health` (Keuze 32); bij 410 een nieuwe sessie op de plek; e2e met `outage_s=30`; `media-status --sessions` waarschuwt vooraf |
 | Een gestopte sessie start vanzelf opnieuw | middel | middel | een grafsteen: een sessie die de app sloot, geeft 30 minuten 403 met de reden, niet 410 (§3.3) |
@@ -3912,18 +4125,21 @@ containers) kan anders uitvallen.
 | SSRF via een omleiding of een DNS-truc van een provider | laag | middel | alleen vaste hosts; omleidingen alleen naar de lijst; de controle zit in het verbinden: één keer opzoeken, het adres controleren, en met dát adres verbinden (SNI en Host op de naam), bij elke omleiding opnieuw (Keuze 39); een test met een nep-resolver die de tweede keer `127.0.0.1` geeft |
 | De nep-providers wijken af van de echte | middel | middel | gebouwd naar de documentatie; `provider-shapes.json` met de echte vormen; `provider_real` met de hand; alles achter één adapter |
 | De parser kiest een verkeerde titel | middel | laag | de testset van ≥ 500; NFO en id's in de naam gaan voor; "Weinig zeker" op `/beheer`; corrigeren met `locked` |
-| Gapless klopt niet voor MP3 of AAC zonder `iTunSMPB` | middel | laag | eerlijk in de README; FLAC en Opus zijn bewezen (S8, e2e 8) |
+| Gapless klopt niet voor MP3 of AAC zonder `iTunSMPB` | middel | laag | eerlijk in de README; FLAC en Opus zijn bewezen (S8, e2e 8). (spike) S8: MP3 is exact in Chromium 141 met delay = `enc_delay`; Opus alleen via FLAC (de cache is dan ±9 × zo groot) |
 | Gapless meten werkt headless niet (AudioWorklet achter MSE) | middel | laag | de terugval op `buffered` en de grenzen van `appendWindow`, met een eerlijke melding |
-| De PGS-fixture via de eigen `.sup`-schrijver werkt niet | middel | laag | S9; VobSub komt uit dezelfde `.sup` met `-c:s dvdsub` (V8 deed dat op 6.1.1); anders schuift inbranden (§5) |
+| De PGS-fixture via de eigen `.sup`-schrijver werkt niet | middel | laag | S9; VobSub komt uit dezelfde `.sup` met `-c:s dvdsub` (V8 deed dat op 6.1.1); anders schuift inbranden (§5). (spike) S9: werkt voor PGS en VobSub, met `-copyts` bij het muxen en `-fix_sub_duration` voor VobSub |
 | ManagedMediaSource op de iPhone werkt anders, of iemand mist AirPlay | middel | laag | native HLS als terugval; AirPlay valt alleen weg bij MMS |
-| `RLIMIT_FSIZE`, `RLIMIT_DATA` of `-threads 4` hindert ffmpeg | middel | laag | S10; V6 mat `RLIMIT_DATA` 1.200 MB met 4K HEVC naar 720 (RSS 520 MB); breekt het x264 op 1080, dan 2.000 MB voor live (de container heeft 3 GB); zonder `RLIMIT_FSIZE` blijven de bewaking van de RSS en de grens van de container |
+| `RLIMIT_FSIZE`, `RLIMIT_DATA` of `-threads 4` hindert ffmpeg | middel | laag | S10; V6 mat `RLIMIT_DATA` 1.200 MB met 4K HEVC naar 720 (RSS 520 MB); breekt het x264 op 1080, dan 2.000 MB voor live (de container heeft 3 GB); zonder `RLIMIT_FSIZE` blijven de bewaking van de RSS en de grens van de container. (spike) S10: alle grenzen werken op 1080 veryfast, `RLIMIT_FSIZE` 0 gaat aan, en `-threads 4` kost niets |
 | Testen raken de grenzen van de sandbox (3 ffmpeg, 8 GB, 3 GB scratch) | laag | middel | `PLATFORM_MEDIA_MAX_PROCS=3` in het harnas en de belastingtest (de worker dwingt het af, stervende processen tellen mee); `ffmpeg_count` kijkt elke 0,5 s en faalt bij een vierde; fixtures ±60 MB; de bronnen van de belastingtest uit `synth` (±675 MB, ±3 minuten) |
 | Eén proces: sessies, toelating en de SSE-hub in het geheugen | — | — | goed voor standalone; het cluster vraagt later routering op de naam van de node en een broker (Keuze 48) |
-| Safari speelt `trun` versie 1 (negatieve offsets) niet goed via native HLS | laag tot middel | middel | hier niet te testen; een apparaattest in fase 9; de terugval is een `elst` in de init die de vertraging terugzet, of de knipper telt de offset bij `tfdt` op [niet getest] (Keuze 22, §3.7) |
-| De kosten van 4K, VP9 en AV1 als bron kloppen niet | middel | middel | `d_codec` voor VP9 en AV1 is geschat; S11 meet het; een plan boven 1,8 × `f` telt dubbel; HDR boven 1920×1088 wordt geweigerd; de belastingtest op de LXC |
+| Safari speelt `trun` versie 1 (negatieve offsets) niet goed via native HLS | laag tot middel | middel | hier niet te testen; een apparaattest in fase 9; de terugval is een `elst` in de init die de vertraging terugzet, of de knipper telt de offset bij `tfdt` op [niet getest] (Keuze 22, §3.7). (spike) Ook in Chromium is `trun` v1 met B-frames nog niet getest (geen H.264 in Playwright); dat komt met S13 |
+| De kosten van 4K, VP9 en AV1 als bron kloppen niet | middel | middel | `d_codec` voor VP9 en AV1 is geschat; S11 meet het; een plan boven 1,8 × `f` telt dubbel; HDR boven 1920×1088 wordt geweigerd; de belastingtest op de LXC. (spike) S11 mat VP9 0,150 en AV1 0,222 (nu 0,18 en 0,25); VP9 met HDR hooguit 720 |
 | Mb haalt 2,5 s niet op 3 cores | middel | laag | V7 mat 2,59 s voor 1080 alleen; daarom ≤ 2,5 s als mediaan en ≤ 3,0 s als slechtste; naast 2 andere ≤ 5 s; de startvoorrang; de toelating kiest anders een lagere trede |
 | De import kan in de unprivileged LXC niet lezen of verplaatsen | hoog | laag | het commando voor de Proxmox-host `chown -R 110001:110001 /tank/platform/import` (README, Vraag 1); de import zegt vooraf wat niet te lezen of te verplaatsen is en stelt kopiëren voor; een test met een bestand van een andere uid |
 | De planning loopt uit (±22 dagen) | middel | laag | de lijst hierboven van wat als eerste schuift; de kern schuift nooit |
+| (spike) Een herstart van een MPEG-TS-bron mist tot één GOP: zonder index begint de uitvoer na `-ss` op de volgende keyframe (S2) | middel | laag | M4 kiest de aanpak (eerder beginnen en weggooien wat vóór de grens ligt, of TS altijd vanaf een keyframe uit de index); `interlaced.ts` in `test_media_restart.py` (Keuze 22) |
+| (spike) Bij inbranden mist na een herstart een ondertitel die langer dan 30 s staat | laag | laag | de tweede fd begint 30 s eerder (S9); netter is de begintijd uit de stap `subs` (M5) |
+| (spike) De referentie van `bench` klopt niet: 0,74 is de prijs van een bestand, de bench kost ±2 × zoveel (S7) | hoog zolang niet gemeten | middel | M1 meet de referentie van `bench` en `f_dec` in de sandbox; tot er gemeten is, is `f` 1,0 (Keuze 26); Mk controleert de voorspelling |
 
 ---
 
@@ -3995,6 +4211,37 @@ anders deed of een deel niet overnam, staat dat onder "Afgewezen kritiek", met d
 | R21. B = 3,0 rekende op één vrije core, maar office mag zelf 2 cores. Na een herstart maakt DS zijn fonts opnieuw, precies als alle streams terugkomen. Md testte geen herstart van DS. | Zolang de office-monitor zegt dat DS start of fonts maakt, is het budget `B − 1,0`. Lopende streams lopen door; nieuwe plannen krijgen een lagere trede. Fase d van de belastingtest en een run in Md: een herstart van DS midden in de test. Keuze 26, §4.5, §4.6. |
 | R22. De duur van CI was niet begroot. De mediatests kwamen in de bestaande jobs, en `e2e` had geen `timeout-minutes`. | Twee eigen jobs naast de rest: `api-media` (`-m media`) en `e2e-media`, elk met `timeout-minutes: 20`. Een eigen deadline per test in het harnas. De verwachte duur staat in §4.8. |
 | R23. `chown -R 10001:10001` werkt niet in een unprivileged LXC: bestanden van de host zijn daar 65534, en root in de LXC kan ze niet chownen. | Het commando voor de Proxmox-host: `chown -R 110001:110001 /tank/platform/import` (10001 plus de offset 100000). Dat verzwakt niets. De import zegt vooraf wat niet te lezen of te verplaatsen is, en stelt dan kopiëren voor. Test in `test_media_import.py`: een bestand van een andere uid komt in "overgeslagen". Keuze 2, Vraag 1, M10. |
+
+### Uitslag van de spike (M0)
+
+Geen kritiek, maar een meting. De spike (S1 tot S12: in CI op het echte image en in de sandbox;
+S13 draait later in `e2e-media-perf`) legde de commando's van de worker vast. Geen enkele stap
+had een terugval van §3.7 nodig: `compose.media.yaml` blijft zoals Keuze 11, de tone-mapping van
+Keuze 27 is er, en inbranden blijft in fase 5. §3.3 en de Keuzes zijn bijgewerkt naar
+[spike.md](spike.md), en elke plek die veranderde, staat erin met "(spike)". Revisie 2 blijft
+verder de tekst. Wat er anders is dan hierboven:
+
+| Uitkomst | Bijgewerkt in |
+|---|---|
+| Een fd uit `SCM_RIGHTS` deelt zijn positie (S3). Dus `lseek` vóór elke exec, één kind per fd, de blob per opdracht opnieuw open, `recvmsg` met `MSG_CMSG_CLOEXEC`, `dup2` alleen in het kind, en de app sluit de pipe zelf | Keuze 12, §3.3, M1 |
+| `lavfi` staat in 7.1 onder `-devices` (S1), en komt nooit in de witte lijst van een invoer-fd | Keuze 12, §3.3, M1 (de zelftest) |
+| Het rooster hangt aan het eerste videobeeld (`origin`): segment 0 loopt tot `origin + 2`, een herstart begint met `-ss (origin + 2k)`, en N komt uit het laatste videobeeld (S2, nagemeten in spike.md) | Keuze 22, 25, §3.3, M4, §3.6 (de lint) |
+| MPEG-TS zoekt niet precies (S2); M4 kiest de aanpak | Keuze 22, 23, 25, §5.1 |
+| Alleen de `stsd` telt, en er is geen `elst` (S5); een andere `stsd` speelt in dezelfde SourceBuffer (S4) | Keuze 22, 32 |
+| Chromium springt niet zelf over een gat (S4): de springer gaat na 250 ms | Keuze 25, 32, M6 |
+| Geen `-readrate` (S6) | Keuze 23, 26, §3.3 |
+| `bench` is bruikbaar, maar 0,74 is geen referentie voor de bench (S7); M1 meet hem | Keuze 26, §3.3, §5.1 |
+| Opus via `remux_audio -c:a flac`, MP3 met delay = `enc_delay` (S8) | Keuze 18, 38, §3.3, M9 |
+| Inbranden met de ondertitels uit een tweede fd, 30 s eerder; eerst schalen, dan `overlay` (S9) | Keuze 24, 29, §3.3, §3.6, M5 |
+| `RLIMIT_FSIZE` 0 gaat aan, en `-threads 4` kost niets (S10) | Keuze 12, §3.3 |
+| `d_codec` VP9 0,18 en AV1 0,25; VP9 met HDR hooguit 720 (S11); level 3.1 voor 480 boven 25 fps; HEVC met open GOP geeft CRA-keyframes | Keuze 23, 24, 26, 27, §3.3 |
+| F1 en F2 zijn nodig zoals beschreven (S12) | §3.5 |
+| De regel "geen ffmpeg buiten de worker" gaat over `app/` | §2.0, regel 4 |
+
+De keuzes van Jonas (B39–B48) staan nog open; de spike ging uit van de standaard. Wat de spike
+niet kon testen (Safari en Firefox, `trun` v1 met B-frames in een browser, een ondertitel die
+langer dan 30 s staat, de grootte van de cache voor Opus, HDR met VP9 op 7.1.5), staat bij de
+open punten van `spike.md`.
 
 ### Afgewezen kritiek
 
