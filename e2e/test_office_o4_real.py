@@ -178,6 +178,11 @@ def test_een_echte_editor_opent_ook_een_nieuw_engels_werkblad(
     assert node["name"] == "New spreadsheet.xlsx"
     page = real_browsers.context_as(bram, service_workers="block").new_page()
     page.goto(f"/map/{folder}")
+    # Eerst de map af (de knop New staat er pas na de refresh van de sessie), zoals een
+    # gebruiker. Wie weggaat terwijl die refresh loopt, kan uitgelogd raken: de server heeft
+    # het token dan al gebruikt, de browser kreeg het nieuwe cookie nooit, en na REFRESH_RACE
+    # telt dat als hergebruik (bewust, docs/fase-3/README.md)
+    expect(page.get_by_role("button", name="New", exact=True)).to_be_visible()
     page.goto(f"/bewerken/{node['id']}")
     status = page.locator(".editor-status")
     expect(status).to_have_text(re.compile(r"^Editing"), timeout=120_000)
