@@ -1,6 +1,6 @@
 [project]
 name = "platform-api"
-version = "0.5.0"
+version = "0.6.0"
 description = "Kern-API van het alles-in-één file/office/media-platform"
 requires-python = ">=3.12"
 dependencies = [
