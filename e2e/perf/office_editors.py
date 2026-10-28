@@ -125,6 +125,7 @@ async def run_crowd(
         opened = [e for e in crowd.editors if e.opened_s is not None]
         for e in opened:
             await crowd.status(e)
+            await crowd.editor_text(e)
         t["close"] = time.monotonic()
         await asyncio.gather(*(crowd.close(e) for e in opened))
         t["closed_clicks"] = time.monotonic()
@@ -204,6 +205,9 @@ def one_round(
         "typed": sum(p["words"]["typed"] for p in per_doc_out),
         "saved": sum(p["words"]["saved"] for p in per_doc_out),
         "missing_near": sum(p["words"]["missing_near"] for p in per_doc_out),
+        "shown_known": sum(p["words"]["shown_known"] for p in per_doc_out),
+        "not_shown": sum(p["words"]["not_shown_n"] for p in per_doc_out),
+        "lost_saving": sum(p["words"]["lost_saving_n"] for p in per_doc_out),
         "phases": {
             name: {
                 "ds": watch.between(a, b),
@@ -221,7 +225,8 @@ def one_round(
     typ = out["phases"]["typing"]
     print(
         f"ronde {n}: {out['opened']}/{out['editors']} open (mediaan {out['opened_s']['median']} s),"
-        f" {out['saved']}/{out['typed']} woorden opgeslagen, DS"
+        f" {out['saved']}/{out['typed']} woorden opgeslagen (in de editor maar niet in het"
+        f" bestand: {out['lost_saving']}; nooit in de editor: {out['not_shown']}), DS"
         f" {typ['ds'].get('cores_avg')} cores (max {typ['ds'].get('cores_max_1s')}),"
         f" {typ['ds'].get('rss_mb_max')} MB; app {typ['machine'].get('app_cores_avg')} cores,"
         f" {typ['machine'].get('app_rss_mb_max')} MB; vrij"
@@ -292,6 +297,13 @@ def summarize(result: dict[str, Any]) -> dict[str, Any]:
         "all_saved": all(r["saved"] == r["typed"] for r in rr),
         "missing": sum(r["typed"] - r["saved"] for r in rr),
         "missing_near": sum(r["missing_near"] for r in rr),
+        # Met de tekst van elke editor zelf: weg bij het opslaan, en nooit in de editor
+        "shown_known": sum(r.get("shown_known", 0) for r in rr),
+        "not_shown": sum(r.get("not_shown", 0) for r in rr),
+        "lost_saving": sum(r.get("lost_saving", 0) for r in rr),
+        "none_lost_saving": all(
+            r.get("lost_saving", 0) == 0 and r.get("shown_known", 0) == r["typed"] for r in rr
+        ),
         "opened_s_median": ob.stats([r["opened_s"]["median"] for r in rr if r["opened_s"]["n"]]),
         "opened_s_max": max((r["opened_s"]["max"] or 0) for r in rr) if rr else None,
         "save_s": ob.stats([r["save_s"] for r in rr], 1),
@@ -343,7 +355,13 @@ def check(result: dict[str, Any]) -> list[str]:
         if gate and r["saved"] != r["typed"]:
             errors.append(
                 f"ronde {r['round']}: {r['typed'] - r['saved']} van {r['typed']} woorden niet"
-                f" opgeslagen ({r['missing_near']} met één teken verschil)"
+                f" opgeslagen ({r['missing_near']} met één teken verschil,"
+                f" {r.get('not_shown', 0)} had de editor zelf al niet)"
+            )
+        if r.get("lost_saving"):
+            errors.append(
+                f"ronde {r['round']}: {r['lost_saving']} woorden stonden in de editor maar niet"
+                " in het opgeslagen bestand"
             )
         for p in r["per_doc_results"]:
             if p["status2"] != 1:

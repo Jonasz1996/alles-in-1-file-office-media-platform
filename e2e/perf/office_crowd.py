@@ -51,6 +51,16 @@ START_PAUSE_S = 2.0
 READY_TIMEOUT_MS = 180_000
 CLOSE_S = 15.0
 WORD = re.compile(r"[a-z0-9]+")
+# De tekst van het hele document zoals deze editor hem heeft (sdkjs: alles selecteren en de
+# selectie als tekst, dezelfde aanroep als een plug-in). Alleen de selectie van deze editor
+# verandert; er wordt daarna niet meer getypt.
+EDITOR_TEXT_JS = """() => {
+  const ed = window.editor || (window.Asc && window.Asc.editor);
+  if (!ed || !ed.asc_EditSelectAll || !ed.pluginMethod_GetSelectedText) return null;
+  ed.asc_EditSelectAll();
+  return ed.pluginMethod_GetSelectedText(
+    {Numbering: false, Math: false, NewLineSeparator: String.fromCharCode(10)});
+}"""
 
 
 # --- de sampler ---
@@ -195,6 +205,7 @@ class Editor:
     words: list[tuple[str, float]] = field(default_factory=list)  # (woord, time.monotonic)
     page_errors: int = 0
     typing_errors: list[str] = field(default_factory=list)
+    shown: str | None = None  # de tekst die de editor zelf had (editor_text), kleine letters
 
     @property
     def prefix(self) -> str:
@@ -423,6 +434,15 @@ class Crowd:
         await asyncio.gather(*(self.type_for(e, seconds, stop) for e in ready))
         return time.monotonic() - t0
 
+    async def editor_text(self, editor: Editor) -> str | None:
+        """De tekst die de editor zelf heeft (EDITOR_TEXT_JS), hooguit 10 s; ook in editor.shown."""
+        frame = editor.page.frame(name="frameEditor") if editor.page else None
+        if frame is None:
+            return None
+        ok, text = await _within(frame.evaluate(EDITOR_TEXT_JS), 10)
+        editor.shown = text.lower() if ok and isinstance(text, str) else None
+        return editor.shown
+
     async def status(self, editor: Editor) -> str:
         """De laatste statusregel; een renderer die vastzit antwoordt niet, dus hooguit 5 s."""
         with contextlib.suppress(Exception):
@@ -493,7 +513,19 @@ def check_words(data: bytes, editors: list[Editor], *, before: float | None = No
     # Een ander getypt woord telt niet als "bijna": w003 weg en w002 er, is gewoon weg
     others = tokens - {w for w, _ in typed}
     found = {w: near_token(w, others) for w in missing}
+    # Met de tekst van de editors zelf: wat de editor had maar niet in het bestand staat, is weg
+    # bij het opslaan; wat de editor zelf al niet had, kwam nooit binnen (een toets die viel)
+    pairs = [(w, t, e) for e in editors for w, t in e.words if before is None or t <= before]
+    seen = [(w, e) for w, _t, e in pairs if e.shown is not None]
+    shown = [w for w, e in seen if is_saved(w, e.shown or "")]
+    shown_set = set(shown)
     return {
+        "shown_known": len(seen),
+        "shown": len(shown),
+        "not_shown": [w for w, _e in seen if w not in shown_set][:20],
+        "not_shown_n": len(seen) - len(shown),
+        "lost_saving": [w for w in shown if not is_saved(w, text)][:20],
+        "lost_saving_n": sum(1 for w in shown if not is_saved(w, text)),
         "typed": len(early),
         "saved": len(early) - len(missing),
         "glued": sum(1 for w in early if w not in tokens and is_saved(w, text)),

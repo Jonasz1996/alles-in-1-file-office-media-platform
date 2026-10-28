@@ -123,7 +123,7 @@ async def _type_then(
     trigger: Any,
 ) -> dict[str, Any]:
     """Openen, typen (seconds, of tot trigger() een moment geeft), dan action in een thread.
-    trigger(stop_event) draait in een thread naast het typen en geeft de actie terug."""
+    trigger(stop_event, typing, crowd) draait naast het typen en geeft de actie terug."""
     out: dict[str, Any] = {}
     async with oc.Crowd(bench.server, sampler) as crowd:
         out["t_open"] = time.monotonic()
@@ -131,7 +131,7 @@ async def _type_then(
         out["t_typing"] = time.monotonic()
         stop = asyncio.Event()
         typing = asyncio.create_task(crowd.type_all(seconds or 3600.0, stop))
-        out.update(await trigger(stop, typing))
+        out.update(await trigger(stop, typing, crowd))
         stop.set()
         await asyncio.gather(typing, return_exceptions=True)
         out["browser"] = crowd.version
@@ -149,9 +149,12 @@ def stop_round(
     seen = len(clock.exchanges)
     sampler = oc.Sampler(bench.pid, min_free=oe.LOW_FREE).start()
 
-    async def trigger(stop: asyncio.Event, typing: asyncio.Task) -> dict[str, Any]:
+    async def trigger(stop: asyncio.Event, typing: asyncio.Task, crowd: Any) -> dict[str, Any]:
         await typing  # seconds s typen
         await asyncio.sleep(3)
+        for e in editors:  # wat elke editor zelf heeft, vlak voor de stop
+            if e.opened_s is not None:
+                await crowd.editor_text(e)
         t = time.monotonic()
         result = await asyncio.to_thread(ob.ds_stop, ds_name, 60)
         return {"t_stop": t, "stop": result}
@@ -199,6 +202,8 @@ def stop_round(
         "typed": sum(p["right_after_stop"]["typed"] for p in per_doc),
         "saved_right_after": sum(p["right_after_stop"]["saved"] for p in per_doc),
         "saved_after_restart": sum(p["after_restart"]["saved"] for p in per_doc),
+        "lost_saving": sum(p["after_restart"]["lost_saving_n"] for p in per_doc),
+        "not_shown": sum(p["after_restart"]["not_shown_n"] for p in per_doc),
         "machine": sampler.between(t["t_open"], t["t_stop"]),
     }
     print(
@@ -234,7 +239,7 @@ def kill_round(
                 found[node] = e  # de laatste per document
         return found
 
-    async def trigger(stop: asyncio.Event, typing: asyncio.Task) -> dict[str, Any]:
+    async def trigger(stop: asyncio.Event, typing: asyncio.Task, _crowd: Any) -> dict[str, Any]:
         end = time.monotonic() + TIMER_WAIT_S
         found: dict[str, ob.Exchange] = {}
         while time.monotonic() < end and len(found) < len(nodes) and not typing.done():
@@ -395,6 +400,8 @@ def summarize(result: dict[str, Any]) -> dict[str, Any]:
             "saved_after_restart": [r["saved_after_restart"] for r in rr],
             "all_saved": all(r["saved_after_restart"] == r["typed"] for r in rr),
             "all_saved_right_after": all(r["saved_right_after"] == r["typed"] for r in rr),
+            "lost_saving": sum(r.get("lost_saving", 0) for r in rr),
+            "not_shown": sum(r.get("not_shown", 0) for r in rr),
             "restart_s": ob.stats([r["restart"].get("fonts_done_s") or 0 for r in rr], 0),
             "callback_after_stop_s": ob.stats(
                 [
