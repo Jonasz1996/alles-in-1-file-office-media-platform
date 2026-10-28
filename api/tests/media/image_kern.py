@@ -126,7 +126,9 @@ async def run(args: argparse.Namespace, uit: Uitkomst) -> dict:
             caps = await client.caps()
             out["caps"] = caps.model_dump(mode="json", exclude={"encoders", "filters"})
             log("== caps")
-            uit.check("caps: PROTOCOL", caps.protocol == wire.PROTOCOL, wire.PROTOCOL, caps.protocol)
+            uit.check(
+                "caps: PROTOCOL", caps.protocol == wire.PROTOCOL, wire.PROTOCOL, caps.protocol
+            )
             uit.check(
                 f"caps: ffmpeg {args.ffmpeg}x",
                 (caps.ffmpeg or "").startswith(args.ffmpeg)

@@ -27,6 +27,56 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest -q
 
+  # Fase 5 (§4.8): de tests met de marker media, met de lokale worker en echte ffmpeg (6.1 van
+  # Ubuntu), naast de rest. Alles onder taskset -c 0-2: de tests, de worker en elke ffmpeg op 3
+  # cores, zoals op de LXC. De job api slaat media over (addopts in api/pyproject.toml).
+  api-media:
+    name: API media (lokale worker en echte ffmpeg)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: ffmpeg (6.1 van Ubuntu)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --frozen
+      - name: Versies en cores
+        run: |
+          ffmpeg -hide_banner -version | head -n 1
+          ffprobe -hide_banner -version | head -n 1
+          n="$(nproc)"
+          echo "cores: $n"
+          # taskset -c 0-2; een runner met minder dan 3 cores krijgt ze allemaal, met een waarschuwing
+          if [ "$n" -ge 3 ]; then cores=0-2; else cores="0-$((n - 1))"; echo "::warning::maar $n cores: taskset -c $cores"; fi
+          echo "CORES=$cores" >> "$GITHUB_ENV"
+      - name: De fixtures maken (§3.8, ≤ 30 s; geen cache)
+        run: |
+          taskset -c "$CORES" uv run python -c '
+          import time
+          from tests.media import fixtures
+          t = time.monotonic()
+          n = len(fixtures.make_all())
+          s = time.monotonic() - t
+          print(f"{n} fixtures in {s:.1f} s")
+          if s > 30:
+              print(f"::warning::de fixtures duurden {s:.1f} s, meer dan de 30 s van §3.8")
+          '
+      - name: pytest -m media
+        run: |
+          set -o pipefail
+          taskset -c "$CORES" uv run pytest -q -m media -rs | tee "$RUNNER_TEMP/pytest.txt"
+          # Overslaan omdat ffmpeg ontbreekt telt als mislukt. Wat de worker nog niet doet (stream,
+          # tot M4) mag overslaan, met de reden in de uitvoer (-rs)
+          if grep -q "^SKIPPED .*ffmpeg ontbreekt" "$RUNNER_TEMP/pytest.txt"; then
+            echo "Tests met media overgeslagen: ffmpeg ontbreekt" && exit 1
+          fi
+          grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/pytest.txt"
+
   acme:
     name: HTTPS (certificaat van Pebble, de test-CA van Let's Encrypt)
     runs-on: ubuntu-latest
@@ -101,7 +151,8 @@ jobs:
         run: npm ci && npm run build
       - name: Chromium voor Playwright
         run: uv run --with playwright python -m playwright install --with-deps chromium
-      - run: uv run --with playwright pytest ../e2e -m "not perf and not office and not office_real"
+      # Zonder media (fase 5, §4.8): die draait in e2e-media en e2e-media-perf
+      - run: uv run --with playwright pytest ../e2e -m "not perf and not media and not media_perf and not office and not office_real and not provider_real"
       - name: Office met de nep-DS (marker office, fase 4 §4.4; in elke run)
         run: uv run --with playwright pytest ../e2e -m office
 
@@ -204,6 +255,122 @@ jobs:
         with:
           name: prestaties
           path: perf-results
+          if-no-files-found: warn
+
+  # Fase 5 (§4.8): e2e van media met de lokale worker, echte ffmpeg en Chrome for Testing (zoals
+  # e2e), naast de rest. Het harnas: e2e/media_harness.py en docs/fase-5/e2e.md.
+  e2e-media:
+    name: e2e media (lokale worker, echte ffmpeg)
+    runs-on: ubuntu-latest
+    needs: [web]
+    timeout-minutes: 20
+    env:
+      # Uit tot S13 (job e2e-media-perf) zegt dat Chrome for Testing H.264 en AAC kan. Met "1"
+      # faalt een test zonder die codecs, in plaats van over te slaan met de reden
+      MEDIA_REQUIRE_H264: "0"
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: ffmpeg (6.1 van Ubuntu)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --frozen
+      - name: Productie-build van de web-app
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Chromium voor Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      - name: e2e met media
+        env:
+          E2E_ARTIFACTS: ${{ runner.temp }}/media-artefacten
+        run: |
+          set -o pipefail
+          uv run --with playwright pytest ../e2e -m media -rs | tee "$RUNNER_TEMP/pytest.txt"
+          # Zonder ffmpeg slaat alles over: dat telt als mislukt. Een codec die de browser niet
+          # heeft, slaat over met de reden (tot MEDIA_REQUIRE_H264=1)
+          if grep -q "^SKIPPED .*geen ffmpeg en ffprobe" "$RUNNER_TEMP/pytest.txt"; then
+            echo "Tests met media overgeslagen: ffmpeg ontbreekt" && exit 1
+          fi
+          grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/pytest.txt"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-media
+          path: ${{ runner.temp }}/media-artefacten
+          if-no-files-found: ignore
+
+  # Fase 5 (§4.8): -m media_perf in Chrome for Testing, alleen een rapport (zoals perf). Het
+  # artefact noemt de browserversie en wat isTypeSupported zegt voor avc1.640028 en mp4a.40.2
+  # (S13 van de spike). Ma en Mb komen met M6.
+  e2e-media-perf:
+    name: e2e media-prestaties (alleen rapport, S13)
+    runs-on: ubuntu-latest
+    needs: [web]
+    timeout-minutes: 20
+    continue-on-error: true
+    env:
+      E2E_PERF_REPORT_ONLY: "1"
+      E2E_PERF_OUT: ${{ github.workspace }}/media-perf-results
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: ffmpeg (6.1 van Ubuntu)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --frozen
+      - name: Productie-build van de web-app
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Chromium voor Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      - name: Prestaties van media (marker media_perf)
+        run: uv run --with playwright pytest ../e2e -m media_perf -rs -s
+      - name: S13 tonen (de browser, H.264 en AAC)
+        if: always()
+        run: |
+          python3 -I -c '
+          import json, os, sys
+          path = os.path.join(os.environ["E2E_PERF_OUT"], "media-m0-s13.json")
+          if not os.path.exists(path):
+              print("(geen media-m0-s13.json)")
+              sys.exit(0)
+          r = json.load(open(path))
+          s13 = r["s13"]
+          print("browser:", r["browser"])
+          print("user agent:", r["user_agent"])
+          for codec in ("avc1.640028", "mp4a.40.2"):
+              print(f"{codec}: {s13[codec]}")
+          print("H.264 en AAC (MSE):", s13["h264_en_aac"])
+          print("eerste beeld VP9 (ms):", r["eerste_beeld_vp9_ms"])
+          kan = "ja" if s13["h264_en_aac"] else "nee"
+          zin = "S13: " + r["browser"] + ", H.264 en AAC via MSE: " + kan
+          print("::notice::" + zin)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(zin + "\n")
+          '
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: media-prestaties
+          path: media-perf-results
           if-no-files-found: warn
 
   infra:
@@ -459,4 +626,80 @@ jobs:
         with:
           name: spike
           path: ${{ runner.temp }}/spike/spike.json
+          if-no-files-found: warn
+
+  # Fase 5 (§4.8): het echte image met wat M0 heeft. Het platform-image met de cache van images
+  # (scope platform, zoals media-spike), en daarin:
+  # - de kern van de worker (api/tests/media/image_kern.py, alleen-lezen erin gezet): caps op
+  #   ffmpeg 7.1, en probe op fixtures die in het image gemaakt zijn; zonder netwerk, zonder
+  #   capabilities, onder --cpus 3 (regel 14);
+  # - S3 van de spike (fd's tussen containers, de afscherming van Keuze 11 en 47) met de scripts
+  #   van media-spike (api/tests/media/spike).
+  # M1 voegt toe: `python -m app.media.worker --selftest` op 7.1 en
+  # infra/single/tests/test_media_container.sh (de afscherming van Keuze 11); die nemen S3 over.
+  # M10 voegt toe: het bewijs van R12 (installeren vanaf de commit van 0.6.0, bijwerken naar deze
+  # versie, een transcode via curl en dan docker top) en de rooktest van de belastingtest.
+  media-image:
+    name: Media-image (de kern van de worker in het image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Platform-image bouwen (de cache van images)
+        id: bouw
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: platform:ci
+          cache-from: type=gha,scope=platform
+          cache-to: type=gha,mode=max,scope=platform,ignore-error=true
+      - name: De kern van de worker in het image (caps en probe, ffmpeg 7.1)
+        run: |
+          mkdir -p "$RUNNER_TEMP/media-image"
+          # Het verloop staat in het log, de uitkomst in kern.json; exitcode 1 als een controle faalt
+          docker run --rm --cpus 3 --memory 3g --memory-swap 3g --network none --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 256 --read-only --tmpfs /tmp:size=1g \
+            -v "$PWD/api/tests:/srv/tests:ro" platform:ci \
+            python3 -I /srv/tests/media/image_kern.py --alles --ffmpeg 7. \
+            > "$RUNNER_TEMP/media-image/kern.json"
+      - name: kern.json tonen
+        if: always()
+        run: |
+          echo "=== kern.json ==="
+          cat "$RUNNER_TEMP/media-image/kern.json" || echo "(geen kern.json)"
+          echo "=== einde kern.json ==="
+      # S3 draait ook als de kern faalde: twee losse uitkomsten
+      - name: Afgeleid image voor S3 bouwen (de drie regels van Keuze 47, zoals media-spike)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        # de builder default ziet platform:ci, de builder van setup-buildx niet
+        run: |
+          docker buildx build --builder default --load --build-arg BASE=platform:ci \
+            -t platform-spike:ci api/tests/media/spike
+      - name: S3 in het image (fd's tussen containers en de afscherming; tot M1)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        run: |
+          python3 -I api/tests/media/spike/ci.py --uit "$RUNNER_TEMP/media-image/s3.json" \
+            --image platform:ci --worker-image platform-spike:ci --stappen S3
+          # Hier is S3 een harde controle (in media-spike alleen een uitkomst): elke controle goed
+          python3 -I -c '
+          import json, sys
+          uit = json.load(open(sys.argv[1]))
+          s3 = [s for s in uit["stappen"] if s.get("stap") == "S3"]
+          assert not uit["crash"] and len(s3) == 1, "S3 draaide niet"
+          checks = s3[0].get("checks") or []
+          fout = [c["naam"] for c in checks if not c.get("ok")]
+          print(f"S3: {len(checks) - len(fout)} van {len(checks)} controles goed")
+          assert checks and not fout, f"S3 faalt: {fout}"
+          ' "$RUNNER_TEMP/media-image/s3.json"
+      - name: S3 kort tonen
+        if: always()
+        run: cat "$RUNNER_TEMP/media-image/kort.txt" || echo "(geen kort.txt)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: media-image
+          path: ${{ runner.temp }}/media-image
           if-no-files-found: warn

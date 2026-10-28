@@ -91,3 +91,5 @@ worker, de kosten van de bron, de tijden van fMP4, en de eerste start op 3 cores
 - [m0.md](m0.md): wat M0 bouwde, waar het van het ontwerp afwijkt, en wat nog open is;
   [m0-web.md](m0-web.md) voor het webdeel, [toetsenbord-m0.md](toetsenbord-m0.md) voor het
   toetsenbord.
+- [e2e.md](e2e.md): de tests van media (de markers `media`, `media_perf` en `provider_real`),
+  het harnas, de nep-servers, de jobs in CI, en hoe je ze lokaal draait.

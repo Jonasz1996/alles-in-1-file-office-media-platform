@@ -3722,6 +3722,16 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
     de reden in het verslag. Met `MEDIA_REQUIRE_H264=1` faalt hij dan in plaats van over te
     slaan;
   - `e2e/pytest.ini`: markers `media`, `media_perf` en `provider_real` (`--strict-markers` blijft).
+- *Noot bij de bouw van M0 (M0-e2e, het harnas in `e2e/`):* gebouwd zoals hierboven, met deze
+  keuzes ([m0.md](m0.md), afwijkingen 28–35; uitleg in [e2e.md](e2e.md)):
+  - caps zijn zichtbaar via `app.cli media-status` (de stub van M0 vraagt ze over de socket);
+    `/api/v1/admin/media` blijft tot M10 503 `media_off`;
+  - zonder scanner (M2) zet het harnas `media.analyse` in de rij van de app, en leest het
+    `media_probe`;
+  - `ffmpeg_count` telt ffmpeg en ffprobe in de hele boom van de app, want de previews draaien
+    tot M1 nog in de app;
+  - de worker-container in de e2e komt met M1 (`E2E_MEDIA_WORKER`); `media-image` draait in M0 de
+    kern van de worker in het image en S3 van de spike.
 - **CI** (§4.8): de nieuwe jobs `media-spike` (op `pull_request`, vanaf de eerste commit van M0),
   `api-media`, `e2e-media`, `e2e-media-perf` (een rapport) en `media-image`.
 
@@ -3825,16 +3835,17 @@ S11 VP9 = 1,0 × x264, `d_codec` VP9 0,18 en AV1 0,25, VP9 met HDR hooguit 720; 
   `docs/fase-5/README.md` heeft een skelet.
 - Tag `fase5-basis`.
 
-*Stand na het samenvoegen van M0-api, M0-web en M0-los* ([m0.md](m0.md), "Open"): M0-e2e
-bouwde daarna de nep-worker, `worker_contract.py` (tegen de nep, en tegen de lokale worker voor
-`caps`, `probe` en stoppen), `record.py` met `recorded/`, de nep-stroom, `media_contract.py` en
-het deel van `test_media_logs.py` met de nep-stroom. Nog niet gebouwd zijn het deel van het
-harnas in `e2e/` (`media_harness.py`, de fixture `media`, `ffmpeg_count`, de markers in
-`e2e/pytest.ini`), de jobs `api-media`, `e2e-media`, `e2e-media-perf` en `media-image`, en de
-tag. De selftest op 7.1 komt
-met `media-image` (M1 bouwt `--selftest`). De fixtures zijn lokaal in 26 s gemaakt; in CI pas
-met `api-media`. Het artefact `spike.json` is van de run op `f713169`, niet van de laatste
-commit van M0. De rest van de lijst hierboven is groen.
+*Stand na M0-e2e* ([m0.md](m0.md), "Open"): M0-e2e bouwde de nep-worker, `worker_contract.py`
+(tegen de nep, en tegen de lokale worker voor `caps`, `probe` en stoppen), `record.py` met
+`recorded/`, de nep-stroom, `media_contract.py`, het deel van `test_media_logs.py` met de
+nep-stroom, het harnas in `e2e/` (`media_harness.py`, de fixtures `media` en `ffmpeg_count`, de
+markers in `e2e/pytest.ini`, de rooktest `test_media_m0.py`) en de jobs `api-media`,
+`e2e-media` (beide `timeout-minutes: 20`), `e2e-media-perf` en `media-image`. Die jobs draaiden
+nog niet: hun eerste uitslag komt na de push. `media-image` heeft in M0 de kern van de worker op
+7.1 en S3; de selftest op 7.1 (ook de afscherming van Keuze 11) komt met M1 (`--selftest`). De
+fixtures zijn hier koud in 30,0 s gemaakt op 3 cores (26 s op 4); `api-media` zet de tijd in CI
+in het log. Het artefact `spike.json` is van de run op `f713169`, niet van de laatste commit van
+M0. De tag zet de lead. De rest van de lijst hierboven is groen.
 
 ### 3.9 Elk verzoekpad, met bewijs en controle
 
@@ -4100,6 +4111,13 @@ een gewone job op `pull_request`. Geen nieuwe action.
 - **De duur:** de fixtures zijn in ≤ 30 s gemaakt, dus geen cache (dat zou een nieuwe action
   zijn). Elke mediatest heeft een eigen deadline in het harnas (§4.2). Met de twee nieuwe jobs naast
   de rest groeit de wandtijd van CI niet met de mediatests.
+- *Noot bij de bouw van M0 (M0-e2e):* de jobs staan zo in `ci.yml` ([e2e.md](e2e.md), "De jobs
+  in CI"; [m0.md](m0.md), afwijkingen 32–33). `api-media` faalt als een test overslaat omdat
+  ffmpeg ontbreekt (de scenario's met `stream` mogen overslaan tot M4), en geeft een
+  waarschuwing als de fixtures langer dan 30 s duren. `e2e-media` zet `MEDIA_REQUIRE_H264` op
+  `"0"`. `e2e-media-perf` zet de uitkomst van S13 in de samenvatting van de run. `media-image`
+  draait in M0 de kern van de worker in het image (`api/tests/media/image_kern.py`) en S3 van de
+  spike, allebei hard; M1 en M10 vullen de rest. `media-spike` is ongewijzigd.
 
 ---
 
