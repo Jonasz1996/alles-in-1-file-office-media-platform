@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { loadAreas, resetI18nForTests } from "../i18n";
+import { type Library, mediaStatus } from "../media";
 import { officeStatus } from "../office/api";
 import type { OfficeStatus } from "../office/types";
 import {
@@ -13,6 +14,7 @@ import {
   actionsVersion,
   findAction,
   GROUPS,
+  libraryHook,
   MAX_SHARE,
   registerAction,
   subscribeActions,
@@ -251,5 +253,74 @@ describe("de haken van office (fase 4)", () => {
     expect(action("edit").shortcut).toBe("e");
     const withE = browserActions().filter((a) => a.shortcut === "e" || (Array.isArray(a.shortcut) && a.shortcut.includes("e")));
     expect(withE.map((a) => a.id)).toEqual(["edit"]);
+  });
+});
+
+describe("de haak van media (fase 5): Als bibliotheek gebruiken", () => {
+  const lib: Library = {
+    id: "lib1",
+    name: "Films",
+    kind: "movies",
+    root_id: "films",
+    mine: true,
+    item_count: 0,
+    scan_state: "idle",
+    scanned_at: null,
+    online: false,
+  };
+  const on = { libraries: [lib] };
+  const folder = dirNode({ id: "series" });
+
+  afterEach(() => mediaStatus.set(null));
+
+  it("zonder media (uit, een oudere server, een fout) is hij er niet", () => {
+    mediaStatus.set(null);
+    expect(availability(action("library"), [folder], env).visible).toBe(false);
+    expect(actionMenuItems([folder], env, () => {}).map((i) => i.id)).not.toContain("library");
+  });
+
+  it("één eigen map met media aan; geen bestand, geen gast, geen gedeelde map, niet twee", () => {
+    mediaStatus.set(on);
+    expect(availability(action("library"), [folder], env)).toEqual({ visible: true, enabled: true });
+    expect(libraryHook([fileNode({ id: "f" })], env, on).visible).toBe(false);
+    expect(libraryHook([folder], { ...env, guest: true }, on).visible).toBe(false);
+    expect(libraryHook([dirNode({ id: "d", owner: anna, permission: "write" })], env, on).visible).toBe(false);
+    expect(libraryHook([folder, dirNode({ id: "d2" })], env, on).visible).toBe(false);
+    expect(libraryHook([], env, on).visible).toBe(false);
+  });
+
+  it("een map die al een bibliotheek is: uitgeschakeld met de naam", () => {
+    expect(libraryHook([dirNode({ id: "films" })], env, on)).toEqual({
+      visible: true,
+      enabled: false,
+      reason: "Deze map is al de bibliotheek Films",
+    });
+  });
+
+  it("in de groep delen, na Toevoegen aan album, zonder sneltoets", () => {
+    mediaStatus.set(on);
+    const a = action("library");
+    expect(a.group).toBe("share");
+    expect(a.shortcut).toBeUndefined();
+    expect(actionLabel(a, [folder])).toBe("Als bibliotheek gebruiken");
+    const ids = browserActions().map((x) => x.id);
+    expect(ids.indexOf("library")).toBe(ids.indexOf("addToAlbum") + 1);
+  });
+
+  it("een andere status van media: wie het register toont, hoort het", () => {
+    const heard = vi.fn();
+    const stop = subscribeActions(heard);
+    mediaStatus.set(on);
+    expect(heard).toHaveBeenCalledTimes(1);
+    mediaStatus.set({ libraries: [lib] });
+    expect(heard).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("kiezen laadt de dialoog van M2 en het gebied media (M0: een melding)", async () => {
+    mediaStatus.set(on);
+    await action("library").run([folder], { ...env, ui: undefined as never });
+    const { areasLoaded } = await import("../i18n");
+    expect(areasLoaded(["media"])).toBe(true);
   });
 });

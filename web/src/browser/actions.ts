@@ -8,9 +8,14 @@
 // De haken van office (fase 4, van O0): "Bewerken" (E) en "Downloaden als PDF". Wanneer ze er
 // zijn, zeggen office/actions.ts (O2) en office/pdf.ts (O3), met de status van de server: zonder
 // office zijn ze er niet, precies zoals fase 3.
+//
+// De haak van media (fase 5, van M0): "Als bibliotheek gebruiken" op één eigen map, als media aan
+// staat en die map nog geen bibliotheek is. De dialoog (het soort kiezen) is van M2
+// (media/NewLibraryDialog.tsx) en laadt pas bij het kiezen. Zonder media is hij er niet.
 
 import type { FileNode } from "../api";
-import { errorText, type MessageKey, t } from "../i18n";
+import { errorText, loadAreas, type MessageKey, t } from "../i18n";
+import { libraryOn, type MediaOn, mediaStatus } from "../media";
 import { canEdit, openEditor } from "../office/actions";
 import { officeStatus } from "../office/api";
 import { canPdf, downloadPdf } from "../office/pdf";
@@ -114,6 +119,16 @@ function single(sel: readonly FileNode[]): boolean {
 function isMedia(node: FileNode): boolean {
   const mime = node.mime ?? "";
   return node.kind === "file" && (mime.startsWith("image/") || mime.startsWith("video/"));
+}
+
+/** De haak van media: één map van jezelf (geen gast), media aan, en nog geen bibliotheek. Een
+ * bibliotheek binnen een andere (of eromheen) weigert de server (M2). */
+export function libraryHook(sel: readonly FileNode[], env: ActionEnv, status: MediaOn | null): Availability {
+  if (!status || env.guest || !single(sel)) return HIDDEN;
+  const folder = sel[0];
+  if (folder.kind !== "dir" || permissionOf(folder) !== "owner") return HIDDEN;
+  const lib = libraryOn(status, folder.id);
+  return lib ? no(t("browser.media.reasons.already", { name: lib.name })) : OK;
 }
 
 /** Een haak van office als beschikbaarheid: de reden in de woorden van Bestanden. */
@@ -242,6 +257,22 @@ const BUILT_IN: BrowserAction[] = [
     run: (sel, ctx) => ctx.ui.addToAlbum(sel),
   },
   {
+    // Media (fase 5): de map als bibliotheek (de dialoog van M2). Geen sneltoets
+    id: "library",
+    labelKey: "browser.media.useAsLibrary",
+    icon: "video",
+    group: "share",
+    when: (sel, _folder, env) => libraryHook(sel, env, mediaStatus.get()),
+    run: async (sel) => {
+      try {
+        const [m] = await Promise.all([import("../media/NewLibraryDialog"), loadAreas(["media"])]);
+        m.openNewLibraryDialog(sel[0]);
+      } catch (e) {
+        toast(errorText(e), { kind: "error" });
+      }
+    },
+  },
+  {
     id: "versions",
     labelKey: "browser.actions.versions",
     icon: "history",
@@ -284,6 +315,11 @@ let version = 0;
 // Een andere status van office (aan, uit, weg): de haken hierboven veranderen mee, dus wie het
 // register toont, tekent opnieuw
 officeStatus.subscribe(() => {
+  version++;
+  for (const l of [...listeners]) l();
+});
+// Hetzelfde voor media (fase 5): aan, uit, of een nieuwe bibliotheek
+mediaStatus.subscribe(() => {
   version++;
   for (const l of [...listeners]) l();
 });

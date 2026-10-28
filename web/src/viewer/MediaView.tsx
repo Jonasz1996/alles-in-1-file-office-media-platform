@@ -2,9 +2,17 @@
 // server las, zijn alleen een hint. Lukt het niet, dan zoeken we uit waarom: kan de browser het
 // formaat niet aan, dan zeggen we dat (met downloaden); was de link verlopen of de verbinding
 // weg, dan één nieuwe link en verder waar hij was.
+//
+// De haak van fase 5 (M0, frozen; Keuze 32): een video laadt de speler van M6
+// (player/ViewerPlayer.tsx, een eigen chunk) als je ingelogd bent, het de huidige versie is en
+// media aan staat (wantsPlayer in media/index.ts). De speler krijgt de <video> van hieronder als
+// fallback; tot M6 toont hij alleen die. Zonder media, via een publieke link en voor audio blijft
+// het precies fase 3. De keuze valt één keer per bestand (de viewer geeft elk bestand een eigen
+// key): nooit midden in het afspelen wisselen.
 
-import { type JSX, useCallback, useEffect, useRef, useState } from "react";
+import { Component, type JSX, lazy, type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { errorText, t } from "../i18n";
+import { mediaStatus, wantsPlayer } from "../media";
 import { Button } from "../ui/Button";
 import { useShortcuts } from "../ui/keys";
 import { Spinner } from "../ui/Spinner";
@@ -24,6 +32,59 @@ interface Props {
   onEnded?: () => void;
 }
 
+/** Wat de speler van M6 in de viewer krijgt (het contract van de haak; frozen na M0). */
+export interface ViewerPlayerProps {
+  item: ViewerItem;
+  detail: ViewerDetail;
+  /** Altijd een ingelogde bron (kind "user"), en nooit een eerdere versie */
+  source: Source;
+  /** De <video> van fase 3: voor als de speler het niet kan, of (tot M6) altijd */
+  fallback: () => JSX.Element;
+}
+
+const ViewerPlayer = lazy(() => import("../player/ViewerPlayer"));
+
+/** Lukt het chunk van de speler niet (een nieuwe versie uitgerold, geen verbinding): dan de
+ * <video> van fase 3, nooit een lege viewer. */
+class PlayerBoundary extends Component<{ fallback: () => JSX.Element; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.warn("viewer: de speler laadde niet", error);
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback() : this.props.children;
+  }
+}
+
+export default function MediaView(props: Props): JSX.Element {
+  const { item, detail, source, kind } = props;
+  // Eén keer per bestand; get() vraagt een oude status op de achtergrond opnieuw
+  const [player] = useState(() =>
+    wantsPlayer(kind, source.kind, item.version !== undefined, source.kind === "user" ? mediaStatus.get() : null),
+  );
+  const native = () => <NativeMedia {...props} />;
+  if (!player) return native();
+  return (
+    <PlayerBoundary fallback={native}>
+      <Suspense
+        fallback={
+          <div className="media media-video">
+            <Spinner label={t("viewer.media.loadingPlayer")} />
+          </div>
+        }
+      >
+        <ViewerPlayer item={item} detail={detail} source={source} fallback={native} />
+      </Suspense>
+    </PlayerBoundary>
+  );
+}
+
 /** De status van een los verzoek naar het adres (alleen de eerste byte). */
 async function probe(url: string): Promise<number> {
   try {
@@ -35,7 +96,8 @@ async function probe(url: string): Promise<number> {
   }
 }
 
-export default function MediaView({ item, detail, source, kind, onEnded }: Props): JSX.Element {
+/** De speler van de browser (fase 3), met de sneltoetsen Spatie, K, J, L en M. */
+function NativeMedia({ item, detail, source, kind, onEnded }: Props): JSX.Element {
   const media = useRef<HTMLVideoElement & HTMLAudioElement>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [problem, setProblem] = useState<MediaProblem>(null);
