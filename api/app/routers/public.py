@@ -313,7 +313,7 @@ async def children(
     )
 
 
-@router.get("/download/{node_id}")
+@router.api_route("/download/{node_id}", methods=["GET", "HEAD"])  # F2 (fase 5)
 async def download(
     node_id: uuid.UUID,
     link: CurrentLink,
@@ -330,6 +330,8 @@ async def download(
     node = await session.get(Node, node_id)
     if node is None or node.kind != "file":
         raise errors.fail(404, **NOT_FOUND)
+    # F1 (fase 5): geen databaseverbinding vasthouden zolang de stroom loopt
+    await session.close()
     return await send_file(node, settings, if_none_match, inline)
 
 

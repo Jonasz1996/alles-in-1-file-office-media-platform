@@ -1638,7 +1638,8 @@ async def send_file(
     )
 
 
-@router.get("/download/{node_id}")
+# F2 (fase 5): ook HEAD; FileResponse stuurt dan alleen de koppen (Range en 304 net als GET)
+@router.api_route("/download/{node_id}", methods=["GET", "HEAD"])
 async def download(
     node_id: uuid.UUID,
     token: str,
@@ -1655,10 +1656,13 @@ async def download(
     # Opnieuw: een deling die intussen is ingetrokken, stopt ook een link die al uit was
     node = (await get_tree_access(session, user, node_id, "read")).node
     version = await get_version(session, node, version_id) if version_id else None
+    # F1 (fase 5): de verbinding terug in de pool vóór de stroom; anders hield elke lopende
+    # download er een vast tot de laatste byte (16 gepauzeerde streams: een 500 na 30 s)
+    await session.close()
     return await send_file(node, settings, if_none_match, inline, version)
 
 
-@router.get("/files/{node_id}/content")
+@router.api_route("/files/{node_id}/content", methods=["GET", "HEAD"])
 async def content(
     node_id: uuid.UUID,
     user: CurrentUser,
@@ -1672,4 +1676,5 @@ async def content(
     Met version: die eerdere inhoud."""
     node = (await get_tree_access(session, user, node_id, "read")).node
     found = await get_version(session, node, version) if version else None
+    await session.close()  # F1: zie download
     return await send_file(node, settings, if_none_match, inline, found)
