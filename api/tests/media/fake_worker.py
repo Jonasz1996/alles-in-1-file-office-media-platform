@@ -440,9 +440,10 @@ class FakeWorker:
         out.update(self.snapshot())
         return out
 
-    def _known(self) -> dict[str, str]:
-        """sha256 → naam, van elke opgenomen fixture die hier gemaakt is."""
-        if self._index is None:
+    def _known(self, *, refresh: bool = False) -> dict[str, str]:
+        """sha256 → naam, van elke opgenomen fixture die hier gemaakt is. refresh: opnieuw
+        kijken (een fixture kan na de eerste probe gemaakt zijn)."""
+        if self._index is None or refresh:
             index: dict[str, str] = {}
             for file in sorted(record.PROBE_DIR.glob("*.json")):
                 if file.name.startswith("_"):
@@ -458,8 +459,10 @@ class FakeWorker:
         return {**self._index, **self._registered}
 
     async def _probe(self, job: Job) -> dict:
-        digest = await asyncio.to_thread(_sha_fd, job.inputs[0])
-        name = self._known().get(digest or "")
+        digest = await asyncio.to_thread(_sha_fd, job.inputs[0]) or ""
+        name = self._known().get(digest)
+        if name is None and digest:
+            name = (await asyncio.to_thread(self._known, refresh=True)).get(digest)
         found = record.load(name) if name else None
         if found is None:
             raise OpError(Code.UNKNOWN_FORMAT, "geen bekend formaat (nep-worker)")
