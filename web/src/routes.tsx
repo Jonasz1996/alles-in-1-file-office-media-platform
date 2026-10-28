@@ -1,4 +1,5 @@
-// De routetabel (frozen na P0; fase 4 voegt /bewerken/:id toe, van O0). Elke pagina is lazy:
+// De routetabel (frozen na P0; fase 4 voegt /bewerken/:id toe, van O0; fase 5 de pagina's van
+// media en muziek, van M0). Elke pagina is lazy:
 // load() wacht op het chunk én op de woordenboeken die de pagina nodig heeft, zodat t() meteen
 // werkt bij de eerste render.
 
@@ -46,6 +47,9 @@ function route(
 const files = () => import("./Files");
 const photos: readonly Area[] = ["photos", "browser", "sharing"];
 const browse: readonly Area[] = ["browser", "upload", "sharing"];
+const media: readonly Area[] = ["media"];
+const watch: readonly Area[] = ["player", "media"];
+const music: readonly Area[] = ["music"];
 
 /** Alle pagina's voor wie ingelogd is, in volgorde: de eerste die past, wint. */
 export const routes: readonly RouteDef[] = [
@@ -65,6 +69,18 @@ export const routes: readonly RouteDef[] = [
   // De editor (fase 4, Keuze 32): een eigen pagina, zodat herladen en Terug werken. Zonder office
   // is hij er niet (de pagina zegt dan "niet gevonden", zoals in fase 3)
   route("/bewerken/:id", () => import("./office/EditorPage"), ["office"], "office.title", null),
+  // Media en muziek (fase 5, Keuze 33): elke pagina een eigen chunk, gevuld door M2, M6 en M9.
+  // Zonder media zijn ze er niet (de poort media/Gate.tsx zegt dan "niet gevonden"). Gasten mogen:
+  // ze zien de bibliotheken die met hen gedeeld zijn
+  route("/media", () => import("./media/LibraryHome"), media, "media.title", "media"),
+  route("/media/bibliotheek/:id", () => import("./media/Library"), media, "media.library", "media"),
+  route("/media/item/:node", () => import("./media/ItemPage"), media, "media.item", "media"),
+  route("/media/serie/:id", () => import("./media/ShowPage"), media, "media.show", "media"),
+  route("/kijken/:node", () => import("./player/WatchPage"), watch, "player.title", "media"),
+  route("/muziek", () => import("./music/MusicHome"), music, "music.title", "music"),
+  route("/muziek/album/:id", () => import("./music/AlbumPage"), music, "music.album", "music"),
+  route("/muziek/artiest/:key", () => import("./music/ArtistPage"), music, "music.artist", "music"),
+  route("/muziek/lijst/:id", () => import("./music/PlaylistPage"), music, "music.playlist", "music"),
   // Deze pagina zit in de schil zelf (App gebruikt NoAccess uit hetzelfde bestand): geen chunk
   route("*", () => Promise.resolve({ default: NotFound }), [], "shell.notFound.title", null),
 ];

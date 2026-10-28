@@ -1,5 +1,8 @@
 // De schil van de app: inloggen, de balk bovenaan met het accountmenu, de routetabel en wat
 // altijd klaarstaat (dialogen, meldingen, sneltoetsen, uploads). Pagina's laden lazy.
+//
+// Fase 5 (M0): Media en Muziek in het menu en de plek van de muziekbalk, alleen als media aan
+// staat (media/index.ts). Zonder media is de schil die van fase 4.
 
 import {
   Component,
@@ -35,6 +38,7 @@ import {
 } from "./i18n";
 import { Link } from "./links";
 import { Login } from "./Login";
+import { MEDIA_HOME, MUSIC_HOME, mediaEvents, musicBar, resetMedia, showMediaNav, useMediaStatus } from "./media";
 import { officeListener } from "./office/listener";
 import { markReady } from "./perf";
 import { AppStatus } from "./pwa/AppStatus";
@@ -315,6 +319,7 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
       // volgende die in dit tabblad inlogt
       clipboard.clear();
       clearUndo();
+      resetMedia();
       setCodes(null);
       setUser(null);
     };
@@ -328,10 +333,12 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
   useEffect(() => {
     if (!live) return;
     const stopOffice = liveEvents.subscribe(officeEvents);
+    const stopMedia = liveEvents.subscribe(mediaEvents);
     liveEvents.start();
     return () => {
       liveEvents.stop();
       stopOffice();
+      stopMedia();
     };
   }, [live]);
 
@@ -375,6 +382,7 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
     liveEvents.stop();
     clipboard.clear(); // zie api.onLoggedOut
     clearUndo();
+    resetMedia();
     await api.logout();
     setCodes(null);
     setUser(null);
@@ -419,6 +427,7 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
         </a>
         <TopBar user={user} section={route.def.section} setupRequired={setupRequired} onLogout={logout} />
         {page}
+        <MusicBarSlot />
         <UploadSlot />
         <Overlays />
       </ShellActionsContext.Provider>
@@ -472,6 +481,23 @@ function UploadSlot(): JSX.Element | null {
   );
 }
 
+/** De muziekbalk (music/MusicBar.tsx, M9; Keuze 37), alleen als er muziek speelt: anders hoeven
+ * zijn chunk en het gebied "music" niet te laden. Hij staat buiten de pagina, dus blijft hij
+ * staan (en spelen) bij navigeren. */
+const MusicBar = lazyWithAreas(() => import("./music/MusicBar"), ["music"]);
+
+function MusicBarSlot(): JSX.Element | null {
+  const visible = useSyncExternalStore(musicBar.subscribe, musicBar.visible, () => false);
+  if (!visible) return null;
+  return (
+    <ChunkBoundary>
+      <Suspense fallback={null}>
+        <MusicBar />
+      </Suspense>
+    </ChunkBoundary>
+  );
+}
+
 // --- de balk bovenaan ---
 
 function TopBar({
@@ -489,6 +515,8 @@ function TopBar({
   const theme = useTheme();
   const current = override ?? section;
   const guest = user.role === "guest";
+  // Fase 5: Media en Muziek alleen als media aan staat (een gast: met een gedeelde bibliotheek)
+  const media = showMediaNav(useMediaStatus(!setupRequired), guest);
 
   const link = (to: string, label: string, s: NavSection) => (
     <Link to={to} aria-current={current === s ? "page" : undefined}>
@@ -553,6 +581,8 @@ function TopBar({
         <nav aria-label={t("shell.nav.label")}>
           {!guest && link("/", t("shell.nav.files"), "files")}
           {!guest && link("/fotos", t("shell.nav.photos"), "photos")}
+          {media && link(MEDIA_HOME, t("shell.nav.media"), "media")}
+          {media && link(MUSIC_HOME, t("shell.nav.music"), "music")}
           {link("/gedeeld", t("shell.nav.shared"), "shared")}
           {!guest && link("/prullenbak", t("shell.nav.trash"), "trash")}
           {user.role === "admin" && link("/beheer", t("shell.nav.admin"), "admin")}

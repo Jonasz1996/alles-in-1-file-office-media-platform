@@ -154,15 +154,31 @@ export function mediaEvents(event: { type: string; data: Record<string, unknown>
 }
 
 /**
+ * Een status uit een StatusStore in een component; vraagt hem bij het tonen als hij oud is.
+ * active false: niets vragen en null geven.
+ */
+export function useStatus<T>(store: StatusStore<T>, active = true): T | null {
+  const status = useSyncExternalStore(store.subscribe, store.peek, () => null);
+  useEffect(() => {
+    if (active && store.stale()) void store.load();
+  }, [store, active]);
+  return active ? status : null;
+}
+
+/**
  * De status van media (null: uit of onbekend). Vraagt hem bij het tonen als hij oud is.
  * active false: niets vragen en null geven (bijv. de viewer via een publieke link).
  */
 export function useMediaStatus(active = true): MediaOn | null {
-  const status = useSyncExternalStore(mediaStatus.subscribe, mediaStatus.peek, () => null);
-  useEffect(() => {
-    if (active && mediaStatus.stale()) void mediaStatus.load();
-  }, [active]);
-  return active ? status : null;
+  return useStatus(mediaStatus, active);
+}
+
+/** Na uitloggen: de bibliotheken en de muziekbalk waren van de vorige gebruiker. De volgende
+ * die inlogt, vraagt de status opnieuw. */
+export function resetMedia(): void {
+  mediaStatus.set(null);
+  mediaStatus.invalidate();
+  musicBar.hide();
 }
 
 /** Voor een mediapagina: eerst een vers antwoord van de server. asking: nog bezig; off: de

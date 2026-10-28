@@ -16,6 +16,7 @@ import {
   mediaStatus,
   musicBar,
   playlistPath,
+  resetMedia,
   STATUS_RETRY,
   STATUS_TTL,
   StatusStore,
@@ -233,6 +234,17 @@ describe("de adressen (routes.tsx)", () => {
     expect(streamUrl("film.mkv.AbC-_1", "map.json")).toBe("/api/v1/stream/film.mkv.AbC-_1/map.json");
     expect(streamUrl("s", "/subs/e2.vtt")).toBe("/api/v1/stream/s/subs/e2.vtt");
     expect(streamUrl("a b", "3.m4s")).toBe("/api/v1/stream/a%20b/3.m4s");
+  });
+});
+
+describe("uitloggen", () => {
+  it("resetMedia vergeet de bibliotheken en de muziekbalk; de volgende vraagt opnieuw", () => {
+    mediaStatus.set(on);
+    musicBar.show();
+    resetMedia();
+    expect(mediaStatus.peek()).toBeNull();
+    expect(mediaStatus.stale()).toBe(true);
+    expect(musicBar.visible()).toBe(false);
   });
 });
 

@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { nodeHref } from "./links";
 import { isPlainLeftClick, match, ScrollMemory } from "./router";
+import {
+  albumPath,
+  artistPath,
+  itemPath,
+  libraryPath,
+  MEDIA_HOME,
+  MUSIC_HOME,
+  playlistPath,
+  showPath,
+  watchPath,
+} from "./media";
 import { allowed, isPublicPath, publicRoutes, resolve, routes } from "./routes";
 
 describe("match", () => {
@@ -67,6 +78,30 @@ describe("de routetabel", () => {
     expect(r.def.section).toBeNull();
     for (const role of ["admin", "user", "guest"] as const) expect(allowed(r.def, role)).toBe(true);
     expect(resolve("/bewerken").def.pattern).toBe("*");
+  });
+
+  it("media en muziek (fase 5): negen lazy pagina's met de adressen van media/index.ts, voor elke rol", async () => {
+    const cases: [string, string, Record<string, string>, readonly string[], string, string][] = [
+      [MEDIA_HOME, "/media", {}, ["media"], "media.title", "media"],
+      [libraryPath("l 1"), "/media/bibliotheek/:id", { id: "l 1" }, ["media"], "media.library", "media"],
+      [itemPath("n1"), "/media/item/:node", { node: "n1" }, ["media"], "media.item", "media"],
+      [showPath("s1"), "/media/serie/:id", { id: "s1" }, ["media"], "media.show", "media"],
+      [watchPath("n1", 75), "/kijken/:node", { node: "n1" }, ["player", "media"], "player.title", "media"],
+      [MUSIC_HOME, "/muziek", {}, ["music"], "music.title", "music"],
+      [albumPath("a1"), "/muziek/album/:id", { id: "a1" }, ["music"], "music.album", "music"],
+      [artistPath("the beatles"), "/muziek/artiest/:key", { key: "the beatles" }, ["music"], "music.artist", "music"],
+      [playlistPath("p1"), "/muziek/lijst/:id", { id: "p1" }, ["music"], "music.playlist", "music"],
+    ];
+    for (const [href, pattern, params, areas, title, section] of cases) {
+      const r = resolve(href.split("?")[0]);
+      expect(r).toMatchObject({ def: { pattern, areas, title, section }, params });
+      for (const role of ["admin", "user", "guest"] as const) expect(allowed(r.def, role)).toBe(true);
+      // Elke pagina bestaat (M0: een lege pagina achter de poort), met een default export
+      const page = await r.def.load();
+      expect(typeof page.default).toBe("function");
+    }
+    expect(resolve("/media/onbekend").def.pattern).toBe("*");
+    expect(resolve("/kijken").def.pattern).toBe("*");
   });
 
   it("alleen beheerders in Beheer; gasten niet in de prullenbak of Foto's", () => {
