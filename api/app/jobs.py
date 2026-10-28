@@ -14,6 +14,18 @@ dan gaat hij bij het starten terug in de rij, en telt die poging mee: een bestan
 proces laat crashen, blijft zo niet eindeloos terugkomen.
 
 Een taak doet zijn zware rekenwerk in een thread of eigen proces, nooit op de event loop.
+
+Rijen (fase 5, Keuze 14). Elk soort hoort bij één rij (register(..., lane=...)), en elke rij
+heeft een eigen Runner met eigen workers: default (settings.job_workers, alles van fase 3 en
+4), media_scan (1), media (settings.media_job_workers), media_net (1) en import (1). Een
+Runner pakt alleen soorten uit zijn eigen rij; default pakt alles wat niet in een andere rij
+staat, dus ook een onbekend soort (dat faalt dan zoals altijd). Zo houdt een lange analyse een
+preview niet op, en een rij vol analyses een scan niet. Het opruimwerk (housekeeping) draait
+alleen in de Runner van default: één keer per periode, hoeveel Runners er ook zijn.
+
+Een taak die nu niet kan (de mediaworker is druk of weg, een provider remt af) raist
+Defer(seconds): terug in de rij na zoveel seconden, zonder dat de poging telt. timeout per soort
+vervangt settings.job_timeout.
 """
 
 import asyncio
@@ -25,7 +37,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import anyio
-from sqlalchemy import and_, delete, event, func, or_, select, update
+from sqlalchemy import and_, delete, event, false, func, or_, select, true, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session as OrmSession
 
@@ -45,6 +57,9 @@ KEEP_DONE = timedelta(days=7)
 HOUSEKEEPING = 3600.0
 ERROR_CHARS = 2000
 _KICK = "platform.jobs.kick"  # in session.info: na de commit de workers wekken
+DEFAULT_LANE = "default"
+# De rijen van Keuze 14, in de volgorde waarin de lifespan ze start
+LANES = ("default", "media_scan", "media", "media_net", "import")
 
 
 class JobError(Exception):
@@ -127,7 +142,38 @@ def register(
     """Wat er gebeurt bij een taak van dit soort; on_dead als hij definitief mislukt is.
     lane: de rij met een eigen Runner; timeout: in plaats van settings.job_timeout (Keuze 14
     van fase 5)."""
+    if lane not in LANES:
+        raise ValueError(f"onbekende rij {lane!r} (bekend: {', '.join(LANES)})")
+    if timeout is not None and timeout <= 0:
+        raise ValueError("timeout moet groter dan 0 zijn")
     _kinds[type] = Kind(run, on_dead, max_attempts, lane, timeout)
+
+
+def lane_of(type: str) -> str:
+    """De rij van een soort; een onbekend soort hoort bij default."""
+    kind = _kinds.get(type)
+    return kind.lane if kind is not None else DEFAULT_LANE
+
+
+def lane_workers(settings: Settings, lane: str) -> int:
+    """Hoeveel workers een rij heeft (Keuze 14)."""
+    if lane == DEFAULT_LANE:
+        return max(1, settings.job_workers)
+    if lane == "media":
+        return max(1, settings.media_job_workers)
+    return 1
+
+
+def _lane_filter(lane: str | None):
+    """De voorwaarde op Job.type voor claim in deze rij; None: alle soorten (tests). Een rij
+    zonder aangemelde soorten geeft False: dan hoeft claim de database niet in."""
+    if lane is None:
+        return true()
+    if lane == DEFAULT_LANE:
+        elsewhere = sorted(t for t, k in _kinds.items() if k.lane != DEFAULT_LANE)
+        return Job.type.not_in(elsewhere) if elsewhere else true()
+    mine = sorted(t for t, k in _kinds.items() if k.lane == lane)
+    return Job.type.in_(mine) if mine else false()
 
 
 def now() -> datetime:
@@ -268,15 +314,25 @@ def describe(error: BaseException) -> str:
     return text[:ERROR_CHARS]
 
 
-async def claim(settings: Settings, at: datetime | None = None) -> Claimed | None:
-    """Pakt de eerstvolgende taak die klaarstaat. Twee workers die tegelijk dezelfde kiezen:
-    de UPDATE slaagt maar voor één, de ander probeert de volgende."""
+async def claim(
+    settings: Settings, at: datetime | None = None, lane: str | None = None
+) -> Claimed | None:
+    """Pakt de eerstvolgende taak die klaarstaat, alleen uit deze rij (None: uit alle rijen,
+    voor tests). Twee workers die tegelijk dezelfde kiezen: de UPDATE slaagt maar voor één, de
+    ander probeert de volgende."""
     at = at or now()
+    if (
+        lane is not None
+        and lane != DEFAULT_LANE
+        and not any(k.lane == lane for k in _kinds.values())
+    ):
+        return None  # niets aangemeld in deze rij: de database hoeft niet in
+    lane_filter = _lane_filter(lane)
     async with _maker(settings)() as session:
         candidates = (
             await session.scalars(
                 select(Job.id)
-                .where(Job.status == "queued", Job.run_after <= at)
+                .where(Job.status == "queued", Job.run_after <= at, lane_filter)
                 .order_by(Job.run_after, Job.created_at)
                 .limit(10)
             )
@@ -303,18 +359,27 @@ async def execute(settings: Settings, job: Claimed) -> None:
     taak terug in de rij, zonder dat die poging meetelt."""
     kind = _kinds.get(job.type)
     scope: anyio.CancelScope | None = None
+    limit = settings.job_timeout
+    if kind is not None and kind.timeout is not None:
+        limit = kind.timeout
     try:
         if kind is None:
             raise JobError(f"Onbekend soort taak: {job.type}")
-        with anyio.fail_after(settings.job_timeout) as scope:
+        with anyio.fail_after(limit) as scope:
             await kind.run(settings, job.payload)
     except asyncio.CancelledError:
         with anyio.CancelScope(shield=True), anyio.move_on_after(10):
             await _requeue(settings, job.id)
         raise
+    except Defer as e:
+        # Nu niet, straks wel: terug in de rij, en deze poging telt niet
+        log.info("Achtergrondtaak %s (%s) wacht %g s: %s", job.id, job.type, e.seconds, e)
+        with anyio.CancelScope(shield=True):
+            await _requeue(settings, job.id, after=e.seconds)
+        return
     except Exception as e:  # noqa: BLE001 - elke fout telt als mislukte poging
         if isinstance(e, TimeoutError) and scope is not None and scope.cancel_called:
-            error = f"Duurde langer dan {settings.job_timeout:g} seconden"
+            error = f"Duurde langer dan {limit:g} seconden"
         else:
             error = describe(e)
         final = kind is None or job.attempts >= job.max_attempts
@@ -347,14 +412,15 @@ async def _set(settings: Settings, job_id: uuid.UUID, **values: Any) -> None:
         await session.commit()
 
 
-async def _requeue(settings: Settings, job_id: uuid.UUID) -> None:
+async def _requeue(settings: Settings, job_id: uuid.UUID, after: float = 0) -> None:
+    """Terug in de rij zonder dat deze poging telt (stoppen, of Defer na `after` s)."""
     await _set(
         settings,
         job_id,
         status="queued",
         started_at=None,
         attempts=Job.attempts - 1,
-        run_after=now(),
+        run_after=now() + timedelta(seconds=max(0.0, after)),
     )
 
 
@@ -379,19 +445,21 @@ async def _dead(settings: Settings, kind: Kind, payload: dict[str, Any], error: 
         log.exception("Afhandelen van een definitief mislukte taak ging mis")
 
 
-async def run_one(settings: Settings, at: datetime | None = None) -> bool:
-    job = await claim(settings, at)
+async def run_one(settings: Settings, at: datetime | None = None, lane: str | None = None) -> bool:
+    job = await claim(settings, at, lane)
     if job is None:
         return False
     await execute(settings, job)
     return True
 
 
-async def run_pending(settings: Settings, at: datetime | None = None) -> int:
-    """Voor tests: draait wat klaarstaat (op tijdstip `at`) tot er niets meer klaarstaat,
-    zonder de achtergrondlus. Geeft het aantal gedraaide taken."""
+async def run_pending(
+    settings: Settings, at: datetime | None = None, lane: str | None = None
+) -> int:
+    """Voor tests: draait wat klaarstaat (op tijdstip `at`; lane None: uit alle rijen) tot er
+    niets meer klaarstaat, zonder de achtergrondlus. Geeft het aantal gedraaide taken."""
     count = 0
-    while await run_one(settings, at):
+    while await run_one(settings, at, lane):
         count += 1
     return count
 
@@ -428,10 +496,18 @@ async def remove_old(settings: Settings) -> int:
 
 
 class Runner:
-    """De workers en het opruimen, gestart en gestopt door de lifespan van de app."""
+    """De workers van één rij, en (alleen in default) het opruimen. Gestart en gestopt door
+    de lifespan van de app (start_runners)."""
 
-    def __init__(self, settings: Settings):
+    def __init__(
+        self, settings: Settings, lane: str = DEFAULT_LANE, housekeeping: bool | None = None
+    ):
+        if lane not in LANES:
+            raise ValueError(f"onbekende rij {lane!r}")
         self.settings = settings
+        self.lane = lane
+        # Het opruimwerk één keer per proces: in de Runner van default
+        self.housekeeping = lane == DEFAULT_LANE if housekeeping is None else housekeeping
         self._wake = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._tasks: list[asyncio.Task] = []
@@ -445,9 +521,11 @@ class Runner:
         self._loop = asyncio.get_running_loop()
         _wakers.add(self.wake)
         _runners.add(self)
-        for i in range(max(1, self.settings.job_workers)):
-            self._tasks.append(asyncio.create_task(self._work(), name=f"achtergrondtaken {i + 1}"))
-        self._tasks.append(asyncio.create_task(self._housekeeping(), name="taken opruimen"))
+        for i in range(lane_workers(self.settings, self.lane)):
+            name = f"achtergrondtaken {self.lane} {i + 1}"
+            self._tasks.append(asyncio.create_task(self._work(), name=name))
+        if self.housekeeping:
+            self._tasks.append(asyncio.create_task(self._housekeeping(), name="taken opruimen"))
 
     async def stop(self) -> None:
         """Lopende taken worden afgebroken en gaan terug in de rij."""
@@ -467,7 +545,7 @@ class Runner:
         while True:
             self._wake.clear()
             try:
-                job = await claim(self.settings)
+                job = await claim(self.settings, lane=self.lane)
                 if job is not None:
                     self.wake()  # misschien staat er meer klaar: dan pakt een andere worker die
                     await execute(self.settings, job)
@@ -482,6 +560,19 @@ class Runner:
         while True:
             await run_housekeeping(self.settings, last)
             await asyncio.sleep(HOUSEKEEPING_TICK)
+
+
+async def start_runners(settings: Settings) -> list[Runner]:
+    """Een Runner per rij (LANES), het opruimwerk alleen in default. Roep eerst recover()
+    aan."""
+    runners = [Runner(settings, lane=lane) for lane in LANES]
+    for runner in runners:
+        await runner.start()
+    return runners
+
+
+async def stop_runners(runners: list[Runner]) -> None:
+    await asyncio.gather(*(runner.stop() for runner in runners))
 
 
 async def _remove_old(settings: Settings) -> None:
