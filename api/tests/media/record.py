@@ -142,6 +142,55 @@ async def record(names: list[str] | None = None) -> dict[str, str]:
     return outcome
 
 
+def shape(data: dict) -> dict:
+    """Wat bij een andere build van ffmpeg gelijk moet blijven (los van bitrates en tags)."""
+    streams = [
+        (
+            s["type"],
+            s["codec"],
+            s.get("width"),
+            s.get("height"),
+            s.get("channels"),
+            s.get("sample_rate"),
+            s.get("lang"),
+            s.get("forced"),
+            s.get("hdr"),
+        )  # fmt: skip
+        for s in data["streams"]
+    ]
+    return {
+        "container": data["container"],
+        "streams": streams,
+        "chapters": [c.get("title") for c in data.get("chapters", [])],
+        "truncated": sorted(data.get("truncated", {})),
+    }
+
+
+def _close(a: int | None, b: int | None, margin: int) -> bool:
+    return (a is None) == (b is None) and (a is None or abs(a - b) <= margin)
+
+
+def differences(name: str, fresh: dict, found: dict) -> list[str]:
+    """Waar een verse probe ({"data"} of {"error"}) van de opname afwijkt: de vorm, de duur
+    (±60 ms) en per spoor het begin (±30 ms) en het laatste beeld (±60 ms). Leeg: gelijk.
+    Voor test_fake_worker.py (ffmpeg 6.1 hier) en tests/media/image_kern.py (7.1 in het image)."""
+    if "error" in found or "error" in fresh:
+        if fresh.get("error", {}).get("code") != found.get("error", {}).get("code"):
+            return [f"{name}: {fresh} tegen {found}"]
+        return []
+    a, b = fresh["data"], found["data"]
+    if shape(a) != shape(b) or not _close(a["duration_ms"], b["duration_ms"], 60):
+        return [f"{name}: {shape(a)} tegen {shape(b)}"]
+    out = []
+    for sa, sb in zip(a["streams"], b["streams"], strict=True):
+        if not (
+            _close(sa["start_ms"], sb["start_ms"], 30)
+            and _close(sa["last_frame_ms"], sb["last_frame_ms"], 60)
+        ):
+            out.append(f"{name}: tijden van spoor {sa['index']}")
+    return out
+
+
 async def raw_probe(source: Path) -> dict[str, Any]:
     """Het antwoord van de worker zoals het over de socket kwam (de data van result)."""
     async with asyncio.timeout(client.PROBE_TIMEOUT):

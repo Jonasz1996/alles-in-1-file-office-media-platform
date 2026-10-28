@@ -1,18 +1,24 @@
 """De commando's van media in app.cli (fase 5, §3.5): elk een dunne aanroep van een functie in het
 pakket. Zonder pakket (de stub) zegt een commando dat media uit staat, met exitcode 1; wat er
-zonder pakket al kan (media-status, media-parse, media-provider-check), geeft 0.
+zonder pakket al kan (media-status, media-parse, media-provider-check), geeft 0. media-status
+vraagt met media aan de worker om caps (de stub van M0; M10 bouwt de rest): geen worker is
+exitcode 1.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 import uuid
 
 import pytest
 
 from app import cli
-from app.config import get_settings
-from app.media import importer, loadtest, names, providers, status
+from app.config import Settings, get_settings
+from app.media import client, importer, loadtest, names, providers, status
+from tests.media import record
+from tests.media.fake_worker import FakeWorker
 
 
 @pytest.fixture(autouse=True)
@@ -39,6 +45,73 @@ def test_media_status_geeft_de_opties_door(monkeypatch, capsys):
     assert cli.main(["media-status", "--wait", "20", "--sessions"]) == 1
     assert seen == {"sessions": True, "wait": 20.0}
     assert capsys.readouterr().out.splitlines() == ["Media: aan", "Let op: iemand kijkt"]
+
+
+def _media_settings(tmp_path, socket_path):
+    return Settings(
+        data_dir=tmp_path,
+        web_dist=tmp_path / "web",
+        jwt_secret="t" * 32,
+        media_enabled=True,
+        media_worker=str(socket_path),
+    )
+
+
+@pytest.fixture
+def unbind():
+    yield
+    client.bind(None)
+
+
+@pytest.mark.anyio
+async def test_media_status_vraagt_de_worker_om_caps(tmp_path, unbind):
+    """De stub van M0 vraagt caps over de socket van de app (het harnas en media-image zien
+    zo dat de worker er is)."""
+    async with FakeWorker(tmp_path / "w" / "nep.sock", mode="container") as fake:
+        found = await status.collect(_media_settings(tmp_path, fake.socket))
+    expected = record.load_caps()["ffmpeg"]
+    assert found["ok"] is True and found["worker"] == "ok"
+    assert found["caps"]["ffmpeg"] == expected and found["caps"]["missing"] == []
+    assert found["lines"] == [f"Media: aan (afgeschermd, ffmpeg {expected})"]
+
+
+@pytest.mark.anyio
+async def test_media_status_zonder_worker(tmp_path, unbind):
+    started = time.monotonic()
+    found = await status.collect(_media_settings(tmp_path, tmp_path / "geen.sock"), wait=1)
+    assert time.monotonic() - started >= status.RETRY  # hij probeerde het opnieuw
+    assert found["ok"] is False and found["worker"] == "down" and found["caps"] is None
+    assert found["lines"][0].startswith("Media: aan, maar de worker is niet bereikbaar (")
+
+
+@pytest.mark.anyio
+async def test_media_status_wacht_op_de_worker(tmp_path, unbind):
+    """--wait: een worker die pas na een tijdje luistert, telt."""
+    fake = FakeWorker(tmp_path / "w" / "laat.sock")
+
+    async def late() -> None:
+        await asyncio.sleep(0.6)
+        await fake.start()
+
+    task = asyncio.create_task(late())
+    try:
+        found = await status.collect(_media_settings(tmp_path, fake.socket), wait=10)
+    finally:
+        await task
+        await fake.stop()
+    assert found["ok"] is True
+    assert found["lines"][0].startswith("Media: aan (lokaal, zonder afscherming, ffmpeg ")
+
+
+def test_media_status_met_media_aan_en_zonder_worker(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("PLATFORM_MEDIA_ENABLED", "true")
+    monkeypatch.setenv("PLATFORM_MEDIA_WORKER", str(tmp_path / "geen.sock"))
+    get_settings.cache_clear()
+    try:
+        assert cli.main(["media-status"]) == 1
+    finally:
+        client.bind(None)
+    assert "niet bereikbaar" in capsys.readouterr().out
 
 
 def test_media_parse_toont_wat_de_parser_ziet(monkeypatch, capsys):

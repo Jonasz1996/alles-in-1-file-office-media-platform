@@ -247,34 +247,6 @@ def test_opnames_geldig_en_zonder_paden():
     assert WorkerCaps.model_validate({**caps, "protocol": wire.PROTOCOL}).missing == []
 
 
-def _shape(data: dict) -> dict:
-    """Wat bij een andere build van ffmpeg gelijk moet blijven (los van bitrates en tags)."""
-    streams = [
-        (
-            s["type"],
-            s["codec"],
-            s.get("width"),
-            s.get("height"),
-            s.get("channels"),
-            s.get("sample_rate"),
-            s.get("lang"),
-            s.get("forced"),
-            s.get("hdr"),
-        )  # fmt: skip
-        for s in data["streams"]
-    ]
-    return {
-        "container": data["container"],
-        "streams": streams,
-        "chapters": [c.get("title") for c in data.get("chapters", [])],
-        "truncated": sorted(data.get("truncated", {})),
-    }
-
-
-def _close(a: int | None, b: int | None, margin: int) -> bool:
-    return (a is None) == (b is None) and (a is None or abs(a - b) <= margin)
-
-
 @pytest.mark.media
 async def test_opnames_kloppen_met_de_echte_worker(tmp_path):
     """Elke opname tegen een verse probe van de echte worker, na elkaar (regel 13)."""
@@ -290,20 +262,7 @@ async def test_opnames_kloppen_met_de_echte_worker(tmp_path):
                 fresh = {"data": await record.raw_probe(record.path(name))}
             except WorkerFailed as exc:
                 fresh = {"error": {"code": exc.code}}
-            if "error" in found or "error" in fresh:
-                if fresh.get("error", {}).get("code") != found.get("error", {}).get("code"):
-                    differ.append(f"{name}: {fresh} tegen {found}")
-                continue
-            a, b = fresh["data"], found["data"]
-            if _shape(a) != _shape(b) or not _close(a["duration_ms"], b["duration_ms"], 60):
-                differ.append(f"{name}: {_shape(a)} tegen {_shape(b)}")
-                continue
-            for sa, sb in zip(a["streams"], b["streams"], strict=True):
-                if not (
-                    _close(sa["start_ms"], sb["start_ms"], 30)
-                    and _close(sa["last_frame_ms"], sb["last_frame_ms"], 60)
-                ):
-                    differ.append(f"{name}: tijden van spoor {sa['index']}")
+            differ += record.differences(name, fresh, found)
     finally:
         await local.stop(worker)
         client.bind(None)
