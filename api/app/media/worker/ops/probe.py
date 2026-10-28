@@ -354,7 +354,9 @@ def clean(
         )
     tags = _tags(fmt.get("tags"))
     first_audio = next((s for s in streams_raw if s.get("codec_type") == "audio"), None)
-    if first_audio is not None:  # Ogg en Opus: de tags staan bij de stream
+    # Ogg (Opus, Vorbis): de muziektags staan bij de stream. Bij andere containers zijn de tags
+    # van een stream iets anders (taal, handler, duur) en horen ze niet bij het bestand
+    if first_audio is not None and container == "ogg":
         for key, value in _tags(first_audio.get("tags")).items():
             if len(tags) >= MAX_TAGS:
                 break
@@ -494,19 +496,8 @@ async def probe_fd(ctx: Context, fd: int, demuxer: str | None) -> dict:
     frames: dict[int, Any] = {}
     last: dict[int, float] = {}
     if any(s.get("codec_name") in ("h264", "hevc", "av1", "vp9") for s in videos):
-        data = await _json(
-            ctx,
-            fd,
-            _argv(
-                demuxer,
-                "-select_streams",
-                "v",
-                "-show_entries",
-                "stream=index,extradata",
-                "-show_data",
-            ),  # fmt: skip
-            required=False,
-        )
+        show = ("-select_streams", "v", "-show_entries", "stream=index,extradata", "-show_data")
+        data = await _json(ctx, fd, _argv(demuxer, *show), required=False)
         for s in (data or {}).get("streams") or []:
             if isinstance(s, dict) and isinstance(s.get("index"), int):
                 blob = hexdump(s.get("extradata"))
@@ -514,41 +505,18 @@ async def probe_fd(ctx: Context, fd: int, demuxer: str | None) -> dict:
                     extradata[s["index"]] = blob
     main = videos[0] if videos else None
     if main is not None and str(main.get("color_transfer")) in ("smpte2084", "arib-std-b67"):
-        data = await _json(
-            ctx,
-            fd,
-            _argv(
-                demuxer,
-                "-select_streams",
-                str(main["index"]),
-                "-read_intervals",
-                "%+#1",
-                "-show_frames",
-                "-show_entries",
-                "frame=side_data_list",
-            ),  # fmt: skip
-            required=False,
-        )
+        show = ("-select_streams", str(main["index"]), "-read_intervals", "%+#1", "-show_frames",
+                "-show_entries", "frame=side_data_list")  # fmt: skip
+        data = await _json(ctx, fd, _argv(demuxer, *show), required=False)
         if data:
             frames[main["index"]] = data.get("frames")
     fmt = raw.get("format") if isinstance(raw.get("format"), dict) else {}
     duration = _float(fmt.get("duration"))
     if main is not None and duration and duration > 0:
         begin = max(0.0, (_float(fmt.get("start_time")) or 0.0) + duration - LAST_WINDOW_S)
-        data = await _json(
-            ctx,
-            fd,
-            _argv(
-                demuxer,
-                "-select_streams",
-                str(main["index"]),
-                "-read_intervals",
-                f"{begin:.3f}%",
-                "-show_entries",
-                "packet=pts_time",
-            ),  # fmt: skip
-            required=False,
-        )
+        show = ("-select_streams", str(main["index"]), "-read_intervals", f"{begin:.3f}%",
+                "-show_entries", "packet=pts_time")  # fmt: skip
+        data = await _json(ctx, fd, _argv(demuxer, *show), required=False)
         times = [
             t
             for p in (data or {}).get("packets") or []
