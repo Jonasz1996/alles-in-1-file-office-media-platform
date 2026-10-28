@@ -1,0 +1,41 @@
+{
+  "test": "test_office_o2_real.py::test_twee_gebruikers_een_docx",
+  "ingelogd_met_2fa": true,
+  "key_anna": "ace85f8179534c3e978780404ebaa56c-73d66a543dbad5b9",
+  "key_bram": "ace85f8179534c3e978780404ebaa56c-73d66a543dbad5b9",
+  "gebeurtenissen_anna": [
+    "onAppReady",
+    "onRequestUsers",
+    "onInfo",
+    "onDocumentReady"
+  ],
+  "gebeurtenissen_bram": [
+    "onAppReady",
+    "onRequestUsers",
+    "onInfo",
+    "onDocumentReady"
+  ],
+  "info_gebruikers": [
+    "868056ae6a365d75cd358fca",
+    "d4e7383947b7932aa9195741"
+  ],
+  "ds_uid_anna": "868056ae6a365d75cd358fca",
+  "ds_uid_bram": "d4e7383947b7932aa9195741",
+  "woord_anna": "annaf8a62a24",
+  "woord_bram": "bramd39238f4",
+  "versies_voor": 0,
+  "nu_opslaan_tot_beide_woorden_s": 1.1,
+  "sluiten_tot_status_2_s": 5.8,
+  "sessie": [
+    "closed",
+    "saved"
+  ],
+  "versies_na": 1,
+  "replaced_by": "Bram",
+  "beide_woorden_in_de_docx": true,
+  "versie_is_de_inhoud_van_voor_de_sessie": true,
+  "opnieuw_geladen": {
+    "anna": 0,
+    "bram": 0
+  }
+}

@@ -77,3 +77,5 @@ er als eerste schuift als het uitloopt.
   een keer via de kern in de app), met de afwijkingen van het ontwerp.
 - [e2e.md](e2e.md): de e2e van office (nep-DS en echte DS), de job `office` in CI, en ontwikkelen
   met een echte DS.
+- [klaar.md](klaar.md): het bewijs van "Klaar als" met de echte DS (twee gebruikers in één docx,
+  een nieuwe versie, het voorbeeld zonder editor), met de schermafdrukken in [klaar/](klaar/).

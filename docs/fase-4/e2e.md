@@ -79,7 +79,7 @@ Voor de tests:
 | `E2E_REAL_DS` | het adres van de echte DS, bijv. `http://127.0.0.1:18080`. Zonder: `office_real` wordt overgeslagen |
 | `E2E_REAL_DS_SECRET_FILE` | het bestand met het JWT-geheim van die DS (van `office_ds.sh`: `<OFFICE_DS_DIR>/jwt.secret`). Het geheim zelf staat nooit in de omgeving |
 | `E2E_REAL_DS_APP_HOST` | hoe DS de host bereikt, standaard `host.docker.internal` (`office_ds.sh` zet `--add-host=host.docker.internal:host-gateway`) |
-| `E2E_ARTIFACTS` | waar schermafdrukken en de meldingen uit de editor komen; standaard een map `artefacten` onder de basetemp van pytest |
+| `E2E_ARTIFACTS` | waar schermafdrukken, de meldingen uit de editor en `o2-echt-bewijs.json` (het bewijs van §4.6 punt 1, [klaar.md](klaar.md)) komen; standaard een map `artefacten` onder de basetemp van pytest |
 | `E2E_HEADED=1` | Chromium met venster (lokaal kijken) |
 
 Voor `office_ds.sh`:
