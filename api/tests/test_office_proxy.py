@@ -424,6 +424,68 @@ async def test_de_service_worker_komt_van_de_app(world, ds):
     assert ds.seen == []
 
 
+async def test_een_statisch_pad_met_dubbele_slash(world, ds, caplog):
+    """De presentatie-editor vraagt sdkjs/slide/themes//themes.js (DS 10.0.0.1; metingen deel 1,
+    bevinding 1). Dat was 404, en dan had een presentatie geen ingebouwde ontwerpen. Nu: een
+    statisch pad met '//' gaat samengevoegd naar DS (DS ziet nooit '//'), ook de eigen service
+    worker. Elke andere klasse met '//' blijft 404, ook met een goed cookie, en DS ziet niets
+    (o1.md, afwijking 19)."""
+    s = await shared(world)
+    caplog.set_level(logging.WARNING, logger="platform.office")
+    for method, path, sent in (
+        (
+            "GET",
+            f"/office/{V}/sdkjs/slide/themes//themes.js",
+            f"/{V}/sdkjs/slide/themes/themes.js",
+        ),
+        (
+            "HEAD",
+            f"/office/{V}/sdkjs///slide/themes/themes.js",
+            f"/{V}/sdkjs/slide/themes/themes.js",
+        ),
+        ("GET", f"/office//{V}/fonts//000?v=1", f"/{V}/fonts/000?v=1"),
+    ):
+        before = len(ds.seen)
+        messages = await asgi(method, path, [])
+        start = next(m for m in messages if m["type"] == "http.response.start")
+        assert start["status"] == 200, path
+        assert len(ds.seen) == before + 1, path
+        assert ds.seen[-1].method == method
+        assert ds.seen[-1].url.raw_path == sent.encode(), path
+        assert (b"cross-origin-resource-policy", b"same-origin") in start["headers"]
+    assert not [r for r in caplog.records if "pad geweigerd" in r.getMessage()]
+    # De service worker met '//': die van de app, DS ziet het verzoek niet
+    before = len(ds.seen)
+    messages = await asgi("GET", f"/office/{V}//document_editor_service_worker.js", [])
+    body = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
+    assert body == paths.OWN_SERVICE_WORKER and len(ds.seen) == before
+    cookie = (b"cookie", f"office={s.a}".encode())
+    frame = (b"sec-fetch-dest", b"iframe")
+    page = PAGE.replace("/main/", "/main//")
+    for method, path in (
+        ("GET", page),
+        ("GET", PAGE.replace("/web-apps/", "//web-apps/")),
+        ("GET", f"/office/{V}//themes.json"),
+        ("GET", data_path(s.key).replace("/data/", "/data//")),
+        ("GET", data_path(s.key).replace("/cache/", "/cache//")),
+        ("POST", f"/office/{V}/downloadas//{s.key}?shardkey={s.key}"),
+        ("POST", f"/office/{V}//upload/{s.key}?shardkey={s.key}"),
+        ("GET", f"/office/{V}/doc//{s.key}/c/?EIO=4&transport=polling"),
+        ("POST", f"/office/{V}/sdkjs//word/sdk-all-min.js"),
+        ("GET", f"/office/{V}/sdkjs//../command"),
+        ("GET", f"/office/{V}/sdkjs//%2e%2e/command"),
+        ("GET", f"/office/{V}/sdkjs//word/a.xml"),
+        ("GET", f"/office/{V}/sdkjs/word//"),
+        ("GET", "/office//healthcheck"),
+        ("POST", f"/office/{V}//command"),
+    ):
+        before = len(ds.seen)
+        messages = await asgi(method, path, [cookie, frame])
+        start = next(m for m in messages if m["type"] == "http.response.start")
+        assert start["status"] == 404, (method, path)
+        assert len(ds.seen) == before, (method, path)
+
+
 async def test_location_alleen_naar_onze_host(world, ds):
     s = await shared(world)
     for location, kept in (

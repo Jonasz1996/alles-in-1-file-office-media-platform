@@ -20,8 +20,9 @@ Deel 1:
   (3,9 KB, doel < 50 KB).
 - **Niet gehaald:** warm openen (2,3–2,5 s, doel 2 s) en de groei van de route Bestanden
   (+2,94 KB, doel < 1 KB).
-- **Wat de metingen verder lieten zien:** de presentatie-editor krijgt via de app de lijst met
-  ingebouwde thema's niet (404 op `themes//themes.js`), elke opening via een link wacht ±0,3 s
+- **Wat de metingen verder lieten zien:** de presentatie-editor kreeg via de app de lijst met
+  ingebouwde thema's niet (404 op `themes//themes.js`; bij de afronding hersteld, o1.md afwijking
+  19), elke opening via een link wacht ±0,3 s
   op React, en de fout A22 (de pptx-editor komt niet klaar) zit in DS zelf. Zie
   [Bevindingen](#bevindingen).
 
@@ -474,11 +475,16 @@ cijfers van `/beheer` → Office en `docker stats` (runbook, "De belasting meten
    `AscCommon.g_defaultThemes` er niet, rechtstreeks bij DS heeft hij 36 namen (dezelfde
    container, dezelfde `proef.pptx`); de toegangslog van elke koude pptx-opening heeft
    `GET office (404)` 3 keer, docx en xlsx geen. Gevolg: in Bewerken van een presentatie
-   ontbreken de ingebouwde ontwerpen (Ontwerp/thema wijzigen). Niet hersteld in deze stap: het
+   ontbreken de ingebouwde ontwerpen (Ontwerp/thema wijzigen). ~~Niet hersteld in deze stap: het
    padbeleid is de toegangscontrole, en een leeg segment toestaan is geen kleine wijziging.
    Voorstel: voor de klasse STATIC een leeg segment binnen het pad samenvoegen zoals nginx, en
    dan het samengevoegde pad doorsturen (nooit het rauwe), met een test in de tests van
-   `oo/paths.py` en een controle in `office_real` dat `g_defaultThemes` er is.
+   `oo/paths.py` en een controle in `office_real` dat `g_defaultThemes` er is.~~ Bij de afronding
+   van de integratie zo hersteld, in de proxy: het padbeleid blijft een leeg segment weigeren,
+   en alleen een pad dat samengevoegd STATIC is, gaat samengevoegd naar DS
+   ([o1.md](o1.md), afwijking 19). Met de echte DS heeft de pptx-editor via de app nu 36
+   ontwerpen, en geeft `/office/` bij het openen nergens 404
+   (`test_office_o2_real.py::test_werkblad_en_presentatie_openen`).
 2. **Elke opening via een link wacht ±0,3 s op React.** Het chunk van de editorpagina is 10–40 ms
    na de refresh binnen, maar de pagina komt pas ±300 ms na het tonen van de terugval van
    `<Suspense>` op het scherm: React 19.3 houdt het tonen van een lazy onderdeel na een terugval

@@ -23,7 +23,10 @@ Per verzoek:
    alleen een vaste lijst verzoekkoppen plus X-Forwarded-Prefix, -Host, -Proto en -For (nooit
    Cookie, Authorization behalve 2., Referer, Forwarded of X-Forwarded-* van de client). Het pad
    gaat byte voor byte naar DS; kan dat niet ('//', '.', '..', een prefix in procenttekens), dan
-   404. Bodies gaan in stukken in beide richtingen (hooguit MAX_BODY: 413 office_too_large),
+   404. Eén uitzondering: een statisch pad met '//' erin (de presentatie-editor vraagt
+   sdkjs/slide/themes//themes.js). Is het pad met elke reeks '/' als één '/' (merged) STATIC,
+   dan gaat dát pad byte voor byte naar DS, nooit het rauwe (o1.md, afwijking 19). Bodies gaan
+   in stukken in beide richtingen (hooguit MAX_BODY: 413 office_too_large),
    gzip blijft gzip. DS niet bereikbaar: 502 office_unavailable.
 4. Het antwoord: Set-Cookie, Clear-Site-Data, HSTS, Server, Service-Worker-Allowed en de
    X-Frame-Options en CSP van DS gaan weg. Erbij: X-Frame-Options: SAMEORIGIN (anders zet Edge
@@ -37,6 +40,7 @@ Per verzoek:
 
 import logging
 import math
+import re
 import time
 from collections import defaultdict, deque
 from urllib.parse import quote, urlsplit
@@ -70,6 +74,7 @@ CACHE = {PathClass.PAGE: "private, no-cache", PathClass.DATA: "private, no-store
 FRESHNESS = frozenset({"cache-control", "expires", "pragma"})
 # Logregels over geweigerde paden: hooguit zoveel per minuut
 REFUSED_LOG_PER_MINUTE = 60
+SLASHES = re.compile(r"/{2,}")
 
 EDITOR_CSP = (
     "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
@@ -233,6 +238,21 @@ def ds_target(scope) -> str | None:
     return path.decode("latin-1") + ("?" + query.decode("latin-1") if query else "")
 
 
+def merged(path: str) -> str:
+    """Het pad (rauw, zonder query) met na het prefix elke reeks '/' als één '/', zoals nginx het
+    doet (merge_slashes). Alleen voor een statisch pad (afwijking 19 van docs/fase-4/o1.md): het
+    padbeleid zelf blijft elk leeg segment weigeren."""
+    if not path.startswith(PREFIX + "/"):
+        return path
+    return PREFIX + SLASHES.sub("/", path[len(PREFIX) :])
+
+
+def _target(path: str, scope) -> str:
+    """Pad en query aan de kant van DS voor een samengevoegd pad (merged), zoals ds_target."""
+    query = scope.get("query_string", b"")
+    return path[len(PREFIX) :] + ("?" + query.decode("latin-1") if query else "")
+
+
 def _own_location(location: str, host: str) -> bool:
     """Relatief, of naar onze eigen host. Een browser leest bij http(s) een '\\' als '/' en
     laat tabs, regeleinden en spaties aan de randen weg; '/\\evil.example/x' is dus een andere
@@ -325,7 +345,14 @@ class OfficeProxy:
     async def handle(self, eng, scope, receive, send) -> None:
         method = scope["method"]
         path = raw_path(scope)
-        kind = eng.classify(method, path, False) if ds_target(scope) is not None else None
+        target = ds_target(scope)
+        kind = eng.classify(method, path, False) if target is not None else None
+        if kind is None and target is not None and merged(path) != path:
+            # Een statisch pad met '//' (afwijking 19): alleen als het samengevoegde pad zelf
+            # STATIC is, en dan gaat dat pad naar DS. Elke andere klasse blijft 404.
+            if eng.classify(method, merged(path), False) == PathClass.STATIC:
+                kind, path = PathClass.STATIC, merged(path)
+                target = _target(path, scope)
         if kind is None:
             refused("geen", method, path)
             return await self.app(scope, receive, send)  # de catch-all geeft 404
@@ -377,6 +404,7 @@ class OfficeProxy:
             scope,
             receive,
             send,
+            target=target,
             page=kind == PathClass.PAGE,
             cache=CACHE.get(kind),
             extra=extra,
@@ -389,12 +417,12 @@ class OfficeProxy:
         receive,
         send,
         *,
+        target: str | None,
         page: bool = False,
         cache: str | None = None,
         extra: list[tuple[str, str]] | None = None,
         budget: str | None = None,
     ) -> None:
-        target = ds_target(scope)
         if target is None:
             return await self.app(scope, receive, send)  # de catch-all geeft 404
         length = _header(scope, b"content-length")

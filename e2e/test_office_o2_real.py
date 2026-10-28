@@ -24,6 +24,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -345,12 +346,37 @@ def test_herstart_van_de_app_terwijl_anna_bewerkt(real_office: Office, real_brow
 def test_werkblad_en_presentatie_openen(real_office: Office, real_browsers, name: str) -> None:
     """Een xlsx en een pptx openen in de echte editor via de app (A22: een pptx opende in de
     spike 4 van 22 keer niet via de proxy; de pagina laadt de iframe dan zelf opnieuw). Sluiten
-    zonder wijziging: de sessie gaat dicht met status 4 (no_changes), geen versie erbij."""
+    zonder wijziging: de sessie gaat dicht met status 4 (no_changes), geen versie erbij.
+
+    Onderweg geeft /office/ nergens 404. De presentatie-editor heeft zijn ingebouwde ontwerpen:
+    die komen uit sdkjs/slide/themes//themes.js (met '//'), dat via de app eerst 404 gaf
+    (metingen deel 1, bevinding 1; o1.md, afwijking 19)."""
     office = real_office
     d = duo(office, name=name, data=fixture(name))
     page = real_browsers.context_as(d.anna, service_workers="block").new_page()
+    missing: list[str] = []
+    page.on(
+        "response",
+        lambda r: (
+            missing.append(r.url)
+            if r.status == 404 and urlsplit(r.url).path.startswith("/office/")
+            else None
+        ),
+    )
     key, reloads = open_via_button(page, d, d.node, name)
     expect(page.locator("iframe[name=frameEditor]")).to_have_attribute("title", f"Editor: {name}")
+    if name.endswith(".pptx"):
+        frame = page.frame(name="frameEditor")
+        assert frame is not None
+        themes = wait_until(
+            lambda: frame.evaluate(
+                "() => (window.AscCommon && window.AscCommon.g_defaultThemes || []).length"
+            ),
+            30,
+            "de ingebouwde ontwerpen van de presentatie-editor (g_defaultThemes)",
+        )
+        print(f"{name}: {themes} ingebouwde ontwerpen", file=sys.stderr)
+    assert missing == [], f"404 op /office/ bij het openen: {missing}"
     page.get_by_role("button", name="Sluiten", exact=True).click()
     expect(page).to_have_url(re.compile(rf"/map/{d.folder}\?bestand={d.node}$"))
 

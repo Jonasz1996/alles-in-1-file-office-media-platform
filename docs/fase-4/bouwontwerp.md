@@ -2359,6 +2359,10 @@ Toelichting:
 - `cmd` en `shardkey` gaan nooit in een log (`SECRET_PARAMS`).
 - `<V>` is per container anders en wisselt bij de font-herstart van een nieuwe container: alleen de
   vorm controleren, nooit vastpinnen.
+- Bij de afronding van de integratie: de presentatie-editor vraagt `sdkjs/slide/themes//themes.js`
+  (een fout in DS; zijn nginx voegt de strepen samen). Het padbeleid blijft een leeg segment
+  weigeren; de proxy stuurt een pad dat samengevoegd STATIC is, samengevoegd naar DS, en alleen
+  dan (`docs/fase-4/o1.md`, afwijking 19). `Engine.classify` blijft gelijk.
 
 ---
 

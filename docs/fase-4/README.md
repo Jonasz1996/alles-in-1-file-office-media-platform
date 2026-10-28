@@ -152,9 +152,6 @@ Elk in één regel; de uitleg staat achter de link.
 
 Bewerken:
 
-- In de presentatie-editor ontbreken de ingebouwde ontwerpen: de app weigert het pad
-  `themes//themes.js` met een dubbele schuine streep ([metingen.md](metingen.md#bevindingen),
-  bevinding 1).
 - Een docx met heel veel opmaak net onder de grens van 4 MB XML opent niet in de editor (de
   browser blijft rekenen); het PDF-voorbeeld werkt wel ([metingen.md](metingen.md#bevindingen),
   bevinding 4).

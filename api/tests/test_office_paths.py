@@ -13,6 +13,7 @@ import jwt
 import pytest
 
 from app.config import Settings
+from app.office import proxy
 from app.office.engine import PathClass, TokenError
 from app.office.oo import paths, tokens
 
@@ -172,6 +173,62 @@ def test_normaliseren_weigert(path):
     for method in ("GET", "HEAD", "POST"):
         assert paths.classify(method, path, False) is None, (method, path)
     assert paths.key_of(path) is None
+
+
+def test_een_dubbele_slash_komt_alleen_bij_statisch_door():
+    """De presentatie-editor van DS 10.0.0.1 vraagt sdkjs/slide/themes//themes.js: web-apps zet
+    SetThemesPath("../../../../sdkjs/slide/themes/") en sdkjs plakt er "/themes.js" achter. DS
+    zelf geeft 200 (nginx voegt de slashes samen); via de app gaf het 404, en dan had een
+    presentatie geen ingebouwde ontwerpen (metingen deel 1, bevinding 1).
+
+    Het padbeleid blijft elk leeg segment weigeren. De proxy voegt de slashes samen
+    (proxy.merged), vraagt het padbeleid opnieuw en laat alleen STATIC door, met het
+    samengevoegde pad naar DS (o1.md, afwijking 19). Hier het deel van het padbeleid: voor elk
+    pad uit de spike geeft een extra '/' op elke plek na het prefix None, en het samengevoegde
+    pad weer precies de eigen klasse. Via '//' komt dus niets door wat zonder '//' dicht was,
+    en alleen statisch telt."""
+    themes = f"/office/{V}/sdkjs/slide/themes//themes.js"
+    assert paths.classify("GET", themes, False) is None
+    assert paths.key_of(themes) is None
+    assert proxy.merged(themes) == f"/office/{V}/sdkjs/slide/themes/themes.js"
+    assert paths.classify("GET", proxy.merged(themes), False) == PathClass.STATIC
+    assert proxy.merged(f"/office//{V}///fonts//000") == f"/office/{V}/fonts/000"
+    assert proxy.merged("/officex//a") == "/officex//a"  # niet van ons: blijft zoals het is
+    checked = 0
+    for kind, method, _, path in fixture_lines():
+        upgrade = method == "UPGRADE"
+        verb = "GET" if upgrade else method
+        raw, sep, query = path.partition("?")
+        for i, ch in enumerate(raw):
+            if ch != "/" or i < len("/office"):
+                continue
+            doubled = raw[:i] + "/" + raw[i:]
+            assert paths.classify(verb, doubled + sep + query, upgrade) is None, doubled
+            again = proxy.merged(doubled)
+            assert again == raw, doubled
+            assert paths.classify(verb, again + sep + query, upgrade) == PathClass(kind)
+            checked += 1
+    assert checked > 100
+    # Wat na samenvoegen nog steeds dicht of geen STATIC is
+    for path, wanted in (
+        (f"/office/{V}/sdkjs//../command", None),
+        (f"/office/{V}/sdkjs//%2e%2e/command", None),
+        (f"/office/{V}/sdkjs//word/a.xml", None),
+        (f"/office/{V}/sdkjs/word//", None),
+        ("/office//healthcheck", None),
+        (f"/office/{V}//index.html", None),
+        (f"/office/{V}/web-apps/apps/presentationeditor/main//index.html", PathClass.PAGE),
+        (f"/office/{V}//themes.json", PathClass.SETTINGS),
+        (f"/office/cache/files/data//{KEY}/Editor.bin/Editor.bin", PathClass.DATA),
+    ):
+        assert paths.classify("GET", path, False) is None, path
+        assert paths.classify("GET", proxy.merged(path), False) == wanted, path
+    sw = f"/office/{V}//document_editor_service_worker.js"
+    assert paths.own_file(sw) is None
+    assert paths.own_file(proxy.merged(sw)) == (
+        "text/javascript; charset=utf-8",
+        paths.OWN_SERVICE_WORKER,
+    )
 
 
 def test_versieprefix_en_hoofdletters():
