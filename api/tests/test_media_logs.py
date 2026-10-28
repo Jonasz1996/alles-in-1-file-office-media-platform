@@ -3,17 +3,23 @@
 punt door ***; het deel ervoor (de naam van de node) blijft, om te kunnen volgen.
 
 M0 legt het patroon vast, en kijkt het na op de echte toegangslog van uvicorn (via tests/live.py).
-Het afspelen van een hele sessie met de nep-stream (fake_stream.py) komt erbij met die nep-stream.
+Daarna speelt een hele sessie af met de nep-stroom (fake_stream.py) achter een echte uvicorn:
+play, de map, de playlists, de init, elk segment, een sprong, direct play met Range, en sluiten.
+Geen enkele logregel (de toegangslog en de eigen log van de nep) bevat het geheim van een sid.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 
+import httpx
 import pytest
 
 from app.main import STREAM_PATH, HideSecrets, _hide
-from tests.live import live
+from tests.live import free_port, live
+from tests.media import fixtures as F
 
 SECRET = "Zr7Qd2kLmN0pXa9sB4cT1vWy3eF6gH8j"
 SID = f"node-1.{SECRET}"
@@ -102,3 +108,85 @@ async def test_geen_sid_in_de_echte_toegangslog(tmp_path, monkeypatch):
     assert len(stream_lines) == 6, keep.lines
     for line in keep.lines:
         assert SECRET not in line, line
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not F.available(), reason="ffmpeg ontbreekt (fixtures)")
+async def test_geen_sid_in_een_hele_sessie_met_de_nep_stroom():
+    import uvicorn
+
+    from tests.media.fake_stream import (
+        H264_PROFILE,
+        NODE_DIRECT,
+        NODE_TRANSCODE,
+        TOKEN,
+        FakeStream,
+    )
+
+    fake = FakeStream(speed=40)
+    port = free_port()
+    config = uvicorn.Config(
+        fake.app, host="127.0.0.1", port=port, log_level="info", lifespan="off",
+        server_header=False,
+    )  # fmt: skip
+    server = uvicorn.Server(config)
+    keep = Keep()
+    access = logging.getLogger("uvicorn.access")
+    own = logging.getLogger("tests.media.fake_stream")
+    level = own.level
+    own.setLevel(logging.INFO)
+    access.addHandler(keep)
+    own.addHandler(keep)
+    task = asyncio.create_task(server.serve())
+    sids: list[str] = []
+    try:
+        for _ in range(200):
+            if server.started:
+                break
+            assert not task.done(), "uvicorn stopte"
+            await asyncio.sleep(0.02)
+        auth = {"Authorization": f"Bearer {TOKEN}"}
+        async with httpx.AsyncClient(
+            base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=30
+        ) as c:
+            r = await c.post(
+                f"/api/v1/media/{NODE_TRANSCODE}/play", json={"profile": H264_PROFILE},
+                headers=auth,
+            )  # fmt: skip
+            assert r.status_code == 200, r.text
+            sid = r.json()["sid"]
+            sids.append(sid)
+            base = f"/api/v1/stream/{sid}"
+            m = (await c.get(f"{base}/map.json")).json()
+            for rest in ("master.m3u8", "v.m3u8", m["init"], "0.m4s", "8.m4s", "1.m4s"):
+                assert (await c.get(f"{base}/{rest}")).status_code == 200, rest
+            assert (await c.delete(base)).status_code == 204
+            assert (await c.get(f"{base}/2.m4s")).status_code == 410
+            r = await c.post(
+                f"/api/v1/media/{NODE_DIRECT}/play", json={"profile": H264_PROFILE},
+                headers=auth,
+            )  # fmt: skip
+            sid = r.json()["sid"]
+            sids.append(sid)
+            ranged = await c.get(f"/api/v1/stream/{sid}/file", headers={"Range": "bytes=0-99"})
+            assert ranged.status_code == 206
+            assert (await c.head(f"/api/v1/stream/{sid}/file")).status_code == 200
+            fake.stop(sid)
+            assert (await c.get(f"/api/v1/stream/{sid}/file")).status_code == 403
+    finally:
+        server.should_exit = True
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(task, 10)
+        access.removeHandler(keep)
+        own.removeHandler(keep)
+        own.setLevel(level)
+        await fake.aclose()
+    assert len(sids) == 2
+    secrets = [sid.split(".", 1)[1] for sid in sids]
+    stream_lines = [line for line in keep.lines if "/api/v1/stream/" in line]
+    assert len(stream_lines) >= 12, keep.lines
+    assert all("/api/v1/stream/local.***" in line for line in stream_lines), stream_lines
+    assert any("sessie " in line for line in keep.lines), "de nep logde niets"
+    for line in keep.lines:
+        for secret in secrets:
+            assert secret not in line, line
