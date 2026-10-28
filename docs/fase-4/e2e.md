@@ -25,9 +25,33 @@ lokaal met een echte DS ontwikkelt. Gemaakt in O0-e2e. Het ontwerp staat in
 | `e2e/conftest.py` | de fixtures `office`, `real_office`, `office_browsers` en `real_browsers`, en de optie `office_frames` van de bewaking |
 | `e2e/office_ds.sh` | de echte DS starten, wachten, logs ophalen en stoppen (CI en lokaal) |
 | `e2e/fixtures/office/` | `proef.docx`, `.xlsx`, `.pptx`, `.doc`, `.xls`, `.ppt` en `.rtf`, met een [README](../../e2e/fixtures/office/README.md) over hoe ze gemaakt zijn |
-| `e2e/test_office_o0.py` | O0 met de nep-DS: alles dicht zonder office, de status en de proxy, twee editors via proxy en tunnel, DS weg en terug |
-| `e2e/test_office_o0_real.py` | de rooktest met de echte DS (§4.5 punt 0) |
+| `e2e/test_office_o<N>.py`, `e2e/test_office_o<N>_real.py` | de tests per pakket, zie de tabel hieronder |
 | `api/tests/fake_docserver/recorded/` | wat de echte DS deed (de opnames uit de spike); de nep-DS en `api/tests/test_fake_docserver.py` houden zich daaraan |
+
+### Wat elk testbestand bewijst
+
+Met de nep-DS (`office`, 30 tests) en met de echte DS (`office_real`, 22 tests). De uitslag van
+de laatste runs staat in [klaar.md](klaar.md).
+
+| Bestand | Tests | Wat het bewijst |
+|---|---|---|
+| `test_office_o0.py` | 4 | zonder office is `/office/` en `/internal/` 404 en zegt de status uit (precies fase 3); met de nep-DS gezond na de grote controle en `api.js` via de proxy met zijn koppen; twee editors op één key via proxy en tunnel, status 2 met beide teksten; DS op PID gestopt geeft 502 `office_unavailable` en `down`, weer gestart weer gezond zonder herstart van de app |
+| `test_office_o0_real.py` | 1 | de rooktest (§4.5 punt 0): `api.js` laadt via `/office/` onder de CSP van de app, `/healthcheck` is `true`, `version` zonder token geeft `error 6`, een docx wordt een PDF |
+| `test_office_o1.py` | 7 | de poort (§4.4 punt 3 en 10): twee contexts bewerken samen via de tunnel, elk met het poort-cookie (`HttpOnly`, `SameSite=Strict`, `Path=/office/`); een lezer ziet geen Bewerken en komt ook met een eigen cookie niet bij de key van een ander (401); uitloggen in een andere context sluit de editor binnen 10 s; de editorpagina als pagina is 404, ook met cookie; na het intrekken geen nieuwe socket met het oude sessietoken; een socket met het token van een andere key gaat dicht vóór DS iets ziet; de editor over http en over https (`wss:`, `Secure`) |
+| `test_office_o1_real.py` | 4 | §4.5 punt 5 tegen de echte DS: de afscherming met de echte editor open (404 als pagina, geen DATA-pad of upgrade zonder cookie, na het intrekken eruit en `info` noemt hem niet meer); een tweede `auth` over een andere key op een goede socket gaat dicht; de service worker onder `/office/` is die van de app, zonder caches van DS; de echte editor over http en https op dezelfde key, en wat over https getypt is, staat na Nu opslaan in de docx |
+| `test_office_o2.py` | 8 | bewerken via de web-app (§4.4 punt 1, 2 en 6): samen bewerken geeft precies één versie met beide teksten; hernoemen tijdens het bewerken (opgeslagen in hetzelfde id); de prullenbak terwijl de eigenaar bewerkt (het werk staat in het bestand in de prullenbak, een nieuwe sessie 422 `trashed`); een ingetrokken deling zet Bram eruit en zijn werk wordt een herstelkopie bij Anna; definitief verwijderd terwijl er bewerkt wordt (geen kopie, 404); DS weg en terug (de viewer houdt het voorbeeld); de app weg tijdens het bewerken en het herstel zet het werk terug; openen, Nu opslaan en Sluiten met alleen het toetsenbord, ook in het Engels |
+| `test_office_o2_real.py` | 4 | §4.6 punt 1: Anna en Bram met 2FA in één docx in de echte editor (`onDocumentReady` bij beide, dezelfde key, `info` noemt beide, beide woorden na Nu opslaan, status 2 met reden `saved`, precies één versie gelijk aan `proef.docx`), met schermafdrukken en `o2-echt-bewijs.json`; §4.5 punt 4: de app op PID stoppen en starten terwijl Anna bewerkt, en haar tekst staat in het bestand; een xlsx en een pptx openen en zonder wijziging sluiten (status 4, geen versie) |
+| `test_office_o3.py` | 3 | het voorbeeld zonder editor (§4.4 punt 4 en 8): een docx en een doc worden PDF-pagina's en een thumbnail, zonder socket, download of callback en zonder verkeer naar `/office/`, en een odt-bom komt nooit bij DS; achter een publieke link pagina's zonder Bewerken, en een upload via een uploadlink wacht tot een ingelogde lezer erom vraagt; zonder office geen omzetting (`office_off`, geen bronroute op de publieke poort) |
+| `test_office_o3_real.py` | 1 | §4.5 punt 2: `proef.docx`, `.xlsx`, `.pptx`, `.doc` en `.rtf` zijn binnen 60 s `ready`, met pagina's in de viewer, zonder verkeer naar `/office/` |
+| `test_office_o4.py` | 2 | Nieuw met alleen het toetsenbord: O, ↓ en Enter maakt "Nieuw document.docx" en opent de editor, sluiten zonder typen geeft status 4 en geen versie; in het Engels via de knop New; via het submenu Nieuw van de map met een naam die al bestaat ("Nieuwe presentatie (1).pptx"); met alleen leesrecht geen menu en doet O niets |
+| `test_office_o4_real.py` | 4 | §4.5 punt 3: een nieuwe docx, xlsx en pptx openen in de echte editor zonder `onError`, sluiten zonder wijziging (`no_changes`, geen versie, de inhoud precies het lege bestand) en worden een PDF van één pagina; bij de docx geeft "Downloaden als docx" geen melding (A17); het Engelse werkblad opent ook |
+| `test_office_o5.py` | 6 | het tabblad Office (§4.4 punt 7): 2 verbindingen, 2 mensen en 1 document terwijl twee mensen bewerken, daarna 0 en de piek blijft; de grens op 1 en de tweede bewerker krijgt de melding (daarna terug naar 20); na Opslaan ziet de eigen app meteen of Nieuw er is; "Niet bereikbaar sinds …" leest een schermlezer één keer voor; Niet opgeslagen terugzetten na het vrijmaken van ruimte en verwijderen met de bevestiging; alles met het toetsenbord, en het tabblad in het Engels |
+| `test_office_o5_real.py` | 1 | het tabblad met de echte DS: de vastgepinde versie (`10.0.0.169`), "geen limiet" en dat DS tokens eist, geen melding behalve forgotten files zonder eigenaar; 2 verbindingen, 2 mensen en 1 document terwijl Anna en Bram bewerken, daarna 0 |
+| `test_office_o6_real.py` | 7 | de instellingen van `infra/single/office/local-production-linux.json`: voor docx, pptx, xlsx, odt, ods en odp zetten de app en DS net onder de grens om en weigeren ze net erboven allebei (DS `-10`); een gewoon document gaat, en de AI-proxy van DS weigert |
+
+`test_office_o6.py` met de nep-DS bestaat niet: O6 is install.sh en compose, en dat bewijzen
+`infra/single/tests/test_install_env.sh` (job `infra`) en de installatietest
+([integratie.md](integratie.md)).
 
 ## Draaien
 

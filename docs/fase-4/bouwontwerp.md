@@ -475,6 +475,10 @@ Elke keuze geeft de standaard en waarom.
       | `saving` | wachten op het slot; na 15 s 409 `office_busy` |
 
       Bij `office_busy` vraagt de editorpagina het elke 3 s opnieuw, hooguit 30 s lang.
+
+      *Noot bij de bouw:* een `pending` sessie waarvan de inhoud intussen veranderde (een
+      upload), gaat ook binnen de 5 minuten dicht (`lost`), en de opener krijgt een nieuwe key
+      met de nieuwe inhoud; anders laadde DS de oude ([o2.md](o2.md), afwijking 38).
     - Waarom geen lege `open`-key hergeven: DS gaat die key opslaan. Wie daarop opent, krijgt van
       DS `onRequestRefreshFile` (M17), of zijn werk valt tussen twee sessies.
     - Waarom `pending` tot 5 minuten: de eerste opener kan nog laden. Na een start van DS duren de
@@ -534,9 +538,12 @@ Elke keuze geeft de standaard en waarom.
     4. **Meteen downloaden** naar `blobs.root/.tmp`. De link leeft ±900 s en sterft bij een herstart
        van DS zonder vast geheim [gemeten]. **De grens** is de kleinste van
        `office_max_save_bytes` (standaard 512 MB) en wat de eigenaar nog mag opslaan
-       (`room_left`). Wat DS echt maakt, is veel kleiner: invoer tot 100 MB, afbeeldingen tot
-       25 MB, wijzigingen tot 150 MB [image]. Boven de grens stopt het downloaden en wordt er
-       niets geschreven (`too_large` of `no_room`).
+       (`room_left`). *Gebouwd:* `room_left` plus de grootte van het bestand nu (een opslag die
+       de tussenstand vervangt, kost alleen het verschil), hooguit `office_max_save_bytes`;
+       `place_file` rekent onder de sloten precies na ([o2.md](o2.md), afwijking 35). Wat DS
+       echt maakt, is veel kleiner: invoer tot 100 MB, afbeeldingen tot 25 MB, wijzigingen tot
+       150 MB [image]. Boven de grens stopt het downloaden en wordt er niets geschreven
+       (`too_large` of `no_room`).
     5. Het bestand vers laden. Naam en map kunnen veranderd zijn. **Definitief weg** (ook de
        eigenaar): `{"error": 0}`, niets schrijven, sessie dicht met `gone`. De eigenaar wilde het
        weg (Keuze 19).
@@ -551,7 +558,8 @@ Elke keuze geeft de standaard en waarom.
     8. Er is niemand meer met schrijfrecht, maar bestand en eigenaar bestaan: **een herstelkopie**
        `<naam> (hersteld <datum tijd>).<ext>` in de hoofdmap van de eigenaar, met de eigenaar als
        actor. Nooit bij iemand die zijn recht kwijt is. Gebeurtenis `office.recovered` alleen naar
-       wie de kopie nu kan zien (§3.4).
+       wie de kopie nu kan zien (§3.4). Een herhaling van dezelfde opslag maakt geen tweede kopie
+       (de sha van de laatste kopie staat bij de sessie; [o2.md](o2.md), afwijking 39).
     9. Gelukt: `applied_mark`, `checkpoint`, `saved_at` en `versions_made` bijwerken en
        committen, dan pas `{"error": 0}`.
     - **Tijdelijke fout** (database bezet, DS-link gaf 5xx, schijf): **HTTP 503**. DS probeert het
@@ -645,7 +653,9 @@ Elke keuze geeft de standaard en waarom.
       zonder `actions` [gemeten]. Die komt dus ook na een eigen eindopslag binnen; de tabel van
       Keuze 15 geeft daar `{"error": 0}`;
     - tussentijds opslaan (Keuze 18);
-    - gesloten rijen ouder dan 30 dagen weg.
+    - gesloten rijen ouder dan 30 dagen weg. *Gebouwd:* behalve een rij waarvan DS de key nog als
+      forgotten file heeft; anders kon het herstel dat werk later niet meer opslaan
+      ([o2.md](o2.md), afwijking 36).
 
     Elke stap met een eigen korte transactie. Nooit een slot vasthouden tijdens een aanroep naar DS.
 21. **Forgotten files herstellen we vanzelf.**
@@ -660,14 +670,21 @@ Elke keuze geeft de standaard en waarom.
       2. Bestand of eigenaar definitief weg → alleen `deleteForgotten`. Niets schrijven.
       3. De sessie van deze key is de laatste van het bestand (ook als hij nog `saving` of `lost`
          is), en de inhoud van het bestand is nog wat deze sessie het laatst zag → gewoon opslaan
-         op het origineel, volgens Keuze 16 en 17.
+         op het origineel, volgens Keuze 16 en 17. *Gebouwd:* een rij die nog liep, sluit dan als
+         `lost`, niet `saved`, zodat een latere opslag op die key er ook nog in komt
+         ([o2.md](o2.md), afwijking 37).
       4. Anders → een herstelkopie bij de eigenaar (Keuze 16, stap 8).
       5. Gelukt → `deleteForgotten`, gebeurtenis `office.recovered`.
       6. Lukt ook de kopie niet (quotum vol, te groot) → hij blijft staan. `/beheer` → Office →
          "Niet opgeslagen" toont hem met de naam en eigenaar uit `office_session`, met de knoppen
          **Terugzetten** (zelfde stap 4, als er nu ruimte is) en **Verwijderen**. Melding
-         `office_unsaved`.
+         `office_unsaved`. *Gebouwd:* Terugzetten geeft 409 `office_owner_gone` als de eigenaar
+         of het bestand definitief weg is, en kijkt onder het slot of het werk er al staat (dan
+         geen tweede kopie) ([o5.md](o5.md), afwijking 1 en 14, en de open problemen).
       7. Geen rij voor deze key (een andere database) → alleen op `/beheer`, als "onbekend".
+         *Gebouwd:* daar alleen met Verwijderen, want zonder rij is er geen eigenaar
+         ([o5.md](o5.md), afwijking 11). Een key **met** een dichte rij blijft wel herstelbaar,
+         ook na 30 dagen (Keuze 20, [o2.md](o2.md), afwijking 36).
     - Ze staan in het volume `office-lib`, niet in `/tank/platform`, dus niet in de ZFS-snapshot.
       Het herstel zet ze binnen enkele minuten in de app; dan zitten ze er wel in.
 
@@ -1018,7 +1035,8 @@ Elke keuze geeft de standaard en waarom.
    ±4 GB schijf (8 GB vrij tijdens een update), ±0,5 GB RAM in rust (grens 2 GB), en na elke start
    van DS ±5 minuten 1–2 cores [gemeten]. Uit: `OFFICE=uit bash install.sh`, of `OFFICE=uit` in
    `/opt/platform/.env` en het script opnieuw draaien. Bij nee start het script DS pas na
-   `OFFICE=aan`.
+   `OFFICE=aan`. *Stand bij 0.6.0:* de standaard (aan) is in gebruik; Jonas koos niet anders,
+   en het kan nog veranderen (B37).
 3. **Het restrisico van DS op hetzelfde adres accepteren?** (Keuze 9) **Besloten (Jonas,
    2026-10-26): ja.** Wat
    overblijft:
@@ -1042,11 +1060,14 @@ Elke keuze geeft de standaard en waarom.
    elke 5 minuten) werkt het bestand bij, maar maakt daarnaast geen eigen versie. Zo blijft de
    inhoud van vóór een sessie terug te halen tot er 20 nieuwere versies zijn. Eén sessie maakt er
    hooguit 10, dus die ene sessie duwt hem er nooit uit. Bij "elke opslag een versie" duwt één
-   middag bewerken alle geschiedenis eruit (max. 20).
+   middag bewerken alle geschiedenis eruit (max. 20). *Stand bij 0.6.0:* de standaard is in
+   gebruik; Jonas koos niet anders, en het kan nog veranderen (B34).
 5. **De Collabora-adapter nu bouwen?** Standaard: **nee, alleen klaarzetten** (Keuze 3): de naad,
    de motor-neutrale contracttests en `docs/fase-4/collabora.md`. Omschakelen kost dan later ±1 week.
    Bij ja: ±3 dagen extra (een WOPI-host zonder locks, een nep-Collabora, en de echte CODE één keer
-   in de sandbox), en dat past niet in twee weken naast de rest.
+   in de sandbox), en dat past niet in twee weken naast de rest. *Stand bij 0.6.0:* de standaard
+   (alleen klaargezet, [collabora.md](collabora.md)) is in gebruik; Jonas koos niet anders, en
+   het kan nog veranderen.
 
 ---
 
@@ -1288,7 +1309,9 @@ upgrade: Origin 403, cookie of recht 401, te veel 429, ander pad 404 — vóór 
   - Alt+Shift+Q in de iframe zet de focus op Sluiten. Sluiten gaat terug naar waar je vandaan kwam
     (anders naar de map van het bestand);
   - vernieuwt het cookie elke 30 minuten (`gate.ts`);
-  - luistert naar `node.changed` voor dit bestand ("Opgeslagen om …") en naar `office.presence`;
+  - luistert naar `node.changed` voor dit bestand ("Opgeslagen om …") en naar `office.presence`
+    (*gebouwd:* "Opgeslagen om …" alleen als `modified_at` van het bestand verder is, want
+    `node.changed` komt ook bij hernoemen en verplaatsen; [o2.md](o2.md), afwijking 40);
   - `destroyEditor()` bij het verlaten.
 - `office/actions.ts`: wanneer "Bewerken" er is (formaat, `canWrite`, office aan), voor de haak in
   `browser/actions.ts` en de knop in de viewer.
@@ -1520,7 +1543,8 @@ GET  /api/v1/office/pdf/{id}?token= → application/pdf
 **API**
 ```
 POST /api/v1/office/new  body { parent_id: uuid, kind: "docx"|"xlsx"|"pptx", name?: str }
-     → 201 NodeOut      (een naam zonder extensie krijgt die erbij; bestaat hij al: "Nieuw document (2).docx")
+     → 201 NodeOut      (een naam zonder extensie krijgt die erbij; bestaat hij al: "Nieuw document (2).docx";
+                         gebouwd: "Nieuw document (1).docx", zoals de rest van de app nummert, o4.md afwijking 1)
      fouten: 403 read_only; 404 folder_not_found; 413 no_room; 422 album | invalid_input
 ```
 Dit werkt ook als DS uit staat (het is gewoon een bestand). De web-app toont de items alleen als
@@ -1916,6 +1940,8 @@ max_editors: 20, checkpoint_minutes: 5, version_minutes: 30}`. In het geheugen, 
 KEY_RE = re.compile(r"^[0-9A-Za-z._=-]{1,128}$")
 def new_key(node_id: uuid.UUID) -> str               # f"{node_id.hex}-{secrets.token_hex(8)}"
 def convert_key(sha: str, n: int = 1) -> str         # f"p{PDF_VERSION}-{sha}", vanaf n = 2 met "-a<n>"
+    # review fase 4: een optionele derde parameter r (Mislukte opnieuw) geeft "p1-<sha>-r<r>",
+    # en "-r<r>-a<n>" na -2 of -4; zonder r precies als hierboven (o3.md, afwijking 16)
 
 # app/office/engine.py (de naad; zie Keuze 3)
 class PathClass(StrEnum): STATIC; PAGE; DATA; SESSION; SETTINGS; ACTION
@@ -1999,6 +2025,7 @@ def rewrite(settings, url: str, *, key: str, kind: Literal["data", "conv", "forg
 @dataclass(frozen=True)
 class Verdict: ok: bool; reason: str | None     # too_big | ratio | entries | method | encrypted | time | io | ...
 TRANSIENT = frozenset({"time", "io"})            # de machine, niet de inhoud: niet bewaard, niet unsafe
+    # review fase 4: io en TRANSIENT zijn erbij gekomen (eerst gaf een OSError corrupt); o3.md, afwijking 20
 async def check(settings, path: Path, ext: str, sha: str) -> Verdict   # een uur in het geheugen per sha (TRANSIENT niet)
 
 # app/office/health.py (de enige gezondheidslus; schrijft OfficeState)
@@ -2425,7 +2452,8 @@ class Driver(Protocol):            # nu één: de nep-DS van OnlyOffice
     async def close(self, h: Handle) -> None
     async def reconnect(self, h: Handle) -> bool     # zoals een browser na een breuk; False = geweigerd
     async def fail_callbacks(self, n: int) -> None   # de app geeft de volgende n callbacks 503 (testhaak)
-    async def replay_refused(self) -> int            # de laatst geweigerde callback nog eens (status)
+    async def replay_refused(self) -> int            # de laatst geweigerde callback nog eens (status);
+                                                     # review fase 4, o2.md afwijking 41
     async def crash(self) -> None                    # kill zonder opslaan
     async def restart_app(self) -> None
 ```
@@ -2621,17 +2649,20 @@ van Docker Hub met digest (§5.1), de start van DS, één sessie met twee gebrui
      `test_error_catalog`), ruff, `tsc -b`, vitest, build, budget, `check:i18n`, de e2e van fase 3,
      `-m office` en de job `office`.
 4. **Integratie** (±2 dagen):
-   - de e2e met de echte DS (§4.5) en het bewijs van §4.6 → `docs/fase-4/klaar.md`;
+   - de e2e met de echte DS (§4.5) en het bewijs van §4.6 → `docs/fase-4/klaar.md` (gedaan);
    - de echte installatie in de sandbox (`test_install_update.sh`, §4.6 punt 3) →
      `docs/fase-4/integratie.md`, ook het bijwerken van een `.env` van v0.5.0 en het terugrollen
-     naar v0.5.0 met `db-downgrade`;
-   - de metingen van §4.7, en `max_editors` daarop gezet;
+     naar v0.5.0 met `db-downgrade` (gedaan; het runbook was daarbij fout en is verbeterd);
+   - de metingen van §4.7, en `max_editors` daarop gezet (gedaan: hij blijft 20, zie
+     `docs/fase-4/metingen.md`, max_editors);
    - `office_dev_ungated` weg uit `config.py` en de harnas (gedaan: het harnas bij het
      samenvoegen van O1, het veld bij de integratie; zie o1.md);
    - `docs/fase-4/README.md` met wat er is en de bekende grenzen; de vinkjes van fase 4 in het
      stappenplan, en de regels over "eigen Postgres, Redis en RabbitMQ" en de limiet van 20
-     bijgewerkt met de reden; B3 en B31 en verder definitief na de keuze van Jonas;
-   - versie 0.6.0 in `pyproject.toml`, `app/__init__.py` en `package.json`.
+     bijgewerkt met de reden; B3 en B31 en verder definitief na de keuze van Jonas (gedaan: B3,
+     B31 en B32 koos Jonas; B33–B38 zijn de standaard in gebruik sinds 0.6.0, Jonas koos niet
+     anders);
+   - versie 0.6.0 in `pyproject.toml`, `app/__init__.py` en `package.json` (gedaan).
 
 **Eerlijk over de tijd.** O0 ±4 dagen, de golf ±5 dagen, de integratie ±2 dagen: samen **±11
 werkdagen**. Dat is één dag meer dan de twee weken van het stappenplan. O0 is zwaarder dan in

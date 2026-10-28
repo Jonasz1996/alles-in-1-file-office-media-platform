@@ -64,5 +64,12 @@ van het tabblad is van O5; in O0 alleen de tekst dat het overzicht later komt.
       zegt `ok`; Bewerken staat bij een docx en niet bij een txt; E in de lijst en E in de viewer
       openen `/bewerken/<id>`; Terug is met Tab en Enter te bereiken; het tabblad Office staat er
       en Alt+7 gaat erheen.
-- [ ] O (het menu Nieuw) met alleen het toetsenbord: pas als `office/newItems.ts` items geeft
-      (O4). De vaste e2e met de nep-DS komt met O0-e2e (`e2e/office_harness.py`).
+- [x] O (het menu Nieuw) met alleen het toetsenbord: sinds O4 geeft `office/newItems.ts` de items
+      Document, Werkblad en Presentatie. Bewezen in de e2e met de nep-DS,
+      `e2e/test_office_o4.py::test_nieuw_document_met_alleen_het_toetsenbord`: O opent het menu
+      met de focus op Map, ↓ naar Document en Enter maakt "Nieuw document.docx" en opent de
+      editor; in het Engels Tab naar de knop New, ↑ opent het menu onderaan, Enter maakt "New
+      spreadsheet.xlsx", en Escape zet de focus terug op de knop. Het submenu Nieuw in het menu
+      van de map (→, End, Enter) in `::test_nieuw_via_het_contextmenu_van_de_map`, dat ook
+      bewijst dat O met alleen leesrecht niets doet. Met de echte DS: O, ↓ en Enter in
+      `test_office_o4_real.py` (de checklist staat in [toetsenbord-o4.md](toetsenbord-o4.md)).
