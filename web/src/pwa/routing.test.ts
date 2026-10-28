@@ -45,6 +45,45 @@ describe("classify", () => {
     }
   });
 
+  it("media (fase 5): /api/v1/stream/ nooit, op geen enkele manier; de pagina's zijn de schil", () => {
+    // De sid zit in het pad (§3.4); wat de speler, de viewer en de muziekbalk ophalen
+    const sid = "film.mkv.AbC-_123";
+    const stream = [
+      `/api/v1/stream/${sid}`,
+      `/api/v1/stream/${sid}/file`,
+      `/api/v1/stream/${sid}/map.json`,
+      `/api/v1/stream/${sid}/master.m3u8`,
+      `/api/v1/stream/${sid}/v.m3u8`,
+      `/api/v1/stream/${sid}/init.mp4?g=1`,
+      `/api/v1/stream/${sid}/0.m4s`,
+      `/api/v1/stream/${sid}/1234.m4s`,
+      `/api/v1/stream/${sid}/subs/e2.vtt`,
+      `/api/v1/stream/${sid}/trick.vtt`,
+      `/api/v1/stream/${sid}/trick/0.jpg`,
+      `/api/v1/stream/${sid}/audio.mp4`,
+      "/api/v1/stream/",
+      "/api/v1/stream",
+    ];
+    for (const path of stream) {
+      expect(classify(req(path), ORIGIN)).toBeNull();
+      expect(classify(req(path, { mode: "navigate" }), ORIGIN)).toBeNull();
+      expect(classify(req(path, { mode: "no-cors" }), ORIGIN)).toBeNull();
+      expect(classify(req(path, { method: "HEAD" }), ORIGIN)).toBeNull();
+      expect(classify(req(path, { method: "DELETE" }), ORIGIN)).toBeNull();
+      expect(classify(req(path, { headers: { Range: "bytes=0-" } }), ORIGIN)).toBeNull();
+      expect(classify(req(path, { mode: "navigate", headers: { range: "bytes=100-199" } }), ORIGIN)).toBeNull();
+    }
+    // Ook de rest van media onder /api niet (play, voortgang, hoezen)
+    for (const path of ["/api/v1/media/libraries", "/api/v1/media/n1/play", "/api/v1/public/media/n1/play"]) {
+      expect(classify(req(path, { method: "POST" }), ORIGIN)).toBeNull();
+      expect(classify(req(path), ORIGIN)).toBeNull();
+    }
+    // De pagina's zelf zijn gewone navigaties van de app
+    for (const path of ["/media", "/media/item/n1", "/kijken/n1?t=754", "/muziek/album/a1", "/muziek/artiest/the%20beatles"]) {
+      expect(classify(req(path, { mode: "navigate" }), ORIGIN)).toBe("shell");
+    }
+  });
+
   it("office (fase 4) nooit: de editor, zijn websocket en zijn bestanden komen altijd van het net", () => {
     for (const path of [
       "/office",

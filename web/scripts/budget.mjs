@@ -7,7 +7,15 @@
 // Faalt (exitcode 1) als:
 // - een grens hieronder overschreden wordt;
 // - dist/sw.js een import of export bevat (een service worker in klassieke vorm kan dat niet);
-// - een woordenboek van een ander gebied dan common, shell of auth (nl) in de eerste lading zit.
+// - een woordenboek van een ander gebied dan common, shell of auth (nl) in de eerste lading zit;
+// - een module van media, de speler of muziek (fase 5) in de eerste lading zit, behalve de
+//   kleine ingang src/media/index.ts (Keuze 33).
+//
+// Fase 5 (M0): drie regels erbij (Keuze 33). Elk telt wat er bij het openen bovenop de eerste
+// lading binnenkomt: de chunks met hun statische imports, en het Nederlandse woordenboek.
+// - mediaRoute: elke mediapagina apart (/media, bibliotheek, item, serie en /kijken);
+// - player: alles met een module uit src/player/ samen (de speler, ook in de viewer);
+// - music: alles met een module uit src/music/ samen (pagina's, gapless en de balk).
 //
 // Gebruik: node scripts/budget.mjs [--json]
 
@@ -29,6 +37,10 @@ export const LIMITS = {
   heavyChunk: 60 * KB,
   initialCss: 12 * KB,
   sw: 8 * KB,
+  // Fase 5 (Keuze 33)
+  mediaRoute: 45 * KB,
+  player: 35 * KB,
+  music: 40 * KB,
 };
 
 /** Woordenboeken die in de eerste lading mogen (statisch in i18n/index.ts). */
@@ -36,6 +48,17 @@ const INITIAL_AREAS = /^src\/i18n\/areas\/(common|shell|auth)\.nl\.ts$/;
 const AREA = /^src\/i18n\/areas\/(\w+)\.(nl|en)\.ts$/;
 /** Woordenboeken die bij de route Bestanden horen. */
 const FILES_AREAS = /^src\/i18n\/areas\/(browser|upload|sharing)\.nl\.ts$/;
+/** De pagina's van media (routes.tsx) met hun woordenboeken (fase 5). */
+export const MEDIA_PAGES = {
+  "src/media/LibraryHome.tsx": ["media"],
+  "src/media/Library.tsx": ["media"],
+  "src/media/ItemPage.tsx": ["media"],
+  "src/media/ShowPage.tsx": ["media"],
+  "src/player/WatchPage.tsx": ["player", "media"],
+};
+/** Modules van fase 5 die nooit in de eerste lading horen (alleen media/index.ts wel). */
+const MEDIA_MODULE = /^src\/(media|player|music)\//;
+const MEDIA_ENTRY = "src/media/index.ts";
 /** Een highlighter of worker mag groter zijn. */
 const HEAVY = /(\.worker\.ts|highlight)/i;
 
@@ -154,7 +177,45 @@ function main() {
     problems.push("geen chunk voor src/Files.tsx gevonden");
   }
 
-  // 3. Elk ander lazy chunk apart
+  // 3. Fase 5: elke mediapagina, de speler en muziek (Keuze 33)
+  for (const f of initial) {
+    for (const m of chunks[f].modules) {
+      if (MEDIA_MODULE.test(m) && m !== MEDIA_ENTRY) problems.push(`${m} zit in de eerste lading (${f})`);
+    }
+  }
+  const dict = (area) => facade(new RegExp(`^src/i18n/areas/${area}\\.nl\\.ts$`));
+  /** De chunks bovenop de eerste lading: de closure van roots en de woordenboeken. */
+  const extra = (roots, areas) => {
+    const out = new Set();
+    for (const f of closure(chunks, roots)) if (!initial.has(f)) out.add(f);
+    for (const area of areas) for (const f of dict(area)) if (!initial.has(f)) out.add(f);
+    return out;
+  };
+  const sum = (set) => [...set].reduce((total, f) => total + gz(f), 0);
+  for (const [page, areas] of Object.entries(MEDIA_PAGES)) {
+    const roots = facade(new RegExp(`^${page.replace(/[.]/g, "\\.")}$`));
+    if (!roots.length) {
+      problems.push(`geen chunk voor ${page} gevonden`);
+      continue;
+    }
+    const group = extra(roots, areas);
+    check(`mediapagina ${page.replace(/^src\//, "")}`, sum(group), LIMITS.mediaRoute, [...group].sort().join(", "));
+  }
+  const containing = (re) => Object.keys(chunks).filter((f) => chunks[f].modules.some((m) => re.test(m)));
+  for (const [name, re, area, limit] of [
+    ["speler (src/player)", /^src\/player\//, "player", LIMITS.player],
+    ["muziek (src/music)", /^src\/music\//, "music", LIMITS.music],
+  ]) {
+    const roots = containing(re);
+    if (!roots.length) {
+      problems.push(`geen chunk met ${name} gevonden`);
+      continue;
+    }
+    const group = extra(roots, [area]);
+    check(name, sum(group), limit, [...group].sort().join(", "));
+  }
+
+  // 4. Elk ander lazy chunk apart
   let lazyCount = 0;
   let largest = { file: null, size: 0 };
   for (const f of Object.keys(chunks).sort()) {
@@ -174,7 +235,7 @@ function main() {
     detail: largest.file ?? "",
   });
 
-  // 4. De service worker
+  // 5. De service worker
   if (!distFiles.has("sw.js")) {
     problems.push("dist/sw.js ontbreekt");
   } else {

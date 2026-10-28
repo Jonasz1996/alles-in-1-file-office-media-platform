@@ -9,7 +9,7 @@
 // M0). Een oudere server (404) of een andere fout: ook uit. Zolang media uit is, zijn de haken er
 // niet (geen menu-items, geen actie, de viewer van fase 3) en is de app precies 0.6.0.
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { api } from "../api";
 import type { Library, LibraryEvent } from "./types";
 
@@ -179,22 +179,6 @@ export function resetMedia(): void {
   mediaStatus.set(null);
   mediaStatus.invalidate();
   musicBar.hide();
-}
-
-/** Voor een mediapagina: eerst een vers antwoord van de server. asking: nog bezig; off: de
- * pagina is er niet (zoals in fase 3: "niet gevonden"); on: media staat aan. */
-export function useMediaGate(): "asking" | "off" | "on" {
-  const status = useMediaStatus();
-  const [asked, setAsked] = useState(false);
-  useEffect(() => {
-    let live = true;
-    void mediaStatus.load().then(() => live && setAsked(true));
-    return () => {
-      live = false;
-    };
-  }, []);
-  if (!asked && status === null) return "asking";
-  return status === null ? "off" : "on";
 }
 
 // --- de regels van de haken ---
