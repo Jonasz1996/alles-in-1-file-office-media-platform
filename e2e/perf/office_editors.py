@@ -383,6 +383,14 @@ def test_office_editors() -> None:
     assert not errors, "\n".join(errors)
 
 
+def result_name(docs: int, per_doc: int) -> str:
+    """office_editors_<n> voor de stappen van office_run.py (hooguit 4 per document);
+    meer bewerkers op één document krijgt een eigen naam, bv. office_editors_1x20."""
+    if per_doc <= PER_DOC:
+        return f"office_editors_{docs * per_doc}"
+    return f"office_editors_{docs}x{per_doc}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Veel bewerkers tegelijk (§4.7 deel 2)")
     parser.add_argument("--docs", type=int, default=DOCS)
@@ -397,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
     print(text)
     if args.out:
         args.out.write_text(text + "\n")
-    write_result(f"office_editors_{args.docs * args.per_doc}", result)
+    write_result(result_name(args.docs, args.per_doc), result)
     errors = check(result)
     for e in errors:
         print(f"FOUT {e}", file=sys.stderr)

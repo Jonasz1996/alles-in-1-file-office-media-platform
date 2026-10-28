@@ -115,6 +115,11 @@ def _spread(s: dict[str, Any], unit: str = " s", digits: int = 2) -> str:
     )
 
 
+def _range(values: list[float], digits: int = 1) -> str:
+    lo, hi = min(values), max(values)
+    return _n(lo, digits) if lo == hi else f"{_n(lo, digits)}–{_n(hi, digits)}"
+
+
 def _yes(ok: bool | None) -> str:
     return "niet gemeten" if ok is None else ("ja" if ok else "nee")
 
@@ -450,21 +455,44 @@ def rows2(results: dict[str, Any]) -> list[dict[str, str]]:
     goal = "alle teksten opgeslagen; cpu en RAM van DS en app vastgelegd"
     if ed and ed.get("scales"):
         parts = []
-        for n, r in sorted(ed["scales"].items(), key=lambda kv: int(kv[0])):
+        for _key, r in sorted(ed["scales"].items(), key=lambda kv: (scale_n(kv[0]), kv[0])):
             m = r["summary"]
+            shown = ""
+            if m.get("shown_known"):
+                shown = (
+                    f" (van de woorden die de editor zelf had: {m['lost_saving']} niet opgeslagen;"
+                    f" {m['not_shown']} getypte woorden kwamen nooit in de editor)"
+                )
             parts.append(
-                f"{n} ({r['docs']} × {r['per_doc']}): {sum(m['saved'])}/{sum(m['typed'])} woorden"
-                f" opgeslagen ({m['rounds']} rondes), DS {_n(m['ds_cores_typing']['median'])}"
-                f" cores (piek {_n(m['ds_cores_typing_max']['max'])}),"
+                f"{r['docs'] * r['per_doc']} ({r['docs']} × {r['per_doc']}):"
+                f" {sum(m['saved'])}/{sum(m['typed'])} woorden"
+                f" opgeslagen{shown} ({m['rounds']} rondes), open"
+                f" {sum(m['opened'])}/{m['rounds'] * m['editors']}, openen mediaan"
+                f" {_spread(m['opened_s_median'], ' s', 1)},"
+                f" DS {_n(m['ds_cores_typing']['median'])} cores"
+                f" (piek {_n(m['ds_cores_typing_max']['max'])}),"
                 f" DS {_n(m['ds_rss_mb_max'], 0)} MB,"
                 f" app {_n(m['app_cores_typing']['median'])} cores en"
                 f" {_n(m['app_rss_mb_max'], 0)} MB, browser {_n(m['browser_pss_mb_max'], 0)} MB,"
                 f" minst vrij {_n(m['mem_available_mb_min'], 0)} MB"
             )
         top = ed["scales"].get("20")
-        ok = None if not top else top["summary"]["all_saved"] and not top["summary"]["low_memory"]
+        ok = None
+        if top:
+            t = top["summary"]
+            # Opgeslagen telt wat de editor zelf had: een woord dat nooit in de editor kwam, is
+            # niet bij het opslaan verloren (dat staat apart in de waarde en bij de bevindingen).
+            saved = t["none_lost_saving"] if t.get("shown_known") else t["all_saved"]
+            ok = (
+                saved
+                and sum(t["opened"]) == t["rounds"] * t["editors"]
+                and not t["low_memory"]
+                and not t.get("oom_kills")
+                and not t.get("health_not_true")
+            )
         if ed.get("stopped"):
             parts.append(f"gestopt met opschalen: {ed['stopped']}")
+        one = [k for k in ed["scales"] if "x" in k]
         add(
             what,
             goal,
@@ -473,9 +501,11 @@ def rows2(results: dict[str, Any]) -> list[dict[str, str]]:
             "office_editors.py, opgeschaald 2 → 8 → 20 bewerkers, elk 3 rondes (nieuwe"
             " documenten van ±150 kB XML), één Chromium met een context per bewerker, elk typt"
             " eigen woorden in een eigen alinea (110 ms per toets, 0,8–1,6 s pauze), daarna"
-            " Sluiten; opgeslagen = het woord staat in de docx na status 2; cpu: de cgroup van DS"
-            " en utime + stime van de app, elke seconde; RAM: rss van de cgroup van DS, VmRSS van"
-            " de app, PSS van de browser",
+            " Sluiten; opgeslagen = het woord staat in de docx na status 2; wat de editor zelf"
+            " had = zijn eigen tekst (sdkjs) vlak voor Sluiten; cpu: de cgroup van DS en utime +"
+            " stime van de app, elke seconde; RAM: rss van de cgroup van DS, VmRSS van de app, PSS"
+            " van de browser"
+            + (f"; ook {', '.join(one)} op één document (voor max_editors)" if one else ""),
         )
     else:
         add(what, goal, "–", None, "office_editors.py: niet gemeten")
@@ -491,14 +521,25 @@ def rows2(results: dict[str, Any]) -> list[dict[str, str]]:
             f" (137); opgeslagen meteen na de stop {sum(m['saved_right_after'])}/{sum(m['typed'])}"
             f" woorden, na de herstart {sum(m['saved_after_restart'])}/{sum(m['typed'])};"
             f" status 2 kwam {_spread(m['callback_after_stop_s'], ' s', 1)} na het begin van de"
-            " stop",
+            " stop"
+            + (
+                f"; van de tekst die elke editor zelf had: {m['lost_saving']} niet opgeslagen,"
+                f" {m['not_shown']} getypte woorden nooit in de editor"
+                if "lost_saving" in m
+                else ""
+            )
+            + (
+                f"; bewerken kon weer {_spread(m['editable_s'], ' s', 0)} na docker start"
+                if (m.get("editable_s") or {}).get("n")
+                else ""
+            ),
             m["all_saved"]
             and not m["killed_after_grace"]
             and (m["stop_s"]["max"] or 999) <= office_outage.GATE["stop_s"],
             f"office_outage.py --mode stop, {m['rounds']} rondes: {st['docs']} documenten ×"
             f" {st['per_doc']} bewerkers typen 30 s, 3 s later `docker stop -t 60` op de"
             " container van DS (zoals compose met stop_grace_period 60 s); daarna de inhoud in de"
-            " app, DS weer starten, 90 s wachten en nog eens",
+            " app, DS weer starten, wachten tot de app DS weer ok vindt, dan 90 s en nog eens",
         )
     else:
         add(what, goal, "–", None, "office_outage.py --mode stop: niet gemeten")
@@ -509,6 +550,7 @@ def rows2(results: dict[str, Any]) -> list[dict[str, str]]:
     if kl:
         m = kl["summary"]
         windows = [w for w in m["loss_window_s"] if w is not None]
+        firsts = [-f for f in m.get("lost_first_after_checkpoint_s", []) if f is not None and f < 0]
         add(
             what,
             goal,
@@ -516,16 +558,34 @@ def rows2(results: dict[str, Any]) -> list[dict[str, str]]:
             f"{m['before_checkpoint']} woorden; van erna {m['after_saved']}/"
             f"{m['after_checkpoint']} (weg: {m['lost']}; na de herstart in totaal"
             f" {m.get('saved_after_restart')}/{m.get('typed')}); verloren venster"
-            f" {', '.join(_n(w, 0) for w in m['loss_window_s'])} s; de klok sloeg"
-            f" {_spread(m['checkpoint_after_open_s'], ' s', 0)} na het openen",
+            f" {', '.join(_n(w, 0) for w in m['loss_window_s'])} s"
+            + (
+                f" (het eerste verloren woord was {_range(firsts)} s vóór de forcesave getypt:"
+                " het zat nog niet in die opslag)"
+                if firsts
+                else ""
+            )
+            + "; de klok sloeg"
+            f" {_spread(m['checkpoint_after_open_s'], ' s', 0)} na het openen"
+            + (
+                f"; {m['restart_failed']}× kwam DS na docker start niet terug (zie bevindingen)"
+                if m.get("restart_failed")
+                else ""
+            )
+            + (
+                f"; bewerken kon weer {_spread(m['editable_s'], ' s', 0)} na docker start"
+                if (m.get("editable_s") or {}).get("n")
+                else ""
+            ),
             m["before_saved"] == m["before_checkpoint"]
             and bool(windows)
             and max(windows) <= office_outage.GATE["loss_s"],
             f"office_outage.py --mode kill, {m['rounds']} rondes: {kl['docs']} documenten ×"
             f" {kl['per_doc']} bewerkers typen tot de klok (checkpoint_minutes 5) een forcesave"
             " (status 6, timer) gaf, dan nog 30, 150 of 285 s, dan `docker kill`; daarna DS"
-            " starten en 150 s wachten; verloren venster = van de forcesave tot het laatst"
-            " getypte woord dat weg is",
+            " starten, wachten tot de app DS weer ok vindt, dan 150 s; verloren venster = van de"
+            " forcesave tot de kill; ‘bewaard’ = het woord staat in de docx van de app, vóór ="
+            " getypt tot 3 s vóór de forcesave",
         )
     else:
         add(what, goal, "–", None, "office_outage.py --mode kill: niet gemeten")
@@ -691,6 +751,12 @@ def editors(url: str, secret: str, args: argparse.Namespace) -> tuple[dict[str, 
     return result, errors
 
 
+def scale_n(key: str) -> int:
+    """Het aantal bewerkers van een stap: "20" of "1x20" (één document met 20)."""
+    docs, _, per_doc = key.partition("x")
+    return int(docs) * int(per_doc) if per_doc else int(docs)
+
+
 def imported(tool: str, path: Path, results: dict[str, Any]) -> dict[str, Any]:
     """De JSON van een los gedraaid script overnemen; office_editors_<n> gaat onder
     office_editors.scales."""
@@ -700,7 +766,7 @@ def imported(tool: str, path: Path, results: dict[str, Any]) -> dict[str, Any]:
         merged = dict(results.get("office_editors") or {"tool": "office_editors", "scales": {}})
         merged["scales"] = {**merged.get("scales", {}), n: data}
         merged["machine"] = data.get("machine") or merged.get("machine")
-        ok = [int(k) for k, v in merged["scales"].items() if not v["summary"]["low_memory"]]
+        ok = [scale_n(k) for k, v in merged["scales"].items() if not v["summary"]["low_memory"]]
         merged["highest_ok"] = max(ok, default=None)
         return merged
     return data
@@ -745,7 +811,8 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         metavar="TOOL=PAD",
-        help="de JSON van een los gedraaid script overnemen (office_editors_<n> voor één stap)",
+        help="de JSON van een los gedraaid script overnemen (office_editors_<n> voor één stap,"
+        " office_editors_<docs>x<per-doc> voor meer dan 4 per document)",
     )
     parser.add_argument("--kinds", default=",".join(office_open.KINDS))
     parser.add_argument("--out-dir", type=Path, default=DOCS)
@@ -763,7 +830,7 @@ def main(argv: list[str] | None = None) -> int:
     pairs = []
     for item in args.imports:
         tool, _, path = item.partition("=")
-        if not path or (tool not in TOOLS and not re.fullmatch(r"office_editors_\d+", tool)):
+        if not path or (tool not in TOOLS and not re.fullmatch(r"office_editors_(\d+x)?\d+", tool)):
             parser.error(f"--import {item}: verwacht TOOL=PAD met een bekende meting")
         pairs.append((tool, Path(path)))
 

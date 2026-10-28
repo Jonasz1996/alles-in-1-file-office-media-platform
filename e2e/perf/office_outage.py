@@ -64,6 +64,7 @@ SECONDS_STOP = 30.0
 ROUNDS = 3
 OFFSETS = (30.0, 150.0, 285.0)
 TIMER_WAIT_S = 420.0  # de eerste forcesave van de klok: 5 min plus een ronde, plus marge
+DS_START_S = 480.0  # de time-out van ob.ds_start
 SAFE_BEFORE_S = 3.0  # wat zo kort vóór de forcesave getypt is, kan er nog net niet in zitten
 
 
@@ -91,11 +92,15 @@ def words_by_time(
 
 
 def restart(bench: ob.Bench, ds_name: str, url: str) -> dict[str, Any]:
+    """DS weer starten en wachten tot de app hem ok vindt. app_ok_s telt vanaf het einde van
+    ds_start, editable_s vanaf docker start: zo lang kon niemand bewerken."""
+    t_start = time.monotonic()
     started = ob.ds_start(ds_name, url)
     t0 = time.monotonic()
     try:
         bench.office.wait_state("ok", 900)
         started["app_ok_s"] = round(time.monotonic() - t0, 1)
+        started["editable_s"] = round(time.monotonic() - t_start, 1)
     except AssertionError as exc:
         started["app_ok_s"] = None
         started["app_error"] = str(exc)[:300]
@@ -388,6 +393,24 @@ def measure(
     return result
 
 
+def editable(rr: list[dict[str, Any]]) -> dict[str, Any]:
+    """Hoe lang na docker start de app DS weer ok vond (bewerken mag weer: na de font-herstart,
+    health.py). Oudere uitslagen zonder editable_s: de duur van ds_start (tot gezond en de
+    font-herstart, of de time-out) plus app_ok_s, op ±2 s (ds_start kijkt elke 2 s)."""
+    values = []
+    for r in rr:
+        rs = r["restart"]
+        v = rs.get("editable_s")
+        if v is None and rs.get("app_ok_s") is not None:
+            ds = DS_START_S
+            if rs.get("ok"):
+                ds = max(rs.get("healthy_s") or 0, rs.get("fonts_done_s") or 0)
+            v = ds + rs["app_ok_s"]
+        if v is not None:
+            values.append(v)
+    return ob.stats(values, 0)
+
+
 def summarize(result: dict[str, Any]) -> dict[str, Any]:
     rr = [r for r in result["round_results"] if "error" not in r]
     if result["mode"] == "stop":
@@ -403,6 +426,8 @@ def summarize(result: dict[str, Any]) -> dict[str, Any]:
             "lost_saving": sum(r.get("lost_saving", 0) for r in rr),
             "not_shown": sum(r.get("not_shown", 0) for r in rr),
             "restart_s": ob.stats([r["restart"].get("fonts_done_s") or 0 for r in rr], 0),
+            "editable_s": editable(rr),
+            "restart_failed": sum(1 for r in rr if not r["restart"].get("ok")),
             "callback_after_stop_s": ob.stats(
                 [
                     c["after_stop_s"]
@@ -431,6 +456,8 @@ def summarize(result: dict[str, Any]) -> dict[str, Any]:
         "saved_after_restart": sum(p["saved_after_restart"] for p in docs),
         "lost_first_after_checkpoint_s": [p["lost_first_after_checkpoint_s"] for p in docs],
         "restart_s": ob.stats([r["restart"].get("fonts_done_s") or 0 for r in rr], 0),
+        "editable_s": editable(rr),
+        "restart_failed": sum(1 for r in rr if not r["restart"].get("ok")),
         "sessions_after": [s for r in rr for s in r["sessions_after"]],
     }
 

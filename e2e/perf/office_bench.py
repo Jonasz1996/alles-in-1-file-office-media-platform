@@ -1038,19 +1038,12 @@ def ds_running(name: str) -> bool:
     return r.stdout.strip() == "true"
 
 
-def converter_starts(name: str) -> int:
-    """Hoe vaak supervisord in de container de converter (opnieuw) startte: de font-herstart
-    na een start is de tweede keer."""
-    r = docker(
-        "exec",
-        name,
-        "grep",
-        "-c",
-        "success: converter entered RUNNING",
-        "/var/log/supervisor/supervisord.log",
-        timeout=30,
-    )
-    return int(r.stdout.strip() or 0) if r.returncode in (0, 1) else -1
+def fonts_restarted(name: str, since: str) -> bool:
+    """Heeft DS sinds `since` (RFC 3339) zijn font-herstart gedaan? Het startscript schrijft dan
+    "ds:converter: started" (supervisorctl restart) in de log van de container. (De log van
+    supervisord in de container is hier niet bruikbaar: een gestopte container kan niet exec.)"""
+    r = docker("logs", "--since", since, name, timeout=30)
+    return "ds:converter: started" in (r.stdout or "") + (r.stderr or "")
 
 
 def ds_stop(name: str, grace: int = 60) -> dict[str, Any]:
@@ -1083,7 +1076,7 @@ def ds_start(name: str, url: str, timeout: float = 480) -> dict[str, Any]:
     (elke start doet die, ook een herstart van dezelfde container: spike, extra bevinding 1)."""
     import httpx
 
-    before = converter_starts(name)
+    since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 1))
     t0 = time.monotonic()
     r = docker("start", name, timeout=120)
     if r.returncode != 0:
@@ -1098,7 +1091,7 @@ def ds_start(name: str, url: str, timeout: float = 480) -> dict[str, Any]:
                 ok = h.status_code == 200 and h.text.strip() == "true"
             if ok and healthy_at is None:
                 healthy_at = time.monotonic() - t0
-            if fonts_at is None and converter_starts(name) >= before + 2:
+            if fonts_at is None and fonts_restarted(name, since):
                 fonts_at = time.monotonic() - t0
             if ok and fonts_at is not None:
                 break

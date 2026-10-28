@@ -264,8 +264,8 @@ script. De uitslag en wat hij betekent: [metingen.md](metingen.md).
 | `office_crowd.py` | gedeeld (deel 2): veel echte editors in één Chromium (async), typen in een menselijk tempo, cpu en geheugen van app, browser en machine elke seconde, en welke getypte woorden in het opgeslagen bestand staan | |
 | `office_xml.py` | de XML-grens bij 2 GB: per soort een bestand net onder de grens via de app omzetten (en de bewerkbare openen), met het geheugen van DS, x2t en de OOM-kills | echt |
 | `office_convert.py` | conversie klein en van 401 pagina's (via de app en rechtstreeks bij DS), en 401 pagina's terwijl een editor opent (`/healthcheck` elke 0,5 s) | echt |
-| `office_editors.py` | veel bewerkers tegelijk (`--docs`, `--per-doc`), 60 s typen; alles opgeslagen, cpu en RAM van DS en app | echt |
-| `office_outage.py` | DS stoppen (`--mode stop`) of killen (`--mode kill`) met open editors: wat is opgeslagen, hoe lang `docker stop` duurt, wat er na een kill weg is | echt (wordt gestopt en weer gestart) |
+| `office_editors.py` | veel bewerkers tegelijk (`--docs`, `--per-doc`), 60 s typen; alles opgeslagen (ook vergeleken met de tekst die elke editor zelf had), cpu en RAM van DS en app. De uitslag heet `office_editors_<n>`; meer dan 4 per document heet `office_editors_<docs>x<per-doc>` (bv. `1x20`, voor `max_editors`) | echt |
+| `office_outage.py` | DS stoppen (`--mode stop`) of killen (`--mode kill`) met open editors: wat is opgeslagen, hoe lang `docker stop` duurt, wat er na een kill weg is, en hoe lang na `docker start` bewerken weer kan | echt (wordt gestopt en weer gestart) |
 | `office_run.py` | alles na elkaar; schrijft `docs/fase-4/metingen.json` en de tabel in `metingen.md`; `--scale` voor de bewerkers (standaard 2, 8, 20), `--import tool=pad` neemt een los gedraaide uitslag over | |
 
 ```sh
@@ -298,7 +298,9 @@ cd .. && bash e2e/office_ds.sh stop   # met dezelfde variabelen als start
 - Deel 2 is zwaar (20 editors zijn ±10 GB Chromium; x2t mag 2 GB). Draai elk script onder
   `office_watchdog.py`: die stopt de meting voordat de sandbox zelf geheugen tekortkomt, en zijn
   log zegt achteraf wat er gebeurde. `office_outage.py` stopt en killt de container van DS
-  (`E2E_REAL_DS`) en start hem weer; draai het alleen tegen een eigen DS.
+  (`E2E_REAL_DS`) en start hem weer; draai het alleen tegen een eigen DS. Blijft DS na een start
+  op 502 staan zonder supervisord (bevinding 7 van [metingen.md](metingen.md)), dan helpt
+  `docker exec <naam> rm -f /var/run/supervisord.pid` en `docker restart <naam>`.
 - Een editor die een enorm document niet kan opbouwen (de renderer zit vast op 100 % cpu),
   houdt ook `close()` van Playwright minutenlang op. `office_crowd.py` stopt de browser dan zelf,
   op PID.
