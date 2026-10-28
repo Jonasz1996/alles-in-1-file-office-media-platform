@@ -68,9 +68,10 @@ Zo staat nooit de hele bibliotheek in de rij, en gaan nieuwe uploads voor (ook b
 Met DS niet gezond stopt de ronde; on_healthy start hem opnieuw.
 
 Mislukte opnieuw (retry_failed, de knop op /beheer): elke failed meteen een eigen taak met r (8
-hex-tekens), en pending. r komt in de key (keys.convert_key): of DS een fout als -3 of -1
-onder de key bewaart, is niet gemeten (-4 en -10 niet, gemeten), en met een nieuwe key maakt
-dat niet uit. Kan zo'n taak niet omzetten zonder poging
+hex-tekens), en pending. r komt in de key (keys.convert_key): DS bewaart -3 onder de key
+(gemeten: dezelfde key gaf meteen weer -3, zonder x2t; metingen.md fase 4, de XML-grens), -4
+en -10 niet (gemeten), en of hij -1 bewaart, is niet gemeten; met een nieuwe key maakt dat niet
+uit. Kan zo'n taak niet omzetten zonder poging
 (office uit, DS niet gezond, -8), dan gaat de inhoud terug naar failed, niet naar leeg: de
 inhaalronde zou dan de oude key nemen. Niet via de inhaalronde: loopt er al een, dan komt die
 niet meer langs een sha vóór zijn plek.
