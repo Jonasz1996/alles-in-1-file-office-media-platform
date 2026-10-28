@@ -16,6 +16,12 @@ PLATFORM_OFFICE_INTERNAL_PORT, alleen voor de document server (Keuze 8). Die poo
 niet gepubliceerd; hij start alleen als office ingesteld is en stopt als laatste. De
 publieke luisteraars krijgen ws=Tunnel: de enige WebSocket is de tunnel naar office
 (Keuze 6), al het andere krijgt 404.
+
+Netjes stoppen (fase 5, F3): eerst media (geen nieuwe verzoeken onder /api/v1/stream/, wie
+wacht krijgt 503 met Retry-After: 2, de sessies dicht), dan office, dan https en http tegelijk
+met één deadline van GRACEFUL seconden (timeout_graceful_shutdown op beide). Een lange stream
+houdt het stoppen zo niet langer op; daarna sluit http de lifespan af, pas als https ook klaar
+is. Zonder office geeft Docker 10 s, met media 30 s (stop_grace_period in compose.media.yaml).
 """
 
 import asyncio
@@ -26,7 +32,7 @@ import logging
 import resource
 import signal
 import socket
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
 import h11
 import uvicorn
@@ -35,6 +41,7 @@ from uvicorn.protocols.http.h11_impl import H11Protocol
 from app import events
 from app.config import Settings, get_settings
 from app.main import app, internal_app
+from app.media import runtime as media_runtime
 from app.office import sweep, tunnel
 from app.office.tunnel import Tunnel
 
@@ -53,6 +60,9 @@ uvicorn_log = logging.getLogger("uvicorn.error")  # heeft een handler, ook voor 
 HEADER_TIMEOUT = 10.0
 KEEP_ALIVE = 5  # seconden dat een stille keep-alive-verbinding open blijft
 LISTENER_RETRY = 60.0  # https-poort ging niet open: zo vaak opnieuw proberen
+# F3 (fase 5): zo lang mogen lopende antwoorden bij het stoppen nog duren, voor https en http
+# samen (ze stoppen tegelijk); daarna breekt uvicorn ze af en sluit de lifespan
+GRACEFUL = 10
 
 # Leesbare reden bij de fouten die je ziet als de https-poort niet open kan
 BIND_ERRORS = {
@@ -153,6 +163,24 @@ if HttpToolsProtocol is not None:
 
 class Server(uvicorn.Server):
     on_started: Callable[[], None] | None = None  # zodra de server echt luistert
+    # Alleen http (die draait de lifespan): waar het afsluiten van de lifespan eerst op wacht
+    # (dat https ook klaar is; F3)
+    before_lifespan: Callable[[], Awaitable[None]] | None = None
+
+    async def shutdown(self, sockets=None) -> None:
+        wait = self.before_lifespan
+        lifespan = getattr(self, "lifespan", None)
+        if wait is not None and lifespan is not None:
+            original = lifespan.shutdown
+
+            async def after_wait() -> None:
+                try:
+                    await wait()
+                finally:
+                    await original()
+
+            lifespan.shutdown = after_wait
+        await super().shutdown(sockets=sockets)
 
     @contextlib.contextmanager
     def capture_signals(self):
@@ -209,6 +237,7 @@ def _config(settings: Settings, port: int, **extra) -> uvicorn.Config:
         ws=Tunnel,  # alleen de tunnel naar office (Keuze 6); elke andere upgrade: 404
         limit_concurrency=None,  # zie HEADER_TIMEOUT
         timeout_keep_alive=KEEP_ALIVE,
+        timeout_graceful_shutdown=GRACEFUL,  # F3: ook voor https (dezelfde config)
         **extra,
     )
 
@@ -228,6 +257,7 @@ def _internal_config(settings: Settings) -> uvicorn.Config:
         lifespan="off",
         limit_concurrency=None,
         timeout_keep_alive=KEEP_ALIVE,
+        timeout_graceful_shutdown=GRACEFUL,  # stopt als laatste; ook hij hangt niet
     )
 
 
@@ -329,15 +359,24 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
         internal_task = asyncio.create_task(serve_internal(), name="intern")
 
     https_task = asyncio.create_task(serve_https(), name="https")
+
+    async def https_stopped() -> None:
+        # Https kreeg hetzelfde moment het sein; zijn eigen deadline is GRACEFUL
+        await asyncio.wait({https_task}, timeout=GRACEFUL + 5)
+
+    http.before_lifespan = https_stopped
     stop_task = asyncio.create_task(stop.wait())
     # Https mag uitvallen zonder dat http stopt; alleen http of een signaal stopt alles
     await asyncio.wait({http_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
 
-    # Netjes stoppen. Eerst office: alle open documenten tussentijds opslaan (hooguit 5 s,
-    # de callbacks komen binnen op de interne poort, die nog draait), dan de tunnels dicht.
-    # Dan de open gebeurtenisstromen afronden: uvicorn wacht op lopende antwoorden voordat
-    # het de lifespan afsluit, en een stroom eindigt anders nooit. Dan https (zonder
-    # lifespan), dan http (die sluit de lifespan af), en de interne luisteraar als laatste.
+    # Netjes stoppen. Eerst media (F3): geen nieuwe verzoeken onder /api/v1/stream/, wie op
+    # een segment wacht krijgt 503 met Retry-After: 2, en de sessies gaan dicht. Dan office:
+    # alle open documenten tussentijds opslaan (hooguit 5 s, de callbacks komen binnen op de
+    # interne poort, die nog draait), dan de tunnels dicht. Dan de open gebeurtenisstromen
+    # afronden: uvicorn wacht op lopende antwoorden voordat het de lifespan afsluit, en een
+    # stroom eindigt anders nooit. Dan https en http tegelijk, met één deadline (GRACEFUL);
+    # http sluit de lifespan af als https ook klaar is. De interne luisteraar als laatste.
+    media_runtime.begin_stop(app)
     if settings.office_configured:
         try:
             await sweep.checkpoint_all(wait=5)
@@ -350,9 +389,9 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
         https.should_exit = True
     else:
         https_task.cancel()
+    http.should_exit = True
     with contextlib.suppress(asyncio.CancelledError):
         await https_task
-    http.should_exit = True
     await http_task
     if internal_task is not None:
         if internal is not None:

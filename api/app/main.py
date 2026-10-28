@@ -15,7 +15,13 @@ from urllib.parse import quote
 import anyio
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from pydantic import BaseModel
 
 from app import __version__, errors, events, jobs, photometa, previews
@@ -239,6 +245,16 @@ class StreamHeaders:
         if scope["type"] != "http" or not scope["path"].startswith(STREAM_PREFIX):
             return await self.app(scope, receive, send)
 
+        app = self.app
+        host = scope.get("app")  # de FastAPI-app (Starlette zet hem in de scope)
+        if host is not None and media_runtime.stopping(host):
+            # F3: de app stopt; de speler probeert het over 2 s opnieuw (na de herstart: 410
+            # en stil een nieuwe sessie)
+            busy = media_runtime.stopping_error()
+            app = JSONResponse(
+                {"detail": busy.detail}, status_code=busy.status_code, headers=busy.headers
+            )
+
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
                 headers = [
@@ -252,7 +268,7 @@ class StreamHeaders:
                 message["headers"] = headers
             await send(message)
 
-        await self.app(scope, receive, send_with_headers)
+        await app(scope, receive, send_with_headers)
 
 
 def _header(scope, name: bytes) -> str:
@@ -366,7 +382,7 @@ class JsonCompression:
 
 
 @contextmanager
-def _streams_end_on_signal():
+def _streams_end_on_signal(app: FastAPI):
     """Open gebeurtenisstromen afronden zodra het stoppen begint, met welke server dan ook.
     Uvicorn wacht bij stoppen eerst op lopende antwoorden en sluit pas daarna de lifespan af;
     een stroom liep zo door tot het token verliep, en `uvicorn --reload` bleef zolang op de
@@ -382,6 +398,8 @@ def _streams_end_on_signal():
         def handler(sig, frame):
             hub = events.hub  # die van nu, niet een nieuwe van een volgende start
             with suppress(RuntimeError):  # de loop is al dicht
+                # Media eerst (F3): geen nieuwe verzoeken onder /stream/, de sessies dicht
+                loop.call_soon_threadsafe(media_runtime.begin_stop, app)
                 loop.call_soon_threadsafe(hub.close)
             previous(sig, frame)
 
@@ -469,8 +487,9 @@ async def lifespan(app: FastAPI):
     media_runtime.bind(app, settings)
     await media_runtime.start(app, settings)
     log.info("Platform %s gestart (%s), data in %s", __version__, settings.mode, settings.data_dir)
-    with _streams_end_on_signal():
+    with _streams_end_on_signal(app):
         yield
+    media_runtime.begin_stop(app)  # na een signaal of serve.run al gebeurd
     events.hub.close()  # wat nog openstond afronden (na een signaal al gebeurd)
     events.hub = events.Hub()  # een volgende start in hetzelfde proces (tests) kan weer
     await _office_stop(app)

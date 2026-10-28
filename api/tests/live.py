@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from app import db, serve
+from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.main import app
 from app.security import SecurityConfig, SecurityPolicy
@@ -37,6 +38,7 @@ class Live:
     settings: Settings
     stop: asyncio.Event
     task: asyncio.Task
+    https_base: str | None = None  # alleen met live(..., https=True)
     extra: list[httpx.AsyncClient] = field(default_factory=list)
 
     async def admin(self) -> dict[str, str]:
@@ -58,24 +60,29 @@ class Live:
         assert r.status_code == 201, r.text
         return r.json()
 
-    def new_client(self) -> httpx.AsyncClient:
-        """Een eigen client (een eigen pool): elke stroom op een eigen verbinding."""
-        c = httpx.AsyncClient(base_url=self.base, trust_env=False, timeout=10)
+    def new_client(self, https: bool = False) -> httpx.AsyncClient:
+        """Een eigen client (een eigen pool): elke stroom op een eigen verbinding. https: via
+        de https-poort (het certificaat van de test, niet gecontroleerd)."""
+        base = self.https_base if https else self.base
+        assert base is not None, "start live(..., https=True) voor https"
+        c = httpx.AsyncClient(base_url=base, trust_env=False, timeout=10, verify=not https)
         self.extra.append(c)
         return c
 
 
 @contextlib.asynccontextmanager
-async def live(tmp_path, monkeypatch, **env: str):
+async def live(tmp_path, monkeypatch, *, https: bool = False, **env: str):
     """Start serve.run met een eigen datamap en poorten; stopt bij het verlaten (op het
-    stopsignaal, zoals SIGTERM), ook als de test faalde."""
+    stopsignaal, zoals SIGTERM), ook als de test faalde. https: met een certificaat in
+    data/tls, zodat ook de https-luisteraar draait (zoals na een herstart)."""
     http_port = free_port()
+    https_port = free_port()
     values = {
         "PLATFORM_DATA_DIR": str(tmp_path),
         "PLATFORM_WEB_DIST": str(tmp_path / "web"),
         "PLATFORM_HOST": "127.0.0.1",
         "PLATFORM_HTTP_PORT": str(http_port),
-        "PLATFORM_HTTPS_PORT": str(free_port()),
+        "PLATFORM_HTTPS_PORT": str(https_port),
         "PLATFORM_JWT_SECRET": "test" * 8,
         "PLATFORM_RATE_LIMITS": "false",
         **env,
@@ -84,6 +91,10 @@ async def live(tmp_path, monkeypatch, **env: str):
         monkeypatch.setenv(key, value)
     get_settings.cache_clear()
     settings = get_settings()
+    if https:
+        from tests.test_certs import write_cert
+
+        write_cert(CertManager(settings), "platform.test")
     # Zoals de client van conftest: de meeste tests gaan niet over 2FA
     app.state.security = SecurityPolicy(SecurityConfig(require_2fa=False))
     stop = asyncio.Event()
@@ -91,13 +102,18 @@ async def live(tmp_path, monkeypatch, **env: str):
     base = f"http://127.0.0.1:{http_port}"
     client = httpx.AsyncClient(base_url=base, trust_env=False, timeout=10)
     server = Live(base, client, settings, stop, task)
+    if https:
+        server.https_base = f"https://127.0.0.1:{https_port}"
     try:
-        for _ in range(400):
-            with contextlib.suppress(httpx.TransportError):
-                if (await client.get("/health")).status_code == 200:
-                    break
-            assert not task.done(), "serve.run stopte"
-            await asyncio.sleep(0.05)
+        for check in [client, *([server.new_client(https=True)] if https else [])]:
+            for _ in range(400):
+                with contextlib.suppress(httpx.TransportError):
+                    if (await check.get("/health")).status_code == 200:
+                        break
+                assert not task.done(), "serve.run stopte"
+                await asyncio.sleep(0.05)
+            else:
+                raise AssertionError(f"{check.base_url} kwam niet op")
         yield server
     finally:
         stop.set()

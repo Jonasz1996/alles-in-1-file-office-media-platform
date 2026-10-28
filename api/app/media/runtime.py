@@ -13,15 +13,24 @@ Met media aan:
   sessie weg;
 - het opruimwerk media.sweep komt in de rij default (cache.sweep, M4 en M5); stop haalt het
   weer weg.
+
+Netjes stoppen (F3, §3.5): serve.run roept bij het begin van het stoppen begin_stop(app) aan,
+vóór alles. Vanaf dan krijgt elk verzoek onder /api/v1/stream/ 503 media_busy {reason: worker}
+met Retry-After: 2 (StreamHeaders in main.py), een verzoek dat op iets wacht via
+until_stopped(...) ook, en alle sessies gaan dicht (sessions.close_all). De speler vraagt na de
+herstart stil een nieuwe sessie (Keuze 32).
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import shutil
+from collections.abc import Awaitable
 
 import anyio.to_thread
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from app import jobs
 from app.config import Settings, get_settings
@@ -33,6 +42,7 @@ log = logging.getLogger("platform.media")
 
 SWEEP = "media.sweep"
 SWEEP_EVERY = 300.0  # seconden
+STOP_RETRY = 2  # Retry-After bij het stoppen (F3)
 
 _app = None
 _settings: Settings | None = None
@@ -66,6 +76,7 @@ async def start(app, settings: Settings) -> MediaState:
 
     state = media_state(app)
     state.enabled = settings.media_enabled
+    state.stopping = False  # een vorige keer gestopt in hetzelfde proces (tests)
     if not state.enabled:
         return state
     state.mode = "container" if settings.media_worker else "local"
@@ -113,6 +124,70 @@ async def _sweep(settings: Settings) -> None:
     from app.media import cache
 
     await cache.sweep(settings)
+
+
+def stopping(app) -> bool:
+    """Is het stoppen begonnen (F3)?"""
+    return media_state(app).stopping
+
+
+def stopping_error() -> HTTPException:
+    """Het antwoord zolang de app stopt: 503 media_busy {reason: worker}, Retry-After: 2."""
+    return media_errors.busy("worker", STOP_RETRY)
+
+
+def begin_stop(app) -> int:
+    """Het begin van het stoppen (F3), vóór alles: geen nieuwe verzoeken meer onder
+    /api/v1/stream/, wie wacht krijgt 503 met Retry-After: 2, en alle sessies dicht. Twee keer
+    is één keer; zonder media gebeurt er niets. Geeft het aantal gesloten sessies. Synchroon:
+    ook aan te roepen vanuit een signaal (via call_soon_threadsafe)."""
+    state = media_state(app)
+    if state.stopping or not state.enabled:
+        return 0
+    state.stopping = True
+    for waiter in list(state.stop_waiters):
+        if not waiter.done():
+            waiter.set_result(None)
+    state.stop_waiters.clear()
+    from app.media import sessions
+
+    try:
+        closed = sessions.close_all()
+    except Exception:  # stoppen gaat altijd door
+        log.exception("mediasessies sluiten bij het stoppen")
+        return 0
+    if closed:
+        log.info("%s mediasessies gesloten bij het stoppen", closed)
+    return closed
+
+
+async def until_stopped[T](app, awaitable: Awaitable[T]) -> T:
+    """Wacht op awaitable (een segment, de worker), tenzij het stoppen begint: dan wordt het
+    wachten afgebroken en komt er 503 media_busy met Retry-After: 2 (F3). Voor M3, M4, M5 en M9:
+    elk wachten in een route onder /api/v1/stream/ gaat hierlangs."""
+    state = media_state(app)
+    if state.stopping:
+        if asyncio.iscoroutine(awaitable):
+            awaitable.close()
+        raise stopping_error()
+    task = asyncio.ensure_future(awaitable)
+    waiter = asyncio.get_running_loop().create_future()
+    state.stop_waiters.add(waiter)
+    try:
+        await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+    except BaseException:
+        task.cancel()
+        raise
+    finally:
+        state.stop_waiters.discard(waiter)
+        if not waiter.done():
+            waiter.cancel()
+    if task.done():
+        return task.result()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+    raise stopping_error()
 
 
 def enabled(app) -> bool:

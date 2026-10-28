@@ -116,5 +116,12 @@ def stop(session_id: uuid.UUID, reason: Literal["stopped", "revoked"]) -> bool:
     return False
 
 
+def close_all() -> int:
+    """Bij het stoppen van de app (F3, runtime.begin_stop): elke sessie dicht, ook de
+    producenten (streams.close), zonder grafsteen voor de speler (na de herstart is de sid
+    onbekend: 410, en de speler vraagt stil een nieuwe). Geeft het aantal."""
+    return 0
+
+
 def list() -> builtins.list[SessionView]:
     return []

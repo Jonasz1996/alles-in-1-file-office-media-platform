@@ -40,6 +40,10 @@ class MediaState:
     admission: Any = None  # Admission (M4)
     enabled: bool = False
     reason: str = ""  # waarom down of ffmpeg_missing, voor /beheer en het log
+    # F3 (§3.5): het stoppen is begonnen (runtime.begin_stop). Verzoeken onder /api/v1/stream/
+    # krijgen dan 503 media_busy met Retry-After: 2, ook wie op een segment wacht
+    stopping: bool = False
+    stop_waiters: set[asyncio.Future] = field(default_factory=set, repr=False)
 
     def set_worker(self, worker: WorkerHealth, reason: str = "") -> bool:
         """Een nieuwe toestand van de worker; True als hij veranderde (since gaat dan mee)."""
