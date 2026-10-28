@@ -687,3 +687,60 @@ async def test_worker_stopt_op_sigterm_zonder_kinderen(tmp_path):
         assert not w.socket.exists()
     finally:
         await local.stop(w)
+
+
+# --- runtime: uit is uit, aan start de lokale worker -----------------------------------------
+
+
+class FakeApp:
+    def __init__(self):
+        self.state = type("State", (), {})()
+
+
+async def test_runtime_uit_start_niets(tmp_path):
+    from app.media import runtime
+
+    app = FakeApp()
+    state = await runtime.start(app, media_settings(tmp_path))
+    try:
+        assert state.enabled is False and not runtime.enabled(app)
+        assert getattr(app.state, "media_local", None) is None
+        assert getattr(app.state, "media_health", None) is None
+        assert not (tmp_path / "media").exists()  # geen map, geen socket
+    finally:
+        await runtime.stop(app)
+
+
+async def test_runtime_container_zonder_worker_is_down(tmp_path, monkeypatch):
+    from app.media import health, runtime
+
+    monkeypatch.setattr(health, "FIRST", 0.01)
+    app = FakeApp()
+    settings = media_settings(tmp_path, media_enabled=True, media_worker=str(tmp_path / "x.sock"))
+    state = await runtime.start(app, settings)
+    try:
+        assert state.mode == "container" and runtime.enabled(app)
+        assert getattr(app.state, "media_local", None) is None  # nooit stil terug op lokaal
+        assert await until(lambda: state.worker == "down")
+        assert not state.healthy
+    finally:
+        await runtime.stop(app)
+
+
+@pytest.mark.media
+async def test_runtime_aan_start_en_stopt_de_lokale_worker(tmp_path, monkeypatch):
+    from app.media import health, runtime
+
+    monkeypatch.setattr(health, "FIRST", 0.05)
+    app = FakeApp()
+    state = await runtime.start(app, media_settings(tmp_path, media_enabled=True))
+    worker = app.state.media_local
+    try:
+        assert state.mode == "local"
+        assert await until(lambda: state.worker == "ok", limit=10), state.reason
+        assert state.healthy and state.caps is not None and state.caps.missing == []
+        assert worker.socket == tmp_path / "media" / "run" / "worker.sock"
+    finally:
+        await runtime.stop(app)
+    assert worker.process.returncode is not None
+    assert not worker.socket.exists()

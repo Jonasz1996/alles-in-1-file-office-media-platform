@@ -55,6 +55,9 @@ Index = Annotated[int, Field(ge=0, le=63)]
 Seconds = Annotated[float, Field(ge=0, le=7 * 24 * 3600)]
 # De grenzen op het geheugen per proces (RLIMIT_DATA, Keuze 12 en spike punt 6)
 SHORT_MEMORY_MB = 512
+# De bovengrens op threads per ffmpeg- of ffprobe-proces: elke argv krijgt `-threads 4` (spike
+# punt 6); de CPU-grens van de container en de plaatsen doen de rest
+THREADS = 4
 
 
 def demuxer_of(container: str | None) -> str | None:

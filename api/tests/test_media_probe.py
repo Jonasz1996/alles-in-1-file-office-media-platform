@@ -101,6 +101,17 @@ def test_hexdump():
     assert P.hexdump(big) is None  # meer dan 64 KB extradata
 
 
+def test_argv_van_ffprobe():
+    """Alleen fd: en de witte lijst, nooit raden, en de grenzen van spike punt 6."""
+    argv = P._argv("matroska", "-show_format")
+    assert argv[0] == "ffprobe" and argv[-2:] == ["-i", "fd:"]
+    assert argv[argv.index("-f") + 1] == "matroska" and argv[argv.index("-fd") + 1] == "3"
+    assert argv[argv.index("-protocol_whitelist") + 1] == "fd,pipe"
+    assert "lavfi" not in argv[argv.index("-format_whitelist") + 1].split(",")
+    assert argv[argv.index("-threads") + 1] == "4"
+    assert int(argv[argv.index("-max_pixels") + 1]) == P.MAX_PIXELS
+
+
 # --- clean en fit ----------------------------------------------------------------------------
 
 

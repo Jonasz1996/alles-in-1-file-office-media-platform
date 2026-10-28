@@ -27,7 +27,7 @@ from typing import Any
 from app.media import codecs, wire
 from app.media.types import Probe
 from app.media.wire import Code
-from app.media.worker.args import DEMUXERS, ProbeArgs
+from app.media.worker.args import DEMUXERS, THREADS, ProbeArgs
 from app.media.worker.server import Context, OpError
 
 MAX_STREAMS = 64
@@ -433,7 +433,7 @@ def _argv(demuxer: str, *show: str) -> list[str]:
     return [
         "ffprobe", "-hide_banner", "-loglevel", "error", "-max_alloc", "536870912",
         "-protocol_whitelist", "fd,pipe", "-format_whitelist", WHITELIST,
-        "-max_pixels", "35389440", "-f", demuxer, "-fd", "3",
+        "-max_pixels", "35389440", "-threads", str(THREADS), "-f", demuxer, "-fd", "3",
         *show, "-of", "json", "-i", "fd:",
     ]  # fmt: skip
 
