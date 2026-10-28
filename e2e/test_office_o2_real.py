@@ -15,6 +15,7 @@ het recht van nu); het harnas zet PLATFORM_OFFICE_DEV_UNGATED niet meer.
 
 from __future__ import annotations
 
+import json
 import re
 import secrets
 import sys
@@ -147,6 +148,8 @@ def open_via_button(page: Page, d: Duo, node: str, name: str) -> tuple[str, int]
     assert answer.value.status == 200, answer.value.text()
     expect(page).to_have_url(re.compile(rf"/bewerken/{node}$"))
     key = answer.value.json()["key"]
+    # De key van de sessie is de key in de config die de editor krijgt (§4.6 punt 1.2)
+    assert answer.value.json()["config"]["document"]["key"] == key
     reloads = ready(page)
     # api.js zet op zijn iframe onmousewheel=""; onder onze CSP een schending, die Chrome 156
     # meteen meldt (de bewaking vangt hem dan) en Chromium 141 pas als de handler gebruikt wordt.
@@ -158,6 +161,33 @@ def open_via_button(page: Page, d: Duo, node: str, name: str) -> tuple[str, int]
     )
     assert handlers == [], f"inline handlers op de iframe van de editor: {handlers}"
     return key, reloads
+
+
+# Schrijft op welke gebeurtenissen de iframe van DS aan de pagina meldt (onAppReady,
+# onDocumentReady, onError, ...). api.js krijgt ze als postMessage met een JSON-tekst
+# {"frameEditorId": …, "event": …} [gemeten in api.js van 10.0.0.1]. Alleen meeluisteren: de
+# pagina en api.js merken er niets van. Alleen in het bovenste venster, niet in de iframes.
+DS_EVENTS_SCRIPT = """
+(() => {
+  if (window.top !== window) return;
+  const seen = [];
+  Object.defineProperty(window, "__dsEvents", { value: seen });
+  window.addEventListener("message", (e) => {
+    let m = e.data;
+    if (typeof m === "string") {
+      try { m = JSON.parse(m); } catch { return; }
+    }
+    if (m && typeof m.event === "string" && typeof m.frameEditorId === "string") {
+      seen.push(m.event);
+    }
+  });
+})();
+"""
+
+
+def ds_events(page: Page) -> list[str]:
+    """De gebeurtenissen die de editor in deze pagina meldde (zie DS_EVENTS_SCRIPT)."""
+    return page.evaluate("() => [...(window.__dsEvents || [])]")
 
 
 def info_users(office: Office, key: str) -> list[str]:
@@ -174,24 +204,43 @@ def info_users(office: Office, key: str) -> list[str]:
 def test_twee_gebruikers_een_docx(real_office: Office, real_browsers, tmp_path_factory) -> None:
     """§4.6 punt 1: Anna en Bram (elk ingelogd met 2FA) bewerken tegelijk één docx in de echte
     editor. Nu opslaan door Bram geeft een docx met beide woorden; na het sluiten komt status 2,
-    en er is precies één versie bij (de inhoud van vóór de sessie)."""
+    en er is precies één versie bij (de inhoud van vóór de sessie). Het bewijs komt ook in
+    o2-echt-bewijs.json in de map met artefacten, naast de schermafdrukken
+    (docs/fase-4/klaar.md)."""
     office = real_office
     d = duo(office)
+    out = artifacts_dir(tmp_path_factory)
+    proof: dict[str, Any] = {"test": "test_office_o2_real.py::test_twee_gebruikers_een_docx"}
     # De tokens voor de API-aanroepen van de test, vóór 2FA aangaat
     for account in (d.anna, d.bram):
         office.server.token(account)
     two_a = enable_2fa(office.server, d.anna)
     two_b = enable_2fa(office.server, d.bram)
-    page_a = login_with_2fa(office, real_browsers, d.anna, two_a).new_page()
-    page_b = login_with_2fa(office, real_browsers, d.bram, two_b).new_page()
+    context_a = login_with_2fa(office, real_browsers, d.anna, two_a)
+    context_b = login_with_2fa(office, real_browsers, d.bram, two_b)
+    for context in (context_a, context_b):
+        context.add_init_script(DS_EVENTS_SCRIPT)
+    page_a = context_a.new_page()
+    page_b = context_b.new_page()
+    proof["ingelogd_met_2fa"] = True
 
     key, reloads_a = open_via_button(page_a, d, d.node, "verslag.docx")
     key_b, reloads_b = open_via_button(page_b, d, d.node, "verslag.docx")
     assert key_b == key  # dezelfde key in beide configs
+    proof["key_anna"], proof["key_bram"] = key, key_b
+    # Allebei onDocumentReady van de echte editor (ready() keek naar de statusregel, die pas na
+    # onDocumentReady "Bewerken" zegt; dit is de gebeurtenis zelf)
+    events_a, events_b = ds_events(page_a), ds_events(page_b)
+    assert "onDocumentReady" in events_a, events_a
+    assert "onDocumentReady" in events_b, events_b
+    assert "onError" not in events_a and "onError" not in events_b, (events_a, events_b)
+    proof["gebeurtenissen_anna"], proof["gebeurtenissen_bram"] = events_a, events_b
     expect(page_a.locator(".editor-status")).to_have_text("Bewerken met 1 ander", timeout=30_000)
     expect(page_b.locator(".editor-status")).to_have_text("Bewerken met 1 ander", timeout=30_000)
     users = wait_until(lambda: info_users(office, key), 30, "info met gebruikers")
     assert sorted(users) == sorted([uid(office, d.anna), uid(office, d.bram)]), users
+    proof["info_gebruikers"] = sorted(users)
+    proof["ds_uid_anna"], proof["ds_uid_bram"] = uid(office, d.anna), uid(office, d.bram)
 
     # De echte editor slikt soms de eerste toets na de klik in het document (gezien: "nna-…"
     # voor "Anna-…"); de test zoekt daarom het willekeurige deel
@@ -200,9 +249,12 @@ def test_twee_gebruikers_een_docx(real_office: Office, real_browsers, tmp_path_f
     type_in_editor(page_a, f"Anna {word_a}")
     type_in_editor(page_b, f"Bram {word_b}")
     page_a.wait_for_timeout(3000)  # de wijzigingen van Anna bij DS en bij Bram
+    proof["woord_anna"], proof["woord_bram"] = word_a, word_b
 
     before = len(versions(office, d.anna, d.node))
+    proof["versies_voor"] = before
     page_b.get_by_role("button", name="Nu opslaan", exact=True).click()
+    saved_from = time.monotonic()
     saved = wait_until(
         lambda: (lambda t: t if word_a in t and word_b in t else None)(
             text(office, d.anna, d.node)
@@ -210,11 +262,11 @@ def test_twee_gebruikers_een_docx(real_office: Office, real_browsers, tmp_path_f
         60,
         "de docx met beide woorden na Nu opslaan",
     )
+    proof["nu_opslaan_tot_beide_woorden_s"] = round(time.monotonic() - saved_from, 1)
     assert word_a in saved and word_b in saved
     assert len(versions(office, d.anna, d.node)) == before + 1
     expect(page_b.locator(".editor-status")).to_contain_text("Opgeslagen om", timeout=30_000)
 
-    out = artifacts_dir(tmp_path_factory)
     page_a.screenshot(path=str(out / "o2-echt-anna.png"))
     page_b.screenshot(path=str(out / "o2-echt-bram.png"))
 
@@ -222,17 +274,26 @@ def test_twee_gebruikers_een_docx(real_office: Office, real_browsers, tmp_path_f
     for page in (page_a, page_b):
         page.get_by_role("button", name="Sluiten", exact=True).click()
         expect(page).to_have_url(re.compile(rf"/map/{d.folder}\?bestand={d.node}$"))
+    closed_from = time.monotonic()
 
     def closed() -> bool:
         r = office.server.call(d.anna, "GET", f"/api/v1/office/files/{d.node}", expect=200)
         return r.json()["open"] is None
 
     wait_until(closed, 30, "status 2 en de sessie dicht")
+    proof["sluiten_tot_status_2_s"] = round(time.monotonic() - closed_from, 1)
+    # open is None: de sessie is dicht (sessions.live). Dicht als saved doet alleen status 2;
+    # status 4 geeft no_changes (saving.py)
+    assert session_row(office.server, key) == ("closed", "saved")
+    proof["sessie"] = list(session_row(office.server, key))
     listed = versions(office, d.anna, d.node)
     assert len(listed) == before + 1, listed
     assert listed[0]["replaced_by"]["id"] in (d.anna.id, d.bram.id)
+    proof["versies_na"] = len(listed)
+    proof["replaced_by"] = "Anna" if listed[0]["replaced_by"]["id"] == d.anna.id else "Bram"
     final = text(office, d.anna, d.node)
     assert word_a in final and word_b in final, final
+    proof["beide_woorden_in_de_docx"] = True
     old = office.server.call(
         d.anna,
         "GET",
@@ -241,7 +302,14 @@ def test_twee_gebruikers_een_docx(real_office: Office, real_browsers, tmp_path_f
         expect=200,
     )
     assert word_a not in docx_text(old.content)
+    # De versie is precies het bestand van vóór de sessie
+    assert word_b not in docx_text(old.content)
+    assert old.content == fixture("proef.docx")
+    proof["versie_is_de_inhoud_van_voor_de_sessie"] = True
+    proof["opnieuw_geladen"] = {"anna": reloads_a, "bram": reloads_b}
+    (out / "o2-echt-bewijs.json").write_text(json.dumps(proof, indent=2) + "\n")
     print(f"opnieuw geladen (A22): Anna {reloads_a}, Bram {reloads_b}", file=sys.stderr)
+    print(f"bewijs: {json.dumps(proof)}", file=sys.stderr)
 
 
 def test_herstart_van_de_app_terwijl_anna_bewerkt(real_office: Office, real_browsers) -> None:
