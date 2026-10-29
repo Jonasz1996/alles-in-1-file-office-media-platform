@@ -146,7 +146,11 @@ def test_ci_draait_de_container_test_en_s3():
     assert runs[0]["env"]["MEDIA_TEST_IMAGE"] == "platform:ci"
     assert runs[0]["env"]["MEDIA_TEST_FFMPEG"] == "7.1."
     assert "steps.bouw.outcome == 'success'" in runs[0]["if"]
-    assert any("--stappen S3" in str(step.get("run", "")) for step in steps)  # tot M4
+    # Sinds M4 geen aparte stap S3 meer met het afgeleide image van de spike: de container-test
+    # zelf doet S3 punt 17 (de remux naar een pipe van de app, met stream) en R12
+    assert not any("--stappen S3" in str(step.get("run", "")) for step in steps)
+    script = (SINGLE / "tests" / "test_media_container.sh").read_text(encoding="utf-8")
+    assert "S3 punt 17" in script and "R12" in script and "Op.STREAM" in script
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="geen bash")
