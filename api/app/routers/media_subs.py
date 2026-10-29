@@ -26,7 +26,6 @@ databaseverbinding blijft open terwijl er op de worker gewacht wordt (regel 8).
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from pathlib import Path as FilePath
 from typing import Annotated
 
@@ -77,8 +76,13 @@ async def _settle(app, task: asyncio.Task | None) -> None:
     Afbreken van het verzoek (of het stoppen van de app) laat de taak doorlopen."""
     if task is None:
         return
-    with contextlib.suppress(TimeoutError):
+    try:
         await runtime.until_stopped(app, asyncio.wait_for(asyncio.shield(task), FAST_WAIT))
+    except TimeoutError:
+        pass
+    except Exception:
+        if not task.done():  # niet de taak zelf (de app stopt): die fout gaat door
+            raise
     if task.done() and not task.cancelled() and task.exception() is not None:
         raise media_errors.from_worker(task.exception())  # type: ignore[arg-type]
 

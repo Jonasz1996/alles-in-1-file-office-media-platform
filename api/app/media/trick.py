@@ -153,14 +153,15 @@ def count_for(tiles: int, reported: object, duration_ms: int | None) -> int:
 
 
 def make_vtt(count: int, cell_h: int, duration_ms: int | None) -> bytes:
-    """trick.vtt: per beeld een cue van 10 s; de laatste loopt door tot het einde."""
+    """trick.vtt: per beeld een cue van 10 s; de laatste loopt tot het einde (ook als dat
+    eerder is dan 10 s na zijn begin)."""
     from app.media.subconv import HEADER, stamp
 
     blocks = [HEADER]
     for k in range(count):
         start = k * INTERVAL * 1000
         end = (k + 1) * INTERVAL * 1000
-        if k == count - 1 and duration_ms and duration_ms > end:
+        if k == count - 1 and duration_ms and duration_ms > start:
             end = duration_ms
         tile, cell = divmod(k, PER_TILE)
         x, y = (cell % COLS) * WIDTH, (cell // COLS) * cell_h
