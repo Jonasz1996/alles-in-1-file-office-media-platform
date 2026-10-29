@@ -74,11 +74,15 @@ async def check(app) -> str:
     return state.worker
 
 
+async def _pause(seconds: float) -> None:
+    await asyncio.sleep(seconds)  # apart, zodat een test de tijden van de lus kan zien
+
+
 async def _loop(app, settings: Settings) -> None:
     delay = FIRST
     retry = RETRY_FIRST
     while True:
-        await asyncio.sleep(delay)
+        await _pause(delay)
         try:
             worker = await check(app)
         except Exception:  # de lus mag nooit stoppen

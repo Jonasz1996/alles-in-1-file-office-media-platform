@@ -146,6 +146,10 @@ async def start(
     return worker
 
 
+async def _pause(seconds: float) -> None:
+    await asyncio.sleep(seconds)  # apart, zodat een test de backoff kan zien
+
+
 async def _supervise(worker: LocalWorker) -> None:
     """Wacht op het einde van de worker en start hem opnieuw, met backoff."""
     assert worker.settings is not None
@@ -161,7 +165,7 @@ async def _supervise(worker: LocalWorker) -> None:
         log.warning(
             "lokale mediaworker %s stopte (code %s); opnieuw over %g s", worker.pid, code, delay
         )
-        await asyncio.sleep(delay)
+        await _pause(delay)
         delay = min(delay * 2, BACKOFF_MAX)
         if worker._stopping:
             return
