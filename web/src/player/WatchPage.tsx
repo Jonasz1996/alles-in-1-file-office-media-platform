@@ -3,8 +3,9 @@
 // is de pagina van de route (RouteProps).
 //
 // De titel, de hoes en wat er hierna komt (de volgende aflevering, het volgende deel) komen uit
-// de bibliotheek (getItem en getShow, M2). Lukt dat niet (geen bibliotheek, M2 nog niet klaar),
-// dan de naam van het bestand en geen kaart: afspelen kan altijd.
+// de bibliotheek (getItem en getShow, M2). Lukt dat niet (het bestand staat in geen bibliotheek:
+// 404), dan de naam van het bestand en geen kaart: afspelen kan altijd. De maat van het item (voor
+// decodingInfo) geeft het Item van M2 niet; hier meet de speler dus op 1080p (m6.md, afwijking 5).
 
 import { type JSX, useEffect, useState } from "react";
 import { api, type FileNode } from "../api";
