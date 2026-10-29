@@ -253,6 +253,20 @@ def test_docx_heen_en_terug():
     assert docx.fake_text(data) is None
 
 
+def test_docx_hangt_niet_af_van_de_klok(monkeypatch):
+    """Dezelfde inhoud geeft dezelfde bytes, ook 4 s later (een zip had de tijd met 2 s per
+    stap): test_place_file_exact.py rekent op dezelfde sha voor dezelfde tussenstand."""
+    first = docx.make_docx(["tussenstand 3"])
+    xlsx = docx.with_text(first, "tekst")
+    changes = docx.changes_zip([{"user": "u1"}])
+    real = time.time
+    monkeypatch.setattr(time, "time", lambda: real() + 4)
+    assert docx.make_docx(["tussenstand 3"]) == first
+    assert docx.with_text(first, "tekst") == xlsx
+    assert docx.changes_zip([{"user": "u1"}]) == changes
+    assert docx.paragraphs(first) == ["tussenstand 3"]
+
+
 def test_repr_digest():
     import base64
     import hashlib

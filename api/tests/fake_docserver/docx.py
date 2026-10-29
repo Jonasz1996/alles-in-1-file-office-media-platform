@@ -3,6 +3,11 @@
 - docx: een nieuwe docx met eerst de alinea's van het origineel en dan één alinea per gebruiker
   met zijn tekst, zodat een test de inhoud kan lezen (paragraphs);
 - xlsx en pptx: het origineel plus customXml/fake.xml met de tekst.
+
+Elk deel krijgt een vaste datum in de zip: dezelfde inhoud geeft zo altijd dezelfde bytes (en
+sha). Met de klok (writestr met een naam, 2 s per stap) faalde
+test_place_file_exact.py::test_squash_alleen_bij_de_juiste_sha af en toe, als twee keer dezelfde
+inhoud aan weerszijden van een grens van 2 s viel (samenvoegen fase 5, golf 3).
 """
 
 import io
@@ -12,6 +17,7 @@ from xml.sax.saxutils import escape
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 FAKE_PART = "customXml/fake.xml"
+DATE = (1980, 1, 1, 0, 0, 0)  # de vroegste datum van zip
 
 CONTENT_TYPES = (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
@@ -32,6 +38,11 @@ RELS = (
 )
 
 
+def _put(z: zipfile.ZipFile, name: str, data: str | bytes) -> None:
+    """Een deel met de vaste datum (niet de klok), gecomprimeerd."""
+    z.writestr(zipfile.ZipInfo(name, date_time=DATE), data, zipfile.ZIP_DEFLATED)
+
+
 def make_docx(paragraphs: list[str]) -> bytes:
     """Een kleine geldige docx met deze alinea's."""
     body = "".join(
@@ -43,9 +54,9 @@ def make_docx(paragraphs: list[str]) -> bytes:
     )
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", CONTENT_TYPES)
-        z.writestr("_rels/.rels", RELS)
-        z.writestr("word/document.xml", document)
+        _put(z, "[Content_Types].xml", CONTENT_TYPES)
+        _put(z, "_rels/.rels", RELS)
+        _put(z, "word/document.xml", document)
     return out.getvalue()
 
 
@@ -75,7 +86,7 @@ def with_text(original: bytes, text: str) -> bytes:
         for info in source.infolist():
             if info.filename != FAKE_PART:
                 target.writestr(info, source.read(info))
-        target.writestr(FAKE_PART, f"<fake>{escape(text)}</fake>")
+        _put(target, FAKE_PART, f"<fake>{escape(text)}</fake>")
     return out.getvalue()
 
 
@@ -95,5 +106,5 @@ def changes_zip(entries: list[dict]) -> bytes:
 
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("changes.json", json.dumps(entries))
+        _put(z, "changes.json", json.dumps(entries))
     return out.getvalue()
