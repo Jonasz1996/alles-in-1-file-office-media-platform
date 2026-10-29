@@ -31,6 +31,10 @@
 #   schrijven geeft EBADF, opnieuw openen via /proc/self/fd en een kind via /proc/<pid>/fd
 #   lukken niet (een eigen bestand wel: de controle), een stuk midden in de blob heeft de hash
 #   van de app, de pipe is van de app, en de blob bleef gelijk;
+# - de stroom (M4): S3 punt 17 van de spike (een remux in de worker van een fd van de app naar
+#   fMP4 op een pipe van de app; de boxen met de knipper van de app), een transcode op het
+#   rooster van 2 s, en R12: tijdens die transcode één ffmpeg in de container van media en geen
+#   in die van de app;
 # - media-status zegt "afgeschermd";
 # - de worker gestopt: de app meldt binnen 30 s (de lus van health.py, +1 s) dat hij niet
 #   bereikbaar is; weer gestart: media-status zegt weer "afgeschermd".
@@ -647,6 +651,163 @@ if [ "$k1_app" = 0 ] && [ "$k1_media" = 0 ]; then
   echo "  app: $(cat "$WORK/k1_app.txt")"
 else
   fout "een blob van de app bij een proces van media: media $(mask < "$WORK/k1_media.txt"), app $(mask < "$WORK/k1_app.txt" 2> /dev/null)"
+fi
+
+# --- de stroom (M4): S3 punt 17 en R12 -----------------------------------------------------------
+# S3 punt 17 van de spike, nu met stream van M4: de remux in de worker leest de fd van de app en
+# schrijft fMP4 naar een pipe van de app; de app knipt met zijn eigen knipper (fmp4.Cutter) en
+# kijkt naar de boxen: één init met beeld en geluid, een fragment per GOP met een keyframe
+# vooraan, op mediatijd. Daarna een transcode op het rooster van 2 s, en R12 (§4.6): zolang die
+# loopt (de app leest de pipe nog niet, dus ffmpeg wacht erop) draait er één ffmpeg in de
+# container van media en geen in die van de app (docker top, en /proc in de app zelf).
+
+R12_HOLD=/tmp/r12-klaar
+cat > "$WORK/m4.py" << 'PY'
+import asyncio, os, subprocess, sys, time
+from pathlib import Path
+
+sys.path.insert(0, "/srv")
+from app.media import client, fmp4, grid  # noqa: E402
+from app.media.wire import Op  # noqa: E402
+from app.media.worker import args as A  # noqa: E402
+
+SOCK, HOLD = Path(sys.argv[1]), Path(sys.argv[2])
+problems = []
+
+
+def check(name, ok, detail=""):
+    print(("goed: " if ok else "FOUT: ") + name + (f" ({detail})" if detail else ""), flush=True)
+    if not ok:
+        problems.append(name)
+
+
+# Een film zoals de spike: Matroska, H.264 met B-frames en een keyframe per 2 s, en AAC
+film = Path("/tmp/m4-film.mkv")
+subprocess.run(
+    ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
+     "testsrc2=size=320x240:rate=25", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+     "-t", "6", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-bf", "2",
+     "-x264-params", "keyint=50:min-keyint=50:scenecut=0", "-c:a", "aac", "-shortest", str(film)],
+    check=True,
+)
+os.chmod(film, 0o600)  # zoals een blob: alleen de app kan hem openen
+
+
+def read_all(fd):
+    chunks = []
+    try:
+        while chunk := os.read(fd, 65536):
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    return b"".join(chunks)
+
+
+def cut(data):
+    """Met de knipper van de app (fmp4.Cutter, begrensd): de init en de fragmenten."""
+    cutter = fmp4.Cutter()
+    items = cutter.feed(data)
+    cutter.close()
+    inits = [i for i in items if isinstance(i, fmp4.Init)]
+    frags = [i for i in items if isinstance(i, fmp4.Fragment) and i.video_start_ms is not None]
+    return inits, frags
+
+
+def ffmpeg_here():
+    """De ffmpeg-processen die deze container ziet (/proc: alleen de eigen pid-namespace)."""
+    found = []
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit():
+            try:
+                if (entry / "comm").read_text().strip() == "ffmpeg":
+                    found.append(int(entry.name))
+            except OSError:
+                continue
+    return found
+
+
+async def stream(args, *, hold=False):
+    job, (r,) = await client.call(Op.STREAM, args, source=film, outputs=1)
+    async with job:
+        if hold:
+            # R12: de app leest de pipe nog niet; ffmpeg loopt in de worker en wacht op de pipe
+            print("R12: loopt", flush=True)
+            for _ in range(900):
+                if HOLD.exists():
+                    break
+                await asyncio.sleep(0.1)
+            here = ffmpeg_here()
+            check("R12: tijdens de transcode geen ffmpeg in de container van de app",
+                  HOLD.exists() and not here, f"{len(here)} ffmpeg, teken {HOLD.exists()}")
+        began = time.monotonic()
+        data = await asyncio.to_thread(read_all, r)
+        result = await job.result()
+    return data, result, time.monotonic() - began
+
+
+async def main():
+    client.bind(SOCK, os.environ["PLATFORM_MEDIA_WORKER_KEY"])
+    probe = await client.probe(film)
+    video, audio = probe.video(), probe.audio_streams()[0]
+    common = dict(
+        demuxer=A.demuxer_of(probe.container), source_start_s=round(probe.start_ms / 1000, 3),
+        video_index=video.index, audio_index=audio.index, audio="copy",
+    )
+    # S3 punt 17: de remux in de worker leest de fd en schrijft fMP4 naar een pipe van de app
+    data, result, took = await stream(A.StreamArgs(mode="remux", video="copy", **common))
+    inits, frags = cut(data)
+    starts = [f.video_start_ms for f in frags]
+    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    detail = (f"{len(data)} bytes in {took:.2f} s, {len(inits)} init, starts {starts}, "
+              f"trun {sorted({f.trun_version for f in frags})}, {result}")
+    check("S3 punt 17: remux van de fd naar fMP4 op een pipe van de app (init met beeld en "
+          "geluid, een fragment per GOP met een keyframe vooraan, op mediatijd)",
+          len(inits) == 1 and inits[0].video is not None and inits[0].audio is not None
+          and len(frags) == 3 and all(f.sync for f in frags) and 0 <= starts[0] <= 100
+          and all(abs(g - 2000) <= 40 for g in gaps), detail)
+    # De transcode op het rooster van 2 s, en R12: ffmpeg draait alleen in de worker
+    layout = grid.transcode_layout(probe)
+    encode = A.VideoEncode(codec="libx264", width=320, height=240, preset="veryfast", level="3.0",
+                           maxrate_k=800)
+    args = A.StreamArgs(mode="transcode", video=encode, grid="2s", **common)
+    data, result, took = await stream(args, hold=True)
+    inits, frags = cut(data)
+    starts = [f.video_start_ms for f in frags]
+    on = [layout.segment_of(t + 1) for t in starts]
+    check("de transcode: een segment per 2 s van het rooster, elk met een keyframe vooraan",
+          len(inits) == 1 and on == list(range(layout.count)) and all(f.sync for f in frags)
+          and abs(starts[0] - layout.grid.origin_ms) <= 40,
+          f"{len(data)} bytes, starts {starts}, segmenten {on} van {layout.count}, {result}")
+
+
+asyncio.run(main())
+film.unlink()
+sys.exit(1 if problems else 0)
+PY
+in_platform python -I - "$SOCK" "$R12_HOLD" < "$WORK/m4.py" > "$WORK/m4.txt" 2>&1 &
+m4_pid=$!
+r12_running() { grep -q "R12: loopt" "$WORK/m4.txt"; }
+# docker top filtert op de pid's van de container; het heeft de kolom pid nodig
+ffmpeg_in() { docker top "$1" -eo pid,comm 2> /dev/null | awk 'NR > 1 && $2 == "ffmpeg"' | wc -l | tr -d ' '; }
+if wait_for 120 r12_running; then
+  n_media="$(ffmpeg_in "$(compose ps -q media)")"
+  n_app="$(ffmpeg_in "$(compose ps -q platform)")"
+  if [ "$n_media" = 1 ] && [ "$n_app" = 0 ]; then
+    goed "R12: tijdens een transcode één ffmpeg in de container van media, geen in die van de app (docker top)"
+  else
+    fout "R12: ffmpeg in media $n_media, in de app $n_app (docker top)"
+  fi
+else
+  fout "R12: de transcode liep niet: $(mask < "$WORK/m4.txt" | tail -n 5)"
+fi
+in_platform touch "$R12_HOLD" || true
+if wait "$m4_pid"; then m4_rc=0; else m4_rc=1; fi
+if [ "$m4_rc" = 0 ]; then
+  cat "$WORK/m4.txt"
+  goed "de stroom (M4): S3 punt 17 (remux naar een pipe van de app) en een transcode op het rooster"
+else
+  mask < "$WORK/m4.txt" >&2
+  fout "de stroom (M4)"
 fi
 
 status="$(in_platform python -m app.cli media-status --wait 30 2>&1 | tr -d '\r' || true)"

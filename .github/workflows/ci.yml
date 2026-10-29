@@ -604,8 +604,10 @@ jobs:
           echo "=== kern.json ==="
           cat "$RUNNER_TEMP/media-image/kern.json" || echo "(geen kern.json)"
           echo "=== einde kern.json ==="
-      # De container-test (M1) en S3 draaien ook als de kern faalde: losse uitkomsten
-      - name: De mediaworker in zijn container (--selftest en test_media_container.sh, M1)
+      # De container-test draait ook als de kern faalde: losse uitkomsten. Hij heeft sinds M4
+      # ook S3 punt 17 van de spike (de remux naar een pipe van de app, met stream) en R12; de
+      # aparte stap S3 met het afgeleide image van de spike is daarom weg
+      - name: De mediaworker in zijn container (--selftest en test_media_container.sh, M1 en M4)
         if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
         env:
           MEDIA_TEST_IMAGE: platform:ci
@@ -620,31 +622,6 @@ jobs:
           echo "=== selftest.json ==="
           cat "$RUNNER_TEMP/media-image/selftest.json" || echo "(geen selftest.json)"
           echo "=== einde selftest.json ==="
-      - name: Afgeleid image voor S3 bouwen (de drie regels van Keuze 47, zoals de spike)
-        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
-        # de builder default ziet platform:ci, de builder van setup-buildx niet
-        run: |
-          docker buildx build --builder default --load --build-arg BASE=platform:ci \
-            -t platform-spike:ci api/tests/media/spike
-      - name: S3 in het image (fd's tussen containers en de afscherming; tot M4)
-        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
-        run: |
-          python3 -I api/tests/media/spike/ci.py --uit "$RUNNER_TEMP/media-image/s3.json" \
-            --image platform:ci --worker-image platform-spike:ci --stappen S3
-          # Hier is S3 een harde controle (in de spike was het alleen een uitkomst): elke controle goed
-          python3 -I -c '
-          import json, sys
-          uit = json.load(open(sys.argv[1]))
-          s3 = [s for s in uit["stappen"] if s.get("stap") == "S3"]
-          assert not uit["crash"] and len(s3) == 1, "S3 draaide niet"
-          checks = s3[0].get("checks") or []
-          fout = [c["naam"] for c in checks if not c.get("ok")]
-          print(f"S3: {len(checks) - len(fout)} van {len(checks)} controles goed")
-          assert checks and not fout, f"S3 faalt: {fout}"
-          ' "$RUNNER_TEMP/media-image/s3.json"
-      - name: S3 kort tonen
-        if: always()
-        run: cat "$RUNNER_TEMP/media-image/kort.txt" || echo "(geen kort.txt)"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
