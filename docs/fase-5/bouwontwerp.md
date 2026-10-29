@@ -754,11 +754,23 @@ onderaan.
         `media_worker_down` omdat de worker druk is.
       - De Grant van de toelating (Keuze 26) reserveert de plaats in de worker al. Een play die de
         toelating goedkeurt, krijgt dus geen `busy` van de worker.
+        *Noot (review golf 2, C5):* de plaatsen tellen samen 12 (3 + 6 + 1 + 2) bij `max_procs`
+        10. De toelating laat daarom live (transcode en remux samen) hooguit `max_procs −
+        (achtergrond + kort)` toe, 7 bij 10. Bij `max_procs` ≤ 3 (het harnas, de belastingtest)
+        blijft er niets over; daar geldt die grens niet, en kan `busy` van de worker toch
+        (de speler probeert opnieuw). [m4.md](m4.md), afwijking 14.
     - **Eén producent per sessie.** Bij zoeken stopt de oude producent (SIGTERM, na 2 s SIGKILL).
       De nieuwe start pas na `waitpid` van de oude. Zoekverzoeken binnen 300 ms worden samengevoegd:
       alleen het laatste start een producent. Zo staan er per sessie hooguit 2 ffmpeg tegelijk (één
       die stopt, één die start), en telt de stoppende mee in de plaatsen. Een test doet 10 keer
       zoeken in 1 s.
+      *Noot (review golf 2, K1):* de speler laat oude verzoeken vallen, maar de server ziet dat
+      niet (uvicorn breekt een verzoek niet af als de client weggaat). Een verzoek om n is daarom
+      *ingehaald* zodra er een nieuwer kwam buiten [n, n + 3]: het wacht alleen nog, start geen
+      herstart, en zijn 503 telt niet mee voor het sluiten (Keuze 25). De herstart begint als er
+      300 ms geen nieuw verzoek kwam, op het laagste doel dat nog telt. Test:
+      `test_media_producer.py::test_tien_keer_zoeken_in_1_s_is_een_herstart` (zonder cancel; één
+      start). [m4.md](m4.md), afwijking 15.
     - Uitvoer altijd via pipes die de app maakt (D7), ook voor ondertitels. De app leest ze met
       asyncio. (spike) Stopt de app een producent, dan sluit hij de pipe zelf: een gepauzeerde
       asyncio-transport krijgt na een kill geen EOF (S6).
@@ -1235,6 +1247,9 @@ onderaan.
     - De speler vraagt segment n.
     - Staat het in de cache van de sessie: meteen.
     - Loopt de producent en ligt n hooguit 3 segmenten (6 s) voor op wat er is: wachten.
+      *Noot (review golf 2, C1):* alleen wat de producent nog maakt (vanaf het segment waar hij
+      is) of wat af is en nog naar de schijf gaat. Een segment dat hij al voorbij is en dat het
+      venster uit de cache haalde, maakt hij nooit meer: dat is een herstart.
     - Anders: de producent stoppen (de verbinding dicht) en een nieuwe starten op de grens van n
       (`-ss (origin + 2n)` bij transcode (spike; revisie 2: `-ss 2n`), `-ss (b_n − 0,5)` bij remux;
       bij MPEG-TS niet exact, Keuze 22). De nieuwe start pas als de oude weg
@@ -1327,6 +1342,10 @@ onderaan.
     - Grenzen: `max_transcodes` 3 (`PLATFORM_MEDIA_MAX_TRANSCODES` is het plafond; `/beheer` kan
       alleen lager), 2 per gebruiker (`reason: user`), 1 per publieke link. Minder dan 10 GB vrij:
       `reason: disk` (Keuze 31).
+      *Noot (review golf 2, S3):* remux had alleen het totaal van 6 (Keuze 12), en één account
+      kon ze alle 6 nemen. M4 zet er hooguit 3 per gebruiker (`reason: user`) en 1 per publieke
+      link (`reason: link`) bij, met Retry-After 30. Jonas kan die getallen nog kiezen; dit is de
+      veiligere lezing, geen besluit. [m4.md](m4.md), afwijking 13.
     - **Afremmen door tegendruk** (D6): de app leest de pipe niet verder als de producent 60 s
       voor ligt op het laatste verzoek van de speler. Dat telt in seconden mediatijd, niet in
       segmenten (een remux-segment is 6 s of langer). ffmpeg blokkeert dan en kost niets.
@@ -2698,6 +2717,9 @@ aftiteling.
 - `test_media_chapters.py`: titels, de aftiteling in het Nederlands en Engels, geen hoofdstukken.
 - e2e `test_media_m5.py`: SRT en de ASS-cue met `\an8` (boven in beeld) als `<track>`; PGS inbranden
   (de pixels op de plek van de ondertitel veranderen, gemeten in een canvas); sprites bij hover.
+  *Noot (review golf 2, K3):* zonder de speler toetst M5 de kant van de server: de cue van een tijd
+  in `trick.vtt` (als metadata-track in de browser) wijst het goede vak van de tegel aan. De hover
+  zelf schuift naar de e2e van M6 (punt 11 daar). [m5.md](m5.md), afwijking 15.
   (spike) Ook inbranden na een sprong naar een plek waar een ondertitel al loopt (S9: `-ss 4`
   met een ondertitel van 2,0 tot 5,0 s), met de tweede fd van Keuze 29.
 
@@ -2744,8 +2766,16 @@ ondertitels, PiP en toetsenbord. Binnen het budget, zonder bibliotheek (B19).
   9. de app herstart midden in het afspelen: de speler loopt binnen 10 s door. En met de
      harnasoptie `outage_s=30` (de app stoppen op pid, 30 s wachten, starten): de speler loopt
      ≤ 10 s na "ready" weer;
-  10. geen fouten in de console, geen CSP-meldingen.
+  10. geen fouten in de console, geen CSP-meldingen;
+  11. (van M5, review golf 2, K3) sprites bij hover: de muis boven de tijdbalk toont het plaatje
+      van die tijd (de cue uit `trick.vtt`, het vak `xywh` uit de tegel).
 - `budget.mjs`: `player` ≤ 35 KB, `mediaRoute` ≤ 45 KB, de eerste lading ≤ 100 KB.
+- *Noot (review golf 2, K2):* `X-Init` is de sleutel van een init, geen teller. Bij de echte routes
+  geeft A, B, A de generaties 1, 2, 1 ([m4.md](m4.md), afwijking 5); `fake_stream.py` (M0) geeft
+  dan 3. Een lagere `X-Init` is dus niet oud (`mse.test.ts`, "`gen` wisselen"), en een test met
+  twee wissels hoort tegen de echte routes. *Noot (K1):* bij zoeken breekt de speler zijn oude
+  verzoeken af (`AbortController`); de server rekent er niet op, maar zo blijven er geen
+  verbindingen open die niemand leest.
 
 **Klaar als**
 - Alle e2e groen in Chromium 141 en in CI.
