@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.config import MediaConfig
 from app.db import get_engine
 from app.main import app
-from app.media import analysis, hooks, keyframes, sessions, streams
+from app.media import admission, analysis, hooks, keyframes, sessions, streams
 from app.media import profile as P
 from app.media.state import MediaPolicy, MediaState
 from app.media.types import Plan, PlayOut, StreamInfo
@@ -534,26 +534,64 @@ async def test_intrekken_terwijl_play_wacht(
 async def test_geen_stroom_als_de_toegang_tijdens_play_verviel(
     client, other, settings, monkeypatch
 ):
-    """Remux: is de sessie bij create al dicht, dan start play geen stroom (streams.open, M4)."""
+    """Remux: is de sessie bij create al dicht, dan start play geen stroom (streams.open, M4).
+    streams.close krijgt hem wel, één keer, zoals bij elke sluiting van een sessie die niet
+    direct is (na-controle golf 1): M4 moet een close zonder open aankunnen, net als een close
+    terwijl open nog loopt."""
     headers, tokens, _, _ = other
     node = await video(client, headers, settings, "serie.mkv", "vp9_opus.mkv", index=True)
     opened: list[Plan] = []
+    closed: list[sessions.Session] = []
 
     async def open_stream(session, plan):
         opened.append(plan)
         return StreamInfo(mode="remux", url="master.m3u8", map_url="map.json")
+
+    async def close_stream(session):
+        closed.append(session)
 
     async def logout() -> int:
         body = {"refresh_token": tokens["refresh_token"]}
         return (await client.post("/api/v1/auth/logout", json=body)).status_code
 
     monkeypatch.setattr(streams, "open", open_stream)
+    monkeypatch.setattr(streams, "close", close_stream)
     during_play(monkeypatch, logout)
     out = await play(client, headers, node["id"], fixture="vp9_opus.mkv")
     assert out["mode"] == "remux" and opened == []
     assert out["urls"]["master"] == "master.m3u8" and out["urls"]["map"] == "map.json"
     failed(await client.get(f"{STREAM}/{out['sid']}/master.m3u8"), 403, "media_access_gone",
            "revoked")  # fmt: skip
+    await settle()
+    assert [s.sid for s in closed] == [out["sid"]] and closed[0].info is None
+
+
+@pytest.mark.anyio
+async def test_een_fout_in_de_controle_van_create_geeft_de_plaats_een_keer_terug(
+    client, own, monkeypatch
+):
+    """Na-controle golf 1: gooit de controle in create (de database weg, of play afgebroken),
+    dan geeft play de plaats terug (admission.release), en niet ook nog de sessie die daarbij
+    dichtgaat. Met de stub doet release niets, maar met M4 telt elke release: twee keer
+    dezelfde Grant terug maakt het budget groter dan het is."""
+    headers, _, node = own
+    released: list[uuid.UUID] = []
+    real = admission.release
+
+    def release(grant):
+        released.append(grant.id)
+        return real(grant)
+
+    async def broken(session):
+        raise RuntimeError("de database is weg")
+
+    monkeypatch.setattr(admission, "release", release)
+    monkeypatch.setattr(sessions, "_verify", broken)
+    with pytest.raises(RuntimeError, match="de database is weg"):
+        await play(client, headers, node["id"])
+    await settle()
+    assert len(released) == 1, released
+    assert sessions.table().open() == [] and sessions.table().by_sid == {}
 
 
 @pytest.mark.anyio

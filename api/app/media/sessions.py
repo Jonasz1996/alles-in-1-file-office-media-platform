@@ -602,6 +602,10 @@ async def create(
     try:
         failure = await check(s)
     except BaseException:
+        # Gooit create, dan geeft wie create aanriep de plaats terug (play doet admission.release),
+        # zoals bij elke andere fout in create; de sessie die dichtgaat dus niet nog een keer
+        # (met M4 telt elke release; na-controle golf 1)
+        s.grant = None
         _close(s, None)
         raise
     if failure is not None:
