@@ -9,6 +9,11 @@ terwijl hij op de worker wacht (regel 8): ctx.maker() geeft korte sessies. Een m
 houdt de rest niet tegen; WorkerBusy of WorkerDown wordt jobs.Defer(30), zonder dat de poging
 telt. Lopen er 2 of meer live transcodes, dan wacht de analyse: Defer(60) (M4 zet de teller in
 busy_live).
+
+Alleen een fout van het bestand zelf (FILE_ERRORS: unreadable, unknown_format, too_large) wordt
+een opgeslagen probe met state failed. Een andere WorkerFailed van de probe (ffmpeg_missing,
+not_built, timeout, internal, …) slaat niets op: de job mislukt die poging en probeert het later
+opnieuw, met backoff (jobs.MAX_ATTEMPTS).
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from app.config import Settings
 from app.db import get_engine
 from app.media import client
 from app.media.types import Probe
+from app.media.wire import Code
 from app.models import MediaLibrary, MediaProbe
 from app.storage import BlobStore
 
@@ -146,20 +152,38 @@ async def load(maker: async_sessionmaker[AsyncSession], sha: str) -> Probe | Non
         return Probe.model_validate(row, from_attributes=True)
 
 
+# Fouten van het bestand zelf: die worden een opgeslagen Probe met state failed (blijvend, tot
+# een hogere PROBE_VERSION). Elke andere WorkerFailed (ffmpeg_missing, not_built, timeout,
+# internal, …) zegt iets over de worker of de omgeving, niet over het bestand: die gaat door,
+# zodat de job het later opnieuw probeert (met backoff) en er niets blijvends staat.
+FILE_ERRORS = frozenset({Code.UNREADABLE.value, Code.UNKNOWN_FORMAT.value, Code.TOO_LARGE.value})
+
+
 async def probe_blob(settings: Settings, sha: str) -> Probe:
-    """De worker laten proben (zonder databaseverbinding). WorkerBusy, WorkerDown of
-    WorkerFailed gaan door; een onleesbare bron wordt een Probe met state failed."""
+    """De worker laten proben (zonder databaseverbinding). WorkerBusy en WorkerDown gaan door,
+    en WorkerFailed ook, behalve een fout van het bestand zelf (FILE_ERRORS): dan een Probe met
+    state failed. Een bron boven 8192×4320 geeft de worker al als Probe met error too_large."""
     path = BlobStore(settings.blob_dir).path(sha)
     try:
         probe = await client.probe(path)
     except client.WorkerFailed as exc:
-        probe = Probe(state="failed", error=(exc.code or "failed")[:200])
+        if exc.code not in FILE_ERRORS:
+            raise
+        probe = Probe(state="failed", error=exc.code[:200])
     probe.blob_sha = sha
     return probe
 
 
+def settled(probe: Probe | None) -> bool:
+    """Is deze opgeslagen probe het eindoordeel? ready, of failed door het bestand zelf. Een
+    failed met een andere fout (van vóór FILE_ERRORS) wordt opnieuw geprobeerd."""
+    if probe is None:
+        return False
+    return probe.state != "failed" or (probe.error or "") in FILE_ERRORS
+
+
 async def _probe_step(ctx: StepContext) -> None:
-    if ctx.probe is not None:
+    if settled(ctx.probe):
         return
     ctx.probe = await probe_blob(ctx.settings, ctx.sha)
     await save_probe(ctx.maker(), ctx.sha, ctx.probe)
