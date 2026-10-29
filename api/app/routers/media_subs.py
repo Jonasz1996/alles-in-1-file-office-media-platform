@@ -52,11 +52,16 @@ def not_found():
     return errors.fail(404, **sessions.NOT_FOUND)
 
 
-async def _read(path: FilePath) -> bytes | None:
+async def _read_file(path: FilePath) -> bytes | None:
     try:
         return await asyncio.to_thread(path.read_bytes)
     except (FileNotFoundError, NotADirectoryError):
         return None
+
+
+async def _read(request: Request, path: FilePath) -> bytes | None:
+    """Een bestand uit de cache; ook dat wachten gaat via until_stopped (F3)."""
+    return await runtime.until_stopped(request.app, _read_file(path))
 
 
 def pending() -> JSONResponse:
@@ -124,31 +129,35 @@ async def subtitle(
     if state == "failed":
         raise media_errors.unavailable("subtitle")
     if state == "ready":
-        data = await _read(subtitles.cached(settings, sha, name))
+        data = await _read(request, subtitles.cached(settings, sha, name))
         if data is not None:
             return Response(data, media_type=VTT_TYPE, headers=CACHED)
     return pending()
 
 
 @router.get("/{sid}/trick.vtt")
-async def trick_vtt(session: sessions.Guarded):
+async def trick_vtt(request: Request, session: sessions.Guarded):
     settings = session.settings or runtime.settings()
     try:
-        data = await _read(trick.vtt_path(settings, session.sha))
+        path = trick.vtt_path(settings, session.sha)
     except ValueError:
-        data = None
+        raise not_found() from None
+    data = await _read(request, path)
     if data is None:
         raise not_found()
     return Response(data, media_type=VTT_TYPE, headers=CACHED)
 
 
 @router.get("/{sid}/trick/{i}.jpg")
-async def trick_jpg(session: sessions.Guarded, i: Annotated[int, Path(ge=0, le=100_000)]):
+async def trick_jpg(
+    request: Request, session: sessions.Guarded, i: Annotated[int, Path(ge=0, le=100_000)]
+):
     settings = session.settings or runtime.settings()
     try:
-        data = await _read(trick.tile_path(settings, session.sha, i))
+        path = trick.tile_path(settings, session.sha, i)
     except ValueError:
-        data = None
+        raise not_found() from None
+    data = await _read(request, path)
     if data is None:
         raise not_found()
     return Response(data, media_type=JPEG_TYPE, headers=CACHED)

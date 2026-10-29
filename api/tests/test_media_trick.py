@@ -530,3 +530,19 @@ async def test_echt_twee_tegels(worker, built):
     assert out["count"] == 105
     assert found[100] == ("00:16:40.000 --> 00:16:50.000", "trick/1.jpg#xywh=0,0,160,90")
     assert re.fullmatch(r"00:17:20\.000 --> 00:17:35\.\d{3}", found[-1][0])
+
+
+@pytest.mark.anyio
+async def test_de_routes_als_de_app_stopt(client, admin, settings, media, monkeypatch):
+    monkeypatch.setattr(runtime, "_settings", settings)
+    headers, _ = admin
+    node = await video(client, headers, settings, "stopt.mp4")
+    trick._store(settings, node["sha"], [jpeg()], trick.make_vtt(1, 90, 10_000))
+    sid = (await play(client, headers, node["id"]))["sid"]
+    assert (await client.get(f"{STREAM}/{sid}/trick.vtt")).status_code == 200
+    media.stopping = True
+    try:
+        for rest in ("trick.vtt", "trick/0.jpg"):
+            failed(await client.get(f"{STREAM}/{sid}/{rest}"), 503, "media_busy", "worker")
+    finally:
+        media.stopping = False

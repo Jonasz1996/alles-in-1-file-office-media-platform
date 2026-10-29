@@ -898,3 +898,22 @@ async def test_echt_een_los_bestand(worker, built, name, kind, wanted):
     assert wanted in data.decode()
     assert not data.startswith(b"\xef\xbb\xbf")
     assert subtitles.check_vtt(data) == data
+
+
+@pytest.mark.anyio
+async def test_de_route_als_de_app_stopt(client, admin, settings, fake, media):
+    """F3: elk wachten onder /stream/ gaat via until_stopped; stopt de app, dan 503 media_busy
+    met reden worker, ook voor een ondertitel die al klaar is."""
+    headers, _ = admin
+    node = await text_video(client, headers, settings)
+    fake.on(Op.SUBS, Subs({2: vtt((0, 1000, "a")), 3: vtt((0, 1000, "b"))}))
+    sid = (await play(client, headers, node["id"]))["sid"]
+    assert (await get_vtt(client, sid, "e2")).status_code == 200
+    media.stopping = True
+    try:
+        for track in ("e2", "e3"):
+            r = await get_vtt(client, sid, track)
+            failed(r, 503, "media_busy", "worker")
+            assert r.headers["retry-after"] == "2"
+    finally:
+        media.stopping = False
