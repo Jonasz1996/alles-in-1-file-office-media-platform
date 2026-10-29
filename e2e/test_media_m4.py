@@ -19,13 +19,14 @@ generatie, dan eerst die init (Keuze 22). Daarna moet de <video> echt spelen.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import Any
 
 import pytest
 
-from media_harness import open_app, require_codec, run_async, wait_playing
-from test_media_m3 import codecs_of, login, play, profile
+from media_harness import Uploaded, open_app, require_codec, run_async, wait_playing
+from test_media_m3 import codecs_of, login, padded_webm, play, profile
 
 ACCESS_CACHE_S = 15.0  # settings.media_access_cache (Keuze 21)
 
@@ -137,6 +138,22 @@ def keyframes_state(media: Any, sha: str) -> str | None:
     return row[0] if row else None
 
 
+def fresh_mkv(media: Any, owner: Any, folder: str, pad: int) -> Uploaded:
+    """vp9_opus.mkv met eigen bytes (een Void-element van pad bytes achteraan het Segment): een
+    blob die nog niemand had. Andere tests in dezelfde sessie laden de fixture zelf ook op, en de
+    probe en de keyframe-index horen bij de inhoud (blob_sha), niet bij de node."""
+    from tests.media import fixtures
+
+    path = fixtures.make("vp9_opus.mkv")
+    data = padded_webm(path.read_bytes(), pad)
+    r = media.server.call(
+        owner, "PUT", f"/api/v1/files/{folder}/upload", params={"name": "film.mkv"},
+        content=data, headers={"Content-Length": str(len(data))}, expect=201,
+    )  # fmt: skip
+    node = r.json()
+    return Uploaded(node["id"], node["name"], hashlib.sha256(data).hexdigest(), path, len(data))
+
+
 def fragments(media: Any, sid: str, n: int) -> list[Any]:
     """Segment n buiten de browser, met zijn init geknipt door de knipper van de app."""
     from app.media import fmp4
@@ -205,7 +222,7 @@ def test_een_mkv_buiten_een_bibliotheek_speelt_als_remux(media, media_browsers, 
     page = media_browsers.context_as(owner).new_page()
     open_app(page)
     token = login(media, owner)["access_token"]
-    up = media.upload(owner, "vp9_opus.mkv", folder)
+    up = fresh_mkv(media, owner, folder, 4096 + 1)
     assert keyframes_state(media, up.sha) is None  # nog niets: geen bibliotheek, geen scan
     first = codecs_of(media, token, up.id)
     out = play(media, token, up.id, {"profile": profile(page, first["candidates"])})
@@ -241,8 +258,9 @@ def test_een_publieke_link_speelt_remux_en_transcode_niet(media, media_browsers,
     owner = media.user()
     folder = media.folder(owner, "M4 link")
     token = login(media, owner)["access_token"]
-    mkv = media.upload(owner, "vp9_opus.mkv", folder)
+    mkv = fresh_mkv(media, owner, folder, 4096 + 2)
     hevc = media.upload(owner, "hevc10_hdr10.mkv", folder)
+    assert keyframes_state(media, mkv.sha) is None
     made, opened = public_link(media, token, folder)
     page = media_browsers.new_context().new_page()
     page.goto(made["link"]["url"])  # de publieke pagina: niet ingelogd
