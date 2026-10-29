@@ -288,8 +288,10 @@ def test_fuzz_gooit_nooit():
 
 # --- de echte lokale worker ------------------------------------------------------------------
 
-# De string van V en van elk audiospoor, zoals de worker hem nu maakt (M3)
-WANT = {
+# De string van V en van elk audiospoor, zoals de worker hem nu maakt (M3). Elke bron met
+# sporen staat erin (review golf 1, K3); broken.mp4, empty.mkv en random.mkv hebben er geen.
+# None: een spoor zonder string (MPEG-4 Part 2 van xvid kent geen RFC 6381-string hier).
+WANT: dict[str, tuple[str | None, ...]] = {
     "h264_aac.mp4": ("avc1.64001f", "mp4a.40.2"),
     "h264_aac_moov_end.mp4": ("avc1.64001f", "mp4a.40.2"),
     "vp9_opus.webm": ("vp09.00.21.08", "opus"),
@@ -305,6 +307,19 @@ WANT = {
     "a.m2ts": ("hvc1.1.6.L63.90", "mp4a.40.2"),
     "hevc2160_hdr10.mkv": ("hvc1.2.4.L150.90",),
     "pgs.mkv": ("avc1.64001f",),
+    "chapters.mkv": ("avc1.64000c", "mp4a.40.2"),
+    "fps23976.mkv": ("avc1.64001e", "mp4a.40.2"),
+    # 640x360 bij 240 fps: Constrained Baseline, level 4.0. 40 x 23 macroblokken x 240 is
+    # 220800 per seconde; level 3.2 gaat tot 216000, level 4.0 tot 245760
+    "fps240.mp4": ("avc1.42c028",),
+    "irregular_gop.mkv": ("avc1.64000c",),
+    "late_video.mkv": ("avc1.64000d", "mp4a.40.2"),
+    "long_gop.mkv": ("avc1.64000c",),
+    "no_cues.mkv": ("avc1.64000c", "mp4a.40.2"),
+    "stream_src.mkv": ("avc1.64001e", "mp4a.40.2"),
+    "subs_text.mkv": ("avc1.64000c",),
+    "vobsub.mkv": ("avc1.64001f",),
+    "xvid_mp3.avi": (None, "mp3"),
     "album/flac/01.flac": ("flac",),
     "album/mp3/02.mp3": ("mp3",),
     "album/opus/03.opus": ("opus",),
