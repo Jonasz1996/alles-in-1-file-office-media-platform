@@ -45,7 +45,7 @@ MEASURE_JS = """async (strings) => {
         const info = await navigator.mediaCapabilities.decodingInfo({
           type: "media-source",
           video: {
-            contentType: types[0], width: 1280, height: 720, bitrate: 4000000, framerate: 24,
+            contentType: types[0], width: 1920, height: 1080, bitrate: 8000000, framerate: 24,
           },
         });
         if (info.supported) { entry.smooth = info.smooth; entry.power = info.powerEfficient; }
