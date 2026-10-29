@@ -606,7 +606,9 @@ jobs:
           echo "=== einde kern.json ==="
       # De container-test draait ook als de kern faalde: losse uitkomsten. Hij heeft sinds M4
       # ook S3 punt 17 van de spike (de remux naar een pipe van de app, met stream) en R12; de
-      # aparte stap S3 met het afgeleide image van de spike is daarom weg
+      # aparte stap S3 met het afgeleide image van de spike is daarom weg. Sinds de review van
+      # golf 2 ook subs en sprites van M5 op de ffmpeg van het image (de regels "goed: subs: …"
+      # en "goed: sprites: …"); de fixtures maakt hij in de app, met api/tests alleen te lezen
       - name: De mediaworker in zijn container (--selftest en test_media_container.sh, M1 en M4)
         if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
         env:

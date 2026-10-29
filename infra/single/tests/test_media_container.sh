@@ -35,6 +35,14 @@
 #   fMP4 op een pipe van de app; de boxen met de knipper van de app), een transcode op het
 #   rooster van 2 s, en R12: tijdens die transcode één ffmpeg in de container van media en geen
 #   in die van de app;
+# - subs en sprites (M5) op de ffmpeg van het image (review golf 2): de app pakt de twee
+#   tekstsporen van subs_text.mkv uit (subtitles.extract) en maakt de sprites van vp9_opus.webm
+#   en van een video van 1055 s, twee tegels (trick.make), elk met de fd vanuit de
+#   platform-container. De fixtures maakt de app zelf met tests/media/fixtures.py (api/tests
+#   alleen te lezen op /srv/tests, zoals image_kern.py). Nagekeken met de code van de app:
+#   check_vtt en parse_vtt, de tijden van de fixture tot op de ms; split_jpegs en Pillow (één
+#   JPEG van 1600×900 per tegel), het aantal beelden dat de worker telde (frame=), en het vak
+#   dat de cue van een tijd in trick.vtt aanwijst (ook in de tweede tegel);
 # - media-status zegt "afgeschermd";
 # - de worker gestopt: de app meldt binnen 30 s (de lus van health.py, +1 s) dat hij niet
 #   bereikbaar is; weer gestart: media-status zegt weer "afgeschermd".
@@ -46,6 +54,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SINGLE="$(dirname "$HERE")"
+TESTS="$(dirname "$(dirname "$SINGLE")")/api/tests" # de fixtures van M5 (tests/media/fixtures.py)
 IMAGE="${MEDIA_TEST_IMAGE:-platform:local}"
 FFMPEG="${MEDIA_TEST_FFMPEG:-7.1.}"
 OUT="${MEDIA_TEST_OUT:-}"
@@ -112,7 +121,8 @@ docker image inspect "$IMAGE" > /dev/null || {
 }
 
 # Het project zonder poorten naar buiten en met een eigen volume voor /data (in plaats van
-# DATA_ROOT), op het image van de test
+# DATA_ROOT), op het image van de test. In de app ook api/tests, alleen te lezen (zoals de kern
+# van media-image): het deel van M5 maakt daarmee zijn fixtures in het image
 cat > "$WORK/test.yaml" << EOF
 services:
   platform:
@@ -121,6 +131,7 @@ services:
     ports: !reset []
     volumes:
       - platform-data:/data
+      - "$TESTS:/srv/tests:ro"
   media:
     image: $IMAGE
 volumes:
@@ -808,6 +819,197 @@ if [ "$m4_rc" = 0 ]; then
 else
   mask < "$WORK/m4.txt" >&2
   fout "de stroom (M4)"
+fi
+
+# --- subs en sprites (M5) op de ffmpeg van het image (review golf 2) ----------------------------
+# api-media en e2e-media toetsen subs en sprites met ffmpeg 6.1 van Ubuntu; hier gaat het over de
+# ffmpeg van het image. De app maakt subs_text.mkv en vp9_opus.webm met hun eigen recept
+# (tests/media/fixtures.py, één ffmpeg tegelijk, in /tmp) en de video van 1055 s zoals
+# test_media_trick.py, en vraagt de worker zoals in productie: subtitles.extract (de pipes van de
+# app, check_vtt, de cache) en trick.make (de tegels over een pipe van de app, split_jpegs,
+# trick.vtt). De verwachting is die van test_media_subtitles.py en test_media_trick.py met de
+# echte worker; alleen het aantal beelden van 1055 s mag 105 of 106 zijn (6.1 geeft 105).
+
+cat > "$WORK/m5.py" << 'PY'
+import asyncio, hashlib, io, os, re, shutil, subprocess, sys, tempfile
+from pathlib import Path
+
+sys.dont_write_bytecode = True  # /srv/tests is alleen te lezen
+sys.path.insert(0, "/srv")
+from PIL import Image  # noqa: E402
+
+from app.config import Settings  # noqa: E402
+from app.media import client, subtitles, trick  # noqa: E402
+from tests.media import fixtures as F  # noqa: E402
+
+SOCK = Path(sys.argv[1])
+problems = []
+BASE = Path(tempfile.mkdtemp(prefix="m5-"))
+F.CACHE = BASE / "fixtures"  # niet in /srv/.pytest_cache: dat is van het image
+CONFIG = Settings(data_dir=BASE / "data")  # de cache van subs en trick in /tmp
+
+
+def check(name, ok, detail=""):
+    print(("goed: " if ok else "FOUT: ") + name + (f" ({detail})" if detail else ""), flush=True)
+    if not ok:
+        problems.append(name)
+
+
+def ms(stamp):
+    """00:00:01,000 (SRT) of 0:00:01.00 (ASS) in ms."""
+    h, m, s = stamp.replace(",", ".").split(":")
+    return round((int(h) * 3600 + int(m) * 60 + float(s)) * 1000)
+
+
+# De bekende tijden van de fixture: uit de tekst waar fixtures.py subs_text.mkv mee maakt
+SRT_TIMES = [(ms(a), ms(b)) for a, b in re.findall(r"^(\S+) --> (\S+)$", F.SRT_NL, re.M)]
+ASS_TIMES = [(ms(a), ms(b)) for a, b in re.findall(r"^Dialogue: \d+,([^,]+),([^,]+),", F.ASS, re.M)]
+TEXTS = {
+    "e1": [("", "Hallo, dit is de eerste regel."), ("", "En dit is de tweede.")],  # srt
+    "e2": [("line:0", "Bovenaan in beeld"), ("", "Onderaan, gewoon")],  # ass, \an8: bovenaan
+}
+BOX = re.compile(r"trick/(\d+)\.jpg#xywh=(\d+),(\d+),(\d+),(\d+)")  # een vak van trick.vtt
+
+
+def blob(name):
+    """Een fixture als blob: 0600, alleen de app kan hem openen. (pad, sha)"""
+    path = F.make(name)
+    os.chmod(path, 0o600)
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+async def subs():
+    film, sha = blob("subs_text.mkv")
+    probe = await client.probe(film)
+    done = await subtitles.extract(CONFIG, sha, film, probe)
+    check("subs: de twee tekstsporen van subs_text.mkv uitgepakt, met de fd van de app",
+          done == {"e1": "ready", "e2": "ready"}, f"{done}, start {probe.start_ms} ms")
+    # De tijden in mediatijd: check_vtt trekt de start van de bron eraf (ffmpeg pakt uit met
+    # -copyts), dus tot op de ms de bekende tijd min de start
+    for name, times in (("e1", SRT_TIMES), ("e2", ASS_TIMES)):
+        want = [(a - probe.start_ms, b - probe.start_ms, *text)
+                for (a, b), text in zip(times, TEXTS[name], strict=False)]
+        path = subtitles.cached(CONFIG, sha, name)
+        data = path.read_bytes() if path.is_file() else b""
+        try:
+            cues = [(c.start_ms, c.end_ms, c.settings, c.text) for c in subtitles.parse_vtt(data)]
+            same = subtitles.check_vtt(data) == data
+        except subtitles.VttInvalid as exc:
+            cues, same = f"VttInvalid: {exc}", False
+        check(f"subs: {name} is een VTT die check_vtt van M5 ongewijzigd laat, met de tijden van "
+              "de fixture tot op de ms", same and len(want) == 2 and cues == want, f"{cues}")
+
+
+async def sprites_of(label, film, sha, counts, tiles, hits):
+    """trick.make op een blob, nagekeken zoals test_media_trick.py: counts de aantallen beelden
+    die passen, tiles het aantal tegels, hits {tijd in ms: het vak dat de cue van die tijd
+    aanwijst}."""
+    probe = await client.probe(film)
+    video = probe.video()
+    told = []  # wat de worker telde (frame= van de lege uitvoer), zoals make het doorgeeft
+    count_for = trick.count_for
+
+    def counted(n, reported, duration_ms):
+        told.append(reported)
+        return count_for(n, reported, duration_ms)
+
+    trick.count_for = counted
+    try:
+        found = await trick.make(CONFIG, sha, film, probe)
+    finally:
+        trick.count_for = count_for
+    h = found["h"]
+    fixed = {"interval": trick.INTERVAL, "w": trick.WIDTH, "h": 90, "cols": trick.COLS,
+             "rows": trick.ROWS, "tiles": tiles}  # 160 breed, dus 90 hoog bij 16:9
+    source = f"{video.width}×{video.height}" if video else "geen beeld"
+    # Telde frame= de tegels in plaats van de beelden, dan past het niet bij de tegels en schat
+    # make uit de duur: dan is told niet het aantal
+    check(f"sprites: {label}: trick.make (de tegels over een pipe van de app), met het aantal "
+          "beelden dat de worker telde",
+          {k: found.get(k) for k in fixed} == fixed and found.get("count") in counts
+          and told == [found.get("count")],
+          f"{found}, de worker telde {told}, bron {source}, {probe.duration_ms} ms")
+    folder = trick.trick_dir(CONFIG, sha)
+    names = sorted(p.name for p in folder.iterdir())
+    size = (trick.WIDTH * trick.COLS, h * trick.ROWS)
+    seen = []
+    for i in range(found["tiles"]):
+        data = trick.tile_path(CONFIG, sha, i).read_bytes()
+        try:
+            parts = [(w, hh) for _, w, hh in trick.split_jpegs(data)]  # de knipper van de app
+        except trick.BadSprites as exc:
+            parts = f"BadSprites: {exc}"
+        with Image.open(io.BytesIO(data)) as image:
+            image.load()  # helemaal decoderen, niet alleen de kop
+            seen.append((parts, image.format, image.size))
+    check(f"sprites: {label}: elke tegel is één JPEG van {size[0]}×{size[1]} (split_jpegs en "
+          "Pillow)",
+          names == sorted([*(f"{i}.jpg" for i in range(found["tiles"])), "trick.vtt"])
+          and len(seen) == found["tiles"] and all(s == ([size], "JPEG", size) for s in seen),
+          f"{names}, {seen}")
+    vtt = trick.vtt_path(CONFIG, sha).read_bytes()
+    try:
+        cues = subtitles.parse_vtt(vtt)  # de controle van M5: trick.vtt is ook een geldige VTT
+    except subtitles.VttInvalid as exc:
+        check(f"sprites: {label}: trick.vtt is een VTT", False, f"VttInvalid: {exc}")
+        return
+    starts = [c.start_ms for c in cues]
+    got, inside = {}, True
+    for at in hits:
+        got[at] = [c.text for c in cues if c.start_ms <= at < c.end_ms]
+        box = BOX.fullmatch(got[at][0]) if got[at] else None
+        inside = inside and box is not None and int(box[1]) < found["tiles"] and (
+            int(box[2]) + int(box[4]) <= size[0] and int(box[3]) + int(box[5]) <= size[1]
+        )
+    ends = [(c.start_ms, c.end_ms, c.text) for c in cues[:1] + cues[-1:]]
+    check(f"sprites: {label}: trick.vtt heeft een cue per beeld van 10 s tot het eind, en de cue "
+          "van een tijd wijst het goede vak van de goede tegel aan",
+          len(cues) == found["count"]
+          and starts == [k * trick.INTERVAL * 1000 for k in range(len(cues))]
+          and bool(cues) and cues[-1].end_ms == probe.duration_ms
+          and got == {at: [box] for at, box in hits.items()} and inside,
+          f"{len(cues)} cues, eerste en laatste {ends}, gevonden {got}")
+
+
+async def sprites():
+    # 640×360 → 160×90; 6 s is één beeld, dus één tegel (test_media_trick.py). De tijd van 1,5 s
+    # is die van de e2e van M5
+    film, sha = blob("vp9_opus.webm")
+    await sprites_of("vp9_opus.webm", film, sha, {1}, 1, {1500: "trick/0.jpg#xywh=0,0,160,90"})
+
+
+async def two_tiles():
+    # De video van test_media_trick.py: 1055 s van 64×36, 1 beeld per s, dus twee tegels; 105
+    # beelden met 6.1 (het filter fps maakt er aan het eind soms één minder dan de duur)
+    film = BASE / "lang.mkv"
+    argv = [*F.FFMPEG, *F.video("64x36", 1, 1055), *F.X264, "-g", "10", str(film)]
+    await asyncio.to_thread(subprocess.run, argv, check=True, timeout=300, stdin=subprocess.DEVNULL)
+    os.chmod(film, 0o600)
+    sha = hashlib.sha256(film.read_bytes()).hexdigest()
+    hits = {1500: "trick/0.jpg#xywh=0,0,160,90", 115_000: "trick/0.jpg#xywh=160,90,160,90",
+            1_005_000: "trick/1.jpg#xywh=0,0,160,90"}
+    await sprites_of("1055 s (twee tegels)", film, sha, {105, 106}, 2, hits)
+
+
+async def main():
+    client.bind(SOCK, os.environ["PLATFORM_MEDIA_WORKER_KEY"])
+    for part in (subs, sprites, two_tiles):
+        try:
+            await part()
+        except Exception as exc:  # de andere delen lopen door; de fout staat in de uitvoer
+            check(f"{part.__name__}: liep niet", False, f"{type(exc).__name__}: {exc}")
+
+
+asyncio.run(main())
+shutil.rmtree(BASE, ignore_errors=True)
+sys.exit(1 if problems else 0)
+PY
+if in_platform python -I - "$SOCK" < "$WORK/m5.py" > "$WORK/m5.txt" 2>&1; then
+  cat "$WORK/m5.txt"
+  goed "subs en sprites (M5) op de ffmpeg van het image: subs_text.mkv naar WebVTT, de sprites van vp9_opus.webm en van 1055 s (twee tegels)"
+else
+  mask < "$WORK/m5.txt" >&2
+  fout "subs en sprites (M5) op de ffmpeg van het image"
 fi
 
 status="$(in_platform python -m app.cli media-status --wait 30 2>&1 | tr -d '\r' || true)"

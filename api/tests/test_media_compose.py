@@ -11,6 +11,8 @@ houdt de bestanden hier gelijk met de code:
 - het Dockerfile heeft de regels van Keuze 47 en PROBE_FILE van de zelftest;
 - het afgeleide image van de spike bouwt ook op een image dat media al heeft (M0-hotfix van M1);
 - ci.yml draait test_media_container.sh in media-image, en S3 nog (tot M4).
+- het script doet ook subs en sprites (M5) in de container, op de ffmpeg van het image (review
+  golf 2).
 """
 
 from __future__ import annotations
@@ -183,3 +185,39 @@ def test_het_script_toetst_wat_s3_nog_toetste():
         '"blob_gelijk"',
     ):
         assert needle in text, needle
+
+
+def test_het_script_toetst_subs_en_sprites_op_de_ffmpeg_van_het_image():
+    """Review golf 2: subs en sprites (M5) draaiden alleen op ffmpeg 6.1 van Ubuntu (api-media en
+    e2e-media). Het script doet ze in de container, met de fd van de app, de code van de app en
+    de fixtures van fixtures.py (api/tests alleen te lezen in de app, zoals de kern), en kijkt na
+    wat test_media_subtitles.py en test_media_trick.py met de echte worker nakijken."""
+    script = SINGLE / "tests" / "test_media_container.sh"
+    text = script.read_text(encoding="utf-8")
+    assert 'TESTS="$(dirname "$(dirname "$SINGLE")")/api/tests"' in text
+    assert (SINGLE.parents[1] / "api" / "tests" / "media" / "fixtures.py").is_file()
+    for needle in (
+        '- "$TESTS:/srv/tests:ro"',  # in de app, in test.yaml
+        'in_platform python -I - "$SOCK" < "$WORK/m5.py"',  # de fd komt van de app
+        'blob("subs_text.mkv")',
+        "subtitles.extract(CONFIG, sha, film, probe)",
+        'done == {"e1": "ready", "e2": "ready"}',
+        "subtitles.check_vtt(data) == data",  # de controle van M5 laat de VTT zoals hij is
+        "F.SRT_NL",  # de tijden van de fixture zelf
+        "F.ASS",
+        'blob("vp9_opus.webm")',
+        "trick.make(CONFIG, sha, film, probe)",
+        'told == [found.get("count")]',  # frame= van de worker telt de beelden
+        "trick.split_jpegs(data)",
+        "image.format, image.size",
+        '1_005_000: "trick/1.jpg#xywh=0,0,160,90"',  # de cue van een tijd in de tweede tegel
+        'goed "subs en sprites (M5) op de ffmpeg van het image',
+    ):
+        assert needle in text, needle
+    # het ingebedde Python is geldig (bash -n ziet het niet)
+    body = re.search(r"^cat > \"\$WORK/m5\.py\" << 'PY'\n(.*?)^PY$", text, re.M | re.S)
+    assert body is not None
+    compile(body.group(1), "m5.py", "exec")
+    from tests.media import fixtures
+
+    assert {"subs_text.mkv", "vp9_opus.webm"} <= set(fixtures.RECIPES)
