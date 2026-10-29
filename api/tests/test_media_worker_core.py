@@ -25,6 +25,7 @@ import socket
 import struct
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -590,7 +591,7 @@ asyncio.run(main())
 """
 
 
-async def test_een_kind_stopt_als_de_worker_hard_stopt():
+def test_een_kind_stopt_als_de_worker_hard_stopt():
     """SIGKILL op de worker (of de OOM-killer): zijn kind (een eigen sessie) krijgt SIGKILL via
     PR_SET_PDEATHSIG, in plaats van als wees door te lopen met de fd's van de opdracht."""
     proc = subprocess.Popen(
@@ -606,7 +607,11 @@ async def test_een_kind_stopt_als_de_worker_hard_stopt():
         assert st is not None and st[1] == proc.pid and st[2] == pid  # kind, eigen sessie
         os.kill(proc.pid, signal.SIGKILL)  # op pid
         proc.wait(timeout=10)
-        assert await until(lambda: not alive(pid), limit=5), "het kind leeft nog als wees"
+        for _ in range(250):  # hooguit 5 s
+            if not alive(pid):
+                break
+            time.sleep(0.02)
+        assert not alive(pid), "het kind leeft nog als wees"
     finally:
         if pid and alive(pid):
             os.kill(pid, signal.SIGKILL)  # opruimen op pid
