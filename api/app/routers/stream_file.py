@@ -34,7 +34,18 @@ FILE_CACHE = "private, max-age=0, must-revalidate"
 PIECE = 256 * 1024  # een stuk van de respons; guarded_body kijkt per 4 MB of 5 s
 NOT_FOUND = {"message": "Niet gevonden", "code": "not_found"}
 
-_RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
+_RANGE = re.compile(r"^bytes=([0-9]*)-([0-9]*)$")
+# Een getal met meer cijfers is groter dan elk bestand. int() zelf weigert boven 4300 cijfers
+# (ValueError, dus 500): zo'n getal lezen we nooit (review golf 1, S3)
+DIGITS = 19
+HUGE = 10**DIGITS
+
+
+def _number(digits: str) -> int:
+    """De waarde van een rij cijfers uit de kop; voorloopnullen tellen niet, en meer dan
+    DIGITS cijfers is HUGE (groter dan elk bestand)."""
+    digits = digits.lstrip("0") or "0"
+    return int(digits) if len(digits) <= DIGITS else HUGE
 
 
 def byte_range(header: str | None, size: int) -> tuple[int, int] | None | bool:
@@ -50,14 +61,14 @@ def byte_range(header: str | None, size: int) -> tuple[int, int] | None | bool:
     if not first and not last:
         return None
     if not first:  # de laatste N bytes
-        n = int(last)
+        n = _number(last)
         if n == 0 or size == 0:
             return False
         return max(0, size - n), size - 1
-    start = int(first)
+    start = _number(first)
     if start >= size:
         return False
-    end = min(int(last), size - 1) if last else size - 1
+    end = min(_number(last), size - 1) if last else size - 1
     if end < start:
         return None
     return start, end

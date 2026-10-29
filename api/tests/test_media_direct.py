@@ -155,6 +155,14 @@ def test_byte_range():
     assert byte_range("bytes=0-0", 0) is False
     for bad in ("bytes=0-1,5-6", "bytes=a-b", "items=0-1", "bytes=-", "bytes=9-3", "0-9"):
         assert byte_range(bad, 100) is None, bad
+    # review golf 1, S3: meer cijfers dan int() wil lezen (4300) gaf een ValueError (500)
+    huge = "9" * 5000
+    assert byte_range(f"bytes={huge}-", 1000) is False  # begint voorbij elk bestand: 416
+    assert byte_range(f"bytes=-{huge}", 1000) == (0, 999)  # meer dan er is: alles
+    assert byte_range(f"bytes=0-{huge}", 1000) == (0, 999)  # tot het eind
+    assert byte_range(f"bytes={huge}-{huge}", 1000) is False
+    assert byte_range("bytes=" + "0" * 5000 + "5-" + "0" * 5000 + "9", 1000) == (5, 9)
+    assert byte_range("bytes=٣-٩", 100) is None  # alleen 0-9 zijn cijfers
 
 
 def test_byte_range_fuzz():
@@ -171,6 +179,21 @@ def test_byte_range_fuzz():
         if isinstance(found, tuple):
             start, end = found
             assert 0 <= start <= end < size, (header, size, found)
+    # lange rijen cijfers (tot ver boven de grens van int, 4300), met en zonder voorloopnullen
+    for _ in range(300):
+        size = rng.choice([0, 1, 100, 10**12, 10**18])
+
+        def digits() -> str:
+            n = rng.choice([0, 1, 19, 20, rng.randint(1, 6000)])
+            run = "".join(rng.choice("0123456789") for _ in range(n))
+            return ("0" * rng.randint(0, 5000) + run) if rng.random() < 0.3 else run
+
+        header = f"bytes={digits()}-{digits()}"
+        found = byte_range(header, size)
+        assert found is None or found is False or isinstance(found, tuple), header[:40]
+        if isinstance(found, tuple):
+            start, end = found
+            assert 0 <= start <= end < size, (header[:40], size, found)
 
 
 @pytest.mark.anyio
@@ -188,6 +211,8 @@ async def test_de_randen_van_range(client, own):
         ("bytes=a-b", 200, data, None),
         ("items=0-1", 200, data, None),
         ("bytes=9-3", 200, data, None),
+        ("bytes=0-" + "9" * 5000, 206, data, f"bytes 0-{size - 1}/{size}"),  # review S3
+        ("bytes=-" + "9" * 5000, 206, data, f"bytes 0-{size - 1}/{size}"),
     ]
     for header, status, body, content_range in cases:
         r = await file(client, sid, Range=header)
@@ -196,9 +221,10 @@ async def test_de_randen_van_range(client, own):
         assert r.headers.get("content-range") == content_range, header
         assert int(r.headers["content-length"]) == len(body), header
         stream_headers(r, FILE_CACHE)
-    for header in (f"bytes={size}-", f"bytes={size + 5}-{size + 9}", "bytes=-0"):
+    huge = "bytes=" + "9" * 5000 + "-"  # review S3: was 500 (ValueError van int)
+    for header in (f"bytes={size}-", f"bytes={size + 5}-{size + 9}", "bytes=-0", huge):
         r = await file(client, sid, Range=header)
-        assert r.status_code == 416, header
+        assert r.status_code == 416, header[:40]
         assert r.headers["content-range"] == f"bytes */{size}" and r.content == b""
         stream_headers(r, FILE_CACHE)
 
