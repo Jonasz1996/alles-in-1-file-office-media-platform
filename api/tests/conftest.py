@@ -14,6 +14,16 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def _vrije_schijf(monkeypatch):
+    """De toelating van media (Keuze 31) weigert onder 10 GiB vrij op data_dir. In een test is
+    dat de schijf van de host, dus zonder dit faalden op een machine met weinig vrije ruimte tests
+    met media_busy (disk). Tests over die grens zetten disk_free zelf."""
+    from app.media import admission
+
+    monkeypatch.setattr(admission, "disk_free", lambda path=None: admission.DISK_MIN * 4)
+
+
 @pytest.fixture
 async def settings(tmp_path):
     s = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8)
