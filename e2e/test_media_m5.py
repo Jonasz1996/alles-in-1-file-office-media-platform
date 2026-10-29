@@ -12,8 +12,9 @@ analyse komt als job met die bibliotheek:
   die bovenaan en de SRT-cue onderaan; elke VTT is text/vtt met nosniff;
 - de sprites: de analyse in een bibliotheek maakt ze, play geeft trick, elk adres uit trick.vtt
   laadt via de sessie (ook als <img>), en na de prullenbak 403;
-- PGS inbranden gaat via de producer van M4: zonder M4 geeft play 503 media_off en slaat de
-  test over (bij het samenvoegen gaat hij aan).
+- bij het samenvoegen met M4 (golf 2): PGS en VobSub ingebrand door de producer van M4, gemeten
+  in de pixels van de stroom (ook na een sprong, S9), en de ingebedde SRT en ASS van een
+  transcode (HDR) als <track> op de <video> van die stroom, op de tijdlijn van de stroom.
 """
 
 from __future__ import annotations
@@ -385,28 +386,258 @@ def test_sprites_via_de_sessie_en_403_na_de_prullenbak(media, media_browsers, ff
     assert page.evaluate(IMG_JS, f"{base}/trick/0.jpg?opnieuw=1") is None
 
 
+PART_JS = """async ({ base, segments }) => {
+  // Een stuk van de stroom via MediaSource, zoals de speler na een sprong: alleen deze
+  // segmenten, elk met de init van zijn generatie (X-Init, Keuze 22)
+  const out = { error: null };
+  try {
+    const r = await fetch(base + "map.json", { cache: "no-store" });
+    if (!r.ok) throw new Error(`map.json: ${r.status}`);
+    const map = await r.json();
+    document.getElementById("m5s")?.remove();
+    const v = document.createElement("video");
+    v.id = "m5s"; v.muted = true; v.playsInline = true;
+    document.body.prepend(v);
+    const ms = new MediaSource();
+    v.src = URL.createObjectURL(ms);
+    await new Promise((ok) => ms.addEventListener("sourceopen", ok, { once: true }));
+    const sb = ms.addSourceBuffer(map.mime);
+    sb.timestampOffset = map.offset;
+    const append = (data) => new Promise((ok, bad) => {
+      sb.addEventListener("updateend", ok, { once: true });
+      sb.addEventListener("error", () => bad(new Error("appendBuffer")), { once: true });
+      sb.appendBuffer(data);
+    });
+    const get = async (path) => {
+      const res = await fetch(base + path, { cache: "no-store" });
+      if (!res.ok) throw new Error(`${path}: ${res.status}`);
+      return { gen: Number(res.headers.get("x-init") || 0), data: await res.arrayBuffer() };
+    };
+    let gen = 0;
+    for (const n of segments) {
+      const seg = await get(`${n}.m4s`);
+      if (seg.gen !== gen) {
+        gen = seg.gen;
+        await append((await get(`init.mp4?g=${gen}`)).data);
+      }
+      await append(seg.data);
+    }
+    ms.endOfStream();
+    out.buffered = [];
+    for (let i = 0; i < sb.buffered.length; i++) {
+      out.buffered.push([sb.buffered.start(i), sb.buffered.end(i)]);
+    }
+    out.mime = map.mime;
+    out.segments = map.segments;
+    out.size = await new Promise((ok) => {
+      if (v.readyState >= 1) ok([v.videoWidth, v.videoHeight]);
+      else v.addEventListener("loadedmetadata", () => ok([v.videoWidth, v.videoHeight]),
+                              { once: true });
+    });
+  } catch (e) {
+    out.error = String(e && e.message || e);
+  }
+  return out;
+}"""
+
+WHITE_JS = """async ({ t, box, core }) => {
+  // Het beeld op t in een canvas: welk deel van de kern van de letters is wit?
+  const v = document.getElementById("m5s");
+  v.pause();
+  const seeked = new Promise((ok) => v.addEventListener("seeked", ok, { once: true }));
+  v.currentTime = t;
+  await seeked;
+  await new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)));
+  const c = document.createElement("canvas");
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  const g = c.getContext("2d", { willReadFrequently: true });
+  g.drawImage(v, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height).data;
+  const sx = c.width / box.cw, sy = c.height / box.ch;
+  let white = 0;
+  for (const [x, y] of core) {
+    const px = Math.min(c.width - 1, Math.round((box.x + x + 0.5) * sx - 0.5));
+    const py = Math.min(c.height - 1, Math.round((box.y + y + 0.5) * sy - 0.5));
+    const i = (py * c.width + px) * 4;
+    if (Math.min(d[i], d[i + 1], d[i + 2]) >= 190) white++;
+  }
+  return { time: v.currentTime, white: white / core.length };
+}"""
+
+TRACKS_ON_JS = """(tracks) => {
+  // <track>'s op de <video> van de stroom (#m5s), zoals de speler van M6 dat straks doet
+  const v = document.getElementById("m5s");
+  for (const t of tracks) {
+    const el = document.createElement("track");
+    el.kind = "subtitles"; el.src = t.src; el.srclang = t.lang || ""; el.label = t.id;
+    el.id = "t-" + t.id;
+    v.append(el);
+  }
+  for (const el of v.querySelectorAll("track")) el.track.mode = "hidden";
+}"""
+
+ACTIVE_JS = """async (t) => {
+  // Naar t op de tijdlijn van de stroom; welke cues staan dan aan, per spoor?
+  const v = document.getElementById("m5s");
+  v.pause();
+  const seeked = new Promise((ok) => v.addEventListener("seeked", ok, { once: true }));
+  v.currentTime = t;
+  await seeked;
+  await new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)));
+  const out = { time: v.currentTime };
+  for (const el of v.querySelectorAll("track")) {
+    out[el.label] = Array.from(el.track.activeCues || []).map((c) => c.text);
+  }
+  return out;
+}"""
+
+SUP = (1280, 720)  # de maat van de .sup in pgs.mkv en vobsub.mkv (fixtures.write_sup)
+SUP_EVENTS = {"HALLO": (2.0, 4.0), "WERELD": (5.0, 7.0)}  # idem: (begin, eind) in s
+
+
+def letters(text: str) -> tuple[dict[str, int], list[list[int]]]:
+    """Waar sup.write_sup de ondertitel zet, en de kern van zijn letters: de witte pixels
+    waarvan alles binnen 2 pixels ook wit is (de randen vervagen bij het omzetten)."""
+    from tests.media import sup
+
+    w, h, rows = sup.render(text, 6)
+    cw, ch = SUP
+    box = {"x": (cw - w) // 2, "y": ch - h - ch // 12, "cw": cw, "ch": ch}
+    core = [
+        [x, y]
+        for y in range(2, h - 2)
+        for x in range(2, w - 2)
+        if all(rows[y + dy][x + dx] == 1 for dy in range(-2, 3) for dx in range(-2, 3))
+    ]
+    return box, core
+
+
+def stream_part(page: Any, sid: str, segments: list[int]) -> dict[str, Any]:
+    out = page.evaluate(PART_JS, {"base": f"/api/v1/stream/{sid}/", "segments": segments})
+    assert out["error"] is None, out
+    return out
+
+
+def white_at(page: Any, t: float, text: str) -> float:
+    box, core = letters(text)
+    got = page.evaluate(WHITE_JS, {"t": t, "box": box, "core": core})
+    assert abs(got["time"] - t) < 0.05, got
+    return float(got["white"])
+
+
+def close_stream(media: Any, token: str, sid: str) -> None:
+    media.server.request("DELETE", f"/api/v1/stream/{sid}", token=token, expect=204)
+
+
 @pytest.mark.media
-def test_pgs_inbranden_via_de_producer(media, media_browsers, ffmpeg_count):
-    """Keuze 29 en S9: een beeldondertitel kan alleen ingebrand, en dat doet de producer van M4
-    (VideoEncode.burn_index). M5 geeft het spoor met staat burn; play met dat spoor vraagt
-    transcode. Zonder M4 is daar geen stroom (503 media_off): dan slaat deze test over."""
+@pytest.mark.parametrize("fixture", ["pgs.mkv", "vobsub.mkv"])
+def test_beeldondertitel_ingebrand_via_de_producer(media, media_browsers, ffmpeg_count, fixture):
+    """#5 van §4.3, Keuze 29 en S9 (bij het samenvoegen met M4): een beeldondertitel kan alleen
+    ingebrand. M5 geeft het spoor met staat burn, play met dat spoor wordt transcode, en de
+    producer van M4 brandt hem in (VideoEncode.burn_index, de ondertitels uit een tweede fd).
+    Gemeten in een canvas: op de plek van de letters is het beeld wit zolang de ondertitel
+    loopt, en daarna niet meer. Ook na een sprong naar een plek waar een ondertitel al loopt
+    (S9: de producer begint op het segment van 6 s, WERELD liep al vanaf 5 s)."""
+    from app.media.types import SegmentGrid
+
     owner = media.user()
-    folder = media.folder(owner, "M5 PGS")
+    folder = media.folder(owner, f"M5 {fixture}")
     page = media_browsers.context_as(owner).new_page()
     open_app(page)
     token = login(media, owner)["access_token"]
-    up = media.upload(owner, "pgs.mkv", folder)
-    first = codecs_of(media, token, up.id)
-    body = {"profile": profile(page, first["candidates"]), "subtitle": "e1"}
-    r = media.server.request("POST", f"/api/v1/media/{up.id}/play", token=token, json=body)
-    if r.status_code == 409:  # de probe loopt nog
-        time.sleep(float(r.headers.get("retry-after", "2")))
-        r = media.server.request("POST", f"/api/v1/media/{up.id}/play", token=token, json=body)
-    detail = r.json().get("detail") if r.status_code != 200 else None
-    if r.status_code == 503 and detail and detail.get("code") in ("media_off", "media_busy"):
-        pytest.skip("PGS inbranden gaat via de producer van M4; die is er in deze tak nog niet")
-    assert r.status_code == 200, r.text
-    out = r.json()
-    assert out["mode"] == "transcode", out
+    up = media.upload(owner, fixture, folder)
+    body = {"profile": profile(page, codecs_of(media, token, up.id)["candidates"])}
+
+    out = play(media, token, up.id, {**body, "subtitle": "e1"})
+    assert out["mode"] == "transcode" and "subtitle_burn" in out["reasons"], out
     burn = [t for t in out["tracks"]["subtitles"] if t["id"] == "e1"]
     assert burn and burn[0]["state"] == "burn" and burn[0]["default"], out["tracks"]
+    grid = SegmentGrid.model_validate(stream_part(page, out["sid"], [0])["segments"])
+    stream_part(page, out["sid"], list(range(grid.count)))
+    # Gemeten (golf 2): 1.0 waar de ondertitel loopt, 0.0 ervoor, ertussen en erna
+    inside, later = white_at(page, 3.0, "HALLO"), white_at(page, 6.5, "WERELD")
+    assert inside >= 0.9 and later >= 0.9, (inside, later)
+    outside = [white_at(page, t, text) for t, text in ((1.5, "HALLO"), (4.5, "HALLO"),
+                                                         (7.5, "WERELD"))]  # fmt: skip
+    assert max(outside) <= 0.2, outside
+    close_stream(media, token, out["sid"])
+
+    # een sprong (S9): de producer begint op het segment van 6 s; WERELD begon op 5 s
+    jump = play(media, token, up.id, {**body, "subtitle": "e1", "start_ms": 6000})
+    assert jump["mode"] == "transcode", jump
+    k = grid.segment_of(6000)
+    assert grid.start_of(k) > SUP_EVENTS["WERELD"][0] * 1000, grid
+    got = stream_part(page, jump["sid"], [k])
+    assert SegmentGrid.model_validate(got["segments"]) == grid, got
+    assert got["buffered"][0][0] <= 6.1, got
+    assert white_at(page, 6.5, "WERELD") >= 0.9
+    close_stream(media, token, jump["sid"])
+
+
+LOADED_JS = """() => {
+  // De cues per spoor op de <video> van de stroom, zodra elk spoor geladen is
+  const v = document.getElementById("m5s");
+  const out = {};
+  for (const el of v.querySelectorAll("track")) {
+    if (el.readyState !== 2) return null;
+    out[el.label] = Array.from(el.track.cues).map((c) => ({
+      start: c.startTime, end: c.endTime, text: c.text, line: c.line,
+    }));
+  }
+  return out;
+}"""
+
+
+@pytest.mark.media
+def test_ondertitels_op_de_tijd_van_een_transcode(media, media_browsers, ffmpeg_count):
+    """#4 van §4.3 zonder de speler (bij het samenvoegen met M4): hevc10_hdr10.mkv gaat om met
+    tonemap (VP9 in Chromium 141, H.264 in Chrome for Testing); de ingebedde SRT en ASS komen
+    als <track> op de <video> van de stroom (MSE), en hun cues gaan af op de tijdlijn van die
+    stroom: mediatijd, dus de start van de bron (−21 ms) eraf. De ASS-cue met \\an8 heeft
+    line 0."""
+    owner = media.user()
+    folder = media.folder(owner, "M5 HDR")
+    page = media_browsers.context_as(owner).new_page()
+    open_app(page)
+    token = login(media, owner)["access_token"]
+    up = media.upload(owner, "hevc10_hdr10.mkv", folder)
+    first = codecs_of(media, token, up.id)
+    out = play(media, token, up.id, {"profile": profile(page, first["candidates"])})
+    found = codecs_of(media, token, up.id)
+    body = {"profile": profile(page, found["candidates"] + found["item"]), "subtitle": "e3",
+            "replace": out["sid"]}  # fmt: skip
+    out = play(media, token, up.id, body)
+    assert out["mode"] == "transcode" and "hdr" in out["reasons"], out
+    tracks = {t["id"]: t for t in out["tracks"]["subtitles"]}
+    assert set(tracks) == {"e3", "e4"} and tracks["e3"]["default"], tracks
+    sid = out["sid"]
+    base = f"/api/v1/stream/{sid}"
+    grid = stream_part(page, sid, [0])["segments"]
+    got = stream_part(page, sid, list(range(grid["count"])))
+    assert got["size"] == [1280, 720], got
+    for track in tracks:  # eerst klaar (202 zolang hij gemaakt wordt), dan als <track>
+        vtt = page.evaluate(FETCH_VTT_JS, f"{base}/subs/{track}.vtt")
+        assert vtt["status"] == 200, (track, vtt)
+    page.evaluate(
+        TRACKS_ON_JS,
+        [{"id": i, "src": f"{base}/subs/{i}.vtt", "lang": t["lang"]} for i, t in tracks.items()],
+    )
+    cues = page.wait_for_function(LOADED_JS, timeout=15_000).json_value()
+    row = probe_state(media, up.sha)
+    assert row is not None and row["start_ms"] == -21, row
+    shift = 0.021
+    srt, ass = cues["e3"], cues["e4"]
+    assert [c["text"] for c in srt] == ["Hallo, dit is de eerste regel.", "En dit is de tweede."]
+    assert abs(srt[0]["start"] - (1.0 + shift)) < 0.002, srt
+    assert abs(srt[1]["end"] - (4.5 + shift)) < 0.002, srt
+    assert ass[0]["text"] == "Bovenaan in beeld" and ass[0]["line"] == 0, ass
+    # op de tijdlijn van de stroom: de cue staat aan precies waar het beeld is
+    for t, want in ((1.5, (0, 0)), (2.8, None), (3.5, (1, 1))):
+        active = page.evaluate(ACTIVE_JS, t)
+        assert abs(active["time"] - t) < 0.05, active
+        if want is None:
+            assert active["e3"] == [] and active["e4"] == [], active
+        else:
+            assert active["e3"] == [srt[want[0]]["text"]], active
+            assert active["e4"] == [ass[want[1]]["text"]], active
+    close_stream(media, token, sid)
