@@ -339,7 +339,14 @@ async def test_synth_alleen_met_loadtest(worker, tmp_path):
     assert reply["code"] == Code.NOT_ALLOWED
 
 
-async def test_stub_geeft_not_built_en_de_plaats_komt_vrij(worker, source):
+async def test_stub_geeft_not_built_en_de_plaats_komt_vrij(worker, source, monkeypatch):
+    # M0-hotfix van M1: frame is gebouwd; hier weer een stub zoals die van M0
+    from app.media.worker.ops import frame
+
+    async def stub(ctx: server.Context) -> dict:
+        raise server.OpError(Code.NOT_BUILT, "frame bouwt M1")
+
+    monkeypatch.setattr(frame, "run", stub)
     job, (out,) = await client.call(Op.FRAME, FRAME, source=source, outputs=1)
     try:
         with pytest.raises(WorkerFailed) as exc:
@@ -1030,10 +1037,14 @@ def test_check_en_selftest():
     caps = json.loads(done.stdout)
     assert caps["missing"] == [] and caps["protocol"] == wire.PROTOCOL
     assert caps["mode"] == "container" and caps["sandbox"] == "unchecked"  # geen --local
+    # M0-hotfix van M1: de zelftest bestaat (selftest.full). Zonder --local en zonder container
+    # faalt de afscherming hier (code 1); het verslag is JSON (test_media_worker_guard.py test
+    # de inhoud)
     done = subprocess.run(
-        [*argv, "--selftest"], capture_output=True, timeout=60, env=env, cwd="/", check=False
+        [*argv, "--selftest"], capture_output=True, timeout=120, env=env, cwd="/", check=False
     )
-    assert done.returncode == 2  # M1 bouwt de zelftest
+    report = json.loads(done.stdout)
+    assert done.returncode == (0 if report["ok"] else 1) and report["checks"]
     # luisteren zonder sleutel: niet (review S1)
     done = subprocess.run(
         [*argv, "--socket", "/nergens/w.sock"], capture_output=True, timeout=60, env=env,
