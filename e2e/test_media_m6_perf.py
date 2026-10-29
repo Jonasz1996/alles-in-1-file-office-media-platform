@@ -81,8 +81,10 @@ def big_webm(tmp_path_factory: pytest.TempPathFactory) -> Any:
     work = tmp_path_factory.mktemp("m6-perf")
     piece, path = work / "stuk.webm", work / "direct-1080-20M.webm"
     lavfi = "testsrc2=size=1920x1080:rate=24,noise=alls=12:allf=t"
+    # Regel 14: op de cores van de worker als die er zijn (de app draait dan nog niets zwaars)
+    pin = ["taskset", "-c", "0-2"] if PERF_CPUS <= os.sched_getaffinity(0) else []
     subprocess.run(
-        ["taskset", "-c", "0-2", "ffmpeg", "-nostdin", "-v", "error", "-y",
+        [*pin, "ffmpeg", "-nostdin", "-v", "error", "-y",
          "-f", "lavfi", "-i", lavfi, "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
          "-t", "10", "-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8",
          "-b:v", "20M", "-minrate", "20M", "-maxrate", "20M", "-g", "48", "-threads", "3",
@@ -185,6 +187,7 @@ def test_m6_ma_eerste_beeld_direct(media, media_browsers, ffmpeg_count, big_webm
     node = upload_path(media, owner, folder, big_webm)
     times = first_frames(page, node, "direct", ffmpeg_count, plays)
     result = {"direct": summary(times), "grens_ms": GATES_MS["direct"]}
+    result["bron_mbit_s"] = round(big_webm.stat().st_size * 8 / 120 / 1e6, 1)
     result["netwerk"] = media_browsers.network[-1:]
     report("ma-direct", result, media, ffmpeg_count)
     gate("Ma direct", times, GATES_MS["direct"])

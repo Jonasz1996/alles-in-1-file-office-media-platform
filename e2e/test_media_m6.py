@@ -58,6 +58,7 @@ from media_harness import (
     process_table,
     require_codec,
 )
+from test_media_m3 import login
 from test_media_m5 import library_item, wait_state
 
 PLAYER = ".player"
@@ -1007,6 +1008,33 @@ def test_weg_van_de_pagina_sluit_de_sessie(media, media_browsers, ffmpeg_count):
         time.sleep(0.1)
     assert r.status_code == 410, (r.status_code, r.text)
     assert not ffmpeg_count.wait_zero(15), "de producent loopt nog na pagehide"
+
+
+@pytest.mark.media
+def test_403_de_speler_stopt_en_zegt_waarom(media, media_browsers, ffmpeg_count, tmp_path):
+    """Het bestand naar de prullenbak terwijl het speelt: 403 media_access_gone (revoked). De
+    speler stopt, zegt waarom, en vraagt nooit een nieuwe sessie. Remux van 150 s: de speler
+    vraagt elke 2 s een segment, dus hij merkt het meteen (een klein direct bestand heeft
+    Chromium al helemaal in het geheugen en speelt door, m3.md)."""
+    owner, folder, context, page = setup(media, media_browsers, "M6 ingetrokken")
+    plays = Plays(context)
+    path = loop_mkv(tmp_path, 25)
+    node = upload_path(media, owner, folder, path)
+    path.unlink()
+    watch(page, node)
+    ready_state(page, "remux")
+    playing_past(page, 1.0)
+    token = login(media, owner)["access_token"]
+    media.server.request("DELETE", f"/api/v1/files/{node}", token=token, expect=204)
+    expect(page.locator(PLAYER)).to_have_attribute("data-state", "stopped", timeout=20_000)
+    expect(page.locator(".player-overlay[role=alert]")).to_have_text(
+        "Je hebt geen toegang meer tot deze video."
+    )
+    assert page.evaluate("() => document.querySelector('.player-video').paused")
+    # Geen nieuwe sessie, ook niet na een tijdje
+    page.wait_for_timeout(3000)
+    assert len(plays.calls) == 1, plays.calls
+    assert not ffmpeg_count.wait_zero(15), "de producent loopt nog na 403"
 
 
 # --- #19: na 2 haperingen zelf een trede lager ----------------------------------------------------
