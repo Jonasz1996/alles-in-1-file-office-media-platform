@@ -326,12 +326,23 @@ async def call(client, headers, link, method, path, body, who):
     return await client.request(method, url_of(path), json=body, headers=extra)
 
 
-# De eindpunten die hun pakket al bouwde (M3): met media aan geven die geen media_off meer.
-# Hun eigen tests staan bij het pakket (test_media_sessions.py, test_media_public.py)
+# De eindpunten die hun pakket al bouwde (M3, M2): met media aan geven die geen media_off meer.
+# Hun eigen tests staan bij het pakket (test_media_sessions.py, test_media_public.py,
+# test_media_library_api.py)
 BUILT = {
     ("GET", "/api/v1/media/{node_id}/codecs"),
     ("POST", "/api/v1/media/{node_id}/play"),
     ("POST", "/api/v1/public/media/{node_id}/play"),
+    # M2 (M0-hotfix, alleen deze test)
+    ("GET", "/api/v1/media/libraries"),
+    ("POST", "/api/v1/media/libraries"),
+    ("PATCH", "/api/v1/media/libraries/{library_id}"),
+    ("DELETE", "/api/v1/media/libraries/{library_id}"),
+    ("POST", "/api/v1/media/libraries/{library_id}/scan"),
+    ("GET", "/api/v1/media/home"),
+    ("GET", "/api/v1/media/libraries/{library_id}/items"),
+    ("GET", "/api/v1/media/items/{node_id}"),
+    ("GET", "/api/v1/media/shows/{show_id}"),
 }
 
 

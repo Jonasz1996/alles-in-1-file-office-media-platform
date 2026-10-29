@@ -138,7 +138,10 @@ def test_media_status_met_media_aan_en_zonder_worker(tmp_path, monkeypatch, caps
 
 def test_media_parse_toont_wat_de_parser_ziet(monkeypatch, capsys):
     assert cli.main(["media-parse", "Films/The Matrix (1999).mkv"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"pad": "Films/The Matrix (1999).mkv"}
+    # M2 (M0-hotfix van deze test): de echte parser ziet de titel en het jaar
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"pad": "Films/The Matrix (1999).mkv", **names.parse(out["pad"])}
+    assert (out["title"], out["year"]) == ("The Matrix", 1999)
 
     monkeypatch.setattr(names, "parse", lambda name: {"title": name.upper()})
     assert cli.main(["media-parse", "a.mkv", "b.mkv"]) == 0

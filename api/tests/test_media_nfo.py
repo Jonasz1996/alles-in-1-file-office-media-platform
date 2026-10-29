@@ -308,6 +308,34 @@ async def test_een_nfo_van_1_mb_geeft_de_lus_de_beurt(tmp_path, monkeypatch):
     assert time.perf_counter() - started < 5
 
 
+@pytest.mark.media
+async def test_door_de_lokale_worker_in_zijn_eigen_proces(tmp_path):
+    """Met -m media: de worker als eigen proces (local.start, zoals in productie zonder
+    container), dus ook de import van de opdracht en de grenzen van de sandbox."""
+    from app.config import Settings
+    from app.media import local
+
+    settings = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="t" * 32)
+    w = await local.start(settings, tmp_path / "run" / "worker.sock")
+    client.bind(w.socket, w.key)
+    try:
+        path = tmp_path / "movie.nfo"
+        path.write_text(MOVIE)
+        got = await ask(path)
+        assert got["fields"]["title"] == "De Lift" and got["fields"]["ids"]["tmdb"] == "27420"
+        evil = tmp_path / "evil.nfo"
+        evil.write_bytes(b'<!DOCTYPE x [<!ENTITY a "b">]><movie><title>&a;</title></movie>')
+        assert (await ask(evil))["error"] == "doctype"
+        big = tmp_path / "groot.nfo"
+        big.write_bytes(b"<movie><plot>" + b"x" * (2 * 1024 * 1024) + b"</plot></movie>")
+        with pytest.raises(WorkerFailed) as failed:
+            await ask(big)
+        assert failed.value.code == "too_large"
+    finally:
+        client.bind(None)
+        await local.stop(w)
+
+
 # --- fuzz ----------------------------------------------------------------------------------------
 
 SEEDS = [MOVIE, EPISODE, EPISODE * 3, "https://www.imdb.com/title/tt0111161/"]
