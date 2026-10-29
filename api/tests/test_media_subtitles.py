@@ -232,6 +232,42 @@ def test_de_grenzen() -> None:
         subtitles.parse_vtt(big)
 
 
+def test_check_vtt_fuzz() -> None:
+    """Vast zaad: de VTT van de worker is invoer van buiten (de worker leest de bron). Kapotte,
+    afgebroken en gemengde VTT geeft alleen VttInvalid; wat erdoor komt, komt er na nog een
+    keer precies zo door."""
+    import random
+
+    rng = random.Random(20261031)
+    base = vtt(
+        (0, 1000, "<b>vet</b> &amp; <c.yellow>geel</c>"),
+        (1500, 2500, "twee\nregels"),
+        (3000, 4000, "<i>schuin</i> &lt;tag&gt;"),
+        settings="line:0 align:left",
+    )
+    pieces = [b"<", b">", b"&", b";", b"\n", b"\n\n", b" --> ", b"<c.", b"</c>", b":", b"\x00"]
+    for n in range(2000):
+        data = bytearray(base)
+        for _ in range(rng.randint(1, 5)):
+            at = rng.randrange(len(data) + 1)
+            what = rng.randrange(4)
+            if what == 0 and data:
+                data[min(at, len(data) - 1)] = rng.randrange(256)
+            elif what == 1:
+                del data[at : at + rng.randint(1, 20)]
+            elif what == 2:
+                data[at:at] = rng.choice(pieces)
+            else:
+                data[at:at] = rng.randbytes(rng.randint(1, 6))
+        if n % 20 == 0:
+            data = bytearray(subconv.HEADER.encode() + rng.randbytes(rng.randint(0, 300)))
+        try:
+            out = subtitles.check_vtt(bytes(data), rng.choice([0, -21, 500]))
+        except subtitles.VttInvalid:
+            continue
+        assert subtitles.check_vtt(out) == out
+
+
 def test_wat_subconv_maakt_komt_door_de_controle() -> None:
     from tests.test_media_subconv import GOLDEN
 
