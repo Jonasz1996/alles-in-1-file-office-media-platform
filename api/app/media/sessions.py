@@ -438,29 +438,57 @@ async def guarded(request: Request, sid: str) -> Session:
 Guarded = Annotated[Session, Depends(guarded)]
 
 
+class StreamCut(Exception):
+    """guarded_body breekt een lange respons af (de sessie is dicht, de toegang is weg, of de
+    app stopt). De server sluit dan de verbinding: de respons is korter dan Content-Length, en
+    de browser weet dat hij niet compleet is. Het volgende verzoek krijgt de reden (403 of
+    410)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class _QuietCut(logging.Filter):
+    """uvicorn logt een uitzondering uit de app als "Exception in ASGI application" met de
+    traceback (ERROR). Voor StreamCut is dat geen fout maar het bedoelde einde: één regel op
+    INFO, zonder traceback (en zonder sid: alleen de reden)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        if isinstance(exc, StreamCut):
+            record.msg, record.args = "mediastroom afgebroken (%s)", (exc.reason,)
+            record.levelno, record.levelname = logging.INFO, "INFO"
+            record.exc_info, record.exc_text = None, None
+        return True
+
+
+logging.getLogger("uvicorn.error").addFilter(_QuietCut())
+
+
 async def guarded_body(session: Session, chunks: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
     """Per stuk (≤ 4 MB of 5 s) de sessie en de toegang nakijken (Keuze 21). Is de sessie dicht
-    of de toegang weg, dan houdt de iterator op: de respons breekt af en de verbinding gaat
-    dicht. Wat de browser al had, speelt nog af."""
+    of de toegang weg, dan breekt de iterator af met StreamCut: de respons stopt en de
+    verbinding gaat dicht. Wat de browser al had, speelt nog af."""
     sent = 0
     since = clock()
     try:
         async for chunk in chunks:
             if session.closed is not None:
-                return
+                raise StreamCut(session.closed)
             if session.stale or sent >= CHECK_BYTES or clock() - since >= CHECK_SECONDS:
                 try:
                     failure = await _wait(session.app, check(session))
                 except HTTPException:
-                    return  # de app stopt (F3)
+                    raise StreamCut("stopping") from None  # de app stopt (F3)
                 if failure is not None:
                     _close(session, failure)
-                    return
+                    raise StreamCut(failure)
                 sent = 0
                 since = clock()
             if expired(session):
                 _close(session, None)
-                return
+                raise StreamCut(GONE)
             session.seen = clock()
             yield chunk
             sent += len(chunk)

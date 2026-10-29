@@ -23,10 +23,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.config import MediaConfig
 from app.db import get_engine
 from app.main import app
-from app.media import analysis, hooks, sessions
+from app.media import analysis, hooks, keyframes, sessions, streams
 from app.media import profile as P
 from app.media.state import MediaPolicy, MediaState
-from app.media.types import Plan, PlayOut
+from app.media.types import Plan, PlayOut, StreamInfo
 from app.models import MediaItem, MediaLibrary, MediaProbe, Node
 from app.routers import public_media
 from tests.media.media_contract import failed
@@ -296,6 +296,49 @@ async def test_de_probe_bij_play_binnen_het_budget(client, admin, settings, monk
     assert (await analysis.load(maker(settings), sha)) is not None
     out = await play(client, headers, node["id"])
     assert out["mode"] == "direct" and asked == [sha]
+
+
+@pytest.mark.anyio
+async def test_een_mkv_buiten_een_bibliotheek_speelt_als_remux(
+    client, admin, settings, monkeypatch
+):
+    """De keyframes bij play (Keuze 17): zonder index leest play de index meteen, binnen het
+    budget, en dan is het remux. De stub van M4 zegt none: transcode met keyframes_missing, en
+    zonder M4 is daar geen plek voor (503 media_busy worker). De stroom zelf (streams.open) is
+    van M4: met de stub 503 media_off, en de sessie gaat weer dicht."""
+    headers, _ = admin
+    node = await video(client, headers, settings, "serie.mkv", "vp9_opus.mkv")
+    out = await play(client, headers, node["id"], fixture="vp9_opus.mkv", expect=503)
+    assert out["detail"]["code"] == "media_busy"
+    assert out["detail"]["params"]["reason"] == "worker"
+    read: list[str] = []
+
+    async def read_now(sha):
+        read.append(sha)
+        await store_probe(settings, sha, "vp9_opus.mkv", index=True)
+        return "ready"
+
+    monkeypatch.setattr(keyframes, "read_now", read_now)
+    out = await play(client, headers, node["id"], fixture="vp9_opus.mkv", expect=503)
+    assert out["detail"]["code"] == "media_off"
+    assert read == [node["sha"]] and sessions.list() == []
+    opened: list[Plan] = []
+
+    async def open_stream(session, plan):
+        opened.append(plan)
+        return StreamInfo(
+            mode="remux", url="master.m3u8", map_url="map.json", duration_ms=5000,
+            mime='video/mp4; codecs="vp09.00.31.08,opus"', offset_ms=-1000,
+        )  # fmt: skip
+
+    monkeypatch.setattr(streams, "open", open_stream)
+    out = await play(client, headers, node["id"], fixture="vp9_opus.mkv")
+    assert out["mode"] == "remux" and out["reasons"] == ["container"]
+    assert out["urls"]["master"] == "master.m3u8" and out["urls"]["map"] == "map.json"
+    assert out["offset"] == -1.0 and [p.mode for p in opened] == ["remux"]
+    assert out["mime"] == 'video/mp4; codecs="vp09.00.31.08,opus"'
+    assert read == [node["sha"]]  # de index staat er nu: niet nog eens
+    failed(await file(client, out["sid"]), 404, "not_found")  # /file is voor direct play
 
 
 # --- de guard op elke route -----------------------------------------------------------------------
@@ -715,7 +758,7 @@ async def test_guarded_body_stopt_binnen_een_stuk_na_intrekken(client, own):
     r = await client.post("/api/v1/auth/logout", json={"refresh_token": tokens["refresh_token"]})
     assert r.status_code == 204
     pause.set()
-    with pytest.raises(StopAsyncIteration):
+    with pytest.raises(sessions.StreamCut):
         await anext(body)
     assert s.closed == "revoked"
 
@@ -741,7 +784,7 @@ async def test_guarded_body_kijkt_per_4_mb_en_per_5_s(client, admin, other, sett
     # het vierde stuk gaat nog (3 MB en 0 s sinds de laatste controle)
     got += len(await anext(body))
     # het vijfde komt na 4 MB: controle, de deling is weg
-    with pytest.raises(StopAsyncIteration):
+    with pytest.raises(sessions.StreamCut):
         await anext(body)
     assert got == 4 * 1024 * 1024 and s.closed == "revoked"
     # en per 5 s, ook bij kleine stukken
@@ -750,8 +793,33 @@ async def test_guarded_body_kijkt_per_4_mb_en_per_5_s(client, admin, other, sett
     body = sessions.guarded_body(s2, chunks(100, 10))
     await anext(body)
     sessions.stop(s2.id, "stopped")
-    with pytest.raises(StopAsyncIteration):
+    with pytest.raises(sessions.StreamCut):
         await anext(body)
+
+
+@pytest.mark.anyio
+async def test_guarded_body_stopt_als_de_app_stopt(client, own, media):
+    """F3: begin_stop sluit elke sessie (close_all), en een controle die dan nog wacht, breekt
+    af via runtime.until_stopped. In beide gevallen StreamCut, met de reden."""
+    headers, _, node = own
+    first = session_of((await play(client, headers, node["id"]))["sid"])
+    second = session_of((await play(client, headers, node["id"]))["sid"])
+    for s in (first, second):
+        s.app = app
+    body = sessions.guarded_body(first, chunks(10, 10))
+    await anext(body)
+    first.stale = True  # de volgende stap controleert, en dat wachten loopt via until_stopped
+    media.stopping = True
+    with pytest.raises(sessions.StreamCut) as cut:
+        await anext(body)
+    assert cut.value.reason == "stopping"
+    media.stopping = False
+    body = sessions.guarded_body(second, chunks(10, 10))
+    await anext(body)
+    assert sessions.close_all() >= 1
+    with pytest.raises(sessions.StreamCut) as cut:
+        await anext(body)
+    assert cut.value.reason == "gone"
 
 
 @pytest.mark.anyio
