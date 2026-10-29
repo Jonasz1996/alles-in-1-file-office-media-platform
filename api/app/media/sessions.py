@@ -16,6 +16,9 @@ guard:
    niet, 410 met reden replaced;
 3. mislukt 2, dan gaat de sessie dicht (met grafsteen).
 
+create doet stap 2 ook meteen bij het maken: play keek de toegang na vóór het wachten op de
+probe (tot 5 s), en een haak die toen kwam, zag de nieuwe sessie nog niet (review golf 1, S2).
+
 Een lange respons (/file, en voor M9 audio.mp4) loopt door guarded_body: na elk stuk van
 hooguit 4 MB, of na 5 s, kijkt die naar session.closed en doet hij stap 2 opnieuw (met de
 cache). Intrekken (close_user, close_login), Stop en close_sha zetten de vlag closed meteen;
@@ -102,13 +105,14 @@ def node_name(value: str | None) -> str:
 
 @dataclass
 class Session:
-    """Eén sessie. sid staat alleen in het pad, nooit in een log (Keuze 35).
+    """Eén sessie. sid staat alleen in het pad, nooit in een log (Keuze 35), dus ook niet in
+    repr: een logregel of een fout die de sessie noemt, toont hem niet (review golf 1, S4).
 
     De velden na closed zijn van M3 (additief): wat play vastlegde, en de staat van de
     controle."""
 
     id: uuid.UUID
-    sid: str
+    sid: str = field(repr=False)
     user_id: uuid.UUID
     sha: str
     size: int
@@ -345,7 +349,8 @@ def _fresh(s: Session, now: float) -> bool:
 async def check(s: Session) -> str | None:
     """Stap 2 van de guard met de cache: None als de toegang klopt, anders de reden waarom
     de sessie dicht moet. Gelijktijdige verzoeken delen één controle. Wordt de sessie tijdens
-    de controle ongeldig verklaard (close_node), dan nog een keer."""
+    de controle ongeldig verklaard (close_node, close_user: _gen), dan nog een keer; gaat hij
+    tijdens de controle dicht, dan die reden."""
     for _ in range(3):
         if s.closed is not None:
             return s.closed
@@ -359,6 +364,8 @@ async def check(s: Session) -> str | None:
         failure = await asyncio.shield(task)
         if failure is not None:
             return failure
+        if s.closed is not None:  # tijdens de controle dicht (uitloggen, blokkeren, Stop)
+            return s.closed
         if s._gen == gen:
             s.checked = clock()
             s.stale = False
@@ -421,6 +428,8 @@ async def guard(request: Request, sid: str) -> Session:
     failure = await _wait(request.app, check(s))
     if failure is not None:
         _close(s, failure)
+        if s.refine:  # tijdens de controle dicht door close_user: misschien blocked
+            await _wait(request.app, _refine(s))
         raise _stone(s)
     s.seen = clock()
     s.last_seen = datetime.now(UTC)
@@ -544,9 +553,12 @@ async def create(
     link_id: uuid.UUID | None = None,
     replace: str | None = None,
     settings: Settings | None = None,
+    link_print: str | None = None,
 ) -> Session:
     """Een nieuwe sessie met de gepinde (sha, grootte) van de bron. settings (additief): de
-    instellingen van het verzoek (de database en de blob-opslag); zonder die van runtime."""
+    instellingen van het verzoek (de database en de blob-opslag); zonder die van runtime.
+    link_print (additief): de vingerafdruk van het wachtwoord van de link bij play; de
+    controle bij het maken vergelijkt hem al."""
     settings = settings if settings is not None else runtime.settings()
     now = clock()
     _table.prune(now)
@@ -574,13 +586,26 @@ async def create(
         path=path,
         settings=settings,
         probe=probe,
+        link_print=link_print,
         loadtest=loadtest,
         born=now,
         seen=now,
-        checked=now,  # play controleerde de toegang net
     )
     _table.by_sid[s.sid] = s
     log.info("mediasessie %s: %s", s.id, plan.mode)
+    # De toegang nog een keer, nu de sessie in de tabel staat (review golf 1, S2 en C1). Wat
+    # play nakeek, was vóór het wachten op de probe en de index (tot 5 s): een haak die toen
+    # kwam (uitloggen, blokkeren, de prullenbak, een nieuwe versie), zag deze sessie nog niet,
+    # en de cache had hem anders 15 s vertrouwd. Klopt de toegang niet meer, dan gaat de
+    # sessie meteen dicht met de grafsteen: er start geen stroom, en het eerste verzoek krijgt
+    # de reden (403, of 410 replaced). Eén korte databasesessie (regel 8).
+    try:
+        failure = await check(s)
+    except BaseException:
+        _close(s, None)
+        raise
+    if failure is not None:
+        _close(s, failure)
     return s
 
 
@@ -625,6 +650,7 @@ def close_user(user_id: uuid.UUID, keep_family: uuid.UUID | None = None) -> int:
             continue
         if s.link_id is not None:
             s.checked = None
+            s._gen += 1  # een controle die al liep, zet de oude uitkomst niet terug (review C2)
             continue
         if keep_family is not None and s.family == keep_family:
             continue
@@ -649,6 +675,7 @@ def close_node(node_id: uuid.UUID) -> int:
     if not hit:
         for s in _table.open():
             s.checked = None
+            s._gen += 1  # een controle die al liep, zet de oude uitkomst niet terug (review C2)
         return 0
     for s in hit:
         s.stale = True

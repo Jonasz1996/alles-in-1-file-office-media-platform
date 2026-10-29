@@ -448,6 +448,7 @@ async def start(
             link_id=viewer.link_id,
             replace=body.replace,
             settings=settings,
+            link_print=viewer.link_print,
         )
     except BaseException:
         admission.release(grant)
@@ -457,12 +458,12 @@ async def start(
     duration = probe.duration_ms or 0
     s.mime = file_mime(mime)
     s.subs = found.subs
-    s.link_print = viewer.link_print
     s.start_ms = min(choice.start_ms, max(0, duration - 1))
     s.app = request.app
 
     info: StreamInfo | None = None
-    if plan.mode in ("remux", "transcode"):
+    # create sluit een sessie waarvan de toegang tijdens het wachten verviel: dan geen stroom
+    if plan.mode in ("remux", "transcode") and s.closed is None:
         try:
             info = await streams.open(s, plan)  # M4
         except BaseException:
@@ -475,8 +476,10 @@ async def start(
     elif plan.mode == "audio":
         urls = PlayUrls(audio="audio.mp4")  # M9
         offset = 0.0
+    elif info is None:  # al dicht (create): het eerste verzoek krijgt de reden
+        urls = PlayUrls(map="map.json", master="master.m3u8")
+        offset = 0.0
     else:
-        assert info is not None
         urls = PlayUrls(map=info.map_url or "map.json", master=info.url or "master.m3u8")
         offset = info.offset_ms / 1000
         mime = info.mime or mime

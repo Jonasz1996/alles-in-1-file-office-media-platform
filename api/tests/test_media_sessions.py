@@ -28,7 +28,7 @@ from app.media import profile as P
 from app.media.state import MediaPolicy, MediaState
 from app.media.types import Plan, PlayOut, StreamInfo
 from app.models import MediaItem, MediaLibrary, MediaProbe, Node
-from app.routers import public_media
+from app.routers import media_play, public_media
 from tests.media.media_contract import failed
 from tests.test_account import family
 from tests.test_files import mkdir, put, root
@@ -470,6 +470,92 @@ async def test_2fa_terugzetten_sluit_meteen(client, admin, other):
     failed(await file(client, out["sid"]), 403, "media_access_gone", "revoked")
 
 
+def during_play(monkeypatch, event) -> list[int]:
+    """Laat event lopen terwijl play wacht: na de toegang en de probe, vóór sessions.create
+    (queue_analysis staat daartussen). Geeft de statuscodes van event."""
+    codes: list[int] = []
+    real = media_play.queue_analysis
+
+    async def queue(*args, **kwargs):
+        codes.append(await event())
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(media_play, "queue_analysis", queue)
+    return codes
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("event", "status", "reason"),
+    [("uitloggen", 403, "revoked"), ("blokkeren", 403, "blocked"),
+     ("prullenbak", 403, "revoked"), ("nieuwe versie", 410, "replaced")],
+)  # fmt: skip
+async def test_intrekken_terwijl_play_wacht(
+    client, admin, other, monkeypatch, event, status, reason
+):
+    """Review golf 1, S2 en C1: de haken sluiten alleen sessies die al in de tabel staan. Een
+    haak die komt terwijl play op de probe wacht, mist de nieuwe sessie; die mag dan niet 15 s
+    op de cache van play draaien. create kijkt opnieuw: het eerste verzoek krijgt de reden."""
+    admin_headers, _ = admin
+    headers, tokens, user_id, node = other
+
+    async def act() -> int:
+        if event == "uitloggen":
+            r = await client.post(
+                "/api/v1/auth/logout", json={"refresh_token": tokens["refresh_token"]}
+            )
+        elif event == "blokkeren":
+            r = await client.patch(
+                f"/api/v1/users/{user_id}", json={"disabled": True}, headers=admin_headers
+            )
+        elif event == "prullenbak":
+            r = await client.delete(f"/api/v1/files/{node['id']}", headers=headers)
+        else:
+            new = content("de nieuwe versie")
+            r = await client.put(f"/api/v1/files/{node['id']}/content", content=new,
+                                 headers=headers)  # fmt: skip
+        return r.status_code
+
+    codes = during_play(monkeypatch, act)
+    out = await play(client, headers, node["id"])
+    assert codes and codes[0] in (200, 204), codes
+    s = session_of(out["sid"])
+    assert s.closed == reason
+    for method in ("HEAD", "GET"):
+        r = await file(client, out["sid"], method, Range="bytes=0-9")
+        assert r.status_code == status, (method, r.status_code)
+        if method == "GET":
+            failed(r, status, "media_session_gone" if status == 410 else "media_access_gone",
+                   reason)  # fmt: skip
+            assert node["data"][:10] not in r.content
+
+
+@pytest.mark.anyio
+async def test_geen_stroom_als_de_toegang_tijdens_play_verviel(
+    client, other, settings, monkeypatch
+):
+    """Remux: is de sessie bij create al dicht, dan start play geen stroom (streams.open, M4)."""
+    headers, tokens, _, _ = other
+    node = await video(client, headers, settings, "serie.mkv", "vp9_opus.mkv", index=True)
+    opened: list[Plan] = []
+
+    async def open_stream(session, plan):
+        opened.append(plan)
+        return StreamInfo(mode="remux", url="master.m3u8", map_url="map.json")
+
+    async def logout() -> int:
+        body = {"refresh_token": tokens["refresh_token"]}
+        return (await client.post("/api/v1/auth/logout", json=body)).status_code
+
+    monkeypatch.setattr(streams, "open", open_stream)
+    during_play(monkeypatch, logout)
+    out = await play(client, headers, node["id"], fixture="vp9_opus.mkv")
+    assert out["mode"] == "remux" and opened == []
+    assert out["urls"]["master"] == "master.m3u8" and out["urls"]["map"] == "map.json"
+    failed(await client.get(f"{STREAM}/{out['sid']}/master.m3u8"), 403, "media_access_gone",
+           "revoked")  # fmt: skip
+
+
 @pytest.mark.anyio
 async def test_de_prullenbak_sluit_meteen(client, own, settings):
     headers, _, node = own
@@ -740,6 +826,66 @@ async def test_gelijktijdige_verzoeken_delen_een_controle(client, own, clock, mo
     assert await sessions.check(s) is None and count == 1  # weer in de cache
 
 
+class Held:
+    """Een nep-_verify die wacht tot release: zo valt een haak midden in een controle."""
+
+    def __init__(self, result: str | None = None) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.result = result
+
+    async def __call__(self, session) -> str | None:
+        self.entered.set()
+        await self.release.wait()
+        return self.result
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("hook", ["map", "link"])
+async def test_een_haak_midden_in_een_controle_wint(client, own, clock, monkeypatch, hook):
+    """Review golf 1, C2: close_node van een map en close_user bij een publieke link zetten
+    de cache op None. Een controle die toen al liep, zette daarna de oude uitkomst terug, en
+    de sessie stond weer 15 s vers. Nu verhoogt de haak _gen: de controle kijkt opnieuw."""
+    headers, _, node = own
+    s = session_of((await play(client, headers, node["id"]))["sid"])
+    if hook == "link":
+        s.link_id = uuid.uuid4()  # alleen de tak van close_user; _verify is nep
+    s.checked = None
+    first = Held()
+    monkeypatch.setattr(sessions, "_verify", first)
+    task = asyncio.ensure_future(sessions.check(s))
+    await asyncio.wait_for(first.entered.wait(), 5)
+    if hook == "map":
+        assert sessions.close_node(uuid.uuid4()) == 0
+    else:
+        assert sessions.close_user(s.user_id) == 0
+    assert s.checked is None
+    second = Held("revoked")  # de tweede controle ziet dat de toegang weg is
+    monkeypatch.setattr(sessions, "_verify", second)
+    first.release.set()
+    await asyncio.wait_for(second.entered.wait(), 5)
+    second.release.set()
+    assert await asyncio.wait_for(task, 5) == "revoked"
+    assert s.checked is None
+
+
+@pytest.mark.anyio
+async def test_dicht_midden_in_een_controle_geeft_die_reden(client, own, monkeypatch):
+    """Uitloggen terwijl een controle loopt (die nog niets merkte): check geeft revoked, niet
+    None, en de guard geeft 403."""
+    headers, _, node = own
+    s = session_of((await play(client, headers, node["id"]))["sid"])
+    s.checked = None
+    held = Held()
+    monkeypatch.setattr(sessions, "_verify", held)
+    task = asyncio.ensure_future(sessions.check(s))
+    await asyncio.wait_for(held.entered.wait(), 5)
+    assert s.family is not None and sessions.close_login(s.family) == 1
+    held.release.set()
+    assert await asyncio.wait_for(task, 5) == "revoked"
+    failed(await file(client, s.sid), 403, "media_access_gone", "revoked")
+
+
 async def chunks(n: int, size: int, pause: asyncio.Event | None = None, after: int = 1):
     for i in range(n):
         if pause is not None and i == after:
@@ -850,4 +996,6 @@ def test_een_sessie_in_het_geheugen_heeft_geen_sid_in_zijn_repr():
         id=uuid.uuid4(), sid="node.geheim", user_id=uuid.uuid4(), sha="a" * 64, size=1,
         plan=Plan(mode="direct"),
     )  # fmt: skip
+    # review golf 1, S4: de naam beloofde het, nu toetst de test het ook
+    assert "node.geheim" not in repr(s) and "geheim" not in str(s)
     assert "settings" not in repr(s) and s.view().reasons == []
