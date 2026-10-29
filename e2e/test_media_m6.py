@@ -6,10 +6,11 @@ Met media aan en de lokale worker (de fixture media), tegen de echte routes van 
 (clientprofiel.md), vraagt play, en speelt direct (het bestand), of via MSE (map.json, de init
 per X-Init, de segmenten).
 
-Alleen de bibliotheek is er nog niet (M2; bij 4bc07bd geven GET /media/libraries, /items/{id} en
-/shows/{id} 503 media_off): de klasse M2 zet in de context een stand-in voor die drie, zodat de
-poort van M0 media aan ziet en /kijken de titel, de serie en het volgende deel kent. Alles van
-M3, M4 en M5 is echt. Na het samenvoegen met M2 kan de stand-in weg (m6.md, afwijking 1).
+Sinds het samenvoegen van golf 3 is ook de bibliotheek echt (M2): de tests met een serie, delen
+of sprites maken een bibliotheek via de API, en de scanner maakt de items uit de namen; /kijken
+haalt de titel, de serie en het volgende deel uit getItem en getShow. Een bestand buiten een
+bibliotheek heeft geen item (404): dan de naam van het bestand. (Tot golf 3 stond hier een
+stand-in voor de routes van M2 in de browser; m6.md, afwijking 1.)
 
 1. direct: vp9_opus.webm; het profiel van de meting, het eerste beeld (requestVideoFrameCallback)
    en zoeken met 5 (50 %);
@@ -65,6 +66,7 @@ PLAYER = ".player"
 VIDEO = ".player-video"
 H264 = "avc1.640028"
 RESTART_LIMIT_S = 10.0  # §2 M6 #9 en §4.3 #18: binnen 10 s weer lopen
+SCAN_S = 35.0  # Klaar als van M2: een item verschijnt binnen 35 s (de tik is hier 0,5 s)
 PLAY_RE = re.compile(r"/api/v1/media/[^/]+/play$")
 
 STATE_JS = """() => {
@@ -101,35 +103,7 @@ PIP_SPY_JS = """(() => {
 })();"""
 
 
-# --- de stand-in voor M2 en het meeschrijven van play -------------------------------------------
-
-
-class M2:
-    """Tot M2 er is: GET /api/v1/media/libraries is 200 [] (media staat aan, zonder bibliotheek),
-    en /items/{id} en /shows/{id} komen uit deze dicts (anders de stub van M0: 503 media_off; dan
-    toont /kijken de naam van het bestand). Alleen GET; de rest gaat door."""
-
-    def __init__(self, context: Any, items: dict | None = None, shows: dict | None = None) -> None:
-        self.items = dict(items or {})
-        self.shows = dict(shows or {})
-        context.route("**/api/v1/media/libraries", self._libraries)
-        context.route("**/api/v1/media/items/*", lambda r: self._one(r, self.items))
-        context.route("**/api/v1/media/shows/*", lambda r: self._one(r, self.shows))
-
-    @staticmethod
-    def _libraries(route: Any) -> None:
-        if route.request.method == "GET":
-            route.fulfill(json=[])
-        else:
-            route.fallback()
-
-    @staticmethod
-    def _one(route: Any, table: dict) -> None:
-        key = urlsplit(route.request.url).path.rsplit("/", 1)[-1]
-        if route.request.method == "GET" and key in table:
-            route.fulfill(json=table[key])
-        else:
-            route.fallback()
+# --- het meeschrijven van play, de segmenten en de encoders ---------------------------------------
 
 
 class Plays:
@@ -263,25 +237,30 @@ def choose(page: Any, menu: str, name: Any, nth: int = 0) -> None:
     expect(m).to_be_hidden()
 
 
-def card(node_id: str, title: str, episode: int | None = None, **extra: Any) -> dict[str, Any]:
-    """Een Card zoals M2 hem geeft (alleen wat de speler leest, plus de verplichte velden)."""
+def scanned(
+    media: Any, owner: Any, root_id: str, kind: str, nodes: list[str]
+) -> dict[str, dict[str, Any]]:
+    """Een bibliotheek op root_id via de API van M2; wacht tot de scanner (tik 0,5 s in het
+    harnas) voor elk van de nodes een item maakte. Geeft {node_id: Item}, opnieuw gelezen als ze
+    er allemaal zijn (de delen van een film rekent M2 bij het lezen uit)."""
+    media.server.call(
+        owner, "POST", "/api/v1/media/libraries", json={"root_id": root_id, "kind": kind},
+        expect=201,
+    )  # fmt: skip
+    end = time.monotonic() + SCAN_S
+    seen: set[str] = set()
+    while len(seen) < len(nodes):
+        assert time.monotonic() < end, f"na {SCAN_S} s {len(seen)} van {len(nodes)} items"
+        for node in nodes:
+            if node not in seen:
+                r = media.server.call(owner, "GET", f"/api/v1/media/items/{node}")
+                if r.status_code == 200:
+                    seen.add(node)
+        time.sleep(0.25)
     return {
-        "node_id": node_id, "library_id": None, "title": title, "year": None,
-        "kind": "episode" if episode else "movie", "poster": None, "progress": None,
-        "watched": False, "season": 1 if episode else None, "episode": episode, **extra,
-    }  # fmt: skip
-
-
-def item(node_id: str, title: str, **extra: Any) -> dict[str, Any]:
-    """Een Item zoals GET /media/items/{id} hem straks geeft (M2)."""
-    base = card(node_id, title)
-    base.update({
-        "library_id": "bib", "overview": None, "backdrop": None, "duration_ms": None,
-        "streams": [], "subtitles": [], "chapters": [], "match_state": "local",
-        "can_edit": False, "parts": [], "analysis": {},
-    })  # fmt: skip
-    base.update(extra)
-    return base
+        node: media.server.call(owner, "GET", f"/api/v1/media/items/{node}", expect=200).json()
+        for node in nodes
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -297,13 +276,12 @@ def pages_away(media_browsers: Any) -> Iterator[None]:
                 page.goto("about:blank", timeout=5_000)
 
 
-def setup(media: Any, media_browsers: Any, name: str, **m2: Any) -> tuple[Any, str, Any, Any]:
-    """Een gebruiker, een map, een context met de stand-in van M2 en het meeschrijven van play,
-    en een pagina waarop de app open is. Geeft (owner, map, context, page)."""
+def setup(media: Any, media_browsers: Any, name: str) -> tuple[Any, str, Any, Any]:
+    """Een gebruiker, een map (geen bibliotheek), een context en een pagina waarop de app open
+    is. Geeft (owner, map, context, page)."""
     owner = media.user()
     folder = media.folder(owner, name)
     context = media_browsers.context_as(owner)
-    M2(context, **m2)
     page = context.new_page()
     open_app(page)
     return owner, folder, context, page
@@ -640,23 +618,19 @@ def test_kwaliteit_720_naar_480(media, media_browsers, ffmpeg_count):
 
 @pytest.mark.media
 def test_de_kaart_volgende_aflevering(media, media_browsers, ffmpeg_count):
+    """Een echte bibliotheek met series (M2): de scanner maakt de serie en haar afleveringen uit de
+    namen, en /kijken haalt de titel en de volgende aflevering uit getItem en getShow."""
     owner = media.user()
-    folder = media.folder(owner, "M6 serie")
-    one = media.upload(owner, "chapters.mkv", folder, name="Serie S01E01.mkv")
-    two = media.upload(owner, "vp9_opus.webm", folder, name="Serie S01E02.webm")
-    show = {
-        "show": {"id": "serie", "library_id": "bib", "title": "De serie", "year": None,
-                 "overview": None, "poster": None, "backdrop": None, "match_state": "local",
-                 "can_edit": False},
-        "seasons": [{"season": 1, "episodes": [card(one.id, "Het begin", 1, show_id="serie"),
-                                               card(two.id, "Het vervolg", 2, show_id="serie")]}],
-    }  # fmt: skip
-    items = {
-        one.id: item(one.id, "Het begin", kind="episode", show_id="serie", season=1, episode=1),
-        two.id: item(two.id, "Het vervolg", kind="episode", show_id="serie", season=1, episode=2),
-    }
+    root = media.folder(owner, "M6 series")
+    season = media.folder(owner, "Season 1", media.folder(owner, "De serie", root))
+    one = media.upload(owner, "chapters.mkv", season, name="De serie S01E01 Het begin.mkv")
+    two = media.upload(owner, "vp9_opus.webm", season, name="De serie S01E02 Het vervolg.webm")
+    found = scanned(media, owner, root, "shows", [one.id, two.id])
+    got = [(found[x]["season"], found[x]["episode"], found[x]["title"]) for x in (one.id, two.id)]
+    assert got == [(1, 1, "Het begin"), (1, 2, "Het vervolg")], found
+    show_id = found[one.id]["show_id"]
+    assert show_id and found[two.id]["show_id"] == show_id, found
     context = media_browsers.context_as(owner)
-    M2(context, items=items, shows={"serie": show})
     plays = Plays(context)
     page = context.new_page()
     open_app(page)
@@ -700,18 +674,20 @@ def test_de_kaart_volgende_aflevering(media, media_browsers, ffmpeg_count):
 
 @pytest.mark.media
 def test_cd1_gaat_vanzelf_naar_cd2(media, media_browsers, ffmpeg_count):
+    """Een film in delen in een echte bibliotheek (M2): het item noemt beide delen."""
     owner = media.user()
     folder = media.folder(owner, "M6 delen")
-    one = media.upload(owner, "vp9_opus.webm", folder, name="Film cd1.webm")
-    two = media.upload(owner, "vp9_opus.webm", folder, name="Film cd2.webm")
+    one = media.upload(owner, "vp9_opus.webm", folder, name="De film cd1.webm")
+    two = media.upload(owner, "vp9_opus.webm", folder, name="De film cd2.webm")
+    found = scanned(media, owner, folder, "movies", [one.id, two.id])
     parts = [{"node_id": one.id, "part": 1}, {"node_id": two.id, "part": 2}]
-    items = {x.id: item(x.id, "De film", parts=parts) for x in (one, two)}
+    assert found[one.id]["parts"] == parts and found[one.id]["title"] == "De film", found
     context = media_browsers.context_as(owner)
-    M2(context, items=items)
     page = context.new_page()
     open_app(page)
     watch(page, one.id, start=4)
     ready_state(page, "direct")
+    expect(page.locator(".player-title")).to_have_text("De film")
     # Geen kaart bij een deel: na het einde meteen het volgende deel
     expect(page).to_have_url(re.compile(f"/kijken/{two.id}$"), timeout=20_000)
     assert page.get_by_role("region", name="Volgende aflevering").count() == 0
@@ -885,7 +861,7 @@ def test_sprites_bij_hover_en_hoofdstukken(media, media_browsers, ffmpeg_count):
     owner, folder, context, page = setup(media, media_browsers, "M6 sprites")
     plays = Plays(context)
     up = media.upload(owner, "chapters.mkv", folder)
-    library_item(media, owner.id, folder, up.id, "Sprites", [])
+    library_item(media, owner, folder, up.id, [])
     row = wait_state(media, up.sha, "trick_state")
     assert row["trick_state"] == "ready" and row["trick"]["count"] >= 2, row
     watch(page, up.id)

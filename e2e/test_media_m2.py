@@ -7,7 +7,9 @@ gaat met focus() (één tabstop), en een nieuwe pagina met goto:
 - een map met fixtures wordt een bibliotheek via het menu van de map (Shift+F10) en de dialoog
   (het soort met de pijltjes, Enter); de items verschijnen vanzelf met de titels uit de namen;
   in het raster de pijltjes, Home en End; Enter opent een film, Afspelen en "Verder op 0:03"
-  gaan naar /kijken (met ?t=); een upload daarna verschijnt binnen de grens van Klaar als;
+  gaan naar /kijken (met ?t=), waar de speler van M6 de titel van het item toont en speelt (K
+  pauzeert, Esc gaat terug naar het item; sinds het samenvoegen van golf 3); een upload daarna
+  verschijnt binnen de grens van Klaar als;
 - een bibliotheek met series: de rij Net toegevoegd met ← en →, de serie met haar seizoen en
   afleveringen, Afspelen S01E01, en Opnieuw scannen;
 - Nieuwe bibliotheek op /media (de lege start): de mappenkiezer en de dialoog met het
@@ -36,6 +38,12 @@ from media_harness import run_async
 ROWS = "#inhoud [role=grid] [role=row][aria-rowindex][data-index]"
 # Klaar als: een item verschijnt binnen 35 s na de upload (met de tik van 30 s; hier 0,5 s)
 APPEAR_S = 35.0
+# De speler (M6): play van een item, en "speelt hij, voorbij t"
+PLAY_RE = re.compile(r"/api/v1/media/[^/]+/play$")
+PLAYING_JS = """(t) => {
+  const v = document.querySelector(".player-video");
+  return !!v && !v.error && !v.paused && v.readyState >= 3 && v.currentTime >= t;
+}"""
 
 
 def focused_text(page: Any) -> str:
@@ -232,6 +240,15 @@ def test_bibliotheek_maken_en_kijken_met_het_toetsenbord(media, media_browsers, 
     tab_to(page, "[data-play]")
     page.keyboard.press("Enter")
     expect(page).to_have_url(re.compile(f"/kijken/{matrix.id}$"))
+    # De speler van M6 (samenvoegen golf 3; §4.3 #9): de titel uit het item van M2, spelen,
+    # K pauzeert, en Esc gaat terug naar het item
+    expect(page.locator(".player")).to_have_attribute("data-state", "ready", timeout=30_000)
+    expect(page.locator(".player-title")).to_have_text("The Matrix")
+    page.wait_for_function(PLAYING_JS, arg=0.3, timeout=20_000)
+    page.keyboard.press("k")
+    page.wait_for_function("() => document.querySelector('.player-video').paused")
+    page.keyboard.press("Escape")
+    expect(page).to_have_url(re.compile(f"/media/item/{matrix.id}$"))
 
     # Verder op 0:03 (de stand van M7 hier als rij in de database)
     set_progress(media, owner.id, matrix.id, 3_400, 6_000)
@@ -239,8 +256,11 @@ def test_bibliotheek_maken_en_kijken_met_het_toetsenbord(media, media_browsers, 
     resume = page.get_by_role("link", name="Verder op 0:03")
     expect(resume).to_be_visible()
     tab_to(page, "[data-resume]")
-    page.keyboard.press("Enter")
+    with page.expect_request(PLAY_RE) as asked:
+        page.keyboard.press("Enter")
+    assert asked.value.post_data_json["start_ms"] == 3_000, asked.value.post_data_json
     expect(page).to_have_url(re.compile(f"/kijken/{matrix.id}\\?t=3$"))
+    page.wait_for_function(PLAYING_JS, arg=3.1, timeout=20_000)
 
 
 @pytest.mark.media
