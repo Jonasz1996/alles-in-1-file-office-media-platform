@@ -111,8 +111,8 @@ class RealDriver:
     worker: local.LocalWorker
     flag: Path
     name: str = "echt"
-    # M4 zet hier Op.STREAM bij als de worker stream doet
-    has: frozenset[Op] = frozenset({Op.CAPS, Op.PROBE})
+    # Sinds M4 doet de echte worker ook stream
+    has: frozenset[Op] = frozenset({Op.CAPS, Op.PROBE, Op.STREAM})
     max_procs: int = 3
     max_transcodes: int = 1
     extra: dict = field(default_factory=dict)
