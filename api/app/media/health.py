@@ -1,6 +1,20 @@
-"""De gezondheid van de worker: elke INTERVAL s caps, over een eigen verbinding die niet
-meetelt in de plaatsen (Keuze 12). M1 bouwt de meldingen, de backoff en de supervisie; M0 heeft
-de lus die MediaState.worker bijhoudt.
+"""De gezondheid van de worker (Keuze 12, 13 en 46). Van M1 (M0 had de lus).
+
+Elke INTERVAL s één keer caps, over een eigen verbinding die niet meetelt in de plaatsen: de
+worker antwoordt uit zijn cache en start geen proces. Dat zet MediaState.worker en de caps in
+de cache (MediaState.caps):
+
+- ok: caps kwam terug, ffmpeg en ffprobe zijn er en er ontbreekt niets van §3.3;
+- ffmpeg_missing: caps kwam terug, maar ffmpeg of iets wat §3.3 nodig heeft ontbreekt (de reden
+  noemt wat; Keuze 46). Direct play werkt door;
+- down: geen verbinding, geen antwoord binnen de tijd, een worker die zich niet bewijst, een
+  weigering (de afscherming faalde: de reden van de worker), of een andere PROTOCOL (reden
+  "versie", Keuze 47: tijdens een update even een oudere worker).
+
+busy van de worker betekent ok: de worker leeft en heeft het druk (caps neemt nooit een plaats,
+dus dat komt alleen van een oudere worker). Is de worker down, dan kijkt de lus vaker: na 1, 2,
+4 … hooguit INTERVAL s, zodat een herstart snel weer ok geeft. Elke overgang komt één keer in
+het log, met de reden.
 """
 
 from __future__ import annotations
@@ -10,13 +24,34 @@ import contextlib
 import logging
 
 from app.config import Settings
-from app.media import client
+from app.media import client, wire
 from app.media.state import media_state
 
 log = logging.getLogger("platform.media")
 
 INTERVAL = 30.0
 FIRST = 0.2  # snel na de start, daarna INTERVAL
+RETRY_FIRST = 1.0  # down: na 1, 2, 4 … s opnieuw, hooguit INTERVAL
+REASON = 200
+
+
+def _reason(exc: BaseException) -> str:
+    text = str(exc).strip() or exc.__class__.__name__
+    if isinstance(exc, client.WorkerDown) and "PROTOCOL" in text:
+        text = f"versie: {text} (de app spreekt {wire.PROTOCOL})"
+    return text[:REASON]
+
+
+def _set(state, worker: str, reason: str = "") -> None:
+    before = state.worker
+    if state.set_worker(worker, reason):
+        if worker == "ok":
+            ffmpeg = state.caps.ffmpeg if state.caps else None
+            log.info("mediaworker bereikbaar (%s, was %s)", ffmpeg or "?", before)
+        elif worker == "down":
+            log.warning("mediaworker niet bereikbaar: %s", reason)
+        else:
+            log.warning("mediaworker zonder %s", reason)
 
 
 async def check(app) -> str:
@@ -24,34 +59,35 @@ async def check(app) -> str:
     state = media_state(app)
     try:
         caps = await client.caps()
-    except client.WorkerDown as exc:
-        if state.set_worker("down", str(exc)[:200]):
-            log.warning("mediaworker niet bereikbaar: %s", exc)
+    except client.WorkerBusy:
+        _set(state, "ok", "druk")
         return state.worker
-    except (client.WorkerFailed, client.WorkerBusy, TimeoutError) as exc:
-        state.set_worker("down", str(exc)[:200] or "geen antwoord")
+    except (client.WorkerDown, client.WorkerFailed, TimeoutError, OSError) as exc:
+        _set(state, "down", _reason(exc) if not isinstance(exc, TimeoutError) else "geen antwoord")
         return state.worker
     state.caps = caps
-    if caps.ffmpeg is None or caps.missing:
-        missing = ", ".join(caps.missing) or "ffmpeg"
-        if state.set_worker("ffmpeg_missing", missing):
-            log.warning("mediaworker zonder %s", missing)
-    elif state.set_worker("ok"):
-        log.info("mediaworker bereikbaar (ffmpeg %s)", caps.ffmpeg)
+    if caps.ffmpeg is None or caps.ffprobe is None or caps.missing:
+        missing = ", ".join(caps.missing) or "ffmpeg en ffprobe"
+        _set(state, "ffmpeg_missing", missing[:REASON])
+    else:
+        _set(state, "ok")
     return state.worker
 
 
 async def _loop(app, settings: Settings) -> None:
     delay = FIRST
+    retry = RETRY_FIRST
     while True:
         await asyncio.sleep(delay)
-        delay = FIRST if media_state(app).worker == "starting" else INTERVAL
         try:
-            await check(app)
+            worker = await check(app)
         except Exception:  # de lus mag nooit stoppen
             log.exception("gezondheid van de mediaworker")
-        if media_state(app).worker != "starting":
-            delay = INTERVAL
+            worker = "down"
+        if worker == "down":
+            delay, retry = retry, min(retry * 2, INTERVAL)
+        else:
+            delay, retry = INTERVAL, RETRY_FIRST
 
 
 def start(app, settings: Settings) -> asyncio.Task:

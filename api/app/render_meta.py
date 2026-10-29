@@ -1,14 +1,17 @@
 """Metadata van foto's en video's lezen (opnamedatum, camera, objectief, belichting), in het
 renderproces (app/render.py). Bovenaan alleen de standaardbibliotheek, zoals render.py; Pillow
-en ffprobe pas als ze nodig zijn.
+en de mediaworker pas als ze nodig zijn.
 
 - image_meta(img) -> {"taken_at", "taken_kind": "local", "exif": {...}} voor een geopende
   Pillow-afbeelding. Alleen wat er echt in staat: zonder datum geen taken_at, zonder
   camerawaarden geen exif (alleen een draaiing telt niet: breedte en hoogte zijn daar al op
   aangepast);
-- video_meta(probe) -> {"taken_at", "taken_kind": "utc" | "local"} uit de JSON van ffprobe;
+- video_meta(probe) -> {"taken_at", "taken_kind": "utc" | "local"} uit de JSON van ffprobe
+  (sinds fase 5 het antwoord van `meta` van de mediaworker, in dezelfde vorm);
 - run_meta(request) -> {"state": "ready", "results": {sha: meta}} voor mode "meta": alleen de
-  headers van veel bestanden in één proces, een fout per bestand ({"error": ...}).
+  headers van veel bestanden in één proces, een fout per bestand ({"error": ...}). Video's via
+  `meta` van de mediaworker (fase 5, M1): met media aan die van de app (request["worker"], van
+  previews.py), anders een eigen worker voor dit proces, pas bij de eerste video.
 
 taken_at is een ISO-tekst zonder tijdzone. "local" is de kloktijd van de camera (een
 zwevende tijd, ook als er een offset bij stond: die kloktijd houden we); "utc" is een echt
@@ -19,7 +22,7 @@ GPS en locatie lezen we nooit (fase 6): de GPS-IFD (0x8825) wordt niet geopend e
 locatietags van video's worden overgeslagen.
 """
 
-import json
+import contextlib
 import math
 import re
 from datetime import UTC, datetime
@@ -179,22 +182,51 @@ def video_meta(probe: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _probe(source: Path) -> dict[str, Any]:
+def _probe(source: Path, media: Any) -> dict[str, Any]:
+    """De opnamedatum van een video via `meta` van de mediaworker (fase 5, M1): ffprobe draait
+    alleen daar. media is een render.Media; niet te lezen geeft {} (zoals 0.6.0)."""
     from app import render
 
     with open(source, "rb") as f:
         head = f.read(render.HEAD)
     fmt = render.container(head)
-    ffprobe = render.shutil.which("ffprobe")
-    if fmt is None or ffprobe is None:
+    if fmt is None:
         return {}
-    probe = render._run(
-        [ffprobe, "-v", "error", "-f", fmt, "-print_format", "json", "-show_format"]
-        + ["-show_streams", f"file:{source}"]
-    )
-    if probe.returncode != 0:
-        return {}
-    return video_meta(json.loads(probe.stdout or b"{}"))
+    if not media.ready():
+        return {}  # geen ffprobe in de worker: zoals 0.6.0 zonder ffprobe
+    info = media.meta(source, fmt)
+    return video_meta(info) if info is not None else {}
+
+
+class _Videos:
+    """De worker voor de video's van één run_meta, pas gestart bij de eerste video (media uit:
+    een eigen worker, render.Media). Lukt dat niet, dan krijgt elke video dezelfde fout."""
+
+    def __init__(self, worker: dict[str, Any] | None):
+        self.worker = worker
+        self.stack = contextlib.ExitStack()
+        self.media: Any = None
+        self.failed: str | None = None
+
+    def probe(self, source: Path) -> dict[str, Any]:
+        from app import render
+
+        if self.failed is not None:
+            return {"error": self.failed}
+        if self.media is None and not self.worker and not render.installed():
+            return {}  # media uit en geen ffprobe: zoals 0.6.0
+        if self.media is None:
+            try:
+                self.media = self.stack.enter_context(render.Media(self.worker, Path.cwd()))
+            except Exception as e:  # noqa: BLE001 - de eigen worker start niet
+                self.failed = f"mediaworker: {type(e).__name__}: {e}"[:200]
+                return {"error": self.failed}
+        try:
+            return _probe(source, self.media)
+        except render.Later as e:
+            # Weg of druk: een fout voor dit bestand. photometa laat de datum die er is dan
+            # staan; de preview-taak zelf wacht wel (jobs.Defer)
+            return {"error": str(e)[:200]}
 
 
 def _image(source: Path, max_pixels: int) -> dict[str, Any]:
@@ -210,17 +242,19 @@ def run_meta(request: dict[str, Any]) -> dict[str, Any]:
     metadata, of {"error": ...} als het niet lukte; een fout in één bestand stopt de rest niet."""
     max_pixels = int(request.get("max_pixels") or 100_000_000)
     results: dict[str, Any] = {}
-    for item in request.get("items") or []:
-        sha = str(item.get("sha", ""))
-        mime = str(item.get("mime") or "").lower()
-        try:
-            source = Path(item["source"])
-            if mime.startswith("image/"):
-                results[sha] = _image(source, max_pixels)
-            elif mime.startswith("video/"):
-                results[sha] = _probe(source)
-            else:
-                results[sha] = {}
-        except Exception as e:  # noqa: BLE001 - per bestand: kapot, weg of te groot
-            results[sha] = {"error": f"{type(e).__name__}: {e}"[:200]}
+    videos = _Videos(request.get("worker"))
+    with videos.stack:
+        for item in request.get("items") or []:
+            sha = str(item.get("sha", ""))
+            mime = str(item.get("mime") or "").lower()
+            try:
+                source = Path(item["source"])
+                if mime.startswith("image/"):
+                    results[sha] = _image(source, max_pixels)
+                elif mime.startswith("video/"):
+                    results[sha] = videos.probe(source)
+                else:
+                    results[sha] = {}
+            except Exception as e:  # noqa: BLE001 - per bestand: kapot, weg of te groot
+                results[sha] = {"error": f"{type(e).__name__}: {e}"[:200]}
     return {"state": "ready", "results": results}

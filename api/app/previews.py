@@ -206,9 +206,38 @@ def info(secret: bytes, blob: Blob | None, exp: int, full: bool = False) -> dict
     }
 
 
+# Video (fase 5, M1): het renderproces vraagt meta en frame aan de mediaworker. Met media aan
+# krijgt het de socket en de sleutel van de worker van de app mee, alleen via stdin en alleen
+# als er een video in kan zitten; met media uit start het zelf een worker (render.Media)
+DEFER_MAX = 3600.0
+VIDEO_UNKNOWN = ("", "application/octet-stream")  # render.kind_of snuffelt dan zelf
+
+
+def _maybe_video(request: dict[str, Any]) -> bool:
+    if request.get("mode") == "meta":
+        items = request.get("items") or []
+        return any(str(i.get("mime") or "").lower().startswith("video/") for i in items)
+    if request.get("mode") or request.get("pdf"):
+        return False
+    mime = str(request.get("mime") or "").split(";")[0].strip().lower()
+    return mime.startswith("video/") or mime in VIDEO_UNKNOWN
+
+
+def _with_worker(settings: Settings, request: dict[str, Any]) -> dict[str, Any]:
+    """Zoals runtime.start de client bindt: de socket van de worker, en geen sleutel als er
+    een probleem mee is (dan weigert de client, en wacht de preview: jobs.Defer)."""
+    if not settings.media_enabled or not _maybe_video(request):
+        return request
+    key = "" if settings.media_problem() else settings.media_key()
+    return {**request, "worker": {"socket": str(settings.media_socket), "key": key}}
+
+
 async def render(settings: Settings, request: dict[str, Any], cwd: Path) -> dict[str, Any]:
     """Draait app/render.py in een eigen proces. Wordt dit afgebroken (de taak duurt te lang,
-    of de app stopt), dan gaat het proces met alles wat het startte meteen dood."""
+    of de app stopt), dan gaat het proces met alles wat het startte meteen dood. Is de
+    mediaworker weg of druk (een video, fase 5), dan jobs.Defer: later opnieuw, de poging telt
+    niet."""
+    request = _with_worker(settings, request)
     env = {"PATH": os.environ.get("PATH", os.defpath), "LANG": "C.UTF-8", "HOME": str(cwd)}
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -241,6 +270,12 @@ async def render(settings: Settings, request: dict[str, Any], cwd: Path) -> dict
     if len(out) > OUTPUT_BYTES:
         raise jobs.JobError("Het voorbeeldproces gaf een te groot antwoord")
     result = json.loads(out)
+    if isinstance(result, dict) and result.get("state") == "defer":
+        try:
+            seconds = float(result.get("seconds") or 300)
+        except (TypeError, ValueError):
+            seconds = 300.0
+        raise jobs.Defer(min(max(seconds, 1.0), DEFER_MAX))
     if not isinstance(result, dict) or result.get("state") not in DONE:
         raise jobs.JobError("Het voorbeeldproces gaf een onverwacht antwoord")
     return result

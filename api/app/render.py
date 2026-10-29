@@ -4,9 +4,11 @@ Bovenaan alleen de standaardbibliotheek, zodat het proces snel start; Pillow en 
 pas als ze nodig zijn.
 
 Verzoek als JSON op stdin: {"source", "out", "work", "mime", "name", "max_pixels",
-"memory_mb"}. Antwoord als JSON op stdout: {"state": "ready" | "none", "meta": {...},
-"sizes": [1024, 256]}. De afbeeldingen komen in out/<grootte>.webp (HEIC, HEIF en TIFF ook
-2048.webp: die kan de browser zelf niet tonen); een kantoordocument geeft ook out/doc.json
+"memory_mb"}, en met media aan "worker": {"socket", "key"} (fase 5, previews.py). Antwoord
+als JSON op stdout: {"state": "ready" | "none", "meta": {...}, "sizes": [1024, 256]}; voor
+een video ook {"state": "defer", "seconds"} als de mediaworker weg of druk is. De
+afbeeldingen komen in out/<grootte>.webp (HEIC, HEIF en TIFF ook 2048.webp: die kan de browser
+zelf niet tonen); een kantoordocument geeft ook out/doc.json
 (app/office/reader.py). work is voor tussenbestanden. Een onverwachte fout eindigt met een exitcode
 en de melding op stderr.
 
@@ -20,16 +22,18 @@ Andere soorten verzoeken (veld "mode"):
 - "meta": alleen metadata van veel bestanden (render_meta.run_meta, P5).
 """
 
+import asyncio
 import base64
 import codecs
+import contextlib
 import json
 import lzma
+import os
 import posixpath
 import resource
 import shutil
 import signal
 import struct
-import subprocess
 import sys
 import tarfile
 import warnings
@@ -51,7 +55,7 @@ TEXT_LINES = 50
 MAX_ENTRIES = 200
 NAME_CHARS = 500
 LIST_SECONDS = 15  # zo lang mag het uitlezen van een (ingepakt) archief duren
-FFMPEG_SECONDS = 60
+FFMPEG_SECONDS = 60  # per vraag aan de mediaworker (meta, frame)
 EMBEDDED_BYTES = 32 * 1024 * 1024  # hoes van een album of e-book
 XML_BYTES = 4 * 1024 * 1024
 WEBP_QUALITY = 80
@@ -309,7 +313,7 @@ def render(request: dict) -> dict:
         if kind == "pdf":
             return pdf(source, out, request["max_pixels"])
         if kind == "video":
-            return video(source, head, out, work, request["max_pixels"])
+            return video(source, head, out, work, request["max_pixels"], request.get("worker"))
         if kind == "audio":
             return audio(source, out, work, request["max_pixels"])
         if kind == "text":
@@ -416,41 +420,201 @@ def pdf(source: Path, out: Path, max_pixels: int) -> dict:
     return {"state": "ready", "meta": {"pages": pages}, "sizes": sizes}
 
 
-def _unlimited():
-    """Voor ffmpeg: de geheugengrens van dit proces niet erven (ffmpeg reserveert per thread
-    veel adresruimte); ffmpeg heeft zijn eigen tijdsgrens."""
-    _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-    resource.setrlimit(resource.RLIMIT_AS, (hard, hard))
+# --- video: via de mediaworker (fase 5, M1) -----------------------------------------------
+#
+# ffmpeg en ffprobe draaien alleen nog in de mediaworker (Keuze 11, regel 4). Dit proces vraagt
+# daar `meta` (de JSON van ffprobe, opgeschoond) en `frame` (één JPEG op een pipe), en geeft de
+# JPEG door de gewone renderer van afbeeldingen. Welke worker:
+# - media aan: die van de app; previews.py zet socket en sleutel in het verzoek ("worker"), via
+#   stdin en nooit in de omgeving of op de opdrachtregel;
+# - media uit (zoals 0.6.0): een eigen worker voor dit ene proces (media/local.oneshot), in
+#   dezelfde procesgroep, zodat previews.render hem bij een tijdgrens mee stopt.
+# Is de worker weg of druk, dan zegt het antwoord "defer" (previews.py: jobs.Defer).
+
+FRAME_BYTES = 16 * 1024 * 1024  # een JPEG van hooguit 1024 px is veel kleiner
+DEFER_DOWN = 300  # s: de worker is weg (bouwontwerp M1)
+DEFER_BUSY = 30  # s: de worker is druk (client.WorkerBusy)
 
 
-def _run(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        args,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        timeout=FFMPEG_SECONDS,
-        preexec_fn=_unlimited,  # veilig: dit proces heeft geen threads
-        check=False,
-    )
+class Later(Exception):
+    """De worker is weg of druk: deze preview later opnieuw, zonder een poging te tellen."""
+
+    def __init__(self, seconds: float, reason: str):
+        super().__init__(reason)
+        self.seconds = seconds
 
 
-def video(source: Path, head: bytes, out: Path, work: Path, max_pixels: int) -> dict:
+def installed() -> bool:
+    """Staan ffmpeg en ffprobe op deze machine (voor de eigen worker bij media uit)?"""
+    from app.media.worker.guard import BINARIES
+
+    return all(shutil.which(name) for name in BINARIES)
+
+
+class Media:
+    """De worker voor dit renderproces, zolang het blok duurt. ask(coro) draait één vraag
+    (asyncio) en maakt van WorkerDown en WorkerBusy een Later."""
+
+    def __init__(self, worker: dict | None, work: Path):
+        self.worker = worker
+        self.work = work
+        self._stack = contextlib.ExitStack()
+        self._caps: bool | None = None
+
+    def __enter__(self) -> "Media":
+        from app.media import client, local
+
+        if self.worker:
+            path, key = Path(str(self.worker["socket"])), str(self.worker.get("key") or "")
+        else:
+            path, key = self._stack.enter_context(local.oneshot(self.work))
+        client.bind(path, key)
+        return self
+
+    def __exit__(self, *exc) -> None:
+        from app.media import client
+
+        client.bind(None)
+        self._stack.close()
+
+    def ask(self, coro):
+        from app.media import client
+
+        try:
+            return asyncio.run(coro)
+        except client.WorkerDown as e:
+            raise Later(DEFER_DOWN, f"mediaworker weg: {e}") from None
+        except client.WorkerBusy as e:
+            raise Later(DEFER_BUSY, f"mediaworker druk: {e}") from None
+        except TimeoutError:
+            # Geen OSError laten zijn: dat zou "onleesbaar" betekenen (is_unreadable)
+            raise RuntimeError("de mediaworker antwoordde niet op tijd") from None
+
+    def ready(self) -> bool:
+        """Heeft de worker ffmpeg en ffprobe (caps, uit zijn cache)? Eén keer per proces."""
+        if self._caps is None:
+            self._caps = self.ask(_has_ffmpeg())
+        return self._caps
+
+    def meta(self, source: Path, demuxer: str) -> dict | None:
+        """De JSON van meta, of None als de worker het bestand niet kan lezen."""
+        from app.media import client
+        from app.media.wire import Code
+
+        try:
+            return self.ask(_meta(source, demuxer))
+        except client.WorkerFailed as e:
+            if e.code in (Code.UNREADABLE, Code.UNKNOWN_FORMAT):
+                return None
+            raise RuntimeError(f"meta: {e}") from None
+
+    def frame(self, source: Path, demuxer: str, index: int, at: float, width: int) -> bytes:
+        """De JPEG van frame, of b"" als er geen beeld kwam (voorbij het einde, of een fout)."""
+        from app.media import client
+
+        try:
+            return self.ask(_frame(source, demuxer, index, at, width))
+        except client.WorkerFailed:
+            return b""
+
+
+async def _has_ffmpeg() -> bool:
+    from app.media import client
+
+    caps = await client.caps()
+    return bool(caps.ffmpeg and caps.ffprobe)
+
+
+async def _meta(source: Path, demuxer: str) -> dict:
+    from app.media import client
+    from app.media.wire import Op
+    from app.media.worker.args import MetaArgs
+
+    async with asyncio.timeout(FFMPEG_SECONDS):
+        job, _ = await client.call(Op.META, MetaArgs(demuxer=demuxer), source=source)
+        async with job:
+            return await job.result()
+
+
+async def _readable(loop: asyncio.AbstractEventLoop, fd: int) -> None:
+    ready = loop.create_future()
+    loop.add_reader(fd, lambda: ready.done() or ready.set_result(None))
+    try:
+        await ready
+    finally:
+        loop.remove_reader(fd)
+
+
+async def _drain(fd: int, limit: int) -> bytes:
+    """Alles van een pipe tot EOF, hooguit limit bytes (Unreadable daarboven)."""
+    os.set_blocking(fd, False)
+    loop = asyncio.get_running_loop()
+    chunks: list[bytes] = []
+    size = 0
+    while True:
+        try:
+            data = os.read(fd, 65536)
+        except BlockingIOError:
+            await _readable(loop, fd)
+            continue
+        if not data:
+            return b"".join(chunks)
+        size += len(data)
+        if size > limit:
+            raise Unreadable("het beeld van de worker is te groot")
+        chunks.append(data)
+
+
+async def _frame(source: Path, demuxer: str, index: int, at: float, width: int) -> bytes:
+    from app.media import client
+    from app.media.wire import Op
+    from app.media.worker.args import FrameArgs
+
+    args = FrameArgs(demuxer=demuxer, video_index=index, at_s=round(at, 3), width=width)
+    async with asyncio.timeout(FFMPEG_SECONDS):
+        job, reads = await client.call(Op.FRAME, args, source=source, outputs=1)
+        async with job:
+            try:
+                data = await _drain(reads[0], FRAME_BYTES)
+            finally:
+                os.close(reads[0])
+            result = await job.result()
+    return data if result.get("frames") != 0 else b""
+
+
+def frame_width(width: int, height: int) -> int:
+    """De breedte voor frame: de lange kant hooguit SIZES[0] (zoals de box van 0.6.0), nooit
+    groter dan het origineel, even, en binnen FrameArgs (16 … 3840)."""
+    scale = min(1.0, SIZES[0] / max(width, height, 1))
+    wanted = int(width * scale) // 2 * 2
+    return max(16, min(3840, wanted))
+
+
+def video(
+    source: Path, head: bytes, out: Path, work: Path, max_pixels: int, worker: dict | None = None
+) -> dict:
     fmt = container(head)
-    ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")
-    if fmt is None or ffmpeg is None or ffprobe is None:
-        return dict(NONE)  # zonder ffmpeg geen preview van video's
-    src = f"file:{source}"
-    probe = _run(
-        [ffprobe, "-v", "error", "-f", fmt, "-print_format", "json", "-show_format"]
-        + ["-show_streams", src]
-    )
-    if probe.returncode != 0:
+    if fmt is None:
         return dict(NONE)
-    info = json.loads(probe.stdout or b"{}")
+    if not worker and not installed():
+        return dict(NONE)  # media uit en geen ffmpeg: geen preview van video's (zoals 0.6.0)
+    try:
+        with Media(worker, work) as media:
+            return _video(media, source, fmt, out, work, max_pixels)
+    except Later as later:
+        return {"state": "defer", "seconds": later.seconds, "reason": str(later)[:200]}
+
+
+def _video(media: Media, source: Path, fmt: str, out: Path, work: Path, max_pixels: int) -> dict:
+    if not media.ready():
+        return dict(NONE)  # de worker heeft geen ffmpeg: zoals 0.6.0 zonder ffmpeg
+    info = media.meta(source, fmt)
+    if info is None:
+        return dict(NONE)
     meta: dict = {}
     try:
         duration = float(info.get("format", {}).get("duration") or 0)
-    except ValueError:
+    except (TypeError, ValueError):
         duration = 0.0
     if duration > 0:
         meta["duration"] = round(duration, 3)
@@ -461,20 +625,16 @@ def video(source: Path, head: bytes, out: Path, work: Path, max_pixels: int) -> 
         return {"state": "ready" if meta else "none", "meta": meta, "sizes": []}
     width, height = int(stream["width"]), int(stream["height"])
     if _rotation(stream) in (90, 270):
-        width, height = height, width
+        width, height = height, width  # ffmpeg draait het beeld zelf (autorotate)
     meta.update(width=width, height=height)
 
-    frame = work / "frame.png"
-    box = f"scale='min({SIZES[0]},iw)':'min({SIZES[0]},ih)':force_original_aspect_ratio=decrease"
+    frame = work / "frame.jpg"
+    wide = frame_width(width, height)
     # Een beeld op 10 % (hooguit na een halve minuut): de eerste frames zijn vaak zwart
     for at in dict.fromkeys([min(duration * 0.1, 30.0), 0.0]):
-        frame.unlink(missing_ok=True)
-        result = _run(
-            [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-ss", f"{at:.3f}"]
-            + ["-f", fmt, "-i", src, "-map", "0:v:0", "-frames:v", "1", "-an", "-sn", "-dn"]
-            + ["-vf", box, "-y", str(frame)]
-        )
-        if result.returncode == 0 and frame.exists() and frame.stat().st_size > 0:
+        data = media.frame(source, fmt, int(stream["index"]), at, wide)
+        if data:
+            frame.write_bytes(data)
             return {**image(frame, out, max_pixels), "meta": meta}
     return {"state": "ready", "meta": meta, "sizes": []}
 
