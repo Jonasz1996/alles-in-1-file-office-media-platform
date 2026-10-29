@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import random
 import time
 
@@ -500,9 +501,16 @@ def test_een_te_lange_ruwe_cue_wordt_afgekapt_zonder_halve_code() -> None:
 
 
 async def _longest_gap(work) -> tuple[bytes, float]:
-    """Het werk naast een taak die elke ms wakker wil worden: (uitvoer, het langste gat)."""
+    """Het werk naast een taak die elke ms wakker wil worden: (uitvoer, het langste gat).
+
+    De heap van dit testproces (na duizenden tests) gaat eerst in gc.freeze: anders meet een
+    volle ronde van de garbage collector over al die objecten mee (in de hele set tot 0,5 s),
+    en dat is niet wat de omzetter doet. De worker is een eigen proces met een kleine heap; wat
+    de omzetter zelf aan afval maakt, ruimt de collector hier nog steeds op, en dat telt mee."""
     gaps: list[float] = []
     done = asyncio.Event()
+    gc.collect()
+    gc.freeze()
 
     async def tick() -> None:
         last = time.perf_counter()
@@ -519,6 +527,7 @@ async def _longest_gap(work) -> tuple[bytes, float]:
     finally:
         done.set()
         await ticker
+        gc.unfreeze()
     return out, max(gaps)
 
 
