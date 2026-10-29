@@ -11,7 +11,8 @@ analyse komt als job met die bibliotheek:
   ziet de TextTrack-API de cues op de goede tijd en de ASS-cue met line 0, en in de pixels staat
   die bovenaan en de SRT-cue onderaan; elke VTT is text/vtt met nosniff;
 - de sprites: de analyse in een bibliotheek maakt ze, play geeft trick, elk adres uit trick.vtt
-  laadt via de sessie (ook als <img>), en na de prullenbak 403;
+  laadt via de sessie (ook als <img>), de cue van een tijd wijst het goede vak van de tegel aan
+  (wat de speler bij hover doet; de hover zelf is van M6), en na de prullenbak 403;
 - bij het samenvoegen met M4 (golf 2): PGS en VobSub ingebrand door de producer van M4, gemeten
   in de pixels van de stroom (ook na een sprong, S9), en de ingebedde SRT en ASS van een
   transcode (HDR) als <track> op de <video> van die stroom, op de tijdlijn van de stroom.
@@ -83,6 +84,44 @@ CUES_JS = """() => {
     }));
   }
   return out;
+}"""
+
+HOVER_JS = """async ({ file, vtt, at }) => {
+  // Wat de speler bij hover doet (M6): trick.vtt als metadata-track, de cue op tijd `at`, en
+  // het vak xywh uit de tegel (relatief aan trick.vtt), op een canvas van die maat
+  document.getElementById("m5-hover")?.remove();
+  const v = document.createElement("video");
+  v.id = "m5-hover"; v.muted = true; v.preload = "metadata"; v.src = file;
+  const el = document.createElement("track");
+  el.kind = "metadata"; el.src = vtt;
+  v.append(el);
+  document.body.append(v);
+  const loaded = new Promise((ok, fail) => {
+    el.addEventListener("load", ok, { once: true });
+    el.addEventListener("error", () => fail(new Error("trick.vtt laadt niet")), { once: true });
+  });
+  el.track.mode = "hidden";
+  await loaded;
+  const cues = Array.from(el.track.cues);
+  const cue = cues.find((c) => c.startTime <= at && at < c.endTime);
+  if (!cue) return { cues: cues.length, cue: null };
+  const [path, box] = cue.text.split("#xywh=");
+  const [x, y, w, h] = box.split(",").map(Number);
+  const img = new Image();
+  img.src = new URL(path, new URL(vtt, location.href)).href;
+  await img.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+  const px = ctx.getImageData(0, 0, w, h).data;
+  let light = 0;
+  for (let i = 0; i < px.length; i += 4) light += px[i] + px[i + 1] + px[i + 2];
+  v.remove();
+  return {
+    cues: cues.length, cue: cue.text, start: cue.startTime, end: cue.endTime,
+    tile: [img.naturalWidth, img.naturalHeight], box: [x, y, w, h], light: light / (w * h * 3),
+  };
 }"""
 
 SHOW_JS = """(label) => {
@@ -376,6 +415,14 @@ def test_sprites_via_de_sessie_en_403_na_de_prullenbak(media, media_browsers, ff
         assert tile["status"] == 200 and tile["type"] == "image/jpeg", tile
         assert tile["nosniff"] == "nosniff", tile
         assert page.evaluate(IMG_JS, url) == [1600, 900]
+    # "sprites bij hover" (review golf 2, K3), zonder de speler van M6: de browser leest
+    # trick.vtt als metadata-track, vindt de cue van een tijd en tekent dat vak uit de tegel.
+    # De hover zelf (de muis boven de tijdbalk) toetst de e2e van M6
+    hover = page.evaluate(HOVER_JS, {"file": f"{base}/file", "vtt": f"{base}/trick.vtt", "at": 1.5})
+    assert hover["cues"] == 1 and hover["cue"] == "trick/0.jpg#xywh=0,0,160,90", hover
+    assert hover["start"] == 0 and hover["end"] > 1.5, hover
+    assert hover["tile"] == [1600, 900] and hover["box"] == [0, 0, 160, 90], hover
+    assert hover["light"] > 5, hover  # een beeld, geen leeg vak
     # naar de prullenbak: de sessie stopt meteen, ook voor de sprites
     media.server.request("DELETE", f"/api/v1/files/{up.id}", token=token, expect=204)
     for rest in ("trick.vtt", "trick/0.jpg"):
