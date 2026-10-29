@@ -205,7 +205,8 @@ en capabilities, onder `--cpus 3`:
 
 Daarna S3 van de spike (`api/tests/media/spike/ci.py --stappen S3`): een fd van de app naar de
 worker tussen twee containers, met de afscherming van Keuze 11 en 47. Hier is S3 hard: elke
-controle moet goed zijn. In `media-spike` blijft het een uitkomst.
+controle moet goed zijn. In de job `media-spike` was het een uitkomst; die job is weg sinds de tag
+`fase5-basis` (§3.7: na M0 neemt `media-image` het over).
 
 ## De jobs in CI
 
@@ -216,7 +217,6 @@ controle moet goed zijn. In `media-spike` blijft het een uitkomst.
 | `e2e` | de e2e van fase 3 en 4, zonder media | een test faalt |
 | `e2e-media` | de web-app bouwen, Chrome for Testing (`playwright install --with-deps chromium`, zoals `e2e`), ffmpeg, dan `pytest ../e2e -m media -rs`; `timeout-minutes: 20`, `MEDIA_REQUIRE_H264` `"1"` | een test faalt (ook een H.264-test die de codec mist), of alles slaat over omdat ffmpeg ontbreekt |
 | `e2e-media-perf` | zoals `e2e-media`, dan `-m media_perf`; toont de browser en S13, en zet één regel in de samenvatting van de run; artefact `media-prestaties` | nooit (`continue-on-error`, `E2E_PERF_REPORT_ONLY=1`) |
-| `media-spike` | de spike in het image (alleen als de spike of het Dockerfile veranderde); ongewijzigd | een script crasht |
 | `media-image` | het platform-image (de cache van `images`), de kern in het image, dan S3; artefact `media-image` met `kern.json`, `s3.json` en `kort.txt` | een controle van de kern of van S3 faalt |
 
 Geen nieuwe action: alles met `actions/checkout`, `setup-uv`, `setup-node`, `setup-buildx`,
