@@ -637,7 +637,10 @@ onderaan.
       `PLATFORM_MEDIA_WORKER_KEY` (minstens 32 tekens, nooit het geheim van de app), verplicht
       met `PLATFORM_MEDIA_WORKER`; de lokale worker krijgt een afgeleide van het geheim van de
       app (`Settings.media_key`, zodat de cli hem ook kent). Zonder sleutel start de worker niet
-      (code 2). Dit maakt de vraag het tweede bericht; `PROTOCOL` blijft 1, want er is nog geen
+      (code 2). Klopt de sleutel van de app niet (`Settings.media_problem`: te kort, of gelijk
+      aan het geheim), dan praat de app niet met de worker: `client.connect` weigert, de
+      gezondheid draait niet, en de worker staat op down met de reden (nacontrole M0). Dit
+      maakt de vraag het tweede bericht; `PROTOCOL` blijft 1, want er is nog geen
       uitgerolde worker zonder hello. Keuze 11 zegt waarom;
     - **(spike) Een fd uit `SCM_RIGHTS` deelt zijn positie** (de file offset) met de app en met
       elk kind. In S3 stond hij na ffprobe op 65536, en ffmpeg las `fd:` vanaf daar (rc 183).
