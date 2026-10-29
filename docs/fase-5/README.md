@@ -70,6 +70,32 @@ tests, eerste lading JS 95,6 van 100 KB, i18n strikt zonder meldingen); de e2e v
 Chromium 141 hier heeft geen `avc1`; in CI moet hij spelen). Het image, de worker-container
 (S3 punt 17 en R12) en Chrome for Testing ziet pas CI.
 
+Na de review van golf 2 kwamen de fixer en de na-controle. De na-controle draaide de test van
+elke fix tegen de code van vóór de fix, en vond drie dingen die ze met een test rechtzette:
+
+- de fix van S3 gaf remux ook een grens van 1 per publieke link. Een link heeft al 2 sessies (de
+  derde sluit de oudste), en met die grens kreeg de tweede kijker van een mkv 503. Die grens is
+  weer weg; de 3 remuxen per gebruiker blijven ([m4.md](m4.md), afwijking 13);
+- een wissel (`replace`, een ander audiospoor of een lagere trede) telde de plaats van de oude
+  sessie nog mee in de toelating: de wissel van de ene transcode via een link gaf 503, en een
+  eigen transcode kreeg een lagere trede. Nu telt die plaats niet mee ([m4.md](m4.md), afwijking
+  16; de twee bestanden van M3 staan in [m3.md](m3.md));
+- de tik van `subconv.steps` zonder cues had geen test ([m5.md](m5.md)).
+
+"Klaar als" van M4 en M5, per punt hier bewezen of in CI, staat onder "De na-controle (golf 2)"
+in [m4.md](m4.md) en [m5.md](m5.md). De uitslag op de stand na de na-controle, in de sandbox: api
+3109 goed en 1 overgeslagen (twee volle rondes); `-m media` (onder `taskset -c 0-2`, twee keer)
+164 goed; web groen (648 tests, eerste lading JS 95,6 van 100 KB, i18n strikt zonder meldingen);
+de e2e van fase 3 en 4 110 goed; `-m office` 30 goed; e2e `-m media` 27 goed en 3 overgeslagen
+(H.264, zoals hierboven); `media_perf` 2 goed, alle starttijden ruim onder hun grens (de sprong
+1,56 van 2 s). In een eerste volle ronde faalde één keer
+`test_search.py::test_snel_genoeg_met_twintigduizend_bestanden` (fase 2): de zoekvraag op een tag
+duurde 1,12 s (grens 1 s), terwijl de na-controle in dezelfde checkout ook andere tests draaide.
+Die vraag kost 0,07 s, ook midden in de volle ronde (gemeten: geen volle ronde van de garbage
+collector en geen andere threads op dat moment), en de test slaagde daarna in twee volle rondes
+en tien losse, ook met een veel grotere heap en naast een bezette core. Waar die ene seconde
+vandaan kwam, is niet gevonden; de test (en de code) van fase 2 bleef ongemoeid.
+
 ## Doel
 
 Films, series en muziek afspelen op elk apparaat, met zo weinig mogelijk omzetten. Uit het

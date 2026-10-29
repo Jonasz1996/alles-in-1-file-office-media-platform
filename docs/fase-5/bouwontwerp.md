@@ -1343,9 +1343,15 @@ onderaan.
       alleen lager), 2 per gebruiker (`reason: user`), 1 per publieke link. Minder dan 10 GB vrij:
       `reason: disk` (Keuze 31).
       *Noot (review golf 2, S3):* remux had alleen het totaal van 6 (Keuze 12), en één account
-      kon ze alle 6 nemen. M4 zet er hooguit 3 per gebruiker (`reason: user`) en 1 per publieke
-      link (`reason: link`) bij, met Retry-After 30. Jonas kan die getallen nog kiezen; dit is de
-      veiligere lezing, geen besluit. [m4.md](m4.md), afwijking 13.
+      kon ze alle 6 nemen. M4 zet er hooguit 3 per gebruiker (`reason: user`) bij, met
+      Retry-After 30. Jonas kan dat getal nog kiezen; dit is de veiligere lezing, geen besluit.
+      *Na-controle golf 2:* geen eigen grens voor remux per publieke link (de review zette er 1):
+      een link heeft al 2 sessies en de derde sluit de oudste (Keuze 34), en met die grens kreeg
+      de tweede kijker van een mkv 503. [m4.md](m4.md), afwijking 13.
+      *Noot (na-controle golf 2):* bij `replace` (een ander audiospoor, een lagere trede) telt de
+      plaats van de oude sessie niet mee in de toelating; die sessie gaat in dezelfde beurt dicht.
+      Anders kreeg een wissel van de ene transcode via een link 503, en een eigen transcode een
+      lagere trede. [m4.md](m4.md), afwijking 16.
     - **Afremmen door tegendruk** (D6): de app leest de pipe niet verder als de producent 60 s
       voor ligt op het laatste verzoek van de speler. Dat telt in seconden mediatijd, niet in
       segmenten (een remux-segment is 6 s of langer). ffmpeg blokkeert dan en kost niets.
