@@ -451,6 +451,8 @@ PNG_MTIME = "2022-03-05T09:00:00+00:00"
 PNG_AT = "2022-03-05T10:00:00Z"
 # Zo stonden ze er voor het lezen van de inhoud (de terugvaldatum: lastModified)
 OLD_MTIME = "2025-06-01T08:00:00+00:00"
+# De handtekening van een ondertekend adres (base64url): weg vóór de controle op GPS
+SIG = re.compile(r"sig=[A-Za-z0-9_-]+")
 
 
 def ms(iso: str) -> int:
@@ -701,7 +703,9 @@ def test_04_fotos_tijdlijn_album_delen_en_publieke_link(verhaal: Verhaal, tmp_pa
     public = [r.text() for r in answers if "json" in (r.headers.get("content-type") or "")]
     assert len(public) >= 2, [r.url for r in answers]  # het album en zijn previews
     for text in [r.text for r in own] + public:
-        low = text.lower()
+        # Een handtekening (sig=, base64url van een HMAC met een geheim per run) kan toevallig
+        # "gps" bevatten (± 0,1 % per handtekening); daar staat geen plaats in
+        low = SIG.sub("sig=", text).lower()
         assert "gps" not in low and "latitude" not in low and "location" not in low, text
     v.stand.update(album=album_id, fotos=fotos, foto_ids=ids)
     stap(v, "foto's")
