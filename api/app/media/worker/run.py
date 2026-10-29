@@ -4,7 +4,9 @@ Elk kind (ffmpeg of ffprobe):
 - krijgt zijn fd's op 3, 4, … via dup2 in het kind zelf, nooit in de ouder: daar kan fd 3 de
   epoll van asyncio zijn (spike punt 3). In het kind eerst een kopie boven alle doelen
   (F_DUPFD_CLOEXEC), dan dup2 naar het doel (dat haalt CLOEXEC eraf). Alle andere fd's van de
-  worker zijn CLOEXEC (PEP 446, en recvmsg met MSG_CMSG_CLOEXEC), dus close_fds is niet nodig;
+  worker zijn CLOEXEC (PEP 446, en recvmsg met MSG_CMSG_CLOEXEC), maar daar rekent het kind niet
+  op: alles boven de doelen krijgt in het kind CLOEXEC (close_range met CLOSE_RANGE_CLOEXEC),
+  zodat ook een fd die per ongeluk erfbaar is (een bibliotheek, een dup2) niet bij ffmpeg komt;
 - leest een bron vanaf positie 0: de positie van een fd uit SCM_RIGHTS is gedeeld met de app en
   met elk vorig kind (spike punt 1). Daarom lseek(0) vóór elke start, en nooit twee kinderen
   tegelijk op één fd (de opdrachten draaien hun kinderen na elkaar);
@@ -46,8 +48,24 @@ _PROGRESS = re.compile(rb"^([a-z][a-z0-9_]*)=(.*)$")
 _TAIL_BYTES = 16 * 1024
 Progress = Callable[[int, float | None], None]
 PR_SET_PDEATHSIG = 1
+CLOSE_RANGE_CLOEXEC = 4
 # Vooraf geladen: in het kind (na fork, vóór exec) alleen nog aanroepen
 _LIBC = ctypes.CDLL(None, use_errno=True)
+_CLOSE_RANGE = getattr(_LIBC, "close_range", None)  # glibc 2.34 en Linux 5.11
+if _CLOSE_RANGE is not None:
+    _CLOSE_RANGE.argtypes = (ctypes.c_uint, ctypes.c_uint, ctypes.c_int)
+
+
+def _cloexec_from(first: int) -> None:
+    """In het kind: elke fd vanaf first krijgt CLOEXEC en is na exec weg. Sluiten kan hier nog
+    niet: de foutpipe van subprocess (CLOEXEC) moet tot exec open blijven. Zonder close_range
+    (ENOSYS, of EPERM van seccomp) per fd uit /proc/self/fd."""
+    if _CLOSE_RANGE is not None and _CLOSE_RANGE(first, 0xFFFFFFFF, CLOSE_RANGE_CLOEXEC) == 0:
+        return
+    for name in os.listdir("/proc/self/fd"):
+        if int(name) >= first:
+            with contextlib.suppress(OSError):  # de fd van listdir zelf is dan al dicht
+                os.set_inheritable(int(name), False)
 
 
 def environment() -> dict[str, str]:
@@ -87,6 +105,7 @@ def _preexec(fds: Sequence[int], limits: dict[int, int], parent: int) -> Callabl
         high = [fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, floor) for fd in fds]
         for i, fd in enumerate(high):
             os.dup2(fd, FIRST_FD + i)  # zonder CLOEXEC: het kind erft hem
+        _cloexec_from(FIRST_FD + len(fds))  # de rest niet, ook niet als hij erfbaar was
         for kind, value in limits.items():
             resource.setrlimit(kind, (value, value))
 

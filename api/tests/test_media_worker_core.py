@@ -17,6 +17,7 @@ import array
 import asyncio
 import contextlib
 import errno
+import fcntl
 import json
 import os
 import shutil
@@ -862,6 +863,42 @@ def test_een_kind_stopt_als_de_worker_hard_stopt():
             proc.wait(timeout=10)
         if proc.stdout is not None:
             proc.stdout.close()
+
+
+@pytest.mark.parametrize("close_range", [True, False], ids=["close_range", "proc-self-fd"])
+async def test_een_erfbare_fd_van_de_worker_komt_niet_bij_het_kind(
+    tmp_path, monkeypatch, close_range
+):
+    """Dat elke fd van de worker CLOEXEC is (PEP 446), is een aanname: een bibliotheek of een
+    dup2 kan er een erfbaar maken. Het kind krijgt toch alleen 0, 1, 2 en zijn eigen fd's (in
+    CI had het pytest-proces er twee, 142 en 145, en die kwamen zo bij de nep-ffmpeg). Met
+    close_range (glibc 2.34, Linux 5.11), en zonder: dan per fd uit /proc/self/fd."""
+    from app.media.worker import run as R
+
+    if close_range:
+        assert R._CLOSE_RANGE is not None  # Debian 13 en Ubuntu 24.04 hebben het
+    else:
+        monkeypatch.setattr(R, "_CLOSE_RANGE", None)  # het kind (fork) neemt dat over
+    source = tmp_path / "bron"
+    source.write_bytes(b"x")
+    src = os.open(source, os.O_RDONLY | os.O_CLOEXEC)
+    leaks = []
+    for _ in range(2):  # laag, net boven de doelen
+        fd = os.open(os.devnull, os.O_RDONLY)
+        os.set_inheritable(fd, True)
+        leaks.append(fd)
+    leaks.append(fcntl.fcntl(leaks[0], fcntl.F_DUPFD, 200))  # hoog, erfbaar
+    try:
+        child = R.spawn(["sleep", "30"], inputs=[src], memory_mb=64)
+        try:
+            fds = sorted(int(n) for n in os.listdir(f"/proc/{child.pid}/fd"))
+            assert fds == [0, 1, 2, 3], {n: os.readlink(f"/proc/{child.pid}/fd/{n}") for n in fds}
+            assert os.readlink(f"/proc/{child.pid}/fd/3") == str(source)
+        finally:
+            await child.stop()
+    finally:
+        for fd in (src, *leaks):
+            os.close(fd)
 
 
 # --- de echte lokale worker (ffmpeg) ---------------------------------------------------------
