@@ -160,12 +160,20 @@ def embedded_subtitle(probe: Probe, sid: str | None) -> Stream | None:
     return next((s for s in probe.subtitles() if s.index == index), None)
 
 
+def _lang(s: Stream | None) -> str | None:
+    """De taal van S; und (ISO 639-2: onbepaald) telt als geen taal. ffmpeg zet und in elke mp4
+    zonder taal (review golf 1, gevonden bij K4)."""
+    lang = s.lang if s else None
+    return None if not lang or lang == "und" else lang
+
+
 def _forced_image(probe: Probe, audio: Stream | None) -> str | None:
     """Een geforceerd beeldspoor in de taal van A (of zonder taal): nooit vanzelf aan, wel
     aangeboden (Keuze 29)."""
-    lang = audio.lang if audio else None
+    lang = _lang(audio)
     for s in probe.subtitles():
-        if s.forced and s.codec in IMAGE_SUBTITLES and (not lang or not s.lang or s.lang == lang):
+        own = _lang(s)
+        if s.forced and s.codec in IMAGE_SUBTITLES and (not lang or not own or own == lang):
             return f"e{s.index}"
     return None
 

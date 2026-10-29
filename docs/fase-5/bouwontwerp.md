@@ -1407,6 +1407,11 @@ onderaan.
       "Geforceerde ondertitel inbranden (kost omzetten)" aan. Tests in `test_media_decide.py`:
       PGS geforceerd met een profiel dat direct kan, geeft `direct`; een publieke link met PGS
       geforceerd geeft `remux`, geen 403.
+      *Noot bij de bouw van M3:* PGS staat alleen in mkv, ts en m2ts, en mkv is nooit direct
+      (Keuze 19), dus "PGS geforceerd geeft `direct`" kan niet. De test is: PGS geforceerd geeft
+      bij elk profiel `remux` (geen transcode) met `forced_available`, ook met `video/x-matroska`
+      in `file`; en een mp4 met een geforceerd VobSub-spoor (dat maakt `ffmpeg -c copy`) blijft
+      `direct`. De taal `und` telt als geen taal ([m3.md](m3.md), afwijking 19).
     - **Beeldondertitels** (PGS, VobSub, DVB) kunnen niet naar tekst zonder OCR. Ze worden alleen
       ingebrand: transcode met `[0:s:N]scale=W:H[s];[v][s]overlay=eof_action=pass`. Dat kan alleen
       voor een ingebed spoor (uit de ene invoer-fd). Losse `.sup`, `.sub` en `.idx` koppelen we in
@@ -2470,6 +2475,9 @@ werkt hiermee al helemaal.
   - "hevc 2160p HDR, auto": 422 `media_hdr` met reden `too_large`;
   - een bron boven 8192×4320: 415 `media_unsupported`;
   - PGS geforceerd met een profiel dat direct kan: `direct`, met `forced_available`;
+    *Noot bij de bouw van M3:* PGS in mkv is nooit direct; de test is `remux` (geen transcode)
+    met `forced_available` bij elk profiel, en `direct` voor een mp4 met een geforceerd
+    VobSub-spoor ([m3.md](m3.md), afwijking 19);
   - een publieke link met PGS geforceerd: `remux`, geen 403;
   - Hi10P (`h264_hi10p.mkv`): `chromium141` remux, `safari17` transcode;
   - `noaudio.mp4`: `audio: "none"` en een mime met alleen video;
@@ -4369,7 +4377,7 @@ anders deed of een deel niet overnam, staat dat onder "Afgewezen kritiek", met d
 | MED-1. De kosten waren per trede, gemeten met een 1080p-bron. Decoderen van 4K of HEVC10 telde niet mee. "4K HDR live nooit" stond nergens als regel. | `kosten = (tabel × fps/24 + d(bron) − d(ref) + extra) × f`, met `d_codec` uit V3 (H.264 0,18, HEVC 0,31). `bench` meet ook het decoderen van HEVC10 (`f_dec`). Een plan boven 1,8 × `f` telt als 2 plaatsen. Een regel in decide: HDR groter dan 1920×1088 geeft 422 `media_hdr` met reden `too_large`. Nagerekend tegen de metingen: binnen 0,1 core. Tests in `test_media_decide.py` en `test_media_admission.py`. Keuze 26, 27. |
 | MED-2. Zonder edit list komt het eerste beeld een B-frame te laat (+83 ms bij remux, +104 ms bij transcode). J4 en S2 keken alleen naar `tfdt`. | `+negative_cts_offsets` in `-movflags` voor transcode en remux, dus `trun` versie 1 met de eerste offset 0 (V4, op de bestanden van de critici). De knipper leest getekende offsets. S2 eist `tfdt` plus de offset van het eerste sample = de brontijd + 1 s, binnen één frame. S4 meet het in Chromium met `requestVideoFrameCallback`. Keuze 22, 23, §3.3, §3.7. Over Safari: zie "Afgewezen kritiek". |
 | MED-3. x264 hield `keyint=250`. Boven 125 fps kwamen er extra IDR's in een segment. En niets begrensde de fps, dus het level klopte niet. | `-g 100000` en `-fpsmax 60` in de argv van transcode (ook bij VP9, al is het daar volgens V5 niet nodig). De knipper deelt fragmenten in op de pts van het eerste sample, niet "één fragment is één segment". V5: met `-g 100000` vallen de keyframes precies om de 2 s, `-fpsmax 60` geeft 60 fps. `fps240.mp4` in S2. Keuze 22, 24, §3.3. |
-| MED-4. Geforceerde ondertitels gingen vanzelf aan, ook als beeld (PGS). Zo werd direct play een transcode, en een publieke link gaf 403. | Alleen tekst gaat vanzelf aan. Bij een beeldspoor houdt decide de modus en geeft `forced_available`. De speler biedt "Geforceerde ondertitel inbranden (kost omzetten)" aan. Tests: PGS geforceerd met een profiel dat direct kan, geeft `direct`; een publieke link geeft `remux`, geen 403. Keuze 19, 29, M3. |
+| MED-4. Geforceerde ondertitels gingen vanzelf aan, ook als beeld (PGS). Zo werd direct play een transcode, en een publieke link gaf 403. | Alleen tekst gaat vanzelf aan. Bij een beeldspoor houdt decide de modus en geeft `forced_available`. De speler biedt "Geforceerde ondertitel inbranden (kost omzetten)" aan. Tests: PGS geforceerd met een profiel dat direct kan, geeft `direct`; een publieke link geeft `remux`, geen 403. Keuze 19, 29, M3. *Noot bij de bouw van M3:* PGS in mkv kan niet direct (Keuze 19); de test is `remux` met `forced_available`, en `direct` voor een mp4 met een geforceerd VobSub-spoor ([m3.md](m3.md), afwijking 19). |
 | MED-5. De keyframe-index (tot 4 MB) paste niet in een bericht van 64 KB. | De worker geeft de index al in de opgeslagen vorm (zlib, varint-delta's, base64), hooguit 48 KB. Daarboven dunt hij uit tot één keyframe per seconde; dat is genoeg voor de regel van 6 s. Test met 50.000 keyframes (`test_media_keyframes_wire.py`). Keuze 12, 17, M4. Over `sparse`: zie "Afgewezen kritiek". |
 | MED-6. Bij de voortgang won de laatste PUT. Een late PUT kon gezien en positie 0 overschrijven. | Elke PUT krijgt `seq` (oplopend per `origin`) en `started_at` van `play`. Een PUT die niet nieuwer is, of van een sessie die begon vóór de laatste keer gezien, telt niet. Gezien gaat alleen weg door "Niet gezien", of door een nieuwe sessie die verder komt dan 60 s. `playback_state` krijgt `seq`, `play_started_at` en `watched_at`. Tests voor beide volgordes in `test_media_progress.py`. Keuze 36, §3.1, M7. |
 | MED-7. Codec-strings kwamen uit `avcC` en `hvcC`, maar MPEG-TS heeft Annex-B. | Annex-B herkennen (`00 00 01`) en profiel en level uit de eerste SPS halen (bij HEVC ook de VPS). Fixtures `a.ts` en `a.m2ts` in `test_media_codecs.py`. Keuze 16, M3. |

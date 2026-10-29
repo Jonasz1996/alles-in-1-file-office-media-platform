@@ -730,6 +730,59 @@ def test_geforceerd_beeld_in_de_taal_van_het_audiospoor():
     assert run(p, "chrome_ci", subtitle="x0").forced_available is None
 
 
+# --- review golf 1, K4: een geforceerd beeldspoor en direct -----------------------------------
+
+MKV_FILE = {"file": ["video/x-matroska", "video/mp4", "video/webm"]}
+
+
+@pytest.mark.parametrize("extra", [None, MKV_FILE], ids=["gewoon", "mkv-in-file"])
+@pytest.mark.parametrize("browser", list(BROWSERS))
+def test_pgs_geforceerd_maakt_er_nooit_een_transcode_van(browser, extra):
+    """Het ontwerp (§2 M3, MED-4) vroeg "PGS geforceerd met een profiel dat direct kan: direct".
+    PGS staat alleen in mkv, ts en m2ts, en mkv is nooit direct (DIRECT_KINDS), ook niet met
+    video/x-matroska in file. Wat de test wel bewijst: het geforceerde beeldspoor maakt er geen
+    transcode van. Remux met forced_available; chromium141 (zonder H.264) transcode om de video,
+    niet om de ondertitel."""
+    plan = run(pgs_forced(), browser, profile=extra)
+    assert plan.forced_available == "e1" and plan.burn is None
+    assert "subtitle_burn" not in plan.reasons
+    want = ("transcode", ["video_codec"]) if browser == "chromium141" else ("remux", ["container"])
+    assert (plan.mode, plan.reasons) == want
+
+
+def mp4_met_geforceerd_beeld(lang: str | None = "eng") -> Probe:
+    """h264_aac.mp4 met een geforceerd VobSub-spoor. Zo'n bestand bestaat: ffmpeg -c copy zet het
+    dvd_subtitle-spoor van vobsub.mkv in een mp4, en de echte worker geeft dan container mp4,
+    dvd_subtitle, forced en taal eng. Het geluid heeft taal und: zo schrijft ffmpeg een mp4."""
+    p = probe("h264_aac.mp4")
+    sub = Stream(index=2, type="subtitle", codec="dvd_subtitle", forced=True, lang=lang)
+    p.streams.append(sub)
+    return p
+
+
+@pytest.mark.parametrize("browser", ["chrome_ci", "safari17", "firefox", "webos5"])
+def test_geforceerd_beeld_in_een_mp4_blijft_direct(browser):
+    """Het geval dat MED-4 bedoelde, in de enige vorm die bestaat: een directe container."""
+    plan = run(mp4_met_geforceerd_beeld(), browser)
+    assert (plan.mode, plan.reasons) == ("direct", [])
+    assert plan.forced_available == "e2" and plan.burn is None
+    # pas als de gebruiker het inbranden kiest: transcode
+    chosen = run(mp4_met_geforceerd_beeld(), browser, subtitle="e2")
+    assert chosen.mode == "transcode" and "subtitle_burn" in chosen.reasons
+
+
+def test_und_telt_als_geen_taal():
+    """und (ISO 639-2: onbepaald) is geen taal: anders biedt decide een geforceerd spoor in een
+    mp4 van ffmpeg nooit aan."""
+    p = mp4_met_geforceerd_beeld()
+    assert D.default_audio(p).lang == "und"
+    assert run(p, "chrome_ci").forced_available == "e2"
+    assert run(mp4_met_geforceerd_beeld("und"), "chrome_ci").forced_available == "e2"
+    # een echte andere taal blijft weg
+    p.streams[1].lang = "nld"
+    assert run(p, "chrome_ci").forced_available is None
+
+
 def test_een_los_bestand_als_ondertitel_houdt_direct():
     assert run(probe("h264_aac.mp4"), "chrome_ci", subtitle="x0").mode == "direct"
 
