@@ -42,9 +42,10 @@ from media_harness import (
     wait_gone,
     wait_playing,
 )
-from test_media_m3 import codecs_of, login, padded_webm, play, profile
+from test_media_m3 import codecs_of, login, padded_webm, play, profile, worker_busy
 
 ACCESS_CACHE_S = 15.0  # settings.media_access_cache (Keuze 21)
+PLAY_BUSY_S = 20.0  # zo lang probeert public_play het opnieuw bij busy van de worker
 
 MSE_JS = """async (base) => {
   // De speler van M6 in het klein: de kaart, de init, de segmenten op volgorde
@@ -200,9 +201,18 @@ def public_link(media: Any, token: str, folder: str) -> tuple[dict[str, Any], di
 
 
 def public_play(page: Any, key: str, node: str, body: dict[str, Any]) -> dict[str, Any]:
-    """play vanuit de publieke pagina (de sleutel van de link, geen login)."""
+    """play vanuit de publieke pagina (de sleutel van de link, geen login). Zoals de speler: bij
+    503 media_busy met reden worker na Retry-After opnieuw (bij het samenvoegen van golf 2: net
+    na twee uploads hielden hun previews de twee plaatsen "kort" van de worker bezet, en kreeg de
+    probe van play busy)."""
     url = f"/api/v1/public/media/{node}/play"
-    return page.evaluate(PUBLIC_JS, {"url": url, "key": key, "body": body})
+    end = time.monotonic() + PLAY_BUSY_S
+    while True:
+        out = page.evaluate(PUBLIC_JS, {"url": url, "key": key, "body": body})
+        detail = (out.get("data") or {}).get("detail") or {}
+        if not worker_busy(out["status"], detail) or time.monotonic() > end:
+            return out
+        time.sleep(float(detail.get("params", {}).get("retry_after", 2)))
 
 
 def set_public_transcode(media: Any, on: bool) -> None:

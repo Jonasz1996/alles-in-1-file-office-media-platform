@@ -194,8 +194,17 @@ def codecs_of(media: Any, token: str, node_id: str) -> dict[str, list[str]]:
     return r.json()
 
 
+def worker_busy(status: int, detail: dict[str, Any]) -> bool:
+    """503 media_busy met reden worker: geen plaats in de worker (Keuze 12; de plaatsen "kort"
+    delen probe, keyframes en de previews van net geüploade video's). De speler probeert het na
+    Retry-After opnieuw (§2 M6); de andere redenen (cpu, disk, user, link) zijn een antwoord."""
+    params = detail.get("params") or {}
+    return status == 503 and detail.get("code") == "media_busy" and params.get("reason") == "worker"
+
+
 def play(media: Any, token: str, node_id: str, body: dict[str, Any], path: str | None = None):
-    """POST play; bij 409 media_probe_pending (de probe loopt nog) na Retry-After opnieuw."""
+    """POST play zoals de speler: bij 409 media_probe_pending (de probe loopt nog) en bij 503
+    media_busy met reden worker na Retry-After opnieuw."""
     path = path or f"/api/v1/media/{node_id}/play"
     end = time.monotonic() + PROBE_WAIT_S
     while True:
@@ -204,7 +213,8 @@ def play(media: Any, token: str, node_id: str, body: dict[str, Any], path: str |
             return r.json()
         detail = r.json().get("detail", {})
         pending = r.status_code == 409 and detail.get("code") == "media_probe_pending"
-        assert pending and time.monotonic() < end, (r.status_code, r.text)
+        again = pending or worker_busy(r.status_code, detail)
+        assert again and time.monotonic() < end, (r.status_code, r.text)
         time.sleep(float(r.headers.get("retry-after", "1")))
 
 
