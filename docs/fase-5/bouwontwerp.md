@@ -270,7 +270,9 @@ KVM, ffmpeg 6.1.1, Docker 29; de commando's staan in [haalbaarheid.md](haalbaarh
   en laat `CODECS` weg bij VP9 en Opus [gemeten].
 - **De Chromium van Playwright heeft geen H.264 en geen AAC** [gemeten]. De doelcodec is dus een
   uitkomst van het profiel. Tests spelen VP9 of AV1 met Opus. CI draait Chrome for Testing 156.
-  Die heeft H.264 en AAC waarschijnlijk wel [niet getest].
+  Die heeft H.264 en AAC waarschijnlijk wel [niet getest]. (review K2) S13 mat het in CI:
+  Chrome for Testing 156.0.8078.4 kan H.264 en AAC via MSE [gemeten]; alleen de Chromium 141 van
+  de sandbox kan het niet.
 - **De downloadroute heeft vier gaten** die afspelen raken (N1–N6). Het fundament repareert ze
   (§3.5).
 - **Tijd.** Het stappenplan geeft 5 weken. Dit ontwerp: ±22 werkdagen, met marge (§5).
@@ -1109,7 +1111,9 @@ onderaan.
         (spike) S2 zag `trun` versie 1 in de uitvoer (H.264 met B-frames bij transcode, HEVC bij
         remux), met de pts van het eerste beeld gelijk aan `tfdt` (V4, binnen één beeld). In een
         browser is het nog niet getest: de Chromium van Playwright heeft geen H.264, en VP9 heeft
-        geen B-frames (S4). Dat komt met S13 in `e2e-media-perf`.
+        geen B-frames (S4). Dat komt met S13 in `e2e-media-perf`. (review K2) S13 zegt dat de
+        Chrome for Testing van CI H.264 kan, dus kan M4 `trun` v1 met B-frames in CI testen (in
+        `e2e-media`, met `MEDIA_REQUIRE_H264=1`).
       - Safari kunnen we hier niet testen. Dat wordt een apparaattest in fase 9, en staat bij de
         risico's. Speelt native HLS v1 niet goed, dan krijgt alleen native HLS de offsets van v0,
         met een `elst` in de init die de vertraging terugzet [niet getest].
@@ -3855,6 +3859,8 @@ contracten bevriezen die op 7.1.5 nooit draaiden. Nu:
 
 (spike) **De uitkomst** (28 oktober 2026; [spike.md](spike.md)): elke stap is gedraaid behalve
 S13, die later in `e2e-media-perf` draait. Geen enkele stap heeft een terugval hieronder nodig.
+(review K2) S13 draaide in de eerste run van de jobs van media (op `e35445c`): Chrome for
+Testing 156.0.8078.4, H.264 en AAC via MSE ja. `e2e-media` zet nu `MEDIA_REQUIRE_H264=1`.
 S1–S12 in het kort: S1 alles er, `lavfi` onder `-devices`; S2 60 van 64 zoals verwacht, N uit het
 laatste videobeeld, TS zoekt niet precies; S3 17 van 17, de fd deelt zijn positie; S4 MSE werkt,
 ook met een andere `stsd`, maar een springer is nodig; S5 alleen de `stsd`; S6 0,007 core, geen
@@ -3888,7 +3894,7 @@ S11 VP9 = 1,0 × x264, `d_codec` VP9 0,18 en AV1 0,25, VP9 met HDR hooguit 720; 
   `spike.md` zegt dat, en H.264 wordt bewezen op de LXC (§4.7, Ma).
 
 (spike) Geen van deze terugvallen is nodig: S2, S3, S4, S9 en S10 slaagden; S5 gaat over Safari
-(fase 9); S13 komt later.
+(fase 9); S13 komt later. (review K2) Ook de terugval van S13 is niet nodig: CfT 156 zei ja.
 
 ### 3.8 Klaar als (M0)
 
@@ -3912,7 +3918,8 @@ S11 VP9 = 1,0 × x264, `d_codec` VP9 0,18 en AV1 0,25, VP9 met HDR hooguit 720; 
 - De spike is gedaan. Het artefact `spike.json` van `media-spike` hoort bij de laatste commit van
   M0. `docs/fase-5/spike.md` heeft een uitkomst per stap, en de commando's van §3.3 liggen vast.
   (spike) `spike.md` is er, met S13 als open stap voor `e2e-media-perf`; §3.3 en de Keuzes zijn
-  bijgewerkt (§6, "Uitslag van de spike (M0)").
+  bijgewerkt (§6, "Uitslag van de spike (M0)"). (review K2) S13 staat er nu ook in, met de
+  uitkomst van de eerste run.
 - De jobs `api-media` en `e2e-media` bestaan, met `timeout-minutes: 20` (§4.8).
 - De keuzes staan als B39 en verder in `docs/fase-0/beslissingen.md` (voorstel), en
   `docs/fase-5/README.md` heeft een skelet.
@@ -3924,7 +3931,10 @@ S11 VP9 = 1,0 × x264, `d_codec` VP9 0,18 en AV1 0,25, VP9 met HDR hooguit 720; 
 nep-stroom, het harnas in `e2e/` (`media_harness.py`, de fixtures `media` en `ffmpeg_count`, de
 markers in `e2e/pytest.ini`, de rooktest `test_media_m0.py`) en de jobs `api-media`,
 `e2e-media` (beide `timeout-minutes: 20`), `e2e-media-perf` en `media-image`. Die jobs draaiden
-nog niet: hun eerste uitslag komt na de push. `media-image` heeft in M0 de kern van de worker op
+nog niet: hun eerste uitslag komt na de push. (review K2) Ze draaiden op `e35445c` (run
+40787463797), alle groen: `api-media` 60 goed en 3 overgeslagen (stream, M4), de 38 fixtures in
+25,7 s; `e2e-media` 8 goed; S13 ja; `media-image` de kern op 7.1.5 12 van 12 en 41 van 41
+opnames gelijk, S3 17 van 17 ([m0.md](m0.md), "Open"). `media-image` heeft in M0 de kern van de worker op
 7.1 en S3; de selftest op 7.1 (ook de afscherming van Keuze 11) komt met M1 (`--selftest`). De
 fixtures zijn hier koud in 30,0 s gemaakt op 3 cores (26 s op 4); `api-media` zet de tijd in CI
 in het log. Het artefact `spike.json` is van de run op `f713169`, niet van de laatste commit van
@@ -3994,6 +4004,8 @@ Chromium 141 van Playwright speelt VP9, AV1, Opus, FLAC en MP3, en geen H.264, A
 draait alleen als `codec_supported` ja zegt (in CI met Chrome for Testing waarschijnlijk wel
 [niet getest]), en slaat anders over met een reden. Zegt S13 dat CfT 156 H.264 en AAC kan, dan
 zet de job `e2e-media` `MEDIA_REQUIRE_H264=1`, en faalt zo'n toets in plaats van over te slaan.
+(review K2) S13 zei ja (156.0.8078.4), en de vlag staat aan; `api/tests/test_media_ci.py` houdt
+hem aan.
 Zo blijft CI niet stil groen terwijl de route van bijna alle echte bestanden nooit getest is.
 Nooit `playwright install`: de browser die er is.
 
@@ -4177,6 +4189,7 @@ een gewone job op `pull_request`. Geen nieuwe action.
   `-m "not perf and not media and not media_perf and not office and not office_real and not provider_real"`.
 - **`e2e-media`** (nieuw, naast de rest): `-m media`, met Chrome for Testing 156 zoals `e2e`.
   `timeout-minutes: 20`. `MEDIA_REQUIRE_H264=1` zodra S13 zegt dat CfT H.264 en AAC kan.
+  (review K2) Dat zei S13; de vlag staat aan.
 - **`e2e-media-perf`** (nieuw, alleen een rapport, zoals `perf`): `-m media_perf` voor Ma en Mb in
   CfT. Het artefact noemt de browserversie en wat `isTypeSupported` zegt voor `avc1.640028` en
   `mp4a.40.2` (S13).
@@ -4198,7 +4211,7 @@ een gewone job op `pull_request`. Geen nieuwe action.
   in CI"; [m0.md](m0.md), afwijkingen 32–33). `api-media` faalt als een test overslaat omdat
   ffmpeg ontbreekt (de scenario's met `stream` mogen overslaan tot M4), en geeft een
   waarschuwing als de fixtures langer dan 30 s duren. `e2e-media` zet `MEDIA_REQUIRE_H264` op
-  `"0"`. `e2e-media-perf` zet de uitkomst van S13 in de samenvatting van de run. `media-image`
+  `"0"` (review K2: sinds S13 op `"1"`). `e2e-media-perf` zet de uitkomst van S13 in de samenvatting van de run. `media-image`
   draait in M0 de kern van de worker in het image (`api/tests/media/image_kern.py`) en S3 van de
   spike, allebei hard; M1 en M10 vullen de rest. `media-spike` is ongewijzigd.
 
@@ -4290,7 +4303,7 @@ containers) kan anders uitvallen.
 | Een gat in de audio na een herstart (32–54 ms, D4) | hoog | laag | de speler springt over gaten tot 0,5 s; S4. (spike) Chromium springt niet zelf: 54 ms gaf ≥ 10 s stilstand. De springer na 250 ms is dus nodig, en werkt (260 ms; Keuze 32) |
 | De init verandert na een herstart, en native HLS raakt in de war | laag tot middel | middel | de vergelijking van de `stsd` (S5); bij native HLS een nieuwe sessie op die plek (410); `/beheer` telt het. (spike) S5: de `stsd` is na elke herstart gelijk; een andere `stsd` speelt in Chromium in dezelfde SourceBuffer (S4) |
 | Safari, iOS, webOS en Firefox zijn niet getest | hoog | middel | het profiel komt uit de browser zelf; basisprofielen met vlaggen per toestel; de playlists volgen RFC 8216 en de regels van Apple en LG, met een eigen lint; echte toestellen in fase 9 |
-| De codecs van Chrome for Testing 156 in CI zijn anders dan verwacht | middel | laag | S13 legt in `e2e-media-perf` vast wat CfT 156 zegt over `avc1` en `mp4a`; bij ja zet de e2e-job `MEDIA_REQUIRE_H264=1`, en dan faalt een H.264-test in plaats van over te slaan; bij nee bewijst de LXC H.264 (Ma); VP9, AV1 en Opus dekken de speler. (spike) S13 is nog niet gedraaid |
+| De codecs van Chrome for Testing 156 in CI zijn anders dan verwacht | middel | laag | S13 legt in `e2e-media-perf` vast wat CfT 156 zegt over `avc1` en `mp4a`; bij ja zet de e2e-job `MEDIA_REQUIRE_H264=1`, en dan faalt een H.264-test in plaats van over te slaan; bij nee bewijst de LXC H.264 (Ma); VP9, AV1 en Opus dekken de speler. (spike) S13 is nog niet gedraaid. (review K2) S13 draaide: CfT 156.0.8078.4 zegt ja, en de vlag staat aan |
 | Tone-mapping ontbreekt in het image (geen libzimg) | laag | middel | S1; dan 422 `media_hdr` met "zonder kleurcorrectie" (Keuze 27). (spike) S1: `zscale` en `tonemap` zijn er in 7.1.5, en de keten draait; de selftest houdt het zo |
 | Lange streams houden de databaseverbindingen vast | was hoog | hoog | F1; regel 8; `test_download_pool.py` |
 | Een update midden in een film | middel | laag | F3: https en http stoppen samen binnen 10 s, de mediasessies eerst, `stop_grace_period: 30s`; de speler probeert het opnieuw zolang er buffer is plus 120 s en kijkt naar `/api/v1/health` (Keuze 32); bij 410 een nieuwe sessie op de plek; e2e met `outage_s=30`; `media-status --sessions` waarschuwt vooraf |
@@ -4313,7 +4326,7 @@ containers) kan anders uitvallen.
 | `RLIMIT_FSIZE`, `RLIMIT_DATA` of `-threads 4` hindert ffmpeg | middel | laag | S10; V6 mat `RLIMIT_DATA` 1.200 MB met 4K HEVC naar 720 (RSS 520 MB); breekt het x264 op 1080, dan 2.000 MB voor live (de container heeft 3 GB); zonder `RLIMIT_FSIZE` blijven de bewaking van de RSS en de grens van de container. (spike) S10: alle grenzen werken op 1080 veryfast, `RLIMIT_FSIZE` 0 gaat aan, en `-threads 4` kost niets |
 | Testen raken de grenzen van de sandbox (3 ffmpeg, 8 GB, 3 GB scratch) | laag | middel | `PLATFORM_MEDIA_MAX_PROCS=3` in het harnas en de belastingtest (de worker dwingt het af, stervende processen tellen mee); `ffmpeg_count` kijkt elke 0,5 s en faalt bij een vierde; fixtures ±60 MB; de bronnen van de belastingtest uit `synth` (±675 MB, ±3 minuten) |
 | Eén proces: sessies, toelating en de SSE-hub in het geheugen | — | — | goed voor standalone; het cluster vraagt later routering op de naam van de node en een broker (Keuze 48) |
-| Safari speelt `trun` versie 1 (negatieve offsets) niet goed via native HLS | laag tot middel | middel | hier niet te testen; een apparaattest in fase 9; de terugval is een `elst` in de init die de vertraging terugzet, of de knipper telt de offset bij `tfdt` op [niet getest] (Keuze 22, §3.7). (spike) Ook in Chromium is `trun` v1 met B-frames nog niet getest (geen H.264 in Playwright); dat komt met S13 |
+| Safari speelt `trun` versie 1 (negatieve offsets) niet goed via native HLS | laag tot middel | middel | hier niet te testen; een apparaattest in fase 9; de terugval is een `elst` in de init die de vertraging terugzet, of de knipper telt de offset bij `tfdt` op [niet getest] (Keuze 22, §3.7). (spike) Ook in Chromium is `trun` v1 met B-frames nog niet getest (geen H.264 in Playwright); dat komt met S13. (review K2) S13 zegt dat CfT in CI H.264 kan; de test hoort bij M4 |
 | De kosten van 4K, VP9 en AV1 als bron kloppen niet | middel | middel | `d_codec` voor VP9 en AV1 is geschat; S11 meet het; een plan boven 1,8 × `f` telt dubbel; HDR boven 1920×1088 wordt geweigerd; de belastingtest op de LXC. (spike) S11 mat VP9 0,150 en AV1 0,222 (nu 0,18 en 0,25); VP9 met HDR hooguit 720 |
 | Mb haalt 2,5 s niet op 3 cores | middel | laag | V7 mat 2,59 s voor 1080 alleen; daarom ≤ 2,5 s als mediaan en ≤ 3,0 s als slechtste; naast 2 andere ≤ 5 s; de startvoorrang; de toelating kiest anders een lagere trede |
 | De import kan in de unprivileged LXC niet lezen of verplaatsen | hoog | laag | het commando voor de Proxmox-host `chown -R 110001:110001 /tank/platform/import` (README, Vraag 1); de import zegt vooraf wat niet te lezen of te verplaatsen is en stelt kopiëren voor; een test met een bestand van een andere uid |
@@ -4396,7 +4409,8 @@ anders deed of een deel niet overnam, staat dat onder "Afgewezen kritiek", met d
 ### Uitslag van de spike (M0)
 
 Geen kritiek, maar een meting. De spike (S1 tot S12: in CI op het echte image en in de sandbox;
-S13 draait later in `e2e-media-perf`) legde de commando's van de worker vast. Geen enkele stap
+S13 draait later in `e2e-media-perf`; review K2: S13 draaide, H.264 en AAC ja) legde de
+commando's van de worker vast. Geen enkele stap
 had een terugval van §3.7 nodig: `compose.media.yaml` blijft zoals Keuze 11, de tone-mapping van
 Keuze 27 is er, en inbranden blijft in fase 5. §3.3 en de Keuzes zijn bijgewerkt naar
 [spike.md](spike.md), en elke plek die veranderde, staat erin met "(spike)". Revisie 2 blijft

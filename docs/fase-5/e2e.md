@@ -65,7 +65,7 @@ ruimt oude mappen op.
 
 | Variabele | Wat |
 |---|---|
-| `MEDIA_REQUIRE_H264=1` | een test met H.264 of AAC faalt als de browser die codec niet heeft, in plaats van over te slaan. Standaard uit; in `e2e-media` op `"0"` tot S13 zegt dat Chrome for Testing H.264 en AAC kan |
+| `MEDIA_REQUIRE_H264=1` | een test met H.264 of AAC faalt als de browser die codec niet heeft, in plaats van over te slaan. Standaard uit; in `e2e-media` op `"1"`, sinds S13 zei dat Chrome for Testing H.264 en AAC kan |
 | `E2E_MEDIA_WORKER` | het pad van een socket: de app start dan geen lokale worker maar verbindt met die (de worker-container van M1). Zet `PLATFORM_MEDIA_WORKER` voor de app |
 | `E2E_PERF_REPORT_ONLY=1` | meten en rapporteren, nooit falen op een grens (zoals `perf`) |
 | `E2E_PERF_OUT` | een map; `media_perf` schrijft daar `media-m0-s13.json` |
@@ -214,7 +214,7 @@ controle moet goed zijn. In `media-spike` blijft het een uitkomst.
 | `api` | alle api-tests zonder `media`, `media_perf` en `provider_real` | een test faalt |
 | `api-media` | ffmpeg van Ubuntu, de fixtures koud maken (met de tijd in het log), dan `pytest -m media -rs`, alles onder `taskset -c 0-2`; `timeout-minutes: 20` | een test faalt, of slaat over omdat ffmpeg ontbreekt. Duurt het maken van de fixtures langer dan 30 s (§3.8), dan een waarschuwing, geen fout |
 | `e2e` | de e2e van fase 3 en 4, zonder media | een test faalt |
-| `e2e-media` | de web-app bouwen, Chrome for Testing (`playwright install --with-deps chromium`, zoals `e2e`), ffmpeg, dan `pytest ../e2e -m media -rs`; `timeout-minutes: 20`, `MEDIA_REQUIRE_H264` `"0"` | een test faalt, of alles slaat over omdat ffmpeg ontbreekt. H.264 overslaan mag (met de reden) |
+| `e2e-media` | de web-app bouwen, Chrome for Testing (`playwright install --with-deps chromium`, zoals `e2e`), ffmpeg, dan `pytest ../e2e -m media -rs`; `timeout-minutes: 20`, `MEDIA_REQUIRE_H264` `"1"` | een test faalt (ook een H.264-test die de codec mist), of alles slaat over omdat ffmpeg ontbreekt |
 | `e2e-media-perf` | zoals `e2e-media`, dan `-m media_perf`; toont de browser en S13, en zet één regel in de samenvatting van de run; artefact `media-prestaties` | nooit (`continue-on-error`, `E2E_PERF_REPORT_ONLY=1`) |
 | `media-spike` | de spike in het image (alleen als de spike of het Dockerfile veranderde); ongewijzigd | een script crasht |
 | `media-image` | het platform-image (de cache van `images`), de kern in het image, dan S3; artefact `media-image` met `kern.json`, `s3.json` en `kort.txt` | een controle van de kern of van S3 faalt |
@@ -223,10 +223,13 @@ Geen nieuwe action: alles met `actions/checkout`, `setup-uv`, `setup-node`, `set
 `build-push-action` en `upload-artifact`, zoals de andere jobs. `yamllint -s .` (job `infra`)
 controleert de workflow.
 
-**S13 en `MEDIA_REQUIRE_H264`.** Lees na een run van `e2e-media-perf` de regel "S13: <versie>,
-H.264 en AAC via MSE: ja/nee" (in de samenvatting) of `media-m0-s13.json`. Staat daar "ja", zet
-dan `MEDIA_REQUIRE_H264: "1"` in `e2e-media`. Dan faalt `test_de_viewer_speelt_h264` als de browser
-H.264 of AAC kwijt is.
+**S13 en `MEDIA_REQUIRE_H264`.** `e2e-media-perf` zet de regel "S13: <versie>, H.264 en AAC via
+MSE: ja/nee" in de samenvatting, en `media-m0-s13.json` in het artefact. De eerste run (op
+`e35445c`) zei "S13: 156.0.8078.4, H.264 en AAC via MSE: ja", en `e2e-media` speelde H.264 goed
+(8 goed, geen overgeslagen). Dus staat `MEDIA_REQUIRE_H264` nu op `"1"` in `e2e-media` (review K2;
+`api/tests/test_media_ci.py` houdt dat zo). Dan faalt `test_de_viewer_speelt_h264` als de browser
+H.264 of AAC kwijt is. Zegt een latere run "nee" (een nieuwe Chrome for Testing zonder de codecs),
+zet de vlag dan niet stil terug: dat is een vondst voor §6 van het bouwontwerp.
 
 ## Wat de pakketten toevoegen
 
@@ -257,4 +260,15 @@ In de sandbox (Chromium 141.0.7390.37, ffmpeg 6.1.1, 4 cores):
 - De e2e van de job `e2e` zonder media: 109 goed; `-m office`: 30 goed.
 - `image_kern.py --alles --ffmpeg 6.`: 12 van 12 controles, 41 van 41 opnames gelijk, 28,6 s.
 - De jobs met het image (`media-image`) en Chrome for Testing (`e2e-media`, `e2e-media-perf`)
-  draaien alleen in CI; hun eerste uitslag komt met de eerste run na deze commit.
+  draaien alleen in CI. Hun eerste uitslag staat hieronder.
+
+In CI, de eerste run (run 40787463797 op `e35445c`, 28 oktober 2026; alle 15 jobs groen):
+
+- `api-media`: 60 goed, 3 overgeslagen (stream, M4).
+- `e2e-media`: 8 goed, 165 niet gekozen, geen overgeslagen: ook `test_de_viewer_speelt_h264`
+  speelde, in Chrome for Testing 156.0.8078.4.
+- `e2e-media-perf`: "S13: 156.0.8078.4, H.264 en AAC via MSE: ja"; het eerste beeld van VP9 in de
+  viewer 1270,9, 835,5 en 794,6 ms. Daarna staat `MEDIA_REQUIRE_H264` op `"1"` (review K2).
+- `api-media`: de 38 fixtures in 25,7 s (onder de 30 s van §3.8).
+- `media-image`: de kern op ffmpeg 7.1.5: 12 van 12 controles, 41 van 41 opnames gelijk aan een
+  verse probe, in 26,6 s; S3 17 van 17 controles goed.

@@ -3,8 +3,9 @@
 Datum: 28 oktober 2026. Volgens §3.7 van `docs/fase-5/bouwontwerp.md` (revisie 2). De stappen
 "in het image" (S1, S2, S3, S5, S7, S10) draaiden in de CI-job `media-spike` op het echte image.
 De stappen "in de sandbox" (S4, S6, S8, S9, S11, S12) draaiden met ffmpeg 6.1.1 en Chromium 141.
-S13 draait later, in de CI-job `e2e-media-perf`. M0-los schreef dit verslag uit de uitkomsten, en
-mat één punt na (het rooster bij een late videostart, zie "Extra").
+S13 draaide later, in de CI-job `e2e-media-perf` (de eerste run op `e35445c`, 28 oktober 2026).
+M0-los schreef dit verslag uit de uitkomsten, en mat één punt na (het rooster bij een late
+videostart, zie "Extra"). De fixer van M0 zette er S13 bij.
 
 **Kort.** Geen enkele stap heeft een terugval van §3.7 nodig. `compose.media.yaml` blijft zoals
 Keuze 11, de tone-mapping van Keuze 27 is er, inbranden blijft in fase 5, en de commando's van
@@ -90,7 +91,7 @@ De scripts van het image staan in `api/tests/media/spike/`. De prototypes van de
 | S10 | CI | alle grenzen werken; `-threads 4` kost niets extra | `RLIMIT_FSIZE` 0 aan; 1.200 MB blijft; `-threads 4` blijft | niet nodig |
 | S11 | sandbox | VP9 0,82–1,05 × x264; VP9 HDR 1080 0,99× | VP9 = 1,0 × x264; `d_codec` VP9 0,18, AV1 0,25; VP9 + HDR hooguit 720 | — |
 | S12 | sandbox | 16 gepauzeerde streams: 500 na 30 s; `HEAD` 404 | F1 en F2 zoals §3.5 | — |
-| S13 | CI, later | nog niet gedraaid | `MEDIA_REQUIRE_H264` blijft uit tot `e2e-media-perf` het meet | — |
+| S13 | CI | Chrome for Testing 156.0.8078.4: H.264 en AAC via MSE ja | `MEDIA_REQUIRE_H264: "1"` in `e2e-media` | niet nodig |
 
 ## S1: ffmpeg 7.1.5 in het image
 
@@ -471,11 +472,26 @@ cd api && uv run python <spike>/probe_head.py         # 3 keer
 
 ## S13: Chrome for Testing in CI
 
-Nog niet gedraaid: S13 draait in de CI-job `e2e-media-perf` (Chrome for Testing 156), die er
-later komt. Die job legt in zijn artefact de browserversie vast, en wat `isTypeSupported` zegt
-voor `avc1.640028` en `mp4a.40.2`. Tot dan blijft `MEDIA_REQUIRE_H264` uit in CI. Zegt CfT 156 nee
-tegen H.264 of AAC, dan blijft het uit, en wordt H.264 bewezen op de LXC (§4.7, Ma). Dat komt dan
-hier bij.
+S13 draaide in de CI-job `e2e-media-perf`, in de eerste run van de jobs van media (run
+40787463797 op `e35445c`, 28 oktober 2026; `test_s13_de_browser_en_het_eerste_beeld`). Uit het log
+en het artefact `media-prestaties`:
+
+```
+browser: 156.0.8078.4
+user agent: ... HeadlessChrome/156.0.8078.4 ...
+avc1.640028: {'type': 'video/mp4; codecs="avc1.640028"', 'mse': True, 'native': 'probably'}
+mp4a.40.2: {'type': 'audio/mp4; codecs="mp4a.40.2"', 'mse': True, 'native': 'probably'}
+H.264 en AAC (MSE): True
+eerste beeld VP9 (ms): [1270.9, 835.5, 794.6]
+S13: 156.0.8078.4, H.264 en AAC via MSE: ja
+```
+
+In dezelfde run speelde `e2e-media` alle 8 tests goed, ook `test_de_viewer_speelt_h264` (geen
+enkele overgeslagen). **Besluit.** De Chrome for Testing van Playwright kan H.264 en AAC, dus zet
+`e2e-media` nu `MEDIA_REQUIRE_H264: "1"` (review K2): een H.264-test faalt in CI als de browser de
+codec kwijt is, in plaats van over te slaan. De LXC (§4.7, Ma) is voor H.264 in de browser geen
+terugval meer, wel nog voor Safari en Firefox. Het eerste beeld van VP9 is een rapport (één run,
+de eerste keer met een koude browser); de grens van §4.3 meet M5.
 
 ## Extra: het rooster bij een late videostart (M0-los)
 
@@ -633,8 +649,10 @@ afscherming van Keuze 11.
 
 ## Open punten
 
-- **`trun` versie 1 met B-frames in een browser** is niet getest (VP9 heeft geen B-frames, de
-  Chromium van Playwright geen H.264). Dat komt met S13 en `e2e-media-perf`.
+- **`trun` versie 1 met B-frames in een browser** is nog niet getest (VP9 heeft geen B-frames, de
+  Chromium 141 van de sandbox geen H.264). S13 zegt dat de Chrome for Testing van CI H.264 kan, dus
+  kan die test nu in CI: in `e2e-media` (met `MEDIA_REQUIRE_H264=1`), met een fixture met
+  B-frames. Die test hoort bij M4 (de transcode).
 - **Safari en Firefox** zijn niet getest: MP3-delay, Opus en FLAC in fMP4, de springer, `trun` v1
   via native HLS (een apparaattest in fase 9).
 - **MPEG-TS zoeken:** M4 kiest de aanpak (bijvoorbeeld eerder beginnen en weggooien wat vóór de

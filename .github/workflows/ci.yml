@@ -265,9 +265,9 @@ jobs:
     needs: [web]
     timeout-minutes: 20
     env:
-      # Uit tot S13 (job e2e-media-perf) zegt dat Chrome for Testing H.264 en AAC kan. Met "1"
-      # faalt een test zonder die codecs, in plaats van over te slaan met de reden
-      MEDIA_REQUIRE_H264: "0"
+      # Aan sinds S13 (job e2e-media-perf, run op e35445c): Chrome for Testing 156.0.8078.4 kan
+      # H.264 en AAC via MSE. Een test zonder die codecs faalt dus, in plaats van over te slaan
+      MEDIA_REQUIRE_H264: "1"
     defaults:
       run:
         working-directory: api
@@ -295,8 +295,8 @@ jobs:
         run: |
           set -o pipefail
           uv run --with playwright pytest ../e2e -m media -rs | tee "$RUNNER_TEMP/pytest.txt"
-          # Zonder ffmpeg slaat alles over: dat telt als mislukt. Een codec die de browser niet
-          # heeft, slaat over met de reden (tot MEDIA_REQUIRE_H264=1)
+          # Zonder ffmpeg slaat alles over: dat telt als mislukt. Met MEDIA_REQUIRE_H264=1 faalt
+          # een test als de browser H.264 of AAC niet heeft; een andere codec slaat over met de reden
           if grep -q "^SKIPPED .*geen ffmpeg en ffprobe" "$RUNNER_TEMP/pytest.txt"; then
             echo "Tests met media overgeslagen: ffmpeg ontbreekt" && exit 1
           fi
