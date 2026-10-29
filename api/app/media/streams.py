@@ -183,6 +183,7 @@ class Stream:
         self.failed: dict[int, BaseException] = {}
         self.problem: tuple[int, BaseException] | None = None
         self.timeouts = 0
+        self.waiting = 0  # verzoeken die nu wachten (dan is de stroom nooit stil)
         self.closed = False
         self.started = producers.clock()
         self.last_request = producers.clock()
@@ -192,6 +193,7 @@ class Stream:
         self._restart: asyncio.Task | None = None
         self._again = False
         self._made_dir = False
+        self._trimming: asyncio.Task | None = None
 
     # --- wat de producent nodig heeft (producer.Sink) ---------------------------------------
 
@@ -251,6 +253,9 @@ class Stream:
         return LEAD_MS
 
     def quiet_s(self) -> float:
+        """Hoe lang geen verzoek; 0 zolang er een op een segment of init wacht."""
+        if self.waiting:
+            return 0.0
         return producers.clock() - self.last_request
 
     def ended(self, producer: producers.Producer, error: BaseException | None) -> None:
@@ -385,9 +390,18 @@ class Stream:
         self.last_request = producers.clock()
         if n is not None:
             self.playhead = self.layout.begin(n)
+            self._trim_soon()  # de speler schoof op: wat nu ver genoeg achter hem ligt mag weg
         p = self.producer
         if p is not None:
             p.flow()
+
+    def _trim_soon(self) -> None:
+        """Boven het venster: op de achtergrond trimmen (niet in de weg van het antwoord)."""
+        budget = cache.window(_cache_gb(), len(_streams))
+        if self.closed or self.bytes <= budget:
+            return
+        if self._trimming is None or self._trimming.done():
+            self._trimming = asyncio.ensure_future(self.trim(budget))
 
     def _check(self) -> None:
         if self.closed or self.session.closed is not None:
@@ -411,8 +425,16 @@ class Stream:
 
     async def fetch(self, n: int) -> tuple[int, bytes]:
         """Segment n: (generatie, bytes). Wacht hooguit wait_s."""
-        global native_reloads
         self.touch(n)
+        self.waiting += 1
+        try:
+            return await self._fetch(n)
+        finally:
+            self.waiting -= 1
+            self.last_request = producers.clock()
+
+    async def _fetch(self, n: int) -> tuple[int, bytes]:
+        global native_reloads
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.wait_s
         while True:
@@ -447,6 +469,14 @@ class Stream:
         """De init van een generatie. Generatie 1 voordat er een is: wachten (hooguit
         wait_s); een generatie die er niet is: 404."""
         self.touch()
+        self.waiting += 1
+        try:
+            return await self._init(gen)
+        finally:
+            self.waiting -= 1
+            self.last_request = producers.clock()
+
+    async def _init(self, gen: int) -> bytes:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.wait_s
         while True:
@@ -516,11 +546,11 @@ class Stream:
 
     async def shutdown(self) -> None:
         self.closed = True
-        task = self._restart
-        if task is not None and not task.done() and task is not asyncio.current_task():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
+        for task in (self._restart, self._trimming):
+            if task is not None and not task.done() and task is not asyncio.current_task():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
         p, self.producer = self.producer, None
         if p is not None:
             await p.stop()

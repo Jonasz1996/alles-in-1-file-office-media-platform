@@ -1,7 +1,8 @@
 """De cache onder data_dir/media en het opruimen (Keuze 31). M4.
 
-    sessions/<uuid>/g<gen>/init.mp4, <n>.m4s   de segmenten per sessie (streams.py)
-    subs/, trick/, art/, audio/                  van M5, M8 en M9
+    sessions/<uuid>/<n>.m4s     de segmenten per sessie (streams.py; de inits, hooguit een
+                                paar KB per generatie, staan in het geheugen van de stroom)
+    subs/, trick/, art/, audio/ van M5, M8 en M9
 
 - Een sessie dicht: haar map weg (streams.close). Bij het starten is `sessions/` helemaal leeg
   (runtime.clear_sessions).
@@ -63,13 +64,12 @@ def window(cache_gb: float, live: int) -> int:
 
 
 def candidates(
-    pieces: Iterable[Piece], playhead_ms: int, *, keep_behind_ms: int = KEEP_BEHIND_MS
+    pieces: Iterable[Piece], playhead_ms: int, *, keep_behind_ms: int | None = None
 ) -> list[Piece]:
     """Wat weg mag, in volgorde: eerst achter de speler (het verste eerst), nooit binnen
-    keep_behind_ms; dan ver vóór de speler (het verste eerst)."""
-    behind = sorted(
-        (p for p in pieces if p.end_ms <= playhead_ms - keep_behind_ms), key=lambda p: p.begin_ms
-    )
+    keep_behind_ms (standaard KEEP_BEHIND_MS); dan ver vóór de speler (het verste eerst)."""
+    keep = KEEP_BEHIND_MS if keep_behind_ms is None else keep_behind_ms
+    behind = sorted((p for p in pieces if p.end_ms <= playhead_ms - keep), key=lambda p: p.begin_ms)
     ahead = sorted(
         (p for p in pieces if p.begin_ms >= playhead_ms + FAR_AHEAD_MS),
         key=lambda p: -p.begin_ms,
@@ -135,6 +135,7 @@ async def sweep(settings) -> None:
     limit = limit_bytes(admission.config().cache_gb)
     audio = await asyncio.to_thread(dir_size, settings.media_dir / "audio")
     total = streams.cached_bytes() + audio
+    closed: set = set()
     if total > limit:
         # Eerst de oudste stille sessies dicht
         for st in sorted(streams.all(), key=lambda s: s.last_request):
@@ -145,12 +146,15 @@ async def sweep(settings) -> None:
             freed = st.bytes
             log.info("cache vol: stille mediasessie %s dicht", st.session.id)
             sessions.close(st.session)
+            closed.add(st.session.id)  # haar stroom gaat op de achtergrond dicht
             total -= freed
     if total > limit:
         # Dan de oudste segmenten achter de speler, hoe jong ook
         for st in sorted(streams.all(), key=lambda s: -s.bytes):
             if total <= limit:
                 break
+            if st.session.id in closed or st.closed:
+                continue
             budget = max(0, st.bytes - (total - limit))
             before = st.bytes
             await st.trim(budget)

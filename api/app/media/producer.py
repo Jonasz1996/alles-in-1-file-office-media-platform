@@ -9,8 +9,11 @@
   eerste videosample (`tfdt` plus de getekende offset, ook bij transcode), met 1 ms speling voor
   het afronden. Een fragment vóór het startsegment gaat weg (remux begint op het keyframe
   ervoor, MPEG-TS eerder); een fragment voorbij N hoort bij het laatste segment. Een segment
-  is af als het eerste fragment van een later segment komt, of aan het eind van een geslaagde
-  run.
+  is af zodra het beeld van een fragment tot de grens van het segment loopt (het volgende
+  fragment begint dan op of na die grens: zo wacht segment 0 niet op fragment 1), anders als
+  het eerste fragment van een later segment komt, of aan het eind van een geslaagde run. Komt
+  er na zo'n vroeg einde toch nog iets voor dat segment, dan schrijft de producent het hele
+  segment opnieuw. Het laatste segment wacht altijd op het eind.
 - **Schrijven** gebeurt door de stroom (`Sink.store`: `<n>.m4s.tmp`, dan atomair hernoemen, en
   de wachtende verzoeken wekken), op volgorde, in een eigen taak.
 - **Tegendruk** (Keuze 26): de app leest niet verder als hij `Sink.limit_ms()` voor ligt op de
@@ -120,6 +123,7 @@ class Producer:
         self._cutter = fmp4.Cutter()
         self._current: int | None = None
         self._parts: list[bytes] = []
+        self._sent: tuple[int, bytes] | None = None  # het laatste segment dat vroeg af was
         self._transport: asyncio.ReadTransport | None = None
         self._queue: asyncio.Queue = asyncio.Queue()
         self._tasks: list[asyncio.Task] = []
@@ -139,6 +143,8 @@ class Producer:
         deze sessie stopt misschien nog), WorkerDown en WorkerFailed gaan door."""
         end = clock() + START_BUSY_S
         while True:
+            if self.stopping:  # tijdens het opnieuw proberen gestopt (de sessie ging dicht)
+                return
             try:
                 job, reads = await client.call(
                     Op.STREAM,
@@ -219,6 +225,7 @@ class Producer:
         t = frag.video_start_ms
         if t is None:  # alleen geluid (een staart na het laatste beeld): bij het huidige
             if self._current is not None:
+                self._reopen()
                 self._parts.append(frag.data)
             self._advance(frag)
             return
@@ -229,12 +236,29 @@ class Producer:
             self._current = n
         elif n > self._current:
             self._complete()
+            self._sent = None
             if n > self._current + 1:
                 log.warning("producent: segment %d tot %d ontbreken", self._current + 1, n - 1)
             self._current = n
+        else:
+            self._reopen()
         self.next = self._current
         self._parts.append(frag.data)
         self._advance(frag)
+        end = frag.video_end_ms
+        if end is not None and n + 1 < layout.count and end + SLACK_MS >= layout.stop(n):
+            # Het beeld loopt tot de grens: een volgend fragment hoort bij n + 1 of later. Dus
+            # nu al af, zonder op dat fragment te wachten (scheelt een heel segment bij de
+            # start). Het laatste segment wacht wel: alles voorbij N hoort erbij
+            self._complete(early=True)
+
+    def _reopen(self) -> None:
+        """Toch nog iets voor een segment dat al vroeg af was: opnieuw, met alles erin (het
+        volgende _complete schrijft het hele segment nog eens)."""
+        if self._sent is not None and self._sent[0] == self._current:
+            log.warning("producent: segment %d kreeg na zijn grens nog een fragment", self._current)
+            self._parts = [self._sent[1]]
+            self._sent = None
 
     def _advance(self, frag: fmp4.Fragment) -> None:
         for end in (frag.video_end_ms, frag.audio_end_ms, frag.video_start_ms):
@@ -242,7 +266,7 @@ class Producer:
                 self.produced_ms = max(self.produced_ms, end)
                 return
 
-    def _complete(self) -> None:
+    def _complete(self, *, early: bool = False) -> None:
         """Het huidige segment is af: naar de schrijver."""
         if self._current is None or not self._parts or self.gen is None:
             return
@@ -251,6 +275,7 @@ class Producer:
         self._queue.put_nowait(("segment", self._current, self.gen, data))
         self.completed += 1
         self.next = self._current + 1
+        self._sent = (self._current, data) if early else None
 
     def flow(self) -> None:
         """De tegendruk: pauzeren of verder lezen."""
@@ -349,6 +374,7 @@ class Producer:
         if self._finishing:
             return
         self._parts = []  # een half segment van een mislukte run telt niet
+        self._sent = None
         self._current = None
         self._finish(exc)
 
