@@ -13,11 +13,19 @@ import { clock } from "../next";
 import { type TrickCue, trickAt } from "../trick";
 
 const STEP_S = 5;
+/** Geen streepje voor een hoofdstuk dat (bijna) bij 0 begint: de tijdlijn van een stroom kan een
+ * paar ms na 0 beginnen (het eerste beeld, Keuze 22). */
+const MARK_FROM_MS = 500;
 
 /** De tijd (s) onder x in een balk van left tot left + width. */
 export function timeAt(x: number, left: number, width: number, duration: number): number {
   if (!(width > 0) || !(duration > 0)) return 0;
   return Math.max(0, Math.min(1, (x - left) / width)) * duration;
+}
+
+/** De hoofdstukken die een streepje krijgen: niet het eerste als dat (bijna) bij 0 begint. */
+export function marks(chapters: readonly Chapter[]): Chapter[] {
+  return chapters.filter((c) => c.start_ms > MARK_FROM_MS);
 }
 
 /** Het hoofdstuk bij tijd t (s), of null. */
@@ -122,11 +130,9 @@ export function Seekbar({
             <span key={`${a}`} className="player-seek-buffer" style={{ left: pct(a), width: pct(b - a) }} />
           ))}
           <span className="player-seek-played" style={{ width: pct(shown) }} />
-          {chapters
-            .filter((c) => c.start_ms > 0)
-            .map((c) => (
-              <span key={c.start_ms} className="player-seek-mark" style={{ left: pct(c.start_ms / 1000) }} />
-            ))}
+          {marks(chapters).map((c) => (
+            <span key={c.start_ms} className="player-seek-mark" style={{ left: pct(c.start_ms / 1000) }} />
+          ))}
           <span className="player-seek-thumb" style={{ left: pct(shown) }} />
         </div>
       </div>

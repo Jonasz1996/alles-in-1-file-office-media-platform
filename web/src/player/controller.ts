@@ -90,6 +90,8 @@ export class Controller {
   private healing = -1;
   private switching = false;
   private closed = false;
+  /** De pagina ging weg (pagehide) en de sessie is dicht; pageshow uit de bfcache opent weer */
+  private hidden = false;
   private started = false;
   private last = 0;
   private readonly onTime = () => {
@@ -274,6 +276,25 @@ export class Controller {
     closeQuietly(this.out?.sid);
     this.out = null;
     await this.open(at, { ...this.choice, ...next });
+  }
+
+  /** De pagina gaat weg (pagehide: een ander adres, het tabblad dicht, de bfcache): de sessie
+   * meteen dicht. Anders houdt een gesloten tabblad zijn plaats bij de toelating vast tot de
+   * server de stille sessie opruimt, en krijgt wie terugkomt "te druk". */
+  hide(): void {
+    if (this.closed || this.hidden || !this.out) return;
+    this.hidden = true;
+    this.seq++;
+    this.engine?.hold();
+    closeQuietly(this.out.sid);
+  }
+
+  /** Terug uit de bfcache (pageshow met persisted): een nieuwe sessie op dezelfde plek. */
+  async show(): Promise<void> {
+    if (this.closed || !this.hidden) return;
+    this.hidden = false;
+    this.out = null;
+    await this.again();
   }
 
   close(): void {

@@ -524,6 +524,9 @@ export class MseLoader {
     if (flush || mimeChanged) {
       await this.removeAll(this.buffered(), token);
       this.next = segmentAt(src.map.segments, t);
+      // Een sprong naar dezelfde plek: anders toont een gepauzeerde video het nieuwe beeld (een
+      // andere trede, een ander spoor) pas als hij weer speelt
+      if (token === this.token && !this.destroyed) this.video.currentTime = t;
     } else {
       this.next = nextSegment(this.buffered(), t, src.map.segments);
     }

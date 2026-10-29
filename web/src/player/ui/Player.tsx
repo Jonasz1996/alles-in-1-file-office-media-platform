@@ -247,7 +247,17 @@ export default function Player(props: PlayerProps): JSX.Element {
     );
     ctl.current = c;
     void c.open(latest.current.startS ?? 0);
+    // Weg van de pagina (een ander adres, het tabblad dicht): de sessie meteen dicht; terug uit
+    // de bfcache: een nieuwe sessie op dezelfde plek
+    const hide = () => c.hide();
+    const show = (e: PageTransitionEvent) => {
+      if (e.persisted) void c.show();
+    };
+    window.addEventListener("pagehide", hide);
+    window.addEventListener("pageshow", show);
     return () => {
+      window.removeEventListener("pagehide", hide);
+      window.removeEventListener("pageshow", show);
       c.close();
       ctl.current = null;
     };
