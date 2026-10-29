@@ -637,7 +637,7 @@ async def test_de_stap_subs(client, admin, settings, fake, tmp_path):
 @pytest.mark.anyio
 async def test_de_route_202_dan_200(client, admin, settings, fake, monkeypatch):
     monkeypatch.setattr(media_subs, "FAST_WAIT", 0.05)
-    # play (M3) vraagt subtitles.tracks(probe) zonder settings: dan die van runtime
+    # de route (session.settings) en keyframes.read_now (M4, bij play) lezen die van runtime
     monkeypatch.setattr(runtime, "_settings", settings)
     headers, _ = admin
     node = await text_video(client, headers, settings)
@@ -662,7 +662,8 @@ async def test_de_route_202_dan_200(client, admin, settings, fake, monkeypatch):
             assert r.headers["retry-after"] == "5"
             assert r.headers["cache-control"] == "no-store"
             assert r.headers["x-content-type-options"] == "nosniff"
-        assert len(fake.requests) == 1  # één taak voor alle verzoeken
+        # één taak voor alle verzoeken; sinds M4 leest play ook de keyframe-index (Keuze 17)
+        assert [r.op for r in fake.requests if r.op != "keyframes"] == ["subs"]
     finally:
         handler.gate.set()
     task = subtitles.running(node["sha"], "embedded")
