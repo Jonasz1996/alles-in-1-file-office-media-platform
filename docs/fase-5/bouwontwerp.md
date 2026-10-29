@@ -567,6 +567,11 @@ onderaan.
       - `chmod 0711 /usr/bin/ffmpeg /usr/bin/ffprobe` in het image (eigenaar root). Een proces
         uit een programma dat het niet mag lezen, is niet dumpbaar. Een andere job kan dan niet in
         zijn `/proc/<pid>/fd` (V2);
+        *Noot bij de bouw van M1:* ook `/usr/bin/env`, `nice` en `ionice` zijn 0711. Een kind
+        start als `nice … ionice … ffmpeg`, en een leesbaar programma maakt het proces bij de
+        execve weer dumpbaar: zonder 0711 was het even dumpbaar met de fd's van de job al open
+        (review golf 1, S1). De zelftest kijkt naar alle vijf ([m1.md](m1.md), afwijking 2 en
+        "De review (golf 1)");
       - de worker zet bij de start `prctl(PR_SET_DUMPABLE, 0)` (via `ctypes`). Dan kan ook een
         gekraakte ffmpeg niet bij de fd's die de worker van andere jobs vasthoudt (V2);
       - de app maakt elke pipe, ook die voor ondertitels. Pipes zijn dan van 10001;
@@ -618,6 +623,10 @@ onderaan.
 
       Faalt de zelftest, dan start de worker niet, en `/beheer` toont `media_worker_down` met de
       reden.
+      *Noot bij de bouw van M1:* de worker start wel, als `RefusingWorker`: hij luistert, en
+      geeft elke hello een weigering met de reden van de zelftest. Hij neemt nooit een opdracht
+      of fd aan. Zo ziet de app (en straks `/beheer`) waarom, in plaats van alleen dat de socket
+      ontbreekt ([m1.md](m1.md), "Wat er is", `selftest.py`, en M0-hotfix 1).
     - **Afgewezen: een worker over http op een intern netwerk** (ontwerp B). Fase 4 (M7) liet zien
       dat een container op een `internal: true`-netwerk de host bereikt via de gateway, en de app
       luistert intern op 8081. Ook een alleen-lezen koppeling van alle blobs valt weg: een lek
@@ -1041,6 +1050,10 @@ onderaan.
     - Grenzen: 12 uur absoluut, 30 minuten zonder verzoek, 8 per gebruiker (de oudste gaat dicht),
       2 per publieke link, 64 in totaal. `replace: <sid>` sluit de oude sessie in dezelfde beurt,
       zodat een wissel niet tegen de grens loopt.
+      *Noot bij de bouw van M3:* de oudste gaat dicht met de grafsteen `stopped` (403), niet stil
+      (410): anders vraagt de speler van dat tabblad stil een nieuwe sessie, en duwen twee
+      tabbladen elkaar eindeloos weg. Alle 64 bezet: 503 `media_busy` met reden `cpu`
+      ([m3.md](m3.md), afwijkingen 8 en 9).
     - In de cachemap staat niet de sid maar een eigen uuid van de sessie.
     - Een herstart van de app: de sessies zijn weg. De speler krijgt 410, vraagt een nieuwe sessie
       op zijn positie en loopt na 1–3 s door.
@@ -1265,6 +1278,9 @@ onderaan.
       bench. Met 0,74 kwam `f` op de runner op 2,1, waar hij ±1 hoort te zijn (S7). Het wordt
       `f` = (cores voor 1,0× hier) / (de cores van dezelfde bench in de sandbox). M1 meet die
       referentie in de sandbox, en ook die van `f_dec`.
+      *Noot bij de bouw van M1:* gemeten onder `taskset -c 0-2`, zes runs: `REF_CORES = 0,98` en
+      `REF_DEC_CORES = 0,20` (de medianen; in `ops/bench.py`). `f_dec` = (CPU-tijd / 4 s) /
+      `REF_DEC_CORES`, niet / 0,31 ([m1.md](m1.md), "De referentie van bench").
       - Daarnaast decodeert `bench` 4 s HEVC10 van 1080p, die hij eerst zelf met libx265 maakt
         (naar een pipe, niet naar schijf). Dat geeft `f_dec` voor `d(bron)`.
       - Alle kosten × `f` (en `d` × `f_dec`).
@@ -1916,6 +1932,8 @@ onderaan.
       - `RUN useradd --system --uid 10002 --no-create-home media`;
       - `RUN install -d -o media -g platform -m 2750 /run/media`;
       - `RUN chmod 0711 /usr/bin/ffmpeg /usr/bin/ffprobe` (na de `apt-get install`).
+        *Noot bij de bouw van M1:* in het Dockerfile `chmod 0711` van ffmpeg, ffprobe, env, nice
+        en ionice ([m1.md](m1.md), afwijking 2 en "De review (golf 1)", S1).
 
       In `python:3.12-slim` (Debian 13) geeft `useradd --system` de groep `platform` het gid 999,
       niet 10001 [gemeten]. Daarom noemt het Dockerfile de groep bij naam. De app-container blijft
@@ -2197,7 +2215,8 @@ de previews van video's gaan erdoorheen.
   - een transcode van 4 s `testsrc2` naar fMP4 op een pipe: twee fragmenten, `tfdt` op 1,000 en
     3,000 (`+frag_discont`, J4), `trun` versie 1 en de eerste offset 0 (`+negative_cts_offsets`,
     V4);
-  - de afscherming (Keuze 11): `id -u` is 10002; ffmpeg en ffprobe hebben modus 0711;
+  - de afscherming (Keuze 11): `id -u` is 10002; ffmpeg en ffprobe hebben modus 0711
+    (*noot bij de bouw van M1:* ook env, nice en ionice, review golf 1 S1, [m1.md](m1.md));
     `os.open('/proc/self/fd/3', O_WRONLY)` op een fd van een bestand van 10001 faalt; een kind
     kan `/proc/<worker>/fd` niet lezen. De lokale worker (zonder sandbox) meldt hier
     `sandbox: off` in plaats van een fout;
@@ -3308,6 +3327,11 @@ SessionSource = Node | LoadtestFile       # LoadtestFile alleen met media_loadte
 async def create(user, source: SessionSource, probe, plan, grant, *, family: UUID | None,
                  link_id=None, replace: str | None = None) -> Session
     # pint (sha, size) van de bron; family is de login die de sessie maakte (voor close_login)
+    # Noot bij de bouw van M3: additief settings=None (de instellingen van het verzoek) en
+    # link_print=None (de vingerafdruk van het wachtwoord van de link). create kijkt de toegang
+    # na het maken nog één keer na (review golf 1, S2): wat tijdens play verviel, maakt de
+    # sessie meteen dicht met die grafsteen, en play opent dan geen stroom (m3.md, afwijking 14
+    # en "De review (golf 1)")
 async def create_audio(user, node, probe, *, family: UUID | None) -> Session   # voor M9
 async def guard(request: Request, sid: str) -> Session
     # 410 media_session_gone: onbekend of verlopen; {reason: replaced} als de node niet meer naar de gepinde sha wijst
@@ -3526,6 +3550,9 @@ ffmpeg -f hevc -i pipe:0 -f null -
 ```
 Alleen de CPU-tijd van het tweede proces telt. `f_dec` = (CPU-tijd / 4 s) / 0,31. (spike) Ook
 voor `f_dec` meet M1 de referentie van deze bench in de sandbox (S7: 0,82–0,86 op de runner).
+*Noot bij de bouw van M1:* de referenties zijn `REF_CORES = 0,98` en `REF_DEC_CORES = 0,20`
+(`ops/bench.py`, [m1.md](m1.md), "De referentie van bench"); `f` = cores / 0,98 en `f_dec` =
+(CPU-tijd / 4 s) / 0,20.
 
 Een bron voor de belastingtest (`synth`, §4.6), naar een fd die de app opent in
 `media/loadtest/`:
@@ -4225,6 +4252,12 @@ een gewone job op `pull_request`. Geen nieuwe action.
   `"0"` (review K2: sinds S13 op `"1"`). `e2e-media-perf` zet de uitkomst van S13 in de samenvatting van de run. `media-image`
   draait in M0 de kern van de worker in het image (`api/tests/media/image_kern.py`) en S3 van de
   spike, allebei hard; M1 en M10 vullen de rest. `media-spike` is ongewijzigd.
+- *Noot bij de bouw van M1:* de job `media-spike` is weg sinds de tag `fase5-basis` (de lead).
+  `media-image` draait nu de kern, `--selftest` en `test_media_container.sh` (M1), en S3 tot M4:
+  de remux van S3 (fMP4 naar een pipe van de app) vraagt `stream` van M4. Alle andere controles
+  van S3 zitten sinds review golf 1 (K1) ook in `test_media_container.sh`, ook de blob van 0600
+  bij een proces van media dat dumpbaar is, de tmpfs van `/data` in de container, en CLOEXEC op
+  een fd uit SCM_RIGHTS ([m1.md](m1.md), Open en "De review (golf 1)").
 
 ---
 
