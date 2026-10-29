@@ -23,9 +23,14 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.config import Settings, get_settings
 from app.db import Session
+from app.media import (
+    importer,  # noqa: F401 - registreert media.import (rij import)
+    progress,
+    runtime,
+    scanner,
+)
 from app.media import items as media_items
 from app.media import library as media_library
-from app.media import progress, runtime, scanner
 from app.media.types import (
     ITEMS_PAGE,
     CardPage,
