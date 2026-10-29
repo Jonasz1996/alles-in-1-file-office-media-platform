@@ -117,7 +117,12 @@ def test_het_dockerfile_heeft_de_regels_van_keuze_47():
     assert platform < media < user  # de groep platform bestaat al; alles als root
     block = joined[media:user]
     assert re.search(r"install -d -o media -g platform -m 2750 /run/media", block)
-    assert re.search(r"chmod 0711 /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/env", block)
+    chmod = re.search(r"chmod 0711 ((?:/usr/bin/[a-z]+ ?)+)", block)
+    assert chmod is not None
+    # elk programma dat de worker of de healthcheck start, ook nice en ionice (review S1)
+    assert sorted(chmod.group(1).split()) == sorted(
+        f"/usr/bin/{name}" for name in selftest.EXEC_PROGRAMS
+    )
     probe = f"install -o platform -g platform -m 0644 /dev/null {selftest.PROBE_FILE}"
     assert probe in block
     assert selftest.PROBE_FILE == Path("/srv/zelftest-10001")

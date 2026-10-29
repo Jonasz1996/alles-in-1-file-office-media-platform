@@ -33,12 +33,15 @@ RUN useradd --system --uid 10001 platform && install -d -o platform -g platform 
 # platform (10001, 0600) dus niet via /proc opnieuw openen. /run/media is van media met groep
 # platform (2750, setgid): de socket krijgt groep platform, en de app kan er niets in maken.
 # ffmpeg en ffprobe 0711: een proces uit een programma dat niemand mag lezen, is niet dumpbaar.
-# env ook 0711: de healthcheck van media start via `env -i`, en zo is de sleutel van hello ook
-# in die korte tijd niet in /proc/<pid>/environ te lezen. /srv/zelftest-10001 (leeg, van
-# platform) is voor de zelftest van de worker (V1: opnieuw openen om te schrijven faalt).
+# nice en ionice ook: zij staan vóór ffmpeg in de argv van een job (args.niceness), en een
+# leesbare nice maakt het kind dumpbaar tot zijn exec van ffmpeg, terwijl het de fd's van de job
+# al heeft (review golf 1, S1). env ook 0711: de healthcheck van media start via `env -i`, en
+# zo is de sleutel van hello ook in die korte tijd niet in /proc/<pid>/environ te lezen.
+# /srv/zelftest-10001 (leeg, van platform) is voor de zelftest van de worker (V1: opnieuw
+# openen om te schrijven faalt).
 RUN useradd --system --uid 10002 --no-create-home media \
     && install -d -o media -g platform -m 2750 /run/media \
-    && chmod 0711 /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/env \
+    && chmod 0711 /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/env /usr/bin/nice /usr/bin/ionice \
     && install -o platform -g platform -m 0644 /dev/null /srv/zelftest-10001
 USER platform
 VOLUME /data

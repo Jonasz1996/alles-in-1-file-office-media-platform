@@ -692,6 +692,43 @@ def test_de_zelftest_ziet_een_fd_die_opnieuw_open_kan_om_te_schrijven(tmp_path, 
     ]
 
 
+def test_de_zelftest_wil_elk_programma_van_het_voorvoegsel_op_0711(tmp_path, monkeypatch):
+    """Review golf 1, S1: nice en ionice staan vóór ffmpeg in de argv. Zijn ze leesbaar, dan is
+    het kind dumpbaar tot zijn exec van ffmpeg, terwijl het de fd's van de job al heeft. De
+    zelftest kijkt dus naar elk programma dat de worker (of de healthcheck) start."""
+    used = set()
+    sprites = A.SpritesArgs(demuxer="mov", video_index=0)
+    frame_args = A.FrameArgs(demuxer="mov", video_index=0, at_s=1.0, width=320)
+    for op, parsed in (
+        (Op.SPRITES, sprites), (Op.FRAME, frame_args), (Op.BENCH, A.BenchArgs()),
+        (Op.PROBE, A.ProbeArgs()),
+    ):  # fmt: skip
+        prefix = A.niceness(op, parsed)
+        used |= {w for w in prefix if not w.startswith("-") and not w.lstrip("-").isdigit()}
+    assert used == {"nice", "ionice"}
+    assert used | set(guard.BINARIES) | {"env"} == set(selftest.EXEC_PROGRAMS)
+    # leesbaar (0755): de controle faalt met de modus, per programma
+    paths = {}
+    for name in selftest.EXEC_PROGRAMS:
+        path = tmp_path / name
+        path.write_bytes(b"")
+        path.chmod(0o755)
+        paths[name] = str(path)
+    monkeypatch.setattr(selftest.shutil, "which", lambda name: paths.get(name))
+    report = selftest.Report()
+    selftest._binaries(report)
+    checks = {c.name: c for c in report.checks}
+    assert sorted(checks) == sorted(f"{n} 0711 van root" for n in selftest.EXEC_PROGRAMS)
+    for name in ("nice", "ionice"):
+        check = checks[f"{name} 0711 van root"]
+        assert not check.ok and check.sandbox and "modus 0755" in check.detail
+    # en niet gevonden is ook een fout
+    monkeypatch.setattr(selftest.shutil, "which", lambda name: None)
+    report = selftest.Report()
+    selftest._binaries(report)
+    assert all(not c.ok and c.detail == "niet gevonden" for c in report.checks)
+
+
 def test_de_zelftest_wil_dat_een_verbinding_naar_buiten_meteen_faalt(monkeypatch):
     class Opened:
         def __enter__(self):
@@ -741,7 +778,8 @@ def test_selftest_lokaal_zegt_wat_hij_controleerde():
     ]  # fmt: skip
     sandbox = [
         "uid 10002", "geen capabilities", "no-new-privileges", "geen netwerk", "/ alleen lezen",
-        "/data leeg", "ffmpeg 0711 van root", "ffprobe 0711 van root", "blob niet heropenbaar",
+        "/data leeg", "ffmpeg 0711 van root", "ffprobe 0711 van root", "nice 0711 van root",
+        "ionice 0711 van root", "env 0711 van root", "blob niet heropenbaar",
         "schrijven op een fd die leest faalt", "een kind leest /proc/<worker>/fd niet",
         "een kind leest /proc/<worker>/environ niet", "een buur ziet /proc/<ffmpeg>/fd niet",
     ]  # fmt: skip

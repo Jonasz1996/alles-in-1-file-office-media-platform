@@ -16,7 +16,8 @@ De afscherming:
   uit het Dockerfile, 0644) is via /proc/self/fd/N niet opnieuw te openen om te schrijven (V1);
   schrijven op de fd zelf (alleen lezen, zoals de app hem geeft) faalt met EBADF;
 - ffmpeg en ffprobe zijn 0711 van root: de worker kan ze niet lezen, dus elk kind is niet
-  dumpbaar (V2);
+  dumpbaar (V2). Ook nice en ionice (het voorvoegsel van args.niceness: tussen hun exec en die
+  van ffmpeg heeft het kind de fd's van de job al, review golf 1 S1) en env (de healthcheck);
 - een kind kan /proc/<worker>/fd en /proc/<worker>/environ niet lezen (PR_SET_DUMPABLE 0; in
   environ stond de sleutel van hello, review S1);
 - geen capabilities (CapEff 0), NoNewPrivs 1, geen netwerk (alleen lo, en een verbinding met
@@ -71,6 +72,11 @@ VERSION = "7.1."
 ENCODERS = ("libx264", "aac", "libopus", "libvpx-vp9", "mjpeg", "libx265", "flac")
 FILTERS = ("zscale", "tonemap", "bwdif", "overlay", "scale", "fps", "tile")
 PROTOCOLS = ("fd", "pipe")
+# Wat de worker en de healthcheck starten. Een proces uit een programma dat zijn uid niet mag
+# lezen, is na execve niet dumpbaar; een leesbaar programma maakt het weer dumpbaar. nice en
+# ionice staan vóór ffmpeg in de argv (args.niceness): het kind heeft dan de fd's van de job al
+# (de blob, de pipe van de app), dus ook zij 0711 (review golf 1, S1). env start de healthcheck.
+EXEC_PROGRAMS = ("ffmpeg", "ffprobe", "nice", "ionice", "env")
 STEP_S = 60.0
 MKV_LIMIT = 4 * 1024 * 1024
 FMP4_LIMIT = 32 * 1024 * 1024
@@ -196,8 +202,9 @@ def _reopen(report: Report) -> None:
 
 
 def _binaries(report: Report) -> None:
-    """V2: ffmpeg en ffprobe 0711 van root, en de worker kan ze niet lezen."""
-    for name in ("ffmpeg", "ffprobe"):
+    """V2: elk programma dat de worker of de healthcheck start, is 0711 van root, en de worker
+    kan het niet lezen (EXEC_PROGRAMS)."""
+    for name in EXEC_PROGRAMS:
         path = shutil.which(name)
         if path is None:
             report.add(f"{name} 0711 van root", False, "niet gevonden", sandbox=True)
