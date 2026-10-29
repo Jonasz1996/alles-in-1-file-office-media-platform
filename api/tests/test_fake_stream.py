@@ -140,6 +140,18 @@ def test_de_segmenten_van_de_nep():
     assert (alt.width, alt.height) == (480, 270) and alt.spans == t.spans
 
 
+def test_target_met_een_lang_laatste_segment():
+    """Review C2: loopt de audio na het laatste beeld door, dan is het laatste segment langer dan
+    2 s. TARGETDURATION gaat dan mee, zoals bij een laat eerste segment."""
+    spans = [(0, 2021), (2021, 2000), (4021, 2000), (6021, 2000), (8021, 2579)]
+    lay = FS.Layout("transcode", spans, [b""] * 5, b"", "", "", 0, 0, None, [])
+    assert FakeStream._target(lay) == 3
+    lay.spans = [(0, 2021), (2021, 1500)]
+    assert FakeStream._target(lay) == 2
+    lay.spans = [(0, 3600), (3600, 2000)]
+    assert FakeStream._target(lay) == 4
+
+
 async def test_onbekend_token_en_codecs(client):
     r = await client.post(
         f"/api/v1/media/{NODE_TRANSCODE}/play",

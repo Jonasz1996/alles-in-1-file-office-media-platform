@@ -25,9 +25,11 @@ En wat §2 M4 en Keuze 22–23 er voor onze playlists bij zeggen:
 
 - `EXTINF` met drie decimalen; bij transcode `TARGETDURATION` 2, bij remux het langste segment
   naar boven afgerond;
-- bij transcode (na de spike) mag alleen het eerste segment langer zijn dan 2 s: het loopt van 0
-  tot `origin + 2`, met `origin` waar de video begint. `TARGETDURATION` is dan die duur afgerond,
-  en elk ander segment blijft afgerond ≤ 2 (`extinf_grid`);
+- bij transcode (na de spike) mogen alleen het eerste en het laatste segment langer zijn dan 2 s.
+  Het eerste loopt van 0 tot `origin + 2`, met `origin` waar de video begint. Het laatste loopt
+  tot het eind van de producent, en dat kan na het laatste videobeeld nog audio zijn (review C2:
+  origin 21 ms, laatste beeld 9,981 s, duur 10,6 s geeft 2,579 s). `TARGETDURATION` is
+  max(2, die twee afgerond); elk segment ertussen blijft afgerond ≤ 2 (`extinf_grid`);
 - bij transcode `EXT-X-INDEPENDENT-SEGMENTS` in de master (behalve voor `webos-5`): elk segment
   begint met een IDR;
 - `RESOLUTION`, `FRAME-RATE` (drie decimalen) en `VIDEO-RANGE` (`SDR`, `PQ` of `HLG`) in de
@@ -711,23 +713,24 @@ def _media(p: Parsed, ctx: Context, out: _Collector) -> None:
     if p.target is not None:
         longest = max(s.duration for s in segments)
         # Het eerste segment loopt van 0 tot origin + 2 s (origin: waar de video begint, in
-        # mediatijd; Keuze 22 na de spike). Alleen daardoor mag het langer zijn dan 2 s.
-        wanted = max(2, _round(segments[0].duration))
+        # mediatijd; Keuze 22 na de spike), het laatste tot het eind van de producent (audio kan
+        # langer zijn dan de video; review C2). Alleen die twee mogen langer zijn dan 2 s.
+        wanted = max(2, _round(segments[0].duration), _round(segments[-1].duration))
         if ctx.mode == "transcode" and p.target != wanted:
             out.add(
                 "target_transcode",
                 target_line.number if target_line else 0,
-                f"TARGETDURATION is {p.target}; bij transcode {wanted} (2, of het eerste "
-                "segment afgerond als de video laat begint; Keuze 22)",
+                f"TARGETDURATION is {p.target}; bij transcode {wanted} (2, of het eerste of "
+                "laatste segment afgerond als dat langer is; Keuze 22)",
             )
         if ctx.mode == "transcode":
-            for s in segments[1:]:
+            for s in segments[1:-1]:
                 if _round(s.duration) > 2:
                     out.add(
                         "extinf_grid",
                         s.line,
-                        f"EXTINF {s.duration:.3f} na het eerste segment; bij transcode hooguit "
-                        "2 s afgerond (het rooster, Keuze 22)",
+                        f"EXTINF {s.duration:.3f} tussen het eerste en het laatste segment; bij "
+                        "transcode hooguit 2 s afgerond (het rooster, Keuze 22)",
                     )
         if ctx.mode == "remux" and p.target != math.ceil(longest - 1e-9):
             out.add(

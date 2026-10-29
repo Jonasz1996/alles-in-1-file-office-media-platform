@@ -1041,9 +1041,12 @@ onderaan.
         (Keuze 23). Normaal is elk fragment één segment. Komt er toch een extra keyframe, dan
         hoort dat fragment bij hetzelfde segment. `fps240.mp4` in S2 eist precies één IDR per 2 s;
       - `TARGETDURATION` is 2, of (spike) de afgeronde duur van segment 0 als die vanaf 2,5 s is
-        (een late videostart). `EXTINF` is 2,000, behalve (spike) segment 0 (`origin + 2`, meestal
-        2,021) en het laatste (tot het eind); de echte grens valt op het eerste frame na
-        `origin + 2k`, dus hooguit één frame later. (spike) `EXTINF` en `map.json` tellen in
+        (een late videostart), of (review M0, C2) de afgeronde duur van het laatste segment als
+        die vanaf 2,5 s is: dat loopt tot het eind van de producent, en de audio kan na het
+        laatste videobeeld nog doorlopen (origin 0,021, laatste beeld 9,981, duur 10,6 geeft
+        2,579). Dus `max(2, rond(eerste), rond(laatste))`. `EXTINF` is 2,000, behalve (spike)
+        segment 0 (`origin + 2`, meestal 2,021) en het laatste (tot het eind); de echte grens
+        valt op het eerste frame na `origin + 2k`, dus hooguit één frame later. (spike) `EXTINF` en `map.json` tellen in
         mediatijd met dit rooster; de HLS-lint (§3.6) eist dat. De tijden in `tfdt` zijn de
         waarheid voor de speler;
       - herstarten gebeurt alleen op een grens, (spike) met `-ss (origin + 2k)` vóór de invoer
@@ -2522,7 +2525,11 @@ v.m3u8
 ```
 - (spike) `EXTINF` van segment 0 is `origin + 2`: hier 2,021 (video vanaf 0, S = −0,021).
   Begint de video laat (`origin + 2` ≥ 2,5), dan is `TARGETDURATION` de afgeronde duur van
-  segment 0; alle andere segmenten blijven ≤ 2 na afronden. De HLS-lint eist dat (§3.6).
+  segment 0. (review M0, C2) Hetzelfde voor het laatste segment: het loopt tot het eind van de
+  producent, en is langer dan 2 s als de audio na het laatste beeld nog 0,5 s of meer doorloopt.
+  `TARGETDURATION` = `max(2, rond(eerste), rond(laatste))`; alle segmenten ertussen blijven ≤ 2
+  na afronden. De HLS-lint eist dat (§3.6). Voor M4: `hls.py` rekent het zo, niet met alleen
+  segment 0.
 - `BANDWIDTH` = (maxrate plus audio) × 1,1. `AVERAGE-BANDWIDTH` = een schatting uit de trede.
 - Bij remux: de echte piek uit de index (de grootste som van samplegroottes in een venster van
   6 s), en `EXTINF` met 3 decimalen.
@@ -3712,8 +3719,9 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
     audio heeft; `BANDWIDTH` ≥ de piek;
   - geen `EXT-X-INDEPENDENT-SEGMENTS` met het basisprofiel `webos-5`, en nooit bij remux;
   - alleen relatieve URI's; geen query behalve `g=`.
-  - (spike) bij transcode mag alleen het eerste segment langer zijn dan 2 s (`origin + 2`), en
-    is `TARGETDURATION` 2 of die duur afgerond; elk ander segment is afgerond ≤ 2
+  - (spike) bij transcode mogen alleen het eerste segment (`origin + 2`) en (review M0, C2) het
+    laatste (tot het eind van de producent) langer zijn dan 2 s, en is `TARGETDURATION`
+    `max(2, rond(eerste), rond(laatste))`; elk segment ertussen is afgerond ≤ 2
     (`extinf_grid`). Verder eist hij wat §2 M4 zegt: `EXTINF` met 3 decimalen, bij remux
     `TARGETDURATION` = het langste segment naar boven afgerond, één variant met `RESOLUTION`,
     `FRAME-RATE` en `VIDEO-RANGE`, en `EXT-X-INDEPENDENT-SEGMENTS` bij transcode (behalve

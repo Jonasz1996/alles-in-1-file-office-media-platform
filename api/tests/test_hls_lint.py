@@ -191,6 +191,8 @@ BROKEN = [
      TRANSCODE_CTX, "target_transcode"),
     ("transcode: een lang segment na het eerste", media([2.6, 2.6, 1.0], target=3),
      TRANSCODE_CTX, "extinf_grid"),
+    ("transcode: een lang laatste segment met target 2", media([2.021, 2.0, 2.579]),
+     TRANSCODE_CTX, "target_transcode"),
     ("remux met target te groot", media([6.0, 5.2], target=7), REMUX_CTX, "target_remux"),
     ("remux met target afgerond i.p.v. naar boven", media([6.4, 5.0], target=6), REMUX_CTX,
      "target_remux"),
@@ -306,6 +308,29 @@ def test_each_rule_has_a_broken_case():
     assert emitted - covered == set()
 
 
+def test_een_lang_laatste_segment_als_de_audio_doorloopt():
+    """Review C2: het rooster hangt aan het eerste beeld en N komt uit het laatste beeld, maar het
+    laatste segment loopt tot het eind van de producent. Loopt de audio 0,6 s langer door, dan is
+    het 2,579 s. Dat mag, net als een lang eerste segment, met TARGETDURATION 3."""
+    from app.media.types import SegmentGrid
+
+    grid = SegmentGrid(origin_ms=21, count=SegmentGrid.count_for(21, 9981), last_frame_ms=9981)
+    begins = [grid.start_of(k) for k in range(grid.count)]
+    ends = [*begins[1:], 10_600]
+    durations = [(e - b) / 1000 for b, e in zip(begins, ends, strict=True)]
+    assert durations == [2.021, 2.0, 2.0, 2.0, 2.579]
+    assert_ok(media(durations, target=3), TRANSCODE_CTX)
+    assert codes(lint(media(durations, target=2), TRANSCODE_CTX)) == {
+        "extinf_too_long",
+        "target_transcode",
+    }
+    # ertussen blijft het rooster, ook als het laatste lang is
+    middle = lint(media([2.021, 2.6, 2.0, 2.579], target=3), TRANSCODE_CTX)
+    assert codes(middle) == {"extinf_grid"}
+    # en een laat begin samen met een lang eind: het langste van de twee
+    assert_ok(media([3.6, 2.0, 2.579], target=4), TRANSCODE_CTX)
+
+
 def test_problem_has_line_and_text():
     (p,) = [x for x in lint(media([2.0, 2.6, 1.0]), TRANSCODE_CTX) if x.code == "extinf_too_long"]
     assert p.line == 9  # #EXTINF:2.600, is regel 9
@@ -334,7 +359,7 @@ def test_set_missing_size_and_target():
 
 
 def test_set_prefixes_the_name():
-    problems = lint_set({"master.m3u8": MASTER, "v.m3u8": media([2.0, 3.0])}, TRANSCODE_CTX)
+    problems = lint_set({"master.m3u8": MASTER, "v.m3u8": media([2.0, 3.0, 1.0])}, TRANSCODE_CTX)
     assert [p.code for p in problems] == ["extinf_too_long", "extinf_grid"]
     assert all(p.message.startswith("v.m3u8: ") for p in problems)
 

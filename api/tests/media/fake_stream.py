@@ -756,8 +756,9 @@ class FakeStream:
     @staticmethod
     def _target(lay: Layout) -> int:
         longest = max(d for _, d in lay.spans) / 1000
-        if lay.mode == "transcode":
-            return max(2, math.floor(lay.spans[0][1] / 1000 + 0.5))
+        if lay.mode == "transcode":  # het eerste en het laatste mogen langer (review C2)
+            first, last = lay.spans[0][1], lay.spans[-1][1]
+            return max(2, math.floor(first / 1000 + 0.5), math.floor(last / 1000 + 0.5))
         return math.ceil(longest - 1e-9)
 
     def _variant(self, s: FakeSession) -> str:
