@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import random
 import struct
@@ -179,6 +180,16 @@ def test_cues_van_een_ander_spoor_tellen_niet(tmp_path):
     assert read_mkv(tmp_path, data, 0) is None
 
 
+@pytest.mark.parametrize("duration", [math.nan, math.inf, -math.inf, -5.0, 0.0])
+def test_een_duur_die_geen_getal_is_is_onbekend(tmp_path, duration):
+    # review golf 2, S2: round(NaN) gaf een ValueError die matroska() niet ving (de worker gaf
+    # dan INTERNAL, en de terugval op ffprobe liep nooit)
+    idx = read_mkv(tmp_path, mkv(times=[0, 2000, 4000], duration=duration))
+    assert idx is not None
+    assert idx.times_ms == [0, 2000, 4000]
+    assert idx.end_ms is None
+
+
 def test_de_grens_van_4_mb(tmp_path):
     data = mkv(times=[i * 100 for i in range(300)], cluster_size=20_000)
     assert read_mkv(tmp_path, data) is not None
@@ -338,6 +349,8 @@ def test_fuzz_matroska_en_mp4(tmp_path, seed):
     seeds = [
         ("matroska", mkv(times=[0, 2000, 4000], duration=6000.0)),
         ("matroska", mkv(times=[0, 1000], second_seekhead=True, unknown_segment=True)),
+        ("matroska", mkv(times=[0, 2000], duration=math.nan)),
+        ("matroska", mkv(times=[0, 2000], duration=-math.inf)),
         ("mov", mp4(trak(b"vide", stss=[1, 5], ctts=[(10, 512)], elst=[(1000, 512)]))),
         ("mov", mp4(trak(b"soun"), trak(b"vide", stss=[1]), moov_at_end=True)),
     ]

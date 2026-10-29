@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import array
 import base64
+import math
 import os
 import struct
 import sys
@@ -298,7 +299,11 @@ def _take(state: _Mkv, reader: Reader, eid: int, data: int, size: int, video_ind
             if cid == TIMECODE_SCALE:
                 state.scale = _uint(body, cdata, csize) or 1_000_000
             elif cid == DURATION:
-                state.duration = _float(body, cdata, csize)
+                value = _float(body, cdata, csize)
+                # NaN, ±Inf en ≤ 0 zijn geen duur: dan is het eind onbekend (review golf 2, S2;
+                # round(NaN) gaf eerst een ValueError die niemand ving)
+                ok = value is not None and math.isfinite(value) and value > 0
+                state.duration = value if ok else None
     elif eid == TRACKS:
         body = _body(reader, data, size, TRACKS_MAX)
         state.track = _track_number(body, video_index)
@@ -355,7 +360,7 @@ def matroska(fd: int, video_index: int, *, budget: int = READ_MAX) -> Index | No
     """De keyframes uit de Cues, of None (geen Cues, geen video, of bytes die niet kloppen)."""
     try:
         return _matroska(Reader(fd, budget), video_index)
-    except (ReadError, struct.error, OverflowError):
+    except (ReadError, struct.error, OverflowError, ValueError):
         return None
 
 
@@ -547,7 +552,7 @@ def mp4(fd: int, video_index: int, *, budget: int = READ_MAX) -> Index | None:
     """De keyframes uit stss (met stts, ctts, elst en stsz), of None."""
     try:
         return _mp4(Reader(fd, budget), video_index)
-    except (ReadError, struct.error, OverflowError, ZeroDivisionError):
+    except (ReadError, struct.error, OverflowError, ZeroDivisionError, ValueError):
         return None
 
 
