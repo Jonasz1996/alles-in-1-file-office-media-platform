@@ -1,9 +1,38 @@
 # Fase 5 — Media en streaming
 
-Status: **M0 in aanbouw** (bouwontwerp revisie 2, 28 oktober 2026). Het fundament staat er
-(migratie 0008, de contracten, de kern van de worker, F1–F4, de rijen en de haken), maar media
-staat nog uit: zonder `PLATFORM_MEDIA_ENABLED` is de app precies 0.6.0 plus F1–F4. Wat M0 bouwde
-en wat nog open is, staat in [m0.md](m0.md).
+Status: **golf 1 samengevoegd: M0, M1 en M3** (bouwontwerp revisie 2; 29 oktober 2026). M0 is
+het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker, F1–F4, de
+rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
+
+- **M1, de worker in isolatie** ([m1.md](m1.md)): ffmpeg draait alleen nog in de worker, ook voor
+  de previews van video's. De app start de lokale worker, start hem opnieuw met backoff, en kijkt
+  elke 30 s of hij gezond is. Er is een container met de afscherming van Keuze 11
+  (`compose.media.yaml`); die bewijst CI in `media-image`.
+- **M3, afspelen** ([m3.md](m3.md), [clientprofiel.md](clientprofiel.md)): het profiel van de
+  client, de beslissing, de sessies met een controle bij elk verzoek, en publieke links. Direct
+  play werkt helemaal, ook met de worker weg of zonder ffmpeg.
+
+Remux en transcode geven nog 503 (`media_off` of `media_busy`): de stromen en de toelating zijn van
+M4. De rest (M2, M4–M10) komt in de volgende golven. Media staat standaard uit: zonder
+`PLATFORM_MEDIA_ENABLED` is de app 0.6.0 plus F1–F4, en de previews van video's werken zoals in
+0.6.0 (via een worker voor één keer, M1).
+
+Bij het samenvoegen van golf 1 (M1, dan M3) gingen er geen bestanden van beide pakketten door
+elkaar; alleen `ci.yml` botste met het weghalen van de job `media-spike`. Wat er toen nog
+gebeurde, staat onder "Bij het samenvoegen" in [m1.md](m1.md) en [m3.md](m3.md):
+
+- play noemt de worker als die weg is of geen ffmpeg heeft, ook bij een transcode zonder plek
+  (eerst gaf dat "druk"); getest met de echte lokale worker van M1
+  (`test_media_zonder_worker.py`);
+- de opnames van de probe voor de nep-worker zijn opnieuw opgenomen met de codec-strings van M3
+  (een M0-hotfix);
+- stap 4 van het verhaal van fase 3 leest geen handtekening meer als GPS.
+
+De uitslag op de samengevoegde stand, in de sandbox: api 2628 goed en 1 overgeslagen;
+`-m media` (onder `taskset -c 0-2`, twee keer) 93 goed en 3 overgeslagen (`stream`, M4); web
+groen (eerste lading JS 95,6 van 100 KB); de e2e van fase 3 en 4 109 goed; `-m office` 30 goed;
+e2e `-m media` (twee keer) 14 goed en 2 overgeslagen (H.264: de Chromium 141 hier heeft geen
+`avc1`; in CI moet hij spelen). Het image, de worker-container en Chrome for Testing ziet pas CI.
 
 ## Doel
 
@@ -78,6 +107,9 @@ worker, de kosten van de bron, de tijden van fMP4, en de eerste start op 3 cores
 5. Mag een publieke link transcoderen? Standaard: nee, alleen direct en remux.
 6. Profielen onder één account (bijvoorbeeld voor kinderen)? Standaard: nee, voortgang per
    account. De kolom `profile` staat klaar.
+7. Een eigen uid voor de kinderen van de worker (Keuze 11)? Voorstel van M1: nee. Het ergste
+   wat een gekraakte ffmpeg dan kan, is media stilleggen; lezen kan hij niets ([m1.md](m1.md),
+   keuze 6).
 
 ## Documenten
 
@@ -91,5 +123,9 @@ worker, de kosten van de bron, de tijden van fMP4, en de eerste start op 3 cores
 - [m0.md](m0.md): wat M0 bouwde, waar het van het ontwerp afwijkt, en wat nog open is;
   [m0-web.md](m0-web.md) voor het webdeel, [toetsenbord-m0.md](toetsenbord-m0.md) voor het
   toetsenbord.
+- [m1.md](m1.md): de worker in isolatie (M1), met de referentie van `bench` en wat alleen CI
+  bewijst.
+- [m3.md](m3.md): afspelen (M3); [clientprofiel.md](clientprofiel.md) beschrijft het profiel dat
+  de client meet en stuurt (versie 1).
 - [e2e.md](e2e.md): de tests van media (de markers `media`, `media_perf` en `provider_real`),
   het harnas, de nep-servers, de jobs in CI, en hoe je ze lokaal draait.

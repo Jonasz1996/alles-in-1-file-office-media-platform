@@ -217,7 +217,7 @@ controle moet goed zijn. In de job `media-spike` was het een uitkomst; die job i
 | `e2e` | de e2e van fase 3 en 4, zonder media | een test faalt |
 | `e2e-media` | de web-app bouwen, Chrome for Testing (`playwright install --with-deps chromium`, zoals `e2e`), ffmpeg, dan `pytest ../e2e -m media -rs`; `timeout-minutes: 20`, `MEDIA_REQUIRE_H264` `"1"` | een test faalt (ook een H.264-test die de codec mist), of alles slaat over omdat ffmpeg ontbreekt |
 | `e2e-media-perf` | zoals `e2e-media`, dan `-m media_perf`; toont de browser en S13, en zet één regel in de samenvatting van de run; artefact `media-prestaties` | nooit (`continue-on-error`, `E2E_PERF_REPORT_ONLY=1`) |
-| `media-image` | het platform-image (de cache van `images`), de kern in het image, dan S3; artefact `media-image` met `kern.json`, `s3.json` en `kort.txt` | een controle van de kern of van S3 faalt |
+| `media-image` | het platform-image (de cache van `images`), de kern in het image, de worker in zijn container (M1: `test_media_container.sh` met `--selftest`), dan S3; artefact `media-image` met `kern.json`, `selftest.json`, `s3.json` en `kort.txt` | een controle van de kern, van de container of van S3 faalt |
 
 Geen nieuwe action: alles met `actions/checkout`, `setup-uv`, `setup-node`, `setup-buildx`,
 `build-push-action` en `upload-artifact`, zoals de andere jobs. `yamllint -s .` (job `infra`)
@@ -237,10 +237,16 @@ zet de vlag dan niet stil terug: dat is een vondst voor §6 van het bouwontwerp.
   en `infra/single/tests/test_media_container.sh` (de afscherming van Keuze 11); die nemen S3
   over. De e2e kunnen dan tegen de container met `E2E_MEDIA_WORKER`. Daarna draaien de previews
   in de worker, en telt `ffmpeg_count` alleen nog daar.
+  *Bij het samenvoegen van golf 1:* zo gebouwd, behalve dat S3 blijft tot M4 (de remux op een
+  pipe van de app heeft `stream` van M4 nodig; [m1.md](m1.md), Open). `e2e/test_media_m1.py`
+  bewijst met een spion op `/proc` dat elke ffmpeg onder de worker draait.
 - **M2:** de scanner zet `media.analyse` zelf klaar; `MediaApp.analyse` is dan alleen nog voor
   een test die het meteen wil.
 - **M3–M6:** play, de stromen en de speler, elk met een eigen `e2e/test_media_m<N>.py`. M6 zet
-  de tijden Ma en Mb in `media_perf`.
+  de tijden Ma en Mb in `media_perf`. *Bij het samenvoegen van golf 1:* `e2e/test_media_m3.py`
+  speelt direct via een echte sessie (de meting in de browser, intrekken, `replaced`, een
+  publieke link; H.264 alleen in CI). De e2e van M6 schakelt pas van `fake_stream` naar de echte
+  routes als ook M4 er is (§5).
 - **M10:** in `media-image` het bewijs van R12 (installeren vanaf de commit van 0.6.0, bijwerken
   naar deze versie, een transcode via curl en dan `docker top`: geen ffmpeg in de app, één in
   `media`) en de rooktest van de belastingtest; `/api/v1/admin/media` en de rest van
