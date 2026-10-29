@@ -77,10 +77,20 @@ def _loopback_without_proxy() -> None:
 _loopback_without_proxy()
 
 
+_GIVEN_PORTS: set[int] = set()
+
+
 def free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+    """Een vrije poort, en nooit twee keer dezelfde in deze sessie. De socket is dicht voor de
+    poort gebruikt wordt, en de kernel geeft een poort die net weer vrij is soms opnieuw: zo
+    kreeg de interne poort van office ooit dezelfde als de server (/internal/office/* gaf 404)."""
+    while True:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        if port not in _GIVEN_PORTS:
+            _GIVEN_PORTS.add(port)
+            return port
 
 
 # --- accounts ---
