@@ -17,9 +17,10 @@
 
 (spike, S7) De referenties zijn de cores van precies deze bench in de sandbox, niet 0,74 (de
 tabelprijs van 720 veryfast van een bestand) en niet 0,31 (d_codec van HEVC). M1 mat ze onder
-taskset -c 0-2 (regel 14), drie keer, met de echte opdracht via de lokale worker; de cijfers en
-de spreiding staan in docs/fase-5/m1.md. f is dus 1,0 op de sandbox, en de kostentabel van
-Keuze 24 (gemeten in de sandbox) geldt hier × f.
+taskset -c 0-2 (regel 14), twee keer drie runs, met de echte opdracht via de lokale worker
+(ffmpeg 6.1.1): cores 0,957–1,001, dec_cores 0,174–0,209; de mediaan staat hieronder, alle
+cijfers in docs/fase-5/m1.md. f is dus ±1,0 op de sandbox, en de kostentabel van Keuze 24
+(gemeten in de sandbox) geldt hier × f.
 
 Op de achtergrond: nice -n 15 en ionice -c 3 (args.niceness); dat verandert de CPU-tijd niet.
 """
@@ -33,9 +34,10 @@ from app.media.wire import Code
 from app.media.worker.args import THREADS, BenchArgs
 from app.media.worker.server import Context, OpError
 
-# Gemeten door M1 in de sandbox (docs/fase-5/m1.md, "De referentie van bench")
-REF_CORES = 1.0
-REF_DEC_CORES = 1.0
+# Gemeten door M1 in de sandbox: de mediaan van 6 runs (docs/fase-5/m1.md, "De referentie van
+# bench")
+REF_CORES = 0.98
+REF_DEC_CORES = 0.20
 _BASE = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error"]
 
 

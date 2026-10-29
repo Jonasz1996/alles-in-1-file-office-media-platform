@@ -777,6 +777,22 @@ def _read_all(fd: int) -> bytes:
 
 
 @pytest.mark.media
+async def test_bench_met_de_echte_ffmpeg(tmp_path):
+    """De opdracht zoals /beheer hem vraagt, kort: f en f_dec zijn de cores / de referentie."""
+    async with serving(tmp_path):
+        job, _ = await client.call(Op.BENCH, A.BenchArgs(encode_s=2, decode_s=1))
+        async with job:
+            result = await job.result()
+    assert result["cores"] > 0 and result["dec_cores"] > 0
+    # f komt uit de cores vóór het afronden; cores staat afgerond in het antwoord
+    assert result["f"] == pytest.approx(result["cores"] / bench.REF_CORES, abs=0.002)
+    assert result["f_dec"] == pytest.approx(result["dec_cores"] / bench.REF_DEC_CORES, abs=0.006)
+    assert result["ref"] == {"cores": bench.REF_CORES, "dec_cores": bench.REF_DEC_CORES}
+    assert (result["encode_s"], result["decode_s"]) == (2, 1)
+    assert 0 < result["encode_wall_s"] <= result["wall_s"]
+
+
+@pytest.mark.media
 async def test_echte_ffmpeg_boven_rlimit_data_stopt_met_een_fout(tmp_path, monkeypatch):
     from tests.media.fixtures import make
 
