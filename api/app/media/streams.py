@@ -10,7 +10,15 @@ of een segment.
 - maakt de producent n, of ligt n hooguit `AHEAD` (3) segmenten voor op wat hij maakt: wachten;
 - anders een herstart op de grens van n (Keuze 25): de oude producent stoppen en wachten tot
   hij weg is (zijn plaats in de worker komt vrij), en zoekverzoeken binnen 300 ms worden één
-  herstart (de laatste telt).
+  herstart: hij begint pas als er 300 ms geen nieuw verzoek kwam (Keuze 12).
+
+**Zoeken** (review golf 2, K1). Een speler die scrubt, laat oude verzoeken vallen, maar de server
+ziet dat niet (uvicorn breekt een verzoek niet af als de client weggaat). Een verzoek om n is
+daarom *ingehaald* zodra er een nieuwer verzoek kwam buiten [n, n + AHEAD] (een sprong ergens
+anders heen). Een ingehaald verzoek wacht nog op zijn segment, maar start nooit een herstart, en
+zijn 503 telt niet mee voor het sluiten. Een herstart begint op het laagste segment waar een
+verzoek op wacht dat niet is ingehaald: die liggen allemaal binnen AHEAD van het nieuwste, dus
+één run maakt ze allemaal.
 Wachten duurt hooguit `media_segment_wait` (20 s): dan 503 media_timeout met Retry-After: 2, en
 na 3 keer achter elkaar gaat de sessie dicht (het volgende verzoek: 410).
 
@@ -96,6 +104,14 @@ class Segment:
     gen: int
     size: int
     path: Path
+
+
+@dataclass(eq=False)
+class _Want:
+    """Een verzoek dat op segment n wacht."""
+
+    n: int
+    overtaken: bool = False  # er kwam een nieuwer verzoek buiten [n, n + AHEAD]
 
 
 class _Signal:
@@ -190,6 +206,8 @@ class Stream:
         self.playhead = 0
         self.first_pending = True
         self._signal = _Signal()
+        self._wants: list[_Want] = []  # de verzoeken die nu op een segment wachten
+        self._seek_at = 0.0  # het laatste verzoek of nieuwe doel (de 300 ms van Keuze 12)
         self._restart: asyncio.Task | None = None
         self._again = False
         self._made_dir = False
@@ -311,6 +329,8 @@ class Stream:
         self.schedule(n)
 
     def schedule(self, n: int) -> None:
+        if n != self.target:
+            self._seek_at = asyncio.get_running_loop().time()
         self.target = n
         if self._restart is not None and not self._restart.done():
             self._again = True  # de lopende herstart neemt het laatste doel
@@ -338,17 +358,31 @@ class Stream:
 
     async def _restart_once(self) -> None:
         loop = asyncio.get_running_loop()
-        began = loop.time()
         old, self.producer = self.producer, None
         if old is not None:
             await old.stop()  # wacht tot de oude run weg is (zijn plaats in de worker)
-            rest = SEEK_MERGE_S - (loop.time() - began)
-            if rest > 0 and not self.closed:
-                await asyncio.sleep(rest)  # zoekverzoeken binnen 300 ms: één herstart
-        n = self.target
+            # Zoekverzoeken binnen 300 ms: één herstart, pas als er zo lang geen nieuw verzoek
+            # kwam (eerst telde het vanaf de eerste sprong: 10 keer in 1 s gaf 4 runs)
+            while not self.closed:
+                rest = self._seek_at + SEEK_MERGE_S - loop.time()
+                if rest <= 0:
+                    break
+                await asyncio.sleep(rest)
+        n = self._start_at()
         if self.closed or n is None or n in self.segments or n in self.failed:
             return
         await self.start(n)
+
+    def _start_at(self) -> int | None:
+        """Waar een herstart begint: het laagste segment waar een verzoek op wacht dat niet is
+        ingehaald (ze liggen binnen AHEAD van het nieuwste, dus één run maakt ze allemaal), en
+        anders het doel."""
+        waiting = [
+            w.n
+            for w in self._wants
+            if not w.overtaken and w.n not in self.segments and w.n not in self.failed
+        ]
+        return min(waiting) if waiting else self.target
 
     async def start(self, n: int) -> None:
         """Een producent vanaf segment n. busy of down bij het starten: het verzoek om n krijgt
@@ -426,14 +460,28 @@ class Stream:
     async def fetch(self, n: int) -> tuple[int, bytes]:
         """Segment n: (generatie, bytes). Wacht hooguit wait_s."""
         self.touch(n)
+        want = self._want(n)
         self.waiting += 1
         try:
-            return await self._fetch(n)
+            return await self._fetch(n, want)
         finally:
             self.waiting -= 1
+            self._wants.remove(want)
             self.last_request = producers.clock()
 
-    async def _fetch(self, n: int) -> tuple[int, bytes]:
+    def _want(self, n: int) -> _Want:
+        """Een nieuw verzoek om n: wie op een segment wacht waar n niet vlak achter ligt (een
+        sprong ergens anders heen), is ingehaald."""
+        for w in self._wants:
+            if not w.n <= n <= w.n + AHEAD:
+                w.overtaken = True
+        want = _Want(n)
+        self._wants.append(want)
+        if n not in self.segments:  # een verzoek dat de cache beantwoordt, rekt de 300 ms niet
+            self._seek_at = asyncio.get_running_loop().time()
+        return want
+
+    async def _fetch(self, n: int, want: _Want) -> tuple[int, bytes]:
         global native_reloads
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.wait_s
@@ -459,10 +507,11 @@ class Stream:
             if n in self.failed:
                 raise _failure(self.failed[n])
             self._problem(n)
-            self.ensure(n)
+            if not want.overtaken:
+                self.ensure(n)  # een ingehaald verzoek wacht alleen (K1)
             remaining = deadline - loop.time()
             if remaining <= 0:
-                raise self._timeout()
+                raise media_errors.timeout() if want.overtaken else self._timeout()
             await self._signal.wait(remaining)
 
     async def init(self, gen: int) -> bytes:

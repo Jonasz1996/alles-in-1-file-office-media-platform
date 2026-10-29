@@ -1,6 +1,8 @@
 """De producent en de stroom met de nep-worker (M4, §2 M4 test_media_producer.py): de tegendruk,
 de herstart bij een sprong, één nieuwe poging na een crash, "vast", te lang wachten, idle, een
-andere stsd, de startvoorrang en een sessie die dichtgaat terwijl open nog loopt.
+andere stsd, de startvoorrang en een sessie die dichtgaat terwijl open nog loopt. Uit de review
+van golf 2: tien keer zoeken in 1 s (K1), een segment uit het venster terwijl de run loopt (C1),
+een run die een segment te laat begint (C2) en de speling van 1 ms bij een grens (C7).
 
 De echte app (play van M3, de routes van M4) met de nep-worker eronder; de bron is een
 HEVC-film (de probe van stream_src.mkv) die dus altijd een transcode is. De nep schrijft
@@ -12,6 +14,7 @@ apart nagekeken.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 import uuid
 from collections.abc import Callable
@@ -23,9 +26,10 @@ import httpx
 import pytest
 
 from app.config import Settings
-from app.media import admission, fmp4, grid, sessions, streams
+from app.media import admission, cache, fmp4, grid, sessions, streams
 from app.media import producer as producers
 from app.media.wire import Op
+from app.media.worker.args import StreamArgs
 from tests.media import fake_worker as FW
 from tests.media import fixtures as F
 from tests.test_media_contract import media_app, profile, source_probe, upload  # noqa: F401
@@ -163,14 +167,117 @@ async def test_herstart_bij_een_sprong(case):
 
 
 async def test_zoeken_binnen_300_ms_is_een_herstart(case):
+    """Twee verzoeken tegelijk (5 en 8): één herstart, op 5 (8 ligt binnen AHEAD). De nep blijft
+    langzaam tot de herstart er is: anders maakte de eerste run 5 en 8 zelf, en bewees de test
+    niets (review golf 2, K1)."""
     case.fake.speed = 2.0
     sid = await case.play()
     await case.seg(sid, 0)
+    st = case.stream(sid)
+    got = asyncio.gather(case.seg(sid, 5), case.seg(sid, 8))
+    await until(lambda: len(case.runs()) == 2)
     case.fake.speed = None
-    got = await asyncio.gather(case.seg(sid, 5), case.seg(sid, 8))
-    assert all(r.status_code == 200 for r in got)
-    # vanaf 0, en één herstart (op het laatste doel), niet twee
-    assert len(case.runs()) <= 3, case.runs()
+    assert all(r.status_code == 200 for r in await got)
+    assert case.runs() == [0.0, pytest.approx(st.layout.start_s(5))]
+
+
+async def _scrub(case: Case, sid: str, targets: list[int]) -> list[httpx.Response]:
+    """Een speler die scrubt: elke 100 ms een verzoek, en de oude laat hij vallen. De server ziet
+    dat niet (uvicorn breekt een verzoek niet af als de client weggaat), dus hier wachten ze
+    allemaal door, zonder cancel."""
+    tasks = []
+    for n in targets:
+        tasks.append(asyncio.ensure_future(case.get(sid, f"{n}.m4s")))
+        await asyncio.sleep(0.1)
+    case.fake.speed = None  # de run na het zoeken mag snel
+    return list(await asyncio.gather(*tasks))
+
+
+async def test_tien_keer_zoeken_in_1_s_is_een_herstart(case):
+    """Keuze 12 (review golf 2, K1): tien keer zoeken in 1 s, en geen verzoek wordt afgebroken.
+    Eén start na het zoeken, op het laagste doel dat nog telt (7: 8 en 9 liggen erachter); het
+    laatste verzoek krijgt zijn segment en de sessie blijft open. Wie is ingehaald (5 en 6),
+    start niets en telt niet mee voor het sluiten. Met SEEK_MERGE_S = 0, of met de oude code
+    (elk wachtend verzoek zette het doel terug), zijn het er veel meer."""
+    case.fake.speed = 2.0
+    sid = await case.play()
+    await case.seg(sid, 0)
+    st = case.stream(sid)
+    st.wait_s = 4.0
+    targets = [8, 5, 9, 6, 8, 5, 9, 7, 8, 9]
+    got = await _scrub(case, sid, targets)
+    assert case.runs() == [0.0, pytest.approx(st.layout.start_s(7))]
+    status = [(n, r.status_code) for n, r in zip(targets, got, strict=True)]
+    assert all(code == 200 for n, code in status if n >= 7), status
+    for n, r in zip(targets, got, strict=True):
+        if n < 7:  # ingehaald, en die segmenten komen niet: wachten tot wait_s, dan 503
+            assert r.status_code == 503 and r.json()["detail"]["code"] == "media_timeout"
+    assert got[-1].headers["x-init"] == "1"
+    assert st.timeouts == 0 and sessions.table().by_sid[sid].closed is None
+    assert case.fake.processes <= 1
+    await case.seg(sid, 5)  # de sessie leeft: een nieuw verzoek start gewoon een run
+    assert case.runs()[-1] == pytest.approx(st.layout.start_s(5))
+
+
+# --- het venster en de herstart (review golf 2, C1 en C2) --------------------------------------
+
+
+async def test_een_segment_uit_het_venster_komt_terug_terwijl_de_run_loopt(case, monkeypatch):
+    """Review golf 2, C1: de run is segment 0 al voorbij en leeft nog (gepauzeerd, of nog bezig);
+    het venster haalde 0 uit de cache. Een stap terug naar 0 is een herstart op 0, niet 20 s
+    wachten op een run die 0 nooit meer maakt."""
+    monkeypatch.setattr(cache, "KEEP_BEHIND_MS", 2000)
+    case.fake.speed = 3.0
+    sid = await case.play()
+    for n in range(4):
+        await case.seg(sid, n)
+    st = case.stream(sid)
+    assert st.producer is not None and st.producer.alive
+    await st.trim(0)
+    assert 0 not in st.segments
+    st.wait_s = 4.0
+    r = await case.seg(sid, 0)
+    assert r.headers["x-init"] == "1"
+    assert case.runs() == [0.0, 0.0]
+    assert st.timeouts == 0
+
+
+async def test_terug_voor_het_begin_van_de_run_is_een_herstart(case):
+    """Review golf 2, C1: terug naar een segment vóór het begin van de lopende run (nooit
+    gemaakt): een herstart daar."""
+    case.fake.speed = 2.0
+    sid = await case.play()
+    await case.seg(sid, 0)
+    st = case.stream(sid)
+    await case.seg(sid, 8)
+    assert 4 not in st.segments
+    await case.seg(sid, 4)
+    assert case.runs() == [0.0, *(pytest.approx(st.layout.start_s(n)) for n in (8, 4))]
+
+
+async def test_een_run_die_een_segment_te_laat_begint(case):
+    """Review golf 2, C2: MPEG-TS met een GOP boven de marge van 5 s, of een index die een
+    keyframe te vroeg zag: het eerste beeld na de sprong ligt een segment verder. Dat eerste
+    fragment is dan het startsegment; zonder dat kwam het nooit en startte de stroom steeds
+    opnieuw op hetzelfde segment."""
+
+    async def late(job: FW.Job) -> dict:
+        args = job.args
+        assert isinstance(args, StreamArgs)
+        if args.start_s > 0:  # de nep begint 2 s (een segment) na start_s
+            args = args.model_copy(update={"start_s": args.start_s + 2.0})
+        return await case.fake._stream(dataclasses.replace(job, args=args))
+
+    case.fake.on(Op.STREAM, late)
+    case.fake.speed = 2.0
+    sid = await case.play()
+    await case.seg(sid, 0)
+    st = case.stream(sid)
+    st.wait_s = 4.0
+    case.fake.speed = None
+    r = await case.seg(sid, 7)
+    assert r.headers["x-init"] == "1"
+    assert case.runs() == [0.0, pytest.approx(st.layout.start_s(7))]
 
 
 # --- crash en nieuwe poging --------------------------------------------------------------------
@@ -412,9 +519,9 @@ def _frag(start: int, end: int, tag: bytes) -> fmp4.Fragment:
     )  # fmt: skip
 
 
-def _bare(layout: grid.Layout) -> producers.Producer:
+def _bare(layout: grid.Layout, start: int = 0) -> producers.Producer:
     sink = SimpleNamespace(layout=layout, playhead_ms=lambda: 0, limit_ms=lambda: streams.LEAD_MS)
-    p = producers.Producer(sink, 0, None, Path("bron"))  # type: ignore[arg-type]
+    p = producers.Producer(sink, start, None, Path("bron"))  # type: ignore[arg-type]
     p.gen = 1
     return p
 
@@ -467,3 +574,54 @@ def test_toch_nog_iets_na_een_vroeg_einde_schrijft_het_segment_opnieuw():
     p._fragment(tail)
     p._fragment(_frag(4021, 6000, b"d"))
     assert _queued(p) == [(1, b"bct")]
+
+
+GRID = grid.Layout("transcode", (0, 2000, 4000, 6000), 8000)
+
+
+def test_een_ms_voor_de_grens_telt_als_op_de_grens():
+    """Review golf 2, C7: echte pts zijn op hele ms afgerond en vallen soms 1 ms vóór een grens.
+    Zo'n fragment hoort bij het volgende segment, en een beeld dat 1 ms vóór de grens ophoudt,
+    maakt zijn segment toch al af (SLACK_MS)."""
+    p = _bare(GRID)
+    p._fragment(_frag(0, 1999, b"a"))
+    assert _queued(p) == [(0, b"a")] and p.next == 1
+    p._fragment(_frag(1999, 3999, b"b"))
+    assert _queued(p) == [(1, b"b")] and p.next == 2
+    p._fragment(_frag(3999, 5999, b"c"))
+    assert _queued(p) == [(2, b"c")]
+    p._fragment(_frag(5999, 8000, b"d"))
+    p._complete()
+    assert _queued(p) == [(3, b"d")]
+
+
+def test_het_eerste_beeld_na_het_startsegment_is_het_startsegment():
+    """Review golf 2, C2: een run vanaf 1 waarvan het eerste beeld pas in 2 valt. Dat fragment
+    wordt segment 1 (het eerste beeld na de sprong); de rest volgt het rooster. Alleen het
+    eerste fragment van een run: daarna is een gat een gat."""
+    p = _bare(GRID, start=1)
+    p._fragment(_frag(4500, 6000, b"a"))
+    assert _queued(p) == [(1, b"a")] and p.next == 2
+    p._fragment(_frag(6000, 8000, b"b"))
+    p._complete()
+    assert _queued(p) == [(3, b"b")]
+    # vóór het startsegment gaat nog altijd weg (remux en MPEG-TS beginnen eerder)
+    q = _bare(GRID, start=2)
+    q._fragment(_frag(3000, 4000, b"x"))
+    q._fragment(_frag(4000, 6000, b"y"))
+    assert _queued(q) == [(2, b"y")]
+
+
+def test_wat_de_run_al_voorbij_is_komt_er_niet_meer_uit():
+    """Review golf 2, C1: covers. Wat de run maakt en tot AHEAD verder: ja. Een segment dat af
+    is maar nog in de rij van de schrijver staat: ook ja (het komt zo op schijf). Wat de run al
+    voorbij is en geschreven: nee, dat maakt hij nooit meer (een herstart)."""
+    p = _bare(GRID)
+    p._fragment(_frag(0, 2000, b"a"))
+    p._fragment(_frag(2000, 4000, b"b"))
+    assert p.next == 2
+    assert p.covers(0, 3) and p.covers(1, 3)  # af, op weg naar de schijf
+    assert p.covers(2, 3) and p.covers(5, 3) and not p.covers(6, 3)
+    assert [n for n, _ in _queued(p)] == [0, 1]
+    p._queued.clear()  # wat de schrijver doet als ze op schijf staan
+    assert not p.covers(0, 3) and not p.covers(1, 3) and p.covers(2, 3)

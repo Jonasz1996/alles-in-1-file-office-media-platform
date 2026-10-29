@@ -8,7 +8,10 @@
 - **Groeperen** tot segmenten volgens de Layout van de stroom (grid.py), op de pts van het
   eerste videosample (`tfdt` plus de getekende offset, ook bij transcode), met 1 ms speling voor
   het afronden. Een fragment vóór het startsegment gaat weg (remux begint op het keyframe
-  ervoor, MPEG-TS eerder); een fragment voorbij N hoort bij het laatste segment. Een segment
+  ervoor, MPEG-TS eerder); een fragment voorbij N hoort bij het laatste segment. Valt het
+  eerste beeld van een run na het startsegment (MPEG-TS met een GOP boven de marge van 5 s, of
+  een index die een keyframe te vroeg zag), dan is dat eerste fragment het startsegment: het is
+  het eerste beeld na de sprong, en anders kwam dat segment nooit (review golf 2, C2). Een segment
   is af zodra het beeld van een fragment tot de grens van het segment loopt (het volgende
   fragment begint dan op of na die grens: zo wacht segment 0 niet op fragment 1), anders als
   het eerste fragment van een later segment komt, of aan het eind van een geslaagde run. Komt
@@ -114,6 +117,8 @@ class Producer:
         self.next = start  # het segment dat nu gevuld wordt (of als volgende komt)
         self.produced_ms = sink.layout.begin(start)  # het eind van het laatste fragment
         self.completed = 0  # hoeveel segmenten deze run afmaakte
+        # Af, maar nog niet geschreven (de rij van de schrijver): die komen nog uit deze run
+        self._queued: set[int] = set()
         self.gen: int | None = None
         self.error: BaseException | None = None
         self.idle = False
@@ -198,8 +203,12 @@ class Producer:
         return self._finishing and not self._done.is_set()
 
     def covers(self, n: int, ahead: int) -> bool:
-        """Komt segment n uit deze run, binnen `ahead` segmenten van wat hij nu maakt?"""
-        return self.alive and self.start <= n <= self.next + ahead
+        """Komt segment n nog uit deze run: wat hij nu maakt of hooguit `ahead` verder, of af en
+        op weg naar de schijf? Een segment dat de run al voorbij is (en uit de cache ging, het
+        venster), komt er niet meer uit: dat vraagt een herstart (review golf 2, C1)."""
+        if not self.alive:
+            return False
+        return n in self._queued or max(self.start, self.next) <= n <= self.next + ahead
 
     # --- lezen ------------------------------------------------------------------------------
 
@@ -232,6 +241,10 @@ class Producer:
         n = layout.segment_of(t + SLACK_MS)
         if n < self.start:
             return  # vóór de grens: remux begon op het keyframe ervoor, of MPEG-TS eerder
+        if self._current is None and self.completed == 0 and n > self.start:
+            # Het eerste beeld van de run ligt na het startsegment: dat is het startsegment
+            log.info("producent: het eerste beeld valt in %d, niet in %d", n, self.start)
+            n = self.start
         if self._current is None:
             self._current = n
         elif n > self._current:
@@ -273,6 +286,7 @@ class Producer:
         data = b"".join(self._parts)
         self._parts = []
         self._queue.put_nowait(("segment", self._current, self.gen, data))
+        self._queued.add(self._current)
         self.completed += 1
         self.next = self._current + 1
         self._sent = (self._current, data) if early else None
@@ -343,6 +357,9 @@ class Producer:
             except Exception as exc:  # de schijf: een fout van deze run
                 log.exception("producent: segment schrijven mislukt")
                 self._fail(exc)
+            finally:
+                if item[0] == "segment":
+                    self._queued.discard(item[1])
             self.flow()
 
     async def _watchdog(self) -> None:
