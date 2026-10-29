@@ -1008,6 +1008,11 @@ async def _write(
                 show_of[f.id] = shows.get(session, folder_id, show_fields, show_source)
         await session.flush()
     analyse: list[str] = []
+    # Inhoud die nieuw is in deze bibliotheek (een nieuw item, of verhuisd uit een andere): die
+    # krijgt de analyse ook als de probe er al is. Play (de viewer van Bestanden, M6) probet een
+    # video buiten een bibliotheek; zonder dit kwamen de stappen van de bibliotheek (subs,
+    # sprites) er voor zo'n video nooit. De stappen slaan over wat al klaar is.
+    fresh: set[str] = set()
     extras: list[tuple[MediaItem, Entry]] = []
     now = _now()
     for f, entry in described:
@@ -1041,7 +1046,8 @@ async def _write(
             )
             session.add(item)
         touched_item = new
-        if item.library_id != library.id:  # verhuisd uit een andere bibliotheek
+        moved = item.library_id != library.id
+        if moved:  # verhuisd uit een andere bibliotheek
             item.library_id = library.id
             item.show_id = None
             item.parent_id = None
@@ -1082,12 +1088,18 @@ async def _write(
             changed.append(f.id)
         if f.blob_id and entry.present:
             analyse.append(f.blob_id)
+            if new or moved:
+                fresh.add(f.blob_id)
     await session.flush()
     probes = await _probes(session, list(dict.fromkeys(analyse)))
     await _queue_analysis(
         session,
         library.id,
-        [s for s in analyse if s not in probes or probes[s][0] < analysis.PROBE_VERSION],
+        [
+            s
+            for s in analyse
+            if s in fresh or s not in probes or probes[s][0] < analysis.PROBE_VERSION
+        ],
     )
     if extras:
         await _link_extras(session, library.id, extras, changed)

@@ -257,7 +257,25 @@ async def test_een_nieuwe_versie_geeft_opnieuw_analyse(world, client):
     assert list(await items(settings, library_id)) == ["Film (2010).mkv"]
 
 
-async def test_een_probe_die_er_al_is_geeft_geen_nieuwe_analyse(world, client):
+async def all_done(settings) -> None:
+    """Alle analyses klaar, zonder ze te draaien."""
+    async with maker(settings)() as session:
+        await session.execute(update(Job).where(Job.type == analysis.JOB).values(status="done"))
+        await session.commit()
+
+
+async def queued_analyses(settings) -> list[dict]:
+    async with maker(settings)() as session:
+        rows = await session.scalars(
+            select(Job).where(Job.type == analysis.JOB, Job.status.in_(jobs.ACTIVE))
+        )
+        return [job.payload for job in rows]
+
+
+async def test_een_probe_die_er_al_is_geeft_de_stappen_van_de_bibliotheek(world, client):
+    """Een video die al geprobed is (play buiten een bibliotheek, zoals de viewer van M6) en dan
+    in een bibliotheek komt: toch de analyse, met de bibliotheek, anders komen subs en sprites
+    er nooit. Eén keer: een volgende scan van hetzelfde item zet niets meer klaar."""
     settings, _, headers = world
     library_id, folder = await library(client, headers)
     node = await upload(client, headers, folder, "Film (2010).mkv")
@@ -265,7 +283,34 @@ async def test_een_probe_die_er_al_is_geeft_geen_nieuwe_analyse(world, client):
         sha = (await session.get(Node, uuid.UUID(node))).blob_id
     await analysis.save_probe(maker(settings), sha, analysis.Probe(duration_ms=1000))
     await scan(settings)
-    assert await analyses(settings) == {}
+    assert await queued_analyses(settings) == [{"sha": sha, "library_id": library_id}]
+    await all_done(settings)
+    r = await client.patch(
+        f"/api/v1/files/{node}", json={"name": "Film (2011).mkv"}, headers=headers
+    )
+    assert r.status_code == 200, r.text
+    await scan(settings)
+    assert (await items(settings, library_id))["Film (2011).mkv"].year == 2011
+    assert await queued_analyses(settings) == []
+
+
+async def test_naar_een_andere_bibliotheek_geeft_de_analyse_met_die_bibliotheek(world, client):
+    """Verhuisd uit een bibliotheek met films naar een met eigen video's: de analyse opnieuw met
+    de nieuwe bibliotheek (de stappen hangen van het soort af), ook al is de probe er."""
+    settings, _, headers = world
+    _, films = await library(client, headers)
+    videos_id, videos = await library(client, headers, name="Video's", kind="videos")
+    node = await upload(client, headers, films, "Film (2010).mkv")
+    async with maker(settings)() as session:
+        sha = (await session.get(Node, uuid.UUID(node))).blob_id
+    await analysis.save_probe(maker(settings), sha, analysis.Probe(duration_ms=1000))
+    await scan(settings)
+    await all_done(settings)
+    r = await client.patch(f"/api/v1/files/{node}", json={"parent_id": videos}, headers=headers)
+    assert r.status_code == 200, r.text
+    await scan(settings)
+    assert list(await items(settings, videos_id)) == ["Film (2010).mkv"]
+    assert await queued_analyses(settings) == [{"sha": sha, "library_id": videos_id}]
 
 
 async def test_play_zette_de_analyse_klaar_zonder_bibliotheek(world, client):
