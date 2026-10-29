@@ -31,7 +31,7 @@ yaml = pytest.importorskip("yaml")
 ROOT = Path(__file__).resolve().parents[2]
 SINGLE = ROOT / "infra" / "single"
 SOCK = "/run/media/worker.sock"
-KEY_REF = "${MEDIA_WORKER_KEY:?MEDIA_WORKER_KEY ontbreekt in .env}"
+KEY_REF = "${MEDIA_WORKER_KEY:-}"  # zonder: de worker stopt met code 2, de app zegt down
 CLEAN_PATH = "PATH=/opt/venv/bin:/usr/local/bin:/usr/bin:/bin"
 
 

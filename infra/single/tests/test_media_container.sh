@@ -12,15 +12,17 @@
 #                      voor een sandbox die 65536 niet geeft); leeg in CI
 #
 # Het controleert:
-# - zonder MEDIA_WORKER_KEY start compose niet, en de worker zonder sleutel stopt met code 2;
+# - zonder MEDIA_WORKER_KEY stopt de worker met code 2, en zegt de app (media-status) dat hij
+#   niet bereikbaar is, met de reden;
 # - de container start met precies de afscherming van compose.media.yaml (docker inspect), en
 #   de sleutel staat alleen in de omgeving, niet in command of healthcheck;
 # - de zelftest (--selftest) in de container: ok en sandbox "on";
 # - id -u is 10002, `touch /x` faalt, /data is leeg, een verbinding met 1.1.1.1:53 faalt;
 # - een proces in de container kan /proc/<worker>/fd en /proc/<worker>/environ niet lezen;
 # - vanuit de app (uid 10001): /run/media is 2750 van media:platform, de socket 0660 met groep
-#   platform, de app kan er niets in maken (V2); caps zegt afgeschermd, en een probe, meta en
-#   een frame van een eigen bestand (0600) lukken met de fd vanuit de platform-container;
+#   platform, de app kan er niets in maken (V2); caps zegt afgeschermd, en een probe, meta, een
+#   frame en een preview (previews.render, zonder ffmpeg in PATH) van een eigen bestand (0600)
+#   lukken met de fd vanuit de platform-container;
 # - media-status zegt "afgeschermd";
 # - de worker gestopt: de app meldt binnen 30 s (de lus van health.py, +1 s) dat hij niet
 #   bereikbaar is; weer gestart: media-status zegt weer "afgeschermd".
@@ -73,7 +75,6 @@ cleanup() {
     compose logs --no-color --tail 80 2>&1 | mask >&2 || true
   fi
   compose down -v --remove-orphans --timeout 10 > /dev/null 2>&1 || true
-  docker rm -f "$PROJECT-zonder" > /dev/null 2>&1 || true
   rm -rf "$WORK"
   if [ "$rc" = 0 ] && [ "$FAILED" != 0 ]; then rc=1; fi
   exit "$rc"
@@ -123,15 +124,37 @@ fi
 FILES+=(-f "$WORK/test.yaml")
 if [ -n "${MEDIA_TEST_COMPOSE:-}" ]; then FILES+=(-f "$MEDIA_TEST_COMPOSE"); fi
 
-# Zonder sleutel: compose weigert, en de worker zelf stopt met code 2
+health_ok() {
+  in_platform python -I -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status == 200 else 1)"
+}
+
+# --- zonder sleutel ---------------------------------------------------------------------------
+# De worker stopt met code 2 (en docker probeert het steeds weer), de app start wel en zegt dat
+# de worker niet bereikbaar is, met de reden (media_worker_down)
+
 printf 'DATA_ROOT=/niet-gebruikt\n' > "$WORK/.env"
-if compose config -q > "$WORK/config.txt" 2>&1; then
-  fout "compose start zonder MEDIA_WORKER_KEY"
-elif grep -q "MEDIA_WORKER_KEY ontbreekt" "$WORK/config.txt"; then
-  goed "zonder MEDIA_WORKER_KEY weigert compose (met de reden)"
+compose up -d --no-build --pull never > "$WORK/up.txt" 2>&1 || {
+  fout "compose up zonder sleutel: $(tail -n 3 "$WORK/up.txt")"
+  exit 1
+}
+wait_for 90 health_ok || {
+  fout "de app start niet zonder sleutel"
+  exit 1
+}
+exit_code() { docker inspect --format '{{.State.ExitCode}}' "$(compose ps -aq media)"; }
+media_code_2() { [ "$(exit_code)" = 2 ]; }
+if wait_for 30 media_code_2 && compose logs --no-color media 2>&1 | grep -q "PLATFORM_MEDIA_WORKER_KEY ontbreekt"; then
+  goed "zonder sleutel stopt de worker met code 2, met de reden"
 else
-  fout "compose zonder sleutel: $(tail -n 2 "$WORK/config.txt")"
+  fout "zonder sleutel: de worker stopte met code $(exit_code)"
 fi
+status="$(in_platform python -m app.cli media-status 2>&1 | tr -d '\r' || true)"
+if grep -q "niet bereikbaar (PLATFORM_MEDIA_WORKER_KEY ontbreekt" <<< "$status"; then
+  goed "zonder sleutel zegt de app: $status"
+else
+  fout "zonder sleutel zegt de app: $status"
+fi
+compose down -v --remove-orphans --timeout 10 > /dev/null 2>&1
 
 KEY="$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')"
 printf 'DATA_ROOT=/niet-gebruikt\nMEDIA_WORKER_KEY=%s\n' "$KEY" > "$WORK/.env"
@@ -144,24 +167,9 @@ command = json.load(sys.stdin)["services"]["media"]["command"]
 print(command[command.index("-c") + 1])
 ')"
 
-set +e
-timeout 120 docker run --rm --name "$PROJECT-zonder" --user media --network none --read-only \
-  --cap-drop ALL --security-opt no-new-privileges "$IMAGE" \
-  python -I -c "$BOOT" /srv --socket /tmp/w.sock > "$WORK/zonder.txt" 2>&1
-rc=$?
-set -e
-if [ "$rc" = 2 ] && grep -q PLATFORM_MEDIA_WORKER_KEY "$WORK/zonder.txt"; then
-  goed "de worker zonder sleutel stopt met code 2"
-else
-  fout "de worker zonder sleutel: code $rc: $(tail -n 2 "$WORK/zonder.txt")"
-fi
-
 # --- starten ----------------------------------------------------------------------------------
 
 compose up -d --no-build --pull never
-health_ok() {
-  in_platform python -I -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status == 200 else 1)"
-}
 wait_for 90 health_ok || {
   fout "de app start niet"
   exit 1
@@ -318,7 +326,7 @@ fi
 # --- vanuit de app ----------------------------------------------------------------------------
 
 cat > "$WORK/app.py" << 'PY'
-import asyncio, grp, os, stat, subprocess, sys
+import asyncio, grp, os, shutil, stat, subprocess, sys, tempfile
 from pathlib import Path
 
 sys.path.insert(0, "/srv")
@@ -399,6 +407,26 @@ async def main():
     check("frame: een JPEG over een pipe van de app", data[:3] == b"\xff\xd8\xff"
           and result.get("frames") == 1, f"{len(data)} bytes, {result}")
 
+    # Een preview zoals de taak hem maakt (previews.render: het renderproces vraagt de worker),
+    # met een PATH zonder ffmpeg: het beeld kan alleen van de worker komen
+    from app import previews
+    from app.config import get_settings
+
+    settings = get_settings()
+    work = Path(tempfile.mkdtemp(prefix="m1-preview-"))
+    out, scratch = work / "out", work / "work"
+    out.mkdir()
+    scratch.mkdir()
+    request = {"source": str(film), "out": str(out), "work": str(scratch), "mime": "video/mp4",
+               "name": film.name, "max_pixels": settings.preview_max_pixels,
+               "memory_mb": settings.preview_memory_mb}
+    os.environ["PATH"] = "/nergens"
+    result = await previews.render(settings, request, scratch)
+    sizes = sorted(p.name for p in out.glob("*.webp"))
+    check("een preview van een video via de worker (zonder ffmpeg in PATH)",
+          result.get("state") == "ready" and "256.webp" in sizes, f"{result.get('state')} {sizes}")
+    shutil.rmtree(work, ignore_errors=True)
+
 
 asyncio.run(main())
 film.unlink()
@@ -406,7 +434,7 @@ sys.exit(1 if problems else 0)
 PY
 if in_platform python -I - "$SOCK" < "$WORK/app.py" > "$WORK/app.txt" 2>&1; then
   cat "$WORK/app.txt"
-  goed "vanuit de app: map, socket, caps, probe, meta en frame"
+  goed "vanuit de app: map, socket, caps, probe, meta, frame en een preview"
 else
   mask < "$WORK/app.txt" >&2
   fout "vanuit de app"
