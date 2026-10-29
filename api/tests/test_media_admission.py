@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -23,6 +24,7 @@ from app.media.errors import MediaBusy
 from app.media.state import MediaPolicy, MediaState
 from app.media.types import Choice, Plan, Rung, WorkerCaps
 from app.media.wire import Op, WorkClass
+from app.media.worker.server import Config, Places
 from app.office.state import OfficeState
 from tests.media import fixtures as F
 from tests.test_media_contract import media_app, profile, source_probe, upload  # noqa: F401
@@ -176,14 +178,82 @@ async def test_schijf_vol(host, monkeypatch):
     assert admission.snapshot().grants == []
 
 
+REMUX = Plan(mode="remux", video="copy", audio="copy", cost=0.05)
+
+
 async def test_hooguit_6_remuxen(host):
-    user = uuid.uuid4()
-    remux = Plan(mode="remux", video="copy", audio="copy", cost=0.05)
-    for _ in range(admission.REMUX_PLACES):
-        admission.reserve(remux, user, None)
+    users = [uuid.uuid4(), uuid.uuid4()]
+    for user in users:
+        for _ in range(admission.REMUX_PER_USER):
+            admission.reserve(REMUX, user, None)
+    assert len(admission.admission().remuxes()) == admission.REMUX_PLACES
     with pytest.raises(MediaBusy) as caught:
-        admission.reserve(remux, user, None)
+        admission.reserve(REMUX, uuid.uuid4(), None)
     assert (caught.value.reason, caught.value.retry_after) == ("worker", admission.RETRY_WORKER)
+
+
+async def test_remux_per_gebruiker_en_per_link(host):
+    """Review golf 2, S3: eerst kon één account (8 sessies) alle 6 plaatsen voor remux nemen,
+    en kreeg iedereen daarna 503."""
+    mallory, alice, link = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    for _ in range(admission.REMUX_PER_USER):
+        admission.reserve(REMUX, mallory, None)
+    with pytest.raises(MediaBusy) as caught:
+        admission.reserve(REMUX, mallory, None)
+    assert (caught.value.reason, caught.value.retry_after) == ("user", admission.RETRY)
+    # een ander kan nog, en een link van mallory telt los van mallory zelf
+    assert admission.reserve(REMUX, alice, None).mode == "remux"
+    assert admission.reserve(REMUX, mallory, link).link_id == link
+    with pytest.raises(MediaBusy) as caught:
+        admission.reserve(REMUX, mallory, link)
+    assert caught.value.reason == "link"
+    assert admission.reserve(REMUX, mallory, uuid.uuid4()).mode == "remux"
+
+
+def _worker_caps(max_procs: int) -> WorkerCaps:
+    limits = Config(socket=Path("w.sock"), max_procs=max_procs, max_transcodes=3).limits()
+    return WorkerCaps(protocol=1, max_procs=max_procs, max_transcodes=3,
+                      places={wc.value: n for wc, n in limits.items()})  # fmt: skip
+
+
+async def test_wat_de_toelating_goedkeurt_past_altijd_in_de_worker(host):
+    """Review golf 2, C5: de plaatsen van de worker (3 + 6 + 1 + 2) zijn samen meer dan
+    max_procs (10). De toelating houdt de achtergrond en de korte plaatsen vrij: met die vol
+    krijgt elk goedgekeurd plan nog een plaats in de worker (Keuze 12)."""
+    configure(host, {"media_max_transcodes": 3}, cpu_budget=16, max_user_transcodes=3)
+    host.state.media.caps = _worker_caps(10)
+    assert admission.live_max() == 7
+    worker = Places(Config(socket=Path("w.sock"), max_procs=10, max_transcodes=3).limits(), 10)
+    assert worker.take(WorkClass.BACKGROUND, 1)
+    assert worker.take(WorkClass.SHORT, 1) and worker.take(WorkClass.SHORT, 1)
+    granted = []
+    for _ in range(2):
+        user = uuid.uuid4()
+        for _ in range(admission.REMUX_PER_USER):
+            granted.append(admission.reserve(REMUX, user, None))
+    for _ in range(3):
+        try:
+            granted.append(watch(film(), "chrome_ci", uuid.uuid4())[1])
+        except (MediaBusy, HTTPException):
+            break
+    assert len(granted) == 7  # 6 remuxen en 1 transcode; de tweede transcode niet
+    assert busy(lambda: watch(film(), "chrome_ci", uuid.uuid4()))[0] == "worker"
+    for grant in granted:
+        wc = WorkClass.TRANSCODE if grant.mode == "transcode" else WorkClass.REMUX
+        assert worker.take(wc, 1), grant
+    # weer een plaats vrij: dan past een transcode wel
+    admission.release(granted.pop(0))
+    assert watch(film(), "chrome_ci", uuid.uuid4())[0].mode == "transcode"
+
+
+async def test_een_kleine_worker_heeft_die_grens_niet(host):
+    # het harnas en de belastingtest (max_procs 3, regel 13): niets over na achtergrond en kort
+    host.state.media.caps = _worker_caps(3)
+    assert admission.live_max() is None
+    for _ in range(admission.REMUX_PER_USER):
+        admission.reserve(REMUX, uuid.uuid4(), None)
+    host.state.media.caps = None  # zonder caps: PLATFORM_MEDIA_MAX_PROCS (standaard 10)
+    assert admission.live_max() == runtime.settings().media_max_procs - 3
 
 
 # --- de nieuwe gevallen van §2 M4 -------------------------------------------------------------

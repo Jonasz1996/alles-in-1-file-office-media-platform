@@ -17,12 +17,19 @@ reserve en neemt nooit de laatste plek. Een plan boven 1,8 × f gebruikt 2 plaat
 **Grenzen:** `max_transcodes` plaatsen (het kleinste van /beheer, het plafond
 `PLATFORM_MEDIA_MAX_TRANSCODES` en wat de worker zegt in caps), 2 transcodes per gebruiker
 (`max_user_transcodes`), 1 per publieke link, en hooguit 6 remuxen (de plaatsen van de worker
-voor remux, Keuze 12). Minder dan 10 GB vrij op `data_dir`: geen nieuwe transcode en geen
-nieuwe remux (`reason: disk`, Keuze 31). Direct play kan altijd.
+voor remux, Keuze 12), waarvan hooguit REMUX_PER_USER per gebruiker en REMUX_PER_LINK per
+publieke link (review golf 2, S3: eerst kon één account alle 6 nemen). Minder dan 10 GB vrij op
+`data_dir`: geen nieuwe transcode en geen nieuwe remux (`reason: disk`, Keuze 31). Direct play
+kan altijd.
 
 **De worker.** Een Grant reserveert ook de plaats in de worker (Keuze 12): de app laat nooit meer
 transcodes toe dan de worker plaatsen heeft, en een producent start pas als de vorige van zijn
-sessie weg is (streams.py). Zo krijgt een goedgekeurd plan geen `busy` van de worker.
+sessie weg is (streams.py). Daarbij telt het totaal van de worker (`max_procs`): de plaatsen
+achtergrond en kort (1 + 2) kunnen elk moment bezet zijn, dus hooguit `max_procs − 3` live
+opdrachten (transcode en remux samen; review golf 2, C5). Zo krijgt een goedgekeurd plan geen
+`busy` van de worker. Een worker met `max_procs` ≤ 3 (het harnas en de belastingtest, regel 13)
+kan die belofte niet doen: dan geldt deze grens niet, en kan een plan toch `busy` krijgen (de
+speler probeert het na Retry-After opnieuw).
 
 **Teruggeven** is idempotent per grant-id: elke grant telt één keer, ook als release twee keer
 komt (sessions._release en een fout in play).
@@ -43,6 +50,7 @@ from app.media import ladder, runtime
 from app.media.errors import MediaBusy
 from app.media.state import MediaPolicy, MediaState, media_policy, media_state
 from app.media.types import AdmissionView, BudgetView, Grant, Plan, Rung
+from app.media.wire import WorkClass
 
 log = logging.getLogger("platform.media")
 
@@ -50,6 +58,10 @@ FILL = 0.9  # hooguit 0,9 × B
 OFFICE_REST = 1.0  # B − 1,0 zolang DS start
 DISK_MIN = 10 * 1024**3  # bytes vrij op data_dir (Keuze 31)
 REMUX_PLACES = 6  # de plaatsen van de worker voor remux (Keuze 12)
+REMUX_PER_USER = 3  # de helft: één account neemt nooit alle plaatsen (review golf 2, S3)
+REMUX_PER_LINK = 1  # zoals bij transcode
+# De plaatsen van de worker die niet live zijn (Keuze 12), als caps ze niet noemt
+OTHER_PLACES = {WorkClass.BACKGROUND: 1, WorkClass.SHORT: 2}
 RETRY = 30  # Retry-After bij cpu, user, link en disk: een transcode is niet zo weg
 RETRY_WORKER = 2
 RESERVE_RUNG = Rung(height=480, preset="veryfast", codec="h264")
@@ -120,6 +132,19 @@ def budget() -> float:
     if _office_starting():
         b -= OFFICE_REST
     return max(0.0, round(b, 4))
+
+
+def live_max() -> int | None:
+    """Hoeveel live opdrachten (transcode en remux) de worker hooguit tegelijk kan starten, ook
+    als de achtergrond en de korte plaatsen vol zijn: max_procs − (achtergrond + kort). None als
+    er dan niets overblijft (max_procs ≤ 3: het harnas en de belastingtest); dan geldt deze grens
+    niet (review golf 2, C5)."""
+    caps = _state().caps
+    total = caps.max_procs if caps is not None else runtime.settings().media_max_procs
+    places = caps.places if caps is not None else {}
+    other = sum(places.get(wc.value, n) for wc, n in OTHER_PLACES.items())
+    room = total - other
+    return room if room > 0 else None
 
 
 def max_transcodes() -> int:
@@ -214,8 +239,17 @@ def reserve(plan: Plan, user_id: uuid.UUID, link_id: uuid.UUID | None) -> Grant:
     adm = admission()
     if not disk_ok():
         raise MediaBusy("disk", RETRY)
+    room = live_max()
+    if room is not None and len(adm.transcodes()) + len(adm.remuxes()) >= room:
+        raise MediaBusy("worker", RETRY_WORKER)
     if plan.mode == "remux":
-        if len(adm.remuxes()) >= REMUX_PLACES:
+        remuxes = adm.remuxes()
+        if link_id is not None:
+            if sum(g.link_id == link_id for g in remuxes) >= REMUX_PER_LINK:
+                raise MediaBusy("link", RETRY)
+        elif sum(g.user_id == user_id and g.link_id is None for g in remuxes) >= REMUX_PER_USER:
+            raise MediaBusy("user", RETRY)
+        if len(remuxes) >= REMUX_PLACES:
             raise MediaBusy("worker", RETRY_WORKER)
     else:
         current = view(user_id, link_id)
