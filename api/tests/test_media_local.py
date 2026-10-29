@@ -195,8 +195,14 @@ def test_oneshot_laat_niets_achter(tmp_path):
         started = set(workers_of_me()) - before
         assert len(started) == 1
         (pid,) = started
-        # de sleutel in de omgeving, niet op de opdrachtregel; dezelfde procesgroep als hier
-        assert key.encode() in Path(f"/proc/{pid}/environ").read_bytes()
+        # de sleutel in de omgeving, niet op de opdrachtregel; dezelfde procesgroep als hier.
+        # Na PR_SET_DUMPABLE 0 leest alleen root /proc/<worker>/environ; een gewone gebruiker
+        # (zo draait CI) krijgt EACCES, en dan is juist dat de controle
+        if os.geteuid() == 0:
+            assert key.encode() in Path(f"/proc/{pid}/environ").read_bytes()
+        else:
+            with pytest.raises(PermissionError):
+                Path(f"/proc/{pid}/environ").read_bytes()
         assert key.encode() not in Path(f"/proc/{pid}/cmdline").read_bytes()
         assert os.getpgid(pid) == os.getpgrp()
         assert "--max-transcodes" in Path(f"/proc/{pid}/cmdline").read_text()

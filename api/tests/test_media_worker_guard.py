@@ -98,6 +98,17 @@ def environ(pid: int) -> bytes:
     return Path(f"/proc/{pid}/environ").read_bytes()
 
 
+def key_in_worker_environ(pid: int, key: str) -> None:
+    """De sleutel staat in de omgeving van de worker. Na PR_SET_DUMPABLE 0 leest alleen root
+    /proc/<worker>/environ; een gewone gebruiker (zo draait CI) krijgt EACCES, en dan is juist
+    dat de controle."""
+    if os.geteuid() == 0:
+        assert key.encode() in environ(pid)
+    else:
+        with pytest.raises(PermissionError):
+            environ(pid)
+
+
 def ionice(pid: int) -> str:
     return subprocess.run(["ionice", "-p", str(pid)], capture_output=True, text=True).stdout
 
@@ -823,7 +834,7 @@ async def test_de_sleutel_komt_niet_bij_ffmpeg_van_de_lokale_worker(tmp_path, mo
     film = tmp_path / "a.mkv"
     film.write_bytes(b"\x1aE\xdf\xa3" + b"\0" * 1020)
     try:
-        assert w.key.encode() in environ(w.pid)
+        key_in_worker_environ(w.pid, w.key)
         job = await frame_job(film)
         try:
             assert await until(lambda: len(guard.children(w.pid)) == 1)

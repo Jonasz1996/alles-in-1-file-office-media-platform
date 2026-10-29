@@ -12,10 +12,13 @@ Met media uit (de gewone server van de e2e, zoals 0.6.0):
   worker (local.oneshot, in zijn procesgroep), en daarna leeft er geen worker meer.
 
 Elke ffmpeg wordt gezien door een eigen draad die elke 20 ms /proc leest; stoppen alleen op pid.
+Elke upload is een kopie met eigen bytes (unique): er is één preview per blob, dus met dezelfde
+bytes als een eerdere test in de sessie draait er geen ffmpeg en bewijst de test niets.
 """
 
 from __future__ import annotations
 
+import secrets
 import signal
 import threading
 import time
@@ -51,8 +54,10 @@ class Seen:
     scans: int = 0
 
     def outside_worker(self) -> list[str]:
+        # Hele opdrachtregels: in CI staat python onder een lang pad, en afgekapt op 160 tekens
+        # viel app.media.worker er half af. Alleen de melding wordt korter
         return [
-            f"{pid}: {' <- '.join(chain)}"
+            f"{pid}: {' <- '.join(line[:160] for line in chain)}"
             for (pid, _s), chain in self.ffmpeg.items()
             if not any(WORKER in line for line in chain)
         ]
@@ -72,11 +77,11 @@ def spy(root: int, every: float = 0.02) -> Iterator[Seen]:
             if name in FFMPEG_NAMES and (pid, start) not in seen.ffmpeg:
                 chain, up = [], ppid
                 while up and up != root and up in table:
-                    chain.append(cmdline(up)[:160])
+                    chain.append(cmdline(up))
                     up = table[up][0]
                 seen.ffmpeg[(pid, start)] = chain
             elif (pid, start) not in seen.workers and WORKER in cmdline(pid):
-                seen.workers[(pid, start)] = cmdline(ppid)[:200]
+                seen.workers[(pid, start)] = cmdline(ppid)
         seen.scans += 1
 
     def run() -> None:
@@ -94,10 +99,24 @@ def spy(root: int, every: float = 0.02) -> Iterator[Seen]:
         look()
 
 
-def upload(server: Server, account: Account, fixture: str, parent: str) -> str:
+def unique(fixture: str, tmp: Path) -> Path:
+    """Een kopie van de fixture met eigen bytes, zodat de app er echt een preview voor maakt.
+    Achteraan komt een element dat de demuxer overslaat: een free-box (MP4) of een EBML Void
+    (Matroska en WebM); ffprobe en een frame gaan zonder melding."""
     from tests.media import fixtures
 
-    path = fixtures.make(fixture)
+    tag = secrets.token_hex(16).encode()
+    if fixture.endswith(".mp4"):
+        tail = (8 + len(tag)).to_bytes(4, "big") + b"free" + tag
+    else:
+        tail = b"\xec" + bytes([0x80 | len(tag)]) + tag
+    path = tmp / f"{tag.decode()[:8]}-{Path(fixture).name}"
+    path.write_bytes(fixtures.make(fixture).read_bytes() + tail)
+    return path
+
+
+def upload(server: Server, account: Account, fixture: str, parent: str, tmp: Path) -> str:
+    path = unique(fixture, tmp)
     with open(path, "rb") as body:
         r = server.call(
             account,
@@ -143,15 +162,15 @@ def thumb_is_webp(server: Server, info: dict) -> None:
 
 
 @pytest.mark.media
-def test_de_preview_van_een_video_komt_van_de_worker(media, ffmpeg_count):
+def test_de_preview_van_een_video_komt_van_de_worker(media, ffmpeg_count, tmp_path):
     owner = media.user()
     parent = folder(media.server, owner, "Previews M1")
     worker = media.worker_pid()
     assert worker is not None
     with spy(media.pid) as seen:
         ids = [
-            upload(media.server, owner, "vp9_opus.webm", parent),
-            upload(media.server, owner, "h264_aac.mp4", parent),
+            upload(media.server, owner, "vp9_opus.webm", parent, tmp_path),
+            upload(media.server, owner, "h264_aac.mp4", parent, tmp_path),
         ]
         previews = wait_previews(media.server, owner, ids)
     for node in ids:
@@ -159,13 +178,15 @@ def test_de_preview_van_een_video_komt_van_de_worker(media, ffmpeg_count):
     # Nooit ffmpeg buiten de worker; wat de spion zag (een frame duurt ±0,2 s), liep eronder
     assert seen.outside_worker() == [], seen.ffmpeg
     assert seen.scans > 10
+    # twee nieuwe blobs: de worker maakte er echt frames voor (met ffmpeg of ffprobe)
+    assert seen.ffmpeg, "geen ffmpeg gezien: kwamen de previews uit een eerdere test?"
     # de lokale worker van de app deed het werk: geen worker voor één keer (die is voor media uit)
     assert {pid for pid, _s in seen.workers} == {worker}, seen.workers
     assert ffmpeg_count.max <= 3
 
 
 @pytest.mark.media
-def test_de_worker_weg_en_terug(media, ffmpeg_count):
+def test_de_worker_weg_en_terug(media, ffmpeg_count, tmp_path):
     """kill -9 op de pid van de worker: de bewaker in de app start hem na 1 s opnieuw."""
     old = media.worker_pid()
     assert old is not None
@@ -187,13 +208,13 @@ def test_de_worker_weg_en_terug(media, ffmpeg_count):
 
     owner = media.user()
     parent = folder(media.server, owner, "Na de herstart")
-    node = upload(media.server, owner, "vp9_opus.mkv", parent)
+    node = upload(media.server, owner, "vp9_opus.mkv", parent, tmp_path)
     thumb_is_webp(media.server, wait_previews(media.server, owner, [node])[node])
     assert media.worker_pid() == new
 
 
 @pytest.mark.media
-def test_met_media_uit_krijgt_een_video_een_preview_zoals_in_0_6_0(server, admin):
+def test_met_media_uit_krijgt_een_video_een_preview_zoals_in_0_6_0(server, admin, tmp_path):
     """De gewone server (PLATFORM_MEDIA_ENABLED niet gezet): het renderproces start een worker
     voor één keer, en na de preview is er geen worker meer (ook geen wees)."""
     assert server.proc is not None
@@ -201,7 +222,7 @@ def test_met_media_uit_krijgt_een_video_een_preview_zoals_in_0_6_0(server, admin
     owner = create_user(server, admin, name="Media uit M1")
     parent = folder(server, owner, "Zonder media")
     with spy(root) as seen:
-        node = upload(server, owner, "vp9_opus.webm", parent)
+        node = upload(server, owner, "vp9_opus.webm", parent, tmp_path)
         previews = wait_previews(server, owner, [node])
         thumb_is_webp(server, previews[node])
         # het renderproces ruimt zijn worker op voor het stopt
