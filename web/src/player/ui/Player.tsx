@@ -14,6 +14,7 @@ import { Spinner } from "../../ui/Spinner";
 import { useScope, useShortcuts } from "../../ui/keys";
 import type { Size } from "../caps";
 import { Controller } from "../controller";
+import { sessionUrl } from "../engine";
 import {
   bindings,
   chapterTarget,
@@ -396,7 +397,7 @@ export default function Player(props: PlayerProps): JSX.Element {
   };
 
   // --- de sprites (trick.vtt) ---
-  const trickUrl = out?.trick?.url ?? null;
+  const trickUrl = out?.trick ? sessionUrl(out.sid, out.trick.url) : null;
   useEffect(() => {
     setCues([]);
     if (!trickUrl) return;
