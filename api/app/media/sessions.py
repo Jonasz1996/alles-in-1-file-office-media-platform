@@ -535,14 +535,30 @@ def _make_room(user_id: uuid.UUID, link_id: uuid.UUID | None) -> None:
         raise media_errors.busy("cpu", TOTAL_RETRY)
 
 
+def _replaceable(sid: str | None, user_id: uuid.UUID, link_id: uuid.UUID | None) -> Session | None:
+    """De open sessie die replace sluit: dezelfde kijker (gebruiker en link), anders None."""
+    old = _table.by_sid.get(sid) if sid and len(sid) <= SID_MAX else None
+    if old is None or old.closed is not None:
+        return None
+    if old.user_id == user_id and old.link_id == link_id:
+        return old
+    return None
+
+
 def _replace(sid: str, user_id: uuid.UUID, link_id: uuid.UUID | None) -> None:
     """replace: de oude sessie van dezelfde kijker gaat in dezelfde beurt dicht (410 daarna).
     Een sid van een ander doet niets."""
-    old = _table.by_sid.get(sid) if len(sid) <= SID_MAX else None
-    if old is None or old.closed is not None:
-        return
-    if old.user_id == user_id and old.link_id == link_id:
+    old = _replaceable(sid, user_id, link_id)
+    if old is not None:
         _close(old, None)
+
+
+def replaced_grant(sid: str | None, user_id: uuid.UUID, link_id: uuid.UUID | None) -> Grant | None:
+    """De grant van de sessie die replace zal sluiten, of None (additief, na-controle golf 2).
+    Play telt hem niet mee bij de toelating (admission.replacing): een wissel van spoor of trede
+    loopt zo niet tegen de grens, net als bij de sessies."""
+    old = _replaceable(sid, user_id, link_id)
+    return old.grant if old is not None else None
 
 
 async def create(

@@ -192,9 +192,11 @@ async def test_hooguit_6_remuxen(host):
     assert (caught.value.reason, caught.value.retry_after) == ("worker", admission.RETRY_WORKER)
 
 
-async def test_remux_per_gebruiker_en_per_link(host):
+async def test_remux_per_gebruiker_en_een_link_zonder_eigen_grens(host):
     """Review golf 2, S3: eerst kon één account (8 sessies) alle 6 plaatsen voor remux nemen,
-    en kreeg iedereen daarna 503."""
+    en kreeg iedereen daarna 503. Een publieke link heeft geen eigen grens voor remux
+    (na-controle golf 2): hij heeft hooguit 2 sessies en de derde sluit de oudste (M3); een
+    grens hier weigerde de tweede kijker (test_media_wissel.py)."""
     mallory, alice, link = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     for _ in range(admission.REMUX_PER_USER):
         admission.reserve(REMUX, mallory, None)
@@ -204,10 +206,46 @@ async def test_remux_per_gebruiker_en_per_link(host):
     # een ander kan nog, en een link van mallory telt los van mallory zelf
     assert admission.reserve(REMUX, alice, None).mode == "remux"
     assert admission.reserve(REMUX, mallory, link).link_id == link
+    assert admission.reserve(REMUX, mallory, link).link_id == link  # de tweede kijker
+    # het totaal blijft 6
     with pytest.raises(MediaBusy) as caught:
         admission.reserve(REMUX, mallory, link)
-    assert caught.value.reason == "link"
-    assert admission.reserve(REMUX, mallory, uuid.uuid4()).mode == "remux"
+    assert caught.value.reason == "worker"
+
+
+async def test_een_wissel_telt_de_oude_plaats_niet(host):
+    """Na-controle golf 2: play met replace (een ander audiospoor, een lagere trede). De grant van
+    de oude sessie telt niet mee, want die gaat in dezelfde beurt dicht: wie zijn grens of de
+    laatste plaats had, wisselt zonder 503, en houdt zijn trede."""
+    user, owner, link = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    held = [admission.reserve(REMUX, user, None) for _ in range(admission.REMUX_PER_USER)]
+    assert busy(lambda: admission.reserve(REMUX, user, None))[0] == "user"
+    with admission.replacing(held[0]):
+        assert admission.reserve(REMUX, user, None).mode == "remux"
+    assert admission.admission().ignored == set()
+    assert busy(lambda: admission.reserve(REMUX, user, None))[0] == "user"
+    # een transcode via een link (1 per link)
+    big = synthetic("hevc", "hvc1.1.6.L120.90", 1920, 1080)
+    plan, grant = watch(big, "chrome_ci", owner, link=link, policy=PUBLIC_TC)
+    assert busy(lambda: watch(big, "chrome_ci", owner, link=link, policy=PUBLIC_TC))[0] == "link"
+    with admission.replacing(grant):
+        again, _ = watch(big, "chrome_ci", owner, link=link, policy=PUBLIC_TC)
+    assert again.video == plan.video
+    for g in admission.snapshot().grants:
+        admission.release(g)
+    # dezelfde trede: zonder replacing geeft een tweede 1080 hier 720 superfast (de reserve)
+    one, first = watch(film(), "chrome_ci", user)
+    assert one.video == H1080
+    with admission.replacing(first):
+        two, _ = watch(film(), "chrome_ci", user)
+    assert two.video == H1080
+    # release binnen het blok: dan is de grant echt weg, ook na het blok
+    with admission.replacing(first):
+        admission.release(first)
+    assert first.id not in admission.admission().grants and admission.admission().ignored == set()
+    # zonder grant (direct play, of een sid van een ander) verandert er niets
+    with admission.replacing(None):
+        assert admission.admission().ignored == set()
 
 
 def _worker_caps(max_procs: int) -> WorkerCaps:

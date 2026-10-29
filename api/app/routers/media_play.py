@@ -447,14 +447,18 @@ async def start(
     policy = media_public.for_source(
         media_public.policy(found.config, public=viewer.public), found.config, probe
     )
-    budget = admission.view(viewer.user.id, viewer.link_id)
-    plan = decide_or_worker(state, probe, profile, choice, policy, budget)
-    need_worker(state, plan)
-    need_tonemap(state, plan)
-    try:
-        grant = admission.reserve(plan, viewer.user.id, viewer.link_id)
-    except media_errors.MediaBusy as exc:
-        raise media_errors.from_busy(exc) from None
+    # Een wissel (replace): de plaats van de oude sessie telt niet mee, want die gaat in
+    # dezelfde beurt dicht (na-controle golf 2). Alles hierin is synchroon.
+    replaced = sessions.replaced_grant(body.replace, viewer.user.id, viewer.link_id)
+    with admission.replacing(replaced):
+        budget = admission.view(viewer.user.id, viewer.link_id)
+        plan = decide_or_worker(state, probe, profile, choice, policy, budget)
+        need_worker(state, plan)
+        need_tonemap(state, plan)
+        try:
+            grant = admission.reserve(plan, viewer.user.id, viewer.link_id)
+        except media_errors.MediaBusy as exc:
+            raise media_errors.from_busy(exc) from None
 
     try:
         s = await sessions.create(

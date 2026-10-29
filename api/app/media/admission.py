@@ -17,10 +17,18 @@ reserve en neemt nooit de laatste plek. Een plan boven 1,8 × f gebruikt 2 plaat
 **Grenzen:** `max_transcodes` plaatsen (het kleinste van /beheer, het plafond
 `PLATFORM_MEDIA_MAX_TRANSCODES` en wat de worker zegt in caps), 2 transcodes per gebruiker
 (`max_user_transcodes`), 1 per publieke link, en hooguit 6 remuxen (de plaatsen van de worker
-voor remux, Keuze 12), waarvan hooguit REMUX_PER_USER per gebruiker en REMUX_PER_LINK per
-publieke link (review golf 2, S3: eerst kon één account alle 6 nemen). Minder dan 10 GB vrij op
-`data_dir`: geen nieuwe transcode en geen nieuwe remux (`reason: disk`, Keuze 31). Direct play
-kan altijd.
+voor remux, Keuze 12), waarvan hooguit REMUX_PER_USER per gebruiker (review golf 2, S3: eerst kon
+één account alle 6 nemen). Een publieke link heeft voor remux geen eigen grens: hij heeft hooguit
+2 sessies, en de derde sluit de oudste (sessions.py, §2 M3). Een grens hier weigerde de tweede
+kijker en die derde (503 in plaats van de oudste dicht), en beschermt het totaal niet: één
+account kan veel links maken (na-controle golf 2). Minder dan 10 GB vrij op `data_dir`: geen
+nieuwe transcode en geen nieuwe remux (`reason: disk`, Keuze 31). Direct play kan altijd.
+
+**Een wissel** (`replace` in play: een ander audiospoor, een lagere trede): de grant van de sessie
+die play vervangt, telt niet mee (`replacing`). Die sessie gaat in dezelfde beurt dicht, zoals
+`replace` ook de grens van de sessies niet raakt. Zonder dat kreeg wie zijn grens of de laatste
+plaats had (een transcode via een link, 3 remuxen, de laatste live plaats), bij een wissel 503,
+of een lagere trede omdat zijn eigen oude stroom nog meetelde (na-controle golf 2).
 
 **De worker.** Een Grant reserveert ook de plaats in de worker (Keuze 12): de app laat nooit meer
 transcodes toe dan de worker plaatsen heeft, en een producent start pas als de vorige van zijn
@@ -40,9 +48,11 @@ tests met ASGITransport draaien de lifespan niet) is dat de app uit app.main.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import shutil
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 from app.config import MediaConfig
@@ -59,7 +69,6 @@ OFFICE_REST = 1.0  # B − 1,0 zolang DS start
 DISK_MIN = 10 * 1024**3  # bytes vrij op data_dir (Keuze 31)
 REMUX_PLACES = 6  # de plaatsen van de worker voor remux (Keuze 12)
 REMUX_PER_USER = 3  # de helft: één account neemt nooit alle plaatsen (review golf 2, S3)
-REMUX_PER_LINK = 1  # zoals bij transcode
 # De plaatsen van de worker die niet live zijn (Keuze 12), als caps ze niet noemt
 OTHER_PLACES = {WorkClass.BACKGROUND: 1, WorkClass.SHORT: 2}
 RETRY = 30  # Retry-After bij cpu, user, link en disk: een transcode is niet zo weg
@@ -73,16 +82,21 @@ class Admission:
 
     def __init__(self) -> None:
         self.grants: dict[uuid.UUID, Grant] = {}
+        # De grants van sessies die play nu vervangt (replacing): die tellen niet mee
+        self.ignored: set[uuid.UUID] = set()
+
+    def counted(self) -> list[Grant]:
+        return [g for g in self.grants.values() if g.id not in self.ignored]
 
     def transcodes(self) -> list[Grant]:
-        return [g for g in self.grants.values() if g.mode == "transcode"]
+        return [g for g in self.counted() if g.mode == "transcode"]
 
     def remuxes(self) -> list[Grant]:
-        return [g for g in self.grants.values() if g.mode == "remux"]
+        return [g for g in self.counted() if g.mode == "remux"]
 
     @property
     def in_use(self) -> float:
-        return round(sum(g.cost for g in self.grants.values()), 4)
+        return round(sum(g.cost for g in self.counted()), 4)
 
     @property
     def places_used(self) -> int:
@@ -244,10 +258,8 @@ def reserve(plan: Plan, user_id: uuid.UUID, link_id: uuid.UUID | None) -> Grant:
         raise MediaBusy("worker", RETRY_WORKER)
     if plan.mode == "remux":
         remuxes = adm.remuxes()
-        if link_id is not None:
-            if sum(g.link_id == link_id for g in remuxes) >= REMUX_PER_LINK:
-                raise MediaBusy("link", RETRY)
-        elif sum(g.user_id == user_id and g.link_id is None for g in remuxes) >= REMUX_PER_USER:
+        mine = sum(g.user_id == user_id and g.link_id is None for g in remuxes)
+        if link_id is None and mine >= REMUX_PER_USER:
             raise MediaBusy("user", RETRY)
         if len(remuxes) >= REMUX_PLACES:
             raise MediaBusy("worker", RETRY_WORKER)
@@ -262,6 +274,23 @@ def reserve(plan: Plan, user_id: uuid.UUID, link_id: uuid.UUID | None) -> Grant:
     adm.grants[grant.id] = grant
     log.info("toelating: %s, %.2f cores, %d plaatsen", plan.mode, grant.cost, grant.places)
     return grant
+
+
+@contextlib.contextmanager
+def replacing(grant: Grant | None) -> Iterator[None]:
+    """Play met `replace`: binnen dit blok telt de grant van de oude sessie niet mee voor view en
+    reserve. Die sessie gaat in dezelfde beurt dicht (sessions.create) en geeft haar grant dan
+    terug. Alleen om synchrone code: tussen view en reserve wacht play nergens op. Release
+    binnen het blok werkt gewoon (de grant gaat dan echt weg)."""
+    adm = admission()
+    if grant is None or grant.id not in adm.grants:
+        yield
+        return
+    adm.ignored.add(grant.id)
+    try:
+        yield
+    finally:
+        adm.ignored.discard(grant.id)
 
 
 def release(grant: Grant) -> None:
