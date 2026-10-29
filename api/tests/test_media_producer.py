@@ -372,6 +372,36 @@ async def test_close_zonder_open_is_veilig(case):
     assert case.fake.processes == 0
 
 
+# --- regel 8 -----------------------------------------------------------------------------------
+
+
+async def test_wachten_op_een_segment_houdt_geen_verbinding_vast(case):
+    """Regel 8 (de les van F1): twintig verzoeken wachten op een segment dat niet komt (de nep
+    hangt na één fragment), en intussen is er geen verbinding met de database uitgeleend; een
+    gewone vraag aan de API gaat gewoon."""
+    from app.db import get_engine
+
+    pool = get_engine(case.settings).sync_engine.pool
+    case.fake.fault("hang", op=Op.STREAM, after=1)
+    sid = await case.play()
+    st = case.stream(sid)
+    waiting = [asyncio.ensure_future(case.get(sid, f"{1 + i % 2}.m4s")) for i in range(20)]
+    try:
+        await until(lambda: st.waiting == 20)
+        assert pool.checkedout() == 0
+        r = await case.client.get("/api/v1/files/root", headers=case.headers, timeout=5)
+        assert r.status_code == 200, r.text
+        assert st.waiting == 20 and not any(t.done() for t in waiting)
+        assert pool.checkedout() == 0
+    finally:
+        for task in waiting:
+            task.cancel()
+        await asyncio.gather(*waiting, return_exceptions=True)
+    r = await case.client.delete(f"/api/v1/stream/{sid}", headers=case.headers)
+    assert r.status_code == 204, r.text
+    await settle()
+
+
 # --- het groeperen (zonder worker) -------------------------------------------------------------
 
 
