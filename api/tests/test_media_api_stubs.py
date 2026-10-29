@@ -326,6 +326,15 @@ async def call(client, headers, link, method, path, body, who):
     return await client.request(method, url_of(path), json=body, headers=extra)
 
 
+# De eindpunten die hun pakket al bouwde (M3): met media aan geven die geen media_off meer.
+# Hun eigen tests staan bij het pakket (test_media_sessions.py, test_media_public.py)
+BUILT = {
+    ("GET", "/api/v1/media/{node_id}/codecs"),
+    ("POST", "/api/v1/media/{node_id}/play"),
+    ("POST", "/api/v1/public/media/{node_id}/play"),
+}
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize("enabled", [False, True])
 async def test_elke_stub_geeft_media_off(client, admin, monkeypatch, enabled):
@@ -333,6 +342,8 @@ async def test_elke_stub_geeft_media_off(client, admin, monkeypatch, enabled):
     link = await shared(client, headers)
     monkeypatch.setattr(app.state, "media", MediaState(enabled=enabled), raising=False)
     for method, path, body, who, *_ in ENDPOINTS:
+        if enabled and (method, path) in BUILT:
+            continue
         r = await call(client, headers, link, method, path, body, who)
         assert r.status_code == 503, (method, path, r.status_code, r.text)
         assert r.json()["detail"]["code"] == "media_off", (method, path)

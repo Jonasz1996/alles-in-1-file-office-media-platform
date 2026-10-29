@@ -44,6 +44,14 @@ EXPECTED = {
 # Een geldige waarde voor elke andere parameter in het pad
 DUMMY = {"n": "0", "i": "0", "track": "e0"}
 
+# De routes die hun pakket al bouwde (M3): die geven met een nagebootste sessie geen 503 meer.
+# Hun eigen tests staan bij het pakket (test_media_direct.py, test_media_sessions.py)
+BUILT = {
+    ("GET", "/api/v1/stream/{sid}/file"),
+    ("HEAD", "/api/v1/stream/{sid}/file"),
+    ("DELETE", "/api/v1/stream/{sid}"),
+}
+
 
 def stream_routes() -> list[RouteContext]:
     """Alle routes onder /api/v1/stream, ook die in een ingesloten router (FastAPI 0.150 houdt
@@ -155,6 +163,8 @@ async def test_een_route_met_sessie_komt_wel_bij_de_route(client, monkeypatch):
 
     monkeypatch.setattr(sessions, "guard", guard)
     for method, path, url in calls():
+        if (method, path) in BUILT:
+            continue
         r = await client.request(method, url)
         assert r.status_code == 503, (method, path, r.status_code)
         check_headers(r, path)
