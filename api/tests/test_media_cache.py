@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import pytest
 
@@ -97,16 +98,24 @@ async def test_het_venster_achter_de_speler_en_opnieuw_maken(case: Case, monkeyp
     de speler doorloopt, de bestanden zijn echt weg, en wat terug nodig is komt opnieuw."""
     monkeypatch.setattr(cache, "KEEP_BEHIND_MS", 2000)
     monkeypatch.setattr(streams, "_cache_gb", lambda: 450 * 1024 / GiB)  # ~450 KB
+    # trim vergeet eerst (geheugen) en haalt dan weg (schijf, in een thread): de test wacht op
+    # allebei. Het weghalen hier trager, zodat een test die alleen op het geheugen wacht altijd
+    # faalt, en niet 1 op 12 keer (review golf 2, S5)
+    unlink = streams._unlink
+    monkeypatch.setattr(streams, "_unlink", lambda paths: (time.sleep(0.2), unlink(paths)))
     sid = await case.play()
     st = case.stream(sid)
     for n in range(st.layout.count):
         await case.seg(sid, n)
     last = st.layout.count - 1
+
+    def files() -> list[str]:
+        return sorted(p.name for p in st.dir.glob("*.m4s"))
+
     # net gespeeld (2 s achter de speler) en wat hij nu speelt blijven; de rest past niet
     await until(lambda: set(st.segments) == {last - 1, last})
+    await until(lambda: files() == sorted(f"{n}.m4s" for n in st.segments))
     assert st.bytes <= 450 * 1024
-    files = sorted(p.name for p in st.dir.glob("*.m4s"))
-    assert files == sorted(f"{n}.m4s" for n in st.segments)
     # terug naar het begin: opnieuw gemaakt (een nieuwe run vanaf 0)
     runs = len(case.runs())
     r = await case.seg(sid, 0)
