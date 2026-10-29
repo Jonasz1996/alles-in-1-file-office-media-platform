@@ -236,7 +236,7 @@ class Stream:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._made_dir = True
         tmp = path.with_name(path.name + ".tmp")
-        with open(tmp, "wb") as handle:
+        with builtins.open(tmp, "wb") as handle:
             handle.write(data)
         os.replace(tmp, path)
 
@@ -299,7 +299,9 @@ class Stream:
         if self.closed or n in self.failed or n in self.segments:
             return
         p = self.producer
-        if p is not None and p.covers(n, AHEAD):
+        if p is not None and (p.covers(n, AHEAD) or p.ending):
+            # Wachten: deze run maakt n, of hij houdt net op en ended komt zo (dat telt een
+            # mislukte run; een herstart hier zou die fout overslaan, en de nieuwe poging ook)
             return
         self.schedule(n)
 

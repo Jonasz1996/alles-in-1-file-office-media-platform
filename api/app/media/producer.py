@@ -186,6 +186,11 @@ class Producer:
     def alive(self) -> bool:
         return not self._finishing and not self.stopping
 
+    @property
+    def ending(self) -> bool:
+        """Mislukt of klaar, maar de stroom hoorde het nog niet: sink.ended volgt zo."""
+        return self._finishing and not self._done.is_set()
+
     def covers(self, n: int, ahead: int) -> bool:
         """Komt segment n uit deze run, binnen `ahead` segmenten van wat hij nu maakt?"""
         return self.alive and self.start <= n <= self.next + ahead
