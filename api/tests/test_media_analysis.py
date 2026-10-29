@@ -60,6 +60,10 @@ def worker(monkeypatch):
         return Probe.model_validate(answer)
 
     monkeypatch.setattr(client, "probe", probe)
+    # Alleen de stap probe: de andere stappen (keyframes van M4, …) vragen de worker zelf, en
+    # zonder worker wordt dat Defer; deze tests gaan over de probe (M0-hotfix van M4)
+    only = {name: step for name, step in analysis._steps.items() if name == "probe"}
+    monkeypatch.setattr(analysis, "_steps", only)
     return answers, calls
 
 

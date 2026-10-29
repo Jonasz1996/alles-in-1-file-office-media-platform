@@ -56,7 +56,7 @@ from app.db import get_engine
 from app.media import errors as media_errors
 from app.media import runtime
 from app.media.state import media_state
-from app.media.types import Grant, LoadtestFile, Plan, Probe, Rung, SessionView
+from app.media.types import ClientProfile, Grant, LoadtestFile, Plan, Probe, Rung, SessionView
 from app.models import Node, Share, User
 from app.security import family_revoked, password_print
 from app.storage import BlobStore
@@ -146,6 +146,9 @@ class Session:
     _gen: int = field(default=0, repr=False)
     _task: asyncio.Future | None = field(default=None, repr=False)
     _task_gen: int = field(default=-1, repr=False)
+    # --- M4 (additief): wat play koos, voor streams.open (het profiel en het audiospoor) ---
+    profile: ClientProfile | None = field(default=None, repr=False)
+    audio_index: int | None = None
 
     @property
     def public(self) -> bool:

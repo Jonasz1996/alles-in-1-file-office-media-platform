@@ -460,6 +460,7 @@ async def start(
     s.subs = found.subs
     s.start_ms = min(choice.start_ms, max(0, duration - 1))
     s.app = request.app
+    s.profile, s.audio_index = profile, audio.index if audio is not None else None  # M4
 
     info: StreamInfo | None = None
     # create sluit een sessie waarvan de toegang tijdens het wachten verviel: dan geen stroom

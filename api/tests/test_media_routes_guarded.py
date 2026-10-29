@@ -50,6 +50,12 @@ BUILT = {
     ("GET", "/api/v1/stream/{sid}/file"),
     ("HEAD", "/api/v1/stream/{sid}/file"),
     ("DELETE", "/api/v1/stream/{sid}"),
+    # M4 (test_media_contract.py, test_media_producer.py)
+    ("GET", "/api/v1/stream/{sid}/map.json"),
+    ("GET", "/api/v1/stream/{sid}/master.m3u8"),
+    ("GET", "/api/v1/stream/{sid}/v.m3u8"),
+    ("GET", "/api/v1/stream/{sid}/init.mp4"),
+    ("GET", "/api/v1/stream/{sid}/{n}.m4s"),
 }
 
 

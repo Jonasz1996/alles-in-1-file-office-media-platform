@@ -13,7 +13,6 @@ hand: de test kijkt na dat ladder hem zo heeft (tot M4 zette deze test hem zelf 
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -21,8 +20,8 @@ import pytest
 from fastapi import HTTPException
 
 from app.config import MediaConfig
-from app.media import admission, ladder, public
 from app.media import decide as D
+from app.media import ladder, public
 from app.media import profile as P
 from app.media.types import (
     BudgetView,
@@ -560,10 +559,10 @@ def test_de_toelating_zegt_nee():
     ):
         status, detail = refused(lambda c=changes: run(film(), "chrome_ci", b=budget(**c)))
         assert status == 503 and detail["reason"] == reason
-    # de stub van M4 (admission.view): geen transcode, wel direct en remux
-    stub = admission.view(uuid.uuid4(), None)
-    assert refused(lambda: run(film(), "chrome_ci", b=stub))[1]["reason"] == "worker"
-    assert run(probe("vp9_opus.mkv", **K), "chrome_ci", b=stub).mode == "remux"
+    # geen plek meer (M4: admission.view geeft places_free 0): wel direct en remux
+    full = budget(places_free=0)
+    assert refused(lambda: run(film(), "chrome_ci", b=full))[1]["reason"] == "cpu"
+    assert run(probe("vp9_opus.mkv", **K), "chrome_ci", b=full).mode == "remux"
 
 
 def test_kosten_tellen_de_bron_en_het_extra_werk_mee():

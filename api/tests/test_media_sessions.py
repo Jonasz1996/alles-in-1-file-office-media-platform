@@ -27,6 +27,7 @@ from app.media import admission, analysis, hooks, keyframes, sessions, streams
 from app.media import profile as P
 from app.media.state import MediaPolicy, MediaState
 from app.media.types import Plan, PlayOut, StreamInfo
+from app.media.worker import containers
 from app.models import MediaItem, MediaLibrary, MediaProbe, Node
 from app.routers import media_play, public_media
 from tests.media.media_contract import failed
@@ -303,24 +304,31 @@ async def test_een_mkv_buiten_een_bibliotheek_speelt_als_remux(
     client, admin, settings, monkeypatch
 ):
     """De keyframes bij play (Keuze 17): zonder index leest play de index meteen, binnen het
-    budget, en dan is het remux. De stub van M4 zegt none: transcode met keyframes_missing, en
-    zonder M4 is daar geen plek voor (503 media_busy worker). De stroom zelf (streams.open) is
-    van M4: met de stub 503 media_off, en de sessie gaat weer dicht."""
+    budget, en dan is het remux. Hier is er geen worker (de staat zegt ok): de index komt er
+    niet, dus transcode met keyframes_missing, en de stroom (streams.open, M4) kan zijn
+    producent niet starten: 503 media_worker_down, en de sessie gaat weer dicht. Met de index
+    (read_now nagebootst) is het remux; ook dan faalt open zonder worker, en daarna met een
+    nagebootste open speelt het (M4: de stubs van admission, keyframes en streams zijn weg)."""
     headers, _ = admin
     node = await video(client, headers, settings, "serie.mkv", "vp9_opus.mkv")
     out = await play(client, headers, node["id"], fixture="vp9_opus.mkv", expect=503)
-    assert out["detail"]["code"] == "media_busy"
-    assert out["detail"]["params"]["reason"] == "worker"
+    assert out["detail"]["code"] == "media_worker_down"
     read: list[str] = []
 
     async def read_now(sha):
         read.append(sha)
         await store_probe(settings, sha, "vp9_opus.mkv", index=True)
+        async with maker(settings)() as session:
+            blob = containers.encode([0, 2000, 4000], [65536, 65536, 65536])
+            await session.execute(
+                update(MediaProbe).where(MediaProbe.blob_sha == sha).values(keyframes=blob)
+            )
+            await session.commit()
         return "ready"
 
     monkeypatch.setattr(keyframes, "read_now", read_now)
     out = await play(client, headers, node["id"], fixture="vp9_opus.mkv", expect=503)
-    assert out["detail"]["code"] == "media_off"
+    assert out["detail"]["code"] == "media_worker_down"
     assert read == [node["sha"]] and sessions.list() == []
     opened: list[Plan] = []
 

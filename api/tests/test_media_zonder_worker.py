@@ -72,13 +72,14 @@ async def test_direct_speelt_en_de_rest_noemt_de_worker(client, admin, settings,
 async def test_met_de_worker_gezond_blijft_een_transcode_zonder_plek_busy(
     client, admin, settings, media
 ):
-    """De stub van de toelating (M4) heeft geen plek: met een gezonde worker blijft dat 503
-    media_busy met reden worker, zoals M3 het bouwde."""
+    """De toelating (M4) heeft geen plek (max_transcodes 0): met een gezonde worker blijft dat
+    503 media_busy, zoals M3 het bouwde, en niet de fout van de worker."""
     headers, _ = admin
+    app.state.media_policy = MediaPolicy(MediaConfig(max_transcodes=0))
     node = await video(client, headers, settings, "oud.avi", "xvid_mp3.avi", index=True)
     out = await play(client, headers, node["id"], fixture="xvid_mp3.avi", expect=503)
     assert out["detail"]["code"] == "media_busy"
-    assert out["detail"]["params"]["reason"] == "worker"
+    assert out["detail"]["params"]["reason"] == "cpu"
 
 
 # --- met media echt aan: de lokale worker en de gezondheid van M1 ---------------------------
