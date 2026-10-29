@@ -348,14 +348,37 @@ def file_mime(mime: str) -> str:
     return mime.split(";", 1)[0].strip()
 
 
+def worker_problem(state: MediaState) -> HTTPException | None:
+    """Wat de gezondheid (M1) over de worker weet: niets (ok), of de fout voor de client."""
+    if state.worker == "ffmpeg_missing":
+        return media_errors.ffmpeg_missing()
+    if state.worker != "ok":
+        return media_errors.worker_down()
+    return None
+
+
 def need_worker(state: MediaState, plan: Plan) -> None:
     """Remux, transcode en audio.mp4 hebben de worker nodig; direct play niet."""
     if plan.mode not in WORKER_MODES:
         return
-    if state.worker == "ffmpeg_missing":
-        raise media_errors.ffmpeg_missing()
-    if state.worker != "ok":
-        raise media_errors.worker_down()
+    problem = worker_problem(state)
+    if problem is not None:
+        raise problem
+
+
+def decide_or_worker(state: MediaState, *args: Any) -> Plan:
+    """decide, maar zonder werkende worker is een weigering om plek (503 media_busy, alleen bij
+    transcode) eigenlijk de worker: dan de fout van need_worker (bij het samenvoegen van M1 en
+    M3). Zo krijgt een HEVC-film met de worker weg of zonder ffmpeg media_worker_down of
+    media_ffmpeg_missing (de speler biedt dan Downloaden aan), en geen "druk, probeer later"."""
+    try:
+        return decide.decide(*args)
+    except HTTPException as exc:
+        code = exc.detail.get("code") if isinstance(exc.detail, dict) else None
+        problem = worker_problem(state) if code == "media_busy" else None
+        if problem is not None:
+            raise problem from None
+        raise
 
 
 def need_tonemap(state: MediaState, plan: Plan) -> None:
@@ -406,7 +429,7 @@ async def start(
         media_public.policy(found.config, public=viewer.public), found.config, probe
     )
     budget = admission.view(viewer.user.id, viewer.link_id)
-    plan = decide.decide(probe, profile, choice, policy, budget)
+    plan = decide_or_worker(state, probe, profile, choice, policy, budget)
     need_worker(state, plan)
     need_tonemap(state, plan)
     try:
