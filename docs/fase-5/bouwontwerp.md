@@ -593,6 +593,22 @@ onderaan.
       dezelfde uid, en zo een andere stream stoppen. Dat is hinder, geen lek. Schrijven in een
       blob kan niet meer: de blob is van 10001 (V1). Per job een eigen uid of container is
       zwaarder dan het waard is. Dit staat bij de risico's.
+    - (review M0, S1) **De socket hoort bij dezelfde uid als ffmpeg.** `/run/media` is van
+      `media`, en een gekraakte ffmpeg draait als `media`. Hij kan de socket dus weghalen of
+      hernoemen en zelf luisteren, of de worker een signaal sturen en zijn plaats innemen. Zonder
+      meer zou de app dan de fd's van elke volgende job (een blob van een andere gebruiker, de
+      pipes) aan hem geven. Daarom bewijst de worker zich eerst (hello, Keuze 12): een HMAC met
+      `PLATFORM_MEDIA_WORKER_KEY` over een nonce van de app en de uid die hij van de andere
+      kant ziet (`SO_PEERCRED`). De sleutel staat alleen in de omgeving van de worker; die haalt
+      hem bij de start uit `os.environ`, zijn kinderen krijgen een kale omgeving, en
+      `/proc/<worker>/environ` is na `PR_SET_DUMPABLE 0` niet te lezen voor dezelfde uid. Wie de
+      sleutel niet heeft, krijgt alleen hello, en de app opent de bron niet eens. Een
+      tussenpersoon die doorgeeft, ziet de worker met zijn eigen uid (10002, niet 10001): dat
+      bewijs aanvaardt de app niet. Wat overblijft is hinder: de worker stoppen of de socket
+      bezet houden geeft `media_worker_down`, geen lek. De kinderen onder een eigen uid laten
+      draaien (de worker heeft dan `CAP_SETUID` nodig) of `/run/media` van root maken (de worker
+      bindt dan als root en laat daarna los) zou ook dat wegnemen; dat weegt M1 af, het is niet
+      besloten;
     - De zelftest bij de start (`selftest`, in S3 en S10) bewijst dit op de LXC zelf:
       - `os.open('/proc/self/fd/3', O_WRONLY)` op een blob faalt in de worker;
       - een kind van de worker kan `/proc/<worker>/fd` niet lezen;
@@ -608,6 +624,19 @@ onderaan.
       terugval is niet nodig; op de LXC bewijst de zelftest het.
 12. **Het protocol: getypte opdrachten, file descriptors over een Unix-socket.**
     - Eén verbinding per opdracht. De eerste boodschap draagt de fd's als `SCM_RIGHTS`.
+    - (review M0, S1) **Eerst hello.** Vóór die eerste vraag stuurt de app
+      `{"v": 1, "hello": <nonce>}` (16 willekeurige bytes als hex, zonder fd's). De worker
+      antwoordt `{"ev": "hello", "v": 1, "uid": <uid>, "proof": <hex>}` met
+      `proof = HMAC-SHA256(sleutel, "platform-media-worker|<PROTOCOL>|<nonce>|<uid>")` en `uid`
+      de uid van de app zoals `SO_PEERCRED` hem geeft. De app eist zijn eigen euid en een
+      kloppend bewijs (`hmac.compare_digest`), binnen 5 s; anders `WorkerDown`, en pas daarna
+      opent hij de bron en maakt hij de pipes. Een vraag of fd's vóór hello weigert de worker
+      (`protocol`, `bad_fds`), en de fd's houdt hij niet. De sleutel is
+      `PLATFORM_MEDIA_WORKER_KEY` (minstens 32 tekens, nooit het geheim van de app), verplicht
+      met `PLATFORM_MEDIA_WORKER`; de lokale worker krijgt een afgeleide van het geheim van de
+      app (`Settings.media_key`, zodat de cli hem ook kent). Zonder sleutel start de worker niet
+      (code 2). Dit maakt de vraag het tweede bericht; `PROTOCOL` blijft 1, want er is nog geen
+      uitgerolde worker zonder hello. Keuze 11 zegt waarom;
     - **(spike) Een fd uit `SCM_RIGHTS` deelt zijn positie** (de file offset) met de app en met
       elk kind. In S3 stond hij na ffprobe op 65536, en ffmpeg las `fd:` vanaf daar (rc 183).
       Daarom:
@@ -2165,9 +2194,19 @@ de previews van video's gaan erdoorheen.
     slaagt, zet M1 hem op `on` (in de cache van caps); alleen `on` heet "afgeschermd", in
     `media-status` en op `/beheer`. Zonder `--local` en zonder zelftest is er geen bewijs: de
     worker kan ook gewoon op de host draaien, als de app;
-  - `RLIMIT_DATA` van 1.200 MB laat 1080 veryfast met `-threads 4` gewoon draaien (V6).
+  - `RLIMIT_DATA` van 1.200 MB laat 1080 veryfast met `-threads 4` gewoon draaien (V6);
+  - (review M0, S1) een kind kan `/proc/<worker>/environ` niet lezen (daar stond de sleutel van
+    hello), en een vraag met fd's vóór hello wordt geweigerd.
 
   Exit 1 bij een fout. CI gebruikt het als harde poort.
+
+  *Noot (M0, review S1) voor compose en `install.sh`:* `PLATFORM_MEDIA_WORKER_KEY` moet in
+  beide containers dezelfde zijn (`platform` en `media`). `install.sh` maakt hem één keer (64
+  hex, zoals de andere geheimen in `/opt/platform/.env`), en `compose.media.yaml` geeft hem aan
+  allebei; nooit als argument van `command` (de opdrachtregel is in `/proc` te lezen). Zonder
+  sleutel start de worker niet (code 2), en zegt de app `media_worker_down` met de reden. De
+  e2e met de worker-container krijgt hem als `E2E_MEDIA_WORKER_KEY`. Een eigen uid voor de
+  kinderen, of `/run/media` van root, staat open (Keuze 11).
 - `app/media/local.py`: de lokale worker als kindproces (Keuze 13): starten, herstarten met backoff
   (1, 2, 4 … 60 s), stoppen met de app.
 - `app/media/health.py`: elke 30 s verbinden en `caps`, over de controleverbinding die niet
@@ -3120,6 +3159,7 @@ INDEX ix_media_playlist_item (playlist_id, position)
 ```python
 # Media (fase 5)
 media_worker: str = ""                 # PLATFORM_MEDIA_WORKER: de socket van de worker-container; leeg = lokale worker (Keuze 13)
+media_worker_key: str = ""             # PLATFORM_MEDIA_WORKER_KEY: de sleutel van hello (review M0, S1); verplicht met media_worker
 media_max_transcodes: int = 3          # plafond; /beheer kan alleen lager (Keuze 26)
 media_job_memory_mb: int = 1200        # per ffmpeg; daarboven stopt de worker hem (Keuze 12)
 media_job_workers: int = 1             # workers van de rij media (Keuze 14)
@@ -3156,6 +3196,12 @@ class Op(StrEnum): CAPS; BENCH; PROBE; KEYFRAMES; AUDIO_INFO; NFO; FRAME; META; 
 class WorkClass(StrEnum): TRANSCODE; REMUX; BACKGROUND; SHORT; CONTROL   # de plaatsen van Keuze 12
 async def send(sock, message: dict, fds: Sequence[int] = ()) -> None    # lengte + JSON, fd's als SCM_RIGHTS
 async def receive(sock) -> tuple[dict, list[int]]                       # weigert > MAX_MESSAGE en te veel fd's
+# (review M0, S1) hello vóór de vraag: de worker bewijst zich (Keuze 12)
+def hello(nonce: str) -> dict                                           # {"v": 1, "hello": nonce}
+def proof(key: str, nonce: str, uid: int) -> str                        # HMAC-SHA256, hex
+def hello_problem(message: dict) -> tuple[Code, str] | None             # voor de worker en de nep
+def hello_reply(key: str, nonce: str, uid: int) -> dict                 # {"ev": "hello", "v", "uid", "proof"}
+def peer_uid(sock) -> int                                               # SO_PEERCRED
 
 # app/media/worker/args.py: de argumenten per opdracht (pydantic; de client gebruikt dezelfde klassen)
 class StreamArgs(BaseModel):
@@ -3182,7 +3228,9 @@ class SynthArgs(BaseModel):               # alleen voor de belastingtest (§4.6)
     height: Literal[1080, 720]
 
 # app/media/client.py: de enige weg naar de worker
-class WorkerDown(Exception): ...          # geen verbinding, of een andere PROTOCOL
+class WorkerDown(Exception): ...          # geen verbinding, een andere PROTOCOL, of geen geldig hello
+def bind(socket_path: Path | None, key: str | None = None) -> None   # runtime.start: socket en sleutel
+async def connect(path: Path | None = None, key: str | None = None) -> socket   # verbinden en hello
 class WorkerBusy(Exception): work_class: WorkClass   # de app maakt er 503 media_busy {reason: worker} van
 class WorkerFailed(Exception): code: str; detail: str
 class Job:
@@ -3882,7 +3930,7 @@ M0. De tag zet de lead. De rest van de lijst hierboven is groen.
 | 4 | browser → app | `/api/v1/stream/{sid}/…` (`file`, `map.json`, playlists, `init.mp4`, `{n}.m4s`, `subs/…`, `trick.vtt`, `trick/{i}.jpg`, `audio.mp4`) | de sid in het pad (24 willekeurige bytes) | `sessions.guard`: bestaat, niet verlopen, geen grafsteen, de node wijst nog naar de gepinde sha, de toegang van nu (cache ≤ 15 s); `/file` en `audio.mp4` kijken dat per stuk opnieuw na |
 | 5 | browser → app | `/api/v1/media/art/…` | ondertekend adres (12 uur) | handtekening en tijd, zoals previews |
 | 6 | browser → app | `/api/v1/admin/media/…` | Bearer, beheerder | zoals de rest van `/beheer` |
-| 7 | app → worker | Unix-socket `/run/media/worker.sock` | geen: alleen de groep `platform` (de app) kan verbinden (socket 0660, map 2750 van `media`); geen andere container ziet het volume | de worker: `PROTOCOL`, de grootte, het aantal fd's, de argumenten (pydantic), de plaatsen per soort |
+| 7 | app → worker | Unix-socket `/run/media/worker.sock` | alleen de groep `platform` (de app) en `media` kunnen verbinden (socket 0660, map 2750 van `media`); geen andere container ziet het volume. (review M0, S1) Vóór er een fd gaat, bewijst de worker zich met hello: een HMAC met `PLATFORM_MEDIA_WORKER_KEY` over een nonce en de uid van de app (`SO_PEERCRED`) | de app: het bewijs van de worker; de worker: hello eerst, `PROTOCOL`, de grootte, het aantal fd's, de argumenten (pydantic), de plaatsen per soort |
 | 8 | app → TMDB, MusicBrainz, CAA | https via `providers/http.py` | Bearer voor TMDB (uit `media_secrets`); niets voor MB en CAA | vaste hosts, de controle na DNS, grenzen, de stroomonderbreker (Keuze 39) |
 
 Vanaf internet zijn alleen #1–#6 bereikbaar, via 80 of 443. #7 verlaat de LXC niet, en de worker

@@ -15,7 +15,8 @@ scenario uit SCENARIOS met een Driver per worker:
   scenario's slagen.
 
 Afspraken voor elke Driver:
-- `socket`: waar de worker luistert; `client.bind` staat erop;
+- `socket`: waar de worker luistert; `client.bind` staat erop, met `key`;
+- `key`: de sleutel van hello (review S1); de worker bewijst zich ermee vóór er een fd gaat;
 - `has`: de opdrachten die deze worker echt doet;
 - `max_procs` en `max_transcodes`: zoals de worker gestart is;
 - `processes()`: de ffmpeg- en ffprobe-processen van de worker nu (bij de nep: de opdrachten die
@@ -60,6 +61,7 @@ SOURCE = "stream_src.mkv"
 class WorkerDriver(Protocol):
     name: str
     socket: Path
+    key: str
     has: frozenset[Op]
     max_procs: int
     max_transcodes: int
@@ -100,6 +102,7 @@ async def until(cond: Callable[[], bool], limit: float = 5.0) -> bool:
 
 
 async def _connect(path: Path) -> socket.socket:
+    """Een verbinding zonder hello."""
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
     sock.setblocking(False)
     with wire.socket_address(path) as address:
@@ -107,9 +110,20 @@ async def _connect(path: Path) -> socket.socket:
     return sock
 
 
-async def ask(path: Path, message: dict, fds: list[int] | tuple = ()) -> dict:
-    """Eén vraag over een eigen verbinding; het eerste antwoord."""
-    sock = await _connect(path)
+async def _send_raw(sock: socket.socket, data: bytes, fds: list[int] | tuple = ()) -> dict:
+    if fds:
+        anc = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", fds).tobytes())]
+        sock.sendmsg([data], anc)
+    else:
+        await asyncio.get_running_loop().sock_sendall(sock, data)
+    reply, extra = await wire.receive(sock, max_fds=0)
+    wire.close_all(extra)
+    return reply
+
+
+async def ask(d: WorkerDriver, message: dict, fds: list[int] | tuple = ()) -> dict:
+    """Eén vraag over een eigen verbinding (na hello); het eerste antwoord."""
+    sock = await client.connect(d.socket, d.key)
     try:
         await wire.send(sock, message, fds)
         reply, extra = await wire.receive(sock, max_fds=0)
@@ -119,18 +133,35 @@ async def ask(path: Path, message: dict, fds: list[int] | tuple = ()) -> dict:
         sock.close()
 
 
-async def ask_raw(path: Path, data: bytes, fds: list[int] | tuple = ()) -> dict:
-    sock = await _connect(path)
+async def ask_raw(d: WorkerDriver, data: bytes, fds: list[int] | tuple = ()) -> dict:
+    """Ruwe bytes als vraag, na hello."""
+    sock = await client.connect(d.socket, d.key)
     try:
-        if fds:
-            anc = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", fds).tobytes())]
-            sock.sendmsg([data], anc)
-        else:
-            await asyncio.get_running_loop().sock_sendall(sock, data)
-        reply, _ = await wire.receive(sock, max_fds=0)
-        return reply
+        return await _send_raw(sock, data, fds)
     finally:
         sock.close()
+
+
+async def bare(d: WorkerDriver, data: bytes, fds: list[int] | tuple = ()) -> dict:
+    """Ruwe bytes als eerste boodschap, zonder hello."""
+    sock = await _connect(d.socket)
+    try:
+        return await _send_raw(sock, data, fds)
+    finally:
+        sock.close()
+
+
+def at_eof(fd: int) -> Callable[[], bool]:
+    """Voor until: is de schrijfkant van deze pipe overal dicht (EOF)?"""
+    os.set_blocking(fd, False)
+
+    def check() -> bool:
+        try:
+            return os.read(fd, 1) == b""
+        except BlockingIOError:
+            return False
+
+    return check
 
 
 def request(op: Op, args: BaseModel | dict, v: int = wire.PROTOCOL) -> dict:
@@ -289,7 +320,7 @@ async def probe_vorm(d: WorkerDriver) -> None:
 
 async def begin_tot_eind(d: WorkerDriver) -> None:
     """Op één verbinding: started, result, done, en dan sluit de worker."""
-    sock = await _connect(d.socket)
+    sock = await client.connect(d.socket, d.key)
     try:
         with opened(d.source("noaudio.mp4")) as fd:
             await wire.send(sock, request(Op.PROBE, A.ProbeArgs()), [fd])
@@ -344,44 +375,99 @@ async def bezet_per_soort(d: WorkerDriver) -> None:
     await free(d)
 
 
-async def andere_protocol(d: WorkerDriver) -> None:
-    reply = await ask(d.socket, request(Op.CAPS, {}, v=wire.PROTOCOL + 1))
+async def eerst_hello(d: WorkerDriver) -> None:
+    """Review S1: de worker bewijst zich (een HMAC met de sleutel over de nonce en de uid die hij
+    van de app ziet) vóór de app hem een fd geeft. Een vraag of fd's vóór hello: geweigerd, en
+    de fd's houdt hij niet."""
+    nonce = "0123456789abcdef" * 2
+    sock = await _connect(d.socket)
+    try:
+        await wire.send(sock, wire.hello(nonce))
+        reply, extra = await wire.receive(sock, max_fds=0)
+        assert extra == []
+    finally:
+        sock.close()
+    me = os.geteuid()
+    assert reply == {
+        "ev": "hello",
+        "v": wire.PROTOCOL,
+        "uid": me,
+        "proof": wire.proof(d.key, nonce, me),
+    }
+    # het bewijs hangt aan de uid (een tussenpersoon) en aan de sleutel
+    assert reply["proof"] != wire.proof(d.key, nonce, me + 1)
+    assert reply["proof"] != wire.proof("x" * wire.KEY_MIN, nonce, me)
+    # een vraag zonder hello
+    reply = await bare(d, wire.encode(request(Op.CAPS, {})))
     assert reply["ev"] == "error" and reply["code"] == Code.PROTOCOL
-    reply = await ask(d.socket, {"op": "caps", "args": {}})
+    # de vraag met fd's zonder hello: geweigerd, en de worker sloot zijn kopie
+    r, w = os.pipe2(os.O_CLOEXEC)
+    try:
+        with opened(d.source("h264_aac.mp4")) as fd:
+            reply = await bare(d, wire.encode(request(Op.FRAME, {})), [fd, w])
+        assert reply["code"] == Code.BAD_FDS
+        os.close(w)
+        w = -1
+        assert await until(at_eof(r)), "de worker hield een fd van vóór hello"
+    finally:
+        wire.close_all([fd for fd in (r, w) if fd >= 0])
+    # hello met fd's, een andere PROTOCOL of een kapotte nonce
+    with opened(d.source("h264_aac.mp4")) as fd:
+        assert (await bare(d, wire.encode(wire.hello(nonce)), [fd]))["code"] == Code.BAD_FDS
+    for message in (
+        {"v": wire.PROTOCOL + 1, "hello": nonce},
+        {"v": wire.PROTOCOL, "hello": "kort"},
+        {"v": wire.PROTOCOL, "hello": nonce.upper()},
+        {"v": wire.PROTOCOL, "hello": nonce, "op": "caps"},
+    ):
+        assert (await bare(d, wire.encode(message)))["code"] == Code.PROTOCOL, message
+    # met een andere sleutel: de app weigert, en de worker kreeg geen vraag
+    with contextlib.suppress(client.WorkerDown):
+        await client.connect(d.socket, "y" * wire.KEY_MIN)
+        raise AssertionError("een verkeerde sleutel werd aanvaard")
+    assert (await client.caps()).procs == 0  # de worker leeft nog
+    await free(d)
+
+
+async def andere_protocol(d: WorkerDriver) -> None:
+    reply = await ask(d, request(Op.CAPS, {}, v=wire.PROTOCOL + 1))
+    assert reply["ev"] == "error" and reply["code"] == Code.PROTOCOL
+    reply = await ask(d, {"op": "caps", "args": {}})
     assert reply["code"] == Code.PROTOCOL
 
 
 async def te_grote_boodschap(d: WorkerDriver) -> None:
-    reply = await ask_raw(d.socket, struct.pack(">I", wire.MAX_MESSAGE + 1))
+    reply = await ask_raw(d, struct.pack(">I", wire.MAX_MESSAGE + 1))
+    assert reply["ev"] == "error" and reply["code"] == Code.TOO_LARGE
+    reply = await bare(d, struct.pack(">I", wire.MAX_MESSAGE + 1))  # ook als hello
     assert reply["ev"] == "error" and reply["code"] == Code.TOO_LARGE
     assert (await client.caps()).protocol == wire.PROTOCOL  # de worker leeft nog
 
 
 async def onbekende_opdracht(d: WorkerDriver) -> None:
     for message in ({"v": 1, "op": "shell", "args": {}}, {"v": 1, "args": {}}):
-        reply = await ask(d.socket, message)
+        reply = await ask(d, message)
         assert reply["ev"] == "error" and reply["code"] == Code.UNKNOWN_OP
 
 
 async def verkeerde_argumenten(d: WorkerDriver) -> None:
     with opened(d.source("h264_aac.mp4")) as fd:
-        reply = await ask(d.socket, request(Op.PROBE, {"demuxer": "/etc/passwd"}), [fd])
+        reply = await ask(d, request(Op.PROBE, {"demuxer": "/etc/passwd"}), [fd])
     assert reply["code"] == Code.BAD_ARGS
     assert "/etc/passwd" not in reply["detail"]  # nooit de waarde terug
 
 
 async def verkeerd_aantal_fds(d: WorkerDriver) -> None:
-    path = d.socket
     probe = request(Op.PROBE, A.ProbeArgs())
-    assert (await ask(path, probe))["code"] == Code.BAD_FDS
+    assert (await ask(d, probe))["code"] == Code.BAD_FDS
     with opened(d.source("h264_aac.mp4")) as fd:
-        assert (await ask(path, probe, [fd, fd]))["code"] == Code.BAD_FDS
-        assert (await ask(path, request(Op.CAPS, {}), [fd]))["code"] == Code.BAD_FDS
-        many = await ask_raw(path, wire.encode(probe), [fd] * (wire.MAX_FDS + 1))
+        assert (await ask(d, probe, [fd, fd]))["code"] == Code.BAD_FDS
+        assert (await ask(d, request(Op.CAPS, {}), [fd]))["code"] == Code.BAD_FDS
+        many = await ask_raw(d, wire.encode(probe), [fd] * (wire.MAX_FDS + 1))
         assert many["code"] == Code.BAD_FDS
     r, w = os.pipe2(os.O_CLOEXEC)
     try:  # een pipe als invoer
-        assert (await ask(path, probe, [r]))["code"] == Code.BAD_FDS
+        assert (await ask(d, probe, [r]))["code"] == Code.BAD_FDS
     finally:
         wire.close_all([r, w])
     await free(d)
@@ -457,6 +543,7 @@ SCENARIOS: list[Scenario] = [
     begin_tot_eind,
     dicht_is_stoppen,
     bezet_per_soort,
+    eerst_hello,
     andere_protocol,
     te_grote_boodschap,
     onbekende_opdracht,

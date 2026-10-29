@@ -43,6 +43,7 @@ from app.media.worker.server import Config, OpError, Places, Worker
 pytestmark = pytest.mark.anyio
 
 CAPS = {"protocol": 1, "ffmpeg": "test", "ffprobe": "test", "mode": "local", "sandbox": "off"}
+KEY = "de-sleutel-van-deze-test-" * 2  # hello (review S1)
 PROBE = A.ProbeArgs()
 SPRITES = A.SpritesArgs(demuxer="matroska", video_index=0)
 FRAME = A.FrameArgs(demuxer="matroska", video_index=0)
@@ -109,7 +110,8 @@ async def until(cond: Callable[[], bool], limit: float = 5.0) -> bool:
     return cond()
 
 
-async def connect(path: Path) -> socket.socket:
+async def raw_connect(path: Path) -> socket.socket:
+    """Een verbinding zonder hello."""
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
     sock.setblocking(False)
     with wire.socket_address(path) as address:
@@ -117,8 +119,13 @@ async def connect(path: Path) -> socket.socket:
     return sock
 
 
+async def connect(path: Path) -> socket.socket:
+    """Een verbinding na hello, met de sleutel waar de client op gebonden is."""
+    return await client.connect(path)
+
+
 async def ask(path: Path, message: dict, fds: list[int] | tuple = ()) -> dict:
-    """Eén vraag over een eigen verbinding; het eerste antwoord."""
+    """Eén vraag over een eigen verbinding (na hello); het eerste antwoord."""
     sock = await connect(path)
     try:
         await wire.send(sock, message, fds)
@@ -221,10 +228,10 @@ def test_client_vertaalt_de_fouten():
 
 @pytest.fixture
 async def worker(tmp_path):
-    config = Config(socket=tmp_path / "run" / "w.sock", max_procs=6, max_transcodes=2)
+    config = Config(socket=tmp_path / "run" / "w.sock", max_procs=6, max_transcodes=2, key=KEY)
     w = Worker(config, dict(CAPS))
     await w.start()
-    client.bind(config.socket)
+    client.bind(config.socket, KEY)
     try:
         yield w
     finally:
@@ -352,12 +359,223 @@ async def test_symlink_als_bron_gaat_niet_naar_de_worker(worker, source, tmp_pat
 
 
 async def test_geen_worker_is_worker_down(tmp_path):
-    client.bind(tmp_path / "geen.sock")
+    client.bind(tmp_path / "geen.sock", KEY)
     try:
         with pytest.raises(WorkerDown):
             await client.caps()
     finally:
         client.bind(None)
+
+
+# --- hello: de worker bewijst zich vóór er een fd naartoe gaat (review S1) -------------------
+
+
+class Impostor:
+    """Iets anders op de socket: neemt verbindingen aan, leest alles (met de fd's erbij) en
+    antwoordt op de eerste boodschap met answer(boodschap), of nooit."""
+
+    def __init__(self, path: Path, answer: Callable[[dict], dict] | None):
+        self.path = path
+        self.answer = answer
+        self.messages: list[dict] = []
+        self.fds = 0
+        self._tasks: set[asyncio.Task] = set()
+
+    async def __aenter__(self) -> Impostor:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
+        with wire.socket_address(self.path) as address:
+            self._listener.bind(address)
+        self._listener.listen(8)
+        self._listener.setblocking(False)
+        self._accept = asyncio.create_task(self._accepting())
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        self._accept.cancel()
+        for task in list(self._tasks):
+            task.cancel()
+        await asyncio.gather(self._accept, *self._tasks, return_exceptions=True)
+        self._listener.close()
+        self.path.unlink(missing_ok=True)
+
+    async def _accepting(self) -> None:
+        loop = asyncio.get_running_loop()
+        while True:
+            conn, _ = await loop.sock_accept(self._listener)
+            conn.setblocking(False)
+            task = asyncio.create_task(self._one(conn))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+
+    async def _one(self, conn: socket.socket) -> None:
+        try:
+            while True:
+                message, fds = await wire.receive(conn)
+                self.fds += len(fds)
+                wire.close_all(fds)
+                self.messages.append(message)
+                if self.answer is not None and len(self.messages) == 1:
+                    await wire.send(conn, self.answer(message))
+        except (wire.Closed, wire.WireError, OSError):
+            pass
+        finally:
+            conn.close()
+
+
+def _wrong_key(message: dict) -> dict:
+    return wire.hello_reply("z" * wire.KEY_MIN, message["hello"], os.geteuid())
+
+
+@pytest.mark.parametrize(
+    ("answer", "why"),
+    [
+        (_wrong_key, "bewijst zich niet"),
+        (lambda m: {"ev": "hello", "v": 1, "uid": os.geteuid(), "proof": "0" * 64}, "bewijst"),
+        (lambda m: {"ev": "started"}, "geen hello"),  # een worker zonder hello
+        (lambda m: {"ev": "hello", "v": 1, "uid": True, "proof": "0" * 64}, "ziet uid"),
+        (None, "binnen"),  # zegt niets
+    ],
+    ids=["andere-sleutel", "nep-bewijs", "geen-hello", "rare-uid", "stil"],
+)
+async def test_een_bedrieger_op_de_socket_krijgt_geen_fd(
+    tmp_path, source, monkeypatch, answer, why
+):
+    """Wie de socket overneemt (een gekraakt kind van de worker, Keuze 11) zonder de sleutel,
+    krijgt alleen hello: de app opent de bron niet eens."""
+    monkeypatch.setattr(client, "HELLO_TIMEOUT", 0.3)
+    opened_sources: list[Path] = []
+    real_open = client._open_source
+    monkeypatch.setattr(client, "_open_source", lambda p: opened_sources.append(p) or real_open(p))
+    async with Impostor(tmp_path / "w.sock", answer) as impostor:
+        client.bind(impostor.path, KEY)
+        try:
+            with pytest.raises(WorkerDown, match=why):
+                await client.call(Op.FRAME, FRAME, source=source, outputs=1)
+        finally:
+            client.bind(None)
+        await asyncio.sleep(0.05)
+    assert impostor.fds == 0 and opened_sources == []
+    assert len(impostor.messages) == 1 and set(impostor.messages[0]) == {"v", "hello"}
+
+
+async def test_een_verkeerde_sleutel_of_geen_is_worker_down(worker, source, monkeypatch):
+    seen: list[Op] = []
+    real = server.handler
+    monkeypatch.setattr(server, "handler", lambda op: seen.append(op) or real(op))
+    client.bind(worker.config.socket, "y" * 40)
+    with pytest.raises(WorkerDown, match="PLATFORM_MEDIA_WORKER_KEY klopt niet"):
+        await client.call(Op.PROBE, PROBE, source=source)
+    client.bind(worker.config.socket, "kort")
+    with pytest.raises(WorkerDown, match="geen sleutel"):
+        await client.caps()
+    assert seen == []  # de worker kreeg geen vraag
+    client.bind(worker.config.socket, KEY)
+    assert (await client.caps()).protocol == wire.PROTOCOL
+
+
+async def test_het_bewijs_hangt_aan_de_uid_die_de_worker_ziet(worker, source, monkeypatch):
+    """Een tussenpersoon met een andere uid: de worker bewijst zich voor die uid, en dat
+    aanvaardt de app niet (zonder root nagespeeld; de echte staat hieronder)."""
+    monkeypatch.setattr(wire, "peer_uid", lambda sock: os.geteuid() + 1)
+    with pytest.raises(WorkerDown, match=f"ziet uid {os.geteuid() + 1}"):
+        await client.call(Op.PROBE, PROBE, source=source)
+
+
+async def test_zonder_sleutel_start_de_worker_niet(tmp_path):
+    for key in ("", "x" * (wire.KEY_MIN - 1)):
+        config = Config(socket=tmp_path / "w.sock", key=key)
+        with pytest.raises(ValueError, match="PLATFORM_MEDIA_WORKER_KEY"):
+            await Worker(config, dict(CAPS)).start()
+        assert not config.socket.exists()
+    assert KEY not in repr(Config(socket=tmp_path / "w.sock", key=KEY))
+
+
+# Een tussenpersoon als een andere uid (nobody): neemt één verbinding aan, verbindt met de
+# worker en geeft de bytes door; telt de fd's die de app hem stuurt
+RELAY = r"""
+import os, select, socket, sys
+here, there = sys.argv[1], sys.argv[2]
+listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+listener.bind(here)
+os.chmod(here, 0o666)
+listener.listen(1)
+print("luistert", flush=True)
+a, _ = listener.accept()
+b = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+b.connect(there)
+fds = 0
+done = False
+while not done:
+    ready, _, _ = select.select([a, b], [], [], 10)
+    if not ready:
+        break
+    for s in ready:
+        if s is a:
+            data, anc, _, _ = a.recvmsg(65536, socket.CMSG_SPACE(64 * 4))
+            fds += sum(len(raw) // 4 for _, _, raw in anc)
+            if not data:
+                done = True
+                break
+            b.sendall(data)
+        else:
+            data = b.recv(65536)
+            if not data:
+                done = True
+                break
+            a.sendall(data)
+print("fds", fds, flush=True)
+"""
+
+
+@pytest.fixture
+def shared_dir():
+    """Een map in /tmp waar ook nobody bij kan (tmp_path is 0700); daarna weg."""
+    import tempfile
+
+    base = Path(tempfile.mkdtemp(prefix="media-relay-", dir="/tmp"))
+    base.chmod(0o777)
+    yield base
+    shutil.rmtree(base, ignore_errors=True)
+
+
+# De tussenpersoon draait als nobody: die kan de python van de venv niet starten, wel die van
+# het systeem (alleen de standaardbibliotheek)
+SYSTEM_PYTHON = "/usr/bin/python3"
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="een andere uid kan alleen als root")
+@pytest.mark.skipif(not os.access(SYSTEM_PYTHON, os.X_OK), reason="geen python van het systeem")
+async def test_een_tussenpersoon_met_een_andere_uid_krijgt_niets(source, shared_dir):
+    """De echte tussenpersoon (review S1): een proces als nobody op een eigen socket dat alles
+    doorgeeft. De worker ziet nobody, bewijst zich voor die uid, en de app weigert; de
+    tussenpersoon kreeg geen enkele fd. Rechtstreeks werkt dezelfde sleutel wel."""
+    base = shared_dir
+    config = Config(socket=base / "w.sock", max_procs=3, key=KEY)
+    w = Worker(config, dict(CAPS))
+    await w.start()
+    os.chmod(config.socket, 0o666)
+    relay = await asyncio.create_subprocess_exec(
+        SYSTEM_PYTHON, "-I", "-c", RELAY, str(base / "r.sock"), str(config.socket),
+        user=65534, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, env=local.worker_env(),
+        cwd="/", start_new_session=True,
+    )  # fmt: skip
+    try:
+        assert relay.stdout is not None
+        assert await asyncio.wait_for(relay.stdout.readline(), 10) == b"luistert\n"
+        client.bind(base / "r.sock", KEY)
+        with pytest.raises(WorkerDown, match="ziet uid 65534"):
+            await client.call(Op.PROBE, PROBE, source=source)
+        out = await asyncio.wait_for(relay.stdout.read(), 15)
+        assert out == b"fds 0\n"
+        client.bind(config.socket, KEY)
+        assert (await client.caps()).protocol == wire.PROTOCOL
+    finally:
+        client.bind(None)
+        if relay.returncode is None:
+            relay.kill()  # op pid
+        await relay.wait()
+        await w.stop()
 
 
 async def test_voortgang_resultaat_en_done(worker, monkeypatch):
@@ -504,10 +722,10 @@ async def test_child_stop_nogmaals_gestopt_wacht_toch_op_het_kind():
 
 
 async def test_stop_van_de_worker_stopt_elk_kind(tmp_path, slow, source):
-    config = Config(socket=tmp_path / "w.sock", max_procs=3)
+    config = Config(socket=tmp_path / "w.sock", max_procs=3, key=KEY)
     w = Worker(config, dict(CAPS))
     await w.start()
-    client.bind(config.socket)
+    client.bind(config.socket, KEY)
     try:
         job, _ = await client.call(Op.PROBE, PROBE, source=source)
         assert await until(lambda: len(slow) == 1)
@@ -528,7 +746,7 @@ async def test_een_andere_fout_bij_aannemen_stopt_de_worker_met_code_1(tmp_path,
         raise OSError(errno.EBADF, "kapot")
 
     monkeypatch.setattr(Worker, "_accept", kapot)
-    config = Config(socket=tmp_path / "w.sock", max_procs=3)
+    config = Config(socket=tmp_path / "w.sock", max_procs=3, key=KEY)
     async with asyncio.timeout(5):
         assert await main.serve(config, dict(CAPS)) == 1
     assert not config.socket.exists()
@@ -551,10 +769,10 @@ async def test_zonder_fds_neemt_de_worker_daarna_weer_aan(tmp_path):
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-I", "-c", NOFILE_WRAPPER, *argv,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-        env=local.worker_env(), cwd="/", start_new_session=True,
+        env=local.worker_env(KEY), cwd="/", start_new_session=True,
     )  # fmt: skip
     socks: list[socket.socket] = []
-    client.bind(path)
+    client.bind(path, KEY)
     try:
         assert await until(path.exists, limit=15), "de worker luistert niet"
         for _ in range(90):  # meer dan de 64 fd's van de worker
@@ -658,7 +876,7 @@ def media_settings(tmp_path: Path, **over) -> Settings:
 @pytest.fixture
 async def real_worker(tmp_path):
     w = await local.start(media_settings(tmp_path), tmp_path / "run" / "worker.sock")
-    client.bind(w.socket)
+    client.bind(w.socket, w.key)
     try:
         yield w
     finally:
@@ -679,7 +897,7 @@ async def sleepy_worker(tmp_path, monkeypatch):
     fake.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}")
     w = await local.start(media_settings(tmp_path), tmp_path / "run" / "worker.sock")
-    client.bind(w.socket)
+    client.bind(w.socket, w.key)
     try:
         yield w
     finally:
@@ -702,6 +920,8 @@ async def test_echte_worker_caps(real_worker):
     assert caps.max_procs == 3 and caps.procs == 0
     mode = real_worker.socket.stat().st_mode & 0o777
     assert mode == 0o660
+    # de sleutel gaat via de omgeving, nooit op de opdrachtregel (die is voor iedereen te lezen)
+    assert real_worker.key and real_worker.key.encode() not in proc_file(real_worker.pid, "cmdline")
 
 
 @pytest.mark.media
@@ -814,6 +1034,12 @@ def test_check_en_selftest():
         [*argv, "--selftest"], capture_output=True, timeout=60, env=env, cwd="/", check=False
     )
     assert done.returncode == 2  # M1 bouwt de zelftest
+    # luisteren zonder sleutel: niet (review S1)
+    done = subprocess.run(
+        [*argv, "--socket", "/nergens/w.sock"], capture_output=True, timeout=60, env=env,
+        cwd="/", check=False,
+    )  # fmt: skip
+    assert done.returncode == 2 and b"PLATFORM_MEDIA_WORKER_KEY" in done.stderr
 
 
 @pytest.mark.media
@@ -863,6 +1089,7 @@ async def test_runtime_container_zonder_worker_is_down(tmp_path, monkeypatch):
         assert getattr(app.state, "media_local", None) is None  # nooit stil terug op lokaal
         assert await until(lambda: state.worker == "down")
         assert not state.healthy
+        assert "PLATFORM_MEDIA_WORKER_KEY" in (state.reason or "")  # review S1
     finally:
         await runtime.stop(app)
 

@@ -105,7 +105,7 @@ async def record(names: list[str] | None = None) -> dict[str, str]:
             data_dir=base, web_dist=base / "web", jwt_secret="r" * 32, media_max_procs=3
         )
         worker = await local.start(settings, base / "run" / "worker.sock")
-        client.bind(worker.socket)
+        client.bind(worker.socket, worker.key)
         try:
             caps = (await client.caps()).model_dump(mode="json")
             for key in CAPS_VOLATILE:

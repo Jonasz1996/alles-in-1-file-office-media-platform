@@ -10,9 +10,14 @@ sluit de eigen kopieën en geeft de leeskanten terug (D7). Wie een leeskant krij
 zelf, ook als hij stopt met lezen: een gepauzeerde asyncio-transport krijgt na een kill geen EOF
 (spike punt 4).
 
+Vóór er iets geopend of gestuurd wordt, moet de worker zich bewijzen (hello, wire.py; review
+S1): een HMAC met de sleutel (PLATFORM_MEDIA_WORKER_KEY, of bij de lokale worker een sleutel
+uit het geheim van de app: Settings.media_key) over een verse nonce en de uid van de app zoals
+de worker die ziet. Lukt dat niet, dan WorkerDown, en heeft de andere kant niets gekregen.
+
 call wacht op het eerste antwoord van de worker. Is dat busy, dan WorkerBusy; een andere
-PROTOCOL of geen verbinding is WorkerDown; elke andere fout WorkerFailed. Zo ligt er na call
-nooit een half gestarte opdracht.
+PROTOCOL, een worker die zich niet bewijst of geen verbinding is WorkerDown; elke andere fout
+WorkerFailed. Zo ligt er na call nooit een half gestarte opdracht.
 
 De verbinding sluiten (Job.cancel, of de taak die stopt) is stoppen: de worker doet killpg.
 """
@@ -20,7 +25,9 @@ De verbinding sluiten (Job.cancel, of de taak die stopt) is stoppen: de worker d
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
+import secrets
 import socket
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
@@ -33,10 +40,12 @@ from app.media.wire import Code, Op, WorkClass
 from app.media.worker.args import CapsArgs, ProbeArgs
 
 CONNECT_TIMEOUT = 5.0
+HELLO_TIMEOUT = 5.0
 PROBE_TIMEOUT = 60.0
 CAPS_TIMEOUT = 5.0
 
 _socket: Path | None = None
+_key: str | None = None
 
 
 class WorkerDown(Exception):
@@ -64,10 +73,12 @@ class WorkerFailed(Exception):
         self.detail = detail
 
 
-def bind(socket_path: Path | None) -> None:
-    """Waar de worker luistert (runtime.start); None = Settings.media_socket."""
-    global _socket
+def bind(socket_path: Path | None, key: str | None = None) -> None:
+    """Waar de worker luistert en met welke sleutel hij zich bewijst (runtime.start); None =
+    Settings.media_socket en Settings.media_key()."""
+    global _socket, _key
     _socket = socket_path
+    _key = key
 
 
 def socket_path() -> Path:
@@ -76,6 +87,14 @@ def socket_path() -> Path:
     from app.config import get_settings
 
     return get_settings().media_socket
+
+
+def worker_key() -> str:
+    if _key is not None:
+        return _key
+    from app.config import get_settings
+
+    return get_settings().media_key()
 
 
 def _raise(message: dict) -> None:
@@ -181,6 +200,54 @@ async def _connect(path: Path) -> socket.socket:
     return sock
 
 
+async def _hello(sock: socket.socket, key: str) -> None:
+    """De worker bewijst zich (wire.py): een verse nonce, en dan het bewijs voor de euid van
+    de app. Geen fd's in beide richtingen."""
+    nonce = secrets.token_hex(16)
+    me = os.geteuid()
+    try:
+        async with asyncio.timeout(HELLO_TIMEOUT):
+            await wire.send(sock, wire.hello(nonce))
+            reply, extra = await wire.receive(sock, max_fds=0)
+    except wire.Closed:
+        raise WorkerDown("de worker sloot de verbinding bij hello") from None
+    except TimeoutError:
+        raise WorkerDown(f"geen hello van de worker binnen {HELLO_TIMEOUT:g} s") from None
+    except (wire.WireError, OSError) as exc:
+        raise WorkerDown(f"geen geldig hello: {exc}") from None
+    wire.close_all(extra)
+    if reply.get("ev") == "error":
+        code = str(reply.get("code") or Code.INTERNAL.value)
+        detail = str(reply.get("detail") or "")[:200]
+        raise WorkerDown(f"de worker weigerde hello ({code}: {detail})")
+    if reply.get("ev") != "hello" or reply.get("v") != wire.PROTOCOL:
+        raise WorkerDown(f"geen hello maar {reply.get('ev')!r} (andere PROTOCOL?)")
+    uid = reply.get("uid")
+    if type(uid) is not int or uid != me:
+        raise WorkerDown(f"de worker ziet uid {uid!r} en niet {me}: iets anders zit op de socket")
+    got = str(reply.get("proof") or "").encode()
+    if not hmac.compare_digest(got, wire.proof(key, nonce, me).encode()):
+        raise WorkerDown("de worker bewijst zich niet (PLATFORM_MEDIA_WORKER_KEY klopt niet)")
+
+
+async def connect(path: Path | None = None, key: str | None = None) -> socket.socket:
+    """Een verbinding met de worker, die zich al bewezen heeft (hello). Voor call; de tests
+    sturen er hun eigen vragen over."""
+    key = worker_key() if key is None else key
+    if len(key) < wire.KEY_MIN:
+        raise WorkerDown(
+            f"geen sleutel voor de worker (PLATFORM_MEDIA_WORKER_KEY, minstens {wire.KEY_MIN} "
+            "tekens)"
+        )
+    sock = await _connect(socket_path() if path is None else path)
+    try:
+        await _hello(sock, key)
+    except BaseException:
+        sock.close()
+        raise
+    return sock
+
+
 def _open_source(source: Path) -> int:
     return os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
 
@@ -201,9 +268,10 @@ async def call(
       bestand); call sluit ze niet;
     - outputs pipes: de schrijfkanten gaan mee, de leeskanten komen terug (CLOEXEC).
 
-    De open() van de bron mag mislukken (FileNotFoundError, of ELOOP voor een symlink): dan
-    gaat er niets naar de worker."""
-    sock = await _connect(socket_path())
+    Eerst de verbinding en hello: pas als de worker zich bewezen heeft, opent call de bron en
+    maakt hij de pipes. De open() van de bron mag mislukken (FileNotFoundError, of ELOOP voor
+    een symlink): dan gaat er niets naar de worker."""
+    sock = await connect()
     own: list[int] = []  # wat na het sturen dicht moet
     reads: list[int] = []
     try:

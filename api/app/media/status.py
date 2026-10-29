@@ -30,7 +30,10 @@ async def _caps(settings: Settings, wait: float) -> tuple[Any, str]:
     """(WorkerCaps of None, de reden als het niet lukte); probeert opnieuw tot wait om is."""
     from app.media import client
 
-    client.bind(settings.media_socket)
+    client.bind(settings.media_socket, settings.media_key())
+    problem = settings.media_problem()
+    if problem is not None:
+        return None, problem
     end = time.monotonic() + max(0.0, wait)
     while True:
         try:

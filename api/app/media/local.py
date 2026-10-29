@@ -5,7 +5,8 @@ met backoff; M0 heeft het starten en stoppen, zodat de kern zonder Docker werkt.
 
 `python -I -m app.media.worker` vindt `app` niet als het project niet geïnstalleerd is (-I zet
 de werkmap niet in sys.path); BOOT zet de map van de API er zelf in en start dan de module. Het
-kind krijgt een kale omgeving en een eigen procesgroep, en stopt alleen op pid.
+kind krijgt een kale omgeving en een eigen procesgroep, en stopt alleen op pid. De sleutel van
+hello (Settings.media_key, review S1) gaat alleen via de omgeving mee, nooit als argument.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import contextlib
 import os
 import signal
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.config import Settings
@@ -33,6 +34,7 @@ STOP_GRACE = 5.0
 class LocalWorker:
     process: asyncio.subprocess.Process
     socket: Path
+    key: str = field(default="", repr=False)
 
     @property
     def pid(self) -> int:
@@ -59,13 +61,20 @@ def worker_argv(settings: Settings, socket_path: Path) -> list[str]:
     ]
 
 
-def worker_env() -> dict[str, str]:
-    """Kaal: PATH, LC_ALL=C en HOME=/tmp (Keuze 12)."""
-    return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "HOME": "/tmp"}
+def worker_env(key: str = "") -> dict[str, str]:
+    """Kaal: PATH, LC_ALL=C en HOME=/tmp (Keuze 12), en de sleutel van hello."""
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "HOME": "/tmp"}
+    if key:
+        env["PLATFORM_MEDIA_WORKER_KEY"] = key
+    return env
 
 
-async def start(settings: Settings, socket_path: Path | None = None) -> LocalWorker:
-    """Start de worker en wacht tot hij luistert (hooguit READY_TIMEOUT)."""
+async def start(
+    settings: Settings, socket_path: Path | None = None, key: str | None = None
+) -> LocalWorker:
+    """Start de worker en wacht tot hij luistert (hooguit READY_TIMEOUT). key: standaard
+    Settings.media_key(); client.bind(worker.socket, worker.key) praat ermee."""
+    key = settings.media_key() if key is None else key
     path = socket_path or settings.media_socket
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with contextlib.suppress(FileNotFoundError):
@@ -75,11 +84,11 @@ async def start(settings: Settings, socket_path: Path | None = None) -> LocalWor
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=None,  # het log van de worker gaat naar dat van de app
-        env=worker_env(),
+        env=worker_env(key),
         cwd="/",
         start_new_session=True,
     )
-    worker = LocalWorker(process, path)
+    worker = LocalWorker(process, path, key)
     try:
         async with asyncio.timeout(READY_TIMEOUT):
             while not path.exists():

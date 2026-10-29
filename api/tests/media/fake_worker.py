@@ -1,12 +1,15 @@
 """De nep-mediaworker (§3.6): spreekt het protocol van §3.3 over een echte Unix-socket.
 
     async with FakeWorker(tmp_path / "w.sock") as fake:
-        client.bind(fake.socket)              # of Settings(media_enabled=True, media_worker=…)
+        client.bind(fake.socket, fake.key)    # of Settings(media_worker=…, media_worker_key=…)
         fake.speed = 4.0                      # stream: 4 s mediatijd per seconde
         fake.fault("crash_after", op=Op.STREAM, n=3)
         ...
 
 Wat hij doet, zoals de echte worker (`app/media/worker/server.py`, Keuze 12):
+- eerst hello (review S1): het bewijs met `key` (standaard een verse sleutel per nep; `running`
+  bindt de client erop) voor de uid van de andere kant. Een vraag of fd's vóór hello: dezelfde
+  weigering als de echte;
 - één verbinding per opdracht; de vraag gaat door `wire.receive` (grens op de grootte en het
   aantal fd's) en `args.parse`; een andere PROTOCOL, een onbekende opdracht, verkeerde argumenten
   of een verkeerd aantal of soort fd's geeft dezelfde foutcode;
@@ -55,6 +58,7 @@ import contextlib
 import functools
 import hashlib
 import os
+import secrets
 import socket
 import stat
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -156,8 +160,10 @@ class FakeWorker:
         max_transcodes: int = 3,
         mode: Literal["local", "container"] = "local",
         loadtest: bool = False,
+        key: str | None = None,
     ):
         self.socket = socket_path
+        self.key = key if key is not None else secrets.token_hex(32)
         self.max_procs = max_procs
         self.max_transcodes = max_transcodes
         self.mode = mode
@@ -305,6 +311,26 @@ class FakeWorker:
             wire.close_all(fds)
             sock.close()
 
+    async def _hello(self, sock: socket.socket) -> bool:
+        """Zoals Worker._hello: de nonce zonder fd's, dan het bewijs voor de peer-uid."""
+        try:
+            message, _ = await wire.receive(sock, max_fds=0)
+        except wire.Closed:
+            return False
+        except wire.WireError as exc:
+            with contextlib.suppress(OSError):
+                await wire.send(sock, wire.error(exc.code, exc.detail))
+            return False
+        problem = wire.hello_problem(message)
+        if problem is not None:
+            with contextlib.suppress(OSError):
+                await wire.send(sock, wire.error(*problem))
+            return False
+        with contextlib.suppress(OSError):
+            await wire.send(sock, wire.hello_reply(self.key, message["hello"], wire.peer_uid(sock)))
+            return True
+        return False
+
     async def _serve(self, sock: socket.socket, fds: list[int]) -> None:
         closed = False
 
@@ -313,6 +339,8 @@ class FakeWorker:
                 raise ConnectionResetError("de app sloot de verbinding")
             await wire.send(sock, message)
 
+        if not await self._hello(sock):
+            return
         try:
             message, got = await wire.receive(sock)
         except wire.Closed:
@@ -593,7 +621,7 @@ async def running(socket_path: Path, **kwargs) -> AsyncIterator[FakeWorker]:
 
     fake = FakeWorker(socket_path, **kwargs)
     await fake.start()
-    client.bind(fake.socket)
+    client.bind(fake.socket, fake.key)
     try:
         yield fake
     finally:

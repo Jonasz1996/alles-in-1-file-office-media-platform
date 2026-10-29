@@ -1,8 +1,24 @@
 """Het protocol tussen de app en de mediaworker (bouwontwerp fase 5, Keuze 12). Frozen.
 
 Eén verbinding per opdracht, over een Unix-socket. Een boodschap is 4 bytes lengte (big endian)
-en dan JSON, hooguit MAX_MESSAGE bytes. Alleen de eerste boodschap (de vraag) draagt file
-descriptors, als SCM_RIGHTS: [invoer…, uitvoer…].
+en dan JSON, hooguit MAX_MESSAGE bytes.
+
+Eerst bewijst de worker wie hij is (review S1), en pas daarna gaan er fd's naar hem toe:
+
+    app:        {"v": 1, "hello": "<nonce: 32 hex>"}                         (zonder fd's)
+    worker:     {"ev": "hello", "v": 1, "uid": <uid>, "proof": "<64 hex>"}
+
+proof = HMAC-SHA256(sleutel, "platform-media-worker|<PROTOCOL>|<nonce>|<uid>") (proof()), met
+uid de uid die de worker van de andere kant ziet (SO_PEERCRED, peer_uid()). De app eist zijn
+eigen euid en een kloppend bewijs; anders WorkerDown en dicht, zonder dat er een bron geopend
+of gestuurd is. Zo krijgt alleen wie de sleutel heeft (PLATFORM_MEDIA_WORKER_KEY, Keuze 11)
+een fd van de app. Een kind van de worker heeft hem niet: het krijgt een kale omgeving
+(run.environment) en kan niet in de worker kijken (PR_SET_DUMPABLE 0). Een tussenpersoon die de
+socket overneemt en doorgeeft, ziet de worker met zijn eigen uid: dan klopt het bewijs voor de
+uid van de app niet. Een vraag zonder hello, of fd's op hello, weigert de worker.
+
+Daarna draagt alleen de vraag (de eerste boodschap na hello) file descriptors, als SCM_RIGHTS:
+[invoer…, uitvoer…].
 
     vraag:      {"v": 1, "op": "<naam>", "args": {…}}
     antwoorden: {"ev": "started"}
@@ -28,8 +44,11 @@ from __future__ import annotations
 import array
 import asyncio
 import contextlib
+import hashlib
+import hmac
 import json
 import os
+import re
 import socket
 import struct
 from collections.abc import Iterator, Sequence
@@ -42,8 +61,12 @@ MAX_MESSAGE = 64 * 1024
 # spoor, hooguit 8 sporen per run)
 MAX_FDS = 32
 DETAIL_CHARS = 2000
+# De sleutel van hello (PLATFORM_MEDIA_WORKER_KEY): minstens zoveel tekens
+KEY_MIN = 32
+NONCE = re.compile(r"[0-9a-f]{32}")
 _HEADER = struct.Struct(">I")
 _INT = array.array("i").itemsize
+_UCRED = struct.Struct("3i")
 
 
 class Op(StrEnum):
@@ -116,6 +139,38 @@ def error(code: Code, detail: str = "", **extra) -> dict:
     out = {"ev": "error", "code": code.value, "detail": detail[-DETAIL_CHARS:]}
     out.update(extra)
     return out
+
+
+def hello(nonce: str) -> dict:
+    """De eerste boodschap van de app: de nonce (32 hex) waarover de worker zijn bewijs geeft."""
+    return {"v": PROTOCOL, "hello": nonce}
+
+
+def proof(key: str, nonce: str, uid: int) -> str:
+    """Het bewijs van de worker: HMAC-SHA256 met de sleutel over PROTOCOL, de nonce van de app
+    en de uid van de andere kant."""
+    text = f"platform-media-worker|{PROTOCOL}|{nonce}|{uid}".encode()
+    return hmac.new(key.encode(), text, hashlib.sha256).hexdigest()
+
+
+def hello_problem(message: dict) -> tuple[Code, str] | None:
+    """Wat er niet klopt aan een hello van de app, of None (voor de worker en de nep)."""
+    if message.get("v") != PROTOCOL:
+        return Code.PROTOCOL, f"de worker spreekt PROTOCOL {PROTOCOL}"
+    nonce = message.get("hello")
+    if not isinstance(nonce, str) or not NONCE.fullmatch(nonce) or "op" in message:
+        return Code.PROTOCOL, "eerst hello met een nonce van 32 hex, zonder fd's"
+    return None
+
+
+def hello_reply(key: str, nonce: str, uid: int) -> dict:
+    return {"ev": "hello", "v": PROTOCOL, "uid": uid, "proof": proof(key, nonce, uid)}
+
+
+def peer_uid(sock: socket.socket) -> int:
+    """De uid van de andere kant van een Unix-socket (SO_PEERCRED: bij connect vastgelegd)."""
+    data = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, _UCRED.size)
+    return _UCRED.unpack(data)[1]
 
 
 async def _wait(sock: socket.socket, *, write: bool) -> None:

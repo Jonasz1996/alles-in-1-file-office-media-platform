@@ -299,7 +299,7 @@ async def worker(tmp_path_factory, built):
         data_dir=base, web_dist=base / "web", jwt_secret="t" * 32, media_max_procs=3
     )
     w = await local.start(settings, base / "run" / "worker.sock")
-    client.bind(w.socket)
+    client.bind(w.socket, w.key)
     try:
         yield w
     finally:

@@ -47,13 +47,17 @@ def test_media_status_geeft_de_opties_door(monkeypatch, capsys):
     assert capsys.readouterr().out.splitlines() == ["Media: aan", "Let op: iemand kijkt"]
 
 
-def _media_settings(tmp_path, socket_path):
+KEY = "de-sleutel-van-de-cli-test" * 2
+
+
+def _media_settings(tmp_path, socket_path, key=KEY):
     return Settings(
         data_dir=tmp_path,
         web_dist=tmp_path / "web",
         jwt_secret="t" * 32,
         media_enabled=True,
         media_worker=str(socket_path),
+        media_worker_key=key,
     )
 
 
@@ -67,7 +71,7 @@ def unbind():
 async def test_media_status_vraagt_de_worker_om_caps(tmp_path, unbind):
     """De stub van M0 vraagt caps over de socket van de app (het harnas en media-image zien
     zo dat de worker er is)."""
-    async with FakeWorker(tmp_path / "w" / "nep.sock", mode="container") as fake:
+    async with FakeWorker(tmp_path / "w" / "nep.sock", mode="container", key=KEY) as fake:
         found = await status.collect(_media_settings(tmp_path, fake.socket))
     expected = record.load_caps()["ffmpeg"]
     assert found["ok"] is True and found["worker"] == "ok"
@@ -87,9 +91,25 @@ async def test_media_status_zonder_worker(tmp_path, unbind):
 
 
 @pytest.mark.anyio
+async def test_media_status_met_een_andere_sleutel_of_zonder(tmp_path, unbind):
+    """Review S1: een worker die zich niet bewijst, is niet bereikbaar; zonder sleutel (of met
+    het geheim van de app) wordt er niet eens verbonden."""
+    async with FakeWorker(tmp_path / "w" / "nep.sock", mode="container") as fake:
+        found = await status.collect(_media_settings(tmp_path, fake.socket))
+        assert found["ok"] is False and found["worker"] == "down"
+        assert "bewijst zich niet" in found["lines"][0]
+        assert fake.requests == []  # geen vraag, dus ook geen fd
+        for key, why in (("", "ontbreekt"), ("t" * 32, "geheim van de app")):
+            found = await status.collect(_media_settings(tmp_path, fake.socket, key=key))
+            assert found["worker"] == "down" and "PLATFORM_MEDIA_WORKER_KEY" in found["lines"][0]
+            assert why in found["lines"][0]
+        assert fake.requests == []
+
+
+@pytest.mark.anyio
 async def test_media_status_wacht_op_de_worker(tmp_path, unbind):
     """--wait: een worker die pas na een tijdje luistert, telt."""
-    fake = FakeWorker(tmp_path / "w" / "laat.sock")
+    fake = FakeWorker(tmp_path / "w" / "laat.sock", key=KEY)
 
     async def late() -> None:
         await asyncio.sleep(0.6)

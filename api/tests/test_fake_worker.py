@@ -55,6 +55,10 @@ class FakeDriver:
         return self.fake.socket
 
     @property
+    def key(self) -> str:
+        return self.fake.key
+
+    @property
     def max_procs(self) -> int:
         return self.fake.max_procs
 
@@ -117,6 +121,10 @@ class RealDriver:
     def socket(self) -> Path:
         return self.worker.socket
 
+    @property
+    def key(self) -> str:
+        return self.worker.key
+
     def processes(self) -> int:
         return _children(self.worker.pid)
 
@@ -161,7 +169,7 @@ async def real_driver(tmp_path, monkeypatch):
         media_max_transcodes=1,
     )
     worker = await local.start(settings, tmp_path / "run" / "worker.sock")
-    client.bind(worker.socket)
+    client.bind(worker.socket, worker.key)
     try:
         yield RealDriver(worker, flag)
     finally:
@@ -254,7 +262,7 @@ async def test_opnames_kloppen_met_de_echte_worker(tmp_path):
         data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="t" * 32, media_max_procs=3
     )
     worker = await local.start(settings, tmp_path / "run" / "worker.sock")
-    client.bind(worker.socket)
+    client.bind(worker.socket, worker.key)
     differ: list[str] = []
     try:
         for name, found in _recorded().items():
@@ -387,9 +395,10 @@ async def test_keyframes_met_terugval_heeft_dezelfde_tijdgrens(kind, tmp_path, m
     else:
         real = server.handler
         monkeypatch.setattr(server, "handler", lambda op: hang if op == Op.KEYFRAMES else real(op))
-        worker = server.Worker(server.Config(socket=path, max_procs=3), {"protocol": 1})
+        config = server.Config(socket=path, max_procs=3, key="k" * 32)
+        worker = server.Worker(config, {"protocol": 1})
     await worker.start()
-    client.bind(path)
+    client.bind(path, worker.key if kind == "nep" else worker.config.key)
     try:
         for fallback, low, high in ((False, 0.15, 0.55), (True, 0.55, 3.0)):
             args = A.KeyframesArgs(demuxer="matroska", video_index=0, fallback=fallback)
@@ -609,6 +618,7 @@ async def test_de_nep_als_worker_van_de_app(tmp_path, monkeypatch):
         jwt_secret="t" * 32,
         media_enabled=True,
         media_worker=str(fake.socket),
+        media_worker_key=fake.key,
     )
     try:
         state = await runtime.start(app, settings)

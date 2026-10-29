@@ -121,7 +121,7 @@ async def run(args: argparse.Namespace, uit: Uitkomst) -> dict:
         )
         log("== de lokale worker (M0) starten")
         worker = await local.start(settings, base / "run" / "worker.sock")
-        client.bind(worker.socket)
+        client.bind(worker.socket, worker.key)
         try:
             caps = await client.caps()
             out["caps"] = caps.model_dump(mode="json", exclude={"encoders", "filters"})

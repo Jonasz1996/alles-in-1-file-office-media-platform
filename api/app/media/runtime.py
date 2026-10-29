@@ -7,7 +7,9 @@ worker, elk media-eindpunt geeft 503 media_off (require), en de app is precies 0
 Met media aan:
 - PLATFORM_MEDIA_WORKER leeg: de app start zelf een lokale worker (local.py, Keuze 13);
 - PLATFORM_MEDIA_WORKER gezet: de app verbindt met die socket, en valt nooit stil terug op
-  lokaal (dat zou de afscherming uitzetten);
+  lokaal (dat zou de afscherming uitzetten). De worker bewijst zich met
+  PLATFORM_MEDIA_WORKER_KEY (hello, review S1); zonder geldige sleutel is de worker down met
+  de reden (Settings.media_problem), en gaat er nooit een fd naar de socket;
 - health.py houdt MediaState.worker bij met caps (telt niet mee in de plaatsen);
 - de map media/sessions/ (de stukken van lopende sessies) gaat leeg: na een herstart is elke
   sessie weg;
@@ -82,8 +84,12 @@ async def start(app, settings: Settings) -> MediaState:
     state.mode = "container" if settings.media_worker else "local"
     await anyio.to_thread.run_sync(clear_sessions, settings)
     jobs.housekeeping(SWEEP, _sweep, SWEEP_EVERY)
-    client.bind(settings.media_socket)
-    if state.mode == "local":
+    client.bind(settings.media_socket, settings.media_key())
+    problem = settings.media_problem()
+    if problem is not None:
+        log.warning("mediaworker: %s", problem)
+        state.set_worker("down", problem)
+    elif state.mode == "local":
         try:
             app.state.media_local = await local.start(settings)
         except Exception as exc:  # de app start ook zonder worker

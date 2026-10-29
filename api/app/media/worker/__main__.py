@@ -11,6 +11,13 @@
 
 Zonder vlag gelden de omgevingsvariabelen. De worker leest nooit de rest van de instellingen
 van de app: hij heeft geen data, geen database en geen netwerk.
+
+De sleutel van hello (review S1) komt alleen uit de omgeving: PLATFORM_MEDIA_WORKER_KEY,
+minstens 32 tekens, en nooit als argument (de opdrachtregel is voor iedereen te lezen in
+/proc). De worker haalt hem meteen uit os.environ; zijn kinderen krijgen toch een kale omgeving
+(run.environment), en /proc/<worker>/environ is na PR_SET_DUMPABLE 0 niet te lezen voor
+dezelfde uid. Zonder sleutel stopt de worker met code 2 (--check en --selftest hebben hem niet
+nodig).
 """
 
 from __future__ import annotations
@@ -26,12 +33,14 @@ import signal
 import sys
 from pathlib import Path
 
+from app.media import wire
 from app.media.worker import run as R
 from app.media.worker.ops import caps as caps_op
 from app.media.worker.server import Config, Worker
 
 log = logging.getLogger("platform.media.worker")
 PR_SET_DUMPABLE = 4
+KEY_ENV = "PLATFORM_MEDIA_WORKER_KEY"
 
 
 def _env_int(name: str, default: int) -> int:
@@ -99,6 +108,8 @@ async def serve(config: Config, caps: dict) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse(argv)
+    key = os.environ.pop(KEY_ENV, "")  # vóór elk kind, ook die van caps
+    _not_dumpable()
     logging.basicConfig(
         level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(name)s %(message)s"
     )
@@ -111,9 +122,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.selftest:
         print("de zelftest bouwt M1", file=sys.stderr)
         return 2
+    if len(key) < wire.KEY_MIN:
+        print(f"{KEY_ENV} ontbreekt of is korter dan {wire.KEY_MIN} tekens", file=sys.stderr)
+        return 2
     os.umask(0o007)
     R.reserve_low_fds()
-    _not_dumpable()
     config = Config(
         socket=Path(args.socket),
         max_procs=args.max_procs,
@@ -121,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         memory_mb=args.memory_mb,
         local=args.local,
         loadtest=args.loadtest,
+        key=key,
     )
     return asyncio.run(serve(config, caps))
 

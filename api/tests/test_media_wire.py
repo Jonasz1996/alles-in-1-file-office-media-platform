@@ -404,3 +404,26 @@ def test_socket_pad_van_de_instellingen(tmp_path):
         data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="t" * 32, media_worker="/x.sock"
     )
     assert s2.media_socket == Path("/x.sock")
+
+
+def test_de_sleutel_van_de_worker(tmp_path):
+    """Review S1: de sleutel van hello. Lokaal een vaste afgeleide van het geheim (de cli kent
+    hem zo ook, en hij verraadt het geheim niet); met PLATFORM_MEDIA_WORKER verplicht en eigen."""
+    from app.config import Settings
+
+    base = {"data_dir": tmp_path, "web_dist": tmp_path / "web", "jwt_secret": "t" * 32}
+    here = Settings(**base)
+    assert here.media_problem() is None
+    key = here.media_key()
+    assert len(key) == 64 and "t" * 32 not in key
+    assert Settings(**base).media_key() == key
+    assert Settings(**{**base, "jwt_secret": "u" * 32}).media_key() != key
+    own = Settings(**base, media_worker_key="m" * 40)
+    assert own.media_key() == "m" * 40 and own.media_problem() is None
+    container = Settings(**base, media_worker="/x.sock")
+    assert container.media_key() == ""
+    assert "ontbreekt" in (container.media_problem() or "")
+    short = Settings(**base, media_worker="/x.sock", media_worker_key="k" * 31)
+    assert "ontbreekt" in (short.media_problem() or "")
+    same = Settings(**base, media_worker="/x.sock", media_worker_key="t" * 32)
+    assert "geheim van de app" in (same.media_problem() or "")

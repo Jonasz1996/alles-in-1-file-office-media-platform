@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import secrets
 from datetime import datetime
 from functools import lru_cache
@@ -105,6 +107,10 @@ class Settings(BaseSettings):
     media_enabled: bool = False
     # De socket van de worker-container; leeg = de app start zelf een lokale worker (Keuze 13)
     media_worker: str = ""
+    # De sleutel waarmee de worker zich bewijst vóór de app hem fd's stuurt (hello, review S1).
+    # Verplicht met PLATFORM_MEDIA_WORKER: dezelfde waarde in de worker-container, minstens 32
+    # tekens en nooit het geheim van de app. Leeg bij de lokale worker: dan media_key().
+    media_worker_key: str = ""
     media_max_transcodes: int = 3  # plafond; /beheer kan alleen lager (Keuze 26)
     media_job_memory_mb: int = 1200  # RLIMIT_DATA per ffmpeg voor live en sprites (Keuze 12)
     media_job_workers: int = 1  # workers van de rij media (Keuze 14)
@@ -157,6 +163,28 @@ class Settings(BaseSettings):
         if self.media_worker:
             return Path(self.media_worker)
         return self.media_dir / "run" / "worker.sock"
+
+    def media_key(self) -> str:
+        """De sleutel van hello: PLATFORM_MEDIA_WORKER_KEY, of voor de lokale worker een
+        afgeleide van het geheim van de app (zo kent de cli hem ook, en verraadt hij het geheim
+        niet). Een container zonder sleutel: leeg (media_problem)."""
+        if self.media_worker_key:
+            return self.media_worker_key
+        if self.media_worker:
+            return ""
+        digest = hmac.new(self.secret().encode(), b"platform-media-worker-local", hashlib.sha256)
+        return digest.hexdigest()
+
+    def media_problem(self) -> str | None:
+        """Waarom de sleutel van de worker niet goed is, of None."""
+        key = self.media_worker_key
+        if not (self.media_worker or key):
+            return None
+        if len(key) < 32:
+            return "PLATFORM_MEDIA_WORKER_KEY ontbreekt of is korter dan 32 tekens"
+        if key == self.secret():
+            return "PLATFORM_MEDIA_WORKER_KEY mag niet gelijk zijn aan het geheim van de app"
+        return None
 
     def office_problem(self) -> str | None:
         """Waarom office niet ingesteld is, of None. Zonder office_url is er geen probleem:

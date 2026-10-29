@@ -5,7 +5,8 @@ Uitleg en gebruik: docs/fase-5/e2e.md. Kort:
 - MediaApp: een eigen Server met media aan (PLATFORM_MEDIA_*), de lokale worker als kind van
   de app, en de nep-providers als proces (tests/media/fake_providers/process.py). Met
   E2E_MEDIA_WORKER verbindt de app met die socket (de worker-container; M1) in plaats van
-  zelf een worker te starten. Gemaakt door de fixtures media_app en media in conftest.py;
+  zelf een worker te starten, met E2E_MEDIA_WORKER_KEY als sleutel van hello. Gemaakt door
+  de fixtures media_app en media in conftest.py;
 - restart(outage_s=…): de app stoppen op pid, zoveel seconden wachten en weer starten, op
   dezelfde poort (R06); kill(): alles op pid weg (de deadline);
 - pin(cpus): de worker en zijn kinderen op die cores (taskset -c 0-2 voor media_perf, regel
@@ -199,6 +200,8 @@ def media_env(providers: Any | None) -> dict[str, str]:
     worker = os.environ.get("E2E_MEDIA_WORKER")
     if worker:
         env["PLATFORM_MEDIA_WORKER"] = worker
+        # de sleutel van hello (review S1): dezelfde als die van de worker-container
+        env["PLATFORM_MEDIA_WORKER_KEY"] = os.environ.get("E2E_MEDIA_WORKER_KEY", "")
     return env
 
 

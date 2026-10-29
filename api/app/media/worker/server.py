@@ -2,6 +2,9 @@
 Frozen.
 
 Per verbinding:
+0. hello (review S1, wire.py): de nonce van de app lezen, zonder fd's, en het bewijs sturen
+   voor de uid die de worker van de andere kant ziet (SO_PEERCRED). Een vraag of fd's vóór
+   hello: weigeren en dicht. Zonder sleutel (Config.key) start de worker niet;
 1. de vraag lezen (wire.receive: grens op de grootte en op het aantal fd's, CLOEXEC);
 2. controleren: PROTOCOL, de opdracht, de argumenten (args.parse), het aantal en de soort fd's
    (fd_layout), synth alleen met --loadtest. Elke weigering is een {"ev": "error"} en dan dicht;
@@ -77,6 +80,8 @@ class Config:
     memory_mb: int = 1200
     local: bool = False
     loadtest: bool = False
+    # De sleutel van hello (PLATFORM_MEDIA_WORKER_KEY); nooit in een log of in caps
+    key: str = field(default="", repr=False)
 
     def limits(self) -> dict[WorkClass, int]:
         return {
@@ -213,6 +218,29 @@ class Worker:
             raise OpError(Code.NOT_ALLOWED, "synth alleen met PLATFORM_MEDIA_LOADTEST")
         return op, parsed
 
+    async def _hello(self, sock: socket.socket) -> bool:
+        """Stap 0: het bewijs voor de uid van de andere kant. False: geweigerd of weg."""
+        try:
+            message, _ = await wire.receive(sock, max_fds=0)
+        except wire.Closed:
+            return False
+        except wire.WireError as exc:
+            # ook fd's op hello: MSG_CTRUNC, en de kernel sluit wat niet paste
+            with contextlib.suppress(OSError):
+                await wire.send(sock, wire.error(exc.code, exc.detail))
+            return False
+        problem = wire.hello_problem(message)
+        if problem is not None:
+            with contextlib.suppress(OSError):
+                await wire.send(sock, wire.error(*problem))
+            return False
+        reply = wire.hello_reply(self.config.key, message["hello"], wire.peer_uid(sock))
+        try:
+            await wire.send(sock, reply)
+        except OSError:
+            return False
+        return True
+
     async def _serve(self, sock: socket.socket) -> None:
         closed = False
 
@@ -221,6 +249,8 @@ class Worker:
                 raise ConnectionResetError("de app sloot de verbinding")
             await wire.send(sock, message)
 
+        if not await self._hello(sock):
+            return
         try:
             message, fds = await wire.receive(sock)
         except wire.Closed:
@@ -328,7 +358,11 @@ class Worker:
 
     async def start(self) -> None:
         """Luisteren op config.socket (modus 0660). Eerst op een tijdelijke naam, dan rename:
-        wie de socket ziet, kan meteen verbinden."""
+        wie de socket ziet, kan meteen verbinden. Zonder sleutel geen socket (review S1)."""
+        if len(self.config.key) < wire.KEY_MIN:
+            raise ValueError(
+                f"PLATFORM_MEDIA_WORKER_KEY ontbreekt of is korter dan {wire.KEY_MIN} tekens"
+            )
         path = self.config.socket
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f".{path.name}.{os.getpid()}")
