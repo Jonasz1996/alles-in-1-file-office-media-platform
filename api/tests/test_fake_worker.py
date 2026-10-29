@@ -361,6 +361,50 @@ async def test_hang_na_n_fragmenten_en_stoppen(fake):
     assert await C.until(lambda: fake.processes == 0)
 
 
+@pytest.mark.parametrize("kind", ["nep", "server"])
+async def test_keyframes_met_terugval_heeft_dezelfde_tijdgrens(kind, tmp_path, monkeypatch):
+    """Review C3: keyframes met de terugval stopt na KEYFRAMES_FALLBACK_TIMEOUT (3.600 s) met
+    timeout, in de nep net als in server.py. Hier met een lagere grens en een opdracht die
+    blijft hangen; zonder terugval geldt TIMEOUT[keyframes]."""
+    from app.media.worker import server
+
+    assert FakeWorker(tmp_path / "x.sock").fallback_timeout == server.KEYFRAMES_FALLBACK_TIMEOUT
+    source = tmp_path / "bron.mkv"
+    source.write_bytes(b"\x1aE\xdf\xa3" + b"\0" * 1020)
+    hangs = asyncio.Event()
+
+    async def hang(job_or_ctx) -> dict:
+        await hangs.wait()
+        return {}
+
+    monkeypatch.setitem(server.TIMEOUT, Op.KEYFRAMES, 0.2)
+    monkeypatch.setattr(server, "KEYFRAMES_FALLBACK_TIMEOUT", 0.6)
+    path = tmp_path / "run" / "w.sock"
+    if kind == "nep":
+        worker = FakeWorker(path)  # leest de grenzen van server.py bij het maken
+        worker.on(Op.KEYFRAMES, hang)
+        assert worker.fallback_timeout == 0.6 and worker.timeouts[Op.KEYFRAMES] == 0.2
+    else:
+        real = server.handler
+        monkeypatch.setattr(server, "handler", lambda op: hang if op == Op.KEYFRAMES else real(op))
+        worker = server.Worker(server.Config(socket=path, max_procs=3), {"protocol": 1})
+    await worker.start()
+    client.bind(path)
+    try:
+        for fallback, low, high in ((False, 0.15, 0.55), (True, 0.55, 3.0)):
+            args = A.KeyframesArgs(demuxer="matroska", video_index=0, fallback=fallback)
+            job, _ = await client.call(Op.KEYFRAMES, args, source=source)
+            started = time.monotonic()
+            with pytest.raises(WorkerFailed) as exc:
+                await job.result()
+            took = time.monotonic() - started
+            assert exc.value.code == Code.TIMEOUT, (kind, fallback)
+            assert low <= took < high, (kind, fallback, took)
+    finally:
+        client.bind(None)
+        await worker.stop()
+
+
 @needs_ffmpeg
 async def test_hang_en_de_tijdgrens(fake):
     fake.timeouts[Op.PROBE] = 0.3

@@ -13,7 +13,8 @@ Wat hij doet, zoals de echte worker (`app/media/worker/server.py`, Keuze 12):
 - de plaatsen per soort (transcode = max_transcodes, remux 6, achtergrond 1, kort 2) en het
   totaal aan processen (max_procs); vol is `busy` met de soort. caps telt nooit mee;
 - `started`, dan `progress`, `result` en `done`, of `error`; de verbinding dicht is stoppen;
-- dezelfde tijdgrenzen per opdracht (`timeouts`, standaard die van de worker).
+- dezelfde tijdgrenzen per opdracht (`timeouts`, standaard die van de worker), ook die van
+  keyframes met de terugval (`fallback_timeout`, standaard KEYFRAMES_FALLBACK_TIMEOUT).
 
 Wat hij anders doet:
 - **caps** komt uit `recorded/caps.json` (de echte lokale worker), met de plaatsen van nu;
@@ -64,6 +65,7 @@ from typing import Any, Literal
 from app.media import wire
 from app.media.wire import Code, Op, WorkClass
 from app.media.worker import args as A
+from app.media.worker import server as real_server
 from app.media.worker.server import TIMEOUT
 from tests.media import boxes, record
 from tests.media import fixtures as F
@@ -163,6 +165,7 @@ class FakeWorker:
         self.speed: float | None = None
         self.remux_variant: Literal["h264", "vp9"] = "h264"
         self.timeouts: dict[Op, float | None] = dict(TIMEOUT)
+        self.fallback_timeout: float | None = real_server.KEYFRAMES_FALLBACK_TIMEOUT
         self.requests: list[Request] = []
         self.limits = _limits(max_transcodes)
         self.used: dict[WorkClass, int] = dict.fromkeys(self.limits, 0)
@@ -394,7 +397,7 @@ class FakeWorker:
     async def _execute(self, job: Job) -> dict | None:
         limit = self.timeouts.get(job.op)
         if job.op == Op.KEYFRAMES and getattr(job.args, "fallback", False):
-            limit = None
+            limit = self.fallback_timeout  # zoals server._execute (review C3)
         try:
             async with asyncio.timeout(limit):
                 slow = self._take("slow_start", job.op)
