@@ -19,6 +19,7 @@ import pytest
 from app.config import Settings
 from app.media import client, health, local, wire
 from app.media.state import media_state
+from app.media.types import WorkerCaps
 from app.media.wire import Op
 from app.media.worker import args as A
 from app.media.worker import server
@@ -182,9 +183,38 @@ async def test_een_fout_in_de_lus_stopt_hem_niet(monkeypatch):
 
     monkeypatch.setattr(health, "check", check)
     monkeypatch.setattr(health, "_pause", pause)
+    app = new_app()
+    media_state(app).set_worker("ok")
     with pytest.raises(asyncio.CancelledError):
-        await health._loop(new_app(), None)
+        await health._loop(app, None)
     assert pauses == [health.FIRST, 1.0, 2.0]  # als down
+    # review golf 1, C3: ook de staat zegt down (play en /beheer lezen die)
+    assert media_state(app).worker == "down" and media_state(app).reason == "stuk"
+
+
+async def test_caps_die_niet_valideert_is_down(monkeypatch):
+    """Review golf 1, C3: caps van een worker die iets onbekends zegt (zoals sandbox
+    "partial" van een nieuwere versie) valideert niet. Dat is geen fout die check kent; de lus
+    vangt hem en de staat gaat naar down, niet blijven staan op ok met de oude caps."""
+    pauses: list[float] = []
+
+    async def caps():
+        return WorkerCaps.model_validate({"protocol": wire.PROTOCOL, "sandbox": "partial"})
+
+    async def pause(seconds: float) -> None:
+        pauses.append(seconds)
+        if len(pauses) > 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(client, "caps", caps)
+    monkeypatch.setattr(health, "_pause", pause)
+    app = new_app()
+    state = media_state(app)
+    state.set_worker("ok")
+    with pytest.raises(asyncio.CancelledError):
+        await health._loop(app, None)
+    assert pauses == [health.FIRST, 1.0, 2.0]
+    assert state.worker == "down" and "sandbox" in state.reason
 
 
 @pytest.mark.media

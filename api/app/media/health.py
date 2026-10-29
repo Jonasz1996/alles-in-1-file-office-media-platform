@@ -85,8 +85,12 @@ async def _loop(app, settings: Settings) -> None:
         await _pause(delay)
         try:
             worker = await check(app)
-        except Exception:  # de lus mag nooit stoppen
+        except Exception as exc:  # de lus mag nooit stoppen
             log.exception("gezondheid van de mediaworker")
+            # een fout telt als down, ook in MediaState: anders zegt play nog ok met de oude
+            # caps (review golf 1, C3; bijv. caps van een nieuwere worker die niet valideert)
+            with contextlib.suppress(Exception):
+                _set(media_state(app), "down", _reason(exc))
             worker = "down"
         if worker == "down":
             delay, retry = retry, min(retry * 2, INTERVAL)
