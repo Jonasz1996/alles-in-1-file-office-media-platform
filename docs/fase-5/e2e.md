@@ -203,10 +203,16 @@ en capabilities, onder `--cpus 3`:
 6. met `--alles` elke opname tegen een verse probe, alleen als rapport (de opnames zijn van
    6.1.1; een verschil op 7.1 staat in `kern.json` onder `opnames`).
 
-Daarna S3 van de spike (`api/tests/media/spike/ci.py --stappen S3`): een fd van de app naar de
-worker tussen twee containers, met de afscherming van Keuze 11 en 47. Hier is S3 hard: elke
-controle moet goed zijn. In de job `media-spike` was het een uitkomst; die job is weg sinds de tag
-`fase5-basis` (§3.7: na M0 neemt `media-image` het over).
+Daarna de worker in zijn container: `infra/single/tests/test_media_container.sh` (M1) met
+`--selftest`, de afscherming van Keuze 11 en 47, en sinds M4 de stroom: S3 punt 17 van de spike
+(een remux in de worker van een fd van de app naar een pipe van de app), een transcode op het
+rooster van 2 s, en het deel van R12 dat zonder installatie kan (tijdens die transcode één ffmpeg
+in de container `media` en geen in die van de app, met `docker top`). Elke controle is hard.
+
+*Bij het samenvoegen van golf 2:* tot M4 draaide hier nog S3 van de spike
+(`api/tests/media/spike/ci.py --stappen S3`, met een afgeleid image). Die stappen zijn weg sinds
+M4 (een M0-hotfix van M4 in `ci.yml`, [m4.md](m4.md)): wat S3 nog toetste, doet het script nu
+tegen het echte image. De job `media-spike` is weg sinds de tag `fase5-basis` (§3.7).
 
 ## De jobs in CI
 
@@ -217,7 +223,7 @@ controle moet goed zijn. In de job `media-spike` was het een uitkomst; die job i
 | `e2e` | de e2e van fase 3 en 4, zonder media | een test faalt |
 | `e2e-media` | de web-app bouwen, Chrome for Testing (`playwright install --with-deps chromium`, zoals `e2e`), ffmpeg, dan `pytest ../e2e -m media -rs`; `timeout-minutes: 20`, `MEDIA_REQUIRE_H264` `"1"` | een test faalt (ook een H.264-test die de codec mist), of alles slaat over omdat ffmpeg ontbreekt |
 | `e2e-media-perf` | zoals `e2e-media`, dan `-m media_perf`; toont de browser en S13, en zet één regel in de samenvatting van de run; artefact `media-prestaties` | nooit (`continue-on-error`, `E2E_PERF_REPORT_ONLY=1`) |
-| `media-image` | het platform-image (de cache van `images`), de kern in het image, de worker in zijn container (M1: `test_media_container.sh` met `--selftest`), dan S3; artefact `media-image` met `kern.json`, `selftest.json`, `s3.json` en `kort.txt` | een controle van de kern, van de container of van S3 faalt |
+| `media-image` | het platform-image (de cache van `images`), de kern in het image, dan de worker in zijn container (`test_media_container.sh` met `--selftest`, M1; S3 punt 17 en het deel van R12, M4); artefact `media-image` met `kern.json` en `selftest.json` | een controle van de kern of van de container faalt |
 
 Geen nieuwe action: alles met `actions/checkout`, `setup-uv`, `setup-node`, `setup-buildx`,
 `build-push-action` en `upload-artifact`, zoals de andere jobs. `yamllint -s .` (job `infra`)
@@ -240,6 +246,8 @@ zet de vlag dan niet stil terug: dat is een vondst voor §6 van het bouwontwerp.
   *Bij het samenvoegen van golf 1:* zo gebouwd, behalve dat S3 blijft tot M4 (de remux op een
   pipe van de app heeft `stream` van M4 nodig; [m1.md](m1.md), Open). `e2e/test_media_m1.py`
   bewijst met een spion op `/proc` dat elke ffmpeg onder de worker draait.
+  *Bij het samenvoegen van golf 2:* M4 nam S3 over in `test_media_container.sh` (punt 17, met
+  `stream`) en haalde de stappen van de spike uit `media-image`.
 - **M2:** de scanner zet `media.analyse` zelf klaar; `MediaApp.analyse` is dan alleen nog voor
   een test die het meteen wil.
 - **M3–M6:** play, de stromen en de speler, elk met een eigen `e2e/test_media_m<N>.py`. M6 zet
@@ -255,6 +263,13 @@ zet de vlag dan niet stil terug: dat is een vondst voor §6 van het bouwontwerp.
   van een `fetch` helemaal van de socket, ook toen de pagina na 1,2 MB stopte met lezen (`ss`
   gaf lege rijen, de server was al klaar). Wat de `<video>` doet met wat hij al had na het
   afbreken, is van de speler (M6). Remux en transcode via een link (#10) wachten op M4.
+  *Bij het samenvoegen van golf 2 (M4 en M5):* `e2e/test_media_m4.py` speelt remux en transcode
+  via MediaSource tegen de echte routes (ook via een publieke link, #10), en heeft nu ook #12
+  zonder de speler (de worker gedood tijdens een transcode: binnen 10 s weer een segment, geen
+  ffmpeg over). `e2e/test_media_m5.py` heeft #5 (PGS en VobSub ingebrand door de producer,
+  gemeten in een canvas, ook na een sprong: S9) en het ondertiteldeel van #4 (de SRT en ASS van
+  `hevc10_hdr10.mkv` als `<track>` op de stroom van een transcode, op de tijdlijn van die
+  stroom). De speler zelf (de rest van #2–#4) is van M6.
 - **M10:** in `media-image` het bewijs van R12 (installeren vanaf de commit van 0.6.0, bijwerken
   naar deze versie, een transcode via curl en dan `docker top`: geen ffmpeg in de app, één in
   `media`) en de rooktest van de belastingtest; `/api/v1/admin/media` en de rest van

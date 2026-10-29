@@ -1,8 +1,8 @@
 # Fase 5 — Media en streaming
 
-Status: **golf 1 samengevoegd: M0, M1 en M3** (bouwontwerp revisie 2; 29 oktober 2026). M0 is
-het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker, F1–F4, de
-rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
+Status: **golf 2 samengevoegd: M0, M1, M3, M4 en M5** (bouwontwerp revisie 2; 29 oktober 2026).
+M0 is het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker,
+F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
 
 - **M1, de worker in isolatie** ([m1.md](m1.md)): ffmpeg draait alleen nog in de worker, ook voor
   de previews van video's. De app start de lokale worker, start hem opnieuw met backoff, en kijkt
@@ -11,11 +11,21 @@ rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
 - **M3, afspelen** ([m3.md](m3.md), [clientprofiel.md](clientprofiel.md)): het profiel van de
   client, de beslissing, de sessies met een controle bij elk verzoek, en publieke links. Direct
   play werkt helemaal, ook met de worker weg of zonder ffmpeg.
+- **M4, de stromen** ([m4.md](m4.md)): remux en transcode als fMP4 op een rooster van 2 s, met
+  `map.json` voor MSE en HLS-playlists voor native spelers. De producent herstart bij een sprong
+  en na een fout, houdt 60 s voorsprong, en de toelating laat alleen toe wat de CPU kan (de
+  treden van de ladder). De keyframe-index komt bij de analyse, of bij play voor een video
+  buiten een bibliotheek.
+- **M5, ondertitels, sprites en hoofdstukken** ([m5.md](m5.md)): elke tekstondertitel (SRT, ASS,
+  WebVTT, ingebed of los) als WebVTT via de sessie, op mediatijd; een beeldondertitel (PGS,
+  VobSub) brandt de producer van M4 in. De sprites voor de zoekbalk met `trick.vtt`, en de
+  hoofdstukken met het begin van de aftiteling.
 
-Remux en transcode geven nog 503 (`media_off` of `media_busy`): de stromen en de toelating zijn van
-M4. De rest (M2, M4–M10) komt in de volgende golven. Media staat standaard uit: zonder
-`PLATFORM_MEDIA_ENABLED` is de app 0.6.0 plus F1–F4, en de previews van video's werken zoals in
-0.6.0 (via een worker voor één keer, M1).
+Er is nog geen speler: dat is M6. De API speelt nu alle drie de wegen (direct, remux,
+transcode); de e2e-tests spelen remux en transcode met MediaSource in de pagina, zoals de speler
+het straks doet. De rest (M2, M6–M10) komt in de volgende golven. Media staat standaard uit:
+zonder `PLATFORM_MEDIA_ENABLED` is de app 0.6.0 plus F1–F4, en de previews van video's werken
+zoals in 0.6.0 (via een worker voor één keer, M1).
 
 Bij het samenvoegen van golf 1 (M1, dan M3) gingen er geen bestanden van beide pakketten door
 elkaar; alleen `ci.yml` botste met het weghalen van de job `media-spike`. Wat er toen nog
@@ -28,11 +38,37 @@ gebeurde, staat onder "Bij het samenvoegen" in [m1.md](m1.md) en [m3.md](m3.md):
   (een M0-hotfix);
 - stap 4 van het verhaal van fase 3 leest geen handtekening meer als GPS.
 
-De uitslag op de samengevoegde stand, in de sandbox: api 2628 goed en 1 overgeslagen;
+De uitslag op de samengevoegde stand van golf 1, in de sandbox: api 2628 goed en 1 overgeslagen;
 `-m media` (onder `taskset -c 0-2`, twee keer) 93 goed en 3 overgeslagen (`stream`, M4); web
 groen (eerste lading JS 95,6 van 100 KB); de e2e van fase 3 en 4 109 goed; `-m office` 30 goed;
 e2e `-m media` (twee keer) 14 goed en 2 overgeslagen (H.264: de Chromium 141 hier heeft geen
 `avc1`; in CI moet hij spelen). Het image, de worker-container en Chrome for Testing ziet pas CI.
+
+Bij het samenvoegen van golf 2 (M4, dan M5) ging M4 vooruit zonder samenvoegcommit (de tak stond
+nog op zijn basis), en kwam M5 met cherry-pick. Alleen `test_media_routes_guarded.py` (M0) botste:
+beide pakketten zetten hun routes in `BUILT`, en beide bleven. Wat er toen nog gebeurde, staat
+onder "Bij het samenvoegen (golf 2)" in [m4.md](m4.md), [m5.md](m5.md) en [m3.md](m3.md):
+
+- play (M3) geeft de echte staat van M5: het geforceerde tekstspoor volgt het gekozen audiospoor
+  (Keuze 29), een losse ondertitel krijgt zijn staat uit de cache, de hoofdstukken komen uit
+  `chapters.items`, en `trick` gebruikt de instellingen van het verzoek
+  (`test_media_play_samen.py`);
+- PGS en VobSub ingebrand door de producer van M4, gemeten in de pixels van de stroom, ook na
+  een sprong (S9; #5 van §4.3), en de SRT en ASS van een transcode op de tijdlijn van die stroom
+  (het ondertiteldeel van #4);
+- #12 van §4.3 zonder de speler: de worker gedood tijdens een transcode; de stroom loopt binnen
+  10 s door (hier binnen 2 s), en er blijft geen ffmpeg over;
+- een e2e-test van M4 faalde elke keer met 503 `media_busy` (reden `worker`): net na twee uploads
+  houden hun previews de twee plaatsen "kort" van de worker bezet, en krijgt de probe van play
+  busy. Zo hoort de app te antwoorden (Retry-After 2); de helpers van de e2e proberen het nu
+  opnieuw zoals de speler dat moet doen. Zie "Open" in [m4.md](m4.md).
+
+De uitslag op de samengevoegde stand van golf 2, in de sandbox: api 3066 goed en 1 overgeslagen;
+`-m media` (onder `taskset -c 0-2`, twee keer) 164 goed, niets overgeslagen; web groen (648
+tests, eerste lading JS 95,6 van 100 KB, i18n strikt zonder meldingen); de e2e van fase 3 en 4
+110 goed; `-m office` 30 goed; e2e `-m media` (twee keer) 27 goed en 3 overgeslagen (H.264: de
+Chromium 141 hier heeft geen `avc1`; in CI moet hij spelen). Het image, de worker-container
+(S3 punt 17 en R12) en Chrome for Testing ziet pas CI.
 
 ## Doel
 
@@ -127,5 +163,8 @@ worker, de kosten van de bron, de tijden van fMP4, en de eerste start op 3 cores
   bewijst.
 - [m3.md](m3.md): afspelen (M3); [clientprofiel.md](clientprofiel.md) beschrijft het profiel dat
   de client meet en stuurt (versie 1).
+- [m4.md](m4.md): de stromen (M4), met de metingen van "Klaar als" (de start van een stroom
+  zonder browser).
+- [m5.md](m5.md): ondertitels, sprites en hoofdstukken (M5).
 - [e2e.md](e2e.md): de tests van media (de markers `media`, `media_perf` en `provider_real`),
   het harnas, de nep-servers, de jobs in CI, en hoe je ze lokaal draait.
