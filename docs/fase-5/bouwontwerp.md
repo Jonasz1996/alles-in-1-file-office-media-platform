@@ -3331,7 +3331,8 @@ async def create(user, source: SessionSource, probe, plan, grant, *, family: UUI
     # link_print=None (de vingerafdruk van het wachtwoord van de link). create kijkt de toegang
     # na het maken nog één keer na (review golf 1, S2): wat tijdens play verviel, maakt de
     # sessie meteen dicht met die grafsteen, en play opent dan geen stroom (m3.md, afwijking 14
-    # en "De review (golf 1)")
+    # en "De review (golf 1)"). Gooit create, dan geeft de aanroeper de grant terug, nooit ook
+    # de sessie: elke grant komt één keer bij admission.release (m3.md, "De na-controle")
 async def create_audio(user, node, probe, *, family: UUID | None) -> Session   # voor M9
 async def guard(request: Request, sid: str) -> Session
     # 410 media_session_gone: onbekend of verlopen; {reason: replaced} als de node niet meer naar de gepinde sha wijst
