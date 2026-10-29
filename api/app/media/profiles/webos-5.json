@@ -1,5 +1,26 @@
 {
   "v": 1,
   "base": "webos-5",
-  "_stub": "M0: de echte waarden maakt M3 (Keuze 20)"
+  "_doc": "LG webOS 5 (2020) [doc]: MSE en native HLS, HEVC en VP9 in hardware, AC-3 en E-AC-3. Geen EXT-X-INDEPENDENT-SEGMENTS in de playlist, en audio- en videosegmenten even lang. Geen H.264 Hi10P.",
+  "client": {"kind": "tv"},
+  "engines": {"mse": true, "mms": false, "native_hls": true},
+  "file": ["video/mp4", "video/webm", "audio/mpeg", "audio/mp4", "audio/flac"],
+  "codecs": {
+    "avc1.640033": {"mse": true, "file": true},
+    "hvc1.1.6.L153.B0": {"mse": true, "file": true},
+    "hvc1.2.4.L153.B0": {"mse": true, "file": true},
+    "vp09.00.51.08": {"mse": true, "file": true},
+    "vp09.02.51.10": {"mse": true, "file": true},
+    "mp4a.40.2": {"mse": true, "file": true},
+    "mp4a.40.5": {"mse": true, "file": true},
+    "ac-3": {"mse": true, "file": true},
+    "ec-3": {"mse": true, "file": true},
+    "mp3": {"mse": false, "file": true}
+  },
+  "hdr": {"pq": true, "hlg": true, "dv": false, "screen": false},
+  "max": {"height": 2160, "bitrate_kbps": 0},
+  "audio": {"channels": 2, "track_switch": false},
+  "deny": ["avc1.6e"],
+  "deny_by_name": {},
+  "playlist": {"independent_segments": false}
 }

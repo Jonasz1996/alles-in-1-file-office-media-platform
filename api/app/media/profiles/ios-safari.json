@@ -1,5 +1,25 @@
 {
   "v": 1,
   "base": "ios-safari",
-  "_stub": "M0: de echte waarden maakt M3 (Keuze 20)"
+  "_doc": "Safari op iOS, iPadOS en macOS [doc]: ManagedMediaSource en native HLS, HEVC als hvc1, audioTracks. Geen H.264 Hi10P.",
+  "client": {"kind": "web"},
+  "engines": {"mse": false, "mms": true, "native_hls": true},
+  "file": ["video/mp4", "audio/mpeg", "audio/mp4", "audio/flac"],
+  "codecs": {
+    "avc1.640033": {"mse": true, "file": true},
+    "hvc1.1.6.L153.B0": {"mse": true, "file": true},
+    "hvc1.2.4.L153.B0": {"mse": true, "file": true},
+    "mp4a.40.2": {"mse": true, "file": true},
+    "mp4a.40.5": {"mse": true, "file": true},
+    "ac-3": {"mse": true, "file": true},
+    "ec-3": {"mse": true, "file": true},
+    "flac": {"mse": true, "file": true},
+    "mp3": {"mse": false, "file": true}
+  },
+  "hdr": {"pq": true, "hlg": true, "dv": false, "screen": false},
+  "max": {"height": 1080, "bitrate_kbps": 0},
+  "audio": {"channels": 2, "track_switch": true},
+  "deny": ["avc1.6e"],
+  "deny_by_name": {},
+  "playlist": {"independent_segments": true}
 }

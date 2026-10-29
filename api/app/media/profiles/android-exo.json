@@ -1,5 +1,22 @@
 {
   "v": 1,
   "base": "android-exo",
-  "_stub": "M0: de echte waarden maakt M3 (Keuze 20)"
+  "_doc": "De app van fase 9 met ExoPlayer [doc]: HLS met fMP4, geen MSE. H.264, HEVC en VP9 hangen van het toestel af; de app meet ze zelf met MediaCodecList.",
+  "client": {"kind": "android"},
+  "engines": {"mse": false, "mms": false, "native_hls": true},
+  "file": ["video/mp4", "video/webm", "audio/mpeg", "audio/mp4", "audio/flac", "audio/ogg"],
+  "codecs": {
+    "avc1.640028": {"mse": false, "file": true},
+    "mp4a.40.2": {"mse": false, "file": true},
+    "mp4a.40.5": {"mse": false, "file": true},
+    "opus": {"mse": false, "file": true},
+    "flac": {"mse": false, "file": true},
+    "mp3": {"mse": false, "file": true}
+  },
+  "hdr": {"pq": false, "hlg": false, "dv": false, "screen": false},
+  "max": {"height": 1080, "bitrate_kbps": 0},
+  "audio": {"channels": 2, "track_switch": true},
+  "deny": [],
+  "deny_by_name": {},
+  "playlist": {"independent_segments": true}
 }

@@ -1,5 +1,15 @@
 {
   "v": 1,
   "base": "web",
-  "_stub": "M0: de echte waarden maakt M3 (Keuze 20)"
+  "_doc": "Een browser die zelf meet (Keuze 20). Geen aangenomen codecs: de web-app meet alles. Firefox speelt H.264 Hi10P niet goed, ook als isTypeSupported ja zegt.",
+  "client": {"kind": "web"},
+  "engines": {"mse": true, "mms": false, "native_hls": false},
+  "file": ["video/mp4", "video/webm", "audio/mpeg", "audio/flac", "audio/ogg", "audio/mp4"],
+  "codecs": {},
+  "hdr": {"pq": false, "hlg": false, "dv": false, "screen": false},
+  "max": {"height": 1080, "bitrate_kbps": 0},
+  "audio": {"channels": 2, "track_switch": false},
+  "deny": [],
+  "deny_by_name": {"firefox": ["avc1.6e"]},
+  "playlist": {"independent_segments": true}
 }
