@@ -132,7 +132,7 @@ async def system_info(
     now = datetime.now(UTC)
     started = getattr(request.app.state, "started_at", None)
     counts = await jobs.counts(session)
-    oldest = await jobs.oldest_queued(session)
+    oldest = await jobs.oldest_queued(session, settings)  # zonder de rijen die niet draaien
     alive = jobs.runner_alive()
     if started is not None and not alive:
         notices.append(notice("jobs_stopped", "De achtergrondtaken draaien niet."))

@@ -668,11 +668,25 @@ async def running(session: AsyncSession, limit: int = 50) -> list[Job]:
     )
 
 
-async def oldest_queued(session: AsyncSession) -> datetime | None:
+def _active_filter(settings: Settings | None):
+    """De soorten met een Runner (active_lanes); None: alle soorten."""
+    if settings is None:
+        return true()
+    lanes = active_lanes(settings)
+    if set(lanes) >= set(LANES):
+        return true()
+    return or_(*(_lane_filter(lane) for lane in lanes))
+
+
+async def oldest_queued(session: AsyncSession, settings: Settings | None = None) -> datetime | None:
     """Sinds wanneer de oudste taak die nu al aan de beurt is, wacht (None: niets wacht). Taken
-    die bewust later moeten (run_after in de toekomst) tellen niet mee."""
+    die bewust later moeten (run_after in de toekomst) tellen niet mee. Met settings ook niet de
+    taken van een rij die niet draait (active_lanes): een taak van media terwijl media uit staat,
+    wacht bewust tot media weer aan gaat, en is geen vastgelopen rij (fase 5, review C1)."""
     at = await session.scalar(
-        select(func.min(Job.run_after)).where(Job.status == "queued", Job.run_after <= now())
+        select(func.min(Job.run_after)).where(
+            Job.status == "queued", Job.run_after <= now(), _active_filter(settings)
+        )
     )
     return at.replace(tzinfo=at.tzinfo or UTC) if at is not None else None
 

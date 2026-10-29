@@ -3579,6 +3579,11 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
   - *Noot bij de bouw van M0:* de rijen `media_scan`, `media`, `media_net` en `import` starten
     alleen met media aan (`jobs.active_lanes`); met media uit loopt alleen `default`, zoals in
     0.6.0 ([m0.md](m0.md), afwijking 9).
+  - *Noot (M0, review C1):* een taak van media die blijft staan terwijl media uit staat, wacht
+    bewust. `jobs.oldest_queued(session, settings)` telt alleen de soorten van de rijen die
+    draaien, dus `/admin/status` geeft daarvoor geen `jobs_waiting` en geen `degraded`. Het aantal
+    `queued` telt hem wel (hij staat er echt). Zonder `settings` telt `oldest_queued` alles, zoals
+    eerst (`/beheer`, Taken).
 - **De haken** (één regel elk):
   - `files.notify` en `notify_many` roepen `media.hooks.touched(nodes, type)` aan (synchroon, geen
     I/O). Bij een nieuwe versie, de prullenbak en weghalen sluit die ook de sessies op die node

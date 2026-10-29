@@ -61,6 +61,39 @@ async def test_taken_die_niet_draaien_of_wachten(client, admin, settings, monkey
 
 
 @pytest.mark.anyio
+async def test_een_taak_van_media_met_media_uit_is_geen_wachtende_rij(
+    client, admin, settings, monkeypatch
+):
+    """Review C1: met media uit draait de rij media niet (active_lanes), en blijft een taak
+    media.analyse bewust staan. Dat is geen vastgelopen rij: geen jobs_waiting, status ok (zoals
+    0.6.0). Met media aan wel."""
+    import app.media.analysis as analysis
+
+    headers, _ = admin
+    monkeypatch.setattr(app.state, "started_at", datetime.now(UTC), raising=False)
+    monkeypatch.setattr(jobs, "runner_alive", lambda: True)
+    async with maker(settings)() as session:
+        await jobs.enqueue(
+            session,
+            analysis.JOB,
+            {"sha": "0" * 64, "library_id": None},
+            run_after=datetime.now(UTC) - timedelta(minutes=30),
+        )
+        await session.commit()
+    assert jobs.active_lanes(settings) == (jobs.DEFAULT_LANE,)
+    body = await status(client, headers)
+    codes = {n["code"] for n in body["notices"]}
+    assert "jobs_waiting" not in codes
+    assert body["system"]["jobs"]["oldest_queued_at"] is None
+    assert body["system"]["jobs"]["queued"] == 1  # hij staat er wel, en wacht op media
+    assert body["status"] == "ok" or codes == {"disk_full"}
+    async with maker(settings)() as session:
+        assert await jobs.oldest_queued(session) is not None  # zonder settings: alles
+        on = settings.model_copy(update={"media_enabled": True})
+        assert await jobs.oldest_queued(session, on) is not None
+
+
+@pytest.mark.anyio
 async def test_https_fout_en_bijna_verlopen(client, admin, certs, monkeypatch):
     headers, _ = admin
     monkeypatch.setattr(jobs, "runner_alive", lambda: True)
