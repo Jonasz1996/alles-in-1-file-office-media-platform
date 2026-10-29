@@ -65,6 +65,7 @@ from app.media.types import (
     PlayUrls,
     Probe,
     QualityInfo,
+    Stream,
     StreamInfo,
     SubtitleTrack,
     TrickInfo,
@@ -298,10 +299,19 @@ def quality_options(probe: Probe, policy_max: int, transcode: bool) -> list:
     return options
 
 
-def subtitle_tracks(probe: Probe, subs: list[dict[str, Any]], chosen: str | None) -> list:
-    """De ingebedde sporen (subtitles.tracks, M5) plus de losse x<i> van de sessie."""
+def subtitle_tracks(
+    probe: Probe,
+    subs: list[dict[str, Any]],
+    chosen: str | None,
+    *,
+    audio: Stream | None = None,
+    settings: Settings | None = None,
+) -> list:
+    """De ingebedde sporen (subtitles.tracks, M5) plus de losse x<i> van de sessie, elk met de
+    staat uit de cache van M5. audio is het spoor dat play koos: een geforceerd tekstspoor
+    staat alleen vanzelf aan in die taal (Keuze 29; bij het samenvoegen van M5)."""
     out: list[SubtitleTrack] = []
-    for entry in subtitles.tracks(probe):
+    for entry in subtitles.tracks(probe, audio=audio, chosen=chosen, settings=settings):
         with contextlib.suppress(Exception):
             out.append(SubtitleTrack.model_validate(entry))
     for i, sub in enumerate(subs):
@@ -314,14 +324,23 @@ def subtitle_tracks(probe: Probe, subs: list[dict[str, Any]], chosen: str | None
                 forced=sub["forced"],
                 sdh=sub["sdh"],
                 default=chosen == f"x{i}",
-                state="pending",  # M5 maakt hem en weet de staat; tot dan pending
+                state=loose_state(settings, sub),
             )
         )
     return out
 
 
-def trick_info(probe: Probe) -> TrickInfo | None:
-    found = trick.info(probe)  # M5
+def loose_state(settings: Settings | None, sub: dict[str, Any]) -> str:
+    """De staat van een los bestand in de cache van M5: ready, failed of pending (M5 maakt hem
+    pas als iemand hem vraagt)."""
+    sha = sub.get("sha")
+    if settings is None or not isinstance(sha, str):
+        return "pending"
+    return subtitles.state(settings, sha, "file")
+
+
+def trick_info(probe: Probe, settings: Settings | None = None) -> TrickInfo | None:
+    found = trick.info(probe, settings)  # M5
     if not found:
         return None
     try:
@@ -497,7 +516,9 @@ async def start(
             )
             for a in probe.audio_streams()
         ],
-        subtitles=subtitle_tracks(probe, found.subs, choice.subtitle),
+        subtitles=subtitle_tracks(
+            probe, found.subs, choice.subtitle, audio=audio, settings=settings
+        ),
     )
     return PlayOut(
         sid=s.sid,
@@ -509,9 +530,9 @@ async def start(
         start_ms=s.start_ms,
         offset=offset,
         tracks=tracks,
-        chapters=probe.chapters,
+        chapters=chapters.items(probe),  # M5: op volgorde, binnen de duur, zonder lege
         credits_ms=chapters.credits_ms(probe),  # M5
-        trick=trick_info(probe),
+        trick=trick_info(probe, settings),
         forced_available=plan.forced_available,
         quality=QualityInfo(
             current=choice.quality,
