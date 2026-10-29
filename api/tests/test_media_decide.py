@@ -7,8 +7,8 @@ kandidaten plus de strings van het item, per string mse/file uit een model van d
 - chrome_ci: Chrome for Testing 141 in CI, met H.264 en AAC (S13), zonder HEVC;
 - safari17, firefox: aangenomen [doc]; webos5: alleen het basisprofiel (de TV meet niets).
 
-De tabel van Keuze 24 komt uit ladder.cost (M4); zolang dat de stub is, zet deze test de tabel
-zelf in (zelfde getallen), zodat de rekenvoorbeelden van Keuze 26 hier al kloppen.
+De tabel van Keuze 24 komt uit ladder.cost (M4). TABLE hieronder is dezelfde tabel, met de
+hand: de test kijkt na dat ladder hem zo heeft (tot M4 zette deze test hem zelf in).
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from app.media.types import (
 from app.media.worker.args import AudioEncode
 from tests.media import record
 
-# --- de tabel van Keuze 24 (tot M4 hem in ladder.py zet) --------------------------------------
+# --- de tabel van Keuze 24 (ladder.py, M4) -------------------------------------------------------
 
 TABLE = {
     (1080, "veryfast"): (1.42, 2.30),
@@ -49,17 +49,10 @@ TABLE = {
 }
 
 
-def keuze24(rung: Rung, *, hdr: bool = False) -> float:
-    sdr, hdr_cost = TABLE[(rung.height, rung.preset)]
-    return hdr_cost if hdr else sdr
-
-
-@pytest.fixture(autouse=True)
-def cost_table(monkeypatch):
-    try:
-        ladder.cost(ladder.ORDER[0], hdr=False)
-    except NotImplementedError:
-        monkeypatch.setattr(ladder, "cost", keuze24)
+def test_ladder_heeft_de_tabel_van_keuze_24():
+    for (height, preset), (sdr, hdr) in TABLE.items():
+        rung = Rung(height=height, preset=preset, codec="h264")  # type: ignore[arg-type]
+        assert (ladder.cost(rung), ladder.cost(rung, hdr=True)) == (sdr, hdr)
 
 
 # --- de browsers -------------------------------------------------------------------------------

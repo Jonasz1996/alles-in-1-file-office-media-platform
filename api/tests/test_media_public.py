@@ -12,14 +12,14 @@ import pytest
 
 from app.config import MediaConfig
 from app.main import app
-from app.media import admission, analysis, keyframes, ladder, sessions, streams
+from app.media import admission, analysis, keyframes, sessions, streams
 from app.media import public as media_public
 from app.media.state import MediaPolicy, MediaState
 from app.media.types import Grant, Rung, StreamInfo
 from app.routers import public_media
 from tests.media.media_contract import failed
 from tests.test_files import mkdir, put, root
-from tests.test_media_decide import budget, keuze24, synthetic
+from tests.test_media_decide import budget, synthetic
 from tests.test_media_sessions import (
     Clock,
     blob_of,
@@ -190,10 +190,6 @@ async def test_met_public_transcode_hooguit_720(client, films, settings, monkeyp
     monkeypatch.setattr(
         app.state, "media_policy", MediaPolicy(MediaConfig(public_transcode=True)), raising=False
     )
-    try:
-        ladder.cost(ladder.ORDER[0], hdr=False)
-    except NotImplementedError:
-        monkeypatch.setattr(ladder, "cost", keuze24)
     asked: list[tuple] = []
 
     def view(user_id, link_id):
