@@ -11,14 +11,21 @@ ingetrokken en stopt de sessie:
 - uitloggen van de login die speelt: 403 revoked, de andere login speelt door;
 - een nieuwe versie: 410 replaced;
 - een publieke link: spelen zonder in te loggen, de link weg: binnen 15 s 403;
+- een deling aan een ander weg terwijl die kijkt: een lezing van /file die nog loopt, breekt
+  af na hooguit 15 s en één stuk; uitloggen breekt hem meteen af (review golf 1, K5; #10 en
+  #11 van de e2e-tabel);
+- een publieke link op een bron die alleen met omzetten kan: 403 media_public_transcode, ook
+  gevraagd vanuit de publieke pagina in de browser;
 - H.264 + AAC (mp4) als de browser het kan (Chromium van Playwright 141 niet; in CI met
   MEDIA_REQUIRE_H264=1 moet het), en blokkeren: 403 blocked.
 """
 
 from __future__ import annotations
 
+import socket
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 from playwright.sync_api import expect
@@ -27,6 +34,8 @@ from media_harness import open_app, require_codec, wait_playing
 
 PROBE_WAIT_S = 30.0
 ACCESS_CACHE_S = 15.0  # settings.media_access_cache (Keuze 21)
+PIECE_S = 5.0  # sessions.CHECK_SECONDS: guarded_body kijkt elke 5 s (of 4 MB) opnieuw
+PAD = 48 << 20  # opvulling: ruim meer dan de buffers van de kernel en de browser samen
 
 MEASURE_JS = """async (strings) => {
   const v = document.createElement("video");
@@ -70,6 +79,102 @@ FETCH_JS = """async (url) => {
   try { detail = (await r.json()).detail; } catch (e) { /* bytes */ }
   return { status: r.status, detail };
 }"""
+
+
+PUBLIC_PLAY_JS = """async ({ url, key, body }) => {
+  // play vanuit de publieke pagina; bij 409 media_probe_pending na Retry-After opnieuw
+  const end = Date.now() + 30000;
+  for (;;) {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const detail = (await r.json()).detail ?? null;
+    const pending = r.status === 409 && detail && detail.code === "media_probe_pending";
+    if (!pending || Date.now() > end) return { status: r.status, detail };
+    await new Promise((ok) => setTimeout(ok, 1000 * Number(r.headers.get("retry-after") || 1)));
+  }
+}"""
+
+
+def padded_webm(data: bytes, extra: int) -> bytes:
+    """data (een webm waarvan het Segment tot het einde loopt) met een Void-element (ID 0xEC,
+    opvulling van EBML) van extra bytes aan het einde van het Segment. Een geldig bestand dat
+    groter is dan wat de buffers vasthouden; de probe en de speler slaan de opvulling over."""
+
+    def vint(pos: int) -> tuple[int, int]:
+        n = 9 - data[pos].bit_length()
+        return n, int.from_bytes(data[pos : pos + n], "big") & ((1 << (7 * n)) - 1)
+
+    assert data[:4] == b"\x1a\x45\xdf\xa3", "geen EBML"
+    n, size = vint(4)
+    seg = 4 + n + size
+    assert data[seg : seg + 4] == b"\x18\x53\x80\x67", "geen Segment"
+    n, size = vint(seg + 4)
+    start = seg + 4 + n
+    assert start + size == len(data), "het Segment loopt niet tot het einde"
+    void = b"\xec" + ((1 << 56) | (extra - 9)).to_bytes(8, "big") + bytes(extra - 9)
+    head = ((1 << (7 * n)) | (size + extra)).to_bytes(n, "big")
+    return data[: seg + 4] + head + data[start:] + void
+
+
+class SlowRead:
+    """Een lezing van /file die loopt, buiten de browser. In de browser kan dat hier niet:
+    Chromium las de body van een fetch helemaal van de socket, ook toen de pagina na 1,2 MB
+    stopte met lezen (ss gaf lege rijen; de server was al klaar). Hier een socket met een vaste,
+    kleine ontvangstbuffer (SO_RCVBUF zet de autotuning van de kernel uit): eerst 1 MB, dan
+    stil, zodat de server op de verbinding wacht en de rest nog moet sturen."""
+
+    def __init__(self, base_url: str, path: str) -> None:
+        url = urlsplit(base_url)
+        host, port = url.hostname or "127.0.0.1", url.port or 80
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 64 * 1024)
+        self.sock.settimeout(10)
+        self.sock.connect((host, port))
+        ask = f"GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n"
+        self.sock.sendall(ask.encode())
+        head = b""
+        while b"\r\n\r\n" not in head:
+            part = self.sock.recv(4096)
+            assert part, "geen antwoord"
+            head += part
+        head, _, rest = head.partition(b"\r\n\r\n")
+        lines = head.decode("latin-1").split("\r\n")
+        self.status = int(lines[0].split()[1])
+        fields = dict(line.lower().split(": ", 1) for line in lines[1:] if ": " in line)
+        self.size = int(fields["content-length"])
+        self.bytes = len(rest)
+
+    def read(self, limit: int | None = None, timeout: float = 10) -> bool:
+        """Lees tot limit bytes, of tot het einde. False als de verbinding eerder dichtging."""
+        self.sock.settimeout(timeout)
+        while limit is None or self.bytes < limit:
+            try:
+                part = self.sock.recv(1 << 16)
+            except ConnectionResetError:
+                return False
+            if not part:
+                return self.bytes >= self.size
+            self.bytes += len(part)
+        return True
+
+    def close(self) -> None:
+        self.sock.close()
+
+
+def upload_bytes(media: Any, account: Any, parent: str, name: str, data: bytes) -> str:
+    r = media.server.call(
+        account,
+        "PUT",
+        f"/api/v1/files/{parent}/upload",
+        params={"name": name},
+        content=data,
+        headers={"Content-Length": str(len(data))},
+        expect=201,
+    )
+    return r.json()["id"]
 
 
 def stream_url(sid: str) -> str:
@@ -259,6 +364,115 @@ def test_een_publieke_link_speelt_zonder_inloggen(media, media_browsers, ffmpeg_
         assert time.monotonic() < deadline, "de sessie speelt na 20 s nog"
         page.wait_for_timeout(500)
     refused(media, page, out["sid"], 403, "media_access_gone", "revoked")
+
+
+@pytest.mark.media
+def test_een_deling_intrekken_breekt_een_lopende_lezing_af(media, media_browsers, ffmpeg_count):
+    """#11, en #10 voor direct play: Bob kijkt naar een video die Anna met hem deelt, en een
+    lezing van /file loopt nog. Anna haalt de deling weg. Na hooguit 15 s (de cache van de
+    controle) is het eerstvolgende stuk het laatste: de lezing breekt af, korter dan
+    Content-Length. Daarna geeft een nieuw verzoek 403 revoked (ook in de browser), en een
+    nieuwe <video> laadt niet meer."""
+    from tests.media import fixtures
+
+    anna = media.user()
+    bob = media.user()
+    folder = media.folder(anna, "M3 deling")
+    data = padded_webm(fixtures.make("vp9_opus.webm").read_bytes(), PAD)
+    node = upload_bytes(media, anna, folder, "groot.webm", data)
+    share = media.server.call(
+        anna, "POST", f"/api/v1/files/{folder}/shares",
+        json={"user_id": bob.id, "permission": "read"}, expect=201,
+    ).json()  # fmt: skip
+    page = media_browsers.context_as(bob).new_page()
+    open_app(page)
+    token = login(media, bob)["access_token"]
+    first = codecs_of(media, token, node)
+    out = play(media, token, node, {"profile": profile(page, first["candidates"])})
+    found = codecs_of(media, token, node)
+    body = {"profile": profile(page, found["candidates"] + found["item"]), "replace": out["sid"]}
+    out = play(media, token, node, body)
+    assert out["mode"] == "direct", out
+    start_video(page, out["sid"])
+    reading = SlowRead(media.server.url, stream_url(out["sid"]))
+    try:
+        assert reading.status == 200 and reading.size == len(data)
+        assert reading.read(1 << 20)
+        media.server.call(anna, "DELETE", f"/api/v1/shares/{share['id']}", expect=204)
+        revoked = time.monotonic()
+        # tot de cache verloopt mag het nog; daarna lezen zo snel als het kan
+        time.sleep(ACCESS_CACHE_S + 1)
+        assert not reading.read(timeout=PIECE_S + 5), "de lezing liep tot het einde"
+        took = time.monotonic() - revoked
+    finally:
+        reading.close()
+    # wat er kwam: de eerste MB, wat de buffers hielden en hooguit één stuk; nooit alles
+    assert reading.bytes < len(data) - PAD // 2, reading.bytes
+    assert took <= ACCESS_CACHE_S + 1 + PIECE_S + 5, took
+    refused(media, page, out["sid"], 403, "media_access_gone", "revoked")
+    video_fails(page, out["sid"])
+
+
+@pytest.mark.media
+def test_uitloggen_breekt_een_lopende_lezing_meteen_af(media, media_browsers, ffmpeg_count):
+    """#11: uitloggen sluit de sessies van die login meteen (close_login), ook midden in een
+    /file-stream: het eerstvolgende stuk komt niet meer, zonder te wachten op de cache."""
+    from tests.media import fixtures
+
+    owner = media.user()
+    folder = media.folder(owner, "M3 lezing")
+    data = padded_webm(fixtures.make("vp9_opus.webm").read_bytes(), PAD)
+    node = upload_bytes(media, owner, folder, "groot.webm", data)
+    page = media_browsers.context_as(owner).new_page()
+    open_app(page)
+    phone = login(media, owner)
+    token = phone["access_token"]
+    first = codecs_of(media, token, node)
+    out = play(media, token, node, {"profile": profile(page, first["candidates"])})
+    found = codecs_of(media, token, node)
+    body = {"profile": profile(page, found["candidates"] + found["item"]), "replace": out["sid"]}
+    out = play(media, token, node, body)
+    assert out["mode"] == "direct", out
+    reading = SlowRead(media.server.url, stream_url(out["sid"]))
+    try:
+        assert reading.status == 200 and reading.read(1 << 20)
+        media.server.request(
+            "POST", "/api/v1/auth/logout", json={"refresh_token": phone["refresh_token"]},
+            expect=204,
+        )  # fmt: skip
+        out_at = time.monotonic()
+        assert not reading.read(timeout=PIECE_S + 5), "de lezing liep tot het einde"
+        took = time.monotonic() - out_at
+    finally:
+        reading.close()
+    assert reading.bytes < len(data) - PAD // 2, reading.bytes
+    assert took < 2, took  # meteen: niet pas bij de controle van na 5 s
+    refused(media, page, out["sid"], 403, "media_access_gone", "revoked")
+
+
+@pytest.mark.media
+def test_publiek_omzetten_geeft_403_ook_in_de_browser(media, media_browsers, ffmpeg_count):
+    """#10: een bron die alleen met omzetten kan (xvid + mp3), via een publieke link zonder
+    public_transcode: play vanuit de publieke pagina geeft 403 media_public_transcode."""
+    owner = media.user()
+    folder = media.folder(owner, "M3 link omzetten")
+    token = login(media, owner)["access_token"]
+    up = media.upload(owner, "xvid_mp3.avi", folder)
+    made = media.server.request(
+        "POST", f"/api/v1/files/{folder}/links", token=token, json={"permission": "read"},
+        expect=201,
+    ).json()  # fmt: skip
+    opened = media.server.request(
+        "POST", "/api/v1/public/open", json={"token": made["link"]["url"].removeprefix("/s/")},
+        expect=200,
+    ).json()  # fmt: skip
+    page = media_browsers.new_context().new_page()
+    page.goto(made["link"]["url"])  # de publieke pagina: niet ingelogd
+    body = {"profile": profile(page, codecs_of(media, token, up.id)["candidates"])}
+    url = f"/api/v1/public/media/{up.id}/play"
+    out = page.evaluate(PUBLIC_PLAY_JS, {"url": url, "key": opened["key"], "body": body})
+    assert out["status"] == 403, out
+    assert out["detail"]["code"] == "media_public_transcode", out
 
 
 @pytest.mark.media

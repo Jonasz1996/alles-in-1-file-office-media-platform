@@ -247,6 +247,14 @@ zet de vlag dan niet stil terug: dat is een vondst voor §6 van het bouwontwerp.
   speelt direct via een echte sessie (de meting in de browser, intrekken, `replaced`, een
   publieke link; H.264 alleen in CI). De e2e van M6 schakelt pas van `fake_stream` naar de echte
   routes als ook M4 er is (§5).
+  *Review golf 1 (K5):* #10 en #11 van de tabel staan er nu ook in: een deling weg terwijl een
+  ander kijkt (een lezing van `/file` die loopt, breekt af na hooguit 15 s en één stuk),
+  uitloggen midden in een `/file`-stream (meteen), en de 403 `media_public_transcode` van een
+  publieke link, gevraagd vanuit de publieke pagina. De lezing die loopt, doet de test met een
+  eigen socket (een kleine `SO_RCVBUF`), niet met `fetch` in de browser: Chromium las de body
+  van een `fetch` helemaal van de socket, ook toen de pagina na 1,2 MB stopte met lezen (`ss`
+  gaf lege rijen, de server was al klaar). Wat de `<video>` doet met wat hij al had na het
+  afbreken, is van de speler (M6). Remux en transcode via een link (#10) wachten op M4.
 - **M10:** in `media-image` het bewijs van R12 (installeren vanaf de commit van 0.6.0, bijwerken
   naar deze versie, een transcode via curl en dan `docker top`: geen ffmpeg in de app, één in
   `media`) en de rooktest van de belastingtest; `/api/v1/admin/media` en de rest van
