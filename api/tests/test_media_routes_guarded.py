@@ -44,8 +44,9 @@ EXPECTED = {
 # Een geldige waarde voor elke andere parameter in het pad
 DUMMY = {"n": "0", "i": "0", "track": "e0"}
 
-# De routes die hun pakket al bouwde (M3): die geven met een nagebootste sessie geen 503 meer.
-# Hun eigen tests staan bij het pakket (test_media_direct.py, test_media_sessions.py)
+# De routes die hun pakket al bouwde (M3, M4, M5): die geven met een nagebootste sessie geen 503
+# meer. Hun eigen tests staan bij het pakket (test_media_direct.py, test_media_sessions.py,
+# test_media_contract.py, test_media_producer.py, test_media_subtitles.py, test_media_trick.py)
 BUILT = {
     ("GET", "/api/v1/stream/{sid}/file"),
     ("HEAD", "/api/v1/stream/{sid}/file"),
@@ -56,6 +57,10 @@ BUILT = {
     ("GET", "/api/v1/stream/{sid}/v.m3u8"),
     ("GET", "/api/v1/stream/{sid}/init.mp4"),
     ("GET", "/api/v1/stream/{sid}/{n}.m4s"),
+    # M5 (test_media_subtitles.py, test_media_trick.py)
+    ("GET", "/api/v1/stream/{sid}/subs/{track}.vtt"),
+    ("GET", "/api/v1/stream/{sid}/trick.vtt"),
+    ("GET", "/api/v1/stream/{sid}/trick/{i}.jpg"),
 }
 
 
