@@ -86,8 +86,11 @@ async def start(app, settings: Settings) -> MediaState:
     state.mode = "container" if settings.media_worker else "local"
     await anyio.to_thread.run_sync(clear_sessions, settings)
     jobs.housekeeping(SWEEP, _sweep, SWEEP_EVERY)
-    client.bind(settings.media_socket, settings.media_key())
     problem = settings.media_problem()
+    # Met een probleem met de sleutel (ook een sleutel gelijk aan het geheim van de app, die
+    # verder wel lang genoeg is) praat de app niet met de worker: een lege sleutel laat
+    # client.connect weigeren, en de gezondheid draait niet, zodat de reden blijft staan.
+    client.bind(settings.media_socket, "" if problem else settings.media_key())
     if problem is not None:
         log.warning("mediaworker: %s", problem)
         state.set_worker("down", problem)
@@ -97,7 +100,7 @@ async def start(app, settings: Settings) -> MediaState:
         except Exception as exc:  # de app start ook zonder worker
             log.warning("lokale mediaworker start niet: %s", exc)
             state.set_worker("down", str(exc)[:200])
-    app.state.media_health = health.start(app, settings)
+    app.state.media_health = health.start(app, settings) if problem is None else None
     app.state.media_scanner = scanner.start(app, settings)
     return state
 

@@ -629,3 +629,46 @@ async def test_de_nep_als_worker_van_de_app(tmp_path, monkeypatch):
         await runtime.stop(app)
         await fake.stop()
     assert not fake.socket.exists()
+
+
+async def test_met_een_probleem_met_de_sleutel_praat_de_app_niet_met_de_worker(
+    tmp_path, monkeypatch
+):
+    """PLATFORM_MEDIA_WORKER_KEY gelijk aan het geheim van de app (media_problem): de worker
+    blijft down met die reden, ook als de gezondheid loopt, en de app maakt geen verbinding,
+    ook niet als de worker aan de andere kant precies die sleutel heeft (review S1)."""
+    from app.media import health, runtime
+
+    monkeypatch.setattr(health, "FIRST", 0.01)
+    monkeypatch.setattr(health, "INTERVAL", 0.01)
+    secret = "t" * 32
+    fake = FakeWorker(tmp_path / "w" / "nep.sock", mode="container", key=secret)
+    hellos: list[int] = []
+    real_hello = fake._hello
+
+    async def counted(sock):
+        hellos.append(1)
+        return await real_hello(sock)
+
+    monkeypatch.setattr(fake, "_hello", counted)
+    await fake.start()
+    app = _App()
+    settings = Settings(
+        data_dir=tmp_path,
+        web_dist=tmp_path / "web",
+        jwt_secret=secret,
+        media_enabled=True,
+        media_worker=str(fake.socket),
+        media_worker_key=secret,
+    )
+    assert "geheim van de app" in (settings.media_problem() or "")
+    try:
+        state = await runtime.start(app, settings)
+        await asyncio.sleep(0.3)
+        assert state.worker == "down" and "geheim van de app" in (state.reason or "")
+        with pytest.raises(WorkerDown):
+            await client.caps()
+    finally:
+        await runtime.stop(app)
+        await fake.stop()
+    assert hellos == [] and fake.requests == []
