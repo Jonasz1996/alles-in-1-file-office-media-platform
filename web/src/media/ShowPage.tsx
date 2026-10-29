@@ -23,11 +23,13 @@ import { affectsLibrary } from "./library";
 import type { Card, ShowDetail } from "./types";
 import "./media.css";
 
-function Episode({ card }: { card: Card }): JSX.Element {
+function Episode({ card, show }: { card: Card; show: string }): JSX.Element {
   const href = cardHref(card);
   const done = progressFraction(card.progress);
   const code = episodeCode(card.season, card.episode);
-  const text = code ? t("media.card.episode", { code, title: card.title }) : card.title;
+  // Zonder eigen titel heet een aflevering zoals de serie: dan alleen de code
+  const own = card.title && card.title !== show ? card.title : "";
+  const text = code && own ? t("media.card.episode", { code, title: own }) : code || card.title;
   return (
     <li className="media-episode">
       {href ? <Link to={href}>{text}</Link> : <span>{text}</span>}
@@ -83,7 +85,7 @@ function ShowView({ detail }: { detail: ShowDetail }): JSX.Element {
             <h2 id={id}>{s.season === null ? t("media.showPage.episodes") : t("media.showPage.season", { n: s.season })}</h2>
             <ol className="media-episodes">
               {s.episodes.map((c) => (
-                <Episode key={cardKey(c)} card={c} />
+                <Episode key={cardKey(c)} card={c} show={show.title} />
               ))}
             </ol>
           </section>

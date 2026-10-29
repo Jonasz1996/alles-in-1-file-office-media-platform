@@ -2,9 +2,9 @@
 
 Met media aan en de lokale worker (de fixture media). De speler van M6 is er nog niet: de test
 zet zelf een <video> met <track>'s op de adressen van de sessie (dezelfde origin, CSP media-src
-'self'), zoals de speler dat straks doet. De bibliotheek en het item schrijft de test in de
-database zoals de scanner van M2 dat doet (met subtitles.pair voor de losse bestanden), en de
-analyse komt als job met die bibliotheek:
+'self'), zoals de speler dat straks doet. De bibliotheek maakt de test via de API; het item, de
+losse ondertitels (subtitles.pair) en de analyse met die bibliotheek komen van de scanner van M2
+(golf 3; daarvoor schreef de test die rijen zelf):
 
 - een webm met een ingebed WebVTT-spoor en hoofdstukken, plus een losse .srt (CP1252) en .ass
   (met \\an8): play geeft de hoofdstukken en het begin van de aftiteling; met drie <track>'s
@@ -27,14 +27,13 @@ import sqlite3
 import subprocess
 import tempfile
 import time
-import uuid
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from media_harness import open_app, run_async
+from media_harness import open_app
 from test_media_m3 import codecs_of, login, play, profile, upload_bytes
 
 STATE_WAIT_S = 60.0
@@ -161,56 +160,29 @@ FETCH_JS = """async (url) => {
 }"""
 
 
-# --- wat M2 straks doet -----------------------------------------------------------------------
+# --- de bibliotheek, via de scanner van M2 ----------------------------------------------------
 
 
-def library_item(
-    media: Any, owner_id: str, root_id: str, node_id: str, title: str, subs: list[dict]
-) -> str:
-    """Een bibliotheek (films) op root_id en het item voor node_id, met de losse ondertitels
-    zoals de scanner ze vindt; daarna de analyse als job met die bibliotheek. Geeft de id van
-    de bibliotheek."""
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-
-    from app import db, jobs
-    from app.media import analysis
-    from app.models import MediaItem, MediaLibrary, Node
-
-    settings = media.settings()
-
-    async def go() -> str:
-        engine = db.get_engine(settings)
-        try:
-            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
-                library = MediaLibrary(
-                    owner_id=uuid.UUID(owner_id), root_id=uuid.UUID(root_id), kind="movies",
-                    name=f"Films {title}",
-                )  # fmt: skip
-                session.add(library)
-                await session.flush()
-                session.add(
-                    MediaItem(
-                        node_id=uuid.UUID(node_id),
-                        library_id=library.id,
-                        kind="movie",
-                        title=title,
-                        sort_title=title.lower(),
-                        subs=subs,
-                    )  # fmt: skip
-                )
-                node = await session.get(Node, uuid.UUID(node_id))
-                assert node is not None and node.blob_id
-                payload = {"sha": node.blob_id, "library_id": str(library.id)}
-                await jobs.enqueue(
-                    session, analysis.JOB, payload, key=f"{analysis.JOB}:{node.blob_id}"
-                )
-                await session.commit()
-                return str(library.id)
-        finally:
-            await engine.dispose()
-            db._engine.cache_clear()
-
-    return run_async(go)
+def library_item(media: Any, owner: Any, root_id: str, node_id: str, subs: list[dict]) -> str:
+    """Een bibliotheek (films) op root_id via de API; de scanner van M2 maakt het item voor
+    node_id, koppelt de losse ondertitels (subtitles.pair) en zet de analyse klaar met de
+    bibliotheek. Wacht tot het item er is, met evenveel losse ondertitels als subs. Geeft de id
+    van de bibliotheek. (Tot M2 schreef de test die rijen zelf.)"""
+    library = media.server.call(
+        owner, "POST", "/api/v1/media/libraries", json={"root_id": root_id, "kind": "movies"},
+        expect=201,
+    ).json()  # fmt: skip
+    end = time.monotonic() + STATE_WAIT_S
+    item = None
+    while time.monotonic() < end:
+        r = media.server.call(owner, "GET", f"/api/v1/media/items/{node_id}")
+        if r.status_code == 200:
+            item = r.json()
+            loose = [x for x in item["subtitles"] if x["id"].startswith("x")]
+            if len(loose) == len(subs):
+                return library["id"]
+        time.sleep(0.25)
+    raise AssertionError(f"geen item voor {node_id} met {len(subs)} losse ondertitels: {item}")
 
 
 def loose_subs(video: str, uploaded: dict[str, str]) -> list[dict]:
@@ -329,7 +301,7 @@ def test_ondertitels_als_track_en_ass_bovenaan(media, media_browsers, ffmpeg_cou
     }
     subs = loose_subs("film.webm", uploaded)
     assert [s["lang"] for s in subs] == ["eng", "nld"]
-    library_item(media, owner.id, folder, video, "Film", subs)
+    library_item(media, owner, folder, video, subs)
     out = session_play(media, page, token, video)
     assert out["mode"] == "direct", out
     tracks = {t["id"]: t for t in out["tracks"]["subtitles"]}
@@ -395,7 +367,7 @@ def test_sprites_via_de_sessie_en_403_na_de_prullenbak(media, media_browsers, ff
     open_app(page)
     token = login(media, owner)["access_token"]
     up = media.upload(owner, "vp9_opus.webm", folder)
-    library_item(media, owner.id, folder, up.id, "Sprites", [])
+    library_item(media, owner, folder, up.id, [])
     row = wait_state(media, up.sha, "trick_state")
     assert row["trick_state"] == "ready", row
     assert row["trick"] == {"interval": 10, "w": 160, "h": 90, "cols": 10, "rows": 10,

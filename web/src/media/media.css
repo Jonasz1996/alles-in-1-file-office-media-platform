@@ -307,3 +307,28 @@ a.media-card:hover .media-card-title {
 .media-kind-name {
   font-weight: 600;
 }
+
+/* Afspelen en Verder op zijn links (naar /kijken), maar zien eruit als knoppen */
+.media-actions a.btn {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.media-actions a.btn:hover {
+  border-color: var(--accent);
+}
+
+.media-actions a.btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.media-actions a.btn:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}

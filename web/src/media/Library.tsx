@@ -326,7 +326,13 @@ function LibraryView({ lib }: { lib: Library }): JSX.Element {
               {t("media.title")}
             </Link>
             {lib.mine && (
-              <Button icon="rotate" busy={scanning} disabled={scanBusy(lib.scan_state)} onClick={() => void rescan()}>
+              <Button
+                icon="rotate"
+                busy={scanning}
+                disabled={scanBusy(lib.scan_state)}
+                onClick={() => void rescan()}
+                data-rescan=""
+              >
                 {t("media.scan.again")}
               </Button>
             )}
