@@ -10,11 +10,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
+import time
 
 import pytest
 
 from app.media import subconv, subtitles
+from app.media.worker.ops import subs as subs_op
 from tests.media import fixtures as F
 
 ASS_HEAD = """[Script Info]
@@ -30,6 +33,8 @@ Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,
 2,10,10,10,1
 Style: Bord,Arial,24,&H0000FFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,0,\
 8,10,10,10,1
+Style: Sign,Arial,24,&H0000FFFF,&H000000FF,&H00000000,&H00000000,0,-1,0,0,100,100,0,0,1,2,0,\
+2,10,10,10,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -271,6 +276,51 @@ GOLDEN: list[tuple[str, str, bytes, bytes]] = [
             ("00:00:03.000 --> 00:00:04.000", "Tweede"),
         ),
     ),
+    # review golf 2, C3: in een SRT is alleen {\…} een code; {Muziek} is tekst. {Y:i} (een stijl
+    # van MicroDVD) gaat weg, zoals bij ffmpeg
+    (
+        "srt_accolades_zijn_tekst",
+        "srt",
+        srt(("00:00:01,000", "00:00:02,000", "{Muziek} hallo {lacht} {Y:i}{\\an8}boven")),
+        vtt(("00:00:01.000 --> 00:00:02.000 line:0", "{Muziek} hallo {lacht} boven")),
+    ),
+    # review golf 2, C4: entiteiten in een SRT zijn tekst (niet &amp;amp;); zonder puntkomma
+    # (&copy) of onbekend blijft het staan
+    (
+        "srt_entiteiten",
+        "srt",
+        srt(
+            ("00:00:01,000", "00:00:02,000", "Tom &amp; Jerry &lt;3 &#233;&#xE9; AT&T &copy &foo;")
+        ),
+        vtt(
+            (
+                "00:00:01.000 --> 00:00:02.000",
+                "Tom &amp; Jerry &lt;3 éé AT&amp;T &amp;copy &amp;foo;",
+            )
+        ),
+    ),
+    # review golf 2, C4: \rNaam zet de stijl Naam (cursief geel), \r de stijl van de regel
+    (
+        "ass_r_met_een_stijl",
+        "ass",
+        (
+            ASS_HEAD + "Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,"
+            "gewoon {\\rSign}bord{\\r} terug {\\rOnbekend}ook terug\n"
+        ).encode(),
+        vtt(
+            (
+                "00:00:01.000 --> 00:00:02.000",
+                "gewoon <c.yellow><i>bord</i></c> terug ook terug",
+            )
+        ),
+    ),
+    # Een \r of een stuurteken uit een entiteit (&#13;) breekt de VTT niet (gevonden bij C4)
+    (
+        "vtt_entiteit_cr",
+        "vtt",
+        b"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\na&#13;b&#12;c\n",
+        vtt(("00:00:01.000 --> 00:00:02.000", "a\nbc")),
+    ),
     ("leeg", "srt", b"", vtt()),
 ]
 
@@ -363,12 +413,141 @@ def test_tijden_tot_99_uur() -> None:
     assert subconv.stamp(-5) == "00:00:00.000"
 
 
+# --- tijd (review golf 2, S1) -------------------------------------------------------------------
+#
+# Eerst waren drie dingen kwadratisch in de lengte van één cue (pop(0) in _lines, + in _Runs, en
+# de regex van de HTML-tags die per < 200 × 200 keer terugzocht): een SRT van 1,6 MB met
+# "<b> </b> " kostte 15 s, en de worker (één lus) gaf intussen niets anders de beurt.
+
+EVIL = {
+    "srt_tags": ("srt", "<b> </b> "),
+    "srt_open_tag": ("srt", "<a" + " " * 199),
+    "ass_codes": ("ass", "{\\b1} {\\b0} "),
+    "vtt_tags": ("vtt", "<b> </b> "),
+}
+ASS_EVENT = "Dialogue: 0,0:00:{s:02d}.00,0:00:{s:02d}.50,Default,,0,0,0,,{text}\n"
+
+
+def _one_cue(kind: str, text: str, s: int = 1) -> str:
+    if kind == "srt":
+        return f"{s}\n00:00:{s:02d},000 --> 00:00:{s:02d},500\n{text}x\n\n"
+    if kind == "vtt":
+        return f"00:00:{s:02d}.000 --> 00:00:{s:02d}.500\n{text}x\n\n"
+    return ASS_EVENT.format(s=s, text=text + "x")
+
+
+def _file(kind: str, cues: list[str]) -> bytes:
+    head = {"srt": "", "vtt": "WEBVTT\n\n", "ass": ASS_HEAD}[kind]
+    return (head + "".join(cues)).encode()
+
+
+def _timed(fn, *args):
+    start = time.perf_counter()
+    result = fn(*args)
+    return result, time.perf_counter() - start
+
+
+@pytest.mark.parametrize("name", sorted(EVIL))
+def test_een_cue_van_5_mb_kost_geen_minuten(name: str) -> None:
+    kind, unit = EVIL[name]
+    data = _file(kind, [_one_cue(kind, unit * (5_000_000 // len(unit)))])
+    assert len(data) > 4_900_000
+    out, took = _timed(subconv.to_vtt, data, kind)
+    subtitles.parse_vtt(out)
+    assert took < 1.0, f"{name}: {took:.2f} s"
+
+
+@pytest.mark.parametrize("name", sorted(EVIL))
+def test_veel_cues_tot_de_grens_lineair(name: str) -> None:
+    # 1 MB aan cues die elk MAX_RAW_CUE groot zijn: elke cue kost hooguit een vaste tijd
+    kind, unit = EVIL[name]
+    text = unit * (subconv.MAX_RAW_CUE // len(unit))
+    data = _file(kind, [_one_cue(kind, text, s % 60) for s in range(1_000_000 // len(text))])
+    out, took = _timed(subconv.to_vtt, data, kind)
+    subtitles.parse_vtt(out)
+    assert took < 3.0, f"{name}: {took:.2f} s"
+
+
+def test_lege_stukken_weghalen_is_lineair() -> None:
+    runs = [(subconv.Style(bold=n % 2 == 0), " ") for n in range(50_000)]
+    lines, took = _timed(subconv._lines, [*runs, (subconv.Style(), "x"), *runs])
+    assert lines == [[(subconv.Style(), "x")]]
+    assert took < 0.5, f"{took:.2f} s"
+
+
+def test_stukken_samenvoegen_is_lineair() -> None:
+    runs = subconv._Runs()
+    _, took = _timed(lambda: [runs.add(subconv.Style(), "x" * 20) for _ in range(50_000)])
+    assert runs.items == [(subconv.Style(), "x" * 1_000_000)]
+    assert took < 0.5, f"{took:.2f} s"
+
+
+def test_de_regex_van_de_tags_zoekt_niet_terug() -> None:
+    text = ("<a" + " " * 199) * 5_000
+    found, took = _timed(subconv._HTML_TAG.findall, text)
+    assert found == []
+    assert took < 0.3, f"{took:.2f} s"
+    assert subconv._HTML_TAG.fullmatch('<font color="red" />') is not None
+    assert subconv._HTML_TAG.fullmatch("<br/>") is not None
+
+
+def test_een_te_lange_ruwe_cue_wordt_afgekapt_zonder_halve_code() -> None:
+    cut = subconv.clip("a" * (subconv.MAX_RAW_CUE - 3) + "{\\b1}b")
+    assert cut == "a" * (subconv.MAX_RAW_CUE - 3)
+    cut = subconv.clip("a" * (subconv.MAX_RAW_CUE - 3) + "<font color=red>b")
+    assert cut == "a" * (subconv.MAX_RAW_CUE - 3)
+    assert subconv.clip("kort {") == "kort {"
+
+
+async def _longest_gap(work) -> tuple[bytes, float]:
+    """Het werk naast een taak die elke ms wakker wil worden: (uitvoer, het langste gat)."""
+    gaps: list[float] = []
+    done = asyncio.Event()
+
+    async def tick() -> None:
+        last = time.perf_counter()
+        while not done.is_set():
+            await asyncio.sleep(0.001)
+            now = time.perf_counter()
+            gaps.append(now - last)
+            last = now
+
+    ticker = asyncio.create_task(tick())
+    await asyncio.sleep(0)
+    try:
+        out, _ = await work
+    finally:
+        done.set()
+        await ticker
+    return out, max(gaps)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("name", sorted(EVIL))
+async def test_de_worker_geeft_zijn_lus_de_beurt(name: str) -> None:
+    """ops/subs.convert (in de lus van de worker): geen gat van meer dan 0,25 s, ook niet met
+    één grote cue of 1 MB zonder een enkele cue."""
+    kind, unit = EVIL[name]
+    text = unit * (subconv.MAX_RAW_CUE // len(unit))
+    inputs = [
+        _file(kind, [_one_cue(kind, text, s % 60) for s in range(1_000_000 // len(text))]),
+        _file(kind, [_one_cue(kind, unit * (1_000_000 // len(unit)))]),
+        _file(kind, [unit * (1_000_000 // len(unit))]),
+    ]
+    for data in inputs:
+        vtt_out, gap = await _longest_gap(subs_op.convert(data, kind))
+        subtitles.parse_vtt(vtt_out)
+        assert gap < 0.25, f"{name}: de lus stond {gap:.2f} s stil"
+
+
 # --- fuzz (vaste seed) --------------------------------------------------------------------------
 
 SPECIAL = [
     b"{", b"}", b"\\", b"<", b">", b"&", b"-->", b"\n", b"\n\n", b":", b",", b".", b"\\an8",
     b"{\\p1}", b"{\\c&H", b"<font color=", b"</c>", b"<c.", b"[Events]", b"Dialogue:",
     b"WEBVTT", b"\xef\xbb\xbf", b"\xff\xfe", b"\x00", b"\xe9", b"\xc3", b"99:99:99,999",
+    b"&amp;", b"&#13;", b"&#12;", b"&#0;", b"&#x110000;", b"{\\rSign}", b"{\\r}", b"{Y:i}",
+    b"<b> </b> ", b"<a" + b" " * 199, b"{\\b1} {\\b0} ",
 ]  # fmt: skip
 
 
@@ -412,3 +591,22 @@ def test_fuzz_verminkte_golden_files() -> None:
         kind, data = rng.choice(seeds)
         _ok(_mutate(rng, data), kind)
         _ok(_mutate(rng, data), rng.choice(["srt", "vtt", "ass", "ssa", "webvtt"]))
+
+
+def test_fuzz_groot_en_op_tijd() -> None:
+    """Grote invoer (20 KB tot 400 KB) uit golden files en de lastige stukken door elkaar:
+    altijd geldige VTT (of SubtitleError), en elk binnen 1 s (review golf 2, S1; regel 10)."""
+    rng = random.Random(29)
+    seeds = [(kind, data) for _, kind, data, _ in GOLDEN if data]
+    for _ in range(40):
+        kind, data = rng.choice(seeds)
+        parts = [data]
+        while sum(map(len, parts)) < rng.randint(20_000, 400_000):
+            if rng.random() < 0.5:
+                parts.append(rng.choice(SPECIAL) * rng.randint(1, 2000))
+            else:
+                parts.append(_mutate(rng, rng.choice(seeds)[1]))
+        big = b"".join(parts)
+        for target in (kind, rng.choice(["srt", "vtt", "ass"])):
+            _, took = _timed(_ok, big, target)
+            assert took < 1.0, f"{len(big)} bytes als {target}: {took:.2f} s"

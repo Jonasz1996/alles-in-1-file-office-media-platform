@@ -17,8 +17,10 @@ krijgt de bron op 3 en spoor k op 4+k. De worker
 2. leest alle worker_r tegelijk tot EOF (ffmpeg schrijft de sporen door elkaar), hooguit
    subconv.MAX_INPUT per spoor. Daarboven wordt dat spoor too_large, en leest hij de rest leeg
    (anders blijft ffmpeg op die pipe staan);
-3. zet elk spoor met subconv om, en geeft na elke 200 cues zijn lus de beurt (de worker heeft één
-   lus voor alle opdrachten; 3,2 MB ASS kost ± 0,5 s);
+3. zet elk spoor met subconv om, en geeft zijn lus de beurt zodra er SLICE_S om is (de worker
+   heeft één lus voor alle opdrachten; 3,2 MB ASS kost ± 0,5 s). subconv.steps geeft daarvoor
+   ook een tik in een lang stuk zonder cues, en één cue kost hooguit een vaste tijd (review
+   golf 2, S1: eerst kon één grote cue de lus minuten bezet houden);
 4. schrijft de VTT naar vtt_w en sluit die. Een spoor dat niet lukt, krijgt een lege vtt_w en
    een error in het antwoord.
 
@@ -34,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import time
 
 from app.media import subconv
 from app.media.wire import Code
@@ -42,7 +45,8 @@ from app.media.worker.args import THREADS, SubsArgs
 from app.media.worker.ops.probe import WHITELIST
 from app.media.worker.server import Context, OpError
 
-YIELD_EVERY = 200
+# Hoe lang de omzetter hooguit doorwerkt voor de lus weer de beurt krijgt
+SLICE_S = 0.02
 FIRST_TRACK_FD = 4  # de bron staat op 3
 _FORMAT = {"ass": ("copy", "ass"), "webvtt": ("copy", "webvtt"), "srt": ("srt", "srt")}
 
@@ -128,17 +132,21 @@ async def send(fd: int, data: bytes) -> bool:
 
 
 async def convert(data: bytes, kind: str) -> tuple[bytes, int]:
-    """subconv.to_vtt, met na elke YIELD_EVERY cues een beurt voor de lus. (vtt, cues)."""
+    """subconv.to_vtt, met elke SLICE_S een beurt voor de lus. (vtt, cues)."""
     cues: list[subconv.Cue] = []
-    for n, cue in enumerate(subconv.parse(data, kind), 1):
-        subconv.take(cue, cues)
-        if n % YIELD_EVERY == 0:
+    turn = time.monotonic() + SLICE_S
+    for cue in subconv.steps(data, kind):
+        if cue is not None:
+            subconv.take(cue, cues)
+        if time.monotonic() >= turn:
             await asyncio.sleep(0)
+            turn = time.monotonic() + SLICE_S
     out = [subconv.HEADER]
-    for n, block in enumerate(subconv.blocks(cues), 1):
+    for block in subconv.blocks(cues):
         out.append(block)
-        if n % YIELD_EVERY == 0:
+        if time.monotonic() >= turn:
             await asyncio.sleep(0)
+            turn = time.monotonic() + SLICE_S
     return "".join(out).encode(), len(out) - 1
 
 

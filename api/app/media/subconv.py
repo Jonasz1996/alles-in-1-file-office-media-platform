@@ -53,6 +53,13 @@ MAX_INPUT = 16 * 1024 * 1024
 MAX_PARSED = 4 * MAX_CUES
 # Hooguit 99:59:59.999: twee cijfers voor de uren, zoals check_vtt eist
 MAX_MS = 100 * 3600 * 1000 - 1
+# Hoeveel tekens van de ruwe tekst van één cue (met de codes) de omzetter hooguit leest. De
+# uitvoer houdt er toch hooguit MAX_CUE_CHARS van; zo kost één cue hooguit een vaste tijd, ook
+# als hij 16 MB groot is (review golf 2, S1)
+MAX_RAW_CUE = 8 * MAX_CUE_CHARS
+# Na zoveel tekens invoer geeft steps() een tik (None): de worker geeft dan zijn lus de beurt,
+# ook in een stuk zonder cues
+TICK_CHARS = 64 * 1024
 
 KINDS = frozenset({"srt", "vtt", "webvtt", "ass", "ssa"})
 
@@ -91,6 +98,8 @@ _HORIZONTAL |= {3: "align:right", 6: "align:right", 9: "align:right"}
 _LEGACY = {1: 1, 2: 2, 3: 3, 5: 7, 6: 8, 7: 9, 9: 4, 10: 5, 11: 6}
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# Een entiteit met puntkomma (&amp; &#38; &#x26;); de oude vormen zonder (&copy) niet
+_ENTITY = re.compile(r"&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});")
 
 
 class SubtitleError(ValueError):
@@ -112,6 +121,13 @@ class Style(NamedTuple):
 
 
 Run = tuple[Style, str]
+
+
+@functools.lru_cache(maxsize=1024)
+def _with(style: Style, field: str, value: bool | str | None) -> Style:
+    """style met één veld anders. Er zijn maar een paar honderd stijlen, en _replace kost per
+    keer ± 3 µs: met veel tags was dat de helft van de tijd (S1)."""
+    return style._replace(**{field: value})
 
 
 @dataclass
@@ -139,6 +155,32 @@ def decode(data: bytes) -> str:
             text = data.decode("cp1252", errors="replace")
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\ufeff", "")
     return _CONTROL.sub("", text)
+
+
+def _clean(text: str) -> str:
+    """Tekst uit een entiteit: \r wordt een nieuwe regel, stuurtekens gaan weg (zoals decode)."""
+    return _CONTROL.sub("", text.replace("\r\n", "\n").replace("\r", "\n"))
+
+
+def unescape(text: str) -> str:
+    """De entiteiten met puntkomma als tekst (&amp; wordt &); een onbekende blijft staan. Wat
+    eruit komt, maakt escape() bij het schrijven weer veilig."""
+    if "&" not in text:
+        return text
+    return _clean(_ENTITY.sub(lambda m: html.unescape(m.group(0)), text))
+
+
+def clip(text: str) -> str:
+    """Hooguit MAX_RAW_CUE tekens van de ruwe tekst van een cue. Een code die daardoor niet meer
+    sluit ({… of <…), gaat ook weg."""
+    if len(text) <= MAX_RAW_CUE:
+        return text
+    text = text[:MAX_RAW_CUE]
+    for opening, closing in (("{", "}"), ("<", ">")):
+        at = text.rfind(opening)
+        if at != -1 and text.find(closing, at) == -1:
+            text = text[:at]
+    return text
 
 
 # --- kleur ---------------------------------------------------------------------------------------
@@ -189,18 +231,23 @@ def _html_colour(value: str) -> str | None:
 
 
 class _Runs:
-    """Verzamelt (stijl, tekst); aangrenzende stukken met dezelfde stijl worden één."""
+    """Verzamelt (stijl, tekst); aangrenzende stukken met dezelfde stijl worden één. De stukken
+    gaan in een lijst en worden één keer samengevoegd (een + per stuk is kwadratisch, S1)."""
 
     def __init__(self) -> None:
-        self.items: list[Run] = []
+        self._parts: list[tuple[Style, list[str]]] = []
 
     def add(self, style: Style, text: str) -> None:
         if not text:
             return
-        if self.items and self.items[-1][0] == style:
-            self.items[-1] = (style, self.items[-1][1] + text)
+        if self._parts and self._parts[-1][0] == style:
+            self._parts[-1][1].append(text)
         else:
-            self.items.append((style, text))
+            self._parts.append((style, [text]))
+
+    @property
+    def items(self) -> list[Run]:
+        return [(style, "".join(parts)) for style, parts in self._parts]
 
 
 def position(align: int | None) -> str:
@@ -210,14 +257,25 @@ def position(align: int | None) -> str:
     return " ".join(p for p in (_VERTICAL.get(align, ""), _HORIZONTAL.get(align, "")) if p)
 
 
-_OVERRIDE = re.compile(r"\{([^{}]*)\}")
+_OVERRIDE = re.compile(r"\{([^{}]*+)\}")
+# In een SRT is alleen {\…} een code van ASS, en {Y:i} (een stijl van MicroDVD) gaat weg, zoals
+# bij ffmpeg; elk ander {…} is gewoon tekst ("{Muziek}", review golf 2, C3)
+_SRT_OVERRIDE = re.compile(r"\{(\\[^{}]*+|[CcFfoPSsYy]:[^{}]*+)\}")
 _TAG = re.compile(r"\\(an|a|b|i|u|1c|c|p|r)([^\\]*)")
 _TRANSFORM = re.compile(r"\\t\([^)]*\)?")
 
 
-def _apply(block: str, style: Style, base: Style, drawing: bool, align: int | None):
+def _apply(
+    block: str,
+    style: Style,
+    base: Style,
+    drawing: bool,
+    align: int | None,
+    styles: dict[str, tuple[Style, int | None]] | None = None,
+):
     """Eén {…}-blok van ASS. Geeft (stijl, tekening, plek). De eerste \\an of \\a wint; een
-    animatie (\\t(…)) telt niet."""
+    animatie (\\t(…)) telt niet. \\r zet de stijl van de regel terug, \\rNaam de stijl Naam
+    uit styles (als die er is)."""
     for name, value in _TAG.findall(_TRANSFORM.sub("", block)):
         value = value.strip()
         if name == "an":
@@ -229,24 +287,25 @@ def _apply(block: str, style: Style, base: Style, drawing: bool, align: int | No
         elif name == "b":
             if value.isdigit():
                 weight = int(value[:4])
-                style = style._replace(bold=weight == 1 or weight >= 600)
+                style = _with(style, "bold", weight == 1 or weight >= 600)
         elif name == "i":
             if value in ("0", "1"):
-                style = style._replace(italic=value == "1")
+                style = _with(style, "italic", value == "1")
         elif name == "u":
             if value in ("0", "1"):
-                style = style._replace(underline=value == "1")
+                style = _with(style, "underline", value == "1")
         elif name in ("c", "1c"):
             if not value:
-                style = style._replace(colour=base.colour)
+                style = _with(style, "colour", base.colour)
             elif value[:2].upper() in ("&H", "H"):
                 hexed = value if value[:1] == "&" else f"&{value}"
-                style = style._replace(colour=_ass_colour(hexed))
+                style = _with(style, "colour", _ass_colour(hexed))
         elif name == "p":
             if value.isdigit():
                 drawing = int(value[:4]) > 0
         elif name == "r":
-            style = base
+            named = (styles or {}).get(value.lstrip("*").lower()) if value else None
+            style = named[0] if named is not None else base
     return style, drawing, align
 
 
@@ -255,7 +314,9 @@ def _ass_plain(text: str) -> str:
     return text.replace("\\N", "\n").replace("\\n", " ").replace("\\h", "\u00a0")
 
 
-def _ass_text(text: str, base: Style) -> tuple[list[Run], int | None]:
+def _ass_text(
+    text: str, base: Style, styles: dict[str, tuple[Style, int | None]] | None = None
+) -> tuple[list[Run], int | None]:
     """De tekst van een Dialogue: stukken en de plek (of None)."""
     runs = _Runs()
     style, drawing, align = base, False, None
@@ -263,7 +324,7 @@ def _ass_text(text: str, base: Style) -> tuple[list[Run], int | None]:
     for match in _OVERRIDE.finditer(text):
         if not drawing:
             runs.add(style, _ass_plain(text[pos : match.start()]))
-        style, drawing, align = _apply(match.group(1), style, base, drawing, align)
+        style, drawing, align = _apply(match.group(1), style, base, drawing, align, styles)
         pos = match.end()
     if not drawing:
         runs.add(style, _ass_plain(text[pos:]))
@@ -291,13 +352,16 @@ def stamp(ms: int) -> str:
 
 _SRT_TIME = r"(?:(\d{1,3}):)?(\d{1,2}):(\d{1,2})[,.:](\d{1,3})"
 _SRT_TIMING = re.compile(rf"^\s*{_SRT_TIME}\s*-->\s*{_SRT_TIME}")
-# Een tag begint direct na < (of </) met een letter: "a < b > c" is gewoon tekst
-_HTML_TAG = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9]{0,15})((?:\s[^<>]{0,200})?)\s*/?>")
+# Een tag begint direct na < (of </) met een letter: "a < b > c" is gewoon tekst. De delen
+# zijn bezittelijk (++, {…}+) en zonder \s* achter de attributen: zo probeert de regex per <
+# hooguit één keer, en niet 200 × 200 (review golf 2, S1)
+_HTML_TAG = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9]{0,15}+)((?:\s[^<>]{0,200}+)?)/?>")
 _FONT_COLOUR = re.compile(r"""color\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""", re.IGNORECASE)
 
 
 def _srt_text(text: str) -> tuple[list[Run], int | None]:
-    """SRT-tekst met <b>, <i>, <u>, <font color> en eventueel {\\an8}; andere tags gaan weg."""
+    """SRT-tekst met <b>, <i>, <u>, <font color> en eventueel {\\an8}; andere tags gaan weg.
+    Entiteiten (&amp;) worden tekst, en bij het schrijven weer veilig (C4)."""
     runs = _Runs()
     base = Style()
     style = base
@@ -306,40 +370,46 @@ def _srt_text(text: str) -> tuple[list[Run], int | None]:
     pos = 0
     tokens = sorted(
         [(m.start(), m.end(), True, m) for m in _HTML_TAG.finditer(text)]
-        + [(m.start(), m.end(), False, m) for m in _OVERRIDE.finditer(text)],
+        + [(m.start(), m.end(), False, m) for m in _SRT_OVERRIDE.finditer(text)],
         key=lambda t: t[0],
     )
     for start, end, is_html, match in tokens:
         if start < pos:
             continue  # binnen een vorige code
-        runs.add(style, text[pos:start])
+        runs.add(style, unescape(text[pos:start]))
         pos = end
         if not is_html:
             style, _, align = _apply(match.group(1), style, base, False, align)
             continue
         closing, name = match.group(1) == "/", match.group(2).lower()
         if name == "b":
-            style = style._replace(bold=not closing)
+            style = _with(style, "bold", not closing)
         elif name == "i":
-            style = style._replace(italic=not closing)
+            style = _with(style, "italic", not closing)
         elif name == "u":
-            style = style._replace(underline=not closing)
+            style = _with(style, "underline", not closing)
         elif name == "font":
             if closing:
-                style = style._replace(colour=colours.pop() if colours else base.colour)
+                style = _with(style, "colour", colours.pop() if colours else base.colour)
             else:
                 found = _FONT_COLOUR.search(match.group(3))
                 colours.append(style.colour)
                 if found is not None:
-                    style = style._replace(colour=_html_colour(found.group(1)))
-    runs.add(style, text[pos:])
+                    style = _with(style, "colour", _html_colour(found.group(1)))
+    runs.add(style, unescape(text[pos:]))
     return runs.items, align
 
 
-def parse_srt(text: str) -> Iterator[Cue]:
+def parse_srt(text: str) -> Iterator[Cue | None]:
+    """De cues van een SRT, met na elke TICK_CHARS tekens een tik (None)."""
     lines = text.split("\n")
     i = 0
+    scanned = 0
     while i < len(lines):
+        if scanned >= TICK_CHARS:
+            scanned = 0
+            yield None
+        scanned += len(lines[i]) + 1
         match = _SRT_TIMING.match(lines[i])
         if match is None:
             i += 1
@@ -356,8 +426,9 @@ def parse_srt(text: str) -> Iterator[Cue]:
             if lines[i].strip().isdigit() and _SRT_TIMING.match(nxt):
                 break
             body.append(lines[i])
+            scanned += len(lines[i]) + 1
             i += 1
-        runs, align = _srt_text("\n".join(body))
+        runs, align = _srt_text(clip("\n".join(body)))
         yield Cue(start, end, runs, position(align))
 
 
@@ -402,13 +473,19 @@ def _style(fields: dict[str, str], legacy: bool) -> tuple[Style, int | None]:
     return style, align
 
 
-def parse_ass(text: str) -> Iterator[Cue]:
+def parse_ass(text: str) -> Iterator[Cue | None]:
+    """De cues van een ASS of SSA, met na elke TICK_CHARS tekens een tik (None)."""
     section = ""
     legacy = False  # [V4 Styles]: de oude nummers van Alignment
     style_format: list[str] = []
     event_format = list(_DEFAULT_EVENTS)
     styles: dict[str, tuple[Style, int | None]] = {}
+    scanned = 0
     for raw in text.split("\n"):
+        if scanned >= TICK_CHARS:
+            scanned = 0
+            yield None
+        scanned += len(raw) + 1
         line = raw.strip()
         if not line or line.startswith(";"):
             continue
@@ -441,7 +518,7 @@ def parse_ass(text: str) -> Iterator[Cue]:
                     continue
                 name = (fields.get("style") or "").strip().lstrip("*").lower()
                 base, style_align = styles.get(name) or styles.get("default") or (Style(), None)
-                runs, align = _ass_text(fields["text"], base)
+                runs, align = _ass_text(clip(fields["text"]), base, styles)
                 yield Cue(start, end, runs, position(align or style_align))
 
 
@@ -449,7 +526,7 @@ def parse_ass(text: str) -> Iterator[Cue]:
 
 _VTT_TIME = r"(?:(\d{1,3}):)?(\d{2}):(\d{2})\.(\d{3})"
 _VTT_TIMING = re.compile(rf"^\s*{_VTT_TIME}[ \t]+-->[ \t]+{_VTT_TIME}(.*)$")
-_VTT_TAG = re.compile(r"<([^<>]{0,200})>")
+_VTT_TAG = re.compile(r"<([^<>]{0,200}+)>")
 _PERCENT = r"(?:100(?:\.0{1,3})?|\d{1,2}(?:\.\d{1,3})?)%"
 _SETTING = {
     "line": re.compile(rf"^(-?\d{{1,3}}|{_PERCENT})(?:,(?:start|center|end))?$"),
@@ -484,7 +561,7 @@ def _vtt_text(text: str) -> list[Run]:
     classes: list[str | None] = []
     pos = 0
     for match in _VTT_TAG.finditer(text):
-        runs.add(style, html.unescape(text[pos : match.start()]))
+        runs.add(style, _clean(html.unescape(text[pos : match.start()])))
         pos = match.end()
         tag = match.group(1).strip()
         closing = tag.startswith("/")
@@ -492,25 +569,31 @@ def _vtt_text(text: str) -> list[Run]:
         name = words[0] if words else ""
         head = name.split(".")[0].lower()
         if head == "b":
-            style = style._replace(bold=not closing)
+            style = _with(style, "bold", not closing)
         elif head == "i":
-            style = style._replace(italic=not closing)
+            style = _with(style, "italic", not closing)
         elif head == "u":
-            style = style._replace(underline=not closing)
+            style = _with(style, "underline", not closing)
         elif head == "c":
             if closing:
-                style = style._replace(colour=classes.pop() if classes else base.colour)
+                style = _with(style, "colour", classes.pop() if classes else base.colour)
             else:
                 classes.append(style.colour)
                 wanted = [c for c in name.split(".")[1:] if c in CLASSES]
                 if wanted:
-                    style = style._replace(colour=wanted[-1])
-    runs.add(style, html.unescape(text[pos:]))
+                    style = _with(style, "colour", wanted[-1])
+    runs.add(style, _clean(html.unescape(text[pos:])))
     return runs.items
 
 
-def parse_vtt(text: str) -> Iterator[Cue]:
+def parse_vtt(text: str) -> Iterator[Cue | None]:
+    """De cues van een WebVTT, met na elke TICK_CHARS tekens een tik (None)."""
+    scanned = 0
     for block in re.split(r"\n[ \t]*\n", text):
+        if scanned >= TICK_CHARS:
+            scanned = 0
+            yield None
+        scanned += len(block) + 2
         lines = block.split("\n")
         at = next((n for n, line in enumerate(lines) if "-->" in line), None)
         if at is None:
@@ -523,7 +606,7 @@ def parse_vtt(text: str) -> Iterator[Cue]:
             continue
         g = match.groups()
         start, end = _ms(*g[0:4]), _ms(*g[4:8])
-        runs = _vtt_text("\n".join(lines[at + 1 :]))
+        runs = _vtt_text(clip("\n".join(lines[at + 1 :])))
         yield Cue(start, end, runs, _vtt_settings(g[8]))
 
 
@@ -559,14 +642,17 @@ def _lines(runs: list[Run]) -> list[list[Run]]:
                 lines[-1].append((style, part))
     out = []
     for line in lines:
-        while line and not line[0][1].strip():
-            line.pop(0)
-        while line and not line[-1][1].strip():
-            line.pop()
-        if line:
-            line[0] = (line[0][0], line[0][1].lstrip())
-            line[-1] = (line[-1][0], line[-1][1].rstrip())
-            out.append(line)
+        # met indexen, niet met pop(0): dat is kwadratisch bij veel lege stukken (S1)
+        first, last = 0, len(line)
+        while first < last and not line[first][1].strip():
+            first += 1
+        while last > first and not line[last - 1][1].strip():
+            last -= 1
+        if first < last:
+            kept = line[first:last]
+            kept[0] = (kept[0][0], kept[0][1].lstrip())
+            kept[-1] = (kept[-1][0], kept[-1][1].rstrip())
+            out.append(kept)
     return out
 
 
@@ -640,9 +726,11 @@ def render(cues: Iterable[Cue]) -> bytes:
     return (HEADER + "".join(blocks(cues))).encode()
 
 
-def parse(data: bytes, kind: str) -> Iterator[Cue]:
-    """De cues van een ondertitel van deze soort (srt, vtt of webvtt, ass of ssa), een voor een
-    (de worker geeft tussendoor zijn lus de beurt, ops/subs.py)."""
+def steps(data: bytes, kind: str) -> Iterator[Cue | None]:
+    """De cues van een ondertitel van deze soort (srt, vtt of webvtt, ass of ssa), een voor een,
+    met na elke TICK_CHARS tekens invoer een tik (None): de worker geeft dan zijn lus de beurt
+    (ops/subs.py), ook in een lang stuk zonder cues. Elke stap kost hooguit een vaste tijd: één
+    cue leest hooguit MAX_RAW_CUE tekens, en alles is lineair (review golf 2, S1)."""
     if kind not in KINDS:
         raise ValueError(f"onbekende soort {kind!r}")
     if len(data) > MAX_INPUT:
@@ -653,6 +741,11 @@ def parse(data: bytes, kind: str) -> Iterator[Cue]:
     if kind in ("vtt", "webvtt"):
         return parse_vtt(text)
     return parse_srt(text)
+
+
+def parse(data: bytes, kind: str) -> Iterator[Cue]:
+    """De cues van een ondertitel van deze soort, een voor een (steps zonder de tikken)."""
+    return (cue for cue in steps(data, kind) if cue is not None)
 
 
 def take(cue: Cue, cues: list[Cue]) -> None:
