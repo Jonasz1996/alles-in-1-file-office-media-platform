@@ -1111,3 +1111,60 @@ async def test_runtime_aan_start_en_stopt_de_lokale_worker(tmp_path, monkeypatch
         await runtime.stop(app)
     assert worker.process.returncode is not None
     assert not worker.socket.exists()
+
+
+async def test_runtime_start_en_stopt_de_lus_van_de_scanner(tmp_path, monkeypatch):
+    """Review K1: de haak voor M2. Met media aan roept runtime.start scanner.start één keer aan
+    (met de instellingen, voor media_scan_tick), en stop geeft zijn handvat aan scanner.stop;
+    met media uit gebeurt geen van beide. Een echte lus (zoals M2 hem maakt) stopt dan ook."""
+    from app.media import health, runtime, scanner
+
+    monkeypatch.setattr(health, "FIRST", 60)  # geen caps in deze test
+    calls: list[tuple] = []
+    ticks: list[float] = []
+
+    def start(app, settings):
+        async def loop() -> None:
+            while True:
+                ticks.append(settings.media_scan_tick)
+                await asyncio.sleep(settings.media_scan_tick)
+
+        task = asyncio.create_task(loop())
+        calls.append(("start", app, settings))
+        return task
+
+    real_stop = scanner.stop
+
+    async def stop(handle):
+        calls.append(("stop", handle))
+        await real_stop(handle)
+
+    monkeypatch.setattr(scanner, "start", start)
+    monkeypatch.setattr(scanner, "stop", stop)
+    off = FakeApp()
+    await runtime.start(off, media_settings(tmp_path))
+    await runtime.stop(off)
+    assert calls == [("stop", None)]  # niets gestart; stop met None is niets
+    calls.clear()
+
+    app = FakeApp()
+    settings = media_settings(
+        tmp_path, media_enabled=True, media_worker=str(tmp_path / "x.sock"), media_scan_tick=0.05,
+        media_worker_key="s" * 40,
+    )  # fmt: skip
+    await runtime.start(app, settings)
+    task = app.state.media_scanner
+    try:
+        assert calls == [("start", app, settings)]
+        assert await until(lambda: len(ticks) >= 3)
+    finally:
+        await runtime.stop(app)
+    assert calls[1] == ("stop", task) and task.cancelled()
+    assert app.state.media_scanner is None
+
+
+async def test_de_stub_van_de_scanner_start_niets():
+    from app.media import scanner
+
+    assert scanner.start(FakeApp(), None) is None
+    await scanner.stop(None)

@@ -11,6 +11,8 @@ Met media aan:
   PLATFORM_MEDIA_WORKER_KEY (hello, review S1); zonder geldige sleutel is de worker down met
   de reden (Settings.media_problem), en gaat er nooit een fd naar de socket;
 - health.py houdt MediaState.worker bij met caps (telt niet mee in de plaatsen);
+- scanner.start(app, settings) start de lus van de scanner (M2; de stub niets), en stop roept
+  scanner.stop aan met wat start teruggaf (review K1);
 - de map media/sessions/ (de stukken van lopende sessies) gaat leeg: na een herstart is elke
   sessie weg;
 - het opruimwerk media.sweep komt in de rij default (cache.sweep, M4 en M5); stop haalt het
@@ -74,7 +76,7 @@ def settings() -> Settings:
 async def start(app, settings: Settings) -> MediaState:
     """Media aanzetten als PLATFORM_MEDIA_ENABLED het zegt. Faalt de worker, dan start de app
     toch: de staat zegt down en /beheer toont waarom."""
-    from app.media import health, local
+    from app.media import health, local, scanner
 
     state = media_state(app)
     state.enabled = settings.media_enabled
@@ -96,13 +98,16 @@ async def start(app, settings: Settings) -> MediaState:
             log.warning("lokale mediaworker start niet: %s", exc)
             state.set_worker("down", str(exc)[:200])
     app.state.media_health = health.start(app, settings)
+    app.state.media_scanner = scanner.start(app, settings)
     return state
 
 
 async def stop(app) -> None:
-    from app.media import health, local
+    from app.media import health, local, scanner
 
     jobs.forget_housekeeping(SWEEP)
+    await scanner.stop(getattr(app.state, "media_scanner", None))
+    app.state.media_scanner = None
     await health.stop(getattr(app.state, "media_health", None))
     app.state.media_health = None
     worker = getattr(app.state, "media_local", None)

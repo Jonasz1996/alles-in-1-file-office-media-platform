@@ -2333,7 +2333,11 @@ zonder internet. Een bestaande verzameling komt binnen via de import.
   9).
 - `app/media/scanner.py`:
   - `touched()` (M0 zet de haak) vult de set;
-  - de lus van 30 s;
+  - de lus van 30 s. (review M0, K1) M0 roept `scanner.start(app, settings)` aan in
+    `runtime.start`, alleen met media aan, en `scanner.stop(handle)` in `runtime.stop`. M2 vult
+    die twee: `start` maakt een taak die elke `settings.media_scan_tick` s tikt (30, in de tests
+    0,5) en zet `media.reconcile` klaar bij de start; `stop` stopt hem. Zo hoeft M2
+    `runtime.py` en `main.py` niet te wijzigen;
   - de taak `media.scan` in stukken van 500;
   - `media.reconcile` bij de start en elke 6 uur; die zet alleen scans klaar (rij `media_scan`).
 - `app/media/library.py`: maken, wijzigen, weghalen, de controle op nesting, en wie wat ziet.
@@ -3320,6 +3324,10 @@ def register_discard(fn: Callable[[str], Awaitable[None]]) -> None
 # app/media/items.py (M0-stub; M2)
 async def apply_metadata(session, node_id: UUID, fields: dict, source: str) -> None   # houdt locked aan
 
+# app/media/scanner.py (M0: de haak; M2: de lus) (review M0, K1)
+def start(app, settings: Settings) -> asyncio.Task | None            # runtime.start, alleen met media aan
+async def stop(handle: asyncio.Task | None) -> None                  # runtime.stop, met wat start gaf
+
 # app/media/progress.py (M0-stub geeft lege rijen; M7)
 async def home_rows(session, user_id: UUID, library_ids: list[UUID]) -> dict[str, list[Card]]
 
@@ -3659,7 +3667,9 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
   - de routers (stubs);
   - in de lifespan: `media.runtime.bind(app)`. Dat start de lokale worker of de gezondheidslus,
     de lus van de scanner, maakt `media/sessions/` leeg, en registreert de housekeeping
-    (`media.sweep`);
+    (`media.sweep`). (review M0, K1) De lus van de scanner start via de haak
+    `scanner.start(app, settings)` in `runtime.start` (alleen met media aan), en stopt via
+    `scanner.stop(handle)` in `runtime.stop`. De stub van M0 start niets;
   - `_hide` krijgt het patroon `(/api/v1/stream/+(?:[a-z0-9-]{1,63}\.)?)[^/?\s"]+` → `\1***`
     (Keuze 35, de noot over review S5), naast
     `SECRET_PARAMS` en `LINK_PATH`;
