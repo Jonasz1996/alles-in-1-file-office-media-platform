@@ -1,0 +1,309 @@
+/* Media (fase 5, M2): de start, het raster van een bibliotheek, de pagina van een item en een
+   serie, en de dialoog "Als bibliotheek gebruiken". Alleen tokens uit tokens.css. */
+
+.media-page h2 {
+  font-size: var(--text-l);
+  margin: var(--space-5) 0 var(--space-3);
+}
+
+.media-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  margin: 0 0 var(--space-3);
+}
+
+.media-bad {
+  color: var(--bad);
+}
+
+.media-note,
+.media-error {
+  margin: var(--space-3) 0;
+}
+
+.media-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: var(--space-3) 0 var(--space-4);
+}
+
+.media-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* --- de kaart --- */
+
+.media-card {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: var(--space-1);
+  color: var(--fg);
+  text-decoration: none;
+  border-radius: var(--radius-m);
+  min-width: 0;
+}
+
+.media-card:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 3px;
+}
+
+a.media-card:hover .media-card-title {
+  text-decoration: underline;
+}
+
+.media-poster {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.media-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.media-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: var(--backdrop);
+}
+
+.media-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+}
+
+.media-card-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-card-sub {
+  font-size: var(--text-s);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- het raster (gevirtualiseerd per rij) --- */
+
+.media-grid-body {
+  position: relative;
+  contain: layout;
+}
+
+.media-grid-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 16px;
+  box-sizing: border-box;
+}
+
+.media-cell {
+  min-width: 0;
+}
+
+/* --- de start --- */
+
+.media-row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 9.5rem;
+  gap: var(--space-4);
+  margin: 0;
+  padding: var(--space-1) var(--space-1) var(--space-3);
+  list-style: none;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.media-libraries {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.media-library-card {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  color: var(--fg);
+  text-decoration: none;
+  background: var(--surface);
+}
+
+.media-library-card:hover .media-library-name {
+  text-decoration: underline;
+}
+
+.media-library-icon {
+  color: var(--muted);
+}
+
+.media-library-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* --- een item en een serie --- */
+
+.media-item-head {
+  display: grid;
+  grid-template-columns: minmax(8rem, 14rem) 1fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 40rem) {
+  .media-item-head {
+    grid-template-columns: 1fr;
+  }
+
+  .media-item-poster {
+    max-width: 10rem;
+  }
+}
+
+.media-item-main {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.media-item-main p {
+  margin: 0;
+}
+
+.media-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.media-item-progress {
+  position: relative;
+  display: block;
+  max-width: 20rem;
+  border-radius: var(--radius-s);
+  overflow: hidden;
+}
+
+.media-overview {
+  max-width: 45rem;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.media-badge {
+  justify-self: start;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-s);
+}
+
+.media-list {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.media-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.media-facts dt {
+  font-weight: 600;
+}
+
+.media-facts dd {
+  margin: 0;
+}
+
+.media-facts .media-list {
+  padding-left: 0;
+  list-style: none;
+}
+
+.media-episodes {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.media-episode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+/* --- de dialoog --- */
+
+.media-new-library {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.media-new-library p {
+  margin: 0;
+}
+
+.media-kinds {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.media-kinds legend {
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+
+.media-kind {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+.media-kind > span {
+  display: grid;
+}
+
+.media-kind-name {
+  font-weight: 600;
+}
