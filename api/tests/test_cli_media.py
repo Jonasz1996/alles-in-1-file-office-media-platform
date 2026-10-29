@@ -72,7 +72,9 @@ async def test_media_status_vraagt_de_worker_om_caps(tmp_path, unbind):
     expected = record.load_caps()["ffmpeg"]
     assert found["ok"] is True and found["worker"] == "ok"
     assert found["caps"]["ffmpeg"] == expected and found["caps"]["missing"] == []
-    assert found["lines"] == [f"Media: aan (afgeschermd, ffmpeg {expected})"]
+    # Zonder zelftest (M1) is een container-worker niet afgeschermd (review S6)
+    assert found["caps"]["sandbox"] == "unchecked"
+    assert found["lines"] == [f"Media: aan (afscherming niet gecontroleerd, ffmpeg {expected})"]
 
 
 @pytest.mark.anyio

@@ -156,7 +156,9 @@ class WorkerCaps(BaseModel):
     hwaccels: list[str] = Field(default_factory=list)
     dri: bool = False
     missing: list[str] = Field(default_factory=list)  # wat §3.3 nodig heeft en er niet is
-    sandbox: Literal["on", "off"] = "off"
+    # on: de zelftest van Keuze 11 slaagde (M1); off: de lokale worker; unchecked: niet lokaal,
+    # maar (nog) zonder zelftest. Alleen on is "afgeschermd"
+    sandbox: Literal["on", "off", "unchecked"] = "off"
     mode: Literal["container", "local"] = "local"
     max_procs: int = 10
     max_transcodes: int = 3

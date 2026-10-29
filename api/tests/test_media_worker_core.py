@@ -167,6 +167,23 @@ def opened(path: Path, flags: int = os.O_RDONLY):
 # --- de plaatsen (zonder socket) -------------------------------------------------------------
 
 
+def test_caps_zegt_alleen_lokaal_off_en_anders_unchecked(monkeypatch):
+    """Review S6: zonder --local is de worker niet vanzelf afgeschermd; dat zegt pas de
+    zelftest (M1). Zonder ffmpeg ook: caps.gather start dan niets."""
+    from app.media import status
+    from app.media.types import WorkerCaps
+    from app.media.worker.ops import caps as caps_op
+
+    monkeypatch.setattr(caps_op, "_out", lambda argv: None)
+    local_caps = caps_op.gather(local=True, max_procs=3, max_transcodes=1)
+    other = caps_op.gather(local=False, max_procs=3, max_transcodes=1)
+    assert (local_caps["mode"], local_caps["sandbox"]) == ("local", "off")
+    assert (other["mode"], other["sandbox"]) == ("container", "unchecked")
+    assert WorkerCaps.model_validate(other).sandbox == "unchecked"
+    assert status.SANDBOX_TEXT[other["sandbox"]] == "afscherming niet gecontroleerd"
+    assert status.SANDBOX_TEXT["on"] == "afgeschermd"
+
+
 def test_places_per_soort_en_totaal():
     places = Places(Config(socket=Path("/x"), max_procs=3, max_transcodes=1).limits(), 3)
     assert places.take(WorkClass.SHORT, 1)
@@ -792,6 +809,7 @@ def test_check_en_selftest():
     assert done.returncode == 0, done.stderr[-500:]
     caps = json.loads(done.stdout)
     assert caps["missing"] == [] and caps["protocol"] == wire.PROTOCOL
+    assert caps["mode"] == "container" and caps["sandbox"] == "unchecked"  # geen --local
     done = subprocess.run(
         [*argv, "--selftest"], capture_output=True, timeout=60, env=env, cwd="/", check=False
     )

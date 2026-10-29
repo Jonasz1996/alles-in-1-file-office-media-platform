@@ -98,7 +98,10 @@ def gather(*, local: bool, max_procs: int, max_transcodes: int) -> dict[str, Any
         "ffmpeg": _version(ffmpeg),
         "ffprobe": _version(ffprobe),
         "mode": "local" if local else "container",
-        "sandbox": "off" if local else "on",
+        # Zonder --local is de worker bedoeld voor de container, maar dat bewijst niets: "on"
+        # zegt pas de zelftest van Keuze 11 (M1: andere uid dan de app, geen schrijfrecht op de
+        # blobs, geen netwerk, NoNewPrivs en seccomp). Tot dan "unchecked" (review S6)
+        "sandbox": "off" if local else "unchecked",
         "max_procs": max_procs,
         "max_transcodes": max_transcodes,
         "dri": os.path.isdir("/dev/dri"),

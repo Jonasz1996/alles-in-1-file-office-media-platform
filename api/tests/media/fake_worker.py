@@ -433,7 +433,7 @@ class FakeWorker:
         out.update(
             protocol=wire.PROTOCOL,
             mode=self.mode,
-            sandbox="off" if self.mode == "local" else "on",
+            sandbox="off" if self.mode == "local" else "unchecked",  # zoals caps.gather
             max_procs=self.max_procs,
             max_transcodes=self.max_transcodes,
         )

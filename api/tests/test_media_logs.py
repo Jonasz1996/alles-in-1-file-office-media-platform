@@ -1,6 +1,7 @@
 """Geen sid in een logregel (fase 5, Keuze 35). De sid (<node>.<geheim>) staat in het pad onder
-/api/v1/stream/, en is daar de toegang zelf. _hide in main.py vervangt het deel na de eerste
-punt door ***; het deel ervoor (de naam van de node) blijft, om te kunnen volgen.
+/api/v1/stream/, en is daar de toegang zelf. _hide in main.py vervangt dat hele stuk van het pad
+door ***; alleen een nette naam van de node ervoor ([a-z0-9-], dan een punt) blijft, om te kunnen
+volgen. Ook zonder punt, met een lege naam van de node of met een dubbele / gaat alles weg.
 
 M0 legt het patroon vast, en kijkt het na op de echte toegangslog van uvicorn (via tests/live.py).
 Daarna speelt een hele sessie af met de nep-stroom (fake_stream.py) achter een echte uvicorn:
@@ -53,17 +54,41 @@ def test_ook_in_een_regel_met_aanhalingstekens_en_twee_keer():
     assert hidden.count("/api/v1/stream/node-1.***/") == 2
 
 
+@pytest.mark.parametrize(
+    ("path", "hidden"),
+    [
+        # een lege naam van de node: de sid begint met een punt
+        (f"/api/v1/stream/.{SECRET}/file", "/api/v1/stream/***/file"),
+        (f'"GET /api/v1/stream/.{SECRET}/file HTTP/1.1" 200', '"GET /api/v1/stream/***/file '),
+        # een dubbele /
+        (f"/api/v1/stream//local.{SECRET}/file", "/api/v1/stream//local.***/file"),
+        # geen punt (een tikfout, of later een andere vorm)
+        (f"/api/v1/stream/nodot-{SECRET}/file", "/api/v1/stream/***/file"),
+        (f"/api/v1/stream/{SECRET.lower()}/map.json", "/api/v1/stream/***/map.json"),
+        # een naam van de node die niet netjes is: alles weg
+        (f"/api/v1/stream/Node_1.{SECRET}/v.m3u8", "/api/v1/stream/***/v.m3u8"),
+        # na de naam van de node nog een punt: alles erna weg
+        (f"/api/v1/stream/local.{SECRET}.x/0.m4s", "/api/v1/stream/local.***/0.m4s"),
+    ],
+)
+def test_ook_een_sid_van_een_andere_vorm_gaat_weg(path, hidden):
+    """Review S5: lege naam van de node, //, geen punt."""
+    out = _hide(path)
+    assert SECRET not in out and SECRET.lower() not in out
+    assert out.startswith(hidden)
+
+
 def test_de_rest_blijft_zoals_het_was():
     for text in (
         "/api/v1/streams/a.b/c",  # een ander pad
-        "/api/v1/stream/zonder-punt/map.json",  # geen sid van de vorm <node>.<geheim>
         "/api/v1/files/root",
+        "/api/v1/stream/",  # niets om te verbergen
     ):
         assert _hide(text) == text
     # De patronen van fase 3 en 4 werken nog
     assert _hide("/api/v1/download/x?token=GEHEIM") == "/api/v1/download/x?token=***"
     assert _hide("GET /s/abcdef") == "GET /s/***"
-    assert STREAM_PATH.pattern == r"(/api/v1/stream/[^/.\s\"]+\.)[^/?\s\"]+"
+    assert STREAM_PATH.pattern == r"(/api/v1/stream/+(?:[a-z0-9-]{1,63}\.)?)[^/?\s\"]+"
 
 
 def test_het_filter_van_de_toegangslog():

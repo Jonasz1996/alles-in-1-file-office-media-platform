@@ -570,7 +570,7 @@ async def test_de_nep_als_worker_van_de_app(tmp_path, monkeypatch):
         state = await runtime.start(app, settings)
         assert state.mode == "container"
         assert await C.until(lambda: state.worker == "ok"), state.reason
-        assert state.caps is not None and state.caps.sandbox == "on"
+        assert state.caps is not None and state.caps.sandbox == "unchecked"  # geen zelftest
     finally:
         await runtime.stop(app)
         await fake.stop()

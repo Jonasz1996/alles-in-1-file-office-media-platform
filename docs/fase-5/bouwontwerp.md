@@ -1568,8 +1568,14 @@ onderaan.
       dan de previews die fase 3 al zo serveert.
 35. **Geen lekken.**
     - De sid komt nooit in een log: `_hide` in `main.py` krijgt het patroon
-      `(/api/v1/stream/[^/.\s"]+\.)[^/?\s"]+` → `\1***`. Een test speelt een sessie af en zoekt de
-      sid in alle logregels (`test_media_logs.py`).
+      `(/api/v1/stream/+(?:[a-z0-9-]{1,63}\.)?)[^/?\s"]+` → `\1***`. Een test speelt een sessie af
+      en zoekt de sid in alle logregels (`test_media_logs.py`).
+      *Noot (M0, review S5):* het eerste patroon (`(/api/v1/stream/[^/.\s"]+\.)[^/?\s"]+`) liet
+      de sid staan bij een lege naam van de node (`.<geheim>`), een dubbele `/` of een sid zonder
+      punt. Nu gaat het hele stuk na `/api/v1/stream/` weg; alleen een nette naam van de node
+      (`[a-z0-9-]`, dan een punt) blijft staan. Voor M3: maak de sid met zo'n nette naam ervoor
+      (anders komt hij er niet in, maar lekt hij ook niet); `PLATFORM_NODE_NAME` zelf valideert
+      M0 niet, want dat kan een werkende 0.6.0 laten stoppen.
     - `Referrer-Policy: same-origin` staat al.
     - `Cache-Control`: `map.json` en playlists `no-store`; init, segmenten en VTT `private,
       max-age=3600`; `/file` zoals downloads nu (`private, max-age=0, must-revalidate`).
@@ -2151,6 +2157,11 @@ de previews van video's gaan erdoorheen.
     `os.open('/proc/self/fd/3', O_WRONLY)` op een fd van een bestand van 10001 faalt; een kind
     kan `/proc/<worker>/fd` niet lezen. De lokale worker (zonder sandbox) meldt hier
     `sandbox: off` in plaats van een fout;
+    *Noot (M0, review S6):* `caps.sandbox` is `unchecked` voor elke worker zonder `--local` (de
+    stub van `media-status` zegt dan "afscherming niet gecontroleerd"). Pas als deze zelftest
+    slaagt, zet M1 hem op `on` (in de cache van caps); alleen `on` heet "afgeschermd", in
+    `media-status` en op `/beheer`. Zonder `--local` en zonder zelftest is er geen bewijs: de
+    worker kan ook gewoon op de host draaien, als de app;
   - `RLIMIT_DATA` van 1.200 MB laat 1080 veryfast met `-threads 4` gewoon draaien (V6).
 
   Exit 1 bij een fout. CI gebruikt het als harde poort.
@@ -3589,7 +3600,8 @@ Bestaande codes blijven: `not_found`, `no_room` (quotum vol, ook bij de import),
   - in de lifespan: `media.runtime.bind(app)`. Dat start de lokale worker of de gezondheidslus,
     de lus van de scanner, maakt `media/sessions/` leeg, en registreert de housekeeping
     (`media.sweep`);
-  - `_hide` krijgt het patroon `(/api/v1/stream/[^/.\s"]+\.)[^/?\s"]+` → `\1***`, naast
+  - `_hide` krijgt het patroon `(/api/v1/stream/+(?:[a-z0-9-]{1,63}\.)?)[^/?\s"]+` → `\1***`
+    (Keuze 35, de noot over review S5), naast
     `SECRET_PARAMS` en `LINK_PATH`;
   - F4.
 - **`cli.py`**: `media-import`, `media-parse`, `media-status`, `media-provider-check` en

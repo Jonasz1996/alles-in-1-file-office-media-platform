@@ -18,6 +18,12 @@ from typing import Any
 from app.config import Settings
 
 RETRY = 0.5  # seconden tussen twee pogingen zolang wait loopt
+# Alleen een geslaagde zelftest (M1) is afgeschermd; zonder is het geen bewijs (review S6)
+SANDBOX_TEXT = {
+    "on": "afgeschermd",
+    "off": "lokaal, zonder afscherming",
+    "unchecked": "afscherming niet gecontroleerd",
+}
 
 
 async def _caps(settings: Settings, wait: float) -> tuple[Any, str]:
@@ -50,7 +56,7 @@ async def collect(settings: Settings, *, sessions: bool = False, wait: float = 0
             "lines": [f"Media: aan, maar de worker is niet bereikbaar ({reason})"],
         }
     missing = list(caps.missing)
-    where = "afgeschermd" if caps.sandbox == "on" else "lokaal, zonder afscherming"
+    where = SANDBOX_TEXT.get(caps.sandbox, SANDBOX_TEXT["unchecked"])
     lines = [f"Media: aan ({where}, ffmpeg {caps.ffmpeg or 'ontbreekt'})"]
     if missing:
         lines.append("Let op: de worker mist " + ", ".join(missing))

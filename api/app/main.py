@@ -90,9 +90,11 @@ SECRET_PARAMS = re.compile(
     r"([?&](?:token|sig|key|md5|shardkey|cmd)=)(?:(?<=cmd=)[^&\s]*|[^&\s\"]*)"
 )
 LINK_PATH = re.compile(r"((?:^|[\s\"])/s/)[^/?#\s\"]+")
-# De sid van een afspeelsessie staat in het pad (fase 5, Keuze 35): /api/v1/stream/<id>.<geheim>/…
-# Het deel na de eerste punt is de toegang zelf; het id ervoor mag blijven (om te volgen)
-STREAM_PATH = re.compile(r"(/api/v1/stream/[^/.\s\"]+\.)[^/?\s\"]+")
+# De sid van een afspeelsessie staat in het pad (fase 5, Keuze 35): /api/v1/stream/<node>.<geheim>/…
+# Het hele stuk na /api/v1/stream/ gaat weg, wat er ook in staat (geen punt, een lege naam van de
+# node, een dubbele /). Alleen een nette naam van de node ervoor (kleine letters, cijfers en -)
+# mag blijven, om te kunnen volgen
+STREAM_PATH = re.compile(r"(/api/v1/stream/+(?:[a-z0-9-]{1,63}\.)?)[^/?\s\"]+")
 
 
 def _hide(value: str) -> str:
