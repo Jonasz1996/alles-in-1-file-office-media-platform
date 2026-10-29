@@ -14,18 +14,34 @@ generatie, dan eerst die init (Keuze 22). Daarna moet de <video> echt spelen.
 - een transcode op het rooster van 2 s (xvid + mp3): VP9 + Opus in Chromium 141, H.264 + AAC in
   Chrome for Testing (dan trun versie 1, met negatieve compositietijden);
 - H.264 + AAC uit HEVC HDR (tonemap) als de browser H.264 via MSE kan (Chromium van Playwright
-  141 niet; in CI met MEDIA_REQUIRE_H264=1 moet het).
+  141 niet; in CI met MEDIA_REQUIRE_H264=1 moet het);
+- #12 van §4.3 zonder de speler (bij het samenvoegen van golf 2, M1 en M4): de worker gedood op
+  pid tijdens een transcode; zijn ffmpeg gaat mee, de app start hem opnieuw, en de stroom loopt
+  binnen 10 s door.
 """
 
 from __future__ import annotations
 
 import hashlib
+import signal
+import subprocess
 import time
 from typing import Any
 
 import pytest
 
-from media_harness import Uploaded, open_app, require_codec, run_async, wait_playing
+from media_harness import (
+    Uploaded,
+    comm,
+    descendants,
+    kill_pid,
+    open_app,
+    process_table,
+    require_codec,
+    run_async,
+    wait_gone,
+    wait_playing,
+)
 from test_media_m3 import codecs_of, login, padded_webm, play, profile
 
 ACCESS_CACHE_S = 15.0  # settings.media_access_cache (Keuze 21)
@@ -379,3 +395,72 @@ def test_h264_uit_hevc_hdr_via_mse(media, media_browsers, ffmpeg_count):
     frags = [f for f in fragments(media, out["sid"], 0) if f.video_start_ms is not None]
     assert frags and frags[0].sync and {f.trun_version for f in frags} == {1}, frags
     close_session(media, token, out["sid"])
+
+
+def segment_after_retry(media: Any, sid: str, n: int, seconds: float) -> tuple[float, list[Any]]:
+    """Segment n zoals een speler het vraagt: bij 503 na Retry-After opnieuw. Geeft hoe lang het
+    duurde en wat er tussendoor kwam (status en code)."""
+    began = time.monotonic()
+    seen: list[Any] = []
+    while True:
+        r = media.server.request("GET", f"{base_url(sid)}{n}.m4s")
+        if r.status_code == 200:
+            return time.monotonic() - began, seen
+        seen.append((r.status_code, r.json().get("detail", {}).get("code")))
+        assert r.status_code == 503 and time.monotonic() - began < seconds, seen
+        time.sleep(float(r.headers.get("retry-after", "1")))
+
+
+@pytest.mark.media
+def test_de_worker_gedood_tijdens_een_transcode(media, media_browsers, ffmpeg_count, tmp_path):
+    """#12 van §4.3 zonder de speler (M1 en M4, bij het samenvoegen van golf 2): een bron van
+    120 s xvid + mp3 (alleen met omzetten). De speler haalt de eerste 20 s; de producent loopt
+    door (tot 60 s voor de speler). Dan de worker gedood met SIGKILL op pid: zijn ffmpeg gaat mee
+    (PDEATHSIG), wat in de cache staat komt meteen, en een segment voorbij wat er al was komt
+    binnen 10 s na het doden (503 media_worker_down tot de worker terug is, dan een nieuwe run).
+    Daarna nooit meer dan 3 ffmpeg en geen over (ffmpeg_count)."""
+    src = tmp_path / "lang.avi"
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-y",
+         "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=120",
+         "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=120",
+         "-c:v", "mpeg4", "-vtag", "XVID", "-q:v", "5", "-g", "50",
+         "-c:a", "libmp3lame", "-b:a", "128k", "-threads", "3", str(src)],
+        check=True, timeout=120,
+    )  # fmt: skip
+    owner = media.user()
+    folder = media.folder(owner, "M4 worker weg")
+    page = media_browsers.context_as(owner).new_page()
+    open_app(page)
+    token = login(media, owner)["access_token"]
+    data = src.read_bytes()
+    node = media.server.call(
+        owner, "PUT", f"/api/v1/files/{folder}/upload", params={"name": "lang.avi"},
+        content=data, headers={"Content-Length": str(len(data))}, expect=201,
+    ).json()  # fmt: skip
+    src.unlink()
+    first = codecs_of(media, token, node["id"])
+    out = play(media, token, node["id"], {"profile": profile(page, first["candidates"])})
+    assert out["mode"] == "transcode" and "video_codec" in out["reasons"], out
+    sid = out["sid"]
+    for n in range(10):  # de speler: de eerste 20 s
+        media.server.request("GET", f"{base_url(sid)}{n}.m4s", expect=200)
+
+    old = media.worker_pid()
+    assert old is not None
+    table = process_table()
+    running = [(p, table[p][1]) for p in descendants([old], table) if comm(p) == "ffmpeg"]
+    assert running, "geen ffmpeg in de worker: de producent liep al niet meer"
+    killed = time.monotonic()
+    assert kill_pid(old, table[old][1], signal.SIGKILL)
+    assert wait_gone([(old, table[old][1])]) == []
+    assert wait_gone(running) == [], running  # ffmpeg ging mee met de worker
+
+    took, _ = segment_after_retry(media, sid, 5, 1.0)  # al in de cache: zonder worker
+    assert took < 1.0, took
+    took, seen = segment_after_retry(media, sid, 50, 10.0)  # 100 s: daar was niets
+    assert time.monotonic() - killed <= 10.0, (took, seen)
+    assert {code for _status, code in seen} <= {"media_worker_down", "media_busy"}, seen
+    media.server.request("GET", f"{base_url(sid)}51.m4s", expect=200)  # de nieuwe run loopt
+    assert media.worker_pid() not in (None, old)
+    close_session(media, token, sid)
