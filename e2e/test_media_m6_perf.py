@@ -36,7 +36,6 @@ from playwright.sync_api import expect
 from conftest import report_only, write_result
 from media_harness import PERF_CPUS, first_frame_ms, open_app
 from test_media_m6 import (
-    M2,
     PLAYER,
     VIDEO,
     Plays,
@@ -146,12 +145,12 @@ def pinned(media: Any) -> None:
 
 
 def prepare(media: Any, media_browsers: Any, name: str) -> tuple[Any, str, Any, Any]:
-    """Een gebruiker, een map, de stand-in van M2, en de app open op de start (de klik)."""
+    """Een gebruiker, een map (in geen bibliotheek: /kijken toont de naam van het bestand, M2 geeft
+    404), en de app open op de start (de klik)."""
     pinned(media)
     owner = media.user()
     folder = media.folder(owner, name)
     context = media_browsers.context_as(owner)
-    M2(context)
     page = context.new_page()
     open_app(page)
     return owner, folder, context, page
