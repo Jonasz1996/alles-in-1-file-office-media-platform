@@ -25,6 +25,36 @@ describe("de volgende aflevering", () => {
     expect(prevEpisode(SHOW, "a1")).toBeNull();
   });
 
+  it("de volgorde van M2: specials (seizoen 0) achteraan, en geen kaart naar of van een special", () => {
+    // Zoals items.show_detail de seizoenen geeft: 1, 2, en de specials achteraan
+    const show: ShowDetail = {
+      show: SHOW.show,
+      seasons: [
+        { season: 1, episodes: [ep("a1", 1, 1), ep("a2", 1, 2)] },
+        { season: 2, episodes: [ep("b1", 2, 1)] },
+        { season: 0, episodes: [ep("s1", 0, 1), ep("s2", 0, 2)] },
+      ],
+    };
+    expect(episodes(show).map((c) => c.node_id)).toEqual(["a1", "a2", "b1", "s1", "s2"]);
+    // Ook als de seizoenen in een andere volgorde komen
+    const shuffled = { ...show, seasons: [show.seasons[2], show.seasons[1], show.seasons[0]] };
+    expect(episodes(shuffled).map((c) => c.node_id)).toEqual(["a1", "a2", "b1", "s1", "s2"]);
+    expect(nextEpisode(show, "a2")?.node_id).toBe("b1");
+    expect(nextEpisode(show, "b1")).toBeNull(); // de laatste: geen special vanzelf
+    expect(nextEpisode(show, "s1")?.node_id).toBe("s2");
+    expect(prevEpisode(show, "s1")).toBeNull();
+    expect(prevEpisode(show, "s2")?.node_id).toBe("s1");
+    // Absolute nummering (geen seizoen) staat voor de seizoenen, zoals bij M2
+    const absolute: ShowDetail = {
+      show: SHOW.show,
+      seasons: [
+        { season: 1, episodes: [ep("a1", 1, 1)] },
+        { season: null, episodes: [ep("x1", null, 1), ep("x2", null, 2)] },
+      ],
+    };
+    expect(episodes(absolute).map((c) => c.node_id)).toEqual(["x1", "x2", "a1"]);
+  });
+
   it("de kaart bij het begin van de aftiteling, anders 30 s voor het eind", () => {
     expect(cardTime(1500, 1_380_000)).toBe(1380);
     expect(cardTime(1500, null)).toBe(1470);

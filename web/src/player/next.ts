@@ -15,17 +15,28 @@ export function cardTime(durationS: number, creditsMs: number | null | undefined
   return durationS > CARD_BEFORE_END_S * 2 ? durationS - CARD_BEFORE_END_S : null;
 }
 
+/** De plaats van een seizoen, zoals de serie van M2 ze toont (items.show_detail): absolute
+ * nummering (geen seizoen) eerst, dan 1, 2, …, en de specials (seizoen 0) achteraan. */
+function seasonRank(season: number | null | undefined): number {
+  if (season == null) return -1;
+  return season === 0 ? Number.MAX_SAFE_INTEGER : season;
+}
+
 /** Alle afleveringen op volgorde: seizoen na seizoen (absolute nummering: één lijst). */
 export function episodes(show: ShowDetail): Card[] {
-  const seasons = [...show.seasons].sort((a, b) => (a.season ?? 0) - (b.season ?? 0));
+  const seasons = [...show.seasons].sort((a, b) => seasonRank(a.season) - seasonRank(b.season));
   return seasons.flatMap((s) => [...s.episodes].sort((a, b) => (a.episode ?? 0) - (b.episode ?? 0)));
 }
 
+/** De buur in de lijst, maar nooit van een gewone aflevering naar een special (seizoen 0) of
+ * terug: na de laatste aflevering van de serie komt geen special vanzelf. */
 function neighbour(show: ShowDetail, nodeId: string, dir: 1 | -1): Card | null {
   const list = episodes(show).filter((c) => c.node_id);
   const i = list.findIndex((c) => c.node_id === nodeId);
   if (i < 0) return null;
-  return list[i + dir] ?? null;
+  const other = list[i + dir] ?? null;
+  if (!other) return null;
+  return (other.season === 0) === (list[i].season === 0) ? other : null;
 }
 
 /** De aflevering na deze, of null. */
