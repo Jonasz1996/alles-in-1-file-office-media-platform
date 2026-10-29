@@ -1,0 +1,10 @@
+# Grenzen voor de mediaworker (Keuze 11). install.sh neemt dit bestand alleen mee als
+# `docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}'` "true true" zegt, zoals bij office;
+# anders start de container niet in een LXC zonder die cgroup-controllers.
+# 3 transcodes samen zijn ±1,7 GB [gemeten]; 3 GB laat marge. cpus: 3 houdt een core vrij voor
+# de app (regel 14).
+services:
+  media:
+    mem_limit: 3g
+    memswap_limit: 3g
+    cpus: 3.0

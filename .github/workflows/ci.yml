@@ -565,8 +565,11 @@ jobs:
   #   capabilities, onder --cpus 3 (regel 14);
   # - S3 van de spike (fd's tussen containers, de afscherming van Keuze 11 en 47) met de scripts
   #   van de spike (api/tests/media/spike).
-  # M1 voegt toe: `python -m app.media.worker --selftest` op 7.1 en
-  # infra/single/tests/test_media_container.sh (de afscherming van Keuze 11); die nemen S3 over.
+  # Van M1: infra/single/tests/test_media_container.sh, met de echte compose (compose.yaml +
+  # compose.media.yaml + de grenzen): de worker-container met de afscherming van Keuze 11, de
+  # zelftest (--selftest, ffmpeg 7.1) daarin, probe, meta en frame vanuit de app, en down binnen
+  # 30 s. S3 blijft tot M4: de remux van S3 (fMP4 naar een pipe van de app) heeft de opdracht
+  # stream van M4 nodig (docs/fase-5/m1.md).
   # M10 voegt toe: het bewijs van R12 (installeren vanaf de commit van 0.6.0, bijwerken naar deze
   # versie, een transcode via curl en dan docker top) en de rooktest van de belastingtest.
   media-image:
@@ -601,14 +604,29 @@ jobs:
           echo "=== kern.json ==="
           cat "$RUNNER_TEMP/media-image/kern.json" || echo "(geen kern.json)"
           echo "=== einde kern.json ==="
-      # S3 draait ook als de kern faalde: twee losse uitkomsten
+      # De container-test (M1) en S3 draaien ook als de kern faalde: losse uitkomsten
+      - name: De mediaworker in zijn container (--selftest en test_media_container.sh, M1)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        env:
+          MEDIA_TEST_IMAGE: platform:ci
+          MEDIA_TEST_FFMPEG: "7.1."
+          MEDIA_TEST_OUT: ${{ runner.temp }}/media-image
+        # De sleutel van hello maakt het script zelf (64 hex, in een .env van 0600); hij komt
+        # niet in het log
+        run: bash infra/single/tests/test_media_container.sh
+      - name: selftest.json tonen
+        if: always()
+        run: |
+          echo "=== selftest.json ==="
+          cat "$RUNNER_TEMP/media-image/selftest.json" || echo "(geen selftest.json)"
+          echo "=== einde selftest.json ==="
       - name: Afgeleid image voor S3 bouwen (de drie regels van Keuze 47, zoals de spike)
         if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
         # de builder default ziet platform:ci, de builder van setup-buildx niet
         run: |
           docker buildx build --builder default --load --build-arg BASE=platform:ci \
             -t platform-spike:ci api/tests/media/spike
-      - name: S3 in het image (fd's tussen containers en de afscherming; tot M1)
+      - name: S3 in het image (fd's tussen containers en de afscherming; tot M4)
         if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
         run: |
           python3 -I api/tests/media/spike/ci.py --uit "$RUNNER_TEMP/media-image/s3.json" \

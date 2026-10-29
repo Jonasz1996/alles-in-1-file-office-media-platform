@@ -14,7 +14,8 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/opt/venv \
     PLATFORM_ENVIRONMENT=production PLATFORM_DATA_DIR=/data PLATFORM_WEB_DIST=/srv/web
 WORKDIR /srv
 
-# ffmpeg/ffprobe voor previews van video's (zonder ffmpeg krijgen video's gewoon geen preview)
+# ffmpeg/ffprobe voor de mediaworker (fase 5): de previews van video's en media. Alleen de worker
+# start ze; zonder ffmpeg krijgen video's gewoon geen preview
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
@@ -27,6 +28,18 @@ COPY api/migrations ./migrations
 COPY --from=web /src/dist ./web
 
 RUN useradd --system --uid 10001 platform && install -d -o platform -g platform /data
+
+# Media (fase 5, Keuze 11 en 47): de mediaworker draait als media (10002) en kan een blob van
+# platform (10001, 0600) dus niet via /proc opnieuw openen. /run/media is van media met groep
+# platform (2750, setgid): de socket krijgt groep platform, en de app kan er niets in maken.
+# ffmpeg en ffprobe 0711: een proces uit een programma dat niemand mag lezen, is niet dumpbaar.
+# env ook 0711: de healthcheck van media start via `env -i`, en zo is de sleutel van hello ook
+# in die korte tijd niet in /proc/<pid>/environ te lezen. /srv/zelftest-10001 (leeg, van
+# platform) is voor de zelftest van de worker (V1: opnieuw openen om te schrijven faalt).
+RUN useradd --system --uid 10002 --no-create-home media \
+    && install -d -o media -g platform -m 2750 /run/media \
+    && chmod 0711 /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/env \
+    && install -o platform -g platform -m 0644 /dev/null /srv/zelftest-10001
 USER platform
 VOLUME /data
 # 8080 = http (ook voor de Let's Encrypt-controle), 8443 = https zodra er een certificaat is

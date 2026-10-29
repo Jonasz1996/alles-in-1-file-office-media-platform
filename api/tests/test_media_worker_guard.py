@@ -657,6 +657,52 @@ def _local_version() -> str:
     return ".".join(number.split(".")[:2]) + "."
 
 
+def test_de_zelftest_ziet_een_fd_die_opnieuw_open_kan_om_te_schrijven(tmp_path, monkeypatch):
+    """V1 omgekeerd: is het bestand van onszelf, dan gaat /proc/self/fd/N wel open om te
+    schrijven, en dat ziet de zelftest. Schrijven op de fd die leest faalt met EBADF."""
+    probe = tmp_path / "zelftest-van-mij"
+    probe.write_bytes(b"")
+    monkeypatch.setattr(selftest, "PROBE_FILE", probe)
+    monkeypatch.setattr(selftest, "PLATFORM_UID", os.getuid())
+    report = selftest.Report()
+    selftest._reopen(report)
+    checks = {c.name: c for c in report.checks}
+    assert not checks["blob niet heropenbaar"].ok
+    assert "O_WRONLY" in checks["blob niet heropenbaar"].detail
+    assert checks["schrijven op een fd die leest faalt"].ok
+    assert probe.read_bytes() == b""
+    # zonder het bestand: allebei een fout met de reden
+    monkeypatch.setattr(selftest, "PROBE_FILE", tmp_path / "weg")
+    report = selftest.Report()
+    selftest._reopen(report)
+    assert [(c.name, c.ok) for c in report.checks] == [
+        ("blob niet heropenbaar", False),
+        ("schrijven op een fd die leest faalt", False),
+    ]
+
+
+def test_de_zelftest_wil_dat_een_verbinding_naar_buiten_meteen_faalt(monkeypatch):
+    class Opened:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    def unreachable(*_a, **_kw):
+        raise OSError(101, "Network is unreachable")
+
+    def silent(*_a, **_kw):
+        raise TimeoutError
+
+    monkeypatch.setattr(selftest.socket, "create_connection", unreachable)
+    assert selftest._no_route() == ""
+    monkeypatch.setattr(selftest.socket, "create_connection", lambda *_a, **_kw: Opened())
+    assert "lukte" in selftest._no_route()
+    monkeypatch.setattr(selftest.socket, "create_connection", silent)
+    assert "geen antwoord" in selftest._no_route()
+
+
 @pytest.mark.media
 def test_selftest_lokaal_zegt_wat_hij_controleerde():
     done = subprocess.run(
@@ -685,8 +731,8 @@ def test_selftest_lokaal_zegt_wat_hij_controleerde():
     sandbox = [
         "uid 10002", "geen capabilities", "no-new-privileges", "geen netwerk", "/ alleen lezen",
         "/data leeg", "ffmpeg 0711 van root", "ffprobe 0711 van root", "blob niet heropenbaar",
-        "een kind leest /proc/<worker>/fd niet", "een kind leest /proc/<worker>/environ niet",
-        "een buur ziet /proc/<ffmpeg>/fd niet",
+        "schrijven op een fd die leest faalt", "een kind leest /proc/<worker>/fd niet",
+        "een kind leest /proc/<worker>/environ niet", "een buur ziet /proc/<ffmpeg>/fd niet",
     ]  # fmt: skip
     for name in wanted:
         assert any(n.startswith(name) and not c["sandbox"] for n, c in checks.items()), name

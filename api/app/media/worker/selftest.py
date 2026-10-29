@@ -14,11 +14,13 @@ Twee delen:
 De afscherming:
 - de uid is 10002 (media), niet die van de app (10001), en het bestand van 10001 (PROBE_FILE,
   uit het Dockerfile, 0644) is via /proc/self/fd/N niet opnieuw te openen om te schrijven (V1);
+  schrijven op de fd zelf (alleen lezen, zoals de app hem geeft) faalt met EBADF;
 - ffmpeg en ffprobe zijn 0711 van root: de worker kan ze niet lezen, dus elk kind is niet
   dumpbaar (V2);
 - een kind kan /proc/<worker>/fd en /proc/<worker>/environ niet lezen (PR_SET_DUMPABLE 0; in
   environ stond de sleutel van hello, review S1);
-- geen capabilities (CapEff 0), NoNewPrivs 1, geen netwerk (alleen lo), / alleen lezen, /data
+- geen capabilities (CapEff 0), NoNewPrivs 1, geen netwerk (alleen lo, en een verbinding met
+  1.1.1.1:53 faalt meteen), / alleen lezen, /data
   leeg, en (met --socket) de map van de socket 2750 van media met de groep platform.
 
 Wat ffmpeg moet kunnen (alleen full):
@@ -39,6 +41,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import grp
 import json
 import os
@@ -153,18 +156,18 @@ def _gid_of(name: str) -> int | None:
 
 def _reopen(report: Report) -> None:
     """V1: een fd die alleen leest, is via /proc/self/fd/N niet om te zetten in een die schrijft."""
+    names = ("blob niet heropenbaar", "schrijven op een fd die leest faalt")
     try:
         info = os.stat(PROBE_FILE)
         fd = os.open(PROBE_FILE, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
     except OSError as exc:
-        report.add("blob niet heropenbaar", False, f"{PROBE_FILE}: {exc.strerror}", sandbox=True)
+        for name in names:
+            report.add(name, False, f"{PROBE_FILE}: {exc.strerror}", sandbox=True)
         return
     try:
         if info.st_uid != PLATFORM_UID:
-            report.add(
-                "blob niet heropenbaar", False, f"{PROBE_FILE} is van uid {info.st_uid}",
-                sandbox=True,
-            )  # fmt: skip
+            for name in names:
+                report.add(name, False, f"{PROBE_FILE} is van uid {info.st_uid}", sandbox=True)
             return
         opened = []
         for name, mode in (("O_WRONLY", os.O_WRONLY), ("O_RDWR", os.O_RDWR)):
@@ -176,11 +179,18 @@ def _reopen(report: Report) -> None:
             except OSError as exc:
                 opened.append(f"{name} ({exc.strerror})")
         report.add(
-            "blob niet heropenbaar",
+            names[0],
             not opened,
             f"/proc/self/fd/N ging open met {', '.join(opened)}" if opened else "",
             sandbox=True,
         )
+        # en schrijven op de fd zelf (zoals de app hem doorgeeft: alleen lezen) faalt ook
+        try:
+            os.write(fd, b"x")
+            wrote = "de fd schreef"
+        except OSError as exc:
+            wrote = "" if exc.errno == errno.EBADF else exc.strerror or str(exc)
+        report.add(names[1], not wrote, wrote, sandbox=True)
     finally:
         os.close(fd)
 
@@ -201,6 +211,17 @@ def _binaries(report: Report) -> None:
         report.add(f"{name} 0711 van root", ok, detail, sandbox=True)
 
 
+def _no_route() -> str:
+    """Met alleen lo faalt een verbinding naar buiten meteen (ENETUNREACH): "" als dat zo is."""
+    try:
+        with socket.create_connection(("1.1.1.1", 53), timeout=2):
+            return "een verbinding met 1.1.1.1:53 lukte"
+    except TimeoutError:
+        return "1.1.1.1:53 gaf geen antwoord in plaats van een fout"
+    except OSError:
+        return ""
+
+
 def _container(report: Report, socket_path: Path | None) -> None:
     uid = os.getuid()
     media, platform = _uid_of("media"), _uid_of("platform")
@@ -219,7 +240,10 @@ def _container(report: Report, socket_path: Path | None) -> None:
         names = sorted(name for _i, name in socket.if_nameindex())
     except OSError as exc:
         names = [f"? ({exc.strerror})"]
-    report.add("geen netwerk", names == ["lo"], ", ".join(names), sandbox=True)
+    detail = ", ".join(names)
+    if names == ["lo"]:
+        detail = _no_route()
+    report.add("geen netwerk", names == ["lo"] and not detail, detail or "alleen lo", sandbox=True)
     readonly = bool(os.statvfs("/").f_flag & os.ST_RDONLY)
     report.add("/ alleen lezen", readonly, "" if readonly else "/ is schrijfbaar", sandbox=True)
     try:
