@@ -18,11 +18,19 @@
 #   de sleutel staat alleen in de omgeving, niet in command of healthcheck;
 # - de zelftest (--selftest) in de container: ok en sandbox "on";
 # - id -u is 10002, `touch /x` faalt, /data is leeg, een verbinding met 1.1.1.1:53 faalt;
+# - /data is een tmpfs van 0700 van media (10002), /tmp een tmpfs van 1777 (ook in docker
+#   inspect: de opties van de tmpfs);
 # - een proces in de container kan /proc/<worker>/fd en /proc/<worker>/environ niet lezen;
 # - vanuit de app (uid 10001): /run/media is 2750 van media:platform, de socket 0660 met groep
 #   platform, de app kan er niets in maken (V2); caps zegt afgeschermd, en een probe, meta, een
 #   frame en een preview (previews.render, zonder ffmpeg in PATH) van een eigen bestand (0600)
 #   lukken met de fd vanuit de platform-container;
+# - een blob van de app (0600 van 10001) en een pipe van de app, over SCM_RIGHTS naar een proces
+#   van media dat wel dumpbaar is (de tweede laag van Keuze 11, los van PR_SET_DUMPABLE; S3 van
+#   de spike, review golf 1 K1): de fd is CLOEXEC, het pad van de app bestaat daar niet,
+#   schrijven geeft EBADF, opnieuw openen via /proc/self/fd en een kind via /proc/<pid>/fd
+#   lukken niet (een eigen bestand wel: de controle), een stuk midden in de blob heeft de hash
+#   van de app, de pipe is van de app, en de blob bleef gelijk;
 # - media-status zegt "afgeschermd";
 # - de worker gestopt: de app meldt binnen 30 s (de lus van health.py, +1 s) dat hij niet
 #   bereikbaar is; weer gestart: media-status zegt weer "afgeschermd".
@@ -212,6 +220,11 @@ want("ulimit nofile", ulimits.get("nofile"), [1024, 1024])
 tmpfs = set(h.get("Tmpfs") or {})
 tmpfs |= {m["Target"] for m in h.get("Mounts") or [] if m.get("Type") == "tmpfs"}
 want("tmpfs", sorted(tmpfs), ["/data", "/tmp"])
+# de opties van de tmpfs (zoals S3 van de spike): /data alleen van media, /tmp 1777
+options = {k: set(v.split(",")) for k, v in (h.get("Tmpfs") or {}).items()}
+want("tmpfs /data", sorted(options.get("/data", set()) & {"mode=0700", "uid=10002", "gid=10002"}),
+     ["gid=10002", "mode=0700", "uid=10002"])
+want("tmpfs /tmp", "mode=1777" in options.get("/tmp", set()), True)
 volumes = sorted(m["Destination"] for m in media.get("Mounts") or [] if m.get("Type") != "tmpfs")
 want("volumes (geen anoniem volume op /data)", volumes, ["/run/media"])
 want("stop_grace_period media", c.get("StopTimeout"), 5)
@@ -251,6 +264,27 @@ if [ "$uid" = 10002 ]; then goed "id -u is 10002"; else fout "id -u is $uid"; fi
 if in_media touch /x > /dev/null 2>&1; then fout "touch /x lukte"; else goed "touch /x faalt (alleen lezen)"; fi
 data="$(in_media ls -A /data 2>&1 | tr -d '\r' || true)"
 if [ -z "$data" ]; then goed "/data is leeg"; else fout "/data is niet leeg: $data"; fi
+cat > "$WORK/tmpfs.py" << 'PY'
+import json, os, stat, sys
+
+kinds = {}
+with open("/proc/self/mountinfo") as f:
+    for line in f:
+        parts = line.split()
+        kinds[parts[4]] = parts[parts.index("-") + 1]
+seen = {}
+for path in ("/data", "/tmp"):
+    info = os.stat(path)
+    seen[path] = [kinds.get(path), f"{stat.S_IMODE(info.st_mode):04o}", info.st_uid, info.st_gid]
+print(json.dumps(seen))
+ok = seen["/data"] == ["tmpfs", "0700", 10002, 10002] and seen["/tmp"][:2] == ["tmpfs", "1777"]
+sys.exit(0 if ok else 1)
+PY
+if in_media python -I - < "$WORK/tmpfs.py" > "$WORK/tmpfs.txt" 2>&1; then
+  goed "/data is een tmpfs van 0700 van media, /tmp een tmpfs van 1777: $(cat "$WORK/tmpfs.txt")"
+else
+  fout "de tmpfs in de worker: $(mask < "$WORK/tmpfs.txt")"
+fi
 if in_media python -I -c 'import socket; socket.create_connection(("1.1.1.1", 53), timeout=3)' > /dev/null 2>&1; then
   fout "een verbinding met 1.1.1.1:53 lukte"
 else
@@ -438,6 +472,181 @@ if in_platform python -I - "$SOCK" < "$WORK/app.py" > "$WORK/app.txt" 2>&1; then
 else
   mask < "$WORK/app.txt" >&2
   fout "vanuit de app"
+fi
+
+# --- een fd van de app bij een proces van media dat dumpbaar is (review golf 1, K1) -------------
+# Keuze 11 heeft twee lagen: de worker is niet dumpbaar (PR_SET_DUMPABLE 0, hierboven en in de
+# zelftest), en een blob is 0600 van de app. Dit toetst de tweede laag los van de eerste, zoals
+# S3 van de spike: een proces van media dat wel dumpbaar is (python is leesbaar; het staat voor
+# een worker die PR_SET_DUMPABLE kwijt is), krijgt van de app een blob en een pipe over een
+# eigen socket in /run/media, met wire.send en wire.receive zoals de worker.
+
+K1_SOCK=/run/media/k1-proef.sock
+cat > "$WORK/k1_media.py" << 'PY'
+import asyncio, contextlib, ctypes, errno, hashlib, json, os, socket, stat, subprocess, sys
+import tempfile
+
+sys.path.insert(0, "/srv")
+from app.media import wire  # noqa: E402
+
+PATH = sys.argv[1]
+PR_GET_DUMPABLE = 3
+# Een kind (zelfde uid) opent een fd van zijn ouder via /proc: de blob van de app, en een
+# eigen bestand van media (de controle: de ouder is dumpbaar, dus dat lukt wel)
+LOOK = r"""
+import json, os, sys
+pid, fds = sys.argv[1], sys.argv[2:]
+out = {}
+for name, fd in zip(("blob", "eigen"), fds):
+    try:
+        os.close(os.open(f"/proc/{pid}/fd/{fd}", os.O_RDONLY | os.O_NONBLOCK))
+        out[name] = "open"
+    except OSError as e:
+        out[name] = type(e).__name__
+print(json.dumps(out))
+"""
+
+
+def err(e):
+    return errno.errorcode.get(e.errno, str(e.errno))
+
+
+async def main():
+    libc = ctypes.CDLL(None, use_errno=True)
+    seen = {"uid": os.getuid(), "dumpbaar": libc.prctl(PR_GET_DUMPABLE, 0, 0, 0, 0)}
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(PATH)
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
+    srv.bind(PATH)
+    os.chmod(PATH, 0o660)  # groep platform (de map is setgid)
+    srv.listen(1)
+    srv.setblocking(False)
+    loop = asyncio.get_running_loop()
+    try:
+        conn, _ = await asyncio.wait_for(loop.sock_accept(srv), 60)
+        conn.setblocking(False)
+        message, fds = await asyncio.wait_for(wire.receive(conn, max_fds=2), 30)
+        blob, pipe = fds
+        info = os.fstat(blob)
+        link = os.readlink(f"/proc/self/fd/{blob}")
+        seen["blob"] = {
+            "uid": info.st_uid, "modus": f"{stat.S_IMODE(info.st_mode):04o}",
+            "cloexec": not os.get_inheritable(blob), "pad_hier": os.path.exists(link),
+        }
+        part = os.pread(blob, int(message["lengte"]), int(message["begin"]))
+        seen["sha_stuk"] = hashlib.sha256(part).hexdigest()
+        try:
+            os.write(blob, b"x")
+            seen["schrijven"] = "geschreven"
+        except OSError as e:
+            seen["schrijven"] = err(e)
+        seen["heropen"] = {}
+        for name, flag in (("O_RDONLY", os.O_RDONLY), ("O_WRONLY", os.O_WRONLY)):
+            try:
+                os.close(os.open(f"/proc/self/fd/{blob}", flag | os.O_CLOEXEC))
+                seen["heropen"][name] = "open"
+            except OSError as e:
+                seen["heropen"][name] = err(e)
+        with tempfile.TemporaryFile() as own:
+            done = subprocess.run(
+                [sys.executable, "-I", "-c", LOOK, str(os.getpid()), str(blob), str(own.fileno())],
+                capture_output=True, text=True, timeout=20, check=False,
+            )
+        seen["kind"] = json.loads(done.stdout) if done.returncode == 0 else done.stderr[-200:]
+        info = os.fstat(pipe)
+        seen["pipe"] = {"uid": info.st_uid, "fifo": stat.S_ISFIFO(info.st_mode)}
+        os.set_blocking(pipe, True)
+        os.write(pipe, b"van media\n")
+        wire.close_all(fds)
+        await wire.send(conn, {"ev": "result", "data": seen})
+        conn.close()
+    finally:
+        srv.close()
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(PATH)
+    print(json.dumps(seen))
+    blob_ok = seen["blob"] == {"uid": 10001, "modus": "0600", "cloexec": True, "pad_hier": False}
+    ok = (
+        seen["uid"] == 10002 and seen["dumpbaar"] == 1 and blob_ok
+        and seen["schrijven"] == "EBADF"
+        and seen["heropen"] == {"O_RDONLY": "EACCES", "O_WRONLY": "EACCES"}
+        and seen["kind"] == {"blob": "PermissionError", "eigen": "open"}
+        and seen["pipe"] == {"uid": 10001, "fifo": True}
+    )
+    sys.exit(0 if ok else 1)
+
+
+asyncio.run(main())
+PY
+cat > "$WORK/k1_app.py" << 'PY'
+import asyncio, hashlib, json, os, socket, sys, tempfile
+
+sys.path.insert(0, "/srv")
+from app.media import wire  # noqa: E402
+
+PATH = sys.argv[1]
+BEGIN, LENGTH = 300_000, 65_536
+
+
+def sha(path, begin=0, length=None):
+    with open(path, "rb") as f:
+        f.seek(begin)
+        return hashlib.sha256(f.read() if length is None else f.read(length)).hexdigest()
+
+
+async def main():
+    fd, path = tempfile.mkstemp(dir="/data", prefix="k1-blob-")  # 0600 van de app, zoals een blob
+    os.write(fd, os.urandom(1024 * 1024))
+    os.close(fd)
+    before = sha(path)
+    blob = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+    r, w = os.pipe2(os.O_CLOEXEC)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
+    sock.setblocking(False)
+    try:
+        await asyncio.get_running_loop().sock_connect(sock, PATH)
+        await wire.send(sock, {"begin": BEGIN, "lengte": LENGTH}, [blob, w])
+        os.close(w)
+        w = -1
+        reply, extra = await asyncio.wait_for(wire.receive(sock, max_fds=0), 60)
+        wire.close_all(extra)
+        piped = b""
+        while chunk := os.read(r, 4096):
+            piped += chunk
+    finally:
+        sock.close()
+        os.close(blob)
+        os.close(r)
+        if w >= 0:
+            os.close(w)
+    seen = reply.get("data") or {}
+    out = {
+        "hash_stuk": seen.get("sha_stuk") == sha(path, BEGIN, LENGTH),
+        "pipe": piped == b"van media\n",
+        "blob_gelijk": sha(path) == before,
+    }
+    os.unlink(path)
+    print(json.dumps(out))
+    sys.exit(0 if all(out.values()) else 1)
+
+
+asyncio.run(main())
+PY
+in_media python -I - "$K1_SOCK" < "$WORK/k1_media.py" > "$WORK/k1_media.txt" 2>&1 &
+k1_pid=$!
+if wait_for 30 in_platform test -S "$K1_SOCK" \
+  && in_platform python -I - "$K1_SOCK" < "$WORK/k1_app.py" > "$WORK/k1_app.txt" 2>&1; then
+  k1_app=0
+else
+  k1_app=1
+fi
+if wait "$k1_pid"; then k1_media=0; else k1_media=1; fi
+if [ "$k1_app" = 0 ] && [ "$k1_media" = 0 ]; then
+  goed "een blob van de app (0600) bij een proces van media dat dumpbaar is: CLOEXEC, geen pad, EBADF, niet heropenbaar, niet via /proc; hash, pipe en blob kloppen"
+  echo "  media: $(cat "$WORK/k1_media.txt")"
+  echo "  app: $(cat "$WORK/k1_app.txt")"
+else
+  fout "een blob van de app bij een proces van media: media $(mask < "$WORK/k1_media.txt"), app $(mask < "$WORK/k1_app.txt" 2> /dev/null)"
 fi
 
 status="$(in_platform python -m app.cli media-status --wait 30 2>&1 | tr -d '\r' || true)"

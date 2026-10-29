@@ -157,3 +157,25 @@ def test_het_script_is_geldige_bash():
     # de sleutel nooit in de uitvoer: alleen via de omgeving naar inspect.py, en gemaskeerd
     assert "set -x" not in text and 'echo "$KEY"' not in text
     assert 'MEDIA_TEST_KEY="$KEY"' in text
+
+
+def test_het_script_toetst_wat_s3_nog_toetste():
+    """Review golf 1, K1: de controles van S3 die de zelftest niet heeft, staan in het script,
+    zodat S3 later (M4) weg kan zonder dat ze verdwijnen: de tmpfs van /data (0700 van media,
+    in docker inspect en in de worker), en een blob van de app bij een proces van media dat
+    wel dumpbaar is (CLOEXEC, geen pad, EBADF, niet heropenbaar, niet via /proc, de hash van een
+    stuk midden in de blob, de pipe van de app)."""
+    text = (SINGLE / "tests" / "test_media_container.sh").read_text(encoding="utf-8")
+    for needle in (
+        '"mode=0700", "uid=10002", "gid=10002"',  # inspect: de opties van de tmpfs
+        'seen["/data"] == ["tmpfs", "0700", 10002, 10002]',  # in de worker
+        'seen["dumpbaar"] == 1',  # de controle: dit proces is wel dumpbaar
+        '"cloexec": True, "pad_hier": False',
+        'seen["schrijven"] == "EBADF"',
+        'seen["heropen"] == {"O_RDONLY": "EACCES", "O_WRONLY": "EACCES"}',
+        'seen["kind"] == {"blob": "PermissionError", "eigen": "open"}',
+        'seen["pipe"] == {"uid": 10001, "fifo": True}',
+        '"hash_stuk"',
+        '"blob_gelijk"',
+    ):
+        assert needle in text, needle
