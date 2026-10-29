@@ -443,9 +443,15 @@ def _file(kind: str, cues: list[str]) -> bytes:
 
 
 def _timed(fn, *args):
-    start = time.perf_counter()
-    result = fn(*args)
-    return result, time.perf_counter() - start
+    """(uitvoer, de tijd van fn), met de heap van de testset in gc.freeze (zie _longest_gap)."""
+    gc.collect()
+    gc.freeze()
+    try:
+        start = time.perf_counter()
+        result = fn(*args)
+        return result, time.perf_counter() - start
+    finally:
+        gc.unfreeze()
 
 
 @pytest.mark.parametrize("name", sorted(EVIL))
@@ -470,7 +476,8 @@ def test_veel_cues_tot_de_grens_lineair(name: str) -> None:
 
 
 def test_lege_stukken_weghalen_is_lineair() -> None:
-    runs = [(subconv.Style(bold=n % 2 == 0), " ") for n in range(50_000)]
+    # 2 x 100.000 lege stukken: kwadratisch is dat seconden, lineair een tiende daarvan
+    runs = [(subconv.Style(bold=n % 2 == 0), " ") for n in range(100_000)]
     lines, took = _timed(subconv._lines, [*runs, (subconv.Style(), "x"), *runs])
     assert lines == [[(subconv.Style(), "x")]]
     assert took < 0.5, f"{took:.2f} s"
