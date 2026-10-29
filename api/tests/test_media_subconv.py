@@ -556,6 +556,20 @@ async def test_de_worker_geeft_zijn_lus_de_beurt(name: str) -> None:
         assert gap < 0.25, f"{name}: de lus stond {gap:.2f} s stil"
 
 
+@pytest.mark.parametrize("kind", ["srt", "vtt", "ass"])
+def test_steps_tikt_ook_zonder_cues(kind: str) -> None:
+    """De tik van steps (na elke TICK_CHARS tekens invoer) komt ook in een lang stuk zonder één
+    cue. Daar kijkt de test van de lus (1 MB) niet scherp genoeg naar: zonder tik stond de lus bij
+    16 MB korte regels 1,4 tot 1,9 s stil, met tik 0,2 tot 0,5 s (na-controle golf 2). Zonder tijd
+    gemeten: het aantal tikken."""
+    head = {"srt": "", "vtt": "WEBVTT\n\n", "ass": ASS_HEAD}[kind]
+    line = "x\n\n" if kind == "vtt" else "x\n"
+    data = (head + line * (2_000_000 // len(line))).encode()
+    steps = list(subconv.steps(data, kind))
+    assert all(step is None for step in steps)  # geen cue, alleen tikken
+    assert len(steps) >= 25, len(steps)  # 2 MB, een tik per 64 KB: ± 30
+
+
 # --- fuzz (vaste seed) --------------------------------------------------------------------------
 
 SPECIAL = [
