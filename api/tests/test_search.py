@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import time
 import uuid
 from contextlib import contextmanager
@@ -21,6 +22,22 @@ from tests.test_files import mkdir, new_user, put, root
 from tests.test_mime import zip_bytes
 
 PNG = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"
+
+
+@contextmanager
+def measuring():
+    """Meten zoals timeit: eerst een volle ronde van de garbage collector, en tijdens de meting
+    geen. In een volledige run heeft dit proces meer dan een miljoen objecten van eerdere tests;
+    een volle ronde kost dan ±1 s (gemeten: 1,07 s bij 1,5 miljoen objecten), en die viel soms
+    binnen een gemeten vraag (de tag: 1,01 tot 1,25 s). Dat is de test, niet het zoeken."""
+    gc.collect()
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if enabled:
+            gc.enable()
 
 
 async def find(client, headers, expect=200, **params):
@@ -441,15 +458,16 @@ async def test_snel_genoeg_met_twintigduizend_bestanden(client, admin, settings)
         ({"tag": str(tag_id), "limit": 200}, 200, True),
         ({"q": "bestaat niet"}, 0, False),
     ]
-    for params, count, more in cases:
+    with measuring():
+        for params, count, more in cases:
+            started = time.perf_counter()
+            result = await find(client, headers, **params)
+            elapsed = time.perf_counter() - started
+            assert (len(result["results"]), result["more"]) == (count, more), params
+            assert elapsed < 1.0, f"{params}: {elapsed:.2f} s"
         started = time.perf_counter()
-        result = await find(client, headers, **params)
-        elapsed = time.perf_counter() - started
-        assert (len(result["results"]), result["more"]) == (count, more), params
-        assert elapsed < 1.0, f"{params}: {elapsed:.2f} s"
-    started = time.perf_counter()
-    tags = (await client.get("/api/v1/tags", headers=headers)).json()
-    assert time.perf_counter() - started < 1.0
+        tags = (await client.get("/api/v1/tags", headers=headers)).json()
+        assert time.perf_counter() - started < 1.0
     assert tags[0]["count"] == len(rows[::50]) - sum(
         1 for r in rows[::50] if r["name"].startswith(("Map 00", "Sub 00-", "Foto 00-"))
     )
