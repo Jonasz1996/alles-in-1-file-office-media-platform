@@ -69,7 +69,9 @@ def _not_dumpable() -> None:
         ctypes.CDLL(None, use_errno=True).prctl(PR_SET_DUMPABLE, 0, 0, 0, 0)
 
 
-async def serve(config: Config, caps: dict) -> None:
+async def serve(config: Config, caps: dict) -> int:
+    """Luisteren tot SIGTERM of SIGINT (code 0), of tot het aannemen van verbindingen faalt
+    (code 1: dan start de bewaking de worker opnieuw)."""
     worker = Worker(config, caps)
     await worker.start()
     log.info(
@@ -82,11 +84,17 @@ async def serve(config: Config, caps: dict) -> None:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
+    stopped = asyncio.ensure_future(stop.wait())
     try:
-        await stop.wait()
+        await asyncio.wait({stopped, worker.accepting}, return_when=asyncio.FIRST_COMPLETED)
     finally:
+        stopped.cancel()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.remove_signal_handler(sig)
+        failed = worker.accepting.done() and not worker.accepting.cancelled()
         await worker.stop()
-        log.info("mediaworker gestopt")
+        log.info("mediaworker gestopt%s", " (aannemen faalde)" if failed else "")
+    return 1 if failed else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -114,8 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         local=args.local,
         loadtest=args.loadtest,
     )
-    asyncio.run(serve(config, caps))
-    return 0
+    return asyncio.run(serve(config, caps))
 
 
 if __name__ == "__main__":

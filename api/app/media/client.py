@@ -172,6 +172,9 @@ async def _connect(path: Path) -> socket.socket:
         with wire.socket_address(path) as address:
             async with asyncio.timeout(CONNECT_TIMEOUT):
                 await asyncio.get_running_loop().sock_connect(sock, address)
+        # Een volle wachtrij (EAGAIN) ziet asyncio bij een Unix-socket als verbonden; dan is er
+        # geen andere kant
+        sock.getpeername()
     except (OSError, TimeoutError) as exc:
         sock.close()
         raise WorkerDown(f"geen verbinding met de worker: {exc.__class__.__name__}") from None

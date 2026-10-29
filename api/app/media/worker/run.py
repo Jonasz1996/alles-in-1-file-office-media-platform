@@ -11,7 +11,11 @@ Elk kind (ffmpeg of ffprobe):
 - draait in een eigen procesgroep met een kale omgeving (PATH, LC_ALL=C, HOME=/tmp) en de
   grenzen RLIMIT_CORE 0, RLIMIT_NOFILE 256, RLIMIT_FSIZE 0 (behalve synth, dat een bestand
   schrijft) en RLIMIT_DATA (spike punt 6);
-- stopt met killpg: SIGTERM, na 2 s SIGKILL, en telt mee tot waitpid klaar is.
+- stopt met killpg: SIGTERM, na 2 s SIGKILL, en telt mee tot waitpid klaar is;
+- gaat mee als de worker weggaat (SIGKILL, de OOM-killer, een crash): PR_SET_PDEATHSIG met
+  SIGKILL, en was de worker al weg vóór die stond (de ppid is niet meer de worker), dan stopt
+  het kind meteen. Zo houdt geen wees de fd's van een opdracht vast, en blijft het bij de
+  grens van processen (regel 13).
 
 Wachten gaat via een pidfd in de event loop en os.wait4, zodat de CPU-tijd en het geheugen van
 het kind er zijn (bench, /beheer). stderr wordt gelezen terwijl het kind loopt: de regels van
@@ -22,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ctypes
 import fcntl
 import os
 import re
@@ -40,6 +45,9 @@ NOFILE = 256
 _PROGRESS = re.compile(rb"^([a-z][a-z0-9_]*)=(.*)$")
 _TAIL_BYTES = 16 * 1024
 Progress = Callable[[int, float | None], None]
+PR_SET_PDEATHSIG = 1
+# Vooraf geladen: in het kind (na fork, vóór exec) alleen nog aanroepen
+_LIBC = ctypes.CDLL(None, use_errno=True)
 
 
 def environment() -> dict[str, str]:
@@ -66,8 +74,13 @@ def reserve_low_fds(count: int = 32) -> list[int]:
     return taken
 
 
-def _preexec(fds: Sequence[int], limits: dict[int, int]) -> Callable[[], None]:
+def _preexec(fds: Sequence[int], limits: dict[int, int], parent: int) -> Callable[[], None]:
     def run() -> None:
+        # Weg met de worker: SIGKILL als de ouder sterft. Stierf hij al tussen fork en hier,
+        # dan is de ppid een ander proces (init of een subreaper), en stopt het kind zelf
+        _LIBC.prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+        if os.getppid() != parent:
+            os._exit(1)
         # Eerst kopieën boven alle bronnen en doelen, zodat dup2 niets overschrijft dat nog
         # nodig is; die kopieën zijn CLOEXEC en verdwijnen bij exec
         floor = max([FIRST_FD + len(fds), *fds], default=FIRST_FD) + 1
@@ -304,7 +317,7 @@ def spawn(
         stdout=out,
         stderr=subprocess.PIPE,
         close_fds=False,
-        preexec_fn=_preexec(fds, limits_for(memory_mb, fsize=fsize)),
+        preexec_fn=_preexec(fds, limits_for(memory_mb, fsize=fsize), os.getpid()),
         start_new_session=True,
         env=environment(),
         cwd="/",

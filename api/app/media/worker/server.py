@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import importlib
 import logging
 import os
@@ -53,6 +54,10 @@ TIMEOUT: dict[Op, float | None] = {
     Op.SYNTH: 900,
 }
 KEYFRAMES_FALLBACK_TIMEOUT = 3600.0
+# accept zonder fd's of geheugen: zo lang wachten (verdubbelend) en opnieuw
+SCARCE = frozenset({errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.ENOMEM})
+ACCEPT_PAUSE = 0.1
+ACCEPT_PAUSE_MAX = 1.0
 
 
 class OpError(Exception):
@@ -339,10 +344,35 @@ class Worker:
         self._listener = listener
         self._accept_task = asyncio.create_task(self._accept())
 
+    @property
+    def accepting(self) -> asyncio.Task:
+        """De taak die verbindingen aanneemt. Eindigt hij met een fout, dan stopt de worker
+        (serve in __main__.py, code 1) en start de bewaking hem opnieuw."""
+        return self._accept_task
+
     async def _accept(self) -> None:
+        """Verbindingen aannemen. Geen fd's meer (EMFILE, ENFILE) of geen geheugen: even
+        wachten en opnieuw; de verbinding blijft zolang in de wachtrij van de socket. Elke andere
+        fout eindigt deze taak, en daarmee de worker: een worker die leeft maar niets meer
+        aanneemt, ziet de bewaking niet."""
         loop = asyncio.get_running_loop()
+        pause = ACCEPT_PAUSE
         while True:
-            conn, _ = await loop.sock_accept(self._listener)
+            try:
+                conn, _ = await loop.sock_accept(self._listener)
+            except OSError as exc:
+                if exc.errno not in SCARCE:
+                    log.exception("verbindingen aannemen faalt; de worker stopt")
+                    raise
+                log.warning(
+                    "geen verbinding aangenomen (%s); over %.1f s opnieuw",
+                    errno.errorcode.get(exc.errno or 0, exc.errno),
+                    pause,
+                )
+                await asyncio.sleep(pause)
+                pause = min(pause * 2, ACCEPT_PAUSE_MAX)
+                continue
+            pause = ACCEPT_PAUSE
             conn.setblocking(False)
             asyncio.create_task(self._connection(conn))
 
@@ -350,7 +380,7 @@ class Worker:
         """Niet meer aannemen, elke opdracht stoppen (de kinderen gaan met killpg weg), de
         socket weg."""
         self._accept_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await self._accept_task
         self._listener.close()
         with contextlib.suppress(FileNotFoundError):

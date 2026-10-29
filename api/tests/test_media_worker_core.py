@@ -16,6 +16,7 @@ from __future__ import annotations
 import array
 import asyncio
 import contextlib
+import errno
 import json
 import os
 import shutil
@@ -498,6 +499,122 @@ async def test_stop_van_de_worker_stopt_elk_kind(tmp_path, slow, source):
         await job.cancel()
     finally:
         client.bind(None)
+
+
+async def test_een_andere_fout_bij_aannemen_stopt_de_worker_met_code_1(tmp_path, monkeypatch):
+    """Faalt accept met iets anders dan te weinig fd's of geheugen, dan stopt serve (code 1),
+    zodat de bewaking de worker opnieuw start; de socket is weg."""
+    from app.media.worker import __main__ as main
+
+    async def kapot(self) -> None:
+        raise OSError(errno.EBADF, "kapot")
+
+    monkeypatch.setattr(Worker, "_accept", kapot)
+    config = Config(socket=tmp_path / "w.sock", max_procs=3)
+    async with asyncio.timeout(5):
+        assert await main.serve(config, dict(CAPS)) == 1
+    assert not config.socket.exists()
+
+
+# Een worker als los proces met een kleine RLIMIT_NOFILE (S3): de grens gaat aan vóór exec
+NOFILE_WRAPPER = (
+    "import os,resource,sys;resource.setrlimit(resource.RLIMIT_NOFILE,(64,64));"
+    "os.execv(sys.argv[1],sys.argv[1:])"
+)
+
+
+async def test_zonder_fds_neemt_de_worker_daarna_weer_aan(tmp_path):
+    """EMFILE bij accept (S3): de worker wacht en neemt daarna weer aan, in plaats van te
+    blijven leven zonder ooit nog een verbinding aan te nemen."""
+    settings = media_settings(tmp_path)
+    path = tmp_path / "run" / "w.sock"
+    path.parent.mkdir()
+    argv = local.worker_argv(settings, path)
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-I", "-c", NOFILE_WRAPPER, *argv,
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        env=local.worker_env(), cwd="/", start_new_session=True,
+    )  # fmt: skip
+    socks: list[socket.socket] = []
+    client.bind(path)
+    try:
+        assert await until(path.exists, limit=15), "de worker luistert niet"
+        for _ in range(90):  # meer dan de 64 fd's van de worker
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
+            sock.setblocking(False)
+            try:
+                with wire.socket_address(path) as address:
+                    sock.connect(address)
+            except (BlockingIOError, ConnectionRefusedError):
+                sock.close()
+                break
+            socks.append(sock)
+        assert len(socks) > 40
+        await asyncio.sleep(0.5)  # de worker loopt tegen EMFILE aan
+        for sock in socks:
+            sock.close()
+        socks.clear()
+        caps = None
+        async with asyncio.timeout(10):  # de wachtrij loopt leeg (pauze hooguit 1 s)
+            while caps is None:
+                try:
+                    caps = await client.caps()
+                except WorkerDown:
+                    await asyncio.sleep(0.2)
+        assert caps.protocol == wire.PROTOCOL
+        assert proc.returncode is None
+    finally:
+        for sock in socks:
+            sock.close()
+        client.bind(None)
+        if proc.returncode is None:
+            proc.send_signal(signal.SIGTERM)  # op pid
+        async with asyncio.timeout(10):
+            _, err = await proc.communicate()
+    assert proc.returncode == 0, err.decode()[-2000:]
+    assert b"EMFILE" in err
+
+
+# Een worker die een kind start en dan zelf hard stopt (S4): het kind gaat mee
+ORPHAN = """
+import asyncio, sys
+sys.path.insert(0, sys.argv[1])
+from app.media.worker import run as R
+
+async def main():
+    child = R.spawn(["sleep", "60"], memory_mb=64)
+    print(child.pid, flush=True)
+    await asyncio.sleep(60)
+
+asyncio.run(main())
+"""
+
+
+async def test_een_kind_stopt_als_de_worker_hard_stopt():
+    """SIGKILL op de worker (of de OOM-killer): zijn kind (een eigen sessie) krijgt SIGKILL via
+    PR_SET_PDEATHSIG, in plaats van als wees door te lopen met de fd's van de opdracht."""
+    proc = subprocess.Popen(
+        [sys.executable, "-I", "-c", ORPHAN, str(local.API_ROOT)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, env=local.worker_env(), cwd="/",
+        start_new_session=True,
+    )  # fmt: skip
+    pid = 0
+    try:
+        assert proc.stdout is not None
+        pid = int(proc.stdout.readline())
+        st = proc_stat(pid)
+        assert st is not None and st[1] == proc.pid and st[2] == pid  # kind, eigen sessie
+        os.kill(proc.pid, signal.SIGKILL)  # op pid
+        proc.wait(timeout=10)
+        assert await until(lambda: not alive(pid), limit=5), "het kind leeft nog als wees"
+    finally:
+        if pid and alive(pid):
+            os.kill(pid, signal.SIGKILL)  # opruimen op pid
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+        if proc.stdout is not None:
+            proc.stdout.close()
 
 
 # --- de echte lokale worker (ffmpeg) ---------------------------------------------------------
