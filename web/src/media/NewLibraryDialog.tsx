@@ -5,10 +5,15 @@
 // heeft geen plek in de boom van de pagina); ui/Dialog zet de focus erin, Escape sluit, en na het
 // sluiten staat de focus weer waar hij was. Een fout van de server (media_library_nested,
 // media_library_limit, …) staat in de dialoog, die dan open blijft.
+//
+// LibraryPicker is de knop Nieuwe bibliotheek op /media: eerst de mappenkiezer van Bestanden
+// (FolderPicker, met de woorden van het gebied "browser"), dan dezelfde dialoog voor die map. Hij
+// staat in de boom van de pagina (de kiezer leest wie er ingelogd is uit de context).
 
 import { type FormEvent, type JSX, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { FileNode } from "../api";
+import { FolderPicker } from "../FolderPicker";
 import { errorText, t } from "../i18n";
 import { navigate } from "../router";
 import { Button } from "../ui/Button";
@@ -17,7 +22,7 @@ import { Field } from "../ui/Field";
 import { toast } from "../ui/toast";
 import { createLibrary } from "./api";
 import { libraryPath, mediaStatus } from "./index";
-import { defaultName, guessKind, NAME_MAX, nameToSend } from "./library";
+import { defaultName, guessKind, NAME_MAX, nameToSend, pickProblem } from "./library";
 import { LIBRARY_KINDS, type LibraryKind } from "./types";
 import "./media.css";
 
@@ -87,6 +92,29 @@ function NewLibrary({ folder, onClose }: { folder: FileNode; onClose(): void }):
         </div>
       </form>
     </Dialog>
+  );
+}
+
+/** Nieuwe bibliotheek op /media: eerst een map kiezen (je eigen mappen; een map met al een
+ * bibliotheek of van een ander kan niet), dan de dialoog. onClose na maken of annuleren. */
+export function LibraryPicker({ onClose }: { onClose(): void }): JSX.Element {
+  const [folder, setFolder] = useState<FileNode | null>(null);
+  if (folder) return <NewLibrary folder={folder} onClose={onClose} />;
+  return (
+    <FolderPicker
+      title={t("media.newLibrary.pickTitle")}
+      action={t("media.newLibrary.pick")}
+      startId={null}
+      check={(f) => {
+        const problem = pickProblem(f, mediaStatus.get()?.libraries ?? []);
+        if (!problem) return null;
+        return problem.reason === "already"
+          ? t("media.newLibrary.already", { name: problem.name })
+          : t("media.newLibrary.notOwner");
+      }}
+      onPick={(_id, f) => setFolder(f)}
+      onClose={onClose}
+    />
   );
 }
 

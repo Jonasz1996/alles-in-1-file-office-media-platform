@@ -12,6 +12,7 @@ import {
   nameToSend,
   parseSort,
   parseType,
+  pickProblem,
   scanBusy,
   shownType,
   streamText,
@@ -121,5 +122,20 @@ describe("korte teksten", () => {
   it("de sleutel van een extra", () => {
     expect(extraKey("trailer")).toBe("trailer");
     expect(extraKey("other")).toBe("misc");
+  });
+});
+
+describe("pickProblem", () => {
+  const libs = [{ root_id: "a", name: "Films" }];
+  it("een eigen map zonder bibliotheek mag", () => {
+    expect(pickProblem({ id: "b", permission: "owner" }, libs)).toBeNull();
+    expect(pickProblem({ id: "b" }, [])).toBeNull(); // zonder permission: van jou
+  });
+  it("een gedeelde map niet, ook niet met schrijven", () => {
+    expect(pickProblem({ id: "b", permission: "write" }, libs)).toEqual({ reason: "notOwner" });
+    expect(pickProblem({ id: "b", permission: "read" }, [])).toEqual({ reason: "notOwner" });
+  });
+  it("een map die al een bibliotheek is, noemt haar naam", () => {
+    expect(pickProblem({ id: "a", permission: "owner" }, libs)).toEqual({ reason: "already", name: "Films" });
   });
 });

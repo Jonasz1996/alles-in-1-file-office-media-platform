@@ -28,6 +28,12 @@ De dialoog (`ui/Dialog`, scope `dialog`):
 ## /media
 
 - De kop krijgt na het navigeren de focus (zoals elke pagina).
+- Nieuwe bibliotheek (een knop in de kop; niet voor gasten) opent de mappenkiezer van Bestanden
+  (`FolderPicker`): de focus staat op de eerste map, ↑ ↓ Home End en typen kiezen een map, Enter
+  opent haar, en zonder mappen erin staat de focus op "Deze map gebruiken". Een map van een
+  ander of met al een bibliotheek kan niet (de knop is uit, de reden staat eronder). Daarna
+  dezelfde dialoog als hierboven; na het maken of Escape staat de focus weer op Nieuwe
+  bibliotheek (de knop staat altijd op dezelfde plek, ook als de lege staat verdwijnt).
 - Verder kijken, Volgende aflevering en Net toegevoegd zijn elk een rij met één tabstop: ← en →
   verplaatsen de focus naar de vorige of volgende kaart, Home en End naar de eerste en de
   laatste; Enter opent de kaart. De rij scrolt mee.
@@ -68,7 +74,8 @@ De dialoog (`ui/Dialog`, scope `dialog`):
 - [x] Geen nieuwe sneltoets; geen botsing met de scopes `global`, `browser` of `dialog`.
 - [x] Elke actie is te bereiken met Tab en te doen met Enter of Spatie: de e2e
       `test_media_m2.py` doet het hele rondje (map → dialoog → /media → bibliotheek → item →
-      Afspelen) alleen met het toetsenbord.
+      Afspelen) alleen met het toetsenbord, en ook Nieuwe bibliotheek (kiezer → map → dialoog →
+      de focus terug op de knop).
 - [x] Het raster heeft één tabstop; de pijltjes, Home, End, PageUp en PageDown
       (`ui/virtual.useRovingFocus`), getoetst in de e2e.
 - [x] De dialoog volgt `ui/Dialog`: de focus erin, Escape sluit, de focus terug.

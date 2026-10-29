@@ -34,7 +34,7 @@ const en: Translation<typeof nl> = {
     nextUp: "Next up",
     recent: "Recently added",
     emptyTitle: "No libraries yet",
-    emptyText: "Open a folder in Files and choose Use as library. What is in it then shows up here by itself.",
+    emptyText: "Choose a folder with New library, or open a folder in Files and choose Use as library. What is in it then shows up here by itself.",
     toFiles: "Go to Files",
   },
   list: {
@@ -133,6 +133,11 @@ const en: Translation<typeof nl> = {
     create: "Create library",
     created: "Library {name} created. The scan is running.",
     open: "Open",
+    new: "New library",
+    pickTitle: "Choose the folder for the library",
+    pick: "Use this folder",
+    notOwner: "Only a folder of your own can become a library.",
+    already: "This folder already is the library {name}.",
   },
 };
 

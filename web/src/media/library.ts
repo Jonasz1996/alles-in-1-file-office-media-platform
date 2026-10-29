@@ -3,8 +3,10 @@
 // staat (?sort=, ?type=), welke live gebeurtenissen een pagina opnieuw laten laden, en de korte
 // teksten over sporen en de analyse. Zonder React, zodat vitest het kan testen.
 
+import type { FileNode } from "../api";
+import { permissionOf } from "../sharing";
 import type { IconName } from "../ui/Icon";
-import type { AnalysisState, AnalysisStep, ExtraKind, LibraryKind, ScanState, StreamBrief } from "./types";
+import type { AnalysisState, AnalysisStep, ExtraKind, Library, LibraryKind, ScanState, StreamBrief } from "./types";
 
 /** De sorteringen van GET /libraries/{id}/items (sort=). */
 export type Sort = "title" | "added" | "year";
@@ -128,6 +130,18 @@ export function guessKind(folderName: string): LibraryKind {
   if (/\b(muziek|music|audio)\b/.test(name)) return "music";
   if (/\b(video'?s?|clips?|home ?video'?s?)\b/.test(name)) return "videos";
   return "movies";
+}
+
+/** Waarom deze map in de kiezer van /media (Nieuwe bibliotheek) geen bibliotheek kan worden,
+ * zoals de haak in Bestanden: niet van jou, of er staat al een bibliotheek op (met haar naam).
+ * null: het mag. De rest (nesting, het maximum) zegt de server in de dialoog. */
+export function pickProblem(
+  folder: Pick<FileNode, "id" | "permission">,
+  libraries: readonly Pick<Library, "root_id" | "name">[],
+): { reason: "notOwner" } | { reason: "already"; name: string } | null {
+  if (permissionOf(folder) !== "owner") return { reason: "notOwner" };
+  const lib = libraries.find((l) => l.root_id === folder.id);
+  return lib ? { reason: "already", name: lib.name } : null;
 }
 
 /** De sleutel van een soort extra in het woordenboek ("other" is daar "misc": een object met

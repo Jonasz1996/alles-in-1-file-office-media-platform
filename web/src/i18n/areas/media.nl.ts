@@ -33,7 +33,7 @@ export default {
     nextUp: "Volgende aflevering",
     recent: "Net toegevoegd",
     emptyTitle: "Nog geen bibliotheken",
-    emptyText: "Open een map in Bestanden en kies Als bibliotheek gebruiken. Wat erin staat, verschijnt dan vanzelf hier.",
+    emptyText: "Kies een map met Nieuwe bibliotheek, of open een map in Bestanden en kies Als bibliotheek gebruiken. Wat erin staat, verschijnt dan vanzelf hier.",
     toFiles: "Naar Bestanden",
   },
   list: {
@@ -132,5 +132,10 @@ export default {
     create: "Bibliotheek maken",
     created: "Bibliotheek {name} gemaakt. De scan loopt.",
     open: "Openen",
+    new: "Nieuwe bibliotheek",
+    pickTitle: "Kies de map voor de bibliotheek",
+    pick: "Deze map gebruiken",
+    notOwner: "Alleen een map van jezelf kan een bibliotheek worden.",
+    already: "Deze map is al de bibliotheek {name}.",
   },
 } as const;

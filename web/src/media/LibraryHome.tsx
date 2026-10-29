@@ -1,19 +1,23 @@
 // /media (fase 5, M2): de start van media. De bibliotheken die je ziet, en de rijen Verder kijken
 // en Volgende aflevering (de data van M7, via GET /api/v1/media/home) en Net toegevoegd. Een rij
-// is een lijst kaarten met één tabstop: ← en → (en Home/End) verplaatsen de focus. Zonder
-// bibliotheken: uitleg en een link naar Bestanden (een map wordt een bibliotheek via het menu van
-// die map).
+// is een lijst kaarten met één tabstop: ← en → (en Home/End) verplaatsen de focus. Nieuwe
+// bibliotheek (niet voor gasten) opent de mappenkiezer en dan de dialoog voor die map; beide
+// laden pas bij de klik. Zonder bibliotheken: uitleg en een link naar Bestanden (daar kan het
+// ook, via het menu van een map).
 
 import { type JSX, type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import { isGuest, useCurrentUser } from "../currentUser";
 import { useReloadOn } from "../events";
-import { errorText, t } from "../i18n";
+import { errorText, loadAreas, t } from "../i18n";
 import { Link } from "../links";
 import { type RouteProps, useRestoreScroll } from "../router";
+import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { Icon } from "../ui/Icon";
 import { keyToMove } from "../ui/keys";
 import { PageTitle } from "../ui/PageTitle";
 import { Skeleton } from "../ui/Spinner";
+import { toast } from "../ui/toast";
 import { getHome } from "./api";
 import { MediaGate } from "./Gate";
 import { cardKey } from "./grid";
@@ -88,10 +92,15 @@ function LibraryList({ libraries }: { libraries: Library[] }): JSX.Element {
   );
 }
 
+type Picker = (props: { onClose(): void }) => JSX.Element;
+
 function Home(): JSX.Element {
   const [home, setHome] = useState<MediaHome | null>(null);
   const [error, setError] = useState<string | null>(null);
   const gen = useRef(0);
+  const guest = isGuest(useCurrentUser());
+  const [picker, setPicker] = useState<Picker | null>(null);
+  const [opening, setOpening] = useState(false);
 
   const load = useCallback(async () => {
     const g = ++gen.current;
@@ -111,9 +120,36 @@ function Home(): JSX.Element {
   useReloadOn(affectsHome, () => void load(), 500);
   useRestoreScroll(home !== null);
 
+  async function openPicker() {
+    if (opening) return;
+    setOpening(true);
+    try {
+      // De kiezer spreekt de woorden van Bestanden
+      const [m] = await Promise.all([import("./NewLibraryDialog"), loadAreas(["browser"])]);
+      setPicker(() => m.LibraryPicker);
+    } catch (e) {
+      toast(errorText(e), { kind: "error" });
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  const closePicker = useCallback(() => {
+    setPicker(null);
+    void load();
+  }, [load]);
+
+  const newButton = guest ? null : (
+    <Button onClick={() => void openPicker()} busy={opening} data-new-library="">
+      {t("media.newLibrary.new")}
+    </Button>
+  );
+  const Picker = picker;
+
   return (
     <main className="wide media-page">
-      <PageTitle>{t("media.title")}</PageTitle>
+      {/* Altijd op dezelfde plek: na het maken staat de focus weer op deze knop */}
+      <PageTitle actions={newButton}>{t("media.title")}</PageTitle>
       {error && <p role="alert">{error}</p>}
       {home === null && !error && <Skeleton lines={3} />}
       {home && home.libraries.length === 0 && (
@@ -133,6 +169,7 @@ function Home(): JSX.Element {
       {home && home.next_up.length > 0 && <CardRow id="next" title={t("media.home.nextUp")} cards={home.next_up} />}
       {home && home.libraries.length > 0 && <LibraryList libraries={home.libraries} />}
       {home && home.recent.length > 0 && <CardRow id="recent" title={t("media.home.recent")} cards={home.recent} />}
+      {Picker && <Picker onClose={closePicker} />}
     </main>
   );
 }

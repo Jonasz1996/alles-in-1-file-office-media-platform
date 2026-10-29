@@ -10,9 +10,10 @@ gaat met focus() (één tabstop), en een nieuwe pagina met goto:
   gaan naar /kijken (met ?t=); een upload daarna verschijnt binnen de grens van Klaar als;
 - een bibliotheek met series: de rij Net toegevoegd met ← en →, de serie met haar seizoen en
   afleveringen, Afspelen S01E01, en Opnieuw scannen;
-- een import uit /data/import met `app.cli media-import` (de knop op /beheer is van M10): de
-  items verschijnen in de bibliotheek op de doelmap, de bron blijft (kopiëren), en de taak
-  media.import eindigt als done.
+- Nieuwe bibliotheek op /media (de lege start): de mappenkiezer en de dialoog met het
+  toetsenbord; daarna een import uit /data/import met `app.cli media-import` (de knop op /beheer
+  is van M10): de items verschijnen in de bibliotheek op de doelmap, de bron blijft (kopiëren),
+  en de taak media.import eindigt als done.
 """
 
 from __future__ import annotations
@@ -311,7 +312,39 @@ def test_import_uit_data_import_met_de_cli(media, media_browsers, ffmpeg_count):
 
     owner = media.user()
     target = media.folder(owner, "Import")
-    library = make_library(media, owner, target, "videos")
+
+    # De lege start: Nieuwe bibliotheek, de map kiezen, het soort Video's, Enter
+    page = media_browsers.context_as(owner).new_page()
+    page.goto("/media")
+    expect(page.get_by_role("heading", name="Nog geen bibliotheken")).to_be_visible()
+    tab_to(page, "[data-new-library]")
+    page.keyboard.press("Enter")
+    picker = page.get_by_role("dialog", name="Kies de map voor de bibliotheek")
+    expect(picker).to_be_visible()
+    expect_focus_text(page, "Import")  # de eerste map
+    page.keyboard.press("Enter")  # de map openen
+    use = picker.get_by_role("button", name="Deze map gebruiken")
+    expect(use).to_be_focused()  # geen mappen erin: de knop om hier te kiezen
+    page.keyboard.press("Enter")
+    dialog = page.get_by_role("dialog", name="Als bibliotheek gebruiken")
+    expect(dialog).to_be_visible()
+    expect(picker).to_have_count(0)
+    expect(dialog).to_contain_text("De map Import wordt een bibliotheek")
+    expect(dialog.get_by_role("radio", name=re.compile(r"^Films"))).to_be_focused()
+    for _ in range(3):
+        page.keyboard.press("ArrowDown")
+    expect(dialog.get_by_role("radio", name=re.compile(r"^Video's"))).to_be_checked()
+    page.keyboard.press("Tab")
+    page.keyboard.press("Enter")
+    expect(
+        page.locator(".toast-message", has_text="Bibliotheek Import gemaakt. De scan loopt.")
+    ).to_be_visible()
+    [library] = libraries(media, owner)
+    assert (library["kind"], library["root_id"]) == ("videos", target), library
+    # De start toont de bibliotheek nu, en de focus staat weer op de knop
+    expect(page.get_by_role("link", name=re.compile(r"^Import"))).to_be_visible()
+    expect(page.locator("[data-new-library]")).to_be_focused()
+
     source = media.server.data_dir / "import" / f"batch-{uuid.uuid4().hex[:8]}"
     source.mkdir(parents=True)
     try:
@@ -335,7 +368,6 @@ def test_import_uit_data_import_met_de_cli(media, media_browsers, ffmpeg_count):
         assert [s for s, _ in import_jobs(media)][-1:] == ["done"], import_jobs(media)
 
         # In de browser: de bibliotheek met de twee video's
-        page = media_browsers.context_as(owner).new_page()
         page.goto(f"/media/bibliotheek/{library['id']}")
         grid = page.get_by_role("grid", name="Inhoud van Import")
         expect(grid.locator(".media-card-title")).to_have_text(["Vakantie 2019", "Verjaardag"])
