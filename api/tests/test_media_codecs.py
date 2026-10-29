@@ -350,3 +350,23 @@ async def test_de_strings_van_elke_fixture(worker, name):
         s.codec_string for s in probe.audio_streams()
     )
     assert got == WANT[name]
+
+
+@pytest.mark.parametrize("name", list(WANT))
+def test_de_opnames_hebben_de_strings_van_de_echte_worker(name):
+    """De nep-worker geeft de opnames van tests/media/recorded/probe. Bij het samenvoegen van M3
+    opnieuw opgenomen (cd api && uv run python -m tests.media.record): daarvoor hadden ze de
+    strings van de stub van M0 (vp09.00.40.08 en hvc1.….B0). record.differences kijkt niet naar
+    de strings, dus deze test houdt de opnames gelijk aan WANT, en die toetst de echte worker
+    hierboven (marker media)."""
+    from app.media.types import Probe
+    from tests.media import record
+
+    found = record.load(name)
+    assert found is not None and "data" in found, name
+    probe = Probe.model_validate(found["data"])
+    video = probe.video()
+    got = ((video.codec_string,) if video else ()) + tuple(
+        s.codec_string for s in probe.audio_streams()
+    )
+    assert got == WANT[name], "neem opnieuw op: cd api && uv run python -m tests.media.record"

@@ -30,7 +30,7 @@
     "bitrate": null,
     "channels": null,
     "codec": "hevc",
-    "codec_string": "hvc1.2.4.L93.B0",
+    "codec_string": "hvc1.2.4.L93.90",
     "color": {
      "matrix": "bt2020nc",
      "primaries": "bt2020",

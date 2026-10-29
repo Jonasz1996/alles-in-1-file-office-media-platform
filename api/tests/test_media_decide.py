@@ -639,7 +639,7 @@ def test_mime():
     )
     assert mime_of(probe("noaudio.mp4"), "chrome_ci") == 'video/mp4; codecs="avc1.64001e"'
     assert mime_of(probe("vp9_opus.webm"), "chromium141") == (
-        'video/webm; codecs="vp09.00.40.08,opus"'
+        'video/webm; codecs="vp09.00.21.08,opus"'
     )
     assert mime_of(probe("h264_ac3_51.mkv", **K), "chrome_ci") == (
         'video/mp4; codecs="avc1.64001e,mp4a.40.2"'
