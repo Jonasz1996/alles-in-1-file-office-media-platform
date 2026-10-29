@@ -50,6 +50,11 @@ pytestmark = [
 ]
 
 WAIT_S = 2.0  # media_segment_wait in deze tests (20 s in het echt)
+# De scenario's van het contract tegen de echte routes wachten langer: een herstart is de oude
+# run stoppen, 300 ms samenvoegen, de worker opnieuw vragen tot de oude plaats vrij is, en dan
+# het eerste fragment. Onder last (de hele set tegelijk) was 2 s één keer te krap (review golf
+# 2, C6). Alleen het scenario dat de wachttijd zelf test, houdt WAIT_S (het kost 3 keer zoveel).
+CONTRACT_WAIT_S = 6.0
 DIRECT = {"h264": "h264_aac.mp4", "vp9": "vp9_opus.webm"}
 BROWSER = {"h264": "chrome_ci", "vp9": "chromium141"}
 HEVC = {"codec": "hevc", "codec_string": "hvc1.1.6.L63.90"}
@@ -219,7 +224,11 @@ async def world(request, media_app, client, admin, monkeypatch):
 
 
 @pytest.mark.parametrize("scenario", MC.SCENARIOS, ids=lambda s: s.__name__)
-async def test_contract_echt(scenario, world):
+async def test_contract_echt(scenario, world, media_app):
+    if scenario is not MC.geen_segment_op_tijd:
+        settings, _ = media_app
+        world.monkeypatch.setattr(settings, "media_segment_wait", CONTRACT_WAIT_S)
+        world.wait_s = CONTRACT_WAIT_S
     await scenario(world)
     # Na elk scenario: geen run meer bij de worker voor een gesloten sessie (het sluiten loopt
     # op de achtergrond; wacht daarop)
