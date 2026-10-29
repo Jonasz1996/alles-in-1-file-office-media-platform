@@ -204,13 +204,13 @@ export class Recovery {
         return { ok: false, error: err };
       }
       if (f.kind === "renew") {
-        if (!renewing) {
-          if (!this.limiter.allow(d.now())) {
-            d.notice(null);
-            return { ok: false, error: err, loop: true };
-          }
-          renewing = true;
+        // Elke 410 telt, ook een tweede in dezelfde ronde (de nieuwe sessie was meteen weer weg):
+        // anders vernieuwt hij in een strakke lus
+        if (!this.limiter.allow(d.now())) {
+          d.notice(null);
+          return { ok: false, error: err, loop: true };
         }
+        renewing = true;
       } else if (f.kind === "wait") {
         if (++waits > WAIT_MAX) {
           d.notice(null);

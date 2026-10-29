@@ -120,6 +120,17 @@ describe("vernieuwen bij 410", () => {
     expect(renews).toBe(4);
   });
 
+  it("geeft de nieuwe sessie meteen weer 410, dan geen strakke lus: na 3 keer stopt hij", async () => {
+    const f = fake();
+    let renews = 0;
+    f.deps.renew = async () => {
+      renews++;
+      throw gone();
+    };
+    expect(await new Recovery().run(gone(), f.deps)).toMatchObject({ ok: false, loop: true });
+    expect(renews).toBe(3);
+  });
+
   it("de grens telt ook als de 410's uit verschillende fouten komen", () => {
     const l = new RenewLimiter();
     expect([l.allow(0), l.allow(1), l.allow(2), l.allow(3)]).toEqual([true, true, true, false]);

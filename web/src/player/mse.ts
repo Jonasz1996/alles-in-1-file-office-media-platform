@@ -484,6 +484,13 @@ export class MseLoader {
     this.kick();
   }
 
+  /** Stoppen met laden tot switchTo: de oude sessie gaat zo dicht, zijn verzoeken geven 410. */
+  hold(): void {
+    this.token++;
+    this.ctrl?.abort();
+    this.failed = true;
+  }
+
   /**
    * Verder met een nieuwe sessie (na 410, of een andere kwaliteit of spoor). flush: wat er staat
    * weg (ander geluid of beeld); zonder flush loopt de buffer door (zelfde keuze). De inits van
