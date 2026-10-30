@@ -1,7 +1,7 @@
 # Fase 5 — Media en streaming
 
-Status: **golf 3 samengevoegd, de review en de nacontrole van golf 3 verwerkt: M0 tot en met
-M6** (bouwontwerp revisie 2; 30 oktober 2026).
+Status: **golf 4 samengevoegd: M0 tot en met M7, en M9** (bouwontwerp revisie 2; 30 oktober
+2026). De review van golf 4 volgt nog.
 M0 is het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker,
 F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
 
@@ -31,10 +31,20 @@ F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
   audiospoor, ondertitels, sprites, hoofdstukken, de kaart "Volgende aflevering", herstel na een
   verlopen sessie of een herstart van de app, en het toetsenbord
   ([toetsenbord-m6.md](toetsenbord-m6.md)). Lazy geladen, binnen het budget.
+- **M7, de kijkvoortgang** ([m7.md](m7.md)): de speler meldt zijn stand, de app houdt hem in het
+  geheugen en schrijft hooguit eens per 10 s (pauze en stop meteen), en elk ander tabblad of
+  apparaat ziet hem via SSE binnen 2 s. Gezien bij 90 %, de aftiteling of 3 minuten voor het
+  eind; de rijen Verder kijken en Volgende aflevering op `/media`, met het toetsenbord
+  ([toetsenbord-m7.md](toetsenbord-m7.md)).
+- **M9, muziek en gapless** ([m9.md](m9.md)): albums, artiesten en afspeellijsten op `/muziek`,
+  de muziekbalk die blijft spelen bij navigeren, en nummers die naadloos aansluiten (één
+  MediaSource; de gegevens van `audio_info`, eigen lezers in de worker; `audio.mp4` via
+  `remux_audio`). Bewezen voor FLAC en Opus in Chromium 141; alles met het toetsenbord
+  ([toetsenbord-m9.md](toetsenbord-m9.md)).
 
-De rest (M7–M10: voortgang, metadata online, muziek, beheer en uitrol) komt in de volgende
-golven. Media staat standaard uit: zonder `PLATFORM_MEDIA_ENABLED` is de app 0.6.0 plus F1–F4,
-en de previews van video's werken zoals in 0.6.0 (via een worker voor één keer, M1).
+De rest (M8 en M10: metadata online, beheer en uitrol) komt in de volgende golf. Media staat
+standaard uit: zonder `PLATFORM_MEDIA_ENABLED` is de app 0.6.0 plus F1–F4, en de previews van
+video's werken zoals in 0.6.0 (via een worker voor één keer, M1).
 
 Bij het samenvoegen van golf 1 (M1, dan M3) gingen er geen bestanden van beide pakketten door
 elkaar; alleen `ci.yml` botste met het weghalen van de job `media-spike`. Wat er toen nog
@@ -201,6 +211,34 @@ groen (806 tests, eerste lading JS 96,0 van 100 KB, `/kijken` 23,1 van 45 KB, de
 worker op cores 0–2): Ma 390 ms, Mb 1561 ms, Mc 1922 / 859 / 2193 ms, alle binnen hun grens, ook
 de slechtste.
 
+Bij het samenvoegen van golf 4 (M7, dan M9) kwamen beide pakketten met cherry-pick, met hun
+eigen commits en boodschappen. Ze bouwden op `bcd90ed`; daarna stonden er al negen commits van de
+lead op de tak (de springer van de speler en de e2e van M6 na CI-run 41002597837), en die raakten
+geen bestand van M7 of M9. Eén botsing: `test_media_api_stubs.py` (M0), waar beide hun routes in
+`BUILT` zetten; beide bleven. Wat er daarna nog gebeurde, staat onder "Bij het samenvoegen (golf
+4)" in [m7.md](m7.md), [m9.md](m9.md) en [m2.md](m2.md):
+
+- **De pagina's van M2 tonen de stand uit het geheugen van M7.** De Reader van M2 las alleen
+  `playback_state`; een tik of sprong (die M7 tot 10 s in het geheugen houdt) kwam op de pagina
+  van een item of een serie en in de lijst van een bibliotheek pas na het schrijven, terwijl
+  Keuze 36 ≤ 2 s wil, ook voor de balkjes. Nu legt `progress.overlay` het geheugen over elke
+  kaart van de Reader. `/media/home` neemt Net toegevoegd alleen nog uit `home_rows`.
+- **Een test van de worker-kern die soms faalde** (M0-hotfix, alleen de test): de lijst van de
+  fd's van een kind kwam soms precies terwijl de dynamische lader van `sleep` `libc.so.6` open
+  had (fd 4, even later weer dicht). De test wacht nu tot de lader klaar is; een fd die echt
+  meekomt, vangt hij nog steeds.
+
+De uitslag op de samengevoegde stand, in de sandbox: api 3448 goed en 1 overgeslagen; `-m media`
+(onder `taskset -c 0-2`, twee keer) 174 goed; web groen (872 tests, eerste lading JS 96,3 van 100
+KB, de route Bestanden 43,6 van 45 KB, `/media` 14,2 van 45 KB, `/kijken` 24,7 van 45 KB, de
+speler 24,9 van 35 KB, muziek 30,2 van 40 KB, i18n strikt zonder meldingen); de e2e van fase 3
+en 4 110 goed; `-m office` 30 goed; e2e `-m media` 59 goed en 4 overgeslagen (alle vier H.264,
+dat Chromium 141 niet kan). "Klaar als" van M7 hier: synchroniseren p95 0,081 s over 20 keer
+(grens 2 s). Van M9: de fase springt 0,0 samples bij FLAC en hooguit 0,014 bij Opus (grens 1).
+AAC gapless, de worker-container met `audio_info` en `remux_audio`, en Chrome for Testing ziet
+pas CI. Jonas heeft de beslissingskaarten van fase 5 nog niet beantwoord: M7 en M9 bouwen op de
+standaarden; B39–B48 staan niet als besloten.
+
 ## Doel
 
 Films, series en muziek afspelen op elk apparaat, met zo weinig mogelijk omzetten. Uit het
@@ -301,5 +339,9 @@ worker, de kosten van de bron, de tijden van fMP4, en de eerste start op 3 cores
 - [m5.md](m5.md): ondertitels, sprites en hoofdstukken (M5).
 - [m6.md](m6.md): de speler (M6), met de metingen van "Klaar als" in de browser;
   [toetsenbord-m6.md](toetsenbord-m6.md) voor het toetsenbord.
+- [m7.md](m7.md): de kijkvoortgang (M7), met de meting van het synchroniseren;
+  [toetsenbord-m7.md](toetsenbord-m7.md) voor het toetsenbord.
+- [m9.md](m9.md): muziek en gapless (M9), met de meting van gapless in de browser;
+  [toetsenbord-m9.md](toetsenbord-m9.md) voor het toetsenbord.
 - [e2e.md](e2e.md): de tests van media (de markers `media`, `media_perf` en `provider_real`),
   het harnas, de nep-servers, de jobs in CI, en hoe je ze lokaal draait.

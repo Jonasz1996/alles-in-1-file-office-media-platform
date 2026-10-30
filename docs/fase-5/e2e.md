@@ -285,6 +285,15 @@ zet de vlag dan niet stil terug: dat is een vondst voor §6 van het bouwontwerp.
   *Bij het samenvoegen van golf 3 (M2 en M6):* `e2e/test_media_m6.py` speelt de speler tegen de
   echte routes van M3, M4 en M5, en sinds golf 3 ook tegen de echte bibliotheek van M2 (de
   stand-in in de browser is weg). `e2e/test_media_m6_perf.py` zet Ma, Mb en Mc in `media_perf`.
+- **M7 en M9** (golf 4): `e2e/test_media_m7.py` speelt met twee contexts van dezelfde gebruiker
+  (A speelt en pauzeert, B ziet het binnen 2 s; de p95 van 20 keer is "Klaar als"), en de rijen
+  Verder kijken en Volgende aflevering met het toetsenbord. `e2e/test_media_m2.py` zet "Verder op
+  0:03" sindsdien met de echte `PUT …/progress` in plaats van een rij in `playback_state`.
+  `e2e/test_media_m9.py` meet gapless met een AudioWorklet (FLAC en Opus geëist, MP3 en AAC
+  vastgelegd) en speelt albums, artiesten, de muziekbalk en afspeellijsten met het toetsenbord.
+  Het worklet staat tijdens de test in `web/dist/__e2e-m9/` (page.route ziet geen worklet-module;
+  [m9.md](m9.md), afwijking 1). *Bij het samenvoegen van golf 4:* beide op de stand met de
+  springer van M6 (CI-run 41002597837) samen groen; zie [m7.md](m7.md) en [m9.md](m9.md).
 - **M10:** in `media-image` het bewijs van R12 (installeren vanaf de commit van 0.6.0, bijwerken
   naar deze versie, een transcode via curl en dan `docker top`: geen ffmpeg in de app, één in
   `media`) en de rooktest van de belastingtest; `/api/v1/admin/media` en de rest van
