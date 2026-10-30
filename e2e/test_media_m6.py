@@ -381,7 +381,14 @@ def test_direct_het_profiel_het_eerste_beeld_en_zoeken(media, media_browsers, ff
     profile = first["body"]["profile"]
     # De meting van clientprofiel.md: de vorm, de grens van 64 en de strings van het item
     assert profile["v"] == 1 and profile["base"] == "web", profile
-    assert profile["client"]["kind"] == "web" and profile["client"]["name"].startswith("Chrom")
+    # De naam is wat de browser zelf zegt (Keuze 20, het eerste merk dat niet "Chromium" is): de
+    # Chromium van de sandbox "Chromium 141", de headless shell van CI "HeadlessChrome 156",
+    # Chrome "Google Chrome 156". Dus een Chromium-naam met het hoofdnummer van deze browser
+    # (CI-run 41002597837: startswith("Chrom") hield alleen met de Chromium van de sandbox)
+    assert profile["client"]["kind"] == "web", profile["client"]
+    major = page.context.browser.version.split(".")[0] if page.context.browser else "?"
+    named = re.fullmatch(r"(?i)[a-z ]*chrom[a-z ]* (\d+)", profile["client"]["name"])
+    assert named and named[1] == major, (profile["client"], major)
     assert profile["engines"]["mse"] is True, profile["engines"]
     assert 0 < len(profile["codecs"]) <= 64, len(profile["codecs"])
     assert profile["codecs"]["opus"]["mse"] is True, profile["codecs"]

@@ -187,6 +187,24 @@ describe("de naam en het basisprofiel", () => {
     ).toBe("Safari 17");
   });
 
+  it("de headless shell van CI heet HeadlessChrome (CI-run 41002597837)", () => {
+    // chrome-headless-shell 156 geeft deze merken; deny_by_name kijkt of de naam het woord bevat,
+    // en "chrome" zit erin
+    const brands = [
+      { brand: "Not)A;Brand", version: "8" },
+      { brand: "Chromium", version: "156" },
+      { brand: "HeadlessChrome", version: "156" },
+    ];
+    expect(clientName({ userAgent: "", brands })).toBe("HeadlessChrome 156");
+    // Zonder merken: uit de user agent; de regel voor Chrome/ vindt het ook in HeadlessChrome/
+    const ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36";
+    expect(clientName({ userAgent: ua })).toBe("Chrome 156");
+    // De Chromium van de sandbox heeft alleen Chromium als merk
+    expect(clientName({ userAgent: "", brands: [{ brand: "Chromium", version: "141" }, { brand: "Not=A?Brand", version: "24" }] })).toBe(
+      "Chromium 141",
+    );
+  });
+
   it("Safari krijgt ios-safari, Chrome en Firefox web", () => {
     expect(baseFor({ userAgent: "Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 Version/17.4 Mobile/15E148 Safari/604.1" })).toBe("ios-safari");
     expect(baseFor({ userAgent: "Mozilla/5.0 (X11) AppleWebKit/537.36 Chrome/141.0 Safari/537.36" })).toBe("web");
