@@ -153,6 +153,29 @@ def test_een_lange_origin_past_in_de_kolom():
     assert progress.origin_key(long_a) == progress.origin_key(long_a)
 
 
+
+async def test_apply_knipt_te_grote_getallen_af(world):
+    """Na-controle van golf 4 (S2): wie Store.put zonder de router aanroept (die geeft 422),
+    krijgt de getallen afgeknipt tot wat SQLite kan bewaren; de stand komt in de database en
+    gaat niet verloren in de schrijver per stand."""
+    one, two = world.nodes[0], world.nodes[1]
+    # Zonder duur: de positie zelf afgeknipt
+    big = body(0, duration_s=0, event="pause", seq=2**70, audio=2**70)
+    big = big.model_copy(update={"position_ms": 10**19})
+    assert await world.store.put(world.user_id, one, None, big) == "ok"
+    # Een duur van 10**19 ms: afgeknipt, en de positie erbinnen (gezien, dus 0)
+    long = body(0, event="pause").model_copy(update={"position_ms": 10**19, "duration_ms": 10**19})
+    assert await world.store.put(world.user_id, two, None, long) == "ok"
+    await world.store.flush_user(world.user_id)
+    row = await world.row(one)
+    assert row is not None
+    assert row.seq == progress.SEQ_MAX and row.audio is None
+    assert row.position_ms == progress.MS_MAX and row.duration_ms == 0
+    row = await world.row(two)
+    assert row is not None and row.watched
+    assert row.duration_ms == progress.MS_MAX and row.position_ms == 0
+
+
 # Gezien, play_count en de positie
 
 
