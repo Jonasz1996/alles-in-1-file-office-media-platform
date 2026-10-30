@@ -1,6 +1,7 @@
 # Fase 5 — Media en streaming
 
-Status: **golf 3 samengevoegd: M0 tot en met M6** (bouwontwerp revisie 2; 29 oktober 2026).
+Status: **golf 3 samengevoegd en de review van golf 3 verwerkt: M0 tot en met M6** (bouwontwerp
+revisie 2; 30 oktober 2026).
 M0 is het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker,
 F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
 
@@ -139,7 +140,8 @@ daarna nog gebeurde, staat onder "Bij het samenvoegen (golf 3)" in [m2.md](m2.md
     het midden van 300 s; de producent wacht dan op de tegendruk en leeft tot de test weggaat.
 
 De maat van een item (voor `decodingInfo` op `/kijken`) staat niet in het `Item` van M0; die
-blijft open ([m6.md](m6.md), afwijking 5).
+blijft open ([m6.md](m6.md), afwijking 5). *Bij de review van golf 3:* gedaan, uit de meta van de
+preview, zonder het `Item` te veranderen.
 
 De uitslag op de samengevoegde stand van golf 3, in de sandbox: api 3268 goed en 1 overgeslagen
 (twee volle rondes); `-m media` (onder `taskset -c 0-2`, twee keer) 165 goed, niets overgeslagen;
@@ -153,6 +155,31 @@ fixes van de e2e van M6 hierboven (de twee runs ervoor hadden elk één van die 
 Mb transcode 1197 ms (grens 5000), Mc zoeken direct 1860, remux 856 en transcode 1938 ms (grens
 3000; direct ligt boven de 1500 uit de tabel van §4.5, die alleen ter informatie is). Het image,
 de worker-container en Chrome for Testing ziet pas CI.
+
+De review van golf 3 had 19 bevindingen voor M2 en M6 (S1–S5, C1–C8, K1–K6); ze klopten alle
+19. Elke bevinding staat met haar uitkomst, de commit en de tests onder "De review (golf 3)" in
+[m2.md](m2.md) en [m6.md](m6.md). De belangrijkste:
+
+- **Veiligheid:** een NFO met `encoding="punycode"` legde de worker minutenlang stil (nu alleen
+  coderingen van een vaste lijst); een verplaatste import hield 0666 en de eigenaar van de bron
+  (nu 0600, en een bestand van een ander via een kopie); items en posters bleven na de prullenbak
+  of een verhuizing zichtbaar tot de volgende scan (nu per vraag nagekeken); `._Film.mkv` van een
+  Mac werd een tweede film.
+- **Wat verloren ging:** de rest van een volledige ronde in stukken, de bron van een import die
+  stopte tussen rename en `place_file`, en de stappen van de bibliotheek als de analyse al zonder
+  bibliotheek liep.
+- **De speler:** na een vol quotum bleef er een gat in de buffer; `retry()` en de lus van de
+  lader liepen tegelijk aan de SourceBuffer (de speler stopte na een herstart van de worker); en
+  de speler keek naar `/api/v1/health`, een route die niet bestaat (nu `/health`). Die laatste
+  twee vond de nieuwe e2e van §4.3 #12 (de worker gedood tijdens een transcode). `/kijken` meet
+  nu op de maat van het item.
+
+Geen M0-hotfix. De uitslag na de review, in de sandbox: api 3309 goed en 1 overgeslagen; `-m
+media` (onder `taskset -c 0-2`, drie keer) 165 goed; web groen (806 tests, eerste lading JS 96,0
+van 100 KB, `WatchPage` 23,1 van 45 KB, de speler 22,0 van 35 KB, i18n strikt zonder meldingen);
+de e2e van fase 3 en 4 110 goed, `-m office` 30 goed, `-m media` 49 goed en 4 overgeslagen (alle
+vier H.264, dat Chromium 141 niet kan). De e2e van de gedode worker drie keer los groen. Ma met
+H.264 (nieuw, K1) meet alleen CI.
 
 ## Doel
 
