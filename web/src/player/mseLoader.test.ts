@@ -5,10 +5,13 @@
 // - K3: retry (de herstel-lus na een 503, bijvoorbeeld de worker gedood) en een pump die timeupdate
 //   start, mogen nooit tegelijk aan de SourceBuffer: dat gaf "This SourceBuffer is still
 //   processing an 'appendBuffer'" (InvalidStateError) en de speler stopte met een fout.
+// - CI-run 41002597837: na de herstel-lus komt een segment van een nieuwe run waarvan het geluid
+//   niet aansluit (H.264 met B-frames en AAC: 41 ms later dan het eind van het vorige). In
+//   buffered is dat een gat, maar de video stond daar al stil: de springer moet ook dan nog kijken.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GridSegments } from "../media/types";
-import { aheadOf, MseLoader, type Span, segmentTime } from "./mse";
+import { aheadOf, GAP_WAIT_MS, MseLoader, type Span, segmentTime } from "./mse";
 
 // Segmenten van 2 s, 100 s lang
 const GRID: GridSegments = { grid_ms: 2000, origin_ms: 0, count: 50, last_frame_ms: 99_980 };
@@ -233,5 +236,85 @@ describe("retry na een fout en timeupdate tegelijk (K3)", () => {
     expect(sb.appended.filter((a) => a === 6)).toHaveLength(1); // segment 3 (6-8 s) één keer
     expect(aheadOf(sb.spans, 6)).toBeGreaterThan(4);
     loader.destroy();
+  });
+});
+
+describe("een gat dat pas komt als de video al stilstaat (CI-run 41002597837)", () => {
+  beforeEach(() => {
+    vi.stubGlobal("MediaSource", FakeMediaSource);
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:nep");
+    vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("springt erover zodra het segment van de nieuwe run er is, zonder nieuwe waiting", async () => {
+    sb = new FakeSourceBuffer(1000);
+    const video = new FakeVideo();
+    const errors: unknown[] = [];
+    // Zoals in CI (H.264 met B-frames, AAC): in de oude run eindigt het geluid van segment 4
+    // vóór de grens van 10 s, en buffered dus ook. Segment 5 geeft eerst 503 (de worker is
+    // gedood); het komt daarna van een nieuwe run, met geluid dat 44 ms na dat eind begint
+    let failedOnce = false;
+    const seam = (async (url: string) => {
+      const k = Number(/\/(\d+)\.m4s/.exec(url)?.[1] ?? -1);
+      if (k === 5 && !failedOnce) {
+        failedOnce = true;
+        return new Response(JSON.stringify({ detail: { message: "weg", code: "media_worker_down" } }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (k === 4) return new Response(new Float64Array([8, 9.9705]).buffer);
+      if (k === 5) return new Response(new Float64Array([10.0145, 12]).buffer);
+      return fetchFn(url);
+    }) as unknown as typeof fetch;
+    const loader = new MseLoader(
+      video as unknown as HTMLVideoElement,
+      { sid: "s", duration: 100, map: { gen: 1, mime: "video/mp4", offset: 0, init: "init.mp4", segments: GRID } },
+      { error: (e) => errors.push(e) },
+      seam,
+    );
+    await loader.open(0);
+    await until(() => errors.length > 0);
+    expect(errors).toHaveLength(1); // de 503 van segment 5
+    // De buffer is op: Chromium staat zo'n 50 ms vóór het eind stil (gemeten in Chromium 141)
+    video.currentTime = 9.9202;
+    video.readyState = 2;
+    video.dispatchEvent(new Event("waiting"));
+    await new Promise((ok) => setTimeout(ok, GAP_WAIT_MS + 50));
+    expect(video.currentTime).toBe(9.9202); // nog niets om heen te springen
+    // De herstel-lus van session.ts haalt het segment opnieuw; de video staat nog steeds stil
+    await loader.retry();
+    expect(sb.spans.some(([a]) => Math.abs(a - 10.0145) < 1e-9)).toBe(true);
+    await until(() => video.currentTime !== 9.9202);
+    expect(video.currentTime).toBeCloseTo(10.0145);
+    expect(errors).toHaveLength(1);
+    loader.destroy();
+  });
+
+  it("kijkt niet meer na destroy", async () => {
+    sb = new FakeSourceBuffer(1000);
+    const video = new FakeVideo();
+    const loader = new MseLoader(
+      video as unknown as HTMLVideoElement,
+      { sid: "s", duration: 100, map: { gen: 1, mime: "video/mp4", offset: 0, init: "init.mp4", segments: GRID } },
+      { error: () => undefined },
+      fetchFn,
+    );
+    await loader.open(0);
+    await settle();
+    video.currentTime = 29.97;
+    video.readyState = 2;
+    video.dispatchEvent(new Event("waiting"));
+    loader.destroy();
+    sb.spans = [
+      [0, 30],
+      [30.1, 40],
+    ];
+    await new Promise((ok) => setTimeout(ok, 3 * GAP_WAIT_MS));
+    expect(video.currentTime).toBe(29.97);
   });
 });

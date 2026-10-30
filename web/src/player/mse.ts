@@ -21,8 +21,19 @@ export const BEHIND_S = 60;
 export const QUOTA_AHEAD_S = 10;
 /** Over een gat tot zo groot springt hij (s). */
 export const GAP_MAX_S = 0.5;
-/** Zo lang na waiting kijkt hij of er een gat is (ms; spike S4). */
+/**
+ * Zo lang na waiting kijkt hij of er een gat is (ms; spike S4), en zolang de video stil blijft
+ * staan om de zoveel opnieuw: een gat kan ook pas komen als hij al stilstaat (CI-run 41002597837).
+ */
 export const GAP_WAIT_MS = 250;
+/**
+ * Zo dicht bij het eind van een gebufferd stuk telt de positie als het eind (s). Chromium staat bij
+ * een gat zo'n 50 ms vóór het eind van het stuk stil (Chromium 141: 49 tot 51 ms); de grens van
+ * 50 ms die hier eerst stond, viel daar precies op (CI-run 41002597837). 0,25 s laat ruimte voor
+ * een andere build en is klein tegen een segment van 2 s; de springer kijkt alleen als de video al
+ * GAP_WAIT_MS stilstaat.
+ */
+export const GAP_END_S = 0.25;
 /** Twee haperingen in een minuut bij transcode: een trede lager. */
 export const STALL_LIMIT = 2;
 export const STALL_WINDOW_MS = 60_000;
@@ -98,8 +109,8 @@ export function evictable(list: readonly Span[], t: number, behind = BEHIND_S, a
  * gebufferde stuk binnen GAP_MAX_S na t, dan daarheen. Anders null (er moet nog data komen).
  */
 export function gapTarget(list: readonly Span[], t: number, max = GAP_MAX_S): number | null {
-  // Midden in een stuk (niet aan het eind) is geen gat
-  if (list.some(([a, b]) => t >= a && t < b - 0.05)) return null;
+  // Midden in een stuk (niet in de laatste GAP_END_S) is geen gat
+  if (list.some(([a, b]) => t >= a && t < b - GAP_END_S)) return null;
   const next = list.find(([a]) => a > t);
   return next && next[0] - t <= max ? next[0] : null;
 }
@@ -286,13 +297,26 @@ export class MseLoader {
     // Een hapering telt niet voor het eerste beeld, en niet vlak na een sprong of wissel
     if (this.played && performance.now() - this.seekedAt > 2000) this.events.stall?.();
     this.clearGap();
+    this.watchGap();
+    this.kick();
+  }
+
+  /**
+   * Na GAP_WAIT_MS kijken of de video voor een gat staat, en zolang hij stil blijft staan om de
+   * GAP_WAIT_MS opnieuw (tot playing, een sprong, pauze of destroy). Eén keer kijken was te
+   * weinig: na de herstel-lus komt een segment van een nieuwe run, en sluit het geluid daarvan niet
+   * aan (H.264 met B-frames en AAC: 41 ms), dan ontstaat het gat pas als de video al stilstaat
+   * (CI-run 41002597837).
+   */
+  private watchGap(): void {
     this.gapTimer = setTimeout(() => {
       this.gapTimer = null;
-      if (this.destroyed || this.video.readyState >= 3) return;
-      const to = gapTarget(this.buffered(), this.video.currentTime);
-      if (to !== null) this.video.currentTime = to;
+      const v = this.video;
+      if (this.destroyed || v.readyState >= 3 || v.seeking || v.paused) return;
+      const to = gapTarget(this.buffered(), v.currentTime);
+      if (to !== null) v.currentTime = to;
+      else this.watchGap();
     }, GAP_WAIT_MS);
-    this.kick();
   }
 
   private clearGap(): void {
