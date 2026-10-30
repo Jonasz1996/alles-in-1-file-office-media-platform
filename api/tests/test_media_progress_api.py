@@ -588,3 +588,105 @@ async def test_started_at_buiten_het_bereik_van_de_klok(w):
     late = dt.datetime(9999, 12, 31, 23, 30, tzinfo=dt.timezone(dt.timedelta(hours=-1)))
     assert progress.aware(early) == progress.EPOCH
     assert progress.aware(late) == progress.EPOCH
+
+
+async def settled() -> None:
+    """Tot de korte taken na hooks.touched klaar zijn (een begrensde lus)."""
+    import anyio
+
+    for _ in range(200):
+        if not progress._after:
+            return
+        await anyio.sleep(0.01)
+    raise AssertionError("de taak na een nieuwe versie loopt nog")
+
+
+async def job_of(settings, node: str):
+    from sqlalchemy import select
+
+    from app.models import Job
+
+    async with maker(settings)() as session:
+        return await session.scalar(select(Job).where(Job.key == f"{progress.JOB}:{node}"))
+
+
+async def test_een_vervangen_bestand_ook_op_de_paginas_van_m2(w, client):
+    """Review golf 4, K2 (Keuze 36): een ander bestand (blob en duur meer dan 5 % anders) zet de
+    stand terug naar 0, ook op de pagina van het item en in de lijst van de bibliotheek, niet
+    alleen in Verder kijken. Eerst bood de pagina "Verder op 30:00" aan in het nieuwe bestand.
+    Hier nieuwe inhoud: de job media.voortgang wacht op de probe."""
+    from app import jobs
+
+    settings, headers = w
+    library_id, folder = await library(client, headers)
+    node = await upload(client, headers, folder, "Film (2001).mkv")
+    await scan(settings)
+    assert (await save(client, headers, node, 30 * MIN, seq=1)).status_code == 204
+
+    async def item_progress():
+        r = await client.get(f"/api/v1/media/items/{node}", headers=headers)
+        assert r.status_code == 200, r.text
+        return r.json()["progress"]
+
+    # Een nieuwe versie met (bijna) dezelfde duur: de positie blijft
+    r = await put(client, headers, folder, "Film (2001).mkv", content("v2", 2000),
+                  conflict="replace")  # fmt: skip
+    assert r.status_code == 201
+    await settled()
+    job = await job_of(settings, node)
+    assert job is not None and job.status == "queued"
+    with pytest.raises(jobs.Defer):  # de probe is er nog niet
+        await progress._job(settings, job.payload)
+    sha = await blob_of(settings, node)
+    await analysis.save_probe(maker(settings), sha, Probe(duration_ms=3_650_000))
+    await progress._job(settings, job.payload)
+    assert (await item_progress())["position_ms"] == 1_800_000
+    # Een ander bestand: terug naar 0, ook zonder geheugen (na netjes stoppen)
+    await progress.stop()
+    r = await put(client, headers, folder, "Film (2001).mkv", content("v3", 2000),
+                  conflict="replace")  # fmt: skip
+    await settled()
+    sha = await blob_of(settings, node)
+    await analysis.save_probe(maker(settings), sha, Probe(duration_ms=2_400_000))
+    await progress._job(settings, job.payload)
+    assert await item_progress() is None
+    r = await client.get(f"/api/v1/media/libraries/{library_id}/items", headers=headers)
+    assert [c["progress"] for c in r.json()["items"]] == [None]
+    assert (await home(client, headers))["continue"] == []
+    assert (await rows_of(settings)) == {uuid.UUID(node): 0}
+    assert await progress.check_replaced(settings, [uuid.UUID(node)]) == (0, [])  # één keer
+    # Te lang zonder probe: geen Defer meer
+    r = await put(client, headers, folder, "Film (2001).mkv", content("v4", 2000),
+                  conflict="replace")  # fmt: skip
+    await settled()
+    late = {"node_id": node, "until": (dt.datetime.now(UTC) - dt.timedelta(seconds=1)).isoformat()}
+    await progress._job(settings, late)
+
+
+async def test_een_oude_versie_terug_zet_de_stand_ook_terug(w, client):
+    """Review golf 4, K2: inhoud die al een probe heeft (een oude versie terugzetten) krijgt
+    geen nieuwe analyse; de korte taak na hooks.touched("node.version") kijkt hem meteen na.
+    Een andere melding (hernoemen) zet niets klaar."""
+    settings, headers = w
+    library_id, folder = await library(client, headers)
+    node = await upload(client, headers, folder, "Film (2001).mkv")
+    await scan(settings)
+    old_sha = await blob_of(settings, node)
+    await analysis.save_probe(maker(settings), old_sha, Probe(duration_ms=2_400_000))
+    r = await put(client, headers, folder, "Film (2001).mkv", content("v2", 2000),
+                  conflict="replace")  # fmt: skip
+    assert r.status_code == 201
+    new_sha = await blob_of(settings, node)
+    await analysis.save_probe(maker(settings), new_sha, Probe(duration_ms=3_600_000))
+    assert (await save(client, headers, node, 30 * MIN, seq=1)).status_code == 204
+    progress._touched([uuid.UUID(node)], "node.changed")
+    assert not progress._after
+    await settled()
+    r = await client.get(f"/api/v1/files/{node}/versions", headers=headers)
+    assert r.status_code == 200, r.text
+    [version] = r.json()  # de eerste inhoud
+    r = await client.post(f"/api/v1/files/{node}/versions/{version['id']}/restore", headers=headers)
+    assert r.status_code == 200, r.text
+    assert await blob_of(settings, node) == old_sha
+    await settled()
+    assert (await rows_of(settings)) == {uuid.UUID(node): 0}

@@ -46,10 +46,10 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import events
+from app import events, jobs
 from app.config import Settings
 from app.db import get_engine
-from app.media import analysis, chapters, runtime
+from app.media import analysis, chapters, hooks, runtime
 from app.media import items as media_items
 from app.media.types import (
     EVENT_PROGRESS,
@@ -86,6 +86,7 @@ ENTRIES_MAX = 20_000  # daarboven gaan de oudste schone standen eruit
 INFO_MAX = 1024  # duur en aftiteling van zoveel blobs bewaard
 BATCH_EVENTS = 20  # meer nodes in één batch: alleen de eerste zoveel als event
 BATCH_ORIGIN = "batch"  # de origin van een event uit een batch
+REPLACED_ORIGIN = "replaced"  # de origin van een event na een vervangen bestand
 CHUNK = 500  # ids per IN (...)
 RETRY_S = 1.0  # de schrijver op de achtergrond na een fout
 # De grenzen van een PUT en een batch (review golf 4, S2): wat erboven ligt, kan SQLite niet
@@ -94,8 +95,6 @@ MS_MAX = 10**10  # positie en duur: ruim 115 dagen
 SEQ_MAX = 2**62
 AUDIO_MAX = 9999  # de index van een audiospoor
 SEASON_MAX = 9999
-REPLACED_POLL_S = 5.0  # een nieuwe versie: zo vaak kijken of de probe er is (K2)
-REPLACED_WAIT_S = 1800.0  # en hooguit zo lang
 
 Outcome = Literal["ok", "ignored", "rate_limited"]
 EPOCH = dt.datetime(1970, 1, 1, tzinfo=UTC)
@@ -456,6 +455,24 @@ class Store:
         self._evict_if_full()
         return len(changed)
 
+    async def file_replaced(
+        self, user_id: uuid.UUID, node_id: uuid.UUID, sha: str, duration_ms: int | None
+    ) -> bool:
+        """Keuze 36 (review golf 4, K2): is de stand van een ander bestand (andere blob, en de
+        duur meer dan 5 % anders), dan positie 0 voor de nieuwe inhoud, meteen geschreven en als
+        event. Gezien en play_count blijven. De aanroeper heeft geen transactie open."""
+        async with self.lock(user_id):
+            [e] = await self._entries(user_id, [node_id])
+            if not replaced(e.blob_sha, e.duration_ms, sha, duration_ms):
+                return False
+            e.position_ms = 0
+            e.duration_ms = min(duration_ms or 0, MS_MAX)
+            e.blob_sha = sha
+            e.dirty = True
+            self._publish(e, REPLACED_ORIGIN)
+            await self._write(user_id)
+        return True
+
     def _publish(self, e: Entry, origin: str) -> None:
         data = PlaybackProgressEvent(
             node_id=e.node_id,
@@ -667,6 +684,7 @@ _store: Store | None = None
 def store(settings: Settings) -> Store:
     """De Store van deze database: één per proces (een andere database is een andere test)."""
     global _store
+    hooks.register_touched(_touched)  # na hooks.reset (tests) weer aan
     url = settings.db_url
     if _store is None or _store.url != url or _store.closed:
         maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
@@ -676,6 +694,111 @@ def store(settings: Settings) -> Store:
 
 def current() -> Store | None:
     return _store
+
+
+# Een vervangen bestand (Keuze 36, review golf 4 K2). Eerst gold de regel alleen bij het lezen
+# van Verder kijken; de pagina's van M2 (de Reader) lazen de oude stand en boden "Verder op"
+# in het nieuwe bestand aan. Nu zet de app de stand zelf terug. files.notify meldt een nieuwe
+# versie (hooks.touched "node.version", zonder I/O); één korte taak kijkt meteen na of de
+# probe van de inhoud er al is (een oude versie terugzetten, bekende inhoud). Zo niet, dan de
+# job media.voortgang:<node> (rij default, duurzaam): die wacht met jobs.Defer op de probe,
+# hooguit JOB_WAIT_S. Voor elke stand van die node (alle gebruikers) past Store.file_replaced
+# replaced() toe. Verder kijken blijft de regel ook bij het lezen toepassen (_swapped).
+
+JOB = "media.voortgang"
+JOB_WAIT_S = 1800.0  # zo lang op de probe van een nieuwe versie wachten
+JOB_DEFER_S = 20.0
+
+_after: set[asyncio.Task] = set()
+
+
+def _touched(node_ids: list[uuid.UUID], type: str) -> None:
+    """De luisteraar voor hooks.touched: alleen een korte taak klaarzetten."""
+    if type != "node.version":
+        return
+    bound = runtime.app()
+    if bound is None or not runtime.enabled(bound):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(_after_version(list(node_ids)), name="voortgang: nieuwe versie")
+    _after.add(task)
+    task.add_done_callback(_after.discard)
+
+
+hooks.register_touched(_touched)
+
+
+async def _after_version(node_ids: list[uuid.UUID]) -> None:
+    try:
+        settings = runtime.settings()
+        _, waiting = await check_replaced(settings, node_ids)
+        if not waiting:
+            return
+        until = (jobs.now() + dt.timedelta(seconds=JOB_WAIT_S)).isoformat()
+        async with store(settings).maker() as session:
+            for node_id in waiting:
+                await jobs.enqueue(
+                    session,
+                    JOB,
+                    {"node_id": str(node_id), "until": until},
+                    key=f"{JOB}:{node_id}",
+                    run_after=jobs.now() + dt.timedelta(seconds=JOB_DEFER_S),
+                )
+            await session.commit()
+    except Exception:
+        log.exception("voortgang: een nieuwe versie nakijken")
+
+
+async def check_replaced(
+    settings: Settings, node_ids: Iterable[uuid.UUID]
+) -> tuple[int, list[uuid.UUID]]:
+    """Voor elke node: is de probe van zijn inhoud er, dan Store.file_replaced voor elke stand
+    van die node. Geeft (hoeveel standen terug naar 0 gingen, de nodes waarvan de probe er nog
+    niet is). Geen transactie open bij het slot van een gebruiker (regel 8)."""
+    live = store(settings)
+    changed = 0
+    waiting: list[uuid.UUID] = []
+    for node_id in dict.fromkeys(node_ids):
+        async with live.maker() as session:
+            sha = await session.scalar(select(Node.blob_id).where(Node.id == node_id))
+            probe = await session.get(MediaProbe, sha) if sha else None
+            settled = probe is not None and probe.version >= analysis.PROBE_VERSION
+            duration = probe.duration_ms if probe is not None else None
+            ready = settled and probe is not None and probe.state == "ready"
+            users = set(
+                await session.scalars(
+                    select(PlaybackState.user_id).where(
+                        PlaybackState.node_id == node_id, PlaybackState.profile == PROFILE
+                    )
+                )
+            )
+        if sha is None:
+            continue  # weg, of geen bestand meer
+        if not settled:
+            waiting.append(node_id)
+            continue
+        if not ready:
+            continue  # de probe mislukte: geen duur om te vergelijken
+        users.update(u for u, by in live.entries.items() if node_id in by)
+        for user_id in sorted(users, key=str):
+            if await live.file_replaced(user_id, node_id, sha, duration):
+                changed += 1
+    return changed, waiting
+
+
+async def _job(settings: Settings, payload: dict) -> None:
+    """De job media.voortgang: de nieuwe versie van één node, zodra zijn probe er is."""
+    node_id = uuid.UUID(str(payload["node_id"]))
+    until = dt.datetime.fromisoformat(str(payload["until"]))
+    _, waiting = await check_replaced(settings, [node_id])
+    if waiting and jobs.now() < aware(until):
+        raise jobs.Defer(JOB_DEFER_S)
+
+
+jobs.register(JOB, _job)
 
 
 def reset() -> None:
