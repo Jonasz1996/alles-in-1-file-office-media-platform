@@ -1,0 +1,44 @@
+# Beheerd door Ansible. Traefik is de rand: TLS met Let's Encrypt, HTTP/2 en HTTP/3.
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+    http3: {}
+    http:
+      tls:
+        certResolver: le
+  intern:
+    address: "{{ ansible_host }}:8082"
+
+ping:
+  entryPoint: intern
+
+metrics:
+  prometheus:
+    entryPoint: intern
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  le:
+    acme:
+      email: {{ acme_email }}
+      storage: /data/acme.json
+{% if acme_staging %}
+      caServer: https://acme-staging-v02.api.letsencrypt.org/directory
+{% endif %}
+      httpChallenge:
+        entryPoint: web
+
+accessLog: {}
+log:
+  level: INFO

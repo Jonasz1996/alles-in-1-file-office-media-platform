@@ -1,0 +1,52 @@
+{
+ "data": {
+  "bit_rate": 230292,
+  "chapters": [],
+  "container": "matroska",
+  "duration_ms": 60000,
+  "error": null,
+  "start_ms": 0,
+  "state": "ready",
+  "streams": [
+   {
+    "attached_pic": false,
+    "bit_depth": 8,
+    "bitrate": null,
+    "channels": null,
+    "codec": "h264",
+    "codec_string": "avc1.64000c",
+    "color": {
+     "matrix": null,
+     "primaries": null,
+     "transfer": null
+    },
+    "default": false,
+    "duration_ms": 60000,
+    "dv_profile": null,
+    "forced": false,
+    "fps": 24.0,
+    "hdr": "none",
+    "hdr_meta": null,
+    "hearing_impaired": false,
+    "height": 180,
+    "index": 0,
+    "interlaced": false,
+    "lang": null,
+    "last_frame_ms": 59958,
+    "layout": null,
+    "level": 12,
+    "pix_fmt": "yuv420p",
+    "profile": "High",
+    "sample_rate": null,
+    "start_ms": 0,
+    "title": null,
+    "type": "video",
+    "width": 320
+   }
+  ],
+  "tags": {
+   "encoder": "Lavf60.16.100"
+  },
+  "truncated": {}
+ }
+}

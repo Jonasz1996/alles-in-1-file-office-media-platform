@@ -1,0 +1,52 @@
+[project]
+name = "platform-api"
+version = "0.6.0"
+description = "Kern-API van het alles-in-één file/office/media-platform"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.54",
+    "pydantic-settings>=2.4",
+    "httpx>=0.27",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.22.1",
+    "asyncpg>=0.32.0",
+    "alembic>=1.20.0",
+    "argon2-cffi>=25.1.0",
+    "pyjwt>=2.15.1",
+    "python-multipart>=0.0.32",
+    "pydantic[email]>=2.14.1",
+    "cryptography>=46",
+    "segno>=1.6",
+    "pillow>=13.0.0",
+    "pillow-heif>=1.8.1",
+    "pypdfium2>=5.14.0",
+    "mutagen>=1.48.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Fase 5: de tests met ffmpeg (media), de metingen (media_perf) en de echte providers
+# (provider_real, alleen met de hand) draaien niet standaard; `-m media` kiest ze (§4.8)
+markers = [
+    "media: met de lokale mediaworker en echte ffmpeg (job api-media)",
+    "media_perf: prestatiemeting van media; alleen een rapport",
+    "provider_real: tegen de echte metadata-providers, met een sleutel; nooit in CI",
+]
+addopts = "--strict-markers -m 'not media and not media_perf and not provider_real'"

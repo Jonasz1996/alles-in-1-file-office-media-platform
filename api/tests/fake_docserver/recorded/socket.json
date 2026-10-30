@@ -1,0 +1,833 @@
+{
+ "bron": "Opgenomen met DS 10.0.0.1 (build 10.0.0.169) in de sandbox; tokens vervangen door <JWT>, md5 van secure links door …, van tokens alleen de claims (iat en exp als verschil). spike/logs/ws.log, de eerste pakketten van een opening en een herverbinding",
+ "samenvatting": {
+  "eerste_pakket_van_de_browser": "socket.io CONNECT '40' + JSON {data:{type:'auth', docid, openCmd:{id,...}, jwtOpen:<config-token>, ...}, token:<config-token>}",
+  "tweede_pakket": "'42[\"message\",{type:'auth', ...}]': bij de eerste verbinding met jwtOpen (config-token), bij herverbinden met jwtSession (sessietoken) en sessionId",
+  "key": "data.docid en data.openCmd.id in CONNECT, docid in auth, en document.key in de claims van jwtOpen/token en jwtSession",
+  "config_token": "HS256 met het office-geheim (jwtOpen en token zijn hetzelfde token)",
+  "sessietoken": "HS256 met HMAC-SHA256(sleutel=office-geheim, bericht='editor-session') als hex-tekst; niet met het office-geheim zelf",
+  "compressie": "DS 10.0 onderhandelt geen permessage-deflate, ook niet als de browser het aanbiedt: de frames zijn platte tekst"
+ },
+ "tunnels": [
+  {
+   "pad": "/office/10.0.0-15700fb6e42e543223e10696b3066db9/doc/<key>/c/?shardkey=<key>&EIO=4&transport=websocket",
+   "upgrade": {
+    "cookie": "ok",
+    "sec_fetch_dest": null,
+    "origin": "http://127.0.0.1:18099",
+    "Sec-WebSocket-Extensions (browser)": "permessage-deflate; client_max_window_bits",
+    "Sec-WebSocket-Extensions (DS)": null
+   },
+   "frames": [
+    {
+     "dir": "s2c",
+     "prefix": "0",
+     "type": null,
+     "body": {
+      "sid": "rrtBJcCUvQA_KLd6AAAw",
+      "upgrades": [],
+      "pingInterval": 25000,
+      "pingTimeout": 20000,
+      "maxPayload": 100000000
+     },
+     "tokens": []
+    },
+    {
+     "dir": "c2s",
+     "prefix": "40",
+     "type": "CONNECT:auth",
+     "body": {
+      "data": {
+       "type": "auth",
+       "docid": "rc-rc2-946fae0bddf3",
+       "documentCallbackUrl": "http://172.17.0.1:18766/callback?f=d-448572a6.docx",
+       "token": "fghhfgsjdgfjs",
+       "user": {
+        "id": "u1",
+        "username": "Anna",
+        "firstname": null,
+        "lastname": null,
+        "indexUser": -1
+       },
+       "editorType": 0,
+       "lastOtherSaveTime": -1,
+       "block": [],
+       "sessionId": null,
+       "sessionTimeConnect": null,
+       "sessionTimeIdle": 0,
+       "documentFormatSave": 65,
+       "isCloseCoAuthoring": false,
+       "openCmd": {
+        "c": "open",
+        "id": "rc-rc2-946fae0bddf3",
+        "userid": "u1",
+        "format": "docx",
+        "url": "http://172.17.0.1:18766/doc/d-448572a6.docx",
+        "title": "d-448572a6.docx",
+        "nobase64": true,
+        "outputformat": 8193,
+        "convertToOrigin": ".pdf.xps.oxps.djvu.ofd"
+       },
+       "lang": "nl",
+       "mode": "edit",
+       "permissions": {
+        "edit": true,
+        "download": true,
+        "print": true,
+        "comment": true,
+        "review": true,
+        "copy": true,
+        "fillForms": true
+       },
+       "encrypted": false,
+       "IsAnonymousUser": false,
+       "timezoneOffset": 0,
+       "headingsColor": null,
+       "coEditingMode": "fast",
+       "jwtOpen": "<JWT data.jwtOpen>",
+       "time": 1614,
+       "supportAuthChangesAck": true
+      },
+      "token": "<JWT token>"
+     },
+     "tokens": [
+      {
+       "veld": "data.jwtOpen",
+       "header": {
+        "alg": "HS256",
+        "typ": "JWT"
+       },
+       "claims": {
+        "documentType": "word",
+        "type": "desktop",
+        "width": "100%",
+        "height": "100%",
+        "document": {
+         "fileType": "docx",
+         "key": "rc-rc2-946fae0bddf3",
+         "title": "d-448572a6.docx",
+         "url": "http://172.17.0.1:18766/doc/d-448572a6.docx",
+         "permissions": {
+          "edit": true,
+          "download": true,
+          "print": true,
+          "comment": true,
+          "review": true,
+          "copy": true,
+          "fillForms": true
+         }
+        },
+        "editorConfig": {
+         "mode": "edit",
+         "lang": "nl",
+         "region": "nl-NL",
+         "callbackUrl": "http://172.17.0.1:18766/callback?f=d-448572a6.docx",
+         "user": {
+          "id": "u1",
+          "name": "Anna"
+         },
+         "coEditing": {
+          "mode": "fast",
+          "change": true
+         },
+         "customization": {
+          "autosave": true,
+          "forcesave": true,
+          "feedback": false,
+          "help": false,
+          "plugins": false,
+          "macros": false,
+          "macrosMode": "disable"
+         }
+        },
+        "exp_minus_iat": 7200
+       },
+       "controle": {
+        "office-geheim": "klopt",
+        "hmac(office-geheim,'editor-session').hex": "klopt niet"
+       },
+       "document.key == key van het pad": true
+      },
+      {
+       "veld": "token",
+       "header": {
+        "alg": "HS256",
+        "typ": "JWT"
+       },
+       "claims": {
+        "documentType": "word",
+        "type": "desktop",
+        "width": "100%",
+        "height": "100%",
+        "document": {
+         "fileType": "docx",
+         "key": "rc-rc2-946fae0bddf3",
+         "title": "d-448572a6.docx",
+         "url": "http://172.17.0.1:18766/doc/d-448572a6.docx",
+         "permissions": {
+          "edit": true,
+          "download": true,
+          "print": true,
+          "comment": true,
+          "review": true,
+          "copy": true,
+          "fillForms": true
+         }
+        },
+        "editorConfig": {
+         "mode": "edit",
+         "lang": "nl",
+         "region": "nl-NL",
+         "callbackUrl": "http://172.17.0.1:18766/callback?f=d-448572a6.docx",
+         "user": {
+          "id": "u1",
+          "name": "Anna"
+         },
+         "coEditing": {
+          "mode": "fast",
+          "change": true
+         },
+         "customization": {
+          "autosave": true,
+          "forcesave": true,
+          "feedback": false,
+          "help": false,
+          "plugins": false,
+          "macros": false,
+          "macrosMode": "disable"
+         }
+        },
+        "exp_minus_iat": 7200
+       },
+       "controle": {
+        "office-geheim": "klopt",
+        "hmac(office-geheim,'editor-session').hex": "klopt niet"
+       },
+       "document.key == key van het pad": true
+      }
+     ]
+    },
+    {
+     "dir": "s2c",
+     "prefix": "40",
+     "type": null,
+     "body": {
+      "sid": "IyiK1xe-b0V7zwxTAAAx"
+     },
+     "tokens": []
+    },
+    {
+     "dir": "s2c",
+     "prefix": "42",
+     "type": "license",
+     "body": [
+      "message",
+      {
+       "type": "license",
+       "license": {
+        "type": 3,
+        "light": false,
+        "mode": 0,
+        "rights": 1,
+        "buildVersion": "10.0.0",
+        "buildNumber": 169,
+        "protectionSupport": true,
+        "isAnonymousSupport": true,
+        "liveViewerSupport": true,
+        "branding": false,
+        "customization": false,
+        "advancedApi": false
+       },
+       "aiPluginSettingsAllowBrowserProxy": false
+      }
+     ],
+     "tokens": []
+    },
+    {
+     "dir": "c2s",
+     "prefix": "42",
+     "type": "auth",
+     "body": [
+      "message",
+      {
+       "type": "auth",
+       "docid": "rc-rc2-946fae0bddf3",
+       "documentCallbackUrl": "http://172.17.0.1:18766/callback?f=d-448572a6.docx",
+       "token": "fghhfgsjdgfjs",
+       "user": {
+        "id": "u1",
+        "username": "Anna",
+        "firstname": null,
+        "lastname": null,
+        "indexUser": -1
+       },
+       "editorType": 0,
+       "lastOtherSaveTime": -1,
+       "block": [],
+       "sessionId": null,
+       "sessionTimeConnect": null,
+       "sessionTimeIdle": 0,
+       "documentFormatSave": 65,
+       "isCloseCoAuthoring": false,
+       "openCmd": {
+        "c": "open",
+        "id": "rc-rc2-946fae0bddf3",
+        "userid": "u1",
+        "format": "docx",
+        "url": "http://172.17.0.1:18766/doc/d-448572a6.docx",
+        "title": "d-448572a6.docx",
+        "nobase64": true,
+        "outputformat": 8193,
+        "convertToOrigin": ".pdf.xps.oxps.djvu.ofd"
+       },
+       "lang": "nl",
+       "mode": "edit",
+       "permissions": {
+        "edit": true,
+        "download": true,
+        "print": true,
+        "comment": true,
+        "review": true,
+        "copy": true,
+        "fillForms": true
+       },
+       "encrypted": false,
+       "IsAnonymousUser": false,
+       "timezoneOffset": 0,
+       "headingsColor": null,
+       "coEditingMode": "fast",
+       "jwtOpen": "<JWT [1].jwtOpen>",
+       "time": 1989,
+       "supportAuthChangesAck": true
+      }
+     ],
+     "tokens": [
+      {
+       "veld": "[1].jwtOpen",
+       "header": {
+        "alg": "HS256",
+        "typ": "JWT"
+       },
+       "claims": {
+        "documentType": "word",
+        "type": "desktop",
+        "width": "100%",
+        "height": "100%",
+        "document": {
+         "fileType": "docx",
+         "key": "rc-rc2-946fae0bddf3",
+         "title": "d-448572a6.docx",
+         "url": "http://172.17.0.1:18766/doc/d-448572a6.docx",
+         "permissions": {
+          "edit": true,
+          "download": true,
+          "print": true,
+          "comment": true,
+          "review": true,
+          "copy": true,
+          "fillForms": true
+         }
+        },
+        "editorConfig": {
+         "mode": "edit",
+         "lang": "nl",
+         "region": "nl-NL",
+         "callbackUrl": "http://172.17.0.1:18766/callback?f=d-448572a6.docx",
+         "user": {
+          "id": "u1",
+          "name": "Anna"
+         },
+         "coEditing": {
+          "mode": "fast",
+          "change": true
+         },
+         "customization": {
+          "autosave": true,
+          "forcesave": true,
+          "feedback": false,
+          "help": false,
+          "plugins": false,
+          "macros": false,
+          "macrosMode": "disable"
+         }
+        },
+        "exp_minus_iat": 7200
+       },
+       "controle": {
+        "office-geheim": "klopt",
+        "hmac(office-geheim,'editor-session').hex": "klopt niet"
+       },
+       "document.key == key van het pad": true
+      }
+     ]
+    },
+    {
+     "dir": "s2c",
+     "prefix": "42",
+     "type": "auth",
+     "body": [
+      "message",
+      {
+       "type": "auth",
+       "result": 1,
+       "sessionId": "IyiK1xe-b0V7zwxTAAAx",
+       "sessionTimeConnect": 1793041996599,
+       "participants": [
+        {
+         "id": "u11",
+         "idOriginal": "u1",
+         "username": "Anna",
+         "indexUser": 1,
+         "view": false,
+         "connectionId": "IyiK1xe-b0V7zwxTAAAx",
+         "isCloseCoAuthoring": false,
+         "isLiveViewer": false,
+         "encrypted": false
+        }
+       ],
+       "locks": {},
+       "indexUser": 1,
+       "hasForgotten": false,
+       "jwt": "<JWT [1].jwt>",
+       "buildVersion": "10.0.0",
+       "buildNumber": 169,
+       "licenseType": 3,
+       "settings": {
+        "reconnection": {
+         "attempts": 50,
+         "delay": 2000
+        },
+        "binaryChanges": false,
+        "websocketMaxPayloadSize": 1572864,
+        "maxChangesSize": 157286400,
+        "limits_image_size": 26214400,
+        "limits_image_types_upload": "jpg;jpeg;jpe;jfif;jif;png;gif;bmp;svg;tiff;tif;webp;heic;heif;avif"
+       },
+       "openedAt": 1793041996924
+      }
+     ],
+     "tokens": [
+      {
+       "veld": "[1].jwt",
+       "header": {
+        "alg": "HS256",
+        "typ": "JWT"
+       },
+       "claims": {
+        "document": {
+         "key": "rc-rc2-946fae0bddf3",
+         "permissions": {
+          "edit": true,
+          "download": true,
+          "print": true,
+          "comment": true,
+          "review": true,
+          "copy": true,
+          "fillForms": true
+         },
+         "ds_encrypted": false
+        },
+        "editorConfig": {
+         "user": {
+          "id": "u1",
+          "name": "Anna",
+          "index": 1
+         },
+         "mode": "edit",
+         "ds_view": false,
+         "ds_isCloseCoAuthoring": false,
+         "ds_sessionTimeConnect": 1793041996599
+        },
+        "exp_minus_iat": 2592000
+       },
+       "controle": {
+        "office-geheim": "klopt niet",
+        "hmac(office-geheim,'editor-session').hex": "klopt"
+       },
+       "document.key == key van het pad": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "pad": "/office/10.0.0-15700fb6e42e543223e10696b3066db9/doc/<key>/c/?shardkey=<key>&EIO=4&transport=websocket",
+   "upgrade": {
+    "cookie": "ok",
+    "sec_fetch_dest": null,
+    "origin": "http://127.0.0.1:18099",
+    "Sec-WebSocket-Extensions (browser)": "permessage-deflate; client_max_window_bits",
+    "Sec-WebSocket-Extensions (DS)": null
+   },
+   "frames": [
+    {
+     "dir": "s2c",
+     "prefix": "0",
+     "type": null,
+     "body": {
+      "sid": "rxl6M9IgsVoUq9_oAAAy",
+      "upgrades": [],
+      "pingInterval": 25000,
+      "pingTimeout": 20000,
+      "maxPayload": 100000000
+     },
+     "tokens": []
+    },
+    {
+     "dir": "c2s",
+     "prefix": "40",
+     "type": "CONNECT:auth",
+     "body": {
+      "data": {
+       "type": "auth",
+       "docid": "rc-rc2-946fae0bddf3",
+       "documentCallbackUrl": "http://172.17.0.1:18766/callback?f=d-448572a6.docx",
+       "token": "fghhfgsjdgfjs",
+       "user": {
+        "id": "u1",
+        "username": "Anna",
+        "firstname": null,
+        "lastname": null,
+        "indexUser": -1
+       },
+       "editorType": 0,
+       "lastOtherSaveTime": -1,
+       "block": [],
+       "sessionId": null,
+       "sessionTimeConnect": null,
+       "sessionTimeIdle": 0,
+       "documentFormatSave": 65,
+       "isCloseCoAuthoring": false,
+       "openCmd": {
+        "c": "open",
+        "id": "rc-rc2-946fae0bddf3",
+        "userid": "u1",
+        "format": "docx",
+        "url": "http://172.17.0.1:18766/doc/d-448572a6.docx",
+        "title": "d-448572a6.docx",
+        "nobase64": true,
+        "outputformat": 8193,
+        "convertToOrigin": ".pdf.xps.oxps.djvu.ofd"
+       },
+       "lang": "nl",
+       "mode": "edit",
+       "permissions": {
+        "edit": true,
+        "download": true,
+        "print": true,
+        "comment": true,
+        "review": true,
+        "copy": true,
+        "fillForms": true
+       },
+       "encrypted": false,
+       "IsAnonymousUser": false,
+       "timezoneOffset": 0,
+       "headingsColor": null,
+       "coEditingMode": "fast",
+       "jwtOpen": "<JWT data.jwtOpen>",
+       "time": 1614,
+       "supportAuthChangesAck": true
+      },
+      "session": "<JWT session>"
+     },
+     "tokens": [
+      {
+       "veld": "data.jwtOpen",
+       "header": {
+        "alg": "HS256",
+        "typ": "JWT"
+       },
+       "claims": {
+        "documentType": "word",
+        "type": "desktop",
+        "width": "100%",
+        "height": "100%",
+        "document": {
+         "fileType": "docx",
+         "key": "rc-rc2-946fae0bddf3",
+         "title": "d-448572a6.docx",
+         "url": "http://172.17.0.1:18766/doc/d-448572a6.docx",
+         "permissions": {
+          "edit": true,
+          "download": true,
+          "print": true,
+          "comment": true,
+          "review": true,
+          "copy": true,
+          "fillForms": true
+         }
+        },
+        "editorConfig": {
+         "mode": "edit",
+         "lang": "nl",
+         "region": "nl-NL",
+         "callbackUrl": "http://172.17.0.1:18766/callback?f=d-448572a6.docx",
+         "user": {
+          "id": "u1",
+          "name": "Anna"
+         },
+         "coEditing": {
+          "mode": "fast",
+          "change": true
+         },
+         "customization": {
+          "autosave": true,
+          "forcesave": true,
+          "feedback": false,
+          "help": false,
+          "plugins": false,
+          "macros": false,
+          "macrosMode": "disable"
+         }
+        },
+        "exp_minus_iat": 7200
+       },
+       "controle": {
+        "office-geheim": "klopt",
+        "hmac(office-geheim,'editor-session').hex": "klopt niet"
+       },
+       "document.key == key van het pad": true
+      },
+      {
+       "veld": "session",
+       "header": {
+        "alg": "HS256",
+        "typ": "JWT"
+       },
+       "claims": {
+        "document": {
+         "key": "rc-rc2-946fae0bddf3",
+         "permissions": {
+          "edit": true,
+          "download": true,
+          "print": true,
+          "comment": true,
+          "review": true,
+          "copy": true,
+          "fillForms": true
+         },
+         "ds_encrypted": false
+        },
+        "editorConfig": {
+         "user": {
+          "id": "u1",
+          "name": "Anna",
+          "index": 1
+         },
+         "mode": "edit",
+         "ds_view": false,
+         "ds_isCloseCoAuthoring": false,
+         "ds_sessionTimeConnect": 1793041996599
+        },
+        "exp_minus_iat": 2592000
+       },
+       "controle": {
+        "office-geheim": "klopt niet",
+        "hmac(office-geheim,'editor-session').hex": "klopt"
+       },
+       "document.key == key van het pad": true
+      }
+     ]
+    },
+    {
+     "dir": "s2c",
+     "prefix": "40",
+     "type": null,
+     "body": {
+      "sid": "__ztpXnCHysZarpHAAAz"
+     },
+     "tokens": []
+    },
+    {
+     "dir": "s2c",
+     "prefix": "42",
+     "type": "license",
+     "body": [
+      "message",
+      {
+       "type": "license",
+       "license": {
+        "type": 3,
+        "light": false,
+        "mode": 0,
+        "rights": 1,
+        "buildVersion": "10.0.0",
+        "buildNumber": 169,
+        "protectionSupport": true,
+        "isAnonymousSupport": true,
+        "liveViewerSupport": true,
+        "branding": false,
+        "customization": false,
+        "advancedApi": false
+       },
+       "aiPluginSettingsAllowBrowserProxy": false
+      }
+     ],
+     "tokens": []
+    },
+    {
+     "dir": "c2s",
+     "prefix": "42",
+     "type": "auth",
+     "body": [
+      "message",
+      {
+       "type": "auth",
+       "docid": "rc-rc2-946fae0bddf3",
+       "documentCallbackUrl": "http://172.17.0.1:18766/callback?f=d-448572a6.docx",
+       "token": "fghhfgsjdgfjs",
+       "user": {
+        "id": "u1",
+        "username": "Anna",
+        "firstname": null,
+        "lastname": null,
+        "indexUser": 1
+       },
+       "editorType": 0,
+       "lastOtherSaveTime": -1,
+       "block": [],
+       "sessionId": "IyiK1xe-b0V7zwxTAAAx",
+       "sessionTimeConnect": 1793041996599,
+       "sessionTimeIdle": 1133,
+       "documentFormatSave": 65,
+       "isCloseCoAuthoring": false,
+       "lang": "nl",
+       "mode": "edit",
+       "permissions": {
+        "edit": true,
+        "download": true,
+        "print": true,
+        "comment": true,
+        "review": true,
+        "copy": true,
+        "fillForms": true
+       },
+       "encrypted": false,
+       "IsAnonymousUser": false,
+       "timezoneOffset": 0,
+       "headingsColor": null,
+       "coEditingMode": "fast",
+       "jwtSession": "<JWT [1].jwtSession>",
+       "time": 9048,
+       "supportAuthChangesAck": true
+      }
+     ],
+     "tokens": [
+      {
+       "veld": "[1].jwtSession",
+       "header": {
+        "alg": "HS256",
+        "typ": "JWT"
+       },
+       "claims": {
+        "document": {
+         "key": "rc-rc2-946fae0bddf3",
+         "permissions": {
+          "edit": true,
+          "download": true,
+          "print": true,
+          "comment": true,
+          "review": true,
+          "copy": true,
+          "fillForms": true
+         },
+         "ds_encrypted": false
+        },
+        "editorConfig": {
+         "user": {
+          "id": "u1",
+          "name": "Anna",
+          "index": 1
+         },
+         "mode": "edit",
+         "ds_view": false,
+         "ds_isCloseCoAuthoring": false,
+         "ds_sessionTimeConnect": 1793041996599
+        },
+        "exp_minus_iat": 2592000
+       },
+       "controle": {
+        "office-geheim": "klopt niet",
+        "hmac(office-geheim,'editor-session').hex": "klopt"
+       },
+       "document.key == key van het pad": true
+      }
+     ]
+    },
+    {
+     "dir": "s2c",
+     "prefix": "42",
+     "type": "auth",
+     "body": [
+      "message",
+      {
+       "type": "auth",
+       "result": 1,
+       "sessionId": "IyiK1xe-b0V7zwxTAAAx",
+       "sessionTimeConnect": 1793041996599,
+       "participants": [
+        {
+         "id": "u11",
+         "idOriginal": "u1",
+         "username": "Anna",
+         "indexUser": 1,
+         "view": false,
+         "connectionId": "__ztpXnCHysZarpHAAAz",
+         "isCloseCoAuthoring": false,
+         "isLiveViewer": false,
+         "encrypted": false
+        }
+       ],
+       "locks": {},
+       "indexUser": 1,
+       "buildVersion": "10.0.0",
+       "buildNumber": 169,
+       "licenseType": 3,
+       "settings": {
+        "reconnection": {
+         "attempts": 50,
+         "delay": 2000
+        },
+        "binaryChanges": false,
+        "websocketMaxPayloadSize": 1572864,
+        "maxChangesSize": 157286400,
+        "limits_image_size": 26214400,
+        "limits_image_types_upload": "jpg;jpeg;jpe;jfif;jif;png;gif;bmp;svg;tiff;tif;webp;heic;heif;avif"
+       }
+      }
+     ],
+     "tokens": []
+    }
+   ]
+  }
+ ],
+ "herverbinden_op_een_dichte_key": {
+  "note": "spike stap 14 (logs/ws.log, tunnel 5): een script verbindt opnieuw met het sessietoken van u1 nadat drop hem als enige eruit zette (de key is dicht, status 2). Na CONNECT, license en het auth-bericht van de browser: een nieuw sessietoken en de fout 4008; dan dicht. De echte editor meldt in dat geval onRequestRefreshFile (spike stap 5, A21)",
+  "s2c_na_auth": [
+   {
+    "type": "refreshToken",
+    "messages": "<JWT session>"
+   },
+   {
+    "type": "error",
+    "description": "Update Version error",
+    "code": 4008
+   }
+  ]
+ },
+ "herverbinden_na_een_herstart_van_ds": {
+  "note": "spike stap 15-a (logs/step15-a.out): de editor verbindt opnieuw na de herstart van docservice; DS kent de key niet meer. Een nieuw sessietoken (afgeleide sleutel, 120 s met expires 2m) en de fout 4009; de editor meldt onRequestRefreshFile",
+  "s2c_na_auth": [
+   {
+    "type": "refreshToken",
+    "messages": "<JWT session>"
+   },
+   {
+    "type": "error",
+    "description": "Other error",
+    "code": 4009
+   }
+  ]
+ }
+}

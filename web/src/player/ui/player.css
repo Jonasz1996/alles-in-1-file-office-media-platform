@@ -1,0 +1,476 @@
+/* De speler (M6). Over beeld staat de bediening altijd licht op donker, in beide thema's: dat
+   is leesbaar boven elk beeld. Daarom eigen vaste kleuren binnen .player, en niet de tokens van
+   het thema (die wisselen met licht en donker). De focusring blijft die van de app. */
+
+.player {
+  --p-fg: #fff;
+  --p-muted: rgba(255, 255, 255, 0.75);
+  --p-shade: rgba(0, 0, 0, 0.65);
+  --p-panel: rgba(18, 18, 18, 0.92);
+  --p-rail: rgba(255, 255, 255, 0.3);
+  --p-buffer: rgba(255, 255, 255, 0.55);
+  --p-played: #4da3ff;
+  --p-mark: rgba(0, 0, 0, 0.85);
+  --p-fade: 160ms;
+
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 12rem;
+  overflow: hidden;
+  background: #000;
+  color: var(--p-fg);
+  isolation: isolate;
+}
+
+.player:focus-visible,
+.player :focus-visible {
+  outline-color: var(--focus);
+}
+
+.player-idle {
+  cursor: none;
+}
+
+.player-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+/* Ondertitels: de klassen die subconv.py zet (CLASSES; wit is de standaard en heeft geen klasse) */
+.player-video::cue {
+  font-family: var(--font);
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+}
+.player-video::cue(.lime) {
+  color: #0f0;
+}
+.player-video::cue(.cyan) {
+  color: #0ff;
+}
+.player-video::cue(.red) {
+  color: #f00;
+}
+.player-video::cue(.yellow) {
+  color: #ff0;
+}
+.player-video::cue(.magenta) {
+  color: #f0f;
+}
+.player-video::cue(.blue) {
+  color: #00f;
+}
+.player-video::cue(.black) {
+  color: #000;
+}
+.player-video::cue(b) {
+  font-weight: 700;
+}
+.player-video::cue(i) {
+  font-style: italic;
+}
+.player-video::cue(u) {
+  text-decoration: underline;
+}
+
+/* --- knoppen --- */
+
+.player-button {
+  display: inline-grid;
+  place-items: center;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0.5rem;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--p-fg);
+  cursor: pointer;
+}
+
+.player-button:hover,
+.player-button[aria-expanded="true"],
+.player-button[aria-pressed="true"] {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.player-big-play {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 4.5rem;
+  height: 4.5rem;
+  border: 0;
+  border-radius: 50%;
+  background: var(--p-shade);
+  color: var(--p-fg);
+  cursor: pointer;
+}
+
+.player-big-play .icon {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+
+/* --- boven: terug en titel (alleen /kijken) --- */
+
+.player-top {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 3;
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  background: linear-gradient(to bottom, var(--p-shade), transparent);
+  transition: opacity var(--p-fade);
+}
+
+.player-title {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--text-l);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.player-title:focus {
+  outline: none;
+}
+
+.player-idle .player-top {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* --- onder: de bediening --- */
+
+.player-controls {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 3;
+  padding: var(--space-4) var(--space-3) var(--space-2);
+  background: linear-gradient(to top, var(--p-shade) 60%, transparent);
+  transition: opacity var(--p-fade);
+}
+
+.player-controls.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.player-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.player-spacer {
+  flex: 1;
+}
+
+.player-time {
+  padding: 0 var(--space-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.player-volume {
+  width: 6rem;
+  accent-color: var(--p-played);
+}
+
+/* --- de tijdbalk --- */
+
+.player-seek {
+  position: relative;
+}
+
+.player-seek-track {
+  position: relative;
+  padding: 0.6rem 0;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.player-seek-rail {
+  position: relative;
+  height: 0.3rem;
+  border-radius: 0.15rem;
+  background: var(--p-rail);
+}
+
+.player-seek-track:hover .player-seek-rail,
+.player-seek-track:focus-visible .player-seek-rail {
+  height: 0.45rem;
+}
+
+.player-seek-buffer,
+.player-seek-played {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+}
+
+.player-seek-buffer {
+  background: var(--p-buffer);
+}
+
+.player-seek-played {
+  background: var(--p-played);
+}
+
+.player-seek-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--p-mark);
+}
+
+.player-seek-thumb {
+  position: absolute;
+  top: 50%;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  background: var(--p-fg);
+  transform: translate(-50%, -50%);
+}
+
+.player-seek-preview {
+  position: absolute;
+  bottom: 100%;
+  display: grid;
+  gap: 0.2rem;
+  justify-items: center;
+  padding: 0.25rem;
+  border-radius: var(--radius-s);
+  background: var(--p-panel);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.player-seek-sprite {
+  display: block;
+  background-repeat: no-repeat;
+}
+
+.player-seek-time,
+.player-seek-chapter {
+  font-size: var(--text-s);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- menu's, meldingen, de kaart en Info --- */
+
+.player-menu {
+  position: absolute;
+  right: var(--space-3);
+  bottom: 100%;
+  z-index: 4;
+  display: grid;
+  min-width: 12rem;
+  max-height: 60vh;
+  overflow: auto;
+  padding: var(--space-1);
+  border-radius: var(--radius-m);
+  background: var(--p-panel);
+}
+
+.player-menu-item {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--p-fg);
+  text-align: start;
+  cursor: pointer;
+}
+
+.player-menu-item:hover,
+.player-menu-item:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.player-menu-check {
+  width: 1em;
+}
+
+.player-menu-hint {
+  display: block;
+  color: var(--p-muted);
+}
+
+.player-busy {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.player-notice {
+  position: absolute;
+  top: 4rem;
+  z-index: 3;
+  max-width: min(32rem, 90%);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--p-panel);
+  text-align: center;
+}
+
+.player-overlay {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+  max-width: min(32rem, 90%);
+  padding: var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--p-panel);
+  color: var(--p-fg);
+  text-align: center;
+}
+
+.player-overlay p {
+  margin: 0;
+}
+
+.player-overlay-actions,
+.player-next-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: center;
+}
+
+.player-next {
+  position: absolute;
+  right: var(--space-4);
+  bottom: 6.5rem;
+  z-index: 4;
+  display: grid;
+  gap: var(--space-2);
+  width: min(22rem, 90%);
+  padding: var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--p-panel);
+}
+
+.player-next p {
+  margin: 0;
+}
+
+.player-next-head,
+.player-next-tag,
+.player-next-count {
+  color: var(--p-muted);
+}
+
+.player-next-name {
+  font-weight: 600;
+}
+
+.player-next-actions {
+  justify-content: flex-start;
+}
+
+.player-next-auto {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: var(--text-s);
+}
+
+.player-info {
+  position: absolute;
+  top: 4rem;
+  right: var(--space-3);
+  z-index: 4;
+  width: min(24rem, 90%);
+  max-height: calc(100% - 10rem);
+  overflow: auto;
+  padding: var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--p-panel);
+}
+
+.player-info-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.player-info h2 {
+  margin: 0;
+  font-size: var(--text-m);
+}
+
+.player-info dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-2) 0 0;
+}
+
+.player-info dt {
+  color: var(--p-muted);
+}
+
+.player-info dd {
+  margin: 0;
+}
+
+.player-info ul {
+  margin: 0;
+  padding-inline-start: 1.1rem;
+}
+
+.player-mono {
+  font-family: var(--mono);
+  font-size: var(--text-s);
+  word-break: break-all;
+}
+
+/* --- waar de speler staat --- */
+
+/* /kijken: de hele ruimte onder de balk van de app */
+main.watch {
+  max-width: none;
+  height: calc(100dvh - 3.5rem);
+  min-height: 20rem;
+  padding: 0;
+  background: #000;
+}
+
+/* De viewer van fase 3: de ruimte van .media */
+.player-host {
+  padding: 0;
+}
+
+@media (max-width: 40rem) {
+  .player-volume,
+  .player-button[data-wide] {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player {
+    --p-fade: 0ms;
+  }
+}

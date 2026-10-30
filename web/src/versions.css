@@ -1,0 +1,35 @@
+/* Eerdere versies van een bestand (de dialoog Versies…). */
+
+.version-list {
+  margin: var(--space-2) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.version-list li {
+  display: flex;
+  gap: var(--space-2) var(--space-4);
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.version-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.version-upload {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.version-upload progress {
+  width: min(16rem, 100%);
+  accent-color: var(--accent);
+}

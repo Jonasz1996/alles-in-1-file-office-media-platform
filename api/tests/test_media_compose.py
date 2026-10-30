@@ -1,0 +1,223 @@
+"""compose.media.yaml, het Dockerfile en de container-test bij elkaar (bouwontwerp fase 5, §2 M1).
+
+De container zelf draait alleen in CI (de job media-image, test_media_container.sh). Deze test
+houdt de bestanden hier gelijk met de code:
+- de worker start in compose zoals local.py hem start (BOOT met /srv), de healthcheck ook, via
+  `env -i`, en __main__ leest die argumenten;
+- de sleutel van hello gaat via de omgeving naar allebei, nooit in command of healthcheck;
+- de afscherming van Keuze 11 staat er letterlijk, zonder `init` (docker-init laat de omgeving
+  van de container lezen, m1.md);
+- de grenzen, en stop_grace_period 30 s voor platform (F3);
+- het Dockerfile heeft de regels van Keuze 47 en PROBE_FILE van de zelftest;
+- het afgeleide image van de spike bouwt ook op een image dat media al heeft (M0-hotfix van M1);
+- ci.yml draait test_media_container.sh in media-image, en S3 nog (tot M4).
+- het script doet ook subs en sprites (M5) in de container, op de ffmpeg van het image (review
+  golf 2).
+"""
+
+from __future__ import annotations
+
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from app.media import local
+from app.media.worker import selftest
+from app.media.worker.__main__ import parse
+
+yaml = pytest.importorskip("yaml")
+
+ROOT = Path(__file__).resolve().parents[2]
+SINGLE = ROOT / "infra" / "single"
+SOCK = "/run/media/worker.sock"
+KEY_REF = "${MEDIA_WORKER_KEY:-}"  # zonder: de worker stopt met code 2, de app zegt down
+CLEAN_PATH = "PATH=/opt/venv/bin:/usr/local/bin:/usr/bin:/bin"
+
+
+def load(name: str) -> dict:
+    return yaml.safe_load((SINGLE / name).read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def media() -> dict:
+    return load("compose.media.yaml")
+
+
+def test_de_worker_start_zoals_local(media):
+    command = media["services"]["media"]["command"]
+    assert command == ["python", "-I", "-c", local.BOOT, "/srv", "--socket", SOCK]
+    # BOOT haalt /srv eruit; de rest is voor __main__
+    assert parse(command[5:]).socket == SOCK
+    assert media["services"]["platform"]["environment"]["PLATFORM_MEDIA_WORKER"] == SOCK
+
+
+def test_de_healthcheck_zonder_de_omgeving_van_de_container(media):
+    check = media["services"]["media"]["healthcheck"]
+    test = check["test"]
+    assert test[:4] == ["CMD", "/usr/bin/env", "-i", CLEAN_PATH]
+    assert test[4:] == ["python", "-I", "-c", local.BOOT, "/srv", "--check", SOCK]
+    assert parse(test[9:]).check == SOCK
+    assert (check["interval"], check["timeout"], check["retries"]) == ("30s", "5s", 3)
+
+
+def test_de_sleutel_alleen_via_de_omgeving(media):
+    services = media["services"]
+    for name in ("platform", "media"):
+        assert services[name]["environment"]["PLATFORM_MEDIA_WORKER_KEY"] == KEY_REF
+    worker = services["media"]
+    for argv in (worker["command"], worker["healthcheck"]["test"]):
+        assert not any("KEY" in part or "$" in part for part in argv)
+    assert set(worker["environment"]) == {"PLATFORM_MEDIA_WORKER_KEY"}
+
+
+def test_de_afscherming_van_keuze_11(media):
+    worker = media["services"]["media"]
+    assert worker["image"] == "platform:local" and worker["pull_policy"] == "never"
+    assert worker["restart"] == "unless-stopped" and worker["user"] == "media"
+    assert worker["network_mode"] == "none" and worker["read_only"] is True
+    assert worker["tmpfs"] == [
+        "/tmp:size=64m,mode=1777",
+        "/data:size=1m,mode=0700,uid=10002,gid=10002",
+    ]
+    assert worker["volumes"] == ["media-run:/run/media"]
+    assert worker["cap_drop"] == ["ALL"] and "cap_add" not in worker
+    assert worker["security_opt"] == ["no-new-privileges:true"]
+    assert worker["pids_limit"] == 256
+    assert worker["ulimits"] == {"core": 0, "nofile": {"soft": 1024, "hard": 1024}}
+    assert worker["stop_grace_period"] == "5s"
+    # docker-init (pid 1, uid media, dumpbaar) zou /proc/1/environ met de sleutel laten lezen
+    assert not worker.get("init")
+    for absent in ("ports", "expose", "networks", "privileged", "devices"):
+        assert absent not in worker
+    assert media["volumes"] == {"media-run": None}
+
+
+def test_platform_krijgt_media_en_de_tijd_om_te_stoppen(media):
+    platform = media["services"]["platform"]
+    assert platform["environment"]["PLATFORM_MEDIA_ENABLED"] == "true"
+    assert platform["volumes"] == ["media-run:/run/media"]
+    assert platform["stop_grace_period"] == "30s"
+
+
+def test_de_grenzen():
+    limits = load("compose.media-limits.yaml")
+    assert limits == {
+        "services": {"media": {"mem_limit": "3g", "memswap_limit": "3g", "cpus": 3.0}}
+    }
+
+
+def test_het_dockerfile_heeft_de_regels_van_keuze_47():
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    lines = [line.strip() for line in text.replace("\\\n", " ").splitlines()]
+    joined = "\n".join(lines)
+    platform = joined.index("useradd --system --uid 10001 platform")
+    media = joined.index("useradd --system --uid 10002 --no-create-home media")
+    user = joined.index("USER platform")
+    assert platform < media < user  # de groep platform bestaat al; alles als root
+    block = joined[media:user]
+    assert re.search(r"install -d -o media -g platform -m 2750 /run/media", block)
+    chmod = re.search(r"chmod 0711 ((?:/usr/bin/[a-z]+ ?)+)", block)
+    assert chmod is not None
+    # elk programma dat de worker of de healthcheck start, ook nice en ionice (review S1)
+    assert sorted(chmod.group(1).split()) == sorted(
+        f"/usr/bin/{name}" for name in selftest.EXEC_PROGRAMS
+    )
+    probe = f"install -o platform -g platform -m 0644 /dev/null {selftest.PROBE_FILE}"
+    assert probe in block
+    assert selftest.PROBE_FILE == Path("/srv/zelftest-10001")
+    assert selftest.MEDIA_UID == 10002 and selftest.PLATFORM_UID == 10001
+
+
+def test_het_image_van_de_spike_bouwt_op_een_image_met_media():
+    """M0-hotfix van M1: platform:ci heeft media nu zelf; useradd zou dan falen."""
+    text = (ROOT / "api" / "tests" / "media" / "spike" / "Dockerfile").read_text(encoding="utf-8")
+    run = [line for line in text.splitlines() if "useradd" in line]
+    assert run == [
+        "RUN id -u media >/dev/null 2>&1 || useradd --system --uid 10002 --no-create-home media"
+    ]
+
+
+def test_ci_draait_de_container_test_en_s3():
+    ci = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+    steps = ci["jobs"]["media-image"]["steps"]
+    runs = [step for step in steps if "test_media_container.sh" in str(step.get("run", ""))]
+    assert len(runs) == 1
+    assert runs[0]["env"]["MEDIA_TEST_IMAGE"] == "platform:ci"
+    assert runs[0]["env"]["MEDIA_TEST_FFMPEG"] == "7.1."
+    assert "steps.bouw.outcome == 'success'" in runs[0]["if"]
+    # Sinds M4 geen aparte stap S3 meer met het afgeleide image van de spike: de container-test
+    # zelf doet S3 punt 17 (de remux naar een pipe van de app, met stream) en R12
+    assert not any("--stappen S3" in str(step.get("run", "")) for step in steps)
+    script = (SINGLE / "tests" / "test_media_container.sh").read_text(encoding="utf-8")
+    assert "S3 punt 17" in script and "R12" in script and "Op.STREAM" in script
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="geen bash")
+def test_het_script_is_geldige_bash():
+    script = SINGLE / "tests" / "test_media_container.sh"
+    subprocess.run(["bash", "-n", str(script)], check=True)
+    text = script.read_text(encoding="utf-8")
+    # de sleutel nooit in de uitvoer: alleen via de omgeving naar inspect.py, en gemaskeerd
+    assert "set -x" not in text and 'echo "$KEY"' not in text
+    assert 'MEDIA_TEST_KEY="$KEY"' in text
+
+
+def test_het_script_toetst_wat_s3_nog_toetste():
+    """Review golf 1, K1: de controles van S3 die de zelftest niet heeft, staan in het script,
+    zodat S3 later (M4) weg kan zonder dat ze verdwijnen: de tmpfs van /data (0700 van media,
+    in docker inspect en in de worker), en een blob van de app bij een proces van media dat
+    wel dumpbaar is (CLOEXEC, geen pad, EBADF, niet heropenbaar, niet via /proc, de hash van een
+    stuk midden in de blob, de pipe van de app)."""
+    text = (SINGLE / "tests" / "test_media_container.sh").read_text(encoding="utf-8")
+    for needle in (
+        '"mode=0700", "uid=10002", "gid=10002"',  # inspect: de opties van de tmpfs
+        'seen["/data"] == ["tmpfs", "0700", 10002, 10002]',  # in de worker
+        'seen["dumpbaar"] == 1',  # de controle: dit proces is wel dumpbaar
+        '"cloexec": True, "pad_hier": False',
+        'seen["schrijven"] == "EBADF"',
+        'seen["heropen"] == {"O_RDONLY": "EACCES", "O_WRONLY": "EACCES"}',
+        'seen["kind"] == {"blob": "PermissionError", "eigen": "open"}',
+        'seen["pipe"] == {"uid": 10001, "fifo": True}',
+        '"hash_stuk"',
+        '"blob_gelijk"',
+    ):
+        assert needle in text, needle
+
+
+def test_het_script_toetst_subs_en_sprites_op_de_ffmpeg_van_het_image():
+    """Review golf 2: subs en sprites (M5) draaiden alleen op ffmpeg 6.1 van Ubuntu (api-media en
+    e2e-media). Het script doet ze in de container, met de fd van de app, de code van de app en
+    de fixtures van fixtures.py (api/tests alleen te lezen in de app, zoals de kern), en kijkt na
+    wat test_media_subtitles.py en test_media_trick.py met de echte worker nakijken."""
+    script = SINGLE / "tests" / "test_media_container.sh"
+    text = script.read_text(encoding="utf-8")
+    assert 'TESTS="$(dirname "$(dirname "$SINGLE")")/api/tests"' in text
+    assert (SINGLE.parents[1] / "api" / "tests" / "media" / "fixtures.py").is_file()
+    for needle in (
+        '- "$TESTS:/srv/tests:ro"',  # in de app, in test.yaml
+        'in_platform python -I - "$SOCK" < "$WORK/m5.py"',  # de fd komt van de app
+        'blob("subs_text.mkv")',
+        "subtitles.extract(CONFIG, sha, film, probe)",
+        'done == {"e1": "ready", "e2": "ready"}',
+        "subtitles.check_vtt(data) == data",  # de controle van M5 laat de VTT zoals hij is
+        "F.SRT_NL",  # de tijden van de fixture zelf
+        "F.ASS",
+        'blob("vp9_opus.webm")',
+        "trick.make(CONFIG, sha, film, probe)",
+        'told == [found.get("count")]',  # frame= van de worker telt de beelden
+        "trick.split_jpegs(data)",
+        "image.format, image.size",
+        '1_005_000: "trick/1.jpg#xywh=0,0,160,90"',  # de cue van een tijd in de tweede tegel
+        'goed "subs en sprites (M5) op de ffmpeg van het image',
+    ):
+        assert needle in text, needle
+    # het ingebedde Python is geldig (bash -n ziet het niet)
+    body = re.search(r"^cat > \"\$WORK/m5\.py\" << 'PY'\n(.*?)^PY$", text, re.M | re.S)
+    assert body is not None
+    compile(body.group(1), "m5.py", "exec")
+    from tests.media import fixtures
+
+    assert {"subs_text.mkv", "vp9_opus.webm"} <= set(fixtures.RECIPES)

@@ -1,0 +1,49 @@
+- name: Docker-repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: "https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}"
+    suites: ["{{ ansible_facts.distribution_release }}"]
+    components: [stable]
+    signed_by: "https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}/gpg"
+    state: present
+
+- name: Docker installeren
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Docker-instellingen (logrotatie)
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "log-driver": "local",
+        "log-opts": { "max-size": "20m", "max-file": "5" },
+        "live-restore": true
+      }
+    mode: "0644"
+  notify: Herstart docker
+
+- name: Docker aan
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Opslagdriver controleren
+  ansible.builtin.command: docker info --format '{{ "{{" }} .Driver {{ "}}" }}'
+  register: docker_driver
+  changed_when: false
+
+- name: Waarschuwen als Docker geen overlay2 gebruikt
+  ansible.builtin.debug:
+    msg: >-
+      Docker gebruikt '{{ docker_driver.stdout }}' in plaats van overlay2. Dat werkt, maar is traag
+      en neemt veel ruimte. Werk Proxmox bij naar 8.1 of nieuwer (ZFS 2.2) en herstart de container.
+  when: docker_driver.stdout != 'overlay2'

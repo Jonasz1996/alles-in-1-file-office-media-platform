@@ -1,0 +1,25 @@
+{
+  "v": 1,
+  "base": "windows-webview2",
+  "_doc": "De app van fase 9 in WebView2 (Chromium van Edge) [doc]: MSE, H.264, VP9 en AV1, AAC en Opus. HEVC alleen met de extensie van Windows, dus niet aangenomen.",
+  "client": {"kind": "windows"},
+  "engines": {"mse": true, "mms": false, "native_hls": false},
+  "file": ["video/mp4", "video/webm", "audio/mpeg", "audio/flac", "audio/ogg", "audio/mp4"],
+  "codecs": {
+    "avc1.640033": {"mse": true, "file": true},
+    "vp09.00.51.08": {"mse": true, "file": true},
+    "vp09.02.51.10": {"mse": true, "file": true},
+    "av01.0.08M.08": {"mse": true, "file": true},
+    "mp4a.40.2": {"mse": true, "file": true},
+    "mp4a.40.5": {"mse": true, "file": true},
+    "opus": {"mse": true, "file": true},
+    "flac": {"mse": true, "file": true},
+    "mp3": {"mse": false, "file": true}
+  },
+  "hdr": {"pq": false, "hlg": false, "dv": false, "screen": false},
+  "max": {"height": 1080, "bitrate_kbps": 0},
+  "audio": {"channels": 2, "track_switch": false},
+  "deny": [],
+  "deny_by_name": {},
+  "playlist": {"independent_segments": true}
+}

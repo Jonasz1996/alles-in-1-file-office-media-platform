@@ -1,0 +1,110 @@
+- name: Stoppen als er geheimen ontbreken
+  ansible.builtin.assert:
+    that: lookup('ansible.builtin.vars', item, default='') | length >= 16
+    fail_msg: "Zet {{ item }} in group_vars/all.local.yml (zie infra/README.md)."
+    quiet: true
+  loop:
+    - postgres_superuser_password
+    - postgres_replication_password
+    - postgres_rewind_password
+    - seaweedfs_s3_access_key
+    - seaweedfs_s3_secret_key
+    - keepalived_auth_pass
+    - platform_admin_token
+
+- name: Datamappen op de datadisk
+  ansible.builtin.file:
+    path: "{{ data_root }}/{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    mode: "{{ item.mode | default('0750') }}"
+  loop:
+    - path: etcd
+      mode: "0700"
+    - path: postgres
+      owner: "999"            # gebruiker postgres in het image
+      mode: "0700"
+    - path: seaweedfs/master
+    - path: seaweedfs/volume
+    - path: seaweedfs/filer
+    - path: traefik
+      mode: "0700"
+
+- name: Configuratiemappen
+  ansible.builtin.file:
+    path: "{{ platform_root }}/{{ item }}"
+    state: directory
+    mode: "0750"
+  loop: [postgres, seaweedfs, traefik, traefik/dynamic, src]
+
+- name: Broncode van de API en web-app
+  ansible.posix.synchronize:
+    src: "{{ playbook_dir }}/../../{{ item }}"
+    dest: "{{ platform_root }}/src/"
+    delete: true
+    rsync_opts:
+      - "--exclude=node_modules"
+      - "--exclude=.venv"
+      - "--exclude=dist"
+      - "--exclude=__pycache__"
+      - "--exclude=*.tsbuildinfo"
+  loop: [api, web]
+
+- name: PostgreSQL-image met Patroni
+  ansible.builtin.copy:
+    src: postgres/Dockerfile
+    dest: "{{ platform_root }}/postgres/Dockerfile"
+    mode: "0644"
+
+- name: Configuratie
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ platform_root }}/{{ item.dest }}"
+    mode: "{{ item.mode | default('0640') }}"
+  loop:
+    - { src: compose.yaml.j2, dest: compose.yaml, mode: "0600" }
+    - { src: patroni.yml.j2, dest: postgres/patroni.yml, mode: "0644" }
+    - { src: seaweedfs/s3.json.j2, dest: seaweedfs/s3.json, mode: "0644" }
+    - { src: traefik/traefik.yml.j2, dest: traefik/traefik.yml }
+    - { src: traefik/routes.yml.j2, dest: traefik/dynamic/routes.yml }
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Diensten bouwen en starten
+  community.docker.docker_compose_v2:
+    project_src: "{{ platform_root }}"
+    build: always
+    remove_orphans: true
+    state: present
+
+- name: Wachten tot PostgreSQL een primary heeft
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:8008/cluster"
+    return_content: true
+  register: platform_pg_cluster
+  until: >-
+    platform_pg_cluster.status == 200 and
+    (platform_pg_cluster.json.members | selectattr('role', 'equalto', 'leader') | list | length) == 1
+  retries: 30
+  delay: 10
+  run_once: true
+
+- name: S3-buckets aanmaken
+  ansible.builtin.shell: |
+    set -o pipefail
+    master="{{ groups['nodes'] | map('extract', hostvars, 'ansible_host') | map('regex_replace', '$', ':9333') | join(',') }}"
+    bestaand=$(echo "s3.bucket.list" | docker compose -f {{ platform_root }}/compose.yaml exec -T seaweed-master weed shell -master="$master")
+    for b in vault media thumbs cache backups; do
+      if ! grep -qw "$b" <<<"$bestaand"; then
+        echo "s3.bucket.create -name $b" | docker compose -f {{ platform_root }}/compose.yaml exec -T seaweed-master weed shell -master="$master"
+        echo "aangemaakt: $b"
+      fi
+    done
+  args:
+    executable: /bin/bash
+  register: platform_buckets
+  changed_when: "'aangemaakt' in platform_buckets.stdout"
+  retries: 10
+  delay: 10
+  until: platform_buckets.rc == 0
+  run_once: true

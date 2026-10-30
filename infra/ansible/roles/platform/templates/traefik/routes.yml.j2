@@ -1,0 +1,51 @@
+# Beheerd door Ansible. Elke node kan elk verzoek afhandelen: Traefik stuurt door naar
+# de API en web-app op alle nodes en slaat nodes over waarvan de health-check faalt.
+{% set ips = groups['nodes'] | map('extract', hostvars, 'ansible_host') | list %}
+http:
+  routers:
+    api:
+      rule: "Host(`{{ app_host }}.{{ domain }}`) && PathPrefix(`/api`)"
+      entryPoints: [websecure]
+      service: api
+      middlewares: [security-headers, rate-limit]
+    web:
+      rule: "Host(`{{ app_host }}.{{ domain }}`)"
+      entryPoints: [websecure]
+      service: web
+      middlewares: [security-headers, rate-limit]
+
+  services:
+    api:
+      loadBalancer:
+        healthCheck:
+          path: /health
+          interval: 5s
+          timeout: 2s
+        servers:
+{% for ip in ips %}
+          - url: http://{{ ip }}:8000
+{% endfor %}
+    web:
+      loadBalancer:
+        healthCheck:
+          path: /
+          interval: 5s
+          timeout: 2s
+        servers:
+{% for ip in ips %}
+          - url: http://{{ ip }}:8090
+{% endfor %}
+
+  middlewares:
+    security-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        forceSTSHeader: true
+        contentTypeNosniff: true
+        frameDeny: true
+        referrerPolicy: strict-origin-when-cross-origin
+    rate-limit:
+      rateLimit:
+        average: {{ rate_limit_average }}
+        burst: {{ rate_limit_burst }}

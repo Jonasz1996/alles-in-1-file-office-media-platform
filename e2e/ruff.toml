@@ -1,0 +1,7 @@
+# Dezelfde regels als de API (api/pyproject.toml); app.* is hier ook eigen code
+extend = "../api/pyproject.toml"
+
+[lint.isort]
+known-first-party = [
+    "app", "conftest", "install_api", "media_harness", "office_harness", "seed",
+]

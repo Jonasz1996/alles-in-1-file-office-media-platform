@@ -1,0 +1,443 @@
+/* Basisstijlen voor elementen en de schil. Alleen tokens uit tokens.css, geen vaste kleuren. */
+
+:root {
+  font-family: var(--font);
+  line-height: var(--leading);
+  color: var(--fg);
+  background: var(--bg);
+  /* Altijd ruimte voor de schuifbalk, ook zolang er niets te scrollen valt: anders schuift de
+     hele pagina opzij zodra een lange lijst binnenkomt (een layoutverschuiving; Lighthouse gaf
+     /map/<10k> daardoor CLS 0,27). Met zwevende schuifbalken (mobiel, macOS) verandert er niets. */
+  scrollbar-gutter: stable;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}
+
+main {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4);
+}
+
+#inhoud:focus {
+  outline: none;
+}
+
+main.wide {
+  max-width: 72rem;
+}
+
+main.center {
+  display: grid;
+  place-items: center;
+  min-height: 80vh;
+}
+
+main.dropping {
+  outline: var(--focus-w) dashed var(--accent);
+  outline-offset: -8px;
+}
+
+a {
+  color: var(--accent);
+}
+
+h1 {
+  font-size: var(--text-xl);
+  line-height: 1.2;
+}
+
+h1:focus {
+  outline: none;
+}
+
+h1:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+[role="alert"] {
+  color: var(--bad);
+}
+
+/* Alleen voor schermlezers */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* "Naar inhoud": zichtbaar zodra hij focus krijgt */
+.skip-link {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: var(--z-toast);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--accent);
+  color: var(--accent-fg);
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
+/* De balk bovenaan */
+.topbar {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.6rem var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.topbar .brand {
+  font-weight: 700;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.topbar nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+}
+
+.topbar nav a {
+  text-decoration: none;
+}
+
+.topbar nav a[aria-current="page"],
+.topbar nav a.active {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.spacer {
+  flex: 1;
+}
+
+button {
+  font: inherit;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button:disabled,
+button[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+button.danger {
+  border-color: var(--danger-bg);
+  background: var(--danger-bg);
+  color: var(--accent-fg);
+}
+
+button.ghost {
+  border-color: transparent;
+  background: none;
+}
+
+button.ghost:hover {
+  background: var(--hover);
+}
+
+button.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  text-align: left;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  padding: 0.4rem var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.card {
+  display: grid;
+  gap: 0.8rem;
+  width: min(24rem, 100%);
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+}
+
+.card label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.toolbar,
+.inline-form {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+  margin: var(--space-4) 0;
+}
+
+.inline-form h3 {
+  width: 100%;
+  margin: 0;
+}
+
+.crumbs {
+  font-size: var(--text-l);
+}
+
+.uploads {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0;
+  list-style: none;
+}
+
+.uploads li {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.upload-name {
+  overflow-wrap: anywhere;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+td.wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Een gewone tabelcel (met flex sloten de lijnen tussen de rijen niet meer aan): de knoppen
+   staan rechts naast elkaar */
+td.actions {
+  text-align: right;
+}
+
+td.actions > * + * {
+  margin-left: 0.4rem;
+}
+
+.badge.ok,
+td.up {
+  color: var(--ok);
+}
+
+.badge.degraded {
+  color: var(--warn);
+}
+
+.badge.down,
+td.down {
+  color: var(--bad);
+}
+
+.stack {
+  display: grid;
+  gap: 0.8rem;
+  max-width: 36rem;
+}
+
+.stack label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.stack label.check {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.qr {
+  width: 12rem;
+  height: 12rem;
+  padding: var(--space-2);
+  background: var(--qr-bg);
+  border-radius: var(--radius-m);
+}
+
+.codes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.4rem;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-l);
+}
+
+code {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+/* Merkje "van <eigenaar>" bij een naam */
+.owner-note {
+  margin-left: var(--space-2);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Een modaal venster (<dialog>), zie ui/Dialog.tsx */
+.dialog {
+  box-sizing: border-box;
+  width: min(40rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 4rem);
+  padding: var(--space-4) 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: var(--shadow-2);
+  /* de dialoog staat in de DOM soms binnen een tabelcel en erft anders diens nowrap en uitlijning */
+  text-align: left;
+  white-space: normal;
+}
+
+.dialog.size-s {
+  width: min(28rem, calc(100vw - 2rem));
+}
+
+.dialog.size-l {
+  width: min(56rem, calc(100vw - 2rem));
+}
+
+.dialog.size-full {
+  width: calc(100vw - 2rem);
+  height: calc(100vh - 2rem);
+  max-height: calc(100vh - 2rem);
+}
+
+.dialog::backdrop {
+  background: var(--backdrop);
+}
+
+.dialog > header {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+
+.dialog > header h2 {
+  flex: 1;
+  margin: 0;
+  font-size: var(--text-l);
+  overflow-wrap: anywhere;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  margin-top: var(--space-4);
+}
+
+/* Tagkleur via een klasse, nooit via een style-attribuut */
+.tag-c1 {
+  --tag: var(--tag-1);
+}
+.tag-c2 {
+  --tag: var(--tag-2);
+}
+.tag-c3 {
+  --tag: var(--tag-3);
+}
+.tag-c4 {
+  --tag: var(--tag-4);
+}
+.tag-c5 {
+  --tag: var(--tag-5);
+}
+.tag-c6 {
+  --tag: var(--tag-6);
+}
+.tag-c7 {
+  --tag: var(--tag-7);
+}
+
+/* Op een smal scherm: minder belangrijke kolommen weg, "van <eigenaar>" onder de naam en de
+   knoppen in een tabel mogen onder elkaar */
+@media (max-width: 40rem) {
+  .wide-only {
+    display: none;
+  }
+
+  .owner-note {
+    display: block;
+    margin-left: 0;
+  }
+
+  td.actions {
+    white-space: normal;
+  }
+
+  td.actions > * {
+    margin-block: 0.15rem;
+  }
+}

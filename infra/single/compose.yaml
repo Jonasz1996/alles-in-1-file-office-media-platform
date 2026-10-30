@@ -1,0 +1,25 @@
+# Eerste versie op één node: het hele platform in één container. Wordt gestart door
+# install.sh, dat ook .env maakt. Alleen poort 80 en 443 zijn van buiten bereikbaar;
+# https start vanzelf zodra je op /beheer een domein instelt.
+name: platform
+
+services:
+  platform:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: platform:local
+    restart: unless-stopped
+    # Elke open verbinding kost een file descriptor; Docker geeft standaard maar 1024
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "${PORT:-80}:8080"
+      - "${HTTPS_PORT:-443}:8443"
+    environment:
+      PLATFORM_NODE_NAME: ${NODE_NAME:-node1}
+      PLATFORM_SECURE_COOKIES: ${SECURE_COOKIES:-false}
+    volumes:
+      - ${DATA_ROOT:?}:/data

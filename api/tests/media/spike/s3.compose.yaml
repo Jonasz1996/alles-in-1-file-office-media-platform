@@ -1,0 +1,52 @@
+# S3 van de spike (bouwontwerp fase 5, §3.7): de app geeft een fd aan een afgeschermde worker,
+# over een Unix-socket in het benoemde volume media-run. De worker heeft de afscherming van
+# Keuze 11, zoals compose.media.yaml in §2 M1 (tmpfs, ulimits en afscherming letterlijk), met de
+# grenzen van compose.media-limits (cpus 3, 3 GB). Alleen het image, de gebruiker van de app en
+# het commando zijn van de spike. ci.py start dit; zie daar.
+name: spike-s3
+
+services:
+  worker:
+    image: ${SPIKE_WORKER_IMAGE:-platform-spike:ci}
+    pull_policy: never
+    user: media
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /data:size=1m,mode=0700,uid=10002,gid=10002
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    ulimits:
+      core: 0
+      nofile: {soft: 1024, hard: 1024}
+    cpus: 3.0
+    mem_limit: 3g
+    memswap_limit: 3g
+    environment:
+      SPIKE_FFMPEG_STANDIN: ${SPIKE_FFMPEG_STANDIN:-0}
+    volumes:
+      - media-run:/run/media
+      - ${SPIKE_DIR:?SPIKE_DIR ontbreekt}:/spike:ro
+    command: [python3, -I, /spike/s3_worker.py, --socket, /run/media/worker.sock]
+    stop_grace_period: 5s
+
+  app:
+    image: ${SPIKE_WORKER_IMAGE:-platform-spike:ci}
+    pull_policy: never
+    user: platform
+    network_mode: none
+    cpus: 3.0
+    mem_limit: 3g
+    environment:
+      SPIKE_FFMPEG_STANDIN: ${SPIKE_FFMPEG_STANDIN:-0}
+    volumes:
+      - media-run:/run/media
+      - app-data:/data
+      - ${SPIKE_DIR:?SPIKE_DIR ontbreekt}:/spike:ro
+    command: [python3, -I, /spike/s3_app.py, --socket, /run/media/worker.sock]
+
+volumes:
+  media-run:
+  app-data:
