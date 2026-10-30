@@ -21,6 +21,7 @@ import random
 import shutil
 import struct
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -151,6 +152,26 @@ def opus_file(last: int, pre_skip: int = 312, serial: int = 0x1234, pages: int =
     for i in range(pages - 1):
         out += ogg_page(step * (i + 1), serial, i + 2, [bytes([0xFC]) * 200] * 5)
     return out + ogg_page(last, serial, pages + 1, [bytes([0xFC]) * 120], flags=4)
+
+
+def ogg_worst(serial: int = 0x5151) -> bytes:
+    """Review golf 4, S5: 16 BOS-pagina's van elk 65.306 bytes met een goede CRC (OpusHead),
+    en een staartje met 64 keer "OggS" van dit spoor, met een granule, waarvan de pagina tot het
+    eind loopt en de CRC niet klopt. Met de CRC per byte in Python kostte dit 0,6 s per bron."""
+    body = opus_head() + b"\0" * (255 * 255 - 1 - len(opus_head()))  # 255 segmenten
+    heads = b"".join(ogg_page(0, serial + i, 0, [body], flags=2) for i in range(16))
+    tail = bytearray(65_000)
+    for i in range(64):
+        at = i * 1000
+        rest = len(tail) - at - 27
+        count = -(-rest // 256)
+        data = rest - count
+        lacing = [255] * (data // 255) + [data % 255]
+        lacing += [0] * (count - len(lacing))
+        head = b"OggS" + bytes([0, 0])
+        head += struct.pack("<qIIIB", 960 * (i + 1), serial, i + 1, 0, count)
+        tail[at : at + 27 + count] = head + bytes(lacing)
+    return heads + bytes(tail)
 
 
 # --- bouwen: MP4 ----------------------------------------------------------------------------------
@@ -361,6 +382,46 @@ def test_ogg_crc_van_een_lege_pagina():
     assert AI.ogg_crc(b"") == 0
 
 
+def slow_crc(data: bytes) -> int:
+    """De CRC van Ogg per byte, zoals de spec hem geeft: de maat voor de snelle."""
+    crc = 0
+    for byte in data:
+        crc ^= byte << 24
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x04C11DB7) if crc & 0x80000000 else crc << 1
+            crc &= 0xFFFFFFFF
+    return crc
+
+
+def test_ogg_crc_is_die_van_de_spec():
+    """S5: ogg_crc rekent via zlib (in C); hij is gelijk aan de CRC per byte van de spec."""
+    assert AI.ogg_crc(b"123456789") == 0x89A1897F  # CRC-32/POSIX zonder de xor op het eind
+    rng = random.Random(20261030)
+    for n in range(200):
+        data = rng.randbytes(rng.randrange(0, 300))
+        assert AI.ogg_crc(data) == slow_crc(data), n
+        assert AI.ogg_crc(bytearray(data)) == slow_crc(data), n
+
+
+def test_een_valse_ogg_blokkeert_de_worker_niet():
+    """Review golf 4, S5: audio_info draait in de event loop van de worker. Een bron vol grote
+    BOS-pagina's en valse pagina's in het staartje is binnen 0,1 s klaar (eerst de kop, dan pas
+    de CRC; de CRC in C; en hooguit CRC_MAX bytes per bron nagekeken)."""
+    data = ogg_worst()
+    assert len(data) > 1_100_000
+    for which in ("ogg", None):
+        start = time.perf_counter()
+        found = info(data, which)
+        took = time.perf_counter() - start
+        assert found == {"skip": "te veel Ogg-pagina's om na te kijken"}, found
+        assert took < 0.1, (which, took)
+    # Met één kleine kop: de valse pagina's in het staartje kosten elk een CRC, tot CRC_MAX
+    small = ogg_page(0, 0x5151, 0, [opus_head()], flags=2) + ogg_worst()[16 * 65_306 :]
+    start = time.perf_counter()
+    assert info(small, "ogg") == {"skip": "te veel Ogg-pagina's om na te kijken"}
+    assert time.perf_counter() - start < 0.1
+
+
 def test_opus_laatste_granule_min_pre_skip():
     """(spike S8) samples = laatste granule − pre_skip; delay 0, want Opus gaat via FLAC."""
     data = opus_file(960_312, pre_skip=312)
@@ -519,7 +580,7 @@ FUZZ: dict[str, tuple[str, list[Callable[[], bytes]]]] = {
         ],
     ),
     "wav": ("wav", [lambda: wav_file(500), lambda: wav_file(10, claim=0xFFFFFFFF)]),
-    "ogg": ("ogg", [lambda: opus_file(96_312), lambda: opus_file(48_000, pages=2)]),
+    "ogg": ("ogg", [lambda: opus_file(96_312), lambda: opus_file(48_000, pages=2), ogg_worst]),
     "mov": (
         "mov",
         [
@@ -534,7 +595,8 @@ FUZZ: dict[str, tuple[str, list[Callable[[], bytes]]]] = {
 def test_fuzz_per_lezer(monkeypatch, reader, seed):
     """Vast zaad per lezer (regel 10): de bytes komen van buiten. Elk antwoord heeft de vijf
     velden binnen hun grenzen, of alleen skip; nooit een uitzondering; nooit meer dan READ_MAX
-    bytes gelezen (plus het proeven van 8 KB)."""
+    bytes gelezen (plus het proeven van 8 KB); en elke bron binnen 0,1 s (de lezers draaien in
+    de event loop van de worker; review golf 4, S5)."""
     rng = random.Random(seed)
     demuxer, bases = FUZZ[reader]
     seeds = [make() for make in bases]
@@ -550,8 +612,11 @@ def test_fuzz_per_lezer(monkeypatch, reader, seed):
         data = mutate(rng, rng.choice(seeds))
         for which in (demuxer, None):
             total[0] = 0
+            start = time.perf_counter()
             found = info(data, which, rng.choice([0, 0, 1]))
+            took = time.perf_counter() - start
             assert total[0] <= AI.READ_MAX + 8192, (n, total[0])
+            assert took < 0.1, (n, took)
             if "skip" in found:
                 assert set(found) == {"skip"} and isinstance(found["skip"], str)
                 continue

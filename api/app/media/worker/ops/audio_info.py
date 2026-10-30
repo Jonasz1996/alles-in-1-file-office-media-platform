@@ -14,7 +14,9 @@ geen threads; een paar KB pread kost niets).
   anders de duur van de mdhd. ALAC en FLAC in MP4 hebben geen voorloop;
 - **Ogg**: de BOS-pagina's vooraan (OpusHead of de Vorbis-kop) en alleen de laatste pagina van
   dat spoor (uit het staartje van hooguit één pagina, met de CRC van Ogg nagekeken), voor de
-  laatste granulepositie. Opus gaat via remux_audio naar FLAC (Keuze 38): dan is de delay 0, en
+  laatste granulepositie. Eerst de kop (spoor, granule), dan pas de CRC; de CRC rekent zlib (in
+  C), en per bron hooguit CRC_MAX bytes: een valse bron houdt de event loop zo nooit vast
+  (review golf 4, S5). Opus gaat via remux_audio naar FLAC (Keuze 38): dan is de delay 0, en
   samples = laatste granule − pre_skip (spike S8). Vorbis: geen voorloop, samples = de laatste
   granule;
 - **FLAC**: `total_samples` uit STREAMINFO (0 is onbekend: skip). Geen voorloop;
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import os
 import struct
+import zlib
 from dataclasses import dataclass
 
 from app.media.worker import containers
@@ -45,7 +48,10 @@ READ_MAX = 4 * 1024 * KiB  # samen, per bron (zoals de keyframes, Keuze 17)
 SYNC_WINDOW = 64 * KiB  # zo ver na de ID3-tag zoeken we het eerste MP3-frame
 OGG_PAGE_MAX = 27 + 255 + 255 * 255  # de grootste Ogg-pagina
 OGG_HEADS_MAX = 16  # hooguit zoveel BOS-pagina's vooraan (gemultiplexte stromen)
-OGG_TRIES_MAX = 64  # hooguit zoveel keer "OggS" in het staartje nakijken (de CRC kost tijd)
+OGG_TRIES_MAX = 64  # hooguit zoveel keer "OggS" in het staartje nakijken
+# Hooguit zoveel bytes per bron door de CRC. Echte BOS-pagina's zijn klein (alleen de eerste
+# kop van een spoor); de laatste pagina hooguit OGG_PAGE_MAX
+CRC_MAX = 4 * OGG_PAGE_MAX
 WAV_CHUNKS_MAX = 64
 ELST_ROWS_MAX = 16
 SAMPLES_MAX = 2**40  # ruim boven 300 uur op 768 kHz; daarboven klopt de kop niet
@@ -201,25 +207,33 @@ def wav(fd: int) -> Info:
 # --- Ogg ------------------------------------------------------------------------------------------
 
 
-def _crc_table() -> tuple[int, ...]:
-    table = []
-    for i in range(256):
-        r = i << 24
-        for _ in range(8):
-            r = ((r << 1) ^ 0x04C11DB7) if r & 0x80000000 else (r << 1)
-        table.append(r & 0xFFFFFFFF)
-    return tuple(table)
+# Een byte met de bits omgekeerd (bytes.translate)
+_REVERSED = bytes(int(f"{i:08b}"[::-1], 2) for i in range(256))
 
 
-_CRC = _crc_table()
+def ogg_crc(data: bytes | bytearray) -> int:
+    """De CRC-32 van Ogg (polynoom 0x04C11DB7, niet gespiegeld, begin 0, geen xor op het eind).
+
+    Gerekend met zlib.crc32, in C: dat is dezelfde polynoom gespiegeld. Dus elke byte omgekeerd
+    erin, met een register dat op 0 begint (de waarde 0xFFFFFFFF, want zlib keert hem om), de
+    xor op het eind ongedaan, en het antwoord omgekeerd. De CRC per byte in Python kostte 0,6 s
+    voor een valse bron van 1 MB (review golf 4, S5)."""
+    if not data:
+        return 0
+    crc = zlib.crc32(data.translate(_REVERSED), 0xFFFFFFFF) ^ 0xFFFFFFFF
+    return int(f"{crc:032b}"[::-1], 2)
 
 
-def ogg_crc(data: bytes) -> int:
-    """De CRC-32 van Ogg (polynoom 0x04C11DB7, niet gespiegeld, begin 0)."""
-    crc = 0
-    for byte in data:
-        crc = ((crc << 8) & 0xFFFFFFFF) ^ _CRC[(crc >> 24) ^ byte]
-    return crc
+class _Budget:
+    """Hoeveel bytes de CRC voor deze bron nog mag nakijken (CRC_MAX)."""
+
+    def __init__(self, left: int = CRC_MAX):
+        self.left = left
+
+    def take(self, size: int) -> None:
+        self.left -= size
+        if self.left < 0:
+            raise Skip("te veel Ogg-pagina's om na te kijken")
 
 
 @dataclass(frozen=True)
@@ -231,8 +245,9 @@ class Page:
     data: bytes
 
 
-def ogg_page(buf: bytes, pos: int) -> Page | None:
-    """De pagina op pos als ze helemaal in buf staat en de CRC klopt, anders None."""
+def ogg_page(buf: bytes, pos: int, budget: _Budget | None = None) -> Page | None:
+    """De pagina op pos als ze helemaal in buf staat en de CRC klopt, anders None. Met een
+    budget telt de CRC mee (Skip als het op is)."""
     if pos < 0 or pos + 27 > len(buf) or buf[pos : pos + 4] != b"OggS" or buf[pos + 4] != 0:
         return None
     flags = buf[pos + 5]
@@ -243,20 +258,25 @@ def ogg_page(buf: bytes, pos: int) -> Page | None:
     end = table_end + sum(buf[pos + 27 : table_end])
     if end > len(buf):
         return None
+    if budget is not None:
+        budget.take(end - pos)
     raw = bytearray(buf[pos:end])
     raw[22:26] = b"\0\0\0\0"
-    if ogg_crc(bytes(raw)) != crc:
+    if ogg_crc(raw) != crc:
         return None
     return Page(flags, granule, serial, end - pos, bytes(buf[table_end:end]))
 
 
-def _ogg_heads(reader: Reader) -> list[tuple[int, str, int, int]]:
+def _ogg_heads(reader: Reader, budget: _Budget) -> list[tuple[int, str, int, int]]:
     """De BOS-pagina's vooraan: (serial, soort, frequentie, pre_skip) per audiospoor."""
     out: list[tuple[int, str, int, int]] = []
     pos = 0
     for _ in range(OGG_HEADS_MAX):
-        page = ogg_page(reader.read(pos, OGG_PAGE_MAX), 0)
-        if page is None or not page.flags & 2:
+        buf = reader.read(pos, OGG_PAGE_MAX)
+        if len(buf) < 27 or not buf[5] & 2:
+            break  # geen BOS-pagina meer (de kop zegt het al; geen CRC nodig)
+        page = ogg_page(buf, 0, budget)
+        if page is None:
             break
         data = page.data
         if data[:8] == b"OpusHead" and len(data) >= 19:
@@ -267,8 +287,9 @@ def _ogg_heads(reader: Reader) -> list[tuple[int, str, int, int]]:
     return out
 
 
-def _last_granule(reader: Reader, serial: int) -> int:
-    """De granule van de laatste pagina van dit spoor, uit het staartje van de bron."""
+def _last_granule(reader: Reader, serial: int, budget: _Budget) -> int:
+    """De granule van de laatste pagina van dit spoor, uit het staartje van de bron. Eerst de
+    kop (spoor en granule), dan pas de CRC."""
     start = max(0, reader.size - OGG_PAGE_MAX)
     tail = reader.read(start, reader.size - start)
     at = len(tail)
@@ -276,19 +297,25 @@ def _last_granule(reader: Reader, serial: int) -> int:
         at = tail.rfind(b"OggS", 0, at)
         if at < 0:
             break
-        page = ogg_page(tail, at)
-        if page is not None and page.serial == serial and page.granule >= 0:
+        if at + 27 > len(tail):
+            continue
+        granule, page_serial = struct.unpack_from("<qI", tail, at + 6)
+        if page_serial != serial or granule < 0:
+            continue
+        page = ogg_page(tail, at, budget)
+        if page is not None:
             return page.granule
     raise Skip("geen laatste Ogg-pagina van dit spoor")
 
 
 def ogg(fd: int, audio_index: int = 0) -> Info:
     reader = Reader(fd, READ_MAX)
-    heads = _ogg_heads(reader)
+    budget = _Budget()
+    heads = _ogg_heads(reader, budget)
     if audio_index >= len(heads):
         raise Skip("geen Opus- of Vorbis-spoor met deze index")
     serial, kind, rate, pre_skip = heads[audio_index]
-    granule = _last_granule(reader, serial)
+    granule = _last_granule(reader, serial, budget)
     if kind == "opus":
         # Via remux_audio naar FLAC: de decoder knipt de pre_skip al weg (spike S8)
         return _check(Info(OPUS_RATE, granule - pre_skip, 0, 0, "opus"))
