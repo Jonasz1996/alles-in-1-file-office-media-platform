@@ -61,6 +61,8 @@ BUILT = {
     ("GET", "/api/v1/stream/{sid}/subs/{track}.vtt"),
     ("GET", "/api/v1/stream/{sid}/trick.vtt"),
     ("GET", "/api/v1/stream/{sid}/trick/{i}.jpg"),
+    # M9 (M0-hotfix, alleen deze test): test_media_stream_audio.py
+    ("GET", "/api/v1/stream/{sid}/audio.mp4"),
 }
 
 

@@ -346,6 +346,19 @@ BUILT = {
     # M7 (M0-hotfix, alleen deze test; de eigen tests in test_media_progress_api.py)
     ("PUT", "/api/v1/media/progress/{node_id}"),
     ("POST", "/api/v1/media/progress/batch"),
+    # M9 (M0-hotfix, alleen deze test): test_media_music.py en test_media_playlists.py
+    ("GET", "/api/v1/media/libraries/{library_id}/albums"),
+    ("GET", "/api/v1/media/albums/{album_id}"),
+    ("GET", "/api/v1/media/libraries/{library_id}/artists"),
+    ("GET", "/api/v1/media/artists/{key}"),
+    ("GET", "/api/v1/media/playlists"),
+    ("POST", "/api/v1/media/playlists"),
+    ("GET", "/api/v1/media/playlists/{playlist_id}"),
+    ("PATCH", "/api/v1/media/playlists/{playlist_id}"),
+    ("DELETE", "/api/v1/media/playlists/{playlist_id}"),
+    ("POST", "/api/v1/media/playlists/{playlist_id}/items"),
+    ("PUT", "/api/v1/media/playlists/{playlist_id}/order"),
+    ("DELETE", "/api/v1/media/playlists/{playlist_id}/items/{item_id}"),
 }
 
 
