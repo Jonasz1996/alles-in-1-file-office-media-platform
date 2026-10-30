@@ -343,6 +343,9 @@ BUILT = {
     ("GET", "/api/v1/media/libraries/{library_id}/items"),
     ("GET", "/api/v1/media/items/{node_id}"),
     ("GET", "/api/v1/media/shows/{show_id}"),
+    # M7 (M0-hotfix, alleen deze test; de eigen tests in test_media_progress_api.py)
+    ("PUT", "/api/v1/media/progress/{node_id}"),
+    ("POST", "/api/v1/media/progress/batch"),
 }
 
 

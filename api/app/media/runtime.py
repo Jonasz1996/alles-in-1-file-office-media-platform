@@ -106,8 +106,11 @@ async def start(app, settings: Settings) -> MediaState:
 
 
 async def stop(app) -> None:
-    from app.media import health, local, scanner
+    from app.media import health, local, progress, scanner
 
+    # M0-hotfix van M7: de kijkvoortgang die nog alleen in het geheugen staat, naar de
+    # database (Keuze 36). Faalt nooit.
+    await progress.stop()
     jobs.forget_housekeeping(SWEEP)
     await scanner.stop(getattr(app.state, "media_scanner", None))
     app.state.media_scanner = None
