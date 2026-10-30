@@ -281,13 +281,17 @@ def test_trim_de_oudste_eerst(tmp_path):
         path.write_bytes(b"x" * 100)
         os.utime(path, (now - 100 + i, now - 100 + i))
     (tmp_path / "e.mp4.part").write_bytes(b"x" * 1000)  # wordt nog gemaakt: telt niet
+    # een .part zonder remux in dit proces (van vóór een crash): weg (review golf 4, S1)
+    (tmp_path / "f.mp4.part").write_bytes(b"x" * 1000)
     stream_audio._remuxes["b.mp4"] = object()  # type: ignore[assignment]
+    stream_audio._remuxes["e.mp4"] = object()  # type: ignore[assignment]
     try:
         removed = stream_audio.trim(tmp_path, 250, keep={"a.mp4"})
     finally:
         stream_audio._remuxes.pop("b.mp4")
+        stream_audio._remuxes.pop("e.mp4")
     # a blijft (keep), b blijft (loopt nog): c en d gaan weg, dan past het (a + b = 200)
-    assert removed == 2
+    assert removed == 3
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a.mp4", "b.mp4", "e.mp4.part"]
     assert stream_audio.trim(tmp_path / "weg", 0, keep=set()) == 0
 
@@ -297,6 +301,8 @@ async def test_de_cache_blijft_onder_een_kwart(world, client, monkeypatch):
     settings, fake, headers, _ = world
     fake.on(Op.REMUX_AUDIO, Remux(b"n" * 1000))
     monkeypatch.setattr(stream_audio.cache, "limit_bytes", lambda gb: 4 * 1500)
+    monkeypatch.setattr(stream_audio, "TRACK_SHARE", 1)
+    monkeypatch.setattr(stream_audio, "expected_bytes", lambda *a: 1000)
     old = cache_dir(settings) / f"{'0' * 64}.mp4"
     old.parent.mkdir(parents=True, exist_ok=True)
     old.write_bytes(b"o" * 1000)
@@ -304,7 +310,7 @@ async def test_de_cache_blijft_onder_een_kwart(world, client, monkeypatch):
     node, sid = await track(client, headers, settings)
     assert (await client.get(f"{STREAM}/{sid}/audio.mp4")).status_code == 200
     await until(lambda: not stream_audio._remuxes, "het einde van de remux (en trim)")
-    # 1000 + 1000 > 1500: de oude gaat, de nieuwe blijft
+    # 1000 + 1000 > 1500: de oude gaat (al vóór de start, voor het budget), de nieuwe blijft
     assert not old.exists() and (cache_dir(settings) / f"{node['sha']}.mp4").exists()
 
 
@@ -360,3 +366,194 @@ async def test_uitloggen_breekt_de_stroom_af(world, client):
     # de remux zelf gaat door: het volgende verzoek (met een nieuwe sessie) heeft de cache
     await until(lambda: not stream_audio._remuxes, "het einde van de remux")
     assert len(list(cache_dir(settings).glob("*.mp4"))) == 1
+
+
+@pytest.mark.anyio
+async def test_vier_vragen_tegelijk_een_remux(world, client, monkeypatch):
+    """Review golf 4, C1: vier eerste vragen tegelijk (twee tabbladen, een nieuwe poging) delen
+    één remux; geen tweede remux op hetzelfde .part."""
+    settings, fake, headers, _ = world
+    handler = Remux()
+    fake.on(Op.REMUX_AUDIO, handler)
+    node, sid = await track(client, headers, settings)
+    url = f"{STREAM}/{sid}/audio.mp4"
+    plain = stream_audio._stat
+
+    def slow(path):
+        time.sleep(0.05)  # de stat duurt even: elke vraag ziet nog geen remux
+        return plain(path)
+
+    monkeypatch.setattr(stream_audio, "_stat", slow)
+    out = await asyncio.gather(*(client.get(url) for _ in range(4)), return_exceptions=True)
+    got = [r if isinstance(r, BaseException) else (r.status_code, r.content == DATA) for r in out]
+    assert got == [(200, True)] * 4, got
+    assert len(handler.calls) == 1, f"{len(handler.calls)} remuxes voor één bestand"
+    assert (cache_dir(settings) / f"{node['sha']}.mp4").read_bytes() == DATA
+
+
+@pytest.mark.anyio
+async def test_discard_voor_het_part_bestand(world, client, monkeypatch):
+    """Review golf 4, C6: een discard nog vóór de remux zijn .part opent. Het .part komt pas
+    daarna, dus alleen de vlag discarded houdt de inhoud uit de cache."""
+    import threading
+
+    settings, fake, headers, _ = world
+    handler = Remux()
+    fake.on(Op.REMUX_AUDIO, handler)
+    node, sid = await track(client, headers, settings)
+    opening, release = threading.Event(), threading.Event()
+    plain = stream_audio.Remux._open
+
+    def slow(self):
+        opening.set()
+        release.wait(5)
+        return plain(self)
+
+    monkeypatch.setattr(stream_audio.Remux, "_open", slow)
+    task = asyncio.ensure_future(client.get(f"{STREAM}/{sid}/audio.mp4"))
+    await until(opening.is_set, "de start van de remux")
+    await stream_audio.discard(node["sha"])
+    release.set()
+    with pytest.raises(sessions.StreamCut):
+        await task
+    await until(lambda: not stream_audio._remuxes, "het einde van de remux")
+    assert len(handler.calls) == 1
+    assert not (cache_dir(settings) / f"{node['sha']}.mp4").exists()
+    assert list(cache_dir(settings).iterdir()) == []
+
+
+def test_de_bovengrens_uit_de_probe():
+    """Review golf 4, S1: de bovengrens van audio.mp4. Gemeten (ffmpeg 6.1.1, de argv van
+    remux_audio): 600 s witte ruis als Opus van 6 kbps, mono 48 kHz, werd 36.623.878 bytes FLAC.
+    De grens moet daarboven liggen, en een uur stereo FLAC/Opus blijft onder één nummer."""
+    from types import SimpleNamespace as NS
+
+    mono = NS(sample_rate=48000, channels=1)
+    assert stream_audio.expected_bytes(345_537, 600_000, mono, "flac") > 36_623_878
+    stereo = NS(sample_rate=48000, channels=2)
+    hour = stream_audio.expected_bytes(50_000_000, 3_600_000, stereo, "flac")
+    assert hour == int(3600 * 48000 * 2 * 3 * 1.02) + stream_audio.SLACK
+    assert stream_audio.expected_bytes(1000, None, stereo, "copy") == 1250 + stream_audio.SLACK
+    assert stream_audio.expected_bytes(1000, None, stereo, "flac") is None
+    assert stream_audio.expected_bytes(1000, 1000, NS(sample_rate=None, channels=2), "flac") is None
+
+
+def _lang(sid: str, hours: float) -> None:
+    """De probe van de sessie zegt nu dat het nummer zo lang duurt."""
+    s = session_of(sid)
+    ms = int(hours * 3600 * 1000)
+    streams = [st.model_copy(update={"duration_ms": ms}) for st in s.probe.streams]
+    s.probe = s.probe.model_copy(update={"duration_ms": ms, "streams": streams})
+
+
+@pytest.mark.anyio
+async def test_een_nummer_te_groot_voor_de_cache(world, client):
+    """Review golf 4, S1: 37 uur Opus (100 MB) zou ruim 100 keer zo groot worden als FLAC: 415
+    too_large, nog vóór de worker. Twee uur past wel (cache_gb 20)."""
+    settings, fake, headers, _ = world
+    handler = Remux(b"x" * 1000)
+    fake.on(Op.REMUX_AUDIO, handler)
+    _, sid = await track(client, headers, settings, "album__opus__01.opus")
+    _lang(sid, 37)
+    r = await client.get(f"{STREAM}/{sid}/audio.mp4")
+    assert r.status_code == 415, r.text
+    assert r.json()["detail"]["code"] == "media_unsupported"
+    assert r.json()["detail"]["params"]["reasons"] == ["too_large"]
+    assert handler.calls == [] and not stream_audio._remuxes
+    _lang(sid, 2)
+    r = await client.get(f"{STREAM}/{sid}/audio.mp4")
+    assert r.status_code == 200 and r.content == b"x" * 1000
+
+
+@pytest.mark.anyio
+async def test_boven_het_budget_stopt_de_remux(world, client, monkeypatch):
+    """Review golf 4, S1: zegt de probe te weinig (of liegt hij), dan stopt de remux bij zijn
+    budget: het .part weg, niets in de cache, de opdracht in de worker weg."""
+    settings, fake, headers, _ = world
+    handler = Remux()
+    fake.on(Op.REMUX_AUDIO, handler)
+    monkeypatch.setattr(stream_audio, "expected_bytes", lambda *a: 1000)
+    _, sid = await track(client, headers, settings, "album__opus__01.opus")
+    with pytest.raises(sessions.StreamCut):
+        await client.get(f"{STREAM}/{sid}/audio.mp4")
+    await until(lambda: not stream_audio._remuxes, "het einde van de remux")
+    assert list(cache_dir(settings).iterdir()) == []
+    await until(lambda: fake.procs == 0, "de opdracht in de worker weg")
+    assert len(handler.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_weinig_schijf_geen_remux(world, client, monkeypatch):
+    """Review golf 4, S1: minder dan 10 GB vrij na het budget: 503 media_busy {reason: disk},
+    zoals remux en transcode van video."""
+    settings, fake, headers, _ = world
+    handler = Remux()
+    fake.on(Op.REMUX_AUDIO, handler)
+    _, sid = await track(client, headers, settings)
+    monkeypatch.setattr(stream_audio.admission, "disk_free", lambda path=None: 10 * 1024**3)
+    r = await client.get(f"{STREAM}/{sid}/audio.mp4")
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"]["code"] == "media_busy"
+    assert r.json()["detail"]["params"]["reason"] == "disk"
+    assert r.headers["retry-after"]
+    assert handler.calls == [] and not stream_audio._remuxes
+
+
+@pytest.mark.anyio
+async def test_wat_loopt_telt_mee_in_het_deel(world, client, monkeypatch):
+    """Review golf 4, S1: de budgetten van de remuxen die nog lopen, samen met een nieuwe, niet
+    boven het deel van audio/; is de eerste klaar, dan ruimt de start van de tweede hem op."""
+    settings, fake, headers, _ = world
+    gate = asyncio.Event()
+    first_handler = Remux(b"a" * 1000, gate=gate, pieces=2)
+    fake.on(Op.REMUX_AUDIO, first_handler)
+    monkeypatch.setattr(stream_audio.cache, "limit_bytes", lambda gb: 4 * 1500)
+    monkeypatch.setattr(stream_audio, "TRACK_SHARE", 1)
+    monkeypatch.setattr(stream_audio, "expected_bytes", lambda *a: 1000)
+    one, sid1 = await track(client, headers, settings, "album__flac__01.flac", "een.flac")
+    two, sid2 = await track(client, headers, settings, "album__flac__02.flac", "twee.flac")
+    first = asyncio.ensure_future(client.get(f"{STREAM}/{sid1}/audio.mp4"))
+    await until(lambda: first_handler.first.is_set(), "het eerste stuk")
+    r = await client.get(f"{STREAM}/{sid2}/audio.mp4")
+    assert r.status_code == 503 and r.json()["detail"]["params"]["reason"] == "disk", r.text
+    gate.set()
+    assert (await first).status_code == 200
+    await until(lambda: not stream_audio._remuxes, "het einde van de eerste remux")
+    fake.on(Op.REMUX_AUDIO, Remux(b"b" * 1000))
+    r = await client.get(f"{STREAM}/{sid2}/audio.mp4")
+    assert r.status_code == 200 and r.content == b"b" * 1000
+    assert not (cache_dir(settings) / f"{one['sha']}.mp4").exists()
+    assert (cache_dir(settings) / f"{two['sha']}.mp4").exists()
+
+
+@pytest.mark.anyio
+async def test_niemand_leest_meer(world, client, monkeypatch):
+    """Review golf 4, S1: de vraag ging weg (of kwam nooit bij follow): na IDLE_S zonder volger
+    stopt de remux, en er blijft niets achter."""
+    settings, fake, headers, _ = world
+    monkeypatch.setattr(stream_audio, "IDLE_S", 0.2)
+    gate = asyncio.Event()
+    handler = Remux(gate=gate)
+    fake.on(Op.REMUX_AUDIO, handler)
+    node, sid = await track(client, headers, settings)
+    s = session_of(sid)
+    args = RemuxAudioArgs(demuxer="flac", audio=0, codec="copy")
+    # een volger die na het eerste stuk weggaat
+    remux = stream_audio.Remux(cache_dir(settings), "a.mp4", node["sha"], s.path, args)
+    stream_audio._remuxes["a.mp4"] = remux
+    await remux.started
+    body = stream_audio.follow(app, remux)
+    assert await anext(body)
+    await asyncio.sleep(0.4)
+    assert not remux.task.done()  # er leest nog iemand (al wacht hij)
+    await body.aclose()
+    await until(lambda: remux.task.done(), "het einde van de remux")
+    assert remux.task.cancelled()
+    # nooit een volger
+    lone = stream_audio.Remux(cache_dir(settings), "b.mp4", node["sha"], s.path, args)
+    stream_audio._remuxes["b.mp4"] = lone
+    await lone.started
+    await until(lambda: lone.task.done(), "het einde van de remux zonder volger")
+    assert lone.task.cancelled() and not stream_audio._remuxes
+    assert list(cache_dir(settings).iterdir()) == []
+    await until(lambda: fake.procs == 0, "de opdrachten in de worker weg")

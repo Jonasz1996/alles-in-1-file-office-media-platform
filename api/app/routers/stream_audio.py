@@ -18,6 +18,18 @@ GET /api/v1/stream/{sid}/audio.mp4
 - **Grootte:** audio/ houdt hooguit een kwart van cache_gb; na elk nieuw bestand gaan de oudste
   (op mtime; een verzoek zet die van een bestand dat het serveert op nu) weg tot het past. De
   sweep van M4 telt audio/ mee in cache_gb.
+- **Een budget per remux** (review golf 4, S1): een kleine Opus van 6 kbps wordt als FLAC ruim
+  100 keer zo groot. Elke remux krijgt daarom vooraf een bovengrens in bytes (`budget`: uit de
+  probe de duur × rate × kanalen × 3 bytes voor FLAC, anders de bron + een kwart) en stopt als
+  hij erboven komt (TooLarge: het .part weg, de volgers StreamCut). Past één nummer niet in de
+  helft van het deel van audio/, dan 415 media_unsupported {reasons: [too_large]}. Minder dan
+  10 GB vrij op data_dir na het budget, of samen met de remuxen die nog lopen meer dan het deel
+  van audio/: 503 media_busy {reason: disk}. Vóór de start ruimt trim de oudste af tot alles
+  wat loopt erbij past, en een .part zonder remux (van vóór een crash) gaat weg.
+- **Eén remux per naam** (review golf 4, C1): de vraag kijkt na de stat opnieuw of een ander
+  verzoek de remux al begon, en registreert hem zonder await ertussen. Staat het bestand er
+  intussen toch, dan serveert de remux dat (geen tweede ffmpeg).
+- **Niemand leest meer** (de vraag ging weg): na IDLE_S zonder volger stopt de remux.
 - **Een blob die weggaat** (previews.discard → hooks.on_discard): zijn bestanden weg, en een
   remux die nog loopt, houdt zijn bestand niet.
 """
@@ -58,6 +70,11 @@ START_BUSY_S = 3.0  # de worker zegt busy: zo lang opnieuw proberen
 START_RETRY_S = 0.1
 QUEUE_HIGH = 64  # stukken uit de pipe die op schrijven wachten: niet verder lezen
 QUEUE_LOW = 8
+TRACK_SHARE = 2  # één nummer hooguit de helft van het deel van audio/ (cache_gb / 8)
+FLAC_BYTES = 3  # FLAC van ffmpeg: hooguit 24 bits per sample (verbatim), plus 2 % kop
+COPY_FACTOR = 1.25  # copy (FLAC, AAC): de bron, plus de boxen van fMP4 per frame
+SLACK = 4 * 1024 * 1024  # de init en de boxen van een klein nummer
+IDLE_S = 30.0  # zo lang geen volger: de remux stopt
 
 # Wat nu gemaakt wordt, per naam in de cache (gedeeld door alle sessies)
 _remuxes: dict[str, Remux] = {}
@@ -65,6 +82,39 @@ _remuxes: dict[str, Remux] = {}
 
 class Stalled(Exception):
     """STALL_S geen bytes uit de pipe."""
+
+
+class TooLarge(Exception):
+    """De remux kwam boven zijn budget (review golf 4, S1)."""
+
+
+def share_bytes() -> int:
+    """Het deel van cache_gb voor audio/."""
+    return cache.limit_bytes(admission.config().cache_gb) // CACHE_SHARE
+
+
+def track_max() -> int:
+    """Hooguit zoveel bytes voor één nummer."""
+    return share_bytes() // TRACK_SHARE
+
+
+def expected_bytes(size: int, duration_ms: int | None, stream: Any, codec: str) -> int | None:
+    """Een bovengrens voor audio.mp4, of None als de probe er geen geeft. copy: de bron plus een
+    kwart (de boxen van fMP4 per frame). flac: duur × rate × kanalen × 3 bytes (verbatim, de
+    grens van de encoder) plus 2 % voor de koppen van de frames."""
+    if codec == "copy":
+        return int(size * COPY_FACTOR) + SLACK
+    rate = stream.sample_rate or 0
+    channels = stream.channels or 0
+    if not duration_ms or duration_ms <= 0 or rate <= 0 or channels <= 0:
+        return None
+    pcm = duration_ms / 1000 * rate * channels * FLAC_BYTES
+    return int(pcm * 1.02) + SLACK
+
+
+def reserved(exclude: Remux | None = None) -> int:
+    """De budgetten van de remuxen die nog lopen (hun bytes staan nog niet in trim)."""
+    return sum(r.budget for r in _remuxes.values() if r is not exclude and not r.done)
 
 
 class _Pipe(asyncio.Protocol):
@@ -99,7 +149,10 @@ class _Pipe(asyncio.Protocol):
 class Remux:
     """Eén remux_audio naar de cache: eerst naar <naam>.part, dan atomair hernoemd."""
 
-    def __init__(self, base: Path, name: str, sha: str, source: Path, args: RemuxAudioArgs):
+    def __init__(
+        self, base: Path, name: str, sha: str, source: Path, args: RemuxAudioArgs, *,
+        budget: int | None = None,
+    ):  # fmt: skip
         self.base = base
         self.name = name
         self.sha = sha
@@ -107,16 +160,39 @@ class Remux:
         self.args = args
         self.final = base / name
         self.part = base / f"{name}.part"
+        self.budget = budget if budget is not None else track_max()
         self.size = 0
         self.done = False
         self.error: BaseException | None = None
         self.discarded = False
+        self.followers = 0
         loop = asyncio.get_running_loop()
         self.started: asyncio.Future[None] = loop.create_future()
         # Wacht niemand meer op de start (de vraag ging weg), dan toch de fout ophalen
         self.started.add_done_callback(lambda f: f.cancelled() or f.exception())
         self.changed = asyncio.Event()
         self.task = asyncio.ensure_future(self._run())
+        # Tot de eerste volger er is (de vraag wacht nog op de start), loopt de klok al
+        self._idle: asyncio.TimerHandle | None = loop.call_later(IDLE_S, self._abandon)
+
+    def join(self) -> None:
+        """Een volger begint (follow)."""
+        self.followers += 1
+        if self._idle is not None:
+            self._idle.cancel()
+            self._idle = None
+
+    def leave(self) -> None:
+        """Een volger stopt. Was het de laatste en is de remux niet af: na IDLE_S stoppen."""
+        self.followers -= 1
+        if self.followers <= 0 and not self.done and self.error is None and self._idle is None:
+            self._idle = asyncio.get_running_loop().call_later(IDLE_S, self._abandon)
+
+    def _abandon(self) -> None:
+        self._idle = None
+        if self.followers <= 0 and not self.done and not self.task.done():
+            log.info("remux_audio gestopt: niemand leest meer")
+            self.task.cancel()
 
     def _signal(self) -> None:
         """Wek wie wacht (die hield het oude Event vast) en begin een nieuw."""
@@ -145,6 +221,15 @@ class Remux:
         job: client.Job | None = None
         transport: asyncio.BaseTransport | None = None
         try:
+            # Kwam het bestand er intussen toch (een remux die net klaar was): dat serveren
+            ready = await asyncio.to_thread(_size_of, self.final)
+            if ready is not None:
+                self.size = ready
+                self.done = True
+                if not self.started.done():
+                    self.started.set_result(None)
+                return
+            await self._room()
             out = await asyncio.to_thread(self._open)
             job, reads = await self._call()
             pipe = os.fdopen(reads[0], "rb", buffering=0)
@@ -188,6 +273,9 @@ class Remux:
             if isinstance(exc, asyncio.CancelledError):
                 raise
         finally:
+            if self._idle is not None:
+                self._idle.cancel()
+                self._idle = None
             if transport is not None:
                 transport.close()
             if out >= 0:
@@ -214,6 +302,8 @@ class Remux:
                     break
                 parts.append(more)
             data = b"".join(parts)
+            if self.size + len(data) > self.budget:
+                raise TooLarge(f"meer dan {self.budget} bytes")
             await asyncio.to_thread(_write_all, out, data)
             self.size += len(data)
             protocol.drained()
@@ -221,9 +311,17 @@ class Remux:
             if ended:
                 return
 
+    async def _room(self) -> None:
+        """Vóór de start: de oudste weg tot alles wat loopt (ook deze) erbij past."""
+        try:
+            limit = max(0, share_bytes() - reserved())
+            await asyncio.to_thread(trim, self.base, limit, set())
+        except Exception:
+            log.exception("audio/ opruimen")
+
     async def _trim(self) -> None:
         try:
-            limit = cache.limit_bytes(admission.config().cache_gb) // CACHE_SHARE
+            limit = max(0, share_bytes() - reserved(exclude=self))
             await asyncio.to_thread(trim, self.base, limit, {self.name})
         except Exception:
             log.exception("audio/ opruimen")
@@ -238,13 +336,21 @@ def _write_all(fd: int, data: bytes) -> None:
 
 def trim(base: Path, limit: int, keep: set[str]) -> int:
     """De oudste bestanden van audio/ weg tot het samen onder limit blijft (niet keep, niet wat
-    nog gemaakt wordt). Geeft het aantal verwijderde bestanden."""
+    nog gemaakt wordt). Een .part zonder remux in dit proces (van vóór een crash of een stop)
+    gaat altijd weg. Geeft het aantal verwijderde bestanden."""
     entries = []
+    removed = 0
     try:
         listing = list(os.scandir(base))
     except OSError:
         return 0
     for entry in listing:
+        if entry.name.endswith(".mp4.part"):
+            if entry.name.removesuffix(".part") not in _remuxes:
+                with contextlib.suppress(OSError):
+                    (base / entry.name).unlink()
+                    removed += 1
+            continue
         if not entry.name.endswith(".mp4"):
             continue
         try:
@@ -253,7 +359,6 @@ def trim(base: Path, limit: int, keep: set[str]) -> int:
             continue
         entries.append((st.st_mtime, entry.name, st.st_size))
     total = sum(size for *_, size in entries)
-    removed = 0
     for _, name, size in sorted(entries):
         if total <= limit:
             break
@@ -304,6 +409,13 @@ def _position(session: sessions.Session) -> int:
         if stream.index == session.audio_index:
             return i
     return 0
+
+
+def _size_of(path: Path) -> int | None:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return None
 
 
 def _stat(path: Path) -> int | None:
@@ -367,9 +479,11 @@ def _open_growing(remux: Remux) -> int:
 async def follow(app: Any, remux: Remux) -> AsyncIterator[bytes]:
     """De bytes van een bestand dat nog groeit, tot de remux klaar is. Mislukt hij, of stopt de
     app, dan breekt de respons af (StreamCut)."""
+    remux.join()
     try:
         fd = await asyncio.to_thread(_open_growing, remux)
     except OSError:
+        remux.leave()
         raise sessions.StreamCut("failed") from None
     offset = 0
     try:
@@ -393,6 +507,20 @@ async def follow(app: Any, remux: Remux) -> AsyncIterator[bytes]:
                 raise sessions.StreamCut("stopping") from None
     finally:
         os.close(fd)
+        remux.leave()
+
+
+def _budget(session: sessions.Session, stream: Any, codec: str) -> int:
+    """Het budget van een nieuwe remux; 415 too_large als één nummer niet in de cache past."""
+    probe = session.probe
+    duration = stream.duration_ms or (probe.duration_ms if probe is not None else None)
+    limit = track_max()
+    expected = expected_bytes(session.size, duration, stream, codec)
+    if expected is None:
+        return limit  # geen grens uit de probe: dan de grens van één nummer
+    if expected > limit:
+        raise media_errors.unsupported(["too_large"])
+    return expected
 
 
 @router.get("/{sid}/audio.mp4")
@@ -426,9 +554,17 @@ async def audio(
         size = await asyncio.to_thread(_stat, base / name)
         if size is not None:
             return _file(session, base / name, size, etag, range_, if_range, if_none_match)
-        args = RemuxAudioArgs(demuxer=demuxer, audio=position, codec=codec)  # type: ignore[arg-type]
-        remux = Remux(base, name, session.sha, session.path, args)
-        _remuxes[name] = remux
+        budget = _budget(session, stream, codec)
+        free = await asyncio.to_thread(admission.disk_free, session.settings.data_dir)
+        # Een ander verzoek kan de remux tijdens de awaits hierboven begonnen zijn (C1): dan
+        # die volgen. Vanaf hier geen await meer tot hij in _remuxes staat.
+        remux = _remuxes.get(name)
+        if remux is None:
+            if free - budget < admission.DISK_MIN or reserved() + budget > share_bytes():
+                raise media_errors.busy("disk", admission.RETRY)
+            args = RemuxAudioArgs(demuxer=demuxer, audio=position, codec=codec)  # type: ignore[arg-type]
+            remux = Remux(base, name, session.sha, session.path, args, budget=budget)
+            _remuxes[name] = remux
     try:
         await _wait(request.app, asyncio.shield(remux.started))
     except HTTPException:
