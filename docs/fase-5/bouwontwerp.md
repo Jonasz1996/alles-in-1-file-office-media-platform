@@ -973,6 +973,11 @@ onderaan.
       - `navigator.mediaCapabilities.decodingInfo` → `smooth` en `power`. Voor het item met zijn
         echte maat en bitrate; voor de kandidaten op 1080p. HDR met `transferFunction` `pq` of
         `hlg`, `colorGamut: "rec2020"`.
+        *Noot bij de bouw van M6 (review golf 3, K2):* het `Item` (§3.4) heeft geen breedte en
+        hoogte. De speler haalt de maat, in de viewer en op `/kijken`, uit de meta van
+        `GET /files/{id}/preview` (`sizeOf` in `caps.ts`), tegelijk met de codecs, en wacht er
+        hooguit 3 s op. Zonder maat (de preview is er nog niet, een fout) meet hij het item op
+        1080p. Zie [m6.md](m6.md), afwijking 5.
     - Verder: `matchMedia("(dynamic-range: high)")`, native HLS
       (`canPlayType("application/vnd.apple.mpegurl")`), de schermhoogte maal `devicePixelRatio`,
       kanalen, en of `audioTracks` er is.
@@ -1563,6 +1568,10 @@ onderaan.
         proberen met 1, 2, 4 en 8 s, en dan elke 10 s, zolang er buffer is plus 120 s. Ondertussen
         kijkt de speler naar `/api/v1/health`. Is die weer goed, dan meteen opnieuw. Komt er dan
         410, dan een nieuwe sessie op de positie van nu.
+        *Noot (review golf 3, K3):* die route bestaat niet; de liveness van de app is
+        `GET /health` (`main.py`). De speler vraagt die (`HEALTH_URL` in `session.ts`). Met
+        `/api/v1/health` gaf de vraag altijd 404, en kwam "meteen opnieuw" nooit. Overal waar dit
+        ontwerp `/api/v1/health` noemt, is `/health` bedoeld.
       - Een update legt de app ±30–60 s stil: stoppen, de container starten, migraties en de
         gezondheidscheck. Met 30 s buffer plus 120 s haalt de speler dat. Pas daarna zegt hij
         "De server is niet bereikbaar" en stopt hij.
@@ -2467,6 +2476,46 @@ zonder internet. Een bestaande verzameling komt binnen via de import.
 - Prullenbak en terugzetten houden voortgang en koppeling.
 - Een import van 100 fixtures, verplaatst, kost geen extra ruimte.
 
+*Noten bij de bouw van M2* (de details in [m2.md](m2.md), "Afwijkingen van het ontwerp"):
+- De e2e start de import met `app.cli media-import`, niet via `/beheer`: de routes en het scherm
+  daarvoor zijn van M10 (afwijking 1). "Verder op" komt in de e2e uit een rij in de database,
+  want `PUT …/progress` is van M7 (afwijking 4).
+- Opnieuw scannen staat in de web-app alleen bij de eigenaar; de API laat ook wie via een deling
+  mag schrijven scannen. `Library` heeft geen veld `can_scan` (afwijking 2).
+- In een bibliotheek met muziek worden de nummers items (soort `track`), met de titel uit de naam.
+  Albums, artiesten en de hoes van een album (`cover.jpg`) zijn van M9; de scanner zoekt bij
+  muziek geen art (§4.3 #1 "een album": `test_posters_uit_poster_jpg_op_de_kaarten`).
+
+*Noten (review golf 3)* ([m2.md](m2.md), "De review (golf 3)"):
+- **Zichtbaar per vraag (S4).** Een item, een poster, een achtergrond of het eerste beeld van een
+  serie telt alleen als de node nog onder de map van zijn bibliotheek ligt, zonder prullenbak in
+  de keten. De Reader kijkt dat per vraag na, voor iedereen; de stand van de scanner alleen is
+  niet genoeg. Een pagina van de lijst kan daardoor korter zijn dan `limit`.
+- **Verborgen bestanden (S5).** Een naam met een punt vooraan, of een map met een punt vooraan in
+  het pad (`._Film.mkv`, `.AppleDouble/`), wordt geen item, ondertitel, NFO of plaatje. De import
+  neemt ze wel mee.
+- **NFO (S1, S3).** De codering uit de kop telt alleen als ze op een vaste lijst staat (`DECLARED`
+  in `worker/ops/nfo.py`); anders CP1252. Een timeout van de opdracht `nfo` is een fout van het
+  bestand, net als `unreadable`.
+- **Verplaatsen bij de import (S2, C7).** Geen rename meer: de bron krijgt met `linkat` een tweede
+  naam in `blobs/.tmp`, de blob krijgt modus 0600, en de naam in de bron gaat pas weg na de
+  commit van `place_file`. Een bestand van een andere uid gaat via een kopie, zoals bij `EXDEV`.
+- **Een volledige ronde in stukken (C1).** De rest van een ronde gaat in de payload van een scan
+  die al klaarstaat (`_merge`), niet verloren naast een nieuwere scan van mappen.
+- **Een bibliotheek in een andere geschoven (C2).** Het maken weigert nesting, maar een map
+  verplaatsen kan het daarna nog (de bestandsroutes zijn van M0). Dan wint de binnenste: de boom
+  van de buitenste slaat de map van een andere bibliotheek en alles eronder over.
+- **Art en `tvshow.nfo` van een serie die later komen (C3).** Zo'n bestand in een map van een
+  bibliotheek met series laat die map en alles eronder scannen (de afleveringen liggen vaak in
+  `Season 1`). Een `tvshow.nfo` die uit de map weg verhuist, ziet pas de ronde van 6 uur.
+- **Een NFO die weggaat (C4).** Een lokale bron met een titel is de hele beschrijving: jaar,
+  samenvatting en sorteertitel die ze niet noemt, gaan weg (niet onder een provider, `locked` of
+  een aanvulling zonder titel).
+- **Een analyse die al loopt (C5).** Loopt de analyse van een inhoud al zonder bibliotheek (play
+  buiten een bibliotheek), dan zet de scan een opvolger met de bibliotheek klaar (`jobs.chain`).
+- **Een serie met alleen cijfers (C8).** `24`, `1883` of `9-1-1` als map is de serie als de naam
+  van het bestand hetzelfde zegt, of als er een seizoensmap onder ligt. `NAMES_VERSION` is 2.
+
 ---
 
 ### M3 — Afspelen: profiel, beslissing, sessies en toegang
@@ -2788,6 +2837,32 @@ ondertitels, PiP en toetsenbord. Binnen het budget, zonder bibliotheek (B19).
 - Gemeten in e2e (`media_perf`, 10 keer, de mediaan en de slechtste): het eerste beeld bij direct
   ≤ 2 s, bij transcode ≤ 5 s, en zoeken en weer lopen ≤ 3 s.
 - Het budget klopt. De checklist voor het toetsenbord is af.
+
+*Noten bij de bouw van M6* (de details in [m6.md](m6.md), "Afwijkingen van het ontwerp"):
+- De trede in e2e 3 komt uit de opdrachtregel van ffmpeg en de init, niet uit
+  `admission.snapshot()` (die leeft in het proces van de app). VP9 heeft geen `-preset`; "veryfast"
+  is alleen bij H.264 (CI) te zien (afwijking 3).
+- De speler sluit zijn sessie bij `pagehide` (DELETE met `keepalive`) en maakt een nieuwe bij een
+  terugkeer uit de bfcache; anders hield een dicht tabblad zijn plaats bij de toelating 30 minuten
+  vast (afwijking 15).
+- Geen kaart "Volgende aflevering" van een gewone aflevering naar een special, of terug; de
+  specials staan achteraan, zoals bij M2 (afwijking 17).
+- Een eigen menu in de speler (niet `ui/Menu`), want in volledig scherm is alleen de container te
+  zien (afwijking 4).
+
+*Noten (review golf 3)* ([m6.md](m6.md), "De review (golf 3)"):
+- **De maat op `/kijken` (K2):** uit de meta van de preview, zie de noot bij Keuze 20.
+- **`/health` (K3):** de speler kijkt naar `GET /health`, zie de noot bij Keuze 32.
+- **Het quotum (C6):** na stap 2 (alles na t + 10 s weg) laadt de lader verder vanaf het eind van
+  de buffer bij de positie, niet na het laatste segment dat hij had; anders bleef er een gat.
+- **Eén bewerking tegelijk aan de SourceBuffer (K3):** `retry()` en een wissel wachten op de lus
+  van de lader en houden hem vast (`exclusive` in `mse.ts`). Twee tegelijk gaf
+  `InvalidStateError`, en de speler stopte na een herstart van de worker.
+- **§4.3 #12 in de e2e (K3):** `test_de_worker_gedood_tijdens_een_transcode` doodt de lokale
+  worker op pid tijdens een transcode; de speler loopt binnen 10 s na het eind van zijn buffer
+  weer.
+- **Ma met H.264 (K1):** `test_m6_ma_eerste_beeld_direct_h264` meet het eerste beeld direct met
+  H.264 en AAC in MP4. Alleen CI kan het (Chrome for Testing); hier slaat hij over.
 
 ---
 
