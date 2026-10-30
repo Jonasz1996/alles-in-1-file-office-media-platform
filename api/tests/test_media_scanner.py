@@ -18,7 +18,7 @@ from sqlalchemy import func, select, update
 
 from app import jobs
 from app.main import app
-from app.media import analysis, classify, hooks, scanner
+from app.media import analysis, classify, hooks, names, scanner
 from app.media import client as media_client
 from app.media.wire import Code as wire_code
 from app.media.wire import Op, WorkClass
@@ -614,11 +614,64 @@ async def test_nfo_gaat_voor_de_naam_en_staat_in_de_cache(world, client):
     assert r.status_code == 202
     await jobs.run_pending(settings, lane="media_scan")
     assert len([r for r in fake.requests if r.op == "nfo"]) == calls  # uit de cache
-    # De NFO weg: terug naar de naam
+    # De NFO weg: terug naar de naam, zonder iets van de NFO (review golf 3, C4: de samenvatting
+    # en het jaar van de NFO bleven staan naast de titel uit de naam)
     assert (await client.delete(f"/api/v1/files/{nfo_node}", headers=headers)).status_code == 204
     await scan(settings)
     item = (await items(settings, library_id))["dvd-rip.mkv"]
-    assert (item.title, item.source) == ("dvd-rip", "name")
+    assert (item.title, item.source, item.overview, item.year, item.ids) == (
+        "dvd-rip", "name", None, None, {},
+    )  # fmt: skip
+    assert item.sort_title == names.sort_title("dvd-rip")
+
+
+async def test_een_nfo_met_sorteertitel_en_een_serie_zonder_tvshow_nfo(world, client):
+    """C4 ook bij een serie (tvshow.nfo weg: geen samenvatting meer) en de sorteertitel."""
+    settings, fake, headers = world
+    fake.on(Op.NFO, nfo_handler)
+    library_id, folder = await library(client, headers, "Series", "shows")
+    serie = await mkdir(client, headers, folder, "Mooie Serie")
+    tv = await upload(client, headers, serie, "tvshow.nfo", b"<tvshow><title>Mooie Serie</title>"
+                      b"<plot>Over een serie.</plot><year>2015</year></tvshow>")  # fmt: skip
+    season = await mkdir(client, headers, serie, "Season 1")
+    await upload(client, headers, season, "Mooie Serie S01E01.mkv")
+    ep_nfo = await upload(client, headers, season, "Mooie Serie S01E01.nfo",
+                          b"<episodedetails><title>Begin</title><sorttitle>Aaa</sorttitle>"
+                          b"<plot>Het begin.</plot></episodedetails>")  # fmt: skip
+    await scan(settings)
+    item = (await items(settings, library_id))["Mooie Serie S01E01.mkv"]
+    async with maker(settings)() as session:
+        show = await session.get(MediaShow, item.show_id)
+    assert (item.title, item.sort_title, item.overview) == ("Begin", "aaa", "Het begin.")
+    assert (show.overview, show.year) == ("Over een serie.", 2015)
+    for node in (tv, ep_nfo):
+        assert (await client.delete(f"/api/v1/files/{node}", headers=headers)).status_code == 204
+    await scan(settings)
+    item = (await items(settings, library_id))["Mooie Serie S01E01.mkv"]
+    async with maker(settings)() as session:
+        show = await session.get(MediaShow, item.show_id)
+    assert (item.source, item.overview) == ("name", None)
+    assert item.sort_title != "aaa"
+    assert (show.title, show.overview, show.year) == ("Mooie Serie", None, None)
+
+
+def test_een_aanvulling_zonder_titel_wist_niets():
+    """Een gekoppelde serie krijgt bij een scan alleen lokale art en ids: dat wist de
+    beschrijving van de provider niet. En onder een provider wist een lokale ronde ook niets."""
+    from app.media import items as media_items
+
+    show = MediaShow(title="Echt", sort_title="echt", year=1999, overview="Van TMDB.", ids={},
+                     art={}, locked=[])  # fmt: skip
+    media_items.merge(show, {"art": {}, "ids": {"tvdb": "1"}}, "name")
+    assert (show.year, show.overview) == (1999, "Van TMDB.")
+    item = MediaItem(title="Echt", sort_title="echt", year=1999, overview="Van TMDB.", ids={},
+                     art={}, locked=[], source="provider")  # fmt: skip
+    media_items.merge(item, {"title": "naam", "year": None}, "name")
+    assert (item.title, item.year, item.overview) == ("Echt", 1999, "Van TMDB.")
+    item = MediaItem(title="Echt", sort_title="echt", year=1999, overview="Eigen.", ids={},
+                     art={}, locked=["overview"], source="nfo")  # fmt: skip
+    media_items.merge(item, {"title": "naam", "year": None}, "name")
+    assert (item.title, item.year, item.overview) == ("naam", None, "Eigen.")
 
 
 async def test_een_nfo_van_een_serie_en_een_aflevering(world, client):

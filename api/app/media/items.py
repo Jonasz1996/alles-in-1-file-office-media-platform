@@ -4,7 +4,8 @@ web-app te zien krijgt (kaarten, de pagina van een item en van een serie).
 Metadata (apply_metadata, ook voor M8):
 - velden in `locked` blijven altijd staan (Keuze 43);
 - lokale bronnen (name, nfo) vervangen elkaar: een NFO die erbij komt gaat voor de naam, en een
-  NFO die weggaat geeft de naam terug. Een lokale bron overschrijft nooit de beschrijvende
+  NFO die weggaat geeft de naam terug, zonder iets van die NFO (jaar, samenvatting en
+  sorteertitel gaan mee weg). Een lokale bron overschrijft nooit de beschrijvende
   velden (titel, sorteertitel, jaar, samenvatting) van een provider of van tags; ids vult hij
   alleen aan;
 - art per rol: lokaal is {"node": id} (een plaatje naast het bestand, Keuze 9), van een provider
@@ -170,8 +171,20 @@ def merge(item: MediaItem | MediaShow, fields: dict[str, Any], source: str) -> l
         if getattr(item, name) != value:
             setattr(item, name, value)
             changed.append(name)
+    # Een lokale bron met een titel is de hele beschrijving: wat ze niet (meer) noemt, gaat weg
+    # (review golf 3, C4). Anders hield een film na het weghalen van zijn NFO de samenvatting
+    # van die NFO naast de titel uit de naam. Niet onder een provider of tags (behind), en niet
+    # bij een aanvulling zonder titel (een gekoppelde serie krijgt alleen art en ids).
+    full = source in LOCAL and not behind and "title" in fields
+    if full:
+        for name in ("year", "overview"):
+            if name in fields or name in locked or not hasattr(item, name):
+                continue
+            if getattr(item, name) is not None:
+                setattr(item, name, None)
+                changed.append(name)
     if (
-        "title" in changed
+        ("title" in changed or full)
         and "sort_title" not in fields
         and "sort_title" not in locked
         and item.title
