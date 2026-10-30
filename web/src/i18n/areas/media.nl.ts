@@ -138,4 +138,19 @@ export default {
     notOwner: "Alleen een map van jezelf kan een bibliotheek worden.",
     already: "Deze map is al de bibliotheek {name}.",
   },
+  // M7: de rijen Verder kijken en Volgende aflevering (media/rows)
+  progress: {
+    resumeAt: "Verder op {time}",
+    left: "Nog {time}",
+    cardLabel: "{title}, verder op {time}",
+    nextLabel: "{title}, {code}",
+    actions: "Acties voor {title}",
+    more: "Meer",
+    resume: "Verder kijken vanaf {time}",
+    play: "Afspelen",
+    toItem: "Naar het item",
+    toShow: "Naar de serie",
+    markWatched: "Gezien markeren",
+    marked: "{title} staat op gezien.",
+  },
 } as const;

@@ -139,6 +139,20 @@ const en: Translation<typeof nl> = {
     notOwner: "Only a folder of your own can become a library.",
     already: "This folder already is the library {name}.",
   },
+  progress: {
+    resumeAt: "Resume at {time}",
+    left: "{time} left",
+    cardLabel: "{title}, resume at {time}",
+    nextLabel: "{title}, {code}",
+    actions: "Actions for {title}",
+    more: "More",
+    resume: "Continue watching from {time}",
+    play: "Play",
+    toItem: "Go to the item",
+    toShow: "Go to the show",
+    markWatched: "Mark as watched",
+    marked: "{title} is marked as watched.",
+  },
 };
 
 export default en;

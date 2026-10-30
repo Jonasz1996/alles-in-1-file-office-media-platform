@@ -1,5 +1,6 @@
 // /media (fase 5, M2): de start van media. De bibliotheken die je ziet, en de rijen Verder kijken
-// en Volgende aflevering (de data van M7, via GET /api/v1/media/home) en Net toegevoegd. Een rij
+// en Volgende aflevering (de data van M7, via GET /api/v1/media/home) en Net toegevoegd. De rijen
+// Verder kijken en Volgende aflevering zijn van M7 (media/rows): die bewegen live mee. Een rij
 // is een lijst kaarten met één tabstop: ← en → (en Home/End) verplaatsen de focus. Nieuwe
 // bibliotheek (niet voor gasten) opent de mappenkiezer en dan de dialoog voor die map; beide
 // laden pas bij de klik. Zonder bibliotheken: uitleg en een link naar Bestanden (daar kan het
@@ -20,6 +21,8 @@ import { Skeleton } from "../ui/Spinner";
 import { toast } from "../ui/toast";
 import { getHome } from "./api";
 import { MediaGate } from "./Gate";
+import { ContinueRow } from "./rows/ContinueRow";
+import { NextUpRow } from "./rows/NextUpRow";
 import { cardKey } from "./grid";
 import { libraryPath } from "./index";
 import { MediaCard } from "./Library";
@@ -27,7 +30,7 @@ import { affectsHome, kindIcon } from "./library";
 import type { Card, Library, MediaHome } from "./types";
 import "./media.css";
 
-/** Een rij kaarten (Verder kijken, Volgende aflevering, Net toegevoegd). */
+/** Een rij kaarten (Net toegevoegd). */
 function CardRow({ id, title, cards }: { id: string; title: string; cards: Card[] }): JSX.Element {
   const list = useRef<HTMLUListElement>(null);
   const [focus, setFocus] = useState(0);
@@ -165,8 +168,8 @@ function Home(): JSX.Element {
           <p>{t("media.home.emptyText")}</p>
         </EmptyState>
       )}
-      {home && home.continue.length > 0 && <CardRow id="continue" title={t("media.home.continue")} cards={home.continue} />}
-      {home && home.next_up.length > 0 && <CardRow id="next" title={t("media.home.nextUp")} cards={home.next_up} />}
+      {home && <ContinueRow cards={home.continue} />}
+      {home && <NextUpRow cards={home.next_up} />}
       {home && home.libraries.length > 0 && <LibraryList libraries={home.libraries} />}
       {home && home.recent.length > 0 && <CardRow id="recent" title={t("media.home.recent")} cards={home.recent} />}
       {Picker && <Picker onClose={closePicker} />}
