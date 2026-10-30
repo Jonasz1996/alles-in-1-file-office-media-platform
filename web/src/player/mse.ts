@@ -190,6 +190,8 @@ export class MseLoader {
   private next = 0;
   private inflight = -1;
   private aheadLimit = AHEAD_S;
+  /** Stap 2 van het quotum haalde weg wat na de positie lag: verder bij het eind van de buffer */
+  private refill = false;
   private token = 0;
   private ctrl: AbortController | null = null;
   private pumping: Promise<void> | null = null;
@@ -343,7 +345,7 @@ export class MseLoader {
         if (this.ahead() >= this.aheadLimit) return;
         await this.load(this.next, token);
         if (!live()) return;
-        this.next++;
+        this.next = this.after(this.next);
       }
     } catch (e) {
       if (isAbort(e) || !live()) return;
@@ -352,6 +354,17 @@ export class MseLoader {
     } finally {
       this.inflight = -1;
     }
+  }
+
+  /**
+   * Het segment na k. Haalde stap 2 van het quotum weg wat na t + 10 s lag, dan het segment na
+   * het eind van de buffer bij de positie (review golf 3, C6: eerst k + 1, en dan bleef er een
+   * gat van t + 10 s tot k waar de video stil bleef staan).
+   */
+  private after(k: number): number {
+    if (!this.refill) return k + 1;
+    this.refill = false;
+    return nextSegment(this.buffered(), this.video.currentTime, this.src.map.segments);
   }
 
   /** Segment k halen (en zo nodig eerst zijn init) en toevoegen. */
@@ -376,7 +389,7 @@ export class MseLoader {
       await this.append(init, token);
       this.inits.current = want;
     }
-    await this.append(data, token);
+    await this.append(data, token, segmentTime(this.src.map.segments, k));
   }
 
   private async get(url: string, signal: AbortSignal): Promise<Response> {
@@ -390,8 +403,12 @@ export class MseLoader {
     return res;
   }
 
-  /** Toevoegen; bij QuotaExceededError eerst achter weg, dan vooruit tot 10 s, en opnieuw. */
-  private async append(data: ArrayBuffer, token: number): Promise<void> {
+  /**
+   * Toevoegen; bij QuotaExceededError eerst achter weg, dan vooruit tot 10 s, en opnieuw. Na die
+   * tweede stap gaat pump verder bij het eind van de buffer (after), en een segment (startS) dat
+   * nu verder dan 10 s vooruit ligt, komt er dan pas weer bij.
+   */
+  private async append(data: ArrayBuffer, token: number, startS?: number): Promise<void> {
     for (let step = 0; ; step++) {
       try {
         await this.op(token, (sb) => sb.appendBuffer(data));
@@ -404,6 +421,8 @@ export class MseLoader {
         } else {
           this.aheadLimit = QUOTA_AHEAD_S;
           await this.removeAll(evictable(this.buffered(), t, 5, QUOTA_AHEAD_S), token);
+          this.refill = true;
+          if (startS !== undefined && startS > t + QUOTA_AHEAD_S) return;
         }
       }
     }
@@ -473,7 +492,7 @@ export class MseLoader {
       this.next = want;
       if (want < segmentCount(this.src.map.segments)) {
         await this.load(want, token);
-        this.next = want + 1;
+        this.next = this.after(want);
       }
     } catch (e) {
       if (!isAbort(e)) this.failed = true;
@@ -514,6 +533,7 @@ export class MseLoader {
     this.inits = new Inits();
     this.failed = false;
     this.aheadLimit = AHEAD_S;
+    this.refill = false;
     if (mimeChanged) {
       const sb = this.sb as SourceBuffer & { changeType?: (type: string) => void };
       if (!sb.changeType) throw new StreamError(415, "Ander formaat", "media_unsupported");
