@@ -690,3 +690,32 @@ async def test_een_oude_versie_terug_zet_de_stand_ook_terug(w, client):
     assert await blob_of(settings, node) == old_sha
     await settled()
     assert (await rows_of(settings)) == {uuid.UUID(node): 0}
+
+
+async def test_een_nieuwe_versie_zonder_stand_zet_geen_job_klaar(w, client):
+    """Na-controle van golf 4 (K2): zonder stand van iemand valt er niets terug te zetten. Een
+    nieuwe versie van een bestand dat niemand speelde (een document, of een film zonder stand)
+    zet dus geen job media.voortgang klaar; anders wachtte die 30 minuten (90 keer Defer) op
+    een probe die voor een document nooit komt. En de job draait in een rij van media, niet in
+    default: fase 3 en 4 merken er niets van (Keuze 14), en zonder media draait hij niet."""
+    from app import jobs
+
+    settings, headers = w
+    _, folder = await library(client, headers)
+    film = await upload(client, headers, folder, "Film (2001).mkv")
+    await scan(settings)
+    plain = await mkdir(client, headers, (await root(client, headers))["folder"]["id"], "Werk")
+    doc = await upload(client, headers, plain, "notities.txt", b"eerste versie")
+    for parent, name, node in ((folder, "Film (2001).mkv", film), (plain, "notities.txt", doc)):
+        r = await put(client, headers, parent, name, content("v2", 2000), conflict="replace")
+        assert r.status_code == 201, r.text
+        await settled()
+        assert await job_of(settings, node) is None, name
+    assert jobs.lane_of(progress.JOB) != jobs.DEFAULT_LANE
+    # Met een stand wel (de probe van de nieuwe inhoud is er nog niet)
+    assert (await save(client, headers, film, 30 * MIN, seq=1)).status_code == 204
+    r = await put(client, headers, folder, "Film (2001).mkv", content("v3", 2000),
+                  conflict="replace")  # fmt: skip
+    assert r.status_code == 201, r.text
+    await settled()
+    assert (await job_of(settings, film)) is not None

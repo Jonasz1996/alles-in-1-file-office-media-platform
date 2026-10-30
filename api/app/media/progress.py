@@ -701,13 +701,20 @@ def current() -> Store | None:
 # in het nieuwe bestand aan. Nu zet de app de stand zelf terug. files.notify meldt een nieuwe
 # versie (hooks.touched "node.version", zonder I/O); één korte taak kijkt meteen na of de
 # probe van de inhoud er al is (een oude versie terugzetten, bekende inhoud). Zo niet, dan de
-# job media.voortgang:<node> (rij default, duurzaam): die wacht met jobs.Defer op de probe,
+# job media.voortgang:<node> (rij media_scan, duurzaam): die wacht met jobs.Defer op de probe,
 # hooguit JOB_WAIT_S. Voor elke stand van die node (alle gebruikers) past Store.file_replaced
 # replaced() toe. Verder kijken blijft de regel ook bij het lezen toepassen (_swapped).
+#
+# Na-controle van golf 4: heeft niemand een stand van de node (een document, een film die
+# niemand speelde), dan valt er niets terug te zetten en komt er geen job; een stand die later
+# komt, is al van de nieuwe inhoud. De job staat in de rij media_scan, niet in default: fase 3
+# en 4 merken er niets van (Keuze 14), en zonder media (die rij draait dan niet) loopt hij niet.
 
 JOB = "media.voortgang"
 JOB_WAIT_S = 1800.0  # zo lang op de probe van een nieuwe versie wachten
 JOB_DEFER_S = 20.0
+JOB_LANE = "media_scan"  # kort werk, naast media.scan en media.music (Keuze 14)
+JOB_TIMEOUT_S = 120.0
 
 _after: set[asyncio.Task] = set()
 
@@ -757,7 +764,9 @@ async def check_replaced(
 ) -> tuple[int, list[uuid.UUID]]:
     """Voor elke node: is de probe van zijn inhoud er, dan Store.file_replaced voor elke stand
     van die node. Geeft (hoeveel standen terug naar 0 gingen, de nodes waarvan de probe er nog
-    niet is). Geen transactie open bij het slot van een gebruiker (regel 8)."""
+    niet is). Een node waarvan niemand een stand heeft (in de database of het geheugen), telt
+    niet mee, ook niet als wachtend. Geen transactie open bij het slot van een gebruiker (regel
+    8)."""
     live = store(settings)
     changed = 0
     waiting: list[uuid.UUID] = []
@@ -777,12 +786,14 @@ async def check_replaced(
             )
         if sha is None:
             continue  # weg, of geen bestand meer
+        users.update(u for u, by in live.entries.items() if node_id in by)
+        if not users:
+            continue  # niemand heeft er een stand van: niets terug te zetten
         if not settled:
             waiting.append(node_id)
             continue
         if not ready:
             continue  # de probe mislukte: geen duur om te vergelijken
-        users.update(u for u, by in live.entries.items() if node_id in by)
         for user_id in sorted(users, key=str):
             if await live.file_replaced(user_id, node_id, sha, duration):
                 changed += 1
@@ -798,7 +809,7 @@ async def _job(settings: Settings, payload: dict) -> None:
         raise jobs.Defer(JOB_DEFER_S)
 
 
-jobs.register(JOB, _job)
+jobs.register(JOB, _job, lane=JOB_LANE, timeout=JOB_TIMEOUT_S)
 
 
 def reset() -> None:
