@@ -1242,6 +1242,16 @@ async def _link_orphans(
             changed.append(item.node_id)
 
 
+def _of_show(name: str) -> bool:
+    """Hoort dit bestand bij de serie (of een seizoen) en niet bij één aflevering? tvshow.nfo en
+    de art van de map. De afleveringen liggen vaak een map lager (Season 1), dus dan de map en
+    alles eronder (review golf 3, C3: eerst alleen de map zelf, en daar staat geen aflevering)."""
+    if name.casefold() == "tvshow.nfo":
+        return True
+    found = classify.art_role(name)
+    return (found is not None and found[1] is None) or classify.season_art(name) is not None
+
+
 async def _affected(
     session: AsyncSession, library: MediaLibrary, tree: Tree, nodes: list[uuid.UUID]
 ) -> tuple[set[uuid.UUID], list[uuid.UUID], list[uuid.UUID]]:
@@ -1254,23 +1264,25 @@ async def _affected(
         return dirs, removals, out_dirs
     up = access.ancestry(Node.id == library.root_id)
     above = set((await session.scalars(select(up.c.id).where(up.c.depth > 0))).all())
-    info: dict[uuid.UUID, tuple[str, uuid.UUID | None]] = {}
+    info: dict[uuid.UUID, tuple[str, uuid.UUID | None, str]] = {}
     for start in range(0, len(nodes), 500):
         rows = await session.execute(
-            select(Node.id, Node.kind, Node.parent_id).where(
+            select(Node.id, Node.kind, Node.parent_id, Node.name).where(
                 Node.id.in_(nodes[start : start + 500])
             )
         )
-        info.update({r.id: (r.kind, r.parent_id) for r in rows})
+        info.update({r.id: (r.kind, r.parent_id, r.name) for r in rows})
     for node_id in nodes:
         found = info.get(node_id)
         if found is None:
             continue  # definitief weg: CASCADE
-        kind, parent_id = found
+        kind, parent_id, name = found
         if node_id in tree.dirs:
             dirs.update(tree.below(node_id))
         elif kind == "file" and parent_id in tree.dirs:
             dirs.add(parent_id)
+            if library.kind == "shows" and parent_id != tree.root.id and _of_show(name):
+                dirs.update(tree.below(parent_id))
         elif node_id in above:
             dirs.update(tree.dirs)  # een map boven de bibliotheek: alles
         elif kind == "file":

@@ -782,6 +782,40 @@ async def test_een_nfo_van_een_serie_en_een_aflevering(world, client):
     assert (show.title, show.year) == ("Mooie Serie", 2015)
 
 
+async def test_een_tvshow_nfo_en_poster_die_later_komen(world, client):
+    """C3 (review golf 3): tvshow.nfo en poster.jpg die later in de map van de serie komen. De
+    afleveringen liggen een map lager (Season 1); eerst werd alleen de map van de serie zelf
+    gescand, en daar staat geen aflevering: de serie bleef zonder titel en poster."""
+    settings, fake, headers = world
+    fake.on(Op.NFO, nfo_handler)
+    library_id, folder = await library(client, headers, "Series", "shows")
+    serie = await mkdir(client, headers, folder, "serie-map")
+    season = await mkdir(client, headers, serie, "Season 1")
+    await upload(client, headers, season, "serie-map S01E01.mkv")
+    await scan(settings)
+
+    async def show():
+        item = (await items(settings, library_id))["serie-map S01E01.mkv"]
+        async with maker(settings)() as session:
+            return await session.get(MediaShow, item.show_id)
+
+    assert ((await show()).title, (await show()).art) == ("serie-map", {})
+    tv = b"<tvshow><title>Mooie Serie</title><plot>Echt.</plot></tvshow>"
+    nfo = await upload(client, headers, serie, "tvshow.nfo", tv)
+    poster = await upload(client, headers, serie, "poster.jpg", b"\xff\xd8\xff")
+    await scan(settings)
+    found = await show()
+    assert (found.title, found.overview) == ("Mooie Serie", "Echt.")
+    assert found.art == {"poster": {"node": poster}}
+    # En weg (de prullenbak): weer de naam van de map, zonder poster
+    for node in (nfo, poster):
+        r = await client.delete(f"/api/v1/files/{node}", headers=headers)
+        assert r.status_code in (200, 204), r.text
+    await scan(settings)
+    found = await show()
+    assert (found.title, found.overview, found.art) == ("serie-map", None, {})
+
+
 async def test_een_kapotte_nfo_geeft_de_naam(world, client):
     settings, fake, headers = world
     fake.on(Op.NFO, nfo_handler)
