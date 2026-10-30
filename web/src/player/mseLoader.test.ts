@@ -8,6 +8,7 @@
 // - CI-run 41002597837: na de herstel-lus komt een segment van een nieuwe run waarvan het geluid
 //   niet aansluit (H.264 met B-frames en AAC: 41 ms later dan het eind van het vorige). In
 //   buffered is dat een gat, maar de video stond daar al stil: de springer moet ook dan nog kijken.
+//   Die lus stopt bij pauze, een sprong, readyState 3 en destroy.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GridSegments } from "../media/types";
@@ -117,6 +118,7 @@ class FakeVideo extends EventTarget {
   currentTime = 0;
   readyState = 4;
   seeking = false;
+  paused = false;
   src = "";
   removeAttribute(): void {}
   load(): void {}
@@ -295,6 +297,56 @@ describe("een gat dat pas komt als de video al stilstaat (CI-run 41002597837)", 
     loader.destroy();
   });
 
+  // Een video die midden in een stuk stilstaat (t = 5, gebufferd vanaf 0): de springer kijkt om de
+  // GAP_WAIT_MS opnieuw, en springt niet (geen gat)
+  async function stalled(): Promise<{ loader: MseLoader; video: FakeVideo }> {
+    sb = new FakeSourceBuffer(1000);
+    const video = new FakeVideo();
+    const loader = new MseLoader(
+      video as unknown as HTMLVideoElement,
+      { sid: "s", duration: 100, map: { gen: 1, mime: "video/mp4", offset: 0, init: "init.mp4", segments: GRID } },
+      { error: () => undefined },
+      fetchFn,
+    );
+    await loader.open(0);
+    await settle();
+    video.currentTime = 5;
+    video.readyState = 2;
+    video.dispatchEvent(new Event("waiting"));
+    await settle();
+    await new Promise((ok) => setTimeout(ok, 2 * GAP_WAIT_MS));
+    expect(video.currentTime).toBe(5);
+    return { loader, video };
+  }
+
+  // Vlak voor t = 5 eindigt het stuk, 50 ms verder begint het volgende: een gat om over te springen
+  const hole = (): void => {
+    sb.spans = [
+      [0, 5.05],
+      [5.1, 40],
+    ];
+  };
+
+  it.each([
+    ["pauze", (v: FakeVideo, on: boolean) => (v.paused = on)],
+    ["een sprong (seeking)", (v: FakeVideo, on: boolean) => (v.seeking = on)],
+    ["readyState 3", (v: FakeVideo, on: boolean) => (v.readyState = on ? 3 : 2)],
+  ])("stopt met kijken bij %s, en kijkt pas weer na een nieuwe waiting", async (_name, set) => {
+    const { loader, video } = await stalled();
+    set(video, true);
+    await new Promise((ok) => setTimeout(ok, 2 * GAP_WAIT_MS)); // hij ziet het en stopt
+    set(video, false);
+    hole();
+    // Liep de lus nog, dan sprong hij nu naar 5,1
+    await new Promise((ok) => setTimeout(ok, 3 * GAP_WAIT_MS));
+    expect(video.currentTime).toBe(5);
+    // Een nieuwe waiting (de browser geeft die als de video weer wacht): dan springt hij wel
+    video.dispatchEvent(new Event("waiting"));
+    await until(() => video.currentTime !== 5);
+    expect(video.currentTime).toBeCloseTo(5.1);
+    loader.destroy();
+  });
+
   it("kijkt niet meer na destroy", async () => {
     sb = new FakeSourceBuffer(1000);
     const video = new FakeVideo();
@@ -316,5 +368,13 @@ describe("een gat dat pas komt als de video al stilstaat (CI-run 41002597837)", 
     ];
     await new Promise((ok) => setTimeout(ok, 3 * GAP_WAIT_MS));
     expect(video.currentTime).toBe(29.97);
+  });
+
+  it("kijkt ook niet meer na destroy als de lus al loopt", async () => {
+    const { loader, video } = await stalled();
+    loader.destroy();
+    hole();
+    await new Promise((ok) => setTimeout(ok, 3 * GAP_WAIT_MS));
+    expect(video.currentTime).toBe(5);
   });
 });
