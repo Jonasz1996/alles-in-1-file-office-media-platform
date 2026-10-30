@@ -61,7 +61,7 @@ from app.db import get_engine
 from app.media import analysis, classify, client, hooks, names, subtitles
 from app.media import items as media_items
 from app.media.types import EVENT_ITEM, EVENT_LIBRARY, ItemEvent, LibraryEvent
-from app.media.wire import Op
+from app.media.wire import Code, Op
 from app.media.worker.args import NfoArgs
 from app.models import Job, MediaItem, MediaLibrary, MediaProbe, MediaShow, Node
 from app.storage import BlobStore
@@ -79,6 +79,10 @@ MAX_NODES = 5_000  # ids in één payload; daarboven wordt het een volledige ron
 RECONCILE_EVERY = 6 * 3600.0
 NFO_RETRY = 60.0  # worker druk of weg: de NFO's na zoveel seconden opnieuw
 NFO_MAX_BYTES = 1024 * 1024  # Keuze 9
+# Een fout van de NFO zelf: in de cache, en geen herkansing. Ook timeout (review golf 3, S1): de
+# opdracht leest hooguit 1 MiB in milliseconden; duurt het 10 s, dan ligt het aan de bytes, en
+# zou de herkansing na NFO_RETRY dezelfde NFO steeds opnieuw sturen.
+NFO_FILE_ERRORS = analysis.FILE_ERRORS | {Code.TIMEOUT.value}
 MAX_EVENTS = 20  # meer veranderde items in één stuk: alleen media.library
 MEDIA_KINDS = ("movie", "episode", "video", "extra", "track")
 SEP, END = "\x1f", "\x1e"  # in de sorteersleutel van een map (namen hebben geen stuurtekens)
@@ -626,10 +630,10 @@ async def read_nfos(settings: Settings, shas: list[str]) -> tuple[dict[str, dict
             worker_ok, retry = False, True
             continue
         except client.WorkerFailed as exc:
-            if exc.code in analysis.FILE_ERRORS:
+            if exc.code in NFO_FILE_ERRORS:
                 data = {"root": None, "fields": {}, "error": exc.code}
             else:
-                worker_ok = False  # not_built, timeout, internal: de ronde van 6 uur probeert het
+                worker_ok = False  # not_built, internal: de ronde van 6 uur probeert het
                 continue
         except OSError:
             continue  # de blob is weg

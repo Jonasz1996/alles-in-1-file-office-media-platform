@@ -161,6 +161,72 @@ def test_coderingen():
     assert answer(b"  \n\t ")["error"] == "empty"
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["punycode", "raw_unicode_escape", "unicode_escape", "utf-7", "idna", "rot13", "zlib",
+     "base64", "hex", "uu", "quopri", "bz2", "iso2022_jp", "hz", "undefined"],
+)  # fmt: skip
+def test_een_codering_buiten_de_lijst_wordt_cp1252(name):
+    """Review golf 3, S1 en S3: punycode is kwadratisch (200 KB kostte 14 s, 1 MiB ± 6 minuten in
+    de lus van de worker), en raw_unicode_escape maakte van \\ud800 een losse surrogaat waar expat
+    met een UnicodeEncodeError op viel. Nu telt alleen een codering van DECLARED; de rest is
+    CP1252, snel en altijd een antwoord."""
+    head = f'<?xml version="1.0" encoding="{name}"?>'.encode()
+    slow = head + b"\xff-" + b"a" * 200_000
+    started = time.perf_counter()
+    check_shape(answer(slow))
+    assert time.perf_counter() - started < 1
+    escaped = head + b"\xff<movie><title>\\ud800 \\udfff</title></movie>"
+    got = answer(escaped)
+    check_shape(got)
+    assert got["fields"]["title"] == "\\ud800 \\udfff"
+
+
+def test_een_losse_surrogaat_is_kapotte_xml_en_geen_fout():
+    """Ook als er toch een losse surrogaat in de tekst komt: geen UnicodeEncodeError uit expat,
+    maar kapotte XML (en in start gaat hij er al uit, zoals een stuurteken)."""
+    reader = nfo.Reader("<movie><title>\ud800</title></movie>")
+    with pytest.raises(nfo.NfoError):
+        for part in reader.parts:
+            reader.feed(part)
+        reader.close()
+    assert nfo._CONTROL.sub("", "a\ud800b\udfffc") == "abc"
+
+
+def test_de_lijst_van_coderingen_is_snel_en_geeft_altijd_tekst():
+    """Elke codering die een kop mag noemen: 1 MiB willekeurige bytes (vaste seed) in ruim
+    minder dan een seconde, zonder losse surrogaat in de tekst."""
+    rng = random.Random(1103)
+    body = bytes(rng.randrange(256) for _ in range(1 << 20))
+    for name in sorted(nfo.DECLARED):
+        data = f'<?xml version="1.0" encoding="{name}"?>'.encode() + b"\xff" + body
+        started = time.perf_counter()
+        text = nfo.decode(data)
+        assert time.perf_counter() - started < 0.5, name
+        assert not any(0xD800 <= ord(c) <= 0xDFFF for c in text), name
+        check_shape(answer(data[: 64 * 1024]))
+
+
+def test_fuzz_elke_codering_die_python_kent():
+    """Regel 10, met een vaste seed: elke codec van de standaardbibliotheek in de kop, met
+    ongeldige UTF-8 en verminkte inhoud, geeft altijd een antwoord, en snel."""
+    import encodings
+    import pkgutil
+
+    rng = random.Random(30)
+    names = sorted(m.name for m in pkgutil.iter_modules(encodings.__path__))
+    started = time.perf_counter()
+    for name in names:
+        for _ in range(3):
+            text = list(rng.choice(SEEDS))
+            for _ in range(rng.randint(1, 4)):
+                text.insert(rng.randrange(len(text) + 1), rng.choice(PIECES + ["\\ud800"]))
+            body = "".join(text).encode("utf-8", "surrogatepass")
+            data = f'<?xml version="1.0" encoding="{name}"?>'.encode() + b"\xff" + body
+            check_shape(answer(data + b"a" * rng.randint(0, 20_000)))
+    assert time.perf_counter() - started < 10
+
+
 # --- weigeren en grenzen -------------------------------------------------------------------------
 
 

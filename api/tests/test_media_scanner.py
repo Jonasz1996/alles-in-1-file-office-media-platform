@@ -20,6 +20,7 @@ from app import jobs
 from app.main import app
 from app.media import analysis, classify, hooks, scanner
 from app.media import client as media_client
+from app.media.wire import Code as wire_code
 from app.media.wire import Op, WorkClass
 from app.media.worker.ops import nfo as nfo_op
 from app.models import Blob, Job, MediaItem, MediaLibrary, MediaShow, Node, PlaybackState
@@ -652,6 +653,44 @@ async def test_een_kapotte_nfo_geeft_de_naam(world, client):
     await scan(settings)
     item = (await items(settings, library_id))["Film (2010).mkv"]
     assert (item.title, item.source) == ("Film", "name")
+
+
+async def test_een_nfo_die_de_tijd_overschrijdt_is_een_fout_van_het_bestand(world, client):
+    """Review golf 3, S1: een timeout van de opdracht nfo ligt aan de bytes. Hij komt in de cache
+    zoals unreadable, en de bibliotheek komt niet in de herkansing van 60 s, ook niet met een
+    tweede NFO in dezelfde scan die nog niet gelezen is."""
+    from tests.media.fake_worker import OpError
+
+    settings, fake, headers = world
+
+    async def slow_or_real(job):
+        data = os.pread(job.inputs[0], job.args.max_bytes + 1, 0)
+        if b"traag" in data:
+            raise OpError(wire_code.TIMEOUT, "nfo duurde langer dan 10 s")
+        return nfo_op.parse(data)
+
+    fake.on(Op.NFO, slow_or_real)
+    library_id, folder = await library(client, headers)
+    await upload(client, headers, folder, "a.mkv")
+    await upload(client, headers, folder, "a.nfo", b"<movie><title>traag</title></movie>")
+    await upload(client, headers, folder, "b.mkv")
+    await upload(client, headers, folder, "b.nfo", b"<movie><title>Snel</title></movie>")
+    await scan(settings)
+    got = await items(settings, library_id)
+    assert (got["a.mkv"].title, got["a.mkv"].source) == ("a", "name")
+    assert got["b.mkv"].title == "Snel"
+    assert library_id not in {str(k) for k in scanner._retry}
+    async with maker(settings)() as session:
+        shas = {
+            n.name: n.blob_id
+            for n in await session.scalars(select(Node).where(Node.name.in_(["a.nfo", "b.nfo"])))
+        }
+    assert scanner._read_cache(scanner.nfo_cache(settings, shas["a.nfo"]))["error"] == "timeout"
+    calls = len([r for r in fake.requests if r.op == "nfo"])
+    r = await client.post(f"/api/v1/media/libraries/{library_id}/scan", headers=headers)
+    assert r.status_code == 202
+    await jobs.run_pending(settings, lane="media_scan")
+    assert len([r for r in fake.requests if r.op == "nfo"]) == calls  # niet opnieuw
 
 
 async def test_de_worker_druk_eerst_de_naam_daarna_de_nfo(world, client, monkeypatch):

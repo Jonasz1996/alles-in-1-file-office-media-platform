@@ -5,7 +5,7 @@ met de app), hooguit args.max_bytes (standaard 1 MiB). Groter is too_large.
 
 Wat de lezer doet, in deze volgorde (de inhoud is van een gebruiker, dus onvertrouwd):
 1. ontcijferen: een BOM (UTF-8, UTF-16), anders UTF-8, anders de codering uit de XML-kop als
-   Python die kent, anders CP1252. Stuurtekens gaan weg;
+   die op de lijst DECLARED staat, anders CP1252. Stuurtekens en losse surrogaten gaan weg;
 2. elke `<!DOCTYPE` of `<!ENTITY` (ook in kleine letters) weigeren vóór het parsen. Zonder DTD
    kent expat alleen de vijf vaste entiteiten: geen XXE, geen "billion laughs";
 3. de XML-kop eraf en alles in één eigen wortel (`<nfo>…</nfo>`): een NFO met meerdere
@@ -53,7 +53,7 @@ KINDS = ("movie", "tvshow", "episodedetails", "season", "musicvideo")
 _FORBIDDEN = re.compile(r"<!\s*(?:DOCTYPE|ENTITY)", re.IGNORECASE)
 _DECL = re.compile(r"^\s*<\?xml[^>]{0,200}\?>", re.IGNORECASE)
 _DECL_ENCODING = re.compile(rb"^\s*<\?xml[^>]{0,200}?encoding\s*=\s*[\"']([A-Za-z0-9._\-]{1,40})")
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f￾￿]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff￾￿]")
 _SPACES = re.compile(r"\s+")
 
 _IMDB = re.compile(r"^tt\d{5,10}$")
@@ -70,6 +70,35 @@ _LINKS = (
         ),
     ),
 )
+# De coderingen die een XML-kop mag noemen (review golf 3, S1 en S3). Elk is een tabel of een codec
+# in C: lineair in de lengte, en nooit een losse surrogaat. Python kent er meer, maar die zijn hier
+# gevaarlijk: punycode is kwadratisch (een NFO van 1 MiB hield de lus van de worker minuten vast),
+# raw_unicode_escape en unicode_escape maken van "\\ud800" een losse surrogaat (expat faalt dan
+# met een UnicodeEncodeError), en rot13, zlib of base64 geven geen tekst. Alles anders: CP1252.
+DECLARED = frozenset(
+    codecs.lookup(name).name
+    for name in (
+        "ascii",
+        *(f"iso-8859-{n}" for n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16)),
+        *(f"cp{n}" for n in range(1250, 1259)),
+        "koi8-r",
+        "koi8-u",
+        "mac-roman",
+        "cp437",
+        "cp850",
+        "cp866",
+        "shift_jis",
+        "cp932",
+        "euc_jp",
+        "gb2312",
+        "gbk",
+        "gb18030",
+        "big5",
+        "euc_kr",
+        "cp949",
+    )
+)
+
 _OLD_IDS = {"imdbid": "imdb", "imdb": "imdb", "tmdbid": "tmdb", "tmdb": "tmdb", "tvdbid": "tvdb"}
 
 
@@ -110,11 +139,8 @@ def decode(data: bytes) -> str:
             name = codecs.lookup(found.group(1).decode("ascii")).name
         except LookupError:
             name = ""
-        if name and not name.startswith(("utf-16", "utf-32", "utf-8")):
-            try:
-                return data.decode(name, "replace")
-            except (LookupError, ValueError):
-                pass  # een codec die geen tekst geeft (rot13, zlib): niet gebruiken
+        if name in DECLARED:
+            return data.decode(name, "replace")
     return data.decode("cp1252", "replace")
 
 
@@ -282,14 +308,16 @@ class Reader:
         try:
             self.parser.feed(part)
             self._events()
-        except ET.ParseError:
+        except (ET.ParseError, ValueError):
+            # ValueError: ook een UnicodeError van expat (een teken dat niet naar UTF-8 kan);
+            # na DECLARED en _CONTROL hoort dat niet meer te kunnen, maar het blijft kapotte XML
             raise NfoError("xml") from None
 
     def close(self) -> dict[str, Any]:
         self.feed("</nfo>")
         try:
             self.parser.close()
-        except ET.ParseError:
+        except (ET.ParseError, ValueError):
             raise NfoError("xml") from None
         root = self.root
         if root is None:
