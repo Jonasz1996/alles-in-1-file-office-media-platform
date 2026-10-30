@@ -1,7 +1,7 @@
 # Fase 5 — Media en streaming
 
 Status: **golf 4 samengevoegd: M0 tot en met M7, en M9** (bouwontwerp revisie 2; 30 oktober
-2026). De review van golf 4 volgt nog.
+2026). De review van golf 4 is verwerkt; de nacontrole van golf 4 volgt nog.
 M0 is het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker,
 F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
 
@@ -238,6 +238,34 @@ dat Chromium 141 niet kan). "Klaar als" van M7 hier: synchroniseren p95 0,081 s 
 AAC gapless, de worker-container met `audio_info` en `remux_audio`, en Chrome for Testing ziet
 pas CI. Jonas heeft de beslissingskaarten van fase 5 nog niet beantwoord: M7 en M9 bouwen op de
 standaarden; B39–B48 staan niet als besloten.
+
+De review van golf 4 had 15 bevindingen voor M7 en M9 (S1–S5, C1–C7, K1–K3); ze klopten alle
+15. Elke bevinding staat met haar uitkomst, de commit en de tests onder "De review (golf 4)" in
+[m7.md](m7.md) en [m9.md](m9.md). De belangrijkste:
+
+- **Veiligheid:** `audio.mp4` had geen grens: een Opus van 6 kbps werd als FLAC ±106 × zo groot
+  (nu een budget per remux uit de probe, `DISK_MIN` vrij, en een remux zonder lezer stopt); één
+  te groot getal in een PUT van de voortgang hield alle voortgang van die gebruiker tegen (nu
+  422, en elke stand apart geschreven); een `started_at` buiten de klok gaf 500; een valse Ogg
+  hield de worker 0,4–0,7 s per bron vast (nu een CRC in C en hooguit vier pagina's per bron);
+  albums en artiesten bleven zichtbaar na een verhuizing uit de bibliotheek (nu per map
+  nagekeken, zoals de Reader van M2).
+- **Wat niet klopte:** vragen tegelijk startten elk een remux op hetzelfde bestand; "(Disc 1)"
+  en "(Disc 2)" werden twee albums; "A feat. B" maakte een compilatie; het oude nummer speelde
+  door terwijl het nieuwe laadde (en zijn eind sloeg het gekozen nummer over); een vervangen
+  bestand telde alleen in Verder kijken, niet op de pagina's van M2.
+- **Wat ontbrak:** tests voor `discarded` in de remux, het opruimen van de buffer en de snelle
+  weg van "volgende"; de noten bij de bouw in het ontwerp (§2.0, §2 M7 en M9, §3.3, Keuze 36–38;
+  `sessions.create_audio` gebruikt niemand).
+
+Geen M0-hotfix, geen migratie. De uitslag na de review, in de sandbox: api 3466 goed, 1
+overgeslagen en 1 fout: `test_fuzz_10000_namen_met_vaste_seed` (M2) mat 0,514 s tegen een grens
+van 0,5 s. `names.py`, `classify.py` en de test zijn sinds `bcd90ed` niet veranderd; los meet de
+parser hier nu 0,41–0,68 s per 10.000 namen, de test slaagde los 9 van de 10 keer. De marge is
+op deze sandbox te klein; dat is aan M2 (open punt). `-m media` (onder `taskset -c 0-2`, drie
+keer) 174 goed; web groen (878 tests, eerste lading JS 96,3 van 100 KB, de speler 24,9 van 35
+KB, muziek 30,2 van 40 KB, i18n strikt zonder meldingen); de e2e van fase 3 en 4 110 goed;
+`-m office` 30 goed; e2e `-m media` 59 goed en 4 overgeslagen (alle vier H.264).
 
 ## Doel
 
