@@ -112,7 +112,16 @@ class Plays:
 
     def __init__(self, context: Any) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.context = context
         context.route(PLAY_RE, self._play)
+
+    def stop(self) -> None:
+        """De route weg, voor een test die van de pagina weggaat. Met een route zet Playwright de
+        onderschepping van CDP aan voor elk verzoek van de context, ook voor wat de route niet
+        raakt. Een fetch met keepalive bij pagehide (de DELETE van de speler) bleef dan ±1 op 10
+        keer hangen tot de context dichtging (gemeten: 13 van 130 met de route, 0 van 120
+        zonder of na unroute; een aanroep van Playwright laat hem niet los)."""
+        self.context.unroute(PLAY_RE, self._play)
 
     def _play(self, route: Any) -> None:
         request = route.request
@@ -271,6 +280,10 @@ def pages_away(media_browsers: Any) -> Iterator[None]:
     contexts zelf sluit media_browsers daarna (Browsers._open: de open contexts)."""
     yield
     for context, _guard in list(media_browsers._open):
+        # Eerst de routes weg (Plays): anders blijft de DELETE met keepalive soms hangen tot de
+        # context dicht is (Plays.stop)
+        with contextlib.suppress(Exception):
+            context.unroute_all(behavior="ignoreErrors")
         for page in context.pages:
             with contextlib.suppress(Exception):
                 page.goto("about:blank", timeout=5_000)
@@ -975,6 +988,7 @@ def test_weg_van_de_pagina_sluit_de_sessie(media, media_browsers, ffmpeg_count):
     ready_state(page, "remux")
     playing_past(page, 0.5)
     sid = plays.ok[0]["out"]["sid"]
+    plays.stop()  # zonder route: de keepalive-DELETE gaat meteen de deur uit (Plays.stop)
     page.goto("about:blank")
     end = time.monotonic() + 5
     while True:
