@@ -1111,7 +1111,7 @@ def test_de_worker_gedood_met_een_gat_in_het_geluid(media, media_browsers, ffmpe
     segment dat na de kill met 200 komt (dat van de nieuwe run, na de 503's van de herstel-lus)
     verliest zijn eerste AUDIO_DROP geluidsframes. Dan sluit het geluid van de nieuwe run niet aan,
     zoals met H.264 en AAC: Chromium maakt er twee gebufferde stukken van en staat vóór het eind
-    van het eerste stil (Chromium 141 in de app: 77 tot 81 ms). De speler springt erover
+    van het eerste stil (Chromium 141 in de app: 72 tot 89 ms). De speler springt erover
     (GAP_END_S) en loopt binnen 10 s na het eind van zijn buffer weer. Met de springer van vóór
     cce60fa (grens 50 ms) bleef de video daar staan."""
     owner, folder, context, page = setup(media, media_browsers, "M6 gat na de kill")
@@ -1147,8 +1147,8 @@ def test_de_worker_gedood_met_een_gat_in_het_geluid(media, media_browsers, ffmpe
     print(f"gat na de kill: {end - at:.1f} s in de buffer (tot {end:.4f}), weer voorbij na "
           f"{took:.1f} s; {seam.report()}; {stuck}")  # fmt: skip
     assert took <= limit_s, (took, at, end)
-    # De naad is echt geraakt: het segment kwam zonder zijn eerste frames, en het gat staat in
-    # buffered tussen at en het oude eind, dus vóór end + 1: de video is eroverheen
+    # De naad is echt geraakt: het segment kwam zonder zijn eerste frames, en het gat begint in
+    # buffered tussen at en het oude eind (+ 0,1 s), dus vóór end + 1: de video is eroverheen
     assert seam.segment is not None and not seam.errors, seam.report()
     spans = stuck["buffered"]
     holes = [(a[1], b[0]) for a, b in zip(spans, spans[1:], strict=False)]
