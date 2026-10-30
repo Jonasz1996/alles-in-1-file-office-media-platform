@@ -141,11 +141,8 @@ const en: Translation<typeof nl> = {
   },
   progress: {
     resumeAt: "Resume at {time}",
-    left: "{time} left",
     cardLabel: "{title}, resume at {time}",
     nextLabel: "{title}, {code}",
-    actions: "Actions for {title}",
-    more: "More",
     resume: "Continue watching from {time}",
     play: "Play",
     toItem: "Go to the item",

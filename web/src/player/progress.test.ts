@@ -1,10 +1,14 @@
 // De voortgang van de speler naar de server (M7, Keuze 36): origin, seq, de body, en springen
 // naar een stand van elders zonder die sprong terug te melden.
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ORIGIN } from "../media/progressSync";
 import type { PlaybackProgressEvent, ProgressIn } from "../media/types";
-import type { PlaybackEvent, PlaybackHandle } from "./playback";
+import { type PlaybackEvent, type PlaybackHandle, Reporter, TICK_MS, type VideoLike } from "./playback";
 import { attach, jumpTo, nextSeq, toBody } from "./progress";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function melding(over: Partial<PlaybackEvent> = {}): PlaybackEvent {
   return {
@@ -173,5 +177,74 @@ describe("attach", () => {
     s.send(stand({ position_ms: 90_000 }));
     expect(send).not.toHaveBeenCalled();
     expect(h.seeks).toEqual([]);
+  });
+});
+
+describe("de Reporter van M6 met de echte timers", () => {
+  // In de browser geeft setInterval als methode van een object (timers.set(…)) "Illegal
+  // invocation"; Node niet. Zo brak de eerste tik in de e2e van M7 (m7.md). Hier doen de
+  // timers wat de browser doet.
+  it("start en stopt de tik zonder Illegal invocation", () => {
+    const strict = (name: string, out: unknown) =>
+      vi.fn(function (this: unknown) {
+        if (this !== undefined && this !== globalThis) throw new TypeError(`Illegal invocation (${name})`);
+        return out;
+      });
+    const set = strict("setInterval", 7);
+    const clear = strict("clearInterval", undefined);
+    vi.stubGlobal("setInterval", set);
+    vi.stubGlobal("clearInterval", clear);
+    const video = Object.assign(new EventTarget(), {
+      currentTime: 0,
+      duration: 60,
+      paused: false,
+      seeking: false,
+    }) as unknown as VideoLike;
+    const doc = Object.assign(new EventTarget(), { visibilityState: "visible" as DocumentVisibilityState });
+    const events: PlaybackEvent[] = [];
+    const state = () => ({ position: 1, started_at: "t0", duration_ms: 60_000, audio: null, subtitle: null });
+    const r = new Reporter(video, state, { report: (e) => events.push(e) }, doc);
+    expect(() => video.dispatchEvent(new Event("playing"))).not.toThrow();
+    expect(set).toHaveBeenCalledWith(expect.any(Function), TICK_MS);
+    expect(() => r.stop()).not.toThrow();
+    expect(clear).toHaveBeenCalledWith(7);
+    expect(events.map((e) => e.event)).toEqual(["stop"]);
+  });
+});
+
+describe("de Reporter van M6 bij weggaan", () => {
+  // Bij weggaan ruimt de speler eerst de controller op (zijn effect staat eerder) en pas dan
+  // de Reporter: state() is dan null. Zonder de laatste stand kwam er geen "stop" (m7.md).
+  it("meldt stop met de laatste stand als de controller al dicht is", () => {
+    const video = Object.assign(new EventTarget(), {
+      currentTime: 0,
+      duration: 60,
+      paused: false,
+      seeking: false,
+    }) as unknown as VideoLike;
+    const doc = Object.assign(new EventTarget(), { visibilityState: "visible" as DocumentVisibilityState });
+    let open = true;
+    let position = 3;
+    const state = () =>
+      open ? { position, started_at: "t0", duration_ms: 60_000, audio: 2, subtitle: null } : null;
+    const events: PlaybackEvent[] = [];
+    const timers = { set: () => 1 as unknown as ReturnType<typeof setInterval>, clear: () => undefined };
+    const r = new Reporter(video, state, { report: (e) => events.push(e) }, doc, timers);
+    video.dispatchEvent(new Event("playing"));
+    position = 12.5;
+    video.dispatchEvent(new Event("timeupdate"));
+    open = false; // de controller is dicht
+    r.stop();
+    expect(events).toEqual([
+      {
+        event: "stop",
+        position_ms: 12_500,
+        duration_ms: 60_000,
+        started_at: "t0",
+        audio: 2,
+        subtitle: null,
+        keepalive: true,
+      },
+    ]);
   });
 });

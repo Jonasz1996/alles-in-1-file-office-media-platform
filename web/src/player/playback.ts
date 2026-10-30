@@ -76,6 +76,13 @@ export interface ReporterState {
   subtitle: string | null;
 }
 
+/** setInterval en clearInterval als gewone aanroep: als methode van een object (timers.set(…))
+ * geeft de browser "Illegal invocation" (M7: dat brak de tik; m7.md). */
+const TIMERS = {
+  set: (fn: () => void, ms: number) => setInterval(fn, ms),
+  clear: (id: ReturnType<typeof setInterval>) => clearInterval(id),
+};
+
 /**
  * Zet de gebeurtenissen van de video om in de events van Keuze 36. Zonder sink (geen M7) doet
  * hij niets. timers: in te spuiten voor de tests.
@@ -85,13 +92,16 @@ export class Reporter {
   private ended = false;
   private stopped = false;
   private readonly off: (() => void)[] = [];
+  /** De laatste stand die state() gaf (M7): bij weggaan is de controller al dicht (zijn effect
+   * ruimt eerder op), en dan meldt "stop" deze stand in plaats van niets (m7.md). */
+  private last: ReporterState | null = null;
 
   constructor(
     private readonly video: VideoLike,
     private readonly state: () => ReporterState | null,
     private readonly sink: Pick<ProgressSink, "report">,
     doc: EventTarget & { visibilityState?: DocumentVisibilityState } = document,
-    private readonly timers = { set: setInterval, clear: clearInterval },
+    private readonly timers = TIMERS,
   ) {
     const on = (t: EventTarget, name: string, fn: () => void) => {
       t.addEventListener(name, fn);
@@ -107,6 +117,7 @@ export class Reporter {
       if (!this.ended && !video.seeking) this.emit("pause");
     });
     on(video, "seeked", () => this.emit("seek"));
+    on(video, "timeupdate", () => void this.current());
     on(video, "ended", () => {
       this.ended = true;
       this.halt();
@@ -129,9 +140,16 @@ export class Reporter {
     this.timer = null;
   }
 
+  /** De stand nu, of de laatste die er was. */
+  private current(): ReporterState | null {
+    const s = this.state();
+    if (s) this.last = s;
+    return s ?? this.last;
+  }
+
   private emit(event: ProgressEvent, keepalive = false): void {
     if (this.stopped) return;
-    const s = this.state();
+    const s = this.current();
     if (!s) return;
     const t = s.position;
     const dur = s.duration_ms || (Number.isFinite(this.video.duration) ? this.video.duration * 1000 : 0);

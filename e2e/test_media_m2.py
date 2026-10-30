@@ -30,13 +30,13 @@ import sqlite3
 import time
 import uuid
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 from playwright.sync_api import expect
 
-from media_harness import run_async
 from test_media_m3 import upload_bytes
 
 ROWS = "#inhoud [role=grid] [role=row][aria-rowindex][data-index]"
@@ -117,35 +117,22 @@ def make_library(media: Any, account: Any, root_id: str, kind: str) -> dict[str,
     return r.json()
 
 
-def set_progress(
-    media: Any, user_id: str, node_id: str, position_ms: int, duration_ms: int
+def put_progress(
+    media: Any, account: Any, node_id: str, position_ms: int, duration_ms: int
 ) -> None:
-    """De stand van kijken in playback_state (PUT …/progress is van M7)."""
-    from sqlalchemy.ext.asyncio import async_sessionmaker
+    """De stand van kijken met de echte PUT van M7 (sinds golf 4; tot dan een rij in
+    playback_state, m2.md afwijking 4), als een ander apparaat: een eigen origin en sessie."""
+    started = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    media.server.call(
+        account, "PUT", f"/api/v1/media/progress/{node_id}",
+        json={"position_ms": position_ms, "duration_ms": duration_ms, "event": "pause",
+              "origin": "e2e-m2", "seq": 1, "started_at": started},
+        expect=204,
+    )  # fmt: skip
 
-    from app import db
-    from app.models import PlaybackState
 
-    settings = media.settings()
-
-    async def go() -> None:
-        engine = db.get_engine(settings)
-        try:
-            async with async_sessionmaker(engine)() as session:
-                session.add(
-                    PlaybackState(
-                        user_id=uuid.UUID(user_id),
-                        node_id=uuid.UUID(node_id),
-                        position_ms=position_ms,
-                        duration_ms=duration_ms,
-                    )  # fmt: skip
-                )
-                await session.commit()
-        finally:
-            await engine.dispose()
-            db._engine.cache_clear()
-
-    run_async(go)
+def is_progress_put(response: Any) -> bool:
+    return response.request.method == "PUT" and "/api/v1/media/progress/" in response.url
 
 
 def import_jobs(media: Any) -> list[tuple[str, str]]:
@@ -249,13 +236,19 @@ def test_bibliotheek_maken_en_kijken_met_het_toetsenbord(media, media_browsers, 
     expect(page.locator(".player")).to_have_attribute("data-state", "ready", timeout=30_000)
     expect(page.locator(".player-title")).to_have_text("The Matrix")
     page.wait_for_function(PLAYING_JS, arg=0.3, timeout=20_000)
-    page.keyboard.press("k")
+    # De speler meldt zijn stand (M7): pause, en stop bij weggaan (keepalive). Eerst die
+    # afwachten, anders komt de stop van de speler na de stand hieronder
+    with page.expect_response(is_progress_put) as paused:
+        page.keyboard.press("k")
+    assert paused.value.status == 204
     page.wait_for_function("() => document.querySelector('.player-video').paused")
-    page.keyboard.press("Escape")
+    with page.expect_response(is_progress_put) as stopped:
+        page.keyboard.press("Escape")
+    assert stopped.value.status == 204
     expect(page).to_have_url(re.compile(f"/media/item/{matrix.id}$"))
 
-    # Verder op 0:03 (de stand van M7 hier als rij in de database)
-    set_progress(media, owner.id, matrix.id, 3_400, 6_000)
+    # Verder op 0:03: de stand van een ander apparaat, met PUT /media/progress (M7)
+    put_progress(media, owner, matrix.id, 3_400, 6_000)
     page.goto(f"/media/item/{matrix.id}")
     resume = page.get_by_role("link", name="Verder op 0:03")
     expect(resume).to_be_visible()
