@@ -7,7 +7,7 @@ import { type PlaybackEvent, Reporter, type ReporterState, TICK_MS, type VideoLi
 import { VTT_TRIES, waitVtt } from "./subs";
 import { chapterAt, marks, timeAt } from "./ui/Seekbar";
 import { sizeOf } from "./ViewerPlayer";
-import { startFrom } from "./WatchPage";
+import { loadSize, startFrom } from "./WatchPage";
 
 function vttDeps(responses: Array<Response | Error>) {
   const waits: number[] = [];
@@ -226,5 +226,27 @@ describe("/kijken ?t= en de maat uit de viewer", () => {
     expect(sizeOf({})).toBeUndefined();
     expect(sizeOf({ width: 0, height: 720 })).toBeUndefined();
     expect(sizeOf({ width: -1, height: -1 })).toBeUndefined();
+  });
+
+  it("loadSize: /kijken haalt de maat uit de meta van de viewer, net als ViewerPlayer (K2)", async () => {
+    const asked: string[] = [];
+    const request = async <T,>(method: string, path: string): Promise<T> => {
+      asked.push(`${method} ${path}`);
+      return { meta: { width: 3840, height: 2160 } } as T;
+    };
+    expect(await loadSize("a/b", request)).toEqual(sizeOf({ width: 3840, height: 2160 }));
+    expect(asked).toEqual(["GET /api/v1/files/a%2Fb/preview"]);
+  });
+
+  it("loadSize: geen maat, een fout of te traag geeft undefined (dan 1080p)", async () => {
+    const answer = (v: unknown) => async <T,>(): Promise<T> => v as T;
+    expect(await loadSize("n", answer({ meta: {} }))).toBeUndefined();
+    expect(await loadSize("n", answer({}))).toBeUndefined();
+    const failing = async <T,>(): Promise<T> => {
+      throw new Error("404");
+    };
+    expect(await loadSize("n", failing)).toBeUndefined();
+    const never = <T,>(): Promise<T> => new Promise<T>(() => {});
+    expect(await loadSize("n", never, 5)).toBeUndefined();
   });
 });

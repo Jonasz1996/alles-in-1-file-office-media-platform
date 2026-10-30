@@ -8,15 +8,10 @@ import { type JSX, useState } from "react";
 import { t, useAreas } from "../i18n";
 import { Spinner } from "../ui/Spinner";
 import type { ViewerPlayerProps } from "../viewer/MediaView";
-import type { Size } from "./caps";
+import { sizeOf } from "./caps";
 import Player from "./ui/Player";
 
-/** De maat van het item voor decodingInfo, uit de meta van de viewer (anders 1080p). */
-export function sizeOf(meta: { width?: number; height?: number }): Size | undefined {
-  const { width, height } = meta;
-  if (!width || !height || width <= 0 || height <= 0) return undefined;
-  return { width, height, bitrate: height > 1080 ? 25_000_000 : height > 720 ? 8_000_000 : 4_000_000, framerate: 24 };
-}
+export { sizeOf };
 
 export default function ViewerPlayer({ item, detail, fallback }: ViewerPlayerProps): JSX.Element {
   const ready = useAreas(["player"]);

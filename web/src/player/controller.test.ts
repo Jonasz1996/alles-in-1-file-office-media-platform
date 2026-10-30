@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientProfile, PlayIn, PlayOut, Quality } from "../media/types";
-import { Controller, type ControllerDeps, type ControllerEvents, lowerQuality } from "./controller";
+import { Controller, type ControllerDeps, type ControllerEvents, type ControllerOptions, lowerQuality } from "./controller";
 import type { AnyEngine } from "./engine";
 
 const PROFILE = { v: 1, base: "web" } as unknown as ClientProfile;
@@ -48,7 +48,9 @@ interface FakeEngine {
   stall?: () => void;
 }
 
-function setup(o: { mode?: PlayOut["mode"]; video?: ReturnType<typeof fakeVideo> } = {}) {
+function setup(
+  o: { mode?: PlayOut["mode"]; video?: ReturnType<typeof fakeVideo>; opts?: ControllerOptions; sizes?: unknown[] } = {},
+) {
   const bodies: PlayIn[] = [];
   const engines: FakeEngine[] = [];
   const sessions: Array<[string, string]> = [];
@@ -56,7 +58,10 @@ function setup(o: { mode?: PlayOut["mode"]; video?: ReturnType<typeof fakeVideo>
   let n = 0;
   const deps: ControllerDeps = {
     codecs: async () => ({ candidates: [], item: [] }) as never,
-    profile: async () => PROFILE,
+    profile: async (_codecs, size) => {
+      o.sizes?.push(size);
+      return PROFILE;
+    },
     play: async (_node, body) => {
       bodies.push(body);
       n += 1;
@@ -86,7 +91,7 @@ function setup(o: { mode?: PlayOut["mode"]; video?: ReturnType<typeof fakeVideo>
     lowered: (q) => lowered.push(q),
   };
   const video = o.video ?? fakeVideo();
-  const c = new Controller(video, "node-1", ev, {}, deps);
+  const c = new Controller(video, "node-1", ev, o.opts ?? {}, deps);
   return { c, bodies, engines, sessions, lowered, video };
 }
 
@@ -132,6 +137,20 @@ describe("Controller", () => {
     expect(engines[0].start).toHaveBeenCalledWith(12.5);
     expect(sessions).toEqual([["film.1", "start"]]);
     expect(c.out?.sid).toBe("film.1");
+  });
+
+  it("de maat als belofte (/kijken, K2): het profiel wacht erop en krijgt de maat", async () => {
+    const size = { width: 3840, height: 2160, bitrate: 25_000_000, framerate: 24 };
+    let give: (s: typeof size) => void = () => {};
+    const sizes: unknown[] = [];
+    const { c, bodies } = setup({ opts: { size: new Promise((ok) => (give = ok)) }, sizes });
+    const opened = c.open(0);
+    await new Promise((ok) => setTimeout(ok, 0));
+    expect(bodies).toEqual([]); // nog geen play zonder maat
+    give(size);
+    await opened;
+    expect(sizes).toEqual([size]);
+    expect(bodies).toHaveLength(1);
   });
 
   it("een wissel: replace van de sessie van nu, op de positie van nu, met flush", async () => {

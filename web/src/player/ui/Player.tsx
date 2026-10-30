@@ -65,7 +65,8 @@ export interface PlayerProps {
   artist?: string | null;
   poster?: string | null;
   startS?: number;
-  size?: Size;
+  /** De maat voor decodingInfo; een belofte als hij nog geladen wordt (/kijken) */
+  size?: Size | Promise<Size | undefined>;
   next?: NextUp | null;
   /** De vorige aflevering (Media Session) */
   prev?: string | null;

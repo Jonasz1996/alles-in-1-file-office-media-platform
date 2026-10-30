@@ -26,6 +26,13 @@ export interface Size {
 
 export const SIZE_1080: Size = { width: 1920, height: 1080, bitrate: 8_000_000, framerate: 24 };
 
+/** De maat van het item voor decodingInfo, uit de meta van de viewer (anders 1080p). */
+export function sizeOf(meta: { width?: number; height?: number }): Size | undefined {
+  const { width, height } = meta;
+  if (!width || !height || width <= 0 || height <= 0) return undefined;
+  return { width, height, bitrate: height > 1080 ? 25_000_000 : height > 720 ? 8_000_000 : 4_000_000, framerate: 24 };
+}
+
 type DecodingInfo = { supported: boolean; smooth: boolean; powerEfficient: boolean };
 
 /** Wat de meting van de browser nodig heeft; los in te vullen in caps.test.ts. */

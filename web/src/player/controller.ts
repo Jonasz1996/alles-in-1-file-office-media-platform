@@ -32,8 +32,9 @@ import {
 export type SessionWhy = "start" | "renew" | "change";
 
 export interface ControllerOptions {
-  /** De maat van het item voor decodingInfo (anders 1080p) */
-  size?: Size;
+  /** De maat van het item voor decodingInfo (anders 1080p). Een belofte: /kijken haalt hem
+   * tegelijk met de codecs (WatchPage, review golf 3, K2) */
+  size?: Size | Promise<Size | undefined>;
   /** De viewer: bij een fout aan het begin geen herstel-lus, maar meteen failed (de fallback) */
   quick?: boolean;
 }
@@ -137,7 +138,10 @@ export class Controller {
   }
 
   private async measured(): Promise<ClientProfile> {
-    this.profile ??= await this.deps.profile(await this.deps.codecs(this.nodeId), this.opts.size);
+    if (!this.profile) {
+      const [codecs, size] = await Promise.all([this.deps.codecs(this.nodeId), this.opts.size]);
+      this.profile = await this.deps.profile(codecs, size);
+    }
     return this.profile;
   }
 

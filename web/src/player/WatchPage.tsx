@@ -5,7 +5,8 @@
 // De titel, de hoes en wat er hierna komt (de volgende aflevering, het volgende deel) komen uit
 // de bibliotheek (getItem en getShow, M2). Lukt dat niet (het bestand staat in geen bibliotheek:
 // 404), dan de naam van het bestand en geen kaart: afspelen kan altijd. De maat van het item (voor
-// decodingInfo) geeft het Item van M2 niet; hier meet de speler dus op 1080p (m6.md, afwijking 5).
+// decodingInfo) komt uit de meta van de viewer, net als in ViewerPlayer: loadSize, tegelijk met de
+// codecs (review golf 3, K2). Zonder maat meet de speler op 1080p.
 
 import { type JSX, useEffect, useState } from "react";
 import { api, type FileNode } from "../api";
@@ -14,6 +15,7 @@ import { itemPath, MEDIA_HOME, watchPath } from "../media";
 import { getItem, getShow } from "../media/api";
 import { MediaGate } from "../media/Gate";
 import { back, navigate, type RouteProps, useLocation } from "../router";
+import { type Size, sizeOf } from "./caps";
 import { episodeTag, nextEpisode, nextPart, prevEpisode } from "./next";
 import Player, { type NextUp } from "./ui/Player";
 
@@ -21,6 +23,33 @@ import Player, { type NextUp } from "./ui/Player";
 export function startFrom(value: string | null): number {
   if (value === null || !/^\d{1,6}(\.\d+)?$/.test(value.trim())) return 0;
   return Number(value);
+}
+
+/** Zo lang wacht play hooguit op de maat; daarna 1080p. */
+export const SIZE_WAIT_MS = 3000;
+
+type Request = <T>(method: string, path: string) => Promise<T>;
+
+/** De maat van het item uit de meta van de viewer (GET /files/{id}/preview), of undefined. */
+export async function loadSize(
+  nodeId: string,
+  request: Request = <T,>(method: string, path: string) => api.request<T>(method, path),
+  waitMs = SIZE_WAIT_MS,
+): Promise<Size | undefined> {
+  const detail = request<{ meta?: { width?: number; height?: number } }>(
+    "GET",
+    `/api/v1/files/${encodeURIComponent(nodeId)}/preview`,
+  ).then(
+    (d) => (d?.meta ? sizeOf(d.meta) : undefined),
+    () => undefined,
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<undefined>((ok) => (timer = setTimeout(() => ok(undefined), waitMs)));
+  try {
+    return await Promise.race([detail, late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 interface Meta {
@@ -60,6 +89,7 @@ async function loadMeta(nodeId: string): Promise<Meta> {
 function Watch({ nodeId }: { nodeId: string }): JSX.Element {
   const { query } = useLocation();
   const [startS] = useState(() => startFrom(query.get("t")));
+  const [size] = useState(() => loadSize(nodeId));
   const [meta, setMeta] = useState<Meta | null>(null);
 
   useEffect(() => {
@@ -84,6 +114,7 @@ function Watch({ nodeId }: { nodeId: string }): JSX.Element {
         artist={meta?.artist}
         poster={meta?.poster}
         startS={startS}
+        size={size}
         next={meta?.next}
         prev={meta?.prev}
         onGo={(id) => navigate(watchPath(id), { replace: true })}
