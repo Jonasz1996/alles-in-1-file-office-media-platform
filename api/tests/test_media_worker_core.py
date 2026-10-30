@@ -865,6 +865,29 @@ def test_een_kind_stopt_als_de_worker_hard_stopt():
             proc.stdout.close()
 
 
+def _doel(pid: int, fd: int) -> str:
+    try:
+        return os.readlink(f"/proc/{pid}/fd/{fd}")
+    except FileNotFoundError:
+        return "(al weer dicht)"
+
+
+async def _fds_na_het_laden(pid: int, want: list[int], limit_s: float = 5.0) -> list[int]:
+    """De fd's van het kind zodra de dynamische lader van sleep klaar is. Net na de exec
+    opent ld.so zelf /etc/ld.so.cache en libc.so.6 op de eerste vrije fd (4) en sluit ze
+    weer; een lijst op dat moment toont een fd 4 die er even later niet meer is (gemeten:
+    3 van 1000 keer in een losse proef, en één keer in een volle run van de api). Een fd die
+    van de worker meekwam, gaat nooit vanzelf dicht (sleep sluit niets): die staat er na de
+    grens nog, en dan faalt de test zoals hij moet. Een begrensde lus, geen while."""
+    fds: list[int] = []
+    for _ in range(int(limit_s / 0.01)):
+        fds = sorted(int(n) for n in os.listdir(f"/proc/{pid}/fd"))
+        if fds == want:
+            return fds
+        await asyncio.sleep(0.01)
+    return fds
+
+
 @pytest.mark.parametrize("close_range", [True, False], ids=["close_range", "proc-self-fd"])
 async def test_een_erfbare_fd_van_de_worker_komt_niet_bij_het_kind(
     tmp_path, monkeypatch, close_range
@@ -891,8 +914,8 @@ async def test_een_erfbare_fd_van_de_worker_komt_niet_bij_het_kind(
     try:
         child = R.spawn(["sleep", "30"], inputs=[src], memory_mb=64)
         try:
-            fds = sorted(int(n) for n in os.listdir(f"/proc/{child.pid}/fd"))
-            assert fds == [0, 1, 2, 3], {n: os.readlink(f"/proc/{child.pid}/fd/{n}") for n in fds}
+            fds = await _fds_na_het_laden(child.pid, [0, 1, 2, 3])
+            assert fds == [0, 1, 2, 3], {n: _doel(child.pid, n) for n in fds}
             assert os.readlink(f"/proc/{child.pid}/fd/3") == str(source)
         finally:
             await child.stop()
