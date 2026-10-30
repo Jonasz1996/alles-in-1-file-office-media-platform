@@ -9,7 +9,8 @@ gaat met focus() (één tabstop), en een nieuwe pagina met goto:
   in het raster de pijltjes, Home en End; Enter opent een film, Afspelen en "Verder op 0:03"
   gaan naar /kijken (met ?t=), waar de speler van M6 de titel van het item toont en speelt (K
   pauzeert, Esc gaat terug naar het item; sinds het samenvoegen van golf 3); een upload daarna
-  verschijnt binnen de grens van Klaar als;
+  verschijnt binnen de grens van Klaar als; een poster.jpg naast een film wordt de poster op zijn
+  kaart (§4.3 #1, review golf 3, K4);
 - een bibliotheek met series: de rij Net toegevoegd met ← en →, de serie met haar seizoen en
   afleveringen, Afspelen S01E01, en Opnieuw scannen;
 - Nieuwe bibliotheek op /media (de lege start): de mappenkiezer en de dialoog met het
@@ -20,6 +21,8 @@ gaat met focus() (één tabstop), en een nieuwe pagina met goto:
 
 from __future__ import annotations
 
+import hashlib
+import io
 import os
 import re
 import shutil
@@ -34,6 +37,7 @@ import pytest
 from playwright.sync_api import expect
 
 from media_harness import run_async
+from test_media_m3 import upload_bytes
 
 ROWS = "#inhoud [role=grid] [role=row][aria-rowindex][data-index]"
 # Klaar als: een item verschijnt binnen 35 s na de upload (met de tik van 30 s; hier 0,5 s)
@@ -261,6 +265,35 @@ def test_bibliotheek_maken_en_kijken_met_het_toetsenbord(media, media_browsers, 
     assert asked.value.post_data_json["start_ms"] == 3_000, asked.value.post_data_json
     expect(page).to_have_url(re.compile(f"/kijken/{matrix.id}\\?t=3$"))
     page.wait_for_function(PLAYING_JS, arg=3.1, timeout=20_000)
+
+    # §4.3 #1, posters uit poster.jpg (review golf 3, K4): een plaatje naast Alien wordt de
+    # poster op zijn kaart, in plaats van het beeld uit de video
+    data = jpeg_bytes()
+    upload_bytes(media, owner, films, "Alien (1979)-poster.jpg", data)
+    sha = hashlib.sha256(data).hexdigest()
+    end = time.monotonic() + APPEAR_S
+    while time.monotonic() < end:  # de scan en daarna de preview van het plaatje
+        cards = {c["title"]: c for c in items(media, owner, library["id"])}
+        if sha in (cards["Alien"]["poster"] or ""):
+            break
+        time.sleep(0.25)
+    assert sha in (cards["Alien"]["poster"] or ""), cards["Alien"]
+    assert sha not in (cards["The Matrix"]["poster"] or "")
+    page.goto(f"/media/bibliotheek/{library['id']}")
+    poster = grid.locator(".media-card", has_text="Alien").locator("img")
+    expect(poster).to_have_attribute("src", re.compile(sha))
+    page.wait_for_function(
+        "(img) => img.complete && img.naturalWidth > 0", arg=poster.element_handle()
+    )
+
+
+def jpeg_bytes() -> bytes:
+    """Een klein JPEG (Pillow zit in de omgeving van de api)."""
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (90, 135), "orange").save(buf, "JPEG")
+    return buf.getvalue()
 
 
 @pytest.mark.media

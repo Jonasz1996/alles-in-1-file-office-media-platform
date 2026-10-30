@@ -389,3 +389,70 @@ async def test_een_poster_die_wegging_geeft_geen_adres_meer(people, client):
         assert item["backdrop"] is None, who
         lib_items = (await client.get(f"{URL}/{item['library_id']}/items", headers=p[who])).json()
         assert all(shas[poster] not in (c["poster"] or "") for c in lib_items["items"]), who
+
+
+async def test_posters_uit_poster_jpg_op_de_kaarten(people, client):
+    """K4 (review golf 3), §4.3 #1 'posters uit poster.jpg': een film met poster.jpg en
+    fanart.jpg, een film zonder plaatje, en een serie met poster.jpg en een poster per seizoen.
+    De art staat in de rij, en de poster op de kaart is de preview van het plaatje, niet het beeld
+    van de video; zonder plaatje is het wel het beeld van de video. Ook een album: de nummers
+    worden items (de hoes en de groepering per album zijn van M9)."""
+    from app.models import Blob, MediaShow
+    from tests.test_office import jpeg
+
+    p, jonas = people, people["jonas"]
+    settings = p["settings"]
+    films = (await make(client, jonas, p["films"])).json()["id"]
+    matrix = await mkdir(client, jonas, p["films"], "The Matrix (1999)")
+    film = await upload(client, jonas, matrix, "The Matrix (1999).mkv")
+    poster = await upload(client, jonas, matrix, "poster.jpg", jpeg((90, 120)))
+    backdrop = await upload(client, jonas, matrix, "fanart.jpg", jpeg((160, 90)))
+    heat = await upload(client, jonas, p["films"], "Heat (1995).mkv")
+    series_dir = await mkdir(client, jonas, p["top"], "Series")
+    series = (await make(client, jonas, series_dir, "shows")).json()["id"]
+    bb = await mkdir(client, jonas, series_dir, "Breaking Bad (2008)")
+    season = await mkdir(client, jonas, bb, "Season 1")
+    episode = await upload(client, jonas, season, "Breaking Bad S01E01.mkv")
+    show_poster = await upload(client, jonas, bb, "poster.jpg", jpeg((90, 121)))
+    season_poster = await upload(client, jonas, season, "season01-poster.jpg", jpeg((90, 122)))
+    music_dir = await mkdir(client, jonas, p["top"], "Muziek")
+    music = (await make(client, jonas, music_dir, "music")).json()["id"]
+    artist = await mkdir(client, jonas, music_dir, "Artiest")
+    album = await mkdir(client, jonas, artist, "Album (2001)")
+    tracks = [await upload(client, jonas, album, f"0{n} - Nummer {n}.flac") for n in (1, 2)]
+    await upload(client, jonas, album, "cover.jpg", jpeg((100, 100)))
+    await scan(settings)
+
+    async with maker(settings)() as session:
+        item = await session.get(MediaItem, uuid.UUID(film))
+        assert item.art == {"poster": {"node": poster}, "backdrop": {"node": backdrop}}
+        assert (await session.get(MediaItem, uuid.UUID(heat))).art == {}
+        show = await session.get(
+            MediaShow, (await session.get(MediaItem, uuid.UUID(episode))).show_id
+        )
+        assert show.art == {
+            "poster": {"node": show_poster},
+            "season:1:poster": {"node": season_poster},
+        }
+        shas = {}
+        for node in (poster, backdrop, film, heat, show_poster, episode):
+            sha = (await session.get(Node, uuid.UUID(node))).blob_id
+            blob = await session.get(Blob, sha)
+            blob.preview, blob.preview_meta = "ready", {"sizes": [256, 1024]}
+            shas[node] = sha
+        await session.commit()
+
+    cards = {
+        c["title"]: c
+        for c in (await client.get(f"{URL}/{films}/items", headers=jonas)).json()["items"]
+    }
+    assert shas[poster] in cards["The Matrix"]["poster"]
+    assert shas[heat] in cards["Heat"]["poster"]  # zonder plaatje: het beeld van de video
+    detail = (await client.get(f"/api/v1/media/items/{film}", headers=jonas)).json()
+    assert shas[poster] in detail["poster"] and shas[backdrop] in detail["backdrop"]
+    [card] = (await client.get(f"{URL}/{series}/items", headers=jonas)).json()["items"]
+    assert (card["kind"], card["title"]) == ("show", "Breaking Bad")
+    assert shas[show_poster] in card["poster"] and shas[episode] not in card["poster"]
+    page = (await client.get(f"{URL}/{music}/items", headers=jonas)).json()["items"]
+    assert sorted(c["node_id"] for c in page) == sorted(tracks)
+    assert {c["kind"] for c in page} == {"track"}
