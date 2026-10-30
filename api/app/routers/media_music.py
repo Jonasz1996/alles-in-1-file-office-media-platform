@@ -62,7 +62,8 @@ async def albums(
 ):
     runtime.require(request)
     found = await media_library.get_seen(session, user, library_id)
-    await music.refresh(session, library_id)
+    if found.library.kind == "music":
+        await music.refresh(session, found.library)
     reader = media_items.Reader(session, settings, user)
     return await music.album_page(reader, found.library, sort, cursor)
 
@@ -79,7 +80,8 @@ async def album(
 async def artists(library_id: uuid.UUID, user: CurrentUser, request: Request, session: Session):
     runtime.require(request)
     found = await media_library.get_seen(session, user, library_id)
-    await music.refresh(session, library_id)
+    if found.library.kind == "music":
+        await music.refresh(session, found.library)
     return await music.artists(session, found.library)
 
 

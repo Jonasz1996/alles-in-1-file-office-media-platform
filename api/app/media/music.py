@@ -6,8 +6,8 @@ nooit tegelijk met de scanner):
   audiospoor). Zonder tags de terugval van de map (names.parse: Artiest/Album (Jaar)/[CD2/]01 -
   Titel);
 - een album is (bibliotheek, albumartiest, of "Diverse artiesten" bij een compilatie, de
-  albumtitel genormaliseerd): de sleutel `a:<artiest>|<titel>` of `v:<titel>`;
-- zonder albumartiest: de nummers in dezelfde map met dezelfde albumtag (`d:<map>|<titel>`).
+  albumtitel genormaliseerd): de sleutel `a|<artiest>|<titel>` of `v|<titel>`;
+- zonder albumartiest: de nummers in dezelfde map met dezelfde albumtag (`d|<map>|<titel>`).
   Heeft die map al een album met een albumartiest en dezelfde titel, dan horen ze daarbij;
 - schijven: een map `CD1`, `Disc 2` … telt als de map erboven, en de tag `disc` (of het nummer
   van de map) houdt de schijven uit elkaar;
@@ -27,7 +27,8 @@ van een provider (M8, `{"url"}`) blijft staan. De scanner zoekt geen art voor mu
 komen met de probe), en bij het lezen als er sinds de vorige keer iets in de boom veranderde
 (hooks.touched: alleen een teller in het geheugen, geen I/O). Na een herstart één keer per
 bibliotheek, bij de eerste vraag. De lijsten tellen de nummers zelf (aanwezig, nu), dus een
-nummer in de prullenbak telt meteen niet meer mee.
+nummer in de prullenbak telt niet meer mee zodra de scanner het zag; een album toont alleen wat
+je nu mag lezen (Reader.visible).
 
 **Artiesten:** geen tabel. De albumartiesten van de albums met het aantal albums, gesorteerd op
 de sorteertag (ALBUMARTISTSORT, TSO2; anders TSOP van de artiest), anders zonder "The", "De" of
@@ -324,9 +325,9 @@ def _album(key: str, members: list[_Seen]) -> AlbumOut:
     title = _common(s.album for s in members) or members[0].album
     compilation = any(s.compilation for s in members)
     artist_sort = None
-    if key.startswith("v:"):
+    if key.startswith("v|"):
         album_artist, compilation = VARIOUS, True
-    elif key.startswith("a:"):
+    elif key.startswith("a|"):
         album_artist = _common(s.album_artist for s in members) or ""
         artist_sort = _common(tag(s.t.tags, ALBUM_ARTIST_SORT) for s in members)
     else:
@@ -364,9 +365,10 @@ def _album(key: str, members: list[_Seen]) -> AlbumOut:
 # --- regroup (de database) ------------------------------------------------------------------------
 
 # Na een touched: een teller (geen I/O). Bij het lezen van een bibliotheek die een oudere stand
-# zag: een regroup klaarzetten. Leeg na een herstart: dan één keer per bibliotheek.
+# zag (de teller, of het eind van de laatste scan): een regroup klaarzetten. Leeg na een
+# herstart: dan één keer per bibliotheek.
 _generation = 0
-_requested: dict[uuid.UUID, int] = {}
+_requested: dict[uuid.UUID, tuple[int, Any]] = {}
 # Per bibliotheek de sorteersleutel per artiest (artist_key → sleutel), van de laatste regroup
 _sorts: dict[uuid.UUID, dict[str, str]] = {}
 
@@ -403,14 +405,17 @@ async def schedule(session: AsyncSession, library_id: uuid.UUID, delay: float = 
     )
 
 
-async def refresh(session: AsyncSession, library_id: uuid.UUID) -> None:
-    """Bij het lezen: is de boom veranderd sinds de vorige keer (of is dit de eerste keer na de
-    start), dan een regroup klaarzetten. Commit de sessie van de vraag."""
+async def refresh(session: AsyncSession, library: MediaLibrary) -> None:
+    """Bij het lezen: is de boom veranderd of de scanner klaar sinds de vorige keer (of is dit
+    de eerste keer na de start), dan een regroup klaarzetten. De scanner maakt de items na de
+    touched; zijn scanned_at vangt een regroup die liep voor de scan klaar was. Commit de sessie
+    van de vraag."""
     hooks.register_touched(_touched)  # na hooks.reset (tests) weer aan
-    if _requested.get(library_id) == _generation:
+    stamp = (_generation, library.scanned_at)
+    if _requested.get(library.id) == stamp:
         return
-    _requested[library_id] = _generation
-    await schedule(session, library_id)
+    _requested[library.id] = stamp
+    await schedule(session, library.id)
     await session.commit()
 
 
