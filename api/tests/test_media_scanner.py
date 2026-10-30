@@ -360,6 +360,33 @@ async def test_play_zette_de_analyse_klaar_zonder_bibliotheek(world, client):
     assert (await analyses(settings))[sha]["library_id"] == library_id
 
 
+async def test_play_analyseert_al_zonder_bibliotheek(world, client):
+    """C5 (review golf 3): de analyse zonder library_id loopt al (play) als de scan het item
+    maakt. enqueue ziet de lopende job en zet niets klaar, en die job ziet het soort niet: de
+    stappen van de bibliotheek kwamen er nooit. Nu een opvolger met de bibliotheek erbij."""
+    settings, _, headers = world
+    library_id, folder = await library(client, headers)
+    node = await upload(client, headers, folder, "Film (2010).mkv")
+    async with maker(settings)() as session:
+        sha = (await session.get(Node, uuid.UUID(node))).blob_id
+        await analysis.enqueue(session, sha, library_id=None)
+        await session.commit()
+        await session.execute(update(Job).where(Job.type == analysis.JOB).values(status="running"))
+        await session.commit()
+    await scan(settings)
+    async with maker(settings)() as session:
+        rows = (await session.scalars(select(Job).where(Job.type == analysis.JOB))).all()
+    assert sorted((j.status, j.payload["library_id"] or "") for j in rows) == [
+        ("queued", library_id),
+        ("running", ""),
+    ]
+    # Een tweede scan zet er geen derde bij
+    async with maker(settings)() as session:
+        await scanner._queue_analysis(session, uuid.UUID(library_id), [sha])
+        await session.commit()
+    assert len(await queued_analyses(settings)) == 2
+
+
 async def test_locked_blijft_staan(world, client):
     settings, _, headers = world
     library_id, folder = await library(client, headers)

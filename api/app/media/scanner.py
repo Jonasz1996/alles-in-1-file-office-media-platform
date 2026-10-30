@@ -964,7 +964,9 @@ async def _probes(session: AsyncSession, shas: list[str]) -> dict[str, tuple[int
 async def _queue_analysis(session: AsyncSession, library_id: uuid.UUID, shas: list[str]) -> None:
     """De analyse van deze inhoud in de rij media, met de bibliotheek erbij (de stappen subs,
     sprites en keyframes zien dan het soort). Staat hij al klaar zonder bibliotheek (play zette
-    hem), dan komt die er alsnog bij."""
+    hem), dan komt die er alsnog bij. Loopt hij al zonder bibliotheek, dan een opvolger met de
+    bibliotheek (jobs.chain: alleen ontdubbeld tegen wat klaarstaat). Die slaat over wat de
+    eerste al deed (review golf 3, C5: eerst kwamen de stappen van de bibliotheek dan nooit)."""
     if not shas:
         return
     shas = list(dict.fromkeys(shas))
@@ -976,19 +978,27 @@ async def _queue_analysis(session: AsyncSession, library_id: uuid.UUID, shas: li
     )
     keys = [f"{analysis.JOB}:{sha}" for sha in shas]
     for start in range(0, len(keys), 500):
-        rows = await session.execute(
-            select(Job.id, Job.payload).where(
-                Job.key.in_(keys[start : start + 500]), Job.status == "queued"
+        rows = (
+            await session.execute(
+                select(Job.id, Job.key, Job.status, Job.payload).where(
+                    Job.key.in_(keys[start : start + 500]), Job.status.in_(jobs.ACTIVE)
+                )
             )
-        )
-        for job_id, data in rows:
-            if isinstance(data, dict) and not data.get("library_id"):
+        ).all()
+        queued = {key for _, key, status, _ in rows if status == "queued"}
+        for job_id, key, status, data in rows:
+            if not isinstance(data, dict) or data.get("library_id"):
+                continue
+            if status == "queued":
                 await session.execute(
                     update(Job)
                     .where(Job.id == job_id, Job.status == "queued")
                     .values(payload={**data, **payload})
                     .execution_options(synchronize_session=False)
                 )
+            elif key not in queued:
+                await jobs.chain(session, analysis.JOB, {"sha": data["sha"], **payload}, key)
+                queued.add(key)
 
 
 @dataclass
