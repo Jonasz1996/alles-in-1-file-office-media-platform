@@ -153,6 +153,14 @@ Nooit `pkill` of `killall`: alles stopt op pid.
 | `codec_supported(page, codec, how)` | `mse`, `native` of `any` |
 | `require_codec(page, codec, how)` | overslaan met de reden als de browser het niet kan; met `MEDIA_REQUIRE_H264=1` faalt een codec van H.264 of AAC dan |
 
+Een test die van de pagina weggaat en wil zien dat de speler zijn sessie sluit (de DELETE met
+`keepalive` bij `pagehide`), haalt eerst zijn routes weg (`context.unroute`). Met een route zet
+Playwright 1.64 de onderschepping van CDP aan voor elk verzoek van de context, ook voor wat de
+route niet raakt, en een fetch met `keepalive` bij `pagehide` bleef dan soms hangen tot de context
+dichtging: 13 van 130 keer met de route, 0 van 120 zonder (los nagebootst, *bij het samenvoegen
+van golf 3*). Een aanroep van Playwright laat hem niet los. In `e2e/test_media_m6.py` doen
+`Plays.stop` en de fixture `pages_away` dat.
+
 ## De nep-servers
 
 | Nep | Waar | Voor |
@@ -250,6 +258,10 @@ zet de vlag dan niet stil terug: dat is een vondst voor §6 van het bouwontwerp.
   `stream`) en haalde de stappen van de spike uit `media-image`.
 - **M2:** de scanner zet `media.analyse` zelf klaar; `MediaApp.analyse` is dan alleen nog voor
   een test die het meteen wil.
+  *Bij het samenvoegen van golf 3:* zo gebouwd. `e2e/test_media_m2.py` maakt bibliotheken met het
+  toetsenbord en de import met de CLI, en speelt na Afspelen en "Verder op 0:03" echt af in de
+  speler van M6. De e2e van M5 en M6 maken hun items met `POST /api/v1/media/libraries` en een
+  echte scan (`library_item` in `test_media_m5.py`, `scanned` in `test_media_m6.py`).
 - **M3–M6:** play, de stromen en de speler, elk met een eigen `e2e/test_media_m<N>.py`. M6 zet
   de tijden Ma en Mb in `media_perf`. *Bij het samenvoegen van golf 1:* `e2e/test_media_m3.py`
   speelt direct via een echte sessie (de meting in de browser, intrekken, `replaced`, een
@@ -270,6 +282,9 @@ zet de vlag dan niet stil terug: dat is een vondst voor §6 van het bouwontwerp.
   gemeten in een canvas, ook na een sprong: S9) en het ondertiteldeel van #4 (de SRT en ASS van
   `hevc10_hdr10.mkv` als `<track>` op de stroom van een transcode, op de tijdlijn van die
   stroom). De speler zelf (de rest van #2–#4) is van M6.
+  *Bij het samenvoegen van golf 3 (M2 en M6):* `e2e/test_media_m6.py` speelt de speler tegen de
+  echte routes van M3, M4 en M5, en sinds golf 3 ook tegen de echte bibliotheek van M2 (de
+  stand-in in de browser is weg). `e2e/test_media_m6_perf.py` zet Ma, Mb en Mc in `media_perf`.
 - **M10:** in `media-image` het bewijs van R12 (installeren vanaf de commit van 0.6.0, bijwerken
   naar deze versie, een transcode via curl en dan `docker top`: geen ffmpeg in de app, één in
   `media`) en de rooktest van de belastingtest; `/api/v1/admin/media` en de rest van

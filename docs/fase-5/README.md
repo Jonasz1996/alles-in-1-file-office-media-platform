@@ -1,6 +1,6 @@
 # Fase 5 — Media en streaming
 
-Status: **golf 2 samengevoegd: M0, M1, M3, M4 en M5** (bouwontwerp revisie 2; 29 oktober 2026).
+Status: **golf 3 samengevoegd: M0 tot en met M6** (bouwontwerp revisie 2; 29 oktober 2026).
 M0 is het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker,
 F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
 
@@ -8,6 +8,11 @@ F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
   de previews van video's. De app start de lokale worker, start hem opnieuw met backoff, en kijkt
   elke 30 s of hij gezond is. Er is een container met de afscherming van Keuze 11
   (`compose.media.yaml`); die bewijst CI in `media-image`.
+- **M2, bibliotheken** ([m2.md](m2.md)): een map wordt een bibliotheek. De scanner maakt de
+  items zonder internet: een eigen parser voor bestandsnamen, groeperen in series en delen, en
+  NFO's (gelezen in de worker). Een bestaande verzameling komt binnen met de import uit
+  `/data/import` (standaard kopiëren). In de web-app `/media`, een bibliotheek, een item en een
+  serie, alles met het toetsenbord ([toetsenbord-m2.md](toetsenbord-m2.md)).
 - **M3, afspelen** ([m3.md](m3.md), [clientprofiel.md](clientprofiel.md)): het profiel van de
   client, de beslissing, de sessies met een controle bij elk verzoek, en publieke links. Direct
   play werkt helemaal, ook met de worker weg of zonder ffmpeg.
@@ -20,12 +25,15 @@ F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
   WebVTT, ingebed of los) als WebVTT via de sessie, op mediatijd; een beeldondertitel (PGS,
   VobSub) brandt de producer van M4 in. De sprites voor de zoekbalk met `trick.vtt`, en de
   hoofdstukken met het begin van de aftiteling.
+- **M6, de speler** ([m6.md](m6.md)): `/kijken` en de speler in de viewer van Bestanden. Direct,
+  MSE (de segmenten van M4) en native HLS, zonder bibliotheek (geen hls.js), met kwaliteit,
+  audiospoor, ondertitels, sprites, hoofdstukken, de kaart "Volgende aflevering", herstel na een
+  verlopen sessie of een herstart van de app, en het toetsenbord
+  ([toetsenbord-m6.md](toetsenbord-m6.md)). Lazy geladen, binnen het budget.
 
-Er is nog geen speler: dat is M6. De API speelt nu alle drie de wegen (direct, remux,
-transcode); de e2e-tests spelen remux en transcode met MediaSource in de pagina, zoals de speler
-het straks doet. De rest (M2, M6–M10) komt in de volgende golven. Media staat standaard uit:
-zonder `PLATFORM_MEDIA_ENABLED` is de app 0.6.0 plus F1–F4, en de previews van video's werken
-zoals in 0.6.0 (via een worker voor één keer, M1).
+De rest (M7–M10: voortgang, metadata online, muziek, beheer en uitrol) komt in de volgende
+golven. Media staat standaard uit: zonder `PLATFORM_MEDIA_ENABLED` is de app 0.6.0 plus F1–F4,
+en de previews van video's werken zoals in 0.6.0 (via een worker voor één keer, M1).
 
 Bij het samenvoegen van golf 1 (M1, dan M3) gingen er geen bestanden van beide pakketten door
 elkaar; alleen `ci.yml` botste met het weghalen van de job `media-spike`. Wat er toen nog
@@ -95,6 +103,56 @@ Die vraag kost 0,07 s, ook midden in de volle ronde (gemeten: geen volle ronde v
 collector en geen andere threads op dat moment), en de test slaagde daarna in twee volle rondes
 en tien losse, ook met een veel grotere heap en naast een bezette core. Waar die ene seconde
 vandaan kwam, is niet gevonden; de test (en de code) van fase 2 bleef ongemoeid.
+*Bij het samenvoegen van golf 3:* gevonden, zie hieronder.
+
+Bij het samenvoegen van golf 3 (M2, dan M6) kwamen beide pakketten met cherry-pick, met hun
+eigen commits en boodschappen, zonder botsingen: ze raakten geen bestand van elkaar. Wat er
+daarna nog gebeurde, staat onder "Bij het samenvoegen (golf 3)" in [m2.md](m2.md) en
+[m6.md](m6.md):
+
+- **De scanner analyseert inhoud die nieuw is in een bibliotheek, ook met een probe.** Sinds de
+  speler van M6 in de viewer van Bestanden afspeelt, heeft een video vaak al een probe (van
+  play) voor hij in een bibliotheek komt. De scanner zette de analyse alleen klaar zonder probe,
+  dus kwamen subs en sprites er voor zo'n video nooit. De e2e van M5 vond het: hij wachtte 60 s
+  op de sprites van `vp9_opus.webm`, die de e2e van M0 al had afgespeeld.
+- **De speler volgt de volgorde van een serie zoals M2 die geeft:** absolute nummering eerst,
+  dan de seizoenen, de specials achteraan. De kaart "Volgende aflevering" gaat nooit van een
+  gewone aflevering naar een special of terug ([m6.md](m6.md), afwijking 17).
+- **De e2e op de echte code:** de stand-in van M2 in de e2e van M6 is weg (een echte bibliotheek
+  en een echte scan), en de e2e van M2 speelt na Afspelen en "Verder op 0:03" echt af in de
+  speler.
+- **Vier tests die soms faalden, elk met de oorzaak** (geen van vieren lag aan de app):
+  - `test_place_file_exact.py` (fase 4): de nep-Document Server zette de klok in zijn zip, en
+    twee aanroepen aan weerszijden van een grens van 2 s gaven een andere sha; nu een vaste
+    datum.
+  - De snelheidstest van zoeken (fase 2, zie golf 2): in een volle run heeft het proces 1,5
+    miljoen objecten van eerdere tests, en een volle ronde van de garbage collector kost dan
+    1,07 s (gemeten met een spion op `gc.callbacks`). Die viel soms binnen een gemeten vraag. De
+    meting gaat nu zoals `timeit`: eerst een volle ronde, tijdens de vragen geen. Het zoeken zelf
+    was nooit traag.
+  - De e2e van M6 die van de pagina weggaat: de route van de test hield in Playwright soms de
+    DELETE met `keepalive` bij `pagehide` vast tot de context dichtging (13 van 130 keer, los
+    nagebootst). De test haalt zijn route nu eerst weg ([e2e.md](e2e.md), De browser en de
+    hulpjes).
+  - De e2e van M6 met de sprong voorbij de cache: de nieuwe producent (de laatste 15 s, remux)
+    was in ±90 ms klaar, en de spion op de processen kijkt elke 0,1 s. De sprong gaat nu naar
+    het midden van 300 s; de producent wacht dan op de tegendruk en leeft tot de test weggaat.
+
+De maat van een item (voor `decodingInfo` op `/kijken`) staat niet in het `Item` van M0; die
+blijft open ([m6.md](m6.md), afwijking 5).
+
+De uitslag op de samengevoegde stand van golf 3, in de sandbox: api 3268 goed en 1 overgeslagen
+(twee volle rondes); `-m media` (onder `taskset -c 0-2`, twee keer) 165 goed, niets overgeslagen;
+web groen (799 tests, eerste lading JS 96,0 van 100 KB, de route Bestanden 43,6 van 45 KB,
+`WatchPage` 22,7 van 45 KB, de speler 21,7 van 35 KB, i18n strikt zonder meldingen); de e2e van
+fase 3 en 4 110 goed en `-m office` 30 goed (elk twee keer: voor en na de fixes van de e2e van
+M6); e2e `-m media` 48 goed en 4 overgeslagen (H.264: de
+Chromium 141 hier heeft geen `avc1`; in CI moet hij spelen): twee keer na elkaar groen na de twee
+fixes van de e2e van M6 hierboven (de twee runs ervoor hadden elk één van die twee rood).
+`-m media_perf` voor M6 (10 runs, de worker op cores 0–2): Ma direct mediaan 339 ms (grens 2000),
+Mb transcode 1197 ms (grens 5000), Mc zoeken direct 1860, remux 856 en transcode 1938 ms (grens
+3000; direct ligt boven de 1500 uit de tabel van §4.5, die alleen ter informatie is). Het image,
+de worker-container en Chrome for Testing ziet pas CI.
 
 ## Doel
 
@@ -187,10 +245,14 @@ worker, de kosten van de bron, de tijden van fMP4, en de eerste start op 3 cores
   toetsenbord.
 - [m1.md](m1.md): de worker in isolatie (M1), met de referentie van `bench` en wat alleen CI
   bewijst.
+- [m2.md](m2.md): bibliotheken, de scanner, namen en de import (M2);
+  [toetsenbord-m2.md](toetsenbord-m2.md) voor het toetsenbord.
 - [m3.md](m3.md): afspelen (M3); [clientprofiel.md](clientprofiel.md) beschrijft het profiel dat
   de client meet en stuurt (versie 1).
 - [m4.md](m4.md): de stromen (M4), met de metingen van "Klaar als" (de start van een stroom
   zonder browser).
 - [m5.md](m5.md): ondertitels, sprites en hoofdstukken (M5).
+- [m6.md](m6.md): de speler (M6), met de metingen van "Klaar als" in de browser;
+  [toetsenbord-m6.md](toetsenbord-m6.md) voor het toetsenbord.
 - [e2e.md](e2e.md): de tests van media (de markers `media`, `media_perf` en `provider_real`),
   het harnas, de nep-servers, de jobs in CI, en hoe je ze lokaal draait.
