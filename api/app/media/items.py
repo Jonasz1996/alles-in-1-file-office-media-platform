@@ -22,6 +22,7 @@ import binascii
 import datetime as dt
 import json
 import uuid
+from collections import defaultdict
 from collections.abc import Iterable
 from typing import Any
 
@@ -313,7 +314,14 @@ def after(columns: list[tuple[Any, bool]], values: list[Any]):
 
 class Reader:
     """Wat één vraag nodig heeft om kaarten te maken: de gebruiker en de sleutel van de
-    previewadressen."""
+    previewadressen.
+
+    De rijen van de scanner lopen achter op de boom (tot de volgende scan, of de ronde van 6
+    uur). Daarom kijkt elke vraag zelf of een node nog onder de map van zijn bibliotheek ligt,
+    zonder prullenbak in de keten (inside): een item dat net in de prullenbak ging, of een poster
+    die naar een eigen map verhuisde, is dan voor niemand meer te zien, ook niet voor wie de
+    bibliotheek via een deling ziet (review golf 3, S4). De bibliotheek zelf ziet de vrager al
+    (get_seen); wat eronder ligt en niet in de prullenbak, mag hij dus ook zien."""
 
     def __init__(self, session: AsyncSession, settings: Settings, user: User):
         self.session = session
@@ -321,6 +329,54 @@ class Reader:
         self.user = user
         self.secret = previews.url_key(settings)
         self.exp = previews.expiry()
+        self._roots: dict[uuid.UUID, uuid.UUID] = {}
+
+    async def roots_of(self, library_ids: Iterable[uuid.UUID]) -> dict[uuid.UUID, uuid.UUID]:
+        """De map van elke bibliotheek (bewaard voor deze vraag)."""
+        missing = [i for i in dict.fromkeys(library_ids) if i not in self._roots]
+        if missing:
+            rows = await self.session.execute(
+                select(MediaLibrary.id, MediaLibrary.root_id).where(MediaLibrary.id.in_(missing))
+            )
+            self._roots.update(dict(rows.all()))
+        return self._roots
+
+    async def inside(self, wanted: dict[uuid.UUID, uuid.UUID | None]) -> set[uuid.UUID]:
+        """Welke nodes (node → de map van zijn bibliotheek) liggen nu onder die map, zonder
+        iets in de prullenbak in de keten?"""
+        pairs = {n: r for n, r in wanted.items() if n is not None and r is not None}
+        out: set[uuid.UUID] = set()
+        ids = list(pairs)
+        for start in range(0, len(ids), 500):
+            up = access.ancestry(Node.id.in_(ids[start : start + 500]))
+            rows = await self.session.execute(select(up.c.origin, up.c.id, up.c.deleted_at))
+            chains: dict[uuid.UUID, list[tuple[uuid.UUID, bool]]] = defaultdict(list)
+            for origin, node_id, deleted_at in rows:
+                chains[origin].append((node_id, deleted_at is not None))
+            for origin, chain in chains.items():
+                if any(trashed for _, trashed in chain):
+                    continue
+                if any(node_id == pairs[origin] for node_id, _ in chain):
+                    out.add(origin)
+        return out
+
+    async def visible(self, items: list[MediaItem]) -> list[MediaItem]:
+        """Deze items zonder wat niet (meer) onder de map van zijn bibliotheek ligt."""
+        if not items:
+            return []
+        roots = await self.roots_of(i.library_id for i in items)
+        ok = await self.inside({i.node_id: roots.get(i.library_id) for i in items})
+        return [i for i in items if i.node_id in ok]
+
+    async def art_nodes(
+        self, wanted: dict[uuid.UUID, tuple[uuid.UUID | None, uuid.UUID]]
+    ) -> dict[uuid.UUID, uuid.UUID]:
+        """Per sleutel de node van een plaatje (node, bibliotheek), alleen als die nog onder de
+        map van de bibliotheek ligt."""
+        roots = await self.roots_of(lib for _, lib in wanted.values())
+        nodes = {node: roots.get(lib) for node, lib in wanted.values() if node is not None}
+        ok = await self.inside(nodes)
+        return {key: node for key, (node, _) in wanted.items() if node is not None and node in ok}
 
     async def blobs_of(self, node_ids: Iterable[uuid.UUID]) -> dict[uuid.UUID, Blob]:
         """De blob per node (levend), voor de previews van plaatjes en video's."""
@@ -370,9 +426,17 @@ class Reader:
         return {p.node_id: p for p in rows}
 
     async def cards(self, items: list[MediaItem]) -> list[Card]:
-        """Kaarten voor deze items, met poster, voortgang en gezien: drie queries."""
-        posters = {i.node_id: self.art_node(i.art, "poster") or self.art_node(i.art, "thumb")
-                   for i in items}  # fmt: skip
+        """Kaarten voor deze items (die de aanroeper al zichtbaar vond), met poster, voortgang
+        en gezien. Een poster die niet meer in de bibliotheek ligt, telt niet."""
+        posters = await self.art_nodes(
+            {
+                i.node_id: (
+                    self.art_node(i.art, "poster") or self.art_node(i.art, "thumb"),
+                    i.library_id,
+                )
+                for i in items
+            }
+        )
         blobs = await self.blobs_of([*posters.values(), *(i.node_id for i in items)])
         states = await self.progress([i.node_id for i in items])
         out = []
@@ -405,8 +469,16 @@ class Reader:
             episode=item.episode,
         )
 
+    async def visible_shows(self, shows: list[MediaShow]) -> list[MediaShow]:
+        """Deze series zonder die met een map die niet meer in de bibliotheek ligt (een serie
+        zonder map staat er zolang ze afleveringen heeft)."""
+        roots = await self.roots_of(s.library_id for s in shows)
+        ok = await self.inside({s.folder_id: roots.get(s.library_id) for s in shows if s.folder_id})
+        return [s for s in shows if s.folder_id is None or s.folder_id in ok]
+
     async def show_cards(self, shows: list[MediaShow]) -> list[Card]:
-        arts = {s.id: self.art_node(s.art, "poster") for s in shows}
+        arts = await self.art_nodes({s.id: (self.art_node(s.art, "poster"), s.library_id)
+                                     for s in shows})  # fmt: skip
         blobs = await self.blobs_of(arts.values())
         # Zonder poster: het eerste plaatje van een aflevering
         missing = [s.id for s in shows if not arts.get(s.id) and not self.art_url(s.art, "poster")]
@@ -417,7 +489,10 @@ class Reader:
                 .where(MediaItem.show_id.in_(missing), MediaItem.present.is_(True))
                 .group_by(MediaItem.show_id)
             )
-            first = {show_id: node_id for show_id, node_id in rows}
+            library_of = {s.id: s.library_id for s in shows}
+            first = await self.art_nodes(
+                {show_id: (node_id, library_of[show_id]) for show_id, node_id in rows}
+            )
             blobs.update(await self.blobs_of(first.values()))
         out = []
         for s in shows:
@@ -491,7 +566,8 @@ async def page(
         else:
             values = [last.sort_title, str(last.node_id)]
         next_cursor = encode_cursor(values)
-    return CardPage(items=await reader.cards(rows), next=next_cursor)
+    # De cursor komt van de rijen zelf: een pagina kan korter zijn als de scanner nog achterloopt
+    return CardPage(items=await reader.cards(await reader.visible(rows)), next=next_cursor)
 
 
 async def _show_page(
@@ -535,7 +611,8 @@ async def _show_page(
         else:
             values = [last.sort_title, str(last.id)]
         next_cursor = encode_cursor(values)
-    return CardPage(items=await reader.show_cards([s for s, _ in rows]), next=next_cursor)
+    shows = await reader.visible_shows([s for s, _ in rows])
+    return CardPage(items=await reader.show_cards(shows), next=next_cursor)
 
 
 def _iso(value: Any) -> str:
@@ -558,7 +635,7 @@ async def recent(reader: Reader, library_ids: list[uuid.UUID], limit: int = RECE
         .order_by(MediaItem.added_at.desc(), MediaItem.node_id.desc())
         .limit(limit)
     )
-    return await reader.cards(list(rows.all()))
+    return await reader.cards(await reader.visible(list(rows.all())))
 
 
 async def can_write(session: AsyncSession, user: User, node: Node) -> bool:
@@ -570,14 +647,16 @@ async def can_write(session: AsyncSession, user: User, node: Node) -> bool:
 
 
 async def visible_item(reader: Reader, node_id: uuid.UUID) -> tuple[MediaItem, Node, Seen]:
-    """Een item uit een bibliotheek die de vrager ziet, niet in de prullenbak; anders 404."""
+    """Een item uit een bibliotheek die de vrager ziet, dat nu nog onder de map van die
+    bibliotheek ligt en niet in de prullenbak (voor iedereen, ook vóór de volgende scan);
+    anders 404."""
     session = reader.session
     item = await session.get(MediaItem, node_id)
     node = await session.get(Node, node_id)
     if item is None or node is None or not item.present or node.kind != "file":
         raise errors.fail(404, "not_found", "Niet gevonden")
     seen = await get_seen(session, reader.user, item.library_id)
-    if node.owner_id == reader.user.id and await access.trashed(session, node_id):
+    if not await reader.visible([item]):
         raise errors.fail(404, "not_found", "Niet gevonden")
     return item, node, seen
 
@@ -675,7 +754,8 @@ async def detail(reader: Reader, node_id: uuid.UUID) -> Item:
         ) is not None
     card = (await reader.cards([item]))[0]
     backdrop = reader.art_url(item.art, "backdrop")
-    art = reader.art_node(item.art, "backdrop")
+    art = (await reader.art_nodes({item.node_id: (reader.art_node(item.art, "backdrop"),
+                                                  item.library_id)})).get(item.node_id)  # fmt: skip
     if backdrop is None and art is not None:
         backdrop = reader.image((await reader.blobs_of([art])).get(art), large=True)
     loose = await media_play.allowed_subs(
@@ -748,7 +828,7 @@ async def show_detail(reader: Reader, show_id: uuid.UUID) -> ShowDetail:
         )
     )
     episodes = sorted(
-        rows.all(),
+        await reader.visible(list(rows.all())),
         key=lambda i: (
             i.episode if i.episode is not None else (i.absolute or 0),
             i.aired or dt.date.min,
@@ -765,7 +845,8 @@ async def show_detail(reader: Reader, show_id: uuid.UUID) -> ShowDetail:
     order = sorted(groups, key=lambda s: -1 if s is None else SEASON_LAST if s == 0 else s)
     [show_card] = await reader.show_cards([show])
     backdrop = reader.art_url(show.art, "backdrop")
-    art = reader.art_node(show.art, "backdrop")
+    art = (await reader.art_nodes({show.id: (reader.art_node(show.art, "backdrop"),
+                                             show.library_id)})).get(show.id)  # fmt: skip
     if backdrop is None and art is not None:
         backdrop = reader.image((await reader.blobs_of([art])).get(art), large=True)
     return ShowDetail(

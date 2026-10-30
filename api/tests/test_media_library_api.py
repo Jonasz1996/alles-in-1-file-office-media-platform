@@ -317,3 +317,75 @@ async def test_het_item_met_wat_de_analyse_al_weet(people, client):
     await share_with(client, p["jonas"], p["films"], user_id=p["bas_id"], permission="read")
     r = await client.get(f"/api/v1/media/items/{node}", headers=p["bas"])
     assert r.status_code == 200 and r.json()["can_edit"] is False
+
+
+async def test_de_prullenbak_telt_meteen_ook_voor_wie_via_een_deling_kijkt(people, client):
+    """Review golf 3, S4 (a): Jonas zet een film in de prullenbak. Vóór de volgende scan kreeg
+    Bas (lezen via de deling) het item nog met titel en al, terwijl /files hem al 404 gaf. Nu
+    kijkt elke vraag zelf: weg uit het item, de lijst en Net toegevoegd, voor iedereen."""
+    p = people
+    lib = (await make(client, p["jonas"], p["films"])).json()["id"]
+    await share_with(client, p["jonas"], p["films"], user_id=p["bas_id"], permission="read")
+    node = await upload(client, p["jonas"], p["films"], "Weg (2001).mkv")
+    await upload(client, p["jonas"], p["films"], "Blijft (2002).mkv")
+    await scan(p["settings"])
+    assert (await client.get(f"/api/v1/media/items/{node}", headers=p["bas"])).status_code == 200
+    r = await client.delete(f"/api/v1/files/{node}", headers=p["jonas"])
+    assert r.status_code == 204
+    # Geen scan: de rij staat nog op present
+    async with maker(p["settings"])() as session:
+        assert (await session.get(MediaItem, uuid.UUID(node))).present is True
+    for who in ("bas", "jonas"):
+        r = await client.get(f"/api/v1/media/items/{node}", headers=p[who])
+        assert r.status_code == 404 and code(r) == "not_found", who
+        r = await client.get(f"{URL}/{lib}/items", headers=p[who])
+        assert [c["title"] for c in r.json()["items"]] == ["Blijft"], who
+        home = (await client.get("/api/v1/media/home", headers=p[who])).json()
+        assert [c["title"] for c in home["recent"]] == ["Blijft"], who
+    assert (await client.get(f"/api/v1/files/{node}", headers=p["bas"])).status_code == 404
+
+
+async def test_een_poster_die_wegging_geeft_geen_adres_meer(people, client):
+    """S4 (b): Jonas verhuist poster.jpg uit de gedeelde filmmap naar een eigen map. De scanner
+    zag dat niet (de poster hoort bij geen bibliotheek meer), en Bas kreeg nog een ondertekend
+    adres van de preview van een bestand waar /files hem 404 op gaf. Nu telt een plaatje alleen
+    als het nog in de bibliotheek ligt."""
+    from app.models import Blob
+    from tests.test_office import jpeg
+
+    p = people
+    await make(client, p["jonas"], p["films"])
+    await share_with(client, p["jonas"], p["films"], user_id=p["bas_id"], permission="read")
+    folder = await mkdir(client, p["jonas"], p["films"], "Film (2010)")
+    node = await upload(client, p["jonas"], folder, "Film (2010).mkv")
+    poster = await upload(client, p["jonas"], folder, "poster.jpg", jpeg((90, 120)))
+    backdrop = await upload(client, p["jonas"], folder, "fanart.jpg", jpeg((160, 90)))
+    await scan(p["settings"])
+    async with maker(p["settings"])() as session:
+        item = await session.get(MediaItem, uuid.UUID(node))
+        assert item.art == {"poster": {"node": poster}, "backdrop": {"node": backdrop}}
+        shas = {}
+        for art in (poster, backdrop):
+            sha = (await session.get(Node, uuid.UUID(art))).blob_id
+            blob = await session.get(Blob, sha)
+            blob.preview, blob.preview_meta = "ready", {"sizes": [256, 1024]}
+            shas[art] = sha
+        await session.commit()
+    r = await client.get(f"/api/v1/media/items/{node}", headers=p["bas"])
+    assert shas[poster] in r.json()["poster"] and shas[backdrop] in r.json()["backdrop"]
+    eigen = await mkdir(client, p["jonas"], p["top"], "Eigen")
+    for art in (poster, backdrop):
+        r = await client.patch(
+            f"/api/v1/files/{art}", json={"parent_id": eigen}, headers=p["jonas"]
+        )
+        assert r.status_code == 200, r.text
+    await scan(p["settings"])  # de scanner ziet het niet: de art blijft in de rij staan
+    async with maker(p["settings"])() as session:
+        assert (await session.get(MediaItem, uuid.UUID(node))).art["poster"] == {"node": poster}
+    assert (await client.get(f"/api/v1/files/{poster}", headers=p["bas"])).status_code == 404
+    for who in ("bas", "jonas"):
+        item = (await client.get(f"/api/v1/media/items/{node}", headers=p[who])).json()
+        assert shas[poster] not in (item["poster"] or ""), who
+        assert item["backdrop"] is None, who
+        lib_items = (await client.get(f"{URL}/{item['library_id']}/items", headers=p[who])).json()
+        assert all(shas[poster] not in (c["poster"] or "") for c in lib_items["items"]), who
