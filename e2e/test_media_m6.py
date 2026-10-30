@@ -28,7 +28,9 @@ stand-in voor de routes van M2 in de browser; m6.md, afwijking 1.)
 8. alleen met het toetsenbord (docs/fase-5/toetsenbord-m6.md);
 9. de app herstart midden in het afspelen, en met outage_s=30: de speler loopt ≤ 10 s na "ready";
    en §4.3 #12: de lokale worker gedood (op pid) tijdens een transcode: de speler loopt binnen
-   10 s na het eind van zijn buffer door, en er blijft geen ffmpeg over (review golf 3, K3);
+   10 s na het eind van zijn buffer door, en er blijft geen ffmpeg over (review golf 3, K3); ook
+   met een gat in het geluid tussen de oude en de nieuwe run, zoals met H.264 in CI (CI-run
+   41002597837);
 10. geen fouten in de console en geen CSP-meldingen: de bewaking van conftest, in elke test;
 11. sprites bij hover (review golf 2, K3) en de hoofdstukken in de tijdbalk;
 plus de viewer van fase 3: de speler in het venster, en de fallback als play aan het begin niet
@@ -41,6 +43,7 @@ import contextlib
 import json
 import re
 import signal
+import struct
 import subprocess
 import threading
 import time
@@ -50,6 +53,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import expect
 
@@ -946,6 +950,213 @@ def test_de_worker_gedood_tijdens_een_transcode(media, media_browsers, ffmpeg_co
     assert any(comm(p) == "ffmpeg" for p in descendants([new], table)), "geen nieuwe producent"
     assert state(page)["state"] == "ready"
     assert all(c["status"] == 200 for c in plays.calls), plays.calls
+    leave(page, ffmpeg_count)
+
+
+# --- §4.3 #12 met een gat in het geluid bij de naad (CI-run 41002597837) --------------------------
+
+SEGMENT_RE = re.compile(r"/api/v1/stream/[^/]+/(\d+)\.m4s$")
+INIT_RE = re.compile(r"/api/v1/stream/[^/]+/init\.mp4(\?.*)?$")
+GAP_MAX_S = 0.5  # mse.ts: over een gat tot zo groot springt de speler
+# Zoveel geluidsframes gaan vooraan uit het eerste segment na de kill. Met Opus (20 ms) is dat
+# 80 ms; de nieuwe run overlapt met VP9 36 ms, dus blijft er een gat van 44 ms, zoals met H.264 en
+# AAC in CI (24 tot 41 ms). In CI (AAC, 21,3 ms per frame) komt er 85 ms bij het gat dat er al is:
+# samen ±110 tot 127 ms, ook onder GAP_MAX_S.
+AUDIO_DROP = 4
+
+
+def _box(kind: str, body: bytes) -> bytes:
+    return struct.pack(">I4s", 8 + len(body), kind.encode("latin-1")) + body
+
+
+def _add(buf: bytearray, fmt: str, at: int, delta: int) -> None:
+    struct.pack_into(fmt, buf, at, struct.unpack_from(fmt, buf, at)[0] + delta)
+
+
+def _drop_in_traf(seg: bytes, start: int, end: int, n: int, duration: int) -> tuple[bytes, int]:
+    """De traf (inhoud seg[start:end]) zonder zijn eerste n samples: trun telt n minder en zijn
+    data_offset wijst voorbij hun bytes, tfdt schuift op met hun duur. Geeft (traf, die duur in
+    de tijdschaal van het spoor). duration: de standaardduur uit trex van de init."""
+    from tests.media.boxes import BoxError, boxes, find
+
+    tfhd = find(seg, start, end, "tfhd")
+    if tfhd is None:
+        raise BoxError("traf zonder tfhd")
+    flags = int.from_bytes(seg[tfhd[1] + 1 : tfhd[1] + 4], "big")
+    if flags & 0x1:
+        raise BoxError("tfhd met base_data_offset")  # de app geeft default_base_moof
+    if flags & 0x8:
+        duration = struct.unpack_from(">I", seg, tfhd[1] + 8 + (4 if flags & 0x2 else 0))[0]
+    kids = [(kind, bytearray(seg[b:e]), s - b) for kind, b, s, e in boxes(seg, start, end)]
+    runs = [(box, h) for kind, box, h in kids if kind == "trun"]
+    times = [(box, h) for kind, box, h in kids if kind == "tfdt"]
+    if len(runs) != 1 or len(times) != 1:
+        raise BoxError(f"{len(runs)} trun en {len(times)} tfdt in de traf")
+    trun, h = runs[0]
+    tflags = int.from_bytes(trun[h + 1 : h + 4], "big")
+    count = struct.unpack_from(">I", trun, h + 4)[0]
+    if not tflags & 0x1 or not tflags & 0x200 or count <= n:
+        raise BoxError(f"trun {tflags:#x} met {count} samples")
+    fields = [f for f in (0x100, 0x200, 0x400, 0x800) if tflags & f]
+    first = h + 12 + (4 if tflags & 0x4 else 0)  # na count, data_offset (en first_sample_flags)
+
+    def value(i: int, field: int) -> int:
+        at = first + 4 * (i * len(fields) + fields.index(field))
+        return struct.unpack_from(">I", trun, at)[0]
+
+    gone = sum(value(i, 0x100) if 0x100 in fields else duration for i in range(n))
+    size = sum(value(i, 0x200) for i in range(n))
+    new = trun[:first] + trun[first + 4 * n * len(fields) :]
+    struct.pack_into(">I", new, 0, len(new))
+    struct.pack_into(">I", new, h + 4, count - n)
+    _add(new, ">i", h + 8, size)
+    trun[:] = new
+    tfdt, th = times[0]
+    _add(tfdt, ">Q" if tfdt[th] == 1 else ">I", th + 4, gone)
+    return _box("traf", b"".join(bytes(box) for _kind, box, _h in kids)), gone
+
+
+def drop_audio_head(seg: bytes, track: int, duration: int, n: int) -> tuple[bytes, int]:
+    """Het segment zonder de eerste n samples van spoor track in zijn eerste moof (_drop_in_traf).
+    De bytes blijven in de mdat staan; niets wijst er nog naar. Het moof wordt korter, dus elke
+    data_offset erin ook. Geeft (segment, de duur die weg is)."""
+    from tests.media.boxes import BoxError, boxes, find
+
+    moof = next((b for b in boxes(seg) if b[0] == "moof"), None)
+    if moof is None:
+        raise BoxError("geen moof")
+    _kind, mb, ms, me = moof
+    gone = 0
+    kids: list[bytes] = []
+    for kind, b, s, e in boxes(seg, ms, me):
+        tfhd = find(seg, s, e, "tfhd") if kind == "traf" else None
+        if tfhd is not None and struct.unpack_from(">I", seg, tfhd[1] + 4)[0] == track:
+            box, gone = _drop_in_traf(seg, s, e, n, duration)
+            kids.append(box)
+        else:
+            kids.append(seg[b:e])
+    if not gone:
+        raise BoxError(f"geen spoor {track} in het moof")
+    out = bytearray(_box("moof", b"".join(kids)))
+    shrink = (me - mb) - len(out)
+    for kind, _b, s, e in boxes(out, 8):
+        for sub, _b2, s2, _e2 in boxes(out, s, e) if kind == "traf" else ():
+            if sub == "trun" and out[s2 + 3] & 0x1:
+                _add(out, ">i", s2 + 8, -shrink)
+    return seg[:mb] + bytes(out) + seg[me:], gone
+
+
+class Seam:
+    """De naad van CI-run 41002597837 via context.route: de sporen uit de init, en zodra armed
+    het eerste segment dat met 200 komt zonder zijn eerste AUDIO_DROP geluidsframes (elke keer
+    dat het komt). Dan gaat elk segment via route.fetch, en staat de status in after (ook van een
+    verzoek dat de speler afbrak)."""
+
+    def __init__(self, context: Any) -> None:
+        self.context = context
+        self.tracks: dict[int, Any] = {}
+        self.armed = False
+        self.segment: int | None = None
+        self.gone_ms = 0.0
+        self.after: list[tuple[int, int]] = []
+        self.errors: list[str] = []
+        context.route(INIT_RE, self._init)
+        context.route(SEGMENT_RE, self._segment)
+
+    def stop(self) -> None:
+        """De routes weg, voor leave (Plays.stop)."""
+        self.context.unroute(INIT_RE, self._init)
+        self.context.unroute(SEGMENT_RE, self._segment)
+
+    def report(self) -> dict[str, Any]:
+        return {"segment": self.segment, "weg_ms": round(self.gone_ms, 1),
+                "na_de_kill": self.after[:12], "fouten": self.errors}  # fmt: skip
+
+    def _init(self, route: Any) -> None:
+        from tests.media.boxes import read_init
+
+        response = route.fetch()
+        if response.status == 200 and not self.tracks:
+            try:
+                self.tracks = read_init(response.body())
+            except Exception as e:  # het verzoek mag niet blijven hangen; de test kijkt naar errors
+                self.errors.append(f"init: {e!r}")
+        with contextlib.suppress(PlaywrightError):  # afgebroken (zie _segment)
+            route.fulfill(response=response)
+
+    def _segment(self, route: Any) -> None:
+        if not self.armed:
+            route.fallback()
+            return
+        response = route.fetch()
+        k = int(SEGMENT_RE.search(route.request.url).group(1))
+        self.after.append((k, response.status))
+        body = None
+        if response.status == 200 and self.segment in (None, k):
+            try:
+                audio = next(t for t in self.tracks.values() if t.handler == "soun")
+                body, gone = drop_audio_head(response.body(), audio.id, audio.trex[0], AUDIO_DROP)
+                self.segment, self.gone_ms = k, gone * 1000 / audio.timescale
+            except Exception as e:  # zoals bij _init
+                self.errors.append(f"segment {k}: {e!r}")
+        # De speler breekt een verzoek af bij een sprong (de sprong over het gat ook): dan is de
+        # route al afgehandeld
+        with contextlib.suppress(PlaywrightError):
+            route.fulfill(response=response, body=body)
+
+
+@pytest.mark.media
+def test_de_worker_gedood_met_een_gat_in_het_geluid(media, media_browsers, ffmpeg_count, tmp_path):
+    """De naad van CI-run 41002597837, ook met VP9: §4.3 #12 zoals hierboven, maar het eerste
+    segment dat na de kill met 200 komt (dat van de nieuwe run, na de 503's van de herstel-lus)
+    verliest zijn eerste AUDIO_DROP geluidsframes. Dan sluit het geluid van de nieuwe run niet aan,
+    zoals met H.264 en AAC: Chromium maakt er twee gebufferde stukken van en staat vóór het eind
+    van het eerste stil (Chromium 141 in de app: 77 tot 81 ms). De speler springt erover
+    (GAP_END_S) en loopt binnen 10 s na het eind van zijn buffer weer. Met de springer van vóór
+    cce60fa (grens 50 ms) bleef de video daar staan."""
+    owner, folder, context, page = setup(media, media_browsers, "M6 gat na de kill")
+    plays = Plays(context)
+    seam = Seam(context)
+    path = loop_mkv(tmp_path, 5, "hevc10_hdr10.mkv")
+    node = upload_path(media, owner, folder, path)
+    path.unlink()
+    watch(page, node)
+    ready_state(page, "transcode")
+    playing_past(page, 2.0)
+    assert any(t.handler == "soun" for t in seam.tracks.values()), seam.report()
+    old = media.worker_pid()
+    assert old is not None
+    table = process_table()
+    running = [(p, table[p][1]) for p in descendants([old], table) if comm(p) == "ffmpeg"]
+    assert running, "geen ffmpeg in de worker: de producent liep al niet meer"
+    at, end = page.evaluate(BUFFER_JS)
+    killed = time.monotonic()
+    assert kill_pid(old, table[old][1], signal.SIGKILL)
+    seam.armed = True
+    assert wait_gone([(old, table[old][1])]) == []
+    assert wait_gone(running) == [], running
+    limit_s = (end - at) + RESTART_LIMIT_S
+    try:
+        playing_past(page, end + 1.0, timeout_ms=(limit_s + 5) * 1000)
+    except PlaywrightTimeout as e:
+        stuck = page.evaluate(STUCK_JS)
+        why = f"niet voorbij {end + 1.0:.2f} s, buffer tot {end:.4f}, {seam.report()}: {stuck}"
+        raise AssertionError(why) from e
+    took = time.monotonic() - killed
+    stuck = page.evaluate(STUCK_JS)
+    print(f"gat na de kill: {end - at:.1f} s in de buffer (tot {end:.4f}), weer voorbij na "
+          f"{took:.1f} s; {seam.report()}; {stuck}")  # fmt: skip
+    assert took <= limit_s, (took, at, end)
+    # De naad is echt geraakt: het segment kwam zonder zijn eerste frames, en het gat staat in
+    # buffered tussen at en het oude eind, dus vóór end + 1: de video is eroverheen
+    assert seam.segment is not None and not seam.errors, seam.report()
+    spans = stuck["buffered"]
+    holes = [(a[1], b[0]) for a, b in zip(spans, spans[1:], strict=False)]
+    assert any(at <= x <= end + 0.1 and 0 < y - x <= GAP_MAX_S for x, y in holes), (at, end, stuck)
+    assert state(page)["state"] == "ready"
+    assert all(c["status"] == 200 for c in plays.calls), plays.calls
+    seam.stop()
+    plays.stop()
     leave(page, ffmpeg_count)
 
 
