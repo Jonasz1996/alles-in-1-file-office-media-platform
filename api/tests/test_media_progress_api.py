@@ -434,6 +434,50 @@ async def test_de_rijen_gebruiken_het_geheugen(w, client):
     assert h["continue"][0]["progress"]["position_ms"] == 180_000
 
 
+async def test_de_paginas_van_m2_gebruiken_het_geheugen(w, client):
+    """Bij het samenvoegen van golf 4: de pagina van een item, de lijst van een bibliotheek en
+    Net toegevoegd (de Reader van M2) tonen een tik die nog op zijn beurt wacht, net als Verder
+    kijken. Eerst lazen ze alleen playback_state, en zagen ze hem tot 10 s later."""
+    settings, headers = w
+    library_id, nodes = await films(client, headers, settings, ["Een (2001)"])
+    node = nodes["Een (2001)"]
+    assert (await save(client, headers, node, 2 * MIN, seq=1)).status_code == 204  # meteen
+    r = await save(client, headers, node, 3 * MIN, seq=2, event="tick")
+    assert r.status_code == 204
+    live = progress.current()
+    assert live is not None and live.due  # de tik staat nog niet in de database
+
+    r = await client.get(f"/api/v1/media/items/{node}", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["progress"]["position_ms"] == 180_000
+    r = await client.get(f"/api/v1/media/libraries/{library_id}/items", headers=headers)
+    assert r.status_code == 200, r.text
+    assert [c["progress"]["position_ms"] for c in r.json()["items"]] == [180_000]
+    assert [c["progress"]["position_ms"] for c in (await home(client, headers))["recent"]] == [
+        180_000
+    ]
+
+    # Gezien in het geheugen: geen balkje meer, wel gezien
+    r = await save(client, headers, node, 3590, seq=3, event="end")
+    assert r.status_code == 204
+    item = (await client.get(f"/api/v1/media/items/{node}", headers=headers)).json()
+    assert item["progress"] is None and item["watched"] is True
+
+
+async def test_zonder_geheugen_blijven_de_kaarten_van_m2_zoals_ze_zijn(w, client):
+    """Zonder stand in het geheugen (media net gestart, of na netjes stoppen) lezen de pagina's
+    van M2 playback_state zoals altijd."""
+    settings, headers = w
+    _, nodes = await films(client, headers, settings, ["Een (2001)"])
+    node = nodes["Een (2001)"]
+    assert (await save(client, headers, node, 2 * MIN, seq=1)).status_code == 204
+    await progress.stop()  # alles in de database en het geheugen leeg
+    assert progress.current() is None
+    r = await client.get(f"/api/v1/media/items/{node}", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["progress"]["position_ms"] == 120_000
+
+
 async def test_wie_op_het_slot_wacht_houdt_geen_transactie_open(w, client):
     """Regel 8 en de volgorde van sloten: de router commit vóór het slot van de gebruiker. Terwijl
     een PUT op dat slot wacht, kan een ander gewoon schrijven; daarna gaat de PUT door."""

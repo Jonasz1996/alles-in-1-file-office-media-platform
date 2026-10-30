@@ -97,21 +97,21 @@ async def scan_library(
 
 
 @router.get("/home", response_model=MediaHome)
-async def home(user: CurrentUser, request: Request, session: Session, settings: Config):
-    """De start: bibliotheken, Verder kijken en Volgende aflevering (M7), en Net toegevoegd. Zolang
-    M7 geen recent geeft, komt die rij van hier."""
+async def home(user: CurrentUser, request: Request, session: Session):
+    """De start: bibliotheken, en de drie rijen van M7 (Verder kijken, Volgende aflevering en Net
+    toegevoegd; die laatste is items.recent van hier, met de stand uit het geheugen erover). Bij
+    het samenvoegen van golf 4: de eigen terugval voor Net toegevoegd (uit de tijd van de stub
+    van M7, die lege rijen gaf) is weg."""
     runtime.require(request)
     found = await media_library.seen(session, user)
     ids = [s.library.id for s in found]
     counts = await media_library.counts(session, ids)
     rows = await progress.home_rows(session, user.id, ids)
-    reader = media_items.Reader(session, settings, user)
-    recent = rows.get("recent") or await media_items.recent(reader, ids)
     return MediaHome(
         libraries=[media_library.view(s, counts.get(s.library.id, 0)) for s in found],
         continue_=rows.get("continue") or [],
         next_up=rows.get("next_up") or [],
-        recent=recent,
+        recent=rows.get("recent") or [],
     )
 
 

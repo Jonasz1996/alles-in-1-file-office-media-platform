@@ -683,6 +683,18 @@ def _overlay_all(cards: list[Card], views: dict[uuid.UUID, View]) -> list[Card]:
     return [_overlay(c, views.get(c.node_id)) if c.node_id else c for c in cards]
 
 
+def overlay(user_id: uuid.UUID, cards: list[Card]) -> list[Card]:
+    """De kaarten van de Reader van M2 (een bibliotheek, de pagina van een item en van een
+    serie) met de stand uit het geheugen erover: die is tot 10 s nieuwer dan de database (een
+    tik of een sprong wacht op zijn beurt). Zonder geheugen (media uit, of nog niets gemeld)
+    blijven ze zoals ze zijn. Zonder await: één blik op het geheugen. (Bij het samenvoegen van
+    golf 4, Keuze 36: "Doel: ≤ 2 s na de PUT" geldt ook voor de balkjes op die pagina's.)"""
+    live = current()
+    if live is None or not cards:
+        return cards
+    return _overlay_all(cards, live.snapshot(user_id))
+
+
 async def _items(
     session: AsyncSession, node_ids: list[uuid.UUID], library_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, MediaItem]:

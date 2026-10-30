@@ -461,7 +461,11 @@ class Reader:
             if poster is None:
                 poster = self.image(blobs.get(i.node_id))
             out.append(self.card(i, poster, states.get(i.node_id)))
-        return out
+        # De stand uit het geheugen van M7 erover (tot 10 s nieuwer dan playback_state). Laat
+        # geïmporteerd: progress importeert deze module
+        from app.media import progress as media_progress
+
+        return media_progress.overlay(self.user.id, out)
 
     @staticmethod
     def card(item: MediaItem, poster: str | None, state: PlaybackState | None) -> Card:
