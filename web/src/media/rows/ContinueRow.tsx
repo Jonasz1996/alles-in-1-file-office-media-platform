@@ -5,9 +5,10 @@
 // Eén tabstop per rij: ← en → (en Home/End) verplaatsen de focus. Enter op een kaart kijkt
 // verder (Verder kijken) of speelt af (Volgende aflevering). Shift+F10 of de menutoets (en
 // rechtsklik of lang indrukken) geeft het menu van de kaart: verder kijken of afspelen, naar
-// het item of de serie, en gezien markeren.
+// het item of de serie, en gezien markeren. Verdwijnt de kaart met de focus (gezien, hier of
+// elders), dan gaat de focus naar de kaart die nu op die plek staat, niet naar de pagina.
 
-import { type JSX, type KeyboardEvent, useCallback, useRef, useState } from "react";
+import { type FocusEvent, type JSX, type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { errorText, fmt, t } from "../../i18n";
 import { Link } from "../../links";
 import { navigate } from "../../router";
@@ -150,6 +151,26 @@ export function ProgressRow({
   const list = useRef<HTMLUListElement>(null);
   const [focus, setFocus] = useState(0);
   const current = Math.min(focus, Math.max(0, shown.length - 1));
+  // De kaart met de focus (cardKey), zolang de focus in de rij is of met de kaart verdween
+  const focused = useRef<string | null>(null);
+  const onFocusCard = useCallback(
+    (i: number) => {
+      setFocus(i);
+      focused.current = shown[i] ? cardKey(shown[i]) : null;
+    },
+    [shown],
+  );
+  const onBlur = useCallback((e: FocusEvent<HTMLElement>) => {
+    const to = e.relatedTarget as Node | null;
+    if (to && !e.currentTarget.contains(to)) focused.current = null;
+  }, []);
+  useEffect(() => {
+    const key = focused.current;
+    if (!key || shown.some((c) => cardKey(c) === key)) return;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    list.current?.querySelector<HTMLElement>(`[data-index="${current}"]`)?.focus({ preventScroll: true });
+  }, [shown, current]);
   const mark = useCallback((card: Card) => {
     if (!card.node_id) return;
     markWatched({ node_ids: [card.node_id], watched: true }).then(
@@ -181,10 +202,10 @@ export function ProgressRow({
   return (
     <section className="media-section" aria-labelledby={`media-row-${id}`} data-row={id}>
       <h2 id={`media-row-${id}`}>{title}</h2>
-      <ul ref={list} className="media-row" onKeyDown={onKeyDown}>
+      <ul ref={list} className="media-row" onKeyDown={onKeyDown} onBlur={onBlur}>
         {shown.map((c, i) => (
           <li key={cardKey(c)}>
-            <RowCard card={c} kind={kind} index={i} tabbable={i === current} onFocusCard={setFocus} bind={menu.bind(c)} />
+            <RowCard card={c} kind={kind} index={i} tabbable={i === current} onFocusCard={onFocusCard} bind={menu.bind(c)} />
           </li>
         ))}
       </ul>

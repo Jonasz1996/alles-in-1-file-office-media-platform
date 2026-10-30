@@ -347,10 +347,10 @@ def test_volgende_aflevering_en_gezien_markeren(media, media_browsers, ffmpeg_co
     assert marked.value.status == 200 and marked.value.json() == {"updated": 1}
     expect(b.locator(".toast-message", has_text="staat op gezien.")).to_be_visible()
 
-    # S01E03 schuift door; Enter speelt hem af
+    # S01E03 schuift door, en de focus gaat mee (niet naar de pagina); Enter speelt hem af
     expect(nxt.first).to_have_attribute("data-progress-card", eps[2])
     expect(nxt.first).to_contain_text("S01E03")
-    nxt.first.focus()
+    expect(nxt.first).to_be_focused()
     with b.expect_request(PLAY_RE):
         b.keyboard.press("Enter")
     expect(b).to_have_url(re.compile(f"/kijken/{eps[2]}$"))
