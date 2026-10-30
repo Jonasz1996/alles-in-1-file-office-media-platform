@@ -10,6 +10,8 @@ nummer, en wat de bestanden ernaast zijn (ondertitels, NFO, plaatjes). Pure func
   `-deleted` (en de andere achtervoegsels van Jellyfin) aan het eind van de naam. Een sample
   (`sample` als los woord in de naam) is een extra van het soort sample; de scanner toont hem
   niet zolang hij korter is dan 5 minuten (Keuze 5).
+- Verborgen bestanden en mappen (de naam begint met een punt, zoals de AppleDouble `._Film.mkv`
+  van een Mac) zijn altijd other: geen item, geen ondertitel, geen art.
 - Plaatjes met een bekende naam (Keuze 9): `poster`, `folder`, `cover`, `fanart`, `backdrop`,
   `background`, `banner`, `logo`, `clearlogo`, `thumb`, `landscape`, `<naam>-poster`,
   `<naam>-fanart`, `<naam>-thumb`, en `season01-poster` of `season-specials-poster` bij een
@@ -124,8 +126,18 @@ def stem(name: str) -> str:
     return name
 
 
+def hidden(name: str) -> bool:
+    """Een verborgen bestand of map (de naam begint met een punt): de AppleDouble `._Film.mkv`
+    die een Mac op een share of in een import achterlaat, `.DS_Store`, `.AppleDouble/`. Dat
+    wordt nooit een item of iets ernaast (review golf 3, S5)."""
+    return name.startswith(".")
+
+
 def file_kind(name: str, mime: str | None = None) -> FileKind:
-    """Het soort bestand op extensie; de mime helpt alleen zonder extensie."""
+    """Het soort bestand op extensie; de mime helpt alleen zonder extensie. Een verborgen
+    bestand is altijd other."""
+    if hidden(name):
+        return "other"
     ext = extension(name)
     if ext in VIDEO:
         return "video"
@@ -193,7 +205,7 @@ def art_role(name: str, video_stems: list[str] | None = None) -> tuple[ArtRole, 
     """Wat dit plaatje is: (rol, de naam van de video waar hij bij hoort, of None voor de hele
     map). video_stems: de namen (zonder extensie) van de video's in dezelfde map, voor
     "<naam>-poster.jpg". None als het geen bekend plaatje is."""
-    if extension(name) not in IMAGES:
+    if hidden(name) or extension(name) not in IMAGES:
         return None
     low = stem(name).lower()
     if low in _ART_NAMES:
@@ -226,7 +238,7 @@ def classify(library_kind: str, path_parts: list[str], mime: str | None) -> Kind
     (of een extra); in een met series een aflevering als de naam er een noemt (anders een
     video); muziek kent alleen nummers; eigen video's alleen video's. De rest is other: dat
     wordt geen item (ondertitels, NFO en plaatjes horen bij een video)."""
-    if not path_parts:
+    if not path_parts or any(hidden(part) for part in path_parts):
         return "other"
     kind = file_kind(path_parts[-1], mime)
     if library_kind == "music":

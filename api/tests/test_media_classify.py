@@ -96,6 +96,12 @@ def test_achtervoegsel_en_de_naam_zonder():
         ("music", ["Artiest", "Album", "01 - Nummer.flac"], "track"),
         ("music", ["Artiest", "Album", "clip.mkv"], "other"),
         ("movies", [], "other"),
+        # Review golf 3, S5: verborgen bestanden en mappen worden nooit een item
+        ("movies", ["._Film (2010).mkv"], "other"),
+        ("movies", ["Film (2010)", ".AppleDouble", "Film (2010).mkv"], "other"),
+        ("shows", ["Serie", "Season 1", "._Serie S01E02.mkv"], "other"),
+        ("videos", [".verborgen", "x.mp4"], "other"),
+        ("music", ["Artiest", "Album", "._01 - Nummer.flac"], "other"),
     ],
 )
 def test_classify(library, parts, kind):
@@ -142,3 +148,14 @@ def test_fuzz_namen_geven_altijd_een_antwoord():
         classify.art_role(name, [stem])
         classify.season_art(name)
         classify.extra_suffix(stem)
+
+
+def test_verborgen_bestanden_zijn_niets():
+    """S5: de AppleDouble van een Mac (4 KB) werd een tweede film "Film" (2010), met een probe
+    die altijd faalde. Ook geen ondertitel, NFO of poster."""
+    for name in ("._Film (2010).mkv", ".DS_Store", "._Film (2010).nl.srt", "._poster.jpg",
+                 ".film.nfo", "._x.flac"):  # fmt: skip
+        assert classify.file_kind(name) == "other", name
+    assert classify.file_kind("Film (2010).mkv") == "video"
+    assert classify.art_role("._poster.jpg") is None
+    assert classify.art_role("._Film-poster.jpg", ["._Film"]) is None

@@ -655,6 +655,23 @@ async def test_een_kapotte_nfo_geeft_de_naam(world, client):
     assert (item.title, item.source) == ("Film", "name")
 
 
+async def test_een_appledouble_wordt_geen_item(world, client):
+    """Review golf 3, S5: '._Film (2010).mkv' (4 KB, van een Mac over SMB) werd een tweede film
+    'Film' (2010) met een probe die altijd faalt. Nu: één item, één analyse."""
+    settings, _, headers = world
+    library_id, folder = await library(client, headers)
+    film = await upload(client, headers, folder, "Film (2010).mkv")
+    await upload(client, headers, folder, "._Film (2010).mkv", b"\x00\x05\x16\x07" + b"\0" * 4092)
+    hidden = await mkdir(client, headers, folder, ".AppleDouble")
+    await upload(client, headers, hidden, "Film (2010).mkv", b"\x00\x05\x16\x07" + b"\1" * 4092)
+    await scan(settings)
+    got = await items(settings, library_id)
+    assert list(got) == ["Film (2010).mkv"] and str(got["Film (2010).mkv"].node_id) == film
+    async with maker(settings)() as session:
+        sha = (await session.get(Node, uuid.UUID(film))).blob_id
+    assert list(await analyses(settings)) == [sha]
+
+
 async def test_een_nfo_die_de_tijd_overschrijdt_is_een_fout_van_het_bestand(world, client):
     """Review golf 3, S1: een timeout van de opdracht nfo ligt aan de bytes. Hij komt in de cache
     zoals unreadable, en de bibliotheek komt niet in de herkansing van 60 s, ook niet met een
