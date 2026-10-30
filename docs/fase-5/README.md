@@ -1,7 +1,7 @@
 # Fase 5 — Media en streaming
 
-Status: **golf 3 samengevoegd en de review van golf 3 verwerkt: M0 tot en met M6** (bouwontwerp
-revisie 2; 30 oktober 2026).
+Status: **golf 3 samengevoegd, de review en de nacontrole van golf 3 verwerkt: M0 tot en met
+M6** (bouwontwerp revisie 2; 30 oktober 2026).
 M0 is het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker,
 F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
 
@@ -180,6 +180,26 @@ van 100 KB, `WatchPage` 23,1 van 45 KB, de speler 22,0 van 35 KB, i18n strikt zo
 de e2e van fase 3 en 4 110 goed, `-m office` 30 goed, `-m media` 49 goed en 4 overgeslagen (alle
 vier H.264, dat Chromium 141 niet kan). De e2e van de gedode worker drie keer los groen. Ma met
 H.264 (nieuw, K1) meet alleen CI.
+
+Na de review kwam de nacontrole. Die draaide elke nieuwe test op de code van vóór het herstel
+(elke test faalde daar) en vond twee dingen, elk met een test rechtgezet:
+
+- **Een timeout van `nfo` bleef voor altijd in de cache** (S1). Na de vaste lijst van coderingen
+  ligt een timeout eerder aan de schijf of aan de lus; een goede NFO bleef zo weg, ook na Opnieuw
+  scannen. Nu geldt hij alleen voor die scan ([m2.md](m2.md), "De nacontrole (golf 3)").
+- **Stap 1 van het verhaal van fase 3 las de herstelcodes te vroeg.** De kop "Herstelcodes" staat
+  er eerst, met "Laden…" eronder (de lijst is een lazy component in een Suspense); de test las de
+  lijst zonder te wachten en kreeg één keer `[]`, en daarna faalden de andere 12 stappen. Nu wacht
+  `e2e/test_integratie.py` op de tien codes. De app verandert niet.
+
+"Klaar als" van M2 en M6, per punt hier bewezen of in CI, staat onder "De nacontrole (golf 3)"
+in [m2.md](m2.md) en [m6.md](m6.md). Geen M0-hotfix. De uitslag op de stand na de nacontrole, in
+de sandbox: api 3309 goed en 1 overgeslagen; `-m media` (onder `taskset -c 0-2`) 165 goed; web
+groen (806 tests, eerste lading JS 96,0 van 100 KB, `/kijken` 23,1 van 45 KB, de speler 22,0 van
+35 KB, i18n strikt zonder meldingen); de e2e van fase 3 en 4 110 goed, `-m office` 30 goed,
+`-m media` 49 goed en 4 overgeslagen (alle vier H.264). `media_perf` van M6 (VP9, 10 keer, de
+worker op cores 0–2): Ma 390 ms, Mb 1561 ms, Mc 1922 / 859 / 2193 ms, alle binnen hun grens, ook
+de slechtste.
 
 ## Doel
 
