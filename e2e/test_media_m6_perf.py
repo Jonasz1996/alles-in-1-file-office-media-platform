@@ -6,7 +6,9 @@ krijgt 40 Mbit/s en 20 ms via CDP (MediaBrowsers met perf, §3.6).
 
 - Ma, direct, het eerste beeld: een bron van 1080p, 20 Mbit/s en 2 minuten (VP9 en Opus in WebM;
   10 s gemaakt en met -stream_loop gekopieerd, dat scheelt minuten coderen). Van de klik (de
-  navigatie binnen de app naar /kijken) tot het eerste requestVideoFrameCallback: ≤ 2 s;
+  navigatie binnen de app naar /kijken) tot het eerste requestVideoFrameCallback: ≤ 2 s. En
+  dezelfde meting met H.264 en AAC in MP4 (§4.5: "VP9 hier, H.264 in CI"; review golf 3, K1):
+  die slaat over als de browser geen H.264 kan (Chromium hier), in Chrome for Testing loopt hij;
 - Mb, transcode, het eerste beeld: hevc10_hdr10.mkv naar 720 (VP9 hier, H.264 in CI): ≤ 5 s;
 - Mc, zoeken en weer lopen: currentTime naar 70 % (nog niet gemaakt) tot de video voorbij het
   doel loopt, bij direct, remux en transcode: ≤ 3 s ("Klaar als" van M6). De strengere grenzen
@@ -34,7 +36,7 @@ import pytest
 from playwright.sync_api import expect
 
 from conftest import report_only, write_result
-from media_harness import PERF_CPUS, first_frame_ms, open_app
+from media_harness import PERF_CPUS, first_frame_ms, open_app, require_codec
 from test_media_m6 import (
     PLAYER,
     VIDEO,
@@ -97,6 +99,41 @@ def big_webm(tmp_path_factory: pytest.TempPathFactory) -> Any:
     )  # fmt: skip
     piece.unlink()
     yield path
+    shutil.rmtree(work, ignore_errors=True)
+
+
+@pytest.fixture(scope="module")
+def big_mp4(tmp_path_factory: pytest.TempPathFactory) -> Any:
+    """Als big_webm, maar H.264 (High, avc1.640028) en AAC in MP4 met de moov vooraan: een
+    functie, zodat er alleen gecodeerd wordt als de browser H.264 kan."""
+    work = tmp_path_factory.mktemp("m6-perf-h264")
+    path = work / "direct-1080-20M.mp4"
+
+    def make() -> Any:
+        if path.exists():
+            return path
+        piece = work / "stuk.mp4"
+        lavfi = "testsrc2=size=1920x1080:rate=24,noise=alls=12:allf=t"
+        sine = "sine=frequency=440:sample_rate=48000"
+        pin = ["taskset", "-c", "0-2"] if PERF_CPUS <= os.sched_getaffinity(0) else []
+        subprocess.run(
+            [*pin, "ffmpeg", "-nostdin", "-v", "error", "-y",
+             "-f", "lavfi", "-i", lavfi, "-f", "lavfi", "-i", sine,
+             "-t", "10", "-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high",
+             "-level:v", "4.0", "-pix_fmt", "yuv420p", "-b:v", "20M", "-minrate", "20M",
+             "-maxrate", "20M", "-bufsize", "20M", "-g", "48", "-threads", "3",
+             "-c:a", "aac", "-b:a", "128k", "-shortest", str(piece)],
+            check=True, timeout=300,
+        )  # fmt: skip
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error", "-y", "-stream_loop", "11", "-i", str(piece),
+             "-map", "0", "-c", "copy", "-movflags", "+faststart", str(path)],
+            check=True, timeout=120,
+        )  # fmt: skip
+        piece.unlink()
+        return path
+
+    yield make
     shutil.rmtree(work, ignore_errors=True)
 
 
@@ -190,6 +227,25 @@ def test_m6_ma_eerste_beeld_direct(media, media_browsers, ffmpeg_count, big_webm
     result["netwerk"] = media_browsers.network[-1:]
     report("ma-direct", result, media, ffmpeg_count)
     gate("Ma direct", times, GATES_MS["direct"])
+
+
+@pytest.mark.media_perf
+def test_m6_ma_eerste_beeld_direct_h264(media, media_browsers, ffmpeg_count, big_mp4):
+    """Ma met H.264 en AAC (review golf 3, K1): de bron die in de praktijk het meest direct
+    speelt. Zonder H.264 in de browser overslaan (met MEDIA_REQUIRE_H264=1 falen)."""
+    owner, folder, context, page = prepare(media, media_browsers, "M6 Ma H.264")
+    require_codec(page, 'video/mp4; codecs="avc1.640028"', "native")
+    require_codec(page, 'audio/mp4; codecs="mp4a.40.2"', "native")
+    plays = Plays(context)
+    source = big_mp4()
+    node = upload_path(media, owner, folder, source)
+    times = first_frames(page, node, "direct", ffmpeg_count, plays)
+    result = {"direct": summary(times), "grens_ms": GATES_MS["direct"]}
+    result["bron"] = "H.264 High en AAC in MP4"
+    result["bron_mbit_s"] = round(source.stat().st_size * 8 / 120 / 1e6, 1)
+    result["netwerk"] = media_browsers.network[-1:]
+    report("ma-direct-h264", result, media, ffmpeg_count)
+    gate("Ma direct H.264", times, GATES_MS["direct"])
 
 
 @pytest.mark.media_perf
