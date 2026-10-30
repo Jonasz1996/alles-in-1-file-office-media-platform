@@ -80,9 +80,14 @@ RECONCILE_EVERY = 6 * 3600.0
 NFO_RETRY = 60.0  # worker druk of weg: de NFO's na zoveel seconden opnieuw
 NFO_MAX_BYTES = 1024 * 1024  # Keuze 9
 # Een fout van de NFO zelf: in de cache, en geen herkansing. Ook timeout (review golf 3, S1): de
-# opdracht leest hooguit 1 MiB in milliseconden; duurt het 10 s, dan ligt het aan de bytes, en
-# zou de herkansing na NFO_RETRY dezelfde NFO steeds opnieuw sturen.
+# opdracht leest hooguit 1 MiB in milliseconden; duurt het 10 s, dan zou de herkansing na
+# NFO_RETRY dezelfde NFO steeds opnieuw sturen.
 NFO_FILE_ERRORS = analysis.FILE_ERRORS | {Code.TIMEOUT.value}
+# Maar een timeout komt niet in de cache (nacontrole golf 3): hij kan ook aan de schijf liggen
+# (een schijf die opstart; read_file leest synchroon) of aan een lus die even stilstond. In de
+# cache bleef een goede NFO dan voor altijd weg. Nu leest de volgende scan van die map (een
+# wijziging, Opnieuw scannen, de ronde van 6 uur) hem opnieuw.
+NFO_UNCACHED = frozenset({Code.TIMEOUT.value})
 MAX_EVENTS = 20  # meer veranderde items in één stuk: alleen media.library
 MEDIA_KINDS = ("movie", "episode", "video", "extra", "track")
 SEP, END = "\x1f", "\x1e"  # in de sorteersleutel van een map (namen hebben geen stuurtekens)
@@ -657,6 +662,7 @@ async def read_nfos(settings: Settings, shas: list[str]) -> tuple[dict[str, dict
         if not worker_ok:
             retry = True
             continue
+        keep = True  # het antwoord in de cache
         try:
             if not await polite():
                 worker_ok, retry = False, True
@@ -672,6 +678,7 @@ async def read_nfos(settings: Settings, shas: list[str]) -> tuple[dict[str, dict
         except client.WorkerFailed as exc:
             if exc.code in NFO_FILE_ERRORS:
                 data = {"root": None, "fields": {}, "error": exc.code}
+                keep = exc.code not in NFO_UNCACHED
             else:
                 worker_ok = False  # not_built, internal: de ronde van 6 uur probeert het
                 continue
@@ -680,6 +687,8 @@ async def read_nfos(settings: Settings, shas: list[str]) -> tuple[dict[str, dict
         if not isinstance(data, dict):
             continue
         found[sha] = data
+        if not keep:
+            continue
         with contextlib.suppress(OSError):
             await anyio.to_thread.run_sync(_write_cache, path, data)
     return found, retry

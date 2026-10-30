@@ -2495,8 +2495,9 @@ zonder internet. Een bestaande verzameling komt binnen via de import.
   het pad (`._Film.mkv`, `.AppleDouble/`), wordt geen item, ondertitel, NFO of plaatje. De import
   neemt ze wel mee.
 - **NFO (S1, S3).** De codering uit de kop telt alleen als ze op een vaste lijst staat (`DECLARED`
-  in `worker/ops/nfo.py`); anders CP1252. Een timeout van de opdracht `nfo` is een fout van het
-  bestand, net als `unreadable`.
+  in `worker/ops/nfo.py`); anders CP1252. Een timeout van de opdracht `nfo` is voor die scan een
+  fout van het bestand (geen herkansing na 60 s), maar komt niet in de cache: hij kan ook aan de
+  schijf of de lus liggen, en de volgende scan van de map leest de NFO opnieuw (nacontrole golf 3).
 - **Verplaatsen bij de import (S2, C7).** Geen rename meer: de bron krijgt met `linkat` een tweede
   naam in `blobs/.tmp`, de blob krijgt modus 0600, en de naam in de bron gaat pas weg na de
   commit van `place_file`. Een bestand van een andere uid gaat via een kopie, zoals bij `EXDEV`.

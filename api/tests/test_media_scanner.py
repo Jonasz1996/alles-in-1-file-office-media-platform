@@ -895,16 +895,21 @@ async def test_een_appledouble_wordt_geen_item(world, client):
 
 
 async def test_een_nfo_die_de_tijd_overschrijdt_is_een_fout_van_het_bestand(world, client):
-    """Review golf 3, S1: een timeout van de opdracht nfo ligt aan de bytes. Hij komt in de cache
-    zoals unreadable, en de bibliotheek komt niet in de herkansing van 60 s, ook niet met een
-    tweede NFO in dezelfde scan die nog niet gelezen is."""
+    """Review golf 3, S1: een timeout van de opdracht nfo is voor deze scan een fout van het
+    bestand: de naam, en de bibliotheek komt niet in de herkansing van 60 s, ook niet met een
+    tweede NFO in dezelfde scan die nog niet gelezen is.
+
+    Nacontrole golf 3: maar niet in de cache. Een timeout kan ook aan de schijf liggen (een schijf
+    die opstart) of aan een lus die even stilstond; in de cache bleef een goede NFO dan voor altijd
+    weg. Opnieuw scannen leest hem opnieuw, en dan telt hij."""
     from tests.media.fake_worker import OpError
 
     settings, fake, headers = world
+    asleep = {"on": True}
 
     async def slow_or_real(job):
         data = os.pread(job.inputs[0], job.args.max_bytes + 1, 0)
-        if b"traag" in data:
+        if asleep["on"] and b"traag" in data:
             raise OpError(wire_code.TIMEOUT, "nfo duurde langer dan 10 s")
         return nfo_op.parse(data)
 
@@ -924,12 +929,18 @@ async def test_een_nfo_die_de_tijd_overschrijdt_is_een_fout_van_het_bestand(worl
             n.name: n.blob_id
             for n in await session.scalars(select(Node).where(Node.name.in_(["a.nfo", "b.nfo"])))
         }
-    assert scanner._read_cache(scanner.nfo_cache(settings, shas["a.nfo"]))["error"] == "timeout"
+    assert scanner._read_cache(scanner.nfo_cache(settings, shas["a.nfo"])) is None
+    assert scanner._read_cache(scanner.nfo_cache(settings, shas["b.nfo"]))["fields"]
     calls = len([r for r in fake.requests if r.op == "nfo"])
+    asleep["on"] = False  # de schijf is wakker
     r = await client.post(f"/api/v1/media/libraries/{library_id}/scan", headers=headers)
     assert r.status_code == 202
     await jobs.run_pending(settings, lane="media_scan")
-    assert len([r for r in fake.requests if r.op == "nfo"]) == calls  # niet opnieuw
+    # Alleen a.nfo opnieuw (b.nfo komt uit de cache), en nu telt hij
+    assert len([r for r in fake.requests if r.op == "nfo"]) == calls + 1
+    got = await items(settings, library_id)
+    assert (got["a.mkv"].title, got["a.mkv"].source) == ("traag", "nfo")
+    assert scanner._read_cache(scanner.nfo_cache(settings, shas["a.nfo"]))["fields"]
 
 
 async def test_de_worker_druk_eerst_de_naam_daarna_de_nfo(world, client, monkeypatch):
