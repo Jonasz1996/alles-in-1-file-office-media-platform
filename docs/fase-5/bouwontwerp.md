@@ -1722,7 +1722,9 @@ onderaan.
       het lezen). Nu zet een nieuwe versie (`hooks.touched` met `node.version`, ook het
       terugzetten van een oude versie) de stand terug: meteen als de probe er al is, anders een
       job `media.voortgang` die wacht op de probe (hooguit 30 minuten). Zo tonen ook de pagina's
-      en kaarten van M2 de oude positie niet meer ([m7.md](m7.md), afwijking 5).
+      en kaarten van M2 de oude positie niet meer ([m7.md](m7.md), afwijking 5). Na de
+      nacontrole: alleen voor een node waarvan iemand een stand heeft, en de job staat in de rij
+      `media_scan` (niet in `default`, Keuze 14).
     - **Verder kijken:** positie > 60 s, niet gezien, de nieuwste eerst, hooguit 20. De speler vraagt
       "Verder kijken vanaf 12:05?" (standaard ja na 5 s).
       *Noot bij de bouw van M7:* die vraag in de speler is niet gebouwd (M6, `ui/Player.tsx`).

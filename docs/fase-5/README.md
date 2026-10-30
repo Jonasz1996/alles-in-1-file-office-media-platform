@@ -1,7 +1,7 @@
 # Fase 5 — Media en streaming
 
 Status: **golf 4 samengevoegd: M0 tot en met M7, en M9** (bouwontwerp revisie 2; 30 oktober
-2026). De review van golf 4 is verwerkt; de nacontrole van golf 4 volgt nog.
+2026). De review en de nacontrole van golf 4 zijn verwerkt.
 M0 is het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker,
 F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
 
@@ -266,6 +266,38 @@ op deze sandbox te klein; dat is aan M2 (open punt). `-m media` (onder `taskset 
 keer) 174 goed; web groen (878 tests, eerste lading JS 96,3 van 100 KB, de speler 24,9 van 35
 KB, muziek 30,2 van 40 KB, i18n strikt zonder meldingen); de e2e van fase 3 en 4 110 goed;
 `-m office` 30 goed; e2e `-m media` 59 goed en 4 overgeslagen (alle vier H.264).
+
+Na de review kwam de nacontrole. Die draaide elke nieuwe test op de code van vóór het herstel
+(elke test faalde daar) en vond twee dingen in M7, elk met een test rechtgezet:
+
+- **De job `media.voortgang` kwam bij elke nieuwe versie, en in de rij `default`** (K2). Ook een
+  document of een film die niemand speelde, kreeg een job die tot 30 minuten op een probe
+  wachtte, in de rij van fase 3 en 4, die ook zonder media draait (Keuze 14). Nu alleen voor een
+  node waarvan iemand een stand heeft, en in de rij `media_scan` ([m7.md](m7.md), "De
+  nacontrole (golf 4)").
+- **Het afknippen in `apply()` had geen test** (S2). Nu een test die faalt als een van de vier
+  grenzen (seq, positie, duur, audio) weg is.
+
+In M9 vond de nacontrole niets om te herstellen; wel drie dingen om te weten, in [m9.md](m9.md):
+een lang nummer dat FLAC wordt, krijgt 415 (`cache_gb / 8` per nummer: Opus stereo tot ±2,5 uur
+bij `cache_gb` 20); een schijf die niet te meten is, blokkeert elke remux van audio (503); een
+eerste pagina vol albums die net uit de bibliotheek gingen, toont even "Nog geen albums" boven
+Meer laden. En: de job "e2e media" in CI draait `pytest -rs`, dus de metingen van een geslaagde
+test (de p95 van M7, de fase van gapless, het resultaat van AAC) toont CI niet; alleen een fout
+laat ze zien.
+
+"Klaar als" van M7 en M9, per punt hier bewezen of in CI, staat onder "De nacontrole (golf 4)"
+in [m7.md](m7.md) en [m9.md](m9.md). Geen M0-hotfix, geen migratie. De uitslag op de stand na de
+nacontrole, in de sandbox: api 3469 goed en 1 overgeslagen (`test_fuzz_10000_namen_met_vaste_seed`
+slaagde deze keer; de marge blijft een open punt van M2); `-m media` (onder `taskset -c 0-2`) 174
+goed; web groen (878 tests, eerste lading JS 96,3 van 100 KB, de route Bestanden 43,6 van 45 KB,
+`/kijken` 24,7 van 45 KB, de speler 24,9 van 35 KB, muziek 30,2 van 40 KB, i18n strikt zonder
+meldingen); de e2e van fase 3 en 4 110 goed; `-m office` 30 goed; e2e `-m media` 59 goed en 4
+overgeslagen (alle vier H.264, dat Chromium 141 niet kan). "Klaar als" van M7 hier:
+synchroniseren p95 0,085 s over 20 keer (max 0,086 s; grens 2 s). Van M9: de fase springt 0,0
+samples bij FLAC en hooguit 0,014 bij Opus (grens 1), het eind ligt 0 en 1 sample naast (grens
+2). Jonas heeft de beslissingskaarten van fase 5 nog niet beantwoord: B39–B48 staan niet als
+besloten.
 
 ## Doel
 
