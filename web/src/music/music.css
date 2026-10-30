@@ -1,0 +1,440 @@
+/* Muziek (fase 5, M9): de pagina's (albums, artiesten, afspeellijsten), de lijst van nummers en
+   de muziekbalk onderaan de schil. Alleen tokens uit tokens.css. */
+
+.music-page h2 {
+  font-size: var(--text-l);
+}
+
+.music-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0 var(--space-4);
+}
+
+.music-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.music-panel:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}
+
+.music-more,
+.music-error {
+  margin: var(--space-4) 0;
+}
+
+/* --- de hoes --- */
+
+.music-cover {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.music-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* --- het raster van albums --- */
+
+.music-grid {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.music-grid > li {
+  min-width: 0;
+}
+
+.music-card {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--fg);
+  text-decoration: none;
+  border-radius: var(--radius-m);
+  min-width: 0;
+}
+
+.music-card:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 3px;
+}
+
+a.music-card:hover .music-card-title {
+  text-decoration: underline;
+}
+
+.music-card-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.music-card-sub {
+  font-size: var(--text-s);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- een lijst met regels (artiesten, afspeellijsten) --- */
+
+.music-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.music-list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.music-list-link {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  padding: var(--space-3) var(--space-2);
+  color: var(--fg);
+  text-decoration: none;
+  border-radius: var(--radius-s);
+}
+
+.music-list-link:hover {
+  background: var(--hover);
+}
+
+.music-list-link:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: -2px;
+}
+
+.music-list-title {
+  font-weight: 600;
+}
+
+/* --- de kop van een album --- */
+
+.music-head {
+  display: grid;
+  grid-template-columns: minmax(6rem, 12rem) 1fr;
+  gap: var(--space-4);
+  align-items: end;
+  margin-bottom: var(--space-4);
+}
+
+.music-head-text {
+  min-width: 0;
+}
+
+.music-head-text p {
+  margin: var(--space-1) 0;
+}
+
+.music-head-artist {
+  font-size: var(--text-l);
+}
+
+.music-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+@media (max-width: 36rem) {
+  .music-head {
+    grid-template-columns: 6rem 1fr;
+    align-items: center;
+  }
+}
+
+/* --- de lijst van nummers (gevirtualiseerd) --- */
+
+.music-tracks {
+  border-top: 1px solid var(--line);
+}
+
+.music-tracks-body {
+  position: relative;
+  contain: layout;
+}
+
+.music-track {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--line);
+  box-sizing: border-box;
+}
+
+.music-track-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  height: 100%;
+  min-width: 0;
+  padding: 0 var(--space-2);
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-s);
+}
+
+.music-track-main:hover {
+  background: var(--hover);
+}
+
+.music-track-main:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: -2px;
+}
+
+.music-track.now .music-track-title {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.music-track-no {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.music-track-text {
+  display: grid;
+  min-width: 0;
+}
+
+.music-track-title,
+.music-track-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.music-track-artist {
+  font-size: var(--text-s);
+}
+
+.music-track-time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- de muziekbalk --- */
+
+.music-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface);
+  color: var(--fg);
+  border-top: 1px solid var(--line);
+  box-shadow: var(--shadow-1);
+}
+
+.music-bar-now {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.music-bar-now .music-cover {
+  width: 3rem;
+  flex: none;
+}
+
+.music-bar-text {
+  display: grid;
+  min-width: 0;
+}
+
+.music-bar-title,
+.music-bar-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.music-bar-title a {
+  color: var(--fg);
+}
+
+.music-bar-artist {
+  font-size: var(--text-s);
+}
+
+.music-bar-controls {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.music-bar-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.music-bar-seek {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.music-bar-seek input {
+  width: 100%;
+}
+
+.music-bar-time {
+  font-size: var(--text-s);
+  font-variant-numeric: tabular-nums;
+}
+
+.music-bar-note,
+.music-bar-error {
+  margin: 0;
+  font-size: var(--text-s);
+}
+
+.music-bar-error {
+  color: var(--bad);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.music-bar-side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.music-bar-volume {
+  width: 6rem;
+}
+
+@media (max-width: 48rem) {
+  .music-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .music-bar-controls {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .music-bar-volume {
+    display: none;
+  }
+}
+
+/* --- de rij --- */
+
+.music-queue {
+  grid-column: 1 / -1;
+  max-height: min(50vh, 24rem);
+  overflow: auto;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--line);
+}
+
+.music-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.music-queue-head h2 {
+  margin: 0;
+  font-size: var(--text-m);
+}
+
+.music-queue-list {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.music-queue-list > li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.music-queue-play {
+  flex: 1;
+  display: grid;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-s);
+}
+
+.music-queue-play:hover {
+  background: var(--hover);
+}
+
+.music-queue-play:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: -2px;
+}
+
+.music-queue-list > li.now .music-queue-title {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.music-queue-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
