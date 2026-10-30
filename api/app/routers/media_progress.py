@@ -39,6 +39,11 @@ def not_found() -> HTTPException:
     return errors.fail(404, "not_found", "Niet gevonden")
 
 
+def invalid(field: str) -> HTTPException:
+    """Een getal of tijd buiten de grenzen van progress (review golf 4, S2 en S4)."""
+    return errors.fail(422, "invalid_input", "Ongeldige invoer", field=field)
+
+
 async def readable(session, user: User, node_id: uuid.UUID) -> Node:
     """Een bestand dat deze gebruiker nu mag lezen, anders 404 (ook bij 403: wie het niet mag
     lezen, hoort niet te weten dat het er is)."""
@@ -97,6 +102,8 @@ async def save(
     settings: Config,
 ):
     runtime.require(request)
+    if not progress.valid(body):
+        raise invalid("body")
     node = await readable(session, user, node_id)
     sha = node.blob_id
     await session.commit()  # geen transactie open bij het slot van de gebruiker
@@ -117,6 +124,8 @@ async def batch(
     settings: Config,
 ):
     runtime.require(request)
+    if body.season is not None and not 0 <= body.season <= progress.SEASON_MAX:
+        raise invalid("body.season")
     if body.node_ids is not None:
         node_ids = await readable_many(session, user, body.node_ids)
     else:

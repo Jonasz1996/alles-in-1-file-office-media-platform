@@ -88,6 +88,14 @@ BATCH_EVENTS = 20  # meer nodes in één batch: alleen de eerste zoveel als even
 BATCH_ORIGIN = "batch"  # de origin van een event uit een batch
 CHUNK = 500  # ids per IN (...)
 RETRY_S = 1.0  # de schrijver op de achtergrond na een fout
+# De grenzen van een PUT en een batch (review golf 4, S2): wat erboven ligt, kan SQLite niet
+# bewaren (INTEGER is 64 bits) of is onzin; de router geeft 422 invalid_input, apply() knipt af
+MS_MAX = 10**10  # positie en duur: ruim 115 dagen
+SEQ_MAX = 2**62
+AUDIO_MAX = 9999  # de index van een audiospoor
+SEASON_MAX = 9999
+REPLACED_POLL_S = 5.0  # een nieuwe versie: zo vaak kijken of de probe er is (K2)
+REPLACED_WAIT_S = 1800.0  # en hooguit zo lang
 
 Outcome = Literal["ok", "ignored", "rate_limited"]
 EPOCH = dt.datetime(1970, 1, 1, tzinfo=UTC)
@@ -126,10 +134,34 @@ def origin_key(origin: str) -> str:
 
 
 def aware(value: dt.datetime | None) -> dt.datetime | None:
-    """SQLite geeft tijden zonder zone terug; alles hier is UTC."""
+    """SQLite geeft tijden zonder zone terug; alles hier is UTC. Een tijd die in UTC buiten het
+    bereik van datetime valt (jaar 1 met +01:00): EPOCH, een heel oude sessie (review golf 4,
+    S4)."""
     if value is None:
         return None
-    return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    try:
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    except (OverflowError, ValueError):
+        return EPOCH
+
+
+def valid(body: ProgressIn) -> bool:
+    """Past deze PUT binnen de grenzen (review golf 4, S2)? Zo niet: 422 in de router."""
+    if body.position_ms > MS_MAX or body.duration_ms > MS_MAX or body.seq > SEQ_MAX:
+        return False
+    if body.audio is not None and not 0 <= body.audio <= AUDIO_MAX:
+        return False
+    try:
+        body.started_at.astimezone(UTC)
+    except (OverflowError, ValueError):
+        return False
+    return True
+
+
+def _bad_value(exc: BaseException) -> bool:
+    """Een fout in de waarden van één stand (te groot voor SQLite), niet van de database."""
+    bad = (OverflowError, ValueError, TypeError)
+    return isinstance(exc, bad) or isinstance(getattr(exc, "orig", None), bad)
 
 
 def _remember(store: OrderedDict, key, value, limit: int) -> None:
@@ -238,8 +270,8 @@ def apply(
     vervangen bestand hoeft hier niets: de positie van de PUT gaat over het nieuwe bestand (de
     regel geldt bij het lezen, in Verder kijken)."""
     known, credits = info
-    duration = body.duration_ms or known or e.duration_ms
-    position = min(body.position_ms, duration) if duration > 0 else body.position_ms
+    duration = min(body.duration_ms or known or e.duration_ms, MS_MAX)
+    position = min(body.position_ms, duration) if duration > 0 else min(body.position_ms, MS_MAX)
     if started not in e.sessions:
         _remember(e.sessions, started, position, SESSIONS_MAX)
     first = e.sessions[started]
@@ -269,10 +301,10 @@ def apply(
         e.position_ms = position
     e.duration_ms = duration
     e.blob_sha = sha
-    e.audio = body.audio
+    e.audio = body.audio if body.audio is None or 0 <= body.audio <= AUDIO_MAX else None
     e.subtitle = body.subtitle
     e.origin = origin_key(body.origin)
-    e.seq = body.seq
+    e.seq = min(body.seq, SEQ_MAX)
     e.play_started_at = started
     e.updated_at = now
     e.dirty = True
@@ -449,28 +481,56 @@ class Store:
 
     async def _write(self, user_id: uuid.UUID) -> None:
         """Met het slot: alles wat van deze gebruiker nog niet in de database staat, in één
-        transactie. Een bestand (of gebruiker) dat intussen weg is, valt eruit; een andere
-        fout laat de standen staan voor de volgende keer (over write_every)."""
+        transactie. Een bestand (of gebruiker) dat intussen weg is, valt eruit. Faalt de
+        transactie anders, dan elke stand apart (review golf 4, S2): een stand die ook alleen
+        niet te bewaren is (een getal te groot voor SQLite), gaat uit het geheugen, zodat hij de
+        rest van die gebruiker niet blokkeert. Faalt de database zelf, dan blijven de standen
+        staan voor de volgende keer (over write_every, ook als er intussen een PUT komt)."""
         self.due.pop(user_id, None)
         dirty = [e for e in self.entries.get(user_id, {}).values() if e.dirty]
         if not dirty:
             return
         try:
-            try:
-                await self._upsert(user_id, dirty)
-            except IntegrityError:
-                dirty = await self._still_there(user_id, dirty)
-                if dirty:
-                    await self._upsert(user_id, dirty)
+            await self._save(user_id, dirty)
         except Exception:
             log.exception("voortgang schrijven")
-            self.due[user_id] = self.clock() + self.write_every
-            self._kick()
-            return
+            try:
+                dirty = await self._one_by_one(user_id, dirty)
+            except Exception:
+                self.last_write[user_id] = self.clock()  # niet bij elke PUT opnieuw
+                self.due[user_id] = self.clock() + self.write_every
+                self._kick()
+                return
         for e in dirty:
             e.dirty = False
         self.last_write[user_id] = self.clock()
         self.writes += 1
+
+    async def _save(self, user_id: uuid.UUID, dirty: list[Entry]) -> None:
+        try:
+            await self._upsert(user_id, dirty)
+        except IntegrityError:
+            dirty = await self._still_there(user_id, dirty)
+            if dirty:
+                await self._upsert(user_id, dirty)
+
+    async def _one_by_one(self, user_id: uuid.UUID, dirty: list[Entry]) -> list[Entry]:
+        """Na een fout van de hele transactie: elke stand apart. Een fout in de waarden van één
+        stand: die stand weg uit het geheugen. Een andere fout (de database) gaat omhoog."""
+        by = self.entries.get(user_id, {})
+        done = []
+        for e in dirty:
+            try:
+                await self._save(user_id, [e])
+            except Exception as exc:
+                if not _bad_value(exc):
+                    raise
+                log.warning("voortgang van één bestand niet te bewaren: weggelaten (%s)", exc)
+                if by.get(e.node_id) is e:
+                    del by[e.node_id]
+                continue
+            done.append(e)
+        return done
 
     async def _upsert(self, user_id: uuid.UUID, dirty: list[Entry]) -> None:
         async with self.maker() as session:

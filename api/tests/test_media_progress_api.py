@@ -508,3 +508,83 @@ async def test_wie_op_het_slot_wacht_houdt_geen_transactie_open(w, client):
     r = await task
     assert r.status_code == 204
     assert titles((await home(client, headers))["continue"]) == ["Slot"]
+
+
+# De review van golf 4
+
+
+async def rows_of(settings) -> dict[uuid.UUID, int]:
+    from sqlalchemy import select
+
+    async with maker(settings)() as session:
+        found = await session.scalars(select(PlaybackState))
+        return {r.node_id: r.position_ms for r in found}
+
+
+async def test_te_grote_getallen_geven_422(w, client):
+    """Review golf 4, S2 en C2: een getal dat SQLite niet kan bewaren (seq 2**70, een positie
+    van 10**19 ms, een seizoen 2**70) geeft 422 invalid_input, en blokkeert daarna niets."""
+    settings, headers = w
+    show_id, eps = await series(client, headers, settings, {"Seizoen 1": ["S01E01"]})
+    _, nodes = await films(client, headers, settings, ["Een (2001)", "Twee (2002)"])
+    een = nodes["Een (2001)"]
+    bad = [
+        {**body(90), "seq": 2**70},
+        {**body(90), "seq": 2**64},
+        {**body(90), "position_ms": 10**19},
+        {**body(90), "duration_ms": 10**19},
+        {**body(90), "audio": 2**70},
+        {**body(90), "audio": -1},
+        body(90, started=dt.datetime(1, 1, 1, 0, 30, tzinfo=dt.timezone(dt.timedelta(hours=1)))),
+    ]
+    for b in bad:
+        r = await client.put(f"{URL}/{een}", json=b, headers=headers)
+        assert r.status_code == 422, (b, r.text)
+        assert r.json()["detail"]["code"] == "invalid_input"
+    for season in (2**70, -1, 10_000):
+        r = await client.post(
+            f"{URL}/batch", json={"show_id": show_id, "season": season, "watched": True},
+            headers=headers,
+        )  # fmt: skip
+        assert r.status_code == 422, r.text
+        assert r.json()["detail"]["code"] == "invalid_input"
+    # Daarna gewoon: de pauze van Twee staat meteen in de database
+    assert (await save(client, headers, nodes["Twee (2002)"], 90, seq=1)).status_code == 204
+    assert (await rows_of(settings)) == {uuid.UUID(nodes["Twee (2002)"]): 90_000}
+
+
+async def test_een_stand_die_niet_te_bewaren_is_blokkeert_de_rest_niet(w, client, caplog):
+    """Review golf 4, S2 en C2: komt er toch een stand in het geheugen die SQLite niet kan
+    bewaren, dan schrijft de rest van die gebruiker gewoon (elke stand apart), gaat die ene uit
+    het geheugen, en volgt niet bij elke PUT een nieuwe traceback."""
+    settings, headers = w
+    _, nodes = await films(client, headers, settings, ["Een (2001)", "Twee (2002)", "Drie (2003)"])
+    een, twee, drie = nodes["Een (2001)"], nodes["Twee (2002)"], nodes["Drie (2003)"]
+    assert (await save(client, headers, een, 90, seq=1)).status_code == 204
+    user_id = uuid.UUID((await client.get("/api/v1/auth/me", headers=headers)).json()["id"])
+    live = progress.current()
+    assert live is not None
+    entry = live.entries[user_id][uuid.UUID(een)]
+    entry.seq, entry.dirty = 2**70, True  # zoals een PUT van vóór de grens
+    caplog.clear()
+    assert (await save(client, headers, twee, 120, seq=1)).status_code == 204
+    assert (await rows_of(settings)) == {uuid.UUID(een): 90_000, uuid.UUID(twee): 120_000}
+    assert uuid.UUID(een) not in live.entries[user_id]
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) <= 1
+    caplog.clear()
+    for n, node in enumerate((drie, twee), start=2):
+        r = await save(client, headers, node, 60 * n, seq=n, event="seek")
+        assert r.status_code == 204
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
+    await progress.stop()
+    assert (await rows_of(settings))[uuid.UUID(drie)] == 120_000
+
+
+async def test_started_at_buiten_het_bereik_van_de_klok(w):
+    """Review golf 4, S4: aware() faalt niet op een tijd die naar UTC buiten het bereik van
+    datetime valt; zo'n sessie telt als heel oud."""
+    early = dt.datetime(1, 1, 1, 0, 30, tzinfo=dt.timezone(dt.timedelta(hours=1)))
+    late = dt.datetime(9999, 12, 31, 23, 30, tzinfo=dt.timezone(dt.timedelta(hours=-1)))
+    assert progress.aware(early) == progress.EPOCH
+    assert progress.aware(late) == progress.EPOCH
