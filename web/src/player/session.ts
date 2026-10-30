@@ -9,8 +9,8 @@
 //   melding, begrensd;
 // - een netwerkfout, of 502/503/504 zonder code (de app herstart of wordt bijgewerkt): opnieuw na
 //   1, 2, 4 en 8 s en dan elke 10 s, zolang er buffer is plus 120 s. Ondertussen kijkt hij naar
-//   /api/v1/health: was die weg en is hij er weer, dan meteen opnieuw. Komt er dan 410, dan een
-//   nieuwe sessie op de positie van nu. Pas daarna "De server is niet bereikbaar".
+//   /health (HEALTH_URL): was die weg en is hij er weer, dan meteen opnieuw. Komt er dan 410, dan
+//   een nieuwe sessie op de positie van nu. Pas daarna "De server is niet bereikbaar".
 //
 // De sid staat nooit in localStorage, een log of een melding (Keuze 35).
 
@@ -135,8 +135,13 @@ export const RENEW_MAX = 3;
 export const RENEW_WINDOW_MS = 60_000;
 /** Hooguit zoveel keer wachten op Retry-After na elkaar (bezet, de probe loopt nog). */
 export const WAIT_MAX = 30;
-/** Zo vaak kijkt hij naar /api/v1/health tijdens het wachten. */
+/** Zo vaak kijkt hij naar HEALTH_URL tijdens het wachten. */
 export const HEALTH_EVERY_MS = 1000;
+/**
+ * De liveness van de app (main.py, GET /health). Het ontwerp noemt /api/v1/health, maar die route
+ * bestaat niet: die gaf altijd 404, en "weer goed" kwam nooit (review golf 3, K3).
+ */
+export const HEALTH_URL = "/health";
 
 export function retryDelay(attempt: number): number {
   return (RETRY_DELAYS_S[attempt] ?? RETRY_EVERY_S) * 1000;
@@ -163,7 +168,7 @@ export interface RecoverDeps {
   renew(): Promise<void>;
   /** Seconden buffer voor de positie */
   ahead(): number;
-  /** Is /api/v1/health goed? */
+  /** Is HEALTH_URL goed? */
   health(): Promise<boolean>;
   sleep(ms: number): Promise<void>;
   now(): number;
@@ -258,12 +263,12 @@ export class Recovery {
   }
 }
 
-/** GET /api/v1/health, hooguit 3 s. Zonder login: de gezondheid van de app zelf. */
+/** GET HEALTH_URL, hooguit 3 s. Zonder login: de gezondheid van de app zelf. */
 export async function health(fetchFn: typeof fetch = (...a) => fetch(...a)): Promise<boolean> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 3000);
   try {
-    const res = await fetchFn("/api/v1/health", { cache: "no-store", credentials: "omit", signal: ctrl.signal });
+    const res = await fetchFn(HEALTH_URL, { cache: "no-store", credentials: "omit", signal: ctrl.signal });
     void res.body?.cancel();
     return res.ok;
   } catch {

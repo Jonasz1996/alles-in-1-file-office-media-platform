@@ -1,7 +1,10 @@
-// De lader bij een vol quotum (review golf 3, C6), met een nep-MediaSource en -SourceBuffer in
-// node: na QuotaExceededError haalt stap 2 alles na t + 10 s weg. Daarna moet de lader verder bij
-// het eind van de buffer, niet na het segment dat hij net toevoegde: anders bleef er een gat van
-// t + 10 tot dat segment, en stond de video daar stil.
+// De lader zelf, met een nep-MediaSource en -SourceBuffer in node (review golf 3):
+// - C6: na QuotaExceededError haalt stap 2 alles na t + 10 s weg. Daarna moet de lader verder bij
+//   het eind van de buffer, niet na het segment dat hij net toevoegde: anders bleef er een gat van
+//   t + 10 tot dat segment, en stond de video daar stil;
+// - K3: retry (de herstel-lus na een 503, bijvoorbeeld de worker gedood) en een pump die timeupdate
+//   start, mogen nooit tegelijk aan de SourceBuffer: dat gaf "This SourceBuffer is still
+//   processing an 'appendBuffer'" (InvalidStateError) en de speler stopte met een fout.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GridSegments } from "../media/types";
@@ -17,8 +20,13 @@ class FakeSourceBuffer extends EventTarget {
   updating = false;
   spans: [number, number][] = [];
   quotaHits = 0;
+  appended: number[] = [];
 
-  constructor(private readonly quotaS: number) {
+  /** delayMs: zo lang duurt een bewerking (0: een microtask) */
+  constructor(
+    private readonly quotaS: number,
+    private readonly delayMs = 0,
+  ) {
     super();
   }
 
@@ -32,17 +40,23 @@ class FakeSourceBuffer extends EventTarget {
   }
 
   private later(change: () => void): void {
+    // Zoals een echte SourceBuffer: een tweede bewerking terwijl er een loopt, gooit
+    if (this.updating) throw new DOMException("still processing", "InvalidStateError");
     this.updating = true;
-    queueMicrotask(() => {
+    const done = () => {
       change();
       this.updating = false;
       this.dispatchEvent(new Event("updateend"));
-    });
+    };
+    if (this.delayMs > 0) setTimeout(done, this.delayMs);
+    else queueMicrotask(done);
   }
 
   appendBuffer(data: ArrayBuffer): void {
     if (data.byteLength !== 16) return this.later(() => undefined); // een init
+    if (this.updating) throw new DOMException("still processing", "InvalidStateError");
     const [a, b] = new Float64Array(data);
+    this.appended.push(a);
     if (this.total() + (b - a) > this.quotaS) {
       this.quotaHits++;
       throw new DOMException("vol", "QuotaExceededError");
@@ -109,6 +123,12 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 15; i++) await new Promise((ok) => setTimeout(ok, 0));
 }
 
+/** Wachten tot cond (hooguit 3 s). */
+async function until(cond: () => boolean): Promise<void> {
+  const end = Date.now() + 3000;
+  while (!cond() && Date.now() < end) await new Promise((ok) => setTimeout(ok, 5));
+}
+
 const fetchFn = (async (url: string) => {
   const found = /\/(\d+)\.m4s/.exec(url);
   if (!found) return new Response(new Uint8Array([1]));
@@ -150,6 +170,68 @@ describe("de lader na QuotaExceededError (C6)", () => {
       expect(aheadOf(list, t), `t = ${t}: ${JSON.stringify(list)}`).toBeGreaterThan(1);
     }
     expect(errors).toEqual([]);
+    loader.destroy();
+  });
+});
+
+describe("retry na een fout en timeupdate tegelijk (K3)", () => {
+  beforeEach(() => {
+    vi.stubGlobal("MediaSource", FakeMediaSource);
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:nep");
+    vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("retry houdt de lader vast: geen tweede append ernaast, en daarna laadt hij verder", async () => {
+    sb = new FakeSourceBuffer(1000, 5);
+    const video = new FakeVideo();
+    const errors: unknown[] = [];
+    // Segment 3: eerst 503 (de worker is weg), daarna pas als de nieuwe worker er is (release)
+    let release: () => void = () => {};
+    const back = new Promise<void>((ok) => (release = ok));
+    let failedOnce = false;
+    const gated = (async (url: string) => {
+      if (/\/3\.m4s/.test(url)) {
+        if (!failedOnce) {
+          failedOnce = true;
+          return new Response(JSON.stringify({ detail: { message: "weg", code: "media_worker_down" } }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        await back;
+      }
+      return fetchFn(url);
+    }) as unknown as typeof fetch;
+    const loader = new MseLoader(
+      video as unknown as HTMLVideoElement,
+      { sid: "s", duration: 100, map: { gen: 1, mime: "video/mp4", offset: 0, init: "init.mp4", segments: GRID } },
+      { error: (e) => errors.push(e) },
+      gated,
+    );
+    await loader.open(0);
+    await until(() => errors.length > 0);
+    expect(errors).toHaveLength(1); // de 503 van segment 3
+    const retried = loader.retry();
+    // Terwijl retry op segment 3 wacht: de video loopt (timeupdate start anders een tweede pump)
+    for (let i = 0; i < 5; i++) {
+      video.currentTime = 0.5 + i * 0.1;
+      video.dispatchEvent(new Event("timeupdate"));
+      await settle();
+    }
+    release();
+    await retried;
+    for (let t = 1; t <= 6; t++) {
+      video.currentTime = t;
+      video.dispatchEvent(new Event("timeupdate"));
+      await until(() => aheadOf(sb.spans, t) > 4 || errors.length > 1);
+    }
+    expect(errors.slice(1).map(String)).toEqual([]); // eerst: InvalidStateError (still processing)
+    expect(sb.appended.filter((a) => a === 6)).toHaveLength(1); // segment 3 (6-8 s) één keer
+    expect(aheadOf(sb.spans, 6)).toBeGreaterThan(4);
     loader.destroy();
   });
 });

@@ -481,25 +481,55 @@ export class MseLoader {
     }
   }
 
+  /**
+   * Werk aan de SourceBuffer buiten pump om (retry, switchTo): op de plek van pump
+   * (this.pumping), zodat timeupdate intussen geen tweede pump start. Die voegde anders hetzelfde
+   * segment toe terwijl de SourceBuffer nog bezig was (InvalidStateError, en de speler stopte;
+   * review golf 3, K3: de worker gedood tijdens een transcode).
+   */
+  private async exclusive<T>(work: () => Promise<T>): Promise<T> {
+    while (this.pumping) await this.pumping;
+    const run = work();
+    const held: Promise<void> = run
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        if (this.pumping === held) this.pumping = null;
+        if (this.again) {
+          this.again = false;
+          this.kick();
+        }
+      });
+    this.pumping = held;
+    try {
+      return await run;
+    } finally {
+      await held;
+    }
+  }
+
   /** Na een fout: het segment opnieuw (de herstel-lus van session.ts). Gooit als het weer mislukt. */
   async retry(): Promise<void> {
     if (this.destroyed || !this.sb) throw ABORTED();
-    await this.pumping;
-    this.failed = false;
-    const token = ++this.token;
-    try {
-      const want = nextSegment(this.buffered(), this.video.currentTime, this.src.map.segments);
-      this.next = want;
-      if (want < segmentCount(this.src.map.segments)) {
-        await this.load(want, token);
-        this.next = this.after(want);
+    await this.exclusive(async () => {
+      this.failed = false;
+      const token = ++this.token;
+      try {
+        const want = nextSegment(this.buffered(), this.video.currentTime, this.src.map.segments);
+        this.next = want;
+        if (want < segmentCount(this.src.map.segments)) {
+          await this.load(want, token);
+          this.next = this.after(want);
+        }
+      } catch (e) {
+        if (!isAbort(e)) this.failed = true;
+        throw e;
+      } finally {
+        this.inflight = -1;
       }
-    } catch (e) {
-      if (!isAbort(e)) this.failed = true;
-      throw e;
-    } finally {
-      this.inflight = -1;
-    }
+    });
     this.kick();
   }
 
@@ -526,31 +556,35 @@ export class MseLoader {
         // al klaar
       }
     }
-    await this.pumping;
-    const token = this.token;
-    const mimeChanged = src.map.mime !== this.src.map.mime;
-    this.src = src;
-    this.inits = new Inits();
-    this.failed = false;
-    this.aheadLimit = AHEAD_S;
-    this.refill = false;
-    if (mimeChanged) {
-      const sb = this.sb as SourceBuffer & { changeType?: (type: string) => void };
-      if (!sb.changeType) throw new StreamError(415, "Ander formaat", "media_unsupported");
-      sb.changeType(src.map.mime);
-      sb.timestampOffset = src.map.offset;
-    }
-    const t = this.video.currentTime;
-    if (flush || mimeChanged) {
-      await this.removeAll(this.buffered(), token);
-      this.next = segmentAt(src.map.segments, t);
-      // Een sprong naar dezelfde plek: anders toont een gepauzeerde video het nieuwe beeld (een
-      // andere trede, een ander spoor) pas als hij weer speelt
-      if (token === this.token && !this.destroyed) this.video.currentTime = t;
-    } else {
-      this.next = nextSegment(this.buffered(), t, src.map.segments);
-    }
-    this.seekedAt = performance.now();
+    // Op de plek van pump (exclusive): het weghalen bij flush mag niet naast een pump lopen
+    await this.exclusive(async () => {
+      const sbNow = this.sb;
+      if (!sbNow || this.destroyed) throw ABORTED();
+      const token = this.token;
+      const mimeChanged = src.map.mime !== this.src.map.mime;
+      this.src = src;
+      this.inits = new Inits();
+      this.failed = false;
+      this.aheadLimit = AHEAD_S;
+      this.refill = false;
+      if (mimeChanged) {
+        const sb = sbNow as SourceBuffer & { changeType?: (type: string) => void };
+        if (!sb.changeType) throw new StreamError(415, "Ander formaat", "media_unsupported");
+        sb.changeType(src.map.mime);
+        sb.timestampOffset = src.map.offset;
+      }
+      const t = this.video.currentTime;
+      if (flush || mimeChanged) {
+        await this.removeAll(this.buffered(), token);
+        this.next = segmentAt(src.map.segments, t);
+        // Een sprong naar dezelfde plek: anders toont een gepauzeerde video het nieuwe beeld (een
+        // andere trede, een ander spoor) pas als hij weer speelt
+        if (token === this.token && !this.destroyed) this.video.currentTime = t;
+      } else {
+        this.next = nextSegment(this.buffered(), t, src.map.segments);
+      }
+      this.seekedAt = performance.now();
+    });
     this.kick();
   }
 

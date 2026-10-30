@@ -3,6 +3,8 @@ import { ApiError } from "../api";
 import type { ClientProfile, PlayIn } from "../media/types";
 import {
   classify,
+  HEALTH_URL,
+  health,
   type Notice,
   playBody,
   type RecoverDeps,
@@ -208,7 +210,7 @@ describe("netwerkfouten en 503 zonder code (een herstart of update)", () => {
     });
   }
 
-  it("is /api/v1/health er weer (na weg te zijn geweest), dan meteen opnieuw", async () => {
+  it("is /health er weer (na weg te zijn geweest), dan meteen opnieuw", async () => {
     const f = fake();
     f.deps.health = async () => f.at() >= 17_000;
     const times: number[] = [];
@@ -284,5 +286,28 @@ describe("playBody", () => {
 
   it("de wachttijden", () => {
     expect([0, 1, 2, 3, 4, 5, 9].map(retryDelay)).toEqual([1000, 2000, 4000, 8000, 10_000, 10_000, 10_000]);
+  });
+});
+
+describe("health", () => {
+  it("vraagt /health van de app (main.py), zonder login; /api/v1/health bestaat niet (K3)", async () => {
+    const asked: Array<[string, RequestInit | undefined]> = [];
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      asked.push([url, init]);
+      return new Response(JSON.stringify({ status: "ok" }), { status: url === "/health" ? 200 : 404 });
+    }) as unknown as typeof fetch;
+    expect(HEALTH_URL).toBe("/health");
+    expect(await health(fetchFn)).toBe(true);
+    expect(asked.map(([u]) => u)).toEqual(["/health"]);
+    expect(asked[0][1]?.credentials).toBe("omit");
+  });
+
+  it("een fout of geen antwoord is niet gezond", async () => {
+    expect(await health((async () => new Response("", { status: 503 })) as unknown as typeof fetch)).toBe(false);
+    expect(
+      await health((async () => {
+        throw new TypeError("netwerk");
+      }) as unknown as typeof fetch),
+    ).toBe(false);
   });
 });

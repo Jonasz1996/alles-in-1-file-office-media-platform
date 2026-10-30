@@ -27,6 +27,8 @@ stand-in voor de routes van M2 in de browser; m6.md, afwijking 1.)
 7. PiP: requestPictureInPicture wordt aangeroepen;
 8. alleen met het toetsenbord (docs/fase-5/toetsenbord-m6.md);
 9. de app herstart midden in het afspelen, en met outage_s=30: de speler loopt ≤ 10 s na "ready";
+   en §4.3 #12: de lokale worker gedood (op pid) tijdens een transcode: de speler loopt binnen
+   10 s na het eind van zijn buffer door, en er blijft geen ffmpeg over (review golf 3, K3);
 10. geen fouten in de console en geen CSP-meldingen: de bewaking van conftest, in elke test;
 11. sprites bij hover (review golf 2, K3) en de hoofdstukken in de tijdbalk;
 plus de viewer van fase 3: de speler in het venster, en de fallback als play aan het begin niet
@@ -38,6 +40,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -55,9 +58,11 @@ from media_harness import (
     comm,
     descendants,
     first_frame_ms,
+    kill_pid,
     open_app,
     process_table,
     require_codec,
+    wait_gone,
 )
 from test_media_m3 import login
 from test_media_m5 import library_item, wait_state
@@ -868,6 +873,58 @@ def test_de_app_herstart_midden_in_het_afspelen(media, media_browsers, ffmpeg_co
 @pytest.mark.media
 def test_de_app_dertig_seconden_weg(media, media_browsers, ffmpeg_count, tmp_path):
     restart_case(media, media_browsers, ffmpeg_count, tmp_path, 30)
+
+
+# --- §4.3 #12: de worker gedood tijdens een transcode -------------------------------------------
+
+BUFFER_JS = """() => {
+  const v = document.querySelector(".player-video"), b = v.buffered;
+  const t = v.currentTime;
+  for (let i = 0; i < b.length; i++) {
+    if (t >= b.start(i) - 0.1 && t < b.end(i)) return [t, b.end(i)];
+  }
+  return [t, t];
+}"""
+
+
+@pytest.mark.media
+def test_de_worker_gedood_tijdens_een_transcode(media, media_browsers, ffmpeg_count, tmp_path):
+    """§4.3 #12 (review golf 3, K3): de lokale worker gedood (SIGKILL op pid, met de starttijd)
+    terwijl de speler een transcode speelt. De ffmpeg van de producent gaat mee, de worker
+    herstart, en de speler loopt binnen 10 s na het eind van wat hij al had weer door (de
+    herstel-lus van session.ts), zonder een fout te tonen."""
+    owner, folder, context, page = setup(media, media_browsers, "M6 worker weg")
+    plays = Plays(context)
+    path = loop_mkv(tmp_path, 5, "hevc10_hdr10.mkv")  # 60 s: de producent loopt niet ver voor
+    node = upload_path(media, owner, folder, path)
+    path.unlink()
+    watch(page, node)
+    ready_state(page, "transcode")
+    playing_past(page, 2.0)
+    old = media.worker_pid()
+    assert old is not None
+    table = process_table()
+    running = [(p, table[p][1]) for p in descendants([old], table) if comm(p) == "ffmpeg"]
+    assert running, "geen ffmpeg in de worker: de producent liep al niet meer"
+    at, end = page.evaluate(BUFFER_JS)
+    killed = time.monotonic()
+    assert kill_pid(old, table[old][1], signal.SIGKILL)
+    assert wait_gone([(old, table[old][1])]) == []
+    assert wait_gone(running) == [], running  # geen ffmpeg over van de oude worker
+    # Voorbij de buffer van toen: dat kan alleen met segmenten van de nieuwe worker
+    limit_s = (end - at) + RESTART_LIMIT_S
+    playing_past(page, end + 1.0, timeout_ms=(limit_s + 5) * 1000)
+    took = time.monotonic() - killed
+    print(f"worker weg: {end - at:.1f} s in de buffer, weer voorbij na {took:.1f} s")
+    assert took <= limit_s, (took, at, end)
+    new = media.worker_pid()
+    assert new not in (None, old)
+    # De segmenten na de buffer komen van een producent onder de nieuwe worker (60 s: die loopt nog)
+    table = process_table()
+    assert any(comm(p) == "ffmpeg" for p in descendants([new], table)), "geen nieuwe producent"
+    assert state(page)["state"] == "ready"
+    assert all(c["status"] == 200 for c in plays.calls), plays.calls
+    leave(page, ffmpeg_count)
 
 
 # --- 11. sprites bij hover en de hoofdstukken ---------------------------------------------------
