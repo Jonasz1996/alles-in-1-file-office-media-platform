@@ -1718,8 +1718,16 @@ onderaan.
       minder dan 3 minuten van het eind (alleen bij items langer dan 10 minuten). Dan
       `watched = true`, `play_count + 1` (één keer per sessie) en positie 0.
     - Een vervangen bestand (`blob_sha` anders én de duur meer dan 5 % anders): positie terug naar 0.
+      *Noot bij de bouw van M7 (review golf 4, K2):* eerst gold dit alleen in Verder kijken (bij
+      het lezen). Nu zet een nieuwe versie (`hooks.touched` met `node.version`, ook het
+      terugzetten van een oude versie) de stand terug: meteen als de probe er al is, anders een
+      job `media.voortgang` die wacht op de probe (hooguit 30 minuten). Zo tonen ook de pagina's
+      en kaarten van M2 de oude positie niet meer ([m7.md](m7.md), afwijking 5).
     - **Verder kijken:** positie > 60 s, niet gezien, de nieuwste eerst, hooguit 20. De speler vraagt
       "Verder kijken vanaf 12:05?" (standaard ja na 5 s).
+      *Noot bij de bouw van M7:* die vraag in de speler is niet gebouwd (M6, `ui/Player.tsx`).
+      Verder kijken gaat via de kaart en via "Verder op" op de pagina van het item; beide openen
+      `/kijken/{id}?t=…` ([m7.md](m7.md), afwijking 3).
     - **Volgende aflevering:** na de laatst geziene aflevering van een serie de eerstvolgende
       ongeziene. Alleen voor series met activiteit in de laatste 90 dagen.
     - **Gezien markeren:** `POST /api/v1/media/progress/batch` met `{node_ids[≤1.000], watched}`, of
@@ -1733,14 +1741,24 @@ onderaan.
     - **Albums** (`media_album`): bij elkaar op (bibliotheek, albumartiest of "Diverse artiesten"
       bij een compilatie, albumtitel genormaliseerd). Zonder albumartiest: nummers in dezelfde map
       met dezelfde albumtag. Schijven (`disc`, mappen `CD1` en `CD2`) horen samen.
+      *Noot bij de bouw van M9 (review golf 4, C3):* heeft een nummer een schijf (tag of map),
+      dan valt een schijf achter de albumtitel weg: "Album (Disc 1)" en "Album (Disc 2)" zijn
+      één album "Album".
     - **Compilatie:** de tag `TCMP`/`cpil`, een albumartiest als "Various Artists" of "Diverse
       artiesten", of veel artiesten zonder albumartiest in één map.
+      *Noot bij de bouw van M9 (review golf 4, C4):* geteld op de hoofdartiest: "A feat. B",
+      "A & C" en "A, D" tellen als A. Zo maken gasten geen compilatie; het album heet naar A.
     - **Artiesten:** geen tabel. Een lijst van `album_artist` (anders `artist`) met het aantal
       albums. Het beeld van een artiest is de hoes van een album.
     - **Sorteren** op de sorteertags (`TSOP`, `ALBUMARTISTSORT`), anders zonder lidwoord vooraan
       ("The", "De", "Het").
     - **Hoes:** eerst `cover.jpg` of `folder.jpg` in de map, dan de ingebedde (`frame` op het spoor
       `attached_pic`), dan de Cover Art Archive (Keuze 41).
+      *Noot bij de bouw van M9:* de hoes komt van de node: `cover`, `folder`, `front` of `album`
+      (.jpg, .jpeg, .png, .webp) in de map van het album of van een schijf, anders de preview
+      van het eerste nummer (de renderer maakt die uit de ingebedde hoes). Geen eigen `frame`
+      op `attached_pic`. Een adres van een provider (M8) blijft staan ([m9.md](m9.md),
+      afwijking 11).
     - **Afspeellijsten** (`media_playlist`, `media_playlist_item`): alleen van jezelf, hooguit 5.000
       nummers. Een nummer dat je niet meer mag lezen, wordt bij het lezen overgeslagen, niet
       weggegooid: misschien komt de deling terug. Delen bouwen we niet.
@@ -1759,6 +1777,10 @@ onderaan.
         1 s per nummer. (spike) Behalve Opus naar FLAC: 1,8 s CPU voor een nummer van 4 minuten,
         en 23,5 MB tegen 2,65 MB in de cache (8,9 ×; S8). Met 20 s vooruit laden is de tijd geen
         probleem;
+        *Noot bij de bouw van M9 (review golf 4, S1 en C1):* de cache houdt hooguit een kwart
+        van `cache_gb`; een nummer hooguit de helft daarvan (de bovengrens uit de probe: FLAC
+        3 bytes per sample, copy 1,25 × de bron); de schijf houdt `DISK_MIN` vrij; een remux die
+        zijn budget haalt, stopt. Eén remux per bestand, ook bij vragen tegelijk;
       - ALAC en WAV worden FLAC in fMP4 (verliesvrij);
       - (spike) **Opus ook.** Opus in fMP4 is in Chromium 141 niet gapless: +631 en +619 samples
         per overgang, de opvulling van het laatste frame, ondanks `appendWindowEnd`. Via FLAC is
@@ -1766,6 +1788,9 @@ onderaan.
         groot wordt (een nieuw contract);
       - MP3 gaat rauw als `audio/mpeg`, want MSE kent MP3 in MP4 niet [gemeten].
     - Het antwoord geeft `gapless: {rate, delay, samples}`, uit `audio_info` (Keuze 18).
+      *Noot bij de bouw van M9:* delay is 0 voor alles wat `audio.mp4` naar FLAC omzet (alles
+      behalve FLAC, AAC en MP3): de decoder knipt de voorloop dan zelf (S8; [m9.md](m9.md),
+      afwijking 5).
     - `-use_editlist 0`: de browser krijgt alle samples, ook de voorloop. Wij knippen zelf, en
       precies. Zo maakt het niet uit of een browser een edit list wel of niet toepast.
     - **De speler `music/gapless.ts`** gebruikt één MediaSource en één SourceBuffer voor de hele
@@ -2219,6 +2244,13 @@ en 17).
 | M8 | `items.apply_metadata(node_id, fields, source)` | M2 (M0-stub) |
 | M10 | `state`, `admission.snapshot()`, `sessions.list()`, `cache.sizes()`, `providers.status()`, `importer.start()` | M2, M3, M4, M8 (M0-stubs) |
 | M10 | `app.cli media-status` | M0 (het commando); M10 (`status.py`) |
+
+*Noot bij de bouw van M9 (review golf 4, K1):* `sessions.create_audio` roept niemand aan. M9
+speelt een nummer via `POST …/play` met `Plan(mode="audio")`: `sessions.create` met
+`admission.reserve` in `media_play.py` (M3), zoals elk ander bestand. Zo gelden dezelfde
+grenzen, dezelfde na-controle van de toegang en dezelfde grafstenen. `create_audio` (M3) staat er
+nog, ongebruikt; wie hem verandert, verandert niets aan muziek. Weghalen kan alleen met een
+M0-hotfix, en is niet nodig ([m9.md](m9.md), afwijking 22).
 
 ---
 
@@ -2898,6 +2930,14 @@ ondertitels, PiP en toetsenbord. Binnen het budget, zonder bibliotheek (B19).
 - e2e `test_media_m7.py`: twee contexts van dezelfde gebruiker. A speelt tot 30 s en pauzeert. Bij
   B staat binnen 2 s "Verder kijken 0:30". B opent het item en begint op 0:30.
 
+*Noot bij de bouw van M7:* "Verder kijken 0:30" kan niet: Keuze 36 zet iets pas in Verder kijken
+voorbij 60 s. De e2e toetst 0:30 op de pagina van het item ("Verder op 0:30") en de rij Verder
+kijken met 1:30 ([m7.md](m7.md), afwijking 1). De vraag "Verder kijken vanaf 12:05?" in de speler
+is er niet (afwijking 3). Een vervangen bestand zet de stand terug voor alle lijsten, ook de
+pagina's van M2, via een job na een nieuwe versie (review golf 4, K2; Keuze 36 hieronder). De
+API weigert getallen die de database niet kan bewaren met 422 `invalid_input` (review golf 4, S2
+en S4; m7.md, "De review (golf 4)").
+
 **Klaar als.** Synchroniseren ≤ 2 s (p95 van 20 keer, in e2e). Verder kijken en Volgende aflevering
 kloppen in de e2e.
 
@@ -3004,6 +3044,21 @@ alleen in de header naar TMDB.
 
 **Klaar als.** Gapless bewezen voor FLAC en Opus in Chromium 141. Albums, artiesten en
 afspeellijsten werken met het toetsenbord.
+
+*Noot bij de bouw van M9:* zie [m9.md](m9.md) voor alle afwijkingen. De belangrijkste:
+- `remux_audio` heeft ook `-map_chapters -1` (afwijking 2; §3.3 hieronder);
+- delay is 0 voor alles wat `audio.mp4` naar FLAC omzet, dus alles behalve FLAC, AAC en MP3
+  (afwijking 5; Keuze 38);
+- de hoes zoekt M9 zelf in regroup: `cover.jpg` (en folder, front, album) in de map, anders de
+  preview van het eerste nummer (afwijking 11; Keuze 37);
+- `sessions.create_audio` wordt niet gebruikt: play met `Plan(mode="audio")` (afwijking 22;
+  §2.0).
+
+Na de review van golf 4: de audiocache krijgt per remux een budget uit de probe en de schijf
+moet `DISK_MIN` vrij houden (S1, 415 `too_large` of 503 `media_busy`); één remux per bestand
+(C1); de lijsten van albums en artiesten tellen alleen wat nu in de bibliotheek ligt (S3); een
+schijf achter de albumtitel splitst een album niet (C3); gasten ("feat.") maken geen compilatie
+(C4); de CRC van Ogg is begrensd (S5). Zie m9.md, "De review (golf 4)".
 
 ---
 
@@ -3446,6 +3501,8 @@ async def create(user, source: SessionSource, probe, plan, grant, *, family: UUI
     # en "De review (golf 1)"). Gooit create, dan geeft de aanroeper de grant terug, nooit ook
     # de sessie: elke grant komt één keer bij admission.release (m3.md, "De na-controle")
 async def create_audio(user, node, probe, *, family: UUID | None) -> Session   # voor M9
+    # Noot bij de bouw van M9 (review golf 4, K1): niet gebruikt. Muziek gaat via play met
+    # Plan(mode="audio") en sessions.create (§2.0, m9.md afwijking 22)
 async def guard(request: Request, sid: str) -> Session
     # 410 media_session_gone: onbekend of verlopen; {reason: replaced} als de node niet meer naar de gepinde sha wijst
     # 403 media_access_gone {reason}: de toegang is weg, of de app sloot de sessie zelf (grafsteen)
@@ -3645,6 +3702,10 @@ ffmpeg {invoer} -map 0:a:0 -vn -sn -dn -map_metadata -1 -c:a {copy | flac}
 ```
 (spike) `copy` voor FLAC en AAC; `flac` voor Opus (S8: Opus in fMP4 is niet gapless), ALAC en
 WAV. MP3 gaat rauw als `audio/mpeg`.
+*Noot bij de bouw van M9:* de argv heeft ook `-map_chapters -1`, na `-map_metadata -1`.
+Hoofdstukken (de CUESHEET van een FLAC) geven anders een tekstspoor in de init, en een
+SourceBuffer met alleen geluid weigert dat ([m9.md](m9.md), afwijking 2). `-map 0:a:N` kiest het
+hoeveelste audiospoor dat play koos (afwijking 4).
 
 De meting (Keuze 26), zonder invoer:
 ```
