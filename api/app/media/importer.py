@@ -5,10 +5,15 @@ BlobStore in (ontdubbeld, met quotum, versies en prullenbak), en daarna doet de 
 
 - **Kopiëren** (standaard): de bytes gaan via een tijdelijk bestand de BlobStore in; de bron blijft
   staan.
-- **Verplaatsen:** de sha wordt op de plek geteld; daarna gaat het bestand met `renameat` naar de
-  werkmap van de BlobStore (`blobs/.tmp`) en van daar met `adopt` op zijn plek. Dat kost geen
-  extra ruimte. Geeft `rename` `EXDEV` (een ander bestandssysteem), dan wordt dat ene bestand
-  gekopieerd en daarna de bron weggehaald.
+- **Verplaatsen:** de sha wordt op de plek geteld; daarna krijgt het bestand met `linkat` een
+  tweede naam in de werkmap van de BlobStore (`blobs/.tmp`), die `adopt` op zijn plek zet. Pas
+  als place_file klaar is (de commit), gaat de naam in de bron weg. Dat kost geen extra ruimte,
+  en wie de app midden in een bestand stopt (OOM, een herstart), verliest niets: de bron staat er
+  dan nog (review golf 3, C7; een `rename` naar de werkmap liet het bestand daar achter). Een
+  link die zo achterbleef, ruimt de volgende import op. De blob krijgt modus 0600 en geen ACL
+  (S2: de worker mag een blob nooit kunnen schrijven). Een bestand van een andere gebruiker, of
+  `EXDEV` (een ander bestandssysteem): dat ene bestand wordt gekopieerd en daarna de bron
+  weggehaald.
 - **Veilig:** er wordt nooit een symlink gevolgd. De bronmap gaat open met `O_DIRECTORY |
   O_NOFOLLOW`, elke stap eronder met `openat(dirfd, naam, O_NOFOLLOW)`; een pad als tekst wordt
   daarna nooit meer geopend. `realpath` van de bronmap ligt onder die van de importmap, op
@@ -16,11 +21,13 @@ BlobStore in (ontdubbeld, met quotum, versies en prullenbak), en daarna doet de 
 - **Wat nog geschreven wordt, komt er niet in** (per bestand, op de fd van de import zelf):
   `fstat` vóór het tellen (een gewoon bestand, minstens MIN_AGE_S oud, bij verplaatsen
   `st_nlink == 1`), de sha uit die fd, opnieuw `fstat` (grootte, `mtime_ns` en `ctime_ns`
-  gelijk), en bij verplaatsen na de `rename` hetzelfde `st_ino`. Klopt iets niet, dan komt het
-  in "overgeslagen" met de reden "in gebruik"; een volgende import pakt het op.
+  gelijk), en bij verplaatsen na de `linkat` hetzelfde `st_ino` met precies twee namen. Klopt
+  iets niet, dan komt het in "overgeslagen" met de reden "in gebruik"; een volgende import pakt
+  het op.
 - **Hervatbaar en idempotent:** een map die er al is, wordt hergebruikt; dezelfde naam met dezelfde
-  sha wordt overgeslagen (ook bij verplaatsen: de bron blijft dan staan); een andere sha wordt een
-  nieuwe versie, zoals bij uploaden.
+  sha wordt overgeslagen (ook bij verplaatsen: de bron blijft dan staan, behalve als hij al de
+  blob zelf is: dan was alleen het weghalen nog niet gebeurd); een andere sha wordt een nieuwe
+  versie, zoals bij uploaden.
 - **Quotum:** dat van de eigenaar, zoals een upload (place_file). Vol: de import stopt (staat
   stopped, reden no_room); wat binnen is, blijft.
 - Hooguit één import tegelijk (409 media_import_busy). De voortgang staat in de payload van de
@@ -74,6 +81,9 @@ CHUNK = 1024 * 1024
 MAX_LISTED = 1000  # zoveel overgeslagen bestanden staan met naam in de payload
 MAX_DEPTH = 64
 SAVE_EVERY_S = 1.0
+
+LINK_PREFIX = "import-link-"  # een tweede naam van een bron in blobs/.tmp (verplaatsen)
+BLOB_MODE = 0o600  # zoals mkstemp: alleen de app (S2)
 
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 # O_NONBLOCK: een fifo die tussen lstat en open op de plek van een bestand komt, blokkeert niet
@@ -442,21 +452,48 @@ def _open_file(name: str, dir_fd: int) -> int:
     return os.open(name, FILE_FLAGS, dir_fd=dir_fd)
 
 
-def _rename(name: str, staged: str, dir_fd: int, tmp_fd: int) -> None:
-    os.rename(name, staged, src_dir_fd=dir_fd, dst_dir_fd=tmp_fd)
+def _link(name: str, staged: str, dir_fd: int, tmp_fd: int) -> None:
+    """Een tweede naam voor de bron in de werkmap (linkat, geen symlink volgen)."""
+    os.link(name, staged, src_dir_fd=dir_fd, dst_dir_fd=tmp_fd, follow_symlinks=False)
 
 
-def _put_back(staged: str, tmp_fd: int, name: str, dir_fd: int) -> None:
-    """Zet een bestand uit de werkmap terug op zijn plek, zonder iets te overschrijven (linkat,
-    dan het tijdelijke weg)."""
-    for candidate in (name, f"{name}.import-terug"):
-        try:
-            os.link(staged, candidate, src_dir_fd=tmp_fd, dst_dir_fd=dir_fd)
-        except FileExistsError:
-            continue
-        os.unlink(staged, dir_fd=tmp_fd)
-        return
-    log.error("import: %s kon niet terug; het staat nog in blobs/.tmp als %s", name, staged)
+def _mine(st: os.stat_result) -> bool:
+    """Is dit bestand van de app zelf? Alleen dan mag het (met een link) de blob worden: een
+    bestand van een ander houdt zijn eigenaar, en wie dat is, kan de blob dan schrijven."""
+    return st.st_uid == os.geteuid()
+
+
+def _seal(fd: int) -> None:
+    """Modus 0600 en geen ACL: zoals een blob uit mkstemp (review golf 3, S2). Een bron met
+    0666 (een NAS, een share, umask 000) werd anders een blob die de worker (een andere uid)
+    via /proc/self/fd met O_WRONLY kon openen en overschrijven."""
+    os.fchmod(fd, BLOB_MODE)
+    with contextlib.suppress(OSError):  # geen ACL, of het bestandssysteem kent ze niet
+        os.removexattr(fd, "system.posix_acl_access")
+
+
+def _remove_source(name: str, dir_fd: int, before: os.stat_result, *, ctime: bool) -> None:
+    """De bron weg, als het nog hetzelfde bestand is. OSError als dat niet lukt."""
+    if not _unchanged(before, os.stat(name, dir_fd=dir_fd, follow_symlinks=False), ctime=ctime):
+        raise OSError(errno.ESTALE, "een ander bestand")
+    os.unlink(name, dir_fd=dir_fd)
+
+
+def _sweep_links(tmp_fd: int) -> int:
+    """De links die een gestopte import achterliet (LINK_PREFIX): weg. Er is hooguit één import
+    tegelijk, en een link is nooit de enige naam (de bron of de blob heeft er ook een); met maar
+    één naam blijft hij staan (dan is hij het bestand zelf). Geeft het aantal."""
+    removed = 0
+    with os.scandir(tmp_fd) as found:
+        names = [e.name for e in found if e.name.startswith(LINK_PREFIX)]
+    for name in names:
+        with contextlib.suppress(OSError):
+            if os.stat(name, dir_fd=tmp_fd, follow_symlinks=False).st_nlink > 1:
+                os.unlink(name, dir_fd=tmp_fd)
+                removed += 1
+            else:
+                log.error("import: %s in blobs/.tmp heeft geen andere naam; blijft staan", name)
+    return removed
 
 
 # --- de job --------------------------------------------------------------------------------------
@@ -472,10 +509,10 @@ class Stop(Exception):
 
 @dataclass
 class Staged:
-    """Het bestand, klaar voor place_file: in de werkmap (verplaatst), of een kopie."""
+    """Het bestand, klaar voor place_file: een link in de werkmap (verplaatsen), of een kopie."""
 
     path: Path
-    moved: bool  # met rename uit de bron (anders een kopie)
+    linked: bool  # een tweede naam van de bron (anders een kopie)
 
 
 @dataclass
@@ -584,29 +621,48 @@ class Run:
     async def stage(
         self, fd: int, dir_fd: int, name: str, before: os.stat_result, sha: str, path: str
     ) -> Staged | None:
-        """Verplaatsen: het bestand met renameat naar blobs/.tmp, en nakijken dat het nog
-        hetzelfde is. EXDEV: een kopie (de bron gaat weg na place_file). None: overgeslagen."""
+        """Verplaatsen: een link naar de bron in blobs/.tmp, nakijken dat het nog hetzelfde
+        bestand is (met precies twee namen), en dan modus 0600. De bron blijft tot na
+        place_file. Een bestand van een ander, of EXDEV: een kopie (de bron gaat ook dan weg
+        na place_file). None: overgeslagen."""
         p = self.progress
-        staged = f"import-{uuid.uuid4().hex}"
+        if not _mine(before):
+            return await self.copy_for_move(fd, before, sha, path)
+        staged = f"{LINK_PREFIX}{uuid.uuid4().hex}"
         try:
-            _rename(name, staged, dir_fd, self.tmp_fd)
+            _link(name, staged, dir_fd, self.tmp_fd)
         except OSError as exc:
             if exc.errno != errno.EXDEV:
                 p.skip(path, UNMOVABLE)
                 return None
-            tmp, again, _ = await anyio.to_thread.run_sync(_copy, fd, self.blobs.tmp)
-            if again != sha or not _unchanged(before, os.fstat(fd)):
-                tmp.unlink(missing_ok=True)
-                p.skip(path, IN_USE)
-                return None
-            return Staged(tmp, moved=False)
-        now = os.stat(staged, dir_fd=self.tmp_fd, follow_symlinks=False)
-        if not stat.S_ISREG(now.st_mode) or not _unchanged(before, now, ctime=False):
-            # Tussen het tellen en de rename kwam er iets anders: terug, en overslaan
-            _put_back(staged, self.tmp_fd, name, dir_fd)
-            p.skip(path, IN_USE)
+            return await self.copy_for_move(fd, before, sha, path)
+        try:
+            now = os.stat(staged, dir_fd=self.tmp_fd, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(now.st_mode)
+                or now.st_nlink != 2
+                or not _unchanged(before, now, ctime=False)
+            ):
+                # Tussen het tellen en de link kwam er iets anders, of een derde naam: overslaan
+                raise OSError(errno.ESTALE, "een ander bestand")
+            _seal(fd)
+        except OSError as exc:
+            os.unlink(staged, dir_fd=self.tmp_fd)
+            p.skip(path, IN_USE if exc.errno == errno.ESTALE else UNMOVABLE)
             return None
-        return Staged(self.blobs.tmp / staged, moved=True)
+        return Staged(self.blobs.tmp / staged, linked=True)
+
+    async def copy_for_move(
+        self, fd: int, before: os.stat_result, sha: str, path: str
+    ) -> Staged | None:
+        """Verplaatsen met een kopie (een ander bestandssysteem, of een bestand van een ander):
+        de kopie gaat de BlobStore in, de bron gaat weg na place_file."""
+        tmp, again, _ = await anyio.to_thread.run_sync(_copy, fd, self.blobs.tmp)
+        if again != sha or not _unchanged(before, os.fstat(fd)):
+            tmp.unlink(missing_ok=True)
+            self.progress.skip(path, IN_USE)
+            return None
+        return Staged(tmp, linked=False)
 
     async def file(self, dir_fd: int, name: str, parent_id: uuid.UUID, path: str) -> None:
         p = self.progress
@@ -623,16 +679,35 @@ class Run:
             if time.time() - before.st_mtime < MIN_AGE_S:
                 p.skip(path, IN_USE)
                 return
+            free, existing = await self.existing(parent_id, name)
             if self.move and before.st_nlink != 1:
+                if existing is not None and self.is_blob(before, existing):
+                    # Een vorige import stopte na place_file en vóór het weghalen: de bron is
+                    # de blob al (dezelfde inode). Alleen de naam in de bron moet nog weg.
+                    try:
+                        _remove_source(name, dir_fd, before, ctime=True)
+                    except OSError:
+                        p.skip(path, NOT_REMOVED)
+                        return
+                    p.same += 1
+                    p.done += 1
+                    return
                 p.skip(path, HARD_LINK)
                 return
-            free, existing = await self.existing(parent_id, name)
             if not free:
                 p.skip(path, NAME_TAKEN)
                 return
             await self._file(fd, dir_fd, name, parent_id, path, before, existing)
         finally:
             os.close(fd)
+
+    def is_blob(self, st: os.stat_result, sha: str) -> bool:
+        """Is dit bestand de blob van deze sha zelf (dezelfde inode)?"""
+        try:
+            blob = os.stat(self.blobs.path(sha), follow_symlinks=False)
+        except OSError:
+            return False
+        return (blob.st_dev, blob.st_ino) == (st.st_dev, st.st_ino)
 
     async def _file(self, fd: int, dir_fd: int, name: str, parent_id: uuid.UUID, path: str,
                     before: os.stat_result, existing: str | None) -> None:  # fmt: skip
@@ -654,7 +729,7 @@ class Run:
                 p.same += 1
                 p.done += 1
                 return
-            staged = Staged(copy, moved=False) if copy is not None else None
+            staged = Staged(copy, linked=False) if copy is not None else None
             if self.move:
                 staged = await self.stage(fd, dir_fd, name, before, sha, path)
                 if staged is None:
@@ -668,27 +743,22 @@ class Run:
 
     async def _place(self, staged: Staged, dir_fd: int, name: str, parent_id: uuid.UUID,
                      sha: str, size: int, before: os.stat_result, path: str) -> None:  # fmt: skip
-        """place_file; mislukt het, dan bij verplaatsen het bestand terug op zijn plek (anders
-        de kopie weg). Na een kopie bij verplaatsen (EXDEV) de bron weg, als het nog hetzelfde
-        bestand is."""
+        """place_file; mislukt het, dan de link of de kopie weg (de bron staat er nog). Bij
+        verplaatsen daarna de bron weg, als het nog hetzelfde bestand is: pas na de commit, zodat
+        een gestopte app nooit een bestand kwijt is (C7)."""
         p = self.progress
         try:
             await self.place(parent_id, name, sha, size, staged.path, before.st_mtime)
         except BaseException:
-            # Synchroon (geen await): ook bij een cancel komt het bestand terug
-            if staged.path.exists():
-                if staged.moved:
-                    _put_back(staged.path.name, self.tmp_fd, name, dir_fd)
-                else:
-                    staged.path.unlink(missing_ok=True)
+            # Synchroon (geen await): ook bij een cancel; de bron is er nog
+            staged.path.unlink(missing_ok=True)
             raise
         p.done += 1
         p.bytes += size
-        if self.move and not staged.moved:
+        if self.move:
             try:
-                if not _unchanged(before, os.stat(name, dir_fd=dir_fd, follow_symlinks=False)):
-                    raise OSError(errno.ESTALE, "een ander bestand")
-                os.unlink(name, dir_fd=dir_fd)
+                # Na een link veranderde ctime (de link en de modus); na een kopie niet
+                _remove_source(name, dir_fd, before, ctime=not staged.linked)
             except OSError:
                 p.skip(path, NOT_REMOVED)
 
@@ -770,6 +840,9 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
         await anyio.Path(blobs.tmp).mkdir(parents=True, exist_ok=True)
         tmp_fd = os.open(blobs.tmp, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
+            swept = await anyio.to_thread.run_sync(_sweep_links, tmp_fd)
+            if swept:
+                log.info("import %s: %d links van een gestopte import weg", job_id, swept)
             job = Run(
                 settings=settings,
                 job_id=job_id,

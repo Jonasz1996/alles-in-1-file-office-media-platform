@@ -1,7 +1,8 @@
 """De import uit /data/import (Keuze 2, M2): app/media/importer.py.
 
-Kopiëren; verplaatsen binnen één bestandssysteem (adopt, geen extra ruimte); EXDEV geeft kopiëren
-en daarna de bron weg; ontdubbelen; quotum vol halverwege; een symlink en een fifo overgeslagen;
+Kopiëren; verplaatsen binnen één bestandssysteem (een link en adopt, geen extra ruimte, de blob
+0600, en een gestopte app verliest niets); EXDEV of een bestand van een ander geeft kopiëren en
+daarna de bron weg; ontdubbelen; quotum vol halverwege; een symlink en een fifo overgeslagen;
 `../` buiten de importmap geweigerd; een bronmap die een symlink naar de datamap is, geeft
 media_import_path; een bestand dat tijdens het tellen groeit, of jonger is dan 60 s, komt in
 "overgeslagen" (in gebruik); een harde link wordt bij verplaatsen overgeslagen; een bestand dat de
@@ -15,6 +16,7 @@ import errno
 import os
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -138,13 +140,121 @@ async def test_exdev_kopieert_en_haalt_de_bron_weg(world, monkeypatch):
     def exdev(*args):
         raise OSError(errno.EXDEV, "Invalid cross-device link")
 
-    monkeypatch.setattr(importer, "_rename", exdev)
+    monkeypatch.setattr(importer, "_link", exdev)
     payload = await run_import(w, move=True)
     assert (payload["done"], payload["skipped"]) == (1, 0)
     assert not (w["src"] / "Bron/a.mkv").exists()
     node = (await tree(w["settings"], w["target"]))["a.mkv"]
     blob = w["settings"].blob_dir / node.blob_id[:2] / node.blob_id[2:4] / node.blob_id
     assert blob.read_bytes() == b"a" * 3000 and blob.stat().st_ino != original
+
+
+def blob_of(w, node: Node) -> Path:
+    return w["settings"].blob_dir / node.blob_id[:2] / node.blob_id[2:4] / node.blob_id
+
+
+async def test_verplaatsen_geeft_een_blob_van_0600(world):
+    """Review golf 3, S2: een bron met 0666 (een NAS, een share, umask 000) bleef bij verplaatsen
+    0666, en de worker (een andere uid) kon de blob via /proc/self/fd met O_WRONLY openen en
+    overschrijven. Nu is elke blob 0600, zoals een kopie uit mkstemp."""
+    w = world
+    put(w["src"], "Bron/open.mkv", b"o" * 500).chmod(0o666)
+    put(w["src"], "Bron/setgid.mkv", b"s" * 500).chmod(0o2775)
+    payload = await run_import(w, move=True)
+    assert (payload["done"], payload["skipped"]) == (2, 0)
+    found = await tree(w["settings"], w["target"])
+    for name in ("open.mkv", "setgid.mkv"):
+        st = blob_of(w, found[name]).stat()
+        assert (st.st_mode & 0o7777, st.st_nlink) == (0o600, 1), name
+    # Kopiëren gaf al 0600 (mkstemp)
+    put(w["src"], "Kopie/open.mkv", b"k" * 500).chmod(0o666)
+    await run_import(w, source="Kopie")
+    node = (await tree(w["settings"], w["target"]))["open.mkv"]
+    assert blob_of(w, node).stat().st_mode & 0o7777 == 0o600
+
+
+async def test_verplaatsen_van_een_bestand_van_een_ander_kopieert(world, monkeypatch):
+    """S2: een bestand van een andere uid houdt bij een link zijn eigenaar (en die kan de blob
+    dan schrijven). Dan een kopie (0600, van de app), en de bron gaat daarna weg."""
+    w = world
+    source = put(w["src"], "Bron/van-bas.mkv", b"b" * 800)
+    original = source.stat().st_ino
+    if os.geteuid() == 0:
+        os.chown(source, 12345, 12345)
+    else:
+        monkeypatch.setattr(importer, "_mine", lambda st: False)
+    payload = await run_import(w, move=True)
+    assert (payload["done"], payload["skipped"]) == (1, 0)
+    assert not source.exists()
+    st = blob_of(w, (await tree(w["settings"], w["target"]))["van-bas.mkv"]).stat()
+    assert st.st_ino != original and st.st_uid == os.geteuid() and st.st_mode & 0o777 == 0o600
+
+
+async def test_gestopt_tussen_link_en_place_verliest_niets(world, monkeypatch):
+    """Review golf 3, C7: de app stopt (OOM, een herstart) nadat het bestand klaarstaat en vóór
+    place_file. Eerst ging het met rename naar blobs/.tmp: de bron was weg, er was geen node, en
+    de volgende poging vond niets ("done", 0 bestanden). Nu staat de bron er dan nog, en de
+    volgende poging maakt het af. De link die achterbleef, ruimt die poging op."""
+    w = world
+    source = put(w["src"], "Bron/a.mkv", b"a" * 4000)
+    real = importer.Run.place
+    seen: dict = {}
+
+    async def dies(self, *args, **kwargs):
+        if not seen:
+            tmp = w["settings"].blob_dir / ".tmp"
+            seen.update(source=source.exists(), tmp=sorted(p.name for p in tmp.iterdir()))
+            # Een gedode app ruimt niets op: de link blijft liggen zoals hij was
+            os.link(args[4], tmp / f"{importer.LINK_PREFIX}van-de-dode")
+            raise RuntimeError("gedood")
+        return await real(self, *args, **kwargs)
+
+    monkeypatch.setattr(importer.Run, "place", dies)
+    job_id = await importer.start("Bron", w["target"], w["owner"], move=True)
+    await jobs.run_pending(w["settings"], lane="import")
+    assert seen["source"] is True, seen  # de bron stond er nog
+    assert len(seen["tmp"]) == 1 and seen["tmp"][0].startswith(importer.LINK_PREFIX)
+    assert source.exists()
+    later = datetime.now(UTC) + timedelta(hours=1)
+    await jobs.run_pending(w["settings"], at=later, lane="import")
+    async with maker(w["settings"])() as session:
+        job = await session.get(Job, job_id)
+        assert (job.status, job.payload["done"], job.attempts) == ("done", 1, 2), job.error
+    assert not source.exists()
+    st = blob_of(w, (await tree(w["settings"], w["target"]))["a.mkv"]).stat()
+    assert st.st_nlink == 1  # de link van de dode poging is weg
+    assert not list((w["settings"].blob_dir / ".tmp").glob("import-*"))
+
+
+async def test_gestopt_na_place_en_voor_het_weghalen_van_de_bron(world, monkeypatch):
+    """C7, de andere kant: place_file is klaar (de bron is de blob, met twee namen) en de app
+    stopt voor de bron weg is. De volgende import ziet dezelfde inode en haalt alleen de bron
+    weg; een harde link van iets anders blijft overgeslagen."""
+    w = world
+    source = put(w["src"], "Bron/a.mkv", b"a" * 4000)
+    real = importer._remove_source
+    calls = []
+
+    def dies(*args, **kwargs):
+        calls.append(args[0])
+        if len(calls) == 1:
+            raise SystemExit("gedood")  # geen OSError: niets vangt het
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(importer, "_remove_source", dies)
+    job_id = await importer.start("Bron", w["target"], w["owner"], move=True)
+    with contextlib.suppress(SystemExit):
+        await jobs.run_pending(w["settings"], lane="import")
+    assert source.exists() and source.stat().st_nlink == 2
+    assert await jobs.recover(w["settings"]) == 1  # de herstart: de job gaat terug in de rij
+    await jobs.run_pending(w["settings"], lane="import")
+    async with maker(w["settings"])() as session:
+        job = await session.get(Job, job_id)
+    assert job.status == "done", job.error
+    assert (job.payload["done"], job.payload["same"], job.payload["skipped"]) == (1, 1, 0)
+    assert not source.exists()
+    st = blob_of(w, (await tree(w["settings"], w["target"]))["a.mkv"]).stat()
+    assert st.st_nlink == 1
 
 
 async def test_ontdubbelen(world, client):
