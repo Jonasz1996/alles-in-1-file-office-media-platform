@@ -144,18 +144,33 @@ def _key(library_id: uuid.UUID) -> str:
 # --- klaarzetten -------------------------------------------------------------------------------
 
 
+def _earliest(a: Any, b: Any) -> list[Any] | None:
+    """De vroegste van twee cursors van een volledige ronde ([sleutel, al gedaan]); None is
+    het begin."""
+    if not (isinstance(a, list) and len(a) == 2 and isinstance(b, list) and len(b) == 2):
+        return None
+    return min([str(a[0]), int(a[1])], [str(b[0]), int(b[1])])
+
+
 def _merge(
     old: dict[str, Any],
     *,
     nodes: Iterable[uuid.UUID] = (),
     dirs: Iterable[uuid.UUID] = (),
     full: bool = False,
+    after: list[Any] | None = None,
+    parts: Iterable[list[Any]] = (),
 ) -> dict[str, Any]:
-    """De payload van een klaarstaande scan met wat erbij komt."""
+    """De payload van een klaarstaande scan met wat erbij komt. full met after: de rest van een
+    volledige ronde vanaf die cursor (review golf 3, C1); parts: mappen vanaf een plek
+    ([map, al gedaan], de rest van een stuk)."""
     out = dict(old)
-    if full and not out.get("full"):
-        out["full"] = True
-        out["after"] = None
+    if full:
+        if not out.get("full"):
+            out["full"] = True
+            out["after"] = after
+        else:
+            out["after"] = _earliest(out.get("after"), after)
     merged = list(dict.fromkeys([*(out.get("nodes") or []), *(str(n) for n in nodes)]))
     if len(merged) > MAX_NODES:
         out["full"], out["after"], merged = True, None, []
@@ -164,7 +179,8 @@ def _merge(
     else:
         out.pop("nodes", None)
     wanted: dict[str, int] = {}
-    for entry in [*(out.get("dirs") or []), *([str(d), 0] for d in dirs)]:
+    extra = [*([str(d), 0] for d in dirs), *([str(d), int(o)] for d, o in parts)]
+    for entry in [*(out.get("dirs") or []), *extra]:
         dir_id, offset = str(entry[0]), int(entry[1])
         wanted[dir_id] = min(offset, wanted.get(dir_id, offset))
     if wanted:
@@ -179,18 +195,24 @@ async def _queue(
     nodes: Iterable[uuid.UUID] = (),
     dirs: Iterable[uuid.UUID] = (),
     full: bool = False,
+    after: list[Any] | None = None,
+    parts: Iterable[list[Any]] = (),
 ) -> None:
     """Eén scan voor deze bibliotheek klaarzetten, of wat erbij komt in de payload van de scan
     die al klaarstaat (alleen status queued: een lopende scan pakt zijn opvolger zelf op).
-    In de transactie van de aanroeper."""
-    nodes, dirs = list(nodes), list(dirs)
+    In de transactie van de aanroeper. Ook de rest van een lopend stuk gaat zo (after en
+    parts): een scan die intussen klaarstaat, neemt die rest mee in plaats van hem weg te
+    laten vallen."""
+    nodes, dirs, parts = list(nodes), list(dirs), list(parts)
     key = _key(library_id)
     for _ in range(3):
         job = await session.scalar(
             select(Job).where(Job.key == key, Job.status == "queued").order_by(Job.created_at)
         )
         if job is not None:
-            payload = _merge(job.payload or {}, nodes=nodes, dirs=dirs, full=full)
+            payload = _merge(
+                job.payload or {}, nodes=nodes, dirs=dirs, full=full, after=after, parts=parts
+            )
             result = await session.execute(
                 update(Job)
                 .where(Job.id == job.id, Job.status == "queued")
@@ -200,7 +222,14 @@ async def _queue(
             if result.rowcount:
                 break
             continue  # net geclaimd: dan een nieuwe
-        payload = _merge({"library_id": str(library_id)}, nodes=nodes, dirs=dirs, full=full)
+        payload = _merge(
+            {"library_id": str(library_id)},
+            nodes=nodes,
+            dirs=dirs,
+            full=full,
+            after=after,
+            parts=parts,
+        )
         if await jobs.chain(session, JOB, payload, key) is not None:
             break
     await session.execute(
@@ -1313,7 +1342,15 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
         if changed:
             await _cleanup_shows(session, library.id)
         if work.rest is not None:
-            await jobs.chain(session, JOB, work.rest, _key(library.id))
+            # Niet jobs.chain alleen: staat er intussen al een scan klaar (een upload, een tik),
+            # dan won die de ontdubbeling en viel de rest van de ronde weg (review golf 3, C1)
+            await _queue(
+                session,
+                library.id,
+                full=bool(work.rest.get("full")),
+                after=work.rest.get("after"),
+                parts=work.rest.get("dirs") or [],
+            )
         else:
             waiting = await session.scalar(
                 select(Job.id).where(Job.key == _key(library.id), Job.status == "queued").limit(1)

@@ -392,6 +392,60 @@ async def test_2000_bestanden_in_stukken(world, client, monkeypatch):
         assert lib.item_count == 2000 and lib.scan_state == "idle"
 
 
+async def test_de_rest_van_een_volledige_ronde_gaat_niet_verloren(world, client, monkeypatch):
+    """Review golf 3, C1: een ronde in stukken zette zijn rest met jobs.chain klaar, en die
+    ontdubbelt tegen een scan die al klaarstaat. Kwam er tijdens stuk 1 een upload (en een
+    tik), dan won die scan met alleen zijn eigen nodes, en viel de rest weg: 500 van de 1.202
+    bestanden tot de ronde van 6 uur, en scan_state idle alsof de ronde klaar was."""
+    settings, _, headers = world
+    library_id, folder = await library(client, headers)
+    sample = await upload(client, headers, folder, "eerste.mkv")
+    big = await mkdir(client, headers, folder, "Groot")
+    await scan(settings)  # de eerste ronde (bij het maken), en de set van touched is leeg
+    async with maker(settings)() as session:
+        first = await session.get(Node, uuid.UUID(sample))
+        for i in range(1200):  # zonder de haak: alleen een volledige ronde ziet ze
+            session.add(
+                Node(parent_id=uuid.UUID(big), owner_id=first.owner_id, name=f"Film {i:04d}.mkv",
+                     kind="file", mime="video/x-matroska", size=1, blob_id=first.blob_id)
+            )  # fmt: skip
+        await session.commit()
+    runs: list[dict] = []
+    real = scanner.run
+
+    async def counted(settings, payload):
+        runs.append(dict(payload))
+        if len(runs) == 1:  # tijdens stuk 1: een upload en een tik zetten een scan klaar
+            await upload(client, headers, folder, "tussendoor.mkv")
+            await scanner.tick(settings)
+        await real(settings, payload)
+
+    kind = dataclasses.replace(jobs._kinds[scanner.JOB], run=counted)
+    monkeypatch.setitem(jobs._kinds, scanner.JOB, kind)
+    r = await client.post(f"/api/v1/media/libraries/{library_id}/scan", headers=headers)
+    assert r.status_code == 202
+    await jobs.run_pending(settings, lane="media_scan")
+    found = await items(settings, library_id)
+    assert len(found) == 1202, (len(found), runs)
+    assert runs[1].get("nodes") and runs[1].get("full") and runs[1]["after"][1] > 0
+    async with maker(settings)() as session:
+        lib = await session.get(MediaLibrary, uuid.UUID(library_id))
+        assert lib.item_count == 1202 and lib.scan_state == "idle"
+
+
+def test_merge_van_de_rest_van_een_ronde():
+    """C1: de rest van een ronde (full, after en mappen met een plek) in een scan die al
+    klaarstaat; een nieuwe volledige ronde begint weer vooraan."""
+    queued = {"library_id": "x", "nodes": ["n1"]}
+    out = scanner._merge(queued, full=True, after=["k", 500], parts=[["d1", 20]])
+    assert out == {"library_id": "x", "nodes": ["n1"], "full": True, "after": ["k", 500],
+                   "dirs": [["d1", 20]]}  # fmt: skip
+    assert scanner._merge(out, full=True, after=["j", 0])["after"] == ["j", 0]
+    assert scanner._merge(out, full=True, after=["z", 0])["after"] == ["k", 500]
+    assert scanner._merge(out, full=True)["after"] is None  # opnieuw scannen: vanaf het begin
+    assert scanner._merge(out, parts=[["d1", 5]])["dirs"] == [["d1", 5]]
+
+
 async def test_een_externe_ondertitel_hoort_bij_de_goede_video(world, client):
     settings, _, headers = world
     library_id, folder = await library(client, headers)
