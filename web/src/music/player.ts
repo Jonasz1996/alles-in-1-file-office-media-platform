@@ -234,6 +234,9 @@ export class MusicPlayer {
     if (!item) return;
     const g = ++this.gen;
     this.teardown();
+    // Het vorige nummer stil, nu al: de sessie van het nieuwe kan even duren (review golf 4,
+    // C5). Zijn tijd en zijn eind tellen niet meer (onTime en onEnded zonder bron).
+    this.el?.pause();
     queue.set({ ...q, index, position: startS });
     this.retried = null;
     this.update({
@@ -536,7 +539,9 @@ export class MusicPlayer {
 
   private readonly onTime = (): void => {
     const a = this.el;
-    if (!a) return;
+    // Zonder bron (een nieuw nummer laadt, of de rij is klaar): de tijd van het element is nog
+    // die van het vorige nummer (C5)
+    if (!a || !this.isLoaded()) return;
     const q = queue.snapshot();
     const item = q.items[q.index];
     if (!item) return;
@@ -588,6 +593,7 @@ export class MusicPlayer {
   };
 
   private readonly onEnded = (): void => {
+    if (!this.isLoaded()) return; // het eind van het vorige nummer, terwijl het nieuwe laadt (C5)
     const q = queue.snapshot();
     const i = q.index + 1;
     if (i >= q.items.length) {
