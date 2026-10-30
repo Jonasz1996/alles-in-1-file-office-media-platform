@@ -60,6 +60,7 @@ BLOCK = 1024
 HOP = 512
 EDGE_S = 0.3
 MAX_JUMP = 1.0  # samples (Klaar als)
+END_SLACK = 2  # samples: het laatste sample dat klinkt, tegen de som van de nummers
 AUDIO = "audio.music-audio"
 BAR = "section.music-bar"
 PLAY_RE = re.compile(r"/api/v1/media/[^/]+/play$")
@@ -509,6 +510,9 @@ def test_gapless_de_fase_springt_niet(
     assert m["span_s"] >= m["total_s"] - 2 * EDGE_S, m
     assert m["spread"] <= MAX_JUMP, f"de fase binnen een nummer is geen lijn: {m}"
     assert all(abs(j) <= MAX_JUMP for j in m["jumps"]), f"de fase springt: {m}"
+    # Ook het aantal: de fase ziet een sprong van een veelvoud van de periode (±100 samples) niet,
+    # het laatste sample dat klinkt wel (gemeten: FLAC 0, Opus 1)
+    assert m["end_error"] is not None and abs(m["end_error"]) <= END_SLACK, m
 
 
 @pytest.mark.media
