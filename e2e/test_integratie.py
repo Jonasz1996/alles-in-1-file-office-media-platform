@@ -172,6 +172,9 @@ def enable_2fa_in_ui(v: Verhaal, page: Any, persoon: Persoon) -> None:
     page.get_by_label("3. Je wachtwoord, ter bevestiging", exact=True).fill(persoon.password)
     page.get_by_role("button", name="Aanzetten", exact=True).click()
     expect(page.get_by_role("heading", name="Herstelcodes", exact=True)).to_be_visible()
+    # De lijst staat in een lazy component (Suspense in App.tsx): de kop staat er eerst, met
+    # "Laden…" eronder. all_inner_texts wacht niet, dus eerst wachten tot de codes er zijn.
+    expect(page.locator("ul.codes code")).to_have_count(10)
     codes = page.locator("ul.codes code").all_inner_texts()
     assert len(codes) == 10, codes
     persoon.recovery = list(codes)
