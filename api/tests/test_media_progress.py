@@ -153,7 +153,6 @@ def test_een_lange_origin_past_in_de_kolom():
     assert progress.origin_key(long_a) == progress.origin_key(long_a)
 
 
-
 async def test_apply_knipt_te_grote_getallen_af(world):
     """Na-controle van golf 4 (S2): wie Store.put zonder de router aanroept (die geeft 422),
     krijgt de getallen afgeknipt tot wat SQLite kan bewaren; de stand komt in de database en
