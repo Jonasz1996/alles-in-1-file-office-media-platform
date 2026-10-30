@@ -380,6 +380,14 @@ class Dir:
         return [*self.parts, name]
 
 
+def _other_roots(library: MediaLibrary):
+    """De mappen van de andere bibliotheken. Bij het maken mag een bibliotheek niet in een
+    andere (409 media_library_nested), maar een map verplaatsen kan dat daarna nog: dan wint de
+    binnenste. De buitenste slaat die map en alles eronder over (review golf 3, C2: anders
+    namen ze de items om beurten van elkaar over, en ging bij elke wissel de rij weg)."""
+    return select(MediaLibrary.root_id).where(MediaLibrary.id != library.id)
+
+
 @dataclass
 class Tree:
     root: Dir
@@ -389,7 +397,8 @@ class Tree:
     @classmethod
     async def load(cls, session: AsyncSession, library: MediaLibrary) -> Tree:
         """Alle mappen onder de bibliotheek (ook in de prullenbak), in één recursieve query,
-        plus of er boven de map van de bibliotheek iets in de prullenbak ligt."""
+        plus of er boven de map van de bibliotheek iets in de prullenbak ligt. Zonder de map
+        van een andere bibliotheek die eronder kwam (_other_roots)."""
         top = select(Node.id, Node.parent_id, Node.name, Node.deleted_at).where(
             Node.id == library.root_id
         )
@@ -397,7 +406,9 @@ class Tree:
         child = aliased(Node)
         found = found.union_all(
             select(child.id, child.parent_id, child.name, child.deleted_at).where(
-                child.parent_id == found.c.id, child.kind == "dir"
+                child.parent_id == found.c.id,
+                child.kind == "dir",
+                child.id.not_in(_other_roots(library)),
             )
         )
         rows = (await session.execute(select(found))).all()
@@ -1271,10 +1282,15 @@ async def _affected(
 
 async def _finish_full(session: AsyncSession, library: MediaLibrary) -> list[uuid.UUID]:
     """Het eind van een volledige ronde: items van nodes die niet meer onder de map liggen
-    weg (ook als een gebeurtenis verloren ging)."""
+    weg (ook als een gebeurtenis verloren ging), en items onder de map van een andere
+    bibliotheek die eronder kwam (die is ervan, C2)."""
     top = select(Node.id, literal(0, Integer).label("depth")).where(Node.id == library.root_id)
     down = top.cte("scan_all", recursive=True)
-    down = down.union_all(select(Node.id, down.c.depth + 1).where(Node.parent_id == down.c.id))
+    down = down.union_all(
+        select(Node.id, down.c.depth + 1).where(
+            Node.parent_id == down.c.id, Node.id.not_in(_other_roots(library))
+        )
+    )
     result = await session.execute(
         delete(MediaItem)
         .where(MediaItem.library_id == library.id, MediaItem.node_id.not_in(select(down.c.id)))

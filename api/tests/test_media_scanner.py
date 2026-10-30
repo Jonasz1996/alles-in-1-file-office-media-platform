@@ -314,6 +314,38 @@ async def test_naar_een_andere_bibliotheek_geeft_de_analyse_met_die_bibliotheek(
     assert await queued_analyses(settings) == [{"sha": sha, "library_id": videos_id}]
 
 
+async def test_een_bibliotheek_in_een_andere_geschoven(world, client):
+    """C2 (review golf 3): de map van een bibliotheek geschoven in die van een andere. Het
+    maken weigert dat (409), maar verplaatsen kan nog. De binnenste wint: de items blijven
+    van haar, ook na volledige rondes van beide om beurten (eerst wisselden ze bij elke ronde
+    van bibliotheek, en ging de rij met added_at elke keer weg)."""
+    settings, _, headers = world
+    films_id, films = await library(client, headers)
+    kids_id, kids = await library(client, headers, name="Kids")
+    nemo = await mkdir(client, headers, kids, "Nemo (2003)")
+    node = await upload(client, headers, nemo, "Nemo (2003).mkv")
+    await upload(client, headers, films, "Heat (1995).mkv")
+    await scan(settings)
+    [before] = (await items(settings, kids_id)).values()
+    r = await client.patch(f"/api/v1/files/{kids}", json={"parent_id": films}, headers=headers)
+    assert r.status_code == 200, r.text
+    await scan(settings)
+    for library_id in (films_id, kids_id, films_id, kids_id):
+        r = await client.post(f"/api/v1/media/libraries/{library_id}/scan", headers=headers)
+        assert r.status_code in (200, 202), r.text
+        await jobs.run_pending(settings, lane="media_scan")
+        assert list(await items(settings, films_id)) == ["Heat (1995).mkv"]
+        found = await items(settings, kids_id)
+        assert list(found) == ["Nemo (2003).mkv"]
+        assert found["Nemo (2003).mkv"].node_id == uuid.UUID(node)
+        assert found["Nemo (2003).mkv"].added_at == before.added_at
+    async with maker(settings)() as session:
+        counts = dict(
+            (await session.execute(select(MediaLibrary.id, MediaLibrary.item_count))).all()
+        )
+    assert (counts[uuid.UUID(films_id)], counts[uuid.UUID(kids_id)]) == (1, 1)
+
+
 async def test_play_zette_de_analyse_klaar_zonder_bibliotheek(world, client):
     """Play van een bestand dat nog geen item was: de job staat er zonder library_id. De scan
     zet die er alsnog bij (de stappen subs en sprites zien anders het soort niet)."""
