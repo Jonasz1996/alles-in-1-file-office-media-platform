@@ -28,11 +28,13 @@ from pathlib import Path
 import pytest
 
 from app.media import client
+from app.media.types import Stream
 from app.media.wire import Op
 from app.media.worker import args as A
 from app.media.worker.ops import audio_info as AI
 from app.media.worker.ops import remux_audio as RA
 from app.media.worker.server import Config, Worker
+from app.routers import stream_audio
 from tests.media import fixtures as F
 
 FIELDS = {"rate", "samples", "delay", "padding", "source"}
@@ -793,6 +795,13 @@ async def test_echt_via_de_worker(made, tmp_path):
             assert result["cpu_s"] is not None
             assert data[4:8] == b"ftyp" and b"moof" in data and b"elst" not in data
             assert decoded(data, tmp_path) == (samples, [out_codec]), name
+            # Het budget van audio.mp4 (review golf 4, S1) is een bovengrens, ook zonder de
+            # marge voor de kop: het echte bestand blijft eronder
+            rate = 48000 if name.endswith(".opus") else 44100
+            stream = Stream(index=0, type="audio", codec=out_codec, sample_rate=rate, channels=2)
+            size = made[name].stat().st_size
+            bound = stream_audio.expected_bytes(size, 20_000, stream, codec)
+            assert bound is not None and len(data) <= bound - stream_audio.SLACK, (name, len(data))
     finally:
         await w.stop()
         client.bind(None)
