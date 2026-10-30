@@ -39,7 +39,7 @@ from typing import Any, NamedTuple
 
 from app.media import classify
 
-NAMES_VERSION = 1  # omhoog bij elke verandering die een uitkomst verandert (opnieuw ontleden)
+NAMES_VERSION = 2  # omhoog bij elke verandering die een uitkomst verandert (opnieuw ontleden)
 YEAR_MIN = 1900
 MAX_INPUT = 1024  # langer is geen naam meer: de rest telt niet mee
 
@@ -772,6 +772,13 @@ def _absolute(pre: _Pre, cut: int) -> _Episode | None:
     return None
 
 
+def _number_title(title: str) -> bool:
+    """Een titel van alleen cijfers en leestekens (24, 1883, 9-1-1). Voor een film zegt dat te
+    weinig, maar voor de map van een serie wel als de naam van het bestand hetzelfde zegt, of
+    als er een seizoensmap onder ligt (review golf 3, C8)."""
+    return any(c.isdigit() for c in title) and not _letters(title)
+
+
 def _folder_title(name: str) -> tuple[str, int | None, dict[str, str]]:
     core = _movie_core(name, _top())
     return core.title, core.year, dict(core.ids)
@@ -799,9 +806,11 @@ def _show(stem: str, dirs: list[str], extra: str | None) -> Parsed:
     cut = _noise_cut(toks, years)
     ep = _find_episode(pre, folder_season, cut)
     show_title, show_year, show_ids = None, None, {}
+    number = None  # een map met alleen cijfers: 24, 1883, 9-1-1 (review golf 3, C8)
     if show_i is not None:
         show_title, show_year, show_ids = _folder_title(dirs[show_i])
         if _junk(show_title, show_year):
+            number = show_title if _number_title(show_title) else None
             show_title = None
     if ep is None:
         movie = _movie(stem, dirs, "shows", extra)
@@ -829,6 +838,10 @@ def _show(stem: str, dirs: list[str], extra: str | None) -> Parsed:
     episode_title = _span(pre, after, episode_cut) if after < episode_cut else ""
     if episode_title and not _letters(episode_title):
         episode_title = ""
+    if number is not None and (
+        normalize(title) == normalize(number) or (season_i is not None and _junk(title, year))
+    ):
+        show_title = number  # de naam van het bestand zegt hetzelfde, of de map heeft seizoenen
     if not title or _junk(title, year):
         title = show_title or title
     if show_title is None and title and not _junk(title, year):

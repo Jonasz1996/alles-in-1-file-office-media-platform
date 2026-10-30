@@ -663,6 +663,16 @@ movies	Film.H.264.mkv	title=Film
 movies	Film.x264.mkv	title=Film
 movies	2x2 (2010).mkv	title=2x2	year=2010
 
+# groep: cijfers (review golf 3, C8: een serie die alleen uit cijfers bestaat)
+shows	24/Season 1/24 S01E01.mkv	title=24	season=1	episode=1	show=24	show_index=0
+shows	24/Season 2/S02E03.mkv	title=24	season=2	episode=3	show=24	show_index=0
+shows	1883/1883.S01E04.1080p.WEB.H264-GRP.mkv	title=1883	season=1	episode=4	show=1883	show_index=0
+shows	1923/Season 1/1923 S01E02.mkv	title=1923	season=1	episode=2	show=1923	show_index=0
+shows	9-1-1/Season 3/9-1-1 - S03E05 - Titel.mkv	title=9-1-1	season=3	episode=5	show=9-1-1	show_index=0	episode_title=Titel
+shows	90210/Seizoen 1/90210 1x05.avi	title=90210	season=1	episode=5	show=90210	show_index=0
+shows	2023/Mijn Serie S01E01.mkv	title=Mijn Serie	season=1	episode=1	show=Mijn Serie
+shows	2023/S01E01.mkv	title=	season=1	episode=1
+
 # groep: muziek
 music	Artiest/Album (1999)/01 - Titel.flac	title=Titel	year=1999	artist=Artiest	album=Album	track=1
 music	Radiohead/OK Computer (1997)/02 - Paranoid Android.flac	title=Paranoid Android	year=1997	artist=Radiohead	album=OK Computer	track=2

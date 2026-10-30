@@ -690,6 +690,28 @@ async def test_series_seizoenen_en_absolute_nummering(world, client):
     assert [s["season"] for s in detail["seasons"]] == [None]
 
 
+async def test_een_serie_met_alleen_cijfers(world, client):
+    """C8 (review golf 3): 24, 1883 en 9-1-1 zijn series. Eerst was zo'n map "rommel" (geen
+    letters): de serie kreeg geen map, dus ook geen tvshow.nfo en geen poster."""
+    settings, _, headers = world
+    library_id, folder = await library(client, headers, "Series", "shows")
+    folders = {}
+    for name, sub, file in (
+        ("24", "Season 1", "24 S01E01.mkv"),
+        ("1883", None, "1883.S01E02.mkv"),
+        ("9-1-1", "Season 3", "9-1-1 - S03E05 - Titel.mkv"),
+    ):
+        folders[name] = await mkdir(client, headers, folder, name)
+        parent = await mkdir(client, headers, folders[name], sub) if sub else folders[name]
+        await upload(client, headers, parent, file)
+    await scan(settings)
+    async with maker(settings)() as session:
+        shows = {s.title: s.folder_id for s in (await session.scalars(select(MediaShow))).all()}
+    assert shows == {name: uuid.UUID(f) for name, f in folders.items()}
+    found = await items(settings, library_id)
+    assert found["9-1-1 - S03E05 - Titel.mkv"].title == "Titel"
+
+
 async def test_delen_van_een_film(world, client):
     settings, _, headers = world
     library_id, folder = await library(client, headers)
