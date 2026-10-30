@@ -27,11 +27,12 @@ export const GAP_MAX_S = 0.5;
  */
 export const GAP_WAIT_MS = 250;
 /**
- * Zo dicht bij het eind van een gebufferd stuk telt de positie als het eind (s). Chromium staat bij
- * een gat zo'n 50 ms vóór het eind van het stuk stil (Chromium 141: 49 tot 51 ms); de grens van
- * 50 ms die hier eerst stond, viel daar precies op (CI-run 41002597837). 0,25 s laat ruimte voor
- * een andere build en is klein tegen een segment van 2 s; de springer kijkt alleen als de video al
- * GAP_WAIT_MS stilstaat.
+ * Zo dicht bij het eind van een gebufferd stuk telt de positie als het eind (s). Bij een gat staat
+ * Chromium 141 vóór het eind van het stuk stil: in de app (de worker gedood, de echte speler) 72
+ * tot 89 ms ervoor, ook in de headless shell; met alleen de lader zo'n 50 ms. De grens van 50 ms
+ * die hier eerst stond, haalde het in de app dus nooit (CI-run 41002597837). 0,25 s is bijna 3 keer
+ * de 89 ms en klein tegen een segment van 2 s; de springer kijkt alleen als de video al GAP_WAIT_MS
+ * stilstaat.
  */
 export const GAP_END_S = 0.25;
 /** Twee haperingen in een minuut bij transcode: een trede lager. */
@@ -303,10 +304,10 @@ export class MseLoader {
 
   /**
    * Na GAP_WAIT_MS kijken of de video voor een gat staat, en zolang hij stil blijft staan om de
-   * GAP_WAIT_MS opnieuw (tot playing, een sprong, pauze of destroy). Eén keer kijken was te
-   * weinig: na de herstel-lus komt een segment van een nieuwe run, en sluit het geluid daarvan niet
-   * aan (H.264 met B-frames en AAC: 41 ms), dan ontstaat het gat pas als de video al stilstaat
-   * (CI-run 41002597837).
+   * GAP_WAIT_MS opnieuw (tot playing, readyState 3, een sprong, pauze of destroy). Eén keer kijken
+   * was te weinig: na de herstel-lus komt een segment van een nieuwe run, en sluit het geluid
+   * daarvan niet aan (H.264 met B-frames en AAC: 24 tot 41 ms), dan ontstaat het gat pas als de
+   * video al stilstaat (CI-run 41002597837).
    */
   private watchGap(): void {
     this.gapTimer = setTimeout(() => {

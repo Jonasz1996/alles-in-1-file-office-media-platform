@@ -136,11 +136,15 @@ describe("de beslissing over een gat (S4)", () => {
     expect(gapTarget([[0, 10], [10.1, 20]], 9.7)).toBeNull();
   });
 
-  it("Chromium staat zo'n 50 ms vóór het eind van het stuk stil: dat is het eind (CI-run 41002597837)", () => {
-    // Gemeten in Chromium 141 bij een gat in het geluid tussen twee runs: stil op eind − 0,049 tot
-    // eind − 0,051 s. De grens van 50 ms die hier eerst stond, viel daar precies op
+  it("Chromium staat 50 tot 89 ms vóór het eind van het stuk stil: dat is het eind (CI-run 41002597837)", () => {
+    // Chromium 141 bij een gat in het geluid tussen twee runs. Met alleen de lader (kale proef):
+    // stil zo'n 50 ms vóór het eind. De grens van 50 ms die hier eerst stond, viel daar net op
     expect(gapTarget([[0, 9.9705], [10.0145, 20]], 9.9202)).toBeCloseTo(10.0145);
     expect(gapTarget([[0, 9.991], [10.014, 20]], 9.9402)).toBeCloseTo(10.014);
+    // In de app (de worker gedood, de echte speler; de e2e met het gat in het geluid): 72 tot 89 ms
+    // vóór het eind, ook in de headless shell. Daar haalde de oude grens het nooit
+    expect(gapTarget([[0.0095, 6.0505], [6.0955, 30.1]], 5.9737)).toBeCloseTo(6.0955);
+    expect(gapTarget([[0.0095, 6.0505], [6.0955, 30.1]], 5.9617)).toBeCloseTo(6.0955);
   });
 });
 

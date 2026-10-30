@@ -6,7 +6,7 @@
 //   start, mogen nooit tegelijk aan de SourceBuffer: dat gaf "This SourceBuffer is still
 //   processing an 'appendBuffer'" (InvalidStateError) en de speler stopte met een fout.
 // - CI-run 41002597837: na de herstel-lus komt een segment van een nieuwe run waarvan het geluid
-//   niet aansluit (H.264 met B-frames en AAC: 41 ms later dan het eind van het vorige). In
+//   niet aansluit (H.264 met B-frames en AAC: 24 tot 41 ms na het eind van het vorige). In
 //   buffered is dat een gat, maar de video stond daar al stil: de springer moet ook dan nog kijken.
 //   Die lus stopt bij pauze, een sprong, readyState 3 en destroy.
 
@@ -258,7 +258,8 @@ describe("een gat dat pas komt als de video al stilstaat (CI-run 41002597837)", 
     const errors: unknown[] = [];
     // Zoals in CI (H.264 met B-frames, AAC): in de oude run eindigt het geluid van segment 4
     // vóór de grens van 10 s, en buffered dus ook. Segment 5 geeft eerst 503 (de worker is
-    // gedood); het komt daarna van een nieuwe run, met geluid dat 44 ms na dat eind begint
+    // gedood); het komt daarna van een nieuwe run, met geluid dat 44 ms na dat eind begint (zoals
+    // in de nabootsing met VP9: 4 Opus-frames weg; met H.264 en AAC 24 tot 41 ms)
     let failedOnce = false;
     const seam = (async (url: string) => {
       const k = Number(/\/(\d+)\.m4s/.exec(url)?.[1] ?? -1);
@@ -282,7 +283,8 @@ describe("een gat dat pas komt als de video al stilstaat (CI-run 41002597837)", 
     await loader.open(0);
     await until(() => errors.length > 0);
     expect(errors).toHaveLength(1); // de 503 van segment 5
-    // De buffer is op: Chromium staat zo'n 50 ms vóór het eind stil (gemeten in Chromium 141)
+    // De buffer is op: Chromium staat vóór het eind stil (Chromium 141 met alleen de lader zo'n
+    // 50 ms, in de app 72 tot 89 ms)
     video.currentTime = 9.9202;
     video.readyState = 2;
     video.dispatchEvent(new Event("waiting"));
