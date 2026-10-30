@@ -10,9 +10,12 @@ nooit tegelijk met de scanner):
 - zonder albumartiest: de nummers in dezelfde map met dezelfde albumtag (`d|<map>|<titel>`).
   Heeft die map al een album met een albumartiest en dezelfde titel, dan horen ze daarbij;
 - schijven: een map `CD1`, `Disc 2` … telt als de map erboven, en de tag `disc` (of het nummer
-  van de map) houdt de schijven uit elkaar;
+  van de map) houdt de schijven uit elkaar. Heeft een nummer een schijf (tag of map), dan valt
+  een schijf achter de albumtitel weg ("Album (Disc 1)" is "Album"; review golf 4, C3);
 - compilatie: de tag (`compilation`: TCMP, cpil), een albumartiest als "Various Artists" of
-  "Diverse artiesten", of zonder albumartiest minstens 3 artiesten waarvan geen de helft haalt;
+  "Diverse artiesten", of zonder albumartiest minstens 3 artiesten waarvan geen de helft haalt.
+  Geteld op de hoofdartiest: "A feat. B", "A & C" en "A, D" zijn A (review golf 4, C4); het
+  album heet dan naar A zonder gast;
 - zonder albumtag en zonder eigen map (los in de bibliotheek): geen album.
 De ids blijven staan zolang de sleutel blijft (upsert op key); een album zonder nummers gaat weg.
 regroup schrijft van de items alleen album_id: titel, artiest, disc en nummer zijn van de scanner
@@ -99,6 +102,18 @@ COVER_NAMES = ("cover", "folder", "front", "album")
 COVER_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 # Een map van een schijf, zoals names.py hem herkent
 DISC_DIR = re.compile(r"^(?:disc|disk|cd)[\s._\-]*(\d{1,2})(?:\s.*)?$", re.IGNORECASE)
+# Een schijf achter de albumtitel: "Album (Disc 1)", "Album [CD 2]", "Album - cd2", "Album
+# (Disc 2 of 2)". Valt weg als het nummer een schijf heeft (review golf 4, C3)
+DISC_SUFFIX = re.compile(
+    r"\s*(?:[-\u2013:,]\s*)?[(\[]?\s*(?:disc|disk|cd)[\s._\-]*(\d{1,2})"
+    r"(?:\s*(?:/|of|van)\s*\d{1,2})?\s*[)\]]?\s*$",
+    re.IGNORECASE,
+)
+# Een gast bij de artiest: "A feat. B", "A ft. B", "A featuring B", "A (feat. B)". Weg voor
+# de naam van het album (review golf 4, C4)
+GUEST = re.compile(r"\s*[(\[]?\s*\b(?:feat\.?|ft\.?|featuring)\s.*$", re.IGNORECASE)
+# Voor het tellen van artiesten (compilatie of niet) ook "A & B", "A, B", "A with B", "A x B"
+CREDIT = re.compile(r"\s*(?:&|,|\+|\bwith\b|\bx\b|\bvs\.?(?=\s))\s*.*$", re.IGNORECASE)
 ARTICLES = re.compile(r"^(?:the|de|het)\s+")  # Keuze 37: alleen deze drie
 NUMBER = re.compile(r"^\s*(\d{1,6})")
 YEAR = re.compile(r"(?<!\d)(\d{4})(?!\d)")
@@ -210,6 +225,27 @@ def _common(values: Iterable[str | None]) -> str | None:
     return counted.most_common(1)[0][0] if counted else None
 
 
+def without_guests(artist: str) -> str:
+    """De artiest zonder gast (feat., ft., featuring); zonder iets ervoor de naam zelf."""
+    return GUEST.sub("", artist).strip() or artist
+
+
+def lead_key(artist: str) -> str:
+    """De hoofdartiest voor het tellen: zonder gast en zonder wat na &, een komma, with of x
+    komt (genormaliseerd). Alleen om te tellen: "Simon & Garfunkel" blijft zo heten."""
+    base = without_guests(artist)
+    return norm(CREDIT.sub("", base).strip() or base)
+
+
+def without_disc(album: str) -> tuple[str, int | None]:
+    """De albumtitel zonder schijf erachter, en het nummer van die schijf. Een titel die
+    alleen een schijf is ("CD 1"), blijft staan."""
+    found = DISC_SUFFIX.search(album)
+    if found is None or not album[: found.start()].strip():
+        return album, None
+    return album[: found.start()].strip(), int(found.group(1))
+
+
 def _chunks[T](items: Sequence[T], size: int = CHUNK) -> Iterable[Sequence[T]]:
     for start in range(0, len(items), size):
         yield items[start : start + size]
@@ -275,6 +311,11 @@ def _seen(t: TrackIn) -> _Seen | None:
     album = tag(t.tags, ALBUM) or (parsed.album if folder is not None else None)
     if not album:
         return None
+    disc = number(tag(t.tags, DISC), 99) or t.disc or parsed.disc
+    if disc is not None or folder != own:
+        # Een schijf achter de titel hoort bij de schijf, niet bij het album (C3)
+        album, suffix = without_disc(album)
+        disc = disc or suffix
     return _Seen(
         t=t,
         album=album[:255],
@@ -285,7 +326,7 @@ def _seen(t: TrackIn) -> _Seen | None:
         album_artist=tag(t.tags, ALBUM_ARTIST),
         compilation=truthy(tag(t.tags, COMPILATION)),
         year=year_of(tag(t.tags, DATE)) or parsed.year,
-        disc=number(tag(t.tags, DISC), 99) or t.disc or parsed.disc,
+        disc=disc,
         track=number(tag(t.tags, TRACK)) or t.track or parsed.track,
         title=tag(t.tags, TITLE) or t.title or parsed.title or t.name,
     )
@@ -320,6 +361,14 @@ def _order(s: _Seen) -> tuple:
     return (s.disc or 1, s.track or 10**6, norm(s.title), str(s.t.node_id))
 
 
+def _lead_name(members: list[_Seen], lead: str) -> str:
+    """De naam van de hoofdartiest zoals de nummers hem schrijven: zonder gast, en liefst
+    precies de hoofdartiest ("A" voor "A", "A feat. B", "A & C"); anders de meest gebruikte
+    ("Simon & Garfunkel")."""
+    names_ = [without_guests(s.artist) for s in members if s.artist and lead_key(s.artist) == lead]
+    return _common(n for n in names_ if norm(n) == lead) or _common(names_) or ""
+
+
 def _album(key: str, members: list[_Seen]) -> AlbumOut:
     members.sort(key=_order)
     title = _common(s.album for s in members) or members[0].album
@@ -331,17 +380,20 @@ def _album(key: str, members: list[_Seen]) -> AlbumOut:
         album_artist = _common(s.album_artist for s in members) or ""
         artist_sort = _common(tag(s.t.tags, ALBUM_ARTIST_SORT) for s in members)
     else:
-        artists = Counter(norm(s.artist) for s in members if s.artist)
+        # Geteld op de hoofdartiest: "A feat. B" en "A & C" zijn A (C4)
+        artists = Counter(lead_key(s.artist) for s in members if s.artist)
         top = artists.most_common(1)[0][1] if artists else 0
         many = len(artists) >= COMPILATION_MIN_ARTISTS and top * 2 < len(members)
         if compilation or many:
             album_artist, compilation = VARIOUS, True
         else:
-            album_artist = _common(s.artist for s in members) or ""
+            album_artist = _lead_name(members, artists.most_common(1)[0][0] if artists else "")
     if artist_sort is None and album_artist and album_artist != VARIOUS:
         lead = norm(album_artist)
         artist_sort = _common(
-            tag(s.t.tags, ARTIST_SORT) for s in members if s.artist and norm(s.artist) == lead
+            tag(s.t.tags, ARTIST_SORT)
+            for s in members
+            if s.artist and norm(without_guests(s.artist)) == lead
         )
     years = Counter(s.year for s in members if s.year)
     mbids = (tag(s.t.tags, MBID) for s in members)
@@ -768,41 +820,71 @@ def _iso(value: Any) -> str:
     return dt.datetime.fromisoformat(str(value)).isoformat()
 
 
-async def _durations(session: AsyncSession, album_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
-    out: dict[uuid.UUID, int] = {}
-    for chunk in _chunks(album_ids):
-        rows = await session.execute(
-            select(MediaItem.album_id, func.sum(MediaProbe.duration_ms))
-            .join(Node, Node.id == MediaItem.node_id)
-            .join(MediaProbe, MediaProbe.blob_sha == Node.blob_id)
-            .where(
-                MediaItem.album_id.in_(chunk),
-                MediaItem.present.is_(True),
-                MediaItem.kind == "track",
+async def _shown(
+    reader: media_items.Reader, albums: Sequence[MediaAlbum]
+) -> dict[uuid.UUID, tuple[int, int]]:
+    """Per album (aantal nummers, duur) van wat nu onder de map van zijn bibliotheek ligt;
+    een album zonder zo'n nummer ontbreekt. De rijen van de scanner lopen achter op de boom:
+    een album dat net uit een gedeelde bibliotheek verhuisde of in de prullenbak ging, telt
+    dan meteen niet meer, ook niet voor wie via een deling kijkt (review golf 4, S3; de regel
+    van golf 3, S4 in Reader). Gekeken per map, niet per nummer: een nummer telt als het zelf
+    niet in de prullenbak ligt en zijn map onder de bibliotheek (Reader.inside)."""
+    rows: list[Any] = []
+    for chunk in _chunks([album.id for album in albums]):
+        rows += (
+            await reader.session.execute(
+                select(
+                    MediaItem.album_id,
+                    MediaItem.library_id,
+                    Node.parent_id,
+                    MediaProbe.duration_ms,
+                )
+                .join(Node, Node.id == MediaItem.node_id)
+                .outerjoin(MediaProbe, MediaProbe.blob_sha == Node.blob_id)
+                .where(
+                    MediaItem.album_id.in_(chunk),
+                    MediaItem.present.is_(True),
+                    MediaItem.kind == "track",
+                    Node.deleted_at.is_(None),
+                    Node.parent_id.is_not(None),
+                )
             )
-            .group_by(MediaItem.album_id)
-        )
-        out.update({album_id: int(total or 0) for album_id, total in rows})
+        ).all()
+    roots = await reader.roots_of(library_id for _, library_id, _, _ in rows)
+    # Per bibliotheek apart (inside kent één map per node)
+    by_root: dict[uuid.UUID, set[uuid.UUID]] = defaultdict(set)
+    for _, library_id, parent, _ in rows:
+        root = roots.get(library_id)
+        if root is not None:
+            by_root[root].add(parent)
+    ok: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    for root, folders in by_root.items():
+        ok.update((folder, root) for folder in await reader.inside(dict.fromkeys(folders, root)))
+    out: dict[uuid.UUID, tuple[int, int]] = {}
+    for album_id, library_id, parent, duration in rows:
+        if (parent, roots.get(library_id)) not in ok:
+            continue
+        count, total = out.get(album_id, (0, 0))
+        out[album_id] = (count + 1, total + max(0, duration or 0))
     return out
 
 
 async def cards(
-    reader: media_items.Reader, rows: Sequence[tuple[MediaAlbum, int]]
+    reader: media_items.Reader, rows: Sequence[tuple[MediaAlbum, int, int]]
 ) -> list[AlbumCard]:
-    """Kaarten voor deze albums (met het aantal nummers). De hoes: cover.jpg in de map, dan de
-    ingebedde van het eerste nummer, dan een adres van een provider. Een plaatje dat niet meer
-    in de bibliotheek ligt, telt niet (Reader.art_nodes)."""
+    """Kaarten voor deze albums (met het aantal nummers en de duur van wat zichtbaar is). De
+    hoes: cover.jpg in de map, dan de ingebedde van het eerste nummer, dan een adres van een
+    provider. Een plaatje dat niet meer in de bibliotheek ligt, telt niet (Reader.art_nodes)."""
     wanted: dict[uuid.UUID, tuple[uuid.UUID | None, uuid.UUID]] = {}
-    for album, _ in rows:
+    for album, _, _ in rows:
         for role in ("cover", "thumb"):
             node = reader.art_node(album.art, role)
             if node is not None:
                 wanted[node] = (node, album.library_id)
     ok = await reader.art_nodes(wanted)
     blobs = await reader.blobs_of(ok.values())
-    durations = await _durations(reader.session, [album.id for album, _ in rows])
     out = []
-    for album, count in rows:
+    for album, count, duration in rows:
         cover = None
         for role in ("cover", "thumb"):
             node = reader.art_node(album.art, role)
@@ -821,7 +903,7 @@ async def cards(
                 compilation=album.compilation,
                 cover=cover,
                 track_count=count,
-                duration_ms=durations.get(album.id, 0),
+                duration_ms=duration,
             )
         )
     return out
@@ -831,7 +913,9 @@ async def album_page(
     reader: media_items.Reader, library: MediaLibrary, sort: str, cursor: str | None
 ) -> AlbumPage:
     """Eén pagina albums (keyset, ALBUMS_PAGE): op titel, op jaar (nieuwste eerst, zonder jaar
-    achteraan) of op toegevoegd (het nieuwste nummer). Alleen albums met een aanwezig nummer."""
+    achteraan) of op toegevoegd (het nieuwste nummer). Alleen albums met een nummer dat nu in de
+    bibliotheek ligt (_shown); zoals bij M2 telt de pagina de rijen, dus een pagina kan korter
+    zijn en toch een volgende hebben."""
     live = _live([library.id])
     year_key = literal(0) - func.coalesce(MediaAlbum.year, 0)
     if sort == "added":
@@ -864,7 +948,8 @@ async def album_page(
         else:
             values = [last.sort_title, str(last.id)]
         next_cursor = media_items.encode_cursor(values)
-    found = await cards(reader, [(album, count) for album, count, _ in rows])
+    shown = await _shown(reader, [album for album, _, _ in rows])
+    found = await cards(reader, [(a, *shown[a.id]) for a, _, _ in rows if a.id in shown])
     return AlbumPage(items=found, next=next_cursor)
 
 
@@ -897,37 +982,45 @@ async def album_detail(reader: media_items.Reader, album_id: uuid.UUID) -> Album
     )
     if not tracks:
         raise media_library.not_found()
-    card = (await cards(reader, [(album, len(tracks))]))[0]
+    duration = sum(max(0, t.duration_ms or 0) for t in tracks)
+    card = (await cards(reader, [(album, len(tracks), duration)]))[0]
     info = AlbumInfo(
         **card.model_dump(),
         mbid=album.mbid,
         match_state=album.match_state,  # type: ignore[arg-type]
     )
-    info.duration_ms = sum(max(0, t.duration_ms or 0) for t in tracks)
     return AlbumDetail(album=info, tracks=tracks)
 
 
 async def _albums_of(
-    session: AsyncSession, library_ids: list[uuid.UUID]
-) -> list[tuple[MediaAlbum, int]]:
+    reader: media_items.Reader, library_ids: list[uuid.UUID], key: str | None = None
+) -> list[tuple[MediaAlbum, int, int]]:
+    """De albums van deze bibliotheken (van één artiest als key er is) met (aantal, duur) van
+    wat nu zichtbaar is (_shown); een album zonder zichtbaar nummer ontbreekt."""
     if not library_ids:
         return []
     live = _live(library_ids)
-    rows = await session.execute(
-        select(MediaAlbum, live.c.n)
-        .join(live, live.c.album_id == MediaAlbum.id)
-        .where(MediaAlbum.library_id.in_(library_ids))
-    )
-    return [(album, count) for album, count in rows]
+    found = [
+        album
+        for album in (
+            await reader.session.scalars(
+                select(MediaAlbum)
+                .join(live, live.c.album_id == MediaAlbum.id)
+                .where(MediaAlbum.library_id.in_(library_ids))
+            )
+        ).all()
+        if album.album_artist and (key is None or artist_key(album.album_artist) == key)
+    ]
+    shown = await _shown(reader, found)
+    return [(album, *shown[album.id]) for album in found if album.id in shown]
 
 
-async def artists(session: AsyncSession, library: MediaLibrary) -> list[Artist]:
-    """De albumartiesten van een bibliotheek met het aantal albums, gesorteerd (Keuze 37)."""
+async def artists(reader: media_items.Reader, library: MediaLibrary) -> list[Artist]:
+    """De albumartiesten van een bibliotheek met het aantal albums, gesorteerd (Keuze 37).
+    Alleen albums met een nummer dat nu in de bibliotheek ligt (_shown)."""
     counts: Counter[str] = Counter()
     shown: dict[str, Counter[str]] = defaultdict(Counter)
-    for album, _ in await _albums_of(session, [library.id]):
-        if not album.album_artist:
-            continue
+    for album, _, _ in await _albums_of(reader, [library.id]):
         key = artist_key(album.album_artist)
         counts[key] += 1
         shown[key][album.album_artist] += 1
@@ -952,13 +1045,9 @@ async def artist_detail(
     else:
         libraries = [s.library for s in await media_library.seen(session, user)]
         libraries = [lib for lib in libraries if lib.kind == "music"]
-    found = [
-        (album, count)
-        for album, count in await _albums_of(session, [lib.id for lib in libraries])
-        if album.album_artist and artist_key(album.album_artist) == key
-    ]
+    found = await _albums_of(reader, [lib.id for lib in libraries], key)
     if not found:
         raise media_library.not_found()
     found.sort(key=lambda r: (r[0].year is None, r[0].year or 0, r[0].sort_title, str(r[0].id)))
-    name = Counter(album.album_artist for album, _ in found).most_common(1)[0][0]
+    name = Counter(album.album_artist for album, _, _ in found).most_common(1)[0][0]
     return ArtistDetail(name=name, albums=await cards(reader, found))

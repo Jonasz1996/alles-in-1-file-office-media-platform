@@ -26,7 +26,7 @@ from app.media.wire import Code, Op
 from app.media.worker.args import AudioInfoArgs
 from app.models import Blob, Job, MediaAlbum, MediaItem, MediaProbe
 from tests.media.fake_worker import OpError
-from tests.test_files import mkdir
+from tests.test_files import mkdir, root
 from tests.test_media_contract import media_app  # noqa: F401
 from tests.test_media_scanner import library, scan, upload, world  # noqa: F401
 from tests.test_media_sessions import blob_of, content, maker
@@ -137,6 +137,63 @@ def test_schijven_zonder_tags_uit_de_mappen():
     [album] = music.group(tracks)
     assert (album.title, album.album_artist, album.year) == ("Plaat", "Joop", 1999)
     assert album.tracks == [tracks[1].node_id, tracks[2].node_id, tracks[0].node_id]
+
+
+def test_een_schijf_achter_de_titel_splitst_het_album_niet():
+    """Review golf 4, C3: Artiest/Album/CD1 en CD2 met album="Album (Disc 1)" en "Album
+    (Disc 2)" werd twee albums met elk één schijf. Nu valt het schijfnummer achter de titel weg
+    als het nummer een schijf heeft (tag of map), en telt het als schijf als die er niet is."""
+    tags = {"album_artist": "Lot", "artist": "Lot"}
+    tracks = [
+        track("01.flac", "Lot", "Album", "CD2", album="Album (Disc 2)", track="1", **tags),
+        track("01.flac", "Lot", "Album", "CD1", album="Album (Disc 1)", track="1", **tags),
+        track("02.flac", "Lot", "Album", "CD1", album="Album (Disc 1)", track="2", **tags),
+    ]
+    [album] = music.group(tracks)
+    assert album.title == "Album" and album.album_artist == "Lot"
+    assert album.tracks == [tracks[1].node_id, tracks[2].node_id, tracks[0].node_id]
+    # zonder map per schijf, met een schijftag: ook één album
+    flat = [
+        track("1.flac", "Kim", "Plaat", album="Plaat [CD 1]", artist="Kim", disc="1"),
+        track("2.flac", "Kim", "Plaat", album="Plaat - cd2", artist="Kim", disc="2"),
+        track("3.flac", "Kim", "Plaat", album="Plaat (Disc 2 of 2)", artist="Kim", disc="2"),
+    ]
+    [album] = music.group(flat)
+    assert album.title == "Plaat" and len(album.tracks) == 3
+    # zonder schijf in tag of map blijft de titel zoals hij is (geen bewijs van een schijf)
+    alone = [track("1.flac", "Ed", "Losse", album="Losse CD 2", artist="Ed")]
+    [album] = music.group(alone)
+    assert album.title == "Losse CD 2"
+    # alleen een schijfnummer als titel: dat blijft de titel
+    only = [track("1.flac", "Ed", "CD1", album="CD 1", artist="Ed", disc="1")]
+    [album] = music.group(only)
+    assert album.title == "CD 1"
+
+
+def test_gastartiesten_maken_geen_compilatie():
+    """Review golf 4, C4: een album zonder albumartiest met "A", "A feat. B", "A feat. C",
+    "A feat. D" werd "Diverse artiesten" (vier verschillende artiesten). Nu telt de
+    hoofdartiest: het album hoort bij A."""
+    who = ["A", "A feat. B", "A ft. C", "A featuring D", "A (feat. E)", "A & F", "A, G"]
+    tracks = [
+        track(f"{i}.flac", "A", "Plaat", album="Plaat", artist=a, track=str(i))
+        for i, a in enumerate(who, 1)
+    ]
+    [album] = music.group(tracks)
+    assert (album.title, album.album_artist, album.compilation) == ("Plaat", "A", False)
+    # alleen nummers met een gast: de naam zonder gast
+    guests = [track(f"{i}.flac", "B", "Duet", album="Duet", artist=f"B feat. {g}")
+              for i, g in enumerate("XYZ")]  # fmt: skip
+    [album] = music.group(guests)
+    assert (album.album_artist, album.compilation) == ("B", False)
+    # een duo blijft een duo, en vier echte artiesten blijven een compilatie
+    duo = [track(f"{i}.flac", "SG", "Live", album="Live", artist="Simon & Garfunkel")
+           for i in range(3)]  # fmt: skip
+    [album] = music.group(duo)
+    assert (album.album_artist, album.compilation) == ("Simon & Garfunkel", False)
+    many = [track(f"{a}.flac", "Mix", album="Mix", artist=f"{a} feat. Q") for a in "KLMN"]
+    [album] = music.group(many)
+    assert album.compilation is True and album.album_artist == music.VARIOUS
 
 
 def test_hetzelfde_album_bij_twee_artiesten():
@@ -555,6 +612,56 @@ async def test_de_prullenbak(shelf, client):
     await music.regroup(settings, uuid.UUID(library_id))
     titles = [a["title"] for a in (await albums(client, headers, library_id))["items"]]
     assert titles == ["Abbey Road", "Gold", "Zomer"]
+
+
+@pytest.mark.anyio
+async def test_weg_uit_de_bibliotheek_telt_meteen_ook_voor_wie_via_een_deling_kijkt(shelf, client):
+    """Review golf 4, S3: Alice verhuist het album Gold naar een eigen map buiten de
+    bibliotheek. Vóór de volgende scan zag Bob (lezen via de deling) Gold nog in de lijst van
+    albums en ABBA bij de artiesten, terwijl /files hem al 404 gaf. Nu telt een lijst alleen de
+    nummers die nu onder de map van de bibliotheek liggen (de regel van golf 3, S4)."""
+    headers, library_id, nodes = shelf["headers"], shelf["library"], shelf["nodes"]
+    bob, bob_id = await person(client, headers, "bob@example.com")
+    await share_with(client, headers, shelf["folder"], user_id=bob_id, permission="read")
+    titles = [a["title"] for a in (await albums(client, bob, library_id))["items"]]
+    assert titles == ["Abbey Road", "Gold", "Zomer"]
+    private = await mkdir(client, headers, (await root(client, headers))["folder"]["id"], "Privé")
+    r = await client.patch(
+        f"/api/v1/files/{shelf['gold']}", json={"parent_id": private}, headers=headers
+    )
+    assert r.status_code == 200, r.text
+    assert (await client.get(f"/api/v1/files/{shelf['gold']}", headers=bob)).status_code == 404
+    # één nummer van Abbey Road in de prullenbak: de kaart telt het meteen niet meer
+    r = await client.delete(f"/api/v1/files/{nodes['together']}", headers=headers)
+    assert r.status_code == 204
+    # een nummer van Zomer in de prullenbak: de kaart telt twee nummers
+    r = await client.delete(f"/api/v1/files/{nodes['Anna']}", headers=headers)
+    assert r.status_code == 204
+    for who in (bob, headers):
+        for sort in ("title", "year", "added"):
+            page = await albums(client, who, library_id, sort=sort)
+            cards = {a["title"]: a for a in page["items"]}
+            assert set(cards) == {"Zomer"}, (sort, cards)
+            assert cards["Zomer"]["track_count"] == 2
+            assert cards["Zomer"]["duration_ms"] == 400_000
+        r = await client.get(f"/api/v1/media/libraries/{library_id}/artists", headers=who)
+        assert r.json() == [{"key": "diverse artiesten", "name": music.VARIOUS, "album_count": 1}]
+        for params in ({}, {"library": library_id}):
+            r = await client.get("/api/v1/media/artists/abba", params=params, headers=who)
+            assert r.status_code == 404 and r.json()["detail"]["code"] == "not_found", params
+        r = await client.get("/api/v1/media/artists/diverse artiesten", headers=who)
+        assert [(a["title"], a["track_count"]) for a in r.json()["albums"]] == [("Zomer", 2)]
+
+
+@pytest.mark.anyio
+async def test_een_pagina_vol_onzichtbare_albums_houdt_de_volgende(shelf, client, monkeypatch):
+    """S3: een pagina waarvan alle albums weg zijn, geeft toch een cursor naar de rest (zoals de
+    pagina's van M2: de pagina telt de rijen, niet wat zichtbaar blijft)."""
+    headers, library_id = shelf["headers"], shelf["library"]
+    monkeypatch.setattr(music, "ALBUMS_PAGE", 1)
+    r = await client.delete(f"/api/v1/files/{shelf['nodes']['together']}", headers=headers)
+    assert r.status_code == 204
+    assert await all_pages(client, headers, library_id, "title") == ["Gold", "Zomer"]
 
 
 @pytest.mark.anyio

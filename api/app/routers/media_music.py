@@ -77,12 +77,14 @@ async def album(
 
 
 @router.get("/libraries/{library_id}/artists", response_model=list[Artist])
-async def artists(library_id: uuid.UUID, user: CurrentUser, request: Request, session: Session):
+async def artists(
+    library_id: uuid.UUID, user: CurrentUser, request: Request, session: Session, settings: Config
+):
     runtime.require(request)
     found = await media_library.get_seen(session, user, library_id)
     if found.library.kind == "music":
         await music.refresh(session, found.library)
-    return await music.artists(session, found.library)
+    return await music.artists(media_items.Reader(session, settings, user), found.library)
 
 
 @router.get("/artists/{key}", response_model=ArtistDetail)
