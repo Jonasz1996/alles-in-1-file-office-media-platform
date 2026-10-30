@@ -201,8 +201,14 @@ interface Spec {
   bytes?: number;
 }
 
+/** Zo vaak mag de run wachten (sleep) in één test. Een lus die blijft wachten (een volle buffer
+ * zonder uitweg) faalt dan, en hangt niet: elke keer wachten geeft ook de timers van vitest een
+ * beurt (review golf 4, C7). */
+const SLEEPS_MAX = 200;
+
 function setup(specs: Spec[], opts: { fail?: Record<string, number> } = {}) {
   const audio = new FakeAudio();
+  let sleeps = 0;
   const released: string[] = [];
   const prepared: string[] = [];
   const tracks: string[] = [];
@@ -242,10 +248,13 @@ function setup(specs: Spec[], opts: { fail?: Record<string, number> } = {}) {
     onTrack: (key) => tracks.push(key),
     onError: (e) => errors.push(e),
     responseError: async (res) => Object.assign(new Error("fout"), { status: res.status }),
-    sleep: async () => {},
+    sleep: async () => {
+      if (++sleeps > SLEEPS_MAX) throw new Error("te vaak gewacht");
+      await new Promise((ok) => setTimeout(ok, 0));
+    },
   };
   const run = new GaplessRun(audio as unknown as HTMLMediaElement, make(specs[0]), 0, deps);
-  return { run, audio, released, prepared, tracks, errors, deps, fetchFn };
+  return { run, audio, released, prepared, tracks, errors, deps, fetchFn, waits: () => sleeps };
 }
 
 describe("de run", () => {
@@ -331,7 +340,7 @@ describe("de run", () => {
   it("een volle buffer: eerst wat achter de positie ligt eruit, dan opnieuw", async () => {
     FakeMediaSource.quota = 1500;
     try {
-      const { run, audio, prepared } = setup([
+      const { run, audio, prepared, errors } = setup([
         { key: "a", bytes: 1000, gapless: { rate: 1000, delay: 0, samples: 40_000 } },
         { key: "b", bytes: 1000 },
       ]);
@@ -346,9 +355,86 @@ describe("de run", () => {
       expect(sb.removed.some(([a, b]) => a === 0 && b > 0 && b <= 20 + 1e-9)).toBe(true);
       expect(sb.appends.map((x) => x.start)).toEqual([0, 40]);
       expect(FakeMediaSource.last!.ended).toBe(1);
+      expect(errors).toEqual([]);
     } finally {
       FakeMediaSource.quota = Number.POSITIVE_INFINITY;
     }
+  });
+
+  it("een volle buffer zonder iets achter de positie: wachten (begrensd), dan verder", async () => {
+    FakeMediaSource.quota = 1500;
+    try {
+      // a is kort (0–15): b komt meteen, maar past er pas bij als er gespeeld is
+      const { run, audio, errors, waits } = setup([
+        { key: "a", bytes: 1000, gapless: { rate: 1000, delay: 0, samples: 15_000 } },
+        { key: "b", bytes: 1000 },
+      ]);
+      run.start();
+      await settle();
+      const sb = FakeMediaSource.last!.buffer!;
+      expect(sb.appends).toHaveLength(1);
+      expect(waits()).toBeGreaterThan(0); // op 0 s ligt er niets achter de positie: wachten
+      expect(sb.removed).toEqual([]);
+      audio.tick(12); // 12 − BEHIND_S = 2: [0, 2) mag eruit (de nep heeft van a 1 s staan)
+      await settle();
+      expect(sb.removed).toEqual([[0, 1]]);
+      expect(sb.appends.map((x) => x.start)).toEqual([0, 15]);
+      expect(errors).toEqual([]);
+    } finally {
+      FakeMediaSource.quota = Number.POSITIVE_INFINITY;
+    }
+  });
+
+  it("wat al gespeeld is gaat eruit: alleen [0, begin van het huidige nummer), en pas 2 s erin", async () => {
+    const len = (s: number): Gapless => ({ rate: 1000, delay: 0, samples: s * 1000 });
+    // a 0–60, b 60–70, c 70–80, d 80–90, e 90–100
+    const { run, audio, prepared } = setup([
+      { key: "a", gapless: len(60) },
+      { key: "b", gapless: len(10) },
+      { key: "c", gapless: len(10) },
+      { key: "d", gapless: len(10) },
+      { key: "e", gapless: len(10) },
+    ]);
+    run.start();
+    await settle();
+    const sb = FakeMediaSource.last!.buffer!;
+    audio.tick(41); // b erbij
+    await settle();
+    expect(prepared).toEqual(["b"]);
+    // 1 s in b: c en d erbij, maar b speelt pas net: a blijft nog staan
+    audio.tick(61);
+    await settle();
+    expect(prepared).toEqual(["b", "c", "d"]);
+    expect(run.currentKey).toBe("b");
+    expect(sb.removed).toEqual([]);
+    // In c (70–80), 1 s ver: e erbij; c speelt nog geen 2 s, dus nog niets weg
+    audio.tick(71);
+    await settle();
+    expect(prepared).toEqual(["b", "c", "d", "e"]);
+    expect(sb.removed).toEqual([]);
+    // Een nieuwe run, verder in c: bij het laden gaat alleen wat vóór c ligt eruit
+    const later = setup([
+      { key: "a", gapless: len(60) },
+      { key: "b", gapless: len(10) },
+      { key: "c", gapless: len(30) },
+      { key: "d", gapless: len(10) },
+    ]);
+    later.run.start();
+    await settle();
+    const sb2 = FakeMediaSource.last!.buffer!;
+    later.audio.tick(41); // b
+    await settle();
+    later.audio.tick(61); // c (70–100)
+    await settle();
+    expect(later.prepared).toEqual(["b", "c"]);
+    later.audio.tick(72.5); // 2,5 s in c: d erbij (100 − 72,5 > 20, dus nog niet)
+    await settle();
+    expect(later.prepared).toEqual(["b", "c"]);
+    later.audio.tick(81); // d erbij, c speelt 11 s: [0, 70) eruit
+    await settle();
+    expect(later.prepared).toEqual(["b", "c", "d"]);
+    expect(later.run.currentKey).toBe("c");
+    expect(sb2.removed).toEqual([[0, 70]]);
   });
 
   it("een fout bij het laden: opnieuw met een nieuwe sessie, en dicht na drie keer", async () => {
