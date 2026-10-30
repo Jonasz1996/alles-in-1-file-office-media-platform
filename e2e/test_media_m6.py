@@ -450,18 +450,22 @@ def test_een_sprong_voorbij_de_cache_start_een_nieuwe_producent(
 ):
     owner, folder, context, page = setup(media, media_browsers, "M6 cache")
     plays = Plays(context)
-    path = loop_mkv(tmp_path, 25)  # 150 s; de producent loopt hooguit 60 s voor (LEAD_MS)
+    # 300 s; de producent loopt hooguit 60 s voor (LEAD_MS). De sprong gaat naar het midden: de
+    # nieuwe producent heeft dan meer dan 60 s voor zich, wacht op de tegendruk en leeft tot de
+    # sessie dicht is. Eerst ging de sprong naar 90 % van 150 s; de producent van de laatste 15 s
+    # was dan in ±90 ms klaar, en Encoders (elke 0,1 s) zag hem soms niet.
+    path = loop_mkv(tmp_path, 50)
     node = upload_path(media, owner, folder, path)
     path.unlink()
     with Encoders(media) as enc:
         watch(page, node)
         ready_state(page, "remux")
         out = plays.wait(page, 1)["out"]
-        assert out["duration_ms"] >= 140_000, out["duration_ms"]
+        assert out["duration_ms"] >= 290_000, out["duration_ms"]
         playing_past(page, 1.0)
         before = set(enc.lines)
-        page.keyboard.press("9")  # 90 %: 135 s, ver voorbij wat de producent maakte
-        target = out["duration_ms"] / 1000 * 0.9
+        page.keyboard.press("5")  # 50 %: 150 s, ver voorbij wat de producent maakte
+        target = out["duration_ms"] / 1000 * 0.5
         assert playing_past(page, target + 0.5) >= target
         page.wait_for_timeout(300)
         new = [line for pid, line in enc.lines.items() if pid not in before]
