@@ -50,6 +50,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import pytest
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import expect
 
 from media_harness import (
@@ -893,6 +894,15 @@ BUFFER_JS = """() => {
   return [t, t];
 }"""
 
+# Wat de video doet als hij niet verder komt: positie, readyState en de gebufferde stukken
+# (CI-run 41002597837 liet bij de timeout niets zien; een gat tussen twee stukken zie je hier)
+STUCK_JS = """() => {
+  const v = document.querySelector(".player-video"), b = v.buffered, r = [];
+  for (let i = 0; i < b.length; i++) r.push([+b.start(i).toFixed(4), +b.end(i).toFixed(4)]);
+  return {t: +v.currentTime.toFixed(4), ready: v.readyState, paused: v.paused, seeking: v.seeking,
+          error: v.error && v.error.code, buffered: r};
+}"""
+
 
 @pytest.mark.media
 def test_de_worker_gedood_tijdens_een_transcode(media, media_browsers, ffmpeg_count, tmp_path):
@@ -920,7 +930,12 @@ def test_de_worker_gedood_tijdens_een_transcode(media, media_browsers, ffmpeg_co
     assert wait_gone(running) == [], running  # geen ffmpeg over van de oude worker
     # Voorbij de buffer van toen: dat kan alleen met segmenten van de nieuwe worker
     limit_s = (end - at) + RESTART_LIMIT_S
-    playing_past(page, end + 1.0, timeout_ms=(limit_s + 5) * 1000)
+    try:
+        playing_past(page, end + 1.0, timeout_ms=(limit_s + 5) * 1000)
+    except PlaywrightTimeout as e:
+        stuck = page.evaluate(STUCK_JS)
+        why = f"niet voorbij {end + 1.0:.2f} s, buffer tot {end:.4f}: {stuck}"
+        raise AssertionError(why) from e
     took = time.monotonic() - killed
     print(f"worker weg: {end - at:.1f} s in de buffer, weer voorbij na {took:.1f} s")
     assert took <= limit_s, (took, at, end)
