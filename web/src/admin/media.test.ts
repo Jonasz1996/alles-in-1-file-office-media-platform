@@ -10,6 +10,7 @@ import {
   loadtestLines,
   loadtestOff,
   mergeImport,
+  missingProvider,
   parseConfigNumber,
   providerError,
   reasonColumns,
@@ -208,6 +209,29 @@ describe("de teksten van het tabblad", () => {
     expect(t("admin.media.jobs.files", { n: 2 })).toMatch(/^2 bestanden hebben/);
     await inLocale("en");
     expect(t("admin.media.jobs.files", { n: 2 })).toBe("2 files have a failed analysis, subtitle or preview images.");
+  });
+
+  it("Online metadata zonder bron: films en series zonder sleutel, muziek met MusicBrainz uit", async () => {
+    const off: MediaAdmin["providers"] = [
+      { name: "tmdb", key_set: false, last_ok: null, last_error: null, breaker: "closed" },
+      { name: "musicbrainz", key_set: false, last_ok: null, last_error: null, breaker: "closed" },
+      { name: "caa", key_set: false, last_ok: null, last_error: null, breaker: "closed" },
+    ];
+    const on = off.map((p) => ({ ...p, key_set: true }));
+    expect(missingProvider({ online: true, kind: "movies" }, off)).toBe("tmdb");
+    expect(missingProvider({ online: true, kind: "shows" }, off)).toBe("tmdb");
+    expect(missingProvider({ online: true, kind: "music" }, off)).toBe("musicbrainz");
+    expect(missingProvider({ online: true, kind: "videos" }, off)).toBeNull();
+    expect(missingProvider({ online: false, kind: "movies" }, off)).toBeNull();
+    expect(missingProvider({ online: true, kind: "movies" }, [])).toBe("tmdb");
+    for (const kind of ["movies", "shows", "music", "videos"] as const) {
+      expect(missingProvider({ online: true, kind }, on)).toBeNull();
+    }
+    expect(t("admin.media.libraries.noKey")).toContain("geen sleutel van TMDB");
+    expect(t("admin.media.libraries.musicbrainzOff")).toContain("MusicBrainz staat uit");
+    await inLocale("en");
+    expect(t("admin.media.libraries.noKey")).toContain("no TMDB key");
+    expect(t("admin.media.libraries.musicbrainzOff")).toContain("MusicBrainz is off");
   });
 
   it("meervouden en namen worden ingevuld", async () => {

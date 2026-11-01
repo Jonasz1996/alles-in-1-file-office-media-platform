@@ -551,6 +551,8 @@ export default {
       rescanLabel: "{name} opnieuw scannen",
       rescanned: "De scan van {name} staat klaar.",
       folder: "Map: {path}",
+      noKey: "Online metadata staat aan, maar er is geen sleutel van TMDB: deze bibliotheek houdt de lokale gegevens. Zet de sleutel bij Online metadata.",
+      musicbrainzOff: "Online metadata staat aan, maar MusicBrainz staat uit: deze bibliotheek houdt de lokale gegevens. Zet MusicBrainz aan bij Instellingen.",
       inside: "Let op: deze map ligt nu in {name}. De binnenste bibliotheek wint; zet de map terug als dat niet de bedoeling is.",
       kinds: {
         movies: "films",

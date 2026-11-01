@@ -543,6 +543,8 @@ const en: Translation<typeof nl> = {
       rescanLabel: "Scan {name} again",
       rescanned: "The scan of {name} is queued.",
       folder: "Folder: {path}",
+      noKey: "Online metadata is on, but there is no TMDB key: this library keeps its local data. Set the key under Online metadata.",
+      musicbrainzOff: "Online metadata is on, but MusicBrainz is off: this library keeps its local data. Turn MusicBrainz on under Settings.",
       inside: "Note: this folder is now inside {name}. The inner library wins; move the folder back if that was not intended.",
       kinds: {
         movies: "movies",

@@ -617,9 +617,23 @@ function rescan(id: string): Promise<unknown> {
   return api.request<unknown>("POST", `/api/v1/admin/media/libraries/${encodeURIComponent(id)}/scan`);
 }
 
+/** Welke bron een bibliotheek met Online metadata aan mist (integratie, punt 6; open punt 3 van
+ *  M8): films en series TMDB zonder sleutel, muziek MusicBrainz uit. Zonder die bron gebeurt er
+ *  niets (alleen lokale gegevens); null als er niets ontbreekt. */
+export function missingProvider(
+  lib: Pick<MediaAdmin["libraries"][number], "online" | "kind">,
+  providers: MediaAdmin["providers"],
+): "tmdb" | "musicbrainz" | null {
+  if (!lib.online) return null;
+  const name = lib.kind === "movies" || lib.kind === "shows" ? "tmdb" : lib.kind === "music" ? "musicbrainz" : null;
+  if (name === null) return null;
+  return providers.find((p) => p.name === name)?.key_set ? null : name;
+}
+
 function Libraries({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
   const heading = useRef<HTMLHeadingElement>(null);
   const act = useAction(reload, heading);
+  const missing = (lib: MediaAdmin["libraries"][number]) => missingProvider(lib, a.providers);
   return (
     <section aria-labelledby="admin-media-libraries">
       <Head id="admin-media-libraries" title={t("admin.media.libraries.title")} heading={heading} />
@@ -650,6 +664,10 @@ function Libraries({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
                     {lib.name}
                     {lib.path && <p className="muted">{t("admin.media.libraries.folder", { path: lib.path })}</p>}
                     {lib.inside && <p className="badge degraded">{t("admin.media.libraries.inside", { name: lib.inside })}</p>}
+                    {missing(lib) === "tmdb" && <p className="muted" data-media="no-key">{t("admin.media.libraries.noKey")}</p>}
+                    {missing(lib) === "musicbrainz" && (
+                      <p className="muted" data-media="no-key">{t("admin.media.libraries.musicbrainzOff")}</p>
+                    )}
                   </td>
                   <td>{lib.owner.display_name}</td>
                   <td className="wide-only">{t(`admin.media.libraries.kinds.${lib.kind}`)}</td>
