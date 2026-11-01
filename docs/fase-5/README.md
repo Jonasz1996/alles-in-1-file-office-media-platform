@@ -1,7 +1,8 @@
 # Fase 5 — Media en streaming
 
-Status: **golf 4 samengevoegd: M0 tot en met M7, en M9** (bouwontwerp revisie 2; 30 oktober
-2026). De review en de nacontrole van golf 4 zijn verwerkt.
+Status: **golf 5 samengevoegd: M0 tot en met M10** (bouwontwerp revisie 2; 1 november 2026).
+Alle pakketten van fase 5 staan op de tak. De review en de nacontrole van golf 5 komen nog; die van
+golf 4 zijn verwerkt.
 M0 is het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker,
 F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
 
@@ -41,10 +42,21 @@ F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
   MediaSource; de gegevens van `audio_info`, eigen lezers in de worker; `audio.mp4` via
   `remux_audio`). Bewezen voor FLAC en Opus in Chromium 141; alles met het toetsenbord
   ([toetsenbord-m9.md](toetsenbord-m9.md)).
+- **M8, metadata online** ([m8.md](m8.md)): TMDB, MusicBrainz en de Cover Art Archive via één
+  uitgaande client (alleen https, geen privé-adressen, een stroomonderbreker per provider), de
+  sleutel van TMDB versleuteld in de database en alleen in de header naar TMDB. Een online
+  bibliotheek koppelt vanzelf; wat twijfelt staat onder Nakijken, en Koppelen en Bewerken gaan
+  met het toetsenbord ([toetsenbord-m8.md](toetsenbord-m8.md)). Posters en hoezen komen via ons
+  eigen adres. Zonder sleutel (de standaard) blijft alles lokaal.
+- **M10, beheer en uitrol** ([m10.md](m10.md)): het tabblad Media op `/beheer` (de worker,
+  ffmpeg, de meting, wie er kijkt en Stop, de wachtrij, de bibliotheken, de cache, de providers
+  met de sleutel van TMDB, de import en de instellingen; [toetsenbord-m10.md](toetsenbord-m10.md)),
+  de meldingen, `app.cli media-status`, de belastingtest in de app, en media in `install.sh`
+  (bijwerken en terugrollen, met de installatietest), met het runbook
+  [media.md](../runbooks/media.md).
 
-De rest (M8 en M10: metadata online, beheer en uitrol) komt in de volgende golf. Media staat
-standaard uit: zonder `PLATFORM_MEDIA_ENABLED` is de app 0.6.0 plus F1–F4, en de previews van
-video's werken zoals in 0.6.0 (via een worker voor één keer, M1).
+Media staat standaard uit: zonder `PLATFORM_MEDIA_ENABLED` is de app 0.6.0 plus F1–F4, en de
+previews van video's werken zoals in 0.6.0 (via een worker voor één keer, M1).
 
 Bij het samenvoegen van golf 1 (M1, dan M3) gingen er geen bestanden van beide pakketten door
 elkaar; alleen `ci.yml` botste met het weghalen van de job `media-spike`. Wat er toen nog
@@ -299,6 +311,44 @@ samples bij FLAC en hooguit 0,014 bij Opus (grens 1), het eind ligt 0 en 1 sampl
 2). Jonas heeft de beslissingskaarten van fase 5 nog niet beantwoord: B39–B48 staan niet als
 besloten.
 
+Bij het samenvoegen van golf 5 (M8, dan M10) kwamen beide pakketten met cherry-pick, met hun
+eigen commits en boodschappen (zeven van M8, veertien van M10). Ze bouwden op `0f40abb`; daarna
+stond er één commit van de lead op de tak (`431ba5f`, een test van de bewaking), die geen bestand
+van M8 of M10 raakte. Eén botsing:
+`test_media_api_stubs.py` (M0), waar beide hun routes in `BUILT` zetten; beide bleven. Het
+contract van M8 voor M10 (`providers.status()` en de functies van `secrets.py`) klopte met wat
+M10 verwachtte. Wat er daarna nog gebeurde, staat onder "Bij het samenvoegen (golf 5)" in
+[m8.md](m8.md), [m10.md](m10.md) en [m2.md](m2.md):
+
+- **/beheer gebruikt de sleutelkluis van M8 rechtstreeks.** De omweg van M10 (`tmdb_hooks()`,
+  zonder M8 503) is weg. Na een sleutel die werkt (Bewaren of Testen) en na MusicBrainz aan
+  staat er meteen een ronde `media.lookup` klaar, niet pas na de housekeeping van 5 minuten.
+- **Een 401 bij het opzoeken staat op /beheer:** de melding `media_provider_auth`, en "auth" als
+  laatste fout (als zin, in NL en EN), ook als er al een netwerkfout stond.
+- **De bronvermelding van TMDB op /beheer** (Keuze 40): de zin en de link van M8 in het blok
+  Online metadata.
+- **Een 422 geeft de invoer niet meer terug** (`app/errors.py`, fase 3): een te lange sleutel of
+  een te lang wachtwoord stond in het antwoord van een validatiefout (open punt 5 van M8).
+- **De e2e van M8 zet de sleutel via /beheer**, met het toetsenbord, eerst fout en dan goed; het
+  hulpproces is weg. Dat vond twee fouten in de test zelf: Tab liep de hele pagina rond als de
+  focus al op het veld stond, en een 204 heeft geen body om te lezen.
+- **Nieuw: `test_media_beheer_samen.py`**: de routes van M10 tegen de echte kluis van M8 en de
+  nep-providers (de sleutel, een 401, 24 uur onbereikbaar, MusicBrainz aan).
+- **m2.md, afwijking 1 is dicht:** de import-e2e van M2 gaat sinds M10 via `/beheer`.
+
+Geen M0-hotfix bij het samenvoegen, geen migratie. De M0-hotfixes van de pakketten zelf staan in
+[m8.md](m8.md) en [m10.md](m10.md). De uitslag op de samengevoegde stand, in de sandbox: api 3767
+goed en 2 overgeslagen (ruff en format schoon, ook `../e2e`); `-m media` (onder `taskset -c
+0-2`, twee keer) 175 goed; web groen (907 tests, eerste lading JS 96,4 van 100 KB, de route
+Bestanden 43,6 van 45 KB, `/kijken` 25,5 van 45 KB, de speler 25,1 van 35 KB, muziek 30,5 van
+40 KB, i18n strikt zonder meldingen); de e2e van fase 3 en 4 110 goed; `-m office` 30 goed; e2e
+`-m media` 63 goed en 4 overgeslagen (alle vier H.264, dat Chromium 141 niet kan), met
+`test_media_m8.py` los drie keer na elkaar groen. Het image met de installatietest
+(`media-image`), de worker-container en Chrome for Testing ziet pas CI ([m10.md](m10.md), "Wat
+alleen CI kan bewijzen"). Jonas heeft de beslissingskaarten van fase 5 nog niet beantwoord: M8 en
+M10 bouwen op de standaarden (de import kopieert; geen TMDB-sleutel, alleen lokale metadata);
+B39–B48 staan niet als besloten.
+
 ## Doel
 
 Films, series en muziek afspelen op elk apparaat, met zo weinig mogelijk omzetten. Uit het
@@ -403,5 +453,10 @@ worker, de kosten van de bron, de tijden van fMP4, en de eerste start op 3 cores
   [toetsenbord-m7.md](toetsenbord-m7.md) voor het toetsenbord.
 - [m9.md](m9.md): muziek en gapless (M9), met de meting van gapless in de browser;
   [toetsenbord-m9.md](toetsenbord-m9.md) voor het toetsenbord.
+- [m8.md](m8.md): metadata online (M8), met het contract voor /beheer;
+  [toetsenbord-m8.md](toetsenbord-m8.md) voor het toetsenbord.
+- [m10.md](m10.md): beheer en uitrol (M10), met de installatietest en wat alleen CI bewijst;
+  [toetsenbord-m10.md](toetsenbord-m10.md) voor het toetsenbord, en het runbook
+  [media.md](../runbooks/media.md).
 - [e2e.md](e2e.md): de tests van media (de markers `media`, `media_perf` en `provider_real`),
   het harnas, de nep-servers, de jobs in CI, en hoe je ze lokaal draait.
