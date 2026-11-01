@@ -11,6 +11,7 @@ import {
   loadtestOff,
   mergeImport,
   parseConfigNumber,
+  providerError,
   reasonColumns,
 } from "./MediaTab";
 
@@ -113,6 +114,18 @@ describe("de doelmap van de import", () => {
     expect(importTarget(bert, me, { id: "films" })).toBe("bert-root");
     expect(importTarget(null, me, null)).toBeNull();
     expect(importTarget({ id: "x", root_id: "" }, me, null)).toBeNull();
+  });
+});
+
+describe("de laatste fout van een provider (golf 5: de staat van M8)", () => {
+  it("de sleutel die niet meer werkt in de taal van de app, de rest zoals de server hem geeft", async () => {
+    expect(providerError(null)).toBe("");
+    expect(providerError(undefined)).toBe("");
+    expect(providerError("auth")).toBe("De sleutel van de online metadata werkt niet meer.");
+    expect(providerError("media_provider_auth")).toBe("De sleutel van de online metadata werkt niet meer.");
+    expect(providerError("tmdb: time-out")).toBe("tmdb: time-out");
+    await inLocale("en");
+    expect(providerError("auth")).toBe("The key for online metadata no longer works.");
   });
 });
 

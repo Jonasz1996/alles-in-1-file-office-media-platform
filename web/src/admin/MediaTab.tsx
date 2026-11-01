@@ -40,6 +40,7 @@ import type {
   SessionView,
   WorkClass,
 } from "../media/types";
+import { TmdbAttribution } from "../media/match/Attribution";
 import { Button } from "../ui/Button";
 import { confirm } from "../ui/dialogs";
 import { Field } from "../ui/Field";
@@ -101,6 +102,15 @@ export function mergeImport(current: ImportView | null, data: Record<string, unk
 export function loadtestOff(e: unknown): boolean {
   const err = (typeof e === "object" && e !== null ? e : {}) as { code?: unknown; params?: Record<string, unknown> };
   return err.code === "media_off" && err.params?.reason === "loadtest";
+}
+
+/** De laatste fout van een provider (admin.provider_views): "auth" is de sleutel die niet meer werkt
+ * (secrets.status van M8: ok false), in de taal van de app; de rest is een vaste reden van http.py
+ * (Nederlands, nooit tekst van buiten). Bij het samenvoegen van golf 5. */
+export function providerError(error: string | null | undefined): string {
+  if (!error) return "";
+  if (error === "auth" || error === "media_provider_auth") return t("admin.notice.media_provider_auth");
+  return error;
 }
 
 interface Phase {
@@ -727,6 +737,20 @@ function Providers({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
   const act = useAction(reload, heading);
   const [key, setKey] = useState("");
   const tmdb = a.providers.find((p) => p.name === "tmdb");
+  // De bronvermelding van TMDB (Keuze 40: op /beheer en bij de gegevens van een item) is die van
+  // M8 (media/match/Attribution.tsx), met zijn woorden in het gebied "media"; /beheer laadt alleen
+  // "admin", dus eerst dat gebied (bij het samenvoegen van golf 5)
+  const [credits, setCredits] = useState(false);
+  useEffect(() => {
+    let live = true;
+    loadAreas(["media"]).then(
+      () => live && setCredits(true),
+      () => undefined, // zonder het gebied geen regel; de rest van het blok werkt gewoon
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
 
   function save(e: FormEvent) {
     e.preventDefault();
@@ -780,13 +804,14 @@ function Providers({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
                       : t("admin.media.providers.no")}
                 </td>
                 <td className="wide-only">{p.last_ok ? fmt.dateTime(p.last_ok) : t("admin.media.providers.never")}</td>
-                <td className="wrap">{p.last_error ?? ""}</td>
+                <td className="wrap">{providerError(p.last_error)}</td>
                 <td className="wide-only">{t(`admin.media.providers.breakers.${p.breaker}`)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {credits && <TmdbAttribution />}
       <h4>{t("admin.media.providers.tmdbTitle")}</h4>
       <form className="stack" onSubmit={save}>
         <Field label={t("admin.media.providers.tmdbKey")} hint={t("admin.media.providers.tmdbHelp")}>
