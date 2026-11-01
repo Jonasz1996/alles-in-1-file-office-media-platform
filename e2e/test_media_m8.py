@@ -5,9 +5,11 @@ Klaar als (§2 M8): met de nep-server krijgt een bibliotheek van 20 films met sc
 ≥ 18 vanzelf goed, en de rest staat onder "Nakijken". Handmatig koppelen werkt. De sleutel
 verlaat de server alleen in de header naar TMDB.
 
-1. De sleutel: er is geen route voor (/beheer is van M10), dus zet een hulpproces met de
-   omgeving van de app hem met `secrets.save_tmdb` (zoals de cli dat zou doen), de sleutel via
-   stdin. Eerst een foute: die wordt niet bewaard. Dan de goede (van de nep-providers).
+1. De sleutel, zoals Jonas hem invult (Keuze 40): /beheer → Media → Online metadata (M10), met
+   Tab naar het veld, de sleutel typen en Enter. Eerst een foute: 422 `media_provider_auth`, de
+   melding in het blok, en er is niets bewaard. Dan de goede (van de nep-providers): bewaard, het
+   veld weer leeg, de sleutel nergens in de pagina, en de bronvermelding van TMDB staat erbij.
+   (Tot het samenvoegen van golf 5 deed een hulpproces dit met `secrets.save_tmdb`.)
 2. 20 films met scene-namen (dezelfde lijst als api/tests/test_media_match.py) in een
    bibliotheek met online opzoeken. Niemand duwt: de haak op de wijziging en de rij media_net
    van de app doen het. ≥ 18 gekoppeld met het goede id van TMDB, met een poster via ons eigen
@@ -20,10 +22,11 @@ verlaat de server alleen in de header naar TMDB.
    bewaart. Terug op de bibliotheek staat er nog 1 onder Nakijken.
 4. De sleutel: alle verzoeken naar TMDB met `Authorization: Bearer`, geen `api_key` in een
    adres, niets naar de plaatjes, MusicBrainz of CAA met een sleutel; de sleutel staat niet in
-   de log van de server, niet in de database (versleuteld), niet in de pagina en niet in de
-   uitvoer van het hulpproces.
+   de log van de server, niet in de database (versleuteld), niet in de pagina's (ook niet op
+   /beheer) en niet in een antwoord van de API.
 
-Na de test is de sleutel weer weg (de fixture): de andere mediatests draaien zonder provider.
+Na de test is de sleutel weer weg (de fixture, met DELETE …/admin/media/tmdb): de andere
+mediatests draaien zonder provider.
 """
 
 from __future__ import annotations
@@ -32,8 +35,6 @@ import json
 import re
 import secrets
 import sqlite3
-import subprocess
-import sys
 import time
 import uuid
 from collections.abc import Iterator
@@ -43,7 +44,6 @@ from typing import Any
 import pytest
 from playwright.sync_api import expect
 
-from conftest import API_DIR
 from media_harness import open_app
 from test_media_m2 import tab_to
 from test_media_m3 import upload_bytes
@@ -60,90 +60,76 @@ ATTRIBUTION = "This product uses the TMDB API but is not endorsed or certified b
 LOADED_JS = "(img) => img.complete && img.naturalWidth > 0"
 ART = "/api/v1/media/art/"
 
-# Het hulpproces: de omgeving van de app (dezelfde datamap en hetzelfde app-geheim), de
-# uitgaande client van de app, en secrets van M8. De sleutel komt via stdin, nooit in argv.
-HELPER = r"""
-import asyncio, json, sys
-
-from sqlalchemy.ext.asyncio import async_sessionmaker
-
-from app.config import get_settings
-from app.db import get_engine
-from app.media.providers import http, secrets
-from app.media.providers.base import ProviderAuth, ProviderUnavailable
+# De sleutel op /beheer → Media → Online metadata (M10; Keuze 40)
+TMDB_FIELD = "input[name=tmdb-key]"
+TMDB_ROUTE = "/api/v1/admin/media/tmdb"
+AUTH_TEXT = "De sleutel van de provider werkt niet"
 
 
-async def main(action):
-    settings = get_settings()
-    out = http.Outbound(settings)
-    http.use(out)
-    engine = get_engine(settings)
-    result = "ok"
-    try:
-        async with async_sessionmaker(engine)() as session:
-            if action == "save":
-                try:
-                    await secrets.save_tmdb(session, settings, sys.stdin.read())
-                except ProviderAuth:
-                    result = "auth"
-                except ProviderUnavailable:
-                    result = "unavailable"
-            elif action == "forget":
-                await secrets.forget_tmdb(session)
-            state = await secrets.status(session, settings)
-    finally:
-        await out.aclose()
-        await engine.dispose()
-    print(json.dumps({"result": result, "status": state}))
+def tmdb_on_beheer(page: Any, key: str) -> tuple[int, str]:
+    """Met Tab naar het veld van de sleutel, typen, Enter: (status, body) van PUT …/tmdb, de
+    body meteen gelezen."""
+    tab_to(page, TMDB_FIELD, presses=200)
+    page.keyboard.type(key)
+    with page.expect_response(
+        lambda r: r.request.method == "PUT" and r.url.endswith(TMDB_ROUTE)
+    ) as saved:
+        page.keyboard.press("Enter")
+    response = saved.value
+    return response.status, response.text()
 
 
-asyncio.run(main(sys.argv[1]))
-"""
-
-
-def tmdb_secret(media: Any, action: str, key: str = "") -> dict[str, Any]:
-    """save (met de sleutel op stdin) of forget, in een eigen proces met de omgeving van de app.
-    Geeft {"result", "status"}; de uitvoer mag de sleutel nooit bevatten."""
-    proc = subprocess.run(
-        [sys.executable, "-c", HELPER, action],
-        cwd=API_DIR,
-        env=media.server.environment(),
-        input=key,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    if key:
-        assert key not in proc.stdout and key not in proc.stderr, "de sleutel in de uitvoer"
-    assert proc.returncode == 0, proc.stderr[-2000:]
-    return json.loads(proc.stdout.strip().splitlines()[-1])
+def tmdb_view(media: Any) -> dict[str, Any]:
+    """De regel van TMDB in het overzicht van /beheer (nooit de sleutel zelf)."""
+    r = media.server.call(media.admin, "GET", "/api/v1/admin/media", expect=200)
+    [tmdb] = [p for p in r.json()["providers"] if p["name"] == "tmdb"]
+    return tmdb
 
 
 @pytest.fixture
-def tmdb_key(media: Any, fake_providers: Any) -> Iterator[str]:
-    """Eerst een foute sleutel (niet bewaard), dan de goede van de nep-providers; na de test
-    weer weg, en de nep-server zonder fouten."""
+def tmdb_key(media: Any, media_browsers: Any, fake_providers: Any) -> Iterator[str]:
+    """Op /beheer: eerst een foute sleutel (niet bewaard), dan de goede van de nep-providers; na
+    de test weer weg, en de nep-server zonder fouten."""
     fake_providers.clear_faults()
     fake_providers.clear_log()
+    page = media_browsers.context_as(media.admin).new_page()
+    page.goto("/beheer/media")
+    expect(page.locator("[data-media=worker-state]")).to_be_visible()
+    block = page.locator("section[aria-labelledby=admin-media-providers]")
+    expect(block.locator("[data-attribution]")).to_contain_text(ATTRIBUTION)
+    expect(block.get_by_role("link", name="Gegevens: TMDB")).to_have_attribute(
+        "href", "https://www.themoviedb.org/"
+    )
+
     wrong = "e2e-fout-" + secrets.token_urlsafe(24)
-    out = tmdb_secret(media, "save", wrong)
-    assert out == {"result": "auth", "status": {"set": False, "set_at": None, "ok": None}}
+    status, body = tmdb_on_beheer(page, wrong)
+    assert status == 422 and json.loads(body)["detail"]["code"] == "media_provider_auth", body
+    assert wrong not in body
+    expect(block.get_by_role("alert")).to_have_text(AUTH_TEXT)
+    assert tmdb_view(media)["key_set"] is False
     tried = [e for e in fake_providers.log() if e["service"] == "tmdb"]
     assert tried and all(e["auth"] == "bearer" and not e["auth_ok"] for e in tried), tried
     assert {e["status"] for e in tried} == {401}
     fake_providers.clear_log()
 
     key = fake_providers.tmdb_key
-    out = tmdb_secret(media, "save", key)
-    assert out["result"] == "ok"
-    assert out["status"]["set"] is True and out["status"]["ok"] is True
+    page.locator(TMDB_FIELD).fill("")  # het veld houdt een foute sleutel vast; weer leeg
+    status, body = tmdb_on_beheer(page, key)
+    assert status == 204, body
+    saved = page.locator(".toast-message", has_text="De sleutel is bewaard en werkt.")
+    expect(saved).to_be_visible()
+    expect(page.locator(TMDB_FIELD)).to_have_value("")
+    expect(block.get_by_role("alert")).to_have_count(0)
+    shown = tmdb_view(media)
+    assert shown["key_set"] is True and shown["last_error"] is None, shown
+    assert key not in page.content()
+    page.close()
     try:
         yield key
     finally:
         fake_providers.clear_faults()
-        gone = tmdb_secret(media, "forget")
-        assert gone["status"]["set"] is False
+        media.server.call(media.admin, "DELETE", TMDB_ROUTE, expect=204)
+        assert tmdb_view(media)["key_set"] is False
         log = media.server.log_path.read_text(errors="replace")
         assert wrong not in log
 
