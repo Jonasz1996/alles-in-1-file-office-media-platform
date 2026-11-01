@@ -15,6 +15,7 @@ from fastapi.routing import iter_route_contexts
 from app.config import MediaConfig
 from app.main import app
 from app.media import types as t
+from app.media.loadtest import LoadtestPlay, LoadtestPlayIn
 from app.media.state import MediaState
 from tests.test_files import put, root
 from tests.test_public import new_link, open_link
@@ -264,6 +265,17 @@ ENDPOINTS = [
         t.Accepted,
         202,
     ),
+    # M10 (M0-hotfix, alleen deze test): een sessie op een bron van de belastingtest, voor de
+    # spelers buiten de app (fase c van §4.6); de vormen staan in app/media/loadtest.py
+    (
+        "POST",
+        "/api/v1/admin/media/loadtest/play",
+        {"source": 0},
+        "admin",
+        LoadtestPlayIn,
+        LoadtestPlay,
+        None,
+    ),
 ]
 
 VALUES = {"sha": SHA, "size": "w342", "key": "abba"}
@@ -370,6 +382,23 @@ BUILT = {
     ("POST", "/api/v1/media/shows/{show_id}/match"),
     ("GET", "/api/v1/media/libraries/{library_id}/review"),
     ("GET", "/api/v1/media/art/{sha}/{size}.webp"),
+    # M10 (M0-hotfix, alleen deze test): test_admin_media.py, test_media_loadtest.py. Met media
+    # aan in de omgeving werken het overzicht en de knoppen; de meting, de import en de
+    # belastingtest geven met MediaConfig.enabled uit nog steeds 503 media_off
+    ("GET", "/api/v1/admin/media"),
+    ("PUT", "/api/v1/admin/media/config"),
+    ("POST", "/api/v1/admin/media/bench"),
+    ("DELETE", "/api/v1/admin/media/sessions/{session_id}"),
+    ("POST", "/api/v1/admin/media/retry"),
+    ("POST", "/api/v1/admin/media/cache/clear"),
+    ("PUT", "/api/v1/admin/media/tmdb"),
+    ("DELETE", "/api/v1/admin/media/tmdb"),
+    ("POST", "/api/v1/admin/media/tmdb/test"),
+    ("GET", "/api/v1/admin/media/import/sources"),
+    ("POST", "/api/v1/admin/media/import"),
+    ("GET", "/api/v1/admin/media/loadtest"),
+    ("POST", "/api/v1/admin/media/loadtest"),
+    ("POST", "/api/v1/admin/media/loadtest/play"),
 }
 
 

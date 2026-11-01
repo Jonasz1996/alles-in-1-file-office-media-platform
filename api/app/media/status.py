@@ -1,23 +1,34 @@
-"""app.cli media-status [--wait N] [--sessions]. Stub van M0; M10 bouwt het.
+"""app.cli media-status [--wait N] [--sessions] (M10, Keuze 47).
 
-collect geeft een dict met minstens enabled, worker, ok (alles goed, of media staat uit) en
-lines (wat de cli print, in het Nederlands). wait: hooguit zoveel seconden wachten tot de worker
-er is (na de start, Keuze 47). sessions: ook wie er nu kijkt (een waarschuwing vóór een update).
+collect geeft een dict met enabled, worker, ok (alles goed, of media staat uit), caps, lines
+(wat de cli print, in het Nederlands) en exit (de exitcode). De eerste regel blijft zoals het
+harnas en de job media-image hem lezen: "Media: aan (afgeschermd, ffmpeg 7.1.5)", "Media: uit",
+of "Media: aan, maar de worker is niet bereikbaar (…)". Daarna, als het zo is: een GPU die de
+worker ziet (nooit een eis, en nog niet in gebruik), wat ontbreekt, en met --sessions wie er nu
+kijkt.
 
-De stub van M0 zegt of media aan staat en vraagt de worker om caps, over dezelfde socket als de
-app (Settings.media_socket). Zo ziet het harnas (e2e en de job media-image) dat de worker er is
-en wat hij kan. M10 maakt er de echte status van (afgeschermd, GPU, sessies, meldingen).
+- wait: hooguit zoveel seconden wachten tot de worker er is (na de start, Keuze 47). Met wait is
+  de exitcode altijd 0, ook bij een probleem: install.sh print dan de regels en gaat door (het
+  stopt nooit door media). Zonder wait: 0 als alles goed is, anders 1.
+- sessions: de sessies staan in het geheugen van de app, niet in de database. De cli vraagt ze
+  daarom aan de draaiende app (GET /api/v1/admin/media op 127.0.0.1), met een kort access-token
+  van een beheerder dat hij zelf tekent (hij draait in dezelfde container, met hetzelfde
+  geheim). Dat token komt nooit in een regel of een log. Lukt het niet (de app draait niet,
+  geen beheerder), dan zegt een regel dat, en is het geen fout: vóór de eerste installatie kijkt
+  er ook niemand.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from typing import Any
 
 from app.config import Settings
 
 RETRY = 0.5  # seconden tussen twee pogingen zolang wait loopt
+SESSIONS_TIMEOUT = 5.0
 # Alleen een geslaagde zelftest (M1) is afgeschermd; zonder is het geen bewijs (review S6)
 SANDBOX_TEXT = {
     "on": "afgeschermd",
@@ -45,28 +56,115 @@ async def _caps(settings: Settings, wait: float) -> tuple[Any, str]:
         await asyncio.sleep(RETRY)
 
 
+async def admin_token(settings: Settings, minutes: int = 5) -> str | None:
+    """Een kort access-token van de eerste actieve beheerder, voor de cli die de draaiende app
+    iets vraagt (de sessies, de belastingtest met --extern). Een eigen login-familie die nergens
+    in de database staat: er valt niets in te trekken, en het verloopt vanzelf. None zonder
+    beheerder."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.db import get_engine
+    from app.models import User
+    from app.security import _encode
+
+    maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
+    async with maker() as session:
+        user = await session.scalar(
+            select(User)
+            .where(User.role == "admin", User.disabled_at.is_(None))
+            .order_by(User.created_at)
+            .limit(1)
+        )
+    if user is None:
+        return None
+    claims = {"sub": str(user.id), "role": user.role, "typ": "access", "fam": str(uuid.uuid4())}
+    return _encode(settings, claims, minutes)
+
+
+def app_url(settings: Settings) -> str:
+    return f"http://127.0.0.1:{settings.http_port}"
+
+
+async def watching(settings: Settings, base: str | None = None) -> tuple[list[dict] | None, str]:
+    """(de open sessies volgens de draaiende app, of None met de reden)."""
+    import httpx
+
+    try:
+        token = await admin_token(settings)
+    except Exception as exc:  # geen database (nog niet geïnstalleerd)
+        return None, f"geen database ({exc.__class__.__name__})"
+    if token is None:
+        return None, "er is nog geen beheerder"
+    url = (base or app_url(settings)) + "/api/v1/admin/media"
+    try:
+        async with httpx.AsyncClient(timeout=SESSIONS_TIMEOUT) as http:
+            r = await http.get(url, headers={"Authorization": f"Bearer {token}"})
+    except httpx.HTTPError as exc:
+        return None, f"de app antwoordt niet ({exc.__class__.__name__})"
+    if r.status_code != 200:
+        return None, f"de app gaf {r.status_code}"
+    return list(r.json().get("sessions") or []), ""
+
+
+def session_line(s: dict) -> str:
+    who = (s.get("user") or {}).get("display_name") or "?"
+    what = s.get("title") or "?"
+    mode = s.get("mode") or "?"
+    rung = s.get("rung") or {}
+    if mode == "transcode" and rung.get("height"):
+        mode = f"transcode {rung['height']}p"
+    return f"  {who}: {what} ({mode})"
+
+
+def sessions_lines(found: list[dict] | None, reason: str) -> list[str]:
+    if found is None:
+        return [f"Kijkers: onbekend ({reason})"]
+    if not found:
+        return ["Kijkers: niemand"]
+    who = "kijkt nu 1 persoon" if len(found) == 1 else f"kijken nu {len(found)} mensen"
+    lines = [
+        f"Let op: er {who}. Bij het bijwerken staat de stroom tot ±60 s stil; de speler"
+        " probeert het zelf opnieuw."
+    ]
+    return lines + [session_line(s) for s in found]
+
+
 async def collect(settings: Settings, *, sessions: bool = False, wait: float = 0) -> dict[str, Any]:
     """De staat van media voor de cli."""
+    from app.media.admin import gpu_text
+
     if not settings.media_enabled:
-        return {"enabled": False, "worker": "off", "ok": True, "lines": ["Media: uit"]}
+        return {"enabled": False, "worker": "off", "ok": True, "lines": ["Media: uit"], "exit": 0}
     caps, reason = await _caps(settings, wait)
     if caps is None:
-        return {
+        out: dict[str, Any] = {
             "enabled": True,
             "worker": "down",
             "ok": False,
             "caps": None,
             "lines": [f"Media: aan, maar de worker is niet bereikbaar ({reason})"],
         }
-    missing = list(caps.missing)
-    where = SANDBOX_TEXT.get(caps.sandbox, SANDBOX_TEXT["unchecked"])
-    lines = [f"Media: aan ({where}, ffmpeg {caps.ffmpeg or 'ontbreekt'})"]
-    if missing:
-        lines.append("Let op: de worker mist " + ", ".join(missing))
-    return {
-        "enabled": True,
-        "worker": "ffmpeg_missing" if caps.ffmpeg is None or missing else "ok",
-        "ok": caps.ffmpeg is not None and not missing,
-        "caps": caps.model_dump(mode="json"),
-        "lines": lines,
-    }
+    else:
+        missing = list(caps.missing)
+        where = SANDBOX_TEXT.get(caps.sandbox, SANDBOX_TEXT["unchecked"])
+        lines = [f"Media: aan ({where}, ffmpeg {caps.ffmpeg or 'ontbreekt'})"]
+        gpu = gpu_text(caps)
+        if gpu != "geen":  # media gebruikt hem (nog) niet en heeft hem nooit nodig
+            lines.append(f"GPU: {gpu} (niet in gebruik)")
+        if missing:
+            lines.append("Let op: de worker mist " + ", ".join(missing))
+        out = {
+            "enabled": True,
+            "worker": "ffmpeg_missing" if caps.ffmpeg is None or missing else "ok",
+            "ok": caps.ffmpeg is not None and not missing,
+            "caps": caps.model_dump(mode="json"),
+            "lines": lines,
+        }
+    if sessions:
+        found, why = await watching(settings)
+        out["sessions"] = found
+        out["lines"] = [*out["lines"], *sessions_lines(found, why)]
+    # Met wait (na de start in install.sh) nooit een fout: de regels zeggen wat er is
+    out["exit"] = 0 if wait > 0 or out["ok"] else 1
+    return out

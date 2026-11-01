@@ -183,10 +183,13 @@ class _Scan:
 
 
 def media_bytes(settings: Settings) -> int:
-    """De haak voor het deel media (fase 5): de cache onder <data_dir>/media. M10 meet het en
-    zet het in StorageParts; tot dan 0, en /beheer is precies dat van 0.6.0. Draait in de
-    thread van _scan."""
-    return 0
+    """Het deel media (fase 5, M10): alles onder <data_dir>/media (de stukken van sessies,
+    audio, sprites, hoezen, ondertitels en de bronnen van de belastingtest). Het telt mee in wat
+    bekend is, zodat het niet als "overig" geteld wordt; de verdeling per soort staat op het
+    tabblad Media (CacheView). Zonder die map 0, en /beheer is precies dat van 0.6.0. Draait in
+    de thread van _scan."""
+    base = settings.media_dir
+    return dir_bytes(base) if base.is_dir() else 0
 
 
 def _scan(settings: Settings) -> _Scan:

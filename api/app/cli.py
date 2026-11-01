@@ -248,7 +248,8 @@ def _media(settings: Settings, args: argparse.Namespace) -> int:
             )
             for line in found.get("lines", []):
                 print(line)
-            return 0 if found.get("ok", False) else 1
+            # M10 (M0-hotfix): status zegt zelf de exitcode (0 met --wait, ook bij een probleem)
+            return int(found.get("exit", 0 if found.get("ok", False) else 1))
         if args.command == "media-provider-check":
             found = _media_run(settings, lambda: providers.check(settings, record=args.opnemen))
             for name, state in found.items():
