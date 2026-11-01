@@ -95,3 +95,27 @@ async def test_gewone_fout_heeft_code(client, admin):
     r = await client.get(f"/api/v1/files/{uuid.uuid4()}", headers=headers)
     assert r.status_code == 404
     assert r.json() == {"detail": {"message": "Niet gevonden", "code": "not_found"}}
+
+
+@pytest.mark.anyio
+async def test_validatiefout_geeft_de_invoer_niet_terug(client, admin):
+    """De afgewezen waarde staat niet in het antwoord: pydantic zet hem in `input`, en dat kan
+    een wachtwoord of de sleutel van TMDB zijn (Keuze 40: nooit terug in een antwoord).
+    errors.invalid_input laat hem weg (bij het samenvoegen van golf 5, open punt 5 van m8.md)."""
+    headers, _ = admin
+    secret = "geheim-van-jonas-" + "x" * 1000  # te lang voor TmdbKeyIn (hooguit 1000)
+    r = await client.put("/api/v1/admin/media/tmdb", json={"key": secret}, headers=headers)
+    assert r.status_code == 422
+    assert code_of(r) == "invalid_input"
+    assert params_of(r) == {"field": "body.key"}
+    found = r.json()["detail"]["errors"]
+    assert found and found[0]["type"] == "string_too_long"
+    assert all("input" not in e for e in found)
+    assert "geheim-van-jonas" not in r.text
+
+    password = "wachtwoord-" + "y" * 200  # te lang voor CodeAndPassword (hooguit 200)
+    body = {"code": "123456", "password": password}
+    r = await client.post("/api/v1/auth/2fa/enable", json=body, headers=headers)
+    assert r.status_code == 422 and code_of(r) == "invalid_input"
+    assert params_of(r) == {"field": "body.password"}
+    assert "wachtwoord-" not in r.text

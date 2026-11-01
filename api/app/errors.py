@@ -90,9 +90,13 @@ def _own_message(raw: list) -> str | None:
 
 
 async def invalid_input(_request: Request, exc: RequestValidationError) -> JSONResponse:
-    """422 voor een verzoek dat niet door de validatie komt, in de vorm van fail()."""
+    """422 voor een verzoek dat niet door de validatie komt, in de vorm van fail().
+
+    Zonder `input`: pydantic zet de afgewezen waarde erin, en dat kan een wachtwoord of de
+    sleutel van TMDB zijn (een te lange in PUT /api/v1/admin/media/tmdb; Keuze 40: de sleutel
+    komt nooit terug in een antwoord). Niemand leest hem (fase 5, golf 5)."""
     raw = list(exc.errors())
-    found = jsonable_encoder(raw)
+    found = [{k: v for k, v in e.items() if k != "input"} for e in jsonable_encoder(raw)]
     first = found[0] if found else {}
     detail = {
         "message": _own_message(raw) or INVALID_INPUT,
