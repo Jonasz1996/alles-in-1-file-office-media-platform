@@ -567,3 +567,40 @@ async def test_transport_van_de_kit_is_de_nep(fake):
     async with httpx.AsyncClient(transport=kit.transport(fake)) as client:
         response = await client.get("https://evil.example/x")
     assert response.status_code == 404
+
+
+# --- de staat voor /beheer en de meldingen (het contract met M10) ---------------------------------
+
+
+async def test_status_heeft_de_velden_van_m10(settings):
+    """monitor.provider_notices (M10) leest `auth`, `failing` en `failing_since`;
+    admin.provider_views `breaker`, `key_set`/`configured`, `last_ok` en `last_error`. Nooit de
+    sleutel, nooit `auth_failed` (dat is een woord van http.py)."""
+    import datetime as dt
+
+    secrets.reset()
+    previous = http.use(None)
+    try:
+        found = providers.status()
+        assert set(found) == set(providers.PROVIDERS) == {"tmdb", "musicbrainz", "caa"}
+        for entry in found.values():
+            assert {
+                "configured", "key_set", "breaker", "failures", "last_ok", "last_error",
+                "last_error_at", "failing_since", "auth", "failing",
+            } <= set(entry)  # fmt: skip
+            assert "auth_failed" not in entry
+            assert entry["auth"] is False and entry["failing"] is False
+        assert {"key_ok", "set_at"} <= set(found["tmdb"])
+        assert providers.notices() == []
+        assert providers.unreachable_since("tmdb") is None
+        assert [v.name for v in providers.views()] == list(providers.PROVIDERS)
+        # Niet ingesteld en onbereikbaar: geen melding (er is niets om te melden)
+        out = http.Outbound(settings)
+        http.use(out)
+        out._fail("tmdb", "tmdb: 500")
+        long_ago = dt.datetime.now(dt.UTC) + dt.timedelta(days=2)
+        assert providers.status(now=long_ago)["tmdb"]["failing"] is False
+        assert providers.notices(now=long_ago) == []
+    finally:
+        http.use(previous)
+        secrets.reset()

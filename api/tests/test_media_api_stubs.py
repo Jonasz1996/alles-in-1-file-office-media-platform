@@ -138,6 +138,9 @@ ENDPOINTS = [
         None,
     ),
     ("GET", "/api/v1/media/art/{sha}/{size}.webp", None, "none", None, None, None),
+    # M8 (M0-hotfix, alleen deze test): de lijst Nakijken (§2 M8: op de startpagina van een
+    # bibliotheek). M2 heeft geen filter op match_state in …/items; daarom een eigen route.
+    ("GET", "/api/v1/media/libraries/{library_id}/review", None, "user", None, t.CardPage, None),
     # M9: muziek
     ("GET", "/api/v1/media/libraries/{library_id}/albums", None, "user", None, t.AlbumPage, None),
     ("GET", "/api/v1/media/albums/{album_id}", None, "user", None, t.AlbumDetail, None),
@@ -359,6 +362,14 @@ BUILT = {
     ("POST", "/api/v1/media/playlists/{playlist_id}/items"),
     ("PUT", "/api/v1/media/playlists/{playlist_id}/order"),
     ("DELETE", "/api/v1/media/playlists/{playlist_id}/items/{item_id}"),
+    # M8 (M0-hotfix, alleen deze test): test_media_match_api.py
+    ("GET", "/api/v1/media/items/{node_id}/candidates"),
+    ("POST", "/api/v1/media/items/{node_id}/match"),
+    ("DELETE", "/api/v1/media/items/{node_id}/match"),
+    ("PATCH", "/api/v1/media/items/{node_id}"),
+    ("POST", "/api/v1/media/shows/{show_id}/match"),
+    ("GET", "/api/v1/media/libraries/{library_id}/review"),
+    ("GET", "/api/v1/media/art/{sha}/{size}.webp"),
 }
 
 

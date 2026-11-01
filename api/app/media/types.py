@@ -569,6 +569,10 @@ class Item(Card):
     analysis: dict[AnalysisStep, AnalysisState] = Field(default_factory=dict)
     extra: ExtraKind | None = None
     error: str | None = None  # de reden bij een mislukte probe (Keuze 46)
+    # M8 (M0-hotfix): wat met de hand vaststaat (Keuze 43) en de sorteertitel, voor het venster
+    # Bewerken. De antwoorden van koppelen en verbeteren vullen ze.
+    locked: list[str] = Field(default_factory=list)
+    sort_title: str | None = None
 
 
 class Show(BaseModel):

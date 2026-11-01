@@ -42,17 +42,33 @@ def _configured(name: str) -> bool:
     return musicbrainz.enabled()
 
 
-def status() -> dict[str, dict]:
-    """Per provider: ingesteld, of hij werkt, en de staat van http.py (voor /beheer)."""
+def status(now: dt.datetime | None = None) -> dict[str, dict]:
+    """Per provider, voor /beheer en de meldingen van M10 (monitor.provider_notices):
+
+    - `configured` (ook als `key_set`): een sleutel (TMDB) of aan op /beheer (MusicBrainz, CAA);
+    - de staat van http.py: `breaker`, `failures`, `last_ok`, `last_error` (een vaste reden,
+      nooit een tekst van buiten), `last_error_at`, `failing_since`;
+    - `auth`: de bewaarde sleutel van TMDB werkt niet meer (na een 401; tot "Testen" of een
+      nieuwe sleutel). Een foute sleutel die iemand probeerde te bewaren telt niet;
+    - `failing`: ingesteld en al 24 uur onbereikbaar (`failing_since`), dus melden.
+
+    Nooit de sleutel."""
     from app.media.providers import secrets
 
+    now = now or dt.datetime.now(dt.UTC)
+    memory = secrets.status_memory()
     out: dict[str, dict] = {}
     for name in PROVIDERS:
         health = _health(name)
-        entry = {"configured": _configured(name), **health}
+        configured = _configured(name)
+        since = health.get("failing_since")
+        entry = {"configured": configured, "key_set": configured, **health}
+        entry.pop("auth_failed", None)
+        entry["auth"] = name == "tmdb" and configured and memory["ok"] is False
+        entry["failing"] = bool(configured and since is not None and now - since >= FAILING_AFTER)
         if name == "tmdb":
-            entry["key_ok"] = secrets.status_memory()["ok"]
-            entry["set_at"] = secrets.status_memory()["set_at"]
+            entry["key_ok"] = memory["ok"]
+            entry["set_at"] = memory["set_at"]
         out[name] = entry
     return out
 
@@ -63,9 +79,7 @@ def views() -> list:
 
     out = []
     for name, entry in status().items():
-        error = entry.get("last_error")
-        if name == "tmdb" and entry.get("key_ok") is False:
-            error = "media_provider_auth"
+        error = "media_provider_auth" if entry["auth"] else entry.get("last_error")
         out.append(
             ProviderView(
                 name=name,  # type: ignore[arg-type]
@@ -87,17 +101,12 @@ def unreachable_since(name: str) -> dt.datetime | None:
 def notices(now: dt.datetime | None = None) -> list[str]:
     """De codes van de meldingen voor /beheer (monitor.NOTICES): de sleutel werkt niet meer, of
     een ingestelde provider is al 24 uur onbereikbaar."""
-    from app.media.providers import secrets
-
-    now = now or dt.datetime.now(dt.UTC)
+    found = status(now)
     out = []
-    if secrets.tmdb_key() is not None and secrets.status_memory()["ok"] is False:
+    if any(entry["auth"] for entry in found.values()):
         out.append("media_provider_auth")
-    for name in PROVIDERS:
-        since = unreachable_since(name)
-        if since is not None and _configured(name) and now - since >= FAILING_AFTER:
-            out.append("media_provider_failing")
-            break
+    if any(entry["failing"] for entry in found.values()):
+        out.append("media_provider_failing")
     return out
 
 
