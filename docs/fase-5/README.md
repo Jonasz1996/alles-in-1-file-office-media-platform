@@ -1,8 +1,8 @@
 # Fase 5 — Media en streaming
 
 Status: **golf 5 samengevoegd: M0 tot en met M10** (bouwontwerp revisie 2; 1 november 2026).
-Alle pakketten van fase 5 staan op de tak. De review van golf 5 is verwerkt; de nacontrole van
-golf 5 komt nog. Die van golf 4 zijn verwerkt.
+Alle pakketten van fase 5 staan op de tak. De review en de nacontrole van golf 5 zijn verwerkt,
+net als die van de golven ervoor.
 M0 is het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker,
 F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
 
@@ -372,6 +372,34 @@ grens voor `subs` en `trick`, photometa na een tijd zonder worker, media in de b
 (M0, afwijking 14), een probe die niet kan uitvoeren (M0), de open punten 1–3 van M8 (M2),
 Downloaden op `/kijken` zonder ffmpeg (M6), stuurtekens bij de bron (M2) en Keuze 42 op echte
 namen.
+
+Na de review kwam de nacontrole. Die draaide de tests van de review op de code van vóór het
+herstel (20 rood) en per fix met alleen dat stuk teruggezet; elke fix had een test die faalde.
+Ze vond vier dingen, elk met een test rechtgezet:
+
+- **S1 maakte van witruimte niets** (`334b480`): een tab of regeleinde in een titel van TMDB,
+  MusicBrainz of een PATCH viel weg, dus `De\tNacht` werd "DeNacht". Nu wordt het een spatie.
+- **C1 hield de still van een aflevering niet tegen** (`0943a7f`): een serie die met de hand een
+  andere werd terwijl de still nog wachtte, kreeg de still van de oude serie. De wachtende art
+  van elke aflevering die terug naar lokaal gaat, is nu weg.
+- **C7 toetste de aanroep niet** (`0943a7f`): nu een test per plek (het opzoeken en het venster)
+  dat een late 401 de nieuwe sleutel niet dichtzet.
+- **Het runbook van de belastingtest met `MEDIA_SANDBOX=uit`** (`57005cf`): sinds S2 noemt het
+  blok de dienst `media`, die er dan niet is; het runbook zegt nu wat dan te doen.
+
+Verder in de lijst van M0-hotfixes van [m10.md](m10.md): `AdminLibrary.path` (K3), die er nog
+niet in stond. Geen bevroren contract gebroken; met media uit verandert er niets. "Klaar als"
+van M8 en M10, per punt hier bewezen of in CI, staat onder "De nacontrole (golf 5)" in
+[m8.md](m8.md) en [m10.md](m10.md). De installatietest (`test_install_media.sh --stappen`) gaf
+hier 54 van 54, met een leeg pakket ffmpeg (geen Debian-spiegel); de transcode erin ziet pas CI.
+De uitslag op de stand na de nacontrole, in de sandbox: api 3793 goed en 2 overgeslagen (ruff
+en format schoon, ook `../e2e`); `-m media` (onder `taskset -c 0-2`) 175 goed; web groen (907
+tests, eerste lading JS 96,4 van 100 KB, de route Bestanden 43,6 van 45 KB, `/kijken` 25,5 van
+45 KB, de speler 25,1 van 35 KB, muziek 30,5 van 40 KB, i18n strikt zonder meldingen); de e2e
+van fase 3 en 4 110 goed; `-m office` 30 goed; e2e `-m media` 64 goed en 4 overgeslagen (alle
+vier H.264, dat Chromium 141 niet kan), met de 20 films van M8 en de worker zonder ffmpeg van
+M10. Jonas heeft de beslissingskaarten van fase 5 nog niet beantwoord: B39–B48 staan niet als
+besloten.
 
 ## Doel
 
