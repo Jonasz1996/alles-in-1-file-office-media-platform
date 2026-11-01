@@ -20,6 +20,7 @@ import { MediaGate } from "./Gate";
 import { cardHref, cardKey, episodeCode, nextEpisode, progressFraction, resumeAt } from "./grid";
 import { libraryPath, watchPath } from "./index";
 import { affectsLibrary } from "./library";
+import { ShowMatchAction } from "./match/Actions";
 import type { Card, ShowDetail } from "./types";
 import "./media.css";
 
@@ -41,7 +42,7 @@ function Episode({ card, show }: { card: Card; show: string }): JSX.Element {
   );
 }
 
-function ShowView({ detail }: { detail: ShowDetail }): JSX.Element {
+function ShowView({ detail, reload }: { detail: ShowDetail; reload(): void }): JSX.Element {
   const { show, seasons } = detail;
   const next = nextEpisode(seasons);
   const nextCode = next ? episodeCode(next.card.season, next.card.episode) || next.card.title : "";
@@ -66,14 +67,16 @@ function ShowView({ detail }: { detail: ShowDetail }): JSX.Element {
           <p className="media-meta muted">
             {[show.year ? String(show.year) : "", t("media.showPage.count", { n: total })].filter(Boolean).join(" · ")}
           </p>
-          {next?.card.node_id && (
-            <div className="media-actions">
+          <div className="media-actions">
+            {next?.card.node_id && (
               <Link to={watchPath(next.card.node_id, at ?? undefined)} className="btn primary" data-play="">
                 <Icon name="play" size={16} />
                 {next.resume ? t("media.showPage.resume", { code: nextCode }) : t("media.showPage.play", { code: nextCode })}
               </Link>
-            </div>
-          )}
+            )}
+            {/* M8: een serie koppelen (alleen met schrijfrecht) */}
+            <ShowMatchAction detail={detail} onChanged={reload} />
+          </div>
           {show.overview && <p className="media-overview">{show.overview}</p>}
         </div>
       </div>
@@ -124,7 +127,7 @@ function ShowLoader({ params }: RouteProps): JSX.Element {
   useRestoreScroll(detail !== null);
 
   if (error?.missing) return <NotFound params={params} />;
-  if (detail) return <ShowView detail={detail} />;
+  if (detail) return <ShowView detail={detail} reload={() => void load()} />;
   return (
     <main className="wide media-page">
       {error ? <p role="alert">{error.text}</p> : <Skeleton lines={4} />}

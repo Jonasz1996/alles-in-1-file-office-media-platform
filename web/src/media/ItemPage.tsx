@@ -19,10 +19,13 @@ import { MediaGate } from "./Gate";
 import { episodeCode, progressFraction, resumeAt } from "./grid";
 import { libraryPath, showPath, watchPath } from "./index";
 import { affectsItem, analysisRows, extraKey, streamText } from "./library";
+import { ItemMatchActions } from "./match/Actions";
+import { TmdbAttribution } from "./match/Attribution";
+import { fromTmdb } from "./match/match";
 import type { Item } from "./types";
 import "./media.css";
 
-function ItemView({ item }: { item: Item }): JSX.Element {
+function ItemView({ item, reload }: { item: Item; reload(): void }): JSX.Element {
   const at = resumeAt(item);
   const done = progressFraction(item.progress);
   const code = item.kind === "episode" ? episodeCode(item.season, item.episode) : "";
@@ -71,6 +74,8 @@ function ItemView({ item }: { item: Item }): JSX.Element {
                 {t("media.itemPage.resume", { time: fmt.duration(at) })}
               </Link>
             )}
+            {/* M8: Koppelen en Bewerken (alleen met schrijfrecht) */}
+            <ItemMatchActions item={item} onChanged={reload} />
           </div>
           {done > 0 && (
             <span className="media-progress media-item-progress" aria-hidden="true">
@@ -169,7 +174,10 @@ function ItemView({ item }: { item: Item }): JSX.Element {
             </>
           )}
           <dt>{t("media.itemPage.match")}</dt>
-          <dd>{t(`media.itemPage.matchStates.${item.match_state}`)}</dd>
+          <dd>
+            {t(`media.itemPage.matchStates.${item.match_state}`)}
+            {fromTmdb(item) && <TmdbAttribution />}
+          </dd>
         </dl>
       </section>
     </main>
@@ -204,7 +212,7 @@ function ItemLoader({ params }: RouteProps): JSX.Element {
   useReloadOn((e) => affectsItem(e, node), () => void load(), 500);
 
   if (error?.missing) return <NotFound params={params} />;
-  if (item) return <ItemView item={item} />;
+  if (item) return <ItemView item={item} reload={() => void load()} />;
   return (
     <main className="wide media-page">
       {error ? <p role="alert">{error.text}</p> : <Skeleton lines={4} />}

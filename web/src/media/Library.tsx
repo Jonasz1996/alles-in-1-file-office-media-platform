@@ -47,6 +47,7 @@ import {
   shownType,
   typesFor,
 } from "./library";
+import { hasReview, ReviewList } from "./match/ReviewList";
 import type { Card, Library } from "./types";
 import "./media.css";
 
@@ -355,6 +356,8 @@ function LibraryView({ lib }: { lib: Library }): JSX.Element {
           {t("media.list.musicHint")} <Link to={MUSIC_HOME}>{t("media.list.toMusic")}</Link>
         </p>
       )}
+      {/* M8: de lijst Nakijken (alleen met online opzoeken, en als er iets na te kijken is) */}
+      {hasReview(lib) && <ReviewList lib={lib} />}
       <div className="media-toolbar">
         <label>
           <span>{t("media.list.sort")}</span>

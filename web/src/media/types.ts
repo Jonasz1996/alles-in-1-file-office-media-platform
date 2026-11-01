@@ -317,6 +317,10 @@ export interface Item extends Card {
   extra?: ExtraKind | null;
   /** Bij een probe die mislukte: de reden (de badge "Kan niet afspelen", Keuze 46) */
   error?: string | null;
+  /** M8 (M0-hotfix): de velden die met de hand vaststaan en de sorteertitel. Alleen in de
+   * antwoorden van koppelen en verbeteren (POST/DELETE …/match, PATCH …/items/{id}). */
+  locked?: string[];
+  sort_title?: string | null;
 }
 
 /** Een serie (media_show). */
