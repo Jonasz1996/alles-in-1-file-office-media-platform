@@ -301,7 +301,8 @@ zet de vlag dan niet stil terug: dat is een vondst voor §6 van het bouwontwerp.
 - **M8 en M10** (golf 5): `e2e/test_media_m8.py` laat 20 films met scene-namen koppelen tegen de
   nep-providers (als proces, de fixture `fake_providers`), met Nakijken en Koppelen met het
   toetsenbord. `e2e/test_media_m10.py` loopt het tabblad Media op `/beheer` af (het toetsenbord,
-  een sessie stoppen, een import), en `e2e/test_media_m2.py` start de import sindsdien via
+  een sessie stoppen, een import, en sinds de review van golf 5 de worker zonder ffmpeg met
+  `media.restart(env={"PATH": …})`, §4.3 #13), en `e2e/test_media_m2.py` start de import sindsdien via
   `/beheer` in plaats van met de CLI. *Bij het samenvoegen van golf 5:* de fixture `tmdb_key` van
   de e2e van M8 zet de sleutel via het veld op `/beheer` → Media (eerst fout, dan goed, met de
   bronvermelding van TMDB), niet meer met een hulpproces.
