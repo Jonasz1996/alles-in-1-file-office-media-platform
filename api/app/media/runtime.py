@@ -46,6 +46,8 @@ log = logging.getLogger("platform.media")
 
 SWEEP = "media.sweep"
 SWEEP_EVERY = 300.0  # seconden
+# Integratie, punt 3: de backfill van photometa weer klaarzetten zodra de worker gezond is
+PHOTOMETA = "media.photometa"
 STOP_RETRY = 2  # Retry-After bij het stoppen (F3)
 
 _app = None
@@ -86,6 +88,7 @@ async def start(app, settings: Settings) -> MediaState:
     state.mode = "container" if settings.media_worker else "local"
     await anyio.to_thread.run_sync(clear_sessions, settings)
     jobs.housekeeping(SWEEP, _sweep, SWEEP_EVERY)
+    jobs.housekeeping(PHOTOMETA, _photometa_again, SWEEP_EVERY)
     problem = settings.media_problem()
     # Met een probleem met de sleutel (ook een sleutel gelijk aan het geheim van de app, die
     # verder wel lang genoeg is) praat de app niet met de worker: een lege sleutel laat
@@ -112,6 +115,7 @@ async def stop(app) -> None:
     # database (Keuze 36). Faalt nooit.
     await progress.stop()
     jobs.forget_housekeeping(SWEEP)
+    jobs.forget_housekeeping(PHOTOMETA)
     await scanner.stop(getattr(app.state, "media_scanner", None))
     app.state.media_scanner = None
     await health.stop(getattr(app.state, "media_health", None))
@@ -152,6 +156,19 @@ async def _sweep(settings: Settings) -> None:
     from app.media import cache
 
     await cache.sweep(settings)
+
+
+async def _photometa_again(settings: Settings) -> None:
+    """De video's die photometa niet kon lezen omdat de worker weg, druk of zonder ffmpeg was
+    (render_meta: "later"), staan nog op een oude meta_version. Met een gezonde worker zet dit
+    de backfill weer klaar (eens per SWEEP_EVERY; staat of loopt er al een keten, of is er
+    niets te doen, dan niets). Zo komt de datum van zo'n video zonder herstart."""
+    bound = app()
+    if bound is None or not enabled(bound) or not media_state(bound).healthy:
+        return
+    from app import photometa
+
+    await photometa.enqueue_backfill(settings)
 
 
 def stopping(app) -> bool:

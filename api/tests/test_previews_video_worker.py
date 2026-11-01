@@ -257,6 +257,40 @@ def test_photometa_met_de_worker_weg_een_fout_per_video(tmp_path):
     assert "error" not in results["a"]
     assert results["b"]["error"].startswith("mediaworker weg")
     assert results["c"]["error"].startswith("mediaworker weg")
+    # Integratie, punt 3: "later", dan laat photometa de video staan voor een volgende ronde
+    assert results["b"]["later"] is True and results["c"]["later"] is True
+    assert "later" not in results["a"]
+
+
+class _NoFfmpeg:
+    """render.Media van een worker zonder ffmpeg (caps zonder ffmpeg en ffprobe)."""
+
+    def __init__(self, worker, work):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return None
+
+    def ready(self) -> bool:
+        return False
+
+
+def test_photometa_met_een_worker_zonder_ffmpeg_later(tmp_path, monkeypatch):
+    """Integratie, punt 3: media aan en de worker zonder ffmpeg (ffmpeg_missing) gaf {} en
+    dus een video zonder datum die nooit meer gelezen werd; nu "later". Media uit zonder
+    ffprobe blijft {} zoals 0.6.0."""
+    monkeypatch.setattr(render, "Media", _NoFfmpeg)
+    monkeypatch.setattr(render, "installed", lambda: True)
+    film = tmp_path / "b.mp4"
+    film.write_bytes(FAKE_MP4)
+    items = [{"sha": "b", "source": str(film), "mime": "video/mp4"}]
+    on = {"mode": "meta", "worker": {"socket": str(tmp_path / "w.sock"), "key": "k"}}
+    found = render_meta.run_meta({**on, "items": items})["results"]["b"]
+    assert found == {"error": "mediaworker zonder ffmpeg", "later": True}
+    assert render_meta.run_meta({"mode": "meta", "items": items})["results"] == {"b": {}}
 
 
 def test_photometa_media_uit_zonder_ffmpeg_geen_fout(tmp_path, monkeypatch):

@@ -15,6 +15,11 @@ preview_meta dat de ander net schreef.
 
 Mislukt een run definitief (het proces crasht steeds op hetzelfde bestand), dan zet on_dead
 meta_version voor dat stuk toch op VERSION en gaat de keten verder: geen eindeloze lus.
+
+Met media aan (fase 5) leest de mediaworker de video's. Is die weg, druk of zonder ffmpeg, dan
+geeft render_meta {"error", "later"} en blijft de blob over (integratie, punt 3): de
+housekeeping van media (runtime.PHOTOMETA, eens per 5 minuten en alleen met een gezonde
+worker) roept enqueue_backfill dan weer aan. Media uit: zoals 0.6.0.
 """
 
 import shutil
@@ -124,6 +129,10 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
                 if blob is None or blob.meta_version >= render_meta.VERSION:
                     continue  # opgeruimd, of de preview-taak was intussen al zo ver
                 meta = results.get(sha)
+                if isinstance(meta, dict) and meta.get("later"):
+                    # Media aan en de worker weg, druk of zonder ffmpeg (integratie, punt 3):
+                    # niet als gelezen markeren; enqueue_backfill pakt hem later weer op
+                    continue
                 if sha not in present or not isinstance(meta, dict) or "error" in meta:
                     # Niet te lezen: niet opnieuw proberen, en de datum die er is laten staan
                     blob.meta_version = render_meta.VERSION

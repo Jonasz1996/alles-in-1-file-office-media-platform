@@ -197,3 +197,83 @@ async def test_een_stuk_schrijft_kort(settings):
             assert node.taken_day == 20240700 + d
             assert blob.meta_version == render_meta.VERSION
             assert blob.preview_meta["exif"]["model"] == "Camera X1"
+
+
+async def test_video_met_de_worker_weg_blijft_over_tot_de_worker_er_is(settings, monkeypatch):
+    """Integratie, punt 3: met media aan en de worker weg (of druk, of zonder ffmpeg) gaf
+    render_meta {"error"} voor elke video, en photometa markeerde die als gelezen: de datum
+    kwam nooit meer. Nu zegt render_meta "later", blijft de video over, en zet de housekeeping
+    van media de backfill weer klaar zodra de worker gezond is. Een gewone fout (zonder
+    "later", zoals media uit) markeert hem zoals in 0.6.0."""
+    from types import SimpleNamespace
+
+    from app.config import MediaConfig
+    from app.media import runtime as media_runtime
+    from app.media.state import MediaPolicy, MediaState
+
+    blobs = BlobStore(settings.blob_dir)
+    async with maker(settings)() as session:
+        owner = await create_user(session, "f@example.nl")
+        foto = await old_photo(session, owner, camera_jpeg(), blobs)
+        film = await create_file(
+            session, owner, name="film.mp4", data=b"film", mime="video/mp4", blobs=blobs,
+            taken_at=FALLBACK,
+        )  # fmt: skip
+        kapot = await create_file(
+            session, owner, name="kapot.mp4", data=b"kapot", mime="video/mp4", blobs=blobs,
+            taken_at=FALLBACK,
+        )  # fmt: skip
+        await session.commit()
+        foto_sha, film_sha, kapot_sha, film_id = foto.blob_id, film.blob_id, kapot.blob_id, film.id
+    answer = {
+        film_sha: {"error": "mediaworker weg: geen socket", "later": True},
+        kapot_sha: {"error": "RuntimeError: meta: kapot"},
+    }
+    real = previews.render
+
+    async def render(settings, request, work):
+        """Het echte renderproces voor de foto; de video's krijgen het antwoord van answer."""
+        rest = [i for i in request["items"] if i["sha"] not in answer]
+        out = await real(settings, {**request, "items": rest}, work) if rest else {"results": {}}
+        out["results"].update({i["sha"]: answer[i["sha"]] for i in request["items"]
+                               if i["sha"] in answer})  # fmt: skip
+        return out
+
+    monkeypatch.setattr(previews, "render", render)
+
+    async def versions() -> dict[str, int]:
+        async with maker(settings)() as session:
+            rows = await session.execute(select(Blob.sha256, Blob.meta_version))
+            return dict(rows.all())
+
+    assert await photometa.enqueue_backfill(settings) == 1
+    assert await jobs.run_pending(settings) == 1
+    done = await versions()
+    assert done[foto_sha] == done[kapot_sha] == render_meta.VERSION
+    assert done[film_sha] < render_meta.VERSION  # blijft over
+
+    # De housekeeping van media: niets zolang de worker niet gezond is, en niets met media uit
+    host = SimpleNamespace(state=SimpleNamespace())
+    host.state.media = MediaState(enabled=True, worker="down")
+    host.state.media_policy = MediaPolicy(MediaConfig())
+    media_runtime.bind(host, settings)
+    try:
+        await media_runtime._photometa_again(settings)
+        assert [j.status for j in await job_rows(settings)] == ["done"]
+        host.state.media.worker = "ok"
+        host.state.media.enabled = False
+        await media_runtime._photometa_again(settings)
+        assert [j.status for j in await job_rows(settings)] == ["done"]
+        # Weer gezond: de backfill staat klaar, en de video krijgt zijn datum
+        host.state.media.enabled = True
+        await media_runtime._photometa_again(settings)
+        assert sorted(j.status for j in await job_rows(settings)) == ["done", "queued"]
+        answer[film_sha] = {"taken_at": "2023-05-04T10:00:00", "taken_kind": "local"}
+        assert await jobs.run_pending(settings) == 1
+    finally:
+        media_runtime.unbind()
+    assert (await versions())[film_sha] == render_meta.VERSION
+    async with maker(settings)() as session:
+        node = await session.get(Node, film_id)
+    assert node.taken_day == 20230504
+    assert await photometa.enqueue_backfill(settings) == 0

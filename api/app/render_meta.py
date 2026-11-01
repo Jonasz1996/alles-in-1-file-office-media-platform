@@ -222,11 +222,25 @@ class _Videos:
                 self.failed = f"mediaworker: {type(e).__name__}: {e}"[:200]
                 return {"error": self.failed}
         try:
-            return _probe(source, self.media)
+            info = _probe(source, self.media)
+            if not info and self.worker and not self.media.ready():
+                # Media aan, maar de worker heeft nu geen ffmpeg (ffmpeg_missing): ook later
+                return self._later("mediaworker zonder ffmpeg")
+            return info
         except render.Later as e:
             # Weg of druk: een fout voor dit bestand. photometa laat de datum die er is dan
             # staan; de preview-taak zelf wacht wel (jobs.Defer)
+            if self.worker:
+                return self._later(str(e))
             return {"error": str(e)[:200]}
+
+    @staticmethod
+    def _later(reason: str) -> dict[str, Any]:
+        """Media aan en de worker weg, druk of zonder ffmpeg: een fout met "later" erbij
+        (integratie, punt 3). photometa markeert dat bestand dan niet als gelezen; de
+        housekeeping van media zet de backfill weer klaar als de worker gezond is. Media uit
+        (een eigen worker per run, zoals 0.6.0) geeft nooit "later"."""
+        return {"error": reason[:200], "later": True}
 
 
 def _image(source: Path, max_pixels: int) -> dict[str, Any]:
