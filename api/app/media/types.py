@@ -583,7 +583,8 @@ class Item(Card):
     extra: ExtraKind | None = None
     error: str | None = None  # de reden bij een mislukte probe (Keuze 46)
     # M8 (M0-hotfix): wat met de hand vaststaat (Keuze 43) en de sorteertitel, voor het venster
-    # Bewerken. De antwoorden van koppelen en verbeteren vullen ze.
+    # Bewerken. GET …/items/{id} vult ze sinds de integratie (punt 6), net als koppelen en
+    # verbeteren; `locked` zonder de verborgen vergrendeling match_state.
     locked: list[str] = Field(default_factory=list)
     sort_title: str | None = None
 

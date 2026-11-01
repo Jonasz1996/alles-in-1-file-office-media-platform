@@ -76,7 +76,7 @@ Config = Annotated[Settings, Depends(get_settings)]
 CANDIDATES = 10  # hooguit zoveel in het venster
 CANDIDATE_SECONDS = 8.0  # zoeken plus de posters; wat dan nog niet binnen is, komt zonder poster
 POSTER_PARALLEL = 4
-EDITABLE = ("title", "sort_title", "year", "overview", "season", "episode")
+EDITABLE = media_items.EDITABLE
 ITEM_KINDS = ("movie", "episode")
 
 
@@ -141,15 +141,10 @@ def fresh(session) -> None:
 
 
 async def item_out(session, settings: Settings, user, node_id: uuid.UUID) -> Item:
-    """Het Item zoals GET …/items/{id}, plus `locked` en `sort_title` (M0-hotfix in types.py)
-    voor het venster Bewerken. `locked` zonder de verborgen vergrendeling."""
+    """Het Item zoals GET …/items/{id}, met `locked` en `sort_title` voor het venster Bewerken
+    (die vult detail() sinds de integratie, punt 6)."""
     fresh(session)
-    found = await media_items.detail(media_items.Reader(session, settings, user), node_id)
-    item = await session.get(MediaItem, node_id)
-    if item is not None:
-        found.locked = [f for f in (item.locked or []) if f in EDITABLE]
-        found.sort_title = item.sort_title
-    return found
+    return await media_items.detail(media_items.Reader(session, settings, user), node_id)
 
 
 # --- kandidaten -----------------------------------------------------------------------------------
@@ -414,8 +409,8 @@ async def edit(
     settings: Config,
 ):
     """De velden zetten en vastzetten (`locked`); `unlock` geeft velden terug aan de scanner en
-    de provider. Een lege body verandert niets en geeft het Item met `locked`: zo opent het
-    venster Bewerken, zolang GET …/items/{id} van M2 `locked` niet vult (open punt in m8.md)."""
+    de provider. Een lege body verandert niets en geeft het Item terug; het venster Bewerken
+    leest `locked` sinds de integratie (punt 6) met GET …/items/{id}."""
     runtime.require(request)
     item, _node, seen = await writable_item(session, settings, user, node_id)
     given = [k for k in EDITABLE if k in body.model_fields_set]

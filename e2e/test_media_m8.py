@@ -48,7 +48,8 @@ from media_harness import open_app
 from test_media_m2 import tab_to
 from test_media_m3 import upload_bytes
 
-# De haak wacht SOON (10 s) na de laatste wijziging; dan het opzoeken en de plaatjes
+# Na de scan zet de haak (scanner.after_scan, integratie punt 6) het opzoeken klaar; dan het
+# opzoeken en de plaatjes
 MATCH_S = 50.0
 STORM = "The.Fake.Storm.720p.HDTV.x264-NEP.mkv"
 GLASS = "Glass.Town.2009.1080p.BluRay.x264-NEP.mkv"
@@ -292,12 +293,27 @@ def test_twintig_films_vanzelf_en_met_de_hand(media, media_browsers, fake_provid
     )
     expect(page.locator(".media-item dd", has_text="Met de hand")).to_be_visible()
 
-    # Bewerken: de titel krijgt de focus; wat je wijzigt, gaat vast
+    # Bewerken: de titel krijgt de focus; wat je wijzigt, gaat vast. Het venster leest `locked`
+    # met GET …/items/{id}, niet meer met een lege PATCH (integratie, punt 6)
+    patches: list[str] = []
+
+    def on_request(request) -> None:
+        if request.method == "PATCH":
+            patches.append(request.url)
+
+    page.on("request", on_request)
     tab_to(page, "[data-edit]", presses=60)
-    page.keyboard.press("Enter")
+    with page.expect_response(
+        lambda r: r.request.method == "GET" and bool(ITEM_RE.search(r.url))
+    ) as opened:
+        page.keyboard.press("Enter")
+    fresh = opened.value.json()
+    assert opened.value.status == 200 and fresh["sort_title"], fresh
     edit = page.get_by_role("dialog", name="Gegevens bewerken")
     title = edit.get_by_label("Titel", exact=True)
     expect(title).to_be_focused()
+    page.remove_listener("request", on_request)
+    assert patches == [], patches
     expect(title).to_have_value("The Fake Storm")
     lock = edit.locator("[data-lock='title']")
     expect(lock).not_to_be_checked()

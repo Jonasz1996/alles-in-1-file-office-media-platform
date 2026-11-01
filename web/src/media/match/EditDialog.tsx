@@ -4,8 +4,8 @@
 // het vinkje uit bij een gewijzigd veld zet de wijziging terug. Opslaan stuurt alleen wat anders
 // is (PATCH …/items/{id}), plus `unlock` voor wat niet meer vast hoeft.
 //
-// Bij het openen vraagt het venster het item op met een lege PATCH: die geeft `locked` en de
-// sorteertitel, zolang GET …/items/{id} van M2 die nog niet geeft (open punt in m8.md).
+// Bij het openen vraagt het venster het item vers op (GET …/items/{id}): dat geeft `locked` en
+// de sorteertitel sinds de integratie (punt 6); daarvoor was het een lege PATCH.
 
 import { type FormEvent, type JSX, useEffect, useRef, useState } from "react";
 import { errorText, t } from "../../i18n";
@@ -13,7 +13,7 @@ import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { Skeleton } from "../../ui/Spinner";
 import { toast } from "../../ui/toast";
-import { updateItem } from "../api";
+import { getItem, updateItem } from "../api";
 import type { Item } from "../types";
 import { type EditField, type EditForm, editFields, formOf, isEmptyPatch, patchOf, setLock, setValue } from "./match";
 import "./match.css";
@@ -94,8 +94,8 @@ export function EditDialog({
 
   useEffect(() => {
     let live = true;
-    // Een lege PATCH verandert niets en geeft locked en sort_title (zie de kop)
-    updateItem(item.node_id, {})
+    // Vers: locked en sort_title kunnen sinds het laden van de pagina veranderd zijn
+    getItem(item.node_id)
       .then((fresh) => {
         if (!live) return;
         const f = formOf(fresh);

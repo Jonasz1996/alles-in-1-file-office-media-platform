@@ -64,6 +64,9 @@ from app.models import (
 LOCAL = frozenset({"name", "nfo"})
 # Beschrijvend: een lokale bron overschrijft die van een provider of van tags niet
 DESCRIPTIVE = ("title", "sort_title", "year", "overview")
+# Wat een gebruiker in het venster Bewerken kan zetten en vastzetten (M8); GET …/items/{id}
+# geeft `locked` alleen met deze velden, zonder de verborgen vergrendeling match_state
+EDITABLE = ("title", "sort_title", "year", "overview", "season", "episode")
 STRUCTURE = (
     "season",
     "episode",
@@ -827,6 +830,8 @@ async def detail(reader: Reader, node_id: uuid.UUID) -> Item:
         analysis=_analysis(probe, queued, seen.library.kind),  # type: ignore[arg-type]
         extra=item.extra,  # type: ignore[arg-type]
         error=probe.error if probe and probe.state == "failed" else None,
+        locked=[f for f in (item.locked or []) if f in EDITABLE],
+        sort_title=item.sort_title,
     )
 
 

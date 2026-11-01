@@ -285,6 +285,8 @@ async def test_ontkoppelen_terug_naar_de_naam(net, client):
     assert (item["title"], item["year"]) == ("De Nephaven", 2004)
     assert item["poster"] is None or "/art/" not in item["poster"]
     assert item["locked"] == []  # de verborgen vergrendeling telt niet mee
+    r = await client.get(f"{URL}/items/{node}", headers=net.headers)
+    assert r.json()["locked"] == []  # ook niet bij GET
     stored = await row(net, node)
     assert stored.art == {} and stored.source == "name"
     assert lookup.HIDDEN_LOCK in stored.locked
@@ -322,6 +324,11 @@ async def test_bewerken_vastzetten_en_vrijgeven(net, client):
     assert (item["title"], item["year"]) == ("Mijn Haven", 2003)
     assert sorted(item["locked"]) == ["title", "year"]
     assert item["sort_title"] == "mijn haven"
+    # GET geeft hetzelfde (integratie, punt 6): het venster Bewerken heeft geen lege PATCH nodig
+    r = await client.get(f"{URL}/items/{node}", headers=net.headers)
+    assert r.status_code == 200, r.text
+    assert sorted(r.json()["locked"]) == ["title", "year"]
+    assert r.json()["sort_title"] == "mijn haven"
     # Een nieuwe ronde van de provider laat ze staan
     await lookup.write_item(
         net.settings, uuid.UUID(library_id), node,
