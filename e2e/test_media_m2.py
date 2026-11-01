@@ -14,9 +14,10 @@ gaat met focus() (één tabstop), en een nieuwe pagina met goto:
 - een bibliotheek met series: de rij Net toegevoegd met ← en →, de serie met haar seizoen en
   afleveringen, Afspelen S01E01, en Opnieuw scannen;
 - Nieuwe bibliotheek op /media (de lege start): de mappenkiezer en de dialoog met het
-  toetsenbord; daarna een import uit /data/import met `app.cli media-import` (de knop op /beheer
-  is van M10): de items verschijnen in de bibliotheek op de doelmap, de bron blijft (kopiëren),
-  en de taak media.import eindigt als done.
+  toetsenbord; daarna een import uit /data/import op /beheer/media (sinds M10; tot dan met
+  `app.cli media-import`, afwijking 1 in m2.md): de bronmap, "Kies een map" met de mappenkiezer,
+  Kopiëren en Importeren; de items verschijnen in de bibliotheek op de doelmap, de bron blijft
+  (kopiëren), en de taak media.import eindigt als done.
 """
 
 from __future__ import annotations
@@ -353,10 +354,11 @@ def test_series_de_start_en_opnieuw_scannen(media, media_browsers, ffmpeg_count)
 
 
 @pytest.mark.media
-def test_import_uit_data_import_met_de_cli(media, media_browsers, ffmpeg_count):
+def test_import_uit_data_import_via_beheer(media, media_browsers, ffmpeg_count):
     from tests.media import fixtures
 
-    owner = media.user()
+    # Een beheerder: die opent /beheer, en importeert in een map van zichzelf (sinds M10)
+    owner = media.user(role="admin")
     target = media.folder(owner, "Import")
 
     # De lege start: Nieuwe bibliotheek, de map kiezen, het soort Video's, Enter
@@ -399,11 +401,41 @@ def test_import_uit_data_import_met_de_cli(media, media_browsers, ffmpeg_count):
         for name, fixture in names.items():
             shutil.copyfile(fixtures.make(fixture), source / name)
             os.utime(source / name, (old, old))
-        done = media.cli(
-            "media-import", str(source), "--naar", "/Import", "--eigenaar", owner.email
+
+        # Op /beheer/media (M10): de bronmap, de eigen map Import met de mappenkiezer, Kopiëren
+        page.goto("/beheer/media")
+        form = page.locator("[data-media=import-form]")
+        expect(form).to_be_visible()
+        bron = form.get_by_label("Bronmap", exact=True)
+        bron.focus()  # het binnenkomen in het formulier
+        bron.select_option(source.name)
+        expect(bron).to_have_value(source.name)
+        expect(form.get_by_label("Eigenaar", exact=True)).to_have_value(owner.id)  # jijzelf
+        expect(form.locator("[data-media=import-target]")).to_have_text(
+            f"De hoofdmap van {owner.display_name}"
         )
-        assert done.returncode == 0, done.stdout + done.stderr
-        assert "De import staat klaar" in done.stdout, done.stdout
+        tab_to(page, "[data-media=import-form] .field .toolbar button")
+        expect_focus_text(page, "Kies een map")
+        page.keyboard.press("Enter")
+        picker = page.get_by_role("dialog", name="Doelmap voor de import")
+        expect(picker).to_be_visible()
+        expect_focus_text(page, "Import")  # de eerste (en enige) map
+        page.keyboard.press("Enter")  # de map openen
+        here = picker.get_by_role("button", name="Hier importeren")
+        expect(here).to_be_focused()  # geen mappen erin: de knop om hier te kiezen
+        page.keyboard.press("Enter")
+        expect(picker).to_have_count(0)
+        expect(form.locator("[data-media=import-target]")).to_have_text("Gekozen: Import")
+        expect(form.get_by_role("radio", name=re.compile(r"^Kopiëren"))).to_be_checked()
+        tab_to(page, "[data-media=import-form] button[type=submit]")
+        with page.expect_response(
+            lambda r: r.request.method == "POST" and r.url.endswith("/api/v1/admin/media/import")
+        ) as started:
+            page.keyboard.press("Enter")
+        assert started.value.status == 202, started.value.text()
+        body = started.value.json()
+        assert body["job"], body
+        expect(page.locator(".toast-message", has_text="De import is begonnen.")).to_be_visible()
         found = wait_items(media, owner, library["id"], 2)
         assert sorted(c["title"] for c in found) == ["Vakantie 2019", "Verjaardag"], found
         # kopiëren: de bron blijft staan

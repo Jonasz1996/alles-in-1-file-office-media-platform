@@ -13,7 +13,7 @@ import { api, type FileNode } from "../api";
 import { useCurrentUser } from "../currentUser";
 import { liveEvents, type ServerEvent } from "../events";
 import { FolderPicker } from "../FolderPicker";
-import { errorText, fmt, type MessageKey, t } from "../i18n";
+import { errorText, fmt, loadAreas, type MessageKey, t } from "../i18n";
 import {
   clearCache,
   deleteTmdbKey,
@@ -843,6 +843,18 @@ function Import({ imported, reload }: { imported: ImportView | null; reload: Rel
   const [move, setMove] = useState(false);
   const [picked, setPicked] = useState<FileNode | null>(null);
   const [picking, setPicking] = useState(false);
+
+  // De mappenkiezer spreekt de woorden van Bestanden (het gebied "browser"); /beheer laadt alleen
+  // "admin", dus eerst dat gebied, net als Nieuwe bibliotheek op /media (LibraryHome.tsx)
+  async function openPicker() {
+    try {
+      await loadAreas(["browser"]);
+      setPicking(true);
+    } catch (e) {
+      toast(errorText(e), { kind: "error" });
+    }
+  }
+
   const { setError } = act;
 
   useEffect(() => {
@@ -930,7 +942,7 @@ function Import({ imported, reload }: { imported: ImportView | null; reload: Rel
             </p>
             {mine && (
               <div className="toolbar">
-                <Button onClick={() => setPicking(true)}>{t("admin.media.import.targetPick")}</Button>
+                <Button onClick={() => void openPicker()}>{t("admin.media.import.targetPick")}</Button>
               </div>
             )}
             <small className="muted">{t("admin.media.import.targetHelp")}</small>
