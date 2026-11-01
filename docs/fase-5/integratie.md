@@ -179,3 +179,25 @@ met punt 2 van "Naar de integratie").
 - een ffprobe die in de container niet start (ENOEXEC, EACCES): hier alleen met een leeg
   programma op PATH van de lokale worker;
 - Downloaden op `/kijken` met Chrome for Testing in `e2e-media` (hier met Chromium 141).
+
+## De checks van deel 1
+
+Op `d80a514` (de code van dit deel plus de docs), in de sandbox:
+
+- api: `ruff check` en `ruff format --check` (ook `../e2e`) schoon; `pytest` 3806 goed, 2
+  overgeslagen; `-m media` onder `taskset -c 0-2` 176 goed;
+- web: typecheck, 913 tests in 81 bestanden, build, budget (eerste lading 96,4 van 100 KB, de route
+  Bestanden 43,6 van 45 KB, de speler 25,4 van 35 KB) en `check:i18n --strict` goed;
+- e2e: de set van CI 110 goed; `-m office` 30 goed; `-m media` 64 goed en 4 overgeslagen (H.264,
+  dat de Chromium 141 hier niet heeft);
+- infra: `test_install_media.sh` (het functiedeel) 110 van 110, `test_install_env.sh` goed,
+  shellcheck schoon;
+- als nobody (`/tmp/ci-nobody/run.sh`, zoals CI): de twaalf testbestanden die dit deel raakte, 350
+  goed. Een eerste ronde in de werkmap gaf 5 fouten die niet van de code zijn: `api/data/jwt.secret`
+  is daar 0600 van root (van een eerdere run als root), en `SSL_CERT_FILE` wijst naar een bestand
+  onder `/root`. In een kopie van `api/` van nobody en zonder die variabelen waren ze goed.
+
+Op `/` was maar 6–7 GB vrij (de schijf van de sandbox wordt gedeeld). De toelating weigert remux
+en transcode onder 10 GiB vrij op `data_dir` (Keuze 31, zie m4.md), dus liepen pytest en de e2e
+met `TMPDIR` en `--basetemp` op `/dev/shm`. Dat verandert geen test, alleen waar de tijdelijke
+mappen staan.
