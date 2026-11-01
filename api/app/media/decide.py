@@ -411,8 +411,18 @@ def cost(rung: Rung, video: Stream, *, hdr: bool, burn: bool, budget: BudgetView
     return (table - d_ref + extra) * budget.factor + decode_cost(video) * budget.factor_dec
 
 
+def reserve_cost(f: float, f_dec: float) -> float:
+    """kosten(480 veryfast) in de reserve (Keuze 26): wat die trede van de referentiebron van de
+    tabel kost (H.264 1080p24, decoderen = D_REF_SDR), met alle kosten × f en het decoderen ×
+    f_dec. Zo past de laatste toegestane kijker van zo'n bron altijd nog. Eerder 0,56 × f: met
+    f_dec boven f hield de reserve te weinig vast, en kreeg de derde kijker 503 (metingen.md,
+    Mb in de sandbox: f 1,353, f_dec 1,554)."""
+    table = _table(Rung(height=480, preset="veryfast", codec="h264"), hdr=False)
+    return (table - D_REF_SDR) * f + D_REF_SDR * f_dec
+
+
 def _reserve_unit(budget: BudgetView) -> float:
-    return _table(Rung(height=480, preset="veryfast", codec="h264"), hdr=False) * budget.factor
+    return reserve_cost(budget.factor, budget.factor_dec)
 
 
 def admit(

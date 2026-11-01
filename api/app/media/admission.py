@@ -10,7 +10,8 @@ krijgen een lagere trede.
 
 **De regel** (dezelfde als decide.admit, zodat een plan dat decide goedkeurde hier ook past):
 `in gebruik + kosten(plan) + reserve ≤ 0,9 × B`, met `reserve = (vrije plaatsen − plaatsen van
-het plan) × kosten(480 veryfast) × f`. Een publieke link telt zijn eigen plek mee in de
+het plan) × kosten(480 veryfast)`, de kosten van die trede voor de referentiebron (de tabel × f,
+het decoderen × f_dec; decide.reserve_cost). Een publieke link telt zijn eigen plek mee in de
 reserve en neemt nooit de laatste plek. Een plan boven 1,8 × f gebruikt 2 plaatsen (decide zet
 `plan.places`).
 
@@ -56,10 +57,10 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from app.config import MediaConfig
-from app.media import ladder, runtime
+from app.media import decide, runtime
 from app.media.errors import MediaBusy
 from app.media.state import MediaPolicy, MediaState, media_policy, media_state
-from app.media.types import AdmissionView, BudgetView, Grant, Plan, Rung
+from app.media.types import AdmissionView, BudgetView, Grant, Plan
 from app.media.wire import WorkClass
 
 log = logging.getLogger("platform.media")
@@ -73,7 +74,6 @@ REMUX_PER_USER = 3  # de helft: één account neemt nooit alle plaatsen (review 
 OTHER_PLACES = {WorkClass.BACKGROUND: 1, WorkClass.SHORT: 2}
 RETRY = 30  # Retry-After bij cpu, user, link en disk: een transcode is niet zo weg
 RETRY_WORKER = 2
-RESERVE_RUNG = Rung(height=480, preset="veryfast", codec="h264")
 LIVE = ("remux", "transcode")
 
 
@@ -201,9 +201,10 @@ def disk_ok(path: Path | None = None) -> bool:
     return disk_free(path) >= DISK_MIN
 
 
-def reserve_unit(f: float) -> float:
-    """De kosten van 480 veryfast × f: de plaats die de reserve per vrije plaats vasthoudt."""
-    return ladder.cost(RESERVE_RUNG) * f
+def reserve_unit(f: float, f_dec: float) -> float:
+    """De plaats die de reserve per vrije plaats vasthoudt: kosten(480 veryfast) van de
+    referentiebron, met f en f_dec (decide.reserve_cost, Keuze 26)."""
+    return decide.reserve_cost(f, f_dec)
 
 
 def view(user_id: uuid.UUID, link_id: uuid.UUID | None) -> BudgetView:
@@ -233,7 +234,7 @@ def fits(plan: Plan, budget_view: BudgetView, *, public: bool) -> bool:
     free = budget_view.places_free - plan.places
     if free < (1 if public else 0):
         return False
-    unit = reserve_unit(budget_view.factor)
+    unit = reserve_unit(budget_view.factor, budget_view.factor_dec)
     reserve = (budget_view.places_free if public else free) * unit
     return budget_view.in_use + plan.cost + reserve <= FILL * budget_view.budget + 1e-9
 

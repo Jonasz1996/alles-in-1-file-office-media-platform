@@ -101,6 +101,26 @@ async def test_de_reserve_1080_en_twee_keer_720_superfast(host):
     assert busy(lambda: watch(film(), "chrome_ci", b)) == ("cpu", admission.RETRY)
 
 
+async def test_de_laatste_kijker_past_ook_als_f_dec_boven_f_ligt(host):
+    """Keuze 26: "zo kan de laatste toegestane kijker altijd nog starten". De reserve houdt per
+    vrije plaats vast wat 480 veryfast van de referentiebron kost: de tabel × f en het
+    decoderen × f_dec. Met de bench van de sandbox (f 1,353, f_dec 1,554; metingen.md, Mb) hield
+    0,56 × f te weinig vast (0,758 tegen 0,794): de tweede kreeg 720 superfast en de derde 503
+    (cpu), met een plaats vrij."""
+    measured = BenchResult(f=1.353, f_dec=1.554, at="2026-11-01T21:21:46Z")  # type: ignore[arg-type]
+    configure(host, bench=measured)
+    a, b = uuid.uuid4(), uuid.uuid4()
+    plans = [watch(film(), "chrome_ci", user)[0] for user in (a, a, b)]
+    assert [p.video.height for p in plans] == [720, 480, 480]
+    unit = admission.reserve_unit(1.353, 1.554)
+    assert unit == pytest.approx((0.56 - 0.18) * 1.353 + 0.18 * 1.554)
+    assert plans[2].cost == pytest.approx(unit, abs=1e-3)  # de reserve was precies genoeg
+    snap = admission.snapshot()
+    assert snap.places_used == 3 and snap.in_use <= admission.FILL * 3.0 + 1e-9
+    # met f = f_dec blijft het 0,56 × f, zoals de rekenvoorbeelden van de proef
+    assert admission.reserve_unit(1.2, 1.2) == pytest.approx(0.56 * 1.2)
+
+
 async def test_max_2_en_dan_een_trede_lager(host):
     configure(host, max_transcodes=2)
     user = uuid.uuid4()
