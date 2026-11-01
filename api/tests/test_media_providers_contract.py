@@ -377,6 +377,22 @@ async def test_fuzz_de_lezers_met_een_vaste_seed(db, mb):
         assert tmdb.episodes_of({"episodes": value}, "tv:1", 1) == []
 
 
+def test_tekst_van_buiten_zonder_stuurtekens():
+    """Review golf 5, S1: een titel van TMDB of MusicBrainz komt in de terminal van
+    `media-status --sessions`; ESC, BEL en C1 vallen weg, de samenvatting houdt haar regels."""
+    evil = "\x1b]52;c;Y3VybA==\x07\x1b[2KFilm\x9b31m"
+    c = tmdb.candidate(
+        {"id": 7, "title": evil, "overview": "Een\nregel\x1b[2K", "release_date": "2001"},
+        "movie",
+    )
+    assert c is not None and c.title == "]52;c;Y3VybA==[2KFilm31m"
+    assert c.overview == "Een\nregel[2K"
+    r = musicbrainz.release_of(
+        {"id": ZEE, "title": "Album\x1b[1A", "artist-credit": [{"name": "Bob\x07"}]}
+    )
+    assert r is not None and r.title == "Album[1A" and r.artist == "Bob"
+
+
 def test_fuzz_de_bytes_van_een_plaatje():
     rng = random.Random(SEED)
     heads = [b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"RIFF\0\0\0\0WEBP", b"GIF89a", b"<svg", b""]

@@ -22,9 +22,11 @@ import email.utils
 import gzip
 import ipaddress
 import logging
+import random
 import re
 import ssl
 import uuid
+import zlib
 from typing import Any
 
 import anyio
@@ -41,6 +43,7 @@ from app.media.providers.base import ProviderAuth, ProviderRate, ProviderUnavail
 from tests.media.fake_providers import NEP, Data, FakeConfig, create_app, transport
 
 KEY = "nep-sleutel-" + "x" * 24
+SEED = 20261101
 PUBLIC = "93.184.216.34"
 PUBLIC2 = "151.101.1.1"
 TMDB = "https://api.themoviedb.org/3"
@@ -154,6 +157,8 @@ AUTH = {"Authorization": f"Bearer {KEY}"}
         "2001:0:4136:e378:8000:63bf:80ff:fffe",  # Teredo met client 127.0.0.1
         "ff02::1",
         "fe80::1%eth0",
+        "fec0::1",  # site-local (verouderd): ipaddress noemt het global (review golf 5, S3)
+        "feff:1:2::5",
     ],
 )
 def test_geen_privé_of_bijzonder_adres(address):
@@ -468,6 +473,74 @@ async def test_retry_after_met_een_plafond(tmp_path):
 )  # fmt: skip
 def test_retry_after_lezen(value, seconds):
     assert http.retry_after(value) == seconds
+
+
+def test_fuzz_retry_after_met_een_vaste_seed():
+    """Regel 10 (review golf 5, S4): Retry-After komt van buiten. Nooit een fout, altijd tussen
+    0 en het plafond."""
+    rng = random.Random(SEED)
+    pieces = [
+        *("", " ", "-", "+", ".", "e", "E", "1", "9", "0", "inf", "nan", "GMT", ",", ":"),
+        *("Mon", "Jan", "99999", "1e999", "\x00", "\u00e9", "Wed, 21 Oct 2015 07:28:00"),
+    ]
+    for _ in range(3000):
+        if rng.random() < 0.5:
+            value = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 8)))
+        else:
+            value = "".join(chr(rng.randint(0, 0x2FF)) for _ in range(rng.randint(0, 40)))
+        seconds = http.retry_after(value)
+        assert 0.0 <= seconds <= http.RETRY_CEILING, value
+
+
+class _Chunks(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = chunks
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            yield chunk
+
+
+def _body(rng: random.Random) -> tuple[bytes, str]:
+    """Een body zoals een dienst hem stuurt: goed, afgekapt, een bom of rommel."""
+    kind = rng.randrange(6)
+    plain = bytes(rng.getrandbits(8) for _ in range(rng.randint(0, 300)))
+    if kind == 0:
+        return gzip.compress(plain), "gzip"
+    if kind == 1:  # afgekapt of met een omgegooid byte
+        data = bytearray(gzip.compress(plain))
+        if data and rng.random() < 0.5:
+            data[rng.randrange(len(data))] ^= 1 << rng.randrange(8)
+        return bytes(data[: rng.randint(0, len(data))]), "gzip"
+    if kind == 2:  # een bom: veel groter dan de grens
+        return gzip.compress(b" " * rng.randint(2_000, 200_000)), rng.choice(["gzip", "x-gzip"])
+    if kind == 3:
+        return zlib.compress(plain * rng.randint(1, 50)), "deflate"
+    if kind == 4:
+        return plain, rng.choice(["gzip", "deflate", "br", "identity", ""])
+    return plain, "identity"
+
+
+@pytest.mark.anyio
+async def test_fuzz_read_limited_met_een_vaste_seed():
+    """Regel 10 (review golf 5, S4): wat een dienst stuurt (gzip, deflate, afgekapt, een bom,
+    rommel). read_limited geeft hooguit `limit` bytes, of _Failure; nooit een andere fout."""
+    rng = random.Random(SEED)
+    limit = 1_000
+    for _ in range(2000):
+        body, encoding = _body(rng)
+        cut = sorted(rng.randint(0, len(body)) for _ in range(rng.randint(0, 4)))
+        chunks = [body[a:b] for a, b in zip([0, *cut], [*cut, len(body)], strict=True)]
+        headers = {"Content-Encoding": encoding} if encoding else {}
+        if rng.random() < 0.2:
+            headers["Content-Length"] = rng.choice([str(len(body)), "0", "999999", "x", "-1"])
+        response = httpx.Response(200, headers=headers, stream=_Chunks(chunks))
+        try:
+            out = await http.read_limited(response, limit)
+        except http._Failure as e:
+            assert e.reason in ("te groot", "kapot antwoord", "onbekende codering")
+            continue
+        assert isinstance(out, bytes) and len(out) <= limit
 
 
 def test_retry_after_als_datum():

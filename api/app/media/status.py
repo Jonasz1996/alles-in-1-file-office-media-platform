@@ -21,6 +21,7 @@ kijkt.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from typing import Any
@@ -28,6 +29,10 @@ from typing import Any
 from app.config import Settings
 
 RETRY = 0.5  # seconden tussen twee pogingen zolang wait loopt
+# Stuurtekens (C0, DEL, C1) worden een vraagteken: een titel of naam komt zo in de terminal van
+# root (install.sh, watchers) en mag daar niets doen (OSC 52, de cursor verplaatsen, een regel
+# wissen). Review golf 5, S1.
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 SESSIONS_TIMEOUT = 5.0
 # Alleen een geslaagde zelftest (M1) is afgeschermd; zonder is het geen bewijs (review S6)
 SANDBOX_TEXT = {
@@ -107,10 +112,15 @@ async def watching(settings: Settings, base: str | None = None) -> tuple[list[di
     return list(r.json().get("sessions") or []), ""
 
 
+def safe(text: object) -> str:
+    """Tekst voor de terminal: elk stuurteken wordt "?"."""
+    return CONTROL.sub("?", str(text))
+
+
 def session_line(s: dict) -> str:
-    who = (s.get("user") or {}).get("display_name") or "?"
-    what = s.get("title") or "?"
-    mode = s.get("mode") or "?"
+    who = safe((s.get("user") or {}).get("display_name") or "?")
+    what = safe(s.get("title") or "?")
+    mode = safe(s.get("mode") or "?")
     rung = s.get("rung") or {}
     if mode == "transcode" and rung.get("height"):
         mode = f"transcode {rung['height']}p"
@@ -165,6 +175,8 @@ async def collect(settings: Settings, *, sessions: bool = False, wait: float = 0
         found, why = await watching(settings)
         out["sessions"] = found
         out["lines"] = [*out["lines"], *sessions_lines(found, why)]
+    # Wat de worker of de app terugzei, gaat ook naar de terminal: zonder stuurtekens
+    out["lines"] = [safe(line) for line in out["lines"]]
     # Met wait (na de start in install.sh) nooit een fout: de regels zeggen wat er is
     out["exit"] = 0 if wait > 0 or out["ok"] else 1
     return out

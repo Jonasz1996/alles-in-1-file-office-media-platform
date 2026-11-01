@@ -48,14 +48,14 @@ OVERVIEW_CHARS = 10_000
 def _text(value: Any, limit: int = 500) -> str | None:
     if not isinstance(value, str):
         return None
-    text = " ".join(value.split())[:limit]
+    text = " ".join(http.printable(value).split())[:limit]
     return text or None
 
 
 def _overview(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    text = value.strip()[:OVERVIEW_CHARS]
+    text = http.printable(value, lines=True).strip()[:OVERVIEW_CHARS]
     return text or None
 
 

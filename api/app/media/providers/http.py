@@ -43,6 +43,7 @@ import email.utils
 import ipaddress
 import json
 import logging
+import re
 import socket
 import time
 import zlib
@@ -79,6 +80,9 @@ REDIRECT_HOSTS = ("coverartarchive.org", "archive.org")  # en *.archive.org
 REDIRECT_STATUS = frozenset({301, 302, 303, 307, 308})
 PROVIDERS = ("tmdb", "musicbrainz", "caa")
 ULA = ipaddress.ip_network("fc00::/7")
+# Stuurtekens (C0, DEL en C1): in een terminal zijn ze opdrachten (ESC, OSC 52); review golf 5, S1
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+CONTROL_KEEP_LINES = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 # Verzoeken per seconde per dienst (Keuze 39), en de burst. MusicBrainz: 1 per seconde, met een
 # marge, zodat ook met wat vertraging onderweg nooit twee binnen een seconde aankomen.
 RATES: dict[str, tuple[float, float]] = {
@@ -235,7 +239,8 @@ def address_ok(text: str, *, private_ok: bool = False) -> bool:
             continue
         if not a.is_global or a.is_private or a.is_loopback or a.is_link_local or a.is_reserved:
             return False
-        if isinstance(a, ipaddress.IPv6Address) and a in ULA:
+        if isinstance(a, ipaddress.IPv6Address) and (a in ULA or a.is_site_local):
+            # fec0::/10 (site-local, verouderd) noemt ipaddress "global" (review golf 5, S3)
             return False
     return True
 
@@ -248,6 +253,12 @@ async def system_resolve(host: str, port: int) -> list[str]:
         return list(dict.fromkeys(str(info[4][0]) for info in infos))
 
     return await anyio.to_thread.run_sync(lookup)
+
+
+def printable(text: str, *, lines: bool = False) -> str:
+    """Tekst zonder stuurtekens (wat van buiten of van een gebruiker komt, voor een titel of een
+    samenvatting): ESC, BEL en C1 vallen weg. Met lines blijven regeleinde en tab."""
+    return (CONTROL_KEEP_LINES if lines else CONTROL).sub("", text)
 
 
 def redirect_host_ok(host: str) -> bool:

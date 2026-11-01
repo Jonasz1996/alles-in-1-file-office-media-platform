@@ -61,7 +61,7 @@ def phrase(text: str) -> str:
 def _text(value: Any, limit: int = 255) -> str | None:
     if not isinstance(value, str):
         return None
-    return " ".join(value.split())[:limit] or None
+    return " ".join(http.printable(value).split())[:limit] or None
 
 
 def _int(value: Any, low: int = 0, high: int = 10_000) -> int | None:

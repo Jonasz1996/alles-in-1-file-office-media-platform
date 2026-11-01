@@ -20,8 +20,13 @@ from tests.media import record
 from tests.media.fake_worker import FakeWorker
 from tests.test_cli_media import KEY, _media_settings
 from tests.test_media_contract import media_app  # noqa: F401
+from tests.test_media_scanner import library, scan
+from tests.test_media_scanner import world as world  # noqa: F401
 from tests.test_media_sessions import play, video
 from tests.test_shares import person
+
+# OSC 52 (het klembord), de cursor omhoog, een regel wissen, BEL, en CSI in C1
+EVIL = "\x1b]52;c;Y3VybCBldmlsfHNo\x07\x1b[1A\x1b[2KFilm\x9b31m"
 
 
 @pytest.fixture
@@ -139,6 +144,23 @@ def test_de_regels_van_de_kijkers():
     assert status.sessions_lines([one], "")[0].startswith("Let op: er kijkt nu 1 persoon.")
 
 
+def test_stuurtekens_worden_een_vraagteken():
+    """Review golf 5, S1: een titel of naam komt via install.sh (watchers) in de terminal van
+    root; daar mag hij niets doen."""
+    lines = status.sessions_lines(
+        [{"user": {"display_name": "Bob\x1b[2K"}, "title": EVIL, "mode": "direct\x07"}], ""
+    )
+    assert lines[1] == "  Bob?[2K: ?]52;c;Y3VybCBldmlsfHNo??[1A?[2KFilm?31m (direct?)"
+    assert not any(status.CONTROL.search(line) for line in lines)
+
+
+@pytest.mark.anyio
+async def test_de_regels_van_collect_zonder_stuurtekens(tmp_path, worker, unbind):
+    worker["caps"] = caps(sandbox="on", mode="container", missing=["libx264\x1b[2K"])
+    found = await status.collect(_media_settings(tmp_path, tmp_path / "w.sock"))
+    assert found["lines"][1] == "Let op: de worker mist libx264?[2K"
+
+
 @pytest.fixture
 def asgi(monkeypatch):
     """httpx naar de app in dit proces (de cli vraagt de draaiende app op 127.0.0.1)."""
@@ -189,3 +211,25 @@ async def test_kijkers_als_de_app_niet_antwoordt(media_app, admin):  # noqa: F81
     settings, _ = media_app
     found, why = await status.watching(settings, base="http://127.0.0.1:9")
     assert found is None and why.startswith("de app antwoordt niet (")
+
+
+@pytest.mark.anyio
+async def test_een_titel_met_stuurtekens_komt_niet_in_de_terminal(world, client, asgi):  # noqa: F811
+    """Review golf 5, S1, van begin tot eind: wie mag bewerken, zet een titel met ESC en OSC 52
+    (PATCH van M8). Die wordt zonder stuurtekens bewaard, en media-status --sessions print geen
+    enkel stuurteken."""
+    settings, _fake, headers = world
+    _library_id, folder = await library(client, headers)
+    node = await video(client, headers, settings, "film.mp4", parent=folder)
+    await scan(settings)
+    r = await client.patch(
+        f"/api/v1/media/items/{node['id']}", json={"title": EVIL}, headers=headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["title"] == "]52;c;Y3VybCBldmlsfHNo[1A[2KFilm31m"
+    await play(client, headers, node["id"])
+    found, why = await status.watching(settings)
+    assert why == "" and found is not None and len(found) == 1
+    lines = status.sessions_lines(found, why)
+    assert lines[1] == "  Jonas: ]52;c;Y3VybCBldmlsfHNo[1A[2KFilm31m (direct)"
+    assert not any(status.CONTROL.search(line) for line in lines)

@@ -382,6 +382,14 @@ def _sort_of(title: str) -> str:
     return names.sort_title(title) or title.casefold()[:255]
 
 
+def typed(name: str, value: Any) -> Any:
+    """Wat iemand typte, zonder stuurtekens (ESC, BEL, C1): een titel komt ook in een terminal
+    terecht (`media-status --sessions`, review golf 5, S1). De samenvatting houdt haar regels."""
+    if not isinstance(value, str):
+        return value
+    return http.printable(value, lines=name == "overview")
+
+
 @router.patch("/items/{node_id}", response_model=Item)
 async def edit(
     node_id: uuid.UUID,
@@ -406,7 +414,7 @@ async def edit(
     changed = False
     renumbered = False
     for name in given:
-        value = media_items._clean(name, getattr(body, name))
+        value = media_items._clean(name, typed(name, getattr(body, name)))
         if name == "title" and value is None:
             raise invalid()
         if getattr(item, name) != value:
