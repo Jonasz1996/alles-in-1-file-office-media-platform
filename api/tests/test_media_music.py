@@ -736,6 +736,36 @@ async def test_refresh_zet_een_regroup_klaar(world, client):  # noqa: F811
 
 
 @pytest.mark.anyio
+async def test_na_een_scan_staat_er_een_regroup_klaar(world, client):  # noqa: F811
+    """De haak na een scan (integratie; m9.md, afwijking 8): na de scan van een
+    muziekbibliotheek staat er een regroup klaar zonder dat iemand iets vroeg, zodat de eerste
+    vraag na de scan de nieuwe indeling al ziet. Een bibliotheek met films krijgt er geen."""
+    settings, _, headers = world
+    library_id, folder = await library(client, headers, name="Muziek", kind="music")
+    films_id, _ = await library(client, headers, name="Films", kind="movies")
+    await song(client, headers, settings, folder, "1.flac", album="Een", artist="Kim")
+    await scan(settings)
+    async with maker(settings)() as session:
+        rows = (
+            await session.scalars(
+                select(Job).where(Job.type == music.JOB, Job.status.in_(jobs.ACTIVE))
+            )
+        ).all()
+        assert [r.payload for r in rows] == [{"library_id": library_id}], rows
+        await session.execute(
+            update(Job)
+            .where(Job.type == music.JOB, Job.status == "queued")
+            .values(run_after=jobs.now() - timedelta(seconds=1))
+        )
+        await session.commit()
+    await jobs.run_pending(settings, lane=music.LANE)
+    url = f"/api/v1/media/libraries/{library_id}/albums"
+    [card] = (await client.get(url, headers=headers)).json()["items"]
+    assert card["title"] == "Een" and card["track_count"] == 1
+    assert films_id != library_id
+
+
+@pytest.mark.anyio
 async def test_een_bibliotheek_met_films_heeft_geen_albums(world, client):  # noqa: F811
     settings, _, headers = world
     library_id, _ = await library(client, headers)

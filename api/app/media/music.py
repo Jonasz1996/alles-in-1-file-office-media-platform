@@ -27,11 +27,12 @@ voor het eerste nummer: de preview van een nummer is zijn ingebedde hoes (render
 van een provider (M8, `{"url"}`) blijft staan. De scanner zoekt geen art voor muziek; dit doet het.
 
 **Wanneer:** na de analyse van een nummer (de stap audio_info, ook als die niets vond: de tags
-komen met de probe), en bij het lezen als er sinds de vorige keer iets in de boom veranderde
-(hooks.touched: alleen een teller in het geheugen, geen I/O). Na een herstart één keer per
-bibliotheek, bij de eerste vraag. De lijsten tellen de nummers zelf (aanwezig, nu), dus een
-nummer in de prullenbak telt niet meer mee zodra de scanner het zag; een album toont alleen wat
-je nu mag lezen (Reader.visible).
+komen met de probe), na elke scan van een muziekbibliotheek (de haak scanner.after_scan, sinds
+de integratie: zo loopt de eerste vraag na een scan niet meer één achter), en bij het lezen als
+er sinds de vorige keer iets in de boom veranderde (hooks.touched: alleen een teller in het
+geheugen, geen I/O). Na een herstart één keer per bibliotheek, bij de eerste vraag. De lijsten
+tellen de nummers zelf (aanwezig, nu), dus een nummer in de prullenbak telt niet meer mee zodra
+de scanner het zag; een album toont alleen wat je nu mag lezen (Reader.visible).
 
 **Artiesten:** geen tabel. De albumartiesten van de albums met het aantal albums, gesorteerd op
 de sorteertag (ALBUMARTISTSORT, TSO2; anders TSOP van de artiest), anders zonder "The", "De" of
@@ -64,7 +65,7 @@ from sqlalchemy.orm import aliased
 from app import events, jobs
 from app.config import Settings
 from app.db import get_engine
-from app.media import analysis, client, decide, hooks, names
+from app.media import analysis, client, decide, hooks, names, scanner
 from app.media import items as media_items
 from app.media import library as media_library
 from app.media.types import (
@@ -659,7 +660,19 @@ async def _run(settings: Settings, payload: dict[str, Any]) -> None:
     await regroup(settings, uuid.UUID(str(payload["library_id"])))
 
 
+async def scanned(settings: Settings, library_id: uuid.UUID) -> None:
+    """De haak na een scan (scanner.after_scan): een regroup voor een muziekbibliotheek, na
+    DELAY_S, zodat de analyses van de nieuwe nummers in dezelfde ronde vallen."""
+    async with _maker(settings)() as session:
+        library = await session.get(MediaLibrary, library_id)
+        if library is None or library.kind != "music":
+            return
+        await schedule(session, library_id)
+        await session.commit()
+
+
 jobs.register(JOB, _run, lane=LANE, timeout=TIMEOUT)
+scanner.after_scan(scanned)
 
 
 # --- de stap audio_info ---------------------------------------------------------------------------
