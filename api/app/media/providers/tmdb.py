@@ -239,6 +239,11 @@ class Tmdb:
     def __repr__(self) -> str:  # nooit de sleutel
         return "Tmdb()"
 
+    @property
+    def used_key(self) -> str:
+        """De sleutel van deze provider (voor secrets.mark_tmdb na een 401; nooit in een log)."""
+        return self._key
+
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         headers = {"Authorization": f"Bearer {self._key}"}
         return await http.get_json(NAME, self.base + path, params=params, headers=headers)

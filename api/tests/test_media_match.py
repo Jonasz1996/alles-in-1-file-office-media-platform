@@ -279,6 +279,38 @@ async def test_een_onbekend_id_valt_terug_op_zoeken(tmdb_fake):
     assert [e["inner"] for e in fake.log] == ["/3/movie/123", "/3/search/movie"]
 
 
+class YearFilter:
+    """Een provider die het jaar gebruikt zoals TMDB: als filter (alleen dat jaar)."""
+
+    name = "stub"
+
+    def __init__(self, films: list[Candidate]) -> None:
+        self.films = films
+        self.calls: list[int | None] = []
+
+    async def search(self, kind, title, year, lang):
+        self.calls.append(year)
+        return [f for f in self.films if year is None or f.year == year]
+
+
+@pytest.mark.anyio
+async def test_een_jaar_ernaast_ook_als_dat_jaar_iets_anders_geeft():
+    """Review golf 5, C5: de scene-naam zegt 2020 (het jaar van het festival), de film is van
+    2019, en in 2020 is er een andere film met een deel van de titel. Met het jaar als filter zag
+    de keuze de goede film nooit; nu tellen het zoeken met en zonder jaar samen (±1 jaar)."""
+    provider = YearFilter(
+        [c("Night Harbor", 2019, id="1"), c("Night Harbor Story Returns", 2020, id="2")]
+    )
+    decision = await lookup.identify(provider, "movie", "Night Harbor", 2020, {}, "en-US")
+    assert decision.state == "matched" and decision.choice.id == "movie:1"
+    assert provider.calls == [2020, None]
+    # Geeft het jaar zelf een zekere keuze, dan geen tweede verzoek
+    provider = YearFilter([c("Night Harbor", 2019, id="1"), c("Night Harbor", 2020, id="3")])
+    decision = await lookup.identify(provider, "movie", "Night Harbor", 2020, {}, "en-US")
+    assert decision.state == "matched" and decision.choice.id == "movie:3"
+    assert provider.calls == [2020]
+
+
 @pytest.mark.anyio
 async def test_series_zoeken(tmdb_fake):
     provider, _ = tmdb_fake

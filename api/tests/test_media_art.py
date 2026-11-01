@@ -262,5 +262,43 @@ async def test_opruimen(settings, monkeypatch):
     assert await art.cleanup(settings, now) == {"art": 0, "tmp": 0, "work": 0}
 
 
+async def test_opruimen_laat_een_map_die_store_net_opnieuw_gebruikt(settings, monkeypatch):
+    """Review golf 5, C9: een oude map in art/ zonder verwijzing, die store() net opnieuw
+    gebruikt (hetzelfde plaatje voor een andere film); de verwijzing komt pas daarna. Die map
+    mocht cleanup niet weggooien: store() maakt hem weer vers."""
+    body = picture(color=(10, 120, 40))
+    [sha] = await art.store(settings, [body])
+    folder = art.art_dir(settings) / sha
+    long_ago = time.time() - 3 * 3600
+    os.utime(folder, (long_ago, long_ago))
+
+    async def nothing(_settings):
+        return set()
+
+    monkeypatch.setattr(art, "referenced", nothing)
+    assert await art.store(settings, [body]) == [sha]  # opnieuw gebruikt, nog geen verwijzing
+    assert await art.cleanup(settings) == {"art": 0, "tmp": 0, "work": 0}
+    assert art.find(settings, sha, "w256") is not None
+
+
+async def test_opruimen_kijkt_vlak_voor_het_weggooien_nog_eens(settings, monkeypatch):
+    """Review golf 5, C9: de verwijzing kwam tussen het lezen van de verwijzingen en het
+    weggooien. cleanup leest ze nog eens voor het weggooit."""
+    now = time.time()
+    folder = settings.media_dir / "art" / ("f" * 64)
+    folder.mkdir(parents=True)
+    (folder / "w256.webp").write_bytes(b"RIFF\0\0\0\0WEBP")
+    os.utime(folder, (now - 3 * 3600, now - 3 * 3600))
+    calls = []
+
+    async def referenced(_settings):
+        calls.append(1)
+        return set() if len(calls) == 1 else {"f" * 64}
+
+    monkeypatch.setattr(art, "referenced", referenced)
+    assert await art.cleanup(settings, now) == {"art": 0, "tmp": 0, "work": 0}
+    assert folder.exists()
+
+
 async def test_opruimen_zonder_mappen(settings):
     assert await art.cleanup(settings) == {"art": 0, "tmp": 0, "work": 0}

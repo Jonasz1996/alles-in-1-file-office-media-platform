@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import String, cast, func, select
+from sqlalchemy import String, cast, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import events, jobs
@@ -60,7 +60,7 @@ from app.media.providers.base import (
     ProviderUnavailable,
 )
 from app.media.types import EVENT_ITEM, EVENT_LIBRARY, ItemEvent, LibraryEvent
-from app.models import MediaAlbum, MediaItem, MediaLibrary, MediaShow
+from app.models import Job, MediaAlbum, MediaItem, MediaLibrary, MediaShow
 
 log = logging.getLogger("platform.media.lookup")
 
@@ -81,6 +81,10 @@ PENDING_ROWS = 200
 FALLBACK_LANG = tmdb.FALLBACK_LANG
 HIDDEN_LOCK = "match_state"
 ONLINE_KINDS = ("movies", "shows", "music")
+# Eén ding dat steeds faalt terwijl de provider zelf werkt (review golf 5, C2): na zoveel
+# pogingen naar Nakijken; tot dan komt de volgende ronde pas na UNIT_RETRY seconden
+UNIT_TRIES = 3
+UNIT_RETRY = 120.0
 
 
 def key(library_id: uuid.UUID | str) -> str:
@@ -139,13 +143,15 @@ def _sure(choice: Candidate) -> match.Decision:
 async def search(
     provider: MetadataProvider, kind: str, title: str, year: int | None, lang: str
 ) -> list[Candidate]:
-    """Zoeken op titel en jaar; zonder resultaat met jaar nog eens zonder (een scene-naam heeft
-    soms het jaar van de uitgave, niet van de film)."""
+    """Zoeken op titel en jaar. Het jaar is bij TMDB een filter: een scene-naam heeft soms het
+    jaar van de uitgave of het festival, niet van de film (een jaar ernaast). Geeft het zoeken
+    met jaar geen zekere keuze, dan nog eens zonder jaar, en tellen beide (match.rank telt een
+    kandidaat één keer); zo kan de regel van ±1 jaar van Keuze 42 werken (review golf 5, C5)."""
     if not " ".join((title or "").split()):
         return []
     found = await provider.search(kind, title, year, lang)
-    if not found and year is not None:
-        found = await provider.search(kind, title, None, lang)
+    if year is not None and match.decide(title, year, found).state != "matched":
+        found = found + await provider.search(kind, title, None, lang)
     return found
 
 
@@ -242,11 +248,53 @@ async def publish_library(session: AsyncSession, library_id: uuid.UUID) -> None:
         log.exception("media.library na het opzoeken")
 
 
+def art_ref(target: str, row: MediaItem | MediaShow | MediaAlbum) -> str | None:
+    """Bij welke koppeling de art van dit ding hoort: het id van TMDB (een film, een serie),
+    het nummer (een aflevering), of het album. None zonder koppeling (lokaal, Nakijken, of
+    ontkoppeld): dan hoort er geen art van een provider bij (review golf 5, C1)."""
+    locked = getattr(row, "locked", None) or []
+    if row.match_state not in ("matched", "manual") or HIDDEN_LOCK in locked:
+        return None
+    if target == "album":
+        return "album"
+    if target == "item" and getattr(row, "kind", None) == "episode":
+        return f"aflevering:{row.season}:{row.episode}"
+    number = str((row.ids or {}).get("tmdb") or "")
+    return f"tmdb:{number}" if number.isdigit() else None
+
+
+def _art_key(target: str, target_id: uuid.UUID | str) -> str:
+    return f"{ART_JOB}:{target}:{target_id}:"
+
+
+async def drop_art(session: AsyncSession, target: str, target_id: uuid.UUID) -> None:
+    """De art-taken die nog wachten voor dit ding weg (ontkoppelen, opnieuw koppelen), in de
+    transactie van de aanroeper. Een taak die al loopt, schrijft niet meer: run_art kijkt of
+    de koppeling nog dezelfde is (art_ref)."""
+    await session.execute(
+        delete(Job)
+        .where(
+            Job.type == ART_JOB,
+            Job.status == "queued",
+            Job.key.like(_art_key(target, target_id) + "%"),
+        )
+        .execution_options(synchronize_session=False)
+    )
+
+
 async def queue_art(
-    session: AsyncSession, target: str, target_id: uuid.UUID, details_images: list[Any]
+    session: AsyncSession,
+    target: str,
+    row: MediaItem | MediaShow | MediaAlbum,
+    details_images: list[Any],
 ) -> None:
     """Een taak media.art per rol (poster, achtergrond, hoes), in de transactie van de
-    aanroeper."""
+    aanroeper, na het schrijven van de koppeling. De taak draagt de koppeling (`ref`, ook in de
+    key): een andere koppeling geeft een eigen taak, en een oude schrijft niets meer."""
+    target_id = row.node_id if target == "item" else row.id  # type: ignore[union-attr]
+    ref = art_ref(target, row)
+    if ref is None:
+        return
     seen: set[str] = set()
     for image in details_images:
         role = "poster" if image.kind == "still" else image.kind
@@ -260,8 +308,10 @@ async def queue_art(
             "provider": image.provider,
             "kind": image.kind,
             "path": image.path,
+            "ref": ref,
         }
-        await jobs.enqueue(session, ART_JOB, payload, key=f"{ART_JOB}:{target}:{target_id}:{role}")
+        key = f"{_art_key(target, target_id)}{role}:{ref}"
+        await jobs.enqueue(session, ART_JOB, payload, key=key)
 
 
 def _open(row: MediaItem | MediaShow) -> bool:
@@ -290,8 +340,9 @@ async def write_item(
             fields = detail_fields(details, item.ids, state)
             if manual:
                 item.locked = [f for f in (item.locked or []) if f != HIDDEN_LOCK]
+                await drop_art(session, "item", item.node_id)  # de art van een vorige koppeling
             media_items.merge(item, fields, "provider")
-            await queue_art(session, "item", item.node_id, details.images)
+            await queue_art(session, "item", item, details.images)
         else:
             media_items.merge(
                 item,
@@ -324,8 +375,9 @@ async def write_show(
                 show.locked = [f for f in (show.locked or []) if f != HIDDEN_LOCK]
                 # Een andere serie: de afleveringen opnieuw, met de seizoenen van deze
                 await _reset_episodes(session, show.id)
+                await drop_art(session, "show", show.id)
             media_items.merge(show, detail_fields(details, show.ids, state), "provider")
-            await queue_art(session, "show", show.id, details.images)
+            await queue_art(session, "show", show, details.images)
         else:
             media_items.merge(
                 show,
@@ -382,7 +434,7 @@ async def write_season(
             changed.append(item.node_id)
             if found.still:
                 still = [_Image(found.provider, "still", found.still)]
-                await queue_art(session, "item", item.node_id, still)
+                await queue_art(session, "item", item, still)
         await session.commit()
         await publish_item(session, library_id, changed)
 
@@ -407,7 +459,7 @@ async def write_album(
             return
         album.match_state = state
         if release is not None and release.cover:
-            await queue_art(session, "album", album.id, [_Image(caa.NAME, "cover", release.id)])
+            await queue_art(session, "album", album, [_Image(caa.NAME, "cover", release.id)])
         await session.commit()
         await publish_library(session, library_id)
 
@@ -586,9 +638,61 @@ async def _album(settings, provider, library_id, lang, unit: Unit) -> None:
 
 STEPS = {"movie": _movie, "show": _show, "season": _season, "album": _album}
 
+# Per ding: hoe vaak het faalde terwijl de provider zelf werkte (in het geheugen; na een
+# herstart begint het opnieuw, wat hooguit een paar pogingen extra kost)
+_failures: dict[tuple[str, uuid.UUID, int | None], int] = {}
+
+
+def _unit_key(unit: Unit) -> tuple[str, uuid.UUID, int | None]:
+    return unit.kind, unit.id, unit.season
+
+
+async def _reachable(provider: MetadataProvider) -> bool:
+    """Werkt de provider zelf? Eén lichte vraag (check, de knop Testen). Staat de
+    stroomonderbreker open, dan gaat er niets naar buiten en is het antwoord nee. Een 429 of
+    een 401 gaan door naar run (Defer, of de sleutel dicht)."""
+    try:
+        await provider.check()
+    except ProviderUnavailable:
+        return False
+    return True
+
+
+async def _give_up(settings: Settings, library_id: uuid.UUID, unit: Unit) -> None:
+    """Dit ding naar Nakijken: de provider werkt, maar het antwoord voor dit ding niet."""
+    nothing = match.Decision("review", None, 0.0, [])
+    if unit.kind == "movie":
+        await write_item(settings, library_id, unit.id, nothing, None)
+    elif unit.kind == "show":
+        await write_show(settings, library_id, unit.id, nothing, None)
+    elif unit.kind == "season" and unit.season is not None:
+        await write_season(settings, library_id, unit.id, unit.season, [])
+    elif unit.kind == "album":
+        await write_album(settings, library_id, unit.id, "review", None)
+
+
+async def _unit_failed(settings: Settings, library_id: uuid.UUID, unit: Unit) -> bool:
+    """Telt een fout van één ding. Geeft True als het nu naar Nakijken ging."""
+    key = _unit_key(unit)
+    _failures[key] = _failures.get(key, 0) + 1
+    if _failures[key] < UNIT_TRIES:
+        return False
+    _failures.pop(key, None)
+    log.warning(
+        "media.lookup: %s %s faalt steeds bij de provider; naar Nakijken", unit.kind, unit.id
+    )
+    await _give_up(settings, library_id, unit)
+    return True
+
 
 async def run(settings: Settings, payload: dict[str, Any]) -> None:
-    """De taak media.lookup voor één bibliotheek."""
+    """De taak media.lookup voor één bibliotheek.
+
+    Een fout bij één ding (een kapot of te groot antwoord, een 5xx voor één id) houdt de rest
+    niet tegen (review golf 5, C2): werkt de provider zelf nog (`_reachable`), dan telt de fout
+    voor dat ding en gaat de taak door met het volgende; na UNIT_TRIES keer gaat het naar
+    Nakijken. Alleen als de provider zelf weg is (geen verbinding, de stroomonderbreker open):
+    `Defer` voor de hele bibliotheek, en dan telt niets."""
     if not _active():
         return
     library_id = uuid.UUID(str(payload["library_id"]))
@@ -605,24 +709,36 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
         scanning = library.scan_state in ("queued", "running")
         lang = library.language or "nl-NL"
     # Geen verbinding open tijdens het verkeer naar buiten (regel 8)
+    failed = 0
     try:
         for unit in units:
-            await STEPS[unit.kind](settings, provider, library_id, lang, unit)
+            try:
+                await STEPS[unit.kind](settings, provider, library_id, lang, unit)
+            except ProviderUnavailable:
+                if not await _reachable(provider):
+                    raise
+                if not await _unit_failed(settings, library_id, unit):
+                    failed += 1
+            else:
+                _failures.pop(_unit_key(unit), None)
     except ProviderRate as e:
         raise jobs.Defer(max(1.0, e.retry_after)) from None
     except ProviderUnavailable:
         raise jobs.Defer(OFFLINE) from None
     except ProviderAuth:
-        if provider.name == tmdb.NAME:
+        if isinstance(provider, tmdb.Tmdb):
             async with maker() as session:
-                await secrets.mark_tmdb(session, settings, False)
+                await secrets.mark_tmdb(session, settings, False, used=provider.used_key)
         log.warning("%s: de sleutel werkt niet (meer); alleen lokale metadata", provider.name)
         return
     # Meer werk: een volle ronde, een serie die nu gekoppeld is (haar seizoenen), of een scan
-    # die nog loopt (dan even wachten)
+    # die nog loopt (dan even wachten). Faalde er een ding (de provider werkt wel): de volgende
+    # ronde pas na UNIT_RETRY, dan nog eens
     more = len(units) >= BATCH or any(u.kind == "show" for u in units)
-    if more or scanning:
+    if more or scanning or failed:
         later = None if more else _now() + timedelta(seconds=WAIT_SCAN)
+        if failed:
+            later = _now() + timedelta(seconds=UNIT_RETRY)
         async with maker() as session:
             await jobs.chain(session, JOB, {"library_id": str(library_id)}, key(library_id),
                              run_after=later)  # fmt: skip
@@ -657,8 +773,29 @@ async def _row(session: AsyncSession, target: str, target_id: uuid.UUID):
     return None if model is None else await session.get(model, target_id)
 
 
+def _same_match(target: str, row: Any, payload: dict[str, Any]) -> bool:
+    """Hoort de taak nog bij de koppeling van nu? (Een taak van vóór deze regel heeft geen
+    ref: dan alleen als er een koppeling is.)"""
+    ref = art_ref(target, row)
+    wanted = payload.get("ref")
+    return ref is not None and (wanted is None or wanted == ref)
+
+
+async def _still_online(session: AsyncSession, settings: Settings, row: Any) -> bool:
+    """Mag er (nog) verkeer naar buiten voor dit ding? De bibliotheek online, en de provider
+    nog ingesteld (de sleutel van TMDB, MusicBrainz aan). Anders gaat er niets naar buiten,
+    ook niet voor een taak die eerder klaargezet werd (review golf 5, C4)."""
+    library = await session.get(MediaLibrary, row.library_id)
+    if library is None or not library.online or library.kind not in ONLINE_KINDS:
+        return False
+    await secrets.load(session, settings)
+    return provider_for(library.kind) is not None
+
+
 async def run_art(settings: Settings, payload: dict[str, Any]) -> None:
-    """De taak media.art: één plaatje voor één rol."""
+    """De taak media.art: één plaatje voor één rol. Alleen als het ding nog dezelfde koppeling
+    heeft als toen de taak klaargezet werd (anders is het plaatje van een andere film, of het
+    ding is ontkoppeld: review golf 5, C1), en als er nog verkeer naar buiten mag (C4)."""
     if not _active():
         return
     target = str(payload.get("target"))
@@ -668,6 +805,10 @@ async def run_art(settings: Settings, payload: dict[str, Any]) -> None:
     async with maker() as session:
         row = await _row(session, target, target_id)
         if row is None or _local_role(row.art, role, target):
+            return
+        if not _same_match(target, row, payload):
+            return
+        if not await _still_online(session, settings, row):
             return
     try:
         body = await download(
@@ -691,6 +832,8 @@ async def run_art(settings: Settings, payload: dict[str, Any]) -> None:
         row = await _row(session, target, target_id)
         if row is None or _local_role(row.art, role, target):
             return
+        if not _same_match(target, row, payload):
+            return  # intussen ontkoppeld of anders gekoppeld
         if target == "item":
             media_items.merge(row, {"art": {role: value}}, "provider")
         else:
@@ -797,11 +940,12 @@ async def _kick(settings: Settings) -> None:
 
 
 def reset() -> None:
-    """Tests: de haak vergeten."""
+    """Tests: de haak en de tellers per ding vergeten."""
     global _soon
     if _soon is not None:
         _soon[1].cancel()
     _soon = None
+    _failures.clear()
 
 
 async def counts(session: AsyncSession, library_id: uuid.UUID) -> dict[str, int]:

@@ -220,6 +220,25 @@ async def test_na_een_401_dicht_tot_testen(settings, session, out, fake):
     assert (await secrets.status(session, settings))["ok"] is True
 
 
+async def test_een_late_401_van_de_oude_sleutel_laat_de_nieuwe_open(settings, session):
+    """Review golf 5, C7: een verzoek met de oude sleutel liep nog toen Jonas een nieuwe bewaarde;
+    de 401 daarvan zette de nieuwe dicht. Nu telt een 401 alleen voor de sleutel waarmee het
+    verzoek ging."""
+
+    async def works(key: str) -> None:
+        return None
+
+    old, new = "a" * 40, "b" * 40
+    await secrets.save_tmdb(session, settings, old, check=works)
+    await secrets.save_tmdb(session, settings, new, check=works)
+    await secrets.mark_tmdb(session, settings, False, used=old)
+    assert secrets.usable()
+    assert (await secrets.status(session, settings))["ok"] is True
+    await secrets.mark_tmdb(session, settings, False, used=new)
+    assert not secrets.usable()
+    assert (await secrets.status(session, settings))["ok"] is False
+
+
 async def test_testen_met_een_sleutel_die_niet_meer_werkt(settings, session, out, fake):
     await secrets.save_tmdb(session, settings, KEY)
     fake.state.fake.config.tmdb_key = "een-andere-sleutel-" + "z" * 20

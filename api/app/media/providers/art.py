@@ -185,8 +185,11 @@ async def store(settings, bodies: list[bytes], *, tmp: bool = False) -> list[str
         sha = hashlib.sha256(body).hexdigest()
         out.append(sha)
         if find(settings, sha, "w256") is not None and (tmp or (base / sha).is_dir()):
-            if tmp and (base / sha).is_dir():
-                await anyio.to_thread.run_sync(os.utime, base / sha)  # weer 24 uur
+            if (base / sha).is_dir():
+                # Weer vers: art-tmp weer 24 uur; een oude map in art/ die nu opnieuw gebruikt
+                # wordt, ruimt cleanup niet weg voor de verwijzing er is (review golf 5, C9)
+                with contextlib.suppress(OSError):
+                    await anyio.to_thread.run_sync(os.utime, base / sha)
             continue
         todo[sha] = body
     if not todo:
@@ -359,9 +362,27 @@ async def cleanup(settings, now: float | None = None) -> dict[str, int]:
     t = time.time() if now is None else now
     used = await referenced(settings)
     old_art = await anyio.to_thread.run_sync(_old_dirs, art_dir(settings), t - 3600)
-    gone = [p for p in old_art if p.name not in used]
+    candidates = [p for p in old_art if p.name not in used]
+    if candidates:
+        # Nog eens kijken vlak voor het weggooien (review golf 5, C9): store() kan een oude map
+        # intussen opnieuw gebruikt hebben (dan is hij weer vers), of de verwijzing staat er nu
+        used = await referenced(settings)
+        candidates = [p for p in candidates if p.name not in used]
+    gone = [p for p in candidates if await anyio.to_thread.run_sync(_remove_if_old, p, t - 3600)]
     old = await anyio.to_thread.run_sync(_old_dirs, tmp_dir(settings), t - TMP_KEEP)
     work = await anyio.to_thread.run_sync(_old_dirs, work_dir(settings), t - 3600)
-    for path in (*gone, *old, *work):
+    for path in (*old, *work):
         await anyio.to_thread.run_sync(lambda p=path: shutil.rmtree(p, ignore_errors=True))
     return {"art": len(gone), "tmp": len(old), "work": len(work)}
+
+
+def _remove_if_old(path: Path, before: float) -> bool:
+    """De map weg als hij nog altijd ouder is dan before (store() maakt een map die het opnieuw
+    gebruikt weer vers); geeft of hij weg ging."""
+    try:
+        if path.stat().st_mtime >= before:
+            return False
+    except OSError:
+        return False
+    shutil.rmtree(path, ignore_errors=True)
+    return True

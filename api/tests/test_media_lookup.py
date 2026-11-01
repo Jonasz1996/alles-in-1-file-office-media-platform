@@ -356,6 +356,51 @@ async def test_de_sleutel_nooit_in_de_log(net, client, caplog):
     assert kit.KEY[-12:] not in caplog.text
 
 
+async def test_een_ding_dat_steeds_faalt_houdt_de_rest_niet_tegen(net, client):
+    """Review golf 5, C2: een kapot antwoord voor één film (de provider werkt verder) was een
+    Defer voor de hele bibliotheek, elke ronde opnieuw, zonder einde. Nu: de rest wordt
+    gekoppeld, de ronde erna komt pas na UNIT_RETRY, en na UNIT_TRIES keer naar Nakijken."""
+    await save_key(net)
+    library_id = await films(client, net, [LANTERNS, NEPHAVEN])
+    net.fake.fault("garbage", "/3/movie/900002", host="tmdb", times=None)
+    await run(net.settings)
+    found = await items(net.settings, library_id)
+    assert found[NEPHAVEN].match_state == "matched"
+    assert found[LANTERNS].match_state == "local"
+    [job] = await lookup_jobs(net.settings, "queued")
+    after = job.run_after.replace(tzinfo=job.run_after.tzinfo or dt.UTC)
+    wait = (after - dt.datetime.now(dt.UTC)).total_seconds()
+    assert lookup.UNIT_RETRY - 10 < wait <= lookup.UNIT_RETRY
+    at = dt.datetime.now(dt.UTC)
+    for _ in range(lookup.UNIT_TRIES - 1):
+        at += dt.timedelta(seconds=lookup.UNIT_RETRY + 1)
+        await jobs.run_pending(net.settings, lane="media_net", at=at)
+    found = await items(net.settings, library_id)
+    assert found[LANTERNS].match_state == "review"
+    assert found[NEPHAVEN].match_state == "matched"
+    # Klaar: geen ronde meer in de rij, en de provider zelf staat niet als kapot
+    assert await lookup_jobs(net.settings, "queued") == []
+    from app.media import providers
+
+    assert providers.unreachable_since("tmdb") is None
+
+
+async def test_een_provider_die_weg_is_telt_niet_per_ding(net, client):
+    """Is de provider zelf weg, dan is het een Defer en telt er niets per ding (anders zou een
+    lange storing alles naar Nakijken sturen)."""
+    await save_key(net)
+    library_id = await films(client, net, [LANTERNS])
+    net.fake.fault("500", host="tmdb", times=None)
+    for _ in range(lookup.UNIT_TRIES + 1):
+        with pytest.raises(jobs.Defer):
+            await lookup.run(net.settings, {"library_id": library_id})
+    assert lookup._failures == {}
+    net.fake.clear_faults()
+    net.clock.now += http.BREAKER_OPEN + 1
+    await lookup.run(net.settings, {"library_id": library_id})
+    assert (await items(net.settings, library_id))[LANTERNS].match_state == "matched"
+
+
 # --- wanneer: de haak en de housekeeping ---------------------------------------------------------
 
 

@@ -456,3 +456,157 @@ async def test_de_bibliotheek_weg_tijdens_koppelen(net, client):
     assert not await lookup.write_item(
         net.settings, uuid.UUID(library_id), node, decision, details, manual=True
     )
+
+
+# --- review golf 5 -------------------------------------------------------------------------------
+
+
+async def art_jobs(net) -> list[Job]:
+    async with maker(net.settings)() as session:
+        query = select(Job).where(Job.type == lookup.ART_JOB, Job.status == "queued")
+        return list((await session.scalars(query)).all())
+
+
+def image_paths(net) -> list[str]:
+    return [e["path"] for e in net.fake.log if e["service"] == "image"]
+
+
+async def test_ontkoppelen_met_een_wachtende_art_taak(net, client):
+    """Review golf 5, C1 (a): de art-taak van de automatische koppeling wacht nog (bijvoorbeeld
+    na een 429) als Jonas ontkoppelt. Daarna komt er geen poster van TMDB meer bij, en de taak
+    gaat niet naar buiten."""
+    await save_key(net)
+    library_id = await films(client, net, [NEPHAVEN])
+    await lookup.run(net.settings, {"library_id": library_id})  # alleen het opzoeken
+    node = await node_of(net, library_id, NEPHAVEN)
+    assert (await row(net, node)).match_state == "matched"
+    old = await art_jobs(net)
+    assert {j.payload["role"] for j in old} == {"poster", "backdrop"}
+    r = await client.delete(f"{URL}/items/{node}/match", headers=net.headers)
+    assert r.status_code == 200, r.text
+    assert await art_jobs(net) == []  # de wachtende taken zijn weg
+    # Ook een taak die al liep (de payload van toen) schrijft niets en haalt niets op
+    net.fake.log.clear()
+    for job in old:
+        await lookup.run_art(net.settings, job.payload)
+    await jobs.run_pending(net.settings, lane="media_net")
+    stored = await row(net, node)
+    assert stored.match_state == "local" and stored.art == {}
+    assert image_paths(net) == []
+
+
+async def test_een_verkeerde_koppeling_met_de_hand_goed_zetten(net, client):
+    """Review golf 5, K6 en C1 (b): een film die automatisch verkeerd gekoppeld is (met art
+    die nog wacht) koppelt Jonas met de hand aan een andere. De nieuwe id's, de plaatjes van de
+    nieuwe film (nooit die van de oude), en het automatisch opzoeken laat hem daarna staan."""
+    await save_key(net)
+    library_id = await films(client, net, [NEPHAVEN])
+    await lookup.run(net.settings, {"library_id": library_id})
+    node = await node_of(net, library_id, NEPHAVEN)
+    wrong = await row(net, node)
+    assert wrong.match_state == "matched" and str(wrong.ids["tmdb"]) == "900001"
+    old = await art_jobs(net)
+    assert {j.payload["path"] for j in old} == {"/p900001.jpg", "/b900001.jpg"}
+    r = await client.post(
+        f"{URL}/items/{node}/match", json={"provider": "tmdb", "id": "movie:900019"},
+        headers=net.headers,
+    )  # fmt: skip
+    assert r.status_code == 200, r.text
+    item = r.json()
+    assert item["match_state"] == "manual" and item["title"] == "The Fake Storm"
+    stored = await row(net, node)
+    assert str(stored.ids["tmdb"]) == "900019" and stored.year == 1998
+    queued = await art_jobs(net)
+    assert {j.payload["path"] for j in queued} == {"/p900019.jpg", "/b900019.jpg"}
+    assert all(j.payload["ref"] == "tmdb:900019" for j in queued)
+    # De oude taak (al bezig toen Jonas koppelde) schrijft niets
+    net.fake.log.clear()
+    for job in old:
+        await lookup.run_art(net.settings, job.payload)
+    assert (await row(net, node)).art == {}
+    assert image_paths(net) == []
+    await jobs.run_pending(net.settings, lane="media_net")
+    stored = await row(net, node)
+    assert set(stored.art) == {"poster", "backdrop"}
+    assert sorted(image_paths(net)) == ["/t/p/w1280/b900019.jpg", "/t/p/w500/p900019.jpg"]
+    # Het automatisch opzoeken laat de keuze van Jonas staan
+    await run(net.settings)
+    stored = await row(net, node)
+    assert stored.match_state == "manual" and str(stored.ids["tmdb"]) == "900019"
+
+
+async def test_art_gaat_niet_naar_buiten_als_het_uit_staat(net, client):
+    """Review golf 5, C4: art-taken die nog wachten, gaan niet meer naar buiten als de
+    bibliotheek online uit heeft, of als de sleutel weg is."""
+    await save_key(net)
+    library_id = await films(client, net, [NEPHAVEN])
+    await lookup.run(net.settings, {"library_id": library_id})
+    node = await node_of(net, library_id, NEPHAVEN)
+    assert len(await art_jobs(net)) == 2
+    r = await client.patch(
+        f"{URL}/libraries/{library_id}", json={"online": False}, headers=net.headers
+    )
+    assert r.status_code == 200, r.text
+    net.fake.log.clear()
+    await jobs.run_pending(net.settings, lane="media_net")
+    assert image_paths(net) == [] and (await row(net, node)).art == {}
+    # De sleutel weg (en online weer aan): ook niets
+    async with maker(net.settings)() as session:
+        library = await session.get(MediaLibrary, uuid.UUID(library_id))
+        library.online = True
+        await session.commit()
+    r = await client.post(
+        f"{URL}/items/{node}/match", json={"provider": "tmdb", "id": "movie:900001"},
+        headers=net.headers,
+    )  # fmt: skip
+    assert r.status_code == 200 and len(await art_jobs(net)) == 2
+    async with maker(net.settings)() as session:
+        await secrets.forget_tmdb(session)
+    net.fake.log.clear()
+    await jobs.run_pending(net.settings, lane="media_net")
+    assert image_paths(net) == [] and (await row(net, node)).art == {}
+
+
+async def test_ontkoppelen_maakt_locked_leeg(net, client):
+    """Review golf 5, C8 (Keuze 43): na ontkoppelen is wat met de hand vaststond weer los;
+    de titel en het jaar komen weer uit de naam."""
+    await save_key(net)
+    library_id = await films(client, net, [NEPHAVEN])
+    await run(net.settings)
+    node = await node_of(net, library_id, NEPHAVEN)
+    r = await client.patch(
+        f"{URL}/items/{node}", json={"title": "Verkeerde titel", "year": 1990},
+        headers=net.headers,
+    )  # fmt: skip
+    assert sorted(r.json()["locked"]) == ["title", "year"]
+    r = await client.delete(f"{URL}/items/{node}/match", headers=net.headers)
+    assert r.status_code == 200, r.text
+    item = r.json()
+    assert item["locked"] == [] and item["match_state"] == "local"
+    assert (item["title"], item["year"]) == ("De Nephaven", 2004)
+    assert (await row(net, node)).locked == [lookup.HIDDEN_LOCK]
+
+
+async def test_kandidaten_wachten_hooguit_8_seconden(net, client, monkeypatch):
+    """Review golf 5, C6 (Keuze 39): de 8 s gelden voor het zoeken en de posters samen. Is
+    TMDB te traag: 503 media_provider_unavailable, niet wachten tot de time-out van 20 s."""
+    import time
+
+    import anyio
+
+    from app.routers import media_match
+
+    await save_key(net)
+    library_id = await films(client, net, [NEPHAVEN])
+    node = await node_of(net, library_id, NEPHAVEN)
+
+    async def slow(*args, **kwargs):
+        await anyio.sleep(30)
+        return []
+
+    monkeypatch.setattr(media_match, "CANDIDATE_SECONDS", 0.3)
+    monkeypatch.setattr(lookup, "search", slow)
+    start = time.monotonic()
+    r = await client.get(f"{URL}/items/{node}/candidates", headers=net.headers)
+    assert time.monotonic() - start < 5
+    assert r.status_code == 503 and code(r) == "media_provider_unavailable"

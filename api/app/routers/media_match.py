@@ -22,8 +22,9 @@ Tijdens het verkeer naar buiten staat er geen databaseverbinding open (regel 8):
 committen, dan de provider, dan schrijven (lookup.write_item, een eigen korte transactie).
 
 **Ontkoppelen** zet het item terug op lokaal: de titel uit de naam (de scanner leest daarna ook de
-NFO weer), geen plaatjes van de provider, en de verborgen vergrendeling `match_state`, zodat het
-automatisch opzoeken hem niet meteen weer koppelt (afwijking in m8.md: niet helemaal `locked` leeg).
+NFO weer), geen plaatjes van de provider (ook niet wat nog in de rij stond), wat met de hand
+vaststond weer los (Keuze 43: `locked` leeg), en alleen de verborgen vergrendeling `match_state`,
+zodat het automatisch opzoeken hem niet meteen weer koppelt (afwijking 3 in m8.md).
 
 Elke wijziging stuurt `media.item` (of `media.library` bij een serie) naar wie de bibliotheek ziet.
 """
@@ -91,9 +92,12 @@ def invalid(message: str = "Ongeldige invoer"):
     return errors.fail(422, "invalid_input", message)
 
 
-async def outbound[T](settings: Settings, call: Callable[[], Awaitable[T]]) -> T:
+async def outbound[T](
+    settings: Settings, provider: tmdb.Tmdb, call: Callable[[], Awaitable[T]]
+) -> T:
     """Een aanroep naar een provider; de fouten als API-fout uit de catalogus, nooit met de
-    tekst van de fout. Een 401 zet de sleutel op ok false (dicht tot "Testen" of een nieuwe)."""
+    tekst van de fout. Een 401 zet de sleutel op ok false (dicht tot "Testen" of een nieuwe),
+    maar alleen als het nog dezelfde sleutel is (review golf 5, C7)."""
     try:
         return await call()
     except ProviderRate as e:
@@ -102,7 +106,7 @@ async def outbound[T](settings: Settings, call: Callable[[], Awaitable[T]]) -> T
         raise media_errors.provider_unavailable() from None
     except ProviderAuth:
         async with lookup._maker(settings)() as session:
-            await secrets.mark_tmdb(session, settings, False)
+            await secrets.mark_tmdb(session, settings, False, used=provider.used_key)
         raise media_errors.provider_auth() from None
 
 
@@ -210,10 +214,16 @@ async def candidates(
         wanted_year = year
     lang = library.language or "nl-NL"
     await session.commit()  # geen verbinding open tijdens het verkeer naar buiten (regel 8)
+    # Keuze 39: het venster wacht hooguit 8 s, voor het zoeken (ook zonder jaar) én de
+    # posters samen (review golf 5, C6). Is het zoeken dan niet klaar: 503, zoals onbereikbaar
     deadline = time.monotonic() + CANDIDATE_SECONDS
-    found = await outbound(
-        settings, lambda: lookup.search(provider, kind, title, wanted_year, lang)
-    )
+    found: list[Candidate] | None = None
+    with anyio.move_on_after(CANDIDATE_SECONDS):
+        found = await outbound(
+            settings, provider, lambda: lookup.search(provider, kind, title, wanted_year, lang)
+        )
+    if found is None:
+        raise media_errors.provider_unavailable()
     ranked = [s.candidate for s in match.rank(title, wanted_year, found)][:CANDIDATES]
     pictures = await posters(settings, ranked, deadline)
     return [
@@ -248,7 +258,7 @@ def tmdb_id(body: MatchIn, kind: str) -> str:
 
 async def details_of(settings: Settings, provider: tmdb.Tmdb, kind: str, wanted: str, lang: str):
     try:
-        return await outbound(settings, lambda: provider.details(kind, wanted, lang))
+        return await outbound(settings, provider, lambda: provider.details(kind, wanted, lang))
     except http.NotFound:
         raise not_found() from None
 
@@ -358,16 +368,20 @@ async def unmatch(
     parts = await relative_parts(session, node_id, library.root_id) or [node.name]
     parsed = names.parse(parts, library.kind)
     stem = node.name.rsplit(".", 1)[0] if "." in node.name else node.name
-    item.locked = [f for f in (item.locked or []) if f != lookup.HIDDEN_LOCK]
+    # Keuze 43: "terug naar alleen lokaal; locked leeg". Ook wat met de hand vaststond, komt
+    # weer uit de naam en de NFO (review golf 5, C8)
+    item.locked = []
     item.source = "name"  # de naam is weer de bron (anders blijft ze achter de provider)
     keep = {r: e for r, e in (item.art or {}).items() if media_items.is_local_art(e)}
     fields = local_fields(parsed, item.kind, stem)
     media_items.merge(item, {**fields, "match_state": "local", "candidates": []}, "name")
     item.art = keep
     # Niet meteen weer automatisch koppelen: de verborgen vergrendeling (zie de kop)
-    item.locked = [*(item.locked or []), lookup.HIDDEN_LOCK]
+    item.locked = [lookup.HIDDEN_LOCK]
     item.candidates = []
     item.updated_at = media_items.now()
+    # Een plaatje van de oude koppeling dat nog wacht, komt er niet meer bij (C1)
+    await lookup.drop_art(session, "item", node_id)
     # De scanner leest de naam en de NFO opnieuw: wat de NFO zegt, komt zo terug
     await scanner.queue_nodes(session, library.id, [node_id])
     await session.commit()

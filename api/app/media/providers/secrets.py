@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import binascii
 import datetime as dt
+import hmac
 import os
 import re
 from collections.abc import Awaitable, Callable
@@ -199,10 +200,19 @@ async def forget_tmdb(session: AsyncSession) -> None:
     _memory.clear()
 
 
-async def mark_tmdb(session: AsyncSession, settings: Settings, ok: bool) -> None:
+async def mark_tmdb(
+    session: AsyncSession, settings: Settings, ok: bool, *, used: str | None = None
+) -> None:
     """De sleutel werkt (niet) meer: na een 401 dicht tot een nieuwe sleutel, na een geslaagde
-    test weer open."""
+    test weer open. `used`: de sleutel waarmee het verzoek ging. Is de bewaarde sleutel intussen
+    een andere (Jonas bewaarde een nieuwe terwijl een verzoek met de oude liep), dan zegt een
+    late 401 niets over de nieuwe: niets veranderen (review golf 5, C7)."""
     _, entry = await _entry(session)
+    if entry is not None and used is not None:
+        current = unseal(settings, TMDB, entry)
+        if current is None or not hmac.compare_digest(current.encode(), used.encode()):
+            await load(session, settings)
+            return
     if entry is not None and entry.get("ok") is not ok:
         await _write(session, {**entry, "ok": ok})
     await load(session, settings)
@@ -220,9 +230,9 @@ async def verify_tmdb(
     try:
         await (check or _default_check(settings))(key)
     except ProviderAuth:
-        await mark_tmdb(session, settings, False)
+        await mark_tmdb(session, settings, False, used=key)
         raise
-    await mark_tmdb(session, settings, True)
+    await mark_tmdb(session, settings, True, used=key)
 
 
 def reset() -> None:
