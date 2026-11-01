@@ -510,5 +510,8 @@ worker, de kosten van de bron, de tijden van fMP4, en de eerste start op 3 cores
 - [m10.md](m10.md): beheer en uitrol (M10), met de installatietest en wat alleen CI bewijst;
   [toetsenbord-m10.md](toetsenbord-m10.md) voor het toetsenbord, en het runbook
   [media.md](../runbooks/media.md).
+- [integratie.md](integratie.md): de integratie (stap 4 van §5): de open punten die ze afwerkte
+  of liet liggen (met de reden), de wijzigingen aan contracten, en straks de metingen, de
+  standaarden en de installatietest.
 - [e2e.md](e2e.md): de tests van media (de markers `media`, `media_perf` en `provider_real`),
   het harnas, de nep-servers, de jobs in CI, en hoe je ze lokaal draait.

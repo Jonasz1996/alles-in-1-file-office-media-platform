@@ -65,7 +65,7 @@ ruimt oude mappen op.
 
 | Variabele | Wat |
 |---|---|
-| `MEDIA_REQUIRE_H264=1` | een test met H.264 of AAC faalt als de browser die codec niet heeft, in plaats van over te slaan. Standaard uit; in `e2e-media` op `"1"`, sinds S13 zei dat Chrome for Testing H.264 en AAC kan |
+| `MEDIA_REQUIRE_H264=1` | een test met H.264 of AAC faalt als de browser die codec niet heeft, in plaats van over te slaan. Standaard uit; in `e2e-media` en `e2e-media-perf` op `"1"`, sinds S13 zei dat Chrome for Testing H.264 en AAC kan |
 | `E2E_MEDIA_WORKER` | het pad van een socket: de app start dan geen lokale worker maar verbindt met die (de worker-container van M1). Zet `PLATFORM_MEDIA_WORKER` voor de app |
 | `E2E_PERF_REPORT_ONLY=1` | meten en rapporteren, nooit falen op een grens (zoals `perf`) |
 | `E2E_PERF_OUT` | een map; `media_perf` schrijft daar `media-m0-s13.json` |
@@ -230,7 +230,7 @@ tegen het echte image. De job `media-spike` is weg sinds de tag `fase5-basis` (�
 | `api-media` | ffmpeg van Ubuntu, de fixtures koud maken (met de tijd in het log), dan `pytest -m media -rs`, alles onder `taskset -c 0-2`; `timeout-minutes: 20` | een test faalt, of slaat over omdat ffmpeg ontbreekt. Duurt het maken van de fixtures langer dan 30 s (§3.8), dan een waarschuwing, geen fout |
 | `e2e` | de e2e van fase 3 en 4, zonder media | een test faalt |
 | `e2e-media` | de web-app bouwen, Chrome for Testing (`playwright install --with-deps chromium`, zoals `e2e`), ffmpeg, dan `pytest ../e2e -m media -rs`; `timeout-minutes: 20`, `MEDIA_REQUIRE_H264` `"1"` | een test faalt (ook een H.264-test die de codec mist), of alles slaat over omdat ffmpeg ontbreekt |
-| `e2e-media-perf` | zoals `e2e-media`, dan `-m media_perf`; toont de browser en S13, en zet één regel in de samenvatting van de run; artefact `media-prestaties` | nooit (`continue-on-error`, `E2E_PERF_REPORT_ONLY=1`) |
+| `e2e-media-perf` | zoals `e2e-media` (ook `MEDIA_REQUIRE_H264` `"1"`), dan `-m media_perf`; toont de browser en S13, en zet één regel in de samenvatting van de run; artefact `media-prestaties` | nooit (`continue-on-error`, `E2E_PERF_REPORT_ONLY=1`) |
 | `media-image` | het platform-image (de cache van `images`), de kern in het image, dan de worker in zijn container (`test_media_container.sh` met `--selftest`, M1; S3 punt 17 en het deel van R12, M4); artefact `media-image` met `kern.json` en `selftest.json` | een controle van de kern of van de container faalt |
 
 Geen nieuwe action: alles met `actions/checkout`, `setup-uv`, `setup-node`, `setup-buildx`,
