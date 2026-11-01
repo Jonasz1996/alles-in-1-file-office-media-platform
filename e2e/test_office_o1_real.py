@@ -36,7 +36,7 @@ from playwright.sync_api import expect
 
 from app.office.oo import stream
 from app.office.oo.paths import OWN_SERVICE_WORKER
-from conftest import Browsers
+from conftest import Browsers, trusting_browser
 from office_harness import Office, fixture, type_in_editor
 from test_office_o1 import (
     DROPPED,
@@ -309,9 +309,11 @@ def test_de_echte_editor_over_http_en_https(browser: Any, tmp_path_factory) -> N
 
     secret = Path(secret_file).read_text().strip()
     office = start_real_office(tmp_path_factory.mktemp("office-echt-https"), url, secret)
-    browsers = Browsers(browser, office.server, office_frames="record")
+    trusted: Any = None
+    browsers: Browsers | None = None
     try:
-        write_cert(CertManager(office.settings()), TLS_DOMAIN)
+        certs = CertManager(office.settings())
+        write_cert(certs, TLS_DOMAIN)
         office.server.restart()
         office.wait_state("ok", 60)
         secure = f"https://127.0.0.1:{office.server.https_port}"
@@ -324,14 +326,18 @@ def test_de_echte_editor_over_http_en_https(browser: Any, tmp_path_factory) -> N
                 return False
 
         wait_until(https_up, 30, "https op de server")
+        # Een browser die het certificaat vertrouwt, geen ignore_https_errors: zie
+        # trusting_browser in conftest.py (vermoedelijk de "Unable to preload CSS" in CI)
+        trusted = trusting_browser(browser, (certs.dir / "cert.pem").read_bytes())
+        browsers = Browsers(trusted, office.server, office_frames="record")
         d = duo(office)
         a = open_editor_page(login(browsers, d.anna), d.node, wait=ready)
-        context = browsers.new_context(
-            base_url=secure, ignore_https_errors=True, service_workers="block"
-        )
+        context = browsers.new_context(base_url=secure, service_workers="block")
+        # De API-client van Playwright is geen Chromium en vertrouwt het certificaat niet
         r = context.request.post(
             f"{secure}/api/v1/auth/login",
             data={"email": d.bram.email, "password": d.bram.password},
+            ignore_https_errors=True,
         )
         assert r.ok, r.text()
         b = open_editor_page(context, d.node, wait=ready)
@@ -362,10 +368,12 @@ def test_de_echte_editor_over_http_en_https(browser: Any, tmp_path_factory) -> N
         # gedeelde DS een forgotten file die geen andere server kent (docs/fase-4/o5.md).
         wait_until(lambda: session_closed(office, d.anna, d.node), 60, "de sessie dicht")
     finally:
-        problems = browsers.close_all()
-        if browsers.office_records:
+        problems = browsers.close_all() if browsers is not None else []
+        if browsers is not None and browsers.office_records:
             out = tmp_path_factory.getbasetemp() / "o1-echt-https-office-frames.txt"
             out.write_text("\n".join(browsers.office_records) + "\n")
+        if trusted is not None:
+            trusted.close()
         office.stop()
     if problems:
         pytest.fail("Problemen in de browser:\n" + "\n".join(problems), pytrace=False)
