@@ -294,6 +294,30 @@ async def test_play_voor_een_speler_buiten_de_app(lt, client, admin):
     await client.delete(f"/api/v1/stream/{out.sid}")
 
 
+async def test_play_buiten_de_app_als_de_worker_druk_is(lt, client, admin, monkeypatch):
+    """De metingen (fase c): drie spelers tegelijk vragen drie probes, de worker heeft 2
+    plaatsen "kort". De derde kreeg een 500 (WorkerBusy kwam niet door de catalogus); nu 503
+    media_busy {reason: worker} met Retry-After, zoals play (M3)."""
+    from app.media import client as worker_client
+    from app.routers import admin_media
+
+    headers, _ = admin
+    monkeypatch.setattr(admin_media, "_making", {})  # niet die van een eerdere test (andere loop)
+    body = {"source": 0, "seconds": 30, "player": str(uuid.uuid4())}
+    r = await client.post(f"{BASE}/play", json=body, headers=headers)
+    failed(r, 409, "media_probe_pending", "loadtest")
+    await asyncio.wait_for(asyncio.gather(*admin_media._making.values()), 10)
+
+    async def busy(source):
+        raise worker_client.WorkerBusy("short")
+
+    monkeypatch.setattr(loadtest, "probe_source", busy)
+    r = await client.post(f"{BASE}/play", json=body, headers=headers)
+    failed(r, 503, "media_busy", "worker")
+    assert r.headers["retry-after"] == "2"
+    assert not [s for s in sessions.table().open() if s.loadtest]
+
+
 class FakeApp:
     """Een app voor één speler: map.json, init en segmenten van 2 s; kan een segment laten
     wachten (haperen), en kan 'herstarten' (410 tot er een nieuwe sessie is)."""
@@ -305,6 +329,7 @@ class FakeApp:
         self.slow: dict[int, float] = {}
         self.restart_after: int | None = None
         self.down = 0  # zoveel keer weigert open nog (de app start)
+        self.lost = "410"  # wat de speler bij de herstart ziet: 410, 502 of geen verbinding
         self.gets: list[str] = []
 
     async def open(self, start_ms: int, replace: str | None) -> loadtest.LoadtestPlay:
@@ -333,7 +358,9 @@ class FakeApp:
             self.restart_after = None
             self.gone.add(sid)
             self.down = 2
-            return httpx.Response(410)
+            if self.lost == "connect":
+                raise httpx.ConnectError("de app is weg", request=request)
+            return httpx.Response(int(self.lost))
         return httpx.Response(200, content=b"seg")
 
 
@@ -370,6 +397,58 @@ async def test_de_speler_overleeft_een_herstart(monkeypatch):
     assert restart["weg_s"] >= 0.1 and restart["na_ready_s"] < 1
     assert any(g.startswith("s2/") and g.endswith(".m4s") and g != "s2/0.m4s" for g in fake.gets)
     assert loadtest.judge("c", [r], None)["passed"] is (r.stalls == 0)
+
+
+@pytest.mark.parametrize("lost", ["connect", "502"])
+async def test_de_speler_overleeft_een_app_die_weg_is(monkeypatch, lost):
+    """De metingen (fase c): bij een echte herstart is de app even weg. Geen verbinding (de
+    sandbox) of 502 van de proxy (de LXC) stopte het ophalen zonder dat de speler het merkte:
+    hij speelde zijn buffer op en bleef dan stil staan, zonder nieuwe sessie. Nu net als 410."""
+    monkeypatch.setattr(loadtest, "OPEN_RETRY_S", 0.05)
+    fake = FakeApp(count=8)
+    fake.restart_after = 4
+    fake.lost = lost
+    p = player(fake, loadtest.Timing(tick_s=0.02, scale=0.25))
+    await asyncio.wait_for(p.run(60), 30)
+    r = p.report
+    assert r.error is None and fake.sessions == 2
+    [restart] = r.restarts
+    assert restart["na_ready_s"] < 1
+    assert r.played_s > 15  # de hele bron (16 s), ook na de herstart
+
+
+async def test_spelers_buiten_de_app_wachten_op_retry_after(monkeypatch):
+    """De metingen (fase c): de derde speler kreeg bij de start 503 media_busy (de worker had
+    geen plaats "kort" voor zijn probe) en gaf op. Nu probeert hij het na Retry-After opnieuw,
+    zoals de speler in de browser."""
+    fake = FakeApp(count=4)
+    plays: list[int] = []
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/admin/media/loadtest/play":
+            plays.append(1)
+            if len(plays) == 3:
+                detail = {"code": "media_busy", "message": "druk", "params": {"reason": "worker"}}
+                return httpx.Response(503, json={"detail": detail}, headers={"Retry-After": "0.1"})
+            out = await fake.open(0, None)
+            return httpx.Response(200, json=out.model_dump())
+        return await fake.handle(request)
+
+    real = httpx.AsyncClient
+
+    def factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handle)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(loadtest.httpx, "AsyncClient", factory)
+    monkeypatch.setattr(loadtest, "TIMING", loadtest.Timing(tick_s=0.02, scale=0.1))
+    report = await asyncio.wait_for(
+        loadtest._external(get_settings(), "http://x", "t", streams=3, seconds=30, codec="h264"),
+        30,
+    )
+    players = report["phases"]["c"]["players"]
+    assert [p["error"] for p in players] == [None, None, None], players
+    assert len(plays) == 4 and report["passed"] is True, report["summary"]
 
 
 # --- de onderdelen --------------------------------------------------------------------------------

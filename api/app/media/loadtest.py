@@ -22,8 +22,9 @@ controle, producenten, knipper en cache.
    (127.0.0.1, of in een test via de ASGI-transport). Hij begint zodra segment 0 er is, vraagt
    daarna de segmenten op volgorde met hooguit 30 s vooruit, en speelt in echte tijd. De
    speeltijd loopt alleen als het segment dat nodig is helemaal binnen is; anders is het
-   haperen (aantal en duur). Een 410 of 503 (de app herstart) vraagt een nieuwe sessie op de
-   plek waar hij was (fase c).
+   haperen (aantal en duur). Een 410, 502 of 503, of geen verbinding (de app herstart), vraagt
+   een nieuwe sessie op de plek waar hij was (fase c); 503 media_busy bij het openen probeert
+   hij na Retry-After opnieuw, zoals de speler in de browser.
 5. **Fasen**: a (gespreid op 0, 10 en 20 s; elke sessie springt op 60 s 90 s vooruit, voorbij
    wat de producent al maakte), b (allemaal tegelijk). c (de app herstart) loopt alleen met de
    spelers buiten de app (`--extern`): elke speler meldt dan zijn herstarts. d (DS herstart) kan
@@ -283,8 +284,15 @@ async def play_source(
 
     if not settings.media_loadtest:
         raise loadtest_off()
+    from app.media import client
+
     state = media_state(app)
-    probe = await probe_source(source)
+    try:
+        probe = await probe_source(source)
+    except (client.WorkerBusy, client.WorkerDown, client.WorkerFailed) as exc:
+        # drie spelers tegelijk vragen drie probes, en de worker heeft 2 plaatsen "kort": dan
+        # 503 media_busy {reason: worker} met Retry-After, zoals play (M3), geen 500
+        raise media_errors.from_worker(exc) from None
     media_play.check_probe(probe)
     strings = [s.codec_string for s in probe.streams if s.codec_string]
     profile = profiles.merge(profiles.load(profile_for(codec, strings, short)))
@@ -423,8 +431,13 @@ class Player:
         self.moved = asyncio.Event()
 
     async def _get(self, path: str) -> httpx.Response:
-        r = await self.http.get(f"/api/v1/stream/{self.sid}/{path}", timeout=60)
-        if r.status_code in (403, 410, 503):
+        try:
+            r = await self.http.get(f"/api/v1/stream/{self.sid}/{path}", timeout=60)
+        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            # de app is weg (een herstart): geen verbinding, of hij viel weg midden in een
+            # antwoord. Net als 410: een nieuwe sessie, en niet stil blijven staan
+            raise SessionGone(f"{path}: {exc.__class__.__name__}") from None
+        if r.status_code in (403, 410, 502, 503):  # 502: de proxy voor een app die herstart
             raise SessionGone(f"{path}: {r.status_code}")
         if r.status_code != 200:
             raise RuntimeError(f"{path}: {r.status_code}")
@@ -1020,6 +1033,15 @@ async def _poll(http: httpx.AsyncClient, headers: dict[str, str], limit_s: float
     return {"passed": False, "error": "de test duurde te lang"}
 
 
+def _code(r: httpx.Response) -> str | None:
+    """De code van een API-fout ({"detail": {"code": ...}}), of None."""
+    try:
+        detail = r.json().get("detail")
+    except ValueError:
+        return None
+    return detail.get("code") if isinstance(detail, dict) else None
+
+
 async def _external(
     settings: Settings, base: str, token: str, *, streams: int, seconds: int, codec: str
 ) -> dict[str, Any]:
@@ -1042,6 +1064,12 @@ async def _external(
                         "media_probe_pending"
                     ):
                         await asyncio.sleep(float(r.headers.get("Retry-After", "5")))
+                        continue
+                    busy = r.status_code == 503 and _code(r) == "media_busy"
+                    if busy and r.headers.get("Retry-After"):
+                        # te druk (de plaatsen van de worker, de toelating): later opnieuw,
+                        # zoals de speler in de browser
+                        await asyncio.sleep(float(r.headers["Retry-After"]))
                         continue
                     if r.status_code in (502, 503, 410):
                         raise SessionGone(str(r.status_code))
