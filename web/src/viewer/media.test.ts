@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { browserShows, codecLabel, mediaProblem, viewKind, wantsOriginal } from "./media";
+import { browserShows, codecLabel, mediaProblem, pictureMissing, viewKind, wantsOriginal } from "./media";
 
 describe("mediaProblem (MediaError -> melding)", () => {
   it("decoderen mislukt: dit formaat speelt hier niet", () => {
@@ -24,6 +24,34 @@ describe("mediaProblem (MediaError -> melding)", () => {
 
   it("afgebroken is geen probleem", () => {
     expect(mediaProblem(1)).toBeNull();
+  });
+});
+
+describe("pictureMissing (alleen geluid, geen fout)", () => {
+  const hevc = { video: { codec: "hevc", profile: "Main 10" }, audio: { codec: "ac3" }, container: "matroska,webm" };
+
+  it("een videospoor volgens de server, maar geen beeld in de browser: dit formaat speelt hier niet", () => {
+    // HEVC zonder GPU naast geluid dat de browser wel kan: geen MediaError (CI op 1a6dac0)
+    expect(pictureMissing(hevc, 0)).toBe(true);
+    expect(pictureMissing({ video: { codec: "HEVC" } }, 0)).toBe(true);
+    expect(pictureMissing({ video: { codec: "mpeg4" }, audio: { codec: "mp3" } }, 0)).toBe(true);
+  });
+
+  it("met beeld speelt hij gewoon", () => {
+    expect(pictureMissing(hevc, 1280)).toBe(false);
+    expect(pictureMissing({ video: { codec: "vp9" } }, 640)).toBe(false);
+  });
+
+  it("zonder videospoor in de meta (nog geen preview, of alleen geluid) geen melding", () => {
+    expect(pictureMissing({}, 0)).toBe(false);
+    expect(pictureMissing({ audio: { codec: "opus" }, container: "matroska,webm" }, 0)).toBe(false);
+    expect(pictureMissing({ video: {} }, 0)).toBe(false);
+  });
+
+  it("een hoes is geen beeld om af te spelen (Keuze 19)", () => {
+    for (const codec of ["mjpeg", "png", "bmp", "gif", "webp", "tiff", "PNG"]) {
+      expect(pictureMissing({ video: { codec }, audio: { codec: "aac" } }, 0)).toBe(false);
+    }
   });
 });
 
