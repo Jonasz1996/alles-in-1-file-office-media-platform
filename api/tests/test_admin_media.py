@@ -353,16 +353,10 @@ async def test_de_redenen_tellen_bij_elke_nieuwe_sessie(tmp_path):
 KEY = "eyJhbGciOiJIUzI1NiJ9.geheim-van-jonas.abc123"
 
 
-async def test_tmdb_zonder_m8(media_app, client, admin, monkeypatch):  # noqa: F811
+async def test_een_lege_sleutel(media_app, client, admin):  # noqa: F811
+    """Sinds het samenvoegen van golf 5 is M8 er altijd (de test "zonder M8", met 503
+    media_provider_unavailable, is weg); een lege sleutel haalt de validatie niet."""
     headers, _ = admin
-    for name in media_admin.TMDB_HOOKS:
-        monkeypatch.delattr(secrets, name, raising=False)
-    assert media_admin.tmdb_hooks() is None
-    calls = [("PUT", f"{BASE}/tmdb", {"key": KEY}), ("DELETE", f"{BASE}/tmdb", None),
-             ("POST", f"{BASE}/tmdb/test", None)]  # fmt: skip
-    for method, path, body in calls:
-        r = await client.request(method, path, json=body, headers=headers)
-        failed(r, 503, "media_provider_unavailable")
     failed(await client.put(f"{BASE}/tmdb", json={"key": ""}, headers=headers), 422,
            "invalid_input")  # fmt: skip
 
@@ -396,9 +390,11 @@ class FakeSecrets:
 
 @pytest.fixture
 def m8(monkeypatch) -> FakeSecrets:
+    """De echte secrets van M8 staan in test_media_beheer_samen.py; hier een nep om elke fout van
+    M8 op bestelling te geven."""
     fake = FakeSecrets()
-    for name in media_admin.TMDB_HOOKS:
-        monkeypatch.setattr(secrets, name, getattr(fake, name), raising=False)
+    for name in ("save_tmdb", "forget_tmdb", "verify_tmdb", "status"):
+        monkeypatch.setattr(secrets, name, getattr(fake, name))
     return fake
 
 

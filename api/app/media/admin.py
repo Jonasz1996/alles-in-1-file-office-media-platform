@@ -23,9 +23,9 @@ de knoppen doen. De router (routers/admin_media.py) is dun; alles staat hier.
 - **De meting** (bench): de opdracht bench in de worker, op de achtergrond; de uitkomst gaat in
   MediaConfig.bench. Weigert (409 media_bench_busy) zolang er een transcode of de belastingtest
   loopt.
-- **TMDB** (Keuze 40): de sleutel bewaren, weghalen en testen doet M8 (providers/secrets.py).
-  Dit bestand roept die aan via tmdb_hooks(); zolang M8 ze niet levert, wordt er niets bewaard
-  (503 media_provider_unavailable). De sleutel komt nooit terug in een antwoord of een log.
+- **TMDB** (Keuze 40): de sleutel bewaren, weghalen en testen doet M8 (providers/secrets.py),
+  rechtstreeks sinds het samenvoegen van golf 5. Werkt de sleutel (weer), dan staat er meteen
+  een ronde media.lookup klaar. De sleutel komt nooit terug in een antwoord of een log.
 """
 
 from __future__ import annotations
@@ -437,8 +437,11 @@ def provider_views(tmdb: dict[str, Any] | None = None) -> list[ProviderView]:
         last_error = s.get("last_error")
         if name == "tmdb" and tmdb:
             key_set = key_set or tmdb.get("set") is True
-            if tmdb.get("ok") is False and not last_error:
-                last_error = "auth"
+        # De bewaarde sleutel werkt niet meer (secrets van M8, ok false; providers.status zegt
+        # het als auth): dat gaat voor een fout van het netwerk, want alleen een nieuwe sleutel of
+        # Testen helpt dan (bij het samenvoegen van golf 5)
+        if name == "tmdb" and (s.get("auth") is True or (tmdb and tmdb.get("ok") is False)):
+            last_error = "auth"
         out.append(
             ProviderView(
                 name=name,  # type: ignore[arg-type]
@@ -537,6 +540,8 @@ async def save_config(
     new = MediaConfig.model_validate({**current.model_dump(), **changes})
     await policy.save(session, new)
     log.info("instellingen van media gewijzigd: %s", ", ".join(sorted(changes)) or "niets")
+    if new.musicbrainz and not current.musicbrainz:
+        await lookup_soon(settings)  # MusicBrainz net aan: de albums meteen (golf 5)
     return MediaPolicy.effective(new, settings)
 
 
@@ -687,39 +692,9 @@ def start_bench(app, settings: Settings) -> uuid.UUID:
 
 
 # --- TMDB (Keuze 40; M8 bewaart en test) ---------------------------------------------------------
-
-
-@dataclass
-class TmdbHooks:
-    """Wat M8 levert in providers/secrets.py: bewaren (pas na een geslaagde test), weghalen, de
-    bewaarde sleutel testen, en de staat ({"set", "set_at", "ok"}, nooit de sleutel). Een fout
-    is ProviderAuth (422 media_provider_auth), ProviderUnavailable (503
-    media_provider_unavailable) of ProviderRate (503 media_provider_rate)."""
-
-    store: Callable[[AsyncSession, Settings, str], Awaitable[None]]
-    clear: Callable[[AsyncSession], Awaitable[None]]
-    test: Callable[[AsyncSession, Settings], Awaitable[None]]
-    status: Callable[[AsyncSession, Settings], Awaitable[dict[str, Any]]]
-
-
-TMDB_HOOKS = ("save_tmdb", "forget_tmdb", "verify_tmdb", "status")
-
-
-def tmdb_hooks() -> TmdbHooks | None:
-    """De functies van M8 (TMDB_HOOKS in providers/secrets.py), of None zolang ze er niet zijn."""
-    from app.media.providers import secrets
-
-    found = [getattr(secrets, name, None) for name in TMDB_HOOKS]
-    if not all(callable(f) for f in found):
-        return None
-    return TmdbHooks(*found)  # type: ignore[arg-type]
-
-
-def _hooks() -> TmdbHooks:
-    hooks = tmdb_hooks()
-    if hooks is None:
-        raise media_errors.provider_unavailable()
-    return hooks
+#
+# Bij het samenvoegen van golf 5: rechtstreeks naar providers/secrets.py van M8. Daarvoor zocht
+# tmdb_hooks() de functies op en gaf zonder M8 503 media_provider_unavailable; dat pad is weg.
 
 
 @contextlib.contextmanager
@@ -738,30 +713,52 @@ def _provider_errors():
         raise media_errors.provider_unavailable() from None
 
 
+async def lookup_soon(settings: Settings) -> None:
+    """Na een sleutel die (weer) werkt, of MusicBrainz aan: meteen een ronde media.lookup voor
+    elke online bibliotheek met werk (lookup.queue_all van M8), niet pas bij de housekeeping (elke
+    5 minuten). Een fout hier breekt de knop niet: de housekeeping komt er toch langs."""
+    from app.media import lookup
+
+    try:
+        added = await lookup.queue_all(settings)
+    except Exception:  # noqa: BLE001 - alleen sneller; de housekeeping doet het anders
+        log.exception("media.lookup klaarzetten vanaf /beheer")
+        return
+    if added:
+        log.info("media.lookup klaargezet voor %d bibliotheken", added)
+
+
 async def tmdb_store(session: AsyncSession, settings: Settings, key: str) -> None:
+    from app.media.providers import secrets
+
     with _provider_errors():
-        await _hooks().store(session, settings, key)
+        await secrets.save_tmdb(session, settings, key)
     log.info("de sleutel van TMDB is bewaard")  # nooit de sleutel zelf
+    await lookup_soon(settings)
 
 
 async def tmdb_clear(session: AsyncSession, settings: Settings) -> None:
+    from app.media.providers import secrets
+
     with _provider_errors():
-        await _hooks().clear(session)
+        await secrets.forget_tmdb(session)
     log.info("de sleutel van TMDB is weggehaald")
 
 
 async def tmdb_test(session: AsyncSession, settings: Settings) -> None:
+    from app.media.providers import secrets
+
     with _provider_errors():
-        await _hooks().test(session, settings)
+        await secrets.verify_tmdb(session, settings)
+    await lookup_soon(settings)
 
 
 async def tmdb_status(session: AsyncSession, settings: Settings) -> dict[str, Any]:
-    """{"set", "ok"} van M8, of {} zonder M8 of bij een fout (alleen ter informatie)."""
-    hooks = tmdb_hooks()
-    if hooks is None:
-        return {}
+    """{"set", "ok"} van M8 (secrets.status), of {} bij een fout (alleen ter informatie)."""
+    from app.media.providers import secrets
+
     try:
-        found = await hooks.status(session, settings)
+        found = await secrets.status(session, settings)
     except Exception as exc:
         log.warning("de staat van de sleutel van TMDB: %s", exc.__class__.__name__)
         return {}
