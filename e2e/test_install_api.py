@@ -6,6 +6,10 @@ De eerste run van test_install_media.sh --stappen in CI (job media-image) liep h
 (de zelftest staat in worker.selftest, Keuze 45), en elke fout was een traceback zonder
 HTTP-status. Nu: de hele JSON, en bij een antwoord dat niet klopt één regel met de methode, het
 pad, de status en het begin van de body.
+
+wait, watch en wait-field (ook van test_install_update.sh) proberen het opnieuw na een andere
+status of zonder verbinding (een herstart), maar nooit na een 200 waarvan de body niet klopt:
+dat was vóór deze fix een fout (een JSONDecodeError) en blijft een fout.
 """
 
 from __future__ import annotations
@@ -53,11 +57,18 @@ PLAY = PlayOut(
 ).model_dump_json()
 
 
+HTML = (200, b"<html><body>even niet</body></html>", "text/html")
+OFFICE_OK = (200, b'{"state": "ok", "editing": false}', "application/json")
+
+
 class Fake(BaseHTTPRequestHandler):
     """GET en POST op een paar vaste paden; /api/v1/admin/media-later geeft eerst één keer een
-    worker zonder zelftest (de app sprak de worker nog niet), daarna wel."""
+    worker zonder zelftest (de app sprak de worker nog niet), daarna wel. Een pad in script
+    geeft zijn antwoorden op volgorde (het laatste blijft), en hits telt de aanvragen."""
 
     later = 0
+    script: dict[str, list[tuple[int, bytes, str]]] = {}
+    hits: dict[str, int] = {}
 
     def answer(self, status: int, body: bytes, kind: str = "application/json") -> None:
         self.send_response(status)
@@ -68,7 +79,11 @@ class Fake(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         on = Selftest(ok=True, sandbox="on")
-        if self.path == "/api/v1/admin/media":
+        Fake.hits[self.path] = Fake.hits.get(self.path, 0) + 1
+        if self.path in Fake.script:
+            queue = Fake.script[self.path]
+            self.answer(*(queue.pop(0) if len(queue) > 1 else queue[0]))
+        elif self.path == "/api/v1/admin/media":
             self.answer(200, admin(on))
         elif self.path == "/api/v1/admin/media-later":
             Fake.later += 1
@@ -89,6 +104,8 @@ class Fake(BaseHTTPRequestHandler):
         elif self.path == "/niets":
             self.send_response(204)
             self.end_headers()
+        elif self.path == "/leeg":
+            self.answer(200, b"")
         else:
             self.answer(404, b'{"detail": {"code": "not_found"}}')
 
@@ -118,6 +135,8 @@ def api(tmp_path: Path) -> Iterator:
         )
 
     Fake.later = 0
+    Fake.script = {}
+    Fake.hits = {}
     yield run
     server.shutdown()
     server.server_close()
@@ -188,3 +207,70 @@ def test_wait_field_wacht_tot_de_app_de_worker_sprak(api) -> None:
         "na 1 s nog geen worker.selftest: GET /api/v1/admin/media-nooit gaf worker.selftest null"
         in never.stderr
     )
+
+
+def test_post_met_een_lege_200_is_een_fout(api) -> None:
+    """Alleen een 204 heeft geen body. Een lege 200 (zo bleef 2-play.json in CI leeg) zegt dat."""
+    out = api("post", "/leeg", "{}")
+    assert out.returncode == 1
+    assert out.stdout == ""
+    assert "POST /leeg gaf 200, maar geen JSON: b''" in out.stderr
+    assert "Traceback" not in out.stderr
+
+
+def test_wait_en_watch_nemen_een_200_zonder_json_niet_aan(api, tmp_path: Path) -> None:
+    """Een 200 met een body die geen JSON is, was vóór de fix een JSONDecodeError (de controle
+    faalde) en blijft een fout: geen tweede poging, dus het ok daarna telt niet (de controles
+    K, V en R1 en de tijdlijn b-status.txt van test_install_update.sh)."""
+    path = "/api/v1/office/status"
+    Fake.script = {path: [HTML, OFFICE_OK]}
+    out = api("wait", "ok", "10")
+    assert out.returncode == 1
+    assert f"GET {path} gaf 200, maar geen JSON: b'<html>" in out.stderr
+    assert "Traceback" not in out.stderr
+    assert Fake.hits[path] == 1
+    Fake.script = {path: [HTML, OFFICE_OK]}
+    Fake.hits = {}
+    timeline = tmp_path / "b-status.txt"
+    out = api("watch", "10", str(timeline))
+    assert out.returncode == 1
+    assert f"GET {path} gaf 200, maar geen JSON" in out.stderr
+    assert "Traceback" not in out.stderr
+    assert Fake.hits[path] == 1
+    assert " ok " not in timeline.read_text()
+    # JSON zonder het veld state: ook een fout, meteen
+    Fake.script = {path: [(200, b'{"editing": false}', "application/json"), OFFICE_OK]}
+    Fake.hits = {}
+    out = api("wait", "ok", "10")
+    assert out.returncode == 1
+    assert f"GET {path} gaf 200, maar zonder het veld state" in out.stderr
+    assert Fake.hits[path] == 1
+
+
+def test_wait_en_watch_proberen_een_andere_status_opnieuw(api, tmp_path: Path) -> None:
+    """Tijdens een herstart geeft de app even een andere status: dat is geen fout, wait en
+    watch vragen opnieuw tot ok (zoals vóór de fix; dit bewaakt dat de fix dat niet brak)."""
+    path = "/api/v1/office/status"
+    busy = (503, b'{"detail": {"code": "starting"}}', "application/json")
+    Fake.script = {path: [busy, OFFICE_OK]}
+    out = api("wait", "ok", "20")
+    assert out.returncode == 0, out.stderr
+    assert Fake.hits[path] == 2
+    Fake.script = {path: [busy, OFFICE_OK]}
+    timeline = tmp_path / "b-status.txt"
+    out = api("watch", "20", str(timeline))
+    assert out.returncode == 0, out.stderr
+    states = [line.split()[1] for line in timeline.read_text().splitlines()]
+    assert len(states) == 2 and states[0].startswith("fout:") and states[1] == "ok", states
+
+
+def test_wait_field_neemt_een_200_zonder_json_niet_aan(api) -> None:
+    """wait-field wacht op null en op een andere status, niet op een body die niet klopt."""
+    path = "/api/v1/admin/media-html"
+    Fake.script = {path: [HTML, (200, admin(Selftest(ok=True, sandbox="on")), "application/json")]}
+    out = api("wait-field", path, "worker.selftest", "20")
+    assert out.returncode == 1
+    assert out.stdout == ""
+    assert f"GET {path} gaf 200, maar geen JSON: b'<html>" in out.stderr
+    assert "Traceback" not in out.stderr
+    assert Fake.hits[path] == 1

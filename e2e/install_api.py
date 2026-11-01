@@ -27,7 +27,9 @@ e2e/conftest.py. Een access-token dat verlopen is, wordt met het refresh-token v
 Is een antwoord niet wat de test verwacht (een andere status, geen JSON, of een veld dat
 ontbreekt), dan exitcode 1 met op stderr één regel: de methode, het pad, de HTTP-status en het
 begin van de body. Zo legt een fout in CI zichzelf uit (de eerste run van media-image gaf alleen
-een traceback zonder status).
+een traceback zonder status). wait, watch en wait-field proberen het alleen opnieuw na een andere
+status of zonder verbinding (de app start misschien net opnieuw), nooit na een antwoord met de
+goede status maar een body die niet klopt: dat is een fout, net als vroeger.
 """
 
 from __future__ import annotations
@@ -66,6 +68,16 @@ class ApiError(Exception):
     def __init__(self, method: str, path: str, status: int, body: bytes, what: str = ""):
         super().__init__(f"{method} {path} gaf {status}{what}: {body[:300]!r}")
         self.status = status
+
+
+class StatusError(ApiError):
+    """Een HTTP-status die de aanroep niet verwacht. Alleen dit (en OSError) proberen wait, watch
+    en wait-field opnieuw: tijdens een herstart geeft de app even geen of een andere status."""
+
+
+class ShapeError(ApiError):
+    """De status klopt, de body niet: geen JSON, of een veld dat ontbreekt. Nooit opnieuw
+    proberen: dat is een fout van de app (of van de test), geen moment van de herstart."""
 
 
 def base() -> str:
@@ -157,7 +169,7 @@ def exchange(
             keep_tokens(state, tokens)
             status, answer = request(method, path, token=state["access"], body=body, raw=raw)
     if status not in expect:
-        raise ApiError(method, path, status, answer)
+        raise StatusError(method, path, status, answer)
     return status, answer
 
 
@@ -175,17 +187,17 @@ def call(
 
 def parse(method: str, path: str, status: int, answer: bytes, field: str | None = None) -> Any:
     """De JSON van een antwoord, of één veld eruit (a.0.b). Geen JSON, of een veld dat er niet
-    is: een ApiError met de status en het begin van de body."""
+    is: een ShapeError met de status en het begin van de body."""
     try:
         value = json.loads(answer)
     except ValueError:  # ook een lege body (b"")
-        raise ApiError(method, path, status, answer, ", maar geen JSON") from None
+        raise ShapeError(method, path, status, answer, ", maar geen JSON") from None
     for part in field.split(".") if field else []:
         try:
             value = value[int(part)] if isinstance(value, list) else value[part]
         except (KeyError, IndexError, TypeError, ValueError):
             what = f", maar zonder het veld {field} (bij {part!r})"
-            raise ApiError(method, path, status, answer, what) from None
+            raise ShapeError(method, path, status, answer, what) from None
     return value
 
 
@@ -203,7 +215,7 @@ def setup() -> None:
     body = {"email": EMAIL, "display_name": NAME, "password": password}
     status, answer = request("POST", "/api/v1/auth/setup", body=body)
     if status != 201:
-        raise ApiError("POST", "/api/v1/auth/setup", status, answer)
+        raise StatusError("POST", "/api/v1/auth/setup", status, answer)
     user = json.loads(answer)["user"]
     state = {"email": EMAIL, "password": password, "root": user["root_id"], "user": user["id"]}
     keep_tokens(state, answer)
@@ -226,7 +238,7 @@ def login(with_code: bool = True) -> bool:
         # Een fout van de API: {"detail": {"message": …, "code": …}} (app/errors.py)
         return status == 401 and json.loads(answer)["detail"].get("code") == "totp_required"
     if status != 200:
-        raise ApiError("POST", "/api/v1/auth/login", status, answer)
+        raise StatusError("POST", "/api/v1/auth/login", status, answer)
     keep_tokens(load(), answer)
     return True
 
@@ -243,8 +255,12 @@ def docx_text(data: bytes) -> str:
 
 
 def office_state() -> tuple[str, bool]:
-    status = fetch("GET", "/api/v1/office/status")
-    return status["state"], bool(status["editing"])
+    """De toestand en of er iemand bewerkt. Een body zonder JSON of zonder state of editing is
+    een ShapeError: wait en watch proberen dat niet opnieuw."""
+    path = "/api/v1/office/status"
+    status, answer = exchange("GET", path)
+    state = parse("GET", path, status, answer, "state")
+    return state, bool(parse("GET", path, status, answer, "editing"))
 
 
 def wait(wanted: str, seconds: float) -> bool:
@@ -253,7 +269,7 @@ def wait(wanted: str, seconds: float) -> bool:
     while time.monotonic() < end:
         try:
             seen = office_state()[0]
-        except (ApiError, OSError) as exc:  # de app start misschien net opnieuw
+        except (StatusError, OSError) as exc:  # de app start misschien net opnieuw
             seen = f"fout ({exc})"
         if seen == wanted:
             return True
@@ -269,7 +285,7 @@ def watch(seconds: float, out: str) -> bool:
         while time.monotonic() < end:
             try:
                 state, editing = office_state()
-            except (ApiError, OSError) as exc:
+            except (StatusError, OSError) as exc:  # de app start misschien net opnieuw
                 state, editing = f"fout:{type(exc).__name__}", False
             f.write(f"{time.time():.3f} {state} {str(editing).lower()}\n")
             f.flush()
@@ -281,7 +297,8 @@ def watch(seconds: float, out: str) -> bool:
 
 def wait_field(path: str, field: str, seconds: float) -> Any:
     """GET tot het veld er is en niet null is (bijvoorbeeld de zelftest op /beheer, die er pas
-    is als de app de worker sprak). Na seconds: None, met op stderr wat er het laatst kwam."""
+    is als de app de worker sprak). Na seconds: None, met op stderr wat er het laatst kwam. Een
+    body zonder JSON of zonder het pad naar het veld is een ShapeError, meteen."""
     end = time.monotonic() + seconds
     seen = "nog niets"
     while True:
@@ -290,7 +307,7 @@ def wait_field(path: str, field: str, seconds: float) -> Any:
             if value is not None:
                 return value
             seen = f"GET {path} gaf {field} null"
-        except (ApiError, OSError) as exc:  # de app start misschien net opnieuw
+        except (StatusError, OSError) as exc:  # de app start misschien net opnieuw
             seen = str(exc)
         if time.monotonic() >= end:
             print(f"  na {seconds:.0f} s nog geen {field}: {seen}", file=sys.stderr)
@@ -346,8 +363,9 @@ def main(argv: list[str]) -> int:
             print(f"  post {args[0]}: de body is geen JSON: {args[1][:200]!r}", file=sys.stderr)
             return 2
         status, answer = exchange("POST", args[0], body=body, expect=(200, 201, 202, 204))
-        # Zonder veld de hele JSON, zoals get (een 204 heeft geen body: dan niets)
-        if answer or len(args) > 2:
+        # Zonder veld de hele JSON, zoals get. Alleen een 204 heeft geen body: dan niets; een
+        # lege 200 is een ShapeError ("maar geen JSON: b''")
+        if status != 204 or len(args) > 2:
             show(parse("POST", args[0], status, answer, args[2] if len(args) > 2 else None))
     elif command == "upload":
         query = urllib.parse.urlencode(
