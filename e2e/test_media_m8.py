@@ -67,16 +67,20 @@ AUTH_TEXT = "De sleutel van de provider werkt niet"
 
 
 def tmdb_on_beheer(page: Any, key: str) -> tuple[int, str]:
-    """Met Tab naar het veld van de sleutel, typen, Enter: (status, body) van PUT …/tmdb, de
-    body meteen gelezen."""
-    tab_to(page, TMDB_FIELD, presses=200)
+    """Met Tab naar het veld van de sleutel (als de focus er nog niet staat), wat er staat
+    selecteren en overtypen, Enter: (status, body) van PUT …/tmdb, de body meteen gelezen."""
+    here = "(s) => !!document.activeElement && document.activeElement.matches(s)"
+    if not page.evaluate(here, TMDB_FIELD):
+        tab_to(page, TMDB_FIELD, presses=200)
+    page.keyboard.press("ControlOrMeta+A")  # een foute sleutel van daarnet blijft staan
     page.keyboard.type(key)
     with page.expect_response(
         lambda r: r.request.method == "PUT" and r.url.endswith(TMDB_ROUTE)
     ) as saved:
         page.keyboard.press("Enter")
     response = saved.value
-    return response.status, response.text()
+    # Een 204 heeft geen body; Chromium geeft er dan ook geen (getResponseBody faalt)
+    return response.status, "" if response.status == 204 else response.text()
 
 
 def tmdb_view(media: Any) -> dict[str, Any]:
@@ -113,7 +117,6 @@ def tmdb_key(media: Any, media_browsers: Any, fake_providers: Any) -> Iterator[s
     fake_providers.clear_log()
 
     key = fake_providers.tmdb_key
-    page.locator(TMDB_FIELD).fill("")  # het veld houdt een foute sleutel vast; weer leeg
     status, body = tmdb_on_beheer(page, key)
     assert status == 204, body
     saved = page.locator(".toast-message", has_text="De sleutel is bewaard en werkt.")
