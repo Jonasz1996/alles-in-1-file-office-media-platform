@@ -541,9 +541,606 @@ PY
 # Deel 2: de installatietest (--stappen)
 # ============================================================================================
 
+# De installatietest (bouwontwerp fase 5, §2 M10, "De installatietest"), zoals
+# test_install_update.sh van fase 4: de echte install.sh in een container met Debian 12 (de
+# "LXC"), met de docker-socket en de docker-cli van de host, en de werkmap op hetzelfde absolute
+# pad. Office blijft uit (OFFICE=uit): dat bewijst test_install_update.sh. Per omgeving:
+#
+#   | Stap | Sandbox | CI (media-image) |
+#   |---|---|---|
+#   | 1. 0.6.0 installeren (263abd7), een film uploaden | ja | ja |
+#   | 2. bijwerken: de app en de worker draaien | ja; de film komt nog heel terug, /beheer toont media_ffmpeg_missing | ja; plus een transcode via curl en docker top, de rooktest van de belastingtest |
+#   | 2b. nog een keer bijwerken (een commit erbovenop) | één image platform:local, de oude id weg | idem |
+#   | 3. MEDIA_SANDBOX=uit: de container weg, de lokale worker | ja | ja |
+#   | 4. terug naar 0.6.0 met precies de commando's van Keuze 47 | ja; schema 0007 en de app 0.6.0 | — (INSTALL_TEST_ROLLBACK=0) |
+#
+# - Kan een container geen Debian-spiegel bereiken (de sandbox), dan krijgt python:3.12-slim een
+#   leeg pakket ffmpeg, met lege /usr/bin/ffmpeg en /usr/bin/ffprobe (het Dockerfile zet die op
+#   0711; uitvoeren geeft ENOEXEC, dus "ffmpeg ontbreekt"), zoals test_install_update.sh:53–55.
+#   Wat ffmpeg nodig heeft (de transcode, docker top, de belastingtest), bewijst CI.
+# - Staat er al een python:3.12-slim van een ander, dan leent de test die naam: het image krijgt
+#   even een tweede naam, en aan het eind (ook bij een fout) weer zijn eigen naam. Het image zelf
+#   blijft altijd.
+# - De tweede update (2b) is een commit die de test zelf maakt, alleen in zijn eigen kale kloon:
+#   een leeg bestand in api/app, zodat het image verandert terwijl de worker nog op het vorige
+#   draait (R18 van de review).
+# - De film maakt de ffmpeg van de host (of, zonder, die van het image van 0.6.0): 120 s
+#   640×360 H.264 met 5 Mbit/s en AAC. De transcode vraagt een profiel met hooguit 1000 kbit/s.
+# - Geen geheim in een log: de login van de beheerder staat alleen in de werkmap (sessie.json,
+#   600); de test kijkt na dat MEDIA_WORKER_KEY in geen enkele log van install.sh staat.
+#
+# Instellingen (alle optioneel), zoals test_install_update.sh: INSTALL_TEST_DIR, _REPO, _FROM
+# (standaard 263abd74d914a9811901e7570ed410866364f4b5), _TO (standaard HEAD), _PORT (18580),
+# _HTTPS_PORT (18543), _LOGS, _CA, _UV, _NEED_GB (standaard 8), en INSTALL_TEST_ROLLBACK (1 = stap
+# 4 ook; CI zet 0).
+# shellcheck disable=SC2016  # check … eval '…': eval werkt de uitdrukking pas zelf uit
 stappen() {
-  echo "De installatietest komt in de volgende commit." >&2
-  exit 2
+  REPO_SRC=${INSTALL_TEST_REPO:-$top}
+  FROM=${INSTALL_TEST_FROM:-263abd74d914a9811901e7570ed410866364f4b5}
+  TO=${INSTALL_TEST_TO:-$(git -C "$REPO_SRC" rev-parse HEAD)}
+  PORT=${INSTALL_TEST_PORT:-18580}
+  HTTPS_PORT=${INSTALL_TEST_HTTPS_PORT:-18543}
+  LOGS_OUT=${INSTALL_TEST_LOGS:-}
+  EXTRA_CA=${INSTALL_TEST_CA-}
+  if [ -z "${INSTALL_TEST_CA+x}" ] && [ -f /root/.ccr/ca-bundle.crt ]; then EXTRA_CA=/root/.ccr/ca-bundle.crt; fi
+  UV_FROM=${INSTALL_TEST_UV:-ghcr}
+  NEED_GB=${INSTALL_TEST_NEED_GB:-8}
+  ROLLBACK=${INSTALL_TEST_ROLLBACK:-1}
+  PROJECT=platform
+  RUNNER_NAME=install-media-runner-$$
+  RUNNER_IMG=install-media-runner:$$
+  BORROWED=installatietest-bewaard/python:3.12-slim-$$
+  runner_built=0 borrowed=0 own_project=0 work_existed=0 WORK=""
+  created=() maybe=() SUMMARY=()
+
+  stop() {
+    echo "STOP  $1" >&2
+    exit 1
+  }
+  have() { docker image inspect "$1" >/dev/null 2>&1; }
+  # Wat install.sh in de runner als root maakte (.env 600, de data van 10001, de broncode), leest
+  # de test op de host als root: in CI met sudo
+  as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
+
+  # --- vooraf: niets van een ander raken ----------------------------------------------------
+  local tool
+  for tool in docker git python3 ss curl sha256sum; do
+    command -v "$tool" >/dev/null || stop "$tool ontbreekt"
+  done
+  docker info >/dev/null 2>&1 || stop "Docker draait niet"
+  [ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")" ] ||
+    stop "er is al een compose-project '$PROJECT'; deze test zou het raken"
+  [ -z "$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")" ] ||
+    stop "er zijn al volumes van een project '$PROJECT'"
+  [ -z "$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT")" ] ||
+    stop "er zijn al netwerken van een project '$PROJECT'"
+  ! have platform:local || stop "er is al een image platform:local"
+  local p
+  for p in "$PORT" "$HTTPS_PORT"; do
+    [ -z "$(ss -Hltn "sport = :$p")" ] || stop "poort $p is bezet"
+  done
+  free_gb() { df --output=avail -B1G "$(docker info --format '{{.DockerRootDir}}')" | tail -n 1 | tr -d ' '; }
+  [ "$(free_gb)" -ge "$NEED_GB" ] || stop "te weinig ruimte: $(free_gb) GB vrij voor Docker, de test vraagt er $NEED_GB"
+
+  if [ -n "${INSTALL_TEST_DIR:-}" ]; then
+    WORK=$INSTALL_TEST_DIR
+    case "$WORK" in /*) ;; *) stop "INSTALL_TEST_DIR moet een absoluut pad zijn" ;; esac
+    if [ -e "$WORK" ] && [ -n "$(ls -A "$WORK")" ]; then stop "$WORK is niet leeg"; fi
+    if [ -e "$WORK" ]; then work_existed=1; fi
+    mkdir -p "$WORK"
+  else
+    WORK=$(mktemp -d /tmp/install-media.XXXXXX)
+  fi
+  WORK=$(cd "$WORK" && pwd -P)
+  ROOT=$WORK/platform
+  own_project=1
+  trap stappen_opruimen EXIT
+  trap 'exit 130' INT TERM
+  mkdir -p "$WORK/logs" "$WORK/shim/bin" "$WORK/build" "$WORK/film"
+
+  # --- de broncode: beide versies, en een tweede versie erbovenop (2b) ----------------------
+  echo "== Voorbereiden (${FROM:0:12} -> ${TO:0:12}, werkmap $WORK)"
+  git clone -q --bare "$REPO_SRC" "$WORK/repo.git"
+  local c
+  for c in "$FROM" "$TO"; do
+    git -C "$WORK/repo.git" cat-file -e "$c^{commit}" 2>/dev/null || stop "versie $c staat niet in $REPO_SRC"
+  done
+  local blob tree
+  GIT_INDEX_FILE=$WORK/index git -C "$WORK/repo.git" read-tree "$TO"
+  blob=$(printf 'installatietest: de tweede update\n' | git -C "$WORK/repo.git" hash-object -w --stdin)
+  GIT_INDEX_FILE=$WORK/index git -C "$WORK/repo.git" update-index --add --cacheinfo "100644,$blob,api/app/installatietest.txt"
+  tree=$(GIT_INDEX_FILE=$WORK/index git -C "$WORK/repo.git" write-tree)
+  TO2=$(GIT_AUTHOR_NAME=installatietest GIT_AUTHOR_EMAIL=test@invalid GIT_COMMITTER_NAME=installatietest \
+    GIT_COMMITTER_EMAIL=test@invalid git -C "$WORK/repo.git" commit-tree "$tree" -p "$TO" -m "installatietest: de tweede update")
+  # Elke versie op een eigen ref: een fetch in de kloon van install.sh vindt ze dan ook
+  git -C "$WORK/repo.git" update-ref refs/heads/installatietest-van "$FROM"
+  git -C "$WORK/repo.git" update-ref refs/heads/installatietest-naar "$TO"
+  git -C "$WORK/repo.git" update-ref refs/heads/installatietest-naar2 "$TO2"
+  git -C "$WORK/repo.git" show "$TO:infra/single/install.sh" >"$WORK/install.sh"
+
+  # --- images (zoals test_install_update.sh) -----------------------------------------------
+  pull_new() {
+    have "$1" && return 0
+    docker pull -q "$1" >/dev/null || stop "kan $1 niet ophalen"
+    created+=("$1")
+  }
+  name_as() {
+    if have "$2"; then
+      echo "  $2 is er al; die blijft zoals hij is"
+      return 0
+    fi
+    docker tag "$1" "$2"
+    created+=("$2")
+  }
+  cat >"$WORK/build/leeg-pakket.sh" <<'SH'
+#!/bin/sh
+# Een leeg pakket met deze naam, voor een container zonder Debian-spiegel. Verdere argumenten:
+# lege bestanden die het pakket meebrengt (ffmpeg: /usr/bin/ffmpeg en /usr/bin/ffprobe, die het
+# Dockerfile van fase 5 op 0711 zet; uitvoeren geeft ENOEXEC, dus "ffmpeg ontbreekt")
+set -e
+name=$1
+shift
+d=$(mktemp -d)
+mkdir -p "$d/DEBIAN"
+for f in "$@"; do
+  mkdir -p "$d$(dirname "$f")"
+  : >"$d$f"
+  chmod 755 "$d$f"
+done
+printf 'Package: %s\nVersion: 99:0-installatietest\nArchitecture: all\nMaintainer: installatietest <test@invalid>\nDescription: leeg pakket voor de installatietest\n' "$name" >"$d/DEBIAN/control"
+dpkg-deb --build "$d" "/tmp/$name.deb" >/dev/null
+dpkg -i "/tmp/$name.deb" >/dev/null
+rm -rf "$d" "/tmp/$name.deb"
+SH
+
+  echo "== Basisimages (van mirror.gcr.io; uv van ghcr.io)"
+  pull_new mirror.gcr.io/library/python:3.12-slim
+  pull_new mirror.gcr.io/library/node:22-alpine
+  apt_ok=0
+  if docker run --rm mirror.gcr.io/library/python:3.12-slim \
+    sh -c 'apt-get update >/dev/null 2>&1; ls /var/lib/apt/lists | grep -q _Packages' </dev/null; then
+    apt_ok=1
+  fi
+  local ca=""
+  if [ -n "$EXTRA_CA" ]; then
+    [ -f "$EXTRA_CA" ] || stop "INSTALL_TEST_CA wijst niet naar een bestand"
+    cp "$EXTRA_CA" "$WORK/build/extra-ca.crt"
+    ca=1
+    echo "  de builds vertrouwen ook $EXTRA_CA (de proxy van deze omgeving)"
+  fi
+  if [ "$apt_ok" = 1 ]; then
+    FFMPEG=echt
+  else
+    FFMPEG=leeg
+    echo "  geen Debian-spiegel bereikbaar: een leeg pakket ffmpeg (en unattended-upgrades)"
+  fi
+  if [ "$apt_ok" = 1 ] && [ -z "$ca" ]; then
+    name_as mirror.gcr.io/library/python:3.12-slim python:3.12-slim
+  else
+    if have python:3.12-slim; then
+      # Van een ander: even een tweede naam, aan het eind weer de eigen naam (stappen_opruimen)
+      docker tag python:3.12-slim "$BORROWED"
+      borrowed=1
+      docker image rm python:3.12-slim >/dev/null
+      echo "  python:3.12-slim van een ander bewaard als $BORROWED (komt aan het eind terug)"
+    fi
+    {
+      echo "FROM mirror.gcr.io/library/python:3.12-slim"
+      if [ -n "$ca" ]; then
+        echo "COPY extra-ca.crt /etc/ssl/installatietest-ca.crt"
+        echo "ENV SSL_CERT_FILE=/etc/ssl/installatietest-ca.crt PIP_CERT=/etc/ssl/installatietest-ca.crt UV_SYSTEM_CERTS=1"
+      fi
+      if [ "$apt_ok" = 0 ]; then
+        echo "COPY leeg-pakket.sh /tmp/leeg-pakket.sh"
+        echo "RUN sh /tmp/leeg-pakket.sh ffmpeg /usr/bin/ffmpeg /usr/bin/ffprobe && rm /tmp/leeg-pakket.sh"
+      fi
+    } >"$WORK/build/python.Dockerfile"
+    docker build -q -t python:3.12-slim -f "$WORK/build/python.Dockerfile" "$WORK/build" >/dev/null
+    created+=(python:3.12-slim)
+  fi
+  if [ -z "$ca" ]; then
+    name_as mirror.gcr.io/library/node:22-alpine node:22-alpine
+  else
+    ! have node:22-alpine || stop "node:22-alpine bestaat al; deze test vervangt hem niet"
+    docker build -q -t node:22-alpine -f - "$WORK/build" >/dev/null <<'DOCKERFILE'
+FROM mirror.gcr.io/library/node:22-alpine
+COPY extra-ca.crt /etc/ssl/installatietest-ca.crt
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/installatietest-ca.crt
+DOCKERFILE
+    created+=(node:22-alpine)
+  fi
+  if [ "$apt_ok" = 1 ]; then
+    pull_new mirror.gcr.io/library/debian:12
+    RUNNER_IMG=mirror.gcr.io/library/debian:12
+  else
+    pull_new mirror.gcr.io/library/buildpack-deps:bookworm-scm
+    docker build -q -t "$RUNNER_IMG" -f - "$WORK/build" >/dev/null <<'DOCKERFILE'
+FROM mirror.gcr.io/library/buildpack-deps:bookworm-scm
+COPY leeg-pakket.sh /tmp/leeg-pakket.sh
+RUN sh /tmp/leeg-pakket.sh unattended-upgrades && rm /tmp/leeg-pakket.sh
+DOCKERFILE
+    created+=("$RUNNER_IMG")
+    runner_built=1
+  fi
+  if have ghcr.io/astral-sh/uv:0.11; then
+    :
+  elif [ "$UV_FROM" != pypi ] && docker pull -q ghcr.io/astral-sh/uv:0.11 >/dev/null 2>&1; then
+    created+=(ghcr.io/astral-sh/uv:0.11)
+  else
+    echo "  ghcr.io gaf uv niet: uv 0.11 uit het wiel van PyPI, onder dezelfde naam"
+    docker build -q -t ghcr.io/astral-sh/uv:0.11 -f - "$WORK/build" >/dev/null <<'DOCKERFILE' ||
+FROM python:3.12-slim AS wiel
+RUN pip download -q --only-binary=:all: --no-deps "uv>=0.11,<0.12" -d /w \
+ && python -c "import glob, zipfile; z = zipfile.ZipFile(glob.glob('/w/uv-*.whl')[0]); [open('/' + n.rsplit('/', 1)[1], 'wb').write(z.read(n)) for n in z.namelist() if n.endswith(('.data/scripts/uv', '.data/scripts/uvx'))]" \
+ && chmod 755 /uv /uvx && /uv --version
+FROM scratch
+COPY --from=wiel /uv /uvx /
+DOCKERFILE
+      stop "kan uv niet ophalen (ghcr.io en PyPI)"
+    created+=(ghcr.io/astral-sh/uv:0.11)
+  fi
+  if ! have docker/dockerfile:1; then
+    pull_new mirror.gcr.io/docker/dockerfile:1
+    name_as mirror.gcr.io/docker/dockerfile:1 docker/dockerfile:1
+  fi
+  for c in mirror.gcr.io/library/hello-world hello-world; do
+    have "$c" || maybe+=("$c")
+  done
+  echo "  vrij voor Docker: $(free_gb) GB"
+  # Geeft dockerd minder dan de 65536 open bestanden van compose.yaml (de sandbox), dan krijgt
+  # elke compose-aanroep één extra bestand met de grens die dockerd wel geeft (alleen de app)
+  SANDBOX_COMPOSE=""
+  if ! docker run --rm --ulimit nofile=65536:65536 mirror.gcr.io/library/python:3.12-slim true </dev/null >/dev/null 2>&1; then
+    local nofile
+    nofile=$(sed -n 's/^Max open files *[0-9]* *\([0-9]*\).*/\1/p' "/proc/$(pidof dockerd | cut -d' ' -f1)/limits" 2>/dev/null || true)
+    [ -n "$nofile" ] || nofile=$(ulimit -Hn)
+    SANDBOX_COMPOSE=$WORK/build/sandbox-nofile.yaml
+    printf '# Alleen voor test_install_media.sh: dockerd geeft hier hooguit %s open bestanden\nservices:\n  platform:\n    ulimits:\n      nofile: {soft: %s, hard: %s}\n' \
+      "$nofile" "$nofile" "$nofile" >"$SANDBOX_COMPOSE"
+    echo "  dockerd geeft hier geen 65536 open bestanden: de app krijgt er in deze test $nofile"
+  fi
+
+  # Alleen in de runner: compose krijgt het extra bestand van de sandbox na de laatste -f
+  cat >"$WORK/shim/bin/docker" <<'SHIM'
+#!/usr/bin/env bash
+real=/usr/bin/docker
+if [ "${1-}" = compose ] && [ -n "${SHIM_COMPOSE_EXTRA:-}" ]; then
+  args=("$@") at=-1
+  for i in "${!args[@]}"; do
+    if [ "${args[i]}" = -f ] && [[ ${args[i + 1]-} == *.yaml ]]; then at=$((i + 1)); fi
+  done
+  if [ "$at" -ge 0 ]; then exec "$real" "${args[@]:0:at+1}" -f "$SHIM_COMPOSE_EXTRA" "${args[@]:at+1}"; fi
+fi
+exec "$real" "$@"
+SHIM
+  chmod 755 "$WORK/shim/bin/docker"
+
+  # --- hulpjes ------------------------------------------------------------------------------
+  cid() {
+    docker ps -aq --filter "label=com.docker.compose.project=$PROJECT" \
+      --filter "label=com.docker.compose.service=$1" | head -n 1
+  }
+  running() { [ -n "$1" ] && [ "$(docker inspect --format '{{.State.Running}}' "$1" 2>/dev/null)" = true ]; }
+  env_value() { as_root sed -n "s/^$1=//p" "$ROOT/.env"; }
+  src_head() { as_root git -c safe.directory='*' -C "$ROOT/src" rev-parse HEAD; }
+  container_env() { docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" | sed -n "s/^$2=//p"; }
+  has_env() { docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" | grep -q "^$2="; }
+  same_key() { [ "$(container_env "$1" PLATFORM_MEDIA_WORKER_KEY | sha256sum)" = "$(env_value MEDIA_WORKER_KEY | sha256sum)" ]; }
+  app_up() { curl -fs -o /dev/null -m 5 "http://127.0.0.1:$PORT/health"; }
+  api() {
+    INSTALL_API_URL="http://127.0.0.1:$PORT" INSTALL_API_STATE="$WORK/sessie.json" \
+      python3 -I "$top/e2e/install_api.py" "$@"
+  }
+  said() { grep -qF -- "$2" "$WORK/logs/$1.log"; }
+  db_rev() {
+    docker exec "$(cid platform)" python -c 'import sqlite3
+c = sqlite3.connect("file:/data/platform.db?mode=ro", uri=True)
+print(c.execute("select version_num from alembic_version").fetchone()[0])' </dev/null 2>/dev/null
+  }
+  app_images() { docker images -q --no-trunc platform | sort -u; }
+  image_gone() { ! docker image inspect "$1" >/dev/null 2>&1; }
+  # Eén run van install.sh in de runner; het script komt via stdin (zoals curl | bash)
+  step() {
+    local name=$1 rc=0 kv envs=()
+    shift
+    for kv in "$@"; do envs+=(-e "$kv"); done
+    echo
+    echo "== $name: install.sh $*"
+    timeout 1800 docker run -i --rm --name "$RUNNER_NAME" --network host \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      -v "$(command -v docker)":/usr/bin/docker:ro \
+      -v /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro \
+      -v "$WORK:$WORK" \
+      -e PLATFORM_REPO="$WORK/repo.git" -e PLATFORM_ROOT="$ROOT" -e OFFICE=uit \
+      -e PORT="$PORT" -e HTTPS_PORT="$HTTPS_PORT" -e SHIM_COMPOSE_EXTRA="$SANDBOX_COMPOSE" \
+      -e PATH="$WORK/shim/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+      "${envs[@]}" "$RUNNER_IMG" bash -s <"$WORK/install.sh" >"$WORK/logs/$name.log" 2>&1 || rc=$?
+    if [ "$rc" != 0 ]; then
+      echo "install.sh gaf $rc; de laatste regels:"
+      tail -n 30 "$WORK/logs/$name.log"
+    fi
+    sed -n 's/^\(Media: .*\)/  \1/p; s/^Let op: \(.*\)/  Let op: \1/p' "$WORK/logs/$name.log"
+    return "$rc"
+  }
+  # De functie dc uit infra/single/README.md, met de paden van deze test
+  dc() {
+    local d=$ROOT/src/infra/single
+    local f=(-f "$d/compose.yaml")
+    if docker container inspect platform-office-1 >/dev/null 2>&1; then
+      f+=(-f "$d/compose.office.yaml")
+      if [ "$(docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}')" = "true true" ]; then
+        f+=(-f "$d/compose.office-limits.yaml")
+      fi
+    fi
+    if docker container inspect platform-media-1 >/dev/null 2>&1; then
+      f+=(-f "$d/compose.media.yaml")
+      if [ "$(docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}')" = "true true" ]; then
+        f+=(-f "$d/compose.media-limits.yaml")
+      fi
+    elif [ -f "$d/compose.media-local.yaml" ]; then
+      f+=(-f "$d/compose.media-local.yaml")
+    fi
+    [ -z "$SANDBOX_COMPOSE" ] || f+=(-f "$SANDBOX_COMPOSE")
+    as_root docker compose --project-directory "$d" --env-file "$ROOT/.env" "${f[@]}" "$@"
+  }
+  wait_healthy() {
+    local end=$((SECONDS + $2))
+    until [ "$(docker inspect --format '{{.State.Health.Status}}' "$1" 2>/dev/null)" = healthy ]; do
+      [ "$SECONDS" -lt "$end" ] || return 1
+      sleep 2
+    done
+  }
+  # ffmpeg in een container volgens docker top (de kolom pid is nodig voor het filter)
+  ffmpeg_in() { docker top "$1" -eo pid,comm 2>/dev/null | awk 'NR > 1 && $2 == "ffmpeg"' | wc -l | tr -d ' '; }
+  # Een profiel met H.264 en AAC via MSE, en hooguit 1000 kbit/s: de film (5 Mbit/s) wordt een
+  # transcode (reden bitrate), zoals in de belastingtest
+  profile() {
+    python3 -I -c '
+import json, sys
+strings = json.loads(sys.argv[1])
+def plays(s):
+    low = s.lower()
+    return low.startswith(("avc1.", "mp4a.40.")) and not low.startswith("avc1.6e")
+codecs = {s: ({"mse": True, "file": True, "smooth": True, "power": True} if plays(s) else {"mse": False, "file": False}) for s in strings}
+print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "name": "installatietest"}, "max": {"height": 1080, "bitrate_kbps": 1000}, "codecs": codecs}}))
+' "$1"
+  }
+
+  # --- 1. 0.6.0 installeren, een film uploaden --------------------------------------------
+  step 1-van PLATFORM_SRC_REF="$FROM" || stop "de installatie van $FROM lukte niet"
+  check "1: de app draait op poort $PORT" app_up
+  check "1: de broncode staat op ${FROM:0:12}" test "$(src_head)" = "$(git -C "$WORK/repo.git" rev-parse "$FROM^{commit}")"
+  check "1: het schema staat op 0007 (0.6.0)" test "$(db_rev)" = 0007
+  check "1: geen container media" test -z "$(cid media)"
+  check "1: install.sh zegt dat deze versie geen media heeft" said 1-van "Media: uit, want deze versie van het platform heeft nog geen media."
+  check "1: .env zonder media" test -z "$(env_value MEDIA_WORKER_KEY)"
+  local app1 film root film_id film_sha
+  app1=$(docker image inspect --format '{{.Id}}' platform:local)
+  check "1: een beheerder aangemaakt, met 2FA aan" api setup
+  film=$WORK/film/film.mp4
+  local lavfi=(-hide_banner -loglevel error -f lavfi -i "testsrc2=size=640x360:rate=25" -f lavfi -i "sine=frequency=440:sample_rate=48000" -t 120 -c:v libx264 -preset ultrafast -b:v 5M -maxrate 5M -bufsize 10M -pix_fmt yuv420p -g 50 -c:a aac -b:a 128k -movflags +faststart)
+  if command -v ffmpeg >/dev/null && ffmpeg "${lavfi[@]}" -y "$film" </dev/null; then
+    :
+  else
+    # Zonder ffmpeg op de host: die van het image van 0.6.0 (in CI echt)
+    docker run --rm --user 0 --entrypoint ffmpeg -v "$WORK/film:/film" platform:local "${lavfi[@]}" -y /film/film.mp4 </dev/null ||
+      stop "de film maken lukte niet (geen ffmpeg op de host, en niet in het image)"
+  fi
+  film_sha=$(sha256sum "$film" | cut -d' ' -f1)
+  root=$(api get /api/v1/auth/me root_id) || stop "1: /auth/me gaf geen map"
+  film_id=$(api upload "$root" film.mp4 "$film") || stop "1: de film uploaden lukte niet"
+  check "1: de film staat erin" test "$(api sha "$film_id")" = "$film_sha"
+
+  # --- 2. bijwerken naar deze versie -----------------------------------------------------
+  step 2-bijwerken PLATFORM_SRC_REF="$TO" || fout "2: install.sh gaf een fout"
+  check "2: de app draait" app_up
+  check "2: het schema staat op 0008" test "$(db_rev)" = 0008
+  local app media key app2
+  app=$(cid platform) media=$(cid media)
+  check "2: de container media draait" running "$media"
+  check "2: de worker wordt gezond (healthcheck via env -i)" wait_healthy "$media" 120
+  check "2: de worker draait als media (10002), zonder netwerk" test \
+    "$(docker inspect --format '{{.Config.User}} {{.HostConfig.NetworkMode}} {{.HostConfig.ReadonlyRootfs}}' "$media")" = "media none true"
+  check "2: de app praat met de worker over de socket" test "$(container_env "$app" PLATFORM_MEDIA_WORKER)" = /run/media/worker.sock
+  key=$(env_value MEDIA_WORKER_KEY)
+  check "2: MEDIA_WORKER_KEY in .env, 64 hex-tekens, .env 600" eval '[[ $key =~ ^[0-9a-f]{64}$ ]] && [ "$(as_root stat -c %a "$ROOT/.env")" = 600 ]'
+  check "2: de app en de worker hebben dezelfde sleutel" eval 'same_key "$app" && same_key "$media"'
+  check "2: de sleutel staat in geen enkele log van install.sh" not grep -rqF -- "$key" "$WORK/logs"
+  check "2: MEDIA_SANDBOX=aan en MAX_UPLOAD_BYTES in .env" eval '[ "$(env_value MEDIA_SANDBOX)" = aan ] && [ "$(env_value MAX_UPLOAD_BYTES)" = 53687091200 ]'
+  check "2: de app krijgt MAX_UPLOAD_BYTES" test "$(container_env "$app" PLATFORM_MAX_UPLOAD_BYTES)" = 53687091200
+  check "2: de mappen media en import, van 10001, 750" test \
+    "$(as_root stat -c '%u:%g %a' "$ROOT/data/platform/media" "$ROOT/data/platform/import" | sort -u)" = "10001:10001 750"
+  check "2: de eindtekst zegt Media: aan (afgeschermd)" said 2-bijwerken "Media: aan (afgeschermd)."
+  check "2: de oude app (0.6.0) is weg, er is één image platform:local" eval '[ "$(app_images | wc -l)" = 1 ] && image_gone "$app1"'
+  check "2: de film is er nog, heel" test "$(api sha "$film_id")" = "$film_sha"
+  check "2: /beheer: de worker in zijn container" test "$(api get /api/v1/admin/media worker.mode)" = container
+  if [ "$FFMPEG" = leeg ]; then
+    check "2: media-status na de start: ffmpeg ontbreekt" said 2-bijwerken "ffmpeg ontbreekt)"
+    check "2: /beheer toont media_ffmpeg_missing" api notice media_ffmpeg_missing
+    # Afspelen vraagt eerst een probe, en die vraagt ffprobe: zonder werkende ffprobe geeft play
+    # een nette weigering, nooit een 500. Een lege ffprobe (ENOEXEC) telt in de probe van M0 als
+    # een onleesbaar bestand (409 media_unavailable, en die mislukte probe blijft staan); een
+    # ontbrekende als 503 media_ffmpeg_missing. Open punt in docs/fase-5/m10.md
+    api post "/api/v1/media/$film_id/play" "$(profile "[]")" >"$WORK/logs/2-play-zonder-ffmpeg.log" 2>&1 || true
+    check "2: afspelen zonder ffmpeg: een nette weigering (409 of 503; de speler biedt Downloaden)" grep -Eq \
+      'gaf (409|503): .*(media_unavailable|media_ffmpeg_missing)' "$WORK/logs/2-play-zonder-ffmpeg.log"
+    SUMMARY+=("afspelen zonder ffmpeg: $(grep -Eo 'gaf [0-9]+' "$WORK/logs/2-play-zonder-ffmpeg.log" | head -n 1) $(grep -Eo 'media_[a-z_]+' "$WORK/logs/2-play-zonder-ffmpeg.log" | head -n 1)")
+  else
+    check "2: media-status na de start: afgeschermd, met ffmpeg" said 2-bijwerken "Media: aan (afgeschermd, ffmpeg "
+    check "2: /beheer: geen melding over de worker" eval '! api notice media_ffmpeg_missing && ! api notice media_worker_down'
+    check "2: /beheer: de zelftest zegt afgeschermd" test "$(api get /api/v1/admin/media worker.sandbox)" = on
+    stap_transcode
+    stap_belastingtest
+  fi
+  docker exec "$(cid platform)" python -m app.cli media-status </dev/null >"$WORK/logs/2-media-status.log" 2>&1 || true
+  sed 's/^/  media-status: /' "$WORK/logs/2-media-status.log"
+  SUMMARY+=("media-status na de update: $(head -n 1 "$WORK/logs/2-media-status.log")")
+  [ "$FFMPEG" = leeg ] || check "2: media-status zegt afgeschermd" grep -qF "Media: aan (afgeschermd, ffmpeg " "$WORK/logs/2-media-status.log"
+
+  # --- 2b. nog een keer bijwerken: het oude image weg, ook al draaide de worker erop ---------
+  app2=$(docker image inspect --format '{{.Id}}' platform:local)
+  check "2b: de worker draait op het image van de app" test "$(docker inspect --format '{{.Image}}' "$(cid media)")" = "$app2"
+  step 2b-nogmaals PLATFORM_SRC_REF="$TO2" || fout "2b: install.sh gaf een fout"
+  check "2b: de app draait" app_up
+  check "2b: na twee updates één image platform:local" test "$(app_images | wc -l)" = 1
+  check "2b: de oude id is weg" image_gone "$app2"
+  check "2b: de worker draait op het nieuwe image" test "$(docker inspect --format '{{.Image}}' "$(cid media)")" = "$(docker image inspect --format '{{.Id}}' platform:local)"
+  check "2b: de sleutel bleef dezelfde" test "$(env_value MEDIA_WORKER_KEY)" = "$key"
+
+  # --- 3. MEDIA_SANDBOX=uit: de container weg, de lokale worker ------------------------------
+  step 3-uit PLATFORM_SRC_REF="$TO2" MEDIA_SANDBOX=uit || fout "3: install.sh gaf een fout"
+  check "3: de app draait" app_up
+  check "3: geen container media meer" test -z "$(cid media)"
+  app=$(cid platform)
+  check "3: de app heeft media, zonder PLATFORM_MEDIA_WORKER" eval \
+    '[ "$(container_env "$app" PLATFORM_MEDIA_ENABLED)" = true ] && ! has_env "$app" PLATFORM_MEDIA_WORKER'
+  check "3: MEDIA_SANDBOX=uit in .env, de sleutel blijft" eval '[ "$(env_value MEDIA_SANDBOX)" = uit ] && [ "$(env_value MEDIA_WORKER_KEY)" = "$key" ]'
+  check "3: install.sh zegt: zonder afscherming" said 3-uit "Media: aan, zonder afscherming (MEDIA_SANDBOX=uit"
+  check "3: /beheer: de lokale worker" test "$(api get /api/v1/admin/media worker.mode)" = local
+  check "3: de film is er nog, heel" test "$(api sha "$film_id")" = "$film_sha"
+  # Weer afgeschermd, voor stap 4 (Jonas rolt terug vanaf de gewone stand)
+  step 3-aan PLATFORM_SRC_REF="$TO2" MEDIA_SANDBOX=aan || fout "3: install.sh (weer aan) gaf een fout"
+  check "3: weer aan: de container media draait" running "$(cid media)"
+
+  # --- 4. terug naar 0.6.0, met precies de commando's van Keuze 47 --------------------------
+  if [ "$ROLLBACK" = 1 ]; then
+    echo
+    echo "== 4: terug naar 0.6.0 (docs/runbooks/media.md, Keuze 47)"
+    # 0. de commit van 0.6.0 is er, vóór er iets stopt
+    if as_root git -C "$ROOT/src" fetch -q origin && as_root git -C "$ROOT/src" cat-file -e "$FROM^{commit}"; then
+      ok "4.0: git fetch en cat-file -e '${FROM:0:12}^{commit}'"
+    else
+      fout "4.0: de commit van 0.6.0 is er niet"
+    fi
+    # 1. de app en de worker stoppen
+    if dc stop platform media >"$WORK/logs/4-stop.log" 2>&1; then ok "4.1: dc stop platform media"; else fout "4.1: dc stop platform media"; fi
+    # 2. het schema terug, met het image van nu (het commando vraagt om "ja")
+    if printf 'ja\n' | dc run --rm --no-deps -T platform python -m app.cli db-downgrade 0007 >"$WORK/logs/4-downgrade.log" 2>&1; then
+      ok "4.2: dc run --rm --no-deps platform python -m app.cli db-downgrade 0007 (met \"ja\")"
+    else
+      fout "4.2: db-downgrade 0007"
+      tail -n 20 "$WORK/logs/4-downgrade.log"
+    fi
+    check "4.2: het commando zegt dat het schema op 0007 staat" grep -qF "De database staat nu op revisie 0007." "$WORK/logs/4-downgrade.log"
+    # 3. het script van nu, met de commit van 0.6.0
+    step 4-terug PLATFORM_SRC_REF="$FROM" || fout "4.3: install.sh gaf een fout"
+    check "4: de app draait" app_up
+    check "4: de broncode staat op ${FROM:0:12}" test "$(src_head)" = "$(git -C "$WORK/repo.git" rev-parse "$FROM^{commit}")"
+    check "4: het schema staat op 0007" test "$(db_rev)" = 0007
+    check "4: de app is 0.6.0 (geen /api/v1/admin/media)" eval '! api get /api/v1/admin/media >/dev/null 2>&1'
+    check "4: geen container media (--remove-orphans)" test -z "$(cid media)"
+    check "4: install.sh zegt waarom media uit is" said 4-terug "Media: uit, want deze versie van het platform heeft nog geen media."
+    check "4: de film is er nog, heel" test "$(api sha "$film_id")" = "$film_sha"
+    check "4: de mappen media en import en het volume media-run blijven" eval \
+      'as_root test -d "$ROOT/data/platform/media" && as_root test -d "$ROOT/data/platform/import" && docker volume inspect platform_media-run >/dev/null 2>&1'
+    check "4: één image platform:local" test "$(app_images | wc -l)" = 1
+  else
+    echo
+    echo "== 4: terug naar 0.6.0 overgeslagen (INSTALL_TEST_ROLLBACK=0)"
+  fi
+  einde
+}
+
+# Alleen met echte ffmpeg (CI): een transcode via curl, en tijdens die transcode docker top (R12)
+# shellcheck disable=SC2016  # check … eval '…': eval werkt de uitdrukking pas zelf uit
+stap_transcode() {
+  local strings body sid code n_app n_media i seen=0 app_ffmpeg=0
+  # Wachten tot de worker niets meer doet (de analyse van de film), zodat docker top alleen de
+  # transcode ziet
+  for i in $(seq 1 60); do
+    [ "$(ffmpeg_in "$(cid media)")" = 0 ] && break
+    sleep 1
+  done
+  strings=$(api get "/api/v1/media/$film_id/codecs" | python3 -I -c 'import json, sys; d = json.load(sys.stdin); print(json.dumps(d["candidates"] + d["item"]))')
+  body=$(api post "/api/v1/media/$film_id/play" "$(profile "$strings")") || { fout "2: play gaf een fout"; return 0; }
+  printf '%s' "$body" >"$WORK/logs/2-play.json"
+  check "2: play kiest transcode (reden bitrate)" python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); sys.exit(0 if d["mode"] == "transcode" and "bitrate" in d["reasons"] else 1)' "$WORK/logs/2-play.json"
+  sid=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["sid"])' "$WORK/logs/2-play.json")
+  code=$(curl -s -o "$WORK/film/0.m4s" -w '%{http_code}' -m 60 "http://127.0.0.1:$PORT/api/v1/stream/$sid/0.m4s")
+  check "2: GET segment 0 via curl: 200 met een fragment (moof)" eval '[ "$code" = 200 ] && grep -q moof "$WORK/film/0.m4s"'
+  for i in $(seq 1 10); do
+    n_media=$(ffmpeg_in "$(cid media)") n_app=$(ffmpeg_in "$(cid platform)")
+    [ "$n_app" = 0 ] || app_ffmpeg=1
+    if [ "$n_media" = 1 ] && [ "$n_app" = 0 ]; then seen=1; fi
+    sleep 1
+  done
+  check "2: R12: tijdens de transcode één ffmpeg in media (docker top: $n_media)" test "$seen" = 1
+  check "2: R12: nooit ffmpeg in de container van de app" test "$app_ffmpeg" = 0
+  curl -s -o /dev/null -X DELETE -m 10 "http://127.0.0.1:$PORT/api/v1/stream/$sid" || true
+  SUMMARY+=("transcode via curl: segment 0 $code; docker top: media $n_media ffmpeg, app 0")
+}
+
+# Alleen met echte ffmpeg (CI): de rooktest van de belastingtest, zoals het runbook hem op de LXC
+# laat draaien (een override met PLATFORM_MEDIA_LOADTEST=1, dan app.cli media-loadtest)
+stap_belastingtest() {
+  local override=$WORK/belastingtest.yaml rc=0
+  printf 'services:\n  platform:\n    environment:\n      PLATFORM_MEDIA_LOADTEST: "1"\n' >"$override"
+  if ! dc -f "$override" up -d platform >"$WORK/logs/2-belastingtest-aan.log" 2>&1; then
+    fout "2: de belastingtest aanzetten (dc -f … up -d platform)"
+    return 0
+  fi
+  local end=$((SECONDS + 60))
+  until app_up; do
+    [ "$SECONDS" -lt "$end" ] || break
+    sleep 2
+  done
+  timeout 900 docker exec "$(cid platform)" python -m app.cli media-loadtest --sessies 1 --duur 30 \
+    --json /tmp/belastingtest.json </dev/null >"$WORK/logs/2-belastingtest.log" 2>&1 || rc=$?
+  docker exec "$(cid platform)" cat /tmp/belastingtest.json </dev/null >"$WORK/logs/2-belastingtest.json" 2>/dev/null || true
+  check "2: de rooktest van de belastingtest (1 sessie, 30 s): exit $rc" test "$rc" = 0
+  SUMMARY+=("belastingtest (1 sessie, 30 s): exit $rc")
+}
+
+stappen_opruimen() {
+  local rc=$? ids ref i
+  set +e
+  trap - EXIT INT TERM
+  echo
+  echo "== Opruimen"
+  docker rm -f "$RUNNER_NAME" >/dev/null 2>&1
+  if [ "$own_project" = 1 ]; then
+    ids=$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")
+    # shellcheck disable=SC2086
+    [ -z "$ids" ] || docker rm -f -v $ids >/dev/null
+    ids=$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")
+    # shellcheck disable=SC2086
+    [ -z "$ids" ] || docker volume rm $ids >/dev/null
+    ids=$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT")
+    # shellcheck disable=SC2086
+    [ -z "$ids" ] || docker network rm $ids >/dev/null
+    for ref in $(docker images -q --no-trunc platform | sort -u); do docker image rm -f "$ref" >/dev/null 2>&1; done
+  fi
+  if [ -n "$LOGS_OUT" ] && [ -d "$WORK/logs" ]; then
+    mkdir -p "$LOGS_OUT" && cp -r "$WORK/logs/." "$LOGS_OUT/" && echo "Logs: $LOGS_OUT"
+  fi
+  if [ -n "$WORK" ] && [ -d "$WORK" ]; then
+    # De data van de app is van 10001 en de rest van root: als root weg (in CI met sudo)
+    if [ "$work_existed" = 1 ]; then as_root find "$WORK" -mindepth 1 -delete; else as_root rm -rf "$WORK"; fi
+  fi
+  for ref in "${maybe[@]}"; do
+    if have "$ref"; then docker image rm "$ref" >/dev/null || echo "kon $ref niet weghalen"; fi
+  done
+  for ((i = ${#created[@]} - 1; i >= 0; i--)); do
+    docker image rm "${created[i]}" >/dev/null 2>&1 || echo "kon ${created[i]} niet weghalen"
+  done
+  if [ "$borrowed" = 1 ]; then
+    docker tag "$BORROWED" python:3.12-slim && docker image rm "$BORROWED" >/dev/null &&
+      echo "python:3.12-slim heeft zijn eigen image weer."
+  fi
+  ids="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")"
+  if [ -n "$ids" ] || have platform:local || { [ "$runner_built" = 1 ] && have "$RUNNER_IMG"; } || { [ "$borrowed" = 1 ] && have "$BORROWED"; }; then
+    echo "LET OP: er is nog iets van de test over"
+    rc=1
+  else
+    echo "Alles van de test is weg (containers, volumes, netwerken, images, de werkmap)."
+  fi
+  if [ "${#SUMMARY[@]}" -gt 0 ]; then
+    echo
+    echo "=== Samenvatting (test_install_media.sh --stappen) ==="
+    printf '%s\n' "${SUMMARY[@]}"
+    echo "=== einde samenvatting ==="
+  fi
+  exit "$rc"
 }
 
 case "${1-}" in
