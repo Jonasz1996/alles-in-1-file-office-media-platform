@@ -343,6 +343,43 @@ async def test_een_401_zet_de_sleutel_dicht_en_meldt(net, client):
     assert (await items(net.settings, library_id))[NEPHAVEN].match_state == "matched"
 
 
+NEW_KEY = "nieuwe-sleutel-" + "n" * 30
+
+
+def swap_key_during_search(net: Net, monkeypatch) -> None:
+    """Terwijl een verzoek met de oude sleutel loopt, bewaart Jonas een nieuwe; TMDB weigert de
+    oude daarna (401). Zo komt de 401 pas binnen als de nieuwe er al staat."""
+    from app.media.providers import tmdb
+
+    search = tmdb.Tmdb.search
+
+    async def works(key: str) -> None:
+        return None
+
+    async def swap(self, *args, **kwargs):
+        async with maker(net.settings)() as session:
+            await secrets.save_tmdb(session, net.settings, NEW_KEY, check=works)
+        net.fake.config.tmdb_key = NEW_KEY
+        return await search(self, *args, **kwargs)
+
+    monkeypatch.setattr(tmdb.Tmdb, "search", swap)
+
+
+async def test_een_late_401_bij_het_opzoeken_laat_de_nieuwe_sleutel_open(net, client, monkeypatch):
+    """Nacontrole golf 5 (C7, de aanroep in run): de 401 van een ronde die nog met de oude
+    sleutel liep, zet de nieuwe sleutel niet dicht."""
+    from app.media import providers
+
+    await save_key(net)
+    library_id = await films(client, net, [NEPHAVEN])
+    swap_key_during_search(net, monkeypatch)
+    await lookup.run(net.settings, {"library_id": library_id})  # 401: deze ronde stopt
+    async with maker(net.settings)() as session:
+        assert (await secrets.status(session, net.settings))["ok"] is True
+    assert secrets.usable() and secrets.tmdb_key() == NEW_KEY
+    assert providers.notices() == []
+
+
 async def test_de_sleutel_nooit_in_de_log(net, client, caplog):
     caplog.set_level("DEBUG")
     await save_key(net)

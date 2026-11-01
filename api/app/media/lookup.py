@@ -396,6 +396,10 @@ async def _reset_episodes(session: AsyncSession, show_id: uuid.UUID) -> None:
     for item in rows:
         if item.match_state in ("matched", "review") and HIDDEN_LOCK not in (item.locked or []):
             item.match_state = "local"
+            # Een still van de vorige serie die nog wacht, weg: hij heeft dezelfde koppeling
+            # (aflevering:S:E) en key als de still van de nieuwe, en zou die tegenhouden
+            # (nacontrole golf 5, C1)
+            await drop_art(session, "item", item.node_id)
 
 
 async def write_season(

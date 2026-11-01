@@ -25,11 +25,13 @@ from tests.test_media_contract import media_app  # noqa: F401
 from tests.test_media_lookup import (
     LANTERNS,
     NEPHAVEN,
+    NEW_KEY,
     STORM,
     films,
     make_library,
     run,
     save_key,
+    swap_key_during_search,
 )
 from tests.test_media_lookup import net as net  # noqa: F401
 from tests.test_media_scanner import items, scan, upload
@@ -610,3 +612,57 @@ async def test_kandidaten_wachten_hooguit_8_seconden(net, client, monkeypatch):
     r = await client.get(f"{URL}/items/{node}/candidates", headers=net.headers)
     assert time.monotonic() - start < 5
     assert r.status_code == 503 and code(r) == "media_provider_unavailable"
+
+
+# --- nacontrole golf 5 ---------------------------------------------------------------------------
+
+
+async def test_een_late_401_in_het_venster_laat_de_nieuwe_sleutel_open(net, client, monkeypatch):
+    """Nacontrole golf 5 (C7, de aanroep in outbound): het venster Koppelen zocht nog met de
+    oude sleutel toen er een nieuwe kwam. De 401 is voor dit verzoek (422), maar de nieuwe
+    sleutel blijft open."""
+    await save_key(net)
+    library_id = await films(client, net, [NEPHAVEN])
+    node = await node_of(net, library_id, NEPHAVEN)
+    swap_key_during_search(net, monkeypatch)
+    r = await client.get(f"{URL}/items/{node}/candidates", headers=net.headers)
+    assert r.status_code == 422 and code(r) == "media_provider_auth"
+    async with maker(net.settings)() as session:
+        assert (await secrets.status(session, net.settings))["ok"] is True
+    assert secrets.usable() and secrets.tmdb_key() == NEW_KEY
+
+
+async def test_een_andere_serie_krijgt_nooit_de_still_van_de_oude(net, client):
+    """Nacontrole golf 5 (C1, afleveringen): de still van een aflevering wacht nog als Jonas de
+    serie met de hand aan een andere koppelt. Die taak heeft dezelfde koppeling (aflevering 1×1)
+    en dezelfde key als de still van de nieuwe serie, dus hield hij die tegen en schreef hij de
+    still van de oude serie. Nu gaat een wachtende still mee weg met de afleveringen."""
+    await save_key(net)
+    library_id, folder = await make_library(client, net.headers, "Series", "shows")
+    show = await mkdir(client, net.headers, folder, "The Fake Coast (2010)")
+    await upload(client, net.headers, show, "The Fake Coast S01E01.mkv")
+    await scan(net.settings)
+    # Alleen het opzoeken (eerst de serie, dan het seizoen); de art-taken wachten nog
+    for _ in range(3):
+        await lookup.run(net.settings, {"library_id": library_id})
+    node = await node_of(net, library_id, "The Fake Coast S01E01.mkv")
+    assert (await row(net, node)).match_state == "matched"
+    stills = [j.payload["path"] for j in await art_jobs(net) if j.payload["target"] == "item"]
+    assert stills == ["/e900101-1-1.jpg"]
+    async with maker(net.settings)() as session:
+        [found] = (await session.scalars(select(MediaShow))).all()
+    r = await client.post(
+        f"{URL}/shows/{found.id}/match", json={"provider": "tmdb", "id": "tv:900102"},
+        headers=net.headers,
+    )  # fmt: skip
+    assert r.status_code == 200, r.text
+    # Het seizoen van de nieuwe serie komt aan de beurt vóór de oude still
+    await lookup.run(net.settings, {"library_id": library_id})
+    assert (await row(net, node)).match_state == "matched"
+    stills = [j.payload["path"] for j in await art_jobs(net) if j.payload["target"] == "item"]
+    assert stills == ["/e900102-1-1.jpg"]
+    net.fake.log.clear()
+    await jobs.run_pending(net.settings, lane="media_net")
+    paths = image_paths(net)
+    assert any(p.endswith("/e900102-1-1.jpg") for p in paths), paths
+    assert not any("e900101" in p for p in paths), paths
