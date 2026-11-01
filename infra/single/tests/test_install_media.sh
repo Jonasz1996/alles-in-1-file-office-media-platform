@@ -877,7 +877,7 @@ print(c.execute("select version_num from alembic_version").fetchone()[0])' </dev
       if [ "$(docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}')" = "true true" ]; then
         f+=(-f "$d/compose.media-limits.yaml")
       fi
-    elif [ -f "$d/compose.media-local.yaml" ]; then
+    elif [ -f "$d/compose.media-local.yaml" ] && as_root grep -qx 'MEDIA_SANDBOX=uit' "$ROOT/.env"; then
       f+=(-f "$d/compose.media-local.yaml")
     fi
     [ -z "$SANDBOX_COMPOSE" ] || f+=(-f "$SANDBOX_COMPOSE")

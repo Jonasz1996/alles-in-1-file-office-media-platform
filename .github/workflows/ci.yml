@@ -294,7 +294,9 @@ jobs:
           E2E_ARTIFACTS: ${{ runner.temp }}/media-artefacten
         run: |
           set -o pipefail
-          uv run --with playwright pytest ../e2e -m media -rs | tee "$RUNNER_TEMP/pytest.txt"
+          # De junit bewaart ook de uitvoer van geslaagde tests (de metingen, M10)
+          uv run --with playwright pytest ../e2e -m media -rs --junitxml="$RUNNER_TEMP/media-junit.xml" \
+            -o junit_logging=system-out | tee "$RUNNER_TEMP/pytest.txt"
           # Zonder ffmpeg slaat alles over: dat telt als mislukt. Met MEDIA_REQUIRE_H264=1 faalt
           # een test als de browser H.264 of AAC niet heeft; een andere codec slaat over met de reden
           if grep -q "^SKIPPED .*geen ffmpeg en ffprobe" "$RUNNER_TEMP/pytest.txt"; then
@@ -307,6 +309,29 @@ jobs:
           name: e2e-media
           path: ${{ runner.temp }}/media-artefacten
           if-no-files-found: ignore
+      # M10: wat de geslaagde tests maten (M7: het synchroniseren, p95; M9: de fase van gapless,
+      # en wat MP3 en AAC doen), kort aan het eind van het log
+      - name: Metingen van de geslaagde tests
+        if: always()
+        run: |
+          python3 -I - "$RUNNER_TEMP/media-junit.xml" <<'PY'
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          path = sys.argv[1]
+          print("=== Metingen (e2e media, alleen geslaagde tests) ===")
+          if not os.path.exists(path):
+              print("(geen junit: pytest liep niet)")
+          else:
+              for case in ET.parse(path).getroot().iter("testcase"):
+                  if any(case.find(k) is not None for k in ("failure", "error", "skipped")):
+                      continue
+                  for line in (case.findtext("system-out") or "").splitlines():
+                      if line.startswith(("M7 ", "gapless ")):
+                          print(line if len(line) <= 400 else line[:400] + " …")
+          print("=== einde metingen ===")
+          PY
 
   # Fase 5 (§4.8): -m media_perf in Chrome for Testing, alleen een rapport (zoals perf). Het
   # artefact noemt de browserversie en wat isTypeSupported zegt voor avc1.640028 en mp4a.40.2
@@ -320,6 +345,8 @@ jobs:
     env:
       E2E_PERF_REPORT_ONLY: "1"
       E2E_PERF_OUT: ${{ github.workspace }}/media-perf-results
+      # Zoals e2e-media (M10): Chrome for Testing kan H.264 en AAC; zonder faalt een test
+      MEDIA_REQUIRE_H264: "1"
     defaults:
       run:
         working-directory: api
@@ -451,6 +478,10 @@ jobs:
           echo "$ds"; bestaat "$ds"
       - name: install.sh controleren (test_install_env.sh)
         run: bash infra/single/tests/test_install_env.sh
+      # Media in install.sh (M10): de functies, en docker compose config -q voor alle 8
+      # combinaties (office aan/uit × media aan/uit × grenzen ja/nee)
+      - name: Media in install.sh controleren (test_install_media.sh)
+        run: bash infra/single/tests/test_install_media.sh
       - name: PostgreSQL-image bouwen en Patroni-configuratie valideren
         run: |
           base=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['postgres_base_image'])")
@@ -575,9 +606,13 @@ jobs:
   media-image:
     name: Media-image (de kern van de worker in het image)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # M10: de installatietest bouwt het platform drie keer (0.6.0, deze versie en een commit
+    # erbovenop)
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # M10: de installatietest begint bij 0.6.0 (263abd7)
       - uses: docker/setup-buildx-action@v3
       - name: Platform-image bouwen (de cache van images)
         id: bouw
@@ -624,9 +659,33 @@ jobs:
           echo "=== selftest.json ==="
           cat "$RUNNER_TEMP/media-image/selftest.json" || echo "(geen selftest.json)"
           echo "=== einde selftest.json ==="
+      # M10: 0.6.0 installeren, bijwerken naar deze versie, een transcode via curl met docker top
+      # (R12: geen ffmpeg in de app, één in media), de rooktest van de belastingtest,
+      # /api/v1/admin/media en media-status, nog een update (één image), MEDIA_SANDBOX=uit en weer
+      # aan. Terugrollen (stap 4) bewijst de sandbox (docs/fase-5/m10.md)
+      - name: De installatietest van media (test_install_media.sh --stappen, M10)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        env:
+          INSTALL_TEST_ROLLBACK: "0"
+          INSTALL_TEST_LOGS: ${{ runner.temp }}/media-image/installatietest
+        run: |
+          set -o pipefail
+          bash infra/single/tests/test_install_media.sh --stappen 2>&1 | tee "$RUNNER_TEMP/media-image/installatietest.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: media-image
           path: ${{ runner.temp }}/media-image
           if-no-files-found: warn
+      - name: Samenvatting
+        if: always()
+        run: |
+          log="$RUNNER_TEMP/media-image/installatietest.log"
+          if grep -q '^=== Samenvatting' "$log" 2>/dev/null; then
+            sed -n '/^=== Samenvatting/,/^=== einde samenvatting ===$/p' "$log"
+          else
+            echo "=== Samenvatting (test_install_media.sh --stappen) ==="
+            echo "(geen samenvatting: de installatietest liep niet of brak af)"
+            echo "=== einde samenvatting ==="
+          fi
+          grep -E '^(FOUT|STOP) ' "$log" 2>/dev/null || true

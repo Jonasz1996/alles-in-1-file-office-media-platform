@@ -108,9 +108,14 @@ blijft http werken.
 | PDF-voorbeelden van documenten | `/tank/platform/office` |
 | Gegevens van office | de Docker-volumes `platform_office-lib`, `platform_office-data`, `platform_office-logs` en `platform_office-fonts` (niet in `/tank`) |
 | Instellingen van office | `/opt/platform/.env`: `OFFICE`, `OFFICE_JWT_SECRET`, `OFFICE_LINK_SECRET` en eventueel `OFFICE_IMAGE` (de pin) |
+| Mediaworker (ffmpeg) | de container `platform-media-1`, zonder netwerk en zonder je bestanden: hij krijgt alleen wat de app hem geeft, over de socket in het Docker-volume `platform_media-run` |
+| Cache van media | `/tank/platform/media` (standaard hooguit 20 GB) |
+| Import | `/tank/platform/import`, in de app `/data/import` |
+| Instellingen van media | `/opt/platform/.env`: `MEDIA_SANDBOX`, `MAX_UPLOAD_BYTES` en `MEDIA_WORKER_KEY`; de rest op `/beheer` → Media |
 
 Bijwerken: draai het installatiescript opnieuw (naar 0.6.0: zie hierboven). Het laat eerst de
-open documenten opslaan, vervangt dan het platform en werkt pas daarna office bij. Had je de
+open documenten opslaan, vervangt dan het platform en werkt pas daarna de mediaworker en office
+bij. Had je de
 eerste versie met Traefik, PostgreSQL en SeaweedFS al geïnstalleerd, dan ruimt het script die
 containers op; de oude mappen `/tank/postgres`, `/tank/seaweedfs` en `/tank/traefik` mag je
 daarna weghalen.
@@ -122,11 +127,21 @@ Handige commando's. Plak eerst dit in de console (of zet het in `/root/.bashrc`)
 dc() {
   local d=/opt/platform/src/infra/single
   local f=(-f "$d/compose.yaml")
+  local limits
+  limits=$(docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}')
   if docker container inspect platform-office-1 >/dev/null 2>&1; then
     f+=(-f "$d/compose.office.yaml")
-    if [ "$(docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}')" = "true true" ]; then
+    if [ "$limits" = "true true" ]; then
       f+=(-f "$d/compose.office-limits.yaml")
     fi
+  fi
+  if docker container inspect platform-media-1 >/dev/null 2>&1; then
+    f+=(-f "$d/compose.media.yaml")
+    if [ "$limits" = "true true" ]; then
+      f+=(-f "$d/compose.media-limits.yaml")
+    fi
+  elif [ -f "$d/compose.media-local.yaml" ] && grep -qx 'MEDIA_SANDBOX=uit' /opt/platform/.env; then
+    f+=(-f "$d/compose.media-local.yaml")
   fi
   docker compose --project-directory "$d" --env-file /opt/platform/.env "${f[@]}" "$@"
 }
@@ -136,12 +151,16 @@ dc() {
 dc ps
 dc logs -f platform
 dc logs --tail 100 office
+dc logs --tail 100 media
+dc exec -T platform python -m app.cli media-status --sessions
 ```
 
 Iets veranderen (aan, uit, bijwerken, opnieuw starten) doe je met het installatiescript, niet
 met `docker compose up` of `down`. Vooral nooit `docker compose up -d` met alleen
-`compose.yaml`: dan start het platform zonder de instellingen van office (geen editor meer) en
-blijft DS los draaien. Draai daarna gewoon het installatiescript opnieuw; dat zet het recht.
+`compose.yaml`: dan start het platform zonder de instellingen van office en media (geen editor
+en geen worker meer) en blijven DS en de worker los draaien. Draai daarna gewoon het
+installatiescript opnieuw; dat zet het recht. Nooit `dc exec media` zonder `env -i` (zie
+`docs/runbooks/media.md`).
 
 ## Office: documenten bewerken in de browser
 
@@ -214,6 +233,56 @@ dc logs --tail 100 office
   dan `true`. Geef de container in Proxmox meer geheugen.
 
 Meer, zoals terugrollen en het meten van de belasting, staat in `docs/runbooks/office.md`.
+
+## Media: video en muziek
+
+Met media worden mappen met films, series, video's of muziek een **bibliotheek**: met posters,
+"verder kijken", ondertitels, een speler die op telefoon, laptop en tv werkt, en een muziekbalk
+die doorspeelt terwijl je verder klikt. Kan een browser een bestand niet zelf afspelen, dan zet
+het platform het tijdens het kijken om (met ffmpeg, op de CPU).
+
+**De mediaworker.** ffmpeg leest vreemde bestanden, en daar zitten soms fouten in. Daarom draait
+het in een eigen container, `platform-media-1`: zonder netwerk, zonder toegang tot je bestanden,
+als een eigen gebruiker en met hooguit 3 GB geheugen en 3 cores (als de kernel die grenzen kan
+zetten, zoals bij office). De app geeft hem per opdracht alleen het bestand dat nodig is. Het is
+hetzelfde image als het platform; er wordt niets extra opgehaald.
+
+**Aan en uit.** Media staat aan na het bijwerken, met de worker in zijn eigen container
+(`MEDIA_SANDBOX=aan` in `/opt/platform/.env`). De eindtekst van het script zegt
+`Media: aan (afgeschermd).`, of waarom niet. Uitzetten zonder iets weg te halen: `/beheer` →
+**Media** → Instellingen → **Media aan**. Start de worker in zijn container niet, dan is er een
+nooduitgang die ffmpeg in de app zelf laat draaien, zonder afscherming:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | MEDIA_SANDBOX=uit bash
+```
+
+Alleen tijdelijk; weer terug met `MEDIA_SANDBOX=aan`. Lukt het starten van de worker niet, dan
+stopt het script niet: het platform werkt verder, en video's spelen dan alleen als de browser het
+bestand zelf kan.
+
+**Uploads tot 50 GB.** Een film is groot: `MAX_UPLOAD_BYTES` in `.env` staat op 50 GB. Een hele
+verzameling zet je er sneller in met de import (hieronder).
+
+**Je verzameling importeren.** Zet de mappen op de Proxmox-host in `/tank/platform/import` en geef
+ze daar aan het platform:
+
+```bash
+chown -R 110001:110001 <pad-op-de-host>/platform/import
+```
+
+(de container is unprivileged: uid 10001 in de app is 110001 op de host). Kijk in de LXC met
+`ls -ln /tank/platform/import` of er `10001 10001` staat, en kies dan op `/beheer` → Media →
+**Importeren** de map, de eigenaar en **Kopiëren** of **Verplaatsen**. Hoe je het pad op de host
+vindt en de rest: `docs/runbooks/media.md`.
+
+**Metadata.** Zonder meer haalt het platform titels, jaren en afleveringen uit de namen van je
+bestanden en uit `.nfo`-bestanden. Met een (gratis) sleutel van TMDB komen er posters en
+beschrijvingen bij; die zet je op `/beheer` → Media → Online metadata (versleuteld bewaard, nooit
+in `.env`).
+
+Meer, zoals de status lezen, terugrollen naar 0.6.0, de cache opruimen en de belastingtest op de
+LXC, staat in `docs/runbooks/media.md`.
 
 ## 2FA kwijt
 
