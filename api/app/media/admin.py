@@ -17,8 +17,9 @@ de knoppen doen. De router (routers/admin_media.py) is dun; alles staat hier.
   het netjes meldt en geen nieuwe sessie vraagt).
 - **Opruimen** (cache/clear) breekt geen lopende sessie: bij sessions blijft van elke stroom het
   stuk rond de speler staan (cache.trim houdt 60 s achter de speler), bij audio blijft wat nu
-  gemaakt wordt (stream_audio.trim), en bij trick gaan alleen de sprites weg (de speler toont dan
-  geen voorbeeldjes tot de analyse ze opnieuw maakt).
+  gemaakt wordt en wat een open sessie speelt (stream_audio.trim met keep), en bij trick gaan
+  alleen de sprites weg (play geeft ze dan niet meer, tot de analyse ze opnieuw maakt: trick.info
+  kijkt of trick.vtt er staat).
 - **De meting** (bench): de opdracht bench in de worker, op de achtergrond; de uitkomst gaat in
   MediaConfig.bench. Weigert (409 media_bench_busy) zolang er een transcode of de belastingtest
   loopt.
@@ -126,14 +127,9 @@ class Reasons:
 reasons = Reasons()
 
 
-def install() -> None:
-    """Het tellen om sessions.create (M3) heen; een tweede keer doet niets. Een sessie van de
-    belastingtest telt niet mee: die zegt niets over de kijkers."""
-    from app.media import sessions
-
-    create = sessions.create
-    if getattr(create, "_counted", False):
-        return
+def counting(create: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    """sessions.create met het tellen van de redenen erom heen (na een geslaagde create). Een
+    sessie van de belastingtest telt niet mee: die zegt niets over de kijkers."""
 
     @functools.wraps(create)
     async def counted(user, source, probe, plan, *args, **kwargs):
@@ -144,7 +140,15 @@ def install() -> None:
         return made
 
     counted._counted = True  # type: ignore[attr-defined]
-    sessions.create = counted  # type: ignore[assignment]
+    return counted
+
+
+def install() -> None:
+    """Het tellen om sessions.create (M3) heen; een tweede keer doet niets."""
+    from app.media import sessions
+
+    if not getattr(sessions.create, "_counted", False):
+        sessions.create = counting(sessions.create)  # type: ignore[assignment]
 
 
 # --- de worker en ffmpeg ------------------------------------------------------------------------
@@ -384,8 +388,9 @@ async def cache_view(settings: Settings) -> CacheView:
     return CacheView(parts=parts, free_bytes=free)
 
 
-def provider_views() -> list[ProviderView]:
-    """providers.status() (M8) als ProviderView. De stub van M0 zegt alleen configured."""
+def provider_views(tmdb: dict[str, Any] | None = None) -> list[ProviderView]:
+    """providers.status() (M8) als ProviderView; tmdb is tmdb_status() (de sleutel staat er, en
+    werkt hij nog). De stub van M0 zegt alleen configured."""
     from app.media import providers
 
     try:
@@ -397,12 +402,18 @@ def provider_views() -> list[ProviderView]:
     for name in providers.PROVIDERS:
         s = found.get(name) or {}
         breaker = s.get("breaker", "closed")
+        key_set = bool(s.get("key_set", s.get("configured", False)))
+        last_error = s.get("last_error")
+        if name == "tmdb" and tmdb:
+            key_set = key_set or tmdb.get("set") is True
+            if tmdb.get("ok") is False and not last_error:
+                last_error = "auth"
         out.append(
             ProviderView(
                 name=name,  # type: ignore[arg-type]
-                key_set=bool(s.get("key_set", s.get("configured", False))),
+                key_set=key_set,
                 last_ok=s.get("last_ok"),
-                last_error=s.get("last_error"),
+                last_error=last_error,
                 breaker=breaker if breaker in ("closed", "open", "half_open") else "closed",
             )
         )
@@ -442,9 +453,10 @@ async def overview(app, session: AsyncSession, settings: Settings) -> MediaAdmin
         config=MediaPolicy.effective(config, settings).model_dump(mode="json"),
         notices=notices,
     )
+    tmdb = await tmdb_status(session, settings)
     await session.close()  # klaar met de database vóór het tellen van de cache (regel 8)
     out.cache = await cache_view(settings)
-    out.providers = provider_views()
+    out.providers = provider_views(tmdb)
     return out
 
 
@@ -504,6 +516,22 @@ def _clear_dir(base: Path) -> int:
     return removed
 
 
+def audio_in_use() -> set[str]:
+    """De bestanden in audio/ van de open sessies van muziek: die blijven bij opruimen staan
+    (een speler die er een Range van vraagt, krijgt anders een nieuw, groeiend bestand)."""
+    from app.media import sessions
+    from app.routers import stream_audio
+
+    keep: set[str] = set()
+    for s in sessions.table().open():
+        if s.plan.mode != "audio" or not s.sha:
+            continue
+        with contextlib.suppress(Exception):
+            position = stream_audio._position(s)
+            keep.add(f"{s.sha}.mp4" if position == 0 else f"{s.sha}.{position}.mp4")
+    return keep
+
+
 async def clear_cache(settings: Settings, what: str) -> int:
     """POST /cache/clear. Geeft hoeveel er weg ging (stromen, bestanden of mappen)."""
     if what == "sessions":
@@ -520,7 +548,8 @@ async def clear_cache(settings: Settings, what: str) -> int:
     if what == "audio":
         from app.routers import stream_audio
 
-        return await asyncio.to_thread(stream_audio.trim, settings.media_dir / "audio", 0, set())
+        keep = audio_in_use()
+        return await asyncio.to_thread(stream_audio.trim, settings.media_dir / "audio", 0, keep)
     return await asyncio.to_thread(_clear_dir, settings.media_dir / "trick")
 
 
@@ -608,16 +637,18 @@ def start_bench(app, settings: Settings) -> uuid.UUID:
 
 @dataclass
 class TmdbHooks:
-    """Wat M8 levert in providers/secrets.py: bewaren (pas na een geslaagde test), weghalen, en
-    de bewaarde sleutel testen. Elk gooit bij een fout HTTPException (422 media_provider_auth,
-    503 media_provider_unavailable)."""
+    """Wat M8 levert in providers/secrets.py: bewaren (pas na een geslaagde test), weghalen, de
+    bewaarde sleutel testen, en de staat ({"set", "set_at", "ok"}, nooit de sleutel). Een fout
+    is ProviderAuth (422 media_provider_auth), ProviderUnavailable (503
+    media_provider_unavailable) of ProviderRate (503 media_provider_rate)."""
 
     store: Callable[[AsyncSession, Settings, str], Awaitable[None]]
-    clear: Callable[[AsyncSession, Settings], Awaitable[None]]
+    clear: Callable[[AsyncSession], Awaitable[None]]
     test: Callable[[AsyncSession, Settings], Awaitable[None]]
+    status: Callable[[AsyncSession, Settings], Awaitable[dict[str, Any]]]
 
 
-TMDB_HOOKS = ("store_tmdb_key", "clear_tmdb_key", "test_tmdb_key")
+TMDB_HOOKS = ("save_tmdb", "forget_tmdb", "verify_tmdb", "status")
 
 
 def tmdb_hooks() -> TmdbHooks | None:
@@ -637,15 +668,47 @@ def _hooks() -> TmdbHooks:
     return hooks
 
 
+@contextlib.contextmanager
+def _provider_errors():
+    """De fouten van M8 als API-fout uit de catalogus; de tekst van de fout gaat nooit mee (daar
+    kan niets van de sleutel in staan, maar zeker is zeker)."""
+    from app.media.providers.base import ProviderAuth, ProviderRate, ProviderUnavailable
+
+    try:
+        yield
+    except ProviderAuth:
+        raise media_errors.provider_auth() from None
+    except ProviderRate as exc:
+        raise media_errors.provider_rate(exc.retry_after) from None
+    except ProviderUnavailable:
+        raise media_errors.provider_unavailable() from None
+
+
 async def tmdb_store(session: AsyncSession, settings: Settings, key: str) -> None:
-    await _hooks().store(session, settings, key)
+    with _provider_errors():
+        await _hooks().store(session, settings, key)
     log.info("de sleutel van TMDB is bewaard")  # nooit de sleutel zelf
 
 
 async def tmdb_clear(session: AsyncSession, settings: Settings) -> None:
-    await _hooks().clear(session, settings)
+    with _provider_errors():
+        await _hooks().clear(session)
     log.info("de sleutel van TMDB is weggehaald")
 
 
 async def tmdb_test(session: AsyncSession, settings: Settings) -> None:
-    await _hooks().test(session, settings)
+    with _provider_errors():
+        await _hooks().test(session, settings)
+
+
+async def tmdb_status(session: AsyncSession, settings: Settings) -> dict[str, Any]:
+    """{"set", "ok"} van M8, of {} zonder M8 of bij een fout (alleen ter informatie)."""
+    hooks = tmdb_hooks()
+    if hooks is None:
+        return {}
+    try:
+        found = await hooks.status(session, settings)
+    except Exception as exc:
+        log.warning("de staat van de sleutel van TMDB: %s", exc.__class__.__name__)
+        return {}
+    return {"set": found.get("set") is True, "ok": found.get("ok")}

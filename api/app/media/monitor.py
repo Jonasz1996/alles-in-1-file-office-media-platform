@@ -17,7 +17,8 @@ onthouden: alles leest wat de andere delen al bijhouden.
 - media_sandbox_off: de worker draait zonder afscherming (de lokale worker, of een container
   die zegt dat hij niet afgeschermd is). Jonas zet dat zelf zo (MEDIA_SANDBOX=uit);
 - media_provider_auth: een provider zegt dat de sleutel niet werkt (providers.status() van M8:
-  auth true);
+  auth true), of de bewaarde sleutel van TMDB werkt niet meer (secrets.status() van M8: ok
+  false, na een 401 of een mislukte test);
 - media_provider_failing: een provider faalt al 24 uur aan één stuk (failing_since van M8 is
   minstens 24 uur geleden, of M8 zegt het zelf met failing true). Korter offline geeft geen
   melding: de jobs proberen het later opnieuw (Keuze 39).
@@ -92,8 +93,9 @@ def cache_notices() -> list[Notice]:
     return [media_notice("media_cache_full")] if cache.disk_low else []
 
 
-def provider_notices(at: datetime | None = None) -> list[Notice]:
-    """Uit providers.status() (M8). Per provider hooguit één melding; auth gaat voor."""
+def provider_notices(at: datetime | None = None, tmdb: dict | None = None) -> list[Notice]:
+    """Uit providers.status() (M8) en tmdb (admin.tmdb_status). Per provider hooguit één
+    melding; auth gaat voor."""
     from app.media import providers
 
     at = at or now()
@@ -105,7 +107,7 @@ def provider_notices(at: datetime | None = None) -> list[Notice]:
     out = []
     for name in providers.PROVIDERS:
         s = found.get(name) or {}
-        if s.get("auth") is True:
+        if s.get("auth") is True or (name == "tmdb" and tmdb and tmdb.get("ok") is False):
             out.append(media_notice("media_provider_auth", provider=name))
             continue
         since = _since(s.get("failing_since"))
@@ -123,6 +125,11 @@ async def notices(app, session: AsyncSession) -> list[Notice]:
         await policy.get(session)  # zo weet runtime.enabled of /beheer hem uitzette
     if not runtime.enabled(app):
         return []
-    found = [*worker_notices(app), *cache_notices(), *provider_notices()]
+    tmdb = None
+    if session is not None:
+        from app.media import admin
+
+        tmdb = await admin.tmdb_status(session, runtime.settings())
+    found = [*worker_notices(app), *cache_notices(), *provider_notices(tmdb=tmdb)]
     order = list(NOTICES)
     return sorted(found, key=lambda n: order.index(n.code))
