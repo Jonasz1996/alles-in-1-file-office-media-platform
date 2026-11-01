@@ -785,6 +785,9 @@ export interface MediaAdmin {
     selftest: { ok: boolean; sandbox: "on" | "off"; problems: string[] } | null;
     /** Per soort (een soort zonder plaatsen kan ontbreken) */
     places: Partial<Record<WorkClass, { used: number; max: number }>>;
+    /** M0-hotfix van M10 (additief): het geheugen van de kinderen (VmRSS, tot 30 s oud) */
+    rss_kb?: number;
+    children?: { pid: number; name: string; rss_kb: number }[];
   };
   ffmpeg: {
     version: string | null;
@@ -800,7 +803,13 @@ export interface MediaAdmin {
   /** Per dag de redenen van de beslissing (Keuze 19), de laatste 7 dagen */
   reasons: { day: string; counts: Partial<Record<PlanReason, number>> }[];
   jobs: { queued: number; running: number; failed: number };
-  libraries: (Library & { owner: { id: string; display_name: string }; errors: number; low_confidence: number })[];
+  /** inside (M0-hotfix van M10, m2.md C2): de bibliotheek waar deze map in verschoven is */
+  libraries: (Library & {
+    owner: { id: string; display_name: string };
+    errors: number;
+    low_confidence: number;
+    inside?: string | null;
+  })[];
   cache: { parts: Record<"sessions" | "subs" | "trick" | "art" | "audio", number>; free_bytes: number };
   providers: {
     name: Provider | "caa";

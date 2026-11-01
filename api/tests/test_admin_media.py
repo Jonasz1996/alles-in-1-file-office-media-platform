@@ -124,6 +124,72 @@ async def test_het_overzicht(media_app, client, admin):  # noqa: F811
     assert [n.code for n in view.notices] == ["media_sandbox_off"]
 
 
+async def test_het_geheugen_en_de_zelftest_van_de_worker(media_app, client, admin):  # noqa: F811
+    """M0-hotfix van M10: children, rss_kb en selftest uit de caps (guard.Watch en __main__)
+    vielen weg in WorkerCaps; /beheer toont ze nu (tot 30 s oud, de lus van health)."""
+    _, fake = media_app
+    headers, _ = admin
+    children = [{"pid": 4242, "name": "ffmpeg", "rss_kb": 51200},
+                {"pid": 4243, "name": "ffprobe", "rss_kb": 2048}]  # fmt: skip
+    selftest = {"ok": True, "sandbox": "on", "problems": []}
+    found = {**fake.caps(), "mode": "container", "sandbox": "on", "children": children,
+             "rss_kb": 53248, "selftest": selftest}  # fmt: skip
+    app.state.media.caps = WorkerCaps.model_validate(found)
+    view = MediaAdmin.model_validate(await overview(client, headers))
+    assert view.worker.rss_kb == 53248
+    assert [(c.pid, c.name, c.rss_kb) for c in view.worker.children] == [
+        (4242, "ffmpeg", 51200), (4243, "ffprobe", 2048)
+    ]  # fmt: skip
+    assert view.worker.selftest is not None and view.worker.selftest.sandbox == "on"
+    # wat de worker zelf zag, wint; een vreemde vorm valt terug op de caps
+    found["selftest"] = {"ok": False, "sandbox": "on", "problems": ["seccomp ontbreekt"]}
+    app.state.media.caps = WorkerCaps.model_validate(found)
+    view = MediaAdmin.model_validate(await overview(client, headers))
+    assert view.worker.selftest is not None and view.worker.selftest.ok is False
+    assert view.worker.selftest.problems == ["seccomp ontbreekt"]
+    found["selftest"] = {"ok": "misschien", "sandbox": "on"}
+    app.state.media.caps = WorkerCaps.model_validate(found)
+    view = MediaAdmin.model_validate(await overview(client, headers))
+    assert view.worker.selftest is not None and view.worker.selftest.ok is True
+    # een oudere worker zonder die velden: leeg, geen fout
+    app.state.media.caps = WorkerCaps.model_validate(fake.caps())
+    view = MediaAdmin.model_validate(await overview(client, headers))
+    assert view.worker.rss_kb == 0 and view.worker.children == []
+
+
+async def test_een_bibliotheek_in_een_andere_geschoven(media_app, client, admin):  # noqa: F811
+    """m2.md C2: het maken weigert nesting, maar een map verschuiven kan daarna nog (de
+    bestandsroutes zijn van M0 en weigeren het niet). De binnenste wint al; /beheer waarschuwt
+    met de naam van de buitenste (AdminLibrary.inside, M0-hotfix van M10)."""
+    headers, _ = admin
+    top = (await root(client, headers))["folder"]["id"]
+    films = await mkdir(client, headers, top, "Films")
+    series = await mkdir(client, headers, top, "Series")
+    for root_id, kind in ((films, "movies"), (series, "shows")):
+        r = await client.post("/api/v1/media/libraries", json={"root_id": root_id, "kind": kind},
+                              headers=headers)  # fmt: skip
+        assert r.status_code == 201, r.text
+    view = MediaAdmin.model_validate(await overview(client, headers))
+    assert [(lib.name, lib.inside) for lib in view.libraries] == [("Films", None), ("Series", None)]
+    # Series verhuist naar Films: geen weigering, wel een waarschuwing op /beheer
+    r = await client.patch(f"/api/v1/files/{series}", json={"parent_id": films}, headers=headers)
+    assert r.status_code == 200, r.text
+    view = MediaAdmin.model_validate(await overview(client, headers))
+    assert [(lib.name, lib.inside) for lib in view.libraries] == [
+        ("Films", None), ("Series", "Films")
+    ]  # fmt: skip
+    # een nieuwe bibliotheek in de geneste map: het maken weigert nesting nog steeds
+    sub = await mkdir(client, headers, series, "Extra")
+    r = await client.post("/api/v1/media/libraries", json={"root_id": sub, "kind": "movies"},
+                          headers=headers)  # fmt: skip
+    assert r.status_code == 409  # maken weigert nesting nog steeds
+    # terug: de waarschuwing gaat weg
+    r = await client.patch(f"/api/v1/files/{series}", json={"parent_id": top}, headers=headers)
+    assert r.status_code == 200, r.text
+    view = MediaAdmin.model_validate(await overview(client, headers))
+    assert all(lib.inside is None for lib in view.libraries)
+
+
 async def test_het_overzicht_als_media_op_beheer_uit_staat(media_app, client, admin):  # noqa: F811
     headers, _ = admin
     r = await client.put(f"{BASE}/config", json={"enabled": False}, headers=headers)

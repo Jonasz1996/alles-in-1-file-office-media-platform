@@ -70,7 +70,7 @@ def open_viewer(media, media_browsers, fixture: str):
 @pytest.mark.media
 def test_de_app_start_met_de_lokale_worker(media, ffmpeg_count):
     """De worker is een kind van de app, met de grenzen van het harnas, en media-status ziet
-    zijn caps. De routes van de pakketten zijn stubs: /beheer → Media is nog 503 media_off."""
+    zijn caps. /beheer → Media (M10) ziet de lokale worker zonder afscherming."""
     worker = media.worker_pid()
     assert worker is not None, media.server.log_tail()
     line = " ".join(open(f"/proc/{worker}/cmdline").read().split("\0"))
@@ -82,8 +82,12 @@ def test_de_app_start_met_de_lokale_worker(media, ffmpeg_count):
     first = status.stdout.splitlines()[0]
     assert first == f"Media: aan (lokaal, zonder afscherming, ffmpeg {ffmpeg_version()})", first
 
-    r = media.server.call(media.admin, "GET", "/api/v1/admin/media", expect=503)
-    assert r.json()["detail"]["code"] == "media_off"
+    # M10 (M0-hotfix van deze test): het tabblad Media is gebouwd
+    r = media.server.call(media.admin, "GET", "/api/v1/admin/media", expect=200)
+    body = r.json()
+    assert body["worker"]["mode"] == "local" and body["worker"]["state"] == "ok"
+    assert body["ffmpeg"]["version"] == ffmpeg_version()
+    assert "media_sandbox_off" in [n["code"] for n in body["notices"]]
     assert ffmpeg_count.scans >= 1
 
 

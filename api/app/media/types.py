@@ -141,6 +141,14 @@ class Probe(BaseModel):
         return [s for s in self.streams if s.type == "subtitle"]
 
 
+class WorkerChild(BaseModel):
+    """Een kind van de worker met zijn geheugen (guard.Watch, elke 2 s; M0-hotfix van M10)."""
+
+    pid: int
+    name: str
+    rss_kb: int = 0
+
+
 class WorkerCaps(BaseModel):
     """Het antwoord op caps (Keuze 12), uit de cache van de worker."""
 
@@ -165,6 +173,11 @@ class WorkerCaps(BaseModel):
     places: dict[str, int] = Field(default_factory=dict)  # per soort de grens
     in_use: dict[str, int] = Field(default_factory=dict)  # per soort nu bezet
     procs: int = 0  # processen die nu draaien
+    # M0-hotfix van M10 (additief): wat de worker al stuurde maar hier wegviel, voor /beheer.
+    # children en rss_kb uit guard.Watch (VmRSS elke 2 s); selftest uit __main__ (Keuze 11)
+    children: list[WorkerChild] = Field(default_factory=list)
+    rss_kb: int = 0
+    selftest: dict[str, Any] | None = None
 
 
 # Keuze 20: alleen strings die op een bekend patroon passen
@@ -962,6 +975,9 @@ class WorkerView(BaseModel):
     since: datetime
     selftest: Selftest | None = None
     places: dict[str, PlaceUse] = Field(default_factory=dict)  # per WorkClass
+    # M0-hotfix van M10 (additief): het geheugen van de kinderen (uit de caps, tot 30 s oud)
+    rss_kb: int = 0
+    children: list[WorkerChild] = Field(default_factory=list)
 
 
 class FfmpegView(BaseModel):
@@ -994,6 +1010,9 @@ class AdminLibrary(Library):
     owner: UserRef
     errors: int = 0
     low_confidence: int = 0
+    # M0-hotfix van M10 (additief, m2.md C2): de naam van een andere bibliotheek waar deze map in
+    # ligt (verschoven na het maken). De binnenste wint; /beheer toont het als waarschuwing
+    inside: str | None = None
 
 
 class CacheParts(BaseModel):

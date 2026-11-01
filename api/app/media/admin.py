@@ -47,7 +47,7 @@ from typing import Any
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import errors, jobs
+from app import access, errors, jobs
 from app.config import BenchResult, MediaConfig, Settings
 from app.media import errors as media_errors
 from app.media.state import MediaPolicy, MediaState, media_policy, media_state
@@ -165,6 +165,10 @@ def selftest_of(state: MediaState) -> Selftest | None:
     caps = state.caps
     if caps is None:
         return None
+    if caps.selftest is not None and caps.selftest.get("sandbox") in ("on", "off"):
+        # wat de worker zelf zag (__main__, Keuze 11); een vreemde vorm valt terug op de caps
+        with contextlib.suppress(ValueError):
+            return Selftest.model_validate(caps.selftest)
     if caps.sandbox == "on":
         return Selftest(ok=True, sandbox="on")
     if caps.mode == "local" or caps.sandbox == "off":
@@ -190,6 +194,8 @@ def worker_view(state: MediaState, settings: Settings) -> WorkerView:
         since=state.since,
         selftest=selftest_of(state),
         places=places_of(caps, settings.media_max_transcodes),
+        rss_kb=caps.rss_kb if caps is not None else 0,
+        children=list(caps.children) if caps is not None else [],
     )
 
 
@@ -353,6 +359,7 @@ async def library_views(session: AsyncSession) -> list[AdminLibrary]:
             await session.execute(select(User.id, User.display_name).where(User.id.in_(owner_ids)))
         ).all()
     )
+    outer = await inside(session, libs)
     out = []
     for lib in libs:
         base = library.view(library.Seen(lib, "owner"), counts.get(lib.id, 0))
@@ -362,9 +369,33 @@ async def library_views(session: AsyncSession) -> list[AdminLibrary]:
                 owner=UserRef(id=lib.owner_id, display_name=owners.get(lib.owner_id, "?")),
                 errors=failed.get(lib.id, 0),
                 low_confidence=low.get(lib.id, 0),
+                inside=outer.get(lib.id),
             )
         )
     return out
+
+
+async def inside(session: AsyncSession, libs: list[MediaLibrary]) -> dict[uuid.UUID, str]:
+    """Per bibliotheek de naam van een andere waar haar map in ligt (m2.md C2): het maken weigert
+    nesting, maar een map verschuiven kan daarna nog (de bestandsroutes zijn van M0). De binnenste
+    wint al (de scan van de buitenste slaat haar over); /beheer waarschuwt alleen. Eén query voor
+    alle bibliotheken: van elke map omhoog, de eerste andere bibliotheek op de weg."""
+    roots = {lib.root_id: lib for lib in libs}
+    up = access.ancestry(Node.id.in_(list(roots)))
+    rows = (
+        await session.execute(
+            select(up.c.origin, up.c.depth, MediaLibrary.name)
+            .join(MediaLibrary, MediaLibrary.root_id == up.c.id)
+            .where(up.c.depth > 0)
+            .order_by(up.c.origin, up.c.depth)
+        )
+    ).all()
+    found: dict[uuid.UUID, str] = {}
+    for origin, _depth, name in rows:
+        lib = roots.get(origin)
+        if lib is not None and lib.id not in found:
+            found[lib.id] = name  # de dichtstbijzijnde
+    return found
 
 
 async def cache_view(settings: Settings) -> CacheView:

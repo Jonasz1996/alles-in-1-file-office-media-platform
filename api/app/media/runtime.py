@@ -128,9 +128,20 @@ def sessions_dir(settings: Settings):
     return settings.data_dir / "media" / "sessions"
 
 
+# M0-hotfix van M10: de halve bestanden die bij het starten weg mogen (bij het starten loopt er
+# nog geen remux en geen synth): een remux van audio (M9) en een bron van de belastingtest (M10)
+PARTS = (("audio", "*.mp4.part"), ("loadtest", "*.part"))
+
+
 def clear_sessions(settings: Settings) -> None:
-    """Bij het starten: wat van een vorige keer bleef staan weg (draai in een thread)."""
+    """Bij het starten: wat van een vorige keer bleef staan weg (draai in een thread). Ook een
+    .part van vóór een crash (PARTS); een symlink volgt hij niet."""
     shutil.rmtree(sessions_dir(settings), ignore_errors=True)
+    for sub, pattern in PARTS:
+        for path in (settings.media_dir / sub).glob(pattern):
+            with contextlib.suppress(OSError):
+                if not path.is_symlink() and path.is_file():
+                    path.unlink()
 
 
 async def _sweep(settings: Settings) -> None:
