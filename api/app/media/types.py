@@ -1013,6 +1013,9 @@ class AdminLibrary(Library):
     # M0-hotfix van M10 (additief, m2.md C2): de naam van een andere bibliotheek waar deze map in
     # ligt (verschoven na het maken). De binnenste wint; /beheer toont het als waarschuwing
     inside: str | None = None
+    # M0-hotfix van M10 (additief, review golf 5, K3; Keuze 45 "eigenaar, map"): de map van de
+    # bibliotheek zoals de eigenaar haar ziet, vanaf zijn hoofdmap ("/Video/Films")
+    path: str | None = None
 
 
 class CacheParts(BaseModel):

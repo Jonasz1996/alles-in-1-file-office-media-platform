@@ -803,12 +803,14 @@ export interface MediaAdmin {
   /** Per dag de redenen van de beslissing (Keuze 19), de laatste 7 dagen */
   reasons: { day: string; counts: Partial<Record<PlanReason, number>> }[];
   jobs: { queued: number; running: number; failed: number };
-  /** inside (M0-hotfix van M10, m2.md C2): de bibliotheek waar deze map in verschoven is */
+  /** inside (M0-hotfix van M10, m2.md C2): de bibliotheek waar deze map in verschoven is;
+   *  path (M0-hotfix van M10, review golf 5, K3): de map zoals de eigenaar haar ziet */
   libraries: (Library & {
     owner: { id: string; display_name: string };
     errors: number;
     low_confidence: number;
     inside?: string | null;
+    path?: string | null;
   })[];
   cache: { parts: Record<"sessions" | "subs" | "trick" | "art" | "audio", number>; free_bytes: number };
   providers: {

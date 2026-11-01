@@ -640,6 +640,7 @@ function Libraries({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
                 <tr key={lib.id}>
                   <td className="wrap">
                     {lib.name}
+                    {lib.path && <p className="muted">{t("admin.media.libraries.folder", { path: lib.path })}</p>}
                     {lib.inside && <p className="badge degraded">{t("admin.media.libraries.inside", { name: lib.inside })}</p>}
                   </td>
                   <td>{lib.owner.display_name}</td>

@@ -537,6 +537,7 @@ const en: Translation<typeof nl> = {
       rescan: "Scan again",
       rescanLabel: "Scan {name} again",
       rescanned: "The scan of {name} is queued.",
+      folder: "Folder: {path}",
       inside: "Note: this folder is now inside {name}. The inner library wins; move the folder back if that was not intended.",
       kinds: {
         movies: "movies",

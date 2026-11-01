@@ -545,6 +545,7 @@ export default {
       rescan: "Opnieuw scannen",
       rescanLabel: "{name} opnieuw scannen",
       rescanned: "De scan van {name} staat klaar.",
+      folder: "Map: {path}",
       inside: "Let op: deze map ligt nu in {name}. De binnenste bibliotheek wint; zet de map terug als dat niet de bedoeling is.",
       kinds: {
         movies: "films",

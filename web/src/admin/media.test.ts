@@ -202,7 +202,9 @@ describe("de teksten van het tabblad", () => {
     expect(t("admin.media.jobs.retried", { n: 1 })).toBe("1 analyse staat opnieuw klaar.");
     expect(t("admin.media.jobs.retried", { n: 3 })).toBe("3 analyses staan opnieuw klaar.");
     expect(t("admin.media.libraries.inside", { name: "Films" })).toContain("Films");
+    expect(t("admin.media.libraries.folder", { path: "/Video/Oud" })).toBe("Map: /Video/Oud");
     await inLocale("en");
+    expect(t("admin.media.libraries.folder", { path: "/Video/Oud" })).toBe("Folder: /Video/Oud");
     expect(t("admin.media.budget.nativeReloads", { n: 2 })).toBe("Native players had to reload 2 times since the start.");
   });
 });

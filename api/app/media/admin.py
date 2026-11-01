@@ -19,7 +19,8 @@ de knoppen doen. De router (routers/admin_media.py) is dun; alles staat hier.
   stuk rond de speler staan (cache.trim houdt 60 s achter de speler), bij audio blijft wat nu
   gemaakt wordt en wat een open sessie speelt (stream_audio.trim met keep), en bij trick gaan
   alleen de sprites weg (play geeft ze dan niet meer, tot de analyse ze opnieuw maakt: trick.info
-  kijkt of trick.vtt er staat).
+  kijkt of trick.vtt er staat). Die analyse zet het legen zelf klaar, met de staat van de
+  sprites terug op none (review golf 5, C3).
 - **De meting** (bench): de opdracht bench in de worker, op de achtergrond; de uitkomst gaat in
   MediaConfig.bench. Weigert (409 media_bench_busy) zolang er een transcode of de belastingtest
   loopt.
@@ -360,6 +361,7 @@ async def library_views(session: AsyncSession) -> list[AdminLibrary]:
         ).all()
     )
     outer = await inside(session, libs)
+    where = await folders(session, libs)
     out = []
     for lib in libs:
         base = library.view(library.Seen(lib, "owner"), counts.get(lib.id, 0))
@@ -370,9 +372,32 @@ async def library_views(session: AsyncSession) -> list[AdminLibrary]:
                 errors=failed.get(lib.id, 0),
                 low_confidence=low.get(lib.id, 0),
                 inside=outer.get(lib.id),
+                path=where.get(lib.id),
             )
         )
     return out
+
+
+async def folders(session: AsyncSession, libs: list[MediaLibrary]) -> dict[uuid.UUID, str]:
+    """Per bibliotheek haar map zoals de eigenaar die ziet, vanaf zijn hoofdmap ("/Video/Films";
+    Keuze 45, review golf 5, K3). Eén query voor alle bibliotheken (dezelfde CTE als inside)."""
+    roots = {lib.root_id: lib for lib in libs}
+    up = access.ancestry(Node.id.in_(list(roots)))
+    rows = (
+        await session.execute(
+            select(up.c.origin, up.c.depth, up.c.name, up.c.parent_id).order_by(
+                up.c.origin, up.c.depth.desc()
+            )
+        )
+    ).all()
+    names: dict[uuid.UUID, list[str]] = {}
+    for origin, _depth, name, parent_id in rows:
+        if parent_id is None:
+            continue  # de hoofdmap van de eigenaar (zonder naam)
+        names.setdefault(origin, []).append(name)
+    return {
+        lib.id: "/" + "/".join(names.get(lib.root_id, [])) for lib in libs if lib.root_id in roots
+    }
 
 
 async def inside(session: AsyncSession, libs: list[MediaLibrary]) -> dict[uuid.UUID, str]:
@@ -609,7 +634,52 @@ async def clear_cache(settings: Settings, what: str) -> int:
 
         keep = audio_in_use()
         return await asyncio.to_thread(stream_audio.trim, settings.media_dir / "audio", 0, keep)
-    return await asyncio.to_thread(_clear_dir, settings.media_dir / "trick")
+    removed = await asyncio.to_thread(_clear_dir, settings.media_dir / "trick")
+    await _trick_again(settings)
+    return removed
+
+
+# De soorten bibliotheek waar de stap sprites iets doet (trick._applies)
+TRICK_KINDS = ("movies", "shows", "videos")
+
+
+async def _trick_again(settings: Settings) -> int:
+    """Na het legen van trick/ (review golf 5, C3): de staat van de sprites terug naar none (dan
+    klopt wat de app over het item zegt), en de analyse van elke video in een bibliotheek weer
+    in de rij; de stap sprites maakt ze dan opnieuw (trick.info ziet dat trick.vtt ontbreekt).
+    Met jobs.chain: een analyse die nu loopt, houdt de nieuwe niet tegen (die kan net vóór het
+    legen klaar zijn geweest). De rij media houdt het aantal ffmpeg's laag (regel 13). Geeft
+    het aantal nieuwe taken."""
+    from app.db import get_engine
+    from app.media import analysis
+
+    maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
+    made = MediaProbe.trick_state.in_(("ready", "pending"))
+    async with maker() as session:
+        shas = list((await session.scalars(select(MediaProbe.blob_sha).where(made))).all())
+        await session.execute(update(MediaProbe).where(made).values(trick_state="none", trick=None))
+        wanted: dict[str, uuid.UUID] = {}
+        for start in range(0, len(shas), 500):
+            rows = await session.execute(
+                select(Node.blob_id, MediaItem.library_id)
+                .join(MediaItem, MediaItem.node_id == Node.id)
+                .join(MediaLibrary, MediaLibrary.id == MediaItem.library_id)
+                .where(
+                    Node.blob_id.in_(shas[start : start + 500]),
+                    Node.deleted_at.is_(None),
+                    MediaItem.present.is_(True),
+                    MediaLibrary.kind.in_(TRICK_KINDS),
+                )
+            )
+            for sha, library_id in rows:
+                wanted.setdefault(sha, library_id)
+        added = 0
+        for sha, library_id in wanted.items():
+            payload = {"sha": sha, "library_id": str(library_id)}
+            key = f"{analysis.JOB}:{sha}"
+            added += await jobs.chain(session, analysis.JOB, payload, key) is not None
+        await session.commit()
+    return added
 
 
 # --- de meting (bench) ---------------------------------------------------------------------------

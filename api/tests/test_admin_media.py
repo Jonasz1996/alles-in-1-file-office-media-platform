@@ -41,6 +41,8 @@ from tests.media.media_contract import failed
 from tests.test_files import mkdir, root
 from tests.test_media_contract import media_app  # noqa: F401
 from tests.test_media_producer import Case, case, until  # noqa: F401
+from tests.test_media_scanner import library, scan
+from tests.test_media_scanner import world as world  # noqa: F401
 from tests.test_media_sessions import file, maker, play, session_of, video
 from tests.test_shares import person
 
@@ -197,6 +199,35 @@ async def test_een_bibliotheek_in_een_andere_geschoven(media_app, client, admin)
     assert r.status_code == 200, r.text
     view = MediaAdmin.model_validate(await overview(client, headers))
     assert all(lib.inside is None for lib in view.libraries)
+
+
+async def test_de_map_van_elke_bibliotheek(media_app, client, admin):  # noqa: F811
+    """Review golf 5, K3 (Keuze 45: "eigenaar, map"): twee bibliotheken met dezelfde naam van
+    twee mensen; /beheer toont van elk de map zoals de eigenaar die ziet, ook na verschuiven."""
+    admin_headers, _ = admin
+    headers, _ = await person(client, admin_headers, "bert@example.nl")
+    made = []
+    for who, path in ((admin_headers, ("Video", "Oud", "Films")), (headers, ("Films",))):
+        parent = (await root(client, who))["folder"]["id"]
+        for name in path:
+            parent = await mkdir(client, who, parent, name)
+        r = await client.post("/api/v1/media/libraries", json={"root_id": parent, "kind": "movies"},
+                              headers=who)  # fmt: skip
+        assert r.status_code == 201, r.text
+        made.append((r.json()["id"], parent))
+    view = MediaAdmin.model_validate(await overview(client, admin_headers))
+    paths = {lib.id: (lib.name, lib.owner.display_name, lib.path) for lib in view.libraries}
+    assert paths == {
+        uuid.UUID(made[0][0]): ("Films", "Jonas", "/Video/Oud/Films"),
+        uuid.UUID(made[1][0]): ("Films", "Bert", "/Films"),
+    }
+    # de map verschuift: de weg mee
+    top = (await root(client, admin_headers))["folder"]["id"]
+    r = await client.patch(f"/api/v1/files/{made[0][1]}", json={"parent_id": top},
+                           headers=admin_headers)  # fmt: skip
+    assert r.status_code == 200, r.text
+    view = MediaAdmin.model_validate(await overview(client, admin_headers))
+    assert {lib.path for lib in view.libraries} == {"/Films"}
 
 
 async def test_opnieuw_scannen_ook_van_een_ander(media_app, client, admin):  # noqa: F811
@@ -506,6 +537,54 @@ async def test_audio_en_trick_leegmaken(media_app, client, admin, monkeypatch): 
     assert other.is_file()  # hoezen horen niet bij de cache
     r = await client.post(f"{BASE}/cache/clear", json={"what": "art"}, headers=headers)
     failed(r, 422, "invalid_input")
+
+
+async def test_trick_leegmaken_maakt_de_sprites_opnieuw(world, client):  # noqa: F811
+    """Review golf 5, C3: na het legen van trick/ bleef trick_state op ready staan en zette niets
+    de analyse klaar (de scanner en play doen dat alleen voor nieuwe of ongeprobeerde
+    bestanden): de sprites kwamen nooit terug. Nu: de staat terug naar none en de analyse van
+    elke video in een bibliotheek in de rij (met jobs.chain, ook als er een loopt)."""
+    from app.media import analysis
+    from app.models import MediaProbe
+
+    settings, _fake, headers = world
+    library_id, folder = await library(client, headers)
+    film = await video(client, headers, settings, "film.mp4", parent=folder)
+    loose = await video(client, headers, settings, "los.mp4", data=b"los" * 1000)
+    await scan(settings)
+    sprites = {"interval": 10, "w": 160, "h": 90, "cols": 10, "rows": 10, "count": 3, "tiles": 1}
+    async with maker(settings)() as session:
+        for sha in (film["sha"], loose["sha"]):
+            await session.execute(update(MediaProbe).where(MediaProbe.blob_sha == sha)
+                                  .values(trick_state="ready", trick=sprites))  # fmt: skip
+            old(settings.media_dir / "trick" / sha / "trick.vtt")
+        # wat de scan klaarzette, is gedaan; één analyse loopt nog (die houdt niets tegen)
+        await session.execute(update(Job).where(Job.type == analysis.JOB).values(status="done"))
+        await session.execute(update(Job).where(Job.key == f"{analysis.JOB}:{film['sha']}")
+                              .values(status="running"))  # fmt: skip
+        await session.commit()
+    r = await client.post(f"{BASE}/cache/clear", json={"what": "trick"}, headers=headers)
+    assert r.status_code == 204
+    async with maker(settings)() as session:
+        probes = {
+            p.blob_sha: p
+            for p in (await session.scalars(select(MediaProbe))).all()
+            if p.blob_sha in (film["sha"], loose["sha"])
+        }
+        queued = (
+            await session.scalars(
+                select(Job).where(Job.type == analysis.JOB, Job.status == "queued")
+            )
+        ).all()
+    assert {sha: (p.trick_state, p.trick) for sha, p in probes.items()} == {
+        film["sha"]: ("none", None),
+        loose["sha"]: ("none", None),
+    }
+    # alleen de film in de bibliotheek komt terug in de rij (het losse bestand krijgt geen
+    # sprites: trick._applies), met de bibliotheek erbij
+    assert [(j.key, j.payload) for j in queued] == [
+        (f"{analysis.JOB}:{film['sha']}", {"sha": film["sha"], "library_id": library_id})
+    ]
 
 
 def test_audio_in_gebruik(monkeypatch):
