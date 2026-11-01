@@ -1,8 +1,8 @@
 # Fase 5 — Media en streaming
 
 Status: **golf 5 samengevoegd: M0 tot en met M10** (bouwontwerp revisie 2; 1 november 2026).
-Alle pakketten van fase 5 staan op de tak. De review en de nacontrole van golf 5 komen nog; die van
-golf 4 zijn verwerkt.
+Alle pakketten van fase 5 staan op de tak. De review van golf 5 is verwerkt; de nacontrole van
+golf 5 komt nog. Die van golf 4 zijn verwerkt.
 M0 is het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker,
 F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
 
@@ -348,6 +348,30 @@ Bestanden 43,6 van 45 KB, `/kijken` 25,5 van 45 KB, de speler 25,1 van 35 KB, mu
 alleen CI kan bewijzen"). Jonas heeft de beslissingskaarten van fase 5 nog niet beantwoord: M8 en
 M10 bouwen op de standaarden (de import kopieert; geen TMDB-sleutel, alleen lokale metadata);
 B39–B48 staan niet als besloten.
+
+De review van golf 5 vond 21 punten (S1–S4, C1–C9, K1–K8). Alle 21 zijn gefixt. Elke fix in de
+code heeft een test die zonder de fix faalde; S4, K1 en K7 waren tests die ontbraken, K4, K5 en
+K8 alleen tekst. De uitkomst per punt staat onder "De review (golf 5)" in [m8.md](m8.md) en
+[m10.md](m10.md). Het belangrijkste:
+
+- **Geen stuurtekens meer in de terminal van root** (S1): `media-status`, ook `--sessions` en dus
+  `watchers()` van `install.sh`, maakt van elk stuurteken een vraagteken.
+- **De belastingtest in de container** (S2): het blok in het runbook zet `PLATFORM_MEDIA_LOADTEST`
+  nu ook bij de worker. De installatietest gebruikt dat blok zelf.
+- **Het opzoeken van M8:** een plaatje hoort bij de koppeling van nu (C1); één ding dat steeds
+  faalt, houdt de rest niet meer tegen (C2); niets gaat naar buiten als het uit staat (C4).
+- **Sprites komen terug na Opruimen** (C3); **/beheer toont de map** van elke bibliotheek (K3,
+  een M0-hotfix van één optioneel veld).
+- **Alleen het lange TMDB-token werkt** (K2), en het runbook en /beheer zeggen dat.
+- **Nieuw:** `test_media_providers_real.py` (`-m provider_real`, met de hand) en de e2e van de
+  worker zonder ffmpeg (`test_de_worker_zonder_ffmpeg`).
+
+**Naar de integratie** (K4): de open punten zonder eigenaar staan met hun eigenaar in
+[m10.md](m10.md), "Naar de integratie": een mislukte ondertitel of sprite opnieuw (M5), de
+grens voor `subs` en `trick`, photometa na een tijd zonder worker, media in de balk van Opslag
+(M0, afwijking 14), een probe die niet kan uitvoeren (M0), de open punten 1–3 van M8 (M2),
+Downloaden op `/kijken` zonder ffmpeg (M6), stuurtekens bij de bron (M2) en Keuze 42 op echte
+namen.
 
 ## Doel
 
