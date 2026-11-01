@@ -275,6 +275,9 @@ async def test_play_voor_een_speler_buiten_de_app(lt, client, admin):
     from app.routers import admin_media
 
     await asyncio.wait_for(asyncio.gather(*admin_media._making.values()), 10)
+    # de redenen staan in het geheugen van het proces (admin.reasons): eerdere tests in dezelfde
+    # run tellen al mee, dus vergelijken met vóór de play
+    before = (await client.get("/api/v1/admin/media", headers=headers)).json()["reasons"]
     r = await client.post(f"{BASE}/play", json=body, headers=headers)
     assert r.status_code == 200, r.text
     out = loadtest.LoadtestPlay.model_validate(r.json())
@@ -285,7 +288,7 @@ async def test_play_voor_een_speler_buiten_de_app(lt, client, admin):
     # de beheerder ziet hem als belastingtest; hij telt niet mee in de redenen
     seen = (await client.get("/api/v1/admin/media", headers=headers)).json()
     assert [v["title"] for v in seen["sessions"]] == ["belastingtest"]
-    assert seen["reasons"] == []
+    assert seen["reasons"] == before
     r = await client.get(f"/api/v1/stream/{out.sid}/map.json")
     assert r.status_code == 200
     await client.delete(f"/api/v1/stream/{out.sid}")
