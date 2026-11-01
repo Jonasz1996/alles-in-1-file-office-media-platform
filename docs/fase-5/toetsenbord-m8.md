@@ -81,4 +81,6 @@ TMDB komen; in het venster Koppelen altijd.
 
 - Het raster van de bibliotheek, de pagina van het item en Afspelen:
   [toetsenbord-m2.md](toetsenbord-m2.md).
-- De sleutel van TMDB instellen, testen en weghalen op /beheer, en de bronvermelding daar: M10.
+- De sleutel van TMDB instellen, testen en weghalen op /beheer, en de bronvermelding daar: M10,
+  [toetsenbord-m10.md](toetsenbord-m10.md) (sinds golf 5 staat de link van hierboven ook in het
+  blok Online metadata, met dezelfde toetsen).

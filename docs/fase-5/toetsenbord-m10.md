@@ -10,6 +10,8 @@ belastingtest die uit staat), `test_een_sessie_stoppen` (Stop met bevestigen, de
 kop) en `test_een_import_starten` (↓ in de keuzerondjes, Importeren, Enter op Overgeslagen; de
 twee keuzelijsten zet de test met `select_option`, ↑/↓ daarin is gewoon gedrag van `<select>`). De mappenkiezer van de import met het toetsenbord loopt in
 `test_import_uit_data_import_via_beheer` (`e2e/test_media_m2.py`).
+De sleutel van TMDB met het toetsenbord (Tab naar het veld, Enter bewaart) loopt in de fixture
+`tmdb_key` van `e2e/test_media_m8.py` (sinds het samenvoegen van golf 5).
 
 Geen enkele toets van het tabblad gebruikt Ctrl of ⌘, dus **Ctrl+N, Ctrl+T en Ctrl+W** en de
 andere sneltoetsen van de browser en de app blijven werken.
@@ -25,7 +27,7 @@ andere sneltoetsen van de browser en de app blijven werken.
 
 | Toets | Wat |
 |---|---|
-| Tab / Shift+Tab | door de knoppen en velden, van boven naar beneden: Meten, Stop per sessie, Mislukte opnieuw, Opnieuw scannen per bibliotheek, Opruimen per soort cache, de sleutel van TMDB (Bewaren, Testen, Weghalen), de import, de instellingen en de belastingtest |
+| Tab / Shift+Tab | door de knoppen en velden, van boven naar beneden: Meten, Stop per sessie, Mislukte opnieuw, Opnieuw scannen per bibliotheek, Opruimen per soort cache, de link "Gegevens: TMDB" (de bronvermelding van M8, Keuze 40; opent TMDB in een nieuw tabblad), de sleutel van TMDB (Bewaren, Testen, Weghalen), de import, de instellingen en de belastingtest |
 | Enter of spatie op een knop | de knop. Stop, Opruimen en Sleutel weghalen vragen eerst een bevestiging |
 | In de bevestiging | de focus staat eerst op Annuleren (de veilige keuze); Tab gaat naar Stop, Opruimen of Weghalen en Enter bevestigt dan. Esc (of Enter op Annuleren) sluit zonder iets te doen; de focus gaat terug naar de knop |
 | Enter in een formulier | versturen (de sleutel, de import, de instellingen, de belastingtest) |
