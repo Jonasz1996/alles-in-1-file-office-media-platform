@@ -48,6 +48,13 @@ check() {
 }
 not() { ! "$@"; }
 is_hex64() { [[ $1 =~ ^[0-9a-f]{64}$ ]]; }
+# Het bestand van stap 2 van "De belastingtest" in docs/runbooks/media.md, precies dat blok (de
+# functies controleren het met compose config, de installatietest gebruikt het; review golf 5, S2)
+belastingtest_override() {
+  awk '/^ *cat >\/root\/belastingtest\.yaml <<.EOF.$/ { on = 1; next }
+       on && /^ *EOF$/ { exit }
+       on { sub(/^   /, ""); print }' "$top/docs/runbooks/media.md"
+}
 
 einde() {
   echo
@@ -302,6 +309,8 @@ if os.environ["MEDIA"] == "aan":
         limited = w.get("mem_limit") is not None
         if limited != (os.environ["LIMITS"] == "1"):
             problems.append("media: mem_limit %r" % w.get("mem_limit"))
+        if "PLATFORM_MEDIA_LOADTEST" in (w.get("environment") or {}):
+            problems.append("media: de belastingtest staat standaard aan")
 else:
     if "media" in s:
         problems.append("MEDIA_SANDBOX=uit, maar er is een dienst media")
@@ -316,6 +325,30 @@ PY
         done
       done
     done
+    # De belastingtest (review golf 5, S2): het bestand uit het runbook zet hem aan in de app én
+    # in de worker. Alleen in de app weigert de worker synth, en de test faalt altijd
+    LIMITS=1
+    compose_files 0 1 0
+    files=("${compose[@]:1}")
+    belastingtest_override >"$work/belastingtest.yaml"
+    command docker "${files[@]}" -f "$work/belastingtest.yaml" config --format json \
+      2>"$work/config.err" >"$work/config.json" || true
+    out=$(python3 -I - "$work/config.json" <<'PY'
+import json, sys
+
+try:
+    s = json.load(open(sys.argv[1]))["services"]
+except (OSError, ValueError, KeyError) as e:
+    print("geen config (%s)" % type(e).__name__)
+    raise SystemExit
+missing = [
+    n for n in ("platform", "media")
+    if ((s.get(n) or {}).get("environment") or {}).get("PLATFORM_MEDIA_LOADTEST") != "1"
+]
+print("ok" if not missing else "zonder PLATFORM_MEDIA_LOADTEST: " + ", ".join(missing))
+PY
+    ) || out="(geen uitvoer van compose config)"
+    check "de belastingtest uit het runbook: aan in platform en media ($out)" test "$out" = ok
   fi
   SRC=$saved_src ENV_FILE=$saved_env
   LIMITS=1
@@ -1071,14 +1104,18 @@ stap_transcode() {
 }
 
 # Alleen met echte ffmpeg (CI): de rooktest van de belastingtest, zoals het runbook hem op de LXC
-# laat draaien (een override met PLATFORM_MEDIA_LOADTEST=1, dan app.cli media-loadtest)
+# laat draaien: het bestand uit het runbook (PLATFORM_MEDIA_LOADTEST=1 in de app én in de worker;
+# review golf 5, S2), dan app.cli media-loadtest
 stap_belastingtest() {
   local override=$WORK/belastingtest.yaml rc=0
-  printf 'services:\n  platform:\n    environment:\n      PLATFORM_MEDIA_LOADTEST: "1"\n' >"$override"
-  if ! dc -f "$override" up -d platform >"$WORK/logs/2-belastingtest-aan.log" 2>&1; then
-    fout "2: de belastingtest aanzetten (dc -f … up -d platform)"
+  belastingtest_override >"$override"
+  if ! dc -f "$override" up -d media platform >"$WORK/logs/2-belastingtest-aan.log" 2>&1; then
+    fout "2: de belastingtest aanzetten (dc -f … up -d media platform)"
     return 0
   fi
+  loadtest_in_media() { [ "$(docker exec "$(cid media)" printenv PLATFORM_MEDIA_LOADTEST </dev/null)" = 1 ]; }
+  check "2: de belastingtest staat aan in de worker (PLATFORM_MEDIA_LOADTEST in media)" loadtest_in_media
+  check "2: de worker is weer gezond" wait_healthy "$(cid media)" 120
   local end=$((SECONDS + 60))
   until app_up; do
     [ "$SECONDS" -lt "$end" ] || break

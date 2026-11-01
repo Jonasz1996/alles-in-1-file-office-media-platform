@@ -279,7 +279,10 @@ vindt en de rest: `docs/runbooks/media.md`.
 **Metadata.** Zonder meer haalt het platform titels, jaren en afleveringen uit de namen van je
 bestanden en uit `.nfo`-bestanden. Met een (gratis) sleutel van TMDB komen er posters en
 beschrijvingen bij; die zet je op `/beheer` → Media → Online metadata (versleuteld bewaard, nooit
-in `.env`).
+in `.env`). Neem daar het API Read Access Token (de lange, die met `eyJ` begint). Versleuteld wil
+zeggen: met een sleutel die uit het app-geheim in `/data` komt. Dat beschermt een losse kopie van
+`platform.db`, niet een kopie van heel `/data` of een snapshot van `/tank/platform`: daar staan de
+database en het geheim samen in. Bewaar die dus net zo afgeschermd als de `.env`.
 
 Meer, zoals de status lezen, terugrollen naar 0.6.0, de cache opruimen en de belastingtest op de
 LXC, staat in `docs/runbooks/media.md`.

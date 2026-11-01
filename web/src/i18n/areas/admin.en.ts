@@ -585,7 +585,7 @@ const en: Translation<typeof nl> = {
         half_open: "half open (trying)",
       },
       tmdbTitle: "The TMDB key",
-      tmdbKey: "Key (API Read Access Token or API key)",
+      tmdbKey: "Key (the API Read Access Token: the long one that starts with eyJ)",
       tmdbHelp: "The app stores the key encrypted and never returns it, not even here.",
       save: "Save key",
       saved: "The key is saved and works.",

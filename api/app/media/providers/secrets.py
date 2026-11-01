@@ -47,6 +47,10 @@ TMDB = "tmdb"
 # spatie, een regeleinde) gaat nooit naar buiten: het zou in een kop en in een foutmelding van
 # httpx belanden.
 KEY_FORMAT = re.compile(r"^[A-Za-z0-9._~+/=-]{16,1000}$")
+# De korte "API Key" (v3) van TMDB: 32 hex. Die werkt alleen als ?api_key=… in het adres, en dat
+# doet het platform nooit (de sleutel zou in elke log van een adres staan); als Bearer geeft TMDB
+# er 401 op. Daarom geweigerd zonder verzoek naar buiten (review golf 5, K2)
+V3_KEY = re.compile(r"^[0-9a-fA-F]{32}$")
 
 Check = Callable[[str], Awaitable[None]]
 
@@ -185,6 +189,8 @@ async def save_tmdb(
     key = key.strip()
     if not KEY_FORMAT.match(key):
         raise ProviderAuth("tmdb: de sleutel heeft niet de vorm van een token")
+    if V3_KEY.match(key):
+        raise ProviderAuth("tmdb: dit is de korte API Key; neem het API Read Access Token")
     await session.rollback()
     await (check or _default_check(settings))(key)
     entry = {**seal(settings, TMDB, key), "set_at": _iso(now or dt.datetime.now(dt.UTC))}

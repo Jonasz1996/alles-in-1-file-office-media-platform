@@ -147,7 +147,17 @@ async def test_een_foute_sleutel_vervangt_de_goede_niet(settings, session, out):
     assert await secrets.load(session, settings) == KEY
 
 
-@pytest.mark.parametrize("key", ["kort", KEY + " met spatie", KEY + "\nX-Kop: ja", "é" * 20])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "kort",
+        KEY + " met spatie",
+        KEY + "\nX-Kop: ja",
+        "é" * 20,
+        # de korte API Key (v3) van TMDB: als Bearer geeft TMDB er 401 op (review golf 5, K2)
+        "0123456789abcdef0123456789ABCDEF",
+    ],
+)
 async def test_een_sleutel_in_een_verkeerde_vorm_gaat_niet_naar_buiten(
     settings, session, out, fake, key
 ):

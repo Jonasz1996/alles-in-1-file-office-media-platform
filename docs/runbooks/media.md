@@ -209,7 +209,8 @@ Muziek gebruikt MusicBrainz en de Cover Art Archive; die hebben geen sleutel nod
 op `/beheer` → Media → Instellingen).
 
 1. Maak een account op themoviedb.org, en vraag bij Settings → API een sleutel aan (gratis, voor
-   eigen gebruik). Neem het **API Read Access Token** (lang) of de **API Key** (kort).
+   eigen gebruik). Neem het **API Read Access Token**: de lange, die met `eyJ` begint. De korte
+   **API Key** (32 tekens) werkt hier niet; het platform weigert hem meteen.
 2. `/beheer` → Media → **Online metadata** → **De sleutel van TMDB**: plak hem en kies **Sleutel
    bewaren**. Het platform probeert hem meteen, en zegt het als hij niet werkt.
 3. **Testen** probeert hem later nog eens; **Sleutel weghalen** haalt hem weg (wat er al staat,
@@ -301,17 +302,21 @@ stopt zelf bij een vierde ffmpeg.
 1. **Eerst de meting:** `/beheer` → Media → **Meting** → **Meten** (±1 minuut). Zo weet het
    platform wat deze CPU kan.
 2. **De test aanzetten** (hij staat standaard uit). Maak één keer een klein bestand en start de
-   app ermee:
+   app en de worker ermee (allebei: de app start de test, de worker maakt de bronnen, en zonder
+   de regel bij `media` weigert hij dat):
    ```bash
    cat >/root/belastingtest.yaml <<'EOF'
    services:
      platform:
        environment:
          PLATFORM_MEDIA_LOADTEST: "1"
+     media:
+       environment:
+         PLATFORM_MEDIA_LOADTEST: "1"
    EOF
-   dc -f /root/belastingtest.yaml up -d platform
+   dc -f /root/belastingtest.yaml up -d media platform
    ```
-   Wacht tot `dc ps platform` weer `healthy` zegt.
+   Wacht tot `dc ps platform media` voor allebei weer `healthy` zegt.
 3. **De test:** `/beheer` → Media → **Belastingtest** → **Belastingtest starten** (3 sessies, 300
    seconden). Of vanaf de commandoregel, met de uitkomst in een bestand:
    ```bash
@@ -343,8 +348,10 @@ Slaagt een fase niet, zet dan op `/beheer` → Media → Instellingen **Omzettin
 
 Een GPU (bijvoorbeeld de iGPU van een Intel-processor) kan omzetten veel goedkoper maken, en HDR en
 drie keer 1080p waarschijnlijk wel aan (niet getest). Het platform gebruikt er nog geen: alles werkt
-met alleen de CPU, en een GPU wordt nooit een eis. `media-status` en `/beheer` → Media → ffmpeg
-zeggen "GPU: niet gevonden", of "gevonden, nog niet gebruikt".
+met alleen de CPU, en een GPU wordt nooit een eis. Zonder GPU zegt `media-status` er niets over
+(er komt geen regel bij), en `/beheer` → Media → ffmpeg zegt bij GPU "geen (nooit nodig)". Ziet
+de worker er een, dan zegt `media-status` `GPU: /dev/dri (vaapi, …) (niet in gebruik)` en
+`/beheer` bij GPU `/dev/dri`.
 
 Wil je dat later, dan is dit wat er op de host en in de LXC nodig is (nu nog niet doen; de
 versie die het gebruikt, zegt het precies):

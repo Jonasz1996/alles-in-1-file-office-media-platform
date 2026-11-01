@@ -593,7 +593,7 @@ export default {
         half_open: "half open (probeert)",
       },
       tmdbTitle: "De sleutel van TMDB",
-      tmdbKey: "Sleutel (API Read Access Token of API key)",
+      tmdbKey: "Sleutel (het API Read Access Token: de lange, die met eyJ begint)",
       tmdbHelp: "De app bewaart de sleutel versleuteld en geeft hem nooit terug, ook hier niet.",
       save: "Sleutel bewaren",
       saved: "De sleutel is bewaard en werkt.",
