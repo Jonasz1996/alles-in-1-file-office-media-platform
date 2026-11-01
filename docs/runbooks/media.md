@@ -317,6 +317,12 @@ stopt zelf bij een vierde ffmpeg.
    dc -f /root/belastingtest.yaml up -d media platform
    ```
    Wacht tot `dc ps platform media` voor allebei weer `healthy` zegt.
+
+   Staat `MEDIA_SANDBOX=uit` in `.env` (de nooduitgang: er is dan geen container `media`), laat
+   dan de laatste drie regels van het bestand weg (`media:` en wat eronder staat) en start alleen
+   de app: `dc -f /root/belastingtest.yaml up -d platform`. De lokale worker krijgt de
+   belastingtest van de app mee. Met het blok `media` erin weigert `dc` dan ("service "media"
+   has neither an image nor a build context").
 3. **De test:** `/beheer` → Media → **Belastingtest** → **Belastingtest starten** (3 sessies, 300
    seconden). Of vanaf de commandoregel, met de uitkomst in een bestand:
    ```bash
