@@ -393,6 +393,29 @@ def test_tekst_van_buiten_zonder_stuurtekens():
     assert r is not None and r.title == "Album[1A" and r.artist == "Bob"
 
 
+def test_witruimte_tussen_woorden_blijft_een_spatie():
+    """Nacontrole golf 5 (S1): een tab of regeleinde tussen twee woorden is ook een stuurteken,
+    maar wordt een spatie, geen niets ("Foo\\tBar" werd "FooBar"). De samenvatting houdt haar
+    regels; CRLF en CR worden een regeleinde."""
+    from app.media import items
+    from app.routers import media_match
+
+    c = tmdb.candidate(
+        {"id": 7, "title": "De\tNacht\nvan\x1fde\x85Haven", "overview": "Een\r\nregel\rnog\x0bdan"},
+        "movie",
+    )
+    assert c is not None and c.title == "De Nacht van de Haven"
+    assert c.overview == "Een\nregel\nnog dan"
+    r = musicbrainz.release_of(
+        {"id": ZEE, "title": "OK\tComputer", "artist-credit": [{"name": "Radio\nhead"}]}
+    )
+    assert r is not None and r.title == "OK Computer" and r.artist == "Radio head"
+    # Wat iemand in PATCH typt (of plakt), via typed en dan _clean van M2
+    title = items._clean("title", media_match.typed("title", "Foo\tBar\x1b[2K"))
+    assert title == "Foo Bar[2K"
+    assert media_match.typed("overview", "Een\r\nregel\x07") == "Een\nregel"
+
+
 def test_fuzz_de_bytes_van_een_plaatje():
     rng = random.Random(SEED)
     heads = [b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"RIFF\0\0\0\0WEBP", b"GIF89a", b"<svg", b""]

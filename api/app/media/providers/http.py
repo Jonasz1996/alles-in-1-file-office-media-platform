@@ -83,6 +83,10 @@ ULA = ipaddress.ip_network("fc00::/7")
 # Stuurtekens (C0, DEL en C1): in een terminal zijn ze opdrachten (ESC, OSC 52); review golf 5, S1
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 CONTROL_KEEP_LINES = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+# De stuurtekens die witruimte zijn (tab, regeleinde, \x1c-\x1f, NEL): die worden een spatie,
+# anders plakken twee woorden aan elkaar ("Foo\tBar" werd "FooBar"; nacontrole golf 5)
+SPACE_CONTROL = re.compile(r"[\t\n\x0b\x0c\r\x1c-\x1f\x85]")
+SPACE_CONTROL_KEEP_LINES = re.compile(r"[\x0b\x0c\x1c-\x1f\x85]")
 # Verzoeken per seconde per dienst (Keuze 39), en de burst. MusicBrainz: 1 per seconde, met een
 # marge, zodat ook met wat vertraging onderweg nooit twee binnen een seconde aankomen.
 RATES: dict[str, tuple[float, float]] = {
@@ -257,8 +261,12 @@ async def system_resolve(host: str, port: int) -> list[str]:
 
 def printable(text: str, *, lines: bool = False) -> str:
     """Tekst zonder stuurtekens (wat van buiten of van een gebruiker komt, voor een titel of een
-    samenvatting): ESC, BEL en C1 vallen weg. Met lines blijven regeleinde en tab."""
-    return (CONTROL_KEEP_LINES if lines else CONTROL).sub("", text)
+    samenvatting): ESC, BEL en C1 vallen weg, witruimte wordt een spatie. Met lines blijven
+    regeleinde en tab (een CR of CRLF wordt een regeleinde)."""
+    if lines:
+        text = SPACE_CONTROL_KEEP_LINES.sub(" ", text.replace("\r\n", "\n").replace("\r", "\n"))
+        return CONTROL_KEEP_LINES.sub("", text)
+    return CONTROL.sub("", SPACE_CONTROL.sub(" ", text))
 
 
 def redirect_host_ok(host: str) -> bool:
