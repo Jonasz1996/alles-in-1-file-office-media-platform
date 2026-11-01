@@ -5,12 +5,12 @@
   series per seizoen één verzoek; muziek via MusicBrainz met de hoes uit de CAA.
 - Onbereikbaar of een 429: `jobs.Defer`, de items blijven lokaal; pas na 24 uur een melding (met
   een nepklok). Een 401: de sleutel dicht en de melding `media_provider_auth`.
-- Wanneer: de haak op `hooks.touched` en de housekeeping; in stukken van BATCH.
+- Wanneer: de haak na een scan (`scanner.after_scan`, integratie punt 6) en de housekeeping; in
+  stukken van BATCH.
 """
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import time
 import uuid
@@ -61,12 +61,10 @@ class Net:
 @pytest.fixture
 async def net(world, monkeypatch):  # noqa: F811
     """De nep-providers als de enige uitgaande client van het proces, met een nepklok (geen echte
-    pauzes) en een eigen wandklok. De haak op touched wacht hier lang (de test roept queue_all
-    zelf aan), behalve waar een test dat anders zet."""
+    pauzes) en een eigen wandklok."""
     settings, _fake_worker, headers = world
     secrets.reset()
     lookup.reset()
-    monkeypatch.setattr(lookup, "SOON", 10_000.0)
     clock, wall = kit.Clock(), Wall()
     providers = create_app(FakeConfig(tmdb_key=kit.KEY, data=load(), clock=clock))
     out = http.Outbound(
@@ -441,52 +439,55 @@ async def test_een_provider_die_weg_is_telt_niet_per_ding(net, client):
 # --- wanneer: de haak en de housekeeping ---------------------------------------------------------
 
 
-async def test_de_haak_op_touched_zet_een_taak_klaar(net, client, monkeypatch):
-    """Een bestand erbij: na `delay()` (minstens twee tikken van de scanner) één ronde
-    queue_all; meer wijzigingen in die tijd geven geen tweede. De timer zelf draaien we hier met
-    de hand (geen echte wachttijd in de test)."""
-    await save_key(net)
-    monkeypatch.setattr(lookup, "SOON", 3.0)
-    lookup.reset()
-    library_id, folder = await make_library(client, net.headers)  # een map: ook touched
-    assert lookup._soon is not None
-    loop, handle = lookup._soon
-    assert loop is asyncio.get_running_loop()
-    wait = handle.when() - loop.time()
-    assert lookup.delay() == max(3.0, 2 * net.settings.media_scan_tick)
-    assert 0 < wait <= lookup.delay()
-    await upload(client, net.headers, folder, NEPHAVEN)  # files → hooks.touched
-    assert lookup._soon[1] is handle  # één ronde voor alle wijzigingen
-    # De scanner heeft getikt (de scan staat klaar), het opzoeken nog niet: de timer gaat af
+async def test_na_een_scan_zet_de_haak_een_taak_klaar(net, client):
+    """Integratie, punt 6 (open punt 1 van M8): de scanner roept na een scan
+    scanner.after_scan aan, en M8 zet dan meteen het opzoeken klaar voor die bibliotheek. Tot
+    de integratie was dat een haak op hooks.touched met een wachttijd van minstens twee tikken;
+    zonder scan (een map erbij) staat er nu niets klaar."""
     from app.media import scanner
 
+    await save_key(net)
+    assert lookup.scanned in scanner._after_scan
+    library_id, folder = await make_library(client, net.headers)
+    other, _ = await make_library(client, net.headers, "Leeg")
+    await upload(client, net.headers, folder, NEPHAVEN)
+    assert await lookup_jobs(net.settings) == []  # nog geen scan: niets
     await scanner.tick(net.settings)
-    handle.cancel()
-    lookup._fire()
-    assert lookup._soon is None
-    await asyncio.gather(*list(lookup._tasks))
-    [job] = await lookup_jobs(net.settings, "queued")
-    assert job.payload == {"library_id": library_id}
-    # De scan loopt nog: de taak wacht erop en kijkt daarna opnieuw
-    await jobs.run_pending(net.settings, lane="media_net")
-    [later] = await lookup_jobs(net.settings, "queued")
-    assert later.id != job.id
     await jobs.run_pending(net.settings, lane="media_scan")
-    later_at = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=lookup.WAIT_SCAN + 1)
-    await jobs.run_pending(net.settings, lane="media_net", at=later_at)
+    # Meteen na de scan, alleen voor de bibliotheek met iets op te zoeken
+    [job] = await lookup_jobs(net.settings, "queued")
+    assert job.payload == {"library_id": library_id} and other != library_id
+    await jobs.run_pending(net.settings, lane="media_net")
     assert (await items(net.settings, library_id))[NEPHAVEN].match_state == "matched"
 
 
-async def test_zonder_sleutel_doet_de_haak_niets(net, client, monkeypatch):
+async def test_zonder_sleutel_doet_de_haak_niets(net, client):
     library_id, folder = await make_library(client, net.headers)
     await upload(client, net.headers, folder, NEPHAVEN)
     from app.media import scanner
 
     await scanner.tick(net.settings)
-    lookup._fire()
-    await asyncio.gather(*list(lookup._tasks))
+    await jobs.run_pending(net.settings, lane="media_scan")
     assert await lookup_jobs(net.settings) == []
-    assert library_id
+    assert (await items(net.settings, library_id))[NEPHAVEN].match_state == "local"
+
+
+async def test_een_fout_in_de_haak_houdt_de_scan_niet_tegen(net, client, monkeypatch, caplog):
+    from app.media import scanner
+
+    async def kapot(settings, library_id):
+        raise RuntimeError("kapot")
+
+    monkeypatch.setattr(scanner, "_after_scan", [kapot, *scanner._after_scan])
+    await save_key(net)
+    library_id, folder = await make_library(client, net.headers)
+    await upload(client, net.headers, folder, NEPHAVEN)
+    await scanner.tick(net.settings)
+    await jobs.run_pending(net.settings, lane="media_scan")
+    assert NEPHAVEN in await items(net.settings, library_id)
+    assert "haak na de scan" in caplog.text
+    [job] = await lookup_jobs(net.settings, "queued")  # de haak van M8 liep toch
+    assert job.payload == {"library_id": library_id}
 
 
 async def test_de_housekeeping_kijkt_rond(net, client):

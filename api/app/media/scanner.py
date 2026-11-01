@@ -31,6 +31,10 @@ De worker delen met afspelen: NFO's lezen neemt een plaats van de soort short. D
 eerst caps en leest alleen als er minstens twee short-plaatsen vrij zijn, zodat hij nooit de
 laatste neemt; anders (of als de worker druk of weg is) komen de items er nu met de naam, en
 probeert hij de NFO's na NFO_RETRY seconden opnieuw.
+
+Na een scan (integratie, punt 6; open punt 1 van M8): is een ronde van een bibliotheek klaar
+(geen stuk meer over), dan roept run() na de commit elke haak van after_scan aan met de id van
+de bibliotheek, zonder databaseverbinding. M8 zet daar het opzoeken klaar.
 """
 
 from __future__ import annotations
@@ -43,7 +47,7 @@ import os
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -132,6 +136,26 @@ def touched(node_ids: list[uuid.UUID], type: str) -> None:
 
 
 hooks.register_touched(touched)
+
+
+AfterScan = Callable[[Settings, uuid.UUID], Awaitable[None]]
+_after_scan: list[AfterScan] = []
+
+
+def after_scan(hook: AfterScan) -> AfterScan:
+    """Registreer een haak voor na een scan: hook(settings, library_id), na de commit en
+    zonder databaseverbinding. Een fout erin wordt gelogd; de scan is dan al klaar."""
+    if hook not in _after_scan:
+        _after_scan.append(hook)
+    return hook
+
+
+async def _scanned(settings: Settings, library_id: uuid.UUID) -> None:
+    for hook in list(_after_scan):
+        try:
+            await hook(settings, library_id)
+        except Exception:  # noqa: BLE001 - de scan zelf is gelukt
+            log.exception("haak na de scan van %s", library_id)
 
 
 def _maker(settings: Settings) -> async_sessionmaker[AsyncSession]:
@@ -1408,6 +1432,8 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
         await session.commit()
         await session.refresh(library)
         await _publish(session, library, changed)
+    if work.rest is None:
+        await _scanned(settings, library_id)
     if retry:
         when = time.monotonic() + NFO_RETRY
         _, dirs_before = _retry.get(library_id, (when, set()))

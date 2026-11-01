@@ -19,13 +19,11 @@ ding een korte transactie om te schrijven. Een 429 of geen netwerk: `jobs.Defer`
 niet); de stroomonderbreker van http.py houdt het tempo laag. Een 401 van TMDB: de sleutel gaat
 op `ok: false` (secrets.mark_tmdb) en TMDB gaat dicht tot er een nieuwe is.
 
-**Wanneer.** De scanner (M2) weet niet van M8. Daarom: (1) een haak op `hooks.touched` (een
-bestand erbij of veranderd) zet na `delay()` seconden (minstens twee tikken van de scanner) een
-taak klaar voor elke online bibliotheek met werk of met een scan die klaarstaat of loopt; loopt
-de scan nog, dan wacht de taak (`WAIT_SCAN`) en kijkt opnieuw; (2) de
+**Wanneer.** (1) Na elke scan van een bibliotheek (de haak `scanner.after_scan`, integratie
+punt 6): een taak voor die bibliotheek als ze online opzoekt en er iets op te zoeken is; (2) de
 housekeeping kijkt elke 5 minuten (ook na "Opnieuw scannen", een herstart of een nieuwe
-sleutel). Zie m8.md: een duw van de scanner na een scan zou (1) overbodig maken; die haak is
-van M2.
+sleutel). Loopt er bij een taak toch nog een scan, dan wacht hij (`WAIT_SCAN`) en kijkt opnieuw.
+Tot de integratie was (1) een haak op `hooks.touched` met een wachttijd (m8.md, afwijking 1).
 
 **Art** (`media.art`, per rol): het plaatje via http.py, omzetten in het renderproces
 (art.store), en `{"art": sha, "url": …}` in `art` van het item, de serie of het album. Een
@@ -34,7 +32,6 @@ lokale rol (een poster naast de film) gaat voor: die wordt niet vervangen.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -47,8 +44,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app import events, jobs
 from app.config import Settings
 from app.db import get_engine
-from app.media import hooks, runtime
 from app.media import items as media_items
+from app.media import runtime, scanner
 from app.media.providers import art, caa, http, match, musicbrainz, secrets, tmdb
 from app.media.providers.base import (
     Candidate,
@@ -73,7 +70,6 @@ BATCH = 20
 SWEEP = "media.lookup.sweep"
 SWEEP_EVERY = 300.0
 CLEAN = "media.art.cleanup"
-SOON = 10.0  # seconden na een wijziging aan bestanden
 WAIT_SCAN = 15.0  # zolang de scan van de bibliotheek nog loopt
 OFFLINE = 300.0  # zo lang als de stroomonderbreker dicht blijft
 EPISODE_ROWS = 500
@@ -900,55 +896,26 @@ async def clean(settings: Settings) -> None:
         log.info("art opgeruimd: %s", gone)
 
 
-_soon: tuple[asyncio.AbstractEventLoop, asyncio.TimerHandle] | None = None
-_tasks: set[asyncio.Task] = set()
-
-
-def delay() -> float:
-    """Zo lang na een wijziging: SOON, en minstens twee tikken van de scanner (die zet de scan
-    pas bij zijn volgende tik klaar; daarna ziet queue_all hem als queued of running)."""
-    tick = float(getattr(runtime.settings(), "media_scan_tick", 0.0) or 0.0)
-    return max(SOON, 2 * tick)
-
-
-def touched(node_ids: list[uuid.UUID], type: str) -> None:
-    """De haak op hooks.touched: geen I/O hier, alleen over `delay()` seconden één ronde
-    queue_all (meer wijzigingen in die tijd: één ronde)."""
-    global _soon
+async def scanned(settings: Settings, library_id: uuid.UUID) -> None:
+    """De haak na een scan (scanner.after_scan): een taak voor deze bibliotheek als ze online
+    opzoekt, er een provider is en er iets op te zoeken is. Geen I/O naar buiten hier."""
     if not _active():
         return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    if _soon is not None and _soon[0] is loop and not _soon[1].cancelled():
-        return  # er staat er al een klaar in deze lus
-    _soon = (loop, loop.call_later(delay(), _fire))
-
-
-def _fire() -> None:
-    global _soon
-    _soon = None
-    if not _active():
-        return
-    task = asyncio.get_running_loop().create_task(_kick(runtime.settings()))
-    _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
-
-
-async def _kick(settings: Settings) -> None:
-    try:
-        await queue_all(settings)
-    except Exception:  # noqa: BLE001 - de housekeeping komt er later toch langs
-        log.exception("media.lookup klaarzetten na een wijziging")
+    async with _maker(settings)() as session:
+        library = await session.get(MediaLibrary, library_id)
+        if library is None or not library.online or library.kind not in ONLINE_KINDS:
+            return
+        await secrets.load(session, settings)
+        if provider_for(library.kind) is None:
+            return  # geen sleutel of uit: alleen lokaal
+        if not await has_pending(session, library):
+            return
+        await queue_library(session, library_id)
+        await session.commit()
 
 
 def reset() -> None:
-    """Tests: de haak en de tellers per ding vergeten."""
-    global _soon
-    if _soon is not None:
-        _soon[1].cancel()
-    _soon = None
+    """Tests: de tellers per ding vergeten."""
     _failures.clear()
 
 
@@ -966,4 +933,4 @@ jobs.register(JOB, run, lane=LANE, timeout=TIMEOUT)
 jobs.register(ART_JOB, run_art, lane=LANE, timeout=ART_TIMEOUT)
 jobs.housekeeping(SWEEP, sweep, SWEEP_EVERY)
 jobs.housekeeping(CLEAN, clean, art.CLEAN_EVERY)
-hooks.register_touched(touched)
+scanner.after_scan(scanned)
