@@ -27,6 +27,7 @@ import ssl
 import uuid
 from typing import Any
 
+import anyio
 import httpx
 import pytest
 from cryptography import x509
@@ -520,6 +521,21 @@ async def test_de_token_bucket_per_dienst(tmp_path):
     assert clock.now - start == 0  # TMDB: een burst van 10
     await out.fetch("tmdb", f"{TMDB}/configuration")
     assert clock.now - start == pytest.approx(0.1, abs=0.01)
+    await out.aclose()
+
+
+@pytest.mark.anyio
+async def test_de_token_bucket_blijft_niet_hangen_op_een_afronding(tmp_path):
+    """Bij klok 1000 laat 10 per seconde door afronding 0,99999… token over; een pauze van 1e-17
+    zet de klok niet vooruit. Dat mocht nooit eindeloos wachten worden (zo vonden we het)."""
+    clock = Clock()
+    out = outbound(tmp_path, handler=lambda r: httpx.Response(200, json={}), clock=clock)
+    start = clock.now
+    with anyio.fail_after(10):
+        for _ in range(60):
+            await out.fetch("tmdb", f"{TMDB}/configuration")
+    assert clock.now - start == pytest.approx(5.0, abs=0.05)  # 10 meteen, dan 50 x 0,1 s
+    assert min(clock.slept) >= 0.001
     await out.aclose()
 
 

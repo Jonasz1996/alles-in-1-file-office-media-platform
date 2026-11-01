@@ -438,10 +438,12 @@ class Outbound:
                     bucket.capacity, bucket.tokens + (now - bucket.updated) * bucket.rate
                 )
                 bucket.updated = now
-                if bucket.tokens >= 1.0:
-                    bucket.tokens -= 1.0
+                # Met een marge: anders blijft er door afronding 0,99999… over, en een pauze die
+                # zo kort is dat de klok niet verspringt
+                if bucket.tokens >= 1.0 - 1e-6:
+                    bucket.tokens = max(0.0, bucket.tokens - 1.0)
                     return
-                await self.sleep((1.0 - bucket.tokens) / bucket.rate)
+                await self.sleep(max(0.001, (1.0 - bucket.tokens) / bucket.rate))
 
     # --- de stroomonderbreker ---
 

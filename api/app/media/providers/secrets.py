@@ -131,6 +131,11 @@ def tmdb_key() -> str | None:
     return _memory.key
 
 
+def status_memory() -> dict[str, Any]:
+    """Wat de laatste load las, zonder de database (synchroon, voor providers.status)."""
+    return {"set": _memory.key is not None, "set_at": _memory.set_at, "ok": _memory.ok}
+
+
 def usable() -> bool:
     """Is er een sleutel die (nog) werkt? Na een 401 niet meer, tot een nieuwe sleutel."""
     return _memory.key is not None and _memory.ok is not False
