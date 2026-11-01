@@ -1113,7 +1113,12 @@ stap_belastingtest() {
     fout "2: de belastingtest aanzetten (dc -f … up -d media platform)"
     return 0
   fi
-  loadtest_in_media() { [ "$(docker exec "$(cid media)" printenv PLATFORM_MEDIA_LOADTEST </dev/null)" = 1 ]; }
+  # Uit de instellingen van de container, zonder exec: een exec in media krijgt de sleutel van
+  # hello in zijn omgeving (het runbook: nooit zonder env -i). grep -q print niets, ook die niet.
+  loadtest_in_media() {
+    docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$(cid media)" \
+      </dev/null | grep -qx 'PLATFORM_MEDIA_LOADTEST=1'
+  }
   check "2: de belastingtest staat aan in de worker (PLATFORM_MEDIA_LOADTEST in media)" loadtest_in_media
   check "2: de worker is weer gezond" wait_healthy "$(cid media)" 120
   local end=$((SECONDS + 60))
