@@ -40,6 +40,7 @@ from app.media.wire import Code, Op, WorkClass
 from app.media.worker import args as A
 from app.media.worker import server
 from app.media.worker.server import Config, OpError, Places, Worker
+from tests.media.kindfds import extra, fds_after_start
 
 pytestmark = pytest.mark.anyio
 
@@ -865,29 +866,6 @@ def test_een_kind_stopt_als_de_worker_hard_stopt():
             proc.stdout.close()
 
 
-def _doel(pid: int, fd: int) -> str:
-    try:
-        return os.readlink(f"/proc/{pid}/fd/{fd}")
-    except FileNotFoundError:
-        return "(al weer dicht)"
-
-
-async def _fds_na_het_laden(pid: int, want: list[int], limit_s: float = 5.0) -> list[int]:
-    """De fd's van het kind zodra de dynamische lader van sleep klaar is. Net na de exec
-    opent ld.so zelf /etc/ld.so.cache en libc.so.6 op de eerste vrije fd (4) en sluit ze
-    weer; een lijst op dat moment toont een fd 4 die er even later niet meer is (gemeten:
-    3 van 1000 keer in een losse proef, en één keer in een volle run van de api). Een fd die
-    van de worker meekwam, gaat nooit vanzelf dicht (sleep sluit niets): die staat er na de
-    grens nog, en dan faalt de test zoals hij moet. Een begrensde lus, geen while."""
-    fds: list[int] = []
-    for _ in range(int(limit_s / 0.01)):
-        fds = sorted(int(n) for n in os.listdir(f"/proc/{pid}/fd"))
-        if fds == want:
-            return fds
-        await asyncio.sleep(0.01)
-    return fds
-
-
 @pytest.mark.parametrize("close_range", [True, False], ids=["close_range", "proc-self-fd"])
 async def test_een_erfbare_fd_van_de_worker_komt_niet_bij_het_kind(
     tmp_path, monkeypatch, close_range
@@ -914,8 +892,8 @@ async def test_een_erfbare_fd_van_de_worker_komt_niet_bij_het_kind(
     try:
         child = R.spawn(["sleep", "30"], inputs=[src], memory_mb=64)
         try:
-            fds = await _fds_na_het_laden(child.pid, [0, 1, 2, 3])
-            assert fds == [0, 1, 2, 3], {n: _doel(child.pid, n) for n in fds}
+            fds = await fds_after_start(child.pid, [0, 1, 2, 3])
+            assert fds == [0, 1, 2, 3], extra(child.pid, fds, [0, 1, 2, 3])
             assert os.readlink(f"/proc/{child.pid}/fd/3") == str(source)
         finally:
             await child.stop()
@@ -1052,9 +1030,9 @@ async def test_echte_worker_kind_fds_grenzen_en_omgeving(sleepy_worker, source):
     try:
         assert await until(lambda: len(children(sleepy_worker.pid)) == 1)
         (pid,) = children(sleepy_worker.pid)
-        await asyncio.sleep(0.1)  # sh heeft sleep gestart (exec: dezelfde pid)
-        fds = sorted(int(n) for n in os.listdir(f"/proc/{pid}/fd"))
-        assert fds == [0, 1, 2, 3]  # alleen de bron op fd 3; de rest is CLOEXEC
+        # tot sh sleep heeft gestart (exec: dezelfde pid) en de lader van sleep klaar is
+        fds = await fds_after_start(pid, [0, 1, 2, 3])
+        assert fds == [0, 1, 2, 3], extra(pid, fds, [0, 1, 2, 3])  # de bron op 3; rest CLOEXEC
         assert os.readlink(f"/proc/{pid}/fd/3") == str(source.resolve())
         assert os.readlink(f"/proc/{pid}/cwd") == "/"
         env = proc_file(pid, "environ").split(b"\0")

@@ -36,6 +36,7 @@ from app.media.worker import args as A
 from app.media.worker import guard, selftest, server
 from app.media.worker.ops import bench, frame, meta
 from app.media.worker.server import Config, Worker
+from tests.media.kindfds import extra, fds_after_start
 
 pytestmark = pytest.mark.anyio
 
@@ -480,8 +481,9 @@ async def test_nice_rlimits_en_kale_omgeving_van_frame(tmp_path, monkeypatch, so
             assert names == {"PATH", "LC_ALL", "HOME"}
             assert b"geheim" not in b"".join(env) and b"x" * 64 not in b"".join(env)
             assert os.readlink(f"/proc/{pid}/cwd") == "/"
-            fds = sorted(int(n) for n in os.listdir(f"/proc/{pid}/fd"))
-            assert fds == [0, 1, 2, 3]  # de bron op 3, de pipe van de app op 1
+            # pas na de start van de nep (Python opent dan zelf even fd 4; zie kindfds)
+            fds = await fds_after_start(pid, [0, 1, 2, 3])
+            assert fds == [0, 1, 2, 3], extra(pid, fds, [0, 1, 2, 3])  # bron op 3, pipe op 1
         finally:
             await job.cancel()
 
