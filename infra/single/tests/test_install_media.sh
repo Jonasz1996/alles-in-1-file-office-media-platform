@@ -601,6 +601,15 @@ PY
 #   640×360 H.264 met 5 Mbit/s en AAC. De transcode vraagt een profiel met hooguit 1000 kbit/s.
 # - Geen geheim in een log: de login van de beheerder staat alleen in de werkmap (sessie.json,
 #   600); de test kijkt na dat MEDIA_WORKER_KEY in geen enkele log van install.sh staat.
+# - De images van de app: elk image dat platform:local in deze test was (de test onthoudt het na
+#   elke run van install.sh), en wat compose met het label van het project platform bouwde
+#   (compose 2.38 in CI bouwt via bake en zet dat label niet; nieuwere wel). Ook een oud image
+#   dat zijn naam kwijt is (<none>, zoals bij de klassieke opslag van Docker in CI; met de opslag
+#   van containerd, hier, is dat image meteen weg). Een image dat alleen de naam platform heeft,
+#   is van een ander: in CI bouwt de job media-image eerst platform:ci. De test telt het niet en
+#   ruimt het niet op.
+# - Het blok "=== Samenvatting" staat altijd als laatste in het log (de stap Samenvatting van CI
+#   leest het), ook als de test afbrak: met het aantal controles en de stap waarin hij stopte.
 #
 # Instellingen (alle optioneel), zoals test_install_update.sh: INSTALL_TEST_DIR, _REPO, _FROM
 # (standaard 263abd74d914a9811901e7570ed410866364f4b5), _TO (standaard HEAD), _PORT (18580),
@@ -624,13 +633,31 @@ stappen() {
   RUNNER_IMG=install-media-runner:$$
   BORROWED=installatietest-bewaard/python:3.12-slim-$$
   runner_built=0 borrowed=0 own_project=0 work_existed=0 WORK=""
-  created=() maybe=() SUMMARY=()
+  created=() maybe=() SUMMARY=() APP_IDS=()
+  STAGE=vooraf ENDED=0
+  # Vanaf hier altijd de samenvatting aan het eind, ook bij een STOP vóór er iets gebeurde
+  trap stappen_opruimen EXIT
+  trap 'exit 130' INT TERM
 
   stop() {
     echo "STOP  $1" >&2
     exit 1
   }
   have() { docker image inspect "$1" >/dev/null 2>&1; }
+  # De images van de app die er nog zijn, ook zonder naam (zie boven): APP_IDS en het label van
+  # het project. Een inspect van een id dat weg is, print een lege regel: die valt weg
+  app_images() {
+    local id
+    {
+      docker images -a -q --no-trunc --filter "label=com.docker.compose.project=$PROJECT"
+      for id in "${APP_IDS[@]}"; do docker image inspect --format '{{.Id}}' "$id" 2>/dev/null || true; done
+    } | sed '/^$/d' | sort -u
+  }
+  # platform:local onthouden, na elke run van install.sh
+  note_app() {
+    local id
+    if id=$(docker image inspect --format '{{.Id}}' platform:local 2>/dev/null); then APP_IDS+=("$id"); fi
+  }
   # Wat install.sh in de runner als root maakte (.env 600, de data van 10001, de broncode), leest
   # de test op de host als root: in CI met sudo
   as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
@@ -648,6 +675,7 @@ stappen() {
   [ -z "$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT")" ] ||
     stop "er zijn al netwerken van een project '$PROJECT'"
   ! have platform:local || stop "er is al een image platform:local"
+  [ -z "$(app_images)" ] || stop "er zijn al images van een project '$PROJECT' (label com.docker.compose.project)"
   local p
   for p in "$PORT" "$HTTPS_PORT"; do
     [ -z "$(ss -Hltn "sport = :$p")" ] || stop "poort $p is bezet"
@@ -667,8 +695,6 @@ stappen() {
   WORK=$(cd "$WORK" && pwd -P)
   ROOT=$WORK/platform
   own_project=1
-  trap stappen_opruimen EXIT
-  trap 'exit 130' INT TERM
   mkdir -p "$WORK/logs" "$WORK/shim/bin" "$WORK/build" "$WORK/film"
 
   # --- de broncode: beide versies, en een tweede versie erbovenop (2b) ----------------------
@@ -876,7 +902,18 @@ SHIM
 c = sqlite3.connect("file:/data/platform.db?mode=ro", uri=True)
 print(c.execute("select version_num from alembic_version").fetchone()[0])' </dev/null 2>/dev/null
   }
-  app_images() { docker images -q --no-trunc platform | sort -u; }
+  # Wat app_images vindt, leesbaar (naam en het begin van de id), voor de naam van een controle
+  app_images_text() {
+    local id tags out=()
+    for id in $(app_images); do
+      tags=$(docker image inspect --format '{{join .RepoTags ","}}' "$id" 2>/dev/null) || continue
+      out+=("${tags:-<none>} ${id:7:12}")
+    done
+    local IFS=,
+    echo "${out[*]}"
+  }
+  # Precies één image van de app, en dat is platform:local
+  one_app_image() { [ "$(app_images)" = "$(docker image inspect --format '{{.Id}}' platform:local 2>/dev/null)" ]; }
   image_gone() { ! docker image inspect "$1" >/dev/null 2>&1; }
   # Eén run van install.sh in de runner; het script komt via stdin (zoals curl | bash)
   step() {
@@ -895,6 +932,7 @@ print(c.execute("select version_num from alembic_version").fetchone()[0])' </dev
       -e PORT="$PORT" -e HTTPS_PORT="$HTTPS_PORT" -e SHIM_COMPOSE_EXTRA="$SANDBOX_COMPOSE" \
       -e PATH="$WORK/shim/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
       "${envs[@]}" "$RUNNER_IMG" bash -s <"$WORK/install.sh" >"$WORK/logs/$name.log" 2>&1 || rc=$?
+    note_app
     if [ "$rc" != 0 ]; then
       echo "install.sh gaf $rc; de laatste regels:"
       tail -n 30 "$WORK/logs/$name.log"
@@ -933,20 +971,22 @@ print(c.execute("select version_num from alembic_version").fetchone()[0])' </dev
   # ffmpeg in een container volgens docker top (de kolom pid is nodig voor het filter)
   ffmpeg_in() { docker top "$1" -eo pid,comm 2>/dev/null | awk 'NR > 1 && $2 == "ffmpeg"' | wc -l | tr -d ' '; }
   # Een profiel met H.264 en AAC via MSE, en hooguit 1000 kbit/s: de film (5 Mbit/s) wordt een
-  # transcode (reden bitrate), zoals in de belastingtest
+  # transcode (reden bitrate), zoals in de belastingtest. De argumenten: lijsten van strings
+  # (JSON), zoals candidates en item van GET …/codecs
   profile() {
     python3 -I -c '
 import json, sys
-strings = json.loads(sys.argv[1])
+strings = list(dict.fromkeys(s for a in sys.argv[1:] for s in json.loads(a)))
 def plays(s):
     low = s.lower()
     return low.startswith(("avc1.", "mp4a.40.")) and not low.startswith("avc1.6e")
 codecs = {s: ({"mse": True, "file": True, "smooth": True, "power": True} if plays(s) else {"mse": False, "file": False}) for s in strings}
 print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "name": "installatietest"}, "max": {"height": 1080, "bitrate_kbps": 1000}, "codecs": codecs}}))
-' "$1"
+' "$@"
   }
 
   # --- 1. 0.6.0 installeren, een film uploaden --------------------------------------------
+  STAGE=1
   step 1-van PLATFORM_SRC_REF="$FROM" || stop "de installatie van $FROM lukte niet"
   check "1: de app draait op poort $PORT" app_up
   check "1: de broncode staat op ${FROM:0:12}" test "$(src_head)" = "$(git -C "$WORK/repo.git" rev-parse "$FROM^{commit}")"
@@ -972,6 +1012,7 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
   check "1: de film staat erin" test "$(api sha "$film_id")" = "$film_sha"
 
   # --- 2. bijwerken naar deze versie -----------------------------------------------------
+  STAGE=2
   step 2-bijwerken PLATFORM_SRC_REF="$TO" || fout "2: install.sh gaf een fout"
   check "2: de app draait" app_up
   check "2: het schema staat op 0008" test "$(db_rev)" = 0008
@@ -991,7 +1032,8 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
   check "2: de mappen media en import, van 10001, 750" test \
     "$(as_root stat -c '%u:%g %a' "$ROOT/data/platform/media" "$ROOT/data/platform/import" | sort -u)" = "10001:10001 750"
   check "2: de eindtekst zegt Media: aan (afgeschermd)" said 2-bijwerken "Media: aan (afgeschermd)."
-  check "2: de oude app (0.6.0) is weg, er is één image platform:local" eval '[ "$(app_images | wc -l)" = 1 ] && image_gone "$app1"'
+  check "2: de oude app (0.6.0) is weg (zijn id)" image_gone "$app1"
+  check "2: één image van de app, platform:local (gezien: $(app_images_text))" one_app_image
   check "2: de film is er nog, heel" test "$(api sha "$film_id")" = "$film_sha"
   check "2: /beheer: de worker in zijn container" test "$(api get /api/v1/admin/media worker.mode)" = container
   if [ "$FFMPEG" = leeg ]; then
@@ -1008,7 +1050,13 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
   else
     check "2: media-status na de start: afgeschermd, met ffmpeg" said 2-bijwerken "Media: aan (afgeschermd, ffmpeg "
     check "2: /beheer: geen melding over de worker" eval '! api notice media_ffmpeg_missing && ! api notice media_worker_down'
-    check "2: /beheer: de zelftest zegt afgeschermd" test "$(api get /api/v1/admin/media worker.sandbox)" = on
+    # De zelftest staat in worker.selftest (Keuze 45; app/media/types.py, WorkerView). Na de
+    # update start de app vóór de worker: de lus van health.py vraagt bij "down" na 1, 2, 4 …
+    # hooguit 30 s opnieuw, dus de zelftest kan er even null zijn. Hooguit 60 s wachten
+    local selftest
+    selftest=$(api wait-field /api/v1/admin/media worker.selftest 60) || selftest="geen"
+    check "2: /beheer: de zelftest zegt afgeschermd (worker.selftest: $selftest)" python3 -I -c \
+      'import json, sys; sys.exit(0 if json.loads(sys.argv[1]) == {"ok": True, "sandbox": "on", "problems": []} else 1)' "$selftest"
     stap_transcode
     stap_belastingtest
   fi
@@ -1018,16 +1066,18 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
   [ "$FFMPEG" = leeg ] || check "2: media-status zegt afgeschermd" grep -qF "Media: aan (afgeschermd, ffmpeg " "$WORK/logs/2-media-status.log"
 
   # --- 2b. nog een keer bijwerken: het oude image weg, ook al draaide de worker erop ---------
+  STAGE=2b
   app2=$(docker image inspect --format '{{.Id}}' platform:local)
   check "2b: de worker draait op het image van de app" test "$(docker inspect --format '{{.Image}}' "$(cid media)")" = "$app2"
   step 2b-nogmaals PLATFORM_SRC_REF="$TO2" || fout "2b: install.sh gaf een fout"
   check "2b: de app draait" app_up
-  check "2b: na twee updates één image platform:local" test "$(app_images | wc -l)" = 1
+  check "2b: na twee updates één image van de app, platform:local (gezien: $(app_images_text))" one_app_image
   check "2b: de oude id is weg" image_gone "$app2"
   check "2b: de worker draait op het nieuwe image" test "$(docker inspect --format '{{.Image}}' "$(cid media)")" = "$(docker image inspect --format '{{.Id}}' platform:local)"
   check "2b: de sleutel bleef dezelfde" test "$(env_value MEDIA_WORKER_KEY)" = "$key"
 
   # --- 3. MEDIA_SANDBOX=uit: de container weg, de lokale worker ------------------------------
+  STAGE=3
   step 3-uit PLATFORM_SRC_REF="$TO2" MEDIA_SANDBOX=uit || fout "3: install.sh gaf een fout"
   check "3: de app draait" app_up
   check "3: geen container media meer" test -z "$(cid media)"
@@ -1043,6 +1093,7 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
   check "3: weer aan: de container media draait" running "$(cid media)"
 
   # --- 4. terug naar 0.6.0, met precies de commando's van Keuze 47 --------------------------
+  STAGE=4
   if [ "$ROLLBACK" = 1 ]; then
     echo
     echo "== 4: terug naar 0.6.0 (docs/runbooks/media.md, Keuze 47)"
@@ -1073,41 +1124,64 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
     check "4: de film is er nog, heel" test "$(api sha "$film_id")" = "$film_sha"
     check "4: de mappen media en import en het volume media-run blijven" eval \
       'as_root test -d "$ROOT/data/platform/media" && as_root test -d "$ROOT/data/platform/import" && docker volume inspect platform_media-run >/dev/null 2>&1'
-    check "4: één image platform:local" test "$(app_images | wc -l)" = 1
+    check "4: één image van de app, platform:local (gezien: $(app_images_text))" one_app_image
   else
     echo
     echo "== 4: terug naar 0.6.0 overgeslagen (INSTALL_TEST_ROLLBACK=0)"
   fi
+  ENDED=1
   einde
 }
 
 # Alleen met echte ffmpeg (CI): een transcode via curl, en tijdens die transcode docker top (R12)
 # shellcheck disable=SC2016  # check … eval '…': eval werkt de uitdrukking pas zelf uit
 stap_transcode() {
-  local strings body sid code n_app n_media i seen=0 app_ffmpeg=0
+  local cands item sid code n_app n_media i seen=0 app_ffmpeg=0 tops="" what rc=0
   # Wachten tot de worker niets meer doet (de analyse van de film), zodat docker top alleen de
   # transcode ziet
   for i in $(seq 1 60); do
     [ "$(ffmpeg_in "$(cid media)")" = 0 ] && break
     sleep 1
   done
-  strings=$(api get "/api/v1/media/$film_id/codecs" | python3 -I -c 'import json, sys; d = json.load(sys.stdin); print(json.dumps(d["candidates"] + d["item"]))')
-  body=$(api post "/api/v1/media/$film_id/play" "$(profile "$strings")") || { fout "2: play gaf een fout"; return 0; }
-  printf '%s' "$body" >"$WORK/logs/2-play.json"
-  check "2: play kiest transcode (reden bitrate)" python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); sys.exit(0 if d["mode"] == "transcode" and "bitrate" in d["reasons"] else 1)' "$WORK/logs/2-play.json"
-  sid=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["sid"])' "$WORK/logs/2-play.json")
-  code=$(curl -s -o "$WORK/film/0.m4s" -w '%{http_code}' -m 60 "http://127.0.0.1:$PORT/api/v1/stream/$sid/0.m4s")
-  check "2: GET segment 0 via curl: 200 met een fragment (moof)" eval '[ "$code" = 200 ] && grep -q moof "$WORK/film/0.m4s"'
+  # Elke stap die faalt, zegt waarom (install_api.py: de status en het begin van de body) en
+  # stopt alleen de transcode, niet de test: stap 2b en 3 en de samenvatting lopen door
+  if ! cands=$(api get "/api/v1/media/$film_id/codecs" candidates 2>"$WORK/logs/2-codecs.err") ||
+    ! item=$(api get "/api/v1/media/$film_id/codecs" item 2>>"$WORK/logs/2-codecs.err"); then
+    fout "2: GET /api/v1/media/<film>/codecs:$(head -c 400 "$WORK/logs/2-codecs.err" | tr '\n' ' ')"
+    return 0
+  fi
+  if ! api post "/api/v1/media/$film_id/play" "$(profile "$cands" "$item")" \
+    >"$WORK/logs/2-play.json" 2>"$WORK/logs/2-play.err"; then
+    fout "2: play:$(head -c 400 "$WORK/logs/2-play.err" | tr '\n' ' ')"
+    return 0
+  fi
+  # Wat play koos, zonder de sid (een sleutel in het pad, PlayOut; nooit in een log)
+  what=$(python3 -I -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+print("mode %s, redenen %s" % (d.get("mode"), ",".join(d.get("reasons") or []) or "geen"))
+sys.exit(0 if d.get("mode") == "transcode" and "bitrate" in (d.get("reasons") or []) else 1)
+' "$WORK/logs/2-play.json") || rc=$?
+  check "2: play kiest transcode, reden bitrate (gezien: $what)" test "$rc" = 0
+  sid=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1])).get("sid") or "")' "$WORK/logs/2-play.json") || sid=""
+  if [ -z "$sid" ]; then
+    fout "2: play gaf geen sid"
+    return 0
+  fi
+  code=$(curl -s -o "$WORK/film/0.m4s" -w '%{http_code}' -m 60 "http://127.0.0.1:$PORT/api/v1/stream/$sid/0.m4s") || true
+  check "2: GET segment 0 via curl: 200 met een fragment (moof) (gezien: ${code:-geen antwoord}, $(wc -c <"$WORK/film/0.m4s" 2>/dev/null || echo 0) bytes)" \
+    eval '[ "$code" = 200 ] && grep -q moof "$WORK/film/0.m4s"'
   for i in $(seq 1 10); do
     n_media=$(ffmpeg_in "$(cid media)") n_app=$(ffmpeg_in "$(cid platform)")
+    tops="$tops $n_media/$n_app"
     [ "$n_app" = 0 ] || app_ffmpeg=1
     if [ "$n_media" = 1 ] && [ "$n_app" = 0 ]; then seen=1; fi
     sleep 1
   done
-  check "2: R12: tijdens de transcode één ffmpeg in media (docker top: $n_media)" test "$seen" = 1
+  check "2: R12: tijdens de transcode één ffmpeg in media (docker top per seconde, media/app:$tops)" test "$seen" = 1
   check "2: R12: nooit ffmpeg in de container van de app" test "$app_ffmpeg" = 0
   curl -s -o /dev/null -X DELETE -m 10 "http://127.0.0.1:$PORT/api/v1/stream/$sid" || true
-  SUMMARY+=("transcode via curl: segment 0 $code; docker top: media $n_media ffmpeg, app 0")
+  SUMMARY+=("transcode via curl: $what; segment 0 ${code:-geen antwoord}; docker top per seconde, media/app:$tops")
 }
 
 # Alleen met echte ffmpeg (CI): de rooktest van de belastingtest, zoals het runbook hem op de LXC
@@ -1136,8 +1210,22 @@ stap_belastingtest() {
   timeout 900 docker exec "$(cid platform)" python -m app.cli media-loadtest --sessies 1 --duur 30 \
     --json /tmp/belastingtest.json </dev/null >"$WORK/logs/2-belastingtest.log" 2>&1 || rc=$?
   docker exec "$(cid platform)" cat /tmp/belastingtest.json </dev/null >"$WORK/logs/2-belastingtest.json" 2>/dev/null || true
-  check "2: de rooktest van de belastingtest (1 sessie, 30 s): exit $rc" test "$rc" = 0
-  SUMMARY+=("belastingtest (1 sessie, 30 s): exit $rc")
+  # Bij een fout ook waarom: de regel van fase b en de eerste fout van een speler (een pad met
+  # een sid erin wordt <sid>; de sid hoort in geen log)
+  local why=""
+  if [ "$rc" != 0 ]; then
+    why=$(python3 -I -c '
+import json, re, sys
+d = json.load(open(sys.argv[1]))
+out = [s for s in d.get("summary") or [] if s.startswith("fase b")][:1]
+out += [p["error"] for ph in (d.get("phases") or {}).values() if isinstance(ph, dict)
+        for p in ph.get("players") or [] if p.get("error")][:1]
+out += [d["error"]] if isinstance(d.get("error"), str) else []
+print(re.sub(r"stream/[^/\s]+", "stream/<sid>", "; ".join(out))[:400])
+' "$WORK/logs/2-belastingtest.json" 2>/dev/null) || why="geen uitkomst, zie 2-belastingtest.log"
+  fi
+  check "2: de rooktest van de belastingtest (1 sessie, 30 s): exit $rc${why:+ ($why)}" test "$rc" = 0
+  SUMMARY+=("belastingtest (1 sessie, 30 s): exit $rc${why:+ ($why)}")
 }
 
 stappen_opruimen() {
@@ -1157,7 +1245,10 @@ stappen_opruimen() {
     ids=$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT")
     # shellcheck disable=SC2086
     [ -z "$ids" ] || docker network rm $ids >/dev/null
-    for ref in $(docker images -q --no-trunc platform | sort -u); do docker image rm -f "$ref" >/dev/null 2>&1; done
+    # Alleen de images van het project (het label van compose) en de naam platform:local; een
+    # ander image met de naam platform (in CI platform:ci) blijft
+    for ref in $(app_images); do docker image rm -f "$ref" >/dev/null 2>&1; done
+    if have platform:local; then docker image rm platform:local >/dev/null 2>&1; fi
   fi
   if [ -n "$LOGS_OUT" ] && [ -d "$WORK/logs" ]; then
     mkdir -p "$LOGS_OUT" && cp -r "$WORK/logs/." "$LOGS_OUT/" && echo "Logs: $LOGS_OUT"
@@ -1176,19 +1267,24 @@ stappen_opruimen() {
     docker tag "$BORROWED" python:3.12-slim && docker image rm "$BORROWED" >/dev/null &&
       echo "python:3.12-slim heeft zijn eigen image weer."
   fi
-  ids="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")"
-  if [ -n "$ids" ] || have platform:local || { [ "$runner_built" = 1 ] && have "$RUNNER_IMG"; } || { [ "$borrowed" = 1 ] && have "$BORROWED"; }; then
-    echo "LET OP: er is nog iets van de test over"
-    rc=1
-  else
-    echo "Alles van de test is weg (containers, volumes, netwerken, images, de werkmap)."
+  if [ "$own_project" = 1 ]; then
+    ids="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")$(app_images)"
+    if [ -n "$ids" ] || have platform:local || { [ "$runner_built" = 1 ] && have "$RUNNER_IMG"; } || { [ "$borrowed" = 1 ] && have "$BORROWED"; }; then
+      echo "LET OP: er is nog iets van de test over"
+      rc=1
+    else
+      echo "Alles van de test is weg (containers, volumes, netwerken, images, de werkmap)."
+    fi
   fi
-  if [ "${#SUMMARY[@]}" -gt 0 ]; then
-    echo
-    echo "=== Samenvatting (test_install_media.sh --stappen) ==="
-    printf '%s\n' "${SUMMARY[@]}"
-    echo "=== einde samenvatting ==="
+  # Altijd, ook na een STOP of een afgebroken stap: de stap Samenvatting van CI leest dit blok
+  echo
+  echo "=== Samenvatting (test_install_media.sh --stappen) ==="
+  [ "${#SUMMARY[@]}" = 0 ] || printf '%s\n' "${SUMMARY[@]}"
+  echo "controles: $oks goed, $fails fout"
+  if [ "$ENDED" != 1 ]; then
+    echo "afgebroken in stap $STAGE (exit $rc): de stappen daarna liepen niet"
   fi
+  echo "=== einde samenvatting ==="
   exit "$rc"
 }
 

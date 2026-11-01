@@ -9,8 +9,9 @@ komt op stdout of in een log. INSTALL_API_URL is het adres van de app (http://12
     python3 install_api.py login                 inloggen met wachtwoord en een TOTP-code
     python3 install_api.py login-zonder-code     slaagt als de app 401 totp_required geeft
     python3 install_api.py get <pad> [veld]      GET; één veld (a.0.b) of de hele JSON
+    python3 install_api.py wait-field <pad> <veld> <s>   GET tot het veld er is en niet null is
     python3 install_api.py count <pad>           het aantal in een lijst (GET)
-    python3 install_api.py post <pad> <json> [veld]
+    python3 install_api.py post <pad> <json> [veld]  POST; één veld of de hele JSON (als er is)
     python3 install_api.py upload <map> <naam> <bestand> [conflict]   geeft het id
     python3 install_api.py sha <bestand> [versie]    sha256 van de inhoud
     python3 install_api.py text <bestand> [versie]   de tekst van een docx
@@ -22,6 +23,11 @@ komt op stdout of in een log. INSTALL_API_URL is het adres van de app (http://12
 TOTP zoals app/totp.py (RFC 6238: HMAC-SHA1, 6 cijfers, 30 s). De server neemt een stap maar
 één keer aan; een nieuwe login wacht dus zo nodig op de volgende stap, zoals totp_code in
 e2e/conftest.py. Een access-token dat verlopen is, wordt met het refresh-token vernieuwd.
+
+Is een antwoord niet wat de test verwacht (een andere status, geen JSON, of een veld dat
+ontbreekt), dan exitcode 1 met op stderr één regel: de methode, het pad, de HTTP-status en het
+begin van de body. Zo legt een fout in CI zichzelf uit (de eerste run van media-image gaf alleen
+een traceback zonder status).
 """
 
 from __future__ import annotations
@@ -55,8 +61,10 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class ApiError(Exception):
-    def __init__(self, method: str, path: str, status: int, body: bytes):
-        super().__init__(f"{method} {path} gaf {status}: {body[:300]!r}")
+    """Een antwoord dat niet is wat de test verwacht: de status en het begin van de body."""
+
+    def __init__(self, method: str, path: str, status: int, body: bytes, what: str = ""):
+        super().__init__(f"{method} {path} gaf {status}{what}: {body[:300]!r}")
         self.status = status
 
 
@@ -129,15 +137,16 @@ def keep_tokens(state: dict[str, Any], answer: bytes) -> None:
     save(state)
 
 
-def call(
+def exchange(
     method: str,
     path: str,
     *,
     body: Any = None,
     raw: bytes | None = None,
     expect: tuple[int, ...] = (200,),
-) -> bytes:
-    """Met het access-token; is dat verlopen (401), dan eerst één keer vernieuwen."""
+) -> tuple[int, bytes]:
+    """Met het access-token; is dat verlopen (401), dan eerst één keer vernieuwen. Geeft de
+    status en de body; een status buiten expect is een ApiError."""
     state = load()
     status, answer = request(method, path, token=state.get("access"), body=body, raw=raw)
     if status == 401 and state.get("refresh"):
@@ -149,13 +158,40 @@ def call(
             status, answer = request(method, path, token=state["access"], body=body, raw=raw)
     if status not in expect:
         raise ApiError(method, path, status, answer)
-    return answer
+    return status, answer
 
 
-def pick(value: Any, field: str | None) -> Any:
+def call(
+    method: str,
+    path: str,
+    *,
+    body: Any = None,
+    raw: bytes | None = None,
+    expect: tuple[int, ...] = (200,),
+) -> bytes:
+    """Zoals exchange, alleen de body."""
+    return exchange(method, path, body=body, raw=raw, expect=expect)[1]
+
+
+def parse(method: str, path: str, status: int, answer: bytes, field: str | None = None) -> Any:
+    """De JSON van een antwoord, of één veld eruit (a.0.b). Geen JSON, of een veld dat er niet
+    is: een ApiError met de status en het begin van de body."""
+    try:
+        value = json.loads(answer)
+    except ValueError:  # ook een lege body (b"")
+        raise ApiError(method, path, status, answer, ", maar geen JSON") from None
     for part in field.split(".") if field else []:
-        value = value[int(part)] if isinstance(value, list) else value[part]
+        try:
+            value = value[int(part)] if isinstance(value, list) else value[part]
+        except (KeyError, IndexError, TypeError, ValueError):
+            what = f", maar zonder het veld {field} (bij {part!r})"
+            raise ApiError(method, path, status, answer, what) from None
     return value
+
+
+def fetch(method: str, path: str, field: str | None = None, **kwargs: Any) -> Any:
+    """exchange en dan parse."""
+    return parse(method, path, *exchange(method, path, **kwargs), field)
 
 
 def show(value: Any) -> None:
@@ -207,7 +243,7 @@ def docx_text(data: bytes) -> str:
 
 
 def office_state() -> tuple[str, bool]:
-    status = json.loads(call("GET", "/api/v1/office/status"))
+    status = fetch("GET", "/api/v1/office/status")
     return status["state"], bool(status["editing"])
 
 
@@ -243,6 +279,25 @@ def watch(seconds: float, out: str) -> bool:
     return False
 
 
+def wait_field(path: str, field: str, seconds: float) -> Any:
+    """GET tot het veld er is en niet null is (bijvoorbeeld de zelftest op /beheer, die er pas
+    is als de app de worker sprak). Na seconds: None, met op stderr wat er het laatst kwam."""
+    end = time.monotonic() + seconds
+    seen = "nog niets"
+    while True:
+        try:
+            value = fetch("GET", path, field)
+            if value is not None:
+                return value
+            seen = f"GET {path} gaf {field} null"
+        except (ApiError, OSError) as exc:  # de app start misschien net opnieuw
+            seen = str(exc)
+        if time.monotonic() >= end:
+            print(f"  na {seconds:.0f} s nog geen {field}: {seen}", file=sys.stderr)
+            return None
+        time.sleep(2)
+
+
 SUPERVISOR = re.compile(
     r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d{3}) \w+ (stopped|success): (?:ds:)?converter\b"
 )
@@ -276,21 +331,32 @@ def main(argv: list[str]) -> int:
     elif command == "login-zonder-code":
         return 0 if login(with_code=False) else 1
     elif command == "get":
-        show(pick(json.loads(call("GET", args[0])), args[1] if len(args) > 1 else None))
+        show(fetch("GET", args[0], args[1] if len(args) > 1 else None))
+    elif command == "wait-field":
+        value = wait_field(args[0], args[1], float(args[2]))
+        if value is None:
+            return 1
+        show(value)
     elif command == "count":
-        print(len(json.loads(call("GET", args[0]))))
+        print(len(fetch("GET", args[0])))
     elif command == "post":
-        answer = call("POST", args[0], body=json.loads(args[1]), expect=(200, 201, 202, 204))
-        if len(args) > 2:
-            show(pick(json.loads(answer), args[2]))
+        try:
+            body = json.loads(args[1])
+        except ValueError:
+            print(f"  post {args[0]}: de body is geen JSON: {args[1][:200]!r}", file=sys.stderr)
+            return 2
+        status, answer = exchange("POST", args[0], body=body, expect=(200, 201, 202, 204))
+        # Zonder veld de hele JSON, zoals get (een 204 heeft geen body: dan niets)
+        if answer or len(args) > 2:
+            show(parse("POST", args[0], status, answer, args[2] if len(args) > 2 else None))
     elif command == "upload":
         query = urllib.parse.urlencode(
             {"name": args[1], "conflict": args[3] if len(args) > 3 else "rename"}
         )
         with open(args[2], "rb") as f:
             data = f.read()
-        node = call("PUT", f"/api/v1/files/{args[0]}/upload?{query}", raw=data, expect=(201,))
-        print(json.loads(node)["id"])
+        path = f"/api/v1/files/{args[0]}/upload?{query}"
+        print(parse("PUT", path, *exchange("PUT", path, raw=data, expect=(201,)), "id"))
     elif command == "sha":
         print(hashlib.sha256(content(args[0], args[1] if len(args) > 1 else None)).hexdigest())
     elif command == "text":
@@ -300,7 +366,7 @@ def main(argv: list[str]) -> int:
     elif command == "watch":
         return 0 if watch(float(args[0]), args[1]) else 1
     elif command == "notice":
-        notices = json.loads(call("GET", "/api/v1/admin/status")).get("notices") or []
+        notices = fetch("GET", "/api/v1/admin/status").get("notices") or []
         return 0 if any(n.get("code") == args[0] for n in notices) else 1
     elif command == "font-end":
         end = font_end(args[0], args[1])
