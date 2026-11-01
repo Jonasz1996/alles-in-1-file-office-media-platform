@@ -9,6 +9,8 @@
 # Opnieuw draaien werkt het platform bij; instellingen en data blijven staan.
 # Andere poort dan 80: curl … | PORT=8080 bash (later aan te passen in /opt/platform/.env)
 # Office uit: curl … | OFFICE=uit bash. Weer aan: OFFICE=aan.
+# Media (fase 5) draait standaard afgeschermd in een eigen container. Nooduitgang, zonder die
+# afscherming: curl … | MEDIA_SANDBOX=uit bash. Weer afgeschermd: MEDIA_SANDBOX=aan.
 #
 # Voor tests (Jonas heeft ze niet nodig): PLATFORM_REPO (ook een lokaal pad of file://),
 # PLATFORM_SRC_REF (een commit of tag in plaats van de branch) en PLATFORM_ROOT (in plaats van
@@ -65,6 +67,17 @@ want_office() {
   esac
 }
 
+# Net zo voor media (fase 5): MEDIA_SANDBOX uit de omgeving wint van .env. Alleen aan of uit.
+want_media() {
+  case "${MEDIA_SANDBOX-}" in
+    "" | aan | uit) printf '%s' "${MEDIA_SANDBOX-}" ;;
+    *)
+      echo "MEDIA_SANDBOX moet aan of uit zijn (nu: $MEDIA_SANDBOX)." >&2
+      return 1
+      ;;
+  esac
+}
+
 # Na het maken of lezen van .env: de sleutels van office erbij, nooit overschreven. Een
 # gevraagde OFFICE vervangt daarna de waarde.
 merge_env() {
@@ -78,6 +91,43 @@ merge_env() {
 # Heeft de broncode die nu klaarstaat office? (Een oudere versie, bijvoorbeeld bij terugrollen,
 # heeft het nog niet.)
 office_supported() { [ -f "$SRC/infra/single/compose.office.yaml" ]; }
+
+# En media? 0.6.0 (terugrollen, Keuze 47) heeft het nog niet.
+media_supported() { [ -f "$SRC/infra/single/compose.media.yaml" ]; }
+
+# Na het maken of lezen van .env, als de versie media heeft. Een bestaande waarde blijft; een
+# gevraagde MEDIA_SANDBOX vervangt hem. MEDIA_WORKER_KEY (de sleutel waarmee de worker zich bij
+# de app bewijst, compose.media.yaml) komt er één keer bij, zoals de geheimen van office, en
+# wordt nooit vervangen.
+merge_media_env() {
+  add_key MEDIA_SANDBOX aan
+  add_key MAX_UPLOAD_BYTES 53687091200
+  add_key MEDIA_WORKER_KEY "$(hex)"
+  [ -z "$1" ] || set_key MEDIA_SANDBOX "$1"
+  chmod 600 "$ENV_FILE"
+}
+
+# Beslist over media voor deze run. Zet MEDIA_ON (1: de worker in zijn eigen container),
+# MEDIA_LOCAL (1: MEDIA_SANDBOX=uit, de app start ffmpeg zelf) en MEDIA_REASON (waarom niet
+# afgeschermd). Breekt nooit af: alles staat in een if, zoals decide_office. Een andere waarde
+# dan aan of uit in .env (met de hand bewerkt) houdt de afscherming aan: dat is de veilige kant.
+decide_media() {
+  MEDIA_ON=0 MEDIA_LOCAL=0 MEDIA_REASON=""
+  if ! media_supported; then
+    MEDIA_REASON="deze versie van het platform heeft nog geen media"
+  elif [ "${MEDIA_SANDBOX:-aan}" = uit ]; then
+    MEDIA_LOCAL=1
+    MEDIA_REASON="MEDIA_SANDBOX=uit: ffmpeg draait zonder afscherming in de app"
+  elif [ "${MEDIA_SANDBOX:-aan}" != aan ]; then
+    MEDIA_ON=1
+    MEDIA_REASON="MEDIA_SANDBOX in $ENV_FILE moet aan of uit zijn (nu: $MEDIA_SANDBOX); media blijft afgeschermd"
+  else
+    MEDIA_ON=1
+  fi
+}
+
+# De mappen voor media en de import, van de gebruiker van de app (10001)
+media_dirs() { install -d -m 750 -o 10001 -g 10001 "$DATA_ROOT/media" "$DATA_ROOT/import"; }
 
 # overlay2, of overlayfs bij Docker 29 met de opslag van containerd (M8). Bij vfs wordt het image
 # vele malen groter.
@@ -198,7 +248,9 @@ decide_office() {
   fi
 }
 
-# De compose-bestanden voor deze run (zet de array compose)
+# De compose-bestanden voor deze run (zet de array compose). $1 = office, $2 = media in zijn
+# eigen container, $3 = media zonder afscherming (MEDIA_SANDBOX=uit: de app krijgt media, maar
+# geen PLATFORM_MEDIA_WORKER, en start de worker zelf). Zonder $2 en $3: geen media (0.6.0).
 compose_files() {
   local dir=$SRC/infra/single
   compose=(docker compose --project-directory "$dir" --env-file "$ENV_FILE" -f "$dir/compose.yaml")
@@ -206,6 +258,41 @@ compose_files() {
     compose+=(-f "$dir/compose.office.yaml")
     if limits_supported; then compose+=(-f "$dir/compose.office-limits.yaml"); fi
   fi
+  if [ "${2:-0}" = 1 ]; then
+    compose+=(-f "$dir/compose.media.yaml")
+    if limits_supported; then compose+=(-f "$dir/compose.media-limits.yaml"); fi
+  elif [ "${3:-0}" = 1 ]; then
+    compose+=(-f "$dir/compose.media-local.yaml")
+  fi
+}
+
+# Na de app (en vóór office): de worker in zijn container, en daarna de staat van media. Lukt
+# de start niet, dan draait de app zonder worker (alleen direct play) en zegt het script hoe het
+# verder kan. Breekt nooit af (Keuze 47): de app draait al.
+media_start() {
+  if [ "$MEDIA_ON" = 1 ]; then
+    if ! "${compose[@]}" up -d --no-deps media </dev/null; then
+      MEDIA_REASON="de mediaworker kon niet starten (de melding van Docker staat hierboven)"
+      echo "Let op: $MEDIA_REASON."
+      echo "Afspelen werkt alleen direct. Nooduitgang: MEDIA_SANDBOX=uit (zonder afscherming)."
+      return 0
+    fi
+  elif [ "$MEDIA_LOCAL" != 1 ]; then
+    return 0
+  fi
+  "${compose[@]}" exec -T platform python -m app.cli media-status --wait 20 </dev/null ||
+    echo "Let op: media meldt een probleem (zie hierboven); het platform werkt verder."
+}
+
+# Vóór het vervangen van de app: kijkt er iemand? Alleen een waarschuwing (Keuze 47): die
+# streams staan tot ±60 s stil, en de speler probeert het zelf opnieuw. Een oudere app kent het
+# commando niet, of media staat uit; dan zegt het script niets.
+watchers() {
+  local id out
+  id=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" --filter label=com.docker.compose.service=platform | head -n 1)
+  [ -n "$id" ] || return 0
+  out=$("${compose[@]}" exec -T platform python -m app.cli media-status --sessions </dev/null 2>/dev/null) || true
+  printf '%s\n' "$out" | grep -E '^(Let op: er |  )' || true
 }
 
 # Het volledige id van een image, of niets
@@ -343,7 +430,7 @@ broncode() {
 }
 
 instellingen() {
-  local want=$1
+  local want=$1 want_m=$2
   mkdir -p "$PLATFORM_ROOT"
   if [ -f "$ENV_FILE" ] && grep -q '^POSTGRES_PASSWORD=' "$ENV_FILE"; then
     # Instellingen van de eerste versie (met Traefik, PostgreSQL en SeaweedFS)
@@ -374,12 +461,20 @@ ENV
     add_key OFFICE "$want"
     set_key OFFICE "$want"
   fi
+  if media_supported; then
+    merge_media_env "$want_m"
+  elif [ -n "$want_m" ]; then
+    # Een versie zonder media (terugrollen naar 0.6.0): de wens bewaren, verder niets
+    add_key MEDIA_SANDBOX "$want_m"
+    set_key MEDIA_SANDBOX "$want_m"
+  fi
   chmod 600 "$ENV_FILE"
   # shellcheck disable=SC1090
   . "$ENV_FILE"
   # De app draait in de container als gebruiker 10001
   install -d -m 750 "$DATA_ROOT"
   chown 10001:10001 "$DATA_ROOT"
+  if media_supported; then media_dirs; fi
 }
 
 # Vóór het vervangen van de app: alle open documenten tussentijds opslaan. Een oudere app kent
@@ -403,9 +498,10 @@ wait_health() {
 }
 
 main() {
-  local want old_app new_app previous="" pin="" container
-  # Eerst: OFFICE uit de omgeving, vóór er een .env gelezen wordt (M13)
+  local want want_m old_app new_app previous="" pin="" container
+  # Eerst: OFFICE en MEDIA_SANDBOX uit de omgeving, vóór er een .env gelezen wordt (M13)
   want=$(want_office) || exit 1
+  want_m=$(want_media) || exit 1
   check_host
 
   stap "Pakketten"
@@ -418,7 +514,7 @@ main() {
   broncode
 
   stap "Instellingen"
-  instellingen "$want"
+  instellingen "$want" "$want_m"
 
   stap "Office"
   decide_office
@@ -428,12 +524,24 @@ main() {
     echo "Office: uit ($OFFICE_REASON)"
   fi
   [ -z "$OFFICE_REASON" ] || [ "$OFFICE_ON" = 0 ] || echo "Let op: $OFFICE_REASON."
-  compose_files "$OFFICE_ON"
+
+  stap "Media"
+  decide_media
+  if [ "$MEDIA_ON" = 1 ]; then
+    echo "Media: aan (afgeschermd)"
+    [ -z "$MEDIA_REASON" ] || echo "Let op: $MEDIA_REASON."
+  elif [ "$MEDIA_LOCAL" = 1 ]; then
+    echo "Media: aan, zonder afscherming ($MEDIA_REASON)"
+  else
+    echo "Media: uit ($MEDIA_REASON)"
+  fi
+  compose_files "$OFFICE_ON" "$MEDIA_ON" "$MEDIA_LOCAL"
   container=$(office_container)
   if [ -n "$container" ]; then previous=$(docker inspect --format '{{.Image}}' "$container" 2>/dev/null || true); fi
   [ -z "${OFFICE_IMAGE:-}" ] || pin=$(image_id "$OFFICE_IMAGE")
 
   stap "Platform bouwen en starten (de eerste keer duurt dit een paar minuten)"
+  watchers
   checkpoint
   if [ "$OFFICE_ON" = 0 ] && [ -n "$container" ]; then
     # Eerst DS netjes stoppen, terwijl de app er nog is: zo vindt zijn laatste opslag de app
@@ -443,8 +551,6 @@ main() {
   old_app=$(image_id platform:local)
   OFFICE_IMAGE=$OFFICE_IMG "${compose[@]}" up -d --build --remove-orphans platform
   new_app=$(image_id platform:local)
-  # Het vorige image van de app weg (alleen dat; geen prune van andermans images)
-  if [ -n "$old_app" ] && [ "$old_app" != "$new_app" ]; then docker image rm "$old_app" >/dev/null 2>&1 || true; fi
 
   if ! wait_health; then
     echo "Het platform reageert niet. Laatste logregels:"
@@ -452,10 +558,19 @@ main() {
     exit 1
   fi
 
+  if [ "$MEDIA_ON" = 1 ] || [ "$MEDIA_LOCAL" = 1 ]; then
+    stap "Media starten"
+    media_start
+  fi
+
   if [ "$OFFICE_ON" = 1 ]; then
     stap "Office starten"
     office_start "$container" "$previous" "$pin"
   fi
+
+  # Pas nu het vorige image van de app weg (alleen dat; geen prune van andermans images): de
+  # oude mediaworker draaide er tot media_start nog op, en dan faalde het weghalen stil
+  if [ -n "$old_app" ] && [ "$old_app" != "$new_app" ]; then docker image rm "$old_app" >/dev/null 2>&1 || true; fi
 
   slot
 }
@@ -505,6 +620,7 @@ KLAAR
     echo "Office: uit, want $OFFICE_REASON."
     office_supported && echo "  Aan: $script | ${pre}OFFICE=aan bash"
   fi
+  slot_media "$script" "$pre"
   cat <<KLAAR
 
 Instellingen: $ENV_FILE
@@ -516,6 +632,26 @@ KLAAR
       echo "Map '$oud' van de eerste versie wordt niet meer gebruikt; die mag weg."
     fi
   done
+}
+
+# De regels over media in de eindtekst: aan (afgeschermd), of waarom niet, en hoe het verder kan
+slot_media() {
+  local script=$1 pre=$2
+  # Zonder decide_media (een test die alleen slot draait): niets over media
+  [ -n "${MEDIA_ON+x}" ] || return 0
+  if [ "$MEDIA_ON" = 1 ] && [ -z "$MEDIA_REASON" ]; then
+    echo "Media: aan (afgeschermd)."
+    echo "  Nooduitgang, zonder afscherming: $script | ${pre}MEDIA_SANDBOX=uit bash"
+  elif [ "$MEDIA_ON" = 1 ]; then
+    echo "Media: aan (afgeschermd), maar $MEDIA_REASON."
+    echo "  Opnieuw proberen: $script | ${pre}bash"
+    echo "  Nooduitgang, zonder afscherming: $script | ${pre}MEDIA_SANDBOX=uit bash"
+  elif [ "$MEDIA_LOCAL" = 1 ]; then
+    echo "Media: aan, zonder afscherming ($MEDIA_REASON)."
+    echo "  Weer afgeschermd: $script | ${pre}MEDIA_SANDBOX=aan bash"
+  else
+    echo "Media: uit, want $MEDIA_REASON."
+  fi
 }
 
 [ "${INSTALL_LIB:-}" = 1 ] || main "$@"

@@ -21,5 +21,7 @@ services:
     environment:
       PLATFORM_NODE_NAME: ${NODE_NAME:-node1}
       PLATFORM_SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      # De grootste upload in bytes (fase 5, M10): standaard 50 GiB, voor een film
+      PLATFORM_MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-53687091200}
     volumes:
       - ${DATA_ROOT:?}:/data

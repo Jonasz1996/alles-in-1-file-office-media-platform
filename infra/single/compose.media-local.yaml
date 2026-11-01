@@ -1,0 +1,11 @@
+# Media zonder afscherming (fase 5, M10): de nooduitgang MEDIA_SANDBOX=uit in /opt/platform/.env.
+# install.sh neemt dit bestand dan mee in plaats van compose.media.yaml. De app krijgt media,
+# maar geen PLATFORM_MEDIA_WORKER: hij start de worker zelf, als kind in zijn eigen container
+# (de lokale worker, Keuze 13). Er is dan geen container media, en install.sh haalt een oude weg
+# (--remove-orphans). Zonder dit bestand stond media bij uit helemaal uit: PLATFORM_MEDIA_ENABLED
+# staat standaard uit (M0).
+services:
+  platform:
+    environment:
+      PLATFORM_MEDIA_ENABLED: "true"
+    stop_grace_period: 30s  # F3: de lifespan sluit netjes, ook met lange streams
