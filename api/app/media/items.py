@@ -35,6 +35,7 @@ from app.config import Settings
 from app.media import analysis, names, subtitles
 from app.media import chapters as media_chapters
 from app.media.library import Seen, get_seen
+from app.media.providers.http import printable
 from app.media.types import (
     Card,
     CardPage,
@@ -99,23 +100,26 @@ def _int(value: Any, low: int = 0, high: int = 99_999) -> int | None:
 
 
 def _clean(name: str, value: Any) -> Any:
-    """Een veld in de vorm van de kolom; wat niet past wordt None (of valt weg bij title)."""
+    """Een veld in de vorm van de kolom; wat niet past wordt None (of valt weg bij title). Tekst
+    komt zonder stuurtekens binnen, uit welke bron ook (de naam, de NFO, PATCH, een provider):
+    witruimte wordt een spatie, de rest van C0, DEL en C1 valt weg, zoals http.printable
+    (review golf 5, S1; bij de integratie ook bij de bron)."""
     if value is None:
         return None
     if name in ("title", "sort_title"):
-        text = " ".join(str(value).split())[:255]
+        text = " ".join(printable(str(value)).split())[:255]
         return text or None
     if name == "overview":
-        text = str(value).strip()[:MAX_OVERVIEW]
+        text = printable(str(value), lines=True).strip()[:MAX_OVERVIEW]
         return text or None
     if name == "year":
         return _int(value, *YEAR_RANGE)
     if name in ("season", "episode", "episode_end", "absolute", "part", "disc", "track"):
         return _int(value)
     if name == "edition":
-        return str(value).strip()[:64] or None
+        return printable(str(value)).strip()[:64] or None
     if name == "artist":
-        return str(value).strip()[:255] or None
+        return printable(str(value)).strip()[:255] or None
     if name == "aired":
         if isinstance(value, dt.date):
             return value

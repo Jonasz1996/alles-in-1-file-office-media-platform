@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import os
+import random
 import time
 import uuid
 
@@ -807,6 +808,34 @@ def test_een_aanvulling_zonder_titel_wist_niets():
                      art={}, locked=["overview"], source="nfo")  # fmt: skip
     media_items.merge(item, {"title": "naam", "year": None}, "name")
     assert (item.title, item.year, item.overview) == ("naam", None, "Eigen.")
+
+
+def test_stuurtekens_vallen_weg_bij_de_bron():
+    """Integratie (review golf 5, S1, de bron): een titel uit de naam of de NFO hield ESC, BEL
+    en C1 (split haalt alleen witruimte weg); media-status en de rest kregen ze zo. Nu, voor
+    elke bron in merge: witruimte wordt een spatie, de rest van C0, DEL en C1 valt weg, zoals
+    http.printable. Een samenvatting houdt haar regels."""
+    from app.media import items as media_items
+    from app.media.providers import http
+
+    item = MediaItem(title="x", sort_title="x", ids={}, art={}, locked=[], source="name")
+    media_items.merge(item, {"title": "Film\x1b]52;c;aGk=\x07\x9b2J\tdeel\x852",
+                             "sort_title": "film\x7f\x00", "overview": "Een\r\nregel\x1b[31m",
+                             "edition": "Director\x9bs Cut"}, "nfo")  # fmt: skip
+    assert item.title == "Film]52;c;aGk=2J deel 2"
+    assert item.sort_title == "film"
+    assert item.overview == "Een\nregel[31m"
+    assert item.edition == "Directors Cut"
+    show = MediaShow(title="x", sort_title="x", ids={}, art={}, locked=[])
+    media_items.merge(show, {"title": "Se\u0085rie\x1b"}, "name")
+    assert show.title == "Se rie"
+    rng = random.Random(20261101)
+    pool = [chr(c) for c in (*range(0x00, 0x21), *range(0x7F, 0xA1))] + list("aZ é")
+    for _ in range(2000):
+        raw = "".join(rng.choice(pool) for _ in range(rng.randint(0, 40)))
+        title = media_items._clean("title", raw)
+        assert title is None or (title == " ".join(http.printable(raw).split()) and title)
+        assert title is None or not any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in title)
 
 
 async def test_een_nfo_van_een_serie_en_een_aflevering(world, client):

@@ -55,6 +55,9 @@ _DECL = re.compile(r"^\s*<\?xml[^>]{0,200}\?>", re.IGNORECASE)
 _DECL_ENCODING = re.compile(rb"^\s*<\?xml[^>]{0,200}?encoding\s*=\s*[\"']([A-Za-z0-9._\-]{1,40})")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff￾￿]")
 _SPACES = re.compile(r"\s+")
+# Wat na _SPACES nog een stuurteken is (C0, DEL en C1): weg. C1 mag in XML 1.0, ook als
+# tekenverwijzing (&#x9b;), dus _CONTROL vóór het parsen vangt het niet (integratie, S1)
+_STRAY = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 _IMDB = re.compile(r"^tt\d{5,10}$")
 _NUMBER = re.compile(r"^\d{1,10}$")
@@ -147,7 +150,7 @@ def decode(data: bytes) -> str:
 def _text(element: ET.Element | None, limit: int = MAX_TEXT) -> str | None:
     if element is None:
         return None
-    text = _SPACES.sub(" ", "".join(element.itertext())).strip()
+    text = _STRAY.sub("", _SPACES.sub(" ", "".join(element.itertext()))).strip()
     return text[:limit] or None
 
 
@@ -155,7 +158,7 @@ def _plot(element: ET.Element | None) -> str | None:
     if element is None:
         return None
     text = "".join(element.itertext())[: MAX_PLOT * 4]
-    lines = (_SPACES.sub(" ", line).strip() for line in text.splitlines())
+    lines = (_STRAY.sub("", _SPACES.sub(" ", line)).strip() for line in text.splitlines())
     return "\n".join(line for line in lines if line)[:MAX_PLOT] or None
 
 

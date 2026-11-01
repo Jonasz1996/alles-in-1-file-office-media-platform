@@ -15,6 +15,7 @@ import asyncio
 import json
 import os
 import random
+import re
 import time
 from types import SimpleNamespace
 
@@ -263,6 +264,21 @@ def test_kapotte_xml(text):
     assert got["error"] == "xml" and got["root"] is None and got["fields"] == {}
 
 
+def test_geen_stuurtekens_in_titel_en_samenvatting():
+    """Integratie (review golf 5, S1, de bron): C1 mag in XML 1.0, ook als verwijzing (&#x9b; is
+    CSI, ESC [ voor een terminal), en kwam zo in de titel. Witruimte (tab, NEL) wordt een
+    spatie, de rest van C0, DEL en C1 valt weg; de regels van de samenvatting blijven."""
+    got = answer(
+        "<movie><title>De&#x9b;2J\u009dNacht&#x85;van\tHaven</title>"
+        "<sorttitle>Nacht\u0080</sorttitle>"
+        "<plot>Regel&#x9b;31m een\nregel\u0085twee</plot></movie>"
+    )
+    fields = got["fields"]
+    assert fields["title"] == "De2JNacht van Haven"
+    assert fields["sorttitle"] == "Nacht"
+    assert fields["plot"] == "Regel31m een\nregel\ntwee"
+
+
 def test_te_veel_elementen_en_lange_velden():
     many = "<movie>" + "<genre>g</genre>" * (nfo.MAX_ELEMENTS + 1) + "</movie>"
     assert answer(many)["error"] == "xml"
@@ -409,7 +425,11 @@ PIECES = ["<", ">", "</", "/>", "&", "&amp;", "&#x41;", "&#0;", "<!--", "-->", "
           "<?xml", "?>", "<movie>", "</movie>", "<title>", "</title>", "<uniqueid type='imdb'>",
           "tt0000001", "<!DOCTYPE", "<!ENTITY", "\x00", "\xff", "é", "﻿", "<a>" * 20, "'", '"',
           "<season>-1</season>", "<year>1e9</year>",
-          "<premiered>2024-13-01</premiered>"]  # fmt: skip
+          "<premiered>2024-13-01</premiered>",
+          "&#x9b;", "&#x85;", "\x9b", "\x1b", "\t"]  # fmt: skip
+
+
+STRAY = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 def check_shape(got: dict) -> None:
@@ -420,8 +440,10 @@ def check_shape(got: dict) -> None:
     for key, value in got["fields"].items():
         if key in ("title", "originaltitle", "sorttitle", "showtitle"):
             assert isinstance(value, str) and 0 < len(value) <= nfo.MAX_TEXT
+            assert STRAY.search(value) is None, value  # geen stuurtekens (integratie, S1)
         elif key == "plot":
             assert isinstance(value, str) and len(value) <= nfo.MAX_PLOT
+            assert STRAY.search(value.replace("\n", "")) is None, value
         elif key in ("year", "season", "episode"):
             assert isinstance(value, int)
         elif key == "ids":
