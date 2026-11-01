@@ -7,6 +7,7 @@
 // (where "viewer") alleen Spatie, K, J, L, M, C, A, P en 0–9 in de scope van de viewer.
 
 import { type JSX, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { api } from "../../api";
 import { errorText, locale, t } from "../../i18n";
 import { streamUrl } from "../../media";
 import type { PlayOut, Quality } from "../../media/types";
@@ -29,7 +30,7 @@ import {
 import { spans } from "../mse";
 import { COUNTDOWN_S, cardTime, clock } from "../next";
 import { loadProgress, Reporter, type ProgressSink } from "../playback";
-import type { Notice, StopReason } from "../session";
+import { failureOffer, type Notice, type StopReason } from "../session";
 import { waitVtt } from "../subs";
 import {
   audioLabel,
@@ -166,6 +167,7 @@ export default function Player(props: PlayerProps): JSX.Element {
   const [phase, setPhase] = useState<"loading" | "ready" | "stopped" | "failed">("loading");
   const [notice, setNotice] = useState<Notice>(null);
   const [failure, setFailure] = useState<{ e: unknown; unreachable: boolean; loop: boolean } | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [stopReason, setStopReason] = useState<StopReason | null>(null);
   const [paused, setPaused] = useState(true);
   const [waiting, setWaiting] = useState(false);
@@ -240,6 +242,7 @@ export default function Player(props: PlayerProps): JSX.Element {
             return;
           }
           setFailure({ e, unreachable: o.unreachable, loop: o.loop });
+          setDownloadError(null);
           setPhase("failed");
         },
         lowered: (q) => announce(t("player.quality.lowered", { quality: qualityName(q) })),
@@ -808,6 +811,22 @@ export default function Player(props: PlayerProps): JSX.Element {
     </button>
   );
 
+  // Downloaden bij een fout (Keuze 46): een link van fase 3, zoals de viewer
+  async function download() {
+    setDownloadError(null);
+    try {
+      const a = document.createElement("a");
+      a.href = await api.downloadUrl(nodeId);
+      a.download = "";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (e) {
+      setDownloadError(errorText(e));
+    }
+  }
+
   let overlay: JSX.Element | null = null;
   if (phase === "stopped" && stopReason) {
     overlay = (
@@ -817,20 +836,30 @@ export default function Player(props: PlayerProps): JSX.Element {
     );
   } else if (phase === "failed" && failure) {
     const err = failure.e as { code?: string; params?: { can_raw?: boolean } };
+    // Keuze 46: kan de server het nu niet omzetten, dan die zin en Downloaden (integratie, punt 7)
+    const offer = failure.unreachable || failure.loop ? null : failureOffer(failure.e);
     const text = failure.unreachable
       ? t("player.errors.unreachable")
       : failure.loop
         ? t("player.errors.loop")
-        : err?.code === "media_decode"
-          ? t("player.errors.decode")
-          : errorText(failure.e);
+        : offer?.cannotConvert
+          ? t("player.errors.cannotConvert")
+          : err?.code === "media_decode"
+            ? t("player.errors.decode")
+            : errorText(failure.e);
     overlay = (
       <div className="player-overlay" role="alert">
         <p>{text}</p>
+        {downloadError && <p>{downloadError}</p>}
         <div className="player-overlay-actions">
           {err?.code === "media_hdr" && err.params?.can_raw && (
             <button type="button" className="btn" onClick={() => void ctl.current?.again({ hdr: "raw" })}>
               {t("player.errors.hdrRaw")}
+            </button>
+          )}
+          {offer?.download && (
+            <button type="button" className="btn" data-player="download" onClick={() => void download()}>
+              {t("player.errors.download")}
             </button>
           )}
           <button

@@ -3,6 +3,7 @@ import { ApiError } from "../api";
 import type { ClientProfile, PlayIn } from "../media/types";
 import {
   classify,
+  failureOffer,
   HEALTH_URL,
   health,
   type Notice,
@@ -42,6 +43,37 @@ function fake(o: Partial<RecoverDeps> & { aheadS?: number } = {}) {
 const gone = () => new StreamError(410, "weg", "media_session_gone");
 const net = () => new ApiError(0, "Geen verbinding", "network");
 const bare503 = () => new StreamError(503, "Fout 503", "http_error", { status: 503 });
+
+describe("failureOffer (Keuze 46, integratie punt 7)", () => {
+  it("Downloaden als de server het niet kan omzetten, en de zin van Keuze 46 als ffmpeg ontbreekt", () => {
+    const ffmpeg = new ApiError(503, "ffmpeg ontbreekt", "media_ffmpeg_missing");
+    expect(failureOffer(ffmpeg)).toEqual({ download: true, cannotConvert: true });
+    for (const code of [
+      "media_worker_down",
+      "media_unavailable",
+      "media_unsupported",
+      "media_hdr",
+      "media_transcode_failed",
+      "media_timeout",
+      "media_busy",
+      "media_decode",
+    ]) {
+      expect(failureOffer(new StreamError(503, "x", code)), code).toEqual({ download: true, cannotConvert: false });
+    }
+  });
+
+  it("geen Downloaden bij toegang weg, zonder code of bij iets anders", () => {
+    expect(failureOffer(new StreamError(403, "x", "media_access_gone", { reason: "revoked" }))).toEqual({
+      download: false,
+      cannotConvert: false,
+    });
+    expect(failureOffer(gone()).download).toBe(false);
+    expect(failureOffer(net()).download).toBe(false);
+    expect(failureOffer(bare503()).download).toBe(false);
+    expect(failureOffer(null).download).toBe(false);
+    expect(failureOffer("media_ffmpeg_missing").download).toBe(false);
+  });
+});
 
 describe("classify", () => {
   it("elke code zijn gedrag (Keuze 32)", () => {

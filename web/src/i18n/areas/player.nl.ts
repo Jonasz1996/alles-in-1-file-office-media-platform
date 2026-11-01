@@ -69,6 +69,8 @@ export default {
     loop: "De afspeelsessie blijft verlopen. Probeer het later opnieuw.",
     decode: "Deze browser kan deze video niet afspelen.",
     retry: "Opnieuw proberen",
+    cannotConvert: "Dit bestand kan de browser niet afspelen, en de server kan het nu niet omzetten.",
+    download: "Downloaden",
     hdrRaw: "HDR toch afspelen (kleuren kunnen afwijken)",
   },
   next: {

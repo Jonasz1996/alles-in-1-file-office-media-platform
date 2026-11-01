@@ -70,6 +70,8 @@ const en: Translation<typeof nl> = {
     loop: "The playback session keeps expiring. Try again later.",
     decode: "This browser can't play this video.",
     retry: "Try again",
+    cannotConvert: "The browser cannot play this file, and the server cannot convert it right now.",
+    download: "Download",
     hdrRaw: "Play HDR anyway (colours may be off)",
   },
   next: {

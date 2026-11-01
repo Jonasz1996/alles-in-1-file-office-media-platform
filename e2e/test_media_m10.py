@@ -21,8 +21,9 @@ Met media aan en de lokale worker (de fixture media), tegen de echte routes van 
 
 4. **De worker zonder ffmpeg** (§4.3 #13; review golf 5, K7): de app opnieuw gestart met een
    PATH zonder ffmpeg en ffprobe (een lege map). /beheer zegt "ffmpeg ontbreekt" en toont de
-   melding; direct play (VP9 + Opus in WebM) werkt nog; een HEVC-film geeft op /kijken de fout
-   van de worker, en in de viewer de melding met "Downloaden". Daarna weer met de oude PATH.
+   melding; direct play (VP9 + Opus in WebM) werkt nog; een HEVC-film geeft op /kijken de zin
+   van Keuze 46 met "Downloaden" (met Tab en Enter; de download is het bestand, integratie punt
+   7), en in de viewer de melding met "Downloaden". Daarna weer met de oude PATH.
 
 De import naar een eigen map met de mappenkiezer en kopiëren toetst test_media_m2.py (sinds M10
 via /beheer; m2.md, afwijking 1).
@@ -30,6 +31,7 @@ via /beheer; m2.md, afwijking 1).
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -40,6 +42,7 @@ from typing import Any
 import pytest
 from playwright.sync_api import expect
 
+from test_media_m2 import tab_to
 from test_media_m6 import (
     PLAYER,
     Plays,
@@ -52,6 +55,9 @@ from test_media_m6 import (
 )
 
 STOP_TEXT = "De beheerder heeft het afspelen gestopt."
+CANNOT_CONVERT = (
+    "Dit bestand kan de browser niet afspelen, en de server kan het nu niet omzetten."  # Keuze 46
+)
 ADMIN_POLL_S = 5  # MediaTab ververst elke 5 s
 
 
@@ -322,16 +328,22 @@ def test_de_worker_zonder_ffmpeg(media, media_browsers, ffmpeg_count, tmp_path):
         assert plays.ok and plays.ok[-1]["out"]["mode"] == "direct", plays.calls
 
         # Een HEVC-film moet om, en dat kan nu niet: op /kijken de fout van de worker (503
-        # media_ffmpeg_missing, geen "druk, probeer later")
+        # media_ffmpeg_missing, geen "druk, probeer later"), met de zin van Keuze 46 en
+        # Downloaden (integratie, punt 7), met het toetsenbord
         before = len(plays.calls)
         watch(page, hevc.id)
         expect(page.locator(PLAYER)).to_have_attribute("data-state", "failed", timeout=30_000)
-        expect(page.locator(".player-overlay[role=alert]")).to_contain_text(
-            "ffmpeg ontbreekt of werkt niet in de mediaworker"
-        )
+        overlay = page.locator(".player-overlay[role=alert]")
+        expect(overlay).to_contain_text(CANNOT_CONVERT)
         refused = plays.calls[before:]
         assert refused and refused[-1]["status"] == 503, refused
         assert refused[-1]["out"]["detail"]["code"] == "media_ffmpeg_missing", refused
+        expect(overlay.get_by_role("button", name="Downloaden", exact=True)).to_be_visible()
+        tab_to(page, "[data-player=download]", presses=10)
+        with page.expect_download() as got:
+            page.keyboard.press("Enter")
+        data = got.value.path().read_bytes()
+        assert hashlib.sha256(data).hexdigest() == hevc.sha, len(data)
 
         # In de viewer: play zegt nee aan het begin, de <video> van fase 3 kan het formaat niet,
         # en de melding biedt Downloaden aan

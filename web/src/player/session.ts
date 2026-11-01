@@ -123,6 +123,29 @@ export function classify(e: unknown): Failure {
   return { kind: "fatal" };
 }
 
+/** Fouten waarbij de browser het bestand niet kan afspelen en de server het niet (nu) kan
+ *  omzetten (Keuze 46): de speler biedt dan Downloaden aan. Niet bij een fout over toegang. */
+const DOWNLOAD_CODES = new Set([
+  "media_ffmpeg_missing",
+  "media_worker_down",
+  "media_unavailable",
+  "media_unsupported",
+  "media_hdr",
+  "media_transcode_failed",
+  "media_timeout",
+  "media_busy",
+  "media_decode",
+]);
+
+/** Wat de melding bij een fout die blijft aanbiedt (integratie, punt 7): `download` als
+ *  Downloaden zin heeft, en `cannotConvert` voor de zin van Keuze 46 in plaats van de tekst van
+ *  de server (ffmpeg ontbreekt). */
+export function failureOffer(e: unknown): { download: boolean; cannotConvert: boolean } {
+  const code = typeof e === "object" && e !== null ? (e as { code?: unknown }).code : undefined;
+  if (typeof code !== "string") return { download: false, cannotConvert: false };
+  return { download: DOWNLOAD_CODES.has(code), cannotConvert: code === "media_ffmpeg_missing" };
+}
+
 // --- de regels ---
 
 /** Opnieuw na 1, 2, 4 en 8 s, en dan elke 10 s. */

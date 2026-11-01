@@ -70,6 +70,14 @@ toets, ook Tab, laat hem weer zien. De volgorde met Tab:
 Elke knop heeft een naam (`aria-label`) en een tooltip met dezelfde tekst. Een knop die aan of uit
 staat, heeft `aria-pressed` (Info).
 
+## Als afspelen mislukt
+
+De melding staat midden in de speler (`role="alert"`), met Tab direct na **Terug** (op
+`/kijken`): **HDR toch afspelen** (alleen bij een HDR-film die niet om kan), **Downloaden** (als
+de browser het bestand niet kan afspelen en de server het nu niet kan omzetten, Keuze 46; bij de
+integratie, punt 7) en **Opnieuw proberen**. Enter of Spatie op Downloaden haalt het bestand
+zelf op, zoals Downloaden in de viewer.
+
 ## De menu's Ondertitels, Audiospoor en Kwaliteit
 
 - Enter of Spatie op de knop opent het menu (`aria-haspopup="menu"`, `aria-expanded`); de focus
