@@ -690,6 +690,12 @@ stappen() {
   git -C "$WORK/repo.git" update-ref refs/heads/installatietest-naar "$TO"
   git -C "$WORK/repo.git" update-ref refs/heads/installatietest-naar2 "$TO2"
   git -C "$WORK/repo.git" show "$TO:infra/single/install.sh" >"$WORK/install.sh"
+  # install.sh draait in de runner als root, maar de kale kloon is van de gebruiker van de test
+  # (in CI de runner, niet root). git weigert dan te klonen ("dubious ownership"). Deze ene map
+  # vertrouwen via een eigen globale config: GIT_CONFIG_GLOBAL gaat, anders dan -c of
+  # GIT_CONFIG_COUNT, ook mee naar upload-pack van een lokale kloon. Op de LXC bestaat dit niet:
+  # daar komt de broncode van GitHub.
+  printf '[safe]\n\tdirectory = %s\n' "$WORK/repo.git" >"$WORK/gitconfig"
 
   # --- images (zoals test_install_update.sh) -----------------------------------------------
   pull_new() {
@@ -885,6 +891,7 @@ print(c.execute("select version_num from alembic_version").fetchone()[0])' </dev
       -v /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro \
       -v "$WORK:$WORK" \
       -e PLATFORM_REPO="$WORK/repo.git" -e PLATFORM_ROOT="$ROOT" -e OFFICE=uit \
+      -e GIT_CONFIG_GLOBAL="$WORK/gitconfig" \
       -e PORT="$PORT" -e HTTPS_PORT="$HTTPS_PORT" -e SHIM_COMPOSE_EXTRA="$SANDBOX_COMPOSE" \
       -e PATH="$WORK/shim/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
       "${envs[@]}" "$RUNNER_IMG" bash -s <"$WORK/install.sh" >"$WORK/logs/$name.log" 2>&1 || rc=$?
