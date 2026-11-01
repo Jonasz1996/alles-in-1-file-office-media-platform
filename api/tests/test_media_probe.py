@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import random
@@ -18,11 +19,12 @@ from pathlib import Path
 import pytest
 
 from app.config import Settings
-from app.media import client, local, wire
+from app.media import analysis, client, local, wire
 from app.media.client import WorkerFailed
 from app.media.types import Probe, SegmentGrid
 from app.media.wire import Code
 from app.media.worker.ops import probe as P
+from app.media.worker.server import OpError
 from tests.media import fixtures as F
 
 # --- sniff -----------------------------------------------------------------------------------
@@ -584,3 +586,64 @@ def children(ppid: int) -> list[int]:
         if int(parent) == ppid and state != "Z":
             found.append(int(name))
     return found
+
+
+# --- een ffprobe die niet start (integratie, punt 5) ---------------------------------------------
+
+
+class _Ctx:
+    def __init__(self, exc: BaseException):
+        self.exc = exc
+
+    async def run(self, argv, **kwargs):
+        raise self.exc
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "exc,code",
+    [
+        (FileNotFoundError(errno.ENOENT, "No such file or directory"), Code.FFMPEG_MISSING),
+        (OSError(errno.ENOEXEC, "Exec format error"), Code.FFMPEG_MISSING),
+        (PermissionError(errno.EACCES, "Permission denied"), Code.FFMPEG_MISSING),
+        (OSError(errno.EMFILE, "Too many open files"), Code.INTERNAL),
+        (RuntimeError("te veel uitvoer"), Code.UNREADABLE),
+    ],
+)
+async def test_een_ffprobe_die_niet_start_is_geen_kapot_bestand(exc, code):
+    """Integratie (m10.md, punt 5): ENOEXEC (een leeg ffprobe, zoals in de installatietest van
+    de sandbox) of EACCES werd unreadable, en zo een blijvend mislukte probe; kwam ffmpeg terug,
+    dan bleef de film "niet af te spelen". Nu ffmpeg_missing (of internal): de app bewaart
+    niets en probeert het later opnieuw. Een fout van het bestand blijft unreadable."""
+    with pytest.raises(OpError) as found:
+        await P._json(_Ctx(exc), 3, ["ffprobe"], required=True)
+    assert found.value.code == code
+    assert found.value.code not in analysis.FILE_ERRORS or code == Code.UNREADABLE
+
+
+@pytest.mark.media
+@pytest.mark.anyio
+async def test_een_leeg_ffprobe_in_de_worker_bewaart_niets(tmp_path, monkeypatch):
+    """Met -m media: de echte lokale worker met een leeg ffprobe (0711, zoals het image van de
+    installatietest) op PATH. De probe geeft ffmpeg_missing, niet unreadable, en
+    analysis.probe_blob bewaart dus geen mislukte probe."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("ffprobe", "ffmpeg"):
+        (bin_dir / name).write_bytes(b"")
+        (bin_dir / name).chmod(0o711)
+    # Alleen deze map: met /usr/bin erachter probeert exec na ENOEXEC de volgende ffprobe
+    monkeypatch.setenv("PATH", str(bin_dir))
+    settings = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="t" * 32)
+    source = tmp_path / "film.mkv"
+    source.write_bytes(b"\x1aE\xdf\xa3" + bytes(4092))
+    w = await local.start(settings, tmp_path / "run" / "worker.sock")
+    client.bind(w.socket, w.key)
+    try:
+        with pytest.raises(WorkerFailed) as found:
+            await client.probe(source)
+        assert found.value.code == Code.FFMPEG_MISSING, found.value.detail
+        assert found.value.code not in analysis.FILE_ERRORS
+    finally:
+        await local.stop(w)
+        client.bind(None)

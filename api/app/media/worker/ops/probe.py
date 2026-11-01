@@ -19,6 +19,7 @@ hoofdstukken en last_frame_ms tellen vanaf S.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -429,6 +430,12 @@ def hexdump(text: Any) -> bytes | None:
 # --- de opdracht -----------------------------------------------------------------------------
 
 
+# Een programma dat niet uit te voeren is: ENOEXEC, EACCES, EPERM, ENOTDIR, ELOOP, ETXTBSY
+EXEC_ERRORS = frozenset(
+    {errno.ENOEXEC, errno.EACCES, errno.EPERM, errno.ENOTDIR, errno.ELOOP, errno.ETXTBSY}
+)
+
+
 def _argv(demuxer: str, *show: str) -> list[str]:
     return [
         "ffprobe", "-hide_banner", "-loglevel", "error", "-max_alloc", "536870912",
@@ -447,6 +454,15 @@ async def _json(ctx: Context, fd: int, argv: list[str], *, required: bool) -> di
         return None
     except FileNotFoundError:
         raise OpError(Code.FFMPEG_MISSING, "ffprobe ontbreekt") from None
+    except OSError as exc:
+        # ffprobe start niet (integratie, punt 5): ENOEXEC (een leeg of kapot programma),
+        # EACCES en dergelijke zeggen iets over de worker, niet over het bestand. Dus nooit
+        # unreadable (dat wordt een blijvend mislukte probe): ffmpeg_missing als het programma
+        # niet uit te voeren is, anders internal; de analyse en play proberen het dan later
+        # opnieuw, en er wordt niets bewaard
+        if exc.errno in EXEC_ERRORS:
+            raise OpError(Code.FFMPEG_MISSING, f"ffprobe start niet: {exc.strerror}") from None
+        raise OpError(Code.INTERNAL, f"ffprobe start niet: {exc.strerror}") from None
     except Exception as exc:  # te veel uitvoer en dergelijke
         if required:
             raise OpError(Code.UNREADABLE, str(exc)[:200]) from None
