@@ -483,12 +483,35 @@ async def overview(app, session: AsyncSession, settings: Settings) -> MediaAdmin
         import_=await import_view(session),
         config=MediaPolicy.effective(config, settings).model_dump(mode="json"),
         notices=notices,
+        native_reloads=native_reloads(),
     )
     tmdb = await tmdb_status(session, settings)
     await session.close()  # klaar met de database vóór het tellen van de cache (regel 8)
     out.cache = await cache_view(settings)
     out.providers = provider_views(tmdb)
     return out
+
+
+async def rescan(session: AsyncSession, library_id: uuid.UUID) -> bool:
+    """Opnieuw scannen vanaf /beheer (Keuze 45): een volledige ronde, net als de knop van M2,
+    maar ook voor de bibliotheek van een ander (de beheerder ziet ze hier allemaal). False als
+    de bibliotheek er niet is."""
+    from app.media import scanner
+
+    lib = await session.get(MediaLibrary, library_id)
+    if lib is None:
+        return False
+    await scanner.queue_full(session, lib.id)
+    await session.commit()
+    scanner.activate()
+    log.info("opnieuw scannen vanaf /beheer: bibliotheek %s", lib.id)
+    return True
+
+
+def native_reloads() -> int:
+    from app.media import streams
+
+    return int(streams.native_reloads)
 
 
 # --- de instellingen -----------------------------------------------------------------------------

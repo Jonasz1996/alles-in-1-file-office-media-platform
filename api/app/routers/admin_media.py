@@ -6,6 +6,7 @@ PUT    /api/v1/admin/media/config             MediaConfigIn → MediaConfig
 POST   /api/v1/admin/media/bench              → 202 Accepted | 409 media_bench_busy
 DELETE /api/v1/admin/media/sessions/{id}      → 204 | 404
 POST   /api/v1/admin/media/retry              → {retried}
+POST   /api/v1/admin/media/libraries/{id}/scan → 202 (M10: opnieuw scannen, ook van een ander)
 POST   /api/v1/admin/media/cache/clear        CacheClearIn → 204
 PUT    /api/v1/admin/media/tmdb               TmdbKeyIn → 204 | 422 media_provider_auth
 DELETE /api/v1/admin/media/tmdb               → 204
@@ -98,6 +99,18 @@ async def stop_session(session_id: uuid.UUID, admin: AdminUser, request: Request
 async def retry(admin: AdminUser, request: Request, session: Session):
     on(request)
     return {"retried": await media_admin.retry_failed(session)}
+
+
+@router.post("/libraries/{library_id}/scan", status_code=202)
+async def rescan_library(
+    library_id: uuid.UUID, admin: AdminUser, request: Request, session: Session
+):
+    """Opnieuw scannen vanaf /beheer, ook de bibliotheek van een ander (M10; de route van M2
+    vraagt schrijfrecht)."""
+    runtime.require(request)
+    if not await media_admin.rescan(session, library_id):
+        raise errors.fail(404, "not_found", "Die bibliotheek is er niet (meer)")
+    return {"library_id": str(library_id)}
 
 
 @router.post("/cache/clear", status_code=204)

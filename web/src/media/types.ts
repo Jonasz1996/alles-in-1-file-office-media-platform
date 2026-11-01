@@ -821,6 +821,8 @@ export interface MediaAdmin {
   import: ImportView | null;
   config: MediaConfig;
   notices: { code: MediaNotice; params: Record<string, unknown>; text: string }[];
+  /** M0-hotfix van M10 (additief): hoe vaak een native speler opnieuw laadde (M4) */
+  native_reloads?: number;
 }
 
 /** POST /api/v1/admin/media/cache/clear (body) */

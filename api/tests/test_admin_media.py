@@ -22,7 +22,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.config import MediaConfig
 from app.main import app
@@ -57,6 +57,7 @@ def routes() -> list[tuple[str, str, dict | None]]:
         ("POST", f"{BASE}/bench", None),
         ("DELETE", f"{BASE}/sessions/{uuid.uuid4()}", None),
         ("POST", f"{BASE}/retry", None),
+        ("POST", f"{BASE}/libraries/{uuid.uuid4()}/scan", None),
         ("POST", f"{BASE}/cache/clear", {"what": "trick"}),
         ("PUT", f"{BASE}/tmdb", {"key": "geheim-sleutel-1234567890"}),
         ("DELETE", f"{BASE}/tmdb", None),
@@ -122,6 +123,14 @@ async def test_het_overzicht(media_app, client, admin):  # noqa: F811
     assert view.cache.free_bytes > 0
     # de lokale worker draait zonder afscherming: dat meldt /beheer
     assert [n.code for n in view.notices] == ["media_sandbox_off"]
+    # hoe vaak een native speler opnieuw laadde (M4, streams.native_reloads; M0-hotfix)
+    assert view.native_reloads == 0
+
+
+async def test_native_spelers_die_opnieuw_laden(media_app, client, admin, monkeypatch):  # noqa: F811
+    headers, _ = admin
+    monkeypatch.setattr(streams, "native_reloads", 3)
+    assert (await overview(client, headers))["native_reloads"] == 3
 
 
 async def test_het_geheugen_en_de_zelftest_van_de_worker(media_app, client, admin):  # noqa: F811
@@ -188,6 +197,38 @@ async def test_een_bibliotheek_in_een_andere_geschoven(media_app, client, admin)
     assert r.status_code == 200, r.text
     view = MediaAdmin.model_validate(await overview(client, headers))
     assert all(lib.inside is None for lib in view.libraries)
+
+
+async def test_opnieuw_scannen_ook_van_een_ander(media_app, client, admin):  # noqa: F811
+    """De knop op /beheer: een volledige ronde, ook voor de bibliotheek van Bert (de route van
+    M2 vraagt schrijfrecht, de beheerder heeft dat niet). 404 voor een onbekende."""
+    settings, _ = media_app
+    admin_headers, _ = admin
+    headers, _ = await person(client, admin_headers, "bert@example.nl")
+    top = (await root(client, headers))["folder"]["id"]
+    films = await mkdir(client, headers, top, "Films")
+    r = await client.post("/api/v1/media/libraries", json={"root_id": films, "kind": "movies"},
+                          headers=headers)  # fmt: skip
+    assert r.status_code == 201, r.text
+    lib = r.json()["id"]
+    # via M2 mag de beheerder het niet (hij ziet de bibliotheek niet eens)
+    r = await client.post(f"/api/v1/media/libraries/{lib}/scan", headers=admin_headers)
+    assert r.status_code == 404
+    # de eerste scan is gedaan: opnieuw scannen zet een nieuwe klaar
+    key = f"media.scan:{lib}"
+    async with maker(settings)() as session:
+        await session.execute(update(Job).where(Job.key == key).values(status="done"))
+        await session.commit()
+    r = await client.post(f"{BASE}/libraries/{lib}/scan", headers=admin_headers)
+    assert r.status_code == 202, r.text
+    assert r.json() == {"library_id": lib}
+    async with maker(settings)() as session:
+        queued = (
+            await session.scalars(select(Job).where(Job.key == key, Job.status == "queued"))
+        ).all()
+    assert len(queued) == 1 and queued[0].payload.get("full") is True
+    failed(await client.post(f"{BASE}/libraries/{uuid.uuid4()}/scan", headers=admin_headers),
+           404, "not_found")  # fmt: skip
 
 
 async def test_het_overzicht_als_media_op_beheer_uit_staat(media_app, client, admin):  # noqa: F811

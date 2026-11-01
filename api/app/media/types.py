@@ -1079,6 +1079,9 @@ class MediaAdmin(BaseModel):
     import_: ImportView | None = Field(default=None, alias="import")
     config: dict[str, Any] = Field(default_factory=dict)  # MediaConfig
     notices: list[NoticeView] = Field(default_factory=list)
+    # M0-hotfix van M10 (additief): hoe vaak een native speler (HLS) opnieuw moest laden na een
+    # andere stsd (streams.native_reloads, M4; sinds de start van de app)
+    native_reloads: int = 0
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
