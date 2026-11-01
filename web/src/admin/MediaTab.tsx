@@ -577,13 +577,20 @@ function Reasons({ a }: { a: MediaAdmin }): JSX.Element {
   );
 }
 
+/** Is er iets voor Mislukte opnieuw: een mislukte taak, of een inhoud met een blijvend
+ *  mislukte probe, sprite of ondertitel (integratie, punt 1). */
+export function retryable(jobs: MediaAdmin["jobs"]): boolean {
+  return jobs.failed > 0 || (jobs.failed_files ?? 0) > 0;
+}
+
 function Jobs({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
   const heading = useRef<HTMLHeadingElement>(null);
   const act = useAction(reload, heading);
+  const files = a.jobs.failed_files ?? 0;
   return (
     <section aria-labelledby="admin-media-jobs">
       <Head id="admin-media-jobs" title={t("admin.media.jobs.title")} heading={heading}>
-        {a.jobs.failed > 0 && (
+        {retryable(a.jobs) && (
           <Button
             busy={act.busy === "retry"}
             onClick={() => {
@@ -599,6 +606,7 @@ function Jobs({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
         )}
       </Head>
       <p data-media="jobs">{t("admin.media.jobs.text", { ...a.jobs })}</p>
+      {files > 0 && <p data-media="failed-files">{t("admin.media.jobs.files", { n: files })}</p>}
       {act.error && <p role="alert">{act.error}</p>}
     </section>
   );

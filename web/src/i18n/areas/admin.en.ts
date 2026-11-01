@@ -522,6 +522,10 @@ const en: Translation<typeof nl> = {
       text: "{queued} waiting, {running} running, {failed} failed",
       retry: "Retry failed",
       retried: { one: "{n} analysis is queued again.", other: "{n} analyses are queued again." },
+      files: {
+        one: "{n} file has a failed analysis, subtitle or preview images.",
+        other: "{n} files have a failed analysis, subtitle or preview images.",
+      },
     },
     libraries: {
       title: "Libraries",

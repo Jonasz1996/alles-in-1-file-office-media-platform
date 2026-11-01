@@ -96,9 +96,9 @@ async def stop_session(session_id: uuid.UUID, admin: AdminUser, request: Request
 
 
 @router.post("/retry")
-async def retry(admin: AdminUser, request: Request, session: Session):
+async def retry(admin: AdminUser, request: Request, session: Session, settings: Config):
     on(request)
-    return {"retried": await media_admin.retry_failed(session)}
+    return {"retried": await media_admin.retry_failed(session, settings)}
 
 
 @router.post("/libraries/{library_id}/scan", status_code=202)

@@ -45,7 +45,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import access, errors, jobs
@@ -293,20 +293,60 @@ async def session_views(session: AsyncSession) -> list[AdminSessionView]:
     return out
 
 
+# Wat blijvend mislukt staat bij een inhoud: de probe, de sprites of de ondertitels
+STUCK = or_(
+    MediaProbe.state == "failed",
+    MediaProbe.trick_state == "failed",
+    MediaProbe.subs_state == "failed",
+)
+
+
 async def job_counts(session: AsyncSession) -> JobCounts:
     rows = await session.execute(
         select(Job.status, func.count()).where(Job.type.like(MEDIA_JOBS)).group_by(Job.status)
     )
     found = dict(rows.all())
+    stuck = await session.scalar(select(func.count()).select_from(MediaProbe).where(STUCK))
     return JobCounts(
         queued=found.get("queued", 0),
         running=found.get("running", 0),
         failed=found.get("failed", 0),
+        failed_files=stuck or 0,
     )
 
 
-async def retry_failed(session: AsyncSession) -> int:
-    """De mislukte taken van media opnieuw, met nieuwe pogingen (zoals /beheer → Taken)."""
+def _unmark_subs(base: Path) -> set[str]:
+    """De markeringen <naam>.failed onder media/subs weg (subtitles.state geeft dan pending, en
+    de stap subs of een verzoek probeert het opnieuw). Geeft de sha's waar er een wegging."""
+    shas: set[str] = set()
+    try:
+        folders = list(os.scandir(base))
+    except OSError:
+        return shas
+    for folder in folders:
+        if not folder.is_dir(follow_symlinks=False):
+            continue
+        try:
+            names = [e.name for e in os.scandir(folder.path) if e.name.endswith(".failed")]
+        except OSError:
+            continue
+        for name in names:
+            with contextlib.suppress(OSError):
+                os.unlink(os.path.join(folder.path, name))
+                shas.add(folder.name)
+    return shas
+
+
+async def retry_failed(session: AsyncSession, settings: Settings) -> int:
+    """Mislukte opnieuw: de mislukte taken van media opnieuw, met nieuwe pogingen (zoals
+    /beheer → Taken). Sinds de integratie (punt 1 en 5) ook wat blijvend mislukt staat: een
+    probe met state failed gaat weg (play en de analyse proben dan opnieuw), trick_state en
+    subs_state failed worden none, en de markeringen .failed onder media/subs gaan weg. De
+    analyse van elke inhoud daarvan die in een bibliotheek staat, komt weer in de rij (met
+    jobs.chain, zoals _trick_again); een los bestand komt bij het afspelen weer aan bod. Geeft
+    hoeveel taken er (opnieuw) klaarstaan."""
+    # Eerst de bestanden, nog zonder databaseverbinding
+    marked = await asyncio.to_thread(_unmark_subs, settings.media_dir / "subs")
     result = await session.execute(
         update(Job)
         .where(Job.status == "failed", Job.type.like(MEDIA_JOBS))
@@ -314,6 +354,17 @@ async def retry_failed(session: AsyncSession) -> int:
         .execution_options(synchronize_session=False)
     )
     count = result.rowcount or 0
+    shas = set((await session.scalars(select(MediaProbe.blob_sha).where(STUCK))).all()) | marked
+    await session.execute(delete(MediaProbe).where(MediaProbe.state == "failed"))
+    await session.execute(
+        update(MediaProbe)
+        .where(MediaProbe.trick_state == "failed")
+        .values(trick_state="none", trick=None)
+    )
+    await session.execute(
+        update(MediaProbe).where(MediaProbe.subs_state == "failed").values(subs_state="none")
+    )
+    count += await _analyse_again(session, sorted(shas))
     await session.commit()
     if count:
         jobs.kick()
@@ -651,34 +702,47 @@ async def _trick_again(settings: Settings) -> int:
     legen klaar zijn geweest). De rij media houdt het aantal ffmpeg's laag (regel 13). Geeft
     het aantal nieuwe taken."""
     from app.db import get_engine
-    from app.media import analysis
 
     maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
     made = MediaProbe.trick_state.in_(("ready", "pending"))
     async with maker() as session:
         shas = list((await session.scalars(select(MediaProbe.blob_sha).where(made))).all())
         await session.execute(update(MediaProbe).where(made).values(trick_state="none", trick=None))
-        wanted: dict[str, uuid.UUID] = {}
-        for start in range(0, len(shas), 500):
-            rows = await session.execute(
-                select(Node.blob_id, MediaItem.library_id)
-                .join(MediaItem, MediaItem.node_id == Node.id)
-                .join(MediaLibrary, MediaLibrary.id == MediaItem.library_id)
-                .where(
-                    Node.blob_id.in_(shas[start : start + 500]),
-                    Node.deleted_at.is_(None),
-                    MediaItem.present.is_(True),
-                    MediaLibrary.kind.in_(TRICK_KINDS),
-                )
-            )
-            for sha, library_id in rows:
-                wanted.setdefault(sha, library_id)
-        added = 0
-        for sha, library_id in wanted.items():
-            payload = {"sha": sha, "library_id": str(library_id)}
-            key = f"{analysis.JOB}:{sha}"
-            added += await jobs.chain(session, analysis.JOB, payload, key) is not None
+        added = await _analyse_again(session, shas, TRICK_KINDS)
         await session.commit()
+    return added
+
+
+async def _analyse_again(
+    session: AsyncSession, shas: list[str], kinds: tuple[str, ...] | None = None
+) -> int:
+    """De analyse van elke inhoud in shas die in een bibliotheek staat (van een van kinds, of
+    elke soort), weer in de rij, met de bibliotheek erbij. Met jobs.chain (een lopende analyse
+    houdt de nieuwe niet tegen), in de transactie van de aanroeper. Geeft het aantal nieuwe
+    taken."""
+    from app.media import analysis
+
+    wanted: dict[str, uuid.UUID] = {}
+    for start in range(0, len(shas), 500):
+        query = (
+            select(Node.blob_id, MediaItem.library_id)
+            .join(MediaItem, MediaItem.node_id == Node.id)
+            .join(MediaLibrary, MediaLibrary.id == MediaItem.library_id)
+            .where(
+                Node.blob_id.in_(shas[start : start + 500]),
+                Node.deleted_at.is_(None),
+                MediaItem.present.is_(True),
+            )
+        )
+        if kinds is not None:
+            query = query.where(MediaLibrary.kind.in_(kinds))
+        for sha, library_id in await session.execute(query):
+            wanted.setdefault(sha, library_id)
+    added = 0
+    for sha, library_id in wanted.items():
+        payload = {"sha": sha, "library_id": str(library_id)}
+        key = f"{analysis.JOB}:{sha}"
+        added += await jobs.chain(session, analysis.JOB, payload, key) is not None
     return added
 
 

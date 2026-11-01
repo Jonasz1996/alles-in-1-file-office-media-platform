@@ -70,7 +70,7 @@ from app.media.types import (
     SubtitleTrack,
     TrickInfo,
 )
-from app.models import MediaItem, Node, User
+from app.models import MediaItem, MediaLibrary, Node, User
 from app.routers import files
 from app.security import CurrentUser, TokenFamily
 
@@ -114,6 +114,7 @@ class Found:
     config: MediaConfig
     library_id: uuid.UUID | None
     subs: list[dict[str, Any]]
+    kind: str | None = None  # de soort bibliotheek (movies, shows, …), None buiten een bibliotheek
 
 
 def maker(settings: Settings) -> async_sessionmaker[AsyncSession]:
@@ -201,7 +202,12 @@ async def gather(
     config = MediaPolicy.effective(await media_policy(request.app).get(session), settings)
     item = await session.get(MediaItem, node.id)
     subs = await allowed_subs(session, viewer, item.subs if item else [], inside)
-    return Found(node, config, item.library_id if item else None, subs)
+    kind = None
+    if item is not None:
+        kind = await session.scalar(
+            select(MediaLibrary.kind).where(MediaLibrary.id == item.library_id)
+        )
+    return Found(node, config, item.library_id if item else None, subs, kind)
 
 
 # --- de probe en de keyframe-index ----------------------------------------------------------------
@@ -267,14 +273,40 @@ async def index_now(settings: Settings, probe: Probe, sha: str, deadline: float)
     return fresh if fresh is not None else probe
 
 
+def steps_left(settings: Settings, probe: Probe, kind: str | None) -> bool:
+    """Is er een stap sprites of subs die voor deze video in een bibliotheek nog niets gaf
+    (integratie, punt 1)? none, of pending zonder lopende analyse (een fout van de worker laat
+    pending staan), of ready terwijl trick.vtt weg is. Na Opruimen of een mislukte ronde zet
+    play de analyse dan weer klaar; jobs.enqueue laat een wachtende of lopende met rust.
+    failed blijft failed: dat is voor Mislukte opnieuw op /beheer."""
+    if kind is None or probe.state != "ready":
+        return False
+    steps = {s.name: s for s in analysis.steps()}
+    sprites, subs = steps.get("sprites"), steps.get("subs")
+    if sprites is not None and sprites.applies(probe, kind):
+        if probe.trick_state in ("none", "pending"):
+            return True
+        if probe.trick_state == "ready" and trick.info(probe, settings) is None:
+            return True
+    return (
+        subs is not None and subs.applies(probe, kind) and probe.subs_state in ("none", "pending")
+    )
+
+
 async def queue_analysis(
-    settings: Settings, sha: str, library_id: uuid.UUID | None, probe: Probe, probed: bool
+    settings: Settings,
+    sha: str,
+    library_id: uuid.UUID | None,
+    probe: Probe,
+    probed: bool,
+    kind: str | None = None,
 ) -> None:
-    """De rest van de analyse in de rij: na een probe die play zelf deed, of als de
-    keyframe-index ontbreekt en er een stap keyframes is (M4, met de terugval)."""
+    """De rest van de analyse in de rij: na een probe die play zelf deed, als de
+    keyframe-index ontbreekt en er een stap keyframes is (M4, met de terugval), of als de
+    sprites of ondertitels van een video in een bibliotheek er nog niet zijn (steps_left)."""
     steps = {s.name for s in analysis.steps()}
     missing = probe.video() is not None and probe.keyframes_state in ("none", "sparse")
-    if not (probed or (missing and "keyframes" in steps)):
+    if not (probed or (missing and "keyframes" in steps) or steps_left(settings, probe, kind)):
         return
     try:
         async with maker(settings)() as session:
@@ -432,7 +464,7 @@ async def start(
     assert probe is not None
     check_probe(probe)
     probe = await index_now(settings, probe, sha, deadline)
-    await queue_analysis(settings, sha, found.library_id, probe, probed)
+    await queue_analysis(settings, sha, found.library_id, probe, probed, found.kind)
 
     choice = body.choice()
     if choice.audio is not None and decide.pick_audio(probe, choice.audio) is None:

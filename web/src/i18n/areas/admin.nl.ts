@@ -530,6 +530,10 @@ export default {
       text: "{queued} wachtend, {running} bezig, {failed} mislukt",
       retry: "Mislukte opnieuw",
       retried: { one: "{n} analyse staat opnieuw klaar.", other: "{n} analyses staan opnieuw klaar." },
+      files: {
+        one: "{n} bestand heeft een mislukte analyse, ondertitel of voorbeeldbeelden.",
+        other: "{n} bestanden hebben een mislukte analyse, ondertitel of voorbeeldbeelden.",
+      },
     },
     libraries: {
       title: "Bibliotheken",

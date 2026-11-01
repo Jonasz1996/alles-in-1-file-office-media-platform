@@ -493,7 +493,9 @@ async def test_opnieuw_proberen(media_app, client, admin):  # noqa: F811
             Job(type="preview", status="failed", attempts=3, error="niet van media"),
         ])  # fmt: skip
         await session.commit()
-    assert (await overview(client, headers))["jobs"] == {"queued": 1, "running": 0, "failed": 2}
+    assert (await overview(client, headers))["jobs"] == {
+        "queued": 1, "running": 0, "failed": 2, "failed_files": 0
+    }  # fmt: skip
     r = await client.post(f"{BASE}/retry", headers=headers)
     assert r.status_code == 200 and r.json() == {"retried": 2}
     async with maker(settings)() as session:
@@ -585,6 +587,68 @@ async def test_trick_leegmaken_maakt_de_sprites_opnieuw(world, client):  # noqa:
     assert [(j.key, j.payload) for j in queued] == [
         (f"{analysis.JOB}:{film['sha']}", {"sha": film["sha"], "library_id": library_id})
     ]
+
+
+async def test_mislukte_opnieuw_ook_sprites_ondertitels_en_probes(world, client):  # noqa: F811
+    """Integratie, punt 1 (en 5): een mislukte sprite of ondertitel bleef mislukt (de stappen
+    slaan failed over, en er was geen mislukte taak, dus ook geen knop). Nu telt het overzicht
+    ze (jobs.failed_files), en Mislukte opnieuw zet trick_state en subs_state terug op none,
+    haalt de markeringen .failed weg (ook die van een los bestand), gooit een mislukte probe weg
+    en zet de analyse van wat in een bibliotheek staat weer in de rij."""
+    from app.media import analysis, subtitles
+    from app.models import MediaProbe
+
+    settings, _fake, headers = world
+    library_id, folder = await library(client, headers)
+    film = await video(client, headers, settings, "film.mp4", parent=folder)
+    kapot = await video(client, headers, settings, "kapot.mp4", parent=folder, data=b"k" * 999)
+    loose = await video(client, headers, settings, "los.mp4", data=b"los" * 1000)
+    await scan(settings)
+    async with maker(settings)() as session:
+        await session.execute(update(MediaProbe).where(MediaProbe.blob_sha == film["sha"])
+                              .values(trick_state="failed", subs_state="failed"))  # fmt: skip
+        await session.execute(update(MediaProbe).where(MediaProbe.blob_sha == kapot["sha"])
+                              .values(state="failed", error="unreadable"))  # fmt: skip
+        await session.execute(update(Job).where(Job.type == analysis.JOB).values(status="done"))
+        await session.commit()
+    marks = [
+        subtitles.subs_dir(settings, film["sha"]) / "e2.failed",
+        subtitles.subs_dir(settings, loose["sha"]) / "file.failed",
+    ]
+    for mark in marks:
+        old(mark, b"controle: kapot")
+    keep = subtitles.cached(settings, film["sha"], "e3")
+    old(keep, b"WEBVTT\n")
+    assert subtitles.state(settings, film["sha"], "e2") == "failed"
+    jobs_view = (await overview(client, headers))["jobs"]
+    assert jobs_view == {"queued": 0, "running": 0, "failed": 0, "failed_files": 2}
+    r = await client.post(f"{BASE}/retry", headers=headers)
+    assert r.status_code == 200 and r.json() == {"retried": 2}
+    async with maker(settings)() as session:
+        probes = {
+            p.blob_sha: (p.state, p.trick_state, p.subs_state)
+            for p in (await session.scalars(select(MediaProbe))).all()
+        }
+        queued = (
+            await session.scalars(
+                select(Job).where(Job.type == analysis.JOB, Job.status == "queued")
+            )
+        ).all()
+    assert probes[film["sha"]] == ("ready", "none", "none")
+    assert kapot["sha"] not in probes  # play en de analyse proben opnieuw
+    assert not any(m.exists() for m in marks) and keep.is_file()
+    assert subtitles.state(settings, film["sha"], "e2") == "pending"
+    assert subtitles.state(settings, loose["sha"], "file") == "pending"
+    # alleen wat in de bibliotheek staat, met de bibliotheek erbij
+    assert sorted((j.key, j.payload["library_id"]) for j in queued) == sorted(
+        [
+            (f"{analysis.JOB}:{film['sha']}", library_id),
+            (f"{analysis.JOB}:{kapot['sha']}", library_id),
+        ]
+    )
+    assert (await overview(client, headers))["jobs"]["failed_files"] == 0
+    # nog eens: niets meer te doen (de taken staan al klaar)
+    assert (await client.post(f"{BASE}/retry", headers=headers)).json() == {"retried": 0}
 
 
 def test_audio_in_gebruik(monkeypatch):

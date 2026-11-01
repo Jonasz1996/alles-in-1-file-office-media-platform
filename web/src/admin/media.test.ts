@@ -13,6 +13,7 @@ import {
   parseConfigNumber,
   providerError,
   reasonColumns,
+  retryable,
 } from "./MediaTab";
 
 async function inLocale(locale: "nl" | "en") {
@@ -196,6 +197,17 @@ describe("de teksten van het tabblad", () => {
     } finally {
       errors.mockRestore();
     }
+  });
+
+  it("Mislukte opnieuw ook voor een mislukte sprite, ondertitel of probe (integratie, punt 1)", async () => {
+    expect(retryable({ queued: 0, running: 0, failed: 0 })).toBe(false);
+    expect(retryable({ queued: 0, running: 0, failed: 0, failed_files: 0 })).toBe(false);
+    expect(retryable({ queued: 2, running: 1, failed: 1, failed_files: 0 })).toBe(true);
+    expect(retryable({ queued: 0, running: 0, failed: 0, failed_files: 3 })).toBe(true);
+    expect(t("admin.media.jobs.files", { n: 1 })).toBe("1 bestand heeft een mislukte analyse, ondertitel of voorbeeldbeelden.");
+    expect(t("admin.media.jobs.files", { n: 2 })).toMatch(/^2 bestanden hebben/);
+    await inLocale("en");
+    expect(t("admin.media.jobs.files", { n: 2 })).toBe("2 files have a failed analysis, subtitle or preview images.");
   });
 
   it("meervouden en namen worden ingevuld", async () => {

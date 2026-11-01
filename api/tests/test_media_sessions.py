@@ -763,6 +763,59 @@ async def test_alleen_ondertitels_die_de_kijker_mag_lezen(client, admin, other, 
     assert bert_node  # Bert zelf speelt niets van de beheerder
 
 
+@pytest.mark.anyio
+async def test_play_zet_de_analyse_klaar_als_de_sprites_ontbreken(client, admin, settings):
+    """Integratie, punt 1: play zette de analyse alleen klaar na een eigen probe of zonder
+    keyframe-index. Een film in een bibliotheek met trick_state none (na Opruimen, of een
+    ronde die mislukte met pending) of ready zonder trick.vtt kreeg zo nooit sprites terug.
+    Nu wel; failed niet (dat is Mislukte opnieuw), en een los bestand niet (Keuze 30)."""
+    from sqlalchemy import delete, select
+
+    from app.models import Job
+
+    headers, _ = admin
+    me = (await client.get("/api/v1/auth/me", headers=headers)).json()
+    top = (await root(client, headers))["folder"]["id"]
+    node = await video(client, headers, settings, "in-bieb.mp4", index=True)
+    await library_item(settings, me["id"], node, top, [])
+    loose = await video(client, headers, settings, "los.mp4", index=True)
+
+    async def queued() -> list[tuple[str, dict]]:
+        async with maker(settings)() as session:
+            rows = (await session.scalars(select(Job).where(Job.type == analysis.JOB))).all()
+            await session.execute(delete(Job).where(Job.type == analysis.JOB))
+            await session.commit()
+        return [(j.key, j.payload) for j in rows]
+
+    async def trick_state(value: str, **extra) -> None:
+        async with maker(settings)() as session:
+            await session.execute(update(MediaProbe).where(MediaProbe.blob_sha == node["sha"])
+                                  .values(trick_state=value, **extra))  # fmt: skip
+            await session.commit()
+
+    async with maker(settings)() as session:
+        library_id = str(await session.scalar(select(MediaItem.library_id)))
+    await play(client, headers, loose["id"])
+    assert await queued() == []
+    wanted = [(f"{analysis.JOB}:{node['sha']}", {"sha": node["sha"], "library_id": library_id})]
+    for state in ("none", "pending"):
+        await trick_state(state)
+        await play(client, headers, node["id"])
+        assert await queued() == wanted, state
+    sprites = {"interval": 10, "w": 160, "h": 90, "cols": 10, "rows": 10, "count": 1}
+    await trick_state("ready", trick=sprites)  # maar trick.vtt is er niet
+    await play(client, headers, node["id"])
+    assert await queued() == wanted
+    vtt = settings.media_dir / "trick" / node["sha"] / "trick.vtt"
+    vtt.parent.mkdir(parents=True)
+    vtt.write_bytes(b"WEBVTT\n")
+    await play(client, headers, node["id"])
+    assert await queued() == []
+    await trick_state("failed", trick=None)
+    await play(client, headers, node["id"])
+    assert await queued() == []
+
+
 # --- de grenzen -----------------------------------------------------------------------------------
 
 

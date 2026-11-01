@@ -1004,6 +1004,9 @@ class JobCounts(BaseModel):
     queued: int = 0
     running: int = 0
     failed: int = 0
+    # Integratie (punt 1), additief: inhouden met een blijvend mislukte probe, sprite of
+    # ondertitel; Mislukte opnieuw probeert ook die
+    failed_files: int = 0
 
 
 class AdminLibrary(Library):

@@ -802,7 +802,9 @@ export interface MediaAdmin {
   sessions: SessionView[];
   /** Per dag de redenen van de beslissing (Keuze 19), de laatste 7 dagen */
   reasons: { day: string; counts: Partial<Record<PlanReason, number>> }[];
-  jobs: { queued: number; running: number; failed: number };
+  /** failed_files (integratie, punt 1, additief): inhouden met een blijvend mislukte probe,
+   *  sprite of ondertitel; Mislukte opnieuw probeert ook die */
+  jobs: { queued: number; running: number; failed: number; failed_files?: number };
   /** inside (M0-hotfix van M10, m2.md C2): de bibliotheek waar deze map in verschoven is;
    *  path (M0-hotfix van M10, review golf 5, K3): de map zoals de eigenaar haar ziet */
   libraries: (Library & {
