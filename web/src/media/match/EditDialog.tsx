@@ -7,7 +7,7 @@
 // Bij het openen vraagt het venster het item op met een lege PATCH: die geeft `locked` en de
 // sorteertitel, zolang GET …/items/{id} van M2 die nog niet geeft (open punt in m8.md).
 
-import { type FormEvent, type JSX, useEffect, useState } from "react";
+import { type FormEvent, type JSX, useEffect, useRef, useState } from "react";
 import { errorText, t } from "../../i18n";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
@@ -83,6 +83,14 @@ export function EditDialog({
   const [form, setForm] = useState<EditForm | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const loaded = start !== null;
+
+  // De velden komen pas na het laden: Dialog zette de focus bij het openen al (op de sluitknop),
+  // dus hier de titel zodra het formulier er is
+  useEffect(() => {
+    if (loaded) formRef.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus();
+  }, [loaded]);
 
   useEffect(() => {
     let live = true;
@@ -136,7 +144,7 @@ export function EditDialog({
           <Skeleton lines={4} />
         )
       ) : (
-        <form onSubmit={(e) => void submit(e)} className="media-edit">
+        <form ref={formRef} onSubmit={(e) => void submit(e)} className="media-edit">
           <p className="muted">{t("media.match.lockHint")}</p>
           {editFields(item.kind).map((f) => (
             <FieldRow
