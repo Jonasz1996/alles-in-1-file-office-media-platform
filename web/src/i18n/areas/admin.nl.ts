@@ -223,6 +223,7 @@ export default {
       previews: "Previews",
       uploads: "Lopende uploads",
       database: "Database",
+      media: "Media",
       misc: "Overig",
       free: "Vrij",
     },

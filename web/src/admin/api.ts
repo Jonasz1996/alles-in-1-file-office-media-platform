@@ -78,6 +78,8 @@ export interface StorageParts {
   uploads: number;
   database: number;
   other: number;
+  /** <data_dir>/media (fase 5, integratie punt 4; additief): alleen met media aan */
+  media?: number | null;
 }
 
 export interface NodeStorage {

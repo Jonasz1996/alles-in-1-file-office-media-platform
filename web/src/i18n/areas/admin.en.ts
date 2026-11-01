@@ -223,6 +223,7 @@ const en: Translation<typeof nl> = {
       previews: "Previews",
       uploads: "Ongoing uploads",
       database: "Database",
+      media: "Media",
       misc: "Other",
       free: "Free",
     },

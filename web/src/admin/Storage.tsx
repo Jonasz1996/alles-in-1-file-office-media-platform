@@ -1,5 +1,6 @@
-// /beheer/opslag: per node een gestapelde balk (bestanden, previews, uploads, database, overig,
-// vrij), de totalen, het gebruik per gebruiker en de bewaartermijn van de prullenbak.
+// /beheer/opslag: per node een gestapelde balk (bestanden, previews, uploads, database, media als
+// media aan staat, overig, vrij), de totalen, het gebruik per gebruiker en de bewaartermijn van
+// de prullenbak.
 
 import { type FormEvent, type JSX, useEffect, useState } from "react";
 import { errorText, fmt, type MessageKey, t } from "../i18n";
@@ -7,11 +8,17 @@ import { Button } from "../ui/Button";
 import { Field } from "../ui/Field";
 import { toast } from "../ui/toast";
 import { usageLevel } from "../ui/UsageBar";
-import { adminApi, type NodeStorage, type StorageOverview } from "./api";
+import { adminApi, type NodeStorage, type StorageOverview, type StorageParts } from "./api";
 import { ago, type PartKey, segments } from "./format";
 import { usePolling } from "./usePolling";
 
-const PARTS: PartKey[] = ["blobs", "previews", "uploads", "database", "other", "free"];
+const PARTS: PartKey[] = ["blobs", "previews", "uploads", "database", "media", "other", "free"];
+
+/** De stukken van de legenda: media alleen als de server het deel geeft (media aan), vrij alleen
+ *  met een schijf. Media uit: precies de legenda van 0.6.0. */
+export function legendParts(parts: StorageParts, disk: boolean): PartKey[] {
+  return PARTS.filter((k) => (k !== "free" || disk) && (k !== "media" || parts.media != null));
+}
 
 /** De naam van een stuk van de balk ("other" heet in het woordenboek misc: other is een meervoudsvorm). */
 export function partLabel(k: PartKey): string {
@@ -44,7 +51,8 @@ export function Storage(): JSX.Element {
 
 function NodeBar({ node }: { node: NodeStorage }): JSX.Element {
   const disk = node.disk;
-  const ours = node.parts.blobs + node.parts.previews + node.parts.uploads + node.parts.database;
+  const ours =
+    node.parts.blobs + node.parts.previews + node.parts.uploads + node.parts.database + (node.parts.media ?? 0);
   // Wat de schijf verder gebruikt (andere programma's, het systeem) telt als overig
   const parts = disk ? { ...node.parts, other: Math.max(node.parts.other, disk.used_bytes - ours) } : node.parts;
   const total = disk ? disk.total_bytes : ours + parts.other;
@@ -77,10 +85,10 @@ function NodeBar({ node }: { node: NodeStorage }): JSX.Element {
         ))}
       </div>
       <ul className="storage-values" aria-label={t("admin.storage.legend")}>
-        {PARTS.filter((k) => k !== "free" || disk).map((k) => (
+        {legendParts(parts, !!disk).map((k) => (
           <li key={k}>
             <span className={`storage-swatch seg-${k}`} aria-hidden="true" />
-            {partLabel(k)}: {fmt.bytes(k === "free" ? (disk?.free_bytes ?? 0) : parts[k])}
+            {partLabel(k)}: {fmt.bytes(k === "free" ? (disk?.free_bytes ?? 0) : (parts[k] ?? 0))}
           </li>
         ))}
       </ul>

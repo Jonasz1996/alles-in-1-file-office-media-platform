@@ -145,6 +145,10 @@ td.admin-usage.bad {
   background: var(--tag-5);
 }
 
+.seg-media {
+  background: var(--tag-2);
+}
+
 .seg-other {
   background: var(--tag-7);
 }

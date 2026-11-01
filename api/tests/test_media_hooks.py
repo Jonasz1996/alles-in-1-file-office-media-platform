@@ -183,8 +183,9 @@ async def test_discard_roept_media_na_office(settings, closed, monkeypatch):
 
 @pytest.mark.anyio
 async def test_usage_heeft_een_lege_haak_voor_media(settings, monkeypatch):
-    """De haak geeft 0 en StorageParts blijft die van 0.6.0; vult M10 hem, dan telt het deel
-    media als bekend en wordt "overig" net zoveel kleiner."""
+    """De haak geeft 0; vult M10 hem, dan telt het deel media als bekend en wordt "overig" net
+    zoveel kleiner. Integratie, punt 4: StorageParts kreeg er één veld bij, media (additief),
+    dat alleen met media aan een getal is; met media uit is het None en de rest die van 0.6.0."""
     assert usage.media_bytes(settings) == 0
     assert set(usage.StorageParts.model_fields) == {
         "blobs",
@@ -192,14 +193,21 @@ async def test_usage_heeft_een_lege_haak_voor_media(settings, monkeypatch):
         "uploads",
         "database",
         "other",
+        "media",
     }
+    assert usage.StorageParts.model_fields["media"].default is None
     disk = SimpleNamespace(total=10**9, used=6 * 10**8, free=4 * 10**8)
     monkeypatch.setattr(usage.shutil, "disk_usage", lambda path: disk)
     before = await usage.measure(settings)
+    assert before.parts.media is None  # media uit
     monkeypatch.setattr(usage, "media_bytes", lambda s: 1000)
     after = await usage.measure(settings)
     assert before.parts.other - after.parts.other == 1000
     assert after.parts.model_dump().keys() == before.parts.model_dump().keys()
+    assert after.parts.media is None  # media uit: geen eigen deel op de balk
+    on = settings.model_copy(update={"media_enabled": True})
+    shown = await usage.measure(on)
+    assert shown.parts.media == 1000 and shown.parts.other == after.parts.other
 
 
 @pytest.mark.anyio

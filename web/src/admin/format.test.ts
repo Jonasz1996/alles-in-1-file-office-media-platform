@@ -13,7 +13,7 @@ import {
   segments,
 } from "./format";
 import { byTypeRows } from "./Jobs";
-import { partLabel } from "./Storage";
+import { legendParts, partLabel } from "./Storage";
 import { changesOf } from "./UserDialog";
 
 const GB = 1024 ** 3;
@@ -62,6 +62,33 @@ describe("segments (de balk van een schijf)", () => {
   it("de namen van de stukken", () => {
     expect(partLabel("other")).toBe("Overig");
     expect(partLabel("free")).toBe("Vrij");
+    expect(partLabel("media")).toBe("Media");
+  });
+
+  it("media heeft een eigen stuk, tussen database en overig (integratie, punt 4)", () => {
+    const s = segments({ ...none, blobs: 40, media: 20, other: 10 }, 100, 30);
+    expect(s.map((x) => [x.key, x.percent])).toEqual([
+      ["blobs", 40],
+      ["media", 20],
+      ["other", 10],
+      ["free", 30],
+    ]);
+  });
+
+  it("media uit: de balk en de legenda van 0.6.0", () => {
+    const old = { ...none, blobs: 50, other: 10 };
+    expect(segments({ ...old, media: null }, 100, 40)).toEqual(segments(old, 100, 40));
+    expect(legendParts(old, true)).toEqual(["blobs", "previews", "uploads", "database", "other", "free"]);
+    expect(legendParts({ ...old, media: null }, false)).toEqual(["blobs", "previews", "uploads", "database", "other"]);
+    expect(legendParts({ ...old, media: 0 }, true)).toEqual([
+      "blobs",
+      "previews",
+      "uploads",
+      "database",
+      "media",
+      "other",
+      "free",
+    ]);
   });
 });
 

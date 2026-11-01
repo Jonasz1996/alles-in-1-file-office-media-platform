@@ -96,7 +96,7 @@ export interface Segment {
   percent: number;
 }
 
-const ORDER: PartKey[] = ["blobs", "previews", "uploads", "database", "other", "free"];
+const ORDER: PartKey[] = ["blobs", "previews", "uploads", "database", "media", "other", "free"];
 
 /**
  * De stukken van een balk voor een schijf van total bytes. Lege stukken vallen weg; een stuk
@@ -105,7 +105,7 @@ const ORDER: PartKey[] = ["blobs", "previews", "uploads", "database", "other", "
  */
 export function segments(parts: StorageParts, total: number, free = 0): Segment[] {
   if (!(total > 0)) return [];
-  const values: Record<PartKey, number> = { ...parts, free };
+  const values: Record<PartKey, number> = { ...parts, media: parts.media ?? 0, free };
   const out: Segment[] = [];
   for (const key of ORDER) {
     const bytes = Math.max(0, values[key] ?? 0);

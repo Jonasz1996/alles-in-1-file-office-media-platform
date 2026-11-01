@@ -47,6 +47,9 @@ class StorageParts(BaseModel):
     database: int
     # Wat er verder op de datadisk staat (het systeem, andere programma's)
     other: int
+    # <data_dir>/media (fase 5, integratie punt 4; additief): alleen met media aan, anders None
+    # en is de balk die van 0.6.0
+    media: int | None = None
 
 
 class NodeStorage(BaseModel):
@@ -223,6 +226,7 @@ async def measure(settings: Settings) -> NodeStorage:
             uploads=scan.uploads,
             database=database,
             other=other,
+            media=scan.media if settings.media_enabled else None,
         ),
         measured_at=datetime.now(UTC),
     )
