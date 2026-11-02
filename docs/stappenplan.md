@@ -482,8 +482,11 @@ Klaar als: een 1080p-film start binnen 2 s (direct play) en 5 s
 voortgang synchroniseert tussen apparaten.
 
 Versie 0.7.0 (2-11-2026): in de sandbox gehaald op één eis na. Direct
-play start binnen 0,5 s en een transcode binnen 1,9 s (de slechtste van
-10 in de browser), seek werkt (weer spelen binnen 2,5 s) en de voortgang
+play van een 1080p-film start binnen 0,5 s. Een transcode start in de
+browser binnen 1,9 s (de slechtste van 10), maar die bron was 720p
+(HEVC HDR, 6 s); een 1080p-bron mat alleen de speler zonder browser
+(binnen 1,7 s). Een 1080p-film met transcode in de browser laat de LXC
+zien. Seek werkt (weer spelen binnen 2,5 s) en de voortgang
 staat in ±0,1 s op het andere apparaat. Drie transcodes tegelijk lopen zonder haperen als
 ze samen starten; na een sprong hapert soms één speler 0,1 tot 1,5 s.
 Het laatste bewijs, en het aantal transcodes voor de node, is de

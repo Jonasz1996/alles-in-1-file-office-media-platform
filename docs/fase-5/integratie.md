@@ -517,6 +517,15 @@ van Jonas; zijn vragen in de [README](README.md#vragen-voor-jonas) bleven gelijk
   review, met wijzigingen aan `test_install_media.sh`) open zijn tot de CI-run na de push; zo
   ook hierboven ([Wat alleen CI](#wat-alleen-ci-of-de-lxc-kan-bewijzen)) en in de README, vóór
   de lijst voor de LXC.
+- **K4, "een transcode binnen 1,9 s" gold voor een bron van 720p: gefixt (docs).** Nagegaan: de
+  e2e van Mb in de browser speelt `hevc10_hdr10.mkv`, en het recept in
+  `api/tests/media/fixtures.py` maakt die met `video("1280x720", 24, 6)`: 720p, 6 s. "Klaar als"
+  vraagt een 1080p-film. Een bron van 1080p (H.264, 6 Mbit/s) mat alleen de speler zonder
+  browser: 1,34 / 1,66 s. Gekozen voor de docs in plaats van een nieuwe meting: een HEVC-film van
+  1080p in de browser hoort bij de LXC (de sandbox heeft een andere CPU en geen H.264 in
+  Chromium). Het [stappenplan](../stappenplan.md), de tabel "Klaar als" en de lijst voor de LXC
+  in de README en metingen.md (Mb, en wat alleen de LXC kan) noemen nu de bron, en dat 1080p in
+  de browser op de LXC bewezen wordt.
 
 ## De checks van deel 1
 

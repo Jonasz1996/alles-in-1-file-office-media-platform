@@ -14,7 +14,7 @@ Alle getallen staan in [metingen.json](metingen.json). De scripts staan in
 | Meting | Grens | Gemeten: mediaan / slechtste | Uitkomst |
 |---|---|---|---|
 | Ma: direct, het eerste beeld | ≤ 2 s | 436 / 450 ms (VP9); CI met H.264 477 / 491 ms | gehaald |
-| Mb: transcode, het eerste beeld | e2e ≤ 5 s; zonder browser ≤ 2,5 / 3,0 s, naast 2 ≤ 5 s | e2e 1663 / 1844 ms (VP9), CI met H.264 1512 / 1532 ms; zonder browser 1,34 / 1,66 s, naast 2 1,23 / 1,59 s | gehaald |
+| Mb: transcode, het eerste beeld | e2e ≤ 5 s; zonder browser ≤ 2,5 / 3,0 s, naast 2 ≤ 5 s | e2e (bron 720p) 1663 / 1844 ms (VP9), CI met H.264 1512 / 1532 ms; zonder browser (bron 1080p) 1,34 / 1,66 s, naast 2 1,23 / 1,59 s | gehaald; 1080p in de browser: LXC |
 | Mc: zoeken | tabel 1,5 / 1,0 / 3,0 s; "Klaar als" ≤ 3 s | direct 2020 / 2095, remux 885 / 918, transcode 2343 / 2485 ms | "Klaar als" gehaald; direct haalt de tabel niet (bevinding 4) |
 | Md: 3 transcodes | §4.6 punt 7, per fase | a 4 van 5, b 5 van 5 | niet gehaald: haperen na de sprong (bevinding 3) |
 | Md met een docx elke 30 s | idem | a 2 van 5, b 5 van 5; 85 × docx klaar in 4,6 / 8,3 s | niet gehaald: haperen na de sprong (bevinding 3) |
@@ -106,7 +106,10 @@ geen H.264 en geen AAC, en de test met H.264 slaat hier over.
 ## Mb: transcode, het eerste beeld
 
 **Hoe, in de browser.** De e2e `test_m6_mb_eerste_beeld_transcode`, 10 keer: `hevc10_hdr10.mkv`
-(HEVC 10 bit HDR10) naar 720, van de klik tot het eerste beeld. Hier naar VP9, in CI naar H.264.
+(HEVC 10 bit HDR10, 1280×720, 6 s) naar 720, van de klik tot het eerste beeld. Hier naar VP9, in
+CI naar H.264. De bron is dus 720p, geen 1080p zoals "Klaar als" vraagt; een 1080p-bron mat
+alleen de speler zonder browser (hieronder). Een 1080p-film in de browser laat de LXC zien
+(review van de integratie, K4).
 
 | | Mediaan | Slechtste | Grens |
 |---|---|---|---|
@@ -626,6 +629,9 @@ test als het een fout in onze code is. Getallen zijn nergens bijgesteld om te sl
   niet. In de review van de integratie (K1) is het gebouwd: met `sources` (of `media-loadtest
   --film <id>`) speelt elke speler een film van de beheerder. Het ijken van de tabel met echte
   films (bevinding 6) kan dus op de LXC; de films van Jonas zijn er alleen daar.
+- **Mb in de browser met een bron van 1080p:** de e2e gebruikt `hevc10_hdr10.mkv` van 720p; een
+  1080p-bron mat hier alleen de speler zonder browser (1,34 / 1,66 s). Een HEVC-film van 1080p op
+  `/kijken` hoort bij de lijst voor de LXC (review van de integratie, K4).
 - **H.264 in de browser** (Ma met H.264 en AAC, Mb naar H.264): CI, met Chrome for Testing (de
   getallen hierboven), en de LXC.
 - **ffmpeg 7.1.5 van het image**: de sandbox heeft 6.1.1. De e2e van CI (`e2e-media-perf`)

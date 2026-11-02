@@ -26,7 +26,7 @@ op de LXC).
 | Eis | Gemeten | Uitkomst |
 |---|---|---|
 | Direct play: het eerste beeld ≤ 2 s | 436 / 450 ms (VP9, sandbox); 477 / 491 ms (H.264, Chrome for Testing in CI) | gehaald |
-| Omzetten: het eerste beeld ≤ 5 s | 1663 / 1844 ms (VP9, sandbox); 1512 / 1532 ms (H.264, CI); zonder browser alleen 1,34 / 1,66 s, naast 2 andere omzettingen 1,23 / 1,59 s | gehaald |
+| Omzetten: het eerste beeld ≤ 5 s | in de browser, met een bron van 720p (HEVC 10 bit HDR, 6 s): 1663 / 1844 ms (VP9, sandbox), 1512 / 1532 ms (H.264, CI); zonder browser, met een bron van 1080p (H.264, 6 Mbit/s): alleen 1,34 / 1,66 s, naast 2 andere omzettingen 1,23 / 1,59 s | gehaald; een 1080p-film in de browser alleen op de LXC (de lijst hieronder) |
 | Zoeken werkt (weer spelen ≤ 3 s) | remux 885 / 918 ms, omzetten 2343 / 2485 ms, direct 2020 / 2095 ms (op 400 Mbit/s 1487 / 1628 ms) | gehaald; direct haalt de 1,5 s uit de tabel van het ontwerp alleen op een snel netwerk (Chromium zelf) |
 | 3 omzettingen tegelijk zonder haperen | drie tegelijk gestart: 5 van 5 zonder haperen; gespreid met een sprong: 4 van 5 (één keer 0,6 s haperen na de sprong); met OnlyOffice ernaast 2 van 5; de API ≤ 104,5 ms (grens 200), de worker ≤ 793 MB (grens 3 GB) | bijna: zonder sprong gehaald; na een sprong of een herstart hapert soms één speler 0,1–1,5 s (bevinding 3 in [metingen.md](metingen.md#bevindingen)) |
 | Voortgang synchroniseert (≤ 2 s) | 0,097 / 0,101 s (p95 van 20) | gehaald |
@@ -185,8 +185,9 @@ integratie en de review; de run na de push moet ook groen zijn
   kijkt (10 tot 20 minuten; eerst aanzetten, het runbook "De belastingtest op de LXC"). Fase a en
   b; als het kan ook c (de app herstart) en d (office herstart). Bewaar de uitkomst.
 - [ ] **Een film op telefoon en laptop:** één die de browser zelf kan (een mp4 met H.264) en één
-  die omgezet moet worden (een mkv met HEVC); zoeken, een ondertitel aan, en "Verder kijken" op
-  het andere toestel binnen 2 s.
+  die omgezet moet worden (een mkv met HEVC van 1080p: het eerste beeld binnen 5 s; in de
+  sandbox mat de browser dat alleen met een bron van 720p); zoeken, een ondertitel aan, en
+  "Verder kijken" op het andere toestel binnen 2 s.
 - [ ] **Voor Vraag 2:** `lscpu` en `ls -l /dev/dri` op de Proxmox-host.
 
 ## Documenten
