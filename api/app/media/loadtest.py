@@ -32,7 +32,9 @@ sessies, controle, producenten, knipper en cache.
    speeltijd loopt alleen als het segment dat nodig is helemaal binnen is; anders is het
    haperen (aantal en duur). Een 410, 502 of 503, of geen verbinding (de app herstart), vraagt
    een nieuwe sessie op de plek waar hij was (fase c); 503 media_busy bij het openen probeert
-   hij na Retry-After opnieuw, zoals de speler in de browser.
+   hij na Retry-After opnieuw, zoals de speler in de browser. 409 media_probe_pending (een film
+   van sources zonder opgeslagen probe) vraagt elke speler na Retry-After opnieuw, ook die in
+   de app (na-controle van de review); de wachttijd telt mee in de start.
 5. **Fasen**: a (gespreid op 0, 10 en 20 s; elke sessie springt op 60 s 90 s vooruit, voorbij
    wat de producent al maakte), b (allemaal tegelijk). c (de app herstart) loopt alleen met de
    spelers buiten de app (`--extern`): elke speler meldt dan zijn herstarts. d (DS herstart) kan
@@ -68,6 +70,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app import errors
@@ -966,10 +969,22 @@ async def execute(
 
     def opener_for(source: Source, player: uuid.UUID) -> Opener:
         async def opener(start_ms: int, replace: str | None) -> LoadtestPlay:
-            return await play_source(
-                app, settings, user, family, source, codec=run.codec, short=short,
-                start_ms=start_ms, replace=replace, player=player,
-            )  # fmt: skip
+            while True:
+                try:
+                    return await play_source(
+                        app, settings, user, family, source, codec=run.codec, short=short,
+                        start_ms=start_ms, replace=replace, player=player,
+                    )  # fmt: skip
+                except HTTPException as exc:
+                    # Een film zonder opgeslagen probe (sources): 409 media_probe_pending als
+                    # de probe langer duurt dan het budget van play; hij loopt door. Opnieuw na
+                    # Retry-After, zoals de speler in de browser en die buiten de app (fase c).
+                    # De wachttijd telt mee in de start. Andere fouten blijven fouten.
+                    detail = exc.detail if isinstance(exc.detail, dict) else {}
+                    if detail.get("code") != "media_probe_pending" or watch.stop.is_set():
+                        raise
+                    wait = float((exc.headers or {}).get("Retry-After", 2))
+                    await asyncio.sleep(timing.s(wait))
 
         return opener
 

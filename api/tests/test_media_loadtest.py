@@ -352,6 +352,39 @@ async def test_sources_alleen_eigen_films_en_een_per_sessie(lt, client, admin):
     assert fake.made == []
 
 
+async def test_een_film_zonder_probe_wacht_op_de_probe(lt, client, admin, monkeypatch):
+    """Na-controle van de review (K1): een film zonder opgeslagen probe (nog nooit gespeeld,
+    niet in een bibliotheek) krijgt bij de start 409 media_probe_pending als de probe langer
+    duurt dan het budget van play. De speler in de app vraagt het dan na Retry-After opnieuw,
+    zoals de speler in de browser en die buiten de app (fase c); eerder faalde hij meteen
+    ("start: 409") en zakte de fase voor een probe die gewoon doorliep."""
+    from app.routers import media_play
+
+    settings, fake = lt
+    headers, _ = admin
+    top = (await root(client, headers))["folder"]["id"]
+    r = await put(client, headers, top, "nieuw.mkv", b"\x1aE\xdf\xa3" + b"nieuw" * 5000)
+    assert r.status_code == 201, r.text
+    probe = source_probe("transcode", "h264")
+    probed: list[str] = []
+
+    async def slow(settings_, sha):  # de worker doet er langer over dan het budget
+        probed.append(sha)
+        await asyncio.sleep(0.3)
+        return probe
+
+    monkeypatch.setattr(analysis, "probe_blob", slow)
+    monkeypatch.setattr(media_play, "PROBE_BUDGET", 0.05)
+    await start(client, headers, streams=1, seconds=30, sources=[r.json()["id"]])
+    report = await finish()
+    b = report["phases"]["b"]
+    assert [p["error"] for p in b["players"]] == [None], b["players"]
+    assert b["passed"], b["problems"]
+    assert b["players"][0]["mode"] == "transcode"
+    assert len(probed) == 1  # één probe: de tweede poging wachtte op dezelfde
+    assert not list(sessions.table().open()) and not loadtest._families
+
+
 # --- weigeren -------------------------------------------------------------------------------------
 
 
