@@ -518,8 +518,14 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
     async with maker() as session:
         busy = await sessions.busy(session)
     if busy or _converting:
-        _waiting[sha] = place or (next(_arrivals), bool(payload.get("b")))
         await _postpone(maker, sha, WAIT_SECONDS if busy else SLOT_SECONDS)
+        # Pas in de rij nu de taak queued is: anders kon _next haar hierboven nog lopend zien,
+        # uit de rij halen, en bleef het uitstel van SLOT_SECONDS staan. Kwam het slot vrij
+        # terwijl het uitstel werd opgeslagen, dan zet ze zelf de volgende klaar (geen await
+        # tussen de rij en deze controle).
+        _waiting[sha] = place or (next(_arrivals), bool(payload.get("b")))
+        if not busy and not _converting:
+            await _next(maker)
         return
     _converting.add(sha)  # geen await sinds de controle hierboven: dit is het slot
     try:

@@ -905,6 +905,44 @@ async def test_het_slot_staat_niet_stil(client, admin, office, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_het_slot_komt_vrij_terwijl_de_volgende_uitstelt(client, admin, office, monkeypatch):
+    """Integratie deel 3: de tweede conversie ziet het slot bezet en stelt uit; precies terwijl
+    ze dat in de database zet, komt het slot vrij. Dan is ze toch meteen aan de beurt, niet pas
+    na SLOT_SECONDS. Eerder stond ze al in de rij (_waiting) terwijl haar taak nog liep: _next
+    vond haar taak dan niet in queued, haalde haar uit de rij, en het uitstel van 60 s bleef
+    (in de hele api-set: test_een_rij_conversies_loopt_door, één nog pending na 13 s)."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"hold": True})
+    first = await upload(client, jonas, "een.docx", docx_with_pages(2))
+    await jobs.run_one(s)  # de preview
+    task = office.background(jobs.run_one(s))  # de eerste conversie houdt het slot
+    await until(lambda: office.log("convert_source"))
+    second = await upload(client, jonas, "twee.docx", docx_with_pages(3))
+    sha = (await blob_of(s, second["id"])).sha256
+    postpone = convert._postpone
+    entered, go = asyncio.Event(), asyncio.Event()
+
+    async def slow_postpone(maker_, sha_, seconds):
+        if sha_ == sha:
+            entered.set()
+            await go.wait()  # het slot komt nu vrij, vóór het uitstel in de database staat
+        await postpone(maker_, sha_, seconds)
+
+    monkeypatch.setattr(convert, "_postpone", slow_postpone)
+    pending = office.background(jobs.run_pending(s))  # de preview, dan de conversie: uitstel
+    await asyncio.wait_for(entered.wait(), 10)
+    office.conversions.configure({"hold": False})
+    await task  # de eerste is klaar en geeft het slot vrij (_next)
+    assert (await blob_of(s, first["id"])).pdf_state == "ready"
+    go.set()
+    await asyncio.wait_for(pending, 10)
+    await jobs.run_pending(s)  # wat nu klaarstaat, niet over 60 s
+    assert (await blob_of(s, second["id"])).pdf_state == "ready"
+    assert len(office.converted()) == 2
+
+
+@pytest.mark.anyio
 async def test_gevraagd_gaat_voor_ook_na_uitstel(client, admin, office):
     """Een conversie op verzoek is de volgende zodra het slot vrijkomt, ook als een worker hem
     al oppakte terwijl het slot bezet was (en hij dus moest wachten)."""
