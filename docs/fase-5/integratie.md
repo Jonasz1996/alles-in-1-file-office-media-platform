@@ -1,6 +1,32 @@
 # Fase 5 — De integratie
 
-Stap 4 van §5 van het [bouwontwerp](bouwontwerp.md) (revisie 2, leidend). Dit document groeit
+## In het kort
+
+De integratie (stap 4 van §5 van het [bouwontwerp](bouwontwerp.md)) bracht M0–M10 samen tot
+versie 0.7.0, in vier delen:
+
+- **Deel 1, de open punten:** wat de pakketten aan de integratie overlieten, afgewerkt met een
+  test per punt; wat bleef liggen, met de reden ([Open punten](#open-punten)). Alle wijzigingen
+  aan contracten zijn additief ([Wijzigingen aan contracten](#wijzigingen-aan-contracten)).
+- **Deel 2, de metingen:** Ma–Mp en de belastingtest in de sandbox, met de worker op 3 cores
+  ([Metingen](#metingen); de getallen in [metingen.md](metingen.md)). Vier van de vijf eisen van
+  "Klaar als" gehaald; drie omzettingen tegelijk zonder haperen bijna (na een sprong soms één
+  keer 0,1–1,5 s).
+- **Deel 3, de standaarden en de installatie:** de standaarden van `MediaConfig` op de metingen
+  ([Standaarden](#standaarden)), de installatietest van 0.6.0 naar deze versie en terug
+  ([Installatietest en terugrollen](#installatietest-en-terugrollen)), en drie fouten uit de volle
+  api-set gerepareerd.
+- **Deel 4, afronden:** versie 0.7.0, de README's, het stappenplan, de beslissingen, de lijst
+  van alle e2e van media ([e2e.md](e2e.md#alle-e2e-van-media-070)) en dit document
+  ([Deel 4: afronden en 0.7.0](#deel-4-afronden-en-070)).
+
+Wat alleen CI of de LXC kan laten zien: [hieronder](#wat-alleen-ci-of-de-lxc-kan-bewijzen); de
+lijst voor Jonas op de LXC staat in de [README](README.md#op-de-lxc-stap-5), wat er is en de
+grenzen ook daar. De checks per deel staan onderaan.
+
+## Hoe het liep
+
+Stap 4 van §5 van het [bouwontwerp](bouwontwerp.md) (revisie 2, leidend). Dit document groeide
 per deel van de integratie. Deel 1 werkte de punten van "Naar de integratie" in
 [m10.md](m10.md) af (1 en 3–8), en liep de stukken "Open" van [m0.md](m0.md) tot en met
 [m10.md](m10.md) na op punten met de integratie als eigenaar, of zonder eigenaar en klein. Punt 2
@@ -9,7 +35,8 @@ bij de metingen, en punt 10 (Vraag 7) blijft bij Jonas. Deel 2 mat Ma–Mp van �
 belastingtest van §4.6 en punt 9 ([Metingen](#metingen), [metingen.md](metingen.md)). Deel 3
 zette de standaarden van `MediaConfig` op de metingen, met punt 2 ([Standaarden](#standaarden)),
 en draaide de installatietest met terugrollen naar 0.6.0
-([Installatietest en terugrollen](#installatietest-en-terugrollen)).
+([Installatietest en terugrollen](#installatietest-en-terugrollen)). Deel 4 maakte er versie
+0.7.0 van en werkte de docs af ([Deel 4](#deel-4-afronden-en-070)).
 
 Jonas heeft de beslissingskaarten van fase 5 nog niet beantwoord. De standaarden bleven dus: de
 import kopieert, geen TMDB-sleutel en alleen lokale metadata, de providers uit. B39–B48 blijven
@@ -168,6 +195,8 @@ Deel 3 veranderde geen contract: de grens voor `subs/` en `trick/` zit in de swe
 hetzelfde terug (ze zetten alleen de mtime van de map). Ook de drie reparaties uit de checks
 ([De checks van deel 3](#de-checks-van-deel-3)) zijn intern: `played_s` in het verslag van de
 belastingtest houdt zijn betekenis (de gespeelde tijd), alleen telt hij niet meer te veel.
+
+Deel 4 veranderde geen code, dus ook geen contract: alleen de versie (0.7.0) en de docs.
 
 ## Metingen
 
@@ -333,7 +362,14 @@ staan in het gemeenschappelijke deel en lopen daar ook.
 
 ## Wat alleen CI of de LXC kan bewijzen
 
-*Volgt; uit dit deel:*
+De sandbox heeft Chromium 141 zonder H.264 en AAC, ffmpeg 6.1.1 in plaats van de 7.1.5 van het
+image (het image kreeg hier een leeg pakket ffmpeg: de sandbox bereikt geen Debian-spiegel), en
+een CPU die 20–40 % trager is dan de referentie. Wat daarom alleen in CI (de jobs `e2e-media`,
+`e2e-media-perf` en `media-image`) of op de LXC te bewijzen is, staat hieronder per deel. Voor de
+LXC is het samen stap 5: de lijst in de [README](README.md#op-de-lxc-stap-5), de commando's in
+het runbook [media.md](../runbooks/media.md).
+
+Uit deel 1:
 
 - de sprites en ondertitels opnieuw na "Mislukte opnieuw" met de ffmpeg 7.1.5 van het image;
 - een ffprobe die in de container niet start (ENOEXEC, EACCES): hier alleen met een leeg
@@ -356,6 +392,38 @@ Uit deel 3:
   soort);
 - of de standaarden passen bij de CPU van de LXC: `bench` op /beheer. Boven `f` 1,6 past met 3
   omzettingen tegelijk geen kijker meer (het runbook zegt dan: zet het op 2).
+
+Uit deel 4 (de eindlijst van de e2e, [e2e.md](e2e.md#alle-e2e-van-media-070)):
+
+- de vier e2e met H.264 (`test_de_viewer_speelt_h264`,
+  `test_h264_speelt_via_de_sessie_en_stopt_na_blokkeren`, `test_h264_uit_hevc_hdr_via_mse`,
+  `test_transcode_naar_h264_in_ci`) en Ma met H.264 slaan hier over; in `e2e-media` en
+  `e2e-media-perf` moeten ze spelen (`MEDIA_REQUIRE_H264=1`);
+- Safari, iPhone (native HLS), Firefox en de tv: niet getest, hier niet en in CI niet. Een film
+  op telefoon en laptop staat daarom in de lijst voor de LXC.
+
+## Deel 4: afronden en 0.7.0
+
+Geen code, alleen de versie en de docs:
+
+- **Versie 0.7.0** in dezelfde bestanden als 0.6.0: `api/app/__init__.py`, `api/pyproject.toml`,
+  `api/uv.lock`, `web/package.json` en `web/package-lock.json`.
+- **De README's:** de [README](../../README.md) bovenaan de repo heeft "Bijwerken naar 0.7.0
+  (media)" en fase 5 in de voortgang; [infra/single/README.md](../../infra/single/README.md) heeft
+  media naast office (de derde container, het bijwerken, en office vanaf 0.5.0 in dezelfde run).
+  Het terugrollen naar 0.6.0 blijft de vijf regels van Keuze 47 met de volledige commit; de tag
+  `v0.6.0` staat er nog niet, en het runbook noemt hem alleen met "als die er is".
+- **[README.md](README.md) van fase 5:** bovenaan de stand voor Jonas: wat er is, "Klaar als" met
+  de getallen, de grenzen, wat geschrapt of verschoven is en waarom, de vragen, en stap 5 op de
+  LXC als lijst. De geschiedenis per pakket staat eronder.
+- **Het [stappenplan](../stappenplan.md):** elf punten van fase 5 afgevinkt, elk met de reden
+  waar het ontwerp ze veranderde. De belastingtest blijft open: gebouwd en in de sandbox
+  gedraaid, maar het aantal voor de node zelf kan alleen de LXC zeggen. Dat is de veilige lezing
+  van "per node vastleggen".
+- **De [beslissingen](../fase-0/beslissingen.md):** B39–B48 blijven voorstel, met "zo gebouwd en
+  de standaard in 0.7.0, maar Jonas heeft nog niet gekozen", en een regel dat ze op hem wachten.
+- **[e2e.md](e2e.md):** de lijst van alle 74 e2e van media (68 `media`, 6 `media_perf`) met wat
+  elke test bewijst, en de uitslag bij 0.7.0.
 
 ## De checks van deel 1
 

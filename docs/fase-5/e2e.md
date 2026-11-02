@@ -3,7 +3,9 @@
 Hoe de tests van media werken, hoe je elke marker draait (lokaal en in CI), het harnas, de
 nep-servers, en wat waar bewezen wordt. Gemaakt in M0-e2e. Het ontwerp staat in
 [bouwontwerp.md](bouwontwerp.md), §3.6, §3.8, §4.2, §4.3 en §4.8. Wat M0 verder bouwde, staat in
-[m0.md](m0.md).
+[m0.md](m0.md). De eindlijst van alle e2e van media, met wat elke test bewijst, staat onder
+[Alle e2e van media](#alle-e2e-van-media-070); de uitslag bij 0.7.0 onder
+[Uitslag hier](#uitslag-hier).
 
 ## In het kort
 
@@ -12,7 +14,7 @@ nep-servers, en wat waar bewezen wordt. Gemaakt in M0-e2e. Het ontwerp staat in
 | (geen) | `api/tests` | de nep-worker, de nep-stroom en de nep-providers; nooit echte ffmpeg nodig | `api` | hard |
 | `media` | `api/tests` | de lokale worker met echte ffmpeg (6.1 van Ubuntu), op de fixtures | `api-media` | hard |
 | `media` | `e2e/` | de echte app met media aan, de lokale worker, echte ffmpeg en Chromium | `e2e-media` | hard |
-| `media_perf` | `e2e/` (en later `api/tests`) | zoals `media`, met de worker op 3 cores en 40 Mbit/s en 20 ms | `e2e-media-perf` | alleen een rapport |
+| `media_perf` | `e2e/` (de api-tests hebben hem niet; de metingen van de integratie zijn scripts in `api/tests/media/metingen`) | zoals `media`, met de worker op 3 cores en 40 Mbit/s en 20 ms | `e2e-media-perf` | alleen een rapport |
 | `provider_real` | beide | de echte TMDB, MusicBrainz en CAA, met een eigen sleutel | geen (alleen met de hand) | — |
 | (image) | `api/tests/media/image_kern.py` en de spike | het echte platform-image met ffmpeg 7.1 | `media-image` | hard |
 
@@ -305,6 +307,152 @@ zet de vlag dan niet stil terug: dat is een vondst voor §6 van het bouwontwerp.
   `/beheer` in plaats van met de CLI. *Bij het samenvoegen van golf 5:* de fixture `tmdb_key` van
   de e2e van M8 zet de sleutel via het veld op `/beheer` → Media (eerst fout, dan goed, met de
   bronvermelding van TMDB), niet meer met een hulpproces.
+
+## Alle e2e van media (0.7.0)
+
+De eindlijst bij de integratie (stap 4 van §5): 68 tests met `media` en 6 met `media_perf`, in
+13 bestanden onder `e2e/`. Alle tests met `media` draaien tegen de echte app met media aan, de
+lokale worker, echte ffmpeg en Chromium. Daarbovenop laat de bewaking van `conftest.py` elke
+test met een browser falen op een schending van de CSP, een gelogde of onafgevangen fout, of een
+ontbrekend gebied van i18n, en `ffmpeg_count` laat hem falen bij een vierde ffmpeg of een die
+overblijft. Vier tests met H.264 slaan in de sandbox over (Chromium 141 heeft geen
+H.264 en AAC) en moeten in CI spelen (`MEDIA_REQUIRE_H264=1`); ze staan hieronder met "(H.264)".
+De `provider_real`-tests zijn api-tests (`api/tests`), geen e2e.
+
+### `test_media_m0.py`: het harnas (8 + 1)
+
+| Test | Wat het bewijst |
+|---|---|
+| `test_de_app_start_met_de_lokale_worker` | de worker is een kind van de app met de grenzen van het harnas; `media-status` ziet zijn caps, en `/beheer` → Media ziet de lokale worker zonder afscherming |
+| `test_een_upload_wordt_geprobed` | een upload wordt door de job van de app en de worker geprobed (VP9, twee Opus-sporen); een kapot bestand geeft `failed` met `unreadable` |
+| `test_de_viewer_speelt_vp9` | de viewer speelt VP9 + Opus met media aan |
+| `test_de_viewer_speelt_h264` | idem voor H.264 + AAC (H.264) |
+| `test_herstart_met_een_onderbreking` | de app weg en terug op dezelfde poort met een nieuwe worker; niets blijft over |
+| `test_alles_op_pid_weg_en_weer_starten` | de deadline haalt de app en de wees-worker op pid weg, en de volgende test start ze weer |
+| `test_ffmpeg_count_ziet_een_vierde_en_een_wees` | de teller zelf: hij ziet een vierde ffmpeg en een wees, en stopt ze op pid |
+| `test_de_deadline_dumpt_de_draden` | de deadline dumpt alle draden en stopt dan |
+| `test_s13_de_browser_en_het_eerste_beeld` (`media_perf`) | S13: wat de browser zegt over H.264 en AAC, en het eerste beeld van VP9 in de viewer onder 40 Mbit/s en 20 ms (een rapport) |
+
+### `test_media_m1.py`: de worker in isolatie (3)
+
+| Test | Wat het bewijst |
+|---|---|
+| `test_de_preview_van_een_video_komt_van_de_worker` | elke ffmpeg en ffprobe voor een preview is een nakomeling van de worker, nooit van de app of het renderproces |
+| `test_de_worker_weg_en_terug` | kill -9 op de worker: de app start hem na 1 s opnieuw, en een nieuwe video krijgt weer een preview |
+| `test_met_media_uit_krijgt_een_video_een_preview_zoals_in_0_6_0` | met media uit start het renderproces een worker voor één keer, en daarna blijft er geen over |
+
+### `test_media_m2.py`: bibliotheken, de scanner en de import (3)
+
+| Test | Wat het bewijst |
+|---|---|
+| `test_bibliotheek_maken_en_kijken_met_het_toetsenbord` | een map wordt een bibliotheek met het toetsenbord; de titels komen uit de namen, een poster.jpg wordt de poster; Afspelen en "Verder op 0:03" spelen in de speler op `/kijken`; een upload daarna verschijnt vanzelf |
+| `test_series_de_start_en_opnieuw_scannen` | een bibliotheek met series: Net toegevoegd, de serie met seizoen en afleveringen, Afspelen S01E01 en Opnieuw scannen |
+| `test_import_uit_data_import_via_beheer` | Nieuwe bibliotheek op `/media`, dan een import uit `/data/import` via `/beheer` met de mappenkiezer en Kopiëren: de items in de bibliotheek, de bron blijft, de taak eindigt als `done` |
+
+### `test_media_m3.py`: direct play via een sessie (8)
+
+| Test | Wat het bewijst |
+|---|---|
+| `test_vp9_speelt_via_de_sessie_en_stopt_na_de_prullenbak` | de codecs gemeten in de browser, play doet zelf de probe, direct play; na de prullenbak 403 `revoked` |
+| `test_uitloggen_stopt_alleen_die_login` | uitloggen stopt de sessie van die login; een andere login speelt door |
+| `test_een_nieuwe_versie_geeft_replaced` | een nieuwe versie van het bestand: 410 `replaced` |
+| `test_een_publieke_link_speelt_zonder_inloggen` | een publieke link speelt zonder in te loggen; de link weg: binnen 15 s 403 |
+| `test_een_deling_intrekken_breekt_een_lopende_lezing_af` | een deling weg terwijl een ander kijkt: een lopende lezing van `/file` breekt na hooguit 15 s af |
+| `test_uitloggen_breekt_een_lopende_lezing_meteen_af` | uitloggen breekt een lopende lezing meteen af |
+| `test_publiek_omzetten_geeft_403_ook_in_de_browser` | een bron die omzetten nodig heeft, via een publieke link: 403 `media_public_transcode` |
+| `test_h264_speelt_via_de_sessie_en_stopt_na_blokkeren` | H.264 + AAC direct, en na blokkeren 403 `blocked` (H.264) |
+
+### `test_media_m4.py`: remux en transcode via de stroom (6)
+
+| Test | Wat het bewijst |
+|---|---|
+| `test_een_mkv_buiten_een_bibliotheek_speelt_als_remux` | zonder bibliotheek en zonder opgeslagen probe: play doet de probe en de keyframe-index, en kiest remux |
+| `test_een_publieke_link_speelt_remux_en_transcode_niet` | via een publieke link: remux speelt, omzetten geeft 403, de link weg: binnen 15 s 403 `revoked` |
+| `test_publiek_omzetten_als_het_aan_staat` | met `public_transcode` aan: hooguit 720 en één per link; een tweede kijker krijgt 503 `media_busy` met Retry-After |
+| `test_een_transcode_speelt_op_het_rooster` | een transcode op het rooster van 2 s, elk segment met een keyframe vooraan (VP9 hier, H.264 waar de browser het kan) |
+| `test_h264_uit_hevc_hdr_via_mse` | HEVC 10-bit HDR10 naar H.264 + AAC met tone-mapping via MSE (H.264) |
+| `test_de_worker_gedood_tijdens_een_transcode` | §4.3 #12 zonder speler: de worker gedood, zijn ffmpeg gaat mee, een nieuw segment binnen 10 s, nooit meer dan 3 ffmpeg |
+
+### `test_media_m4_perf.py` (`media_perf`, 1)
+
+`test_m4_de_start_van_een_stroom`: de virtuele speler zonder browser, van play tot en met
+segment 0: alleen, naast 2 andere transcodes, na een sprong naar 70 %, en remux (een rapport;
+de getallen in [metingen.md](metingen.md), Mb).
+
+### `test_media_m5.py`: ondertitels, sprites en hoofdstukken (5)
+
+| Test | Wat het bewijst |
+|---|---|
+| `test_ondertitels_als_track_en_ass_bovenaan` | een ingebed WebVTT-spoor, een losse SRT (CP1252) en ASS als `<track>` op de goede tijd; de ASS-cue bovenaan, de SRT onderaan; hoofdstukken en het begin van de aftiteling |
+| `test_sprites_via_de_sessie_en_403_na_de_prullenbak` | de analyse maakt sprites, elk adres uit `trick.vtt` laadt via de sessie, de cue wijst het goede vak aan; na de prullenbak 403 |
+| `test_beeldondertitel_ingebrand_via_de_producer[pgs.mkv]` en `[vobsub.mkv]` | PGS en VobSub worden ingebrand, gemeten in de pixels, ook na een sprong (S9) |
+| `test_ondertitels_op_de_tijd_van_een_transcode` | de SRT en ASS van een HDR-transcode als `<track>` op de tijdlijn van de stroom |
+
+### `test_media_m6.py`: de speler (21)
+
+| Test | Wat het bewijst |
+|---|---|
+| `test_direct_het_profiel_het_eerste_beeld_en_zoeken` | de meting van [clientprofiel.md](clientprofiel.md), het eerste beeld, zoeken met de toets 5 |
+| `test_remux_zoeken_en_audiospoor_a_b_a` | zoeken bij remux, en audiospoor A, B, A op dezelfde positie |
+| `test_een_sprong_voorbij_de_cache_start_een_nieuwe_producent` | een sprong naar 90 %: een nieuwe ffmpeg met `-ss` |
+| `test_transcode_hdr_naar_720_met_ondertitels` | de trede 720, de redenen in Info, de ondertitels als `<track>` |
+| `test_transcode_naar_h264_in_ci` | een transcode naar H.264 in de speler (H.264) |
+| `test_een_ander_audiospoor_bij_een_transcode` | een ander audiospoor bij een transcode: de positie blijft, en de regel voor geforceerde ondertitels |
+| `test_kwaliteit_720_naar_480` | een andere kwaliteit via het menu: een nieuwe sessie, de positie blijft, het beeld 480 hoog |
+| `test_de_kaart_volgende_aflevering` | de kaart "Volgende aflevering" bij de aftiteling, Esc annuleert, dan vanzelf door; met een echte serie |
+| `test_cd1_gaat_vanzelf_naar_cd2` | een film in twee delen (cd1, cd2) is één item; na deel 1 meteen deel 2, zonder de kaart |
+| `test_pip_vraagt_beeld_in_beeld` | P vraagt beeld-in-beeld |
+| `test_alleen_met_het_toetsenbord` | de lijst van [toetsenbord-m6.md](toetsenbord-m6.md), alle menu's |
+| `test_de_app_herstart_midden_in_het_afspelen` | de app herstart: een nieuwe sessie op de positie (±3 s), weer spelen binnen 10 s |
+| `test_de_app_dertig_seconden_weg` | idem met de app 30 s weg |
+| `test_de_worker_gedood_tijdens_een_transcode` | §4.3 #12 met de speler: hij loopt binnen 10 s na de naad weer, zonder fout |
+| `test_de_worker_gedood_met_een_gat_in_het_geluid` | idem met een gat in het geluid van de nieuwe run: de speler springt erover |
+| `test_sprites_bij_hover_en_hoofdstukken` | de sprite en het hoofdstuk boven de tijdbalk, Page Down |
+| `test_de_speler_in_de_viewer_en_de_fallback` | de speler in de viewer van Bestanden (Esc sluit, de sessie dicht), en de terugval |
+| `test_de_viewer_valt_terug_als_play_nee_zegt` | zegt play nee, dan de `<video>` van fase 3 |
+| `test_weg_van_de_pagina_sluit_de_sessie` | weg van de pagina: de sessie meteen dicht (binnen 5 s 410) |
+| `test_403_de_speler_stopt_en_zegt_waarom` | de prullenbak tijdens het spelen: de speler stopt, zegt waarom, en vraagt geen nieuwe sessie |
+| `test_na_twee_haperingen_een_trede_lager` | §4.3 #19: na twee keer haperen zelf een trede lager, met een melding |
+
+### `test_media_m6_perf.py` (`media_perf`, 4)
+
+`test_m6_ma_eerste_beeld_direct`, `test_m6_ma_eerste_beeld_direct_h264` (H.264),
+`test_m6_mb_eerste_beeld_transcode` en `test_m6_mc_zoeken_en_weer_lopen`: Ma, Mb en Mc van
+"Klaar als" in de browser, elk 10 keer onder 40 Mbit/s en 20 ms (een rapport; de getallen in
+[metingen.md](metingen.md)).
+
+### `test_media_m7.py`: de kijkvoortgang (3)
+
+| Test | Wat het bewijst |
+|---|---|
+| `test_twee_tabbladen_verder_kijken_binnen_2_s` | twee tabbladen van één gebruiker: de stand staat binnen 2 s bij het andere, en de p95 van 20 keer (Klaar als) |
+| `test_verder_kijken_met_het_toetsenbord` | de rij Verder kijken met het toetsenbord; een stand van een ander apparaat zet de kaart vooraan |
+| `test_volgende_aflevering_en_gezien_markeren` | een aflevering uitgekeken: de volgende binnen 2 s klaar; Gezien markeren schuift door |
+
+### `test_media_m8.py`: metadata online (1)
+
+`test_twintig_films_vanzelf_en_met_de_hand`: de sleutel van TMDB via `/beheer` (eerst fout, dan
+goed); van 20 films met scene-namen ≥ 18 vanzelf goed tegen de nep-providers, de rest onder
+Nakijken; Koppelen na een 429 met Retry-After, en Bewerken met het toetsenbord; de sleutel gaat
+alleen in de header naar TMDB, en staat niet in de log, de database, de pagina's of de API.
+
+### `test_media_m9.py`: muziek en gapless (6)
+
+| Test | Wat het bewijst |
+|---|---|
+| `test_gapless_de_fase_springt_niet[flac-flac]` en `[opus-opus]` | gapless (Klaar als): op elke overgang springt de fase van de sinus hooguit 1 sample, zonder gat |
+| `test_gapless_mp3_en_aac_vastgelegd[mp3-mp3]` en `[aac-m4a]` | dezelfde meting voor MP3 en AAC, alleen vastgelegd, niet geëist |
+| `test_albums_artiesten_en_de_muziekbalk_met_het_toetsenbord` | albums, artiesten en de muziekbalk met het toetsenbord; de muziek speelt door bij navigeren |
+| `test_afspeellijsten_met_het_toetsenbord` | een afspeellijst maken, een album erbij, de volgorde, Delete, hernoemen en verwijderen |
+
+### `test_media_m10.py`: `/beheer` → Media (4)
+
+| Test | Wat het bewijst |
+|---|---|
+| `test_het_tabblad_met_het_toetsenbord` | Alt+8, de blokken, Opruimen met Esc en met bevestigen; de belastingtest zegt hoe hij aan gaat |
+| `test_een_sessie_stoppen` | de beheerder stopt een sessie; de speler zegt waarom en vraagt geen nieuwe; daarna geen ffmpeg meer |
+| `test_een_import_starten` | Verplaatsen naar een andere eigenaar; een bestand dat nog geschreven wordt, blijft staan ("in gebruik") |
+| `test_de_worker_zonder_ffmpeg` | §4.3 #13: zonder ffmpeg de melding op `/beheer`, direct play werkt, en een HEVC-film geeft Downloaden (Keuze 46) |
 
 ## Uitslag hier
 
