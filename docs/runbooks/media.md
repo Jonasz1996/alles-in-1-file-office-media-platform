@@ -343,6 +343,18 @@ stopt zelf bij een vierde ffmpeg.
    ```
    Fase a (gespreid, met een sprong) en b (alle drie tegelijk) slagen als elke start binnen 5 s
    is, er niets hapert, en de API (p95) binnen 200 ms antwoordt.
+
+   **Met je eigen films** (om de kostentabel met echte inhoud te ijken, bevinding 6 van
+   `docs/fase-5/metingen.md`): kies films die omgezet moeten worden, een mkv met HEVC of een
+   film boven 4 Mbit/s (de test vraagt hooguit 4 Mbit/s; een H.264-film eronder wordt remux en
+   meet de omzetting niet). Het id staat in het adres als je de film speelt: `/kijken/<id>`.
+   Hooguit één film per sessie; met minder films dan sessies speelt een film meer dan eens:
+   ```bash
+   dc exec -T platform python -m app.cli media-loadtest --sessies 3 --duur 300 --film <id1> --film <id2> --film <id3> | tee /root/belastingtest-films.json
+   ```
+   Het platform maakt dan geen eigen bronnen. Het rapport zegt per speler de modus (`mode`) en
+   de trede (`height`); een film die je niet mag lezen geeft `not_found`. `--film` gaat niet
+   samen met `--extern` (fase c speelt alleen de eigen bronnen).
 4. **Fase c, de app herstart** (de spelers moeten dan buiten de app draaien). Start ze in een
    eigen container:
    ```bash

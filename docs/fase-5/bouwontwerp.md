@@ -4329,7 +4329,9 @@ knipper en cache.
    seed, elk met ruis. Na elkaar, in `media/loadtest/` (±675 MB, hergebruikt), en samen ±3 minuten
    (V8). De app opent de uitvoer-fd; de worker heeft geen schrijfbare map nodig. Revisie 1 had
    `mandelbrot` (±7 minuten per bron) en geen opdracht om bronnen te maken. Met `sources` kan het
-   met echte films van de beheerder.
+   met echte films van de beheerder. *Noot (review van de integratie, K1):* zo gebouwd: een film
+   is een gewone sessie op de node, met de controle van play (404 als de beheerder hem niet mag
+   lezen), hooguit één film per sessie (422), en op de commandoregel `--film <id>`.
 2. **Sessies.** Ze zijn van de beheerder die de test start. Bij de eigen bronnen is de bron een
    `LoadtestFile` (`SessionSource`, §3.3), alleen met `PLATFORM_MEDIA_LOADTEST=1`. De controle per
    verzoek kijkt dan of die beheerder nog actief is en de vlag nog aan staat.

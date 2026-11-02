@@ -21,6 +21,9 @@ versie 0.7.0, in vier delen:
   gemiste wekker in het opzoeken die de laatste checks vonden
   ([Deel 4: afronden en 0.7.0](#deel-4-afronden-en-070)).
 
+Daarna vond een review van de integratie negen punten; alle negen zijn gerepareerd
+([De review van de integratie](#de-review-van-de-integratie)).
+
 Wat alleen CI of de LXC kan laten zien: [hieronder](#wat-alleen-ci-of-de-lxc-kan-bewijzen); de
 lijst voor Jonas op de LXC staat in de [README](README.md#op-de-lxc-stap-5), wat er is en de
 grenzen ook daar. De checks per deel staan onderaan.
@@ -201,6 +204,15 @@ Deel 4 veranderde geen contract: de reparatie in `lookup.scanned` is intern (de 
 `scanner.after_scan` en de taak `media.lookup` blijven gelijk), verder alleen de versie (0.7.0)
 en de docs.
 
+De review van de integratie (K1, [hieronder](#de-review-van-de-integratie)) bouwde `sources`
+van de belastingtest; dat breidt drie dingen uit, alle drie additief:
+
+| Contract | Wat | Test |
+| --- | --- | --- |
+| `POST /api/v1/admin/media/loadtest` (`LoadtestIn.sources`, het veld stond er al) | wordt nu gebruikt; daarbij nieuw 404 `not_found` (een film die de beheerder niet mag lezen, of in zijn prullenbak) en 422 `invalid_input` (meer films dan sessies) | `test_sources_alleen_eigen_films_en_een_per_sessie` |
+| het rapport van de belastingtest (`LoadtestView.report`, een vrij `dict`) | de sleutel `films` erbij (de ids van `sources`, leeg zonder) | `test_met_sources_speelt_hij_de_films_van_de_beheerder` |
+| `app.cli media-loadtest` | de optie `--film <id>` (meer dan eens); niet samen met `--extern` | `test_de_cli_met_een_film`, `test_media_loadtest_geeft_de_argumenten_door` |
+
 ## Metingen
 
 Deel 2 mat Ma–Mp van §4.5 en de belastingtest van §4.6 in de sandbox (de worker onder
@@ -346,7 +358,9 @@ Wat dit deel aan de test veranderde (allemaal in `8ffabf3`):
 - **Het functiedeel** controleert dat het runbook en `infra/single/README.md` precies de vijf
   regels van Keuze 47 geven, in die volgorde, met de volledige hash en het volledige adres van
   install.sh, en dat een tekst die `v0.6.0` noemt "als die er is" zegt (nagegaan: zonder de regel
-  `dc stop platform media` in de README, of zonder "als die er is", FOUT).
+  `dc stop platform media` in de README, of zonder "als die er is", FOUT). *Review van de
+  integratie (C2/K2):* nu zes regels, met het script eerst in een bestand; zie
+  [De review van de integratie](#de-review-van-de-integratie).
 
 **Het runbook en de README.** `docs/runbooks/media.md` ("Terug naar 0.6.0") had de commando's met
 de volledige hash al, maar stap 4 met `…/install.sh` en "na de integratie ook de tag `v0.6.0`".
@@ -384,7 +398,9 @@ Uit deel 2, de metingen ([metingen.md](metingen.md#wat-alleen-de-lxc-of-ci-kan-l
 - de treden van Vraag 3 en §4.5, en een nieuwe kijker tijdens de start van DS (bevinding 7):
   beide hangen aan `f`, en de sandbox is 20–40 % trager dan de referentie;
 - fase c met `dc restart platform` achter de proxy, en fase d met de DS van het image;
-- de belastingtest met echte films: `sources` wordt aangenomen maar niet gebruikt.
+- de belastingtest met echte films (bevinding 6 van de metingen): `sources` is sinds de review
+  van de integratie (K1) gebouwd; met de films van Jonas kan het alleen op de LXC
+  (`media-loadtest --film <id>`, het runbook van media).
 
 Uit deel 3:
 
@@ -414,7 +430,8 @@ Eén reparatie in de code (hieronder), verder de versie en de docs:
 - **De README's:** de [README](../../README.md) bovenaan de repo heeft "Bijwerken naar 0.7.0
   (media)" en fase 5 in de voortgang; [infra/single/README.md](../../infra/single/README.md) heeft
   media naast office (de derde container, het bijwerken, en office vanaf 0.5.0 in dezelfde run).
-  Het terugrollen naar 0.6.0 blijft de vijf regels van Keuze 47 met de volledige commit; de tag
+  Het terugrollen naar 0.6.0 blijft de vijf regels van Keuze 47 met de volledige commit (na de
+  review zes: het script eerst in een bestand, [C2 en K2](#de-review-van-de-integratie)); de tag
   `v0.6.0` staat er nog niet, en het runbook noemt hem alleen met "als die er is".
 - **[README.md](README.md) van fase 5:** bovenaan de stand voor Jonas: wat er is, "Klaar als" met
   de getallen, de grenzen, wat geschrapt of verschoven is en waarom, de vragen, en stap 5 op de
@@ -441,6 +458,50 @@ alleen ontdubbelt tegen een taak die nog klaarstaat: loopt er een, dan komt er e
 `media_net` heeft één worker, dus die loopt erna. De nieuwe test
 `test_een_scan_terwijl_het_opzoeken_loopt_krijgt_een_opvolger` laat midden in de eerste taak een
 film uploaden en scannen; zonder de wijziging bleef die film `local`.
+
+## De review van de integratie
+
+Na deel 4 las een review de integratie (`1a6dac0..c8c1abb`) en vond negen punten: S1, C1, C2 en
+K1–K6. Elk punt is eerst nagegaan (met een test, een commando of de code), daarna gerepareerd met
+een test die zonder de reparatie faalt; bij een punt in de docs is de controle een regel in het
+functiedeel van de installatietest of een bron die het getal laat zien. Geen punt vroeg een keuze
+van Jonas; zijn vragen in de [README](README.md#vragen-voor-jonas) bleven gelijk.
+
+- **S1, het voorbeeld "een instelling erbij" zette de afscherming uit: gefixt (`59799f2`).**
+  Nagegaan: `infra/single/README.md` gaf als voorbeeld `… PLATFORM_BRANCH=… MEDIA_SANDBOX=uit
+  bash`, zonder waarschuwing; install.sh schrijft dat in `.env`, en dan draait ffmpeg in de
+  container van de app tot iemand `MEDIA_SANDBOX=aan` zet. Nu weer `OFFICE=uit` (zoals in 0.6.0),
+  en de inleiding van het runbook noemt `MEDIA_SANDBOX=aan`. Het functiedeel van de
+  installatietest eist nu "tijdelijk" binnen 8 regels na elke `MEDIA_SANDBOX=uit` in de README
+  en het runbook; op de docs van `c8c1abb` faalt die controle.
+- **C1, de tak voor de ondertitels in `steps_left` had geen test: gefixt (`1e4872a`).**
+  Nagegaan: met `return False` in plaats van die tak bleef de hele set groen. De nieuwe test
+  `test_play_zet_de_analyse_klaar_als_de_ondertitels_ontbreken` zet de sprites klaar, geeft de
+  film een SRT-spoor en eist dat play de analyse klaarzet bij `subs_state` none en pending, en
+  niet bij ready, failed en skip. Hij faalt zonder de tak, en als failed meetelt.
+- **C2 en K2, stap 4 van het terugrollen haalde install.sh van main: gefixt (`59799f2`).**
+  Nagegaan: `git ls-tree origin/main` heeft alleen `README.md`, en `curl -fsSL <404> | bash`
+  eindigt met 0 zonder iets te doen; de app stond dan al stil met het schema op 0007. Nu haalt
+  stap 1 het script van de branch (zoals bij het bijwerken) naar `/root/platform-install.sh`,
+  vóór er iets stopt, en zegt "goed" als het er is; stap 4 draait dat bestand met
+  `PLATFORM_BRANCH` en `PLATFORM_SRC_REF`. Zo in het runbook en in `infra/single/README.md`. Het
+  functiedeel eist die vorm (126 van de 126; op de docs van `c8c1abb` FOUT), en `--stappen`
+  draait in stap 4 hetzelfde: `bash -s < install.sh`.
+- **K1, de belastingtest negeerde `sources`: gebouwd (`03f2ec3`).** Nagegaan: een POST met
+  `sources` gaf 202 en draaide op de eigen bronnen; synth liep gewoon. Het ontwerp (§4.6 punt 1)
+  en het bevroren `LoadtestIn` beloven het, dus gebouwd in plaats van geweigerd. De route zoekt
+  de films op met de toegang van play (een film die de beheerder niet mag lezen of in zijn
+  prullenbak: 404 `not_found`), hooguit één per sessie (422 `invalid_input`); speler i speelt
+  film i modulo het aantal, en synth maakt niets. Een film is een gewone sessie op de node, met de
+  controle van play, de opgeslagen probe en de keyframe-index. Het profiel staat direct spelen
+  nooit toe (dan zijn er geen segmenten om te meten). De sessies van de run delen een family:
+  daarmee gaan ze na afloop dicht, en houdt `loadtest.ours` ze buiten de echte kijkers (anders
+  weigerde `/beheer` een meting om de test zelf), buiten de redenen per dag, en heten ze op
+  `/beheer` "belastingtest". Op de commandoregel `media-loadtest --film <id>` (niet met
+  `--extern`). Drie nieuwe tests in `test_media_loadtest.py` falen zonder de wijziging; zonder
+  `loadtest.ours` in `admin.py` faalt de eerste. De contracten: [hierboven](#wijzigingen-aan-contracten).
+  De docs: het runbook ("De belastingtest op de LXC", met je eigen films), metingen.md
+  (bevinding 6), m10.md, §4.6 van het ontwerp en Vraag 5 in de README.
 
 ## De checks van deel 1
 

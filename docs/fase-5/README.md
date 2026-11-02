@@ -158,7 +158,8 @@ Uit het stappenplan (§0.1 en Keuze 50 van het [bouwontwerp](bouwontwerp.md)):
    zegt of een GPU later kan (het runbook, "Later: een GPU").
 5. **Voorstellen uit de metingen** (niet beslist, [metingen.md](metingen.md#bevindingen)):
    voorrang bij de start ook na een sprong (bevinding 3); `max_transcodes` afleiden uit de meting
-   (bevinding 7); de kostentabel op de LXC ijken met echte films (bevinding 6); en twee manieren
+   (bevinding 7); de kostentabel op de LXC ijken met echte films (bevinding 6; de belastingtest
+   kan dat nu met `--film`, het runbook "De belastingtest op de LXC"); en twee manieren
    om minder titels verkeerd te koppelen (Keuze 42, bevinding 5).
 6. **Twee keuzes die niemand nam:** een bibliotheek die in een andere verhuist weigeren (dat
    verandert de bestandsroutes van fase 3; `/beheer` zegt het nu alleen), en een grens aan het

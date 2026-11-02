@@ -587,7 +587,8 @@ test als het een fout in onze code is. Getallen zijn nergens bijgesteld om te sl
    15 %", Keuze 24 een bovengrens; dat kan voor echte inhoud niet allebei. Niets bijgesteld.
    *Voorstel* (voor het ontwerp, niet hier beslist): Mk als "gemeten ≤ voorspeld, en niet meer
    dan 2× te hoog" lezen, of de tabel op de LXC ijken met een paar echte films van Jonas (de
-   snelheid per trede staat op /beheer; de belastingtest kan nu alleen zijn eigen bronnen).
+   snelheid per trede staat op /beheer; de belastingtest kan dat sinds de review van de
+   integratie ook met eigen films: `media-loadtest --film <id>`, het runbook van media).
    Zolang rekent de toelating veilig en kiest ze lagere treden dan de CPU aankan (Md, Me).
 7. **Tijdens de start van DS krijgt een nieuwe kijker 503 in plaats van een lagere trede** (Md
    met een herstart van DS; niet van ons, de keuze is aan Jonas). Zolang DS `starting` is (tot
@@ -620,10 +621,11 @@ test als het een fout in onze code is. Getallen zijn nergens bijgesteld om te sl
   op dezelfde 4 cores: hier draait DS 10.0.0.1 met dezelfde grenzen, maar op de cores van de
   sandbox, met de andere sessie ernaast. Of een nieuwe kijker tijdens de start van DS een
   lagere trede krijgt, hangt aan `f` (bevinding 7): op de LXC met `f` ±1,0 wel.
-- **De belastingtest met echte films:** `POST …/loadtest` neemt `sources` aan (§4.6 punt 1: "Met
-  `sources` kan het met echte films van de beheerder"), maar `loadtest.start` gebruikt het niet:
-  de test draait altijd op zijn eigen drie bronnen. Niet hier gebouwd (een functie van M10, geen
-  meting); het is wel wat nodig is om de tabel op de LXC te ijken (bevinding 6).
+- **De belastingtest met echte films:** bij deze metingen nam `POST …/loadtest` `sources` aan
+  (§4.6 punt 1: "Met `sources` kan het met echte films van de beheerder"), maar gebruikte het
+  niet. In de review van de integratie (K1) is het gebouwd: met `sources` (of `media-loadtest
+  --film <id>`) speelt elke speler een film van de beheerder. Het ijken van de tabel met echte
+  films (bevinding 6) kan dus op de LXC; de films van Jonas zijn er alleen daar.
 - **H.264 in de browser** (Ma met H.264 en AAC, Mb naar H.264): CI, met Chrome for Testing (de
   getallen hierboven), en de LXC.
 - **ffmpeg 7.1.5 van het image**: de sandbox heeft 6.1.1. De e2e van CI (`e2e-media-perf`)
