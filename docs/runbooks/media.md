@@ -135,8 +135,10 @@ bibliotheken blijven): `/beheer` → Media → Instellingen → **Media aan** ui
 de app blijft de nieuwe versie en werkt verder zonder media.
 
 **Moet de code echt terug** naar 0.6.0 (fase 4, commit
-`263abd74d914a9811901e7570ed410866364f4b5`; na de integratie ook de tag `v0.6.0`), dan moet eerst
-de database terug naar revisie 0007, want 0.6.0 start niet op een nieuwer schema. De volgorde is
+`263abd74d914a9811901e7570ed410866364f4b5`), dan moet eerst de database terug naar revisie 0007,
+want 0.6.0 start niet op een nieuwer schema. Alles hieronder werkt met die commit alleen. Bestaat
+de tag `v0.6.0` (als die er is: `git -C /opt/platform/src tag -l v0.6.0` geeft hem), dan wijst hij
+naar dezelfde commit; gebruik toch de volledige hash hieronder. De volgorde is
 die van office (`docs/runbooks/office.md`, "De app terugrollen"). Office blijft gewoon aan:
 0.6.0 kent office.
 
@@ -157,7 +159,7 @@ die van office (`docs/runbooks/office.md`, "De app terugrollen"). Office blijft 
    ```
 4. Installeer 0.6.0, met het script van nu (via curl) en de commit uit stap 1:
    ```bash
-   curl -fsSL …/install.sh | PLATFORM_SRC_REF=263abd74d914a9811901e7570ed410866364f4b5 bash
+   curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | PLATFORM_SRC_REF=263abd74d914a9811901e7570ed410866364f4b5 bash
    ```
    Zonder `PLATFORM_SRC_REF` haalt het script `main`, en die zet het schema bij de start weer
    vooruit. Het script ziet zelf dat 0.6.0 geen media heeft, en haalt de worker weg. De
@@ -177,13 +179,18 @@ Zo nagelopen in de installatietest (`infra/single/tests/test_install_media.sh --
 
 ## De cache opruimen
 
-De cache staat in `/tank/platform/media` en is standaard hooguit 20 GB (`/beheer` → Media →
-Instellingen → **Cache (GB)**). De app ruimt hem zelf op: de oudste stukken eerst, en bij een
-start van de app alle stukken van sessies.
+De cache staat in `/tank/platform/media`. De stukken van sessies en de omgezette muziek zijn
+samen standaard hooguit 20 GB (`/beheer` → Media → Instellingen → **Cache (GB)**); de ondertitels
+en voorbeeldbeelden (de sprites bij het spoelen) samen nog eens hooguit een kwart daarvan (5 GB
+bij 20 GB). De app ruimt hem zelf op, elke 5 minuten: de oudste stukken eerst, nooit iets van wat
+nu speelt, en bij een start van de app alle stukken van sessies. Een ondertitel of voorbeeldbeeld
+dat zo weggaat, maakt de app opnieuw als iemand die film weer kijkt. Hoezen en posters tellen
+niet mee: die komen niet vanzelf terug.
 
 Met de hand: `/beheer` → Media → **Cache** → **Opruimen** bij een soort (lopende sessies,
-ondertitels, voorbeeldbeelden, muziek). Wat nu speelt, blijft werken; de rest maakt de app
-opnieuw als het nodig is. Hoezen en posters ruim je daar niet op: die komen niet vanzelf terug.
+voorbeeldbeelden, muziek). Wat nu speelt, blijft werken; de rest maakt de app opnieuw als het
+nodig is. Ondertitels en hoezen hebben daar geen knop: ondertitels zijn klein en vallen onder de
+grens hierboven, hoezen komen niet vanzelf terug.
 
 Is de schijf zo vol dat de app niet meer start, haal dan alleen de stukken van sessies weg (die
 gaan bij de start toch weg):
@@ -349,6 +356,15 @@ stopt zelf bij een vierde ffmpeg.
 Zet de uitkomst (de JSON-bestanden, of de regels op `/beheer`) in `docs/fase-5/metingen.md`.
 Slaagt een fase niet, zet dan op `/beheer` → Media → Instellingen **Omzettingen tegelijk** of
 **Cores voor omzetten** lager, en meet opnieuw.
+
+**De meting en de standaarden.** De standaarden (3 cores, 3 omzettingen tegelijk) gaan uit van
+een CPU zo snel als de referentie: de meting geeft dan een factor `f` rond 1,0. De toelating houdt
+voor elke vrije plaats een kleine omzetting vast. Met 3 plaatsen en 3 cores past daardoor boven
+`f` 1,6 geen enkele kijker meer: iedereen krijgt "de server is te druk". Staat bij **Meting** een
+factor boven 1,6, zet dan **Omzettingen tegelijk** op 2 (dat past tot `f` 2,4). Zolang de
+document server start (2 à 3 minuten na een start van office), rekent de toelating met een core
+minder; met 3 plaatsen past dan boven `f` ±1,07 niets, en wachten de kijkers tot hij klaar is. De
+sandbox mat `f` 1,22–1,40 (`docs/fase-5/metingen.md`, bevinding 7).
 
 ## Later: een GPU
 

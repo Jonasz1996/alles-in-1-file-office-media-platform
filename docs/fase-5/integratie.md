@@ -105,8 +105,8 @@ de commits.
 
 ### Niet gedaan, met de reden
 
-- **Punt 2 van "Naar de integratie"** (een grens voor `media/subs` en `media/trick`): stap 3,
-  samen met de standaarden van `MediaConfig` op de metingen.
+- **Punt 2 van "Naar de integratie"** (een grens voor `media/subs` en `media/trick`): niet in
+  deel 1; gedaan in deel 3 (`12126c2`), zie [Standaarden](#standaarden).
 - **Punt 9** (Keuze 42 op echte namen): gemeten in deel 2, zie [Metingen](#metingen). De
   formule bleef zoals hij is; de voorstellen zijn voor Jonas.
 - **Punt 10, Vraag 7** (een eigen uid voor de kinderen van de worker): blijft bij Jonas.
@@ -159,6 +159,10 @@ Alles additief, met een test; met media uit verandert er niets.
 | `render_meta` (fase 3, met media aan) | `{"error", "later": true}` als de worker weg, druk of zonder ffmpeg is; photometa telt zo'n blob niet als gelezen | `test_photometa.py`, `test_previews_video_worker.py` |
 | `scanner.after_scan(hook)` (M2) | nieuw: een haak na een afgemaakte scan; vervangt de haak `lookup.touched` van M8 op `hooks.touched` | `test_media_lookup.py`, `test_media_music.py` |
 | `Item.locked`, `Item.sort_title` bij GET …/items/{id} | worden nu gevuld (de velden stonden er al, leeg) | `test_media_match_api.py`, e2e M8 |
+
+Deel 3 veranderde geen contract: de grens voor `subs/` en `trick/` zit in de sweep
+(`cache.py`, intern), `CacheClearIn` bleef `sessions | audio | trick`, en de routes van M5 geven
+hetzelfde terug (ze zetten alleen de mtime van de map).
 
 ## Metingen
 
@@ -214,8 +218,52 @@ drukke toelating; nu ook bij een drukke worker, in plaats van 500.
 
 ## Standaarden
 
-*Volgt in een later deel van de integratie* (de standaarden van `MediaConfig` op de metingen,
-met punt 2 van "Naar de integratie").
+Deel 3: "het budget en de standaarden van `MediaConfig` op de metingen gezet" (§5 stap 4), voor
+de LXC van Jonas: 4 cores, 16 GB, geen GPU, en de worker krijgt er 3. De metingen van deel 2
+dragen elke standaard zoals hij was; er is dus geen getal veranderd. Wat wel nieuw is: de grens
+voor `media/subs` en `media/trick` (punt 2 van "Naar de integratie", `12126c2`). De grenzen van
+het ontwerp (0,5–16 cores, 0–16 omzettingen, 1–10.000 GB) bleven. Alles hieronder staat vast in
+`api/tests/test_media_defaults.py`; een andere waarde daar hoort een andere regel hier te krijgen.
+
+| Standaard | Oud | Nieuw | De meting die hem draagt |
+| --- | --- | --- | --- |
+| `cpu_budget` (Cores voor omzetten) | 3,0 | 3,0 | de worker krijgt 3 cores (`cpus: 3.0` in `compose.media-limits.yaml`, nu ook in de test). Md fase b: 3 transcodes op die 3 cores, 5 van 5, nooit meer dan 3 ffmpeg; Mg: de API op de vierde core met OnlyOffice ernaast p95 ten hoogste 104,5 ms (grens 200) |
+| `max_transcodes` (Omzettingen tegelijk) | 3 | 3 | Vraag 3 (geen antwoord: de standaard blijft); Md fase b 5 van 5. Grens: met 3 plaatsen en B 3,0 past de eerste kijker alleen tot `f` 1,60 (de reserve van Keuze 26; `test_tot_welke_f_de_eerste_kijker_past`). De sandbox had 1,22–1,40. Het runbook zegt nu: staat bij Meting een `f` boven 1,6, zet dit op 2 (past tot 2,4). Bevinding 7 (`max_transcodes` uit `f` afleiden) blijft een voorstel |
+| `max_user_transcodes` | 2 | 2 | geen meting raakt het; Keuze 26 |
+| `public_transcode` | uit | uit | Vraag 5 (geen antwoord) |
+| `hdr_1080` | uit | uit | Keuze 27 (`auto` bij HDR blijft 720; 1080 alleen als iemand hem kiest). Mf liep met `hdr_1080` aan: 0 keer haperen in 15 runs, alleen op 1080 superfast (veryfast past niet onder 0,9 × B bij `f` 1,26). Geen reden om hem standaard aan te zetten; dat blijft een keuze op /beheer |
+| `cache_gb` (Cache) | 20 | 20 | Md: de cache groeide 28 MB per minuut met 3 sessies (720 + 480 + 480); Keuze 31 rekent ±45 MB per minuut voor 1080p, dus 20 GiB is ±2,5 uur van 3 × 1080p, en een venster van 6,7 GiB per sessie |
+| `musicbrainz` | uit | uit | de beslissingskaarten: providers uit |
+| subs/ + trick/ samen | geen grens | `cache_gb / 4`: 5 GiB | geen meting van deel 2; de maat komt uit M5: sprites ±1,4 MB per film van 2 uur (`trick.py`), ondertitels klein. 5 GiB houdt de sprites van ±3.500 films; het voorbeeld van Keuze 31 (1.000 films en 5.000 afleveringen) is ±4 GB. Het langst niet gebruikte gaat eerst, nooit van een open sessie |
+| `PLATFORM_MEDIA_MAX_TRANSCODES` | 3 | 3 | het plafond is de standaard van /beheer |
+| `PLATFORM_MEDIA_JOB_MEMORY_MB` | 1200 | 1200 | Mh: ±200 MB per ffmpeg; 1200 laat marge voor 1080 en de sprites |
+| `PLATFORM_MEDIA_MAX_PROCS` | 10 | 10 | Keuze 12; Md had nooit meer dan 3 ffmpeg voor 3 transcodes. De metingen draaiden met 3 (regel 13 van de sandbox), niet de LXC |
+| de plaatsen van de worker | transcode `max_transcodes`, remux 6, achtergrond 1, kort 2 | idem | Keuze 12; Mj: knippen kost 0,007 core per stroom, 6 remuxen samen ±0,04 core |
+| `mem_limit` / `cpus` van de worker | 3g / 3,0 | 3g / 3,0 | Mh: de worker met al zijn ffmpeg ten hoogste 793 MB. Het commentaar zei "±1,7 GB [gemeten]" (de schatting van het ontwerp); nu de meting |
+
+**Niet veranderd, met de reden:** de kostentabel van Keuze 24 en `REF_CORES` van de bench (Mk
+voorspelt 44–59 % te hoog, maar de tabel is met opzet een bovengrens; bevinding 6 is een voorstel
+voor Jonas), en `B − 1,0` zolang DS start (bevinding 7, een voorstel). Beide veranderen een keuze
+van het ontwerp, geen standaard.
+
+**Met media uit** verandert geen van deze waarden iets: `MediaConfig` werkt alleen met media aan,
+en de housekeeping `media.sweep` (met de nieuwe grens) draait dan niet
+(`test_met_media_uit_doet_de_sweep_niets`: de vlag uit, en uitgezet op /beheer).
+
+**Punt 2 van "Naar de integratie"** (`12126c2`): de sweep van elke 5 minuten telt de mappen per
+blob onder `subs/` en `trick/` en haalt boven `cache_gb / 4` de map weg die het langst niet
+gebruikt is (de mtime van de map; een ondertitel of `trick.vtt` halen zet die op nu). Nooit van
+een blob die een open sessie speelt, ook niet haar losse ondertitels; nooit een tijdelijke naam
+met een punt (`trick._store`, `subtitles._write_file`). Van `trick/` de hele map, en
+`trick_state` gaat van `ready` naar `none`: zo klopt het item, en play zet de analyse weer klaar
+(`media_play.steps_left`). Van `subs/` alleen de VTT's: een `.failed` blijft (de staat failed),
+en een ondertitel komt bij het volgende verzoek terug (202 met `Retry-After`). Los van de grens
+van de sessies en `audio/`, die `cache_gb` samen houden zoals Keuze 31 zegt. Opruimen op /beheer
+(sessies, voorbeeldbeelden, muziek) bleef zoals het was, en een lopende sessie merkt er niets
+van. Tests: `test_de_grens_voor_subs_en_trick` (`test_media_trick.py`, met een echte sessie en de
+routes) en vier regels in `test_media_cache.py`; beide falen zonder de wijziging (nagegaan: zonder
+de aanroep in de sweep blijft `trick/` staan, zonder het aanraken bij het halen blijft de mtime
+oud).
 
 ## Installatietest en terugrollen
 

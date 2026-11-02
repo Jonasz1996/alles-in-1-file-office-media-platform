@@ -284,8 +284,25 @@ zeggen: met een sleutel die uit het app-geheim in `/data` komt. Dat beschermt ee
 `platform.db`, niet een kopie van heel `/data` of een snapshot van `/tank/platform`: daar staan de
 database en het geheim samen in. Bewaar die dus net zo afgeschermd als de `.env`.
 
-Meer, zoals de status lezen, terugrollen naar 0.6.0, de cache opruimen en de belastingtest op de
-LXC, staat in `docs/runbooks/media.md`.
+**Terug naar 0.6.0.** Liever niet: zet media uit op `/beheer` (hierboven), dan werkt de rest
+gewoon door. Moet de code echt terug, dan zijn het deze commando's, in deze volgorde en met de
+volledige commit van 0.6.0 (`dc` uit Handige commando's hierboven; de uitleg per stap staat in
+`docs/runbooks/media.md`, "Terug naar 0.6.0"):
+
+```bash
+git -C /opt/platform/src fetch -q origin
+git -C /opt/platform/src cat-file -e '263abd74d914a9811901e7570ed410866364f4b5^{commit}' && echo "goed: 0.6.0 is er"
+dc stop platform media
+dc run --rm --no-deps platform python -m app.cli db-downgrade 0007
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | PLATFORM_SRC_REF=263abd74d914a9811901e7570ed410866364f4b5 bash
+```
+
+Zegt de tweede regel niet "goed", stop dan: de rest pas als de commit er is. `db-downgrade` vraagt
+om "ja". Daarna zijn de bibliotheken, de voortgang en de afspeellijsten weg; je bestanden, ook de
+films en muziek, blijven. Weer vooruit: het script zonder `PLATFORM_SRC_REF`.
+
+Meer, zoals de status lezen, de cache opruimen en de belastingtest op de LXC, staat in
+`docs/runbooks/media.md`.
 
 ## 2FA kwijt
 

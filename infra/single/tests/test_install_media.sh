@@ -375,6 +375,46 @@ PY
   )
   check "zoals Keuze 47 ($out)" test "$out" = ok
 
+  # Terug naar 0.6.0 (integratie deel 3): het runbook en de README geven Jonas precies de
+  # commando's van Keuze 47, in die volgorde, met de volledige hash (stap 4 van --stappen draait
+  # ze). De tag v0.6.0 is een keuze van de lead: de commando's werken zonder, en een tekst die hem
+  # noemt, zegt "als die er is".
+  echo
+  echo "== terug naar 0.6.0: de commando's van Keuze 47 in het runbook en de README"
+  out=$(python3 -I - "$top/docs/runbooks/media.md" "$here/../README.md" <<'PY'
+import sys
+
+SHA = "263abd74d914a9811901e7570ed410866364f4b5"
+URL = (
+    "https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform"
+    "/main/infra/single/install.sh"
+)
+WANT = [
+    "git -C /opt/platform/src fetch -q origin",
+    "git -C /opt/platform/src cat-file -e '%s^{commit}'" % SHA,
+    "dc stop platform media",
+    "dc run --rm --no-deps platform python -m app.cli db-downgrade 0007",
+    "curl -fsSL %s | PLATFORM_SRC_REF=%s bash" % (URL, SHA),
+]
+problems = []
+for path in sys.argv[1:]:
+    name = path.rsplit("/", 2)[-1]
+    lines = [line.strip() for line in open(path, encoding="utf-8")]
+    at = -1
+    for cmd in WANT:
+        hits = [i for i, line in enumerate(lines) if (line == cmd or line.startswith(cmd + " ")) and i > at]
+        if not hits:
+            problems.append("%s mist (of niet in volgorde): %s" % (name, cmd[:60]))
+            continue
+        at = hits[0]
+    for line in lines:
+        if "v0.6.0" in line and "als die er is" not in line:
+            problems.append("%s noemt v0.6.0 zonder 'als die er is'" % name)
+print("; ".join(problems) or "ok")
+PY
+  ) || out="(geen uitvoer)"
+  check "de commando's van Keuze 47 met de volledige hash, in het runbook en de README ($out)" test "$out" = ok
+
   # --- de nep-Docker voor media_start, watchers en main -------------------------------------
   # Een image-opslag: elke build geeft een nieuwe id; de worker draait op de id van zijn laatste
   # start; `image rm` van een id die een container nog gebruikt faalt, zoals bij de echte Docker
@@ -648,7 +688,7 @@ NEP
 #   | Stap | Sandbox | CI (media-image) |
 #   |---|---|---|
 #   | 1. 0.6.0 installeren (263abd7), een film uploaden | ja | ja |
-#   | 2. bijwerken: de app en de worker draaien | ja; de film komt nog heel terug, /beheer toont media_ffmpeg_missing | ja; plus een transcode via curl en docker top, de rooktest van de belastingtest |
+#   | 2. bijwerken: 0008 vanzelf, de app en de worker draaien, office zoals in 0.6.0, media raakt niets aan (geen bibliotheek, import of provider) | ja; de film komt nog heel terug, /beheer toont media_ffmpeg_missing, play 503 media_ffmpeg_missing | ja; plus een transcode via curl en docker top, de rooktest van de belastingtest |
 #   | 2b. nog een keer bijwerken (een commit erbovenop) | één image platform:local, de oude id weg | idem |
 #   | 3. MEDIA_SANDBOX=uit: de container weg, de lokale worker | ja | ja |
 #   | 4. terug naar 0.6.0 met precies de commando's van Keuze 47 | ja; schema 0007 en de app 0.6.0 | — (INSTALL_TEST_ROLLBACK=0) |
@@ -1110,6 +1150,11 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
   root=$(api get /api/v1/auth/me root_id) || stop "1: /auth/me gaf geen map"
   film_id=$(api upload "$root" film.mp4 "$film") || stop "1: de film uploaden lukte niet"
   check "1: de film staat erin" test "$(api sha "$film_id")" = "$film_sha"
+  # Office staat in deze test uit (OFFICE=uit, zie boven); wat 0.6.0 erover zegt, moet na de
+  # update hetzelfde zijn (office aan over een update: test_install_update.sh)
+  local office1
+  office1=$(api get /api/v1/office/status state 2>"$WORK/logs/1-office.err") || office1="(geen antwoord)"
+  check "1: /api/v1/office/status zegt off (OFFICE=uit; gezien: $office1)" test "$office1" = off
 
   # --- 2. bijwerken naar deze versie -----------------------------------------------------
   STAGE=2
@@ -1136,18 +1181,46 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
   check "2: één image van de app, platform:local (gezien: $(app_images_text))" one_app_image
   check "2: de film is er nog, heel" test "$(api sha "$film_id")" = "$film_sha"
   check "2: /beheer: de worker in zijn container" test "$(api get /api/v1/admin/media worker.mode)" = container
+  # Office werkt zoals in 0.6.0: dezelfde staat op /api/v1/office/status (hier off)
+  local office2
+  office2=$(api get /api/v1/office/status state 2>"$WORK/logs/2-office.err") || office2="(geen antwoord)"
+  check "2: office zoals in 0.6.0 (/api/v1/office/status: $office2)" test "$office2" = "$office1"
+  # Media raakt niets aan tot Jonas het zelf gebruikt (de standaarden van de integratie, en de
+  # beslissingskaarten zonder antwoord): geen bibliotheek, geen import, geen sleutel van TMDB en
+  # MusicBrainz uit. De film in de hoofdmap is gewoon een bestand, in geen enkele bibliotheek
+  local inert
+  inert=$(api get /api/v1/admin/media 2>"$WORK/logs/2-beheer.err" | python3 -I -c '
+import json, sys
+try:
+    m = json.load(sys.stdin)
+except ValueError:
+    print("geen JSON")
+    raise SystemExit
+problems = []
+if m.get("libraries"):
+    problems.append("bibliotheken %d" % len(m["libraries"]))
+if m.get("import"):
+    problems.append("een import")
+if any(p.get("key_set") for p in m.get("providers", []) if p.get("name") == "tmdb"):
+    problems.append("een sleutel van TMDB")
+if (m.get("config") or {}).get("musicbrainz") is not False:
+    problems.append("musicbrainz %r" % (m.get("config") or {}).get("musicbrainz"))
+print("; ".join(problems) or "ok")
+') || inert="(geen antwoord)"
+  check "2: media raakt niets aan: geen bibliotheek, geen import, providers uit ($inert)" test "$inert" = ok
+  check "2: de film staat in geen bibliotheek (GET /api/v1/media/libraries is leeg)" test "$(api count /api/v1/media/libraries)" = 0
   if [ "$FFMPEG" = leeg ]; then
     check "2: media-status na de start: ffmpeg ontbreekt" said 2-bijwerken "ffmpeg ontbreekt)"
     check "2: /beheer toont media_ffmpeg_missing" api notice media_ffmpeg_missing
     # Afspelen vraagt eerst een probe, en die vraagt ffprobe: zonder werkende ffprobe geeft play
-    # een nette weigering, nooit een 500. Een lege ffprobe (ENOEXEC) telt in de probe van M0 als
-    # een onleesbaar bestand (409 media_unavailable, en die mislukte probe blijft staan); een
-    # ontbrekende als 503 media_ffmpeg_missing. Open punt in docs/fase-5/m10.md
+    # een nette weigering, nooit een 500. Een lege ffprobe (ENOEXEC) is sinds de integratie
+    # (8940cac, m10.md "Naar de integratie" punt 5) net als een ontbrekende 503
+    # media_ffmpeg_missing, en die probe wordt niet bewaard; vroeger 409 media_unavailable.
     # Met het veld mode: geeft play onverwacht toch 200, dan staat alleen de mode in het log,
     # niet de sid (PlayOut: een sleutel in het pad, nooit in een log)
     api post "/api/v1/media/$film_id/play" "$(profile "[]")" mode >"$WORK/logs/2-play-zonder-ffmpeg.log" 2>&1 || true
-    check "2: afspelen zonder ffmpeg: een nette weigering (409 of 503; de speler biedt Downloaden)" grep -Eq \
-      'gaf (409|503): .*(media_unavailable|media_ffmpeg_missing)' "$WORK/logs/2-play-zonder-ffmpeg.log"
+    check "2: afspelen zonder ffmpeg: 503 media_ffmpeg_missing (de speler biedt Downloaden)" grep -Eq \
+      'gaf 503: .*media_ffmpeg_missing' "$WORK/logs/2-play-zonder-ffmpeg.log"
     SUMMARY+=("afspelen zonder ffmpeg: $(grep -Eo 'gaf [0-9]+' "$WORK/logs/2-play-zonder-ffmpeg.log" | head -n 1) $(grep -Eo 'media_[a-z_]+' "$WORK/logs/2-play-zonder-ffmpeg.log" | head -n 1)")
   else
     check "2: media-status na de start: afgeschermd, met ffmpeg" said 2-bijwerken "Media: aan (afgeschermd, ffmpeg "
