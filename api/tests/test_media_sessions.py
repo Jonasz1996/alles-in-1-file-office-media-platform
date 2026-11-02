@@ -816,6 +816,60 @@ async def test_play_zet_de_analyse_klaar_als_de_sprites_ontbreken(client, admin,
     assert await queued() == []
 
 
+@pytest.mark.anyio
+async def test_play_zet_de_analyse_klaar_als_de_ondertitels_ontbreken(client, admin, settings):
+    """Integratie, punt 1, de helft van de ondertitels (review van de integratie, C1): een film
+    in een bibliotheek met ingebouwde tekstondertitels en subs_state none (nooit gedaan) of
+    pending (een fout van de worker) krijgt bij play de analyse weer klaar, ook als de sprites
+    er al zijn. ready, failed (Mislukte opnieuw) en skip niet."""
+    from sqlalchemy import delete, select
+
+    from app.models import Job
+
+    headers, _ = admin
+    me = (await client.get("/api/v1/auth/me", headers=headers)).json()
+    top = (await root(client, headers))["folder"]["id"]
+    node = await video(client, headers, settings, "met-subs.mp4")
+    # de probe van h264_aac.mp4 (speelt direct) plus het SRT-spoor van subs_text.mkv
+    text = next(s for s in recorded("subs_text.mkv").streams if s.codec == "subrip")
+    probe = recorded("h264_aac.mp4")
+    text.index = max(s.index for s in probe.streams) + 1
+    probe.streams.append(text)
+    await store_probe(settings, node["sha"], "h264_aac.mp4", index=True, streams=probe.streams)
+    await library_item(settings, me["id"], node, top, [])
+    sprites = {"interval": 10, "w": 160, "h": 90, "cols": 10, "rows": 10, "count": 1}
+    vtt = settings.media_dir / "trick" / node["sha"] / "trick.vtt"
+    vtt.parent.mkdir(parents=True)
+    vtt.write_bytes(b"WEBVTT\n")
+
+    async def queued() -> list[tuple[str, dict]]:
+        async with maker(settings)() as session:
+            rows = (await session.scalars(select(Job).where(Job.type == analysis.JOB))).all()
+            await session.execute(delete(Job).where(Job.type == analysis.JOB))
+            await session.commit()
+        return [(j.key, j.payload) for j in rows]
+
+    async def subs_state(value: str) -> None:
+        ready = {"trick_state": "ready", "trick": sprites, "subs_state": value}
+        async with maker(settings)() as session:
+            await session.execute(
+                update(MediaProbe).where(MediaProbe.blob_sha == node["sha"]).values(**ready)
+            )
+            await session.commit()
+
+    async with maker(settings)() as session:
+        library_id = str(await session.scalar(select(MediaItem.library_id)))
+    wanted = [(f"{analysis.JOB}:{node['sha']}", {"sha": node["sha"], "library_id": library_id})]
+    for state in ("none", "pending"):
+        await subs_state(state)
+        await play(client, headers, node["id"])
+        assert await queued() == wanted, state
+    for state in ("ready", "failed", "skip"):
+        await subs_state(state)
+        await play(client, headers, node["id"])
+        assert await queued() == [], state
+
+
 # --- de grenzen -----------------------------------------------------------------------------------
 
 
