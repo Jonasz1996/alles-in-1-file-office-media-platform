@@ -10,7 +10,7 @@ import { useColumns, useVirtualRows } from "../ui/virtual";
 import type { FileListProps } from "./FileList";
 import { previewCache, useWindowPreviews } from "./previews";
 import { useRowEvents, useScrollingClass } from "./rowEvents";
-import { SlotAssigner, useDeferredRange, useNextStep } from "./slots";
+import { useDeferredRange, useSlots } from "./slots";
 
 /** Minimale breedte van een cel (--cell-min) en de ruimte ertussen. */
 export const CELL_MIN = 160;
@@ -133,12 +133,10 @@ export function FileGrid(p: FileGridProps): JSX.Element {
     );
   };
   // Rijen van het raster op vaste plekken (slots.ts): bestaande elementen worden hergebruikt
-  const slotter = useRef<SlotAssigner | null>(null);
-  slotter.current ??= new SlotAssigner();
   const range = useDeferredRange(rows.start, rows.end, rowCount, focusRowIndex);
   const budget = Math.max(1, Math.floor(CELL_BUDGET / columns));
-  for (const slot of slotter.current.assign(range.start, range.end, range.extra, budget)) add(slot.index, slot.key);
-  useNextStep(slotter.current.pending);
+  const slots = useSlots(range.start, range.end, range.keep, budget);
+  for (const slot of slots) add(slot.index, slot.key);
 
   useEffect(() => {
     if (count > 0 && focusIndex >= count) onFocusRow(count - 1);
