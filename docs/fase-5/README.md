@@ -35,7 +35,8 @@ op de LXC).
 wacht op elk segment, de speler in de browser buffert tot 30 s. De sandbox is 20–40 % trager dan
 de referentie-CPU (`f` 1,22–1,40); daarom koos de toelating hier lagere kwaliteiten dan op een
 CPU zo snel als de referentie (720 + 480 + 480 in plaats van 1080 + 720 + 720). Welke het op de
-LXC worden, laat de meting daar zien.
+LXC worden, laat de meting daar zien. Per punt waar het bewezen is (hier, in CI met de job en
+de stap, of op de LXC met de stap): [integratie.md](integratie.md#klaar-als-waar-elk-punt-bewezen-is).
 
 ## Wat er is
 

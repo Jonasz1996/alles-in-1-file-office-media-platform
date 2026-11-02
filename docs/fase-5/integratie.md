@@ -213,6 +213,11 @@ van de belastingtest; dat breidt drie dingen uit, alle drie additief:
 | het rapport van de belastingtest (`LoadtestView.report`, een vrij `dict`) | de sleutel `films` erbij (de ids van `sources`, leeg zonder) | `test_met_sources_speelt_hij_de_films_van_de_beheerder` |
 | `app.cli media-loadtest` | de optie `--film <id>` (meer dan eens); niet samen met `--extern` | `test_de_cli_met_een_film`, `test_media_loadtest_geeft_de_argumenten_door` |
 
+De na-controle van de review ([hieronder](#de-na-controle-van-de-review)) veranderde geen
+contract: de speler van de belastingtest in de app vraagt een film zonder probe opnieuw na
+`Retry-After` (intern), en verder alleen het runbook, het functiedeel van de installatietest en
+een e2e-test (N3).
+
 ## Metingen
 
 Deel 2 mat Ma–Mp van §4.5 en de belastingtest van §4.6 in de sandbox (de worker onder
@@ -417,7 +422,8 @@ Uit deel 3:
 Uit de review van de integratie:
 
 - `media-image` op de code van nu: groen op `2be8fb7` (run 41373584888), en alles daarna (deel 3,
-  4 en de review, ook `test_install_media.sh`) is open tot de CI-run na de push (K3).
+  4, de review en de na-controle, ook `test_install_media.sh`) is open tot de CI-run na de push
+  (K3).
 
 Uit deel 4 (de eindlijst van de e2e, [e2e.md](e2e.md#alle-e2e-van-media-070)):
 
@@ -689,3 +695,121 @@ Op `ccb6b26` (de reparaties van de review, met de docs van K1–K6), in de sandb
 Alles ging in de eerste ronde goed. Op `/` bleef 15–16 GB vrij en het laagste `MemAvailable`
 tijdens de runs was 13,4 GiB. Hooguit 3 ffmpeg tegelijk (de e2e tellen ze met `ffmpeg_count`).
 De CI-run op deze commits volgt na de push (zie [K3](#de-review-van-de-integratie)).
+
+## De na-controle van de review
+
+Na de review las een na-controle de reparaties (`59799f2..30e8e7c`) nog eens, met de vraag of
+elke reparatie klopt, of haar test zonder de reparatie faalt, en of ze een bevroren contract,
+het gedrag met media uit of een getal in metingen.md raakt. Elke test is zonder de reparatie
+gedraaid: de code of de docs van `c8c1abb` terug, de test, en weer terug.
+
+- **S1, C2/K2 en K5:** het functiedeel van de installatietest op het runbook en
+  `infra/single/README.md` van `c8c1abb`: drie keer FOUT (de regels van Keuze 47,
+  `MEDIA_SANDBOX=uit` zonder "tijdelijk", en "uit te zetten" bij MusicBrainz), 124 van 127; op
+  de docs van nu 127 van 127. Stap 4 met `PLATFORM_BRANCH` en `PLATFORM_SRC_REF` klopt met
+  install.sh: met een commit doet de branch alleen nog iets in de eindtekst.
+- **C1:** met `return False` in plaats van de tak voor de ondertitels faalt de nieuwe test, en
+  ook als `failed` meetelt.
+- **K1:** met `loadtest.py`, `admin.py`, de route en `cli.py` van `c8c1abb` falen zes tests (de
+  drie nieuwe, het profiel, de redenen per dag en de cli); met alleen `admin.py` van `c8c1abb`
+  faalt de eerste (de omzetting van de test telde als echte kijker). Het contract blijft
+  additief: `LoadtestIn` is gelijk, zonder `sources` loopt alles als voorheen. Met media uit
+  verandert niets: de route zegt eerst `media_off` (`runtime.require`, vóór het opzoeken), de
+  cli ook (vóór `--film`). Het profiel zonder "als bestand" verandert niets voor de eigen
+  bronnen (6 Mbit/s boven de 4000 kbit/s van het profiel: dat was al transcode), en geen getal
+  in metingen.md kwam uit een run met `sources`. Een film-sessie schrijft geen voortgang (de
+  virtuele speler doet geen `PUT`), en de controle per verzoek is die van play: een onbekende
+  family is niet ingetrokken (`security.family_revoked`).
+- **K3:** `gh run view 41373584888` (`2be8fb7`): alle 14 jobs groen; in `media-image` ffmpeg
+  `7.1.5-0+deb13u1` en de zelftest met `"sandbox": "on"`.
+- **K4 en K6:** de bron van de e2e van Mb is 1280×720 en 6 s (`fixtures.py`), zoals de docs nu
+  zeggen; de getallen in de README, het stappenplan en metingen.md zijn gelijk gebleven.
+- **De redenen om iets niet te doen** kloppen: geen nieuwe meting van 1080p in de browser hier
+  (Chromium 141 heeft geen H.264 en de CPU is niet die van de LXC), geen CI-run (pushen mag hier
+  niet), en `--stappen` niet opnieuw (in dat deel veranderde alleen een commentaar; de regels van
+  het terugrollen pint het functiedeel).
+
+Drie punten waren nog niet goed (het derde kwam uit de laatste checks):
+
+- **N1, een film zonder opgeslagen probe liet de speler in de app falen: gefixt (`ca43f1a`).**
+  `node_probe` beloofde "de speler probeert het dan opnieuw", maar de speler in de app (fase a en
+  b) ving 409 `media_probe_pending` niet op: duurde de probe van een film langer dan het budget
+  van play (5 s, bijvoorbeeld een film die nog nooit speelde en niet in een bibliotheek staat),
+  dan gaf de speler "start: 409" en zakte de fase, terwijl de probe gewoon doorliep. Alleen de
+  spelers buiten de app (fase c) vroegen het opnieuw. Nu vraagt de opener in de app het na
+  `Retry-After` opnieuw, zoals de speler in de browser; de wachttijd telt mee in de start. Alleen
+  die ene code: een 503 `media_busy` van de toelating blijft een fout van de speler, zodat een
+  geweigerde derde kijker niet als trage start verdwijnt. De nieuwe test
+  `test_een_film_zonder_probe_wacht_op_de_probe` (een probe van 0,3 s tegen een budget van
+  0,05 s) faalde zonder de wijziging met "start: 409". In de praktijk heeft een film uit de
+  bibliotheek van Jonas zijn probe al (de analyse of het afspelen bewaart hem); het runbook laat
+  hem het id nemen van een film die hij speelde.
+- **N2, het runbook zei na stap 4 nog "haalt het script `main`": gefixt (`095900c`).** Stap 4
+  draait het script nu met `PLATFORM_BRANCH`, en dan haalt het zonder `PLATFORM_SRC_REF` de
+  branch (`BRANCH=${PLATFORM_BRANCH:-main}`), niet `main`. Het gevolg (het schema weer vooruit)
+  bleef waar. De zin zegt het nu zo, en de controle van Keuze 47 in het functiedeel weigert de
+  oude zin zolang stap 4 `PLATFORM_BRANCH` heeft (op het runbook van `30e8e7c` FOUT).
+- **N3, een race in de e2e van de speler in de viewer: gefixt (`90e5e76`).**
+  `test_de_speler_in_de_viewer_en_de_fallback` vraagt na Esc `/file` (`bytes=0-0`) tot het 410
+  geeft. In de laatste run van `-m media` kwam de DELETE van de browser tussen de kop (206) en
+  de body van zo'n verzoek; `guarded_body` brak de respons af zoals bedoeld (Keuze 21, in de log
+  "mediastroom afgebroken (gone)"), en de test viel met `httpx.RemoteProtocolError` in plaats
+  van het opnieuw te vragen. De app deed niets fout: het volgende verzoek gaf 410. Nu telt een
+  afgebroken antwoord als "nog geen 410"; de eis blijft 410 binnen 5 s. Met de race afgedwongen
+  (tijdelijk: de route sluit de sessie bij `bytes=0-0` en de DELETE wacht 1,5 s) faalde de oude
+  test met dezelfde fout en slaagde de nieuwe; daarna is de route weer zoals hij was.
+
+## De checks van de na-controle
+
+Op `095900c` (N1 en N2) voor api, web en infra; de e2e-sets op `095900c` en `-m media` opnieuw
+op `90e5e76` (N3, alleen die e2e-test veranderd), in de sandbox:
+
+- api: `uv sync --frozen`; `ruff check` en `ruff format --check` (ook `../e2e`, na N3 ook de
+  gewijzigde test) schoon; `pytest` 3839 goed, 2 overgeslagen, in 23 min 21 s (één meer dan
+  bij de review: de test van N1); `-m media` onder `taskset -c 0-2` 176 goed;
+- web (niets veranderd sinds de review): typecheck, 919 tests in 81 bestanden, build, budget
+  (eerste lading 96,4 van 100 KB, de route Bestanden 43,5 van 45 KB, de speler 25,4 van 35 KB)
+  en `check:i18n --strict` (0 meldingen in 214 bestanden) goed;
+- e2e, onder `taskset -c 0-2`: de set van CI 123 goed; `-m office` 30 goed; `-m media` eerst 63
+  goed, 4 overgeslagen en 1 fout (N3), na de reparatie 64 goed en 4 overgeslagen (H.264, dat de
+  Chromium 141 hier niet heeft);
+- infra: `test_install_media.sh` (het functiedeel) 127 van 127, `test_install_env.sh` goed,
+  shellcheck schoon (`install.sh` en `tests/*.sh`). `--stappen` liep niet opnieuw: N2 veranderde
+  alleen het runbook en de controle van de docs in het functiedeel;
+- als nobody (`/tmp/ci-nobody/run.sh`, in een kopie van `api/` en `infra/` van nobody en zonder
+  `SSL_CERT_FILE`): `test_media_loadtest.py`, 25 goed.
+
+Op `/` bleef minstens 13,7 GiB vrij en het laagste `MemAvailable` tijdens de runs was 13,5 GiB.
+Hooguit 3 ffmpeg tegelijk (de e2e tellen ze met `ffmpeg_count`). De CI-run op deze commits volgt
+na de push.
+
+## Klaar als: waar elk punt bewezen is
+
+Elk punt van "Klaar als" van fase 5, uit het [stappenplan](../stappenplan.md) en uit §4.7 van
+het [bouwontwerp](bouwontwerp.md#47-hoe-elke-klaar-als-bewezen-wordt), met waar het bewezen is:
+**hier bewezen** (in de sandbox, met de test of meting erbij), **in CI** (de job en de stap), of
+**op de LXC** (de stap uit het runbook [media.md](../runbooks/media.md) of de lijst
+[Op de LXC](README.md#op-de-lxc-stap-5)). Een punt kan in meer dan één staan; het woord vooraan
+zegt waar het laatste bewijs ligt. De getallen zijn mediaan / slechtste, uit
+[metingen.md](metingen.md).
+
+"In CI" is bewezen op `2be8fb7` (run 41373584888, alle 14 jobs groen; de getallen van
+`e2e-media-perf` uit run 41341675278 op `d850c4f`). Alles daarna (deel 3 en 4, de review en
+deze na-controle) heeft nog geen CI-run: die volgt na de push, en moet dezelfde jobs groen
+geven. `e2e-media-perf` heeft `continue-on-error`: een rode stap blokkeert de run niet, dus
+daar telt de uitslag van de stap zelf. Die tests eisen de grens (`GATES_MS` in
+`e2e/test_media_m6_perf.py`), het zijn geen losse rapporten.
+
+| Klaar als (stappenplan, met §4.7) | Waar | Bewijs |
+|---|---|---|
+| **Een 1080p-film start binnen 2 s (direct play)**; §4.7: het eerste beeld ≤ 2 s | **hier bewezen** (VP9); H.264 **in CI**; echte toestellen **op de LXC** | Hier: Ma, `test_m6_ma_eerste_beeld_direct` (1080p24, 19,6 Mbit/s, 40 Mbit/s en 20 ms, 10 keer): 436 / 450 ms in Chromium 141. CI: job `e2e-media-perf`, stap "Prestaties van media (marker media_perf)", `test_m6_ma_eerste_beeld_direct_h264` met `MEDIA_REQUIRE_H264=1`: 477 / 491 ms (H.264 + AAC); en job `e2e-media`, stap "e2e met media": `test_de_viewer_speelt_h264`, `test_h264_speelt_via_de_sessie_en_stopt_na_blokkeren`. LXC: [Op de LXC](README.md#op-de-lxc-stap-5), "Een film op telefoon en laptop" (een mp4 met H.264). |
+| **… en binnen 5 s (transcode)**; §4.7: ≤ 5 s, ook als er al 2 transcodes lopen en als er drie tegelijk starten | **op de LXC** (een 1080p-film in de browser); zonder browser **hier bewezen** | Hier, zonder browser met een bron van 1080p (H.264, 6 Mbit/s, de worker op 3 cores, `start.py`): alleen 1,34 / 1,66 s, naast 2 lopende 1,23 / 1,59 s, drie tegelijk 1,14 / 2,43 s; de start in de belastingtest (Md) fase a 1,09 / 2,01 s en fase b 1,68 / 2,49 s. In de browser alleen met een bron van 720p (`hevc10_hdr10.mkv`): 1663 / 1844 ms naar VP9. CI: `e2e-media-perf`, stap "Prestaties van media": `test_m6_mb_eerste_beeld_transcode` naar H.264 1512 / 1532 ms (bron 720p) en `test_m4_de_start_van_een_stroom` (1080 alleen 0,98 s, naast twee 1,98 s); `e2e-media`, stap "e2e met media": `test_transcode_naar_h264_in_ci`, `test_h264_uit_hevc_hdr_via_mse`. LXC: [Op de LXC](README.md#op-de-lxc-stap-5), "Een film op telefoon en laptop" (een mkv met HEVC van 1080p, het eerste beeld binnen 5 s), en het runbook "De belastingtest op de LXC", stap 3 (elke start ≤ 5 s in fase a en b). |
+| **Seek werkt**; §4.7: weer spelen ≤ 3 s, ook in een stuk dat nog niet gemaakt is; direct ≤ 1,5 s, remux ≤ 1 s | **hier bewezen** (≤ 3 s); direct ≤ 1,5 s **niet gehaald** (bevinding 4) | Hier: Mc, `test_m6_mc_zoeken_en_weer_lopen` (naar 70 %, 10 keer per soort): remux 885 / 918 ms, transcode 2343 / 2485 ms, direct 2020 / 2095 ms (op 400 Mbit/s 1487 / 1628 ms); de e2e 2, 3 en 4 van §4.3 (`test_direct_het_profiel_het_eerste_beeld_en_zoeken`, `test_remux_zoeken_en_audiospoor_a_b_a`, `test_een_sprong_voorbij_de_cache_start_een_nieuwe_producent`, `test_transcode_hdr_naar_720_met_ondertitels`) en `api/tests/test_media_restart.py` (`-m media`). CI: `e2e-media-perf`, stap "Prestaties van media" (direct 1814 / 1922, remux 855 / 856, transcode 2316 / 2367 ms); `e2e-media`, stap "e2e met media"; `api-media`, stap "pytest -m media". De 1,5 s van direct haalt het alleen op een snel netwerk ([bevinding 4](metingen.md#bevindingen)). LXC: [Op de LXC](README.md#op-de-lxc-stap-5), "Een film op telefoon en laptop" (zoeken). |
+| **3 gelijktijdige transcodes zonder haperen**; §4.7: standaard 1080 + 720 + 720, 0 keer haperen, de API ≤ 200 ms, ook naast OnlyOffice en na een herstart | **op de LXC** | Hier niet helemaal: Md fase b 5 van 5 zonder haperen, fase a 4 van 5 (één keer 0,6 s na de sprong, [bevinding 3](metingen.md#bevindingen)), met een docx elke 30 s a 2 van 5, fase c 4 van 5, met een herstart van DS b 0 van 2 (503, bevinding 7); de treden 720 + 480 + 480 (`f` 1,40); de API ≤ 104,5 ms (Mg), de worker ≤ 793 MB (Mh). CI: job `api`, stap "Run uv run pytest -q" (`test_media_loadtest.py` met de nep-worker: het rapport, de weigering, de stop bij een vierde ffmpeg, `sources`); `media-image`, stap "De installatietest van media (test_install_media.sh --stappen, M10)" (de rooktest van de belastingtest met ffmpeg 7.1.5, exit 0). LXC: het runbook "De belastingtest op de LXC", stap 1 (de meting), 3 (fase a en b, met de knop of `media-loadtest`, ook met `--film`), 4 (fase c) en 5 (fase d); [Op de LXC](README.md#op-de-lxc-stap-5), "De meting (bench)" en "De belastingtest met de knop". Het punt "Load-test: aantal gelijktijdige transcodes per node vastleggen" in het stappenplan blijft open tot dan. |
+| **Voortgang synchroniseert tussen apparaten**; §4.7: ≤ 2 s (p95 van 20) | **hier bewezen** | Hier: Mi, `test_twee_tabbladen_verder_kijken_binnen_2_s` (5 runs, elk 20 keer; de test eist p95 ≤ 2 s): 0,097 / 0,101 s. CI: `e2e-media`, stap "e2e met media" (`test_media_m7.py`, 3 tests). LXC: [Op de LXC](README.md#op-de-lxc-stap-5), "Een film op telefoon en laptop" ("Verder kijken" op het andere toestel binnen 2 s). |
+| §4.7: **de rest van het stappenplan** (bibliotheken, metadata, ondertitels, muziek, gapless) | **hier bewezen**; de vier e2e met H.264 **in CI** | Hier: de e2e van §4.3 (`-m media`, 68 tests, waarvan 4 met H.264 hier overslaan), de api-tests per pakket (ook `-m media`), Ml (scannen 0,67 / 0,75 s per 1.000 bestanden), Mn (gapless: FLAC 0, Opus 0,014 sample), Mo (namen) en de precisie van Keuze 42 (0,971 en 0,953). CI: `api`, stap "Run uv run pytest -q"; `api-media`, stap "pytest -m media"; `e2e-media`, stap "e2e met media" (met `MEDIA_REQUIRE_H264=1`, dus de vier e2e met H.264 spelen daar of falen). LXC: het runbook "Films, series en muziek importeren" (de verzameling van Jonas) en [Op de LXC](README.md#op-de-lxc-stap-5), "Een film op telefoon en laptop" (een ondertitel aan). |
+
+Samen: twee punten zijn hier bewezen (direct play, de voortgang), één hier op de 3 s van "Klaar
+als" (zoeken; de 1,5 s van direct uit de tabel niet), en twee liggen op de LXC: een 1080p-film
+met transcode in de browser, en drie transcodes tegelijk zonder haperen op de CPU van de node.
+Wat in CI staat, moet de run na de push opnieuw laten zien.
