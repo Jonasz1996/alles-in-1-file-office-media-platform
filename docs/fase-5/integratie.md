@@ -539,3 +539,28 @@ gerepareerd.
 
 De laatste ronde (hierboven) liep op `78f0621`. Op `/` bleef 16 GB vrij en het laagste
 `MemAvailable` tijdens de runs was 13,5 GiB.
+
+## De checks van deel 4
+
+Op `97a7b94` (versie 0.7.0 en de reparatie in het opzoeken) plus deze docs, in de sandbox:
+
+- api: `uv sync --frozen`; `ruff check` en `ruff format --check` (ook `../e2e`) schoon; `pytest`
+  3834 goed, 2 overgeslagen, in 22 min 49 s; `-m media` onder `taskset -c 0-2` 176 goed;
+- web (alleen de versie veranderd): typecheck, 919 tests in 81 bestanden, build, budget (eerste
+  lading 96,4 van 100 KB, de route Bestanden 43,5 van 45 KB, de speler 25,4 van 35 KB) en
+  `check:i18n --strict` (0 meldingen in 214 bestanden) goed;
+- e2e, onder `taskset -c 0-2`: de set van CI 123 goed; `-m office` 30 goed; `-m media` 64 goed en
+  4 overgeslagen (H.264, dat de Chromium 141 hier niet heeft);
+- infra: `test_install_media.sh` (het functiedeel) 125 van 125, `test_install_env.sh` goed,
+  shellcheck schoon (`install.sh` en `tests/*.sh`);
+- als nobody (`setpriv` zoals `/tmp/ci-nobody/run.sh`, in een kopie van `api/` en `infra/` van
+  nobody en zonder `SSL_CERT_FILE`): `test_media_lookup.py` en `test_jobs.py`, 36 goed.
+
+De eerste ronde, op `abc09b0`, gaf één fout: `test_twintig_films_vanzelf_en_met_de_hand` (M8)
+hield een film op `local`. Dat was de gemiste wekker in het opzoeken
+([hierboven](#deel-4-afronden-en-070)), geen toeval; gerepareerd in `97a7b94`, en de nieuwe
+api-test faalde zonder de wijziging. Daarna liepen alle checks hierboven opnieuw, op de laatste
+code.
+
+Op `/` bleef 16 GB vrij en het laagste `MemAvailable` tijdens de runs was 13,5 GiB. Hooguit 3
+ffmpeg tegelijk (de e2e tellen ze met `ffmpeg_count`).

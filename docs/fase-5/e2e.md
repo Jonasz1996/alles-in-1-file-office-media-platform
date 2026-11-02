@@ -456,6 +456,29 @@ alleen in de header naar TMDB, en staat niet in de log, de database, de pagina's
 
 ## Uitslag hier
 
+### Bij 0.7.0
+
+In de sandbox, op `97a7b94` (2 november 2026; Chromium 141.0.7390.37, ffmpeg 6.1.1, 4 cores),
+alles onder `taskset -c 0-2`:
+
+- `pytest -m media` in `api/`: 176 goed, in 1 min 57 s. (De 63 tests van
+  [De api-tests met `media`](#de-api-tests-met-media) zijn de stand van M0; sindsdien kwamen er 113
+  bij.)
+- `pytest ../e2e -m media`: 64 goed, 4 overgeslagen, in 8 min 20 s. De vier zijn de tests met
+  "(H.264)" in [de lijst](#alle-e2e-van-media-070): deze Chromium heeft geen `avc1`.
+- De e2e van de job `e2e` zonder media: 123 goed, in 10 min 44 s; `-m office`: 30 goed.
+- `-m media_perf` liep niet opnieuw bij 0.7.0. De tijden Ma–Mc komen uit de metingen van deel 2
+  ([metingen.md](metingen.md)); S13 hieronder.
+- De eerste ronde op `abc09b0` gaf in `-m media` één fout:
+  `test_twintig_films_vanzelf_en_met_de_hand` (M8). Een gemiste wekker in het opzoeken,
+  gerepareerd in `97a7b94` met een api-test; zie
+  [integratie.md](integratie.md#deel-4-afronden-en-070).
+
+De jobs met het image en Chrome for Testing (`media-image`, `e2e-media`, `e2e-media-perf`)
+draaien alleen in CI; de vier tests met H.264 moeten daar spelen (`MEDIA_REQUIRE_H264=1`).
+
+### Bij M0
+
 In de sandbox (Chromium 141.0.7390.37, ffmpeg 6.1.1, 4 cores):
 
 - `pytest -m media` in `api/` onder `taskset -c 0-2`: 60 goed, 3 overgeslagen (stream, M4), in
