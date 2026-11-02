@@ -172,9 +172,8 @@ Jonas, ±30 minuten, na het bijwerken naar 0.7.0 (de [README](../../README.md)).
 staan in het runbook [media.md](../runbooks/media.md); de uitkomst gaat in
 [metingen.md](metingen.md).
 
-Eerst CI, na de push van 0.7.0: de job `media-image` (de installatietest met het echte image en
-ffmpeg 7.1.5) was het laatst groen op `2be8fb7` (run 41373584888), vóór deel 3 en 4 van de
-integratie en de review; de run na de push moet ook groen zijn
+CI op 0.7.0 is groen: alle 14 jobs op `92a0d04` (run 41430791448), ook `media-image`, de
+installatietest met het echte image en ffmpeg 7.1.5 (54 van de 54 controles)
 ([integratie.md](integratie.md#wat-alleen-ci-of-de-lxc-kan-bewijzen)).
 
 - [ ] **De status:** `dc ps` toont `platform-media-1` als `healthy`, en

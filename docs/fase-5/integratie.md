@@ -378,9 +378,9 @@ herstart-test leest de sessie vóór ready"). Een tag `v0.6.0` bestaat hier niet
 **Alleen CI (`media-image`, met het echte image en ffmpeg 7.1.5):** stap 1–3 met een werkende
 worker: de zelftest `{"ok": true, "sandbox": "on", "problems": []}`, een transcode via curl met
 `docker top` (geen ffmpeg in de app-container), en de rooktest van de belastingtest
-(`--sessies 1 --duur 30`). Het laatst groen op `2be8fb7` (run 41373584888, 50 van de 50), vóór
-dit deel; deze test met de wijzigingen van deel 3, 4 en de review draait pas in de CI-run na de
-push ([K3](#de-review-van-de-integratie)). CI zet `INSTALL_TEST_ROLLBACK=0`: stap 4 draait alleen hier. Met echte
+(`--sessies 1 --duur 30`). Groen op `2be8fb7` (run 41373584888, 50 van de 50), vóór dit deel;
+*na de push*, met de wijzigingen van deel 3, 4 en de review, groen op `92a0d04` (run
+41430791448, 54 van de 54) ([K3](#de-review-van-de-integratie)). CI zet `INSTALL_TEST_ROLLBACK=0`: stap 4 draait alleen hier. Met echte
 ffmpeg geeft afspelen geen 503; de nieuwe controles van stap 2 (office, media raakt niets aan)
 staan in het gemeenschappelijke deel en lopen daar ook.
 
@@ -423,7 +423,9 @@ Uit de review van de integratie:
 
 - `media-image` op de code van nu: groen op `2be8fb7` (run 41373584888), en alles daarna (deel 3,
   4, de review en de na-controle, ook `test_install_media.sh`) is open tot de CI-run na de push
-  (K3).
+  (K3). *Na de push:* groen op `92a0d04` (run 41430791448): 54 van de 54, ffmpeg 7.1.5
+  afgeschermd, een transcode via curl (reden bitrate, segment 0 200, `docker top` tien keer 1/0)
+  en de rooktest van de belastingtest exit 0.
 
 Uit deel 4 (de eindlijst van de e2e, [e2e.md](e2e.md#alle-e2e-van-media-070)):
 
@@ -694,7 +696,8 @@ Op `ccb6b26` (de reparaties van de review, met de docs van K1–K6), in de sandb
 
 Alles ging in de eerste ronde goed. Op `/` bleef 15–16 GB vrij en het laagste `MemAvailable`
 tijdens de runs was 13,4 GiB. Hooguit 3 ffmpeg tegelijk (de e2e tellen ze met `ffmpeg_count`).
-De CI-run op deze commits volgt na de push (zie [K3](#de-review-van-de-integratie)).
+De CI-run op deze commits volgt na de push (zie [K3](#de-review-van-de-integratie)). *Na de
+push:* alle 14 jobs groen op `92a0d04` (run 41430791448).
 
 ## De na-controle van de review
 
@@ -781,7 +784,7 @@ op `90e5e76` (N3, alleen die e2e-test veranderd), in de sandbox:
 
 Op `/` bleef minstens 13,7 GiB vrij en het laagste `MemAvailable` tijdens de runs was 13,5 GiB.
 Hooguit 3 ffmpeg tegelijk (de e2e tellen ze met `ffmpeg_count`). De CI-run op deze commits volgt
-na de push.
+na de push. *Na de push:* alle 14 jobs groen op `92a0d04` (run 41430791448).
 
 ## Klaar als: waar elk punt bewezen is
 
@@ -793,12 +796,16 @@ het [bouwontwerp](bouwontwerp.md#47-hoe-elke-klaar-als-bewezen-wordt), met waar 
 zegt waar het laatste bewijs ligt. De getallen zijn mediaan / slechtste, uit
 [metingen.md](metingen.md).
 
-"In CI" is bewezen op `2be8fb7` (run 41373584888, alle 14 jobs groen; de getallen van
-`e2e-media-perf` uit run 41341675278 op `d850c4f`). Alles daarna (deel 3 en 4, de review en
-deze na-controle) heeft nog geen CI-run: die volgt na de push, en moet dezelfde jobs groen
-geven. `e2e-media-perf` heeft `continue-on-error`: een rode stap blokkeert de run niet, dus
-daar telt de uitslag van de stap zelf. Die tests eisen de grens (`GATES_MS` in
-`e2e/test_media_m6_perf.py`), het zijn geen losse rapporten.
+"In CI" is bewezen op `92a0d04` (run 41430791448, alle 14 jobs groen, met alles van deel 3
+en 4, de review en deze na-controle); eerder ook op `2be8fb7` (run 41373584888). De getallen
+van `e2e-media-perf` in de tabel zijn uit run 41341675278 op `d850c4f`. Let op:
+`e2e-media-perf` draait met `continue-on-error` én `E2E_PERF_REPORT_ONLY=1`, en dan faalt een
+test daar nooit op een grens (`gate()` in `e2e/test_media_m6_perf.py` slaat `GATES_MS` dan
+over; zo ook [e2e.md](e2e.md)). Het bewijs in CI zijn dus de getallen in het rapport (het log
+van de stap en het artefact `media-prestaties`), niet een groene stap. In run 41430791448
+(Chrome for Testing 156, mediaan / slechtste van 10): direct met H.264 489 / 500 ms (grens
+2000), omzetten naar H.264 van een bron van 720p 1393 / 1414 ms (grens 5000), zoeken direct
+1836 / 1867, remux 855 / 858 en omzetten 2164 / 2168 ms (grens 3000): alles onder de grens.
 
 | Klaar als (stappenplan, met §4.7) | Waar | Bewijs |
 |---|---|---|
@@ -812,4 +819,4 @@ daar telt de uitslag van de stap zelf. Die tests eisen de grens (`GATES_MS` in
 Samen: twee punten zijn hier bewezen (direct play, de voortgang), één hier op de 3 s van "Klaar
 als" (zoeken; de 1,5 s van direct uit de tabel niet), en twee liggen op de LXC: een 1080p-film
 met transcode in de browser, en drie transcodes tegelijk zonder haperen op de CPU van de node.
-Wat in CI staat, moet de run na de push opnieuw laten zien.
+Wat in CI staat, liet de run na de push opnieuw zien (run 41430791448 op `92a0d04`).
