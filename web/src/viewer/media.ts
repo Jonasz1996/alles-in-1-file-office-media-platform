@@ -106,6 +106,27 @@ export function mediaProblem(code: number | undefined, probeStatus?: number | nu
   return "network";
 }
 
+// Codecs van een stilstaand beeld. render.codecs_of neemt het eerste videospoor, ook een
+// ingebedde hoes (attached_pic); die speelt de browser niet als beeld af, en dat is geen fout.
+// Een echte film in MJPEG valt hier dus ook onder; die speelt dan zonder melding alleen het
+// geluid, zoals eerst.
+const STILL = new Set(["mjpeg", "png", "bmp", "gif", "webp", "tiff"]);
+
+/**
+ * Speelt de browser van een video alleen het geluid? Na loadedmetadata is de maat van het beeld
+ * bekend. Is die 0 terwijl de server een videospoor vond, dan kan deze browser dat beeld niet
+ * decoderen. Een MediaError komt dan niet: Chromium slaat een spoor dat het niet kan over, speelt
+ * de rest, en geeft pas een fout als er niets overblijft (nagespeeld in Chromium 141: HEVC met
+ * Opus speelt zonder fout alleen het geluid). In CI (Chrome 156, op 1a6dac0) kwam zo bij
+ * hevc10_hdr10.mkv geen fout en geen melding: Chrome heeft AAC, en zonder GPU geen HEVC. Chromium
+ * 141 kan geen AAC en gaf daar wel een fout. Zonder meta.video (nog geen preview) weten we het
+ * niet: dan geen melding.
+ */
+export function pictureMissing(meta: ViewerMeta, videoWidth: number): boolean {
+  const codec = meta.video?.codec?.toLowerCase();
+  return videoWidth === 0 && !!codec && !STILL.has(codec);
+}
+
 /** "h264 (High) · aac · mp4": voor de hint bij een formaat dat niet speelt. */
 export function codecLabel(meta: ViewerMeta): string {
   const parts: string[] = [];

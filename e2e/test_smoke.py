@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
+import pytest
 from playwright.sync_api import expect
 
 DARK_BG = "#121212"
@@ -176,6 +177,50 @@ def test_bewaking_vangt_fouten(browsers):
     problems = guard.take()
     assert any("gevangen door een foutgrens" in p for p in problems), problems
     assert any("niet gevangen" in p for p in problems), problems
+
+
+# admin: met een eerste account toont / het inlogscherm, ook als deze test alleen draait
+@pytest.mark.usefixtures("admin")
+def test_bewaking_noemt_mislukte_verzoeken_alleen_bij_een_probleem(browsers):
+    """Een mislukt verzoek is zelf geen probleem; is er wel een, dan staan de mislukte verzoeken
+    van die context eronder (zoals net::ERR_TOO_MANY_RETRIES onder "Unable to preload CSS").
+    Een afgebroken verzoek (net::ERR_ABORTED) alleen als het een stylesheet is."""
+    load_failing = """() => Promise.all([
+      ...["/assets/mislukt.css", "/assets/afgebroken.css"].map((href) => new Promise((resolve) => {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = href;
+        link.addEventListener("error", resolve);
+        document.head.appendChild(link);
+      })),
+      fetch("/api/v1/afgebroken").catch(() => null),
+    ])"""
+    pages = []
+    for _ in range(2):
+        context = browsers.new_context()
+        context.route("**/assets/mislukt.css", lambda route: route.abort("connectionrefused"))
+        context.route("**/assets/afgebroken.css", lambda route: route.abort("aborted"))
+        context.route("**/api/v1/afgebroken", lambda route: route.abort("aborted"))
+        page = context.new_page()
+        page.goto("/")
+        expect(page.get_by_role("heading", name="Inloggen", exact=True)).to_be_visible()
+        page.evaluate(load_failing)
+        pages.append(page)
+    quiet, failing = pages
+    failing.evaluate("""() => console.error(new Error("Unable to preload CSS for /x.css"))""")
+    guard = browsers.guard(failing.context)
+    for _ in range(50):
+        if guard.problems:
+            break
+        failing.wait_for_timeout(100)
+    assert browsers.close(quiet.context) == []
+    problems = browsers.close(failing.context)
+    assert problems[0].startswith("fout: Error: Unable to preload CSS for /x.css"), problems
+    failed = sorted(p.split("/", 3)[-1] for p in problems[1:] if p.startswith("mislukt verzoek: "))
+    assert failed == [
+        "assets/afgebroken.css net::ERR_ABORTED",
+        "assets/mislukt.css net::ERR_CONNECTION_REFUSED",
+    ], problems
 
 
 def test_uploadlade_tijdens_een_trage_upload(new_context, user_factory):

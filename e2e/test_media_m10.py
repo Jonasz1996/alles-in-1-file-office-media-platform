@@ -23,7 +23,9 @@ Met media aan en de lokale worker (de fixture media), tegen de echte routes van 
    PATH zonder ffmpeg en ffprobe (een lege map). /beheer zegt "ffmpeg ontbreekt" en toont de
    melding; direct play (VP9 + Opus in WebM) werkt nog; een HEVC-film geeft op /kijken de zin
    van Keuze 46 met "Downloaden" (met Tab en Enter; de download is het bestand, integratie punt
-   7), en in de viewer de melding met "Downloaden". Daarna weer met de oude PATH.
+   7), en in de viewer de melding met "Downloaden": ook als de browser van de film alleen het
+   geluid kan (dan geeft hij geen fout: Chrome 156 in CI op 1a6dac0, en hier HEVC met Opus).
+   Daarna weer met de oude PATH.
 
 De import naar een eigen map met de mappenkiezer en kopiëren toetst test_media_m2.py (sinds M10
 via /beheer; m2.md, afwijking 1).
@@ -35,8 +37,10 @@ import hashlib
 import os
 import re
 import shutil
+import subprocess
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -289,6 +293,36 @@ def wait_state(media: Any, want: str, seconds: float = HEALTH_S) -> None:
         time.sleep(0.25)
 
 
+def hevc_with_opus(tmp: Path) -> Path:
+    """Het beeld van hevc10_hdr10.mkv (gekopieerd) met Opus als enig geluid. Dat geluid speelt elke
+    Chromium, het beeld geen enkele zonder GPU: de <video> laadt het dan zonder fout en speelt
+    alleen het geluid. Zo kwam er in CI (Chrome 156, met AAC, op 1a6dac0) bij hevc10_hdr10.mkv
+    geen fout; Chromium 141 hier kan geen AAC en geeft daar wel een. Eén ffmpeg, buiten de app
+    (zoals loop_mkv)."""
+    from tests.media import fixtures
+
+    out = tmp / "hevc_opus.mkv"
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(fixtures.make("hevc10_hdr10.mkv")),
+         "-map", "0:v:0", "-map", "0:a:1", "-c:v", "copy", "-c:a", "libopus", "-b:a", "96k",
+         "-ac", "2", str(out)],
+        check=True, timeout=60,
+    )  # fmt: skip
+    return out
+
+
+def video_codec(media: Any, account: Any, node_id: str, seconds: float = 60) -> str | None:
+    """De videocodec in de meta van de preview, zodra die er is (niet meer pending)."""
+    end = time.monotonic() + seconds
+    while True:
+        r = media.server.call(account, "GET", f"/api/v1/files/{node_id}/preview", expect=200)
+        detail = r.json()
+        if detail["state"] != "pending":
+            return (detail["meta"].get("video") or {}).get("codec")
+        assert time.monotonic() < end, f"de preview van {node_id} na {seconds} s nog pending"
+        time.sleep(0.25)
+
+
 @pytest.mark.media
 def test_de_worker_zonder_ffmpeg(media, media_browsers, ffmpeg_count, tmp_path):
     owner, folder, context, page = setup(media, media_browsers, "M10 zonder ffmpeg")
@@ -297,10 +331,17 @@ def test_de_worker_zonder_ffmpeg(media, media_browsers, ffmpeg_count, tmp_path):
     # (Chromium 141 zonder H.264: dan zou play remux kiezen, en die heeft de worker nodig)
     good = media.upload(owner, "vp9_opus.webm", folder)
     hevc = media.upload(owner, "hevc10_hdr10.mkv", folder)
+    # Hetzelfde beeld met Opus: dan speelt elke Chromium alleen het geluid, zonder fout
+    path = hevc_with_opus(tmp_path)
+    mixed = upload_path(media, owner, folder, path)
+    mixed_sha = hashlib.sha256(path.read_bytes()).hexdigest()
     # De probe vooraf, met ffmpeg: zonder probe weet play niet wat het bestand is
-    for up in (good, hevc):
-        media.analyse(up.sha)
-        media.wait_probe(up.sha)
+    for sha in (good.sha, hevc.sha, mixed_sha):
+        media.analyse(sha)
+        media.wait_probe(sha)
+    # En de preview: zonder meta.video weet de viewer niet dat er beeld in hoort
+    for node in (hevc.id, mixed):
+        assert video_codec(media, owner, node) == "hevc", node
 
     empty = tmp_path / "zonder-ffmpeg"
     empty.mkdir()
@@ -345,21 +386,26 @@ def test_de_worker_zonder_ffmpeg(media, media_browsers, ffmpeg_count, tmp_path):
         data = got.value.path().read_bytes()
         assert hashlib.sha256(data).hexdigest() == hevc.sha, len(data)
 
-        # In de viewer: play zegt nee aan het begin, de <video> van fase 3 kan het formaat niet,
-        # en de melding biedt Downloaden aan
-        before = len(plays.calls)
-        page.goto(f"/map/{folder}?bestand={hevc.id}")
-        viewer = page.get_by_role("dialog", name="hevc10_hdr10.mkv", exact=True)
-        expect(viewer).to_be_visible()
-        expect(viewer.locator(".player")).to_have_count(0, timeout=30_000)
-        message = viewer.locator(".viewer-message")
-        expect(message.get_by_role("alert")).to_have_text(
-            "Deze browser kan dit formaat niet afspelen", timeout=15_000
-        )
-        expect(message.get_by_role("button", name="Downloaden", exact=True)).to_be_visible()
-        refused = plays.calls[before:]
-        assert refused and refused[-1]["status"] == 503, refused
-        assert refused[-1]["out"]["detail"]["code"] == "media_ffmpeg_missing", refused
+        # In de viewer: play zegt nee aan het begin, de <video> van fase 3 kan het beeld niet, en
+        # de melding biedt Downloaden aan. Kan de browser geen enkel spoor (hevc10_hdr10.mkv in
+        # Chromium 141: geen AAC of AC-3), dan is er een MediaError; speelt hij het geluid wel (de
+        # Opus hier in elke Chromium, het AAC in Chrome), dan komt er geen fout en ziet de viewer
+        # het aan het beeld zonder maat
+        for node, name in ((hevc.id, "hevc10_hdr10.mkv"), (mixed, path.name)):
+            before = len(plays.calls)
+            page.goto(f"/map/{folder}?bestand={node}")
+            viewer = page.get_by_role("dialog", name=name, exact=True)
+            expect(viewer).to_be_visible()
+            expect(viewer.locator(".player")).to_have_count(0, timeout=30_000)
+            message = viewer.locator(".viewer-message")
+            expect(message.get_by_role("alert")).to_have_text(
+                "Deze browser kan dit formaat niet afspelen", timeout=15_000
+            )
+            expect(message.get_by_role("button", name="Downloaden", exact=True)).to_be_visible()
+            expect(viewer.locator("video")).to_have_count(0)  # geen geluid zonder beeld meer
+            refused = plays.calls[before:]
+            assert refused and refused[-1]["status"] == 503, (name, refused)
+            assert refused[-1]["out"]["detail"]["code"] == "media_ffmpeg_missing", (name, refused)
     finally:
         page.goto("about:blank")
         # Weer met de PATH van de harnas (restart werkt extra_env alleen bij)

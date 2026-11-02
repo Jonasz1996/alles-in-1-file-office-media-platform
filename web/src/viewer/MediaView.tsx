@@ -1,7 +1,9 @@
 // Video en audio met de speler van de browser. Altijd proberen af te spelen: de codecs die de
 // server las, zijn alleen een hint. Lukt het niet, dan zoeken we uit waarom: kan de browser het
 // formaat niet aan, dan zeggen we dat (met downloaden); was de link verlopen of de verbinding
-// weg, dan één nieuwe link en verder waar hij was.
+// weg, dan één nieuwe link en verder waar hij was. Speelt hij van een video alleen het geluid
+// (geen beeld, wel een videospoor volgens de server), dan is dat ook "kan dit formaat niet":
+// daar geeft Chromium geen fout voor (pictureMissing in ./media).
 //
 // De haak van fase 5 (M0, frozen; Keuze 32): een video laadt de speler van M6
 // (player/ViewerPlayer.tsx, een eigen chunk) als je ingelogd bent, het de huidige versie is en
@@ -17,7 +19,7 @@ import { Button } from "../ui/Button";
 import { useShortcuts } from "../ui/keys";
 import { Spinner } from "../ui/Spinner";
 import type { ViewerDetail } from "./api";
-import { codecLabel, type MediaProblem, mayRenew, mediaProblem } from "./media";
+import { codecLabel, type MediaProblem, mayRenew, mediaProblem, pictureMissing } from "./media";
 import type { Source } from "./source";
 import type { ViewerItem } from "./types";
 
@@ -201,6 +203,12 @@ function NativeMedia({ item, detail, source, kind, onEnded }: Props): JSX.Elemen
     onError: () => void onError(),
     onLoadedMetadata: () => {
       const el = media.current;
+      // Alleen het geluid: de browser kan het beeld niet, maar meldt dat niet als fout
+      if (el && kind === "video" && pictureMissing(meta, el.videoWidth)) {
+        el.pause();
+        setProblem("unsupported");
+        return;
+      }
       if (el && resumeAt.current) el.currentTime = resumeAt.current;
       resumeAt.current = 0;
     },

@@ -908,12 +908,33 @@ STUCK_JS = """() => {
 }"""
 
 
+def new_run_start(page: Any, media: Any, old: int, seconds: float) -> float:
+    """Waar de eerste run onder een nieuwe worker begint (s, mediatijd): de -ss vóór de invoer van
+    zijn ffmpeg voor de stroom (grid.start_s; bij transcode het begin van het segment). Daar zit de
+    naad. Het buffer bij de kill zegt dat niet: wat de oude run al gemaakt had, kan na de kill nog
+    met 200 komen (CI op 1a6dac0: het buffer liep bij de kill tot 7,97 s, daarna van de oude run
+    nog tot 9,96 s, en de nieuwe run begon op 10,04 s). Wacht met page.wait_for_timeout: dan
+    handelt Playwright de routes af."""
+    end = time.monotonic() + seconds
+    while True:
+        new = media.worker_pid()
+        if new not in (None, old):
+            table = process_table()
+            for p in sorted(descendants([new], table)):
+                args = cmdline(p).split()
+                if comm(p) == "ffmpeg" and "-f" in args and "mp4" in args:
+                    return float(args[args.index("-ss") + 1]) if "-ss" in args else 0.0
+        assert time.monotonic() < end, f"geen producent onder een nieuwe worker binnen {seconds} s"
+        page.wait_for_timeout(100)
+
+
 @pytest.mark.media
 def test_de_worker_gedood_tijdens_een_transcode(media, media_browsers, ffmpeg_count, tmp_path):
     """§4.3 #12 (review golf 3, K3): de lokale worker gedood (SIGKILL op pid, met de starttijd)
     terwijl de speler een transcode speelt. De ffmpeg van de producent gaat mee, de worker
     herstart, en de speler loopt binnen 10 s na het eind van wat hij al had weer door (de
-    herstel-lus van session.ts), zonder een fout te tonen."""
+    herstel-lus van session.ts), zonder een fout te tonen. "Wat hij al had" loopt tot de naad:
+    waar de nieuwe run begint (new_run_start), niet het buffer bij de kill."""
     owner, folder, context, page = setup(media, media_browsers, "M6 worker weg")
     plays = Plays(context)
     path = loop_mkv(tmp_path, 5, "hevc10_hdr10.mkv")  # 60 s: de producent loopt niet ver voor
@@ -932,17 +953,23 @@ def test_de_worker_gedood_tijdens_een_transcode(media, media_browsers, ffmpeg_co
     assert kill_pid(old, table[old][1], signal.SIGKILL)
     assert wait_gone([(old, table[old][1])]) == []
     assert wait_gone(running) == [], running  # geen ffmpeg over van de oude worker
-    # Voorbij de buffer van toen: dat kan alleen met segmenten van de nieuwe worker
-    limit_s = (end - at) + RESTART_LIMIT_S
+    # De naad: wat ervoor ligt, kan nog van de oude run zijn; voorbij de naad (+ 1 s) kan alleen
+    # met segmenten van de nieuwe worker. De grens: 10 s na het eind van de oude run
+    seam_s = new_run_start(page, media, old, (end - at) + RESTART_LIMIT_S + 5)
+    assert seam_s >= end - GAP_MAX_S, (seam_s, at, end)  # niet midden in wat hij al had
+    limit_s = (seam_s - at) + RESTART_LIMIT_S
     try:
-        playing_past(page, end + 1.0, timeout_ms=(limit_s + 5) * 1000)
+        left = killed + limit_s + 5 - time.monotonic()
+        playing_past(page, seam_s + 1.0, timeout_ms=left * 1000)
     except PlaywrightTimeout as e:
         stuck = page.evaluate(STUCK_JS)
-        why = f"niet voorbij {end + 1.0:.2f} s, buffer tot {end:.4f}: {stuck}"
+        why = (f"niet voorbij {seam_s + 1.0:.2f} s, naad op {seam_s:.4f}, "
+               f"buffer tot {end:.4f}: {stuck}")  # fmt: skip
         raise AssertionError(why) from e
     took = time.monotonic() - killed
-    print(f"worker weg: {end - at:.1f} s in de buffer, weer voorbij na {took:.1f} s")
-    assert took <= limit_s, (took, at, end)
+    print(f"worker weg: {end - at:.1f} s in de buffer (tot {end:.4f}), naad op {seam_s:.4f}, "
+          f"weer voorbij na {took:.1f} s")  # fmt: skip
+    assert took <= limit_s, (took, at, end, seam_s)
     new = media.worker_pid()
     assert new not in (None, old)
     # De segmenten na de buffer komen van een producent onder de nieuwe worker (60 s: die loopt nog)
@@ -973,10 +1000,13 @@ def _add(buf: bytearray, fmt: str, at: int, delta: int) -> None:
     struct.pack_into(fmt, buf, at, struct.unpack_from(fmt, buf, at)[0] + delta)
 
 
-def _drop_in_traf(seg: bytes, start: int, end: int, n: int, duration: int) -> tuple[bytes, int]:
+def _drop_in_traf(
+    seg: bytes, start: int, end: int, n: int, duration: int
+) -> tuple[bytes, int, int]:
     """De traf (inhoud seg[start:end]) zonder zijn eerste n samples: trun telt n minder en zijn
-    data_offset wijst voorbij hun bytes, tfdt schuift op met hun duur. Geeft (traf, die duur in
-    de tijdschaal van het spoor). duration: de standaardduur uit trex van de init."""
+    data_offset wijst voorbij hun bytes, tfdt schuift op met hun duur. Geeft (traf, die duur, de
+    nieuwe tfdt), in de tijdschaal van het spoor. duration: de standaardduur uit trex van de
+    init."""
     from tests.media.boxes import BoxError, boxes, find
 
     tfhd = find(seg, start, end, "tfhd")
@@ -1012,26 +1042,29 @@ def _drop_in_traf(seg: bytes, start: int, end: int, n: int, duration: int) -> tu
     _add(new, ">i", h + 8, size)
     trun[:] = new
     tfdt, th = times[0]
-    _add(tfdt, ">Q" if tfdt[th] == 1 else ">I", th + 4, gone)
-    return _box("traf", b"".join(bytes(box) for _kind, box, _h in kids)), gone
+    wide = ">Q" if tfdt[th] == 1 else ">I"
+    _add(tfdt, wide, th + 4, gone)
+    first_now = struct.unpack_from(wide, tfdt, th + 4)[0]
+    return _box("traf", b"".join(bytes(box) for _kind, box, _h in kids)), gone, first_now
 
 
-def drop_audio_head(seg: bytes, track: int, duration: int, n: int) -> tuple[bytes, int]:
+def drop_audio_head(seg: bytes, track: int, duration: int, n: int) -> tuple[bytes, int, int]:
     """Het segment zonder de eerste n samples van spoor track in zijn eerste moof (_drop_in_traf).
     De bytes blijven in de mdat staan; niets wijst er nog naar. Het moof wordt korter, dus elke
-    data_offset erin ook. Geeft (segment, de duur die weg is)."""
+    data_offset erin ook. Geeft (segment, de duur die weg is, de tfdt van het eerste sample dat
+    blijft)."""
     from tests.media.boxes import BoxError, boxes, find
 
     moof = next((b for b in boxes(seg) if b[0] == "moof"), None)
     if moof is None:
         raise BoxError("geen moof")
     _kind, mb, ms, me = moof
-    gone = 0
+    gone = first = 0
     kids: list[bytes] = []
     for kind, b, s, e in boxes(seg, ms, me):
         tfhd = find(seg, s, e, "tfhd") if kind == "traf" else None
         if tfhd is not None and struct.unpack_from(">I", seg, tfhd[1] + 4)[0] == track:
-            box, gone = _drop_in_traf(seg, s, e, n, duration)
+            box, gone, first = _drop_in_traf(seg, s, e, n, duration)
             kids.append(box)
         else:
             kids.append(seg[b:e])
@@ -1043,14 +1076,15 @@ def drop_audio_head(seg: bytes, track: int, duration: int, n: int) -> tuple[byte
         for sub, _b2, s2, _e2 in boxes(out, s, e) if kind == "traf" else ():
             if sub == "trun" and out[s2 + 3] & 0x1:
                 _add(out, ">i", s2 + 8, -shrink)
-    return seg[:mb] + bytes(out) + seg[me:], gone
+    return seg[:mb] + bytes(out) + seg[me:], gone, first
 
 
 class Seam:
     """De naad van CI-run 41002597837 via context.route: de sporen uit de init, en zodra armed
     het eerste segment dat met 200 komt zonder zijn eerste AUDIO_DROP geluidsframes (elke keer
     dat het komt). Dan gaat elk segment via route.fetch, en staat de status in after (ook van een
-    verzoek dat de speler afbrak)."""
+    verzoek dat de speler afbrak). cut_s: de tfdt (s) van het eerste geluidsframe dat in dat
+    segment overblijft, het eind van het gat dat de knip maakt; frame_s: de duur van één frame."""
 
     def __init__(self, context: Any) -> None:
         self.context = context
@@ -1058,6 +1092,8 @@ class Seam:
         self.armed = False
         self.segment: int | None = None
         self.gone_ms = 0.0
+        self.cut_s: float | None = None
+        self.frame_s = 0.0
         self.after: list[tuple[int, int]] = []
         self.errors: list[str] = []
         context.route(INIT_RE, self._init)
@@ -1095,8 +1131,12 @@ class Seam:
         if response.status == 200 and self.segment in (None, k):
             try:
                 audio = next(t for t in self.tracks.values() if t.handler == "soun")
-                body, gone = drop_audio_head(response.body(), audio.id, audio.trex[0], AUDIO_DROP)
+                body, gone, first = drop_audio_head(
+                    response.body(), audio.id, audio.trex[0], AUDIO_DROP
+                )
                 self.segment, self.gone_ms = k, gone * 1000 / audio.timescale
+                self.cut_s = first / audio.timescale
+                self.frame_s = gone / AUDIO_DROP / audio.timescale
             except Exception as e:  # zoals bij _init
                 self.errors.append(f"segment {k}: {e!r}")
         # De speler breekt een verzoek af bij een sprong (de sprong over het gat ook): dan is de
@@ -1112,8 +1152,10 @@ def test_de_worker_gedood_met_een_gat_in_het_geluid(media, media_browsers, ffmpe
     verliest zijn eerste AUDIO_DROP geluidsframes. Dan sluit het geluid van de nieuwe run niet aan,
     zoals met H.264 en AAC: Chromium maakt er twee gebufferde stukken van en staat vóór het eind
     van het eerste stil (Chromium 141 in de app: 72 tot 89 ms). De speler springt erover
-    (GAP_END_S) en loopt binnen 10 s na het eind van zijn buffer weer. Met de springer van vóór
-    cce60fa (grens 50 ms) bleef de video daar staan."""
+    (GAP_END_S) en loopt binnen 10 s na het eind van de oude run weer. Met de springer van vóór
+    cce60fa (grens 50 ms) bleef de video daar staan. Het gat zit waar de knip het maakt (het
+    geluid van dat segment begint op cut_s), niet bij het buffer van vóór de kill: een segment van
+    de oude run kan nog na de kill komen (CI op 1a6dac0)."""
     owner, folder, context, page = setup(media, media_browsers, "M6 gat na de kill")
     plays = Plays(context)
     seam = Seam(context)
@@ -1130,29 +1172,46 @@ def test_de_worker_gedood_met_een_gat_in_het_geluid(media, media_browsers, ffmpe
     running = [(p, table[p][1]) for p in descendants([old], table) if comm(p) == "ffmpeg"]
     assert running, "geen ffmpeg in de worker: de producent liep al niet meer"
     at, end = page.evaluate(BUFFER_JS)
+    offset = plays.ok[-1]["out"]["offset"]  # timestampOffset: buffered = tfdt + offset
     killed = time.monotonic()
     assert kill_pid(old, table[old][1], signal.SIGKILL)
     seam.armed = True
     assert wait_gone([(old, table[old][1])]) == []
     assert wait_gone(running) == [], running
-    limit_s = (end - at) + RESTART_LIMIT_S
+    # De grens: 10 s na het eind van de oude run (de naad, new_run_start). Het gat eindigt waar
+    # het geluid van het geknipte segment begint; daar voorbij (+ 1 s) is de video eroverheen
+    seam_s = new_run_start(page, media, old, (end - at) + RESTART_LIMIT_S + 5)
+    assert seam_s >= end - GAP_MAX_S, (seam_s, at, end)  # niet midden in wat hij al had
+    limit_s = (seam_s - at) + RESTART_LIMIT_S
+    while seam.cut_s is None and not seam.errors:
+        assert time.monotonic() < killed + limit_s + 5, f"geen segment geknipt: {seam.report()}"
+        page.wait_for_timeout(100)
+    assert seam.cut_s is not None, seam.report()
+    hole_end = seam.cut_s + offset
+    past = max(seam_s, hole_end) + 1.0
     try:
-        playing_past(page, end + 1.0, timeout_ms=(limit_s + 5) * 1000)
+        left = killed + limit_s + 5 - time.monotonic()
+        playing_past(page, past, timeout_ms=left * 1000)
     except PlaywrightTimeout as e:
         stuck = page.evaluate(STUCK_JS)
-        why = f"niet voorbij {end + 1.0:.2f} s, buffer tot {end:.4f}, {seam.report()}: {stuck}"
+        why = (f"niet voorbij {past:.2f} s, naad op {seam_s:.4f}, gat tot {hole_end:.4f}, "
+               f"buffer tot {end:.4f}, {seam.report()}: {stuck}")  # fmt: skip
         raise AssertionError(why) from e
     took = time.monotonic() - killed
     stuck = page.evaluate(STUCK_JS)
-    print(f"gat na de kill: {end - at:.1f} s in de buffer (tot {end:.4f}), weer voorbij na "
-          f"{took:.1f} s; {seam.report()}; {stuck}")  # fmt: skip
-    assert took <= limit_s, (took, at, end)
-    # De naad is echt geraakt: het segment kwam zonder zijn eerste frames, en het gat begint in
-    # buffered tussen at en het oude eind (+ 0,1 s), dus vóór end + 1: de video is eroverheen
+    print(f"gat na de kill: {end - at:.1f} s in de buffer (tot {end:.4f}), naad op {seam_s:.4f}, "
+          f"gat tot {hole_end:.4f}, weer voorbij na {took:.1f} s; {seam.report()}; "
+          f"{stuck}")  # fmt: skip
+    assert took <= limit_s, (took, at, end, seam_s)
+    # De naad is echt geraakt: het segment kwam zonder zijn eerste frames, en in buffered staat
+    # een gat van hooguit GAP_MAX_S dat eindigt waar zijn geluid nu begint (op één frame na); de
+    # video speelt voorbij dat eind
     assert seam.segment is not None and not seam.errors, seam.report()
     spans = stuck["buffered"]
     holes = [(a[1], b[0]) for a, b in zip(spans, spans[1:], strict=False)]
-    assert any(at <= x <= end + 0.1 and 0 < y - x <= GAP_MAX_S for x, y in holes), (at, end, stuck)
+    near = [(x, y) for x, y in holes if abs(y - hole_end) <= seam.frame_s]
+    assert any(0 < y - x <= GAP_MAX_S for x, y in near), (hole_end, seam.frame_s, stuck)
+    assert stuck["t"] > hole_end, (hole_end, stuck)
     assert state(page)["state"] == "ready"
     assert all(c["status"] == 200 for c in plays.calls), plays.calls
     seam.stop()

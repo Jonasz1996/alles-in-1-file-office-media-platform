@@ -29,14 +29,15 @@ import httpx
 import pytest
 from playwright.sync_api import BrowserContext, Page, expect
 
-from conftest import Account, Browsers, create_user
+from conftest import Account, Browsers, create_user, trusting_browser
 from office_harness import Office, fake_info, fixture, frame_editor, type_in_editor
 from test_office_o2 import duo, is_session, ready, uid, wait_until
 
 pytestmark = pytest.mark.office
 
 DROPPED = "Je hebt geen toegang meer; de editor is gesloten."
-# Het domein van het zelfgetekende certificaat (de browser negeert de fout, de test ook)
+# Het domein van het zelfgetekende certificaat. De browser vertrouwt het (trusting_browser in
+# conftest.py, zoals een echte browser Let's Encrypt); de test zelf controleert het niet.
 TLS_DOMAIN = "platform.test"
 
 # Een socket naar /office/ vanuit de pagina zelf (zoals een script in de pagina): dezelfde
@@ -518,9 +519,11 @@ def test_de_editor_over_http_en_https(browser: Any, tmp_path_factory) -> None:
     from office_harness import start_fake_office
 
     office = start_fake_office(tmp_path_factory.mktemp("office-https"))
+    trusted: Any = None
     browsers: Browsers | None = None
     try:
-        write_cert(CertManager(office.settings()), TLS_DOMAIN)
+        certs = CertManager(office.settings())
+        write_cert(certs, TLS_DOMAIN)
         office.server.restart()
         office.wait_state("ok", 60)
         secure = f"https://127.0.0.1:{office.server.https_port}"
@@ -533,15 +536,16 @@ def test_de_editor_over_http_en_https(browser: Any, tmp_path_factory) -> None:
                 return False
 
         wait_until(https_up, 30, "https op de server")
-        browsers = Browsers(browser, office.server)
+        trusted = trusting_browser(browser, (certs.dir / "cert.pem").read_bytes())
+        browsers = Browsers(trusted, office.server)
         d = duo(office)
         a = open_editor_page(login(browsers, d.anna), d.node)
-        context = browsers.new_context(
-            base_url=secure, ignore_https_errors=True, service_workers="block"
-        )
+        context = browsers.new_context(base_url=secure, service_workers="block")
+        # De API-client van Playwright is geen Chromium en vertrouwt het certificaat niet
         r = context.request.post(
             f"{secure}/api/v1/auth/login",
             data={"email": d.bram.email, "password": d.bram.password},
+            ignore_https_errors=True,
         )
         assert r.ok, r.text()
         b = open_editor_page(context, d.node)
@@ -567,6 +571,8 @@ def test_de_editor_over_http_en_https(browser: Any, tmp_path_factory) -> None:
             expect(opened.page).to_have_url(re.compile(rf"/map/{d.folder}$"))
     finally:
         problems = browsers.close_all() if browsers is not None else []
+        if trusted is not None:
+            trusted.close()
         office.stop()
     if problems:
         pytest.fail("Problemen in de browser:\n" + "\n".join(problems), pytrace=False)

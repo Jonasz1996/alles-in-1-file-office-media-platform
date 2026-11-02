@@ -13,6 +13,8 @@ Bewaking: elke browsercontext krijgt een init-script dat CSP-schendingen
 (securitypolicyviolation), console.error-regels die met "i18n:" beginnen, gelogde fouten (een
 Error-object of een React-fout, zoals een foutgrens die logt) en onafgevangen fouten doorgeeft.
 Eén treffer en de test faalt; een test die er een verwacht, haalt hem weg met Guard.take().
+Faalt een context, dan staan de mislukte verzoeken van die context onder de problemen (alleen
+als uitleg: een mislukt verzoek laat zelf niets falen).
 
 Office (fase 4, O0-e2e): de fixtures office (nep-DS) en real_office (echte DS, E2E_REAL_DS),
 office_browsers en real_browsers, en de optie office_frames van de bewaking. Het harnas zelf
@@ -26,7 +28,10 @@ docs/fase-5/e2e.md.
 
 from __future__ import annotations
 
+import base64
+import collections
 import contextlib
+import hashlib
 import itertools
 import math
 import os
@@ -407,17 +412,53 @@ def launch_browser(pw: Any) -> Any:
     return launch_chromium(pw.chromium)
 
 
-def launch_chromium(browser_type: Any, *, scrollbars: bool = False) -> Any:
+def launch_chromium(
+    browser_type: Any, *, scrollbars: bool = False, trust: bytes | None = None
+) -> Any:
     """Chromium zoals de e2e hem gebruiken. scrollbars: schuifbalken die ruimte innemen, zoals
     in Chrome op een desktop en in Lighthouse (Playwright verbergt ze standaard,
-    --hide-scrollbars)."""
+    --hide-scrollbars). trust: een zelfgetekend certificaat (PEM) dat deze Chromium vertrouwt;
+    zie trusting_browser."""
+    # Zonder --no-proxy-server gaat Chromium via de proxy van de sandbox, ook voor 127.0.0.1
+    args = ["--no-proxy-server"]
+    if trust is not None:
+        args.append(f"--ignore-certificate-errors-spki-list={spki_pin(trust)}")
     return browser_type.launch(
         executable_path=chromium_path(),
-        # Zonder dit gaat Chromium via de proxy van de sandbox, ook voor 127.0.0.1
-        args=["--no-proxy-server"],
+        args=args,
         headless=os.environ.get("E2E_HEADED") != "1",
         ignore_default_args=["--hide-scrollbars"] if scrollbars else None,
     )
+
+
+def spki_pin(cert_pem: bytes) -> str:
+    """De sha256 van de publieke sleutel (SubjectPublicKeyInfo) van het certificaat, in base64:
+    de vorm die Chromium in --ignore-certificate-errors-spki-list verwacht."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    key = x509.load_pem_x509_certificate(cert_pem).public_key()
+    der = key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    return base64.b64encode(hashlib.sha256(der).digest()).decode()
+
+
+def trusting_browser(browser: Any, cert_pem: bytes) -> Any:
+    """Een eigen Chromium (naast browser, van hetzelfde type) die het zelfgetekende certificaat
+    van de testserver vertrouwt, zoals een echte browser het certificaat van Let's Encrypt
+    vertrouwt. Een context daarop heeft geen ignore_https_errors nodig, en gebruikt het ook
+    niet. De test sluit hem zelf, na Browsers.close_all().
+
+    Met ignore_https_errors ziet Chromium op elke nieuwe verbinding eerst een
+    certificaatfout; DevTools staat hem toe en het verzoek begint opnieuw (na 32 herstarts
+    geeft Chromium het op met net::ERR_TOO_MANY_RETRIES). De socket pool geeft de fout van een
+    verbinding aan het wachtende verzoek met de hoogste prioriteit, ook als die verbinding voor
+    een ander verzoek werd geopend (late binding): in de echte https-test kreeg een stylesheet
+    na Sluiten zo tot 14 fouten na elkaar, en met trage handshakes haalt één stylesheet de 32
+    (test_harnas_https.py). Vermoedelijk was dat de oorzaak van "Unable to preload CSS for …"
+    in CI (job office, op 1a6dac0, Chrome Headless Shell 156), maar bewezen is het niet
+    (docs/fase-4/o1.md). Hier is het certificaat gewoon geldig: geen fout, geen herstart.
+    test_harnas_https.py controleert dat."""
+    return launch_chromium(browser.browser_type, trust=cert_pem)
 
 
 class Guard:
@@ -435,10 +476,24 @@ class Guard:
         self.problems: list[str] = []
         self.office_frames = office_frames
         self.office_records: list[str] = []
+        # Uitleg bij een probleem, geen probleem zelf: de laatste mislukte verzoeken.
+        # Browsers.close zet ze onder de problemen, alleen als die er al zijn; zo zegt een fout
+        # als "Unable to preload CSS" in CI ook wat het netwerk zag (bijvoorbeeld
+        # net::ERR_TOO_MANY_RETRIES, een reset of een afgebroken stylesheet).
+        self.failed_requests: collections.deque[str] = collections.deque(maxlen=50)
 
     def attach(self, context: Any) -> None:
         context.expose_binding("__e2eReport", self._report)
         context.add_init_script(GUARD_JS)
+        context.on("requestfailed", self._request_failed)
+
+    def _request_failed(self, request: Any) -> None:
+        with contextlib.suppress(Exception):
+            failure = request.failure or "?"
+            # net::ERR_ABORTED geeft elke navigatie en elke gesloten iframe; alleen bij een
+            # stylesheet hoort hij bij een melding van Vite
+            if failure != "net::ERR_ABORTED" or request.resource_type == "stylesheet":
+                self.failed_requests.append(f"{request.method} {request.url} {failure}")
 
     def _report(self, source: dict, kind: str, text: str) -> None:
         where = "?"
@@ -522,7 +577,10 @@ class Browsers:
                 with contextlib.suppress(Exception):
                     ctx.close()
                 self.office_records.extend(guard.office_records)
-                return guard.take()
+                problems = guard.take()
+                if problems:
+                    problems += [f"mislukt verzoek: {line}" for line in guard.failed_requests]
+                return problems
         return []
 
     def screenshots(self, out: Path, prefix: str) -> list[Path]:

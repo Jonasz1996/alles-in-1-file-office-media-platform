@@ -20,6 +20,10 @@
 #   media, office, en pas dan het oude image van de app weg. Na twee updates is er één image
 #   platform:local en is de oude id weg, ook als de oude worker er nog op draaide (een nep-Docker
 #   die een image in gebruik niet weghaalt, zoals de echte).
+# - de voorcontrole van --stappen (met een nep-docker; er wordt niets gebouwd): een
+#   INSTALL_TEST_DIR die de test weigert (niet leeg, relatief, een bestand) blijft zoals hij was,
+#   een lege blijft leeg, de eigen werkmap onder /tmp gaat weg, en het blok Samenvatting staat
+#   altijd als laatste.
 #
 # De installatietest (--stappen) staat onder stappen() hieronder, met zijn eigen uitleg.
 #
@@ -567,6 +571,68 @@ PY
   out=$(grep -nE '(docker run|compose\[@\]\}" exec) ' "$install_sh" | grep -v '</dev/null' || true)
   check "elke docker run en compose exec krijgt </dev/null" test -z "$out"
 
+  # De trap van --stappen staat vóór de voorcontrole (de samenvatting komt er altijd) en haalt
+  # WORK weg, als root. Een map die de test weigert, mag daarbij nooit verdwijnen (review van
+  # 1bf5b18: INSTALL_TEST_DIR=<niet leeg> werd na de STOP gewist). Alleen de voorcontrole draait:
+  # een nep-docker zonder project en zonder images, een nep-ss, een kleine git-repo en
+  # INSTALL_TEST_FROM die er niet in staat; elke run stopt vóór er iets gebouwd wordt
+  echo "== --stappen: een werkmap die de test weigert, blijft; zijn eigen werkmap gaat weg"
+  local nep=$work/stappen own
+  mkdir -p "$nep/bin" "$nep/cwd/relatief" "$nep/nietleeg" "$nep/leeg"
+  cat >"$nep/bin/docker" <<'NEP'
+#!/usr/bin/env bash
+case "$1" in
+  info) if [ "${2-}" = --format ]; then echo "$NEP_ROOT"; fi ;;
+  image) exit 1 ;;
+esac
+exit 0
+NEP
+  printf '#!/bin/sh\nexit 0\n' >"$nep/bin/ss"
+  chmod +x "$nep/bin/docker" "$nep/bin/ss"
+  echo bewaar >"$nep/nietleeg/bewaar.txt"
+  echo bewaar >"$nep/cwd/relatief/bewaar.txt"
+  echo bewaar >"$nep/bestand"
+  git -c init.defaultBranch=main init -q "$nep/repo"
+  git -C "$nep/repo" -c user.name=test -c user.email=test@invalid commit -q --allow-empty -m test
+  vooraf() {
+    (cd "$nep/cwd" && env -u INSTALL_LIB -u PLATFORM_ROOT -u INSTALL_TEST_DIR -u INSTALL_TEST_LOGS \
+      -u INSTALL_TEST_TO PATH="$nep/bin:$PATH" NEP_ROOT="$nep" INSTALL_TEST_NEED_GB=0 \
+      INSTALL_TEST_REPO="$nep/repo" INSTALL_TEST_FROM=0000000000000000000000000000000000000000 \
+      "$@" bash "$here/test_install_media.sh" --stappen 2>&1)
+  }
+  # STOP met die tekst en exit 1; het blok staat als laatste, met de stap waarin de test stopte
+  stopped_with() { [ "$code" = 1 ] && grep -qxF "STOP  $1" <<<"$out"; }
+  empty_dir() { [ -d "$1" ] && [ -z "$(ls -A "$1")" ]; }
+  gone() { [ -n "$1" ] && [ ! -e "$1" ]; }
+  summary_last() { [ "$(printf '%s\n' "$out" | tail -n 1)" = "=== einde samenvatting ===" ] && grep -qxF "afgebroken in stap vooraf (exit 1): de stappen daarna liepen niet" <<<"$out"; }
+  code=0
+  out=$(vooraf INSTALL_TEST_DIR="$nep/nietleeg") || code=$?
+  check "niet leeg: STOP, exit 1" stopped_with "$nep/nietleeg is niet leeg"
+  check "niet leeg: de map en zijn bestand blijven" grep -qxF bewaar "$nep/nietleeg/bewaar.txt"
+  check "niet leeg: de samenvatting als laatste" summary_last
+  code=0
+  out=$(vooraf INSTALL_TEST_DIR=relatief) || code=$?
+  check "relatief pad: STOP, exit 1" stopped_with "INSTALL_TEST_DIR moet een absoluut pad zijn"
+  check "relatief pad: ./relatief en zijn bestand blijven" grep -qxF bewaar "$nep/cwd/relatief/bewaar.txt"
+  check "relatief pad: de samenvatting als laatste" summary_last
+  code=0
+  out=$(vooraf INSTALL_TEST_DIR="$nep/bestand") || code=$?
+  check "een bestand: STOP, exit 1" stopped_with "$nep/bestand is geen map"
+  check "een bestand: het blijft" grep -qxF bewaar "$nep/bestand"
+  # Een lege map die al bestond: de test gebruikt hem en laat hem leeg achter (STOP bij de versie)
+  code=0
+  out=$(vooraf INSTALL_TEST_DIR="$nep/leeg") || code=$?
+  check "lege map: de test gebruikt hem" grep -qF "werkmap $nep/leeg)" <<<"$out"
+  check "lege map: STOP pas bij de versie" stopped_with "versie 0000000000000000000000000000000000000000 staat niet in $nep/repo"
+  check "lege map: hij blijft, leeg" empty_dir "$nep/leeg"
+  # Zonder INSTALL_TEST_DIR: een eigen map onder /tmp, en die is daarna weg
+  code=0
+  out=$(vooraf) || code=$?
+  own=$(sed -n 's/^== Voorbereiden (.*, werkmap \(\/tmp\/install-media\.[^)]*\))$/\1/p' <<<"$out")
+  check "eigen werkmap: STOP pas bij de versie" stopped_with "versie 0000000000000000000000000000000000000000 staat niet in $nep/repo"
+  check "eigen werkmap: gemaakt (${own:-geen}) en daarna weg" gone "$own"
+  check "eigen werkmap: de samenvatting als laatste" summary_last
+
   einde
 }
 
@@ -601,6 +667,21 @@ PY
 #   640×360 H.264 met 5 Mbit/s en AAC. De transcode vraagt een profiel met hooguit 1000 kbit/s.
 # - Geen geheim in een log: de login van de beheerder staat alleen in de werkmap (sessie.json,
 #   600); de test kijkt na dat MEDIA_WORKER_KEY in geen enkele log van install.sh staat.
+# - De images van de app: elk image dat platform:local in deze test was (de test onthoudt het na
+#   elke run van install.sh), en wat compose met het label van het project platform bouwde
+#   (compose 2.38 in CI bouwt via bake en zet dat label niet; nieuwere wel). Ook een oud image
+#   dat zijn naam kwijt is (<none>, zoals bij de klassieke opslag van Docker in CI; met de opslag
+#   van containerd, hier, is dat image meteen weg). Wat vóór de test al de naam platform had
+#   (PRE_PLATFORM; in CI bouwt de job media-image eerst platform:ci), is van een ander: de test
+#   telt het niet en ruimt het niet op. Elk ander image met de naam platform dat tijdens de test
+#   verschijnt, telt wel mee voor "één image van de app" (strenger dan de oude telling), maar de
+#   opruiming laat het staan: het kan van een ander zijn.
+# - Het blok "=== Samenvatting" staat altijd als laatste in het log (de stap Samenvatting van CI
+#   leest het), ook als de test afbrak: met het aantal controles en de stap waarin hij stopte.
+#   Een werkmap die de test weigert (INSTALL_TEST_DIR niet leeg, geen map of geen absoluut pad),
+#   blijft daarbij zoals hij was; de functies hierboven controleren dat.
+# - De sid van play (een sleutel in het pad, PlayOut) staat in geen log: logs/2-play.json heeft
+#   <sid> waar de sid stond; het antwoord zelf staat alleen in de werkmap.
 #
 # Instellingen (alle optioneel), zoals test_install_update.sh: INSTALL_TEST_DIR, _REPO, _FROM
 # (standaard 263abd74d914a9811901e7570ed410866364f4b5), _TO (standaard HEAD), _PORT (18580),
@@ -623,14 +704,47 @@ stappen() {
   RUNNER_NAME=install-media-runner-$$
   RUNNER_IMG=install-media-runner:$$
   BORROWED=installatietest-bewaard/python:3.12-slim-$$
+  # WORK blijft leeg tot de werkmap van de test is: de trap hieronder haalt WORK weg (als root)
   runner_built=0 borrowed=0 own_project=0 work_existed=0 WORK=""
-  created=() maybe=() SUMMARY=()
+  created=() maybe=() SUMMARY=() APP_IDS=() PRE_PLATFORM=""
+  STAGE=vooraf ENDED=0
+  # Vanaf hier altijd de samenvatting aan het eind, ook bij een STOP vóór er iets gebeurde
+  trap stappen_opruimen EXIT
+  trap 'exit 130' INT TERM
 
   stop() {
     echo "STOP  $1" >&2
     exit 1
   }
   have() { docker image inspect "$1" >/dev/null 2>&1; }
+  # De images die de test maakte en nog zijn, ook zonder naam (zie boven): APP_IDS en het label
+  # van het project, maar nooit een image dat vóór de test al de naam platform had (PRE_PLATFORM,
+  # in CI platform:ci; ook niet als een build toevallig dezelfde id gaf). Dit haalt de opruiming
+  # weg. Een inspect van een id dat weg is, print een lege regel: die valt weg
+  own_images() {
+    local id
+    {
+      docker images -a -q --no-trunc --filter "label=com.docker.compose.project=$PROJECT"
+      for id in "${APP_IDS[@]}"; do docker image inspect --format '{{.Id}}' "$id" 2>/dev/null || true; done
+    } | sed '/^$/d' | sort -u | comm -23 - <(printf '%s\n' "$PRE_PLATFORM" | sort -u)
+  }
+  # Wat "één image van de app" telt: own_images, de ids van platform:local (ook als die vóór de
+  # test al bestonden), en elk image met de naam platform (welke tag ook) dat er vóór de test niet
+  # was. Strenger dan de oude telling van `docker images platform`, zonder platform:ci. De
+  # opruiming haalt alleen own_images weg: een nieuw platform:<iets> kan van een ander zijn
+  app_images() {
+    local id
+    {
+      own_images
+      for id in "${APP_IDS[@]}"; do docker image inspect --format '{{.Id}}' "$id" 2>/dev/null || true; done
+      docker images -q --no-trunc platform | sort -u | comm -23 - <(printf '%s\n' "$PRE_PLATFORM" | sort -u)
+    } | sed '/^$/d' | sort -u
+  }
+  # platform:local onthouden, na elke run van install.sh
+  note_app() {
+    local id
+    if id=$(docker image inspect --format '{{.Id}}' platform:local 2>/dev/null); then APP_IDS+=("$id"); fi
+  }
   # Wat install.sh in de runner als root maakte (.env 600, de data van 10001, de broncode), leest
   # de test op de host als root: in CI met sudo
   as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
@@ -648,6 +762,8 @@ stappen() {
   [ -z "$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT")" ] ||
     stop "er zijn al netwerken van een project '$PROJECT'"
   ! have platform:local || stop "er is al een image platform:local"
+  PRE_PLATFORM=$(docker images -q --no-trunc platform | sort -u)
+  [ -z "$(app_images)" ] || stop "er zijn al images van een project '$PROJECT' (label com.docker.compose.project)"
   local p
   for p in "$PORT" "$HTTPS_PORT"; do
     [ -z "$(ss -Hltn "sport = :$p")" ] || stop "poort $p is bezet"
@@ -655,20 +771,26 @@ stappen() {
   free_gb() { df --output=avail -B1G "$(docker info --format '{{.DockerRootDir}}')" | tail -n 1 | tr -d ' '; }
   [ "$(free_gb)" -ge "$NEED_GB" ] || stop "te weinig ruimte: $(free_gb) GB vrij voor Docker, de test vraagt er $NEED_GB"
 
+  # De werkmap. WORK krijgt pas een waarde als de map van de test is: een map die de test
+  # weigert (geen absoluut pad, geen map, niet leeg), blijft zoals hij was. Een lege map die al
+  # bestond, blijft ook; alleen wat de test erin zette, gaat weg
+  local dir entries
   if [ -n "${INSTALL_TEST_DIR:-}" ]; then
-    WORK=$INSTALL_TEST_DIR
-    case "$WORK" in /*) ;; *) stop "INSTALL_TEST_DIR moet een absoluut pad zijn" ;; esac
-    if [ -e "$WORK" ] && [ -n "$(ls -A "$WORK")" ]; then stop "$WORK is niet leeg"; fi
-    if [ -e "$WORK" ]; then work_existed=1; fi
-    mkdir -p "$WORK"
+    dir=$INSTALL_TEST_DIR
+    case "$dir" in /*) ;; *) stop "INSTALL_TEST_DIR moet een absoluut pad zijn" ;; esac
+    if [ -e "$dir" ] || [ -L "$dir" ]; then
+      [ -d "$dir" ] || stop "$dir is geen map"
+      entries=$(ls -A "$dir") || stop "kan $dir niet lezen"
+      [ -z "$entries" ] || stop "$dir is niet leeg"
+      work_existed=1
+    fi
+    mkdir -p "$dir"
   else
-    WORK=$(mktemp -d /tmp/install-media.XXXXXX)
+    dir=$(mktemp -d /tmp/install-media.XXXXXX)
   fi
-  WORK=$(cd "$WORK" && pwd -P)
+  WORK=$(cd "$dir" && pwd -P)
   ROOT=$WORK/platform
   own_project=1
-  trap stappen_opruimen EXIT
-  trap 'exit 130' INT TERM
   mkdir -p "$WORK/logs" "$WORK/shim/bin" "$WORK/build" "$WORK/film"
 
   # --- de broncode: beide versies, en een tweede versie erbovenop (2b) ----------------------
@@ -876,7 +998,22 @@ SHIM
 c = sqlite3.connect("file:/data/platform.db?mode=ro", uri=True)
 print(c.execute("select version_num from alembic_version").fetchone()[0])' </dev/null 2>/dev/null
   }
-  app_images() { docker images -q --no-trunc platform | sort -u; }
+  # Wat app_images vindt, leesbaar (naam en het begin van de id), voor de naam van een controle
+  app_images_text() {
+    local id tags out=()
+    for id in $(app_images); do
+      tags=$(docker image inspect --format '{{join .RepoTags ","}}' "$id" 2>/dev/null) || continue
+      out+=("${tags:-<none>} ${id:7:12}")
+    done
+    local IFS=,
+    echo "${out[*]}"
+  }
+  # Precies één image van de app, en dat is platform:local (dat er dus moet zijn)
+  one_app_image() {
+    local id
+    id=$(docker image inspect --format '{{.Id}}' platform:local 2>/dev/null) || return 1
+    [ -n "$id" ] && [ "$(app_images)" = "$id" ]
+  }
   image_gone() { ! docker image inspect "$1" >/dev/null 2>&1; }
   # Eén run van install.sh in de runner; het script komt via stdin (zoals curl | bash)
   step() {
@@ -895,6 +1032,7 @@ print(c.execute("select version_num from alembic_version").fetchone()[0])' </dev
       -e PORT="$PORT" -e HTTPS_PORT="$HTTPS_PORT" -e SHIM_COMPOSE_EXTRA="$SANDBOX_COMPOSE" \
       -e PATH="$WORK/shim/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
       "${envs[@]}" "$RUNNER_IMG" bash -s <"$WORK/install.sh" >"$WORK/logs/$name.log" 2>&1 || rc=$?
+    note_app
     if [ "$rc" != 0 ]; then
       echo "install.sh gaf $rc; de laatste regels:"
       tail -n 30 "$WORK/logs/$name.log"
@@ -933,20 +1071,22 @@ print(c.execute("select version_num from alembic_version").fetchone()[0])' </dev
   # ffmpeg in een container volgens docker top (de kolom pid is nodig voor het filter)
   ffmpeg_in() { docker top "$1" -eo pid,comm 2>/dev/null | awk 'NR > 1 && $2 == "ffmpeg"' | wc -l | tr -d ' '; }
   # Een profiel met H.264 en AAC via MSE, en hooguit 1000 kbit/s: de film (5 Mbit/s) wordt een
-  # transcode (reden bitrate), zoals in de belastingtest
+  # transcode (reden bitrate), zoals in de belastingtest. De argumenten: lijsten van strings
+  # (JSON), zoals candidates en item van GET …/codecs
   profile() {
     python3 -I -c '
 import json, sys
-strings = json.loads(sys.argv[1])
+strings = list(dict.fromkeys(s for a in sys.argv[1:] for s in json.loads(a)))
 def plays(s):
     low = s.lower()
     return low.startswith(("avc1.", "mp4a.40.")) and not low.startswith("avc1.6e")
 codecs = {s: ({"mse": True, "file": True, "smooth": True, "power": True} if plays(s) else {"mse": False, "file": False}) for s in strings}
 print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "name": "installatietest"}, "max": {"height": 1080, "bitrate_kbps": 1000}, "codecs": codecs}}))
-' "$1"
+' "$@"
   }
 
   # --- 1. 0.6.0 installeren, een film uploaden --------------------------------------------
+  STAGE=1
   step 1-van PLATFORM_SRC_REF="$FROM" || stop "de installatie van $FROM lukte niet"
   check "1: de app draait op poort $PORT" app_up
   check "1: de broncode staat op ${FROM:0:12}" test "$(src_head)" = "$(git -C "$WORK/repo.git" rev-parse "$FROM^{commit}")"
@@ -972,6 +1112,7 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
   check "1: de film staat erin" test "$(api sha "$film_id")" = "$film_sha"
 
   # --- 2. bijwerken naar deze versie -----------------------------------------------------
+  STAGE=2
   step 2-bijwerken PLATFORM_SRC_REF="$TO" || fout "2: install.sh gaf een fout"
   check "2: de app draait" app_up
   check "2: het schema staat op 0008" test "$(db_rev)" = 0008
@@ -991,7 +1132,8 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
   check "2: de mappen media en import, van 10001, 750" test \
     "$(as_root stat -c '%u:%g %a' "$ROOT/data/platform/media" "$ROOT/data/platform/import" | sort -u)" = "10001:10001 750"
   check "2: de eindtekst zegt Media: aan (afgeschermd)" said 2-bijwerken "Media: aan (afgeschermd)."
-  check "2: de oude app (0.6.0) is weg, er is één image platform:local" eval '[ "$(app_images | wc -l)" = 1 ] && image_gone "$app1"'
+  check "2: de oude app (0.6.0) is weg (zijn id)" image_gone "$app1"
+  check "2: één image van de app, platform:local (gezien: $(app_images_text))" one_app_image
   check "2: de film is er nog, heel" test "$(api sha "$film_id")" = "$film_sha"
   check "2: /beheer: de worker in zijn container" test "$(api get /api/v1/admin/media worker.mode)" = container
   if [ "$FFMPEG" = leeg ]; then
@@ -1001,14 +1143,29 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
     # een nette weigering, nooit een 500. Een lege ffprobe (ENOEXEC) telt in de probe van M0 als
     # een onleesbaar bestand (409 media_unavailable, en die mislukte probe blijft staan); een
     # ontbrekende als 503 media_ffmpeg_missing. Open punt in docs/fase-5/m10.md
-    api post "/api/v1/media/$film_id/play" "$(profile "[]")" >"$WORK/logs/2-play-zonder-ffmpeg.log" 2>&1 || true
+    # Met het veld mode: geeft play onverwacht toch 200, dan staat alleen de mode in het log,
+    # niet de sid (PlayOut: een sleutel in het pad, nooit in een log)
+    api post "/api/v1/media/$film_id/play" "$(profile "[]")" mode >"$WORK/logs/2-play-zonder-ffmpeg.log" 2>&1 || true
     check "2: afspelen zonder ffmpeg: een nette weigering (409 of 503; de speler biedt Downloaden)" grep -Eq \
       'gaf (409|503): .*(media_unavailable|media_ffmpeg_missing)' "$WORK/logs/2-play-zonder-ffmpeg.log"
     SUMMARY+=("afspelen zonder ffmpeg: $(grep -Eo 'gaf [0-9]+' "$WORK/logs/2-play-zonder-ffmpeg.log" | head -n 1) $(grep -Eo 'media_[a-z_]+' "$WORK/logs/2-play-zonder-ffmpeg.log" | head -n 1)")
   else
     check "2: media-status na de start: afgeschermd, met ffmpeg" said 2-bijwerken "Media: aan (afgeschermd, ffmpeg "
     check "2: /beheer: geen melding over de worker" eval '! api notice media_ffmpeg_missing && ! api notice media_worker_down'
-    check "2: /beheer: de zelftest zegt afgeschermd" test "$(api get /api/v1/admin/media worker.sandbox)" = on
+    # De zelftest staat in worker.selftest (Keuze 45; app/media/types.py, WorkerView). Na de
+    # update start de app vóór de worker: de lus van health.py vraagt bij "down" na 1, 2, 4 …
+    # hooguit 30 s opnieuw, dus de zelftest kan er even null zijn. Hooguit 60 s wachten
+    local selftest
+    selftest=$(api wait-field /api/v1/admin/media worker.selftest 60) || selftest="geen"
+    # Geen JSON (wait-field gaf niets: "geen") is gewoon nee, zonder traceback
+    check "2: /beheer: de zelftest zegt afgeschermd (worker.selftest: $selftest)" python3 -I -c '
+import json, sys
+try:
+    seen = json.loads(sys.argv[1])
+except ValueError:
+    seen = None
+sys.exit(0 if seen == {"ok": True, "sandbox": "on", "problems": []} else 1)
+' "$selftest"
     stap_transcode
     stap_belastingtest
   fi
@@ -1018,16 +1175,18 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
   [ "$FFMPEG" = leeg ] || check "2: media-status zegt afgeschermd" grep -qF "Media: aan (afgeschermd, ffmpeg " "$WORK/logs/2-media-status.log"
 
   # --- 2b. nog een keer bijwerken: het oude image weg, ook al draaide de worker erop ---------
+  STAGE=2b
   app2=$(docker image inspect --format '{{.Id}}' platform:local)
   check "2b: de worker draait op het image van de app" test "$(docker inspect --format '{{.Image}}' "$(cid media)")" = "$app2"
   step 2b-nogmaals PLATFORM_SRC_REF="$TO2" || fout "2b: install.sh gaf een fout"
   check "2b: de app draait" app_up
-  check "2b: na twee updates één image platform:local" test "$(app_images | wc -l)" = 1
+  check "2b: na twee updates één image van de app, platform:local (gezien: $(app_images_text))" one_app_image
   check "2b: de oude id is weg" image_gone "$app2"
   check "2b: de worker draait op het nieuwe image" test "$(docker inspect --format '{{.Image}}' "$(cid media)")" = "$(docker image inspect --format '{{.Id}}' platform:local)"
   check "2b: de sleutel bleef dezelfde" test "$(env_value MEDIA_WORKER_KEY)" = "$key"
 
   # --- 3. MEDIA_SANDBOX=uit: de container weg, de lokale worker ------------------------------
+  STAGE=3
   step 3-uit PLATFORM_SRC_REF="$TO2" MEDIA_SANDBOX=uit || fout "3: install.sh gaf een fout"
   check "3: de app draait" app_up
   check "3: geen container media meer" test -z "$(cid media)"
@@ -1043,6 +1202,7 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
   check "3: weer aan: de container media draait" running "$(cid media)"
 
   # --- 4. terug naar 0.6.0, met precies de commando's van Keuze 47 --------------------------
+  STAGE=4
   if [ "$ROLLBACK" = 1 ]; then
     echo
     echo "== 4: terug naar 0.6.0 (docs/runbooks/media.md, Keuze 47)"
@@ -1073,41 +1233,92 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
     check "4: de film is er nog, heel" test "$(api sha "$film_id")" = "$film_sha"
     check "4: de mappen media en import en het volume media-run blijven" eval \
       'as_root test -d "$ROOT/data/platform/media" && as_root test -d "$ROOT/data/platform/import" && docker volume inspect platform_media-run >/dev/null 2>&1'
-    check "4: één image platform:local" test "$(app_images | wc -l)" = 1
+    check "4: één image van de app, platform:local (gezien: $(app_images_text))" one_app_image
   else
     echo
     echo "== 4: terug naar 0.6.0 overgeslagen (INSTALL_TEST_ROLLBACK=0)"
   fi
+  ENDED=1
   einde
 }
 
 # Alleen met echte ffmpeg (CI): een transcode via curl, en tijdens die transcode docker top (R12)
 # shellcheck disable=SC2016  # check … eval '…': eval werkt de uitdrukking pas zelf uit
 stap_transcode() {
-  local strings body sid code n_app n_media i seen=0 app_ffmpeg=0
+  local cands item sid code n_app n_media i seen=0 app_ffmpeg=0 tops="" what rc=0
   # Wachten tot de worker niets meer doet (de analyse van de film), zodat docker top alleen de
   # transcode ziet
   for i in $(seq 1 60); do
     [ "$(ffmpeg_in "$(cid media)")" = 0 ] && break
     sleep 1
   done
-  strings=$(api get "/api/v1/media/$film_id/codecs" | python3 -I -c 'import json, sys; d = json.load(sys.stdin); print(json.dumps(d["candidates"] + d["item"]))')
-  body=$(api post "/api/v1/media/$film_id/play" "$(profile "$strings")") || { fout "2: play gaf een fout"; return 0; }
-  printf '%s' "$body" >"$WORK/logs/2-play.json"
-  check "2: play kiest transcode (reden bitrate)" python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); sys.exit(0 if d["mode"] == "transcode" and "bitrate" in d["reasons"] else 1)' "$WORK/logs/2-play.json"
-  sid=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["sid"])' "$WORK/logs/2-play.json")
-  code=$(curl -s -o "$WORK/film/0.m4s" -w '%{http_code}' -m 60 "http://127.0.0.1:$PORT/api/v1/stream/$sid/0.m4s")
-  check "2: GET segment 0 via curl: 200 met een fragment (moof)" eval '[ "$code" = 200 ] && grep -q moof "$WORK/film/0.m4s"'
+  # Elke stap die faalt, zegt waarom (install_api.py: de status en het begin van de body) en
+  # stopt alleen de transcode, niet de test: stap 2b en 3 en de samenvatting lopen door
+  if ! cands=$(api get "/api/v1/media/$film_id/codecs" candidates 2>"$WORK/logs/2-codecs.err") ||
+    ! item=$(api get "/api/v1/media/$film_id/codecs" item 2>>"$WORK/logs/2-codecs.err"); then
+    fout "2: GET /api/v1/media/<film>/codecs:$(head -c 400 "$WORK/logs/2-codecs.err" | tr '\n' ' ')"
+    return 0
+  fi
+  # Het antwoord van play heeft de sid (PlayOut: een sleutel in het pad, nooit in een log). Het
+  # staat daarom in de werkmap, niet in logs/ (dat gaat in CI mee als artefact); in logs/ komt
+  # 2-play.json met <sid> waar de sid stond
+  if ! api post "/api/v1/media/$film_id/play" "$(profile "$cands" "$item")" \
+    >"$WORK/play.json" 2>"$WORK/logs/2-play.err"; then
+    fout "2: play:$(head -c 400 "$WORK/logs/2-play.err" | tr '\n' ' ')"
+    return 0
+  fi
+  # De sid, en 2-play.json zonder de sid. Geen JSON-object (een 204): dat in één regel
+  if ! sid=$(python3 -I -c '
+import json, sys
+raw = open(sys.argv[1], "rb").read()
+try:
+    d = json.loads(raw)
+except ValueError:
+    d = None
+if not isinstance(d, dict):
+    sys.exit("geen JSON-object: %r" % raw[:300])
+sid = d.get("sid") or ""
+def scrub(v):
+    if isinstance(v, str):
+        return v.replace(sid, "<sid>") if sid else v
+    if isinstance(v, list):
+        return [scrub(x) for x in v]
+    if isinstance(v, dict):
+        return {k: scrub(x) for k, x in v.items()}
+    return v
+with open(sys.argv[2], "w") as f:
+    json.dump(scrub(d), f)
+print(sid)
+' "$WORK/play.json" "$WORK/logs/2-play.json" 2>>"$WORK/logs/2-play.err"); then
+    fout "2: play: $(tail -n 1 "$WORK/logs/2-play.err")"
+    return 0
+  fi
+  # Wat play koos
+  what=$(python3 -I -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+print("mode %s, redenen %s" % (d.get("mode"), ",".join(d.get("reasons") or []) or "geen"))
+sys.exit(0 if d.get("mode") == "transcode" and "bitrate" in (d.get("reasons") or []) else 1)
+' "$WORK/play.json") || rc=$?
+  check "2: play kiest transcode, reden bitrate (gezien: $what)" test "$rc" = 0
+  if [ -z "$sid" ]; then
+    fout "2: play gaf geen sid"
+    return 0
+  fi
+  code=$(curl -s -o "$WORK/film/0.m4s" -w '%{http_code}' -m 60 "http://127.0.0.1:$PORT/api/v1/stream/$sid/0.m4s") || true
+  check "2: GET segment 0 via curl: 200 met een fragment (moof) (gezien: ${code:-geen antwoord}, $(wc -c <"$WORK/film/0.m4s" 2>/dev/null || echo 0) bytes)" \
+    eval '[ "$code" = 200 ] && grep -q moof "$WORK/film/0.m4s"'
   for i in $(seq 1 10); do
     n_media=$(ffmpeg_in "$(cid media)") n_app=$(ffmpeg_in "$(cid platform)")
+    tops="$tops $n_media/$n_app"
     [ "$n_app" = 0 ] || app_ffmpeg=1
     if [ "$n_media" = 1 ] && [ "$n_app" = 0 ]; then seen=1; fi
     sleep 1
   done
-  check "2: R12: tijdens de transcode één ffmpeg in media (docker top: $n_media)" test "$seen" = 1
+  check "2: R12: tijdens de transcode één ffmpeg in media (docker top per seconde, media/app:$tops)" test "$seen" = 1
   check "2: R12: nooit ffmpeg in de container van de app" test "$app_ffmpeg" = 0
   curl -s -o /dev/null -X DELETE -m 10 "http://127.0.0.1:$PORT/api/v1/stream/$sid" || true
-  SUMMARY+=("transcode via curl: segment 0 $code; docker top: media $n_media ffmpeg, app 0")
+  SUMMARY+=("transcode via curl: $what; segment 0 ${code:-geen antwoord}; docker top per seconde, media/app:$tops")
 }
 
 # Alleen met echte ffmpeg (CI): de rooktest van de belastingtest, zoals het runbook hem op de LXC
@@ -1136,8 +1347,22 @@ stap_belastingtest() {
   timeout 900 docker exec "$(cid platform)" python -m app.cli media-loadtest --sessies 1 --duur 30 \
     --json /tmp/belastingtest.json </dev/null >"$WORK/logs/2-belastingtest.log" 2>&1 || rc=$?
   docker exec "$(cid platform)" cat /tmp/belastingtest.json </dev/null >"$WORK/logs/2-belastingtest.json" 2>/dev/null || true
-  check "2: de rooktest van de belastingtest (1 sessie, 30 s): exit $rc" test "$rc" = 0
-  SUMMARY+=("belastingtest (1 sessie, 30 s): exit $rc")
+  # Bij een fout ook waarom: de regel van fase b en de eerste fout van een speler (een pad met
+  # een sid erin wordt <sid>; de sid hoort in geen log)
+  local why=""
+  if [ "$rc" != 0 ]; then
+    why=$(python3 -I -c '
+import json, re, sys
+d = json.load(open(sys.argv[1]))
+out = [s for s in d.get("summary") or [] if s.startswith("fase b")][:1]
+out += [p["error"] for ph in (d.get("phases") or {}).values() if isinstance(ph, dict)
+        for p in ph.get("players") or [] if p.get("error")][:1]
+out += [d["error"]] if isinstance(d.get("error"), str) else []
+print(re.sub(r"stream/[^/\s]+", "stream/<sid>", "; ".join(out))[:400])
+' "$WORK/logs/2-belastingtest.json" 2>/dev/null) || why="geen uitkomst, zie 2-belastingtest.log"
+  fi
+  check "2: de rooktest van de belastingtest (1 sessie, 30 s): exit $rc${why:+ ($why)}" test "$rc" = 0
+  SUMMARY+=("belastingtest (1 sessie, 30 s): exit $rc${why:+ ($why)}")
 }
 
 stappen_opruimen() {
@@ -1157,7 +1382,10 @@ stappen_opruimen() {
     ids=$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT")
     # shellcheck disable=SC2086
     [ -z "$ids" ] || docker network rm $ids >/dev/null
-    for ref in $(docker images -q --no-trunc platform | sort -u); do docker image rm -f "$ref" >/dev/null 2>&1; done
+    # Alleen de images van de test (own_images) en de naam platform:local; een ander image met
+    # de naam platform (in CI platform:ci) blijft
+    for ref in $(own_images); do docker image rm -f "$ref" >/dev/null 2>&1; done
+    if have platform:local; then docker image rm platform:local >/dev/null 2>&1; fi
   fi
   if [ -n "$LOGS_OUT" ] && [ -d "$WORK/logs" ]; then
     mkdir -p "$LOGS_OUT" && cp -r "$WORK/logs/." "$LOGS_OUT/" && echo "Logs: $LOGS_OUT"
@@ -1176,19 +1404,24 @@ stappen_opruimen() {
     docker tag "$BORROWED" python:3.12-slim && docker image rm "$BORROWED" >/dev/null &&
       echo "python:3.12-slim heeft zijn eigen image weer."
   fi
-  ids="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")"
-  if [ -n "$ids" ] || have platform:local || { [ "$runner_built" = 1 ] && have "$RUNNER_IMG"; } || { [ "$borrowed" = 1 ] && have "$BORROWED"; }; then
-    echo "LET OP: er is nog iets van de test over"
-    rc=1
-  else
-    echo "Alles van de test is weg (containers, volumes, netwerken, images, de werkmap)."
+  if [ "$own_project" = 1 ]; then
+    ids="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")$(own_images)"
+    if [ -n "$ids" ] || have platform:local || { [ "$runner_built" = 1 ] && have "$RUNNER_IMG"; } || { [ "$borrowed" = 1 ] && have "$BORROWED"; }; then
+      echo "LET OP: er is nog iets van de test over"
+      rc=1
+    else
+      echo "Alles van de test is weg (containers, volumes, netwerken, images, de werkmap)."
+    fi
   fi
-  if [ "${#SUMMARY[@]}" -gt 0 ]; then
-    echo
-    echo "=== Samenvatting (test_install_media.sh --stappen) ==="
-    printf '%s\n' "${SUMMARY[@]}"
-    echo "=== einde samenvatting ==="
+  # Altijd, ook na een STOP of een afgebroken stap: de stap Samenvatting van CI leest dit blok
+  echo
+  echo "=== Samenvatting (test_install_media.sh --stappen) ==="
+  [ "${#SUMMARY[@]}" = 0 ] || printf '%s\n' "${SUMMARY[@]}"
+  echo "controles: $oks goed, $fails fout"
+  if [ "$ENDED" != 1 ]; then
+    echo "afgebroken in stap $STAGE (exit $rc): de stappen daarna liepen niet"
   fi
+  echo "=== einde samenvatting ==="
   exit "$rc"
 }
 

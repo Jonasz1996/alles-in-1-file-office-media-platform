@@ -14,7 +14,7 @@ import { Icon } from "../ui/Icon";
 import { useVirtualRows } from "../ui/virtual";
 import { previewCache, useWindowPreviews } from "./previews";
 import { type RowCallbacks, useRowEvents, useScrollingClass } from "./rowEvents";
-import { SlotAssigner, useDeferredRange, useNextStep } from "./slots";
+import { useDeferredRange, useSlots } from "./slots";
 import type { Sort, SortKey } from "./sort";
 
 /** De hoogte van een rij (--row-h in tokens.css). */
@@ -253,11 +253,9 @@ export function FileList(p: FileListProps): JSX.Element {
     );
   };
   // Rijen op vaste plekken: bij het scrollen worden bestaande elementen hergebruikt (slots.ts)
-  const slotter = useRef<SlotAssigner | null>(null);
-  slotter.current ??= new SlotAssigner();
   const range = useDeferredRange(rows.start, rows.end, p.count, focusIndex >= 0 ? focusIndex : null);
-  for (const slot of slotter.current.assign(range.start, range.end, range.extra, ROW_BUDGET)) add(slot.index, slot.key);
-  useNextStep(slotter.current.pending);
+  const slots = useSlots(range.start, range.end, range.keep, ROW_BUDGET);
+  for (const slot of slots) add(slot.index, slot.key);
 
   // Een kortere lijst (filter, verwijderd): de focus blijft binnen de lijst
   const { onFocusRow, count } = p;
