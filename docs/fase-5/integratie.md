@@ -6,7 +6,10 @@ per deel van de integratie. Deel 1 werkte de punten van "Naar de integratie" in
 [m10.md](m10.md) na op punten met de integratie als eigenaar, of zonder eigenaar en klein. Punt 2
 (een grens voor `media/subs` en `media/trick`) hoort bij stap 3, punt 9 (Keuze 42 op echte namen)
 bij de metingen, en punt 10 (Vraag 7) blijft bij Jonas. Deel 2 mat Ma–Mp van §4.5, de
-belastingtest van §4.6 en punt 9 ([Metingen](#metingen), [metingen.md](metingen.md)).
+belastingtest van §4.6 en punt 9 ([Metingen](#metingen), [metingen.md](metingen.md)). Deel 3
+zette de standaarden van `MediaConfig` op de metingen, met punt 2 ([Standaarden](#standaarden)),
+en draaide de installatietest met terugrollen naar 0.6.0
+([Installatietest en terugrollen](#installatietest-en-terugrollen)).
 
 Jonas heeft de beslissingskaarten van fase 5 nog niet beantwoord. De standaarden bleven dus: de
 import kopieert, geen TMDB-sleutel en alleen lokale metadata, de providers uit. B39–B48 blijven
@@ -267,7 +270,64 @@ oud).
 
 ## Installatietest en terugrollen
 
-*Volgt in een later deel van de integratie.*
+M10 en Keuze 47: bijwerken van 0.6.0 naar deze versie, en terug met precies de commando's van het
+runbook. In de sandbox op `8ffabf3` (de code en docs van dit deel; het harnas uit een eigen
+worktree van die commit, zodat niets het script tijdens de run veranderde):
+
+```bash
+INSTALL_TEST_REPO=<de repo> INSTALL_TEST_TO=8ffabf3 bash infra/single/tests/test_install_media.sh --stappen
+bash infra/single/tests/test_install_media.sh
+```
+
+**`--stappen`: 59 van de 59 controles**, ±4 minuten (de builds uit de cache van Docker), het
+blok `=== Samenvatting` als laatste, en daarna niets van de test over (containers, volumes,
+netwerken, images en de werkmap weg; `python:3.12-slim` kreeg zijn eigen image terug). Het image
+kreeg het lege pakket ffmpeg (de sandbox bereikt geen Debian-spiegel), dus stap 2 nam de tak
+zonder ffmpeg. Het laagste `MemAvailable` was 13,9 GiB, op `/` bleef ≥ 16 GB vrij. Het functiedeel:
+**125 van de 125**.
+
+| Stap | Wat de run liet zien |
+| --- | --- |
+| 1. 0.6.0 (`263abd74d914a9811901e7570ed410866364f4b5`) installeren, een film uploaden | de app 0.6.0, schema 0007, geen container `media`; de film staat erin; `/api/v1/office/status` zegt `off` (`OFFICE=uit`) |
+| 2. bijwerken naar `8ffabf3` | **0008 vanzelf** (de app migreert bij de start; schema 0008); de worker gezond in zijn container, als `media`, zonder netwerk; dezelfde sleutel in de app en de worker en in geen log; de film heel; **office zoals in 0.6.0** (`off`); **media raakt niets aan**: geen bibliotheek, geen import, geen sleutel van TMDB, MusicBrainz uit, en de film in geen bibliotheek; `media-status`: "Media: aan (afgeschermd, ffmpeg ontbreekt)"; `/beheer` toont `media_ffmpeg_missing`; afspelen geeft **503 `media_ffmpeg_missing`** |
+| 2b. nog een keer bijwerken (`b6777db`, een commit erbovenop) | één image `platform:local`, de oude id weg, de worker op het nieuwe image, dezelfde sleutel |
+| 3. `MEDIA_SANDBOX=uit`, dan weer `aan` | de container weg, de lokale worker op `/beheer`, de sleutel blijft, de film heel; daarna de container terug |
+| 4. terug naar 0.6.0 met de commando's van Keuze 47 | `git fetch` en `cat-file -e '263abd74…^{commit}'`, `dc stop platform media`, `db-downgrade 0007` met "ja" ("De database staat nu op revisie 0007."), dan install.sh met `PLATFORM_SRC_REF=263abd74d914a9811901e7570ed410866364f4b5`: de broncode op die commit, schema 0007, de app 0.6.0 (geen `/api/v1/admin/media`), geen container `media`, de eindtekst "Media: uit, want deze versie van het platform heeft nog geen media.", de film heel, de mappen `media` en `import` en het volume `media-run` blijven, één image |
+
+Wat dit deel aan de test veranderde (allemaal in `8ffabf3`):
+
+- **Afspelen zonder ffmpeg** eist nu 503 `media_ffmpeg_missing`. Sinds `8940cac` (punt 5) is een
+  ffprobe die niet kan uitvoeren `FFMPEG_MISSING`; de oude controle nam ook 409
+  `media_unavailable` aan (afwijking 22 van M10). De run gaf 503.
+- **"Media blijft uit tot hij aangezet wordt"**, in de veiligere lezing: Keuze 47 zet media na het
+  bijwerken aan (`MEDIA_SANDBOX=aan`), dus de vlag zelf is aan. Wat de test eist, is dat media
+  niets doet met de bestanden van Jonas tot hij het zelf gebruikt: geen bibliotheek, geen import,
+  geen provider (de beslissingskaarten zonder antwoord). Uitzetten op /beheer en
+  `MEDIA_SANDBOX=uit` zijn de schakelaars; stap 3 test de tweede.
+- **Office** blijft in deze test uit (`OFFICE=uit`; een DS op de runner zou de test verdubbelen).
+  Nu controleert stap 2 dat `/api/v1/office/status` na de update zegt wat 0.6.0 zei. Office aan
+  over een update (DS blijft, de documenten worden opgeslagen) bewijst `test_install_update.sh`
+  van fase 4; die veranderde in dit deel niet. Afwijking: de opdracht vroeg "het office-deel
+  blijft werken" in deze test; hier alleen met office uit.
+- **Het functiedeel** controleert dat het runbook en `infra/single/README.md` precies de vijf
+  regels van Keuze 47 geven, in die volgorde, met de volledige hash en het volledige adres van
+  install.sh, en dat een tekst die `v0.6.0` noemt "als die er is" zegt (nagegaan: zonder de regel
+  `dc stop platform media` in de README, of zonder "als die er is", FOUT).
+
+**Het runbook en de README.** `docs/runbooks/media.md` ("Terug naar 0.6.0") had de commando's met
+de volledige hash al, maar stap 4 met `…/install.sh` en "na de integratie ook de tag `v0.6.0`".
+Nu het volledige adres, en de tag alleen "als die er is" (`git tag -l v0.6.0`): alles werkt met de
+hash. `infra/single/README.md` verwees alleen naar het runbook; nu staan de vijf regels er zelf,
+met wat "goed" betekent en dat `db-downgrade` om "ja" vraagt. De hash is nagekeken met
+`git rev-parse '263abd74d914a9811901e7570ed410866364f4b5^{commit}'` (de commit "e2e echte DS:
+herstart-test leest de sessie vóór ready"). Een tag `v0.6.0` bestaat hier niet; die is van de lead.
+
+**Alleen CI (`media-image`, met het echte image en ffmpeg 7.1.5):** stap 1–3 met een werkende
+worker: de zelftest `{"ok": true, "sandbox": "on", "problems": []}`, een transcode via curl met
+`docker top` (geen ffmpeg in de app-container), en de rooktest van de belastingtest
+(`--sessies 1 --duur 30`). CI zet `INSTALL_TEST_ROLLBACK=0`: stap 4 draait alleen hier. Met echte
+ffmpeg geeft afspelen geen 503; de nieuwe controles van stap 2 (office, media raakt niets aan)
+staan in het gemeenschappelijke deel en lopen daar ook.
 
 ## Wat alleen CI of de LXC kan bewijzen
 
@@ -284,6 +344,16 @@ Uit deel 2, de metingen ([metingen.md](metingen.md#wat-alleen-de-lxc-of-ci-kan-l
   beide hangen aan `f`, en de sandbox is 20–40 % trager dan de referentie;
 - fase c met `dc restart platform` achter de proxy, en fase d met de DS van het image;
 - de belastingtest met echte films: `sources` wordt aangenomen maar niet gebruikt.
+
+Uit deel 3:
+
+- de installatietest met echte ffmpeg (stap 1–3 in `media-image`): de zelftest, een transcode en
+  de rooktest van de belastingtest; stap 4 (terugrollen) draait alleen in de sandbox;
+- de grens van `subs/` en `trick/` op een echte bibliotheek: of 5 GiB genoeg is voor de sprites van
+  Jonas zonder dat ze steeds opnieuw gemaakt worden (/beheer → Media → Cache toont de maat per
+  soort);
+- of de standaarden passen bij de CPU van de LXC: `bench` op /beheer. Boven `f` 1,6 past met 3
+  omzettingen tegelijk geen kijker meer (het runbook zegt dan: zet het op 2).
 
 ## De checks van deel 1
 
