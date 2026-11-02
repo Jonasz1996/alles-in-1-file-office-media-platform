@@ -1,11 +1,12 @@
 # Fase 5 — De integratie
 
 Stap 4 van §5 van het [bouwontwerp](bouwontwerp.md) (revisie 2, leidend). Dit document groeit
-per deel van de integratie. Deel 1 (dit deel) werkte de punten van "Naar de integratie" in
+per deel van de integratie. Deel 1 werkte de punten van "Naar de integratie" in
 [m10.md](m10.md) af (1 en 3–8), en liep de stukken "Open" van [m0.md](m0.md) tot en met
 [m10.md](m10.md) na op punten met de integratie als eigenaar, of zonder eigenaar en klein. Punt 2
 (een grens voor `media/subs` en `media/trick`) hoort bij stap 3, punt 9 (Keuze 42 op echte namen)
-bij de metingen, en punt 10 (Vraag 7) blijft bij Jonas.
+bij de metingen, en punt 10 (Vraag 7) blijft bij Jonas. Deel 2 mat Ma–Mp van §4.5, de
+belastingtest van §4.6 en punt 9 ([Metingen](#metingen), [metingen.md](metingen.md)).
 
 Jonas heeft de beslissingskaarten van fase 5 nog niet beantwoord. De standaarden bleven dus: de
 import kopieert, geen TMDB-sleutel en alleen lokale metadata, de providers uit. B39–B48 blijven
@@ -106,7 +107,8 @@ de commits.
 
 - **Punt 2 van "Naar de integratie"** (een grens voor `media/subs` en `media/trick`): stap 3,
   samen met de standaarden van `MediaConfig` op de metingen.
-- **Punt 9** (Keuze 42 op echte namen): de metingen.
+- **Punt 9** (Keuze 42 op echte namen): gemeten in deel 2, zie [Metingen](#metingen). De
+  formule bleef zoals hij is; de voorstellen zijn voor Jonas.
 - **Punt 10, Vraag 7** (een eigen uid voor de kinderen van de worker): blijft bij Jonas.
 - **De MBID van een album bewaren** (m8.md, open punt 6): raakt het groeperen van M9 en
   `write_album` van M8. Er is geen fout te zien: een gekoppeld album wordt niet opnieuw
@@ -160,7 +162,55 @@ Alles additief, met een test; met media uit verandert er niets.
 
 ## Metingen
 
-*Volgt in een later deel van de integratie* (onder andere punt 9: Keuze 42 op echte namen).
+Deel 2 mat Ma–Mp van §4.5 en de belastingtest van §4.6 in de sandbox (de worker onder
+`taskset -c 0-2`, nooit meer dan 3 ffmpeg, een waakhond op het geheugen), elk 5 keer en de
+tijden in e2e 10 keer, plus punt 9 (Keuze 42 op echte namen). Alles staat in
+[metingen.md](metingen.md), de getallen in [metingen.json](metingen.json), de scripts in
+`api/tests/media/metingen/` (één commando elk; pytest neemt ze niet mee). Mb en Ma met H.264 komen
+uit CI (run 41341675278).
+
+Gehaald: Ma, Mb, Me, Mf, Mg, Mh, Mi, Mj, Ml, Mm, Mn, Mo en Mp, en de 3 s van "Klaar als" bij Mc.
+Niet gehaald, met de oorzaak, en zonder iets bij te stellen om te slagen:
+
+- **Md, fase a en fase c** (0 keer haperen): na een sprong of een herstart van een producent
+  haperde een speler één keer 0,1–1,5 s, in 5 van de 12 runs van fase a (vaker met OnlyOffice
+  ernaast) en in 1 van de 5 van fase c; zonder sprong nooit. De startvoorrang van Keuze 26
+  geldt alleen tot het eerste segment van een sessie; het voorstel is hem ook na een herstart
+  van een producent te geven ([bevinding 3](metingen.md#bevindingen)).
+- **Md met een herstart van DS** (§4.6 d): de lopende streams haperden niet, maar een nieuwe
+  kijker kreeg 503 in plaats van een lagere trede. Bij `B − 1,0` laat de reserve vanaf `f`
+  ±1,07 geen plaats over, en de sandbox had 1,24 en 1,37 (bevinding 7, met een voorstel). De
+  speler in de browser wacht en begint als DS klaar is.
+- **Mc, direct** haalt de 1,5 s van de tabel niet (2,0 s; 1,5 s op 400 Mbit/s): Chromium zelf
+  (bevinding 4).
+- **Mk**: de voorspelde kosten liggen 44–59 % boven wat het kost; de tabel van Keuze 24 is een
+  bovengrens (bevinding 6).
+- **Keuze 42 (punt 9)**: precisie 0,971 en 0,953 (twee manieren van zoeken), 21 en 18 van de 125
+  namen naar Nakijken. De foute koppelingen zijn titels die het begin van een andere zijn terwijl
+  de goede ontbreekt; het geval van punt 9 zelf ging goed. Geen fout tegen de keuze; twee
+  voorstellen voor Jonas, doorgerekend (samen geen foute koppeling).
+
+De treden van Vraag 3 en §4.5 kiest de toelating alleen bij `f` rond 1,0; de sandbox mat
+1,22–1,40 en koos lager. Dat kan alleen de LXC laten zien, net als H.264 in de browser buiten CI
+en de ffmpeg 7.1.5 van het image.
+
+Drie fouten in onze code, gerepareerd met een test (de derde vonden de checks van dit deel):
+
+- **De reserve van de toelating** (`3420059`): rekende het decoderen van 480 veryfast met `f` in
+  plaats van `f_dec` ("alle kosten × `f`, en `d` × `f_dec`", Keuze 26). Met `f_dec` boven `f`
+  kreeg de derde kijker 503 met een plaats vrij.
+- **De belastingtest buiten de app, fase c** (`bd93489`): 500 als de probe `WorkerBusy` kreeg,
+  spelers die na de herstart voor altijd stilstonden, en een speler die bij 503 `media_busy`
+  meteen opgaf.
+- **De worker en een SIGTERM vlak na zijn start** (`bf2f766`): `serve` zette de handlers voor
+  SIGTERM en SIGINT pas nadat de socket er was, en `local.start` is klaar zodra de socket er is.
+  Een SIGTERM daartussen stopte de worker met -15, zonder de socket op te ruimen
+  (`test_worker_stopt_op_sigterm_zonder_kinderen` faalde zo één keer in `-m media`). Nu staan de
+  handlers er eerst. Test: `test_sigterm_meteen_na_de_socket_stopt_de_worker_netjes`, die zonder
+  de fix in de timeout loopt.
+
+Geen ervan verandert een contract: `POST …/loadtest/play` gaf al 503 `media_busy` bij een
+drukke toelating; nu ook bij een drukke worker, in plaats van 500.
 
 ## Standaarden
 
@@ -179,6 +229,13 @@ met punt 2 van "Naar de integratie").
 - een ffprobe die in de container niet start (ENOEXEC, EACCES): hier alleen met een leeg
   programma op PATH van de lokale worker;
 - Downloaden op `/kijken` met Chrome for Testing in `e2e-media` (hier met Chromium 141).
+
+Uit deel 2, de metingen ([metingen.md](metingen.md#wat-alleen-de-lxc-of-ci-kan-laten-zien)):
+
+- de treden van Vraag 3 en §4.5, en een nieuwe kijker tijdens de start van DS (bevinding 7):
+  beide hangen aan `f`, en de sandbox is 20–40 % trager dan de referentie;
+- fase c met `dc restart platform` achter de proxy, en fase d met de DS van het image;
+- de belastingtest met echte films: `sources` wordt aangenomen maar niet gebruikt.
 
 ## De checks van deel 1
 
@@ -201,3 +258,30 @@ Op `/` was maar 6–7 GB vrij (de schijf van de sandbox wordt gedeeld). De toela
 en transcode onder 10 GiB vrij op `data_dir` (Keuze 31, zie m4.md), dus liepen pytest en de e2e
 met `TMPDIR` en `--basetemp` op `/dev/shm`. Dat verandert geen test, alleen waar de tijdelijke
 mappen staan.
+
+## De checks van deel 2
+
+Op `bf2f766` (de code van dit deel) plus de scripts en docs van de metingen, in de sandbox:
+
+- api: `uv sync --frozen`; `ruff check` en `ruff format --check` (ook `../e2e` en
+  `tests/media/metingen`) schoon; `pytest` 3812 goed, 2 overgeslagen; `-m media` onder
+  `taskset -c 0-2` 176 goed; `pytest --collect-only tests/media/metingen` vindt niets (de scripts
+  heten niet `test_*`);
+- web (niets veranderd in dit deel): typecheck, 913 tests in 81 bestanden, build, budget (eerste
+  lading 96,4 van 100 KB, de route Bestanden 43,6 van 45 KB, de speler 25,4 van 35 KB) en
+  `check:i18n --strict` goed;
+- e2e, onder `taskset -c 0-2`: de set van CI 110 goed; `-m office` 30 goed; `-m media` 64 goed en
+  4 overgeslagen (H.264, dat de Chromium 141 hier niet heeft);
+- infra: `test_install_media.sh` (het functiedeel) 110 van 110, `test_install_env.sh` goed,
+  shellcheck schoon;
+- als nobody (`setpriv` zoals `/tmp/ci-nobody/run.sh`, in een kopie van `api/` van nobody en
+  zonder `SSL_CERT_FILE`): de vier testbestanden die dit deel raakte (`test_media_admission`,
+  `test_media_decide`, `test_media_loadtest`, `test_media_worker_core`), 207 goed en 1
+  overgeslagen, en met `-m media` 9 goed.
+
+De eerste ronde van `-m media` gaf één fout: `test_worker_stopt_op_sigterm_zonder_kinderen` zag
+-15 in plaats van 0. Dat was een race in de worker, geen toeval; gerepareerd in `bf2f766` (zie
+[Metingen](#metingen)), daarna 15 keer na elkaar goed en in deze ronde ook.
+
+Op `/` was 16–17 GB vrij, boven de 10 GiB van Keuze 31: pytest en de e2e liepen zonder de omweg
+via `/dev/shm` van deel 1.
