@@ -761,6 +761,33 @@ async def test_een_andere_fout_bij_aannemen_stopt_de_worker_met_code_1(tmp_path,
     assert not config.socket.exists()
 
 
+async def test_sigterm_meteen_na_de_socket_stopt_de_worker_netjes(tmp_path, monkeypatch):
+    """local.start is klaar zodra de socket er is. Een SIGTERM op dat moment moet de worker netjes
+    stoppen (code 0, de socket weg); stond de handler er pas na de socket, dan stierf de worker
+    aan de SIGTERM (-15; test_worker_stopt_op_sigterm_zonder_kinderen faalde zo bij de metingen).
+    Zonder handler stuurt de test geen signaal (dat zou pytest stoppen), en loopt serve in de
+    timeout."""
+    from app.media.worker import __main__ as main
+
+    before = signal.getsignal(signal.SIGTERM)
+    seen = []
+    original = Worker.start
+
+    async def start(self) -> None:
+        await original(self)
+        seen.append(signal.getsignal(signal.SIGTERM))
+        if seen[-1] is not before:
+            signal.raise_signal(signal.SIGTERM)
+
+    monkeypatch.setattr(Worker, "start", start)
+    config = Config(socket=tmp_path / "w.sock", max_procs=3, key=KEY)
+    async with asyncio.timeout(5):
+        assert await main.serve(config, dict(CAPS)) == 0
+    assert seen and seen[0] is not before
+    assert not config.socket.exists()
+    assert signal.getsignal(signal.SIGTERM) is before
+
+
 # Een worker als los proces met een kleine RLIMIT_NOFILE (S3): de grens gaat aan vóór exec
 NOFILE_WRAPPER = (
     "import os,resource,sys;resource.setrlimit(resource.RLIMIT_NOFILE,(64,64));"

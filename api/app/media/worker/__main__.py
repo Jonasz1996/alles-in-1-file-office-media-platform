@@ -118,6 +118,15 @@ async def alive(path: Path) -> int:
     return 1
 
 
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+
+
+def _drop_handlers(loop: asyncio.AbstractEventLoop) -> None:
+    """De handlers van serve weg: een tweede SIGTERM tijdens het stoppen doet weer het gewone."""
+    for sig in STOP_SIGNALS:
+        loop.remove_signal_handler(sig)
+
+
 async def serve(config: Config, caps: dict, refuse: str | None = None) -> int:
     """Luisteren tot SIGTERM of SIGINT (code 0), of tot het aannemen van verbindingen faalt
     (code 1: dan start de bewaking de worker opnieuw). Met refuse: elke hello krijgt die
@@ -126,7 +135,17 @@ async def serve(config: Config, caps: dict, refuse: str | None = None) -> int:
         worker = Worker(config, caps)
     else:
         worker = selftest.RefusingWorker(config, caps, refuse)
-    await worker.start()
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    # Eerst de handlers, dan de socket: local.start is klaar zodra de socket er is, en een
+    # SIGTERM meteen daarna stopt de worker zo ook netjes (code 0, de socket weg), niet met -15
+    for sig in STOP_SIGNALS:
+        loop.add_signal_handler(sig, stop.set)
+    try:
+        await worker.start()
+    except BaseException:
+        _drop_handlers(loop)
+        raise
     watch = guard.start(caps)
     log.info(
         "mediaworker luistert (ffmpeg %s, %s, max %d processen)",
@@ -134,18 +153,13 @@ async def serve(config: Config, caps: dict, refuse: str | None = None) -> int:
         "lokaal" if config.local else "container",
         config.max_procs,
     )
-    stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, stop.set)
     stopped = asyncio.ensure_future(stop.wait())
     try:
         await asyncio.wait({stopped, worker.accepting}, return_when=asyncio.FIRST_COMPLETED)
     finally:
         stopped.cancel()
         watch.cancel()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.remove_signal_handler(sig)
+        _drop_handlers(loop)
         failed = worker.accepting.done() and not worker.accepting.cancelled()
         await worker.stop()
         log.info("mediaworker gestopt%s", " (aannemen faalde)" if failed else "")
