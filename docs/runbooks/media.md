@@ -218,8 +218,9 @@ luisterboek in Opus tot ±2,5 uur, in WAV of ALAC tot ±2,8 uur. Langer geeft "k
 Zonder sleutel (de standaard) haalt het platform titels, jaren en afleveringen alleen uit de
 namen van je bestanden en uit `.nfo`-bestanden ernaast. Met een sleutel van
 [TMDB](https://www.themoviedb.org/) zoekt het ook posters, beschrijvingen en de juiste film erbij.
-Muziek gebruikt MusicBrainz en de Cover Art Archive; die hebben geen sleutel nodig (uit te zetten
-op `/beheer` → Media → Instellingen).
+Muziek kan MusicBrainz en de Cover Art Archive gebruiken; die hebben geen sleutel nodig. Ze staan
+standaard uit (dan stuurt het platform geen album- en artiestnamen naar buiten); aan te zetten op
+`/beheer` → Media → Instellingen → **MusicBrainz gebruiken voor muziek**.
 
 1. Maak een account op themoviedb.org, en vraag bij Settings → API een sleutel aan (gratis, voor
    eigen gebruik). Neem het **API Read Access Token**: de lange, die met `eyJ` begint. De korte

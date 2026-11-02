@@ -526,6 +526,13 @@ van Jonas; zijn vragen in de [README](README.md#vragen-voor-jonas) bleven gelijk
   Chromium). Het [stappenplan](../stappenplan.md), de tabel "Klaar als" en de lijst voor de LXC
   in de README en metingen.md (Mb, en wat alleen de LXC kan) noemen nu de bron, en dat 1080p in
   de browser op de LXC bewezen wordt.
+- **K5, het runbook noemde MusicBrainz "uit te zetten": gefixt.** Nagegaan: `MediaConfig` heeft
+  `musicbrainz: bool = False`, en `infra/single/README.md` zegt "MusicBrainz staat uit"; het
+  runbook ("De sleutel van TMDB") liet lezen dat het aan staat. Nu: standaard uit, aan te zetten
+  op `/beheer` → Media → Instellingen → **MusicBrainz gebruiken voor muziek**. Een nieuwe
+  controle in het functiedeel van de installatietest leest de standaard uit `MediaConfig` en
+  weigert dan "uit te zetten" naast MusicBrainz in de README's en het runbook; op het oude runbook
+  FOUT, nu 127 van de 127.
 
 ## De checks van deel 1
 

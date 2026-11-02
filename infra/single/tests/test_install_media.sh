@@ -458,6 +458,32 @@ PY
   ) || out="(geen uitvoer)"
   check "MEDIA_SANDBOX=uit in de docs alleen met een waarschuwing ($out)" test "$out" = ok
 
+  # MusicBrainz staat standaard uit (MediaConfig.musicbrainz, de beslissingskaarten zonder
+  # antwoord); de docs noemen het dus niet "uit te zetten" (review van de integratie, K5).
+  echo
+  echo "== MusicBrainz in de docs zoals de standaard van MediaConfig"
+  out=$(python3 -I - "$top/api/app/config.py" "$top/README.md" "$here/../README.md" "$top/docs/runbooks/media.md" "$top/docs/fase-5/README.md" <<'PY'
+import os
+import re
+import sys
+
+config = open(sys.argv[1], encoding="utf-8").read()
+block = config[config.index("class MediaConfig") :]
+found = re.search(r"^\s+musicbrainz: bool = (True|False)$", block, re.M)
+problems = [] if found else ["geen musicbrainz in MediaConfig"]
+if found and found.group(1) == "False":
+    for path in sys.argv[2:]:
+        name = os.path.relpath(path, os.path.dirname(sys.argv[2]))
+        lines = open(path, encoding="utf-8").read().splitlines()
+        for i, line in enumerate(lines):
+            two = " ".join(lines[i : i + 2])
+            if "MusicBrainz" in line and "uit te zetten" in two:
+                problems.append("%s r. %d: 'uit te zetten', maar het staat standaard uit" % (name, i + 1))
+print("; ".join(problems) or "ok")
+PY
+  ) || out="(geen uitvoer)"
+  check "MusicBrainz in de docs standaard uit, zoals MediaConfig ($out)" test "$out" = ok
+
   # --- de nep-Docker voor media_start, watchers en main -------------------------------------
   # Een image-opslag: elke build geeft een nieuwe id; de worker draait op de id van zijn laatste
   # start; `image rm` van een id die een container nog gebruikt faalt, zoals bij de echte Docker
