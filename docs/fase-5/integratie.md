@@ -373,7 +373,9 @@ herstart-test leest de sessie vóór ready"). Een tag `v0.6.0` bestaat hier niet
 **Alleen CI (`media-image`, met het echte image en ffmpeg 7.1.5):** stap 1–3 met een werkende
 worker: de zelftest `{"ok": true, "sandbox": "on", "problems": []}`, een transcode via curl met
 `docker top` (geen ffmpeg in de app-container), en de rooktest van de belastingtest
-(`--sessies 1 --duur 30`). CI zet `INSTALL_TEST_ROLLBACK=0`: stap 4 draait alleen hier. Met echte
+(`--sessies 1 --duur 30`). Het laatst groen op `2be8fb7` (run 41373584888, 50 van de 50), vóór
+dit deel; deze test met de wijzigingen van deel 3, 4 en de review draait pas in de CI-run na de
+push ([K3](#de-review-van-de-integratie)). CI zet `INSTALL_TEST_ROLLBACK=0`: stap 4 draait alleen hier. Met echte
 ffmpeg geeft afspelen geen 503; de nieuwe controles van stap 2 (office, media raakt niets aan)
 staan in het gemeenschappelijke deel en lopen daar ook.
 
@@ -411,6 +413,11 @@ Uit deel 3:
   soort);
 - of de standaarden passen bij de CPU van de LXC: `bench` op /beheer. Boven `f` 1,6 past met 3
   omzettingen tegelijk geen kijker meer (het runbook zegt dan: zet het op 2).
+
+Uit de review van de integratie:
+
+- `media-image` op de code van nu: groen op `2be8fb7` (run 41373584888), en alles daarna (deel 3,
+  4 en de review, ook `test_install_media.sh`) is open tot de CI-run na de push (K3).
 
 Uit deel 4 (de eindlijst van de e2e, [e2e.md](e2e.md#alle-e2e-van-media-070)):
 
@@ -502,6 +509,14 @@ van Jonas; zijn vragen in de [README](README.md#vragen-voor-jonas) bleven gelijk
   `loadtest.ours` in `admin.py` faalt de eerste. De contracten: [hierboven](#wijzigingen-aan-contracten).
   De docs: het runbook ("De belastingtest op de LXC", met je eigen films), metingen.md
   (bevinding 6), m10.md, §4.6 van het ontwerp en Vraag 5 in de README.
+- **K3, "Klaar als" van M10 zei dat `media-image` nog nooit draaide: gefixt (docs).**
+  Nagegaan met `gh run view`: de job draaide wel, en groen, op `d850c4f` (run 41341675278) en
+  `2be8fb7` (run 41373584888): 50 van de 50, ffmpeg 7.1.5, de zelftest afgeschermd, een
+  transcode via curl en de rooktest van de belastingtest exit 0. Geen doc noemde dat. m10.md
+  ("Open" en "Klaar als") noemt nu beide runs, en dat de commits erna (deel 3 en 4, deze
+  review, met wijzigingen aan `test_install_media.sh`) open zijn tot de CI-run na de push; zo
+  ook hierboven ([Wat alleen CI](#wat-alleen-ci-of-de-lxc-kan-bewijzen)) en in de README, vóór
+  de lijst voor de LXC.
 
 ## De checks van deel 1
 
