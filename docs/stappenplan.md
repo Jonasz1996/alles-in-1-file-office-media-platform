@@ -415,41 +415,85 @@ grenzen in [docs/fase-4/README.md](fase-4/README.md).
 Doel: films, series en muziek afspelen op elk apparaat, met zo weinig
 mogelijk transcoding.
 
-- [ ] Bibliotheken (films, series, muziek, foto's) met scanner
-  (inotify + periodiek) en bestandsnaam-parsing (guessit)
+- [x] Bibliotheken (films, series, muziek, foto's) met scanner
+  (inotify + periodiek) en bestandsnaam-parsing (guessit). De soorten
+  zijn films, series, muziek en eigen video's: de fototijdlijn van
+  fase 3 is de fotobibliotheek. Geen inotify: alles komt via de app
+  binnen en de bestanden heten naar hun inhoud, dus de scanner luistert
+  naar de app en loopt bij de start en elke 6 uur alles na. Geen
+  guessit maar een eigen parser met een testset van meer dan 500 namen
+  (B14: geen nieuwe afhankelijkheden). Een bestaande verzameling komt
+  binnen met een import op `/beheer` (B39)
 
-- [ ] Metadata: TMDB, TVDB, MusicBrainz; posters en fanart; handmatig
-  koppelen en corrigeren
+- [x] Metadata: TMDB, TVDB, MusicBrainz; posters en fanart; handmatig
+  koppelen en corrigeren. Lokaal eerst (de naam, NFO en plaatjes in de
+  map); TMDB alleen met een eigen sleutel, MusicBrainz en de Cover Art
+  Archive standaard uit. Geen TVDB (kost geld; TMDB heeft ook series)
+  en geen fanart.tv (B44). Koppelen en Bewerken onder Nakijken
 
-- [ ] ffprobe-analyse: codecs, streams, HDR, audiokanalen, ondertitels
+- [x] ffprobe-analyse: codecs, streams, HDR, audiokanalen, ondertitels
+  (in de mediaworker, één analyse per inhoud)
 
-- [ ] Afspeelbeslissing per clientprofiel: direct play, remux of
-  transcode
+- [x] Afspeelbeslissing per clientprofiel: direct play, remux of
+  transcode. De browser meet zelf wat hij kan en stuurt dat mee met elk
+  afspeelverzoek; geen tabel `device` (B41). Apparaten registreren hoort
+  bij de apps (fase 9)
 
-- [ ] Transcoder-worker: ffmpeg naar HLS/CMAF, ladder 1080p/720p/480p,
-  hardware-acceleratie, tone-mapping HDR naar SDR
+- [x] Transcoder-worker: ffmpeg naar HLS/CMAF, ladder 1080p/720p/480p,
+  hardware-acceleratie, tone-mapping HDR naar SDR. ffmpeg alleen in een
+  eigen afgeschermde container (B40); fMP4-segmenten van 2 s, één trede
+  per sessie (B42). Alleen de CPU: hardwareversnelling is klaargezet,
+  niet gebouwd (B5 is open). Tone-mapping standaard naar 720p, van een
+  bron tot 1080p (B43)
 
-- [ ] Sessiebeheer: sessie gepind op één node, segmenten in lokale
-  cache, opruimen na afloop, hervatten op andere node bij uitval
+- [x] Sessiebeheer: sessie gepind op één node, segmenten in lokale
+  cache, opruimen na afloop, hervatten op andere node bij uitval.
+  Standalone is er één node; "hervatten op een andere" wordt: de speler
+  vraagt bij `410` zelf een nieuwe sessie op zijn positie. Dat vangt nu
+  een herstart van de app op, en later met het cluster de uitval van een
+  node (Keuze 48 in het bouwontwerp)
 
-- [ ] Ondertitels: extractie naar WebVTT, externe .srt, keuze in de
-  player
+- [x] Ondertitels: extractie naar WebVTT, externe .srt, keuze in de
+  player (een beeldondertitel, PGS of VobSub, wordt in het beeld gebrand)
 
-- [ ] Scrub-thumbnails (sprites) en hoofdstukken
+- [x] Scrub-thumbnails (sprites) en hoofdstukken
 
-- [ ] Kijkvoortgang per gebruiker en profiel: verder kijken, volgende
-  aflevering, gezien markeren
+- [x] Kijkvoortgang per gebruiker en profiel: verder kijken, volgende
+  aflevering, gezien markeren. Per account; profielen nog niet, de
+  kolom `profile` staat klaar (B45, Vraag 6 aan Jonas)
 
-- [ ] Muziek: albums, artiesten, afspeellijsten, gapless afspelen
+- [x] Muziek: albums, artiesten, afspeellijsten, gapless afspelen
+  (bewezen voor FLAC en Opus; MP3 en AAC niet gegarandeerd)
 
-- [ ] Web-player: hls.js, kwaliteitskeuze, audiotrack,
-  picture-in-picture, toetsenbord
+- [x] Web-player: hls.js, kwaliteitskeuze, audiotrack,
+  picture-in-picture, toetsenbord. Geen hls.js: een eigen speler op MSE
+  (B19), en native HLS voor Safari en iOS (B42)
 
-- [ ] Load-test: aantal gelijktijdige transcodes per node vastleggen
+- [ ] Load-test: aantal gelijktijdige transcodes per node vastleggen.
+  Gebouwd (de knop op `/beheer` → Media en `app.cli media-loadtest`) en
+  in de sandbox gedraaid; de standaard is 3 tegelijk, maar niet alle
+  drie op 1080p: de eerste kijker hoger, de andere lager (B43, Vraag 3).
+  Bij een tragere CPU (`f` boven 1,6) wordt het 2. Vastleggen voor de
+  node zelf kan alleen op de LXC: stap 5 in
+  [docs/fase-5/README.md](fase-5/README.md#op-de-lxc-stap-5)
 
 Klaar als: een 1080p-film start binnen 2 s (direct play) en 5 s
 (transcode); seek werkt; 3 gelijktijdige transcodes zonder haperen;
 voortgang synchroniseert tussen apparaten.
+
+Versie 0.7.0 (2-11-2026): in de sandbox gehaald op één eis na. Direct
+play start binnen 0,5 s en een transcode binnen 1,9 s (de slechtste van
+10 in de browser), seek werkt (weer spelen binnen 2,5 s) en de voortgang
+staat in ±0,1 s op het andere apparaat. Drie transcodes tegelijk lopen zonder haperen als
+ze samen starten; na een sprong hapert soms één speler 0,1 tot 1,5 s.
+Het laatste bewijs, en het aantal transcodes voor de node, is de
+meting op de LXC. De metingen staan in
+[docs/fase-5/metingen.md](fase-5/metingen.md), de integratie in
+[docs/fase-5/integratie.md](fase-5/integratie.md), wat er is, de
+grenzen en de vragen voor Jonas in
+[docs/fase-5/README.md](fase-5/README.md). De keuzes B39–B48 zijn nog
+voorstel: Jonas heeft de beslissingskaarten van fase 5 nog niet
+beantwoord.
 
 ### Fase 6 — Zoeken en foto's (3 weken)
 
