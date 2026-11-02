@@ -18,6 +18,8 @@ GET /api/v1/stream/{sid}/trick/{i}.jpg   image/jpeg; private, max-age=3600
   gaat mee: pending, dan ready (of failed).
 - Elke VTT gaat als text/vtt met X-Content-Type-Options: nosniff. De sprites zijn alleen JPEG's
   van onze eigen encoder (trick.py).
+- Een ondertitel of trick.vtt halen zet de mtime van de map van die blob: het laatste gebruik
+  voor de grens van subs/ en trick/ (cache.sweep_derived, integratie).
 
 Elk wachten (de database, een taak van de worker) gaat via runtime.until_stopped (F3), en geen
 databaseverbinding blijft open terwijl er op de worker gewacht wordt (regel 8).
@@ -33,8 +35,8 @@ from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import JSONResponse, Response
 
 from app import errors
+from app.media import cache, runtime, sessions, subtitles, trick
 from app.media import errors as media_errors
-from app.media import runtime, sessions, subtitles, trick
 from app.storage import BlobStore
 
 router = APIRouter(
@@ -52,16 +54,24 @@ def not_found():
     return errors.fail(404, **sessions.NOT_FOUND)
 
 
-async def _read_file(path: FilePath) -> bytes | None:
+def _read_bytes(path: FilePath, used: bool) -> bytes:
+    data = path.read_bytes()
+    if used:
+        cache.used(path.parent)  # het laatste gebruik, voor het opruimen (cache.sweep_derived)
+    return data
+
+
+async def _read_file(path: FilePath, used: bool = False) -> bytes | None:
     try:
-        return await asyncio.to_thread(path.read_bytes)
+        return await asyncio.to_thread(_read_bytes, path, used)
     except (FileNotFoundError, NotADirectoryError):
         return None
 
 
-async def _read(request: Request, path: FilePath) -> bytes | None:
-    """Een bestand uit de cache; ook dat wachten gaat via until_stopped (F3)."""
-    return await runtime.until_stopped(request.app, _read_file(path))
+async def _read(request: Request, path: FilePath, *, used: bool = False) -> bytes | None:
+    """Een bestand uit de cache; ook dat wachten gaat via until_stopped (F3). used: een VTT,
+    dan telt dit als gebruik van de map van die blob (de grens voor subs/ en trick/)."""
+    return await runtime.until_stopped(request.app, _read_file(path, used))
 
 
 def pending() -> JSONResponse:
@@ -129,7 +139,7 @@ async def subtitle(
     if state == "failed":
         raise media_errors.unavailable("subtitle")
     if state == "ready":
-        data = await _read(request, subtitles.cached(settings, sha, name))
+        data = await _read(request, subtitles.cached(settings, sha, name), used=True)
         if data is not None:
             return Response(data, media_type=VTT_TYPE, headers=CACHED)
     return pending()
@@ -142,7 +152,7 @@ async def trick_vtt(request: Request, session: sessions.Guarded):
         path = trick.vtt_path(settings, session.sha)
     except ValueError:
         raise not_found() from None
-    data = await _read(request, path)
+    data = await _read(request, path, used=True)
     if data is None:
         raise not_found()
     return Response(data, media_type=VTT_TYPE, headers=CACHED)

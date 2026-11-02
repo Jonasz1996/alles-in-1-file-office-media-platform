@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
+from pathlib import Path
 
 import pytest
 
@@ -84,6 +86,63 @@ def test_nooit_binnen_60_s_achter_de_speler_ook_als_het_niet_past():
 
 def test_past_het_al_dan_niets():
     assert cache.trim(remux_4k(0, 10), 0, budget=10 * SEG_4K) == []
+
+
+# --- subs/ en trick/ (integratie, m10.md "Naar de integratie" punt 2) ---------------------------
+
+
+def made(base: Path, kind: str, sha: str, files: dict[str, int], age: float) -> Path:
+    folder = base / kind / sha
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, size in files.items():
+        (folder / name).write_bytes(b"x" * size)
+    when = time.time() - age
+    os.utime(folder, (when, when))
+    return folder
+
+
+def test_derived_telt_alleen_wat_weg_mag(tmp_path):
+    """trick/: alles; subs/: alleen de VTT's (een .failed is de staat failed); nooit een
+    tijdelijke map of tijdelijk bestand (een punt ervoor); een map zonder iets dat weg mag niet."""
+    a, b, c = "a" * 64, "b" * 64, "c" * 64
+    made(tmp_path, "trick", a, {"0.jpg": 1000, "trick.vtt": 100}, 300)
+    made(tmp_path, "subs", b, {"e2.vtt": 50, "e3.failed": 7, ".e4.vtt.1.abcd": 9}, 200)
+    made(tmp_path, "subs", c, {"e1.failed": 7}, 100)
+    made(tmp_path, "trick", f".{a}.1.abcd", {"0.jpg": 5000}, 400)  # trick._store bezig
+    (tmp_path / "trick" / "los.jpg").write_bytes(b"x" * 10)  # geen map: niet van ons
+    found = {(m.kind, m.sha): m.size for m in cache.derived(tmp_path)}
+    assert found == {("trick", a): 1100, ("subs", b): 50}
+    assert cache.derived(tmp_path / "nergens") == []
+
+
+def test_evict_het_langst_niet_gebruikte_eerst_en_nooit_een_open_sessie():
+    def one(sha: str, used: float) -> cache.Made:
+        return cache.Made("trick", sha, Path("/nergens") / sha, 100, used)
+
+    pieces = [one("a", 3.0), one("b", 1.0), one("c", 2.0), one("d", 4.0)]
+    assert cache.evict(pieces, 400, set()) == []
+    assert [m.sha for m in cache.evict(pieces, 250, set())] == ["b", "c"]
+    assert [m.sha for m in cache.evict(pieces, 250, {"b"})] == ["c", "a"]
+    # past het ook dan niet, dan zoveel als mag: wat in keep staat, blijft altijd
+    assert [m.sha for m in cache.evict(pieces, 0, {"d"})] == ["b", "c", "a"]
+
+
+def test_drop_trick_de_map_en_subs_alleen_de_vtts(tmp_path):
+    a, b = "a" * 64, "b" * 64
+    trick = made(tmp_path, "trick", a, {"0.jpg": 10, "trick.vtt": 10}, 10)
+    subs = made(tmp_path, "subs", b, {"e2.vtt": 5, "file.vtt": 5, "e3.failed": 5,
+                                      ".e4.vtt.1.abcd": 5}, 10)  # fmt: skip
+    for m in cache.derived(tmp_path):
+        cache._drop(m)
+    assert not trick.exists()
+    assert sorted(p.name for p in subs.iterdir()) == [".e4.vtt.1.abcd", "e3.failed"]
+    assert cache.derived(tmp_path) == []
+
+
+def test_het_aandeel_van_subs_en_trick():
+    """Standaard cache_gb 20: subs/ en trick/ samen 5 GiB, los van de sessies en audio/."""
+    assert cache.DERIVED_SHARE == 4
+    assert cache.limit_bytes(20) // cache.DERIVED_SHARE == 5 * GiB
 
 
 # --- met de echte stroom -----------------------------------------------------------------------

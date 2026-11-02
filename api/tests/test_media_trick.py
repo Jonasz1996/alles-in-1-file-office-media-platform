@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import random
 import re
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -451,6 +453,107 @@ async def test_zonder_sprites_404(client, admin, settings, monkeypatch):
     assert out["trick"] is None
     failed(await client.get(f"{STREAM}/{out['sid']}/trick.vtt"), 404, "not_found")
     failed(await client.get(f"{STREAM}/{out['sid']}/trick/0.jpg"), 404, "not_found")
+
+
+def _age(folder: Path, seconds: float) -> None:
+    when = time.time() - seconds
+    os.utime(folder, (when, when))
+
+
+@pytest.mark.anyio
+async def test_de_grens_voor_subs_en_trick(client, admin, settings, monkeypatch):
+    """Integratie, m10.md "Naar de integratie" punt 2: subs/ en trick/ hadden geen grens (ze
+    gingen alleen weg met de blob). Nu samen hooguit cache_gb / 4: de sweep haalt het langst
+    niet gebruikte weg, nooit van een open sessie (ook niet haar losse ondertitel), van subs/
+    alleen de VTT's (een .failed blijft), en zet trick_state van ready terug naar none. Een
+    ondertitel of trick.vtt halen telt als gebruik (de mtime van de map)."""
+    from sqlalchemy import select, update
+
+    from app.media import cache, subtitles
+    from app.models import MediaProbe
+    from tests.test_media_subtitles import text_probe
+
+    monkeypatch.setattr(runtime, "_settings", settings)
+    headers, _ = admin
+    sprites = {"interval": 10, "w": 160, "h": 90, "cols": 10, "rows": 10, "count": 1, "tiles": 1}
+    nodes = {}
+    for name in ("speelt.mp4", "oud.mp4", "nieuw.mp4"):
+        node = nodes[name] = await video(client, headers, settings, name)
+        await analysis.save_probe(maker(settings), node["sha"], text_probe())
+        async with maker(settings)() as db:
+            await db.execute(update(MediaProbe).where(MediaProbe.blob_sha == node["sha"])
+                             .values(trick_state="ready", trick=sprites))  # fmt: skip
+            await db.commit()
+        trick._store(settings, node["sha"], [jpeg()], trick.make_vtt(1, 90, 10_000))
+    speelt, oud, nieuw = (nodes[n]["sha"] for n in ("speelt.mp4", "oud.mp4", "nieuw.mp4"))
+    los, ander = "1" * 64, "2" * 64  # een losse ondertitel van de sessie, en een van niemand
+    text = b"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhallo\n"
+    subtitles._write_file(subtitles.cached(settings, speelt, "e2"), text)
+    subtitles._write_file(subtitles.cached(settings, los, "file"), text)
+    subtitles._write_file(subtitles.cached(settings, ander, "e2"), text)
+    subtitles._write_file(subtitles.subs_dir(settings, ander) / "e3.failed", b"kapot")
+    folders = {
+        "speelt": trick.trick_dir(settings, speelt),
+        "speelt-subs": subtitles.subs_dir(settings, speelt),
+        "oud": trick.trick_dir(settings, oud),
+        "nieuw": trick.trick_dir(settings, nieuw),
+        "los": subtitles.subs_dir(settings, los),
+        "ander": subtitles.subs_dir(settings, ander),
+    }
+    for key, age in (("speelt", 900), ("speelt-subs", 900), ("los", 1000), ("oud", 800),
+                     ("ander", 700), ("nieuw", 10)):  # fmt: skip
+        _age(folders[key], age)
+
+    # halen telt als gebruik: de mtime van de map gaat naar nu
+    out = await play(client, headers, nodes["speelt.mp4"]["id"])
+    sid = out["sid"]
+    sessions.table().by_sid[sid].subs.append({"sha": los, "state": "ready"})
+    for rest, key in (("trick.vtt", "speelt"), ("subs/e2.vtt", "speelt-subs")):
+        before = folders[key].stat().st_mtime
+        r = await client.get(f"{STREAM}/{sid}/{rest}")
+        assert r.status_code == 200, (rest, r.text)
+        assert folders[key].stat().st_mtime > before + 800, rest
+    # een tegel telt niet (de speler haalt er veel), en een tegel die er niet is ook niet
+    _age(folders["speelt"], 900)
+    _age(folders["speelt-subs"], 900)
+    assert (await client.get(f"{STREAM}/{sid}/trick/0.jpg")).status_code == 200
+    assert folders["speelt"].stat().st_mtime < time.time() - 800
+
+    # de grens: precies wat de sessie en nieuw.mp4 nodig hebben
+    made = {(m.kind, m.sha): m.size for m in cache.derived(settings.media_dir)}
+    keep = sum(size for (kind, sha), size in made.items() if sha in (speelt, los, nieuw))
+    assert made[("trick", oud)] and made[("subs", ander)]
+    monkeypatch.setattr(cache, "limit_bytes", lambda gb: keep * cache.DERIVED_SHARE)
+    await cache.sweep(settings)
+    assert not folders["oud"].exists()
+    assert sorted(p.name for p in folders["ander"].iterdir()) == ["e3.failed"]
+    assert subtitles.state(settings, ander, "e2") == "pending"  # komt bij een verzoek weer
+    assert subtitles.state(settings, ander, "e3") == "failed"
+    for key in ("speelt", "speelt-subs", "nieuw", "los"):  # de open sessie, en het nieuwste
+        assert any(folders[key].iterdir()), key
+
+    async def states() -> dict[str, tuple[str, object]]:
+        async with maker(settings)() as db:
+            rows = (await db.scalars(select(MediaProbe))).all()
+        return {p.blob_sha: (p.trick_state, p.trick) for p in rows}
+
+    found = await states()
+    assert found[oud] == ("none", None)
+    assert found[speelt] == found[nieuw] == ("ready", sprites)
+    # play zegt het ook: geen sprites meer voor oud.mp4
+    assert (await play(client, headers, nodes["oud.mp4"]["id"]))["trick"] is None
+
+    # na de sessie mag ook wat zij speelde weg, het oudste eerst
+    sessions.close(sessions.table().by_sid[sid])
+    monkeypatch.setattr(
+        cache, "limit_bytes", lambda gb: made[("trick", nieuw)] * cache.DERIVED_SHARE
+    )
+    await cache.sweep(settings)
+    assert not folders["speelt"].exists()
+    assert not any(folders["los"].iterdir()) and not any(folders["speelt-subs"].iterdir())
+    assert any(folders["nieuw"].iterdir())
+    found = await states()
+    assert found[speelt] == ("none", None) and found[nieuw] == ("ready", sprites)
 
 
 # --- de echte worker (marker media) ---------------------------------------------------------------
