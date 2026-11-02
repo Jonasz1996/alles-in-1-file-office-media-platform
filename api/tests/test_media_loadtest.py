@@ -399,6 +399,27 @@ async def test_de_speler_telt_haperen(monkeypatch):
     assert not found["passed"] and found["problems"] == ["1 keer haperen"]
 
 
+async def test_de_speler_telt_niet_meer_dan_er_binnen_is():
+    """Een tik die laat komt (een volle GC-ronde, een drukke runner): de plek gaat hooguit tot
+    wat binnen is, en de gespeelde tijd telt alleen wat de plek echt opschoof. Eerder telde
+    played_s de hele tik, zodat test_de_speler_telt_haperen in de hele set 10,34 s zag."""
+    fake = FakeApp(count=1)  # één segment van 2 s, binnen na de start
+    times = iter([0.0, 0.0, 0.0, 0.5, 5.0])  # begin, start_s, played_from; 0,5 s; dan 4,5 s laat
+    http = httpx.AsyncClient(transport=httpx.MockTransport(fake.handle), base_url="http://x")
+    report = loadtest.PlayerReport(name="c1", phase="c", source="0")
+    p = loadtest.Player(
+        http,
+        fake.open,
+        report,
+        timing=loadtest.Timing(tick_s=0.001, scale=1.0),
+        clock=lambda: next(times, 5.0),
+    )
+    await p.run(60)
+    assert report.error is None and report.stalls == 0
+    assert p.pos == 2000
+    assert report.played_s == pytest.approx(2.0)
+
+
 async def test_de_speler_overleeft_een_herstart(monkeypatch):
     """Fase c: de sessie is weg (410), de app start nog (503): de speler vraagt een nieuwe
     sessie op de plek waar hij was, en meldt hoe lang het duurde."""

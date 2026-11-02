@@ -541,8 +541,10 @@ class Player:
                     if stalled_at is not None:
                         self.report.stall_s += (now - stalled_at) / self.timing.scale
                         stalled_at = None
-                    self.pos = min(self.pos + dt, float(self.buffered))
-                    self.report.played_s += dt / 1000
+                    # hooguit tot wat binnen is; een late tik telt niet meer dan dat
+                    step = min(dt, self.buffered - self.pos)
+                    self.pos += step
+                    self.report.played_s += step / 1000
                     self.moved.set()
                 elif self.pos < self.duration and stalled_at is None:
                     stalled_at = now
