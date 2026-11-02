@@ -14,6 +14,7 @@ overleeft; de cli.
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 import uuid
 from typing import Any
@@ -43,7 +44,22 @@ def asgi_http() -> httpx.AsyncClient:
 
 
 @pytest.fixture
-async def lt(settings, client, monkeypatch, tmp_path):
+def frozen_heap():
+    """De heap van dit testproces gaat in gc.freeze zolang de belastingtest loopt (zoals _timed
+    in test_media_subconv). In de hele api-set heeft het proces dan ruim een miljoen objecten van
+    eerdere tests; een volle ronde van de garbage collector daarover kost tot 0,94 s (gemeten met
+    een spion op gc.callbacks), en viel die binnen een gemeten vraag van fase a, dan zag de test
+    "de API 1030 ms (p95)". Dat is de test, niet de app: de echte app heeft die objecten niet. Wat
+    de app tijdens de run zelf aan afval maakt, ruimt de collector nog steeds op, en de grens van
+    200 ms blijft."""
+    gc.collect()
+    gc.freeze()
+    yield
+    gc.unfreeze()
+
+
+@pytest.fixture
+async def lt(frozen_heap, settings, client, monkeypatch, tmp_path):
     """Media aan met de belastingtest aan (PLATFORM_MEDIA_LOADTEST=1), een nep-worker die synth
     mag, en een probe van de bronnen die transcode vraagt."""
     on = settings.model_copy(
