@@ -858,7 +858,8 @@ export interface ImportIn {
   move: boolean;
 }
 
-/** POST /api/v1/admin/media/loadtest (body, §4.6) → 202 | 409 media_bench_busy */
+/** POST /api/v1/admin/media/loadtest (body, §4.6) → 202 | 409 media_bench_busy; met sources
+ * (eigen films in plaats van de bronnen van de test) ook 404 not_found | 422 invalid_input */
 export interface LoadtestIn {
   streams: number;
   seconds: number;

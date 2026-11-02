@@ -1126,7 +1126,10 @@ class ImportIn(BaseModel):
 
 
 class LoadtestIn(BaseModel):
-    """POST /api/v1/admin/media/loadtest (§4.6) → 202 | 409 media_bench_busy."""
+    """POST /api/v1/admin/media/loadtest (§4.6) → 202 | 409 media_bench_busy. sources: eigen
+    films in plaats van de bronnen van de test (gebouwd in de review van de integratie, K1):
+    404 not_found als de beheerder er een niet mag lezen, 422 invalid_input bij meer dan
+    streams."""
 
     streams: int = Field(default=3, ge=1, le=3)
     seconds: int = Field(default=300, ge=30, le=600)

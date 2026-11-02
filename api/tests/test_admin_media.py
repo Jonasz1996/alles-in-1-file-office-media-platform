@@ -359,22 +359,31 @@ async def test_de_redenen_tellen_bij_elke_nieuwe_sessie(tmp_path):
     assert getattr(sessions.create, "_counted", False)
     assert not getattr(sessions.create.__wrapped__, "_counted", False)  # type: ignore[attr-defined]
     made: list = []
+    run = uuid.uuid4()  # de family van een belastingtest die loopt (met sources)
 
-    async def create(user, source, probe, plan, *args, **kwargs):
+    async def create(user, source, probe, plan, *args, family=None, **kwargs):
         if source == "kapot":
             raise RuntimeError("create faalde")
         made.append(source)
-        return "sessie"
+        return SimpleNamespace(loadtest=False, family=family)
 
     counted = media_admin.counting(create)
     plan = Plan(mode="transcode", reasons=["video_codec", "hdr"])
-    assert await counted(None, "film", None, plan) == "sessie"
+    s = await counted(None, "film", None, plan, family=uuid.uuid4())
+    assert s.loadtest is False
     source = LoadtestFile(name="testsrc2-0-60s-720p.mkv", path=tmp_path / "x.mkv", size=1,
                           sha="0" * 64)  # fmt: skip
     await counted(None, source, None, plan)
     with pytest.raises(RuntimeError):
         await counted(None, "kapot", None, plan)
-    assert made == ["film", source]
+    # review van de integratie, K1: een film van de beheerder in de belastingtest (sources) is
+    # een gewone sessie op de node, maar telt ook niet mee (loadtest.ours: de family van de run)
+    loadtest._families.add(run)
+    try:
+        await counted(None, "film-van-de-test", None, plan, family=run)
+    finally:
+        loadtest._families.discard(run)
+    assert made == ["film", source, "film-van-de-test"]
     [day] = media_admin.reasons.view()
     assert day.counts == {"video_codec": 1, "hdr": 1}  # de belastingtest en een fout tellen niet
 

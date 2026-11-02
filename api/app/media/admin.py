@@ -130,14 +130,18 @@ reasons = Reasons()
 
 def counting(create: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
     """sessions.create met het tellen van de redenen erom heen (na een geslaagde create). Een
-    sessie van de belastingtest telt niet mee: die zegt niets over de kijkers."""
+    sessie van de belastingtest telt niet mee: die zegt niets over de kijkers. Ook niet een op
+    een film van de beheerder (sources, loadtest.ours)."""
 
     @functools.wraps(create)
     async def counted(user, source, probe, plan, *args, **kwargs):
+        from app.media import loadtest
+
         made = await create(user, source, probe, plan, *args, **kwargs)
         if not isinstance(source, LoadtestFile):
             with contextlib.suppress(Exception):  # tellen breekt afspelen nooit
-                reasons.count(list(plan.reasons))
+                if not loadtest.ours(made):
+                    reasons.count(list(plan.reasons))
         return made
 
     counted._counted = True  # type: ignore[attr-defined]
@@ -253,7 +257,7 @@ def stream_numbers(st: Any) -> tuple[float | None, float | None]:
 
 async def session_views(session: AsyncSession) -> list[AdminSessionView]:
     """De open sessies (de oudste eerst) met wie, wat, de snelheid en de voorsprong."""
-    from app.media import sessions, streams
+    from app.media import loadtest, sessions, streams
 
     views = sessions.list()
     if not views:
@@ -278,7 +282,7 @@ async def session_views(session: AsyncSession) -> list[AdminSessionView]:
         s = table.by_id(v.id)
         if s is not None:
             speed, ahead = stream_numbers(streams.get(s))
-            if s.loadtest:
+            if loadtest.ours(s):  # ook een sessie op een film van de test (sources)
                 title = "belastingtest"
         name = names.get(v.user_id)
         out.append(
@@ -768,13 +772,14 @@ _bench: Task | None = None
 
 
 def transcodes_running() -> int:
-    """Echte omzettingen van kijkers die nu lopen (niet die van de belastingtest)."""
-    from app.media import streams
+    """Echte omzettingen van kijkers die nu lopen (niet die van de belastingtest, ook niet op een
+    film van de beheerder: loadtest.ours)."""
+    from app.media import loadtest, streams
 
     return sum(
         1
         for st in streams.all()
-        if st.plan.mode == "transcode" and not st.closed and not st.session.loadtest
+        if st.plan.mode == "transcode" and not st.closed and not loadtest.ours(st.session)
     )
 
 

@@ -17,6 +17,7 @@ POST   /api/v1/admin/media/import             ImportIn → 202 Accepted | 409 me
                                               | 422 media_import_path
 GET    /api/v1/admin/media/loadtest           → LoadtestView
 POST   /api/v1/admin/media/loadtest           LoadtestIn → 202 Accepted | 409 media_bench_busy
+                                              | 404 not_found | 422 invalid_input (sources)
 POST   /api/v1/admin/media/loadtest/play      LoadtestPlayIn → LoadtestPlay | 409
                                               media_probe_pending (de bron wordt gemaakt)
 
@@ -169,9 +170,15 @@ async def loadtest_view(admin: AdminUser, request: Request):
 
 
 @router.post("/loadtest", status_code=202, response_model=Accepted)
-async def start_loadtest(body: LoadtestIn, admin: AdminUser, request: Request, settings: Config):
+async def start_loadtest(
+    body: LoadtestIn, admin: AdminUser, request: Request, settings: Config, session: Session
+):
+    """Met sources: de films van de beheerder in plaats van de eigen bronnen (§4.6 punt 1), hier
+    opgezocht met de toegang van play (404), hooguit één per sessie (422)."""
     runtime.require(request)
-    return Accepted(job=loadtest.start(request.app, settings, admin, body))
+    nodes = await loadtest.node_sources(session, settings, admin, body)
+    await session.close()  # de test loopt op de achtergrond; geen verbinding vasthouden (regel 8)
+    return Accepted(job=loadtest.start(request.app, settings, admin, body, nodes=nodes))
 
 
 _making: dict[str, asyncio.Task] = {}

@@ -2,8 +2,8 @@
 
 Te starten met de knop op /beheer (POST /api/v1/admin/media/loadtest), of met
 `python -m app.cli media-loadtest [--sessies 3] [--duur 300] [--codec h264] [--json uit.json]
-[--extern adres]`. Hij draait in de app, dus met de echte beslissing, toelating, sessies,
-controle, producenten, knipper en cache.
+[--extern adres] [--film id …]`. Hij draait in de app, dus met de echte beslissing, toelating,
+sessies, controle, producenten, knipper en cache.
 
 1. **Bronnen** (make_sources): de worker maakt ze met synth, na elkaar, in media/loadtest/:
    testsrc2 (seed 0) en twee keer cellauto (seed 1 en 2), 300 s 1080p H.264 6 Mbit/s met AAC.
@@ -11,13 +11,21 @@ controle, producenten, knipper en cache.
    heeft geen schrijfbare map nodig. Een bron die er al is, wordt hergebruikt. Een korte run
    (minder dan SHORT_RUN s, de rooktest van CI) maakt bronnen van SHORT_SOURCE_S s op 720p en
    vraagt de laagste trede (480): goedkoop genoeg voor een gedeelde runner.
-2. **Sessies** (play_source): van de beheerder die de test start, met de bron als LoadtestFile;
-   alleen met PLATFORM_MEDIA_LOADTEST=1 (de controle per verzoek kijkt dat ook na, M3). Elke
-   virtuele speler telt in de toelating als een eigen kijker (een eigen id), anders liet
-   max_user_transcodes (2) de derde nooit toe; de sessie zelf blijft van de beheerder.
-3. **Profiel** (profile_for): H.264 via MSE (of VP9 met codec vp9) en max.bitrate_kbps 4000.
-   De bron heeft 6 Mbit/s, dus de beslissing kiest zelf transcode (reden bitrate), en de
-   toelating kiest de trede.
+   **Met sources** (§4.6 punt 1; review van de integratie, K1) speelt hij echte films van de
+   beheerder in plaats daarvan, en maakt hij niets met synth: node_sources zoekt ze op in de
+   route (een bestand dat hij mag lezen, anders 404 zoals play; hooguit één per sessie, anders
+   422), en speler i krijgt film i modulo het aantal.
+2. **Sessies** (play_source): van de beheerder die de test start. Bij de eigen bronnen is de
+   bron een LoadtestFile, alleen met PLATFORM_MEDIA_LOADTEST=1 (de controle per verzoek kijkt
+   dat ook na, M3); bij een film de node, met de gewone controle van play (toegang, prullenbak,
+   nieuwe versie) en de probe en keyframe-index zoals play. Elke virtuele speler telt in de
+   toelating als een eigen kijker (een eigen id), anders liet max_user_transcodes (2) de derde
+   nooit toe; de sessie zelf blijft van de beheerder. Alle sessies van een run hebben dezelfde
+   family; zo gaan ze na afloop dicht, ook die op een film.
+3. **Profiel** (profile_for): H.264 via MSE (of VP9 met codec vp9) en max.bitrate_kbps 4000,
+   nooit als bestand (direct heeft geen segmenten om te meten). De eigen bron heeft 6 Mbit/s,
+   dus de beslissing kiest zelf transcode (reden bitrate), en de toelating kiest de trede. Een
+   film kan ook remux krijgen (H.264 onder 4 Mbit/s); het rapport zegt per speler de modus.
 4. **Spelers** (Player): per sessie een virtuele speler in Python die via http met de app praat
    (127.0.0.1, of in een test via de ASGI-transport). Hij begint zodra segment 0 er is, vraagt
    daarna de segmenten op volgorde met hooguit 30 s vooruit, en speelt in echte tijd. De
@@ -66,6 +74,7 @@ from app import errors
 from app.config import MediaConfig, Settings
 from app.media import errors as media_errors
 from app.media.types import LoadtestFile, LoadtestIn, LoadtestView, Probe
+from app.models import Node
 
 log = logging.getLogger("platform.media")
 
@@ -187,6 +196,45 @@ async def make_sources(settings: Settings, count: int, seconds: int) -> list[Loa
     return out
 
 
+# Een bron van de test: een eigen bestand van synth, of een film van de beheerder (sources)
+Source = LoadtestFile | Node
+
+
+async def node_sources(session, settings: Settings, user, body: LoadtestIn) -> list[Node] | None:
+    """sources van POST /loadtest (§4.6 punt 1): de films van de beheerder, in de volgorde van
+    de vraag (dubbele één keer). Elk een bestand dat hij mag lezen en niet in zijn prullenbak
+    (anders 404, zoals play: media_play.readable_file); hooguit één per sessie (anders 422
+    invalid_input). Zonder sources None: dan maakt de test zijn eigen bronnen."""
+    from app.routers import media_play
+
+    if not body.sources:
+        return None
+    if not settings.media_loadtest:
+        raise loadtest_off()
+    ids = list(dict.fromkeys(body.sources))
+    if len(ids) > body.streams:
+        raise errors.fail(422, "invalid_input", "Hooguit één film per sessie", streams=body.streams)
+    return [await media_play.readable_file(session, user, node_id) for node_id in ids]
+
+
+async def node_probe(settings: Settings, node: Node) -> Probe:
+    """De probe van een film, zoals play: de opgeslagen, anders nu via de worker (409
+    media_probe_pending als dat niet binnen het budget lukt; de speler probeert het dan
+    opnieuw), en de keyframe-index in hetzelfde budget."""
+    from app.media import analysis
+    from app.routers import media_play
+
+    sha = node.blob_id
+    assert sha is not None
+    deadline = asyncio.get_running_loop().time() + media_play.PROBE_BUDGET
+    stored = await analysis.load(media_play.maker(settings), sha)
+    probe = stored if analysis.settled(stored) else None
+    if probe is None:
+        probe = await media_play.probe_now(settings, sha, deadline)
+    media_play.check_probe(probe)
+    return await media_play.index_now(settings, probe, sha, deadline)
+
+
 _probes: dict[str, Probe] = {}
 
 
@@ -219,8 +267,9 @@ def profile_for(codec: Literal["h264", "vp9"], strings: list[str], short: bool) 
         low = s.lower()
         return low.startswith((*video, "mp4a.40.", "opus")) and not low.startswith(refuse)
 
+    # nooit "file": direct spelen heeft geen segmenten, en de speler van de test meet die
     codecs = {
-        s: {"mse": True, "file": True, "smooth": True, "power": True}
+        s: {"mse": True, "file": False, "smooth": True, "power": True}
         if plays(s)
         else {"mse": False, "file": False}
         for s in dict.fromkeys([*profiles.candidates(), *strings])
@@ -265,7 +314,7 @@ async def play_source(
     settings: Settings,
     user,
     family: uuid.UUID | None,
-    source: LoadtestFile,
+    source: Source,
     *,
     codec: Literal["h264", "vp9"] = "h264",
     short: bool = False,
@@ -273,8 +322,9 @@ async def play_source(
     replace: str | None = None,
     player: uuid.UUID | None = None,
 ) -> LoadtestPlay:
-    """Een sessie op een bron, zoals play (M3) maar zonder node: de probe direct via de worker,
-    de beslissing, de toelating (met de speler als kijker), sessions.create en de stroom."""
+    """Een sessie op een bron, zoals play (M3): de probe (van een eigen bron direct via de
+    worker, van een film zoals play), de beslissing, de toelating (met de speler als kijker),
+    sessions.create en de stroom."""
     from app.media import admission, decide, sessions, streams
     from app.media import profile as profiles
     from app.media import public as media_public
@@ -288,7 +338,10 @@ async def play_source(
 
     state = media_state(app)
     try:
-        probe = await probe_source(source)
+        if isinstance(source, Node):
+            probe = await node_probe(settings, source)
+        else:
+            probe = await probe_source(source)
     except (client.WorkerBusy, client.WorkerDown, client.WorkerFailed) as exc:
         # drie spelers tegelijk vragen drie probes, en de worker heeft 2 plaatsen "kort": dan
         # 503 media_busy {reason: worker} met Retry-After, zoals play (M3), geen 500
@@ -592,6 +645,7 @@ class Run:
     stop_reason: str | None = None
     task: asyncio.Task | None = None
     max_procs_seen: int = 0
+    nodes: list[Node] = field(default_factory=list)  # sources: de films van de beheerder
 
     @property
     def running(self) -> bool:
@@ -803,8 +857,8 @@ def summary_lines(report: dict[str, Any]) -> list[str]:
 async def _phase(
     name: str,
     watch: Watch,
-    opener_for: Callable[[LoadtestFile, uuid.UUID], Opener],
-    sources: list[LoadtestFile],
+    opener_for: Callable[[Source, uuid.UUID], Opener],
+    sources: list[Source],
     *,
     seconds: int,
     stagger: bool,
@@ -843,23 +897,40 @@ async def _phase(
     return [p.report for p in players]
 
 
-def _close_loadtest_sessions() -> int:
+# De family van de run die nu loopt. Een sessie op een film (sources) is een gewone sessie op de
+# node (loadtest false); hieraan ziet /beheer dat hij van de test is (ours).
+_families: set[uuid.UUID] = set()
+
+
+def ours(s) -> bool:
+    """Een sessie van de belastingtest: op een eigen bron, of op een film van een run die loopt.
+    Zo'n sessie telt niet als echte kijker (admin.transcodes_running), niet in de redenen per
+    dag (admin.counting) en heet op /beheer "belastingtest"."""
+    return bool(s.loadtest) or (s.family is not None and s.family in _families)
+
+
+def _ours(s, family: uuid.UUID | None) -> bool:
+    """Een sessie van de test: op een eigen bron, of (met sources) van deze run (zijn family)."""
+    return bool(s.loadtest) or (family is not None and s.family == family)
+
+
+def _close_loadtest_sessions(family: uuid.UUID | None = None) -> int:
     """Na afloop: de sessies van de test dicht (hun stroom en cache gaan mee weg)."""
     from app.media import sessions
 
     closed = 0
     for s in list(sessions.table().open()):
-        if s.loadtest:
+        if _ours(s, family):
             sessions.close(s)
             closed += 1
     return closed
 
 
-async def _drop_streams() -> None:
+async def _drop_streams(family: uuid.UUID | None = None) -> None:
     from app.media import streams
 
     for st in list(streams.all()):
-        if st.session.loadtest:
+        if _ours(st.session, family):
             with contextlib.suppress(Exception):
                 await streams.close(st.session)
 
@@ -879,8 +950,13 @@ async def execute(
 
     short = short_run(run.seconds)
     family = uuid.uuid4()
-    run.state = "making_sources"
-    sources = await make_sources(settings, run.streams, run.seconds)
+    sources: list[Source]
+    if run.nodes:  # sources: de films van de beheerder, speler i op film i modulo het aantal
+        sources = [run.nodes[i % len(run.nodes)] for i in range(run.streams)]
+    else:
+        run.state = "making_sources"
+        sources = list(await make_sources(settings, run.streams, run.seconds))
+    _families.add(family)  # vanaf hier sessies; finally haalt hem weer weg
     run.state = "running"
     watch = Watch(app, run, http, token, timing)
     original = analysis.busy_live
@@ -888,7 +964,7 @@ async def execute(
     guard = asyncio.ensure_future(watch.guard())
     sample = asyncio.ensure_future(watch.sample())
 
-    def opener_for(source: LoadtestFile, player: uuid.UUID) -> Opener:
+    def opener_for(source: Source, player: uuid.UUID) -> Opener:
         async def opener(start_ms: int, replace: str | None) -> LoadtestPlay:
             return await play_source(
                 app, settings, user, family, source, codec=run.codec, short=short,
@@ -909,14 +985,15 @@ async def execute(
                 timing=timing,
             )  # fmt: skip
             phases[name] = judge(name, reports, p95(watch.samples.api_ms[began:]))
-            _close_loadtest_sessions()
-            await _drop_streams()
+            _close_loadtest_sessions(family)
+            await _drop_streams(family)
     finally:
         watch.stop.set()
         await asyncio.gather(guard, sample, return_exceptions=True)
         analysis.busy_live = original
-        _close_loadtest_sessions()
-        await _drop_streams()
+        _close_loadtest_sessions(family)
+        await _drop_streams(family)
+        _families.discard(family)
     phases["c"] = {"skipped": "alleen met de spelers buiten de app (--extern)"}
     phases["d"] = {"skipped": "DS herstart Jonas met de hand (runbook media.md)"}
     cache = watch.samples.cache
@@ -931,6 +1008,7 @@ async def execute(
         "codec": run.codec,
         "short": short,
         "sources": [s.name for s in sources],
+        "films": [str(n.id) for n in run.nodes],
         "phases": phases,
         "api_p95_ms": p95(watch.samples.api_ms),
         "ffmpeg_max": watch.samples.procs,
@@ -979,8 +1057,10 @@ def start(
     *,
     http: HttpFactory | None = None,
     timing: Timing = TIMING,
+    nodes: list[Node] | None = None,
 ) -> uuid.UUID:
-    """POST /api/v1/admin/media/loadtest: 202 met het id, of 409 media_bench_busy."""
+    """POST /api/v1/admin/media/loadtest: 202 met het id, of 409 media_bench_busy. nodes: de
+    films van sources (node_sources, in de route opgezocht)."""
     global _current
     if not settings.media_loadtest:
         raise loadtest_off()
@@ -992,6 +1072,7 @@ def start(
         seconds=body.seconds,
         codec=body.codec,
         started_at=datetime.now(UTC),
+        nodes=list(nodes or []),
     )
     make = http or (lambda: default_http(settings))
 
@@ -1104,17 +1185,21 @@ async def run_cli(
     seconds: int = 300,
     codec: Literal["h264", "vp9"] = "h264",
     external: str | None = None,
+    sources: list[uuid.UUID] | None = None,
 ) -> dict[str, Any]:
     """Voor app.cli media-loadtest: vraagt de draaiende app (127.0.0.1) de test te draaien en
     wacht op de uitkomst; met external draaien de spelers hier, tegen dat adres (fase c). Media
-    uit: media_off; de test uit: media_off met reason loadtest."""
+    uit: media_off; de test uit: media_off met reason loadtest. sources (--film): eigen films in
+    plaats van de bronnen van de test; de spelers buiten de app kennen alleen die bronnen."""
     from app.media import status
 
     if not settings.media_enabled:
         raise media_errors.off()
     if not settings.media_loadtest:
         raise loadtest_off()
-    body = LoadtestIn(streams=streams, seconds=seconds, codec=codec)
+    if sources and external:
+        raise errors.fail(422, "invalid_input", "--film kan niet met --extern")
+    body = LoadtestIn(streams=streams, seconds=seconds, codec=codec, sources=sources or None)
     token = await status.admin_token(settings, minutes=max(30, body.seconds // 60 * 3 + 30))
     if token is None:
         raise errors.fail(409, "admin_only", "Er is nog geen beheerder")
@@ -1125,7 +1210,8 @@ async def run_cli(
         )  # fmt: skip
     headers = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(base_url=status.app_url(settings), timeout=60) as http:
-        r = await http.post("/api/v1/admin/media/loadtest", json=body.model_dump(), headers=headers)
+        data = body.model_dump(mode="json", exclude_none=True)
+        r = await http.post("/api/v1/admin/media/loadtest", json=data, headers=headers)
         if r.status_code != 202:
             detail = (
                 r.json().get("detail", {})

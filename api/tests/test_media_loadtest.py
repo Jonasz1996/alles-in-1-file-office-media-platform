@@ -21,6 +21,7 @@ from typing import Any
 
 import httpx
 import pytest
+from sqlalchemy import update
 
 from app import cli
 from app.config import MediaConfig, get_settings
@@ -29,9 +30,12 @@ from app.media import admin as media_admin
 from app.media import analysis, loadtest, runtime, sessions, streams
 from app.media.state import MediaPolicy, MediaState
 from app.media.wire import Code, Op
+from app.models import MediaProbe, Node
 from tests.media import fake_worker as FW
 from tests.media.media_contract import failed
+from tests.test_files import put, root
 from tests.test_media_contract import WAIT_S, source_probe
+from tests.test_shares import person
 
 pytestmark = pytest.mark.anyio
 
@@ -112,7 +116,7 @@ async def start(client, headers, timing=FAST, **body) -> str:
     original = loadtest.start
 
     def patched(app_, settings, user, data, **kwargs):
-        return original(app_, settings, user, data, http=asgi_http, timing=timing)
+        return original(app_, settings, user, data, **kwargs, http=asgi_http, timing=timing)
 
     loadtest.start = patched  # type: ignore[assignment]
     try:
@@ -237,6 +241,115 @@ async def test_een_bron_die_mislukt(lt, client, admin):
     assert report == {"error": "WorkerFailed", "passed": False}
     assert (await client.get(BASE, headers=headers)).json()["state"] == "failed"
     assert list(loadtest.loadtest_dir(settings).iterdir()) == []  # geen .part over
+
+
+# --- met echte films (sources, §4.6 punt 1) ------------------------------------------------------
+
+
+async def film(client, headers, settings, name: str) -> dict[str, Any]:
+    """Een film van deze gebruiker, met een opgeslagen probe die transcode vraagt (HEVC) en een
+    keyframe-index: zoals een film in een bibliotheek na de analyse."""
+    from app.routers.media_play import maker
+
+    top = (await root(client, headers))["folder"]["id"]
+    r = await put(client, headers, top, name, b"\x1aE\xdf\xa3" + name.encode() * 5000)
+    assert r.status_code == 201, r.text
+    node = r.json()
+    probe = source_probe("transcode", "h264")
+    probe.keyframes_state, probe.max_gop_ms = "ready", 2000
+    async with maker(settings)() as session:
+        sha = (await session.get(Node, uuid.UUID(node["id"]))).blob_id
+    await analysis.save_probe(maker(settings), sha, probe)
+    async with maker(settings)() as session:
+        await session.execute(
+            update(MediaProbe)
+            .where(MediaProbe.blob_sha == sha)
+            .values(keyframes_state="ready", max_gop_ms=2000)
+        )
+        await session.commit()
+    return node
+
+
+async def test_met_sources_speelt_hij_de_films_van_de_beheerder(lt, client, admin, monkeypatch):
+    """Review van de integratie, K1: sources werd aangenomen maar niet gebruikt; de test draaide
+    altijd op zijn eigen bronnen. Nu speelt elke speler een film van de beheerder (speler i film
+    i modulo het aantal), synth maakt niets, en de sessies zijn gewone sessies op de node (met de
+    controle van play) die na afloop dichtgaan."""
+    settings, fake = lt
+    headers, _ = admin
+    one = await film(client, headers, settings, "Een film (2020).mkv")
+    seen: list[tuple[Any, bool, bool]] = []
+    create = sessions.create
+
+    async def spy(user, source, *args, **kwargs):
+        s = await create(user, source, *args, **kwargs)
+        seen.append((s.node_id, s.loadtest, loadtest.ours(s)))
+        return s
+
+    # na een fase, vóór het opruimen: de omzettingen van de test tellen niet als echte kijkers
+    # (anders weigerde /beheer een meting om de test zelf) en /beheer noemt ze belastingtest
+    during: list[tuple[int, int]] = []
+    judge = loadtest.judge
+
+    def judging(*args, **kwargs):
+        live = [st for st in streams.all() if st.plan.mode == "transcode" and not st.closed]
+        during.append((len(live), media_admin.transcodes_running()))
+        return judge(*args, **kwargs)
+
+    monkeypatch.setattr(sessions, "create", spy)
+    monkeypatch.setattr(loadtest, "judge", judging)
+    views = media_admin.session_views
+    titles: list[str | None] = []
+
+    async def viewing(db):
+        out = await views(db)
+        titles.extend(v.title for v in out if v.node_id is not None)
+        return out
+
+    monkeypatch.setattr(media_admin, "session_views", viewing)
+    before = media_admin.reasons.view()
+    await start(client, headers, streams=2, seconds=30, sources=[one["id"], one["id"]])
+    while loadtest.running() and not titles:  # het overzicht van /beheer terwijl hij loopt
+        await client.get("/api/v1/admin/media", headers=headers)
+        await asyncio.sleep(0.05)
+    report = await finish()
+    assert fake.made == []  # geen eigen bronnen
+    assert report["sources"] == ["Een film (2020).mkv", "Een film (2020).mkv"]
+    assert report["films"] == [one["id"]]
+    b = report["phases"]["b"]
+    assert b["passed"], b["problems"]
+    assert [p["source"] for p in b["players"]] == report["sources"]
+    assert all(p["mode"] == "transcode" and not p["error"] for p in b["players"])
+    assert seen and all(
+        node == uuid.UUID(one["id"]) and not test and mine for node, test, mine in seen
+    )
+    assert during and all(live > 0 and real == 0 for live, real in during)
+    assert titles and set(titles) == {"belastingtest"}
+    assert media_admin.reasons.view() == before  # telt niet mee in de redenen per dag
+    assert not list(sessions.table().open())  # ook de sessies op de film zijn dicht
+    assert not loadtest._families  # de family van de run is weer weg
+    assert not list(streams.all())
+    assert not loadtest.loadtest_dir(settings).exists()  # niets gemaakt
+
+
+async def test_sources_alleen_eigen_films_en_een_per_sessie(lt, client, admin):
+    settings, fake = lt
+    headers, _ = admin
+    mine = await film(client, headers, settings, "mijn.mkv")
+    bert, _ = await person(client, headers, "bert@example.nl")
+    theirs = await film(client, bert, settings, "van-bert.mkv")
+    for sources in ([theirs["id"]], [str(uuid.uuid4())], [mine["id"], theirs["id"]]):
+        body = {"streams": 2, "seconds": 30, "sources": sources}
+        failed(await client.post(BASE, json=body, headers=headers), 404, "not_found")
+    two = await film(client, headers, settings, "nog-een.mkv")
+    body = {"streams": 1, "seconds": 30, "sources": [mine["id"], two["id"]]}
+    r = await client.post(BASE, json=body, headers=headers)
+    assert failed(r, 422, "invalid_input") == {"streams": 1}
+    await client.delete(f"/api/v1/files/{two['id']}", headers=headers)  # naar de prullenbak
+    body = {"streams": 1, "seconds": 30, "sources": [two["id"]]}
+    failed(await client.post(BASE, json=body, headers=headers), 404, "not_found")
+    assert (await client.get(BASE, headers=headers)).json()["state"] == "idle"
+    assert fake.made == []
 
 
 # --- weigeren -------------------------------------------------------------------------------------
@@ -522,6 +635,8 @@ def test_het_profiel_vraagt_transcode():
     profile = loadtest.profile_for("h264", ["hvc1.2.4.L120.90", "avc1.64001f"], short=True)
     assert profile["max"] == {"height": 480, "bitrate_kbps": 4000}
     assert profile["codecs"]["avc1.64001f"]["mse"] is True
+    # nooit als bestand: een film van sources (K1) speelt anders direct, zonder segmenten
+    assert not any(c["file"] for c in profile["codecs"].values())
     assert profile["codecs"]["hvc1.2.4.L120.90"]["mse"] is False
     vp9 = loadtest.profile_for("vp9", ["vp09.00.31.08"], short=False)
     assert vp9["max"]["height"] == 1080 and vp9["codecs"]["vp09.00.31.08"]["mse"] is True
@@ -549,6 +664,24 @@ async def test_de_cli_vraagt_de_draaiende_app(lt, admin, via_asgi, monkeypatch):
     report = await loadtest.run_cli(settings, streams=1, seconds=30)
     assert report["passed"] is True, report.get("summary")
     nothing_left()
+
+
+async def test_de_cli_met_een_film(lt, client, admin, via_asgi, monkeypatch):
+    """--film geeft sources mee (K1); met --extern kan het niet (die spelers kennen alleen de
+    bronnen van de test)."""
+    settings, fake = lt
+    headers, _ = admin
+    one = await film(client, headers, settings, "cli.mkv")
+    monkeypatch.setattr(loadtest, "TIMING", FAST)
+    original = loadtest.start
+    monkeypatch.setattr(loadtest, "start", lambda *a, **k: original(*a, **{**k, "timing": FAST}))
+    films = [uuid.UUID(one["id"])]
+    report = await loadtest.run_cli(settings, streams=1, seconds=30, sources=films)
+    assert report["passed"] is True, report.get("summary")
+    assert report["films"] == [one["id"]] and fake.made == []
+    with pytest.raises(Exception) as caught:
+        await loadtest.run_cli(settings, streams=1, seconds=30, sources=films, external="x")
+    assert caught.value.detail["code"] == "invalid_input"  # type: ignore[attr-defined]
 
 
 async def test_de_cli_zonder_beheerder_of_met_media_uit(lt, monkeypatch):

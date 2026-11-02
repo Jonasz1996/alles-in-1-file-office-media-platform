@@ -34,7 +34,7 @@ dan zegt een stub dat media uit staat):
     python -m app.cli media-status [--wait 20] [--sessions]
     python -m app.cli media-provider-check [--opnemen]
     python -m app.cli media-loadtest [--sessies 3] [--duur 300] [--codec h264] [--json uit.json]
-                                     [--extern <adres>]
+                                     [--extern <adres>] [--film <id> …]
 
 Een fout van media (zoals 503 media_off) geeft de melding en exitcode 1.
 """
@@ -43,6 +43,7 @@ import argparse
 import asyncio
 import json
 import sys
+import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -264,6 +265,7 @@ def _media(settings: Settings, args: argparse.Namespace) -> int:
                 seconds=args.duur,
                 codec=args.codec,
                 external=args.extern,
+                sources=args.film,
             ),
         )
         text = json.dumps(result, ensure_ascii=False, indent=2, default=str)
@@ -311,6 +313,14 @@ def _media_parsers(commands) -> None:
     load.add_argument("--codec", choices=("h264", "vp9"), default="h264")
     load.add_argument("--json", metavar="pad", help="de uitkomst naar dit bestand")
     load.add_argument("--extern", metavar="adres", help="spelers buiten de app, tegen dit adres")
+    load.add_argument(
+        "--film",
+        metavar="id",
+        action="append",
+        type=uuid.UUID,
+        help="een eigen film in plaats van de bronnen van de test (het id uit /kijken/<id>); "
+        "hooguit één per sessie, niet met --extern",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

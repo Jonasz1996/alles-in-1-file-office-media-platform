@@ -213,8 +213,10 @@ def test_media_loadtest_zonder_pakket_zegt_media_uit(capsys):
 def test_media_loadtest_geeft_de_argumenten_door(monkeypatch, tmp_path, capsys):
     seen = {}
 
-    async def run_cli(settings, *, streams, seconds, codec, external):
-        seen.update(streams=streams, seconds=seconds, codec=codec, external=external)
+    async def run_cli(settings, *, streams, seconds, codec, external, sources):
+        seen.update(
+            streams=streams, seconds=seconds, codec=codec, external=external, sources=sources
+        )
         return {"passed": True, "phases": {"a": "ok"}}
 
     monkeypatch.setattr(loadtest, "run_cli", run_cli)
@@ -223,9 +225,18 @@ def test_media_loadtest_geeft_de_argumenten_door(monkeypatch, tmp_path, capsys):
         ["media-loadtest", "--sessies", "2", "--duur", "60", "--codec", "vp9", "--json", str(out)]
     )
     assert code == 0
-    assert seen == {"streams": 2, "seconds": 60, "codec": "vp9", "external": None}
+    assert seen == {
+        "streams": 2, "seconds": 60, "codec": "vp9", "external": None, "sources": None,
+    }  # fmt: skip
     assert json.loads(out.read_text()) == {"passed": True, "phases": {"a": "ok"}}
     assert str(out) in capsys.readouterr().out
+
+    # --film (meer dan eens): de films van de beheerder gaan als sources mee (§4.6 punt 1)
+    one, two = uuid.uuid4(), uuid.uuid4()
+    assert cli.main(["media-loadtest", "--film", str(one), "--film", str(two)]) == 0
+    assert seen["sources"] == [one, two]
+    with pytest.raises(SystemExit):  # geen id: argparse weigert het
+        cli.main(["media-loadtest", "--film", "geen-id"])
 
 
 def test_de_bestaande_commandos_blijven(capsys):
