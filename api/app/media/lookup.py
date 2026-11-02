@@ -910,7 +910,12 @@ async def scanned(settings: Settings, library_id: uuid.UUID) -> None:
             return  # geen sleutel of uit: alleen lokaal
         if not await has_pending(session, library):
             return
-        await queue_library(session, library_id)
+        # chain, geen enqueue: loopt de taak van deze bibliotheek al, dan las die zijn lijst vóór
+        # deze scan en ziet hij de nieuwe items niet. enqueue telt een lopende taak mee en zette
+        # dan niets klaar: de nieuwe items bleven lokaal tot de housekeeping (5 minuten). chain
+        # ontdubbelt alleen tegen een taak die nog klaarstaat (die leest de lijst pas als hij
+        # begint); media_net heeft één worker, dus de opvolger loopt na de lopende taak
+        await jobs.chain(session, JOB, {"library_id": str(library_id)}, key(library_id))
         await session.commit()
 
 

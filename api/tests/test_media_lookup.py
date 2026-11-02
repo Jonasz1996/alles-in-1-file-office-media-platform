@@ -461,6 +461,43 @@ async def test_na_een_scan_zet_de_haak_een_taak_klaar(net, client):
     assert (await items(net.settings, library_id))[NEPHAVEN].match_state == "matched"
 
 
+async def test_een_scan_terwijl_het_opzoeken_loopt_krijgt_een_opvolger(net, client, monkeypatch):
+    """Integratie deel 4 (de e2e van M8 in de volle set): komt er een scan klaar terwijl de taak
+    van die bibliotheek al loopt, dan heeft die taak zijn lijst al gelezen en ziet hij de nieuwe
+    items niet. De haak moet dan een opvolger klaarzetten; met enqueue telde de lopende taak mee,
+    kwam er niets, en bleven de nieuwe items lokaal tot de housekeeping (5 minuten)."""
+    from app.media import scanner
+
+    await save_key(net)
+    library_id, folder = await make_library(client, net.headers)
+    await upload(client, net.headers, folder, NEPHAVEN)
+    await scanner.tick(net.settings)
+    await jobs.run_pending(net.settings, lane="media_scan")
+    [first] = await lookup_jobs(net.settings, "queued")
+
+    original = lookup.STEPS["movie"]
+    seen: list[str] = []
+
+    async def step_with_a_scan(settings, provider, lib, lang, unit):
+        # Midden in de eerste taak: een nieuwe film, en de scan daarvan met zijn haak
+        if not seen:
+            [running] = await lookup_jobs(net.settings, "running")
+            seen.append(str(running.id))
+            await upload(client, net.headers, folder, LANTERNS)
+            await scanner.tick(net.settings)
+            await jobs.run_pending(net.settings, lane="media_scan")
+        await original(settings, provider, lib, lang, unit)
+
+    monkeypatch.setitem(lookup.STEPS, "movie", step_with_a_scan)
+    ran = await jobs.run_pending(net.settings, lane="media_net")
+    assert seen == [str(first.id)]
+    found = await items(net.settings, library_id)
+    assert found[NEPHAVEN].match_state == "matched"
+    assert found[LANTERNS].match_state == "matched", "de nieuwe film bleef lokaal"
+    assert ran >= 2  # de eerste taak en zijn opvolger (plus de plaatjes)
+    assert await lookup_jobs(net.settings, "queued") == []
+
+
 async def test_zonder_sleutel_doet_de_haak_niets(net, client):
     library_id, folder = await make_library(client, net.headers)
     await upload(client, net.headers, folder, NEPHAVEN)

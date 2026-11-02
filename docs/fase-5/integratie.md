@@ -17,7 +17,8 @@ versie 0.7.0, in vier delen:
   ([Installatietest en terugrollen](#installatietest-en-terugrollen)), en drie fouten uit de volle
   api-set gerepareerd.
 - **Deel 4, afronden:** versie 0.7.0, de README's, het stappenplan, de beslissingen, de lijst
-  van alle e2e van media ([e2e.md](e2e.md#alle-e2e-van-media-070)) en dit document
+  van alle e2e van media ([e2e.md](e2e.md#alle-e2e-van-media-070)) en dit document, plus één
+  gemiste wekker in het opzoeken die de laatste checks vonden
   ([Deel 4: afronden en 0.7.0](#deel-4-afronden-en-070)).
 
 Wat alleen CI of de LXC kan laten zien: [hieronder](#wat-alleen-ci-of-de-lxc-kan-bewijzen); de
@@ -196,7 +197,9 @@ hetzelfde terug (ze zetten alleen de mtime van de map). Ook de drie reparaties u
 ([De checks van deel 3](#de-checks-van-deel-3)) zijn intern: `played_s` in het verslag van de
 belastingtest houdt zijn betekenis (de gespeelde tijd), alleen telt hij niet meer te veel.
 
-Deel 4 veranderde geen code, dus ook geen contract: alleen de versie (0.7.0) en de docs.
+Deel 4 veranderde geen contract: de reparatie in `lookup.scanned` is intern (de haak
+`scanner.after_scan` en de taak `media.lookup` blijven gelijk), verder alleen de versie (0.7.0)
+en de docs.
 
 ## Metingen
 
@@ -404,7 +407,7 @@ Uit deel 4 (de eindlijst van de e2e, [e2e.md](e2e.md#alle-e2e-van-media-070)):
 
 ## Deel 4: afronden en 0.7.0
 
-Geen code, alleen de versie en de docs:
+Eén reparatie in de code (hieronder), verder de versie en de docs:
 
 - **Versie 0.7.0** in dezelfde bestanden als 0.6.0: `api/app/__init__.py`, `api/pyproject.toml`,
   `api/uv.lock`, `web/package.json` en `web/package-lock.json`.
@@ -424,6 +427,20 @@ Geen code, alleen de versie en de docs:
   de standaard in 0.7.0, maar Jonas heeft nog niet gekozen", en een regel dat ze op hem wachten.
 - **[e2e.md](e2e.md):** de lijst van alle 74 e2e van media (68 `media`, 6 `media_perf`) met wat
   elke test bewijst, en de uitslag bij 0.7.0.
+
+**De gemiste wekker in het opzoeken.** De eerste ronde van `-m media` in de e2e gaf één fout:
+`test_twintig_films_vanzelf_en_met_de_hand` (M8) had na 50 s 14 van de 20 films gekoppeld; de
+laatste zes geüploade stonden nog op `local`. Los ging de test goed (35 s). Geen toeval, maar
+een race die past bij wat er stond: in de volle set liep alles trager, zodat de films in twee
+scans binnenkwamen. De haak na de tweede scan (`lookup.scanned`) zette de taak met `jobs.enqueue` klaar, en die telt een lopende
+taak met dezelfde key mee. De taak van de eerste scan liep nog, had zijn lijst al gelezen (14
+films, minder dan `BATCH`, en de scan was toen klaar), en zette geen opvolger. Zo bleven de
+nieuwe films lokaal tot de housekeeping, 5 minuten later. Op de LXC gebeurt dat ook bij een
+import of een map die in stukken binnenkomt. Nu zet de haak de taak klaar met `jobs.chain`, dat
+alleen ontdubbelt tegen een taak die nog klaarstaat: loopt er een, dan komt er een opvolger, en
+`media_net` heeft één worker, dus die loopt erna. De nieuwe test
+`test_een_scan_terwijl_het_opzoeken_loopt_krijgt_een_opvolger` laat midden in de eerste taak een
+film uploaden en scannen; zonder de wijziging bleef die film `local`.
 
 ## De checks van deel 1
 
