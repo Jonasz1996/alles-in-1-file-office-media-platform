@@ -1,8 +1,238 @@
 # Fase 5 — Media en streaming
 
-Status: **golf 5 samengevoegd: M0 tot en met M10** (bouwontwerp revisie 2; 1 november 2026).
-Alle pakketten van fase 5 staan op de tak. De review en de nacontrole van golf 5 zijn verwerkt,
-net als die van de golven ervoor.
+Status: **gebouwd en getest, versie 0.7.0** (2 november 2026). Alle pakketten (M0 tot en met
+M10) en de integratie staan op de tak. In de sandbox zijn vier van de vijf eisen van "Klaar als"
+gehaald; de vijfde (drie omzettingen tegelijk zonder haperen) bijna, zie hieronder. Het laatste
+bewijs is de LXC zelf: stap 5, [Op de LXC](#op-de-lxc-stap-5).
+
+Films, series, eigen video's en muziek afspelen in de browser, met zo weinig mogelijk omzetten,
+via dezelfde poorten 80 en 443 als de rest van het platform. Een film is een gewoon bestand in de
+boom; een bibliotheek is een map met een soort erop. ffmpeg draait alleen in een eigen,
+afgeschermde container (de mediaworker), uit hetzelfde image als de app. Met media uit werkt
+alles zoals in 0.6.0.
+
+Jonas heeft de beslissingskaarten van fase 5 (B39–B48) nog niet beantwoord. Alles is gebouwd op
+de standaarden van het ontwerp: de import kopieert, alleen de CPU, drie omzettingen tegelijk,
+geen sleutel van TMDB en alleen lokale metadata, MusicBrainz uit, een publieke link zet niets
+om, voortgang per account ([Vragen voor Jonas](#vragen-voor-jonas)).
+
+## Klaar als
+
+Uit het stappenplan: een 1080p-film start binnen 2 s (direct play) en 5 s (transcode); seek
+werkt; 3 gelijktijdige transcodes zonder haperen; voortgang synchroniseert tussen apparaten. De
+getallen zijn mediaan / slechtste, uit [metingen.md](metingen.md) (de worker op 3 cores, zoals
+op de LXC).
+
+| Eis | Gemeten | Uitkomst |
+|---|---|---|
+| Direct play: het eerste beeld ≤ 2 s | 436 / 450 ms (VP9, sandbox); 477 / 491 ms (H.264, Chrome for Testing in CI) | gehaald |
+| Omzetten: het eerste beeld ≤ 5 s | 1663 / 1844 ms (VP9, sandbox); 1512 / 1532 ms (H.264, CI); zonder browser alleen 1,34 / 1,66 s, naast 2 andere omzettingen 1,23 / 1,59 s | gehaald |
+| Zoeken werkt (weer spelen ≤ 3 s) | remux 885 / 918 ms, omzetten 2343 / 2485 ms, direct 2020 / 2095 ms (op 400 Mbit/s 1487 / 1628 ms) | gehaald; direct haalt de 1,5 s uit de tabel van het ontwerp alleen op een snel netwerk (Chromium zelf) |
+| 3 omzettingen tegelijk zonder haperen | drie tegelijk gestart: 5 van 5 zonder haperen; gespreid met een sprong: 4 van 5 (één keer 0,6 s haperen na de sprong); met OnlyOffice ernaast 2 van 5; de API ≤ 104,5 ms (grens 200), de worker ≤ 793 MB (grens 3 GB) | bijna: zonder sprong gehaald; na een sprong of een herstart hapert soms één speler 0,1–1,5 s (bevinding 3 in [metingen.md](metingen.md#bevindingen)) |
+| Voortgang synchroniseert (≤ 2 s) | 0,097 / 0,101 s (p95 van 20) | gehaald |
+
+"Zonder haperen" is hier strenger dan in een browser: de virtuele speler van de belastingtest
+wacht op elk segment, de speler in de browser buffert tot 30 s. De sandbox is 20–40 % trager dan
+de referentie-CPU (`f` 1,22–1,40); daarom koos de toelating hier lagere kwaliteiten dan op een
+CPU zo snel als de referentie (720 + 480 + 480 in plaats van 1080 + 720 + 720). Welke het op de
+LXC worden, laat de meting daar zien.
+
+## Wat er is
+
+- **Bibliotheken en de import.** Een map wordt een bibliotheek (films, series, muziek of eigen
+  video's) met **Als bibliotheek gebruiken** of **Nieuwe bibliotheek** op `/media`. De scanner
+  haalt titels, jaren, seizoenen en afleveringen uit de namen (een eigen parser, getest op meer
+  dan 500 namen) en uit `.nfo`-bestanden, posters uit de map, zonder internet. Hij kijkt bij elke
+  wijziging in de app, bij de start en elke 6 uur. Een bestaande verzameling komt binnen met de
+  import uit `/tank/platform/import` op `/beheer` → Media: standaard kopiëren, verplaatsen kan
+  binnen hetzelfde dataset ([m2.md](m2.md)).
+- **Afspelen: direct, remux en omzetten.** De browser meet zelf wat hij kan, en de app kiest:
+  **direct** (de bytes zoals ze zijn, 0 cores), **remux** (een andere verpakking, bijna geen CPU)
+  of **omzetten** (H.264, of VP9 voor een browser zonder H.264, op 1080p, 720p of 480p, in stukken
+  van 2 s). HDR wordt bij omzetten SDR (standaard op 720p). Elk verzoek kijkt of je nog mag
+  kijken; intrekken stopt binnen 15 s, uitloggen meteen. Een publieke link speelt direct en remux
+  ([m3.md](m3.md), [m4.md](m4.md), [clientprofiel.md](clientprofiel.md)).
+- **Ondertitels, sprites en hoofdstukken.** Elke tekstondertitel (SRT, ASS, WebVTT; ingebed of
+  los naast de film) als WebVTT in de speler; een beeldondertitel (PGS, VobSub) wordt in het beeld
+  gebrand. Sprites voor de zoekbalk (een beeld per 10 s) voor wat in een bibliotheek staat, en de
+  hoofdstukken met het begin van de aftiteling ([m5.md](m5.md)).
+- **De speler.** Een eigen speler op `/kijken` en in de viewer van Bestanden (geen hls.js), met
+  native HLS voor Safari en iOS: kwaliteit, audiospoor, ondertitels, beeld-in-beeld, sprites bij
+  de zoekbalk, de kaart "Volgende aflevering", herstel na een herstart van de app of de worker,
+  één kwaliteit lager na twee keer haperen, en Downloaden als de server niet kan omzetten. Alles
+  met het toetsenbord ([m6.md](m6.md), [toetsenbord-m6.md](toetsenbord-m6.md)).
+- **Kijkvoortgang.** Per account, op elk apparaat binnen 2 s (SSE). Gezien bij 90 %, bij de
+  aftiteling of 3 minuten voor het eind; de rijen Verder kijken en Volgende aflevering op
+  `/media`, en Gezien markeren ([m7.md](m7.md)).
+- **Muziek en gapless.** Albums, artiesten en eigen afspeellijsten op `/muziek`, en een
+  muziekbalk die doorspeelt terwijl je verder klikt. Nummers sluiten naadloos aan: bewezen voor
+  FLAC en Opus ([m9.md](m9.md)).
+- **Metadata online.** Met een eigen sleutel van TMDB: posters, beschrijvingen in het Nederlands
+  en koppelen vanzelf; wat twijfelt staat onder **Nakijken**, met Koppelen en Bewerken. Muziek via
+  MusicBrainz en de Cover Art Archive als je dat aanzet. De sleutel staat versleuteld in de
+  database en gaat alleen naar TMDB. Zonder sleutel (de standaard) gaat er niets naar buiten
+  ([m8.md](m8.md)).
+- **`/beheer` → Media en het runbook.** Het tabblad Media (Alt+8): de worker en zijn afscherming,
+  ffmpeg, de meting van de CPU, het budget, wie er kijkt (met Stop), de achtergrond (met Mislukte
+  opnieuw), de bibliotheken, de cache, de online metadata, de import, de instellingen en de
+  belastingtest. Meldingen bovenaan `/beheer`, `app.cli media-status`, en media in hetzelfde ene
+  `install.sh`, dat nooit stopt door media. Wat Jonas op de server doet: het runbook
+  [media.md](../runbooks/media.md) ([m10.md](m10.md)).
+
+De integratie (stap 4 van §5) werkte de open punten zonder eigenaar af, mat alles in de sandbox,
+zette de standaarden op de metingen en draaide de installatietest met terugrollen naar 0.6.0
+([integratie.md](integratie.md)).
+
+## Media aan en uit
+
+- **Op de server:** media staat na het bijwerken aan, met de worker in zijn eigen container
+  (`MEDIA_SANDBOX=aan` in `/opt/platform/.env`). `MEDIA_SANDBOX=uit` is geen uit-knop maar een
+  nooduitgang: ffmpeg draait dan in de app zelf, zonder afscherming (het runbook, "De
+  nooduitgang").
+- **Op `/beheer` → Media → Instellingen:** het vinkje **Media aan**, zonder herstart. Uit: niets
+  van media draait, afspelen geeft een nette melding, je bestanden en bibliotheken blijven.
+- **Terug naar de code van 0.6.0:** liever niet; liever media uit. Moet het toch, dan met de vijf
+  regels van het runbook ("Terug naar 0.6.0", met de volledige commit). Zo nagelopen in de
+  installatietest ([integratie.md](integratie.md#installatietest-en-terugrollen)).
+
+## De grenzen
+
+| Wat | De grens | Waarom, en waar het staat |
+|---|---|---|
+| Omzettingen tegelijk | 3, standaard; de eerste kijker hoger, de rest lager (bij een CPU als de referentie 1080 + 720 + 720) | Vraag 3; een 4K-bron telt dubbel, HDR zwaarder. Direct en remux tellen niet mee |
+| Een tragere CPU | boven `f` 1,6 (de meting op `/beheer`) past met 3 plaatsen geen kijker meer: zet **Omzettingen tegelijk** dan op 2 (past tot 2,4) | de reserve van Keuze 26; het runbook, "De belastingtest op de LXC" |
+| Terwijl OnlyOffice start (2 à 3 minuten) | een core minder; boven `f` ±1,07 wacht een nieuwe kijker tot DS klaar is ("de server is druk", de speler probeert het zelf opnieuw) | Keuze 26; bevinding 7 |
+| HDR | omzetten alleen van een bron tot 1080p, standaard naar 720p; 4K HDR alleen direct of remux | Keuze 27: tone-mapping kost te veel CPU |
+| Zoeken bij direct play | ±2 s op 40 Mbit/s, ±1,5 s op het LAN | Chromium zelf (bevinding 4) |
+| Haperen na een sprong | soms één keer 0,1–1,5 s als drie omzettingen lopen | de voorrang bij de start geldt alleen voor het eerste segment (bevinding 3, een voorstel) |
+| Cache | 20 GB voor de stukken van het kijken en de muziek; 5 GB voor sprites en ondertitels; onder 10 GB vrij op de schijf geen nieuwe remux of omzetting | Keuze 31; [integratie.md](integratie.md#standaarden) |
+| Geheugen | de worker hooguit 3 GB (gemeten: 793 MB) | Mh |
+| Een upload | hooguit 50 GB (`MAX_UPLOAD_BYTES`) | grotere verzamelingen via de import |
+| Gapless | FLAC en Opus op het sample; MP3 en AAC niet gegarandeerd | m9.md; een lang nummer dat FLAC wordt, kan 415 geven (hooguit `cache_gb` / 8) |
+| Een publieke link | zet niets om (direct en remux wel) | Vraag 5 |
+| Namen | 95–97 % van de automatische koppelingen goed op een testset van 125 namen (tegen de nep-TMDB); wat twijfelt gaat naar Nakijken | Keuze 42, punt 9 in metingen.md |
+| Browsers | getest in Chromium 141 (sandbox) en Chrome for Testing 156 (CI); Safari, iPhone, Firefox en webOS niet | fase 9 |
+| Nodes | één node: sessies in het geheugen van de app | Keuze 48; het cluster later |
+
+## Wat geschrapt of verschoven is, en waarom
+
+Uit het stappenplan (§0.1 en Keuze 50 van het [bouwontwerp](bouwontwerp.md)):
+
+- **guessit:** een eigen parser voor bestandsnamen, met een testset van meer dan 500 namen (B14:
+  geen nieuwe afhankelijkheden).
+- **inotify:** alles komt via de app binnen, en de bestanden heten naar hun inhoud; inotify zou
+  niets zien. De scanner luistert naar de app, en loopt bij de start en elke 6 uur alles na.
+- **TVDB:** kost geld; TMDB heeft ook series. AcoustID, fanart.tv en OpenSubtitles ook niet.
+- **hls.js:** een eigen speler op MSE (B19), en native HLS voor Safari en iOS.
+- **De tabel `device`:** de browser stuurt zijn profiel mee met elk afspeelverzoek; apparaten
+  registreren hoort bij de apps (fase 9).
+- **"3 transcodes":** drie, maar niet alle drie op 1080p: de CPU kan dat niet zonder GPU. De
+  eerste kijker hoger, de andere lager (Vraag 3). Hardwareversnelling is klaargezet, niet
+  gebouwd (B5 is open).
+- **Ook niet in fase 5:** een fotobibliotheek (de tijdlijn van fase 3 is dat al), profielen en
+  kinderslot (de kolom `profile` staat klaar; Vraag 6), externe mappen (fase 7), casten
+  (Chromecast, DLNA), meerdere versies van één film, songteksten en intro overslaan,
+  afspeellijsten delen, AV1 coderen, alvast omzetten, automatisch van kwaliteit wisselen (één
+  kwaliteit per sessie, één stap lager na haperen), en de volledige belastingtest in CI (alleen
+  een rooktest; de echte meting in de sandbox en op de LXC).
+
+## Vragen voor Jonas
+
+1. **De beslissingskaarten B39–B48** ([beslissingen](../fase-0/beslissingen.md)): nog niet
+   beantwoord, dus nog "voorstel". In gebruik zijn de standaarden:
+   - Vraag 1, de import: **kopiëren** (verplaatsen kan als de bron onder
+     `/tank/platform/import` staat; dan op de Proxmox-host
+     `chown -R 110001:110001 /tank/platform/import`);
+   - Vraag 2, de CPU: **alleen de CPU**, geen GPU;
+   - Vraag 3: **drie omzettingen tegelijk**, de eerste hoger, de andere lager;
+   - Vraag 4: **geen sleutel van TMDB**, alleen lokale metadata;
+   - Vraag 5: een publieke link zet **niets om**;
+   - Vraag 6: voortgang **per account**, geen profielen.
+2. **Vraag 7, een eigen uid voor de kinderen van de worker** (Keuze 11): het voorstel van M1 is
+   nee. Het ergste wat een gekraakte ffmpeg dan kan, is media stilleggen; lezen kan hij niets
+   ([m1.md](m1.md), keuze 6).
+3. **Een sleutel van TMDB?** Gratis, voor niet-commercieel gebruik. Neem het API Read Access
+   Token (de lange, die met `eyJ` begint) en zet het op `/beheer` → Media → Online metadata. Dan
+   komen er posters en beschrijvingen, en gaan de titels van je films naar TMDB.
+4. **De CPU en een GPU:** de uitvoer van `lscpu` en `ls -l /dev/dri` op de Proxmox-host. Dat
+   zegt of een GPU later kan (het runbook, "Later: een GPU").
+5. **Voorstellen uit de metingen** (niet beslist, [metingen.md](metingen.md#bevindingen)):
+   voorrang bij de start ook na een sprong (bevinding 3); `max_transcodes` afleiden uit de meting
+   (bevinding 7); de kostentabel op de LXC ijken met echte films (bevinding 6); en twee manieren
+   om minder titels verkeerd te koppelen (Keuze 42, bevinding 5).
+6. **Twee keuzes die niemand nam:** een bibliotheek die in een andere verhuist weigeren (dat
+   verandert de bestandsroutes van fase 3; `/beheer` zegt het nu alleen), en een grens aan het
+   aantal afspeellijsten ([integratie.md](integratie.md#niet-gedaan-met-de-reden)).
+
+## Op de LXC (stap 5)
+
+Jonas, ±30 minuten, na het bijwerken naar 0.7.0 (de [README](../../README.md)). De commando's
+staan in het runbook [media.md](../runbooks/media.md); de uitkomst gaat in
+[metingen.md](metingen.md).
+
+- [ ] **De status:** `dc ps` toont `platform-media-1` als `healthy`, en
+  `dc exec -T platform python -m app.cli media-status` zegt
+  `Media: aan (afgeschermd, ffmpeg 7.1.5)` (het runbook, "De status lezen").
+- [ ] **De meting (bench):** `/beheer` → Media → **Meting** → **Meten** (±1 minuut). Noteer `f`.
+  Boven 1,6: zet **Omzettingen tegelijk** op 2.
+- [ ] **De belastingtest met de knop:** `/beheer` → Media → **Belastingtest**, als er niemand
+  kijkt (10 tot 20 minuten; eerst aanzetten, het runbook "De belastingtest op de LXC"). Fase a en
+  b; als het kan ook c (de app herstart) en d (office herstart). Bewaar de uitkomst.
+- [ ] **Een film op telefoon en laptop:** één die de browser zelf kan (een mp4 met H.264) en één
+  die omgezet moet worden (een mkv met HEVC); zoeken, een ondertitel aan, en "Verder kijken" op
+  het andere toestel binnen 2 s.
+- [ ] **Voor Vraag 2:** `lscpu` en `ls -l /dev/dri` op de Proxmox-host.
+
+## Documenten
+
+- [bouwontwerp.md](bouwontwerp.md): het ontwerp (revisie 2, leidend); revisie 1 in
+  [bouwontwerp-r1.md](bouwontwerp-r1.md). De keuzes staan als voorstel in B39–B48 in
+  [beslissingen](../fase-0/beslissingen.md).
+- [haalbaarheid.md](haalbaarheid.md): de metingen in de sandbox bij revisie 2 (V1–V8), met de
+  commando's.
+- [spike.md](spike.md): de spike van M0 (S1–S13), met een uitkomst per stap en de commando's van
+  de worker na de spike.
+- [m0.md](m0.md): wat M0 bouwde, waar het van het ontwerp afwijkt, en wat nog open is;
+  [m0-web.md](m0-web.md) voor het webdeel, [toetsenbord-m0.md](toetsenbord-m0.md) voor het
+  toetsenbord.
+- [m1.md](m1.md): de worker in isolatie (M1), met de referentie van `bench` en wat alleen CI
+  bewijst.
+- [m2.md](m2.md): bibliotheken, de scanner, namen en de import (M2);
+  [toetsenbord-m2.md](toetsenbord-m2.md) voor het toetsenbord.
+- [m3.md](m3.md): afspelen (M3); [clientprofiel.md](clientprofiel.md) beschrijft het profiel dat
+  de client meet en stuurt (versie 1).
+- [m4.md](m4.md): de stromen (M4), met de metingen van "Klaar als" (de start van een stroom
+  zonder browser).
+- [m5.md](m5.md): ondertitels, sprites en hoofdstukken (M5).
+- [m6.md](m6.md): de speler (M6), met de metingen van "Klaar als" in de browser;
+  [toetsenbord-m6.md](toetsenbord-m6.md) voor het toetsenbord.
+- [m7.md](m7.md): de kijkvoortgang (M7), met de meting van het synchroniseren;
+  [toetsenbord-m7.md](toetsenbord-m7.md) voor het toetsenbord.
+- [m9.md](m9.md): muziek en gapless (M9), met de meting van gapless in de browser;
+  [toetsenbord-m9.md](toetsenbord-m9.md) voor het toetsenbord.
+- [m8.md](m8.md): metadata online (M8), met het contract voor /beheer;
+  [toetsenbord-m8.md](toetsenbord-m8.md) voor het toetsenbord.
+- [m10.md](m10.md): beheer en uitrol (M10), met de installatietest en wat alleen CI bewijst;
+  [toetsenbord-m10.md](toetsenbord-m10.md) voor het toetsenbord, en het runbook
+  [media.md](../runbooks/media.md).
+- [integratie.md](integratie.md): de integratie (stap 4 van §5): de open punten die ze afwerkte
+  of liet liggen (met de reden), de wijzigingen aan contracten, de metingen, de standaarden, de
+  installatietest met terugrollen naar 0.6.0, en wat alleen CI of de LXC kan bewijzen.
+- [metingen.md](metingen.md): de metingen Ma–Mp en de belastingtest in de sandbox, met de
+  bevindingen; de getallen in [metingen.json](metingen.json).
+- [e2e.md](e2e.md): de tests van media (de markers `media`, `media_perf` en `provider_real`),
+  het harnas, de nep-servers, de jobs in CI, hoe je ze lokaal draait, en de lijst van alle e2e
+  van media met wat elke test bewijst.
+- Het runbook [media.md](../runbooks/media.md): wat Jonas op de server doet (de status, de
+  nooduitgang, terug naar 0.6.0, de cache, de sleutel van TMDB, de import, de belastingtest en
+  later een GPU).
+
+## Hoe het gebouwd is
+
+Het ontwerp gaf ±22 werkdagen: M0 alleen (±6), dan M1–M10 in een parallelle golf (±9), de
+integratie (±3) en marge (§5). Hieronder per golf wat er samenkwam, de reviews en de
+nacontroles; de details staan per pakket in `m0.md` tot en met `m10.md`.
+
 M0 is het fundament (tag `fase5-basis`): migratie 0008, de contracten, de kern van de worker,
 F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
 
@@ -55,8 +285,9 @@ F1–F4, de rijen en de haken ([m0.md](m0.md)). Daarop staan nu:
   (bijwerken en terugrollen, met de installatietest), met het runbook
   [media.md](../runbooks/media.md).
 
-Media staat standaard uit: zonder `PLATFORM_MEDIA_ENABLED` is de app 0.6.0 plus F1–F4, en de
-previews van video's werken zoals in 0.6.0 (via een worker voor één keer, M1).
+In de app staat media standaard uit: zonder `PLATFORM_MEDIA_ENABLED` is de app 0.6.0 plus
+F1–F4, en de previews van video's werken zoals in 0.6.0 (via een worker voor één keer, M1).
+`install.sh` zet de vlag aan (`compose.media.yaml`, sinds M10).
 
 Bij het samenvoegen van golf 1 (M1, dan M3) gingen er geen bestanden van beide pakketten door
 elkaar; alleen `ci.yml` botste met het weghalen van de job `media-spike`. Wat er toen nog
@@ -400,118 +631,3 @@ van fase 3 en 4 110 goed; `-m office` 30 goed; e2e `-m media` 64 goed en 4 overg
 vier H.264, dat Chromium 141 niet kan), met de 20 films van M8 en de worker zonder ffmpeg van
 M10. Jonas heeft de beslissingskaarten van fase 5 nog niet beantwoord: B39–B48 staan niet als
 besloten.
-
-## Doel
-
-Films, series en muziek afspelen op elk apparaat, met zo weinig mogelijk omzetten. Uit het
-stappenplan:
-
-- bibliotheken met een scanner en het lezen van bestandsnamen;
-- metadata (TMDB, MusicBrainz), posters, en zelf koppelen en corrigeren;
-- per apparaat kiezen: direct afspelen, remux of transcode;
-- een worker voor ffmpeg, met HDR naar SDR;
-- sessies met een eigen cache, en opruimen na afloop;
-- ondertitels, sprites voor de zoekbalk, en hoofdstukken;
-- kijkvoortgang, "Verder kijken" en de volgende aflevering;
-- muziek, met albums, artiesten, afspeellijsten en gapless.
-
-Klaar als: een 1080p-film start binnen 2 s (direct play) en 5 s (transcode); zoeken werkt;
-3 gelijktijdige transcodes zonder haperen; voortgang synchroniseert tussen apparaten.
-
-## Hoe het werkt, in het kort
-
-- Een film is een gewoon bestand in de boom. Een bibliotheek is een map met een soort erop.
-  Een bestaande verzameling komt binnen via een import uit `/data/import`.
-- ffmpeg draait alleen in een eigen worker-container: geen netwerk, geen data, een eigen
-  gebruiker (uid 10002). De app geeft hem één open bestand en een pipe terug.
-- De browser meet zelf wat hij kan. De app kiest dan direct, remux of transcode. Direct en remux
-  kosten bijna geen CPU; dat is de normale weg.
-- Transcode maakt segmenten van precies 2 s. Een eigen speler in het web (geen hls.js), en native
-  HLS voor Safari en iOS.
-- Alleen de CPU. Het platform meet zelf hoe snel die is (`bench`), en laat alleen toe wat past.
-  Een GPU is klaargezet, niet gebouwd (B5 is open).
-- Bijwerken en terugrollen met hetzelfde ene `install.sh`. Lukt iets met media niet, dan werkt
-  alles van fase 4 gewoon door.
-
-## Wat er komt
-
-- **M0 — Fundament en spike:** migratie 0008, de contracten, de kern van de worker, de reparaties
-  aan downloads (F1–F4), de rijen voor achtergrondwerk, een nep-worker en nep-providers voor de
-  tests, en de spike in CI vanaf de eerste dag.
-- **M1 — Worker en isolatie:** de worker-container, de afscherming van ffmpeg, en de previews
-  van video's via de worker.
-- **M2 — Bibliotheken:** de scanner, de eigen parser voor bestandsnamen, groeperen, NFO, en de
-  import.
-- **M3 — Afspelen:** het profiel van de client, de beslissing, de sessies en de toegang per
-  verzoek.
-- **M4 — Stromen:** de producent, de knipper, de playlists, de toelating en de cache.
-- **M5 — Ondertitels, sprites en hoofdstukken.**
-- **M6 — De speler:** `/kijken`, met toetsenbord, ondertitels en zoeken.
-- **M7 — Voortgang:** "Verder kijken" en synchroniseren via SSE.
-- **M8 — Metadata online:** TMDB en MusicBrainz, met een eigen sleutel, en zelf koppelen.
-- **M9 — Muziek en gapless.**
-- **M10 — Beheer en uitrol:** het tabblad Media op `/beheer`, de belastingtest, en `install.sh`.
-
-## Planning
-
-±22 werkdagen: M0 ±6, de parallelle golf ±9, de integratie ±3, en ±4 dagen marge voor wat de
-spike en de LXC laten zien. Het stappenplan geeft 5 weken (25 dagen). Dat past, krap. Het
-ontwerp zegt wat als eerste schuift als het uitloopt (§5).
-
-Wat de sandbox laat zien, staat in [haalbaarheid.md](haalbaarheid.md): de afscherming van de
-worker, de kosten van de bron, de tijden van fMP4, en de eerste start op 3 cores.
-
-## Vragen voor Jonas
-
-1. Staan er al films, series of muziek op `/tank`, en waar? Standaard: we bouwen de import, en
-   hij kopieert. Verplaatsen kan als de bron onder `/tank/platform/import` staat; daarvoor moet
-   jij op de Proxmox-host `chown -R 110001:110001 /tank/platform/import` doen.
-2. Welke CPU, en is er een GPU (B5)? Standaard: alleen de CPU. Graag de uitvoer van `lscpu` en
-   `ls -l /dev/dri` op de Proxmox-host.
-3. "3 gelijktijdige transcodes": drie op gemengde kwaliteit, of hooguit twee op 1080p?
-   Standaard: drie (de eerste 1080p, de andere twee 720p). Een 4K-bron telt dubbel.
-4. Heb je een TMDB-sleutel? Standaard: geen, alleen lokale metadata.
-5. Mag een publieke link transcoderen? Standaard: nee, alleen direct en remux.
-6. Profielen onder één account (bijvoorbeeld voor kinderen)? Standaard: nee, voortgang per
-   account. De kolom `profile` staat klaar.
-7. Een eigen uid voor de kinderen van de worker (Keuze 11)? Voorstel van M1: nee. Het ergste
-   wat een gekraakte ffmpeg dan kan, is media stilleggen; lezen kan hij niets ([m1.md](m1.md),
-   keuze 6).
-
-## Documenten
-
-- [bouwontwerp.md](bouwontwerp.md): het ontwerp (revisie 2, leidend); revisie 1 in
-  [bouwontwerp-r1.md](bouwontwerp-r1.md). De keuzes staan als voorstel in B39–B48 in
-  [beslissingen](../fase-0/beslissingen.md).
-- [haalbaarheid.md](haalbaarheid.md): de metingen in de sandbox bij revisie 2 (V1–V8), met de
-  commando's.
-- [spike.md](spike.md): de spike van M0 (S1–S13), met een uitkomst per stap en de commando's van
-  de worker na de spike.
-- [m0.md](m0.md): wat M0 bouwde, waar het van het ontwerp afwijkt, en wat nog open is;
-  [m0-web.md](m0-web.md) voor het webdeel, [toetsenbord-m0.md](toetsenbord-m0.md) voor het
-  toetsenbord.
-- [m1.md](m1.md): de worker in isolatie (M1), met de referentie van `bench` en wat alleen CI
-  bewijst.
-- [m2.md](m2.md): bibliotheken, de scanner, namen en de import (M2);
-  [toetsenbord-m2.md](toetsenbord-m2.md) voor het toetsenbord.
-- [m3.md](m3.md): afspelen (M3); [clientprofiel.md](clientprofiel.md) beschrijft het profiel dat
-  de client meet en stuurt (versie 1).
-- [m4.md](m4.md): de stromen (M4), met de metingen van "Klaar als" (de start van een stroom
-  zonder browser).
-- [m5.md](m5.md): ondertitels, sprites en hoofdstukken (M5).
-- [m6.md](m6.md): de speler (M6), met de metingen van "Klaar als" in de browser;
-  [toetsenbord-m6.md](toetsenbord-m6.md) voor het toetsenbord.
-- [m7.md](m7.md): de kijkvoortgang (M7), met de meting van het synchroniseren;
-  [toetsenbord-m7.md](toetsenbord-m7.md) voor het toetsenbord.
-- [m9.md](m9.md): muziek en gapless (M9), met de meting van gapless in de browser;
-  [toetsenbord-m9.md](toetsenbord-m9.md) voor het toetsenbord.
-- [m8.md](m8.md): metadata online (M8), met het contract voor /beheer;
-  [toetsenbord-m8.md](toetsenbord-m8.md) voor het toetsenbord.
-- [m10.md](m10.md): beheer en uitrol (M10), met de installatietest en wat alleen CI bewijst;
-  [toetsenbord-m10.md](toetsenbord-m10.md) voor het toetsenbord, en het runbook
-  [media.md](../runbooks/media.md).
-- [integratie.md](integratie.md): de integratie (stap 4 van §5): de open punten die ze afwerkte
-  of liet liggen (met de reden), de wijzigingen aan contracten, en straks de metingen, de
-  standaarden en de installatietest.
-- [e2e.md](e2e.md): de tests van media (de markers `media`, `media_perf` en `provider_real`),
-  het harnas, de nep-servers, de jobs in CI, en hoe je ze lokaal draait.
