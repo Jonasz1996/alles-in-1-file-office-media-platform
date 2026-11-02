@@ -50,7 +50,7 @@ gewoon opnieuw met `PLATFORM_BRANCH`. De eindtekst van het script noemt de comma
 adres en `PLATFORM_BRANCH` van de branch waarmee je het draaide; die kun je zo overnemen. Het
 tabblad **Office** op `/beheer` noemt altijd de commando's van `main`: zet daar zolang hetzelfde
 adres en `PLATFORM_BRANCH=…` in. Een instelling erbij gaat net zo:
-`… | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 MEDIA_SANDBOX=uit bash`.
+`… | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 OFFICE=uit bash`.
 
 Wat er bij het bijwerken van 0.6.0 naar 0.7.0 gebeurt:
 
@@ -320,14 +320,19 @@ volledige commit van 0.6.0 (`dc` uit Handige commando's hierboven; de uitleg per
 ```bash
 git -C /opt/platform/src fetch -q origin
 git -C /opt/platform/src cat-file -e '263abd74d914a9811901e7570ed410866364f4b5^{commit}' && echo "goed: 0.6.0 is er"
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh -o /root/platform-install.sh && echo "goed: het script is er"
 dc stop platform media
 dc run --rm --no-deps platform python -m app.cli db-downgrade 0007
-curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | PLATFORM_SRC_REF=263abd74d914a9811901e7570ed410866364f4b5 bash
+PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=263abd74d914a9811901e7570ed410866364f4b5 bash < /root/platform-install.sh
 ```
 
-Zegt de tweede regel niet "goed", stop dan: de rest pas als de commit er is. `db-downgrade` vraagt
-om "ja". Daarna zijn de bibliotheken, de voortgang en de afspeellijsten weg; je bestanden, ook de
-films en muziek, blijven. Weer vooruit: het script zonder `PLATFORM_SRC_REF`.
+Zeggen de tweede en de derde regel niet allebei "goed", stop dan: de rest pas als de commit en het
+script er zijn. Het script komt eerst in een bestand, vóór er iets stopt: `curl … | bash` met een
+adres dat er niet is, geeft één regel van curl en doet verder niets, en dan stond de app al stil
+met het schema terug. `db-downgrade` vraagt om "ja". Daarna zijn de bibliotheken, de voortgang en de
+afspeellijsten weg; je bestanden, ook de films en muziek, blijven. Weer vooruit: het script zonder
+`PLATFORM_SRC_REF`. Het adres is dat van de branch, zoals bij het bijwerken hierboven; staat 0.7.0
+op `main`, dan mag `main` in het adres, zonder `PLATFORM_BRANCH`.
 
 Meer, zoals de status lezen, de cache opruimen en de belastingtest op de LXC, staat in
 `docs/runbooks/media.md`.

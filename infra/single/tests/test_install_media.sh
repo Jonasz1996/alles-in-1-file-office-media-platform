@@ -378,42 +378,85 @@ PY
   # Terug naar 0.6.0 (integratie deel 3): het runbook en de README geven Jonas precies de
   # commando's van Keuze 47, in die volgorde, met de volledige hash (stap 4 van --stappen draait
   # ze). De tag v0.6.0 is een keuze van de lead: de commando's werken zonder, en een tekst die hem
-  # noemt, zegt "als die er is".
+  # noemt, zegt "als die er is". Het script komt vóór het stoppen in een bestand, en stap 4 draait
+  # dat bestand (review van de integratie, C2/K2): `curl … | bash` met een adres dat er niet is
+  # (main zolang 0.7.0 op de branch staat), eindigt met 0 zonder iets te doen, en dan stond de app
+  # al stil met het schema op 0007. Het adres mag main of de branch zijn; met de branch hoort
+  # PLATFORM_BRANCH erbij, met main niet.
   echo
   echo "== terug naar 0.6.0: de commando's van Keuze 47 in het runbook en de README"
   out=$(python3 -I - "$top/docs/runbooks/media.md" "$here/../README.md" <<'PY'
+import re
 import sys
 
 SHA = "263abd74d914a9811901e7570ed410866364f4b5"
-URL = (
-    "https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform"
-    "/main/infra/single/install.sh"
-)
+BRANCH = "claude/stappenplan-uitwerken-lu4uv3"
+RAW = "https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform"
+FILE = "/root/platform-install.sh"
 WANT = [
-    "git -C /opt/platform/src fetch -q origin",
-    "git -C /opt/platform/src cat-file -e '%s^{commit}'" % SHA,
-    "dc stop platform media",
-    "dc run --rm --no-deps platform python -m app.cli db-downgrade 0007",
-    "curl -fsSL %s | PLATFORM_SRC_REF=%s bash" % (URL, SHA),
+    ("git fetch", re.escape("git -C /opt/platform/src fetch -q origin")),
+    ("cat-file met de hash", re.escape("git -C /opt/platform/src cat-file -e '%s^{commit}' && echo " % SHA)),
+    (
+        "curl -o " + FILE,
+        re.escape("curl -fsSL %s/" % RAW)
+        + "(?P<ref>main|"
+        + re.escape(BRANCH)
+        + ")"
+        + re.escape("/infra/single/install.sh -o %s && echo " % FILE),
+    ),
+    ("dc stop", re.escape("dc stop platform media")),
+    ("db-downgrade", re.escape("dc run --rm --no-deps platform python -m app.cli db-downgrade 0007")),
+    (
+        "bash < " + FILE + " met de hash",
+        "(?P<pre>(PLATFORM_BRANCH=\\S+ )?)" + re.escape("PLATFORM_SRC_REF=%s bash < %s" % (SHA, FILE)),
+    ),
 ]
 problems = []
 for path in sys.argv[1:]:
     name = path.rsplit("/", 2)[-1]
     lines = [line.strip() for line in open(path, encoding="utf-8")]
     at = -1
-    for cmd in WANT:
-        hits = [i for i, line in enumerate(lines) if (line == cmd or line.startswith(cmd + " ")) and i > at]
+    found = {}
+    for label, pat in WANT:
+        hits = [(i, m) for i, line in enumerate(lines) if i > at for m in [re.match(pat + "(?:$| |(?<=echo ))", line)] if m]
         if not hits:
-            problems.append("%s mist (of niet in volgorde): %s" % (name, cmd[:60]))
+            problems.append("%s mist (of niet in volgorde): %s" % (name, label))
             continue
-        at = hits[0]
+        at, m = hits[0]
+        found.update({k: v for k, v in m.groupdict().items() if v is not None})
+    want_pre = "" if found.get("ref") == "main" else "PLATFORM_BRANCH=%s " % BRANCH
+    if "ref" in found and "pre" in found and found["pre"] != want_pre:
+        problems.append("%s: PLATFORM_BRANCH past niet bij het adres (%s)" % (name, found["ref"]))
     for line in lines:
         if "v0.6.0" in line and "als die er is" not in line:
             problems.append("%s noemt v0.6.0 zonder 'als die er is'" % name)
+        if "PLATFORM_SRC_REF=" in line and "| " in line and "bash" in line.split("PLATFORM_SRC_REF=", 1)[1]:
+            problems.append("%s: PLATFORM_SRC_REF met curl | bash, niet met het bestand" % name)
 print("; ".join(problems) or "ok")
 PY
   ) || out="(geen uitvoer)"
   check "de commando's van Keuze 47 met de volledige hash, in het runbook en de README ($out)" test "$out" = ok
+
+  # De nooduitgang zonder afscherming (review van de integratie, S1): `MEDIA_SANDBOX=uit bash`
+  # staat in de docs alleen waar binnen 8 regels "tijdelijk" staat, dus nooit als los voorbeeld
+  # van "een instelling erbij".
+  echo
+  echo "== MEDIA_SANDBOX=uit alleen bij de nooduitgang, met 'tijdelijk'"
+  out=$(python3 -I - "$top/README.md" "$here/../README.md" "$top/docs/runbooks/media.md" "$top/docs/fase-5/README.md" <<'PY'
+import os
+import sys
+
+problems = []
+for path in sys.argv[1:]:
+    name = os.path.relpath(path, os.path.dirname(sys.argv[1]))
+    lines = open(path, encoding="utf-8").read().splitlines()
+    for i, line in enumerate(lines):
+        if "MEDIA_SANDBOX=uit bash" in line and not any("tijdelijk" in x for x in lines[i : i + 9]):
+            problems.append("%s r. %d zonder 'tijdelijk'" % (name, i + 1))
+print("; ".join(problems) or "ok")
+PY
+  ) || out="(geen uitvoer)"
+  check "MEDIA_SANDBOX=uit in de docs alleen met een waarschuwing ($out)" test "$out" = ok
 
   # --- de nep-Docker voor media_start, watchers en main -------------------------------------
   # Een image-opslag: elke build geeft een nieuwe id; de worker draait op de id van zijn laatste
@@ -1295,7 +1338,9 @@ sys.exit(0 if seen == {"ok": True, "sandbox": "on", "problems": []} else 1)
       tail -n 20 "$WORK/logs/4-downgrade.log"
     fi
     check "4.2: het commando zegt dat het schema op 0007 staat" grep -qF "De database staat nu op revisie 0007." "$WORK/logs/4-downgrade.log"
-    # 3. het script van nu, met de commit van 0.6.0
+    # 3. het script van nu, met de commit van 0.6.0. step draait het als `bash -s < install.sh`,
+    #    zoals de docs het bestand uit stap 1 (`bash < /root/platform-install.sh`); dat bestand
+    #    halen kan hier niet (geen GitHub), en de docs-controle in het functiedeel pint de regels
     step 4-terug PLATFORM_SRC_REF="$FROM" || fout "4.3: install.sh gaf een fout"
     check "4: de app draait" app_up
     check "4: de broncode staat op ${FROM:0:12}" test "$(src_head)" = "$(git -C "$WORK/repo.git" rev-parse "$FROM^{commit}")"

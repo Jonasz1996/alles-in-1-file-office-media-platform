@@ -17,7 +17,7 @@ curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-m
 ```
 
 Hieronder heet dat kortweg "het script"; een instelling zet je ervoor, zoals
-`curl … | MEDIA_SANDBOX=uit bash`. Zolang deze versie nog niet op `main` staat, gebruik je het
+`curl … | MEDIA_SANDBOX=aan bash`. Zolang deze versie nog niet op `main` staat, gebruik je het
 adres van de branch en `PLATFORM_BRANCH`, zoals in `infra/single/README.md`.
 
 ## Wat het script bij elke run met media doet
@@ -142,13 +142,19 @@ naar dezelfde commit; gebruik toch de volledige hash hieronder. De volgorde is
 die van office (`docs/runbooks/office.md`, "De app terugrollen"). Office blijft gewoon aan:
 0.6.0 kent office.
 
-1. Kijk eerst of de oude versie er is, vóór je iets stopt:
+1. Kijk eerst of de oude versie er is, en haal het script van nu in een bestand, vóór je iets
+   stopt:
    ```bash
    git -C /opt/platform/src fetch -q origin
    git -C /opt/platform/src cat-file -e '263abd74d914a9811901e7570ed410866364f4b5^{commit}' && echo "goed: 0.6.0 is er"
+   curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh -o /root/platform-install.sh && echo "goed: het script is er"
    ```
-   Zegt dit niet "goed", stop dan hier. Met een versie die niet bestaat, faalt stap 4 pas als de
-   app al gestopt is en het schema terug is.
+   Zeggen ze niet allebei "goed", stop dan hier. Met een versie die niet bestaat, faalt stap 4
+   pas als de app al gestopt is en het schema terug is. En `curl … | bash` met een adres dat er
+   niet is (zoals `main` zolang 0.7.0 op de branch staat), geeft één regel van curl en doet verder
+   niets: daarom komt het script hier al in een bestand. Het adres is dat van de branch, zoals bij
+   het bijwerken; staat 0.7.0 op `main`, dan mag `main` in het adres, en in stap 4 zonder
+   `PLATFORM_BRANCH`.
 2. Stop de app en de worker, zodat niets meer naar de tabellen van media schrijft:
    ```bash
    dc stop platform media
@@ -157,9 +163,9 @@ die van office (`docs/runbooks/office.md`, "De app terugrollen"). Office blijft 
    ```bash
    dc run --rm --no-deps platform python -m app.cli db-downgrade 0007
    ```
-4. Installeer 0.6.0, met het script van nu (via curl) en de commit uit stap 1:
+4. Installeer 0.6.0, met het script uit stap 1 en de commit uit stap 1:
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | PLATFORM_SRC_REF=263abd74d914a9811901e7570ed410866364f4b5 bash
+   PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=263abd74d914a9811901e7570ed410866364f4b5 bash < /root/platform-install.sh
    ```
    Zonder `PLATFORM_SRC_REF` haalt het script `main`, en die zet het schema bij de start weer
    vooruit. Het script ziet zelf dat 0.6.0 geen media heeft, en haalt de worker weg. De
