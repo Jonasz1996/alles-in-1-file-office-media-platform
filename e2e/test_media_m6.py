@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import httpx
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
@@ -1303,13 +1304,19 @@ def test_de_speler_in_de_viewer_en_de_fallback(media, media_browsers, ffmpeg_cou
     expect(viewer).to_be_hidden()
     end = time.monotonic() + 5
     while True:
-        r = media.server.request(
-            "GET", f"/api/v1/stream/{sid}/file", headers={"Range": "bytes=0-0"}
-        )
-        if r.status_code == 410 or time.monotonic() > end:
+        try:
+            r: httpx.Response | None = media.server.request(
+                "GET", f"/api/v1/stream/{sid}/file", headers={"Range": "bytes=0-0"}
+            )
+        except httpx.RemoteProtocolError:
+            # De sessie ging dicht tussen de kop (206) en de body van dit verzoek: guarded_body
+            # breekt de respons dan af (Keuze 21, "mediastroom afgebroken"). Dat is nog geen
+            # 410; het volgende verzoek moet het zijn.
+            r = None
+        if (r is not None and r.status_code == 410) or time.monotonic() > end:
             break
         page.wait_for_timeout(200)
-    assert r.status_code == 410, r.text
+    assert r is not None and r.status_code == 410, r.text if r is not None else "afgebroken"
 
 
 @pytest.mark.media
