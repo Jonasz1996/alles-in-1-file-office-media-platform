@@ -664,3 +664,28 @@ code.
 
 Op `/` bleef 16 GB vrij en het laagste `MemAvailable` tijdens de runs was 13,5 GiB. Hooguit 3
 ffmpeg tegelijk (de e2e tellen ze met `ffmpeg_count`).
+
+## De checks van de review
+
+Op `ccb6b26` (de reparaties van de review, met de docs van K1–K6), in de sandbox:
+
+- api: `uv sync --frozen`; `ruff check` en `ruff format --check` (ook `../e2e`) schoon; `pytest`
+  3838 goed, 2 overgeslagen, in 22 min 19 s; `-m media` onder `taskset -c 0-2` drie keer na
+  elkaar 176 goed;
+- web (alleen een commentaar in `media/types.ts` veranderd): typecheck, 919 tests in 81
+  bestanden, build, budget (eerste lading 96,4 van 100 KB, de route Bestanden 43,5 van 45 KB, de
+  speler 25,4 van 35 KB) en `check:i18n --strict` (0 meldingen in 214 bestanden) goed;
+- e2e, onder `taskset -c 0-2`: de set van CI 123 goed; `-m office` 30 goed; `-m media` 64 goed en
+  4 overgeslagen (H.264, dat de Chromium 141 hier niet heeft);
+- infra: `test_install_media.sh` (het functiedeel) 127 van 127, `test_install_env.sh` goed,
+  shellcheck schoon (`install.sh` en `tests/*.sh`). `--stappen` liep niet opnieuw: in dat deel
+  veranderde alleen een commentaar, en de regels van het terugrollen in de docs pint het
+  functiedeel;
+- als nobody (`setpriv` zoals `/tmp/ci-nobody/run.sh`, in een kopie van `api/` en `infra/` van
+  nobody en zonder `SSL_CERT_FILE`): de vier testbestanden die de review raakte
+  (`test_media_loadtest`, `test_admin_media`, `test_cli_media`, `test_media_sessions`), 107 goed;
+  geen ervan heeft een test met `-m media`.
+
+Alles ging in de eerste ronde goed. Op `/` bleef 15–16 GB vrij en het laagste `MemAvailable`
+tijdens de runs was 13,4 GiB. Hooguit 3 ffmpeg tegelijk (de e2e tellen ze met `ffmpeg_count`).
+De CI-run op deze commits volgt na de push (zie [K3](#de-review-van-de-integratie)).
