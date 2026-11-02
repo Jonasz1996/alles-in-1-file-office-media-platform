@@ -23,7 +23,8 @@ curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-m
 ```
 
 Het script installeert Docker, bouwt het platform en start het op poort 80, met office
-(OnlyOffice Docs, zie Office hieronder) als tweede container ernaast. Open daarna
+(OnlyOffice Docs, zie Office hieronder) als tweede container ernaast en de mediaworker (ffmpeg,
+zie Media hieronder) als derde. Open daarna
 `http://<ip-van-de-container>` in je browser: bij het eerste bezoek maak je het
 beheerdersaccount aan en zet je meteen 2FA aan (verplicht; houd een authenticator-app zoals
 Aegis of Google Authenticator bij de hand). Doe dat voordat je de poort in je router
@@ -33,9 +34,9 @@ Een andere poort kiezen kan bij de eerste installatie met `curl … | PORT=8080 
 commando hierboven, met `PORT=8080` vóór `bash`), of later in `/opt/platform/.env` (daarna het
 script opnieuw draaien).
 
-## Bijwerken naar 0.6.0 (met office)
+## Bijwerken naar 0.7.0 (met media)
 
-Versie 0.6.0 (fase 4) staat nog niet op `main`, maar op de branch
+Versie 0.7.0 (fase 5) staat nog niet op `main`, maar op de branch
 `claude/stappenplan-uitwerken-lu4uv3`. Tot hij op `main` staat, werk je zo bij (en geldt dit ook
 voor elk ander commando hieronder met `curl … | bash`):
 
@@ -49,7 +50,34 @@ gewoon opnieuw met `PLATFORM_BRANCH`. De eindtekst van het script noemt de comma
 adres en `PLATFORM_BRANCH` van de branch waarmee je het draaide; die kun je zo overnemen. Het
 tabblad **Office** op `/beheer` noemt altijd de commando's van `main`: zet daar zolang hetzelfde
 adres en `PLATFORM_BRANCH=…` in. Een instelling erbij gaat net zo:
-`… | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 OFFICE=uit bash`.
+`… | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 MEDIA_SANDBOX=uit bash`.
+
+Wat er bij het bijwerken van 0.6.0 naar 0.7.0 gebeurt:
+
+- het script laat open documenten opslaan, bouwt het nieuwe platform en start het; de database
+  gaat bij de start vanzelf naar het nieuwe schema;
+- **media staat daarna aan**: `MEDIA_SANDBOX=aan`, `MAX_UPLOAD_BYTES` (50 GB) en
+  `MEDIA_WORKER_KEY` komen in `/opt/platform/.env` (rechten 600), de mappen
+  `/tank/platform/media` en `/tank/platform/import` komen erbij, en de mediaworker start als
+  container `platform-media-1` na de app, uit hetzelfde image (er wordt niets extra
+  opgehaald). De eindtekst zegt `Media: aan (afgeschermd).`, of waarom niet; lukt iets met media
+  niet, dan stopt het script niet en werkt de rest door;
+- **media doet niets met je bestanden** tot je het zelf gebruikt: geen bibliotheek, geen import,
+  geen sleutel van TMDB, en MusicBrainz staat uit;
+- daarna staan **Media** en **Muziek** in het menu, en `/beheer` heeft het tabblad **Media**
+  (Alt+8). Een map wordt een bibliotheek met **Als bibliotheek gebruiken**; een bestaande
+  verzameling komt binnen met de import (zie Media hieronder). Voorbeeldbeelden van video's maakt
+  nu de mediaworker;
+- office blijft zoals het was (aan of uit), net als inloggen, 2FA, je bestanden en hun versies.
+  Liever zonder media: `/beheer` → Media → Instellingen → **Media aan** uitvinken. Terug naar
+  0.6.0: zie Media hieronder ("Terug naar 0.6.0");
+- daarna één keer op de LXC: de status, de meting, de belastingtest en een film op telefoon en
+  laptop (de lijst in `docs/fase-5/README.md`, "Op de LXC"; de commando's in
+  `docs/runbooks/media.md`).
+
+## Van 0.5.0: office komt erbij (0.6.0)
+
+Draai je nog 0.5.0 (fase 3), dan komt office in dezelfde run erbij, met het commando hierboven.
 
 Kijk vóór het bijwerken één keer of Docker in de container office aankan (één commando, in
 `docs/runbooks/office.md`, "Vóór het bijwerken naar 0.6.0").
@@ -113,7 +141,7 @@ blijft http werken.
 | Import | `/tank/platform/import`, in de app `/data/import` |
 | Instellingen van media | `/opt/platform/.env`: `MEDIA_SANDBOX`, `MAX_UPLOAD_BYTES` en `MEDIA_WORKER_KEY`; de rest op `/beheer` → Media |
 
-Bijwerken: draai het installatiescript opnieuw (naar 0.6.0: zie hierboven). Het laat eerst de
+Bijwerken: draai het installatiescript opnieuw (naar 0.7.0: zie hierboven). Het laat eerst de
 open documenten opslaan, vervangt dan het platform en werkt pas daarna de mediaworker en office
 bij. Had je de
 eerste versie met Traefik, PostgreSQL en SeaweedFS al geïnstalleerd, dan ruimt het script die
