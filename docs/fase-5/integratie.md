@@ -165,7 +165,9 @@ Alles additief, met een test; met media uit verandert er niets.
 
 Deel 3 veranderde geen contract: de grens voor `subs/` en `trick/` zit in de sweep
 (`cache.py`, intern), `CacheClearIn` bleef `sessions | audio | trick`, en de routes van M5 geven
-hetzelfde terug (ze zetten alleen de mtime van de map).
+hetzelfde terug (ze zetten alleen de mtime van de map). Ook de drie reparaties uit de checks
+([De checks van deel 3](#de-checks-van-deel-3)) zijn intern: `played_s` in het verslag van de
+belastingtest houdt zijn betekenis (de gespeelde tijd), alleen telt hij niet meer te veel.
 
 ## Metingen
 
@@ -403,3 +405,52 @@ De eerste ronde van `-m media` gaf één fout: `test_worker_stopt_op_sigterm_zon
 
 Op `/` was 16–17 GB vrij, boven de 10 GiB van Keuze 31: pytest en de e2e liepen zonder de omweg
 via `/dev/shm` van deel 1.
+
+## De checks van deel 3
+
+Op `78f0621` (de code van dit deel, met de drie reparaties hieronder) plus deze docs, in de
+sandbox:
+
+- api: `uv sync --frozen`; `ruff check` en `ruff format --check` (ook `../e2e`) schoon; `pytest`
+  3833 goed, 2 overgeslagen; `-m media` onder `taskset -c 0-2` 176 goed;
+- web (niets veranderd in dit deel): typecheck, 919 tests in 81 bestanden, build, budget (eerste
+  lading 96,4 van 100 KB, de route Bestanden 43,5 van 45 KB, de speler 25,4 van 35 KB) en
+  `check:i18n --strict` goed;
+- e2e, onder `taskset -c 0-2`: de set van CI 123 goed; `-m office` 30 goed; `-m media` 64 goed en
+  4 overgeslagen (H.264, dat de Chromium 141 hier niet heeft);
+- infra: `test_install_media.sh` (het functiedeel) 125 van 125 en `--stappen` 59 van 59
+  ([Installatietest en terugrollen](#installatietest-en-terugrollen)), `test_install_env.sh`
+  goed, shellcheck schoon;
+- als nobody (`setpriv` zoals `/tmp/ci-nobody/run.sh`, in een kopie van `api/` en `infra/` van
+  nobody en zonder `SSL_CERT_FILE`): de vijf testbestanden die dit deel raakte
+  (`test_media_cache`, `test_media_trick`, `test_media_defaults`, `test_media_loadtest`,
+  `test_office_convert`), 130 goed, en met `-m media` 3 goed. De eerste ronde had alleen `api/`
+  gekopieerd: `test_het_budget_past_bij_de_cores_van_de_container` leest
+  `infra/single/compose.media-limits.yaml` (in CI staat de hele repo er).
+
+Drie eerdere rondes van de hele api-set gaven elk één andere fout, telkens in een test die los
+goed ging. Geen toeval: drie oorzaken, geen ervan in wat deel 3 veranderde, elk met een test
+gerepareerd.
+
+1. **`test_fase_a_en_b`** (de belastingtest in pytest): "de API 1030,2 ms (p95)" in fase a; los
+   37 tot 80 ms. Een spion op `gc.callbacks` in de testbestanden tot en met die module (in de
+   volgorde van de hele set) liet zien: het proces heeft dan ruim een miljoen objecten van
+   eerdere tests, een volle ronde van de garbage collector kost 0,94 s, en de gemeten vraag die
+   erna kwam duurde 961 ms. De fixture `lt` zet de heap nu eerst in `gc.freeze`, zoals de
+   tijdtests van subconv al deden (`85b17a4`); het afval van de app zelf telt nog mee
+   en de grens van 200 ms blijft. Met de spion daarna: geen gemeten vraag boven 200 ms.
+2. **`test_de_speler_telt_haperen`**: `played_s` 10,34 voor een bron van 10 s. De virtuele speler
+   zette zijn plek hooguit tot wat binnen was, maar telde de hele tik; een late tik telde zo meer
+   dan er gespeeld werd (`691ddd2`). Dat raakte ook het verslag van de echte belastingtest: een
+   speler die tegen de rand van zijn buffer zit, kreeg te veel gespeelde tijd. De nieuwe test
+   geeft één tik 4,5 s laat: eerst 5,0 s gespeeld voor een segment van 2 s, nu 2,0 s.
+3. **`test_een_rij_conversies_loopt_door`** (office, fase 4): één conversie nog `pending` na
+   13 s. Een gemiste wekker in `office/convert.py`: de tweede conversie zette zich in de rij en
+   sloeg daarna haar uitstel op; kwam het slot precies daartussen vrij, dan zag `_next` haar taak
+   nog lopend, haalde haar uit de rij, en bleef het uitstel van 60 s staan (`78f0621`). Nu gaat ze
+   pas in de rij als haar taak `queued` is, en is het slot dan al vrij, dan zet ze zelf de
+   volgende klaar. De nieuwe test houdt het uitstel vast tot het slot vrij is; zonder de
+   wijziging stond de taak daarna 60 s later in de rij.
+
+De laatste ronde (hierboven) liep op `78f0621`. Op `/` bleef 16 GB vrij en het laagste
+`MemAvailable` tijdens de runs was 13,5 GiB.
