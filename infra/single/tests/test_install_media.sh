@@ -427,6 +427,10 @@ for path in sys.argv[1:]:
     want_pre = "" if found.get("ref") == "main" else "PLATFORM_BRANCH=%s " % BRANCH
     if "ref" in found and "pre" in found and found["pre"] != want_pre:
         problems.append("%s: PLATFORM_BRANCH past niet bij het adres (%s)" % (name, found["ref"]))
+    if found.get("pre"):  # stap 4 met PLATFORM_BRANCH: zonder de commit haalt hij de branch
+        for i, line in enumerate(lines):
+            if "`PLATFORM_SRC_REF` haalt het script `main`" in line:
+                problems.append("%s r. %d: 'haalt het script main', maar stap 4 heeft PLATFORM_BRANCH" % (name, i + 1))
     for line in lines:
         if "v0.6.0" in line and "als die er is" not in line:
             problems.append("%s noemt v0.6.0 zonder 'als die er is'" % name)

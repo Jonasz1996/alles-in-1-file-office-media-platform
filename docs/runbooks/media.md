@@ -167,8 +167,8 @@ die van office (`docs/runbooks/office.md`, "De app terugrollen"). Office blijft 
    ```bash
    PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=263abd74d914a9811901e7570ed410866364f4b5 bash < /root/platform-install.sh
    ```
-   Zonder `PLATFORM_SRC_REF` haalt het script `main`, en die zet het schema bij de start weer
-   vooruit. Het script ziet zelf dat 0.6.0 geen media heeft, en haalt de worker weg. De
+   Zonder `PLATFORM_SRC_REF` haalt het script de nieuwste versie (van de branch in
+   `PLATFORM_BRANCH`, anders van `main`), en die zet het schema bij de start weer vooruit. Het script ziet zelf dat 0.6.0 geen media heeft, en haalt de worker weg. De
    eindtekst zegt `Media: uit, want deze versie van het platform heeft nog geen media.`
 
 Daarna zijn de bibliotheken, de voortgang ("verder kijken"), de afspeellijsten en de metadata weg
