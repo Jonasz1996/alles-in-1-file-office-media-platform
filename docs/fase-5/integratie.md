@@ -533,6 +533,14 @@ van Jonas; zijn vragen in de [README](README.md#vragen-voor-jonas) bleven gelijk
   controle in het functiedeel van de installatietest leest de standaard uit `MediaConfig` en
   weigert dan "uit te zetten" naast MusicBrainz in de README's en het runbook; op het oude runbook
   FOUT, nu 127 van de 127.
+- **K6, "De schijf in de sandbox" in m4.md stond open zonder markering: gefixt (docs).**
+  Nagegaan: het punt had geen noot "Bij de integratie" en stond hier nergens. Het is een
+  voorwaarde van de checks, geen fout: de grens van 10 GiB (Keuze 31) heeft tests
+  (`test_schijf_vol`, en 503 `disk` in `test_media_cache.py` en `test_media_stream_audio.py`), de
+  checks van deel 1 liepen op `/dev/shm`, die van deel 2–4 en deze review met ten minste 16 GB vrij
+  op `/`. m4.md zegt dat nu, en wat het op de LXC is: de grens zelf, onder 10 GiB vrij op
+  `/tank/platform` geen remux of omzetting en de melding `media_cache_full` op `/beheer`. Een
+  vaste `disk_free` in de tests blijft niet gedaan (dan las geen test meer de echte vrije ruimte).
 
 ## De checks van deel 1
 
