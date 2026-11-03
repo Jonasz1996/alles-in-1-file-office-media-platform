@@ -55,7 +55,7 @@ async def test_van_0008_naar_0009_en_terug(tmp_path):
         assert await conn.scalar(sa.text("SELECT count(*) FROM blob")) == 1
 
     # En weer omhoog gaat ook
-    await migrate(settings, command.upgrade, "head")
+    await migrate(settings, command.upgrade, "0009")
     assert (await schema(settings))["alembic_version"] == ["0009"]
 
 

@@ -64,10 +64,23 @@ HOUSEKEEPING = 3600.0
 ERROR_CHARS = 2000
 _KICK = "platform.jobs.kick"  # in session.info: welke rijen na de commit gewekt worden
 DEFAULT_LANE = "default"
-# De rijen van Keuze 14 en preview, in de volgorde waarin de lifespan ze start
-LANES = ("default", "preview", "media_scan", "media", "media_net", "import")
-# De rijen die ook zonder media draaien
-BASE_LANES = ("default", "preview")
+# De rijen van Keuze 14 (fase 5), preview, en index en ocr van fase 6, in de volgorde waarin de
+# lifespan ze start
+LANES = (
+    "default",
+    "preview",
+    "index",
+    "media_scan",
+    "media",
+    "media_net",
+    "import",
+    "ocr",
+)
+# De rijen die ook zonder media draaien: index (zoeken, fase 6) hoort daarbij, want tekst lezen
+# gaat buiten de zandbak als er geen mediaworker is
+BASE_LANES = ("default", "preview", "index")
+# De rijen van media (fase 5)
+MEDIA_LANES = ("media_scan", "media", "media_net", "import")
 # Wat iemand nu bekijkt (to_front): run_after vóór FRONT gaat voor alles wat gewoon klaarstaat
 FRONT = datetime(2000, 1, 1, tzinfo=UTC)
 # Een taak die minder dan zoveel seconden geleden naar voren ging, blijft staan: de tijdlijn die
@@ -687,11 +700,16 @@ class Runner:
 
 
 def active_lanes(settings: Settings) -> tuple[str, ...]:
-    """De rijen die draaien. De rijen naast default en preview zijn allemaal van media: zonder
-    PLATFORM_MEDIA_ENABLED draaien alleen die twee, zoals in 0.6.0 (toen zat preview in
-    default). Een taak van media blijft dan in de rij staan tot media weer aan gaat (default
-    pakt hem niet)."""
-    return LANES if settings.media_enabled else BASE_LANES
+    """De rijen die draaien (fase 6, §3.3). default, preview en index altijd; de rijen van
+    media alleen met PLATFORM_MEDIA_ENABLED, zoals in 0.6.0 (toen zat preview in default); ocr
+    alleen met media en PLATFORM_OCR_ENABLED, want OCR draait in de zandbak van de mediaworker.
+    Een taak van een rij die niet draait, blijft staan tot die rij aan gaat (default pakt hem
+    niet)."""
+    return (
+        BASE_LANES
+        + (MEDIA_LANES if settings.media_enabled else ())
+        + (("ocr",) if settings.media_enabled and settings.ocr_enabled else ())
+    )
 
 
 async def start_runners(settings: Settings, lanes: Sequence[str] | None = None) -> list[Runner]:

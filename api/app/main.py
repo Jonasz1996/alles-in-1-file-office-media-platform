@@ -42,12 +42,16 @@ from app.routers import (
     admin,
     admin_media,
     admin_office,
+    admin_search,
     albums,
+    albums_rule,
     archive,
     auth,
     batch,
+    duplicates,
     files,
     folder_tree,
+    geo,
     groups,
     jobs_admin,
     media_library,
@@ -56,12 +60,18 @@ from app.routers import (
     media_play,
     media_progress,
     media_subs,
+    memories,
     myshares,
+    ocr,
     office,
     office_internal,
     office_new,
     office_pdf,
+    pages_words,
+    people,
+    photo_prefs,
     photos,
+    photos_map,
     public,
     public_media,
     search,
@@ -75,6 +85,7 @@ from app.routers import (
 )
 from app.routers import events as live_events
 from app.routers import previews as preview_routes
+from app.search import hooks as search_hooks
 from app.security import RateLimiter
 
 log = logging.getLogger("platform")
@@ -86,9 +97,13 @@ log = logging.getLogger("platform")
 # downloadas: die JSON draagt het sessietoken van DS (tokenSession, 30 dagen geldig; spike
 # A6). cmd loopt door tot & of witruimte, ook over aanhalingstekens heen, voor het geval een
 # client de JSON rauw stuurt.
+# q: een zoekvraag kan zeggen wat er in een bestand staat (fase 6, Keuze 13)
 SECRET_PARAMS = re.compile(
-    r"([?&](?:token|sig|key|md5|shardkey|cmd)=)(?:(?<=cmd=)[^&\s]*|[^&\s\"]*)"
+    r"([?&](?:token|sig|key|md5|shardkey|cmd|q)=)(?:(?<=cmd=)[^&\s]*|[^&\s\"]*)"
 )
+# Onder /search, /photos en /people gaat de hele query string weg: filters op een plaats, een
+# persoon, een kaartvak of een datum zeggen ook iets over iemands foto's (fase 6, Keuze 13)
+QUERY_PATHS = re.compile(r"(/api/v1/(?:search|photos|people)(?:/[^?\s\"]*)?\?)[^\s\"]*")
 LINK_PATH = re.compile(r"((?:^|[\s\"])/s/)[^/?#\s\"]+")
 # De sid van een afspeelsessie staat in het pad (fase 5, Keuze 35): /api/v1/stream/<node>.<geheim>/…
 # Het hele stuk na /api/v1/stream/ gaat weg, wat er ook in staat (geen punt, een lege naam van de
@@ -98,6 +113,7 @@ STREAM_PATH = re.compile(r"(/api/v1/stream/+(?:[a-z0-9-]{1,63}\.)?)[^/?\s\"]+")
 
 
 def _hide(value: str) -> str:
+    value = QUERY_PATHS.sub(r"\1***", value)
     value = SECRET_PARAMS.sub(r"\1***", value)
     return STREAM_PATH.sub(r"\1***", LINK_PATH.sub(r"\1***", value))
 
@@ -481,6 +497,9 @@ async def lifespan(app: FastAPI):
         await photometa.enqueue_backfill(settings)
     except Exception:  # noqa: BLE001 - zonder opnamedatums werkt de rest gewoon
         log.exception("Metadata van bestaande foto's klaarzetten mislukt")
+    # Zoeken en foto's (fase 6): de backfills van de pakketten (tekst, hash, plaatsen); zonder
+    # aanmelding gebeurt er niets. Een fout komt in het log, de app start gewoon
+    await search_hooks.backfill(settings)
     # De voorgeladen renderprocessen voor previews; lukt het niet, dan elk een eigen proces
     await previews.start_forkserver()
     # Een Runner per rij (Keuze 14 van fase 5); het opruimwerk alleen in default
@@ -543,6 +562,18 @@ app.include_router(office.router)
 app.include_router(office_pdf.router)
 app.include_router(office_new.router)
 app.include_router(admin_office.router)
+# Zoeken en foto's (fase 6, §3.4): zoeken via select_engine; de rest zijn stubs van Z0 die
+# 501 not_built geven tot hun pakket ze vult
+app.include_router(pages_words.router)
+app.include_router(ocr.router)
+app.include_router(geo.router)
+app.include_router(photos_map.router)
+app.include_router(duplicates.router)
+app.include_router(people.router)
+app.include_router(memories.router)
+app.include_router(photo_prefs.router)
+app.include_router(albums_rule.router)
+app.include_router(admin_search.router)
 # Media (fase 5, §2.0): stubs van M0 die 503 media_off geven tot hun pakket ze vult. Alles onder
 # /api/v1/stream/ gaat eerst langs sessions.guard (regel 6, de dependency van elke router)
 app.include_router(media_library.router)

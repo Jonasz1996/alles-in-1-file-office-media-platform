@@ -283,6 +283,8 @@ class FakeWorker:
             op = Op(message.get("op"))
         except ValueError:
             raise OpError(Code.UNKNOWN_OP, "onbekende opdracht") from None
+        if op not in A.ARGS:  # zoals de echte worker: text en ocr (fase 6) nog niet
+            raise OpError(Code.NOT_BUILT, f"{op.value} is nog niet gebouwd")
         try:
             parsed = A.parse(op, message.get("args", {}))
         except ValueError as exc:

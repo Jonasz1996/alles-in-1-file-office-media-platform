@@ -33,7 +33,8 @@ async def test_media_uit_draait_niets_van_media(tmp_path, monkeypatch):
         assert state.enabled is False and not media_runtime.enabled(app)
         assert getattr(app.state, "media_local", None) is None
         assert getattr(app.state, "media_health", None) is None
-        assert lanes_running() == {"default", "preview"}  # preview ook zonder media
+        # preview en index ook zonder media (fase 6: index leest tekst, ook buiten de zandbak)
+        assert lanes_running() == {"default", "preview", "index"}
         assert media_runtime.SWEEP not in jobs._housekeeping
         assert media_runtime.PHOTOMETA not in jobs._housekeeping  # integratie, punt 3
         assert media_runtime.PREVIEWS not in jobs._housekeeping
@@ -76,7 +77,8 @@ async def test_media_aan_start_en_stopt_met_de_app(tmp_path, monkeypatch):
         worker = app.state.media_local
         assert worker is not None and worker.process.returncode is None
         assert app.state.media_health is not None
-        assert lanes_running() == set(jobs.LANES)
+        # Alles behalve ocr: die rij draait pas met PLATFORM_OCR_ENABLED (fase 6, X1)
+        assert lanes_running() == set(jobs.LANES) - {"ocr"}
         assert media_runtime.SWEEP in jobs._housekeeping
         assert media_runtime.PHOTOMETA in jobs._housekeeping
         assert media_runtime.PREVIEWS in jobs._housekeeping

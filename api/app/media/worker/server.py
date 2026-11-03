@@ -209,6 +209,10 @@ class Worker:
             op = Op(message.get("op"))
         except ValueError:
             raise OpError(Code.UNKNOWN_OP, "onbekende opdracht") from None
+        if op not in A.ARGS:
+            # Een opdracht van een pakket dat nog komt (text in Z2, ocr in X1): nog geen
+            # argumenten, dus ook geen fd's om te controleren
+            raise OpError(Code.NOT_BUILT, f"{op.value} is nog niet gebouwd")
         try:
             parsed = A.parse(op, message.get("args", {}))
         except ValueError as exc:

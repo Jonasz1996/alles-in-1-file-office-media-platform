@@ -24,7 +24,9 @@ Andere soorten verzoeken (veld "mode"):
 - "page": {"source", "out", "pages": [n, ...], "width"} -> pagina's van een PDF als
   out/<n>.webp, zo breed als width (de viewer, routers/viewer.py);
 - "docinfo": {"source"} -> {"state", "pages", "page_sizes", "toc", "labels"} van een PDF;
-- "meta": alleen metadata van veel bestanden (render_meta.run_meta, P5).
+- "meta": alleen metadata van veel bestanden (render_meta.run_meta, P5);
+- "text": de tekst uit een document (fase 6, Z2; nu een stub die "none" geeft);
+- "ocr_page": één pagina of foto door tesseract (fase 6, X1; nu een stub).
 
 serve() is de forkserver van previews.py: één voorgeladen proces dat per verzoek een kind maakt
 met fork, in plaats van elke keer een nieuwe Python met Pillow (zie daar).
@@ -1323,6 +1325,24 @@ def pages(request: dict) -> dict:
     return {"state": "ready", "pages": done}
 
 
+def run_text(request: dict) -> dict:
+    """mode "text" (fase 6, Z2): de tekst uit een document lezen. Hier draait het buiten de
+    zandbak, als er geen mediaworker is (§3.3); met media gaat dezelfde code door de worker
+    (Op.TEXT). Z0 is een stub: hij leest nog niets en geeft "none", dus zoeken vindt tot Z2
+    alleen namen. De velden zijn die van extract.result.Extracted, zonder sha.
+    """
+    return {"state": "none", "chars": 0, "truncated": False, "scan_pages": [], "meta": "",
+            "code": None}  # fmt: skip
+
+
+def run_ocr_page(request: dict) -> dict:
+    """mode "ocr_page" (fase 6, X1): één pagina of foto door tesseract. Z0 is een stub: zonder
+    tesseract in het image kan dit niet, en X1 bouwt het (Vraag 1). "none" betekent: geen
+    tekst gevonden; code zegt waarom (ocr_missing: tesseract staat er niet).
+    """
+    return {"state": "none", "chars": 0, "truncated": False, "code": "ocr_missing"}
+
+
 def main() -> None:
     request = json.loads(sys.stdin.buffer.read())
     if request.get("nice"):
@@ -1339,6 +1359,10 @@ def main() -> None:
         result = pages(request)
     elif request.get("mode") == "docinfo":
         result = docinfo(request)
+    elif request.get("mode") == "text":
+        result = run_text(request)  # de tekst uit een document (fase 6, Z2)
+    elif request.get("mode") == "ocr_page":
+        result = run_ocr_page(request)  # één pagina door tesseract (fase 6, X1)
     else:
         result = render(request)
     sys.stdout.write(json.dumps(result))

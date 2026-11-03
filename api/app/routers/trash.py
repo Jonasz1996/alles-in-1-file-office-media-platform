@@ -21,7 +21,7 @@ from itertools import batched
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
@@ -33,6 +33,7 @@ from app.models import Node, Setting, User
 # De hulpfuncties via de module: tests vervangen ze daar (monkeypatch op routers.files)
 from app.routers import files
 from app.routers.files import NodeOut, Store
+from app.search import purge as search_purge
 from app.security import CurrentUser
 from app.storage import BlobStore
 from app.text import fold
@@ -162,10 +163,8 @@ async def purge(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs: 
         refs = Counter(n.blob_id for n in rows if n.blob_id)
         refs += await files.drop_versions(session, ids)
         await files.add_refs(session, refs, sign=-1)
-        for chunk in batched(reversed(ids), 500):  # kinderen voor hun ouders
-            await session.execute(
-                delete(Node).where(Node.id.in_(chunk)).execution_options(synchronize_session=False)
-            )
+        # Kinderen voor hun ouders, via de ene helper van Keuze 11 (fase 6)
+        await search_purge.delete_nodes(session, list(reversed(ids)))
         await session.commit()
     await files.notify(session, node, "node.deleted", seen=seen, below=below)
     await files.collect_garbage(session, blobs)
@@ -375,10 +374,8 @@ async def purge_locked(session: AsyncSession, nodes: list[Node]) -> tuple[dict, 
     refs = Counter(blob_id for _, blob_id in rows if blob_id)
     refs += await files.drop_versions(session, all_ids)
     await files.add_refs(session, refs, sign=-1)
-    for chunk in batched(all_ids, BATCH):  # kinderen voor hun ouders
-        await session.execute(
-            delete(Node).where(Node.id.in_(chunk)).execution_options(synchronize_session=False)
-        )
+    # all_ids staat al diepste eerst (_subtree), zoals de helper van Keuze 11 wil
+    await search_purge.delete_nodes(session, all_ids)
     return seen, below
 
 

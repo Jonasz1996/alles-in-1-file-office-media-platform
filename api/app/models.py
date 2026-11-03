@@ -7,6 +7,12 @@ timeZone "UTC". Een tijd die echt UTC is (zoals creation_time van een video) zet
 om naar settings.timezone (zie app/photodate.py). Node.taken_day is dezelfde dag als
 JJJJMMDD-getal, om zonder SQL-dialect per dag of maand te groeperen. GPS en locatie slaan we
 in fase 3 nergens op; dat komt in fase 6.
+
+Fase 6 (migratie 0010): node.num, mpath, dead en ftype houden triggers in SQLite bij
+(app/search/schema.py). Ze staan hier als deferred met raiseload: een ORM-object kent ze niet
+(de trigger schrijft ze na de INSERT), dus wie ze nodig heeft, vraagt ze met een eigen select.
+Foto-gegevens over een plek, een persoon of tekst in een foto staan per node (Keuze 25a); wat
+over de inhoud zelf gaat, per blob.
 """
 
 import uuid
@@ -16,8 +22,11 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
+    Computed,
     Date,
     DateTime,
+    FetchedValue,
     Float,
     ForeignKey,
     Index,
@@ -35,6 +44,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+from app.search.schema import FTYPE_SQL
 from app.text import fold
 
 
@@ -183,6 +193,38 @@ class Node(Base):
     # en anders de lastModified van de client of het uploadmoment. taken_day = JJJJMMDD.
     taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     taken_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Fase 6, door triggers bijgehouden (zie boven): het vaste nummer (de rowid in FTS), het
+    # pad van nummers ('/1/7/42/'), of de node of een map erboven in de prullenbak ligt, en de
+    # soort (mime.FTYPES). Nooit zelf schrijven.
+    num: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        server_default=FetchedValue(),
+        server_onupdate=FetchedValue(),
+        deferred=True,
+        deferred_raiseload=True,
+    )
+    mpath: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        server_default=FetchedValue(),
+        server_onupdate=FetchedValue(),
+        deferred=True,
+        deferred_raiseload=True,
+    )
+    dead: Mapped[int] = mapped_column(
+        Integer,
+        server_default=text("0"),
+        server_onupdate=FetchedValue(),
+        deferred=True,
+        deferred_raiseload=True,
+    )
+    ftype: Mapped[str | None] = mapped_column(
+        Text, Computed(FTYPE_SQL, persisted=False), deferred=True, deferred_raiseload=True
+    )
+
+    # Geen RETURNING na een INSERT of UPDATE: dat gaf de waarden van vóór de AFTER-trigger
+    __mapper_args__ = {"eager_defaults": False}
 
     @property
     def etag(self) -> str:
@@ -222,6 +264,23 @@ class Upload(Base):
 @event.listens_for(Node.name, "set")
 def _search_name(target: Node, value: str | None, _old, _initiator) -> None:
     target.search_name = fold(value or "")
+
+
+# Fase 6 (0010): het nummer, de submap als bereik op het pad, de prullenbak als bereik, en de
+# levende nodes op datum en op soort (Keuze 4, 4a)
+_LIVE = text("dead = 0")
+Index("ix_node_num", Node.num, unique=True)
+Index("ix_node_mpath", Node.mpath)
+Index("ix_node_trash", Node.mpath, sqlite_where=text("deleted_at IS NOT NULL"))
+Index("ix_node_live_mod", Node.modified_at.desc(), Node.num.desc(), sqlite_where=_LIVE)
+Index(
+    "ix_node_ftype_mod",
+    Node.ftype,
+    Node.modified_at.desc(),
+    Node.num.desc(),
+    sqlite_where=_LIVE,
+)
+Index("ix_node_owner_blob", Node.owner_id, Node.blob_id, sqlite_where=_LIVE)
 
 
 class Version(Base):
@@ -370,6 +429,10 @@ class AlbumItem(Base):
         ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # Fase 6: 'hand' of 'rule' (een slim album, Z6); shared 0 = alleen de eigenaar ziet het
+    # (een regel-item in een gedeeld album zonder share_new, Keuze 42)
+    source: Mapped[str] = mapped_column(Text, default="hand", server_default="hand")
+    shared: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
 
 class OfficeSession(Base):
@@ -687,3 +750,292 @@ class MediaPlaylistItem(Base):
     node_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("node.id", ondelete="CASCADE"))
     position: Mapped[int] = mapped_column(Integer)
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+# --- Fase 6: zoeken en foto's (migratie 0010, bouwontwerp §3.1) ----------------------------
+
+
+class SearchSeq(Base):
+    """De teller voor node.num (één rij, id = 1); node_ai neemt het volgende nummer."""
+
+    __tablename__ = "search_seq"
+    __table_args__ = (CheckConstraint("id = 1"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    next: Mapped[int] = mapped_column(Integer)
+
+
+class SearchState(Base):
+    """De stand van een herbouw in stukken (één rij, id = 1). cursor NULL: geen herbouw; anders
+    is FTS gevuld tot en met dit num, en schrijven de triggers alleen daaronder (Keuze 12)."""
+
+    __tablename__ = "search_state"
+    __table_args__ = (CheckConstraint("id = 1"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    cursor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    what: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class BlobText(Base):
+    """De tekst van een inhoud (Z2). Alleen via analysis.write_text(): een gewone INSERT na een
+    SELECT, of een UPDATE; nooit INSERT OR REPLACE (de triggers houden FTS gelijk)."""
+
+    __tablename__ = "blob_text"
+
+    blob_sha: Mapped[str] = mapped_column(
+        ForeignKey("blob.sha256", ondelete="CASCADE"), primary_key=True
+    )
+    body: Mapped[str] = mapped_column(Text, default="", server_default="")
+    ocr: Mapped[str] = mapped_column(Text, default="", server_default="")
+    meta: Mapped[str] = mapped_column(Text, default="", server_default="")
+    truncated: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class OcrPage(Base):
+    """De woorden van één pagina met hun plek (X1): words is zlib van JSON [[t, x, y, w, h]]."""
+
+    __tablename__ = "ocr_page"
+
+    blob_sha: Mapped[str] = mapped_column(
+        ForeignKey("blob.sha256", ondelete="CASCADE"), primary_key=True
+    )
+    page: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    angle: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    words: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+class Analysis(Base):
+    """Eén stap van de analyse per inhoud (Z2): text, hash of ocr (analysis.Step). state:
+    wait, busy, done, none, skip, failed. owner_id: wie hem het eerst nodig had (voor de
+    volgorde per gebruiker); weg met de gebruiker."""
+
+    __tablename__ = "analysis"
+    __table_args__ = (Index("ix_analysis_todo", "step", "state", "owner_id", "queued_at"),)
+
+    blob_sha: Mapped[str] = mapped_column(
+        ForeignKey("blob.sha256", ondelete="CASCADE"), primary_key=True
+    )
+    step: Mapped[str] = mapped_column(String(8), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(8))
+    tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class BlobMeta(Base):
+    """Camera en objectief van een inhoud (Z3), gevouwen; gps: 1, 0 of NULL (onbekend). Nooit
+    de plek zelf: die staat per node in photo_geo."""
+
+    __tablename__ = "blob_meta"
+    __table_args__ = (Index("ix_blob_meta_camera", "camera"),)
+
+    blob_sha: Mapped[str] = mapped_column(
+        ForeignKey("blob.sha256", ondelete="CASCADE"), primary_key=True
+    )
+    camera: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lens: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class PhotoGeo(Base):
+    """De plek van een foto, per node en alleen voor de eigenaar (Z3, Keuze 25a). x16 en y16:
+    de tegel op zoom 16; place_id: in places.sqlite. source: exif, xmp of video."""
+
+    __tablename__ = "photo_geo"
+    __table_args__ = (
+        Index("ix_photo_geo_tile", "owner_id", "x16", "y16"),
+        Index("ix_photo_geo_place", "owner_id", "place_id"),
+        Index("ix_photo_geo_country", "owner_id", "country"),
+    )
+
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    lat: Mapped[float] = mapped_column(Float)
+    lon: Mapped[float] = mapped_column(Float)
+    alt: Mapped[float | None] = mapped_column(Float, nullable=True)
+    x16: Mapped[int] = mapped_column(Integer)
+    y16: Mapped[int] = mapped_column(Integer)
+    place_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    country: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    admin1: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(8))
+
+
+class BlobHash(Base):
+    """De pHash van een inhoud (Z3): state ok, flat of none; phash 64 bits met teken; h0–h3 de
+    vier stukken van 16 bits, om bijna-gelijke te vinden."""
+
+    __tablename__ = "blob_hash"
+    __table_args__ = (
+        Index("ix_hash_0", "h0"),
+        Index("ix_hash_1", "h1"),
+        Index("ix_hash_2", "h2"),
+        Index("ix_hash_3", "h3"),
+    )
+
+    blob_sha: Mapped[str] = mapped_column(
+        ForeignKey("blob.sha256", ondelete="CASCADE"), primary_key=True
+    )
+    state: Mapped[str] = mapped_column(String(8))
+    phash: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    h0: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    h1: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    h2: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    h3: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    version: Mapped[int] = mapped_column(Integer)
+
+
+class DupPair(Base):
+    """Twee inhouden die op elkaar lijken (Z3), a < b. level: zeker of lijkt."""
+
+    __tablename__ = "dup_pair"
+    __table_args__ = (
+        CheckConstraint("a < b"),
+        Index("ix_dup_b", "b"),
+        {"sqlite_with_rowid": False},
+    )
+
+    a: Mapped[str] = mapped_column(ForeignKey("blob.sha256", ondelete="CASCADE"), primary_key=True)
+    b: Mapped[str] = mapped_column(ForeignKey("blob.sha256", ondelete="CASCADE"), primary_key=True)
+    dist: Mapped[int] = mapped_column(Integer)
+    mad: Mapped[float] = mapped_column(Float)
+    level: Mapped[str] = mapped_column(String(8))
+
+
+class DupIgnore(Base):
+    """Een groep duplicaten die een gebruiker niet meer wil zien; key = sha256 van de
+    gesorteerde shas."""
+
+    __tablename__ = "dup_ignore"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+
+class Person(Base):
+    """Een persoon, alleen van de eigenaar (Z6)."""
+
+    __tablename__ = "person"
+    __table_args__ = (Index("ix_person_owner", "owner_id", "hidden", "search_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(Text)
+    search_name: Mapped[str] = mapped_column(Text)
+    hidden: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    cover_node: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("node.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PhotoPerson(Base):
+    """Een persoon op een foto, per node (Z6, S8); het kader is optioneel. source: hand of
+    auto (X2)."""
+
+    __tablename__ = "photo_person"
+    __table_args__ = (
+        Index("ix_pp_node", "node_id"),
+        Index("ix_pp_owner", "owner_id", "person_id"),
+    )
+
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("person.id", ondelete="CASCADE"), primary_key=True
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    h: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(8), default="hand", server_default="hand")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PhotoOcr(Base):
+    """Tekst in een foto, per node en alleen voor de eigenaar (X1, S8). De triggers po_* houden
+    FTS gelijk; nooit INSERT OR REPLACE."""
+
+    __tablename__ = "photo_ocr"
+
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    text: Mapped[str] = mapped_column(Text, default="", server_default="")
+    words: Mapped[bytes] = mapped_column(LargeBinary)
+    angle: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PhotoPref(Base):
+    """De foto-instellingen van een gebruiker (app/prefs.py); zonder rij gelden de
+    standaarden van PHOTO_PREFS."""
+
+    __tablename__ = "photo_pref"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    location: Mapped[str] = mapped_column(String(8), default="mij", server_default="mij")
+    memories: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    ocr_photos: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    faces: Mapped[str] = mapped_column(String(8), default="uit", server_default="uit")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MemoryHide(Base):
+    """Een herinnering die iemand niet meer wil zien: kind day, folder of person."""
+
+    __tablename__ = "memory_hide"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    kind: Mapped[str] = mapped_column(String(8), primary_key=True)
+    ref: Mapped[str] = mapped_column(String(255), primary_key=True)
+
+
+class AlbumRule(Base):
+    """De regel van een slim album (Z6): rule is JSON (SearchParams zonder offset, limit en
+    after). share_new 0: nieuwe regel-items zijn alleen voor de eigenaar (Keuze 42)."""
+
+    __tablename__ = "album_rule"
+
+    album_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    rule: Mapped[str] = mapped_column(Text)
+    share_new: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    refreshed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class AlbumSkip(Base):
+    """Een foto die de eigenaar uit een slim album haalde: de regel zet hem er niet terug."""
+
+    __tablename__ = "album_skip"
+
+    album_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )

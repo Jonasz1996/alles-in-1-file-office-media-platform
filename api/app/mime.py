@@ -163,6 +163,32 @@ DOCUMENT_TYPES = frozenset(
     }
 )
 CATEGORIES = ("folder", "image", "video", "audio", "pdf", "document", "archive", "other")
+# De soort voor zoeken (fase 6): node.ftype, een virtuele kolom met een CASE in SQL
+# (app/search/schema.py, migratie 0010). Een archief is daar "other"; rekenbladen en
+# presentaties zijn een eigen soort. tests/search/test_ftype.py eist dat de SQL en ftype()
+# hieronder hetzelfde zeggen; wie een groep verandert, maakt dus ook een nieuwe migratie.
+FTYPES = (
+    "folder",
+    "image",
+    "video",
+    "audio",
+    "pdf",
+    "document",
+    "spreadsheet",
+    "presentation",
+    "other",
+)
+SPREADSHEET_TYPES = frozenset(
+    {
+        XLSX,
+        ZIP_BY_EXT["xlsm"],
+        ODS,
+        OLE_BY_EXT["xls"],
+        TEXT_BY_EXT["csv"],
+        TEXT_BY_EXT["tsv"],
+    }
+)
+PRESENTATION_TYPES = frozenset({PPTX, ZIP_BY_EXT["pptm"], ODP, OLE_BY_EXT["ppt"]})
 
 FTYP_IMAGE = {
     b"avif": "image/avif",
@@ -479,6 +505,21 @@ def category(mime: str | None, kind: str = "file") -> str:
     if mime.startswith("text/") or mime in DOCUMENT_TYPES:
         return "document"
     return "other"
+
+
+def ftype(mime: str | None, kind: str = "file") -> str:
+    """De soort voor zoeken; zie FTYPES. Zelfde uitkomst als node.ftype in de database, voor
+    een mime zoals sniff() hem geeft (kleine letters, zonder parameters)."""
+    if kind == "dir":
+        return "folder"
+    if kind != "file" or not mime:
+        return "other"
+    if mime in SPREADSHEET_TYPES:
+        return "spreadsheet"
+    if mime in PRESENTATION_TYPES:
+        return "presentation"
+    found = category(mime)
+    return "other" if found == "archive" else found
 
 
 def read_head(path) -> bytes:

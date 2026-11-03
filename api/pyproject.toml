@@ -48,5 +48,6 @@ markers = [
     "media: met de lokale mediaworker en echte ffmpeg (job api-media)",
     "media_perf: prestatiemeting van media; alleen een rapport",
     "provider_real: tegen de echte metadata-providers, met een sleutel; nooit in CI",
+    "zoek_perf: prestatiemeting van zoeken (fase 6, job zoek-perf); niet in de gewone run",
 ]
-addopts = "--strict-markers -m 'not media and not media_perf and not provider_real'"
+addopts = "--strict-markers -m 'not media and not media_perf and not provider_real and not zoek_perf'"

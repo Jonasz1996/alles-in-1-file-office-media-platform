@@ -1,9 +1,9 @@
-"""Zoeken op naam, soort en tag, en tags zelf (per gebruiker: een tag op een bestand ziet
-alleen wie hem maakte).
+"""Zoeken, en tags zelf (per gebruiker: een tag op een bestand ziet alleen wie hem maakte).
 
-Zoeken gaat met een recursieve CTE vanaf de gekozen map omlaag (zonder map: vanaf de eigen
-hoofdmap en alles wat met je gedeeld is), en stopt bij wat in de prullenbak ligt: zo komt
-niets uit (of onder) de prullenbak in de resultaten. Werkt op SQLite en PostgreSQL.
+Zoeken gaat via de zoekmachine van app/search/engine.py (fase 6, Keuze 10): select_engine geeft
+tot Z1 altijd LikeFallback, de zoekfunctie van 0.7.0 (app/search/like.py). De vraag blijft
+die van 0.7.0 (q, één type, één tag, in, limit tot 200); het antwoord is SearchPage, met
+results en more zoals in 0.7.0 en de velden van fase 6 erbij. Z1 maakt de vraag van §3.4.
 """
 
 import asyncio
@@ -11,36 +11,28 @@ import re
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import and_, delete, func, not_, or_, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 
-from app import access, errors, events
+from app import errors, events
+from app.config import Settings, get_settings
 from app.db import Session
-from app.mime import ARCHIVE_TYPES, DOCUMENT_TYPES
 from app.models import Node, NodeTag, Tag, User
-from app.routers.files import (
-    NodeOut,
-    TagRef,
-    describe,
-    get_dir,
-    get_tree_access,
-    is_trashed,
-    tag_order,
-    tags_by_node,
-    tree,
-)
+from app.routers.files import TagRef, get_tree_access, tag_order, tree
+from app.search.engine import read_conn_info, select_engine
+from app.search.like import own_tag, search_roots
+from app.search.types import SearchPage, SearchParams, Suggestions
 from app.security import CurrentUser
 from app.text import CONTROL, fold
 
 router = APIRouter(prefix="/api/v1", tags=["zoeken"])
 
+# De soorten van 0.7.0 (mime.category, met archive); Z1 maakt er de soorten van node.ftype van
 Category = Literal["folder", "image", "video", "audio", "pdf", "document", "archive", "other"]
 COLOR = re.compile(r"^(#[0-9a-f]{6})?$")
-MAX_WORDS = 10
 MAX_TAG_NAME = 50
 # Zoveel tags heeft een gebruiker hooguit (bij elke nieuwe naam worden ze allemaal vergeleken)
 MAX_TAGS = 500
@@ -54,145 +46,44 @@ def _tag_lock(user_id: uuid.UUID) -> asyncio.Lock:
     return _tag_locks.setdefault(user_id, asyncio.Lock())
 
 
-class PathPart(BaseModel):
-    id: uuid.UUID
-    name: str
-
-
-class Hit(BaseModel):
-    node: NodeOut
-    # Van de hoofdmap tot en met de map waar het in staat; voor wat met je gedeeld is vanaf de
-    # gedeelde map (leeg als het de gedeelde map zelf is)
-    path: list[PathPart]
-
-
-class SearchResult(BaseModel):
-    results: list[Hit]
-    more: bool
-
-
-def of_category(category: str):
-    """SQL-voorwaarde die hetzelfde zegt als mime.category()."""
-    if category == "folder":
-        return Node.kind == "dir"
-    mime = Node.mime
-    groups = {
-        "archive": mime.in_(ARCHIVE_TYPES),
-        "pdf": mime == "application/pdf",
-        "image": mime.like("image/%"),
-        "video": mime.like("video/%"),
-        "audio": mime.like("audio/%"),
-        "document": or_(mime.like("text/%"), mime.in_(DOCUMENT_TYPES)),
-    }
-    if category == "other":
-        return and_(Node.kind == "file", or_(mime.is_(None), not_(or_(*groups.values()))))
-    return and_(Node.kind == "file", groups[category])
-
-
-async def own_tag(session: AsyncSession, user: User, tag_id: uuid.UUID) -> Tag:
-    tag = await session.get(Tag, tag_id, populate_existing=True)
-    if tag is None or tag.owner_id != user.id:
-        raise errors.fail(404, "tag_not_found", "Tag niet gevonden")
-    return tag
-
-
-async def paths(session: AsyncSession, nodes: list[Node]) -> dict[uuid.UUID, list[PathPart]]:
-    """Het pad naar elk van deze nodes, met één recursieve query omhoog."""
-    parents = {n.parent_id for n in nodes if n.parent_id}
-    if not parents:
-        return {}
-    up = (
-        select(Node.id, Node.parent_id, Node.name)
-        .where(Node.id.in_(parents))
-        .cte("up", recursive=True)
-    )
-    above = aliased(Node)
-    up = up.union(select(above.id, above.parent_id, above.name).where(above.id == up.c.parent_id))
-    known = {row.id: row for row in await session.execute(select(up))}
-    result = {}
-    for node in nodes:
-        chain, current = [], node.parent_id
-        while current in known and len(chain) <= len(known):
-            row = known[current]
-            chain.append(PathPart(id=row.id, name=row.name))
-            current = row.parent_id
-        result[node.id] = list(reversed(chain))
-    return result
-
-
-async def search_roots(session: AsyncSession, user: User) -> list[uuid.UUID]:
-    """Waar zoeken zonder map begint: de eigen hoofdmap (niet voor gasten) en de bovenste
-    gedeelde mappen van anderen."""
-    roots = [r.node_id for r in await access.shared_roots(session, user.id)]
-    if user.role != "guest":
-        roots.append(user.root_id)
-    return roots
-
-
 @router.get("/search")
 async def search(
     user: CurrentUser,
     session: Session,
+    settings: Annotated[Settings, Depends(get_settings)],
     q: Annotated[str, Query(max_length=200)] = "",
     type_: Annotated[Category | None, Query(alias="type")] = None,
     tag: uuid.UUID | None = None,
     in_: Annotated[uuid.UUID | None, Query(alias="in")] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
-) -> SearchResult:
+) -> SearchPage:
     """Zoekt in map `in` en alles eronder, of zonder `in` in je eigen bestanden en alles wat
     met je gedeeld is. Elk woord van q moet in de naam staan (hoofdletters en accenten tellen
     niet). Mappen eerst, dan op naam. tag: alleen je eigen tags."""
-    if in_ is not None:
-        found = await get_dir(session, user, in_, "read")
-        if found.owner and await is_trashed(session, found.node):
-            raise errors.fail(404, "folder_not_found", "Map niet gevonden")
-        anchors, skip = [found.node.id], [found.node.id]
-    else:
-        anchors, skip = await search_roots(session, user), [user.root_id]
-    found = tree(anchors, live=True)
-    # Een album (met je gedeeld) staat buiten de boom: geen zoekresultaat
-    query = (
-        select(Node)
-        .join(found, Node.id == found.c.id)
-        .where(Node.id.not_in(skip), Node.kind != "album")
+    # Zonder controle gebouwd: de vraag van 0.7.0 past niet in de grenzen van SearchParams
+    # (archive als soort, limit tot 200). LikeFallback leest alleen q, types, tags, in_ en limit
+    params = SearchParams.model_construct(
+        q=q,
+        types=[type_] if type_ is not None else [],
+        tags=[tag] if tag is not None else [],
+        in_=in_,
+        limit=limit,
     )
-    for word in fold(q).split()[:MAX_WORDS]:
-        query = query.where(Node.search_name.contains(word, autoescape=True))
-    if type_ is not None:
-        query = query.where(of_category(type_))
-    if tag is not None:
-        await own_tag(session, user, tag)
-        query = query.where(
-            select(NodeTag.node_id)
-            .where(NodeTag.node_id == Node.id, NodeTag.tag_id == tag)
-            .exists()
-        )
-    rows = list(
-        (
-            await session.scalars(
-                query.order_by(Node.kind, Node.search_name, Node.id).limit(limit + 1)
-            )
-        ).all()
-    )
-    more, rows = len(rows) > limit, rows[:limit]
-    tags = await tags_by_node(session, user, [n.id for n in rows])
-    mine = [n for n in rows if n.owner_id == user.id]
-    where = await paths(session, mine)
-    # Van anderen: recht en pad in één query, het pad vanaf de gedeelde map
-    grants = await access.resolve(session, user.id, [n.id for n in rows if n.owner_id != user.id])
-    permissions = {n.id: "owner" for n in mine}
-    roots = set()
-    for node_id, grant in grants.items():
-        permissions[node_id] = grant.permission
-        where[node_id] = [PathPart(id=s.id, name=s.name) for s in grant.chain[:-1]]
-        if grant.root_id == node_id:
-            roots.add(node_id)
-    rows = [n for n in rows if n.id in permissions]  # wat intussen onzichtbaar werd
-    described = await describe(session, user, rows, permissions, tags=tags, roots=roots)
-    return SearchResult(
-        results=[Hit(node=out, path=where.get(out.id, [])) for out in described],
-        more=more,
-    )
+    engine = select_engine(settings, await read_conn_info(await session.connection()))
+    return await engine.search(session, user, params)
+
+
+@router.get("/search/suggest")
+async def suggest(
+    user: CurrentUser,
+    session: Session,
+    settings: Annotated[Settings, Depends(get_settings)],
+    q: Annotated[str, Query(min_length=1, max_length=200)],
+) -> Suggestions:
+    """Namen, personen, plaatsen, tags en albums voor het zoekveld, elk hooguit 5. Tot Z1 geeft
+    LikeFallback geen suggesties."""
+    engine = select_engine(settings, await read_conn_info(await session.connection()))
+    return await engine.suggest(session, user, q)
 
 
 class TagOut(TagRef):

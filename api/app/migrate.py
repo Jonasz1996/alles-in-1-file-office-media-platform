@@ -29,3 +29,11 @@ async def upgrade(settings: Settings) -> None:
 
     async with get_engine(settings).begin() as conn:
         await conn.run_sync(_run)
+    # Wat de database na de migratie kan (de FTS-tabellen van 0010 of niet): één keer lezen,
+    # dan hoeft de eerste zoekvraag dat niet te doen. Hier geïmporteerd: zoeken trekt de
+    # routers mee, en de CLI importeert dit bestand ook
+    from app.search import engine as search_engine
+
+    search_engine.forget(settings.db_url)
+    async with get_engine(settings).connect() as conn:
+        await search_engine.read_conn_info(conn)

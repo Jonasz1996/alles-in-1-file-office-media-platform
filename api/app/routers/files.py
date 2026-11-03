@@ -43,6 +43,7 @@ from app.media import hooks as media_hooks
 from app.mime import read_head, sniff
 from app.models import Blob, GroupMember, Node, NodeTag, Share, Tag, Upload, User, Version
 from app.routers.auth import used_bytes
+from app.search import hooks as search_hooks
 from app.security import CurrentUser, active_user, download_token, read_download_token
 from app.storage import BlobStore, TooLarge
 from app.text import CONTROL, fold
@@ -942,13 +943,16 @@ async def add_ref(
     size: int,
     mime: str | None = None,
     pdf_state: str | None = None,
+    owner: uuid.UUID | None = None,
 ) -> None:
     """ref_count + 1 in de database zelf, of een nieuwe blob-rij (en dan een taak voor de
     preview, die begint zodra de aanroeper commit). pdf_state geldt alleen voor een nieuwe
     blob (fase 4: "ask" voor een upload via een link). Bestaat de inhoud al, dan krijgt een
     mislukte preview (of een foto of video zonder) een nieuwe kans (previews.requeue), en een
     blob zonder bekende soort de soort van nu (een nieuwere app/mime.py kent hem misschien).
-    Alleen onder BlobStore.lock."""
+    Nieuwe inhoud gaat na de commit naar search.hooks.blob_added (fase 6, §3.5): owner is wie
+    het bestand bezit, voor de grenzen per gebruiker van Z2 en X1. Alleen onder
+    BlobStore.lock."""
     unknown = or_(Blob.mime.is_(None), Blob.mime == "application/octet-stream")
     result = await session.execute(
         update(Blob)
@@ -972,6 +976,7 @@ async def add_ref(
             )
         )
         await previews.queue(session, sha)
+        search_hooks.blob_added_after_commit(session, sha, owner)
 
 
 async def drop_ref(session: AsyncSession, sha: str) -> None:
@@ -1115,7 +1120,7 @@ async def place_file(
             now = datetime.now(UTC)
             if replacing:
                 if existing.blob_id != sha:
-                    await add_ref(session, sha, size, mime, pdf_state)
+                    await add_ref(session, sha, size, mime, pdf_state, owner.id)
                     if squashing:
                         await drop_ref(session, existing.blob_id)
                     elif existing.blob_id:
@@ -1125,7 +1130,7 @@ async def place_file(
                 existing.modified_at = now
                 node = existing
             else:
-                await add_ref(session, sha, size, mime, pdf_state)
+                await add_ref(session, sha, size, mime, pdf_state, owner.id)
                 if existing:
                     name = await free_name(session, parent.id, name)
                 node = Node(
@@ -1420,6 +1425,11 @@ async def copy(
             await session.execute(insert(Node), [copied(n) for n in chunk])
             await asyncio.sleep(0)
         await add_refs(session, Counter(n.blob_id for n in originals if n.blob_id))
+        # Fase 6, §3.5: wat aan een bestand hangt, gaat mee naar de kopie (Z6: personen als de
+        # eigenaar gelijk is). Nog in deze transactie, zodat de kopie nooit half klaar is.
+        await search_hooks.photo_copy(
+            session, [(n.id, new_ids[n.id]) for n in originals if n.kind == "file"]
+        )
         await session.commit()
     top = await session.get(Node, new_ids[node.id])
     await notify(session, top, "node.created")

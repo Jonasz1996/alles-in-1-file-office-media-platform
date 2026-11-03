@@ -14,12 +14,22 @@ maakt het account beheerder en heft een blokkade op. Niet voor een account dat a
 verwijderd (een taak user.delete staat klaar of loopt): die taak zou gewoon doorgaan.
 
     docker exec <container> python -m app.cli db-downgrade <revisie> [--ja]
+    docker exec <container> python -m app.cli db-backup
     docker exec <container> python -m app.cli office-checkpoint [--wait 30]
 
 db-downgrade zet het schema van de database terug naar een eerdere revisie (Alembic
 downgrade), bijvoorbeeld 0006 vóór het terugzetten van een image van fase 3 (M19): een oudere
 app start niet op een nieuwer schema. Het vraagt eerst om bevestiging (typ "ja"), tenzij --ja.
 Wat alleen in de nieuwere kolommen en tabellen stond, is daarna weg. Stop de app eerst.
+Haalt de downgrade 0010 weg (fase 6), dan zegt hij ook wat er van zoeken en foto's weggaat, en
+vraagt hij of album-items van een regel die niet gedeeld worden eerst uit hun album moeten
+(standaard ja): in 0.7.0 deelt een album elk item.
+
+db-backup maakt een reservekopie van de database met sqlite3.Connection.backup, terwijl de app
+draait (Keuze 52 van fase 6). Het bestand komt in /data/backup en heet naar de alembic-head en
+de tijd: platform-0010-<tijd>.db. Per head blijft de nieuwste; zo staat de kopie van vóór een
+migratie er na nieuwe kopieën nog. Het migreert niets. install.sh maakt zijn eigen kopie, met
+alleen de standaardbibliotheek, want dit commando bestaat in oudere images niet.
 
 office-checkpoint vraagt de document server om alle open documenten tussentijds op te slaan
 en wacht daar hooguit --wait seconden op (vóór het stoppen of bijwerken van office). Het
@@ -43,14 +53,28 @@ dan zegt een stub dat media uit staat):
                                      [--extern <adres>] [--film <id> …]
 
 Een fout van media (zoals 503 media_off) geeft de melding en exitcode 1.
+
+Zoeken en foto's (fase 6). Deze commando's bouwt hun pakket; tot dan zeggen ze dat ze er nog
+niet zijn en geven ze exitcode 1:
+
+    python -m app.cli search-bench
+    python -m app.cli search-rebuild
+    python -m app.cli search-check
+    python -m app.cli search-triggers
+    python -m app.cli geo-load
 """
 
 import argparse
 import asyncio
 import json
+import os
+import re
+import sqlite3
 import sys
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -59,14 +83,14 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util import CommandError
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, make_url, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import previews
 from app.config import Settings, get_settings
 from app.db import get_engine
 from app.migrate import alembic_config
-from app.models import User
+from app.models import AlbumItem, User
 from app.routers.auth import being_deleted, reset_totp
 
 
@@ -110,6 +134,18 @@ class UnknownRevision(Exception):
     """De revisie bestaat niet, of ligt niet vóór de huidige."""
 
 
+class NoDatabase(Exception):
+    """Er is nog geen database om een kopie van te maken."""
+
+
+class NoRevision(Exception):
+    """De database staat op geen enkele (leesbare) revisie."""
+
+
+class NotSqlite(Exception):
+    """Dit commando werkt alleen met SQLite."""
+
+
 async def db_revision(settings: Settings) -> str | None:
     """De revisie waar de database nu op staat (None: nog leeg)."""
 
@@ -147,6 +183,135 @@ async def db_downgrade(settings: Settings, revision: str) -> None:
         await conn.run_sync(run)
 
 
+# De revisie van zoeken en foto's: alleen een downgrade die hém weghaalt, raakt de zoekindex,
+# de plekken, de hashes, de personen en de regels van slimme albums (fase 6, §3.1)
+SEARCH_REVISION = "0010"
+
+
+def removed_revisions(current: str, revision: str) -> list[str]:
+    """De revisies die een downgrade van current naar revision weghaalt."""
+    script = ScriptDirectory.from_config(alembic_config(""))
+    return [
+        rev.revision
+        for rev in script.iterate_revisions(current, revision)
+        if rev.revision != revision
+    ]
+
+
+async def unshared_rule_items(settings: Settings) -> int:
+    """Hoeveel album-items van een regel niet gedeeld worden (source 'rule', shared 0).
+
+    Na een downgrade naar 0009 is de kolom shared weg en deelt een album elk item, zoals in
+    0.7.0 (fase 6, §3.1). Die items zouden dus ineens wél gedeeld zijn.
+    """
+    async with get_engine(settings).connect() as conn:
+        found = await conn.scalar(
+            select(func.count())
+            .select_from(AlbumItem.__table__)
+            .where(AlbumItem.source == "rule", AlbumItem.shared == 0)
+        )
+    return int(found or 0)
+
+
+async def drop_unshared_rule_items(settings: Settings) -> int:
+    """Haalt die items uit hun album; het aantal dat eruit ging."""
+    async with get_engine(settings).begin() as conn:
+        result = await conn.execute(
+            delete(AlbumItem).where(AlbumItem.source == "rule", AlbumItem.shared == 0)
+        )
+    return int(result.rowcount)
+
+
+BACKUP_DIR = "backup"
+HEAD_RE = re.compile(r"^[A-Za-z0-9_]{1,40}$")
+# platform-<head>-<tijd>.db, met de tijd in UTC. install.sh gaat zijn eigen kopie schrijven
+# zonder de milliseconden (Z7, §3.10); die naam hoort er dus ook bij.
+BACKUP_RE = re.compile(
+    r"^platform-(?P<head>[A-Za-z0-9_]{1,40})-(?P<tijd>\d{8}T\d{6}(?:\.\d{3})?Z)\.db$"
+)
+
+
+def now_stamp() -> str:
+    """De tijd in de naam van een kopie: UTC, tot milliseconden, zo dat namen op volgorde
+    staan."""
+    moment = datetime.now(UTC)
+    return f"{moment:%Y%m%dT%H%M%S}.{moment.microsecond // 1000:03d}Z"
+
+
+def sqlite_file(settings: Settings) -> Path:
+    """Het bestand van de database; NotSqlite als het geen SQLite is."""
+    url = make_url(settings.db_url)
+    if url.get_backend_name() != "sqlite" or not url.database or url.database == ":memory:":
+        raise NotSqlite(settings.db_url)
+    return Path(url.database)
+
+
+def read_head(conn: sqlite3.Connection) -> str | None:
+    """De alembic-head in deze database (None: geen of meer dan één)."""
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='alembic_version'"
+    ).fetchone():
+        return None
+    rows = conn.execute("SELECT version_num FROM alembic_version").fetchall()
+    if len(rows) != 1 or not HEAD_RE.match(str(rows[0][0])):
+        return None
+    return str(rows[0][0])
+
+
+def keep_newest_per_head(folder: Path) -> list[Path]:
+    """Per head blijft de nieuwste kopie; de rest gaat weg (Keuze 52). De naam draagt de tijd,
+    dus de nieuwste is de laatste op naam. Zo blijft de kopie van vóór een migratie staan: die
+    heeft een eigen head. Wat niet naar een kopie van ons lijkt, blijft ook staan."""
+    found: dict[str, list[Path]] = {}
+    for path in sorted(folder.glob("platform-*.db")):
+        match = BACKUP_RE.match(path.name)
+        if match is not None:
+            found.setdefault(match["head"], []).append(path)
+    newest = []
+    for paths in found.values():
+        newest.append(paths[-1])
+        for old in paths[:-1]:
+            old.unlink(missing_ok=True)
+    return sorted(newest)
+
+
+def db_backup(settings: Settings) -> Path:
+    """Een reservekopie van de database naar data_dir/backup, terwijl de app draait (Keuze 52).
+
+    sqlite3.Connection.backup geeft een kopie die klopt, ook met schrijvers erbij. Dit commando
+    migreert niets en raakt de database zelf niet aan. Het bestand heet naar de alembic-head en
+    de tijd; per head blijft de nieuwste.
+    """
+    source = sqlite_file(settings)
+    if not source.exists():
+        raise NoDatabase(source)
+    folder = settings.data_dir / BACKUP_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    folder.chmod(0o700)
+    with closing(sqlite3.connect(source)) as src:
+        src.execute("PRAGMA busy_timeout=5000")
+        head = read_head(src)
+        if head is None:
+            raise NoRevision(str(source))
+        target = folder / f"platform-{head}-{now_stamp()}.db"
+        for _ in range(2000):  # twee kopieën in dezelfde milliseconde: wacht op de volgende
+            if not target.exists():
+                break
+            target = folder / f"platform-{head}-{now_stamp()}.db"
+        part = target.with_name(target.name + ".part")
+        part.unlink(missing_ok=True)
+        try:
+            with closing(sqlite3.connect(part)) as dst:
+                src.backup(dst)
+            part.chmod(0o600)
+            os.replace(part, target)
+        except BaseException:
+            part.unlink(missing_ok=True)
+            raise
+    keep_newest_per_head(folder)
+    return target
+
+
 async def office_checkpoint(settings: Settings, wait: float) -> int:
     """Tussentijds opslaan van alle open documenten (sweep.checkpoint_all); het aantal."""
     from app.office import runtime, sweep
@@ -158,16 +323,68 @@ async def office_checkpoint(settings: Settings, wait: float) -> int:
         runtime.unbind()
 
 
-def _confirm(current: str | None, revision: str) -> bool:
+# Wat een downgrade die 0010 weghaalt, kwijtmaakt (fase 6, §3.1 en §3.10)
+SEARCH_LOST = (
+    "Weg zijn daarna: de zoekindex, de plekken van foto's, de hashes voor duplicaten, de "
+    "personen die je met de hand benoemde en de regels van slimme albums. Bestanden, delingen "
+    "en albums blijven, en zoeken op naam werkt gewoon."
+)
+
+
+def _confirm(current: str | None, revision: str, *, search: bool) -> bool:
     print(
         f"De database gaat van revisie {current} terug naar {revision}. Wat alleen in de "
         "nieuwere kolommen en tabellen staat, is daarna weg. Is de app gestopt?"
     )
+    if search:
+        print(SEARCH_LOST)
     try:
         answer = input('Typ "ja" om door te gaan: ')
     except EOFError:
         return False
     return answer.strip().lower() == "ja"
+
+
+def _ask_rule_items(count: int) -> bool:
+    """De vraag van §3.1: standaard ja, dus leeg of "ja" is ja."""
+    print(
+        f"{count} item(s) in een album komen van een regel en worden niet gedeeld. Na de "
+        "downgrade deelt een album elk item, zoals in 0.7.0: die items zijn dan ineens wél "
+        "gedeeld met iedereen die het album heeft."
+    )
+    try:
+        answer = input("Die items eerst uit het album halen? [ja] ")
+    except EOFError:
+        return True
+    return answer.strip().lower() in ("", "ja", "j")
+
+
+def _rule_items_first(settings: Settings, yes: bool, search: bool) -> None:
+    """Regel-items die niet gedeeld worden eerst uit hun album (§3.1). Alleen als de downgrade
+    0010 weghaalt: daarvóór bestaan source en shared niet."""
+    if not search:
+        return
+
+    async def count() -> int:
+        try:
+            return await unshared_rule_items(settings)
+        finally:
+            await get_engine(settings).dispose()
+
+    found = asyncio.run(count())
+    if not found:
+        return
+    if not yes and not _ask_rule_items(found):
+        print("Die items blijven in hun album staan.")
+        return
+
+    async def drop() -> int:
+        try:
+            return await drop_unshared_rule_items(settings)
+        finally:
+            await get_engine(settings).dispose()
+
+    print(f"{asyncio.run(drop())} item(s) zijn uit hun album gehaald.")
 
 
 def _downgrade(settings: Settings, revision: str, yes: bool) -> int:
@@ -186,7 +403,10 @@ def _downgrade(settings: Settings, revision: str, yes: bool) -> int:
             file=sys.stderr,
         )
         return 1
-    if not yes and not _confirm(now, revision):
+    assert now is not None  # check_downgrade laat None niet door
+    search = SEARCH_REVISION in removed_revisions(now, revision)
+    _rule_items_first(settings, yes, search)
+    if not yes and not _confirm(now, revision, search=search):
         print("Niets gedaan.", file=sys.stderr)
         return 1
 
@@ -225,6 +445,45 @@ def _recheck(settings: Settings) -> int:
     else:
         print("Alles nalopen liep al (of stond al klaar).")
     return 0
+
+
+def _backup(settings: Settings) -> int:
+    try:
+        target = db_backup(settings)
+    except NotSqlite:
+        print("Een reservekopie maakt dit commando alleen van SQLite.", file=sys.stderr)
+        return 1
+    except NoDatabase as exc:
+        print(f"Er is nog geen database ({exc.args[0]}).", file=sys.stderr)
+        return 1
+    except NoRevision:
+        print(
+            "De database staat op geen enkele revisie; start eerst de app.",
+            file=sys.stderr,
+        )
+        return 1
+    except (OSError, sqlite3.Error) as exc:
+        print(f"De reservekopie lukte niet: {exc}", file=sys.stderr)
+        return 1
+    mb = target.stat().st_size / 1_000_000
+    print(f"De reservekopie staat in {target} ({mb:.1f} MB).")
+    return 0
+
+
+# De commando's van zoeken en foto's die hun pakket nog moet bouwen (fase 6, §3.5)
+SEARCH_STUBS = {
+    "search-bench": ("Z1", "zoeken meten op een boom van 100.000"),
+    "search-rebuild": ("Z1", "de index in stukken herbouwen"),
+    "search-check": ("Z1", "de index met de bron vergelijken"),
+    "search-triggers": ("Z1", "de triggers terugzetten en daarna herbouwen"),
+    "geo-load": ("Z3", "places.sqlite bouwen uit de bronnen"),
+}
+
+
+def _stub(name: str) -> int:
+    package, what = SEARCH_STUBS[name]
+    print(f"{name} ({what}) is nog niet gebouwd ({package}).", file=sys.stderr)
+    return 1
 
 
 def _media_failed(exc: HTTPException) -> int:
@@ -372,11 +631,20 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "previews-recheck", help="alles nalopen: previews die ontbreken of mislukten opnieuw"
     )
+    commands.add_parser(
+        "db-backup", help="een reservekopie van de database maken, terwijl de app draait"
+    )
+    for name, (package, what) in SEARCH_STUBS.items():
+        commands.add_parser(name, help=f"{what} (nog niet gebouwd, {package})")
     _media_parsers(commands)
     args = parser.parse_args(argv)
     settings = get_settings()
     if args.command in MEDIA_COMMANDS:
         return _media(settings, args)
+    if args.command in SEARCH_STUBS:
+        return _stub(args.command)
+    if args.command == "db-backup":
+        return _backup(settings)
     if args.command == "db-downgrade":
         return _downgrade(settings, args.revision, args.ja)
     if args.command == "office-checkpoint":

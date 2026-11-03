@@ -28,6 +28,7 @@ from app.models import Node, User
 # De hulpfuncties via de module: tests vervangen ze daar (monkeypatch op routers.files)
 from app.routers import files
 from app.routers.files import Access, NodeOut, Store
+from app.search import hooks as search_hooks
 from app.security import CurrentUser
 from app.text import fold
 
@@ -311,4 +312,9 @@ async def _copy_tree(session: AsyncSession, node: Node, rows: list, target: Node
     for chunk in batched(rows, 500):
         await session.execute(insert(Node), [copied(n) for n in chunk])
         await asyncio.sleep(0)
+    # Fase 6, §3.5: wat aan een bestand hangt, gaat mee naar de kopie (Z6: personen als de
+    # eigenaar gelijk is). Nog in deze transactie, vóór de commit van de aanroeper.
+    await search_hooks.photo_copy(
+        session, [(n.id, new_ids[n.id]) for n in rows if n.kind == "file"]
+    )
     return new_ids[node.id]
