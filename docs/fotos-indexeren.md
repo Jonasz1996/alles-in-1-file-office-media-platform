@@ -217,6 +217,25 @@ verzoeken aan de API duren tijdens de import ongeveer anderhalf keer zo lang (de
 onder de 0,1 s). Daar staat tegenover dat alle thumbnails twee keer zo vroeg klaar zijn en dat
 alles samen iets minder tijd en CPU kost.
 
+De nacontrole na de review mat met 151 gemengde bestanden (100 JPEG's, PNG, TIFF, HEIC, PSD,
+JPEG 2000, camera-RAW, GIF, WebP, kapotte en afgekapte, 2 video's), de app op 3 kernen: eerst
+een gewone upload, daarna alle previews weg en opnieuw in de rij, de bovenkant van de tijdlijn
+als laatste (zoals na een import). De bovenste 24 waren hier de zware soorten (TIFF van 18 MB,
+HEIC, PNG, JPEG 2000).
+
+| nacontrole, 151 bestanden | vóór de nacontrole | na |
+|---|---|---|
+| elk bestand een thumbnail of een reden op /beheer | 146 + 4 "zonder preview" (150 inhouden) | gelijk |
+| /fotos open: de 24 zichtbare cellen geschilderd | 25,2 s (als laatste) | 10,2 s (119 wachten nog) |
+| `GET /photos` tijdens de achterstand (p50 / p95 / max) | 38 / 74 / 246 ms | 38 / 64 / 172 ms |
+| RAW in de viewer, 112 grote versies in de rij: 2048 te zien | | 3,1 s (107 wachten nog) |
+| PSD in de viewer vóór zijn eerste preview | bleef "kan niet worden getoond" | na 9,9 s te zien |
+| "Alles nalopen" zes keer tegelijk | 5 ketens | 1 |
+
+De PSD kwam pas na 9,9 s aan de beurt doordat de tijdlijn hem 3 s eerder al naar voren had
+gehaald: binnen `FRONT_AGAIN` (10 s) haalt ook de viewer hem niet opnieuw naar voren (zie
+"Wat nog open staat").
+
 ## Wat nog open staat
 
 - **HTTP/2.** De browser opent 6 verbindingen per host, en één daarvan houdt de live-stroom
@@ -242,3 +261,16 @@ alles samen iets minder tijd en CPU kost.
   inhoud, geen 304. Met `immutable` en een geldig `max-age` vraagt de browser het niet.
 - **Een open map laadt opnieuw** bij elke nieuwe verbinding van de live-stroom (`folderStore`,
   ongewijzigd). Dat haalt soms de thumbnails van de map twee keer op.
+- **De viewer wacht soms tot 13 s op een thumbnail.** Wat de tijdlijn of een map in de laatste
+  10 s naar voren haalde (`jobs.FRONT_AGAIN`), haalt ook de viewer niet opnieuw naar voren; hij
+  krijgt zijn beurt in de volgorde van de pagina, of bij de volgende vraag van de viewer (elke
+  3 s) zodra die 10 s om zijn. De grote versie heeft dat niet: die zet alleen de viewer klaar.
+- **"Alles nalopen" kan een foto even terugzetten.** Komt een thumbnail klaar terwijl de keten
+  zijn stuk van 500 bekijkt, dan kan hij die foto nog als "wacht" zien en opnieuw in de rij
+  zetten (`previews._again`). Tot hij nog een keer gemaakt is, staat hij weer op "wacht" en is
+  zijn thumbnail even weg. Alleen tijdens een achterstand, en alleen als iemand dan drukt.
+- **Commandoregel en knop tegelijk.** `app.cli previews-recheck` is een eigen proces; drukt
+  iemand op precies hetzelfde moment op de knop, dan kunnen er twee ketens klaarstaan. De
+  tweede stopt na zijn eerste stuk.
+- **Welke bestanden geen preview hebben**, ziet /beheer alleen als aantal ("4 zonder preview"),
+  niet bij naam.
