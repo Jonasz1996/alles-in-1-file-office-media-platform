@@ -33,7 +33,8 @@ Belangrijkste conclusies:
 
 - Doorlooptijd: circa 26 weken tot productie (fase 0 t/m 8) voor één
   voltijdse ontwikkelaar; de drie apps daarna in sporen van 5 tot 10
-  weken elk.
+  weken elk. Fase 6 duurt sinds 3-11-2026 ±9 weken in plaats van 3,
+  omdat Jonas voor "alles" koos (zie fase 6).
 
 ## Uitgangspunten en kernbeslissingen
 
@@ -498,7 +499,7 @@ grenzen en de vragen voor Jonas in
 voorstel: Jonas heeft de beslissingskaarten van fase 5 nog niet
 beantwoord.
 
-### Fase 6 — Zoeken en foto's (3 weken)
+### Fase 6 — Zoeken en foto's (±9 weken)
 
 Doel: alles terugvinden, ook op inhoud en op wat er op een foto staat.
 
@@ -519,6 +520,23 @@ Doel: alles terugvinden, ook op inhoud en op wat er op een foto staat.
 
 Klaar als: een zoekopdracht over 100.000 bestanden antwoordt binnen 200
 ms; OCR-tekst is doorzoekbaar; gezichten zijn te benoemen en te zoeken.
+
+Duur en omvang (3-11-2026): Jonas koos voor "alles": OCR, gezichten
+automatisch en zoeken op wat er op een foto staat, met een kaart zonder
+tegels van buiten. Daarmee is fase 6 ±43 werkdagen (±9 weken) in plaats
+van 3 weken, in twee opleveringen: 0.8.0 rond dag 27 met de kern, en
+0.8.1 rond dag 43 met gezichten en beeld. Anders dan hierboven staat:
+YuNet en SFace in plaats van InsightFace (die gewichten zijn alleen voor
+niet-commercieel onderzoek), SigLIP 2 in plaats van CLIP (beter in het
+Nederlands), en de vectoren in de SQLite die er al is in plaats van
+pgvector (standalone draait op SQLite, B15). Gezichten en beeld rekenen
+in een eigen afgeschermde container, en staan per gebruiker standaard
+uit. Zoeken op beeld mag 250 ms duren; gewoon zoeken houdt zijn 200 ms.
+Wie de plek van een foto ziet, heeft Jonas nog niet gekozen; tot dan
+ziet alleen de eigenaar hem. Het ontwerp, de planning en de open vragen
+staan in [docs/fase-6/README.md](fase-6/README.md) en
+[docs/fase-6/bouwontwerp.md](fase-6/bouwontwerp.md); de keuzes in
+B49–B70.
 
 ### Fase 7 — Sync, delen en integraties (3 weken)
 

@@ -1,6 +1,23 @@
 # Fase 6 — Zoeken en foto's
 
-Status: **ontwerp** (bouwontwerp revisie 2, 3 november 2026). Er is nog niets gebouwd.
+Status: **ontwerp** (bouwontwerp revisie 3, 3 november 2026). Er is nog niets samengevoegd. Het
+fundament (Z0) wordt op een eigen branch gebouwd.
+
+## Wat je koos
+
+Op 3 november 2026 zei je "ja voeg alles toe", en daarna koos je op een kaartje "Ook gezichten".
+Dat betekent:
+
+- **OCR: ja.** Scans en foto's met tekst worden doorzoekbaar. Daarvoor komt tesseract in het
+  image.
+- **Gezichten automatisch: ja**, in fase 6. Per gebruiker staat het standaard uit.
+- **Zoeken op wat er op een foto staat** ("strand", "hond"): ja, in fase 6. Dat volgt uit "alles";
+  het kaartje noemde het niet apart. Daarom staat het per gebruiker standaard uit (Vraag 11).
+- **De kaart: geen tegels van buiten.** Alleen landsgrenzen. Er gaat niets naar een kaartdienst.
+- **Plaatsnamen en landsgrenzen downloaden bij de installatie** (de oude Vraag 5 en 6): de kaartjes
+  zijn ingetrokken, omdat "alles" ze dekt. De standaard geldt.
+- **Wie ziet de plek van een foto** (Vraag 4): die heb je **niet** beantwoord. Tot je dat doet,
+  geldt de standaard: alleen de eigenaar. Dat is geen keuze van jou.
 
 ## Doel
 
@@ -10,7 +27,7 @@ Alles terugvinden, en meer halen uit je foto's. Uit het stappenplan:
 - OCR voor scans en foto's met tekst;
 - EXIF en GPS (datum, camera, plek), een kaart en plaatsnamen zonder internet;
 - duplicaten en bijna-duplicaten;
-- gezichten en objecten met lokale modellen, en zoeken op wat er op een foto staat;
+- gezichten en zoeken op wat er op een foto staat, met lokale modellen;
 - herinneringen ("vandaag, N jaar geleden") en slimme albums;
 - filters op type, datum, persoon, plek, tag en bibliotheek.
 
@@ -19,78 +36,114 @@ doorzoekbaar; gezichten zijn te benoemen en te zoeken.
 
 ## Hoe het werkt, in het kort
 
-- Eén zoekindex in de SQLite die we al hebben (FTS5), bijgehouden door triggers. Geen nieuwe
-  database, geen nieuwe dienst. Zoeken op naam werkt meteen na de update; de inhoud komt op de
-  achtergrond.
-- Je ziet alleen wat je mag zien: de index filtert op de mappen die jij mag lezen, en elke
-  treffer wordt nog een keer gecontroleerd. Geen score en geen totaal, zodat de uitkomst niets
-  zegt over bestanden van anderen.
-- Tekst uit bestanden lezen gebeurt in de afgeschermde mediaworker van fase 5 (geen netwerk, geen
-  data, een eigen gebruiker). Staat media uit, dan in een apart proces met grenzen, en zegt
-  `/beheer` dat.
-- Plek, personen en tekst uit een foto horen bij het bestand van de eigenaar. Alleen hij ziet ze,
-  nooit via een publieke link, en een kopie bij een ander krijgt niets mee. Locatie "uit" wist
-  alles.
-- Een eigen kaart met alleen landsgrenzen, zonder tegels van buiten. Plaatsnamen en landen komen
-  uit vaste bestanden die `install.sh` downloadt (GeoNames en Natural Earth).
-- Een slim album deelt nieuwe foto's niet vanzelf; dat kies je apart.
-- Bijwerken en terugrollen met hetzelfde ene `install.sh`, met een reservekopie van de database
-  vooraf.
+- Eén zoekindex in de SQLite die we al hebben (FTS5). Geen nieuwe database. Zoeken op naam werkt
+  meteen na de update; de inhoud komt op de achtergrond.
+- Je ziet alleen wat je mag zien. Geen score en geen totaal, zodat een uitkomst niets zegt over
+  bestanden van anderen.
+- Tekst lezen en OCR gebeuren in de afgeschermde mediaworker van fase 5.
+- **Gezichten en zoeken op beeld** rekenen in een eigen container, `analyse`. Die heeft geen
+  netwerk en kan niet bij je bestanden: de app geeft hem alleen een klein voorbeeld van een foto.
+  numpy en onnxruntime staan alleen daar; de app zelf gebruikt ze nooit.
+- **Gezichten** geven voorstellen ("Is dit Eva?"). Niets wordt vanzelf bevestigd. De gegevens van
+  gezichten zijn versleuteld, met een sleutel per gebruiker. Zet iemand gezichten uit, dan wist het
+  platform eerst die sleutel. Dan is alles wat er nog van over is onleesbaar, ook in snapshots en
+  in een kopie buiten huis.
+- Een foto die iemand anders in jouw map zette, wordt niet gescand, tenzij die ander het zelf aan
+  heeft. Een upload via een publieke link nooit (Vraag 9).
+- Plek, personen en tekst uit een foto horen bij de eigenaar van het bestand. Nooit via een
+  publieke link.
+- Bijwerken en terugrollen met hetzelfde `install.sh`, met eerst een reservekopie van de database.
 
 ## Wat er komt
 
-- **Z0 — Fundament en spike:** migratie 0010, de contracten, de regel "eigen en levend", de
-  wachters, het harnas, en de spike (S1–S11), met `bench --los` om je CPU te meten.
-- **Z1 — Zoekmachine:** de index, de vraag, het toegangsfilter, snippets, de tijdsgrens, grenzen
-  voor de hele app.
-- **Z2 — Tekst uit bestanden:** lezen in de worker, de backfill, de woorden per pagina voor de
-  viewer.
-- **Z3 — Foto-gegevens:** GPS, camera, plaatsen en landen, pHash, duplicaten, de kaart (API).
-- **Z4 — Zoeken in de web:** het zoekveld, suggesties, `/zoeken`, de gemarkeerde woorden in de
-  viewer.
-- **Z5 — Kaart en duplicaten in de web**, en de waarschuwing bij delen van foto's met een plek.
+- **Z0 — Fundament en spike**, en **Z0b**: de afspraken (contracten) voor alles, ook voor
+  gezichten en beeld, zodat de rest naast elkaar gebouwd kan worden.
+- **Z1 — Zoekmachine**, **Z2 — Tekst uit bestanden**, **Z4 — Zoeken in de web**.
+- **Z3 — Foto-gegevens** (GPS, camera, plaatsen, duplicaten) en **Z5 — Kaart en duplicaten in de
+  web**, met de waarschuwing bij delen van foto's met een plek.
 - **Z6 — Personen, herinneringen, slimme albums en filters.**
-- **Z7 — Beheer en uitrol:** de tab op `/beheer`, de reservekopie, terugrollen, het runbook.
-- **X1 — OCR** (wacht op Vraag 1).
-- **X2 — Gezichten automatisch** (wacht op Vraag 2; niet in fase 6).
+- **Z7 — Beheer en uitrol**, en **X1 — OCR**.
+- **A0 — Fundament van gezichten en beeld**: de container `analyse`, en migratie 0011 en 0012.
+- **X2 — Gezichten automatisch**, en **X3 — Zoeken op wat er op een foto staat**.
 
 Migratie 0009 ging in 0.7.1 naar de indexen voor de foto's
 ([fotos-indexeren](../fotos-indexeren.md)); die van fase 6 is daarom 0010.
 
+## Wat het kost
+
+Gemeten in de sandbox, of berekend uit die metingen ([haalbaarheid.md](haalbaarheid.md)):
+
+| Wat | Hoeveel |
+|---|---|
+| het image | +118–141 MB voor numpy en onnxruntime, ook als je `analyse` uitzet; plus tesseract (nog niet gemeten, grens 30 MB) |
+| de modellen | ±39 MB voor gezichten en ±0,4 GB voor beeld, in `/opt/platform/modellen`; bij de installatie tijdelijk 1,55 GB extra |
+| de database | ±0,9–1,1 GB per 100.000 foto's, voor gezichten en beeld samen |
+| eenmalig rekenen, 55.000 foto's | gezichten ±2,2–2,5 uur, beeld ±1,1–1,2 uur, op de achtergrond op één core |
+| geheugen | de container `analyse` hooguit 3 GB; met media en OnlyOffice samen 8 van de 16 GB |
+| zoeken | gewoon zoeken binnen 200 ms; zoeken op beeld binnen 250 ms (Vraag 14) |
+
+Je rootdisk is 64 GB; dat past. Een tragere CPU dan die van de sandbox rekent langer. `/beheer`
+laat zien hoe ver het is.
+
 ## Planning
 
-±26 werkdagen (±5 weken): Z0 en vier golven van twee pakketten, elk met een dag voor review, en
-3 dagen integratie. Het stappenplan geeft 3 weken; dat past niet met review per golf. Daarom
-Vraag 7. Na golf 2 (±dag 14) zijn zoeken, personen, herinneringen en slimme albums af.
+±43 werkdagen (≈ 9 weken), in twee delen (Vraag 13):
 
-Wat de sandbox laat zien, staat in [haalbaarheid.md](haalbaarheid.md): zoeken over 100.000
-bestanden met p95 17–80 ms, tekst lezen voor 2,2 ms per PDF-pagina, OCR voor 2–3 s per pagina,
-en het land via polygonen in 0,8 ms per foto.
+- **0.8.0 rond dag 27**: zoeken, tekst, OCR, foto-gegevens, de kaart, duplicaten, personen,
+  herinneringen en slimme albums.
+- **0.8.1 rond dag 43**: gezichten en zoeken op beeld.
+
+Kies je één oplevering, dan is het ±41 werkdagen. Het stappenplan gaf 3 weken; dat was zonder
+gezichten en beeld, en zonder review per golf. Loopt het uit, dan schuift eerst zoeken met woorden
+op beeld, dan beeld helemaal (naar een fase 6b), dan de groepen "Wie is dit?" van gezichten. Geen
+privacyregel schuift.
+
+## Privacy en de wet
+
+- **Gezichten zijn biometrische gegevens**, ook van mensen op je foto's die zelf niets kozen.
+  Voor gebruik in je eigen gezin geldt waarschijnlijk de uitzondering voor huishoudelijk gebruik
+  in de AVG. Gebruik je het platform voor anderen (een vereniging, klanten), dan gaat het om
+  bijzondere persoonsgegevens (artikel 9). Dan heb je uitdrukkelijke toestemming nodig van wie op
+  de foto's staat. Dit is niet door een jurist nagekeken.
+- **De sleutels van gezichten** staan in `/opt/platform/sleutels`, buiten `/tank`. Neem die map
+  niet op in je snapshots of je kopie buiten huis; anders werkt "uit wist alles" daar niet. Het
+  runbook zegt hoe.
+- **Licenties**: de modellen (YuNet: MIT; SFace en SigLIP 2: Apache-2.0) mogen privé en
+  commercieel gebruikt worden. Waar ze mee getraind zijn, is niet nagekeken.
 
 ## Vragen voor Jonas
 
-1. Mag tesseract (±20 MB) in het image, voor OCR? Standaard: **nee, tot je ja zegt.** X1 wordt
-   gebouwd en in CI getest; zonder ja is een scan alleen op naam te vinden.
-2. Mogen gezichten automatisch gevonden worden (numpy en onnxruntime, ±120 MB, en twee modellen)?
-   Let op: dat is biometrische data, ook van mensen op de foto die zelf niets kozen. Standaard:
-   **nee**; personen benoem je met de hand.
-3. Zoeken op wat er op een foto staat ("strand", "hond")? Standaard: **niet in fase 6.**
-4. Wie ziet de plek van een foto? Standaard: **alleen de eigenaar**, en het deeldialoog
+Elke vraag heeft een standaard. Tot je antwoordt, bouwen we daarop door; niemand hoeft te
+wachten.
+
+4. **Wie ziet de plek van een foto?** Standaard: **alleen de eigenaar**, en het deeldialoog
    waarschuwt dat een download de plek meeneemt. Anders: GPS uit downloads halen (±2 dagen), of
    "wie ik deel, ziet de plek ook".
-5. Mogen GeoNames (CC BY 4.0) en de landsgrenzen van Natural Earth (publiek domein) bij de
-   installatie gedownload worden? Standaard: **ja**, met sha256, niet fataal, uit te zetten met
-   `PLAATSEN=uit`.
-6. Wat ligt er onder de kaart? Standaard: **alleen landsgrenzen**, geen tegels van buiten.
-7. Mag fase 6 ±5 weken duren in plaats van 3? Standaard: **ja, ±5 weken met alles.** Anders:
-   ±4 weken zonder kaart, duplicaten en OCR, of 3 weken met alleen zoeken.
+8. **Mogen echte gezichten van NASA in CI gebruikt worden om de herkenning te meten?** Dat is
+   biometrie van echte mensen, bij naam, op servers van GitHub in de VS. Standaard: **nee**; dan
+   meet je de kwaliteit op je eigen server, en verlaat niets je huis.
+9. **Worden foto's gescand die een ander in jouw map zette?** Standaard: **nee, tenzij die ander
+   het zelf aan heeft**; een upload via een link nooit.
+10. **Hoe komt het model voor zoeken op beeld op je server?** Standaard: **`install.sh` downloadt
+    het origineel van Google (via huggingface.co) en zet het één keer om op je server**, zonder
+    nieuw pakket.
+11. **Staat zoeken op beeld standaard aan?** Standaard: **uit**, tot gemeten is of "Meer zoals
+    deze" op een portret dezelfde persoon terugvindt. Wie het wil, zet het aan.
+12. **Wat mag CI gebruiken om zoeken op beeld na te rekenen?** Standaard: **ja** voor een vaste set
+    van 120 foto's uit het publiek domein (alleen in CI), **nee** voor de officiële bibliotheken
+    als meetlat.
+13. **Leveren we in twee delen op?** Standaard: **ja**: de kern rond dag 27, gezichten en beeld
+    rond dag 43.
+14. **Mag zoeken op beeld 250 ms duren?** Standaard: **ja**; gewoon zoeken houdt zijn 200 ms.
 
-De vragen staan uitgebreid in het [bouwontwerp](bouwontwerp.md) onder "Vragen voor Jonas".
+Vraag 1, 2, 3, 5, 6 en 7 heb je beantwoord, of ze zijn ingetrokken (zie "Wat je koos"). De vragen
+staan uitgebreid in het [bouwontwerp](bouwontwerp.md) onder "Vragen voor Jonas".
 
 ## Documenten
 
-- [bouwontwerp.md](bouwontwerp.md): het ontwerp (revisie 2, leidend); revisie 1 in
-  [bouwontwerp-r1.md](bouwontwerp-r1.md). De keuzes staan als voorstel in B49–B60 in
-  [beslissingen](../fase-0/beslissingen.md).
-- [haalbaarheid.md](haalbaarheid.md): de metingen in de sandbox (H1–H8, de proef van ontwerp B, en
-  V1–V10 bij revisie 2), met de commando's.
+- [bouwontwerp.md](bouwontwerp.md): het ontwerp (revisie 3, leidend). Eerdere revisies:
+  [bouwontwerp-r2.md](bouwontwerp-r2.md) en [bouwontwerp-r1.md](bouwontwerp-r1.md).
+- [haalbaarheid.md](haalbaarheid.md): de metingen in de sandbox, met de commando's: H1–H8, V1–V10,
+  de spike B1–B7 voor gezichten en beeld, en de proeven van de kritiek op revisie 3.
+- [beslissingen](../fase-0/beslissingen.md): B49–B60 en B61–B70 voor fase 6. B53 en B57 zijn
+  besloten; de rest is voorstel.
