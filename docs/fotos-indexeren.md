@@ -40,8 +40,32 @@ een worker minder dan het aantal kernen (instelbaar, zie hieronder). Het renderp
 `nice 10`, zodat uploads, de API, office en afspelen voorgaan. Een voorgeladen forkserver maakt
 per foto een eigen proces (`render.serve`). De grenzen van tijd en geheugen blijven per foto
 gelden, maar Python en Pillow hoeven niet elke keer op te starten (272 ms in plaats van 493 ms
-per JPEG). Start de forkserver niet, of stopt hij, dan krijgt elke preview weer zijn eigen
-nieuwe proces, zoals voorheen. Een nieuwe taak wekt alleen de workers van zijn eigen rij.
+per JPEG). Start de forkserver niet, dan krijgt elke preview weer zijn eigen nieuwe proces,
+zoals voorheen. Een nieuwe taak wekt alleen de workers van zijn eigen rij.
+
+**De forkserver schermt niet minder af dan het eigen proces van vroeger** (nagelopen na de
+review, ook als `nobody` zoals in CI). Hij wordt zelf gestart als een nieuw proces (`python -I`,
+werkmap `/`, alleen `PATH`, `LANG` en `HOME`), niet afgesplitst van de app: in zijn geheugen
+staan geen geheimen van de app. Een kind ervan heeft dezelfde omgeving, geen open bestanden of
+sockets van de app (alleen `/dev/null` en zijn eigen uitvoerbestanden), dezelfde grenzen
+(geheugen via `RLIMIT_AS`, `nice 10`), een eigen sessie, en draait in een kopie van de
+forkserver: wat een kwaadaardige foto in één kind verandert, ziet het volgende niet. Wat de
+controle na de review nog vond, en wat nu anders is:
+
+- Een video krijgt de sleutel van de mediaworker mee. Via de forkserver bleef die in diens
+  geheugen staan, en erfde elk volgend kind hem, ook een dat een foto decodeert. Een verzoek
+  met de worker krijgt nu altijd een eigen proces.
+- Afbreken (de tijdgrens, of de app stopt) vlak na het versturen, vóór de pid terug was, liet
+  het kind doorlopen zonder tijdgrens; en de forkserver meldde de pid vóór het kind een eigen
+  sessie had, zodat `killpg` het kon missen. Nu komt de pid pas na de `setsid`, en wacht
+  afbreken op de pid om het kind toch te stoppen.
+- Viel de forkserver weg tijdens een render, dan liep het kind door zonder dat iemand op de
+  tijdgrens lette. Nu gaan zijn kinderen mee (`PR_SET_PDEATHSIG`); ook als de app wegvalt.
+- Stopt de forkserver (gecrasht, doodgemaakt) of antwoordt hij niet meer, dan start de volgende
+  preview een nieuwe (hooguit eens per 30 s, `previews.RESTART_SECONDS`; tot dan een eigen
+  proces per foto). Een render die op dat moment liep, mislukt en komt als gewone nieuwe poging
+  terug. Eerder bleef het tot een herstart van de app een eigen proces per foto, en liet een
+  forkserver die niet antwoordde elke preview tot de tijdgrens hangen.
 
 **Niets blijft stil zonder thumbnail:**
 
@@ -189,8 +213,13 @@ alles samen iets minder tijd en CPU kost.
   Daarom is dit niet gebouwd.
 - **Camera-RAW en iPhone-HEIC** zijn getest met nagemaakte bestanden, niet met echte foto's van
   een camera of iPhone.
-- **De forkserver** start niet vanzelf opnieuw als hij stopt. Previews werken dan verder met
-  een eigen proces per foto (zoals vóór deze verbetering) tot de app opnieuw start.
+- **Het renderproces draait als dezelfde gebruiker als de app**, met of zonder forkserver. Een
+  decoder die echt wordt overgenomen, kan zo de omgeving van de app lezen
+  (`/proc/<pid van de app>/environ`, dus `PLATFORM_JWT_SECRET` als die daar staat), en ook de
+  database en de blobs. De kale omgeving van het renderproces voorkomt dus alleen dat geheimen
+  per ongeluk meegaan, niet dat een aanvaller ze haalt. Dat was vóór dit werk precies zo;
+  dichtzetten vraagt de app zelf niet-dumpbaar (`PR_SET_DUMPABLE 0`) of het renderen onder een
+  eigen gebruiker. Niet gebouwd: dat raakt de hele app, niet alleen de foto's.
 - **De import zelf is trager**, ook zonder dat iemand kijkt: op dezelfde manier gemeten
   ongeveer een derde (zie "Gemeten"; met /fotos open 59 naar 90 s). De thumbnails houden de
   import nu bij en delen met hem de event loop, de schrijver van SQLite en het slot van de

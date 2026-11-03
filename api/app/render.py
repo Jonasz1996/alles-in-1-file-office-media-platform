@@ -1353,13 +1353,17 @@ def main() -> None:
 # het oude renderproces: een eigen sessie (procesgroep, zodat previews.render het met alles wat
 # het startte kan stoppen), dezelfde kale omgeving, en het draait de code van previews.CHILD met
 # het verzoek op stdin; stdout en stderr gaan naar OUT en ERR in zijn werkmap. Geheugengrens en
-# nice zet main() in het kind, net als in een eigen proces.
+# nice zet main() in het kind, net als in een eigen proces. Valt de forkserver weg (de app is
+# weg, of hij is doodgemaakt), dan gaan zijn kinderen mee (PDEATHSIG): een kind zonder iemand
+# die op de tijdgrens let, draait anders onbeperkt door.
 #
-# Op stdin regels JSON {"id", "code", "cwd", "request"}; op stdout per kind {"id", "pid"} meteen
-# na de fork en {"id", "exit"} (de exitcode, of -signaal) als het klaar is, of {"id", "error"}
-# als fork mislukte. Eén thread: fork is dan veilig. stdin dicht (de app is weg): klaar.
+# Op stdin regels JSON {"id", "code", "cwd", "request"}; op stdout per kind {"id", "pid"} zodra
+# het een eigen sessie heeft (eerder zou killpg op die pid het kind nog missen) en {"id", "exit"}
+# (de exitcode, of -signaal) als het klaar is, of {"id", "error"} als fork mislukte. Eén thread:
+# fork is dan veilig. stdin dicht (de app is weg): klaar.
 
 OUT, ERR = ".render.out", ".render.err"
+PR_SET_PDEATHSIG = 1
 
 
 def preload() -> None:
@@ -1373,11 +1377,17 @@ def preload() -> None:
         pillow_heif.register_heif_opener()
 
 
-def _child(message: dict) -> None:
-    """In het kind: alsof het een eigen proces was. Komt nooit terug."""
+def _child(message: dict, libc, parent: int, ready: int) -> None:
+    """In het kind: alsof het een eigen proces was. Komt nooit terug. Eerst SIGKILL als de
+    forkserver wegvalt (parent; was hij al weg, dan meteen stoppen), dan een eigen sessie, en
+    pas dan ready dicht: zo meldt de forkserver de pid pas als killpg het kind raakt."""
     code = 1
     try:
+        libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+        if os.getppid() != parent:
+            os._exit(1)
         os.setsid()
+        os.close(ready)
         cwd = str(message["cwd"])
         os.chdir(cwd)
         for fd, name in ((1, OUT), (2, ERR)):
@@ -1408,7 +1418,11 @@ def _child(message: dict) -> None:
 
 
 def serve() -> None:
+    import ctypes
+
     preload()
+    libc = ctypes.CDLL(None, use_errno=True)
+    parent = os.getpid()
     selector = selectors.DefaultSelector()
     selector.register(0, selectors.EVENT_READ, None)
     pending = b""
@@ -1429,19 +1443,26 @@ def serve() -> None:
                 continue
             chunk = os.read(0, 65536)
             if not chunk:
-                return  # de app is weg; lopende kinderen maken hun werk af
+                return  # de app is weg; lopende kinderen gaan mee (PDEATHSIG)
             pending += chunk
             while b"\n" in pending:
                 line, pending = pending.split(b"\n", 1)
                 message = json.loads(line)
+                waiting, ready = os.pipe()
                 try:
                     pid = os.fork()
                 except OSError as e:
+                    os.close(waiting)
+                    os.close(ready)
                     send({"id": message["id"], "error": str(e)[:200]})
                     continue
                 if pid == 0:
+                    os.close(waiting)
                     selector.close()
-                    _child(message)
+                    _child(message, libc, parent, ready)
+                os.close(ready)
+                os.read(waiting, 1)  # leeg: het kind heeft een eigen sessie (of is al weg)
+                os.close(waiting)
                 selector.register(os.pidfd_open(pid), selectors.EVENT_READ, (message["id"], pid))
                 send({"id": message["id"], "pid": pid})
 

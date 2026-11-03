@@ -120,6 +120,9 @@ SERVER = "import sys; sys.path.insert(0, sys.argv[1]); from app.render import se
 CODE_ROOT = str(Path(__file__).resolve().parent.parent)
 # Zo lang wachten op een kind dat net is doodgemaakt (de forkserver ruimt het op)
 REAP_SECONDS = 10
+# Een gestopte forkserver (gecrasht of doodgemaakt) start bij het volgende gebruik opnieuw,
+# hooguit eens per zoveel seconden; tot dan krijgt elk voorbeeld een eigen proces
+RESTART_SECONDS = 30
 
 
 def _maker(settings: Settings) -> async_sessionmaker[AsyncSession]:
@@ -344,7 +347,8 @@ class Forkserver:
     een kind per verzoek; dat kind is het oude renderproces (eigen sessie, kale omgeving,
     tijds- en geheugengrens, CHILD op stdin), alleen zonder elke keer Python en Pillow te
     starten. Gestart en gestopt door de lifespan (start_forkserver, stop_forkserver); daarbuiten
-    (tests, de cli) start render() gewoon een eigen proces."""
+    (tests, de cli) start render() gewoon een eigen proces. Stopt hij onverwacht, dan start
+    _forkserver hem bij het volgende gebruik opnieuw."""
 
     def __init__(self, proc: asyncio.subprocess.Process):
         self.proc = proc
@@ -352,6 +356,8 @@ class Forkserver:
         self.calls: dict[int, tuple[asyncio.Future, asyncio.Future]] = {}
         self.next = 0
         self.reader = asyncio.create_task(self._read(), name="forkserver lezen")
+        # Niet opnieuw starten vóór dit moment (time.monotonic)
+        self.restart_after = 0.0
 
     @property
     def alive(self) -> bool:
@@ -386,10 +392,17 @@ class Forkserver:
         self.next += 1
         ident = self.next
         started, done = self.loop.create_future(), self.loop.create_future()
+        for future in (started, done):
+            future.add_done_callback(_seen)  # een gestopte forkserver na het afbreken: geen ruis
         self.calls[ident] = (started, done)
         line = {"id": ident, "code": code, "cwd": str(cwd), "request": request}
         self.proc.stdin.write((json.dumps(line) + "\n").encode())
         return started, done
+
+    def kill(self) -> None:
+        """Hij reageert niet: weg ermee (zijn kinderen gaan mee, render.serve)."""
+        with contextlib.suppress(ProcessLookupError):
+            self.proc.kill()
 
     async def close(self) -> None:
         if self.proc.stdin is not None and not self.proc.stdin.is_closing():
@@ -402,8 +415,13 @@ class Forkserver:
                 self.proc.kill()
             await self.proc.wait()
         self.reader.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        with contextlib.suppress(asyncio.CancelledError, Exception):  # al gestopt, met een fout
             await self.reader
+
+
+def _seen(future: asyncio.Future) -> None:
+    if not future.cancelled():
+        future.exception()
 
 
 _server: Forkserver | None = None
@@ -413,6 +431,11 @@ async def start_forkserver() -> Forkserver | None:
     """Bij het starten van de app (lifespan). Lukt het niet, dan maakt render() gewoon zelf
     een proces per preview, zoals voorheen."""
     global _server
+    _server = await _launch()
+    return _server
+
+
+async def _launch() -> Forkserver | None:
     try:
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
@@ -429,8 +452,7 @@ async def start_forkserver() -> Forkserver | None:
     except OSError as e:
         log.warning("Forkserver voor previews start niet (%s): elk voorbeeld een eigen proces", e)
         return None
-    _server = Forkserver(proc)
-    return _server
+    return Forkserver(proc)
 
 
 async def stop_forkserver() -> None:
@@ -440,11 +462,31 @@ async def stop_forkserver() -> None:
         await server.close()
 
 
-def _forkserver() -> Forkserver | None:
+async def _forkserver() -> Forkserver | None:
+    """De forkserver van deze event loop, of None (tests, de cli, of hij start niet). Is hij
+    gestopt (gecrasht, of doodgemaakt), dan hier opnieuw starten, hooguit eens per
+    RESTART_SECONDS; tot dan None, en maakt render() een eigen proces."""
+    global _server
     server = _server
-    if server is None or not server.alive or server.loop is not asyncio.get_running_loop():
+    if server is None or server.loop is not asyncio.get_running_loop():
         return None
-    return server
+    if server.alive:
+        return server
+    now = time.monotonic()
+    if now < server.restart_after:
+        return None
+    server.restart_after = now + RESTART_SECONDS  # wie tegelijk komt, wacht hier niet op
+    log.warning("Forkserver voor previews gestopt (%s): opnieuw starten", server.proc.returncode)
+    await server.close()
+    new = await _launch()
+    if new is None:
+        return None
+    if _server is not server:  # intussen gestopt (de app stopt)
+        await new.close()
+        return None
+    new.restart_after = server.restart_after  # ook die niet vaker dan eens per RESTART_SECONDS
+    _server = new
+    return new
 
 
 async def _spawn(request: dict[str, Any], cwd: Path) -> tuple[int, bytes, bytes]:
@@ -493,16 +535,23 @@ async def _forked(
     started, done = server.submit(CHILD, request, cwd)
     pid: int | None = None
     try:
-        pid = await started
-        answer = await done
+        # shield: afbreken annuleert anders ook de futures zelf, en die zijn hieronder nog nodig
+        pid = await asyncio.shield(started)
+        answer = await asyncio.shield(done)
     except asyncio.CancelledError:
-        # Afgebroken (de tijdgrens, of de app stopt): het kind met alles wat het startte weg
-        if pid is not None:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(pid, signal.SIGKILL)
-        with anyio.CancelScope(shield=True), anyio.move_on_after(REAP_SECONDS):
-            with contextlib.suppress(ConnectionError):
-                await done
+        # Afgebroken (de tijdgrens, of de app stopt): het kind met alles wat het startte weg.
+        # Ook als de pid er nog niet was: het verzoek staat al bij de forkserver, het kind komt
+        # er dus toch. Komt de pid niet, dan hangt de forkserver: dan hij weg, met zijn kinderen
+        with anyio.CancelScope(shield=True):
+            with anyio.move_on_after(REAP_SECONDS), contextlib.suppress(ConnectionError):
+                if pid is None:
+                    pid = await asyncio.shield(started)
+                if pid is not None:
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        os.killpg(pid, signal.SIGKILL)
+                await asyncio.shield(done)
+            if not started.done():
+                server.kill()
         raise
     except ConnectionError:
         raise jobs.JobError("Het voorbeeldproces stopte onverwacht (forkserver weg)") from None
@@ -519,12 +568,16 @@ async def _forked(
 
 
 async def render(settings: Settings, request: dict[str, Any], cwd: Path) -> dict[str, Any]:
-    """Draait app/render.py in een eigen proces (een kind van de forkserver als die draait).
+    """Draait app/render.py in een eigen proces (een kind van de forkserver als die draait,
+    behalve met de sleutel van de mediaworker).
     Wordt dit afgebroken (de taak duurt te lang, of de app stopt), dan gaat het proces met alles
     wat het startte meteen dood. Is de mediaworker weg of druk (een video, fase 5), dan
     jobs.Defer: later opnieuw, de poging telt niet."""
     request = _with_worker(settings, request)
-    server = _forkserver()
+    # Met de sleutel van de mediaworker (een video) altijd een eigen proces: de forkserver houdt
+    # wat hij leest in zijn geheugen, en dat erft elk volgend kind, ook een dat een foto
+    # decodeert. Zo kent alleen het proces van die video de sleutel, zoals vóór de forkserver
+    server = None if "worker" in request else await _forkserver()
     if server is not None:
         code, out, err = await _forked(server, request, cwd)
     else:
