@@ -61,6 +61,11 @@ export function Dialog({ title, onClose, children, size = "m", actions }: Dialog
         onClose();
       }}
       onCancel={(e) => {
+        // Een sluitverzoek dat niet als Escape hierboven binnenkomt (de terugknop van Android,
+        // requestClose()). React laat cancel door de boom van componenten omhoog gaan, ook al
+        // gaat het DOM-event niet omhoog: die van een dialoog erin (Wachtwoord instellen, de
+        // viewer vanuit Versies) is niet voor deze; anders gingen ze allebei dicht.
+        if (e.target !== ref.current) return;
         e.preventDefault(); // de ouder beslist; die haalt de dialoog weg
         onClose();
       }}

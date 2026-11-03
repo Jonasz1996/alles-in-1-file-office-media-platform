@@ -118,7 +118,10 @@ staat: in een dialoog nooit op `<body>`.
   komt de vraag (`test_sharing_ui::test_sluiten_bij_een_selectie_vraagt_ook_eerst`).
 - [x] Een dialoog in een dialoog (Wachtwoord instellen in Gebruiker wijzigen): Enter opent,
   Escape sluit alleen de bovenste en de focus staat weer op de knop, ook drie keer op rij
-  (`test_admin::test_escape_sluit_alleen_de_bovenste_dialoog`).
+  (`test_admin::test_escape_sluit_alleen_de_bovenste_dialoog`). Een sluitverzoek dat niet als
+  toets binnenkomt (de terugknop van Android, `requestClose()`) sluit ook alleen de bovenste
+  (`test_admin::test_sluitverzoek_in_een_dialoog_in_een_dialoog`); net zo de viewer vanuit
+  Versies (`test_trash_versions::test_sluitverzoek_op_de_viewer_vanuit_versies`).
 - [x] Delen met een selectie: Tab naar Delen, Enter; de focus blijft op Delen zolang het delen
   loopt, daarna in het zoekveld (`test_sharing_ui::test_focus_blijft_op_delen_tijdens_het_delen`).
 

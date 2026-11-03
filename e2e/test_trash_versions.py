@@ -98,6 +98,32 @@ def open_versions(page, name: str):
     return dialog
 
 
+def test_sluitverzoek_op_de_viewer_vanuit_versies(context_as, server, user_factory):
+    """De viewer vanuit Versies en een sluitverzoek dat niet als toets binnenkomt (de terugknop
+    van Android; hier dialog.requestClose()): alleen de viewer gaat dicht, Versies blijft open
+    met de focus weer op Bekijken. React liet de cancel van de viewer ook bij de dialoog Versies
+    komen, en dan gingen ze allebei dicht."""
+    user = user_factory(name="Versie Terug")
+    node = upload(server, user, "notitie.txt", b"eerste\n")
+    server.call(user, "PUT", f"/api/v1/files/{node['id']}/content", content=b"tweede\n", expect=200)
+
+    page = context_as(user).new_page()
+    page.goto("/")
+    expect(page.locator("#inhoud").get_by_text("notitie.txt").first).to_be_visible()
+    dialog = open_versions(page, "notitie.txt")
+    view = dialog.get_by_role("button", name=re.compile(r"^Versie van .* bekijken$")).first
+    view.click()
+    viewer = page.get_by_role("dialog", name="notitie.txt", exact=True)
+    expect(viewer.locator(".viewer-stage")).to_contain_text("eerste")
+    viewer.evaluate("(d) => d.requestClose()")
+    expect(viewer).to_have_count(0)
+    expect(dialog).to_be_visible()
+    assert dialog.evaluate("(d) => d.open")
+    expect(view).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+
+
 def test_versie_uploaden_bekijken_terugzetten(context_as, server, user_factory):
     user = user_factory(name="Versie Test")
     node = upload(server, user, "verslag.txt", b"eerste versie\n")
