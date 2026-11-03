@@ -150,7 +150,7 @@ Op een machine met 4 kernen, de app op 3 (`taskset`), met 539 bestanden (500 JPE
 |---|---|---|
 | import met /fotos open: alle thumbnails | 190,7 s | 103,5 s |
 | idem: thumbnails na 30 / 60 / 90 s | 93 / 173 / 264 | 184 / 341 / 502 |
-| idem: import zelf klaar | 59 s | 90 s (zonder open tabblad 65 s) |
+| idem: import zelf klaar | 59 s | 90 s (zonder tabblad zie hieronder) |
 | achterstand van 540: alle thumbnails | 151,5 s (3 workers) | 64,3 s (2 workers) |
 | nieuwe upload achter ~530 wachtende | 18,7 s | 0,16 s |
 | /fotos open tijdens de achterstand: alles geschilderd | 148,5 s | 5,3 s |
@@ -162,6 +162,25 @@ Op een machine met 4 kernen, de app op 3 (`taskset`), met 539 bestanden (500 JPE
 Bij 50.000 foto's (afgeleid): alle thumbnails in ongeveer 1,7 uur, alles in 3,7 uur (was
 4,9 uur, met de zichtbare foto's het laatst).
 
+De review mat de import ook zonder open tabblad, en dan op dezelfde manier vóór en na: een
+kleinere import van 159 foto's, 3 keer per kant, de app op 3 kernen. Hier stond eerst "na
+zonder open tabblad 65 s" naast "vóór met open tabblad 59 s"; die vergelijking liet de
+vertraging kleiner lijken dan hij is.
+
+| zonder open tabblad, 159 foto's (3 keer) | vóór | na |
+|---|---|---|
+| import zelf klaar | 17,9 / 19,1 / 11,9 s | 23,0 / 20,4 / 21,5 s |
+| alle thumbnails | 49,1 / 55,5 / 46,6 s | 24,6 / 22,0 / 23,1 s |
+| alles, ook de grote versies | 49,1 / 55,5 / 46,6 s | 47,2 / 45,0 / 45,2 s |
+| `GET children` tijdens de import (p50) | 40 / 39 / 27 ms | 57 / 56 / 60 ms |
+| previews opvragen tijdens de import (p50) | 37 / 39 / 30 ms | 54 / 51 / 48 ms |
+| CPU-tijd van de app | 115 / 112 / 105 s | 94 / 88 / 90 s |
+
+De import zelf is dus ongeveer een derde trager (gemiddeld +33 %, de mediaan +21 %), en
+verzoeken aan de API duren tijdens de import ongeveer anderhalf keer zo lang (de mediaan blijft
+onder de 0,1 s). Daar staat tegenover dat alle thumbnails twee keer zo vroeg klaar zijn en dat
+alles samen iets minder tijd en CPU kost.
+
 ## Wat nog open staat
 
 - **HTTP/2.** De browser opent 6 verbindingen per host, en één daarvan houdt de live-stroom
@@ -172,10 +191,12 @@ Bij 50.000 foto's (afgeleid): alle thumbnails in ongeveer 1,7 uur, alles in 3,7 
   een camera of iPhone.
 - **De forkserver** start niet vanzelf opnieuw als hij stopt. Previews werken dan verder met
   een eigen proces per foto (zoals vóór deze verbetering) tot de app opnieuw start.
-- **De import is trager als iemand tegelijk kijkt** (59 naar 90 s met /fotos open; zonder
-  open tabblad 65 s). De thumbnails houden de import nu bij en delen met hem de event loop,
-  de schrijver van SQLite en het slot van de opslag (`BlobStore.lock`). De thumbnails komen
-  wel twee keer zo vroeg.
+- **De import zelf is trager**, ook zonder dat iemand kijkt: op dezelfde manier gemeten
+  ongeveer een derde (zie "Gemeten"; met /fotos open 59 naar 90 s). De thumbnails houden de
+  import nu bij en delen met hem de event loop, de schrijver van SQLite en het slot van de
+  opslag (`BlobStore.lock`). De thumbnails komen wel twee keer zo vroeg, en alles samen is
+  niet later klaar. Minder vertraging vraagt een fijner slot of de previews afremmen zolang een
+  import loopt; dat is niet gebouwd.
 - **Een voorwaardelijk verzoek** (`If-None-Match`) op een thumbnail geeft nog 200 met de hele
   inhoud, geen 304. Met `immutable` en een geldig `max-age` vraagt de browser het niet.
 - **Een open map laadt opnieuw** bij elke nieuwe verbinding van de live-stroom (`folderStore`,
