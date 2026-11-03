@@ -51,6 +51,7 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -772,6 +773,24 @@ async def _store_large(
     return False
 
 
+# Wie na preview.ready aan de beurt is (fase 6, §3.5): photometa v2 leest de plek en de hash
+# uit de inhoud zodra de preview er is. Zonder aanmelding gebeurt er niets.
+Ready = Callable[[async_sessionmaker[AsyncSession], str, bool], Awaitable[None]]
+_ready: list[Ready] = []
+
+
+def register_ready(fn: Ready) -> None:
+    """Na preview.ready, met (maker, sha, dated). Faalt hij, dan komt dat in het log en gaat de
+    volgende gewoon door: de melding aan de gebruiker is dan al verstuurd."""
+    if fn not in _ready:
+        _ready.append(fn)
+
+
+def forget_ready() -> None:
+    """Alleen voor tests: alle aanmeldingen weg."""
+    _ready.clear()
+
+
 async def announce(maker: async_sessionmaker[AsyncSession], sha: str, dated: bool = False) -> None:
     """preview.ready naar de eigenaren van bestanden met deze inhoud en naar wie er een via
     een deling kan zien, elk met alleen de bestanden die hij ziet. dated: de opnamedatum van
@@ -791,6 +810,11 @@ async def announce(maker: async_sessionmaker[AsyncSession], sha: str, dated: boo
         if dated:
             data["dated"] = True
         events.publish([user_id], "preview.ready", data)
+    for fn in list(_ready):
+        try:
+            await fn(maker, sha, dated)
+        except Exception:
+            log.exception("previews.ready")
 
 
 async def mark_failed(settings: Settings, payload: dict[str, Any], _error: str) -> None:

@@ -136,6 +136,7 @@ async def _remaining(session: AsyncSession, user: User) -> list:
 
 async def _drop_nodes(session: AsyncSession, settings: Settings, user: User) -> int:
     from app.routers.files import add_refs, drop_versions
+    from app.search import purge
     from app.storage import BlobStore
 
     blobs = BlobStore(settings.blob_dir)
@@ -163,14 +164,10 @@ async def _drop_nodes(session: AsyncSession, settings: Settings, user: User) -> 
                 refs = Counter(row.blob_id for row in present if row.blob_id)
                 refs += await drop_versions(session, present_ids)
                 await add_refs(session, refs, sign=-1)
-                # Kinderen staan vóór hun ouders in de lijst; binnen een batch eerst de diepste
+                # Kinderen staan vóór hun ouders in de lijst; binnen een batch eerst de
+                # diepste. Wissen gaat via de ene helper van Keuze 11 (fase 6).
                 order = {node_id: i for i, node_id in enumerate(ids)}
-                for part in batched(sorted(present_ids, key=order.__getitem__), BATCH):
-                    await session.execute(
-                        delete(Node)
-                        .where(Node.id.in_(part))
-                        .execution_options(synchronize_session=False)
-                    )
+                await purge.delete_nodes(session, sorted(present_ids, key=order.__getitem__))
                 await session.commit()
                 removed += len(present_ids)
     return removed

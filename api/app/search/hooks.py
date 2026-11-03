@@ -21,10 +21,15 @@ import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import event
+from sqlalchemy.orm import Session as OrmSession
+
 if TYPE_CHECKING:
     from app.config import Settings
 
 log = logging.getLogger("platform.search")
+# In session.info: welke nieuwe inhoud na de commit gemeld wordt (zoals jobs._KICK)
+_NEW_BLOBS = "platform.search.new_blobs"
 
 BlobAdded = Callable[[str, uuid.UUID | None], None]
 PhotoCopy = Callable[[Any, Sequence[tuple[uuid.UUID, uuid.UUID]]], Awaitable[None]]
@@ -86,6 +91,28 @@ def blob_added(sha: str, owner: uuid.UUID | None) -> None:
             fn(sha, owner)
         except Exception:
             log.exception("search.hooks.blob_added")
+
+
+def blob_added_after_commit(session: Any, sha: str, owner: uuid.UUID | None) -> None:
+    """Vanuit files.add_ref, nog in de transactie: na de commit krijgt blob_added deze inhoud.
+    Rollt de aanroeper terug, dan gebeurt er niets (de blob is er dan ook niet)."""
+    session.info.setdefault(_NEW_BLOBS, []).append((sha, owner))
+
+
+def pending(session: Any) -> list[tuple[str, uuid.UUID | None]]:
+    """Alleen voor tests: wat deze sessie na de commit gaat melden."""
+    return list(session.info.get(_NEW_BLOBS, ()))
+
+
+@event.listens_for(OrmSession, "after_commit")
+def _after_commit(session: OrmSession) -> None:
+    for sha, owner in session.info.pop(_NEW_BLOBS, ()):
+        blob_added(sha, owner)
+
+
+@event.listens_for(OrmSession, "after_rollback")
+def _after_rollback(session: OrmSession) -> None:
+    session.info.pop(_NEW_BLOBS, None)
 
 
 async def photo_copy(session: Any, pairs: Sequence[tuple[uuid.UUID, uuid.UUID]]) -> None:
