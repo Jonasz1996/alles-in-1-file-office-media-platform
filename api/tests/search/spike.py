@@ -7,6 +7,7 @@ snel een grote index te vullen, en de controle dat de index gelijk is aan een he
   houden num, pad en dead bij, maar schrijven niet naar FTS), en herbouwt daarna beide
   FTS-tabellen in één keer. Alleen voor een testdatabase waar niemand anders schrijft;
 - zoekbench(): tools/zoekbench/bench.py als module (S9), voor zijn boom en zijn SQL;
+- kaart(): tools/kaart/maak_wereld.py als module (S6);
 - herbouw_verschil(path): de integrity-check van FTS5, en de index (fts_node en fts_name) naast
   een volledige herbouw van dezelfde database, term voor term (fts5vocab, soort instance).
   Leeg: gelijk.
@@ -29,6 +30,7 @@ from alembic import command
 from app.migrate import alembic_config
 
 BENCH = Path(__file__).resolve().parents[3] / "tools" / "zoekbench" / "bench.py"
+KAART = Path(__file__).resolve().parents[3] / "tools" / "kaart" / "maak_wereld.py"
 TZ = "Europe/Amsterdam"
 NU = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
 
@@ -72,6 +74,16 @@ def zoekbench():
     spec = importlib.util.spec_from_file_location("zoekbench", BENCH)
     mod = importlib.util.module_from_spec(spec)
     sys.modules["zoekbench"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@functools.cache
+def kaart():
+    """tools/kaart/maak_wereld.py als module (spike S6), net als zoekbench()."""
+    spec = importlib.util.spec_from_file_location("maak_wereld", KAART)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["maak_wereld"] = mod
     spec.loader.exec_module(mod)
     return mod
 
