@@ -43,6 +43,10 @@ from media_harness import (
 
 WORKER = "app.media.worker"
 RENDER = "from app.render import main"
+# De forkserver van previews (render.serve). Een renderproces is een fork daarvan en heeft dus
+# dezelfde opdrachtregel; de worker hoort een kind van zo'n fork te zijn, niet van de
+# forkserver zelf
+FORKSERVER = "from app.render import serve"
 
 
 @dataclass
@@ -50,7 +54,8 @@ class Seen:
     """Wat de spion zag: per ffmpeg (pid, starttime) de opdrachtregels van zijn voorouders."""
 
     ffmpeg: dict[tuple[int, int], list[str]] = field(default_factory=dict)
-    workers: dict[tuple[int, int], str] = field(default_factory=dict)  # → cmdline van de ouder
+    # → cmdline van de ouder en van diens ouder
+    workers: dict[tuple[int, int], tuple[str, str]] = field(default_factory=dict)
     scans: int = 0
 
     def outside_worker(self) -> list[str]:
@@ -81,7 +86,8 @@ def spy(root: int, every: float = 0.02) -> Iterator[Seen]:
                     up = table[up][0]
                 seen.ffmpeg[(pid, start)] = chain
             elif (pid, start) not in seen.workers and WORKER in cmdline(pid):
-                seen.workers[(pid, start)] = cmdline(ppid)
+                grand = table[ppid][0] if ppid in table else 0
+                seen.workers[(pid, start)] = (cmdline(ppid), cmdline(grand) if grand else "")
         seen.scans += 1
 
     def run() -> None:
@@ -231,8 +237,12 @@ def test_met_media_uit_krijgt_een_video_een_preview_zoals_in_0_6_0(server, admin
             time.sleep(0.05)
     assert seen.outside_worker() == [], seen.ffmpeg
     assert seen.workers, "geen worker gezien: wie maakte het frame?"
-    for (pid, start), parent_line in seen.workers.items():
-        assert RENDER in parent_line, parent_line  # een kind van het renderproces
+    for (pid, start), (parent_line, grand_line) in seen.workers.items():
+        # een kind van het renderproces: zonder forkserver render.main, met forkserver een fork
+        # van render.serve (dan is de ouder van die fork de forkserver, niet de app)
+        assert RENDER in parent_line or FORKSERVER in parent_line, parent_line
+        if FORKSERVER in parent_line:
+            assert FORKSERVER in grand_line, grand_line
         assert not alive(pid, start), f"de worker {pid} leeft nog"
     left = [p for p in descendants([root]) if WORKER in cmdline(p)]
     assert left == [], left
