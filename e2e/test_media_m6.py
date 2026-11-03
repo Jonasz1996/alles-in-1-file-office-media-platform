@@ -909,6 +909,25 @@ STUCK_JS = """() => {
 }"""
 
 
+# De bron voor de kill-tests: 25 keer de 6 s van hevc10_hdr10.mkv (150 s). Langer dan de naad, plus
+# wat de speler vooruit vraagt (AHEAD_S in mse.ts: 30 s), plus de tegendruk daarvoor (LEAD_MS in
+# streams.py: 60 s): zo kan geen run de bron afmaken voordat de test kijkt, en loopt de producent
+# nog of wacht hij op de pipe. Met 5 keer (30 s) had een snelle runner de rest na de naad al af
+# (CI op d519cf9: "geen nieuwe producent"); met 15 keer (90 s) maakte hij hier de bron af met de
+# speler op pauze. Dat geldt ook voor de ffmpeg die vóór de kill moet lopen.
+KILL_LOOPS = 25
+
+
+def producers(worker: int, table: Any) -> list[int]:
+    """De ffmpeg van de stroom onder een worker (uitvoer -f mp4), niet die van de analyse."""
+    found = []
+    for p in sorted(descendants([worker], table)):
+        args = cmdline(p).split()
+        if comm(p) == "ffmpeg" and "-f" in args and "mp4" in args:
+            found.append(p)
+    return found
+
+
 def new_run_start(page: Any, media: Any, old: int, seconds: float) -> float:
     """Waar de eerste run onder een nieuwe worker begint (s, mediatijd): de -ss vóór de invoer van
     zijn ffmpeg voor de stroom (grid.start_s; bij transcode het begin van het segment). Daar zit de
@@ -920,11 +939,10 @@ def new_run_start(page: Any, media: Any, old: int, seconds: float) -> float:
     while True:
         new = media.worker_pid()
         if new not in (None, old):
-            table = process_table()
-            for p in sorted(descendants([new], table)):
-                args = cmdline(p).split()
-                if comm(p) == "ffmpeg" and "-f" in args and "mp4" in args:
-                    return float(args[args.index("-ss") + 1]) if "-ss" in args else 0.0
+            found = producers(new, process_table())
+            if found:
+                args = cmdline(found[0]).split()
+                return float(args[args.index("-ss") + 1]) if "-ss" in args else 0.0
         assert time.monotonic() < end, f"geen producent onder een nieuwe worker binnen {seconds} s"
         page.wait_for_timeout(100)
 
@@ -938,7 +956,7 @@ def test_de_worker_gedood_tijdens_een_transcode(media, media_browsers, ffmpeg_co
     waar de nieuwe run begint (new_run_start), niet het buffer bij de kill."""
     owner, folder, context, page = setup(media, media_browsers, "M6 worker weg")
     plays = Plays(context)
-    path = loop_mkv(tmp_path, 5, "hevc10_hdr10.mkv")  # 60 s: de producent loopt niet ver voor
+    path = loop_mkv(tmp_path, KILL_LOOPS, "hevc10_hdr10.mkv")
     node = upload_path(media, owner, folder, path)
     path.unlink()
     watch(page, node)
@@ -973,9 +991,9 @@ def test_de_worker_gedood_tijdens_een_transcode(media, media_browsers, ffmpeg_co
     assert took <= limit_s, (took, at, end, seam_s)
     new = media.worker_pid()
     assert new not in (None, old)
-    # De segmenten na de buffer komen van een producent onder de nieuwe worker (60 s: die loopt nog)
-    table = process_table()
-    assert any(comm(p) == "ffmpeg" for p in descendants([new], table)), "geen nieuwe producent"
+    # De segmenten na de buffer komen van een producent onder de nieuwe worker (KILL_LOOPS: die
+    # loopt nog)
+    assert producers(new, process_table()), "geen nieuwe producent"
     assert state(page)["state"] == "ready"
     assert all(c["status"] == 200 for c in plays.calls), plays.calls
     leave(page, ffmpeg_count)
@@ -1160,7 +1178,7 @@ def test_de_worker_gedood_met_een_gat_in_het_geluid(media, media_browsers, ffmpe
     owner, folder, context, page = setup(media, media_browsers, "M6 gat na de kill")
     plays = Plays(context)
     seam = Seam(context)
-    path = loop_mkv(tmp_path, 5, "hevc10_hdr10.mkv")
+    path = loop_mkv(tmp_path, KILL_LOOPS, "hevc10_hdr10.mkv")
     node = upload_path(media, owner, folder, path)
     path.unlink()
     watch(page, node)
