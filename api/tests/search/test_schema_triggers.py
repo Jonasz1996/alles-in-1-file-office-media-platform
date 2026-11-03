@@ -3,11 +3,13 @@ app/search/schema.py zegt, en de bevroren kopie in migratie 0010 is daaraan geli
 trigger verandert, verandert dus beide en schrijft een nieuwe migratie."""
 
 import importlib.util
+import uuid
 from pathlib import Path
 
 import pytest
 
 from app.search import schema
+from tests.search.migratie import check_fts
 
 MIGRATION = Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0010_zoeken.py"
 
@@ -92,3 +94,71 @@ def test_elke_trigger_op_een_bekende_tabel():
     for name, sql in schema.TRIGGERS.items():
         assert f" ON {tables[name.split('_')[0]]}" in sql.split("BEGIN")[0], name
         assert "OR REPLACE" not in sql and "OR IGNORE" not in sql, name
+
+
+@pytest.mark.anyio
+async def test_ocr_van_een_foto_staat_alleen_in_pocr(settings):
+    """Review Z0, veilig F3: OCR van een foto is alleen van de eigenaar (Keuze 16, 23, 25a).
+    In fts_node heeft hij een eigen kolom pocr, los van de OCR van een PDF in ocr. Een vraag van
+    een ander sluit pocr uit met een kolomfilter: dan geen treffer, geen rang en geen snippet
+    uit de foto. De OCR van een PDF (wie hem mag lezen, mag de tekst zien) blijft vindbaar."""
+    from app.db import get_engine
+
+    user, root, foto, scan = (uuid.uuid4().hex for _ in range(4))
+    sha_foto, sha_scan = "a" * 64, "b" * 64
+    t = "2026-11-03 09:00:00.000000"
+    async with get_engine(settings).begin() as conn:
+        run = conn.exec_driver_sql
+        assert [r[1] for r in (await run("PRAGMA table_info(fts_node)")).all()] == [
+            "name", "extra", "body", "ocr", "meta", "pocr",
+        ]  # fmt: skip
+        await run(
+            'INSERT INTO "user" (id, email, display_name, password_hash, role, quota_bytes, '
+            "root_id, created_at) VALUES (?, 'eva@example.nl', 'Eva', 'x', 'user', 0, ?, ?)",
+            (user, root, t),
+        )
+        for sha in (sha_foto, sha_scan):
+            await run(
+                "INSERT INTO blob (sha256, size, ref_count, created_at) VALUES (?, 1, 1, ?)",
+                (sha, t),
+            )
+        for node_id, parent, name, blob in (
+            (root, None, "", None),
+            (foto, root, "bon.jpg", sha_foto),
+            (scan, root, "scan.pdf", sha_scan),
+        ):
+            await run(
+                "INSERT INTO node (id, parent_id, owner_id, name, kind, size, blob_id, "
+                "created_at, modified_at, search_name) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+                (node_id, parent, user, name, "dir" if blob is None else "file", blob, t, t,
+                 name),
+            )  # fmt: skip
+        await run(
+            "INSERT INTO blob_text (blob_sha, ocr, updated_at) VALUES (?, 'scanwoord', ?)",
+            (sha_scan, t),
+        )
+        await run(
+            "INSERT INTO photo_ocr (node_id, owner_id, text, words, angle, updated_at) "
+            "VALUES (?, ?, 'pincode fotowoord 4711', x'00', 0, ?)",
+            (foto, user, t),
+        )
+
+        async def hits(expr: str) -> set[str]:
+            rows = await run(
+                "SELECT n.name FROM fts_node f JOIN node n ON n.num = f.rowid "
+                "WHERE fts_node MATCH ?",
+                (expr,),
+            )
+            return {r[0] for r in rows.all()}
+
+        assert await hits("fotowoord") == {"bon.jpg"}  # de eigenaar
+        assert await hits("pocr:fotowoord") == {"bon.jpg"}
+        assert await hits("ocr:fotowoord") == set()
+        # zoals een vraag van een ander: alle kolommen behalve pocr
+        anders = "{name extra body ocr meta}: "
+        assert await hits(anders + "fotowoord") == set()
+        assert await hits(anders + "pincode") == set()
+        assert await hits(anders + "scanwoord") == {"scan.pdf"}
+        assert await hits("ocr:scanwoord") == {"scan.pdf"}
+        assert await hits("pocr:scanwoord") == set()
+        await conn.run_sync(check_fts)

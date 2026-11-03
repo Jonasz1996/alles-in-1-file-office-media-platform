@@ -95,7 +95,11 @@ def ss(x: str) -> str:
 
 
 _BODY = ss("coalesce(t.body, '')")
-_OCR = ss("trim(coalesce(t.ocr, '') || ' ' || coalesce(po.text, ''))")
+_OCR = ss("coalesce(t.ocr, '')")
+# OCR van een foto (X1) in een eigen kolom: die tekst is alleen van de eigenaar (Keuze 16, 23,
+# 25a). Een vraag van een ander sluit de kolom uit met een kolomfilter, {name extra body ocr
+# meta}: …; zo komt een treffer, zijn rang en zijn snippet nooit uit pocr (review Z0, veilig F3).
+_POCR = ss("coalesce(po.text, '')")
 _META = ss("coalesce(t.meta, '')")
 _EXTRA = ss(
     "coalesce((SELECT group_concat(m.title, ' ') FROM media_item m WHERE m.node_id = n.id), '')"
@@ -108,14 +112,15 @@ VIEW_SQL = (
     f"         {_EXTRA} AS extra,\n"
     f"         {_BODY} AS body,\n"
     f"         {_OCR} AS ocr,\n"
-    f"         {_META} AS meta\n"
+    f"         {_META} AS meta,\n"
+    f"         {_POCR} AS pocr\n"
     "  FROM node n\n"
     "  LEFT JOIN blob_text t ON t.blob_sha = n.blob_id\n"
     "  LEFT JOIN photo_ocr po ON po.node_id = n.id"
 )
 FTS_TABLES = {
     "fts_node": (
-        "CREATE VIRTUAL TABLE fts_node USING fts5(name, extra, body, ocr, meta, "
+        "CREATE VIRTUAL TABLE fts_node USING fts5(name, extra, body, ocr, meta, pocr, "
         "content='search_src', content_rowid='num', tokenize='unicode61 remove_diacritics 2')"
     ),
     "fts_name": (
@@ -127,7 +132,7 @@ FTS_TABLES = {
 # --- De macro's --------------------------------------------------------------------------
 
 _CURSOR = "(SELECT cursor FROM search_state WHERE id = 1)"
-_COLS = "name, extra, body, ocr, meta"
+_COLS = "name, extra, body, ocr, meta, pocr"
 
 
 def in_(n: str) -> str:

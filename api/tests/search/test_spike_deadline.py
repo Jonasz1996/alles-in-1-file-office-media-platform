@@ -142,7 +142,7 @@ async def engine(corpus):
 
 BEREIK = "(n.mpath >= :p1 AND n.mpath < :e1)"
 RONDE_A = text(
-    "SELECT n.id, bm25(fts_node, 10.0, 6.0, 1.0, 0.8, 0.5) AS s "
+    "SELECT n.id, bm25(fts_node, 10.0, 6.0, 1.0, 0.8, 0.5, 0.8) AS s "
     "FROM fts_node CROSS JOIN node AS n ON n.num = fts_node.rowid "
     f"WHERE fts_node MATCH :expr AND n.kind <> 'album' AND n.dead = 0 AND {BEREIK} "
     "ORDER BY s, n.num LIMIT :n"

@@ -60,7 +60,7 @@ def _bereiken(con, n: int) -> tuple[str, list]:
 def _zoeken(con, wortels: int):
     bereik, args = _bereiken(con, wortels)
     sql = f"""
-        SELECT n.id, bm25(fts_node, 10.0, 6.0, 1.0, 0.8, 0.5) AS s
+        SELECT n.id, bm25(fts_node, 10.0, 6.0, 1.0, 0.8, 0.5, 0.8) AS s
         FROM fts_node CROSS JOIN node AS n ON n.num = fts_node.rowid
         WHERE fts_node MATCH ?
           AND n.kind <> 'album' AND n.dead = 0

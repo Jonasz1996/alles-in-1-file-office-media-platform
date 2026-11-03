@@ -107,7 +107,8 @@ def ss(x: str) -> str:
 
 
 _BODY = ss("coalesce(t.body, '')")
-_OCR = ss("trim(coalesce(t.ocr, '') || ' ' || coalesce(po.text, ''))")
+_OCR = ss("coalesce(t.ocr, '')")
+_POCR = ss("coalesce(po.text, '')")
 _META = ss("coalesce(t.meta, '')")
 _EXTRA = ss(
     "coalesce((SELECT group_concat(m.title, ' ') FROM media_item m WHERE m.node_id = n.id), '')"
@@ -118,14 +119,15 @@ VIEW_SQL = (
     f"         {_EXTRA} AS extra,\n"
     f"         {_BODY} AS body,\n"
     f"         {_OCR} AS ocr,\n"
-    f"         {_META} AS meta\n"
+    f"         {_META} AS meta,\n"
+    f"         {_POCR} AS pocr\n"
     "  FROM node n\n"
     "  LEFT JOIN blob_text t ON t.blob_sha = n.blob_id\n"
     "  LEFT JOIN photo_ocr po ON po.node_id = n.id"
 )
 FTS_TABLES = {
     "fts_node": (
-        "CREATE VIRTUAL TABLE fts_node USING fts5(name, extra, body, ocr, meta, "
+        "CREATE VIRTUAL TABLE fts_node USING fts5(name, extra, body, ocr, meta, pocr, "
         "content='search_src', content_rowid='num', tokenize='unicode61 remove_diacritics 2')"
     ),
     "fts_name": (
@@ -135,7 +137,7 @@ FTS_TABLES = {
 }
 
 _CURSOR = "(SELECT cursor FROM search_state WHERE id = 1)"
-_COLS = "name, extra, body, ocr, meta"
+_COLS = "name, extra, body, ocr, meta, pocr"
 
 
 def in_(n: str) -> str:

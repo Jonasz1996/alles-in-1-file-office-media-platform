@@ -587,7 +587,8 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
      zoekt die als heel woord, plus in de namen via trigram met een `LIKE`-filter;
    - `parse()` is de enige plek die een `MATCH`-uitdrukking maakt. Een AST-test verbiedt een
      f-string of `%` naast `MATCH`.
-6. **Rangorde** (B). bm25 met gewichten naam 10, titel 6, tekst 1, OCR 0,8, meta 0,5. Bij gelijke
+6. **Rangorde** (B). bm25 met gewichten naam 10, titel 6, tekst 1, OCR 0,8, meta 0,5 (en OCR van
+   een foto 0,8, de kolom `pocr` van de review van Z0). Bij gelijke
    score op `num`, zodat de volgorde vast is. Stukken van namen uit `fts_name` komen ná de
    treffers op hele woorden, en alleen als de eerste ronde minder dan een pagina gaf. Na de
    tijdsgrens is er geen rangorde (`ranked: false`, Keuze 9).
@@ -3615,6 +3616,16 @@ met wat erin staat. De vraag sluit ze uit (Keuze 4).
 …), ''))`. Anders vond "grosse" de film "Die große Stille" niet. Zo staat het in `schema.py` en
 in 0010. En de tekst krijgt NFKC vóór hij in `blob_text` komt (Keuze 21): `unicode61` breekt een
 ligatuur als "ﬁ" niet op.
+
+**Herzien na de review van Z0 (veilig F3).** OCR van een foto staat niet meer in de kolom `ocr`,
+maar in een eigen kolom `pocr` (`SS(coalesce(po.text, ''))`), achteraan in de view en in
+`fts_node(name, extra, body, ocr, meta, pocr, …)`; `ocr` is alleen `SS(coalesce(t.ocr, ''))`. In
+één kolom kon een treffer, zijn bm25 en zijn snippet bij een ander uit de foto-OCR van de
+eigenaar komen, en FTS5 kon die twee daarna niet meer scheiden. Z1 zoekt voor een node van een
+ander met het kolomfilter `{name extra body ocr meta}: …` (zonder `pocr`), en alleen voor eigen
+nodes met alle kolommen; de snippet komt bij een ander nooit uit `pocr`. De macro's `DEL` en
+`INS` nemen `pocr` mee. Test: `test_ocr_van_een_foto_staat_alleen_in_pocr`
+(`tests/search/test_schema_triggers.py`). Het gewicht van `pocr` in bm25 is dat van `ocr` (0,8).
 
 **De macro's.** In `schema.py` staan ze uitgeschreven.
 

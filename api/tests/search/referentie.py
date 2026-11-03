@@ -28,9 +28,10 @@ De regels (wat de app moet doen, niet hoe):
   geldige deling met jou of een groep van jou (geen link, niet verlopen, niet van jezelf).
   Een album delen geeft niets om te zoeken. in_: alleen onder die map.
 - **OCR-tekst uit een foto** (photo_ocr) telt alleen voor de eigenaar van de node (Keuze 25a):
-  Bram vindt bonwoordy niet op Eva's gedeelde foto. De view search_src zet die tekst in
-  dezelfde kolom ocr als de OCR van een PDF (blob_text.ocr), die wel voor iedereen telt die
-  het bestand ziet: de app moet het verschil zelf maken (zie docs/fase-6/z0-e2e.md).
+  Bram vindt bonwoordy niet op Eva's gedeelde foto. In fts_node staat die tekst in een eigen
+  kolom pocr, los van de OCR van een PDF (ocr, blob_text.ocr), die wel telt voor iedereen die
+  het bestand ziet. Een vraag van een ander sluit pocr uit met een kolomfilter (review Z0,
+  veilig F3).
 
     uv run python -m tests.search.referentie --vragen    # schrijft vragen.tsv opnieuw
 """

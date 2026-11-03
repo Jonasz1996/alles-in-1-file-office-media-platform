@@ -298,12 +298,14 @@ Op 3 cores van deze VM:
    grensparen en de punten op de Noordzee zijn met de hand gekozen.
    `download.geonames.org` is hier dicht en Natural Earth is er niet. Z3 moet ze controleren tegen
    `places.sqlite` en de polygonen.
-6. **OCR van een foto staat in dezelfde kolom als OCR van een PDF.** De view `search_src` van
-   0010 zet `photo_ocr.text` en `blob_text.ocr` allebei in de kolom `ocr` van `fts_node`. De
+6. ~~**OCR van een foto staat in dezelfde kolom als OCR van een PDF.** De view `search_src` van
+   0010 zet `photo_ocr.text` en `blob_text.ocr` allebei in de kolom `ocr` van `fts_node`.~~ De
    referentie telt OCR-tekst van een foto alleen voor de eigenaar (Keuze 25a: Bram vindt
-   `bonwoordy` niet op Eva's gedeelde foto). FTS alleen kan dat verschil niet maken, dus de app
+   `bonwoordy` niet op Eva's gedeelde foto). ~~FTS alleen kan dat verschil niet maken, dus de app
    moet het zelf doen: een eigen kolom, of een tweede controle op `photo_ocr`. Dat is voor Z1 en
-   Z6. `test_wie_wat_vindt` legt vast wat eruit moet komen.
+   Z6.~~ [Na de review van Z0 (veilig F3): de foto-OCR staat in een eigen kolom `pocr`; Z1 sluit
+   die uit voor de nodes van een ander met een kolomfilter. Zie [z0.md](z0.md), "De review".]
+   `test_wie_wat_vindt` legt vast wat eruit moet komen.
 7. **Tesseract en de hoeken.** Gemeten met tesseract 5.3.4 op de scans:
    - met `-l nld+eng` leest hij `ocrwoordx` op 0°, 3° en −5° (PNG en JPEG, NL en EN);
    - met `nld` alleen leest hij op 3° "oerwoordx";
