@@ -80,7 +80,7 @@ async def test_een_taak_van_media_met_media_uit_is_geen_wachtende_rij(
             run_after=datetime.now(UTC) - timedelta(minutes=30),
         )
         await session.commit()
-    assert jobs.active_lanes(settings) == (jobs.DEFAULT_LANE, "preview")
+    assert jobs.active_lanes(settings) == (jobs.DEFAULT_LANE, "preview", "index")
     body = await status(client, headers)
     codes = {n["code"] for n in body["notices"]}
     assert "jobs_waiting" not in codes

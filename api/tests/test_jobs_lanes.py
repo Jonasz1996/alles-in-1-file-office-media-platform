@@ -62,11 +62,12 @@ async def until(predicate, seconds: float = 5.0) -> float:
 
 @pytest.fixture
 async def runners(settings):
-    """Start een Runner per rij (met media aan: anders alleen default); stopt ze na de test."""
+    """Start een Runner per rij (met media en ocr aan: anders draaien die rijen niet); stopt ze
+    na de test."""
     started: list[jobs.Runner] = []
 
     async def start(s=None):
-        s = (s or settings).model_copy(update={"media_enabled": True})
+        s = (s or settings).model_copy(update={"media_enabled": True, "ocr_enabled": True})
         started.extend(await jobs.start_runners(s))
         return started
 
@@ -156,10 +157,10 @@ async def test_zonder_media_alleen_default_en_preview(settings, maker, kind):
 
     name = kind("test.media-uit", note, lane="media")
     assert not settings.media_enabled
-    assert jobs.active_lanes(settings) == ("default", "preview")
+    assert jobs.active_lanes(settings) == ("default", "preview", "index")
     started = await jobs.start_runners(settings)
     try:
-        assert [r.lane for r in started] == ["default", "preview"]
+        assert [r.lane for r in started] == ["default", "preview", "index"]
         [job_id] = await put(maker, name)
         jobs.kick()
         await asyncio.sleep(0.3)
@@ -172,7 +173,8 @@ async def test_zonder_media_alleen_default_en_preview(settings, maker, kind):
 @pytest.mark.anyio
 async def test_workers_per_rij(settings):
     s = settings.model_copy(update={"job_workers": 3, "media_job_workers": 2, "preview_workers": 4})
-    assert [jobs.lane_workers(s, lane) for lane in jobs.LANES] == [3, 4, 1, 2, 1, 1]
+    # default, preview, index, media_scan, media, media_net, import, ocr
+    assert [jobs.lane_workers(s, lane) for lane in jobs.LANES] == [3, 4, 1, 1, 2, 1, 1, 1]
     # preview_workers 0: een minder dan het aantal kernen van dit proces, minstens 1
     auto = s.model_copy(update={"preview_workers": 0})
     cores = len(os.sched_getaffinity(0))
