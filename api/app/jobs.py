@@ -43,7 +43,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import anyio
-from sqlalchemy import and_, case, delete, event, false, func, or_, select, true, update
+from sqlalchemy import and_, bindparam, case, delete, event, false, func, or_, select, true, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session as OrmSession
 
@@ -345,21 +345,32 @@ async def enqueue_many(
 
 async def to_front(session: AsyncSession, keys: Sequence[str]) -> int:
     """Taken met deze keys die nu klaarstaan, naar voren: vóór alles wat gewoon wacht, en het
-    laatst naar voren gehaalde eerst (run_after net zo ver vóór FRONT als nu erna is). Een taak
-    die bewust later moet (Defer, na een fout, opnieuw maken na een versiewissel), blijft
-    staan, net als een die in de laatste FRONT_AGAIN seconden al naar voren ging. Eerst lezen,
-    dan alleen schrijven als er iets te verschuiven is: een UPDATE neemt in SQLite het
-    schrijfslot, ook als hij niets raakt. In de transactie van de aanroeper; geeft het aantal."""
+    laatst naar voren gehaalde eerst (run_after net zo ver vóór FRONT als nu erna is). Binnen
+    één keer in de volgorde van keys (een microseconde per plek): de tijdlijn haalt een hele
+    pagina van 500 naar voren, en wat bovenaan staat (wat iemand ziet) gaat dan als eerste.
+    Eerder kregen ze allemaal dezelfde plek en ging de oudste taak voor; bij een import staan de
+    nieuwste foto's bovenaan, en die kwamen zo als laatste. Een taak die bewust later moet
+    (Defer, na een fout, opnieuw maken na een versiewissel), blijft staan, net als een die in de
+    laatste FRONT_AGAIN seconden al naar voren ging. Eerst lezen, dan alleen schrijven als er
+    iets te verschuiven is: een UPDATE neemt in SQLite het schrijfslot, ook als hij niets raakt.
+    In de transactie van de aanroeper; geeft het aantal."""
     at = now()
     front = FRONT - (at - FRONT)
     # Wie na dit punt staat, ging nooit naar voren of al langer dan FRONT_AGAIN geleden
     since = front + timedelta(seconds=FRONT_AGAIN)
     moved = 0
-    keys = list(keys)
+    keys = list(dict.fromkeys(keys))
+    place = {k: i for i, k in enumerate(keys)}
+    table = Job.__table__
+    move = (
+        update(table)
+        .where(table.c.id == bindparam("job"), table.c.status == "queued")
+        .values(run_after=bindparam("at"))
+    )
     for i in range(0, len(keys), 500):
-        ids = (
-            await session.scalars(
-                select(Job.id).where(
+        rows = (
+            await session.execute(
+                select(Job.id, Job.key, Job.type).where(
                     Job.key.in_(keys[i : i + 500]),
                     Job.status == "queued",
                     Job.run_after <= at,
@@ -367,17 +378,15 @@ async def to_front(session: AsyncSession, keys: Sequence[str]) -> int:
                 )
             )
         ).all()
-        if not ids:
+        if not rows:
             continue
-        result = await session.execute(
-            update(Job)
-            .where(Job.id.in_(ids), Job.status == "queued")
-            .values(run_after=front)
-            .returning(Job.type)
-            .execution_options(synchronize_session=False)
-        )
-        for moved_type in result.scalars().all():
-            _kick_after_commit(session, lane_of(moved_type))
+        spots = [
+            {"job": row.id, "at": front - timedelta(microseconds=len(keys) - place[row.key])}
+            for row in rows
+        ]
+        await session.execute(move, spots)
+        for row in rows:
+            _kick_after_commit(session, lane_of(row.type))
             moved += 1
     return moved
 

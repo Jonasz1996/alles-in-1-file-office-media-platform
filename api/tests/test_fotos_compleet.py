@@ -476,6 +476,31 @@ async def test_wat_iemand_bekijkt_gaat_voor(client, admin, settings):
         assert oldest is not None and oldest > datetime.now(UTC) - timedelta(minutes=5)
 
 
+async def test_de_tijdlijn_haalt_de_bovenste_eerst_naar_voren(client, admin, settings):
+    """De tijdlijn haalt een hele pagina (tot 500) tegelijk naar voren; wat bovenaan staat, wat
+    iemand ziet, moet dan eerst. Eerder kregen ze allemaal dezelfde plek in de rij en ging de
+    oudste taak voor. Bij een import staan de nieuwste foto's bovenaan en zijn hun taken de
+    jongste: met /fotos open kwamen de zichtbare thumbnails zo als laatste (de nacontrole: 24
+    zichtbare cellen pas na 25 s, met de hele achterstand)."""
+    headers, _ = admin
+    nodes = [await upload(client, headers, f"{i}.png", picture("PNG", (60, 40 + i)))
+             for i in range(5)]  # fmt: skip
+    r = await client.get("/api/v1/photos", headers=headers)
+    shown = [item["id"] for item in r.json()["items"]]
+    assert shown == [n["id"] for n in reversed(nodes)]  # de nieuwste bovenaan
+    sha = {n["id"]: sha_of(n) for n in nodes}
+    claimed = [(await jobs.claim(settings, lane=previews.LANE)).payload["sha"] for _ in nodes]
+    assert claimed == [sha[i] for i in shown]
+    # Een map (POST /previews): in de volgorde van het verzoek
+    async with maker(settings)() as session:
+        await session.execute(update(Job).values(status="queued", run_after=jobs.now()))
+        await session.commit()
+    order = [nodes[2]["id"], nodes[0]["id"], nodes[4]["id"]]
+    await preview_of(client, headers, *order)
+    claimed = [(await jobs.claim(settings, lane=previews.LANE)).payload["sha"] for _ in order]
+    assert claimed == [sha[i] for i in order]
+
+
 async def test_wat_de_viewer_toont_gaat_voor_alle_thumbnails(client, admin, settings):
     """Een RAW (of een HEIC met ingebedde thumbnail) heeft na de eerste ronde alleen 256 px, en de
     browser kan het origineel niet tonen. Opent iemand hem in de viewer tijdens een import, dan

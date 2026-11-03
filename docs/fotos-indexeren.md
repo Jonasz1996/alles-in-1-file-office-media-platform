@@ -31,6 +31,11 @@ De tijdlijn en een map doen dat alleen voor de thumbnail (meer tonen ze niet); d
 voor de grote versie. Wat zo vooraan staat, gaat voor alles, ook voor de thumbnails van een
 import (`jobs._fronted_filter`). Een nieuwe upload tijdens een grote import hoeft zo niet
 achter de hele import te wachten.
+Binnen één keer gaat het in de volgorde van het scherm: de tijdlijn haalt een hele pagina (tot
+500) naar voren, en wat bovenaan staat, gaat als eerste. Dat was eerst niet zo: de hele pagina
+kreeg dezelfde plek en dan ging de oudste taak voor. Bij een import staan de nieuwste foto's
+bovenaan en zijn hun taken de jongste, dus de zichtbare thumbnails kwamen als laatste (de
+nacontrole, zie "Gemeten").
 Dat gebeurt pas na het antwoord, in een eigen sessie (`previews.to_front`): het schrijven
 wacht soms op SQLite, en het antwoord hoeft daar niet op te wachten. Wie dezelfde foto's
 binnen 10 seconden opnieuw laadt, schrijft niets (`jobs.FRONT_AGAIN`).

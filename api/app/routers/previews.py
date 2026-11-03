@@ -74,7 +74,9 @@ async def preview_info(
     result = {
         str(n.id): PreviewOut(**previews.info(secret, blobs.get(n.blob_id), exp)) for n in nodes
     }
-    waiting = [(b.sha256, b.preview, b.preview_meta) for b in blobs.values()]
+    # In de volgorde van het verzoek (zoals de map ze toont): wat bovenaan staat, gaat eerst
+    shown = [blobs[n.blob_id] for n in nodes if n.blob_id in blobs]
+    waiting = [(b.sha256, b.preview, b.preview_meta) for b in shown]
     previews.to_front(background, settings, waiting)
     return result
 
