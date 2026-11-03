@@ -17,6 +17,7 @@ import asyncio
 import io
 import shutil
 import struct
+import time
 import types
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -202,6 +203,45 @@ def test_raf_en_cr3_krijgen_de_ingebedde_jpeg(tmp_path):
     result, made = draw(tmp_path, cr3, "IMG_0001.CR3", "image/x-canon-cr3")
     assert result["state"] == "ready" and made[256] == (256, 192)
     assert result["meta"]["taken_at"].startswith("2022-08-09T10:11")
+
+
+# Koppen die een worker eerder bezighielden (review F2): FFD8 FFDA zonder einde, met een SOF
+# erbij, FFD8 steeds opnieuw (elke kop springt 65 KB per segment), en lange ketens van markers
+SOF = b"\xff\xc0\x00\x11\x08\x00\x10\x00\x10\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01"
+CRAFTED = {
+    "kop zonder einde": b"\xff\xd8\xff\xda\x00\x08" + b"\0" * 6,
+    "kop met SOF zonder einde": b"\xff\xd8" + SOF + b"\xff\xda\x00\x08" + b"\0" * 6,
+    "FFD8 steeds opnieuw": b"\xff\xd8",
+    "lange ketens": b"\xff\xd8" + b"\xff\x01" * 1000,
+}
+
+
+@pytest.mark.parametrize("unit", list(CRAFTED.values()), ids=list(CRAFTED))
+def test_een_gemaakte_raw_houdt_de_worker_niet_bezig(tmp_path, unit):
+    """Elke kop zocht eerder opnieuw tot het eind van het bestand naar FFD9, en een kop die niet
+    deugde telde niet mee: 1 MB kostte 45 s, 4 MB een worker tot de tijdgrens van de taak (300
+    s), drie pogingen lang. Nu een vaste grens aan het werk (render._Scan, RAW_STEPS)."""
+    body = unit * (4 * 1024 * 1024 // len(unit))
+    source = tmp_path / "DSCF0001.RAF"
+    # Zonder einde: niets; met één FFD9 helemaal achteraan mag de eerste kop met SOF "een JPEG"
+    # zijn (Pillow weigert die dan), als het maar snel gaat
+    for end in (b"", b"\xff\xd9"):
+        source.write_bytes(b"FUJIFILMCCD-RAW 0201" + body + end)
+        started = time.perf_counter()
+        found = render.embedded_jpeg(source)
+        assert time.perf_counter() - started < 5
+        assert found is None or (end and found.startswith(unit[:4]) and found.endswith(end))
+
+
+def test_de_grens_laat_echte_raws_heel(tmp_path):
+    """Een DNG met tegels: elke tegel een eigen verliesloze JPEG (SOF3) vóór de preview. Die
+    tellen mee in RAW_STEPS, maar 3000 tegels laten ruim genoeg over; ook rommel erachter."""
+    tile = b"\xff\xd8\xff\xc4\x00\x04\x00\x00\xff\xc3\x00\x0b" + b"\0" * 40
+    preview = photo((1600, 1200))
+    data = exif_tiff() + tile * 3000 + preview + CRAFTED["kop zonder einde"] * 50_000
+    source = tmp_path / "IMG_0001.DNG"
+    source.write_bytes(data)
+    assert render.embedded_jpeg(source) == preview
 
 
 # --- langs elke weg ---------------------------------------------------------------------------

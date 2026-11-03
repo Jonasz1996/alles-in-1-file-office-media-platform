@@ -40,7 +40,10 @@ nieuwe proces, zoals voorheen. Een nieuwe taak wekt alleen de workers van zijn e
   telefoon) wordt verkleind gedecodeerd. Andere formaten houden de grens van 100 MP.
 - Een afgekapte JPEG (een afgebroken sync) krijgt toch een thumbnail; wat ontbreekt is grijs.
 - Camera-RAW (CR2, CR3, NEF, NRW, ARW, DNG, ORF, RW2, RAF, PEF) krijgt de ingebedde JPEG als
-  preview en staat op de tijdlijn. PSD en JPEG 2000 krijgen ook een preview.
+  preview en staat op de tijdlijn. Het zoeken naar die JPEG heeft een vaste grens aan het werk
+  (`render.RAW_STEPS`): een gemaakt bestand met een JPEG-kop na elke paar bytes houdt een worker
+  zo hooguit een fractie van een seconde bezig (was tot de tijdgrens van 300 s, drie pogingen
+  lang). PSD en JPEG 2000 krijgen ook een preview.
 - Een video die niet kon omdat de mediaworker geen ffmpeg had, komt vanzelf terug zodra de
   worker gezond is.
 - Een video die wachtte omdat de mediaworker er (nog) niet was, bijvoorbeeld vlak na het

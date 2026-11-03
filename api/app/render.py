@@ -144,6 +144,11 @@ RAW_TIFF = (b"II*\x00", b"MM\x00*", b"IIRO", b"IIRS", b"MMOR", b"IIU\x00")
 RAW_BYTES = 512 * 1024 * 1024  # zoveel van een RAW-bestand doorzoeken op een JPEG
 RAW_HEAD = 4 * 1024 * 1024  # de TIFF-kop met de EXIF staat vooraan
 RAW_CANDIDATES = 64
+# Zoveel segmenten van JPEG-koppen mag het zoeken in één RAW samen aflopen (review F2). Een echte
+# RAW heeft er hooguit een paar duizend (een DNG met tegels: een paar per tegel); een gemaakt
+# bestand met een kop na elke paar bytes stopt zo na een fractie van een seconde, met wat er
+# dan gevonden is
+RAW_STEPS = 100_000
 CR3_UUID = bytes.fromhex("85c0b687820f11e08111f4ce462b6a48")
 OFFICE_EXTENSIONS = (".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".docm", ".xlsm", ".pptm")
 # Kantoordocumenten die app/office/reader.py leest (B21); doc, xls, ppt en rtf niet
@@ -535,51 +540,83 @@ def thumbnails(img, out: Path, wanted: tuple[int, ...] = SIZES) -> list[int]:
 # heeft een JPEG met eigen EXIF. Geen libraw: alleen wat er al als JPEG in staat.
 
 
-def _jpeg_at(view, start: int) -> tuple[int, int, int] | None:
-    """(einde, breedte, hoogte) van de JPEG die op start begint, als het een gewone JPEG is
-    (SOF0, 1 of 2) met een einde; anders None. Loopt de segmenten af tot de scan, en zoekt dan
-    het einde (FFD9 komt in de gecomprimeerde data niet voor)."""
-    i, size, found = start + 2, len(view), None
-    for _ in range(1000):
-        if i + 4 > size or view[i] != 0xFF:
-            return None
-        marker = view[i + 1]
-        if marker == 0xFF:
-            i += 1  # opvulling
-            continue
-        if marker == 0x01 or 0xD0 <= marker <= 0xD7:
-            i += 2
-            continue
-        length = (view[i + 2] << 8) | view[i + 3]
-        if length < 2:
-            return None
-        if marker in (0xC0, 0xC1, 0xC2) and i + 9 <= size:
-            height = (view[i + 5] << 8) | view[i + 6]
-            width = (view[i + 7] << 8) | view[i + 8]
-            found = (width, height)
-        elif 0xC3 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
-            return None  # verliesloos, hiërarchisch of rekenkundig: de sensordata, niet te tonen
-        if marker == 0xDA:
-            end = view.find(b"\xff\xd9", i + 2 + length)
-            if end < 0 or found is None or not found[0] or not found[1]:
+class _Scan:
+    """Zoekt gewone JPEG's in een RAW met begrensd werk (review F2). Eerder zocht elke kop
+    zonder einde opnieuw naar FFD9 tot het eind van het bestand, en telde een kop die niet
+    deugde niet mee: een gemaakt bestand van 1 MB kostte 45 s, van 4 MB een worker tot de
+    tijdgrens van de taak (en dat drie pogingen lang). Nu wordt elke byte hooguit één keer naar
+    FFD9 doorzocht (none_from), en lopen alle koppen samen hooguit RAW_STEPS segmenten af."""
+
+    def __init__(self, view) -> None:
+        self.view = view
+        self.steps = RAW_STEPS
+        # Vanaf hier begint geen FFD9 meer (al doorzocht)
+        self.none_from = len(view)
+
+    def end_after(self, start: int) -> int:
+        """Waar de eerstvolgende FFD9 vanaf start begint, of -1."""
+        if start >= self.none_from:
+            return -1
+        end = self.view.find(b"\xff\xd9", start, self.none_from + 1)
+        if end < 0:
+            self.none_from = start
+        return end
+
+    def jpeg_at(self, start: int) -> tuple[int, int, int] | None:
+        """(einde, breedte, hoogte) van de JPEG die op start begint, als het een gewone JPEG is
+        (SOF0, 1 of 2) met een einde; anders None. Loopt de segmenten af tot de scan, en zoekt
+        dan het einde (FFD9 komt in de gecomprimeerde data niet voor)."""
+        view = self.view
+        i, size, found = start + 2, len(view), None
+        for _ in range(1000):
+            if self.steps <= 0:
                 return None
-            return end + 2, found[0], found[1]
-        i += 2 + length
-    return None
+            self.steps -= 1
+            if i + 4 > size or view[i] != 0xFF:
+                return None
+            marker = view[i + 1]
+            if marker == 0xFF:
+                i += 1  # opvulling
+                continue
+            if marker == 0x01 or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            length = (view[i + 2] << 8) | view[i + 3]
+            if length < 2:
+                return None
+            if marker in (0xC0, 0xC1, 0xC2) and i + 9 <= size:
+                height = (view[i + 5] << 8) | view[i + 6]
+                width = (view[i + 7] << 8) | view[i + 8]
+                found = (width, height)
+            elif 0xC3 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                # Verliesloos, hiërarchisch of rekenkundig: de sensordata, niet te tonen
+                return None
+            if marker == 0xDA:
+                # Zonder afmetingen geen JPEG om te tonen: dan ook niet naar het einde zoeken
+                if found is None or not found[0] or not found[1]:
+                    return None
+                end = self.end_after(i + 2 + length)
+                if end < 0:
+                    return None
+                return end + 2, found[0], found[1]
+            i += 2 + length
+        return None
 
 
 def embedded_jpeg(source: Path) -> bytes | None:
-    """De grootste gewone JPEG in dit bestand (hooguit RAW_BYTES doorzocht). Komen dezelfde
-    afmetingen vaak voor (de tegels van een DNG), dan zijn dat stukken van een beeld: overslaan."""
+    """De grootste gewone JPEG in dit bestand (hooguit RAW_BYTES doorzocht, met begrensd werk:
+    _Scan). Komen dezelfde afmetingen vaak voor (de tegels van een DNG), dan zijn dat stukken
+    van een beeld: overslaan."""
     with open(source, "rb") as f:
         length = min(os.fstat(f.fileno()).st_size, RAW_BYTES)
         if length < 4:
             return None
         with mmap.mmap(f.fileno(), length, access=mmap.ACCESS_READ) as view:
+            scan = _Scan(view)
             found: list[tuple[int, int, int, int]] = []
             pos = view.find(b"\xff\xd8\xff")
-            while pos >= 0 and len(found) < RAW_CANDIDATES:
-                jpeg = _jpeg_at(view, pos)
+            while pos >= 0 and len(found) < RAW_CANDIDATES and scan.steps > 0:
+                jpeg = scan.jpeg_at(pos)
                 if jpeg is not None:
                     end, width, height = jpeg
                     found.append((width * height, pos, end, width))
