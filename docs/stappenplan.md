@@ -524,14 +524,15 @@ ms; OCR-tekst is doorzoekbaar; gezichten zijn te benoemen en te zoeken.
 Duur en omvang (3-11-2026): Jonas koos voor "alles": OCR, gezichten
 automatisch en zoeken op wat er op een foto staat, met een kaart zonder
 tegels van buiten. Daarmee is fase 6 ±43 werkdagen (±9 weken) in plaats
-van 3 weken, in twee opleveringen: 0.8.0 rond dag 27 met de kern, en
-0.8.1 rond dag 43 met gezichten en beeld. Anders dan hierboven staat:
+van 3 weken, standaard in twee opleveringen (Vraag 13): 0.8.0 rond
+dag 27 met de kern, en 0.8.1 rond dag 43 met gezichten en beeld. Anders dan hierboven staat:
 YuNet en SFace in plaats van InsightFace (die gewichten zijn alleen voor
 niet-commercieel onderzoek), SigLIP 2 in plaats van CLIP (beter in het
 Nederlands), en de vectoren in de SQLite die er al is in plaats van
 pgvector (standalone draait op SQLite, B15). Gezichten en beeld rekenen
 in een eigen afgeschermde container, en staan per gebruiker standaard
-uit. Zoeken op beeld mag 250 ms duren; gewoon zoeken houdt zijn 200 ms.
+uit. Zoeken op beeld mag standaard 250 ms duren (Vraag 14); gewoon zoeken
+houdt zijn 200 ms.
 Wie de plek van een foto ziet, heeft Jonas nog niet gekozen; tot dan
 ziet alleen de eigenaar hem. Het ontwerp, de planning en de open vragen
 staan in [docs/fase-6/README.md](fase-6/README.md) en

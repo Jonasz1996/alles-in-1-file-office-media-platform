@@ -47,8 +47,8 @@ doorzoekbaar; gezichten zijn te benoemen en te zoeken.
 - **Gezichten** geven voorstellen ("Is dit Eva?"). Niets wordt vanzelf bevestigd. De getallen
   die het platform van elk gezicht maakt (de vectoren), zijn versleuteld, met een sleutel per
   gebruiker. Zet iemand gezichten uit, dan wist het platform eerst die sleutel en dan de
-  gezichten. Oude kopieën van die getallen zijn dan onleesbaar, ook in snapshots en in een kopie
-  buiten huis, zolang de map met sleutels daar niet in zit (zie "Privacy en de wet").
+  gezichten. Oude kopieën van die getallen zijn dan onleesbaar, in elke kopie waar de sleutel
+  niet in zit (zie "Privacy en de wet").
 - Een foto die iemand anders in jouw map zette, wordt niet gescand, tenzij die ander het zelf aan
   heeft. Een upload via een publieke link nooit (Vraag 9).
 - Plek, personen en tekst uit een foto horen bij de eigenaar van het bestand. Nooit via een
@@ -83,7 +83,7 @@ Gemeten in de sandbox, of berekend uit die metingen ([haalbaarheid.md](haalbaarh
 | geheugen | de container `analyse` hooguit 3 GB; met media en OnlyOffice samen 8 van de 16 GB |
 | zoeken | gewoon zoeken binnen 200 ms; zoeken op beeld binnen 250 ms (Vraag 14) |
 
-Je rootdisk is 64 GB; dat past. Een tragere CPU dan die van de sandbox rekent langer. `/beheer`
+Je container heeft een rootdisk van 500 GB; dat past ruim. Een tragere CPU dan die van de sandbox rekent langer. `/beheer`
 laat zien hoe ver het is.
 
 ## Planning
@@ -106,9 +106,11 @@ privacyregel schuift.
   in de AVG. Gebruik je het platform voor anderen (een vereniging, klanten), dan gaat het om
   bijzondere persoonsgegevens (artikel 9). Dan heb je uitdrukkelijke toestemming nodig van wie op
   de foto's staat. Dit is niet door een jurist nagekeken.
-- **De sleutels van gezichten** staan in `/opt/platform/sleutels`, buiten `/tank`. Neem die map
-  niet op in je snapshots of je kopie buiten huis; anders werkt "uit wist alles" daar niet. Het
-  runbook zegt hoe.
+- **De sleutels van gezichten** staan in `/opt/platform/sleutels`, buiten de map met je data.
+  In jouw container staat alles op één schijf, dus een snapshot of backup van de hele container
+  bevat ook de sleutels. In zo'n kopie blijven oude gezichten leesbaar tot je die kopie weggooit.
+  Het runbook zegt hoe je de sleutels eruit houdt, bijvoorbeeld met een eigen mount point zonder
+  backup.
 - **Licenties**: de modellen (YuNet: MIT; SFace en SigLIP 2: Apache-2.0) mogen privé en
   commercieel gebruikt worden. Waar ze mee getraind zijn, is niet nagekeken.
 

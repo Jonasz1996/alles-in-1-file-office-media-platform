@@ -270,7 +270,9 @@ Afkortingen:
   (`install.sh:21`), dus die variabele hoort in het commando (§3.10).
 - **J4. B20 belooft een tekstlaag in de PDF-viewer in fase 6.** Die zit in dit ontwerp (Keuze 18).
 - **J5. Terugrollen** gaat naar de laatste commit van 0.7.0 vóór Z0 (nu `1130e1b`, app-code gelijk
-  aan `92a0d04`). Bij de integratie komt daar een tag `v0.7.0` op.
+  aan `92a0d04`). Bij de integratie komt daar een tag `v0.7.0` op. Dit zijn de waarden van
+  revisie 2: daarna kwam 0.7.1, met migratie 0009. Z7 zet ze op de laatste commit vóór Z0, met
+  head `0009` (§3.10).
 - **J6. Het voorbeeld van 256 px is al gedraaid volgens EXIF** (`render.py:357` en `:370`)
   [code]. De pHash daarop heeft geen eigen draaiing nodig.
 - **J7. GPS uit downloads halen** hoort bij de bewerking "metadata en GPS-locatie weghalen" van
@@ -337,8 +339,8 @@ gezichten zijn te benoemen en te zoeken.
 | De app is één Python-proces met één event loop (`serve.py`). | Zoeken krijgt een grens voor de hele app, niet alleen per gebruiker (Keuze 13). |
 | CPU en GPU van Jonas zijn onbekend (B5). | Alles werkt op de CPU. Een tijdsgrens per vraag beschermt de 200 ms (Keuze 9). `bench --los` meet zijn LXC in week 1. |
 | Jonas gaf het startsein voor fase 6 (3 november 2026) zonder de kaarten van fase 5 te beantwoorden. | De standaarden van fase 5 blijven. Fase 6 verandert er niets aan. |
-| De rootdisk van de LXC is 64 GB; `/tank` (700 GB) is optioneel (`infra/single/README.md:11–12`, K2-24). | De modellen (±0,4 GB, en ±1,55 GB tijdelijk bij het omzetten) en de vectoren met hun cache (±0,45 GB per 100.000 foto's; alles samen ±0,9–1,1 GB) passen. `install.sh` kijkt met `df` naar de echte mappen (Keuze 58, 84). |
-| Jonas maakt zelf snapshots van `/data` en een kopie buiten huis (`stappenplan.md:145–151`). | "Uit" bij gezichten moet ook daar werken. Daarom versleutelde vectoren met een sleutel per eigenaar, buiten `/data` (Keuze 68). |
+| De LXC van Jonas (CT 146) heeft één rootdisk van 500 GB op ZFS en geen `/tank`. Alles staat daarop: `DATA_ROOT` (`/opt/platform/data/platform`), de modellen en de sleutels. Het voorbeeld in `infra/single/README.md:11–12` (64 GB en een `/tank` van 700 GB) is niet zijn opzet (K2-24). | De modellen (±0,4 GB, en ±1,55 GB tijdelijk bij het omzetten) en de vectoren met hun cache (±0,45 GB per 100.000 foto's; alles samen ±0,9–1,1 GB) passen. `install.sh` kijkt met `df` naar de echte mappen (Keuze 58, 84). |
+| Jonas maakt zelf snapshots van `/data` en een kopie buiten huis (`stappenplan.md:145–151`). | "Uit" bij gezichten moet ook daar werken. Daarom versleutelde vectoren met een sleutel per eigenaar, buiten `DATA_ROOT` (Keuze 68). Op één rootdisk zit de sleutel wel in een snapshot of backup van de hele container; in zo'n kopie blijven oude vectoren leesbaar tot die kopie weg is. |
 | Het stappenplan geeft fase 6 drie weken. | Met "alles" en review per golf is het ±43 werkdagen, in twee opleveringen (§5, Vraag 13). |
 
 ### 0.2 De invalshoek
@@ -889,7 +891,7 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
       bronvermelding.
     - **Downloaden in `install.sh`, niet in de Dockerfile** (C12). Een `RUN`-stap die niet fataal
       faalt, blijft als lege laag in de cache staan, en `.env` komt niet in de build. Daarom haalt
-      `install.sh` beide bestanden naar `DATA_ROOT/geo/` (op de LXC `/tank/platform/geo/`): de
+      `install.sh` beide bestanden naar `DATA_ROOT/geo/` (bij Jonas `/opt/platform/data/platform/geo/`): de
       sdist van `reverse_geocoder` 1.5.1 van PyPI (daarin `rg_cities1000.csv`) en
       `ne_10m_admin_0_countries.geojson` van `raw.githubusercontent.com`, elk met sha256. Ontbreekt
       een bestand, dan probeert elke run het opnieuw. Mislukt het, dan gaat de installatie door
@@ -1097,6 +1099,8 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
       oude app nog draait. Dat werkt met het image van 0.7.0 en van 0.8.0; `app.cli db-backup`
       bestaat in 0.7.0 niet (V9).
     - Het bestand heet naar de alembic-head en de tijd: `/data/backup/platform-0008-<tijd>.db`.
+      Dat is het voorbeeld van revisie 2; vanaf 0.7.1 is de head `0009`, en Z7 zet de namen
+      daarop (§3.10).
     - Per head blijft de nieuwste kopie, en nooit gaat de laatste kopie van vóór een migratie weg.
       Zo staat de kopie van 0008 er na twee nieuwe runs op 0010 nog.
     - Lukt de kopie niet, dan stopt het script: er is dan nog niets veranderd.
@@ -1293,12 +1297,17 @@ Keuze 70–84 van X3.
       associated data. `cryptography` is al een basisafhankelijkheid
       [code: `api/pyproject.toml:19`].
     - **Waar de sleutels staan.** In `SLEUTELS_ROOT` (standaard `/opt/platform/sleutels/gezichten`,
-      `0700`, van uid 10001), in de container van de app op `/keys`. Dat is buiten `/tank`, dus
-      buiten de snapshots van `/data`. Het runbook zegt: neem deze map niet mee in snapshots of
-      offsite-kopieën. Doet Jonas dat toch, dan geldt het wissen pas als die kopie verlopen is.
+      `0700`, van uid 10001), in de container van de app op `/keys`. Dat is buiten `DATA_ROOT`,
+      dus niet in een snapshot of kopie van alleen de data. Op de LXC van Jonas staat alles op één
+      rootdisk: een snapshot of backup van de hele container bevat de sleutels wél. Het runbook
+      zegt hoe je ze eruit houdt: `SLEUTELS_ROOT` op een eigen mount point met "Backup" uit, zodat
+      vzdump hem overslaat. Een snapshot van de container in Proxmox neemt elk mount point mee; in
+      zo'n snapshot blijven oude vectoren leesbaar tot hij weg is.
     - **"Uit".** De job wist eerst de sleutel (`unlink` en `fsync` van de map), dan de rijen. Vanaf
-      dat moment is elke kopie van de vectoren onleesbaar: in snapshots, in de offsite-kopie, in
-      oude blokken van ZFS, in de WAL en in tijdelijke bestanden.
+      dat moment is elke kopie van de vectoren onleesbaar waar de sleutel niet in zit: een snapshot
+      of kopie van alleen de data, de offsite-kopie van de data, de WAL en tijdelijke bestanden.
+      Een kopie die de sleutel wel heeft (een snapshot of backup van de hele container van vóór
+      "uit"), houdt de oude vectoren leesbaar tot die kopie weg is.
     - **Wie de sleutel gebruikt.** Alleen de app. De worker krijgt de vectoren ontsleuteld in een
       verzegelde memfd, en ziet nooit een sleutel.
     - **Een kopie terugzetten.** Een rij die niet te ontsleutelen is, telt als gewist; die foto
@@ -1510,8 +1519,8 @@ Keuze 70–84 van X3.
     - **Schrijven alleen via `write_embed()`** (zoals `write_text()`, Keuze 3): eerst een
       `SELECT`, dan `INSERT` of `UPDATE`, één korte transactie per blob. In dezelfde transactie gaat
       `beeld_owner.gen` +1 voor elke eigenaar van een bestand met die sha.
-    - **Het bestand per eigenaar**: `/data/cache/beeld/<user_id>.vec` (op de LXC
-      `/tank/platform/cache/beeld/`). Een kop (magic, model, dim, aantal, `gen`), dan de `num`'s
+    - **Het bestand per eigenaar**: `/data/cache/beeld/<user_id>.vec` (bij Jonas
+      `/opt/platform/data/platform/cache/beeld/`). Een kop (magic, model, dim, aantal, `gen`), dan de `num`'s
       (int64), dan de vectoren (f16) als één matrix. Voor 55.000 foto's ±85 MB [berekend]. Het is
       een cache: is hij weg, dan maakt de job hem opnieuw. Hij gaat niet mee in de reservekopie.
     - **Wat erin staat:** alle bestanden van die eigenaar met `ftype = 'image'` en een vector, ook
@@ -1952,8 +1961,9 @@ Keuze 70–84 van X3.
       9. De container `analyse` opnieuw starten als de sha256 van de modelmap veranderde.
       Nooit fataal: bij een fout zegt het script "Zoeken op beeld: het model is niet geladen. De
       volgende run probeert het opnieuw." en gaat door. Gewoon zoeken en de rest werken.
-    - **Ruimte** (K2-24). De LXC heeft een rootdisk van 64 GB en een optionele `/tank` van 700 GB
-      [code: `infra/single/README.md:11–12`].
+    - **Ruimte** (K2-24). De LXC van Jonas heeft één rootdisk van 500 GB (ZFS), zonder `/tank`.
+      Het voorbeeld in `infra/single/README.md:11–12` noemt 64 GB en een optionele `/tank` van
+      700 GB; ook daar past het.
 
       | Wat | Grootte | Waar |
       |---|---|---|
@@ -1961,7 +1971,7 @@ Keuze 70–84 van X3.
       | het model in int8 | ±390 MB [gemeten op de proxy, B6], plus `tokenizer.bin` [niet gemeten] | `MODELLEN_ROOT/siglip2-b32-256/` |
       | de modellen van gezichten | 38,9 MB [gemeten: spike B4] | `MODELLEN_ROOT` |
       | vectoren van beeld in de database | 205 MB per 100.000 foto's [gemeten, B7] | `platform.db` (niet in de reservekopieën) |
-      | vectoren van gezichten in de database | ±70–90 MB per 100.000 gezichten [schatting uit B7] | `platform.db` (niet in de reservekopieën) |
+      | vectoren van gezichten in de database | ±70–90 MB per 100.000 gezichten [B7 mat ±60 MB zonder UUID's en indexen; de rest is een schatting, zie X2] | `platform.db` (niet in de reservekopieën) |
       | de cache per eigenaar | ±154 MB per 100.000 foto's [berekend: K2-24] | `/data/cache/beeld/` |
       | numpy en onnxruntime in het image | +118–141 MB, gedeeld met X2 | het image (twee keer tijdens een update) |
 
@@ -3890,7 +3900,7 @@ De instellingen van de container `analyse` en van gezichten (`PLATFORM_ANALYSE_*
 Eén nieuw geheim: `ANALYSE_WORKER_KEY`, zoals `MEDIA_WORKER_KEY`. `install.sh` maakt hem één keer,
 in `/opt/platform/.env` (0600), en vervangt hem nooit. Hij staat nooit in `command`, een log of
 een document. De sleutels per eigenaar (Keuze 68) zijn geen instelling: ze staan als bestanden in
-`SLEUTELS_ROOT`, buiten `/data` en buiten de snapshots.
+`SLEUTELS_ROOT`, buiten `DATA_ROOT` (wat dat betekent voor snapshots en backups: Keuze 68).
 
 ### 3.3 Python-contracten (vast)
 
@@ -4279,7 +4289,7 @@ Wat het script doet, in deze volgorde (herzien in r2: C7, C12, C13):
 1. De gewone stappen tot en met de instellingen (ongewijzigd); `PLAATSEN=aan` erbij als hij
    ontbreekt.
 2. **Nieuw:** de bronnen voor plaatsen (Keuze 29), als `PLAATSEN=aan` en ze er nog niet zijn:
-   naar `DATA_ROOT/geo/` (op de LXC `/tank/platform/geo/`), elk met sha256. Lukt dat niet, dan
+   naar `DATA_ROOT/geo/` (bij Jonas `/opt/platform/data/platform/geo/`), elk met sha256. Lukt dat niet, dan
    zegt het script "Plaatsnamen: niet geladen" en gaat door; de volgende run probeert het weer.
 3. Office netjes laten opslaan (`checkpoint`, zoals nu).
 4. **Nieuw:** een reservekopie van de database, terwijl de oude app nog draait, met het image dat
@@ -4290,7 +4300,7 @@ Wat het script doet, in deze volgorde (herzien in r2: C7, C12, C13):
    ```
 
    `<backup>` leest de alembic-head (`0008`), en schrijft met `sqlite3.Connection.backup` naar
-   `/data/backup/platform-0008-<tijd>.db` (op de LXC `/tank/platform/backup/`). Daarna blijft per
+   `/data/backup/platform-0008-<tijd>.db` (bij Jonas `/opt/platform/data/platform/backup/`). Daarna blijft per
    head alleen de nieuwste, en de laatste kopie van vóór een migratie gaat nooit weg. Lukt de kopie
    niet, dan stopt het script hier: er is dan nog niets veranderd. Bij een eerste installatie (nog
    geen database) slaat het script dit over. Dit werkt met elk image, want `app.cli db-backup`
@@ -4444,7 +4454,7 @@ services:
       PLATFORM_FACES_KEYS: /keys
     volumes:
       - analyse-run:/run/analyse
-      # Keuze 68: de sleutels per eigenaar staan buiten /tank, dus buiten de snapshots van /data
+      # Keuze 68: de sleutels per eigenaar staan buiten DATA_ROOT, niet in een kopie van alleen de data
       - ${SLEUTELS_ROOT:-/opt/platform/sleutels/gezichten}:/keys
 
   analyse:
@@ -4678,7 +4688,7 @@ ANALYSE=aan                 # aan | uit: de container analyse en de modellen (Ke
 ANALYSE_WORKER_KEY=         # 64 hex; install.sh maakt hem één keer en vervangt hem nooit
 BEELD=aan                   # aan | uit: het model voor zoeken op beeld downloaden (Keuze 84)
 MODELLEN_ROOT=/opt/platform/modellen          # van root, buiten $DATA_ROOT (K1-06)
-SLEUTELS_ROOT=/opt/platform/sleutels/gezichten  # buiten /tank en buiten de snapshots (Keuze 68)
+SLEUTELS_ROOT=/opt/platform/sleutels/gezichten  # buiten $DATA_ROOT; snapshots en backups: Keuze 68
 ```
 
 `BEELD=aan` betekent dat het model er staat. Of een gebruiker zoeken op beeld aan heeft, is een
@@ -5227,14 +5237,14 @@ fixes is een deel anders gedaan. Dat staat onder "Afgewezen (revisie 3)", met de
 | K2-21. Gezichten passen niet in `FailedItem`. | Alleen aantallen per code (Keuze 67, 80). |
 | K2-22. Beeld stond standaard aan. | Vraag 11, standaard uit; de backfill na die van de index. |
 | K2-23. De cache had alleen `gen` als sleutel. | (eigenaar, `gen`, sha256), met `test_beeld_cache.py` (Keuze 75). |
-| K2-24. Het ontwerp ging uit van 500 GB. | 64 GB rootdisk en `/tank` van 700 GB, met de tabel in Keuze 84. |
+| K2-24. Het ontwerp ging uit van 500 GB. | Die 500 GB klopt voor de LXC van Jonas: één rootdisk op ZFS, zonder `/tank`. De tabel in Keuze 84 rekent de ruimte uit; die past ook op het voorbeeld van `infra/single/README.md` (64 GB). |
 
 #### Afgewezen (revisie 3)
 
 | Kritiek | Waarom niet |
 |---|---|
 | K1-01, deel 3: de reservekopie via het geheugen maken (`:memory:`, dan `VACUUM INTO`). | Dat werkt (de critici toonden het), maar kost zoveel geheugen als de hele database (±370 MB per 100.000 bestanden, R8, plus de vectoren), in de container van de app terwijl die draait. Met de versleuteling (Keuze 68) staan in de `.part` alleen versleutelde vectoren, en `secure_delete` met `journal_mode = OFF` overschrijft ze vóór de `rename`. |
-| K1-01, deel 2: de plek van de sleutels als vraag aan Jonas. | Er is maar één goede plek: buiten `/data` en buiten de snapshots. Dat is de standaard (`/opt/platform/sleutels/gezichten`); `SLEUTELS_ROOT` in `.env` verandert hem, en het runbook zegt wat het betekent. Een vraag zonder echte keuze maakt de lijst langer, niet beter. |
+| K1-01, deel 2: de plek van de sleutels als vraag aan Jonas. | De standaard (`/opt/platform/sleutels/gezichten`) ligt buiten `DATA_ROOT`; `SLEUTELS_ROOT` in `.env` verandert hem. Wat dat betekent voor snapshots en backups van de hele container, staat in Keuze 68 en in het runbook, met een eigen mount point als manier om ze eruit te houden. Dat is beheer van de LXC, geen keuze in het ontwerp. |
 | K1-04: `zoeken` en `werk` elk een eigen uid. | De aanval (een tweede proces van dezelfde uid leest `/proc/<kind>/fd`) sluit `PR_SET_DUMPABLE` 0 al voor elk kind, met een test. Een tweede uid vraagt een eigen groep op `/opt/analyse` en `/models`, en meer om te testen, voor geen andere winst. |
 | K1-04: het kind `werk` opnieuw starten bij elke andere eigenaar. | De rij gaat om de beurt per eigenaar (Keuze 65), dus dat is bijna elke batch: dan laadt het kind steeds de modellen opnieuw. Na 8 opdrachten of 10 minuten houdt de blootstelling klein. |
 | K2-03: het model in `actions/cache` op sha256. | `ci.yml` gebruikt `actions/cache` nu niet, en een nieuwe action mag niet. `beeld-model` draait alleen als zijn bestanden veranderen, dus de download is zeldzaam. |

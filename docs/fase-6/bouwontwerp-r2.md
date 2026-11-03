@@ -1,3 +1,5 @@
+> Archief: dit is revisie 2. Revisie 3 ([bouwontwerp.md](bouwontwerp.md)) is leidend.
+
 > Werkdocument: het bouwontwerp van fase 6 (zoeken en foto's), revisie 2. Revisie 2 is leidend.
 > Revisie 1 staat in [bouwontwerp-r1.md](bouwontwerp-r1.md).
 > Nog niet besloten. De vragen aan Jonas staan onder "Vragen voor Jonas". Tot hij antwoordt,
