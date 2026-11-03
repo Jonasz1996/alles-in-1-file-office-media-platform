@@ -125,12 +125,16 @@ def _dubbel(con):
 
 
 def _bijna(con):
+    # De vorm met EXISTS van "Herzien na de spike (S4, S10)": de vorm met IN mine uit Keuze 4a is
+    # zonder ANALYZE een kruisproduct (test_spike_plannen.py)
     sql = """
-        WITH mine(sha) AS (SELECT DISTINCT blob_id FROM node
-                           WHERE owner_id = ? AND dead = 0 AND kind = 'file' AND ftype = 'image')
         SELECT p.a, p.b, p.dist, p.level FROM dup_pair AS p
-        WHERE p.a IN mine AND p.b IN mine"""
-    return sql, [_eigenaar(con)]
+        WHERE EXISTS (SELECT 1 FROM node AS n WHERE n.owner_id = ? AND n.blob_id = p.a
+                      AND n.dead = 0 AND n.kind = 'file')
+          AND EXISTS (SELECT 1 FROM node AS n WHERE n.owner_id = ? AND n.blob_id = p.b
+                      AND n.dead = 0 AND n.kind = 'file')"""
+    ik = _eigenaar(con)
+    return sql, [ik, ik]
 
 
 FTS = "fts_node VIRTUAL TABLE"

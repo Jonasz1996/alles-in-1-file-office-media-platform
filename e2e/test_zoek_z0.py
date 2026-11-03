@@ -1,8 +1,8 @@
 """Zoeken in Z0 (fase 6, §3.6): het harnas in de echte app. Dit is de snelle e2e van
 e2e/slim.sh: de wereld van §4.2, zoeken op naam zoals in 0.7.0 (LikeFallback, tot Z1 de enige
-zoekmachine), één upload met tekst, en de toetsen van het zoeken die er nu zijn (/ in
-Bestanden, Enter, het veld Zoekwoorden, Enter op een resultaat). En de boom van 1.000 van
-app/search/bench.py, met een gebruiker per rol van §4.4.
+zoekmachine), één upload met tekst, en de toetsen van het zoeken die er nu zijn (Ctrl+K en het
+veld bovenaan, / in Bestanden, Enter, het veld Zoekwoorden, Enter op een resultaat). En de boom
+van 1.000 van app/search/bench.py, met een gebruiker per rol van §4.4.
 
 Z0 bouwt geen functie: deze tests leggen vast dat het harnas de app goed zaait, en dat zoeken
 precies geeft wat de referentie (api/tests/search/referentie.py, Referentie.op_naam) zegt. Z1
@@ -146,6 +146,50 @@ def test_zoeken_met_het_toetsenbord(zoek_wereld: ZoekApp, zoek_browsers: Browser
     page.keyboard.press("Enter")
     expect(page).to_have_url(re.compile(f"/map/{app.wereld.ids['werk']}$"))
     expect(row(page, "Verslag kwartaal.docx")).to_be_visible()
+
+
+def test_ctrl_k_en_het_zoekveld_bovenaan(zoek_wereld: ZoekApp, zoek_browsers: Browsers) -> None:
+    """Bram op Foto's: Ctrl+K zet de focus op het veld bovenaan (Z0-web), ook vanuit een ander
+    veld; Escape maakt het leeg en geeft daarna de focus terug; Enter gaat naar /zoeken en
+    geeft precies wat de referentie zegt."""
+    app = zoek_wereld
+    assert app.wereld is not None
+    ref = app.referentie()
+    page = zoek_browsers.context_as(app.accounts["bram"]).new_page()
+    page.goto("/fotos")
+    veld = page.get_by_role("search", name="Zoeken in alles").get_by_role("searchbox")
+    expect(veld).to_have_attribute("aria-keyshortcuts", "Control+K")
+
+    # Escape: eerst leeg, dan de focus terug naar waar hij stond
+    menu = page.get_by_role("link", name="Bestanden", exact=True)
+    menu.focus()
+    page.keyboard.press("Control+k")
+    expect(veld).to_be_focused()
+    page.keyboard.type("iets")
+    page.keyboard.press("Escape")
+    expect(veld).to_have_value("")
+    expect(veld).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(menu).to_be_focused()
+
+    page.keyboard.press("Control+k")
+    expect(veld).to_be_focused()
+    page.keyboard.type("utrecht")
+    with page.expect_response(is_zoeken) as antwoord:
+        page.keyboard.press("Enter")
+    data = antwoord.value.json()
+    expect(page).to_have_url(re.compile(r"/zoeken\?q=utrecht$"))
+    verwacht = ref.op_naam(app.wereld.users["bram"], "utrecht")
+    assert ids(data) == verwacht and len(verwacht) == 4
+    expect(page.locator(ROWS)).to_have_count(len(verwacht))
+    expect(page.get_by_role("searchbox", name="Zoekwoorden")).to_have_value("utrecht")
+    expect(veld).to_have_value("")  # het veld bovenaan is na Enter weer leeg
+
+    # Ook vanuit het veld Zoekwoorden op /zoeken (Ctrl+K typt geen teken)
+    page.get_by_role("searchbox", name="Zoekwoorden").focus()
+    page.keyboard.press("Control+k")
+    expect(veld).to_be_focused()
+    expect(page.get_by_role("searchbox", name="Zoekwoorden")).to_have_value("utrecht")
 
 
 def test_wie_niets_heeft_vindt_niets(zoek_wereld: ZoekApp, zoek_browsers: Browsers) -> None:
