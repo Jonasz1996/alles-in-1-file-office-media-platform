@@ -4080,8 +4080,8 @@ In de container van de app (compose zet ze, of de standaard geldt):
 | `PLATFORM_SEARCH_MAX_TEXT` | `1048576` | tekens per blob |
 | `PLATFORM_SEARCH_TIMING` | `false` | `Server-Timing` op `/search` (alleen tests en metingen) |
 | `PLATFORM_TEXT_BATCH` | `16` | blobs per kind in de worker (Keuze 17) |
-| `PLATFORM_PLACES_DB` | `/data/geo/places.sqlite` | gemaakt door `geo-load`; ontbreekt hij, dan geen namen |
-| `PLATFORM_GEO_SRC` | `/data/geo` | waar `install.sh` de bronnen neerzet |
+| `PLATFORM_PLACES_DB` | `<geo_src>/places.sqlite` (in het image `/data/geo/places.sqlite`) | gemaakt door `geo-load`; ontbreekt hij, dan geen namen. Herzien na de review van Z0 (veilig F5): volgt `geo_src`, niet vast `/data` |
+| `PLATFORM_GEO_SRC` | `<data_dir>/geo` (in het image `/data/geo`) | waar `install.sh` de bronnen neerzet; volgt `data_dir` zoals `blob_dir` (review Z0, veilig F5) |
 | `PLATFORM_INDEX_DEFER_TRANSCODES` | `2` | `index`, `ocr` en `analyse` wachten bij zoveel transcodes |
 | `PLATFORM_OCR_MAX_PAGES` | `200` | per document (X1) |
 | `PLATFORM_OCR_PER_HOUR` | `20` | verzoeken per gebruiker per uur (X1) |

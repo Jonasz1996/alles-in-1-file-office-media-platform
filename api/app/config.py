@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -146,9 +146,10 @@ class Settings(BaseSettings):
     search_max_text: int = 1_048_576  # tekens per blob
     search_timing: bool = False  # Server-Timing op /search (alleen tests en metingen)
     text_batch: int = 16  # blobs per kind in de worker (Keuze 17)
-    # Gemaakt door geo-load; ontbreekt hij, dan geen plaatsnamen
-    places_db: Path = Path("/data/geo/places.sqlite")
-    geo_src: Path = Path("/data/geo")  # waar install.sh de bronnen neerzet
+    # Waar install.sh de bronnen neerzet; leeg = data_dir/geo (review Z0, veilig F5)
+    geo_src: Path | None = None
+    # Gemaakt door geo-load; ontbreekt hij, dan geen plaatsnamen. Leeg = geo_src/places.sqlite
+    places_db: Path | None = None
     index_defer_transcodes: int = 2  # index en ocr wachten bij zoveel transcodes
     # OCR (X1): pas na ja op Vraag 1 (tesseract in het image); tot dan uit, en de rij ocr
     # draait niet (jobs.active_lanes)
@@ -156,6 +157,15 @@ class Settings(BaseSettings):
     ocr_max_pages: int = 200  # per document
     ocr_per_hour: int = 20  # verzoeken per gebruiker per uur
     ocr_pages_per_day: int = 200  # pagina's per gebruiker per dag
+
+    @model_validator(mode="after")
+    def _geo_paths(self) -> "Settings":
+        """geo_src en places_db volgen data_dir, zoals blob_dir, tenzij de omgeving ze zet."""
+        if self.geo_src is None:
+            self.geo_src = self.data_dir / "geo"
+        if self.places_db is None:
+            self.places_db = self.geo_src / "places.sqlite"
+        return self
 
     def nodes(self) -> list[tuple[str, str]]:
         if not self.cluster_nodes:
