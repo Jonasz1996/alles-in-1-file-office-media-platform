@@ -114,6 +114,11 @@ staat: in een dialoog nooit op `<body>`.
   (`test_toetsenbord_p6::test_delen_met_alt_p_en_een_link_met_alt_l`).
 - [x] Delen: Escape met iemand op "Klaar om te delen" vraagt eerst; Escape op de vraag gaat
   terug, ook drie keer op rij (`test_sharing_ui::test_sluiten_met_iemand_op_de_lijst_vraagt_eerst`).
+  Bij een selectie sluit Escape eerst de lijst met namen, dan wordt het veld leeg, en pas dan
+  komt de vraag (`test_sharing_ui::test_sluiten_bij_een_selectie_vraagt_ook_eerst`).
+- [x] Een dialoog in een dialoog (Wachtwoord instellen in Gebruiker wijzigen): Enter opent,
+  Escape sluit alleen de bovenste en de focus staat weer op de knop, ook drie keer op rij
+  (`test_admin::test_escape_sluit_alleen_de_bovenste_dialoog`).
 - [x] Delen met een selectie: Tab naar Delen, Enter; de focus blijft op Delen zolang het delen
   loopt, daarna in het zoekveld (`test_sharing_ui::test_focus_blijft_op_delen_tijdens_het_delen`).
 

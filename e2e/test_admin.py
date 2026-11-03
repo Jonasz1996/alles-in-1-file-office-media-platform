@@ -232,3 +232,41 @@ def test_taken_en_groepen_met_het_toetsenbord(context_as, ui_admin, seeded):
     page.keyboard.type(name)
     page.keyboard.press("Enter")
     expect(page.get_by_role("row").filter(has_text=name)).to_have_count(1)
+
+
+def test_escape_sluit_alleen_de_bovenste_dialoog(context_as, ui_admin, user_factory):
+    """Een dialoog in een dialoog (Nieuw wachtwoord in Gebruiker wijzigen), alleen met het
+    toetsenbord: Escape sluit alleen de bovenste en de focus gaat terug naar de knop die hem
+    opende, ook drie keer op rij. ui/Dialog handelt Escape zelf af; met alleen de cancel van de
+    browser sloot Chromium bij de derde Escape op rij de dialoog eronder zelf, buiten React om
+    (hij was dan weg, maar stond nog in de state). Er komt ook geen cancel meer, dus onClose
+    loopt per Escape één keer."""
+    other = user_factory(name=f"Wachtwoord Kwijt {uuid.uuid4().hex[:6]}")
+    page = context_as(ui_admin).new_page()
+    page.goto("/beheer/gebruikers")
+    page.get_by_label("Zoek op naam of e-mailadres", exact=True).fill(other.display_name)
+    edit = page.get_by_role("button", name=f"{other.display_name} wijzigen", exact=True)
+    edit.click()
+    outer = page.get_by_role("dialog", name=f"{other.display_name} wijzigen", exact=True)
+    expect(outer).to_be_visible()
+    page.evaluate(
+        """() => {
+          window.__cancels = 0;
+          document.addEventListener('cancel', () => { window.__cancels++; }, true);
+        }"""
+    )
+    button = outer.get_by_role("button", name="Wachtwoord instellen…", exact=True)
+    inner = page.get_by_role("dialog", name=f"Nieuw wachtwoord voor {other.display_name}")
+    for _ in range(3):
+        button.focus()
+        page.keyboard.press("Enter")
+        expect(inner).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(inner).to_have_count(0)
+        expect(outer).to_be_visible()
+        assert outer.evaluate("(d) => d.open")
+        expect(button).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(outer).to_have_count(0)
+    expect(edit).to_be_focused()
+    assert page.evaluate("() => window.__cancels") == 0

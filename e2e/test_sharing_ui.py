@@ -469,6 +469,91 @@ def test_eerst_wie_dan_kan_bewerken_dan_delen_bij_een_selectie(context_as, serve
     server.call(bob, "PUT", f"/api/v1/files/{file_id}/content", content=b"tweede\n", expect=200)
 
 
+def test_een_groep_eerst_kiezen_dan_kan_bewerken(context_as, server, admin, user_factory):
+    """De stappen van Jonas met een groep: eerst de groep, dan "Kan bewerken", dan Delen. Een
+    lid ziet "Kan bewerken" (via de groep) in Gedeeld met mij en kan echt uploaden."""
+    owner = user_factory(name="Jonas Groep")
+    lid = user_factory(name=f"Groepslid {uuid.uuid4().hex[:6]}")
+    team = f"Team {uuid.uuid4().hex[:6]}"
+    group = server.call(admin, "POST", "/api/v1/groups", json={"name": team}, expect=201).json()
+    server.call(
+        admin, "PUT", f"/api/v1/groups/{group['id']}/members",
+        json={"user_ids": [lid.id]}, expect=200,
+    )  # fmt: skip
+    work = mkdir(server, owner, owner.root_id, f"Groep {uuid.uuid4().hex[:6]}")
+    node_id = mkdir(server, owner, work, "Samen")
+
+    page = context_as(owner).new_page()
+    page.goto(f"/map/{work}")
+    dialog = open_share_dialog(page, "Samen")
+    choose(dialog, team, team)
+    dialog.get_by_label("Rechten voor wie je toevoegt", exact=True).select_option(
+        label="Kan bewerken"
+    )
+    expect(pending(dialog)).to_contain_text(team)
+    assert people_shares(server, owner, node_id) == []
+    dialog.get_by_role("button", name="Delen", exact=True).click()
+    expect(toast(page, f"Gedeeld met {team}.")).to_be_visible()
+    expect(dialog.get_by_label(f"Rechten voor {team}", exact=True)).to_have_value("write")
+    assert people_shares(server, owner, node_id) == [(group["id"], "write")]
+
+    other = context_as(lid).new_page()
+    other.goto("/gedeeld")
+    row = other.get_by_role("row").filter(has_text="Samen")
+    expect(row).to_have_count(1)
+    expect(row).to_contain_text(f"Groep {team}")
+    expect(row).to_contain_text("Kan bewerken")
+    server.call(
+        lid, "PUT", f"/api/v1/files/{node_id}/upload",
+        params={"name": "van-het-lid.txt"}, content=b"hallo\n", expect=201,
+    )  # fmt: skip
+
+
+def test_bekijken_wordt_bewerken_in_gedeeld_met(context_as, server, user_factory):
+    """Een bestaande deling van "Kan bekijken" naar "Kan bewerken" in de lijst Gedeeld met
+    (PATCH /shares/{id}): de ontvanger ziet het meteen in Gedeeld met mij, zonder te herladen,
+    en kan dan echt opslaan. Terug naar "Kan bekijken" en opslaan mag weer niet."""
+    owner = user_factory(name="Jonas Wijziger")
+    bob = user_factory(name=f"Bewerker {uuid.uuid4().hex[:6]}")
+    work = mkdir(server, owner, owner.root_id, f"Wijzigen {uuid.uuid4().hex[:6]}")
+    file_id = put_file(server, owner, work, "plan.txt", b"eerste versie\n")
+    server.call(
+        owner, "POST", f"/api/v1/files/{file_id}/shares",
+        json={"user_id": bob.id, "permission": "read"}, expect=201,
+    )  # fmt: skip
+
+    other = context_as(bob).new_page()
+    other.goto("/gedeeld")
+    row = other.get_by_role("row").filter(has_text="plan.txt")
+    expect(row).to_contain_text("Kan bekijken")
+    server.call(bob, "PUT", f"/api/v1/files/{file_id}/content", content=b"nee\n", expect=403)
+
+    page = context_as(owner).new_page()
+    page.goto(f"/map/{work}")
+    dialog = open_share_dialog(page, "plan.txt")
+    rights = dialog.get_by_label(f"Rechten voor {bob.display_name}", exact=True)
+    expect(rights).to_have_value("read")
+
+    def patch(response) -> bool:
+        return response.request.method == "PATCH" and bool(
+            re.search(r"/api/v1/shares/[^/]+$", response.url)
+        )
+
+    for label, value, status in (("Kan bewerken", "write", 200), ("Kan bekijken", "read", 403)):
+        with page.expect_response(patch) as changed:
+            rights.select_option(label=label)
+        assert changed.value.status == 200
+        assert changed.value.json()["permission"] == value
+        expect(rights).to_have_value(value)
+        expect(row).to_contain_text(label)  # live, via share.changed
+        assert people_shares(server, owner, file_id) == [(bob.id, value)]
+        server.call(
+            bob, "PUT", f"/api/v1/files/{file_id}/content", content=b"tweede\n", expect=status
+        )
+    current = server.call(owner, "GET", f"/api/v1/files/{file_id}", expect=200).json()
+    assert current["size"] == len(b"tweede\n")
+
+
 def share_posts(page) -> list[str]:
     """De POST's naar /files/{id}/shares van deze pagina (ook wat een route opvangt)."""
     posts: list[str] = []
@@ -612,6 +697,70 @@ def test_sluiten_met_iemand_op_de_lijst_vraagt_eerst(context_as, server, user_fa
     expect(dialog).to_be_hidden()
     expect(ask).to_have_count(0)
     assert people_shares(server, owner, node_id) == [(bob.id, "read")]
+
+
+def test_sluiten_bij_een_selectie_vraagt_ook_eerst(context_as, server, user_factory):
+    """Ook de dialoog voor meerdere items vraagt eerst, zolang er iemand op "Klaar om te delen"
+    staat. Escape in het zoekveld sluit eerst de lijst met namen, maakt dan het veld leeg, en pas
+    daarna komt de vraag: ui/Dialog handelt Escape zelf af, maar na de combobox. De browser
+    stuurt daarbij geen cancel, dus de dialoog krijgt elke Escape één keer."""
+    owner = user_factory(name="Selectie Sluiter")
+    tag = uuid.uuid4().hex[:6]
+    bob = user_factory(name=f"Bewerker {tag}")
+    zoe = user_factory(name=f"Zoe {tag}")
+    work = mkdir(server, owner, owner.root_id, f"Sluiten {tag}")
+    ids = [put_file(server, owner, work, name, b"x\n") for name in ("a.txt", "b.txt")]
+
+    page = context_as(owner).new_page()
+    page.goto(f"/map/{work}")
+    page.locator(ROWS).first.wait_for()
+    pick(page, "a.txt")
+    pick(page, "b.txt", ["ControlOrMeta"])
+    bar = page.get_by_role("toolbar", name="Selectie")
+    expect(bar.locator(".selection-count")).to_have_text("2 geselecteerd")
+    bar.get_by_role("button", name="Delen…", exact=True).click()
+    dialog = page.get_by_role("dialog", name="2 items delen", exact=True)
+    expect(dialog).to_be_visible()
+    page.evaluate(
+        """() => {
+          window.__cancels = 0;
+          document.addEventListener('cancel', () => { window.__cancels++; }, true);
+        }"""
+    )
+    choose(dialog, bob.display_name.split()[1], bob.display_name)
+    expect(pending(dialog)).to_contain_text(bob.display_name)
+
+    ask = page.get_by_role("dialog", name="Sluiten zonder te delen?", exact=True)
+    box = dialog.get_by_role("combobox", name="Zoek een persoon of groep")
+    box.press_sequentially(zoe.display_name, delay=20)
+    option = dialog.get_by_role("option", name=re.compile(re.escape(zoe.display_name)))
+    expect(option).to_be_visible()
+    expect(box).to_have_attribute("aria-expanded", "true")
+    # 1. de lijst met namen dicht; het veld houdt de tekst en de focus
+    page.keyboard.press("Escape")
+    expect(box).to_have_attribute("aria-expanded", "false")
+    expect(box).to_have_value(zoe.display_name)
+    expect(box).to_be_focused()
+    # 2. het veld leeg
+    page.keyboard.press("Escape")
+    expect(box).to_have_value("")
+    expect(box).to_be_focused()
+    expect(ask).to_have_count(0)
+    # 3. de vraag; Escape daarop gaat terug, met de lijst
+    page.keyboard.press("Escape")
+    expect(ask).to_be_visible()
+    expect(ask).to_contain_text(f"Nog niet gedeeld met {bob.display_name}.")
+    page.keyboard.press("Escape")
+    expect(ask).to_be_hidden()
+    expect(box).to_be_focused()
+    expect(pending(dialog)).to_contain_text(bob.display_name)
+    # Sluiten onderaan: de vraag, en dan echt sluiten zonder delen
+    dialog.locator(".dialog-actions").get_by_role("button", name="Sluiten", exact=True).click()
+    expect(ask).to_be_visible()
+    ask.get_by_role("button", name="Sluiten zonder delen", exact=True).click()
+    expect(dialog).to_be_hidden()
+    assert all(people_shares(server, owner, node_id) == [] for node_id in ids)
+    assert page.evaluate("() => window.__cancels") == 0
 
 
 def test_selectie_met_een_item_dat_al_gedeeld_is(context_as, server, user_factory):
