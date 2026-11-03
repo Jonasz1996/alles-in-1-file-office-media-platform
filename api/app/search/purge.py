@@ -8,8 +8,10 @@ ertussen: een boom van 100.000 in één transactie houdt de schrijver minuten va
 per stuk mee.
 
 De aanroeper geeft de ids met de kinderen vóór hun ouders. De FK `node.parent_id` staat op
-CASCADE, dus een ouder neemt zijn kinderen mee, maar dan ziet de trigger de kinderen niet en
-blijft hun rij in de zoekindex staan. Daarom wist de helper van onder naar boven.
+CASCADE, dus een ouder neemt zijn kinderen mee, en de cascade start node_bd ook voor elk kind en
+kleinkind (spike S2, test_wissen_met_de_cascade_raakt_ook_de_kleinkinderen): de index blijft
+dan heel. Van onder naar boven wissen is er voor de stukken: een ouder vóór zijn kinderen wissen
+neemt de hele boom in één opdracht mee, en dan is een stuk niet meer `CHUNK` nodes.
 """
 
 from __future__ import annotations

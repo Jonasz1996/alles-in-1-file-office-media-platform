@@ -7,7 +7,8 @@
 #
 #   MEDIA_TEST_IMAGE   het image van de app (standaard platform:local)
 #   MEDIA_TEST_FFMPEG  het begin van de versie die de zelftest eist (standaard 7.1.)
-#   MEDIA_TEST_OUT     een map voor selftest.json (de artifact van CI); leeg: nergens
+#   MEDIA_TEST_OUT     een map voor selftest.json, handdruk.json en zoekbench.log (de
+#                      artifact van CI); leeg: nergens
 #   MEDIA_TEST_COMPOSE nog een compose-bestand, als laatste (lokaal: bijv. een lagere nofile
 #                      voor een sandbox die 65536 niet geeft); leeg in CI
 #
@@ -44,6 +45,12 @@
 #   JPEG van 1600×900 per tegel), het aantal beelden dat de worker telde (frame=), en het vak
 #   dat de cue van een tijd in trick.vtt aanwijst (ook in de tweede tegel);
 # - media-status zegt "afgeschermd";
+# - zoeken (fase 6, spike S11 en S9): de handdruk van het tekst-kind van Keuze 17 als media, met
+#   een tweede proces van media dat /proc/<pid>/fd, mem en ptrace van het kind probeert, vóór en
+#   na "klaar" (api/tests/search/handdruk.py; nooit de inhoud van een blob via /proc/<pid>/fd);
+#   en tools/zoekbench/bench.py in de container van de app (`python -I - --los`), binnen 5
+#   minuten en daarna niets meer in /data/cache. MEDIA_TEST_OUT krijgt handdruk.json en
+#   zoekbench.log;
 # - de worker gestopt: de app meldt binnen 30 s (de lus van health.py, +1 s) dat hij niet
 #   bereikbaar is; weer gestart: media-status zegt weer "afgeschermd".
 #
@@ -1017,6 +1024,67 @@ if grep -q "afgeschermd" <<< "$status"; then
   goed "media-status: $status"
 else
   fout "media-status: $(mask <<< "$status")"
+fi
+
+# --- zoeken (fase 6): spike S11 en S9 ---------------------------------------------------------
+
+# S11 (Keuze 17): de handdruk in de worker-container, als media. Drie vormen: "ontwerp" (zoals
+# revisie 2), "vork" (het werk in een kleinkind na "klaar") en "0711" (het kind uit een python
+# die media niet mag lezen; de kopie komt in /run/media, want /tmp is een tmpfs met noexec).
+# Exit 0: via /proc/<pid>/fd nooit de inhoud van een blob, na "klaar" alles EACCES of weg. Wat
+# mem en ptrace vóór "klaar" gaven, staat in handdruk.json (dat hangt af van Yama op de host)
+if in_media python -I - --srv /srv --kopie-map /run/media < "$TESTS/search/handdruk.py" \
+  > "$WORK/handdruk.json" 2> "$WORK/handdruk.err"; then
+  rc=0
+else
+  rc=$?
+fi
+if [ -n "$OUT" ]; then
+  mask < "$WORK/handdruk.json" > "$OUT/handdruk.json"
+fi
+cat > "$WORK/handdruk_kort.py" << 'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+regels = [f"ptrace_scope {d.get('ptrace_scope')}"]
+for v in ("ontwerp", "vork", "0711"):
+    r = d.get(v, {})
+    o = r.get("oordeel")
+    if o is None:
+        regels.append(f"{v}: {r.get('niet te proberen', 'ontbreekt')}")
+        continue
+    lek = "lekt niet" if o["ok"] else "LEKT " + json.dumps(o["blob-inhoud gezien"])
+    regels.append(f"{v}: {lek} (vóór klaar: mem {o['mem vóór klaar']}, "
+                  f"ptrace {o['ptrace vóór klaar']})")
+print("; ".join(regels))
+PY
+handdruk="$(python3 -I "$WORK/handdruk_kort.py" "$WORK/handdruk.json" 2>&1 || true)"
+if [ "$rc" = 0 ]; then
+  goed "S11 de handdruk: $handdruk"
+else
+  fout "S11 de handdruk (code $rc): $handdruk $(tail -n 3 "$WORK/handdruk.err" | mask)"
+fi
+if [ -n "$(in_media sh -c 'ls -d /run/media/handdruk-* 2> /dev/null' || true)" ]; then
+  fout "S11: de kopie van python bleef achter in /run/media"
+fi
+
+# S9: de zoekbench in de container van de app, zoals bij een gebruiker (`dc exec -T platform
+# python -I - --los < bench.py`), met de standaardgrootte (100.000)
+REPO="$(dirname "$(dirname "$SINGLE")")"
+start="$(date +%s)"
+if in_platform python -I - --los < "$REPO/tools/zoekbench/bench.py" > "$WORK/zoekbench.log" 2>&1; then
+  rc=0
+else
+  rc=$?
+fi
+duur=$(($(date +%s) - start))
+if [ -n "$OUT" ]; then
+  mask < "$WORK/zoekbench.log" > "$OUT/zoekbench.log"
+fi
+rest="$(in_platform sh -c 'ls -d /data/cache/zoekbench-* /tmp/zoekbench-* 2> /dev/null' || true)"
+if [ "$rc" = 0 ] && [ "$duur" -le 300 ] && [ -z "$rest" ] && grep -q "^opgeruimd: ja" "$WORK/zoekbench.log"; then
+  goed "S9 de zoekbench in de container: $duur s, opgeruimd; $(grep -E "^(SQLite|eigenaar|alles) " "$WORK/zoekbench.log" | tr '\n' ' ')"
+else
+  fout "S9 de zoekbench (code $rc, $duur s, over: ${rest:-niets}): $(tail -n 5 "$WORK/zoekbench.log" | mask)"
 fi
 
 # --- de worker weg, en weer terug -------------------------------------------------------------

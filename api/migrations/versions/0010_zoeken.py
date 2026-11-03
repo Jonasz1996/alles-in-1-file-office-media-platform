@@ -109,11 +109,13 @@ def ss(x: str) -> str:
 _BODY = ss("coalesce(t.body, '')")
 _OCR = ss("trim(coalesce(t.ocr, '') || ' ' || coalesce(po.text, ''))")
 _META = ss("coalesce(t.meta, '')")
+_EXTRA = ss(
+    "coalesce((SELECT group_concat(m.title, ' ') FROM media_item m WHERE m.node_id = n.id), '')"
+)
 VIEW_SQL = (
     "CREATE VIEW search_src AS\n"
     "  SELECT n.num AS num, n.blob_id AS blob_id, n.id AS node_id, n.search_name AS name,\n"
-    "         coalesce((SELECT group_concat(m.title, ' ') FROM media_item m"
-    " WHERE m.node_id = n.id), '') AS extra,\n"
+    f"         {_EXTRA} AS extra,\n"
     f"         {_BODY} AS body,\n"
     f"         {_OCR} AS ocr,\n"
     f"         {_META} AS meta\n"
