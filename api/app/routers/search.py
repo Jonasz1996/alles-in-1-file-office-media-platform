@@ -4,6 +4,11 @@ Zoeken gaat via de zoekmachine van app/search/engine.py (fase 6, Keuze 10): sele
 tot Z1 altijd LikeFallback, de zoekfunctie van 0.7.0 (app/search/like.py). De vraag blijft
 die van 0.7.0 (q, één type, één tag, in, limit tot 200); het antwoord is SearchPage, met
 results en more zoals in 0.7.0 en de velden van fase 6 erbij. Z1 maakt de vraag van §3.4.
+
+De overgang (review Z0, haalbaar F4; bouwontwerp §3.4): een vraag die niet in SearchParams past
+(type=archive, limit boven 50: wat de web van nu stuurt) gaat altijd naar LikeFallback, ook als
+Z1 FtsEngine aanzet. De rest gaat via select_engine, met een gecontroleerde SearchParams. Z4 zet
+de web op de vraag van §3.4 en haalt deze tak weg.
 """
 
 import asyncio
@@ -12,7 +17,7 @@ import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +27,7 @@ from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Node, NodeTag, Tag, User
 from app.routers.files import TagRef, get_tree_access, tag_order, tree
-from app.search.engine import read_conn_info, select_engine
+from app.search.engine import LIKE, read_conn_info, select_engine
 from app.search.like import own_tag, search_roots
 from app.search.types import SearchPage, SearchParams, Suggestions
 from app.security import CurrentUser
@@ -60,15 +65,20 @@ async def search(
     """Zoekt in map `in` en alles eronder, of zonder `in` in je eigen bestanden en alles wat
     met je gedeeld is. Elk woord van q moet in de naam staan (hoofdletters en accenten tellen
     niet). Mappen eerst, dan op naam. tag: alleen je eigen tags."""
-    # Zonder controle gebouwd: de vraag van 0.7.0 past niet in de grenzen van SearchParams
-    # (archive als soort, limit tot 200). LikeFallback leest alleen q, types, tags, in_ en limit
-    params = SearchParams.model_construct(
-        q=q,
-        types=[type_] if type_ is not None else [],
-        tags=[tag] if tag is not None else [],
-        in_=in_,
-        limit=limit,
-    )
+    fields = {
+        "q": q,
+        "types": [type_] if type_ is not None else [],
+        "tags": [tag] if tag is not None else [],
+        "in_": in_,
+        "limit": limit,
+    }
+    try:
+        params = SearchParams(**fields)
+    except ValidationError:
+        # De vraag van 0.7.0 (archive als soort, limit tot 200) past niet in SearchParams:
+        # zonder controle gebouwd, en altijd naar LikeFallback (die leest alleen q, types,
+        # tags, in_ en limit), tot Z4 de web op de vraag van §3.4 zet
+        return await LIKE.search(session, user, SearchParams.model_construct(**fields))
     engine = select_engine(settings, await read_conn_info(await session.connection()))
     return await engine.search(session, user, params)
 

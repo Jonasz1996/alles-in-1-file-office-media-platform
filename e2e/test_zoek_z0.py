@@ -75,6 +75,16 @@ def namen(app: ZoekApp, gevonden: set[uuid.UUID]) -> set[str]:
 # --- de wereld ------------------------------------------------------------------------------
 
 
+def test_de_wereld_zoekt_zoals_070(zoek_wereld: ZoekApp) -> None:
+    """De referentie op naam is die van 0.7.0: de app draait met de index uit, en elke vraag
+    (ook binnen de grenzen van SearchParams) komt van LikeFallback, ook nadat Z1 FtsEngine
+    aanzet (review Z0, haalbaar F4)."""
+    assert zoek_wereld.server.extra_env.get("PLATFORM_SEARCH_INDEX") == "uit"
+    eva = zoek_wereld.accounts["eva"]
+    for params in ({}, {"limit": 200}, {"limit": 10, "type": "document"}):
+        assert zoek(zoek_wereld.server, eva, "verslag", **params)["engine"] == "like", params
+
+
 def test_iedereen_uit_de_wereld_kan_inloggen(zoek_wereld: ZoekApp) -> None:
     for naam, account in zoek_wereld.accounts.items():
         me = zoek_wereld.server.call(account, "GET", f"{API}/auth/me", expect=200).json()

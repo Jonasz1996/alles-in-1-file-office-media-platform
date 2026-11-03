@@ -2243,7 +2243,7 @@ rijen en leest met `own_live_geo`.
 | `api/migrations/versions/0010_zoeken.py`, `app/models.py` (nieuwe modellen), `app/search/schema.py`, `app/search/live.py` (`own_live`, `own_live_geo`), `app/search/types.py` | Z0 |
 | de hotspots van §3.5 (`main.py`, `cli.py`, `jobs.py`, `files.py`, `trash.py`, `userdelete.py`, `web/src/routes.tsx`, `web/src/Beheer.tsx`, `web/scripts/budget.mjs`) | Z0 |
 | de contracten van X2 en X3 in de bestanden van Z0 (§3.3, §3.5: velden, `Step.EMBED`, de rij `analyse`, `PHOTO_PREFS`, `register_large`, de stubs, de lege plekken in de web, de i18n-gebieden `photos_faces` en `beeld`, de catalogi `faces.ts` en `beeld.ts`) | Z0b |
-| `app/search/{engine,query,access,snippets,deadline,like,suggest,limits,bench}.py`, `routers/search.py` | Z1 |
+| `app/search/{engine,query,access,snippets,deadline,like,suggest,limits,bench}.py`, `routers/search.py` | Z1 (de tak voor de vraag van 0.7.0 in `routers/search.py` blijft tot Z4 en gaat dan weg: "De overgang" in §3.4) |
 | `app/search/filters.py` (register en de filters `type`, `from`/`to`, `tag`, `library`, `in`) | Z1 |
 | `app/analysis.py`, `app/extract/*`, `app/office/reader.py` (alleen een nieuwe stand "alle tekst"), `app/render.py` (ingang `text`), `app/previews.py` (de terugval zonder media), `routers/pages_words.py` | Z2 |
 | `app/media/worker/ops/text.py`, de handdruk in `app/media/worker/run.py` | Z2 |
@@ -2444,7 +2444,10 @@ p95 ≤ 300 ms in `zoek-perf`, of de tabel uit Keuze 4a als S10 dat zei.
 `/zoeken` met chips, snippets, "Meer laden" en de meldingen, ook de twee teksten van Keuze 9
 (Keuze 47); de tekstlaag in de PDF-viewer met de markering van `?q=` (Keuze 18), in de lazy
 chunk van de viewer; de teksten in het gebied `search` en de codes in
-`web/src/i18n/errors/search.ts`; de begroting.
+`web/src/i18n/errors/search.ts`; de begroting. Herzien na de review van Z0 (haalbaar F4): de web
+stuurt de vraag van §3.4 (`limit` ≤ 50, geen `archive`), en Z4 haalt in dezelfde merge de tak voor
+de vraag van 0.7.0 uit `routers/search.py` weg, met de grenzen van 0.7.0 in `searchQuery.ts`,
+`Search.tsx`, `api/tests/test_search.py` en `e2e/test_zoek_z0.py` ("De overgang" in §3.4).
 
 **Tests:** vitest voor `query.ts` (URL heen en terug), de combobox (pijlen, Esc, Enter,
 `aria-activedescendant`), de snippets (alleen tekst, geen HTML), de meldingen bij `partial` en
@@ -4234,6 +4237,17 @@ de toegangslog (Keuze 13).
 `Hit` blijft `{node, path}` zoals in 0.7.0 en krijgt `match` en `snippet` erbij. De web van nu
 leest alleen `results` en `more`, en werkt dus gewoon door.
 
+**De overgang van de vraag van 0.7.0** (herzien na de review van Z0, haalbaar F4). De web van nu
+(`web/src/search/searchQuery.ts`, `MAX_LIMIT = 200`; `Search.tsx`) en tests van 0.7.0
+(`api/tests/test_search.py`, `e2e/test_zoek_z0.py`) sturen nog de vraag van 0.7.0: `type=archive`
+en `limit` tot 200. Die past niet in `SearchParams` (geen `archive`, `limit` 1–50). Tot Z4 de web
+op de vraag hierboven zet, neemt `GET /search` beide aan: een vraag die niet in `SearchParams`
+past, gaat altijd naar `LikeFallback`, ook als Z1 `FtsEngine` aanzet; de rest gaat via
+`select_engine`, met een gecontroleerde `SearchParams`. Z4 haalt die tak weg, samen met de
+grenzen van 0.7.0 in de web en de tests. Test: `tests/search/test_search_overgang.py`. Het
+harnas van de e2e (`e2e/search_harness.py`) start de app met `PLATFORM_SEARCH_INDEX=uit`: de
+referentie op naam is die van 0.7.0; wie de index wil, geeft `zoekindex="aan"`.
+
 **Tekst**
 
 | Methode en pad | Wie | Antwoord |
@@ -4331,7 +4345,7 @@ Codes in `analysis.code` (alleen op `/beheer`, niet als HTTP-fout): `too_slow`, 
 | `app/previews.py` | `register_ready(fn)`: na `preview.ready` (voor photometa v2) |
 | `app/render.py` | ingang `text` (stub die `none` geeft); de plek voor `ocr_page` (stub) |
 | `app/media/wire.py` | `Op.TEXT`, `Op.OCR` (de worker geeft `not_built` tot Z2 en X1) |
-| `app/routers/search.py` | via `select_engine`; tot Z1 alleen `LikeFallback` |
+| `app/routers/search.py` | via `select_engine`; tot Z1 alleen `LikeFallback`. Herzien na de review van Z0 (haalbaar F4): een vraag van 0.7.0 die niet in `SearchParams` past (`type=archive`, `limit` boven 50) gaat altijd naar `LikeFallback`, tot Z4 de web op §3.4 zet (zie "De overgang" in §3.4) |
 | `web/src/App.tsx`, `routes.tsx`, `router.ts` | het zoekveld (leeg), Ctrl/Cmd+K, de nieuwe routes met lege pagina's |
 | `web/src/Beheer.tsx` | de tab "Zoeken en foto's" (leeg) |
 | `web/src/viewer/InfoPanel.tsx` | plekken `LocationRow`, `PeopleRow` (elk een eigen bestand) |

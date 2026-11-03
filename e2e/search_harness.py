@@ -17,6 +17,9 @@ Uitleg en gebruik: docs/fase-6/z0-e2e.md. Kort:
   te kijken; app.wijzig(fn): de server stoppen, fn(conn, wereld) in één transactie (zoals
   wereld.intrekken en wereld.verhuis), en weer starten op dezelfde poort.
 
+Zoeken draait standaard met PLATFORM_SEARCH_INDEX=uit (LikeFallback, zoals 0.7.0): de
+referentie op naam is die van 0.7.0. Wie de FTS-motor wil (Z1 en verder), geeft zoekindex="aan".
+
 Ingelogd zijn gaat zoals in de rest van de e2e: server.call(account, …) voor de API en
 Browsers.context_as(account) voor de browser (de fixture zoek_browsers in conftest.py). 2FA is
 niet verplicht (setting "security", zoals make_admin hem zet), dus inloggen kan zonder code.
@@ -35,7 +38,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import insert, select
 
@@ -52,6 +55,11 @@ from app.config import Settings  # noqa: E402
 from app.models import Setting  # noqa: E402
 from app.search import bench  # noqa: E402
 from app.security import SECURITY_KEY, hash_password  # noqa: E402
+
+# PLATFORM_SEARCH_INDEX van de server (review Z0, haalbaar F4). "uit": altijd LikeFallback, het
+# zoeken van 0.7.0 waar Referentie.op_naam en test_zoek_z0.py van uitgaan, ook nadat Z1
+# FtsEngine aanzet. Z1 en verder starten hun eigen app met "aan".
+Zoekindex = Literal["aan", "uit"]
 
 
 @dataclass
@@ -134,17 +142,18 @@ def _zonder_2fa(conn: Any) -> None:
         conn.execute(insert(Setting).values(key=SECURITY_KEY, value={"require_2fa": False}))
 
 
-def _nieuwe_server(base: Path) -> Server:
+def _nieuwe_server(base: Path, zoekindex: Zoekindex) -> Server:
     """Een eigen server; één keer gestart en gestopt, zodat de migraties gedraaid hebben."""
-    server = Server(Path(base) / "data")
+    server = Server(Path(base) / "data", env={"PLATFORM_SEARCH_INDEX": zoekindex})
     server.start()
     return server
 
 
-def start_wereld(base: Path) -> ZoekApp:
-    """De app met de wereld van §4.2, gestart; een Account per persoon."""
+def start_wereld(base: Path, zoekindex: Zoekindex = "uit") -> ZoekApp:
+    """De app met de wereld van §4.2, gestart; een Account per persoon. zoekindex: zie
+    Zoekindex."""
     klok = time.monotonic()
-    server = _nieuwe_server(base)
+    server = _nieuwe_server(base, zoekindex)
     blob_dir = Settings(data_dir=server.data_dir).blob_dir
 
     def zaai(data_dir: Path) -> W.Wereld:
@@ -167,11 +176,19 @@ def start_wereld(base: Path) -> ZoekApp:
     return ZoekApp(server, accounts, wereld=w, seconden={"start": time.monotonic() - klok})
 
 
-def start_boom(base: Path, n: int = 1_000, *, seed: int = 6, profiel: str = "basis") -> ZoekApp:
+def start_boom(
+    base: Path,
+    n: int = 1_000,
+    *,
+    seed: int = 6,
+    profiel: str = "basis",
+    zoekindex: Zoekindex = "uit",
+) -> ZoekApp:
     """De app met de boom van bench.py (n bestanden), gestart; een Account per rol van §4.4.
-    Bij n = 100.000 duurt het zaaien ±1 minuut (bench.Uitkomst.seconden)."""
+    Bij n = 100.000 duurt het zaaien ±1 minuut (bench.Uitkomst.seconden). zoekindex: zie
+    Zoekindex."""
     klok = time.monotonic()
-    server = _nieuwe_server(base)
+    server = _nieuwe_server(base, zoekindex)
     plan = bench.Plan(n=n, seed=seed, profiel=profiel)
 
     def zaai(data_dir: Path) -> bench.Uitkomst:

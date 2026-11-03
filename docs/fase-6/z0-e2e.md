@@ -189,6 +189,9 @@ van de video) en 1 onder `ocr` (echte tesseract).
   admin, user en guest. `ZoekApp.wereld` heeft de ids.
 - `start_boom(map, n)` doet hetzelfde met de boom van `bench.py` (1.000 of 100.000), alleen in de
   database: geen bestanden op schijf. Er is een `Account` per rol van §4.4.
+- Beide starten de app met `PLATFORM_SEARCH_INDEX=uit` (na de review van Z0, haalbaar F4): de
+  referentie op naam is het zoeken van 0.7.0 (`LikeFallback`), ook nadat Z1 `FtsEngine` aanzet.
+  Wie de index wil (Z1 en verder), geeft `zoekindex="aan"`.
 - `app.referentie()` leest de referentie over de database van nu, ook na een upload van de test
   zelf.
 - `app.db()` geeft een alleen-lezen sqlite3-verbinding naast de draaiende server, om in de index
