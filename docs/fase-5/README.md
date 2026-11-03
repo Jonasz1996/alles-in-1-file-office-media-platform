@@ -114,6 +114,7 @@ zette de standaarden op de metingen en draaide de installatietest met terugrolle
 | Namen | 95–97 % van de automatische koppelingen goed op een testset van 125 namen (tegen de nep-TMDB); wat twijfelt gaat naar Nakijken | Keuze 42, punt 9 in metingen.md |
 | Browsers | getest in Chromium 141 (sandbox) en Chrome for Testing 156 (CI); Safari, iPhone, Firefox en webOS niet | fase 9 |
 | Nodes | één node: sessies in het geheugen van de app | Keuze 48; het cluster later |
+| ffmpeg 8 | de worker is getest met ffmpeg 6.1 (CI, Ubuntu 24.04) en 7.1 (het image, Debian 13); met ffmpeg 8.0 geeft de probe geen `last_frame_ms` en weigert mjpeg een frame voorbij het einde ("Non full-range YUV") | gezien op 3 november 2026, toen `ubuntu-latest` in CI Ubuntu 26.04 werd: de jobs met ffmpeg uit apt staan nu vast op `ubuntu-24.04`. Het image (`python:3.12-slim`) krijgt ffmpeg 8 pas met Debian 14; de worker moet dan eerst aangepast zijn |
 
 ## Wat geschrapt of verschoven is, en waarom
 

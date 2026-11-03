@@ -8,10 +8,14 @@ on:
 permissions:
   contents: read
 
+# De jobs die ffmpeg uit apt halen draaien vast op ubuntu-24.04 (ffmpeg 6.1). ubuntu-latest werd
+# in november 2026 Ubuntu 26.04 met ffmpeg 8.0, en daar geeft de probe van de worker geen
+# last_frame_ms meer en weigert mjpeg een frame voorbij het einde (open punt in docs/fase-5/README.md).
+# Het image zelf gebruikt ffmpeg 7.1 van Debian 13 en hangt hier niet van af.
 jobs:
   api:
     name: API (lint en tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
     defaults:
       run:
         working-directory: api
@@ -32,7 +36,7 @@ jobs:
   # cores, zoals op de LXC. De job api slaat media over (addopts in api/pyproject.toml).
   api-media:
     name: API media (lokale worker en echte ffmpeg)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
     timeout-minutes: 20
     defaults:
       run:
@@ -128,7 +132,7 @@ jobs:
 
   e2e:
     name: e2e (Playwright tegen de echte server)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
     needs: [web]
     defaults:
       run:
@@ -220,7 +224,7 @@ jobs:
 
   perf:
     name: Prestaties (alleen rapport)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
     needs: [web]
     # Runners zijn te wisselend voor een harde poort; in de sandbox en bij de integratie wel
     continue-on-error: true
@@ -261,7 +265,7 @@ jobs:
   # e2e), naast de rest. Het harnas: e2e/media_harness.py en docs/fase-5/e2e.md.
   e2e-media:
     name: e2e media (lokale worker, echte ffmpeg)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
     needs: [web]
     timeout-minutes: 20
     env:
@@ -338,7 +342,7 @@ jobs:
   # (S13 van de spike). Ma en Mb komen met M6.
   e2e-media-perf:
     name: e2e media-prestaties (alleen rapport, S13)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
     needs: [web]
     timeout-minutes: 20
     continue-on-error: true
