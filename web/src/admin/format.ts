@@ -160,12 +160,13 @@ export function jobTypeLabel(type: string): string {
 }
 
 /** De regels onder "Foto's en video's" op het tabblad Taken: eerst hoeveel er een thumbnail
- * hebben, daarna alleen wat er niet nul is (de grote versie die nog komt, zonder preview, video's
- * die op ffmpeg wachten). */
+ * hebben, daarna alleen wat er niet nul is (de grote versie die nog komt, de grote versie die
+ * mislukte, zonder preview, video's die op ffmpeg wachten). */
 export function photoLines(p: PhotoIndex): string[] {
-  const done = p.ready + p.partial;
+  const done = p.ready + p.partial + p.large_failed;
   const lines = [t("admin.jobs.photos.summary", { done, total: p.total, waiting: p.waiting, failed: p.failed })];
   if (p.partial) lines.push(t("admin.jobs.photos.partial", { n: p.partial }));
+  if (p.large_failed) lines.push(t("admin.jobs.photos.largeFailed", { n: p.large_failed }));
   if (p.none) lines.push(t("admin.jobs.photos.none", { n: p.none }));
   if (p.later) lines.push(t("admin.jobs.photos.later", { n: p.later }));
   return lines;

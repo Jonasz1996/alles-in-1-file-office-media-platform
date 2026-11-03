@@ -52,6 +52,8 @@ class PhotoIndex(BaseModel):
     ready: int = 0
     # Alleen de thumbnail; de grote maat komt nog (de tweede ronde)
     partial: int = 0
+    # Alleen de thumbnail; de tweede ronde mislukte ("Alles nalopen" probeert opnieuw)
+    large_failed: int = 0
     waiting: int = 0
     failed: int = 0
     # Geen preview mogelijk (onleesbaar, of een soort zonder)

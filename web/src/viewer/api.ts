@@ -36,6 +36,8 @@ export interface ViewerMeta extends PreviewMeta {
   pdf_state?: PdfState;
   /** Alleen de thumbnail is er: de grote versie (en 2048) komt in een tweede ronde */
   partial?: boolean;
+  /** De tweede ronde mislukte: de grote versie komt niet vanzelf meer (Alles nalopen op /beheer) */
+  large_failed?: boolean;
 }
 
 export interface ViewerDetail {

@@ -124,6 +124,10 @@ describe("moreComing: het detail opnieuw vragen", () => {
     expect(moreComing({ state: "none", meta: {} })).toBe(false);
   });
 
+  it("de tweede ronde mislukte: niet blijven vragen naar wat niet meer komt", () => {
+    expect(moreComing({ state: "ready", meta: { sizes: [256], partial: true, large_failed: true } })).toBe(false);
+  });
+
   it("preview.ready voor dit bestand (node_ids), niet voor een ander", () => {
     const ready = { type: "preview.ready", data: { sha: "a", node_ids: ["n1", "n2"] } };
     expect(previewReadyFor(ready, "n2")).toBe(true);

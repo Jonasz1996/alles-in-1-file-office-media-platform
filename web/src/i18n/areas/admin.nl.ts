@@ -280,6 +280,10 @@ export default {
       title: "Foto's en video's",
       summary: "{done} van {total} hebben een thumbnail, {waiting} in de wachtrij, {failed} mislukt.",
       partial: { one: "{n} krijgt nog een grote versie.", other: "{n} krijgen nog een grote versie." },
+      largeFailed: {
+        one: "Bij {n} mislukte de grote versie; Alles nalopen probeert het opnieuw.",
+        other: "Bij {n} mislukte de grote versie; Alles nalopen probeert het opnieuw.",
+      },
       none: { one: "{n} zonder preview (onleesbaar, of een soort zonder).", other: "{n} zonder preview (onleesbaar, of een soort zonder)." },
       later: { one: "{n} video wacht op ffmpeg in de mediaworker.", other: "{n} video's wachten op ffmpeg in de mediaworker." },
       recheck: "Alles nalopen",

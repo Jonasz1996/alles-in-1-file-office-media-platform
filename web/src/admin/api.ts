@@ -140,6 +140,8 @@ export interface PhotoIndex {
   ready: number;
   /** Alleen de thumbnail; de grote maat komt nog (de tweede ronde) */
   partial: number;
+  /** Alleen de thumbnail; de tweede ronde mislukte ("Alles nalopen" probeert opnieuw) */
+  large_failed: number;
   waiting: number;
   failed: number;
   /** Geen preview mogelijk (onleesbaar, of een soort zonder) */

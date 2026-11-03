@@ -82,9 +82,11 @@ export function browserShows(mime: string | null): boolean {
 
 /** Komt er nog meer van de preview? Nog in de maak, of alleen de thumbnail (partial: de grote
  * versie en 2048 komen in een tweede ronde). Dan vraagt de viewer het detail opnieuw: een RAW of
- * HEIC toont anders 256 px, ook als de grote versie er al is. */
+ * HEIC toont anders 256 px, ook als de grote versie er al is. Mislukte de tweede ronde
+ * (large_failed), dan komt er niets meer. */
 export function moreComing(detail: { state: string; meta: ViewerMeta }): boolean {
-  return detail.state === "pending" || (detail.state === "ready" && detail.meta.partial === true);
+  if (detail.state === "pending") return true;
+  return detail.state === "ready" && detail.meta.partial === true && detail.meta.large_failed !== true;
 }
 
 /** Is dit preview.ready voor bestand id (data.node_ids)? */

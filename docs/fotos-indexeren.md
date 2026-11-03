@@ -21,6 +21,9 @@ wachten. Opent iemand zo'n foto in de viewer, dan gaat zijn grote versie wel met
 hieronder). De viewer toont tot dan de thumbnail, vraagt het detail opnieuw zolang alleen de
 thumbnail er is (en ingelogd ook bij `preview.ready`), en wisselt naar de grote versie zodra die
 er is. Voor een RAW of HEIC, die de browser zelf niet kan tonen, bleef dat eerst 256 px.
+Mislukt de tweede ronde ook na de laatste poging, dan blijft de thumbnail staan en krijgt de
+foto `large_failed` in zijn metadata: `/beheer` telt hem dan apart, de viewer vraagt niet
+verder, en **Alles nalopen** probeert het opnieuw.
 
 **Wat je bekijkt, gaat voor.** De tijdlijn (`GET /photos`), een map (`POST /previews`) en de
 viewer zetten de wachtende taken van wat ze tonen vooraan in de rij, de laatst bekeken eerst.
@@ -93,9 +96,9 @@ review vond dat te ruim zonder jouw besluit, dus de standaard is weer 6 uur.
 `/beheer` → **Taken** heeft bovenaan **Foto's en video's**:
 
 - "x van y hebben een thumbnail, n in de wachtrij, m mislukt";
-- zo nodig: hoeveel er nog een grote versie krijgen, hoeveel er geen preview kunnen krijgen
-  (onleesbaar, of een soort zonder preview) en hoeveel video's wachten op ffmpeg in de
-  mediaworker.
+- zo nodig: hoeveel er nog een grote versie krijgen, bij hoeveel de grote versie mislukte
+  (die hebben wel een thumbnail), hoeveel er geen preview kunnen krijgen (onleesbaar, of een
+  soort zonder preview) en hoeveel video's wachten op ffmpeg in de mediaworker.
 
 **Alles nalopen** zet alles zonder (complete) preview opnieuw in de rij, ook wat mislukte en
 foto's of video's met "geen preview". Ook maakt het een preview opnieuw als zijn bestand op

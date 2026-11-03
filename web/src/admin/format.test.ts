@@ -197,7 +197,7 @@ describe("taken", () => {
   });
 
   it("photoLines: eerst wat een thumbnail heeft, daarna alleen wat niet nul is", async () => {
-    const all = { total: 10, ready: 6, partial: 0, waiting: 3, failed: 1, none: 0, later: 0 };
+    const all = { total: 10, ready: 6, partial: 0, large_failed: 0, waiting: 3, failed: 1, none: 0, later: 0 };
     expect(photoLines(all)).toEqual(["6 van 10 hebben een thumbnail, 3 in de wachtrij, 1 mislukt."]);
     expect(photoLines({ ...all, ready: 4, partial: 2, none: 1, later: 1, total: 12 })).toEqual([
       "6 van 12 hebben een thumbnail, 3 in de wachtrij, 1 mislukt.",
@@ -211,6 +211,15 @@ describe("taken", () => {
       "7 of 10 have a thumbnail, 3 queued, 1 failed.",
       "1 still gets a large version.",
       "2 videos are waiting for ffmpeg in the media worker.",
+    ]);
+  });
+
+  it("photoLines: een mislukte grote versie heeft wel een thumbnail, maar komt niet meer vanzelf", () => {
+    const p = { total: 10, ready: 5, partial: 1, large_failed: 2, waiting: 2, failed: 0, none: 0, later: 0 };
+    expect(photoLines(p)).toEqual([
+      "8 van 10 hebben een thumbnail, 2 in de wachtrij, 0 mislukt.",
+      "1 krijgt nog een grote versie.",
+      "Bij 2 mislukte de grote versie; Alles nalopen probeert het opnieuw.",
     ]);
   });
 

@@ -712,6 +712,7 @@ async def _store_large(
 
             await anyio.to_thread.run_sync(place)
             meta.pop("partial", None)
+            meta.pop("large_failed", None)
             meta["sizes"] = sorted(set(meta.get("sizes") or []) | set(sizes))
             blob.preview_meta = meta
             await session.commit()
@@ -754,6 +755,23 @@ async def mark_failed(settings: Settings, payload: dict[str, Any], _error: str) 
         await session.commit()
     if result.rowcount:
         await announce(maker, sha)
+
+
+async def mark_large_failed(settings: Settings, payload: dict[str, Any], _error: str) -> None:
+    """Na de laatste mislukte poging van de tweede ronde: de thumbnail blijft staan (partial),
+    maar /beheer telt hem niet meer bij "krijgt nog een grote versie" (er wacht niets meer) en
+    wel apart als mislukt (large_failed). "Alles nalopen" probeert hem opnieuw."""
+    sha = str(payload.get("sha", ""))
+    if not SHA.fullmatch(sha):
+        return
+    async with _maker(settings)() as session:
+        blob = await session.get(Blob, sha)
+        meta = dict((blob.preview_meta if blob else None) or {})
+        if blob is None or blob.preview != "ready" or not meta.get("partial"):
+            return
+        meta["large_failed"] = True
+        blob.preview_meta = meta
+        await session.commit()
 
 
 async def enqueue_missing(settings: Settings) -> int:
@@ -1033,8 +1051,8 @@ async def recheck(settings: Settings, payload: dict[str, Any]) -> None:
     Opnieuw: geen preview of een die wacht zonder taak, een mislukte, een foto of video zonder
     preview (none), en een preview waarvan een bestand op schijf ontbreekt (heal). Een foto met
     alleen een thumbnail krijgt zijn tweede ronde terug. Een onbekende soort wordt eerst opnieuw
-    herkend. Na het laatste stuk ook de metadata (photometa) en verouderde previews
-    (enqueue_outdated)."""
+    herkend; een mislukte tweede ronde (large_failed) ook. Na het laatste stuk ook de metadata
+    (photometa) en verouderde previews (enqueue_outdated)."""
     after = str(payload.get("after") or "")
     blobs = BlobStore(settings.blob_dir)
     async with _maker(settings)() as session:
@@ -1047,7 +1065,7 @@ async def recheck(settings: Settings, payload: dict[str, Any]) -> None:
             )
         ).all()
     kinds = await _resniff(settings, [(row.sha256, row.mime) for row in rows])
-    again, large, ready = [], [], []
+    again, large, retry, ready = [], [], [], []
     for sha, kind, state, meta in rows:
         meta = meta if isinstance(meta, dict) else {}
         if state in (None, "pending", "failed"):
@@ -1057,6 +1075,8 @@ async def recheck(settings: Settings, payload: dict[str, Any]) -> None:
         elif state == "ready":
             if meta.get("partial"):
                 large.append(sha)
+                if meta.get("large_failed"):
+                    retry.append(sha)
             ready.append((sha, [s for s in meta.get("sizes") or [] if s in SIZES]))
     broken = await anyio.to_thread.run_sync(
         lambda: [sha for sha, sizes in ready if _missing(blobs, sha, sizes)]
@@ -1064,6 +1084,11 @@ async def recheck(settings: Settings, payload: dict[str, Any]) -> None:
     async with _maker(settings)() as session:
         await _again(session, again)
         await jobs.enqueue_many(session, LARGE_TYPE, [({"sha": s}, large_key(s)) for s in large])
+        # Weer in de rij: dan komt de grote versie weer (nog), tot hij er is of weer mislukt
+        for blob in (await session.scalars(select(Blob).where(Blob.sha256.in_(retry)))).all():
+            meta = dict(blob.preview_meta or {})
+            meta.pop("large_failed", None)
+            blob.preview_meta = meta
         if len(rows) == RECHECK_BATCH:
             await jobs.chain(session, RECHECK, {"after": rows[-1].sha256}, RECHECK_KEY)
         await session.commit()
@@ -1078,8 +1103,9 @@ async def recheck(settings: Settings, payload: dict[str, Any]) -> None:
 
 async def photo_counts(session: AsyncSession) -> dict[str, int]:
     """Hoe ver de foto's en video's zijn (de statusregel op /beheer): total, ready (met alle
-    maten), partial (alleen de thumbnail: de tweede ronde komt nog), waiting (nog geen preview),
-    failed, none (geen preview mogelijk) en later (een video die wacht op de mediaworker)."""
+    maten), partial (alleen de thumbnail: de tweede ronde komt nog), large_failed (alleen de
+    thumbnail: de tweede ronde mislukte), waiting (nog geen preview), failed, none (geen preview
+    mogelijk) en later (een video die wacht op de mediaworker)."""
     media = or_(Blob.mime.like("image/%"), Blob.mime.like("video/%"))
     rows = (
         await session.execute(
@@ -1094,19 +1120,26 @@ async def photo_counts(session: AsyncSession) -> dict[str, int]:
             Blob.preview_meta["later"].as_boolean().is_(true()),
         )
     )
-    partial = await session.scalar(
-        select(func.count()).where(
-            media,
-            Blob.preview == "ready",
-            Blob.preview_meta["partial"].as_boolean().is_(true()),
+    halves = (
+        await session.execute(
+            select(Blob.preview_meta["large_failed"].as_boolean(), func.count())
+            .where(
+                media,
+                Blob.preview == "ready",
+                Blob.preview_meta["partial"].as_boolean().is_(true()),
+            )
+            .group_by(Blob.preview_meta["large_failed"].as_boolean())
         )
-    )
+    ).all()
+    large_failed = sum(count for gave_up, count in halves if gave_up)
+    partial = sum(count for gave_up, count in halves if not gave_up)
     total = sum(states.values())
     waiting = states.get(None, 0) + states.get("pending", 0)
     return {
         "total": total,
-        "ready": states.get("ready", 0) - (partial or 0),
-        "partial": partial or 0,
+        "ready": states.get("ready", 0) - partial - large_failed,
+        "partial": partial,
+        "large_failed": large_failed,
         "waiting": waiting,
         "failed": states.get("failed", 0),
         "none": states.get("none", 0) - (later or 0),
@@ -1116,7 +1149,7 @@ async def photo_counts(session: AsyncSession) -> dict[str, int]:
 
 jobs.register(TYPE, make, on_dead=mark_failed, lane=LANE)
 # De tweede ronde: pas als er geen thumbnails meer wachten (rank). Mislukt hij, dan blijft de
-# thumbnail gewoon staan (partial): "alles nalopen" probeert hem opnieuw
-jobs.register(LARGE_TYPE, make_large, lane=LANE, rank=1)
+# thumbnail gewoon staan (partial, large_failed): "alles nalopen" probeert hem opnieuw
+jobs.register(LARGE_TYPE, make_large, on_dead=mark_large_failed, lane=LANE, rank=1)
 jobs.register(OUTDATED, rerender_outdated)
 jobs.register(RECHECK, recheck)

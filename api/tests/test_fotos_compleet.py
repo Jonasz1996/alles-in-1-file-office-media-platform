@@ -14,6 +14,7 @@ wat eerder stil zonder preview bleef, en hoe het alsnog komt.
 """
 
 import asyncio
+import dataclasses
 import io
 import shutil
 import struct
@@ -309,8 +310,8 @@ async def test_alles_nalopen_en_de_telling_op_beheer(client, admin, settings):
     shutil.rmtree(previews.directory(BlobStore(settings.blob_dir), sha["weg"]))
     await set_blob(settings, sha["half"], preview_meta={"sizes": [256], "partial": True})
     r = await client.get("/api/v1/admin/jobs", headers=headers)
-    assert r.json()["photos"] == {"total": 6, "ready": 2, "partial": 1, "waiting": 1,
-                                  "failed": 1, "none": 1, "later": 0}  # fmt: skip
+    assert r.json()["photos"] == {"total": 6, "ready": 2, "partial": 1, "large_failed": 0,
+                                  "waiting": 1, "failed": 1, "none": 1, "later": 0}  # fmt: skip
 
     r = await client.post("/api/v1/admin/jobs/recheck-previews", headers=headers)
     assert r.status_code == 200 and r.json() == {"started": True}
@@ -323,8 +324,8 @@ async def test_alles_nalopen_en_de_telling_op_beheer(client, admin, settings):
         assert (await client.get(info[node["id"]]["thumb"])).status_code == 200, name
     assert info[archive["id"]]["state"] == "ready"  # een zip heeft wel een preview (de lijst)
     r = await client.get("/api/v1/admin/jobs", headers=headers)
-    assert r.json()["photos"] == {"total": 6, "ready": 6, "partial": 0, "waiting": 0,
-                                  "failed": 0, "none": 0, "later": 0}  # fmt: skip
+    assert r.json()["photos"] == {"total": 6, "ready": 6, "partial": 0, "large_failed": 0,
+                                  "waiting": 0, "failed": 0, "none": 0, "later": 0}  # fmt: skip
     # Alleen voor beheerders
     other = await login_as(client, headers, "gewoon@example.nl")
     r = await client.post("/api/v1/admin/jobs/recheck-previews", headers=other)
@@ -514,6 +515,56 @@ async def test_wat_de_viewer_toont_gaat_voor_alle_thumbnails(client, admin, sett
     # Daarna gewoon de thumbnails
     rest = [(await jobs.claim(settings, lane=previews.LANE)).type for _ in waiting]
     assert rest == [previews.TYPE] * 5
+
+
+async def test_een_mislukte_tweede_ronde_telt_niet_meer_als_onderweg(
+    client, admin, settings, monkeypatch
+):
+    """Mislukt de tweede ronde ook na de laatste poging, dan blijft de thumbnail gewoon staan. Op
+    /beheer telde hij eerder voor altijd bij "krijgt nog een grote versie", en de viewer bleef
+    vragen. Nu staat hij apart (large_failed), en "Alles nalopen" probeert hem opnieuw."""
+    headers, _ = admin
+    raw = exif_tiff() + b"\0" * 1000 + photo((1600, 1200))
+    node = await upload(client, headers, "DSC_0002.NEF", raw)
+    assert await jobs.run_one(settings)  # eerste ronde: alleen 256
+    real = jobs._kinds[previews.LARGE_TYPE]
+
+    async def kapot(_settings, _payload):
+        raise RuntimeError("kapot")
+
+    monkeypatch.setitem(jobs._kinds, previews.LARGE_TYPE, dataclasses.replace(real, run=kapot))
+    async with maker(settings)() as session:
+        await session.execute(
+            update(Job).where(Job.type == previews.LARGE_TYPE).values(max_attempts=1)
+        )
+        await session.commit()
+    await jobs.run_pending(settings)
+    async with maker(settings)() as session:
+        job = await session.scalar(select(Job).where(Job.type == previews.LARGE_TYPE))
+        assert job.status == "failed" and "kapot" in job.error
+        blob = await session.get(Blob, sha_of(node))
+        assert blob.preview == "ready" and blob.preview_meta["sizes"] == [256]
+        assert blob.preview_meta["partial"] is True and blob.preview_meta["large_failed"] is True
+    r = await client.get("/api/v1/admin/jobs", headers=headers)
+    assert r.json()["photos"] == {"total": 1, "ready": 0, "partial": 0, "large_failed": 1,
+                                  "waiting": 0, "failed": 0, "none": 0, "later": 0}  # fmt: skip
+    detail = (await client.get(f"/api/v1/files/{node['id']}/preview", headers=headers)).json()
+    assert detail["state"] == "ready" and detail["meta"]["large_failed"] is True
+    assert (await client.get(detail["thumb"])).status_code == 200
+
+    # Alles nalopen: weer in de rij, dus weer onderweg; nu lukt hij
+    monkeypatch.setitem(jobs._kinds, previews.LARGE_TYPE, real)
+    await previews.recheck(settings, {})
+    assert await queued(settings, previews.LARGE_TYPE) == [sha_of(node)]
+    r = await client.get("/api/v1/admin/jobs", headers=headers)
+    assert (r.json()["photos"]["partial"], r.json()["photos"]["large_failed"]) == (1, 0)
+    await jobs.run_pending(settings)
+    async with maker(settings)() as session:
+        blob = await session.get(Blob, sha_of(node))
+        assert "partial" not in blob.preview_meta and "large_failed" not in blob.preview_meta
+    r = await client.get("/api/v1/admin/jobs", headers=headers)
+    assert r.json()["photos"]["ready"] == 1
+    assert (r.json()["photos"]["partial"], r.json()["photos"]["large_failed"]) == (0, 0)
 
 
 async def test_naar_voren_gaat_voor_een_lagere_rank(settings):

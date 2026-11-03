@@ -279,6 +279,10 @@ const en: Translation<typeof nl> = {
       title: "Photos and videos",
       summary: "{done} of {total} have a thumbnail, {waiting} queued, {failed} failed.",
       partial: { one: "{n} still gets a large version.", other: "{n} still get a large version." },
+      largeFailed: {
+        one: "The large version failed for {n}; Check everything tries again.",
+        other: "The large version failed for {n}; Check everything tries again.",
+      },
       none: { one: "{n} without a preview (unreadable, or a type without one).", other: "{n} without a preview (unreadable, or a type without one)." },
       later: { one: "{n} video is waiting for ffmpeg in the media worker.", other: "{n} videos are waiting for ffmpeg in the media worker." },
       recheck: "Check everything",
