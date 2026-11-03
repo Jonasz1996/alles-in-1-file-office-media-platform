@@ -21,6 +21,10 @@ wachten. Opent iemand zo'n foto in de viewer, dan gaat zijn grote versie wel met
 hieronder). De viewer toont tot dan de thumbnail, vraagt het detail opnieuw zolang alleen de
 thumbnail er is (en ingelogd ook bij `preview.ready`), en wisselt naar de grote versie zodra die
 er is. Voor een RAW of HEIC, die de browser zelf niet kan tonen, bleef dat eerst 256 px.
+Is er van zo'n foto (RAW, HEIC, TIFF, PSD) nog helemaal niets als je hem opent, dan staat er
+"Het voorbeeld wordt gemaakt…" tot de preview er is (`ZoomView`). Eerst stond daar "Deze
+afbeelding kan niet worden getoond.", en dat bleef staan, ook als de preview er daarna was (de
+nacontrole: een PSD bleef zo 75 s leeg, tot je hem opnieuw opende).
 Mislukt de tweede ronde ook na de laatste poging, dan blijft de thumbnail staan en krijgt de
 foto `large_failed` in zijn metadata: `/beheer` telt hem dan apart, de viewer vraagt niet
 verder, en **Alles nalopen** probeert het opnieuw.

@@ -62,9 +62,16 @@ export default function ZoomView({ item, detail, source, onZoomedChange }: Props
   const natural: Size | null =
     meta.width && meta.height ? { w: meta.width, h: meta.height } : loadedSize;
 
+  // Een HEIC, RAW of PSD waarvan de preview nog gemaakt wordt: er is nog niets om te tonen
+  const waiting = !native && !animated && !detail.large && !detail.display && detail.state === "pending";
+
   // De beginafbeelding: wat beweegt als origineel, anders de grote preview (of het origineel
-  // als er geen preview is)
+  // als er geen preview is). Eén keer per bestand (de viewer geeft elk bestand een eigen key),
+  // behalve zolang er nog niets staat: dan alsnog zodra een nieuw detail de preview heeft.
+  // Eerder bleef een HEIC of RAW die je opende terwijl zijn preview nog wachtte (tijdens een
+  // import) op "kan niet worden getoond" staan, ook als de preview er daarna was.
   useEffect(() => {
+    if (shown || waiting) return;
     let live = true;
     const preview = detail.large ?? null;
     if (!animated && preview) {
@@ -82,8 +89,7 @@ export default function ZoomView({ item, detail, source, onZoomedChange }: Props
     return () => {
       live = false;
     };
-    // Eén keer per bestand: de viewer geeft elk bestand een eigen key
-  }, []);
+  }, [detail.large, detail.display, waiting]);
 
   useLayoutEffect(() => {
     const el = stage.current;
@@ -241,6 +247,8 @@ export default function ZoomView({ item, detail, source, onZoomedChange }: Props
       >
         {broken ? (
           <p className="viewer-message muted">{t("viewer.image.broken")}</p>
+        ) : !shown && waiting ? (
+          <p className="viewer-message muted">{t("viewer.pending")}</p>
         ) : !shown ? (
           <Spinner label={t("viewer.loading")} />
         ) : (
