@@ -95,6 +95,17 @@ async def test_claim_zoekt_via_de_index(tmp_path):
             compiled = query.compile(conn.sync_engine, compile_kwargs={"literal_binds": True})
             rows = (await conn.exec_driver_sql(f"EXPLAIN QUERY PLAN {compiled}")).all()
             plans.append(" | ".join(r[-1] for r in rows))
+        # Wat naar voren is gehaald (alle ranks): alleen dat deel van de index, zonder de
+        # bovengrens "nu" die SQLite anders kiest (dan las hij alle wachtende previews)
+        query = (
+            sa.select(Job.id)
+            .where(Job.status == "queued", jobs._fronted_filter(previews.LANE))
+            .order_by(Job.run_after, Job.created_at)
+            .limit(10)
+        )
+        compiled = query.compile(conn.sync_engine, compile_kwargs={"literal_binds": True})
+        rows = (await conn.exec_driver_sql(f"EXPLAIN QUERY PLAN {compiled}")).all()
+        fronted = " | ".join(r[-1] for r in rows)
         rows = (
             await conn.exec_driver_sql(
                 "EXPLAIN QUERY PLAN SELECT sha256 FROM blob WHERE ref_count <= 0"
@@ -105,4 +116,5 @@ async def test_claim_zoekt_via_de_index(tmp_path):
     for plan in plans:
         assert "ix_job_queue" in plan, plan
         assert "TEMP B-TREE" not in plan, plan
+    assert "ix_job_queue (status=? AND type=? AND run_after<?)" in fronted, fronted
     assert "ix_blob_ref_count" in garbage, garbage

@@ -22,6 +22,7 @@ import {
   useState,
 } from "react";
 import { formatBytes } from "../api";
+import { liveEvents } from "../events";
 import { errorText, t } from "../i18n";
 import { useOfficeStatus } from "../office";
 import { canEdit, openEditor } from "../office/actions";
@@ -33,7 +34,7 @@ import { openShortcutHelp } from "../ui/ShortcutHelp";
 import { Spinner } from "../ui/Spinner";
 import { modals } from "../ui/topLayer";
 import type { ViewerDetail } from "./api";
-import { type ViewKind, viewKind } from "./media";
+import { moreComing, previewReadyFor, type ViewKind, viewKind } from "./media";
 import { type Source, sourceOf } from "./source";
 import type { ViewerItem, ViewerProps } from "./types";
 import "./viewer.css";
@@ -45,7 +46,8 @@ const TextView = lazy(() => import("./TextView"));
 const OfficeView = lazy(() => import("./OfficeView"));
 const InfoPanel = lazy(() => import("./InfoPanel"));
 
-/** Zo vaak (elke 3 s) vragen we een preview die nog gemaakt wordt opnieuw. */
+/** Zo vaak (elke 3 s) vragen we een preview die nog gemaakt wordt (of alleen een thumbnail
+ * heeft) opnieuw. */
 const PENDING_ROUNDS = 20;
 const PENDING_MS = 3000;
 /** Zo ver (px) vegen is naar het volgende bestand. */
@@ -134,7 +136,9 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
     };
   }, []);
 
-  // Het detail van dit bestand; wat nog gemaakt wordt, een tijdje opnieuw
+  // Het detail van dit bestand; wat nog gemaakt wordt of alleen een thumbnail heeft (de grote
+  // versie van een RAW of HEIC komt in een tweede ronde), een tijdje opnieuw, en ingelogd
+  // meteen bij preview.ready van dit bestand. Een nieuw detail geeft ZoomView de 2048 erbij.
   useEffect(() => {
     if (!item) return;
     let live = true;
@@ -147,15 +151,23 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
         (detail) => {
           if (!live) return;
           setLoaded({ key, detail });
-          if (detail.state === "pending" && ++rounds < PENDING_ROUNDS) timer = setTimeout(() => load(true), PENDING_MS);
+          clearTimeout(timer);
+          if (moreComing(detail) && ++rounds < PENDING_ROUNDS) timer = setTimeout(() => load(true), PENDING_MS);
         },
         (e: unknown) => live && setLoaded({ key, error: e }),
       );
     };
     load(false);
+    const stop =
+      src.kind === "user"
+        ? liveEvents.subscribe((event) => {
+            if (live && previewReadyFor(event, item.id)) load(true);
+          })
+        : undefined;
     return () => {
       live = false;
       clearTimeout(timer);
+      stop?.();
     };
     // Op key: dezelfde inhoud opnieuw doorgegeven vraagt niets opnieuw
   }, [key, getDetail]);

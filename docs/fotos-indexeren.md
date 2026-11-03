@@ -17,11 +17,17 @@ taak `preview`. Voor een JPEG, een camera-RAW (de ingebedde JPEG) en een HEIC (d
 thumbnail, zoals een iPhone die erin zet) maakt die eerst alleen de thumbnail, met de
 opnamedatum en de rest van de metadata. Dat kost een JPEG van 12 MP 50 ms in plaats van
 425 ms. De grote versie komt daarna als taak `preview.large`, pas als er geen thumbnails meer
-wachten. Tot dan toont de viewer de thumbnail.
+wachten. Opent iemand zo'n foto in de viewer, dan gaat zijn grote versie wel meteen (zie
+hieronder). De viewer toont tot dan de thumbnail, vraagt het detail opnieuw zolang alleen de
+thumbnail er is (en ingelogd ook bij `preview.ready`), en wisselt naar de grote versie zodra die
+er is. Voor een RAW of HEIC, die de browser zelf niet kan tonen, bleef dat eerst 256 px.
 
 **Wat je bekijkt, gaat voor.** De tijdlijn (`GET /photos`), een map (`POST /previews`) en de
 viewer zetten de wachtende taken van wat ze tonen vooraan in de rij, de laatst bekeken eerst.
-Een nieuwe upload tijdens een grote import hoeft zo niet achter de hele import te wachten.
+De tijdlijn en een map doen dat alleen voor de thumbnail (meer tonen ze niet); de viewer ook
+voor de grote versie. Wat zo vooraan staat, gaat voor alles, ook voor de thumbnails van een
+import (`jobs._fronted_filter`). Een nieuwe upload tijdens een grote import hoeft zo niet
+achter de hele import te wachten.
 Dat gebeurt pas na het antwoord, in een eigen sessie (`previews.to_front`): het schrijven
 wacht soms op SQLite, en het antwoord hoeft daar niet op te wachten. Wie dezelfde foto's
 binnen 10 seconden opnieuw laadt, schrijft niets (`jobs.FRONT_AGAIN`).

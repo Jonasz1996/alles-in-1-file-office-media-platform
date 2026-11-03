@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { browserShows, codecLabel, mediaProblem, pictureMissing, viewKind, wantsOriginal } from "./media";
+import {
+  browserShows,
+  codecLabel,
+  mediaProblem,
+  moreComing,
+  pictureMissing,
+  previewReadyFor,
+  viewKind,
+  wantsOriginal,
+} from "./media";
 
 describe("mediaProblem (MediaError -> melding)", () => {
   it("decoderen mislukt: dit formaat speelt hier niet", () => {
@@ -103,5 +112,23 @@ describe("viewKind", () => {
       codecLabel({ video: { codec: "h264", profile: "High" }, audio: { codec: "aac" }, container: "mov,mp4,m4a" }),
     ).toBe("h264 (High) · aac · mov");
     expect(codecLabel({})).toBe("");
+  });
+});
+
+describe("moreComing: het detail opnieuw vragen", () => {
+  it("nog in de maak, of alleen de thumbnail (de grote versie van een RAW of HEIC komt nog)", () => {
+    expect(moreComing({ state: "pending", meta: {} })).toBe(true);
+    expect(moreComing({ state: "ready", meta: { sizes: [256], partial: true } })).toBe(true);
+    expect(moreComing({ state: "ready", meta: { sizes: [256, 1024, 2048] } })).toBe(false);
+    expect(moreComing({ state: "failed", meta: { partial: true } })).toBe(false);
+    expect(moreComing({ state: "none", meta: {} })).toBe(false);
+  });
+
+  it("preview.ready voor dit bestand (node_ids), niet voor een ander", () => {
+    const ready = { type: "preview.ready", data: { sha: "a", node_ids: ["n1", "n2"] } };
+    expect(previewReadyFor(ready, "n2")).toBe(true);
+    expect(previewReadyFor(ready, "n3")).toBe(false);
+    expect(previewReadyFor({ type: "node.updated", data: { node_ids: ["n2"] } }, "n2")).toBe(false);
+    expect(previewReadyFor({ type: "preview.ready", data: { sha: "a" } }, "n2")).toBe(false);
   });
 });

@@ -475,6 +475,63 @@ async def test_wat_iemand_bekijkt_gaat_voor(client, admin, settings):
         assert oldest is not None and oldest > datetime.now(UTC) - timedelta(minutes=5)
 
 
+async def test_wat_de_viewer_toont_gaat_voor_alle_thumbnails(client, admin, settings):
+    """Een RAW (of een HEIC met ingebedde thumbnail) heeft na de eerste ronde alleen 256 px, en de
+    browser kan het origineel niet tonen. Opent iemand hem in de viewer tijdens een import, dan
+    gaat zijn preview.large (rank 1) voor de thumbnails die wachten (rank 0); eerder pas als die
+    allemaal klaar waren (review F3). De tijdlijn en een map halen geen grote versies naar voren:
+    die tonen alleen thumbnails, en hun thumbnails gaan voor."""
+    headers, _ = admin
+    raw = exif_tiff() + b"\0" * 1000 + photo((1600, 1200))
+    node = await upload(client, headers, "DSC_0001.NEF", raw)
+    assert await jobs.run_one(settings)  # eerste ronde: alleen 256
+    async with maker(settings)() as session:
+        blob = await session.get(Blob, sha_of(node))
+        assert blob.preview_meta["partial"] is True and blob.preview_meta["sizes"] == [256]
+    # De import: thumbnails wachten. De tijdlijn haalt alleen hun eerste ronde naar voren
+    waiting = [await upload(client, headers, f"{i}.png", picture("PNG", (60, 40 + i)))
+               for i in range(5)]  # fmt: skip
+    assert (await client.get("/api/v1/photos", headers=headers)).status_code == 200
+    async with maker(settings)() as session:
+        fronted = (await session.scalars(select(Job.type).where(Job.run_after < jobs.FRONT))).all()
+        assert sorted(fronted) == [previews.TYPE] * 5
+        # Niets naar voren gehaald: eerst alle thumbnails, dan de grote (rank)
+        await session.execute(update(Job).values(run_after=jobs.now() - timedelta(seconds=1)))
+        await session.commit()
+    first = await jobs.claim(settings, lane=previews.LANE)
+    assert first.type == previews.TYPE
+    async with maker(settings)() as session:
+        await session.execute(update(Job).where(Job.id == first.id).values(status="queued"))
+        await session.commit()
+    # De viewer: de grote versie van deze ene foto meteen, vóór de thumbnails
+    detail = (await client.get(f"/api/v1/files/{node['id']}/preview", headers=headers)).json()
+    assert detail["meta"]["partial"] is True and detail["display"] is None
+    claimed = await jobs.claim(settings, lane=previews.LANE)
+    assert (claimed.type, claimed.payload["sha"]) == (previews.LARGE_TYPE, sha_of(node))
+    await jobs.execute(settings, claimed)
+    detail = (await client.get(f"/api/v1/files/{node['id']}/preview", headers=headers)).json()
+    assert "partial" not in detail["meta"] and "/2048.webp?" in detail["display"]
+    # Daarna gewoon de thumbnails
+    rest = [(await jobs.claim(settings, lane=previews.LANE)).type for _ in waiting]
+    assert rest == [previews.TYPE] * 5
+
+
+async def test_naar_voren_gaat_voor_een_lagere_rank(settings):
+    async with maker(settings)() as session:
+        for i in range(30):
+            await jobs.enqueue(session, previews.TYPE, {"sha": f"{i:064x}"}, key=f"t:{i}")
+        large = await jobs.enqueue(
+            session, previews.LARGE_TYPE, {"sha": "f" * 64}, key=previews.large_key("f" * 64)
+        )
+        await session.commit()
+        assert await jobs.to_front(session, [previews.large_key("f" * 64)]) == 1
+        await session.commit()
+    claimed = await jobs.claim(settings, lane=previews.LANE)
+    assert claimed.id == large
+    # Zonder naar voren: rank 0 eerst
+    assert (await jobs.claim(settings, lane=previews.LANE)).type == previews.TYPE
+
+
 async def test_naar_voren_laat_een_taak_die_later_moet_staan(settings):
     async with maker(settings)() as session:
         soon = await jobs.enqueue(session, previews.TYPE, {"sha": "a" * 64}, key="k:soon")

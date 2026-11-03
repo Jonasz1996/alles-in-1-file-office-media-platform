@@ -2,6 +2,7 @@
 // welk soort weergave een bestand krijgt, en wat een fout van de speler betekent.
 
 import type { PreviewMeta } from "../api";
+import type { ServerEvent } from "../events";
 import { type Category, category } from "../Thumb";
 import type { ViewerMeta } from "./api";
 
@@ -77,6 +78,19 @@ export function browserShows(mime: string | null): boolean {
   const m = (mime ?? "").toLowerCase();
   if (/^image\/(hei[cf](-sequence)?|tiff?|x-tiff|jp2|vnd\.adobe\.photoshop)/.test(m)) return false;
   return !/^image\/(x-adobe-dng|x-raw|x-canon|x-nikon|x-sony|x-fuji|x-olympus|x-panasonic|x-pentax)/.test(m);
+}
+
+/** Komt er nog meer van de preview? Nog in de maak, of alleen de thumbnail (partial: de grote
+ * versie en 2048 komen in een tweede ronde). Dan vraagt de viewer het detail opnieuw: een RAW of
+ * HEIC toont anders 256 px, ook als de grote versie er al is. */
+export function moreComing(detail: { state: string; meta: ViewerMeta }): boolean {
+  return detail.state === "pending" || (detail.state === "ready" && detail.meta.partial === true);
+}
+
+/** Is dit preview.ready voor bestand id (data.node_ids)? */
+export function previewReadyFor(event: ServerEvent, id: string): boolean {
+  const ids = event.data.node_ids;
+  return event.type === "preview.ready" && Array.isArray(ids) && ids.map(String).includes(id);
 }
 
 /** Het origineel tonen in plaats van de preview: wat beweegt (een preview staat stil). */

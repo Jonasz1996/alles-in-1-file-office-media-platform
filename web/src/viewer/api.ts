@@ -34,13 +34,15 @@ export interface ViewerMeta extends PreviewMeta {
   format?: string;
   /** De omgezette PDF van office (fase 4, O3); alleen met office aan of als die PDF er is */
   pdf_state?: PdfState;
+  /** Alleen de thumbnail is er: de grote versie (en 2048) komt in een tweede ronde */
+  partial?: boolean;
 }
 
 export interface ViewerDetail {
   state: Preview["state"];
   thumb: string | null;
   large: string | null;
-  /** 2048 px, alleen voor wat de browser zelf niet kan tonen (HEIC, HEIF, TIFF) */
+  /** 2048 px, alleen voor wat de browser zelf niet kan tonen (HEIC, TIFF, PSD, camera-RAW) */
   display: string | null;
   meta: ViewerMeta;
   /** De opnamedatum als kloktijd (opgeslagen als UTC, zo ook tonen) */

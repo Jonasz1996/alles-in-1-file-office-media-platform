@@ -196,7 +196,9 @@ async def preview_detail(
     detail = await _detail(session, settings, sha, taken_at, version is not None, period=period)
     blob = await session.get(Blob, sha) if sha else None
     if blob is not None:
-        previews.to_front(background, settings, [(sha, blob.preview, blob.preview_meta)])
+        previews.to_front(
+            background, settings, [(sha, blob.preview, blob.preview_meta)], large=True
+        )
     return detail
 
 

@@ -157,20 +157,26 @@ async def requeue(session: AsyncSession, sha: str) -> bool:
 
 
 def to_front(
-    background: BackgroundTasks, settings: Settings, blobs: list[tuple[str, Any, Any]]
+    background: BackgroundTasks,
+    settings: Settings,
+    blobs: list[tuple[str, Any, Any]],
+    *,
+    large: bool = False,
 ) -> None:
     """Wat iemand nu bekijkt, eerst: de wachtende taken van deze (sha, preview, preview_meta)
-    naar voren (de tijdlijn, een map, de viewer). Zonder preview de eerste ronde, met alleen een
-    thumbnail de tweede. Pas na het antwoord en in een eigen sessie (_front): het schrijven wacht
-    soms op de schrijflock van SQLite (een import, previews die klaar komen), en daar hoeft wie
-    kijkt niet op te wachten."""
+    naar voren (de tijdlijn, een map, de viewer). Zonder preview de eerste ronde; met alleen een
+    thumbnail de tweede, maar alleen als large (de viewer: die toont de grote versie). Een lijst
+    toont alleen thumbnails, en een naar voren gehaalde taak gaat voor alles, ook voor de
+    thumbnails van een import (jobs._claim_filters). Pas na het antwoord en in een eigen sessie
+    (_front): het schrijven wacht soms op de schrijflock van SQLite (een import, previews die
+    klaar komen), en daar hoeft wie kijkt niet op te wachten."""
     keys = []
     for sha, state, meta in blobs:
         if not sha:
             continue
         if state in (None, "pending"):
             keys.append(key(sha))
-        elif state == "ready" and isinstance(meta, dict) and meta.get("partial"):
+        elif large and state == "ready" and isinstance(meta, dict) and meta.get("partial"):
             keys.append(large_key(sha))
     if keys:
         background.add_task(_front, settings, list(dict.fromkeys(keys)))

@@ -30,7 +30,7 @@ vervangt settings.job_timeout.
 De rij preview (previews) heeft settings.preview_workers workers (0: een minder dan het aantal
 kernen) en draait ook zonder media. Binnen een rij gaat een soort met een lagere rank voor:
 preview.large (rank 1) pas als er geen thumbnails (rank 0) meer klaarstaan. Wat iemand nu
-bekijkt, haalt to_front naar voren.
+bekijkt, haalt to_front naar voren, en dat gaat voor alles, ook voor een lagere rank.
 """
 
 import asyncio
@@ -204,8 +204,21 @@ def _lane_filter(lane: str | None):
     return Job.type.in_(mine) if mine else false()
 
 
+def _fronted_filter(lane: str | None):
+    """Wat iemand bekijkt (to_front: run_after vóór FRONT) gaat voor, van elke rank: de viewer
+    wacht op de grote versie van één foto (preview.large, rank 1), niet tot alle thumbnails van
+    een import klaar zijn (review F3). Alleen in een rij met ranks (zonder staat het naar voren
+    gehaalde al vooraan); anders None. Met run_after < FRONT als enige bovengrens: met ook
+    run_after <= nu erbij las SQLite alle wachtende previews (gemeten met 50.000 in de rij: een
+    claim 25 ms; zo 8 ms, zonder deze query 7 ms)."""
+    if not any(k.rank and (lane is None or k.lane == lane) for k in _kinds.values()):
+        return None
+    return and_(_lane_filter(lane), Job.run_after < FRONT)
+
+
 def _claim_filters(lane: str | None) -> list:
-    """De voorwaarden voor claim, de laagste rank eerst (zie Kind.rank)."""
+    """De voorwaarden voor claim, de laagste rank eerst (zie Kind.rank); _fronted_filter gaat
+    daar nog voor."""
     base = _lane_filter(lane)
     ranked = {t: k.rank for t, k in _kinds.items() if k.rank and (lane is None or k.lane == lane)}
     if not ranked:
@@ -423,13 +436,16 @@ async def claim(
         and not any(k.lane == lane for k in _kinds.values())
     ):
         return None  # niets aangemeld in deze rij: de database hoeft niet in
+    fronted = _fronted_filter(lane)
+    wheres = [] if fronted is None else [(fronted,)]
+    wheres += [(Job.run_after <= at, f) for f in _claim_filters(lane)]
     async with _maker(settings)() as session:
         candidates: Sequence[uuid.UUID] = []
-        for lane_filter in _claim_filters(lane):
+        for where in wheres:
             candidates = (
                 await session.scalars(
                     select(Job.id)
-                    .where(Job.status == "queued", Job.run_after <= at, lane_filter)
+                    .where(Job.status == "queued", *where)
                     .order_by(Job.run_after, Job.created_at)
                     .limit(10)
                 )
