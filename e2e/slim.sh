@@ -101,7 +101,7 @@ stap_web() {
 stap_e2e() {
   local t=$SECONDS
   echo "== 3. e2e met marker zoek"
-  (cd "$API" && "${cpus[@]}" uv run --with playwright pytest ../e2e -q -m "$MARKERS_E2E")
+  (cd "$API" && "${cpus[@]}" uv run --with playwright python -m pytest ../e2e -q -m "$MARKERS_E2E")
   kort+=("3. e2e (marker zoek): groen ($((SECONDS - t)) s)")
 }
 
