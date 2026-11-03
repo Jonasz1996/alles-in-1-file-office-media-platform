@@ -224,8 +224,8 @@ async def drop_unshared_rule_items(settings: Settings) -> int:
 
 BACKUP_DIR = "backup"
 HEAD_RE = re.compile(r"^[A-Za-z0-9_]{1,40}$")
-# platform-<head>-<tijd>.db, met de tijd in UTC. install.sh schrijft zijn eigen kopie zonder de
-# milliseconden; die naam hoort er dus ook bij.
+# platform-<head>-<tijd>.db, met de tijd in UTC. install.sh gaat zijn eigen kopie schrijven
+# zonder de milliseconden (Z7, §3.10); die naam hoort er dus ook bij.
 BACKUP_RE = re.compile(
     r"^platform-(?P<head>[A-Za-z0-9_]{1,40})-(?P<tijd>\d{8}T\d{6}(?:\.\d{3})?Z)\.db$"
 )
