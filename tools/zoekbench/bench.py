@@ -15,10 +15,10 @@ Of met een gewone python3 (≥ 3.10, een SQLite met FTS5):
 
     python3 tools/zoekbench/bench.py --los [--n 100000] [--seed 6] [--map PAD] [--json UIT]
 
---los      alles in een tijdelijke map: onder /data/cache als die er is en schrijfbaar is
-           (±1,1 GB bij 100.000), anders in de tijdelijke map van het systeem. Na afloop weg,
-           ook na een fout, Ctrl-C of SIGTERM. Z7 maakt hiervan `app.cli bench --los`, met de
-           uitkomst op /beheer.
+--los      alles in een tijdelijke map: onder /data/cache als die er is en schrijfbaar is, anders
+           in de tijdelijke map van het systeem. Bij 100.000 even ±1,1 GB (de database en de
+           WAL), daarna ±530 MB. Na afloop weg, ook na een fout, Ctrl-C of SIGTERM. Z7 maakt
+           hiervan `app.cli bench --los`, met de uitkomst op /beheer.
 --vormen   meet ook de vormen van Keuze 4a (alleen filters, de kaart, de duplicaten; spike S10).
            Er komt dan een gebruiker "fotograaf" bij met 55.000 foto's met GPS (de poort van
            §4.4 voor de kaart en de duplicaten).
@@ -741,7 +741,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Boom van {args.n} maken in {map_} ...", flush=True)
         boom = Boom(args.n, args.seed, fotograaf=args.vormen)
         uit["bouw"] = vul(con, boom, triggers=args.triggers)
-        uit["bouw"]["MB"] = round(sum(f.stat().st_size for f in map_.iterdir()) / 1e6)
+        # De piek op schijf is de database plus de WAL van de ene grote transactie; daarna is de
+        # WAL leeg en blijft de database
+        uit["bouw"]["MB met WAL"] = round(sum(f.stat().st_size for f in map_.iterdir()) / 1e6)
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        uit["bouw"]["MB"] = round((map_ / "bench.db").stat().st_size / 1e6)
         print(f"Gemaakt: {uit['bouw']}", flush=True)
         con.execute("PRAGMA synchronous=NORMAL")
         uit["zoeken"] = meet_zoeken(con, boom, args.rondes)
