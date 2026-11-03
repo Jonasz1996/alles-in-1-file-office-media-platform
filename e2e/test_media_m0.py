@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -181,8 +180,14 @@ def test_alles_op_pid_weg_en_weer_starten(media, ffmpeg_count):
 def test_ffmpeg_count_ziet_een_vierde_en_een_wees(tmp_path):
     """De teller zelf, zonder echte ffmpeg (regel 13): vier slapers die ffmpeg heten. Hij ziet
     er vier tegelijk, volgt ze ook als hun ouder stopt, en haalt ze op pid weg."""
+    # Een script met Python als interpreter, geen kopie van sleep: Ubuntu 26.04 heeft coreutils
+    # als één programma dat op zijn naam kiest, en een kopie die ffmpeg heet stopt dan meteen
+    # ("unknown program"). De kernel geeft een script de naam van het script als comm.
     fake = tmp_path / "ffmpeg"
-    shutil.copy(shutil.which("sleep") or "/bin/sleep", fake)
+    shebang = f"#!{sys.executable} -I"
+    assert " " not in sys.executable and len(shebang) < 250, shebang
+    fake.write_text(f"{shebang}\nimport sys, time\ntime.sleep(float(sys.argv[1]))\n")
+    fake.chmod(0o755)
     spawn = (
         "import subprocess, sys\n"
         "kids = [subprocess.Popen([sys.argv[1], '30']) for _ in range(4)]\n"
