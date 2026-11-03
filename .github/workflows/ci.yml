@@ -236,7 +236,8 @@ jobs:
       - name: Chromium voor Playwright
         run: uv run --with playwright python -m playwright install --with-deps chromium
       # Zonder media (fase 5, §4.8): die draait in e2e-media en e2e-media-perf. Zoeken (marker
-      # zoek, fase 6) draait hier mee; ocr (echte tesseract) alleen in een eigen job
+      # zoek, fase 6) draait hier mee; ocr (echte tesseract) niet: die hoort in de job ocr van
+      # §4.6 (X1), en die is er nog niet
       - run: >-
           uv run --with playwright pytest ../e2e
           -m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"

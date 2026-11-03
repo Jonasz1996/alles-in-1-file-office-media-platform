@@ -1,7 +1,7 @@
 # Fase 6 — Zoeken en foto's
 
-Status: **ontwerp** (bouwontwerp revisie 3, 3 november 2026). Er is nog niets samengevoegd. Het
-fundament (Z0) wordt op een eigen branch gebouwd.
+Status: **Z0 gebouwd** (het fundament, samengevoegd op 3 november 2026; zie [z0.md](z0.md)). Het
+ontwerp is bouwontwerp revisie 3.
 
 ## Wat je koos
 
