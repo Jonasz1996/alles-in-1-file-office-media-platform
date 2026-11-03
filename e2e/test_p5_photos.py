@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from PIL import Image
@@ -21,6 +21,11 @@ import seed
 pytestmark = pytest.mark.p5
 
 PHOTOS = 40
+# De foto's lopen terug vanaf een vaste dag, niet vanaf vandaag: van 26 juni tot 9 april, altijd
+# dezelfde drie maanden (13, 16 en 11). Vanaf vandaag viel de nieuwste foto soms als enige in de
+# huidige maand (op 3 november 2026: 1 + 15 + 15 + 9, vier maanden), en dan stond de kop van de
+# vierde maand onder de rijen die het gevirtualiseerde raster tekent (overscan 3).
+LATEST = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
 GRID = "[role=grid]"
 FOCUSED = '[role=gridcell][tabindex="0"]'
 
@@ -35,7 +40,7 @@ def library(server, user_factory, seeded):
         blobs = seed.make_blobs(data_dir, PHOTOS)
         seed.seed_folder(
             data_dir, fien, PHOTOS, blobs, name="Vakantie", photos_only=True,
-            step=timedelta(days=2),
+            step=timedelta(days=2), latest=LATEST,
         )  # fmt: skip
 
     seeded(fill)

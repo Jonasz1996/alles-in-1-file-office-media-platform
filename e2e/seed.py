@@ -252,11 +252,12 @@ def seed_folder(
     parent_id: str | None = None,
     photos_only: bool = False,
     step: timedelta = timedelta(minutes=7),
+    latest: datetime | None = None,
 ) -> str:
     """Een nieuwe map (in de hoofdmap van owner, of in parent_id) met n rijen. Standaard 5 %
     mappen, 50 % afbeeldingen en 45 % andere bestanden; photos_only: alleen afbeeldingen (voor
-    de tijdlijn). De bestanden gaan om de beurt over blobs; de datums lopen terug vanaf nu met
-    stappen van step. Geeft het id van de map."""
+    de tijdlijn). De bestanden gaan om de beurt over blobs; de datums lopen terug vanaf latest
+    (standaard nu) met stappen van step. Geeft het id van de map."""
     if not blobs:
         raise ValueError("seed_folder heeft blobs nodig (make_blobs)")
     data_dir = Path(data_dir)
@@ -270,7 +271,7 @@ def seed_folder(
         rows = [folder]
         files = 0
         for i in range(n):
-            at = now - step * (i + 1)
+            at = (latest or now) - step * (i + 1)
             if not photos_only and i % FOLDER_SHARE == 0:
                 rows.append(_dir(owner_id, folder["id"], f"Map {i:05d}", at))
                 continue
