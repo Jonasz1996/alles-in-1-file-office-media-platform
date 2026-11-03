@@ -1,9 +1,12 @@
 # Fase 6: haalbaarheid (metingen)
 
-> Bij het bouwontwerp, revisie 2 ([bouwontwerp.md](bouwontwerp.md)). Gemeten op 3 november 2026 in
+> Bij het bouwontwerp, revisie 3 ([bouwontwerp.md](bouwontwerp.md)). Gemeten op 3 november 2026 in
 > de sandbox: eerst voor het ontwerp (H1–H8 en de proef van ontwerp B), daarna om de kritiek op
-> revisie 1 na te lopen (V1–V10). Er staan geen databases, beelden, modellen of datasets in het
-> repo. De scripts en de uitkomsten staan in scratch (`fase6/`), niet in het repo.
+> revisie 1 na te lopen (V1–V10). Voor revisie 3 kwamen gezichten en beeld erbij: de spike B1–B7,
+> groeperen en wissen van gezichten, de proeven van de critici (K1, K2) en de installatie met
+> `--target` (zie "Revisie 3: gezichten en beeld"). Er staan geen databases, beelden, modellen of
+> datasets in het repo. De scripts en de uitkomsten staan in scratch (`fase6/` en `fase6-beeld/`),
+> niet in het repo.
 
 Dit stuk zet de getallen bij elkaar waar het ontwerp op leunt. Per meting: de vraag, het
 commando, en wat eruit kwam. Elke tijd is de mediaan van 3 runs, tenzij er iets anders staat.
@@ -326,6 +329,402 @@ cd $S/verify && python3 -I gencol.py; docker run --rm --network none -v "$PWD":/
 
 **Gevolg.** §3.1 staat zo in revisie 2.
 
+## Revisie 3: gezichten en beeld
+
+Jonas koos op 3 november 2026 voor "alles", met gezichten en zonder tegels van buiten. Voor X2
+(gezichten) en X3 (zoeken op beeld) is daarna gemeten in drie rondes: de spike B1–B7, twee
+metingen voor gezichten (groeperen en wissen), en de proeven van de twee critici van revisie 3
+(K1, K2). Bij het schrijven van revisie 3 zijn een deel van die proeven opnieuw gedraaid; dat
+staat er per proef bij. Daarnaast is de installatie met `--target /opt/analyse` geprobeerd.
+
+`$B` is de scratchmap `fase6-beeld/` (niet in het repo). De scripts en kleine uitkomsten staan
+daar: `$B/spike/` (B1–B7, met `verslag.md`), `$B/gezichten/`, `$B/kritiek1/`, `$B/kritiek2/` en
+`$B/r3/`.
+
+| | |
+|---|---|
+| Machine | dezelfde sandbox als hierboven (4 vCPU, AVX-512 en VNNI) |
+| Python | 3.12.3 op de host, 3.12.16 in `python:3.12-slim` |
+| Pakketten | numpy 2.5.4 (scipy-openblas 0.3.34), onnxruntime 1.31.1, Pillow 13.0.0 (staat al in `api/uv.lock`), in een eigen venv in `$B/spike/venv`, nooit in `api/.venv` |
+| Zwaar werk | `taskset -c 0-2`; op één core `taskset -c 0` met `OPENBLAS_NUM_THREADS=1` |
+
+De VNNI van de sandbox maakt int8 snel. Of de CPU van Jonas dat heeft, is onbekend (BZ9).
+
+## B1. numpy en onnxruntime in een eigen venv (Keuze 57)
+
+**Vraag.** Wat kosten numpy en onnxruntime, en werkt de import, ook offline in het image?
+
+```sh
+cd $B/spike
+pip download numpy onnxruntime -d b1/wheels --only-binary=:all:
+python3.12 -m venv venv && venv/bin/pip install --no-index --find-links b1/wheels numpy onnxruntime
+du -sh venv/lib/python3.12/site-packages/*
+docker run --rm --network none -v "$PWD/b1":/b1:ro python:3.12-slim …   # dezelfde wheels, offline
+```
+
+**Uitkomst.**
+
+- Vijf wheels, samen 40 MB: numpy 2.5.4 (16,7 MB), onnxruntime 1.31.1 (23,8 MB), protobuf 7.36.2,
+  flatbuffers 25.12.19 en packaging 26.3.
+- Geïnstalleerd ±140 MB (numpy 43 MB, numpy.libs 27 MB, onnxruntime 68 MB); in
+  `python:3.12-slim` 153 MB.
+- Import: numpy 91–122 ms, onnxruntime 37–57 ms, RSS 44–53 MB.
+- onnxruntime meldt twee providers: `AzureExecutionProvider` en `CPUExecutionProvider`. Het
+  ontwerp kiest altijd alleen de tweede, en controleert dat (K1-12).
+
+**Gevolg.** De extra `analyse` heeft precies vijf pakketten; R24 en de poort ≤ +160 MB in de job
+`images`.
+
+## B2. Zelf een klein ONNX-model maken (testen zonder echte gewichten)
+
+**Vraag.** Kunnen tests hun eigen modellen bouwen, zonder download en zonder gewichten in het
+repo?
+
+```sh
+cd $B/spike
+python3 -I scripts/b2_bouw.py b2/modellen          # alleen de standaardbibliotheek (onnxw.py)
+venv/bin/python -I scripts/b2_draai.py b2/modellen
+```
+
+**Uitkomst.** Drie nepmodellen (de vormen van SFace, YuNet en een tekstmodel), gebouwd zonder
+numpy. Twee keer bouwen geeft dezelfde sha256. onnxruntime en numpy rekenen hetzelfde, tot
+6,33·10⁻⁸. Een token buiten de woordenlijst geeft een nette fout. De vorm van YuNet draait op
+640×480 tot 1024×768 in 1,9–2,9 ms.
+
+**Gevolg.** Laag 2 van de tests (X2, "Tests") en de nep-worker gebruiken dit.
+
+## B3. Waar de gewichten vandaan komen
+
+**Vraag.** Welke bronnen zijn bereikbaar, voor `install.sh` en voor CI?
+
+```sh
+cd $B/spike && sh scripts/b3_reach.sh > b3/reach.txt   # curl --max-time 10 per URL
+```
+
+**Uitkomst.**
+
+| Host | Uitkomst |
+|---|---|
+| huggingface.co, cdn-lfs.huggingface.co, hf-mirror.com | 000: de proxy van de sandbox weigert |
+| upload.wikimedia.org, nasa.gov, images-assets.nasa.gov | 000 |
+| github.com, codeload.github.com | 400 of 403 |
+| raw.githubusercontent.com | 200, maar voor een LFS-bestand alleen de pointer (131 B) |
+| media.githubusercontent.com (LFS van opencv_zoo) | 200, het echte bestand (YuNet: 232.589 B) |
+| pypi.org, registry.npmjs.org | 200 |
+
+YuNet en SFace zijn gedownload vanaf commit `48b10fa505aeb51fbd127fc60a5c660040e823b7` van
+opencv_zoo; de sha256 van elk bestand is gelijk aan die in de LFS-pointer.
+
+**Gevolg.** `install.sh` downloadt op de host, met sha256, naar `MODELLEN_ROOT` (Keuze 58). Of
+een runner van GitHub bij huggingface.co kan, is **niet aangetoond** (BZ1, R41).
+
+## B4. Licenties
+
+**Vraag.** Mogen de gewichten privé en commercieel gebruikt worden?
+
+Gelezen in de bestanden zelf (`$B/spike/b4/`) en op de pagina's van de modellen:
+
+| Model | Licentie van de gewichten | Oordeel |
+|---|---|---|
+| YuNet (opencv_zoo) | MIT ("All files in this directory are licensed under MIT License") | mag; de MIT-tekst moet mee (K1-13) |
+| SFace (opencv_zoo) | Apache-2.0 | mag |
+| SigLIP 2 B/32-256 (`google/siglip2-base-patch32-256`) | "License: apache-2.0" | mag |
+| InsightFace | "for non-commercial research only" | valt af |
+| MobileCLIP (Apple) | "exclusively for Research Purposes" | valt af |
+| nllb-clip-base-siglip | cc-by-nc-4.0 | valt af |
+| clip-ViT-B-32-multilingual-v1 | tekstkant Apache-2.0, het beeldmodel is OpenAI CLIP ("out of scope") | valt af |
+
+- De int8bq-varianten van YuNet en SFace draaien niet in onnxruntime 1.31.1. Het ontwerp gebruikt
+  YuNet 2026may en SFace 2021dec in fp32.
+- Een int8-versie van SigLIP 2 bestaat niet als download; de omzetter maakt hem zelf (Keuze 73).
+- **Rechtgezet bij revisie 3 (K1-14).** De spike noemde de meetlat voor B5,
+  `@lenml/tokenizer-gemma` 3.7.2, "MIT". npm meldt **Apache-2.0**. Beide labels zijn van de maker
+  van het npm-pakket; de woordenlijst zelf komt van Google, en onder welke voorwaarden die valt, is
+  niet nagekeken. Dat bestand komt nooit in het repo, in CI of in de docs. BZ3 vergelijkt alleen
+  met het bestand van SigLIP 2 zelf.
+- De herkomst van de **trainingsdata** van YuNet, SFace en SigLIP 2 is niet nagekeken (K1-13,
+  R36).
+
+## B5. De tokenizer zonder `transformers`
+
+**Vraag.** Kan een Nederlandse zoekvraag tokens worden met alleen de standaardbibliotheek?
+
+```sh
+cd $B/spike
+venv-meetlat/bin/python -I scripts/b5_vergelijk.py <tokenizer.json> scripts   # meetlat: tokenizers 0.23.3
+```
+
+**Uitkomst.** 2.181 zinnen (Nederlandse zoekvragen, willekeurige zinnen, Unicode uit veel
+schriften, randgevallen):
+
+- `encode()` tegen de bibliotheek `tokenizers`: 0 verschillen;
+- kleine letters met `str.lower()` op de hele tekst: 1 verschil (`'ΣΟΦΙΑ ΟΔΟΣ'`, de slot-sigma);
+  per teken: 0 verschillen;
+- de hele SigLIP-vorm (kleine letters, afkappen, `<eos>`, opvullen tot 64): 0 verschillen;
+- laden 1,35 s en 245 MB maxrss voor een JSON van 17,5 MB; encode mediaan 0,11 ms.
+
+**Wat dit niet bewijst.** Gemeten met het tokenizer-bestand van Gemma (de meetlat van B4), niet
+met dat van SigLIP 2 (34,4 MB), want huggingface.co was dicht. Of die gelijk zijn, is onbekend.
+Dat doet BZ3 in CI. De wegwerp-venv met `tokenizers` is gewist.
+
+## B6. Rekenkosten
+
+**Vraag.** Wat kost een foto voor gezichten en voor beeld, en wat kost een zoekvraag, op één
+core?
+
+```sh
+cd $B/spike
+OPENBLAS_NUM_THREADS=1 taskset -c 0 venv/bin/python -I scripts/b6_gezichten.py <modellen> <foto> 1
+venv/bin/python -I scripts/b6_jpeg.py
+venv/bin/python -I scripts/b6_proxy.py build|run …      # SigLIP 2 met willekeurige gewichten, dezelfde vormen
+OPENBLAS_NUM_THREADS=1 taskset -c 0 venv/bin/python -I scripts/b6_vec.py 100000 768 5
+```
+
+**Uitkomst** (mediaan, één thread):
+
+| Stap | Tijd |
+|---|---|
+| YuNet 2026may op 1024×640 | 38,0–41,0 ms |
+| SFace fp32, per gezicht | 52,1–59,5 ms |
+| NMS en uitlijnen (5 punten) | 1,2–1,4 ms |
+| beeldmodel B/32-256 int8 | 66,3–76,5 ms |
+| tekstmodel (256k tokens) int8 | 62,4–62,7 ms (p95 69–74) |
+| zoeken over 100.000 vectoren (768, float32) | 35,3–41,9 ms (p95 40,6–50,6) |
+| een JPEG van 12 MP decoderen en verkleinen (synthetisch) | 192–245 ms; met `draft` 75–137 ms |
+
+- Eén testfoto (`messi5.jpg` van OpenCV): één gezicht, score 0,915. Dat zegt niets over de
+  kwaliteit tussen personen: er waren geen foto's van meer mensen.
+- In puur Python kost één zoekvraag over 100.000 vectoren 5,3–10,7 s. Daarom zoekt de container,
+  niet de app.
+- Een volle int8-versie van het echte model is **niet** gemeten; de proxy heeft dezelfde vormen,
+  niet dezelfde gewichten (BZ4).
+
+**Gevolg.** De kosten per foto zijn na K2-04 opnieuw gerekend: zie "De proeven van de kritiek".
+
+## B7. Vectoren als BLOB in SQLite
+
+**Vraag.** Hoeveel ruimte kost een vector per foto en per gezicht?
+
+```sh
+cd $B/spike && taskset -c 0-2 python3.12 -I scripts/b7_sqlite.py b7/db 100000 150000
+# ook in python:3.12-slim (SQLite 3.46.1); de groottes waren gelijk aan die op 3.45.1
+```
+
+**Uitkomst** (page size 4096, na `VACUUM`):
+
+| Wat | Bestand | Per rij |
+|---|---|---|
+| 100.000 × 768 float32 | 410,6 MB | 4.106 B |
+| **100.000 × 768 float16** | **205,3 MB** | 2.053 B |
+| 100.000 × 768 int8 + schaal | 82,1 MB | 821 B |
+| 150.000 gezichten (vak, score, 128 × float32, index) | 89,7 MB | 598 B |
+
+float16 kost in de recall niets (B6: recall@50 1,0 als hij in het geheugen float32 wordt).
+
+**Gevolg.** `blob_embed.vec` is float16 (Keuze 76); de ruimte staat in §3.1a en bij Keuze 84.
+
+## Gezichten groeperen (`groep.py`, Keuze 62)
+
+**Vraag.** Wat kost groeperen van gezichtsvectoren met numpy op één core?
+
+```sh
+cd $B/gezichten
+OPENBLAS_NUM_THREADS=1 taskset -c 2 ../spike/venv/bin/python -I scripts/groep.py 5000 512 3
+OPENBLAS_NUM_THREADS=1 taskset -c 2 ../spike/venv/bin/python -I scripts/groep.py 20000 512 2
+OPENBLAS_NUM_THREADS=1 taskset -c 2 ../spike/venv/bin/python -I scripts/groep.py 60000 512 2
+```
+
+**Uitkomst** (`uit/groep2_*.json`; synthetische vectoren, 128 × float32):
+
+| Gezichten | Buren | Groepen | Voorstellen | maxrss |
+|---|---|---|---|---|
+| 5.000 | 0,19–0,25 s | 0,11 s | 0,03–0,04 s | 60 MB |
+| 20.000 | 3,5 s | 0,5–0,8 s | 0,45–0,56 s | 122 MB |
+| 60.000 | 31,8–33,6 s | 2,0 s | 3,9–4,3 s | 285 MB |
+
+- De eerste vorm (blokken van 1.024, zonder drempel vooraf) kostte bij 60.000 74–76 s en 1.376 MB
+  (`uit/groep_60000.json`).
+- Op synthetische data: zuiverheid 1,0, recall 0,986–0,989, 0–5 foute voorstellen. Dat zegt
+  **niets** over echte gezichten.
+- Tijdens de meting draaide er ook een pytest op de machine.
+
+**Gevolg.** `GROUP_MAX` is 60.000 (K2-06); het geheugen van de container staat in §3.11.
+
+## Gezichten wissen (`wissen.py`, Keuze 64)
+
+**Vraag.** Staan de bytes van een gewiste vector nog in `platform.db` of in de WAL?
+
+```sh
+cd $B/gezichten
+python3 -I scripts/wissen.py <lege map>     # SQLite 3.45.1; daarna hetzelfde in python:3.12-slim (3.46.1)
+```
+
+**Uitkomst** (3.000 rijen in WAL-modus; een derde met een merkteken, 32.000 merktekens; beide
+versies gelijk, `uit/wissen_host.txt` en `uit/wissen_slim.txt`):
+
+| Manier | in `.db` | in `-wal` | Checkpoint (busy, log, klaar) |
+|---|---|---|---|
+| gewone `DELETE`, PASSIVE | 0 | 96 | 0, 444, 444 |
+| `secure_delete` en TRUNCATE | 0 | 0 | 0, 0, 0 |
+| hetzelfde, met een open lezer | 32.000 | 96 | 1, 444, 0 |
+| na het sluiten van de lezer, opnieuw TRUNCATE | 0 | 0 | 0, 0, 0 |
+
+**Gevolg.** Wissen gaat met `secure_delete`, en TRUNCATE wordt herhaald tot hij lukt. Dat
+gebeurt op een eigen verbinding met `busy_timeout` 0 (K2-08, zie hieronder).
+
+## De proeven van de kritiek (K1, K2)
+
+De critici draaiden hun proeven zelf. Bij het schrijven van revisie 3 zijn de goedkope proeven
+opnieuw gedraaid (`$B/r3/na/`); dat staat er bij. Wat niet opnieuw gedraaid is, staat er ook bij.
+
+### K1-01. Een reservekopie zonder gezichten, via het geheugen
+
+```sh
+python3 -I $B/kritiek1/backup/kopie.py <bron.db> <kopie.db>
+```
+
+5.000 foto's met een merkteken in elke vector. Eerst `backup()` naar `:memory:`, daar
+`DELETE FROM face`, dan `VACUUM INTO` naar schijf. **Opnieuw gedraaid:** "kopie 94208 B;
+merktekens: 0; nodes: 5000; face-rijen: 0". De criticus zag met `strace` ook 0 tijdelijke
+bestanden op schijf. **Gevolg:** Keuze 52 en 64; de reservekopie heeft geen gezichten.
+
+### K1-03. SQLite sorteert in een tijdelijk bestand
+
+```sh
+N=20000 strace -f -y -e trace=write,pwrite64 -s 1200 python3 -I $B/kritiek1/tempstore/spill.py <t.db> default
+N=20000 strace -f -y -e trace=write,pwrite64 -s 1200 python3 -I $B/kritiek1/tempstore/spill.py <t.db> memory
+```
+
+20.000 vectoren van 512 B, gesorteerd op een kolom zonder index. `pragma compile_options` geeft
+`TEMP_STORE=1`, en `pragma temp_store` is 0: standaard naar een bestand. **Opnieuw gedraaid:**
+41.232 schrijfacties naar een ontkoppeld `etilqs_*`-bestand; in de eerste 1.200 bytes van 36.058
+daarvan staat het merkteken (de criticus zag het met een langere uitsnede in alle 41.232). Met
+`PRAGMA temp_store=MEMORY`: 0 schrijfacties. **Gevolg:** `temp_store=MEMORY` in de connect-haak
+(A0) en een test per verbinding (Keuze 64).
+
+### K1-04. Twee processen met dezelfde uid lezen elkaars bestanden
+
+In `python:3.12-slim` met `--user 10003 --cap-drop ALL --security-opt no-new-privileges
+--read-only` las een broerproces via `/proc/<pid>/fd` de memfd van een ander
+("werk leest via /proc: b'VECTOR-VAN-EVA'"). `/usr/local/bin/python3.12` is 0755, dus na `exec`
+dumpbaar. **Niet opnieuw gedraaid.** **Gevolg:** elk kind doet eerst
+`prctl(PR_SET_DUMPABLE, 0)`; de test in laag 2 eist `EACCES` (Keuze 56). Aparte uid's per kind
+zijn afgewezen (§6 van het bouwontwerp).
+
+### K1-05. `compose run` erft de sleutel en de socket
+
+```sh
+cd $B/kritiek1/composerun
+ANALYSE_WORKER_KEY=<nep> docker compose -p r3-proef-run -f compose.yaml run --rm --no-deps analyse \
+  python -I -c "import os; print('PLATFORM_ANALYSE_WORKER_KEY' in os.environ, os.path.ismount('/run/analyse'))"
+```
+
+**Opnieuw gedraaid:** "sleutel in de omgeving: True", "socketmap gekoppeld: True". **Gevolg:** een
+eigen dienst `analyse-omzetten` zonder sleutel, socket en `/models` (Keuze 73).
+
+### K1-06. De app plant een symlink, root volgt hem
+
+In een map van uid 10001 een symlink `modellen/face.onnx` naar een bestand van root (0600).
+**Opnieuw gedraaid** (in scratch, met een eigen doelbestand): na `cp` en `chmod 644` als root op
+`modellen/face.onnx` is het doelbestand 0644 en is de inhoud vervangen. `[ -L ]` ziet de symlink
+wel. **Gevolg:** `MODELLEN_ROOT` buiten `$DATA_ROOT`, elke map van root, symlinks weigeren, en een
+test die er een plant (Keuze 58).
+
+### K2-04. De kosten per foto, met de echte bron
+
+```sh
+OPENBLAS_NUM_THREADS=1 taskset -c 1 $B/spike/venv/bin/python -I $B/kritiek2/meet.py $B/kritiek2/model/yunet.onnx
+OPENBLAS_NUM_THREADS=1 taskset -c 1 $B/spike/venv/bin/python -I $B/kritiek2/meet2.py
+```
+
+| Stap | Criticus (2 runs) | Opnieuw gedraaid (2 runs) |
+|---|---|---|
+| YuNet 2026may 1024×640 | 29,7–33,6 ms | 24,3–28,3 ms |
+| YuNet 2026may 1024×768 | 40,3–42,9 ms | 36,3–37,4 ms |
+| WebP 1024×768 decoderen (±140 kB) | 20,8–23,0 ms | 20,0–21,5 ms |
+| van 1024×768 naar 256×256 | 8,8 ms | 8,6–8,7 ms |
+| WebP 256×192 decoderen | 2,4 ms | 2,3–2,4 ms |
+
+Met SFace (B6) erbij is een foto met één gezicht ±142–164 ms (55.000 foto's: ±2,2–2,5 core-uur).
+Beeld uit de preview van 256 px: ±69–80 ms (2,4 ms decoderen plus 66–77 ms model, B6; 55.000
+foto's: ±1,1–1,2 core-uur). Het beeld is synthetisch; echte previews kunnen anders uitvallen.
+**Gevolg:** de poorten in X2 en X3, en de kosten in de README.
+
+### K2-05. YuNet en een hoogte die geen veelvoud van 32 is
+
+```sh
+OPENBLAS_NUM_THREADS=1 taskset -c 0 $B/spike/venv/bin/python -I $B/r3/na/yunet/vorm.py $B/kritiek2/model/yunet.onnx
+```
+
+**Opnieuw gedraaid** (sha256 `ebafce4e3c11…`): 1024×683 geeft `[ONNXRuntimeError] … Add node.
+Name:'Add_50'`; 1024×704 werkt (33,3 ms), 1024×768 ook (37,3 ms). `render.py` maakt een preview
+van 1024 px zonder te vergroten, dus 683 komt echt voor. **Gevolg:** de worker vult het beeld op
+tot een veelvoud van 32 (Keuze 60).
+
+### K2-08. Een checkpoint met `busy_timeout` 5000 laat schrijvers wachten
+
+```sh
+python3 -I $B/kritiek2/ckpt.py <lege map>
+docker run --rm --network none -v $B/kritiek2:/k:ro -v <lege map>:/d python:3.12-slim python -I /k/ckpt.py /d
+```
+
+Een lezer houdt een snapshot vast; dan een TRUNCATE en een schrijver. **Opnieuw gedraaid**, op
+3.45.1 en 3.46.1 gelijk:
+
+| `busy_timeout` van het checkpoint | Uitkomst (busy, log, klaar) | Duur | De schrijver wachtte |
+|---|---|---|---|
+| 5000 | 1, 12, 11 | 5.014–5.016 ms | 4.845–4.847 ms |
+| 0 | 1, 13, 11 | 0 ms | 1–2 ms |
+
+**Gevolg:** het wissen en het checkpoint van elk uur gebruiken een eigen verbinding met
+`busy_timeout` 0 en proberen het later opnieuw (Keuze 64, R26).
+
+### K2-09. `o-rwx` in `/opt/venv` geeft een leeg namespace-pakket
+
+Een map met groep 10003 en `o-rwx`, geïmporteerd als uid 10001 via `setpriv`: "import gelukt:
+<module 'fakenp' (namespace)>". Een ontoegankelijke map telt als namespace-portie. **Niet opnieuw
+gedraaid**; de proef met `--target` hieronder laat zien dat de oplossing werkt.
+
+### K2-10. Een test die numpy bovenaan importeert, breekt `api` al bij het verzamelen
+
+Een module met de marker `analyse` en een ontbrekende import bovenaan, met `-m 'not analyse'` in
+`addopts`: "ERROR collecting … ModuleNotFoundError … Interrupted: 1 error during collection".
+Pytest importeert eerst, en kiest pas daarna op marker. **Niet opnieuw gedraaid.** **Gevolg:** de
+tests met numpy staan in `api/tests_analyse/`, buiten de `testpaths` van `api`, met een telling in
+`api-analyse` (Keuze 57).
+
+## De proef met `--target /opt/analyse` (Keuze 57, K2-09, K2-15)
+
+**Vraag.** Kan de extra buiten `/opt/venv`, met precies vijf pakketten, en zien uid 10001 en 10002
+hem dan echt niet?
+
+```sh
+cd $B/r3/proef-target        # een kopie van api/pyproject.toml met de extra, en uv.lock
+uv export --frozen --no-dev --no-emit-project --no-hashes -o basis.txt
+uv export --frozen --no-dev --extra analyse --no-emit-project --no-hashes -o alles.txt
+grep -E '^[a-z]' alles.txt | sort > a; grep -E '^[a-z]' basis.txt | sort > b; comm -23 a b > extra.txt
+uv pip install --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
+  --target opt-analyse --no-deps -r extra.txt
+du -sh opt-analyse; du -sh --apparent-size opt-analyse
+# een kopie, root:10003 en 0750; dan per uid:
+setpriv --reuid <uid> --regid <uid> --clear-groups /usr/bin/python3.12 -I -c \
+  "import sys, importlib.util; sys.path.insert(0, '<kopie>'); print(importlib.util.find_spec('numpy'))"
+```
+
+**Uitkomst.**
+
+- `extra.txt` heeft precies vijf regels: flatbuffers 25.12.19, numpy 2.5.4, onnxruntime 1.31.1,
+  packaging 26.3, protobuf 7.36.2. packaging komt nu alleen via pytest (dev) in de lock; in het
+  image is hij nieuw (K2-15).
+- `opt-analyse` is 118–121 MB (`du`, met en zonder `--apparent-size`).
+- uid 10001 en 10002: `find_spec("numpy")` is `None`, ook met de map zelf in `sys.path`.
+- uid 10003: numpy 2.5.4 met `ndarray`, en onnxruntime met de providers `AzureExecutionProvider` en
+  `CPUExecutionProvider`.
+
+**Gevolg.** Het blok in de Dockerfile van §3.11, met `test "$(wc -l < /tmp/analyse.txt)" -eq 5`,
+en de controle met `find_spec` in de job `images`. Het image zelf is niet gebouwd: dat gebeurt
+alleen in CI.
+
 ## Wat niet gemeten is
 
 - De CPU van Jonas: dat doet `bench --los` (Keuze 54) in week 1.
@@ -333,7 +732,30 @@ cd $S/verify && python3 -I gencol.py; docker run --rm --network none -v "$PWD":/
   werk zelf.
 - De vormen van Keuze 4a over HTTP: spike S10 meet ze in Z0.
 - De handdruk van Keuze 17 in de echte worker-container: spike S11.
-- tesseract in Debian 13 (het image): spike S5, alleen in CI.
+- tesseract in Debian 13 (het image): spike S5, alleen in CI. Ook hoeveel groter het image
+  daarmee wordt, is nog niet gemeten (de poort in `images` is ≤ +30 MB).
+
+Bij revisie 3 (gezichten en beeld):
+
+- **Het echte SigLIP 2.** huggingface.co is vanuit de sandbox dicht (B3). Niet gemeten: de
+  omzetting met eigen code, de kwaliteit van int8 tegen fp32, de kwaliteit van Nederlandse
+  zoekvragen, en het tokenizer-bestand van SigLIP 2 zelf. Dat doen BZ1–BZ4 in de job
+  `beeld-model`, of op de LXC met `app.cli beeld-kwaliteit`. De tijden van B6 komen van een model
+  met dezelfde vormen en willekeurige gewichten.
+- **Echte gezichten.** Er waren geen foto's met meer mensen; NASA en Wikimedia zijn vanuit de
+  sandbox dicht. Niet gemeten: de kwaliteit van de voorstellen tussen personen, RGB tegen BGR bij
+  SFace, en of "Meer zoals deze" op een portret dezelfde persoon terugvindt (BZ10). Groeperen is
+  alleen op synthetische vectoren gemeten.
+- **Of een runner van GitHub bij huggingface.co kan** (BZ1): geen bestaande job doet het.
+- **De CPU van Jonas**: VNNI of niet (BZ9). Zonder VNNI kan int8 duidelijk trager zijn.
+- **Het image met de extra en met tesseract**: niet gebouwd in de sandbox, alleen in CI (job
+  `images`). De grootte van de extra (118–121 MB) komt van de proef met `--target`, niet van een
+  echt image.
+- **De container `analyse` zelf**: het werkmodel met twee kinderen, `RLIMIT_DATA`, de wachter en
+  het geheugen samen (BZ5) zijn ontwerp; ze worden gemeten in X2a en X3a.
+- **Juridisch**: de herkomst van de trainingsdata (K1-13) en de AVG bij gebruik buiten het gezin
+  (K1-11) zijn niet door een jurist nagekeken.
+- **K1-04, K2-09 en K2-10** zijn de proeven van de critici; die zijn niet opnieuw gedraaid.
 
 ## Opgeruimd
 
@@ -341,3 +763,10 @@ De grote bestanden zijn na de meting uit scratch gewist: de database van 200.000
 (78 MB na het bouwen, 155 MB na de proeven), de GeoJSON van Natural Earth (13 MB), de
 wegwerp-venv voor de modellen (307 MB) en de modellen zelf (47 MB). De scripts, de uitvoer als
 `.txt` en de kleinere testdata blijven in scratch. Niets daarvan staat in het repo.
+
+Bij revisie 3 zijn gewist: de modellen en de testfoto van de spike, de wegwerp-venv met
+`tokenizers`, het npm-pakket met de Gemma-tokenizer, de proxymodellen van SigLIP 2 (1,6 GB), de
+databases van de proef met tijdelijke bestanden (K1-03, ±250 MB), de map `opt-analyse` van de
+proef met `--target` (±121 MB) en de databases van de nieuwe runs. De venv van de spike
+(`$B/spike/venv`, 177 MB) en de wheels van B1 (40 MB) blijven staan voor wie X2a en X3a bouwt.
+De proef met `compose run` liet geen container of volume achter.
