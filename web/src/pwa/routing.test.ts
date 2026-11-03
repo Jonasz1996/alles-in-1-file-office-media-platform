@@ -100,6 +100,24 @@ describe("classify", () => {
     expect(classify(req("/bewerken/abc", { mode: "navigate" }), ORIGIN)).toBe("shell");
   });
 
+  it("zoeken en foto's (fase 6): de pagina's zijn de schil; de API en de zoekvraag nooit in de cache", () => {
+    for (const path of ["/zoeken?q=factuur", "/fotos/kaart", "/fotos/personen", "/fotos/personen/p1", "/dubbel"]) {
+      expect(classify(req(path, { mode: "navigate" }), ORIGIN)).toBe("shell");
+    }
+    for (const path of [
+      "/api/v1/search?q=factuur",
+      "/api/v1/search/suggest?q=fa",
+      "/api/v1/files/f1/pages/1/words?token=t",
+      "/api/v1/photos/map?bbox=4,52,5,53&z=8",
+      "/api/v1/people",
+      "/api/v1/duplicates?kind=exact",
+      "/api/v1/geo/attribution",
+    ]) {
+      expect(classify(req(path), ORIGIN)).toBeNull();
+      expect(classify(req(path, { mode: "navigate" }), ORIGIN)).toBeNull();
+    }
+  });
+
   it("tus PATCH, POST en andere methoden nooit", () => {
     expect(classify(req("/api/v1/tus/abc", { method: "PATCH" }), ORIGIN)).toBeNull();
     expect(classify(req("/assets/x.js", { method: "POST" }), ORIGIN)).toBeNull();

@@ -1,5 +1,6 @@
 // De routetabel (frozen na P0; fase 4 voegt /bewerken/:id toe, van O0; fase 5 de pagina's van
-// media en muziek, van M0). Elke pagina is lazy:
+// media en muziek, van M0; fase 6 de kaart, personen en dubbele bestanden, van Z0). Elke pagina is
+// lazy:
 // load() wacht op het chunk én op de woordenboeken die de pagina nodig heeft, zodat t() meteen
 // werkt bij de eerste render.
 
@@ -50,6 +51,9 @@ const browse: readonly Area[] = ["browser", "upload", "sharing"];
 const media: readonly Area[] = ["media"];
 const watch: readonly Area[] = ["player", "media"];
 const music: readonly Area[] = ["music"];
+const people: readonly Area[] = ["photos_people"];
+/** Alleen wie eigen bestanden heeft (geen gast). */
+const own: Pick<RouteDef, "roles"> = { roles: ["admin", "user"] };
 
 /** Alle pagina's voor wie ingelogd is, in volgorde: de eerste die past, wint. */
 export const routes: readonly RouteDef[] = [
@@ -64,6 +68,12 @@ export const routes: readonly RouteDef[] = [
   route("/fotos", () => import("./photos/PhotosPage"), photos, "photos.title", "photos", { roles: ["admin", "user"] }),
   route("/albums", () => import("./photos/AlbumsPage"), photos, "photos.albums", "photos", { roles: ["admin", "user"] }),
   route("/album/:id", () => import("./photos/AlbumPage"), photos, "photos.album", "photos"),
+  // Fase 6 (Z0, Keuze 48): elk een eigen chunk en een eigen gebied, gevuld door Z5 en Z6. Alleen
+  // eigen bestanden, dus niet voor gasten (die hebben er geen)
+  route("/fotos/kaart", () => import("./photos/map/MapPage"), ["photos_map"], "photos_map.title", "photos", own),
+  route("/fotos/personen", () => import("./photos/people/PeoplePage"), people, "photos_people.title", "photos", own),
+  route("/fotos/personen/:id", () => import("./photos/people/PersonPage"), people, "photos_people.person", "photos", own),
+  route("/dubbel", () => import("./dupes/DupesPage"), ["dupes"], "dupes.title", "files", own),
   route("/beheer/:tab?", () => import("./Beheer"), ["admin"], "admin.title", "admin", { roles: ["admin"] }),
   route("/account", () => import("./Account"), ["account"], "account.title", "account"),
   // De editor (fase 4, Keuze 32): een eigen pagina, zodat herladen en Terug werken. Zonder office

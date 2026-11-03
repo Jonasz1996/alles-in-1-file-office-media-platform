@@ -17,6 +17,15 @@
 // - player: alles met een module uit src/player/ samen (de speler, ook in de viewer);
 // - music: alles met een module uit src/music/ samen (pagina's, gapless en de balk).
 //
+// Fase 6 (Z0): regels voor de nieuwe chunks (Keuze 45 en 48), op dezelfde manier geteld:
+// - search: de pagina /zoeken (tot Z4 haar vervangt: Search.tsx van 0.7.0);
+// - mapRoute: /fotos/kaart (≤ 30 kB); mapData: de wereld van de kaart (dist/kaart/*.json, van Z5;
+//   ≤ 60 kB; zolang Z5 hem niet maakt, staat er "nog niet gebouwd");
+// - dupes: /dubbel; people: /fotos/personen en /fotos/personen/:id, elk apart;
+// - van fase 6 mag in de eerste lading alleen het zoekveld in de balk (src/search/AppBarSearch.tsx
+//   en zijn helpers); de plekken Plek, Personen en de waarschuwing bij delen zitten nooit in de
+//   eerste lading of in de route Bestanden.
+//
 // Gebruik: node scripts/budget.mjs [--json]
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -41,6 +50,13 @@ export const LIMITS = {
   mediaRoute: 45 * KB,
   player: 35 * KB,
   music: 40 * KB,
+  // Fase 6 (Keuze 48). mapRoute en mapData staan in het ontwerp; search, dupes en people zijn
+  // het voorstel van Z0: zoveel als een route van Bestanden of media
+  search: 45 * KB,
+  mapRoute: 30 * KB,
+  mapData: 60 * KB,
+  dupes: 45 * KB,
+  people: 45 * KB,
 };
 
 /** Woordenboeken die in de eerste lading mogen (statisch in i18n/index.ts). */
@@ -59,6 +75,22 @@ export const MEDIA_PAGES = {
 /** Modules van fase 5 die nooit in de eerste lading horen (alleen media/index.ts wel). */
 const MEDIA_MODULE = /^src\/(media|player|music)\//;
 const MEDIA_ENTRY = "src/media/index.ts";
+/** De lazy pagina's van fase 6 (routes.tsx) met hun woordenboeken en hun grens (Keuze 48). */
+export const ZOEK_PAGES = {
+  "src/Search.tsx": [["browser", "sharing", "search"], "search"],
+  "src/photos/map/MapPage.tsx": [["photos_map"], "mapRoute"],
+  "src/dupes/DupesPage.tsx": [["dupes"], "dupes"],
+  "src/photos/people/PeoplePage.tsx": [["photos_people"], "people"],
+  "src/photos/people/PersonPage.tsx": [["photos_people"], "people"],
+};
+/** Modules van fase 6; in de eerste lading alleen ZOEK_INITIAL (het zoekveld, Keuze 45). */
+const ZOEK_MODULE = /^src\/(search|dupes|photos\/(map|people))\//;
+export const ZOEK_INITIAL = new Set(["src/search/AppBarSearch.tsx", "src/search/appBar.ts", "src/search/types.ts"]);
+/** De lazy plekken van fase 6: nooit in de eerste lading en nooit in de route Bestanden. */
+const ZOEK_SLOTS = /^src\/(viewer\/(LocationRow|PeopleRow)|shares\/LocationWarning)\.tsx$/;
+/** De wereld van de kaart (Z5, Keuze 31): public/kaart/world-110m.<hash>.json. */
+export const MAP_DATA = /^kaart\/[^/]+\.json$/;
+
 /** Een highlighter of worker mag groter zijn. */
 const HEAVY = /(\.worker\.ts|highlight)/i;
 
@@ -215,7 +247,34 @@ function main() {
     check(name, sum(group), limit, [...group].sort().join(", "));
   }
 
-  // 4. Elk ander lazy chunk apart
+  // 4. Fase 6: wat in de eerste lading en in Bestanden mag, de pagina's en de wereld (Keuze 48)
+  for (const f of initial) {
+    for (const m of chunks[f].modules) {
+      if (ZOEK_MODULE.test(m) && !ZOEK_INITIAL.has(m)) problems.push(`${m} zit in de eerste lading (${f})`);
+      if (ZOEK_SLOTS.test(m)) problems.push(`${m} zit in de eerste lading (${f})`);
+    }
+  }
+  for (const f of filesGroup) {
+    for (const m of chunks[f].modules) {
+      if (ZOEK_SLOTS.test(m) || ZOEK_MODULE.test(m)) problems.push(`${m} zit in de route Bestanden (${f})`);
+    }
+  }
+  for (const [page, [areas, limit]] of Object.entries(ZOEK_PAGES)) {
+    const roots = facade(new RegExp(`^${page.replace(/[.]/g, "\\.")}$`));
+    if (!roots.length) {
+      problems.push(`geen chunk voor ${page} gevonden`);
+      continue;
+    }
+    const group = extra(roots, areas);
+    check(`${limit} ${page.replace(/^src\//, "")}`, sum(group), LIMITS[limit], [...group].sort().join(", "));
+  }
+  const worlds = [...distFiles].filter((f) => MAP_DATA.test(f)).sort();
+  if (worlds.length === 0) {
+    rows.push({ name: "mapData (nog niet gebouwd, Z5)", size: 0, limit: LIMITS.mapData, ok: true, detail: "" });
+  }
+  for (const f of worlds) check(`mapData ${f}`, gz(f), LIMITS.mapData);
+
+  // 5. Elk ander lazy chunk apart
   let lazyCount = 0;
   let largest = { file: null, size: 0 };
   for (const f of Object.keys(chunks).sort()) {
@@ -235,7 +294,7 @@ function main() {
     detail: largest.file ?? "",
   });
 
-  // 5. De service worker
+  // 6. De service worker
   if (!distFiles.has("sw.js")) {
     problems.push("dist/sw.js ontbreekt");
   } else {

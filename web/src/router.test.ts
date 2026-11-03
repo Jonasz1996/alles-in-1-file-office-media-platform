@@ -116,7 +116,36 @@ describe("de routetabel", () => {
 
   it("de laatste route is *, en elke route heeft een titel", () => {
     expect(routes[routes.length - 1].pattern).toBe("*");
-    for (const r of [...routes, ...publicRoutes]) expect(r.title).toMatch(/^[a-z]+\./);
+    for (const r of [...routes, ...publicRoutes]) {
+      // Een sleutel "gebied.naam"; een gebied kan een _ hebben (photos_map, fase 6, Keuze 48)
+      expect(r.title).toMatch(/^[a-z]+(_[a-z]+)*\.[A-Za-z]/);
+      // en dat gebied is er als de titel getoond wordt: dat van de route zelf, of de schil
+      const area = r.title.slice(0, r.title.indexOf("."));
+      expect([...r.areas, "common", "shell"]).toContain(area);
+    }
+  });
+
+  it("fase 6 (Z0): kaart, personen en dubbele bestanden, elk een eigen lazy pagina en gebied, niet voor gasten", async () => {
+    const cases: [string, string, Record<string, string>, readonly string[], string, string][] = [
+      ["/fotos/kaart", "/fotos/kaart", {}, ["photos_map"], "photos_map.title", "photos"],
+      ["/fotos/personen", "/fotos/personen", {}, ["photos_people"], "photos_people.title", "photos"],
+      ["/fotos/personen/p%201", "/fotos/personen/:id", { id: "p 1" }, ["photos_people"], "photos_people.person", "photos"],
+      ["/dubbel", "/dubbel", {}, ["dupes"], "dupes.title", "files"],
+    ];
+    for (const [href, pattern, params, areas, title, section] of cases) {
+      const r = resolve(href);
+      expect(r).toMatchObject({ def: { pattern, areas, title, section }, params });
+      expect(allowed(r.def, "admin")).toBe(true);
+      expect(allowed(r.def, "user")).toBe(true);
+      expect(allowed(r.def, "guest")).toBe(false);
+      const page = await r.def.load();
+      expect(typeof page.default).toBe("function");
+    }
+    // /fotos en /zoeken blijven wat ze waren (de pagina van 0.7.0 tot Z4)
+    expect(resolve("/fotos").def).toMatchObject({ pattern: "/fotos", title: "photos.title" });
+    expect(resolve("/zoeken").def).toMatchObject({ pattern: "/zoeken", areas: ["browser", "sharing"], title: "browser.searchTitle" });
+    expect(resolve("/fotos/kaart/x").def.pattern).toBe("*");
+    expect(resolve("/dubbel/x").def.pattern).toBe("*");
   });
 
   it("publieke links staan buiten de login", () => {

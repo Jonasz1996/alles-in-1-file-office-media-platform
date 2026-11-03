@@ -139,6 +139,11 @@ h1:focus-visible {
   flex: 1;
 }
 
+/* Het zoekveld in de balk bovenaan (fase 6, Z0) */
+.appbar-search input {
+  width: min(14rem, 45vw);
+}
+
 button {
   font: inherit;
   padding: 0.35rem 0.7rem;

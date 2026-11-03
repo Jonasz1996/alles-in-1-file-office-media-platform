@@ -437,7 +437,13 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
         </div>
         {info && (
           <Suspense fallback={null}>
-            <InfoPanel item={item} detail={detail} kind={kind} onClose={() => setInfo(false)} />
+            <InfoPanel
+              item={item}
+              detail={detail}
+              kind={kind}
+              signedIn={src.kind === "user"}
+              onClose={() => setInfo(false)}
+            />
           </Suspense>
         )}
       </div>

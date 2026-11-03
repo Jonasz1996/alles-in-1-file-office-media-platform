@@ -1,14 +1,22 @@
 // Het paneel met gegevens (toets I): het bestand, wat de server in de inhoud vond (afmetingen,
-// duur, codecs, codering) en bij een foto Camera, Objectief, Belichting en Datum. Nooit een
-// locatie: die hoort bij fase 6.
+// duur, codecs, codering) en bij een foto Camera, Objectief, Belichting en Datum.
+//
+// Fase 6 (Z0): twee plekken, elk een eigen bestand en chunk: Plek (LocationRow.tsx, van Z5) en
+// Personen (PeopleRow.tsx, van Z6), alleen ingelogd bij een foto of video (infoRows.ts). De plek
+// van een foto komt nooit uit de EXIF hier: alleen de eigenaar ziet hem, via zijn eigen route.
 
 import type { JSX, ReactNode } from "react";
 import { formatBytes } from "../api";
-import { fmt, t } from "../i18n";
+import { fmt, lazyWithAreas, t } from "../i18n";
 import { IconButton } from "../ui/Button";
+import { LazySlot } from "../ui/LazySlot";
 import type { Exif, ViewerDetail } from "./api";
+import { type InfoRowProps, showPhotoRows } from "./infoRows";
 import { formatDuration, type ViewKind } from "./media";
 import type { ViewerItem } from "./types";
+
+const LocationRow = lazyWithAreas<InfoRowProps>(() => import("./LocationRow"), ["photos_map"]);
+const PeopleRow = lazyWithAreas<InfoRowProps>(() => import("./PeopleRow"), ["photos_people"]);
 
 function num(v: number | string | undefined): number | null {
   if (v === undefined || v === null || v === "") return null;
@@ -48,11 +56,14 @@ export default function InfoPanel({
   item,
   detail,
   kind,
+  signedIn,
   onClose,
 }: {
   item: ViewerItem;
   detail: ViewerDetail | undefined;
   kind: ViewKind;
+  /** Ingelogd (niet via een publieke link): dan ook Plek en Personen */
+  signedIn: boolean;
   onClose(): void;
 }): JSX.Element {
   const meta = detail?.meta ?? {};
@@ -102,6 +113,16 @@ export default function InfoPanel({
             <Row label={t("viewer.info.date")}>{detail?.taken_at ? fmt.wallClock(detail.taken_at) : null}</Row>
           </dl>
         </section>
+      )}
+      {showPhotoRows(kind, item, signedIn) && (
+        <>
+          <LazySlot key={`plek-${item.id}`}>
+            <LocationRow item={item} detail={detail} kind={kind} />
+          </LazySlot>
+          <LazySlot key={`personen-${item.id}`}>
+            <PeopleRow item={item} detail={detail} kind={kind} />
+          </LazySlot>
+        </>
       )}
     </aside>
   );

@@ -702,6 +702,10 @@ const en: Translation<typeof nl> = {
       stoppedBecause: "Stopped: {why}",
     },
   },
+  search: {
+    tab: "Search and photos",
+    notReady: "The overview of search and photos comes later in phase 6.",
+  },
 };
 
 export default en;
