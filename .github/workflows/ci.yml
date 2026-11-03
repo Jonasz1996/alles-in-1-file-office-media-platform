@@ -174,7 +174,7 @@ jobs:
           echo "S4, S8, S9, S6: $(tail -n 1 "$d/plannen.txt" 2> /dev/null || echo "liep niet")"
           grep -E "^ *(S4 op|laatste jaar|langs de tijd|type),? " "$d/plannen.txt" 2> /dev/null || true
           echo "zoek_perf (S1, S2, S3, S7): $(tail -n 1 "$d/zoek_perf.txt" 2> /dev/null || echo "liep niet")"
-          grep -E "^\.?(S1|S2|S7) " "$d/zoek_perf.txt" 2> /dev/null | sed 's/^\.//' || true
+          grep -E "^[.FEsx]*(S1|S2|S7) " "$d/zoek_perf.txt" 2> /dev/null | sed 's/^[.FEsx]*//' || true
           grep -E "^[0-9.]+s call " "$d/zoek_perf.txt" 2> /dev/null || true
           cat "$d/zaad.txt" 2> /dev/null || true
           sed -n '/^=== zoekbench ===/,$p' "$d/bench.txt" 2> /dev/null || echo "S10: de bench liep niet"
