@@ -39,7 +39,7 @@ doorzoekbaar; gezichten zijn te benoemen en te zoeken.
 
 ## Wat er komt
 
-- **Z0 — Fundament en spike:** migratie 0009, de contracten, de regel "eigen en levend", de
+- **Z0 — Fundament en spike:** migratie 0010, de contracten, de regel "eigen en levend", de
   wachters, het harnas, en de spike (S1–S11), met `bench --los` om je CPU te meten.
 - **Z1 — Zoekmachine:** de index, de vraag, het toegangsfilter, snippets, de tijdsgrens, grenzen
   voor de hele app.
@@ -53,6 +53,9 @@ doorzoekbaar; gezichten zijn te benoemen en te zoeken.
 - **Z7 — Beheer en uitrol:** de tab op `/beheer`, de reservekopie, terugrollen, het runbook.
 - **X1 — OCR** (wacht op Vraag 1).
 - **X2 — Gezichten automatisch** (wacht op Vraag 2; niet in fase 6).
+
+Migratie 0009 ging in 0.7.1 naar de indexen voor de foto's
+([fotos-indexeren](../fotos-indexeren.md)); die van fase 6 is daarom 0010.
 
 ## Planning
 

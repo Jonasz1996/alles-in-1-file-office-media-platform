@@ -94,7 +94,7 @@ api/.venv/bin/python -I $S/proef/bench_geo_rtree.py $S/data/dl-geo/reverse_geoco
 
 | Wat | Uitkomst | Waar in het ontwerp |
 |---|---|---|
-| Migratie 0009 op 104.696 nodes (paden, `dead`, FTS `rebuild` van de namen) | 2,82 s (paden 1,74 s, FTS 0,76 s); 0 paden fout; `integrity-check` ok | Keuze 2, §3.1 |
+| Migratie 0010 op 104.696 nodes (paden, `dead`, FTS `rebuild` van de namen) | 2,82 s (paden 1,74 s, FTS 0,76 s); 0 paden fout; `integrity-check` ok | Keuze 2, §3.1 |
 | Een map van 5.276 nodes verplaatsen | 55,7 ms (terug 66,2 ms); naar de prullenbak 31,3 ms, terug 39,7 ms | Keuze 11 |
 | Een gebruiker met 10.911 nodes wissen via de FK-cascade, in één keer | 3.060,8 ms | Keuze 11 (daarom per 2.000) |
 | Zoeken met snippets, zonder HTTP | p95 45,3–54,0 ms (1–20 delingen), 79,8 ms ("alles", 105.931 nodes); max 136,0 ms | §4.4 |

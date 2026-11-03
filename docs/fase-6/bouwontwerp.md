@@ -230,7 +230,7 @@ gezichten zijn te benoemen en te zoeken.
 | P2 | **Zelf bouwen met wat er is** | SQLite (FTS5, R*Tree), Pillow, pillow-heif, pypdfium2, mutagen, de eigen kantoorlezer (B21), ffmpeg in de worker, de standaardbibliotheek. Eigen code voor de rest. |
 | P3 | **Elk extern ding is een vraag** | Met een standaard waarmee de bouw doorgaat. Wat er zonder niet kan, staat in X-pakketten. |
 | P4 | **Eerlijk meten** | De 200 ms meten we via HTTP, in `python:3.12-slim` (SQLite 3.46.1), met het toegangsfilter, voor zes soorten gebruikers. De poort is de p95; de rest is een rapport. In CI en op de LXC van Jonas. |
-| P5 | **De update breekt niets** | 0009 voegt kolommen, tabellen en triggers toe. Zoeken op naam werkt meteen; de inhoud vult zich. Een schakelaar zet het oude zoeken terug. Vóór de migratie een reservekopie die met elk image werkt. Terug naar 0.7.0 is getest. |
+| P5 | **De update breekt niets** | 0010 voegt kolommen, tabellen en triggers toe. Zoeken op naam werkt meteen; de inhoud vult zich. Een schakelaar zet het oude zoeken terug. Vóór de migratie een reservekopie die met elk image werkt. Terug naar 0.7.0 is getest. |
 | P6 | **Privacy standaard dicht** | Plek, personen en tekst uit foto's horen bij een bestand van één eigenaar, met zijn toestemming (Keuze 25a). Nooit in `preview_meta`, nooit via een publieke link, nooit in een log. Een gedeeld album deelt alleen wat de eigenaar koos. Geen totalen of scores naar buiten. |
 | P7 | **Achtergrondwerk wijkt, en is eerlijk** | Twee rijen, `nice` 19 en de idle IO-klasse, korte transacties, batches, om de beurt per eigenaar, en wachten als er ≥ 2 transcodes lopen of OnlyOffice start. |
 | P8 | **Onvertrouwde bestanden in de zandbak** | Wat de app vanzelf leest (tekst, OCR), leest de worker. Een decoder krijgt een begrensd, genormaliseerd beeld, nooit de ruwe blob als het anders kan. |
@@ -867,7 +867,7 @@ komt; "(r2)" is van deze revisie, met de kritiek erbij.
       bevestigen;
     - de reservekopieën (Keuze 52) houden de vectoren tot ze weggedraaid zijn. Dat staat op
       `/beheer` en in de README.
-    - Tabellen `face` en `face_person` in migratie 0010.
+    - Tabellen `face` en `face_person` in migratie 0011.
 
 ### Beeld: semantisch zoeken en objecten
 
@@ -965,7 +965,7 @@ komt; "(r2)" is van deze revisie, met de kritiek erbij.
       bestaat in 0.7.0 niet (V9).
     - Het bestand heet naar de alembic-head en de tijd: `/data/backup/platform-0008-<tijd>.db`.
     - Per head blijft de nieuwste kopie, en nooit gaat de laatste kopie van vóór een migratie weg.
-      Zo staat de kopie van 0008 er na twee nieuwe runs op 0009 nog.
+      Zo staat de kopie van 0008 er na twee nieuwe runs op 0010 nog.
     - Lukt de kopie niet, dan stopt het script: er is dan nog niets veranderd.
     - `app.cli db-backup` (Z0) doet hetzelfde voor de hand en voor `/beheer`.
 53. **Terug naar 0.7.0 is beschreven en getest** (A, herzien in r2: C7, §3.10). Het script komt
@@ -1028,7 +1028,7 @@ fixer en de nacontrole. Zo plannen we nu ook.
 
 | Golf | Pakketten | Dagen | Na deze golf werkt |
 |---|---|---|---|
-| 0 | Z0 Fundament (Z0-api, Z0-web en Z0-e2e naast elkaar) | 3 + 1 review | migratie 0009, de contracten, de spike S1–S11, `bench --los` |
+| 0 | Z0 Fundament (Z0-api, Z0-web en Z0-e2e naast elkaar) | 3 + 1 review | migratie 0010, de contracten, de spike S1–S11, `bench --los` |
 | 1 | Z1 Zoekmachine + Z2 Tekst | 4 + 1 review | zoeken op naam en inhoud binnen 200 ms (API), tekst uit documenten, de woorden per pagina (API) |
 | 2 | Z4 Zoeken in de web + Z6 Personen, herinneringen, slimme albums en filters | 4 + 1 review | zoeken in de web; personen benoemen en vinden; herinneringen; slimme albums |
 | 3 | Z3 Foto-gegevens (API) + Z5 Kaart en duplicaten (web) | 4 + 1 review | GPS, plaatsen, de kaart, duplicaten, de waarschuwing bij delen |
@@ -1063,7 +1063,7 @@ bestanden die twee pakketten nodig hadden, hebben er één.
 
 | Bestand of map | Eigenaar |
 |---|---|
-| `api/alembic/versions/0009_zoeken.py`, `app/models.py` (nieuwe modellen), `app/search/schema.py`, `app/search/live.py` (`own_live`), `app/search/types.py` | Z0 |
+| `api/alembic/versions/0010_zoeken.py`, `app/models.py` (nieuwe modellen), `app/search/schema.py`, `app/search/live.py` (`own_live`), `app/search/types.py` | Z0 |
 | de hotspots van §3.5 (`main.py`, `cli.py`, `jobs.py`, `files.py`, `trash.py`, `userdelete.py`, `web/src/routes.tsx`, `web/src/Beheer.tsx`, `web/scripts/budget.mjs`) | Z0 |
 | `app/search/{engine,query,access,snippets,deadline,like,suggest,limits,bench}.py`, `routers/search.py` | Z1 |
 | `app/search/filters.py` (register en de filters `type`, `from`/`to`, `tag`, `library`, `in`) | Z1 |
@@ -1333,7 +1333,7 @@ meting); de belastingtest naast OnlyOffice en media (§4.5); de README.
 
 **Tests:** `infra/single/tests/test_install_search.sh`: de reservekopie gemaakt met het image van
 0.7.0 én van 0.8.0; een mislukte reservekopie stopt het script vóór elke wijziging; na twee runs
-op 0009 staat de kopie van 0008 er nog; `PLAATSEN=uit`; een download die faalt, is niet fataal en
+op 0010 staat de kopie van 0008 er nog; `PLAATSEN=uit`; een download die faalt, is niet fataal en
 wordt de volgende run opnieuw geprobeerd; terug naar 0.7.0 met het script van de commit van
 0.7.0, en weer vooruit (precies de stappen van §3.10). `e2e/test_zoek_beheer.py`; vitest voor de
 tab.
@@ -1373,7 +1373,7 @@ met ja ook `media-image` groen met tesseract erin (+ ≤ 30 MB).
 
 **Bouwt:** de container `analyse` (Keuze 39) met `compose.analyse.yaml`, de sleutel en de
 handdruk van de mediaworker (`wire.py` met een eigen label), YuNet en SFace met sha256 in
-`models.lock`, `face` per node en `face_person` in migratie 0010, groeperen per eigenaar, de
+`models.lock`, `face` per node en `face_person` in migratie 0011, groeperen per eigenaar, de
 voorstellen in de web, de schakelaar per gebruiker en het verbod van de beheerder, de job die bij
 "uit" alles wist.
 
@@ -1394,7 +1394,7 @@ de i18n-gebieden en catalogi, begrotingen) en **Z0-e2e** (harnas, fixtures, de w
 referentie, `e2e/slim.sh`, CI-jobs). Z0 bouwt geen functie af; het legt vast waar de pakketten op
 bouwen.
 
-### 3.1 Migratie 0009 (`0009_zoeken.py`, down_revision `0008`)
+### 3.1 Migratie 0010 (`0010_zoeken.py`, down_revision `0009`)
 
 Alles in ruwe SQL via `op.execute` (zoals 0005): FTS5, views en triggers kent Alembic niet. De
 SQL van de triggers staat ook in `app/search/schema.py`; een test eist dat ze gelijk zijn. Op
@@ -1640,7 +1640,7 @@ dezelfde transactie. Een node die tijdens de herbouw nieuw is, krijgt een `num` 
 en komt dus in het laatste stuk. Gemeten op 200.000 rijen: `delete-all` 17–250 ms, het langste
 stuk 101–142 ms (V4).
 
-**Downgrade naar 0008:** eerst alle triggers, dan de view, de twee FTS-tabellen (hun
+**Downgrade naar 0009:** eerst alle triggers, dan de view, de twee FTS-tabellen (hun
 schaduwtabellen gaan mee), de nieuwe tabellen, de zes indexen op `node`, dan
 `ALTER TABLE node DROP COLUMN` voor `ftype`, `dead`, `mpath` en `num`, en `ALTER TABLE album_item
 DROP COLUMN` voor `shared` en `source` (SQLite ≥ 3.35, beide builds; V10 voor `ftype`). Geen
@@ -1649,9 +1649,9 @@ personen en de regels van albums gaan weg; bestanden, delingen en albums blijven
 `shared = 0` had, is na de downgrade weer gedeeld zoals in 0.7.0: `db-downgrade` noemt het aantal
 en vraagt of de regel-items eerst uit het album moeten (standaard ja).
 
-**Tests** (`tests/test_migration_0009.py`, zoals die van 0008):
+**Tests** (`tests/test_migration_0010.py`, zoals die van 0008):
 
-- leeg naar head; 0008 met data naar 0009 en terug, en weer heen: bestanden, delingen en albums
+- leeg naar head; 0009 met data naar 0010 en terug, en weer heen: bestanden, delingen en albums
   blijven gelijk; `num` uniek; elk pad klopt met de ouders; `dead` klopt met de prullenbak;
   `integrity-check` van beide FTS-tabellen slaagt;
 - `compare_metadata` tussen de modellen en de migratie, met de schaduwtabellen van FTS
@@ -1953,13 +1953,13 @@ Codes in `analysis.code` (alleen op `/beheer`, niet als HTTP-fout): `too_slow`, 
 |---|---|---|---|
 | S1 | De tijdsgrens via `interrupt()` uit een timer, door aiosqlite en de pool van SQLAlchemy heen, met de rondes A, B en C | Keuze 9; een progress-handler is te grof (V3) | een vraag van 2 s stopt na 120 ± 30 ms; een vraag met een zichtbare treffer geeft ≥ 1 rij; de verbinding werkt daarna gewoon; een late `interrupt()` raakt de volgende vraag niet |
 | S2 | De triggers met de ORM: hernoemen, verplaatsen, prullenbak, de batch van 500, kopie, `userdelete`, `purge_expired`, de import van fase 5, een andere eigenaar, nieuwe inhoud; en de herbouw in stukken met uploads ertussen | Keuze 3, 12, 25a | na elke stap is de index gelijk aan een herbouw; een upload tijdens de herbouw wacht ≤ 1 s |
-| S3 | 0009 heen en terug met data; `compare_metadata` | §3.1 | precies 0008 na de downgrade |
+| S3 | 0010 heen en terug met data; `compare_metadata` | §3.1 | precies 0009 na de downgrade |
 | S4 | De plan-tests in `python:3.12-slim`, met en zonder `ANALYZE` | J12 | groen in CI in het image |
 | S5 | Tesseract in Debian 13: grootte, en of ffmpeg `libtesseract` al meebrengt | Vraag 1 | een getal in `docs/fase-6/spike.md` (alleen gemeten in CI; het image verandert niet) |
 | S6 | `world-110m.<hash>.json` maken en meten | Keuze 31 | ≤ 60 kB gzip, of een andere vereenvoudiging |
 | S7 | Het zaad van 100.000 in CI | §4.4 | < 3 minuten |
 | S8 | De twee vormen per woord (J1) en ß op 3.46.1 en 3.53.1 | Keuze 5, 21 | ß, ẞ, ligaturen en İ vinden naam én tekst; "grosse" en "große" vinden elkaar, ook "strasse" en "Straße" |
-| S9 | `tools/zoekbench/bench.py`: alleen stdlib, maakt het schema van 0009 en een boom van 100.000 in een tijdelijke map, en meet zoeken voor "eigenaar" en "alles" | Keuze 54, B5 | draait in de container van 0.7.0 met `dc exec -T platform python -I - --los < bench.py`, in < 5 minuten, en ruimt op |
+| S9 | `tools/zoekbench/bench.py`: alleen stdlib, maakt het schema van 0010 en een boom van 100.000 in een tijdelijke map, en meet zoeken voor "eigenaar" en "alles" | Keuze 54, B5 | draait in de container van 0.7.0 met `dc exec -T platform python -I - --los < bench.py`, in < 5 minuten, en ruimt op |
 | S10 | De vormen van Keuze 4a op 3.46.1, onder "eigenaar" en "alles": alleen filters, de kaart, de duplicaten | C6 | per vorm een p95; haalt een vorm zijn poort niet, dan de tabel of de poort uit Keuze 4a, vastgelegd in `spike.md` |
 | S11 | De handdruk van Keuze 17 in de echte worker-container: een tweede proces van uid 10002 probeert `/proc/<pid>/fd/N` van het kind te openen, vóór en na "klaar" | S6 | altijd `EACCES` (of het pad bestaat niet); nooit de inhoud van een blob |
 
@@ -1968,7 +1968,7 @@ Met S9 kan Jonas al in week 1 meten wat zijn CPU haalt, zonder iets te installer
 
 ### 3.8 Klaar als (Z0)
 
-- 0009 heen en terug, ook zonder FTS5;
+- 0010 heen en terug, ook zonder FTS5;
 - `own_live` en `schema.TRIGGERS` staan vast, met hun tests;
 - alle routers gemount (stubs), de web-app bouwt met de lege pagina's en blijft binnen budget;
 - de spike S1–S11 staat in `docs/fase-6/spike.md`, met wat het ontwerp daardoor verandert;
@@ -2045,7 +2045,7 @@ Wat het script doet, in deze volgorde (herzien in r2: C7, C12, C13):
    geen database) slaat het script dit over. Dit werkt met elk image, want `app.cli db-backup`
    bestaat in 0.7.0 niet (V9).
 5. Het nieuwe image bouwen en de app starten (`up -d --build`, zoals nu, `install.sh:552`); de
-   migratie 0009 draait (seconden); de app is gezond (`wait_health`). Bij de start maakt de app
+   migratie 0010 draait (seconden); de app is gezond (`wait_health`). Bij de start maakt de app
    `/data/geo/places.sqlite` uit de bronnen (`geo-load`, ±1 minuut).
 6. Media, dan office (zoals nu, B47).
 7. Het script zegt: "Zoeken op naam werkt meteen. De inhoud wordt nu op de achtergrond gelezen;
@@ -2081,7 +2081,7 @@ dc run --rm --no-deps platform python -m app.cli db-downgrade 0008
 PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=1130e1bbe86d9e4242c0effb588d7671599f5d8a bash < /root/platform-install-0.7.0.sh
 ```
 
-- De downgrade moet met het image van 0.8.0 (dat kent 0009). Daarom eerst stoppen, dan
+- De downgrade moet met het image van 0.8.0 (dat kent 0010). Daarom eerst stoppen, dan
   `db-downgrade`, dan pas het oude script. Zeggen de twee regels van stap 1 niet allebei "goed",
   dan stop je daar (zoals in het runbook van media).
 - De downgrade gooit de index, de plekken, de hashes, de personen en de regels van albums weg.
@@ -2126,7 +2126,7 @@ herinneringen en slimme albums) naar fase 6b. Zo staat het in de README en op `/
 |---|---|---|---|
 | Puur | `api/tests/{search,extract,geo,dupes,photos,albums,people}/` | `uv run pytest` | `parse`, snippets, pHash en de tweede controle, plaatsen, de GPS-lezers, filters, regels, herinneringen |
 | API | `api/tests/test_*.py` | httpx tegen de app (ASGI) | routes, toegang, events, foutcodes, wissen, grenzen |
-| Migratie en triggers | `tests/test_migration_0009.py`, `test_search_churn.py` | 3.53.1, en lokaal en in CI in `python:3.12-slim` (3.46.1, zoals V8) | heen, terug, zonder FTS5, churn, herbouw |
+| Migratie en triggers | `tests/test_migration_0010.py`, `test_search_churn.py` | 3.53.1, en lokaal en in CI in `python:3.12-slim` (3.46.1, zoals V8) | heen, terug, zonder FTS5, churn, herbouw |
 | Worker | `api/tests/media/test_text_*.py`, `test_ocr_*.py` | markers `media` en `ocr` | de opdrachten `text` en `ocr`, de handdruk |
 | e2e | `e2e/test_zoek_*.py` | Chromium (Playwright van buiten, B29), marker `zoek` | de schermen, alleen met het toetsenbord |
 | Web | `web/src/**/*.test.ts(x)` | vitest | `query.ts`, combobox, projectie, clusters, snippets als tekst, de waarschuwing |
@@ -2146,7 +2146,7 @@ snelle e2e. Zo kan elk pakket 3.46.1 aantonen vóór het samenvoegen, zonder te 
   `INSERT OR REPLACE`, `OR IGNORE`, `ON CONFLICT`, `.merge(`, `on_conflict_do_update`,
   `on_conflict_do_nothing` of `prefix_with("OR`; en `blob_text` alleen via `write_text()` (AST en
   tekst);
-- `test_no_batch_alter_node.py`: geen `batch_alter_table("node")` in een migratie na 0009;
+- `test_no_batch_alter_node.py`: geen `batch_alter_table("node")` in een migratie na 0010;
 - `test_no_temp_table.py`: geen `CREATE TEMP` in `app/search` (Keuze 14);
 - `test_own_live.py`: elke fotofunctie gebruikt `own_live` (Keuze 25a);
 - `test_search_logs.py`: zoek op `geheimwoord7`, vraag de kaart op zoom 14 rond een bekende plek
@@ -2383,7 +2383,7 @@ nacontrole, dan samenvoegen in de volgorde van de tabel en alle checks.
 | 20–22 | **Golf 4**: Z7, en X1 als Jonas niet "nee" zei. | Z7, dan X1 |
 | 23 | Review van golf 4. | — |
 | 24–26 | **Integratie**: alle checks, de belastingtest (§4.5) als poort, metingen naar `docs/fase-6/metingen.md`, de README, 0.8.0, tag `v0.7.0`. | — |
-| na ja op Vraag 2 | **X2**, ±5–6 dagen, als eigen golf met migratie 0010. | — |
+| na ja op Vraag 2 | **X2**, ±5–6 dagen, als eigen golf met migratie 0011. | — |
 
 **Wat er gebeurt als Jonas antwoordt:**
 
@@ -2467,7 +2467,7 @@ de reden.
 
 | Kritiek | Fix |
 |---|---|
-| C1. De view `search_src` had geen kolom `blob_id`, dus de eerste schrijfactie naar `blob_text` faalde; de metingen gingen over een andere vorm. | `n.blob_id AS blob_id` in de view; de hele SQL van §3.1 gedraaid met churn en een herbouw in stukken, `integrity-check` ok op drie versies (V1, V10); `test_migration_0009.py` draait de echte SQL. Keuze 3, §3.1. |
+| C1. De view `search_src` had geen kolom `blob_id`, dus de eerste schrijfactie naar `blob_text` faalde; de metingen gingen over een andere vorm. | `n.blob_id AS blob_id` in de view; de hele SQL van §3.1 gedraaid met churn en een herbouw in stukken, `integrity-check` ok op drie versies (V1, V10); `test_migration_0010.py` draait de echte SQL. Keuze 3, §3.1. |
 | C2. Een upsert en `INSERT OR IGNORE` maken een external-content-index kapot; de wachter verbood alleen `OR REPLACE` en `.merge()`. | De wachter verbiedt ook `OR IGNORE`, `ON CONFLICT`, `on_conflict_do_*` en `prefix_with("OR`, op vier tabellen; één helper `write_text()` (eerst `SELECT`, dan `INSERT` of `UPDATE`); churn met herhaalde schrijfacties. Gemeten in V1. Keuze 3, §4.1, §4.3. |
 | C3. Per blob een nieuw renderproces kost meer dan de tijd per stuk; de tijden voor Jonas waren 6 tot 70 keer te laag. | Batches: één kind voor tot 16 blobs in de worker (50 zonder media); per blob een resultaat over de pipe; halveren bij een fout; pHash in de bestaande batch van photometa; §3.10 en §4.5 opnieuw gerekend met de start van een kind (V2). Keuze 17, 20, 35. |
 | C4. De tijdsgrens gaf altijd een lege pagina, en de progress-handler had grote gaten. | `interrupt()` uit een timer in plaats van de handler; de rondes A, B en C; S1 eist ≥ 1 rij; de teksten in de web zeggen eerlijk wat er is. Gemeten in V3. Keuze 9. |
@@ -2479,7 +2479,7 @@ de reden.
 | C10. De OCR-keten kost ±6,5 s per pagina, niet 2–3 s; de poort van 18 pagina's per minuut was niet haalbaar. | PGM in plaats van PNG (6–20 ms tegen 154–174 ms); OSD alleen bij een lage zekerheid; poort ≥ 8 pagina's per minuut, gemeten in de job `ocr`; de kosten bij Vraag 1 opnieuw: ±70–110 minuten per 1.000 pagina's. Gemeten in V7. Keuze 22, Vraag 1, §4.5. |
 | C11. Een tekst met veel kopieën houdt de schrijver bij elke schrijfactie lang vast; een OCR-update leest alles opnieuw. | `body`, `ocr` en `meta` in één `UPDATE`; een PDF met ≥ 200.000 tekens krijgt geen OCR (`ocr_has_text`); OCR van foto's per node, niet per blob; het profiel "kopieën" in `test_backfill.py` en in §4.5. Keuze 1, 3, 23. |
 | C12. Downloaden in een `RUN`-stap die niet fataal faalt, laat een lege laag in de cache; `.env` komt niet in de build. | `install.sh` downloadt naar `DATA_ROOT/geo/` met sha256 en probeert het elke run opnieuw; `app.cli geo-load` bouwt `places.sqlite`; `test_geo_load.py` met een kleine vaste bron, het downloaden in CI. Keuze 29, §3.10, Z7. |
-| C13. Na twee runs op 0.8.0 was de enige kopie van vóór 0009 weggedraaid. | De alembic-head in de bestandsnaam; per head de nieuwste; de laatste kopie van vóór een migratie gaat nooit weg; `test_install_search.sh` controleert het na twee runs. Keuze 52. |
+| C13. Na twee runs op 0.8.0 was de enige kopie van vóór 0010 weggedraaid. | De alembic-head in de bestandsnaam; per head de nieuwste; de laatste kopie van vóór een migratie gaat nooit weg; `test_install_search.sh` controleert het na twee runs. Keuze 52. |
 | C14. Eén apt-regel is niet genoeg: tesseract blijft leesbaar en dus dumpbaar, staat niet in de bewaking en heeft geen test. | `chmod 0711` in dezelfde regel; `"tesseract"` in `guard.BINARIES` en in `test_media_no_ffmpeg_outside.py`; `test_ocr_container.sh` controleert de modus. Keuze 22, X1. |
 | C15. De kaart haalde de begroting niet, en Z4 en Z5 deelden dezelfde ruimte zonder verdeling. | De wereld als statisch bestand met een eigen grens (`mapData` ≤ 60 kB, `mapRoute` ≤ 30 kB); het zoekveld ≤ 0,8 kB, de combobox lazy; de waarschuwing laadt pas met het dialoog; "initiële JS ≤ 100 kB en Bestanden ≤ 45 kB" ook in de klaar-als van Z5. Keuze 31, 45, 48, Z5. |
 | C16. Groen op 3.46.1 was niet aan te tonen vóór een push. | `e2e/slim.sh` met `python:3.12-slim`, de venv alleen-lezen en `--network none` (V8); groen in slim in de klaar-als van Z0, Z1, Z2, Z3 en Z6. §2.0, §4.1. |
