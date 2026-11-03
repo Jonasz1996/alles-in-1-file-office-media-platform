@@ -18,14 +18,29 @@ Het volledige plan staat in [docs/stappenplan.md](docs/stappenplan.md).
 
 Op één Proxmox-container, vanuit de console: zie [infra/single/README.md](infra/single/README.md).
 
-## Bijwerken naar 0.7.0 (media)
+## Bijwerken naar 0.7.1 (media, delen en foto's)
+
+Versie 0.7.1 is 0.7.0 met twee verbeteringen:
+
+- **"Kan bewerken" werkt nu bij delen.** Je kiest eerst wie, dan de rechten ("Kan bekijken" of
+  "Kan bewerken"), en pas **Delen** deelt. Eerder deelde kiezen meteen met "Kan bekijken", en
+  deed "Kan bewerken" daarna niets meer. Sluiten met iemand op de lijst vraagt eerst.
+- **Elke foto een thumbnail**, ook HEIC, RAW, TIFF, PSD en JPEG 2000; lukt het niet (een kapot
+  bestand), dan telt `/beheer` hem als "zonder preview". Eerst de thumbnails, daarna de grote
+  versies; wat je op Foto's, in een map of in de viewer bekijkt, gaat voor. Op `/beheer` → Taken
+  staat een statusregel voor foto's en video's, met **Alles nalopen**. Hoe het werkt:
+  [docs/fotos-indexeren.md](docs/fotos-indexeren.md).
+
+De database krijgt twee indexen (migratie 0009; die loopt vanzelf bij het starten). Terug naar
+0.7.0 kan; de stappen staan in [docs/fotos-indexeren.md](docs/fotos-indexeren.md) ("Database:
+migratie 0009").
 
 Versie 0.7.0 is fase 5: films, series, eigen video's en muziek in het platform, met
 bibliotheken, posters, "verder kijken", ondertitels, een speler voor telefoon, laptop en tv, en
 een muziekbalk die doorspeelt terwijl je verder klikt. Wat de browser niet zelf kan afspelen,
 zet het platform tijdens het kijken om, met ffmpeg in een eigen afgeschermde container. Zolang
-deze versie nog niet op `main` staat, werk je bij vanaf de branch, in de Console van de container
-(als root):
+0.7.1 nog niet op `main` staat, werk je bij vanaf de branch, in de Console van de container (als
+root):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
@@ -34,7 +49,7 @@ curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-m
 Het adres kiest het script, `PLATFORM_BRANCH` de code die het ophaalt; laat geen van beide weg.
 De commando's in de eindtekst van het script hebben dan ook dat adres en `PLATFORM_BRANCH`; die
 op `/beheer` → Office noemen `main`, dus zet daar zolang hetzelfde in.
-Staat 0.7.0 op `main`, dan is het weer het gewone commando uit
+Staat 0.7.1 op `main`, dan is het weer het gewone commando uit
 [infra/single/README.md](infra/single/README.md), zonder `PLATFORM_BRANCH`.
 
 - **Media staat na het bijwerken aan**, met de mediaworker in zijn eigen container

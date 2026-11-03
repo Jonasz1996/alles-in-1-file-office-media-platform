@@ -34,9 +34,10 @@ Een andere poort kiezen kan bij de eerste installatie met `curl … | PORT=8080 
 commando hierboven, met `PORT=8080` vóór `bash`), of later in `/opt/platform/.env` (daarna het
 script opnieuw draaien).
 
-## Bijwerken naar 0.7.0 (met media)
+## Bijwerken naar 0.7.1 (met media)
 
-Versie 0.7.0 (fase 5) staat nog niet op `main`, maar op de branch
+Versie 0.7.1 (fase 5, met de verbeteringen aan delen en foto's) staat nog niet op `main`, maar op
+de branch
 `claude/stappenplan-uitwerken-lu4uv3`. Tot hij op `main` staat, werk je zo bij (en geldt dit ook
 voor elk ander commando hieronder met `curl … | bash`):
 
@@ -52,7 +53,20 @@ tabblad **Office** op `/beheer` noemt altijd de commando's van `main`: zet daar 
 adres en `PLATFORM_BRANCH=…` in. Een instelling erbij gaat net zo:
 `… | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 OFFICE=uit bash`.
 
-Wat er bij het bijwerken van 0.6.0 naar 0.7.0 gebeurt:
+Wat er bij het bijwerken van 0.7.0 naar 0.7.1 gebeurt:
+
+- het script laat open documenten opslaan, bouwt het nieuwe platform en start het; de database
+  krijgt bij de start twee indexen (migratie 0009); `.env`, office en media blijven zoals ze waren;
+- **delen**: kiezen deelt niet meer meteen. Je kiest eerst wie, dan de rechten ("Kan bekijken" of
+  "Kan bewerken"), en pas **Delen** deelt; sluiten met iemand op de lijst vraagt eerst;
+- **foto's**: elke foto krijgt een thumbnail, ook HEIC, RAW, TIFF, PSD en JPEG 2000 (of telt op
+  `/beheer` als "zonder preview"); eerst de thumbnails, dan de grote versies, en wat iemand
+  bekijkt gaat voor. `/beheer` → **Taken** heeft een statusregel **Foto's en video's** met
+  **Alles nalopen** (ook `dc exec -T platform python -m app.cli previews-recheck`);
+- terug naar 0.7.0: het schema eerst naar 0008, met de app gestopt (`docs/fotos-indexeren.md`,
+  "Database: migratie 0009").
+
+Wat er bij het bijwerken van 0.6.0 naar 0.7.0 gebeurt (van 0.6.0 komt 0.7.1 in dezelfde run):
 
 - het script laat open documenten opslaan, bouwt het nieuwe platform en start het; de database
   gaat bij de start vanzelf naar het nieuwe schema;
@@ -141,7 +155,7 @@ blijft http werken.
 | Import | `/tank/platform/import`, in de app `/data/import` |
 | Instellingen van media | `/opt/platform/.env`: `MEDIA_SANDBOX`, `MAX_UPLOAD_BYTES` en `MEDIA_WORKER_KEY`; de rest op `/beheer` → Media |
 
-Bijwerken: draai het installatiescript opnieuw (naar 0.7.0: zie hierboven). Het laat eerst de
+Bijwerken: draai het installatiescript opnieuw (naar 0.7.1: zie hierboven). Het laat eerst de
 open documenten opslaan, vervangt dan het platform en werkt pas daarna de mediaworker en office
 bij. Had je de
 eerste versie met Traefik, PostgreSQL en SeaweedFS al geïnstalleerd, dan ruimt het script die
@@ -331,7 +345,7 @@ script er zijn. Het script komt eerst in een bestand, vóór er iets stopt: `cur
 adres dat er niet is, geeft één regel van curl en doet verder niets, en dan stond de app al stil
 met het schema terug. `db-downgrade` vraagt om "ja". Daarna zijn de bibliotheken, de voortgang en de
 afspeellijsten weg; je bestanden, ook de films en muziek, blijven. Weer vooruit: het script zonder
-`PLATFORM_SRC_REF`. Het adres is dat van de branch, zoals bij het bijwerken hierboven; staat 0.7.0
+`PLATFORM_SRC_REF`. Het adres is dat van de branch, zoals bij het bijwerken hierboven; staat 0.7.1
 op `main`, dan mag `main` in het adres, zonder `PLATFORM_BRANCH`.
 
 Meer, zoals de status lezen, de cache opruimen en de belastingtest op de LXC, staat in
