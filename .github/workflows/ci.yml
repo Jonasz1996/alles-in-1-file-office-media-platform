@@ -81,6 +81,105 @@ jobs:
           fi
           grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/pytest.txt"
 
+  # Fase 6, spike Z0 (bouwontwerp §3.7): zoeken op de SQLite van het image. python:3.12-slim is
+  # de basis van het Dockerfile (Debian 13, SQLite 3.46.1). De plannen met en zonder ANALYZE
+  # (S4), de twee vormen per woord (S8), het schema van de zoekbench (S9) en de landsgrenzen
+  # (S6, test met een eigen bron); dan de metingen met marker zoek_perf: de echte tijdsgrenzen
+  # (S1), de herbouw van 100.000 (S2), de migratie van 100.000 (S3) en het zaad van 100.000 in
+  # < 3 minuten (S7); de vormen van Keuze 4a (S10) met tools/zoekbench/bench.py --vormen; en
+  # world-110m.<hash>.json uit Natural Earth (S6, ≤ 60 kB gzip). Alles op 3 cores (taskset), en
+  # aan het eind van het log het blok "=== kort ===".
+  zoek-perf:
+    name: Zoek-perf (spike Z0 op SQLite 3.46.1)
+    runs-on: ubuntu-24.04
+    container: python:3.12-slim
+    timeout-minutes: 45
+    env:
+      UV_PYTHON_PREFERENCE: only-system
+      UV_LINK_MODE: copy
+    defaults:
+      run:
+        shell: bash
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Versies en cores
+        run: |
+          mkdir -p "$RUNNER_TEMP/zoek-perf"
+          python3 -c 'import sqlite3, sys; print(f"python {sys.version.split()[0]}, SQLite {sqlite3.sqlite_version}")' \
+            | tee "$RUNNER_TEMP/zoek-perf/versie.txt"
+          if ! grep -q "SQLite 3.46.1$" "$RUNNER_TEMP/zoek-perf/versie.txt"; then
+            echo "::warning::python:3.12-slim heeft niet meer SQLite 3.46.1: de metingen gelden voor deze versie"
+          fi
+          n="$(nproc)"
+          if [ "$n" -ge 3 ]; then cores=0-2; else cores="0-$((n - 1))"; echo "::warning::maar $n cores: taskset -c $cores"; fi
+          echo "cores: $n, taskset -c $cores"
+          echo "CORES=$cores" >> "$GITHUB_ENV"
+      - run: uv sync --frozen
+      - name: S4, S8, S9 en S6 (de plannen, de vormen per woord, het schema van de bench, de kaart)
+        run: |
+          set -o pipefail
+          taskset -c "$CORES" uv run pytest -q -s tests/search/test_spike_plannen.py \
+            tests/search/test_spike_vouwen.py tests/search/test_zoekbench.py tests/search/test_spike_kaart.py \
+            | tee "$RUNNER_TEMP/zoek-perf/plannen.txt"
+      - name: S1, S2, S3 en S7 (marker zoek_perf)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          taskset -c "$CORES" uv run pytest -q -s -m zoek_perf tests/search --durations=0 -rA \
+            | tee "$RUNNER_TEMP/zoek-perf/zoek_perf.txt"
+      # Het zaad van §3.6 zelf komt van Z0-e2e (app/search/bench.py); zolang dat niet op de tak
+      # staat, meet S7 hierboven met de boom van de zoekbench
+      - name: S7 met het zaad van Z0-e2e (als app/search/bench.py er is)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          uit="$RUNNER_TEMP/zoek-perf/zaad.txt"
+          if [ ! -f app/search/bench.py ]; then
+            echo "het zaad van Z0-e2e (app/search/bench.py) staat nog niet op deze tak" | tee "$uit"
+            exit 0
+          fi
+          start=$SECONDS
+          taskset -c "$CORES" uv run python -m app.search.bench --data "$RUNNER_TEMP/zaad" --n 100000 \
+            --uitkomst "$RUNNER_TEMP/zoek-perf/zaad.json" 2>&1 | tee "$RUNNER_TEMP/zoek-perf/zaad.log"
+          duur=$((SECONDS - start))
+          echo "het zaad van Z0-e2e: 100.000 in $duur s (grens 180 s)" | tee "$uit"
+          rm -rf "$RUNNER_TEMP/zaad"
+          [ "$duur" -lt 180 ]
+      - name: S10 de vormen van Keuze 4a (tools/zoekbench/bench.py --los --vormen)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          taskset -c "$CORES" python3 -I ../tools/zoekbench/bench.py --los --vormen --map "$RUNNER_TEMP" \
+            --json "$RUNNER_TEMP/zoek-perf/bench.json" | tee "$RUNNER_TEMP/zoek-perf/bench.txt"
+      - name: S6 world-110m.<hash>.json uit Natural Earth 110m v5.1.2
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          python3 -I ../tools/kaart/maak_wereld.py --download --uit "$RUNNER_TEMP/zoek-perf/kaart" \
+            | tee "$RUNNER_TEMP/zoek-perf/kaart.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zoek-perf
+          path: ${{ runner.temp }}/zoek-perf
+          if-no-files-found: warn
+      - name: Samenvatting
+        if: always()
+        run: |
+          d="$RUNNER_TEMP/zoek-perf"
+          echo "=== kort ==="
+          cat "$d/versie.txt" 2> /dev/null || echo "(geen versie)"
+          echo "S4, S8, S9, S6: $(tail -n 1 "$d/plannen.txt" 2> /dev/null || echo "liep niet")"
+          grep -E "^ *(S4 op|laatste jaar|langs de tijd|type),? " "$d/plannen.txt" 2> /dev/null || true
+          echo "zoek_perf (S1, S2, S3, S7): $(tail -n 1 "$d/zoek_perf.txt" 2> /dev/null || echo "liep niet")"
+          grep -E "^\.?(S1|S2|S7) " "$d/zoek_perf.txt" 2> /dev/null | sed 's/^\.//' || true
+          grep -E "^[0-9.]+s call " "$d/zoek_perf.txt" 2> /dev/null || true
+          cat "$d/zaad.txt" 2> /dev/null || true
+          sed -n '/^=== zoekbench ===/,$p' "$d/bench.txt" 2> /dev/null || echo "S10: de bench liep niet"
+          echo "S6: $(cat "$d/kaart.txt" 2> /dev/null || echo "liep niet")"
+
   acme:
     name: HTTPS (certificaat van Pebble, de test-CA van Let's Encrypt)
     runs-on: ubuntu-latest
@@ -643,6 +742,42 @@ jobs:
           echo "=== kern.json ==="
           cat "$RUNNER_TEMP/media-image/kern.json" || echo "(geen kern.json)"
           echo "=== einde kern.json ==="
+      # Fase 6, spike S5 (Vraag 1): wat tesseract in Debian 13 kost, en of de ffmpeg van het
+      # image libtesseract al meebrengt. In een wegwerpcontainer van het image, als root en met
+      # netwerk; het image zelf verandert niet. De regel van X1: tesseract-ocr met nld, eng en osd
+      - name: S5 tesseract in Debian 13 (alleen meten)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/media-image"
+          cat > "$RUNNER_TEMP/s5.sh" << 'SH'
+          set -e
+          . /etc/os-release
+          echo "debian: $PRETTY_NAME"
+          avfilter="$(ls /usr/lib/*/libavfilter.so.* | head -n 1)"
+          if ldd "$avfilter" | grep -q libtesseract; then
+            echo "libtesseract via ffmpeg: ja ($(ldd "$avfilter" | grep libtesseract | awk '{print $1}'))"
+          else
+            echo "libtesseract via ffmpeg: nee"
+          fi
+          if ffmpeg -hide_banner -buildconf 2> /dev/null | grep -q -- --enable-libtesseract; then
+            echo "ffmpeg gebouwd met --enable-libtesseract: ja"
+          else
+            echo "ffmpeg gebouwd met --enable-libtesseract: nee"
+          fi
+          echo "al in het image: $(dpkg-query -W -f '${Package} ' 'libtesseract*' 'tesseract*' 2> /dev/null || true)"
+          voor="$(dpkg-query -W -f '${Installed-Size}\n' | awk '{s += $1} END {print s}')"
+          apt-get update -qq
+          apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-nld tesseract-ocr-eng \
+            tesseract-ocr-osd > /tmp/apt.log
+          grep -E "^(Need to get|After this operation)" /tmp/apt.log || true
+          echo "nieuwe pakketten: $(sed -n '/NEW packages will be installed/,/^[0-9]* upgraded/p' /tmp/apt.log | sed '1d;$d' | tr -s ' \n' ' ')"
+          na="$(dpkg-query -W -f '${Installed-Size}\n' | awk '{s += $1} END {print s}')"
+          echo "tesseract erbij: $(((na - voor) / 1024)) MiB (dpkg Installed-Size)"
+          echo "taaldata: $(du -sh /usr/share/tesseract-ocr | cut -f1)"
+          echo "$(tesseract --version 2>&1 | head -n 1); talen: $(tesseract --list-langs 2>&1 | tail -n +2 | tr '\n' ' ')"
+          if ldd "$avfilter" | grep -q libtesseract; then echo "ffmpeg na de installatie: ook libtesseract"; fi
+          SH
+          docker run --rm -i --user root platform:ci sh -s < "$RUNNER_TEMP/s5.sh" | tee "$RUNNER_TEMP/media-image/tesseract.txt"
       # De container-test draait ook als de kern faalde: losse uitkomsten. Hij heeft sinds M4
       # ook S3 punt 17 van de spike (de remux naar een pipe van de app, met stream) en R12; de
       # aparte stap S3 met het afgeleide image van de spike is daarom weg. Sinds de review van
@@ -693,3 +828,25 @@ jobs:
             echo "=== einde samenvatting ==="
           fi
           grep -E '^(FOUT|STOP) ' "$log" 2>/dev/null || true
+          # Fase 6, spike Z0: S5, S9 en S11, als laatste in het log
+          d="$RUNNER_TEMP/media-image"
+          echo "=== kort ==="
+          echo "S5 tesseract (het image verandert niet):"
+          sed 's/^/  /' "$d/tesseract.txt" 2> /dev/null || echo "  liep niet"
+          echo "S9 de zoekbench in de container van de app:"
+          sed -n '/^=== zoekbench ===/,$p' "$d/zoekbench.log" 2> /dev/null | sed 's/^/  /' || true
+          [ -f "$d/zoekbench.log" ] || echo "  liep niet"
+          echo "S11 de handdruk in de worker-container:"
+          if [ -f "$d/handdruk.json" ]; then
+            python3 -I - "$d/handdruk.json" << 'PY' || echo "  handdruk.json is niet te lezen"
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          print(f"  ok {d.get('ok')}, S11 {d.get('S11')}, ptrace_scope {d.get('ptrace_scope')}")
+          for v in ("ontwerp", "vork", "0711"):
+              r = d.get(v, {})
+              o = r.get("oordeel")
+              print(f"  {v}: " + (json.dumps(o, ensure_ascii=False) if o else str(r.get("niet te proberen"))))
+          PY
+          else
+            echo "  liep niet"
+          fi
