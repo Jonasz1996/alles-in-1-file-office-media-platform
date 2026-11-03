@@ -301,3 +301,29 @@ async def test_foto_instellingen_met_standaarden(settings):
     assert set(prefs.PhotoSettings.model_fields) == {"location", "memories", "ocr_photos"}
     with pytest.raises(ValidationError):
         prefs.PhotoSettingsPatch.model_validate({"faces": "aan"})  # X2: niet via de API
+
+
+async def test_na_de_migratie_is_de_stand_van_de_database_al_gelezen(settings):
+    """app.migrate.upgrade leest na de migratie of er FTS is: de eerste zoekvraag hoeft dat niet
+    te doen (en telt dus net zoveel vragen als de volgende)."""
+    key = engine._key(settings.db_url)
+    assert engine._info[key].fts is True
+    engine.forget(settings.db_url)
+    assert key not in engine._info
+
+
+async def test_backfill_bij_het_starten_faalt_nooit(caplog):
+    seen = []
+
+    async def kapot(settings):
+        raise RuntimeError("stuk")
+
+    async def goed(settings):
+        seen.append(settings)
+
+    hooks.register_backfill(kapot)
+    hooks.register_backfill(goed)
+    with caplog.at_level(logging.ERROR, logger="platform.search"):
+        await hooks.backfill("s")  # type: ignore[arg-type]
+    assert seen == ["s"]
+    assert any("backfill" in r.getMessage() for r in caplog.records)

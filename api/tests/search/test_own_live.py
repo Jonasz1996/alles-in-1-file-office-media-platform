@@ -40,8 +40,14 @@ PHOTO_FUNCTIONS = (
     "routers/people.py",
     "routers/memories.py",
 )
-# Wat geen node leest en dus geen own_live hoeft: de vaste typen en het laden van GeoNames
-NOT_A_QUERY = {"geo/types.py", "geo/__init__.py", "dupes/__init__.py", "people/__init__.py"}
+# Wat geen node leest en dus geen own_live hoeft: de vaste typen van Z0
+NOT_A_QUERY = {
+    "geo/types.py",
+    "geo/__init__.py",
+    "dupes/__init__.py",
+    "people/__init__.py",
+    "people/types.py",
+}
 
 READS_NODES = re.compile(r"\bNode\b|\bFROM\s+node\b|\bJOIN\s+node\b", re.I)
 

@@ -10,6 +10,8 @@ de haken niets, en is de app precies 0.7.1.
   per gekopieerd bestand (Z6: personen gaan mee als de eigenaar gelijk is).
 - groups en suggest: extra groepen in de resultaten (Z3 plaatsen, Z6 personen) en suggesties
   voor het zoekveld.
+- backfill(settings): bij het starten van de app (main.lifespan), vóór de rijen draaien: elk
+  pakket zet zijn achterstand klaar (Z2 tekst, Z3 hash en plaatsen). Faalt nooit.
 """
 
 from __future__ import annotations
@@ -17,7 +19,10 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from app.config import Settings
 
 log = logging.getLogger("platform.search")
 
@@ -25,11 +30,13 @@ BlobAdded = Callable[[str, uuid.UUID | None], None]
 PhotoCopy = Callable[[Any, Sequence[tuple[uuid.UUID, uuid.UUID]]], Awaitable[None]]
 GroupsFn = Callable[..., Awaitable[Any]]
 SuggestFn = Callable[..., Awaitable[Any]]
+Backfill = Callable[["Settings"], Awaitable[None]]
 
 _blob_added: list[BlobAdded] = []
 _photo_copy: list[PhotoCopy] = []
 _groups: list[GroupsFn] = []
 _suggest: list[SuggestFn] = []
+_backfill: list[Backfill] = []
 
 
 def _add(registry: list, fn) -> None:
@@ -54,6 +61,10 @@ def register_suggest(fn: SuggestFn) -> None:
     _add(_suggest, fn)
 
 
+def register_backfill(fn: Backfill) -> None:
+    _add(_backfill, fn)
+
+
 def groups() -> list[GroupsFn]:
     return list(_groups)
 
@@ -64,7 +75,7 @@ def suggesters() -> list[SuggestFn]:
 
 def reset() -> None:
     """Alleen voor tests: alle aanmeldingen weg."""
-    for registry in (_blob_added, _photo_copy, _groups, _suggest):
+    for registry in (_blob_added, _photo_copy, _groups, _suggest, _backfill):
         registry.clear()
 
 
@@ -84,3 +95,13 @@ async def photo_copy(session: Any, pairs: Sequence[tuple[uuid.UUID, uuid.UUID]])
         return
     for fn in list(_photo_copy):
         await fn(session, pairs)
+
+
+async def backfill(settings: Settings) -> None:
+    """De achterstand van elk pakket klaarzetten, bij het starten. Faalt nooit: een fout komt
+    in het log en de volgende gaat door."""
+    for fn in list(_backfill):
+        try:
+            await fn(settings)
+        except Exception:
+            log.exception("search.hooks.backfill")

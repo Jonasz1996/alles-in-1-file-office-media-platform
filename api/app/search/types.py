@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -148,3 +148,164 @@ class Suggestions(BaseModel):
     places: list[PlaceRef] = Field(default_factory=list, max_length=5)
     tags: list[TagRef] = Field(default_factory=list, max_length=5)
     albums: list[AlbumRef] = Field(default_factory=list, max_length=5)
+
+
+# --- Tekst (Z2, X1) ---
+
+
+class PageWord(BaseModel):
+    """Een woord op een pagina met zijn plek, als deel van de pagina (0..1)."""
+
+    t: str
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+class PageWords(BaseModel):
+    """GET /files/{id}/pages/{n}/words: de tekstlaag van de viewer."""
+
+    page: int
+    words: list[PageWord]
+    source: Literal["pdf", "ocr"]
+
+
+# Een stap van de analyse zoals de API hem toont: wait en busy in de tabel zijn hier queued
+StepState = Literal["queued", "done", "none", "skip", "failed"]
+AnalysisCode = Literal[
+    "too_slow", "ocr_missing", "ocr_bad_image", "ocr_has_text", "zip_limit", "xml_refused",
+    "pages_limit",
+]  # fmt: skip
+
+
+class AnalysisOut(BaseModel):
+    """GET /files/{id}/analysis."""
+
+    text: StepState
+    hash: StepState
+    ocr: StepState
+    truncated: bool
+    code: AnalysisCode | None
+
+
+# --- Beheer (Z7). §3.4 noemt de velden van GET /admin/search niet; dit is het voorstel uit
+# Keuze 51, gelijk aan web/src/admin/searchApi.ts. Z7 legt het vast met app/search/admin.py ---
+
+RebuildWhat = Literal["names", "text", "geo", "hash", "ocr"]
+
+
+class Rebuild(IndexProgress):
+    what: RebuildWhat
+    started_at: str
+
+
+class AdminIndex(BaseModel):
+    names_done: bool
+    text_done: int
+    text_total: int
+    failed: int
+
+
+class PerHour(BaseModel):
+    deadline_b: int
+    deadline_c: int
+    busy: int
+
+
+class AdminOcr(BaseModel):
+    installed: bool
+    on: bool
+    pages_queued: int
+
+
+class AdminPlaces(BaseModel):
+    loaded: bool
+    source: str | None
+    date: str | None
+
+
+class AdminBench(BaseModel):
+    at: str
+    p95_owner_ms: float
+    p95_all_ms: float
+
+
+class AdminSearch(BaseModel):
+    """GET en PATCH /admin/search: de stand van Keuze 51."""
+
+    engine: EngineName
+    paused: bool
+    index: AdminIndex
+    rebuild: Rebuild | None
+    extract_in_sandbox: bool
+    per_hour: PerHour
+    ocr: AdminOcr
+    places: AdminPlaces
+    bench: AdminBench | None
+
+
+class AdminSearchPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ocr: bool | None = None
+    paused: bool | None = None
+
+
+class RebuildIn(BaseModel):
+    """POST /admin/search/rebuild → 202; 409 search_rebuild_running."""
+
+    what: RebuildWhat
+
+
+class FailedItem(BaseModel):
+    sha: str
+    step: Literal["text", "hash", "ocr", "geo"]
+    code: str
+    at: str
+
+
+class FailedPage(BaseModel):
+    """GET /admin/search/failed?cursor=."""
+
+    items: list[FailedItem]
+    cursor: str | None
+
+
+# --- Gebeurtenissen (SSE, via events.publish, na de commit; §3.4) ---
+
+
+class SearchReadyEvent(BaseModel):
+    """search.ready, naar wie de nodes kan zien: de viewer ververst de tekstlaag."""
+
+    nodes: list[uuid.UUID]
+    step: Literal["text", "hash", "ocr"]
+
+
+class PeopleChangedEvent(BaseModel):
+    """people.changed, naar de eigenaar (leeg)."""
+
+
+class SearchProgressEvent(BaseModel):
+    """search.progress, alleen naar beheerders, elke 10 s tijdens een backfill of herbouw."""
+
+    what: Literal["backfill", "names", "text", "geo", "hash", "ocr"]
+    done: float = Field(ge=0, le=1)
+
+
+EVENT_SEARCH_READY = "search.ready"
+EVENT_PEOPLE_CHANGED = "people.changed"
+EVENT_SEARCH_PROGRESS = "search.progress"
+EVENTS: dict[str, type[BaseModel]] = {
+    EVENT_SEARCH_READY: SearchReadyEvent,
+    EVENT_PEOPLE_CHANGED: PeopleChangedEvent,
+    EVENT_SEARCH_PROGRESS: SearchProgressEvent,
+}
+
+
+def event_data(type: str, data: BaseModel) -> dict[str, Any]:
+    """De data van een gebeurtenis als JSON, gecontroleerd tegen de vorm van dat type."""
+    model = EVENTS[type]
+    if not isinstance(data, model):
+        raise TypeError(f"{type} verwacht {model.__name__}")
+    return data.model_dump(mode="json")

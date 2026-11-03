@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from sqlalchemy import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from app.config import Settings
@@ -44,9 +45,14 @@ FTS: SearchEngine | None = None
 _info: dict[str, ConnInfo] = {}
 
 
+def _key(url: str | URL) -> str:
+    # str(url) verbergt het wachtwoord; dan zou forget(settings.db_url) de sleutel missen
+    return make_url(url).render_as_string(hide_password=False)
+
+
 async def read_conn_info(conn: AsyncConnection) -> ConnInfo:
     """Leest het één keer per database (de url); daarna uit het geheugen."""
-    key = str(conn.engine.url)
+    key = _key(conn.engine.url)
     if key in _info:
         return _info[key]
     dialect = conn.dialect.name
@@ -61,9 +67,13 @@ async def read_conn_info(conn: AsyncConnection) -> ConnInfo:
     return _info[key]
 
 
-def forget() -> None:
-    """Alleen voor tests en na een migratie: read_conn_info leest opnieuw."""
-    _info.clear()
+def forget(url: str | None = None) -> None:
+    """Na een migratie (app.migrate.upgrade) en in tests: read_conn_info leest opnieuw, voor
+    deze database of (zonder url) voor alle."""
+    if url is None:
+        _info.clear()
+    else:
+        _info.pop(_key(url), None)
 
 
 def select_engine(settings: Settings, conn_info: ConnInfo) -> SearchEngine:

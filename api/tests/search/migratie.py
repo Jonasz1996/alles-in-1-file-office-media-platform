@@ -21,10 +21,17 @@ SHA_TXT = "f" * 64
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
+# Elke database van settings_at; tests/search/conftest.py sluit hun verbindingen na de test,
+# in dezelfde event loop (anders sluit aiosqlite ze later, als de loop al dicht is)
+MADE: list[Settings] = []
+
+
 def settings_at(tmp_path, name: str) -> Settings:
     path = tmp_path / name
     path.mkdir()
-    return Settings(data_dir=path, jwt_secret="test" * 8, timezone=TZ)
+    settings = Settings(data_dir=path, jwt_secret="test" * 8, timezone=TZ)
+    MADE.append(settings)
+    return settings
 
 
 async def migrate(settings: Settings, fn, revision: str, fts5: bool | None = None) -> None:
