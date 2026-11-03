@@ -1,14 +1,15 @@
 // Een persoon of groep kiezen om mee te delen: een combobox (WAI-ARIA 1.2) met een lijst die
 // onder het veld openklapt. ↑ en ↓ gaan door de lijst (aria-activedescendant: de focus blijft in
-// het veld), Enter kiest, Escape sluit de lijst of maakt het veld leeg.
+// het veld), Enter kiest, Escape sluit de lijst of maakt het veld leeg. Kiezen deelt nog niet:
+// de deeldialoog zet de keuze op een lijst, en Enter in het lege veld deelt met wie erop staat.
 
 import { type JSX, type KeyboardEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { api, type Directory } from "../api";
 import { errorText, t } from "../i18n";
 import { Icon } from "../ui/Icon";
-import { memberCount } from "../sharing";
+import { type Excluded, memberCount, type ShareTarget } from "../sharing";
 
-export type ShareTarget = { user_id: string } | { group_id: string };
+export type { ShareTarget };
 
 export interface Option {
   key: string;
@@ -19,10 +20,7 @@ export interface Option {
 }
 
 /** De keuzes uit een zoekresultaat, zonder wie er al bij is. */
-export function optionsOf(
-  found: Directory | null,
-  exclude: { users: ReadonlySet<string>; groups: ReadonlySet<string> },
-): Option[] {
+export function optionsOf(found: Directory | null, exclude: Excluded): Option[] {
   if (!found) return [];
   return [
     ...found.users
@@ -51,15 +49,19 @@ export function PersonPicker({
   exclude,
   busy,
   onPick,
+  onSubmit,
   inputRef,
   onError,
 }: {
-  exclude: { users: ReadonlySet<string>; groups: ReadonlySet<string> };
+  exclude: Excluded;
   /** Bezig met delen: niets te kiezen of te typen. Het veld wordt dan readOnly, niet disabled:
-   * een uitgeschakeld veld verliest de focus (naar <body>), en die moet er na het kiezen nog
+   * een uitgeschakeld veld verliest de focus (naar <body>), en die moet er na het delen nog
    * staan voor de volgende persoon. */
   busy?: boolean;
-  onPick(target: ShareTarget, name: string): Promise<boolean> | boolean;
+  /** Iemand gekozen; true: het veld wordt leeg voor de volgende. */
+  onPick(option: Option): Promise<boolean> | boolean;
+  /** Enter in het lege veld (zonder lijst open): delen met wie klaarstaat. */
+  onSubmit?(): void;
   inputRef?: RefObject<HTMLInputElement | null>;
   onError(message: string): void;
 }): JSX.Element {
@@ -103,7 +105,7 @@ export function PersonPicker({
 
   async function pick(o: Option) {
     if (busy) return;
-    if (await onPick(o.target, o.name)) {
+    if (await onPick(o)) {
       setQ("");
       setFound(null);
       setActive(-1);
@@ -123,6 +125,9 @@ export function PersonPicker({
       if (o) {
         e.preventDefault();
         void pick(o);
+      } else if (!q.trim() && onSubmit) {
+        e.preventDefault();
+        onSubmit();
       }
     } else if (e.key === "Escape") {
       if (expanded) {

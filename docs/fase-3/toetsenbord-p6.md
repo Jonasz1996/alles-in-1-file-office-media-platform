@@ -60,8 +60,26 @@ Bekijken.
 | Alt+P | focus in "Zoek een persoon of groep" (ook vanuit een ander veld) |
 | Alt+L | het formulier voor een nieuwe link openen (focus op Soort) |
 | ↓ ↑ (in het zoekveld) | door de gevonden personen en groepen (aria-activedescendant: de focus blijft in het veld) |
-| Enter (in het zoekveld) | delen met de actieve keuze (of de eerste) |
-| Escape (in het zoekveld) | de lijst sluiten; nog een keer: het veld leegmaken; daarna sluit Escape de dialoog |
+| Enter (in het zoekveld) | de actieve keuze (of de eerste) op de lijst "Klaar om te delen" zetten; dat deelt nog niet |
+| Enter (in het lege zoekveld) | delen met iedereen op "Klaar om te delen", met de rechten en de datum die erbij staan |
+| Tab (vanuit het zoekveld) | langs × (van de lijst halen), "Rechten voor wie je toevoegt" (↓ ↑ kiest), de datum en Delen |
+| Escape (in het zoekveld) | de lijst sluiten; nog een keer: het veld leegmaken; daarna sluit Escape de dialoog (staat er nog iemand op "Klaar om te delen", dan eerst de vraag "Sluiten zonder te delen?") |
+
+Kiezen deelt niet meer meteen: eerder deelde Enter (of een klik) op een naam direct met de
+rechten die er op dat moment stonden ("Kan bekijken"), en wie daarna "Kan bewerken" koos,
+veranderde niets meer. Nu staat wie je kiest eerst op de lijst; de rechten en de datum kies je
+ervoor of erna, en pas Delen deelt (één POST per persoon of groep, één melding). Boven de lijst
+staat zichtbaar "Klaar om te delen" met "Nog niet gedeeld: kies de rechten en druk op Delen." Na
+Delen staat de focus weer in het zoekveld; na × op de × van de volgende (of de vorige) op de
+lijst, of in het zoekveld als de lijst leeg is. Delen is uitgeschakeld zolang de lijst leeg is;
+tijdens het delen is hij bezig (aria-busy, een klik doet niets) maar niet uitgeschakeld, zodat
+de focus er blijft staan en nooit op `<body>` valt.
+
+Sluiten (Escape, × of Sluiten) met nog iemand op "Klaar om te delen" vraagt eerst "Sluiten
+zonder te delen?": "Terug naar delen" (de focus staat daar eerst; ook Escape) houdt de dialoog
+open met de lijst, "Sluiten zonder delen" sluit hem. Escape handelt de dialoog zelf af, niet de
+browser: Chromium sluit een dialoog anders zelf bij de derde Escape op rij zonder klik ertussen,
+ook als hij net iets vraagt.
 
 Na Link maken of Annuleren in het formulier voor een nieuwe link staat de focus op "Nieuwe
 link"; na Opslaan of Annuleren bij Wijzigen van een link op Wijzigen.
@@ -91,8 +109,21 @@ staat: in een dialoog nooit op `<body>`.
   (`test_toetsenbord_p6::test_prullenbak_terugzetten_verwijderen_en_legen`).
 - [x] Versies: V, U, bestand kiezen, Enter op "Upload annuleren"; Bekijken en Terugzetten met
   Tab en Enter (`test_toetsenbord_p6::test_versies_uploaden_annuleren_bekijken_en_terugzetten`).
-- [x] Delen: S, Alt+P, typen, ↓, Enter; Alt+L, Tab naar "Link maken", Enter
+- [x] Delen: S, Alt+P, typen, ↓, Enter (op de lijst), Tab naar de rechten, ↓ (Kan bewerken),
+  Tab naar Delen, Enter; Alt+L, Tab naar "Link maken", Enter
   (`test_toetsenbord_p6::test_delen_met_alt_p_en_een_link_met_alt_l`).
+- [x] Delen: Escape met iemand op "Klaar om te delen" vraagt eerst; Escape op de vraag gaat
+  terug, ook drie keer op rij (`test_sharing_ui::test_sluiten_met_iemand_op_de_lijst_vraagt_eerst`).
+  Bij een selectie sluit Escape eerst de lijst met namen, dan wordt het veld leeg, en pas dan
+  komt de vraag (`test_sharing_ui::test_sluiten_bij_een_selectie_vraagt_ook_eerst`).
+- [x] Een dialoog in een dialoog (Wachtwoord instellen in Gebruiker wijzigen): Enter opent,
+  Escape sluit alleen de bovenste en de focus staat weer op de knop, ook drie keer op rij
+  (`test_admin::test_escape_sluit_alleen_de_bovenste_dialoog`). Een sluitverzoek dat niet als
+  toets binnenkomt (de terugknop van Android, `requestClose()`) sluit ook alleen de bovenste
+  (`test_admin::test_sluitverzoek_in_een_dialoog_in_een_dialoog`); net zo de viewer vanuit
+  Versies (`test_trash_versions::test_sluitverzoek_op_de_viewer_vanuit_versies`).
+- [x] Delen met een selectie: Tab naar Delen, Enter; de focus blijft op Delen zolang het delen
+  loopt, daarna in het zoekveld (`test_sharing_ui::test_focus_blijft_op_delen_tijdens_het_delen`).
 
 `e2e/test_admin.py`, `e2e/test_trash_versions.py` en `e2e/test_sharing_ui.py` lopen daarnaast
 de rest van P6 na, deels met de muis.

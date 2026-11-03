@@ -15,7 +15,8 @@ export interface DialogProps {
 
 /**
  * Een modaal venster (<dialog>, in de top layer). Escape en de sluitknop roepen onClose aan; de
- * ouder haalt de dialoog dan weg. Een element met data-autofocus krijgt de focus bij het openen.
+ * ouder haalt de dialoog dan weg (of vraagt eerst iets; de browser sluit hem niet zelf). Een
+ * element met data-autofocus krijgt de focus bij het openen.
  * Na het sluiten staat de focus weer waar hij was. Zolang hij open is, staat de sneltoets-scope
  * "dialog" bovenop: sneltoetsen van de pagina eronder werken dan niet. Een scope van iets ín de
  * dialoog (useScope("viewer")) komt erboven: de dialoog zet de zijne in een layout-effect, en die
@@ -48,7 +49,23 @@ export function Dialog({ title, onClose, children, size = "m", actions }: Dialog
       ref={ref}
       className={`dialog size-${size}`}
       aria-labelledby={titleId}
+      onKeyDown={(e) => {
+        // Escape zelf afhandelen (preventDefault): dan sluit de browser de dialoog nooit buiten
+        // de ouder om. Chromium maakt een cancel zonder klik of toets ertussen niet-annuleerbaar
+        // (de derde Escape op rij) en sluit dan zelf, ook als de ouder eerst iets vraagt (de
+        // deeldialoog met iemand op "Klaar om te delen"). Alleen voor deze dialoog, niet voor
+        // een dialoog erin (de viewer vanuit Versies): die doet zijn eigen Escape.
+        if (e.key !== "Escape" || e.defaultPrevented || e.nativeEvent.isComposing) return;
+        if (!(e.target instanceof Element) || e.target.closest("dialog") !== ref.current) return;
+        e.preventDefault();
+        onClose();
+      }}
       onCancel={(e) => {
+        // Een sluitverzoek dat niet als Escape hierboven binnenkomt (de terugknop van Android,
+        // requestClose()). React laat cancel door de boom van componenten omhoog gaan, ook al
+        // gaat het DOM-event niet omhoog: die van een dialoog erin (Wachtwoord instellen, de
+        // viewer vanuit Versies) is niet voor deze; anders gingen ze allebei dicht.
+        if (e.target !== ref.current) return;
         e.preventDefault(); // de ouder beslist; die haalt de dialoog weg
         onClose();
       }}

@@ -354,16 +354,17 @@ def test_versies_uploaden_annuleren_bekijken_en_terugzetten(context_as, server, 
 
 
 def test_delen_met_alt_p_en_een_link_met_alt_l(context_as, server, user_factory):
-    """Delen: S op de rij, Alt+P, typen, ↓, Enter; Alt+L, Tab naar "Link maken", Enter."""
+    """Delen: S op de rij, Alt+P, typen, ↓, Enter (op de lijst), Tab naar de rechten, ↓ (Kan
+    bewerken), Tab naar Delen, Enter; Alt+L, Tab naar "Link maken", Enter."""
     owner = user_factory(name="Toets Deler")
-    user_factory(name="Toets Ontvanger")
-    server.call(
+    receiver = user_factory(name="Toets Ontvanger")
+    folder = server.call(
         owner,
         "POST",
         f"/api/v1/files/{owner.root_id}/folders",
         json={"name": "Plannen"},
         expect=201,
-    )
+    ).json()
     page = context_as(owner).new_page()
     page.goto("/")
     start(page)
@@ -378,8 +379,20 @@ def test_delen_met_alt_p_en_een_link_met_alt_l(context_as, server, user_factory)
     expect(dialog.get_by_role("option", name=re.compile("Toets Ontvanger"))).to_be_visible()
     page.keyboard.press("ArrowDown")
     page.keyboard.press("Enter")
+    expect(dialog.get_by_role("list", name="Klaar om te delen", exact=True)).to_contain_text(
+        "Toets Ontvanger"
+    )
+    expect(box).to_be_focused()
+    rights = dialog.get_by_label("Rechten voor wie je toevoegt", exact=True)
+    tab_to(page, rights, limit=5)
+    page.keyboard.press("ArrowDown")
+    expect(rights).to_have_value("write")
+    tab_to(page, dialog.get_by_role("button", name="Delen", exact=True), limit=10)
+    page.keyboard.press("Enter")
     expect(toast(page, "Gedeeld met Toets Ontvanger.")).to_be_visible()
     expect(box).to_be_focused()
+    shares = server.call(owner, "GET", f"/api/v1/files/{folder['id']}/shares", expect=200).json()
+    assert [(s["user"]["id"], s["permission"]) for s in shares] == [(receiver.id, "write")]
 
     page.keyboard.press("Alt+L")
     expect(dialog.get_by_label("Soort", exact=True)).to_be_focused()

@@ -1,15 +1,22 @@
 // De deeldialoog: delen met personen en groepen (met rechten en een vervaldatum) en publieke
-// links. Met nodes (meer dan één) deelt hij een selectie in één keer met een persoon of groep:
-// een lus over POST /files/{id}/shares met voortgang. Een album deel je alleen om te bekijken
-// en zonder uploadlink. Alt+P: zoeken naar personen; Alt+L: een nieuwe link.
+// links. Kiezen in het zoekveld deelt nog niet: wie je kiest, komt op een lijst, en Delen deelt
+// met iedereen op die lijst, met de rechten en de vervaldatum die ernaast staan. Sluiten terwijl
+// er nog iemand op die lijst staat, vraagt eerst. Met nodes (meer dan één) deelt hij een selectie
+// in één keer met die personen en groepen: een lus over POST /files/{id}/shares met voortgang.
+// Een album deel je alleen om te bekijken en zonder uploadlink. Alt+P: zoeken naar personen;
+// Alt+L: een nieuwe link.
 
-import { type FormEvent, type JSX, type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, type JSX, type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError, api, type FileNode, type Share } from "../api";
-import { errorText, t } from "../i18n";
+import { errorText, fmt, t } from "../i18n";
 import {
+  alreadyShared,
   checkedExpiry,
   dateInputValue,
+  type Excluded,
+  excluding,
   expiryLabel,
+  isExcluded,
   type LinkForm,
   linkChange,
   linkHref,
@@ -22,17 +29,21 @@ import {
   multiShare,
   newLink,
   PERMISSION_LABELS,
+  type ShareResult,
+  shareEach,
   sharePermissions,
+  someNames,
   today,
+  withPending,
 } from "../sharing";
 import type { ShareDialogProps } from "../ShareDialog";
-import { Button } from "../ui/Button";
+import { Button, IconButton } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
 import { confirm } from "../ui/dialogs";
 import { Field } from "../ui/Field";
 import { useScope, useShortcuts } from "../ui/keys";
 import { toast } from "../ui/toast";
-import { PersonPicker, type ShareTarget } from "./PersonPicker";
+import { type Option, PersonPicker } from "./PersonPicker";
 import "../share.css";
 import "../files.css";
 
@@ -56,6 +67,7 @@ function SingleShareDialog({
   const [error, setError] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const search = useRef<HTMLInputElement>(null);
+  const guard = useCloseGuard(onClose);
   /** Alt+P terwijl de delingen nog laden: het zoekveld is er dan nog niet. Hier staat waar de
    * focus toen stond; zodra het veld er is en de focus daar nog staat, gaat hij naar het veld. */
   const searchWanted = useRef<Element | null | undefined>(undefined);
@@ -108,19 +120,48 @@ function SingleShareDialog({
   return (
     <Dialog
       title={t("sharing.dialog.title", { name: node.name })}
-      onClose={onClose}
-      actions={<Button onClick={onClose}>{t("common.close")}</Button>}
+      onClose={guard.close}
+      actions={<Button onClick={guard.close}>{t("common.close")}</Button>}
     >
       {error && <p role="alert">{error}</p>}
       {shares === null && !error && <p className="muted">{t("common.loading")}</p>}
       {shares !== null && (
         <>
-          <People node={node} shares={people} onChanged={changed} search={search} />
+          <People node={node} shares={people} onChanged={changed} search={search} pending={guard.pending} />
           <Links node={node} shares={links} onChanged={changed} open={linkOpen} setOpen={setLinkOpen} />
         </>
       )}
     </Dialog>
   );
+}
+
+/**
+ * Sluiten (Escape, × of Sluiten) terwijl er nog iemand op "Klaar om te delen" staat: eerst
+ * vragen. Kiezen deelt niet meer meteen; zonder deze vraag viel de lijst stil weg en kreeg de
+ * ander niets. pending houdt AddPeople bij (leeg zolang Delen loopt: dan wordt er al gedeeld).
+ */
+function useCloseGuard(onClose: () => void): { pending: RefObject<readonly Option[]>; close: () => void } {
+  const pending = useRef<readonly Option[]>([]);
+  const asking = useRef(false);
+  const close = useCallback(() => {
+    const list = pending.current;
+    if (list.length === 0) {
+      onClose();
+      return;
+    }
+    if (asking.current) return;
+    asking.current = true;
+    void confirm({
+      title: t("sharing.people.closeTitle"),
+      message: t("sharing.people.closeText", { names: fmt.list(list.map((p) => p.name)) }),
+      confirm: t("sharing.people.closeConfirm"),
+      cancel: t("sharing.people.closeCancel"),
+    }).then((yes) => {
+      asking.current = false;
+      if (yes) onClose();
+    });
+  }, [onClose]);
+  return { pending, close };
 }
 
 /** Kwam de knop `to` net terug (shown) in de plaats van iets met de focus (een formulier dat
@@ -187,39 +228,230 @@ function PermissionSelect({
   );
 }
 
+/** Delen met wie op de lijst staat; geeft de keys van wie het helemaal lukte (die gaan van de
+ * lijst af). permission is bij een album altijd "read". */
+type ShareRun = (people: Option[], permission: "read" | "write", expires: string | null) => Promise<string[]>;
+
+/**
+ * Personen en groepen toevoegen. Kiezen in het zoekveld deelt nog niet: wie je kiest, komt op de
+ * lijst "Klaar om te delen", met de rechten en de vervaldatum ernaast. Pas Delen (of Enter in het
+ * lege zoekveld) deelt met iedereen op de lijst. Zo zie en kies je de rechten vóór er iets gedeeld
+ * is, in welke volgorde je het ook doet; eerder deelde kiezen meteen, met de rechten die er op dat
+ * moment stonden ("Kan bekijken"), en een latere keuze deed niets meer voor wie al gekozen was.
+ */
+function AddPeople({
+  kind,
+  exclude,
+  busy,
+  search,
+  pendingOut,
+  onShare,
+  onError,
+}: {
+  /** Een album deel je alleen om te bekijken: dan geen keuze voor de rechten. */
+  kind: FileNode["kind"];
+  /** Wie al een deling heeft */
+  exclude: Excluded;
+  /** Er loopt al iets anders (wijzigen of stoppen met delen) */
+  busy: boolean;
+  search: RefObject<HTMLInputElement | null>;
+  /** Wie er nu klaarstaat, voor de vraag bij sluiten (zie useCloseGuard) */
+  pendingOut: RefObject<readonly Option[]>;
+  onShare: ShareRun;
+  onError(message: string | null): void;
+}): JSX.Element {
+  const album = kind === "album";
+  const [pending, setPending] = useState<readonly Option[]>([]);
+  const [permission, setPermission] = useState<"read" | "write">("read");
+  const [date, setDate] = useState("");
+  const [running, setRunning] = useState(false);
+  /** Voor schermlezers: wie er net op de lijst kwam of eraf ging. */
+  const [said, setSaid] = useState("");
+  /** Tegen dubbel delen (dubbelklik, of Enter en een klik): de state is pas na de render bij. */
+  const started = useRef(false);
+  const removeButtons = useRef(new Map<string, HTMLButtonElement>());
+  /** Na weghalen: de focus naar de knop van de volgende (key), of null: het zoekveld. */
+  const focusAfter = useRef<string | null | undefined>(undefined);
+
+  // Wie intussen een deling heeft (een fout "al gedeeld", of gedeeld vanaf een ander apparaat),
+  // staat niet meer klaar
+  const list = pending.filter((p) => !isExcluded(p.target, exclude));
+  const blocked = busy || running;
+  const headId = useId();
+
+  useEffect(() => {
+    pendingOut.current = running ? [] : list;
+  });
+
+  // En daarna ook echt van de lijst af: anders kwam hij terug als je later stopt met delen
+  useEffect(() => {
+    setPending((all) => (all.some((p) => isExcluded(p.target, exclude)) ? all.filter((p) => !isExcluded(p.target, exclude)) : all));
+  }, [exclude]);
+
+  useEffect(() => {
+    const key = focusAfter.current;
+    if (key === undefined) return;
+    focusAfter.current = undefined;
+    const button = key === null ? undefined : removeButtons.current.get(key);
+    if (button) button.focus();
+    else search.current?.focus();
+  }, [pending, search]);
+
+  function add(o: Option): boolean {
+    setPending((all) => withPending(all, o));
+    setSaid(t(album ? "sharing.people.pendingAddedAlbum" : "sharing.people.pendingAdded", { name: o.name }));
+    return true;
+  }
+
+  function drop(o: Option) {
+    const i = list.findIndex((p) => p.key === o.key);
+    focusAfter.current = (list[i + 1] ?? list[i - 1])?.key ?? null;
+    setPending((all) => all.filter((p) => p.key !== o.key));
+    setSaid(t("sharing.people.pendingRemoved", { name: o.name }));
+  }
+
+  async function share() {
+    if (started.current || blocked || list.length === 0) return;
+    let expires: string | null = null;
+    try {
+      expires = checkedExpiry(date);
+    } catch (e) {
+      onError(errorText(e));
+      return;
+    }
+    started.current = true;
+    setRunning(true);
+    setSaid("");
+    try {
+      const done = new Set(await onShare([...list], album ? "read" : permission, expires));
+      setPending((all) => all.filter((p) => !done.has(p.key)));
+      if (list.every((p) => done.has(p.key))) setDate("");
+    } finally {
+      started.current = false;
+      setRunning(false);
+      // Terug in het zoekveld, voor de volgende (met een lege lijst gaat Delen zo uit)
+      search.current?.focus();
+    }
+  }
+
+  return (
+    <>
+      <div className="share-add">
+        <PersonPicker
+          exclude={excluding(exclude, list)}
+          busy={blocked}
+          onPick={add}
+          onSubmit={() => void share()}
+          inputRef={search}
+          onError={onError}
+        />
+      </div>
+      {list.length > 0 && (
+        <p className="share-pending-head">
+          <strong id={headId}>{t("sharing.people.pending")}</strong>{" "}
+          <span className="muted" id={`${headId}-hint`}>
+            {album ? t("sharing.people.pendingHintAlbum") : t("sharing.people.pendingHint")}
+          </span>
+        </p>
+      )}
+      {list.length > 0 && (
+        <ul className="share-pending" aria-labelledby={headId} aria-describedby={`${headId}-hint`}>
+          {list.map((p) => (
+            <li key={p.key}>
+              <span>
+                {p.name} <span className="muted">{p.detail}</span>
+              </span>
+              <IconButton
+                ref={(b) => {
+                  if (b) removeButtons.current.set(p.key, b);
+                  else removeButtons.current.delete(p.key);
+                }}
+                icon="close"
+                label={t("sharing.people.pendingRemove", { name: p.name })}
+                disabled={blocked}
+                onClick={() => drop(p)}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="sr-only" role="status">
+        {said}
+      </p>
+      <div className="share-add share-go">
+        {!album && (
+          <label className="share-date">
+            <span>{t("sharing.people.permFor")}</span>
+            <PermissionSelect
+              kind={kind}
+              value={permission}
+              label={t("sharing.people.permFor")}
+              disabled={blocked}
+              onChange={setPermission}
+            />
+          </label>
+        )}
+        <label className="share-date">
+          <span>{t("sharing.people.expiry")}</span>
+          <input
+            type="date"
+            min={today()}
+            value={date}
+            disabled={blocked}
+            onChange={(e) => setDate(e.target.value)}
+          />
+        </label>
+        {/* Tijdens het delen niet uitgeschakeld maar bezig (aria-busy, een klik doet niets): een
+            uitgeschakelde knop verliest de focus (naar <body>), de hele lus lang. */}
+        <Button
+          variant="primary"
+          icon="share"
+          disabled={!running && (list.length === 0 || busy)}
+          busy={running}
+          onClick={() => void share()}
+        >
+          {t("sharing.people.share")}
+        </Button>
+      </div>
+    </>
+  );
+}
+
 function People({
   node,
   shares,
   onChanged,
   search,
+  pending,
 }: {
   node: FileNode;
   shares: Share[];
   onChanged: () => Promise<void>;
   search: RefObject<HTMLInputElement | null>;
+  pending: RefObject<readonly Option[]>;
 }): JSX.Element {
-  const [permission, setPermission] = useState<"read" | "write">("read");
-  const [date, setDate] = useState("");
   const action = useAction(onChanged);
   const album = node.kind === "album";
 
   const users = new Set(shares.map((s) => s.user?.id).filter((x): x is string => Boolean(x)));
   const groups = new Set(shares.map((s) => s.group?.id).filter((x): x is string => Boolean(x)));
 
-  async function add(to: ShareTarget, name: string): Promise<boolean> {
-    let expires: string | null = null;
-    try {
-      expires = checkedExpiry(date);
-    } catch (e) {
-      action.setError(errorText(e));
-      return false;
-    }
-    const ok = await action.run(() => api.share(node.id, to, album ? "read" : permission, expires ?? undefined));
-    if (ok) {
-      toast(t("sharing.people.added", { name }), { kind: "ok" });
-      setDate("");
-    }
-    return ok;
+  /** Eén POST per persoon of groep, daarna één keer de lijst verversen en één melding. */
+  async function share(people: Option[], permission: "read" | "write", expires: string | null): Promise<string[]> {
+    let results: ShareResult<Option, string>[] = [];
+    await action.run(async () => {
+      results = await shareEach(people, [node.id], (who, id) =>
+        api.share(id, who.target, permission, expires ?? undefined),
+      );
+    });
+    const done = results.filter((r) => r.failed.length === 0).map((r) => r.who);
+    if (done.length > 0) toast(t("sharing.people.added", { name: fmt.list(done.map((p) => p.name)) }), { kind: "ok" });
+    const failed = results.filter((r) => r.failed.length > 0);
+    if (failed.length > 0)
+      action.setError(
+        failed.map((r) => t("sharing.people.failed", { name: r.who.name, reason: errorText(r.failed[0].error) })).join("\n"),
+      );
+    return done.map((p) => p.key);
   }
 
   async function remove(s: Share, name: string) {
@@ -244,24 +476,21 @@ function People({
   return (
     <section className="share-section" aria-labelledby="share-people">
       <h3 id="share-people">{t("sharing.people.title")}</h3>
-      <div className="share-add">
-        <PersonPicker
-          exclude={{ users, groups }}
-          busy={action.busy}
-          onPick={add}
-          inputRef={search}
-          onError={action.setError}
-        />
-        {!album && (
-          <PermissionSelect kind={node.kind} value={permission} label={t("sharing.people.permFor")} onChange={setPermission} />
-        )}
-        <label className="share-date">
-          <span>{t("sharing.people.expiry")}</span>
-          <input type="date" min={today()} value={date} onChange={(e) => setDate(e.target.value)} />
-        </label>
-      </div>
+      <AddPeople
+        kind={node.kind}
+        exclude={{ users, groups }}
+        busy={action.busy}
+        search={search}
+        pendingOut={pending}
+        onShare={share}
+        onError={action.setError}
+      />
       {album && <p className="muted">{t("sharing.people.albumNote")}</p>}
-      {action.error && <p role="alert">{action.error}</p>}
+      {action.error && (
+        <p role="alert" className="share-errors">
+          {action.error}
+        </p>
+      )}
       {shares.length === 0 ? (
         <p className="muted">{t("sharing.people.nobody")}</p>
       ) : (
@@ -599,7 +828,7 @@ function LinkFields({
   );
 }
 
-/** Een selectie (≤ 100) in één keer delen met een persoon of groep. */
+/** Een selectie (≤ 100) in één keer delen met de personen en groepen op de lijst. */
 function MultiShareDialog({
   nodes,
   onClose,
@@ -611,56 +840,66 @@ function MultiShareDialog({
 }): JSX.Element {
   const plan = multiShare(nodes, MAX_MULTI_SHARE);
   const album = plan.ok.some((n) => n.kind === "album");
-  const [permission, setPermission] = useState<"read" | "write">("read");
-  const [date, setDate] = useState("");
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const search = useRef<HTMLInputElement>(null);
-  const empty = useRef(new Set<string>()).current;
+  const guard = useCloseGuard(onClose);
+  /** Per persoon of groep (key) de items die klaar zijn: gedeeld in deze dialoog, of die hij al
+   * had ("al gedeeld"; die houden hun rechten). Nog een keer Delen stuurt alleen de rest. */
+  const settled = useRef(new Map<string, Set<string>>());
+  /** Wie alles al heeft: die gaat van de lijst af en wordt niet meer aangeboden. */
+  const [complete, setComplete] = useState<Excluded>(() => ({ users: new Set(), groups: new Set() }));
+  const left = (who: Option) => plan.ok.filter((n) => !settled.current.get(who.key)?.has(n.id));
 
   useShortcuts(
     [{ combo: "alt+p", label: t("sharing.keys.people"), run: () => search.current?.focus(), allowInInput: true }],
     { scope: "share" },
   );
 
-  async function share(to: ShareTarget): Promise<boolean> {
-    let expires: string | null = null;
-    try {
-      expires = checkedExpiry(date);
-    } catch (e) {
-      setError(errorText(e));
-      return false;
-    }
-    const total = plan.ok.length;
-    const failed: unknown[] = [];
+  /** Elk item met elke persoon of groep (alleen wat er voor hem nog niet is): één POST per keer,
+   * met voortgang. Wie daarna alles heeft, gaat van de lijst af. */
+  async function share(people: Option[], permission: "read" | "write", expires: string | null): Promise<string[]> {
     setError(null);
-    setProgress({ done: 0, total });
-    // Na elkaar, niet tegelijk: elke deling geeft de ontvanger een live melding, en die wachtrij
-    // is beperkt
-    for (let i = 0; i < total; i++) {
-      try {
-        await api.share(plan.ok[i].id, to, album ? "read" : permission, expires ?? undefined);
-      } catch (e) {
-        failed.push(e);
-      }
-      setProgress({ done: i + 1, total });
-    }
+    setProgress({ done: 0, total: people.reduce((sum, who) => sum + left(who).length, 0) });
+    const results = await shareEach(
+      people,
+      left,
+      (who, n) => api.share(n.id, who.target, permission, expires ?? undefined),
+      (done, total) => setProgress({ done, total }),
+    );
     setProgress(null);
-    const ok = total - failed.length;
-    if (ok > 0) toast(t("sharing.many.done", { n: ok }), { kind: "ok" });
-    if (failed.length > 0) {
-      const reason = errorText(failed[0]);
-      setError(t("sharing.many.failed", { n: failed.length, reason }));
+    const messages: string[] = [];
+    for (const r of results) {
+      const got = settled.current.get(r.who.key) ?? new Set<string>();
+      settled.current.set(r.who.key, got);
+      for (const n of r.ok) got.add(n.id);
+      const already = r.failed.filter((f) => alreadyShared(f.error)).map((f) => f.item);
+      const other = r.failed.filter((f) => !alreadyShared(f.error));
+      for (const n of already) got.add(n.id);
+      if (already.length > 0)
+        messages.push(
+          t("sharing.many.already", { n: already.length, name: r.who.name, items: someNames(already.map((n) => n.name)) }),
+        );
+      if (other.length > 0)
+        messages.push(t("sharing.many.failed", { n: other.length, name: r.who.name, reason: errorText(other[0].error) }));
     }
+    const shared = results.filter((r) => r.ok.length > 0);
+    if (shared.length > 0) {
+      const n = new Set(shared.flatMap((r) => r.ok.map((x) => x.id))).size;
+      toast(t("sharing.many.done", { n, names: fmt.list(shared.map((r) => r.who.name)) }), { kind: "ok" });
+    }
+    if (messages.length > 0) setError(messages.join("\n"));
+    const done = people.filter((who) => left(who).length === 0);
+    if (done.length > 0) setComplete((c) => excluding(c, done));
     onChanged();
-    return failed.length === 0;
+    return done.map((who) => who.key);
   }
 
   return (
     <Dialog
       title={t("sharing.dialog.titleMany", { n: nodes.length })}
-      onClose={onClose}
-      actions={<Button onClick={onClose}>{t("common.close")}</Button>}
+      onClose={guard.close}
+      actions={<Button onClick={guard.close}>{t("common.close")}</Button>}
     >
       {plan.tooMany ? (
         <p role="alert">{t("sharing.many.tooMany", { max: MAX_MULTI_SHARE, n: nodes.length })}</p>
@@ -672,27 +911,15 @@ function MultiShareDialog({
             {plan.ok.length === 0 ? (
               <p className="muted">{t("sharing.many.nothing")}</p>
             ) : (
-              <div className="share-add">
-                <PersonPicker
-                  exclude={{ users: empty, groups: empty }}
-                  busy={progress !== null}
-                  onPick={share}
-                  inputRef={search}
-                  onError={setError}
-                />
-                {!album && (
-                  <PermissionSelect
-                    kind="dir"
-                    value={permission}
-                    label={t("sharing.people.permFor")}
-                    onChange={setPermission}
-                  />
-                )}
-                <label className="share-date">
-                  <span>{t("sharing.people.expiry")}</span>
-                  <input type="date" min={today()} value={date} onChange={(e) => setDate(e.target.value)} />
-                </label>
-              </div>
+              <AddPeople
+                kind={album ? "album" : "dir"}
+                exclude={complete}
+                busy={progress !== null}
+                search={search}
+                pendingOut={guard.pending}
+                onShare={share}
+                onError={setError}
+              />
             )}
             {album && <p className="muted">{t("sharing.people.albumNote")}</p>}
             {progress && (
@@ -701,7 +928,11 @@ function MultiShareDialog({
                 <span aria-live="polite">{t("sharing.many.progress", progress)}</span>
               </div>
             )}
-            {error && <p role="alert">{error}</p>}
+            {error && (
+              <p role="alert" className="share-errors">
+                {error}
+              </p>
+            )}
           </section>
           <section className="share-section" aria-labelledby="share-many-items">
             <h3 id="share-many-items">{t("sharing.many.items")}</h3>

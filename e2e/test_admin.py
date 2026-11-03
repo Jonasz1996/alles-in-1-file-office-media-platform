@@ -232,3 +232,69 @@ def test_taken_en_groepen_met_het_toetsenbord(context_as, ui_admin, seeded):
     page.keyboard.type(name)
     page.keyboard.press("Enter")
     expect(page.get_by_role("row").filter(has_text=name)).to_have_count(1)
+
+
+def test_escape_sluit_alleen_de_bovenste_dialoog(context_as, ui_admin, user_factory):
+    """Een dialoog in een dialoog (Nieuw wachtwoord in Gebruiker wijzigen), alleen met het
+    toetsenbord: Escape sluit alleen de bovenste en de focus gaat terug naar de knop die hem
+    opende, ook drie keer op rij. ui/Dialog handelt Escape zelf af. Met alleen de cancel van de
+    browser gingen ze bij de eerste Escape al allebei dicht: React liet de cancel van de dialoog
+    erin ook bij de onCancel van de dialoog eromheen komen. Er komt ook geen cancel meer, dus
+    onClose loopt per Escape één keer."""
+    other = user_factory(name=f"Wachtwoord Kwijt {uuid.uuid4().hex[:6]}")
+    page = context_as(ui_admin).new_page()
+    page.goto("/beheer/gebruikers")
+    page.get_by_label("Zoek op naam of e-mailadres", exact=True).fill(other.display_name)
+    edit = page.get_by_role("button", name=f"{other.display_name} wijzigen", exact=True)
+    edit.click()
+    outer = page.get_by_role("dialog", name=f"{other.display_name} wijzigen", exact=True)
+    expect(outer).to_be_visible()
+    page.evaluate(
+        """() => {
+          window.__cancels = 0;
+          document.addEventListener('cancel', () => { window.__cancels++; }, true);
+        }"""
+    )
+    button = outer.get_by_role("button", name="Wachtwoord instellen…", exact=True)
+    inner = page.get_by_role("dialog", name=f"Nieuw wachtwoord voor {other.display_name}")
+    for _ in range(3):
+        button.focus()
+        page.keyboard.press("Enter")
+        expect(inner).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(inner).to_have_count(0)
+        expect(outer).to_be_visible()
+        assert outer.evaluate("(d) => d.open")
+        expect(button).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(outer).to_have_count(0)
+    expect(edit).to_be_focused()
+    assert page.evaluate("() => window.__cancels") == 0
+
+
+def test_sluitverzoek_in_een_dialoog_in_een_dialoog(context_as, ui_admin, user_factory):
+    """Een sluitverzoek dat niet als toets binnenkomt (de terugknop van Android; hier
+    dialog.requestClose(), dat in Chromium dezelfde weg gaat): alleen Wachtwoord instellen gaat
+    dicht, Gebruiker wijzigen blijft open, met de focus weer op de knop. React liet de cancel van
+    de dialoog erin ook bij de dialoog eromheen komen, en dan gingen ze allebei dicht."""
+    other = user_factory(name=f"Terugknop {uuid.uuid4().hex[:6]}")
+    page = context_as(ui_admin).new_page()
+    page.goto("/beheer/gebruikers")
+    page.get_by_label("Zoek op naam of e-mailadres", exact=True).fill(other.display_name)
+    edit = page.get_by_role("button", name=f"{other.display_name} wijzigen", exact=True)
+    edit.click()
+    outer = page.get_by_role("dialog", name=f"{other.display_name} wijzigen", exact=True)
+    expect(outer).to_be_visible()
+    button = outer.get_by_role("button", name="Wachtwoord instellen…", exact=True)
+    button.click()
+    inner = page.get_by_role("dialog", name=f"Nieuw wachtwoord voor {other.display_name}")
+    expect(inner).to_be_visible()
+    inner.evaluate("(d) => d.requestClose()")
+    expect(inner).to_have_count(0)
+    expect(outer).to_be_visible()
+    assert outer.evaluate("(d) => d.open")
+    expect(button).to_be_focused()
+    # En dan de buitenste zelf: die gaat dicht
+    outer.evaluate("(d) => d.requestClose()")
+    expect(outer).to_have_count(0)
+    expect(edit).to_be_focused()
