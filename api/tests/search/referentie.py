@@ -335,6 +335,25 @@ class Referentie:
         namen = {n for n in mag if all(w in self.nodes[n].naam for w in vraag.alle)}
         return Uitkomst(woorden=treffers, namen=namen - treffers)
 
+    def op_naam(
+        self,
+        user: uuid.UUID,
+        q: str,
+        *,
+        in_: uuid.UUID | None = None,
+        nu: datetime | None = None,
+    ) -> set[uuid.UUID]:
+        """Zoeken zoals in 0.7.0 (LikeFallback, ook de terugval van Keuze 10): elk woord van
+        fold(q), gesplitst op spaties (hooguit 10), staat in de gevouwen naam; zonder je eigen
+        hoofdmap en zonder in_ zelf."""
+        stukken = fold(q).split()[:MAX_WOORDEN]
+        zonder = {in_} if in_ is not None else {self.wortels.get(user)}
+        return {
+            n
+            for n in self.zichtbaar(user, in_=in_, nu=nu) - zonder
+            if all(w in self.nodes[n].naam for w in stukken)
+        }
+
 
 # --- De vragenlijst ------------------------------------------------------------------------
 

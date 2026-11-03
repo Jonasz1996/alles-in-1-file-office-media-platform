@@ -10,7 +10,6 @@ import json
 import math
 import shutil
 import subprocess
-import warnings
 import zipfile
 from pathlib import Path
 
@@ -298,11 +297,12 @@ def test_make_laat_niets_half_achter(tmp_path, monkeypatch):
 
 
 def test_de_sleutel_volgt_het_lettertype(monkeypatch):
+    """Met en zonder DejaVu een andere map (de scans zien er anders uit). Beide gevallen met
+    de hand, zodat de test ook klopt waar DejaVu ontbreekt (python:3.12-slim in slim.sh)."""
+    monkeypatch.setattr(F, "lettertype", lambda grootte=36: ("DejaVuSans", None))
     met = F.sleutel()
-    monkeypatch.setattr(F, "LETTERTYPEN", ())
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        assert F.sleutel() != met
+    monkeypatch.setattr(F, "lettertype", lambda grootte=36: ("pillow-standaard", None))
+    assert F.sleutel() != met
 
 
 # --- Met ffmpeg en met tesseract ------------------------------------------------------------

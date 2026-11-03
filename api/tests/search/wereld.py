@@ -117,6 +117,10 @@ GEBRUIKERS = {
     "iris": ("user", "Iris"),
 }
 GROEP = "Team"
+# Vragen op naam (zoals in 0.7.0) met voor elke persoon een ander antwoord: de API-test en de
+# e2e leggen de app hiermee naast Referentie.op_naam
+NAAMVRAGEN = ("verslag", "utrecht", "img", "brief", "notities", "plan", "werk", "jpg", "kopie",
+              "scan", "a", "IMG_utrecht klein", "privé")  # fmt: skip
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _NS = uuid.UUID("6e0c2f5e-7a3b-4d58-9a51-2b7f4d1c0006")
 

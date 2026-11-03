@@ -852,13 +852,24 @@ def _fotos(boom: _Boom, schrijf: _Schrijver) -> None:
 WACHTWOORD = "bench-wachtwoord-lang-genoeg"
 
 
+def app_blob() -> dict[str, object]:
+    """preview, meta_version en render_version zoals de app ze nu zet: dan hebben de backfills
+    bij het starten niets te doen. Importeert de app (dus niet in tools/zoekbench)."""
+    from app import previews, render_meta
+
+    return {
+        "preview": "none",
+        "meta_version": render_meta.VERSION,
+        "render_version": previews.RENDER_VERSION,
+    }
+
+
 def maak(data_dir: Path, plan: Plan, *, wachtwoord: str = WACHTWOORD) -> Uitkomst:
     """Een nieuwe database in data_dir (platform.db) via de echte migratie, gevuld met de boom
     van dit plan. Bestaat er al een database, dan komt de boom erbij (de migratie doet dan
     niets meer)."""
     import asyncio
 
-    from app import previews, render_meta
     from app.config import Settings
     from app.db import get_engine
     from app.migrate import upgrade
@@ -877,16 +888,7 @@ def maak(data_dir: Path, plan: Plan, *, wachtwoord: str = WACHTWOORD) -> Uitkoms
     migratie = time.monotonic() - klok
     con = sqlite3.connect(data_dir / "platform.db")
     try:
-        uit = vul(
-            con,
-            plan,
-            wachtwoord_hash=hash_password(wachtwoord),
-            blob_standaard={
-                "preview": "none",
-                "meta_version": render_meta.VERSION,
-                "render_version": previews.RENDER_VERSION,
-            },
-        )
+        uit = vul(con, plan, wachtwoord_hash=hash_password(wachtwoord), blob_standaard=app_blob())
     finally:
         con.close()
     uit.seconden = {"migratie": migratie, **uit.seconden}

@@ -155,8 +155,9 @@ jobs:
         run: npm ci && npm run build
       - name: Chromium voor Playwright
         run: uv run --with playwright python -m playwright install --with-deps chromium
-      # Zonder media (fase 5, §4.8): die draait in e2e-media en e2e-media-perf
-      - run: uv run --with playwright pytest ../e2e -m "not perf and not media and not media_perf and not office and not office_real and not provider_real"
+      # Zonder media (fase 5, §4.8): die draait in e2e-media en e2e-media-perf. Zoeken (marker
+      # zoek, fase 6) draait hier mee; ocr (echte tesseract) alleen in een eigen job
+      - run: uv run --with playwright pytest ../e2e -m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"
       - name: Office met de nep-DS (marker office, fase 4 §4.4; in elke run)
         run: uv run --with playwright pytest ../e2e -m office
 
@@ -413,7 +414,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ansible ansible-lint yamllint shellcheck-py
-      - run: shellcheck infra/single/install.sh infra/single/tests/*.sh infra/scripts/*.sh api/tests/pebble/start.sh e2e/office_ds.sh
+      - run: shellcheck infra/single/install.sh infra/single/tests/*.sh infra/scripts/*.sh api/tests/pebble/start.sh e2e/office_ds.sh e2e/slim.sh
       - run: yamllint -s .
       - name: Ansible lint
         working-directory: infra/ansible

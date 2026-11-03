@@ -207,3 +207,29 @@ async def test_iris_wissen_laat_geen_personen_achter(settings):
         await conn.run_sync(check_fts)
         # Eva's persoon blijft
         assert (await conn.exec_driver_sql("SELECT count(*) FROM person")).scalar() == 1
+
+
+async def test_zoeken_van_nu_volgt_de_referentie(client, settings):
+    """Zoeken op naam zoals in 0.7.0 (LikeFallback, tot Z1): wat elke persoon krijgt, is wat
+    Referentie.op_naam zegt. De e2e (e2e/test_zoek_z0.py) doet hetzelfde in de echte app."""
+    w = await W.bouw_async(settings)
+    ref = await _lees(settings)
+    for naam in W.GEBRUIKERS:
+        login = {"email": W.email(naam), "password": W.WACHTWOORD}
+        r = await client.post("/api/v1/auth/login", json=login)
+        assert r.status_code == 200, (naam, r.text)
+        kop = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        for q in W.NAAMVRAGEN:
+            r = await client.get("/api/v1/search", params={"q": q}, headers=kop)
+            assert r.status_code == 200, (naam, q, r.text)
+            gevonden = {uuid.UUID(h["node"]["id"]) for h in r.json()["results"]}
+            assert gevonden == ref.op_naam(w.users[naam], q), (naam, q)
+    # Binnen een map, ook een gedeelde
+    r = await client.post("/api/v1/auth/login", json={"email": W.email("bram"),
+                                                      "password": W.WACHTWOORD})  # fmt: skip
+    kop = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    for q in ("utrecht", "brief", "a"):
+        params = {"q": q, "in": str(w.ids["werk"])}
+        r = await client.get("/api/v1/search", params=params, headers=kop)
+        gevonden = {uuid.UUID(h["node"]["id"]) for h in r.json()["results"]}
+        assert gevonden == ref.op_naam(w.users["bram"], q, in_=w.ids["werk"]), q
