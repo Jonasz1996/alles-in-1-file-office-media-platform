@@ -228,6 +228,41 @@ async def test_downgrade_met_ja_haalt_ze_eruit_zonder_vragen(settings):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "stdin",
+    [b"\nnee\n", b"ja\n", b""],
+    ids=["ja-dan-nee", "ja-dan-eof", "eof"],
+)
+async def test_downgrade_die_niet_doorgaat_haalt_ook_geen_items_weg(settings, stdin):
+    """Review Z0, veilig F1: het antwoord op de vraag naar de regel-items doet pas iets na het
+    laatste "ja". Wie daarna "nee" zegt, of geen invoer meer heeft, houdt alles: de items en
+    revisie 0010."""
+    await _album_met_regel_items(settings)
+    result = await run_cli(settings, "db-downgrade", "0009", stdin=stdin)
+    assert result.returncode == 1
+    assert "Niets gedaan." in result.stderr.decode()
+    assert "uit hun album gehaald" not in result.stdout.decode()
+    assert await revision(settings) == HEAD
+    assert await _items(settings) == 3
+    assert await cli.unshared_rule_items(settings) == 2
+
+
+@pytest.mark.anyio
+async def test_regel_items_en_downgrade_in_een_transactie(settings, monkeypatch):
+    """Review Z0, veilig F1: faalt de downgrade halverwege, dan staan de items er nog."""
+    await _album_met_regel_items(settings)
+
+    def kapot(cfg, revision):
+        raise RuntimeError("downgrade stuk")
+
+    monkeypatch.setattr(cli.command, "downgrade", kapot)
+    with pytest.raises(RuntimeError, match="downgrade stuk"):
+        await cli.db_downgrade(settings, "0009", drop_rule_items=True)
+    assert await revision(settings) == HEAD
+    assert await _items(settings) == 3
+
+
+@pytest.mark.anyio
 async def test_downgrade_zonder_regel_items_vraagt_niets_extra(settings):
     result = await run_cli(settings, "db-downgrade", "0009", stdin=b"ja\n")
     assert result.returncode == 0, result.stderr.decode()

@@ -170,17 +170,26 @@ def check_downgrade(current: str | None, revision: str) -> None:
         raise UnknownRevision(revision)
 
 
-async def db_downgrade(settings: Settings, revision: str) -> None:
-    """Alembic downgrade naar revision, in één transactie."""
+async def db_downgrade(settings: Settings, revision: str, *, drop_rule_items: bool = False) -> int:
+    """Alembic downgrade naar revision, in één transactie. drop_rule_items: eerst de album-items
+    van een regel die niet gedeeld worden uit hun album (§3.1), in dezelfde transactie; faalt de
+    downgrade, dan staan ze er nog. Het aantal items dat eruit ging."""
     cfg = alembic_config(settings.db_url)
 
-    def run(connection) -> None:
+    def run(connection) -> int:
+        removed = 0
+        if drop_rule_items:
+            result = connection.execute(
+                delete(AlbumItem).where(AlbumItem.source == "rule", AlbumItem.shared == 0)
+            )
+            removed = int(result.rowcount)
         cfg.attributes["connection"] = connection
         cfg.attributes["timezone"] = settings.timezone
         command.downgrade(cfg, revision)
+        return removed
 
     async with get_engine(settings).begin() as conn:
-        await conn.run_sync(run)
+        return await conn.run_sync(run)
 
 
 # De revisie van zoeken en foto's: alleen een downgrade die hém weghaalt, raakt de zoekindex,
@@ -211,15 +220,6 @@ async def unshared_rule_items(settings: Settings) -> int:
             .where(AlbumItem.source == "rule", AlbumItem.shared == 0)
         )
     return int(found or 0)
-
-
-async def drop_unshared_rule_items(settings: Settings) -> int:
-    """Haalt die items uit hun album; het aantal dat eruit ging."""
-    async with get_engine(settings).begin() as conn:
-        result = await conn.execute(
-            delete(AlbumItem).where(AlbumItem.source == "rule", AlbumItem.shared == 0)
-        )
-    return int(result.rowcount)
 
 
 BACKUP_DIR = "backup"
@@ -359,11 +359,12 @@ def _ask_rule_items(count: int) -> bool:
     return answer.strip().lower() in ("", "ja", "j")
 
 
-def _rule_items_first(settings: Settings, yes: bool, search: bool) -> None:
-    """Regel-items die niet gedeeld worden eerst uit hun album (§3.1). Alleen als de downgrade
-    0010 weghaalt: daarvóór bestaan source en shared niet."""
+def _rule_items_answer(settings: Settings, yes: bool, search: bool) -> tuple[int, bool]:
+    """Hoeveel regel-items niet gedeeld worden, en of ze eerst uit hun album gaan (§3.1). Alleen
+    als de downgrade 0010 weghaalt: daarvóór bestaan source en shared niet. Dit vraagt alleen;
+    er verandert pas iets na het laatste "ja", in de transactie van de downgrade."""
     if not search:
-        return
+        return 0, False
 
     async def count() -> int:
         try:
@@ -373,18 +374,8 @@ def _rule_items_first(settings: Settings, yes: bool, search: bool) -> None:
 
     found = asyncio.run(count())
     if not found:
-        return
-    if not yes and not _ask_rule_items(found):
-        print("Die items blijven in hun album staan.")
-        return
-
-    async def drop() -> int:
-        try:
-            return await drop_unshared_rule_items(settings)
-        finally:
-            await get_engine(settings).dispose()
-
-    print(f"{asyncio.run(drop())} item(s) zijn uit hun album gehaald.")
+        return 0, False
+    return found, yes or _ask_rule_items(found)
 
 
 def _downgrade(settings: Settings, revision: str, yes: bool) -> int:
@@ -405,18 +396,22 @@ def _downgrade(settings: Settings, revision: str, yes: bool) -> int:
         return 1
     assert now is not None  # check_downgrade laat None niet door
     search = SEARCH_REVISION in removed_revisions(now, revision)
-    _rule_items_first(settings, yes, search)
+    found, drop = _rule_items_answer(settings, yes, search)
     if not yes and not _confirm(now, revision, search=search):
         print("Niets gedaan.", file=sys.stderr)
         return 1
 
-    async def run() -> None:
+    async def run() -> int:
         try:
-            await db_downgrade(settings, revision)
+            return await db_downgrade(settings, revision, drop_rule_items=drop)
         finally:
             await get_engine(settings).dispose()
 
-    asyncio.run(run())
+    removed = asyncio.run(run())
+    if drop:
+        print(f"{removed} item(s) zijn uit hun album gehaald.")
+    elif found:
+        print("Die items blijven in hun album staan.")
     print(f"De database staat nu op revisie {revision}.")
     return 0
 

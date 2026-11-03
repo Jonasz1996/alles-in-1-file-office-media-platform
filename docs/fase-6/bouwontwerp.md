@@ -3782,7 +3782,9 @@ DROP COLUMN` voor `shared` en `source` (SQLite ≥ 3.35, beide builds; V10 voor 
 kopie van `node`. `db-downgrade` waarschuwt vóór "ja": de index, de plekken, de hashes, de
 personen en de regels van albums gaan weg; bestanden, delingen en albums blijven. Een item dat
 `shared = 0` had, is na de downgrade weer gedeeld zoals in 0.7.0: `db-downgrade` noemt het aantal
-en vraagt of de regel-items eerst uit het album moeten (standaard ja).
+en vraagt of de regel-items eerst uit het album moeten (standaard ja). Herzien na de review van
+Z0 (veilig F1): het antwoord doet pas iets na het laatste "ja", en de items gaan eruit in dezelfde
+transactie als de downgrade. Zegt iemand daarna "nee", of is de invoer op, dan blijft alles staan.
 
 **Tests** (`tests/test_migration_0010.py`, zoals die van 0008):
 
