@@ -305,6 +305,13 @@ Media als die map een bibliotheek is. De eigenaar van de map kiest op Media **Ni
 bibliotheek**, of opent de map in Bestanden en kiest **Als bibliotheek gebruiken** (films, series,
 muziek of video's). De scanner doet de rest; met een sleutel van TMDB komen er ook posters bij.
 
+**7. Foto's.** Importeer je foto's, dan maakt het platform tijdens de import al thumbnails:
+eerst van alles een kleine, daarna de grote versies. Wat iemand op Foto's of in een map bekijkt,
+gaat voor. Of alles klaar is, zie je op `/beheer` → **Taken** onder **Foto's en video's**.
+Staat daar iets als mislukt, of wacht er een video op ffmpeg, kies dan **Alles nalopen**. In de
+LXC kan het ook met `dc exec -T platform python -m app.cli previews-recheck`. Hoe dat werkt en
+wat er gemeten is: [docs/fotos-indexeren.md](../fotos-indexeren.md).
+
 ## De belastingtest op de LXC
 
 De belastingtest laat zien of de LXC drie kijkers tegelijk aankan die allemaal omgezet moeten
