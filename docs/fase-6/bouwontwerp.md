@@ -2332,7 +2332,9 @@ rijen en leest met `own_live_geo`.
 - `test_search_rebuild.py`: een upload tijdens een herbouw wacht ≤ 1 s, en de index is daarna
   gelijk aan een volledige herbouw (`integrity-check`);
 - `test_search_logs.py`: geen `q`, `bbox`, `z`, `place`, `country`, `person` of `day` in de log,
-  ook niet bij de kaart op zoom 14 en bij `/photos?place=`;
+  ook niet bij de kaart op zoom 14 en bij `/photos?place=`; ook niet bij een databasefout (de
+  engine heeft `hide_parameters=True`; staat er al sinds de review van Z0, veilig F6, in
+  `test_log_hiding.py`);
 - `test_search_snippets.py`: ß, een treffer na teken 20.000 (`snippet: null`, `match: "text"`),
   het budget van 40 ms met een nepklok, alleen tekst (geen HTML);
 - `test_search_purge_batches.py`: 10.911 nodes, geen transactie langer dan 1 s (staat er al
