@@ -397,11 +397,12 @@ async def test_upload_geeft_thumbnail(client, admin, settings, hub):
     r = await client.get(info["thumb"])  # zonder Authorization, zoals een <img>
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/webp"
-    # Zo lang als het adres geldig is (URL_PERIOD, hooguit 14 dagen), en nooit opnieuw vragen
+    # Zo lang als het adres geldig is (standaard 6 tot 12 uur), en nooit opnieuw vragen
     control = r.headers["cache-control"]
     assert control.startswith("private, max-age=") and control.endswith(", immutable")
     age = int(control.split("max-age=")[1].split(",")[0])
-    assert previews.URL_PERIOD < age <= 2 * previews.URL_PERIOD
+    assert previews.url_period(settings) == previews.URL_PERIOD == 6 * 3600
+    assert previews.URL_PERIOD - 5 < age <= 2 * previews.URL_PERIOD
     with Image.open(io.BytesIO(r.content)) as img:
         assert img.size == (192, 256)
     assert list((previews.root(BlobStore(settings.blob_dir)) / ".tmp").iterdir()) == []
@@ -436,12 +437,9 @@ async def test_ondertekend_adres(client, admin, settings):
     assert (await client.get(f"/api/v1/previews/..%2F..%2Fx/256.webp?{query}")).status_code == 404
 
 
-@pytest.mark.parametrize(
-    ("period", "days"), [(previews.URL_PERIOD, 7), (previews.PUBLIC_PERIOD, 0.25)]
-)
+@pytest.mark.parametrize(("period", "days"), [(7 * 24 * 3600, 7), (previews.PUBLIC_PERIOD, 0.25)])
 def test_verloop_afgerond_op_de_periode(period, days):
-    """In de app een week (de browser haalt een thumbnail zo hooguit eens per week), achter
-    een publieke link 6 uur zoals altijd."""
+    """Een week (als preview_url_hours 168 is) of 6 uur: binnen een blok hetzelfde adres."""
     assert period == days * 24 * 3600
     base = 1_000_000 * period
     assert previews.expiry(base, period) == base + period  # precies op de grens

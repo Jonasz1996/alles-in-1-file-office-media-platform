@@ -53,12 +53,15 @@ nieuwe proces, zoals voorheen. Een nieuwe taak wekt alleen de workers van zijn e
 
 ## Direct laden
 
-- Een previewadres blijft in de app **7 dagen** hetzelfde en werkt daarna nog hooguit 7 dagen
-  (`previews.URL_PERIOD`); achter een publieke link blijft het 6 uur (`PUBLIC_PERIOD`). De
-  browser mag een thumbnail zo lang bewaren als het adres geldig is (`Cache-Control: max-age`).
-  Een tweede bezoek haalt de thumbnails dus uit de cache. Vroeger veranderde elk adres elke 6
-  uur, en haalde de browser daarna alles opnieuw op.
-- De web-app vraagt adressen pas na 6 dagen opnieuw (`STALE_MS` in `web/src/browser/previews.ts`).
+- Een previewadres blijft hetzelfde tot de volgende grens van zijn termijn en werkt daarna nog
+  zo lang. De browser mag een thumbnail zo lang bewaren als het adres geldig is
+  (`Cache-Control: max-age` is wat er nog over is; was altijd een dag). Binnen een termijn haalt
+  een tweede bezoek de thumbnails dus uit de cache. De termijn is in de app standaard 6 uur,
+  zoals sinds fase 3 (`PLATFORM_PREVIEW_URL_HOURS`, nooit korter); achter een publieke link
+  altijd 6 uur (`previews.PUBLIC_PERIOD`), ook in de viewer van de link.
+- De web-app vraagt adressen na 5 uur opnieuw (`STALE_MS` in `web/src/browser/previews.ts`).
+  Geldt een adres langer, dan krijgt hij hetzelfde adres terug en blijft de afbeelding uit de
+  cache komen.
 - Komt er een thumbnail klaar (`preview.ready`), dan vraagt de tijdlijn (of het album) alleen
   de adressen van die foto's op (`POST /previews`, hooguit één keer per 500 ms) en zet de
   thumbnail in de plaatshouder. Vroeger las de pagina bij elke klare thumbnail de maanden en
@@ -67,11 +70,14 @@ nieuwe proces, zoals voorheen. Een nieuwe taak wekt alleen de workers van zijn e
   verplaatst), na het opnieuw verbinden, of als de opnamedatum uit de foto hem naar een andere
   dag verschuift (`preview.ready` met `dated`). Dat gebeurt hooguit één keer per seconde.
 
-**Te beslissen (Jonas):** de termijn van 7 dagen. Een previewadres is ondertekend op de
-inhoud, niet op de gebruiker. Na een ingetrokken deling werkt een adres dat al was uitgegeven
-dus nog hooguit 14 dagen (was 12 uur), alleen voor die ene thumbnail of grote versie en alleen
-met de inhoud van toen. Korter maken kan in `URL_PERIOD`; de browser haalt de thumbnails dan
-vaker opnieuw.
+**Te beslissen (Jonas):** een langere termijn in de app, bijvoorbeeld een week
+(`PLATFORM_PREVIEW_URL_HOURS=168`). Dan haalt de browser de thumbnails hooguit eens per week
+opnieuw in plaats van elke 6 uur. Maar een previewadres is ondertekend op de inhoud, niet op de
+gebruiker: na een ingetrokken deling, een blokkade of een weggehaalde gast werkt een adres dat
+al was uitgegeven nog twee termijnen (met een week: 14 dagen, nu 12 uur), ook voor wie het
+doorgestuurd kreeg. Alleen voor die ene thumbnail of grote versie, en alleen met de inhoud van
+toen. Achter een publieke link blijft het altijd 12 uur. De bouw stond eerst op 7 dagen; de
+review vond dat te ruim zonder jouw besluit, dus de standaard is weer 6 uur.
 
 ## Op /beheer zien of alles geïndexeerd is
 
@@ -102,6 +108,7 @@ dc exec -T platform python -m app.cli previews-recheck
 | `PLATFORM_PREVIEW_WORKERS` | `0` | workers voor previews; 0 = een minder dan het aantal kernen (minstens 1) |
 | `PLATFORM_PREVIEW_MEMORY_MB` | `1536` | geheugengrens per renderproces |
 | `PLATFORM_PREVIEW_MAX_PIXELS` | `100000000` | grens voor één afbeelding; een JPEG mag 4 keer zoveel |
+| `PLATFORM_PREVIEW_URL_HOURS` | `6` | zo lang blijft een previewadres in de app hetzelfde (minstens 6; zie "Te beslissen") |
 | `PLATFORM_JOB_TIMEOUT` | `300` | zo lang mag één taak duren |
 
 ## Database: migratie 0009

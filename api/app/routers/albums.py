@@ -213,7 +213,8 @@ async def albums_out(
         blobs = {
             b.sha256: b for b in await session.scalars(select(Blob).where(Blob.sha256.in_(shas)))
         }
-    secret, exp = previews.url_key(settings), previews.expiry()
+    secret = previews.url_key(settings)
+    exp = previews.expiry(period=previews.url_period(settings))
     result = []
     for album in albums:
         count, first, last = stats.get(album.id, (0, None, None))

@@ -235,7 +235,8 @@ async def photo_items(
     """PhotoItems voor deze rijen; shared alleen voor wat van user zelf is (één query). Wat
     nog geen (complete) preview heeft, gaat na het antwoord in de rij naar voren: dit bekijkt
     iemand nu (previews.to_front)."""
-    secret, exp = previews.url_key(settings), previews.expiry()
+    secret = previews.url_key(settings)
+    exp = previews.expiry(period=previews.url_period(settings))
     mine = [r.id for r in rows if user is not None and r.owner_id == user.id]
     shared = await shared_ids(session, mine) if mine else set()
     items = [

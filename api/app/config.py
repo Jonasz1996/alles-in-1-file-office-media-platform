@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     # Een JPEG mag 4 keer zo groot zijn: die wordt verkleind gedecodeerd (render.JPEG_PIXELS)
     preview_memory_mb: int = 1536
     preview_max_pixels: int = 100_000_000
+    # Zo lang (uren) blijft een previewadres in de app hetzelfde; het werkt daarna nog zo lang.
+    # Langer = de browser haalt thumbnails minder vaak opnieuw, maar na een ingetrokken deling
+    # werkt een uitgegeven adres ook langer (twee keer dit). Nooit korter dan 6; achter een
+    # publieke link altijd 6 (previews.url_period, docs/fotos-indexeren.md)
+    preview_url_hours: int = 6
     # PDF-pagina's voor de viewer: zoveel renderprocessen tegelijk, en hooguit zoveel MB aan
     # gerenderde pagina's op schijf (de oudste gaan eerst)
     page_render_workers: int = 2

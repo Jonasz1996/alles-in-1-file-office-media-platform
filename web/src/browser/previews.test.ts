@@ -56,18 +56,19 @@ describe("pending: wacht het antwoord over de preview nog?", () => {
   });
 });
 
-describe("verouderd: de adressen blijven dagen geldig", () => {
-  it("na een paar uur niet opnieuw vragen (de browser houdt de thumbnail), na 6 dagen wel", async () => {
+describe("verouderd: een adres werkt minstens 6 uur", () => {
+  it("binnen 5 uur niet opnieuw vragen, daarna wel (voordat het adres verloopt)", async () => {
     const f = controlled();
     let now = 0;
     const cache = new PreviewCache(f.fetch, () => now);
     cache.want([file("a")]);
     f.calls[0].resolve({ a: ready });
     await settle();
-    now = 12 * 3600 * 1000;
+    now = 4 * 3600 * 1000;
     cache.want([file("a")]);
     expect(f.calls).toHaveLength(1);
-    expect(STALE_MS).toBe(6 * 24 * 3600 * 1000);
+    expect(STALE_MS).toBe(5 * 3600 * 1000);
+    expect(STALE_MS).toBeLessThan(6 * 3600 * 1000);
     now = STALE_MS + 1;
     cache.want([file("a")]);
     expect(f.calls).toHaveLength(2);

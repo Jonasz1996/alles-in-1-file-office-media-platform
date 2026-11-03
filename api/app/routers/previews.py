@@ -23,7 +23,7 @@ MAX_NODES = 500
 
 def cache_control(exp: int) -> str:
     """Het adres verandert als het verloopt; tot die tijd hoeft de browser niets opnieuw te
-    vragen (in de app hooguit 14 dagen, achter een publieke link hooguit 12 uur)."""
+    vragen (hooguit twee termijnen: previews.url_period in de app, 12 uur achter een link)."""
     return f"private, max-age={max(0, exp - int(time.time()))}, immutable"
 
 
@@ -69,7 +69,8 @@ async def preview_info(
     if shas:
         rows = await session.scalars(select(Blob).where(Blob.sha256.in_(shas)))
         blobs = {b.sha256: b for b in rows.all()}
-    secret, exp = previews.url_key(settings), previews.expiry()
+    secret = previews.url_key(settings)
+    exp = previews.expiry(period=previews.url_period(settings))
     result = {
         str(n.id): PreviewOut(**previews.info(secret, blobs.get(n.blob_id), exp)) for n in nodes
     }

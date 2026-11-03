@@ -100,11 +100,13 @@ SECRET_META = ("gps", "location", "latitude", "longitude")
 DOC = "doc.json"
 SHA = re.compile(r"[0-9a-f]{64}")
 DONE = ("ready", "none")
-# Een adres blijft hetzelfde tot de volgende grens van URL_PERIOD, en werkt daarna nog zo lang:
-# zo kan de browser de afbeelding cachen. In de app 7 dagen (de browser haalt een thumbnail zo
-# hooguit eens per week opnieuw; een uitgelekt adres werkt hooguit 14 dagen, en alleen voor die
-# ene thumbnail); achter een publieke link 6 uur, zoals altijd (PUBLIC_PERIOD).
-URL_PERIOD = 7 * 24 * 3600
+# Een adres blijft hetzelfde tot de volgende grens van zijn termijn, en werkt daarna nog zo lang:
+# zo kan de browser de afbeelding cachen. Het is ondertekend op de inhoud, niet op de
+# gebruiker: na een ingetrokken deling werkt een uitgegeven adres dus nog hooguit twee termijnen
+# (docs/fase-3/p4.md). In de app settings.preview_url_hours (url_period), standaard 6 uur zoals
+# sinds fase 3, en nooit korter (URL_PERIOD); achter een publieke link altijd 6 uur
+# (PUBLIC_PERIOD).
+URL_PERIOD = 6 * 3600
 PUBLIC_PERIOD = 6 * 3600
 OUTPUT_BYTES = 1024 * 1024
 ERROR_BYTES = 64 * 1024
@@ -215,9 +217,15 @@ def signature(secret: bytes, sha: str, size: int, exp: int, v: int = 0) -> str:
     return base64.urlsafe_b64encode(mac).rstrip(b"=").decode()
 
 
+def url_period(settings: Settings) -> int:
+    """De termijn van een previewadres in de app: settings.preview_url_hours, nooit korter dan
+    URL_PERIOD (de web-app vraagt adressen na 5 uur opnieuw, STALE_MS)."""
+    return max(URL_PERIOD, settings.preview_url_hours * 3600)
+
+
 def expiry(at: float | None = None, period: int = URL_PERIOD) -> int:
-    """Naar boven afgerond op period, plus period (URL_PERIOD in de app, PUBLIC_PERIOD achter een
-    publieke link)."""
+    """Naar boven afgerond op period, plus period (url_period in de app, PUBLIC_PERIOD achter
+    een publieke link)."""
     t = int(time.time() if at is None else at)
     return -(-t // period) * period + period
 
