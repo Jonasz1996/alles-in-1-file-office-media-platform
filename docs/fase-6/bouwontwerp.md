@@ -2,6 +2,9 @@
 > Revisie 1 staat in [bouwontwerp-r1.md](bouwontwerp-r1.md).
 > Nog niet besloten. De vragen aan Jonas staan onder "Vragen voor Jonas". Tot hij antwoordt,
 > bouwen we op de standaard die daar staat.
+> Bijgewerkt na de spike (Z0, 3 november 2026). Wat de spike veranderde, staat erin als
+> "Herzien na de spike (Sx)"; de uitkomsten per stap staan in [spike.md](spike.md). Revisie 2
+> blijft verder de tekst.
 
 # Fase 6 (zoeken en foto's): bouwontwerp, revisie 2
 
@@ -380,6 +383,10 @@ komt; "(r2)" is van deze revisie, met de kritiek erbij.
 
      Gemeten door de critici met een eenvoudiger vorm zonder index: "alles" p95 142,6 ms op
      3.46.1 (C6). Poort 150 ms als S10 een SQL-p95 ≤ 100 ms meet, anders 200 ms.
+
+     **Herzien na de spike (S4, S10), alleen filters.** De SQL-p95 is ≤ 2,4 ms, dus poort 150 ms.
+     Boven 64 wortels (`json_each`) is "vanaf de paden" een `SCAN` over heel `ix_node_mpath`:
+     dan altijd langs de tijd, ook onder 20.000 nodes.
    - **De kaart** (Keuze 32), met `ix_photo_geo_tile (owner_id, x16, y16)`:
 
      ```sql
@@ -394,6 +401,10 @@ komt; "(r2)" is van deze revisie, met de kritiek erbij.
 
      Poort p95 ≤ 150 ms bij 55.000 foto's met GPS van één eigenaar. Haalt S10 dat niet, dan een
      tabel `geo_cell (owner_id, z, cx, cy, n, cover)` die de job `geo` bijwerkt.
+
+     **Herzien na de spike (S10).** Niet gehaald: bij 55.000 foto's met GPS p95 217–244 ms voor
+     Nederland en 328–351 ms voor de wereld (3.46.1 en 3.53.1). De join op `node` per foto kost
+     het; zonder join 22–34 ms. Dus komt de tabel `geo_cell`. Die staat nog niet in 0010.
    - **Duplicaten** (Keuze 34–36), met `ix_node_owner_blob (owner_id, blob_id) WHERE dead = 0`:
 
      ```sql
@@ -410,9 +421,24 @@ komt; "(r2)" is van deze revisie, met de kritiek erbij.
 
      Poort p95 ≤ 300 ms bij 55.000 foto's. Haalt S10 dat niet, dan een tabel `dup_group` per
      eigenaar, bijgewerkt door de job `hash`, en bij het lezen nog door `own_live` gefilterd.
+
+     **Herzien na de spike (S4, S10).** De vorm met `IN mine` is zonder ANALYZE een kruisproduct:
+     SQLite maakt van de twee lijsten gelijkheden op de sleutel `(a, b)` van `dup_pair`. Bij
+     55.000 foto's stopte hij niet binnen 2 s. Deze vorm geeft dezelfde paren in p95 5–7 ms, en
+     `dup_group` is niet nodig. Precies gelijk: p95 95–114 ms.
+
+     ```sql
+     SELECT p.a, p.b, p.dist, p.level FROM dup_pair AS p
+     WHERE EXISTS (SELECT 1 FROM node AS n WHERE n.owner_id = :me AND n.blob_id = p.a
+                   AND n.dead = 0 AND n.kind = 'file')
+       AND EXISTS (SELECT 1 FROM node AS n WHERE n.owner_id = :me AND n.blob_id = p.b
+                   AND n.dead = 0 AND n.kind = 'file')
+     ```
 5. **De vraag ontleden** (B, met ß in r2: S5). `app/search/query.py`, `parse()`:
    - hooguit 200 tekens en 10 woorden, anders `400 search_query_too_long`;
    - NFKC, kleine letters, ß en ẞ naar "ss", dan splitsen op alles wat geen letter of cijfer is.
+     **Herzien na de spike (S8):** een teken op een letter (Unicode-categorie M) hoort bij het
+     woord. Anders valt "İstanbul" (`i` + U+0307 na NFKC en kleine letters) in "i" en "stanbul".
      Elk woord tussen aanhalingstekens. Wat de gebruiker typt, is nooit een FTS-operator: `AND`,
      `NEAR`, `name:` en `*` zijn gewone tekens of woorden;
    - de tekst in FTS krijgt dezelfde regel voor ß (Keuze 21). Daarmee zijn de tekst-vorm en de
@@ -470,6 +496,13 @@ komt; "(r2)" is van deze revisie, met de kritiek erbij.
      (trigram, ±3 ms, H2), met het laatste woord als stuk van de naam.
    - Bij B en C: `partial: true` en `ranked: false`; bij C ook `names_only: true`. Samen hooguit
      120 + 40 + ±5 ms; met HTTP onder de 200 ms.
+   - **Herzien na de spike (S1).** Ronde A stopt bij een voorvoegsel 2–22 ms na zijn grens: FTS5
+     voegt de lijsten samen tussen twee keer kijken naar de interrupt. Met een vaste 40 ms voor B
+     kwam het antwoord tot 191 ms. Daarom krijgt B de rest van 120 + 40 ms, minstens 1 ms. Zo
+     gaf `"ver"*` op 20.000 documenten 162,6–171,5 ms (30 keer), en bij 100.000 nodes is het
+     p95 161–162 ms, max 178 ms; op 3.46.1 met 164.000 nodes één keer 191 ms. "±5 ms" is dus een
+     p95 van ±162 ms met een staart tot ±190 ms. Ronde C zelf kost ≤ 1,5 ms; ronde B hielp bij
+     een voorvoegsel hooguit 1 op de 13 keer.
    - De web zegt het eerlijk. Met treffers: "Dit zijn de eerste treffers, niet per se de beste.
      Maak je vraag preciezer." Zonder treffers: "Niets gevonden binnen de tijd. Maak je vraag
      preciezer."
@@ -498,6 +531,12 @@ komt; "(r2)" is van deze revisie, met de kritiek erbij.
       hand: hij leest alles.
     - Test: een upload tijdens een herbouw wacht hooguit 1 s, en de index is daarna gelijk aan een
       volledige herbouw.
+    - **Herzien na de spike (S2).** Een stuk begint met een schrijfactie (`UPDATE search_state
+      SET cursor = cursor WHERE id = 1 RETURNING cursor`) en leest pas daarna `:hi` en
+      `search_seq.next`. Met pysqlite (en dus aiosqlite) opent een SELECT geen transactie; BEGIN
+      komt pas vóór de eerste schrijfactie. Leest het laatste stuk `next` daarvoor, dan mist de
+      index een node die er net bij kwam (in de test 3 in `fts_node`, 18 in `fts_name`). Bij
+      100.000 nodes is het langste stuk 201–294 ms en wacht een upload tot 687 ms.
 13. **Logs, grenzen en tijden** (herzien in r2: S12, S16).
     - **Logs.** Voor elk pad onder `/api/v1/search`, `/api/v1/photos` en `/api/v1/people` gaat de
       hele query string uit de toegangslog (`?***`). Zo staan `q`, `bbox`, `z`, `place`,
@@ -559,6 +598,15 @@ komt; "(r2)" is van deze revisie, met de kritiek erbij.
       openen (de les van golf 1 in fase 5). Daarom krijgt het kind bij de start alleen een socket
       op fd 3. Het zet zichzelf op niet-dumpbaar, meldt "klaar", en krijgt dan pas de fd's van de
       blobs via `SCM_RIGHTS`. Spike S11 en `test_media_container.sh` bewijzen het.
+    - **Herzien na de spike (S11).** `/proc/<pid>/fd` is na "klaar" dicht (`EACCES`), maar
+      zonder Yama is de handdruk niet genoeg. Een proces van uid 10002 opent vóór "klaar"
+      `/proc/<pid>/mem` of hangt er met ptrace aan; die fd en die tracer blijven na
+      `PR_SET_DUMPABLE 0` werken, en de blobs staan na "klaar" in het geheugen van het kind. De
+      aanvaller in de test las zo de blob. Daarom start het kind uit een kopie van python die
+      niemand mag lezen (0711, root, met een `pyvenv.cfg`), zoals ffmpeg al (Keuze 11 en 47 van
+      fase 5): dan is het vanaf de exec niet-dumpbaar, zonder venster. De handdruk blijft, als
+      tweede slot. stderr van het kind is `/dev/null`; fouten gaan over de socket. Een vork na
+      "klaar" sluit de `mem`-fd ook af, maar niet een tracer van vóór "klaar".
     - **Batches** (C3). Eén kind doet tot 16 blobs of 20 s CPU. Per blob gaat er een resultaat
       terug over de pipe, in lengte-gemarkeerde stukken (JSON, dan de tekst). Zo kost de start van
       het kind (113 ms, V2) per blob ±7 ms. De app schrijft daarna elke blob in een eigen korte
@@ -790,11 +838,16 @@ komt; "(r2)" is van deze revisie, met de kritiek erbij.
     `mapRoute` ≤ 30 kB. Webmercator, getekend als SVG; slepen, knijpen en het toetsenbord (pijlen,
     `+`, `-`). Geen tegels van buiten, de CSP blijft gelijk (`img-src 'self' data: blob:`). Lazy
     route `/fotos/kaart`.
+    **Herzien na de spike (S6):** de vorm. Per land `a3`, `a2`, `nl`, `en` en de ringen per vlak;
+    een ring is één lijst gehele getallen: het eerste punt in honderdsten van een graad, daarna
+    verschillen, zonder sluitpunt. Bron 838.726 bytes (sha256 `6866c877…c977f`), uitvoer
+    85.456 bytes, gzip -9 33.686 bytes.
 32. **Clusters rekent de server** (B). Op zoom `z` (0–14) is een cel
     `(x16 >> (14 − z), y16 >> (14 − z))`: vier cellen per tegelbreedte. Boven zoom 14 losse
     foto's. De SQL staat in Keuze 4a: `GROUP BY` over eigen, levende foto's in het venster,
     ≤ 500 cellen, met een omslag (de nieuwste). Poort p95 ≤ 150 ms bij 55.000 foto's met GPS
     (S10, §4.4). Plaatsnamen op de kaart pas vanaf zoom 6.
+    **Herzien na de spike (S10):** niet gehaald met de join; zie Keuze 4a, de tabel `geo_cell`.
 33. **Een lijst naast de kaart** (A; herzien in r2: S9). "Plaatsen": de plaatsen met het aantal
     foto's, voor wie geen kaart gebruikt of met een schermlezer werkt. Een klik zet het filter
     `place`. Het aantal komt per verzoek uit `GROUP BY` op `ix_photo_geo_place (owner_id,
@@ -1485,6 +1538,11 @@ CREATE VIRTUAL TABLE fts_name USING fts5(search_name,
 snippet "große" toont (Keuze 21). De view neemt ook albums mee: dan klopt de `delete` in FTS altijd
 met wat erin staat. De vraag sluit ze uit (Keuze 4).
 
+**Herzien na de spike (S8).** `extra` gaat ook door `SS()`: `SS(coalesce((SELECT group_concat(…)
+…), ''))`. Anders vond "grosse" de film "Die große Stille" niet. Zo staat het in `schema.py` en
+in 0010. En de tekst krijgt NFKC vóór hij in `blob_text` komt (Keuze 21): `unicode61` breekt een
+ligatuur als "ﬁ" niet op.
+
 **De macro's.** In `schema.py` staan ze uitgeschreven.
 
 - `IN(n)`: `((SELECT cursor FROM search_state WHERE id = 1) IS NULL OR n <= (SELECT cursor FROM
@@ -1639,6 +1697,10 @@ UPDATE search_state SET cursor = :hi WHERE id = 1;          -- het laatste stuk:
 dezelfde transactie. Een node die tijdens de herbouw nieuw is, krijgt een `num` boven de cursor
 en komt dus in het laatste stuk. Gemeten op 200.000 rijen: `delete-all` 17–250 ms, het langste
 stuk 101–142 ms (V4).
+
+**Herzien na de spike (S2).** "Gelezen in dezelfde transactie" vraagt dat het stuk eerst schrijft
+(`UPDATE search_state SET cursor = cursor WHERE id = 1 RETURNING cursor`, dat ook `:cur` geeft) en
+pas dan `:hi` en `search_seq.next` leest; zie Keuze 12.
 
 **Downgrade naar 0009:** eerst alle triggers, dan de view, de twee FTS-tabellen (hun
 schaduwtabellen gaan mee), de nieuwe tabellen, de zes indexen op `node`, dan
@@ -1965,6 +2027,10 @@ Codes in `analysis.code` (alleen op `/beheer`, niet als HTTP-fout): `too_slow`, 
 
 Met S9 kan Jonas al in week 1 meten wat zijn CPU haalt, zonder iets te installeren. Z7 maakt er
 `app.cli bench --los` van, met de uitkomst op `/beheer`.
+
+**Herzien na de spike (S9).** De bench heeft bij 100.000 ±1,1 GB vrij nodig in zijn map: 1.056 MB
+met de WAL, 525 MB na een checkpoint. Hij duurt ±70 s op 3 cores. De uitslag van S1–S11 staat in
+[spike.md](spike.md).
 
 ### 3.8 Klaar als (Z0)
 
