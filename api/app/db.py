@@ -21,7 +21,10 @@ class Base(DeclarativeBase):
 
 @lru_cache
 def _engine(url: str) -> AsyncEngine:
-    engine = create_async_engine(url, pool_pre_ping=True)
+    # hide_parameters: een DBAPIError (database is locked, schijf vol) zet de parameters niet
+    # in zijn tekst, dus ook de zoekvraag q en bestandsnamen niet in de log (review Z0,
+    # veilig F6)
+    engine = create_async_engine(url, pool_pre_ping=True, hide_parameters=True)
     if url.startswith("sqlite"):
 
         @event.listens_for(engine.sync_engine, "connect")

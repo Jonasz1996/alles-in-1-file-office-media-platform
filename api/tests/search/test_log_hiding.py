@@ -7,9 +7,13 @@ plaats, en dan de log doorzoeken) is test_search_logs.py van Z1 en Z3.
 from __future__ import annotations
 
 import logging
+import sqlite3
 
 import pytest
+from sqlalchemy import event
+from sqlalchemy.exc import DBAPIError
 
+from app.db import get_engine
 from app.main import QUERY_PATHS, SECRET_PARAMS, HideSecrets, _hide
 
 
@@ -57,3 +61,32 @@ def test_het_filter_van_de_toegangslog():
     assert HideSecrets().filter(record)
     assert "geheimwoord7" not in record.getMessage()
     assert "/api/v1/search?***" in record.getMessage()
+
+
+async def test_een_databasefout_bij_zoeken_zet_q_niet_in_de_log(client, admin, settings, caplog):
+    """Een fout van de database tijdens het zoeken (hier: "database is locked") komt met zijn
+    SQL in de foutlog van uvicorn. De parameters daarvan, met q, horen er niet in
+    (hide_parameters op de engine; review Z0, veilig F6)."""
+    headers, _ = admin
+    engine = get_engine(settings).sync_engine
+    # In delen, anders staat de vraag in de broncode die de traceback in de log laat zien
+    vraag = "".join(("geheim", "woord7"))
+
+    def op_slot(cursor, statement, parameters, context):
+        if any(vraag in str(p) for p in parameters or ()):
+            raise sqlite3.OperationalError("database is locked")
+
+    caplog.set_level(logging.DEBUG)
+    event.listen(engine, "do_execute", op_slot)
+    try:
+        with pytest.raises(DBAPIError) as fout:
+            await client.get("/api/v1/search", params={"q": vraag}, headers=headers)
+    finally:
+        event.remove(engine, "do_execute", op_slot)
+    # Zoals uvicorn een fout in de app logt
+    logging.getLogger("uvicorn.error").error("Exception in ASGI application", exc_info=fout.value)
+    assert "database is locked" in str(fout.value)
+    assert vraag not in str(fout.value)
+    assert any(r.exc_info for r in caplog.records)
+    for record in caplog.records:
+        assert vraag not in logging.Formatter().format(record), record.name
