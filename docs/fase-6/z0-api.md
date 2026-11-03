@@ -30,13 +30,14 @@ haalt `install.sh` bij de installatie (Z7).
     `photo_ocr`, `photo_pref`, `memory_hide`, `album_rule`, `album_skip`;
   - de view `search_src` en de twee FTS5-tabellen `fts_node` (external content over die view) en
     `fts_name` (trigram op de naam), met hun shadowtabellen;
-  - 25 triggers die het nummer, het pad, `dead`, de FTS-rijen en de foto-rijen bijhouden;
+  - ~~25 triggers~~ 29 triggers (na de review van Z0: de vier van `photo_geo`, haalbaar F1 en
+    F2) die het nummer, het pad, `dead`, de FTS-rijen en de foto-rijen bijhouden;
   - het vullen achteraf: elke bestaande node krijgt zijn nummer en pad, en de FTS-tabellen worden
     gevuld.
 - **Zonder FTS5** (een SQLite zonder die module) maakt de migratie geen view en geen
-  FTS-tabellen, en alleen de vijf triggers die nummer, pad, `dead` en de foto-rijen bijhouden
-  (`TRIGGERS_NO_FTS`). Zoeken gaat dan via `LikeFallback`. De migratie kijkt zelf of FTS5 er is,
-  en `config.attributes["search_fts5"]` laat een test het afdwingen.
+  FTS-tabellen, en alleen de ~~vijf~~ negen triggers (na de review) die nummer, pad, `dead` en
+  de foto-rijen bijhouden (`TRIGGERS_NO_FTS`). Zoeken gaat dan via `LikeFallback`. De migratie
+  kijkt zelf of FTS5 er is, en `config.attributes["search_fts5"]` laat een test het afdwingen.
 - **`api/app/search/schema.py`** is dezelfde SQL als een leesbaar geheel: `FTYPE_SQL`,
   `NODE_COLUMNS`, `NODE_INDEXES`, `ALBUM_ITEM_COLUMNS`, `NEW_TABLES`, `VIEW_SQL`, `FTS_TABLES`,
   `TRIGGERS` en `TRIGGERS_NO_FTS`. De migratie heeft een eigen, bevroren kopie.

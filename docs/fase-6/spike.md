@@ -48,7 +48,8 @@ het ontwerp. Wel veranderen er acht dingen:
    2 s. De vorm met `EXISTS` geeft dezelfde paren in p95 5–7 ms (S4, S10).
 6. **De kaart haalt de poort van 150 ms niet** bij een fotograaf met 55.000 foto's met GPS:
    Nederland p95 217–244 ms, de wereld 328–351 ms. Zonder de join op `node` 22–34 ms. Dus komt
-   de tabel `geo_cell` uit Keuze 4a (S10).
+   de tabel `geo_cell` uit Keuze 4a (S10). Na de review van Z0 (haalbaar F1 en F2) niet meer:
+   `photo_geo` houdt `dead` en `taken_at` van de node bij, en de kaart gaat zonder join (S10).
 7. **De handdruk van Keuze 17 houdt `/proc/<pid>/fd` dicht, maar zonder Yama niet `mem` en
    `ptrace`.** Een tweede proces van dezelfde uid opent vóór "klaar" `/proc/<pid>/mem` of hangt
    er met ptrace aan, en leest na "klaar" de blobs uit het geheugen van het kind. Een python die
