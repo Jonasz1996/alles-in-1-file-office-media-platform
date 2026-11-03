@@ -11,9 +11,9 @@ Het web-deel staat in [z0-web.md](z0-web.md). Het harnas, de fixtures, de wereld
 **Open**.
 
 De keuzes B49–B60 staan nog open. Z0 bouwt op de standaard: geen tesseract in het image
-(`ocr_enabled` uit, en de rij `ocr` draait dan niet), geen automatische gezichten, geen
-afbeeldingzoeken, GPS alleen voor de eigenaar, en de bronnen van GeoNames en Natural Earth haalt
-`install.sh` bij de installatie (Z7).
+(`ocr_enabled` uit, en de rij `ocr` draait dan niet), geen automatische gezichten, niet zoeken
+met een foto als vraag, GPS alleen voor de eigenaar, en de bronnen van GeoNames en Natural Earth
+haalt `install.sh` bij de installatie (Z7).
 
 ## Wat er is
 
@@ -83,6 +83,10 @@ In `app/config.py`: `search_index`, `search_deadline_ms` (120), `search_inflight
 `search_queue` (20), `search_max_text` (1 MiB), `search_timing`, `text_batch` (16), `places_db`,
 `geo_src`, `index_defer_transcodes` (2), `ocr_enabled` (uit), `ocr_max_pages`, `ocr_per_hour`,
 `ocr_pages_per_day`.
+
+Z0 leest er zelf twee: `search_index` (in `select_engine`) en `ocr_enabled` (in
+`jobs.active_lanes`). De rest staat klaar voor Z1, Z2, Z3 en X1; `search_inflight` en
+`search_queue` staan in de docstring van `limits.py`, die Z1 bouwt.
 
 ### De API-contracten (§3.4)
 
@@ -178,17 +182,18 @@ Elk met een test in `tests/search/test_hotspots.py`, behalve waar anders staat.
 1. **De migraties staan in `api/migrations/versions/`**, niet in `api/alembic/versions/` zoals
    §3.1 schrijft. De migratie heet `0010_zoeken.py` met `down_revision = "0009"`, zoals het
    bouwontwerp na de merge van delen en foto's zegt.
-2. **`node_au_move` gebruikt `coalesce(..., '/')`** voor het pad van een node zonder ouder: de
-   hoofdmap heeft geen `parent_id`, en zonder `coalesce` werd `mpath` dan NULL en viel de node
-   uit `ix_node_mpath`.
+2. **`node_ai` en `node_au_move` gebruiken `coalesce(..., '/')`** voor het pad van een node
+   zonder ouder: een hoofdmap heeft geen `parent_id`, en zonder `coalesce` werd `mpath` dan NULL
+   en viel die node uit `ix_node_mpath`. Het ontwerp schrijft alleen het pad van de ouder.
 3. **`album_rule.refreshed_at` is NOT NULL** met een standaard, niet nullable: een regel die nog
    nooit gedraaid heeft, heeft het moment van aanmaken, zodat sorteren op dat veld altijd werkt.
 4. **`dup_pair`** heeft FK's naar `blob.sha256` met `ON DELETE CASCADE` (een opgeruimde blob
    neemt zijn paren mee) en een `CHECK (a < b)`, zodat hetzelfde paar niet twee keer kan staan.
    De tabel heeft geen rowid.
 5. **De PostgreSQL-tak is niet getest.** 0010 maakt op PostgreSQL de tabellen en de kolommen,
-   maar geen view, geen FTS en geen triggers, en `select_engine` geeft daar `LikeFallback`. Er is
-   geen PostgreSQL in CI, dus dat staat alleen in de code.
+   maar geen view, geen FTS, geen triggers en geen vulling: `num` en `mpath` blijven daar leeg, en
+   `select_engine` geeft `LikeFallback`. Er is geen PostgreSQL in CI, dus dat staat alleen in de
+   code.
 6. **`Hit.path` blijft `list[PathPart]`** zoals in 0.7.0 (de mappen erboven), niet de string die
    §3.4 noemt. De web-app van nu leest dat veld, en Z0 wil die niet breken.
 7. **`GET /search` houdt de parameters van 0.7.0.** Er is nog geen 400 `search_bad_filter`, de
@@ -196,6 +201,10 @@ Elk met een test in `tests/search/test_hotspots.py`, behalve waar anders staat.
    Z1 breidt ze uit; nu zou een strengere controle het zoeken van 0.7.1 kapot maken.
 8. **`not_built` staat in `web/src/i18n/errors/common.ts`**, niet in een catalogus van zoeken:
    de code komt van elke stubroute, ook van een route die straks bij foto's of OCR hoort.
+   En **`ocr_missing` staat in `admin.ts`**: §3.4 noemt het een code in `analysis.code` en geen
+   HTTP-fout, maar `test_error_catalog.py` ziet elke `"code": "..."` in `app/` en wil er een
+   Engelse tekst bij. Hij hoort bij `/beheer`, dus staat hij daar. De andere codes van
+   `analysis.code` komen van Z2 en X1.
 9. **Drie routes staan in een ander bestand dan §3.4 suggereert**: de analyse van een document in
    `routers/pages_words.py`, de regel van een slim album in `routers/albums_rule.py` en de
    OCR-aanvraag in `routers/ocr.py`. Zo blijft elk bestand bij één pakket.

@@ -6,6 +6,9 @@ export default {
     en: "A guest cannot have files of their own; delete or move them first",
   },
   job_not_found: { en: "Job not found" },
+  // Een code in analysis.code (fase 6): geen HTTP-fout, alleen te zien op /beheer.
+  // render.py geeft hem als er geen tesseract in het image zit.
+  ocr_missing: { en: "Text recognition is not installed on this server" },
   last_admin: { en: "At least one active administrator must remain" },
   no_domain: { en: "Set a domain first" },
   not_disabled: { en: "Block the account first" },
