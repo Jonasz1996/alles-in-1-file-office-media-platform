@@ -57,15 +57,17 @@ De routes:
   houd `SEARCH_KEY`, `searchShortcut` en `searchTarget` (de vitest in `search/appBar.test.ts`
   toetst ze tegen de echte registry). De pagina: vervang de route `/zoeken` in `routes.tsx` door
   een pagina onder `src/search/` met de gebieden `["search"]` (plus wat hij nog nodig heeft), en
-  zet die pagina in `ZOEK_PAGES` van `budget.mjs` in plaats van `src/Search.tsx` (dat is één
-  regel). De aanroepen staan in `search/api.ts` (`search(params)`, `suggest(q)`); de querystring
-  maakt `wireQuery`. De tekstlaag in de viewer leest `pageWords(id, n, token)`. Alles wat het
-  zoekveld uit `search/` laadt, telt mee in de eerste lading: alleen `AppBarSearch.tsx`,
-  `appBar.ts` en `types.ts` mogen daar (`ZOEK_INITIAL`); de combobox moet lazy.
+  zet die pagina in `ZOEK_PAGES` van `budget.mjs` in plaats van `src/Search.tsx` (twee regels
+  in hotspots van Z0; zeg het in `z4.md`). De aanroepen staan in `search/api.ts`
+  (`search(params)`, `suggest(q)`); de querystring maakt `wireQuery`. De tekstlaag in de
+  viewer leest `pageWords(id, n, token)`. Alles wat het zoekveld uit `search/` laadt, telt mee
+  in de eerste lading: alleen `AppBarSearch.tsx`, `appBar.ts` en `types.ts` mogen daar
+  (`ZOEK_INITIAL`); de combobox moet lazy.
 - **Z5 (kaart en duplicaten)**: de default export van `MapPage.tsx` en `DupesPage.tsx` is de
   pagina (`RouteProps`). `LocationRow.tsx` krijgt `InfoRowProps` (`item`, `detail`, `kind`) en
-  laadt alleen voor een foto of video van jezelf, ingelogd, de huidige versie (`showPhotoRows`);
-  de API geeft `404` als je de plek niet mag zien (`fileLocation(id)`). `LocationWarning.tsx`
+  laadt alleen voor een foto of video, ingelogd, de huidige versie (`showPhotoRows`). Wie de
+  eigenaar is, weet de plek niet: bij de foto van een ander geeft `fileLocation(id)` `404` en
+  `filePeople(id)` een lege lijst, en dan toont de plek niets. `LocationWarning.tsx`
   krijgt `{nodes}`: bij één node `[node]`, bij meer de nodes die gedeeld kunnen worden
   (`plan.ok`); `nodes` is elke render een nieuwe lijst, dus sleutel een effect op de ids.
   `shareCheck(nodeId)` geeft `{with_location, unknown}`. De wereld van de kaart moet als
@@ -146,9 +148,10 @@ andere); de precache ging van 29 naar 32 bestanden.
 8. **De nieuwe routes zijn niet voor gasten.** Ze gaan over eigen bestanden (`own_live`); een
    gast heeft er geen en krijgt "Geen toegang". `/dubbel` valt onder Bestanden in het menu
    (`aria-current`), de andere drie onder Foto's.
-9. **De plekken in het infopaneel laden alleen voor een foto of video van jezelf, ingelogd, de
-   huidige versie** (`showPhotoRows`). Via een publieke link, bij een eerdere versie en bij een
-   ander soort bestand laden ze niet; de API geeft daar toch niets.
+9. **De plekken in het infopaneel laden alleen voor een foto of video, ingelogd, de huidige
+   versie** (`showPhotoRows`). Via een publieke link, bij een eerdere versie en bij een ander
+   soort bestand laden ze niet; de API geeft daar toch niets. Bij de foto van een ander laden ze
+   wel (de viewer kent de eigenaar niet); de API geeft dan `404` of een lege lijst.
 10. **Esc in het zoekveld** maakt een veld met tekst leeg, en geeft bij een leeg veld de focus
     terug aan waar hij stond vóór Mod+K. Het ontwerp zegt alleen "Esc sluit" voor de combobox
     (Z4).
@@ -214,4 +217,8 @@ zonder melding.
 6. **De gebeurtenissen** (`search.ready`, `search.progress`, `people.changed`) zijn alleen namen
    en vormen; geen code luistert er nog naar.
 7. **`e2e/slim.sh`** (§3.5) is niet van Z0-web; hij staat er niet in deze tak.
-8. **Besluiten B49–B60** blijven "voorstel"; Z0-web nam er geen.
+8. **De plekken bij de foto van een ander.** De viewer weet niet wie de eigenaar is, dus Plek en
+   Personen laden ook bij een gedeelde foto en vragen dan de API (die `404` of `[]` geeft). Wil
+   Z5 of Z6 dat verzoek sparen, dan is een teken van de eigenaar in `ViewerItem` nodig (een
+   kleine wijziging in de viewer, niet in Z0).
+9. **Besluiten B49–B60** blijven "voorstel"; Z0-web nam er geen.

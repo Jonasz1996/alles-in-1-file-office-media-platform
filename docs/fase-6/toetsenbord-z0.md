@@ -54,7 +54,7 @@ sinds fase 3). Geen eigen toetsen. Alleen voor beheerders en gebruikers; een gas
 
 ## De viewer en het deeldialoog
 
-- In het infopaneel (I) van een eigen foto of video (ingelogd, de huidige versie) laden twee
+- In het infopaneel (I) van een foto of video (ingelogd, de huidige versie) laden twee
   lege plekken voor de plek (Z5) en de personen (Z6). Ze tonen in Z0 niets en nemen geen focus;
   Tab door het paneel is gelijk aan 0.7.1.
 - Het deeldialoog laadt bij het openen een lege plek voor de waarschuwing over de GPS-plek
