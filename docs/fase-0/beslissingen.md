@@ -57,6 +57,10 @@ Pas na een keuze de status aan en schrijf in één zin waarom.
 
 B39–B48 wachten op Jonas: de beslissingskaarten van fase 5 zijn nog niet beantwoord. Tot dan blijven ze **voorstel**, en draait 0.7.0 op de standaarden van het bouwontwerp (Vraag 1–6: kopiëren bij de import, alleen de CPU, drie transcodes, geen sleutel van TMDB, een publieke link zet niets om, voortgang per account). Vraag 7 (een eigen uid voor de kinderen van de worker) ligt ook nog bij Jonas. Zie [docs/fase-5/README.md](../fase-5/README.md#vragen-voor-jonas).
 
+Op 3 november 2026 gaf Jonas het groene licht voor fase 6 ("top doe maar volgende fase") zonder
+de kaarten te beantwoorden. Claude houdt daarom de standaarden hierboven aan (ook nee op Vraag 7):
+ze blijven in gebruik en blijven **voorstel**, en Jonas kan elk ervan later nog anders kiezen.
+
 ## Vastgelegd in deze fase
 
 - Fase 1 is na B1, B13 en B14 herschreven van k3s naar Docker Compose; de k3s-versie staat nog in de git-geschiedenis.
