@@ -5,8 +5,8 @@ de e2e-regels van §3.5, en §4.1–§4.3). Z0 bouwt geen functie: dit deel legt
 en X1 testen. Zoeken in de app is nog dat van 0.7.0 (`LikeFallback`, op naam).
 
 De kern (migratie 0010, de contracten, de stubs) staat in [z0-api.md](z0-api.md). Het web-deel
-staat in `z0-web.md`, op de tak van Z0-web (nog niet in deze boom). De spike S1–S11 en de CI-jobs
-van §4.6 (`zoek-perf`, `ocr`) zijn van een andere werker.
+staat in [z0-web.md](z0-web.md), de spike S1–S11 en de job `zoek-perf` in [spike.md](spike.md).
+Hoe de vier delen samenkwamen: [z0.md](z0.md).
 
 De keuzes B49–B60 zijn nog een voorstel. Dit deel bouwt op de standaard: geen tesseract in het
 image (de test met echte tesseract heeft marker `ocr` en draait niet in de gewone run), geen
@@ -61,7 +61,9 @@ Hoe lang het zaaien duurt:
 - Via het harnas (`start_boom(…, 100_000)`): 128 s, waarvan nodes 90 s en tekst 22 s. Daar
   komen twee keer starten van de server bij.
 
-S7 eist < 3 minuten in CI. Dat meet de job `zoek-perf` van de spike.
+S7 eist < 3 minuten in CI. Dat meet de job `zoek-perf` van de spike, sinds de samenvoeging
+met dit zaad (`test_spike_zaad.py`: lokaal 106,8 s op 3.53.1 en 112,4 s op 3.46.1, zie
+[spike.md](spike.md)).
 
 ### De wereld (`api/tests/search/wereld.py`)
 
@@ -311,10 +313,12 @@ Op 3 cores van deze VM:
    De test onder `ocr` eist alleen 0°, 3°, −5° en de herkenning van 90°. 7° is het geval voor het
    rechtzetten van X1.
 8. **`test_plans.py` gebruikt de SQL uit het ontwerp**, niet die van de app (die is er nog niet).
-   Z1 en Z3 zetten hun echte SQL in `test_search_plans.py`, onder dezelfde `assert_plan`.
-9. **De e2e gebruikt `/` en Enter, niet Ctrl/Cmd+K.** Ctrl/Cmd+K zit op de tak van Z0-web en nog
-   niet in deze boom. De e2e heet `test_zoek_z0.py` en test het harnas. `test_zoek_toegang.py`
-   van §4.2 bouwt later op dezelfde wereld.
+   Z1 en Z3 zetten hun echte SQL in `test_search_plans.py`, onder dezelfde `assert_plan`. Bij de
+   samenvoeging kreeg `_bijna` de vorm met `EXISTS` van "Herzien na de spike (S4, S10)".
+9. **De e2e gebruikte `/` en Enter, niet Ctrl/Cmd+K**, omdat Ctrl/Cmd+K op de tak van Z0-web
+   zat. Sinds de samenvoeging test `test_ctrl_k_en_het_zoekveld_bovenaan` het veld bovenaan ook.
+   De e2e heet `test_zoek_z0.py` en test het harnas. `test_zoek_toegang.py` van §4.2 bouwt later
+   op dezelfde wereld.
 10. **`triggers` alleen in `tests/search/`.** De hook zit in `tests/search/conftest.py`. Een
     `test_search_churn.py` (Z1) moet daar ook staan, anders krijgt hij de marker niet en draait
     slim.sh hem niet op 3.46.1.
@@ -332,8 +336,8 @@ Op 3 cores van deze VM:
 
 Voor andere pakketten:
 
-1. **Ctrl/Cmd+K in de e2e** komt na het samenvoegen met Z0-web (in deze boom zit het niet). Z4's
-   `test_zoek_z4.py` heeft het in zijn lijst.
+1. ~~**Ctrl/Cmd+K in de e2e** komt na het samenvoegen met Z0-web.~~ Gedaan bij de samenvoeging
+   (`test_ctrl_k_en_het_zoekveld_bovenaan`). Z4's `test_zoek_z4.py` test de combobox.
 2. **De CI-jobs `zoek-perf` en `ocr`** (§4.6) zijn van de spike.
    - Deze tak voegt alleen `and not ocr` toe aan de e2e-stap en shellcheck op `slim.sh`.
    - De job `ocr` moet `-m ocr` draaien (api en e2e), met `tesseract-ocr`,

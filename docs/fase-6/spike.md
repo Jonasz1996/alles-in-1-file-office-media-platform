@@ -234,9 +234,26 @@ niet in git.
 
 **Klaar als:** < 3 minuten. **Gehaald** lokaal; in CI in de job `zoek-perf`.
 
-`api/tests/search/test_spike_zaad.py` (marker `zoek_perf`): de echte migratie (`head_db`), dan
-de boom van de zoekbench (108.452 nodes, 233 miljoen tekens) met gewone INSERTs, zodat elke
-`node_ai` zijn rij in FTS schrijft. Daarna is de index gelijk aan een herbouw.
+`api/tests/search/test_spike_zaad.py` (marker `zoek_perf`): het zaad van §3.6 zelf,
+`app/search/bench.py` van Z0-e2e (`maak()` met `Plan(n=100_000, seed=6)`). Dat draait de echte
+migratie en zet de boom met gewone INSERTs in de database, zodat elke `node_ai` zijn rij in FTS
+schrijft. Daarna is de index gelijk aan een herbouw.
+
+Na de samenvoeging van Z0 (100.000 bestanden, 5.900 mappen, 230 miljoen tekens):
+
+| | 3.53.1 | 3.46.1 (slim) |
+|---|---|---|
+| het zaad | 106,8 s | 112,4 s |
+| migratie, plannen, blobs, tekst | 0,3 s, 2,8 s, 1,1 s, 21,1 s | 0,3 s, 3,0 s, 1,3 s, 22,0 s |
+| nodes met de triggers | 78,4 s | 82,8 s |
+| op schijf | 541 MB | 541 MB |
+| de test, met de herbouw erna | 118,6 s | 125,9 s |
+
+Lokaal, op 3 van de 4 cores (`taskset -c 0-2`, en `--cpuset-cpus 0-2` voor slim). In CI meet
+de job `zoek-perf` hetzelfde op 3.46.1.
+
+Vóór de samenvoeging stond `app/search/bench.py` nog niet op de tak van de spike; die mat met de
+boom van de zoekbench (108.452 nodes, 233 miljoen tekens):
 
 | | 3.53.1 | 3.46.1 (slim) |
 |---|---|---|
@@ -246,10 +263,9 @@ de boom van de zoekbench (108.452 nodes, 233 miljoen tekens) met gewone INSERTs,
 | op schijf | 526 MB | 526 MB |
 
 Een tweede run op 3.53.1: 79,9 s (nodes met de triggers 69,0 s). De test zelf, met de
-controle op een herbouw erna: 85,7 s (3.53.1) en 102,6 s (3.46.1).
-
-Het zaad van §3.6 zelf (`app/search/bench.py`) komt van Z0-e2e en staat nog niet op deze tak.
-De job meet het ook (`python -m app.search.bench --n 100000`, grens 180 s) zodra het er is.
+controle op een herbouw erna: 85,7 s (3.53.1) en 102,6 s (3.46.1). Het zaad van Z0-e2e is
+trager in "tekst" (21 s tegen 4 s): het maakt de tekst woord voor woord uit een woordenschat
+(Zipf, `tekst()` in bench.py) en zet die per sha in `blob_text`, vóór de nodes.
 
 ## S8: de twee vormen per woord
 
@@ -422,7 +438,7 @@ per vorm in `kort`. Het getal komt hier bij de eerste run.
 
 `zoek-perf` (nieuw, `python:3.12-slim`, 3 cores): S4, S8, S9 (het schema) en S6 (de test),
 dan de marker `zoek_perf` (S1 met de echte grenzen, S2 herbouw van 100.000, S3 migratie van
-100.000, S7), het zaad van Z0-e2e als dat er is, `bench.py --los --vormen` (S10, S9) en
+100.000, S7 met het zaad van `app/search/bench.py`), `bench.py --los --vormen` (S10, S9) en
 `maak_wereld.py --download` (S6). Lokaal in slim kostte de marker `zoek_perf` ±3,5 minuten.
 
 `media-image`: de stap S5, en `test_media_container.sh` met S11 (`handdruk.json`) en S9
@@ -430,15 +446,16 @@ dan de marker `zoek_perf` (S1 met de echte grenzen, S2 herbouw van 100.000, S3 m
 
 ## Afwijkingen van §3.7
 
-- **S7 meet met de boom van de zoekbench**, niet met het zaad van Z0-e2e: dat staat nog niet op
-  deze tak. De job meet het zaad van Z0-e2e ook, zodra het er is.
-- **De plan-tests staan in `test_spike_plannen.py`**, met de SQL van de bench; `plans.py` en
-  `assert_plan` zijn van Z0-e2e.
+- **S7 mat in de spike met de boom van de zoekbench**, omdat het zaad van Z0-e2e nog niet op die
+  tak stond. Sinds de samenvoeging van Z0 meet de test het zaad zelf (`app/search/bench.py`);
+  de aparte stap in `zoek-perf` voor dat zaad is weg.
+- **De plan-tests staan in `test_spike_plannen.py`**, met de SQL van de bench. `plans.py` en
+  `assert_plan` (`test_plans.py`) zijn van Z0-e2e; beide sets blijven, met dezelfde vormen.
 - **S8 veranderde 0010 en `schema.py`** (`extra` door `SS()`). 0010 is van Z0-api en nog niet
   uitgebracht; 0001–0009 bleven gelijk.
 - **S11 meet meer dan `/proc/<pid>/fd`**: ook `mem` en ptrace, in drie vormen.
 - **De bench heeft een eigen generator** (stdlib, voor `--los` in de container), los van
-  `app/search/bench.py` van Z0-e2e.
+  `app/search/bench.py` van Z0-e2e. Dat blijft zo: `--los` draait één bestand zonder de app.
 
 ## Open
 
@@ -448,5 +465,6 @@ dan de marker `zoek_perf` (S1 met de echte grenzen, S2 herbouw van 100.000, S3 m
   na "klaar" is code in `app.render text`. Aanbevolen: 0711, plus stderr naar `/dev/null`.
 - **CI-getallen op 3.46.1** voor S1, S2, S7, S9 en S10 in de job, en S5 en S11 in de
   container: bij de eerste run na de push.
-- **Z0-e2e `plans.py`**: als daar de vorm `IN mine` voor bijna-duplicaten staat, is die plan-test
-  een kruisproduct; hij moet de vorm met `EXISTS` krijgen.
+- ~~**Z0-e2e `plans.py`**: als daar de vorm `IN mine` voor bijna-duplicaten staat, is die
+  plan-test een kruisproduct; hij moet de vorm met `EXISTS` krijgen.~~ Gedaan bij de
+  samenvoeging van Z0: `_bijna` in `api/tests/search/test_plans.py` heeft de vorm met `EXISTS`.

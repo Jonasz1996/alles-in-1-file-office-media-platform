@@ -159,11 +159,13 @@ andere); de precache ging van 29 naar 32 bestanden.
     het zoekveld van Bestanden (`#zoekveld`) en Mod+F het naamfilter. Z0 verandert geen van
     beide (zie [toetsenbord-z0.md](toetsenbord-z0.md)).
 12. **Vormen die het ontwerp niet uitschrijft**, gekozen door Z0-web en naast het werk van Z0-api
-    gelegd waar dat er al was (`app/search/types.py` in `wip/z0-api`, nog niet gecommit):
+    gelegd waar dat er al was (`app/search/types.py` in `wip/z0-api`, toen nog niet gecommit;
+    bij de samenvoeging gelijkgetrokken, zie [z0.md](z0.md)):
     `Groups` (`{people, places}` met `{id: string, name, n}`, zoals `GroupItem` van Z0-api),
     `NameRef` (`{id, name, kind}`), `PersonRef`, `PlaceRef`, `AlbumRef`, `IndexProgress`
     (`{done}`), `StepState` en de vorm van `Analysis`, `PersonPhotos` (`{items, cursor}`),
-    `MemoryHides` (`{hides}`), `AlbumRuleSaved` (`{needs_confirm?}`), `AdminSearch`,
+    `MemoryHides` (`{hides}`), `AlbumRuleSaved` (`{needs_confirm}`; tot de samenvoeging
+    `{needs_confirm?}`), `AdminSearch`,
     `FailedItem` en `FailedPage`.
 
 ## Buiten de eigen bestanden
@@ -200,15 +202,14 @@ zonder melding.
 
 ## Open
 
-1. **Gelijk met Z0-api bij het samenvoegen.** Leg `search/types.ts`, `photos/map/types.ts`,
-   `dupes/types.ts`, `photos/people/types.ts` en `admin/searchApi.ts` naast de modellen en
-   routers van Z0-api (de OpenAPI van de app): elk pad en elke methode, en de vormen uit punt 12
-   van de afwijkingen.
-2. **De foutcode van de stubs.** Welke code geven de stubs van Z0-api bij `501`? Staat die niet
-   in een catalogus, dan faalt `test_error_catalog.py` bij het samenvoegen; dan hoort hij in de
-   catalogus van zijn pakket of in een algemene.
-3. **De codes `ocr_*`.** Gebruikt Z0-api ze al in `app/`, dan moeten ze bij het samenvoegen in
-   `i18n/errors/photos.ts` (§3.4 geeft die aan X1).
+1. ~~**Gelijk met Z0-api bij het samenvoegen.**~~ Gedaan bij de samenvoeging: de typen liggen
+   naast de modellen en routers van Z0-api, en `api/tests/search/test_web_contracts.py` houdt
+   ze gelijk. Wat er anders was en hoe het nu is: [z0.md](z0.md).
+2. ~~**De foutcode van de stubs.**~~ De stubs geven `501 not_built`; die staat in
+   `i18n/errors/common.ts`, en `test_error_catalog.py` is groen.
+3. **De codes `ocr_*`.** Z0-api gebruikt alleen `ocr_missing` in `app/` (de stub van
+   `ocr_page` in `render.py`); die staat in `i18n/errors/admin.ts`. De rest van de codes `ocr_*`
+   zet X1 in `photos.ts` (§3.4).
 4. **Twee zoekvelden op Bestanden.** Het veld bovenaan en het veld boven de lijst (`#zoekveld`,
    `/`) doen nu hetzelfde. Z4 beslist of het veld van Bestanden blijft (en wat `/` dan doet).
 5. **`dist/kaart/*.json`** is een aanname voor de plek van de wereld (Keuze 31 noemt
@@ -216,7 +217,8 @@ zonder melding.
    worker cachet `/kaart/` nu niet.
 6. **De gebeurtenissen** (`search.ready`, `search.progress`, `people.changed`) zijn alleen namen
    en vormen; geen code luistert er nog naar.
-7. **`e2e/slim.sh`** (§3.5) is niet van Z0-web; hij staat er niet in deze tak.
+7. ~~**`e2e/slim.sh`** (§3.5) is niet van Z0-web; hij staat er niet in deze tak.~~ Hij is van
+   Z0-e2e ([z0-e2e.md](z0-e2e.md)) en staat er sinds de samenvoeging.
 8. **De plekken bij de foto van een ander.** De viewer weet niet wie de eigenaar is, dus Plek en
    Personen laden ook bij een gedeelde foto en vragen dan de API (die `404` of `[]` geeft). Wil
    Z5 of Z6 dat verzoek sparen, dan is een teken van de eigenaar in `ViewerItem` nodig (een

@@ -238,11 +238,14 @@ Elk met een test in `tests/search/test_hotspots.py`, behalve waar anders staat.
 
 Van Z0 zelf:
 
-1. **De spike S1–S11** (§3.7) en wat die aan het ontwerp verandert staan nog niet in
-   `docs/fase-6/spike.md`. Die is van een andere werker.
-2. **Het harnas, de fixtures, de wereld en de referentie** (§3.6) en **`e2e/slim.sh`** zijn er
-   nog niet, en dus ook geen e2e-test van fase 6.
-3. **De CI-jobs van §4.6** bestaan nog niet.
+1. ~~**De spike S1–S11** (§3.7) en wat die aan het ontwerp verandert staan nog niet in
+   `docs/fase-6/spike.md`. Die is van een andere werker.~~ Bij de samenvoeging van Z0 gekomen:
+   [spike.md](spike.md), en de notities "Herzien na de spike" in het bouwontwerp.
+2. ~~**Het harnas, de fixtures, de wereld en de referentie** (§3.6) en **`e2e/slim.sh`** zijn er
+   nog niet, en dus ook geen e2e-test van fase 6.~~ Bij de samenvoeging gekomen:
+   [z0-e2e.md](z0-e2e.md).
+3. ~~**De CI-jobs van §4.6** bestaan nog niet.~~ Bij de samenvoeging: `zoek-perf` en de stappen
+   S5, S9 en S11 in `media-image` zijn er (spike.md); de job `ocr` niet ([z0.md](z0.md), Open).
 4. **`install.sh` maakt nog geen reservekopie** vóór een update; `db-backup` is er wel. Z7.
 5. **De PostgreSQL-tak** van 0010 en van `select_engine` is niet getest (afwijking 5).
 
