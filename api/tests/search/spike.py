@@ -6,6 +6,7 @@ snel een grote index te vullen, en de controle dat de index gelijk is aan een he
 - vul_snel(conn, ...): zet nodes en tekst neer met de cursor van de herbouw op 0 (de triggers
   houden num, pad en dead bij, maar schrijven niet naar FTS), en herbouwt daarna beide
   FTS-tabellen in één keer. Alleen voor een testdatabase waar niemand anders schrijft;
+- zoekbench(): tools/zoekbench/bench.py als module (S9), voor zijn boom en zijn SQL;
 - herbouw_verschil(path): de integrity-check van FTS5, en de index (fts_node en fts_name) naast
   een volledige herbouw van dezelfde database, term voor term (fts5vocab, soort instance).
   Leeg: gelijk.
@@ -13,8 +14,11 @@ snel een grote index te vullen, en de controle dat de index gelijk is aan een he
 
 from __future__ import annotations
 
+import functools
+import importlib.util
 import random
 import sqlite3
+import sys
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +28,7 @@ from alembic import command
 
 from app.migrate import alembic_config
 
+BENCH = Path(__file__).resolve().parents[3] / "tools" / "zoekbench" / "bench.py"
 TZ = "Europe/Amsterdam"
 NU = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
 
@@ -59,6 +64,16 @@ def zipf(n: int, s: float = 1.07) -> list[float]:
         acc += 1.0 / r**s
         out.append(acc)
     return out
+
+
+@functools.cache
+def zoekbench():
+    """tools/zoekbench/bench.py als module: hij staat los van de app, niet in een pakket."""
+    spec = importlib.util.spec_from_file_location("zoekbench", BENCH)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["zoekbench"] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def head_db(path: Path, *, fts5: bool | None = None) -> str:

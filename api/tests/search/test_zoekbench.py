@@ -8,32 +8,21 @@ view, een FTS-tabel of een index in 0010, dan faalt hij tot DDL in bench.py is b
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import signal
 import sqlite3
-import sys
-from pathlib import Path
 
 import pytest
 
 from tests.search import spike
 
-BENCH = Path(__file__).resolve().parents[3] / "tools" / "zoekbench" / "bench.py"
 # In de bench alleen met de kolommen die de view en de triggers lezen
 INGEKORT = {"media_item", "photo_person"}
 
 
 @pytest.fixture(scope="module")
 def bench():
-    spec = importlib.util.spec_from_file_location("zoekbench", BENCH)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["zoekbench"] = mod
-    try:
-        spec.loader.exec_module(mod)
-        yield mod
-    finally:
-        sys.modules.pop("zoekbench", None)
+    return spike.zoekbench()
 
 
 def _objecten(con: sqlite3.Connection) -> dict[str, tuple[str, str, str]]:
