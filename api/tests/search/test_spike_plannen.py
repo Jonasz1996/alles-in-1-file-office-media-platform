@@ -137,15 +137,16 @@ def test_alleen_filters_vanaf_de_paden(con, wortels):
 
 
 def test_de_kaart(con):
+    """Zonder join op node (review Z0, haalbaar F1 en F2): photo_geo houdt dead en taken_at van
+    de node bij. Eén bereik in ix_photo_geo_tile, die alles heeft (dekkend): geen rij per foto."""
     sql = (
-        "SELECT g.x16 >> :s AS cx, g.y16 >> :s AS cy, count(*) AS n, max(n.taken_at) AS t, "
-        "n.id AS cover FROM photo_geo AS g CROSS JOIN node AS n ON n.id = g.node_id "
-        "WHERE g.owner_id = :me AND g.x16 BETWEEN :x0 AND :x1 AND g.y16 BETWEEN :y0 AND :y1 "
-        "AND n.dead = 0 AND n.kind = 'file' GROUP BY cx, cy LIMIT 501"
+        "SELECT g.x16 >> :s AS cx, g.y16 >> :s AS cy, count(*) AS n, max(g.taken_at) AS t, "
+        "g.node_id AS cover FROM photo_geo AS g WHERE g.owner_id = :me AND g.dead = 0 "
+        "AND g.x16 BETWEEN :x0 AND :x1 AND g.y16 BETWEEN :y0 AND :y1 GROUP BY cx, cy LIMIT 501"
     )
     args = {"me": _ik(con), "s": 6, "x0": 0, "x1": 65535, "y0": 0, "y1": 65535}
-    eis(con, sql, args, eerst="SEARCH g USING INDEX ix_photo_geo_tile",
-        nodig=("SEARCH n USING INDEX sqlite_autoindex_node_1 (id=?)",))  # fmt: skip
+    tegel = "g USING COVERING INDEX ix_photo_geo_tile (owner_id=? AND dead=? AND x16>? AND x16<?)"
+    eis(con, sql, args, eerst=tegel, verboden=("node",))
 
 
 def test_precies_gelijk(con):

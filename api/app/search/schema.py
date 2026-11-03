@@ -179,7 +179,9 @@ def dead_subtree() -> str:
     """DEAD_SUBTREE: dead opnieuw voor de submap van NEW. CUR is het pad van nu; NEW.mpath is in
     de trigger nog het oude. Twee stappen, elk lineair: eerst de hele submap op de dead van de
     ouder, dan elke submap onder een node in de prullenbak op 1 (review Z0, veilig F2: één
-    UPDATE met EXISTS per rij was O(submap × prullenbak), seconden bij 10.000 en 2.000)."""
+    UPDATE met EXISTS per rij was O(submap × prullenbak), seconden bij 10.000 en 2.000). Dan
+    photo_geo.dead van de submap, via de sleutel node_id en alleen waar hij verandert (een gewone
+    verplaatsing schrijft daar niets; review Z0, haalbaar F2)."""
     cur = "(SELECT mpath FROM node WHERE id = NEW.id)"
     return (
         "UPDATE node SET dead =\n"
@@ -188,7 +190,10 @@ def dead_subtree() -> str:
         "UPDATE node SET dead = 1\n"
         "  FROM (SELECT mpath AS tp FROM node WHERE deleted_at IS NOT NULL\n"
         f"          AND mpath >= {cur} AND mpath < {end(cur)}) AS t\n"
-        f"   WHERE node.mpath >= t.tp AND node.mpath < {end('t.tp')};"
+        f"   WHERE node.mpath >= t.tp AND node.mpath < {end('t.tp')};\n"
+        "UPDATE photo_geo SET dead = (SELECT n.dead FROM node n WHERE n.id = photo_geo.node_id)\n"
+        f"   WHERE node_id IN (SELECT id FROM node WHERE mpath >= {cur} AND mpath < {end(cur)})\n"
+        "     AND dead IS NOT (SELECT n.dead FROM node n WHERE n.id = photo_geo.node_id);"
     )
 
 
@@ -272,6 +277,34 @@ def triggers(fts: bool) -> dict[str, str]:
         "node_au_trash AFTER UPDATE OF deleted_at ON node\n"
         "WHEN (OLD.deleted_at IS NULL) <> (NEW.deleted_at IS NULL) AND OLD.mpath IS NOT NULL",
         dead_subtree(),
+    )
+    # De plek van een foto houdt de stand van zijn node bij: dead (via DEAD_SUBTREE hierboven)
+    # en taken_at. Zo kan de kaart zonder join op node, en blijft hij toch precies own_live
+    # (live.own_live_geo; review Z0, haalbaar F1 en F2). Een rij hoort bij een bestand van de
+    # eigenaar van de node; node_id en owner_id veranderen nooit (een andere eigenaar: de rij
+    # gaat weg, node_au_owner), en dead en taken_at zijn altijd die van de node.
+    t["node_au_taken"] = _trigger(
+        "node_au_taken AFTER UPDATE OF taken_at ON node\nWHEN OLD.taken_at IS NOT NEW.taken_at",
+        "UPDATE photo_geo SET taken_at = NEW.taken_at WHERE node_id = NEW.id;",
+    )
+    t["geo_bi"] = _trigger(
+        "geo_bi BEFORE INSERT ON photo_geo\n"
+        "WHEN NOT EXISTS (SELECT 1 FROM node n WHERE n.id = NEW.node_id"
+        " AND n.owner_id = NEW.owner_id AND n.kind = 'file')",
+        "SELECT RAISE(ABORT, 'photo_geo: alleen bij een bestand, van de eigenaar van de node');",
+    )
+    t["geo_ai"] = _trigger(
+        "geo_ai AFTER INSERT ON photo_geo",
+        "UPDATE photo_geo SET (dead, taken_at) =\n"
+        "  (SELECT n.dead, n.taken_at FROM node n WHERE n.id = NEW.node_id)\n"
+        "WHERE node_id = NEW.node_id;",
+    )
+    t["geo_bu"] = _trigger(
+        "geo_bu BEFORE UPDATE ON photo_geo\n"
+        "WHEN NEW.node_id IS NOT OLD.node_id OR NEW.owner_id IS NOT OLD.owner_id\n"
+        "  OR NEW.dead IS NOT (SELECT n.dead FROM node n WHERE n.id = NEW.node_id)\n"
+        "  OR NEW.taken_at IS NOT (SELECT n.taken_at FROM node n WHERE n.id = NEW.node_id)",
+        "SELECT RAISE(ABORT, 'photo_geo: node_id, owner_id, dead en taken_at volgen de node');",
     )
     if not fts:
         return t

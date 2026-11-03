@@ -1,6 +1,7 @@
 """De kaart, de plaatsen en de controle vóór het delen (bouwontwerp fase 6, §3.4; Z3). Stubs van
 Z0: 501 not_built. Alleen eigen, levende bestanden (own_live); de filters van Keuze 43 komen
-erbij met Z3.
+erbij met Z3. De kaart en de plaatsen lezen photo_geo zonder join, met own_live_geo (Keuze 4a,
+review Z0 haalbaar F2).
 """
 
 import uuid

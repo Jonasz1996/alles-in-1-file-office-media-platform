@@ -541,6 +541,35 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
      **Herzien na de spike (S10).** Niet gehaald: bij 55.000 foto's met GPS p95 217–244 ms voor
      Nederland en 328–351 ms voor de wereld (3.46.1 en 3.53.1). De join op `node` per foto kost
      het; zonder join 22–34 ms. Dus komt de tabel `geo_cell`. Die staat nog niet in 0010.
+
+     **Herzien na de review van Z0 (haalbaar F1 en F2).** Geen `geo_cell`. Opgeslagen tellingen
+     per cel lopen na prullenbak of terugzetten uit de pas tot de job `geo` weer draait, en kunnen
+     de filters van Keuze 43 niet toepassen: hetzelfde gebrek waarom `place_count` verdween (S9).
+     En de tabel had geen eigenaar en geen migratie (0010 is van Z0, A0 heeft 0011 en 0012). Nu
+     houdt `photo_geo` zelf de stand van zijn node bij, in dezelfde transactie, met triggers in
+     0010 (§3.1): `dead` en `taken_at` zijn altijd die van de node, en een rij hoort alleen bij een
+     bestand van de eigenaar van de node. Dan is `own_live_geo(g)` (`g.owner_id = :me AND
+     g.dead = 0`, `app/search/live.py`) precies `own_live`, en kan de kaart zonder join:
+
+     ```sql
+     SELECT g.x16 >> :s AS cx, g.y16 >> :s AS cy, count(*) AS n,
+            max(g.taken_at) AS t, g.node_id AS cover   -- de nieuwste foto van de cel
+     FROM photo_geo AS g
+     WHERE g.owner_id = :me AND g.dead = 0
+       AND g.x16 BETWEEN :x0 AND :x1 AND g.y16 BETWEEN :y0 AND :y1
+     GROUP BY cx, cy
+     LIMIT 501
+     ```
+
+     met `ix_photo_geo_tile (owner_id, dead, x16, y16, taken_at, node_id)`: dekkend, dus geen
+     rij per foto. Gemeten met `tools/zoekbench/bench.py --vormen` (55.000 foto's met GPS, 5
+     rondes): p95 wereld 44,7 ms en Nederland 30,4 ms op 3.53.1, 66,2 en 33,4 ms op 3.46.1. De
+     vorm met de join in dezelfde run: 241 en 194 ms (3.53.1), 219 en 146 ms (3.46.1). Zonder
+     `taken_at` en `node_id` in de index 89 en 70 ms. Het bijhouden kost bij een map met 10.000
+     foto's met plek, waarvan 2.000 in de prullenbak: prullenbak 0,37 s, terugzetten 0,31–0,34 s,
+     verplaatsen 0,23 s; zonder plekken 0,17–0,22, 0,13–0,19 en 0,20–0,23 s (3.53.1; marker
+     `zoek_perf`, grens 1 s). Een datumfilter gaat op `g.taken_at`; een filter op persoon, tag,
+     map of camera doet de join met `node` over de al smallere set, met een eigen poort (Z3).
    - **Duplicaten** (Keuze 34–36), met `ix_node_owner_blob (owner_id, blob_id) WHERE dead = 0`:
 
      ```sql
@@ -891,7 +920,8 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
       doelmap, V9) mag niets erven, en de toestemming is per eigenaar.
     - **Schrijven** alleen voor de eigenaar van de node, en alleen als zijn instelling het toelaat
       (`photo_pref`), gecontroleerd in dezelfde transactie als het schrijven.
-    - **Prullenbak**: de rijen blijven, maar `own_live` laat ze weg. **Terugzetten**: ze zijn er
+    - **Prullenbak**: de rijen blijven, maar `own_live` laat ze weg (in `photo_geo` zet een
+      trigger `dead` mee: `own_live_geo`, review Z0). **Terugzetten**: ze zijn er
       weer. **Definitief wissen**: weg via de cascade. **Een gebruiker wissen**: weg via de
       cascade.
     - **Andere eigenaar** (verplaatst naar de map van een ander): een trigger op `node.owner_id`
@@ -906,7 +936,10 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
       `n.owner_id = :me AND n.dead = 0 AND n.kind = 'file'`. Herinneringen, de kaart, de
       plaatsen, de duplicaten, personen (foto's, aantallen en omslagen) en de verversing van slimme
       albums gebruiken hem allemaal. In 0.7.0 eisen de tijdlijn en albums al "levend"
-      (`on_timeline`, `live_items`, V9); met `dead` is dat één kolom.
+      (`on_timeline`, `live_items`, V9); met `dead` is dat één kolom. Herzien na de review van
+      Z0 (haalbaar F2): de kaart en de plaatsen lezen alleen `photo_geo`, met `own_live_geo(g)`
+      (`g.owner_id = :me AND g.dead = 0`). Dat is dezelfde regel: de triggers van 0010 houden
+      `photo_geo.dead` gelijk aan `node.dead`, en een rij hoort bij een bestand van de eigenaar.
     - Test (`test_own_live.py`): Eva's eigen foto in de prullenbak staat niet in herinneringen,
       kaart, plaatsen, duplicaten, personen of suggesties, en komt na terugzetten terug. Een kopie
       in Brams boom: Bram ziet er geen plek, persoon of OCR-tekst van Eva bij.
@@ -990,11 +1023,14 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
     ≤ 500 cellen, met een omslag (de nieuwste). Poort p95 ≤ 150 ms bij 55.000 foto's met GPS
     (S10, §4.4). Plaatsnamen op de kaart pas vanaf zoom 6.
     **Herzien na de spike (S10):** niet gehaald met de join; zie Keuze 4a, de tabel `geo_cell`.
+    **Herzien na de review van Z0 (haalbaar F1 en F2):** geen `geo_cell`; `photo_geo` houdt
+    `dead` en `taken_at` van de node bij, en de kaart gaat zonder join (Keuze 4a), p95 ≤ 67 ms.
 33. **Een lijst naast de kaart** (A; herzien in r2: S9). "Plaatsen": de plaatsen met het aantal
     foto's, voor wie geen kaart gebruikt of met een schermlezer werkt. Een klik zet het filter
     `place`. Het aantal komt per verzoek uit `GROUP BY` op `ix_photo_geo_place (owner_id,
     place_id)` met `own_live`, niet uit een opgeslagen telling: die zou na prullenbak,
-    terugzetten, wissen of "uit" niet meer kloppen.
+    terugzetten, wissen of "uit" niet meer kloppen. Herzien na de review van Z0 (haalbaar F2):
+    op `ix_photo_geo_place (owner_id, dead, place_id)` met `own_live_geo`, zonder join.
 
 ### Duplicaten
 
@@ -2187,11 +2223,14 @@ aan heeft (Keuze 69, Vraag 9).
 
 **Eigendom.** Een bestand heeft één eigenaar per golf. Z0 en Z0b zetten de stubs en de hotspots;
 daarna bewerkt alleen de eigenaar het bestand. Herzien in r2 (C9) en in r3: het pad van de
-migraties is `api/migrations/versions/` (K2-18).
+migraties is `api/migrations/versions/` (K2-18). Herzien na de review van Z0 (haalbaar F1): de
+kaart heeft geen eigen tabel en geen eigen migratie. `photo_geo` met `dead`, `taken_at`, de
+dekkende `ix_photo_geo_tile` en de triggers `geo_*` staan in 0010 (Z0); Z3 schrijft alleen de
+rijen en leest met `own_live_geo`.
 
 | Bestand of map | Eigenaar |
 |---|---|
-| `api/migrations/versions/0010_zoeken.py`, `app/models.py` (nieuwe modellen), `app/search/schema.py`, `app/search/live.py` (`own_live`), `app/search/types.py` | Z0 |
+| `api/migrations/versions/0010_zoeken.py`, `app/models.py` (nieuwe modellen), `app/search/schema.py`, `app/search/live.py` (`own_live`, `own_live_geo`), `app/search/types.py` | Z0 |
 | de hotspots van §3.5 (`main.py`, `cli.py`, `jobs.py`, `files.py`, `trash.py`, `userdelete.py`, `web/src/routes.tsx`, `web/src/Beheer.tsx`, `web/scripts/budget.mjs`) | Z0 |
 | de contracten van X2 en X3 in de bestanden van Z0 (§3.3, §3.5: velden, `Step.EMBED`, de rij `analyse`, `PHOTO_PREFS`, `register_large`, de stubs, de lege plekken in de web, de i18n-gebieden `photos_faces` en `beeld`, de catalogi `faces.ts` en `beeld.ts`) | Z0b |
 | `app/search/{engine,query,access,snippets,deadline,like,suggest,limits,bench}.py`, `routers/search.py` | Z1 |
@@ -3566,7 +3605,7 @@ per node (Keuze 25a); wat over de inhoud zelf gaat, per blob.
 | `ocr_page` | `blob_sha`, `page` INT, `angle` REAL, `words` BLOB (zlib, JSON `[[t, x, y, w, h], …]`) | PK (`blob_sha`, `page`) | X1 |
 | `analysis` | `blob_sha`, `step` (`text`, `hash`, `ocr`), `version` INT, `state` (`wait`, `busy`, `done`, `none`, `skip`, `failed`), `tries` INT 0, `code` TEXT NULL, `owner_id` NULL (FK `user` SET NULL), `queued_at`, `updated_at` | PK (`blob_sha`, `step`); `ix_analysis_todo (step, state, owner_id, queued_at)` | Z2 |
 | `blob_meta` | `blob_sha`, `camera` TEXT NULL (gevouwen "merk model"), `lens` TEXT NULL, `gps` INT NULL (1, 0, of onbekend) | PK; `ix_blob_meta_camera (camera)` | Z3 |
-| `photo_geo` | `node_id`, `owner_id`, `lat` REAL, `lon` REAL, `alt` REAL NULL, `x16` INT, `y16` INT, `place_id` INT NULL, `country` TEXT NULL, `admin1` TEXT NULL, `source` (`exif`, `xmp`, `video`) | PK `node_id`; `ix_photo_geo_tile (owner_id, x16, y16)`, `ix_photo_geo_place (owner_id, place_id)`, `ix_photo_geo_country (owner_id, country)` | Z3 |
+| `photo_geo` | `node_id`, `owner_id`, `lat` REAL, `lon` REAL, `alt` REAL NULL, `x16` INT, `y16` INT, `place_id` INT NULL, `country` TEXT NULL, `admin1` TEXT NULL, `source` (`exif`, `xmp`, `video`); herzien na de review van Z0: `dead` INT 0 en `taken_at` NULL, die van de node (triggers, nooit zelf schrijven) | PK `node_id`; `ix_photo_geo_tile (owner_id, dead, x16, y16, taken_at, node_id)`, `ix_photo_geo_place (owner_id, dead, place_id)`, `ix_photo_geo_country (owner_id, dead, country)` | Z3 |
 | `blob_hash` | `blob_sha`, `state` (`ok`, `flat`, `none`), `phash` INT NULL (64 bits, met teken), `h0`–`h3` INT NULL (16 bits), `version` INT | PK; `ix_hash_0 (h0)` … `ix_hash_3 (h3)` | Z3 |
 | `dup_pair` | `a`, `b` (sha, `a < b`), `dist` INT, `mad` REAL, `level` (`zeker`, `lijkt`) | PK (`a`, `b`), WITHOUT ROWID; `ix_dup_b (b)` | Z3 |
 | `dup_ignore` | `user_id`, `key` TEXT (sha256 van de gesorteerde shas) | PK (`user_id`, `key`) | Z3 |
@@ -3728,6 +3767,52 @@ UPDATE node SET dead = 1
 
 `tests/search/test_triggers_dead.py`: `dead` klopt op elke diepte, het werk groeit niet met de
 prullenbak, en (marker `zoek_perf`) terugzetten en verplaatsen blijven onder 0,5 s.
+
+**Herzien na de review van Z0 (haalbaar F1 en F2): `photo_geo` volgt zijn node.** De kaart leest
+`photo_geo` zonder join (Keuze 4a). Daarvoor zet `DEAD_SUBTREE` als derde stap `dead` in
+`photo_geo` voor de submap, alleen waar hij verandert (een gewone verplaatsing schrijft daar
+niets), en vier triggers houden de rest vast:
+
+```sql
+-- derde stap van DEAD_SUBTREE: per node van de submap één zoekstap op de sleutel van photo_geo
+UPDATE photo_geo SET dead = (SELECT n.dead FROM node n WHERE n.id = photo_geo.node_id)
+ WHERE node_id IN (SELECT id FROM node WHERE mpath >= CUR AND mpath < END(CUR))
+   AND dead IS NOT (SELECT n.dead FROM node n WHERE n.id = photo_geo.node_id);
+
+CREATE TRIGGER node_au_taken AFTER UPDATE OF taken_at ON node
+WHEN OLD.taken_at IS NOT NEW.taken_at BEGIN
+  UPDATE photo_geo SET taken_at = NEW.taken_at WHERE node_id = NEW.id;
+END;
+-- alleen bij een bestand, van de eigenaar van de node
+CREATE TRIGGER geo_bi BEFORE INSERT ON photo_geo
+WHEN NOT EXISTS (SELECT 1 FROM node n WHERE n.id = NEW.node_id
+                 AND n.owner_id = NEW.owner_id AND n.kind = 'file') BEGIN
+  SELECT RAISE(ABORT, 'photo_geo: alleen bij een bestand, van de eigenaar van de node');
+END;
+-- een nieuwe rij krijgt dead en taken_at van de node (het ORM schrijft 0 en NULL)
+CREATE TRIGGER geo_ai AFTER INSERT ON photo_geo BEGIN
+  UPDATE photo_geo SET (dead, taken_at) =
+    (SELECT n.dead, n.taken_at FROM node n WHERE n.id = NEW.node_id)
+  WHERE node_id = NEW.node_id;
+END;
+-- node_id en owner_id veranderen nooit (een andere eigenaar: node_au_owner wist de rij), en
+-- dead en taken_at zijn altijd die van de node
+CREATE TRIGGER geo_bu BEFORE UPDATE ON photo_geo
+WHEN NEW.node_id IS NOT OLD.node_id OR NEW.owner_id IS NOT OLD.owner_id
+  OR NEW.dead IS NOT (SELECT n.dead FROM node n WHERE n.id = NEW.node_id)
+  OR NEW.taken_at IS NOT (SELECT n.taken_at FROM node n WHERE n.id = NEW.node_id) BEGIN
+  SELECT RAISE(ABORT, 'photo_geo: node_id, owner_id, dead en taken_at volgen de node');
+END;
+```
+
+Ook zonder FTS5 (`TRIGGERS_NO_FTS`). `tests/search/test_triggers_geo.py`: na elke stap
+(prullenbak, ook via een map erboven, terug, verplaatsen, een andere opnamedatum, een andere
+eigenaar) zijn `dead` en `taken_at` die van de node en toont `own_live_geo` precies wat
+`own_live` met de join toont; een rij bij een map, een album, de node van een ander of een node
+die niet bestaat wordt geweigerd, en zelf `dead`, `taken_at`, `owner_id` of `node_id` zetten
+ook; de stap in `photo_geo` zoekt per node op de sleutel; en (marker `zoek_perf`) een map met
+10.000 foto's met plek blijft onder 1 s. `check_tree` (`tests/search/migratie.py`) controleert
+`photo_geo` nu bij elke test die hem gebruikt.
 
 **De triggers op `blob_text`, `photo_ocr` en `media_item`.** Een `media_item` of `photo_ocr`
 waarvan `node_id` verandert, bestaat niet; een test houdt dat vast.
@@ -4046,6 +4131,9 @@ async def admit(user: User) -> AsyncContextManager[None]: ...   # 429 search_bus
 # app/search/live.py (Z0, vast; Keuze 25a)
 def own_live(n: Alias, me: UUID) -> ColumnElement[bool]: ...    # owner, dead = 0, kind = 'file'
 OWN_LIVE_SQL = "{n}.owner_id = :me AND {n}.dead = 0 AND {n}.kind = 'file'"
+# herzien na de review van Z0 (haalbaar F2): photo_geo zonder join, dezelfde regel (§3.1)
+def own_live_geo(g: Alias, me: UUID) -> ColumnElement[bool]: ...  # owner, dead = 0
+OWN_LIVE_GEO_SQL = "{g}.owner_id = :me AND {g}.dead = 0"
 
 # app/search/filters.py
 def register(name: str, apply: ApplyFilter, suggest: SuggestFn | None = None) -> None: ...
@@ -4319,6 +4407,10 @@ met de WAL, 525 MB na een checkpoint. Hij duurt ±70 s op 3 cores. De uitslag va
 
 - 0010 heen en terug, ook zonder FTS5;
 - `own_live` en `schema.TRIGGERS` staan vast, met hun tests;
+- `photo_geo` volgt zijn node (prullenbak, terug, verplaatsen, opnamedatum, andere eigenaar) en
+  de kaart zonder join is `own_live` (herzien na de review van Z0, haalbaar F2):
+  `tests/search/test_triggers_geo.py`, de vorm `kaart` in `test_plans.py` en
+  `test_spike_plannen.py`, en S10 in `tools/zoekbench/bench.py --vormen` (p95 ≤ 150 ms);
 - alle routers gemount (stubs), de web-app bouwt met de lege pagina's en blijft binnen budget;
 - de spike S1–S11 staat in `docs/fase-6/spike.md`, met wat het ontwerp daardoor verandert;
 - de fixtures maken alles van §3.6; de wereld en de referentie hebben eigen tests;
@@ -4343,8 +4435,9 @@ Herzien in r2: de rijen voor foto-gegevens per node (S8, S9, S17) en voor slimme
 | andere eigenaar (`owner_id` verandert) | trigger: paden | niets | `node_au_owner` wist `photo_geo`, `photo_person`, `photo_ocr` van die node | de oude eigenaar ziet niets meer; de nieuwe pas als photometa v2 voor hem leest, met zijn eigen "mij" | `test_owner_change_wipes` |
 | inhoud vervangen, nieuwe versie | trigger (`blob_id`) | job voor de nieuwe sha | `photo_geo` en `photo_ocr` weg; personen blijven, zonder kader | de oude tekst nooit meer | `test_replace_no_old_text` |
 | versie terugzetten | trigger (`blob_id`) | de oude sha heeft zijn rij nog | als bij vervangen | meteen | `test_restore_version` |
-| naar de prullenbak (bestand of map) | trigger: `dead` voor de submap | niets | rijen blijven; `own_live` laat ze weg | weg uit zoeken, kaart, plaatsen, herinneringen, personen, duplicaten en slimme albums | `test_trash_subtree`, `test_own_live` |
-| terug uit de prullenbak | trigger: `dead` | niets | rijen zijn er weer | terug | `test_restore` |
+| naar de prullenbak (bestand of map) | trigger: `dead` voor de submap | niets | rijen blijven; `own_live` laat ze weg; `photo_geo.dead` volgt in dezelfde transactie (`own_live_geo`) | weg uit zoeken, kaart, plaatsen, herinneringen, personen, duplicaten en slimme albums | `test_trash_subtree`, `test_own_live`, `test_triggers_geo` |
+| terug uit de prullenbak | trigger: `dead` | niets | rijen zijn er weer; `photo_geo.dead` ook | terug | `test_restore`, `test_triggers_geo` |
+| andere opnamedatum (`taken_at`) | — | — | `node_au_taken`: `photo_geo.taken_at` volgt | de omslag van een cel op de kaart | `test_triggers_geo` |
 | definitief wissen, gebruiker wissen | cascade → `node_bd`, per 2.000 | niets | weg via de cascade | weg | `test_purge_cascade` |
 | blob opgeruimd | — | cascade: `blob_text`, `blob_meta`, `blob_hash`, `ocr_page` | — (per node al weg) | — | `test_gc_cascade` |
 | locatie "uit" | — | — | één job wist alle `photo_geo` van die eigenaar; niets schrijft er nog een | kaart en plaatsen meteen leeg; `blob_meta.gps` blijft voor de waarschuwing | `test_location_off` |

@@ -105,12 +105,14 @@ def _eigenaar(con) -> str:
 
 
 def _kaart(con):
+    # Zonder join op node: photo_geo houdt dead en taken_at van de node bij (own_live_geo;
+    # review Z0, haalbaar F1 en F2). De cover is de foto met de nieuwste taken_at (max)
     sql = """
         SELECT g.x16 >> ? AS cx, g.y16 >> ? AS cy, count(*) AS n,
-               max(n.taken_at) AS t, n.id AS cover
-        FROM photo_geo AS g CROSS JOIN node AS n ON n.id = g.node_id
-        WHERE g.owner_id = ? AND g.x16 BETWEEN ? AND ? AND g.y16 BETWEEN ? AND ?
-          AND n.dead = 0 AND n.kind = 'file'
+               max(g.taken_at) AS t, g.node_id AS cover
+        FROM photo_geo AS g
+        WHERE g.owner_id = ? AND g.dead = 0
+          AND g.x16 BETWEEN ? AND ? AND g.y16 BETWEEN ? AND ?
         GROUP BY cx, cy
         LIMIT 501"""
     return sql, [6, 6, _eigenaar(con), 33_000, 34_000, 21_000, 22_000]
@@ -146,7 +148,12 @@ VORMEN = {
     "filters langs de tijd": (_filters_tijd, "ix_node_live_mod", [], ["TEMP B-TREE"]),
     "filters vanaf de paden": (_filters_paden, "", ["ix_node_mpath"], []),
     "filter op soort": (_filters_soort, "ix_node_ftype_mod", [], ["TEMP B-TREE"]),
-    "kaart": (_kaart, "ix_photo_geo_tile", [], []),
+    "kaart": (
+        _kaart,
+        "COVERING INDEX ix_photo_geo_tile (owner_id=? AND dead=? AND x16>? AND x16<?)",
+        [],
+        ["node"],
+    ),
     "duplicaten": (_dubbel, "ix_node_owner_blob", [], []),
     "bijna-duplicaten": (_bijna, "", ["ix_node_owner_blob"], []),
 }

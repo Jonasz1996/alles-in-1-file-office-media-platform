@@ -366,7 +366,12 @@ Paren: 30 bij de eigenaar, 522 bij de fotograaf. Hele run met de vormen: 117 s (
   tot 20.000 nodes en tot 64 wortels (S4); bij 97.000 kost hij 163–171 ms.
 - **De kaart:** de join op `node` per foto kost het. Zonder join 22–34 ms. Volgens Keuze 4a komt
   er de tabel `geo_cell (owner_id, z, cx, cy, n, cover)`, bijgewerkt door de job `geo`. Die
-  staat nog niet in 0010; zie "Open".
+  staat nog niet in 0010; zie "Open". **Herzien na de review van Z0 (haalbaar F1 en F2):** geen
+  `geo_cell` (opgeslagen tellingen lopen na de prullenbak uit de pas, en kennen de filters
+  niet). `photo_geo` houdt `dead` en `taken_at` van de node bij met triggers in 0010, en de kaart
+  gaat zonder join met de dekkende `ix_photo_geo_tile`: p95 wereld 44,7 en Nederland 30,4 ms
+  (3.53.1), 66,2 en 33,4 ms (3.46.1). De bench meet de oude vorm met join ernaast ("met join
+  (oud)").
 - **Bijna gelijk:** de vorm met `EXISTS` in plaats van `IN mine`. Daarmee haalt hij de poort
   ruim, en is `dup_group` niet nodig.
 - Niet gemeten: "langs de tijd" met een filter dat in een groot bereik niets vindt. Die loopt de
@@ -459,8 +464,10 @@ dan de marker `zoek_perf` (S1 met de echte grenzen, S2 herbouw van 100.000, S3 m
 
 ## Open
 
-- **De kaart: `geo_cell`.** S10 haalt de poort niet. De tabel moet in 0010 (Z0-api) of in de
-  migratie van Z4; wie en wanneer is nog niet beslist.
+- ~~**De kaart: `geo_cell`.** S10 haalt de poort niet. De tabel moet in 0010 (Z0-api) of in de
+  migratie van Z4; wie en wanneer is nog niet beslist.~~ Gedaan na de review van Z0 (haalbaar F1
+  en F2), zonder `geo_cell`: `photo_geo.dead` en `taken_at` in 0010 (Z0), de kaart zonder join
+  haalt de poort (zie S10).
 - **Keuze 17: welke vorm.** De 0711-kopie van python is één regel in de Dockerfile (Z2); de vork
   na "klaar" is code in `app.render text`. Aanbevolen: 0711, plus stderr naar `/dev/null`.
 - **CI-getallen op 3.46.1** voor S1, S2, S7, S9 en S10 in de job, en S5 en S11 in de

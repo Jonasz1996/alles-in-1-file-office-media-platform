@@ -847,13 +847,18 @@ class BlobMeta(Base):
 
 class PhotoGeo(Base):
     """De plek van een foto, per node en alleen voor de eigenaar (Z3, Keuze 25a). x16 en y16:
-    de tegel op zoom 16; place_id: in places.sqlite. source: exif, xmp of video."""
+    de tegel op zoom 16; place_id: in places.sqlite. source: exif, xmp of video.
+
+    dead en taken_at zijn die van de node; triggers van 0010 houden ze bij (nooit zelf
+    schrijven). Zo kan de kaart zonder join op node en blijft hij own_live (live.own_live_geo;
+    review Z0, haalbaar F1 en F2). Een rij hoort bij een bestand van de eigenaar van de node."""
 
     __tablename__ = "photo_geo"
     __table_args__ = (
-        Index("ix_photo_geo_tile", "owner_id", "x16", "y16"),
-        Index("ix_photo_geo_place", "owner_id", "place_id"),
-        Index("ix_photo_geo_country", "owner_id", "country"),
+        # Dekkend voor de kaart: geen rij lezen per foto (review Z0, haalbaar F2)
+        Index("ix_photo_geo_tile", "owner_id", "dead", "x16", "y16", "taken_at", "node_id"),
+        Index("ix_photo_geo_place", "owner_id", "dead", "place_id"),
+        Index("ix_photo_geo_country", "owner_id", "dead", "country"),
     )
 
     node_id: Mapped[uuid.UUID] = mapped_column(
@@ -869,6 +874,8 @@ class PhotoGeo(Base):
     country: Mapped[str | None] = mapped_column(String(2), nullable=True)
     admin1: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[str] = mapped_column(String(8))
+    dead: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class BlobHash(Base):

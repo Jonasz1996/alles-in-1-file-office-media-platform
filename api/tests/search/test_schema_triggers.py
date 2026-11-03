@@ -79,18 +79,31 @@ def test_zonder_fts_alleen_nummer_pad_dead_en_foto_rijen():
         "node_au_owner",
         "node_au_move",
         "node_au_trash",
+        # de stand van de node in photo_geo (review Z0, haalbaar F2)
+        "node_au_taken",
+        "geo_bi",
+        "geo_ai",
+        "geo_bu",
     }
     for sql in schema.TRIGGERS_NO_FTS.values():
         assert "fts_" not in sql and "search_src" not in sql
     assert set(schema.TRIGGERS_NO_FTS) < set(schema.TRIGGERS)
-    for name in ("node_au_owner", "node_au_move", "node_au_trash"):
+    for name in ("node_au_owner", "node_au_move", "node_au_trash", "node_au_taken", "geo_bi",
+                 "geo_ai", "geo_bu"):  # fmt: skip
         assert schema.TRIGGERS_NO_FTS[name] == schema.TRIGGERS[name]
 
 
 def test_elke_trigger_op_een_bekende_tabel():
-    """bt_* op blob_text, po_* op photo_ocr, mi_* op media_item, node_* op node; en geen
-    trigger schrijft met INSERT OR REPLACE (dan klopt de 'delete' in FTS niet meer)."""
-    tables = {"node": "node", "bt": "blob_text", "po": "photo_ocr", "mi": "media_item"}
+    """bt_* op blob_text, po_* op photo_ocr, mi_* op media_item, geo_* op photo_geo, node_* op
+    node; en geen trigger schrijft met INSERT OR REPLACE (dan klopt de 'delete' in FTS niet
+    meer)."""
+    tables = {
+        "node": "node",
+        "bt": "blob_text",
+        "po": "photo_ocr",
+        "mi": "media_item",
+        "geo": "photo_geo",
+    }
     for name, sql in schema.TRIGGERS.items():
         assert f" ON {tables[name.split('_')[0]]}" in sql.split("BEGIN")[0], name
         assert "OR REPLACE" not in sql and "OR IGNORE" not in sql, name

@@ -630,11 +630,12 @@ def meet_vormen(con, rondes: int = 20) -> dict:
                f"n.kind <> 'album' AND {bereik} ORDER BY n.modified_at DESC, n.num DESC LIMIT 31")  # fmt: skip
         uit[f"filters {naam}: vanaf de paden"] = samenvatting(tijd(sql, args))
 
+    # De kaart zonder join op node: photo_geo houdt dead en taken_at van de node bij, dus dit is
+    # own_live (review Z0, haalbaar F1 en F2). De cover is de foto met de nieuwste taken_at.
     kaart = (
-        "SELECT g.x16 >> :s AS cx, g.y16 >> :s AS cy, count(*) AS n, max(n.taken_at) AS t, "
-        "n.id AS cover FROM photo_geo AS g CROSS JOIN node AS n ON n.id = g.node_id "
-        "WHERE g.owner_id = :me AND g.x16 BETWEEN :x0 AND :x1 AND g.y16 BETWEEN :y0 AND :y1 "
-        "AND n.dead = 0 AND n.kind = 'file' GROUP BY cx, cy LIMIT 501"
+        "SELECT g.x16 >> :s AS cx, g.y16 >> :s AS cy, count(*) AS n, max(g.taken_at) AS t, "
+        "g.node_id AS cover FROM photo_geo AS g WHERE g.owner_id = :me AND g.dead = 0 "
+        "AND g.x16 BETWEEN :x0 AND :x1 AND g.y16 BETWEEN :y0 AND :y1 GROUP BY cx, cy LIMIT 501"
     )
     nl0, nl1 = tegel16(53.6, 3.3), tegel16(50.7, 7.3)
     exact = (
@@ -664,12 +665,12 @@ def meet_vormen(con, rondes: int = 20) -> dict:
         "AND n.kind = 'file' AND EXISTS (SELECT 1 FROM node AS m WHERE m.owner_id = :me "
         "AND m.blob_id = p.b AND m.dead = 0 AND m.kind = 'file') GROUP BY p.a, p.b"
     )
-    # De kaart zonder de join met node (alleen ter vergelijking: dan telt een foto in de
-    # prullenbak mee)
-    kaart_los = (
-        "SELECT g.x16 >> :s AS cx, g.y16 >> :s AS cy, count(*) AS n FROM photo_geo AS g "
+    # Ter vergelijking de vorm van vóór de review: per foto een join op node voor dead
+    kaart_join = (
+        "SELECT g.x16 >> :s AS cx, g.y16 >> :s AS cy, count(*) AS n, max(n.taken_at) AS t, "
+        "n.id AS cover FROM photo_geo AS g CROSS JOIN node AS n ON n.id = g.node_id "
         "WHERE g.owner_id = :me AND g.x16 BETWEEN :x0 AND :x1 AND g.y16 BETWEEN :y0 AND :y1 "
-        "GROUP BY cx, cy LIMIT 501"
+        "AND n.dead = 0 AND n.kind = 'file' GROUP BY cx, cy LIMIT 501"
     )
     for naam in ("b00", "fotograaf"):
         if naam not in users:
@@ -680,7 +681,8 @@ def meet_vormen(con, rondes: int = 20) -> dict:
         nl = {"me": me, "s": 6, "x0": nl0[0], "x1": nl1[0], "y0": nl0[1], "y1": nl1[1]}
         uit[f"kaart {wie}: wereld"] = samenvatting(tijd(kaart, wereld))
         uit[f"kaart {wie}: Nederland"] = samenvatting(tijd(kaart, nl))
-        uit[f"kaart {wie}: Nederland, zonder join"] = samenvatting(tijd(kaart_los, nl))
+        uit[f"kaart {wie}: wereld, met join (oud)"] = samenvatting(tijd(kaart_join, wereld))
+        uit[f"kaart {wie}: Nederland, met join (oud)"] = samenvatting(tijd(kaart_join, nl))
         uit[f"duplicaten {wie}: precies"] = samenvatting(tijd(exact, {"me": me}))
         uit[f"duplicaten {wie}: bijna, met EXISTS"] = samenvatting(tijd(bijna_exists, {"me": me}))
         uit[f"duplicaten {wie}: bijna, vanaf de eigen sha's"] = samenvatting(
@@ -816,7 +818,7 @@ DDL = (
     # tabel photo_ocr
     "CREATE TABLE photo_ocr (\n\tnode_id CHAR(32) NOT NULL, \n\towner_id CHAR(32) NOT NULL, \n\ttext TEXT DEFAULT '' NOT NULL, \n\twords BLOB NOT NULL, \n\tangle FLOAT DEFAULT '0' NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (node_id), \n\tFOREIGN KEY(node_id) REFERENCES node (id) ON DELETE CASCADE, \n\tFOREIGN KEY(owner_id) REFERENCES user (id) ON DELETE CASCADE\n)",
     # tabel photo_geo
-    "CREATE TABLE photo_geo (\n\tnode_id CHAR(32) NOT NULL, \n\towner_id CHAR(32) NOT NULL, \n\tlat FLOAT NOT NULL, \n\tlon FLOAT NOT NULL, \n\talt FLOAT, \n\tx16 INTEGER NOT NULL, \n\ty16 INTEGER NOT NULL, \n\tplace_id INTEGER, \n\tcountry VARCHAR(2), \n\tadmin1 TEXT, \n\tsource VARCHAR(8) NOT NULL, \n\tPRIMARY KEY (node_id), \n\tFOREIGN KEY(node_id) REFERENCES node (id) ON DELETE CASCADE, \n\tFOREIGN KEY(owner_id) REFERENCES user (id) ON DELETE CASCADE\n)",
+    "CREATE TABLE photo_geo (\n\tnode_id CHAR(32) NOT NULL, \n\towner_id CHAR(32) NOT NULL, \n\tlat FLOAT NOT NULL, \n\tlon FLOAT NOT NULL, \n\talt FLOAT, \n\tx16 INTEGER NOT NULL, \n\ty16 INTEGER NOT NULL, \n\tplace_id INTEGER, \n\tcountry VARCHAR(2), \n\tadmin1 TEXT, \n\tsource VARCHAR(8) NOT NULL, \n\tdead INTEGER DEFAULT '0' NOT NULL, \n\ttaken_at DATETIME, \n\tPRIMARY KEY (node_id), \n\tFOREIGN KEY(node_id) REFERENCES node (id) ON DELETE CASCADE, \n\tFOREIGN KEY(owner_id) REFERENCES user (id) ON DELETE CASCADE\n)",
     # tabel dup_pair
     "CREATE TABLE dup_pair (\n\ta VARCHAR(64) NOT NULL, \n\tb VARCHAR(64) NOT NULL, \n\tdist INTEGER NOT NULL, \n\tmad FLOAT NOT NULL, \n\tlevel VARCHAR(8) NOT NULL, \n\tPRIMARY KEY (a, b), \n\tCHECK (a < b), \n\tFOREIGN KEY(a) REFERENCES blob (sha256) ON DELETE CASCADE, \n\tFOREIGN KEY(b) REFERENCES blob (sha256) ON DELETE CASCADE\n)\n WITHOUT ROWID\n\n",
     # tabel search_seq
@@ -850,11 +852,11 @@ DDL = (
     # index ix_node_trash
     "CREATE INDEX ix_node_trash ON node (mpath) WHERE deleted_at IS NOT NULL",
     # index ix_photo_geo_country
-    "CREATE INDEX ix_photo_geo_country ON photo_geo (owner_id, country)",
+    "CREATE INDEX ix_photo_geo_country ON photo_geo (owner_id, dead, country)",
     # index ix_photo_geo_place
-    "CREATE INDEX ix_photo_geo_place ON photo_geo (owner_id, place_id)",
+    "CREATE INDEX ix_photo_geo_place ON photo_geo (owner_id, dead, place_id)",
     # index ix_photo_geo_tile
-    "CREATE INDEX ix_photo_geo_tile ON photo_geo (owner_id, x16, y16)",
+    "CREATE INDEX ix_photo_geo_tile ON photo_geo (owner_id, dead, x16, y16, taken_at, node_id)",
     # search_src
     "CREATE VIEW search_src AS\n  SELECT n.num AS num, n.blob_id AS blob_id, n.id AS node_id, n.search_name AS name,\n         replace(replace(coalesce((SELECT group_concat(m.title, ' ') FROM media_item m WHERE m.node_id = n.id), ''), 'ß', 'ss'), 'ẞ', 'ss') AS extra,\n         replace(replace(coalesce(t.body, ''), 'ß', 'ss'), 'ẞ', 'ss') AS body,\n         replace(replace(coalesce(t.ocr, ''), 'ß', 'ss'), 'ẞ', 'ss') AS ocr,\n         replace(replace(coalesce(t.meta, ''), 'ß', 'ss'), 'ẞ', 'ss') AS meta,\n         replace(replace(coalesce(po.text, ''), 'ß', 'ss'), 'ẞ', 'ss') AS pocr\n  FROM node n\n  LEFT JOIN blob_text t ON t.blob_sha = n.blob_id\n  LEFT JOIN photo_ocr po ON po.node_id = n.id",
     # fts_node
@@ -872,9 +874,9 @@ DDL = (
     # trigger node_bd
     "CREATE TRIGGER node_bd BEFORE DELETE ON node WHEN OLD.num IS NOT NULL BEGIN\n  INSERT INTO fts_node(fts_node, rowid, name, extra, body, ocr, meta, pocr) SELECT 'delete', num, name, extra, body, ocr, meta, pocr FROM search_src WHERE (num = OLD.num) AND ((SELECT cursor FROM search_state WHERE id = 1) IS NULL OR num <= (SELECT cursor FROM search_state WHERE id = 1));\n  INSERT INTO fts_name(fts_name, rowid, search_name) SELECT 'delete', OLD.num, OLD.search_name WHERE ((SELECT cursor FROM search_state WHERE id = 1) IS NULL OR OLD.num <= (SELECT cursor FROM search_state WHERE id = 1));\nEND",
     # trigger node_au_move
-    "CREATE TRIGGER node_au_move AFTER UPDATE OF parent_id ON node\nWHEN OLD.parent_id IS NOT NEW.parent_id AND OLD.mpath IS NOT NULL BEGIN\n  UPDATE node SET mpath = coalesce((SELECT p.mpath FROM node p WHERE p.id = NEW.parent_id), '/') || NEW.num || '/'\n                          || substr(mpath, length(OLD.mpath) + 1)\n   WHERE mpath >= OLD.mpath AND mpath < substr(OLD.mpath, 1, length(OLD.mpath) - 1) || '0';\n  UPDATE node SET dead =\n        coalesce((SELECT p.dead FROM node p WHERE p.id = NEW.parent_id), 0)\n     WHERE mpath >= (SELECT mpath FROM node WHERE id = NEW.id) AND mpath < substr((SELECT mpath FROM node WHERE id = NEW.id), 1, length((SELECT mpath FROM node WHERE id = NEW.id)) - 1) || '0';\n  UPDATE node SET dead = 1\n    FROM (SELECT mpath AS tp FROM node WHERE deleted_at IS NOT NULL\n            AND mpath >= (SELECT mpath FROM node WHERE id = NEW.id) AND mpath < substr((SELECT mpath FROM node WHERE id = NEW.id), 1, length((SELECT mpath FROM node WHERE id = NEW.id)) - 1) || '0') AS t\n     WHERE node.mpath >= t.tp AND node.mpath < substr(t.tp, 1, length(t.tp) - 1) || '0';\nEND",
+    "CREATE TRIGGER node_au_move AFTER UPDATE OF parent_id ON node\nWHEN OLD.parent_id IS NOT NEW.parent_id AND OLD.mpath IS NOT NULL BEGIN\n  UPDATE node SET mpath = coalesce((SELECT p.mpath FROM node p WHERE p.id = NEW.parent_id), '/') || NEW.num || '/'\n                          || substr(mpath, length(OLD.mpath) + 1)\n   WHERE mpath >= OLD.mpath AND mpath < substr(OLD.mpath, 1, length(OLD.mpath) - 1) || '0';\n  UPDATE node SET dead =\n        coalesce((SELECT p.dead FROM node p WHERE p.id = NEW.parent_id), 0)\n     WHERE mpath >= (SELECT mpath FROM node WHERE id = NEW.id) AND mpath < substr((SELECT mpath FROM node WHERE id = NEW.id), 1, length((SELECT mpath FROM node WHERE id = NEW.id)) - 1) || '0';\n  UPDATE node SET dead = 1\n    FROM (SELECT mpath AS tp FROM node WHERE deleted_at IS NOT NULL\n            AND mpath >= (SELECT mpath FROM node WHERE id = NEW.id) AND mpath < substr((SELECT mpath FROM node WHERE id = NEW.id), 1, length((SELECT mpath FROM node WHERE id = NEW.id)) - 1) || '0') AS t\n     WHERE node.mpath >= t.tp AND node.mpath < substr(t.tp, 1, length(t.tp) - 1) || '0';\n  UPDATE photo_geo SET dead = (SELECT n.dead FROM node n WHERE n.id = photo_geo.node_id)\n     WHERE node_id IN (SELECT id FROM node WHERE mpath >= (SELECT mpath FROM node WHERE id = NEW.id) AND mpath < substr((SELECT mpath FROM node WHERE id = NEW.id), 1, length((SELECT mpath FROM node WHERE id = NEW.id)) - 1) || '0')\n       AND dead IS NOT (SELECT n.dead FROM node n WHERE n.id = photo_geo.node_id);\nEND",
     # trigger node_au_trash
-    "CREATE TRIGGER node_au_trash AFTER UPDATE OF deleted_at ON node\nWHEN (OLD.deleted_at IS NULL) <> (NEW.deleted_at IS NULL) AND OLD.mpath IS NOT NULL BEGIN\n  UPDATE node SET dead =\n        coalesce((SELECT p.dead FROM node p WHERE p.id = NEW.parent_id), 0)\n     WHERE mpath >= (SELECT mpath FROM node WHERE id = NEW.id) AND mpath < substr((SELECT mpath FROM node WHERE id = NEW.id), 1, length((SELECT mpath FROM node WHERE id = NEW.id)) - 1) || '0';\n  UPDATE node SET dead = 1\n    FROM (SELECT mpath AS tp FROM node WHERE deleted_at IS NOT NULL\n            AND mpath >= (SELECT mpath FROM node WHERE id = NEW.id) AND mpath < substr((SELECT mpath FROM node WHERE id = NEW.id), 1, length((SELECT mpath FROM node WHERE id = NEW.id)) - 1) || '0') AS t\n     WHERE node.mpath >= t.tp AND node.mpath < substr(t.tp, 1, length(t.tp) - 1) || '0';\nEND",
+    "CREATE TRIGGER node_au_trash AFTER UPDATE OF deleted_at ON node\nWHEN (OLD.deleted_at IS NULL) <> (NEW.deleted_at IS NULL) AND OLD.mpath IS NOT NULL BEGIN\n  UPDATE node SET dead =\n        coalesce((SELECT p.dead FROM node p WHERE p.id = NEW.parent_id), 0)\n     WHERE mpath >= (SELECT mpath FROM node WHERE id = NEW.id) AND mpath < substr((SELECT mpath FROM node WHERE id = NEW.id), 1, length((SELECT mpath FROM node WHERE id = NEW.id)) - 1) || '0';\n  UPDATE node SET dead = 1\n    FROM (SELECT mpath AS tp FROM node WHERE deleted_at IS NOT NULL\n            AND mpath >= (SELECT mpath FROM node WHERE id = NEW.id) AND mpath < substr((SELECT mpath FROM node WHERE id = NEW.id), 1, length((SELECT mpath FROM node WHERE id = NEW.id)) - 1) || '0') AS t\n     WHERE node.mpath >= t.tp AND node.mpath < substr(t.tp, 1, length(t.tp) - 1) || '0';\n  UPDATE photo_geo SET dead = (SELECT n.dead FROM node n WHERE n.id = photo_geo.node_id)\n     WHERE node_id IN (SELECT id FROM node WHERE mpath >= (SELECT mpath FROM node WHERE id = NEW.id) AND mpath < substr((SELECT mpath FROM node WHERE id = NEW.id), 1, length((SELECT mpath FROM node WHERE id = NEW.id)) - 1) || '0')\n       AND dead IS NOT (SELECT n.dead FROM node n WHERE n.id = photo_geo.node_id);\nEND",
     # trigger bt_bi
     "CREATE TRIGGER bt_bi BEFORE INSERT ON blob_text BEGIN INSERT INTO fts_node(fts_node, rowid, name, extra, body, ocr, meta, pocr) SELECT 'delete', num, name, extra, body, ocr, meta, pocr FROM search_src WHERE (blob_id = NEW.blob_sha) AND ((SELECT cursor FROM search_state WHERE id = 1) IS NULL OR num <= (SELECT cursor FROM search_state WHERE id = 1)); END",
     # trigger bt_ai
@@ -911,6 +913,14 @@ DDL = (
     "CREATE TRIGGER mi_bd BEFORE DELETE ON media_item BEGIN INSERT INTO fts_node(fts_node, rowid, name, extra, body, ocr, meta, pocr) SELECT 'delete', num, name, extra, body, ocr, meta, pocr FROM search_src WHERE (num = (SELECT num FROM node WHERE id = OLD.node_id)) AND ((SELECT cursor FROM search_state WHERE id = 1) IS NULL OR num <= (SELECT cursor FROM search_state WHERE id = 1)); END",
     # trigger mi_ad
     "CREATE TRIGGER mi_ad AFTER DELETE ON media_item BEGIN INSERT INTO fts_node(rowid, name, extra, body, ocr, meta, pocr) SELECT num, name, extra, body, ocr, meta, pocr FROM search_src WHERE (num = (SELECT num FROM node WHERE id = OLD.node_id)) AND ((SELECT cursor FROM search_state WHERE id = 1) IS NULL OR num <= (SELECT cursor FROM search_state WHERE id = 1)); END",
+    # trigger node_au_taken
+    "CREATE TRIGGER node_au_taken AFTER UPDATE OF taken_at ON node\nWHEN OLD.taken_at IS NOT NEW.taken_at BEGIN\n  UPDATE photo_geo SET taken_at = NEW.taken_at WHERE node_id = NEW.id;\nEND",
+    # trigger geo_bi
+    "CREATE TRIGGER geo_bi BEFORE INSERT ON photo_geo\nWHEN NOT EXISTS (SELECT 1 FROM node n WHERE n.id = NEW.node_id AND n.owner_id = NEW.owner_id AND n.kind = 'file') BEGIN\n  SELECT RAISE(ABORT, 'photo_geo: alleen bij een bestand, van de eigenaar van de node');\nEND",
+    # trigger geo_ai
+    "CREATE TRIGGER geo_ai AFTER INSERT ON photo_geo BEGIN\n  UPDATE photo_geo SET (dead, taken_at) =\n    (SELECT n.dead, n.taken_at FROM node n WHERE n.id = NEW.node_id)\n  WHERE node_id = NEW.node_id;\nEND",
+    # trigger geo_bu
+    "CREATE TRIGGER geo_bu BEFORE UPDATE ON photo_geo\nWHEN NEW.node_id IS NOT OLD.node_id OR NEW.owner_id IS NOT OLD.owner_id\n  OR NEW.dead IS NOT (SELECT n.dead FROM node n WHERE n.id = NEW.node_id)\n  OR NEW.taken_at IS NOT (SELECT n.taken_at FROM node n WHERE n.id = NEW.node_id) BEGIN\n  SELECT RAISE(ABORT, 'photo_geo: node_id, owner_id, dead en taken_at volgen de node');\nEND",
 )
 
 if __name__ == "__main__":

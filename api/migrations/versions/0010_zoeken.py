@@ -182,7 +182,10 @@ def dead_subtree() -> str:
         "UPDATE node SET dead = 1\n"
         "  FROM (SELECT mpath AS tp FROM node WHERE deleted_at IS NOT NULL\n"
         f"          AND mpath >= {cur} AND mpath < {end(cur)}) AS t\n"
-        f"   WHERE node.mpath >= t.tp AND node.mpath < {end('t.tp')};"
+        f"   WHERE node.mpath >= t.tp AND node.mpath < {end('t.tp')};\n"
+        "UPDATE photo_geo SET dead = (SELECT n.dead FROM node n WHERE n.id = photo_geo.node_id)\n"
+        f"   WHERE node_id IN (SELECT id FROM node WHERE mpath >= {cur} AND mpath < {end(cur)})\n"
+        "     AND dead IS NOT (SELECT n.dead FROM node n WHERE n.id = photo_geo.node_id);"
     )
 
 
@@ -253,6 +256,29 @@ def triggers(fts: bool) -> dict[str, str]:
         "node_au_trash AFTER UPDATE OF deleted_at ON node\n"
         "WHEN (OLD.deleted_at IS NULL) <> (NEW.deleted_at IS NULL) AND OLD.mpath IS NOT NULL",
         dead_subtree(),
+    )
+    t["node_au_taken"] = _trigger(
+        "node_au_taken AFTER UPDATE OF taken_at ON node\nWHEN OLD.taken_at IS NOT NEW.taken_at",
+        "UPDATE photo_geo SET taken_at = NEW.taken_at WHERE node_id = NEW.id;",
+    )
+    t["geo_bi"] = _trigger(
+        "geo_bi BEFORE INSERT ON photo_geo\n"
+        "WHEN NOT EXISTS (SELECT 1 FROM node n WHERE n.id = NEW.node_id"
+        " AND n.owner_id = NEW.owner_id AND n.kind = 'file')",
+        "SELECT RAISE(ABORT, 'photo_geo: alleen bij een bestand, van de eigenaar van de node');",
+    )
+    t["geo_ai"] = _trigger(
+        "geo_ai AFTER INSERT ON photo_geo",
+        "UPDATE photo_geo SET (dead, taken_at) =\n"
+        "  (SELECT n.dead, n.taken_at FROM node n WHERE n.id = NEW.node_id)\n"
+        "WHERE node_id = NEW.node_id;",
+    )
+    t["geo_bu"] = _trigger(
+        "geo_bu BEFORE UPDATE ON photo_geo\n"
+        "WHEN NEW.node_id IS NOT OLD.node_id OR NEW.owner_id IS NOT OLD.owner_id\n"
+        "  OR NEW.dead IS NOT (SELECT n.dead FROM node n WHERE n.id = NEW.node_id)\n"
+        "  OR NEW.taken_at IS NOT (SELECT n.taken_at FROM node n WHERE n.id = NEW.node_id)",
+        "SELECT RAISE(ABORT, 'photo_geo: node_id, owner_id, dead en taken_at volgen de node');",
     )
     if not fts:
         return t
@@ -405,10 +431,14 @@ def _tables() -> None:
         sa.Column("country", sa.String(length=2), nullable=True),
         sa.Column("admin1", sa.Text(), nullable=True),
         sa.Column("source", sa.String(length=8), nullable=False),
+        sa.Column("dead", sa.Integer(), server_default="0", nullable=False),
+        _at("taken_at", nullable=True),
     )
-    op.create_index("ix_photo_geo_tile", "photo_geo", ["owner_id", "x16", "y16"])
-    op.create_index("ix_photo_geo_place", "photo_geo", ["owner_id", "place_id"])
-    op.create_index("ix_photo_geo_country", "photo_geo", ["owner_id", "country"])
+    op.create_index(
+        "ix_photo_geo_tile", "photo_geo", ["owner_id", "dead", "x16", "y16", "taken_at", "node_id"]
+    )
+    op.create_index("ix_photo_geo_place", "photo_geo", ["owner_id", "dead", "place_id"])
+    op.create_index("ix_photo_geo_country", "photo_geo", ["owner_id", "dead", "country"])
     op.create_table(
         "blob_hash",
         _blob(),
