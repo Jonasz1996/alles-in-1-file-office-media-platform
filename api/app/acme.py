@@ -26,6 +26,11 @@ LETS_ENCRYPT_STAGING = "https://acme-staging-v02.api.letsencrypt.org/directory"
 
 log = logging.getLogger("platform.acme")
 
+# Pogingen per POST bij badNonce (RFC 8555 §6.5: opnieuw met de nieuwe nonce uit het antwoord).
+# Pebble weigert met opzet 5% van de goede nonces; met 3 pogingen faalde in CI eens een heel
+# certificaat op drie weigeringen achter elkaar. Met 6 is die kans 0,05^6 = 1,6e-8 per POST.
+NONCE_TRIES = 6
+
 
 class AcmeError(Exception):
     """Fout van de ACME-server, met de uitleg die die zelf meestuurt."""
@@ -139,7 +144,7 @@ class AcmeClient:
 
     async def post(self, url: str, payload: dict | None, accept: str | None = None):
         """Ondertekende POST. payload None = POST-as-GET (lege payload)."""
-        for attempt in range(3):
+        for attempt in range(NONCE_TRIES):
             nonce = self._nonce or await self._new_nonce()
             self._nonce = None
             protected: dict = {"alg": "ES256", "nonce": nonce, "url": url}
@@ -162,7 +167,8 @@ class AcmeClient:
             if r.status_code < 400:
                 return r
             problem = _problem(r)
-            if problem.get("type") == "urn:ietf:params:acme:error:badNonce" and attempt < 2:
+            bad_nonce = problem.get("type") == "urn:ietf:params:acme:error:badNonce"
+            if bad_nonce and attempt < NONCE_TRIES - 1:
                 continue
             raise AcmeError(_describe(problem, r.status_code), problem, _retry_after(r))
         raise AcmeError("De ACME-server bleef de nonce weigeren")

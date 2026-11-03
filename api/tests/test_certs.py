@@ -243,6 +243,53 @@ async def issue(transport: httpx.MockTransport) -> acme.AcmeError:
     return info.value
 
 
+def weigert_nonces(keer: int):
+    """Nep-ACME-server die de eerste `keer` POST's weigert met badNonce, zoals Pebble dat met
+    opzet doet (5% van de goede nonces), en daarna gewoon antwoordt. Elk antwoord, ook de
+    weigering, geeft een nieuwe nonce mee (RFC 8555 §6.5)."""
+    posts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        nonce = {"Replay-Nonce": f"nonce-{len(posts)}"}
+        if path == "/dir":
+            names = ("newNonce", "newAccount", "newOrder")
+            return httpx.Response(200, json={name: f"{ACME}/{name}" for name in names})
+        if path == "/newNonce":
+            return httpx.Response(200, headers=nonce)
+        posts.append(path)
+        if len(posts) <= keer:
+            problem = {"type": "urn:ietf:params:acme:error:badNonce", "detail": "oud"}
+            return httpx.Response(400, json=problem, headers=nonce)
+        return httpx.Response(200, text="ok", headers=nonce)
+
+    return httpx.MockTransport(handler), posts
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("keer", [0, 1, 5])
+async def test_badnonce_wordt_opnieuw_geprobeerd(keer):
+    """Pebble weigerde in CI drie nonces achter elkaar op dezelfde POST (certZ); met 3
+    pogingen faalde dan het hele certificaat. Nu 6 pogingen: met 5% per nonce is de kans
+    dat alle zes geweigerd worden 1,6e-8."""
+    transport, posts = weigert_nonces(keer)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = acme.AcmeClient(f"{ACME}/dir", acme.new_key(), http, poll_interval=0)
+        r = await client.post(f"{ACME}/cert", None)
+    assert r.status_code == 200 and len(posts) == keer + 1
+
+
+@pytest.mark.anyio
+async def test_badnonce_te_vaak_geeft_de_fout_van_de_server():
+    transport, posts = weigert_nonces(acme.NONCE_TRIES)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = acme.AcmeClient(f"{ACME}/dir", acme.new_key(), http, poll_interval=0)
+        with pytest.raises(acme.AcmeError) as info:
+            await client.post(f"{ACME}/cert", None)
+    assert info.value.type == "urn:ietf:params:acme:error:badNonce"
+    assert len(posts) == acme.NONCE_TRIES
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize("kind", ["connection", "dns", "unauthorized"])
 async def test_uitleg_bij_mislukte_controle(kind):
