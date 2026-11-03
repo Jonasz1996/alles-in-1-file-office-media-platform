@@ -14,7 +14,10 @@ Wat de spike vond (docs/fase-6/spike.md, S1):
   thread). Na een await loopt er op die verbinding dus geen statement meer, en een interrupt()
   dan doet niets (SQLite negeert hem zonder lopend statement);
 - na "interrupted" is de verbinding gewoon bruikbaar, ook in dezelfde transactie, en de pool
-  geeft hem heel terug.
+  geeft hem heel terug;
+- ronde A stopt bij een voorvoegsel 2–22 ms na de grens (FTS5 voegt de lijsten samen tussen
+  twee kijkjes naar de interrupt). Daarom krijgt ronde B de rest van 120 + 40 ms, niet vast
+  40 ms: zo bleef "ver"* in 30 keer onder 172 ms (met vast 40 ms: tot 191 ms).
 """
 
 from __future__ import annotations
@@ -168,7 +171,11 @@ class Uitkomst:
 
 async def zoek(conn, root: str, expr: str, names: str | None, *, ms_a=120, ms_b=40, n=30):
     """De volgorde van Keuze 9: A gerangschikt; stopt die, dan B zonder volgorde; stopt ook die,
-    dan C alleen op namen (trigram)."""
+    dan C alleen op namen (trigram).
+
+    B krijgt wat er over is van ms_a + ms_b, niet vast ms_b: A stopt pas 2–22 ms na zijn grens
+    (op 3.46.1; FTS5 kijkt bij een voorvoegsel niet bij elke stap naar de interrupt), en met een
+    vaste 40 ms kwam het antwoord zo tot 191 ms in plaats van 165 (S1). Minstens 1 ms."""
     args = {"expr": expr, "p1": root, "e1": root[:-1] + "0", "n": n + 1}
     start = time.perf_counter()
     rows: list = []
@@ -176,7 +183,8 @@ async def zoek(conn, root: str, expr: str, names: str | None, *, ms_a=120, ms_b=
         rows = (await conn.execute(RONDE_A, args)).all()
     if not a.hit:
         return Uitkomst(rows, "A", False, True, False, (time.perf_counter() - start) * 1000)
-    async with grens(conn, ms_b) as b:
+    rest = ms_a + ms_b - (time.perf_counter() - start) * 1000
+    async with grens(conn, max(1, round(rest))) as b:
         rows = (await conn.execute(RONDE_B, args)).all()
     if not b.hit:
         return Uitkomst(rows, "B", True, False, False, (time.perf_counter() - start) * 1000)
