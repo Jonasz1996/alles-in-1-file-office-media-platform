@@ -31,8 +31,9 @@ Nederlandse en Engelse woorden, diakrieten, ß en kunstwoorden), 2% kopieën bij
 de mappen en 1% van de bestanden in de prullenbak.
 
 Een vraag gaat zoals in Keuze 4 en 9: ronde A gerangschikt met een grens van 120 ms; stopt die,
-dan ronde B zonder volgorde (40 ms); stopt ook die, dan ronde C op de namen (trigram). Gemeten
-wordt de tijd tot het antwoord, en apart de gerangschikte vraag zonder grens.
+dan ronde B zonder volgorde met wat er over is van 120 + 40 ms (spike S1); stopt ook die, dan
+ronde C op de namen (trigram). Gemeten wordt de tijd tot het antwoord, de tijd van ronde C apart,
+en de gerangschikte vraag zonder grens.
 
 Uitvoer: een tabel per bereik (p50, p95, max in ms; hoe vaak B of C nodig was), en met --json
 alles als JSON. Exitcode 0; 3 als SQLite geen FTS5 kent (dan zoekt de app met LIKE).
@@ -495,14 +496,19 @@ def zoek(con, bereik: str, args: dict, vraag: str) -> dict:
     a = {**args, "expr": expr, "n": PAGINA + 1}
     start = time.perf_counter()
     rows = met_grens(con, GRENS_A, sql_a(bereik), a)
-    ronde = "A"
+    ronde, c_ms = "A", None
     if rows is None:
-        ronde, rows = "B", met_grens(con, GRENS_B, sql_b(bereik), a)
+        # B krijgt de rest: A stopt pas 2–22 ms na zijn grens (S1)
+        rest = GRENS_A + GRENS_B - (time.perf_counter() - start) * 1000
+        ronde, rows = "B", met_grens(con, max(1, round(rest)), sql_b(bereik), a)
     if rows is None:
         ronde, rows = "C", []
+        c_start = time.perf_counter()
         if names:
             rows = con.execute(sql_c(bereik), {**a, "names": names}).fetchall()
-    return {"ms": (time.perf_counter() - start) * 1000, "ronde": ronde, "rijen": len(rows)}
+        c_ms = (time.perf_counter() - c_start) * 1000
+    return {"ms": (time.perf_counter() - start) * 1000, "ronde": ronde, "rijen": len(rows),
+            "C ms": c_ms}  # fmt: skip
 
 
 def zonder_grens(con, bereik: str, args: dict, vraag: str) -> float:
@@ -539,7 +545,7 @@ def meet_zoeken(con, boom: Boom, rondes: int) -> dict:
     uit = {}
     for naam, wortels in profielen.items():
         bereik, args = bereiken(wortels)
-        p95s, alle, rondes_bc, leeg_c = [], [], {"B": 0, "C": 0}, 0
+        p95s, alle, rondes_bc, leeg_c, c_ms = [], [], {"B": 0, "C": 0}, 0, []
         per_soort: dict[str, dict] = {}
         for _ in range(rondes):
             ronde = []
@@ -552,6 +558,8 @@ def meet_zoeken(con, boom: Boom, rondes: int) -> dict:
                     rondes_bc[r["ronde"]] += 1
                     s[r["ronde"]] += 1
                     leeg_c += r["ronde"] == "C" and r["rijen"] == 0
+                if r["C ms"] is not None:
+                    c_ms.append(r["C ms"])
             p95s.append(p(ronde, 0.95))
             alle += ronde
         ruw = []
@@ -570,6 +578,7 @@ def meet_zoeken(con, boom: Boom, rondes: int) -> dict:
             "ronde B": rondes_bc["B"],
             "ronde C": rondes_bc["C"],
             "C zonder rijen": leeg_c,
+            "ronde C zelf": samenvatting(c_ms) if c_ms else None,
             "zonder grens": samenvatting(ruw),
             "per soort": {
                 soort: {
@@ -772,6 +781,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{naam:9} ({z['wortels']} wortels, {z['zichtbaar']} zichtbaar): p50 {z['p50']} "
               f"p95 {z['p95']} max {z['max']} ms; B {z['ronde B']}x, C {z['ronde C']}x; "
               f"zonder grens p95 {z['zonder grens']['p95']} ms")  # fmt: skip
+        if z["ronde C zelf"]:
+            c = z["ronde C zelf"]
+            print(f"{naam:9} ronde C zelf: p50 {c['p50']} p95 {c['p95']} max {c['max']} ms; "
+                  f"{z['C zonder rijen']}x zonder rijen")  # fmt: skip
     for naam, v in uit.get("vormen", {}).items():
         if isinstance(v, int):
             print(f"{naam}: {v}")
