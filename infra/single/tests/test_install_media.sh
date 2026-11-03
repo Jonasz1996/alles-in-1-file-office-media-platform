@@ -761,7 +761,7 @@ NEP
 #   | Stap | Sandbox | CI (media-image) |
 #   |---|---|---|
 #   | 1. 0.6.0 installeren (263abd7), een film uploaden | ja | ja |
-#   | 2. bijwerken: 0008 vanzelf, de app en de worker draaien, office zoals in 0.6.0, media raakt niets aan (geen bibliotheek, import of provider) | ja; de film komt nog heel terug, /beheer toont media_ffmpeg_missing, play 503 media_ffmpeg_missing | ja; plus een transcode via curl en docker top, de rooktest van de belastingtest |
+#   | 2. bijwerken: het schema vanzelf naar de nieuwste migratie van die versie, de app en de worker draaien, office zoals in 0.6.0, media raakt niets aan (geen bibliotheek, import of provider) | ja; de film komt nog heel terug, /beheer toont media_ffmpeg_missing, play 503 media_ffmpeg_missing | ja; plus een transcode via curl en docker top, de rooktest van de belastingtest |
 #   | 2b. nog een keer bijwerken (een commit erbovenop) | één image platform:local, de oude id weg | idem |
 #   | 3. MEDIA_SANDBOX=uit: de container weg, de lokale worker | ja | ja |
 #   | 4. terug naar 0.6.0 met precies de commando's van Keuze 47 | ja; schema 0007 en de app 0.6.0 | — (INSTALL_TEST_ROLLBACK=0) |
@@ -1111,6 +1111,16 @@ SHIM
 c = sqlite3.connect("file:/data/platform.db?mode=ro", uri=True)
 print(c.execute("select version_num from alembic_version").fetchone()[0])' </dev/null 2>/dev/null
   }
+  # De revisie van de nieuwste migratie in commit $1 (de bestanden heten NNNN_naam.py; de
+  # revisie zelf staat erin als revision = "NNNN"). Niet vast in de test: een nieuwe migratie
+  # verandert wat "bijgewerkt" betekent.
+  head_rev() {
+    local last
+    last=$(git -C "$REPO_SRC" ls-tree --name-only "$1" api/migrations/versions/ \
+      | grep -E '^api/migrations/versions/[0-9]{4}_[^/]*\.py$' | sort | tail -n 1)
+    [ -n "$last" ] || return 1
+    git -C "$REPO_SRC" show "$1:$last" | sed -n 's/^revision = "\([0-9A-Za-z_]*\)"$/\1/p'
+  }
   # Wat app_images vindt, leesbaar (naam en het begin van de id), voor de naam van een controle
   app_images_text() {
     local id tags out=()
@@ -1233,7 +1243,10 @@ print(json.dumps({"profile": {"v": 1, "base": "web", "client": {"kind": "web", "
   STAGE=2
   step 2-bijwerken PLATFORM_SRC_REF="$TO" || fout "2: install.sh gaf een fout"
   check "2: de app draait" app_up
-  check "2: het schema staat op 0008" test "$(db_rev)" = 0008
+  local schema_head
+  schema_head=$(head_rev "$TO") || schema_head=""
+  [ -n "$schema_head" ] || stop "geen migraties gevonden in $TO (api/migrations/versions)"
+  check "2: het schema staat op de nieuwste migratie ($schema_head; gezien: $(db_rev))" test "$(db_rev)" = "$schema_head"
   local app media key app2
   app=$(cid platform) media=$(cid media)
   check "2: de container media draait" running "$media"
