@@ -12,7 +12,9 @@ zoals userdelete._drop_nodes; delete_nodes zelf commit nooit.
 - daarna klopt de boekhouding (check_refs), de boom (check_tree) en de index (check_fts);
 - terugzetten tijdens het wissen: wat nog niet weg was, komt terug (heel), en het wissen
   antwoordt not_trashed;
-- tussen twee stukken: wat er onder de map bij kwam gaat mee, wat eruit verhuisde blijft.
+- tussen twee stukken: wat er onder de map bij kwam gaat mee, wat eruit verhuisde blijft;
+- zonder de triggers van 0010 (zoals op PostgreSQL) werkt definitief wissen ook, kinderen vóór
+  hun ouders (nacontrole).
 """
 
 from __future__ import annotations
@@ -207,3 +209,61 @@ async def test_wat_er_tussen_twee_stukken_gebeurt(client, admin, settings):
     assert await _heel(settings) == 4
     r = await client.get("/api/v1/trash", headers=headers)
     assert {n["name"] for n in r.json()} == {"elders"}
+
+
+@pytest.mark.parametrize("hoe", ["los", "bulk", "legen"])
+async def test_wissen_zonder_de_triggers_van_0010(client, admin, settings, monkeypatch, hoe):
+    """Op PostgreSQL maakt 0010 alleen de tabellen en kolommen (§3.1): geen triggers, dus dead
+    blijft 0 en mpath leeg. Definitief wissen mag daar niet van afhangen; dood volgt uit de
+    keten van ouders, en de volgorde (kinderen vóór hun ouders) uit de diepte in de boom, niet
+    uit mpath (nacontrole van de review van Z0, haalbaar F3). Hier nagedaan op SQLite: alle
+    triggers weg, en dead en mpath zoals op PostgreSQL."""
+    headers, _ = admin
+    gewist: list[uuid.UUID] = []
+    echt = purge.delete_nodes
+
+    async def opschrijven(db, ids):
+        gewist.extend(ids)
+        return await echt(db, ids)
+
+    monkeypatch.setattr(purge, "delete_nodes", opschrijven)
+    async with get_engine(settings).begin() as conn:
+        namen = (
+            await conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+        ).scalars()
+        for naam in list(namen):
+            await conn.exec_driver_sql(f'DROP TRIGGER "{naam}"')
+        await conn.exec_driver_sql("UPDATE node SET mpath = NULL, dead = 0")
+
+    top = (await root(client, headers))["folder"]["id"]
+    weg = await mkdir(client, headers, top, "weg")
+    sub = await mkdir(client, headers, weg, "sub")
+    for parent, name in ((weg, "a.txt"), (sub, "b.txt"), (sub, "c.txt"), (top, "blijft.txt")):
+        r = await put(client, headers, parent, name, f"inhoud {name}".encode())
+        assert r.status_code == 201, r.text
+    assert (await client.delete(f"/api/v1/files/{weg}", headers=headers)).status_code == 204
+    async with get_engine(settings).connect() as conn:
+        rows = await conn.execute(sa.select(Node.id, Node.parent_id))
+        ouder = {node_id: parent_id for node_id, parent_id in rows}
+
+    if hoe == "los":
+        r = await client.delete(f"/api/v1/trash/{weg}", headers=headers)
+        assert r.status_code == 204, r.text
+    elif hoe == "bulk":
+        r = await client.post("/api/v1/trash/purge", json={"ids": [weg, sub]}, headers=headers)
+        assert r.status_code == 200, r.text
+        assert [x["ok"] for x in r.json()["results"]] == [True, True], r.text
+    else:
+        r = await client.delete("/api/v1/trash", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["purged"] == 1
+    async with get_engine(settings).connect() as conn:
+        namen = set((await conn.execute(sa.select(Node.name))).scalars())
+    assert namen == {"", "blijft.txt"}
+    await check_refs(settings)
+    # weg, sub, a.txt, b.txt en c.txt, elk kind vóór zijn ouder
+    assert len(gewist) == len(set(gewist)) == 5
+    plek = {node_id: i for i, node_id in enumerate(gewist)}
+    for node_id in gewist:
+        if ouder[node_id] in plek:
+            assert plek[node_id] < plek[ouder[node_id]], "een map ging vóór wat erin lag"

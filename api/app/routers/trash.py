@@ -354,7 +354,9 @@ async def covered(session: AsyncSession, user: User, ids: list[uuid.UUID]) -> se
     return found
 
 
-async def _subtree(session: AsyncSession, ids: list[uuid.UUID]) -> list[tuple[uuid.UUID, str]]:
+async def _subtree(
+    session: AsyncSession, ids: list[uuid.UUID]
+) -> list[tuple[uuid.UUID, str | None]]:
     """(id, mpath) van deze nodes en alles eronder, kinderen vóór hun ouders, elk één keer
     (ook als de ene node onder de andere ligt). In stukken binnengehaald."""
     found = files.tree(ids)
@@ -376,41 +378,49 @@ async def present(session: AsyncSession, ids: list[uuid.UUID]) -> set[uuid.UUID]
     return found
 
 
-def _depth(mpath: str | None) -> int:
-    return (mpath or "").count("/")
+async def _dead(session: AsyncSession, ids: Sequence[uuid.UUID]) -> set[uuid.UUID]:
+    """Welke van deze ids dood zijn: hij of een map erboven ligt in de prullenbak. Uit de keten
+    van ouders (access.ancestry), niet uit node.dead: die kolom houden alleen de triggers van
+    0010 bij, en op PostgreSQL maakt 0010 geen triggers (§3.1), dus daar blijft hij 0
+    (nacontrole van de review van Z0, haalbaar F3)."""
+    up = access.ancestry(Node.id.in_(ids))
+    rows = await session.scalars(select(up.c.origin).where(up.c.deleted_at.is_not(None)).distinct())
+    return set(rows.all())
 
 
 async def _doomed(
-    session: AsyncSession, part: Sequence[tuple[uuid.UUID, str]]
+    session: AsyncSession, part: Sequence[tuple[uuid.UUID, str | None]]
 ) -> list[tuple[uuid.UUID, str | None]]:
     """Onder BlobStore.lock: wat van dit stuk van het plan nu nog weg moet, als (id, blob_id),
-    kinderen vóór hun ouders. Een node gaat alleen mee als hij er nog is, dood (dead = 1: hij
-    of een map erboven ligt in de prullenbak) en niet verplaatst (zijn mpath is die van het
-    plan); intussen teruggezet of eruit verplaatst blijft hij staan. Wat er intussen onder kwam
-    (terugzetten, erin verplaatsen en weer weggooien) gaat mee: de cascade nam het anders mee
-    zonder dat ref_count omlaag ging."""
+    kinderen vóór hun ouders. Een node gaat alleen mee als hij er nog is, dood (_dead: hij of
+    een map erboven ligt in de prullenbak) en niet verplaatst (zijn mpath is die van het plan;
+    op PostgreSQL is mpath leeg, en zegt dit niets); intussen teruggezet of eruit verplaatst
+    blijft hij staan. Wat er intussen onder kwam (terugzetten, erin verplaatsen en weer
+    weggooien) gaat mee: de cascade nam het anders mee zonder dat ref_count omlaag ging."""
     planned = dict(part)
-    found: dict[uuid.UUID, tuple[str | None, str | None]] = {}
+    found: set[uuid.UUID] = set()
     for ids in batched(planned, search_purge.IN_LIMIT):
-        rows = await session.execute(
-            select(Node.id, Node.blob_id, Node.mpath).where(Node.id.in_(ids), Node.dead == 1)
-        )
-        for node_id, blob_id, mpath in rows:
-            if mpath == planned[node_id]:
-                found[node_id] = (blob_id, mpath)
+        dead = await _dead(session, ids)
+        rows = await session.execute(select(Node.id, Node.mpath).where(Node.id.in_(dead)))
+        found.update(node_id for node_id, mpath in rows if mpath == planned[node_id])
+    # Met wat er intussen onder kwam, elk op zijn grootste diepte onder een node van het stuk.
+    # Het diepste eerst zet elk kind vóór zijn ouder (het ligt altijd minstens één dieper), ook
+    # wat intussen binnen het stuk verplaatst is: dat ziet mpath op PostgreSQL niet.
+    deepest: dict[uuid.UUID, tuple[int, str | None]] = {}
     for ids in batched(list(found), search_purge.IN_LIMIT):
         down = files.tree(ids)
         rows = await session.execute(
-            select(Node.id, Node.blob_id, Node.mpath).join(down, Node.id == down.c.id)
+            select(Node.id, Node.blob_id, down.c.depth).join(down, Node.id == down.c.id)
         )
-        for node_id, blob_id, mpath in rows:
-            found.setdefault(node_id, (blob_id, mpath))
-    order = sorted(found.items(), key=lambda item: -_depth(item[1][1]))
-    return [(node_id, blob_id) for node_id, (blob_id, _) in order]
+        for node_id, blob_id, depth in rows:
+            if depth > deepest.get(node_id, (-1, None))[0]:
+                deepest[node_id] = (depth, blob_id)
+    order = sorted(deepest.items(), key=lambda item: -item[1][0])
+    return [(node_id, blob_id) for node_id, (_, blob_id) in order]
 
 
 async def purge_chunks(
-    session: AsyncSession, blobs: BlobStore, plan: list[tuple[uuid.UUID, str]]
+    session: AsyncSession, blobs: BlobStore, plan: list[tuple[uuid.UUID, str | None]]
 ) -> set[uuid.UUID]:
     """Het plan van _subtree (kinderen vóór hun ouders) definitief weg, per purge.CHUNK nodes:
     elk stuk een eigen transactie onder BlobStore.lock (Keuze 11), met de versies en ref_count
@@ -452,7 +462,7 @@ async def purge_ids(
         nodes: list[Node] = []
         seen: dict = {}
         below: dict = {}
-        plan: list[tuple[uuid.UUID, str]] = []
+        plan: list[tuple[uuid.UUID, str | None]] = []
         async with blobs.lock:
             # Pas onder het slot lezen: intussen kan het al weg of teruggezet zijn
             for node_id in chunk:

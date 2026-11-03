@@ -685,12 +685,15 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
     `delete_nodes` (die commit nooit): `routers/trash.py` heeft `purge_chunks`, zoals
     `userdelete._drop_nodes`. Per stuk: commit, `BlobStore.lock`, opnieuw lezen wat er nog weg
     moet, versies weg, `ref_count` omlaag, `delete_nodes`, commit. Opnieuw lezen omdat een ander
-    tussen twee stukken het slot krijgt: een node gaat alleen mee als hij er nog is, `dead = 1`
-    heeft en niet verplaatst is (`mpath` als in het plan); wat er intussen onder kwam, gaat mee
-    (anders nam de cascade het mee zonder `ref_count`). Wordt de map intussen teruggezet, dan komt
-    terug wat nog niet weg was, en antwoordt het wissen `422 not_trashed`. Gemeten (3.53.1): de
-    hele boom van 10.911 nodes in één transactie hield een upload 0,78 s op; in stukken komt hij
-    na het eerste stuk aan de beurt.
+    tussen twee stukken het slot krijgt: een node gaat alleen mee als hij er nog is, dood is (hij
+    of een map erboven in de prullenbak) en niet verplaatst is (`mpath` als in het plan); wat er
+    intussen onder kwam, gaat mee (anders nam de cascade het mee zonder `ref_count`). Wordt de map
+    intussen teruggezet, dan komt terug wat nog niet weg was, en antwoordt het wissen
+    `422 not_trashed`. Gemeten (3.53.1): de hele boom van 10.911 nodes in één transactie hield een
+    upload 0,78 s op; in stukken komt hij na het eerste stuk aan de beurt. **Na de nacontrole van
+    Z0:** dood volgt uit de keten van ouders (`access.ancestry`), niet uit `node.dead`, en de
+    volgorde (kinderen vóór hun ouders) uit de diepte in de boom, niet uit `mpath`: die kolommen
+    houden alleen de triggers van 0010 bij, en op PostgreSQL maakt 0010 geen triggers (§3.1).
 12. **Herstellen en controleren, zonder de schrijver vast te houden** (herzien in r2: S13).
     - `search-rebuild` is nooit één statement: een `rebuild` van FTS5 houdt de schrijver minuten
       vast, en `busy_timeout` is 5 s (V9). In plaats daarvan: `delete-all` (17–250 ms, V4), dan
