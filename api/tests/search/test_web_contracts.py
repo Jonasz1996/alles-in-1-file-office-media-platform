@@ -9,14 +9,29 @@ deze test houdt ze gelijk tot Z1–Z7 de routes vullen.
 De TypeScript wordt met een eenvoudige lezer gelezen: `export interface X { ... }` (met of zonder
 `extends Y`), velden gescheiden door `;`, een vorm `{ a: t; b: t }` als type van een veld, en
 woorden als `"a" | "b"`, een eigen `export type` daarvan of `(typeof LIJST)[number]`.
+
+Per veld ook het type (review Z0, haalbaar F5): string tegen str, UUID, date en datetime; number
+tegen int en float; boolean tegen bool; `X[]` tegen list[X]; een tupel `[a: t, b: t]` tegen
+tuple; een interface tegen zijn model (MODELLEN); `X["y"]` tegen het veld y van het model van X.
+Null en `?` hangen af van de richting:
+
+- antwoord (de API stuurt, de web leest): de API stuurt elk veld, dus geen `?`; `| null` precies
+  waar het model None toelaat;
+- vraag (de web stuurt, de API leest): `?` precies waar het model een standaard heeft; `| null`
+  alleen waar het model None neemt (None als standaard staat voor weglaten, dat mag zonder);
+- beide: allebei.
+
+Een type dat de lezer niet kent, is een fout: hij slaat niets stil over.
 """
 
 from __future__ import annotations
 
+import datetime
 import enum
 import re
 import types
 import typing
+import uuid
 from pathlib import Path
 
 import pytest
@@ -25,6 +40,8 @@ from pydantic import BaseModel
 from app import prefs
 from app.geo import types as G
 from app.people import types as P
+from app.routers.files import NodeOut, TagRef
+from app.routers.photos import PhotoItem
 from app.search import types as S
 
 WEB = Path(__file__).resolve().parents[3] / "web" / "src"
@@ -42,9 +59,25 @@ INTERFACE = re.compile(r"export interface (\w+)(?: extends (\w+))? \{")
 TYPE = re.compile(r"export type (\w+) = ([^;]+);")
 LIJST = re.compile(r"export const (\w+) = \[([^\]]*)\] as const;", re.S)
 NAAM = re.compile(r'export const (\w+) = "([^"]+)";')
-VELD = re.compile(r"(\w+)\??\s*:\s*(.+)", re.S)
+VELD = re.compile(r"(\w+)(\??)\s*:\s*(.+)", re.S)
 WOORD = re.compile(r'"([^"]*)"')
 TYPEOF = re.compile(r"\(typeof (\w+)\)\[number\]")
+INDEX = re.compile(r'(\w+)\["(\w+)"\]')
+TUPEL = re.compile(r"(?:readonly )?\[(.*)\]")
+WOORDNAAM = re.compile(r"\w+")
+
+# string, number en boolean tegen de typen van Python
+BASIS: dict[str, tuple[type, ...]] = {
+    "string": (str, uuid.UUID, datetime.date),
+    "number": (int, float),
+    "boolean": (bool,),
+}
+
+
+class Veld(typing.NamedTuple):
+    type: str
+    # `x?: t`: het mag ontbreken
+    optioneel: bool
 
 
 class Bron:
@@ -73,7 +106,7 @@ def _blok(tekst: str, start: int) -> str:
     raise AssertionError("accolade niet gesloten")
 
 
-def _velden(blok: str) -> dict[str, str]:
+def _velden(blok: str) -> dict[str, Veld]:
     """Veld → type, gescheiden door `;` buiten geneste accolades."""
     uit, stuk, diepte = {}, "", 0
     for teken in blok + ";":
@@ -83,7 +116,7 @@ def _velden(blok: str) -> dict[str, str]:
             if stuk.strip():
                 m = VELD.fullmatch(stuk.strip())
                 assert m, f"geen veld: {stuk.strip()!r}"
-                uit[m.group(1)] = " ".join(m.group(2).split())
+                uit[m.group(1)] = Veld(" ".join(m.group(3).split()), m.group(2) == "?")
             stuk = ""
         else:
             stuk += teken
@@ -95,7 +128,7 @@ def web() -> dict[str, Bron]:
     return {naam: Bron((WEB / naam).read_text()) for naam in BESTANDEN}
 
 
-def _interface(web: dict[str, Bron], bestand: str, naam: str) -> dict[str, str]:
+def _interface(web: dict[str, Bron], bestand: str, naam: str) -> dict[str, Veld]:
     """De velden van een interface, met die van `extends` erbij (eerst in hetzelfde bestand)."""
     for bron in [web[bestand], *web.values()]:
         if naam in bron.interfaces:
@@ -121,46 +154,130 @@ def _woorden(web: dict[str, Bron], bestand: str, ts: str) -> set[str] | None:
     return None
 
 
-def _kern(annotatie: object) -> object:
-    """Zonder None en zonder list: het type waar het om gaat."""
-    while True:
-        oorsprong = typing.get_origin(annotatie)
-        if oorsprong in (typing.Union, types.UnionType):
-            rest = [a for a in typing.get_args(annotatie) if a is not type(None)]
-            if len(rest) != 1:
-                return annotatie
-            annotatie = rest[0]
-        elif oorsprong is list:
-            annotatie = typing.get_args(annotatie)[0]
+def _delen(ts: str) -> list[str]:
+    """De delen van een union, alleen op het bovenste niveau (niet binnen {}, [], () of <>)."""
+    uit, stuk, diepte = [], "", 0
+    for teken in ts:
+        diepte += teken in "{[(<"
+        diepte -= teken in "}])>"
+        if teken == "|" and diepte == 0:
+            uit.append(stuk.strip())
+            stuk = ""
         else:
-            return annotatie
+            stuk += teken
+    return [d for d in [*uit, stuk.strip()] if d]
+
+
+def _ts_zonder_null(ts: str) -> tuple[str, bool]:
+    """Het type zonder `| null`, en of null erbij stond."""
+    delen = _delen(ts)
+    rest = [d for d in delen if d != "null"]
+    return " | ".join(rest), len(rest) < len(delen)
+
+
+def _los(annotatie: object) -> object:
+    """Zonder Annotated (de validators doen voor het contract niet mee)."""
+    while typing.get_origin(annotatie) is typing.Annotated:
+        annotatie = typing.get_args(annotatie)[0]
+    return annotatie
+
+
+def _zonder_none(annotatie: object) -> tuple[object, bool]:
+    """Het type zonder None, en of None erbij stond."""
+    annotatie = _los(annotatie)
+    if typing.get_origin(annotatie) in (typing.Union, types.UnionType):
+        args = typing.get_args(annotatie)
+        rest = [a for a in args if a is not type(None)]
+        if len(rest) < len(args):
+            assert len(rest) == 1, f"een union van meer typen: {annotatie}"
+            return _los(rest[0]), True
+    return annotatie, False
 
 
 def _python_woorden(annotatie: object) -> set[str] | None:
-    kern = _kern(annotatie)
-    if typing.get_origin(kern) is typing.Literal:
-        return set(typing.get_args(kern))
-    if isinstance(kern, type) and issubclass(kern, enum.Enum):
-        return {e.value for e in kern}
+    if typing.get_origin(annotatie) is typing.Literal:
+        return set(typing.get_args(annotatie))
+    if isinstance(annotatie, type) and issubclass(annotatie, enum.Enum):
+        return {e.value for e in annotatie}
     return None
 
 
-def _vergelijk(web, bestand: str, ts: dict[str, str], model: type[BaseModel], waar: str):
+def _gelijk_null(web, bestand: str, ts: str, annotatie: object, waar: str, richting: str):
+    """Een type binnen een type (van een lijst of tupel): null aan beide kanten gelijk."""
+    kern, ts_null = _ts_zonder_null(ts)
+    py, py_null = _zonder_none(annotatie)
+    assert ts_null == py_null, f"{waar}: web {ts} tegen {annotatie}"
+    _type(web, bestand, kern, py, waar, richting)
+
+
+def _type(web, bestand: str, ts: str, py: object, waar: str, richting: str) -> None:
+    """Een type van de web zonder null tegen dat van de API zonder None."""
+    tegen = f"{waar}: web {ts} tegen {py}"
+    if not ts.endswith("[]") and (woorden := _woorden(web, bestand, ts)) is not None:
+        assert woorden == _python_woorden(py), f"{waar}: web {sorted(woorden)} tegen {py}"
+        return
+    assert len(_delen(ts)) == 1, f"{waar}: de lezer kent de union {ts!r} niet"
+    if ts.endswith("[]"):
+        assert typing.get_origin(py) is list, tegen
+        element = ts.removesuffix("[]")
+        if element.startswith("(") and element.endswith(")"):
+            element = element[1:-1]
+        _gelijk_null(web, bestand, element, typing.get_args(py)[0], f"{waar}[]", richting)
+    elif m := TUPEL.fullmatch(ts):
+        assert typing.get_origin(py) is tuple, tegen
+        leden = [lid.split(":")[-1].strip() for lid in m.group(1).split(",")]
+        args = typing.get_args(py)
+        assert len(leden) == len(args), tegen
+        for i, (lid, arg) in enumerate(zip(leden, args, strict=True)):
+            _gelijk_null(web, bestand, lid, arg, f"{waar}[{i}]", richting)
+    elif ts.startswith("{"):
+        assert isinstance(py, type) and issubclass(py, BaseModel), tegen
+        _vergelijk(web, bestand, _velden(_blok(ts, 0)), py, waar, richting)
+    elif m := INDEX.fullmatch(ts):
+        assert m.group(1) in MODELLEN, f"{waar}: geen model voor {m.group(1)}"
+        veld = MODELLEN[m.group(1)].model_fields[m.group(2)]
+        assert _zonder_none(veld.annotation) == (py, False), tegen
+    elif ts in BASIS:
+        assert isinstance(py, type) and issubclass(py, BASIS[ts]), tegen
+        assert ts == "boolean" or not issubclass(py, bool), tegen
+    elif ts in MODELLEN:
+        assert py is MODELLEN[ts], tegen
+    elif WOORDNAAM.fullmatch(ts) and (alias := _alias(web, bestand, ts)) is not None:
+        kern, null = _ts_zonder_null(alias)
+        assert not null, f"{waar}: null in het type {ts}; de lezer kent dat niet"
+        _type(web, bestand, kern, py, waar, richting)
+    else:
+        raise AssertionError(f"{waar}: de lezer kent het type {ts!r} niet")
+
+
+def _alias(web: dict[str, Bron], bestand: str, naam: str) -> str | None:
+    for bron in [web[bestand], *web.values()]:
+        if naam in bron.types:
+            return bron.types[naam]
+    return None
+
+
+def _vergelijk(
+    web, bestand: str, ts: dict[str, Veld], model: type[BaseModel], waar: str, richting: str
+):
     py = {(f.alias or naam): f for naam, f in model.model_fields.items()}
     assert set(ts) == set(py), f"{waar}: web {sorted(ts)} tegen {model.__name__} {sorted(py)}"
-    for veld, ts_type in ts.items():
-        annotatie = py[veld].annotation
-        if ts_type.startswith("{"):
-            kern = _kern(annotatie)
-            assert isinstance(kern, type) and issubclass(kern, BaseModel), f"{waar}.{veld}"
-            blok = ts_type[: ts_type.rindex("}") + 1]
-            _vergelijk(web, bestand, _velden(_blok(blok, 0)), kern, f"{waar}.{veld}")
-            continue
-        woorden = _woorden(web, bestand, ts_type)
-        if woorden is not None:
-            assert woorden == _python_woorden(annotatie), (
-                f"{waar}.{veld}: web {sorted(woorden)} tegen {annotatie}"
+    for naam, veld in ts.items():
+        plek = f"{waar}.{naam}"
+        kern, ts_null = _ts_zonder_null(veld.type)
+        annotatie, py_null = _zonder_none(py[naam].annotation)
+        standaard = not py[naam].is_required()
+        if richting in ("vraag", "beide"):
+            # Weglaten mag waar de API een standaard heeft; null sturen waar hij None neemt
+            assert veld.optioneel == standaard, (
+                f"{plek}: web ?={veld.optioneel}, standaard={standaard}"
             )
+            assert py_null or not ts_null, f"{plek}: de web stuurt null, de API neemt het niet"
+        if richting in ("antwoord", "beide"):
+            # De API stuurt elk veld, met null precies waar het model None toelaat
+            assert not veld.optioneel, f"{plek}: de API stuurt het altijd, de web zegt `?`"
+            assert ts_null == py_null, f"{plek}: web {veld.type} tegen {py[naam].annotation}"
+        _type(web, bestand, kern, annotatie, plek, richting)
 
 
 PAREN = [
@@ -214,15 +331,78 @@ PAREN = [
 ]
 
 
+# Een interface als type van een veld: het model dat erbij hoort. Ook de typen van 0.7.0 die de
+# contracten gebruiken (hun eigen velden vergelijkt deze test niet), en AlbumRule (de Omit van
+# SearchParams, zie test_de_filters_zijn_de_regel_van_een_slim_album)
+MODELLEN: dict[str, type[BaseModel]] = {
+    **{naam: model for _, naam, model in PAREN},
+    "FileNode": NodeOut,
+    "TagRef": TagRef,
+    "PhotoItem": PhotoItem,
+    "SearchHit": S.Hit,
+    "AlbumRule": S.SearchRule,
+}
+
+# Wat de web stuurt (vraag), of stuurt en terugkrijgt (beide); de rest stuurt de API (antwoord)
+RICHTING = {
+    "SearchParams": "vraag",
+    "AdminSearchPatch": "vraag",
+    "PersonPatch": "vraag",
+    "AlbumRuleBody": "vraag",
+    "MemoryHide": "beide",
+}
+
+
+def _controleer(web, bestand: str, naam: str) -> None:
+    ts = _interface(web, bestand, naam)
+    _vergelijk(web, bestand, ts, MODELLEN[naam], naam, RICHTING.get(naam, "antwoord"))
+
+
 @pytest.mark.parametrize(("bestand", "naam", "model"), PAREN, ids=[p[1] for p in PAREN])
 def test_de_web_heeft_dezelfde_velden_als_de_api(web, bestand, naam, model):
-    _vergelijk(web, bestand, _interface(web, bestand, naam), model, naam)
+    _controleer(web, bestand, naam)
+
+
+# Een veld van de web anders dan de API: elk moet de vergelijking zien (review Z0, haalbaar F5)
+FOUTEN = [
+    ("search/types.ts", "GroupItem", "  n: number;\n}", "  n: string | null;\n}"),
+    ("search/types.ts", "GroupItem", "  n: number;\n}", "  n: string;\n}"),
+    ("search/types.ts", "GroupItem", "  n: number;\n}", "  n: number | null;\n}"),
+    ("search/types.ts", "GroupItem", "  n: number;\n}", "  n?: number;\n}"),
+    ("search/types.ts", "Hit", "snippet: SnippetPart[] | null;", "snippet: SnippetPart | null;"),
+    ("search/types.ts", "Suggestions", "places: PlaceRef[];", "places: GroupItem[];"),
+    ("search/types.ts", "SearchParams", "  limit?: number;", "  limit?: string;"),
+    ("search/types.ts", "SearchParams", "  q?: string;", "  q?: string | null;"),
+    ("photos/people/types.ts", "AlbumRuleBody", "  rule: AlbumRule;", "  rule?: AlbumRule;"),
+    ("admin/searchApi.ts", "AdminSearch", "    text_done: number;", "    text_done: boolean;"),
+    (
+        "photos/people/types.ts",
+        "FilePerson",
+        "Box = readonly [x: number, y: number, w: number, h: number];",
+        "Box = readonly [x: number, y: number, w: number];",
+    ),
+    ("dupes/types.ts", "DupeItem", "taken_at: string | null;", "taken_at: number | null;"),
+]
+
+
+@pytest.mark.parametrize(
+    ("bestand", "naam", "oud", "nieuw"),
+    FOUTEN,
+    ids=[f"{f[1]}-{f[3].split(';')[0].strip()}" for f in FOUTEN],
+)
+def test_de_vergelijking_ziet_een_ander_type(web, bestand, naam, oud, nieuw):
+    tekst = (WEB / bestand).read_text()
+    assert tekst.count(oud) == 1, oud
+    anders = {**web, bestand: Bron(tekst.replace(oud, nieuw))}
+    with pytest.raises(AssertionError):
+        _controleer(anders, bestand, naam)
 
 
 def test_de_filters_zijn_de_regel_van_een_slim_album(web):
     """Filters met q is SearchRule; een AlbumRule is SearchParams zonder de pagina."""
     filters = _interface(web, "search/types.ts", "Filters")
-    _vergelijk(web, "search/types.ts", {"q": "string", **filters}, S.SearchRule, "Filters")
+    ts = {"q": Veld("string", optioneel=True), **filters}
+    _vergelijk(web, "search/types.ts", ts, S.SearchRule, "Filters", "vraag")
     rule = web["photos/people/types.ts"].types["AlbumRule"]
     assert rule == 'Omit<SearchParams, "offset" | "limit" | "after">'
     assert set(S.SearchParams.model_fields) - set(S.SearchRule.model_fields) == {
@@ -253,12 +433,16 @@ def test_de_gebeurtenissen_heten_hetzelfde(web):
 def test_de_lezer_ziet_de_vormen_van_de_web(web):
     """Een lezer die niets vindt, zegt niets: deze vormen moet hij lezen."""
     admin = _interface(web, "admin/searchApi.ts", "AdminSearch")
-    assert _velden(_blok(admin["index"], 0)) == {
-        "names_done": "boolean",
-        "text_done": "number",
-        "text_total": "number",
-        "failed": "number",
+    assert _velden(_blok(admin["index"].type, 0)) == {
+        "names_done": Veld("boolean", optioneel=False),
+        "text_done": Veld("number", optioneel=False),
+        "text_total": Veld("number", optioneel=False),
+        "failed": Veld("number", optioneel=False),
     }
+    assert _interface(web, "search/types.ts", "SearchParams")["limit"] == Veld("number", True)
+    assert _delen('{ a: "x" | "y" } | null') == ['{ a: "x" | "y" }', "null"]
+    assert _delen('Omit<SearchParams, "a" | "b">') == ['Omit<SearchParams, "a" | "b">']
+    assert TUPEL.fullmatch(web["photos/people/types.ts"].types["Box"])
     assert _woorden(web, "search/types.ts", "SearchType[]") == set(typing.get_args(S.FileType))
     assert _woorden(web, "search/types.ts", "AnalysisCode | null") == set(
         typing.get_args(S.AnalysisCode)
