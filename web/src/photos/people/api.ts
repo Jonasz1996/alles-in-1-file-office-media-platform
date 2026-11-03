@@ -110,9 +110,10 @@ export function setAlbumRule(albumId: string, body: AlbumRuleBody): Promise<Albu
   return api.request<AlbumRuleSaved>("PUT", `${API}/albums/${seg(albumId)}/rule`, body);
 }
 
-/** POST /albums/{id}/rule/confirm {share_new}: het antwoord op de vraag van Keuze 42. */
-export function confirmAlbumRule(albumId: string, shareNew: boolean): Promise<void> {
-  return api.request<void>("POST", `${API}/albums/${seg(albumId)}/rule/confirm`, { share_new: shareNew });
+/** POST /albums/{id}/rule/confirm {share_new}: het antwoord op de vraag van Keuze 42. Geeft
+ * AlbumRuleSaved, zoals PUT (needs_confirm is dan false). */
+export function confirmAlbumRule(albumId: string, shareNew: boolean): Promise<AlbumRuleSaved> {
+  return api.request<AlbumRuleSaved>("POST", `${API}/albums/${seg(albumId)}/rule/confirm`, { share_new: shareNew });
 }
 
 /** DELETE /albums/{id}/rule → 204; de items uit de regel blijven, met hun shared. */

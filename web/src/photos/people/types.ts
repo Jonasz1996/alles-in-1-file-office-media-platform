@@ -112,10 +112,11 @@ export interface AlbumRuleBody {
 /** Het antwoord op PUT /albums/{id}/rule: needs_confirm als het album gedeeld is of een publieke
  * link heeft en share_new niet gezet is (dan de vraag van Keuze 42). */
 export interface AlbumRuleSaved {
-  needs_confirm?: boolean;
+  needs_confirm: boolean;
 }
 
-/** Wat GET /albums/{id} de eigenaar erbij geeft als er een regel is. */
+/** Wat GET /albums/{id} de eigenaar erbij geeft als er een regel is. Nog zonder Python-model:
+ * Z6 zet het in de bestaande route (§3.4), en legt het dan naast dit type. */
 export interface AlbumRuleInfo {
   rule: AlbumRule | null;
   share_new: boolean;
@@ -151,5 +152,6 @@ export const PEOPLE_ERROR_CODES = [
 ] as const;
 export type PeopleErrorCode = (typeof PEOPLE_ERROR_CODES)[number];
 
-/** SSE naar de eigenaar: er is iets aan zijn personen veranderd ({}). */
+/** SSE naar de eigenaar: er is iets aan zijn personen veranderd ({}, PeopleChangedEvent). */
 export const PEOPLE_CHANGED = "people.changed";
+export type PeopleChangedData = Record<string, never>;

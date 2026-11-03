@@ -23,18 +23,22 @@ EngineName = Literal["fts", "like"]
 
 
 class SearchRule(BaseModel):
-    """De filters van een zoekvraag zonder de pagina: ook de regel van een slim album (Z6)."""
+    """De filters van een zoekvraag zonder de pagina: ook de regel van een slim album (Z6).
+
+    In Python de namen van §3.3 (types, date_from, …); als JSON en in de querystring de namen
+    van §3.4 en Keuze 43 (type, from, to, person, tag, in), zoals web/src/search/types.ts ze
+    stuurt. Binnen komen beide; naar buiten (en de regel in album_rule) met by_alias=True."""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     q: str = Field("", max_length=200)
-    types: list[FileType] = []
-    date_from: date | None = None
-    date_to: date | None = None
-    persons: list[uuid.UUID] = []
+    types: list[FileType] = Field([], alias="type")
+    date_from: date | None = Field(None, alias="from")
+    date_to: date | None = Field(None, alias="to")
+    persons: list[uuid.UUID] = Field([], alias="person")
     place: int | None = None
     country: str | None = None
-    tags: list[uuid.UUID] = []
+    tags: list[uuid.UUID] = Field([], alias="tag")
     library: uuid.UUID | None = None
     camera: str | None = None
     in_: uuid.UUID | None = Field(None, alias="in")

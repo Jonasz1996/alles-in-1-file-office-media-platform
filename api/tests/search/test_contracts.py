@@ -70,6 +70,23 @@ def test_searchparams_volgt_het_contract():
     assert SearchRule(types=["pdf"]).has_filter() and SearchRule(place=0).has_filter()
 
 
+def test_de_regel_neemt_de_namen_van_de_querystring():
+    """De web stuurt de regel van een slim album met de namen van §3.4 (AlbumRule in
+    web/src/photos/people/types.ts); in Python heten ze zoals in §3.3."""
+    wie, map_ = uuid.uuid4(), uuid.uuid4()
+    rule = SearchRule.model_validate(
+        {"q": "zee", "type": ["image", "video"], "from": "2026-06-01", "to": "2026-08-31",
+         "person": [str(wie)], "tag": [], "in": str(map_)}
+    )  # fmt: skip
+    assert rule.types == ["image", "video"] and rule.persons == [wie] and rule.in_ == map_
+    assert str(rule.date_from) == "2026-06-01" and str(rule.date_to) == "2026-08-31"
+    assert set(rule.model_dump(by_alias=True)) == {
+        "q", "type", "from", "to", "person", "place", "country", "tag", "library", "camera", "in"
+    }  # fmt: skip
+    with pytest.raises(ValidationError):
+        SearchRule.model_validate({"types": ["pdf"], "type": ["image"]})
+
+
 def test_searchpage_en_suggesties():
     page = SearchPage(results=[], more=False)
     assert page.model_dump() == {

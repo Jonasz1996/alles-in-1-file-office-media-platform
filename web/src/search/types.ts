@@ -28,20 +28,24 @@ export const MAX_SUGGEST = 5;
 
 // --- de filters (Keuze 43) ---
 
-/** Het filter type, via node.ftype; meer keer is OF. */
+/** Het filter type, via node.ftype; meer keer is OF. Precies FileType van app/search/types.py
+ * (mime.FTYPES): Keuze 43 noemt "other" niet als filter, maar de API neemt het wel aan. */
 export const SEARCH_TYPES = [
+  "folder",
   "image",
   "video",
   "audio",
-  "document",
   "pdf",
+  "document",
   "spreadsheet",
   "presentation",
-  "folder",
+  "other",
 ] as const;
 export type SearchType = (typeof SEARCH_TYPES)[number];
 
-/** De filters van zoeken, /photos, de kaart en een slim album. Datums als JJJJ-MM-DD. */
+/** De filters van zoeken, /photos, de kaart en een slim album. Datums als JJJJ-MM-DD. De namen
+ * zijn die van de querystring (§3.4); in Python heten ze types, date_from, date_to, persons en
+ * tags, met deze namen als alias (SearchRule in app/search/types.py). */
 export interface Filters {
   /** Meer keer: OF */
   type?: SearchType[];
@@ -225,6 +229,12 @@ export interface SearchReadyData {
   step: "text" | "hash" | "ocr";
 }
 
-/** search.progress: alleen naar beheerders, elke 10 s tijdens een backfill of herbouw. De
- * inhoud is die van GET /admin/search (Z7, admin/searchApi.ts). */
+/** search.progress: alleen naar beheerders, elke 10 s tijdens een backfill of herbouw
+ * (SearchProgressEvent in app/search/types.py). De hele stand haalt /beheer met GET /admin/search
+ * (admin/searchApi.ts). */
 export const SEARCH_PROGRESS = "search.progress";
+export interface SearchProgressData {
+  what: "backfill" | "names" | "text" | "geo" | "hash" | "ocr";
+  /** 0–1 */
+  done: number;
+}
