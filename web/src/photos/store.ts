@@ -219,6 +219,26 @@ export class SectionStore {
     return job.promise;
   }
 
+  /** Velden van geladen items bijwerken (een thumbnail die klaar is) zonder iets opnieuw te
+   * laden: de plek verandert niet. Alleen een sectie waarin iets veranderde, krijgt een nieuwe
+   * array (dan tekenen alleen die rijen opnieuw). Geeft het aantal bijgewerkte items. */
+  patch(changes: ReadonlyMap<string, Partial<PhotoItem>>): number {
+    let count = 0;
+    for (const [s, items] of this.data) {
+      let copy: PhotoItem[] | null = null;
+      for (let k = 0; k < items.length; k++) {
+        const change = changes.get(items[k].id);
+        if (!change) continue;
+        copy ??= [...items];
+        copy[k] = { ...items[k], ...change };
+        count++;
+      }
+      if (copy) this.data.set(s, copy);
+    }
+    if (count) this.changed();
+    return count;
+  }
+
   /** Mislukte secties weer proberen (bijv. weer online). */
   retry(): void {
     this.failed.clear();

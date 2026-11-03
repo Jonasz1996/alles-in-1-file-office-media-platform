@@ -22,6 +22,7 @@ import { useColumns } from "../ui/virtual";
 import { type AlbumOut, albumNode, periodOf, photosApi } from "./api";
 import { downloadZip, SelectionBar, usePhotoBrowser, useStoreVersion } from "./browse";
 import { GAP, type GridControl, MIN_CELL, PhotoGrid } from "./Grid";
+import { reorders, useThumbPatches } from "./live";
 import { SectionStore } from "./store";
 import { buildLayout } from "./timeline";
 import "./photos.css";
@@ -71,11 +72,13 @@ export default function AlbumPage({ params }: RouteProps): JSX.Element {
   useServerEvents((e) => {
     if (e.type === "connected" || e.type.startsWith("share.")) void load();
     else if ((e.type === "album.changed" || e.type === "album.deleted") && String(e.data.id) === id) void load();
-    else if (e.type === "preview.ready" || e.type.startsWith("node.")) {
+    else if (reorders(e) || e.type.startsWith("node.")) {
       const ids = (e.data.node_ids ?? e.data.ids ?? [e.data.id]) as unknown[];
       if (ids.some((x) => store.indexOf(String(x)) >= 0)) void load();
     }
   });
+  // Een thumbnail die klaar is: alleen die foto bijwerken (live.ts)
+  useThumbPatches(store);
 
   const layout = useMemo(() => buildLayout([count], columns, rowHeight, 0, false), [count, columns, rowHeight]);
   const section = useMemo(() => (version >= 0 ? (s: number) => store.section(s) : () => undefined), [store, version]);

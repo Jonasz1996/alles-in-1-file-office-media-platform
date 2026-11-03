@@ -71,10 +71,12 @@ export function viewKind(item: { name: string; mime: string | null }, meta: View
   return "none";
 }
 
-/** Toont de browser dit soort afbeelding zelf? HEIC, HEIF en TIFF niet: daarvoor is display. */
+/** Toont de browser dit soort afbeelding zelf? HEIC, HEIF, TIFF, PSD, JPEG 2000 en camera-RAW
+ * niet: daarvoor is display (render.DISPLAY_FORMATS en RAW_MIMES). */
 export function browserShows(mime: string | null): boolean {
   const m = (mime ?? "").toLowerCase();
-  return !/^image\/(hei[cf](-sequence)?|tiff?|x-tiff|x-adobe-dng|x-raw|x-canon|x-nikon|x-sony)/.test(m);
+  if (/^image\/(hei[cf](-sequence)?|tiff?|x-tiff|jp2|vnd\.adobe\.photoshop)/.test(m)) return false;
+  return !/^image\/(x-adobe-dng|x-raw|x-canon|x-nikon|x-sony|x-fuji|x-olympus|x-panasonic|x-pentax)/.test(m);
 }
 
 /** Het origineel tonen in plaats van de preview: wat beweegt (een preview staat stil). */

@@ -4,7 +4,7 @@
 
 import { fmt, type MessageKey, t } from "../i18n";
 import type { OfficeHealth } from "../office/types";
-import type { HttpsDetails, Notice, StorageParts } from "./api";
+import type { HttpsDetails, Notice, PhotoIndex, StorageParts } from "./api";
 
 const NOTICES = new Set([
   "db_unreachable",
@@ -144,6 +144,8 @@ export function quotaInput(bytes: number): string {
  * office/convert.py), met de punt als _: admin.jobs.types.<soort>. */
 const JOB_TYPES = new Set([
   "preview",
+  "preview_large",
+  "preview_recheck",
   "preview_outdated",
   "user_delete",
   "photometa",
@@ -155,6 +157,18 @@ const JOB_TYPES = new Set([
 export function jobTypeLabel(type: string): string {
   const key = type.replace(/\./g, "_");
   return JOB_TYPES.has(key) ? t(`admin.jobs.types.${key}` as MessageKey) : type;
+}
+
+/** De regels onder "Foto's en video's" op het tabblad Taken: eerst hoeveel er een thumbnail
+ * hebben, daarna alleen wat er niet nul is (de grote versie die nog komt, zonder preview, video's
+ * die op ffmpeg wachten). */
+export function photoLines(p: PhotoIndex): string[] {
+  const done = p.ready + p.partial;
+  const lines = [t("admin.jobs.photos.summary", { done, total: p.total, waiting: p.waiting, failed: p.failed })];
+  if (p.partial) lines.push(t("admin.jobs.photos.partial", { n: p.partial }));
+  if (p.none) lines.push(t("admin.jobs.photos.none", { n: p.none }));
+  if (p.later) lines.push(t("admin.jobs.photos.later", { n: p.later }));
+  return lines;
 }
 
 /** Waar de taak over gaat, kort: bij een preview de eerste tekens van de inhoud (sha). */

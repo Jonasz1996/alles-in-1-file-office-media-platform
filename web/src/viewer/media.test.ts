@@ -87,6 +87,11 @@ describe("viewKind", () => {
     expect(browserShows("image/jpeg")).toBe(true);
     expect(browserShows("image/heic")).toBe(false);
     expect(browserShows("image/tiff")).toBe(false);
+    // Camera-RAW, PSD en JPEG 2000: ook de grote preview (display), niet het origineel
+    const raw = ["image/x-fuji-raf", "image/x-olympus-orf", "image/x-panasonic-rw2", "image/x-pentax-pef"];
+    for (const m of [...raw, "image/x-canon-cr3", "image/jp2", "image/vnd.adobe.photoshop"]) {
+      expect(browserShows(m)).toBe(false);
+    }
     expect(wantsOriginal("image/gif", { animated: true })).toBe(true);
     expect(wantsOriginal("image/gif", { animated: false })).toBe(false);
     expect(wantsOriginal("image/gif", {})).toBe(true); // nog niet bekend: het origineel

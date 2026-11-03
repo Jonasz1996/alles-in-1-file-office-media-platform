@@ -134,8 +134,24 @@ export interface RunningJob {
   started_at: string | null;
 }
 
+/** Foto's en video's naar de toestand van hun preview (/admin/jobs, previews.photo_counts). */
+export interface PhotoIndex {
+  total: number;
+  ready: number;
+  /** Alleen de thumbnail; de grote maat komt nog (de tweede ronde) */
+  partial: number;
+  waiting: number;
+  failed: number;
+  /** Geen preview mogelijk (onleesbaar, of een soort zonder) */
+  none: number;
+  /** Een video die wacht tot de mediaworker ffmpeg heeft */
+  later: number;
+}
+
 export interface JobsPage {
   counts: { queued: number; running: number; done: number; failed: number };
+  /** Ontbreekt bij een server van vóór deze versie */
+  photos?: PhotoIndex;
   by_type: { type: string; status: string; count: number }[];
   running: RunningJob[];
   oldest_queued_at: string | null;
@@ -156,6 +172,9 @@ export const adminApi = {
   jobs: (before?: string | null) =>
     api.request<JobsPage>("GET", `/api/v1/admin/jobs${before ? `?${new URLSearchParams({ before })}` : ""}`),
   deleteJob: (id: string) => api.request<void>("DELETE", `/api/v1/admin/jobs/${id}`),
+  /** Alles nalopen: elke foto zonder (complete) preview opnieuw in de rij. started false: dat
+   * liep al (of stond al klaar). */
+  recheckPreviews: () => api.request<{ started: boolean }>("POST", "/api/v1/admin/jobs/recheck-previews"),
   trashSettings: () => api.request<{ retention_days: number }>("GET", "/api/v1/admin/trash"),
   setTrashSettings: (retention_days: number) =>
     api.request<{ retention_days: number }>("PUT", "/api/v1/admin/trash", { retention_days }),

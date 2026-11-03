@@ -11,8 +11,9 @@ import { eventIds, liveEvents, type ServerEvent } from "../events";
 export const PREVIEW_BATCH = 500;
 export const PREVIEW_THROTTLE_MS = 100;
 const MAX_IN_FLIGHT = 2;
-/** De adressen zijn ondertekend en verlopen (6 tot 12 uur); na 5 uur opnieuw vragen. */
-const STALE_MS = 5 * 3600 * 1000;
+/** De adressen zijn ondertekend en verlopen (in de app na 7 tot 14 dagen, previews.URL_PERIOD;
+ * zo lang blijven ze ook in de cache van de browser); na 6 dagen opnieuw vragen. */
+export const STALE_MS = 6 * 24 * 3600 * 1000;
 
 interface Entry {
   etag: string;
