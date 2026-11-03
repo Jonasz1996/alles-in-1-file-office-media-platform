@@ -6,13 +6,17 @@ import type admin from "./areas/admin.nl";
 import type auth from "./areas/auth.nl";
 import type browser from "./areas/browser.nl";
 import type common from "./areas/common.nl";
+import type dupes from "./areas/dupes.nl";
 import type media from "./areas/media.nl";
 import type music from "./areas/music.nl";
 import type office from "./areas/office.nl";
 import type photos from "./areas/photos.nl";
+import type photosMap from "./areas/photos_map.nl";
+import type photosPeople from "./areas/photos_people.nl";
 import type player from "./areas/player.nl";
 import type publicArea from "./areas/public.nl";
 import type pwa from "./areas/pwa.nl";
+import type search from "./areas/search.nl";
 import type sharing from "./areas/sharing.nl";
 import type shell from "./areas/shell.nl";
 import type trash from "./areas/trash.nl";
@@ -41,7 +45,12 @@ export type Area =
   // Fase 5 (M0): de gebieden van M2, M6 en M9
   | "media"
   | "player"
-  | "music";
+  | "music"
+  // Fase 6 (Z0): de gebieden van Z4, Z5 en Z6 (Keuze 48)
+  | "search"
+  | "photos_map"
+  | "dupes"
+  | "photos_people";
 
 /** Meervoudsvormen (Intl.PluralRules); "other" is altijd nodig. Een object met de sleutel
  * "other" is daarom altijd een meervoud, nooit een groep sleutels. */
@@ -97,6 +106,10 @@ export interface Dictionaries {
   media: typeof media;
   player: typeof player;
   music: typeof music;
+  search: typeof search;
+  photos_map: typeof photosMap;
+  dupes: typeof dupes;
+  photos_people: typeof photosPeople;
 }
 
 /** "browser.title", "common.close", "shell.nav.files": gebied, dan het pad in het woordenboek. */

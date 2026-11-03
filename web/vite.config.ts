@@ -23,8 +23,8 @@ interface ManifestChunk {
 const KILL_SWITCH = process.env.VITE_SW === "off";
 
 /** Woordenboeken die de schil zonder netwerk nodig heeft: de basis in beide talen, de
- * offline-melding (pwa) en de Engelse foutteksten. */
-const OFFLINE_I18N = /src\/i18n\/(areas\/(common|shell|auth|pwa)\.(nl|en)\.ts|errors\/[a-z]+\.ts)$/;
+ * offline-melding (pwa) en de Engelse foutteksten (ook photos_map.ts van fase 6: met _). */
+const OFFLINE_I18N = /src\/i18n\/(areas\/(common|shell|auth|pwa)\.(nl|en)\.ts|errors\/[a-z_]+\.ts)$/;
 
 /** Wat de service worker vooraf ophaalt: index.html, het entry-chunk met zijn statische
  * imports en css, de woordenboeken van hierboven, boot.js, het manifest en de iconen. */

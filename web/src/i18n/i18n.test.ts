@@ -43,6 +43,11 @@ const AREAS: Area[] = [
   "media",
   "player",
   "music",
+  // Fase 6 (Z0)
+  "search",
+  "photos_map",
+  "dupes",
+  "photos_people",
 ];
 
 /** Elke tekst met zijn pad; een meervoud ({one, other}) is één blad met al zijn vormen. */
