@@ -6,8 +6,11 @@ maken" in de web-app). Daarbij (P6):
 
 - GET /trash/overview: alles in de prullenbak met waar het stond ("Was in"), de grootte
   (van een map: alles eronder) en of terugzetten naar de oude plek kan;
-- POST /trash/purge (veel tegelijk) en DELETE /trash (legen): per 500 één transactie onder
-  BlobStore.lock, daarna collect_garbage;
+- POST /trash/purge (veel tegelijk) en DELETE /trash (legen): per 500 ids nagaan wat weg mag,
+  daarna collect_garbage;
+- definitief wissen (los en in bulk) gaat per purge.CHUNK nodes, elk stuk een eigen transactie
+  onder BlobStore.lock (Keuze 11 van fase 6; review Z0, haalbaar F3), zoals het wissen van een
+  gebruiker: een upload of een andere schrijver komt tussen twee stukken door;
 - de bewaartermijn (Setting trash_retention_days, ingesteld op /beheer): het opruimwerk
   haalt elk uur weg wat langer geleden is weggegooid, op dezelfde manier.
 """
@@ -47,6 +50,8 @@ RETENTION_KEY = "trash_retention_days"
 MAX_RETENTION_DAYS = 3650
 # Zo vaak (seconden) kijkt het opruimwerk of er iets over de bewaartermijn is
 RETENTION_EVERY = 3600.0
+# Definitief wissen in stukken: wat intussen terugkwam of verhuisde, blijft staan
+HALF = "Intussen teruggezet of verplaatst: wat nog niet weg was, staat er nog"
 
 log = logging.getLogger("platform.trash")
 
@@ -148,25 +153,24 @@ async def restore(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs
 @router.delete("/trash/{node_id}", status_code=204)
 async def purge(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs: Store) -> None:
     """Definitief verwijderen, inclusief alles eronder en alle versies (en de delingen en
-    links erop)."""
+    links erop). In stukken (purge_chunks): wordt hij intussen teruggezet, dan komt terug wat
+    nog niet weg was, en is het antwoord not_trashed."""
     await session.commit()  # niet met een databaseverbinding op het slot wachten
     async with blobs.lock:
         # Pas onder het slot lezen: intussen kan het al weg of teruggezet zijn
         node = await files.get_node(session, user, node_id, "owner")
         if node.deleted_at is None:
             raise errors.fail(422, "not_trashed", "Verplaats het eerst naar de prullenbak")
-        rows = await files.descendants(session, node)
-        ids = [n.id for n in rows]
         # Wie het via een deling zag, nu het nog kan: daarna zijn node en delingen weg
         seen = await access.watchers(session, [node.id])
         below = await files.shared_below(session, node)
-        refs = Counter(n.blob_id for n in rows if n.blob_id)
-        refs += await files.drop_versions(session, ids)
-        await files.add_refs(session, refs, sign=-1)
-        # Kinderen voor hun ouders, via de ene helper van Keuze 11 (fase 6)
-        await search_purge.delete_nodes(session, list(reversed(ids)))
-        await session.commit()
-    await files.notify(session, node, "node.deleted", seen=seen, below=below)
+        plan = await _subtree(session, [node.id])
+    removed = await purge_chunks(session, blobs, plan)
+    if node.id not in removed and await present(session, [node.id]):
+        await files.collect_garbage(session, blobs)
+        raise errors.fail(422, "not_trashed", HALF)
+    if node.id in removed:  # anders wiste een ander verzoek hem, en meldde dat
+        await files.notify(session, node, "node.deleted", seen=seen, below=below)
     await files.collect_garbage(session, blobs)
 
 
@@ -347,53 +351,105 @@ async def covered(session: AsyncSession, user: User, ids: list[uuid.UUID]) -> se
     return found
 
 
-async def _subtree(session: AsyncSession, ids: list[uuid.UUID]) -> list:
-    """(id, blob_id) van deze nodes en alles eronder, kinderen vóór hun ouders, elk één keer
+async def _subtree(session: AsyncSession, ids: list[uuid.UUID]) -> list[tuple[uuid.UUID, str]]:
+    """(id, mpath) van deze nodes en alles eronder, kinderen vóór hun ouders, elk één keer
     (ook als de ene node onder de andere ligt). In stukken binnengehaald."""
     found = files.tree(ids)
-    query = select(Node.id, Node.blob_id, found.c.depth).join(found, Node.id == found.c.id)
-    deepest: dict[uuid.UUID, tuple[int, str | None]] = {}
+    query = select(Node.id, Node.mpath, found.c.depth).join(found, Node.id == found.c.id)
+    deepest: dict[uuid.UUID, tuple[int, str]] = {}
     async for part in (await session.stream(query)).partitions(BATCH):
-        for node_id, blob_id, depth in part:
+        for node_id, mpath, depth in part:
             if node_id not in deepest or deepest[node_id][0] < depth:
-                deepest[node_id] = (depth, blob_id)
+                deepest[node_id] = (depth, mpath)
     order = sorted(deepest.items(), key=lambda item: -item[1][0])
-    return [(node_id, blob_id) for node_id, (_, blob_id) in order]
+    return [(node_id, mpath) for node_id, (_, mpath) in order]
 
 
-async def purge_locked(session: AsyncSession, nodes: list[Node]) -> tuple[dict, dict]:
-    """Onder BlobStore.lock, in de transactie van de aanroeper (die commit): deze nodes (in de
-    prullenbak) en alles eronder weg, met hun versies, en ref_count omlaag. Geeft (seen,
-    below) voor notify_many na de commit."""
-    ids = [n.id for n in nodes]
-    # Wie het via een deling zag, nu het nog kan: daarna zijn node en delingen weg
-    seen = await access.watchers(session, ids)
-    below = {n.id: await files.shared_below(session, n) for n in nodes if n.kind == "dir"}
-    rows = await _subtree(session, ids)
-    all_ids = [node_id for node_id, _ in rows]
-    refs = Counter(blob_id for _, blob_id in rows if blob_id)
-    refs += await files.drop_versions(session, all_ids)
-    await files.add_refs(session, refs, sign=-1)
-    # all_ids staat al diepste eerst (_subtree), zoals de helper van Keuze 11 wil
-    await search_purge.delete_nodes(session, all_ids)
-    return seen, below
+async def present(session: AsyncSession, ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    """Welke van deze ids er (nog) zijn: vers uit de database, niet uit de identity map."""
+    found: set[uuid.UUID] = set()
+    for chunk in batched(ids, BATCH):
+        found.update((await session.scalars(select(Node.id).where(Node.id.in_(chunk)))).all())
+    return found
+
+
+def _depth(mpath: str | None) -> int:
+    return (mpath or "").count("/")
+
+
+async def _doomed(
+    session: AsyncSession, part: Sequence[tuple[uuid.UUID, str]]
+) -> list[tuple[uuid.UUID, str | None]]:
+    """Onder BlobStore.lock: wat van dit stuk van het plan nu nog weg moet, als (id, blob_id),
+    kinderen vóór hun ouders. Een node gaat alleen mee als hij er nog is, dood (dead = 1: hij
+    of een map erboven ligt in de prullenbak) en niet verplaatst (zijn mpath is die van het
+    plan); intussen teruggezet of eruit verplaatst blijft hij staan. Wat er intussen onder kwam
+    (terugzetten, erin verplaatsen en weer weggooien) gaat mee: de cascade nam het anders mee
+    zonder dat ref_count omlaag ging."""
+    planned = dict(part)
+    found: dict[uuid.UUID, tuple[str | None, str | None]] = {}
+    for ids in batched(planned, search_purge.IN_LIMIT):
+        rows = await session.execute(
+            select(Node.id, Node.blob_id, Node.mpath).where(Node.id.in_(ids), Node.dead == 1)
+        )
+        for node_id, blob_id, mpath in rows:
+            if mpath == planned[node_id]:
+                found[node_id] = (blob_id, mpath)
+    for ids in batched(list(found), search_purge.IN_LIMIT):
+        down = files.tree(ids)
+        rows = await session.execute(
+            select(Node.id, Node.blob_id, Node.mpath).join(down, Node.id == down.c.id)
+        )
+        for node_id, blob_id, mpath in rows:
+            found.setdefault(node_id, (blob_id, mpath))
+    order = sorted(found.items(), key=lambda item: -_depth(item[1][1]))
+    return [(node_id, blob_id) for node_id, (blob_id, _) in order]
+
+
+async def purge_chunks(
+    session: AsyncSession, blobs: BlobStore, plan: list[tuple[uuid.UUID, str]]
+) -> set[uuid.UUID]:
+    """Het plan van _subtree (kinderen vóór hun ouders) definitief weg, per purge.CHUNK nodes:
+    elk stuk een eigen transactie onder BlobStore.lock (Keuze 11), met de versies en ref_count
+    omlaag, zoals userdelete._drop_nodes. Tussen twee stukken kan een ander het slot en de
+    schrijver krijgen; daarom leest elk stuk opnieuw wat er nog weg moet (_doomed). Geeft de
+    ids die weg zijn. Daarna collect_garbage (de aanroeper)."""
+    removed: set[uuid.UUID] = set()
+    for part in batched(plan, search_purge.CHUNK):
+        await session.commit()  # niet met een databaseverbinding op het slot wachten
+        async with blobs.lock:
+            rows = await _doomed(session, part)
+            if not rows:
+                continue
+            ids = [node_id for node_id, _ in rows]
+            refs = Counter(blob_id for _, blob_id in rows if blob_id)
+            refs += await files.drop_versions(session, ids)
+            await files.add_refs(session, refs, sign=-1)
+            # Kinderen vóór hun ouders, via de ene helper van Keuze 11; die commit zelf niet
+            await search_purge.delete_nodes(session, ids)
+            await session.commit()
+        removed.update(ids)
+    return removed
 
 
 async def purge_ids(
     session: AsyncSession, blobs: BlobStore, user: User, ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, errors.ItemResult]:
-    """Definitief verwijderen voor een lijst ids van user: per 500 één transactie onder
-    BlobStore.lock, dan de gebeurtenissen en aan het eind collect_garbage. Wat onder een
-    andere weggegooide id uit de lijst ligt, gaat met die mee (ok)."""
+    """Definitief verwijderen voor een lijst ids van user: per 500 onder BlobStore.lock nagaan
+    wat weg mag, dan het wissen in stukken (purge_chunks), de gebeurtenissen, en aan het eind
+    collect_garbage. Wat onder een andere weggegooide id uit de lijst ligt, gaat met die mee
+    (ok). Wat intussen werd teruggezet, krijgt not_trashed."""
     requested = list(dict.fromkeys(ids))
     results: dict[uuid.UUID, errors.ItemResult] = {}
     inside = await covered(session, user, requested)
     todo = [node_id for node_id in requested if node_id not in inside]
+    removed: set[uuid.UUID] = set()
     for chunk in batched(todo, BATCH):
         await session.commit()  # niet met een databaseverbinding op het slot wachten
-        purged: list[Node] = []
+        nodes: list[Node] = []
         seen: dict = {}
         below: dict = {}
+        plan: list[tuple[uuid.UUID, str]] = []
         async with blobs.lock:
             # Pas onder het slot lezen: intussen kan het al weg of teruggezet zijn
             for node_id in chunk:
@@ -407,16 +463,29 @@ async def purge_ids(
                         node_id, "not_trashed", "Verplaats het eerst naar de prullenbak"
                     )
                     continue
-                purged.append(node)
-            if purged:
-                seen, below = await purge_locked(session, purged)
-            await session.commit()
+                nodes.append(node)
+            if nodes:
+                # Wie het via een deling zag, nu het nog kan: daarna zijn node en delingen weg
+                seen = await access.watchers(session, [n.id for n in nodes])
+                below = {
+                    n.id: await files.shared_below(session, n) for n in nodes if n.kind == "dir"
+                }
+                plan = await _subtree(session, [n.id for n in nodes])
+        if not nodes:
+            continue
+        removed |= await purge_chunks(session, blobs, plan)
+        purged = [n for n in nodes if n.id in removed]
         await files.notify_many(session, purged, "node.deleted", seen=seen, below=below)
-        for node in purged:
-            results[node.id] = errors.ItemResult(id=node.id, ok=True)
-    for node_id in inside:
+    open_ = [i for i in [*todo, *inside] if i not in removed and i not in results]
+    left = await present(session, open_)
+    for node_id in open_:
+        if node_id in left:
+            results[node_id] = errors.item_fail(node_id, "not_trashed", HALF)
+        else:  # een ander verzoek was eerder
+            results[node_id] = errors.ItemResult(id=node_id, ok=True)
+    for node_id in removed.intersection([*todo, *inside]):
         results[node_id] = errors.ItemResult(id=node_id, ok=True)
-    if any(r.ok for r in results.values()):
+    if removed:
         await files.collect_garbage(session, blobs)
     return results
 

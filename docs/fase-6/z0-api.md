@@ -224,7 +224,8 @@ Elk met een test in `tests/search/test_hotspots.py`, behalve waar anders staat.
 15. **De purge-helper staat in `app/search/purge.py`** en doet alles nog in één transactie, met
     IN-lijsten van 500 ids (de parametergrens van SQLite). Keuze 11 vraagt stukken van 2.000 met
     een commit ertussen; die zitten als `CHUNK` al in het bestand, maar Z1 bouwt ze, want zonder
-    index is er nog geen reden om de transactie op te breken.
+    index is er nog geen reden om de transactie op te breken. Na de review (haalbaar F3) niet
+    meer zo: de aanroepers maken de stukken al (`trash.purge_chunks`), zie `z0.md`, "De review".
 16. **`register_ready(fn)` krijgt `(maker, sha, dated)`** — de sessionmaker, de inhoud en of de
     datum veranderd is — niet alleen de sha: een haak die iets in de database wil doen, heeft die
     maker nodig, en `announce` heeft er geen sessie.

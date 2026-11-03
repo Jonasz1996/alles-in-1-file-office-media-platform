@@ -681,6 +681,16 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
 11. **Grote wissen in stukken** (J13). Definitief wissen uit de prullenbak, `purge_expired` en het
     wissen van een gebruiker gaan per 2.000 nodes, met een commit ertussen. Verplaatsen blijft één
     transactie: een map van 5.276 nodes kost 56 ms, naar de prullenbak 31 ms [gemeten].
+    **Herzien na de review van Z0 (haalbaar F3).** De stukken maken de aanroepers, niet
+    `delete_nodes` (die commit nooit): `routers/trash.py` heeft `purge_chunks`, zoals
+    `userdelete._drop_nodes`. Per stuk: commit, `BlobStore.lock`, opnieuw lezen wat er nog weg
+    moet, versies weg, `ref_count` omlaag, `delete_nodes`, commit. Opnieuw lezen omdat een ander
+    tussen twee stukken het slot krijgt: een node gaat alleen mee als hij er nog is, `dead = 1`
+    heeft en niet verplaatst is (`mpath` als in het plan); wat er intussen onder kwam, gaat mee
+    (anders nam de cascade het mee zonder `ref_count`). Wordt de map intussen teruggezet, dan komt
+    terug wat nog niet weg was, en antwoordt het wissen `422 not_trashed`. Gemeten (3.53.1): de
+    hele boom van 10.911 nodes in één transactie hield een upload 0,78 s op; in stukken komt hij
+    na het eerste stuk aan de beurt.
 12. **Herstellen en controleren, zonder de schrijver vast te houden** (herzien in r2: S13).
     - `search-rebuild` is nooit één statement: een `rebuild` van FTS5 houdt de schrijver minuten
       vast, en `busy_timeout` is 5 s (V9). In plaats daarvan: `delete-all` (17–250 ms, V4), dan
@@ -2294,8 +2304,8 @@ rijen en leest met `own_live_geo`.
 - `filters.py`: het register en de filters zonder foto's; de vorm "alleen filters" van Keuze 4a;
 - `suggest.py`: namen (`fts_name` en voorvoegsel), tags, albums; personen en plaatsen via de
   haken van Z3 en Z6 (tot dan leeg);
-- de tweede controle (Keuze 15), wissen in stukken (Keuze 11, in `routers/trash.py` en
-  `userdelete.py` via een gedeelde helper);
+- de tweede controle (Keuze 15); wissen in stukken (Keuze 11) is na de review van Z0 (haalbaar
+  F3) al door Z0 gebouwd, in `routers/trash.py` en `userdelete.py` via de gedeelde helper;
 - de herbouw in stukken met `search_state.cursor` (Keuze 12);
 - `bench.py`: het zaad van 100.000 (§3.6), en `app.cli search-bench`, `search-rebuild`,
   `search-check`, `search-triggers`.
@@ -2325,7 +2335,9 @@ rijen en leest met `own_live_geo`.
   ook niet bij de kaart op zoom 14 en bij `/photos?place=`;
 - `test_search_snippets.py`: ß, een treffer na teken 20.000 (`snippet: null`, `match: "text"`),
   het budget van 40 ms met een nepklok, alleen tekst (geen HTML);
-- `test_search_purge_batches.py`: 10.911 nodes, geen transactie langer dan 1 s.
+- `test_search_purge_batches.py`: 10.911 nodes, geen transactie langer dan 1 s (staat er al
+  sinds de review van Z0, haalbaar F3: een upload komt tussen twee stukken door en is binnen
+  1 s klaar).
 
 **Klaar als:** alle tests hierboven groen op 3.53.1 en in `python:3.12-slim` (3.46.1, zoals V8);
 `e2e/slim.sh` groen; de poorten van §4.4 die bij Z1 horen (`zoek-perf`) groen; geen
@@ -4315,7 +4327,7 @@ Codes in `analysis.code` (alleen op `/beheer`, niet als HTTP-fout): `too_slow`, 
 | `app/config.py` | de instellingen van §3.2 |
 | `app/cli.py` | `search-bench`, `search-rebuild`, `search-check`, `search-triggers`, `geo-load` (stubs), en `db-backup` meteen af: `sqlite3.Connection.backup` naar `/data/backup/platform-<head>-<tijd>.db`, terwijl de app draait; migreert niets; per head de nieuwste (Keuze 52) |
 | `app/routers/files.py` | in `add_ref()`: `search.hooks.blob_added(sha, owner)` na de commit; bij kopiëren de haak `photo_copy(src, dst)` (Z6 vult hem: personen mee als de eigenaar gelijk is) |
-| `app/routers/trash.py`, `app/userdelete.py` | wissen via de gedeelde helper in stukken (stub die het nu in één keer doet; Z1 maakt de stukken) |
+| `app/routers/trash.py`, `app/userdelete.py` | wissen via de gedeelde helper in stukken. Herzien na de review van Z0 (haalbaar F3): de stukken maakt Z0 al, bij de aanroepers: `trash.purge_chunks` per `CHUNK` (2.000) nodes, `userdelete._drop_nodes` per 500, elk stuk een eigen transactie onder `BlobStore.lock` die opnieuw leest wat er nog weg moet; `delete_nodes` commit nooit. Z1 bouwt hier niets meer aan; `test_search_purge_batches.py` staat er al |
 | `app/previews.py` | `register_ready(fn)`: na `preview.ready` (voor photometa v2) |
 | `app/render.py` | ingang `text` (stub die `none` geeft); de plek voor `ocr_page` (stub) |
 | `app/media/wire.py` | `Op.TEXT`, `Op.OCR` (de worker geeft `not_built` tot Z2 en X1) |

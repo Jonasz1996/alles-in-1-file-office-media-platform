@@ -197,7 +197,7 @@ async def test_de_prullenbak_wist_via_de_ene_helper(client, admin, settings, mon
 
 
 async def test_veel_tegelijk_wist_ook_via_de_helper(client, admin, settings, monkeypatch):
-    """DELETE /trash (leegmaken) en /trash/purge gaan via purge_locked, en dus ook via de
+    """DELETE /trash (leegmaken) en /trash/purge gaan via purge_chunks, en dus ook via de
     helper."""
     headers, _ = admin
     root, _me = await tree(client, headers)
@@ -223,7 +223,8 @@ async def test_veel_tegelijk_wist_ook_via_de_helper(client, admin, settings, mon
 
 
 def test_de_vorm_van_de_helper():
-    """De stub doet het in de transactie van de aanroeper; Z1 maakt er stukken van."""
+    """De helper doet het in de transactie van de aanroeper; de stukken maken de aanroepers
+    (test_search_purge_batches.py)."""
     assert purge.CHUNK == 2000 and purge.IN_LIMIT == 500
     assert purge.delete_nodes.__module__ == "app.search.purge"
 
