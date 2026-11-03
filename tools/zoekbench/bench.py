@@ -11,7 +11,7 @@ In de container van 0.7.1 (of later), zonder iets te installeren:
 
     docker compose exec -T platform python -I - --los < tools/zoekbench/bench.py
 
-Of met een gewone python3 (≥ 3.10, een SQLite met FTS5):
+Of met een gewone python3 (≥ 3.11, een SQLite met FTS5):
 
     python3 tools/zoekbench/bench.py --los [--n 100000] [--seed 6] [--map PAD] [--json UIT]
 

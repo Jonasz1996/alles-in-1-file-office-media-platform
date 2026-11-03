@@ -8,7 +8,9 @@ view, een FTS-tabel of een index in 0010, dan faalt hij tot DDL in bench.py is b
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 import signal
 import sqlite3
 
@@ -102,3 +104,34 @@ def test_vullen_via_de_triggers_geeft_dezelfde_index(bench, tmp_path):
     assert aantal == len(boom.nodes)
     con.close()
     assert spike.herbouw_verschil(pad) == {}
+
+
+# Wat er pas in een latere python3 bij kwam, en wat bench.py daarvan importeert
+NIEUW = {
+    ("datetime", "UTC"): 11,
+    ("enum", "StrEnum"): 11,
+    ("typing", "Self"): 11,
+    ("contextlib", "chdir"): 11,
+    ("hashlib", "file_digest"): 11,
+    ("itertools", "batched"): 12,
+    ("tomllib", None): 11,
+}
+
+
+def test_de_bench_noemt_de_python_die_hij_nodig_heeft():
+    """De docstring zegt met welke python3 de bench los draait; datetime.UTC is er pas sinds 3.11
+    (review Z0, haalbaar F8). Met 3.11.17 is hij hier gedraaid (--los --n 2000)."""
+    bron = spike.BENCH.read_text()
+    m = re.search(r"python3 \(≥ 3\.(\d+)", bron)
+    assert m, "de docstring noemt geen python3"
+    minst = int(m.group(1))
+    boom = ast.parse(bron, feature_version=(3, minst))
+    for node in ast.walk(boom):
+        if isinstance(node, ast.ImportFrom):
+            namen = [(node.module, n.name) for n in node.names]
+        elif isinstance(node, ast.Import):
+            namen = [(n.name, None) for n in node.names]
+        else:
+            continue
+        for naam in namen:
+            assert minst >= NIEUW.get(naam, 0), f"{naam} vraagt 3.{NIEUW[naam]}"
