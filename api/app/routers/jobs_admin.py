@@ -1,5 +1,6 @@
 """De achtergrondtaken op /beheer: overzicht per soort, wat nu loopt, de mislukte (in
-pagina's), opnieuw proberen en weggooien."""
+pagina's), opnieuw proberen en weggooien. En hoe ver de foto's zijn (photos: de statusregel)
+met "alles nalopen" (previews.recheck)."""
 
 import uuid
 from datetime import UTC, datetime
@@ -7,7 +8,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app import errors, jobs
+from app import errors, jobs, previews
 from app.db import Session
 from app.models import Job
 from app.security import AdminUser
@@ -44,8 +45,26 @@ class RunningJob(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PhotoIndex(BaseModel):
+    """Foto's en video's naar de toestand van hun preview (previews.photo_counts)."""
+
+    total: int = 0
+    ready: int = 0
+    # Alleen de thumbnail; de grote maat komt nog (de tweede ronde)
+    partial: int = 0
+    # Alleen de thumbnail; de tweede ronde mislukte ("Alles nalopen" probeert opnieuw)
+    large_failed: int = 0
+    waiting: int = 0
+    failed: int = 0
+    # Geen preview mogelijk (onleesbaar, of een soort zonder)
+    none: int = 0
+    # Een video die wacht tot de mediaworker ffmpeg heeft
+    later: int = 0
+
+
 class JobsOverview(BaseModel):
     counts: dict[str, int]
+    photos: PhotoIndex = PhotoIndex()
     by_type: list[TypeCount] = []
     running: list[RunningJob] = []
     # Sinds wanneer de oudste taak die aan de beurt is, wacht (null: niets wacht)
@@ -86,6 +105,7 @@ async def admin_jobs(_: AdminUser, session: Session, before: str | None = None) 
     failed = await jobs.failed(session, PAGE, page)
     return JobsOverview(
         counts=await jobs.counts(session),
+        photos=PhotoIndex(**await previews.photo_counts(session)),
         by_type=[
             TypeCount(type=t, status=s, count=c) for t, s, c in await jobs.counts_by_type(session)
         ],
@@ -102,6 +122,20 @@ async def retry_failed(_: AdminUser, session: Session) -> Retried:
     count = await jobs.retry_failed(session)
     await session.commit()
     return Retried(count=count)
+
+
+class Recheck(BaseModel):
+    # False: alles nalopen liep al (of stond al klaar)
+    started: bool
+
+
+@router.post("/admin/jobs/recheck-previews", tags=["beheer"])
+async def recheck_previews(_: AdminUser, session: Session) -> Recheck:
+    """Alles nalopen: elke foto, video en ander bestand zonder (complete) preview opnieuw in de
+    rij, ook een mislukte, en een preview waarvan het bestand op schijf ontbreekt. Daarna de
+    opnamedatums (photometa) en verouderde previews. Twee keer drukken, ook tegelijk, zet hem
+    één keer klaar (queue_recheck legt zelf vast, onder een slot)."""
+    return Recheck(started=await previews.queue_recheck(session))
 
 
 async def _not_failed(session: Session, job_id: uuid.UUID) -> Exception:

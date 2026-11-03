@@ -154,6 +154,7 @@ async def test_met_6_verbindingen_open_en_een_volle_soort_blijft_het_ok(
 async def test_de_lus_kijkt_vaker_als_de_worker_down_is(monkeypatch):
     answers = iter(["down", "down", "down", "ok", "down", "ok"])
     pauses: list[float] = []
+    back: list[int] = []
 
     async def check(_app) -> str:
         return next(answers)
@@ -163,11 +164,17 @@ async def test_de_lus_kijkt_vaker_als_de_worker_down_is(monkeypatch):
         if len(pauses) > 6:
             raise asyncio.CancelledError
 
+    async def on_back(_settings) -> None:
+        back.append(len(pauses))
+
     monkeypatch.setattr(health, "check", check)
     monkeypatch.setattr(health, "_pause", pause)
+    monkeypatch.setattr(health, "_back", on_back)
     with pytest.raises(asyncio.CancelledError):
         await health._loop(new_app(), None)
     assert pauses == [health.FIRST, 1.0, 2.0, 4.0, health.INTERVAL, 1.0, health.INTERVAL]
+    # Weer ok: de previews van video's die op de worker wachtten, meteen (bij elke overgang)
+    assert back == [4, 6]
 
 
 async def test_een_fout_in_de_lus_stopt_hem_niet(monkeypatch):

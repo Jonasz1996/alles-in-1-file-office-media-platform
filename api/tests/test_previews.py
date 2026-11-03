@@ -314,7 +314,9 @@ def test_soort_bepalen():
     assert render.kind_of(None, odt, "x") == "office"
     assert render.kind_of("text/csv", b"", "x.csv") == "text"
     assert render.kind_of(None, b"BMW-onderhoud\n", "notities") == "text"  # geen BMP
-    assert render.kind_of(None, b"II*\x00" + b"\x00" * 20, "IMG.CR2") == ""  # RAW
+    # Camera-RAW krijgt sinds RENDER_VERSION 2 een preview (de ingebedde JPEG)
+    assert render.kind_of(None, b"II*\x00" + b"\x00" * 20, "IMG.CR2") == "raw"
+    assert render.kind_of(None, b"II*\x00" + b"\x00" * 20, "scan.tif") == "image"
     assert render.container(b"\x00\x00\x00\x18ftypisom") == "mov"
     assert render.container(b"#EXTM3U\nfile:///etc/passwd") is None  # nooit een afspeellijst
     assert render._rotation({"side_data_list": [{"rotation": -90}]}) == 270
@@ -375,13 +377,18 @@ async def test_upload_geeft_thumbnail(client, admin, settings, hub):
         "large": None,
         "meta": {},
     }
+    expected = {"type": "preview.ready", "data": {"sha": sha_of(node), "node_ids": [node["id"]]}}
     with hub.subscribe(uuid.UUID(tokens["user"]["id"])) as sub:
+        # Eerste ronde: alleen de thumbnail (en alle metadata); large valt terug op 256
+        assert await jobs.run_one(settings)
+        assert await asyncio.wait_for(anext(aiter(sub)), 1) == expected
+        info = (await preview_of(client, headers, node["id"]))[node["id"]]
+        assert info["state"] == "ready"
+        assert info["meta"] == {"width": 1200, "height": 1600, "animated": False, "sizes": [256]}
+        assert "/256.webp?" in info["thumb"] and "/256.webp?" in info["large"]
+        # Tweede ronde (preview.large): 1024 erbij
         assert await jobs.run_pending(settings) == 1
-        ready = await asyncio.wait_for(anext(aiter(sub)), 1)
-    assert ready == {
-        "type": "preview.ready",
-        "data": {"sha": sha_of(node), "node_ids": [node["id"]]},
-    }
+        assert await asyncio.wait_for(anext(aiter(sub)), 1) == expected
 
     info = (await preview_of(client, headers, node["id"]))[node["id"]]
     assert info["state"] == "ready"
@@ -390,7 +397,12 @@ async def test_upload_geeft_thumbnail(client, admin, settings, hub):
     r = await client.get(info["thumb"])  # zonder Authorization, zoals een <img>
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/webp"
-    assert r.headers["cache-control"] == "private, max-age=86400, immutable"
+    # Zo lang als het adres geldig is (standaard 6 tot 12 uur), en nooit opnieuw vragen
+    control = r.headers["cache-control"]
+    assert control.startswith("private, max-age=") and control.endswith(", immutable")
+    age = int(control.split("max-age=")[1].split(",")[0])
+    assert previews.url_period(settings) == previews.URL_PERIOD == 6 * 3600
+    assert previews.URL_PERIOD - 5 < age <= 2 * previews.URL_PERIOD
     with Image.open(io.BytesIO(r.content)) as img:
         assert img.size == (192, 256)
     assert list((previews.root(BlobStore(settings.blob_dir)) / ".tmp").iterdir()) == []
@@ -425,14 +437,16 @@ async def test_ondertekend_adres(client, admin, settings):
     assert (await client.get(f"/api/v1/previews/..%2F..%2Fx/256.webp?{query}")).status_code == 404
 
 
-def test_verloop_afgerond_op_zes_uur():
-    period = 6 * 3600
+@pytest.mark.parametrize(("period", "days"), [(7 * 24 * 3600, 7), (previews.PUBLIC_PERIOD, 0.25)])
+def test_verloop_afgerond_op_de_periode(period, days):
+    """Een week (als preview_url_hours 168 is) of 6 uur: binnen een blok hetzelfde adres."""
+    assert period == days * 24 * 3600
     base = 1_000_000 * period
-    assert previews.expiry(base) == base + period  # precies op de grens
-    assert previews.expiry(base + 1) == base + 2 * period
-    assert previews.expiry(base + period - 1) == base + 2 * period
-    # Binnen een blok van 6 uur hetzelfde adres: de browser kan het cachen
-    assert len({previews.expiry(base + s) for s in range(1, period, 600)}) == 1
+    assert previews.expiry(base, period) == base + period  # precies op de grens
+    assert previews.expiry(base + 1, period) == base + 2 * period
+    assert previews.expiry(base + period - 1, period) == base + 2 * period
+    # Binnen een blok van een periode hetzelfde adres: de browser kan het cachen
+    assert len({previews.expiry(base + s, period) for s in range(1, period, 600)}) == 1
 
 
 @pytest.mark.anyio
@@ -561,8 +575,22 @@ async def test_bron_weg_voor_het_maken_is_geen_fout(client, admin, settings, mak
         assert (await session.scalars(select(Job.status))).all() == ["done"]
 
 
+@pytest.fixture(params=["eigen proces", "forkserver"])
+async def proces(request, monkeypatch):
+    """De twee manieren waarop render() het renderproces maakt: een eigen proces per preview
+    (tests, de cli) en een kind van de voorgeladen forkserver (de app, via de lifespan). Beide
+    met dezelfde isolatie; een geheim in de omgeving van de app staat er al vóór het starten."""
+    monkeypatch.setenv("PLATFORM_JWT_SECRET", "zeer-geheim")
+    if request.param == "forkserver":
+        assert await previews.start_forkserver() is not None
+    yield request.param
+    await previews.stop_forkserver()
+
+
 @pytest.mark.anyio
-async def test_crash_van_het_voorbeeldproces(client, admin, settings, maker, monkeypatch, hub):
+async def test_crash_van_het_voorbeeldproces(
+    client, admin, settings, maker, monkeypatch, hub, proces
+):
     """Een bestand dat de decoder laat crashen raakt de server niet; na 3 pogingen failed."""
     headers, tokens = admin
     node = await upload(client, headers, "boos.png", picture("PNG"))
@@ -599,7 +627,9 @@ def process_gone(pid: int) -> bool:
 
 
 @pytest.mark.anyio
-async def test_te_lang_stopt_ook_ffmpeg(client, admin, settings, maker, monkeypatch, tmp_path):
+async def test_te_lang_stopt_ook_ffmpeg(
+    client, admin, settings, maker, monkeypatch, tmp_path, proces
+):
     """Na de tijdslimiet gaat het voorbeeldproces dood, en wat het zelf startte ook."""
     headers, _ = admin
     await upload(client, headers, "traag.png", picture("PNG"))
@@ -628,8 +658,7 @@ async def test_te_lang_stopt_ook_ffmpeg(client, admin, settings, maker, monkeypa
 
 
 @pytest.mark.anyio
-async def test_geen_geheimen_naar_het_voorbeeldproces(settings, monkeypatch, tmp_path):
-    monkeypatch.setenv("PLATFORM_JWT_SECRET", "zeer-geheim")
+async def test_geen_geheimen_naar_het_voorbeeldproces(settings, monkeypatch, tmp_path, proces):
     seen = tmp_path / "env.json"
     monkeypatch.setattr(
         previews,
@@ -665,7 +694,8 @@ async def test_preview_in_het_eigen_proces(client, admin, settings):
             client, headers, "brief.docx", b"PK\x03\x04" + b"\x00" * 26 + b"[Content_Types].xml"
         ),
     ]
-    assert await jobs.run_pending(settings) == len(nodes)
+    # De foto in twee rondes (thumbnail, dan preview.large), de rest in één
+    assert await jobs.run_pending(settings) == len(nodes) + 1
     info = await preview_of(client, headers, *(n["id"] for n in nodes))
     foto, doc, lied, tekst, archief, brief = (info[n["id"]] for n in nodes)
     assert foto["meta"]["width"] == 3000 and foto["thumb"] and foto["large"]

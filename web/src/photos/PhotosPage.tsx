@@ -20,12 +20,15 @@ import AddToAlbumDialog from "./AddToAlbum";
 import { type MonthCount, monthLabel, photosApi } from "./api";
 import { downloadZip, SelectionBar, usePhotoBrowser, useStoreVersion } from "./browse";
 import { GAP, type GridControl, MIN_CELL, PhotoGrid } from "./Grid";
+import { reorders, useThumbPatches } from "./live";
 import { Scrubber } from "./Scrubber";
 import { SectionStore } from "./store";
 import { buildLayout } from "./timeline";
 import "./photos.css";
 
 const HEADER_H = 48;
+/** Veel wijzigingen vlak na elkaar (een import) geven hooguit zo vaak de maanden opnieuw. */
+const RELOAD_MS = 1000;
 
 export default function PhotosPage(_: RouteProps): JSX.Element {
   useScope("photos");
@@ -71,12 +74,14 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
     void loadMonths();
   }, [store, loadMonths]);
 
-  // Live: een upload, iets weg of terug, of een thumbnail die klaar is
+  // Live: een upload, iets weg of terug, of een foto die door zijn opnamedatum verschoof: de
+  // maanden opnieuw (en wat in beeld is). Een thumbnail die klaar is, komt er zonder dat in.
   useReloadOn(
-    (e) => e.type === "connected" || e.type.startsWith("node.") || e.type === "preview.ready",
+    (e) => e.type === "connected" || e.type.startsWith("node.") || reorders(e),
     () => void loadMonths(),
-    500,
+    RELOAD_MS,
   );
+  useThumbPatches(store);
 
   const counts = useMemo(() => (months ?? []).map((m) => m.count), [months]);
   const layout = useMemo(() => buildLayout(counts, columns, rowHeight, HEADER_H), [counts, columns, rowHeight]);

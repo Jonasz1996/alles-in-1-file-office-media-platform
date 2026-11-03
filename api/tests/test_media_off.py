@@ -33,9 +33,10 @@ async def test_media_uit_draait_niets_van_media(tmp_path, monkeypatch):
         assert state.enabled is False and not media_runtime.enabled(app)
         assert getattr(app.state, "media_local", None) is None
         assert getattr(app.state, "media_health", None) is None
-        assert lanes_running() == {"default"}
+        assert lanes_running() == {"default", "preview"}  # preview ook zonder media
         assert media_runtime.SWEEP not in jobs._housekeeping
         assert media_runtime.PHOTOMETA not in jobs._housekeeping  # integratie, punt 3
+        assert media_runtime.PREVIEWS not in jobs._housekeeping
         assert not (tmp_path / "media").exists()
 
         headers = await server.admin()
@@ -78,10 +79,12 @@ async def test_media_aan_start_en_stopt_met_de_app(tmp_path, monkeypatch):
         assert lanes_running() == set(jobs.LANES)
         assert media_runtime.SWEEP in jobs._housekeeping
         assert media_runtime.PHOTOMETA in jobs._housekeeping
+        assert media_runtime.PREVIEWS in jobs._housekeeping
         assert not old.exists()  # na een herstart is elke sessie weg
     # Gestopt: de worker (op zijn pid), zijn socket en het opruimwerk zijn weg
     assert worker.process.returncode is not None
     assert not worker.socket.exists()
     assert media_runtime.SWEEP not in jobs._housekeeping
     assert media_runtime.PHOTOMETA not in jobs._housekeeping
+    assert media_runtime.PREVIEWS not in jobs._housekeeping
     assert state.stopping is True

@@ -4,6 +4,7 @@ de rij default, met settings.job_timeout."""
 
 import asyncio
 import inspect
+import os
 import time
 from datetime import UTC, timedelta
 
@@ -139,15 +140,15 @@ async def test_opruimwerk_een_keer_per_periode_met_alle_runners(settings, runner
     )
     started = await runners()
     assert [r.lane for r in started] == list(jobs.LANES)
-    assert [r.housekeeping for r in started] == [True, False, False, False, False]
+    assert [r.housekeeping for r in started] == [True] + [False] * (len(jobs.LANES) - 1)
     await asyncio.sleep(0.3)
-    assert len(calls) == 1  # niet vijf keer (één per Runner)
+    assert len(calls) == 1  # niet zes keer (één per Runner)
 
 
 @pytest.mark.anyio
-async def test_zonder_media_alleen_de_rij_default(settings, maker, kind):
-    """Zonder PLATFORM_MEDIA_ENABLED draait alleen default, zoals in 0.6.0; een taak van media
-    blijft dan staan (default pakt hem niet)."""
+async def test_zonder_media_alleen_default_en_preview(settings, maker, kind):
+    """Zonder PLATFORM_MEDIA_ENABLED draaien alleen default en preview (in 0.6.0 zat preview
+    in default); een taak van media blijft dan staan (default pakt hem niet)."""
     ran = []
 
     async def note(_s, payload):
@@ -155,10 +156,10 @@ async def test_zonder_media_alleen_de_rij_default(settings, maker, kind):
 
     name = kind("test.media-uit", note, lane="media")
     assert not settings.media_enabled
-    assert jobs.active_lanes(settings) == ("default",)
+    assert jobs.active_lanes(settings) == ("default", "preview")
     started = await jobs.start_runners(settings)
     try:
-        assert [r.lane for r in started] == ["default"]
+        assert [r.lane for r in started] == ["default", "preview"]
         [job_id] = await put(maker, name)
         jobs.kick()
         await asyncio.sleep(0.3)
@@ -170,8 +171,12 @@ async def test_zonder_media_alleen_de_rij_default(settings, maker, kind):
 
 @pytest.mark.anyio
 async def test_workers_per_rij(settings):
-    s = settings.model_copy(update={"job_workers": 3, "media_job_workers": 2})
-    assert [jobs.lane_workers(s, lane) for lane in jobs.LANES] == [3, 1, 2, 1, 1]
+    s = settings.model_copy(update={"job_workers": 3, "media_job_workers": 2, "preview_workers": 4})
+    assert [jobs.lane_workers(s, lane) for lane in jobs.LANES] == [3, 4, 1, 2, 1, 1]
+    # preview_workers 0: een minder dan het aantal kernen van dit proces, minstens 1
+    auto = s.model_copy(update={"preview_workers": 0})
+    cores = len(os.sched_getaffinity(0))
+    assert jobs.lane_workers(auto, "preview") == max(1, cores - 1)
 
 
 @pytest.mark.anyio
@@ -199,6 +204,62 @@ async def test_claim_alleen_uit_de_eigen_rij(settings, maker, kind):
     await jobs.execute(settings, unknown)
     failed = await get(maker, unknown_id)
     assert failed.status == "failed" and "Onbekend soort taak" in failed.error
+
+
+@pytest.mark.anyio
+async def test_een_nieuwe_taak_wekt_alleen_zijn_eigen_rij(settings, maker, kind, monkeypatch):
+    """Elke claim leest de database. Een nieuwe taak (of een die naar voren gaat) wekt dus
+    alleen de workers van zijn eigen rij: tijdens een import van foto's hoeft default niet bij
+    elk nieuw bestand de rij door te lezen (gemeten 50 ms per claim met 100.000 previews in de
+    rij). Opnieuw starten en kick() zonder rij wekken alles."""
+    woke: list[str] = []
+
+    def waker(lane):
+        return lambda: woke.append(lane)
+
+    monkeypatch.setattr(jobs, "_wakers", {waker(lane): lane for lane in jobs.LANES})
+
+    async def nothing(_s, _p):
+        return None
+
+    media = kind("test.media", nothing, lane="media")
+    await put(maker, "preview")
+    assert woke == ["preview"]
+    woke.clear()
+    await put(maker, media)
+    assert woke == ["media"]
+    woke.clear()
+    await put(maker, "test.bestaat-niet")
+    assert woke == ["default"]
+
+    # Naar voren: alleen de rij van wat er echt verschoof
+    async with maker() as session:
+        await jobs.enqueue(session, "preview", {}, key="voor")
+        await session.commit()
+    woke.clear()
+    async with maker() as session:
+        assert await jobs.to_front(session, ["bestaat-niet"]) == 0
+        await session.commit()
+    assert woke == []
+    async with maker() as session:
+        assert await jobs.to_front(session, ["voor"]) == 1
+        await session.commit()
+    assert woke == ["preview"]
+
+    # Teruggedraaid: niemand
+    woke.clear()
+    async with maker() as session:
+        await jobs.enqueue(session, media, {}, key="weg")
+        await session.rollback()
+    assert woke == []
+
+    async with maker() as session:
+        await jobs.retry_failed(session)
+        await session.commit()
+    assert sorted(woke) == sorted(jobs.LANES)
+    woke.clear()
+    jobs.kick()
+    assert sorted(woke) == sorted(jobs.LANES)
 
 
 @pytest.mark.anyio
@@ -299,7 +360,10 @@ def test_de_bestaande_soorten_veranderen_niet():
     }
     known = {t for t in jobs._kinds if not t.startswith(("media.", "test."))}
     assert fase3_en_4 <= known, sorted(fase3_en_4 - known)
-    for t in known:
+    # Behalve de previews zelf (hun eigen rij, met de tweede ronde erachter): zoals fase 3 en 4
+    assert jobs._kinds["preview"].lane == jobs._kinds["preview.large"].lane == "preview"
+    assert (jobs._kinds["preview"].rank, jobs._kinds["preview.large"].rank) == (0, 1)
+    for t in known - {"preview", "preview.large"}:
         assert jobs._kinds[t].lane == "default", t
         assert jobs._kinds[t].timeout is None, t
     assert jobs.lane_of("bestaat.niet") == "default"

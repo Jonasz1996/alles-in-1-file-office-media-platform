@@ -11,8 +11,10 @@ import { eventIds, liveEvents, type ServerEvent } from "../events";
 export const PREVIEW_BATCH = 500;
 export const PREVIEW_THROTTLE_MS = 100;
 const MAX_IN_FLIGHT = 2;
-/** De adressen zijn ondertekend en verlopen (6 tot 12 uur); na 5 uur opnieuw vragen. */
-const STALE_MS = 5 * 3600 * 1000;
+/** De adressen zijn ondertekend en verlopen (standaard na 6 tot 12 uur, nooit eerder: de
+ * instelling preview_url_hours); na 5 uur opnieuw vragen. Geldt een adres langer, dan komt
+ * hetzelfde adres terug en houdt de browser de afbeelding uit zijn cache. */
+export const STALE_MS = 5 * 3600 * 1000;
 
 interface Entry {
   etag: string;

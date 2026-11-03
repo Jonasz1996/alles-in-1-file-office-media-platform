@@ -1,5 +1,6 @@
 // /beheer/taken: hoeveel taken er wachten, lopen en mislukten (ook per soort), wat nu loopt en
 // de mislukte taken in pagina's van 100, met Opnieuw en Weggooien. Shift+R: alles opnieuw.
+// Bovenaan hoe ver de foto's en video's zijn (thumbnails), met Alles nalopen.
 
 import { type JSX, useState } from "react";
 import { api } from "../api";
@@ -9,7 +10,7 @@ import { confirm } from "../ui/dialogs";
 import { useShortcuts } from "../ui/keys";
 import { toast } from "../ui/toast";
 import { adminApi, type FailedJob, type JobsPage } from "./api";
-import { ago, jobSubject, jobTypeLabel } from "./format";
+import { ago, jobSubject, jobTypeLabel, photoLines } from "./format";
 import { usePolling } from "./usePolling";
 
 const STATUSES = ["queued", "running", "done", "failed"] as const;
@@ -69,6 +70,16 @@ export function Jobs(): JSX.Element {
       toast(t("admin.jobs.retried", { n }), { kind: "ok" });
   }
 
+  async function recheck() {
+    let started = false;
+    if (
+      await act(async () => {
+        started = (await adminApi.recheckPreviews()).started;
+      })
+    )
+      toast(t(started ? "admin.jobs.photos.recheckStarted" : "admin.jobs.photos.recheckBusy"), { kind: "ok" });
+  }
+
   async function remove(job: FailedJob) {
     const yes = await confirm({
       title: t("admin.jobs.removeTitle"),
@@ -112,6 +123,25 @@ export function Jobs(): JSX.Element {
           <p>{t("admin.jobs.counts", page.counts)}</p>
           {page.oldest_queued_at && (
             <p className="muted">{t("admin.jobs.oldest", { ago: ago(page.oldest_queued_at) })}</p>
+          )}
+
+          {page.photos && (
+            <section aria-labelledby="admin-jobs-photos">
+              <div className="admin-head">
+                <h3 id="admin-jobs-photos">{t("admin.jobs.photos.title")}</h3>
+                <Button disabled={busy} aria-describedby="admin-jobs-photos-help" onClick={() => void recheck()}>
+                  {t("admin.jobs.photos.recheck")}
+                </Button>
+              </div>
+              {photoLines(page.photos).map((line, i) => (
+                <p key={line} className={i === 0 ? undefined : "muted"}>
+                  {line}
+                </p>
+              ))}
+              <p id="admin-jobs-photos-help" className="muted">
+                {t("admin.jobs.photos.recheckHelp")}
+              </p>
+            </section>
           )}
 
           {page.by_type.length > 0 && (

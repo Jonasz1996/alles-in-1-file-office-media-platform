@@ -4,6 +4,7 @@ nergens een locatie."""
 
 import io
 import json
+import time
 import uuid
 
 import pytest
@@ -254,3 +255,57 @@ async def test_kantoordocument_via_document(client, admin, settings):
     assert meta["office"] == "document"
     # Het lichte deel heeft de inhoud niet
     assert "office" not in (await listing(client, jonas, brief["id"]))[brief["id"]]["meta"]
+
+
+def exp_of(url: str) -> int:
+    return int(dict(p.split("=", 1) for p in url.split("?")[1].split("&"))["exp"])
+
+
+@pytest.mark.anyio
+async def test_publieke_viewer_geeft_adressen_van_hooguit_12_uur(client, admin, settings):
+    """Een previewadres is ondertekend op de inhoud, dus het werkt ook na het intrekken van de
+    link. Achter een link daarom hooguit 12 uur (previews.PUBLIC_PERIOD), ook in de viewer en
+    hoe lang adressen in de app ook gelden (review F1: de viewer gaf de termijn van de app)."""
+    settings.preview_url_hours = 7 * 24
+    jonas, _ = admin
+    folder = await mkdir(client, jonas, (await root(client, jonas))["folder"]["id"], "Gedeeld")
+    # Een TIFF krijgt ook 2048 (display): de browser kan hem niet tonen
+    photo = await upload(client, jonas, "scan.tif", picture("TIFF", (3000, 2000)), parent=folder)
+    await jobs.run_pending(settings)
+    key = await open_link(client, jonas, folder)
+    now = time.time()
+    r = await client.get(f"/api/v1/public/preview/{photo['id']}", headers=key)
+    assert r.status_code == 200, r.text
+    shown = r.json()
+    urls = [shown["thumb"], shown["large"], shown["display"]]
+    assert all(urls) and "/2048.webp?" in shown["display"]
+    for url in urls:
+        assert exp_of(url) <= now + 2 * previews.PUBLIC_PERIOD, url
+    r = await client.get(shown["display"])
+    assert r.status_code == 200
+    age = int(r.headers["cache-control"].split("max-age=")[1].split(",")[0])
+    assert age <= 2 * previews.PUBLIC_PERIOD
+    # De lijst achter de link net zo
+    r = await client.post("/api/v1/public/previews", json={"node_ids": [photo["id"]]}, headers=key)
+    assert exp_of(r.json()[photo["id"]]["thumb"]) <= now + 2 * previews.PUBLIC_PERIOD
+    # In de app wel de ingestelde termijn: een week, en hooguit twee
+    for url in (
+        (await detail(client, jonas, photo["id"]))["thumb"],
+        (await listing(client, jonas, photo["id"]))[photo["id"]]["thumb"],
+    ):
+        assert now + 7 * 24 * 3600 <= exp_of(url) <= now + 14 * 24 * 3600 + 5
+
+
+@pytest.mark.anyio
+async def test_termijn_in_de_app_standaard_6_uur_en_nooit_korter(client, admin, settings):
+    """Standaard 6 tot 12 uur, zoals sinds fase 3 (review F4: 7 dagen alleen als Jonas dat
+    instelt). Korter dan 6 uur kan niet: de web-app vraagt adressen pas na 5 uur opnieuw."""
+    jonas, _ = admin
+    photo = await upload(client, jonas, "a.png", picture("PNG", (300, 300)))
+    await jobs.run_pending(settings)
+    for hours in (6, 1, 0, -5):
+        settings.preview_url_hours = hours
+        assert previews.url_period(settings) == 6 * 3600
+        now = time.time()
+        thumb = (await listing(client, jonas, photo["id"]))[photo["id"]]["thumb"]
+        assert now + 6 * 3600 - 5 <= exp_of(thumb) <= now + 12 * 3600 + 5, hours

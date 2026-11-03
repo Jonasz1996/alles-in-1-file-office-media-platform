@@ -9,6 +9,7 @@ import {
   matchesUser,
   noticeText,
   parseQuota,
+  photoLines,
   quotaInput,
   segments,
 } from "./format";
@@ -187,10 +188,39 @@ describe("taken", () => {
     expect(jobTypeLabel("user.delete")).toBe("Gebruiker verwijderen");
     expect(jobTypeLabel("preview.outdated")).toBe("Previews opnieuw maken");
     expect(jobTypeLabel("photometa")).toBe("Fotogegevens");
+    expect(jobTypeLabel("preview.large")).toBe("Preview, grote versie");
+    expect(jobTypeLabel("preview.recheck")).toBe("Previews nalopen");
     expect(jobTypeLabel("iets.anders")).toBe("iets.anders");
     expect(jobSubject("preview:0123456789abcdef")).toBe("0123456789ab…");
     expect(jobSubject("user.delete:abc")).toBe("abc");
     expect(jobSubject(null)).toBe("");
+  });
+
+  it("photoLines: eerst wat een thumbnail heeft, daarna alleen wat niet nul is", async () => {
+    const all = { total: 10, ready: 6, partial: 0, large_failed: 0, waiting: 3, failed: 1, none: 0, later: 0 };
+    expect(photoLines(all)).toEqual(["6 van 10 hebben een thumbnail, 3 in de wachtrij, 1 mislukt."]);
+    expect(photoLines({ ...all, ready: 4, partial: 2, none: 1, later: 1, total: 12 })).toEqual([
+      "6 van 12 hebben een thumbnail, 3 in de wachtrij, 1 mislukt.",
+      "2 krijgen nog een grote versie.",
+      "1 zonder preview (onleesbaar, of een soort zonder).",
+      "1 video wacht op ffmpeg in de mediaworker.",
+    ]);
+    resetI18nForTests("en");
+    await loadAreas(["common", "admin"]);
+    expect(photoLines({ ...all, partial: 1, later: 2 })).toEqual([
+      "7 of 10 have a thumbnail, 3 queued, 1 failed.",
+      "1 still gets a large version.",
+      "2 videos are waiting for ffmpeg in the media worker.",
+    ]);
+  });
+
+  it("photoLines: een mislukte grote versie heeft wel een thumbnail, maar komt niet meer vanzelf", () => {
+    const p = { total: 10, ready: 5, partial: 1, large_failed: 2, waiting: 2, failed: 0, none: 0, later: 0 };
+    expect(photoLines(p)).toEqual([
+      "8 van 10 hebben een thumbnail, 2 in de wachtrij, 0 mislukt.",
+      "1 krijgt nog een grote versie.",
+      "Bij 2 mislukte de grote versie; Alles nalopen probeert het opnieuw.",
+    ]);
   });
 
   it("byTypeRows: per soort één rij, op naam", () => {

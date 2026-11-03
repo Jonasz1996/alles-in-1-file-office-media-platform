@@ -230,6 +230,70 @@ def test_bewegende_gif_als_origineel(context_as, library: Library):
     expect(viewer.locator(".zoom-img")).to_have_attribute("src", re.compile("/download"))
 
 
+def test_tiff_die_nog_wacht_verschijnt_zodra_de_preview_er_is(
+    server: Server, admin: Account, context_as
+):
+    """Een TIFF (of HEIC, RAW, PSD: de browser toont het origineel niet) openen terwijl zijn
+    preview nog in de rij staat, zoals tijdens een import. Eerst "wordt gemaakt", en zodra de
+    preview er is de afbeelding. Eerder bleef "kan niet worden getoond" staan, ook nadat de
+    viewer het nieuwe detail had (de nacontrole van de foto's: een PSD bleef zo 75 s leeg).
+    Het eerste antwoord is hier nagemaakt (pending); daarna het echte."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    owner = create_user(server, admin, name="Scanner")
+    folder = server.call(
+        owner, "POST", f"/api/v1/files/{owner.root_id}/folders", json={"name": "Scans"}, expect=201
+    ).json()["id"]
+    data = BytesIO()
+    Image.new("RGB", (1600, 1200), (40, 90, 160)).save(data, "TIFF")
+    node = server.call(
+        owner,
+        "PUT",
+        f"/api/v1/files/{folder}/upload",
+        params={"name": "scan.tif"},
+        content=data.getvalue(),
+        expect=201,
+    ).json()
+    wait_for_previews(server, owner, [node["id"]])
+
+    page = context_as(owner).new_page()
+    answers: list[str] = []
+
+    def detail(route):
+        if not answers:
+            answers.append("pending")
+            route.fulfill(
+                json={
+                    "state": "pending",
+                    "thumb": None,
+                    "large": None,
+                    "display": None,
+                    "meta": {},
+                    "taken_at": None,
+                }
+            )
+        else:
+            answers.append("echt")
+            route.continue_()
+
+    page.route(f"**/api/v1/files/{node['id']}/preview*", detail)
+    page.goto(f"/map/{folder}?bestand={node['id']}")
+    viewer = page.get_by_role("dialog", name="scan.tif", exact=True)
+    expect(viewer.get_by_text("Het voorbeeld wordt gemaakt…")).to_be_visible()
+    expect(viewer.get_by_text("Deze afbeelding kan niet worden getoond.")).to_have_count(0)
+    # De viewer vraagt een wachtende preview elke 3 s opnieuw
+    image = viewer.locator(".zoom-img")
+    expect(image).to_have_attribute("src", re.compile(r"/1024\.webp"), timeout=15_000)
+    page.wait_for_function(
+        "() => { const i = document.querySelector('.zoom-img');"
+        " return !!i && i.complete && i.naturalWidth > 0; }"
+    )
+    assert answers[0] == "pending" and "echt" in answers, answers
+    expect(viewer.get_by_text("Het voorbeeld wordt gemaakt…")).to_have_count(0)
+
+
 def test_gegevens_zonder_locatie(context_as, library: Library):
     """I opent het paneel met gegevens: de camera-EXIF (P5's render_meta) staat in de groep
     Foto, met Camera en Belichting; een locatie staat nergens, ook niet buiten het paneel."""

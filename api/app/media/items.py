@@ -348,7 +348,7 @@ class Reader:
         self.settings = settings
         self.user = user
         self.secret = previews.url_key(settings)
-        self.exp = previews.expiry()
+        self.exp = previews.expiry(period=previews.url_period(settings))
         self._roots: dict[uuid.UUID, uuid.UUID] = {}
 
     async def roots_of(self, library_ids: Iterable[uuid.UUID]) -> dict[uuid.UUID, uuid.UUID]:

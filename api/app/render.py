@@ -7,35 +7,47 @@ Verzoek als JSON op stdin: {"source", "out", "work", "mime", "name", "max_pixels
 "memory_mb"}, en met media aan "worker": {"socket", "key"} (fase 5, previews.py). Antwoord
 als JSON op stdout: {"state": "ready" | "none", "meta": {...}, "sizes": [1024, 256]}; voor
 een video ook {"state": "defer", "seconds"} als de mediaworker weg of druk is. De
-afbeeldingen komen in out/<grootte>.webp (HEIC, HEIF en TIFF ook 2048.webp: die kan de browser
-zelf niet tonen); een kantoordocument geeft ook out/doc.json
+afbeeldingen komen in out/<grootte>.webp (HEIC, HEIF, TIFF, PSD, JPEG 2000 en camera-RAW ook
+2048.webp: die kan de browser zelf niet tonen); een kantoordocument geeft ook out/doc.json
 (app/office/reader.py). work is voor tussenbestanden. Een onverwachte fout eindigt met een exitcode
 en de melding op stderr.
 
 Met een veld "pdf" (een pad) maakt hij de thumbnails uit die PDF in plaats van uit de bron:
 de omgezette PDF van een kantoordocument (fase 4, app/office/convert.py).
 
+Met "first" (de eerste ronde van previews.make) alleen 256.webp als dat snel kan: een JPEG (ook
+de ingebedde van een camera-RAW) met draft, een HEIC met zijn ingebedde thumbnail. Het antwoord
+heeft dan "more": de grote maten volgen in een tweede ronde. Met "nice" draait het proces zoveel
+stappen lager (achtergrondwerk; de API en het afspelen gaan voor).
+
 Andere soorten verzoeken (veld "mode"):
 - "page": {"source", "out", "pages": [n, ...], "width"} -> pagina's van een PDF als
   out/<n>.webp, zo breed als width (de viewer, routers/viewer.py);
 - "docinfo": {"source"} -> {"state", "pages", "page_sizes", "toc", "labels"} van een PDF;
 - "meta": alleen metadata van veel bestanden (render_meta.run_meta, P5).
+
+serve() is de forkserver van previews.py: één voorgeladen proces dat per verzoek een kind maakt
+met fork, in plaats van elke keer een nieuwe Python met Pillow (zie daar).
 """
 
 import asyncio
 import base64
 import codecs
 import contextlib
+import io
 import json
 import lzma
+import mmap
 import os
 import posixpath
 import resource
+import selectors
 import shutil
 import signal
 import struct
 import sys
 import tarfile
+import traceback
 import warnings
 import zipfile
 import zlib
@@ -47,7 +59,7 @@ from app import render_meta  # ook alleen de standaardbibliotheek
 
 SIZES = (1024, 256)  # groot eerst: de thumbnail wordt uit de grote gemaakt
 DISPLAY = 2048  # extra groot voor wat de browser zelf niet kan tonen
-DISPLAY_FORMATS = {"HEIF", "TIFF"}
+DISPLAY_FORMATS = {"HEIF", "TIFF", "PSD", "JPEG2000"}
 THUMB = 256
 HEAD = 8192
 TEXT_BYTES = 4096
@@ -59,6 +71,12 @@ FFMPEG_SECONDS = 60  # per vraag aan de mediaworker (meta, frame)
 EMBEDDED_BYTES = 32 * 1024 * 1024  # hoes van een album of e-book
 XML_BYTES = 4 * 1024 * 1024
 WEBP_QUALITY = 80
+# Zo hard comprimeert WebP (0-6): 256.webp het hardst (die laadt elke lijst), de grote maten
+# sneller (1024: 68 ms met 4, 27,5 ms met 2, 5 % groter; gemeten in fase 6-voorwerk)
+WEBP_METHOD_THUMB, WEBP_METHOD = 4, 2
+# Een JPEG mag zoveel keer max_pixels hebben (een panorama, een telefoon van 200 MP): draft
+# decodeert hem kleiner, en na draft geldt max_pixels gewoon (gemeten: 200 MP in 0,8 s, 61 MB)
+JPEG_PIXELS = 4
 # PDF-pagina's voor de viewer
 PAGE_WIDTHS = (640, 1280, 1920, 2560)
 PAGE_PIXELS = 40_000_000  # een extreem lange pagina wordt minder scherp, niet enorm
@@ -67,7 +85,8 @@ MAX_TOC = 1000
 TOC_CHARS = 200
 
 # Alleen deze decoders van Pillow: andere (zoals EPS, dat Ghostscript start) nooit
-IMAGE_FORMATS = ["JPEG", "PNG", "GIF", "WEBP", "BMP", "TIFF", "ICO", "AVIF", "HEIF"]
+IMAGE_FORMATS = ["JPEG", "PNG", "GIF", "WEBP", "BMP", "TIFF", "ICO", "AVIF", "HEIF", "PSD"]
+IMAGE_FORMATS += ["JPEG2000"]
 IMAGE_MIMES = {
     "image/jpeg",
     "image/png",
@@ -83,6 +102,8 @@ IMAGE_MIMES = {
     "image/heif",
     "image/heic-sequence",
     "image/heif-sequence",
+    "image/vnd.adobe.photoshop",
+    "image/jp2",
 }
 TAR_MIMES = {
     "application/x-tar",
@@ -105,8 +126,30 @@ TEXT_MIMES = {
     "application/sql",
     "application/x-ndjson",
 }
-# Camera-RAW is vaak TIFF van binnen; daar maken we (nog) geen preview van
+# Camera-RAW (vaak TIFF van binnen): de preview komt uit de ingebedde JPEG (raw())
 RAW_EXTENSIONS = (".cr2", ".cr3", ".nef", ".nrw", ".arw", ".dng", ".orf", ".rw2", ".raf", ".pef")
+RAW_MIMES = {
+    "image/x-canon-cr2",
+    "image/x-canon-cr3",
+    "image/x-nikon-nef",
+    "image/x-sony-arw",
+    "image/x-adobe-dng",
+    "image/x-fuji-raf",
+    "image/x-olympus-orf",
+    "image/x-panasonic-rw2",
+    "image/x-pentax-pef",
+}
+# TIFF met een eigen handtekening: Olympus (ORF) en Panasonic (RW2)
+RAW_TIFF = (b"II*\x00", b"MM\x00*", b"IIRO", b"IIRS", b"MMOR", b"IIU\x00")
+RAW_BYTES = 512 * 1024 * 1024  # zoveel van een RAW-bestand doorzoeken op een JPEG
+RAW_HEAD = 4 * 1024 * 1024  # de TIFF-kop met de EXIF staat vooraan
+RAW_CANDIDATES = 64
+# Zoveel segmenten van JPEG-koppen mag het zoeken in één RAW samen aflopen (review F2). Een echte
+# RAW heeft er hooguit een paar duizend (een DNG met tegels: een paar per tegel); een gemaakt
+# bestand met een kop na elke paar bytes stopt zo na een fractie van een seconde, met wat er
+# dan gevonden is
+RAW_STEPS = 100_000
+CR3_UUID = bytes.fromhex("85c0b687820f11e08111f4ce462b6a48")
 OFFICE_EXTENSIONS = (".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".docm", ".xlsm", ".pptm")
 # Kantoordocumenten die app/office/reader.py leest (B21); doc, xls, ppt en rtf niet
 OFFICE_MIMES = {
@@ -154,13 +197,17 @@ def sniff(head: bytes, name: str) -> str:
         if struct.unpack("<I", head[14:18])[0] in (12, 40, 52, 56, 64, 108, 124):
             return "image"
     if head[:4] in (b"II*\x00", b"MM\x00*"):
-        return "" if lower.endswith(RAW_EXTENSIONS) else "image"
+        return "raw" if lower.endswith(RAW_EXTENSIONS) else "image"
+    if head[:4] in RAW_TIFF or head.startswith(b"FUJIFILMCCD-RAW"):
+        return "raw"
     if head[:4] == b"\x00\x00\x01\x00" and len(head) >= 6 and head[4] > 0:
         return "image"
     if head[4:8] == b"ftyp":
         brand = head[8:12]
         if brand in HEIF_BRANDS:
             return "image"
+        if brand == b"crx ":
+            return "raw"  # Canon CR3
         return "audio" if brand in AUDIO_BRANDS else "video"
     if head.startswith(b"%PDF-"):
         return "pdf"
@@ -231,6 +278,8 @@ def kind_of(mime: str | None, head: bytes, name: str) -> str:
     lower = name.lower()
     if mime == "image/svg+xml":
         return ""
+    if mime in RAW_MIMES or (mime == "image/tiff" and lower.endswith(RAW_EXTENSIONS)):
+        return "raw"
     if mime in IMAGE_MIMES:
         return "image"
     if mime == "application/pdf":
@@ -307,9 +356,12 @@ def render(request: dict) -> dict:
     kind = kind_of(request.get("mime"), head, name)
     if not kind:
         return dict(NONE)
+    first = bool(request.get("first"))
     try:
         if kind == "image":
-            return image(source, out, request["max_pixels"], exif=True)
+            return image(source, out, request["max_pixels"], exif=True, first=first)
+        if kind == "raw":
+            return raw(source, out, work, request["max_pixels"], first=first)
         if kind == "pdf":
             return pdf(source, out, request["max_pixels"])
         if kind == "video":
@@ -348,13 +400,34 @@ def _pillow(max_pixels: int):
     return Image
 
 
+def _is_jpeg(source: Path) -> bool:
+    with open(source, "rb") as f:
+        return f.read(3) == b"\xff\xd8\xff"
+
+
 def image(
-    source: Path, out: Path, max_pixels: int, meta: dict | None = None, *, exif: bool = False
+    source: Path,
+    out: Path,
+    max_pixels: int,
+    meta: dict | None = None,
+    *,
+    exif: bool = False,
+    first: bool = False,
+    display: bool = False,
+    orientation: int | None = None,
 ) -> dict:
     """exif: ook de opnamedatum en camerametadata lezen (render_meta), alleen voor een foto
-    zelf, niet voor de hoes van een album of e-book of een frame van een video."""
-    Image = _pillow(max_pixels)
-    from PIL import ImageOps
+    zelf, niet voor de hoes van een album of e-book of een frame van een video. first: de eerste
+    ronde (alleen 256.webp als dat snel kan, zie quick). display: ook 2048.webp (een camera-RAW:
+    die kan de browser niet tonen). orientation: de draaiing van een camera-RAW, als de
+    ingebedde JPEG er zelf geen heeft.
+
+    Een JPEG mag JPEG_PIXELS keer zo groot zijn als max_pixels: draft decodeert hem kleiner, en
+    wat daarna overblijft valt weer onder max_pixels. Een afgekapte JPEG (een afgebroken sync)
+    krijgt toch een preview: wat ontbreekt is grijs."""
+    jpeg = _is_jpeg(source)
+    Image = _pillow(max_pixels * JPEG_PIXELS if jpeg else max_pixels)
+    from PIL import ImageFile, ImageOps
 
     meta = dict(meta or {})
     with Image.open(source, formats=IMAGE_FORMATS) as img:
@@ -362,17 +435,78 @@ def image(
             meta.update(render_meta.image_meta(img))
             # Alleen bij een foto zelf: een video-frame of hoes beweegt nooit
             meta["animated"] = bool(getattr(img, "is_animated", False))
+        tags = img.getexif()
+        if orientation in (2, 3, 4, 5, 6, 7, 8) and tags.get(0x0112, 1) == 1:
+            tags[0x0112] = orientation  # exif_transpose leest het hier
         width, height = img.size
-        if img.getexif().get(0x0112, 1) in (5, 6, 7, 8):  # gedraaid: breedte en hoogte om
+        if tags.get(0x0112, 1) in (5, 6, 7, 8):  # gedraaid: breedte en hoogte om
             width, height = height, width
-        wanted = (DISPLAY, *SIZES) if exif and img.format in DISPLAY_FORMATS else SIZES
-        img.draft("RGB", (wanted[0], wanted[0]))  # JPEG meteen kleiner decoderen
-        sizes = thumbnails(ImageOps.exif_transpose(img), out, wanted)
-    return {
-        "state": "ready",
-        "meta": {**meta, "width": width, "height": height},
-        "sizes": sizes,
-    }
+        if img.format != "JPEG" and img.size[0] * img.size[1] > max_pixels:
+            raise Unreadable("te veel pixels")  # alleen een JPEG kan kleiner gedecodeerd
+        done = {**meta, "width": width, "height": height}
+        truncated = ImageFile.LOAD_TRUNCATED_IMAGES
+        ImageFile.LOAD_TRUNCATED_IMAGES = img.format == "JPEG"
+        try:
+            if first and max(img.size) > THUMB:
+                sizes = quick(img, source, out, max_pixels)
+                if sizes is not None:
+                    return {"state": "ready", "meta": done, "sizes": sizes, "more": True}
+            big = exif and (display or img.format in DISPLAY_FORMATS)
+            wanted = (DISPLAY, *SIZES) if big else SIZES
+            img.draft("RGB", (wanted[0], wanted[0]))  # JPEG meteen kleiner decoderen
+            _decoded(img, max_pixels)
+            sizes = thumbnails(ImageOps.exif_transpose(img), out, wanted)
+        finally:
+            ImageFile.LOAD_TRUNCATED_IMAGES = truncated
+    return {"state": "ready", "meta": done, "sizes": sizes}
+
+
+def _decoded(img, max_pixels: int) -> None:
+    """Na draft: wordt er niet meer dan max_pixels gedecodeerd?"""
+    if img.size[0] * img.size[1] > max_pixels:
+        raise Unreadable("te veel pixels, ook kleiner gedecodeerd")
+
+
+def quick(img, source: Path, out: Path, max_pixels: int) -> list[int] | None:
+    """Alleen 256.webp, als dat veel sneller is dan alles in één keer: een JPEG met draft (1/8:
+    50 ms tegen 425 ms voor een foto van 12 MP), een HEIC met zijn ingebedde thumbnail. None:
+    dan alles in één keer (PNG, TIFF, ... decoderen kost daar toch het meeste)."""
+    from PIL import ImageOps
+
+    if img.format == "JPEG":
+        img.draft("RGB", (THUMB, THUMB))
+        _decoded(img, max_pixels)
+        return thumbnails(ImageOps.exif_transpose(img), out, (THUMB,))
+    if img.format == "HEIF":
+        small = _heif_thumbnail(source, img.size)
+        if small is not None:
+            return thumbnails(small, out, (THUMB,))
+    return None
+
+
+def _heif_thumbnail(source: Path, size: tuple[int, int]):
+    """De ingebedde thumbnail van een HEIC (een iPhone zet er een van 320 px in), als die groot
+    genoeg is en dezelfde verhouding heeft als de foto zelf (libheif draait hem zoals de foto;
+    anders liever de foto zelf)."""
+    try:
+        import pillow_heif
+
+        primary = pillow_heif.open_heif(source)[0]
+        found = list(primary.info.get("thumbnails") or [])
+    except Exception:  # noqa: BLE001 - dan gewoon de foto zelf
+        return None
+    for index, box in sorted(enumerate(found), key=lambda x: x[1]):
+        if box < THUMB:
+            continue
+        try:
+            small = primary.get_thumbnail(index).to_pillow()
+        except Exception:  # noqa: BLE001 - zie hierboven
+            return None
+        w, h = small.size
+        if w and h and abs(w / h - size[0] / size[1]) <= 0.02 * size[0] / size[1]:
+            return small
+        return None
+    return None
 
 
 def thumbnails(img, out: Path, wanted: tuple[int, ...] = SIZES) -> list[int]:
@@ -391,9 +525,210 @@ def thumbnails(img, out: Path, wanted: tuple[int, ...] = SIZES) -> list[int]:
         if size != THUMB and max(img.size) <= smaller:
             continue  # een groter formaat heeft geen zin: dat is het volgende al
         img.thumbnail((size, size), Image.Resampling.LANCZOS)
-        img.save(out / f"{size}.webp", "WEBP", quality=WEBP_QUALITY, method=4)
+        method = WEBP_METHOD_THUMB if size == THUMB else WEBP_METHOD
+        img.save(out / f"{size}.webp", "WEBP", quality=WEBP_QUALITY, method=method)
         sizes.append(size)
     return sizes
+
+
+# --- camera-RAW -----------------------------------------------------------------------------
+#
+# Elke camera zet een JPEG in zijn RAW (vaak op volle grootte, soms 1-2 MP), naast het eigen
+# sensorbeeld dat Pillow niet kan lezen. raw() zoekt de grootste gewone JPEG (baseline of
+# progressive, niet de verliesloze van de sensordata), en neemt datum, camera en draaiing uit de
+# TIFF-kop van de RAW (CR2, NEF, ARW, DNG, PEF, ORF, RW2) of de CMT-boxen van een CR3. Een RAF
+# heeft een JPEG met eigen EXIF. Geen libraw: alleen wat er al als JPEG in staat.
+
+
+class _Scan:
+    """Zoekt gewone JPEG's in een RAW met begrensd werk (review F2). Eerder zocht elke kop
+    zonder einde opnieuw naar FFD9 tot het eind van het bestand, en telde een kop die niet
+    deugde niet mee: een gemaakt bestand van 1 MB kostte 45 s, van 4 MB een worker tot de
+    tijdgrens van de taak (en dat drie pogingen lang). Nu wordt elke byte hooguit één keer naar
+    FFD9 doorzocht (none_from), en lopen alle koppen samen hooguit RAW_STEPS segmenten af."""
+
+    def __init__(self, view) -> None:
+        self.view = view
+        self.steps = RAW_STEPS
+        # Vanaf hier begint geen FFD9 meer (al doorzocht)
+        self.none_from = len(view)
+
+    def end_after(self, start: int) -> int:
+        """Waar de eerstvolgende FFD9 vanaf start begint, of -1."""
+        if start >= self.none_from:
+            return -1
+        end = self.view.find(b"\xff\xd9", start, self.none_from + 1)
+        if end < 0:
+            self.none_from = start
+        return end
+
+    def jpeg_at(self, start: int) -> tuple[int, int, int] | None:
+        """(einde, breedte, hoogte) van de JPEG die op start begint, als het een gewone JPEG is
+        (SOF0, 1 of 2) met een einde; anders None. Loopt de segmenten af tot de scan, en zoekt
+        dan het einde (FFD9 komt in de gecomprimeerde data niet voor)."""
+        view = self.view
+        i, size, found = start + 2, len(view), None
+        for _ in range(1000):
+            if self.steps <= 0:
+                return None
+            self.steps -= 1
+            if i + 4 > size or view[i] != 0xFF:
+                return None
+            marker = view[i + 1]
+            if marker == 0xFF:
+                i += 1  # opvulling
+                continue
+            if marker == 0x01 or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            length = (view[i + 2] << 8) | view[i + 3]
+            if length < 2:
+                return None
+            if marker in (0xC0, 0xC1, 0xC2) and i + 9 <= size:
+                height = (view[i + 5] << 8) | view[i + 6]
+                width = (view[i + 7] << 8) | view[i + 8]
+                found = (width, height)
+            elif 0xC3 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                # Verliesloos, hiërarchisch of rekenkundig: de sensordata, niet te tonen
+                return None
+            if marker == 0xDA:
+                # Zonder afmetingen geen JPEG om te tonen: dan ook niet naar het einde zoeken
+                if found is None or not found[0] or not found[1]:
+                    return None
+                end = self.end_after(i + 2 + length)
+                if end < 0:
+                    return None
+                return end + 2, found[0], found[1]
+            i += 2 + length
+        return None
+
+
+def embedded_jpeg(source: Path) -> bytes | None:
+    """De grootste gewone JPEG in dit bestand (hooguit RAW_BYTES doorzocht, met begrensd werk:
+    _Scan). Komen dezelfde afmetingen vaak voor (de tegels van een DNG), dan zijn dat stukken
+    van een beeld: overslaan."""
+    with open(source, "rb") as f:
+        length = min(os.fstat(f.fileno()).st_size, RAW_BYTES)
+        if length < 4:
+            return None
+        with mmap.mmap(f.fileno(), length, access=mmap.ACCESS_READ) as view:
+            scan = _Scan(view)
+            found: list[tuple[int, int, int, int]] = []
+            pos = view.find(b"\xff\xd8\xff")
+            while pos >= 0 and len(found) < RAW_CANDIDATES and scan.steps > 0:
+                jpeg = scan.jpeg_at(pos)
+                if jpeg is not None:
+                    end, width, height = jpeg
+                    found.append((width * height, pos, end, width))
+                pos = view.find(b"\xff\xd8\xff", (end if jpeg else pos + 3))
+            counts: dict[tuple[int, int], int] = {}
+            for pixels, _pos, _end, width in found:
+                counts[(pixels, width)] = counts.get((pixels, width), 0) + 1
+            usable = [c for c in found if counts[(c[0], c[3])] <= 4]
+            if not usable:
+                return None
+            _pixels, start, end, _width = max(usable)
+            return bytes(view[start:end])
+
+
+class _Tags:
+    """Genoeg van een Pillow-Image voor render_meta.image_meta: getexif() met get en get_ifd."""
+
+    def __init__(self, top: dict, sub: dict):
+        self.top, self.sub = top, sub
+
+    def getexif(self):
+        return self
+
+    def __len__(self) -> int:
+        return len(self.top) + len(self.sub)
+
+    def get(self, key, default=None):
+        return self.top.get(key, default)
+
+    def get_ifd(self, tag: int):
+        return self.sub if tag == render_meta.EXIF_IFD else {}
+
+
+def _tiff_tags(data: bytes):
+    """De EXIF van een TIFF-structuur (ook ORF en RW2: een eigen handtekening, verder TIFF)."""
+    from PIL import Image
+
+    if len(data) < 8:
+        return None
+    data = data[:2] + (b"*\x00" if data[:2] == b"II" else b"\x00*") + data[4:]
+    exif = Image.Exif()
+    exif.load(b"Exif\x00\x00" + data)
+    return exif
+
+
+def _cr3_tags(head: bytes) -> "_Tags | None":
+    """IFD0 (CMT1) en de Exif-IFD (CMT2) uit de uuid-box van Canon in moov."""
+
+    def boxes(data: bytes, start: int, end: int):
+        while start + 8 <= end:
+            size, kind = struct.unpack(">I4s", data[start : start + 8])
+            body = start + 8
+            if size == 1 and start + 16 <= end:
+                size, body = struct.unpack(">Q", data[start + 8 : start + 16])[0], start + 16
+            if size < 8 or start + size > end:
+                return
+            yield kind, body, start + size
+            start += size
+
+    for kind, body, end in boxes(head, 0, len(head)):
+        if kind != b"moov":
+            continue
+        for kind, inner, stop in boxes(head, body, end):
+            if kind == b"uuid" and head[inner : inner + 16] == CR3_UUID:
+                parts = {k: head[b:e] for k, b, e in boxes(head, inner + 16, stop)}
+                top = _tiff_tags(parts.get(b"CMT1", b""))
+                sub = _tiff_tags(parts.get(b"CMT2", b""))
+                if top is None and sub is None:
+                    return None
+                return _Tags(dict(top or {}), dict(sub or {}))
+    return None
+
+
+def _raw_tags(source: Path):
+    """Datum, camera en draaiing uit de RAW zelf (None als er niets te lezen is)."""
+    with open(source, "rb") as f:
+        head = f.read(RAW_HEAD)
+    try:
+        if head[4:12] == b"ftypcrx ":
+            return _cr3_tags(head)
+        if head[:4] in RAW_TIFF:
+            exif = _tiff_tags(head)
+            try:
+                sub = dict(exif.get_ifd(render_meta.EXIF_IFD))
+            except Exception:  # noqa: BLE001 - kapotte Exif-IFD: dan alleen IFD0
+                sub = {}
+            return _Tags(dict(exif), sub)
+    except Exception:  # noqa: BLE001 - een kapotte kop: dan zonder
+        return None
+    return None
+
+
+def raw(source: Path, out: Path, work: Path, max_pixels: int, *, first: bool = False) -> dict:
+    """Een camera-RAW: de grootste ingebedde JPEG als preview (ook 2048: de browser kan een RAW
+    niet tonen), met datum en camera uit de RAW zelf. Zonder bruikbare JPEG: wat Pillow van een
+    TIFF-RAW kan lezen (vaak een kleine thumbnail), anders geen preview."""
+    tags = _raw_tags(source)
+    meta = render_meta.image_meta(tags) if tags is not None else {}
+    orientation = render_meta._whole(tags.get(render_meta.ORIENTATION)) if tags else None
+    data = embedded_jpeg(source)
+    if data is None:
+        with open(source, "rb") as f:
+            if f.read(4) not in (b"II*\x00", b"MM\x00*"):
+                return dict(NONE)
+        return image(source, out, max_pixels, exif=True, first=first)
+    path = work / "raw.jpg"
+    path.write_bytes(data)
+    result = image(
+        path, out, max_pixels, exif=True, first=first, display=True, orientation=orientation
+    )
+    # Wat de RAW zelf zegt gaat voor (de ingebedde JPEG heeft vaak geen EXIF)
+    return {**result, "meta": {**result["meta"], **meta}}
 
 
 def pdf(source: Path, out: Path, max_pixels: int) -> dict:
@@ -605,9 +940,15 @@ def video(
         return {"state": "defer", "seconds": later.seconds, "reason": str(later)[:200]}
 
 
+# Geen preview omdat de mediaworker (nu) geen ffmpeg heeft: zodra hij weer gezond is, zet de
+# housekeeping van media hem opnieuw klaar (previews.enqueue_later); zo blijft een video niet voor
+# altijd zonder thumbnail
+LATER = {"state": "none", "meta": {"later": True}, "sizes": []}
+
+
 def _video(media: Media, source: Path, fmt: str, out: Path, work: Path, max_pixels: int) -> dict:
     if not media.ready():
-        return dict(NONE)  # de worker heeft geen ffmpeg: zoals 0.6.0 zonder ffmpeg
+        return {**LATER, "meta": dict(LATER["meta"])}
     info = media.meta(source, fmt)
     if info is None:
         return dict(NONE)
@@ -984,6 +1325,8 @@ def pages(request: dict) -> dict:
 
 def main() -> None:
     request = json.loads(sys.stdin.buffer.read())
+    if request.get("nice"):
+        os.nice(int(request["nice"]))
     if request.get("memory_mb"):
         limit = int(request["memory_mb"]) * 1024 * 1024
         _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
@@ -1000,6 +1343,128 @@ def main() -> None:
         result = render(request)
     sys.stdout.write(json.dumps(result))
     sys.stdout.flush()
+
+
+# --- de forkserver (previews.Forkserver) ---------------------------------------------------
+#
+# Eén proces dat Pillow en de rest één keer laadt en per verzoek een kind maakt met fork: dat
+# scheelt per foto het starten van Python en het laden van Pillow (gemeten: een JPEG van 12 MP
+# 272 ms in een kind van de forkserver, 493 ms in een nieuw proces). Het kind is verder precies
+# het oude renderproces: een eigen sessie (procesgroep, zodat previews.render het met alles wat
+# het startte kan stoppen), dezelfde kale omgeving, en het draait de code van previews.CHILD met
+# het verzoek op stdin; stdout en stderr gaan naar OUT en ERR in zijn werkmap. Geheugengrens en
+# nice zet main() in het kind, net als in een eigen proces. Valt de forkserver weg (de app is
+# weg, of hij is doodgemaakt), dan gaan zijn kinderen mee (PDEATHSIG): een kind zonder iemand
+# die op de tijdgrens let, draait anders onbeperkt door.
+#
+# Op stdin regels JSON {"id", "code", "cwd", "request"}; op stdout per kind {"id", "pid"} zodra
+# het een eigen sessie heeft (eerder zou killpg op die pid het kind nog missen) en {"id", "exit"}
+# (de exitcode, of -signaal) als het klaar is, of {"id", "error"} als fork mislukte. Eén thread:
+# fork is dan veilig. stdin dicht (de app is weg): klaar.
+
+OUT, ERR = ".render.out", ".render.err"
+PR_SET_PDEATHSIG = 1
+
+
+def preload() -> None:
+    """Wat bijna elk kind nodig heeft, één keer: Pillow met zijn decoders en pillow-heif."""
+    from PIL import Image, ImageFile, ImageOps  # noqa: F401
+
+    Image.init()
+    with contextlib.suppress(ImportError):
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+
+
+def _child(message: dict, libc, parent: int, ready: int) -> None:
+    """In het kind: alsof het een eigen proces was. Komt nooit terug. Eerst SIGKILL als de
+    forkserver wegvalt (parent; was hij al weg, dan meteen stoppen), dan een eigen sessie, en
+    pas dan ready dicht: zo meldt de forkserver de pid pas als killpg het kind raakt."""
+    code = 1
+    try:
+        libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+        if os.getppid() != parent:
+            os._exit(1)
+        os.setsid()
+        os.close(ready)
+        cwd = str(message["cwd"])
+        os.chdir(cwd)
+        for fd, name in ((1, OUT), (2, ERR)):
+            target = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            os.dup2(target, fd)
+            os.close(target)
+        null = os.open(os.devnull, os.O_RDONLY)
+        os.dup2(null, 0)
+        os.close(null)
+        os.closerange(3, resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+        os.environ["HOME"] = cwd
+        data = json.dumps(message["request"]).encode()
+        sys.stdin = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8")
+        sys.stdout = open(1, "w", encoding="utf-8", closefd=False)
+        sys.stderr = open(2, "w", encoding="utf-8", closefd=False)
+        exec(compile(str(message["code"]), "<render>", "exec"), {"__name__": "__main__"})
+        code = 0
+    except SystemExit as e:
+        code = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
+    except BaseException:  # noqa: BLE001 - zoals een proces dat met een fout stopt
+        with contextlib.suppress(Exception):
+            traceback.print_exc()
+    finally:
+        with contextlib.suppress(Exception):
+            sys.stdout.flush()
+            sys.stderr.flush()
+        os._exit(code)
+
+
+def serve() -> None:
+    import ctypes
+
+    preload()
+    libc = ctypes.CDLL(None, use_errno=True)
+    parent = os.getpid()
+    selector = selectors.DefaultSelector()
+    selector.register(0, selectors.EVENT_READ, None)
+    pending = b""
+
+    def send(message: dict) -> None:
+        data = (json.dumps(message) + "\n").encode()
+        while data:
+            data = data[os.write(1, data) :]
+
+    while True:
+        for key, _events in selector.select():
+            if key.data is not None:
+                ident, pid = key.data
+                selector.unregister(key.fd)
+                os.close(key.fd)
+                _pid, status = os.waitpid(pid, 0)
+                send({"id": ident, "exit": os.waitstatus_to_exitcode(status)})
+                continue
+            chunk = os.read(0, 65536)
+            if not chunk:
+                return  # de app is weg; lopende kinderen gaan mee (PDEATHSIG)
+            pending += chunk
+            while b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                message = json.loads(line)
+                waiting, ready = os.pipe()
+                try:
+                    pid = os.fork()
+                except OSError as e:
+                    os.close(waiting)
+                    os.close(ready)
+                    send({"id": message["id"], "error": str(e)[:200]})
+                    continue
+                if pid == 0:
+                    os.close(waiting)
+                    selector.close()
+                    _child(message, libc, parent, ready)
+                os.close(ready)
+                os.read(waiting, 1)  # leeg: het kind heeft een eigen sessie (of is al weg)
+                os.close(waiting)
+                selector.register(os.pidfd_open(pid), selectors.EVENT_READ, (message["id"], pid))
+                send({"id": message["id"], "pid": pid})
 
 
 if __name__ == "__main__":

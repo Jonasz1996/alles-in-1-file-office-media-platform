@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FileNode, Preview } from "../api";
-import { PreviewCache } from "./previews";
+import { PreviewCache, STALE_MS } from "./previews";
 
 const file = (id: string, etag = "e1") => ({ id, kind: "file", etag }) as unknown as FileNode;
 const ready = { state: "ready", url: "/p/a.webp" } as unknown as Preview;
@@ -53,5 +53,24 @@ describe("pending: wacht het antwoord over de preview nog?", () => {
     await settle();
     expect(cache.get("a", "e1")).toBe(ready);
     expect(cache.pending("a", "e1")).toBe(false);
+  });
+});
+
+describe("verouderd: een adres werkt minstens 6 uur", () => {
+  it("binnen 5 uur niet opnieuw vragen, daarna wel (voordat het adres verloopt)", async () => {
+    const f = controlled();
+    let now = 0;
+    const cache = new PreviewCache(f.fetch, () => now);
+    cache.want([file("a")]);
+    f.calls[0].resolve({ a: ready });
+    await settle();
+    now = 4 * 3600 * 1000;
+    cache.want([file("a")]);
+    expect(f.calls).toHaveLength(1);
+    expect(STALE_MS).toBe(5 * 3600 * 1000);
+    expect(STALE_MS).toBeLessThan(6 * 3600 * 1000);
+    now = STALE_MS + 1;
+    cache.want([file("a")]);
+    expect(f.calls).toHaveLength(2);
   });
 });

@@ -42,7 +42,7 @@ from typing import Annotated, Any
 import anyio
 import anyio.to_thread
 import jwt
-from fastapi import APIRouter, Depends, Header, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -158,10 +158,19 @@ async def _kind(settings: Settings, blob: Blob | None, sha: str, name: str) -> s
 
 
 async def _detail(
-    session: AsyncSession, settings: Settings, sha: str, taken_at: Any, version: bool = False
+    session: AsyncSession,
+    settings: Settings,
+    sha: str,
+    taken_at: Any,
+    version: bool = False,
+    *,
+    period: int,
 ) -> ViewerDetail:
+    """period: hoe lang de previewadressen gelden (previews.url_period in de app,
+    previews.PUBLIC_PERIOD achter een publieke link)."""
     blob = await session.get(Blob, sha)
-    data = previews.info(previews.url_key(settings), blob, previews.expiry(), full=True)
+    exp = previews.expiry(period=period)
+    data = previews.info(previews.url_key(settings), blob, exp, full=True)
     ready = await office_convert.office_pdf(settings, blob) is not None
     state = office_convert.shown_state(blob, ready, version)
     if state is not None:  # alleen met office (of een PDF die er is): anders precies fase 3
@@ -175,13 +184,22 @@ async def preview_detail(
     user: CurrentUser,
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
+    background: BackgroundTasks,
     version: uuid.UUID | None = None,
 ) -> ViewerDetail:
     """Alles wat de viewer over dit bestand (of een eerdere versie ervan) wil weten. Een
-    lijst krijgt via POST /previews alleen het lichte deel."""
+    lijst krijgt via POST /previews alleen het lichte deel. Heeft het nog geen (complete)
+    preview, dan gaat die in de rij naar voren (previews.to_front)."""
     node = await files.get_node(session, user, node_id, "read")
     sha, taken_at = await _content(session, node, version)
-    return await _detail(session, settings, sha, taken_at, version is not None)
+    period = previews.url_period(settings)
+    detail = await _detail(session, settings, sha, taken_at, version is not None, period=period)
+    blob = await session.get(Blob, sha) if sha else None
+    if blob is not None:
+        previews.to_front(
+            background, settings, [(sha, blob.preview, blob.preview_meta)], large=True
+        )
+    return detail
 
 
 # --- PDF: gegevens van het document ---------------------------------------------------------
@@ -593,7 +611,10 @@ async def public_preview(
 ) -> ViewerDetail:
     """Zoals GET /files/{id}/preview, voor een bestand binnen een publieke leeslink."""
     node = await _public_file(session, link, node_id)
-    return await _detail(session, settings, node.blob_id or "", node.taken_at)
+    # Achter een link korter geldig dan in de app, net als POST /public/previews (review F1)
+    return await _detail(
+        session, settings, node.blob_id or "", node.taken_at, period=previews.PUBLIC_PERIOD
+    )
 
 
 @router.get("/public/document/{node_id}")

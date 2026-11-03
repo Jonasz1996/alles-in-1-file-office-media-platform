@@ -275,9 +275,27 @@ export default {
     removeTitle: "Deze mislukte taak weggooien?",
     removeText: "Hij komt niet meer terug, ook niet bij Alles opnieuw.",
     more: "Meer mislukte taken",
+    // Foto's en video's naar hun preview (per inhoud: dubbele bestanden tellen één keer)
+    photos: {
+      title: "Foto's en video's",
+      summary: "{done} van {total} hebben een thumbnail, {waiting} in de wachtrij, {failed} mislukt.",
+      partial: { one: "{n} krijgt nog een grote versie.", other: "{n} krijgen nog een grote versie." },
+      largeFailed: {
+        one: "Bij {n} mislukte de grote versie; Alles nalopen probeert het opnieuw.",
+        other: "Bij {n} mislukte de grote versie; Alles nalopen probeert het opnieuw.",
+      },
+      none: { one: "{n} zonder preview (onleesbaar, of een soort zonder).", other: "{n} zonder preview (onleesbaar, of een soort zonder)." },
+      later: { one: "{n} video wacht op ffmpeg in de mediaworker.", other: "{n} video's wachten op ffmpeg in de mediaworker." },
+      recheck: "Alles nalopen",
+      recheckHelp: "Zet alles zonder (complete) preview opnieuw in de wachtrij, ook wat mislukte, en maakt een preview opnieuw als het bestand ervan ontbreekt.",
+      recheckStarted: "Alles nalopen staat klaar; de achtergrondtaken beginnen er zo aan.",
+      recheckBusy: "Alles nalopen liep al.",
+    },
     // De soort van een taak, met _ in plaats van een punt (user.delete -> user_delete)
     types: {
       preview: "Preview",
+      preview_large: "Preview, grote versie",
+      preview_recheck: "Previews nalopen",
       user_delete: "Gebruiker verwijderen",
       photometa: "Fotogegevens",
       preview_outdated: "Previews opnieuw maken",

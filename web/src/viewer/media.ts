@@ -2,6 +2,7 @@
 // welk soort weergave een bestand krijgt, en wat een fout van de speler betekent.
 
 import type { PreviewMeta } from "../api";
+import type { ServerEvent } from "../events";
 import { type Category, category } from "../Thumb";
 import type { ViewerMeta } from "./api";
 
@@ -71,10 +72,27 @@ export function viewKind(item: { name: string; mime: string | null }, meta: View
   return "none";
 }
 
-/** Toont de browser dit soort afbeelding zelf? HEIC, HEIF en TIFF niet: daarvoor is display. */
+/** Toont de browser dit soort afbeelding zelf? HEIC, HEIF, TIFF, PSD, JPEG 2000 en camera-RAW
+ * niet: daarvoor is display (render.DISPLAY_FORMATS en RAW_MIMES). */
 export function browserShows(mime: string | null): boolean {
   const m = (mime ?? "").toLowerCase();
-  return !/^image\/(hei[cf](-sequence)?|tiff?|x-tiff|x-adobe-dng|x-raw|x-canon|x-nikon|x-sony)/.test(m);
+  if (/^image\/(hei[cf](-sequence)?|tiff?|x-tiff|jp2|vnd\.adobe\.photoshop)/.test(m)) return false;
+  return !/^image\/(x-adobe-dng|x-raw|x-canon|x-nikon|x-sony|x-fuji|x-olympus|x-panasonic|x-pentax)/.test(m);
+}
+
+/** Komt er nog meer van de preview? Nog in de maak, of alleen de thumbnail (partial: de grote
+ * versie en 2048 komen in een tweede ronde). Dan vraagt de viewer het detail opnieuw: een RAW of
+ * HEIC toont anders 256 px, ook als de grote versie er al is. Mislukte de tweede ronde
+ * (large_failed), dan komt er niets meer. */
+export function moreComing(detail: { state: string; meta: ViewerMeta }): boolean {
+  if (detail.state === "pending") return true;
+  return detail.state === "ready" && detail.meta.partial === true && detail.meta.large_failed !== true;
+}
+
+/** Is dit preview.ready voor bestand id (data.node_ids)? */
+export function previewReadyFor(event: ServerEvent, id: string): boolean {
+  const ids = event.data.node_ids;
+  return event.type === "preview.ready" && Array.isArray(ids) && ids.map(String).includes(id);
 }
 
 /** Het origineel tonen in plaats van de preview: wat beweegt (een preview staat stil). */

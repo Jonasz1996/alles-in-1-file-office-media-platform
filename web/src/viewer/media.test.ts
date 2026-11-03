@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { browserShows, codecLabel, mediaProblem, pictureMissing, viewKind, wantsOriginal } from "./media";
+import {
+  browserShows,
+  codecLabel,
+  mediaProblem,
+  moreComing,
+  pictureMissing,
+  previewReadyFor,
+  viewKind,
+  wantsOriginal,
+} from "./media";
 
 describe("mediaProblem (MediaError -> melding)", () => {
   it("decoderen mislukt: dit formaat speelt hier niet", () => {
@@ -87,6 +96,11 @@ describe("viewKind", () => {
     expect(browserShows("image/jpeg")).toBe(true);
     expect(browserShows("image/heic")).toBe(false);
     expect(browserShows("image/tiff")).toBe(false);
+    // Camera-RAW, PSD en JPEG 2000: ook de grote preview (display), niet het origineel
+    const raw = ["image/x-fuji-raf", "image/x-olympus-orf", "image/x-panasonic-rw2", "image/x-pentax-pef"];
+    for (const m of [...raw, "image/x-canon-cr3", "image/jp2", "image/vnd.adobe.photoshop"]) {
+      expect(browserShows(m)).toBe(false);
+    }
     expect(wantsOriginal("image/gif", { animated: true })).toBe(true);
     expect(wantsOriginal("image/gif", { animated: false })).toBe(false);
     expect(wantsOriginal("image/gif", {})).toBe(true); // nog niet bekend: het origineel
@@ -98,5 +112,27 @@ describe("viewKind", () => {
       codecLabel({ video: { codec: "h264", profile: "High" }, audio: { codec: "aac" }, container: "mov,mp4,m4a" }),
     ).toBe("h264 (High) · aac · mov");
     expect(codecLabel({})).toBe("");
+  });
+});
+
+describe("moreComing: het detail opnieuw vragen", () => {
+  it("nog in de maak, of alleen de thumbnail (de grote versie van een RAW of HEIC komt nog)", () => {
+    expect(moreComing({ state: "pending", meta: {} })).toBe(true);
+    expect(moreComing({ state: "ready", meta: { sizes: [256], partial: true } })).toBe(true);
+    expect(moreComing({ state: "ready", meta: { sizes: [256, 1024, 2048] } })).toBe(false);
+    expect(moreComing({ state: "failed", meta: { partial: true } })).toBe(false);
+    expect(moreComing({ state: "none", meta: {} })).toBe(false);
+  });
+
+  it("de tweede ronde mislukte: niet blijven vragen naar wat niet meer komt", () => {
+    expect(moreComing({ state: "ready", meta: { sizes: [256], partial: true, large_failed: true } })).toBe(false);
+  });
+
+  it("preview.ready voor dit bestand (node_ids), niet voor een ander", () => {
+    const ready = { type: "preview.ready", data: { sha: "a", node_ids: ["n1", "n2"] } };
+    expect(previewReadyFor(ready, "n2")).toBe(true);
+    expect(previewReadyFor(ready, "n3")).toBe(false);
+    expect(previewReadyFor({ type: "node.updated", data: { node_ids: ["n2"] } }, "n2")).toBe(false);
+    expect(previewReadyFor({ type: "preview.ready", data: { sha: "a" } }, "n2")).toBe(false);
   });
 });
