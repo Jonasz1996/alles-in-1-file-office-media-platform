@@ -16,6 +16,12 @@ const en: Translation<typeof nl> = {
     media: "Media",
     music: "Music",
   },
+  search: {
+    region: "Search everything",
+    label: "Search",
+    placeholder: "Search ({keys})",
+    key: "Go to the search field",
+  },
   account: {
     menu: "Account menu for {name}",
     account: "Account",

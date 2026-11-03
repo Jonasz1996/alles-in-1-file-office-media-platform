@@ -711,4 +711,10 @@ export default {
       stoppedBecause: "Gestopt: {why}",
     },
   },
+  // Fase 6 (Z0): het tabblad Zoeken en foto's (Alt+9, Keuze 51). De inhoud is van Z7
+  // (admin/SearchTab.tsx)
+  search: {
+    tab: "Zoeken en foto's",
+    notReady: "Het overzicht van zoeken en foto's komt later in fase 6.",
+  },
 } as const;

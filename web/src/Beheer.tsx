@@ -5,6 +5,9 @@
 // Fase 4: het zevende tabblad Office (Alt+7), alleen met office ingesteld. Fase 5 (M0): het
 // achtste tabblad Media (Alt+8), alleen als GET /api/v1/admin/media antwoordt; de inhoud is van
 // M10 (admin/MediaTab.tsx, een eigen chunk). Alt+8 blijft Alt+8, ook zonder office.
+//
+// Fase 6 (Z0): het negende tabblad "Zoeken en foto's" (Alt+9), altijd: zoeken kan niet uit. De
+// inhoud is van Z7 (admin/SearchTab.tsx, een eigen chunk; de aanroepen in admin/searchApi.ts).
 
 import { type JSX, lazy, Suspense } from "react";
 import { Jobs } from "./admin/Jobs";
@@ -48,20 +51,26 @@ const OFFICE_TAB: TabInfo = { id: "office", path: "office", label: "admin.office
 /** Het achtste tabblad (fase 5), alleen als de server het overzicht van media geeft. */
 const MEDIA_TAB: TabInfo = { id: "media", path: "media", label: "admin.media.tab" };
 
+/** Het negende tabblad (fase 6), altijd, als laatste. */
+const SEARCH_TAB: TabInfo = { id: "search", path: "zoeken", label: "admin.search.tab" };
+
 /** De tabbladen bij deze status: zonder office en media (of als de server het niet zegt) die van
- * fase 3. */
+ * fase 3, en Zoeken en foto's. */
 export function tabsFor(status: Pick<OfficeStatus, "state"> | null, media = false): readonly TabInfo[] {
   const tabs = status && status.state !== "off" ? [...TABS, OFFICE_TAB] : [...TABS];
   if (media) tabs.push(MEDIA_TAB);
+  tabs.push(SEARCH_TAB);
   return tabs;
 }
 
-/** De sneltoetsen: Alt+1 … Alt+8, elk vast bij zijn tabblad (Alt+8 is Media, ook zonder Office). */
+/** De sneltoetsen: Alt+1 … Alt+9, elk vast bij zijn tabblad (Alt+8 is Media, ook zonder Office;
+ * Alt+9 is Zoeken en foto's, ook zonder Office en Media). */
 export function tabKeys(): readonly { combo: string; tab: TabInfo }[] {
-  return [...TABS, OFFICE_TAB, MEDIA_TAB].map((tab, i) => ({ combo: `alt+${i + 1}`, tab }));
+  return [...TABS, OFFICE_TAB, MEDIA_TAB, SEARCH_TAB].map((tab, i) => ({ combo: `alt+${i + 1}`, tab }));
 }
 
 const MediaTab = lazy(() => import("./admin/MediaTab"));
+const SearchTab = lazy(() => import("./admin/SearchTab"));
 
 export function tabHref(path: string): string {
   return path ? `/beheer/${path}` : "/beheer";
@@ -110,6 +119,11 @@ export default function BeheerPage({ params }: RouteProps): JSX.Element | null {
         {current.id === "media" && (
           <Suspense fallback={<p>{t("common.loading")}</p>}>
             <MediaTab />
+          </Suspense>
+        )}
+        {current.id === "search" && (
+          <Suspense fallback={<p>{t("common.loading")}</p>}>
+            <SearchTab />
           </Suspense>
         )}
       </div>

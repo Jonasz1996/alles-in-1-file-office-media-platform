@@ -5,10 +5,13 @@
 // in één keer met die personen en groepen: een lus over POST /files/{id}/shares met voortgang.
 // Een album deel je alleen om te bekijken en zonder uploadlink. Alt+P: zoeken naar personen;
 // Alt+L: een nieuwe link.
+//
+// Fase 6 (Z0): bovenaan een plek voor de waarschuwing over de plek in foto's (LocationWarning.tsx,
+// van Z5): een eigen chunk, pas geladen als het dialoog opengaat.
 
 import { type FormEvent, type JSX, type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError, api, type FileNode, type Share } from "../api";
-import { errorText, fmt, t } from "../i18n";
+import { errorText, fmt, lazyWithAreas, t } from "../i18n";
 import {
   alreadyShared,
   checkedExpiry,
@@ -42,10 +45,14 @@ import { Dialog } from "../ui/Dialog";
 import { confirm } from "../ui/dialogs";
 import { Field } from "../ui/Field";
 import { useScope, useShortcuts } from "../ui/keys";
+import { LazySlot } from "../ui/LazySlot";
 import { toast } from "../ui/toast";
+import type { LocationWarningProps } from "./LocationWarning";
 import { type Option, PersonPicker } from "./PersonPicker";
 import "../share.css";
 import "../files.css";
+
+const LocationWarning = lazyWithAreas<LocationWarningProps>(() => import("./LocationWarning"), ["photos_map"]);
 
 /** Delen met personen en groepen, en publieke links. Alleen voor de eigenaar. */
 export default function ShareDialogPanel({ node, nodes, onClose, onChanged }: ShareDialogProps): JSX.Element {
@@ -123,6 +130,9 @@ function SingleShareDialog({
       onClose={guard.close}
       actions={<Button onClick={guard.close}>{t("common.close")}</Button>}
     >
+      <LazySlot>
+        <LocationWarning nodes={[node]} />
+      </LazySlot>
       {error && <p role="alert">{error}</p>}
       {shares === null && !error && <p className="muted">{t("common.loading")}</p>}
       {shares !== null && (
@@ -905,6 +915,9 @@ function MultiShareDialog({
         <p role="alert">{t("sharing.many.tooMany", { max: MAX_MULTI_SHARE, n: nodes.length })}</p>
       ) : (
         <>
+          <LazySlot>
+            <LocationWarning nodes={plan.ok} />
+          </LazySlot>
           <p>{t("sharing.many.intro", { n: plan.ok.length })}</p>
           <section className="share-section" aria-labelledby="share-many-people">
             <h3 id="share-many-people">{t("sharing.people.title")}</h3>

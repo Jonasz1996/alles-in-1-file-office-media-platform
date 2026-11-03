@@ -15,6 +15,14 @@ export default {
     media: "Media",
     music: "Muziek",
   },
+  // Fase 6 (Z0): het zoekveld in de balk bovenaan, met Ctrl/Cmd+K (Keuze 45). De suggesties en de
+  // pagina /zoeken zijn van Z4
+  search: {
+    region: "Zoeken in alles",
+    label: "Zoeken",
+    placeholder: "Zoeken ({keys})",
+    key: "Naar het zoekveld",
+  },
   account: {
     menu: "Accountmenu van {name}",
     account: "Account",

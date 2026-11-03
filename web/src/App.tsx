@@ -3,6 +3,8 @@
 //
 // Fase 5 (M0): Media en Muziek in het menu en de plek van de muziekbalk, alleen als media aan
 // staat (media/index.ts). Zonder media is de schil die van fase 4.
+//
+// Fase 6 (Z0): het zoekveld in de balk bovenaan, met Ctrl/Cmd+K (search/AppBarSearch.tsx).
 
 import {
   Component,
@@ -52,6 +54,7 @@ import {
   useRestoreScroll,
 } from "./router";
 import { allowed, isPublicPath, publicRoutes, type Resolved, resolve } from "./routes";
+import { AppBarSearch } from "./search/AppBarSearch";
 import { NoAccess } from "./shellPages";
 import { DialogHost } from "./ui/dialogs";
 import type { MenuItem } from "./ui/menu";
@@ -589,6 +592,7 @@ function TopBar({
         </nav>
       )}
       <span className="spacer" />
+      {!setupRequired && <AppBarSearch />}
       <MenuButton
         items={items}
         label={t("shell.account.menu", { name: user.display_name })}
