@@ -279,6 +279,16 @@ async def test_onbekende_opdracht(worker):
     assert reply["code"] == Code.UNKNOWN_OP
 
 
+@pytest.mark.parametrize("op", [Op.TEXT, Op.OCR])
+async def test_text_en_ocr_geven_not_built_tot_hun_pakket(worker, op):
+    # Fase 6 legt de opdrachten vast (wire.Op); de worker kent ze pas met Z2 en X1
+    assert op not in A.ARGS
+    reply = await ask(worker.config.socket, request(op, {}))
+    assert reply["ev"] == "error" and reply["code"] == Code.NOT_BUILT
+    caps = await client.caps()
+    assert caps.in_use == {"transcode": 0, "remux": 0, "background": 0, "short": 0}
+
+
 async def test_verkeerde_argumenten_zonder_waarden(worker, source):
     with opened(source) as fd:
         reply = await ask(worker.config.socket, request(Op.PROBE, {"demuxer": "/etc/x"}), [fd])

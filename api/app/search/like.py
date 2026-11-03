@@ -1,0 +1,161 @@
+"""LikeFallback: zoeken op naam met LIKE, zoals in 0.7.0 (Keuze 10). Z0 zet de zoekfunctie van
+0.7.0 hier achter het protocol van engine.py; Z1 is de eigenaar en maakt hem af (filters uit
+het register, suggesties).
+
+Zoeken gaat met een recursieve CTE vanaf de gekozen map omlaag (zonder map: vanaf de eigen
+hoofdmap en alles wat met je gedeeld is), en stopt bij wat in de prullenbak ligt: zo komt niets
+uit (of onder) de prullenbak in de resultaten. Werkt op SQLite en PostgreSQL, en met een SQLite
+zonder FTS5.
+
+Tot Z1 geldt de vraag van 0.7.0: één soort (met "archive" als soort, zoals mime.category),
+één tag, limit tot 200. De andere filters van SearchParams negeert hij nog.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+from sqlalchemy import and_, not_, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+
+from app import access, errors, mime
+from app.models import Node, NodeTag, Tag, User
+from app.routers.files import describe, get_dir, is_trashed, tags_by_node, tree
+from app.search.types import Hit, PathPart, SearchPage, SearchParams, Suggestions
+from app.text import fold
+
+MAX_WORDS = 10
+
+
+def of_category(category: str):
+    """SQL-voorwaarde die hetzelfde zegt als mime.category() (de soorten van 0.7.0); ook
+    spreadsheet en presentation (de soorten van zoeken, mime.ftype)."""
+    if category == "folder":
+        return Node.kind == "dir"
+    m = Node.mime
+    groups = {
+        "archive": m.in_(mime.ARCHIVE_TYPES),
+        "pdf": m == "application/pdf",
+        "image": m.like("image/%"),
+        "video": m.like("video/%"),
+        "audio": m.like("audio/%"),
+        "document": or_(m.like("text/%"), m.in_(mime.DOCUMENT_TYPES)),
+    }
+    if category == "spreadsheet":
+        return and_(Node.kind == "file", m.in_(mime.SPREADSHEET_TYPES))
+    if category == "presentation":
+        return and_(Node.kind == "file", m.in_(mime.PRESENTATION_TYPES))
+    if category == "other":
+        return and_(Node.kind == "file", or_(m.is_(None), not_(or_(*groups.values()))))
+    return and_(Node.kind == "file", groups[category])
+
+
+async def own_tag(session: AsyncSession, user: User, tag_id: uuid.UUID) -> Tag:
+    tag = await session.get(Tag, tag_id, populate_existing=True)
+    if tag is None or tag.owner_id != user.id:
+        raise errors.fail(404, "tag_not_found", "Tag niet gevonden")
+    return tag
+
+
+async def paths(session: AsyncSession, nodes: list[Node]) -> dict[uuid.UUID, list[PathPart]]:
+    """Het pad naar elk van deze nodes, met één recursieve query omhoog."""
+    parents = {n.parent_id for n in nodes if n.parent_id}
+    if not parents:
+        return {}
+    up = (
+        select(Node.id, Node.parent_id, Node.name)
+        .where(Node.id.in_(parents))
+        .cte("up", recursive=True)
+    )
+    above = aliased(Node)
+    up = up.union(select(above.id, above.parent_id, above.name).where(above.id == up.c.parent_id))
+    known = {row.id: row for row in await session.execute(select(up))}
+    result = {}
+    for node in nodes:
+        chain, current = [], node.parent_id
+        while current in known and len(chain) <= len(known):
+            row = known[current]
+            chain.append(PathPart(id=row.id, name=row.name))
+            current = row.parent_id
+        result[node.id] = list(reversed(chain))
+    return result
+
+
+async def search_roots(session: AsyncSession, user: User) -> list[uuid.UUID]:
+    """Waar zoeken zonder map begint: de eigen hoofdmap (niet voor gasten) en de bovenste
+    gedeelde mappen van anderen."""
+    roots = [r.node_id for r in await access.shared_roots(session, user.id)]
+    if user.role != "guest":
+        roots.append(user.root_id)
+    return roots
+
+
+class LikeFallback:
+    name = "like"
+
+    async def search(self, db: AsyncSession, user: User, p: SearchParams) -> SearchPage:
+        """Zoekt in map in_ en alles eronder, of zonder in_ in je eigen bestanden en alles wat
+        met je gedeeld is. Elk woord van q moet in de naam staan (hoofdletters en accenten
+        tellen niet). Mappen eerst, dan op naam. tags: alleen je eigen tags."""
+        session = db
+        if p.in_ is not None:
+            found = await get_dir(session, user, p.in_, "read")
+            if found.owner and await is_trashed(session, found.node):
+                raise errors.fail(404, "folder_not_found", "Map niet gevonden")
+            anchors, skip = [found.node.id], [found.node.id]
+        else:
+            anchors, skip = await search_roots(session, user), [user.root_id]
+        found = tree(anchors, live=True)
+        # Een album (met je gedeeld) staat buiten de boom: geen zoekresultaat
+        query = (
+            select(Node)
+            .join(found, Node.id == found.c.id)
+            .where(Node.id.not_in(skip), Node.kind != "album")
+        )
+        for word in fold(p.q).split()[:MAX_WORDS]:
+            query = query.where(Node.search_name.contains(word, autoescape=True))
+        if p.types:
+            query = query.where(or_(*(of_category(t) for t in p.types)))
+        for tag in p.tags:
+            await own_tag(session, user, tag)
+            query = query.where(
+                select(NodeTag.node_id)
+                .where(NodeTag.node_id == Node.id, NodeTag.tag_id == tag)
+                .exists()
+            )
+        limit = p.limit
+        rows = list(
+            (
+                await session.scalars(
+                    query.order_by(Node.kind, Node.search_name, Node.id).limit(limit + 1)
+                )
+            ).all()
+        )
+        more, rows = len(rows) > limit, rows[:limit]
+        tags = await tags_by_node(session, user, [n.id for n in rows])
+        mine = [n for n in rows if n.owner_id == user.id]
+        where = await paths(session, mine)
+        # Van anderen: recht en pad in één query, het pad vanaf de gedeelde map
+        grants = await access.resolve(
+            session, user.id, [n.id for n in rows if n.owner_id != user.id]
+        )
+        permissions = {n.id: "owner" for n in mine}
+        roots = set()
+        for node_id, grant in grants.items():
+            permissions[node_id] = grant.permission
+            where[node_id] = [PathPart(id=s.id, name=s.name) for s in grant.chain[:-1]]
+            if grant.root_id == node_id:
+                roots.add(node_id)
+        rows = [n for n in rows if n.id in permissions]  # wat intussen onzichtbaar werd
+        described = await describe(session, user, rows, permissions, tags=tags, roots=roots)
+        return SearchPage(
+            results=[Hit(node=out, path=where.get(out.id, [])) for out in described],
+            more=more,
+            names_only=True,
+            engine="like",
+        )
+
+    async def suggest(self, db: AsyncSession, user: User, q: str) -> Suggestions:
+        """Suggesties zijn van Z1; tot dan geen."""
+        return Suggestions()

@@ -138,6 +138,25 @@ class Settings(BaseSettings):
     # Alleen tests: de nep-providers op 127.0.0.1 (Keuze 39)
     media_provider_private_ok: bool = False
 
+    # Zoeken en foto's (fase 6, bouwontwerp §3.2). "uit" zet LikeFallback terug (Keuze 10)
+    search_index: Literal["aan", "uit"] = "aan"
+    search_deadline_ms: int = 120  # grens van ronde A; ronde B heeft 40 ms (Keuze 9)
+    search_inflight: int = 2  # FTS-vragen tegelijk voor de hele app (Keuze 13)
+    search_queue: int = 20  # wachtenden; daarboven 429 search_busy
+    search_max_text: int = 1_048_576  # tekens per blob
+    search_timing: bool = False  # Server-Timing op /search (alleen tests en metingen)
+    text_batch: int = 16  # blobs per kind in de worker (Keuze 17)
+    # Gemaakt door geo-load; ontbreekt hij, dan geen plaatsnamen
+    places_db: Path = Path("/data/geo/places.sqlite")
+    geo_src: Path = Path("/data/geo")  # waar install.sh de bronnen neerzet
+    index_defer_transcodes: int = 2  # index en ocr wachten bij zoveel transcodes
+    # OCR (X1): pas na ja op Vraag 1 (tesseract in het image); tot dan uit, en de rij ocr
+    # draait niet (jobs.active_lanes)
+    ocr_enabled: bool = False
+    ocr_max_pages: int = 200  # per document
+    ocr_per_hour: int = 20  # verzoeken per gebruiker per uur
+    ocr_pages_per_day: int = 200  # pagina's per gebruiker per dag
+
     def nodes(self) -> list[tuple[str, str]]:
         if not self.cluster_nodes:
             return [(self.node_name, "127.0.0.1")]
