@@ -615,6 +615,45 @@ async def test_een_mislukte_tweede_ronde_telt_niet_meer_als_onderweg(
     assert (r.json()["photos"]["partial"], r.json()["photos"]["large_failed"]) == (0, 0)
 
 
+async def test_opnieuw_op_beheer_haalt_de_mislukte_tweede_ronde_weg(
+    client, admin, settings, monkeypatch
+):
+    """Niet via "Alles nalopen" maar met Opnieuw bij de mislukte taak op /beheer: lukt de tweede
+    ronde dan, dan staat large_failed ook niet meer in de metadata (de viewer en /beheer lezen
+    hem)."""
+    headers, _ = admin
+    raw = exif_tiff() + b"\0" * 1000 + photo((1600, 1200))
+    node = await upload(client, headers, "DSC_0003.NEF", raw)
+    assert await jobs.run_one(settings)  # eerste ronde: alleen 256
+    real = jobs._kinds[previews.LARGE_TYPE]
+
+    async def kapot(_settings, _payload):
+        raise RuntimeError("kapot")
+
+    monkeypatch.setitem(jobs._kinds, previews.LARGE_TYPE, dataclasses.replace(real, run=kapot))
+    async with maker(settings)() as session:
+        await session.execute(
+            update(Job).where(Job.type == previews.LARGE_TYPE).values(max_attempts=1)
+        )
+        await session.commit()
+    await jobs.run_pending(settings)
+    async with maker(settings)() as session:
+        job = await session.scalar(select(Job).where(Job.type == previews.LARGE_TYPE))
+        assert job.status == "failed"
+        assert (await session.get(Blob, sha_of(node))).preview_meta["large_failed"] is True
+
+    monkeypatch.setitem(jobs._kinds, previews.LARGE_TYPE, real)
+    r = await client.post(f"/api/v1/admin/jobs/{job.id}/retry", headers=headers)
+    assert r.status_code == 204
+    await jobs.run_pending(settings)
+    async with maker(settings)() as session:
+        meta = (await session.get(Blob, sha_of(node))).preview_meta
+        assert "partial" not in meta and "large_failed" not in meta
+        assert 1024 in meta["sizes"]
+    detail = (await client.get(f"/api/v1/files/{node['id']}/preview", headers=headers)).json()
+    assert "large_failed" not in detail["meta"] and detail["large"]
+
+
 async def test_naar_voren_gaat_voor_een_lagere_rank(settings):
     async with maker(settings)() as session:
         for i in range(30):
