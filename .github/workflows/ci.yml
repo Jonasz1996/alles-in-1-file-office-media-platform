@@ -182,6 +182,7 @@ jobs:
       - run: uv sync --frozen
       - name: Pebble starten en certificaat aanvragen
         run: |
+          set -o pipefail
           eval "$(tests/pebble/start.sh)"
           test -n "$PEBBLE_DIRECTORY"
           # Overgeslagen telt als mislukt: deze job bestaat juist voor deze test
