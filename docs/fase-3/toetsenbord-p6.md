@@ -60,8 +60,18 @@ Bekijken.
 | Alt+P | focus in "Zoek een persoon of groep" (ook vanuit een ander veld) |
 | Alt+L | het formulier voor een nieuwe link openen (focus op Soort) |
 | ↓ ↑ (in het zoekveld) | door de gevonden personen en groepen (aria-activedescendant: de focus blijft in het veld) |
-| Enter (in het zoekveld) | delen met de actieve keuze (of de eerste) |
+| Enter (in het zoekveld) | de actieve keuze (of de eerste) op de lijst "Klaar om te delen" zetten; dat deelt nog niet |
+| Enter (in het lege zoekveld) | delen met iedereen op "Klaar om te delen", met de rechten en de datum die erbij staan |
+| Tab (vanuit het zoekveld) | langs × (van de lijst halen), "Rechten voor wie je toevoegt" (↓ ↑ kiest), de datum en Delen |
 | Escape (in het zoekveld) | de lijst sluiten; nog een keer: het veld leegmaken; daarna sluit Escape de dialoog |
+
+Kiezen deelt niet meer meteen: eerder deelde Enter (of een klik) op een naam direct met de
+rechten die er op dat moment stonden ("Kan bekijken"), en wie daarna "Kan bewerken" koos,
+veranderde niets meer. Nu staat wie je kiest eerst op de lijst; de rechten en de datum kies je
+ervoor of erna, en pas Delen deelt (één POST per persoon of groep, één melding). Na Delen staat
+de focus weer in het zoekveld; na × op de knop × van de volgende op de lijst (of in het
+zoekveld als de lijst leeg is). Delen is uitgeschakeld zolang de lijst leeg is of er gedeeld
+wordt.
 
 Na Link maken of Annuleren in het formulier voor een nieuwe link staat de focus op "Nieuwe
 link"; na Opslaan of Annuleren bij Wijzigen van een link op Wijzigen.
@@ -91,7 +101,8 @@ staat: in een dialoog nooit op `<body>`.
   (`test_toetsenbord_p6::test_prullenbak_terugzetten_verwijderen_en_legen`).
 - [x] Versies: V, U, bestand kiezen, Enter op "Upload annuleren"; Bekijken en Terugzetten met
   Tab en Enter (`test_toetsenbord_p6::test_versies_uploaden_annuleren_bekijken_en_terugzetten`).
-- [x] Delen: S, Alt+P, typen, ↓, Enter; Alt+L, Tab naar "Link maken", Enter
+- [x] Delen: S, Alt+P, typen, ↓, Enter (op de lijst), Tab naar de rechten, ↓ (Kan bewerken),
+  Tab naar Delen, Enter; Alt+L, Tab naar "Link maken", Enter
   (`test_toetsenbord_p6::test_delen_met_alt_p_en_een_link_met_alt_l`).
 
 `e2e/test_admin.py`, `e2e/test_trash_versions.py` en `e2e/test_sharing_ui.py` lopen daarnaast

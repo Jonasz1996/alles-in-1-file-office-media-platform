@@ -172,6 +172,48 @@
   font-size: var(--text-s);
 }
 
+/* Wie je toevoegt, nog niet gedeeld: pas Delen deelt (met de rechten en de datum eronder) */
+.share-pending {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.share-pending li {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  padding-left: var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  overflow-wrap: anywhere;
+}
+
+.share-pending .muted {
+  font-size: var(--text-s);
+}
+
+.share-pending .icon-button {
+  min-width: 2rem;
+  min-height: 2rem;
+  border-radius: 999px;
+}
+
+.share-go {
+  align-items: end;
+  margin-top: var(--space-2);
+}
+
+/* Meer dan één fout (per persoon of groep): elk op een eigen regel */
+.share-errors {
+  white-space: pre-line;
+}
+
 .share-progress {
   display: flex;
   gap: var(--space-2);

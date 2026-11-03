@@ -136,7 +136,8 @@ def test_hulp_in_de_deeldialoog_toont_zijn_sneltoetsen(server, user_factory, con
 
 def test_zoekveld_houdt_de_focus_als_delen_mislukt(server, user_factory, context_as):
     """Delen met iemand met wie het intussen al gedeeld is (een ander apparaat): de fout staat
-    er, en de focus blijft in het zoekveld (een uitgeschakeld veld zou hem kwijtraken)."""
+    er, en de focus blijft in het zoekveld (een uitgeschakeld veld zou hem kwijtraken). Stopt die
+    deling daarna, dan staat hij niet vanzelf weer klaar om te delen."""
     owner = user_factory(name="Deler Twee")
     other = user_factory(name=f"Ontvanger {uuid.uuid4().hex[:6]}")
     tree = small_tree(server, owner)
@@ -159,9 +160,23 @@ def test_zoekveld_houdt_de_focus_als_delen_mislukt(server, user_factory, context
         json={"user_id": other.id, "permission": "read"}, expect=201,
     )  # fmt: skip
     page.keyboard.press("ArrowDown")
-    page.keyboard.press("Enter")
+    page.keyboard.press("Enter")  # op de lijst "Klaar om te delen"
+    klaar = dialog.get_by_role("list", name="Klaar om te delen", exact=True)
+    expect(klaar).to_contain_text(other.display_name)
+    page.keyboard.press("Enter")  # in het lege veld: delen
+    expect(dialog.get_by_role("alert")).to_contain_text(f"Delen met {other.display_name}")
     expect(dialog.get_by_role("alert")).to_contain_text("Al gedeeld")
     expect(box).to_be_focused()
+    # Hij heeft nu een deling (van het andere apparaat): niet meer op de lijst, wel bij Gedeeld met
+    expect(klaar).to_have_count(0)
+    shared = dialog.get_by_role("list", name="Gedeeld met", exact=True)
+    expect(shared).to_contain_text(other.display_name)
+    # Stopt die deling, dan komt hij niet vanzelf terug op de lijst om te delen
+    dialog.get_by_role("button", name=f"Delen met {other.display_name} stoppen", exact=True).click()
+    page.get_by_role("button", name="Stoppen met delen", exact=True).click()
+    expect(dialog.get_by_text("Nog met niemand gedeeld.")).to_be_visible()
+    expect(klaar).to_have_count(0)
+    expect(dialog.get_by_role("button", name="Delen", exact=True)).to_be_disabled()
 
 
 def test_alt_p_terwijl_de_delingen_nog_laden(server, user_factory, context_as):

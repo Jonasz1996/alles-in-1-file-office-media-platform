@@ -63,6 +63,72 @@ export function multiShare(nodes: readonly FileNode[], max = MAX_MULTI_SHARE): M
   return { ok, skipped, tooMany: nodes.length > max };
 }
 
+/** Met wie je deelt: een persoon of een groep (de body van POST /files/{id}/shares). */
+export type ShareTarget = { user_id: string } | { group_id: string };
+
+/** Wie al een deling heeft (of al op de lijst staat): die bied je niet nog eens aan. */
+export interface Excluded {
+  users: ReadonlySet<string>;
+  groups: ReadonlySet<string>;
+}
+
+export function isExcluded(target: ShareTarget, exclude: Excluded): boolean {
+  return "user_id" in target ? exclude.users.has(target.user_id) : exclude.groups.has(target.group_id);
+}
+
+/** Wie al gedeeld is plus wie op de lijst staat om te delen; de sets van exclude blijven heel. */
+export function excluding(exclude: Excluded, list: readonly { target: ShareTarget }[]): Excluded {
+  const users = new Set(exclude.users);
+  const groups = new Set(exclude.groups);
+  for (const { target } of list) {
+    if ("user_id" in target) users.add(target.user_id);
+    else groups.add(target.group_id);
+  }
+  return { users, groups };
+}
+
+/** Iemand op de lijst "klaar om te delen" zetten, achteraan; wie er al op staat, niet nog eens. */
+export function withPending<T extends { key: string }>(list: readonly T[], who: T): readonly T[] {
+  return list.some((p) => p.key === who.key) ? list : [...list, who];
+}
+
+/** Wat Delen opleverde voor één persoon of groep: de items die lukten en de fouten. */
+export interface ShareResult<P, N> {
+  who: P;
+  ok: N[];
+  errors: unknown[];
+}
+
+/**
+ * Delen met iedereen op de lijst: elk item met elke persoon of groep, één POST per keer en na
+ * elkaar, niet tegelijk (elke deling geeft de ontvanger een live melding, en die wachtrij is
+ * beperkt). Een fout houdt de rest niet tegen; onProgress na elke stap.
+ */
+export async function shareEach<P, N>(
+  people: readonly P[],
+  items: readonly N[],
+  share: (who: P, item: N) => Promise<unknown>,
+  onProgress?: (done: number, total: number) => void,
+): Promise<ShareResult<P, N>[]> {
+  const total = people.length * items.length;
+  let done = 0;
+  const out: ShareResult<P, N>[] = [];
+  for (const who of people) {
+    const result: ShareResult<P, N> = { who, ok: [], errors: [] };
+    for (const item of items) {
+      try {
+        await share(who, item);
+        result.ok.push(item);
+      } catch (e) {
+        result.errors.push(e);
+      }
+      onProgress?.(++done, total);
+    }
+    out.push(result);
+  }
+  return out;
+}
+
 /** In de toolbar van een map: wat er mag in de map die open staat. */
 export function folderActions(folder: FileNode | null | undefined) {
   const permission = permissionOf(folder);

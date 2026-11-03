@@ -1,7 +1,13 @@
 """Delen in de browser (P6): een vervaldatum voor een persoon via de combobox (Alt+P, ↓,
-Enter), Gedeeld door mij, en een gedeeld album in Gedeeld met mij zonder Kopiëren. Met de
-bestandsbrowser (P2) en de viewer (P4): een selectie van drie in één keer met een groep delen,
-de grens van 100 items met zijn reden, en Gedeeld met mij opent een bestand in de viewer."""
+Enter; Enter in het lege veld deelt), Gedeeld door mij, en een gedeeld album in Gedeeld met mij
+zonder Kopiëren. Met de bestandsbrowser (P2) en de viewer (P4): een selectie van drie in één
+keer met een groep delen, de grens van 100 items met zijn reden, en Gedeeld met mij opent een
+bestand in de viewer.
+
+Kiezen deelt nog niet: wie je kiest, komt op de lijst "Klaar om te delen", en pas Delen deelt
+met de rechten die ernaast staan. Eerder deelde kiezen meteen met "Kan bekijken", en wie daarna
+"Kan bewerken" koos, veranderde niets meer (de melding van Jonas): zie de tests
+test_eerst_wie_dan_kan_bewerken_dan_delen*."""
 
 from __future__ import annotations
 
@@ -46,6 +52,27 @@ def put_file(server, account, parent: str, name: str, body: bytes) -> str:
         content=body,
         expect=201,
     ).json()["id"]
+
+
+def pending(dialog):
+    """De lijst "Klaar om te delen": gekozen, nog niet gedeeld."""
+    return dialog.get_by_role("list", name="Klaar om te delen", exact=True)
+
+
+def people_shares(server, owner, node_id: str) -> list[tuple[str, str]]:
+    """De delingen met personen en groepen: (id van de persoon of groep, rechten)."""
+    shares = server.call(owner, "GET", f"/api/v1/files/{node_id}/shares", expect=200).json()
+    return [
+        ((s["user"] or s["group"])["id"], s["permission"]) for s in shares if s["type"] != "link"
+    ]
+
+
+def choose(dialog, text: str, name: str) -> None:
+    """In het zoekveld typen en met de muis kiezen (zoals Jonas deed)."""
+    box = dialog.get_by_role("combobox", name="Zoek een persoon of groep")
+    box.click()
+    box.press_sequentially(text, delay=20)
+    dialog.get_by_role("option", name=re.compile(re.escape(name))).click()
 
 
 def test_vervaldatum_voor_een_persoon_en_gedeeld_door_mij(context_as, server, user_factory):
@@ -93,7 +120,15 @@ def test_vervaldatum_voor_een_persoon_en_gedeeld_door_mij(context_as, server, us
     expect(box).to_have_attribute("aria-activedescendant", re.compile("."))
     expect(option).to_have_attribute("aria-selected", "true")
     page.keyboard.press("Enter")
+    # Kiezen zet Bob op de lijst; gedeeld is er nog niets
+    expect(pending(dialog)).to_contain_text("Bob Ontvanger")
+    expect(box).to_be_focused()
+    expect(box).to_have_value("")
+    assert people_shares(server, owner, folder["id"]) == []
+    # Enter in het lege zoekveld deelt met wie op de lijst staat
+    page.keyboard.press("Enter")
     expect(toast(page, "Gedeeld met Bob Ontvanger.")).to_be_visible()
+    expect(pending(dialog)).to_have_count(0)
     # De focus blijft in het zoekveld (niet naar <body>): meteen de volgende typen
     expect(box).to_be_focused()
     shared = dialog.get_by_role("list", name="Gedeeld met")
@@ -216,7 +251,9 @@ def test_selectie_van_drie_met_een_groep_delen_en_bekijken(context_as, server, a
     bar.get_by_role("button", name="Delen…", exact=True).click()
     dialog = page.get_by_role("dialog", name="3 items delen", exact=True)
     expect(dialog).to_be_visible()
-    expect(dialog.get_by_text("Je deelt 3 items met dezelfde persoon of groep.")).to_be_visible()
+    expect(
+        dialog.get_by_text("Je deelt 3 items in één keer met wie je hieronder kiest.")
+    ).to_be_visible()
     items = dialog.get_by_role("list").filter(has_text="a.txt")
     expect(items.get_by_role("listitem")).to_have_count(3)
 
@@ -229,7 +266,11 @@ def test_selectie_van_drie_met_een_groep_delen_en_bekijken(context_as, server, a
     page.keyboard.press("ArrowDown")
     expect(option).to_have_attribute("aria-selected", "true")
     page.keyboard.press("Enter")
-    expect(toast(page, "Gedeeld: 3 items.")).to_be_visible()
+    expect(pending(dialog)).to_contain_text(team)
+    assert all(people_shares(server, owner, node_id) == [] for node_id in ids.values())
+    page.keyboard.press("Enter")
+    expect(toast(page, f"3 items gedeeld met {team}.")).to_be_visible()
+    expect(box).to_be_focused()
     for node_id in ids.values():
         shares = server.call(owner, "GET", f"/api/v1/files/{node_id}/shares", expect=200).json()
         groups = [s for s in shares if s["type"] == "group"]
@@ -293,5 +334,185 @@ def test_hooguit_honderd_items_tegelijk_delen(context_as, server, user_factory):
     share.click()
     dialog = page.get_by_role("dialog", name="100 items delen", exact=True)
     expect(dialog).to_be_visible()
-    expect(dialog.get_by_text("Je deelt 100 items met dezelfde persoon of groep.")).to_be_visible()
+    expect(
+        dialog.get_by_text("Je deelt 100 items in één keer met wie je hieronder kiest.")
+    ).to_be_visible()
     expect(dialog.get_by_role("combobox", name="Zoek een persoon of groep")).to_be_visible()
+    # Delen kan pas als er iemand op de lijst staat
+    expect(dialog.get_by_role("button", name="Delen", exact=True)).to_be_disabled()
+
+
+def open_share_dialog(page, name: str):
+    """De deeldialoog van één map of bestand, via de selectiebalk."""
+    page.locator(ROWS).first.wait_for()
+    pick(page, name)
+    page.get_by_role("toolbar", name="Selectie").get_by_role(
+        "button", name="Delen…", exact=True
+    ).click()
+    dialog = page.get_by_role("dialog", name=f"{name} delen", exact=True)
+    expect(dialog).to_be_visible()
+    return dialog
+
+
+@pytest.mark.parametrize("soort", ["map", "bestand"])
+def test_eerst_wie_dan_kan_bewerken_dan_delen(context_as, server, user_factory, soort):
+    """De melding van Jonas: eerst de persoon kiezen, dan "Kan bewerken", dan Delen. De
+    ontvanger moet dan echt kunnen bewerken; eerder deelde kiezen al meteen met "Kan bekijken"
+    en deed de latere keuze niets meer."""
+    owner = user_factory(name="Jonas Deler")
+    bob = user_factory(name=f"Bewerker {uuid.uuid4().hex[:6]}")
+    work = mkdir(server, owner, owner.root_id, f"Delen {uuid.uuid4().hex[:6]}")
+    if soort == "map":
+        name = "Samen"
+        node_id = mkdir(server, owner, work, name)
+    else:
+        name = "plan.txt"
+        node_id = put_file(server, owner, work, name, b"eerste versie\n")
+
+    page = context_as(owner).new_page()
+    page.goto(f"/map/{work}")
+    dialog = open_share_dialog(page, name)
+    rights = dialog.get_by_label("Rechten voor wie je toevoegt", exact=True)
+    expect(rights).to_have_value("read")  # het minste vooraf
+
+    # 1. de persoon, 2. dan pas de rechten
+    choose(dialog, bob.display_name.split()[1], bob.display_name)
+    rights.select_option(label="Kan bewerken")
+    expect(rights).to_have_value("write")
+    # Kiezen deelde nog niets: hij staat klaar (eerder was hier al gedeeld, met Kan bekijken)
+    expect(pending(dialog)).to_contain_text(bob.display_name)
+    expect(dialog.get_by_text("Nog met niemand gedeeld.", exact=True)).to_be_visible()
+    assert people_shares(server, owner, node_id) == []
+    # 3. Delen
+    share = dialog.get_by_role("button", name="Delen", exact=True)
+    expect(share).to_be_enabled()
+    share.click()
+    expect(toast(page, f"Gedeeld met {bob.display_name}.")).to_be_visible()
+    expect(pending(dialog)).to_have_count(0)
+    expect(share).to_be_disabled()
+    expect(dialog.get_by_role("combobox", name="Zoek een persoon of groep")).to_be_focused()
+    shared = dialog.get_by_role("list", name="Gedeeld met", exact=True)
+    expect(shared).to_contain_text(bob.display_name)
+    expect(dialog.get_by_label(f"Rechten voor {bob.display_name}", exact=True)).to_have_value(
+        "write"
+    )
+    assert people_shares(server, owner, node_id) == [(bob.id, "write")]
+
+    # De ontvanger: Kan bewerken in Gedeeld met mij, en hij kan echt schrijven
+    other = context_as(bob).new_page()
+    other.goto("/gedeeld")
+    row = other.get_by_role("row").filter(has_text=name)
+    expect(row).to_have_count(1)
+    expect(row).to_contain_text("Kan bewerken")
+    expect(row).not_to_contain_text("Kan bekijken")
+    if soort == "map":
+        server.call(
+            bob, "PUT", f"/api/v1/files/{node_id}/upload",
+            params={"name": "van-de-ontvanger.txt"}, content=b"hallo\n", expect=201,
+        )  # fmt: skip
+        listing = server.call(owner, "GET", f"/api/v1/files/{node_id}/children", expect=200)
+        assert [c["name"] for c in listing.json()["children"]] == ["van-de-ontvanger.txt"]
+    else:
+        server.call(
+            bob, "PUT", f"/api/v1/files/{node_id}/content", content=b"tweede versie\n", expect=200
+        )
+        current = server.call(owner, "GET", f"/api/v1/files/{node_id}", expect=200).json()
+        assert current["size"] == len(b"tweede versie\n")
+
+
+def test_eerst_wie_dan_kan_bewerken_dan_delen_bij_een_selectie(context_as, server, user_factory):
+    """Hetzelfde voor een selectie (de dialoog voor meerdere items): een map en een bestand,
+    eerst de persoon, dan "Kan bewerken", dan Delen."""
+    owner = user_factory(name="Jonas Selectie")
+    bob = user_factory(name=f"Bewerker {uuid.uuid4().hex[:6]}")
+    work = mkdir(server, owner, owner.root_id, f"Selectie {uuid.uuid4().hex[:6]}")
+    folder = mkdir(server, owner, work, "Map A")
+    file_id = put_file(server, owner, work, "b.txt", b"eerste versie\n")
+
+    page = context_as(owner).new_page()
+    page.goto(f"/map/{work}")
+    page.locator(ROWS).first.wait_for()
+    pick(page, "Map A")
+    pick(page, "b.txt", ["ControlOrMeta"])
+    bar = page.get_by_role("toolbar", name="Selectie")
+    expect(bar.locator(".selection-count")).to_have_text("2 geselecteerd")
+    bar.get_by_role("button", name="Delen…", exact=True).click()
+    dialog = page.get_by_role("dialog", name="2 items delen", exact=True)
+    expect(dialog).to_be_visible()
+
+    choose(dialog, bob.display_name.split()[1], bob.display_name)
+    rights = dialog.get_by_label("Rechten voor wie je toevoegt", exact=True)
+    rights.select_option(label="Kan bewerken")
+    # Kiezen deelde nog niets (eerder: meteen beide met Kan bekijken)
+    expect(pending(dialog)).to_contain_text(bob.display_name)
+    assert people_shares(server, owner, folder) == []
+    assert people_shares(server, owner, file_id) == []
+    dialog.get_by_role("button", name="Delen", exact=True).click()
+    expect(toast(page, f"2 items gedeeld met {bob.display_name}.")).to_be_visible()
+    expect(pending(dialog)).to_have_count(0)
+    expect(dialog.get_by_role("alert")).to_have_count(0)
+    expect(dialog.get_by_role("combobox", name="Zoek een persoon of groep")).to_be_focused()
+    assert people_shares(server, owner, folder) == [(bob.id, "write")]
+    assert people_shares(server, owner, file_id) == [(bob.id, "write")]
+
+    other = context_as(bob).new_page()
+    other.goto("/gedeeld")
+    for name in ("Map A", "b.txt"):
+        row = other.get_by_role("row").filter(has_text=name)
+        expect(row).to_have_count(1)
+        expect(row).to_contain_text("Kan bewerken")
+    server.call(
+        bob, "PUT", f"/api/v1/files/{folder}/upload",
+        params={"name": "van-de-ontvanger.txt"}, content=b"hallo\n", expect=201,
+    )  # fmt: skip
+    server.call(bob, "PUT", f"/api/v1/files/{file_id}/content", content=b"tweede\n", expect=200)
+
+
+def test_de_lijst_om_te_delen_weghalen_en_dubbelklik(context_as, server, user_factory):
+    """Twee op de lijst, één eraf met ×: Delen deelt alleen met wie er nog staat, één keer, ook
+    bij een dubbelklik; de vervaldatum en de rechten gelden voor iedereen op de lijst."""
+    owner = user_factory(name="Lijst Deler")
+    tag = uuid.uuid4().hex[:6]
+    ans = user_factory(name=f"Ans {tag}")
+    kees = user_factory(name=f"Kees {tag}")
+    piet = user_factory(name=f"Piet {tag}")
+    work = mkdir(server, owner, owner.root_id, f"Lijst {tag}")
+    node_id = mkdir(server, owner, work, "Gezamenlijk")
+
+    page = context_as(owner).new_page()
+    page.goto(f"/map/{work}")
+    dialog = open_share_dialog(page, "Gezamenlijk")
+    share = dialog.get_by_role("button", name="Delen", exact=True)
+    expect(share).to_be_disabled()  # nog niemand op de lijst
+    for person in (ans, kees, piet):
+        choose(dialog, person.display_name, person.display_name)
+    items = pending(dialog).get_by_role("listitem")
+    expect(items).to_have_count(3)
+    expect(share).to_be_enabled()
+    # Wie al op de lijst staat, wordt niet nog eens aangeboden
+    box = dialog.get_by_role("combobox", name="Zoek een persoon of groep")
+    box.press_sequentially(tag, delay=20)
+    expect(dialog.get_by_text("Niemand gevonden.", exact=True)).to_be_visible()
+    box.fill("")
+
+    # Kees eraf: de focus gaat naar de × van de volgende (Piet)
+    dialog.get_by_role("button", name=f"{kees.display_name} van de lijst halen").click()
+    expect(items).to_have_count(2)
+    expect(pending(dialog)).not_to_contain_text(kees.display_name)
+    expect(
+        dialog.get_by_role("button", name=f"{piet.display_name} van de lijst halen")
+    ).to_be_focused()
+
+    until = date.today() + timedelta(days=3)
+    dialog.get_by_label("Geldig tot en met (optioneel)", exact=True).fill(until.isoformat())
+    dialog.get_by_label("Rechten voor wie je toevoegt", exact=True).select_option("write")
+    share.dblclick()
+    expect(toast(page, f"Gedeeld met {ans.display_name} en {piet.display_name}.")).to_be_visible()
+    expect(dialog.get_by_role("alert")).to_have_count(0)
+    shares = server.call(owner, "GET", f"/api/v1/files/{node_id}/shares", expect=200).json()
+    assert sorted((s["user"]["id"], s["permission"]) for s in shares) == sorted(
+        [(ans.id, "write"), (piet.id, "write")]
+    )
+    assert all(s["expires_at"] is not None for s in shares)
+    # Na het delen is de datum weer leeg; de rechten blijven staan (je ziet ze)
+    expect(dialog.get_by_label("Geldig tot en met (optioneel)", exact=True)).to_have_value("")
