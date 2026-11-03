@@ -21,6 +21,7 @@ from sqlalchemy import (
     Integer,
     Select,
     Uuid,
+    case,
     delete,
     func,
     insert,
@@ -944,13 +945,22 @@ async def add_ref(
 ) -> None:
     """ref_count + 1 in de database zelf, of een nieuwe blob-rij (en dan een taak voor de
     preview, die begint zodra de aanroeper commit). pdf_state geldt alleen voor een nieuwe
-    blob (fase 4: "ask" voor een upload via een link). Alleen onder BlobStore.lock."""
+    blob (fase 4: "ask" voor een upload via een link). Bestaat de inhoud al, dan krijgt een
+    mislukte preview (of een foto of video zonder) een nieuwe kans (previews.requeue), en een
+    blob zonder bekende soort de soort van nu (een nieuwere app/mime.py kent hem misschien).
+    Alleen onder BlobStore.lock."""
+    unknown = or_(Blob.mime.is_(None), Blob.mime == "application/octet-stream")
     result = await session.execute(
         update(Blob)
         .where(Blob.sha256 == sha)
-        .values(ref_count=Blob.ref_count + 1, mime=func.coalesce(Blob.mime, mime))
+        .values(
+            ref_count=Blob.ref_count + 1,
+            mime=Blob.mime if mime is None else case((unknown, mime), else_=Blob.mime),
+        )
     )
-    if result.rowcount == 0:
+    if result.rowcount:
+        await previews.requeue(session, sha)
+    else:
         session.add(
             Blob(
                 sha256=sha,

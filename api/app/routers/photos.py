@@ -20,7 +20,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import ColumnElement, Select, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -226,15 +226,26 @@ def item_dict(row: Any, secret: bytes, exp: int) -> dict[str, Any]:
 
 
 async def photo_items(
-    session: AsyncSession, user: User | None, rows: Sequence[Any], settings: Settings
+    session: AsyncSession,
+    user: User | None,
+    rows: Sequence[Any],
+    settings: Settings,
+    background: BackgroundTasks,
 ) -> list[PhotoItem]:
-    """PhotoItems voor deze rijen; shared alleen voor wat van user zelf is (één query)."""
+    """PhotoItems voor deze rijen; shared alleen voor wat van user zelf is (één query). Wat
+    nog geen (complete) preview heeft, gaat na het antwoord in de rij naar voren: dit bekijkt
+    iemand nu (previews.to_front)."""
     secret, exp = previews.url_key(settings), previews.expiry()
     mine = [r.id for r in rows if user is not None and r.owner_id == user.id]
     shared = await shared_ids(session, mine) if mine else set()
-    return [
+    items = [
         PhotoItem.model_construct(**item_dict(r, secret, exp), shared=r.id in shared) for r in rows
     ]
+    if user is not None:
+        previews.to_front(
+            background, settings, [(r.blob_id, r.preview, r.preview_meta) for r in rows]
+        )
+    return items
 
 
 def next_cursor(rows: Sequence[Any], limit: int) -> str | None:
@@ -278,6 +289,7 @@ async def photos(
     user: CurrentUser,
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
+    background: BackgroundTasks,
     month: Annotated[str | None, Query(max_length=7)] = None,
     after: Annotated[str | None, Query(max_length=300)] = None,
     limit: Limit = MAX_PAGE,
@@ -291,7 +303,8 @@ async def photos(
         where += [Node.taken_day >= start, Node.taken_day < end]
     rows = (await session.execute(photo_query(*where).limit(limit))).all()
     return PhotoPage(
-        items=await photo_items(session, user, rows, settings), next=next_cursor(rows, limit)
+        items=await photo_items(session, user, rows, settings, background),
+        next=next_cursor(rows, limit),
     )
 
 

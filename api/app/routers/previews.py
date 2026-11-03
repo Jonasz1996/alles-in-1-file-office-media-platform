@@ -1,10 +1,11 @@
 """Previews opvragen en tonen. De achtergrondtaken op /beheer staan in routers/jobs_admin.py."""
 
+import time
 import uuid
 from typing import Annotated, Any
 
 import anyio
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -18,8 +19,12 @@ from app.storage import BlobStore
 
 router = APIRouter(prefix="/api/v1", tags=["previews"])
 MAX_NODES = 500
-# Het adres verandert als het verloopt; tot die tijd hoeft de browser niets opnieuw te vragen
-CACHE = "private, max-age=86400, immutable"
+
+
+def cache_control(exp: int) -> str:
+    """Het adres verandert als het verloopt; tot die tijd hoeft de browser niets opnieuw te
+    vragen (in de app hooguit 14 dagen, achter een publieke link hooguit 12 uur)."""
+    return f"private, max-age={max(0, exp - int(time.time()))}, immutable"
 
 
 class PreviewRequest(BaseModel):
@@ -40,10 +45,12 @@ async def preview_info(
     user: CurrentUser,
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
+    background: BackgroundTasks,
 ) -> dict[str, PreviewOut]:
     """Previews van (hooguit 500) bestanden; wat niet bestaat of wat je niet mag zien (niet
     van jou en niet met je gedeeld), ontbreekt in het antwoord. thumb en large zijn
-    ondertekende adressen voor een <img>."""
+    ondertekende adressen voor een <img>. Wat nog wacht, gaat in de rij naar voren: dit kijkt
+    iemand nu (previews.to_front)."""
     ids = list(dict.fromkeys(body.node_ids))
     loaded = (await session.scalars(select(Node).where(Node.id.in_(ids)))).all() if ids else []
     # Wat van een ander is: in één query nagaan wat met je gedeeld is
@@ -63,9 +70,12 @@ async def preview_info(
         rows = await session.scalars(select(Blob).where(Blob.sha256.in_(shas)))
         blobs = {b.sha256: b for b in rows.all()}
     secret, exp = previews.url_key(settings), previews.expiry()
-    return {
+    result = {
         str(n.id): PreviewOut(**previews.info(secret, blobs.get(n.blob_id), exp)) for n in nodes
     }
+    waiting = [(b.sha256, b.preview, b.preview_meta) for b in blobs.values()]
+    previews.to_front(background, settings, waiting)
+    return result
 
 
 @router.get("/previews/{sha}/{size}.webp")
@@ -80,12 +90,16 @@ async def preview_image(
     """De preview zelf, zonder inloggen maar alleen met een geldige handtekening (zo werkt
     een <img>). 403 bij een verkeerde of verlopen handtekening, 404 als hij er niet is. v is
     de PDF-generatie van office (mee getekend, previews.url); de browser haalt zo een nieuwe
-    thumbnail na een nieuwe PDF."""
+    thumbnail na een nieuwe PDF. Heet hij klaar maar ontbreekt het bestand, dan wordt hij
+    opnieuw gemaakt (previews.heal); tot dan 404."""
     if not previews.SHA.fullmatch(sha) or size not in previews.SIZES:
         raise errors.fail(404, "not_found", "Niet gevonden")
     if not previews.valid(previews.url_key(settings), sha, size, exp, sig, v=v):
         raise errors.fail(403, "link_invalid", "Deze link is ongeldig of verlopen")
     path = previews.directory(BlobStore(settings.blob_dir), sha) / f"{size}.webp"
     if not await anyio.Path(path).is_file():
+        await previews.heal(settings, sha)
         raise errors.fail(404, "no_preview", "Geen preview")
-    return FileResponse(path, media_type="image/webp", headers={"Cache-Control": CACHE})
+    return FileResponse(
+        path, media_type="image/webp", headers={"Cache-Control": cache_control(exp)}
+    )

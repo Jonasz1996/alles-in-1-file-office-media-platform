@@ -481,6 +481,8 @@ async def lifespan(app: FastAPI):
         await photometa.enqueue_backfill(settings)
     except Exception:  # noqa: BLE001 - zonder opnamedatums werkt de rest gewoon
         log.exception("Metadata van bestaande foto's klaarzetten mislukt")
+    # De voorgeladen renderprocessen voor previews; lukt het niet, dan elk een eigen proces
+    await previews.start_forkserver()
     # Een Runner per rij (Keuze 14 van fase 5); het opruimwerk alleen in default
     runners = await jobs.start_runners(settings)
     await _office_start(app, settings)
@@ -496,6 +498,7 @@ async def lifespan(app: FastAPI):
     events.hub = events.Hub()  # een volgende start in hetzelfde proces (tests) kan weer
     await _office_stop(app)
     await jobs.stop_runners(runners)
+    await previews.stop_forkserver()  # na de rijen: een lopende preview gebruikt hem nog
     await media_runtime.stop(app)  # na de rijen: een taak van media gebruikt de worker nog
     media_runtime.unbind()
     cleaner.cancel()

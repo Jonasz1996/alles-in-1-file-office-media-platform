@@ -48,6 +48,7 @@ SWEEP = "media.sweep"
 SWEEP_EVERY = 300.0  # seconden
 # Integratie, punt 3: de backfill van photometa weer klaarzetten zodra de worker gezond is
 PHOTOMETA = "media.photometa"
+PREVIEWS = "media.previews"
 STOP_RETRY = 2  # Retry-After bij het stoppen (F3)
 
 _app = None
@@ -89,6 +90,7 @@ async def start(app, settings: Settings) -> MediaState:
     await anyio.to_thread.run_sync(clear_sessions, settings)
     jobs.housekeeping(SWEEP, _sweep, SWEEP_EVERY)
     jobs.housekeeping(PHOTOMETA, _photometa_again, SWEEP_EVERY)
+    jobs.housekeeping(PREVIEWS, _previews_again, SWEEP_EVERY)
     problem = settings.media_problem()
     # Met een probleem met de sleutel (ook een sleutel gelijk aan het geheim van de app, die
     # verder wel lang genoeg is) praat de app niet met de worker: een lege sleutel laat
@@ -116,6 +118,7 @@ async def stop(app) -> None:
     await progress.stop()
     jobs.forget_housekeeping(SWEEP)
     jobs.forget_housekeeping(PHOTOMETA)
+    jobs.forget_housekeeping(PREVIEWS)
     await scanner.stop(getattr(app.state, "media_scanner", None))
     app.state.media_scanner = None
     await health.stop(getattr(app.state, "media_health", None))
@@ -169,6 +172,18 @@ async def _photometa_again(settings: Settings) -> None:
     from app import photometa
 
     await photometa.enqueue_backfill(settings)
+
+
+async def _previews_again(settings: Settings) -> None:
+    """De video's die geen preview kregen omdat de worker geen ffmpeg had (render.LATER): met
+    een gezonde worker opnieuw (previews.enqueue_later), eens per SWEEP_EVERY. Zo krijgt zo'n
+    video zijn thumbnail zonder herstart en zonder "alles nalopen"."""
+    bound = app()
+    if bound is None or not enabled(bound) or not media_state(bound).healthy:
+        return
+    from app import previews
+
+    await previews.enqueue_later(settings)
 
 
 def stopping(app) -> bool:

@@ -116,7 +116,11 @@ class Blob(Base):
     """Inhoud, content-addressed op SHA-256: dezelfde inhoud staat maar één keer op disk."""
 
     __tablename__ = "blob"
-    __table_args__ = (Index("ix_blob_pdf", "pdf_version"),)
+    # ix_blob_ref_count: files.collect_garbage zoekt de blobs zonder verwijzing (0009)
+    __table_args__ = (
+        Index("ix_blob_pdf", "pdf_version"),
+        Index("ix_blob_ref_count", "ref_count"),
+    )
 
     sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
     size: Mapped[int] = mapped_column(BigInteger)
@@ -317,6 +321,8 @@ class Job(Base):
     zichtbaar op /beheer en daar opnieuw te starten."""
 
     __tablename__ = "job"
+    # jobs.claim: de eerste wachtende taak van deze soorten, op volgorde (0009)
+    __table_args__ = (Index("ix_job_queue", "status", "type", "run_after", "created_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     type: Mapped[str] = mapped_column(String(32), index=True)

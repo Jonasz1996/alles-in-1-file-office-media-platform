@@ -61,20 +61,20 @@ def test_check_downgrade():
 
 @pytest.mark.anyio
 async def test_downgrade_vraagt_om_bevestiging(settings):
-    assert await revision(settings) == "0008"
+    assert await revision(settings) == "0009"
 
     result = await run_cli(settings, "db-downgrade", "0007", stdin=b"nee\n")
     assert result.returncode == 1
     out = result.stdout.decode()
-    assert "van revisie 0008 terug naar 0007" in out
+    assert "van revisie 0009 terug naar 0007" in out
     assert 'Typ "ja" om door te gaan' in out
     assert "Niets gedaan." in result.stderr.decode()
-    assert await revision(settings) == "0008"
+    assert await revision(settings) == "0009"
 
     # Zonder invoer (EOF) ook niet
     result = await run_cli(settings, "db-downgrade", "0007")
     assert result.returncode == 1
-    assert await revision(settings) == "0008"
+    assert await revision(settings) == "0009"
 
     result = await run_cli(settings, "db-downgrade", "0007", stdin=b"ja\n")
     assert result.returncode == 0, result.stderr.decode()
@@ -92,7 +92,7 @@ async def test_downgrade_vraagt_om_bevestiging(settings):
 
     # De app zet hem bij het starten weer op head
     await upgrade(settings)
-    assert await revision(settings) == "0008"
+    assert await revision(settings) == "0009"
     assert await has_table(settings, "media_library")
 
 

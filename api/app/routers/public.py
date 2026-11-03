@@ -359,7 +359,8 @@ async def preview_info(
             select(Blob).where(Blob.sha256.in_({n.blob_id for n in nodes}))
         )
         blobs = {b.sha256: b for b in rows.all()}
-    secret, exp = previews.url_key(settings), previews.expiry()
+    # Achter een link korter geldig dan in de app (previews.PUBLIC_PERIOD)
+    secret, exp = previews.url_key(settings), previews.expiry(period=previews.PUBLIC_PERIOD)
     return {
         str(n.id): PreviewOut(**previews.info(secret, blobs.get(n.blob_id), exp)) for n in nodes
     }
@@ -388,7 +389,8 @@ async def album_items(
     root = await session.scalar(select(User.root_id).where(User.id == album.owner_id))
     where = [*albums_router.live_items(album, root), *photos.page_where(after)]
     rows = (await session.execute(photos.photo_query(*where).limit(limit))).all()
-    secret, exp = previews.url_key(settings), previews.expiry()
+    # Achter een link korter geldig dan in de app (previews.PUBLIC_PERIOD)
+    secret, exp = previews.url_key(settings), previews.expiry(period=previews.PUBLIC_PERIOD)
     return PublicPhotoPage(
         items=[PublicPhotoItem.model_construct(**photos.item_dict(r, secret, exp)) for r in rows],
         next=photos.next_cursor(rows, limit),

@@ -20,7 +20,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, insert, select
 from sqlalchemy.exc import IntegrityError
@@ -381,6 +381,7 @@ async def album_items(
     user: CurrentUser,
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
+    background: BackgroundTasks,
     after: Annotated[str | None, Query(max_length=300)] = None,
     limit: Limit = MAX_PAGE,
 ) -> PhotoPage:
@@ -390,7 +391,8 @@ async def album_items(
     query = photo_query(*live_items(album, root), *page_where(after))
     rows = (await session.execute(query.limit(limit))).all()
     return PhotoPage(
-        items=await photo_items(session, user, rows, settings), next=next_cursor(rows, limit)
+        items=await photo_items(session, user, rows, settings, background),
+        next=next_cursor(rows, limit),
     )
 
 

@@ -365,6 +365,15 @@ def _signature(head: bytes, name: str) -> str | None:
         return riff
     if mime := _ftyp(head, name):
         return mime
+    if head.startswith(b"\x00\x00\x00\x0cjP  \r\n\x87\n"):  # JPEG 2000 (JP2): eerst deze box
+        return "image/jp2"
+    # Camera-RAW met een eigen handtekening; CR2, NEF, ARW, DNG en PEF zijn TIFF (hieronder)
+    if head.startswith(b"FUJIFILMCCD-RAW"):
+        return "image/x-fuji-raf"
+    if head[:4] in (b"IIRO", b"IIRS", b"MMOR"):
+        return "image/x-olympus-orf"
+    if head[:4] == b"IIU\0":
+        return "image/x-panasonic-rw2"
     if head[:4] in (b"II*\0", b"MM\0*"):
         return "image/tiff"
     if _bmp(head):

@@ -78,9 +78,21 @@ async def _pause(seconds: float) -> None:
     await asyncio.sleep(seconds)  # apart, zodat een test de tijden van de lus kan zien
 
 
+async def _back(settings: Settings) -> None:
+    """De worker is (weer) ok: de previews van video's die op hem wachtten, nu
+    (previews.worker_back). Een fout hier stopt de lus niet."""
+    from app import previews
+
+    try:
+        await previews.worker_back(settings)
+    except Exception:  # noqa: BLE001 - dan komen ze na hun wachttijd
+        log.exception("previews van video's opnieuw klaarzetten")
+
+
 async def _loop(app, settings: Settings) -> None:
     delay = FIRST
     retry = RETRY_FIRST
+    last = None
     while True:
         await _pause(delay)
         try:
@@ -92,6 +104,9 @@ async def _loop(app, settings: Settings) -> None:
             with contextlib.suppress(Exception):
                 _set(media_state(app), "down", _reason(exc))
             worker = "down"
+        if worker == "ok" and last != "ok":
+            await _back(settings)
+        last = worker
         if worker == "down":
             delay, retry = retry, min(retry * 2, INTERVAL)
         else:

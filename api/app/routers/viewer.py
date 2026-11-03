@@ -42,7 +42,7 @@ from typing import Annotated, Any
 import anyio
 import anyio.to_thread
 import jwt
-from fastapi import APIRouter, Depends, Header, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -175,13 +175,19 @@ async def preview_detail(
     user: CurrentUser,
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
+    background: BackgroundTasks,
     version: uuid.UUID | None = None,
 ) -> ViewerDetail:
     """Alles wat de viewer over dit bestand (of een eerdere versie ervan) wil weten. Een
-    lijst krijgt via POST /previews alleen het lichte deel."""
+    lijst krijgt via POST /previews alleen het lichte deel. Heeft het nog geen (complete)
+    preview, dan gaat die in de rij naar voren (previews.to_front)."""
     node = await files.get_node(session, user, node_id, "read")
     sha, taken_at = await _content(session, node, version)
-    return await _detail(session, settings, sha, taken_at, version is not None)
+    detail = await _detail(session, settings, sha, taken_at, version is not None)
+    blob = await session.get(Blob, sha) if sha else None
+    if blob is not None:
+        previews.to_front(background, settings, [(sha, blob.preview, blob.preview_meta)])
+    return detail
 
 
 # --- PDF: gegevens van het document ---------------------------------------------------------

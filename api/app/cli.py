@@ -25,6 +25,12 @@ office-checkpoint vraagt de document server om alle open documenten tussentijds 
 en wacht daar hooguit --wait seconden op (vóór het stoppen of bijwerken van office). Het
 zegt hoeveel documenten zijn opgeslagen.
 
+    docker exec <container> python -m app.cli previews-recheck
+
+previews-recheck is "Alles nalopen" van /beheer → Taken: elke foto, video en ander bestand
+zonder (complete) preview gaat opnieuw in de rij, ook een mislukte of een waarvan het bestand
+op schijf ontbreekt. De draaiende app pakt het binnen enkele seconden op (docs/fotos-indexeren.md).
+
 Media (fase 5), elk een dunne aanroep van een functie in app/media (de pakketten bouwen ze; tot
 dan zegt een stub dat media uit staat):
 
@@ -56,6 +62,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app import previews
 from app.config import Settings, get_settings
 from app.db import get_engine
 from app.migrate import alembic_config
@@ -206,6 +213,20 @@ def _checkpoint(settings: Settings, wait: float) -> int:
     return 0
 
 
+def _recheck(settings: Settings) -> int:
+    async def run() -> bool:
+        try:
+            return await previews.enqueue_recheck(settings)
+        finally:
+            await get_engine(settings).dispose()
+
+    if asyncio.run(run()):
+        print("Alles nalopen staat klaar; de app begint er binnen enkele seconden aan.")
+    else:
+        print("Alles nalopen liep al (of stond al klaar).")
+    return 0
+
+
 def _media_failed(exc: HTTPException) -> int:
     detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
     code = detail.get("code")
@@ -348,6 +369,9 @@ def main(argv: list[str] | None = None) -> int:
     checkpoint.add_argument(
         "--wait", type=float, default=30.0, help="hooguit zoveel seconden wachten (standaard 30)"
     )
+    commands.add_parser(
+        "previews-recheck", help="alles nalopen: previews die ontbreken of mislukten opnieuw"
+    )
     _media_parsers(commands)
     args = parser.parse_args(argv)
     settings = get_settings()
@@ -357,6 +381,8 @@ def main(argv: list[str] | None = None) -> int:
         return _downgrade(settings, args.revision, args.ja)
     if args.command == "office-checkpoint":
         return _checkpoint(settings, args.wait)
+    if args.command == "previews-recheck":
+        return _recheck(settings)
     action = make_admin if args.command == "make-admin" else reset_2fa
 
     async def run() -> bool:

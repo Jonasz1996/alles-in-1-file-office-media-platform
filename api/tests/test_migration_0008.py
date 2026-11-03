@@ -316,8 +316,8 @@ async def test_van_0007_naar_0008_en_terug(tmp_path):
     assert await count(settings, "user") == 1
     assert await count(settings, "office_session") == 1
 
-    # En weer omhoog gaat ook
-    await migrate(settings, command.upgrade, "head")
+    # En weer omhoog gaat ook (tot 0008; 0009 heeft een eigen test)
+    await migrate(settings, command.upgrade, "0008")
     assert (await schema(settings))["alembic_version"] == ["0008"]
     assert await count(settings, "media_library") == 0
 
@@ -393,7 +393,7 @@ async def test_modellen_gelijk_aan_de_migratie(tmp_path):
 @pytest.mark.anyio
 async def test_lege_database_naar_0008(tmp_path):
     settings = settings_at(tmp_path, "leeg")
-    await migrate(settings, command.upgrade, "head")
+    await migrate(settings, command.upgrade, "0008")
     found = await schema(settings)
     assert MEDIA_TABLES <= set(found)
     assert found["alembic_version"] == ["0008"]

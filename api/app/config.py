@@ -53,12 +53,17 @@ class Settings(BaseSettings):
     # Onafgemaakte hervatbare uploads worden na zoveel uur zonder activiteit opgeruimd
     upload_expiry_hours: int = 24
 
-    # Achtergrondtaken (zoals previews): zoveel tegelijk, en zo lang (seconden) mag één taak
-    # duren voordat hij als mislukt telt en later opnieuw gaat
+    # Achtergrondtaken: zoveel tegelijk, en zo lang (seconden) mag één taak duren voordat hij
+    # als mislukt telt en later opnieuw gaat
     job_workers: int = 2
     job_timeout: float = 300
+    # Previews hebben een eigen rij (jobs.LANES) met zoveel workers; 0 = een minder dan het
+    # aantal kernen (minstens 1). Het renderproces draait op nice 10: uploads, de API en
+    # afspelen gaan voor
+    preview_workers: int = 0
     # Een preview wordt in een eigen proces gemaakt, met hooguit zoveel geheugen (MB, 0 = geen
-    # grens); afbeeldingen met meer pixels krijgen geen preview (bescherming tegen "bommen")
+    # grens); afbeeldingen met meer pixels krijgen geen preview (bescherming tegen "bommen").
+    # Een JPEG mag 4 keer zo groot zijn: die wordt verkleind gedecodeerd (render.JPEG_PIXELS)
     preview_memory_mb: int = 1536
     preview_max_pixels: int = 100_000_000
     # PDF-pagina's voor de viewer: zoveel renderprocessen tegelijk, en hooguit zoveel MB aan
