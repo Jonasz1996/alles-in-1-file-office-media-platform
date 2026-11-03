@@ -51,8 +51,9 @@ De grootste veranderingen:
   `install.sh` weigert symlinks. De worker rekent de sha256 over precies de bytes die hij laadt
   (K1-12).
 - **Vectoren van gezichten zijn versleuteld, met een sleutel per eigenaar** (Keuze 68, K1-01).
-  "Uit" wist de sleutel. Dan is elke kopie onleesbaar, ook in snapshots en in de offsite-kopie
-  van Jonas. De tekst bij het aanzetten belooft niets meer wat niet waar is.
+  "Uit" wist de sleutel. Dan is elke kopie van de vectoren onleesbaar, ook in snapshots en in de
+  offsite-kopie van Jonas, zolang de map met sleutels daar niet in zit. De tekst bij het aanzetten
+  belooft niets meer wat niet waar is.
 - **Wie een foto uploadde, telt mee** (Keuze 69, K1-02). Een foto die een ander in jouw map zette,
   wordt niet gescand, tenzij die ander het zelf aan heeft. Een upload via een publieke link nooit.
   Dat is Vraag 9.
@@ -336,7 +337,7 @@ gezichten zijn te benoemen en te zoeken.
 | De app is één Python-proces met één event loop (`serve.py`). | Zoeken krijgt een grens voor de hele app, niet alleen per gebruiker (Keuze 13). |
 | CPU en GPU van Jonas zijn onbekend (B5). | Alles werkt op de CPU. Een tijdsgrens per vraag beschermt de 200 ms (Keuze 9). `bench --los` meet zijn LXC in week 1. |
 | Jonas gaf het startsein voor fase 6 (3 november 2026) zonder de kaarten van fase 5 te beantwoorden. | De standaarden van fase 5 blijven. Fase 6 verandert er niets aan. |
-| De rootdisk van de LXC is 64 GB; `/tank` (700 GB) is optioneel (`infra/single/README.md:11–12`, K2-24). | De modellen (±0,4 GB, en ±1,55 GB tijdelijk bij het omzetten) en de vectoren (±0,9–1,1 GB per 100.000 foto's) passen. `install.sh` kijkt met `df` naar de echte mappen (Keuze 58, 84). |
+| De rootdisk van de LXC is 64 GB; `/tank` (700 GB) is optioneel (`infra/single/README.md:11–12`, K2-24). | De modellen (±0,4 GB, en ±1,55 GB tijdelijk bij het omzetten) en de vectoren met hun cache (±0,45 GB per 100.000 foto's; alles samen ±0,9–1,1 GB) passen. `install.sh` kijkt met `df` naar de echte mappen (Keuze 58, 84). |
 | Jonas maakt zelf snapshots van `/data` en een kopie buiten huis (`stappenplan.md:145–151`). | "Uit" bij gezichten moet ook daar werken. Daarom versleutelde vectoren met een sleutel per eigenaar, buiten `/data` (Keuze 68). |
 | Het stappenplan geeft fase 6 drie weken. | Met "alles" en review per golf is het ±43 werkdagen, in twee opleveringen (§5, Vraag 13). |
 
@@ -1074,10 +1075,10 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
 
 49. **Drie rijen, eerlijk per eigenaar** (A, herzien in r2: S15, en in r3: K2-07). `index` (tekst,
     hash, GPS-backfill, en het bestand per eigenaar van X3) draait altijd, ook zonder media:
-    `active_lanes` (`jobs.py:570–574`) zet hem erbij. `ocr` (X1) draait alleen als media aan staat
-    en OCR aan staat. `analyse` (X2, X3) draait alleen als de container er is, en begint pas als
-    de backfill van de index klaar is (K2-07). Elke rij één job tegelijk; een job is een batch
-    (Keuze 17), samengesteld om de beurt per eigenaar (Keuze 20).
+    `active_lanes` zet hem erbij [code: wt-z0api `app/jobs.py:81`, `:702–713`]. `ocr` (X1) draait
+    alleen als media aan staat en OCR aan staat. `analyse` (X2, X3) draait alleen als de container
+    er is, en begint pas als de backfill van de index klaar is (K2-07). Elke rij één job
+    tegelijk; een job is een batch (Keuze 17), samengesteld om de beurt per eigenaar (Keuze 20).
 50. **Wijken** (B). `jobs.Defer` (fase 5) voor `index`, `ocr` en `analyse` als er ≥ 2 transcodes
     lopen of OnlyOffice start. De naamindex wacht nooit: die zit in de triggers.
 
@@ -1181,7 +1182,7 @@ Keuze 70–84 van X3.
       [gemeten: K2-09].
     - **Wat erin zit:** numpy, onnxruntime, protobuf, flatbuffers en packaging (vijf pakketten, met
       de versies in `uv.lock`) [gemeten: spike B1; K2-15].
-    - **Grootte.** +141 MB [gemeten: spike B1].
+    - **Grootte.** +118–141 MB [gemeten: spike B1 en de proef met `--target`].
     - **De wacht.** De job `api` blijft zonder extra draaien. De job `images` eist:
       `importlib.util.find_spec("numpy")` is `None` voor uid 10001 en 10002, en `numpy.ndarray`
       bestaat voor uid 10003.
@@ -1223,7 +1224,7 @@ Keuze 70–84 van X3.
       (128 × float32, genormaliseerd).
     - **Wat niet.** Alleen foto's, geen video.
     - **Tijd.** ±142–164 ms voor een foto met één gezicht, met het decoderen van een WebP van
-      1024 × 768 erbij [gemeten: K2-04]. Hooguit 10 s per foto.
+      1024 × 768 erbij [berekend: K2-04]. Hooguit 10 s per foto.
 61. **Gegevens per node, in migratie 0011** (herzien in r3: K1-02, K1-03, K2-17, K2-18).
     - **Tabellen.** `face`, `face_person`, `face_scan`, `face_owner` en `node_origin`, met
       `node_id`, `owner_id` en `ON DELETE CASCADE` (Keuze 25a). De SQL staat in §3.1a.
@@ -1271,7 +1272,7 @@ Keuze 70–84 van X3.
       index klaar is. Zo vallen ze na de update niet samen.
     - **Wijken.** `Defer` bij ≥ 2 transcodes, als OnlyOffice start, en bij "pauzeren".
     - **Zacht.** Het kind `werk` draait met `nice 19` en één thread.
-    - **Kosten.** 100.000 foto's met één gezicht kosten ±3,9–4,6 core-uur [gemeten: K2-04].
+    - **Kosten.** 100.000 foto's met één gezicht kosten ±3,9–4,6 core-uur [berekend: K2-04].
 66. **De web: voorstellen waar je je personen al ziet.**
     - **`/fotos/personen`.** Twee blokken: "Is dit Anna?" en "Wie is dit?".
     - **De pagina van een persoon.** "Misschien ook Anna".
@@ -1578,7 +1579,7 @@ Keuze 70–84 van X3.
 77. **Achtergrondwerk: de stap `embed`, uit de preview van 256, om de beurt per eigenaar**
     (herzien in r3: K1-02, K2-04, K2-07).
     - `Step.EMBED = "embed"` in `analysis` (per blob; past in `String(8)`), in de rij `analyse`.
-      `Defer` zoals Keuze 50 (≥ 2 transcodes, of OnlyOffice start), en `Defer(30)` als de container
+      `Defer` zoals Keuze 50 (≥ 2 transcodes, of OnlyOffice start), en `Defer(300)` als de container
       weg is. Een stap per blob past hier, anders dan bij de gezichten van X2: de toestemming hangt
       niet aan één node.
     - **Wanneer.** Na `preview.ready` (`previews.register_ready`, Z0), bij de start
@@ -1599,7 +1600,7 @@ Keuze 70–84 van X3.
       L2-normaliseren en float16 terug.
     - **Batches** van ≤ 16, om de beurt per eigenaar (elke eigenaar ≤ 4 plekken, Keuze 20). In de
       rij `analyse` om en om met de gezichten. Elke blob een eigen korte transactie.
-    - **Kosten.** Per foto 69–80 ms op één core, uit `256.webp` [gemeten: K2-04].
+    - **Kosten.** Per foto 69–80 ms op één core, uit `256.webp` [berekend: K2-04].
 
       | Foto's | Alleen beeld, 1 core (`cpus: 1.0`) | Met gezichten (X2) aan |
       |---|---|---|
@@ -1610,7 +1611,7 @@ Keuze 70–84 van X3.
       een kwart zijn, maar de container heeft `cpus: 1.0`, om media en OnlyOffice te beschermen
       (B43). Zonder VNNI op de CPU van Jonas kan int8 duidelijk trager zijn (R42).
     - **Poort:** ≥ 500 foto's per minuut per core met het echte model (BZ6). Verwachting 750–870
-      [gemeten: K2-04].
+      [berekend: K2-04].
     - **Voortgang:** `/search?mode=image` geeft `indexing: {"done": …}` over je eigen foto's, en
       `search.progress` krijgt `what: "beeld"` voor beheerders.
     - **Een nieuw model of een nieuwe omzetter:** `VERSIONS[Step.EMBED]` + 1 zet alles op `wait`.
@@ -1962,9 +1963,10 @@ Keuze 70–84 van X3.
       | vectoren van beeld in de database | 205 MB per 100.000 foto's [gemeten, B7] | `platform.db` (niet in de reservekopieën) |
       | vectoren van gezichten in de database | ±70–90 MB per 100.000 gezichten [schatting uit B7] | `platform.db` (niet in de reservekopieën) |
       | de cache per eigenaar | ±154 MB per 100.000 foto's [berekend: K2-24] | `/data/cache/beeld/` |
-      | numpy en onnxruntime in het image | +141 MB, gedeeld met X2 | het image (twee keer tijdens een update) |
+      | numpy en onnxruntime in het image | +118–141 MB, gedeeld met X2 | het image (twee keer tijdens een update) |
 
-      Samen ±0,9–1,1 GB per 100.000 foto's, plus ±0,4 GB aan modellen [berekend: K2-24]. Dat past.
+      Samen ±0,9–1,1 GB bij 100.000 foto's, met de modellen (±0,43 GB) en het image al
+      meegeteld; daarvan groeit ±0,45 GB mee met het aantal foto's [berekend: K2-24]. Dat past.
     - **Uitzetten:** `BEELD=uit` in `.env` en `install.sh` opnieuw: geen download. Of zonder
       herinstallatie op `/beheer`. De map met het model blijft staan; het runbook
       (`docs/runbooks/analyse.md`, met een deel beeld) zegt hoe je hem wist.
@@ -2565,8 +2567,10 @@ K2-04]:
 | **elk gezicht extra** | **+53–61 ms** [B6] |
 
 De spike decodeerde een kleine JPEG (7–8 ms) en mat YuNet op 1024 × 640. Een telefoonfoto (4:3)
-geeft een preview van 1024 × 768, en de bron is een WebP. Daarom is het ±25–30% meer dan de eerste
-schatting van ±112–126 ms (K2-04).
+geeft een preview van 1024 × 768, en de bron is een WebP. Daarom rekent het ontwerp met ±25–30%
+meer dan de eerste schatting van ±112–126 ms (K2-04). De rijen hierboven opgeteld geven
+±130–148 ms; ±142–164 ms is dus aan de veilige kant. De poort van ≥ 250 foto's per minuut meet
+het echte getal op de runner.
 
 Drie threads maken het niet sneller [gemeten: spike B6]. Daarom één thread, en `cpus: 1.0`.
 
@@ -3172,7 +3176,7 @@ spike B6]. Daarom:
 | kleurvolgorde (LXC, of met ja op Vraag 8) | dezelfde persoon minus verschillende personen, gemiddelde cosinus: met de gekozen volgorde ≥ 0,05 hoger dan met de andere | [niet getest] |
 | snelheid op de runner | ≥ 250 foto's per minuut per core met één gezicht | ±365–420 [berekend uit K2-04] |
 | routes van gezichten bij 60.000 | p95 ≤ 100 ms | [niet getest] |
-| image | ≤ +160 MB | +141 MB [gemeten] |
+| image | ≤ +160 MB | +118–141 MB [gemeten: B1 en de proef met `--target`] |
 | initiële JS | 0 B erbij | — |
 | §4.5 met X2 aan | dezelfde poorten als zonder | [niet getest] |
 

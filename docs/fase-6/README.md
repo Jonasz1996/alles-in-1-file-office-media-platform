@@ -44,10 +44,11 @@ doorzoekbaar; gezichten zijn te benoemen en te zoeken.
 - **Gezichten en zoeken op beeld** rekenen in een eigen container, `analyse`. Die heeft geen
   netwerk en kan niet bij je bestanden: de app geeft hem alleen een klein voorbeeld van een foto.
   numpy en onnxruntime staan alleen daar; de app zelf gebruikt ze nooit.
-- **Gezichten** geven voorstellen ("Is dit Eva?"). Niets wordt vanzelf bevestigd. De gegevens van
-  gezichten zijn versleuteld, met een sleutel per gebruiker. Zet iemand gezichten uit, dan wist het
-  platform eerst die sleutel. Dan is alles wat er nog van over is onleesbaar, ook in snapshots en
-  in een kopie buiten huis.
+- **Gezichten** geven voorstellen ("Is dit Eva?"). Niets wordt vanzelf bevestigd. De getallen
+  die het platform van elk gezicht maakt (de vectoren), zijn versleuteld, met een sleutel per
+  gebruiker. Zet iemand gezichten uit, dan wist het platform eerst die sleutel en dan de
+  gezichten. Oude kopieën van die getallen zijn dan onleesbaar, ook in snapshots en in een kopie
+  buiten huis, zolang de map met sleutels daar niet in zit (zie "Privacy en de wet").
 - Een foto die iemand anders in jouw map zette, wordt niet gescand, tenzij die ander het zelf aan
   heeft. Een upload via een publieke link nooit (Vraag 9).
 - Plek, personen en tekst uit een foto horen bij de eigenaar van het bestand. Nooit via een
@@ -77,7 +78,7 @@ Gemeten in de sandbox, of berekend uit die metingen ([haalbaarheid.md](haalbaarh
 |---|---|
 | het image | +118–141 MB voor numpy en onnxruntime, ook als je `analyse` uitzet; plus tesseract (nog niet gemeten, grens 30 MB) |
 | de modellen | ±39 MB voor gezichten en ±0,4 GB voor beeld, in `/opt/platform/modellen`; bij de installatie tijdelijk 1,55 GB extra |
-| de database | ±0,9–1,1 GB per 100.000 foto's, voor gezichten en beeld samen |
+| de database | ±0,3 GB per 100.000 foto's, voor gezichten en beeld samen; plus ±0,15 GB cache voor zoeken op beeld |
 | eenmalig rekenen, 55.000 foto's | gezichten ±2,2–2,5 uur, beeld ±1,1–1,2 uur, op de achtergrond op één core |
 | geheugen | de container `analyse` hooguit 3 GB; met media en OnlyOffice samen 8 van de 16 GB |
 | zoeken | gewoon zoeken binnen 200 ms; zoeken op beeld binnen 250 ms (Vraag 14) |

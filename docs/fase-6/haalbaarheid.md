@@ -646,6 +646,8 @@ OPENBLAS_NUM_THREADS=1 taskset -c 1 $B/spike/venv/bin/python -I $B/kritiek2/meet
 | WebP 256×192 decoderen | 2,4 ms | 2,3–2,4 ms |
 
 Met SFace (B6) erbij is een foto met één gezicht ±142–164 ms (55.000 foto's: ±2,2–2,5 core-uur).
+Dat is de eerste schatting (±112–126 ms) plus 25–30%; de stappen in de tabel van X2 opgeteld
+geven ±130–148 ms. Het ontwerp rekent met het hogere getal.
 Beeld uit de preview van 256 px: ±69–80 ms (2,4 ms decoderen plus 66–77 ms model, B6; 55.000
 foto's: ±1,1–1,2 core-uur). Het beeld is synthetisch; echte previews kunnen anders uitvallen.
 **Gevolg:** de poorten in X2 en X3, en de kosten in de README.
