@@ -133,10 +133,9 @@ class Recheck(BaseModel):
 async def recheck_previews(_: AdminUser, session: Session) -> Recheck:
     """Alles nalopen: elke foto, video en ander bestand zonder (complete) preview opnieuw in de
     rij, ook een mislukte, en een preview waarvan het bestand op schijf ontbreekt. Daarna de
-    opnamedatums (photometa) en verouderde previews."""
-    started = await previews.queue_recheck(session)
-    await session.commit()
-    return Recheck(started=started)
+    opnamedatums (photometa) en verouderde previews. Twee keer drukken, ook tegelijk, zet hem
+    één keer klaar (queue_recheck legt zelf vast, onder een slot)."""
+    return Recheck(started=await previews.queue_recheck(session))
 
 
 async def _not_failed(session: Session, job_id: uuid.UUID) -> Exception:

@@ -340,6 +340,29 @@ async def test_alles_nalopen_kan_ook_vanaf_de_commandoregel(settings):
         assert await session.scalar(count) == 1
 
 
+async def test_alles_nalopen_tegelijk_zet_hem_een_keer_klaar(client, admin, settings, monkeypatch):
+    """Zes keer tegelijk drukken (twee tabbladen, twee beheerders): één keten. Eerder zagen de
+    verzoeken allemaal nog niets staan en zetten ze er elk een klaar (de nacontrole: 5 van 6).
+    De database is hier traag tussen klaarzetten en vastleggen (zoals tijdens een import, die
+    ook schrijft); zonder dat trad het hier maar af en toe op."""
+    headers, _ = admin
+    enqueue = jobs.enqueue
+
+    async def traag(*args, **kwargs):
+        added = await enqueue(*args, **kwargs)
+        await asyncio.sleep(0.05)
+        return added
+
+    monkeypatch.setattr(jobs, "enqueue", traag)
+    answers = await asyncio.gather(
+        *(client.post("/api/v1/admin/jobs/recheck-previews", headers=headers) for _ in range(6))
+    )
+    assert sorted(r.json()["started"] for r in answers) == [False] * 5 + [True]
+    async with maker(settings)() as session:
+        count = select(func.count()).where(Job.type == previews.RECHECK)
+        assert await session.scalar(count) == 1
+
+
 def test_de_cli_zegt_of_alles_nalopen_klaarstaat(monkeypatch, capsys):
     from app import cli
 

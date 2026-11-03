@@ -134,7 +134,10 @@ foto's of video's met "geen preview". Ook maakt het een preview opnieuw als zijn
 schijf ontbreekt, en geeft het een foto met alleen een thumbnail zijn tweede ronde terug.
 Daarna komen ook de metadata (photometa) en verouderde previews aan de beurt. Het loopt in
 stukken van 500 als achtergrondtaak (`preview.recheck`); de app blijft bruikbaar. Twee keer
-drukken start het niet twee keer.
+drukken start het niet twee keer, ook niet tegelijk (twee tabbladen of twee beheerders: een slot
+in de app, `previews.queue_recheck`; eerst gaf zes keer tegelijk vijf ketens). Alleen de
+commandoregel en de knop op precies hetzelfde moment kunnen er nog twee geven; de tweede stopt
+dan na zijn eerste stuk van 500.
 
 Hetzelfde vanaf de commandoregel, in de LXC:
 

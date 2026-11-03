@@ -1080,18 +1080,29 @@ async def rerender_outdated(settings: Settings, payload: dict[str, Any]) -> None
         await session.commit()
 
 
+# Per database één slot voor queue_recheck. Nagaan of er al een is en hem toevoegen zijn twee
+# stappen: twee verzoeken tegelijk (twee tabbladen of beheerders) zagen allebei niets en zetten
+# er allebei een klaar (de nacontrole: 6 tegelijk gaf 5 ketens)
+_recheck_locks: dict[str, asyncio.Lock] = {}
+
+
 async def queue_recheck(session: AsyncSession) -> bool:
-    """Alles nalopen (/beheer, app.cli previews-recheck): de keten preview.recheck klaarzetten,
-    in de transactie van de aanroeper. False als er al een klaarstaat of loopt."""
-    return await jobs.enqueue(session, RECHECK, {"after": ""}, key=RECHECK_KEY) is not None
+    """Alles nalopen (/beheer, app.cli previews-recheck): de keten preview.recheck klaarzetten en
+    vastleggen (commit). False als er al een klaarstaat of loopt. Het slot loopt tot en met de
+    commit, zodat de app hem ook bij verzoeken tegelijk maar één keer klaarzet. De cli is een
+    eigen proces: die en de knop op precies hetzelfde moment kunnen er nog twee geven; de
+    tweede keten stopt dan na zijn eerste stuk (jobs.chain ziet de opvolger van de eerste)."""
+    where = str(session.bind.url) if session.bind is not None else ""
+    async with _recheck_locks.setdefault(where, asyncio.Lock()):
+        added = await jobs.enqueue(session, RECHECK, {"after": ""}, key=RECHECK_KEY) is not None
+        await session.commit()
+    return added
 
 
 async def enqueue_recheck(settings: Settings) -> bool:
     """queue_recheck met een eigen sessie (de cli)."""
     async with _maker(settings)() as session:
-        added = await queue_recheck(session)
-        await session.commit()
-    return added
+        return await queue_recheck(session)
 
 
 def _missing(blobs: BlobStore, sha: str, sizes: list[int]) -> list[int]:
