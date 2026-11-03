@@ -3700,6 +3700,24 @@ UPDATE node SET dead =
  WHERE mpath >= CUR AND mpath < END(CUR);
 ```
 
+**Herzien na de review van Z0 (veilig F2).** Die ene `UPDATE` doet per rij van de submap een
+`EXISTS` over alle nodes in de prullenbak van de submap: O(submap × prullenbak). Een map met
+10.000 bestanden, waarvan 2.000 in de prullenbak, terugzetten of verplaatsen kostte 5,9 en 6,2 s
+op 3.46.1, met het schrijfslot vast. Nu twee stappen, elk lineair; dezelfde map in 0,09 en 0,14 s:
+
+```sql
+UPDATE node SET dead =
+    coalesce((SELECT p.dead FROM node p WHERE p.id = NEW.parent_id), 0)
+ WHERE mpath >= CUR AND mpath < END(CUR);
+UPDATE node SET dead = 1
+  FROM (SELECT mpath AS tp FROM node WHERE deleted_at IS NOT NULL
+          AND mpath >= CUR AND mpath < END(CUR)) AS t                   -- ix_node_trash
+ WHERE node.mpath >= t.tp AND node.mpath < END(t.tp);
+```
+
+`tests/search/test_triggers_dead.py`: `dead` klopt op elke diepte, het werk groeit niet met de
+prullenbak, en (marker `zoek_perf`) terugzetten en verplaatsen blijven onder 0,5 s.
+
 **De triggers op `blob_text`, `photo_ocr` en `media_item`.** Een `media_item` of `photo_ocr`
 waarvan `node_id` verandert, bestaat niet; een test houdt dat vast.
 

@@ -172,15 +172,18 @@ def end(p: str) -> str:
 
 def dead_subtree() -> str:
     """DEAD_SUBTREE: dead opnieuw voor de submap van NEW. CUR is het pad van nu; NEW.mpath is in
-    de trigger nog het oude."""
+    de trigger nog het oude. Twee stappen, elk lineair: eerst de hele submap op de dead van de
+    ouder, dan elke submap onder een node in de prullenbak op 1 (review Z0, veilig F2: één
+    UPDATE met EXISTS per rij was O(submap × prullenbak), seconden bij 10.000 en 2.000)."""
     cur = "(SELECT mpath FROM node WHERE id = NEW.id)"
     return (
         "UPDATE node SET dead =\n"
         "      coalesce((SELECT p.dead FROM node p WHERE p.id = NEW.parent_id), 0)\n"
-        "      OR EXISTS (SELECT 1 FROM node t WHERE t.deleted_at IS NOT NULL\n"
-        f"                 AND t.mpath >= {cur} AND t.mpath < {end(cur)}\n"
-        f"                 AND node.mpath >= t.mpath AND node.mpath < {end('t.mpath')})\n"
-        f"   WHERE mpath >= {cur} AND mpath < {end(cur)};"
+        f"   WHERE mpath >= {cur} AND mpath < {end(cur)};\n"
+        "UPDATE node SET dead = 1\n"
+        "  FROM (SELECT mpath AS tp FROM node WHERE deleted_at IS NOT NULL\n"
+        f"          AND mpath >= {cur} AND mpath < {end(cur)}) AS t\n"
+        f"   WHERE node.mpath >= t.tp AND node.mpath < {end('t.tp')};"
     )
 
 

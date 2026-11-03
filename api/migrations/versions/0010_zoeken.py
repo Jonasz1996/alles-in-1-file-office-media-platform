@@ -176,10 +176,11 @@ def dead_subtree() -> str:
     return (
         "UPDATE node SET dead =\n"
         "      coalesce((SELECT p.dead FROM node p WHERE p.id = NEW.parent_id), 0)\n"
-        "      OR EXISTS (SELECT 1 FROM node t WHERE t.deleted_at IS NOT NULL\n"
-        f"                 AND t.mpath >= {cur} AND t.mpath < {end(cur)}\n"
-        f"                 AND node.mpath >= t.mpath AND node.mpath < {end('t.mpath')})\n"
-        f"   WHERE mpath >= {cur} AND mpath < {end(cur)};"
+        f"   WHERE mpath >= {cur} AND mpath < {end(cur)};\n"
+        "UPDATE node SET dead = 1\n"
+        "  FROM (SELECT mpath AS tp FROM node WHERE deleted_at IS NOT NULL\n"
+        f"          AND mpath >= {cur} AND mpath < {end(cur)}) AS t\n"
+        f"   WHERE node.mpath >= t.tp AND node.mpath < {end('t.tp')};"
     )
 
 
