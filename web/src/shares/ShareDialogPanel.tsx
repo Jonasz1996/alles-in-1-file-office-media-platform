@@ -1,14 +1,16 @@
 // De deeldialoog: delen met personen en groepen (met rechten en een vervaldatum) en publieke
 // links. Kiezen in het zoekveld deelt nog niet: wie je kiest, komt op een lijst, en Delen deelt
-// met iedereen op die lijst, met de rechten en de vervaldatum die ernaast staan. Met nodes (meer
-// dan één) deelt hij een selectie in één keer met die personen en groepen: een lus over
-// POST /files/{id}/shares met voortgang. Een album deel je alleen om te bekijken en zonder
-// uploadlink. Alt+P: zoeken naar personen; Alt+L: een nieuwe link.
+// met iedereen op die lijst, met de rechten en de vervaldatum die ernaast staan. Sluiten terwijl
+// er nog iemand op die lijst staat, vraagt eerst. Met nodes (meer dan één) deelt hij een selectie
+// in één keer met die personen en groepen: een lus over POST /files/{id}/shares met voortgang.
+// Een album deel je alleen om te bekijken en zonder uploadlink. Alt+P: zoeken naar personen;
+// Alt+L: een nieuwe link.
 
-import { type FormEvent, type JSX, type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, type JSX, type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError, api, type FileNode, type Share } from "../api";
 import { errorText, fmt, t } from "../i18n";
 import {
+  alreadyShared,
   checkedExpiry,
   dateInputValue,
   type Excluded,
@@ -30,6 +32,7 @@ import {
   type ShareResult,
   shareEach,
   sharePermissions,
+  someNames,
   today,
   withPending,
 } from "../sharing";
@@ -64,6 +67,7 @@ function SingleShareDialog({
   const [error, setError] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const search = useRef<HTMLInputElement>(null);
+  const guard = useCloseGuard(onClose);
   /** Alt+P terwijl de delingen nog laden: het zoekveld is er dan nog niet. Hier staat waar de
    * focus toen stond; zodra het veld er is en de focus daar nog staat, gaat hij naar het veld. */
   const searchWanted = useRef<Element | null | undefined>(undefined);
@@ -116,19 +120,48 @@ function SingleShareDialog({
   return (
     <Dialog
       title={t("sharing.dialog.title", { name: node.name })}
-      onClose={onClose}
-      actions={<Button onClick={onClose}>{t("common.close")}</Button>}
+      onClose={guard.close}
+      actions={<Button onClick={guard.close}>{t("common.close")}</Button>}
     >
       {error && <p role="alert">{error}</p>}
       {shares === null && !error && <p className="muted">{t("common.loading")}</p>}
       {shares !== null && (
         <>
-          <People node={node} shares={people} onChanged={changed} search={search} />
+          <People node={node} shares={people} onChanged={changed} search={search} pending={guard.pending} />
           <Links node={node} shares={links} onChanged={changed} open={linkOpen} setOpen={setLinkOpen} />
         </>
       )}
     </Dialog>
   );
+}
+
+/**
+ * Sluiten (Escape, × of Sluiten) terwijl er nog iemand op "Klaar om te delen" staat: eerst
+ * vragen. Kiezen deelt niet meer meteen; zonder deze vraag viel de lijst stil weg en kreeg de
+ * ander niets. pending houdt AddPeople bij (leeg zolang Delen loopt: dan wordt er al gedeeld).
+ */
+function useCloseGuard(onClose: () => void): { pending: RefObject<readonly Option[]>; close: () => void } {
+  const pending = useRef<readonly Option[]>([]);
+  const asking = useRef(false);
+  const close = useCallback(() => {
+    const list = pending.current;
+    if (list.length === 0) {
+      onClose();
+      return;
+    }
+    if (asking.current) return;
+    asking.current = true;
+    void confirm({
+      title: t("sharing.people.closeTitle"),
+      message: t("sharing.people.closeText", { names: fmt.list(list.map((p) => p.name)) }),
+      confirm: t("sharing.people.closeConfirm"),
+      cancel: t("sharing.people.closeCancel"),
+    }).then((yes) => {
+      asking.current = false;
+      if (yes) onClose();
+    });
+  }, [onClose]);
+  return { pending, close };
 }
 
 /** Kwam de knop `to` net terug (shown) in de plaats van iets met de focus (een formulier dat
@@ -211,6 +244,7 @@ function AddPeople({
   exclude,
   busy,
   search,
+  pendingOut,
   onShare,
   onError,
 }: {
@@ -221,6 +255,8 @@ function AddPeople({
   /** Er loopt al iets anders (wijzigen of stoppen met delen) */
   busy: boolean;
   search: RefObject<HTMLInputElement | null>;
+  /** Wie er nu klaarstaat, voor de vraag bij sluiten (zie useCloseGuard) */
+  pendingOut: RefObject<readonly Option[]>;
   onShare: ShareRun;
   onError(message: string | null): void;
 }): JSX.Element {
@@ -241,6 +277,11 @@ function AddPeople({
   // staat niet meer klaar
   const list = pending.filter((p) => !isExcluded(p.target, exclude));
   const blocked = busy || running;
+  const headId = useId();
+
+  useEffect(() => {
+    pendingOut.current = running ? [] : list;
+  });
 
   // En daarna ook echt van de lijst af: anders kwam hij terug als je later stopt met delen
   useEffect(() => {
@@ -258,7 +299,7 @@ function AddPeople({
 
   function add(o: Option): boolean {
     setPending((all) => withPending(all, o));
-    setSaid(t("sharing.people.pendingAdded", { name: o.name }));
+    setSaid(t(album ? "sharing.people.pendingAddedAlbum" : "sharing.people.pendingAdded", { name: o.name }));
     return true;
   }
 
@@ -288,7 +329,7 @@ function AddPeople({
     } finally {
       started.current = false;
       setRunning(false);
-      // Terug in het zoekveld, voor de volgende (de knop Delen is nu uitgeschakeld)
+      // Terug in het zoekveld, voor de volgende (met een lege lijst gaat Delen zo uit)
       search.current?.focus();
     }
   }
@@ -306,7 +347,15 @@ function AddPeople({
         />
       </div>
       {list.length > 0 && (
-        <ul className="share-pending" aria-label={t("sharing.people.pending")}>
+        <p className="share-pending-head">
+          <strong id={headId}>{t("sharing.people.pending")}</strong>{" "}
+          <span className="muted" id={`${headId}-hint`}>
+            {album ? t("sharing.people.pendingHintAlbum") : t("sharing.people.pendingHint")}
+          </span>
+        </p>
+      )}
+      {list.length > 0 && (
+        <ul className="share-pending" aria-labelledby={headId} aria-describedby={`${headId}-hint`}>
           {list.map((p) => (
             <li key={p.key}>
               <span>
@@ -352,10 +401,12 @@ function AddPeople({
             onChange={(e) => setDate(e.target.value)}
           />
         </label>
+        {/* Tijdens het delen niet uitgeschakeld maar bezig (aria-busy, een klik doet niets): een
+            uitgeschakelde knop verliest de focus (naar <body>), de hele lus lang. */}
         <Button
           variant="primary"
           icon="share"
-          disabled={list.length === 0 || blocked}
+          disabled={!running && (list.length === 0 || busy)}
           busy={running}
           onClick={() => void share()}
         >
@@ -371,11 +422,13 @@ function People({
   shares,
   onChanged,
   search,
+  pending,
 }: {
   node: FileNode;
   shares: Share[];
   onChanged: () => Promise<void>;
   search: RefObject<HTMLInputElement | null>;
+  pending: RefObject<readonly Option[]>;
 }): JSX.Element {
   const action = useAction(onChanged);
   const album = node.kind === "album";
@@ -391,12 +444,12 @@ function People({
         api.share(id, who.target, permission, expires ?? undefined),
       );
     });
-    const done = results.filter((r) => r.errors.length === 0).map((r) => r.who);
+    const done = results.filter((r) => r.failed.length === 0).map((r) => r.who);
     if (done.length > 0) toast(t("sharing.people.added", { name: fmt.list(done.map((p) => p.name)) }), { kind: "ok" });
-    const failed = results.filter((r) => r.errors.length > 0);
+    const failed = results.filter((r) => r.failed.length > 0);
     if (failed.length > 0)
       action.setError(
-        failed.map((r) => t("sharing.people.failed", { name: r.who.name, reason: errorText(r.errors[0]) })).join("\n"),
+        failed.map((r) => t("sharing.people.failed", { name: r.who.name, reason: errorText(r.failed[0].error) })).join("\n"),
       );
     return done.map((p) => p.key);
   }
@@ -428,6 +481,7 @@ function People({
         exclude={{ users, groups }}
         busy={action.busy}
         search={search}
+        pendingOut={pending}
         onShare={share}
         onError={action.setError}
       />
@@ -789,45 +843,63 @@ function MultiShareDialog({
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const search = useRef<HTMLInputElement>(null);
-  const empty = useRef<Excluded>({ users: new Set(), groups: new Set() }).current;
+  const guard = useCloseGuard(onClose);
+  /** Per persoon of groep (key) de items die klaar zijn: gedeeld in deze dialoog, of die hij al
+   * had ("al gedeeld"; die houden hun rechten). Nog een keer Delen stuurt alleen de rest. */
+  const settled = useRef(new Map<string, Set<string>>());
+  /** Wie alles al heeft: die gaat van de lijst af en wordt niet meer aangeboden. */
+  const [complete, setComplete] = useState<Excluded>(() => ({ users: new Set(), groups: new Set() }));
+  const left = (who: Option) => plan.ok.filter((n) => !settled.current.get(who.key)?.has(n.id));
 
   useShortcuts(
     [{ combo: "alt+p", label: t("sharing.keys.people"), run: () => search.current?.focus(), allowInInput: true }],
     { scope: "share" },
   );
 
-  /** Elk item met elke persoon of groep: één POST per keer, met voortgang. */
+  /** Elk item met elke persoon of groep (alleen wat er voor hem nog niet is): één POST per keer,
+   * met voortgang. Wie daarna alles heeft, gaat van de lijst af. */
   async function share(people: Option[], permission: "read" | "write", expires: string | null): Promise<string[]> {
     setError(null);
-    setProgress({ done: 0, total: plan.ok.length * people.length });
+    setProgress({ done: 0, total: people.reduce((sum, who) => sum + left(who).length, 0) });
     const results = await shareEach(
       people,
-      plan.ok,
+      left,
       (who, n) => api.share(n.id, who.target, permission, expires ?? undefined),
       (done, total) => setProgress({ done, total }),
     );
     setProgress(null);
+    const messages: string[] = [];
+    for (const r of results) {
+      const got = settled.current.get(r.who.key) ?? new Set<string>();
+      settled.current.set(r.who.key, got);
+      for (const n of r.ok) got.add(n.id);
+      const already = r.failed.filter((f) => alreadyShared(f.error)).map((f) => f.item);
+      const other = r.failed.filter((f) => !alreadyShared(f.error));
+      for (const n of already) got.add(n.id);
+      if (already.length > 0)
+        messages.push(
+          t("sharing.many.already", { n: already.length, name: r.who.name, items: someNames(already.map((n) => n.name)) }),
+        );
+      if (other.length > 0)
+        messages.push(t("sharing.many.failed", { n: other.length, name: r.who.name, reason: errorText(other[0].error) }));
+    }
     const shared = results.filter((r) => r.ok.length > 0);
     if (shared.length > 0) {
       const n = new Set(shared.flatMap((r) => r.ok.map((x) => x.id))).size;
       toast(t("sharing.many.done", { n, names: fmt.list(shared.map((r) => r.who.name)) }), { kind: "ok" });
     }
-    const failed = results.filter((r) => r.errors.length > 0);
-    if (failed.length > 0)
-      setError(
-        failed
-          .map((r) => t("sharing.many.failed", { n: r.errors.length, name: r.who.name, reason: errorText(r.errors[0]) }))
-          .join("\n"),
-      );
+    if (messages.length > 0) setError(messages.join("\n"));
+    const done = people.filter((who) => left(who).length === 0);
+    if (done.length > 0) setComplete((c) => excluding(c, done));
     onChanged();
-    return results.filter((r) => r.errors.length === 0).map((r) => r.who.key);
+    return done.map((who) => who.key);
   }
 
   return (
     <Dialog
       title={t("sharing.dialog.titleMany", { n: nodes.length })}
-      onClose={onClose}
-      actions={<Button onClick={onClose}>{t("common.close")}</Button>}
+      onClose={guard.close}
+      actions={<Button onClick={guard.close}>{t("common.close")}</Button>}
     >
       {plan.tooMany ? (
         <p role="alert">{t("sharing.many.tooMany", { max: MAX_MULTI_SHARE, n: nodes.length })}</p>
@@ -841,9 +913,10 @@ function MultiShareDialog({
             ) : (
               <AddPeople
                 kind={album ? "album" : "dir"}
-                exclude={empty}
+                exclude={complete}
                 busy={progress !== null}
                 search={search}
+                pendingOut={guard.pending}
                 onShare={share}
                 onError={setError}
               />

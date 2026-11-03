@@ -92,41 +92,55 @@ export function withPending<T extends { key: string }>(list: readonly T[], who: 
   return list.some((p) => p.key === who.key) ? list : [...list, who];
 }
 
-/** Wat Delen opleverde voor één persoon of groep: de items die lukten en de fouten. */
+/** Wat Delen opleverde voor één persoon of groep: de items die lukten, en per item wat niet lukte. */
 export interface ShareResult<P, N> {
   who: P;
   ok: N[];
-  errors: unknown[];
+  failed: { item: N; error: unknown }[];
 }
 
 /**
  * Delen met iedereen op de lijst: elk item met elke persoon of groep, één POST per keer en na
  * elkaar, niet tegelijk (elke deling geeft de ontvanger een live melding, en die wachtrij is
- * beperkt). Een fout houdt de rest niet tegen; onProgress na elke stap.
+ * beperkt). items: voor iedereen dezelfde, of per persoon (bij nog een keer Delen alleen wat er
+ * voor hem nog niet is). Een fout houdt de rest niet tegen; onProgress na elke stap.
  */
 export async function shareEach<P, N>(
   people: readonly P[],
-  items: readonly N[],
+  items: readonly N[] | ((who: P) => readonly N[]),
   share: (who: P, item: N) => Promise<unknown>,
   onProgress?: (done: number, total: number) => void,
 ): Promise<ShareResult<P, N>[]> {
-  const total = people.length * items.length;
+  const lists = people.map((who) => (typeof items === "function" ? items(who) : items));
+  const total = lists.reduce((sum, l) => sum + l.length, 0);
   let done = 0;
   const out: ShareResult<P, N>[] = [];
-  for (const who of people) {
-    const result: ShareResult<P, N> = { who, ok: [], errors: [] };
-    for (const item of items) {
+  for (const [i, who] of people.entries()) {
+    const result: ShareResult<P, N> = { who, ok: [], failed: [] };
+    for (const item of lists[i]) {
       try {
         await share(who, item);
         result.ok.push(item);
-      } catch (e) {
-        result.errors.push(e);
+      } catch (error) {
+        result.failed.push({ item, error });
       }
       onProgress?.(++done, total);
     }
     out.push(result);
   }
   return out;
+}
+
+/** De fout "al gedeeld met deze persoon of groep" (409): die deling bestaat al, met de rechten
+ * die hij had. */
+export function alreadyShared(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "already_shared";
+}
+
+/** Namen voor in een melding: "a, b en c", bij meer "a, b, c en 4 andere". */
+export function someNames(names: readonly string[], max = 3): string {
+  if (names.length <= max) return fmt.list([...names]);
+  return fmt.list([...names.slice(0, max), t("sharing.many.others", { n: names.length - max })]);
 }
 
 /** In de toolbar van een map: wat er mag in de map die open staat. */

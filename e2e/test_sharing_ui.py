@@ -12,6 +12,7 @@ test_eerst_wie_dan_kan_bewerken_dan_delen*."""
 from __future__ import annotations
 
 import re
+import time
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
@@ -468,9 +469,22 @@ def test_eerst_wie_dan_kan_bewerken_dan_delen_bij_een_selectie(context_as, serve
     server.call(bob, "PUT", f"/api/v1/files/{file_id}/content", content=b"tweede\n", expect=200)
 
 
+def share_posts(page) -> list[str]:
+    """De POST's naar /files/{id}/shares van deze pagina (ook wat een route opvangt)."""
+    posts: list[str] = []
+
+    def seen(request):
+        if request.method == "POST" and re.search(r"/api/v1/files/[^/]+/shares$", request.url):
+            posts.append(request.url)
+
+    page.on("request", seen)
+    return posts
+
+
 def test_de_lijst_om_te_delen_weghalen_en_dubbelklik(context_as, server, user_factory):
     """Twee op de lijst, één eraf met ×: Delen deelt alleen met wie er nog staat, één keer, ook
-    bij een dubbelklik; de vervaldatum en de rechten gelden voor iedereen op de lijst."""
+    bij twee klikken vóór React opnieuw rendert; de vervaldatum en de rechten gelden voor
+    iedereen op de lijst."""
     owner = user_factory(name="Lijst Deler")
     tag = uuid.uuid4().hex[:6]
     ans = user_factory(name=f"Ans {tag}")
@@ -480,6 +494,7 @@ def test_de_lijst_om_te_delen_weghalen_en_dubbelklik(context_as, server, user_fa
     node_id = mkdir(server, owner, work, "Gezamenlijk")
 
     page = context_as(owner).new_page()
+    posts = share_posts(page)
     page.goto(f"/map/{work}")
     dialog = open_share_dialog(page, "Gezamenlijk")
     share = dialog.get_by_role("button", name="Delen", exact=True)
@@ -499,14 +514,23 @@ def test_de_lijst_om_te_delen_weghalen_en_dubbelklik(context_as, server, user_fa
     dialog.get_by_role("button", name=f"{kees.display_name} van de lijst halen").click()
     expect(items).to_have_count(2)
     expect(pending(dialog)).not_to_contain_text(kees.display_name)
+    remove_piet = dialog.get_by_role("button", name=f"{piet.display_name} van de lijst halen")
+    expect(remove_piet).to_be_focused()
+    # Piet (de laatste) eraf: dan naar de × van de vorige (Ans); en Piet er weer op
+    page.keyboard.press("Enter")
+    expect(items).to_have_count(1)
     expect(
-        dialog.get_by_role("button", name=f"{piet.display_name} van de lijst halen")
+        dialog.get_by_role("button", name=f"{ans.display_name} van de lijst halen")
     ).to_be_focused()
+    choose(dialog, piet.display_name, piet.display_name)
+    expect(items).to_have_count(2)
 
     until = date.today() + timedelta(days=3)
     dialog.get_by_label("Geldig tot en met (optioneel)", exact=True).fill(until.isoformat())
     dialog.get_by_label("Rechten voor wie je toevoegt", exact=True).select_option("write")
-    share.dblclick()
+    # Twee klikken in dezelfde taak, vóór React opnieuw rendert (een dubbelklik op een trage
+    # telefoon): de knop is dan nog niet bezig; alleen de vlag in AddPeople houdt de tweede tegen
+    share.evaluate("(b) => { b.click(); b.click(); }")
     expect(toast(page, f"Gedeeld met {ans.display_name} en {piet.display_name}.")).to_be_visible()
     expect(dialog.get_by_role("alert")).to_have_count(0)
     shares = server.call(owner, "GET", f"/api/v1/files/{node_id}/shares", expect=200).json()
@@ -514,5 +538,217 @@ def test_de_lijst_om_te_delen_weghalen_en_dubbelklik(context_as, server, user_fa
         [(ans.id, "write"), (piet.id, "write")]
     )
     assert all(s["expires_at"] is not None for s in shares)
+    assert len(posts) == 2, posts  # één POST per persoon, niet twee
     # Na het delen is de datum weer leeg; de rechten blijven staan (je ziet ze)
     expect(dialog.get_by_label("Geldig tot en met (optioneel)", exact=True)).to_have_value("")
+
+
+def test_sluiten_met_iemand_op_de_lijst_vraagt_eerst(context_as, server, user_factory):
+    """Kiezen deelt niet meer meteen. Wie dan sluit (Escape, × of Sluiten) met iemand op "Klaar
+    om te delen", krijgt eerst een vraag; eerder viel de lijst stil weg en kreeg de ander niets.
+    Ook de derde Escape op rij (zonder klik ertussen) houdt de dialoog open: Chromium sloot hem
+    dan zelf, buiten de vraag om."""
+    owner = user_factory(name="Sluit Deler")
+    bob = user_factory(name=f"Bewerker {uuid.uuid4().hex[:6]}")
+    work = mkdir(server, owner, owner.root_id, f"Sluiten {uuid.uuid4().hex[:6]}")
+    node_id = mkdir(server, owner, work, "Samen")
+
+    page = context_as(owner).new_page()
+    page.goto(f"/map/{work}")
+    dialog = open_share_dialog(page, "Samen")
+    choose(dialog, bob.display_name.split()[1], bob.display_name)
+    rights = dialog.get_by_label("Rechten voor wie je toevoegt", exact=True)
+    rights.select_option(label="Kan bewerken")
+    # Zichtbaar, niet alleen voor schermlezers: hij staat klaar, nog niet gedeeld
+    expect(pending(dialog)).to_contain_text(bob.display_name)
+    expect(dialog.get_by_text("Klaar om te delen", exact=True)).to_be_visible()
+    hint = dialog.get_by_text("Nog niet gedeeld: kies de rechten en druk op Delen.", exact=True)
+    expect(hint).to_be_visible()
+
+    ask = page.get_by_role("dialog", name="Sluiten zonder te delen?", exact=True)
+    back = ask.get_by_role("button", name="Terug naar delen", exact=True)
+    box = dialog.get_by_role("combobox", name="Zoek een persoon of groep")
+    box.focus()
+    for _ in range(3):
+        # Escape in het lege zoekveld: eerst de vraag (de focus op Terug), de dialoog blijft
+        page.keyboard.press("Escape")
+        expect(ask).to_be_visible()
+        expect(ask).to_contain_text(f"Nog niet gedeeld met {bob.display_name}.")
+        expect(back).to_be_focused()
+        expect(dialog).to_be_visible()
+        # Escape op de vraag: terug, met de lijst, de rechten en de focus in het zoekveld
+        page.keyboard.press("Escape")
+        expect(ask).to_be_hidden()
+        expect(dialog).to_be_visible()
+        assert dialog.evaluate("(d) => d.open")
+        expect(pending(dialog)).to_contain_text(bob.display_name)
+        expect(rights).to_have_value("write")
+        expect(box).to_be_focused()
+    assert people_shares(server, owner, node_id) == []
+
+    # Sluiten onderaan: de vraag; Terug naar delen houdt alles zoals het was
+    dialog.locator(".dialog-actions").get_by_role("button", name="Sluiten", exact=True).click()
+    expect(ask).to_be_visible()
+    back.click()
+    expect(ask).to_be_hidden()
+    expect(dialog).to_be_visible()
+    expect(pending(dialog)).to_contain_text(bob.display_name)
+    # De × bovenaan, en dan echt sluiten zonder delen
+    dialog.locator("header").get_by_role("button", name="Sluiten", exact=True).click()
+    expect(ask).to_be_visible()
+    ask.get_by_role("button", name="Sluiten zonder delen", exact=True).click()
+    expect(ask).to_be_hidden()
+    expect(dialog).to_be_hidden()
+    assert people_shares(server, owner, node_id) == []
+
+    # Na Delen is de lijst leeg: dan sluit Escape meteen, zonder vraag
+    dialog = open_share_dialog(page, "Samen")
+    choose(dialog, bob.display_name.split()[1], bob.display_name)
+    dialog.get_by_role("button", name="Delen", exact=True).click()
+    expect(toast(page, f"Gedeeld met {bob.display_name}.")).to_be_visible()
+    expect(pending(dialog)).to_have_count(0)
+    expect(dialog.get_by_role("combobox", name="Zoek een persoon of groep")).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(dialog).to_be_hidden()
+    expect(ask).to_have_count(0)
+    assert people_shares(server, owner, node_id) == [(bob.id, "read")]
+
+
+def test_selectie_met_een_item_dat_al_gedeeld_is(context_as, server, user_factory):
+    """Een selectie van drie: Map A had Bob al (Kan bekijken), en c.txt mislukt de eerste keer
+    (503). Map A telt als klaar en houdt zijn rechten, en de melding noemt hem; nog een keer
+    Delen stuurt alleen c.txt, en dan gaat Bob van de lijst af. Eerder bleef hij erop staan en
+    deelde Delen alles opnieuw ("lukte bij 2 items niet: Al gedeeld")."""
+    owner = user_factory(name="Jonas Opnieuw")
+    bob = user_factory(name=f"Bewerker {uuid.uuid4().hex[:6]}")
+    work = mkdir(server, owner, owner.root_id, f"Opnieuw {uuid.uuid4().hex[:6]}")
+    folder = mkdir(server, owner, work, "Map A")
+    b_id = put_file(server, owner, work, "b.txt", b"b\n")
+    c_id = put_file(server, owner, work, "c.txt", b"c\n")
+    server.call(
+        owner, "POST", f"/api/v1/files/{folder}/shares",
+        json={"user_id": bob.id, "permission": "read"}, expect=201,
+    )  # fmt: skip
+
+    page = context_as(owner).new_page()
+    posts = share_posts(page)
+    failed: list[str] = []
+
+    def once_unavailable(route):
+        if route.request.method == "POST" and not failed:
+            failed.append(route.request.url)
+            body = {"detail": {"message": "Even niet beschikbaar", "code": "unavailable"}}
+            route.fulfill(status=503, json=body)
+        else:
+            route.fallback()
+
+    page.route(f"**/api/v1/files/{c_id}/shares", once_unavailable)
+    page.goto(f"/map/{work}")
+    page.locator(ROWS).first.wait_for()
+    pick(page, "Map A")
+    pick(page, "b.txt", ["ControlOrMeta"])
+    pick(page, "c.txt", ["ControlOrMeta"])
+    bar = page.get_by_role("toolbar", name="Selectie")
+    expect(bar.locator(".selection-count")).to_have_text("3 geselecteerd")
+    bar.get_by_role("button", name="Delen…", exact=True).click()
+    dialog = page.get_by_role("dialog", name="3 items delen", exact=True)
+    expect(dialog).to_be_visible()
+
+    choose(dialog, bob.display_name.split()[1], bob.display_name)
+    rights = dialog.get_by_label("Rechten voor wie je toevoegt", exact=True)
+    rights.select_option(label="Kan bewerken")
+    share = dialog.get_by_role("button", name="Delen", exact=True)
+    share.click()
+    expect(toast(page, f"1 item gedeeld met {bob.display_name}.")).to_be_visible()
+    alert = dialog.get_by_role("alert")
+    expect(alert).to_contain_text(
+        f"{bob.display_name} had Map A al: die deling blijft zoals hij was, "
+        "met de rechten van toen."
+    )
+    expect(alert).to_contain_text(
+        f"Delen met {bob.display_name} lukte bij 1 item niet: Even niet beschikbaar"
+    )
+    # c.txt mist nog: Bob blijft staan, Delen kan nog een keer
+    expect(pending(dialog)).to_contain_text(bob.display_name)
+    expect(share).to_be_enabled()
+    assert len(posts) == 3, posts
+    assert people_shares(server, owner, folder) == [(bob.id, "read")]
+    assert people_shares(server, owner, b_id) == [(bob.id, "write")]
+    assert people_shares(server, owner, c_id) == []
+
+    # Nog een keer: alleen c.txt (niet Map A en b.txt opnieuw), en dan is Bob klaar
+    share.click()
+    expect(pending(dialog)).to_have_count(0)
+    expect(alert).to_have_count(0)
+    expect(share).to_be_disabled()
+    assert posts[3:] == [posts[2]], posts
+    assert posts[2].endswith(f"/files/{c_id}/shares")
+    assert people_shares(server, owner, c_id) == [(bob.id, "write")]
+    assert people_shares(server, owner, folder) == [(bob.id, "read")]  # de oude rechten
+    assert people_shares(server, owner, b_id) == [(bob.id, "write")]
+    # Wie alles al heeft, wordt niet meer aangeboden
+    box = dialog.get_by_role("combobox", name="Zoek een persoon of groep")
+    box.press_sequentially(bob.display_name.split()[1], delay=20)
+    expect(dialog.get_by_text("Niemand gevonden.", exact=True)).to_be_visible()
+
+
+def test_focus_blijft_op_delen_tijdens_het_delen(context_as, server, user_factory):
+    """Met het toetsenbord: Enter op Delen bij een selectie. Zolang het delen loopt, blijft de
+    focus op Delen (bezig: aria-busy, niet uitgeschakeld) en nooit op <body>; daarna in het
+    zoekveld. Eerder werd Delen uitgeschakeld en stond de focus de hele lus op <body>."""
+    owner = user_factory(name="Focus Deler")
+    tag = uuid.uuid4().hex[:6]
+    ans = user_factory(name=f"Ans {tag}")
+    kees = user_factory(name=f"Kees {tag}")
+    work = mkdir(server, owner, owner.root_id, f"Focus {tag}")
+    for name in ("a.txt", "b.txt", "c.txt"):
+        put_file(server, owner, work, name, b"x")
+
+    page = context_as(owner).new_page()
+
+    def slow(route):
+        # Elke deling even trager, zodat er tijdens het delen iets te meten valt
+        if route.request.method == "POST":
+            time.sleep(0.15)
+        route.fallback()
+
+    page.route("**/api/v1/files/*/shares", slow)
+    page.goto(f"/map/{work}")
+    page.locator(ROWS).first.wait_for()
+    pick(page, "a.txt")
+    page.keyboard.press("ControlOrMeta+a")
+    bar = page.get_by_role("toolbar", name="Selectie")
+    expect(bar.locator(".selection-count")).to_have_text("3 geselecteerd")
+    bar.get_by_role("button", name="Delen…", exact=True).click()
+    dialog = page.get_by_role("dialog", name="3 items delen", exact=True)
+    expect(dialog).to_be_visible()
+    for person in (ans, kees):
+        choose(dialog, person.display_name, person.display_name)
+    expect(pending(dialog).get_by_role("listitem")).to_have_count(2)
+
+    share = dialog.get_by_role("button", name="Delen", exact=True)
+    share.focus()
+    # Waar de focus staat zolang de voortgang er is, elke 10 ms
+    page.evaluate(
+        """() => {
+          window.__focus = [];
+          window.__timer = setInterval(() => {
+            if (!document.querySelector('.share-progress')) return;
+            const el = document.activeElement;
+            window.__focus.push(!el || el === document.body ? 'BODY' : el.textContent.trim());
+          }, 10);
+        }"""
+    )
+    page.keyboard.press("Enter")
+    progress = dialog.locator(".share-progress")
+    expect(progress).to_be_visible()
+    expect(share).to_have_attribute("aria-busy", "true")
+    expect(share).to_be_enabled()
+    expect(progress).to_be_hidden(timeout=30_000)
+    done = f"3 items gedeeld met {ans.display_name} en {kees.display_name}."
+    expect(toast(page, done)).to_be_visible()
+    seen = page.evaluate("() => { clearInterval(window.__timer); return window.__focus; }")
+    assert len(seen) >= 5, seen
+    assert set(seen) == {"Delen"}, seen  # nooit <body>, nooit ergens anders
+    expect(dialog.get_by_role("combobox", name="Zoek een persoon of groep")).to_be_focused()
+    expect(share).to_be_disabled()

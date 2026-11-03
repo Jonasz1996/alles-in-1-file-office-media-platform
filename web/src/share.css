@@ -172,12 +172,21 @@
   font-size: var(--text-s);
 }
 
-/* Wie je toevoegt, nog niet gedeeld: pas Delen deelt (met de rechten en de datum eronder) */
+/* Wie je toevoegt, nog niet gedeeld: pas Delen deelt (met de rechten en de datum eronder). Het
+   kopje zegt het ook zichtbaar, niet alleen voor schermlezers. */
+.share-pending-head {
+  margin: var(--space-2) 0 0;
+}
+
+.share-pending-head .muted {
+  font-size: var(--text-s);
+}
+
 .share-pending {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-2);
-  margin: var(--space-2) 0 0;
+  margin: var(--space-1) 0 0;
   padding: 0;
   list-style: none;
 }

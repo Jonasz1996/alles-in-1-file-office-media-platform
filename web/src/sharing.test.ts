@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Api, type FileNode, type SearchHit, type Share } from "./api";
+import { Api, ApiError, type FileNode, type SearchHit, type Share } from "./api";
 import { isGuest } from "./currentUser";
 import { affectsFolder, affectsSharedWithMe } from "./events";
 import { fmt, loadAreas, resetI18nForTests, t } from "./i18n";
 import { folderHref, hitPath, parentHref, pathLabel } from "./searchQuery";
 import {
+  alreadyShared,
   canWrite,
   crumbs,
   dateInputValue,
@@ -28,6 +29,7 @@ import {
   permissionOf,
   type ShareTarget,
   shareEach,
+  someNames,
   sharePermissions,
   today,
   withPending,
@@ -552,7 +554,7 @@ describe("delen met een lijst: kiezen deelt nog niet, Delen deelt met iedereen e
     expect(most).toBe(1);
     expect(calls).toEqual(["Bob:a", "Bob:b", "Bob:c", "Gijs:a", "Gijs:b", "Gijs:c"]);
     expect(progress).toEqual([1, 2, 3, 4, 5, 6].map((d) => [d, 6]));
-    expect(results.map((r) => [r.who.name, r.ok, r.errors.length])).toEqual([
+    expect(results.map((r) => [r.who.name, r.ok, r.failed.length])).toEqual([
       ["Bob", ["a", "b", "c"], 0],
       ["Gijs", ["a", "b", "c"], 0],
     ]);
@@ -563,11 +565,53 @@ describe("delen met een lijst: kiezen deelt nog niet, Delen deelt met iedereen e
     const results = await shareEach([bob, gijs, team], ["a", "b"], async (who, item) => {
       if (who === gijs && item === "a") throw gone;
     });
-    expect(results.map((r) => [r.who.name, r.ok, r.errors])).toEqual([
+    expect(results.map((r) => [r.who.name, r.ok, r.failed])).toEqual([
       ["Bob", ["a", "b"], []],
-      ["Gijs", ["b"], [gone]],
+      ["Gijs", ["b"], [{ item: "a", error: gone }]],
       ["Team", ["a", "b"], []],
     ]);
+  });
+
+  it("per persoon eigen items: nog een keer Delen stuurt alleen wat er voor hem nog niet is", async () => {
+    const calls: string[] = [];
+    const progress: [number, number][] = [];
+    const have: Record<string, string[]> = { Bob: ["a", "b"], Gijs: [] };
+    const results = await shareEach(
+      [bob, gijs],
+      (who) => ["a", "b", "c"].filter((item) => !have[who.name].includes(item)),
+      async (who, item) => {
+        calls.push(`${who.name}:${item}`);
+      },
+      (done, total) => progress.push([done, total]),
+    );
+    expect(calls).toEqual(["Bob:c", "Gijs:a", "Gijs:b", "Gijs:c"]);
+    expect(progress).toEqual([1, 2, 3, 4].map((d) => [d, 4]));
+    expect(results.map((r) => [r.who.name, r.ok])).toEqual([
+      ["Bob", ["c"]],
+      ["Gijs", ["a", "b", "c"]],
+    ]);
+  });
+
+  it("al gedeeld (409 already_shared) herkennen, en niet elke andere fout", () => {
+    expect(alreadyShared(new ApiError(409, "Al gedeeld met deze persoon of groep", "already_shared"))).toBe(true);
+    expect(alreadyShared(new ApiError(409, "Er bestaat al iets met deze naam", "name_taken"))).toBe(false);
+    expect(alreadyShared(new ApiError(0, "Geen verbinding", "network"))).toBe(false);
+    expect(alreadyShared(new Error("al gedeeld"))).toBe(false);
+    expect(alreadyShared(null)).toBe(false);
+    expect(alreadyShared("already_shared")).toBe(false);
+  });
+
+  it("namen in een melding: hooguit drie, de rest geteld", () => {
+    expect(someNames(["Map A"])).toBe("Map A");
+    expect(someNames(["a", "b", "c"])).toBe("a, b en c");
+    expect(someNames(["a", "b", "c", "d"])).toBe("a, b, c en 1 ander");
+    expect(someNames(["a", "b", "c", "d", "e", "f"])).toBe("a, b, c en 3 andere");
+    expect(
+      t("sharing.many.already", { n: 1, name: "Bob", items: someNames(["Map A"]) }),
+    ).toBe("Bob had Map A al: die deling blijft zoals hij was, met de rechten van toen.");
+    expect(t("sharing.many.already", { n: 2, name: "Bob", items: someNames(["a", "b"]) })).toBe(
+      "Bob had 2 items al (a en b): die delingen blijven zoals ze waren, met de rechten van toen.",
+    );
   });
 
   it("een lege lijst: geen enkele POST", async () => {
@@ -576,7 +620,8 @@ describe("delen met een lijst: kiezen deelt nog niet, Delen deelt met iedereen e
       calls++;
     };
     expect(await shareEach([], ["a"], share)).toEqual([]);
-    expect(await shareEach([bob], [], share)).toEqual([{ who: bob, ok: [], errors: [] }]);
+    expect(await shareEach([bob], [], share)).toEqual([{ who: bob, ok: [], failed: [] }]);
+    expect(await shareEach([bob], () => [], share)).toEqual([{ who: bob, ok: [], failed: [] }]);
     expect(calls).toBe(0);
   });
 
@@ -595,6 +640,7 @@ describe("delen met een lijst: kiezen deelt nog niet, Delen deelt met iedereen e
     await loadAreas(["common", "sharing"]);
     expect(t("sharing.people.added", { name: fmt.list(["Bob", "Gijs"]) })).toBe("Shared with Bob and Gijs.");
     expect(t("sharing.many.done", { n: 3, names: "Family" })).toBe("3 items shared with Family.");
+    expect(someNames(["a", "b", "c", "d"])).toBe("a, b, c and 1 other");
     resetI18nForTests("nl");
     await loadAreas(["sharing"]);
   });
