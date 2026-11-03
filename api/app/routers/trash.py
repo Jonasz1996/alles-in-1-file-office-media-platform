@@ -164,13 +164,16 @@ async def purge(node_id: uuid.UUID, user: CurrentUser, session: Session, blobs: 
         # Wie het via een deling zag, nu het nog kan: daarna zijn node en delingen weg
         seen = await access.watchers(session, [node.id])
         below = await files.shared_below(session, node)
-        plan = await _subtree(session, [node.id])
+        # Kinderen vóór hun ouders (descendants geeft ouders eerst)
+        plan = [(row.id, row.mpath) for row in reversed(await files.descendants(session, node))]
     removed = await purge_chunks(session, blobs, plan)
-    if node.id not in removed and await present(session, [node.id]):
+    if node.id not in removed:
         await files.collect_garbage(session, blobs)
-        raise errors.fail(422, "not_trashed", HALF)
-    if node.id in removed:  # anders wiste een ander verzoek hem, en meldde dat
-        await files.notify(session, node, "node.deleted", seen=seen, below=below)
+        if await present(session, [node.id]):
+            raise errors.fail(422, "not_trashed", HALF)
+        # Al weg: een ander verzoek was eerder (en meldde het), zoals onder het slot gelezen
+        raise errors.fail(404, "not_found", "Niet gevonden")
+    await files.notify(session, node, "node.deleted", seen=seen, below=below)
     await files.collect_garbage(session, blobs)
 
 
@@ -481,8 +484,8 @@ async def purge_ids(
     for node_id in open_:
         if node_id in left:
             results[node_id] = errors.item_fail(node_id, "not_trashed", HALF)
-        else:  # een ander verzoek was eerder
-            results[node_id] = errors.ItemResult(id=node_id, ok=True)
+        else:  # al weg: een ander verzoek was eerder, zoals onder het slot gelezen
+            results[node_id] = errors.item_fail(node_id, "not_found", "Niet gevonden")
     for node_id in removed.intersection([*todo, *inside]):
         results[node_id] = errors.ItemResult(id=node_id, ok=True)
     if removed:

@@ -469,8 +469,8 @@ async def subtree_rows(
 
 
 async def descendants(session: AsyncSession, node: Node) -> list:
-    """(id, blob_id) van node en alles eronder, ouders voor hun kinderen."""
-    return await subtree_rows(session, node.id, Node.id, Node.blob_id)
+    """(id, blob_id, mpath) van node en alles eronder, ouders voor hun kinderen."""
+    return await subtree_rows(session, node.id, Node.id, Node.blob_id, Node.mpath)
 
 
 async def tags_by_node(
