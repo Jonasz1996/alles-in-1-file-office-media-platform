@@ -1,7 +1,27 @@
+from pathlib import Path
+
 import pytest
 
 from app import db
 from tests.search.migratie import MADE
+
+HIER = Path(__file__).resolve().parent
+# De bestanden over de triggers en de migratie van zoeken (0010): marker triggers erbij
+TRIGGERS = ("migration_0010", "trigger", "churn")
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config, items):
+    """Elke test hier krijgt marker zoek; die over de triggers en de migratie ook triggers
+    (bouwontwerp §4.1). e2e/slim.sh kiest ze met -m "zoek or triggers" in python:3.12-slim
+    (SQLite 3.46.1). tryfirst: vóór de selectie op -m."""
+    for item in items:
+        pad = Path(str(item.path))
+        if pad.parent != HIER:
+            continue
+        item.add_marker(pytest.mark.zoek)
+        if any(t in pad.name for t in TRIGGERS):
+            item.add_marker(pytest.mark.triggers)
 
 
 @pytest.fixture(autouse=True)

@@ -735,6 +735,8 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "media: e2e van media met de lokale worker en ffmpeg")
     config.addinivalue_line("markers", "media_perf: prestatiemeting van media (rapport)")
     config.addinivalue_line("markers", "provider_real: tegen de echte metadata-providers")
+    config.addinivalue_line("markers", "zoek: e2e van zoeken en foto's (fase 6)")
+    config.addinivalue_line("markers", "ocr: met echte tesseract (fase 6, job ocr)")
 
 
 @pytest.fixture(scope="session")
@@ -1048,6 +1050,38 @@ def media_browsers(
     from media_harness import MediaBrowsers
 
     b = MediaBrowsers(media_browser, media.server, perf=_media_kind(request.node) == "media_perf")
+    yield b
+    problems = _browsers_teardown(request, b, artifacts_dir(tmp_path_factory))
+    if problems:
+        pytest.fail("Problemen in de browser:\n" + "\n".join(problems), pytrace=False)
+
+
+# --- zoeken (fase 6, Z0-e2e; zie docs/fase-6/z0-e2e.md) ---
+
+
+@pytest.fixture(scope="session")
+def zoek_wereld(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Any]:
+    """Een eigen Server met de wereld van §4.2 (api/tests/search/wereld.py) en een Account per
+    persoon, voor de hele sessie. Wie de wereld verandert (wereld.intrekken, wereld.verhuis),
+    start zijn eigen met search_harness.start_wereld."""
+    from search_harness import start_wereld
+
+    app = start_wereld(tmp_path_factory.mktemp("zoek-wereld"))
+    try:
+        yield app
+    finally:
+        app.stop()
+
+
+@pytest.fixture
+def zoek_browsers(
+    browser: Any,
+    zoek_wereld: Any,
+    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[Browsers]:
+    """Contexts op de server van de wereld; elke melding laat de test falen."""
+    b = Browsers(browser, zoek_wereld.server)
     yield b
     problems = _browsers_teardown(request, b, artifacts_dir(tmp_path_factory))
     if problems:
