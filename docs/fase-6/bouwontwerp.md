@@ -5049,7 +5049,10 @@ snelle e2e. Zo kan elk pakket 3.46.1 aantonen vóór het samenvoegen, zonder te 
   tekst);
 - `test_no_batch_alter_node.py`: geen `batch_alter_table("node")` in een migratie na 0010;
 - `test_no_temp_table.py`: geen `CREATE TEMP` in `app/search` (Keuze 14);
-- `test_own_live.py`: elke fotofunctie gebruikt `own_live` (Keuze 25a);
+- `test_own_live.py`: elke fotofunctie gebruikt `own_live` (Keuze 25a). Herzien na de review van
+  Z0 (veilig F4): de wachter kijkt per functie (en buiten functies per opdracht), niet per
+  bestand; naar `node` én `photo_geo`, `photo_person`, `photo_ocr`, `blob_hash` en `dup_pair`
+  (de tabel na `FROM`/`JOIN`, of het model); en neemt `own_live_geo` aan voor `photo_geo`;
 - `test_search_logs.py`: zoek op `geheimwoord7`, vraag de kaart op zoom 14 rond een bekende plek
   en filter op een plaats; daarna staat geen van die woorden of getallen in de logs, ook niet in
   de toegangslog, en niet bij `search_access_mismatch`;

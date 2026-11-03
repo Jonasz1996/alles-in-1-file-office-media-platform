@@ -4,12 +4,18 @@ Drie dingen: de vorm ligt vast (de SQLAlchemy-vorm en de SQL-tekst zeggen hetzel
 wat hij zegt op een echte database met de triggers van 0010 (prullenbak in en uit, ook via een
 map erboven; een kopie in Brams boom), en de wachter: elke fotofunctie gebruikt hem. De
 fotofuncties komen in Z3 en Z6; de wachter kijkt naar elk bestand van die pakketten dat er is.
+
+De wachter kijkt per functie (review Z0, veilig F4; eerst per bestand: één own_live ergens
+dekte alles), naar node én de tabellen ernaast (photo_geo, photo_person, photo_ocr, blob_hash,
+dup_pair), en neemt own_live_geo aan voor photo_geo zonder join.
 """
 
 from __future__ import annotations
 
+import ast
 import re
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -19,7 +25,7 @@ from sqlalchemy.orm import aliased
 
 from app.db import get_engine
 from app.models import Node
-from app.search.live import OWN_LIVE_SQL, own_live
+from app.search.live import OWN_LIVE_GEO_SQL, OWN_LIVE_SQL, own_live
 from tests.search.migratie import NOW, SHA_JPG, fill_0009, migrate, settings_at
 
 pytestmark = pytest.mark.anyio
@@ -49,13 +55,87 @@ NOT_A_QUERY = {
     "people/types.py",
 }
 
-READS_NODES = re.compile(r"\bNode\b|\bFROM\s+node\b|\bJOIN\s+node\b", re.I)
+# Wat foto's leest (review Z0, veilig F4): node zelf, en de tabellen ernaast met een rij per foto
+# of per inhoud. In SQL-tekst de tabelnaam na FROM of JOIN; in Python het model
+TABLES = ("node", "photo_geo", "photo_person", "photo_ocr", "blob_hash", "dup_pair")
+MODELS = frozenset({"Node", "PhotoGeo", "PhotoPerson", "PhotoOcr", "BlobHash", "DupPair"})
+READS_SQL = re.compile(r"\b(?:FROM|JOIN)\s+(?:" + "|".join(TABLES) + r")\b", re.I)
+# Wat de regel toepast: own_live (op node) of own_live_geo (op photo_geo), of hun SQL-tekst
+OWN_LIVE = frozenset({"own_live", "OWN_LIVE_SQL", "own_live_geo", "OWN_LIVE_GEO_SQL"})
+
+
+def _woorden(node: ast.AST) -> Iterator[str]:
+    """De namen en strings in deze stukken code, zonder geneste functies (die tellen apart),
+    zonder imports, docstrings en type-annotaties (die lezen niets)."""
+    todo = [node]
+    while todo:
+        cur = todo.pop()
+        if isinstance(cur, ast.Name):
+            yield cur.id
+        elif isinstance(cur, ast.Attribute):
+            yield cur.attr
+        elif isinstance(cur, ast.Constant) and isinstance(cur.value, str):
+            yield cur.value
+        for field, value in ast.iter_fields(cur):
+            if field in ("annotation", "returns", "decorator_list"):
+                continue
+            for child in value if isinstance(value, list) else [value]:
+                if not isinstance(child, ast.AST) or isinstance(
+                    child, (ast.Import, ast.ImportFrom)
+                ):
+                    continue
+                if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                    continue
+                if _is_docstring(cur, child):
+                    continue
+                todo.append(child)
+
+
+def _is_docstring(parent: ast.AST, child: ast.AST) -> bool:
+    body = getattr(parent, "body", None)
+    return (
+        isinstance(body, list)
+        and bool(body)
+        and body[0] is child
+        and isinstance(child, ast.Expr)
+        and isinstance(child.value, ast.Constant)
+        and isinstance(child.value.value, str)
+    )
+
+
+def _units(tree: ast.Module) -> Iterator[tuple[str, list[ast.AST]]]:
+    """Elke functie (ook een methode of een geneste) is een eenheid; daarbuiten (module en
+    klasse) elke opdracht apart."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            yield node.name, [node]
+    todo: list[ast.Module | ast.ClassDef] = [tree]
+    while todo:
+        cur = todo.pop()
+        for stmt in cur.body:
+            if isinstance(stmt, ast.ClassDef):
+                todo.append(stmt)
+            elif not isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef):
+                if not _is_docstring(cur, stmt):
+                    yield f"regel {stmt.lineno}", [stmt]
+
+
+def offenders(source: str) -> list[str]:
+    """De functies (of opdrachten buiten een functie) die foto's lezen zonder own_live of
+    own_live_geo. Per functie, niet per bestand: één goede vraag in een bestand dekt een
+    andere niet (review Z0, veilig F4)."""
+    found = []
+    for name, nodes in _units(ast.parse(source)):
+        words = [w for n in nodes for w in _woorden(n)]
+        reads = any(w in MODELS or READS_SQL.search(w) for w in words)
+        if reads and not any(w in OWN_LIVE for w in words):
+            found.append(name)
+    return found
 
 
 def needs_own_live(source: str) -> bool:
-    """Leest dit bestand nodes zonder own_live? (Dan is het een fout.)"""
-    return bool(READS_NODES.search(source)) and not re.search(r"\bown_live\b|\bOWN_LIVE_SQL\b",
-                                                              source)  # fmt: skip
+    """Leest dit bestand ergens foto's zonder own_live? (Dan is het een fout.)"""
+    return bool(offenders(source))
 
 
 def photo_files() -> list[Path]:
@@ -140,16 +220,63 @@ async def test_alleen_eigen_levende_bestanden_ook_na_prullenbak_en_terug(tmp_pat
 
 
 def test_de_wachter_ziet_een_fotofunctie_zonder_own_live():
-    zonder = "from app.models import Node\nselect(Node.id).where(Node.owner_id == me)\n"
-    met = zonder + "q = q.where(own_live(Node, me))\n"
-    rauw = "SELECT n.id FROM node n WHERE " + OWN_LIVE_SQL
+    zonder = "def f(me):\n    q = select(Node.id).where(Node.owner_id == me)\n"
+    met = zonder + "    q = q.where(own_live(Node, me))\n"
     assert needs_own_live(zonder)
     assert not needs_own_live(met)
-    assert needs_own_live("SELECT id FROM node WHERE owner_id = :me")
-    assert not needs_own_live(f"sql = {rauw!r}\nfrom app.search.live import OWN_LIVE_SQL")
+    assert needs_own_live("SQL = 'SELECT id FROM node WHERE owner_id = :me'")
+    assert not needs_own_live("SQL = 'SELECT n.id FROM node n WHERE ' + OWN_LIVE_SQL")
     assert not needs_own_live("def place(lat, lon): ...")  # leest geen nodes
+    # photo_geo zonder join, met own_live_geo of zijn SQL-tekst: goed
+    geo = "SELECT g.lat FROM photo_geo g WHERE "
+    assert not needs_own_live(f"SQL = {geo!r} + OWN_LIVE_GEO_SQL.format(g='g')")
+    assert not needs_own_live(
+        "def f(me):\n    return select(PhotoGeo).where(own_live_geo(PhotoGeo, me))"
+    )
+    assert needs_own_live("def f(me):\n    return select(PhotoGeo).where(PhotoGeo.owner_id == me)")
+    # Wat niets leest: een import, een docstring, een type-annotatie
+    assert not needs_own_live('"""Leest FROM node niet."""\nfrom app.models import Node, PhotoGeo')
+    assert not needs_own_live('def f(n: Node) -> Node:\n    """SELECT * FROM node"""\n    return n')
+    # Een geneste functie telt apart: own_live in de buitenste dekt hem niet
+    nest = "def f(me):\n    own_live\n    def g():\n        return select(Node)\n    return g\n"
+    assert offenders(nest) == ["g"]
+    assert OWN_LIVE_GEO_SQL.startswith("{g}.owner_id")
 
 
 def test_elke_fotofunctie_gebruikt_own_live():
-    offenders = [str(p.relative_to(APP)) for p in photo_files() if needs_own_live(p.read_text())]
-    assert not offenders, f"Fotofuncties zonder own_live (Keuze 25a): {offenders}"
+    fout = {
+        str(p.relative_to(APP)): offenders(p.read_text())
+        for p in photo_files()
+        if offenders(p.read_text())
+    }
+    assert not fout, f"Fotofuncties zonder own_live of own_live_geo (Keuze 25a): {fout}"
+
+
+# De drie proeven van de review (Z0, veilig F4): elk leest foto's zonder own_live, en de wachter
+# moet ze zien
+PROEF_GEO = """
+from app.search.live import own_live
+
+async def kaart(session, me):
+    return await session.execute(text("SELECT lat, lon FROM photo_geo WHERE owner_id = :me"))
+"""
+PROEF_TWEE = """
+from app.models import Node
+from app.search.live import own_live
+
+async def goed(session, me):
+    return await session.scalars(select(Node.id).where(own_live(Node, me)))
+
+async def fout(session, me):
+    return await session.scalars(select(Node).where(Node.owner_id == me))
+"""
+PROEF_PERSOON = """
+SQL = "SELECT person_id FROM photo_person WHERE node_id = :id"
+"""
+
+
+@pytest.mark.parametrize(
+    "bron", [PROEF_GEO, PROEF_TWEE, PROEF_PERSOON], ids=["photo_geo", "twee-functies", "persoon"]
+)
+def test_de_wachter_ziet_de_proeven_van_de_review(bron):
+    assert needs_own_live(bron)
