@@ -233,10 +233,11 @@ def test_thumbnails_na_eigen_sortering_en_een_tweede_zoekopdracht(
     expect(row(page, "foto-00999.webp")).to_be_in_viewport()
     assert "foto-00997.webp" in photos_with_thumbnail(page, 2)
 
-    # Twee zoekopdrachten met elk vijf resultaten
-    page.goto("/zoeken?q=foto-0001")
-    expect(row(page, "foto-00011.webp")).to_be_visible()
-    assert sorted(photos_with_thumbnail(page, 5)) == [f"foto-0001{i}.webp" for i in (1, 3, 5, 7, 9)]
+    # Twee zoekopdrachten met elk vijf resultaten. Niet "foto-0001": sinds de FtsEngine (fase 6,
+    # Z1) vindt het woord "0001" ook foto-00001 (een deel van de naam, Keuze 5), dus zes
+    page.goto("/zoeken?q=foto-0004")
+    expect(row(page, "foto-00041.webp")).to_be_visible()
+    assert sorted(photos_with_thumbnail(page, 5)) == [f"foto-0004{i}.webp" for i in (1, 3, 5, 7, 9)]
     box = page.get_by_role("searchbox", name="Zoekwoorden")
     box.fill("foto-0002")
     box.press("Enter")
