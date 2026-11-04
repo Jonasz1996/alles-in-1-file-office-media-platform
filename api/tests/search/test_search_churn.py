@@ -5,6 +5,9 @@ en een versie terugzetten, tekst erbij en opnieuw geschreven (analysis.write_tex
 foto (photo_ocr, zoals X1 hem schrijft), een andere eigenaar, definitief wissen, en een gebruiker
 wissen. Halverwege een herbouw in stukken, met wijzigingen tussen de stukken door.
 
+Ook herhaalde schrijfacties (§4.3): dezelfde tekst nog eens (een analyse die opnieuw draait),
+alleen één veld van de tekst, dezelfde OCR nog eens, en dezelfde inhoud als nieuwe versie.
+
 Na elke 100 wijzigingen, en aan het eind:
 - de boom klopt (num, pad, dead: migratie.check_tree);
 - FTS5 zegt bij de integrity-check dat de index bij zijn inhoud past, en de index is term voor
@@ -126,16 +129,25 @@ class Wereld:
         return self.rng.choice(list(self.koppen))
 
     async def mappen(self, u: uuid.UUID) -> list[str]:
-        """De levende mappen waar u in mag schrijven: de eigen, en die onder een deling om te
-        bewerken."""
-        return await self.ids(
-            "SELECT n.id FROM node n WHERE n.kind = 'dir' AND n.dead = 0 AND (n.owner_id = :u "
-            "OR EXISTS (SELECT 1 FROM share s JOIN node r ON r.id = s.node_id "
-            "WHERE s.grantee_id = :u AND s.permission = 'write' AND r.dead = 0 "
-            "AND n.mpath >= r.mpath AND n.mpath < substr(r.mpath, 1, length(r.mpath) - 1) || '0'"
-            ")) ORDER BY n.num",
+        """Levende mappen waar u in mag schrijven: meestal (2 op 3) de eigen, anders die onder
+        een deling om te bewerken. Zonder die keuze kwam bijna alles in de map die cas met
+        iedereen deelt (een bestand daarin is van cas), hielden de anderen bijna niets eigens, en
+        bleef er na het wissen van cas haast niets over om te vinden."""
+        eigen = await self.ids(
+            "SELECT id FROM node WHERE kind = 'dir' AND dead = 0 AND owner_id = :u ORDER BY num",
             u=u.hex,
         )
+        if eigen and self.rng.random() < 2 / 3:
+            return eigen
+        gedeeld = await self.ids(
+            "SELECT n.id FROM node n WHERE n.kind = 'dir' AND n.dead = 0 AND n.owner_id <> :u "
+            "AND EXISTS (SELECT 1 FROM share s JOIN node r ON r.id = s.node_id "
+            "WHERE s.grantee_id = :u AND s.permission = 'write' AND r.dead = 0 "
+            "AND n.mpath >= r.mpath AND n.mpath < substr(r.mpath, 1, length(r.mpath) - 1) || '0'"
+            ") ORDER BY n.num",
+            u=u.hex,
+        )
+        return gedeeld or eigen
 
     async def eigen(self, u: uuid.UUID, kind: str | None = None, *, weg: bool = False) -> list:
         """De eigen nodes van u (zonder de hoofdmap); weg: die in de prullenbak staan."""
@@ -266,13 +278,23 @@ async def wissen(w: Wereld) -> None:
 
 
 async def versie(w: Wereld) -> None:
-    """Nieuwe inhoud (zoals de editor opslaat), of een oude versie terugzetten."""
+    """Nieuwe inhoud (zoals de editor opslaat), dezelfde inhoud nog eens, of een oude versie
+    terugzetten."""
     u = w.iemand()
     node = w.kies(await w.eigen(u, "file"))
     if node is None:
         return
     kop = w.koppen[u]
-    if w.rng.random() < 0.3:
+    kans = w.rng.random()
+    if kans < 0.15:
+        # Herhaald: wat er nu in staat, nog eens opgeslagen
+        r = await w.client.get(f"/api/v1/files/{node}/content", headers=kop)
+        w.kijk("inhoud", r)
+        if r.status_code == 200:
+            r = await w.client.put(f"/api/v1/files/{node}/content", content=r.content, headers=kop)
+            w.kijk("versie herhaald", r)
+            return
+    if kans > 0.7:
         r = await w.client.get(f"/api/v1/files/{node}/versions", headers=kop)
         w.kijk("versies", r)
         oud = w.kies([v["id"] for v in r.json()] if r.status_code == 200 else [])
@@ -285,24 +307,42 @@ async def versie(w: Wereld) -> None:
 
 
 async def tekst(w: Wereld) -> None:
-    """De tekst van een inhoud (zoals Z2 hem schrijft): erbij, of opnieuw geschreven."""
+    """De tekst van een inhoud (zoals Z2 hem schrijft): erbij, opnieuw geschreven, alleen één
+    veld (de rest blijft), of herhaald: precies dezelfde tekst nog eens."""
+    kans = w.rng.random()
+    if kans < 0.2:
+        rijen = await w.rijen(
+            "SELECT blob_sha, body, ocr, meta FROM blob_text "
+            "WHERE blob_sha IN (SELECT blob_id FROM node) ORDER BY blob_sha"
+        )
+        rij = w.kies(rijen)
+        if rij is not None:
+            async with maker(w.settings)() as session:
+                await analysis.write_text(session, rij[0], body=rij[1], ocr=rij[2], meta=rij[3])
+            w.tellingen["tekst herhaald"] = w.tellingen.get("tekst herhaald", 0) + 1
+            return
     sql = "SELECT DISTINCT blob_id FROM node WHERE blob_id IS NOT NULL ORDER BY blob_id"
     blobs = [r[0] for r in await w.rijen(sql)]
     sha = w.kies(blobs)
     if sha is None:
         return
-    velden = {"body": w.zin()}
-    if w.rng.random() < 0.3:
-        velden["meta"] = w.zin()
-    if w.rng.random() < 0.2:
-        velden["ocr"] = w.zin()
+    if kans > 0.9:
+        velden = {w.rng.choice(("ocr", "meta")): w.zin()}
+        soort = "tekst deels"
+    else:
+        velden = {"body": w.zin()}
+        if w.rng.random() < 0.3:
+            velden["meta"] = w.zin()
+        if w.rng.random() < 0.2:
+            velden["ocr"] = w.zin()
+        soort = "tekst"
     async with maker(w.settings)() as session:
         await analysis.write_text(session, sha, **velden)
-    w.tellingen["tekst"] = w.tellingen.get("tekst", 0) + 1
+    w.tellingen[soort] = w.tellingen.get(soort, 0) + 1
 
 
 async def ocr(w: Wereld) -> None:
-    """OCR in een foto (photo_ocr): erbij, opnieuw, of weg."""
+    """OCR in een foto (photo_ocr): erbij, opnieuw, dezelfde nog eens, of weg."""
     fotos = await w.rijen(
         "SELECT id, owner_id FROM node WHERE kind = 'file' AND mime LIKE 'image/%' ORDER BY num"
     )
@@ -319,9 +359,16 @@ async def ocr(w: Wereld) -> None:
                 ),
                 {"n": foto[0], "o": foto[1], "t": w.zin(), "u": spike.NU.isoformat()},
             )
-        elif w.rng.random() < 0.7:
+        elif (kans := w.rng.random()) < 0.5:
             await conn.execute(text("UPDATE photo_ocr SET text = :t WHERE node_id = :n"),
                                {"t": w.zin(), "n": foto[0]})  # fmt: skip
+        elif kans < 0.7:
+            # Herhaald: dezelfde tekst nog eens (de triggers gaan toch af)
+            await conn.execute(
+                text("UPDATE photo_ocr SET text = text, updated_at = :u WHERE node_id = :n"),
+                {"u": spike.NU.isoformat(), "n": foto[0]},
+            )
+            w.tellingen["ocr herhaald"] = w.tellingen.get("ocr herhaald", 0) + 1
         else:
             await conn.execute(text("DELETE FROM photo_ocr WHERE node_id = :n"), {"n": foto[0]})
     w.tellingen["ocr"] = w.tellingen.get("ocr", 0) + 1
@@ -329,7 +376,7 @@ async def ocr(w: Wereld) -> None:
 
 async def eigenaar(w: Wereld) -> None:
     """Een andere eigenaar (geen pad in de app): het bestand gaat naar de hoofdmap van de nieuwe
-    eigenaar, in één UPDATE."""
+    eigenaar, met een nieuwe naam, in twee UPDATEs (zie de docstring bovenaan)."""
     u = w.iemand()
     node = w.kies(await w.eigen(u, "file"))
     ander = w.kies([v for v in w.koppen if v != u])
@@ -488,13 +535,16 @@ async def _churn(client, admin, settings, caplog) -> None:
             begin = time.perf_counter()
             treffers.append(await de_referentie_klopt(w, f"na {stap}"))
             tijd["referentie"] += time.perf_counter() - begin
-    print("churn:", {k: round(v, 1) for k, v in tijd.items()}, w.tellingen)
+    print("churn:", {k: round(v, 1) for k, v in tijd.items()}, w.tellingen, treffers)
     # Alles is langsgekomen, en de vragen vinden echt iets
     assert {k.split()[0] for k in w.tellingen if k.endswith("ok")} >= {
         "upload", "map", "kopie", "hernoemen", "verplaatsen", "prullenbak", "terugzetten",
         "wissen", "versie",
     }, w.tellingen  # fmt: skip
     assert w.tellingen.get("tekst", 0) > 100 and w.tellingen.get("ocr", 0) > 20, w.tellingen
+    # De herhaalde schrijfacties
+    for soort in ("tekst herhaald", "tekst deels", "ocr herhaald", "versie herhaald ok"):
+        assert w.tellingen.get(soort, 0) > 5, (soort, w.tellingen)
     assert w.tellingen.get("eigenaar", 0) > 5, w.tellingen
     assert min(treffers) > 100, treffers
     assert await w.rijen("SELECT 1 FROM node WHERE owner_id = :c", c=cas.hex) == []
