@@ -27,7 +27,7 @@ import uuid
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -75,6 +75,7 @@ async def search(
     user: CurrentUser,
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
+    response: Response,
     q: Annotated[str, Query(max_length=200)] = "",
     type_: Annotated[list[Category], Query(alias="type")] = [],  # noqa: B006
     date_from: Annotated[date | None, Query(alias="from")] = None,
@@ -135,6 +136,9 @@ async def search(
     # de rij is 20 lang): de motor neemt na het wachten een nieuwe
     await session.commit()
     token = engines.SETTINGS.set(settings)
+    # De tijd per stap in Server-Timing, alleen voor tests en metingen (Keuze 13)
+    steps: dict[str, float] | None = {} if settings.search_timing else None
+    timing = engines.TIMING.set(steps)
     try:
         async with admit(user, "search", settings):
             return await engine.search(session, user, params)
@@ -143,7 +147,10 @@ async def search(
             400, "search_query_too_long", "Je zoekvraag is te lang", max_words=10
         ) from None
     finally:
+        engines.TIMING.reset(timing)
         engines.SETTINGS.reset(token)
+        if steps:
+            response.headers["Server-Timing"] = engines.server_timing(steps)
 
 
 @router.get("/search/suggest")

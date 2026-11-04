@@ -34,7 +34,8 @@ from __future__ import annotations
 import json
 import time as clock
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -62,12 +63,13 @@ from app import errors
 from app.config import Settings, get_settings
 from app.models import Node, PhotoOcr, User
 from app.routers.files import describe, get_dir, is_trashed, tags_by_node
+from app.search import snippets
 from app.search.access import MAX_OR, Ranges, ranges_sql, search_ranges, second_check
 from app.search.deadline import STOP, deadline
 from app.search.filters import apply_all
 from app.search.like import LikeFallback, own_tag, paths
 from app.search.query import Parsed, parse
-from app.search.types import Hit, Match, PathPart, SearchPage, SearchParams, Suggestions
+from app.search.types import Hit, PathPart, SearchPage, SearchParams, Suggestions
 
 
 class SearchEngine(Protocol):
@@ -94,6 +96,32 @@ SETTINGS: ContextVar[Settings | None] = ContextVar("zoek_settings", default=None
 
 def settings_now() -> Settings:
     return SETTINGS.get() or get_settings()
+
+
+# De tijd per stap van dit verzoek, voor Server-Timing (alleen met PLATFORM_SEARCH_TIMING=1,
+# Keuze 13): roots (de bereiken), fts (ronde A, of alleen filters), round (ronde B), names (de
+# stukken van namen, ook ronde C), check (de tweede controle en de nodes laden), snip (de
+# snippets). De router zet een lege dict; zonder dict wordt er niets gemeten.
+TIMING: ContextVar[dict[str, float] | None] = ContextVar("zoek_timing", default=None)
+STEPS = ("roots", "fts", "round", "names", "check", "snip")
+
+
+@contextmanager
+def timed(step: str) -> Iterator[None]:
+    found = TIMING.get()
+    if found is None:
+        yield
+        return
+    start = clock.perf_counter()
+    try:
+        yield
+    finally:
+        found[step] = found.get(step, 0.0) + (clock.perf_counter() - start) * 1000
+
+
+def server_timing(found: dict[str, float]) -> str:
+    """De kop Server-Timing: elke stap die liep, in milliseconden."""
+    return ", ".join(f"{step};dur={found[step]:.1f}" for step in STEPS if step in found)
 
 
 # --- De vorm van de SQL: CROSS JOIN en INDEXED BY (SQLAlchemy kent ze niet voor SQLite) -------
@@ -342,18 +370,12 @@ def _stopped_page(p: SearchParams) -> SearchPage:
     )
 
 
-async def run(conn: AsyncConnection, sel: Select, ms: float) -> Round:
+async def run(conn: AsyncConnection, sel: Select, ms: float, step: str = "fts") -> Round:
     """sel onder een grens van ms milliseconden; bij de grens geen rijen (de vraag stopte)."""
-    async with deadline(conn, max(1, int(ms))) as d:
-        rows = list((await conn.execute(sel)).all())
+    with timed(step):
+        async with deadline(conn, max(1, int(ms))) as d:
+            rows = list((await conn.execute(sel)).all())
     return Round([] if d.hit else rows, d.hit)
-
-
-def _match_of(row: Row, parsed: Parsed | None) -> Match:
-    """name als elk woord in de naam staat; anders text (snippets.py maakt het preciezer)."""
-    if parsed is None or all(w in (row.search_name or "") for w in parsed.words):
-        return "name"
-    return "text"
 
 
 async def check_in(db: AsyncSession, user: User, folder: uuid.UUID) -> None:
@@ -366,23 +388,39 @@ async def check_in(db: AsyncSession, user: User, folder: uuid.UUID) -> None:
 async def hits(
     db: AsyncSession, user: User, rows: Sequence[Row], parsed: Parsed | None
 ) -> list[Hit]:
-    """De treffers van een pagina, na de tweede controle (Keuze 15), in dezelfde volgorde."""
+    """De treffers van een pagina, na de tweede controle (Keuze 15), in dezelfde volgorde, met
+    match en snippet (snippets.py, Keuze 8; zonder vraag alleen filters: match name)."""
     if not rows:
         return []
-    checked = await second_check(db, user, [(r.id, r.owner_id) for r in rows])
-    keep = [r for r in rows if r.id in checked.permissions]
-    if not keep:
-        return []
-    loaded = await db.scalars(select(Node).where(Node.id.in_([r.id for r in keep])))
-    by_id = {node.id: node for node in loaded}
-    nodes = [by_id[r.id] for r in keep if r.id in by_id]
-    match = {r.id: _match_of(r, parsed) for r in keep}
-    tags = await tags_by_node(db, user, [node.id for node in nodes])
-    where = await paths(db, [node for node in nodes if node.owner_id == user.id])
-    for node_id, chain in checked.paths.items():
-        where[node_id] = [PathPart(id=s.id, name=s.name) for s in chain]
-    described = await describe(db, user, nodes, checked.permissions, tags=tags, roots=checked.roots)
-    return [Hit(node=out, path=where.get(out.id, []), match=match[out.id]) for out in described]
+    with timed("check"):
+        checked = await second_check(db, user, [(r.id, r.owner_id) for r in rows])
+        keep = [r for r in rows if r.id in checked.permissions]
+        if not keep:
+            return []
+        loaded = await db.scalars(select(Node).where(Node.id.in_([r.id for r in keep])))
+        by_id = {node.id: node for node in loaded}
+        nodes = [by_id[r.id] for r in keep if r.id in by_id]
+        tags = await tags_by_node(db, user, [node.id for node in nodes])
+        where = await paths(db, [node for node in nodes if node.owner_id == user.id])
+        for node_id, chain in checked.paths.items():
+            where[node_id] = [PathPart(id=s.id, name=s.name) for s in chain]
+        described = await describe(
+            db, user, nodes, checked.permissions, tags=tags, roots=checked.roots
+        )
+    snips: dict[uuid.UUID, snippets.Snip] = {}
+    if parsed is not None:
+        with timed("snip"):
+            snips = await snippets.make(db, user, [node.id for node in nodes], parsed)
+    none = snippets.Snip("name", None)
+    return [
+        Hit(
+            node=out,
+            path=where.get(out.id, []),
+            match=snips.get(out.id, none).match,
+            snippet=snips.get(out.id, none).snippet,
+        )
+        for out in described
+    ]
 
 
 class FtsEngine:
@@ -397,7 +435,8 @@ class FtsEngine:
             await own_tag(db, user, tag_id)
         if stopped():
             return _stopped_page(p)
-        roots = await search_ranges(db, user)
+        with timed("roots"):
+            roots = await search_ranges(db, user)
         if not roots.ranges or (parsed is None and not p.has_filter()):
             return SearchPage(results=[], more=False, offset=p.offset, ranked=True, engine="fts")
         scope = Scope(user, roots, p)
@@ -453,14 +492,14 @@ class FtsEngine:
                 without = [r.num for r in a.rows]
                 small = await self._small(conn, scope, parsed)
                 sel = names_select(parsed, scope, need, skip, without, small=small)
-                names = await run(conn, sel, rest())
+                names = await run(conn, sel, rest(), "names")
                 rows = page + names.rows[: p.limit - len(page)]
                 more = len(page) + len(names.rows) > p.limit
                 return await self._page(db, scope, rows, parsed, more=more, partial=names.hit)
         # Ronde B: in de volgorde van rowid, verder na after
         k = p.limit + 1
         skip = p.offset if p.after is None else 0
-        b = await run(conn, stream_select(parsed, scope, k, p.after, skip), rest())
+        b = await run(conn, stream_select(parsed, scope, k, p.after, skip), rest(), "round")
         if b.hit and stopped():
             return _stopped_page(p)
         if not b.hit:
@@ -475,7 +514,7 @@ class FtsEngine:
             return await self._page(db, scope, [], parsed, partial=True, ranked=False)
         # Ronde C: alleen de namen
         small = await self._small(conn, scope, parsed)
-        c = await run(conn, names_select(parsed, scope, k, p.offset, small=small), C_MS)
+        c = await run(conn, names_select(parsed, scope, k, p.offset, small=small), C_MS, "names")
         return await self._page(
             db,
             scope,
