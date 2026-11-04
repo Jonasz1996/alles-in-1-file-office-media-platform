@@ -10,7 +10,15 @@ pipe; de worker leest hem niet.
 
 In het image is python voor dit kind /opt/venv/bin/python-tekst: een kopie die niemand mag lezen
 (0711, root; de regel in de Dockerfile), zodat het kind vanaf zijn exec niet dumpbaar is (spike
-S11). Zonder die kopie (lokaal, in tests) is het sys.executable, met alleen de handdruk.
+S11). Alleen de handdruk is niet genoeg: een proces van dezelfde uid (een gekraakte ffmpeg) dat
+/proc/<kind>/mem opent tussen de exec van een leesbare python en de prctl van BOOT, houdt die
+toegang ook daarna, als de blobs komen (review golf 1, F2). Daarom:
+
+- is de worker afgeschermd (caps.sandbox "on", alleen na de zelftest van de start), dan start het
+  kind alleen uit de kopie; ontbreekt die of is hij leesbaar, dan geen kind maar de fout
+  "geen python-tekst" (de zelftest controleert de kopie ook: "python-tekst 0711 van root", dan
+  neemt de worker niets aan en staat de reden op /beheer);
+- zonder afscherming (de lokale worker, tests) mag sys.executable, met alleen de handdruk.
 
 Antwoord: {"rc": exitcode van het kind (−24: SIGXCPU, RLIMIT_CPU), "done": hoeveel uitkomsten
 het kind zegt te hebben geschreven, "error": de soort fout of None, "cpu_s"}. Welke blob klaar
@@ -21,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 
@@ -42,19 +51,40 @@ BOOT = (
 COPY_NAME = "python-tekst"
 
 
-def python() -> str:
-    """De python voor het kind: de kopie die niemand mag lezen als die er is."""
-    copy = Path(sys.executable).with_name(COPY_NAME)
-    if os.access(copy, os.X_OK) and copy.is_file():
+NO_COPY = "geen python-tekst"
+
+
+def copy_path() -> Path:
+    return Path(sys.executable).with_name(COPY_NAME)
+
+
+def unreadable(path: Path) -> bool:
+    """Een gewoon bestand dat dit proces mag starten maar niet lezen: dan is het kind vanaf zijn
+    exec niet dumpbaar (de kernel kijkt bij de exec of de uid het programma mag lezen)."""
+    try:
+        regular = stat.S_ISREG(path.stat().st_mode)
+    except OSError:
+        return False
+    return regular and os.access(path, os.X_OK) and not os.access(path, os.R_OK)
+
+
+def python(sandbox: bool) -> str | None:
+    """De python voor het kind: de kopie die de worker niet mag lezen als die er is.
+    Afgeschermd zonder zo'n kopie: None (geen kind)."""
+    copy = copy_path()
+    if unreadable(copy):
         return str(copy)
-    return sys.executable
+    return None if sandbox else sys.executable
 
 
 async def run(ctx: Context) -> dict:
     args = ctx.args
     assert isinstance(args, TextArgs)
+    executable = python(ctx.worker.caps.get("sandbox") == "on")
+    if executable is None:
+        return {"rc": None, "done": 0, "error": NO_COPY, "cpu_s": 0.0}
     child, sock = R.spawn_handshake(
-        [python(), "-I", "-c", BOOT, API_ROOT, "text"],
+        [executable, "-I", "-c", BOOT, API_ROOT, "text"],
         memory_mb=MEMORY_MB,
         cpu_s=args.child_cpu_s,
     )

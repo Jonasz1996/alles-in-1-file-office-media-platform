@@ -410,3 +410,61 @@ async def test_met_media_uit_de_terugval_zonder_worker(settings, tmp_path):
         client.bind(None)
     assert state((await rows(settings))[sha]) == ("done", 0, None)
     assert (await texts(settings))[sha].body == "tekst zonder media"
+
+
+# --- review golf 1, F2: afgeschermd alleen uit python-tekst ---------------------------------
+
+
+def _venv(tmp_path: Path, modus: int | None) -> Path:
+    """Een map met een python en (met modus) een python-tekst ernaast."""
+    bin_ = tmp_path / "venv" / "bin"
+    bin_.mkdir(parents=True)
+    (bin_ / "python").write_bytes(b"")
+    if modus is not None:
+        copy = bin_ / ops_text.COPY_NAME
+        copy.write_bytes(b"")
+        copy.chmod(modus)
+    return bin_ / "python"
+
+
+def _als_media(path, mode, **_kw) -> bool:
+    """os.access zoals de worker in het image het ziet: uid 10002, de kopie is van root, dus
+    alleen de bits voor "anderen" tellen (root zou alles mogen lezen)."""
+    bits = os.stat(path).st_mode
+    return all(bits & want for flag, want in ((os.R_OK, 0o4), (os.X_OK, 0o1)) if mode & flag)
+
+
+@pytest.mark.parametrize(
+    ("modus", "afgeschermd", "uit"),
+    [
+        (None, False, "python"),  # lokaal: de leesbare python, met alleen de handdruk
+        (None, True, None),  # afgeschermd zonder kopie: geen kind
+        (0o755, True, None),  # een leesbare kopie telt niet
+        (0o755, False, "python"),
+        (0o700, True, None),  # niet te starten
+        (0o711, True, ops_text.COPY_NAME),
+        (0o711, False, ops_text.COPY_NAME),
+    ],
+)
+def test_de_python_van_het_kind(tmp_path, monkeypatch, modus, afgeschermd, uit):
+    python = _venv(tmp_path, modus)
+    monkeypatch.setattr(ops_text.sys, "executable", str(python))
+    monkeypatch.setattr(ops_text.os, "access", _als_media)
+    gekozen = ops_text.python(afgeschermd)
+    assert (gekozen and Path(gekozen).name) == uit
+
+
+async def test_afgeschermd_zonder_kopie_geen_kind(aan, kinderen, tmp_path, monkeypatch, worker):
+    """caps.sandbox "on" (de worker in het image) en geen python-tekst: de opdracht start geen
+    kind en zegt waarom; de blobs krijgen geen tekst uit een leesbare python."""
+    monkeypatch.setattr(ops_text.sys, "executable", str(_venv(tmp_path, None)))
+    worker.caps["sandbox"] = "on"
+    path = tmp_path / "blob.txt"
+    path.write_text("geheime tekst")
+    fd = batch.open_blob(path)
+    try:
+        ran = await batch.via_worker([fd], ["plain"], max_chars=1000)
+    finally:
+        os.close(fd)
+    assert kinderen == []
+    assert (ran.found, ran.clean, ran.error) == ([], False, ops_text.NO_COPY)

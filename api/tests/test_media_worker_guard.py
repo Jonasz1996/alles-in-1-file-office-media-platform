@@ -731,6 +731,62 @@ def test_de_zelftest_wil_elk_programma_van_het_voorvoegsel_op_0711(tmp_path, mon
     assert all(not c.ok and c.detail == "niet gevonden" for c in report.checks)
 
 
+def test_de_zelftest_wil_python_tekst_0711_van_root(tmp_path, monkeypatch):
+    """Fase 6, review golf 1 F2: het tekst-kind start in het image alleen uit python-tekst
+    (ops/text.py); die moet 0711 van root zijn en voor de worker niet te lezen. Ontbreekt hij of
+    klopt hij niet, dan faalt de afscherming en neemt de worker niets aan."""
+    from app.media.worker.ops import text as text_op
+
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    monkeypatch.setattr(selftest.sys, "executable", str(bin_ / "python"))
+    naam = "python-tekst 0711 van root"
+
+    def controle() -> selftest.Check:
+        report = selftest.Report()
+        selftest._text_python(report)
+        assert [c.name for c in report.checks] == [naam]
+        return report.checks[0]
+
+    check = controle()
+    assert not check.ok and check.sandbox
+    assert check.detail == f"{bin_ / 'python-tekst'} niet gevonden"
+    copy = bin_ / text_op.COPY_NAME
+    copy.write_bytes(b"")
+    copy.chmod(0o755)
+    check = controle()
+    assert not check.ok and check.sandbox and "modus 0755" in check.detail
+    copy.chmod(0o711)
+    eigen = os.getuid()
+    check = controle()
+    if eigen == 0:
+        # root mag alles lezen, dus ook hier geen goed: de worker draait nooit als root
+        assert not check.ok and "leesbaar: True" in check.detail
+    else:
+        assert not check.ok and f"uid {eigen}" in check.detail
+    # zoals in het image: van root, en de worker (uid 10002) mag hem niet lezen
+    echt = os.stat
+    monkeypatch.setattr(
+        selftest.os, "stat",
+        lambda p, *a, **kw: os.stat_result((*echt(p)[:4], 0, *echt(p)[5:]))
+        if Path(p) == copy else echt(p, *a, **kw),
+    )  # fmt: skip
+    monkeypatch.setattr(selftest.os, "access", lambda p, mode, **kw: mode != os.R_OK)
+    check = controle()
+    assert check.ok and check.detail == "", check
+    # en de afscherming van de start (selftest.startup → isolation) draait hem
+    gedaan: list[str] = []
+    for name in ("_container", "_binaries", "_reopen", "_text_python"):
+        monkeypatch.setattr(selftest, name, lambda *_a, _n=name: gedaan.append(_n))
+
+    async def peek(_report):
+        gedaan.append("_peek")
+
+    monkeypatch.setattr(selftest, "_peek", peek)
+    asyncio.run(selftest.isolation(selftest.Report()))
+    assert "_text_python" in gedaan
+
+
 def test_de_zelftest_wil_dat_een_verbinding_naar_buiten_meteen_faalt(monkeypatch):
     class Opened:
         def __enter__(self):
@@ -781,7 +837,8 @@ def test_selftest_lokaal_zegt_wat_hij_controleerde():
     sandbox = [
         "uid 10002", "geen capabilities", "no-new-privileges", "geen netwerk", "/ alleen lezen",
         "/data leeg", "ffmpeg 0711 van root", "ffprobe 0711 van root", "nice 0711 van root",
-        "ionice 0711 van root", "env 0711 van root", "blob niet heropenbaar",
+        "ionice 0711 van root", "env 0711 van root", "python-tekst 0711 van root",
+        "blob niet heropenbaar",
         "schrijven op een fd die leest faalt", "een kind leest /proc/<worker>/fd niet",
         "een kind leest /proc/<worker>/environ niet", "een buur ziet /proc/<ffmpeg>/fd niet",
     ]  # fmt: skip

@@ -221,3 +221,28 @@ def test_het_script_toetst_subs_en_sprites_op_de_ffmpeg_van_het_image():
     from tests.media import fixtures
 
     assert {"subs_text.mkv", "vp9_opus.webm"} <= set(fixtures.RECIPES)
+
+
+def test_het_script_toetst_python_tekst_in_het_image():
+    """Review golf 1 van fase 6 (F2, S5): het tekst-kind is alleen vanaf zijn exec niet dumpbaar
+    als het uit /opt/venv/bin/python-tekst start (0711 van root, de regel in de Dockerfile).
+    Het script kijkt dat na in het image, en draait de echte opdracht text als media met een
+    aanvaller op /proc/<kind>/fd en mem (handdruk_tekst.py, de vormen "python-tekst"); de
+    zelftest van de worker eist hem ook (selftest._text_python)."""
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert (
+        'install -o root -g root -m 0711 "$(readlink -f /opt/venv/bin/python)" '
+        "/opt/venv/bin/python-tekst"
+    ) in dockerfile
+    text = (SINGLE / "tests" / "test_media_container.sh").read_text(encoding="utf-8")
+    for needle in (
+        "in_media stat -c '%U %a' /opt/venv/bin/python-tekst",
+        '[ "$kopie" = "root 711" ]',
+        'in_media python -I - /srv --kopie-map /run/media < "$TESTS/extract/handdruk_tekst.py"',
+        'for v in ("python-tekst, traag", "python-tekst"):',
+        'if r["aantal geopend"] or r["mem geopend"]:',
+        'if not set(r["fouten"]) <= {"EACCES"} or not r["fouten"].get("EACCES"):',
+    ):
+        assert needle in text, needle
+    helper = (ROOT / "api" / "tests" / "extract" / "handdruk_tekst.py").read_text(encoding="utf-8")
+    assert '("python-tekst, traag", str(echt), True), ("python-tekst", str(echt), False)' in helper

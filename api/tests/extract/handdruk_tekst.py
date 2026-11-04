@@ -8,15 +8,27 @@ ffmpeg) zoekt vanaf zijn start onafgebroken naar elk kind van dit proces en prob
 /proc/<pid>/fd te lezen en elke /proc/<pid>/fd/N te openen; wat hij opent, leest hij en hij kijkt
 of het merk van een blob erin staat.
 
-Drie vormen, alle drie via de echte opdracht (ops/text.py, run.spawn_handshake):
+Naast de fd's opent de aanvaller ook /proc/<pid>/mem (review golf 1, F2): wie dat opent vóór
+het kind zichzelf niet-dumpbaar maakt, houdt die toegang daarna, als de blobs er zijn. Hij telt
+een mem alleen als hij er ook echt iets uit kan lezen (op het eerste adres uit maps), en houdt
+hem open; ziet hij het kind daarna dicht (EACCES op /proc/<pid>/fd), dan probeert hij de oude
+mem opnieuw ("mem na dicht"). Met Yama (ptrace_scope ≥ 1, zoals op Ubuntu) mag een proces dat
+geen ouder is mem nooit openen; ptrace_scope staat in de uitvoer.
+
+Vormen, alle via de echte opdracht (ops/text.py, run.spawn_handshake):
 - "leesbaar, traag": het kind uit deze python (leesbaar) en een BOOT die eerst 0,4 s slaapt,
   vóór PR_SET_DUMPABLE: het venster dat er zonder kopie is. Hier moet de aanvaller iets openen
-  (anders bewijst de test niets), maar nooit een blob: die komen pas na "klaar";
+  (anders bewijst de test niets), maar nooit een blob via een fd: die komen pas na "klaar";
 - "kopie, traag": hetzelfde, maar uit een kopie van python die niemand mag lezen (0111, zoals
   python-tekst 0711 in het image): vanaf de exec niet dumpbaar, dus ook in die 0,4 s EACCES;
-- "kopie": de echte BOOT uit de kopie.
+- "kopie": de echte BOOT uit de kopie;
+- "python-tekst, traag" en "python-tekst": alleen als naast deze python een python-tekst staat
+  die deze uid niet mag lezen (in het image: /opt/venv/bin/python-tekst, 0711 van root). Dan
+  zijn het de vorige twee met de echte kopie van het image (test_media_container.sh).
 
-    python -I handdruk_tekst.py API-MAP
+    python -I handdruk_tekst.py API-MAP [--kopie-map MAP]
+
+--kopie-map: waar de werkmap komt (in de container /run/media: /tmp is daar noexec).
 
 Uitvoer: JSON op stdout, per vorm wat de aanvaller zag en of de tekst klopte.
 """
@@ -38,6 +50,34 @@ import errno, json, os, sys, time
 ouder, stop, merk = sys.argv[1], sys.argv[2], sys.argv[3].encode()
 mij = str(os.getpid())
 gezien, pogingen, geopend, fouten = {}, 0, [], {}
+mem, mem_geopend, mem_na = {}, [], set()
+
+
+def fout_tel(e, ook=("ENOENT",)):
+    fout = errno.errorcode.get(e.errno, str(e.errno))
+    if fout not in ook:
+        fouten[fout] = fouten.get(fout, 0) + 1
+
+
+def mem_proberen(naam, ms):
+    try:
+        fd = os.open(f"/proc/{naam}/mem", os.O_RDONLY)
+    except OSError as e:
+        fout_tel(e, ("ENOENT", "ESRCH"))
+        return
+    try:
+        with open(f"/proc/{naam}/maps") as f:
+            begin = int(f.readline().split("-", 1)[0], 16)
+        data = os.pread(fd, 16, begin)
+    except (OSError, ValueError, IndexError):
+        data = b""
+    if data:
+        mem[naam] = (fd, begin)
+        mem_geopend.append({"pid": int(naam), "ms": ms})
+    else:
+        os.close(fd)
+
+
 print("klaar", flush=True)
 while not os.path.exists(stop):
     for naam in os.listdir("/proc"):
@@ -54,12 +94,21 @@ while not os.path.exists(stop):
         eerst = gezien.setdefault(naam, t)
         ms = round((t - eerst) * 1000, 2)
         pogingen += 1
+        if naam not in mem:
+            mem_proberen(naam, ms)
         try:
             fds = os.listdir(f"/proc/{naam}/fd")
         except OSError as e:
             fds = []
             fout = errno.errorcode.get(e.errno, str(e.errno))
             fouten[fout] = fouten.get(fout, 0) + 1
+            if fout == "EACCES" and naam in mem and naam not in mem_na:
+                fd, begin = mem[naam]
+                try:
+                    if os.pread(fd, 16, begin):
+                        mem_na.add(naam)
+                except OSError:
+                    pass
         for n in sorted({*range(0, 8), *(int(x) for x in fds if x.isdigit())}):
             try:
                 fd = os.open(f"/proc/{naam}/fd/{n}", os.O_RDONLY | os.O_NONBLOCK)
@@ -78,6 +127,7 @@ while not os.path.exists(stop):
 print(json.dumps({
     "kinderen": len(gezien), "pogingen": pogingen, "geopend": geopend[:50],
     "aantal geopend": len(geopend), "fouten": fouten,
+    "mem geopend": len(mem_geopend), "mem": mem_geopend[:10], "mem na dicht": len(mem_na),
 }), flush=True)
 """
 
@@ -107,7 +157,7 @@ async def vorm(api: Path, map_: Path, naam: str, python: str, traag: bool) -> di
     merk = os.urandom(8).hex()
     stop = map_ / f"stop-{naam.replace(' ', '-').replace(',', '')}"
     boot = ops_text.BOOT
-    ops_text.python = lambda: python
+    ops_text.python = lambda _sandbox: python
     ops_text.BOOT = ("import time\ntime.sleep(0.4)\n" + boot) if traag else boot
     key = "de-sleutel-van-de-handdruk-" * 2
     sock = map_ / f"w{len(naam)}{int(traag)}.sock"
@@ -148,22 +198,37 @@ async def vorm(api: Path, map_: Path, naam: str, python: str, traag: bool) -> di
     return uit
 
 
+def ptrace_scope() -> int | None:
+    try:
+        return int(Path("/proc/sys/kernel/yama/ptrace_scope").read_text())
+    except (OSError, ValueError):
+        return None
+
+
 def main() -> int:
     api = Path(sys.argv[1])
+    basis = sys.argv[sys.argv.index("--kopie-map") + 1] if "--kopie-map" in sys.argv else None
     sys.path.insert(0, str(api))
     if os.geteuid() == 0:
         print(json.dumps({"fout": "niet als root: root mag alles in /proc"}))
         return 1
+    from app.media.worker.ops import text as ops_text
+
     ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0)  # zoals de worker zelf
-    map_ = Path(tempfile.mkdtemp(prefix="handdruk-tekst-"))
+    map_ = Path(tempfile.mkdtemp(prefix="handdruk-tekst-", dir=basis))
     try:
         kopie_ = kopie(map_)
-        uit: dict = {"uid": os.getuid()}
-        for naam, python, traag in (
+        uit: dict = {"uid": os.getuid(), "ptrace_scope": ptrace_scope()}
+        vormen = [
             ("leesbaar, traag", sys.executable, True),
             ("kopie, traag", kopie_, True),
             ("kopie", kopie_, False),
-        ):
+        ]
+        echt = ops_text.copy_path()
+        uit["python-tekst"] = str(echt) if ops_text.unreadable(echt) else None
+        if uit["python-tekst"]:
+            vormen += [("python-tekst, traag", str(echt), True), ("python-tekst", str(echt), False)]
+        for naam, python, traag in vormen:
             uit[naam] = asyncio.run(vorm(api, map_, naam, python, traag))
     finally:
         shutil.rmtree(map_, ignore_errors=True)

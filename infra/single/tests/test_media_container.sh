@@ -7,8 +7,8 @@
 #
 #   MEDIA_TEST_IMAGE   het image van de app (standaard platform:local)
 #   MEDIA_TEST_FFMPEG  het begin van de versie die de zelftest eist (standaard 7.1.)
-#   MEDIA_TEST_OUT     een map voor selftest.json, handdruk.json en zoekbench.log (de
-#                      artifact van CI); leeg: nergens
+#   MEDIA_TEST_OUT     een map voor selftest.json, handdruk.json, handdruk_tekst.json en
+#                      zoekbench.log (de artifact van CI); leeg: nergens
 #   MEDIA_TEST_COMPOSE nog een compose-bestand, als laatste (lokaal: bijv. een lagere nofile
 #                      voor een sandbox die 65536 niet geeft); leeg in CI
 #
@@ -48,6 +48,9 @@
 # - zoeken (fase 6, spike S11 en S9): de handdruk van het tekst-kind van Keuze 17 als media, met
 #   een tweede proces van media dat /proc/<pid>/fd, mem en ptrace van het kind probeert, vóór en
 #   na "klaar" (api/tests/search/handdruk.py; nooit de inhoud van een blob via /proc/<pid>/fd);
+#   de echte python-tekst (0711 van root) en het tekst-kind daaruit door een worker als media:
+#   /proc/<kind>/fd en mem geven alleen EACCES (api/tests/extract/handdruk_tekst.py, review golf 1
+#   van fase 6, F2 en S5);
 #   en tools/zoekbench/bench.py in de container van de app (`python -I - --los`), binnen 5
 #   minuten en daarna niets meer in /data/cache. MEDIA_TEST_OUT krijgt handdruk.json en
 #   zoekbench.log;
@@ -1065,6 +1068,61 @@ else
 fi
 if [ -n "$(in_media sh -c 'ls -d /run/media/handdruk-* 2> /dev/null' || true)" ]; then
   fout "S11: de kopie van python bleef achter in /run/media"
+fi
+
+# Review golf 1 van fase 6 (F2, S5; Keuze 17): het tekst-kind start in het image alleen uit
+# /opt/venv/bin/python-tekst, 0711 van root (de regel in de Dockerfile; de zelftest hierboven
+# controleert hem ook). Dan de echte opdracht text door een worker als media, met een tweede
+# proces van media dat vanaf de eerste milliseconde /proc/<kind>/fd en /proc/<kind>/mem probeert
+# (api/tests/extract/handdruk_tekst.py, de vormen "python-tekst"): alleen EACCES.
+kopie="$(in_media stat -c '%U %a' /opt/venv/bin/python-tekst 2>&1 | tr -d '\r' || true)"
+if [ "$kopie" = "root 711" ]; then
+  goed "python-tekst: $kopie"
+else
+  fout "python-tekst: ${kopie:-niets} (moet root 711 zijn)"
+fi
+if in_media python -I - /srv --kopie-map /run/media < "$TESTS/extract/handdruk_tekst.py" \
+  > "$WORK/handdruk_tekst.json" 2> "$WORK/handdruk_tekst.err"; then
+  rc=0
+else
+  rc=$?
+fi
+if [ -n "$OUT" ]; then
+  mask < "$WORK/handdruk_tekst.json" > "$OUT/handdruk_tekst.json"
+fi
+cat > "$WORK/handdruk_tekst_kort.py" << 'PY'
+import json, sys
+try:
+    d = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+except (ValueError, IndexError):
+    print("geen uitvoer")
+    sys.exit(1)
+fout = []
+if d.get("uid") != 10002:
+    fout.append(f"uid {d.get('uid')}")
+if not d.get("python-tekst"):
+    fout.append("geen python-tekst die media niet mag lezen")
+for v in ("python-tekst, traag", "python-tekst"):
+    r = d.get(v)
+    if r is None:
+        fout.append(f"{v}: ontbreekt")
+        continue
+    if r["aantal geopend"] or r["mem geopend"]:
+        fout.append(f"{v}: geopend fd {r['aantal geopend']}, mem {r['mem geopend']}")
+    if not set(r["fouten"]) <= {"EACCES"} or not r["fouten"].get("EACCES"):
+        fout.append(f"{v}: fouten {r['fouten']}")
+    if not r["tekst klopt"] or r["rc"] != 0:
+        fout.append(f"{v}: tekst klopt {r['tekst klopt']}, rc {r['rc']}")
+r = d.get("leesbaar, traag", {})
+print("; ".join(fout) if fout else (
+    f"alleen EACCES uit python-tekst (ptrace_scope {d.get('ptrace_scope')}; een leesbare "
+    f"python: mem {r.get('mem geopend')}, na dicht {r.get('mem na dicht')})"))
+sys.exit(1 if fout else 0)
+PY
+if tekst="$(python3 -I "$WORK/handdruk_tekst_kort.py" "$WORK/handdruk_tekst.json" 2>&1)" && [ "$rc" = 0 ]; then
+  goed "het tekst-kind uit python-tekst: $tekst"
+else
+  fout "het tekst-kind uit python-tekst (code $rc): $tekst $(tail -n 3 "$WORK/handdruk_tekst.err" | mask)"
 fi
 
 # S9: de zoekbench in de container van de app, zoals bij een gebruiker (`dc exec -T platform

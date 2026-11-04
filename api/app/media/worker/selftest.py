@@ -18,6 +18,8 @@ De afscherming:
 - ffmpeg en ffprobe zijn 0711 van root: de worker kan ze niet lezen, dus elk kind is niet
   dumpbaar (V2). Ook nice en ionice (het voorvoegsel van args.niceness: tussen hun exec en die
   van ffmpeg heeft het kind de fd's van de job al, review golf 1 S1) en env (de healthcheck);
+- python-tekst naast de python van de worker (het tekst-kind van fase 6, Z2) is 0711 van root en
+  niet te lezen: anders is dat kind tot zijn prctl dumpbaar (review golf 1 van fase 6, F2);
 - een kind kan /proc/<worker>/fd en /proc/<worker>/environ niet lezen (PR_SET_DUMPABLE 0; in
   environ stond de sleutel van hello, review S1);
 - geen capabilities (CapEff 0), NoNewPrivs 1, geen netwerk (alleen lo, en een verbinding met
@@ -63,6 +65,7 @@ from app.media import wire
 from app.media.worker import args as A
 from app.media.worker import run as R
 from app.media.worker.ops import caps as caps_op
+from app.media.worker.ops import text as text_op
 from app.media.worker.server import Config, Worker
 
 MEDIA_UID = 10002
@@ -218,6 +221,24 @@ def _binaries(report: Report) -> None:
         report.add(f"{name} 0711 van root", ok, detail, sandbox=True)
 
 
+def _text_python(report: Report) -> None:
+    """Fase 6, Z2 (Keuze 17, review golf 1 F2): het tekst-kind start uit python-tekst naast de
+    python van de worker, 0711 van root, en de worker kan hem niet lezen. Zonder die kopie zou
+    het kind uit een leesbare python starten en tot zijn prctl dumpbaar zijn (ops/text.py)."""
+    name = f"{text_op.COPY_NAME} 0711 van root"
+    copy = text_op.copy_path()
+    try:
+        info = os.stat(copy)
+    except OSError:
+        report.add(name, False, f"{copy} niet gevonden", sandbox=True)
+        return
+    mode = stat.S_IMODE(info.st_mode)
+    readable = os.access(copy, os.R_OK)
+    ok = stat.S_ISREG(info.st_mode) and mode == 0o711 and info.st_uid == 0 and not readable
+    detail = "" if ok else f"modus {mode:04o}, uid {info.st_uid}, leesbaar: {readable}"
+    report.add(name, ok, detail, sandbox=True)
+
+
 def _no_route() -> str:
     """Met alleen lo faalt een verbinding naar buiten meteen (ENETUNREACH): "" als dat zo is."""
     try:
@@ -294,6 +315,7 @@ async def _peek(report: Report) -> None:
 async def isolation(report: Report, *, socket_path: Path | None = None) -> None:
     _container(report, socket_path)
     _binaries(report)
+    _text_python(report)
     _reopen(report)
     await _peek(report)
 
