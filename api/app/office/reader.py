@@ -24,6 +24,8 @@ read(path) -> {"doc": OfficeDoc, "meta": {...}, "thumbnail": bytes | None}. Offi
   {"type": "sheet", "sheets": [{"name", "rows": [[str]], "truncated": bool}], "truncated"}
   {"type": "slides", "size": [w_pt, h_pt] | None, "slides": [{"title", "bullets":
      [{"text", "level"}]}], "truncated": bool}
+
+all_text() is de stand "alle tekst" voor de zoekindex (fase 6, Z2): onderaan dit bestand.
 """
 
 import json
@@ -32,6 +34,7 @@ import re
 import signal
 import zipfile
 import zlib
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -102,11 +105,24 @@ class TooSlow(Exception):
     pass
 
 
+class XmlRefused(Unreadable):
+    """Een DOCTYPE of entiteit (de "billion laughs"); code xml_refused (fase 6, Z2)."""
+
+    code = "xml_refused"
+
+
+class ZipLimit(Unreadable):
+    """Te veel onderdelen, te groot uitgepakt of te sterk gepakt (de stand "alle tekst");
+    code zip_limit."""
+
+    code = "zip_limit"
+
+
 # --- XML in stukken lezen --------------------------------------------------------------
 
 
 def _refuse(*_args: Any) -> None:
-    raise Unreadable("DOCTYPE of entiteit in een kantoordocument")
+    raise XmlRefused("DOCTYPE of entiteit in een kantoordocument")
 
 
 def sax(stream: BinaryIO, start, end=None, text=None) -> None:
@@ -1291,3 +1307,364 @@ def read(source: Path, seconds: float = READ_SECONDS) -> dict[str, Any]:
 
 def doc_type(kind: str) -> str:
     return DOC_TYPES[kind]
+
+
+# --- de stand "alle tekst" (fase 6, Z2; bouwontwerp Keuze 17) -------------------------------
+#
+# Voor de zoekindex: alle tekst, zonder opmaak en zonder de grenzen op blokken, rijen en dia's
+# van hierboven. Ook kop- en voetteksten, voetnoten en eindnoten, sprekersnotities, tekstvakken
+# en alle cellen van elk werkblad. Niet: opmerkingen, verwijderde tekst (wijzigingen bijhouden),
+# veldcodes, en de Fallback van een tekstvak (die herhaalt de Choice).
+#
+# all_text(bron, add, check, on_meta): eerst on_meta(meta) met titel, auteur en onderwerp, dan
+# add(tekst) per stuk en check() tussen de onderdelen. Een fout uit add of check (vol, de klok)
+# gaat gewoon naar boven: het lezen stopt daar. Grenzen, elk een ZipLimit: hooguit 2.000
+# onderdelen in het zip-bestand, elk gelezen onderdeel hooguit 50 MB uitgepakt en samen hooguit
+# 200 MB (ook geteld terwijl er gelezen wordt, tegen een liegend zip-bestand), en een onderdeel
+# boven 1 MB hooguit 100 keer zo groot als gepakt. Een DOCTYPE of entiteit: XmlRefused.
+
+ALL_PARTS = 2000
+ALL_PART_BYTES = 50 * 1024 * 1024
+ALL_TOTAL_BYTES = 200 * 1024 * 1024
+ALL_RATIO = 100
+ALL_RATIO_FROM = 1024 * 1024
+ALL_SHARED_CHARS = 4 * 1024 * 1024  # gedeelde tekst van een werkblad, samen
+AllAdd = Callable[[str], None]
+
+
+class _Counted:
+    """Een gelezen onderdeel dat meetelt voor de grens van alle onderdelen samen."""
+
+    def __init__(self, stream: BinaryIO, pkg: "_AllPackage"):
+        self.stream = stream
+        self.pkg = pkg
+
+    def read(self, size: int = -1) -> bytes:
+        data = self.stream.read(size)
+        self.pkg.read_bytes += len(data)
+        if self.pkg.read_bytes > ALL_TOTAL_BYTES:
+            raise ZipLimit("samen meer dan 200 MB uitgepakt")
+        return data
+
+
+class _AllPackage(Package):
+    def __init__(self, archive: zipfile.ZipFile):
+        if len(archive.infolist()) > ALL_PARTS:
+            raise ZipLimit("meer dan 2.000 onderdelen")
+        super().__init__(archive)
+        self.read_bytes = 0
+
+    def part(self, name: str):
+        info = self.names.get(name)
+        if info is None:
+            raise Unreadable(f"{name} ontbreekt")
+        if info.file_size > ALL_PART_BYTES:
+            raise ZipLimit(f"{name} is uitgepakt groter dan 50 MB")
+        if info.file_size > ALL_RATIO_FROM and info.file_size > ALL_RATIO * max(
+            1, info.compress_size
+        ):
+            raise ZipLimit(f"{name} is meer dan 100 keer gepakt")
+        return _Counted(self.zip.open(info), self)
+
+
+class _Collect:
+    """sax-handlers die de tekst in `texts` doorgeven. skip: elementen waarvan alles eronder
+    wegvalt (ook een functie van tag en attributen); newline_end en newline_start: een
+    regeleinde; space: een spatie."""
+
+    def __init__(
+        self,
+        add: AllAdd,
+        *,
+        texts: set[str] | None = None,
+        skip: set[str] = frozenset(),
+        skip_if: Callable[[str, dict[str, str]], bool] | None = None,
+        newline_end: set[str] = frozenset(),
+        newline_start: set[str] = frozenset(),
+        space: set[str] = frozenset(),
+    ):
+        self.add = add
+        self.texts = texts  # None: alle tekst telt (binnen `inside` als dat er is)
+        self.skip = skip
+        self.skip_if = skip_if
+        self.newline_end = newline_end
+        self.newline_start = newline_start
+        self.space = space
+        self.skipping = 0
+        self.inside = 0
+
+    def start(self, tag: str, attrs: dict[str, str]) -> None:
+        if self.skipping:
+            self.skipping += 1
+            return
+        if tag in self.skip or (self.skip_if is not None and self.skip_if(tag, attrs)):
+            self.skipping = 1
+            return
+        if self.texts is not None and tag in self.texts:
+            self.inside += 1
+        if tag in self.newline_start:
+            self.add("\n")
+        elif tag in self.space:
+            self.add(" ")
+
+    def end(self, tag: str) -> None:
+        if self.skipping:
+            self.skipping -= 1
+            return
+        if self.texts is not None and tag in self.texts:
+            self.inside -= 1
+        if tag in self.newline_end:
+            self.add("\n")
+
+    def text(self, data: str) -> None:
+        if not self.skipping and (self.texts is None or self.inside > 0):
+            self.add(data)
+
+    def run(self, stream) -> None:
+        sax(stream, self.start, self.end, self.text)
+
+
+def _all_rels(pkg: _AllPackage, part: str, *suffixes: str) -> list[str]:
+    """De onderdelen bij `part` met een relatie die op een van de suffixes eindigt, in de
+    volgorde van het rels-bestand."""
+    return [
+        path
+        for _id, (kind, path) in pkg.rels(part).items()
+        if kind.endswith(suffixes) and pkg.has(path)
+    ]
+
+
+def _main_part(pkg: _AllPackage, fallback: str) -> str:
+    for kind, path in pkg.rels("").values():
+        if kind.endswith("/officeDocument") and pkg.has(path):
+            return path
+    return fallback
+
+
+def _all_docx(pkg: _AllPackage, add: AllAdd, check: Callable[[], None]) -> None:
+    main = _main_part(pkg, "word/document.xml")
+    parts = [main]
+    for suffix in ("/header", "/footer", "/footnotes", "/endnotes"):
+        parts += [p for p in _all_rels(pkg, main, suffix) if p not in parts]
+    for part in parts:
+        check()
+        _Collect(
+            add,
+            texts={f"{W}t"},
+            skip={f"{MC}Fallback", f"{W}moveFrom", f"{W}del"},
+            newline_end={f"{W}p", f"{W}tr"},
+            newline_start={f"{W}br", f"{W}cr"},
+            space={f"{W}tab", f"{W}tc"},
+        ).run(pkg.part(part))
+
+
+def _all_xlsx(pkg: _AllPackage, add: AllAdd, check: Callable[[], None]) -> None:
+    book = _main_part(pkg, "xl/workbook.xml")
+    rels = pkg.rels(book)
+    shared: list[str] = []
+    for kind, path in rels.values():
+        if kind.endswith("/sharedStrings") and pkg.has(path):
+            shared = _all_shared(pkg, path)
+            break
+    root = pkg.xml(book)
+    sheets = []
+    if root is not None:
+        for sheet in root.iter(f"{S}sheet"):
+            path = rels.get(sheet.get(f"{R}id") or "", ("", ""))[1]
+            if path and pkg.has(path):
+                sheets.append((sheet.get("name") or "", path))
+    for name, path in sheets:
+        check()
+        add(name + "\n")
+        _all_sheet(pkg, path, shared, add)
+
+
+def _all_shared(pkg: _AllPackage, path: str) -> list[str]:
+    """De gedeelde tekst; na ALL_SHARED_CHARS tekens samen blijft de rest leeg."""
+    strings: list[str] = []
+    state = {"parts": None, "in_t": 0, "skip": 0, "chars": 0}
+
+    def start(tag: str, _attrs: dict[str, str]) -> None:
+        if tag == f"{S}si":
+            state["parts"] = []
+        elif tag == f"{S}rPh":
+            state["skip"] += 1  # de uitspraak (Japans), geen tekst van het blad
+        elif tag == f"{S}t":
+            state["in_t"] += 1
+
+    def end(tag: str) -> None:
+        if tag == f"{S}si":
+            text = "".join(state["parts"] or [])
+            if state["chars"] + len(text) > ALL_SHARED_CHARS:
+                text = ""
+            state["chars"] += len(text)
+            strings.append(text)
+            state["parts"] = None
+        elif tag == f"{S}rPh":
+            state["skip"] -= 1
+        elif tag == f"{S}t":
+            state["in_t"] -= 1
+
+    def text(data: str) -> None:
+        if state["in_t"] and not state["skip"] and state["parts"] is not None:
+            state["parts"].append(data)
+
+    sax(pkg.part(path), start, end, text)
+    return strings
+
+
+def _all_sheet(pkg: _AllPackage, path: str, shared: list[str], add: AllAdd) -> None:
+    cell: dict[str, Any] = {"type": None, "value": [], "in": None}
+
+    def start(tag: str, attrs: dict[str, str]) -> None:
+        if tag == f"{S}c":
+            cell["type"] = attrs.get("t")
+            cell["value"] = []
+        elif tag == f"{S}v":
+            cell["in"] = "v"
+        elif tag == f"{S}t" and cell["type"] == "inlineStr":
+            cell["in"] = "t"
+
+    def end(tag: str) -> None:
+        if tag == f"{S}c":
+            value = "".join(cell["value"]).strip()
+            kind = cell["type"]
+            if kind == "s":
+                index = int(value) if value.isdigit() else -1
+                value = shared[index] if 0 <= index < len(shared) else ""
+            elif kind in ("b", "e"):
+                value = ""  # waar/onwaar en #DEEL/0! zijn geen tekst om op te zoeken
+            if value:
+                add(value + " ")
+            cell["type"] = None
+        elif tag in (f"{S}v", f"{S}t"):
+            cell["in"] = None
+        elif tag == f"{S}row":
+            add("\n")
+
+    def text(data: str) -> None:
+        if cell["in"] is not None:
+            cell["value"].append(data)
+
+    sax(pkg.part(path), start, end, text)
+
+
+def _slide_number(tag: str, attrs: dict[str, str]) -> bool:
+    return tag == f"{A}fld" and attrs.get("type") == "slidenum"
+
+
+def _all_pptx(pkg: _AllPackage, add: AllAdd, check: Callable[[], None]) -> None:
+    main = _main_part(pkg, "ppt/presentation.xml")
+    root = pkg.xml(main)
+    if root is None:
+        raise Unreadable("ppt/presentation.xml ontbreekt")
+    rels = pkg.rels(main)
+    for sld in root.iter(f"{P}sldId"):
+        path = rels.get(sld.get(f"{R}id") or "", ("", ""))[1]
+        if not path or not pkg.has(path):
+            continue
+        # De dia, dan zijn sprekersnotities
+        for part in [path, *_all_rels(pkg, path, "/notesSlide")]:
+            check()
+            _Collect(
+                add,
+                texts={f"{A}t"},
+                skip={f"{MC}Fallback"},
+                skip_if=_slide_number,
+                newline_end={f"{A}p"},
+                newline_start={f"{A}br"},
+                space={f"{A}tc"},
+            ).run(pkg.part(part))
+
+
+# ODF: alle tekst binnen office:body (content.xml) en binnen de kop- en voetteksten van de
+# opmaakpagina's (styles.xml). Opmerkingen, bijgehouden wijzigingen en het nummer van een
+# voetnoot tellen niet; de voetnoot zelf en de sprekersnotities wel.
+ODF_SKIP = {
+    f"{OFFICE}annotation",
+    f"{OFFICE}annotation-end",
+    f"{TEXT}tracked-changes",
+    f"{TEXT}note-citation",
+}
+ODF_NEWLINE_END = {f"{TEXT}p", f"{TEXT}h", f"{TABLE}table-row"}
+ODF_NEWLINE_START = {f"{TEXT}line-break"}
+ODF_SPACE = {f"{TEXT}tab", f"{TEXT}s", f"{TABLE}table-cell", f"{TEXT}note"}
+ODF_HEADERS = {
+    f"{STYLE}{part}{side}" for part in ("header", "footer") for side in ("", "-left", "-first")
+}
+
+
+def _all_odf(pkg: _AllPackage, add: AllAdd, check: Callable[[], None]) -> None:
+    check()
+    _Collect(
+        add,
+        texts={f"{OFFICE}body"},
+        skip=ODF_SKIP,
+        newline_end=ODF_NEWLINE_END,
+        newline_start=ODF_NEWLINE_START,
+        space=ODF_SPACE,
+    ).run(pkg.part("content.xml"))
+    if pkg.has("styles.xml"):
+        check()
+        _Collect(
+            add,
+            texts=ODF_HEADERS,
+            skip=ODF_SKIP,
+            newline_end=ODF_NEWLINE_END,
+            newline_start=ODF_NEWLINE_START,
+            space=ODF_SPACE,
+        ).run(pkg.part("styles.xml"))
+
+
+ALL_READERS = {
+    "docx": _all_docx,
+    "xlsx": _all_xlsx,
+    "pptx": _all_pptx,
+    "odt": _all_odf,
+    "ods": _all_odf,
+    "odp": _all_odf,
+}
+
+
+def _subject(pkg: Package, kind: str) -> str | None:
+    if kind in ("odt", "ods", "odp"):
+        root = pkg.xml("meta.xml")
+        found = root.find(f".//{DC}subject") if root is not None else None
+    else:
+        root = pkg.xml("docProps/core.xml")
+        found = root.find(f"{DC}subject") if root is not None else None
+    return _clean(found.text) if found is not None else None
+
+
+def all_text(
+    source: Path | BinaryIO,
+    add: AllAdd,
+    check: Callable[[], None],
+    on_meta: Callable[[dict[str, str]], None],
+) -> str:
+    """De stand "alle tekst"; zie de uitleg hierboven. Geeft de soort (docx, …, odp)."""
+    try:
+        with zipfile.ZipFile(source) as archive:
+            pkg = _AllPackage(archive)
+            kind = detect(pkg)
+            meta = odf_meta(pkg) if kind in ("odt", "ods", "odp") else ooxml_meta(pkg)
+            found = {k: str(meta[k]) for k in ("title", "author") if meta.get(k)}
+            subject = _subject(pkg, kind)
+            if subject:
+                found["subject"] = subject
+            on_meta(found)
+            ALL_READERS[kind](pkg, add, check)
+            return kind
+    except (FileNotFoundError, PermissionError, MemoryError):
+        raise
+    except (
+        zipfile.BadZipFile,
+        zipfile.LargeZipFile,
+        KeyError,
+        EOFError,
+        ValueError,
+        NotImplementedError,
+        zlib.error,
+        OSError,
+    ) as e:
+        raise Unreadable(str(e)) from e

@@ -602,6 +602,43 @@ async def render(settings: Settings, request: dict[str, Any], cwd: Path) -> dict
     return result
 
 
+# --- tekst lezen zonder media (fase 6, Z2; bouwontwerp Keuze 17) ----------------------------
+
+TEXT_MEMORY_MB = 1024  # RLIMIT_AS van het renderproces: 1 GiB
+TEXT_CPU_S = 60  # RLIMIT_CPU per renderproces
+TEXT_NICE = 19  # achtergrondwerk: de app, de previews en het afspelen gaan voor
+
+
+async def render_text(
+    settings: Settings, request: dict[str, Any], cwd: Path, *, cpu_s: int = TEXT_CPU_S
+) -> tuple[int, dict[str, Any] | None]:
+    """De terugval van de stap text als media uit staat (app/extract/step.py): het
+    renderproces in mode text, zoals een preview (een kind van de forkserver als die draait,
+    anders een eigen proces), met RLIMIT_AS 1 GiB, RLIMIT_CPU cpu_s en nice 19. De stukken
+    komen in het bestand request["out"] (app/extract/frame.py). Geeft (exitcode, antwoord):
+    na een crash of RLIMIT_CPU de exitcode (-signaal) en None; wat er tot dan in out staat,
+    telt nog. Een forkserver die wegvalt: jobs.JobError, zoals bij render()."""
+    request = {
+        **request,
+        "mode": "text",
+        "memory_mb": TEXT_MEMORY_MB,
+        "cpu_s": cpu_s,
+        "nice": TEXT_NICE,
+    }
+    server = await _forkserver()
+    if server is not None:
+        code, out, _err = await _forked(server, request, cwd)
+    else:
+        code, out, _err = await _spawn(request, cwd)
+    if code != 0 or len(out) > OUTPUT_BYTES:
+        return code, None
+    try:
+        result = json.loads(out)
+    except ValueError:
+        return code, None
+    return code, result if isinstance(result, dict) else None
+
+
 async def make(settings: Settings, payload: dict[str, Any]) -> None:
     """De taak: preview maken van één blob. Van een foto eerst alleen de thumbnail (render met
     first); de grote maten komen dan met preview.large (make_large)."""

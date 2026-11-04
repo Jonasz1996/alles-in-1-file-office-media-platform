@@ -3,8 +3,8 @@
 Nieuwe inhoud meldt zich na de commit bij search.hooks.blob_added; kopiëren roept photo_copy in
 dezelfde transactie; de prullenbak en het wissen van een gebruiker wissen nodes via de ene
 helper; na preview.ready komt wie zich aanmeldde aan de beurt; render.py kent de ingangen text
-en ocr_page (stubs). De rijen index en ocr staan in test_jobs_lanes.py, de log in
-test_log_hiding.py, en db-backup en de stubs van de cli in test_cli_db.py.
+(sinds Z2 echt) en ocr_page (een stub tot X1). De rijen index en ocr staan in test_jobs_lanes.py,
+de log in test_log_hiding.py, en db-backup en de stubs van de cli in test_cli_db.py.
 
 Z0b (Keuze 65): hier dat niemand zich met register_large aanmeldt, en (na de review) ook niet met
 register_switch of register_admin. Wat er na de grote preview gebeurt, staat in test_previews.py:
@@ -14,6 +14,7 @@ e2e/slim.sh geen Pillow (hij start met -I en zonder PYTHONPATH).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import subprocess
@@ -27,6 +28,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import previews
 from app.db import get_engine
+from app.extract import frame
 from app.models import Node
 from app.search import hooks, purge
 
@@ -305,18 +307,28 @@ def _render(request: dict) -> dict:
     return json.loads(done.stdout)
 
 
-def test_render_kent_text_en_ocr_page_maar_leest_nog_niets(tmp_path):
-    """De ingangen van §3.5: text geeft "none" tot Z2, ocr_page tot X1."""
+def test_render_leest_text_en_ocr_page_nog_niet(tmp_path):
+    """De ingangen van §3.5: text leest sinds Z2 (hier mode text met paden, de terugval zonder
+    media; tests/extract heeft de rest), ocr_page geeft "none" tot X1."""
     source = tmp_path / "doc.txt"
     source.write_text("Er staat tekst in dit bestand.")
-    out = _render({"mode": "text", "source": str(source), "mime": "text/plain"})
-    assert out == {
-        "state": "none",
-        "chars": 0,
-        "truncated": False,
-        "scan_pages": [],
-        "meta": "",
-        "code": None,
-    }
+    uit = tmp_path / "uit"
+    items = [
+        {"path": str(source), "kind": "plain"},
+        {"path": str(tmp_path / "weg"), "kind": "plain"},
+    ]
+    out = _render({"mode": "text", "items": items, "out": str(uit), "max_chars": 1000})
+    assert out == {"state": "ready", "done": 2}
+
+    async def lees() -> list[frame.Found | None]:
+        reader = asyncio.StreamReader()
+        reader.feed_data(uit.read_bytes())
+        reader.feed_eof()
+        return [await frame.read(reader, i, 1000) for i in range(3)]
+
+    first, second, end = asyncio.run(lees())
+    assert first == frame.Found(0, "done", False, [], "", None, "Er staat tekst in dit bestand.")
+    assert second == frame.Found(1, "failed", False, [], "", None, "")
+    assert end is None
     page = _render({"mode": "ocr_page", "source": str(source), "page": 1})
     assert page == {"state": "none", "chars": 0, "truncated": False, "code": "ocr_missing"}

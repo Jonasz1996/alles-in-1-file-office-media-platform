@@ -34,6 +34,7 @@ import os
 import re
 import resource
 import signal
+import socket
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -365,3 +366,105 @@ async def run(
     if child.stdout_overflow:
         raise ChildError("te veel uitvoer")
     return done, bytes(child.stdout), child.tail()
+
+
+# --- de handdruk van het tekst-kind (fase 6, Z2; bouwontwerp Keuze 17) -----------------------
+#
+# Het kind van Op.TEXT (python, `app.render text`) leest documenten van anderen. Bij de start
+# krijgt het alleen een socket op fd 3: geen blob, geen pipe. Het zet zichzelf op niet-dumpbaar
+# (PR_SET_DUMPABLE 0), zegt "klaar", en krijgt dan pas de fd's van de blobs en de pipe naar de
+# app via SCM_RIGHTS. Zo kan een ander proces van dezelfde uid (een gekraakte ffmpeg) ze niet
+# via /proc/<pid>/fd openen. In het image is python voor dit kind ook nog een kopie die niemand
+# mag lezen (0711, root): dan is het kind vanaf zijn exec niet dumpbaar (spike S11). stdin,
+# stdout en stderr zijn /dev/null; fouten komen over de socket.
+#
+# De grenzen: die van limits_for, plus RLIMIT_CPU (zacht cpu_s: SIGXCPU, een seconde later hard:
+# SIGKILL), nice 19 en de idle IO-klasse. Die twee zet het kind zelf vóór de exec, zonder nice
+# of ionice ervoor: een leesbaar programma vóór python zou weer een venster geven.
+
+READY = b"klaar"
+HANDSHAKE_S = 10.0
+IOPRIO_CLASS_IDLE = 3 << 13  # IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0)
+IOPRIO_WHO_PROCESS = 1
+# De syscall ioprio_set per architectuur (os kent hem niet); onbekend: geen idle IO-klasse
+_IOPRIO_SET = {"x86_64": 251, "aarch64": 30, "i686": 289, "armv7l": 314}.get(os.uname().machine)
+
+
+def _handshake_preexec(
+    fd: int, memory_mb: int, cpu_s: int, nice: int, parent: int
+) -> Callable[[], None]:
+    base = _preexec([fd], limits_for(memory_mb), parent)
+
+    def run() -> None:
+        base()
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_s, cpu_s + 1))
+        os.setpriority(os.PRIO_PROCESS, 0, nice)
+        if _IOPRIO_SET is not None:
+            _LIBC.syscall(
+                ctypes.c_long(_IOPRIO_SET),
+                ctypes.c_long(IOPRIO_WHO_PROCESS),
+                ctypes.c_long(0),
+                ctypes.c_long(IOPRIO_CLASS_IDLE),
+            )
+
+    return run
+
+
+def spawn_handshake(
+    argv: Sequence[str], *, memory_mb: int, cpu_s: int, nice: int = 19
+) -> tuple[Child, socket.socket]:
+    """Start een kind met alleen een socket op fd 3; geeft het kind en onze kant van de
+    socket. Daarna handshake() voor de fd's."""
+    ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        popen = subprocess.Popen(
+            list(argv),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=False,
+            preexec_fn=_handshake_preexec(theirs.fileno(), memory_mb, cpu_s, nice, os.getpid()),
+            start_new_session=True,
+            env=environment(),
+            cwd="/",
+        )
+    except BaseException:
+        ours.close()
+        raise
+    finally:
+        theirs.close()
+    return Child(popen, None, 0), ours
+
+
+async def handshake(
+    sock: socket.socket, fds: Sequence[int], message: bytes, *, limit_s: float = HANDSHAKE_S
+) -> None:
+    """Wacht op "klaar" van het kind en stuur dan de vraag met de fd's. ChildError als het kind
+    iets anders zegt of eerder stopt; TimeoutError na limit_s."""
+    loop = asyncio.get_running_loop()
+    sock.setblocking(False)
+    got = b""
+    async with asyncio.timeout(limit_s):
+        while len(got) < len(READY):
+            chunk = await loop.sock_recv(sock, len(READY) - len(got))
+            if not chunk:
+                raise ChildError("het kind stopte vóór klaar")
+            got += chunk
+    if got != READY:
+        raise ChildError("het kind zei geen klaar")
+    # Klein (hooguit 64 KiB) op een verse socketpair: past altijd in de buffer
+    socket.send_fds(sock, [message], list(fds))
+
+
+async def report(sock: socket.socket, *, limit_s: float = 1.0) -> bytes:
+    """Wat het kind na zijn werk over de socket zei (hooguit 4 KiB), na zijn einde."""
+    loop = asyncio.get_running_loop()
+    data = b""
+    with contextlib.suppress(TimeoutError, OSError):
+        async with asyncio.timeout(limit_s):
+            while len(data) < 4096:
+                chunk = await loop.sock_recv(sock, 4096 - len(data))
+                if not chunk:
+                    break
+                data += chunk
+    return data

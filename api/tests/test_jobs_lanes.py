@@ -381,7 +381,13 @@ def test_de_bestaande_soorten_veranderen_niet():
     # Behalve de previews zelf (hun eigen rij, met de tweede ronde erachter): zoals fase 3 en 4
     assert jobs._kinds["preview"].lane == jobs._kinds["preview.large"].lane == "preview"
     assert (jobs._kinds["preview"].rank, jobs._kinds["preview.large"].rank) == (0, 1)
-    for t in known - {"preview", "preview.large"}:
+    # Fase 6 (Z2): de pomp van de analyse heeft de rij index, met een eigen grens per batch;
+    # de backfill (per 500 blobs, Keuze 20) ook, met een eigen grens per stuk
+    assert jobs._kinds["analysis.index"].lane == "index"
+    assert jobs._kinds["analysis.index"].timeout == 3600
+    assert jobs._kinds["analysis.backfill"].lane == "index"
+    assert jobs._kinds["analysis.backfill"].timeout == 600
+    for t in known - {"preview", "preview.large", "analysis.index", "analysis.backfill"}:
         assert jobs._kinds[t].lane == "default", t
         assert jobs._kinds[t].timeout is None, t
     assert jobs.lane_of("bestaat.niet") == "default"

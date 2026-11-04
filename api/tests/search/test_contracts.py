@@ -24,7 +24,7 @@ from app.config import Settings
 from app.db import get_engine
 from app.extract.result import Extracted
 from app.geo.types import Location, Place
-from app.models import BlobText, PhotoPref, User
+from app.models import Analysis, Blob, BlobText, Job, PhotoPref, User
 from app.people.types import AlbumRuleIn
 from app.search import deadline, engine, filters, hooks, limits, query
 from app.search import types as t
@@ -249,10 +249,37 @@ def test_een_stap_meldt_zich_een_keer_aan():
         analysis.register_step(analysis.Step.TEXT, "index", lambda sha, mime: True, run)
 
 
-async def test_queue_is_van_z2(settings):
+async def test_queue_zet_de_stap_klaar_en_wekt_de_rij(settings):
+    """Sinds Z2 (tot dan NotImplementedError): queue zet de stap op wait, of op skip als hij
+    niet bij de inhoud past, en zet de pomp van zijn rij klaar. Een stap die niemand aanmeldde
+    en een onbekende inhoud slaat hij over. De rest: tests/test_analysis_versions.py."""
+
+    async def run(settings, sha):
+        return None
+
+    pdf, png = "a" * 64, "b" * 64
+    analysis.register_step(
+        analysis.Step.TEXT, "index", lambda sha, mime: mime == "application/pdf", run
+    )
     async with sessions(settings)() as db:
-        with pytest.raises(NotImplementedError):
-            await analysis.queue(db, "a" * 64, [analysis.Step.TEXT], owner=None)
+        db.add_all(
+            [
+                Blob(sha256=pdf, size=1, mime="application/pdf"),
+                Blob(sha256=png, size=1, mime="image/png"),
+            ]
+        )
+        await db.commit()
+        for sha in (pdf, png, "c" * 64):
+            await analysis.queue(db, sha, [analysis.Step.TEXT, analysis.Step.HASH], owner=None)
+        await db.commit()
+        rows = (
+            await db.execute(
+                sa.select(Analysis.blob_sha, Analysis.step, Analysis.state, Analysis.version)
+            )
+        ).all()
+        pumps = (await db.execute(sa.select(Job.type, Job.key, Job.status))).all()
+    assert sorted(rows) == [(pdf, "text", "wait", 1), (png, "text", "skip", 1)]
+    assert pumps == [("analysis.index", "analysis.index", "queued")]
 
 
 # --- write_text ---

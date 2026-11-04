@@ -55,6 +55,7 @@ TIMEOUT: dict[Op, float | None] = {
     Op.STREAM: None,
     Op.REMUX_AUDIO: None,
     Op.SYNTH: 900,
+    Op.TEXT: 900,  # fase 6, Z2: RLIMIT_CPU 60 s, maar met nice 19 kan de wandklok lang duren
 }
 KEYFRAMES_FALLBACK_TIMEOUT = 3600.0
 # accept zonder fd's of geheugen: zo lang wachten (verdubbelend) en opnieuw

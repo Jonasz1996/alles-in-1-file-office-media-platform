@@ -25,7 +25,7 @@ Andere soorten verzoeken (veld "mode"):
   out/<n>.webp, zo breed als width (de viewer, routers/viewer.py);
 - "docinfo": {"source"} -> {"state", "pages", "page_sizes", "toc", "labels"} van een PDF;
 - "meta": alleen metadata van veel bestanden (render_meta.run_meta, P5);
-- "text": de tekst uit een document (fase 6, Z2; nu een stub die "none" geeft);
+- "text": de tekst uit documenten (fase 6, Z2): zie run_text en text_child;
 - "ocr_page": één pagina of foto door tesseract (fase 6, X1; nu een stub).
 
 serve() is de forkserver van previews.py: één voorgeladen proces dat per verzoek een kind maakt
@@ -1288,11 +1288,15 @@ def docinfo(request: dict) -> dict:
 
 
 def pages(request: dict) -> dict:
-    """Pagina's (vanaf 1) van een PDF als <n>.webp, width pixels breed."""
+    """Pagina's (vanaf 1) van een PDF als <n>.webp, width pixels breed. Met words (fase 6, Z2;
+    Keuze 18) uit dezelfde render ook de woorden van elke pagina als words-<n>.json
+    (page_words); met only_words alleen die (de pagina staat al in de cache)."""
     width = int(request["width"])
     if width not in PAGE_WIDTHS:
         raise ValueError("ongeldige breedte")
     out = Path(request["out"])
+    words = bool(request.get("words")) or bool(request.get("only_words"))
+    only_words = bool(request.get("only_words"))
     try:
         document = _open_pdf(Path(request["source"]), request.get("max_pixels", 10**8))
     except Exception as e:
@@ -1308,6 +1312,14 @@ def pages(request: dict) -> dict:
             try:
                 w, h = page.get_size()
                 if w <= 0 or h <= 0:
+                    continue
+                if words:
+                    found = page_words(page)
+                    (out / f"words-{int(n)}.json").write_text(
+                        json.dumps({"v": WORDS_VERSION, "words": found}, ensure_ascii=False)
+                    )
+                if only_words:
+                    done.append(int(n))
                     continue
                 scale = width / w
                 if (w * scale) * (h * scale) > PAGE_PIXELS:
@@ -1325,14 +1337,169 @@ def pages(request: dict) -> dict:
     return {"state": "ready", "pages": done}
 
 
+# --- de woorden van een pagina (fase 6, Z2; bouwontwerp Keuze 18) ---------------------------
+#
+# Voor de tekstlaag van de viewer: elk woord met zijn plek op de pagina als deel van de breedte
+# en de hoogte (0..1, linksboven), zoals de viewer de pagina toont (de draaiing van de pagina
+# meegerekend). Een woord: tekens tot witruimte. Hooguit MAX_PAGE_WORDS woorden, elk hooguit
+# MAX_WORD_CHARS tekens.
+
+WORDS_VERSION = 1
+MAX_PAGE_WORDS = 20_000
+MAX_WORD_CHARS = 200
+
+
+def page_words(page) -> list[dict]:
+    """De woorden van een pagina van pypdfium2 als [{"t", "x", "y", "w", "h"}]."""
+    import pypdfium2.raw as pdfium_c
+
+    left, bottom, right, top = page.get_cropbox()
+    width, height = right - left, top - bottom
+    if width <= 0 or height <= 0:
+        return []
+    rotation = page.get_rotation() % 360
+    textpage = page.get_textpage()
+    found: list[dict] = []
+    try:
+        chars: list[str] = []
+        box: list[float] = []
+
+        def flush() -> None:
+            if not chars or len(found) >= MAX_PAGE_WORDS:
+                chars.clear()
+                return
+            x0, y0, x1, y1 = box
+            x, y = (x0 - left) / width, (top - y1) / height
+            w, h = (x1 - x0) / width, (y1 - y0) / height
+            x, y = min(max(x, 0.0), 1.0), min(max(y, 0.0), 1.0)
+            w, h = min(max(w, 0.0), 1.0 - x), min(max(h, 0.0), 1.0 - y)
+            if rotation == 90:
+                x, y, w, h = 1.0 - y - h, x, h, w
+            elif rotation == 180:
+                x, y = 1.0 - x - w, 1.0 - y - h
+            elif rotation == 270:
+                x, y, w, h = y, 1.0 - x - w, h, w
+            text = "".join(chars)[:MAX_WORD_CHARS]
+            found.append(
+                {"t": text, "x": round(x, 5), "y": round(y, 5), "w": round(w, 5), "h": round(h, 5)}
+            )
+            chars.clear()
+
+        for index in range(textpage.count_chars()):
+            code = pdfium_c.FPDFText_GetUnicode(textpage.raw, index)
+            char = chr(code) if 0 < code < 0x110000 and not 0xD800 <= code < 0xE000 else ""
+            if not char or char.isspace() or code < 32:
+                flush()
+                continue
+            x0, y0, x1, y1 = textpage.get_charbox(index)
+            if not chars:
+                box = [x0, y0, x1, y1]
+            else:
+                box = [min(box[0], x0), min(box[1], y0), max(box[2], x1), max(box[3], y1)]
+            chars.append(char)
+        flush()
+    finally:
+        textpage.close()
+    return found
+
+
+# --- tekst voor zoeken (fase 6, Z2; bouwontwerp Keuze 17) ------------------------------------
+#
+# Twee ingangen met dezelfde lus (_text_batch): per blob app.extract.read.extract, en de uitkomst
+# als lengte-gemarkeerde stukken op de uitvoer (app/extract/frame.py). De klok per blob is 30 s
+# CPU (blob_cpu_s); na batch_cpu_s CPU voor de hele batch begint het kind geen nieuwe blob meer
+# (de rest komt in de volgende batch). Een fout van één blob is een uitkomst failed; alleen een
+# crash van het proces neemt de batch mee.
+#
+# - text_child(): het kind van de worker (Op.TEXT): eerst niet-dumpbaar, dan "klaar" op de
+#   socket (fd 3), dan de vraag met de fd's van de blobs en als laatste de pipe naar de app
+#   (SCM_RIGHTS). Na het werk {"done": n} op de socket, of {"error": soort}; stderr is
+#   /dev/null. De vraag: {"items": [{"kind"}], "max_chars", "blob_cpu_s", "batch_cpu_s"}.
+# - run_text(request) (mode "text"): hetzelfde in het renderproces van de app, als media uit
+#   staat (de terugval, previews.render_text): {"items": [{"path", "kind"}], "out", "cpu_s",
+#   …}; met RLIMIT_CPU cpu_s (zacht: SIGXCPU, een seconde later hard), RLIMIT_AS en nice uit
+#   main(). De stukken komen in het bestand out, het antwoord is {"state": "ready", "done": n}.
+
+PR_SET_DUMPABLE = 4
+TEXT_REQUEST_BYTES = 64 * 1024
+TEXT_MAX_FDS = 64
+
+
+def _text_batch(blobs: list, request: dict, out_fd: int) -> int:
+    """blobs: open bestanden (of None: niet te openen), in de volgorde van request["items"]."""
+    import time
+
+    from app.extract import frame, read
+
+    max_chars = int(request["max_chars"])
+    blob_cpu = float(request.get("blob_cpu_s", read.BLOB_CPU_S))
+    batch_end = time.process_time() + float(request.get("batch_cpu_s", 20.0))
+    done = 0
+    for index, (item, f) in enumerate(zip(request["items"], blobs, strict=True)):
+        if index and time.process_time() > batch_end:
+            break
+        if f is None:
+            found = read.Extracted("", "failed", 0, False, [], "", None)
+            text = ""
+        else:
+            found, text = read.extract(
+                "", f, str(item["kind"]), max_chars=max_chars, cpu_seconds=blob_cpu
+            )
+        frame.write(out_fd, index, read.fields(found), text)
+        done += 1
+    return done
+
+
+def text_child() -> int:
+    """Het kind van Op.TEXT; zie hierboven. Geeft de exitcode."""
+    import ctypes
+    import socket
+
+    # Als eerste: niet-dumpbaar, vóór er iets van een ander in dit proces komt
+    if ctypes.CDLL(None, use_errno=True).prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
+        return 3
+    sock = socket.socket(fileno=3)
+    fds: list[int] = []
+    try:
+        sock.sendall(b"klaar")
+        data, fds, _flags, _addr = socket.recv_fds(sock, TEXT_REQUEST_BYTES, TEXT_MAX_FDS)
+        request = json.loads(data)
+        if len(fds) != len(request["items"]) + 1:
+            raise ValueError("aantal fd's")
+        out_fd = fds[-1]
+        blobs = [os.fdopen(fd, "rb", closefd=False) for fd in fds[:-1]]
+        done = _text_batch(blobs, request, out_fd)
+        os.close(out_fd)  # de app ziet EOF zodra ook de worker zijn kant sluit
+        sock.sendall(json.dumps({"done": done}).encode())
+        return 0
+    except Exception as e:  # noqa: BLE001 - de fout gaat over de socket, stderr is /dev/null
+        with contextlib.suppress(OSError):
+            sock.sendall(json.dumps({"error": type(e).__name__}).encode())
+        return 1
+
+
 def run_text(request: dict) -> dict:
-    """mode "text" (fase 6, Z2): de tekst uit een document lezen. Hier draait het buiten de
-    zandbak, als er geen mediaworker is (§3.3); met media gaat dezelfde code door de worker
-    (Op.TEXT). Z0 is een stub: hij leest nog niets en geeft "none", dus zoeken vindt tot Z2
-    alleen namen. De velden zijn die van extract.result.Extracted, zonder sha.
-    """
-    return {"state": "none", "chars": 0, "truncated": False, "scan_pages": [], "meta": "",
-            "code": None}  # fmt: skip
+    """mode "text": een batch via paden, in het renderproces van de app (media uit)."""
+    cpu = int(request.get("cpu_s") or 0)
+    if cpu > 0:
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu + 1))
+    blobs = []
+    for item in request["items"]:
+        try:
+            fd = os.open(item["path"], os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        except OSError:
+            blobs.append(None)
+            continue
+        blobs.append(os.fdopen(fd, "rb"))
+    out = os.open(request["out"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        done = _text_batch(blobs, request, out)
+    finally:
+        os.close(out)
+        for f in blobs:
+            if f is not None:
+                f.close()
+    return {"state": "ready", "done": done}
 
 
 def run_ocr_page(request: dict) -> dict:
