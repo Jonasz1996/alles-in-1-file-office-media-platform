@@ -24,9 +24,9 @@ search_name (of blob_id) verandert van een node met OCR van een foto, maakt de i
 node_au_text de nieuwe rij schrijft, en die schrijft hem daarna nog eens. Geen pad in de app doet
 dit; wie later eigendom laat overgaan, zet owner_id in een eigen UPDATE (0010 ligt vast).
 
-De herbouw is die van spike S2 (test_spike_triggers.herbouw_in_stukken); de tweede stap van Z1
-zet app.cli search-rebuild in de plaats. "churn" in de naam geeft de marker triggers: e2e/slim.sh
-draait dit ook in python:3.12-slim (SQLite 3.46.1).
+De herbouw is die van app.cli search-rebuild (app/search/rebuild.py, Keuze 12), in stukken van 50
+met wijzigingen ertussen. "churn" in de naam geeft de marker triggers: e2e/slim.sh draait dit ook
+in python:3.12-slim (SQLite 3.46.1).
 """
 
 from __future__ import annotations
@@ -47,13 +47,14 @@ from app import analysis, jobs
 from app.db import get_engine
 from app.models import Node, User
 from app.search import engine as engines
+from app.search import rebuild
 from app.search.types import SearchParams
 from app.text import fold
 from tests.factories import maker
 from tests.search import referentie as R
 from tests.search import spike
 from tests.search.migratie import check_tree
-from tests.search.test_spike_triggers import herbouw_in_stukken, pad
+from tests.search.test_spike_triggers import pad
 from tests.test_files import mkdir, put, root
 from tests.test_shares import person, share_with
 from tests.test_user_delete import block_and_delete
@@ -521,7 +522,7 @@ async def _churn(client, admin, settings, caplog) -> None:
                 for _ in range(3):
                     await een_wijziging(w)
 
-            await herbouw_in_stukken(get_engine(settings), stuk=50, na_elk_stuk=tussendoor)
+            await rebuild.rebuild(get_engine(settings), chunk=50, after_chunk=tussendoor)
         if stap == WEG:
             # Een gebruiker wissen: cas, met zijn map die met anderen gedeeld is
             await block_and_delete(client, jonas_kop, str(cas))
