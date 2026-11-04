@@ -311,3 +311,11 @@ async def test_het_deel_per_node_ook_bij_alleen_ocr(settings, client, admin, mon
     assert len(ocr) == 100
     await write(meta="titel")
     assert await stored() == (woorden[:500], ocr, 1)
+    # Een lange ocr van toen er minder kopieën waren: komt daarna alleen meta mee, dan gaat ook
+    # die ocr terug tot wat er nu naast de body over is (de nacontrole van golf 1)
+    await write(body=woorden[:100], ocr="scan " * 80)  # 20 nodes: 500, de ocr krijgt 400
+    body, ocr, truncated = await stored()
+    assert (body, len(ocr), truncated) == (woorden[:100], 400, 0)
+    await copies(20, 19)  # 40 nodes: 250 per node, naast de body van 100 nog 150
+    await write(meta="titel")
+    assert await stored() == (woorden[:100], ("scan " * 80)[:150], 0)
