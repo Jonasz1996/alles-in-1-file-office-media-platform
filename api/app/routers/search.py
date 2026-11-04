@@ -160,13 +160,19 @@ async def suggest(
     settings: Annotated[Settings, Depends(get_settings)],
     q: Annotated[str, Query(min_length=1, max_length=200)],
 ) -> Suggestions:
-    """Namen, personen, plaatsen, tags en albums voor het zoekveld, elk hooguit 5."""
+    """Namen, personen, plaatsen, tags en albums voor het zoekveld, elk hooguit 5
+    (app/search/suggest.py)."""
     engine = await engine_for(settings, await session.connection())
     if engine is LIKE:
         return await engine.suggest(session, user, q)
     await session.commit()  # geen verbinding vasthouden in de rij (zie search)
-    async with admit(user, "suggest", settings):
-        return await engine.suggest(session, user, q)
+    try:
+        async with admit(user, "suggest", settings):
+            return await engine.suggest(session, user, q)
+    except QueryTooLong:
+        raise errors.fail(
+            400, "search_query_too_long", "Je zoekvraag is te lang", max_words=10
+        ) from None
 
 
 class TagOut(TagRef):

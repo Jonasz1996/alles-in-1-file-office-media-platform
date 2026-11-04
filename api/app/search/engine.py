@@ -556,8 +556,10 @@ class FtsEngine:
         )
 
     async def suggest(self, db: AsyncSession, user: User, q: str) -> Suggestions:
-        """Suggesties komen met suggest.py (Z1, tweede stap); tot dan geen."""
-        return Suggestions()
+        """suggest.py; die gebruikt names_select en run van hier (vandaar pas hier geïmporteerd)."""
+        from app.search.suggest import suggest
+
+        return await suggest(db, user, q)
 
 
 LIKE = LikeFallback()
