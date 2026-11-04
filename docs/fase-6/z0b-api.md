@@ -202,8 +202,9 @@ Erbij of uitgebreid, allemaal in `api/tests/`:
 1. **De migraties 0011 en 0012** (A0): de tabellen van gezichten en beeld, de kolom `beeld` op
    `photo_pref`, en de fix van `node_bu_text` (afwijking 1).
 2. **`tests/search/test_web_contracts.py` is op wip/z0b-api alleen rood** (88 errors, het
-   bestand `web/src/photos/faces/types.ts` ontbreekt) tot de samenvoeging met wip/z0b-web. Tegen
-   de boom van Z0b-web zijn ze alle 88 groen.
+   bestand `web/src/photos/faces/types.ts` ontbreekt) tot de samenvoeging met wip/z0b-web. Op een
+   proefsamenvoeging met wip/z0b-web (`f0cc1ee`) zijn ze alle 88 groen, en stap 1 van
+   `e2e/slim.sh` ook (386 groen). Daarom is stap 1 op wip/z0b-api alleen ook rood.
 3. **`faces_too_many`**: X2 zet de 422 van meer dan 200 gezichten om naar die code, of het
    ontwerp laat hem vallen (afwijking 7).
 4. **De rest van §3.11** (de container analyse, `compose.analyse.yaml`, de modellen en hun
@@ -212,4 +213,10 @@ Erbij of uitgebreid, allemaal in `api/tests/`:
 Bekend en niet van Z0b:
 
 5. `tests/test_media_names.py::test_fuzz_10000_namen_met_vaste_seed` meet tijd en faalt alleen op
-   deze VM; hij staat ongewijzigd.
+   deze VM; hij staat ongewijzigd (in de twee volle runs van Z0b was hij groen).
+6. `tests/test_media_worker_guard.py::test_verbinding_dicht_stopt_ffmpeg_en_kleinkinderen_binnen_3_s`
+   faalde één keer in de volle run (`comm` was `ffmpeg`, niet `sleep`). De oorzaak: de nep-ffmpeg
+   doet `sleep 60 &`, dus sh maakt eerst een kopie van zichzelf (die heet nog `ffmpeg`) en die doet
+   pas daarna `exec sleep`. De test leest `comm` zodra het kind er is, en onder de last van de
+   volle run is die `exec` dan soms nog niet gebeurd. Los vijf keer groen; Z0b raakt dat bestand
+   en `app/media` niet. De test moet wachten tot het kind `sleep` heet (van media, niet van Z0b).
