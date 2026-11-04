@@ -8,7 +8,8 @@ en waar het kan ook met de vraag van 0.7.0 (limit 200: altijd LikeFallback, "De 
 - person, place, country en camera: 501 not_built tot Z3 en Z6 ze aanmelden (S1);
 - library van een bibliotheek die je niet ziet: 404 (veilig F3);
 - de eigen hoofdmap is nooit een treffer, ook niet zonder q (S2);
-- in en library zoeken onder die map; de map zelf is geen treffer (N1);
+- in en library zoeken onder die map; de map zelf is geen treffer (N1); samen alleen onder
+  allebei;
 - from en to filteren ook in LikeFallback (S3).
 """
 
@@ -131,6 +132,38 @@ async def test_een_bibliotheek_die_je_niet_ziet_is_404(client, admin, settings, 
     )
     assert r.status_code == 201, r.text
     assert await _beide(client, bram, motor, q="film", library=str(library)) == {"film een.txt"}
+
+
+async def test_in_en_library_samen_zoeken_onder_allebei(client, admin, settings, motor):
+    """in en library samen: alleen wat onder allebei ligt, zonder die mappen zelf. LikeFallback
+    neemt de diepste van de twee; liggen ze los van elkaar, dan niets (de nacontrole van golf 1:
+    zonder deze test bleef LikeFallback groen als hij altijd in nam, of bij twee losse mappen
+    alles gaf)."""
+    headers, tokens = admin
+    eigen = (await root(client, headers))["folder"]["id"]
+    films = await mkdir(client, headers, eigen, "films")
+    reeks = await mkdir(client, headers, films, "films reeks")
+    ander = await mkdir(client, headers, eigen, "films ander")
+    await put(client, headers, reeks, "films diep.txt", b"x")
+    await put(client, headers, films, "films een.txt", b"x")
+    await put(client, headers, ander, "films ernaast.txt", b"x")
+    library = str(await _bibliotheek(settings, uuid.UUID(tokens["user"]["id"]), films))
+    onder_films = {"films reeks", "films diep.txt", "films een.txt"}
+    for vraag in ({}, {"q": "films"}):
+        # in ligt in de bibliotheek: onder in
+        assert await _beide(client, headers, motor, library=library, **{"in": reeks}, **vraag) == {
+            "films diep.txt"
+        }
+        # in is de hoofdmap van de bibliotheek, of ligt erboven: onder de bibliotheek
+        for boven in (films, eigen):
+            assert (
+                await _beide(client, headers, motor, library=library, **{"in": boven}, **vraag)
+                == onder_films
+            ), boven
+        # in ligt naast de bibliotheek: niets
+        assert await _beide(client, headers, motor, library=library, **{"in": ander}, **vraag) == (
+            set()
+        )
 
 
 async def test_de_eigen_hoofdmap_is_nooit_een_treffer(client, admin, settings, motor):
