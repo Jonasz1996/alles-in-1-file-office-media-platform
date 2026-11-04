@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -22,6 +24,25 @@ def _vrije_schijf(monkeypatch):
     from app.media import admission
 
     monkeypatch.setattr(admission, "disk_free", lambda path=None: admission.DISK_MIN * 4)
+
+
+@pytest.fixture(autouse=True)
+def _geen_mismatch(request):
+    """Geen search_access_mismatch in welke test ook (fase 6, §4.1; tests/search/mismatch.py)."""
+    from tests.search.mismatch import LOGGER, Mismatches, check
+
+    handler = Mismatches()
+    logging.getLogger(LOGGER).addHandler(handler)
+    try:
+        yield handler
+    finally:
+        logging.getLogger(LOGGER).removeHandler(handler)
+    check(handler.lines, "mismatch_verwacht" in request.fixturenames)
+
+
+@pytest.fixture
+def mismatch_verwacht():
+    """Deze test lokt search_access_mismatch expres uit en controleert de regel zelf."""
 
 
 @pytest.fixture

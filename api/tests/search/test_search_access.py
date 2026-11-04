@@ -183,7 +183,9 @@ async def test_intrekken_en_verhuizen_tellen_meteen(client, settings):
     assert await alles(client, eva, q=W.VERHUIS_WOORD, **werk) == []
 
 
-async def test_een_deling_ingetrokken_in_hetzelfde_verzoek(client, settings, monkeypatch, caplog):
+async def test_een_deling_ingetrokken_in_hetzelfde_verzoek(
+    client, settings, monkeypatch, caplog, mismatch_verwacht
+):
     """De deling met Hans verdwijnt nadat de bereiken gemaakt zijn, nog vóór de vraag aan FTS:
     de tweede controle (access.resolve) haalt de treffer weg. Eén logregel per node, met alleen
     het node-id."""

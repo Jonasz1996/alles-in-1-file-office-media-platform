@@ -92,7 +92,7 @@ async def test_kort_geen_namen_wel_tags(client, settings):
     assert [t["name"] for t in found["tags"]] == ["Ab-tag"]
 
 
-async def test_de_tweede_controle(client, settings, monkeypatch, caplog):
+async def test_de_tweede_controle(client, settings, monkeypatch, caplog, mismatch_verwacht):
     """De deling met Hans verdwijnt nadat de bereiken gemaakt zijn: de naam valt weg, met één
     logregel met alleen het node-id."""
     w = await W.bouw_async(settings)
