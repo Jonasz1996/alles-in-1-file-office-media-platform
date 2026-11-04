@@ -25,7 +25,7 @@ Andere soorten verzoeken (veld "mode"):
   out/<n>.webp, zo breed als width (de viewer, routers/viewer.py);
 - "docinfo": {"source"} -> {"state", "pages", "page_sizes", "toc", "labels"} van een PDF;
 - "meta": alleen metadata van veel bestanden (render_meta.run_meta, P5);
-- "text": de tekst uit een document (fase 6, Z2; nu een stub die "none" geeft);
+- "text": de tekst uit documenten (fase 6, Z2): zie run_text en text_child;
 - "ocr_page": één pagina of foto door tesseract (fase 6, X1; nu een stub).
 
 serve() is de forkserver van previews.py: één voorgeladen proces dat per verzoek een kind maakt
@@ -1325,14 +1325,99 @@ def pages(request: dict) -> dict:
     return {"state": "ready", "pages": done}
 
 
+# --- tekst voor zoeken (fase 6, Z2; bouwontwerp Keuze 17) ------------------------------------
+#
+# Twee ingangen met dezelfde lus (_text_batch): per blob app.extract.read.extract, en de uitkomst
+# als lengte-gemarkeerde stukken op de uitvoer (app/extract/frame.py). De klok per blob is 30 s
+# CPU (blob_cpu_s); na batch_cpu_s CPU voor de hele batch begint het kind geen nieuwe blob meer
+# (de rest komt in de volgende batch). Een fout van één blob is een uitkomst failed; alleen een
+# crash van het proces neemt de batch mee.
+#
+# - text_child(): het kind van de worker (Op.TEXT): eerst niet-dumpbaar, dan "klaar" op de
+#   socket (fd 3), dan de vraag met de fd's van de blobs en als laatste de pipe naar de app
+#   (SCM_RIGHTS). Na het werk {"done": n} op de socket, of {"error": soort}; stderr is
+#   /dev/null. De vraag: {"items": [{"kind"}], "max_chars", "blob_cpu_s", "batch_cpu_s"}.
+# - run_text(request) (mode "text"): hetzelfde in het renderproces van de app, als media uit
+#   staat (de terugval van previews.render, Z2 stap 2): {"items": [{"path", "kind"}], "out",
+#   …}; de stukken komen in het bestand out, het antwoord is {"state": "ready", "done": n}.
+
+PR_SET_DUMPABLE = 4
+TEXT_REQUEST_BYTES = 64 * 1024
+TEXT_MAX_FDS = 64
+
+
+def _text_batch(blobs: list, request: dict, out_fd: int) -> int:
+    """blobs: open bestanden (of None: niet te openen), in de volgorde van request["items"]."""
+    import time
+
+    from app.extract import frame, read
+
+    max_chars = int(request["max_chars"])
+    blob_cpu = float(request.get("blob_cpu_s", read.BLOB_CPU_S))
+    batch_end = time.process_time() + float(request.get("batch_cpu_s", 20.0))
+    done = 0
+    for index, (item, f) in enumerate(zip(request["items"], blobs, strict=True)):
+        if index and time.process_time() > batch_end:
+            break
+        if f is None:
+            found = read.Extracted("", "failed", 0, False, [], "", None)
+            text = ""
+        else:
+            found, text = read.extract(
+                "", f, str(item["kind"]), max_chars=max_chars, cpu_seconds=blob_cpu
+            )
+        frame.write(out_fd, index, read.fields(found), text)
+        done += 1
+    return done
+
+
+def text_child() -> int:
+    """Het kind van Op.TEXT; zie hierboven. Geeft de exitcode."""
+    import ctypes
+    import socket
+
+    # Als eerste: niet-dumpbaar, vóór er iets van een ander in dit proces komt
+    if ctypes.CDLL(None, use_errno=True).prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
+        return 3
+    sock = socket.socket(fileno=3)
+    fds: list[int] = []
+    try:
+        sock.sendall(b"klaar")
+        data, fds, _flags, _addr = socket.recv_fds(sock, TEXT_REQUEST_BYTES, TEXT_MAX_FDS)
+        request = json.loads(data)
+        if len(fds) != len(request["items"]) + 1:
+            raise ValueError("aantal fd's")
+        out_fd = fds[-1]
+        blobs = [os.fdopen(fd, "rb", closefd=False) for fd in fds[:-1]]
+        done = _text_batch(blobs, request, out_fd)
+        os.close(out_fd)  # de app ziet EOF zodra ook de worker zijn kant sluit
+        sock.sendall(json.dumps({"done": done}).encode())
+        return 0
+    except Exception as e:  # noqa: BLE001 - de fout gaat over de socket, stderr is /dev/null
+        with contextlib.suppress(OSError):
+            sock.sendall(json.dumps({"error": type(e).__name__}).encode())
+        return 1
+
+
 def run_text(request: dict) -> dict:
-    """mode "text" (fase 6, Z2): de tekst uit een document lezen. Hier draait het buiten de
-    zandbak, als er geen mediaworker is (§3.3); met media gaat dezelfde code door de worker
-    (Op.TEXT). Z0 is een stub: hij leest nog niets en geeft "none", dus zoeken vindt tot Z2
-    alleen namen. De velden zijn die van extract.result.Extracted, zonder sha.
-    """
-    return {"state": "none", "chars": 0, "truncated": False, "scan_pages": [], "meta": "",
-            "code": None}  # fmt: skip
+    """mode "text": een batch via paden, in het renderproces van de app (media uit)."""
+    blobs = []
+    for item in request["items"]:
+        try:
+            fd = os.open(item["path"], os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        except OSError:
+            blobs.append(None)
+            continue
+        blobs.append(os.fdopen(fd, "rb"))
+    out = os.open(request["out"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        done = _text_batch(blobs, request, out)
+    finally:
+        os.close(out)
+        for f in blobs:
+            if f is not None:
+                f.close()
+    return {"state": "ready", "done": done}
 
 
 def run_ocr_page(request: dict) -> dict:

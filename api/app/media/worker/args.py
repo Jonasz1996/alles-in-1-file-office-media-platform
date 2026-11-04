@@ -250,6 +250,24 @@ class SynthArgs(_Args):
     height: Literal[1080, 720]
 
 
+class TextItem(_Args):
+    """Eén blob van een batch voor text: alleen de soort lezer (app.extract.KINDS). Geen sha,
+    geen naam: welke blob op welke plaats staat, weet alleen de app."""
+
+    kind: Literal["pdf", "office", "plain", "html", "rtf", "media"]
+
+
+class TextArgs(_Args):
+    """De tekst uit documenten (fase 6, Z2; Keuze 17): één kind voor hooguit 16 blobs. De
+    grenzen staan hier zodat een test ze klein kan maken; de app stuurt de standaard."""
+
+    items: list[TextItem] = Field(min_length=1, max_length=16)
+    max_chars: int = Field(default=1_048_576, ge=1, le=4 * 1024 * 1024)
+    blob_cpu_s: float = Field(default=30.0, gt=0, le=60)  # de klok per blob
+    batch_cpu_s: float = Field(default=20.0, gt=0, le=60)  # daarna geen nieuwe blob meer
+    child_cpu_s: int = Field(default=60, ge=1, le=120)  # RLIMIT_CPU van het kind
+
+
 ARGS: dict[Op, type[_Args]] = {
     Op.CAPS: CapsArgs,
     Op.BENCH: BenchArgs,
@@ -264,6 +282,7 @@ ARGS: dict[Op, type[_Args]] = {
     Op.STREAM: StreamArgs,
     Op.REMUX_AUDIO: RemuxAudioArgs,
     Op.SYNTH: SynthArgs,
+    Op.TEXT: TextArgs,
 }
 
 
@@ -291,7 +310,7 @@ def work_class(op: Op, args: _Args) -> WorkClass:
         return WorkClass.TRANSCODE if args.mode == "transcode" else WorkClass.REMUX
     if op == Op.REMUX_AUDIO:
         return WorkClass.REMUX
-    if op in (Op.SUBS, Op.SPRITES, Op.BENCH, Op.SYNTH):
+    if op in (Op.SUBS, Op.SPRITES, Op.BENCH, Op.SYNTH, Op.TEXT):
         return WorkClass.BACKGROUND
     if op == Op.KEYFRAMES and isinstance(args, KeyframesArgs) and args.fallback:
         return WorkClass.BACKGROUND
@@ -347,6 +366,9 @@ def fd_layout(op: Op, args: _Args) -> Layout:
         return Layout(1, 1 if args.loose else 3 * len(args.tracks))
     if op in (Op.FRAME, Op.SPRITES, Op.REMUX_AUDIO):
         return Layout(1, 1)
+    if op == Op.TEXT:
+        assert isinstance(args, TextArgs)
+        return Layout(len(args.items), 1)  # de blobs, dan de pipe naar de app (fase 6, Z2)
     return Layout(1, 0)  # probe, keyframes, audio_info, nfo, meta
 
 

@@ -279,9 +279,10 @@ async def test_onbekende_opdracht(worker):
     assert reply["code"] == Code.UNKNOWN_OP
 
 
-@pytest.mark.parametrize("op", [Op.TEXT, Op.OCR])
-async def test_text_en_ocr_geven_not_built_tot_hun_pakket(worker, op):
-    # Fase 6 legt de opdrachten vast (wire.Op); de worker kent ze pas met Z2 en X1
+@pytest.mark.parametrize("op", [Op.OCR])
+async def test_ocr_geeft_not_built_tot_zijn_pakket(worker, op):
+    # Fase 6 legt de opdrachten vast (wire.Op); text kent de worker sinds Z2
+    # (tests/extract/test_extract_subprocess.py), ocr pas met X1
     assert op not in A.ARGS
     reply = await ask(worker.config.socket, request(op, {}))
     assert reply["ev"] == "error" and reply["code"] == Code.NOT_BUILT

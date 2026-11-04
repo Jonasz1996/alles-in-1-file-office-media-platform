@@ -1,9 +1,9 @@
 """De uitkomsten van het kind op de pipe naar de app (bouwontwerp fase 6, Keuze 17).
 
 Per blob, in de volgorde van de vraag, twee stukken met elk vier bytes lengte vooraf (big
-endian): eerst JSON {"i", "state", "chars", "truncated", "scan_pages", "meta", "code"}, dan de
-tekst in UTF-8. De sha gaat niet mee: de app weet welke blob op plaats i stond. De worker
-leest de pipe niet; hij gaat van het kind rechtstreeks naar de app.
+endian): eerst JSON {"i", "state", "truncated", "scan_pages", "meta", "code"}, dan de tekst in
+UTF-8 (de app telt de tekens zelf). De sha gaat niet mee: de app weet welke blob op plaats i
+stond. De worker leest de pipe niet; hij gaat van het kind rechtstreeks naar de app.
 
 De app vertrouwt het kind niet (het las een kwaadaardig bestand): read() controleert elke
 grens en elk veld, en geeft bij elke afwijking Broken.
