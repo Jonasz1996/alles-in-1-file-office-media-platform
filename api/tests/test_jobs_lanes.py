@@ -381,7 +381,10 @@ def test_de_bestaande_soorten_veranderen_niet():
     # Behalve de previews zelf (hun eigen rij, met de tweede ronde erachter): zoals fase 3 en 4
     assert jobs._kinds["preview"].lane == jobs._kinds["preview.large"].lane == "preview"
     assert (jobs._kinds["preview"].rank, jobs._kinds["preview.large"].rank) == (0, 1)
-    for t in known - {"preview", "preview.large"}:
+    # Fase 6 (Z2): de pomp van de analyse heeft de rij index, met een eigen grens per batch
+    assert jobs._kinds["analysis.index"].lane == "index"
+    assert jobs._kinds["analysis.index"].timeout == 3600
+    for t in known - {"preview", "preview.large", "analysis.index"}:
         assert jobs._kinds[t].lane == "default", t
         assert jobs._kinds[t].timeout is None, t
     assert jobs.lane_of("bestaat.niet") == "default"
