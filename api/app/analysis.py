@@ -22,7 +22,15 @@ vast, Keuze 80).
   xml_refused): meteen failed (S15). Een inhoud zonder uitkomst gaat terug op wait, zonder dat
   het een poging telt.
 - Bij het starten (search.hooks.backfill): wat op busy bleef staan terug op wait, elke rij met
-  een lagere versie dan de code terug op wait, en de pomp van elke rij met werk aan.
+  een lagere versie dan de code terug op wait, en de pomp van elke rij met werk aan (recover).
+  Daarna de backfill (start_backfill, Keuze 20): de job analysis.backfill zet per BACKFILL_CHUNK
+  de blobs zonder rij in de wachtrij, met als eigenaar die van de nieuwste levende node met die
+  sha, elke keer in één korte transactie; de pomp kiest daaruit om de beurt per eigenaar.
+- Een nieuwe inhoud (search.hooks.blob_added, vanuit files.add_ref na de commit): on_blob_added
+  zet hem in de wachtrij, in een taak in het geheugen (de haak mag de database niet in). Zonder
+  draaiende rijen (tests, de cli) gebeurt er niets: de backfill vindt hem bij het starten.
+- indexing(): de voortgang voor het antwoord van /search ({"done": 0.43}) zolang er veel werk
+  open staat.
 
 write_text() is de enige schrijver van blob_text (Keuze 3). Eerst een SELECT, dan een gewone
 INSERT of één UPDATE, in één korte transactie. Nooit INSERT OR REPLACE, OR IGNORE of een upsert:
@@ -34,24 +42,29 @@ In het log nooit de naam van een bestand: alleen de eerste 12 tekens van de sha.
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import exists, func, insert, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import jobs
 from app.config import Settings
 from app.db import get_engine
-from app.models import Analysis, Blob, BlobText, Job, now
+from app.models import Analysis, Blob, BlobText, Job, Node, now
+
+if TYPE_CHECKING:
+    from app.search.types import IndexProgress
 
 log = logging.getLogger("platform.analysis")
 
@@ -76,6 +89,14 @@ PUMP_TIMEOUT = 3600.0  # één batch, met het halveren na een crash
 # Vooraan (first=True): queued_at vóór FRONT_END. De pomp neemt die eerst, van elke eigenaar.
 FRONT = jobs.FRONT
 FRONT_END = datetime(2001, 1, 1, tzinfo=FRONT.tzinfo)
+# De backfill (Keuze 20): zoveel blobs per job (één korte transactie), in de rij index
+BACKFILL = "analysis.backfill"
+BACKFILL_CHUNK = 500
+BACKFILL_TIMEOUT = 600.0
+# indexing in /search: pas vanaf zoveel open inhouden (één upload is geen backfill), en
+# hooguit eens per INDEXING_TTL geteld
+INDEXING_MIN = 50
+INDEXING_TTL = 5.0
 
 
 @dataclass(frozen=True)
@@ -136,6 +157,7 @@ def register_step(
         raise ValueError(f"onbekende rij {lane!r}")
     _steps[step] = Registered(step, lane, eligible, run, batch, size)
     jobs.register(pump_type(lane), _pump_for(lane), lane=lane, timeout=PUMP_TIMEOUT)
+    jobs.register(BACKFILL, backfill_job, lane="index", timeout=BACKFILL_TIMEOUT)
     from app.search import hooks as search_hooks
 
     search_hooks.register_backfill(recover)
@@ -150,6 +172,7 @@ def reset() -> None:
     _steps.clear()
     _served.clear()
     _step_served.clear()
+    _indexing.clear()
 
 
 def _maker(settings: Settings) -> async_sessionmaker[AsyncSession]:
@@ -247,6 +270,214 @@ async def recover(settings: Settings) -> None:
         for lane in sorted({reg.lane for reg in _steps.values()}):
             await _chain_next(db, lane)
         await db.commit()
+
+
+# --- nieuwe inhoud en de backfill (Keuze 20) -----------------------------------------------------
+
+_tasks: set[asyncio.Task] = set()
+
+
+def _live_settings() -> Settings | None:
+    """De instellingen van de rijen die in deze event loop draaien (de app), of None (tests
+    zonder rijen, de cli): dan doet on_blob_added niets en vindt de backfill de inhoud later."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+    for runner in list(jobs._runners):
+        if getattr(runner, "_loop", None) is loop:
+            return runner.settings
+    return None
+
+
+def on_blob_added(sha: str, owner: uuid.UUID | None) -> None:
+    """search.hooks.blob_added: een nieuwe inhoud (files.add_ref, na de commit). Geen database
+    hier: een taak in het geheugen zet elke aangemelde stap klaar (queue), met owner als
+    eigenaar. Faalt die, dan staat het in het log en pakt de backfill hem bij de volgende start."""
+    settings = _live_settings()
+    if settings is None or not _steps:
+        return
+    task = asyncio.get_running_loop().create_task(
+        _queue_new(settings, sha, owner), name="analyse klaarzetten"
+    )
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+
+
+async def _queue_new(settings: Settings, sha: str, owner: uuid.UUID | None) -> None:
+    try:
+        async with _maker(settings)() as db:
+            await queue(db, sha, list(_steps), owner=owner)
+            await db.commit()
+    except Exception:  # noqa: BLE001 - de backfill vindt hem later
+        log.exception("analyse van %s klaarzetten mislukt", sha[:12])
+
+
+async def start_backfill(settings: Settings) -> None:
+    """search.hooks.backfill (bij het starten, na recover): de job analysis.backfill vanaf het
+    begin. Staat er al een klaar of loopt er een (een herstart midden in de backfill), dan
+    begint jobs.enqueue geen tweede."""
+    if not _steps:
+        return
+    async with _maker(settings)() as db:
+        await jobs.enqueue(db, BACKFILL, {"after": ""}, key=BACKFILL)
+        await db.commit()
+
+
+async def backfill_job(settings: Settings, payload: dict[str, Any]) -> None:
+    """Eén stuk van de backfill: hooguit BACKFILL_CHUNK blobs (op sha, na payload["after"])
+    zonder rij voor een van de aangemelde stappen. Elke stap krijgt een rij (wait, of skip als
+    hij niet past), met als eigenaar die van de nieuwste levende node met die sha (anders de
+    nieuwste in de prullenbak; een blob zonder node slaat hij over) en als queued_at het moment
+    van die node: zo neemt de pomp binnen een eigenaar de nieuwste eerst. Eén korte transactie
+    per stuk; daarna de pomp wekken en het volgende stuk klaarzetten."""
+    after = str(payload.get("after") or "")
+    steps = list(_steps)
+    if not steps:
+        return
+    maker = _maker(settings)
+    async with maker() as db:
+        if not after:
+            await _again_legacy(db)
+        # Zonder rij voor minstens één stap (de primaire sleutel van analysis: (blob_sha, step))
+        missing = or_(
+            *(
+                ~exists().where(Analysis.blob_sha == Blob.sha256, Analysis.step == step.value)
+                for step in steps
+            )
+        )
+        rows = (
+            await db.execute(
+                select(Blob.sha256, Blob.mime)
+                .where(Blob.sha256 > after, missing)
+                .order_by(Blob.sha256)
+                .limit(BACKFILL_CHUNK)
+            )
+        ).all()
+    if not rows:
+        async with maker() as db:
+            for lane in sorted({reg.lane for reg in _steps.values()}):
+                await _chain_next(db, lane)
+            await db.commit()
+        return
+    last = rows[-1].sha256
+    for attempt in (1, 2):
+        try:
+            async with maker() as db:
+                await _backfill_rows(db, steps, rows)
+                await jobs.chain(db, BACKFILL, {"after": last}, key=BACKFILL)
+                await db.commit()
+            break
+        except IntegrityError:
+            # files.add_ref zette er intussen een klaar (queue): nog één keer, zonder die
+            if attempt == 2:
+                raise
+            log.info("backfill: een inhoud kwam er tussendoor bij; opnieuw")
+    jobs.kick(["index"])
+
+
+async def _backfill_rows(db: AsyncSession, steps: list[Step], rows: list[Any]) -> None:
+    shas = [row.sha256 for row in rows]
+    owners: dict[str, tuple[int, datetime, uuid.UUID]] = {}
+    for blob_id, owner_id, created_at, dead in await db.execute(
+        select(Node.blob_id, Node.owner_id, Node.created_at, Node.dead).where(
+            Node.blob_id.in_(shas)
+        )
+    ):
+        rank = (0 if dead else 1, created_at)
+        best = owners.get(blob_id)
+        if best is None or rank > best[:2]:
+            owners[blob_id] = (*rank, owner_id)
+    have = {
+        (sha, step)
+        for sha, step in await db.execute(
+            select(Analysis.blob_sha, Analysis.step).where(Analysis.blob_sha.in_(shas))
+        )
+    }
+    values: list[dict[str, Any]] = []
+    lanes: set[str] = set()
+    at = now()
+    for row in rows:
+        found = owners.get(row.sha256)
+        if found is None:
+            continue  # geen node: de inhoud gaat weg (opruimen), niets te zoeken
+        _alive, created, owner = found
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=FRONT.tzinfo)
+        for step in steps:
+            if (row.sha256, step.value) in have:
+                continue
+            reg = _steps[step]
+            state = "wait" if reg.eligible(row.sha256, row.mime) else "skip"
+            if state == "wait":
+                lanes.add(reg.lane)
+            values.append(
+                {
+                    "blob_sha": row.sha256,
+                    "step": step.value,
+                    "version": VERSIONS[step],
+                    "state": state,
+                    "tries": 0,
+                    "code": None,
+                    "owner_id": owner,
+                    "queued_at": min(max(created, FRONT_END), at),
+                    "updated_at": at,
+                }
+            )
+    if values:
+        await db.execute(insert(Analysis), values)
+    for lane in sorted(lanes):
+        await _wake(db, lane, at)
+
+
+async def _again_legacy(db: AsyncSession) -> None:
+    """doc, xls en ppt die skip kregen voordat OnlyOffice er een PDF van maakte (de haak na de
+    omzetting kwam niet, bijvoorbeeld omdat de thumbnails mislukten): nu opnieuw klaar."""
+    from app.extract import LEGACY_MIMES
+
+    if Step.TEXT not in _steps:
+        return
+    shas = (
+        await db.scalars(
+            select(Analysis.blob_sha)
+            .join(Blob, Blob.sha256 == Analysis.blob_sha)
+            .where(
+                Analysis.step == Step.TEXT.value,
+                Analysis.state == "skip",
+                Blob.pdf_state == "ready",
+                Blob.mime.in_(sorted(LEGACY_MIMES)),
+            )
+        )
+    ).all()
+    for sha in shas:
+        await queue(db, sha, [Step.TEXT], owner=None, again=True)
+    await db.commit()
+
+
+# --- de voortgang (/search, /beheer) -------------------------------------------------------------
+
+_indexing: dict[str, tuple[float, IndexProgress | None]] = {}
+
+
+async def indexing(db: AsyncSession, step: Step = Step.TEXT) -> IndexProgress | None:
+    """{"done": 0.43} voor /search zolang er minstens INDEXING_MIN inhouden van deze stap open
+    staan (wait of busy); daarna None. done: het deel van de inhoud die meedoet (zonder skip)
+    dat klaar is. Hooguit eens per INDEXING_TTL geteld (per database)."""
+    from app.search.types import IndexProgress  # hier: types importeert de routers
+
+    key = f"{db.bind.url}|{step.value}"
+    cached = _indexing.get(key)
+    moment = time.monotonic()
+    if cached is not None and moment - cached[0] < INDEXING_TTL:
+        return cached[1]
+    found = await counts(db, step)
+    open_ = sum(found.get(state, 0) for state in OPEN)
+    total = sum(n for state, n in found.items() if state != "skip")
+    result: IndexProgress | None = None
+    if open_ >= INDEXING_MIN and total:
+        result = IndexProgress(done=round(min(1.0, max(0.0, (total - open_) / total)), 4))
+    _indexing[key] = (moment, result)
+    return result
 
 
 async def counts(db: AsyncSession, step: Step) -> dict[str, int]:
