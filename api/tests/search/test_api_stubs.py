@@ -361,6 +361,26 @@ async def test_een_vast_getal_in_de_query_string_komt_bij_de_stub(client, admin)
                 method, url_of(path), json=body, params=params, headers=headers
             )
             assert r.status_code == 422, (method, path, params, r.status_code)
+            # Review Z0b, veilig V1: alleen gewone cijfers worden een getal. De rest geeft de
+            # 422 van elke andere fout, zonder de tekst van int() en zonder de waarde zelf.
+            for fout in ("abc", "9" * 5000, "9_6", "٩٦", " 96", "+1", "-0", "1e1"):
+                params = {**QUERY.get(path, {}), param["name"]: fout}
+                r = await client.request(
+                    method, url_of(path), json=body, params=params, headers=headers
+                )
+                assert r.status_code == 422, (method, path, fout, r.status_code)
+                detail = r.json()["detail"]
+                assert detail["message"] == "Ongeldige invoer", (path, fout, detail["message"])
+                assert detail["code"] == "invalid_input"
+                assert detail["params"] == {"field": f"query.{param['name']}"}
+                assert [e["type"] for e in detail["errors"]] == ["literal_error"], (path, fout)
+                assert all("input" not in e for e in detail["errors"])
+            for fout in ("abc", "9" * 5000):
+                params = {**QUERY.get(path, {}), param["name"]: fout}
+                r = await client.request(
+                    method, url_of(path), json=body, params=params, headers=headers
+                )
+                assert fout not in r.text and "int()" not in r.text, (path, fout)
             gezien.add((path, param["name"]))
     assert gezien == {
         ("/api/v1/people", "hidden"),

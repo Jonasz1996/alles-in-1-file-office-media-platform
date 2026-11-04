@@ -14,7 +14,6 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, Response
-from pydantic import BeforeValidator
 
 from app.people.faces_types import (
     FACES_PAGE,
@@ -29,7 +28,7 @@ from app.people.faces_types import (
     FacesStatus,
     SuggestionsByPerson,
 )
-from app.routers.stubs import not_built
+from app.routers.stubs import QueryInt, not_built
 from app.security import CurrentUser
 
 router = APIRouter(prefix="/api/v1", tags=["foto's"])
@@ -37,7 +36,7 @@ router = APIRouter(prefix="/api/v1", tags=["foto's"])
 Cursor = Annotated[str | None, Query(max_length=200)]
 # ?size=96 komt als tekst binnen; CropSize (Literal[96, 192]) alleen neemt geen "96" (dan altijd
 # 422, ook voor faceCropUrl van de web)
-Size = Annotated[CropSize, BeforeValidator(int)]
+Size = Annotated[CropSize, QueryInt]
 
 
 @router.get("/people/faces/status")
