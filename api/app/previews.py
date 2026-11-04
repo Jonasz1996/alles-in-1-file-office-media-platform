@@ -800,11 +800,16 @@ def forget_ready() -> None:
 # zich aan.
 Large = Callable[[async_sessionmaker[AsyncSession], str], Awaitable[None]]
 _large: list[Large] = []
+# Zo lang mag een haak duren; daarna stopt hij met een regel in het log (review Z0b, veilig V4).
+# De taak houdt een plek in de rij preview bezet, dus een haak die wacht houdt de previews op.
+LARGE_HOOK_S = 5.0
 
 
 def register_large(fn: Large) -> None:
-    """Na preview.large, als de grote maten erbij staan, met (maker, sha). Faalt hij, dan komt
-    dat in het log en gaat de volgende gewoon door: de preview is dan al klaar."""
+    """Na preview.large, als de grote maten erbij staan, met (maker, sha). Een haak zet alleen
+    werk in de rij (jobs.enqueue) en wacht niet op de container of een render; doet hij dat toch,
+    dan stopt hij na LARGE_HOOK_S. Faalt of stopt hij, dan komt dat in het log en gaat de volgende
+    gewoon door: de preview is dan al klaar."""
     if fn not in _large:
         _large.append(fn)
 
@@ -817,7 +822,10 @@ def forget_large() -> None:
 async def _after_large(maker: async_sessionmaker[AsyncSession], sha: str) -> None:
     for fn in list(_large):
         try:
-            await fn(maker, sha)
+            with anyio.move_on_after(LARGE_HOOK_S) as scope:
+                await fn(maker, sha)
+            if scope.cancelled_caught:
+                log.warning("previews.large te traag: gestopt na %s s", LARGE_HOOK_S)
         except Exception:
             log.exception("previews.large")
 

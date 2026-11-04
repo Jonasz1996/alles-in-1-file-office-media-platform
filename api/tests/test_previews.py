@@ -13,6 +13,7 @@ import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import anyio
 import pytest
 from PIL import Image, features
 from sqlalchemy import event, func, select, update
@@ -854,6 +855,35 @@ async def test_een_fout_na_de_grote_preview_gaat_door(client, admin, settings, m
     with caplog.at_level("ERROR"):
         assert await jobs.run_pending(settings) == 1
     assert "previews.large" in caplog.text
+    assert gezien == [sha]
+    assert await stand(maker, sha) == ([256, 1024], False, ["done"])
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("geen_haken")
+async def test_een_trage_haak_na_de_grote_preview_houdt_de_rij_niet_op(
+    client, admin, settings, maker, caplog, monkeypatch
+):
+    """Review Z0b, veilig V4: een haak mag alleen werk in de rij zetten. Wacht hij toch (op de
+    container, een render), dan stopt hij na LARGE_HOOK_S: de volgende haak loopt, de taak eindigt
+    done, en de rij preview blijft niet tot de tijdslimiet van de taak (300 s) bezet."""
+    headers, _ = admin
+    monkeypatch.setattr(previews, "LARGE_HOOK_S", 0.05)
+
+    async def traag(maker, sha):
+        await anyio.Event().wait()  # komt nooit
+
+    gezien: list[str] = []
+
+    async def daarna(maker, sha):
+        gezien.append(sha)
+
+    previews.register_large(traag)
+    previews.register_large(daarna)
+    sha = await grote_preview(client, headers, settings)
+    with caplog.at_level("WARNING"), anyio.fail_after(10):
+        assert await jobs.run_pending(settings) == 1
+    assert "previews.large te traag" in caplog.text
     assert gezien == [sha]
     assert await stand(maker, sha) == ([256, 1024], False, ["done"])
 

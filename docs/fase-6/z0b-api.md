@@ -85,7 +85,9 @@ In **`api/app/analysis.py`**: `Step.EMBED = "embed"`, met versie 1 in `VERSIONS`
 `(maker, sha)` en komt aan de beurt nadat de ronde `preview.large` de 1024 gemaakt heeft, ná
 `announce`. Een fout in `fn` komt in het log (`previews.large`) en de volgende gaat gewoon door;
 de preview zelf is dan al klaar. Dezelfde `fn` twee keer aanmelden telt één keer. Niemand meldt
-zich nog aan (X2 en X3 doen dat).
+zich nog aan (X2 en X3 doen dat). Na de review (veilig V4): `fn` zet alleen werk in de rij en
+wacht niet op de container of een render; duurt hij langer dan `LARGE_HOOK_S` (5 s), dan stopt
+hij met `previews.large te traag` in het log en gaat de volgende door.
 
 ### De routes (§3.4)
 
