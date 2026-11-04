@@ -131,6 +131,9 @@ async def search(
     engine = await engine_for(settings, await session.connection())
     if engine is LIKE:
         return await engine.search(session, user, params)
+    # Wie in de rij van admit wacht, houdt geen verbinding uit de pool vast (dat zijn er 15;
+    # de rij is 20 lang): de motor neemt na het wachten een nieuwe
+    await session.commit()
     token = engines.SETTINGS.set(settings)
     try:
         async with admit(user, "search", settings):
@@ -154,6 +157,7 @@ async def suggest(
     engine = await engine_for(settings, await session.connection())
     if engine is LIKE:
         return await engine.suggest(session, user, q)
+    await session.commit()  # geen verbinding vasthouden in de rij (zie search)
     async with admit(user, "suggest", settings):
         return await engine.suggest(session, user, q)
 

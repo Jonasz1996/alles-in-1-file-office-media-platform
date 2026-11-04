@@ -16,6 +16,9 @@ rondes onder een tijdsgrens (deadline.py, Keuze 9):
   verder na `after` (de laatste rowid);
 - **ronde C**, als ook B de grens raakt: alleen de namen via fts_name.
 
+Stopt een nieuwere vraag van dezelfde gebruiker deze (limits.admit, Keuze 13), dan komt er geen
+volgende ronde: meteen een lege, gedeeltelijke pagina.
+
 Zonder vraag maar met filters de vormen van Keuze 4a: langs de tijd (INDEXED BY
 ix_node_live_mod, of ix_node_ftype_mod bij één soort), of vanaf de paden als de wortels samen
 ≤ 20.000 nodes hebben (en het er ≤ 64 zijn).
@@ -60,7 +63,7 @@ from app.config import Settings, get_settings
 from app.models import Node, PhotoOcr, User
 from app.routers.files import describe, get_dir, is_trashed, tags_by_node
 from app.search.access import MAX_OR, Ranges, ranges_sql, search_ranges, second_check
-from app.search.deadline import deadline
+from app.search.deadline import STOP, deadline
 from app.search.filters import apply_all
 from app.search.like import LikeFallback, own_tag, paths
 from app.search.query import Parsed, parse
@@ -300,6 +303,19 @@ class Round:
     hit: bool
 
 
+def stopped() -> bool:
+    """Heeft een nieuwere vraag van dezelfde gebruiker deze gestopt (Keuze 13)? Dan geen
+    volgende ronde meer: de plek is voor de nieuwe vraag."""
+    stop = STOP.get()
+    return stop is not None and stop.stopped
+
+
+def _stopped_page(p: SearchParams) -> SearchPage:
+    return SearchPage(
+        results=[], more=False, offset=p.offset, partial=True, ranked=False, engine="fts"
+    )
+
+
 async def run(conn: AsyncConnection, sel: Select, ms: float) -> Round:
     """sel onder een grens van ms milliseconden; bij de grens geen rijen (de vraag stopte)."""
     async with deadline(conn, max(1, int(ms))) as d:
@@ -353,6 +369,8 @@ class FtsEngine:
             await check_in(db, user, p.in_)
         for tag_id in dict.fromkeys(p.tags):
             await own_tag(db, user, tag_id)
+        if stopped():
+            return _stopped_page(p)
         roots = await search_ranges(db, user)
         if not roots.ranges or (parsed is None and not p.has_filter()):
             return SearchPage(results=[], more=False, offset=p.offset, ranked=True, engine="fts")
@@ -398,6 +416,8 @@ class FtsEngine:
             # Ronde A, en daarna de stukken van namen als A minder dan deze pagina gaf
             k = p.offset + p.limit + 1
             a = await run(conn, ranked_select(parsed, scope, k), a_ms)
+            if a.hit and stopped():
+                return _stopped_page(p)
             if not a.hit:
                 page = a.rows[p.offset : p.offset + p.limit]
                 if len(a.rows) == k:
@@ -413,6 +433,8 @@ class FtsEngine:
         k = p.limit + 1
         skip = p.offset if p.after is None else 0
         b = await run(conn, stream_select(parsed, scope, k, p.after, skip), rest())
+        if b.hit and stopped():
+            return _stopped_page(p)
         if not b.hit:
             page = b.rows[: p.limit]
             more = len(b.rows) > p.limit
