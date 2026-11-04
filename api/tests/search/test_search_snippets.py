@@ -18,6 +18,8 @@ Wat hier vastligt:
 
 from __future__ import annotations
 
+import itertools
+import random
 import threading
 import uuid
 
@@ -30,6 +32,7 @@ from app.models import User
 from app.search import limits, snippets
 from app.search.query import parse
 from app.search.snippets import WINDOW, Snip, Source, build, pattern, snippet
+from app.text import fold
 from tests.search import wereld as W
 from tests.search.test_search_access import kop
 
@@ -203,16 +206,26 @@ def _documenten(n: int, naam: str = "doc") -> list[Source]:
 
 
 def test_hooguit_40_ms_per_verzoek(klok):
-    """15 ms per document: na drie (45 ms) is het budget op; de rest krijgt snippet null met
-    match text. De klok kijkt vóór elk document: een document wordt niet halverwege gestopt."""
+    """15 ms per document. De klok kijkt vóór elk document, en een document begint alleen als
+    het nog past (geschat op het duurste tot nu toe): na twee (30 ms) zou een derde op 45 ms
+    uitkomen, dus de rest krijgt snippet null met match text. Een document wordt nooit
+    halverwege gestopt."""
     docs = _documenten(5)
     found = build(docs, parse("zebra"))
     met = [d.id for d in docs if found[d.id].snippet is not None]
-    assert met == [d.id for d in docs[:3]]
-    assert [found[d.id] for d in docs[3:]] == [Snip("text", None)] * 2
-    # Een nieuw verzoek heeft weer 40 ms (de app heeft nog 55 over)
+    assert met == [d.id for d in docs[:2]]
+    assert [found[d.id] for d in docs[2:]] == [Snip("text", None)] * 3
+    assert klok.t == pytest.approx(5_000.030)
+    # Een nieuw verzoek heeft weer 40 ms (de app heeft nog 70 over)
     found = build(docs, parse("zebra"))
-    assert sum(found[d.id].snippet is not None for d in docs) == 3
+    assert sum(found[d.id].snippet is not None for d in docs) == 2
+
+
+def test_wat_de_stap_al_kostte_telt_mee_in_de_schatting(klok):
+    """De SQL kostte al 20 ms: één document van 15 ms past (35), een tweede niet meer (50)."""
+    docs = _documenten(3)
+    found = build(docs, parse("zebra"), 20.0)
+    assert [found[d.id].snippet is not None for d in docs] == [True, False, False]
 
 
 def test_een_naam_treffer_kost_geen_tijd(klok):
@@ -229,9 +242,10 @@ def test_een_naam_treffer_kost_geen_tijd(klok):
 
 
 def test_hooguit_100_ms_per_seconde_voor_de_app(klok):
-    """30 ms per document. Verzoek 1: 60 ms (twee documenten, dan is zijn eigen 40 ms op).
-    Verzoek 2: nog 40 over, twee documenten (de app staat op 120). Verzoek 3: niets meer, tot
-    er een seconde voorbij is."""
+    """30 ms per document: elk verzoek één (een tweede zou op 60 ms uitkomen). De app staat na
+    drie verzoeken op 90 ms; met 10 over past een document van 30 niet meer, ook niet als
+    eerste van een nieuw verzoek (de app schat op het duurste in zijn venster). Na een seconde
+    weer wel."""
     klok.per = 0.030
     docs = _documenten(4)
     parsed = parse("zebra")
@@ -239,12 +253,11 @@ def test_hooguit_100_ms_per_seconde_voor_de_app(klok):
     def met_snippet() -> int:
         return sum(s.snippet is not None for s in build(docs, parsed).values())
 
-    assert met_snippet() == 2
-    assert met_snippet() == 2
+    assert [met_snippet() for _ in range(3)] == [1, 1, 1]
     found = build(docs, parsed)
     assert list(found.values()) == [Snip("text", None)] * 4
     klok.t += 1.0
-    assert met_snippet() == 2
+    assert met_snippet() == 1
 
 
 # --- Met de app -------------------------------------------------------------------------------
@@ -336,14 +349,34 @@ def test_de_sql_telt_mee_in_de_40_ms():
     assert {(s.match, s.snippet) for s in op.values()} == {("text", None)}
 
 
+@pytest.mark.parametrize("seed", range(20))
+def test_de_weg_terug_zoals_per_teken(seed):
+    """Folded.back() (alleen de tekens die niet precies één teken geven, met bisect) geeft voor
+    elke plek in de gevouwen tekst dezelfde plek in de tekst als een tabel per teken; ook als
+    de tekst in stukken gevouwen wordt."""
+    rnd = random.Random(seed)
+    stukjes = ["a", "Z", " ", "7", "ß", "ẞ", "e\u0301", "\u0301", "ﬁ", "é", "½", "\u200b"]
+    tekst = "".join(rnd.choice(stukjes) for _ in range(rnd.randint(1, 400)))
+    per_teken = [i for i, c in enumerate(tekst) for _ in fold(c)]
+    f = snippets.Folded(tekst, 0)
+    grenzen = sorted(rnd.sample(range(1, len(tekst) + 1), min(3, len(tekst))))
+    for n in [*grenzen, len(tekst)]:
+        f.extend(n)
+        assert f.out == "".join(fold(c) for c in tekst[:n])
+        verwacht = [i for i in per_teken if i < n]
+        assert [f.back(i) for i in range(len(f.out))] == verwacht
+        assert f.back(len(f.out)) == n
+
+
 @pytest.mark.parametrize("plek", [0, 1_990, 1_998, 7_990, 12_000, 19_990])
 def test_in_stappen_gevouwen_zoals_in_een_keer(plek):
     """Vouwen in stappen (2.000, 8.000, het hele venster) geeft hetzelfde als alles in één keer,
     ook als het woord over de rand van een stap loopt, of als er een langer woord op de rand
-    staat dat met het woord begint."""
+    staat dat met het woord begint; ook met ß ervoor (gevouwen "ss": de plekken in de gevouwen
+    tekst en in de tekst verschillen dan)."""
     rx = snippets.pattern(parse("zebrapad"))
-    for voor in ("", "zebrapadden "):
-        tekst = ("x" * max(0, plek - len(voor) - 1) + " " + voor + "zebrapad en verder")[:20_000]
+    for vul, voor in itertools.product(("x", "ß"), ("", "zebrapadden ")):
+        tekst = (vul * max(0, plek - len(voor) - 1) + " " + voor + "zebrapad en verder")[:20_000]
         stappen = snippets.snippet(tekst, rx)
         heel = snippets.STEPS
         try:

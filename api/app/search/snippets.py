@@ -11,11 +11,14 @@
   (Keuze 16 en 25a: een treffer, zijn rang en zijn snippet komen nooit uit de foto-OCR van een
   ander).
 - Vouwen (fold() per teken, met een tabel van plekken terug naar de tekst) in stappen: eerst de
-  eerste 2.000 tekens, dan 8.000, dan het hele venster, tot de eerste treffer met zijn stuk erin
-  past (vouwen kost ±0,75 ms per 20.000 tekens, en de meeste treffers staan vooraan). Dan één
-  reguliere expressie met de gevouwen woorden van de vraag (het laatste als voorvoegsel, zoals
-  parse() het zegt). Het stuk van ±160 tekens rond de eerste treffer, met elke treffer daarin
-  gemarkeerd. Zo vindt "strasse" ook "Straße", en is in de snippet "Straße" gemarkeerd.
+  eerste 2.000 tekens, dan tot 8.000, dan de rest van het venster, tot de eerste treffer met
+  zijn stuk erin past (de meeste treffers staan vooraan). Elke stap vouwt alleen wat er nieuw
+  bij komt, en zoekt pas vanaf waar de vorige stap nog niet zeker was: zonder treffer kost het
+  venster zo één keer vouwen en één keer zoeken (±0,45 ms per 20.000 tekens, in stappen opnieuw
+  was dat ±0,75). Eén reguliere expressie met de gevouwen woorden van de vraag (het laatste als
+  voorvoegsel, zoals parse() het zegt). Het stuk van ±160 tekens rond de eerste treffer, met
+  elke treffer daarin gemarkeerd. Zo vindt "strasse" ook "Straße", en is in de snippet "Straße"
+  gemarkeerd.
 - match: "name" als elk woord in de naam staat (geen snippet: de naam staat er al); anders de
   eerste kolom met een treffer in zijn venster, in de volgorde van bm25 (Keuze 6): title, text,
   ocr (ook de OCR van een eigen foto), meta. Staat het woord nergens in de eerste 20.000 tekens,
@@ -24,13 +27,13 @@
   HTML: wat er in de tekst staat (ook "<b>") komt er letterlijk in; stuurtekens, tekens die de
   richting van tekst omdraaien en regeleinden worden een spatie. De web zet de stukken als tekst
   in de pagina.
-- De klok loopt per document: hooguit 40 ms per verzoek, en voor de hele app hooguit 100 ms per
-  seconde (Keuze 13). De 40 ms gelden voor de hele stap snip (Server-Timing, §4.4): de SQL telt
-  mee, en build() begint geen document meer na REQUEST_MS sinds het begin van de stap. Wat
-  daarna nog komt, krijgt snippet null en match "text" (de treffer en
-  zijn naam blijven). De klok is de wandklok van de thread (CLOCK; de tests zetten een nepklok).
-  Met de limiter van 1 hieronder is dat de tijd van het werk zelf, of iets meer als de event
-  loop de GIL even heeft: nooit minder dan de CPU die het kost.
+- De klok kijkt vóór elk document: hooguit 40 ms per verzoek, en voor de hele app hooguit
+  100 ms per seconde (Keuze 13). De 40 ms gelden voor de hele stap snip (Server-Timing, §4.4):
+  de SQL, het wachten op de thread en elk document tellen mee (de wandklok vanaf het begin van
+  de stap). Een document begint alleen als het nog past, geschat op het duurste document tot nu
+  toe in dit verzoek; een document wordt nooit halverwege gestopt. Wat niet meer past, krijgt
+  snippet null en match "text" (de treffer en zijn naam blijven). De klok is CLOCK (de tests
+  zetten een nepklok).
 - Het werk draait in een thread (anyio.to_thread) met een eigen limiter van 1, zodat de event
   loop tussendoor andere verzoeken kan doen.
 """
@@ -38,6 +41,7 @@
 from __future__ import annotations
 
 import asyncio
+import bisect
 import re
 import threading
 import time
@@ -100,6 +104,7 @@ class Source:
 
 # Tekens waarvan fold() niet precies één teken geeft (ß → "ss", een accent los → "")
 _ODD: set[str] = set()
+_odd_rx: tuple[int, re.Pattern[str]] = (-1, re.compile("(?!)"))
 
 
 class _Table(dict):
@@ -116,25 +121,62 @@ class _Table(dict):
 _TABLE = _Table({code: fold(chr(code)) for code in range(128)})
 
 
+def _odd() -> re.Pattern[str]:
+    """Eén klasse met de tekens van _ODD, opnieuw gemaakt als er een bij kwam."""
+    global _odd_rx
+    chars = sorted(_ODD)
+    if _odd_rx[0] != len(chars):
+        body = "".join(re.escape(c) for c in chars)
+        _odd_rx = (len(chars), re.compile(f"[{body}]" if body else "(?!)"))
+    return _odd_rx[1]
+
+
 class Folded:
     """Een tekst gevouwen zoals de vraag (fold() per teken), met de weg terug: back(i) is de
     plek in de tekst van teken i van de gevouwen tekst. Geeft elk teken precies één teken (het
-    gewone geval), dan is dat dezelfde plek, en wordt er niets geteld."""
+    gewone geval), dan is dat dezelfde plek. Anders onthoudt Folded alleen de tekens die dat
+    niet doen (meestal weinig): hun plek in de tekst, hun plek in de gevouwen tekst en hoeveel
+    tekens ze geven; back() zoekt het laatste ervoor op (bisect).
 
-    def __init__(self, text: str) -> None:
+    Folded(text, n) vouwt alleen de eerste n tekens; extend(m) vouwt verder tot teken m. Het
+    gevouwen deel staat in out, en n zegt tot waar het komt."""
+
+    def __init__(self, text: str, n: int | None = None) -> None:
         self.text = text
-        self.out = text.translate(_TABLE)
-        self._same = _ODD.isdisjoint(text)
-        self._starts: list[int] = []
-        self._i = 0
+        self.n = 0
+        self.out = ""
+        self._at: list[int] = []  # plek in de tekst
+        self._folded_at: list[int] = []  # plek in de gevouwen tekst
+        self._width: list[int] = []  # zoveel tekens geeft fold()
+        self.extend(len(text) if n is None else n)
+
+    def extend(self, n: int) -> None:
+        n = min(n, len(self.text))
+        if n <= self.n:
+            return
+        piece = self.text[self.n : n]
+        shift = len(self.out) - self.n
+        self.out += piece.translate(_TABLE)
+        # Na translate: dan staan de tekens van dit stuk in _ODD
+        for m in _odd().finditer(self.text, self.n, n):
+            at = m.start()
+            width = len(_TABLE[ord(m.group())])
+            self._at.append(at)
+            self._folded_at.append(at + shift)
+            self._width.append(width)
+            shift += width - 1
+        self.n = n
 
     def back(self, pos: int) -> int:
-        if self._same:
-            return min(pos, len(self.text))
-        while len(self._starts) <= pos and self._i < len(self.text):
-            self._starts.extend([self._i] * len(_TABLE[ord(self.text[self._i])]))
-            self._i += 1
-        return self._starts[pos] if pos < len(self._starts) else len(self.text)
+        if pos >= len(self.out):
+            return self.n
+        k = bisect.bisect_right(self._folded_at, pos) - 1
+        if k < 0:
+            return pos
+        at, folded_at, width = self._at[k], self._folded_at[k], self._width[k]
+        if pos < folded_at + width:
+            return at
+        return at + 1 + pos - folded_at - width
 
     def span(self, start: int, end: int) -> tuple[int, int]:
         """[start, end) in de gevouwen tekst als [begin, eind) in de tekst. Een teken dat in
@@ -165,16 +207,26 @@ def _clean(text: str) -> str:
 def snippet(text: str, rx: re.Pattern[str]) -> list[SnippetPart] | None:
     """Het stuk van ±SPAN tekens rond de eerste treffer in text, als stukken; None zonder
     treffer. Gevouwen in stappen (STEPS): een treffer telt pas als hij met zijn stuk en een
-    marge (een woord dat over de rand loopt) binnen het gevouwen deel valt."""
+    marge (een woord dat over de rand loopt) binnen het gevouwen deel valt. Elke stap vouwt
+    alleen het nieuwe stuk, en zoekt vanaf de eerste plek die de vorige stap niet zeker wist:
+    de treffer die nog niet telde, of zonder treffer een marge vóór de rand (een woord van de
+    vraag dat daar begon, liep misschien over de rand)."""
+    # Langer dan elk gevouwen woord van de vraag (het patroon bevat ze allemaal)
+    margin = max(MARGIN, len(rx.pattern))
+    f = Folded(text, 0)
+    first: re.Match[str] | None = None
+    pos = 0
     for n in (*STEPS, len(text)):
-        part = text[:n] if n < len(text) else text
-        f = Folded(part)
-        hits = rx.finditer(f.out)
-        first = next(hits, None)
-        if part is text:
+        f.extend(n)
+        first = rx.search(f.out, pos)
+        if f.n == len(text):
             break
-        if first is not None and f.span(first.start(), first.end())[1] + SPAN + MARGIN < n:
+        if first is None:
+            pos = max(pos, len(f.out) - margin)
+        elif f.span(first.start(), first.end())[1] + SPAN + margin < f.n:
             break
+        else:
+            pos = first.start()
     if first is None:
         return None
     begin, stop = f.span(first.start(), first.end())
@@ -186,7 +238,7 @@ def snippet(text: str, rx: re.Pattern[str]) -> list[SnippetPart] | None:
             start = space + 1
     end = max(stop, min(len(text), start + SPAN))
     marks = [(begin, stop)]
-    for m in hits:
+    for m in rx.finditer(f.out, first.end()):
         b, s = f.span(m.start(), m.end())
         if b >= end:
             break
@@ -230,11 +282,13 @@ class _App:
         self._lock = threading.Lock()
         self._spent: deque[tuple[float, float]] = deque()
 
-    def left(self, now: float) -> float:
+    def left(self, now: float) -> tuple[float, float]:
+        """Wat er in het venster nog over is, en het duurste document erin."""
         with self._lock:
             while self._spent and self._spent[0][0] <= now - APP_WINDOW_S:
                 self._spent.popleft()
-            return APP_MS - sum(ms for _, ms in self._spent)
+            ms = [ms for _, ms in self._spent]
+            return APP_MS - sum(ms), max(ms, default=0.0)
 
     def add(self, now: float, ms: float) -> None:
         with self._lock:
@@ -266,21 +320,28 @@ def _one(src: Source, rx: re.Pattern[str]) -> Snip:
 
 def build(sources: Sequence[Source], parsed: Parsed, already: float = 0.0) -> dict[uuid.UUID, Snip]:
     """match en snippet per node, binnen het budget van dit verzoek en van de app. already: de
-    ms die de stap al kostte (de SQL van make())."""
+    ms die de stap al kostte (de SQL van make() en het wachten op de thread).
+
+    Een document begint alleen als het nog past: wat de stap tot nu toe kostte (de wandklok),
+    plus het duurste document tot nu toe in dit verzoek, blijft onder REQUEST_MS; en de app
+    heeft in zijn venster nog meer over dan het duurste document daarin of in dit verzoek."""
     rx = pattern(parsed)
-    spent = already
+    begin = CLOCK()
+    most = 0.0
     out: dict[uuid.UUID, Snip] = {}
     for src in sources:
         if all(w in src.name for w in parsed.words):
             out[src.id] = Snip("name", None)
             continue
         start = CLOCK()
-        if spent >= REQUEST_MS or APP.left(start) <= 0:
+        spent = already + (start - begin) * 1000
+        left, largest = APP.left(start)
+        if spent + most >= REQUEST_MS or left <= max(most, largest):
             out[src.id] = Snip("text", None)
             continue
         out[src.id] = _one(src, rx)
         ms = (CLOCK() - start) * 1000
-        spent += ms
+        most = max(most, ms)
         APP.add(start, ms)
     return out
 
@@ -362,5 +423,9 @@ async def make(
     found = await sources(db, user, ids)
     if not found:
         return {}
-    sql = (CLOCK() - start) * 1000
-    return await anyio.to_thread.run_sync(build, found, parsed, sql, limiter=_thread())
+
+    def run() -> dict[uuid.UUID, Snip]:
+        # In de thread: het wachten op de limiter telt mee
+        return build(found, parsed, (CLOCK() - start) * 1000)
+
+    return await anyio.to_thread.run_sync(run, limiter=_thread())
