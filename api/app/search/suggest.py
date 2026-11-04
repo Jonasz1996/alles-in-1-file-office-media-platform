@@ -56,10 +56,11 @@ MAX = 5
 # De tijdsgrens voor de namen samen (ms): een suggestie die later komt, helpt niet meer (wie
 # typt, typt door), en de poort van §4.4 is p95 ≤ 50 ms voor het hele verzoek
 NAMES_MS = 40.0
-# Van die 50 ms gaan er ±10 naar inloggen, HTTP en JSON (buiten suggest()); SUGGEST_MS is wat
+# Van die 50 ms gaan er ±11-13 naar inloggen, HTTP en JSON (buiten suggest()); SUGGEST_MS is wat
 # suggest() zelf mag kosten, AFTER_NAMES_MS wat na de namen nog komt (gemeten op de boom van
-# §4.4: de tweede controle tot 8 ms bij p95, tags en albums samen ±5 ms)
-SUGGEST_MS = 40.0
+# §4.4: de tweede controle tot 8 ms bij p95, tags en albums samen ±5 ms). Met 40 kwam "alles"
+# (30 gedeelde hoofdmappen) op een p95 van 49,5
+SUGGEST_MS = 35.0
 AFTER_NAMES_MS = 10.0
 
 
