@@ -14,7 +14,11 @@ De filters van Z1:
   modified_at, per hele dag in settings.timezone;
 - tag: eigen tags; meer keer is EN;
 - library: onder de hoofdmap van die mediabibliotheek (via mpath);
-- in: onder deze map, en de map zelf (via mpath).
+- in: onder deze map (via mpath).
+
+Onder is echt eronder: de map van in, en de hoofdmap van library, zijn zelf geen treffer, net als
+in LikeFallback en in 0.7.0 (review golf 1, contract N1). De eigen hoofdmap is nooit een treffer
+(engine.scoped; contract S2).
 """
 
 from __future__ import annotations
@@ -83,25 +87,32 @@ def _day_num(day: date) -> int:
     return day.year * 10_000 + day.month * 100 + day.day
 
 
+def date_where(p: SearchParams, dated: Any, taken_day: Any, modified_at: Any) -> list[Any]:
+    """De voorwaarden van from en to: op taken_day waar dated waar is, anders op modified_at.
+    Ook voor LikeFallback, met zijn eigen dated (zonder ftype; review golf 1, contract S3)."""
+    out = []
+    if p.date_from is not None:
+        out.append(
+            case(
+                (dated, taken_day >= _day_num(p.date_from)),
+                else_=modified_at >= _day_start(p.date_from),
+            )
+        )
+    if p.date_to is not None:
+        out.append(
+            case(
+                (dated, taken_day <= _day_num(p.date_to)),
+                else_=modified_at < _day_start(p.date_to + timedelta(days=1)),
+            )
+        )
+    return out
+
+
 def _dates(sel: Select, n: Any, p: SearchParams, user: User) -> Select:
     if p.date_from is None and p.date_to is None:
         return sel
     dated = and_(n.c.ftype.in_(DATED), n.c.taken_day.is_not(None))
-    if p.date_from is not None:
-        sel = sel.where(
-            case(
-                (dated, n.c.taken_day >= _day_num(p.date_from)),
-                else_=n.c.modified_at >= _day_start(p.date_from),
-            )
-        )
-    if p.date_to is not None:
-        sel = sel.where(
-            case(
-                (dated, n.c.taken_day <= _day_num(p.date_to)),
-                else_=n.c.modified_at < _day_start(p.date_to + timedelta(days=1)),
-            )
-        )
-    return sel
+    return sel.where(*date_where(p, dated, n.c.taken_day, n.c.modified_at))
 
 
 def _tag(sel: Select, n: Any, p: SearchParams, user: User) -> Select:
@@ -113,16 +124,18 @@ def _tag(sel: Select, n: Any, p: SearchParams, user: User) -> Select:
 
 
 def _under(n: Any, root: Select) -> Any:
-    """n ligt onder de node met dit mpath (root: een select van één mpath), of is hem zelf. Elk
-    deel is een losse subquery zonder verband met n: SQLite rekent hem één keer uit."""
+    """n ligt onder de node met dit mpath (root: een select van één mpath), en is hem niet zelf:
+    het pad van de map zelf is het begin van het bereik. Elk deel is een losse subquery zonder
+    verband met n: SQLite rekent hem één keer uit."""
     start = root.scalar_subquery()
     end = root.with_only_columns(
         literal_column("substr(mpath, 1, length(mpath) - 1) || '0'")
     ).scalar_subquery()
-    return and_(n.c.mpath >= start, n.c.mpath < end)
+    return and_(n.c.mpath > start, n.c.mpath < end)
 
 
 def _library(sel: Select, n: Any, p: SearchParams, user: User) -> Select:
+    """Wie de bibliotheek niet ziet, krijgt 404 vóór dit filter (like.check_library)."""
     if p.library is None:
         return sel
     root = (

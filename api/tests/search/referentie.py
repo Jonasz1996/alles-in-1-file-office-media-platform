@@ -258,12 +258,14 @@ class Referentie:
     def zichtbaar(
         self, user: uuid.UUID | None, *, in_: uuid.UUID | None = None, nu: datetime | None = None
     ) -> set[uuid.UUID]:
-        """De nodes die zoeken voor user mag geven. user None: alles wat levend is (voor een
-        vergelijking met de index zelf)."""
+        """De nodes die zoeken voor user mag geven: nooit zijn eigen hoofdmap, en met in_ alleen
+        wat eronder ligt, niet in_ zelf (review golf 1, contract S2 en N1). user None: alles wat
+        levend is (voor een vergelijking met de index zelf)."""
         wortels = None if user is None else self.wortels_van(user, nu)
+        eigen = None if user is None else self.wortels.get(user)
         uit = set()
         for node_id, node in self.nodes.items():
-            if node.kind == "album":
+            if node.kind == "album" or node_id in (eigen, in_):
                 continue
             keten = self.keten(node_id)
             if any(self.nodes[k].weg for k in keten):
@@ -346,12 +348,11 @@ class Referentie:
     ) -> set[uuid.UUID]:
         """Zoeken zoals in 0.7.0 (LikeFallback, ook de terugval van Keuze 10): elk woord van
         fold(q), gesplitst op spaties (hooguit 10), staat in de gevouwen naam; zonder je eigen
-        hoofdmap en zonder in_ zelf."""
+        hoofdmap en zonder in_ zelf (zoals zichtbaar)."""
         stukken = fold(q).split()[:MAX_WOORDEN]
-        zonder = {in_} if in_ is not None else {self.wortels.get(user)}
         return {
             n
-            for n in self.zichtbaar(user, in_=in_, nu=nu) - zonder
+            for n in self.zichtbaar(user, in_=in_, nu=nu)
             if all(w in self.nodes[n].naam for w in stukken)
         }
 

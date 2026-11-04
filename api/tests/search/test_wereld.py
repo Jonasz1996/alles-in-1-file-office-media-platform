@@ -122,8 +122,9 @@ async def test_de_wereld_is_elke_keer_gelijk(settings, tmp_path):
 
 async def test_de_rollen_kloppen_met_de_app(settings):
     """De referentie rekent zelf uit wat iemand ziet; hier ligt hij naast access.shared_roots,
-    de regel van de app sinds fase 2: dezelfde nodes (de eigen map erbij, behalve voor een gast;
-    een gedeeld album niet: dat geeft niets om te zoeken)."""
+    de regel van de app sinds fase 2: dezelfde nodes (wat in de eigen map ligt erbij, behalve
+    voor een gast, en de eigen map zelf niet; een gedeeld album niet: dat geeft niets om te
+    zoeken)."""
     w = await W.bouw_async(settings)
     ref = await _lees(settings)
     levend = ref.zichtbaar(None)
@@ -132,7 +133,7 @@ async def test_de_rollen_kloppen_met_de_app(settings):
             wortels = {r.node_id for r in await access.shared_roots(session, user_id)}
             if W.GEBRUIKERS[naam][0] != "guest":
                 wortels.add(w.roots[naam])
-            app = {n for n in levend if wortels.intersection(ref.keten(n))}
+            app = {n for n in levend if wortels.intersection(ref.keten(n))} - {w.roots[naam]}
             assert ref.zichtbaar(user_id) == app, naam
     # Bram: zijn eigen map, Werk, en Werk/Inbox apart (het dubbele pad); het album niet
     assert ref.wortels_van(w.users["bram"]) == {w.roots["bram"], w.ids["werk"], w.ids["inbox"]}

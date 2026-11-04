@@ -20,6 +20,7 @@ from datetime import timedelta
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import Session
 
@@ -264,8 +265,16 @@ def _deel_mappen(conn, w: W.Wereld, n: int) -> list[uuid.UUID]:
         s.add(Share(node_id=node.id, owner_id=w.users["eva"], grantee_id=w.users["bram"],
                     permission="read", created_at=W.DAG))  # fmt: skip
         ids.append(node.id)
+    # In de laatste een map: wat type=folder met in van die map vindt
+    s.add(Node(parent_id=ids[-1], owner_id=w.users["eva"], name="binnen", kind="dir",
+               created_at=W.DAG, modified_at=W.DAG))  # fmt: skip
     s.flush()
     return ids
+
+
+def _binnen(conn, map_id: uuid.UUID) -> uuid.UUID:
+    s = Session(bind=conn)
+    return s.scalars(select(Node.id).where(Node.parent_id == map_id)).one()
 
 
 @pytest.mark.parametrize("wortels", [64, 65, 1000])
@@ -288,13 +297,16 @@ async def test_veel_wortels(client, settings, wortels):
     assert sorted(gevonden, key=str) == sorted(mappen, key=str)
     ref = await _lees(settings)
     assert set(gevonden) == ref.zoek(w.users["bram"], "doelmap").alles
-    # Alleen filters (Keuze 4a): ook over alle wortels, en met in alleen die ene map
+    # Alleen filters (Keuze 4a): ook over alle wortels, en met in alleen wat in die ene map
+    # ligt, zonder de map zelf (review golf 1, contract N1)
+    async with get_engine(settings).begin() as conn:
+        binnen = await conn.run_sync(_binnen, mappen[-1])
     r = await client.get(
         "/api/v1/search",
         params={"type": "folder", "in": str(mappen[-1])},
         headers=bram_kop,
     )
-    assert [h["node"]["id"] for h in r.json()["results"]] == [str(mappen[-1])]
+    assert [h["node"]["id"] for h in r.json()["results"]] == [str(binnen)]
 
 
 async def test_fien_ziet_niets_na_het_verlopen(client, settings):

@@ -9,9 +9,13 @@ zonder FTS5.
 
 Sinds Z1 is hij de terugval (Keuze 10): als FTS5 ontbreekt, met PLATFORM_SEARCH_INDEX=uit,
 tijdens een herbouw, en voor de vraag van 0.7.0 ("De overgang" in §3.4: één soort, met "archive"
-als soort zoals mime.category, één tag, limit tot 200). Hij kent q, type, tag en in, zonder de
-kolommen die alleen de triggers van 0010 bijhouden (ftype, mpath, taken_day: op PostgreSQL zijn
-er geen triggers). from/to, library en de filters van Z3 en Z6 negeert hij nog.
+als soort zoals mime.category, één tag, limit tot 200). Hij kent q, type, from/to, tag, library
+en in, zonder de kolommen die alleen de triggers van 0010 bijhouden (ftype en mpath: op
+PostgreSQL zijn er geen triggers). from/to gaat zoals filters._dates (de opnamedag van een foto
+of video, anders modified_at), met de soort uit mime; library en in zoeken vanaf die map omlaag
+(review golf 1, contract S3). In en library zijn zelf geen treffer, net als de eigen hoofdmap
+(contract N1 en S2). De filters van Z3 en Z6 geven 501 not_built in de router (contract S1);
+wie ze aanmeldt, zorgt ook voor deze motor.
 """
 
 from __future__ import annotations
@@ -23,8 +27,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app import access, errors, mime
+from app.media.library import get_seen
 from app.models import Node, NodeTag, Tag, User
 from app.routers.files import describe, get_dir, is_trashed, tags_by_node, tree
+from app.search.filters import date_where
 from app.search.types import Hit, PathPart, SearchPage, SearchParams, Suggestions
 from app.text import fold
 
@@ -59,6 +65,34 @@ async def own_tag(session: AsyncSession, user: User, tag_id: uuid.UUID) -> Tag:
     if tag is None or tag.owner_id != user.id:
         raise errors.fail(404, "tag_not_found", "Tag niet gevonden")
     return tag
+
+
+async def check_library(session: AsyncSession, user: User, library_id: uuid.UUID) -> uuid.UUID:
+    """De hoofdmap van een bibliotheek die deze gebruiker ziet (wie de map mag lezen, zoals in
+    /media); anders 404, ook als hij niet bestaat (review golf 1, veilig F3)."""
+    return (await get_seen(session, user, library_id)).library.root_id
+
+
+def _dated():
+    """Een foto of video met een opnamedag: daarop filtert from/to (filters.DATED, uit mime)."""
+    return and_(
+        Node.kind == "file",
+        or_(Node.mime.like("image/%"), Node.mime.like("video/%")),
+        Node.taken_day.is_not(None),
+    )
+
+
+async def _deepest(session: AsyncSession, a: Node, b: Node) -> Node | None:
+    """De diepste van twee mappen als de een in de ander ligt; anders None (niets ligt in
+    allebei)."""
+    if a.id == b.id:
+        return a
+    where = await paths(session, [a, b])
+    if b.id in {part.id for part in where.get(a.id, [])}:
+        return a
+    if a.id in {part.id for part in where.get(b.id, [])}:
+        return b
+    return None
 
 
 async def paths(session: AsyncSession, nodes: list[Node]) -> dict[uuid.UUID, list[PathPart]]:
@@ -98,15 +132,25 @@ class LikeFallback:
     name = "like"
 
     async def search(self, db: AsyncSession, user: User, p: SearchParams) -> SearchPage:
-        """Zoekt in map in_ en alles eronder, of zonder in_ in je eigen bestanden en alles wat
-        met je gedeeld is. Elk woord van q moet in de naam staan (hoofdletters en accenten
-        tellen niet). Mappen eerst, dan op naam. tags: alleen je eigen tags."""
+        """Zoekt onder map in_ (en onder de hoofdmap van library), of anders in je eigen
+        bestanden en alles wat met je gedeeld is. Elk woord van q moet in de naam staan
+        (hoofdletters en accenten tellen niet). Mappen eerst, dan op naam. tags: alleen je eigen
+        tags."""
         session = db
+        anchor = None
         if p.in_ is not None:
             found = await get_dir(session, user, p.in_, "read")
             if found.owner and await is_trashed(session, found.node):
                 raise errors.fail(404, "folder_not_found", "Map niet gevonden")
-            anchors, skip = [found.node.id], [found.node.id]
+            anchor = found.node
+        if p.library is not None:
+            top = await session.get(Node, await check_library(session, user, p.library))
+            anchor = top if anchor is None or top is None else await _deepest(session, anchor, top)
+            if anchor is None:
+                return SearchPage(results=[], more=False, offset=p.offset, names_only=True,
+                                  engine="like")  # fmt: skip
+        if anchor is not None:
+            anchors, skip = [anchor.id], [anchor.id]
         else:
             anchors, skip = await search_roots(session, user), [user.root_id]
         found = tree(anchors, live=True)
@@ -120,6 +164,9 @@ class LikeFallback:
             query = query.where(Node.search_name.contains(word, autoescape=True))
         if p.types:
             query = query.where(or_(*(of_category(t) for t in p.types)))
+        dates = date_where(p, _dated(), Node.taken_day, Node.modified_at)
+        if dates:
+            query = query.where(*dates)
         for tag in p.tags:
             await own_tag(session, user, tag)
             query = query.where(

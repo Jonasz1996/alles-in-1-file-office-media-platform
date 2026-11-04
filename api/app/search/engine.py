@@ -67,7 +67,7 @@ from app.search import snippets
 from app.search.access import MAX_OR, Ranges, ranges_sql, search_ranges, second_check
 from app.search.deadline import STOP, deadline
 from app.search.filters import apply_all
-from app.search.like import LikeFallback, own_tag, paths
+from app.search.like import LikeFallback, check_library, own_tag, paths
 from app.search.query import Parsed, parse
 from app.search.types import Hit, PathPart, SearchPage, SearchParams, Suggestions
 
@@ -234,14 +234,17 @@ class Scope:
 
 
 def scoped(sel: Select, n: Any, scope: Scope) -> Select:
-    """Levend, geen album, binnen de bereiken, en de filters uit het register. dead = 0 staat er
-    letterlijk: alleen dan mag SQLite de partiële indexen gebruiken."""
+    """Levend, geen album, binnen de bereiken, niet de eigen hoofdmap (zoals in LikeFallback;
+    review golf 1, contract S2), en de filters uit het register. dead = 0 staat er letterlijk:
+    alleen dan mag SQLite de partiële indexen gebruiken."""
     sql, params = ranges_sql(scope.roots.ranges, n.name)
     sel = sel.where(
         n.c.dead == literal_column("0"),
         n.c.kind != literal_column("'album'"),
         text(sql).bindparams(**params),
     )
+    if scope.user.root_id is not None:
+        sel = sel.where(n.c.id != scope.user.root_id)
     return apply_all(sel, n, scope.p, scope.user)
 
 
@@ -446,6 +449,8 @@ class FtsEngine:
         parsed = parse(p.q)  # QueryTooLong: de router geeft 400 search_query_too_long
         if p.in_ is not None:
             await check_in(db, user, p.in_)
+        if p.library is not None:
+            await check_library(db, user, p.library)
         for tag_id in dict.fromkeys(p.tags):
             await own_tag(db, user, tag_id)
         if stopped():

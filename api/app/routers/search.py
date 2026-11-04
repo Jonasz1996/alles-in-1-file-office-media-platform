@@ -16,6 +16,10 @@ Grenzen (Keuze 13): FtsEngine draait binnen limits.admit (2 tegelijk voor de app
 20, 1 per gebruiker, de snelheid per gebruiker). LikeFallback niet: dat is het zoeken van 0.7.0,
 zonder tijdsgrens die een nieuwere vraag kan stoppen.
 
+Voor beide motoren gelijk (review golf 1): q boven 200 tekens is 400 search_query_too_long;
+person (Z6), place, country en camera (Z3) zijn 501 not_built tot dat pakket het filter aanmeldt;
+library van een bibliotheek die je niet ziet is 404 (like.check_library).
+
 Zoeken op beeld (X3, Keuze 80; Z0b): mode=image of like geeft na de inlog 501 not_built("X3")
 tot X3 er is. Zonder mode (of met mode=text) is het een vraag zoals ervoor, met hetzelfde
 antwoord; daarin staan dan mode "text" en fallback null (de standaard van SearchPage).
@@ -41,9 +45,10 @@ from app.routers.files import TagRef, get_tree_access, tag_order, tree
 from app.routers.stubs import not_built
 from app.search import engine as engines
 from app.search.engine import LIKE, engine_for
+from app.search.filters import FILTERS
 from app.search.like import own_tag, search_roots
 from app.search.limits import Replaced, admit
-from app.search.query import QueryTooLong
+from app.search.query import MAX_CHARS, QueryTooLong
 from app.search.types import SearchMode, SearchPage, SearchParams, Suggestions
 from app.security import CurrentUser
 from app.text import CONTROL, fold
@@ -70,13 +75,34 @@ def _tag_lock(user_id: uuid.UUID) -> asyncio.Lock:
     return _tag_locks.setdefault(user_id, asyncio.Lock())
 
 
+# De filters van een later pakket (filters.py): tot dat pakket ze aanmeldt 501 not_built, in
+# beide motoren; zonder dat telde has_filter() ze wel, en gaf een vraag met alleen place alles
+# (review golf 1, contract S1)
+LATER = (("persons", "person", "Z6"), ("place", "place", "Z3"), ("country", "country", "Z3"),
+         ("camera", "camera", "Z3"))  # fmt: skip
+
+
+def _not_too_long(q: str) -> None:
+    """Meer dan 200 tekens: 400 search_query_too_long, zoals bij meer dan 10 woorden, in beide
+    motoren (de 422 van Query(max_length) was een andere fout; review golf 1, contract N2)."""
+    if len(q) > MAX_CHARS:
+        raise errors.fail(400, "search_query_too_long", "Je zoekvraag is te lang", max_words=10)
+
+
+def _built(fields: dict) -> None:
+    for field, name, package in LATER:
+        value = fields[field]
+        if (value is not None if field == "place" else bool(value)) and name not in FILTERS:
+            raise not_built(package)
+
+
 @router.get("/search")
 async def search(
     user: CurrentUser,
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
     response: Response,
-    q: Annotated[str, Query(max_length=200)] = "",
+    q: str = "",
     type_: Annotated[list[Category], Query(alias="type")] = [],  # noqa: B006
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
@@ -100,6 +126,7 @@ async def search(
     van X3."""
     if mode == "image" or like is not None:
         raise not_built("X3")
+    _not_too_long(q)
     if offset > MAX_OFFSET:
         raise errors.fail(
             400, "search_bad_offset", "Verder dan dit kun je niet bladeren", max=MAX_OFFSET
@@ -120,6 +147,7 @@ async def search(
         "limit": limit,
         "after": after,
     }
+    _built(fields)
     try:
         params = SearchParams(**fields)
     except ValidationError:
@@ -169,10 +197,11 @@ async def suggest(
     user: CurrentUser,
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
-    q: Annotated[str, Query(min_length=1, max_length=200)],
+    q: Annotated[str, Query(min_length=1)],
 ) -> Suggestions:
     """Namen, personen, plaatsen, tags en albums voor het zoekveld, elk hooguit 5
     (app/search/suggest.py)."""
+    _not_too_long(q)
     engine = await engine_for(settings, await session.connection())
     if engine is LIKE:
         return await engine.suggest(session, user, q)

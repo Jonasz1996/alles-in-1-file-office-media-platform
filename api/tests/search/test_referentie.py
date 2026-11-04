@@ -188,8 +188,8 @@ def test_een_frase_staat_in_een_kolom():
 
 @pytest.mark.anyio
 async def test_wat_iedereen_ziet_volgt_access(boom):
-    """Voor elke gebruiker van de boom: de nodes onder zijn eigen map (niet voor een gast) en
-    onder access.shared_roots (zonder album) zijn precies ref.zichtbaar()."""
+    """Voor elke gebruiker van de boom: de nodes onder zijn eigen map (niet voor een gast; de
+    map zelf niet) en onder access.shared_roots (zonder album) zijn precies ref.zichtbaar()."""
     data, uit, ref = boom
     settings = Settings(data_dir=data, jwt_secret="test" * 8)
     MADE.append(settings)
@@ -201,4 +201,5 @@ async def test_wat_iedereen_ziet_volgt_access(boom):
             if ref.rollen[user_id] != "guest":
                 wortels.add(ref.wortels[user_id])
             verwacht = {n for n in levend if wortels.intersection(ref.keten(n))}
+            verwacht.discard(ref.wortels.get(user_id))  # de eigen hoofdmap is nooit een treffer
             assert ref.zichtbaar(user_id) == verwacht, sleutel
