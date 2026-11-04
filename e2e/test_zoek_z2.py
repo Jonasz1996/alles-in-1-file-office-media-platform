@@ -5,10 +5,9 @@ een woord uit de tekst staat in de index, met een snippet. Standaard staat media
 de terugval in het renderproces van de app (batches tot 50). Met media aan (marker media, job
 e2e-media) leest de worker hem, met de handdruk.
 
-Zoeken zelf is op deze kop nog LikeFallback (alleen namen, names_only): dan komt het snippet uit
-de index (fts_node, snippet() van FTS5, alleen lezen naast de server). Zodra GET /search de tekst
-doorzoekt (FtsEngine van Z1, names_only false), controleert dezelfde test het snippet in het
-antwoord van /search.
+Sinds de samenvoeging met Z1 zoekt GET /search de tekst (FtsEngine, names_only false): het
+snippet komt uit het antwoord van /search (Keuze 8), met de treffer gemarkeerd. De index zelf
+(fts_node, alleen lezen naast de server) gebruikt alleen de test van de backfill.
 
 En de backfill: documenten van vóór Z2 (zonder rij in analysis en zonder blob_text) leest de
 app na een herstart vanzelf, om de beurt per eigenaar.
@@ -91,19 +90,16 @@ def _uuid(waarde: Any) -> str:
 
 
 def gevonden(server: Server, account: Account, woord: str, node_id: str) -> str:
-    """Zoeken op een woord uit de tekst: het snippet van dit bestand. Met LikeFallback (alleen
-    namen) uit de index; met een zoekmachine die de tekst doorzoekt, uit /search."""
+    """Zoeken op een woord uit de tekst via /search (FtsEngine): het snippet van dit bestand,
+    met elke treffer tussen [ en ] (zoals snippets())."""
     antwoord = server.call(account, "GET", f"{API}/search", params={"q": woord}, expect=200).json()
-    if antwoord["names_only"]:
-        # Op naam vindt LikeFallback het niet: het woord staat alleen in de tekst
-        assert node_id not in {h["node"]["id"] for h in antwoord["results"]}
-        found = snippets(server, woord)
-        assert node_id in found, found
-        return found[node_id]
+    assert antwoord["engine"] == "fts" and antwoord["names_only"] is False, antwoord
     hits = {h["node"]["id"]: h for h in antwoord["results"]}
     assert node_id in hits, antwoord
-    assert hits[node_id]["match"] != "name"
-    return hits[node_id]["snippet"] or ""
+    assert hits[node_id]["match"] == "text", hits[node_id]
+    delen = hits[node_id]["snippet"]
+    assert delen, hits[node_id]
+    return "".join(f"[{d['t']}]" if d["m"] else d["t"] for d in delen)
 
 
 def zoek_en_zie_het_snippet(server: Server, account: Account, woord: str) -> str:
@@ -137,7 +133,7 @@ def app(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[Server, Acco
 def test_docx_uploaden_en_een_woord_uit_de_tekst_vinden(app: tuple[Server, Account]) -> None:
     server, admin = app
     snippet = zoek_en_zie_het_snippet(server, admin, "zoekwoordterugval")
-    assert "[zoekwoordterugval]" in snippet or "<mark>" in snippet, snippet
+    assert "[zoekwoordterugval]" in snippet.lower(), snippet
 
 
 def test_de_backfill_na_een_herstart(app: tuple[Server, Account]) -> None:
