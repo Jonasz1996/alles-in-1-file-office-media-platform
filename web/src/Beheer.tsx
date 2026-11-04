@@ -8,6 +8,8 @@
 //
 // Fase 6 (Z0): het negende tabblad "Zoeken en foto's" (Alt+9), altijd: zoeken kan niet uit. De
 // inhoud is van Z7 (admin/SearchTab.tsx, een eigen chunk; de aanroepen in admin/searchApi.ts).
+// Z0b: in die tab ook de blokken "Gezichten" (X2) en "Zoeken op beeld" (X3); hun gebieden
+// photos_faces en beeld laden met de tab (SEARCH_TAB_AREAS).
 
 import { type JSX, lazy, Suspense } from "react";
 import { Jobs } from "./admin/Jobs";
@@ -18,7 +20,7 @@ import { Storage } from "./admin/Storage";
 import { Users } from "./admin/Users";
 import { BeheerGroups } from "./BeheerGroups";
 import { useCurrentUser } from "./currentUser";
-import { type MessageKey, t } from "./i18n";
+import { type Area, lazyWithAreas, type MessageKey, t } from "./i18n";
 import { useStatus } from "./media";
 import { adminMediaStatus } from "./media/api";
 import { useOfficeStatus } from "./office";
@@ -69,8 +71,11 @@ export function tabKeys(): readonly { combo: string; tab: TabInfo }[] {
   return [...TABS, OFFICE_TAB, MEDIA_TAB, SEARCH_TAB].map((tab, i) => ({ combo: `alt+${i + 1}`, tab }));
 }
 
+/** De gebieden die de tab "Zoeken en foto's" meeneemt: die van de blokken van X2 en X3 (Z0b). */
+export const SEARCH_TAB_AREAS: readonly Area[] = ["photos_faces", "beeld"];
+
 const MediaTab = lazy(() => import("./admin/MediaTab"));
-const SearchTab = lazy(() => import("./admin/SearchTab"));
+const SearchTab = lazyWithAreas(() => import("./admin/SearchTab"), SEARCH_TAB_AREAS);
 
 export function tabHref(path: string): string {
   return path ? `/beheer/${path}` : "/beheer";

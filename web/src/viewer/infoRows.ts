@@ -1,12 +1,13 @@
 // De plekken in het infopaneel voor fase 6 (Z0): Plek (LocationRow.tsx, van Z5) en Personen
-// (PeopleRow.tsx, van Z6). Elk een eigen bestand en een eigen chunk; het infopaneel laadt ze pas
-// als ze iets kunnen tonen. Puur, zodat het in vitest te testen is.
+// (PeopleRow.tsx, van Z6); Z0b zette de derde erbij: "Meer zoals deze" (LikeRow.tsx, van X3). Elk
+// een eigen bestand en een eigen chunk; het infopaneel laadt ze pas als ze iets kunnen tonen.
+// Puur, zodat het in vitest te testen is.
 
 import type { ViewerDetail } from "./api";
 import type { ViewKind } from "./media";
 import type { ViewerItem } from "./types";
 
-/** Wat LocationRow en PeopleRow krijgen: hetzelfde als het infopaneel. Elk geeft een eigen
+/** Wat LocationRow, PeopleRow en LikeRow krijgen: hetzelfde als het infopaneel. Elk geeft een eigen
  * <section> (met een <h4>) of niets. */
 export interface InfoRowProps {
   item: ViewerItem;
@@ -21,4 +22,13 @@ export interface InfoRowProps {
  */
 export function showPhotoRows(kind: ViewKind, item: Pick<ViewerItem, "version">, signedIn: boolean): boolean {
   return signedIn && !item.version && (kind === "image" || kind === "video");
+}
+
+/**
+ * "Meer zoals deze" (X3) alleen bij een foto: zoeken op beeld kent geen video's (Keuze 71). Verder
+ * als Plek en Personen: ingelogd en de huidige versie. Bij de foto van een ander of zonder vector
+ * geeft de API 404 of 409 beeld_no_vector; X3 beslist wat de rij dan toont.
+ */
+export function showLikeRow(kind: ViewKind, item: Pick<ViewerItem, "version">, signedIn: boolean): boolean {
+  return showPhotoRows(kind, item, signedIn) && kind === "image";
 }

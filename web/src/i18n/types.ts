@@ -4,6 +4,7 @@
 import type account from "./areas/account.nl";
 import type admin from "./areas/admin.nl";
 import type auth from "./areas/auth.nl";
+import type beeld from "./areas/beeld.nl";
 import type browser from "./areas/browser.nl";
 import type common from "./areas/common.nl";
 import type dupes from "./areas/dupes.nl";
@@ -11,6 +12,7 @@ import type media from "./areas/media.nl";
 import type music from "./areas/music.nl";
 import type office from "./areas/office.nl";
 import type photos from "./areas/photos.nl";
+import type photosFaces from "./areas/photos_faces.nl";
 import type photosMap from "./areas/photos_map.nl";
 import type photosPeople from "./areas/photos_people.nl";
 import type player from "./areas/player.nl";
@@ -50,7 +52,10 @@ export type Area =
   | "search"
   | "photos_map"
   | "dupes"
-  | "photos_people";
+  | "photos_people"
+  // Fase 6 (Z0b): de gebieden van X2 en X3 (Keuze 55)
+  | "photos_faces"
+  | "beeld";
 
 /** Meervoudsvormen (Intl.PluralRules); "other" is altijd nodig. Een object met de sleutel
  * "other" is daarom altijd een meervoud, nooit een groep sleutels. */
@@ -110,6 +115,8 @@ export interface Dictionaries {
   photos_map: typeof photosMap;
   dupes: typeof dupes;
   photos_people: typeof photosPeople;
+  photos_faces: typeof photosFaces;
+  beeld: typeof beeld;
 }
 
 /** "browser.title", "common.close", "shell.nav.files": gebied, dan het pad in het woordenboek. */

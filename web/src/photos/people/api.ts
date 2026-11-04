@@ -18,6 +18,7 @@ import type {
   PersonPatch,
   PersonPhotos,
   PhotoSettings,
+  PhotoSettingsPatch,
 } from "./types";
 
 const API = "/api/v1";
@@ -98,8 +99,8 @@ export function photoSettings(): Promise<PhotoSettings> {
   return api.request<PhotoSettings>("GET", `${API}/me/photo-settings`);
 }
 
-/** PATCH /me/photo-settings */
-export function updatePhotoSettings(patch: Partial<PhotoSettings>): Promise<PhotoSettings> {
+/** PATCH /me/photo-settings: alleen wat verandert (ook faces en beeld, X2 en X3). */
+export function updatePhotoSettings(patch: PhotoSettingsPatch): Promise<PhotoSettings> {
   return api.request<PhotoSettings>("PATCH", `${API}/me/photo-settings`, patch);
 }
 

@@ -9,6 +9,12 @@
 //
 // Tot Z1 en Z2 hun routes vullen, geven de nieuwe routes 501 (de stubs van Z0); GET /search zelf
 // werkt al (LikeFallback) en geeft de velden van 0.7.0, de rest pas met Z1.
+//
+// Z0b (Keuze 55 en 80) zette de velden van zoeken op beeld (X3) erbij, allemaal met een standaard:
+// mode en like in de vraag (niet in de filters, dus niet in de regel van een slim album), match
+// "image", mode en fallback in het antwoord, twee codes van de analyse, "faces" en "beeld" in
+// search.progress, en de stand van GET /photos/beeld en van de container analyse. Een vraag
+// zonder mode is een vraag als nu; tot X3 er is, geeft de API op mode image 501 not_built.
 
 import type { FileNode, SearchHit, TagRef } from "../api";
 
@@ -67,9 +73,44 @@ export interface Filters {
   in?: string;
 }
 
-/** De vraag van GET /search. Zonder q en zonder filter: 400 search_bad_filter. */
+// --- zoeken op beeld (X3, Keuze 78–80; vastgelegd in Z0b) ---
+
+/** De stand van een vraag: op naam en tekst (text, de standaard) of op wat er op de foto staat
+ * (image, X3). Alleen in de vraag van /search, niet in de filters: een regel van een slim album
+ * kent hem niet (Keuze 80). */
+export const SEARCH_MODES = ["text", "image"] as const;
+export type SearchMode = (typeof SEARCH_MODES)[number];
+
+/** Waarom zoeken op beeld terugviel op gewoon zoeken (de rondes van Keuze 9): te laat, de container
+ * analyse weg, of geen model (Keuze 78). */
+export const BEELD_FALLBACKS = ["slow", "down", "no_model"] as const;
+export type BeeldFallback = (typeof BEELD_FALLBACKS)[number];
+
+/** GET /photos/beeld (X3): de stand van zoeken op beeld voor jou; warmt je bestand op in de
+ * container (Keuze 78). bezig: je foto's worden nog bekeken (done 0–1); uit: jij zette het uit;
+ * beheer_uit: de beheerder; niet_geinstalleerd: geen model; weg: de container draait niet. */
+export const BEELD_STATES = ["ok", "bezig", "uit", "beheer_uit", "niet_geinstalleerd", "weg"] as const;
+export type BeeldState = (typeof BEELD_STATES)[number];
+
+export interface BeeldStatus {
+  state: BeeldState;
+  /** 0–1 zolang je foto's bekeken worden, anders null */
+  done: number | null;
+}
+
+/** De stand van de container analyse (Keuze 59), gedeeld door gezichten (X2) en beeld (X3): ok,
+ * down (met een reden), models_missing, of off (PLATFORM_ANALYSE_ENABLED staat niet aan). */
+export const ANALYSE_STATES = ["ok", "down", "models_missing", "off"] as const;
+export type AnalyseState = (typeof ANALYSE_STATES)[number];
+
+/** De vraag van GET /search. Zonder q en zonder filter: 400 search_bad_filter. Met mode image: q
+ * (1–200) of like, alleen het type image, zonder after (anders ook 400 search_bad_filter). */
 export interface SearchParams extends Filters {
   q?: string;
+  /** Zonder: text, zoals een oude client */
+  mode?: SearchMode;
+  /** "Meer zoals deze" (X3): een eigen foto (node-id), met mode image */
+  like?: string;
   offset?: number;
   limit?: number;
   /** Ronde B: verder na deze rowid (de after van de vorige pagina, Keuze 9) */
@@ -78,8 +119,9 @@ export interface SearchParams extends Filters {
 
 // --- het antwoord van GET /search (§3.3) ---
 
-/** Waar de treffer zit: de naam, de titel uit de mediabibliotheek, de tekst, OCR of meta. */
-export type MatchKind = "name" | "title" | "text" | "ocr" | "meta";
+/** Waar de treffer zit: de naam, de titel uit de mediabibliotheek, de tekst, OCR of meta; image:
+ * wat er op de foto staat (X3, zonder snippet). */
+export type MatchKind = "name" | "title" | "text" | "ocr" | "meta" | "image";
 
 /** Een stuk van een snippet; m: gemarkeerd (een woord uit de vraag). Altijd tekst, nooit HTML. */
 export interface SnippetPart {
@@ -141,6 +183,10 @@ export interface SearchPage {
   groups: Groups | null;
   indexing: IndexProgress | null;
   engine: "fts" | "like";
+  /** Welke stand antwoordde (X3); zonder mode in de vraag altijd text */
+  mode: SearchMode;
+  /** Zoeken op beeld viel terug op gewoon zoeken, en waarom; anders null */
+  fallback: BeeldFallback | null;
 }
 
 // --- de suggesties (Keuze 46) ---
@@ -187,7 +233,8 @@ export interface PageWords {
 /** De stand van één stap (text, hash, ocr) voor de inhoud van een bestand. queued: nog in de rij. */
 export type StepState = "queued" | "done" | "none" | "skip" | "failed";
 
-/** Codes in analysis.code: alleen op /beheer, nooit als HTTP-fout (§3.4). */
+/** Codes in analysis.code: alleen op /beheer, nooit als HTTP-fout (§3.4). no_preview en
+ * image_bad zijn van de stap embed (X3, Keuze 80). */
 export const ANALYSIS_CODES = [
   "too_slow",
   "ocr_missing",
@@ -196,6 +243,8 @@ export const ANALYSIS_CODES = [
   "zip_limit",
   "xml_refused",
   "pages_limit",
+  "no_preview",
+  "image_bad",
 ] as const;
 export type AnalysisCode = (typeof ANALYSIS_CODES)[number];
 
@@ -220,6 +269,12 @@ export const SEARCH_ERROR_CODES = [
 ] as const;
 export type SearchErrorCode = (typeof SEARCH_ERROR_CODES)[number];
 
+/** De foutcodes van zoeken op beeld (X3, Keuze 80), met hun Engelse tekst in
+ * i18n/errors/beeld.ts. Daarnaast de codes die er al zijn: search_bad_filter, search_busy,
+ * rate_limited, not_found en guest. */
+export const BEELD_ERROR_CODES = ["beeld_off", "beeld_no_vector", "beeld_not_installed"] as const;
+export type BeeldErrorCode = (typeof BEELD_ERROR_CODES)[number];
+
 // --- gebeurtenissen (SSE, §3.4) ---
 
 /** search.ready: naar wie de nodes kan zien; de viewer ververst dan de tekstlaag. */
@@ -231,10 +286,10 @@ export interface SearchReadyData {
 
 /** search.progress: alleen naar beheerders, elke 10 s tijdens een backfill of herbouw
  * (SearchProgressEvent in app/search/types.py). De hele stand haalt /beheer met GET /admin/search
- * (admin/searchApi.ts). */
+ * (admin/searchApi.ts). faces en beeld: de backfill van X2 en X3 (Z0b). */
 export const SEARCH_PROGRESS = "search.progress";
 export interface SearchProgressData {
-  what: "backfill" | "names" | "text" | "geo" | "hash" | "ocr";
+  what: "backfill" | "names" | "text" | "geo" | "hash" | "ocr" | "faces" | "beeld";
   /** 0–1 */
   done: number;
 }

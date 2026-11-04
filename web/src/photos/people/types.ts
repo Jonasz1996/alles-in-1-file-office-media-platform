@@ -90,18 +90,38 @@ export interface MemoryHides {
 
 // --- de instellingen voor foto's (Keuze 44) ---
 
+/** Aan of uit, zoals photo_pref het bewaart (gezichten en beeld). */
+export type OnOff = "aan" | "uit";
+
 /** GET en PATCH /me/photo-settings. location: of de plek van je foto's gebruikt wordt (mij: alleen
- * voor jou; uit: nergens). ocr_photos is van X1. */
+ * voor jou; uit: nergens). ocr_photos is van X1. Z0b (Keuze 55) zette faces (X2) en beeld (X3)
+ * erbij, allebei standaard uit (Vraag 11); faces kan alleen aan als de beheerder het niet verbiedt
+ * (faces_forbidden) en de container analyse er is (faces_available, Keuze 59). */
 export interface PhotoSettings {
   location: "mij" | "uit";
   memories: boolean;
   ocr_photos: boolean;
+  faces: OnOff;
+  faces_forbidden: boolean;
+  faces_available: boolean;
+  beeld: OnOff;
+}
+
+/** PATCH /me/photo-settings: alleen wat verandert. faces aan: 403 faces_forbidden of 409
+ * faces_unavailable; beeld aan zonder model: 409 beeld_not_installed. Uit wist (X2, X3). */
+export interface PhotoSettingsPatch {
+  location?: "mij" | "uit";
+  memories?: boolean;
+  ocr_photos?: boolean;
+  faces?: OnOff;
+  beeld?: OnOff;
 }
 
 // --- slimme albums (Keuze 42) ---
 
-/** De regel van een slim album: de filters en q van zoeken, zonder offset, limit en after. */
-export type AlbumRule = Omit<SearchParams, "offset" | "limit" | "after">;
+/** De regel van een slim album: de filters en q van zoeken, zonder offset, limit en after, en
+ * zonder mode en like: een regel zoekt nooit op beeld (Keuze 80; de API geeft dan 422). */
+export type AlbumRule = Omit<SearchParams, "offset" | "limit" | "after" | "mode" | "like">;
 
 /** PUT /albums/{id}/rule */
 export interface AlbumRuleBody {

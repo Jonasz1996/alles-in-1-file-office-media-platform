@@ -30,6 +30,7 @@ describe("de aanroepen van personen, herinneringen en slimme albums (§3.4, Z6)"
     await people.unhideMemories("day", "02-29");
     await people.photoSettings();
     await people.updatePhotoSettings({ location: "uit" });
+    await people.updatePhotoSettings({ faces: "aan", beeld: "uit" });
     await people.setAlbumRule("a1", { rule: { type: ["image"], person: ["p1"] } });
     await people.setAlbumRule("a1", { rule: { q: "strand", country: "NL" }, share_new: false });
     await people.confirmAlbumRule("a1", true);
@@ -57,6 +58,7 @@ describe("de aanroepen van personen, herinneringen en slimme albums (§3.4, Z6)"
       ["DELETE", `${V}/photos/memories/hide/day/02-29`],
       ["GET", `${V}/me/photo-settings`],
       ["PATCH", `${V}/me/photo-settings`, { location: "uit" }],
+      ["PATCH", `${V}/me/photo-settings`, { faces: "aan", beeld: "uit" }],
       ["PUT", `${V}/albums/a1/rule`, { rule: { type: ["image"], person: ["p1"] } }],
       ["PUT", `${V}/albums/a1/rule`, { rule: { q: "strand", country: "NL" }, share_new: false }],
       ["POST", `${V}/albums/a1/rule/confirm`, { share_new: true }],
