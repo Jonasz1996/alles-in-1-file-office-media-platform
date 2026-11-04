@@ -17,8 +17,14 @@ import unicodedata
 _DROP = dict.fromkeys(map(ord, "­​‌‍⁠﻿᠎"), None)
 # Stuurtekens (behalve tab en regeleinde) en losse surrogaten (die kan SQLite niet opslaan)
 _CONTROL = re.compile(r"[\x00-\x08\x0e-\x1f\x7f-\x9f\ud800-\udfff]")
-_LINES = re.compile(r"\s*[\n\r\x0b\x0c\x1c-\x1e\x85  ]\s*")
-_SPACES = re.compile(r"[^\S\n]+")
+# Witruimte in twee stappen, elk lineair: eerst een reeks zonder regeleinde één spatie, dan een
+# reeks van regeleinden met hooguit één spatie ertussen één regeleinde. Eén patroon met \s* voor en
+# na een regeleinde zocht vanaf elke spatie van een lange reeks tot het eind en terug: kwadratisch
+# (200 KB spaties waren minuten CPU, buiten de klok van de blob; review golf 1, F1).
+_BREAKS = r"\n\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029"
+# (een losse spatie blijft staan: niets te vervangen)
+_SPACES = re.compile(rf"[^\S{_BREAKS}]{{2,}}|[^\S {_BREAKS}]")
+_LINES = re.compile(rf" ?(?:[{_BREAKS}] ?)+")
 META_CHARS = 2000  # titel, auteur en onderwerp samen
 FIELD_CHARS = 500
 
@@ -28,8 +34,8 @@ def clean(text: str) -> str:
     text = text.translate(_DROP)
     text = unicodedata.normalize("NFKC", text)
     text = _CONTROL.sub(" ", text)
-    text = _LINES.sub("\n", text)
     text = _SPACES.sub(" ", text)
+    text = _LINES.sub("\n", text)
     return text.strip()
 
 
@@ -47,7 +53,8 @@ def fold_meta(*values: str | None) -> str:
     for value in values:
         if not value:
             continue
-        one = clean(str(value)).replace("\n", " ")[:FIELD_CHARS].strip()
+        # Eerst afkappen: een titel van megabytes hoeft niet helemaal door clean()
+        one = clean(str(value)[: FIELD_CHARS * 4]).replace("\n", " ")[:FIELD_CHARS].strip()
         if one and one not in seen:
             seen.append(one)
     return "\n".join(seen)[:META_CHARS]
