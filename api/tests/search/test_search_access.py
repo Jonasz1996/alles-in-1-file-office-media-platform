@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
@@ -209,6 +209,41 @@ async def test_een_deling_ingetrokken_in_hetzelfde_verzoek(
     regels = [rec.getMessage() for rec in caplog.records if rec.name == "platform.search"]
     assert regels == [f"search_access_mismatch {w.ids['doc']}"]
     assert all(W.TEKST_WOORD not in m and "Verslag" not in m for m in caplog.messages)
+
+
+async def test_een_eigen_map_in_de_prullenbak_in_hetzelfde_verzoek(
+    client, admin, settings, monkeypatch, caplog, mismatch_verwacht
+):
+    """De map boven een eigen treffer gaat naar de prullenbak nadat FTS de treffer gaf, nog vóór
+    de tweede controle: de keten omhoog (access.own_chains) haalt hem weg, met één logregel met
+    alleen het node-id; een eigen treffer erbuiten blijft (de nacontrole van golf 1: zonder de
+    prullenbak in de keten bleef elke test groen)."""
+    headers, _ = admin
+    eigen = (await root(client, headers))["folder"]["id"]
+    kast = await mkdir(client, headers, eigen, "kast")
+    weg = (await put(client, headers, kast, "kastpapier.txt", b"x")).json()["id"]
+    await put(client, headers, eigen, "kastpapier boven.txt", b"x")
+    echt = engine.second_check
+
+    async def eerst_weggooien(session, user, hits):
+        async with async_sessionmaker(get_engine(settings))() as s:
+            await s.execute(
+                sa.update(Node)
+                .where(Node.id == uuid.UUID(kast))
+                .values(deleted_at=datetime.now(UTC))
+            )
+            await s.commit()
+        return await echt(session, user, hits)
+
+    monkeypatch.setattr(engine, "second_check", eerst_weggooien)
+    caplog.set_level(logging.INFO, logger="platform.search")
+    r = await client.get("/api/v1/search", params={"q": "kastpapier"}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["engine"] == "fts"
+    assert [hit["node"]["name"] for hit in r.json()["results"]] == ["kastpapier boven.txt"]
+    regels = [rec.getMessage() for rec in caplog.records if rec.name == "platform.search"]
+    assert regels == [f"search_access_mismatch {weg}"]
+    assert all("kastpapier" not in m for m in caplog.messages)
 
 
 async def test_de_controle_en_het_pad_in_een_query(client, admin, settings):

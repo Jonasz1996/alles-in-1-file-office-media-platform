@@ -11,6 +11,7 @@ import socket
 import ssl
 import sys
 import time
+import weakref
 from typing import NamedTuple
 
 import httpx
@@ -432,12 +433,27 @@ def test_python_m_app_serve_bevriest_de_heap_na_de_start(monkeypatch):
 
 def test_freeze_heap_haalt_wat_er_is_uit_de_gc():
     before = gc.get_freeze_count()  # python zelf bevriest er bij de start al een paar honderd
+
+    class Kring:
+        pass
+
+    kring = Kring()
+    kring.zelf = kring
+    kring_weg = weakref.ref(kring)
+    del kring
+    aan = gc.isenabled()
+    gc.disable()  # geen ronde vanzelf: alleen freeze_heap kan de kring nog opruimen
     try:
         serve.freeze_heap()
         assert gc.get_freeze_count() > before + 10_000  # de modules en de app
         assert gc.get_count()[0] < 100  # eerst opgeruimd: wat weg kan is weg
+        # Een kring die al weg kon, is niet voor altijd bevroren (de nacontrole van golf 1: zonder
+        # gc.collect vóór gc.freeze bleef deze test groen)
+        assert kring_weg() is None
     finally:
         gc.unfreeze()
+        if aan:
+            gc.enable()
 
 
 @pytest.mark.anyio
