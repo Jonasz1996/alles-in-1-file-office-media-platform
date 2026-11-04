@@ -368,9 +368,14 @@ async def test_zonder_worker_later_opnieuw(settings, tmp_path):
     assert state((await rows(settings))[sha]) == ("wait", 0, None)
 
 
-async def test_met_media_uit_nog_niet(settings):
-    sha = await put(settings, b"tekst", "text/plain")
-    with pytest.raises(jobs.Defer) as raised:
-        await analysis.pump(settings, "index")
-    assert raised.value.seconds == extract_step.MEDIA_OFF_DEFER_S
-    assert state((await rows(settings))[sha]) == ("wait", 0, None)
+async def test_met_media_uit_de_terugval_zonder_worker(settings, tmp_path):
+    """Met media uit vraagt de stap de worker niets: de terugval (het renderproces van de app,
+    test_extract_terugval.py) leest de tekst, ook als er een socket van een worker staat."""
+    client.bind(tmp_path / "nergens.sock", KEY)
+    try:
+        sha = await put(settings, b"tekst zonder media", "text/plain")
+        assert await analysis.pump(settings, "index") == 1
+    finally:
+        client.bind(None)
+    assert state((await rows(settings))[sha]) == ("done", 0, None)
+    assert (await texts(settings))[sha].body == "tekst zonder media"

@@ -1338,8 +1338,9 @@ def pages(request: dict) -> dict:
 #   (SCM_RIGHTS). Na het werk {"done": n} op de socket, of {"error": soort}; stderr is
 #   /dev/null. De vraag: {"items": [{"kind"}], "max_chars", "blob_cpu_s", "batch_cpu_s"}.
 # - run_text(request) (mode "text"): hetzelfde in het renderproces van de app, als media uit
-#   staat (de terugval van previews.render, Z2 stap 2): {"items": [{"path", "kind"}], "out",
-#   …}; de stukken komen in het bestand out, het antwoord is {"state": "ready", "done": n}.
+#   staat (de terugval, previews.render_text): {"items": [{"path", "kind"}], "out", "cpu_s",
+#   …}; met RLIMIT_CPU cpu_s (zacht: SIGXCPU, een seconde later hard), RLIMIT_AS en nice uit
+#   main(). De stukken komen in het bestand out, het antwoord is {"state": "ready", "done": n}.
 
 PR_SET_DUMPABLE = 4
 TEXT_REQUEST_BYTES = 64 * 1024
@@ -1401,6 +1402,9 @@ def text_child() -> int:
 
 def run_text(request: dict) -> dict:
     """mode "text": een batch via paden, in het renderproces van de app (media uit)."""
+    cpu = int(request.get("cpu_s") or 0)
+    if cpu > 0:
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu + 1))
     blobs = []
     for item in request["items"]:
         try:

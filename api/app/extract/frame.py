@@ -6,7 +6,9 @@ UTF-8 (de app telt de tekens zelf). De sha gaat niet mee: de app weet welke blob
 stond. De worker leest de pipe niet; hij gaat van het kind rechtstreeks naar de app.
 
 De app vertrouwt het kind niet (het las een kwaadaardig bestand): read() controleert elke
-grens en elk veld, en geeft bij elke afwijking Broken.
+grens en elk veld, en geeft bij elke afwijking Broken. read_file() doet hetzelfde met een
+bestand: met media uit schrijft het renderproces van de app de stukken in een bestand (de
+terugval van previews.render_text, Z2).
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import json
 import os
 import struct
 from dataclasses import dataclass
+from typing import BinaryIO
 
 from app.extract.normalize import META_CHARS
 
@@ -75,6 +78,34 @@ async def read(reader: asyncio.StreamReader, index: int, max_chars: int) -> Foun
     except (asyncio.IncompleteReadError, ValueError, UnicodeDecodeError):
         raise Broken("afgebroken of geen JSON") from None
     return _check(head, index, text, max_chars)
+
+
+def read_file(f: BinaryIO, index: int, max_chars: int) -> Found | None:
+    """Zoals read(), uit een bestand; None bij een nette EOF (tussen twee uitkomsten)."""
+    raw = f.read(HEADER.size)
+    if not raw:
+        return None
+    if len(raw) < HEADER.size:
+        raise Broken("afgebroken lengte")
+    (size,) = HEADER.unpack(raw)
+    if size > MAX_JSON:
+        raise Broken("JSON te groot")
+    try:
+        head = json.loads(_exact(f, size))
+        (size,) = HEADER.unpack(_exact(f, HEADER.size))
+        if size > max_chars * 4:
+            raise Broken("tekst te groot")
+        text = _exact(f, size).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        raise Broken("afgebroken of geen JSON") from None
+    return _check(head, index, text, max_chars)
+
+
+def _exact(f: BinaryIO, size: int) -> bytes:
+    data = f.read(size)
+    if len(data) != size:
+        raise Broken("afgebroken")
+    return data
 
 
 def _check(head: object, index: int, text: str, max_chars: int) -> Found:

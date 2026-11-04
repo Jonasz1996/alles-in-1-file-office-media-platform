@@ -7,7 +7,8 @@ Keuze 17, S6). Zoals test_media_no_ffmpeg_outside.py, in twee delen:
 2. een eigen proces dat de hele keten draait (app.main geladen, een worker in dat proces, de
    pomp van de analyse, een PDF en een docx), met een import-haak die elke import van
    pypdfium2, de kantoorlezer en de lezers weigert: de tekst komt toch terug (het kind las hem),
-   en geen van die modules staat daarna in sys.modules.
+   en geen van die modules staat daarna in sys.modules. Ook met media uit (de terugval: het
+   renderproces van de app leest, Z2 stap 2).
 """
 
 from __future__ import annotations
@@ -108,6 +109,7 @@ import asyncio, hashlib, json, sys
 from pathlib import Path
 
 FORBIDDEN = json.loads(sys.argv[2])
+MEDIA = sys.argv[3] == "aan"
 
 
 class Weiger:
@@ -138,12 +140,13 @@ DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 async def main(root: Path) -> dict:
-    s = Settings(data_dir=root, web_dist=root / "web", jwt_secret="t" * 32, media_enabled=True)
+    s = Settings(data_dir=root, web_dist=root / "web", jwt_secret="t" * 32, media_enabled=MEDIA)
     await upgrade(s)
     worker = Worker(Config(socket=root / "run" / "w.sock", max_procs=4, max_transcodes=1,
                            key=KEY), dict(CAPS))
-    await worker.start()
-    client.bind(worker.config.socket, KEY)
+    if MEDIA:
+        await worker.start()
+        client.bind(worker.config.socket, KEY)
     maker = async_sessionmaker(get_engine(s), expire_on_commit=False)
     shas = {}
     for name, mime in (("doc.pdf", "application/pdf"), ("doc.docx", DOCX)):
@@ -161,7 +164,8 @@ async def main(root: Path) -> dict:
     try:
         count = await analysis.pump(s, "index")
     finally:
-        await worker.stop()
+        if MEDIA:
+            await worker.stop()
     async with maker() as db:
         bodies = {t.blob_sha: t.body for t in (await db.scalars(sa.select(BlobText))).all()}
     await get_engine(s).dispose()
@@ -175,14 +179,15 @@ print(json.dumps(asyncio.run(main(Path(sys.argv[1])))))
 """
 
 
-def test_de_hele_keten_zonder_lezer_in_het_app_proces(tmp_path):
+@pytest.mark.parametrize("media", ["aan", "uit"])
+def test_de_hele_keten_zonder_lezer_in_het_app_proces(tmp_path, media):
     (tmp_path / "doc.pdf").write_bytes(fixtures.pdf_tekst(1, tekst="pdfwoordx"))
     (tmp_path / "doc.docx").write_bytes(fixtures.docx("kantoorwoordx"))
     # app.render laadt de app al voor de previews (render.kind_of): die staat hier niet in de
     # lijst van de import-haak, wel in de AST-controle hierboven
     weiger = [name for name in FORBIDDEN if name != "app.render"]
     done = subprocess.run(
-        [sys.executable, "-c", SCRIPT, str(tmp_path), json.dumps(weiger)],
+        [sys.executable, "-c", SCRIPT, str(tmp_path), json.dumps(weiger), media],
         cwd=API,
         capture_output=True,
         text=True,
