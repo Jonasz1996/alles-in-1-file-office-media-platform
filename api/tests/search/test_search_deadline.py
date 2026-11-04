@@ -166,10 +166,20 @@ async def test_de_timer_is_uit_voor_de_verbinding_terug_in_de_pool_gaat(engine):
 
 async def test_de_timer_is_ook_uit_na_een_fout_of_annulering(engine):
     async with engine.connect() as conn:
-        with pytest.raises(exc.OperationalError):
+        # De fout komt na de grens, zonder statement: een statement na de grens mag deadline()
+        # stoppen ("interrupted" telt dan als de grens, Keuze 9), en SQLite kijkt ook tijdens het
+        # parsen naar de vlag. Met SELECT * FROM bestaat_niet was de test zo af en toe rood (de
+        # nacontrole van golf 1, "Open na de review" in z1.md). Een echte fout van SQLite die
+        # gewoon doorgaat: test_een_andere_fout_gaat_gewoon_door.
+        eigen = exc.OperationalError(
+            "SELECT * FROM bestaat_niet",
+            {},
+            sqlite3.OperationalError("no such table: bestaat_niet"),
+        )
+        with pytest.raises(exc.OperationalError, match="bestaat_niet"):
             async with deadline(conn, 5):
                 await asyncio.sleep(0.02)  # de grens is af en herhaalt
-                await conn.exec_driver_sql("SELECT * FROM bestaat_niet")
+                raise eigen
         assert (await conn.exec_driver_sql(HALF)).scalar() == 1_500_000
 
         async def blok():
