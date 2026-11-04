@@ -2,6 +2,9 @@
 methode, body, antwoordmodel en status, vraagt eerst de inlog (beheer: de rol; de woorden per
 pagina: het download-token) en geeft dan 501 not_built tot zijn pakket het vult. Zoeken zelf
 werkt al: via select_engine, met LikeFallback.
+
+Z0b (Keuze 55) zette de routes van gezichten (X2) en zoeken op beeld (X3) erbij, ook als stub;
+zoeken met mode=image of like geeft 501 not_built("X3").
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from fastapi.routing import iter_route_contexts
 from app import prefs
 from app.geo import types as g
 from app.main import app
+from app.people import faces_types as f
 from app.people import types as p
 from app.search import types as t
 from app.security import download_token
@@ -188,6 +192,58 @@ ENDPOINTS = [
     ),  # fmt: skip
     ("GET", "/api/v1/admin/search/failed", None, "admin", None, t.FailedPage, None, "Z7"),
     ("POST", "/api/v1/admin/search/retry", None, "admin", None, None, 202, "Z7"),
+    # Gezichten automatisch (X2; stubs van Z0b)
+    ("GET", "/api/v1/people/faces/status", None, "user", None, f.FacesStatus, None, "X2"),
+    (
+        "GET",
+        "/api/v1/people/faces/suggestions",
+        None,
+        "user",
+        None,
+        f.SuggestionsByPerson | f.FacePage,
+        None,
+        "X2",
+    ),  # fmt: skip
+    ("GET", "/api/v1/people/faces/groups", None, "user", None, f.FaceGroups, None, "X2"),
+    ("GET", "/api/v1/people/faces/groups/{key}", None, "user", None, f.FacePage, None, "X2"),
+    (
+        "POST",
+        "/api/v1/people/faces/confirm",
+        {"faces": [ID], "name": "Oma"},
+        "user",
+        f.FacesConfirmIn,
+        None,
+        204,
+        "X2",
+    ),  # fmt: skip
+    (
+        "POST",
+        "/api/v1/people/faces/reject",
+        {"faces": [ID], "person_id": ID},
+        "user",
+        f.FacesRejectIn,
+        None,
+        204,
+        "X2",
+    ),  # fmt: skip
+    ("POST", "/api/v1/people/faces/hide", {"faces": [ID]}, "user", f.FacesIn, None, 204, "X2"),
+    ("POST", "/api/v1/people/faces/reset", {"faces": [ID]}, "user", f.FacesIn, None, 204, "X2"),
+    (
+        "POST",
+        "/api/v1/people/faces/wipe-unnamed",
+        None,
+        "user",
+        None,
+        f.FacesQueued,
+        202,
+        "X2",
+    ),  # fmt: skip
+    ("GET", "/api/v1/people/faces/{face_id}/crop", None, "user", None, None, None, "X2"),
+    ("GET", "/api/v1/files/{node_id}/faces", None, "user", None, list[f.FaceOut], None, "X2"),
+    ("POST", "/api/v1/files/{node_id}/faces/rescan", None, "user", None, None, 202, "X2"),
+    # Zoeken op beeld (X3; stubs van Z0b). Zoeken zelf: test_zoeken_op_beeld_is_van_x3
+    ("GET", "/api/v1/photos/beeld", None, "user", None, t.BeeldStatus, None, "X3"),
+    ("DELETE", "/api/v1/admin/search/beeld", None, "admin", None, None, 202, "X3"),
 ]
 BUILT = {("GET", "/api/v1/search"), ("GET", "/api/v1/search/suggest")}
 # De vraag die een stub nodig heeft om bij de route te komen
@@ -209,16 +265,17 @@ PREFIXES = (
     "/api/v1/people",
     "/api/v1/me/photo-settings",
     "/api/v1/admin/search",
+    "/api/v1/photos/beeld",
 )
 SUFFIXES = ("/words", "/analysis", "/ocr", "/location", "/people", "/rule", "/rule/confirm",
-            "/refresh")  # fmt: skip
+            "/refresh", "/faces", "/faces/rescan")  # fmt: skip
 
 
 def url_of(path: str, node_id: str = ID) -> str:
     url = path.replace("{node_id}", node_id).replace("{n}", "1")
-    for name in ("person_id", "album_id"):
+    for name in ("person_id", "album_id", "face_id"):
         url = url.replace("{" + name + "}", ID)
-    url = url.replace("{kind}", "day").replace("{ref}", "2024-07-01")
+    url = url.replace("{kind}", "day").replace("{ref}", "2024-07-01").replace("{key}", "3:17")
     assert "{" not in url, path
     return url
 
@@ -253,7 +310,8 @@ def test_de_modellen_staan_in_de_openapi():
     schema = app.openapi()
     for method, path, *_ in ENDPOINTS:
         assert method.lower() in schema["paths"][path], (method, path)
-    for name in ("SearchPage", "PageWords", "MapCells", "DupePage", "People", "AdminSearch"):
+    for name in ("SearchPage", "PageWords", "MapCells", "DupePage", "People", "AdminSearch",
+                 "AdminFaces", "AdminBeeld", "BeeldStatus", "FacesStatus", "FaceOut"):  # fmt: skip
         assert name in schema["components"]["schemas"], name
 
 
@@ -332,6 +390,46 @@ async def test_zoeken_werkt_via_likefallback(client, admin):
     assert r.status_code == 200
     assert r.json() == {"names": [], "people": [], "places": [], "tags": [], "albums": []}
     r = await client.get("/api/v1/search/suggest", params={"q": ""}, headers=headers)
+    assert r.status_code == 422
+
+
+async def test_zoeken_op_beeld_is_van_x3(client, admin):
+    """mode=image (met q of like) en like alleen: eerst de inlog, dan 501 not_built("X3"). Een
+    andere mode: 422."""
+    headers, _ = admin
+    for params in (
+        {"mode": "image", "q": "strand"},
+        {"mode": "image", "like": ID},
+        {"like": ID},
+        {"mode": "image", "q": "strand", "type": "image", "limit": 10},
+    ):
+        r = await client.get("/api/v1/search", params=params)
+        assert r.status_code == 401, (params, r.status_code)
+        r = await client.get("/api/v1/search", params=params, headers=headers)
+        assert r.status_code == 501, (params, r.text)
+        assert r.json()["detail"]["code"] == "not_built"
+        assert r.json()["detail"]["params"] == {"package": "X3"}
+    for params in ({"mode": "foto", "q": "x"}, {"mode": "image", "like": "geen-id"}):
+        r = await client.get("/api/v1/search", params=params, headers=headers)
+        assert r.status_code == 422, (params, r.status_code)
+
+
+async def test_gezichten_bevestigen_met_id_of_naam_niet_allebei(client, admin):
+    """De bodies van X2 worden gelezen voor de stub antwoordt: een fout geeft 422."""
+    headers, _ = admin
+    url = "/api/v1/people/faces/confirm"
+    for body in (
+        {"faces": [ID]},
+        {"faces": [ID], "name": "Oma", "person_id": ID},
+        {"faces": [], "name": "Oma"},
+        {"faces": [ID] * (f.MAX_FACES + 1), "name": "Oma"},
+        {"faces": [ID], "name": "Oma", "rest": True},
+    ):
+        r = await client.post(url, json=body, headers=headers)
+        assert r.status_code == 422, (body, r.status_code)
+    r = await client.post(url, json={"faces": [ID], "person_id": ID}, headers=headers)
+    assert r.status_code == 501
+    r = await client.get(f"/api/v1/people/faces/{ID}/crop", params={"size": 128}, headers=headers)
     assert r.status_code == 422
 
 

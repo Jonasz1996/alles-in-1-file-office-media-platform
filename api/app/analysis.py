@@ -1,7 +1,8 @@
 """De analyse van inhoud voor zoeken (bouwontwerp fase 6, §3.3; Keuzes 3, 19, 49, 50).
 
 Z0 legt de vorm vast; Z2 is de eigenaar en bouwt de wachtrij (queue, de rij index, Defer) en
-de stappen. Eén stap per inhoud (blob) in de tabel analysis: text (Z2), hash (Z3), ocr (X1).
+de stappen. Eén stap per inhoud (blob) in de tabel analysis: text (Z2), hash (Z3), ocr (X1) en
+embed (X3, de vector van zoeken op beeld; Z0b legde de naam vast, Keuze 80).
 
 write_text() is af: het is de enige schrijver van blob_text (Keuze 3). Eerst een SELECT, dan een
 gewone INSERT of één UPDATE, in één korte transactie. Nooit INSERT OR REPLACE, OR IGNORE of een
@@ -30,10 +31,11 @@ class Step(StrEnum):
     TEXT = "text"
     HASH = "hash"
     OCR = "ocr"
+    EMBED = "embed"
 
 
 # Een hogere versie zet de stap voor elke inhoud opnieuw in de wachtrij (zoals PROBE_VERSION)
-VERSIONS: dict[Step, int] = {Step.TEXT: 1, Step.HASH: 1, Step.OCR: 1}
+VERSIONS: dict[Step, int] = {Step.TEXT: 1, Step.HASH: 1, Step.OCR: 1, Step.EMBED: 1}
 
 # Doet de stap mee voor deze inhoud? (sha, mime) → ja of nee
 Eligible = Callable[[str, str | None], bool]

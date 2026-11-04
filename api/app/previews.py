@@ -668,6 +668,8 @@ async def _make(settings: Settings, payload: dict[str, Any], large: bool) -> Non
             await anyio.to_thread.run_sync(shutil.rmtree, work, True)
     if stored is not None:
         await announce(maker, sha, dated=stored)
+        if large:
+            await _after_large(maker, sha)
 
 
 def _sizes(result: dict[str, Any], out: Path) -> list[int]:
@@ -789,6 +791,35 @@ def register_ready(fn: Ready) -> None:
 def forget_ready() -> None:
     """Alleen voor tests: alle aanmeldingen weg."""
     _ready.clear()
+
+
+# Wie na de tweede ronde aan de beurt is (Keuze 65; Z0b): gezichten (X2) hebben 1024.webp nodig,
+# en die komt bij een foto pas met preview.large. announce loopt dan ook (zonder dated), maar
+# alleen deze haak zegt dat de grote maten er net bij kwamen. Maakte de eerste ronde al alle maten
+# (geen partial), dan is er geen tweede ronde: dan is register_ready de haak. Nog niemand meldt
+# zich aan.
+Large = Callable[[async_sessionmaker[AsyncSession], str], Awaitable[None]]
+_large: list[Large] = []
+
+
+def register_large(fn: Large) -> None:
+    """Na preview.large, als de grote maten erbij staan, met (maker, sha). Faalt hij, dan komt
+    dat in het log en gaat de volgende gewoon door: de preview is dan al klaar."""
+    if fn not in _large:
+        _large.append(fn)
+
+
+def forget_large() -> None:
+    """Alleen voor tests: alle aanmeldingen weg."""
+    _large.clear()
+
+
+async def _after_large(maker: async_sessionmaker[AsyncSession], sha: str) -> None:
+    for fn in list(_large):
+        try:
+            await fn(maker, sha)
+        except Exception:
+            log.exception("previews.large")
 
 
 async def announce(maker: async_sessionmaker[AsyncSession], sha: str, dated: bool = False) -> None:

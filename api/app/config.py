@@ -157,6 +157,10 @@ class Settings(BaseSettings):
     ocr_max_pages: int = 200  # per document
     ocr_per_hour: int = 20  # verzoeken per gebruiker per uur
     ocr_pages_per_day: int = 200  # pagina's per gebruiker per dag
+    # De container analyse (Keuze 59: gezichten X2 en zoeken op beeld X3). compose.analyse.yaml
+    # zet hem aan; tot dan draait de rij analyse niet (jobs.active_lanes). De rest van §3.11 is
+    # van A0
+    analyse_enabled: bool = False
 
     @model_validator(mode="after")
     def _geo_paths(self) -> "Settings":

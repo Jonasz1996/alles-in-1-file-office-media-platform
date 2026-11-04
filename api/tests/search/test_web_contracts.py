@@ -2,9 +2,10 @@
 met dezelfde namen, dezelfde vaste woorden en dezelfde namen van gebeurtenissen.
 
 Links staat de web (web/src/search/types.ts, photos/people/types.ts, photos/map/types.ts,
-dupes/types.ts en admin/searchApi.ts), rechts het model in app/search, app/people, app/geo en
-app/prefs. Bij de samenvoeging van Z0 liepen ze op een paar plekken uiteen (docs/fase-6/z0.md);
-deze test houdt ze gelijk tot Z1–Z7 de routes vullen.
+dupes/types.ts, admin/searchApi.ts en photos/faces/types.ts), rechts het model in app/search,
+app/people, app/geo en app/prefs. Bij de samenvoeging van Z0 liepen ze op een paar plekken uiteen
+(docs/fase-6/z0.md); deze test houdt ze gelijk tot Z1–Z7 de routes vullen. Z0b zette de vormen
+van gezichten (X2) en zoeken op beeld (X3) erbij, aan beide kanten.
 
 De TypeScript wordt met een eenvoudige lezer gelezen: `export interface X { ... }` (met of zonder
 `extends Y`), velden gescheiden door `;`, een vorm `{ a: t; b: t }` als type van een veld, en
@@ -39,6 +40,7 @@ from pydantic import BaseModel
 
 from app import prefs
 from app.geo import types as G
+from app.people import faces_types as F
 from app.people import types as P
 from app.routers.files import NodeOut, TagRef
 from app.routers.photos import PhotoItem
@@ -51,6 +53,7 @@ BESTANDEN = [
     "photos/map/types.ts",
     "dupes/types.ts",
     "admin/searchApi.ts",
+    "photos/faces/types.ts",
     "api.ts",
 ]
 
@@ -328,6 +331,25 @@ PAREN = [
     ("dupes/types.ts", "DupeItem", G.DupeItem),
     ("dupes/types.ts", "DupeGroup", G.DupeGroup),
     ("dupes/types.ts", "DupePage", G.DupePage),
+    # Z0b: zoeken op beeld (X3) en gezichten (X2)
+    ("search/types.ts", "BeeldStatus", S.BeeldStatus),
+    ("admin/searchApi.ts", "CodeCount", S.CodeCount),
+    ("admin/searchApi.ts", "AnalyseModel", S.AnalyseModel),
+    ("admin/searchApi.ts", "AdminFaces", S.AdminFaces),
+    ("admin/searchApi.ts", "AdminBeeld", S.AdminBeeld),
+    ("photos/people/types.ts", "PhotoSettingsPatch", prefs.PhotoSettingsPatch),
+    ("photos/faces/types.ts", "FaceSuggest", F.FaceSuggest),
+    ("photos/faces/types.ts", "FaceOut", F.FaceOut),
+    ("photos/faces/types.ts", "FacesPhotos", F.FacesPhotos),
+    ("photos/faces/types.ts", "FacesCount", F.FacesCount),
+    ("photos/faces/types.ts", "FacesStatus", F.FacesStatus),
+    ("photos/faces/types.ts", "PersonSuggestions", F.PersonSuggestions),
+    ("photos/faces/types.ts", "SuggestionsByPerson", F.SuggestionsByPerson),
+    ("photos/faces/types.ts", "FacePage", F.FacePage),
+    ("photos/faces/types.ts", "FaceGroup", F.FaceGroup),
+    ("photos/faces/types.ts", "FaceGroups", F.FaceGroups),
+    ("photos/faces/types.ts", "FacesReject", F.FacesRejectIn),
+    ("photos/faces/types.ts", "FacesQueued", F.FacesQueued),
 ]
 
 
@@ -350,6 +372,8 @@ RICHTING = {
     "PersonPatch": "vraag",
     "AlbumRuleBody": "vraag",
     "MemoryHide": "beide",
+    "PhotoSettingsPatch": "vraag",
+    "FacesReject": "vraag",
 }
 
 
@@ -382,6 +406,23 @@ FOUTEN = [
         "Box = readonly [x: number, y: number, w: number];",
     ),
     ("dupes/types.ts", "DupeItem", "taken_at: string | null;", "taken_at: number | null;"),
+    # Z0b
+    (
+        "search/types.ts",
+        "SearchPage",
+        "  fallback: BeeldFallback | null;",
+        "  fallback: BeeldFallback;",
+    ),
+    ("search/types.ts", "SearchParams", "  mode?: SearchMode;", "  mode: SearchMode;"),
+    ("admin/searchApi.ts", "AdminFaces", "  users_on: number;", "  users_on: string;"),
+    ("admin/searchApi.ts", "AdminSearch", "  beeld: AdminBeeld | null;", "  beeld: AdminBeeld;"),
+    (
+        "photos/faces/types.ts",
+        "FaceOut",
+        "  suggest: FaceSuggest | null;",
+        "  suggest: FaceSuggest;",
+    ),
+    ("photos/people/types.ts", "PhotoSettings", "  beeld: OnOff;\n}", "  beeld: boolean;\n}"),
 ]
 
 
@@ -404,12 +445,35 @@ def test_de_filters_zijn_de_regel_van_een_slim_album(web):
     ts = {"q": Veld("string", optioneel=True), **filters}
     _vergelijk(web, "search/types.ts", ts, S.SearchRule, "Filters", "vraag")
     rule = web["photos/people/types.ts"].types["AlbumRule"]
-    assert rule == 'Omit<SearchParams, "offset" | "limit" | "after">'
+    # Zonder de pagina, en zonder mode en like: een regel zoekt nooit op beeld (Z0b, Keuze 80)
+    assert rule == 'Omit<SearchParams, "offset" | "limit" | "after" | "mode" | "like">'
     assert set(S.SearchParams.model_fields) - set(S.SearchRule.model_fields) == {
         "offset",
         "limit",
         "after",
+        "mode",
+        "like",
     }
+
+
+def test_gezichten_bevestigen_en_de_grenzen(web):
+    """FacesConfirm: de gezichten met een bestaande persoon of een nieuwe naam (FacesConfirmIn);
+    de grenzen van X2 aan beide kanten gelijk (Z0b)."""
+    faces = web["photos/faces/types.ts"]
+    assert set(re.findall(r"(\w+)\??:", faces.types["FacesConfirm"])) == set(
+        F.FacesConfirmIn.model_fields
+    )
+    tekst = COMMENT.sub("", (WEB / "photos/faces/types.ts").read_text())
+    assert re.search(rf"export const MAX_FACES = {F.MAX_FACES};", tekst)
+    assert re.search(rf"export const FACES_PAGE = {F.FACES_PAGE};", tekst)
+    sizes = re.search(r"export const CROP_SIZES = \[([^\]]*)\] as const;", tekst)
+    assert sizes and {int(n) for n in sizes.group(1).split(",")} == set(F.CropSize.__args__)
+    assert faces.lijsten["FACES_ERROR_CODES"] == {
+        "faces_forbidden", "faces_off", "faces_unavailable", "faces_too_many", "faces_gone"
+    }  # fmt: skip
+    assert web["search/types.ts"].lijsten["BEELD_ERROR_CODES"] == {
+        "beeld_off", "beeld_no_vector", "beeld_not_installed"
+    }  # fmt: skip
 
 
 def test_een_persoon_op_een_foto_zetten(web):

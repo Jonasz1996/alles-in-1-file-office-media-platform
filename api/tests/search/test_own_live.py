@@ -8,6 +8,10 @@ fotofuncties komen in Z3 en Z6; de wachter kijkt naar elk bestand van die pakket
 De wachter kijkt per functie (review Z0, veilig F4; eerst per bestand: één own_live ergens
 dekte alles), naar node én de tabellen ernaast (photo_geo, photo_person, photo_ocr, blob_hash,
 dup_pair), en neemt own_live_geo aan voor photo_geo zonder join.
+
+Z0b ("Eigen en levend" van X2, en Keuze 80) zette gezichten en beeld erbij: de router van X2 en
+alles onder app/beeld/ zijn fotofuncties, en de tabellen van 0011 en 0012 met een rij per foto of
+per inhoud (face, face_person, face_scan, blob_embed) tellen als lezen van foto's.
 """
 
 from __future__ import annotations
@@ -45,6 +49,10 @@ PHOTO_FUNCTIONS = (
     "routers/duplicates.py",
     "routers/people.py",
     "routers/memories.py",
+    # Z0b: gezichten (X2; app/people/faces/ valt al onder people) en zoeken op beeld (X3)
+    "routers/people_faces.py",
+    "beeld",
+    "routers/beeld.py",
 )
 # Wat geen node leest en dus geen own_live hoeft: de vaste typen van Z0
 NOT_A_QUERY = {
@@ -53,12 +61,17 @@ NOT_A_QUERY = {
     "dupes/__init__.py",
     "people/__init__.py",
     "people/types.py",
+    "people/faces_types.py",
 }
 
 # Wat foto's leest (review Z0, veilig F4): node zelf, en de tabellen ernaast met een rij per foto
-# of per inhoud. In SQL-tekst de tabelnaam na FROM of JOIN; in Python het model
-TABLES = ("node", "photo_geo", "photo_person", "photo_ocr", "blob_hash", "dup_pair")
-MODELS = frozenset({"Node", "PhotoGeo", "PhotoPerson", "PhotoOcr", "BlobHash", "DupPair"})
+# of per inhoud. In SQL-tekst de tabelnaam na FROM of JOIN; in Python het model. De tabellen van
+# gezichten en beeld (0011 en 0012, A0) staan er al in (Z0b); hun modellen heten zoals hier, en
+# heet een model in A0 anders, dan komt die naam hier
+TABLES = ("node", "photo_geo", "photo_person", "photo_ocr", "blob_hash", "dup_pair",
+          "face", "face_person", "face_scan", "blob_embed")  # fmt: skip
+MODELS = frozenset({"Node", "PhotoGeo", "PhotoPerson", "PhotoOcr", "BlobHash", "DupPair",
+                    "Face", "FacePerson", "FaceScan", "BlobEmbed"})  # fmt: skip
 READS_SQL = re.compile(r"\b(?:FROM|JOIN)\s+(?:" + "|".join(TABLES) + r")\b", re.I)
 # Wat de regel toepast: own_live (op node) of own_live_geo (op photo_geo), of hun SQL-tekst
 OWN_LIVE = frozenset({"own_live", "OWN_LIVE_SQL", "own_live_geo", "OWN_LIVE_GEO_SQL"})
@@ -273,10 +286,33 @@ async def fout(session, me):
 PROEF_PERSOON = """
 SQL = "SELECT person_id FROM photo_person WHERE node_id = :id"
 """
+# Z0b: gezichten en beeld zonder own_live (X2 "Eigen en levend", X3)
+PROEF_GEZICHT = """
+async def voorstellen(session, me):
+    return await session.scalars(select(Face).where(Face.owner_id == me))
+"""
+PROEF_BEELD = """
+SQL = "SELECT e.vec FROM blob_embed e JOIN beeld_owner o ON o.user_id = :me"
+"""
 
 
 @pytest.mark.parametrize(
-    "bron", [PROEF_GEO, PROEF_TWEE, PROEF_PERSOON], ids=["photo_geo", "twee-functies", "persoon"]
+    "bron",
+    [PROEF_GEO, PROEF_TWEE, PROEF_PERSOON, PROEF_GEZICHT, PROEF_BEELD],
+    ids=["photo_geo", "twee-functies", "persoon", "gezicht", "beeld"],
 )
 def test_de_wachter_ziet_de_proeven_van_de_review(bron):
     assert needs_own_live(bron)
+
+
+def test_de_wachter_kijkt_naar_gezichten_en_beeld():
+    """Z0b: de router van X2, app/beeld/ en routers/beeld.py staan in de lijst; faces_types.py
+    leest niets. Een vraag op face met own_live is goed."""
+    namen = {str(p.relative_to(APP)) for p in photo_files()}
+    assert {"routers/people_faces.py", "routers/beeld.py"} <= namen
+    assert "people/faces_types.py" not in namen
+    assert (APP / "people" / "faces_types.py").exists()
+    assert not needs_own_live(
+        "def f(me):\n    return select(Face).join(Node).where(own_live(Node, me))"
+    )
+    assert needs_own_live("SQL = 'SELECT f.id FROM face_scan f WHERE f.node_id = :id'")
