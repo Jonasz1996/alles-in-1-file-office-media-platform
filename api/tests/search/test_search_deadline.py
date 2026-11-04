@@ -8,7 +8,9 @@ Wat hier vastligt:
 - een interrupt() die te laat komt, raakt de volgende vraag niet;
 - de timer is uit vóór de verbinding terug in de pool gaat, ook na een fout of een annulering;
 - een tweede vraag van dezelfde gebruiker stopt de eerste (Stop, Keuze 13), ook tussen twee
-  statements door.
+  statements door;
+- in FtsEngine: een vraag die de grens raakt, geeft ≥ 1 rij als er een zichtbare treffer is in
+  de eerste rijen van ronde B of in de namen (ronde C), en niets van een ander.
 
 De spike-tests van S1 (test_spike_deadline.py) draaien sinds Z1 ook op deze deadline().
 """
@@ -18,16 +20,21 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import pytest
-from sqlalchemy import exc
+from sqlalchemy import exc, text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
+from app import security
 from app.search import deadline as dl
+from app.search import engine as engines
 from app.search.deadline import STOP, Stop, deadline
+from tests.factories import create_user, maker
+from tests.test_files import put, root
 
 pytestmark = pytest.mark.anyio
 
@@ -239,3 +246,71 @@ async def test_de_grens_raakt_alleen_de_eigen_verbinding(engine):
         hit, n = await asyncio.gather(met_grens(), zonder())
     assert hit
     assert n == 1_500_000
+
+
+# --- De rondes in FtsEngine (Keuze 9) ---------------------------------------------------------
+#
+# Een vraag die de grens raakt, geeft ≥ 1 rij als er een zichtbare treffer is in de eerste rijen
+# van ronde B of in de namen (ronde C). Welke ronde de grens raakt, zet de test zelf: die ronde
+# krijgt een vraag die alleen eindigt als ze stopt. De ronde die het moet halen, krijgt een ruime
+# grens: het gaat om wat er uit de rondes komt, niet om de tijd (een volle ronde van de garbage
+# collector kan 40 ms terecht raken; de echte grenzen: test_spike_deadline.py, zoek_perf).
+
+EINDELOOS = (
+    "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) "
+    "SELECT x AS id, x AS num, x AS owner_id, '' AS search_name, x AS s FROM c WHERE x < 0"
+)
+
+
+def _eindeloos(*args, **kwargs):
+    return text(EINDELOOS)
+
+
+@pytest.fixture
+async def met_een_ander(client, admin, settings) -> dict[str, str]:
+    """De beheerder heeft "Jaarverslag 2025.pdf"; een ander heeft "Jaarverslag geheim.pdf",
+    dat de beheerder niet mag zien."""
+    headers, _ = admin
+    await put(client, headers, (await root(client, headers))["folder"]["id"],
+              "Jaarverslag 2025.pdf", b"%PDF-1.4\n1")  # fmt: skip
+    async with maker(settings)() as s:
+        ander = await create_user(s, "ander@example.nl")
+        await s.commit()
+    kop = {"Authorization": f"Bearer {security.access_token(settings, ander, uuid.uuid4())}"}
+    await put(client, kop, (await root(client, kop))["folder"]["id"],
+              "Jaarverslag geheim.pdf", b"%PDF-1.4\n2")  # fmt: skip
+    return headers
+
+
+async def _zoek(client, headers, q: str) -> dict:
+    r = await client.get("/api/v1/search", params={"q": q}, headers=headers)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def test_ronde_b_geeft_de_zichtbare_treffer(client, met_een_ander, settings, monkeypatch):
+    monkeypatch.setattr(settings, "search_deadline_ms", 50)
+    monkeypatch.setattr(engines, "ranked_select", _eindeloos)
+    monkeypatch.setattr(engines, "B_MS", 10_000)
+    begin = time.monotonic()
+    page = await _zoek(client, met_een_ander, "jaarverslag")
+    assert time.monotonic() - begin < 5
+    assert [h["node"]["name"] for h in page["results"]] == ["Jaarverslag 2025.pdf"]
+    assert page["partial"] is True and page["ranked"] is False
+    assert page["names_only"] is False and page["engine"] == "fts"
+
+
+@pytest.mark.parametrize("q", ["jaarv", "ja"], ids=["trigram", "kort"])
+async def test_ronde_c_geeft_de_zichtbare_naam(client, met_een_ander, settings, monkeypatch, q):
+    """A en B raken de grens: dan de namen, binnen de toegang. "ja" heeft geen woord van ≥ 3
+    tekens: dan zonder trigram, langs de paden (Keuze 6)."""
+    monkeypatch.setattr(settings, "search_deadline_ms", 50)
+    monkeypatch.setattr(engines, "ranked_select", _eindeloos)
+    monkeypatch.setattr(engines, "stream_select", _eindeloos)
+    monkeypatch.setattr(engines, "C_MS", 10_000)
+    page = await _zoek(client, met_een_ander, q)
+    assert [h["node"]["name"] for h in page["results"]] == ["Jaarverslag 2025.pdf"]
+    assert page["partial"] is True and page["ranked"] is False and page["names_only"] is True
+    # Niets zichtbaars in de namen: een eerlijke lege pagina
+    page = await _zoek(client, met_een_ander, "geheim")
+    assert page["results"] == [] and page["partial"] is True and page["names_only"] is True
