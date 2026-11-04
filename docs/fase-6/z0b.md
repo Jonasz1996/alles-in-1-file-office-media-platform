@@ -214,6 +214,21 @@ Afwijkingen van de review:
 3. **V2 is opgelost in de web, niet in de route.** Een uitsnede blijft een route met de inlog als
    header; geen token of handtekening in de query, dus ook geen nieuw adres dat in de log kan.
 
+## Gedraaid na de review
+
+Op `f91bc3a` (daarna veranderde alleen dit verslag), alles onder `taskset -c 0-2`, één zware run
+tegelijk:
+
+| Check | Uitkomst |
+|---|---|
+| `uv run ruff check .` en `uv run ruff format --check .` | groen (497 bestanden) |
+| `uv run pytest -q` (de hele API-suite) | 4344 groen, 2 overgeslagen, 193 niet gekozen (29 min). `test_fuzz_10000_namen_met_vaste_seed` was ook nu groen. |
+| `uv run pytest -q -m media` | 178 groen (2 min) |
+| `tests/search` als nobody (`/tmp/ci-nobody/run.sh`, zoals CI) | 393 groen, 9 niet gekozen |
+| `npm run typecheck`, `npm test`, `npm run build`, `npm run check:i18n -- --strict`, `npm run budget` | groen: 999 tests in 94 bestanden, 0 meldingen van i18n, binnen het budget (eerste lading JS 97,4 van 100 kB en Bestanden 44,3 van 45 kB, allebei gelijk aan vóór de review; `faces` 0,3 van 12 kB, `beeld` 0,0 van 15 kB, `likeRow` 0,2 van 3 kB) |
+| `SLIM_CPUS=0-2 e2e/slim.sh`, alleen gedraaid | groen in 147 s: 393 tests op SQLite 3.46.1 in `python:3.12-slim`, 9 e2e met marker `zoek` |
+| de e2e van CI (`-m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"`) | 146 groen, 129 niet gekozen (13 min) |
+
 ## Open
 
 Voor de volgende pakketten:
