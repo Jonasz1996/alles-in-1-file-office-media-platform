@@ -64,8 +64,8 @@ HOUSEKEEPING = 3600.0
 ERROR_CHARS = 2000
 _KICK = "platform.jobs.kick"  # in session.info: welke rijen na de commit gewekt worden
 DEFAULT_LANE = "default"
-# De rijen van Keuze 14 (fase 5), preview, en index en ocr van fase 6, in de volgorde waarin de
-# lifespan ze start
+# De rijen van Keuze 14 (fase 5), preview, en index, ocr en analyse van fase 6, in de volgorde
+# waarin de lifespan ze start
 LANES = (
     "default",
     "preview",
@@ -75,6 +75,7 @@ LANES = (
     "media_net",
     "import",
     "ocr",
+    "analyse",
 )
 # De rijen die ook zonder media draaien: index (zoeken, fase 6) hoort daarbij, want tekst lezen
 # gaat buiten de zandbak als er geen mediaworker is
@@ -702,13 +703,15 @@ class Runner:
 def active_lanes(settings: Settings) -> tuple[str, ...]:
     """De rijen die draaien (fase 6, §3.3). default, preview en index altijd; de rijen van
     media alleen met PLATFORM_MEDIA_ENABLED, zoals in 0.6.0 (toen zat preview in default); ocr
-    alleen met media en PLATFORM_OCR_ENABLED, want OCR draait in de zandbak van de mediaworker.
-    Een taak van een rij die niet draait, blijft staan tot die rij aan gaat (default pakt hem
-    niet)."""
+    alleen met media en PLATFORM_OCR_ENABLED, want OCR draait in de zandbak van de mediaworker;
+    analyse (gezichten X2, beeld X3) alleen met PLATFORM_ANALYSE_ENABLED, want hij praat met de
+    container analyse (Keuze 59), los van media. Een taak van een rij die niet draait, blijft
+    staan tot die rij aan gaat (default pakt hem niet)."""
     return (
         BASE_LANES
         + (MEDIA_LANES if settings.media_enabled else ())
         + (("ocr",) if settings.media_enabled and settings.ocr_enabled else ())
+        + (("analyse",) if settings.analyse_enabled else ())
     )
 
 

@@ -5,6 +5,10 @@ dezelfde transactie; de prullenbak en het wissen van een gebruiker wissen nodes 
 helper; na preview.ready komt wie zich aanmeldde aan de beurt; render.py kent de ingangen text
 en ocr_page (stubs). De rijen index en ocr staan in test_jobs_lanes.py, de log in
 test_log_hiding.py, en db-backup en de stubs van de cli in test_cli_db.py.
+
+Z0b (Keuze 65): hier dat niemand zich met register_large aanmeldt. Wat er na de grote preview
+gebeurt, staat in test_previews.py: daar draait de echte tweede ronde, met de renderer, en die
+heeft in python:3.12-slim van e2e/slim.sh geen Pillow (hij start met -I en zonder PYTHONPATH).
 """
 
 from __future__ import annotations
@@ -35,9 +39,11 @@ def _schoon():
     """Geen aanmeldingen van een vorige test, en ook niet naar de volgende."""
     hooks.reset()
     previews.forget_ready()
+    previews.forget_large()
     yield
     hooks.reset()
     previews.forget_ready()
+    previews.forget_large()
 
 
 async def put(client, headers, parent: str, name: str, data: bytes) -> dict:
@@ -259,6 +265,16 @@ async def test_een_fout_na_preview_ready_gaat_door(settings, caplog):
         await previews.announce(maker, "c" * 64)
     assert "previews.ready" in caplog.text
     assert gezien == ["c" * 64]
+
+
+def test_niemand_meldt_zich_aan_na_de_grote_preview():
+    """Z0b meldt niemand aan, ook niet als de hele app geladen is (een eigen proces: de fixture
+    hierboven haalt de aanmeldingen in dit proces weg)."""
+    code = "import app.main; from app import previews; print(len(previews._large))"
+    done = subprocess.run(
+        [sys.executable, "-c", code], cwd=API_DIR, capture_output=True, check=True, text=True
+    )
+    assert done.stdout.strip() == "0"
 
 
 def _render(request: dict) -> dict:

@@ -9,6 +9,10 @@ De overgang (review Z0, haalbaar F4; bouwontwerp §3.4): een vraag die niet in S
 (type=archive, limit boven 50: wat de web van nu stuurt) gaat altijd naar LikeFallback, ook als
 Z1 FtsEngine aanzet. De rest gaat via select_engine, met een gecontroleerde SearchParams. Z4 zet
 de web op de vraag van §3.4 en haalt deze tak weg.
+
+Zoeken op beeld (X3, Keuze 80; Z0b): mode=image of like geeft na de inlog 501 not_built("X3")
+tot X3 er is. Zonder mode (of met mode=text) is het een vraag zoals ervoor, met hetzelfde
+antwoord; daarin staan dan mode "text" en fallback null (de standaard van SearchPage).
 """
 
 import asyncio
@@ -27,9 +31,10 @@ from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Node, NodeTag, Tag, User
 from app.routers.files import TagRef, get_tree_access, tag_order, tree
+from app.routers.stubs import not_built
 from app.search.engine import LIKE, read_conn_info, select_engine
 from app.search.like import own_tag, search_roots
-from app.search.types import SearchPage, SearchParams, Suggestions
+from app.search.types import SearchMode, SearchPage, SearchParams, Suggestions
 from app.security import CurrentUser
 from app.text import CONTROL, fold
 
@@ -61,10 +66,15 @@ async def search(
     tag: uuid.UUID | None = None,
     in_: Annotated[uuid.UUID | None, Query(alias="in")] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    mode: SearchMode = "text",
+    like: uuid.UUID | None = None,
 ) -> SearchPage:
     """Zoekt in map `in` en alles eronder, of zonder `in` in je eigen bestanden en alles wat
     met je gedeeld is. Elk woord van q moet in de naam staan (hoofdletters en accenten tellen
-    niet). Mappen eerst, dan op naam. tag: alleen je eigen tags."""
+    niet). Mappen eerst, dan op naam. tag: alleen je eigen tags. mode=image en like (zoeken op
+    beeld, ook "Meer zoals deze") zijn van X3."""
+    if mode == "image" or like is not None:
+        raise not_built("X3")
     fields = {
         "q": q,
         "types": [type_] if type_ is not None else [],

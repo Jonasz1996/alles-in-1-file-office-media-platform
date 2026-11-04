@@ -1,6 +1,9 @@
 """De vaste Python-vormen van fase 6 (bouwontwerp §3.3) die Z0 neerzet: de typen van zoeken, de
 keuze van de zoekmachine, de registers (filters, haken, stappen), write_text() als enige
-schrijver van blob_text, de foto-instellingen, en de stubs die tot hun pakket niets doen."""
+schrijver van blob_text, de foto-instellingen, en de stubs die tot hun pakket niets doen.
+
+Z0b (Keuze 55, 66 en 80) zette de velden en waarden van X2 en X3 erbij, elk met een standaard: de
+tests onder "Z0b" laten zien dat een oude vraag hetzelfde antwoord krijgt."""
 
 from __future__ import annotations
 
@@ -20,7 +23,9 @@ from app.db import get_engine
 from app.extract.result import Extracted
 from app.geo.types import Location, Place
 from app.models import BlobText, PhotoPref
+from app.people.types import AlbumRuleIn
 from app.search import deadline, engine, filters, hooks, limits, query
+from app.search import types as t
 from app.search.engine import ConnInfo, read_conn_info, select_engine
 from app.search.types import SearchPage, SearchParams, SearchRule, Suggestions
 from tests.search.migratie import (
@@ -32,6 +37,7 @@ from tests.search.migratie import (
     settings_at,
     words,
 )
+from tests.test_files import put, root
 
 pytestmark = pytest.mark.anyio
 
@@ -100,6 +106,8 @@ def test_searchpage_en_suggesties():
         "groups": None,
         "indexing": None,
         "engine": "like",
+        "mode": "text",
+        "fallback": None,
     }
     assert Suggestions().model_dump() == {
         "names": [],
@@ -222,7 +230,7 @@ def test_een_stap_meldt_zich_een_keer_aan():
     async def run(settings, sha):
         return None
 
-    assert [s.value for s in analysis.Step] == ["text", "hash", "ocr"]
+    assert [s.value for s in analysis.Step] == ["text", "hash", "ocr", "embed"]
     assert analysis.VERSIONS == {s: 1 for s in analysis.Step}
     analysis.register_step(analysis.Step.TEXT, "index", lambda sha, mime: True, run)
     assert analysis.registered()[analysis.Step.TEXT].lane == "index"
@@ -296,6 +304,7 @@ async def test_foto_instellingen_met_standaarden(settings):
         "memories": True,
         "ocr_photos": False,
         "faces": "uit",
+        "beeld": "uit",
     }
     maker = sessions(settings)
     async with maker() as db:
@@ -314,10 +323,36 @@ async def test_foto_instellingen_met_standaarden(settings):
         await db.commit()
     async with maker() as db:
         got = await prefs.photo_prefs(db, me)
-    assert got == {"location": "uit", "memories": False, "ocr_photos": False, "faces": "uit"}
-    assert set(prefs.PhotoSettings.model_fields) == {"location", "memories", "ocr_photos"}
-    with pytest.raises(ValidationError):
-        prefs.PhotoSettingsPatch.model_validate({"faces": "aan"})  # X2: niet via de API
+    # beeld heeft nog geen kolom (0012, A0): de standaard
+    assert got == {
+        "location": "uit",
+        "memories": False,
+        "ocr_photos": False,
+        "faces": "uit",
+        "beeld": "uit",
+    }
+    assert set(prefs.PhotoSettings.model_fields) == {
+        "location",
+        "memories",
+        "ocr_photos",
+        "faces",
+        "faces_forbidden",
+        "faces_available",
+        "beeld",
+    }
+    assert set(prefs.PhotoSettingsPatch.model_fields) == {
+        "location",
+        "memories",
+        "ocr_photos",
+        "faces",
+        "beeld",
+    }
+    # faces en beeld via de API (Z0b): alleen aan of uit
+    patch = prefs.PhotoSettingsPatch.model_validate({"faces": "aan", "beeld": "uit"})
+    assert (patch.faces, patch.beeld) == ("aan", "uit")
+    for bad in ({"faces": "ja"}, {"beeld": True}, {"faces_forbidden": False}, {"onbekend": 1}):
+        with pytest.raises(ValidationError):
+            prefs.PhotoSettingsPatch.model_validate(bad)
 
 
 async def test_na_de_migratie_is_de_stand_van_de_database_al_gelezen(settings):
@@ -344,3 +379,122 @@ async def test_backfill_bij_het_starten_faalt_nooit(caplog):
         await hooks.backfill("s")  # type: ignore[arg-type]
     assert seen == ["s"]
     assert any("backfill" in r.getMessage() for r in caplog.records)
+
+
+# --- Z0b: de velden van X2 en X3, elk met een standaard ---
+
+
+def test_een_oude_vraag_en_een_oud_antwoord_blijven_gelijk():
+    """Zonder de nieuwe velden: dezelfde vraag, en hetzelfde antwoord met alleen de nieuwe velden
+    op hun standaard erbij."""
+    oud = {"q": "zee", "type": ["image"], "limit": 20}
+    assert SearchParams.model_validate(oud) == SearchParams.model_validate({**oud, "mode": "text"})
+    p = SearchParams.model_validate(oud)
+    assert (p.mode, p.like) == ("text", None)
+
+    z0 = {
+        "engine": "fts",
+        "paused": False,
+        "index": {"names_done": True, "text_done": 1, "text_total": 2, "failed": 0},
+        "rebuild": None,
+        "extract_in_sandbox": True,
+        "per_hour": {"deadline_b": 0, "deadline_c": 0, "busy": 0},
+        "ocr": {"installed": False, "on": False, "pages_queued": 0},
+        "places": {"loaded": False, "source": None, "date": None},
+        "bench": None,
+    }
+    assert t.AdminSearch.model_validate(z0).model_dump() == {**z0, "faces": None, "beeld": None}
+    assert t.AdminSearchPatch.model_validate({"paused": True}).model_dump(exclude_none=True) == {
+        "paused": True
+    }
+
+    z0_settings = {"location": "mij", "memories": True, "ocr_photos": False}
+    assert prefs.PhotoSettings.model_validate(z0_settings).model_dump() == {
+        **z0_settings,
+        "faces": "uit",
+        "faces_forbidden": False,
+        "faces_available": False,
+        "beeld": "uit",
+    }
+    assert t.Hit.model_fields["match"].default == "name"
+
+
+def test_de_nieuwe_waarden_van_z0b():
+    """De vaste woorden van Keuze 66 en 80, en mode en like alleen in de vraag van /search, niet
+    in de regel van een slim album (Keuze 80)."""
+    assert set(t.Match.__args__) == {"name", "title", "text", "ocr", "meta", "image"}
+    assert set(t.SearchMode.__args__) == {"text", "image"}
+    assert set(t.BeeldFallback.__args__) == {"slow", "down", "no_model"}
+    assert set(t.AnalysisCode.__args__) == {
+        "too_slow", "ocr_missing", "ocr_bad_image", "ocr_has_text", "zip_limit", "xml_refused",
+        "pages_limit", "no_preview", "image_bad",
+    }  # fmt: skip
+    assert set(t.RebuildWhat.__args__) == {
+        "names", "text", "geo", "hash", "ocr", "faces", "beeld"
+    }  # fmt: skip
+    assert set(t.AnalyseState.__args__) == {"ok", "down", "models_missing", "off"}
+    assert t.RebuildIn(what="faces").what == "faces" and t.RebuildIn(what="beeld").what == "beeld"
+    for what in ("faces", "beeld"):
+        assert t.SearchProgressEvent(what=what, done=0.5).what == what
+    # Geen nieuw type gebeurtenis en geen veld voor embed in de analyse (Keuze 79)
+    assert set(t.EVENTS) == {"search.ready", "people.changed", "search.progress"}
+    assert set(t.AnalysisOut.model_fields) == {"text", "hash", "ocr", "truncated", "code"}
+    assert set(t.FailedItem.model_fields["step"].annotation.__args__) == {
+        "text", "hash", "ocr", "geo"
+    }  # fmt: skip
+
+    like = uuid.uuid4()
+    p = SearchParams.model_validate({"mode": "image", "like": str(like)})
+    assert (p.mode, p.like) == ("image", like)
+    with pytest.raises(ValidationError):
+        SearchParams.model_validate({"mode": "foto"})
+    assert set(SearchParams.model_fields) - set(SearchRule.model_fields) == {
+        "offset", "limit", "after", "mode", "like"
+    }  # fmt: skip
+    for extra in ({"mode": "image"}, {"like": str(like)}):
+        with pytest.raises(ValidationError):
+            SearchRule.model_validate({"q": "zee", **extra})
+        with pytest.raises(ValidationError):
+            AlbumRuleIn.model_validate({"rule": {"q": "zee", **extra}})
+
+    status = t.BeeldStatus(state="bezig", done=0.25)
+    assert status.model_dump() == {"state": "bezig", "done": 0.25}
+    for bad in ({"state": "aan", "done": None}, {"state": "ok", "done": 1.5}, {"state": "ok"}):
+        with pytest.raises(ValidationError):
+            t.BeeldStatus.model_validate(bad)
+
+
+async def test_zoeken_zonder_mode_geeft_hetzelfde_antwoord(client, admin):
+    """GET /search zonder mode is een vraag als in Z0: byte voor byte hetzelfde antwoord als met
+    mode=text, met precies de velden van Z0 en mode en fallback op hun standaard."""
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    await put(client, headers, root_id, "Jaarverslag 2025.pdf", b"%PDF-1.4\n")
+    zonder = await client.get("/api/v1/search", params={"q": "jaarverslag"}, headers=headers)
+    met = await client.get(
+        "/api/v1/search", params={"q": "jaarverslag", "mode": "text"}, headers=headers
+    )
+    assert zonder.status_code == met.status_code == 200, zonder.text
+    assert zonder.content == met.content
+    body = zonder.json()
+    assert list(body) == [
+        "results", "more", "offset", "partial", "ranked", "names_only", "after", "groups",
+        "indexing", "engine", "mode", "fallback",
+    ]  # fmt: skip
+    assert (body["mode"], body["fallback"]) == ("text", None)
+    assert [h["node"]["name"] for h in body["results"]] == ["Jaarverslag 2025.pdf"]
+    # Een vraag van 0.7.0 die niet in SearchParams past (LikeFallback zonder controle): ook
+    r = await client.get("/api/v1/search", params={"q": "x", "limit": 200}, headers=headers)
+    assert r.status_code == 200 and (r.json()["mode"], r.json()["fallback"]) == ("text", None)
+
+
+async def test_een_regel_met_mode_geeft_422(client, admin):
+    """Een slim album zoekt nooit op beeld: mode of like in de regel geeft 422 (de body wordt
+    gelezen voor de stub van Z6 antwoordt)."""
+    headers, _ = admin
+    url = f"/api/v1/albums/{uuid.uuid4()}/rule"
+    for extra in ({"mode": "image"}, {"like": str(uuid.uuid4())}):
+        r = await client.put(url, json={"rule": {"q": "zee", **extra}}, headers=headers)
+        assert r.status_code == 422, (extra, r.text)
+    r = await client.put(url, json={"rule": {"q": "zee"}}, headers=headers)
+    assert r.status_code == 501 and r.json()["detail"]["params"] == {"package": "Z6"}

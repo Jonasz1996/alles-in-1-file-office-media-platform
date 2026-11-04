@@ -48,6 +48,7 @@ from app.routers import (
     archive,
     auth,
     batch,
+    beeld,
     duplicates,
     files,
     folder_tree,
@@ -69,6 +70,7 @@ from app.routers import (
     office_pdf,
     pages_words,
     people,
+    people_faces,
     photo_prefs,
     photos,
     photos_map,
@@ -102,7 +104,9 @@ SECRET_PARAMS = re.compile(
     r"([?&](?:token|sig|key|md5|shardkey|cmd|q)=)(?:(?<=cmd=)[^&\s]*|[^&\s\"]*)"
 )
 # Onder /search, /photos en /people gaat de hele query string weg: filters op een plaats, een
-# persoon, een kaartvak of een datum zeggen ook iets over iemands foto's (fase 6, Keuze 13)
+# persoon, een kaartvak of een datum zeggen ook iets over iemands foto's (fase 6, Keuze 13). Zo
+# ook bij zoeken op beeld (/search?mode=image&q= of &like=, X3) en de routes van gezichten
+# (/people/faces/…, X2): test_log_hiding.py
 QUERY_PATHS = re.compile(r"(/api/v1/(?:search|photos|people)(?:/[^?\s\"]*)?\?)[^\s\"]*")
 LINK_PATH = re.compile(r"((?:^|[\s\"])/s/)[^/?#\s\"]+")
 # De sid van een afspeelsessie staat in het pad (fase 5, Keuze 35): /api/v1/stream/<node>.<geheim>/…
@@ -569,11 +573,15 @@ app.include_router(ocr.router)
 app.include_router(geo.router)
 app.include_router(photos_map.router)
 app.include_router(duplicates.router)
+# Gezichten (X2) vóór people: /people/faces/... komt zo nooit bij /people/{person_id}. De
+# stubs van X2 en X3 zijn van Z0b (501 not_built)
+app.include_router(people_faces.router)
 app.include_router(people.router)
 app.include_router(memories.router)
 app.include_router(photo_prefs.router)
 app.include_router(albums_rule.router)
 app.include_router(admin_search.router)
+app.include_router(beeld.router)
 # Media (fase 5, §2.0): stubs van M0 die 503 media_off geven tot hun pakket ze vult. Alles onder
 # /api/v1/stream/ gaat eerst langs sessions.guard (regel 6, de dependency van elke router)
 app.include_router(media_library.router)

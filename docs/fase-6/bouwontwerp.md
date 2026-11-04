@@ -4027,6 +4027,7 @@ END;
 Z0. Keuze 25a zegt "zonder kader", maar `node_bu_text` in Z0 doet dat niet [code: wt-z0api
 `app/search/schema.py:221–227`]. Z0b kan het in 0010 repareren, zolang 0010 niet gepusht is
 (Keuze 55). Dan is deze regel dubbel maar onschuldig. Anders doet 0011 het.
+**Na Z0b:** 0010 is gepusht, dus 0011 doet het (A0; [z0b-api.md](z0b-api.md)).
 
 **Eigen en levend.**
 

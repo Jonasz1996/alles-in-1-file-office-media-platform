@@ -62,12 +62,13 @@ async def until(predicate, seconds: float = 5.0) -> float:
 
 @pytest.fixture
 async def runners(settings):
-    """Start een Runner per rij (met media en ocr aan: anders draaien die rijen niet); stopt ze
-    na de test."""
+    """Start een Runner per rij (met media, ocr en analyse aan: anders draaien die rijen niet);
+    stopt ze na de test."""
     started: list[jobs.Runner] = []
 
     async def start(s=None):
-        s = (s or settings).model_copy(update={"media_enabled": True, "ocr_enabled": True})
+        aan = {"media_enabled": True, "ocr_enabled": True, "analyse_enabled": True}
+        s = (s or settings).model_copy(update=aan)
         started.extend(await jobs.start_runners(s))
         return started
 
@@ -171,10 +172,25 @@ async def test_zonder_media_alleen_default_en_preview(settings, maker, kind):
 
 
 @pytest.mark.anyio
+async def test_de_rij_analyse_alleen_met_de_container(settings):
+    """De rij analyse (X2, X3) draait alleen met PLATFORM_ANALYSE_ENABLED (Keuze 59), los van
+    media; zonder blijft een taak van analyse staan, zoals bij ocr. Standaard uit (Z0b)."""
+    assert settings.analyse_enabled is False
+    assert jobs.LANES[-1] == "analyse"
+    assert jobs.active_lanes(settings) == ("default", "preview", "index")
+    aan = settings.model_copy(update={"analyse_enabled": True})
+    assert jobs.active_lanes(aan) == ("default", "preview", "index", "analyse")
+    media = aan.model_copy(update={"media_enabled": True, "ocr_enabled": True})
+    assert jobs.active_lanes(media) == jobs.LANES
+    zonder = media.model_copy(update={"analyse_enabled": False})
+    assert jobs.active_lanes(zonder) == tuple(lane for lane in jobs.LANES if lane != "analyse")
+
+
+@pytest.mark.anyio
 async def test_workers_per_rij(settings):
     s = settings.model_copy(update={"job_workers": 3, "media_job_workers": 2, "preview_workers": 4})
-    # default, preview, index, media_scan, media, media_net, import, ocr
-    assert [jobs.lane_workers(s, lane) for lane in jobs.LANES] == [3, 4, 1, 1, 2, 1, 1, 1]
+    # default, preview, index, media_scan, media, media_net, import, ocr, analyse
+    assert [jobs.lane_workers(s, lane) for lane in jobs.LANES] == [3, 4, 1, 1, 2, 1, 1, 1, 1]
     # preview_workers 0: een minder dan het aantal kernen van dit proces, minstens 1
     auto = s.model_copy(update={"preview_workers": 0})
     cores = len(os.sched_getaffinity(0))
