@@ -442,7 +442,15 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
    - Een kopie staat twee keer in de index. In het zaad is dat 2% van de bestanden. Dat kost
      ruimte, en bij het schrijven tijd per kopie: de triggers schrijven de tekst voor elke node
      met die sha. Gemeten door de critici (C11): 1 MB tekst met 10 kopieën kost 648 ms per
-     schrijfactie. Keuze 20 en 23 houden dat begrensd.
+     schrijfactie. Keuze 20 en 23 begrenzen dat niet: die gaan over hoeveel inhouden er per
+     transactie gaan, niet over het aantal kopieën van één inhoud (review golf 1, H1: 100
+     kopieën gaven 2,8 s wachten, 250 "database is locked"). Daarom deelt `write_text` een
+     budget: body en ocr samen hooguit 12 MiB tekens maal het aantal nodes, dus per node
+     `TEXT_BUDGET` gedeeld door het aantal nodes met die sha, en nooit minder dan 1000 tekens.
+     Tot 11 nodes blijft 1 MB heel; daarboven zet een afgekapte body `truncated`. Rest: een
+     kopie die er ná het schrijven bij komt, kost bij de volgende schrijfactie nog één keer
+     kopieën × de oude tekst (de 'delete' in FTS5 heeft de oude tekst nodig); daarna is hij
+     weer klein.
    - Ruimte per 100.000 bestanden (20.000 met tekst): index ±120 MB, opgeslagen tekst ±257 MB,
      naamindexen ±15 MB [gemeten, H8].
    - Albums staan niet in de index als treffer (`kind = 'album'`). Mappen wel: je vindt een map op

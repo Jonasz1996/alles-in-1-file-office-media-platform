@@ -97,6 +97,12 @@ BACKFILL_TIMEOUT = 600.0
 # hooguit eens per INDEXING_TTL geteld
 INDEXING_MIN = 50
 INDEXING_TTL = 5.0
+# write_text (H1): de triggers schrijven de tekst voor elke node met die sha. Eén schrijfactie
+# zet zo hooguit TEXT_BUDGET tekens (body en ocr samen, maal het aantal nodes) in fts_node: een
+# tekst van 1 MB met 10 kopieën blijft heel, bij meer kopieën krijgt elke node minder, nooit
+# minder dan TEXT_MIN_SHARE.
+TEXT_BUDGET = 12 * 1024 * 1024
+TEXT_MIN_SHARE = 1_000
 
 
 @dataclass(frozen=True)
@@ -778,16 +784,27 @@ async def write_text(
 
     Schreef een ander dezelfde inhoud tussen de SELECT en de INSERT, dan geeft de INSERT een
     IntegrityError; dan nog één keer, en de SELECT vindt de rij.
+
+    Elke node met deze sha kost de tekst nog eens (de triggers). Met veel kopieën gaat er dus
+    minder tekst in: body en ocr samen hooguit TEXT_BUDGET gedeeld door het aantal nodes (en
+    nooit minder dan TEXT_MIN_SHARE), body eerst. Een afgekapte body zet truncated. Komt alleen
+    ocr of meta mee terwijl de opgeslagen body langer is dan wat nu past, dan gaat ook die body
+    terug tot dat deel: de volgende schrijfactie kost dan weer weinig.
     """
+    copies = await db.scalar(select(func.count()).select_from(Node).where(Node.blob_id == sha))
+    share = max(TEXT_MIN_SHARE, TEXT_BUDGET // max(1, copies or 0))
+    if body is not None and len(body) > share:
+        body, truncated = body[:share], True
     for attempt in (1, 2):
         exists = await db.scalar(select(BlobText.blob_sha).where(BlobText.blob_sha == sha))
         try:
             if exists is None:
+                rest = max(TEXT_MIN_SHARE, share - len(body or ""))
                 await db.execute(
                     insert(BlobText).values(
                         blob_sha=sha,
                         body=body or "",
-                        ocr=ocr or "",
+                        ocr=(ocr or "")[:rest],
                         meta=meta or "",
                         truncated=int(bool(truncated)) if body is not None else 0,
                         updated_at=now(),
@@ -795,11 +812,27 @@ async def write_text(
                 )
             else:
                 values: dict[str, object] = {"updated_at": now()}
+                stored = (
+                    await db.execute(
+                        select(func.length(BlobText.body), func.length(BlobText.ocr)).where(
+                            BlobText.blob_sha == sha
+                        )
+                    )
+                ).one()
                 if body is not None:
                     values["body"] = body
                     values["truncated"] = int(bool(truncated))
+                    kept = len(body)
+                else:
+                    if stored[0] > share:
+                        values["body"] = func.substr(BlobText.body, 1, share)
+                        values["truncated"] = 1
+                    kept = min(stored[0], share)
+                rest = max(TEXT_MIN_SHARE, share - kept)
                 if ocr is not None:
-                    values["ocr"] = ocr
+                    values["ocr"] = ocr[:rest]
+                elif stored[1] > rest:
+                    values["ocr"] = func.substr(BlobText.ocr, 1, rest)
                 if meta is not None:
                     values["meta"] = meta
                 await db.execute(update(BlobText).where(BlobText.blob_sha == sha).values(values))

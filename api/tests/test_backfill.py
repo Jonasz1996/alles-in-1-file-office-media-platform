@@ -182,3 +182,132 @@ async def test_een_upload_wacht_nooit_langer_dan_1_s_tijdens_de_backfill(
         f"de tekst van 1 MB bij 11 nodes {(big_end - big_start) * 1000:.0f} ms"
     )
     assert max(waits) < MAX_WAIT_S, f"een upload wachtte {max(waits):.2f} s"
+
+
+async def test_veel_kopieen_houden_de_schrijfactie_klein(settings, client, admin):
+    """H1: de triggers schrijven de tekst voor elke node met die sha. Een tekst van 1 MB met 250
+    kopieën was 251 MB in fts_node: Bram wachtte seconden, of kreeg "database is locked".
+    write_text geeft elke node nu een deel van TEXT_BUDGET; Brams uploads blijven onder 1 s."""
+    async with maker(settings)() as db:
+        await create_user(db, "eva@example.nl", password="lang-genoeg-123")
+        await create_user(db, "bram@example.nl", password="lang-genoeg-123")
+        await db.commit()
+    eva = await login(client, "eva@example.nl")
+    bram = await login(client, "bram@example.nl")
+    eva_root = (await test_files.root(client, eva))["folder"]["id"]
+    bram_root = (await test_files.root(client, bram))["folder"]["id"]
+    rng = random.Random("veel kopieën")
+    groot = bench.tekst(rng, MB).encode()
+    sha = hashlib.sha256(groot).hexdigest()
+    bron = await upload(client, eva, eva_root, "groot.txt", groot)
+    for i in range(250):
+        r = await client.post(
+            f"/api/v1/files/{bron['id']}/copy",
+            json={"parent_id": eva_root, "name": f"kopie-{i}.txt"},
+            headers=eva,
+        )
+        assert r.status_code == 201, r.text
+    text = groot.decode()
+
+    async def write() -> tuple[float, float]:
+        started = time.monotonic()
+        async with maker(settings)() as db:
+            await analysis.write_text(db, sha, body=text)
+        return started, time.monotonic()
+
+    spans: list[tuple[float, float]] = []
+    writer: asyncio.Task | None = None
+    for i in range(400):
+        started = time.monotonic()
+        await upload(client, bram, bram_root, f"tussendoor-{i}.txt", f"klein {i}".encode())
+        spans.append((started, time.monotonic()))
+        if i == 3:
+            writer = asyncio.create_task(write())
+        if writer is not None and writer.done() and i >= 10:
+            break
+        await asyncio.sleep(0.05)
+    assert writer is not None and writer.done()
+    big_start, big_end = writer.result()
+    waits = [end - start for start, end in spans]
+
+    share = analysis.TEXT_BUDGET // 251
+    async with maker(settings)() as db:
+        length, truncated = (
+            await db.execute(
+                sa.select(sa.func.length(BlobText.body), BlobText.truncated).where(
+                    BlobText.blob_sha == sha
+                )
+            )
+        ).one()
+        word = text[:share].split()[5].strip(".").lower()
+        hits = await db.scalar(
+            sa.text("SELECT count(*) FROM fts_node WHERE fts_node MATCH :q"),
+            {"q": f'body:"{word}"'},
+        )
+    assert length == share and truncated == 1
+    # Het begin van de tekst staat bij alle 251 nodes in de index
+    assert hits >= 251
+    assert spans[0][0] < big_start and big_end < spans[-1][1]
+    print(
+        f"\n=== kort === uploads {len(waits)}, max {max(waits) * 1000:.0f} ms; "
+        f"de tekst bij 251 nodes {(big_end - big_start) * 1000:.0f} ms"
+    )
+    assert max(waits) < MAX_WAIT_S, f"een upload wachtte {max(waits):.2f} s"
+
+
+async def test_het_deel_per_node_ook_bij_alleen_ocr(settings, client, admin, monkeypatch):
+    """De regels van write_text met een klein budget: body eerst, dan ocr met wat over is, nooit
+    minder dan TEXT_MIN_SHARE. Komt alleen ocr mee, dan gaat ook een te lange opgeslagen body
+    terug. fts_node blijft gelijk met wat er staat (integrity-check)."""
+    monkeypatch.setattr(analysis, "TEXT_BUDGET", 10_000)
+    monkeypatch.setattr(analysis, "TEXT_MIN_SHARE", 100)
+    async with maker(settings)() as db:
+        await create_user(db, "eva@example.nl", password="lang-genoeg-123")
+        await db.commit()
+    eva = await login(client, "eva@example.nl")
+    root = (await test_files.root(client, eva))["folder"]["id"]
+    bron = await upload(client, eva, root, "bron.txt", b"de bron")
+    sha = hashlib.sha256(b"de bron").hexdigest()
+
+    async def copies(n: int, start: int) -> None:
+        for i in range(start, start + n):
+            r = await client.post(
+                f"/api/v1/files/{bron['id']}/copy",
+                json={"parent_id": root, "name": f"kopie-{i}.txt"},
+                headers=eva,
+            )
+            assert r.status_code == 201, r.text
+
+    async def stored() -> tuple[str, str, int]:
+        async with maker(settings)() as db:
+            row = (
+                await db.execute(
+                    sa.select(BlobText.body, BlobText.ocr, BlobText.truncated).where(
+                        BlobText.blob_sha == sha
+                    )
+                )
+            ).one()
+            await db.execute(sa.text("INSERT INTO fts_node(fts_node) VALUES('integrity-check')"))
+        return row[0], row[1], row[2]
+
+    async def write(**kwargs) -> None:
+        async with maker(settings)() as db:
+            await analysis.write_text(db, sha, **kwargs)
+
+    woorden = " ".join(f"woord{i:05d}" for i in range(1000))  # 10 tekens per woord
+    await copies(4, 0)  # 5 nodes: 2000 tekens per node
+    await write(body=woorden[:5000], ocr="scan " * 100)
+    body, ocr, truncated = await stored()
+    assert (len(body), truncated) == (2000, 1)
+    assert len(ocr) == 100  # niets over: TEXT_MIN_SHARE
+    await write(body=woorden[:1500])
+    body, ocr, truncated = await stored()
+    assert (len(body), truncated) == (1500, 0)
+    assert len(ocr) == 100
+    await copies(15, 4)  # 20 nodes: 500 per node
+    await write(ocr="scan " * 600)
+    body, ocr, truncated = await stored()
+    assert (body, truncated) == (woorden[:500], 1)
+    assert len(ocr) == 100
+    await write(meta="titel")
+    assert await stored() == (woorden[:500], ocr, 1)
