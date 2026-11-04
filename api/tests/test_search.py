@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import event, insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app import events
+from app import analysis, events
 from app.db import get_engine
 from app.events import Hub
 from app.mime import CATEGORIES, category
@@ -381,8 +381,11 @@ async def test_tegelijk_tags_zetten(client, admin):
 
 
 @pytest.mark.anyio
-async def test_lijst_en_zoeken_zonder_query_per_bestand(client, admin, settings):
+async def test_lijst_en_zoeken_zonder_query_per_bestand(client, admin, settings, monkeypatch):
     """Tags en paden kosten één query per verzoek, niet één per bestand."""
+    # /search telt voor indexing (Z2) hooguit eens per 5 s; hier bij elk verzoek, zodat beide
+    # zoekvragen hieronder (limit 2 en de vraag van 0.7.0 met limit 200) hem doen
+    monkeypatch.setattr(analysis, "INDEXING_TTL", 0)
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]
     tag = (await client.post("/api/v1/tags", json={"name": "t"}, headers=headers)).json()["id"]

@@ -126,7 +126,9 @@ async def search(
         # De vraag van 0.7.0 (archive als soort, limit tot 200) past niet in SearchParams:
         # zonder controle gebouwd, en altijd naar LikeFallback (die leest alleen q, types,
         # tags, in_, offset en limit), tot Z4 de web op de vraag van §3.4 zet
-        return await LIKE.search(session, user, SearchParams.model_construct(**fields))
+        page = await LIKE.search(session, user, SearchParams.model_construct(**fields))
+        page.indexing = await analysis.indexing(session)
+        return page
     if not q.strip() and not params.has_filter():
         raise errors.fail(400, "search_bad_filter", "Geef een zoekvraag of een filter")
     engine = await engine_for(settings, await session.connection())

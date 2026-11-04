@@ -307,8 +307,9 @@ async def test_indexing_voor_het_antwoord_van_search(settings, trage, monkeypatc
 
 
 async def test_search_geeft_indexing(client, admin, settings, monkeypatch):
-    """Samenvoeging Z1 en Z2: /search draagt indexing in het antwoord, met FtsEngine en met
-    LikeFallback (de index uit), zolang er minstens 50 inhouden open staan; daarna null."""
+    """Samenvoeging Z1 en Z2: /search draagt indexing in het antwoord, met FtsEngine, met
+    LikeFallback (de index uit) en bij de vraag van 0.7.0 (limit tot 200, "De overgang" in §3.4),
+    zolang er minstens 50 inhouden open staan; daarna null."""
     headers, _ = admin
     monkeypatch.setattr(analysis, "INDEXING_TTL", 0.0)
     async with maker(settings)() as db:
@@ -320,13 +321,15 @@ async def test_search_geeft_indexing(client, admin, settings, monkeypatch):
         )
         await db.commit()
 
-    async def zoek() -> dict:
-        r = await client.get("/api/v1/search", params={"q": "jonas"}, headers=headers)
+    async def zoek(**extra) -> dict:
+        r = await client.get("/api/v1/search", params={"q": "jonas", **extra}, headers=headers)
         assert r.status_code == 200, r.text
         return r.json()
 
     page = await zoek()
     assert page["engine"] == "fts" and page["indexing"] == {"done": 0.0}
+    page = await zoek(limit=200)  # de vraag van 0.7.0: altijd LikeFallback
+    assert page["engine"] == "like" and page["indexing"] == {"done": 0.0}
     monkeypatch.setattr(settings, "search_index", "uit")
     page = await zoek()
     assert page["engine"] == "like" and page["indexing"] == {"done": 0.0}
@@ -337,6 +340,8 @@ async def test_search_geeft_indexing(client, admin, settings, monkeypatch):
         await db.commit()
     page = await zoek()
     assert page["engine"] == "like" and page["indexing"] is None  # 40 open: geen melding
+    page = await zoek(limit=200)
+    assert page["engine"] == "like" and page["indexing"] is None
     monkeypatch.setattr(settings, "search_index", "aan")
     page = await zoek()
     assert page["engine"] == "fts" and page["indexing"] is None
