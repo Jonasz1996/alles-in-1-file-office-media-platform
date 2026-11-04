@@ -36,11 +36,12 @@ In de API (de lijst met standaarden staat in [z0b-api.md](z0b-api.md), "De vorme
 - **`app/people/faces_types.py`** (nieuw): de vormen van de API van X2, met `MAX_FACES` 200,
   `FACES_PAGE` 60 en de uitsneden 96 en 192.
 - **`app/prefs.py`**: `faces` en `beeld` per gebruiker, standaard `uit`; de docstring noemt nu
-  Vraag 2.
+  Vraag 2. Na de review ook de regel voor aanzetten (`check_switch`) en de aanmelding van X2 en
+  X3 (`register_switch`); zie De review, V3 en F4.
 - **`app/analysis.py`**: `Step.EMBED`. **`app/jobs.py`**: de rij `analyse`, alleen met
   `PLATFORM_ANALYSE_ENABLED` (standaard uit, de enige nieuwe instelling in `app/config.py`).
 - **`app/previews.py`**: `register_large(fn)`, na de ronde `preview.large`. Niemand meldt zich nog
-  aan.
+  aan. Na de review stopt een haak na `LARGE_HOOK_S` (5 s); zie De review, V4.
 - **De routes**: twaalf van X2 in `routers/people_faces.py` (vóór `routers/people.py` gemount),
   twee van X3 in `routers/beeld.py`, en `GET /search` met `mode=image` of `like`: allemaal `501`
   na de inlog. De query string onder `/search`, `/photos` en `/people` ging al niet in de
@@ -56,7 +57,8 @@ In de web (de tabellen staan in [z0b-web.md](z0b-web.md), "Wat er is"):
 - de regels `faces` (12 kB), `beeld` (15 kB) en `likeRow` (3 kB) in `scripts/budget.mjs`.
 
 Niet in Z0b, en niet aangeraakt: de migraties 0001–0010, `TRIGGERS` en `TRIGGERS_NO_FTS` in
-`app/search/schema.py`, `pyproject.toml`, `uv.lock`, de Dockerfile en `package.json`. Geen tabel
+`app/search/schema.py` (na de review staan ze in een deel per migratie, met precies dezelfde
+triggers; zie De review, F5), `pyproject.toml`, `uv.lock`, de Dockerfile en `package.json`. Geen tabel
 van gezichten of beeld (dat zijn 0011 en 0012, A0), geen numpy of onnxruntime, geen model.
 
 ## De samenvoeging
@@ -78,9 +80,11 @@ Daarna, omdat de delen elkaar nu zien:
   (`501 not_built`), zoeken en de suggesties gaven 200, en de woorden van een pagina 401 met het
   nep-token van de vitest (zoals bedoeld). Twee kwamen er niet: `/people?hidden=0` en `?hidden=1`
   gaven 422. Hetzelfde gold voor het adres van een uitsnede van X2 (`faceCropUrl`:
-  `/people/faces/{id}/crop?size=96`), dat geen aanroep is maar een `<img>`. De oorzaak: een query
+  `/people/faces/{id}/crop?size=96`), ~~dat geen aanroep is maar een `<img>`~~ (na de review een
+  fetch met de inlog, `faceCrop`; zie De review, V2). De oorzaak: een query
   string is tekst, en `Literal[0, 1]` of `Literal[96, 192]` neemt alleen een int. Nu zet een
-  `BeforeValidator(int)` de tekst eerst om; 2 of 128 geeft nog 422, en de OpenAPI blijft een enum
+  ~~`BeforeValidator(int)`~~ `QueryInt` (na de review: alleen gewone cijfers; zie De review, V1)
+  de tekst eerst om; 2 of 128 geeft nog 422, en de OpenAPI blijft een enum
   van getallen. `hidden` is van Z0 (de stub van Z6), maar het is dezelfde fout op dezelfde plek,
   dus hij ging mee. Test: `test_een_vast_getal_in_de_query_string_komt_bij_de_stub`
   (`tests/search/test_api_stubs.py`) loopt elke stub van fase 6 langs met zo'n keuze in de query
@@ -142,7 +146,7 @@ Op `56e6c43` (de API-suite op `8b979ca`; daarna veranderde alleen de web), alles
 
 Eén run faalde, en niet door Z0b: de eerste `e2e/slim.sh`, die naast de API-suite op dezelfde
 cores liep. Stap 1 gaf `test_spike_deadline.py::test_rondes_a_b_en_c` rood; zie
-Open 7. Alleen gedraaid was slim.sh groen.
+Open 11. Alleen gedraaid was slim.sh groen.
 
 ## Afwijkingen
 
@@ -179,6 +183,37 @@ Van de delen: [z0b-api.md](z0b-api.md) (12) en [z0b-web.md](z0b-web.md) (9), elk
 - `faces` in het budget is een groep (`ZOEK_GROUPS`), geen pagina; X2 heeft geen eigen route;
 - de blokken staan in `admin/SearchTab.tsx` (het bestand van Z7), niet in `Beheer.tsx`.
 
+## De review
+
+Na de samenvoeging lazen twee reviews Z0b: een met de lens "veilig" (V1–V4) en een met de lens
+"contract" (F1–F5). V2 en F2 zijn hetzelfde punt, net als V3 en F1. Elk punt is eerst nagegaan;
+geen bleek onjuist. Elk is gerepareerd met een test die zonder de reparatie faalt (nagegaan door
+de test op de oude code te draaien, en voor de regel van V3 door elke regel apart weg te halen).
+Geen punt vroeg een keuze van Jonas: van B49–B70 zijn nog steeds alleen B53 en B57 besloten, en
+Vraag 4 staat op de standaard (alleen de eigenaar). Geen migratie, geen tabel, geen nieuwe
+afhankelijkheid; `TRIGGERS` en `TRIGGERS_NO_FTS` zijn nog precies wat 0010 maakte.
+
+| Punt | Wat er gedaan is | Test |
+|---|---|---|
+| V1 (should) | `d9d686c`. De `BeforeValidator(int)` uit de samenvoeging gaf bij `?hidden=abc` een 422 met de tekst van `int()` en de waarde erin, en `int()` nam ook `" 96"`, `"+1"`, `"9_6"` en `"٩٦"`. Nu zet `QueryInt` (`app/routers/stubs.py`) alleen gewone cijfers om (ASCII, hooguit 9); de rest blijft tekst en valt op de `Literal`: 422 "Ongeldige invoer", code `invalid_input`, als params alleen het veld. Voor `hidden` en `size`. | `test_een_vast_getal_in_de_query_string_komt_bij_de_stub` (`tests/search/test_api_stubs.py`) stuurt nu ook acht foute waarden (`abc`, 5000 cijfers, `9_6`, `٩٦`, `" 96"`, `+1`, `-0`, `1e1`): 422 met fouttype `literal_error`, geen `input`, en bij `abc` en de 5000 cijfers de waarde en `int()` niet in het antwoord. |
+| V2 en F2 (should) | `d94e459`. De uitsnede wil de inlog als Bearer-header, zoals elke route van X2 (`CurrentUser` is alleen `HTTPBearer`); een `<img>` stuurt die niet mee, dus `faceCropUrl` gaf altijd 401, en een token in de query zou in de log en de geschiedenis komen. Nu haalt de web hem met `faceCrop(id, size)`: `api.rawRequest` met de header, en een `Blob` waar X2 een object-URL van maakt. De route bleef gelijk; de docstring, het bouwontwerp (de rij van de uitsnede) en [z0b-web.md](z0b-web.md) zeggen het nu. | `test_een_uitsnede_alleen_met_de_inlog_in_de_header` (zonder header, ook met `?token=` of `sig=`: 401 `not_logged_in`; met de header 501 `X2`); in `src/photos/faces/api.test.ts` de aanroepen van `faceCrop` via `rawRequest`, het type `image/webp`, en geen export met "url" in de naam. |
+| V3 en F1 (should, blocking) | `8775064`. `PhotoSettingsPatch` nam `faces: "aan"` en `beeld: "aan"`, en niets weigerde dat zonder X2, X3 of de analyse (Keuze 59). Nu staat de regel in `app/prefs.py`, en Z6 roept hem aan vóór hij schrijft: `check_switch()` weigert "aan" met 409 `faces_unavailable` of 409 `beeld_not_installed` zolang X2 of X3 zich niet aanmeldt, en altijd als `PLATFORM_ANALYSE_ENABLED` uit staat, ook met een aangemeld pakket; met 403 `faces_forbidden` (Keuze 64) of 409 `beeld_off` (Keuze 82) als de beheerder het verbood; met 403 `guest` voor een gast. "uit" mag altijd. De route is nog de stub van Z6 (501); de docstring van `routers/photo_prefs.py` en Z6 in het bouwontwerp zeggen wat Z6 aanroept. | `tests/search/test_contracts.py`: `test_gezichten_en_beeld_aanzetten_kan_niet_zonder_x2_en_x3`, `test_x2_en_x3_melden_hun_schakelaar_aan`. Elke regel apart weggehaald (de analyse, de gast, "uit", het verbod) gaf rood. |
+| V4 (nit) | `231d209`. Een haak van `register_large` had geen tijdgrens, en de taak houdt een plek in de rij `preview` bezet. Nu stopt `_after_large` een haak na `LARGE_HOOK_S` (5 s), met `previews.large te traag` in het log, en loopt de volgende. De docstring zegt dat een haak alleen werk in de rij zet en niet op de container of een render wacht. | `test_een_trage_haak_na_de_grote_preview_houdt_de_rij_niet_op` (`tests/test_previews.py`): een haak die nooit klaar is, daarna een gewone; zonder de grens loopt de test in zijn eigen limiet van 10 s. |
+| F3 (should) | `46eac9b`. Er was geen plek voor X2 en X3 in de bestanden van Z4 en Z6. Nu laadt `PeoplePage` `PeopleFaces`, `PersonPage` `PersonFaces` (met `personId`) en het infopaneel `FacesRow` (alleen bij een foto, ingelogd, niet via een publieke link en niet bij een eerdere versie: `showFacesRow`), elk lazy met het gebied `photos_faces` in een `LazySlot`. Voor pagina's die er nog niet zijn staan de bestanden klaar: `FacesSwitch` en `BeeldSwitch` (Z6, Account → Foto's) en `BeeldResults` (Z4, `/zoeken` in de stand beeld). Elk toont niets. Het budget is gelijk gebleven (eerste lading en Bestanden); `faces` werd 0,3 kB. | `src/lazySlots.test.ts` (de regels in de bron van `PeoplePage`, `PersonPage` en `InfoPanel`, en alle zes plekken tonen niets); `src/viewer/infoRows.test.ts` (wanneer de rij gezichten laadt). |
+| F4 (should) | `8775064`. Er was geen haak voor het deel van X2 en X3 in `/admin/search` en in de foto-instellingen, dus moesten X2 en X3 de bestanden van Z6 en Z7 openen. Nu melden ze zich aan: `prefs.register_switch()` (de stand en wat er gebeurt na een verandering; `photo_settings()` en `switched()` gebruiken die) en `search.hooks.register_admin()` (het blok, de schakelaar en herbouwen). Zonder aanmelding geeft `admin_block` `None`, en `admin_switch` en `admin_rebuild` 501 `X2` of `X3`. | `test_x2_en_x3_melden_hun_schakelaar_aan`, `test_de_foto_instellingen_met_de_stand_van_x2`, `test_x2_en_x3_melden_hun_deel_van_beheer_aan` (`tests/search/test_contracts.py`). |
+| F5 (nit) | `c0e3c4c`. De plek voor de triggers van 0011 en 0012 stond er niet, en de test van de kopie in 0010 vergeleek met heel `TRIGGERS`. Nu zijn `TRIGGERS_0010` en `TRIGGERS_NO_FTS_0010` het bevroren deel van 0010, en `TRIGGERS` en `TRIGGERS_NO_FTS` alles na head (nu gelijk aan 0010). De kopie in 0010 wordt met het deel van 0010 vergeleken, de database met `TRIGGERS`, allebei exact; de migratie zelf is niet veranderd. | `test_de_plek_voor_de_triggers_van_0011_en_0012` (`tests/search/test_schema_triggers.py`): rood zonder de splitsing, en ook als `TRIGGERS` hetzelfde dict is als `TRIGGERS_0010`. |
+
+Afwijkingen van de review:
+
+1. **De vormen van de haken zijn een voorstel van Z0b**: `Switch`, `SwitchState` en `AdminPart`,
+   en welke fout bij welke weigering hoort. X2, X3, Z6 en Z7 leggen ze vast; een vorm die
+   verandert, verandert met zijn test in `test_contracts.py`.
+2. **`beeld: "aan"` terwijl de beheerder beeld uit heeft, geeft 409 `beeld_off`**, de code van
+   Keuze 82 voor "staat uit voor dit platform". Er is geen code `beeld_forbidden`, en de catalogus
+   `beeld.ts` heeft er geen; bij gezichten is het 403 `faces_forbidden` (Keuze 64).
+3. **V2 is opgelost in de web, niet in de route.** Een uitsnede blijft een route met de inlog als
+   header; geen token of handtekening in de query, dus ook geen nieuw adres dat in de log kan.
+
 ## Open
 
 Voor de volgende pakketten:
@@ -188,7 +223,11 @@ Voor de volgende pakketten:
    tabellen al (`face`, `face_person`, `face_scan`, `blob_embed`) en hun modellen onder een
    aangenomen naam (`Face`, `FacePerson`, `FaceScan`, `BlobEmbed`): A0 gebruikt die namen, of zet
    de lijst in `tests/search/test_own_live.py` gelijk. De rest van §3.11 (de container `analyse`,
-   `compose.analyse.yaml`, de modellen en hun instellingen) is ook van A0.
+   `compose.analyse.yaml`, de modellen en hun instellingen) is ook van A0. Na de review (F5): de
+   triggers van 0011 en 0012 komen als `TRIGGERS_0011` en `TRIGGERS_0012` (en hun vorm zonder
+   FTS5) naast `TRIGGERS_0010` in `app/search/schema.py`, elk gelijk aan de kopie in zijn
+   migratie, en erbij in `TRIGGERS`; beide vergelijkingen in `test_schema_triggers.py` blijven
+   exact. Met 0012 leest `photo_prefs()` de kolom `beeld` (nu geeft hij de standaard).
 2. **X2**: zet de 422 van meer dan 200 gezichten om naar `faces_too_many`, of het ontwerp laat
    die code vallen. `FacesConfirm` is een union in de web en één model met een controle in de API;
    de contracttest vergelijkt alleen de velden, de vitest de twee bodies.
@@ -198,27 +237,41 @@ Voor de volgende pakketten:
    nagelopen (zie De samenvoeging), niet in een vaste test. De vaste test dekt alleen de soort fout
    die het vond (een vast getal in de query). Wie een route vult, draait zijn aanroepen uit de
    vitest het best ook een keer tegen de echte route.
+5. **Z6** (na de review, V3, F1, F3 en F4): GET `/me/photo-settings` met `prefs.photo_settings()`;
+   PATCH met eerst `prefs.check_switch()`, dan schrijven, dan `prefs.switched()` in dezelfde
+   transactie, met de test "PATCH `{faces: "aan"}` zonder X2 geeft 409 `faces_unavailable`". In
+   het blok Foto's onder Account laadt Z6 `photos/faces/FacesSwitch.tsx` (gebied `photos_faces`)
+   en `search/beeld/BeeldSwitch.tsx` (gebied `beeld`) lazy. Wie `PeoplePage` of `PersonPage`
+   herschrijft, houdt de plek van X2 (`src/lazySlots.test.ts` eist hem in de bron).
+6. **Z7** (F4): GET `/admin/search` vult `faces` en `beeld` met `search.hooks.admin_block()`;
+   PATCH stuurt `faces_allowed` en `beeld` naar `admin_switch()` (`ADMIN_SWITCHES`); rebuild met
+   `what` `faces` of `beeld` gaat naar `admin_rebuild()`. Zonder aanmelding 501 `X2` of `X3`.
+7. **Z4** (F3): in de stand beeld (`?mode=image`) laadt `/zoeken` `search/beeld/BeeldResults.tsx`
+   lazy, met het gebied `beeld`, in plaats van de lijst.
+8. **X2 en X3** (F3, F4, V4): melden zich aan met `prefs.register_switch()` en
+   `search.hooks.register_admin()`, en vullen de bestanden van hun plekken. Een haak van
+   `previews.register_large()` zet alleen werk in de rij; na 5 s stopt hij.
 
 Bekend en niet van Z0b:
 
-5. `tests/test_media_names.py::test_fuzz_10000_namen_met_vaste_seed` meet tijd en faalt alleen op
+9. `tests/test_media_names.py::test_fuzz_10000_namen_met_vaste_seed` meet tijd en faalt alleen op
    deze VM (Open 14 van [z0.md](z0.md)). Hij staat ongewijzigd.
-6. `tests/test_media_worker_guard.py::test_verbinding_dicht_stopt_ffmpeg_en_kleinkinderen_binnen_3_s`
-   faalde één keer in een volle run van Z0b-api: de nep-ffmpeg doet `sleep 60 &`, en de test leest
-   de naam van het kind voordat de kopie van sh `exec sleep` gedaan heeft (Open 6 van
-   [z0b-api.md](z0b-api.md)). Van media, niet van Z0b; hij staat ongewijzigd. In de volle run
-   van deze samenvoeging was hij groen.
-7. `tests/search/test_spike_deadline.py::test_rondes_a_b_en_c` (S1, van Z0-spike) faalde één keer
-   in stap 1 van `e2e/slim.sh`, die naast de volle API-suite op dezelfde cores 0–2 liep: in stap 2
-   van de test gaf ronde A voor `"de"` een antwoord ("A") waar "B" moest komen. De grens is daar
-   een derde van één meting van ronde A: A duurt ±4 ms, dus de grens is 1 of 2 ms. Onder die last
-   kwam de interrupt soms pas als A al klaar was. Nagemeten met precies die stap van de test
-   (dezelfde helpers en fixtures, in `python:3.12-slim`, 12 × 30 keer): naast de volle suite 2 van
-   de 360 keer "A" (A duurde toen 6 en 8 ms), zonder die suite 0 van de 360. De test, `spike.py`
-   en de code van zoeken zijn door Z0b niet veranderd; de test staat ongewijzigd. Voor Z1, die
-   `deadline()` bouwt en deze tests houdt: stap 2 heeft maar een paar ms marge, dus draai
-   slim.sh niet naast een andere zware run (en een CI-runner met buren kan hetzelfde zien).
-8. **De module-cache van vitest** (`node_modules/.vitest-cache`) kan bij een ander bestand met een
-   glob nog steeds oude lijsten bewaren als iemand er een typeargument in zet;
-   `src/globCache.test.ts` vangt dat in de bron. Een checkout die al een oude kopie in de cache
-   heeft, raakt die kwijt zodra de bron van het bestand verandert, of met `npx vitest --clearCache`.
+10. `tests/test_media_worker_guard.py::test_verbinding_dicht_stopt_ffmpeg_en_kleinkinderen_binnen_3_s`
+    faalde één keer in een volle run van Z0b-api: de nep-ffmpeg doet `sleep 60 &`, en de test leest
+    de naam van het kind voordat de kopie van sh `exec sleep` gedaan heeft (Open 6 van
+    [z0b-api.md](z0b-api.md)). Van media, niet van Z0b; hij staat ongewijzigd. In de volle run
+    van deze samenvoeging was hij groen.
+11. `tests/search/test_spike_deadline.py::test_rondes_a_b_en_c` (S1, van Z0-spike) faalde één keer
+    in stap 1 van `e2e/slim.sh`, die naast de volle API-suite op dezelfde cores 0–2 liep: in stap 2
+    van de test gaf ronde A voor `"de"` een antwoord ("A") waar "B" moest komen. De grens is daar
+    een derde van één meting van ronde A: A duurt ±4 ms, dus de grens is 1 of 2 ms. Onder die last
+    kwam de interrupt soms pas als A al klaar was. Nagemeten met precies die stap van de test
+    (dezelfde helpers en fixtures, in `python:3.12-slim`, 12 × 30 keer): naast de volle suite 2 van
+    de 360 keer "A" (A duurde toen 6 en 8 ms), zonder die suite 0 van de 360. De test, `spike.py`
+    en de code van zoeken zijn door Z0b niet veranderd; de test staat ongewijzigd. Voor Z1, die
+    `deadline()` bouwt en deze tests houdt: stap 2 heeft maar een paar ms marge, dus draai
+    slim.sh niet naast een andere zware run (en een CI-runner met buren kan hetzelfde zien).
+12. **De module-cache van vitest** (`node_modules/.vitest-cache`) kan bij een ander bestand met een
+    glob nog steeds oude lijsten bewaren als iemand er een typeargument in zet;
+    `src/globCache.test.ts` vangt dat in de bron. Een checkout die al een oude kopie in de cache
+    heeft, raakt die kwijt zodra de bron van het bestand verandert, of met `npx vitest --clearCache`.
