@@ -130,9 +130,26 @@ class _ByType(_Indexed):
     index = "ix_node_ftype_mod"
 
 
+class _ByPath(_Indexed):
+    """Vanaf de paden: zonder INDEXED BY koos de planner bij een filter op soort of tijd zelf
+    ix_node_ftype_mod of ix_node_live_mod, ook voor een klein bereik (test_search_plans.py)."""
+
+    inherit_cache = True
+    index = "ix_node_mpath"
+
+
+class _ByNum(_Indexed):
+    """Op num, zonder sorteren: de rijen komen meteen, en de LIMIT stopt hem."""
+
+    inherit_cache = True
+    index = "ix_node_num"
+
+
 @compiles(_Indexed)
 @compiles(_ByTime)
 @compiles(_ByType)
+@compiles(_ByPath)
+@compiles(_ByNum)
 def _indexed(element: _Indexed, compiler: Any, **kw: Any) -> str:
     out = compiler.visit_alias(element, **kw)
     if kw.get("asfrom"):
@@ -239,13 +256,21 @@ def stream_select(parsed: Parsed, scope: Scope, k: int, after: int | None, skip:
 
 
 def names_select(
-    parsed: Parsed, scope: Scope, k: int, skip: int, without: Sequence[int] = ()
+    parsed: Parsed,
+    scope: Scope,
+    k: int,
+    skip: int,
+    without: Sequence[int] = (),
+    *,
+    small: bool = False,
 ) -> Select:
     """Stukken van namen (Keuze 6, en ronde C): elk woord staat in de gevouwen naam. Via
-    fts_name (trigram) als er een woord van ≥ 3 tekens is; anders langs de bereiken. without:
-    de nums die al als treffer op hele woorden kwamen."""
-    n = alias()
+    fts_name (trigram) als er een woord van ≥ 3 tekens is. Anders zonder index op de naam, en
+    dan kiest de code het plan zoals bij alleen filters (Keuze 4a): vanaf de paden als het bereik
+    klein is (small, zie is_small), en anders op num, zonder sorteren, zodat er ook bij de grens
+    rijen zijn. without: de nums die al als treffer op hele woorden kwamen."""
     if parsed.names is not None:
+        n = alias()
         sel = (
             select(*_columns(n))
             .select_from(CrossJoin(FTS_NAME, n, n.c.num == FTS_NAME.c.rowid))
@@ -253,6 +278,7 @@ def names_select(
         )
         order = FTS_NAME.c.rowid
     else:
+        n = (_ByPath if small else _ByNum)._construct(_NODE, name="n")
         sel = select(*_columns(n)).select_from(n)
         order = n.c.num
     sel = sel.where(
@@ -274,7 +300,7 @@ def filters_select(scope: Scope, k: int, small: bool) -> Select:
     """Alleen filters, zonder vraag (Keuze 4a), op de nieuwste eerst."""
     types = set(scope.p.types)
     if small:
-        n = alias()
+        n = _ByPath._construct(_NODE, name="n")
     elif len(types) == 1:
         n = _ByType._construct(_NODE, name="n")
     else:
@@ -424,7 +450,9 @@ class FtsEngine:
                     return await self._page(db, scope, page, parsed, more=True)
                 need = k - max(len(a.rows), p.offset)
                 skip = max(0, p.offset - len(a.rows))
-                sel = names_select(parsed, scope, need, skip, [r.num for r in a.rows])
+                without = [r.num for r in a.rows]
+                small = await self._small(conn, scope, parsed)
+                sel = names_select(parsed, scope, need, skip, without, small=small)
                 names = await run(conn, sel, rest())
                 rows = page + names.rows[: p.limit - len(page)]
                 more = len(page) + len(names.rows) > p.limit
@@ -446,7 +474,8 @@ class FtsEngine:
             # Een volgende pagina van ronde B: geen namen ertussen, die waren er al
             return await self._page(db, scope, [], parsed, partial=True, ranked=False)
         # Ronde C: alleen de namen
-        c = await run(conn, names_select(parsed, scope, k, p.offset), C_MS)
+        small = await self._small(conn, scope, parsed)
+        c = await run(conn, names_select(parsed, scope, k, p.offset, small=small), C_MS)
         return await self._page(
             db,
             scope,
@@ -457,6 +486,11 @@ class FtsEngine:
             ranked=False,
             names_only=True,
         )
+
+    @staticmethod
+    async def _small(conn: AsyncConnection, scope: Scope, parsed: Parsed) -> bool:
+        """Alleen nodig voor de namen zonder trigram (woorden van 1–2 tekens)."""
+        return parsed.names is None and await is_small(conn, scope.roots)
 
     async def _page(
         self,
