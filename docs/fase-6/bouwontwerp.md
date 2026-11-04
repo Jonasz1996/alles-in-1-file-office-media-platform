@@ -445,9 +445,10 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
      schrijfactie. Keuze 20 en 23 begrenzen dat niet: die gaan over hoeveel inhouden er per
      transactie gaan, niet over het aantal kopieën van één inhoud (review golf 1, H1: 100
      kopieën gaven 2,8 s wachten, 250 "database is locked"). Daarom deelt `write_text` een
-     budget: body en ocr samen hooguit 12 MiB tekens maal het aantal nodes, dus per node
+     budget over de kopieën: wat één schrijfactie in `fts_node` zet (body en ocr, opgeteld over
+     alle nodes met die sha) is hooguit `TEXT_BUDGET`, 12 MiB tekens. Elke node krijgt dus
      `TEXT_BUDGET` gedeeld door het aantal nodes met die sha, en nooit minder dan 1000 tekens.
-     Tot 11 nodes blijft 1 MB heel; daarboven zet een afgekapte body `truncated`. Rest: een
+     Tot 12 nodes blijft 1 MB heel; daarboven zet een afgekapte body `truncated`. Rest: een
      kopie die er ná het schrijven bij komt, kost bij de volgende schrijfactie nog één keer
      kopieën × de oude tekst (de 'delete' in FTS5 heeft de oude tekst nodig); daarna is hij
      weer klein.

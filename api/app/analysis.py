@@ -98,9 +98,9 @@ BACKFILL_TIMEOUT = 600.0
 INDEXING_MIN = 50
 INDEXING_TTL = 5.0
 # write_text (H1): de triggers schrijven de tekst voor elke node met die sha. Eén schrijfactie
-# zet zo hooguit TEXT_BUDGET tekens (body en ocr samen, maal het aantal nodes) in fts_node: een
-# tekst van 1 MB met 10 kopieën blijft heel, bij meer kopieën krijgt elke node minder, nooit
-# minder dan TEXT_MIN_SHARE.
+# zet zo hooguit TEXT_BUDGET tekens in fts_node (body en ocr, opgeteld over alle nodes met die
+# sha): een tekst van 1 MB met 10 kopieën blijft heel, bij meer kopieën krijgt elke node minder,
+# nooit minder dan TEXT_MIN_SHARE.
 TEXT_BUDGET = 12 * 1024 * 1024
 TEXT_MIN_SHARE = 1_000
 
