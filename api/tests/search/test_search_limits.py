@@ -263,6 +263,51 @@ async def test_overgenomen_en_dan_weggevallen(settings):
     assert state.running == 0 and not state.waiting
 
 
+@pytest.mark.parametrize("hoe", ["fout", "annulering"])
+async def test_overgenomen_en_weg_terwijl_hij_op_de_vorige_wacht(settings, hoe):
+    """X2 neemt de plek van X1 over, maar valt weg terwijl X1 de beurt van de gebruiker nog heeft:
+    in zijn release (de commit faalt, of de browser sluit). Dan gaat de overgenomen plek uit de
+    rij. Anders bleef er een plek zonder vraag in de rij staan: de plek in de app ging daarna naar
+    niemand en kwam nooit terug (de nacontrole van golf 1)."""
+    een = settings.model_copy(update={"search_inflight": 1, "rate_limits": False})
+    state = limits._now_state()
+    x = iemand()
+    los = asyncio.Event()
+    binnen: list[str] = []
+    in_release = asyncio.Event()
+
+    async def vraag(naam: str, wie: User, release=None) -> None:
+        async with limits.admit(wie, "search", een, release=release):
+            binnen.append(naam)
+            await los.wait()
+
+    async def geef_terug() -> None:
+        in_release.set()
+        if hoe == "fout":
+            raise RuntimeError("de commit faalt")
+        await asyncio.Event().wait()  # tot de browser sluit
+
+    a = asyncio.create_task(vraag("A", iemand()))
+    await tot(lambda: binnen == ["A"])
+    x1 = asyncio.create_task(vraag("X1", x))
+    await tot(lambda: len(state.waiting) == 1)
+    x2 = asyncio.create_task(vraag("X2", x, release=geef_terug))
+    await in_release.wait()
+    if hoe == "annulering":
+        x2.cancel()
+    uit = (await asyncio.gather(x2, return_exceptions=True))[0]
+    assert isinstance(uit, RuntimeError if hoe == "fout" else asyncio.CancelledError), uit
+    with pytest.raises(limits.Replaced):
+        await x1
+    assert not state.waiting and state.running == 1
+    b = asyncio.create_task(vraag("B", iemand()))
+    await tot(lambda: len(state.waiting) == 1)
+    los.set()
+    await asyncio.gather(a, b)
+    assert binnen == ["A", "B"]
+    assert state.running == 0 and not state.waiting
+
+
 async def test_zoeken_en_suggesties_stoppen_elkaar_niet(settings):
     ik = iemand()
     los = asyncio.Event()
