@@ -53,8 +53,8 @@ async def test_view_en_fts_tabellen_in_de_database(settings):
 
 def test_de_migratie_is_een_kopie_van_schema():
     m = migration_0010()
-    assert m.TRIGGERS == schema.TRIGGERS
-    assert m.TRIGGERS_NO_FTS == schema.TRIGGERS_NO_FTS
+    assert m.TRIGGERS == schema.TRIGGERS_0010
+    assert m.TRIGGERS_NO_FTS == schema.TRIGGERS_NO_FTS_0010
     for name in (
         "FTYPE_SQL",
         "NODE_COLUMNS",
@@ -68,6 +68,22 @@ def test_de_migratie_is_een_kopie_van_schema():
         "NEW_TABLES",
     ):
         assert getattr(m, name) == getattr(schema, name), name
+
+
+def test_de_plek_voor_de_triggers_van_0011_en_0012(monkeypatch):
+    """Review Z0b, contract F5: de triggers van 0011 en 0012 (A0) komen in dezelfde TRIGGERS, en
+    de kopie in 0010 blijft gelijk aan alleen het deel van 0010. Nu (Z0b) is er alleen 0010."""
+    assert schema.TRIGGERS == schema.TRIGGERS_0010
+    assert schema.TRIGGERS_NO_FTS == schema.TRIGGERS_NO_FTS_0010
+    # Zoals A0 er een bij zet: het deel van 0010 en de kopie in de migratie veranderen niet
+    nieuw = "CREATE TRIGGER person_bd_face BEFORE DELETE ON person BEGIN SELECT 1; END"
+    monkeypatch.setitem(schema.TRIGGERS, "person_bd_face", nieuw)
+    monkeypatch.setitem(schema.TRIGGERS_NO_FTS, "person_bd_face", nieuw)
+    assert "person_bd_face" not in schema.TRIGGERS_0010
+    assert "person_bd_face" not in schema.TRIGGERS_NO_FTS_0010
+    m = migration_0010()
+    assert m.TRIGGERS == schema.TRIGGERS_0010
+    assert m.TRIGGERS_NO_FTS == schema.TRIGGERS_NO_FTS_0010
 
 
 def test_zonder_fts_alleen_nummer_pad_dead_en_foto_rijen():

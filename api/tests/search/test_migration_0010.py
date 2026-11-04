@@ -81,7 +81,7 @@ async def test_van_0009_met_data_heen_terug_en_weer_heen(tmp_path, fts5):
     after = await schema_of(settings)
     assert after["alembic_version"] == ["0010"]
     assert await data(settings) == rows  # niets aan de bestanden zelf veranderd
-    triggers = schema.TRIGGERS if fts5 else schema.TRIGGERS_NO_FTS
+    triggers = schema.TRIGGERS_0010 if fts5 else schema.TRIGGERS_NO_FTS_0010
     assert await objects(settings, "trigger") == triggers
     assert bool(await objects(settings, "view")) is fts5
     assert ("fts_node" in after) is fts5

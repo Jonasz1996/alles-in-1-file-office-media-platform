@@ -3978,7 +3978,11 @@ bevroren kopie van haar SQL, zoals 0010.
 
 **Eén plek voor de triggers** (K2-17). De triggers van 0011 en 0012 komen in
 `app/search/schema.py`, in dezelfde `TRIGGERS` (en `TRIGGERS_NO_FTS`) als die van 0010. Z0b zet
-die plek klaar (Keuze 55). Zo blijft `test_triggers_in_de_database_zijn_schema_triggers` één
+die plek klaar (Keuze 55): `TRIGGERS_0010` en `TRIGGERS_NO_FTS_0010` zijn het bevroren deel van
+0010, en `test_de_migratie_is_een_kopie_van_schema` vergelijkt de kopie in 0010 alleen daarmee.
+A0 zet er `TRIGGERS_0011` en `TRIGGERS_0012` naast (elk gelijk aan de kopie in zijn migratie) en
+voegt ze aan `TRIGGERS` toe (review Z0b, contract F5). Zo blijft
+`test_triggers_in_de_database_zijn_schema_triggers` één
 vergelijking: wat in `sqlite_master` staat, is precies `TRIGGERS` [code: wt-z0api
 `tests/search/test_schema_triggers.py:33–34`]. `test_elke_trigger_op_een_bekende_tabel` krijgt
 `person` erbij, voor `person_bd_face` [code: `test_schema_triggers.py:88–95`].

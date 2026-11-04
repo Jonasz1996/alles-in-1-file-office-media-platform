@@ -1,9 +1,9 @@
 """Het schema van de zoekindex zoals migratie 0010 het maakt (bouwontwerp §3.1).
 
 De migratie heeft een eigen, bevroren kopie van deze SQL. tests/search/test_schema_triggers.py
-eist dat de triggers in sqlite_master, de kopie in de migratie en TRIGGERS hier gelijk zijn; en
-tests/search/test_ftype.py dat FTYPE_SQL hetzelfde zegt als mime.ftype(). Wie hier iets
-verandert, schrijft dus ook een nieuwe migratie.
+eist dat de triggers in sqlite_master gelijk zijn aan TRIGGERS hier, en de kopie in de migratie
+aan TRIGGERS_0010; en tests/search/test_ftype.py dat FTYPE_SQL hetzelfde zegt als mime.ftype().
+Wie hier iets verandert, schrijft dus ook een nieuwe migratie.
 
 De macro's van het ontwerp staan hieronder als functies: IN(n), DEL(w), INS(w), NDEL(n, s),
 NINS(n, s), END(p) en DEAD_SUBTREE.
@@ -340,8 +340,16 @@ def triggers(fts: bool) -> dict[str, str]:
     return t
 
 
-TRIGGERS = triggers(fts=True)
-TRIGGERS_NO_FTS = triggers(fts=False)
+# De bevroren delen per migratie: 0010 heeft er een kopie van (test_schema_triggers.py eist dat
+# die gelijk zijn). TRIGGERS en TRIGGERS_NO_FTS zijn alle triggers die er na head zijn, en dat
+# is precies wat in sqlite_master staat. De plek voor 0011 (gezichten) en 0012 (zoeken op beeld):
+# A0 zet hier TRIGGERS_0011 en TRIGGERS_0012 neer, elk gelijk aan de kopie in zijn migratie, en
+# voegt ze hieronder toe (bouwontwerp §3.1a, Keuze 55; review Z0b, contract F5). 0010 blijft dan
+# zoals hij is.
+TRIGGERS_0010 = triggers(fts=True)
+TRIGGERS_NO_FTS_0010 = triggers(fts=False)
+TRIGGERS = {**TRIGGERS_0010}
+TRIGGERS_NO_FTS = {**TRIGGERS_NO_FTS_0010}
 
 # --- Vullen in de migratie ---------------------------------------------------------------
 
