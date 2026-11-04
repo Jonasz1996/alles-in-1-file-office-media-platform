@@ -28,6 +28,7 @@ import asyncio
 import contextlib
 import errno
 import functools
+import gc
 import logging
 import resource
 import signal
@@ -268,8 +269,12 @@ def _listen(host: str, port: int) -> socket.socket:
     return socket.create_server((host, port), family=family, backlog=2048)
 
 
-async def run(settings: Settings, stop: asyncio.Event) -> None:
+async def run(
+    settings: Settings, stop: asyncio.Event, started: Callable[[], None] | None = None
+) -> None:
+    """started: zodra http luistert, na de lifespan (main geeft freeze_heap)."""
     http = Server(_config(settings, settings.http_port, lifespan="on"))
+    http.on_started = started
     https: Server | None = None  # alleen zolang de https-server echt draait
     http_task = asyncio.create_task(http.serve(), name="http")
 
@@ -413,6 +418,17 @@ def _raise_fd_limit() -> None:
         log.warning("Limiet op open bestanden blijft %s: %s", soft, e)
 
 
+def freeze_heap() -> None:
+    """Wat er na het opstarten (imports en lifespan) leeft, leeft tot het einde: ±275.000
+    objecten van FastAPI, pydantic, SQLAlchemy en de routes. Zonder freeze loopt elke volledige
+    gc-ronde (generatie 2) daar opnieuw doorheen: gemeten 150-240 ms stilstand voor alle
+    verzoeken tegelijk, onder zoeklast elke ±5 s (§4.4 van fase 6). Bevroren slaat gc ze over;
+    het afval van het opstarten ruimt gc.collect() eerst op. Alleen vanuit main(): de tests
+    draaien run() in hun eigen proces."""
+    gc.collect()
+    gc.freeze()
+
+
 def main() -> None:
     settings = get_settings()
     _raise_fd_limit()
@@ -422,7 +438,7 @@ def main() -> None:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
-        await run(settings, stop)
+        await run(settings, stop, started=freeze_heap)
 
     asyncio.run(_main())
 

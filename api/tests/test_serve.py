@@ -4,12 +4,14 @@ stopt http niet."""
 
 import asyncio
 import contextlib
+import gc
 import re
 import resource
 import socket
 import ssl
 import sys
 import time
+import weakref
 from typing import NamedTuple
 
 import httpx
@@ -278,7 +280,7 @@ def https_get(port: int, path: str) -> str:
 
 
 @contextlib.asynccontextmanager
-async def platform(tmp_path, monkeypatch, https_port: int):
+async def platform(tmp_path, monkeypatch, https_port: int, started=None):
     """Het hele platform via serve.run, met al een certificaat in data/tls (zoals na
     een herstart). Geeft een http-client."""
     monkeypatch.setattr(serve, "LISTENER_RETRY", 0.2)
@@ -296,7 +298,7 @@ async def platform(tmp_path, monkeypatch, https_port: int):
     settings = get_settings()
     write_cert(CertManager(settings), "platform.test")
     stop = asyncio.Event()
-    task = asyncio.create_task(serve.run(settings, stop))
+    task = asyncio.create_task(serve.run(settings, stop, started=started))
     base = f"http://127.0.0.1:{http_port}"
     try:
         async with httpx.AsyncClient(base_url=base, trust_env=False, timeout=5) as c:
@@ -313,6 +315,53 @@ async def platform(tmp_path, monkeypatch, https_port: int):
         get_settings.cache_clear()
         with contextlib.suppress(AttributeError):
             del app.state.certs
+
+
+@pytest.mark.anyio
+async def test_started_komt_na_de_lifespan(tmp_path, monkeypatch):
+    """main() bevriest de heap via started (freeze_heap): pas als http luistert, dus na de
+    lifespan, anders blijft wat de lifespan maakt in elke volledige gc-ronde."""
+    with contextlib.suppress(AttributeError, KeyError):
+        del app.state.certs  # zet de lifespan
+    seen = []
+    async with platform(
+        tmp_path, monkeypatch, free_port(), lambda: seen.append(hasattr(app.state, "certs"))
+    ) as c:
+        assert seen == [True]
+        assert (await c.get("/health")).status_code == 200
+    assert seen == [True]
+
+
+def test_main_bevriest_de_heap_na_het_opstarten(monkeypatch):
+    calls = []
+
+    async def run(settings, stop, started=None):
+        calls.append(started)
+
+    monkeypatch.setattr(serve, "run", run)
+    monkeypatch.setattr(serve, "get_settings", lambda: None)
+    monkeypatch.setattr(serve, "_raise_fd_limit", lambda: None)
+    serve.main()
+    assert calls == [serve.freeze_heap]
+
+
+def test_freeze_heap_ruimt_eerst_op():
+    class Kring:
+        pass
+
+    gebleven = Kring()
+    afval = Kring()
+    afval.zelf = afval  # alleen gc ruimt dit op
+    weg = weakref.ref(afval)
+    del afval
+    before = gc.get_freeze_count()
+    try:
+        serve.freeze_heap()
+        assert weg() is None  # opgeruimd, niet bevroren
+        assert gc.get_freeze_count() > before
+        assert gc.is_tracked(gebleven)
+    finally:
+        gc.unfreeze()
 
 
 @pytest.mark.anyio
