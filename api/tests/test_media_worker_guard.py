@@ -766,14 +766,28 @@ def test_de_zelftest_wil_python_tekst_0711_van_root(tmp_path, monkeypatch):
         assert not check.ok and f"uid {eigen}" in check.detail
     # zoals in het image: van root, en de worker (uid 10002) mag hem niet lezen
     echt = os.stat
+    eigenaar = {"uid": 0}
     monkeypatch.setattr(
         selftest.os, "stat",
-        lambda p, *a, **kw: os.stat_result((*echt(p)[:4], 0, *echt(p)[5:]))
+        lambda p, *a, **kw: os.stat_result((*echt(p)[:4], eigenaar["uid"], *echt(p)[5:]))
         if Path(p) == copy else echt(p, *a, **kw),
     )  # fmt: skip
     monkeypatch.setattr(selftest.os, "access", lambda p, mode, **kw: mode != os.R_OK)
     check = controle()
     assert check.ok and check.detail == "", check
+    # Niet te lezen is niet genoeg: ook van root en precies 0711, elk op zich (de nacontrole van
+    # golf 1: als root en als nobody is een kopie van de eigen uid altijd leesbaar, dus zonder
+    # deze gevallen telde alleen "leesbaar")
+    eigenaar["uid"] = 10002
+    check = controle()
+    assert not check.ok and check.detail == "modus 0711, uid 10002, leesbaar: False", check
+    eigenaar["uid"] = 0
+    for modus in (0o751, 0o701):
+        copy.chmod(modus)
+        check = controle()
+        assert not check.ok and check.detail == f"modus {modus:04o}, uid 0, leesbaar: False", check
+    copy.chmod(0o711)
+    assert controle().ok
     # en de afscherming van de start (selftest.startup → isolation) draait hem
     gedaan: list[str] = []
     for name in ("_container", "_binaries", "_reopen", "_text_python"):
