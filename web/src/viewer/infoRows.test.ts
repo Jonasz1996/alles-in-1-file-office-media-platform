@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { showLikeRow, showPhotoRows } from "./infoRows";
+import { showFacesRow, showLikeRow, showPhotoRows } from "./infoRows";
 import LikeRow from "./LikeRow";
 import type { ViewKind } from "./media";
 import type { ViewerItem } from "./types";
@@ -31,6 +31,17 @@ describe("Meer zoals deze in het infopaneel (fase 6, Z0b voor X3)", () => {
   it("nooit via een publieke link, en niet bij een eerdere versie", () => {
     expect(KINDS.filter((k) => showLikeRow(k, {}, false))).toEqual([]);
     expect(showLikeRow("image", { version: { id: "v1", label: "Versie 2" } }, true)).toBe(false);
+  });
+});
+
+describe("de gezichten in het infopaneel (fase 6, Z0b voor X2; review contract F3)", () => {
+  it("alleen bij een foto, ingelogd: geen video (Keuze 60)", () => {
+    expect(KINDS.filter((k) => showFacesRow(k, {}, true))).toEqual(["image"]);
+  });
+
+  it("nooit via een publieke link, en niet bij een eerdere versie", () => {
+    expect(KINDS.filter((k) => showFacesRow(k, {}, false))).toEqual([]);
+    expect(showFacesRow("image", { version: { id: "v1", label: "Versie 2" } }, true)).toBe(false);
   });
 });
 

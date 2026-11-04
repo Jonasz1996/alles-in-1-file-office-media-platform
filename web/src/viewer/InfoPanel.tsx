@@ -4,7 +4,9 @@
 // Fase 6 (Z0): twee plekken, elk een eigen bestand en chunk: Plek (LocationRow.tsx, van Z5) en
 // Personen (PeopleRow.tsx, van Z6), alleen ingelogd bij een foto of video (infoRows.ts). De plek
 // van een foto komt nooit uit de EXIF hier: alleen de eigenaar ziet hem, via zijn eigen route.
-// Z0b (Keuze 55): een derde plek, "Meer zoals deze" (LikeRow.tsx, van X3), alleen bij een foto.
+// Z0b (Keuze 55): een derde plek, "Meer zoals deze" (LikeRow.tsx, van X3), alleen bij een foto; na
+// de review (contract F3) een vierde, de gezichten (photos/faces/FacesRow.tsx, van X2), na
+// Personen en ook alleen bij een foto.
 
 import type { JSX, ReactNode } from "react";
 import { formatBytes } from "../api";
@@ -12,13 +14,14 @@ import { fmt, lazyWithAreas, t } from "../i18n";
 import { IconButton } from "../ui/Button";
 import { LazySlot } from "../ui/LazySlot";
 import type { Exif, ViewerDetail } from "./api";
-import { type InfoRowProps, showLikeRow, showPhotoRows } from "./infoRows";
+import { type InfoRowProps, showFacesRow, showLikeRow, showPhotoRows } from "./infoRows";
 import { formatDuration, type ViewKind } from "./media";
 import type { ViewerItem } from "./types";
 
 const LocationRow = lazyWithAreas<InfoRowProps>(() => import("./LocationRow"), ["photos_map"]);
 const PeopleRow = lazyWithAreas<InfoRowProps>(() => import("./PeopleRow"), ["photos_people"]);
 const LikeRow = lazyWithAreas<InfoRowProps>(() => import("./LikeRow"), ["beeld"]);
+const FacesRow = lazyWithAreas<InfoRowProps>(() => import("../photos/faces/FacesRow"), ["photos_faces"]);
 
 function num(v: number | string | undefined): number | null {
   if (v === undefined || v === null || v === "") return null;
@@ -125,6 +128,11 @@ export default function InfoPanel({
             <PeopleRow item={item} detail={detail} kind={kind} />
           </LazySlot>
         </>
+      )}
+      {showFacesRow(kind, item, signedIn) && (
+        <LazySlot key={`gezichten-${item.id}`}>
+          <FacesRow item={item} detail={detail} kind={kind} />
+        </LazySlot>
       )}
       {showLikeRow(kind, item, signedIn) && (
         <LazySlot key={`zoals-${item.id}`}>

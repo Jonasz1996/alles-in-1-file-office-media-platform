@@ -2465,6 +2465,10 @@ chunk van de viewer; de teksten in het gebied `search` en de codes in
 stuurt de vraag van §3.4 (`limit` ≤ 50, geen `archive`), en Z4 haalt in dezelfde merge de tak voor
 de vraag van 0.7.0 uit `routers/search.py` weg, met de grenzen van 0.7.0 in `searchQuery.ts`,
 `Search.tsx`, `api/tests/test_search.py` en `e2e/test_zoek_z0.py` ("De overgang" in §3.4).
+Na de review van Z0b (contract F3) ook wat Keuze 81 aan Z4 geeft: de keuze "Namen en tekst" /
+"Wat er op de foto staat", de laatste suggestie en de regel "Geen foto met deze naam?"; in de
+stand beeld laadt `/zoeken` het raster van X3 lazy uit `src/search/beeld/BeeldResults.tsx`, met
+het gebied `beeld` (de plek zette Z0b; tot X3 toont hij niets).
 
 **Tests:** vitest voor `query.ts` (URL heen en terug), de combobox (pijlen, Esc, Enter,
 `aria-activedescendant`), de snippets (alleen tekst, geen HTML), de meldingen bij `partial` en
@@ -2516,7 +2520,13 @@ vanzelf te delen.
 - web: "Persoon toevoegen" met kader in het infopaneel, `/fotos/personen`, de persoonpagina,
   "Vandaag, N jaar geleden" op `/fotos`, de regel en de vraag over delen in het albumdialoog,
   het merkje "alleen voor jou", filters op `/fotos`; het gebied `photos_people` en de catalogus
-  `people.ts`.
+  `people.ts`;
+- de plekken voor X2 en X3 (na de review van Z0b, contract F3): `PeoplePage` en `PersonPage`
+  houden de lazy plekken `photos/faces/PeopleFaces.tsx` en `PersonFaces.tsx` (gebied
+  `photos_faces`; `src/lazySlots.test.ts` eist ze). Het blok Foto's onder Account laadt lazy
+  `photos/faces/FacesSwitch.tsx` (gebied `photos_faces`) en `search/beeld/BeeldSwitch.tsx`
+  (gebied `beeld`), en `/fotos` krijgt de knop "Zoeken op beeld" (Keuze 81). Tot X2 en X3 ze
+  vullen, tonen de plekken niets.
 
 **Tests:** `test_people.py` (alleen de eigenaar; samenvoegen; wissen; een kopie van dezelfde
 eigenaar heeft de persoon ook, een kopie van Bram niet); `test_people_privacy.py` (de wereld: Bram
@@ -3114,7 +3124,10 @@ Een gezicht naar buiten (`FaceOut`) bevat: `id`, `node_id`, `box` (`x`, `y`, `w`
 
 **Bestanden.**
 
-- `web/src/photos/faces/**`, lazy.
+- `web/src/photos/faces/**`, lazy. De plekken in de bestanden van Z4 en Z6 zette Z0b (na de
+  review, contract F3): `PeopleFaces.tsx` (op `/fotos/personen`), `PersonFaces.tsx` (de pagina
+  van een persoon), `FacesRow.tsx` (het infopaneel, na Personen, alleen bij een foto) en
+  `FacesSwitch.tsx` (Account → Foto's). X2 vult ze; de bestanden van Z4 en Z6 blijven dicht.
 - Het i18n-gebied `photos_faces`, en de catalogus `web/src/i18n/errors/faces.ts`.
 - `budget.mjs`: `ZOEK_MODULE` en `ZOEK_PAGES` krijgen de chunk van gezichten (≤ 12 kB gzip
   [schatting]).
