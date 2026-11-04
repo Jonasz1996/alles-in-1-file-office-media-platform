@@ -356,16 +356,47 @@ async def test_onzin_op_de_pipe_wordt_niet_geloofd(aan, monkeypatch):
 # --- de worker druk, weg of uit ----------------------------------------------------------------
 
 
+async def pomp_wacht(settings) -> float:
+    """De pomp met een worker die weg of druk is: hoe lang hij wacht (jobs.Defer)."""
+    with pytest.raises(jobs.Defer) as defer:
+        await analysis.pump(settings, "index")
+    return defer.value.seconds
+
+
 async def test_zonder_worker_later_opnieuw(settings, tmp_path):
+    """Is de worker weg, dan wacht de pomp 1, 2, 4 … s, hooguit 30 s, zonder poging: bij het
+    starten luistert de worker vaak pas net na de eerste pomp (dan wachtte de backfill 30 s)."""
     aan_zonder = settings.model_copy(update={"media_enabled": True})
     client.bind(tmp_path / "nergens.sock", KEY)
     try:
         sha = await put(aan_zonder, b"tekst", "text/plain")
-        with pytest.raises(jobs.Defer):
-            await analysis.pump(aan_zonder, "index")
+        waits = [await pomp_wacht(aan_zonder) for _ in range(7)]
     finally:
         client.bind(None)
+    assert waits == [1, 2, 4, 8, 16, 30, 30]
     assert state((await rows(settings))[sha]) == ("wait", 0, None)
+
+
+async def test_na_een_batch_weer_snel_en_druk_is_30_s(aan, monkeypatch):
+    """Nam de worker een batch aan, dan wacht de pomp de volgende keer dat hij weg is weer 1 s.
+    Is de worker druk (alle plaatsen bezet), dan 30 s."""
+    real = batch.via_worker
+    answer: list[type[Exception] | None] = [client.WorkerDown, client.WorkerDown, None]
+
+    async def via_worker(*args, **kwargs):
+        fout = answer.pop(0) if answer else None
+        if fout is not None:
+            raise fout("test")
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(batch, "via_worker", via_worker)
+    first = await put(aan, b"de eerste tekst", "text/plain")
+    assert [await pomp_wacht(aan), await pomp_wacht(aan)] == [1, 2]
+    assert await analysis.pump(aan, "index") == 1
+    assert state((await rows(aan))[first]) == ("done", 0, None)
+    await put(aan, b"de tweede tekst", "text/plain")
+    answer[:] = [client.WorkerDown, client.WorkerBusy, client.WorkerDown]
+    assert [await pomp_wacht(aan) for _ in range(3)] == [1, 30, 2]
 
 
 async def test_met_media_uit_de_terugval_zonder_worker(settings, tmp_path):

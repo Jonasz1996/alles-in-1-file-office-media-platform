@@ -9,7 +9,8 @@ met de haken van Z2 erbij (register()).
   skip (after_ready zet hem opnieuw klaar als de PDF er is, de backfill bij het starten ook).
 - Met media aan gaat de batch door de mediaworker (batch.via_worker), met per eigenaar een eigen
   kind: een kind dat een kwaadaardig bestand las, krijgt zo nooit de bestanden van een ander
-  (de batch zelf is om de beurt per eigenaar, Keuze 20).
+  (de batch zelf is om de beurt per eigenaar, Keuze 20). Is de worker weg, dan wacht de pomp
+  (jobs.Defer, zonder poging) 1, 2, 4 … s, hooguit WORKER_DEFER_S; is hij druk, WORKER_DEFER_S.
 - Met media uit (de terugval): het renderproces van de app (previews.render_text, een kind van
   de forkserver of een eigen proces), met batches tot FALLBACK_BATCH, RLIMIT_AS 1 GiB,
   RLIMIT_CPU en nice 19. Dat is geen zandbak: /beheer zegt het (in_sandbox(), Z7 toont het).
@@ -72,7 +73,12 @@ from app.storage import BlobStore
 log = logging.getLogger("platform.extract")
 
 LANE = "index"
-WORKER_DEFER_S = 30.0  # de worker is druk of weg
+WORKER_DEFER_S = 30.0  # de worker is druk, of al langer weg
+# De worker is weg: de pomp na 1, 2, 4 … s opnieuw, hooguit WORKER_DEFER_S (zoals de lus van
+# media/health.py). Bij het starten luistert de worker vaak pas net na de eerste pomp: dan wacht
+# de backfill geen 30 s.
+DOWN_FIRST_S = 1.0
+_down_s = DOWN_FIRST_S
 # Na een kind dat de app zelf stopte (onzin op de pipe): de worker geeft zijn plek pas vrij als
 # hij het kind heeft opgeruimd; zo lang mag de volgende helft op busy wachten
 SETTLE_S = 5.0
@@ -177,12 +183,29 @@ async def run_batch(settings: Settings, shas: list[str]) -> dict[str, Outcome]:
             by_owner = sorted(items, key=lambda item: (str(item.owner), order[item.sha]))
             for _, group in groupby(by_owner, key=lambda item: item.owner):
                 await _run_group(settings, list(group), out, _via_worker_group)
+                _worker_back()
     except (client.WorkerBusy, client.WorkerDown, jobs.JobError) as exc:
         if not any(item.sha in out for item in items):
-            raise jobs.Defer(WORKER_DEFER_S) from exc
+            raise jobs.Defer(_defer_s(exc)) from exc
         log.info("text: %s; de rest van de batch later", type(exc).__name__)
     await announce(settings, [sha for sha, o in out.items() if o.state == "done"])
     return out
+
+
+def _defer_s(exc: BaseException) -> float:
+    """Hoe lang de pomp wacht: is de worker weg, na 1, 2, 4 … s, hooguit WORKER_DEFER_S; is hij
+    druk of ging het mis, WORKER_DEFER_S."""
+    global _down_s
+    if not isinstance(exc, client.WorkerDown):
+        return WORKER_DEFER_S
+    wait, _down_s = _down_s, min(_down_s * 2, WORKER_DEFER_S)
+    return wait
+
+
+def _worker_back() -> None:
+    """De worker nam een batch aan: de volgende keer dat hij weg is, weer na 1 s."""
+    global _down_s
+    _down_s = DOWN_FIRST_S
 
 
 # Eén kind voor deze inhouden: (settings, items, out, settle) → (Ran, de items in de volgorde
@@ -413,6 +436,7 @@ async def after_ready(
 def register() -> None:
     """De stap en de haken aanmelden (één keer; tests die analysis.reset() of
     search.hooks.reset() deden, roepen hem opnieuw aan)."""
+    _worker_back()
     if Step.TEXT not in analysis.registered():
         analysis.register_step(Step.TEXT, LANE, eligible, run_one, batch=run_batch, size=batch_size)
     search_hooks.register_blob_added(analysis.on_blob_added)
