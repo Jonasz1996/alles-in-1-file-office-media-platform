@@ -209,9 +209,12 @@ async def test_iris_wissen_laat_geen_personen_achter(settings):
         assert (await conn.exec_driver_sql("SELECT count(*) FROM person")).scalar() == 1
 
 
-async def test_zoeken_van_nu_volgt_de_referentie(client, settings):
-    """Zoeken op naam zoals in 0.7.0 (LikeFallback, tot Z1): wat elke persoon krijgt, is wat
-    Referentie.op_naam zegt. De e2e (e2e/test_zoek_z0.py) doet hetzelfde in de echte app."""
+async def test_zoeken_van_nu_volgt_de_referentie(client, settings, monkeypatch):
+    """Zoeken op naam zoals in 0.7.0 (LikeFallback; sinds Z1 met de index uit, zoals het harnas
+    van de e2e): wat elke persoon krijgt, is wat Referentie.op_naam zegt. De e2e
+    (e2e/test_zoek_z0.py) doet hetzelfde in de echte app. FtsEngine tegen Referentie.zoek:
+    test_search_access.py."""
+    monkeypatch.setattr(settings, "search_index", "uit")
     w = await W.bouw_async(settings)
     ref = await _lees(settings)
     for naam in W.GEBRUIKERS:

@@ -418,12 +418,15 @@ async def test_de_woorden_alleen_met_het_token_van_dit_bestand(client, admin, se
     assert r.status_code == 422
 
 
-async def test_zoeken_werkt_via_likefallback(client, admin):
-    """De vraag van 0.7.0 blijft werken; het antwoord heeft de velden van fase 6 erbij."""
+async def test_zoeken_werkt_via_likefallback(client, admin, settings, monkeypatch):
+    """De vraag van 0.7.0 blijft werken; het antwoord heeft de velden van fase 6 erbij. Met de
+    index uit via LikeFallback, met de index aan (sinds Z1) via FtsEngine: dezelfde treffer,
+    met engine fts en een gerangschikte pagina."""
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]
     await put(client, headers, root_id, "Jaarverslag 2025.pdf", b"%PDF-1.4\n")
     await put(client, headers, root_id, "notities.txt", b"jaarverslag")
+    monkeypatch.setattr(settings, "search_index", "uit")
     r = await client.get("/api/v1/search", params={"q": "jaarverslag"}, headers=headers)
     assert r.status_code == 200, r.text
     page = r.json()
@@ -443,6 +446,26 @@ async def test_zoeken_werkt_via_likefallback(client, admin):
     assert r.json() == {"names": [], "people": [], "places": [], "tags": [], "albums": []}
     r = await client.get("/api/v1/search/suggest", params={"q": ""}, headers=headers)
     assert r.status_code == 422
+
+    # Met de index aan: FtsEngine (Z1), met hetzelfde pad. Een ruime grens: een volle ronde van
+    # de garbage collector in ronde A gaf anders terecht een gedeeltelijke pagina (Keuze 9)
+    monkeypatch.setattr(settings, "search_index", "aan")
+    monkeypatch.setattr(settings, "search_deadline_ms", 10_000)
+    r = await client.get("/api/v1/search", params={"q": "jaarverslag"}, headers=headers)
+    assert r.status_code == 200, r.text
+    page = r.json()
+    assert [h["node"]["name"] for h in page["results"]] == ["Jaarverslag 2025.pdf"]
+    hit = page["results"][0]
+    assert hit["path"] == [{"id": root_id, "name": ""}]
+    assert hit["match"] == "name" and hit["snippet"] is None
+    assert page["more"] is False and page["engine"] == "fts" and page["names_only"] is False
+    assert page["partial"] is False and page["ranked"] is True and page["offset"] == 0
+    assert page["after"] is None and page["mode"] == "text" and page["fallback"] is None
+    # 0.7.0 blijft via LikeFallback lopen, ook met de index aan
+    for params in ({"type": "archive"}, {"q": "x", "limit": 200}):
+        r = await client.get("/api/v1/search", params=params, headers=headers)
+        assert r.status_code == 200, (params, r.text)
+        assert r.json()["engine"] == "like", params
 
 
 async def test_zoeken_op_beeld_is_van_x3(client, admin):

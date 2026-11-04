@@ -1,14 +1,20 @@
 """Zoeken, en tags zelf (per gebruiker: een tag op een bestand ziet alleen wie hem maakte).
 
-Zoeken gaat via de zoekmachine van app/search/engine.py (fase 6, Keuze 10): select_engine geeft
-tot Z1 altijd LikeFallback, de zoekfunctie van 0.7.0 (app/search/like.py). De vraag blijft
-die van 0.7.0 (q, één type, één tag, in, limit tot 200); het antwoord is SearchPage, met
-results en more zoals in 0.7.0 en de velden van fase 6 erbij. Z1 maakt de vraag van §3.4.
+Zoeken gaat via de zoekmachine van app/search/engine.py (fase 6, Keuze 10): FtsEngine over de
+index, of LikeFallback (de zoekfunctie van 0.7.0, app/search/like.py) als de index uit staat,
+de database geen FTS5 heeft of er een herbouw loopt. De vraag is die van §3.4 (q, type meer
+keer, from, to, person, place of country, tag meer keer, library, camera, in, offset, limit,
+after); het antwoord is SearchPage, met results en more zoals in 0.7.0.
 
 De overgang (review Z0, haalbaar F4; bouwontwerp §3.4): een vraag die niet in SearchParams past
-(type=archive, limit boven 50: wat de web van nu stuurt) gaat altijd naar LikeFallback, ook als
-Z1 FtsEngine aanzet. De rest gaat via select_engine, met een gecontroleerde SearchParams. Z4 zet
-de web op de vraag van §3.4 en haalt deze tak weg.
+(type=archive, limit boven 50: wat de web van nu stuurt) gaat altijd naar LikeFallback, ook nu
+Z1 FtsEngine aanzet. De rest gaat via de motor, met een gecontroleerde SearchParams. Z4 zet de
+web op de vraag van §3.4 en haalt deze tak weg; tot dan blijft limit zonder waarde 50, zoals in
+0.7.0 (§3.4 zegt 30).
+
+Grenzen (Keuze 13): FtsEngine draait binnen limits.admit (2 tegelijk voor de app met een rij van
+20, 1 per gebruiker, de snelheid per gebruiker). LikeFallback niet: dat is het zoeken van 0.7.0,
+zonder tijdsgrens die een nieuwere vraag kan stoppen.
 
 Zoeken op beeld (X3, Keuze 80; Z0b): mode=image of like geeft na de inlog 501 not_built("X3")
 tot X3 er is. Zonder mode (of met mode=text) is het een vraag zoals ervoor, met hetzelfde
@@ -18,6 +24,7 @@ antwoord; daarin staan dan mode "text" en fallback null (de standaard van Search
 import asyncio
 import re
 import uuid
+from datetime import date
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -32,20 +39,27 @@ from app.db import Session
 from app.models import Node, NodeTag, Tag, User
 from app.routers.files import TagRef, get_tree_access, tag_order, tree
 from app.routers.stubs import not_built
-from app.search.engine import LIKE, read_conn_info, select_engine
+from app.search import engine as engines
+from app.search.engine import LIKE, engine_for
 from app.search.like import own_tag, search_roots
+from app.search.limits import admit
+from app.search.query import QueryTooLong
 from app.search.types import SearchMode, SearchPage, SearchParams, Suggestions
 from app.security import CurrentUser
 from app.text import CONTROL, fold
 
 router = APIRouter(prefix="/api/v1", tags=["zoeken"])
 
-# De soorten van 0.7.0 (mime.category, met archive); Z1 maakt er de soorten van node.ftype van
-Category = Literal["folder", "image", "video", "audio", "pdf", "document", "archive", "other"]
+# De soorten van 0.7.0 (mime.category, met archive) en die van node.ftype (§3.4)
+Category = Literal[
+    "folder", "image", "video", "audio", "pdf", "document", "spreadsheet", "presentation",
+    "archive", "other",
+]  # fmt: skip
 COLOR = re.compile(r"^(#[0-9a-f]{6})?$")
 MAX_TAG_NAME = 50
 # Zoveel tags heeft een gebruiker hooguit (bij elke nieuwe naam worden ze allemaal vergeleken)
 MAX_TAGS = 500
+MAX_OFFSET = 1000
 
 # Per gebruiker één wijziging aan tags tegelijk: of "Foto" en "foto" allebei vrij zijn, en
 # welke tags een bestand krijgt, moet vastliggen tot de wijziging erin staat
@@ -62,35 +76,71 @@ async def search(
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
     q: Annotated[str, Query(max_length=200)] = "",
-    type_: Annotated[Category | None, Query(alias="type")] = None,
-    tag: uuid.UUID | None = None,
+    type_: Annotated[list[Category], Query(alias="type")] = [],  # noqa: B006
+    date_from: Annotated[date | None, Query(alias="from")] = None,
+    date_to: Annotated[date | None, Query(alias="to")] = None,
+    person: Annotated[list[uuid.UUID], Query()] = [],  # noqa: B006
+    place: int | None = None,
+    country: Annotated[str | None, Query(max_length=8)] = None,
+    tag: Annotated[list[uuid.UUID], Query()] = [],  # noqa: B006
+    library: uuid.UUID | None = None,
+    camera: Annotated[str | None, Query(max_length=200)] = None,
     in_: Annotated[uuid.UUID | None, Query(alias="in")] = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    after: int | None = None,
     mode: SearchMode = "text",
     like: uuid.UUID | None = None,
 ) -> SearchPage:
-    """Zoekt in map `in` en alles eronder, of zonder `in` in je eigen bestanden en alles wat
-    met je gedeeld is. Elk woord van q moet in de naam staan (hoofdletters en accenten tellen
-    niet). Mappen eerst, dan op naam. tag: alleen je eigen tags. mode=image en like (zoeken op
-    beeld, ook "Meer zoals deze") zijn van X3."""
+    """Zoekt in je eigen bestanden en alles wat met je gedeeld is (met `in`: alleen in die map
+    en alles eronder), op hele woorden in naam, titel, tekst, OCR en meta, het laatste woord
+    ook als begin van een woord, en daarna op stukken van namen. Zonder q en zonder filter:
+    400 search_bad_filter. mode=image en like (zoeken op beeld, ook "Meer zoals deze") zijn
+    van X3."""
     if mode == "image" or like is not None:
         raise not_built("X3")
+    if offset > MAX_OFFSET:
+        raise errors.fail(
+            400, "search_bad_offset", "Verder dan dit kun je niet bladeren", max=MAX_OFFSET
+        )
     fields = {
         "q": q,
-        "types": [type_] if type_ is not None else [],
-        "tags": [tag] if tag is not None else [],
+        "types": type_,
+        "date_from": date_from,
+        "date_to": date_to,
+        "persons": person,
+        "place": place,
+        "country": country,
+        "tags": tag,
+        "library": library,
+        "camera": camera,
         "in_": in_,
+        "offset": offset,
         "limit": limit,
+        "after": after,
     }
     try:
         params = SearchParams(**fields)
     except ValidationError:
         # De vraag van 0.7.0 (archive als soort, limit tot 200) past niet in SearchParams:
         # zonder controle gebouwd, en altijd naar LikeFallback (die leest alleen q, types,
-        # tags, in_ en limit), tot Z4 de web op de vraag van §3.4 zet
+        # tags, in_, offset en limit), tot Z4 de web op de vraag van §3.4 zet
         return await LIKE.search(session, user, SearchParams.model_construct(**fields))
-    engine = select_engine(settings, await read_conn_info(await session.connection()))
-    return await engine.search(session, user, params)
+    if not q.strip() and not params.has_filter():
+        raise errors.fail(400, "search_bad_filter", "Geef een zoekvraag of een filter")
+    engine = await engine_for(settings, await session.connection())
+    if engine is LIKE:
+        return await engine.search(session, user, params)
+    token = engines.SETTINGS.set(settings)
+    try:
+        async with admit(user, "search", settings):
+            return await engine.search(session, user, params)
+    except QueryTooLong:
+        raise errors.fail(
+            400, "search_query_too_long", "Je zoekvraag is te lang", max_words=10
+        ) from None
+    finally:
+        engines.SETTINGS.reset(token)
 
 
 @router.get("/search/suggest")
@@ -100,10 +150,12 @@ async def suggest(
     settings: Annotated[Settings, Depends(get_settings)],
     q: Annotated[str, Query(min_length=1, max_length=200)],
 ) -> Suggestions:
-    """Namen, personen, plaatsen, tags en albums voor het zoekveld, elk hooguit 5. Tot Z1 geeft
-    LikeFallback geen suggesties."""
-    engine = select_engine(settings, await read_conn_info(await session.connection()))
-    return await engine.suggest(session, user, q)
+    """Namen, personen, plaatsen, tags en albums voor het zoekveld, elk hooguit 5."""
+    engine = await engine_for(settings, await session.connection())
+    if engine is LIKE:
+        return await engine.suggest(session, user, q)
+    async with admit(user, "suggest", settings):
+        return await engine.suggest(session, user, q)
 
 
 class TagOut(TagRef):

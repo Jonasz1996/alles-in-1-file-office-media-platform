@@ -24,7 +24,7 @@ from app.config import Settings
 from app.db import get_engine
 from app.extract.result import Extracted
 from app.geo.types import Location, Place
-from app.models import BlobText, PhotoPref
+from app.models import BlobText, PhotoPref, User
 from app.people.types import AlbumRuleIn
 from app.search import deadline, engine, filters, hooks, limits, query
 from app.search import types as t
@@ -141,24 +141,27 @@ def test_extracted_location_en_place_staan_vast():
 # --- de zoekmachine ---
 
 
-def test_select_engine_geeft_like_tot_z1(monkeypatch):
+def test_select_engine_geeft_fts_of_like(monkeypatch):
+    """Sinds Z1 is FtsEngine er; LikeFallback zonder fts_node (geen FTS5, of PostgreSQL), met de
+    index uit, en zonder FTS-motor."""
     aan = Settings(jwt_secret="test" * 8)
     uit = Settings(jwt_secret="test" * 8, search_index="uit")
     met, zonder = ConnInfo("sqlite", True, "3.46.1"), ConnInfo("sqlite", False, "3.46.1")
-    assert engine.FTS is None
-    for settings, info in ((aan, met), (aan, zonder), (uit, met), (uit, zonder)):
-        assert select_engine(settings, info) is engine.LIKE
+    assert isinstance(engine.FTS, engine.FtsEngine) and engine.FTS.name == "fts"
     assert engine.LIKE.name == "like"
+    assert select_engine(aan, met) is engine.FTS
+    # Zonder fts_node (geen FTS5, of PostgreSQL) of met de index uit: altijd LIKE
+    for settings, info in ((aan, zonder), (uit, met), (uit, zonder)):
+        assert select_engine(settings, info) is engine.LIKE
+    assert select_engine(aan, ConnInfo("postgresql", False)) is engine.LIKE
 
     class Fts:
         name = "fts"
 
     monkeypatch.setattr(engine, "FTS", Fts())
     assert select_engine(aan, met) is engine.FTS
-    # Zonder fts_node (geen FTS5, of PostgreSQL) of met de index uit: altijd LIKE
-    assert select_engine(aan, zonder) is engine.LIKE
-    assert select_engine(uit, met) is engine.LIKE
-    assert select_engine(aan, ConnInfo("postgresql", False)) is engine.LIKE
+    monkeypatch.setattr(engine, "FTS", None)
+    assert select_engine(aan, met) is engine.LIKE
 
 
 @pytest.mark.parametrize("fts5", [True, False], ids=["fts5", "zonder-fts5"])
@@ -171,17 +174,21 @@ async def test_read_conn_info_ziet_of_er_fts_is(tmp_path, fts5):
     assert info.sqlite_version and info.sqlite_version.count(".") == 2
 
 
-async def test_de_stubs_van_z1_zeggen_dat_ze_er_nog_niet_zijn(settings):
+async def test_parse_deadline_en_admit_zijn_gebouwd(settings, client, admin):
+    """De stubs van Z0 zijn sinds Z1 gebouwd: parse() geeft een uitdrukking, deadline() een
+    grens die niet geraakt is, admit() laat een vraag door."""
     assert query.parse("") is None and query.parse("   \t") is None
-    with pytest.raises(NotImplementedError):
-        query.parse("jaarverslag")
+    parsed = query.parse("jaarverslag")
+    assert parsed is not None and parsed.match == '"jaarverslag"*'
     async with get_engine(settings).connect() as conn:
-        with pytest.raises(NotImplementedError):
-            async with deadline.deadline(conn, 120):
-                pass
-    with pytest.raises(NotImplementedError):
-        async with limits.admit(None):  # type: ignore[arg-type]
-            pass
+        async with deadline.deadline(conn, 120) as d:
+            assert (await conn.exec_driver_sql("SELECT 1")).scalar() == 1
+        assert d.hit is False
+    async with sessions(settings)() as session:
+        user = await session.scalar(sa.select(User).where(User.role == "admin"))
+    assert user is not None
+    async with limits.admit(user):
+        pass
 
 
 # --- registers ---
