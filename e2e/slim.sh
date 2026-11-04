@@ -10,6 +10,8 @@
 #    venv van de host alleen-lezen erin, --network none, en de gemaakte bestanden van
 #    tests/search/fixtures.py in een eigen map (api/.pytest_cache/slim). Zo toont een pakket
 #    3.46.1 aan zonder te pushen. Zonder ocr, media en zoek_perf: die hebben hun eigen job.
+#    De renderprocessen (previews.py) starten met python -I en een kale omgeving: PYTHONPATH
+#    telt daar niet. Een .pth in de site-packages van het image geeft ook hen de venv.
 # 2. De web-app bouwen als een bestand in web/ nieuwer is dan web/dist/index.html.
 # 3. De e2e met marker zoek (e2e/test_zoek_*.py) tegen die build, op de host.
 #
@@ -58,14 +60,17 @@ stap_db() {
   fi
   mkdir -p "$CACHE/fixtures"
   local t=$SECONDS
-  local versie
-  versie="$(docker run --rm --network none "$IMAGE" \
-    python -c 'import sqlite3; print(sqlite3.sqlite_version)')"
+  local info versie site
+  info="$(docker run --rm --network none "$IMAGE" \
+    python -c 'import sqlite3, sysconfig; print(sqlite3.sqlite_version, sysconfig.get_path("purelib"))')"
+  read -r versie site <<<"$info"
+  echo "/repo/api/.venv/lib/python3.12/site-packages" >"$CACHE/venv.pth"
   echo "== 1. zoeken in $IMAGE (SQLite $versie)"
   docker run --rm --network none "${docker_cpus[@]}" \
     --user "$(id -u):$(id -g)" \
     -v "$REPO:/repo:ro" \
     -v "$CACHE:/cache" \
+    -v "$CACHE/venv.pth:$site/venv.pth:ro" \
     -e HOME=/tmp \
     -e PYTHONDONTWRITEBYTECODE=1 \
     -e PYTHONPATH=/repo/api/.venv/lib/python3.12/site-packages \
