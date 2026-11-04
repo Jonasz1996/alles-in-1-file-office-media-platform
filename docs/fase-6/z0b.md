@@ -196,7 +196,7 @@ afhankelijkheid; `TRIGGERS` en `TRIGGERS_NO_FTS` zijn nog precies wat 0010 maakt
 | Punt | Wat er gedaan is | Test |
 |---|---|---|
 | V1 (should) | `d9d686c`. De `BeforeValidator(int)` uit de samenvoeging gaf bij `?hidden=abc` een 422 met de tekst van `int()` en de waarde erin, en `int()` nam ook `" 96"`, `"+1"`, `"9_6"` en `"٩٦"`. Nu zet `QueryInt` (`app/routers/stubs.py`) alleen gewone cijfers om (ASCII, hooguit 9); de rest blijft tekst en valt op de `Literal`: 422 "Ongeldige invoer", code `invalid_input`, als params alleen het veld. Voor `hidden` en `size`. | `test_een_vast_getal_in_de_query_string_komt_bij_de_stub` (`tests/search/test_api_stubs.py`) stuurt nu ook acht foute waarden (`abc`, 5000 cijfers, `9_6`, `٩٦`, `" 96"`, `+1`, `-0`, `1e1`): 422 met fouttype `literal_error`, geen `input`, en bij `abc` en de 5000 cijfers de waarde en `int()` niet in het antwoord. |
-| V2 en F2 (should) | `d94e459`. De uitsnede wil de inlog als Bearer-header, zoals elke route van X2 (`CurrentUser` is alleen `HTTPBearer`); een `<img>` stuurt die niet mee, dus `faceCropUrl` gaf altijd 401, en een token in de query zou in de log en de geschiedenis komen. Nu haalt de web hem met `faceCrop(id, size)`: `api.rawRequest` met de header, en een `Blob` waar X2 een object-URL van maakt. De route bleef gelijk; de docstring, het bouwontwerp (de rij van de uitsnede) en [z0b-web.md](z0b-web.md) zeggen het nu. | `test_een_uitsnede_alleen_met_de_inlog_in_de_header` (zonder header, ook met `?token=` of `sig=`: 401 `not_logged_in`; met de header 501 `X2`); in `src/photos/faces/api.test.ts` de aanroepen van `faceCrop` via `rawRequest`, het type `image/webp`, en geen export met "url" in de naam. |
+| V2 en F2 (should) | `d94e459`. De uitsnede wil de inlog als Bearer-header, zoals elke route van X2 (`CurrentUser` is alleen `HTTPBearer`); een `<img>` stuurt die niet mee, dus `faceCropUrl` gaf altijd 401, en een token in de query zou in de log en de geschiedenis komen. Nu haalt de web hem met `faceCrop(id, size)`: `api.rawRequest` met de header, en een `Blob` waar X2 een object-URL van maakt. De route bleef gelijk; de docstring, het bouwontwerp (de rij van de uitsnede) en [z0b-web.md](z0b-web.md) zeggen het nu. | `test_een_uitsnede_alleen_met_de_inlog_in_de_header` (zonder header, ook met `?token=` of `sig=`: 401 `not_logged_in`; met de header 501 `X2`); in `src/photos/faces/api.test.ts` de aanroepen van `faceCrop` via `rawRequest`, het type `image/webp`, en geen export met "url" in de naam. Zonder de reparatie faalt de vitest; de API-test bewaakt de route, die niet veranderde, en is ook op de oude code groen (zie De nacontrole). |
 | V3 en F1 (should, blocking) | `8775064`. `PhotoSettingsPatch` nam `faces: "aan"` en `beeld: "aan"`, en niets weigerde dat zonder X2, X3 of de analyse (Keuze 59). Nu staat de regel in `app/prefs.py`, en Z6 roept hem aan vóór hij schrijft: `check_switch()` weigert "aan" met 409 `faces_unavailable` of 409 `beeld_not_installed` zolang X2 of X3 zich niet aanmeldt, en altijd als `PLATFORM_ANALYSE_ENABLED` uit staat, ook met een aangemeld pakket; met 403 `faces_forbidden` (Keuze 64) of 409 `beeld_off` (Keuze 82) als de beheerder het verbood; met 403 `guest` voor een gast. "uit" mag altijd. De route is nog de stub van Z6 (501); de docstring van `routers/photo_prefs.py` en Z6 in het bouwontwerp zeggen wat Z6 aanroept. | `tests/search/test_contracts.py`: `test_gezichten_en_beeld_aanzetten_kan_niet_zonder_x2_en_x3`, `test_x2_en_x3_melden_hun_schakelaar_aan`. Elke regel apart weggehaald (de analyse, de gast, "uit", het verbod) gaf rood. |
 | V4 (nit) | `231d209`. Een haak van `register_large` had geen tijdgrens, en de taak houdt een plek in de rij `preview` bezet. Nu stopt `_after_large` een haak na `LARGE_HOOK_S` (5 s), met `previews.large te traag` in het log, en loopt de volgende. De docstring zegt dat een haak alleen werk in de rij zet en niet op de container of een render wacht. | `test_een_trage_haak_na_de_grote_preview_houdt_de_rij_niet_op` (`tests/test_previews.py`): een haak die nooit klaar is, daarna een gewone; zonder de grens loopt de test in zijn eigen limiet van 10 s. |
 | F3 (should) | `46eac9b`. Er was geen plek voor X2 en X3 in de bestanden van Z4 en Z6. Nu laadt `PeoplePage` `PeopleFaces`, `PersonPage` `PersonFaces` (met `personId`) en het infopaneel `FacesRow` (alleen bij een foto, ingelogd, niet via een publieke link en niet bij een eerdere versie: `showFacesRow`), elk lazy met het gebied `photos_faces` in een `LazySlot`. Voor pagina's die er nog niet zijn staan de bestanden klaar: `FacesSwitch` en `BeeldSwitch` (Z6, Account → Foto's) en `BeeldResults` (Z4, `/zoeken` in de stand beeld). Elk toont niets. Het budget is gelijk gebleven (eerste lading en Bestanden); `faces` werd 0,3 kB. | `src/lazySlots.test.ts` (de regels in de bron van `PeoplePage`, `PersonPage` en `InfoPanel`, en alle zes plekken tonen niets); `src/viewer/infoRows.test.ts` (wanneer de rij gezichten laadt). |
@@ -229,6 +229,77 @@ tegelijk:
 | `SLIM_CPUS=0-2 e2e/slim.sh`, alleen gedraaid | groen in 147 s: 393 tests op SQLite 3.46.1 in `python:3.12-slim`, 9 e2e met marker `zoek` |
 | de e2e van CI (`-m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"`) | 146 groen, 129 niet gekozen (13 min) |
 
+## De nacontrole
+
+Daarna is elke commit van de review nagelopen, in een eigen worktree vanaf `31e8299`: alleen de
+reparatie teruggedraaid, de test gedraaid (rood), de reparatie terug (groen). Waar een commit uit
+meer regels bestaat, is ook elke regel apart weggehaald.
+
+| Punt | Teruggedraaid of weggehaald | Uitkomst |
+|---|---|---|
+| V1 (`d9d686c`) | `QueryInt` weer `BeforeValidator(int)`; apart: zonder `isascii()`, zonder de grens van 9 cijfers | Elk rood. Met `int()` is de melding bij `?hidden=abc` "invalid literal for int() with base 10: 'abc'"; zonder `isascii()` komt `٩٦` bij de stub (501); zonder de grens staat de melding van `int()` over 5000 cijfers in het antwoord. |
+| V3, F1 en F4 (`8775064`) | `app/prefs.py` en `app/search/hooks.py` van vóór de commit; daarna 14 regels apart | Van vóór de commit: rood (er is geen `forget_switches`). Rood met elk van: de analyse niet meegeteld, geen gastregel, "uit" niet overgeslagen, geen verbod (faces, beeld), "niet beschikbaar" niet geweigerd (faces, beeld), `switched` ook zonder verandering, `photo_settings` zonder de stand van X2, `admin_switch` en `admin_rebuild` zonder 501, `reset` zonder de delen van beheer. **Groen bleven** `register_switch` en `register_admin` zonder hun controle op de sleutel; zie hieronder. |
+| V2 en F2 (`d94e459`) | `web/src/photos/faces/api.ts` met `faceCropUrl` | Rood in `src/photos/faces/api.test.ts` (`faceCrop is not a function`). `test_een_uitsnede_alleen_met_de_inlog_in_de_header` is ook op de oude code groen: de route veranderde niet (alleen de docstring). Hij bewaakt dat de route geen token of `sig` in de query neemt; de vitest is de test van de reparatie. |
+| F3 (`46eac9b`) | `PeoplePage.tsx`, `PersonPage.tsx` en `InfoPanel.tsx` elk apart van vóór de commit; `infoRows.ts` zonder `showFacesRow` | Elk rood, in `src/lazySlots.test.ts` of `src/viewer/infoRows.test.ts`. |
+| V4 (`231d209`) | `previews.py` van vóór de commit; apart: de grens weg (de constante blijft), de regel in het log weg, één grens om de hele lus | Elk rood. Zonder de grens loopt de test in zijn `fail_after(10)` (na 14 s); zonder de regel mist "previews.large te traag"; met één grens om de lus komt de volgende haak niet meer aan de beurt. |
+| F5 (`c0e3c4c`) | `schema.py` van vóór de commit; apart: `TRIGGERS = TRIGGERS_0010`, en alleen `TRIGGERS_NO_FTS` gedeeld | Rood. Zonder de splitsing 4 tests (de kopie, de plek, 0009 → 0010 met en zonder FTS5); met één gedeeld dict `test_de_plek_voor_de_triggers_van_0011_en_0012`. |
+
+Wat de nacontrole veranderde, in `f74236d` (1–3) en in dit verslag (4–6):
+
+1. **De controle op de sleutel heeft een test.** `test_alleen_faces_en_beeld_melden_zich_aan`
+   (`tests/search/test_contracts.py`): `register_switch` met een instelling van Z6 (`location`,
+   `memories`, `ocr_photos`) of iets anders dan `faces` en `beeld`, en `register_admin` met een
+   deel van Z7 (`names`, `text`, `geo`, `hash`, `ocr`), geven `ValueError` en melden niets aan.
+   Rood met elk van de twee mutaties die groen bleven.
+2. **Niemand meldt zich aan.** `test_niemand_meldt_een_schakelaar_of_een_deel_van_beheer_aan`
+   (`tests/search/test_hotspots.py`), zoals die van `register_large`: de hele app geladen in een
+   eigen proces, en dan geen schakelaar in `app.prefs` en geen deel in `search.hooks`. Daarop rust
+   dat een oude client hetzelfde antwoord krijgt: zonder aanmelding weigert `check_switch` "aan",
+   en geven `admin_switch` en `admin_rebuild` 501. Rood als `prefs` of `hooks` bij het laden iets
+   aanmeldt.
+3. **Wat `available` betekent.** De docstring van `SwitchState` zei "de container analyse is er,
+   met het model". Keuze 59 weigert aanzetten alleen in de stand `off` (`faces_unavailable` is "de
+   stand is off"; voor X2 ook zonder `PLATFORM_FACES_KEYS`); in `down` en `models_missing` wacht
+   het werk in de rij. Nu zeggen de docstring en het commentaar bij
+   `PhotoSettings.faces_available` dat. Het gedrag is gelijk: zonder aanmelding en zonder
+   `PLATFORM_ANALYSE_ENABLED` is `available` False.
+4. **De rij van V2** zegt nu dat de API-test ook op de oude code groen is, en dat de vitest de
+   test van de reparatie is.
+5. **Open 5 en 8.** `check_switch()` kent de huidige waarde niet (Open 5, voor Z6). Wat
+   `available` betekent, en wie de test van "niemand meldt zich aan" aanpast (Open 8, voor X2 en
+   X3).
+6. **Open 11 had de verkeerde oorzaak.** `test_rondes_a_b_en_c` faalde in de eerste volle
+   API-suite op `f74236d`, zonder andere last. Nagemeten komt de interrupt in stap 2 niet te laat
+   maar te vroeg: vóór de vraag in de thread van aiosqlite begint, en dan negeert SQLite hem. Open
+   11 zegt nu de oorzaak, de getallen en wat Z1 ermee moet in `deadline()`. De test staat
+   ongewijzigd.
+
+**Klaar als.** Elke regel noemt tests die bestaan (op naam nagezocht) en groen zijn in de runs
+hieronder. De getallen kloppen: 14 routes van X2 en X3 in `ENDPOINTS` (12 en 2), zes regels voor
+X2 en X3 in de tabel van `test_log_hiding.py`, twaalf vormen van X2 en zes nieuwe proeven in
+`test_web_contracts.py`. Geen regel zegt meer dan de tests eisen. Sinds de samenvoeging is geen
+regel uit een test weggehaald behalve waar de reparatie hem verving (de kopie van 0010 tegen
+`TRIGGERS_0010`, nog steeds exact; de test van `faceCropUrl` werd die van `faceCrop`).
+
+### Gedraaid na de nacontrole
+
+Op `f74236d` (daarna veranderde alleen dit verslag), alles onder `taskset -c 0-2`, één zware run
+tegelijk:
+
+| Check | Uitkomst |
+|---|---|
+| `uv run ruff check .` en `uv run ruff format --check .` | groen (497 bestanden) |
+| `uv run pytest -q` (de hele API-suite), eerste keer | 4345 groen, 1 rood, 2 overgeslagen, 193 niet gekozen (31 min). Rood was `tests/search/test_spike_deadline.py::test_rondes_a_b_en_c` in stap 2: "A" waar "B" moest komen (Open 11). `test_fuzz_10000_namen_met_vaste_seed` was groen. |
+| `uv run pytest -q`, tweede keer | 4346 groen, 2 overgeslagen, 193 niet gekozen (32 min); `test_rondes_a_b_en_c` en `test_fuzz_10000_namen_met_vaste_seed` waren ook groen. |
+| `uv run pytest -q -m media` | 178 groen (2 min) |
+| `tests/search` als nobody (`/tmp/ci-nobody/run.sh`, zoals CI) | 395 groen, 9 niet gekozen |
+| `npm run typecheck`, `npm test`, `npm run check:i18n -- --strict`, `npm run build`, `npm run budget` | groen: 999 tests in 94 bestanden, 0 meldingen van i18n, binnen het budget, gelijk aan na de review (eerste lading JS 97,4 van 100 kB, Bestanden 44,3 van 45 kB, `faces` 0,3 van 12 kB, `beeld` 0,0 van 15 kB, `likeRow` 0,2 van 3 kB) |
+| `SLIM_CPUS=0-2 e2e/slim.sh`, alleen gedraaid | groen in 155 s: 395 tests op SQLite 3.46.1 in `python:3.12-slim`, 9 e2e met marker `zoek` |
+| de e2e van CI (`-m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"`) | 146 groen, 129 niet gekozen (13 min) |
+
+De twee nieuwe tests van `f74236d` staan in de tellingen: de API-suite en `tests/search` hebben er
+elk twee meer dan na de review (4346 en 395).
+
 ## Open
 
 Voor de volgende pakketten:
@@ -254,7 +325,10 @@ Voor de volgende pakketten:
    vitest het best ook een keer tegen de echte route.
 5. **Z6** (na de review, V3, F1, F3 en F4): GET `/me/photo-settings` met `prefs.photo_settings()`;
    PATCH met eerst `prefs.check_switch()`, dan schrijven, dan `prefs.switched()` in dezelfde
-   transactie, met de test "PATCH `{faces: "aan"}` zonder X2 geeft 409 `faces_unavailable`". In
+   transactie, met de test "PATCH `{faces: "aan"}` zonder X2 geeft 409 `faces_unavailable`".
+   `check_switch()` kent de huidige waarde niet: `faces: "aan"` terwijl het al aan staat, geeft in
+   de stand off ook 409. `PhotoSettingsPatch` is "alleen wat verandert"; Z6 stuurt dus alleen wat
+   verandert, of geeft `check_switch()` alleen de velden die echt veranderen (nacontrole). In
    het blok Foto's onder Account laadt Z6 `photos/faces/FacesSwitch.tsx` (gebied `photos_faces`)
    en `search/beeld/BeeldSwitch.tsx` (gebied `beeld`) lazy. Wie `PeoplePage` of `PersonPage`
    herschrijft, houdt de plek van X2 (`src/lazySlots.test.ts` eist hem in de bron).
@@ -265,7 +339,10 @@ Voor de volgende pakketten:
    lazy, met het gebied `beeld`, in plaats van de lijst.
 8. **X2 en X3** (F3, F4, V4): melden zich aan met `prefs.register_switch()` en
    `search.hooks.register_admin()`, en vullen de bestanden van hun plekken. Een haak van
-   `previews.register_large()` zet alleen werk in de rij; na 5 s stopt hij.
+   `previews.register_large()` zet alleen werk in de rij; na 5 s stopt hij. `SwitchState.available`
+   is False in de stand off (Keuze 59) en voor X2 zonder `PLATFORM_FACES_KEYS`, niet in `down` of
+   `models_missing`: dan wacht het werk in de rij (nacontrole). Wie zich aanmeldt, past
+   `test_niemand_meldt_een_schakelaar_of_een_deel_van_beheer_aan` aan (die eist nu 0 en 0).
 
 Bekend en niet van Z0b:
 
@@ -277,15 +354,34 @@ Bekend en niet van Z0b:
     [z0b-api.md](z0b-api.md)). Van media, niet van Z0b; hij staat ongewijzigd. In de volle run
     van deze samenvoeging was hij groen.
 11. `tests/search/test_spike_deadline.py::test_rondes_a_b_en_c` (S1, van Z0-spike) faalde één keer
-    in stap 1 van `e2e/slim.sh`, die naast de volle API-suite op dezelfde cores 0–2 liep: in stap 2
-    van de test gaf ronde A voor `"de"` een antwoord ("A") waar "B" moest komen. De grens is daar
-    een derde van één meting van ronde A: A duurt ±4 ms, dus de grens is 1 of 2 ms. Onder die last
-    kwam de interrupt soms pas als A al klaar was. Nagemeten met precies die stap van de test
-    (dezelfde helpers en fixtures, in `python:3.12-slim`, 12 × 30 keer): naast de volle suite 2 van
-    de 360 keer "A" (A duurde toen 6 en 8 ms), zonder die suite 0 van de 360. De test, `spike.py`
-    en de code van zoeken zijn door Z0b niet veranderd; de test staat ongewijzigd. Voor Z1, die
-    `deadline()` bouwt en deze tests houdt: stap 2 heeft maar een paar ms marge, dus draai
-    slim.sh niet naast een andere zware run (en een CI-runner met buren kan hetzelfde zien).
+    in stap 1 van `e2e/slim.sh`, die naast de volle API-suite op dezelfde cores 0–2 liep, en in de
+    nacontrole één keer in de volle API-suite zonder andere last: in stap 2 van de test gaf ronde A
+    voor `"de"` een antwoord ("A") waar "B" moest komen. De grens is daar een derde van één meting
+    van ronde A: A duurt ±4 ms, dus de grens is meestal 1 ms. Nagemeten met precies die stap van de
+    test (dezelfde helpers en fixtures, in `python:3.12-slim`, 12 × 30 keer): naast de volle suite
+    2 van de 360 keer "A" (A duurde toen 6 en 8 ms), zonder die suite 0 van de 360.
+
+    **De oorzaak (nacontrole).** De interrupt komt dan niet te laat, maar te vroeg. SQLite negeert
+    `interrupt()` als er op dat moment geen statement loopt, ook voor het statement dat daarna
+    begint (nagegaan op 3.53.1: een vraag van 300 ms na zo'n interrupt liep helemaal). Stap 2 is
+    1.802 keer herhaald, na dezelfde bestanden van `tests/search` als in de volle suite, met de
+    tijd van de interrupt en van het begin van de vraag in de thread van aiosqlite (de
+    trace-callback van `sqlite3`; alleen in een scratch-worktree): 12 keer "A", 11 van de 1.202
+    met de hele suite verzameld en 1 van de 600 met alleen die bestanden. De vraag begint meestal
+    0,4 ms na het zetten van de timer (met de hele suite verzameld p99 1,0 ms, max 1,7 ms), dus
+    soms na de grens van 1 ms. In de 5 gevallen waar het begin gemeten is, ging de
+    interrupt in 4 af 0,26–0,43 ms vóór de vraag begon, en liep A helemaal (8–17 ms). In de 5e was
+    de meting van A zelf te hoog (30,6 ms, dus een grens van 10 ms) en was A al in 6,8 ms klaar.
+    In de 7 zonder het begin ging de interrupt af na 1,1–4,1 ms, terwijl A 6–14 ms duurde en niet
+    stopte: hetzelfde beeld.
+
+    De test, `spike.py` en de code van zoeken zijn door Z0b niet veranderd; de test staat
+    ongewijzigd. Voor Z1, die `deadline()` bouwt en deze tests houdt: hetzelfde gat zit in de vorm
+    van `deadline()` (één `interrupt()` uit `call_later`). Begint de vraag in de thread van
+    aiosqlite pas na de grens, dan stopt hij niet te laat maar helemaal niet. `deadline()` moet dat
+    opvangen, bijvoorbeeld door de interrupt te herhalen tot de vraag klaar is, of met een progress
+    handler die de tijd bijhoudt. Stap 2 van de test heeft ±1 ms marge; draai slim.sh niet naast
+    een andere zware run (en een CI-runner met buren kan hetzelfde zien).
 12. **De module-cache van vitest** (`node_modules/.vitest-cache`) kan bij een ander bestand met een
     glob nog steeds oude lijsten bewaren als iemand er een typeargument in zet;
     `src/globCache.test.ts` vangt dat in de bron. Een checkout die al een oude kopie in de cache
