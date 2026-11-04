@@ -14,7 +14,9 @@ bouwt hem.
   van die vraag gaat dan meteen af, en ze geeft een lege, gedeeltelijke pagina. Dat past bij
   typen.
 - **De snelheid per gebruiker**: hooguit 10 zoekvragen en 20 suggesties per seconde, anders
-  429 rate_limited met Retry-After: 1.
+  429 rate_limited met Retry-After: 1. Niet met settings.rate_limits uit (PLATFORM_RATE_LIMITS=
+  false, alleen voor een testserver), zoals de andere limieten: de meting van §4.4 stelt 200
+  vragen na elkaar. De grens op tegelijk blijft.
 
 Alles leeft in de event loop van de app; een nieuwe loop (zoals in de tests) begint leeg.
 """
@@ -116,7 +118,8 @@ async def admit(
     settings = settings or get_settings()
     state = _now_state()
     mine = state.users.setdefault((user.id, kind), _Mine())
-    _rate(mine, kind)
+    if settings.rate_limits:
+        _rate(mine, kind)
     stop = Stop()
     if mine.latest is not None:
         mine.latest()  # de vorige vraag van deze gebruiker stopt

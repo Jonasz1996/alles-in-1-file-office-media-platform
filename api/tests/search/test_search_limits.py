@@ -178,6 +178,26 @@ async def test_de_snelheid_per_gebruiker(settings, monkeypatch, kind, per_second
         pass
 
 
+async def test_zonder_rate_limits_geen_snelheidsgrens(settings, monkeypatch):
+    """PLATFORM_RATE_LIMITS=false (een testserver, de meting van §4.4): geen 429 rate_limited,
+    wel nog één vraag tegelijk per gebruiker."""
+    nepklok(monkeypatch)
+    los = settings.model_copy(update={"rate_limits": False})
+    ik = iemand()
+    for kind in ("search", "suggest"):
+        for _ in range(limits.RATE[kind] * 5):
+            async with limits.admit(ik, kind, los):
+                pass
+    # Met de grens aan telt alleen wat daarna komt
+    for _ in range(limits.RATE["search"]):
+        async with limits.admit(ik, "search", settings):
+            pass
+    with pytest.raises(Exception) as fout:
+        async with limits.admit(ik, "search", settings):
+            pass
+    assert fout.value.detail["code"] == "rate_limited"
+
+
 # --- Via GET /search ------------------------------------------------------------------------
 
 
