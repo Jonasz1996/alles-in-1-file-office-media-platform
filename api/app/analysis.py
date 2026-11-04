@@ -365,7 +365,8 @@ async def backfill_job(settings: Settings, payload: dict[str, Any]) -> None:
         try:
             async with maker() as db:
                 await _backfill_rows(db, steps, rows)
-                await jobs.chain(db, BACKFILL, {"after": last}, key=BACKFILL)
+                if len(rows) == BACKFILL_CHUNK:  # een kleiner stuk was het laatste
+                    await jobs.chain(db, BACKFILL, {"after": last}, key=BACKFILL)
                 await db.commit()
             break
         except IntegrityError:
