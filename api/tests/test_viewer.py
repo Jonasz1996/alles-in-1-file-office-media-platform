@@ -4,6 +4,7 @@ nergens een locatie."""
 
 import io
 import json
+import re
 import time
 import uuid
 
@@ -51,10 +52,23 @@ async def detail(client, headers, node_id, expect=200, **params):
     return r.json()
 
 
+# Een tijdstip als "2026-11-04t01:13:54.883571z" bevat soms toevallig "4.88" of "52.3"; dat is
+# geen plek. Hele tijdstippen gaan er daarom uit vóór de controle, al de rest blijft streng.
+ISO_TIME = re.compile(r"\d{4}-\d{2}-\d{2}t\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:z|[+-]\d{2}:\d{2})?")
+
+
 def no_location(payload) -> None:
-    text = json.dumps(payload).lower()
+    text = ISO_TIME.sub("<tijd>", json.dumps(payload).lower())
     for trace in GPS_TRACES:
         assert trace not in text, (trace, text)
+
+
+def test_een_tijdstip_is_geen_plek_maar_een_plek_blijft_een_plek():
+    times = {"modified_at": "2026-11-04T01:13:54.883571Z", "at": "2026-11-04T01:13:52.369+00:00"}
+    no_location(times)
+    for leak in ({"lon": 4.884}, {"exif": {"GPSLatitude": [52.0, 22.0, 7.5]}}, {"x": "52.369"}):
+        with pytest.raises(AssertionError):
+            no_location({**times, **leak})
 
 
 @pytest.mark.anyio
