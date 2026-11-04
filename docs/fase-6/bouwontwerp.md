@@ -1250,6 +1250,8 @@ Keuze 70–84 van X3.
       en `node_bu_text` maakt het kader van `photo_person` bij nieuwe inhoud nog niet leeg, terwijl
       Keuze 25a dat eist [code: wt-z0api `app/search/schema.py:221–227`]. Z0b zet beide recht in
       0010.
+      **Na Z0b:** de docstring staat recht; 0010 is gepusht, dus `node_bu_text` doet 0011 (A0;
+      [z0b.md](z0b.md)).
     - **Wat niet in Z0b:** de tabellen van gezichten en beeld. Die komen in 0011 en 0012, in A0
       (§3.1a).
 
@@ -4027,7 +4029,7 @@ END;
 Z0. Keuze 25a zegt "zonder kader", maar `node_bu_text` in Z0 doet dat niet [code: wt-z0api
 `app/search/schema.py:221–227`]. Z0b kan het in 0010 repareren, zolang 0010 niet gepusht is
 (Keuze 55). Dan is deze regel dubbel maar onschuldig. Anders doet 0011 het.
-**Na Z0b:** 0010 is gepusht, dus 0011 doet het (A0; [z0b-api.md](z0b-api.md)).
+**Na Z0b:** 0010 is gepusht, dus 0011 doet het (A0; [z0b.md](z0b.md)).
 
 **Eigen en levend.**
 

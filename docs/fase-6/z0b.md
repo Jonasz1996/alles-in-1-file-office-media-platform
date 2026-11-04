@@ -1,0 +1,224 @@
+# Z0b: de contracten van gezichten en zoeken op beeld
+
+Z0b is de kleine stap na Z0 ([bouwontwerp.md](bouwontwerp.md), Keuze 55; §3.3, §3.4 en §3.5). Hij
+bouwt geen functie. Hij zet de contracten van X2 (gezichten automatisch) en X3 (zoeken op wat er
+op een foto staat) bij de code van Z0, zodat golf 1–4 kunnen bouwen zonder dat X2 en X3 later aan
+hun bestanden en hun exacte lijsten komen. Alles is erbij gezet, met een standaard: een oude
+client krijgt hetzelfde antwoord als ervoor. De routes van X2 en X3 geven `501 not_built("X2")`
+of `not_built("X3")`, net als de stubs van Z0. Zoeken werkt nog zoals na Z0: op naam, met LIKE
+(`LikeFallback`).
+
+Z0b is in twee delen gebouwd, elk op een eigen tak vanaf `3e6c1c2` (0.7.1 plus Z0). Op 4 november
+2026 zijn ze samengevoegd op `claude/stappenplan-uitwerken-lu4uv3`. Dit verslag zegt wat er samen
+staat, wat de samenvoeging veranderde, en waar het bewijs voor elke regel van Keuze 55 is. De
+verslagen per deel blijven de bron voor de details.
+
+Z0b bouwt op wat Jonas koos: gezichten en zoeken op beeld zitten in fase 6 en staan per gebruiker
+standaard uit. Vraag 4 (wie ziet de plek) is niet beantwoord, dus de standaard geldt: alleen de
+eigenaar. Vraag 8–14 op hun standaard. Van B49–B70 zijn alleen B53 en B57 besloten.
+
+## De delen
+
+| Deel | Tak | Commits | Verslag |
+|---|---|---|---|
+| Z0b-api: de vormen, de instelling en de rij `analyse`, de haak na de grote preview, de stubs | `wip/z0b-api` (`39adbcc`) | 4 | [z0b-api.md](z0b-api.md) |
+| Z0b-web: de vormen en aanroepen, de lege plekken, de gebieden, de catalogi, het budget | `wip/z0b-web` (`f0cc1ee`) | 2 | [z0b-web.md](z0b-web.md) |
+
+### Wat er nu staat
+
+In de API (de lijst met standaarden staat in [z0b-api.md](z0b-api.md), "De vormen"):
+
+- **`app/search/types.py`**: `mode` (standaard `text`) en `like` in de vraag van `/search`, niet
+  in de regel van een slim album; `mode` en `fallback` (standaard `null`) in `SearchPage`; `image`
+  als `Match`; `no_preview` en `image_bad` als code van de analyse; `faces` en `beeld` bij
+  herbouwen en in `search.progress`; de stand van de container (`AnalyseState`); de blokken
+  `AdminSearch.faces` en `.beeld` (standaard `null`) en hun schakelaars in de PATCH; `BeeldStatus`.
+- **`app/people/faces_types.py`** (nieuw): de vormen van de API van X2, met `MAX_FACES` 200,
+  `FACES_PAGE` 60 en de uitsneden 96 en 192.
+- **`app/prefs.py`**: `faces` en `beeld` per gebruiker, standaard `uit`; de docstring noemt nu
+  Vraag 2.
+- **`app/analysis.py`**: `Step.EMBED`. **`app/jobs.py`**: de rij `analyse`, alleen met
+  `PLATFORM_ANALYSE_ENABLED` (standaard uit, de enige nieuwe instelling in `app/config.py`).
+- **`app/previews.py`**: `register_large(fn)`, na de ronde `preview.large`. Niemand meldt zich nog
+  aan.
+- **De routes**: twaalf van X2 in `routers/people_faces.py` (vóór `routers/people.py` gemount),
+  twee van X3 in `routers/beeld.py`, en `GET /search` met `mode=image` of `like`: allemaal `501`
+  na de inlog. De query string onder `/search`, `/photos` en `/people` ging al niet in de
+  toegangslog; dat staat nu ook voor zoeken op beeld in een test.
+
+In de web (de tabellen staan in [z0b-web.md](z0b-web.md), "Wat er is"):
+
+- de vormen en aanroepen van X3 in `src/search/`, die van X2 in `src/photos/faces/` (nieuw), de
+  foto-instellingen in `src/photos/people/`, de blokken in `src/admin/searchApi.ts`;
+- de lege plekken: de blokken "Gezichten" en "Zoeken op beeld" op `/beheer/zoeken` (een kop en
+  "komt later in fase 6"), en `LikeRow` ("Meer zoals deze") in het infopaneel, die niets toont;
+- de gebieden `photos_faces` en `beeld`, de catalogi `faces.ts` en `beeld.ts`;
+- de regels `faces` (12 kB), `beeld` (15 kB) en `likeRow` (3 kB) in `scripts/budget.mjs`.
+
+Niet in Z0b, en niet aangeraakt: de migraties 0001–0010, `TRIGGERS` en `TRIGGERS_NO_FTS` in
+`app/search/schema.py`, `pyproject.toml`, `uv.lock`, de Dockerfile en `package.json`. Geen tabel
+van gezichten of beeld (dat zijn 0011 en 0012, A0), geen numpy of onnxruntime, geen model.
+
+## De samenvoeging
+
+In deze volgorde, met `git merge --no-ff`:
+
+1. `wip/z0b-api` (`db3c1e1`): geen conflict.
+2. `wip/z0b-web` (`2c4e52e`): geen conflict. De twee delen raken geen bestand samen.
+
+Daarna, omdat de delen elkaar nu zien:
+
+- **De contracttest was meteen groen.** `api/tests/search/test_web_contracts.py` legde Z0b-api al
+  naast de web van Z0b-web (de regels uit Open 1 van [z0b-web.md](z0b-web.md)); op de tak van
+  Z0b-api alleen ontbrak `web/src/photos/faces/types.ts`. Na de samenvoeging: 88 groen, samen met
+  `test_contracts.py`, `test_api_stubs.py` en `test_error_catalog.py` 126.
+- **Een vast getal in de query string kwam nooit bij de route** (`8b979ca`). Elke aanroep uit de
+  vitest van de web (`search`, `photos/people`, `photos/map`, `dupes`, `admin/searchApi` en
+  `photos/faces`, 77 in totaal) is met echte id's tegen de API gedaan. 74 kwamen bij hun stub
+  (`501 not_built`), zoeken en de suggesties gaven 200, en de woorden van een pagina 401 met het
+  nep-token van de vitest (zoals bedoeld). Twee kwamen er niet: `/people?hidden=0` en `?hidden=1`
+  gaven 422. Hetzelfde gold voor het adres van een uitsnede van X2 (`faceCropUrl`:
+  `/people/faces/{id}/crop?size=96`), dat geen aanroep is maar een `<img>`. De oorzaak: een query
+  string is tekst, en `Literal[0, 1]` of `Literal[96, 192]` neemt alleen een int. Nu zet een
+  `BeforeValidator(int)` de tekst eerst om; 2 of 128 geeft nog 422, en de OpenAPI blijft een enum
+  van getallen. `hidden` is van Z0 (de stub van Z6), maar het is dezelfde fout op dezelfde plek,
+  dus hij ging mee. Test: `test_een_vast_getal_in_de_query_string_komt_bij_de_stub`
+  (`tests/search/test_api_stubs.py`) loopt elke stub van fase 6 langs met zo'n keuze in de query
+  (uit de OpenAPI), stuurt elke waarde als tekst en eist 501, en eist dat het precies `hidden` en
+  `size` zijn. Zonder de fix faalt hij op `hidden`; met alleen de fix van `hidden` op `size`.
+- **De vitest zag de nieuwe woordenboeken niet in deze checkout** (`56e6c43`). Op de tak van
+  Z0b-web was `src/admin/searchTab.test.ts` groen, hier faalde hij: "geen woordenboek voor
+  `photos_faces`" (en `beeld`). Niet de code, maar de module-cache van vitest 5
+  (`fsModuleCache`, standaard aan, in `node_modules/.vitest-cache`): die bewaart een getransformeerd
+  bestand onder een sleutel van zijn bron, en slaat een bestand met een glob alleen over als de
+  bron letterlijk `import.meta.glob(` bevat. `src/i18n/index.ts` schreef de glob met een
+  typeargument ertussen, dus kwam hij toch in de cache, met de lijst woordenboeken van 3 november;
+  de bron veranderde niet, de sleutel dus ook niet. In CI is de cache leeg. Nu staat het type met
+  `as` achter de glob (ook in `i18n.test.ts` en `player/playback.ts`, waar hetzelfde kon), en
+  `src/globCache.test.ts` eist dat elke glob er zo staat en dat de bekende aanroepen er zijn. Hij
+  faalt op de oude bron met precies die drie bestanden; daarna is de tab groen zonder de cache te
+  wissen, en vitest schrijft voor die bestanden niets meer in de cache.
+- **De verslagen per deel** kregen een notitie waar ze iets over de andere tak zeiden dat nu niet
+  meer klopt (doorgestreept, met wat er nu is): Open 2 van [z0b-api.md](z0b-api.md), Open 1–3 van
+  [z0b-web.md](z0b-web.md), en in [z0.md](z0.md) de regel van Z0b onder "Klaar als" en Open 1.
+- **Het bouwontwerp**: bij Keuze 55 ("Z0b zet beide recht in 0010") en in §3.1a ("Z0b kan het in
+  0010 repareren") staat nu dat 0010 gepusht is en 0011 (A0) het doet. De README noemt Z0b in de
+  regel met de stand.
+
+## Klaar als (Keuze 55)
+
+| Klaar als | Bewijs |
+|---|---|
+| de velden en waarden van Keuze 66 en 80, elk met een standaard | `tests/search/test_contracts.py`: `test_de_nieuwe_waarden_van_z0b` (de woorden van `Match`, `SearchMode`, `BeeldFallback`, `AnalysisCode`, `RebuildWhat`, `AnalyseState`; `AnalysisOut` zonder veld voor `embed`, Keuze 79). Aan beide kanten gelijk: `tests/search/test_web_contracts.py` (de paren van `BeeldStatus`, `CodeCount`, `AnalyseModel`, `AdminFaces`, `AdminBeeld`, `PhotoSettingsPatch` en de twaalf vormen van X2; zes nieuwe proeven in `test_de_vergelijking_ziet_een_ander_type`; `test_gezichten_bevestigen_en_de_grenzen`). Groen. |
+| een oude client krijgt hetzelfde antwoord | `test_zoeken_zonder_mode_geeft_hetzelfde_antwoord`: `/search?q=x` en `/search?q=x&mode=text` geven byte voor byte hetzelfde, met precies de sleutels van Z0 plus `mode` en `fallback`. `test_een_oude_vraag_en_een_oud_antwoord_blijven_gelijk`: een oude `AdminSearch`, `PhotoSettings` en `SearchPage` geven de oude data plus de nieuwe standaarden. `test_een_regel_met_mode_geeft_422`: een slim album zoekt nooit op beeld. Groen. |
+| `Step.EMBED` | `test_contracts.py` eist de stappen precies `text, hash, ocr, embed`. Groen. |
+| de rij `analyse` in `LANES`, alleen actief met de container (Keuze 59) | `tests/test_jobs_lanes.py`: `test_de_rij_analyse_alleen_met_de_container` en de exacte lijst van workers per rij (`test_workers_per_rij`); `tests/test_media_off.py`: met media aan draaien alle rijen behalve `ocr` en `analyse`. Groen. |
+| de sleutels `faces` en `beeld` in `PHOTO_PREFS`, standaard `uit` | `test_contracts.py` eist de vijf sleutels met hun standaard, en de velden van `PhotoSettings` en `PhotoSettingsPatch` precies. Groen. |
+| de routes van X2 en X3 als stub (`501 not_built("X2")` of `"X3"`) | `tests/search/test_api_stubs.py`: de 14 routes in `ENDPOINTS` met pad, body, antwoordmodel en status (`test_elk_eindpunt_van_paragraaf_3_4_bestaat_met_zijn_vorm`), 501 met het pakket (`test_elke_stub_geeft_501_not_built`), 401 en 403 (`test_zonder_login_geen_toegang_en_beheer_alleen_voor_beheerders`), `test_zoeken_op_beeld_is_van_x3`, `test_gezichten_bevestigen_met_id_of_naam_niet_allebei`, en sinds de samenvoeging `test_een_vast_getal_in_de_query_string_komt_bij_de_stub`. Groen. |
+| de vraag van zoeken op beeld nooit in de log | `tests/search/test_log_hiding.py`: zes regels voor X2 en X3 in de tabel, `test_zoeken_op_beeld_staat_niet_in_de_toegangslog` (de regel wordt precies `"GET /api/v1/search?*** HTTP/1.1" 501`) en `test_zoeken_op_beeld_logt_de_vraag_niet`. Groen. |
+| `own_live` ziet ook gezichten en beeld | `tests/search/test_own_live.py`: `routers/people_faces.py`, `routers/beeld.py` en `beeld` onder de wachter, de tabellen van 0011 en 0012 erbij, en `test_de_wachter_kijkt_naar_gezichten_en_beeld`. Groen. |
+| `previews.register_large(fn)` (Keuze 65) | `tests/test_previews.py`: `test_na_de_grote_preview_is_de_volgende_aan_de_beurt`, `test_een_fout_na_de_grote_preview_gaat_door`, `test_zonder_aanmelding_niets_na_de_grote_preview`; `tests/search/test_hotspots.py`: `test_niemand_meldt_zich_aan_na_de_grote_preview`. Groen. |
+| de lege plekken in de web (`LikeRow`, de blokken op `/beheer`) | `src/viewer/infoRows.test.ts` (wanneer "Meer zoals deze" laadt, en dat `LikeRow` niets toont), `src/admin/searchTab.test.ts` (de tab eindigt in nl en en met precies de twee blokken). Groen. |
+| de gebieden `photos_faces` en `beeld`, de catalogi `faces.ts` en `beeld.ts` | `src/i18n/i18n.test.ts` (de exacte lijst `AREAS`), `npm run check:i18n -- --strict`; `src/photos/faces/api.test.ts` en `src/search/api.test.ts` (de catalogus is precies de lijst van codes); `tests/test_error_catalog.py`. Groen. |
+| de regels in `budget.mjs` | `scripts/budget.test.mjs` (de grenzen, de groepen, de lazy plekken en de eerste lading, exact) en `npm run budget` na de build. Groen. |
+| de tests met een exacte lijst eisen de nieuwe lijst; geen test wordt zwakker | Bij de samenvoeging is elke verwijderde regel in de tests nagelopen (`git diff 3e6c1c2 -- api/tests web/src`): elke exacte lijst kreeg de nieuwe exacte lijst (de rijen en workers, de stappen, de sleutels en velden van de foto-instellingen, `ENDPOINTS`, de namen in de OpenAPI, de paren van de contracttest, `AREAS`, de aanroepen in de vitest, de regels van het budget). Geen gelijkheid werd een deelverzameling, geen test is weg. Eén eis veranderde met opzet: `PhotoSettingsPatch` neemt nu `faces` (de API van X2 zet het via `PATCH /me/photo-settings`); daar staat nu een test die de velden precies eist. |
+| de docstring van `app/prefs.py` noemt de goede vraag | Vraag 2 (`d96de96`). |
+| `node_bu_text` maakt het kader van `photo_person` leeg bij nieuwe inhoud (Keuze 25a) | **Niet in Z0b**: 0010 is gepusht. Dat doet 0011 (A0); zie Afwijkingen 1. |
+
+## Gedraaid op de samengevoegde tak
+
+Op `56e6c43` (de API-suite op `8b979ca`; daarna veranderde alleen de web), alles onder
+`taskset -c 0-2`:
+
+| Check | Uitkomst |
+|---|---|
+| `uv run ruff check .` en `uv run ruff format --check .` | groen (497 bestanden) |
+| `uv run pytest -q` (de hele API-suite) | 4337 groen, 2 overgeslagen, 193 niet gekozen (29 min). `test_fuzz_10000_namen_met_vaste_seed` was deze keer ook groen. |
+| `uv run pytest -q -m media` | 178 groen (2 min) |
+| `tests/search` als nobody (`/tmp/ci-nobody/run.sh`, zoals CI) | 387 groen, 9 niet gekozen |
+| `npm run typecheck`, `npm test`, `npm run check:i18n -- --strict`, `npm run build`, `npm run budget` | groen: 995 tests in 93 bestanden, 0 meldingen van i18n, binnen het budget (eerste lading JS 97,4 van 100 kB; `faces` 0,0 en `beeld` 0,0 kB, nog niet gebouwd; `likeRow` 0,2 van 3 kB) |
+| `SLIM_CPUS=0-2 e2e/slim.sh` | groen in 143 s: 387 tests op SQLite 3.46.1 in `python:3.12-slim`, de web-app was bij, 9 e2e met marker `zoek` |
+| de e2e van CI (`-m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"`) | 146 groen, 129 niet gekozen (13 min) |
+
+Eén run faalde, en niet door Z0b: de eerste `e2e/slim.sh`, die naast de API-suite op dezelfde
+cores liep. Stap 1 gaf `test_spike_deadline.py::test_rondes_a_b_en_c` rood; zie
+Open 7. Alleen gedraaid was slim.sh groen.
+
+## Afwijkingen
+
+Van de samenvoeging:
+
+1. **De fix van `node_bu_text` (Keuze 25a) gaat naar 0011 (A0), niet naar 0010.** Keuze 55 zegt
+   dat Z0b het kader van `photo_person` bij nieuwe inhoud leeg laat maken in 0010. Maar 0010 is
+   gepusht en draait misschien al op de server van Jonas; een gepushte migratie verandert niet.
+   Daarom blijven ook `TRIGGERS` en `TRIGGERS_NO_FTS` in `app/search/schema.py` gelijk aan 0010
+   (`test_schema_triggers.py` eist dat). In het bouwontwerp staat dat bij Keuze 55 en in §3.1a. Het
+   lijstje "in 0010" onder "Wat Z0b toevoegt" (§3.3) en de rij van `schema.py` en `0010_zoeken.py`
+   in "Hotspots van Z0b en A0" (§3.5) lees je als 0011, A0.
+2. **`/people?hidden=` is van Z0, maar ging mee in de fix van de query string** (`8b979ca`):
+   dezelfde fout als bij de uitsnede van X2, en de test loopt alle stubs van fase 6 langs.
+3. **Drie bestanden van de web buiten Z0b veranderden** (`56e6c43`): `i18n/index.ts`,
+   `i18n/i18n.test.ts` en `player/playback.ts` schrijven de glob zonder typeargument, en
+   `src/globCache.test.ts` is nieuw. Alleen de schrijfwijze van het type; wat ze laden is gelijk.
+
+Van de delen: [z0b-api.md](z0b-api.md) (12) en [z0b-web.md](z0b-web.md) (9), elk onder
+"Afwijkingen". De belangrijkste:
+
+- de velden van `AdminFaces` en `AdminBeeld` en de vormen van de routes van X2 zijn een voorstel
+  (Keuze 67 en 82 noemen wat er te zien is, niet de vorm); A0, X2 en X3 leggen ze vast, in de web
+  en de API tegelijk;
+- `failed_by_code` staat per blok, als lijst van `{code, n}`, niet als één veld op `AdminSearch`;
+- `app/people/faces_types.py` is volgens §2.0 van A0; Z0b zette het neer zodat de stubs en de web
+  een vorm hebben;
+- meer dan 200 gezichten in één verzoek geeft de 422 van de validatie, nog niet de code
+  `faces_too_many`;
+- `like` zonder `mode=image` geeft ook 501 `X3`;
+- de tests van de haak na de grote preview staan in `tests/test_previews.py`, niet in
+  `tests/search/test_hotspots.py`, omdat de renderer in de stap van `e2e/slim.sh` geen Pillow
+  heeft;
+- `faces` in het budget is een groep (`ZOEK_GROUPS`), geen pagina; X2 heeft geen eigen route;
+- de blokken staan in `admin/SearchTab.tsx` (het bestand van Z7), niet in `Beheer.tsx`.
+
+## Open
+
+Voor de volgende pakketten:
+
+1. **A0**: de migraties 0011 en 0012 (de tabellen van gezichten en beeld, de kolom `beeld` op
+   `photo_pref`) en de fix van `node_bu_text` (Afwijking 1). De wachter van `own_live` kent de
+   tabellen al (`face`, `face_person`, `face_scan`, `blob_embed`) en hun modellen onder een
+   aangenomen naam (`Face`, `FacePerson`, `FaceScan`, `BlobEmbed`): A0 gebruikt die namen, of zet
+   de lijst in `tests/search/test_own_live.py` gelijk. De rest van §3.11 (de container `analyse`,
+   `compose.analyse.yaml`, de modellen en hun instellingen) is ook van A0.
+2. **X2**: zet de 422 van meer dan 200 gezichten om naar `faces_too_many`, of het ontwerp laat
+   die code vallen. `FacesConfirm` is een union in de web en één model met een controle in de API;
+   de contracttest vergelijkt alleen de velden, de vitest de twee bodies.
+3. **A0, X2 en X3**: de vormen van Z0b zijn een voorstel tot ze vastliggen. Een vorm die verandert,
+   verandert in de web en de API tegelijk; `test_web_contracts.py` houdt ze gelijk.
+4. **De aanroepen van de web tegen de API** zijn bij deze samenvoeging één keer met de hand
+   nagelopen (zie De samenvoeging), niet in een vaste test. De vaste test dekt alleen de soort fout
+   die het vond (een vast getal in de query). Wie een route vult, draait zijn aanroepen uit de
+   vitest het best ook een keer tegen de echte route.
+
+Bekend en niet van Z0b:
+
+5. `tests/test_media_names.py::test_fuzz_10000_namen_met_vaste_seed` meet tijd en faalt alleen op
+   deze VM (Open 14 van [z0.md](z0.md)). Hij staat ongewijzigd.
+6. `tests/test_media_worker_guard.py::test_verbinding_dicht_stopt_ffmpeg_en_kleinkinderen_binnen_3_s`
+   faalde één keer in een volle run van Z0b-api: de nep-ffmpeg doet `sleep 60 &`, en de test leest
+   de naam van het kind voordat de kopie van sh `exec sleep` gedaan heeft (Open 6 van
+   [z0b-api.md](z0b-api.md)). Van media, niet van Z0b; hij staat ongewijzigd. In de volle run
+   van deze samenvoeging was hij groen.
+7. `tests/search/test_spike_deadline.py::test_rondes_a_b_en_c` (S1, van Z0-spike) faalde één keer
+   in stap 1 van `e2e/slim.sh`, die naast de volle API-suite op dezelfde cores 0–2 liep: in stap 2
+   van de test gaf ronde A voor `"de"` een antwoord ("A") waar "B" moest komen. De grens is daar
+   een derde van één meting van ronde A: A duurt ±4 ms, dus de grens is 1 of 2 ms. Onder die last
+   kwam de interrupt soms pas als A al klaar was. Nagemeten met precies die stap van de test
+   (dezelfde helpers en fixtures, in `python:3.12-slim`, 12 × 30 keer): naast de volle suite 2 van
+   de 360 keer "A" (A duurde toen 6 en 8 ms), zonder die suite 0 van de 360. De test, `spike.py`
+   en de code van zoeken zijn door Z0b niet veranderd; de test staat ongewijzigd. Voor Z1, die
+   `deadline()` bouwt en deze tests houdt: stap 2 heeft maar een paar ms marge, dus draai
+   slim.sh niet naast een andere zware run (en een CI-runner met buren kan hetzelfde zien).
+8. **De module-cache van vitest** (`node_modules/.vitest-cache`) kan bij een ander bestand met een
+   glob nog steeds oude lijsten bewaren als iemand er een typeargument in zet;
+   `src/globCache.test.ts` vangt dat in de bron. Een checkout die al een oude kopie in de cache
+   heeft, raakt die kwijt zodra de bron van het bestand verandert, of met `npx vitest --clearCache`.

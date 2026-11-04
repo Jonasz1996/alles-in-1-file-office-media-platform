@@ -5,7 +5,7 @@ Dit is het deel Z0b-api van het bouwontwerp van fase 6 ([bouwontwerp.md](bouwont
 en X3 (zoeken op beeld) bij de code van Z0, zodat X2, X3 en de web ertegen kunnen bouwen. Alles is
 erbij gezet, met een standaard: een oude client krijgt hetzelfde antwoord als ervoor.
 
-Het web-deel staat in `z0b-web.md` (wip/z0b-web). De tabellen van gezichten en beeld komen niet
+Het web-deel staat in [z0b-web.md](z0b-web.md) (wip/z0b-web); samen staan ze in [z0b.md](z0b.md). De tabellen van gezichten en beeld komen niet
 in Z0b: die zijn van A0 (0011 en 0012, §3.1a). Er komt geen model, geen numpy of onnxruntime en
 geen nieuwe afhankelijkheid.
 
@@ -201,10 +201,11 @@ Erbij of uitgebreid, allemaal in `api/tests/`:
 
 1. **De migraties 0011 en 0012** (A0): de tabellen van gezichten en beeld, de kolom `beeld` op
    `photo_pref`, en de fix van `node_bu_text` (afwijking 1).
-2. **`tests/search/test_web_contracts.py` is op wip/z0b-api alleen rood** (88 errors, het
+2. ~~**`tests/search/test_web_contracts.py` is op wip/z0b-api alleen rood** (88 errors, het
    bestand `web/src/photos/faces/types.ts` ontbreekt) tot de samenvoeging met wip/z0b-web. Op een
    proefsamenvoeging met wip/z0b-web (`f0cc1ee`) zijn ze alle 88 groen, en stap 1 van
-   `e2e/slim.sh` ook (386 groen). Daarom is stap 1 op wip/z0b-api alleen ook rood.
+   `e2e/slim.sh` ook (386 groen). Daarom is stap 1 op wip/z0b-api alleen ook rood.~~ Na de
+   samenvoeging (4 november 2026) groen, zonder verdere aanpassing: zie [z0b.md](z0b.md).
 3. **`faces_too_many`**: X2 zet de 422 van meer dan 200 gezichten om naar die code, of het
    ontwerp laat hem vallen (afwijking 7).
 4. **De rest van §3.11** (de container analyse, `compose.analyse.yaml`, de modellen en hun

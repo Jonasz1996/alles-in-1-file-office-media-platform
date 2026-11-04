@@ -192,7 +192,7 @@ boom:
 
 ## Open
 
-1. **De contracttest bij het samenvoegen met Z0b-api.** `api/tests/search/test_web_contracts.py`
+1. ~~**De contracttest bij het samenvoegen met Z0b-api.** `api/tests/search/test_web_contracts.py`
    is van de API-kant en wijzigt Z0b-web niet. Op deze tak alleen faalt hij (de web heeft de
    velden, de API van `3e6c1c2` niet); op `wip/z0b-api` alleen ook (andersom). Nagelopen op een
    kopie met de app van `wip/z0b-api` (nog niet gecommit, stand van 4 november) en `web/src`
@@ -209,13 +209,15 @@ boom:
      `'Omit<SearchParams, "offset" | "limit" | "after" | "mode" | "like">'` en
      `{"offset", "limit", "after", "mode", "like"}`.
    Zonder de paren van `AdminFaces` en `AdminBeeld` faalt `AdminSearch` met "de lezer kent het
-   type 'AdminFaces' niet".
-2. **De migratie.** 0010 is gepusht en blijft zoals hij is; het leegmaken van het kader van
+   type 'AdminFaces' niet".~~ Gedaan: Z0b-api zette precies deze regels al in de test (`d96de96`);
+   na de samenvoeging is hij groen zonder verdere aanpassing ([z0b.md](z0b.md)).
+2. ~~**De migratie.** 0010 is gepusht en blijft zoals hij is; het leegmaken van het kader van
    `photo_person` in `node_bu_text` (Keuze 25a) gaat naar 0011 (A0). De zin in het bouwontwerp
    ("Z0b kan het in 0010 repareren") en de aantekening in `z0b.md` zijn van Z0b-api of de
-   samenvoeging, niet van de web.
-3. **De docstring van `api/app/prefs.py`** (Vraag 3 waar Vraag 2 bedoeld is) is van Z0b-api;
-   in `wip/z0b-api` staat hij al goed.
+   samenvoeging, niet van de web.~~ Gedaan: de zin staat in het bouwontwerp (bij Keuze 55 en in
+   §3.1a), de aantekening in [z0b.md](z0b.md) (afwijking 1).
+3. ~~**De docstring van `api/app/prefs.py`** (Vraag 3 waar Vraag 2 bedoeld is) is van Z0b-api;
+   in `wip/z0b-api` staat hij al goed.~~ Gedaan in Z0b-api (`d96de96`).
 4. **De vormen van X2 en X3** (`photos/faces/types.ts`, `AdminFaces`, `AdminBeeld`,
    `BeeldStatus`) zijn een voorstel tot A0, X2 en X3 ze vastleggen; past een pakket een vorm
    aan, dan in de web en in de API tegelijk (de contracttest houdt ze gelijk zodra Open 1 gedaan

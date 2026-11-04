@@ -1,7 +1,8 @@
 # Fase 6 — Zoeken en foto's
 
-Status: **Z0 gebouwd** (het fundament, samengevoegd op 3 november 2026; zie [z0.md](z0.md)). Het
-ontwerp is bouwontwerp revisie 3.
+Status: **Z0 en Z0b gebouwd**: het fundament (samengevoegd op 3 november 2026; zie [z0.md](z0.md))
+en de contracten van gezichten en zoeken op beeld (samengevoegd op 4 november 2026; zie
+[z0b.md](z0b.md)). Het ontwerp is bouwontwerp revisie 3.
 
 ## Wat je koos
 
