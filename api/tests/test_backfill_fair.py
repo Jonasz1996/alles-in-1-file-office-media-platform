@@ -273,3 +273,33 @@ async def test_met_de_rij_index_en_echte_jobs(settings, trage):
     sha = done_at["sha"]
     index = next(i for i, batch in enumerate(trage.batches) if sha in batch)
     assert index == 1, f"Bram's upload kwam in batch {index + 1}"
+
+
+async def test_indexing_voor_het_antwoord_van_search(settings, trage, monkeypatch):
+    """indexing (voor /search, §3.4): {"done": deel} zolang er minstens 50 open staan; skip telt
+    niet mee; hooguit eens per 5 s geteld."""
+    [eva] = await users(settings, "Eva")
+    docs = await documents(settings, eva, 100, "eva")
+    async with maker(settings)() as db:
+        assert await analysis.indexing(db) is None  # nog niets in de rij
+    await backfill(settings)
+    async with maker(settings)() as db:
+        assert await analysis.indexing(db) is None  # de vorige telling geldt nog 5 s
+    monkeypatch.setattr(analysis, "INDEXING_TTL", 0.0)
+    async with maker(settings)() as db:
+        assert (await analysis.indexing(db)).done == 0.0
+        # 40 klaar, 10 overgeslagen (tellen niet mee): 40 van de 90
+        await db.execute(
+            sa.update(Analysis).where(Analysis.blob_sha.in_(docs[:40])).values(state="done")
+        )
+        await db.execute(
+            sa.update(Analysis).where(Analysis.blob_sha.in_(docs[40:50])).values(state="skip")
+        )
+        await db.commit()
+        assert (await analysis.indexing(db)).done == round(40 / 90, 4)
+        # Minder dan 50 open: geen melding meer
+        await db.execute(
+            sa.update(Analysis).where(Analysis.blob_sha.in_(docs[50:51])).values(state="done")
+        )
+        await db.commit()
+        assert await analysis.indexing(db) is None
