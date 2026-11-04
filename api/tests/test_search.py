@@ -40,13 +40,24 @@ def measuring():
             gc.enable()
 
 
-@pytest.fixture(autouse=True)
-def _zoeken_van_070(settings, monkeypatch):
-    """Deze tests gaan over zoeken op naam zoals in 0.7.0 (LikeFallback). Sinds Z1 staat de
-    index aan; hier staat hij uit, zoals in het harnas van de e2e ("De overgang" in §3.4 van het
-    bouwontwerp van fase 6). Z4 zet deze tests op de vraag van §3.4. FtsEngine:
-    tests/search/test_search_access.py en test_search_reference.py."""
-    monkeypatch.setattr(settings, "search_index", "uit")
+@pytest.fixture(autouse=True, params=["like", "fts"])
+def motor(request, settings, monkeypatch) -> str:
+    """Elke test met de index uit (LikeFallback: het zoeken van 0.7.0, zoals in het harnas van
+    de e2e) en aan (FtsEngine, sinds Z1 de standaard; review golf 1, contract S4). Waar ze
+    verschillen, is dat een keuze van fase 6 (docs/fase-6/z1.md, "De review"):
+
+    - de volgorde: FtsEngine rangschikt met bm25 (Keuze 6), en zonder q de nieuwste eerst
+      (Keuze 4a); LikeFallback zet mappen eerst, dan op naam;
+    - de woorden: FtsEngine splitst op alles wat geen letter of cijfer is (Keuze 5; "13-3-42"
+      zijn drie woorden, % en _ ook scheidingstekens), en vindt daarna ook stukken van namen
+      (Keuze 6); LikeFallback zoekt elk stuk tussen spaties in de naam;
+    - type=other: in §3.4 is een archief other (mime.ftype); type=archive is de vraag van 0.7.0
+      en gaat altijd naar LikeFallback ("De overgang" in §3.4).
+
+    FtsEngine verder: tests/search/test_search_access.py en test_search_reference.py."""
+    if request.param == "like":
+        monkeypatch.setattr(settings, "search_index", "uit")
+    return request.param
 
 
 async def find(client, headers, expect=200, **params):
@@ -75,7 +86,7 @@ def count_queries(settings):
 
 
 @pytest.mark.anyio
-async def test_zoeken_op_naam(client, admin):
+async def test_zoeken_op_naam(client, admin, motor):
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]
     vakantie = await mkdir(client, headers, root_id, "Vakantie Café")
@@ -88,16 +99,37 @@ async def test_zoeken_op_naam(client, admin):
     await put(client, headers, root_id, "a_b.txt", b"x")
     await put(client, headers, root_id, "axb.txt", b"x")
 
-    # Hoofdletters en accenten tellen niet; mappen eerst, dan op naam
+    # Hoofdletters en accenten tellen niet; mappen eerst, dan op naam (LikeFallback), of op
+    # bm25 (FtsEngine: "cafe" is een heel woord in drie namen, en het begin van "cafeine")
     result = await find(client, headers, q="cafe")
-    assert names(result) == ["Vakantie Café", "café menu.pdf", "CAFE.txt", "Cafeïne.md"]
+    assert (
+        names(result)
+        == {
+            "like": ["Vakantie Café", "café menu.pdf", "CAFE.txt", "Cafeïne.md"],
+            "fts": ["Vakantie Café", "CAFE.txt", "Cafeïne.md", "café menu.pdf"],
+        }[motor]
+    )
     assert result["more"] is False
     # Elk woord moet erin staan, in elke volgorde
     assert names(await find(client, headers, q="MENU  café")) == ["café menu.pdf"]
     assert names(await find(client, headers, q="vakantie thee")) == []
-    # % en _ zijn gewone tekens
-    assert names(await find(client, headers, q="100%")) == ["100% zeker.txt"]
-    assert names(await find(client, headers, q="a_b")) == ["a_b.txt"]
+    # % en _ zijn gewone tekens (LikeFallback). FtsEngine splitst erop: "100" is een heel woord
+    # en daarna een stuk van "1000 dingen"; "a" en "b" zijn hele woorden in a_b.txt en stukken
+    # van "axb.txt" (Keuze 5 en 6)
+    assert (
+        names(await find(client, headers, q="100%"))
+        == {
+            "like": ["100% zeker.txt"],
+            "fts": ["100% zeker.txt", "1000 dingen.txt"],
+        }[motor]
+    )
+    assert (
+        names(await find(client, headers, q="a_b"))
+        == {
+            "like": ["a_b.txt"],
+            "fts": ["a_b.txt", "axb.txt"],
+        }[motor]
+    )
 
     # Het pad: van de hoofdmap tot de map waar het in staat
     [hit] = (await find(client, headers, q="menu"))["results"]
@@ -126,7 +158,7 @@ async def test_niets_uit_de_prullenbak(client, admin):
 
 
 @pytest.mark.anyio
-async def test_zoeken_op_soort(client, admin):
+async def test_zoeken_op_soort(client, admin, motor):
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]
     await mkdir(client, headers, root_id, "item map")
@@ -148,18 +180,29 @@ async def test_zoeken_op_soort(client, admin):
     expected = {c: [] for c in CATEGORIES}
     for hit in everything:
         node = hit["node"]
-        expected[category(node["mime"], node["kind"])].append(node["name"])
+        found = category(node["mime"], node["kind"])
+        expected[found].append(node["name"])
+        if motor == "fts" and found == "archive":
+            # §3.4 kent geen archive: een archief is other (mime.ftype, node.ftype)
+            expected["other"].append(node["name"])
     assert all(expected[c] for c in CATEGORIES)  # elke soort komt voor
-    # De SQL-voorwaarde zegt hetzelfde als mime.category()
+    # De SQL-voorwaarde zegt hetzelfde als mime.category() (en mime.ftype in FtsEngine);
+    # type=archive gaat ook met de index aan naar LikeFallback
     for c in CATEGORIES:
         assert names(await find(client, headers, q="item", type=c)) == expected[c], c
     assert expected["document"] == ["item brief.docx", "item notitie.txt"]
-    assert expected["other"] == ["item leeg", "item onbekend.bin"]
+    assert (
+        expected["other"]
+        == {
+            "like": ["item leeg", "item onbekend.bin"],
+            "fts": ["item leeg", "item archief.zip", "item onbekend.bin"],
+        }[motor]
+    )
     await find(client, headers, expect=422, type="foto")
 
 
 @pytest.mark.anyio
-async def test_in_map_limiet_en_andermans_bestanden(client, admin):
+async def test_in_map_limiet_en_andermans_bestanden(client, admin, motor):
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]
     a = await mkdir(client, headers, root_id, "A")
@@ -168,12 +211,14 @@ async def test_in_map_limiet_en_andermans_bestanden(client, admin):
         await put(client, headers, b, f"doc {i}.txt", b"x")
         await put(client, headers, root_id, f"doc buiten {i}.txt", b"x")
     assert len(names(await find(client, headers, q="doc", **{"in": a}))) == 3
-    assert names(await find(client, headers, q="", **{"in": a})) == [
-        "B",
-        "doc 0.txt",
-        "doc 1.txt",
-        "doc 2.txt",
-    ]
+    # Alles onder A, zonder A zelf; zonder q in FtsEngine de nieuwste eerst (Keuze 4a)
+    assert (
+        names(await find(client, headers, q="", **{"in": a}))
+        == {
+            "like": ["B", "doc 0.txt", "doc 1.txt", "doc 2.txt"],
+            "fts": ["doc 2.txt", "doc 1.txt", "doc 0.txt", "B"],
+        }[motor]
+    )
     result = await find(client, headers, q="doc", limit=4)
     assert len(result["results"]) == 4 and result["more"] is True
     assert (await find(client, headers, q="doc", limit=6))["more"] is False
@@ -244,7 +289,7 @@ async def test_tags_beheren(client, admin):
 
 
 @pytest.mark.anyio
-async def test_tags_op_bestanden(client, admin, monkeypatch, settings):
+async def test_tags_op_bestanden(client, admin, monkeypatch, settings, motor):
     headers, tokens = admin
     monkeypatch.setattr(events, "hub", Hub())
     root_id = (await root(client, headers))["folder"]["id"]
@@ -275,8 +320,22 @@ async def test_tags_op_bestanden(client, admin, monkeypatch, settings):
     assert [t["name"] for t in listing["folder"]["tags"]] == ["Werk"]
     info = (await client.get(f"/api/v1/files/{b}", headers=headers)).json()
     assert info["tags"] == [{"id": werk["id"], "name": "Werk", "color": ""}]
-    assert names(await find(client, headers, tag=werk["id"])) == ["Map", "a.txt", "b.txt"]
-    assert names(await find(client, headers, tag=werk["id"], q="a")) == ["Map", "a.txt"]
+    # FtsEngine: zonder q de nieuwste eerst (Keuze 4a); met q "a" eerst het hele woord, dan
+    # het stuk van "Map" (Keuze 6)
+    assert (
+        names(await find(client, headers, tag=werk["id"]))
+        == {
+            "like": ["Map", "a.txt", "b.txt"],
+            "fts": ["b.txt", "a.txt", "Map"],
+        }[motor]
+    )
+    assert (
+        names(await find(client, headers, tag=werk["id"], q="a"))
+        == {
+            "like": ["Map", "a.txt"],
+            "fts": ["a.txt", "Map"],
+        }[motor]
+    )
     assert names(await find(client, headers, tag=alfa["id"])) == ["a.txt"]
     counts = {
         t["name"]: t["count"] for t in (await client.get("/api/v1/tags", headers=headers)).json()
@@ -381,8 +440,11 @@ async def test_tegelijk_tags_zetten(client, admin):
 
 
 @pytest.mark.anyio
-async def test_lijst_en_zoeken_zonder_query_per_bestand(client, admin, settings, monkeypatch):
-    """Tags en paden kosten één query per verzoek, niet één per bestand."""
+async def test_lijst_en_zoeken_zonder_query_per_bestand(
+    client, admin, settings, monkeypatch, motor
+):
+    """Tags en paden kosten één query per verzoek, niet één per bestand. Per motor: limit 200 is
+    de vraag van 0.7.0 en gaat altijd naar LikeFallback; FtsEngine gaat tot limit 50."""
     # /search telt voor indexing (Z2) hooguit eens per 5 s; hier bij elk verzoek, zodat beide
     # zoekvragen hieronder (limit 2 en de vraag van 0.7.0 met limit 200) hem doen
     monkeypatch.setattr(analysis, "INDEXING_TTL", 0)
@@ -412,15 +474,20 @@ async def test_lijst_en_zoeken_zonder_query_per_bestand(client, admin, settings,
     assert small == large
     assert all(c["tags"] for c in listing["children"] if c["kind"] == "file")
     small, _ = await statements("/api/v1/search", q="bestand", limit=2)
-    large, result = await statements("/api/v1/search", q="bestand", limit=200)
+    large, result = await statements(
+        "/api/v1/search", q="bestand", limit={"like": 200, "fts": 50}[motor]
+    )
     assert small == large
+    assert result["engine"] == motor
+    assert all(hit["node"]["tags"] for hit in result["results"])
+    _, result = await statements("/api/v1/search", q="bestand", limit=200)
     assert len(result["results"]) == 62
     assert all(hit["node"]["tags"] for hit in result["results"])
     assert max(len(hit["path"]) for hit in result["results"]) == 6
 
 
 @pytest.mark.anyio
-async def test_snel_genoeg_met_twintigduizend_bestanden(client, admin, settings):
+async def test_snel_genoeg_met_twintigduizend_bestanden(client, admin, settings, motor):
     headers, tokens = admin
     owner = uuid.UUID(tokens["user"]["id"])
     root_id = uuid.UUID((await root(client, headers))["folder"]["id"])
@@ -461,10 +528,12 @@ async def test_snel_genoeg_met_twintigduizend_bestanden(client, admin, settings)
         session.add_all(NodeTag(node_id=r["id"], tag_id=tag_id) for r in rows[::50])
         await session.commit()
 
+    # FtsEngine: "13-3-42" zijn drie woorden (Keuze 5): het hele woord in Foto 13-3-42, en de
+    # stukken van namen in Foto 13-j-42 (Keuze 6); bij "07-3-4" vol (limit 50, meer)
     cases = [
         ({"q": "foto 07", "limit": 200}, 200, True),
-        ({"q": "foto 13-3-42"}, 1, False),
-        ({"q": "07-3-4"}, 11, False),
+        ({"q": "foto 13-3-42"}, {"like": 1, "fts": 10}[motor], False),
+        ({"q": "07-3-4"}, {"like": 11, "fts": 50}[motor], motor == "fts"),
         ({"q": "foto 00-3-42"}, 0, False),  # in de prullenbak
         ({"q": "sub", "type": "folder", "limit": 200}, 190, False),
         ({"tag": str(tag_id), "limit": 200}, 200, True),
