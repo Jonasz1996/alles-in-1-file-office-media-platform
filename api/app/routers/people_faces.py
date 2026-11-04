@@ -35,7 +35,7 @@ router = APIRouter(prefix="/api/v1", tags=["foto's"])
 
 Cursor = Annotated[str | None, Query(max_length=200)]
 # ?size=96 komt als tekst binnen; CropSize (Literal[96, 192]) alleen neemt geen "96" (dan altijd
-# 422, ook voor faceCropUrl van de web)
+# 422, ook voor faceCrop van de web)
 Size = Annotated[CropSize, QueryInt]
 
 
@@ -97,7 +97,9 @@ async def wipe_unnamed_faces(user: CurrentUser) -> FacesQueued:
 
 @router.get("/people/faces/{face_id}/crop", response_class=Response)
 async def face_crop(face_id: uuid.UUID, user: CurrentUser, size: Size = 96) -> Response:
-    """WebP, Cache-Control: no-store; niets op schijf."""
+    """WebP, Cache-Control: no-store; niets op schijf. Met de inlog als Bearer-header, zoals elke
+    route hier: de web haalt hem met een fetch (faceCrop), niet als adres in een <img>; geen
+    token of handtekening in de query (review Z0b, veilig V2 en contract F2)."""
     raise not_built("X2")
 
 

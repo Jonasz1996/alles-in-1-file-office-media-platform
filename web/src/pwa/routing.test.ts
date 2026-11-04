@@ -112,7 +112,7 @@ describe("classify", () => {
       "/api/v1/people",
       "/api/v1/duplicates?kind=exact",
       "/api/v1/geo/attribution",
-      // Z0b: gezichten (X2) en zoeken op beeld (X3); een uitsnede is een <img>, maar ook nooit
+      // Z0b: gezichten (X2) en zoeken op beeld (X3); een uitsnede (een fetch met de inlog) ook nooit
       "/api/v1/people/faces/status",
       "/api/v1/people/faces/g1/crop?size=96",
       "/api/v1/files/f1/faces",

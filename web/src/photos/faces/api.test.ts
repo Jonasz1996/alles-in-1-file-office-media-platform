@@ -52,14 +52,20 @@ describe("de aanroepen van gezichten automatisch (X2, vastgelegd in Z0b)", () =>
     ]);
   });
 
-  it("het adres van een uitsnede: 96 of 192 px, zonder aanroep", () => {
-    const request = vi.spyOn(api, "request");
+  it("een uitsnede (96 of 192 px) gaat met de inlog in de header, als blob; nooit een adres voor een <img>", async () => {
+    // Review Z0b, veilig V2 en contract F2: de route wil de inlog als Bearer-header (zoals elke
+    // route van X2), en die stuurt een <img> niet mee. Dus haalt de web hem met rawRequest.
+    const raw = vi
+      .spyOn(api, "rawRequest")
+      .mockImplementation(async () => new Response(new Blob(["webp"], { type: "image/webp" })));
     expect(CROP_SIZES).toEqual([96, 192]);
-    expect(CROP_SIZES.map((size) => faces.faceCropUrl("g/1", size))).toEqual([
-      "/api/v1/people/faces/g%2F1/crop?size=96",
-      "/api/v1/people/faces/g%2F1/crop?size=192",
+    const blobs = await Promise.all(CROP_SIZES.map((size) => faces.faceCrop("g/1", size)));
+    expect(raw.mock.calls).toEqual([
+      ["/api/v1/people/faces/g%2F1/crop?size=96"],
+      ["/api/v1/people/faces/g%2F1/crop?size=192"],
     ]);
-    expect(request).not.toHaveBeenCalled();
+    expect(blobs.map((b) => b.type)).toEqual(["image/webp", "image/webp"]);
+    expect(Object.keys(faces).filter((name) => /url/i.test(name))).toEqual([]);
   });
 
   it("de grenzen van het contract: 200 gezichten per verzoek, 60 per pagina", () => {

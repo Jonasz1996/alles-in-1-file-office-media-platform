@@ -3078,7 +3078,7 @@ Z0b (Keuze 55). De routes staan in
 | `POST /people/faces/wipe-unnamed` | eigenaar | `faces.wipe` met scope `unnamed`; `{queued: n}` |
 | `GET /files/{id}/faces` | eigenaar van de node | `[{id, box, person \| null, suggest: {person_id, name, sure, why} \| null}]`; een ander die de foto mag zien: `[]`; anders `404` |
 | `POST /files/{id}/faces/rescan` | eigenaar | de rijen van die node met `hidden = 0` weg, dan `wait` vooraan; hooguit 20 per uur |
-| `GET /people/faces/{id}/crop?size=96\|192` | eigenaar | WebP, `Cache-Control: no-store` |
+| `GET /people/faces/{id}/crop?size=96\|192` | eigenaar | WebP, `Cache-Control: no-store`. Met de inlog als Bearer-header, zoals elke route hier: de web haalt hem met een fetch (`faceCrop`) en maakt er een object-URL van, geen adres in een `<img>` (na de review van Z0b, veilig V2) |
 
 Een gezicht naar buiten (`FaceOut`) bevat: `id`, `node_id`, `box` (`x`, `y`, `w`, `h`),
 `person`, `suggest`. Daarbij:

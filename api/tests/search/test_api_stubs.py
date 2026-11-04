@@ -485,6 +485,21 @@ async def test_gezichten_bevestigen_met_id_of_naam_niet_allebei(client, admin):
     assert r.status_code == 422
 
 
+async def test_een_uitsnede_alleen_met_de_inlog_in_de_header(client, admin):
+    """Review Z0b, veilig V2 en contract F2: de uitsnede van X2 wil de inlog als Bearer-header,
+    zoals elke route van X2. Een <img> stuurt die niet mee (401), en het token in de query telt
+    niet; de web haalt hem daarom met een fetch (faceCrop in web/src/photos/faces/api.ts)."""
+    headers, _ = admin
+    token = headers["Authorization"].removeprefix("Bearer ")
+    url = f"/api/v1/people/faces/{ID}/crop"
+    for params in ({"size": "96"}, {"size": "96", "token": token}, {"size": "96", "sig": "x"}):
+        r = await client.get(url, params=params)
+        assert r.status_code == 401, (params, r.status_code)
+        assert r.json()["detail"]["code"] == "not_logged_in"
+    r = await client.get(url, params={"size": "96"}, headers=headers)
+    assert r.status_code == 501 and r.json()["detail"]["params"] == {"package": "X2"}
+
+
 async def test_met_de_index_uit_ook_like(client, admin, settings, monkeypatch):
     headers, _ = admin
     monkeypatch.setattr(settings, "search_index", "uit")

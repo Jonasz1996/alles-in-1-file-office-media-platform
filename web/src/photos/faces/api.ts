@@ -87,7 +87,11 @@ export function rescanFaces(fileId: string): Promise<void> {
   return api.request<void>("POST", `${API}/files/${seg(fileId)}/faces/rescan`);
 }
 
-/** Het adres van een uitsnede (GET /people/faces/{id}/crop?size=): WebP, voor een <img>. */
-export function faceCropUrl(faceId: string, size: CropSize): string {
-  return `${FACES}/${seg(faceId)}/crop${wireQuery({ size })}`;
+/** Een uitsnede (GET /people/faces/{id}/crop?size=): WebP, no-store. De route wil de inlog als
+ * Bearer-header, en die stuurt een <img> niet mee; dus een fetch, en het scherm maakt er een
+ * object-URL van (URL.createObjectURL) die het weer vrijgeeft als het gezicht verdwijnt (review
+ * Z0b, veilig V2 en contract F2). */
+export async function faceCrop(faceId: string, size: CropSize): Promise<Blob> {
+  const res = await api.rawRequest(`${FACES}/${seg(faceId)}/crop${wireQuery({ size })}`);
+  return res.blob();
 }

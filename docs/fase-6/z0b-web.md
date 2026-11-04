@@ -18,7 +18,7 @@ Gebouwd op `3e6c1c2`, tak `wip/z0b-web`.
 | `src/search/types.ts` | `SEARCH_MODES` (`text`, `image`) en `SearchParams.mode?`, `.like?`; `MatchKind` + `image`; `SearchPage.mode` en `.fallback` (`BEELD_FALLBACKS`: `slow`, `down`, `no_model`, of `null`); `BEELD_STATES` en `BeeldStatus` (`{state, done}`); `ANALYSE_STATES` en `AnalyseState` (de container analyse, gedeeld door X2 en X3); `ANALYSIS_CODES` + `no_preview`, `image_bad`; `BEELD_ERROR_CODES`; `SearchProgressData.what` + `faces`, `beeld` | Z0b (frozen); X3 |
 | `src/search/api.ts` | `beeldStatus()` (`GET /photos/beeld`); `search()` neemt `mode: "image"` met `q` of `like` | X3 |
 | `src/photos/faces/types.ts` (nieuw) | de vormen van de API van X2: `MAX_FACES` 200, `FACES_PAGE` 60, `CROP_SIZES` 96 en 192, `FaceSuggest`, `FaceOut`, `FacesStatus` (met `FacesPhotos`, `FacesCount`), `PersonSuggestions`, `SuggestionsByPerson`, `FacePage`, `FaceGroup`, `FaceGroups`, `FacesConfirm`, `FacesReject`, `FacesQueued`, `FACES_ERROR_CODES` | Z0b; A0 legt vast met `app/people/faces_types.py` |
-| `src/photos/faces/api.ts` (nieuw) | `facesStatus`, `faceSuggestions`, `personFaceSuggestions`, `faceGroups`, `faceGroup`, `confirmFaces`, `rejectFaces`, `hideFaces`, `resetFaces`, `wipeUnnamedFaces`, `fileFaces`, `rescanFaces`, en `faceCropUrl(id, size)` (een adres voor een `<img>`, geen aanroep) | X2 |
+| `src/photos/faces/api.ts` (nieuw) | `facesStatus`, `faceSuggestions`, `personFaceSuggestions`, `faceGroups`, `faceGroup`, `confirmFaces`, `rejectFaces`, `hideFaces`, `resetFaces`, `wipeUnnamedFaces`, `fileFaces`, `rescanFaces`, en ~~`faceCropUrl(id, size)` (een adres voor een `<img>`, geen aanroep)~~ `faceCrop(id, size)` (een fetch met de inlog, geeft een blob; review Z0b V2/F2, zie [z0b.md](z0b.md)) | X2 |
 | `src/photos/people/types.ts` | `OnOff` (`aan`, `uit`); `PhotoSettings` + `faces`, `faces_forbidden`, `faces_available`, `beeld`; `PhotoSettingsPatch` als eigen type (+ `faces?`, `beeld?`); `AlbumRule` laat ook `mode` en `like` weg | Z6; X2 en X3 lezen het |
 | `src/photos/people/api.ts` | `updatePhotoSettings(patch: PhotoSettingsPatch)` | Z6 |
 | `src/admin/searchApi.ts` | `REBUILD_WHAT` + `faces`, `beeld`; `CodeCount`, `AnalyseModel`, `AdminFaces` (Keuze 67), `AdminBeeld` (Keuze 82); `AdminSearch.faces` en `.beeld` (elk `null` zolang het pakket er niet is); `AdminSearchPatch.faces_allowed?` en `.beeld?`; `wipeBeeld()` (`DELETE /admin/search/beeld`, 202) | Z7; X2 en X3 leggen hun blok vast |
@@ -51,7 +51,7 @@ De nieuwe routes in `api.ts`-vorm (methode, pad, body) toetst `photos/faces/api.
 | `wipeUnnamedFaces()` | `POST /people/faces/wipe-unnamed` | X2 |
 | `fileFaces(id)` | `GET /files/{id}/faces` | X2 |
 | `rescanFaces(id)` | `POST /files/{id}/faces/rescan` | X2 |
-| `faceCropUrl(id, size)` | `/people/faces/{id}/crop?size=96` of `192` (een adres) | X2 |
+| ~~`faceCropUrl(id, size)`~~ `faceCrop(id, size)` | `GET /people/faces/{id}/crop?size=96` of `192`, met de inlog in de header (review Z0b V2/F2) | X2 |
 | `updatePhotoSettings({faces, beeld})` | `PATCH /me/photo-settings` | X2, X3 |
 | `search({mode: "image", q})`, `search({mode: "image", like})` | `GET /search?mode=image&q=` of `&like=` | X3 |
 | `beeldStatus()` | `GET /photos/beeld` | X3 |
