@@ -183,6 +183,45 @@ async def test_de_timer_is_ook_uit_na_een_fout_of_annulering(engine):
         assert (await conn.exec_driver_sql(HALF)).scalar() == 1_500_000
 
 
+async def test_een_annulering_stopt_ook_de_vraag_in_de_thread(engine):
+    """N1: de taak wordt geannuleerd (de browser sluit) terwijl een vraag in de thread van
+    aiosqlite loopt. SQLAlchemy maakt de verbinding dan ongeldig en sluit hem, maar aiosqlite
+    sluit pas na het lopende statement: de vraag liep door (de finally zette alleen de timer uit),
+    ±20 s. Nu stopt deadline() hem: de thread is binnen enkele HERHAAL_MS klaar, en een volgende
+    vraag uit de pool loopt helemaal."""
+    gestart = asyncio.Event()
+    aio = None
+
+    async def blok() -> None:
+        nonlocal aio
+        async with engine.connect() as conn:
+            aio = (await conn.get_raw_connection()).driver_connection
+            async with deadline(conn, 60_000):
+                gestart.set()
+                await conn.exec_driver_sql(TRAAG)
+
+    async def vrij() -> None:
+        """De thread van aiosqlite doet niets meer: dicht en gestopt, of een stap in zijn rij
+        komt meteen aan de beurt."""
+        if aio._running:
+            await aio._execute(lambda: None)
+        else:
+            await asyncio.to_thread(aio._thread.join)
+
+    taak = asyncio.create_task(blok())
+    await gestart.wait()
+    await asyncio.sleep(0.05)  # de vraag loopt in de thread
+    begin = time.monotonic()
+    taak.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await taak
+    await asyncio.wait_for(vrij(), 2)
+    vrij_ms = (time.monotonic() - begin) * 1000
+    assert vrij_ms < 100 * dl.HERHAAL_MS, vrij_ms
+    async with engine.connect() as conn:
+        assert (await conn.exec_driver_sql(HALF)).scalar() == 1_500_000
+
+
 async def test_een_andere_fout_gaat_gewoon_door(engine):
     async with engine.connect() as conn:
         with pytest.raises(exc.OperationalError, match="bestaat_niet"):
