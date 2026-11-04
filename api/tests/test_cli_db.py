@@ -1,4 +1,4 @@
-"""python -m app.cli db-downgrade, db-backup en de stubs van zoeken (§3.5, §3.8): db-downgrade
+"""python -m app.cli db-downgrade, db-backup en de stub van geo-load (§3.5, §3.8): db-downgrade
 0007 vraagt om bevestiging en doet daarna precies dat; een onbekende of latere revisie doet
 niets. db-backup maakt een kopie van de database terwijl de app draait (fase 6, Keuze 52)."""
 

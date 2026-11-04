@@ -456,8 +456,10 @@ async def herbouw_in_stukken(
             if klaar:
                 hi = last
             await c.exec_driver_sql(
-                "INSERT INTO fts_node(rowid, name, extra, body, ocr, meta) "
-                "SELECT num, name, extra, body, ocr, meta FROM search_src "
+                # Met pocr (review Z0, veilig F3): zonder die kolom mist de index de OCR van
+                # foto's, en zegt de integrity-check "malformed" (gevonden door de churn van Z1)
+                "INSERT INTO fts_node(rowid, name, extra, body, ocr, meta, pocr) "
+                "SELECT num, name, extra, body, ocr, meta, pocr FROM search_src "
                 "WHERE num > ? AND num <= ?",
                 (cur, hi),
             )

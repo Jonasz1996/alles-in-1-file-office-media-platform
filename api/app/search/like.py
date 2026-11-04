@@ -7,8 +7,11 @@ hoofdmap en alles wat met je gedeeld is), en stopt bij wat in de prullenbak ligt
 uit (of onder) de prullenbak in de resultaten. Werkt op SQLite en PostgreSQL, en met een SQLite
 zonder FTS5.
 
-Tot Z1 geldt de vraag van 0.7.0: één soort (met "archive" als soort, zoals mime.category),
-één tag, limit tot 200. De andere filters van SearchParams negeert hij nog.
+Sinds Z1 is hij de terugval (Keuze 10): als FTS5 ontbreekt, met PLATFORM_SEARCH_INDEX=uit,
+tijdens een herbouw, en voor de vraag van 0.7.0 ("De overgang" in §3.4: één soort, met "archive"
+als soort zoals mime.category, één tag, limit tot 200). Hij kent q, type, tag en in, zonder de
+kolommen die alleen de triggers van 0010 bijhouden (ftype, mpath, taken_day: op PostgreSQL zijn
+er geen triggers). from/to, library en de filters van Z3 en Z6 negeert hij nog.
 """
 
 from __future__ import annotations
@@ -128,7 +131,9 @@ class LikeFallback:
         rows = list(
             (
                 await session.scalars(
-                    query.order_by(Node.kind, Node.search_name, Node.id).limit(limit + 1)
+                    query.order_by(Node.kind, Node.search_name, Node.id)
+                    .offset(p.offset)
+                    .limit(limit + 1)
                 )
             ).all()
         )
@@ -152,6 +157,7 @@ class LikeFallback:
         return SearchPage(
             results=[Hit(node=out, path=where.get(out.id, [])) for out in described],
             more=more,
+            offset=p.offset,
             names_only=True,
             engine="like",
         )

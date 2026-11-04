@@ -40,6 +40,15 @@ def measuring():
             gc.enable()
 
 
+@pytest.fixture(autouse=True)
+def _zoeken_van_070(settings, monkeypatch):
+    """Deze tests gaan over zoeken op naam zoals in 0.7.0 (LikeFallback). Sinds Z1 staat de
+    index aan; hier staat hij uit, zoals in het harnas van de e2e ("De overgang" in §3.4 van het
+    bouwontwerp van fase 6). Z4 zet deze tests op de vraag van §3.4. FtsEngine:
+    tests/search/test_search_access.py en test_search_reference.py."""
+    monkeypatch.setattr(settings, "search_index", "uit")
+
+
 async def find(client, headers, expect=200, **params):
     r = await client.get("/api/v1/search", params=params, headers=headers)
     assert r.status_code == expect, r.text
