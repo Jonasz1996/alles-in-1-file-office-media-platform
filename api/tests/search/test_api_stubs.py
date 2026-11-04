@@ -1,7 +1,8 @@
 """De API-contracten van fase 6 (bouwontwerp §3.4) in Z0: elk eindpunt bestaat met zijn pad,
 methode, body, antwoordmodel en status, vraagt eerst de inlog (beheer: de rol; de woorden per
 pagina: het download-token) en geeft dan 501 not_built tot zijn pakket het vult. Zoeken zelf
-werkt al: via select_engine, met LikeFallback.
+werkt al: via select_engine, met LikeFallback. Sinds Z2 zijn ook de woorden per pagina en de
+stand van de analyse gebouwd (BUILT).
 
 Z0b (Keuze 55) zette de routes van gezichten (X2) en zoeken op beeld (X3) erbij, ook als stub;
 zoeken met mode=image of like geeft 501 not_built("X3").
@@ -33,7 +34,7 @@ ENDPOINTS = [
     # Zoeken (Z1): gebouwd via select_engine
     ("GET", "/api/v1/search", None, "user", None, t.SearchPage, None, "Z1"),
     ("GET", "/api/v1/search/suggest", None, "user", None, t.Suggestions, None, "Z1"),
-    # Tekst (Z2, X1)
+    # Tekst (Z2: gebouwd; X1)
     (
         "GET",
         "/api/v1/files/{node_id}/pages/{n}/words",
@@ -245,7 +246,13 @@ ENDPOINTS = [
     ("GET", "/api/v1/photos/beeld", None, "user", None, t.BeeldStatus, None, "X3"),
     ("DELETE", "/api/v1/admin/search/beeld", None, "admin", None, None, 202, "X3"),
 ]
-BUILT = {("GET", "/api/v1/search"), ("GET", "/api/v1/search/suggest")}
+BUILT = {
+    ("GET", "/api/v1/search"),
+    ("GET", "/api/v1/search/suggest"),
+    # Z2: de woorden per pagina en de stand van de analyse (tests/test_pages_words.py)
+    ("GET", "/api/v1/files/{node_id}/pages/{n}/words"),
+    ("GET", "/api/v1/files/{node_id}/analysis"),
+}
 # De vraag die een stub nodig heeft om bij de route te komen
 QUERY = {
     "/api/v1/search/suggest": {"q": "jaar"},

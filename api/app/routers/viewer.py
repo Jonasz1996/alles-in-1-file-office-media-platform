@@ -12,7 +12,9 @@ als afbeelding, gerenderd op de server (B20).
   renderproces (app/render.py, mode "page"), n, n+1 en n+2 tegelijk, met hooguit
   settings.page_render_workers processen tegelijk; de pagina's blijven in
   previews/<sha>/pages/<w>/<n>.webp tot de cache boven settings.page_cache_mb komt (de
-  langst niet gebruikte gaan eerst).
+  langst niet gebruikte gaan eerst). Dezelfde render geeft ook de woorden van elke pagina
+  (fase 6, Z2; Keuze 18) in previews/<sha>/pages/words/<n>.json, met dezelfde opruimregel; de
+  route van de woorden staat in routers/pages_words.py.
 - dezelfde drie onder /public/ voor een publieke leeslink (met de sleutel van de link);
 - een kantoordocument met een omgezette PDF van office (fase 4, Keuze 25): /document geeft
   kind "pdf" met source "office", en de pagina's komen uit die PDF
@@ -29,6 +31,7 @@ als afbeelding, gerenderd op de server (B20).
 
 import asyncio
 import contextlib
+import itertools
 import json
 import os
 import shutil
@@ -211,6 +214,21 @@ def _pages_dir(blobs: BlobStore, sha: str) -> Path:
 
 def page_path(blobs: BlobStore, sha: str, width: int, n: int) -> Path:
     return _pages_dir(blobs, sha) / str(width) / f"{n}.webp"
+
+
+def words_path(blobs: BlobStore, sha: str, n: int) -> Path:
+    """De woorden van pagina n (Z2, Keuze 18), uit dezelfde render als de pagina."""
+    return _pages_dir(blobs, sha) / "words" / f"{n}.json"
+
+
+async def word_moves(blobs: BlobStore, sha: str, work: Path, done: list[int]) -> list[tuple]:
+    """De woorden die het renderproces schreef (words-<n>.json), voor _place."""
+    moves = []
+    for k in done:
+        source = work / "out" / f"words-{k}.json"
+        if await anyio.Path(source).is_file():
+            moves.append((source, words_path(blobs, sha, k)))
+    return moves
 
 
 async def _read_json(path: Path) -> dict[str, Any] | None:
@@ -460,11 +478,12 @@ async def _render_pages(
         pdf = source or blobs.path(sha)
         result, work = await _render(
             settings,
-            {"mode": "page", "source": str(pdf), "pages": wanted, "width": width},
+            {"mode": "page", "source": str(pdf), "pages": wanted, "width": width, "words": True},
         )
         try:
             done = [int(k) for k in result.get("pages") or [] if int(k) in wanted]
             moves = [(work / "out" / f"{k}.webp", page_path(blobs, sha, width, k)) for k in done]
+            moves += await word_moves(blobs, sha, work, done)
             await _place(settings, sha, moves, v)
         finally:
             await anyio.to_thread.run_sync(shutil.rmtree, work, True)
@@ -473,7 +492,8 @@ async def _render_pages(
 
 def _scan(root: Path) -> list[tuple[float, int, Path]]:
     found = []
-    for path in root.glob("*/*/pages/*/*.webp"):
+    pages = root.glob("*/*/pages/*/*.webp")
+    for path in itertools.chain(pages, root.glob("*/*/pages/words/*.json")):
         try:
             stat = path.stat()
         except FileNotFoundError:

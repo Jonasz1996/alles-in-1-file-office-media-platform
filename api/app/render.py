@@ -1288,11 +1288,15 @@ def docinfo(request: dict) -> dict:
 
 
 def pages(request: dict) -> dict:
-    """Pagina's (vanaf 1) van een PDF als <n>.webp, width pixels breed."""
+    """Pagina's (vanaf 1) van een PDF als <n>.webp, width pixels breed. Met words (fase 6, Z2;
+    Keuze 18) uit dezelfde render ook de woorden van elke pagina als words-<n>.json
+    (page_words); met only_words alleen die (de pagina staat al in de cache)."""
     width = int(request["width"])
     if width not in PAGE_WIDTHS:
         raise ValueError("ongeldige breedte")
     out = Path(request["out"])
+    words = bool(request.get("words")) or bool(request.get("only_words"))
+    only_words = bool(request.get("only_words"))
     try:
         document = _open_pdf(Path(request["source"]), request.get("max_pixels", 10**8))
     except Exception as e:
@@ -1309,6 +1313,14 @@ def pages(request: dict) -> dict:
                 w, h = page.get_size()
                 if w <= 0 or h <= 0:
                     continue
+                if words:
+                    found = page_words(page)
+                    (out / f"words-{int(n)}.json").write_text(
+                        json.dumps({"v": WORDS_VERSION, "words": found}, ensure_ascii=False)
+                    )
+                if only_words:
+                    done.append(int(n))
+                    continue
                 scale = width / w
                 if (w * scale) * (h * scale) > PAGE_PIXELS:
                     scale = (PAGE_PIXELS / (w * h)) ** 0.5
@@ -1323,6 +1335,72 @@ def pages(request: dict) -> dict:
     finally:
         document.close()
     return {"state": "ready", "pages": done}
+
+
+# --- de woorden van een pagina (fase 6, Z2; bouwontwerp Keuze 18) ---------------------------
+#
+# Voor de tekstlaag van de viewer: elk woord met zijn plek op de pagina als deel van de breedte
+# en de hoogte (0..1, linksboven), zoals de viewer de pagina toont (de draaiing van de pagina
+# meegerekend). Een woord: tekens tot witruimte. Hooguit MAX_PAGE_WORDS woorden, elk hooguit
+# MAX_WORD_CHARS tekens.
+
+WORDS_VERSION = 1
+MAX_PAGE_WORDS = 20_000
+MAX_WORD_CHARS = 200
+
+
+def page_words(page) -> list[dict]:
+    """De woorden van een pagina van pypdfium2 als [{"t", "x", "y", "w", "h"}]."""
+    import pypdfium2.raw as pdfium_c
+
+    left, bottom, right, top = page.get_cropbox()
+    width, height = right - left, top - bottom
+    if width <= 0 or height <= 0:
+        return []
+    rotation = page.get_rotation() % 360
+    textpage = page.get_textpage()
+    found: list[dict] = []
+    try:
+        chars: list[str] = []
+        box: list[float] = []
+
+        def flush() -> None:
+            if not chars or len(found) >= MAX_PAGE_WORDS:
+                chars.clear()
+                return
+            x0, y0, x1, y1 = box
+            x, y = (x0 - left) / width, (top - y1) / height
+            w, h = (x1 - x0) / width, (y1 - y0) / height
+            x, y = min(max(x, 0.0), 1.0), min(max(y, 0.0), 1.0)
+            w, h = min(max(w, 0.0), 1.0 - x), min(max(h, 0.0), 1.0 - y)
+            if rotation == 90:
+                x, y, w, h = 1.0 - y - h, x, h, w
+            elif rotation == 180:
+                x, y = 1.0 - x - w, 1.0 - y - h
+            elif rotation == 270:
+                x, y, w, h = y, 1.0 - x - w, h, w
+            text = "".join(chars)[:MAX_WORD_CHARS]
+            found.append(
+                {"t": text, "x": round(x, 5), "y": round(y, 5), "w": round(w, 5), "h": round(h, 5)}
+            )
+            chars.clear()
+
+        for index in range(textpage.count_chars()):
+            code = pdfium_c.FPDFText_GetUnicode(textpage.raw, index)
+            char = chr(code) if 0 < code < 0x110000 and not 0xD800 <= code < 0xE000 else ""
+            if not char or char.isspace() or code < 32:
+                flush()
+                continue
+            x0, y0, x1, y1 = textpage.get_charbox(index)
+            if not chars:
+                box = [x0, y0, x1, y1]
+            else:
+                box = [min(box[0], x0), min(box[1], y0), max(box[2], x1), max(box[3], y1)]
+            chars.append(char)
+        flush()
+    finally:
+        textpage.close()
+    return found
 
 
 # --- tekst voor zoeken (fase 6, Z2; bouwontwerp Keuze 17) ------------------------------------
