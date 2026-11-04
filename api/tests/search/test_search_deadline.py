@@ -18,6 +18,7 @@ De spike-tests van S1 (test_spike_deadline.py) draaien sinds Z1 ook op deze dead
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import threading
 import time
 import uuid
@@ -219,6 +220,28 @@ async def test_een_annulering_stopt_ook_de_vraag_in_de_thread(engine):
     vrij_ms = (time.monotonic() - begin) * 1000
     assert vrij_ms < 100 * dl.HERHAAL_MS, vrij_ms
     async with engine.connect() as conn:
+        assert (await conn.exec_driver_sql(HALF)).scalar() == 1_500_000
+
+
+async def test_na_een_fout_stopt_deadline_ook_wat_nog_in_de_thread_loopt(engine):
+    """Verlaat een fout het blok terwijl er nog een statement in de thread van aiosqlite loopt
+    (hier een dat niet via SQLAlchemy wacht), dan stopt deadline() ook dat: interrupt() tot de
+    thread voorbij dat statement is (stop_after). Daarna loopt een volgende vraag op dezelfde
+    verbinding helemaal (de nacontrole van golf 1: zonder stop_after liep het statement door,
+    ±12 s, en bleef geen test rood)."""
+    async with engine.connect() as conn:
+        aio = (await conn.get_raw_connection()).driver_connection
+        lopend = None
+        with pytest.raises(RuntimeError, match="weg"):
+            async with deadline(conn, 60_000):
+                lopend = asyncio.ensure_future(aio.execute(TRAAG))
+                await asyncio.sleep(0.05)  # het statement loopt in de thread
+                raise RuntimeError("weg")
+        begin = time.monotonic()
+        with pytest.raises(sqlite3.OperationalError, match="interrupted"):
+            await asyncio.wait_for(lopend, 2)
+        klaar_ms = (time.monotonic() - begin) * 1000
+        assert klaar_ms < 100 * dl.HERHAAL_MS, klaar_ms
         assert (await conn.exec_driver_sql(HALF)).scalar() == 1_500_000
 
 
