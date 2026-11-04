@@ -379,7 +379,7 @@ def stopped() -> bool:
     return stop is not None and stop.stopped
 
 
-def _stopped_page(p: SearchParams) -> SearchPage:
+def stopped_page(p: SearchParams) -> SearchPage:
     return SearchPage(
         results=[], more=False, offset=p.offset, partial=True, ranked=False, engine="fts"
     )
@@ -449,7 +449,7 @@ class FtsEngine:
         for tag_id in dict.fromkeys(p.tags):
             await own_tag(db, user, tag_id)
         if stopped():
-            return _stopped_page(p)
+            return stopped_page(p)
         with timed("roots"):
             roots = await search_ranges(db, user)
         if not roots.ranges or (parsed is None and not p.has_filter()):
@@ -497,7 +497,7 @@ class FtsEngine:
             k = p.offset + p.limit + 1
             a = await run(conn, ranked_select(parsed, scope, k), a_ms)
             if a.hit and stopped():
-                return _stopped_page(p)
+                return stopped_page(p)
             if not a.hit:
                 page = a.rows[p.offset : p.offset + p.limit]
                 if len(a.rows) == k:
@@ -516,7 +516,7 @@ class FtsEngine:
         skip = p.offset if p.after is None else 0
         b = await run(conn, stream_select(parsed, scope, k, p.after, skip), rest(), "round")
         if b.hit and stopped():
-            return _stopped_page(p)
+            return stopped_page(p)
         if not b.hit:
             page = b.rows[: p.limit]
             more = len(b.rows) > p.limit

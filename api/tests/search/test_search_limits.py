@@ -130,6 +130,77 @@ async def test_een_tweede_vraag_van_dezelfde_gebruiker_stopt_de_eerste(settings)
     assert volgorde == ["eerste", "tweede"]
 
 
+async def test_een_nieuwere_vraag_neemt_de_plek_in_de_rij_over(settings):
+    """H4: met één plek loopt A; X1, B, C, D en E wachten. Dan vraagt X opnieuw (X2). X1 stopt,
+    en X2 krijgt de plek van X1 in de rij: X2 is na A aan de beurt, niet na E. In de rij staat
+    nooit een gestopte vraag, en X1 gaat weg met Replaced, zonder plek."""
+    een = settings.model_copy(update={"search_inflight": 1, "rate_limits": False})
+    state = limits._now_state()
+    x = iemand()
+    los = {naam: asyncio.Event() for naam in "A B C D E X1 X2".split()}
+    volgorde: list[str] = []
+    vervangen: list[str] = []
+
+    async def vraag(naam: str, wie: User) -> None:
+        try:
+            async with limits.admit(wie, "search", een):
+                volgorde.append(naam)
+                await los[naam].wait()
+        except limits.Replaced:
+            vervangen.append(naam)
+
+    taken = {"A": asyncio.create_task(vraag("A", iemand()))}
+    await tot(lambda: volgorde == ["A"])
+    for naam in ("X1", "B", "C", "D", "E"):
+        taken[naam] = asyncio.create_task(vraag(naam, x if naam == "X1" else iemand()))
+        await tot(lambda: len(state.waiting) == len(taken) - 1)
+    taken["X2"] = asyncio.create_task(vraag("X2", x))
+    # X1 is weg terwijl A nog loopt: geen gestopte vraag in de rij, X2 op zijn plek
+    await tot(lambda: vervangen == ["X1"])
+    assert volgorde == ["A"] and len(state.waiting) == 5
+    assert state.waiting[0] is state.users[(x.id, "search")].place
+    await taken["X1"]
+    for naam in ("A", "X2", "B", "C", "D", "E"):
+        los[naam].set()
+        await taken[naam]
+    assert volgorde == ["A", "X2", "B", "C", "D", "E"]
+    assert state.running == 0 and not state.waiting
+
+
+async def test_overgenomen_en_dan_weggevallen(settings):
+    """X2 neemt de plek van X1 over en valt weg (de browser sluit) voor hij aan de beurt is:
+    zijn plek gaat uit de rij, en de plekken kloppen. Een X3 daarna wacht gewoon achteraan."""
+    een = settings.model_copy(update={"search_inflight": 1, "rate_limits": False})
+    state = limits._now_state()
+    x = iemand()
+    los = asyncio.Event()
+    binnen: list[str] = []
+
+    async def vraag(naam: str, wie: User) -> None:
+        async with limits.admit(wie, "search", een):
+            binnen.append(naam)
+            await los.wait()
+
+    a = asyncio.create_task(vraag("A", iemand()))
+    await tot(lambda: binnen == ["A"])
+    x1 = asyncio.create_task(vraag("X1", x))
+    b = asyncio.create_task(vraag("B", iemand()))
+    await tot(lambda: len(state.waiting) == 2)
+    x2 = asyncio.create_task(vraag("X2", x))
+    with pytest.raises(limits.Replaced):
+        await x1
+    assert len(state.waiting) == 2
+    x2.cancel()
+    await asyncio.gather(x2, return_exceptions=True)
+    assert len(state.waiting) == 1 and state.running == 1
+    x3 = asyncio.create_task(vraag("X3", x))
+    await tot(lambda: len(state.waiting) == 2)
+    los.set()
+    await asyncio.gather(a, b, x3)
+    assert binnen == ["A", "B", "X3"]
+    assert state.running == 0 and not state.waiting
+
+
 async def test_zoeken_en_suggesties_stoppen_elkaar_niet(settings):
     ik = iemand()
     los = asyncio.Event()
@@ -298,6 +369,44 @@ async def test_de_tweede_vraag_stopt_de_eerste_via_de_api(client, admin, setting
     assert r2.status_code == 200, r2.text
     assert [h["node"]["name"] for h in r2.json()["results"]] == ["Jaarverslag 2025.pdf"]
     assert r2.json()["partial"] is False
+
+
+@pytest.mark.parametrize("pad", ["/api/v1/search", "/api/v1/search/suggest"])
+async def test_overgenomen_via_de_api(client, settings, monkeypatch, pad):
+    """H4 via de API, met één plek: A loopt, X1 wacht; X2 neemt de plek van X1 over. X1 krijgt
+    meteen 200 met een lege (gedeeltelijke) uitkomst, X2 is na A aan de beurt."""
+    monkeypatch.setattr(settings, "search_inflight", 1)
+    los = asyncio.Event()
+    binnen: list[str] = []
+    kind = "suggest" if pad.endswith("suggest") else "search"
+
+    async def wacht(self, db, user, p):
+        binnen.append(user.email)
+        await los.wait()
+        if kind == "suggest":
+            return engines.Suggestions()
+        return engines.SearchPage(results=[], more=False, engine="fts")
+
+    monkeypatch.setattr(engines.FtsEngine, kind, wacht)
+    a, x = await koppen(settings, 2)
+    state = limits._now_state()
+    ta = asyncio.create_task(client.get(pad, params={"q": "a"}, headers=a))
+    await tot(lambda: len(binnen) == 1)
+    x1 = asyncio.create_task(client.get(pad, params={"q": "x"}, headers=x))
+    await tot(lambda: len(state.waiting) == 1)
+    x2 = asyncio.create_task(client.get(pad, params={"q": "xy"}, headers=x))
+    r1 = await asyncio.wait_for(x1, 5)  # terwijl A nog loopt
+    assert r1.status_code == 200, r1.text
+    if kind == "search":
+        assert r1.json()["results"] == [] and r1.json()["partial"] is True
+    else:
+        assert r1.json() == {"names": [], "people": [], "places": [], "tags": [], "albums": []}
+    assert len(binnen) == 1 and len(state.waiting) == 1
+    los.set()
+    assert (await ta).status_code == 200
+    assert (await x2).status_code == 200
+    assert binnen == ["zoeker0@example.nl", "zoeker1@example.nl"]
+    assert state.running == 0 and not state.waiting
 
 
 async def test_de_snelheid_via_de_api(client, settings, monkeypatch):

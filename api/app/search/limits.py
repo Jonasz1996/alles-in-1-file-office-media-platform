@@ -12,7 +12,10 @@ bouwt hem.
 - **Per gebruiker**: hooguit één vraag tegelijk, apart voor zoeken en suggesties. Een nieuwe
   vraag stopt de vorige (die nog loopt of nog wacht) via haar Stop (deadline.STOP): elke grens
   van die vraag gaat dan meteen af, en ze geeft een lege, gedeeltelijke pagina. Dat past bij
-  typen.
+  typen. Wacht de vorige nog in de rij, dan neemt de nieuwe haar plek in de rij over, en de
+  vorige gaat weg met Replaced, zonder plek en zonder werk (review golf 1, H4: anders kwam de
+  nieuwe achter iedereen die intussen in de rij kwam). In de rij staat zo nooit een gestopte
+  vraag.
 - **De snelheid per gebruiker**: hooguit 10 zoekvragen en 20 suggesties per seconde, anders
   429 rate_limited met Retry-After: 1. Niet met settings.rate_limits uit (PLATFORM_RATE_LIMITS=
   false, alleen voor een testserver), zoals de andere limieten: de meting van §4.4 stelt 200
@@ -44,6 +47,19 @@ WINDOW_S = 1.0
 RETRY = {"Retry-After": "1"}
 
 
+class Replaced(Exception):
+    """Een nieuwere vraag van dezelfde gebruiker nam de plek in de rij over; deze vraag is
+    gestopt voor ze liep. De router geeft een lege, gedeeltelijke pagina."""
+
+
+@dataclass
+class _Place:
+    """Een plek in de rij. turn krijgt True als de plek in de app vrij is, en False als een
+    nieuwere vraag van dezelfde gebruiker de plek overnam (die wacht dan op een nieuwe turn)."""
+
+    turn: asyncio.Future[bool]
+
+
 @dataclass
 class _Mine:
     """Eén gebruiker, één soort vraag: wie er loopt of wacht, en wanneer hij vroeg."""
@@ -51,13 +67,14 @@ class _Mine:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     latest: Stop | None = None
     asked: deque[float] = field(default_factory=deque)
+    place: _Place | None = None  # de plek in de rij van de vraag die nu wacht
 
 
 @dataclass
 class _State:
     loop: asyncio.AbstractEventLoop
     running: int = 0
-    waiting: deque[asyncio.Future[None]] = field(default_factory=deque)
+    waiting: deque[_Place] = field(default_factory=deque)
     users: dict[tuple[uuid.UUID, Kind], _Mine] = field(default_factory=dict)
 
 
@@ -83,30 +100,69 @@ def _rate(mine: _Mine, kind: Kind) -> None:
     mine.asked.append(now)
 
 
-async def _enter(state: _State, settings: Settings) -> None:
-    """Een plek in de app: meteen, in de rij, of 429 search_busy als de rij vol is."""
-    if state.running < settings.search_inflight and not state.waiting:
-        state.running += 1
-        return
-    if len(state.waiting) >= settings.search_queue:
-        raise errors.fail(429, "search_busy", "Zoeken is even te druk", headers=RETRY)
-    turn: asyncio.Future[None] = state.loop.create_future()
-    state.waiting.append(turn)
+def _take_over(state: _State, mine: _Mine) -> asyncio.Future[bool] | None:
+    """Wacht de vorige vraag van deze gebruiker nog in de rij, dan krijgt deze vraag die plek:
+    een nieuwe turn op dezelfde plek, en de vorige hoort False (Replaced). Anders None."""
+    place = mine.place
+    if place is None or place.turn.done():
+        return None
+    turn: asyncio.Future[bool] = state.loop.create_future()
+    old, place.turn = place.turn, turn
+    old.set_result(False)
+    return turn
+
+
+async def _enter(
+    state: _State, settings: Settings, mine: _Mine, turn: asyncio.Future[bool] | None
+) -> None:
+    """Een plek in de app: meteen, in de rij (of op de plek die deze vraag overnam: turn), of
+    429 search_busy als de rij vol is. Replaced als een nieuwere vraag de plek overnam."""
+    if turn is None:
+        if state.running < settings.search_inflight and not state.waiting:
+            state.running += 1
+            return
+        if len(state.waiting) >= settings.search_queue:
+            raise errors.fail(429, "search_busy", "Zoeken is even te druk", headers=RETRY)
+        turn = state.loop.create_future()
+        mine.place = _Place(turn)
+        state.waiting.append(mine.place)
+    await _wait(state, mine, turn)
+
+
+async def _wait(state: _State, mine: _Mine, turn: asyncio.Future[bool]) -> None:
+    """Wacht op turn: True is een plek in de app (_leave gaf hem door, running blijft gelijk),
+    False is Replaced."""
     try:
-        await turn  # _leave geeft de plek door (running blijft gelijk)
+        mine_now = await turn
     except asyncio.CancelledError:
-        if turn.done() and not turn.cancelled():
-            _leave(state)  # de plek was al van ons: geef hem door
-        else:
-            state.waiting.remove(turn)
+        _drop(state, mine, turn)
         raise
+    if mine.place is not None and mine.place.turn is turn:
+        mine.place = None
+    if not mine_now:
+        raise Replaced
+
+
+def _drop(state: _State, mine: _Mine, turn: asyncio.Future[bool]) -> None:
+    """De vraag met turn valt weg (de browser sluit): had ze de plek in de app al, dan geeft ze
+    hem door; wacht ze nog, dan gaat haar plek uit de rij. Nam een nieuwere vraag de plek over
+    (False), dan niets."""
+    place = mine.place
+    ours = place is not None and place.turn is turn
+    if turn.done() and not turn.cancelled():
+        if turn.result():
+            _leave(state)
+    elif ours and place is not None:
+        state.waiting.remove(place)
+    if ours:
+        mine.place = None
 
 
 def _leave(state: _State) -> None:
     while state.waiting:
-        turn = state.waiting.popleft()
-        if not turn.done():
-            turn.set_result(None)
+        place = state.waiting.popleft()
+        if not place.turn.done():
+            place.turn.set_result(True)
             return
     state.running -= 1
 
@@ -124,14 +180,23 @@ async def admit(
     if mine.latest is not None:
         mine.latest()  # de vorige vraag van deze gebruiker stopt
     mine.latest = stop
+    turn = _take_over(state, mine)  # wacht ze nog in de rij: haar plek is voor deze vraag
     token = STOP.set(stop)
     try:
-        async with mine.lock:
-            await _enter(state, settings)
+        try:
+            await mine.lock.acquire()  # de vorige vraag van deze gebruiker is eerst weg
+        except asyncio.CancelledError:
+            if turn is not None:
+                _drop(state, mine, turn)
+            raise
+        try:
+            await _enter(state, settings, mine, turn)
             try:
                 yield
             finally:
                 _leave(state)
+        finally:
+            mine.lock.release()
     finally:
         STOP.reset(token)
         if mine.latest is stop:

@@ -42,7 +42,7 @@ from app.routers.stubs import not_built
 from app.search import engine as engines
 from app.search.engine import LIKE, engine_for
 from app.search.like import own_tag, search_roots
-from app.search.limits import admit
+from app.search.limits import Replaced, admit
 from app.search.query import QueryTooLong
 from app.search.types import SearchMode, SearchPage, SearchParams, Suggestions
 from app.security import CurrentUser
@@ -146,6 +146,9 @@ async def search(
     try:
         async with admit(user, "search", settings):
             page = await engine.search(session, user, params)
+    except Replaced:
+        # Een nieuwere vraag van deze gebruiker nam de plek in de rij over (review golf 1, H4)
+        page = engines.stopped_page(params)
     except QueryTooLong:
         raise errors.fail(
             400, "search_query_too_long", "Je zoekvraag is te lang", max_words=10
@@ -177,6 +180,8 @@ async def suggest(
     try:
         async with admit(user, "suggest", settings):
             return await engine.suggest(session, user, q)
+    except Replaced:
+        return Suggestions()
     except QueryTooLong:
         raise errors.fail(
             400, "search_query_too_long", "Je zoekvraag is te lang", max_words=10
