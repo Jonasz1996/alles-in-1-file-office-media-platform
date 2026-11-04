@@ -48,6 +48,9 @@ const AREAS: Area[] = [
   "photos_map",
   "dupes",
   "photos_people",
+  // Fase 6 (Z0b)
+  "photos_faces",
+  "beeld",
 ];
 
 /** Elke tekst met zijn pad; een meervoud ({one, other}) is één blad met al zijn vormen. */

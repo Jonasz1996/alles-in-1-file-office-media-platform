@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
+import beeldCatalog from "../i18n/errors/beeld";
 import searchCatalog from "../i18n/errors/search";
 import * as search from "./api";
-import { SEARCH_ERROR_CODES, type SearchParams } from "./types";
+import { BEELD_ERROR_CODES, SEARCH_ERROR_CODES, type SearchParams } from "./types";
 import { wireQuery } from "./wire";
 
 afterEach(() => {
@@ -54,6 +55,10 @@ describe("de aanroepen van zoeken en tekst (§3.4, Z1, Z2, X1)", () => {
     await search.pageWords("f/1", 3, "tok en");
     await search.analysis("f1");
     await search.requestOcr("f1");
+    // Zoeken op beeld (X3, vastgelegd in Z0b): met tekst of vanaf een foto, en de stand
+    await search.search({ q: "rode auto", mode: "image", type: ["image"] });
+    await search.search({ mode: "image", like: "f/2" });
+    await search.beeldStatus();
 
     const V = "/api/v1";
     expect(request.mock.calls).toEqual([
@@ -67,6 +72,9 @@ describe("de aanroepen van zoeken en tekst (§3.4, Z1, Z2, X1)", () => {
       ["GET", `${V}/files/f%2F1/pages/3/words?token=tok+en`],
       ["GET", `${V}/files/f1/analysis`],
       ["POST", `${V}/files/f1/ocr`],
+      ["GET", `${V}/search?q=rode+auto&mode=image&type=image`],
+      ["GET", `${V}/search?mode=image&like=f%2F2`],
+      ["GET", `${V}/photos/beeld`],
     ]);
   });
 
@@ -75,6 +83,15 @@ describe("de aanroepen van zoeken en tekst (§3.4, Z1, Z2, X1)", () => {
     for (const { en } of Object.values(searchCatalog)) {
       expect(en.trim()).not.toBe("");
       expect(en).not.toMatch(/[{}]/); // de API geeft geen params mee: een {x} bleef letterlijk staan
+    }
+  });
+
+  it("de catalogus beeld.ts heeft precies de foutcodes van zoeken op beeld (X3)", () => {
+    expect([...BEELD_ERROR_CODES].sort()).toEqual(["beeld_no_vector", "beeld_not_installed", "beeld_off"]);
+    expect(Object.keys(beeldCatalog).sort()).toEqual([...BEELD_ERROR_CODES].sort());
+    for (const { en } of Object.values(beeldCatalog)) {
+      expect(en.trim()).not.toBe("");
+      expect(en).not.toMatch(/[{}]/);
     }
   });
 });

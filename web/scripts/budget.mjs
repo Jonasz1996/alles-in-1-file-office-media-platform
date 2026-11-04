@@ -26,6 +26,16 @@
 //   en zijn helpers); de plekken Plek, Personen en de waarschuwing bij delen zitten nooit in de
 //   eerste lading of in de route Bestanden.
 //
+// Fase 6 (Z0b, Keuze 55, 66, 80 en 81): regels voor de chunks van gezichten (X2) en zoeken op
+// beeld (X3), op dezelfde manier geteld, elk alles met een module uit zijn plek samen (ZOEK_GROUPS):
+// - faces: src/photos/faces/ met het gebied photos_faces (≤ 12 kB);
+// - beeld: het raster, src/search/beeld/ met het gebied beeld (≤ 15 kB);
+// - likeRow: "Meer zoals deze" in het infopaneel, src/viewer/LikeRow.tsx met het gebied beeld
+//   (≤ 3 kB);
+// - zolang een pakket zijn chunk niet bouwt, staat er "nog niet gebouwd";
+// - src/photos/faces/ hoort bij de modules van fase 6 (nooit in de eerste lading of in
+//   Bestanden), en LikeRow is een lazy plek zoals Plek en Personen.
+//
 // Gebruik: node scripts/budget.mjs [--json]
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -57,6 +67,10 @@ export const LIMITS = {
   mapData: 60 * KB,
   dupes: 45 * KB,
   people: 45 * KB,
+  // Fase 6 (Z0b): de chunks van X2 en X3 (Keuze 66 en 81)
+  faces: 12 * KB,
+  beeld: 15 * KB,
+  likeRow: 3 * KB,
 };
 
 /** Woordenboeken die in de eerste lading mogen (statisch in i18n/index.ts). */
@@ -83,11 +97,20 @@ export const ZOEK_PAGES = {
   "src/photos/people/PeoplePage.tsx": [["photos_people"], "people"],
   "src/photos/people/PersonPage.tsx": [["photos_people"], "people"],
 };
-/** Modules van fase 6; in de eerste lading alleen ZOEK_INITIAL (het zoekveld, Keuze 45). */
-const ZOEK_MODULE = /^src\/(search|dupes|photos\/(map|people))\//;
+/** Modules van fase 6; in de eerste lading alleen ZOEK_INITIAL (het zoekveld, Keuze 45). Met
+ * gezichten (src/photos/faces/, X2) erbij; het raster van beeld valt onder src/search/. */
+export const ZOEK_MODULE = /^src\/(search|dupes|photos\/(map|people|faces))\//;
 export const ZOEK_INITIAL = new Set(["src/search/AppBarSearch.tsx", "src/search/appBar.ts", "src/search/types.ts"]);
-/** De lazy plekken van fase 6: nooit in de eerste lading en nooit in de route Bestanden. */
-const ZOEK_SLOTS = /^src\/(viewer\/(LocationRow|PeopleRow)|shares\/LocationWarning)\.tsx$/;
+/** De lazy plekken van fase 6: nooit in de eerste lading en nooit in de route Bestanden. LikeRow
+ * kwam erbij in Z0b (X3). */
+export const ZOEK_SLOTS = /^src\/(viewer\/(LocationRow|PeopleRow|LikeRow)|shares\/LocationWarning)\.tsx$/;
+/** De lazy delen van X2 en X3 (Z0b): alles met een module uit hun plek samen, met hun gebied, tegen
+ * hun grens in LIMITS. Zonder zo'n chunk: "nog niet gebouwd" met het pakket erbij. */
+export const ZOEK_GROUPS = [
+  { limit: "faces", modules: /^src\/photos\/faces\//, area: "photos_faces", pkg: "X2" },
+  { limit: "beeld", modules: /^src\/search\/beeld\//, area: "beeld", pkg: "X3" },
+  { limit: "likeRow", modules: /^src\/viewer\/LikeRow\.tsx$/, area: "beeld", pkg: "X3" },
+];
 /** De wereld van de kaart (Z5, Keuze 31): public/kaart/world-110m.<hash>.json. */
 export const MAP_DATA = /^kaart\/[^/]+\.json$/;
 
@@ -267,6 +290,15 @@ function main() {
     }
     const group = extra(roots, areas);
     check(`${limit} ${page.replace(/^src\//, "")}`, sum(group), LIMITS[limit], [...group].sort().join(", "));
+  }
+  for (const { limit, modules, area, pkg } of ZOEK_GROUPS) {
+    const roots = containing(modules);
+    if (!roots.length) {
+      rows.push({ name: `${limit} (nog niet gebouwd, ${pkg})`, size: 0, limit: LIMITS[limit], ok: true, detail: "" });
+      continue;
+    }
+    const group = extra(roots, [area]);
+    check(`${limit} (${pkg})`, sum(group), LIMITS[limit], [...group].sort().join(", "));
   }
   const worlds = [...distFiles].filter((f) => MAP_DATA.test(f)).sort();
   if (worlds.length === 0) {

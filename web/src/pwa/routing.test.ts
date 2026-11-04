@@ -100,7 +100,7 @@ describe("classify", () => {
     expect(classify(req("/bewerken/abc", { mode: "navigate" }), ORIGIN)).toBe("shell");
   });
 
-  it("zoeken en foto's (fase 6): de pagina's zijn de schil; de API en de zoekvraag nooit in de cache", () => {
+  it("zoeken en foto's (fase 6, ook Z0b): de pagina's zijn de schil; de API en de zoekvraag nooit in de cache", () => {
     for (const path of ["/zoeken?q=factuur", "/fotos/kaart", "/fotos/personen", "/fotos/personen/p1", "/dubbel"]) {
       expect(classify(req(path, { mode: "navigate" }), ORIGIN)).toBe("shell");
     }
@@ -112,6 +112,12 @@ describe("classify", () => {
       "/api/v1/people",
       "/api/v1/duplicates?kind=exact",
       "/api/v1/geo/attribution",
+      // Z0b: gezichten (X2) en zoeken op beeld (X3); een uitsnede is een <img>, maar ook nooit
+      "/api/v1/people/faces/status",
+      "/api/v1/people/faces/g1/crop?size=96",
+      "/api/v1/files/f1/faces",
+      "/api/v1/search?mode=image&like=n1",
+      "/api/v1/photos/beeld",
     ]) {
       expect(classify(req(path), ORIGIN)).toBeNull();
       expect(classify(req(path, { mode: "navigate" }), ORIGIN)).toBeNull();

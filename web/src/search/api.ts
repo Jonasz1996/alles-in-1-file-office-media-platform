@@ -5,14 +5,18 @@
 //
 // De schil importeert dit bestand niet: het hoort bij de lazy chunks (het veld in de balk
 // bovenaan, AppBarSearch.tsx, gaat met een gewone link naar /zoeken).
+//
+// Z0b (Keuze 80): zoeken op beeld (X3) gaat via dezelfde search() met mode "image" en q of like;
+// beeldStatus() is GET /photos/beeld. Tot X3 er is, geeft de API daar 501 not_built.
 
 import { api } from "../api";
-import type { Analysis, PageWords, SearchPage, SearchParams, Suggestions } from "./types";
+import type { Analysis, BeeldStatus, PageWords, SearchPage, SearchParams, Suggestions } from "./types";
 import { seg, wireQuery } from "./wire";
 
 const API = "/api/v1";
 
-/** GET /search: treffers op naam en inhoud, met de filters van Keuze 43. */
+/** GET /search: treffers op naam en inhoud, met de filters van Keuze 43; met mode "image" op wat
+ * er op de foto staat (X3: 409 beeld_off als het uit staat). */
 export function search(params: SearchParams): Promise<SearchPage> {
   return api.request<SearchPage>("GET", `${API}/search${wireQuery(params)}`);
 }
@@ -37,4 +41,10 @@ export function analysis(fileId: string): Promise<Analysis> {
  * 409 ocr_has_text (in i18n/errors/photos.ts, van X1). */
 export function requestOcr(fileId: string): Promise<void> {
   return api.request<void>("POST", `${API}/files/${seg(fileId)}/ocr`);
+}
+
+/** GET /photos/beeld (X3): de stand van zoeken op beeld voor jou; zet je foto's alvast klaar in de
+ * container (hooguit eens per minuut, Keuze 78). */
+export function beeldStatus(): Promise<BeeldStatus> {
+  return api.request<BeeldStatus>("GET", `${API}/photos/beeld`);
 }
