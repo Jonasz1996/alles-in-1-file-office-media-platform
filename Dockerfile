@@ -43,6 +43,10 @@ RUN useradd --system --uid 10002 --no-create-home media \
     && install -d -o media -g platform -m 2750 /run/media \
     && chmod 0711 /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/env /usr/bin/nice /usr/bin/ionice \
     && install -o platform -g platform -m 0644 /dev/null /srv/zelftest-10001
+# Fase 6, Z2 (Keuze 17, spike S11): het kind van de opdracht text (tekst uit documenten) start
+# uit deze kopie van python die niemand mag lezen; dan is het vanaf zijn exec niet dumpbaar. Hij
+# vindt de standaardbibliotheek en het venv via /opt/venv/pyvenv.cfg (ops/text.py: python()).
+RUN install -o root -g root -m 0711 "$(readlink -f /opt/venv/bin/python)" /opt/venv/bin/python-tekst
 USER platform
 VOLUME /data
 # 8080 = http (ook voor de Let's Encrypt-controle), 8443 = https zodra er een certificaat is
