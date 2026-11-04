@@ -208,8 +208,8 @@ def _documenten(n: int, naam: str = "doc") -> list[Source]:
 def test_hooguit_40_ms_per_verzoek(klok):
     """15 ms per document. De klok kijkt vóór elk document, en een document begint alleen als
     het nog past (geschat op het duurste tot nu toe): na twee (30 ms) zou een derde op 45 ms
-    uitkomen, dus de rest krijgt snippet null met match text. Een document wordt nooit
-    halverwege gestopt."""
+    uitkomen (boven 40 - RETURN_MS), dus de rest krijgt snippet null met match text. Een
+    document wordt nooit halverwege gestopt."""
     docs = _documenten(5)
     found = build(docs, parse("zebra"))
     met = [d.id for d in docs if found[d.id].snippet is not None]
@@ -341,11 +341,14 @@ async def test_de_ocr_van_een_foto_alleen_voor_de_eigenaar(client, settings):
 
 
 def test_de_sql_telt_mee_in_de_40_ms():
-    """De stap snip (Server-Timing) is SQL plus build: wat de SQL al kostte, gaat van het budget
-    af (§4.4: snip p95 ≤ 40 ms, ook in "groot")."""
+    """De stap snip (Server-Timing) is SQL plus build plus de weg terug: wat de SQL al kostte,
+    gaat van het budget af, en RETURN_MS blijft over (§4.4: snip p95 ≤ 40 ms, ook in "groot")."""
     docs = [Source(uuid.uuid4(), "x", body="een zebra") for _ in range(3)]
     assert all(s.snippet for s in build(docs, parse("zebra"), 0.0).values())
     op = build(docs, parse("zebra"), snippets.REQUEST_MS)
+    assert {(s.match, s.snippet) for s in op.values()} == {("text", None)}
+    # De weg terug uit de thread hoort ook bij de stap: RETURN_MS blijft over
+    op = build(docs, parse("zebra"), snippets.REQUEST_MS - snippets.RETURN_MS)
     assert {(s.match, s.snippet) for s in op.values()} == {("text", None)}
 
 

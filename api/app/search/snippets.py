@@ -30,8 +30,9 @@
 - De klok kijkt vóór elk document: hooguit 40 ms per verzoek, en voor de hele app hooguit
   100 ms per seconde (Keuze 13). De 40 ms gelden voor de hele stap snip (Server-Timing, §4.4):
   de SQL, het wachten op de thread en elk document tellen mee (de wandklok vanaf het begin van
-  de stap). Een document begint alleen als het nog past, geschat op het duurste document tot nu
-  toe in dit verzoek; een document wordt nooit halverwege gestopt. Wat niet meer past, krijgt
+  de stap), en RETURN_MS blijft over voor de weg terug naar de event loop. Een document begint
+  alleen als het nog past, geschat op het duurste document tot nu toe in dit verzoek; een
+  document wordt nooit halverwege gestopt. Wat niet meer past, krijgt
   snippet null en match "text" (de treffer en zijn naam blijven). De klok is CLOCK (de tests
   zetten een nepklok).
 - Het werk draait in een thread (anyio.to_thread) met een eigen limiter van 1, zodat de event
@@ -70,6 +71,11 @@ MARGIN = 200
 BEFORE = 50
 # Het budget (Keuze 8 en 13): per verzoek, en voor de hele app per APP_WINDOW_S seconden
 REQUEST_MS = 40.0
+# Wat er na build() nog in de stap snip zit en build() niet ziet: de weg terug uit de thread naar
+# de event loop. build() begint geen document dat na REQUEST_MS - RETURN_MS zou eindigen (§4.4:
+# bij volgende pagina's met grote teksten is het budget bijna altijd op, en kwam de p95 op 39,6
+# met een max van 41,5)
+RETURN_MS = 3.0
 APP_MS = 100.0
 APP_WINDOW_S = 1.0
 # De klok van het budget, in seconden (de tests zetten een nepklok)
@@ -323,8 +329,9 @@ def build(sources: Sequence[Source], parsed: Parsed, already: float = 0.0) -> di
     ms die de stap al kostte (de SQL van make() en het wachten op de thread).
 
     Een document begint alleen als het nog past: wat de stap tot nu toe kostte (de wandklok),
-    plus het duurste document tot nu toe in dit verzoek, blijft onder REQUEST_MS; en de app
-    heeft in zijn venster nog meer over dan het duurste document daarin of in dit verzoek."""
+    plus het duurste document tot nu toe in dit verzoek, blijft onder REQUEST_MS - RETURN_MS; en
+    de app heeft in zijn venster nog meer over dan het duurste document daarin of in dit
+    verzoek."""
     rx = pattern(parsed)
     begin = CLOCK()
     most = 0.0
@@ -336,7 +343,7 @@ def build(sources: Sequence[Source], parsed: Parsed, already: float = 0.0) -> di
         start = CLOCK()
         spent = already + (start - begin) * 1000
         left, largest = APP.left(start)
-        if spent + most >= REQUEST_MS or left <= max(most, largest):
+        if spent + most >= REQUEST_MS - RETURN_MS or left <= max(most, largest):
             out[src.id] = Snip("text", None)
             continue
         out[src.id] = _one(src, rx)
