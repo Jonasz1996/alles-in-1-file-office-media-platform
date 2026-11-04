@@ -1,5 +1,10 @@
 """Zoeken en foto's op /beheer (bouwontwerp fase 6, §3.4 en Keuze 51; Z7). Stubs van Z0: 501
 not_built, alleen voor beheerders.
+
+Gezichten (X2) en beeld (X3) vult Z7 via app.search.hooks: admin_block() voor AdminSearch.faces
+en .beeld, admin_switch() voor faces_allowed en beeld (ADMIN_SWITCHES), admin_rebuild() voor
+what faces en beeld. Zonder aanmelding geven die laatste twee 501 not_built("X2") of ("X3")
+(review Z0b, contract F4).
 """
 
 from typing import Annotated

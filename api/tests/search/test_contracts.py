@@ -10,10 +10,12 @@ from __future__ import annotations
 import dataclasses
 import logging
 import uuid
+from types import SimpleNamespace
 
 import pytest
 import sqlalchemy as sa
 from alembic import command
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -52,11 +54,13 @@ def _schone_registers():
     hooks.reset()
     analysis.reset()
     engine.forget()
+    prefs.forget_switches()
     yield
     filters.reset()
     hooks.reset()
     analysis.reset()
     engine.forget()
+    prefs.forget_switches()
 
 
 # --- typen ---
@@ -353,6 +357,165 @@ async def test_foto_instellingen_met_standaarden(settings):
     for bad in ({"faces": "ja"}, {"beeld": True}, {"faces_forbidden": False}, {"onbekend": 1}):
         with pytest.raises(ValidationError):
             prefs.PhotoSettingsPatch.model_validate(bad)
+
+
+def _gebruiker(role: str = "user") -> SimpleNamespace:
+    return SimpleNamespace(id=uuid.uuid4(), role=role)
+
+
+async def _fout(aanroep) -> tuple[int, str]:
+    with pytest.raises(HTTPException) as caught:
+        await aanroep
+    return caught.value.status_code, caught.value.detail["code"]
+
+
+def _patch(**velden) -> prefs.PhotoSettingsPatch:
+    return prefs.PhotoSettingsPatch.model_validate(velden)
+
+
+async def test_gezichten_en_beeld_aanzetten_kan_niet_zonder_x2_en_x3():
+    """Review Z0b, veilig V3 en contract F1: PhotoSettingsPatch neemt faces en beeld "aan", maar
+    check_switch weigert dat zolang X2 of X3 zich niet aanmeldt, en altijd als de analyse uit
+    staat (Keuze 59: 409 faces_unavailable, 409 beeld_not_installed). Z6 roept hem aan vóór hij
+    schrijft. "uit" gaat altijd; een gast mag geen van beide (403 guest)."""
+    db = None  # zonder aanmelding leest check_switch niets
+    eva = _gebruiker()
+    for analyse in (False, True):
+        check = prefs.check_switch
+        assert await _fout(check(db, eva, _patch(faces="aan"), analyse_enabled=analyse)) == (
+            409, "faces_unavailable"
+        )  # fmt: skip
+        assert await _fout(check(db, eva, _patch(beeld="aan"), analyse_enabled=analyse)) == (
+            409, "beeld_not_installed"
+        )  # fmt: skip
+        for patch in (_patch(faces="uit", beeld="uit"), _patch(location="uit"), _patch()):
+            await check(db, eva, patch, analyse_enabled=analyse)
+    gast = _gebruiker("guest")
+    for velden in ({"faces": "aan"}, {"faces": "uit"}, {"beeld": "aan"}, {"beeld": "uit"}):
+        got = await _fout(prefs.check_switch(db, gast, _patch(**velden), analyse_enabled=True))
+        assert got == (403, "guest"), velden
+    await prefs.check_switch(db, gast, _patch(location="uit"), analyse_enabled=True)
+
+
+async def test_x2_en_x3_melden_hun_schakelaar_aan():
+    """Review Z0b, contract F4: X2 en X3 melden bij app.prefs wat hun schakelaar mag en doet;
+    Z6 hoeft photo_prefs.py dan niet voor ze te openen. De stand van de analyse gaat vóór X2:
+    zonder PLATFORM_ANALYSE_ENABLED is er nooit iets beschikbaar."""
+    assert prefs.SWITCHES == {"faces": "X2", "beeld": "X3"}
+    gezien: list[tuple[str, str]] = []
+    stand = {"faces": prefs.SwitchState(), "beeld": prefs.SwitchState()}
+
+    def aanmelden(key: str) -> None:
+        async def state(db, user):
+            return stand[key]
+
+        async def changed(db, user, value):
+            gezien.append((key, value))
+
+        prefs.register_switch(key, prefs.Switch(state=state, changed=changed))
+
+    aanmelden("faces")
+    aanmelden("beeld")
+    eva = _gebruiker()
+    check = prefs.check_switch
+    stand["faces"] = stand["beeld"] = prefs.SwitchState(available=True)
+    # Beschikbaar volgens X2 en X3, maar de analyse staat uit: Keuze 59 wint
+    assert await _fout(check(None, eva, _patch(faces="aan"), analyse_enabled=False)) == (
+        409, "faces_unavailable"
+    )  # fmt: skip
+    assert await _fout(check(None, eva, _patch(beeld="aan"), analyse_enabled=False)) == (
+        409, "beeld_not_installed"
+    )  # fmt: skip
+    st = await prefs.switch_state(None, eva, "faces", analyse_enabled=False)
+    assert st == prefs.SwitchState(forbidden=False, available=False)
+    await check(None, eva, _patch(faces="aan", beeld="aan"), analyse_enabled=True)
+    # De beheerder verbiedt het (Keuze 64), of zet beeld uit voor iedereen (Keuze 82)
+    stand["faces"] = stand["beeld"] = prefs.SwitchState(forbidden=True, available=True)
+    assert await _fout(check(None, eva, _patch(faces="aan"), analyse_enabled=True)) == (
+        403, "faces_forbidden"
+    )  # fmt: skip
+    assert await _fout(check(None, eva, _patch(beeld="aan"), analyse_enabled=True)) == (
+        409, "beeld_off"
+    )  # fmt: skip
+    await check(None, eva, _patch(faces="uit", beeld="uit"), analyse_enabled=True)
+    # Na het schrijven: alleen wat echt veranderde, in de volgorde faces, beeld
+    before = dict(prefs.PHOTO_PREFS)
+    await prefs.switched(None, eva, before, _patch(location="uit"))
+    await prefs.switched(None, eva, before, _patch(faces="uit", beeld="uit"))
+    assert gezien == []
+    await prefs.switched(None, eva, before, _patch(beeld="aan", faces="aan"))
+    await prefs.switched(None, eva, {**before, "faces": "aan"}, _patch(faces="uit"))
+    assert gezien == [("faces", "aan"), ("beeld", "aan"), ("faces", "uit")]
+    prefs.forget_switches()
+    assert await prefs.switch_state(None, eva, "faces", analyse_enabled=True) == (
+        prefs.SwitchState()
+    )
+
+
+async def test_de_foto_instellingen_met_de_stand_van_x2(settings):
+    """GET /me/photo-settings van Z6 is prefs.photo_settings(): de vijf instellingen plus
+    faces_forbidden en faces_available. Zonder X2 allebei False (zoals PhotoSettings zegt)."""
+    eva = _gebruiker()
+    async with sessions(settings)() as db:
+        got = await prefs.photo_settings(db, eva, analyse_enabled=True)
+    assert got == prefs.PhotoSettings(**prefs.PHOTO_PREFS)
+    assert (got.faces_forbidden, got.faces_available) == (False, False)
+
+    async def state(db, user):
+        return prefs.SwitchState(forbidden=True, available=True)
+
+    async def changed(db, user, value):
+        return None
+
+    prefs.register_switch("faces", prefs.Switch(state=state, changed=changed))
+    async with sessions(settings)() as db:
+        got = await prefs.photo_settings(db, eva, analyse_enabled=True)
+        assert (got.faces_forbidden, got.faces_available) == (True, True)
+        got = await prefs.photo_settings(db, eva, analyse_enabled=False)
+        assert (got.faces_forbidden, got.faces_available) == (True, False)
+
+
+async def test_x2_en_x3_melden_hun_deel_van_beheer_aan():
+    """Review Z0b, contract F4: het blok, de schakelaar en het herbouwen van gezichten en beeld op
+    /admin/search gaan via search.hooks, zodat Z7 admin.py en admin_search.py niet voor X2 en X3
+    open hoeft. Zonder aanmelding: het blok None (de standaard van AdminSearch), en de schakelaar
+    en herbouwen geven 501 not_built van het pakket."""
+    assert hooks.ADMIN_PARTS == {"faces": "X2", "beeld": "X3"}
+    assert set(hooks.ADMIN_PARTS) == set(t.RebuildWhat.__args__) - {
+        "names", "text", "geo", "hash", "ocr"
+    }  # fmt: skip
+    assert set(hooks.ADMIN_PARTS) == {"faces", "beeld"} <= set(t.AdminSearch.model_fields)
+    assert hooks.ADMIN_SWITCHES == {"faces_allowed": "faces", "beeld": "beeld"}
+    assert set(hooks.ADMIN_SWITCHES) <= set(t.AdminSearchPatch.model_fields)
+    for name, package in hooks.ADMIN_PARTS.items():
+        assert await hooks.admin_block(name, None) is None
+        for aanroep in (hooks.admin_switch(name, None, True), hooks.admin_rebuild(name, None)):
+            with pytest.raises(HTTPException) as caught:
+                await aanroep
+            assert caught.value.status_code == 501
+            assert caught.value.detail["code"] == "not_built"
+            assert caught.value.detail["params"] == {"package": package}
+
+    gezien: list[tuple] = []
+
+    async def block(db):
+        gezien.append(("block", db))
+        return "blok"
+
+    async def switch(db, value):
+        gezien.append(("switch", db, value))
+
+    async def rebuild(db):
+        gezien.append(("rebuild", db))
+
+    hooks.register_admin("faces", hooks.AdminPart(block=block, switch=switch, rebuild=rebuild))
+    assert await hooks.admin_block("faces", "db") == "blok"
+    await hooks.admin_switch("faces", "db", False)
+    await hooks.admin_rebuild("faces", "db")
+    assert gezien == [("block", "db"), ("switch", "db", False), ("rebuild", "db")]
+    assert await hooks.admin_block("beeld", "db") is None
+    hooks.reset()
+    assert await hooks.admin_block("faces", "db") is None
 
 
 async def test_na_de_migratie_is_de_stand_van_de_database_al_gelezen(settings):

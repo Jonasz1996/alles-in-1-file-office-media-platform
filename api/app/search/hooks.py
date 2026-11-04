@@ -12,6 +12,12 @@ de haken niets, en is de app precies 0.7.1.
   voor het zoekveld.
 - backfill(settings): bij het starten van de app (main.lifespan), vóór de rijen draaien: elk
   pakket zet zijn achterstand klaar (Z2 tekst, Z3 hash en plaatsen). Faalt nooit.
+- admin (Z0b, review contract F4): wat X2 (faces) en X3 (beeld) op /admin/search doen: het blok
+  in GET (AdminSearch.faces en .beeld), de schakelaar in PATCH (faces_allowed en beeld) en
+  POST rebuild {what: faces | beeld}. Z7 roept admin_block, admin_switch en admin_rebuild aan,
+  zodat X2 en X3 app/search/admin.py en routers/admin_search.py niet open hoeven. Zonder
+  aanmelding is het blok None (de standaard van AdminSearch), en geven de schakelaar en het
+  herbouwen 501 not_built("X2") of not_built("X3"), net als de stubs.
 """
 
 from __future__ import annotations
@@ -19,12 +25,17 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import event
 from sqlalchemy.orm import Session as OrmSession
 
+from app.routers.stubs import not_built
+
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from app.config import Settings
 
 log = logging.getLogger("platform.search")
@@ -78,10 +89,59 @@ def suggesters() -> list[SuggestFn]:
     return list(_suggest)
 
 
+# De delen van /admin/search die van X2 en X3 zijn, met hun pakket
+ADMIN_PARTS: dict[str, str] = {"faces": "X2", "beeld": "X3"}
+# Welk veld van AdminSearchPatch bij welk deel hoort
+ADMIN_SWITCHES: dict[str, str] = {"faces_allowed": "faces", "beeld": "beeld"}
+
+
+@dataclass(frozen=True)
+class AdminPart:
+    """De aanmelding van X2 (faces) of X3 (beeld) voor /admin/search. block: AdminFaces of
+    AdminBeeld; switch: faces_allowed of beeld uit de PATCH (X2: een verbod zet iedereen uit en
+    wist, Keuze 64; X3: Keuze 82); rebuild: POST rebuild met what faces of beeld."""
+
+    block: Callable[[AsyncSession], Awaitable[Any]]
+    switch: Callable[[AsyncSession, bool], Awaitable[None]]
+    rebuild: Callable[[AsyncSession], Awaitable[None]]
+
+
+_admin: dict[str, AdminPart] = {}
+
+
+def register_admin(name: Literal["faces", "beeld"], part: AdminPart) -> None:
+    if name not in ADMIN_PARTS:
+        raise ValueError(name)
+    _admin[name] = part
+
+
+async def admin_block(name: str, db: AsyncSession) -> Any:
+    """Het blok voor GET /admin/search; None zonder aanmelding."""
+    part = _admin.get(name)
+    return None if part is None else await part.block(db)
+
+
+async def admin_switch(name: str, db: AsyncSession, value: bool) -> None:
+    """De schakelaar uit PATCH /admin/search; zonder aanmelding 501 not_built."""
+    part = _admin.get(name)
+    if part is None:
+        raise not_built(ADMIN_PARTS[name])
+    await part.switch(db, value)
+
+
+async def admin_rebuild(name: str, db: AsyncSession) -> None:
+    """POST /admin/search/rebuild met what faces of beeld; zonder aanmelding 501 not_built."""
+    part = _admin.get(name)
+    if part is None:
+        raise not_built(ADMIN_PARTS[name])
+    await part.rebuild(db)
+
+
 def reset() -> None:
     """Alleen voor tests: alle aanmeldingen weg."""
     for registry in (_blob_added, _photo_copy, _groups, _suggest, _backfill):
         registry.clear()
+    _admin.clear()
 
 
 def blob_added(sha: str, owner: uuid.UUID | None) -> None:

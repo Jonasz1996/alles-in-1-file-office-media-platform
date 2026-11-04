@@ -2508,7 +2508,11 @@ vanzelf te delen.
 - `albums_rule.py`, `album_rule` met `share_new`, `album_item.source` en `.shared`, `album_skip`,
   de verversing, `POST /albums/{id}/rule/confirm`, en `shared = 1` in `access._via_albums` en
   `public._in_album` (Keuze 42);
-- `photo_pref` en `/me/photo-settings` (Keuze 44);
+- `photo_pref` en `/me/photo-settings` (Keuze 44). PATCH roept eerst `prefs.check_switch()`
+  aan, vóór er iets geschreven wordt, en daarna `prefs.switched()`; GET geeft
+  `prefs.photo_settings()`. Zo zet niemand gezichten of beeld aan zonder X2 of X3 en zonder de
+  analyse, en hoeft X2 deze route niet open (na de review van Z0b: veilig V3, contract F1 en F4).
+  Test van Z6: `PATCH {faces: "aan"}` geeft `409 faces_unavailable`;
 - web: "Persoon toevoegen" met kader in het infopaneel, `/fotos/personen`, de persoonpagina,
   "Vandaag, N jaar geleden" op `/fotos`, de regel en de vraag over delen in het albumdialoog,
   het merkje "alleen voor jou", filters op `/fotos`; het gebied `photos_people` en de catalogus
@@ -2532,7 +2536,10 @@ e2e; `/photos/memories` p95 ≤ 50 ms in `zoek-perf`.
 
 **Doel.** Jonas kan updaten, zien wat er gebeurt, en terug.
 
-**Bouwt:** de tab op `/beheer` (Keuze 51) en `app/search/admin.py`; de reservekopie met alleen de
+**Bouwt:** de tab op `/beheer` (Keuze 51) en `app/search/admin.py`, met de blokken, de
+schakelaars en het herbouwen van gezichten en beeld via `search.hooks.admin_block`,
+`admin_switch` en `admin_rebuild` (na de review van Z0b, contract F4: zonder X2 of X3 het blok
+`null` en `501 not_built`); de reservekopie met alleen de
 standaardbibliotheek in `install.sh`, en de opruimregel per alembic-head (Keuze 52); het
 downloaden van de twee bronnen voor plaatsen naar `DATA_ROOT/geo/` met sha256, en `PLAATSEN` in
 `.env.example` (Keuze 29); `app.cli bench --los` (de versie van Z0, nu met de uitkomst op
@@ -3059,7 +3066,7 @@ Z0b (Keuze 55). De routes staan in
 | Route | Wie | Wat |
 |---|---|---|
 | `GET /me/photo-settings` | ingelogd | erbij: `faces` (`aan`/`uit`), `faces_forbidden`, `faces_available` |
-| `PATCH /me/photo-settings` `{faces}` | ingelogd, geen gast | `aan`: alleen als de analyse beschikbaar is en het niet verboden is; zet `faces.plan` klaar. `uit`: zet `faces.wipe` klaar en antwoordt meteen; de status toont "wissen". |
+| `PATCH /me/photo-settings` `{faces}` | ingelogd, geen gast | `aan`: alleen als de analyse beschikbaar is en het niet verboden is; zet `faces.plan` klaar. `uit`: zet `faces.wipe` klaar en antwoordt meteen; de status toont "wissen". De route is van Z6: X2 meldt zich aan met `prefs.register_switch("faces", …)`, en de regel staat in `prefs.check_switch` (na de review van Z0b). |
 | `GET /people/faces/status` | eigenaar | `{setting, forbidden, analyse: ok/down/models_missing/off, photos: {total, done, waiting, failed, skipped}, faces: {found, named, open, groups}, wiping}` |
 | `GET /people/faces/suggestions?person=&cursor=&limit=60` | eigenaar | zonder `person`: per persoon `{person, count, sample[6]}`; met `person`: de gezichten, beste eerst |
 | `GET /people/faces/groups?cursor=` | eigenaar | `[{key: "<run>:<cluster>", count, faces[12]}]`, de grootste eerst |
@@ -4204,6 +4211,20 @@ class Place: id: int | None; name: str | None; admin1: str | None; cc: str | Non
 # app/prefs.py
 PHOTO_PREFS = {"location": "mij", "memories": True, "ocr_photos": False, "faces": "uit",
                "beeld": "uit"}                      # beeld: Z0b (Vraag 11)
+# na de review van Z0b (veilig V3, contract F1 en F4): X2 en X3 melden hun schakelaar aan; Z6
+# roept check_switch vóór het schrijven aan en switched erna, in dezelfde transactie
+def register_switch(key: Literal["faces", "beeld"], switch: Switch) -> None: ...
+async def check_switch(db, user, patch, *, analyse_enabled: bool) -> None: ...
+    # gast 403 guest; aan: 403 faces_forbidden / 409 beeld_off, 409 faces_unavailable /
+    # 409 beeld_not_installed zonder aanmelding of zonder PLATFORM_ANALYSE_ENABLED; uit mag altijd
+async def switched(db, user, before: dict, patch) -> None: ...
+async def photo_settings(db, user, *, analyse_enabled: bool) -> PhotoSettings: ...
+
+# app/search/hooks.py (na de review van Z0b, contract F4): het deel van X2 en X3 op /beheer
+def register_admin(name: Literal["faces", "beeld"], part: AdminPart) -> None: ...
+async def admin_block(name, db) -> Any: ...          # None zonder aanmelding
+async def admin_switch(name, db, value: bool) -> None: ...   # zonder aanmelding 501 not_built
+async def admin_rebuild(name, db) -> None: ...       # zonder aanmelding 501 not_built
 ```
 
 Rijen in `jobs.py`:
