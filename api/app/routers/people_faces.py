@@ -14,6 +14,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, Response
+from pydantic import BeforeValidator
 
 from app.people.faces_types import (
     FACES_PAGE,
@@ -34,6 +35,9 @@ from app.security import CurrentUser
 router = APIRouter(prefix="/api/v1", tags=["foto's"])
 
 Cursor = Annotated[str | None, Query(max_length=200)]
+# ?size=96 komt als tekst binnen; CropSize (Literal[96, 192]) alleen neemt geen "96" (dan altijd
+# 422, ook voor faceCropUrl van de web)
+Size = Annotated[CropSize, BeforeValidator(int)]
 
 
 @router.get("/people/faces/status")
@@ -93,7 +97,7 @@ async def wipe_unnamed_faces(user: CurrentUser) -> FacesQueued:
 
 
 @router.get("/people/faces/{face_id}/crop", response_class=Response)
-async def face_crop(face_id: uuid.UUID, user: CurrentUser, size: CropSize = 96) -> Response:
+async def face_crop(face_id: uuid.UUID, user: CurrentUser, size: Size = 96) -> Response:
     """WebP, Cache-Control: no-store; niets op schijf."""
     raise not_built("X2")
 

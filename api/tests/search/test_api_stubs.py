@@ -336,6 +336,38 @@ async def test_elke_stub_geeft_501_not_built(client, admin, settings):
         assert detail["params"] == {"package": package}, (method, path)
 
 
+async def test_een_vast_getal_in_de_query_string_komt_bij_de_stub(client, admin):
+    """Een keuze uit vaste getallen in de query (?size=96, ?hidden=1) komt als tekst binnen, zoals
+    de web hem stuurt (wireQuery). Literal[96, 192] alleen neemt geen "96": dan gaf elke waarde
+    422 en kwam niemand bij de route (gevonden bij de samenvoeging van Z0b)."""
+    headers, _ = admin
+    schema = app.openapi()["paths"]
+    gezien = set()
+    for method, path, body, who, *_ in ENDPOINTS:
+        if (method, path) in BUILT or who == "token":
+            continue
+        for param in schema[path][method.lower()].get("parameters", []):
+            keuzes = param["schema"].get("enum", [])
+            if param["in"] != "query" or not keuzes or not all(type(k) is int for k in keuzes):
+                continue
+            for keuze in keuzes:
+                params = {**QUERY.get(path, {}), param["name"]: str(keuze)}
+                r = await client.request(
+                    method, url_of(path), json=body, params=params, headers=headers
+                )
+                assert r.status_code == 501, (method, path, params, r.status_code, r.text)
+            params = {**QUERY.get(path, {}), param["name"]: str(max(keuzes) + 1)}
+            r = await client.request(
+                method, url_of(path), json=body, params=params, headers=headers
+            )
+            assert r.status_code == 422, (method, path, params, r.status_code)
+            gezien.add((path, param["name"]))
+    assert gezien == {
+        ("/api/v1/people", "hidden"),
+        ("/api/v1/people/faces/{face_id}/crop", "size"),
+    }
+
+
 async def test_zonder_login_geen_toegang_en_beheer_alleen_voor_beheerders(client, admin):
     headers, _ = admin
     gewoon = await new_user(client, headers, "gewoon@example.nl")

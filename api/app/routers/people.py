@@ -6,6 +6,7 @@ import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query
+from pydantic import BeforeValidator
 
 from app.people.types import (
     AddPersonIn,
@@ -22,9 +23,12 @@ from app.security import CurrentUser
 
 router = APIRouter(prefix="/api/v1", tags=["foto's"])
 
+# ?hidden=1 komt als tekst binnen; Literal[0, 1] alleen neemt geen "1" (dan altijd 422)
+Hidden = Annotated[Literal[0, 1], BeforeValidator(int)]
+
 
 @router.get("/people")
-async def list_people(user: CurrentUser, hidden: Literal[0, 1] = 0) -> People:
+async def list_people(user: CurrentUser, hidden: Hidden = 0) -> People:
     raise not_built("Z6")
 
 
