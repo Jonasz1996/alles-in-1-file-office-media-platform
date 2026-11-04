@@ -3,8 +3,8 @@
 Nieuwe inhoud meldt zich na de commit bij search.hooks.blob_added; kopiëren roept photo_copy in
 dezelfde transactie; de prullenbak en het wissen van een gebruiker wissen nodes via de ene
 helper; na preview.ready komt wie zich aanmeldde aan de beurt; render.py kent de ingangen text
-(sinds Z2 echt) en ocr_page (een stub tot X1). De rijen index en ocr staan in test_jobs_lanes.py, de log in
-test_log_hiding.py, en db-backup en de stubs van de cli in test_cli_db.py.
+(sinds Z2 echt) en ocr_page (een stub tot X1). De rijen index en ocr staan in test_jobs_lanes.py,
+de log in test_log_hiding.py, en db-backup en de stubs van de cli in test_cli_db.py.
 
 Z0b (Keuze 65): hier dat niemand zich met register_large aanmeldt, en (na de review) ook niet met
 register_switch of register_admin. Wat er na de grote preview gebeurt, staat in test_previews.py:
@@ -27,8 +27,8 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import previews
-from app.extract import frame
 from app.db import get_engine
+from app.extract import frame
 from app.models import Node
 from app.search import hooks, purge
 
