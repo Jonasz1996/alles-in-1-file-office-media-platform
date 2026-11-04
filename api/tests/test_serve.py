@@ -4,6 +4,7 @@ stopt http niet."""
 
 import asyncio
 import contextlib
+import gc
 import re
 import resource
 import socket
@@ -278,9 +279,9 @@ def https_get(port: int, path: str) -> str:
 
 
 @contextlib.asynccontextmanager
-async def platform(tmp_path, monkeypatch, https_port: int):
+async def platform(tmp_path, monkeypatch, https_port: int, started=None):
     """Het hele platform via serve.run, met al een certificaat in data/tls (zoals na
-    een herstart). Geeft een http-client."""
+    een herstart). Geeft een http-client. started gaat mee naar serve.run."""
     monkeypatch.setattr(serve, "LISTENER_RETRY", 0.2)
     http_port = free_port()
     for key, value in {
@@ -296,7 +297,7 @@ async def platform(tmp_path, monkeypatch, https_port: int):
     settings = get_settings()
     write_cert(CertManager(settings), "platform.test")
     stop = asyncio.Event()
-    task = asyncio.create_task(serve.run(settings, stop))
+    task = asyncio.create_task(serve.run(settings, stop, started=started))
     base = f"http://127.0.0.1:{http_port}"
     try:
         async with httpx.AsyncClient(base_url=base, trust_env=False, timeout=5) as c:
@@ -413,3 +414,38 @@ async def test_na_de_body_wacht_receive_onbeperkt(monkeypatch):
     seen = await edge_with_body(b"klaar", done=True, wait=0.5)
     assert time.monotonic() - start >= 0.45
     assert [m["type"] for m in seen] == ["http.request", "http.disconnect"]
+
+
+def test_python_m_app_serve_bevriest_de_heap_na_de_start(monkeypatch):
+    """Review golf 1 van fase 6, H2: python -m app.serve geeft freeze_heap mee aan run; een
+    volle ronde van de gc liep anders over alles wat er na de start is (±140 ms stil)."""
+    seen = []
+
+    async def run(settings, stop, started=None):
+        seen.append(started)
+
+    monkeypatch.setattr(serve, "run", run)
+    monkeypatch.setattr(serve, "_raise_fd_limit", lambda: None)
+    serve.main()
+    assert seen == [serve.freeze_heap]
+
+
+def test_freeze_heap_haalt_wat_er_is_uit_de_gc():
+    before = gc.get_freeze_count()  # python zelf bevriest er bij de start al een paar honderd
+    try:
+        serve.freeze_heap()
+        assert gc.get_freeze_count() > before + 10_000  # de modules en de app
+        assert gc.get_count()[0] < 100  # eerst opgeruimd: wat weg kan is weg
+    finally:
+        gc.unfreeze()
+
+
+@pytest.mark.anyio
+async def test_started_komt_na_de_lifespan(tmp_path, monkeypatch):
+    """run roept started aan als http luistert: na de lifespan (die zet app.state.certs)."""
+    seen = []
+    async with platform(tmp_path, monkeypatch, free_port(), started=lambda: seen.append(
+        hasattr(app.state, "certs")
+    )) as c:  # fmt: skip
+        assert (await c.get("/health")).status_code == 200
+        assert seen == [True]

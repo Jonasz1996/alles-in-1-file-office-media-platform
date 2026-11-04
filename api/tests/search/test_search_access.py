@@ -30,6 +30,7 @@ from app.search import access, engine, limits
 from app.search.access import MAX_OR, ranges_sql, search_ranges
 from tests.search import wereld as W
 from tests.search.referentie import Referentie
+from tests.test_files import mkdir, put, root
 
 pytestmark = pytest.mark.anyio
 
@@ -208,6 +209,41 @@ async def test_een_deling_ingetrokken_in_hetzelfde_verzoek(
     regels = [rec.getMessage() for rec in caplog.records if rec.name == "platform.search"]
     assert regels == [f"search_access_mismatch {w.ids['doc']}"]
     assert all(W.TEKST_WOORD not in m and "Verslag" not in m for m in caplog.messages)
+
+
+async def test_de_controle_en_het_pad_in_een_query(client, admin, settings):
+    """Review golf 1, H2: voor eigen treffers komen de tweede controle en het pad uit één
+    recursieve query (de keten omhoog), niet uit twee; het pad loopt van de hoofdmap tot de map
+    erboven, ook voor treffers die dezelfde mappen boven zich hebben."""
+    headers, _ = admin
+    eigen = (await root(client, headers))["folder"]["id"]
+    a = await mkdir(client, headers, eigen, "a")
+    b = await mkdir(client, headers, a, "b")
+    for i in range(3):
+        await put(client, headers, b, f"keten {i}.txt", b"x")
+    await put(client, headers, eigen, "keten boven.txt", b"x")
+    statements: list[str] = []
+
+    def tel(conn, cursor, statement, params, context, executemany):
+        statements.append(statement)
+
+    sync = get_engine(settings).sync_engine
+    sa.event.listen(sync, "before_cursor_execute", tel)
+    try:
+        r = await client.get("/api/v1/search", params={"q": "keten"}, headers=headers)
+    finally:
+        sa.event.remove(sync, "before_cursor_execute", tel)
+    assert r.status_code == 200, r.text
+    assert r.json()["engine"] == "fts"
+    paden = {hit["node"]["name"]: hit["path"] for hit in r.json()["results"]}
+    onder = [{"id": eigen, "name": ""}, {"id": a, "name": "a"}, {"id": b, "name": "b"}]
+    assert paden == {
+        "keten 0.txt": onder,
+        "keten 1.txt": onder,
+        "keten 2.txt": onder,
+        "keten boven.txt": [{"id": eigen, "name": ""}],
+    }
+    assert sum("RECURSIVE" in s for s in statements) == 1, statements
 
 
 async def test_de_wortels_van_iedereen(settings):

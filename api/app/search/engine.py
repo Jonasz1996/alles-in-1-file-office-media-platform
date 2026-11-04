@@ -38,6 +38,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import cache
 from typing import Any, Literal, Protocol
 
 from sqlalchemy import (
@@ -60,6 +61,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.selectable import Alias, Join
 
 from app import errors
+from app.access import Step
 from app.config import Settings, get_settings
 from app.models import Node, PhotoOcr, User
 from app.routers.files import describe, get_dir, is_trashed, tags_by_node
@@ -67,7 +69,7 @@ from app.search import snippets
 from app.search.access import MAX_OR, Ranges, ranges_sql, search_ranges, second_check
 from app.search.deadline import STOP, deadline
 from app.search.filters import apply_all
-from app.search.like import LikeFallback, check_library, own_tag, paths
+from app.search.like import LikeFallback, check_library, own_tag
 from app.search.query import Parsed, parse
 from app.search.types import Hit, PathPart, SearchPage, SearchParams, Suggestions
 
@@ -182,9 +184,15 @@ class _ByParent(_Indexed):
     index = "ix_node_parent_order"
 
 
+@cache
+def indexed(kind: type[_Indexed]) -> Alias:
+    """node AS n INDEXED BY <index van kind>; één object per soort, zoals alias()."""
+    return kind._construct(_NODE, name="n")
+
+
 def top_level() -> Alias:
     """node AS n INDEXED BY ix_node_parent_order, voor wat op het hoogste niveau staat."""
-    return _ByParent._construct(_NODE, name="n")
+    return indexed(_ByParent)
 
 
 @compiles(_Indexed)
@@ -216,7 +224,11 @@ C_MS = 20
 SMALL = 20_000
 
 
+@cache
 def alias() -> Any:
+    """node AS n, één object voor elke vraag: een alias maakt bij zijn eerste .c een kopie van
+    elke kolom van node, en dat kostte bij elke vraag opnieuw CPU in de event loop (review golf
+    1, H2). Een alias verandert nooit; een select maakt er een nieuwe vraag mee."""
     return _NODE.alias("n")
 
 
@@ -324,7 +336,7 @@ def names_select(
         )
         order = FTS_NAME.c.rowid
     else:
-        n = (_ByPath if small else _ByNum)._construct(_NODE, name="n")
+        n = indexed(_ByPath if small else _ByNum)
         sel = select(*_columns(n)).select_from(n)
         order = n.c.num
     sel = sel.where(
@@ -346,11 +358,11 @@ def filters_select(scope: Scope, k: int, small: bool) -> Select:
     """Alleen filters, zonder vraag (Keuze 4a), op de nieuwste eerst."""
     types = set(scope.p.types)
     if small:
-        n = _ByPath._construct(_NODE, name="n")
+        n = indexed(_ByPath)
     elif len(types) == 1:
-        n = _ByType._construct(_NODE, name="n")
+        n = indexed(_ByType)
     else:
-        n = _ByTime._construct(_NODE, name="n")
+        n = indexed(_ByTime)
     sel = select(*_columns(n)).select_from(n)
     sel = scoped(sel, n, scope)
     return sel.order_by(n.c.modified_at.desc(), n.c.num.desc()).limit(k)
@@ -403,6 +415,43 @@ async def check_in(db: AsyncSession, user: User, folder: uuid.UUID) -> None:
         raise errors.fail(404, "folder_not_found", "Map niet gevonden")
 
 
+@cache
+def page_nodes() -> Select:
+    """De kolommen die files.describe leest, van de nodes van een pagina (de ids als één
+    lijst-parameter "ids"). Rijen, geen ORM-objecten: die kostten met de identity map ±1 ms
+    CPU in de event loop per pagina (review golf 1, H2)."""
+    n = _NODE
+    return select(
+        n.c.id,
+        n.c.parent_id,
+        n.c.owner_id,
+        n.c.name,
+        n.c.kind,
+        n.c.mime,
+        n.c.size,
+        n.c.blob_id,
+        n.c.created_at,
+        n.c.modified_at,
+        n.c.deleted_at,
+    ).where(n.c.id.in_(bindparam("ids", expanding=True)))
+
+
+def path_parts(paths: dict[uuid.UUID, list[Step]]) -> dict[uuid.UUID, list[PathPart]]:
+    """Het pad per treffer uit de tweede controle (de keten omhoog voor wat van jezelf is, de
+    deling voor wat van een ander is). Een map boven meer treffers wordt één PathPart."""
+    parts: dict[uuid.UUID, PathPart] = {}
+    out: dict[uuid.UUID, list[PathPart]] = {}
+    for node_id, chain in paths.items():
+        line = []
+        for step in chain:
+            part = parts.get(step.id)
+            if part is None:
+                part = parts[step.id] = PathPart(id=step.id, name=step.name)
+            line.append(part)
+        out[node_id] = line
+    return out
+
+
 async def hits(
     db: AsyncSession, user: User, rows: Sequence[Row], parsed: Parsed | None
 ) -> list[Hit]:
@@ -415,13 +464,11 @@ async def hits(
         keep = [r for r in rows if r.id in checked.permissions]
         if not keep:
             return []
-        loaded = await db.scalars(select(Node).where(Node.id.in_([r.id for r in keep])))
+        loaded = await db.execute(page_nodes(), {"ids": [r.id for r in keep]})
         by_id = {node.id: node for node in loaded}
         nodes = [by_id[r.id] for r in keep if r.id in by_id]
         tags = await tags_by_node(db, user, [node.id for node in nodes])
-        where = await paths(db, [node for node in nodes if node.owner_id == user.id])
-        for node_id, chain in checked.paths.items():
-            where[node_id] = [PathPart(id=s.id, name=s.name) for s in chain]
+        where = path_parts(checked.paths)
         described = await describe(
             db, user, nodes, checked.permissions, tags=tags, roots=checked.roots
         )

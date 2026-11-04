@@ -28,6 +28,7 @@ import asyncio
 import contextlib
 import errno
 import functools
+import gc
 import logging
 import resource
 import signal
@@ -268,8 +269,23 @@ def _listen(host: str, port: int) -> socket.socket:
     return socket.create_server((host, port), family=family, backlog=2048)
 
 
-async def run(settings: Settings, stop: asyncio.Event) -> None:
+def freeze_heap() -> None:
+    """Na de start: alles wat er dan is (de modules, de app, de lifespan) gaat uit de gc, met
+    gc.freeze. Een volle ronde van de gc liep anders telkens over die ±220.000 objecten en hield
+    de event loop ±140 ms vast; onder 4 zoekers tegelijk gebeurde dat ±1 keer per 3 s, en elke
+    vraag die dan liep was zoveel trager (review golf 1 van fase 6, H2). Wat bevroren is ruimt
+    de gc nooit meer op; dat is wat de hele looptijd blijft bestaan."""
+    gc.collect()
+    gc.freeze()
+
+
+async def run(
+    settings: Settings, stop: asyncio.Event, started: Callable[[], None] | None = None
+) -> None:
+    """started: zodra http luistert (na de lifespan); python -m app.serve geeft freeze_heap
+    mee. De tests die run in hun eigen proces starten geven niets mee."""
     http = Server(_config(settings, settings.http_port, lifespan="on"))
+    http.on_started = started
     https: Server | None = None  # alleen zolang de https-server echt draait
     http_task = asyncio.create_task(http.serve(), name="http")
 
@@ -422,7 +438,7 @@ def main() -> None:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
-        await run(settings, stop)
+        await run(settings, stop, started=freeze_heap)
 
     asyncio.run(_main())
 

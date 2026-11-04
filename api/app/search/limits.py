@@ -16,6 +16,12 @@ bouwt hem.
   vorige gaat weg met Replaced, zonder plek en zonder werk (review golf 1, H4: anders kwam de
   nieuwe achter iedereen die intussen in de rij kwam). In de rij staat zo nooit een gestopte
   vraag.
+- **Wachten zonder verbinding**: wie in de rij komt (of wacht tot zijn vorige vraag weg is),
+  roept eerst release aan (de router geeft session.commit mee): zo houdt niemand in de rij een
+  verbinding uit de pool vast (dat zijn er 15; de rij is 20 lang). Wie meteen een plek heeft,
+  houdt zijn verbinding: eerst gaf elke vraag hem terug en nam hem daarna opnieuw (commit, de
+  rollback van de pool, en de ping bij het opnieuw nemen: ±6 keer heen en weer naar de thread
+  van aiosqlite, ook zonder wachten; review golf 1, H2).
 - **De snelheid per gebruiker**: hooguit 10 zoekvragen en 20 suggesties per seconde, anders
   429 rate_limited met Retry-After: 1. Niet met settings.rate_limits uit (PLATFORM_RATE_LIMITS=
   false, alleen voor een testserver), zoals de andere limieten: de meting van §4.4 stelt 200
@@ -30,7 +36,7 @@ import asyncio
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Literal
@@ -112,8 +118,15 @@ def _take_over(state: _State, mine: _Mine) -> asyncio.Future[bool] | None:
     return turn
 
 
+Release = Callable[[], Awaitable[object]]
+
+
 async def _enter(
-    state: _State, settings: Settings, mine: _Mine, turn: asyncio.Future[bool] | None
+    state: _State,
+    settings: Settings,
+    mine: _Mine,
+    turn: asyncio.Future[bool] | None,
+    release: Release | None,
 ) -> None:
     """Een plek in de app: meteen, in de rij (of op de plek die deze vraag overnam: turn), of
     429 search_busy als de rij vol is. Replaced als een nieuwere vraag de plek overnam."""
@@ -126,15 +139,21 @@ async def _enter(
         turn = state.loop.create_future()
         mine.place = _Place(turn)
         state.waiting.append(mine.place)
-    await _wait(state, mine, turn)
+    await _wait(state, mine, turn, release)
 
 
-async def _wait(state: _State, mine: _Mine, turn: asyncio.Future[bool]) -> None:
+async def _wait(
+    state: _State, mine: _Mine, turn: asyncio.Future[bool], release: Release | None
+) -> None:
     """Wacht op turn: True is een plek in de app (_leave gaf hem door, running blijft gelijk),
-    False is Replaced."""
+    False is Replaced. Eerst release (de verbinding terug). Gaat daarbij iets mis, of wordt de
+    taak geannuleerd, dan gaat de plek weg (_drop): anders bleef hij in de rij, of kreeg hij
+    de plek in de app en gaf hem nooit door."""
     try:
+        if release is not None and not turn.done():
+            await release()
         mine_now = await turn
-    except asyncio.CancelledError:
+    except BaseException:
         _drop(state, mine, turn)
         raise
     if mine.place is not None and mine.place.turn is turn:
@@ -169,8 +188,13 @@ def _leave(state: _State) -> None:
 
 @asynccontextmanager
 async def admit(
-    user: User, kind: Kind = "search", settings: Settings | None = None
+    user: User,
+    kind: Kind = "search",
+    settings: Settings | None = None,
+    release: Release | None = None,
 ) -> AsyncIterator[None]:
+    """release: wordt aangeroepen vlak voordat deze vraag moet wachten (op haar vorige vraag of
+    in de rij), niet als ze meteen een plek heeft."""
     settings = settings or get_settings()
     state = _now_state()
     mine = state.users.setdefault((user.id, kind), _Mine())
@@ -184,13 +208,15 @@ async def admit(
     token = STOP.set(stop)
     try:
         try:
+            if release is not None and mine.lock.locked():
+                await release()
             await mine.lock.acquire()  # de vorige vraag van deze gebruiker is eerst weg
-        except asyncio.CancelledError:
+        except BaseException:
             if turn is not None:
                 _drop(state, mine, turn)
             raise
         try:
-            await _enter(state, settings, mine, turn)
+            await _enter(state, settings, mine, turn, release)
             try:
                 yield
             finally:

@@ -164,15 +164,14 @@ async def search(
         page = await engine.search(session, user, params)
         page.indexing = await analysis.indexing(session)
         return page
-    # Wie in de rij van admit wacht, houdt geen verbinding uit de pool vast (dat zijn er 15;
-    # de rij is 20 lang): de motor neemt na het wachten een nieuwe
-    await session.commit()
     token = engines.SETTINGS.set(settings)
     # De tijd per stap in Server-Timing, alleen voor tests en metingen (Keuze 13)
     steps: dict[str, float] | None = {} if settings.search_timing else None
     timing = engines.TIMING.set(steps)
     try:
-        async with admit(user, "search", settings):
+        # Wie in de rij van admit wacht, houdt geen verbinding uit de pool vast (dat zijn er 15;
+        # de rij is 20 lang): release geeft hem terug, de motor neemt na het wachten een nieuwe
+        async with admit(user, "search", settings, release=session.commit):
             page = await engine.search(session, user, params)
     except Replaced:
         # Een nieuwere vraag van deze gebruiker nam de plek in de rij over (review golf 1, H4)
@@ -205,9 +204,9 @@ async def suggest(
     engine = await engine_for(settings, await session.connection())
     if engine is LIKE:
         return await engine.suggest(session, user, q)
-    await session.commit()  # geen verbinding vasthouden in de rij (zie search)
     try:
-        async with admit(user, "suggest", settings):
+        # geen verbinding vasthouden in de rij (zie search)
+        async with admit(user, "suggest", settings, release=session.commit):
             return await engine.suggest(session, user, q)
     except Replaced:
         return Suggestions()

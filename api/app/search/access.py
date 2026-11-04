@@ -17,6 +17,12 @@ niet meer.
 een ander is; de keten omhoog voor wat van jezelf is) voordat hij de pagina op gaat. Wijkt dat af
 van het filter, dan valt de treffer weg en komt er één logregel search_access_mismatch met het
 node-id: geen vraag, geen naam.
+
+De keten omhoog van wat van jezelf is, geeft meteen ook het pad van die treffers (de namen vanaf
+de hoofdmap): één recursieve query voor de controle en de paden samen, en die query wordt één
+keer gebouwd (de ids als één lijst-parameter). Eerst waren het er twee, elke keer opnieuw
+gebouwd: ±9 ms CPU in de event loop per pagina van de ±25 (review golf 1, H2: bij 4 clients
+tegelijk is die CPU de rij).
 """
 
 from __future__ import annotations
@@ -24,10 +30,12 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import cache
 
-from sqlalchemy import select
+from sqlalchemy import Select, String, bindparam, select, type_coerce
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import access
@@ -55,6 +63,14 @@ class Ranges:
     shared: bool
 
 
+@cache
+def _wortels() -> Select:
+    """(id, pad, soort) van de wortels; één keer gebouwd, de ids als lijst-parameter."""
+    return select(_NODE.c.id, _NODE.c.mpath, _NODE.c.kind).where(
+        _NODE.c.id.in_(bindparam("ids", expanding=True))
+    )
+
+
 async def search_ranges(
     session: AsyncSession, user: User, shared: Sequence[uuid.UUID] | None = None
 ) -> Ranges:
@@ -68,9 +84,7 @@ async def search_ranges(
         ids.append(user.root_id)
     if not ids:
         return Ranges([], False)
-    rows = await session.execute(
-        select(_NODE.c.id, _NODE.c.mpath, _NODE.c.kind).where(_NODE.c.id.in_(ids))
-    )
+    rows = await session.execute(_wortels(), {"ids": ids})
     found = [(path, node_id) for node_id, path, kind in rows if path and kind != "album"]
     shared = any(node_id != user.root_id for _, node_id in found)
     out: list[tuple[str, str]] = []
@@ -102,35 +116,66 @@ def ranges_sql(ranges: Sequence[tuple[str, str]], alias: str = "n") -> tuple[str
 
 @dataclass
 class Checked:
-    """Wat de tweede controle doorliet: het recht per node, het pad vanaf de gedeelde map voor
-    wat van een ander is, en welke nodes zelf een gedeelde map zijn."""
+    """Wat de tweede controle doorliet: het recht per node, het pad naar elke node (vanaf de
+    gedeelde map voor wat van een ander is, vanaf de hoofdmap voor wat van jezelf is; zonder de
+    node zelf), en welke nodes zelf een gedeelde map zijn."""
 
     permissions: dict[uuid.UUID, str]
     paths: dict[uuid.UUID, list[access.Step]]
     roots: set[uuid.UUID]
 
 
+@cache
+def own_chains() -> Select:
+    """(origin, id, naam, deleted_at, diepte) van elke eigen treffer omhoog tot de hoofdmap
+    (access.ancestry), met de ids als één lijst-parameter "own". Eén keer gebouwd: SQLAlchemy
+    onthoudt dan ook de cache-sleutel. origin en id komen zoals de database ze geeft (_uuid):
+    een map staat in de keten van elke treffer eronder, en elke rij twee keer uuid.UUID() was
+    ±1,5 ms per pagina."""
+    up = access.ancestry(Node.id.in_(bindparam("own", expanding=True)))
+    raw = (type_coerce(up.c.origin, String), type_coerce(up.c.id, String))
+    return select(*raw, up.c.name, up.c.deleted_at, up.c.depth)
+
+
+def _uuid(value: object, made: dict[object, uuid.UUID]) -> uuid.UUID:
+    """Een id uit own_chains als uuid.UUID, één keer per waarde (in made): SQLite geeft de 32
+    hextekens van de kolom Uuid, een andere database misschien al een UUID."""
+    found = made[value] = value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+    return found
+
+
 async def second_check(
     session: AsyncSession, user: User, hits: Sequence[tuple[uuid.UUID, uuid.UUID]]
 ) -> Checked:
     """hits: (node-id, eigenaar) per treffer. Eigen nodes: niets in de keten in de prullenbak
-    (en geen gast). Van een ander: access.resolve. Wat niet doorkomt, ontbreekt in het
-    antwoord, met een logregel per node."""
+    (en geen gast), en uit dezelfde keten het pad. Van een ander: access.resolve. Wat niet
+    doorkomt, ontbreekt in het antwoord, met een logregel per node."""
     own = [node_id for node_id, owner in hits if owner == user.id]
     other = [node_id for node_id, owner in hits if owner != user.id]
     permissions: dict[uuid.UUID, str] = {}
     paths: dict[uuid.UUID, list[access.Step]] = {}
     roots: set[uuid.UUID] = set()
     if own and user.role != "guest":
-        up = access.ancestry(Node.id.in_(own))
-        dead = {
-            origin
-            for origin, deleted_at in await session.execute(select(up.c.origin, up.c.deleted_at))
-            if deleted_at is not None
-        }
+        # per node: diepte -> (id, naam); dead: iets in de keten ligt in de prullenbak
+        chains: dict[uuid.UUID, dict[int, tuple[uuid.UUID, str]]] = defaultdict(dict)
+        dead: set[uuid.UUID] = set()
+        made: dict[object, uuid.UUID] = {}
+        rows = await session.execute(own_chains(), {"own": own})
+        for raw_origin, raw_id, name, deleted_at, depth in rows:
+            origin = made.get(raw_origin) or _uuid(raw_origin, made)
+            chains[origin][depth] = (made.get(raw_id) or _uuid(raw_id, made), name)
+            if deleted_at is not None:
+                dead.add(origin)
         for node_id in own:
-            if node_id not in dead:
-                permissions[node_id] = "owner"
+            if node_id in dead:
+                continue
+            permissions[node_id] = "owner"
+            chain = chains.get(node_id, {})
+            paths[node_id] = [
+                access.Step(chain[depth][0], chain[depth][1], "owner")
+                for depth in sorted(chain, reverse=True)
+                if depth > 0
+            ]
     if other:
         grants = await access.resolve(session, user.id, other)
         for node_id, grant in grants.items():

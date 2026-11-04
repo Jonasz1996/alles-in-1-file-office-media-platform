@@ -6,6 +6,8 @@
   Retry-After: 1; wie wacht, houdt geen verbinding uit de pool vast;
 - een tweede vraag van dezelfde gebruiker stopt de eerste: die geeft meteen een lege,
   gedeeltelijke pagina, en de tweede gaat daarna gewoon;
+- alleen wie moet wachten, geeft eerst zijn verbinding terug (release); gaat dat mis, dan
+  klopt de rij nog (review golf 1, H2);
 - de snelheid per gebruiker: de 11e zoekvraag en de 21e suggestie binnen een seconde geven
   429 rate_limited met Retry-After: 1; zoeken en suggesties tellen apart, en elke gebruiker
   apart.
@@ -99,6 +101,66 @@ async def test_wie_wegvalt_uit_de_rij_laat_alles_kloppen(settings):
     los[1].set()
     await taken[1]
     assert state.running == 0
+
+
+async def test_alleen_wie_wacht_geeft_zijn_verbinding_terug(settings):
+    """Review golf 1, H2: release (de router geeft session.commit mee) gaat alleen af vlak
+    voordat een vraag moet wachten, in de rij of op haar vorige vraag; wie meteen een plek heeft,
+    houdt zijn verbinding (geen commit, rollback en ping heen en weer)."""
+    los = asyncio.Event()
+    binnen: list[str] = []
+    terug: list[str] = []
+
+    def release(naam: str):
+        async def geef_terug() -> None:
+            terug.append(naam)
+
+        return geef_terug
+
+    async def vraag(naam: str, wie: User) -> None:
+        async with limits.admit(wie, "search", settings, release=release(naam)):
+            binnen.append(naam)
+            await los.wait()
+
+    a, b, c = iemand(), iemand(), iemand()
+    taken = [asyncio.create_task(vraag("a", a)), asyncio.create_task(vraag("b", b))]
+    await tot(lambda: binnen == ["a", "b"])
+    assert terug == []  # meteen een plek
+    taken.append(asyncio.create_task(vraag("c", c)))  # in de rij
+    taken.append(asyncio.create_task(vraag("a2", a)))  # wacht op de vorige vraag van a
+    await tot(lambda: sorted(terug) == ["a2", "c"])
+    assert binnen == ["a", "b"]
+    los.set()
+    await asyncio.gather(*taken)
+    assert sorted(binnen) == ["a", "a2", "b", "c"]
+    state = limits._now_state()
+    assert state.running == 0 and not state.waiting
+
+
+async def test_een_fout_in_release_laat_de_rij_kloppen(settings):
+    """Gaat release mis (de commit faalt), dan gaat de fout naar de vraag, en haar plek uit de
+    rij: geen plek die blijft staan of nooit wordt doorgegeven."""
+    los = asyncio.Event()
+    binnen: list[int] = []
+
+    async def vraag(i: int) -> None:
+        async with limits.admit(iemand(), "search", settings):
+            binnen.append(i)
+            await los.wait()
+
+    async def stuk() -> None:
+        raise RuntimeError("de commit faalt")
+
+    taken = [asyncio.create_task(vraag(i)) for i in range(2)]
+    await tot(lambda: len(binnen) == 2)
+    state = limits._now_state()
+    with pytest.raises(RuntimeError, match="de commit faalt"):
+        async with limits.admit(iemand(), "search", settings, release=stuk):
+            pytest.fail("geen plek na een fout in release")
+    assert state.running == 2 and not state.waiting
+    los.set()
+    await asyncio.gather(*taken)
+    assert state.running == 0 and not state.waiting
 
 
 async def test_een_tweede_vraag_van_dezelfde_gebruiker_stopt_de_eerste(settings):

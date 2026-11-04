@@ -50,9 +50,10 @@ import uuid
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import cache
 
 import anyio
-from sqlalchemy import LargeBinary, case, cast, func, select
+from sqlalchemy import LargeBinary, Select, bindparam, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import BlobText, MediaItem, Node, PhotoOcr, User
@@ -380,19 +381,19 @@ def _text(value: bytes | str | None) -> str | None:
     return bytes(value).decode("utf-8", "ignore")[:WINDOW]
 
 
-async def sources(db: AsyncSession, user: User, ids: Sequence[uuid.UUID]) -> list[Source]:
-    """De vensters van deze nodes, in de volgorde van ids. De OCR van een foto alleen als de
-    node van user is."""
-    if not ids:
-        return []
+@cache
+def _sources() -> Select:
+    """De vraag van sources(), één keer gebouwd (zoals access.own_chains): de ids als één
+    lijst-parameter "ids", wie vraagt als "user"."""
     n = Node.__table__.alias("n")
     title = (
         select(func.group_concat(MediaItem.title, " "))
         .where(MediaItem.node_id == n.c.id)
         .scalar_subquery()
     )
-    pocr = case((n.c.owner_id == user.id, _window(PhotoOcr.text)), else_=None)
-    sql = (
+    mine = n.c.owner_id == bindparam("user", type_=n.c.owner_id.type)
+    pocr = case((mine, _window(PhotoOcr.text)), else_=None)
+    return (
         select(
             n.c.id,
             n.c.search_name,
@@ -405,8 +406,17 @@ async def sources(db: AsyncSession, user: User, ids: Sequence[uuid.UUID]) -> lis
         .select_from(n)
         .outerjoin(BlobText, BlobText.blob_sha == n.c.blob_id)
         .outerjoin(PhotoOcr, PhotoOcr.node_id == n.c.id)
-        .where(n.c.id.in_(list(ids)))
+        .where(n.c.id.in_(bindparam("ids", expanding=True)))
     )
+
+
+async def sources(db: AsyncSession, user: User, ids: Sequence[uuid.UUID]) -> list[Source]:
+    """De vensters van deze nodes, in de volgorde van ids. De OCR van een foto alleen als de
+    node van user is."""
+    if not ids:
+        return []
+    sql = _sources()
+    params = {"ids": list(ids), "user": user.id}
     found = {
         row[0]: Source(
             row[0],
@@ -417,7 +427,7 @@ async def sources(db: AsyncSession, user: User, ids: Sequence[uuid.UUID]) -> lis
             _text(row[5]),
             _text(row[6]),
         )
-        for row in await db.execute(sql)
+        for row in await db.execute(sql, params)
     }
     return [found[i] for i in ids if i in found]
 

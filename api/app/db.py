@@ -24,8 +24,12 @@ def _engine(url: str) -> AsyncEngine:
     # hide_parameters: een DBAPIError (database is locked, schijf vol) zet de parameters niet
     # in zijn tekst, dus ook de zoekvraag q en bestandsnamen niet in de log (review Z0,
     # veilig F6)
-    engine = create_async_engine(url, pool_pre_ping=True, hide_parameters=True)
-    if url.startswith("sqlite"):
+    # pool_pre_ping niet bij SQLite: een verbinding met een bestand valt niet weg, en de ping
+    # (SELECT 1) kostte met aiosqlite bij elk verzoek vier keer heen en weer naar zijn thread
+    # (review golf 1 van fase 6, H2)
+    sqlite = url.startswith("sqlite")
+    engine = create_async_engine(url, pool_pre_ping=not sqlite, hide_parameters=True)
+    if sqlite:
 
         @event.listens_for(engine.sync_engine, "connect")
         def _sqlite_pragmas(conn, _record):
