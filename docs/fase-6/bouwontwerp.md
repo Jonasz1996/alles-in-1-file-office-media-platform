@@ -900,8 +900,8 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
     en in de RUN van media (regel 42–45) `chmod 0711 /usr/bin/tesseract`. **Herzien na S5:**
     spike S5 mat in CI 69 MiB (21,1 MB download; de talen 20 MB, de rest tesseract, leptonica
     en 12 bibliotheken). De oude poort (+ ≤ 30 MB) is niet te halen; Vraag 1 noemde ±20 MB.
-    Daarom Vraag 15. Standaard: tesseract in het image, de poort in `images` + ≤ 75 MB. Nee op
-    Vraag 15: geen OCR, X1 vervalt. De code blijft werken zonder tesseract (een
+    Daarom Vraag 15, en Jonas koos op 4 november 2026 "Ja, erin": tesseract in het image, de
+    poort in `images` + ≤ 75 MB. De code blijft werken zonder tesseract (een
     image dat ouder is, of een eigen build): `caps` van de worker zegt dan `ocr: false`, de rijen
     blijven `none` met code `ocr_missing`, en worden weer `wait` zodra `caps` OCR meldt. `/beheer`
     zegt dan "OCR: niet geïnstalleerd". OCR van PDF-scans staat aan; OCR van foto's blijft per
@@ -2099,7 +2099,7 @@ Keuze 70–84 van X3.
 
 | Vraag (revisie 2) | Wat Jonas koos |
 |---|---|
-| 1. Mag tesseract in het image, voor OCR? | Ja ("alles"). X1 is een gewoon pakket (Keuze 24). De vraag noemde ±20 MB; S5 mat 69 MiB, daarom Vraag 15. |
+| 1. Mag tesseract in het image, voor OCR? | Ja ("alles"). X1 is een gewoon pakket (Keuze 24). De vraag noemde ±20 MB; S5 mat 69 MiB, daarom Vraag 15 (ook ja). |
 | 2. Mogen gezichten automatisch gevonden worden? | Ja, in fase 6 (het kaartje "Ook gezichten"). X2, Keuze 56–69. |
 | 3. Zoeken op wat er op een foto staat? | Ja, in fase 6 ("alles"). X3, Keuze 70–84. Het kaartje noemde beeld niet apart; daarom Vraag 11. |
 | 5. GeoNames en Natural Earth bij de installatie downloaden? | Geen eigen antwoord: het kaartje is ingetrokken, omdat "alles" het dekt. De standaard geldt: ja, met sha256, niet fataal, uit te zetten met `PLAATSEN=uit`. |
@@ -2178,10 +2178,11 @@ Keuze 70–84 van X3.
     Vraag 1 noemde ±20 MB, en daar zei je ja op. S5 mat in CI 69 MiB: de talen zijn 20 MB, de
     rest zijn tesseract, leptonica en 12 bibliotheken die nog niet in het image zaten. Kleiner
     gaat niet zonder de talen of OCR te verliezen.
-    Standaard: **ja, tesseract in het image**, met + ≤ 75 MB als poort in `images`. Anders: (b)
-    geen OCR; X1 vervalt, en tekst in scans en foto's is niet te vinden.
+    **Beantwoord op 4 november 2026: "Ja, erin"** (kaartje). Tesseract komt in het image, met
+    + ≤ 75 MB als poort in `images`. Het andere antwoord was (b) geen OCR.
 
-Vraag 1–7 kwamen uit revisie 2; daarvan is alleen Vraag 4 nog open. Vraag 8–15 zijn nieuw. De
+Vraag 1–7 kwamen uit revisie 2; daarvan is alleen Vraag 4 nog open. Vraag 8–15 zijn nieuw;
+Vraag 15 is beantwoord. De
 oude nummers 8 en 20–22 uit de twee ontwerpen voor X2 en X3 bestaan niet meer.
 
 ---
@@ -4428,7 +4429,7 @@ dag vóór de review van Z0. A0 komt na de eerste integratie, als alle bestanden
 | S2 | De triggers met de ORM: hernoemen, verplaatsen, prullenbak, de batch van 500, kopie, `userdelete`, `purge_expired`, de import van fase 5, een andere eigenaar, nieuwe inhoud; en de herbouw in stukken met uploads ertussen | Keuze 3, 12, 25a | na elke stap is de index gelijk aan een herbouw; een upload tijdens de herbouw wacht ≤ 1 s |
 | S3 | 0010 heen en terug met data; `compare_metadata` | §3.1 | precies 0009 na de downgrade |
 | S4 | De plan-tests in `python:3.12-slim`, met en zonder `ANALYZE` | J12 | groen in CI in het image |
-| S5 | Tesseract in Debian 13: grootte, en of ffmpeg `libtesseract` al meebrengt | Keuze 24 (Jonas koos ja) | een getal in `docs/fase-6/spike.md`, gemeten in CI. **Gemeten: 69 MiB**, ffmpeg brengt het niet mee; de poort (+ ≤ 30 MB) wordt + ≤ 75 MB (Vraag 15) |
+| S5 | Tesseract in Debian 13: grootte, en of ffmpeg `libtesseract` al meebrengt | Keuze 24 (Jonas koos ja) | een getal in `docs/fase-6/spike.md`, gemeten in CI. **Gemeten: 69 MiB**, ffmpeg brengt het niet mee; de poort (+ ≤ 30 MB) wordt + ≤ 75 MB (Vraag 15: ja) |
 | S6 | `world-110m.<hash>.json` maken en meten | Keuze 31 | ≤ 60 kB gzip, of een andere vereenvoudiging |
 | S7 | Het zaad van 100.000 in CI | §4.4 | < 3 minuten |
 | S8 | De twee vormen per woord (J1) en ß op 3.46.1 en 3.53.1 | Keuze 5, 21 | ß, ẞ, ligaturen en İ vinden naam én tekst; "grosse" en "große" vinden elkaar, ook "strasse" en "Straße" |
@@ -5343,9 +5344,6 @@ nergens op.
   dan 4 dagen), of in fase 10. **(c)**: een keuze per gebruiker, in Z6.
 - **Vraag 8 ja**: de set van NASA in `api-analyse` (in X2b). Nee is de standaard: de kwaliteit
   meet Jonas op zijn LXC.
-- **Vraag 15 (b)**: geen OCR. X1 vervalt in golf 4 (Z7 blijft); tesseract komt niet in het
-  image, en de job `ocr` en `test_ocr_container.sh` vervallen. Een PDF zonder tekstlaag is dan
-  alleen op naam te vinden.
 - **Vraag 9 (b) of (c)**: één regel in de stap `faces` en `embed` (Keuze 69); geen dagen erbij.
 - **Vraag 10 (b)**: de omzetting in een CI-job en een bestand bij een release; `install.sh`
   downloadt dan het omgezette model. Zelfde dagen, maar wij verspreiden de gewichten. **(c)**: B/16
@@ -5377,7 +5375,7 @@ Niemand hoeft op een antwoord te wachten om verder te bouwen: elke vraag heeft e
 | R12 | De backfill vult de WAL en houdt de schrijver bezet | trage uploads tijdens de backfill | één blob per transactie; `test_backfill.py` (een upload wacht ≤ 1 s) |
 | R13 | De bronnen voor plaatsen komen niet binnen bij de installatie | geen plaatsnamen en geen landen | niet fataal; de volgende run probeert opnieuw; `/beheer` zegt het; `PLAATSEN=uit` |
 | R14 | Tekst van 1 MB maakt snippets traag | `/search` boven 200 ms | venster van 20.000 tekens, één regex, 40 ms per verzoek, 100 ms CPU per seconde voor de app (Keuze 8); profiel "groot" met een harde poort |
-| R15 | Jonas antwoordt niet op Vraag 4 en 8–15 | onduidelijk wie de plek ziet, hoe de kwaliteit gemeten wordt, en hoe we opleveren | elke vraag heeft een standaard waarmee de bouw doorgaat; de README zegt welke standaard geldt; Vraag 1, 2, 3, 5, 6 en 7 zijn beantwoord of ingetrokken |
+| R15 | Jonas antwoordt niet op Vraag 4 en 8–14 | onduidelijk wie de plek ziet, hoe de kwaliteit gemeten wordt, en hoe we opleveren | elke vraag heeft een standaard waarmee de bouw doorgaat; de README zegt welke standaard geldt; Vraag 1, 2, 3, 5, 6 en 7 zijn beantwoord of ingetrokken |
 | R16 | De runner in CI is wisselend snel | `zoek-perf` faalt zonder reden | de mediaan van 3 rondes; alleen p99 en max mogen naar een rapport; de p95 blijft hard |
 | R17 | Twee verschillende bestanden heten "bijna zeker gelijk" | iemand gooit het verkeerde weg | vlakke beelden zonder hash, de tweede controle, klieken, tekst telt mee, nooit iets vooraf aangevinkt, alles via de prullenbak (Keuze 35, 36) |
 | R18 | Vectoren van gezichten (X2) zijn biometrische data van derden | privacy, ook in WAL, tijdelijke bestanden, reservekopieën en snapshots | per node, alleen eigen en levend, standaard uit, een verbod; versleuteld met een sleutel per eigenaar buiten `/data` ("uit" wist eerst de sleutel); `secure_delete`, `temp_store` in het geheugen, TRUNCATE tot het lukt, een test op merktekens; nooit in de API, de logs of een bericht; de reservekopie zonder gezichten (Keuze 64, 68; K1-01, K1-03) |

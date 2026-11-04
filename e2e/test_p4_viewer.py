@@ -605,6 +605,16 @@ def test_publieke_link_viewer(server: Server, new_context, library: Library):
 
 
 @pytest.mark.slow
+def served_pages(server: Server, node: str) -> list[str]:
+    """De pagina's van `node` die de server zelf uitleverde (zijn toegangslog). Playwright meldt
+    ook een antwoord uit de cache van de browser als 200; dat is geen download. Zet de viewer
+    `srcset` opnieuw (een nieuw token), dan kan Chromium hetzelfde adres opnieuw "vragen" en het
+    uit zijn cache halen (Open 15 in docs/fase-6/z0.md)."""
+    marker = f"/api/v1/files/{node}/pages/"
+    lines = server.log_path.read_text(errors="replace").splitlines()
+    return [line for line in lines if marker in line and ".webp" in line]
+
+
 def test_pdf_pagina_s_na_het_verlopen_van_het_token(browser, tmp_path_factory):
     """Klaar als: PDF-pagina's blijven laden na de levensduur van het token. Een eigen server
     met download-tokens van 1 minuut; de viewer haalt halverwege een nieuw /document, dus een
@@ -647,7 +657,8 @@ def test_pdf_pagina_s_na_het_verlopen_van_het_token(browser, tmp_path_factory):
               (i) => i.complete && i.naturalWidth > 0)"""
         )
         first_token = viewer.locator(".page img").first.get_attribute("src")
-        loaded = len(pages)
+        served = served_pages(server, node)
+        assert served, f"geen pagina's in de toegangslog:\n{server.log_tail()}"
         page.wait_for_timeout(70_000)
         assert len(documents) >= 2, documents  # op tijd vernieuwd
         # Een pagina die er al stond, houdt zijn adres na het vernieuwen (geen nieuwe download),
@@ -656,7 +667,7 @@ def test_pdf_pagina_s_na_het_verlopen_van_het_token(browser, tmp_path_factory):
         page.mouse.wheel(0, 40)
         page.wait_for_timeout(500)
         assert viewer.locator(".page img").first.get_attribute("src") == first_token
-        assert pages[loaded:] == [], pages[loaded:]
+        assert served_pages(server, node)[len(served) :] == [], served_pages(server, node)
         # Inzoomen na het verlopen van het eerste token: de browser kiest een bredere afbeelding
         # uit srcset, en die komt met het nieuwe token (niet met het oude: dat gaf een 401 en
         # "Pagina … kon niet worden geladen" tot de viewer opnieuw openging)

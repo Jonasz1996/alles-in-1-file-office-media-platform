@@ -59,7 +59,7 @@ het ontwerp. Wel veranderen er negen dingen:
    checkpoint (S9).
 9. **tesseract maakt het image 69 MiB groter, niet ≤ 30 MB.** Vraag 1 van revisie 2 noemde
    ±20 MB; de talen zijn 20 MB, de rest zijn tesseract, leptonica en 12 bibliotheken die nog
-   niet in het image zaten (S5). Dat is Vraag 15 aan Jonas.
+   niet in het image zaten (S5). Vraag 15: Jonas koos op 4 november "Ja, erin".
 
 ---
 
@@ -228,9 +228,9 @@ In CI (het image van `402b307`):
 
 **Wat dat verandert.** De poort van Keuze 24 (+ ≤ 30 MB) is niet te halen: de talen alleen al
 zijn 20 MB, en `--no-install-recommends` staat al aan. Vraag 1 van revisie 2, waar Jonas ja op
-zei, noemde ±20 MB. Daarom Vraag 15 (README en bouwontwerp): tesseract toch in het image, met
-+ ≤ 75 MB als poort, of geen OCR. Tot Jonas antwoordt, bouwt X1 met tesseract in het image en
-de poort + ≤ 75 MB; X1 komt pas in golf 4, dus er gaat niets verloren als het nee wordt.
+zei, noemde ±20 MB. Daarom Vraag 15: tesseract toch in het image, met + ≤ 75 MB als poort, of
+geen OCR. Jonas koos op 4 november 2026 "Ja, erin"; X1 bouwt in golf 4 met tesseract in het
+image en de poort + ≤ 75 MB.
 
 ## S6: de landsgrenzen
 
@@ -518,8 +518,8 @@ dan de marker `zoek_perf` (S1 met de echte grenzen, S2 herbouw van 100.000, S3 m
   na "klaar" is code in `app.render text`. Aanbevolen: 0711, plus stderr naar `/dev/null`.
 - ~~**CI-getallen op 3.46.1** voor S1, S2, S7, S9 en S10 in de job, en S5 en S11 in de
   container: bij de eerste run na de push.~~ Gedaan: run 82 op `402b307`, bij elke stap.
-- **S5: tesseract is 69 MiB**, boven de poort van + ≤ 30 MB. Vraag 15 aan Jonas; de standaard
-  is wel in het image, met de poort + ≤ 75 MB.
+- ~~**S5: tesseract is 69 MiB**, boven de poort van + ≤ 30 MB.~~ Vraag 15: Jonas koos "Ja,
+  erin"; de poort wordt + ≤ 75 MB.
 - ~~**Z0-e2e `plans.py`**: als daar de vorm `IN mine` voor bijna-duplicaten staat, is die
   plan-test een kruisproduct; hij moet de vorm met `EXISTS` krijgen.~~ Gedaan bij de
   samenvoeging van Z0: `_bijna` in `api/tests/search/test_plans.py` heeft de vorm met `EXISTS`.

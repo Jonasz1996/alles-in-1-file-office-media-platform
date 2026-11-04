@@ -90,8 +90,9 @@ buiten). Daarom zijn B53 (OCR) en B57 (gezichten en beeld) **besloten**; hoe ze 
 blijft voorstel. Vraag 7 (de duur) is daarmee ook beantwoord: alles, ±43 werkdagen (B68). De
 kaartjes van Vraag 5 en 6 zijn ingetrokken; hun standaard geldt (B55). Vraag 4 (wie de plek van
 een foto ziet) heeft Jonas **niet** beantwoord: B54 blijft voorstel, met de standaard "alleen de
-eigenaar". De nieuwe vragen 8–15 hebben elk een standaard, die bij de status staat. Vraag 15
-kwam na spike S5: tesseract maakt het image 69 MB groter, niet ±20 MB zoals bij B53 gedacht. Zie
+eigenaar". De nieuwe vragen 8–14 hebben elk een standaard, die bij de status staat. Vraag 15
+kwam na spike S5: tesseract maakt het image 69 MB groter, niet ±20 MB zoals bij B53 gedacht. Op
+4 november 2026 koos Jonas op een kaartje "Ja, erin"; B53 blijft besloten. Zie
 [docs/fase-6/README.md](../fase-6/README.md#vragen-voor-jonas).
 
 ## Vastgelegd in deze fase
