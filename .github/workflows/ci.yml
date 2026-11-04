@@ -596,7 +596,16 @@ jobs:
       - name: keepalived-configuratie controleren
         run: |
           sudo apt-get install -y -q keepalived > /dev/null
-          for n in /tmp/render/*/; do sudo keepalived -t -f "$n/keepalived/keepalived.conf"; done
+          # keepalived -t eist dat de netwerkkaart uit de configuratie bestaat. Die kaart hoort bij
+          # de LXC (vip_interface), niet bij de runner, en op sommige runners van ubuntu-latest
+          # bestaat eth0 niet (4-11-2026: "Non-existent interface", exit 5). Daarom draait de
+          # controle in een eigen netwerk-namespace met alleen die kaart (een veth), los van het
+          # netwerk van de runner.
+          iface=$(python3 -c "import yaml; print(yaml.safe_load(open('infra/ansible/group_vars/all.yml'))['vip_interface'])")
+          sudo unshare -n env IFACE="$iface" sh -ec '
+            ip link add "$IFACE" type veth peer name ci-peer
+            for n in /tmp/render/*/; do keepalived -t -f "$n/keepalived/keepalived.conf"; done
+          '
 
   images:
     name: Images bouwen
