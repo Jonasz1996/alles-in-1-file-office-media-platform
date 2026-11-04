@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from app import __version__, errors, events, jobs, photometa, previews
 from app.certs import CertManager
 from app.config import Settings, get_settings
+from app.extract import step as extract_step  # noqa: F401 - registreert de stap text (Z2)
 from app.media import analysis as media_analysis  # noqa: F401 - registreert media.analyse
 from app.media import runtime as media_runtime
 from app.migrate import upgrade
