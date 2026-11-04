@@ -304,3 +304,39 @@ async def test_indexing_voor_het_antwoord_van_search(settings, trage, monkeypatc
         )
         await db.commit()
         assert await analysis.indexing(db) is None
+
+
+async def test_search_geeft_indexing(client, admin, settings, monkeypatch):
+    """Samenvoeging Z1 en Z2: /search draagt indexing in het antwoord, met FtsEngine en met
+    LikeFallback (de index uit), zolang er minstens 50 inhouden open staan; daarna null."""
+    headers, _ = admin
+    monkeypatch.setattr(analysis, "INDEXING_TTL", 0.0)
+    async with maker(settings)() as db:
+        jonas = await db.scalar(sa.select(User).where(User.role == "admin"))
+    docs = await documents(settings, jonas, 60, "jonas")
+    async with maker(settings)() as db:
+        db.add_all(
+            Analysis(blob_sha=sha, step=Step.TEXT.value, version=1, state="wait") for sha in docs
+        )
+        await db.commit()
+
+    async def zoek() -> dict:
+        r = await client.get("/api/v1/search", params={"q": "jonas"}, headers=headers)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    page = await zoek()
+    assert page["engine"] == "fts" and page["indexing"] == {"done": 0.0}
+    monkeypatch.setattr(settings, "search_index", "uit")
+    page = await zoek()
+    assert page["engine"] == "like" and page["indexing"] == {"done": 0.0}
+    async with maker(settings)() as db:
+        await db.execute(
+            sa.update(Analysis).where(Analysis.blob_sha.in_(docs[:20])).values(state="done")
+        )
+        await db.commit()
+    page = await zoek()
+    assert page["engine"] == "like" and page["indexing"] is None  # 40 open: geen melding
+    monkeypatch.setattr(settings, "search_index", "aan")
+    page = await zoek()
+    assert page["engine"] == "fts" and page["indexing"] is None

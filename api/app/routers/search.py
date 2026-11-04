@@ -33,7 +33,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import errors, events
+from app import analysis, errors, events
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Node, NodeTag, Tag, User
@@ -131,7 +131,9 @@ async def search(
         raise errors.fail(400, "search_bad_filter", "Geef een zoekvraag of een filter")
     engine = await engine_for(settings, await session.connection())
     if engine is LIKE:
-        return await engine.search(session, user, params)
+        page = await engine.search(session, user, params)
+        page.indexing = await analysis.indexing(session)
+        return page
     # Wie in de rij van admit wacht, houdt geen verbinding uit de pool vast (dat zijn er 15;
     # de rij is 20 lang): de motor neemt na het wachten een nieuwe
     await session.commit()
@@ -141,7 +143,7 @@ async def search(
     timing = engines.TIMING.set(steps)
     try:
         async with admit(user, "search", settings):
-            return await engine.search(session, user, params)
+            page = await engine.search(session, user, params)
     except QueryTooLong:
         raise errors.fail(
             400, "search_query_too_long", "Je zoekvraag is te lang", max_words=10
@@ -151,6 +153,10 @@ async def search(
         engines.SETTINGS.reset(token)
         if steps:
             response.headers["Server-Timing"] = engines.server_timing(steps)
+    # Z2 (Keuze 20): hoe ver de backfill van de tekst is, zolang er genoeg open staat; buiten
+    # admit, want de telling heeft geen plek in de rij nodig (hooguit eens per 5 s)
+    page.indexing = await analysis.indexing(session)
+    return page
 
 
 @router.get("/search/suggest")
