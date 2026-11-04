@@ -29,7 +29,8 @@ from app.models import Analysis, Blob, Job, Node, User, now
 from app.search import hooks
 from tests import factories
 
-pytestmark = pytest.mark.anyio
+# zoek: ook in e2e/slim.sh op SQLite 3.46.1 (bouwontwerp §4.1)
+pytestmark = [pytest.mark.anyio, pytest.mark.zoek]
 
 BATCH = 16
 SLOW_S = 0.1

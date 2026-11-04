@@ -35,7 +35,8 @@ from app.storage import BlobStore
 from tests import test_files
 from tests.search import fixtures
 
-pytestmark = pytest.mark.anyio
+# zoek: ook in e2e/slim.sh op SQLite 3.46.1 (bouwontwerp §4.1)
+pytestmark = [pytest.mark.anyio, pytest.mark.zoek]
 
 RTF_TRAAG = b"{\\rtf1 " + b"{\\*\\x a}" * 1_000_000 + b"}"  # 8 MB, ~2,6 s CPU, geen tekst
 CRASH = (

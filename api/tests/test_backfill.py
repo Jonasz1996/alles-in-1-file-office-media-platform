@@ -32,7 +32,8 @@ from app.search import bench, hooks
 from tests import test_files
 from tests.factories import create_user
 
-pytestmark = pytest.mark.anyio
+# zoek: ook in e2e/slim.sh op SQLite 3.46.1 (bouwontwerp §4.1)
+pytestmark = [pytest.mark.anyio, pytest.mark.zoek]
 
 MAX_WAIT_S = 1.0
 MB = 1024 * 1024

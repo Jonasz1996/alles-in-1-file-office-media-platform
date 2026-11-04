@@ -32,7 +32,8 @@ from tests.test_files import mkdir, put, root
 from tests.test_pages import document, sha_of, upload_pdf
 from tests.test_shares import person, share_with
 
-pytestmark = pytest.mark.anyio
+# zoek: ook in e2e/slim.sh op SQLite 3.46.1 (bouwontwerp §4.1)
+pytestmark = [pytest.mark.anyio, pytest.mark.zoek]
 
 
 @pytest.fixture(autouse=True)

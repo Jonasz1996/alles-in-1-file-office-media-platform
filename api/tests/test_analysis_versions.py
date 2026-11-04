@@ -22,7 +22,8 @@ from app.extract import step as extract_step
 from app.models import Analysis, Blob, Job, User
 from app.search import hooks
 
-pytestmark = pytest.mark.anyio
+# zoek: ook in e2e/slim.sh op SQLite 3.46.1 (bouwontwerp §4.1)
+pytestmark = [pytest.mark.anyio, pytest.mark.zoek]
 
 PDF = "application/pdf"
 DONE = Outcome("done")
