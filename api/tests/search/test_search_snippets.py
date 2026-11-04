@@ -327,6 +327,36 @@ async def test_de_ocr_van_een_foto_alleen_voor_de_eigenaar(client, settings):
     assert found[w.ids["foto"]] == Snip("text", None)
 
 
+def test_de_sql_telt_mee_in_de_40_ms():
+    """De stap snip (Server-Timing) is SQL plus build: wat de SQL al kostte, gaat van het budget
+    af (§4.4: snip p95 ≤ 40 ms, ook in "groot")."""
+    docs = [Source(uuid.uuid4(), "x", body="een zebra") for _ in range(3)]
+    assert all(s.snippet for s in build(docs, parse("zebra"), 0.0).values())
+    op = build(docs, parse("zebra"), snippets.REQUEST_MS)
+    assert {(s.match, s.snippet) for s in op.values()} == {("text", None)}
+
+
+@pytest.mark.parametrize("plek", [0, 1_990, 1_998, 7_990, 12_000, 19_990])
+def test_in_stappen_gevouwen_zoals_in_een_keer(plek):
+    """Vouwen in stappen (2.000, 8.000, het hele venster) geeft hetzelfde als alles in één keer,
+    ook als het woord over de rand van een stap loopt, of als er een langer woord op de rand
+    staat dat met het woord begint."""
+    rx = snippets.pattern(parse("zebrapad"))
+    for voor in ("", "zebrapadden "):
+        tekst = ("x" * max(0, plek - len(voor) - 1) + " " + voor + "zebrapad en verder")[:20_000]
+        stappen = snippets.snippet(tekst, rx)
+        heel = snippets.STEPS
+        try:
+            snippets.STEPS = ()
+            in_een_keer = snippets.snippet(tekst, rx)
+        finally:
+            snippets.STEPS = heel
+        assert stappen == in_een_keer
+        # "zebrapadden" begint met het woord: het laatste woord is een voorvoegsel (parse)
+        verwacht = ["zebrapad"] * (2 if voor else 1)
+        assert stappen is not None and [p.t for p in stappen if p.m] == verwacht
+
+
 async def test_in_een_thread_met_een_limiter_van_1(client, settings, monkeypatch):
     w = await W.bouw_async(settings)
     eva = await kop(client, "eva")
@@ -334,9 +364,9 @@ async def test_in_een_thread_met_een_limiter_van_1(client, settings, monkeypatch
     threads: list[int] = []
     echt = snippets.build
 
-    def build_met_thread(sources, parsed):
+    def build_met_thread(sources, parsed, *rest):
         threads.append(threading.get_ident())
-        return echt(sources, parsed)
+        return echt(sources, parsed, *rest)
 
     monkeypatch.setattr(snippets, "build", build_met_thread)
     assert (await _zoek(client, eva, W.TEKST_WOORD))[w.ids["doc"]]["snippet"]

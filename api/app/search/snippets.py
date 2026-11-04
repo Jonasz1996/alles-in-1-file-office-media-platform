@@ -4,11 +4,15 @@
 
 - Alleen voor de treffers op de pagina, en pas na de tweede controle (Keuze 15): engine.hits()
   geeft de nodes die doorkwamen.
-- De SQL leest per node alleen de eerste 20.000 tekens (substr) van de tekst, de OCR en de meta,
-  de titel uit de mediabibliotheek, en de OCR van een foto alleen als de node van wie vraagt is
+- De SQL leest per node alleen het begin van de tekst, de OCR en de meta (substr van de bytes:
+  4 × 20.000, daarna de eerste 20.000 tekens; substr van tekst decodeert de hele waarde en is bij
+  30 teksten van 1 MB 11–14 ms, de bytes 8 ms), de titel uit de mediabibliotheek, en de OCR
+  van een foto alleen als de node van wie vraagt is
   (Keuze 16 en 25a: een treffer, zijn rang en zijn snippet komen nooit uit de foto-OCR van een
   ander).
-- Eén keer vouwen (fold() per teken, met een tabel van plekken terug naar de tekst), dan één
+- Vouwen (fold() per teken, met een tabel van plekken terug naar de tekst) in stappen: eerst de
+  eerste 2.000 tekens, dan 8.000, dan het hele venster, tot de eerste treffer met zijn stuk erin
+  past (vouwen kost ±0,75 ms per 20.000 tekens, en de meeste treffers staan vooraan). Dan één
   reguliere expressie met de gevouwen woorden van de vraag (het laatste als voorvoegsel, zoals
   parse() het zegt). Het stuk van ±160 tekens rond de eerste treffer, met elke treffer daarin
   gemarkeerd. Zo vindt "strasse" ook "Straße", en is in de snippet "Straße" gemarkeerd.
@@ -21,7 +25,9 @@
   richting van tekst omdraaien en regeleinden worden een spatie. De web zet de stukken als tekst
   in de pagina.
 - De klok loopt per document: hooguit 40 ms per verzoek, en voor de hele app hooguit 100 ms per
-  seconde (Keuze 13). Wat daarna nog komt, krijgt snippet null en match "text" (de treffer en
+  seconde (Keuze 13). De 40 ms gelden voor de hele stap snip (Server-Timing, §4.4): de SQL telt
+  mee, en build() begint geen document meer na REQUEST_MS sinds het begin van de stap. Wat
+  daarna nog komt, krijgt snippet null en match "text" (de treffer en
   zijn naam blijven). De klok is de wandklok van de thread (CLOCK; de tests zetten een nepklok).
   Met de limiter van 1 hieronder is dat de tijd van het werk zelf, of iets meer als de event
   loop de GIL even heeft: nooit minder dan de CPU die het kost.
@@ -41,7 +47,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import anyio
-from sqlalchemy import case, func, select
+from sqlalchemy import LargeBinary, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import BlobText, MediaItem, Node, PhotoOcr, User
@@ -53,6 +59,10 @@ from app.text import CONTROL, fold
 WINDOW = 20_000
 # De lengte van een snippet, en hoeveel daarvan vóór de eerste treffer staat
 SPAN = 160
+# Vouwen in stappen (snippet()); MARGIN: wat er na het stuk nog gevouwen moet zijn, zodat een
+# woord van de vraag (hooguit 200 tekens) niet op de rand van een stap valt
+STEPS = (2_000, 8_000)
+MARGIN = 200
 BEFORE = 50
 # Het budget (Keuze 8 en 13): per verzoek, en voor de hele app per APP_WINDOW_S seconden
 REQUEST_MS = 40.0
@@ -154,10 +164,17 @@ def _clean(text: str) -> str:
 
 def snippet(text: str, rx: re.Pattern[str]) -> list[SnippetPart] | None:
     """Het stuk van ±SPAN tekens rond de eerste treffer in text, als stukken; None zonder
-    treffer."""
-    f = Folded(text)
-    hits = rx.finditer(f.out)
-    first = next(hits, None)
+    treffer. Gevouwen in stappen (STEPS): een treffer telt pas als hij met zijn stuk en een
+    marge (een woord dat over de rand loopt) binnen het gevouwen deel valt."""
+    for n in (*STEPS, len(text)):
+        part = text[:n] if n < len(text) else text
+        f = Folded(part)
+        hits = rx.finditer(f.out)
+        first = next(hits, None)
+        if part is text:
+            break
+        if first is not None and f.span(first.start(), first.end())[1] + SPAN + MARGIN < n:
+            break
     if first is None:
         return None
     begin, stop = f.span(first.start(), first.end())
@@ -247,10 +264,11 @@ def _one(src: Source, rx: re.Pattern[str]) -> Snip:
     return Snip("text", None)
 
 
-def build(sources: Sequence[Source], parsed: Parsed) -> dict[uuid.UUID, Snip]:
-    """match en snippet per node, binnen het budget van dit verzoek en van de app."""
+def build(sources: Sequence[Source], parsed: Parsed, already: float = 0.0) -> dict[uuid.UUID, Snip]:
+    """match en snippet per node, binnen het budget van dit verzoek en van de app. already: de
+    ms die de stap al kostte (de SQL van make())."""
     rx = pattern(parsed)
-    spent = 0.0
+    spent = already
     out: dict[uuid.UUID, Snip] = {}
     for src in sources:
         if all(w in src.name for w in parsed.words):
@@ -283,7 +301,15 @@ def _thread() -> anyio.CapacityLimiter:
 
 
 def _window(column):
-    return func.substr(column, 1, WINDOW)
+    """De eerste 4 × WINDOW bytes (UTF-8: genoeg voor WINDOW tekens); _text() maakt er tekst
+    van."""
+    return func.substr(cast(column, LargeBinary), 1, 4 * WINDOW)
+
+
+def _text(value: bytes | str | None) -> str | None:
+    if value is None or isinstance(value, str):
+        return value if value is None else value[:WINDOW]
+    return bytes(value).decode("utf-8", "ignore")[:WINDOW]
 
 
 async def sources(db: AsyncSession, user: User, ids: Sequence[uuid.UUID]) -> list[Source]:
@@ -314,7 +340,15 @@ async def sources(db: AsyncSession, user: User, ids: Sequence[uuid.UUID]) -> lis
         .where(n.c.id.in_(list(ids)))
     )
     found = {
-        row[0]: Source(row[0], row[1] or "", row[2], row[3], row[4], row[5], row[6])
+        row[0]: Source(
+            row[0],
+            row[1] or "",
+            row[2],
+            _text(row[3]),
+            _text(row[4]),
+            _text(row[5]),
+            _text(row[6]),
+        )
         for row in await db.execute(sql)
     }
     return [found[i] for i in ids if i in found]
@@ -324,7 +358,9 @@ async def make(
     db: AsyncSession, user: User, ids: Sequence[uuid.UUID], parsed: Parsed
 ) -> dict[uuid.UUID, Snip]:
     """match en snippet voor de treffers van een pagina (na de tweede controle)."""
+    start = CLOCK()
     found = await sources(db, user, ids)
     if not found:
         return {}
-    return await anyio.to_thread.run_sync(build, found, parsed, limiter=_thread())
+    sql = (CLOCK() - start) * 1000
+    return await anyio.to_thread.run_sync(build, found, parsed, sql, limiter=_thread())
