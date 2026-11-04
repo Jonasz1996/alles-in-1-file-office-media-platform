@@ -706,6 +706,9 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
     - `search-rebuild` is nooit één statement: een `rebuild` van FTS5 houdt de schrijver minuten
       vast, en `busy_timeout` is 5 s (V9). In plaats daarvan: `delete-all` (17–250 ms, V4), dan
       opnieuw vullen per 2.000 `num` met een commit na elk stuk (≤ 142 ms per stuk op 3.46.1, V4).
+      Een stuk is ook hooguit 4 MiB tekst (body en ocr, `CHUNK_TEXT`; minstens één node), en na
+      elk stuk wacht de herbouw 0,1 s zodat een wachtende upload de schrijver krijgt: op de
+      groot-boom hield één stuk van 2.000 nodes de schrijver 4,7 s vast (review golf 1, H3).
     - De voortgang staat in `search_state.cursor`. De triggers schrijven tijdens een herbouw
       alleen naar FTS voor `num <= cursor`; wat daarboven verandert, neemt het volgende stuk mee.
       Het laatste stuk zet `cursor` op `NULL`, in dezelfde transactie. Zo is de index na afloop

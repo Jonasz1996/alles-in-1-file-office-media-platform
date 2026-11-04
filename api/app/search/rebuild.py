@@ -3,7 +3,9 @@ fase 6, Keuze 12). Z1; app.cli search-rebuild, search-triggers en search-check r
 
 - rebuild(): nooit één statement ('rebuild' van FTS5 houdt de schrijver minuten vast, en
   busy_timeout is 5 s). Eerst 'delete-all' en cursor = 0 in één transactie, dan per CHUNK nums
-  een korte transactie met een commit. Elk stuk begint met een schrijfactie (UPDATE search_state
+  een korte transactie met een commit; een stuk is ook hooguit CHUNK_TEXT bytes tekst (minstens
+  één node), en na elk stuk komt eerst PAUSE een andere schrijver aan de beurt (review golf 1,
+  H3). Elk stuk begint met een schrijfactie (UPDATE search_state
   ... RETURNING cursor) en leest pas daarna :hi en search_seq.next: met pysqlite opent een SELECT
   geen transactie, en dan zou het laatste stuk een node missen die er net bij kwam (spike S2).
   De triggers schrijven intussen alleen voor num <= cursor (schema.in_); wat daarboven
@@ -28,6 +30,7 @@ fase 6, Keuze 12). Z1; app.cli search-rebuild, search-triggers en search-check r
 
 from __future__ import annotations
 
+import asyncio
 import random
 import sqlite3
 import time
@@ -41,6 +44,14 @@ from app.search import schema
 from app.search.query import parse
 
 CHUNK = 2000
+# H3: een stuk is ook nooit meer dan zoveel bytes tekst (body en ocr), minstens één node: 2000
+# nodes met elk een tekst van 1 MB hielden de schrijver anders seconden vast. 4 MiB is lokaal
+# ±200 ms per stuk.
+CHUNK_TEXT = 4 * 1024 * 1024
+# Na elk stuk even niets: een upload die op de schrijver wacht, probeert het in de busy-handler van
+# SQLite pas na 1 tot 100 ms opnieuw. Zonder pauze pakt het volgende stuk de schrijver eerst, en
+# wacht die upload meer stukken lang (review golf 1, H3).
+PAUSE = 0.1
 # Zoveel nodes per keer in het geheugen bij check() (een tekst is tot 1 MB)
 BATCH = 100
 
@@ -67,9 +78,27 @@ async def _start(conn: AsyncConnection, what: str) -> None:
         await conn.exec_driver_sql("INSERT INTO fts_name(fts_name) VALUES ('delete-all')")
 
 
-async def _chunk(conn: AsyncConnection, chunk: int) -> tuple[int, bool]:
+# De volgende hooguit :chunk nodes na de cursor, met de tekst tot en met elke node opgeteld.
+# octet_length leest alleen de kop van de rij, niet de tekst zelf (SQLite 3.43 en later).
+_NEXT = (
+    "WITH next AS (SELECT num, blob_id FROM node WHERE num > :cur ORDER BY num LIMIT :chunk), "
+    "sized AS (SELECT next.num AS num, sum(coalesce({n}(t.body), 0) + coalesce({n}(t.ocr), 0)) "
+    "OVER (ORDER BY next.num) AS total "
+    "FROM next LEFT JOIN blob_text t ON t.blob_sha = next.blob_id) "
+    "SELECT max(CASE WHEN total <= :budget THEN num END), min(num), max(num), count(*) "
+    "FROM sized"
+)
+
+
+async def _length(conn: AsyncConnection) -> str:
+    version = (await conn.exec_driver_sql("SELECT sqlite_version()")).scalar() or "0"
+    parts = tuple(int(p) for p in version.split(".")[:2])
+    return "octet_length" if parts >= (3, 43) else "length"
+
+
+async def _chunk(conn: AsyncConnection, chunk: int, budget: int = CHUNK_TEXT) -> tuple[int, bool]:
     """Eén stuk: de nums (cursor, hi] in beide FTS-tabellen. Geeft hi en of het het laatste
-    was."""
+    was. Een stuk is hooguit chunk nodes, en hooguit budget bytes tekst; minstens één node."""
     cur = (
         await conn.exec_driver_sql(
             "UPDATE search_state SET cursor = cursor WHERE id = 1 RETURNING cursor"
@@ -78,11 +107,17 @@ async def _chunk(conn: AsyncConnection, chunk: int) -> tuple[int, bool]:
     if cur is None:  # een andere herbouw maakte hem af
         return 0, True
     last = (await conn.exec_driver_sql("SELECT next - 1 FROM search_seq WHERE id = 1")).scalar()
-    hi = (
+    fit, first, top, n = (
         await conn.exec_driver_sql(
-            "SELECT num FROM node WHERE num > ? ORDER BY num LIMIT 1 OFFSET ?", (cur, chunk - 1)
+            _NEXT.format(n=await _length(conn)), {"cur": cur, "chunk": chunk, "budget": budget}
         )
-    ).scalar()
+    ).one()
+    if n and (fit is None or fit < top):  # de tekst begrenst dit stuk
+        hi = first if fit is None else fit
+    elif n == chunk:
+        hi = top
+    else:
+        hi = None  # minder dan chunk nodes over: dit is het laatste stuk
     done = hi is None or hi >= last
     if done:
         hi = last
@@ -109,6 +144,7 @@ async def rebuild(
     chunk: int = CHUNK,
     after_chunk: Callable[[int], Awaitable[None]] | None = None,
     what: str = "alles",
+    pause: float = PAUSE,
 ) -> list[float]:
     """De herbouw in stukken; geeft de duur per stuk in ms. after_chunk(cursor) na de commit van
     elk stuk behalve het laatste (voor tests en de voortgang)."""
@@ -126,6 +162,7 @@ async def rebuild(
             return times
         if after_chunk is not None:
             await after_chunk(hi)
+        await asyncio.sleep(pause)
 
 
 async def progress(engine: AsyncEngine) -> tuple[int, int] | None:

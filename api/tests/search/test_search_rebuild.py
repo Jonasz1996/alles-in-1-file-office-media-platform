@@ -18,6 +18,9 @@ nu ook deze herbouw gebruikt.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import random
+import sqlite3
 import time
 import uuid
 
@@ -28,10 +31,11 @@ from sqlalchemy import update
 from app import analysis
 from app.db import get_engine
 from app.models import Node
-from app.search import rebuild, schema
+from app.search import bench, rebuild, schema
 from tests.factories import maker
+from tests.search import spike
 from tests.search import wereld as W
-from tests.search.test_spike_triggers import klopt, sql, vul_veel, zoek_naam
+from tests.search.test_spike_triggers import klopt, pad, sql, vul_veel, zoek_naam
 from tests.test_files import mkdir, put, root
 
 pytestmark = pytest.mark.anyio
@@ -114,6 +118,109 @@ async def test_een_upload_wacht_hooguit_1_s_en_de_index_klopt(client, admin, set
     # Na de herbouw weer FtsEngine
     r = await client.get("/api/v1/search", params={"q": "stuk"}, headers=jonas)
     assert r.json()["engine"] == "fts"
+
+
+def _vul_groot(settings, owner: str, root_id: str, n: int) -> None:
+    """n bestanden met elk een eigen tekst van 1 MB, rechtstreeks in SQLite."""
+    rng = random.Random("groot")
+    con = sqlite3.connect(pad(settings))
+
+    def doe(c) -> None:
+        nu = spike.NU.isoformat()
+        for i in range(n):
+            sha = hashlib.sha256(f"groot-{i}".encode()).hexdigest()
+            c.execute(
+                "INSERT INTO blob (sha256, size, ref_count, created_at) VALUES (?, 1, 1, ?)",
+                (sha, nu),
+            )
+            c.execute(
+                "INSERT INTO node (id, parent_id, owner_id, name, kind, mime, size, blob_id, "
+                "created_at, modified_at, search_name) VALUES (?, ?, ?, ?, 'file', "
+                "'text/plain', 1, ?, ?, ?, ?)",
+                (uuid.uuid4().hex, root_id, owner, f"groot {i}.txt", sha, nu, nu,
+                 f"groot {i}.txt"),
+            )  # fmt: skip
+            c.execute(
+                "INSERT INTO blob_text (blob_sha, body, ocr, meta, truncated, updated_at) "
+                "VALUES (?, ?, '', '', 0, ?)",
+                (sha, bench.tekst(rng, 1024 * 1024), nu),
+            )
+
+    try:
+        spike.vul_snel(con, doe)
+    finally:
+        con.close()
+
+
+async def test_een_stuk_vol_lange_teksten_houdt_de_schrijver_kort(client, admin, settings):
+    """H3: een stuk telde alleen nodes (CHUNK = 2000). 80 nodes met elk 1 MB tekst waren één
+    stuk van 80 MB, en een upload wachtte zo lang als dat stuk. Nu is een stuk ook hooguit
+    CHUNK_TEXT bytes tekst, en na elk stuk komt eerst een andere schrijver aan de beurt."""
+    jonas, tokens = admin
+    top = (await root(client, jonas))["folder"]["id"]
+    owner = uuid.UUID(tokens["user"]["id"]).hex
+    await anyio.to_thread.run_sync(_vul_groot, settings, owner, uuid.UUID(top).hex, 80)
+    engine = get_engine(settings)
+    map_id = await mkdir(client, jonas, top, "Tijdens")
+    wachten: list[float] = []
+    klaar = asyncio.Event()
+
+    async def uploads() -> None:
+        i = 0
+        while not klaar.is_set():
+            start = time.perf_counter()
+            r = await put(client, jonas, map_id, f"tegelijk {i}.txt", b"tegelijk %d" % i)
+            wachten.append((time.perf_counter() - start) * 1000)
+            assert r.status_code == 201, r.text
+            i += 1
+            await asyncio.sleep(0.005)
+
+    taak = asyncio.create_task(uploads())
+    try:
+        await asyncio.sleep(0.05)
+        stukken = await rebuild.rebuild(engine)
+    finally:
+        klaar.set()
+        await taak
+    print(f"herbouw: {len(stukken)} stukken, langste {max(stukken):.0f} ms, "
+          f"{len(wachten)} uploads, langste {max(wachten):.0f} ms")  # fmt: skip
+    assert max(wachten) <= 1000, max(wachten)
+    # 80 MB tekst in stukken van hooguit 4 MiB
+    assert len(stukken) >= 20
+    assert await rebuild.progress(engine) is None
+    await klopt(settings, termen=False)
+
+
+async def test_een_node_met_meer_tekst_dan_het_budget_is_een_stuk(client, admin, settings):
+    """Minstens één node per stuk, ook als die alleen al meer tekst heeft dan het budget; en het
+    budget telt de nodes tot en met de laatste die past."""
+    jonas, tokens = admin
+    top = (await root(client, jonas))["folder"]["id"]
+    owner = uuid.UUID(tokens["user"]["id"]).hex
+    await anyio.to_thread.run_sync(_vul_groot, settings, owner, uuid.UUID(top).hex, 3)
+    engine = get_engine(settings)
+    async with engine.begin() as conn:
+        await rebuild._start(conn, "alles")
+    nums = [r[0] for r in await sql(settings, "SELECT num FROM node ORDER BY num")]
+    grote = [
+        r[0]
+        for r in await sql(
+            settings,
+            "SELECT n.num FROM node n JOIN blob_text t ON t.blob_sha = n.blob_id ORDER BY n.num",
+        )
+    ]
+    gezien: list[int] = []
+    while True:
+        async with engine.begin() as conn:
+            hi, done = await rebuild._chunk(conn, 2000, budget=1000)
+        gezien.append(hi)
+        if done:
+            break
+    # Elke node met 1 MB tekst sluit een stuk af; daarna de rest (de hoofdmap en dergelijke)
+    for num in grote:
+        assert num in gezien, (num, gezien)
+    assert gezien[-1] == max(nums)
+    await klopt(settings, termen=False)
 
 
 class Stop(Exception):
