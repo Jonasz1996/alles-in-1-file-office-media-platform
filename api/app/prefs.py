@@ -58,7 +58,7 @@ class PhotoSettings(BaseModel):
     # Z0b: gezichten (X2) en zoeken op beeld (X3), met een standaard
     faces: OnOff = "uit"
     faces_forbidden: bool = False  # de beheerder verbiedt het (Keuze 64)
-    faces_available: bool = False  # de container analyse is er (Keuze 59)
+    faces_available: bool = False  # aanzetten kan: niet in de stand off (Keuze 59)
     beeld: OnOff = "uit"
 
 
@@ -98,8 +98,9 @@ SWITCHES: dict[str, str] = {"faces": "X2", "beeld": "X3"}
 class SwitchState:
     """Wat X2 of X3 over zijn schakelaar zegt, voor deze gebruiker. forbidden: de beheerder
     verbiedt het (faces_allowed false, Keuze 64; beeld uit voor het platform, Keuze 82).
-    available: de container analyse is er, met het model (Keuze 59). Zonder aanmelding: allebei
-    False."""
+    available: aanzetten kan. Niet in de stand off (Keuze 59), en voor X2 ook niet zonder
+    PLATFORM_FACES_KEYS; wel in down en models_missing, want dan wacht het werk in de rij (Keuze
+    59). Zonder aanmelding: allebei False."""
 
     forbidden: bool = False
     available: bool = False

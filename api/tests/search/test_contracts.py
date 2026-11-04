@@ -518,6 +518,30 @@ async def test_x2_en_x3_melden_hun_deel_van_beheer_aan():
     assert await hooks.admin_block("faces", "db") is None
 
 
+async def test_alleen_faces_en_beeld_melden_zich_aan():
+    """Nacontrole van Z0b: register_switch neemt alleen de schakelaars van X2 en X3, en
+    register_admin alleen hun delen van /beheer. Een andere sleutel (een instelling van Z6, of een
+    deel van Z7) geeft ValueError en meldt niets aan."""
+
+    async def state(db, user):
+        return prefs.SwitchState(available=True)
+
+    async def changed(db, user, value):
+        return None
+
+    async def niets(*args):
+        return None
+
+    for key in ("location", "memories", "ocr_photos", "faces_allowed", "Faces", ""):
+        with pytest.raises(ValueError):
+            prefs.register_switch(key, prefs.Switch(state=state, changed=changed))
+    for name in ("names", "text", "geo", "hash", "ocr", "faces_allowed", "Beeld", ""):
+        with pytest.raises(ValueError):
+            hooks.register_admin(name, hooks.AdminPart(block=niets, switch=niets, rebuild=niets))
+    assert prefs._switches == {}
+    assert hooks._admin == {}
+
+
 async def test_na_de_migratie_is_de_stand_van_de_database_al_gelezen(settings):
     """app.migrate.upgrade leest na de migratie of er FTS is: de eerste zoekvraag hoeft dat niet
     te doen (en telt dus net zoveel vragen als de volgende)."""

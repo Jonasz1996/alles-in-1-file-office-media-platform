@@ -6,9 +6,10 @@ helper; na preview.ready komt wie zich aanmeldde aan de beurt; render.py kent de
 en ocr_page (stubs). De rijen index en ocr staan in test_jobs_lanes.py, de log in
 test_log_hiding.py, en db-backup en de stubs van de cli in test_cli_db.py.
 
-Z0b (Keuze 65): hier dat niemand zich met register_large aanmeldt. Wat er na de grote preview
-gebeurt, staat in test_previews.py: daar draait de echte tweede ronde, met de renderer, en die
-heeft in python:3.12-slim van e2e/slim.sh geen Pillow (hij start met -I en zonder PYTHONPATH).
+Z0b (Keuze 65): hier dat niemand zich met register_large aanmeldt, en (na de review) ook niet met
+register_switch of register_admin. Wat er na de grote preview gebeurt, staat in test_previews.py:
+daar draait de echte tweede ronde, met de renderer, en die heeft in python:3.12-slim van
+e2e/slim.sh geen Pillow (hij start met -I en zonder PYTHONPATH).
 """
 
 from __future__ import annotations
@@ -275,6 +276,21 @@ def test_niemand_meldt_zich_aan_na_de_grote_preview():
         [sys.executable, "-c", code], cwd=API_DIR, capture_output=True, check=True, text=True
     )
     assert done.stdout.strip() == "0"
+
+
+def test_niemand_meldt_een_schakelaar_of_een_deel_van_beheer_aan():
+    """Ook de haken van de review van Z0b (contract F4) hebben nog niemand: geen schakelaar in
+    app.prefs en geen deel van /admin/search in search.hooks, als de hele app geladen is. Dan
+    weigert check_switch "aan" en geven admin_switch en admin_rebuild 501, tot X2 en X3 er zijn
+    (nacontrole van Z0b)."""
+    code = (
+        "import app.main; from app import prefs; from app.search import hooks; "
+        "print(len(prefs._switches), len(hooks._admin))"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code], cwd=API_DIR, capture_output=True, check=True, text=True
+    )
+    assert done.stdout.strip() == "0 0"
 
 
 def _render(request: dict) -> dict:
