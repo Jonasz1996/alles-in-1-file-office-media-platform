@@ -781,3 +781,88 @@ def test_toegangslog_zonder_handtekening_of_token(tmp_path):
     for f in access.filters:
         f.filter(record)
     assert record.getMessage().endswith('/api/v1/download/x?token=***&inline=true HTTP/1.1" 200')
+
+
+# --- De haak na de grote preview (Z0b, bouwontwerp fase 6, Keuze 65) ---
+# Hier en niet in tests/search/test_hotspots.py: dit draait de echte tweede ronde met de
+# renderer, en die heeft in python:3.12-slim van e2e/slim.sh geen Pillow (-I, zonder
+# PYTHONPATH). Dat niemand zich aanmeldt, staat wel in test_hotspots.py.
+
+
+@pytest.fixture
+def geen_haken():
+    """Geen aanmelding van een vorige test, en ook niet naar de volgende."""
+    previews.forget_large()
+    yield
+    previews.forget_large()
+
+
+async def grote_preview(client, headers, settings) -> str:
+    """Een foto met twee rondes: de eerste maakt 256, preview.large daarna 1024. Geeft de sha."""
+    node = await upload(client, headers, "foto.jpg", jpeg_rotated((1600, 1200)))
+    assert await jobs.run_one(settings)  # de eerste ronde: alleen de thumbnail
+    return sha_of(node)
+
+
+async def stand(maker, sha: str) -> tuple[list[int], bool, list[str]]:
+    """De maten, of partial er nog staat, en hoe de taken van de tweede ronde afliepen."""
+    async with maker() as session:
+        meta = (await session.get(Blob, sha)).preview_meta
+        status = await session.scalars(select(Job.status).where(Job.type == previews.LARGE_TYPE))
+        return meta["sizes"], "partial" in meta, list(status)
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("geen_haken")
+async def test_na_de_grote_preview_is_de_volgende_aan_de_beurt(client, admin, settings):
+    """previews.register_large(fn): na preview.large, als 1024 er staat, met (maker, sha). Niet
+    na de eerste ronde: dan is er alleen 256."""
+    headers, _ = admin
+    gezien: list[tuple[str, list[int], bool]] = []
+
+    async def groot(maker, sha):
+        async with maker() as session:
+            meta = (await session.get(Blob, sha)).preview_meta
+        gezien.append((sha, meta["sizes"], "partial" in meta))
+
+    previews.register_large(groot)
+    previews.register_large(groot)  # twee keer aanmelden is één keer
+    sha = await grote_preview(client, headers, settings)
+    assert gezien == []
+    assert await jobs.run_pending(settings) == 1  # preview.large
+    assert gezien == [(sha, [256, 1024], False)]
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("geen_haken")
+async def test_een_fout_na_de_grote_preview_gaat_door(client, admin, settings, maker, caplog):
+    """Een haak die faalt, komt in het log; de volgende gaat door en de preview is gewoon klaar
+    (de taak slaagt, de tweede ronde komt niet terug)."""
+    headers, _ = admin
+
+    async def stuk(maker, sha):
+        raise RuntimeError("kapot")
+
+    gezien: list[str] = []
+
+    async def daarna(maker, sha):
+        gezien.append(sha)
+
+    previews.register_large(stuk)
+    previews.register_large(daarna)
+    sha = await grote_preview(client, headers, settings)
+    with caplog.at_level("ERROR"):
+        assert await jobs.run_pending(settings) == 1
+    assert "previews.large" in caplog.text
+    assert gezien == [sha]
+    assert await stand(maker, sha) == ([256, 1024], False, ["done"])
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("geen_haken")
+async def test_zonder_aanmelding_niets_na_de_grote_preview(client, admin, settings, maker):
+    """Zonder aanmelding loopt de tweede ronde zoals ervoor."""
+    headers, _ = admin
+    sha = await grote_preview(client, headers, settings)
+    assert await jobs.run_pending(settings) == 1
+    assert await stand(maker, sha) == ([256, 1024], False, ["done"])

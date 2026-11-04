@@ -139,9 +139,9 @@ Erbij of uitgebreid, allemaal in `api/tests/`:
 - `search/test_api_stubs.py`: de 14 nieuwe routes in `ENDPOINTS` (401, 403, 501 met het
   pakket); `mode=image` en `like` geven 501 `X3`, een andere `mode` of een kapotte `like` 422;
   confirm met `person_id` én `name` (of geen van beide) geeft 422.
-- `search/test_hotspots.py`: na de grote preview komt de haak één keer aan de beurt (en niet na
-  de eerste ronde); een fout gaat door; zonder aanmelding gebeurt niets; na `import app.main` is
-  er niemand aangemeld.
+- `test_previews.py` (onderaan): na de grote preview komt de haak één keer aan de beurt (en
+  niet na de eerste ronde); een fout gaat door; zonder aanmelding gebeurt niets.
+  `search/test_hotspots.py`: na `import app.main` is er niemand aangemeld.
 - `search/test_log_hiding.py`: zes nieuwe regels en twee tests voor zoeken op beeld.
 - `search/test_own_live.py`: `routers/people_faces.py`, `routers/beeld.py` en de functies met
   `beeld` vallen onder de wachter; `people/faces_types.py` staat bij `NOT_A_QUERY`; de tabellen
@@ -189,6 +189,13 @@ Erbij of uitgebreid, allemaal in `api/tests/`:
     wipe-unnamed, rescan en `DELETE /admin/search/beeld`. De tabel van X2 noemt ze niet allemaal.
 11. **`beeld` in `photo_prefs()` is altijd `"uit"`** tot 0012 de kolom maakt; `PATCH
     /me/photo-settings` neemt het al aan, maar die route is nog een stub.
+12. **De tests van de haak na de grote preview staan in `tests/test_previews.py`**, niet in
+    `tests/search/test_hotspots.py` zoals §3.5 voor de plekken van Z0 zegt. Ze draaien de echte
+    tweede ronde met de renderer. Alles onder `tests/search/` krijgt marker `zoek`, en
+    `e2e/slim.sh` draait die in python:3.12-slim met de venv van de host via `PYTHONPATH`; de
+    renderer start met `-I` en zonder de omgeving van de app (geen geheimen), dus daar is geen
+    Pillow en faalt elke preview. In de gewone run en in CI draaien ze gewoon mee. Dat niemand
+    zich aanmeldt, staat wel in `test_hotspots.py`.
 
 ## Open
 

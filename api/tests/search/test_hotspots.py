@@ -2,10 +2,13 @@
 
 Nieuwe inhoud meldt zich na de commit bij search.hooks.blob_added; kopiëren roept photo_copy in
 dezelfde transactie; de prullenbak en het wissen van een gebruiker wissen nodes via de ene
-helper; na preview.ready komt wie zich aanmeldde aan de beurt, en na de grote preview wie zich
-met register_large aanmeldde (Z0b, Keuze 65); render.py kent de ingangen text en ocr_page
-(stubs). De rijen index en ocr staan in test_jobs_lanes.py, de log in
+helper; na preview.ready komt wie zich aanmeldde aan de beurt; render.py kent de ingangen text
+en ocr_page (stubs). De rijen index en ocr staan in test_jobs_lanes.py, de log in
 test_log_hiding.py, en db-backup en de stubs van de cli in test_cli_db.py.
+
+Z0b (Keuze 65): hier dat niemand zich met register_large aanmeldt. Wat er na de grote preview
+gebeurt, staat in test_previews.py: daar draait de echte tweede ronde, met de renderer, en die
+heeft in python:3.12-slim van e2e/slim.sh geen Pillow (hij start met -I en zonder PYTHONPATH).
 """
 
 from __future__ import annotations
@@ -21,11 +24,10 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app import jobs, previews
+from app import previews
 from app.db import get_engine
-from app.models import Blob, Job, Node
+from app.models import Node
 from app.search import hooks, purge
-from tests.test_previews import jpeg_rotated
 
 pytestmark = pytest.mark.anyio
 
@@ -265,65 +267,6 @@ async def test_een_fout_na_preview_ready_gaat_door(settings, caplog):
     assert gezien == ["c" * 64]
 
 
-async def _grote_preview(client, headers, settings) -> str:
-    """Een foto met twee rondes: de eerste maakt 256, preview.large daarna 1024. Geeft de sha."""
-    root, _me = await tree(client, headers)
-    node = await put(client, headers, root, "foto.jpg", jpeg_rotated((1600, 1200)))
-    assert await jobs.run_one(settings)  # de eerste ronde: alleen de thumbnail
-    return node["etag"].strip('"')
-
-
-async def _stand(settings, sha: str) -> tuple[list[int], bool, list[str]]:
-    """De maten, of partial er nog staat, en hoe de taken van de tweede ronde afliepen."""
-    maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
-    async with maker() as session:
-        meta = (await session.get(Blob, sha)).preview_meta
-        status = await session.scalars(sa.select(Job.status).where(Job.type == previews.LARGE_TYPE))
-        return meta["sizes"], "partial" in meta, list(status)
-
-
-async def test_na_de_grote_preview_is_de_volgende_aan_de_beurt(client, admin, settings):
-    """previews.register_large(fn) (Z0b, Keuze 65): na preview.large, als 1024 er staat, met
-    (maker, sha). Niet na de eerste ronde: dan is er alleen 256."""
-    headers, _ = admin
-    gezien: list[tuple[str, list[int], bool]] = []
-
-    async def groot(maker, sha):
-        async with maker() as session:
-            meta = (await session.get(Blob, sha)).preview_meta
-        gezien.append((sha, meta["sizes"], "partial" in meta))
-
-    previews.register_large(groot)
-    previews.register_large(groot)  # twee keer aanmelden is één keer
-    sha = await _grote_preview(client, headers, settings)
-    assert gezien == []
-    assert await jobs.run_pending(settings) == 1  # preview.large
-    assert gezien == [(sha, [256, 1024], False)]
-
-
-async def test_een_fout_na_de_grote_preview_gaat_door(client, admin, settings, caplog):
-    """Een haak die faalt, komt in het log; de volgende gaat door en de preview is gewoon klaar
-    (de taak slaagt, de tweede ronde komt niet terug)."""
-    headers, _ = admin
-
-    async def stuk(maker, sha):
-        raise RuntimeError("kapot")
-
-    gezien: list[str] = []
-
-    async def daarna(maker, sha):
-        gezien.append(sha)
-
-    previews.register_large(stuk)
-    previews.register_large(daarna)
-    sha = await _grote_preview(client, headers, settings)
-    with caplog.at_level("ERROR"):
-        assert await jobs.run_pending(settings) == 1
-    assert "previews.large" in caplog.text
-    assert gezien == [sha]
-    assert await _stand(settings, sha) == ([256, 1024], False, ["done"])
-
-
 def test_niemand_meldt_zich_aan_na_de_grote_preview():
     """Z0b meldt niemand aan, ook niet als de hele app geladen is (een eigen proces: de fixture
     hierboven haalt de aanmeldingen in dit proces weg)."""
@@ -332,14 +275,6 @@ def test_niemand_meldt_zich_aan_na_de_grote_preview():
         [sys.executable, "-c", code], cwd=API_DIR, capture_output=True, check=True, text=True
     )
     assert done.stdout.strip() == "0"
-
-
-async def test_zonder_aanmelding_niets_na_de_grote_preview(client, admin, settings):
-    """Zonder aanmelding loopt de tweede ronde zoals ervoor."""
-    headers, _ = admin
-    sha = await _grote_preview(client, headers, settings)
-    assert await jobs.run_pending(settings) == 1
-    assert await _stand(settings, sha) == ([256, 1024], False, ["done"])
 
 
 def _render(request: dict) -> dict:
