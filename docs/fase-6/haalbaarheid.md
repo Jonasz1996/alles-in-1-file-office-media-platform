@@ -734,8 +734,9 @@ alleen in CI.
   werk zelf.
 - De vormen van Keuze 4a over HTTP: spike S10 meet ze in Z0.
 - De handdruk van Keuze 17 in de echte worker-container: spike S11.
-- tesseract in Debian 13 (het image): spike S5, alleen in CI. Ook hoeveel groter het image
-  daarmee wordt, is nog niet gemeten (de poort in `images` is ≤ +30 MB).
+- tesseract in Debian 13 (het image): spike S5, alleen in CI. **Gemeten op 4 november 2026:
+  69 MiB**, boven de poort van ≤ +30 MB; zie [spike.md](spike.md#s5-tesseract-in-debian-13) en
+  Vraag 15.
 
 Bij revisie 3 (gezichten en beeld):
 

@@ -9,7 +9,7 @@ Op 3 november 2026 zei je "ja voeg alles toe", en daarna koos je op een kaartje 
 Dat betekent:
 
 - **OCR: ja.** Scans en foto's met tekst worden doorzoekbaar. Daarvoor komt tesseract in het
-  image.
+  image. Dat bleek 69 MB, niet ±20 MB; daarom Vraag 15.
 - **Gezichten automatisch: ja**, in fase 6. Per gebruiker staat het standaard uit.
 - **Zoeken op wat er op een foto staat** ("strand", "hond"): ja, in fase 6. Dat volgt uit "alles";
   het kaartje noemde het niet apart. Daarom staat het per gebruiker standaard uit (Vraag 11).
@@ -76,7 +76,7 @@ Gemeten in de sandbox, of berekend uit die metingen ([haalbaarheid.md](haalbaarh
 
 | Wat | Hoeveel |
 |---|---|
-| het image | +118–141 MB voor numpy en onnxruntime, ook als je `analyse` uitzet; plus tesseract (nog niet gemeten, grens 30 MB) |
+| het image | +118–141 MB voor numpy en onnxruntime, ook als je `analyse` uitzet; plus 69 MB voor tesseract (OCR; gemeten, zie Vraag 15) |
 | de modellen | ±39 MB voor gezichten en ±0,4 GB voor beeld, in `/opt/platform/modellen`; bij de installatie tijdelijk 1,55 GB extra |
 | de database | ±0,3 GB per 100.000 foto's, voor gezichten en beeld samen; plus ±0,15 GB cache voor zoeken op beeld |
 | eenmalig rekenen, 55.000 foto's | gezichten ±2,2–2,5 uur, beeld ±1,1–1,2 uur, op de achtergrond op één core |
@@ -138,6 +138,9 @@ wachten.
 13. **Leveren we in twee delen op?** Standaard: **ja**: de kern rond dag 27, gezichten en beeld
     rond dag 43.
 14. **Mag zoeken op beeld 250 ms duren?** Standaard: **ja**; gewoon zoeken houdt zijn 200 ms.
+15. **Mag tesseract het image 69 MB groter maken?** Je zei ja op OCR toen we ±20 MB dachten; in
+    CI is het 69 MB (de talen 20 MB, de rest het programma en bibliotheken). Standaard: **ja,
+    toch erin**. Anders: geen OCR, en tekst in scans en foto's is niet te vinden.
 
 Vraag 1, 2, 3, 5, 6 en 7 heb je beantwoord, of ze zijn ingetrokken (zie "Wat je koos"). De vragen
 staan uitgebreid in het [bouwontwerp](bouwontwerp.md) onder "Vragen voor Jonas".

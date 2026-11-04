@@ -22,12 +22,12 @@ docker run --rm --network none --cpuset-cpus 0-2 -v "$PWD:/repo:ro" -e HOME=/tmp
 
 S5 en S11 in de echte containers, en S1–S10 nog eens op 3.46.1, draaien in CI: de nieuwe job
 `zoek-perf` (`python:3.12-slim`) en de job `media-image`. Beide eindigen met een blok
-`=== kort ===` in het log. Op deze tak heeft CI nog niet gedraaid (er is niet gepusht); de
-getallen "in CI" komen bij de eerste run. S5 is alleen in CI te meten: `apt` in docker geeft
+`=== kort ===` in het log. De getallen "in CI" komen uit run 82 op `402b307` (4 november 2026,
+alle jobs groen); ze staan bij elke stap. S5 is alleen in CI te meten: `apt` in docker geeft
 hier 403.
 
 **Kort.** Alle elf stappen hebben een uitkomst; geen stap vraagt een andere aanpak dan
-het ontwerp. Wel veranderen er acht dingen:
+het ontwerp. Wel veranderen er negen dingen:
 
 1. **Ronde A stopt pas 2–22 ms na zijn grens** bij een voorvoegsel, omdat FTS5 de lijsten
    samenvoegt tussen twee keer kijken naar de interrupt. Met een vaste 40 ms voor ronde B kwam
@@ -57,6 +57,9 @@ het ontwerp. Wel veranderen er acht dingen:
    niet-dumpbaar: geen venster (S11, Keuze 17).
 8. **De zoekbench heeft ±1,1 GB vrij nodig** bij 100.000: 1.056 MB met de WAL, 525 MB na een
    checkpoint (S9).
+9. **tesseract maakt het image 69 MiB groter, niet ≤ 30 MB.** Vraag 1 van revisie 2 noemde
+   ±20 MB; de talen zijn 20 MB, de rest zijn tesseract, leptonica en 12 bibliotheken die nog
+   niet in het image zaten (S5). Dat is Vraag 15 aan Jonas.
 
 ---
 
@@ -84,6 +87,9 @@ cd api && taskset -c 0-2 uv run pytest -q -s -m "zoek_perf or not zoek_perf" \
 | `"factuur"` op 20.000 documenten, 30 keer | ronde A, mediaan 18,6 ms | ronde A, mediaan 22,8 ms |
 | `"de"` | ronde A, mediaan 34,9 ms | ronde A, mediaan 42,2 ms |
 | `"ver"*`, B krijgt de rest | ronde C, 162,6–170,6 ms (p95 169,7) | ronde C, 162,6–171,5 ms (p95 169,6) |
+
+In CI (`zoek-perf`, 3.46.1, 5 keer per vraag): `"factuur"` ronde A, mediaan 11,0 ms; `"de"`
+ronde A, 20,9 ms; `"ver"*` ronde C, 161,4 ms.
 
 Bij `"ver"*` geeft ronde C één rij: "Vergadering bestuur.pdf" van Eva, niet "Verslag van
 Bram.pdf" (test_rondes_a_b_en_c).
@@ -145,7 +151,8 @@ cd api && taskset -c 0-2 uv run pytest -q -s -m zoek_perf tests/search/test_spik
   3 nodes alleen na een herbouw in `fts_node` en 18 in `fts_name`.
 - Het langste stuk bij 100.000 (201 ms op 3.53.1, 294 ms op 3.46.1) is langer dan de
   101–142 ms van V4. Een upload wacht dan tot 687 ms: onder de 1 s, maar met weinig ruimte.
-  In de job `zoek-perf` komt het getal van de runner erbij.
+  In CI (`zoek-perf`, 3.46.1): 51 stukken, het langste 138 ms; 177 uploads ertussen, mediaan
+  32 ms, max 392 ms.
 
 ## S3: 0010 heen en terug
 
@@ -194,8 +201,8 @@ cd api && taskset -c 0-2 uv run pytest -q -s tests/search/test_spike_plannen.py
 
 ## S5: tesseract in Debian 13
 
-**Klaar als:** een getal in dit bestand. **In CI** (stap "S5 tesseract in Debian 13 (alleen
-meten)" van `media-image`; het blok `=== kort ===` toont de uitkomst).
+**Klaar als:** een getal in dit bestand. **Gemeten in CI**: **69 MiB**, meer dan de poort van
++ ≤ 30 MB (stap "S5 tesseract in Debian 13 (alleen meten)" van `media-image`, run 82).
 
 In een wegwerpcontainer van het gebouwde image, als root en met netwerk: Debian-versie, of
 `libavfilter` aan `libtesseract` hangt (`ldd`), of ffmpeg met `--enable-libtesseract` is gebouwd,
@@ -204,11 +211,26 @@ tesseract-ocr-osd`, met de som van `Installed-Size` ervoor en erna, "Need to get
 this operation", de nieuwe pakketten, `du` van de taaldata, en de versie en talen. Het image
 verandert niet.
 
-Hier gemeten: niets. `apt` in docker geeft in de sandbox 403, en het image is hier niet te
-bouwen. Het script zelf draaide in `python:3.12-slim` tot `apt-get` (zonder netwerk). Wat al
-vaststaat: het image installeert ffmpeg uit Debian 13 (`apt-get install ffmpeg`, Dockerfile).
-Het getal staat in `tesseract.txt` (artefact `media-image`) en in het blok `kort`; het komt
-hier bij de eerste run. Tot dan blijft de standaard van Vraag 1: tesseract niet in het image.
+In de sandbox niet te meten: `apt` in docker geeft 403, en het image is hier niet te bouwen.
+In CI (het image van `402b307`):
+
+| | |
+|---|---|
+| Debian | 13 (trixie) |
+| ffmpeg hangt aan `libtesseract`; gebouwd met `--enable-libtesseract` | nee; nee |
+| al in het image | niets van tesseract |
+| download (`Need to get`) | 21,1 MB |
+| erbij volgens apt (`After this operation`) | 72,4 MB |
+| **erbij volgens dpkg (`Installed-Size`)** | **69 MiB** |
+| waarvan taaldata | 20 MB |
+| versie en talen | tesseract 5.5.0; eng, nld, osd |
+| nieuwe pakketten (18) | `tesseract-ocr`, `-eng`, `-nld`, `-osd`, `libtesseract5`, `libleptonica6`, en 12 bibliotheken: `libicu76`, `libarchive13t64`, `libcurl4t64`, `libnghttp2-14`, `libnghttp3-9`, `libssh2-1t64`, `librtmp1`, `libldap2`, `libsasl2-2`, `libsasl2-modules-db`, `libpsl5t64`, `libgif7` |
+
+**Wat dat verandert.** De poort van Keuze 24 (+ ≤ 30 MB) is niet te halen: de talen alleen al
+zijn 20 MB, en `--no-install-recommends` staat al aan. Vraag 1 van revisie 2, waar Jonas ja op
+zei, noemde ±20 MB. Daarom Vraag 15 (README en bouwontwerp): tesseract toch in het image, met
++ ≤ 75 MB als poort, of geen OCR. Tot Jonas antwoordt, bouwt X1 met tesseract in het image en
+de poort + ≤ 75 MB; X1 komt pas in golf 4, dus er gaat niets verloren als het nee wordt.
 
 ## S6: de landsgrenzen
 
@@ -250,8 +272,9 @@ Na de samenvoeging van Z0 (100.000 bestanden, 5.900 mappen, 230 miljoen tekens):
 | op schijf | 541 MB | 541 MB |
 | de test, met de herbouw erna | 118,6 s | 125,9 s |
 
-Lokaal, op 3 van de 4 cores (`taskset -c 0-2`, en `--cpuset-cpus 0-2` voor slim). In CI meet
-de job `zoek-perf` hetzelfde op 3.46.1.
+Lokaal, op 3 van de 4 cores (`taskset -c 0-2`, en `--cpuset-cpus 0-2` voor slim). In CI
+(`zoek-perf`, 3.46.1): het zaad 40,1 s (migratie 0,1 s, plannen 1,2 s, blobs 0,5 s, tekst 8,4 s,
+nodes met de triggers 28,4 s, de rest 1,4 s), 544 MB; de test met de herbouw 42,7 s.
 
 Vóór de samenvoeging stond `app/search/bench.py` nog niet op de tak van de spike; die mat met de
 boom van de zoekbench (108.452 nodes, 233 miljoen tekens):
@@ -326,9 +349,18 @@ duurt een kort voorvoegsel tot 776 ms.
 
 In de container: `test_media_container.sh` draait `in_platform python -I - --los <
 tools/zoekbench/bench.py`, eist ≤ 300 s, `opgeruimd: ja` en geen `zoekbench-*` meer in
-`/data/cache` of `/tmp`. Het blok `=== zoekbench ===` staat in `kort` van `media-image`. Het
-getal van de container komt hier bij de eerste run. In `python:3.12-slim` (3.46.1) met
-`--vormen` (164.124 nodes): eigenaar p95 161,3 ms, alles p95 161,5 ms, max 191,3 ms; 117 s.
+`/data/cache` of `/tmp`. Het blok `=== zoekbench ===` staat in `kort` van `media-image`.
+
+| In CI, 3.46.1 | de container van de app (108.452 nodes) | `zoek-perf`, met `--vormen` (164.124) |
+|---|---|---|
+| bouwen, hele run | 26,5 s, 41,6 s | 31,1 s, 57,7 s |
+| eigenaar: p50, p95 | 4,2, 160,4 ms | 6,1, 160,7 ms (max 161,3) |
+| alles: p50, p95, max | 7,2, 160,6, 167,5 ms | 11,9, 160,8, 163,3 ms |
+| hoe vaak B, C (eigenaar en alles) | B 0, C 12 | B 0, C 12 |
+| opgeruimd | ja | ja |
+
+Lokaal in `python:3.12-slim` (3.46.1) met `--vormen`: eigenaar p95 161,3 ms, alles p95
+161,5 ms, max 191,3 ms; 117 s.
 
 ## S10: de vormen van Keuze 4a
 
@@ -360,6 +392,13 @@ cd api && taskset -c 0-2 uv run python -I ../tools/zoekbench/bench.py --los --vo
 | bijna gelijk, de vorm uit het ontwerp | > 2.000 (gestopt) | > 2.000 (gestopt) | 300: niet gehaald |
 
 Paren: 30 bij de eigenaar, 522 bij de fotograaf. Hele run met de vormen: 117 s (3.46.1).
+
+In CI (`zoek-perf`, 3.46.1, de runner), p95 in ms: filters eigenaar 0,2, 0,1, 0,2 en alles
+0,1, 0,0, 0,1; vanaf de paden eigenaar 2,6 en alles 73,6; kaart eigenaar wereld 1,0 en Nederland
+0,6; **kaart fotograaf zonder join (de vorm van na de review) wereld 17,1 en Nederland 13,7**,
+met join (oud) 167,1 en 87,2; precies gelijk 3,3 en 41,0; bijna gelijk met `EXISTS` 0,4 en 1,8;
+vanaf de eigen sha's 42,1; de vorm uit het ontwerp 1.192 ms bij de eigenaar en gestopt na
+2.000 ms bij de fotograaf. Paren: 30 en 522.
 
 **Wat dat verandert.**
 
@@ -436,7 +475,13 @@ niet: `0711`, `vork`; geen venster: `0711`.
 
 In de container draait `test_media_container.sh` het als `media` (uid 10002), met de
 `ptrace_scope` van de runner. `handdruk.json` (gemaskeerd) komt in het artefact, de uitkomst
-per vorm in `kort`. Het getal komt hier bij de eerste run.
+per vorm in `kort`.
+
+In CI (run 82): `ok True`, `S11 True`, `ptrace_scope` 1. Geen van de drie vormen zag de inhoud
+van een blob: `mem` gaf vóór en na "klaar" `EACCES` en ptrace `EPERM`, omdat Yama daar aan staat.
+Vóór "klaar" waren bij `ontwerp` en `vork` fd 0, 1 en 2 te openen, bij `0711` niets: alleen
+`0711` heeft geen venster. Zonder Yama, zoals lokaal, lekt `ontwerp` wel (zie boven); de
+aanbeveling blijft 0711.
 
 ---
 
@@ -471,8 +516,10 @@ dan de marker `zoek_perf` (S1 met de echte grenzen, S2 herbouw van 100.000, S3 m
   haalt de poort (zie S10).
 - **Keuze 17: welke vorm.** De 0711-kopie van python is één regel in de Dockerfile (Z2); de vork
   na "klaar" is code in `app.render text`. Aanbevolen: 0711, plus stderr naar `/dev/null`.
-- **CI-getallen op 3.46.1** voor S1, S2, S7, S9 en S10 in de job, en S5 en S11 in de
-  container: bij de eerste run na de push.
+- ~~**CI-getallen op 3.46.1** voor S1, S2, S7, S9 en S10 in de job, en S5 en S11 in de
+  container: bij de eerste run na de push.~~ Gedaan: run 82 op `402b307`, bij elke stap.
+- **S5: tesseract is 69 MiB**, boven de poort van + ≤ 30 MB. Vraag 15 aan Jonas; de standaard
+  is wel in het image, met de poort + ≤ 75 MB.
 - ~~**Z0-e2e `plans.py`**: als daar de vorm `IN mine` voor bijna-duplicaten staat, is die
   plan-test een kruisproduct; hij moet de vorm met `EXISTS` krijgen.~~ Gedaan bij de
   samenvoeging van Z0: `_bijna` in `api/tests/search/test_plans.py` heeft de vorm met `EXISTS`.
