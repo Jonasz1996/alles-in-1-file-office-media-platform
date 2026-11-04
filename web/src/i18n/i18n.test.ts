@@ -21,8 +21,9 @@ import {
 import { detectLocale } from "./locale";
 import type { Messages } from "./types";
 
-// Alle woordenboeken, direct geladen: om nl en en naast elkaar te leggen
-const files = import.meta.glob<Messages>("./areas/*.ts", { eager: true, import: "default" });
+// Alle woordenboeken, direct geladen: om nl en en naast elkaar te leggen (het type met "as"
+// erachter, niet als typeargument: zie globCache.test.ts)
+const files = import.meta.glob("./areas/*.ts", { eager: true, import: "default" }) as Record<string, Messages>;
 
 const AREAS: Area[] = [
   "common",
@@ -267,7 +268,10 @@ describe("errorText", () => {
 
 describe("foutcatalogi (errors/*.ts)", () => {
   // De echte catalogi, direct geladen; de app laadt ze lazy via initI18n (alleen in het Engels)
-  const catalogs = import.meta.glob<ErrorCatalog>("./errors/*.ts", { eager: true, import: "default" });
+  const catalogs = import.meta.glob("./errors/*.ts", { eager: true, import: "default" }) as Record<
+    string,
+    ErrorCatalog
+  >;
 
   it("elk gebied met eigen foutcodes heeft een catalogus, elke code één keer en met een Engelse tekst", () => {
     const names = Object.keys(catalogs).map((p) => p.replace(/^\.\/errors\/|\.ts$/g, ""));

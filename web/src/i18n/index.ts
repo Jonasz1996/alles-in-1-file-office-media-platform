@@ -17,15 +17,14 @@ export type { Area, ErrorCatalog, Locale, MessageKey, Translation } from "./type
 
 type Loader<T> = () => Promise<{ default: T }>;
 
-// Eén chunk per (gebied, taal); de drie Nederlandse basiswoordenboeken staan hierboven statisch
-const areaLoaders = import.meta.glob<Messages>(["./areas/*.ts", "!./areas/{common,shell,auth}.nl.ts"], {
+// Eén chunk per (gebied, taal); de drie Nederlandse basiswoordenboeken staan hierboven statisch.
+// Het type staat met "as" achter de glob, niet als typeargument: anders bewaart de module-cache van
+// vitest dit bestand met een oude lijst woordenboeken (zie globCache.test.ts)
+const areaLoaders = import.meta.glob(["./areas/*.ts", "!./areas/{common,shell,auth}.nl.ts"], {
   import: "default",
 }) as Record<string, () => Promise<Messages>>;
 // Foutcatalogi (Engelse teksten per foutcode); alleen nodig als de app Engels is
-const errorLoaders = import.meta.glob<{ default: ErrorCatalog }>("./errors/*.ts") as Record<
-  string,
-  Loader<ErrorCatalog>
->;
+const errorLoaders = import.meta.glob("./errors/*.ts") as Record<string, Loader<ErrorCatalog>>;
 
 const STATIC: Partial<Record<Area, Messages>> = { common: commonNl, shell: shellNl, auth: authNl };
 

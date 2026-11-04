@@ -50,7 +50,8 @@ export interface ProgressModule {
   attach(h: PlaybackHandle): ProgressSink;
 }
 
-const found = import.meta.glob<ProgressModule>("./progress.ts");
+// Het type met "as" erachter, niet als typeargument (zie globCache.test.ts)
+const found = import.meta.glob("./progress.ts") as Record<string, () => Promise<ProgressModule>>;
 
 /** progress.ts van M7, of null zolang hij er niet is. */
 export async function loadProgress(): Promise<ProgressModule | null> {
