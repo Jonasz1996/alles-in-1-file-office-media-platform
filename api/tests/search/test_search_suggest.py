@@ -100,8 +100,8 @@ async def test_de_tweede_controle(client, settings, monkeypatch, caplog, mismatc
     assert _namen(await _suggest(client, hans, "verslag")) == ["Verslag kwartaal.docx"]
     echt = suggest.search_ranges
 
-    async def en_dan_intrekken(session, user):
-        roots = await echt(session, user)
+    async def en_dan_intrekken(session, user, *rest):
+        roots = await echt(session, user, *rest)
         await _doe(settings, W.intrekken, w)
         return roots
 

@@ -55,10 +55,15 @@ class Ranges:
     shared: bool
 
 
-async def search_ranges(session: AsyncSession, user: User) -> Ranges:
+async def search_ranges(
+    session: AsyncSession, user: User, shared: Sequence[uuid.UUID] | None = None
+) -> Ranges:
     """De bereiken waarin zoeken voor deze gebruiker mag kijken; een wortel binnen een andere
-    valt weg."""
-    ids = [r.node_id for r in await access.shared_roots(session, user.id)]
+    valt weg. shared: de ids van access.shared_roots als de aanroeper die al heeft (suggest
+    gebruikt ze ook voor de albums), anders leest hij ze zelf."""
+    if shared is None:
+        shared = [r.node_id for r in await access.shared_roots(session, user.id)]
+    ids = list(shared)
     if user.role != "guest" and user.root_id is not None:
         ids.append(user.root_id)
     if not ids:

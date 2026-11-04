@@ -173,11 +173,26 @@ class _ByNum(_Indexed):
     index = "ix_node_num"
 
 
+class _ByParent(_Indexed):
+    """Albums staan buiten de boom (parent_id NULL; routers/files.py weigert ze): langs
+    (parent_id, kind). Met owner_id erbij koos de planner ix_node_owner_taken en liep hij alle
+    nodes van de eigenaar langs: 10-17 ms bij 5.000-6.500 nodes (suggest.albums)."""
+
+    inherit_cache = True
+    index = "ix_node_parent_order"
+
+
+def top_level() -> Alias:
+    """node AS n INDEXED BY ix_node_parent_order, voor wat op het hoogste niveau staat."""
+    return _ByParent._construct(_NODE, name="n")
+
+
 @compiles(_Indexed)
 @compiles(_ByTime)
 @compiles(_ByType)
 @compiles(_ByPath)
 @compiles(_ByNum)
+@compiles(_ByParent)
 def _indexed(element: _Indexed, compiler: Any, **kw: Any) -> str:
     out = compiler.visit_alias(element, **kw)
     if kw.get("asfrom"):

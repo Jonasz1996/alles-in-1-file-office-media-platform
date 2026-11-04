@@ -14,7 +14,9 @@
 - tags: je eigen tags met elk woord in de naam (gevouwen); eerst wie met het eerste woord
   begint. Hooguit 500 per gebruiker: in Python vergeleken, zoals routers/search.check_free.
 - albums: je eigen albums en de albums die met jou (of een groep van jou) gedeeld zijn, zoals
-  GET /albums, op naam en zo gesorteerd.
+  GET /albums, op naam en zo gesorteerd. De gedeelde wortels (access.shared_roots) leest
+  suggest één keer, voor de bereiken van de namen en voor de albums; de eigen albums langs
+  (parent_id, kind), want een album staat buiten de boom (engine.top_level).
 - people en places: van de haken van Z6 (personen) en Z3 (plaatsen). Een haak meldt zich aan
   met hooks.register_suggest, of als suggest van een filter (filters.register). Elke haak krijgt
   (db, user, q) en geeft een Suggestions of een lijst met PersonRef en PlaceRef; alleen people
@@ -29,10 +31,11 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import Select, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import access
@@ -77,10 +80,16 @@ def _like_prefix(word: str) -> str:
     return escaped + "%"
 
 
-async def names(db: AsyncSession, user: User, parsed: Parsed, q: str) -> list[NameRef]:
+async def names(
+    db: AsyncSession,
+    user: User,
+    parsed: Parsed,
+    q: str,
+    shared: Sequence[uuid.UUID] | None = None,
+) -> list[NameRef]:
     if parsed.names is None:
         return []
-    roots = await search_ranges(db, user)
+    roots = await search_ranges(db, user, shared)
     if not roots.ranges:
         return []
     scope = engines.Scope(user, roots, SearchParams(q=q))
@@ -118,13 +127,28 @@ async def tags(db: AsyncSession, user: User, words: Sequence[str]) -> list[TagRe
     )
 
 
-async def albums(db: AsyncSession, user: User, words: Sequence[str]) -> list[AlbumRef]:
-    """Zoals GET /albums: je eigen (niet als gast) en wat nu met je gedeeld is."""
+def own_albums(user_id: uuid.UUID) -> Select:
+    """(id, naam) van de eigen albums, langs (parent_id, kind): een album staat buiten de boom
+    (test_search_plans.py)."""
+    n = engines.top_level()
+    return select(n.c.id, n.c.name).where(
+        n.c.parent_id.is_(None), n.c.kind == "album", n.c.owner_id == user_id
+    )
+
+
+async def albums(
+    db: AsyncSession,
+    user: User,
+    words: Sequence[str],
+    shared: Sequence[uuid.UUID] | None = None,
+) -> list[AlbumRef]:
+    """Zoals GET /albums: je eigen (niet als gast) en wat nu met je gedeeld is. shared: de ids
+    van access.shared_roots, als suggest() ze al las."""
     found: list[tuple[Any, str]] = []
     if user.role != "guest":
-        own = select(Node.id, Node.name).where(Node.owner_id == user.id, Node.kind == "album")
-        found += list(await db.execute(own))
-    shared = [r.node_id for r in await access.shared_roots(db, user.id)]
+        found += list(await db.execute(own_albums(user.id)))
+    if shared is None:
+        shared = [r.node_id for r in await access.shared_roots(db, user.id)]
     if shared:
         others = select(Node.id, Node.name).where(Node.id.in_(shared), Node.kind == "album")
         found += list(await db.execute(others))
@@ -162,10 +186,12 @@ async def suggest(db: AsyncSession, user: User, q: str) -> Suggestions:
     if parsed is None:
         return Suggestions()
     people, places = await from_hooks(db, user, q)
+    # Eén keer voor de namen en de albums (§4.4: suggesties p95 ≤ 50 ms)
+    shared = [r.node_id for r in await access.shared_roots(db, user.id)]
     return Suggestions(
-        names=await names(db, user, parsed, q),
+        names=await names(db, user, parsed, q, shared),
         people=people,
         places=places,
         tags=await tags(db, user, parsed.words),
-        albums=await albums(db, user, parsed.words),
+        albums=await albums(db, user, parsed.words, shared),
     )

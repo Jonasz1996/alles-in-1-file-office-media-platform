@@ -15,6 +15,8 @@ nooit AUTOMATIC, nooit een SEARCH op parent_id.
   ook met een filter op soort of datum (zonder INDEXED BY koos de planner daar zelf de index op
   soort of tijd).
 - is_small telt via ix_node_mpath; boven 64 wortels telt hij niet (dan altijd langs de tijd).
+- De eigen albums voor suggesties langs (parent_id, kind): een album staat buiten de boom. Met
+  owner_id erbij koos de planner ix_node_owner_taken, alle nodes van de eigenaar langs.
 
 e2e/slim.sh draait dit ook in python:3.12-slim (SQLite 3.46.1).
 """
@@ -34,6 +36,7 @@ from app.db import get_engine
 from app.models import User
 from app.search import bench
 from app.search import engine as E
+from app.search import suggest as S
 from app.search.access import Ranges, end_of
 from app.search.query import parse
 from app.search.types import SearchParams
@@ -220,4 +223,23 @@ async def test_is_small_telt_langs_de_paden(conn, wortels):
     assert len(zoeken) == wortels, plan.tekst()
     assert all("COVERING INDEX ix_node_mpath (mpath>? AND mpath<?)" in t for t in zoeken), (
         plan.tekst()
+    )
+
+
+async def test_eigen_albums_langs_het_hoogste_niveau(conn):
+    rij = (await conn.exec_driver_sql("SELECT owner_id FROM node WHERE kind = 'dir'")).first()
+    eigenaar = uuid.UUID(hex=rij[0]) if isinstance(rij[0], str) else rij[0]
+    gezien = conn.info["gezien"]
+    gezien.clear()
+    await conn.execute(S.own_albums(eigenaar))
+    sql, args = gezien[-1]
+    # parent_id=? is hier juist de bedoeling: alleen het hoogste niveau, waar de albums staan
+    await conn.run_sync(
+        lambda c: assert_plan(
+            c,
+            sql,
+            args,
+            require_first="INDEX ix_node_parent_order (parent_id=? AND kind=?)",
+            forbid_index_terms=(),
+        )
     )
