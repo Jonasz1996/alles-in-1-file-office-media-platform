@@ -12,7 +12,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import access, userdelete
+from app import access, analysis, userdelete
 from app.db import get_engine
 from app.models import User
 from tests.search import wereld
@@ -80,6 +80,28 @@ async def test_de_wereld_staat_er(settings):
     for sha in set(w.shas.values()):
         pad = settings.blob_dir / sha[:2] / sha[2:4] / sha
         assert pad.is_file(), sha
+
+
+async def test_de_backfill_van_z2_heeft_niets_te_doen(settings):
+    """De rijen van de stap text staan er (done bij de documenten met tekst, none bij de scan):
+    een server met de wereld leest bij het starten niets opnieuw, zodat de index niet onder een
+    test van Z1 door verandert (z2.md, Open 2)."""
+    w = await W.bouw_async(settings)
+
+    async def stand() -> dict[str, str]:
+        async with get_engine(settings).connect() as conn:
+            rijen = await conn.exec_driver_sql("SELECT blob_sha, state FROM analysis")
+            return dict(rijen.all())
+
+    voor = await stand()
+    async with get_engine(settings).connect() as conn:
+        shas = set((await conn.exec_driver_sql("SELECT sha256 FROM blob")).scalars())
+        tekst = set((await conn.exec_driver_sql("SELECT blob_sha FROM blob_text")).scalars())
+    assert set(voor) == shas
+    assert {sha for sha, staat in voor.items() if staat == "done"} == tekst
+    assert voor[w.shas["scan"]] == "none" and voor[w.shas["foto"]] == "skip"
+    await analysis.backfill_job(settings, {"after": ""})
+    assert await stand() == voor
 
 
 async def test_de_wereld_is_elke_keer_gelijk(settings, tmp_path):

@@ -869,6 +869,43 @@ def app_blob() -> dict[str, object]:
     }
 
 
+# De inhouden zonder rij voor de stap text in analysis (Z2), met hun soort en of ze tekst hebben
+ANALYSE_BLOBS = (
+    "SELECT b.sha256, b.mime, t.blob_sha IS NOT NULL FROM blob b "
+    "LEFT JOIN blob_text t ON t.blob_sha = b.sha256 WHERE NOT EXISTS "
+    "(SELECT 1 FROM analysis a WHERE a.blob_sha = b.sha256 AND a.step = 'text')"
+)
+ANALYSE_SQL = (
+    "INSERT INTO analysis (blob_sha, step, version, state, tries, code, owner_id, queued_at, "
+    "updated_at) VALUES (?, ?, ?, ?, 0, NULL, NULL, ?, ?)"
+)
+
+
+def analyse_rijen(blobs: Iterable[tuple[str, str | None, int]]) -> list[tuple]:
+    """De rijen van de stap text zoals de backfill van Z2 ze achterlaat als hij klaar is: done
+    voor een inhoud met tekst in blob_text, none als de stap er wel bij past maar het zaad hem
+    geen tekst gaf, skip als de stap er niet bij past. blobs: de rijen van ANALYSE_BLOBS. Dan
+    leest de backfill bij het starten niets opnieuw (de bestanden staan niet op schijf, of de
+    tekst is die van het zaad). Importeert de app (dus niet in tools/zoekbench)."""
+    from app.analysis import VERSIONS, Step
+    from app.extract.step import eligible
+
+    nu = _tijd(DAG)
+    versie = VERSIONS[Step.TEXT]
+    rijen = []
+    for sha, mime, tekst in blobs:
+        staat = "done" if tekst else "none" if eligible(sha, mime) else "skip"
+        rijen.append((sha, Step.TEXT.value, versie, staat, nu, nu))
+    return rijen
+
+
+def analyse_klaar(con: sqlite3.Connection) -> int:
+    """analyse_rijen voor elke inhoud van de database van con, in één transactie (con zonder
+    open transactie, zoals na vul()); geeft het aantal rijen."""
+    rijen = analyse_rijen(con.execute(ANALYSE_BLOBS).fetchall())
+    return _Schrijver(con).rijen(ANALYSE_SQL, rijen)
+
+
 def maak(data_dir: Path, plan: Plan, *, wachtwoord: str = WACHTWOORD) -> Uitkomst:
     """Een nieuwe database in data_dir (platform.db) via de echte migratie, gevuld met de boom
     van dit plan. Bestaat er al een database, dan komt de boom erbij (de migratie doet dan
@@ -894,6 +931,7 @@ def maak(data_dir: Path, plan: Plan, *, wachtwoord: str = WACHTWOORD) -> Uitkoms
     con = sqlite3.connect(data_dir / "platform.db")
     try:
         uit = vul(con, plan, wachtwoord_hash=hash_password(wachtwoord), blob_standaard=app_blob())
+        analyse_klaar(con)
     finally:
         con.close()
     uit.seconden = {"migratie": migratie, **uit.seconden}

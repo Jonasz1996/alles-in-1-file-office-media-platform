@@ -34,9 +34,10 @@ Wat erin staat (de woorden zijn uniek, zodat een test precies weet wat hij hoort
   (deling, in te trekken), **Iris** (een foto met plek en persoon "Joop"; de test wist haar).
 
 De afgeleide rijen staan er al, zoals de jobs van Z2, Z3 en Z6 ze zouden schrijven: blob_text
-(tekst van de documenten), blob_meta, photo_geo, photo_ocr, person en photo_person, dup_pair.
-Geen blob_hash en geen ocr_page: die maken de jobs zelf. De bestanden zelf staan in blob_dir
-(gemaakt met tests/search/fixtures.py), dus downloaden en de jobs werken op echte inhoud.
+(tekst van de documenten) met de rijen van de stap text in analysis, blob_meta, photo_geo,
+photo_ocr, person en photo_person, dup_pair. Geen blob_hash en geen ocr_page: die maken de jobs
+zelf. De bestanden zelf staan in blob_dir (gemaakt met tests/search/fixtures.py), dus downloaden
+en de jobs werken op echte inhoud.
 
 Schrijft met een ORM-sessie op de verbinding van de aanroeper: niets commit zelf, en de
 triggers van 0010 zetten num, mpath, dead en de index. blob_text komt met een gewone INSERT
@@ -78,6 +79,7 @@ from app.models import (
     User,
 )
 from app.photodate import day_of
+from app.search import bench
 from app.search.bench import tegel16
 from app.security import hash_password
 from app.text import fold
@@ -310,6 +312,15 @@ class _Bouwer:
         for sha, n in self.refs.items():
             self.s.execute(update(Blob).where(Blob.sha256 == sha).values(ref_count=n))
 
+    def analyse(self) -> None:
+        """De rijen van de stap text zoals de backfill van Z2 ze achterlaat (bench.analyse_rijen):
+        dan leest een server met de wereld bij het starten de documenten niet opnieuw, en
+        verandert de index niet onder een test door."""
+        self.s.flush()
+        conn = self.s.connection()
+        rijen = bench.analyse_rijen(conn.exec_driver_sql(bench.ANALYSE_BLOBS).all())
+        conn.exec_driver_sql(bench.ANALYSE_SQL, rijen)
+
 
 def bouw(conn: Connection, blob_dir: Path | None = None) -> Wereld:
     """Bouwt de wereld in de database van conn (al op head); bestanden in blob_dir (de
@@ -429,6 +440,7 @@ def bouw(conn: Connection, blob_dir: Path | None = None) -> Wereld:
         b.deel("album_bram", album.id, "eva", naar="bram")
         b.deel("album_link", album.id, "eva", token="wereldalbum" + "0" * 21)
         b.ref_counts()
+        b.analyse()
         s.flush()
         return w
 

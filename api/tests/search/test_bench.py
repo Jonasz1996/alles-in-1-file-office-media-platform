@@ -14,7 +14,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import access, previews, render_meta
+from app import access, analysis, previews, render_meta
 from app.config import Settings
 from app.db import get_engine
 from app.models import User
@@ -137,6 +137,12 @@ NUL = {
     # De backfills bij het starten hebben niets te doen
     "backfill": "SELECT count(*) FROM blob WHERE preview IS NULL OR preview = 'pending' "
     f"OR render_version < {previews.RENDER_VERSION} OR meta_version < {render_meta.VERSION}",
+    # Ook die van de tekst (Z2): elke inhoud een rij voor de stap text, niets open, done precies
+    # bij een inhoud met tekst (bench.analyse_klaar)
+    "analysis": "SELECT count(*) FROM blob b WHERE NOT EXISTS (SELECT 1 FROM analysis a "
+    "WHERE a.blob_sha = b.sha256 AND a.step = 'text' AND a.version = "
+    f"{analysis.VERSIONS[analysis.Step.TEXT]} AND a.state IN ('done', 'none', 'skip') AND "
+    "(a.state = 'done') = EXISTS (SELECT 1 FROM blob_text t WHERE t.blob_sha = b.sha256))",
 }
 
 
@@ -165,6 +171,37 @@ def test_wat_er_geschreven_is(boom):
         # dead volgt de prullenbak: ook een bestand onder een weggegooide map is dood
         dood = een("SELECT count(*) FROM node WHERE dead = 1")
         assert dood > t["prullenbak_mappen"] + t["prullenbak_bestanden"]
+
+
+@pytest.mark.anyio
+async def test_de_backfill_van_z2_heeft_niets_te_doen(boom):
+    """De echte backfill van Z2 (analysis.backfill_job, zoals bij het starten) zet in de boom
+    niets klaar: de bestanden staan niet op schijf, dus anders las de stap text bij een meting
+    duizenden documenten die er niet zijn (§4.4)."""
+    data, _ = boom
+    settings = Settings(data_dir=data)
+    engine = get_engine(settings)
+
+    async def stand() -> tuple:
+        async with engine.connect() as conn:
+            rijen = (
+                await conn.exec_driver_sql("SELECT state, count(*) FROM analysis GROUP BY state")
+            ).all()
+            werk = (
+                await conn.exec_driver_sql(
+                    "SELECT count(*) FROM job WHERE type LIKE 'analysis.%' AND status = 'queued'"
+                )
+            ).scalar()
+        return sorted(rijen), werk
+
+    try:
+        voor = await stand()
+        assert {staat for staat, _ in voor[0]} <= {"done", "none", "skip"}
+        await analysis.backfill_job(settings, {"after": ""})
+        assert await stand() == voor
+        assert voor[1] == 0
+    finally:
+        await engine.dispose()
 
 
 def test_kort_voor_het_einde_van_een_log(boom):

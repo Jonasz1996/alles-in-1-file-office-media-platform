@@ -196,6 +196,7 @@ def start_boom(
         try:
             wachtwoord = hash_password(bench.WACHTWOORD)
             uit = bench.vul(con, plan, wachtwoord_hash=wachtwoord, blob_standaard=bench.app_blob())
+            bench.analyse_klaar(con)  # de backfill van Z2 heeft dan niets te doen
         finally:
             con.close()
         with connect(data_dir) as conn:
