@@ -93,7 +93,8 @@ jobs:
     name: Zoek-perf (spike Z0 op SQLite 3.46.1)
     runs-on: ubuntu-24.04
     container: python:3.12-slim
-    timeout-minutes: 45
+    # §4.4 (Z1) bouwt een boom van 100.000 en meet zes rollen over HTTP: ±20 min op 3 cores
+    timeout-minutes: 75
     env:
       UV_PYTHON_PREFERENCE: only-system
       UV_LINK_MODE: copy
@@ -131,7 +132,13 @@ jobs:
         run: |
           set -o pipefail
           taskset -c "$CORES" uv run pytest -q -s -m zoek_perf tests/search --durations=0 -rA \
-            | tee "$RUNNER_TEMP/zoek-perf/zoek_perf.txt"
+            --ignore=tests/search/test_perf_100k.py | tee "$RUNNER_TEMP/zoek-perf/zoek_perf.txt"
+      - name: §4.4 100.000 bestanden binnen 200 ms (Z1; de poorten zijn hard)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
+            tests/search/test_perf_100k.py | tee "$RUNNER_TEMP/zoek-perf/perf_100k.txt"
       - name: S10 de vormen van Keuze 4a (tools/zoekbench/bench.py --los --vormen)
         if: ${{ !cancelled() }}
         run: |
@@ -162,6 +169,7 @@ jobs:
           grep -E "^[.FEsx]*(S1|S2|S7) " "$d/zoek_perf.txt" 2> /dev/null | sed 's/^[.FEsx]*//' || true
           grep -E "^[0-9.]+s call " "$d/zoek_perf.txt" 2> /dev/null || true
           sed -n '/^=== zoekbench ===/,$p' "$d/bench.txt" 2> /dev/null || echo "S10: de bench liep niet"
+          if [ -f "$d/zoek_100k.txt" ]; then cat "$d/zoek_100k.txt"; else echo "§4.4: liep niet of brak af"; fi
           echo "S6: $(cat "$d/kaart.txt" 2> /dev/null || echo "liep niet")"
 
   acme:
