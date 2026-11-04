@@ -5,6 +5,8 @@ Wat hier vastligt, met de wereld van §4.2:
   bestand van een ander zonder deling), eerst wie met het eerste woord begint, hooguit 5, met
   kind; pas bij een woord van ≥ 3 tekens;
 - de tweede controle haalt een naam weg die in hetzelfde verzoek onzichtbaar werd;
+- de namen krijgen hooguit NAMES_MS, en niet meer dan wat er van SUGGEST_MS over is (min
+  AFTER_NAMES_MS);
 - tags: alleen de eigen, het voorvoegsel eerst; albums: eigen en gedeelde, niet als gast en
   niet van een ander zonder deling;
 - personen en plaatsen via de haken (hooks.register_suggest en de suggest van een filter); een
@@ -15,11 +17,17 @@ Wat hier vastligt, met de wereld van §4.2:
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.db import get_engine
+from app.models import User
+from app.search import engine as engines
 from app.search import filters, hooks, limits, suggest
+from app.search.query import parse
 from app.search.types import PersonRef, PlaceRef, Suggestions
 from tests.search import wereld as W
 from tests.search.test_search_access import _doe, kop
@@ -36,6 +44,7 @@ def _zonder_snelheidsgrens(monkeypatch):
 def _ruime_grens(monkeypatch):
     """Het gaat om wat er komt, niet om de tijd (zie test_search_access.py, _ruime_grens)."""
     monkeypatch.setattr(suggest, "NAMES_MS", 10_000.0)
+    monkeypatch.setattr(suggest, "SUGGEST_MS", 10_000.0)
 
 
 async def _suggest(client, headers, q: str) -> dict:
@@ -110,6 +119,33 @@ async def test_de_tweede_controle(client, settings, monkeypatch, caplog, mismatc
         assert (await _suggest(client, hans, "verslag"))["names"] == []
     regels = [r.getMessage() for r in caplog.records if "search_access_mismatch" in r.getMessage()]
     assert regels == [f"search_access_mismatch {w.ids['doc']}"]
+
+
+async def test_de_namen_krijgen_wat_er_van_het_verzoek_over_is(client, settings, monkeypatch):
+    """Zonder begin hooguit NAMES_MS; begon suggest() 25 ms eerder, dan nog 40 - 10 - 25 = 5 ms
+    (en minder naarmate de stappen ervoor langer duurden)."""
+    w = await W.bouw_async(settings)
+    monkeypatch.setattr(suggest, "NAMES_MS", 40.0)
+    monkeypatch.setattr(suggest, "SUGGEST_MS", 40.0)
+    monkeypatch.setattr(suggest, "AFTER_NAMES_MS", 10.0)
+    grenzen: list[float] = []
+    echt = engines.run
+
+    async def run(conn, sel, ms, step="fts"):
+        grenzen.append(ms)
+        return await echt(conn, sel, ms, step)
+
+    monkeypatch.setattr(engines, "run", run)
+    parsed = parse("verslag")
+    async with async_sessionmaker(get_engine(settings), expire_on_commit=False)() as db:
+        eva = await db.get(User, w.users["eva"])
+        assert [n.name for n in await suggest.names(db, eva, parsed, "verslag")] == [
+            "Verslag kwartaal.docx"
+        ]
+        assert 30.0 < grenzen[0] <= 40.0
+        grenzen.clear()
+        await suggest.names(db, eva, parsed, "verslag", None, time.perf_counter() - 0.025)
+        assert grenzen and grenzen[0] <= 5.0
 
 
 async def test_tags_alleen_de_eigen(client, settings):

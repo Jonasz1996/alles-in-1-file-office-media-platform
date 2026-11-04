@@ -9,8 +9,11 @@
   zodat een veelvoorkomend stuk ("ver") niet alle namen langs hoeft. Alleen als de vraag een
   woord van ≥ 3 tekens heeft (parse().names): zonder trigram is het een scan over alle nodes van
   de wortels, bij elke toets. Bij één of twee tekens zijn er dus alleen tags, albums, personen
-  en plaatsen. Onder een eigen tijdsgrens (NAMES_MS, met deadline() van Keuze 9): bij de grens
-  geen namen, of alleen die met het voorvoegsel; daarna de tweede controle (Keuze 15).
+  en plaatsen. Onder een tijdsgrens (deadline() van Keuze 9): hooguit NAMES_MS voor de namen,
+  en nooit later dan SUGGEST_MS na het begin van suggest() min wat er na de namen nog komt
+  (AFTER_NAMES_MS: de tweede controle, tags, albums). Was er vóór de namen al veel tijd nodig
+  (de gedeelde wortels), dan krijgen de namen dus minder. Bij de grens geen namen, of alleen die
+  met het voorvoegsel; daarna de tweede controle (Keuze 15).
 - tags: je eigen tags met elk woord in de naam (gevouwen); eerst wie met het eerste woord
   begint. Hooguit 500 per gebruiker: in Python vergeleken, zoals routers/search.check_free.
 - albums: je eigen albums en de albums die met jou (of een groep van jou) gedeeld zijn, zoals
@@ -53,6 +56,11 @@ MAX = 5
 # De tijdsgrens voor de namen samen (ms): een suggestie die later komt, helpt niet meer (wie
 # typt, typt door), en de poort van §4.4 is p95 ≤ 50 ms voor het hele verzoek
 NAMES_MS = 40.0
+# Van die 50 ms gaan er ±10 naar inloggen, HTTP en JSON (buiten suggest()); SUGGEST_MS is wat
+# suggest() zelf mag kosten, AFTER_NAMES_MS wat na de namen nog komt (gemeten op de boom van
+# §4.4: de tweede controle tot 8 ms bij p95, tags en albums samen ±5 ms)
+SUGGEST_MS = 40.0
+AFTER_NAMES_MS = 10.0
 
 
 def _rank(name: str, words: Sequence[str]) -> int | None:
@@ -86,7 +94,10 @@ async def names(
     parsed: Parsed,
     q: str,
     shared: Sequence[uuid.UUID] | None = None,
+    begin: float | None = None,
 ) -> list[NameRef]:
+    """begin: het begin van suggest() (time.perf_counter); de namen eindigen uiterlijk
+    SUGGEST_MS - AFTER_NAMES_MS daarna."""
     if parsed.names is None:
         return []
     roots = await search_ranges(db, user, shared)
@@ -95,9 +106,12 @@ async def names(
     scope = engines.Scope(user, roots, SearchParams(q=q))
     conn = await db.connection()
     start = time.perf_counter()
+    end = start + NAMES_MS / 1000
+    if begin is not None:
+        end = min(end, begin + (SUGGEST_MS - AFTER_NAMES_MS) / 1000)
 
     def rest() -> float:
-        return NAMES_MS - (time.perf_counter() - start) * 1000
+        return (end - time.perf_counter()) * 1000
 
     prefix = engines.names_select(parsed, scope, MAX, 0).where(
         text("n.search_name LIKE :prefix ESCAPE '\\'").bindparams(
@@ -182,6 +196,7 @@ async def from_hooks(db: AsyncSession, user: User, q: str) -> tuple[list, list]:
 
 async def suggest(db: AsyncSession, user: User, q: str) -> Suggestions:
     """QueryTooLong als zoeken (de router geeft 400 search_query_too_long)."""
+    begin = time.perf_counter()
     parsed = parse(q)
     if parsed is None:
         return Suggestions()
@@ -189,7 +204,7 @@ async def suggest(db: AsyncSession, user: User, q: str) -> Suggestions:
     # Eén keer voor de namen en de albums (§4.4: suggesties p95 ≤ 50 ms)
     shared = [r.node_id for r in await access.shared_roots(db, user.id)]
     return Suggestions(
-        names=await names(db, user, parsed, q, shared),
+        names=await names(db, user, parsed, q, shared, begin),
         people=people,
         places=places,
         tags=await tags(db, user, parsed.words),
