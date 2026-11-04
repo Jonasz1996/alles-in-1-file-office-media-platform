@@ -1,28 +1,57 @@
-"""De analyse van inhoud voor zoeken (bouwontwerp fase 6, §3.3; Keuzes 3, 19, 49, 50).
+"""De analyse van inhoud voor zoeken (bouwontwerp fase 6, §3.3; Keuzes 3, 19, 20, 49, 50).
 
-Z0 legt de vorm vast; Z2 is de eigenaar en bouwt de wachtrij (queue, de rij index, Defer) en
-de stappen. Eén stap per inhoud (blob) in de tabel analysis: text (Z2), hash (Z3), ocr (X1) en
-embed (X3, de vector van zoeken op beeld; Z0b legde de naam vast, Keuze 80).
+Z0 legde de vorm vast; Z2 bouwde de wachtrij. Eén stap per inhoud (blob) in de tabel analysis:
+text (Z2), hash (Z3), ocr (X1) en embed (X3, de vector van zoeken op beeld; Z0b legde de naam
+vast, Keuze 80).
 
-write_text() is af: het is de enige schrijver van blob_text (Keuze 3). Eerst een SELECT, dan een
-gewone INSERT of één UPDATE, in één korte transactie. Nooit INSERT OR REPLACE, OR IGNORE of een
-upsert: dan klopt de FTS-index niet meer (de triggers van app/search/schema.py).
+- register_step(): een pakket meldt zijn stap aan, met zijn rij (index, ocr of analyse) en
+  wanneer hij meedoet (eligible). Een stap werkt per inhoud (run) of per batch (batch, zoals
+  text: één kind voor 16 blobs, Keuze 17).
+- queue(): zet stappen voor een inhoud in de wachtrij (state wait), in de transactie van de
+  aanroeper; na de commit wekt een job de rij. Een lagere versie (VERSIONS) dan die in de code
+  gaat terug op wait, net als again=True; first=True zet hem vooraan (wat iemand nu bekijkt).
+- De pomp: per rij één job ("analysis.<rij>"), één batch per keer (Keuze 49). Hij wijkt
+  (jobs.Defer) als er ≥ index_defer_transcodes omzettingen lopen of OnlyOffice start (Keuze
+  50), kiest een batch om de beurt per eigenaar (Keuze 20: hooguit FAIR_SHARE per eigenaar per
+  ronde, wie het langst niet aan de beurt was eerst, binnen een eigenaar de nieuwste eerst),
+  zet die op busy, draait de stap en legt de uitkomst vast. Daarna zet hij zichzelf opnieuw
+  klaar zolang er werk is.
+- De uitkomst per inhoud (Outcome): done, none (niets te halen), skip (doet niet mee) of
+  failed. failed met retry: hooguit MAX_TRIES pogingen, met wachttijd (RETRY_AFTER, steeds
+  dubbel), daarna failed met de code (Keuze 19). Zonder retry (too_slow, zip_limit,
+  xml_refused): meteen failed (S15). Een inhoud zonder uitkomst gaat terug op wait, zonder dat
+  het een poging telt.
+- Bij het starten (search.hooks.backfill): wat op busy bleef staan terug op wait, elke rij met
+  een lagere versie dan de code terug op wait, en de pomp van elke rij met werk aan.
+
+write_text() is de enige schrijver van blob_text (Keuze 3). Eerst een SELECT, dan een gewone
+INSERT of één UPDATE, in één korte transactie. Nooit INSERT OR REPLACE, OR IGNORE of een upsert:
+dan klopt de FTS-index niet meer (de triggers van app/search/schema.py). Hetzelfde geldt hier
+voor de tabel analysis.
+
+In het log nooit de naam van een bestand: alleen de eerste 12 tekens van de sha.
 """
 
 from __future__ import annotations
 
+import itertools
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import StrEnum
+from typing import Any, Literal
 
-from sqlalchemy import insert, select, update
+import anyio
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app import jobs
 from app.config import Settings
-from app.models import BlobText, now
+from app.db import get_engine
+from app.models import Analysis, Blob, BlobText, Job, now
 
 log = logging.getLogger("platform.analysis")
 
@@ -37,10 +66,35 @@ class Step(StrEnum):
 # Een hogere versie zet de stap voor elke inhoud opnieuw in de wachtrij (zoals PROBE_VERSION)
 VERSIONS: dict[Step, int] = {Step.TEXT: 1, Step.HASH: 1, Step.OCR: 1, Step.EMBED: 1}
 
+STATES = ("wait", "busy", "done", "none", "skip", "failed")
+OPEN = ("wait", "busy")
+MAX_TRIES = 3
+RETRY_AFTER = timedelta(minutes=1)  # na de eerste mislukte poging; daarna steeds dubbel
+FAIR_SHARE = 4  # plekken per eigenaar per ronde (Keuze 20)
+DEFER_S = 30.0  # wijken voor omzettingen of een startende OnlyOffice (Keuze 50)
+PUMP_TIMEOUT = 3600.0  # één batch, met het halveren na een crash
+# Vooraan (first=True): queued_at vóór FRONT_END. De pomp neemt die eerst, van elke eigenaar.
+FRONT = jobs.FRONT
+FRONT_END = datetime(2001, 1, 1, tzinfo=FRONT.tzinfo)
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """Wat een stap met een inhoud deed. retry telt alleen bij failed."""
+
+    state: Literal["done", "none", "skip", "failed"]
+    code: str | None = None
+    retry: bool = True
+
+
 # Doet de stap mee voor deze inhoud? (sha, mime) → ja of nee
 Eligible = Callable[[str, str | None], bool]
-# Voert de stap uit voor één inhoud (sha); de stap schrijft zelf zijn uitkomst
-Runner = Callable[[Settings, str], Awaitable[None]]
+# Voert de stap uit voor één inhoud (sha); de stap schrijft zelf zijn uitkomst (write_text en
+# dergelijke). None betekent done.
+Runner = Callable[[Settings, str], Awaitable[Outcome | None]]
+# Voert de stap uit voor een batch; een inhoud zonder uitkomst gaat terug op wait
+Batch = Callable[[Settings, list[str]], Awaitable[dict[str, Outcome]]]
+Size = Callable[[Settings], int]
 
 
 @dataclass(frozen=True)
@@ -49,16 +103,42 @@ class Registered:
     lane: str
     eligible: Eligible
     run: Runner
+    batch: Batch | None = None
+    size: Size | None = None
 
 
 _steps: dict[Step, Registered] = {}
+# Wanneer elke eigenaar (per stap) en elke stap (per rij) het laatst aan de beurt was. In het
+# geheugen: na een herstart begint iedereen gelijk.
+_served: dict[tuple[Step, uuid.UUID | None], int] = {}
+_step_served: dict[Step, int] = {}
+_turn = itertools.count(1)
 
 
-def register_step(step: Step, lane: str, eligible: Eligible, run: Runner) -> None:
-    """Een pakket meldt zijn stap aan (Z2 text, Z3 hash, X1 ocr); één keer per stap."""
+def pump_type(lane: str) -> str:
+    return f"analysis.{lane}"
+
+
+def register_step(
+    step: Step,
+    lane: str,
+    eligible: Eligible,
+    run: Runner,
+    *,
+    batch: Batch | None = None,
+    size: Size | None = None,
+) -> None:
+    """Een pakket meldt zijn stap aan (Z2 text, Z3 hash, X1 ocr); één keer per stap. batch en
+    size: de stap werkt per batch van size(settings) inhouden (zonder: één per keer, met run)."""
     if step in _steps:
         raise ValueError(f"stap {step.value} is al aangemeld")
-    _steps[step] = Registered(step=step, lane=lane, eligible=eligible, run=run)
+    if lane not in jobs.LANES:
+        raise ValueError(f"onbekende rij {lane!r}")
+    _steps[step] = Registered(step, lane, eligible, run, batch, size)
+    jobs.register(pump_type(lane), _pump_for(lane), lane=lane, timeout=PUMP_TIMEOUT)
+    from app.search import hooks as search_hooks
+
+    search_hooks.register_backfill(recover)
 
 
 def registered() -> dict[Step, Registered]:
@@ -68,6 +148,15 @@ def registered() -> dict[Step, Registered]:
 def reset() -> None:
     """Alleen voor tests."""
     _steps.clear()
+    _served.clear()
+    _step_served.clear()
+
+
+def _maker(settings: Settings) -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(get_engine(settings), expire_on_commit=False)
+
+
+# --- de wachtrij ---------------------------------------------------------------------------------
 
 
 async def queue(
@@ -77,10 +166,367 @@ async def queue(
     *,
     owner: uuid.UUID | None,
     first: bool = False,
+    again: bool = False,
 ) -> None:
-    """Zet stappen voor een inhoud in de wachtrij; owner: wie hem het eerst nodig had (de
-    volgorde per gebruiker, Keuze 20); first: vóór de rest (wat iemand nu bekijkt)."""
-    raise NotImplementedError("queue wordt gebouwd in Z2")
+    """Zet stappen voor een inhoud in de wachtrij, in de transactie van de aanroeper (die
+    commit). owner: wie hem het eerst nodig had (de volgorde per gebruiker, Keuze 20); first:
+    vóór de rest (wat iemand nu bekijkt); again: ook als de stap al klaar was (de inhoud is
+    veranderd, zoals een PDF van OnlyOffice). Een stap die niet is aangemeld, slaat queue over;
+    een inhoud waar de stap niet bij past, krijgt state skip."""
+    blob = (await db.execute(select(Blob.mime).where(Blob.sha256 == sha))).first()
+    if blob is None:
+        return
+    lanes: set[str] = set()
+    at = FRONT if first else now()
+    for step in dict.fromkeys(Step(s) for s in steps):
+        reg = _steps.get(step)
+        if reg is None:
+            continue
+        state = "wait" if reg.eligible(sha, blob.mime) else "skip"
+        mine = (Analysis.blob_sha == sha, Analysis.step == step.value)
+        row = (
+            await db.execute(
+                select(Analysis.state, Analysis.version, Analysis.owner_id).where(*mine)
+            )
+        ).first()
+        version = VERSIONS[step]
+        if row is None:
+            await db.execute(
+                insert(Analysis).values(
+                    blob_sha=sha,
+                    step=step.value,
+                    version=version,
+                    state=state,
+                    tries=0,
+                    code=None,
+                    owner_id=owner,
+                    queued_at=at,
+                    updated_at=now(),
+                )
+            )
+        elif row.version < version or (again and row.state not in OPEN):
+            await db.execute(
+                update(Analysis)
+                .where(*mine)
+                .values(
+                    version=version,
+                    state=state,
+                    tries=0,
+                    code=None,
+                    owner_id=row.owner_id if row.owner_id is not None else owner,
+                    queued_at=at,
+                    updated_at=now(),
+                )
+            )
+        elif row.state == "wait" and first:
+            await db.execute(update(Analysis).where(*mine).values(queued_at=FRONT))
+        else:
+            continue
+        if state == "wait":
+            lanes.add(reg.lane)
+    for lane in sorted(lanes):
+        await _wake(db, lane, now())
+
+
+async def recover(settings: Settings) -> None:
+    """Bij het starten (search.hooks.backfill): busy terug op wait (een crash midden in een
+    batch), elke rij met een lagere versie terug op wait, en de pomp van elke rij met werk aan.
+    """
+    async with _maker(settings)() as db:
+        for step in _steps:
+            await db.execute(
+                update(Analysis)
+                .where(Analysis.step == step.value, Analysis.state == "busy")
+                .values(state="wait", updated_at=now())
+            )
+            await db.execute(
+                update(Analysis)
+                .where(Analysis.step == step.value, Analysis.version < VERSIONS[step])
+                .values(version=VERSIONS[step], state="wait", tries=0, code=None, updated_at=now())
+            )
+        for lane in sorted({reg.lane for reg in _steps.values()}):
+            await _chain_next(db, lane)
+        await db.commit()
+
+
+async def counts(db: AsyncSession, step: Step) -> dict[str, int]:
+    """Hoeveel inhouden per state (voor /beheer en indexing)."""
+    rows = await db.execute(
+        select(Analysis.state, func.count())
+        .where(Analysis.step == step.value)
+        .group_by(Analysis.state)
+    )
+    return {state: n for state, n in rows.all()}
+
+
+# --- de pomp -------------------------------------------------------------------------------------
+
+
+def busy_elsewhere(settings: Settings) -> bool:
+    """Keuze 50: wijken als er genoeg omzettingen lopen (media) of OnlyOffice start."""
+    if settings.media_enabled:
+        try:
+            from app.media import admin as media_admin
+
+            if media_admin.transcodes_running() >= settings.index_defer_transcodes:
+                return True
+        except Exception:  # noqa: BLE001 - de teller hoort de analyse nooit te breken
+            log.debug("transcodes_running", exc_info=True)
+    try:
+        from app.media import admission
+
+        return bool(admission._office_starting())
+    except Exception:  # noqa: BLE001 - zie hierboven
+        return False
+
+
+def _pump_for(lane: str) -> Callable[[Settings, dict[str, Any]], Awaitable[None]]:
+    async def run(settings: Settings, payload: dict[str, Any]) -> None:
+        await pump(settings, lane)
+
+    return run
+
+
+async def pump(settings: Settings, lane: str) -> int:
+    """Eén batch van een stap in deze rij met werk (om de beurt per stap); geeft het aantal
+    inhouden. Zet daarna de volgende job klaar: nu als er werk klaarstaat, anders bij de eerste
+    nieuwe poging. jobs.Defer als de app moet wijken; een batch gaat dan terug op wait."""
+    if busy_elsewhere(settings):
+        raise jobs.Defer(DEFER_S)
+    maker = _maker(settings)
+    count = 0
+    steps = sorted(
+        (reg for reg in _steps.values() if reg.lane == lane),
+        key=lambda reg: _step_served.get(reg.step, 0),
+    )
+    for reg in steps:
+        size = max(1, reg.size(settings)) if reg.size is not None else 1
+        async with maker() as db:
+            shas = await pick(db, reg.step, size)
+            if not shas:
+                continue
+            await db.execute(
+                update(Analysis)
+                .where(
+                    Analysis.blob_sha.in_(shas),
+                    Analysis.step == reg.step.value,
+                    Analysis.state == "wait",
+                )
+                .values(state="busy", updated_at=now())
+            )
+            await db.commit()
+        _step_served[reg.step] = next(_turn)
+        try:
+            outcomes = await _run(settings, reg, shas)
+        except BaseException:
+            # Defer, stoppen of de tijdgrens: de batch terug op wait, zonder poging
+            with anyio.CancelScope(shield=True):
+                await _back_to_wait(maker, reg.step, shas)
+            raise
+        await record(maker, reg.step, shas, outcomes)
+        count = len(shas)
+        break
+    async with maker() as db:
+        await _chain_next(db, lane)
+        await db.commit()
+    return count
+
+
+async def _run(settings: Settings, reg: Registered, shas: list[str]) -> dict[str, Outcome]:
+    if reg.batch is not None:
+        try:
+            return await reg.batch(settings, shas)
+        except jobs.Defer:
+            raise
+        except Exception:  # noqa: BLE001 - de batch is mislukt: elke inhoud een poging
+            log.exception("analyse %s: batch van %d mislukt", reg.step.value, len(shas))
+            return {sha: Outcome("failed") for sha in shas}
+    outcomes: dict[str, Outcome] = {}
+    for sha in shas:
+        try:
+            outcomes[sha] = await reg.run(settings, sha) or Outcome("done")
+        except jobs.Defer:
+            raise
+        except Exception:  # noqa: BLE001 - één inhoud stopt de rest niet
+            log.exception("analyse %s van %s mislukt", reg.step.value, sha[:12])
+            outcomes[sha] = Outcome("failed")
+    return outcomes
+
+
+async def pick(db: AsyncSession, step: Step, size: int) -> list[str]:
+    """De volgende batch van deze stap (Keuze 20): eerst wat vooraan staat (first), dan om de
+    beurt per eigenaar, hooguit FAIR_SHARE per eigenaar per ronde; wie het langst niet aan de
+    beurt was, gaat voor; binnen een eigenaar de nieuwste eerst. Alleen wat nu aan de beurt is
+    (een nieuwe poging met queued_at in de toekomst wacht)."""
+    due = now()
+    base = (Analysis.step == step.value, Analysis.state == "wait")
+    picked: list[str] = list(
+        (
+            await db.scalars(
+                select(Analysis.blob_sha)
+                .where(*base, Analysis.queued_at < FRONT_END)
+                .order_by(Analysis.updated_at.desc(), Analysis.blob_sha)
+                .limit(size)
+            )
+        ).all()
+    )
+    if len(picked) >= size:
+        return picked
+    owners: list[uuid.UUID | None] = list(
+        (
+            await db.scalars(
+                select(Analysis.owner_id)
+                .where(*base, Analysis.queued_at >= FRONT_END, Analysis.queued_at <= due)
+                .group_by(Analysis.owner_id)
+            )
+        ).all()
+    )
+    # Wie het langst niet aan de beurt was eerst (nooit: 0)
+    owners.sort(key=lambda owner: (_served.get((step, owner), 0), str(owner)))
+    waiting: dict[uuid.UUID | None, list[str]] = {}
+    for owner in owners:
+        if len(picked) >= size:
+            break
+        mine = Analysis.owner_id.is_(None) if owner is None else Analysis.owner_id == owner
+        rows = (
+            await db.scalars(
+                select(Analysis.blob_sha)
+                .where(*base, mine, Analysis.queued_at >= FRONT_END, Analysis.queued_at <= due)
+                .order_by(Analysis.queued_at.desc(), Analysis.blob_sha)
+                .limit(size)
+            )
+        ).all()
+        rest = [sha for sha in rows if sha not in picked]
+        take = rest[: min(FAIR_SHARE, size - len(picked))]
+        picked += take
+        waiting[owner] = rest[len(take) :]
+    # Nog plek: nog een ronde, in dezelfde volgorde
+    while len(picked) < size and any(waiting.values()):
+        for rest in waiting.values():
+            take = rest[: min(FAIR_SHARE, size - len(picked))]
+            picked += take
+            del rest[: len(take)]
+            if len(picked) >= size:
+                break
+    for owner in waiting:
+        _served[(step, owner)] = next(_turn)
+    return picked
+
+
+async def _back_to_wait(
+    maker: async_sessionmaker[AsyncSession], step: Step, shas: Iterable[str]
+) -> None:
+    async with maker() as db:
+        await db.execute(
+            update(Analysis)
+            .where(
+                Analysis.blob_sha.in_(list(shas)),
+                Analysis.step == step.value,
+                Analysis.state == "busy",
+            )
+            .values(state="wait", updated_at=now())
+        )
+        await db.commit()
+
+
+def retry_after(tries: int) -> timedelta:
+    """De wachttijd na zoveel mislukte pogingen (1: RETRY_AFTER, dan steeds dubbel)."""
+    return RETRY_AFTER * (2 ** max(0, tries - 1))
+
+
+async def record(
+    maker: async_sessionmaker[AsyncSession],
+    step: Step,
+    shas: list[str],
+    outcomes: dict[str, Outcome],
+) -> None:
+    """De uitkomsten vastleggen, in één korte transactie. Alleen rijen die nog busy zijn: zette
+    queue() er intussen een nieuwe versie klaar, dan blijft die staan."""
+    async with maker() as db:
+        tries = dict(
+            (
+                await db.execute(
+                    select(Analysis.blob_sha, Analysis.tries).where(
+                        Analysis.blob_sha.in_(shas), Analysis.step == step.value
+                    )
+                )
+            ).all()
+        )
+        for sha in shas:
+            out = outcomes.get(sha)
+            values: dict[str, Any] = {"updated_at": now()}
+            if out is None:
+                values["state"] = "wait"  # geen uitkomst: later opnieuw, zonder poging
+            elif out.state != "failed":
+                values.update(state=out.state, code=out.code)
+            else:
+                n = tries.get(sha, 0) + 1
+                values.update(tries=n, code=out.code)
+                if out.retry and n < MAX_TRIES:
+                    values.update(state="wait", queued_at=now() + retry_after(n))
+                else:
+                    values["state"] = "failed"
+                    log.warning(
+                        "analyse %s van %s mislukt (%s), poging %d",
+                        step.value, sha[:12], out.code or "geen code", n,
+                    )  # fmt: skip
+            await db.execute(
+                update(Analysis)
+                .where(
+                    Analysis.blob_sha == sha,
+                    Analysis.step == step.value,
+                    Analysis.state == "busy",
+                )
+                .values(values)
+            )
+        await db.commit()
+
+
+async def _chain_next(db: AsyncSession, lane: str) -> None:
+    """De volgende job van de pomp: nu als er werk klaarstaat, anders bij de eerste nieuwe
+    poging. Geen werk: geen job."""
+    steps = [reg.step.value for reg in _steps.values() if reg.lane == lane]
+    if not steps:
+        return
+    first = await db.scalar(
+        select(func.min(Analysis.queued_at)).where(
+            Analysis.step.in_(steps), Analysis.state == "wait"
+        )
+    )
+    if first is None:
+        return
+    if first.tzinfo is None:
+        first = first.replace(tzinfo=FRONT.tzinfo)
+    await _wake(db, lane, max(first, now()))
+
+
+async def _wake(db: AsyncSession, lane: str, at: datetime) -> None:
+    """De pomp van deze rij uiterlijk op at: een nieuwe job, of de job die al klaarstaat naar
+    voren als die later stond (een nieuwe poging over vier minuten laat nieuw werk niet zo lang
+    wachten). Eerst lezen, alleen schrijven als het moet. In de transactie van de aanroeper."""
+    kind = pump_type(lane)
+    waiting = (
+        await db.execute(
+            select(Job.id, Job.run_after)
+            .where(Job.key == kind, Job.status == "queued")
+            .order_by(Job.run_after)
+            .limit(1)
+        )
+    ).first()
+    if waiting is None:
+        await jobs.chain(db, kind, {}, key=kind, run_after=at)
+        return
+    planned = waiting.run_after
+    if planned.tzinfo is None:
+        planned = planned.replace(tzinfo=FRONT.tzinfo)
+    if planned > at:
+        await db.execute(
+            update(Job).where(Job.id == waiting.id, Job.status == "queued").values(run_after=at)
+        )
+        jobs.kick([lane])  # mag vóór de commit: wat de rij dan mist, ziet hij bij zijn rondje
+
+
+# --- blob_text -----------------------------------------------------------------------------------
 
 
 async def write_text(
