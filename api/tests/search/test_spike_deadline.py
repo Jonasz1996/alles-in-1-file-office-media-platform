@@ -2,8 +2,11 @@
 interrupt() uit een timer in de event loop, door aiosqlite en de pool van SQLAlchemy heen, met
 de rondes A, B en C.
 
-grens() hieronder is de vorm die de spike bewijst. Z1 bouwt app.search.deadline.deadline() met
-dezelfde handtekening en zet die hier in de plaats; deze tests blijven.
+De spike bewees de vorm met een eigen grens() (één interrupt() uit loop.call_later). Z1 bouwde
+app.search.deadline.deadline() met dezelfde handtekening en zette die hier in de plaats; de tests
+en hun grenzen bleven gelijk. deadline() herhaalt de interrupt() na de grens tot het blok klaar
+is: met één interrupt() stopte een vraag die pas na de grens in de thread van aiosqlite begon,
+helemaal niet (docs/fase-6/z0b.md, Open 11; tests/search/test_search_deadline.py).
 
 Wat de spike vond (docs/fase-6/spike.md, S1):
 - interrupt() moet in de callback van de timer zelf gebeuren, op de sqlite3-verbinding die
@@ -29,14 +32,13 @@ import sqlite3
 import statistics
 import time
 import uuid
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import pytest
-from sqlalchemy import exc, text
-from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
+from app.search.deadline import deadline
 from tests.search import spike
 
 pytestmark = pytest.mark.anyio
@@ -57,35 +59,10 @@ HALF = (
 )
 
 
-@dataclass
-class Grens:
-    ms: int
-    hit: bool = False  # de vraag is gestopt
-
-
 def _sqlite3(raw):
     """De sqlite3-verbinding achter een verbinding uit de pool (aiosqlite houdt hem in
     _connection; interrupt() mag vanuit elke thread)."""
     return raw.driver_connection._conn
-
-
-@asynccontextmanager
-async def grens(conn: AsyncConnection, ms: int) -> AsyncIterator[Grens]:
-    """De vorm van app.search.deadline.deadline (§3.3): de timer roept interrupt() zelf aan, en
-    is altijd uit vóór de verbinding verder gaat. Een vraag die stopt, geeft OperationalError
-    "interrupted"; die vangt grens() op en zet .hit."""
-    raw = await conn.get_raw_connection()
-    db = _sqlite3(raw)
-    d = Grens(ms)
-    handle = asyncio.get_running_loop().call_later(ms / 1000, db.interrupt)
-    try:
-        yield d
-    except exc.OperationalError as e:
-        if "interrupted" not in str(e.orig):
-            raise
-        d.hit = True
-    finally:
-        handle.cancel()
 
 
 # --- de database ------------------------------------------------------------------------------
@@ -179,12 +156,12 @@ async def zoek(conn, root: str, expr: str, names: str | None, *, ms_a=120, ms_b=
     args = {"expr": expr, "p1": root, "e1": root[:-1] + "0", "n": n + 1}
     start = time.perf_counter()
     rows: list = []
-    async with grens(conn, ms_a) as a:
+    async with deadline(conn, ms_a) as a:
         rows = (await conn.execute(RONDE_A, args)).all()
     if not a.hit:
         return Uitkomst(rows, "A", False, True, False, (time.perf_counter() - start) * 1000)
     rest = ms_a + ms_b - (time.perf_counter() - start) * 1000
-    async with grens(conn, max(1, round(rest))) as b:
+    async with deadline(conn, max(1, round(rest))) as b:
         rows = (await conn.execute(RONDE_B, args)).all()
     if not b.hit:
         return Uitkomst(rows, "B", True, False, False, (time.perf_counter() - start) * 1000)
@@ -209,7 +186,7 @@ async def test_een_vraag_van_2_s_stopt_na_120_ms(engine):
     async with engine.connect() as conn:
         for _ in range(5):
             start = time.perf_counter()
-            async with grens(conn, 120) as d:
+            async with deadline(conn, 120) as d:
                 await conn.exec_driver_sql(TRAAG)
             tijden.append((time.perf_counter() - start) * 1000)
             assert d.hit
@@ -221,14 +198,14 @@ async def test_de_verbinding_werkt_daarna_gewoon(engine):
     """Na "interrupted": dezelfde verbinding, dezelfde transactie en de pool werken door."""
     async with engine.connect() as conn:
         raw_before = (await conn.get_raw_connection()).driver_connection
-        async with grens(conn, 20) as d:
+        async with deadline(conn, 20) as d:
             await conn.exec_driver_sql(TRAAG)
         assert d.hit
         assert (await conn.exec_driver_sql("SELECT 41 + 1")).scalar() == 42
         # In dezelfde transactie: schrijven en committen lukt
         await conn.exec_driver_sql("CREATE TABLE IF NOT EXISTS s1_proef (x INTEGER)")
         await conn.exec_driver_sql("INSERT INTO s1_proef VALUES (1)")
-        async with grens(conn, 20) as d:
+        async with deadline(conn, 20) as d:
             await conn.exec_driver_sql(TRAAG)
         assert d.hit
         await conn.exec_driver_sql("INSERT INTO s1_proef VALUES (2)")
@@ -247,7 +224,7 @@ async def test_een_late_interrupt_raakt_de_volgende_vraag_niet(engine):
     async with engine.connect() as conn:
         db = _sqlite3(await conn.get_raw_connection())
         # Klaar ruim voor de grens; na de grens nog een vraag
-        async with grens(conn, 50) as d:
+        async with deadline(conn, 50) as d:
             await conn.exec_driver_sql("SELECT 1")
         assert not d.hit
         await asyncio.sleep(0.08)
@@ -260,7 +237,7 @@ async def test_een_late_interrupt_raakt_de_volgende_vraag_niet(engine):
         ms = max(1, round(statistics.median(tijden)))
         gestopt = 0
         for _ in range(200):
-            async with grens(conn, ms) as d:
+            async with deadline(conn, ms) as d:
                 await conn.exec_driver_sql(KORT)
             gestopt += d.hit
             # De volgende vraag stopt nooit
@@ -274,7 +251,7 @@ async def test_de_grens_raakt_alleen_de_eigen_verbinding(engine):
     async with engine.connect() as een, engine.connect() as twee:
 
         async def met_grens():
-            async with grens(een, 60) as d:
+            async with deadline(een, 60) as d:
                 await een.exec_driver_sql(TRAAG)
             return d.hit
 
