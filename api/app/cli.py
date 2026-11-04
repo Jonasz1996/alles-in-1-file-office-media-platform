@@ -54,13 +54,20 @@ dan zegt een stub dat media uit staat):
 
 Een fout van media (zoals 503 media_off) geeft de melding en exitcode 1.
 
-Zoeken en foto's (fase 6). Deze commando's bouwt hun pakket; tot dan zeggen ze dat ze er nog
-niet zijn en geven ze exitcode 1:
+Zoeken en foto's (fase 6), elk een dunne aanroep van app/search/bench.py (Z1):
 
-    python -m app.cli search-bench
-    python -m app.cli search-rebuild
-    python -m app.cli search-check
+    python -m app.cli search-bench --data /tmp/boom [--n 100000] [--seed 6] [--profiel groot]
+    python -m app.cli search-rebuild [--stuk 2000]
     python -m app.cli search-triggers
+    python -m app.cli search-check [--n 1000] [--volledig] [--seed 6]
+
+search-bench maakt de boom van 100.000 om zoeken te meten, in een nieuwe map (nooit in die van
+de app). search-rebuild herbouwt de zoekindex in stukken terwijl de app draait; search-triggers
+zet de triggers van zoeken terug en herbouwt daarna; search-check vergelijkt willekeurige nodes
+met de bron (exitcode 1 bij een verschil).
+
+Dit commando bouwt zijn pakket nog; tot dan zegt het dat het er nog niet is (exitcode 1):
+
     python -m app.cli geo-load
 """
 
@@ -92,6 +99,7 @@ from app.db import get_engine
 from app.migrate import alembic_config
 from app.models import AlbumItem, User
 from app.routers.auth import being_deleted, reset_totp
+from app.search import bench as search_bench
 
 
 class BeingDeleted(Exception):
@@ -467,10 +475,6 @@ def _backup(settings: Settings) -> int:
 
 # De commando's van zoeken en foto's die hun pakket nog moet bouwen (fase 6, §3.5)
 SEARCH_STUBS = {
-    "search-bench": ("Z1", "zoeken meten op een boom van 100.000"),
-    "search-rebuild": ("Z1", "de index in stukken herbouwen"),
-    "search-check": ("Z1", "de index met de bron vergelijken"),
-    "search-triggers": ("Z1", "de triggers terugzetten en daarna herbouwen"),
     "geo-load": ("Z3", "places.sqlite bouwen uit de bronnen"),
 }
 
@@ -629,6 +633,7 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "db-backup", help="een reservekopie van de database maken, terwijl de app draait"
     )
+    search_bench.parsers(commands)
     for name, (package, what) in SEARCH_STUBS.items():
         commands.add_parser(name, help=f"{what} (nog niet gebouwd, {package})")
     _media_parsers(commands)
@@ -636,6 +641,8 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     if args.command in MEDIA_COMMANDS:
         return _media(settings, args)
+    if args.command in search_bench.COMMANDS:
+        return search_bench.run(settings, args)
     if args.command in SEARCH_STUBS:
         return _stub(args.command)
     if args.command == "db-backup":

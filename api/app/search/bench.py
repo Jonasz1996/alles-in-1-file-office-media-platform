@@ -44,6 +44,11 @@ from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # alleen voor de typen: de app pas bij draaien (zie boven)
+    from app.config import Settings
+    from app.search.rebuild import Checked
 
 # Een vaste dag, niet nu: dezelfde seed geeft overal dezelfde boom (ook de datums)
 DAG = datetime(2026, 11, 3, 12, 0, tzinfo=UTC)
@@ -905,6 +910,132 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     klok = time.monotonic()
     uit = maak(args.data, Plan(n=args.n, seed=args.seed, profiel=args.profiel))
+    uit.seconden["totaal"] = time.monotonic() - klok
+    if args.uitkomst:
+        args.uitkomst.write_text(uit.json() + "\n")
+    print(uit.kort())
+    return 0
+
+
+# --- app.cli: search-bench, search-rebuild, search-check en search-triggers (§3.5) ----------
+#
+# De commando's van Z1. Ze importeren de app pas als ze draaien, zoals maak(): tools/zoekbench
+# neemt alleen de standaardbibliotheek over.
+#
+#     python -m app.cli search-bench --data /tmp/boom [--n 100000] [--seed 6] [--profiel groot]
+#     python -m app.cli search-rebuild [--stuk 2000]
+#     python -m app.cli search-triggers
+#     python -m app.cli search-check [--n 1000] [--volledig] [--seed 6]
+#
+# search-bench maakt de boom van §3.6 in een eigen map, nooit in die van de app; het meten zelf
+# doen test_perf_100k.py en e2e/perf/zoek_100k.py (§4.4). search-rebuild en search-triggers
+# mogen terwijl de app draait (de herbouw in stukken, Keuze 12); search-check exit 1 bij een
+# verschil, of als er een herbouw loopt.
+
+COMMANDS = {
+    "search-bench": "de boom van 100.000 voor het meten maken, in een eigen map (§3.6)",
+    "search-rebuild": "de zoekindex in stukken herbouwen, terwijl de app draait",
+    "search-check": "willekeurige nodes in de zoekindex met de bron vergelijken",
+    "search-triggers": "de triggers van zoeken terugzetten, en daarna herbouwen",
+}
+
+
+def parsers(commands: argparse._SubParsersAction) -> None:
+    bench = commands.add_parser("search-bench", help=COMMANDS["search-bench"])
+    bench.add_argument("--data", required=True, type=Path, help="een nieuwe, eigen datamap")
+    bench.add_argument("--n", type=int, default=100_000, help="aantal bestanden")
+    bench.add_argument("--seed", type=int, default=6)
+    bench.add_argument("--profiel", choices=PROFIELEN, default="basis")
+    bench.add_argument("--uitkomst", type=Path, help="schrijf de uitkomst als JSON hierheen")
+    rebuild = commands.add_parser("search-rebuild", help=COMMANDS["search-rebuild"])
+    rebuild.add_argument("--stuk", type=int, default=2000, help="nodes per stuk (standaard 2000)")
+    commands.add_parser("search-triggers", help=COMMANDS["search-triggers"])
+    check = commands.add_parser("search-check", help=COMMANDS["search-check"])
+    check.add_argument("--n", type=int, default=1000, help="zoveel nodes (standaard 1000)")
+    check.add_argument(
+        "--volledig", action="store_true", help="ook integrity-check van FTS5 (leest alles)"
+    )
+    check.add_argument("--seed", type=int, help="voor een vaste keuze van nodes")
+
+
+def run(settings: Settings, args: argparse.Namespace) -> int:
+    """Een van COMMANDS; daarna de database dicht, zoals de andere commando's van app.cli."""
+    if args.command == "search-bench":
+        return _bench(settings, args)
+    if settings.database_url and not settings.database_url.startswith("sqlite"):
+        print("Alleen voor SQLite: op PostgreSQL zoekt de app met LIKE.", file=sys.stderr)
+        return 1
+    import asyncio
+
+    from app.db import get_engine
+    from app.search import rebuild
+
+    engine = get_engine(settings)
+
+    async def herbouw() -> list[float]:
+        async def stuk(cursor: int) -> None:
+            nu = await rebuild.progress(engine)
+            if nu is not None:
+                print(f"tot num {cursor} van {nu[1]}", flush=True)
+
+        return await rebuild.rebuild(engine, chunk=args.stuk, after_chunk=stuk)
+
+    async def alles() -> int:
+        try:
+            if args.command == "search-check":
+                return _checked(
+                    await rebuild.check(engine, sample=args.n, full=args.volledig, seed=args.seed)
+                )
+            if args.command == "search-triggers":
+                terug = await rebuild.restore_triggers(engine)
+                print(
+                    f"triggers weg: {len(terug.dropped)}, nieuw: {len(terug.created)}; "
+                    f"nodes met een nieuw num: {terug.numbered}, met een ander mpath of dead: "
+                    f"{terug.tree}; foto-rijen: {terug.photo_rows}"
+                )
+                args.stuk = rebuild.CHUNK
+            tijden = await herbouw()
+            if not tijden:
+                print("Deze database heeft geen FTS5: niets te herbouwen.")
+                return 0
+            print(
+                f"De index is herbouwd in {len(tijden)} stuk(ken); het langste duurde "
+                f"{max(tijden):.0f} ms."
+            )
+            return 0
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(alles())
+
+
+def _checked(found: Checked) -> int:
+    if found.rebuilding:
+        print("Er loopt een herbouw; controleer daarna.", file=sys.stderr)
+        return 1
+    for num, wat in found.bad[:50]:
+        print(f"num {num}: {wat}")
+    if len(found.bad) > 50:
+        print(f"… en nog {len(found.bad) - 50}")
+    for wat in found.integrity:
+        print(f"integrity-check: {wat}")
+    print(f"{found.sampled} node(s) vergeleken, {len(found.bad)} verschil(len).")
+    if found.ok:
+        return 0
+    print("Herstel: python -m app.cli search-triggers (zet de triggers terug en herbouwt).")
+    return 1
+
+
+def _bench(settings: Settings, args: argparse.Namespace) -> int:
+    data = args.data.resolve()
+    if data == Path(settings.data_dir).resolve() or (data / "platform.db").exists():
+        print(
+            f"{data} heeft al een database (of is die van de app): kies een nieuwe map.",
+            file=sys.stderr,
+        )
+        return 1
+    klok = time.monotonic()
+    uit = maak(data, Plan(n=args.n, seed=args.seed, profiel=args.profiel))
     uit.seconden["totaal"] = time.monotonic() - klok
     if args.uitkomst:
         args.uitkomst.write_text(uit.json() + "\n")
