@@ -18,9 +18,7 @@ export default {
   filters: {
     label: "Filters",
     addType: "Soort",
-    anyType: "Soort kiezen",
     addTag: "Tag",
-    anyTag: "Tag kiezen",
     tagCount: "{name} ({n})",
     from: "Vanaf",
     to: "Tot en met",

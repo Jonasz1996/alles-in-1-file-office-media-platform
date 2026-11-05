@@ -18,9 +18,7 @@ const en: Translation<typeof nl> = {
   filters: {
     label: "Filters",
     addType: "Type",
-    anyType: "Choose a type",
     addTag: "Tag",
-    anyTag: "Choose a tag",
     tagCount: "{name} ({n})",
     from: "From",
     to: "Up to and including",
