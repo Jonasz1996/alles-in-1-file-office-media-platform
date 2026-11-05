@@ -184,22 +184,39 @@ def test_zoeken_met_het_toetsenbord(zoek_wereld: ZoekApp, zoek_browsers: Browser
 
 def test_ctrl_k_en_het_zoekveld_bovenaan(zoek_wereld: ZoekApp, zoek_browsers: Browsers) -> None:
     """Bram op Foto's: Ctrl+K zet de focus op het veld bovenaan (Z0-web), ook vanuit een ander
-    veld; Escape maakt het leeg en geeft daarna de focus terug; Enter gaat naar /zoeken en
-    geeft precies wat de referentie zegt."""
+    veld; sinds Z4 een combobox met suggesties: Escape sluit eerst de lijst, maakt dan het veld
+    leeg en geeft daarna de focus terug; Enter gaat naar /zoeken en geeft precies wat de
+    referentie zegt."""
     app = zoek_wereld
     assert app.wereld is not None
     ref = app.referentie()
     page = zoek_browsers.context_as(app.accounts["bram"]).new_page()
     page.goto("/fotos")
-    veld = page.get_by_role("search", name="Zoeken in alles").get_by_role("searchbox")
+    veld = page.get_by_role("search", name="Zoeken in alles").get_by_role(
+        "combobox", name="Zoeken", exact=True
+    )
     expect(veld).to_have_attribute("aria-keyshortcuts", "Control+K")
+    expect(veld).to_have_attribute("aria-expanded", "false")
+    lijst = page.get_by_role("listbox", name="Suggesties", exact=True)
 
-    # Escape: eerst leeg, dan de focus terug naar waar hij stond
+    # Escape: eerst de lijst dicht (de tekst blijft), dan leeg, dan de focus terug naar waar
+    # hij stond
     menu = page.get_by_role("link", name="Bestanden", exact=True)
     menu.focus()
     page.keyboard.press("Control+k")
     expect(veld).to_be_focused()
     page.keyboard.type("iets")
+    # Bram is geen gast: de lijst heeft altijd de regel voor zoeken op beeld (Keuze 81)
+    expect(lijst).to_be_visible()
+    expect(veld).to_have_attribute("aria-expanded", "true")
+    expect(lijst.get_by_role("option").last).to_have_text(
+        "Zoek 'iets' op wat er op je foto's staat"
+    )
+    page.keyboard.press("Escape")
+    expect(lijst).to_have_count(0)
+    expect(veld).to_have_attribute("aria-expanded", "false")
+    expect(veld).to_have_value("iets")
+    expect(veld).to_be_focused()
     page.keyboard.press("Escape")
     expect(veld).to_have_value("")
     expect(veld).to_be_focused()
@@ -218,6 +235,7 @@ def test_ctrl_k_en_het_zoekveld_bovenaan(zoek_wereld: ZoekApp, zoek_browsers: Br
     expect(page.locator(ROWS)).to_have_count(len(verwacht))
     expect(page.get_by_role("searchbox", name="Zoekwoorden")).to_have_value("utrecht")
     expect(veld).to_have_value("")  # het veld bovenaan is na Enter weer leeg
+    expect(lijst).to_have_count(0)  # en de lijst met suggesties is dicht
 
     # Ook vanuit het veld Zoekwoorden op /zoeken (Ctrl+K typt geen teken)
     page.get_by_role("searchbox", name="Zoekwoorden").focus()
@@ -343,7 +361,8 @@ def test_de_boom_van_1000_in_de_browser(boom: ZoekApp, browser: Any) -> None:
             page.keyboard.press("Enter")
         data = antwoord.value.json()
         verwacht = boom.referentie().op_naam(uuid.UUID(boom.accounts["eigenaar"].id), "pdf")
-        assert ids(data) <= verwacht and len(data["results"]) == min(50, len(verwacht)) > 0
+        # De pagina van Z4 vraagt 30 per keer (§3.4: limit ≤ 50, standaard 30; "Meer laden")
+        assert ids(data) <= verwacht and len(data["results"]) == min(30, len(verwacht)) > 0
         expect(page.locator(ROWS).first).to_be_visible()
     finally:
         problems = b.close_all()
