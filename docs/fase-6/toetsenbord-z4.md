@@ -5,8 +5,8 @@ Z4 maakt het zoeken af dat Z0 klaarzette: het veld bovenaan wordt een combobox m
 tussen zoeken op naam en tekst of op wat er op de foto staat (Keuze 47 en 81). *Mod* is Ctrl, op
 een Mac ⌘. Er is geen nieuwe sneltoets: Mod+K en `/` bestonden al.
 
-Dit is stap 1 van Z4. De tekstlaag met de markering van `?q=` in de PDF-viewer (Keuze 18) komt in
-stap 2, met de rest van `e2e/test_zoek_z4.py`.
+Stap 1 van Z4 bouwde het veld en `/zoeken`; stap 2 de tekstlaag met de markering van `?q=` in de
+PDF-viewer (Keuze 18) en de rest van `e2e/test_zoek_z4.py`. Wat er gebouwd is: [z4.md](z4.md).
 
 ## Eén zoekveld (z0.md, Open 12)
 
@@ -82,9 +82,32 @@ Na het openen staat de focus op de kop (zoals elke pagina). Met Tab, in deze vol
   gezocht", "Niets gevonden") staan in één `role="status"`: een schermlezer leest ze voor zonder
   dat de focus verspringt.
 - De snippet onder een treffer is tekst; de woorden uit de vraag staan in `<mark>`.
-- In de viewer: Esc sluit hem en de focus staat weer op de treffer.
+- In de viewer: Esc sluit hem en de focus staat weer op de treffer. Een PDF opent met de woorden
+  van `?q=` gemarkeerd (hieronder).
 - Het adres van `/zoeken` met zijn filters komt niet in de toegangslog van de server (alles na `?`
   wordt `***`, `api/tests/search/test_zoek_adres.py`).
+
+## De tekstlaag in de PDF-viewer (Keuze 18)
+
+Over elke pagina van een PDF (ook een kantoorbestand dat als PDF getoond wordt) liggen de woorden
+van die pagina, doorzichtig, op hun plek. Er komt geen tabstop bij en geen sneltoets: de toetsen
+van de viewer blijven zoals ze waren ([toetsenbord-p4.md](../fase-3/toetsenbord-p4.md), PDF:
+PgDn/PgUp, + en −, 0, T, het paginavak; Esc sluit).
+
+- Selecteren en kopiëren werkt zoals in een gewone tekst (met de muis, of met Shift en de pijlen
+  als de browser caret browsing aan heeft, F7). Tussen de woorden komt een spatie, na een regel een
+  regeleinde.
+- Komt de viewer van `/zoeken` (Enter op een treffer), dan staat `?q=` naast `?bestand=` in het
+  adres. De woorden van de vraag zijn dan gemarkeerd (`<mark>`, geel), op dezelfde manier als de
+  snippet: zonder hoofdletters en accenten, het laatste woord ook als begin van een woord.
+- De viewer zoekt de eerste pagina met een woord van de vraag (hooguit de eerste 50 pagina's) en
+  gaat erheen, als je zelf nog niet gescrold hebt. De focus verspringt niet. In de balk, na de
+  knoppen, staat wat hij vond, in een `role="status"` (een schermlezer leest het voor):
+  "Gevonden op pagina 3", "Niet gevonden in de tekst van de pagina's", "Niet gevonden in de eerste
+  50 pagina's", of "Deze pagina's hebben geen tekst om in te zoeken" (een scan zonder OCR).
+- In de stand "Wat er op de foto staat" (`mode=image`) markeert de viewer niets: dan beschrijft de
+  vraag een foto, geen woorden.
+- Via een publieke link is er geen tekstlaag (de woorden zijn alleen voor wie mag lezen).
 
 ## Nagelopen
 
@@ -116,3 +139,26 @@ van de lijst, een knop), zoals in de andere e2e:
 Niet nagelopen in stap 1: een gast (de vitest toetst dat hij de laatste regel en de keuze voor de
 stand niet krijgt), een snippet met `<mark>` in de echte app (de werelden hebben geen tekst met die
 woorden; de vitest toetst de opmaak), en de tekstlaag van de PDF-viewer (stap 2).
+
+In stap 2, met een eigen server met de index aan, een PDF van 3 pagina's met tekst en 33 notities
+(`e2e/test_zoek_z4.py`, Chromium 141):
+
+- [x] Mod+K, "kwartaal": de lijst met het bestand onder Namen en de laatste regel; ↓ zet
+      `aria-activedescendant`, ↑ weer terug naar het veld; ↓ en Enter openen de map met de viewer.
+      De woorden liggen over de pagina, zonder `<mark>` en zonder melding (geen `?q=`).
+- [x] Mod+K, een woord van pagina 3 en Enter: `/zoeken` met de PDF; de snippet heeft het woord in
+      `<mark>`. Van de kop met Tab: Zoekwoorden, Zoeken, Namen en tekst, Filters; Enter opent het
+      paneel, Tab naar PDF, Spatie zet het filter (de chip "Filter weghalen: PDF", de focus blijft
+      op het vinkje).
+- [x] Enter op de treffer: de viewer met `?bestand=` naast `?q=`; "Gevonden op pagina 3", de
+      viewer staat op pagina 3 en het woord is gemarkeerd (in beeld). De woorden kwamen per pagina
+      één keer, alleen met het download-token (niet met de vraag). Esc: de viewer dicht, de focus
+      weer op de treffer.
+- [x] "Meer laden" (33 notities): End naar treffer 30, Tab naar de knop, Enter: `offset=30`, de
+      focus op treffer 31, de knop weg.
+- [x] Kopiëren uit de tekstlaag (een selectie over twee regels in Chromium 141):
+      `getSelection().toString()` geeft "De factuur\nvan maart", met spaties tussen de woorden en
+      een regeleinde per regel.
+- [x] De melding in de balk is helemaal te lezen (een schermafdruk): eerst stond hij tegen de
+      rechterkant en viel "pagina 1" half onder de rand van de schuifbalk (de viewer is 100vw
+      breed, `scrollbar-gutter` in `base.css`); nu staat hij na de knoppen.
