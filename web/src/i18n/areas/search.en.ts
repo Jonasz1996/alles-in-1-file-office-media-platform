@@ -72,6 +72,12 @@ const en: Translation<typeof nl> = {
     albums: "Albums",
     image: "Search your photos for '{q}'",
   },
+  viewer: {
+    found: "Found on page {n}",
+    notFound: "Not found in the text of the pages",
+    notInFirst: "Not found in the first {n} pages",
+    noText: "These pages have no text to search",
+  },
 };
 
 export default en;

@@ -74,4 +74,11 @@ export default {
     albums: "Albums",
     image: "Zoek '{q}' op wat er op je foto's staat",
   },
+  // De tekstlaag in de PDF-viewer (Keuze 18): waar de eerste treffer van ?q= staat
+  viewer: {
+    found: "Gevonden op pagina {n}",
+    notFound: "Niet gevonden in de tekst van de pagina's",
+    notInFirst: "Niet gevonden in de eerste {n} pagina's",
+    noText: "Deze pagina's hebben geen tekst om in te zoeken",
+  },
 } as const;
