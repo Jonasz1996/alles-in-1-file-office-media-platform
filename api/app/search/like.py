@@ -14,8 +14,8 @@ en in, zonder de kolommen die alleen de triggers van 0010 bijhouden (ftype en mp
 PostgreSQL zijn er geen triggers). from/to gaat zoals filters._dates (de opnamedag van een foto
 of video, anders modified_at), met de soort uit mime; library en in zoeken vanaf die map omlaag
 (review golf 1, contract S3). In en library zijn zelf geen treffer, net als de eigen hoofdmap
-(contract N1 en S2). De filters van Z3 en Z6 geven 501 not_built in de router (contract S1);
-wie ze aanmeldt, zorgt ook voor deze motor.
+(contract N1 en S2). De filters van Z3 en Z6 geven 501 not_built in de router (contract S1)
+tot ze in het register staan; daarna past deze motor ze toe zoals FtsEngine (op de tabel node).
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from app import access, errors, mime
 from app.media.library import get_seen
 from app.models import Node, NodeTag, Tag, User
 from app.routers.files import describe, get_dir, is_trashed, tags_by_node, tree
-from app.search.filters import date_where
+from app.search.filters import BUILTIN, FILTERS, date_where
 from app.search.types import Hit, PathPart, SearchPage, SearchParams, Suggestions
 from app.text import fold
 
@@ -174,6 +174,11 @@ class LikeFallback:
                 .where(NodeTag.node_id == Node.id, NodeTag.tag_id == tag)
                 .exists()
             )
+        # De filters die een ander pakket aanmeldt (person van Z6; place, country en camera van
+        # Z3): dezelfde functie als in FtsEngine, op de tabel node
+        for f in FILTERS.values():
+            if f.name not in BUILTIN:
+                query = f.apply(query, Node.__table__, p, user)
         limit = p.limit
         rows = list(
             (

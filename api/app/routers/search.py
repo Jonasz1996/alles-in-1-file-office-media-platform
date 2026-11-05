@@ -26,6 +26,7 @@ antwoord; daarin staan dan mode "text" en fallback null (de standaard van Search
 """
 
 import asyncio
+import logging
 import re
 import uuid
 from datetime import date
@@ -44,16 +45,18 @@ from app.models import Node, NodeTag, Tag, User
 from app.routers.files import TagRef, get_tree_access, tag_order, tree
 from app.routers.stubs import not_built
 from app.search import engine as engines
+from app.search import hooks as search_hooks
 from app.search.engine import LIKE, engine_for
 from app.search.filters import FILTERS
 from app.search.like import own_tag, search_roots
 from app.search.limits import Replaced, admit
 from app.search.query import MAX_CHARS, QueryTooLong
-from app.search.types import SearchMode, SearchPage, SearchParams, Suggestions
+from app.search.types import Groups, SearchMode, SearchPage, SearchParams, Suggestions
 from app.security import CurrentUser
 from app.text import CONTROL, fold
 
 router = APIRouter(prefix="/api/v1", tags=["zoeken"])
+log = logging.getLogger("platform.search")
 
 # De soorten van 0.7.0 (mime.category, met archive) en die van node.ftype (§3.4)
 Category = Literal[
@@ -87,6 +90,23 @@ def _not_too_long(q: str) -> None:
     motoren (de 422 van Query(max_length) was een andere fout; review golf 1, contract N2)."""
     if len(q) > MAX_CHARS:
         raise errors.fail(400, "search_query_too_long", "Je zoekvraag is te lang", max_words=10)
+
+
+async def _groups(session: AsyncSession, user: User, p: SearchParams) -> Groups | None:
+    """De groepen bovenaan de resultaten (Z6 personen, Z3 plaatsen) van search.hooks.groups():
+    elke haak geeft Groups of None, samen in de volgorde van de haken; None als er geen is. Een
+    haak die faalt, geeft niets: één logregel met de naam van de haak, nooit de vraag."""
+    people, places = [], []
+    for fn in search_hooks.groups():
+        try:
+            found = await fn(session, user, p)
+        except Exception:
+            log.warning("search_groups_hook_failed %s", getattr(fn, "__qualname__", "?"))
+            continue
+        if found is not None:
+            people += found.people
+            places += found.places
+    return Groups(people=people, places=places) if people or places else None
 
 
 def _built(fields: dict) -> None:
@@ -154,8 +174,10 @@ async def search(
         # De vraag van 0.7.0 (archive als soort, limit tot 200) past niet in SearchParams:
         # zonder controle gebouwd, en altijd naar LikeFallback (die leest alleen q, types,
         # tags, in_, offset en limit), tot Z4 de web op de vraag van §3.4 zet
-        page = await LIKE.search(session, user, SearchParams.model_construct(**fields))
+        old = SearchParams.model_construct(**fields)
+        page = await LIKE.search(session, user, old)
         page.indexing = await analysis.indexing(session)
+        page.groups = await _groups(session, user, old)
         return page
     if not q.strip() and not params.has_filter():
         raise errors.fail(400, "search_bad_filter", "Geef een zoekvraag of een filter")
@@ -163,6 +185,7 @@ async def search(
     if engine is LIKE:
         page = await engine.search(session, user, params)
         page.indexing = await analysis.indexing(session)
+        page.groups = await _groups(session, user, params)
         return page
     token = engines.SETTINGS.set(settings)
     # De tijd per stap in Server-Timing, alleen voor tests en metingen (Keuze 13)
@@ -188,6 +211,8 @@ async def search(
     # Z2 (Keuze 20): hoe ver de backfill van de tekst is, zolang er genoeg open staat; buiten
     # admit, want de telling heeft geen plek in de rij nodig (hooguit eens per 5 s)
     page.indexing = await analysis.indexing(session)
+    # Z6 en Z3: de groepen bovenaan (personen, plaatsen), ook buiten admit
+    page.groups = await _groups(session, user, params)
     return page
 
 

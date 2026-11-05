@@ -2,7 +2,7 @@
 methode, body, antwoordmodel en status, vraagt eerst de inlog (beheer: de rol; de woorden per
 pagina: het download-token) en geeft dan 501 not_built tot zijn pakket het vult. Zoeken zelf
 werkt al: via select_engine, met LikeFallback. Sinds Z2 zijn ook de woorden per pagina en de
-stand van de analyse gebouwd (BUILT).
+stand van de analyse gebouwd (BUILT), en sinds Z6 de routes van personen.
 
 Z0b (Keuze 55) zette de routes van gezichten (X2) en zoeken op beeld (X3) erbij, ook als stub;
 zoeken met mode=image of like geeft 501 not_built("X3").
@@ -252,6 +252,16 @@ BUILT = {
     # Z2: de woorden per pagina en de stand van de analyse (tests/test_pages_words.py)
     ("GET", "/api/v1/files/{node_id}/pages/{n}/words"),
     ("GET", "/api/v1/files/{node_id}/analysis"),
+    # Z6: personen (tests/people/test_people.py)
+    ("GET", "/api/v1/people"),
+    ("POST", "/api/v1/people"),
+    ("PATCH", "/api/v1/people/{person_id}"),
+    ("POST", "/api/v1/people/{person_id}/merge"),
+    ("DELETE", "/api/v1/people/{person_id}"),
+    ("GET", "/api/v1/people/{person_id}/photos"),
+    ("GET", "/api/v1/files/{node_id}/people"),
+    ("POST", "/api/v1/files/{node_id}/people"),
+    ("DELETE", "/api/v1/files/{node_id}/people/{person_id}"),
 }
 # De vraag die een stub nodig heeft om bij de route te komen
 QUERY = {
@@ -346,13 +356,15 @@ async def test_elke_stub_geeft_501_not_built(client, admin, settings):
 async def test_een_vast_getal_in_de_query_string_komt_bij_de_stub(client, admin):
     """Een keuze uit vaste getallen in de query (?size=96, ?hidden=1) komt als tekst binnen, zoals
     de web hem stuurt (wireQuery). Literal[96, 192] alleen neemt geen "96": dan gaf elke waarde
-    422 en kwam niemand bij de route (gevonden bij de samenvoeging van Z0b)."""
+    422 en kwam niemand bij de route (gevonden bij de samenvoeging van Z0b). Een stub geeft dan
+    501, een gebouwde route zijn gewone antwoord (Z6: GET /people?hidden=1)."""
     headers, _ = admin
     schema = app.openapi()["paths"]
     gezien = set()
-    for method, path, body, who, *_ in ENDPOINTS:
-        if (method, path) in BUILT or who == "token":
+    for method, path, body, who, _model, _out, status, _package in ENDPOINTS:
+        if who == "token":
             continue
+        expect = (status or 200) if (method, path) in BUILT else 501
         for param in schema[path][method.lower()].get("parameters", []):
             keuzes = param["schema"].get("enum", [])
             if param["in"] != "query" or not keuzes or not all(type(k) is int for k in keuzes):
@@ -362,7 +374,7 @@ async def test_een_vast_getal_in_de_query_string_komt_bij_de_stub(client, admin)
                 r = await client.request(
                     method, url_of(path), json=body, params=params, headers=headers
                 )
-                assert r.status_code == 501, (method, path, params, r.status_code, r.text)
+                assert r.status_code == expect, (method, path, params, r.status_code, r.text)
             params = {**QUERY.get(path, {}), param["name"]: str(max(keuzes) + 1)}
             r = await client.request(
                 method, url_of(path), json=body, params=params, headers=headers

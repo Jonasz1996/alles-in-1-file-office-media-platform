@@ -5,7 +5,8 @@ en waar het kan ook met de vraag van 0.7.0 (limit 200: altijd LikeFallback, "De 
 §3.4). Dezelfde vraag geeft dan hetzelfde antwoord, of dezelfde fout:
 
 - een vraag van meer dan 200 tekens: 400 search_query_too_long, ook bij suggest (N2);
-- person, place, country en camera: 501 not_built tot Z3 en Z6 ze aanmelden (S1);
+- place, country en camera: 501 not_built tot Z3 ze aanmeldt (S1); person meldde Z6 aan: een
+  persoon die niet van jou is, geeft niets (tests/people/test_people.py);
 - library van een bibliotheek die je niet ziet: 404 (veilig F3);
 - de eigen hoofdmap is nooit een treffer, ook niet zonder q (S2);
 - in en library zoeken onder die map; de map zelf is geen treffer (N1); samen alleen onder
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_engine
 from app.models import MediaLibrary, Node
+from app.people import search as people_search
 from tests.test_files import mkdir, new_user, put, root
 
 pytestmark = pytest.mark.anyio
@@ -76,7 +78,6 @@ async def test_een_te_lange_vraag_is_400(client, admin, motor):
 @pytest.mark.parametrize(
     ("param", "waarde", "pakket"),
     [
-        ("person", str(uuid.UUID(int=7)), "Z6"),
         ("place", "2759794", "Z3"),
         ("place", "0", "Z3"),
         ("country", "NL", "Z3"),
@@ -93,6 +94,16 @@ async def test_de_filters_van_later_zijn_501(client, admin, motor, param, waarde
             "message": f"Nog niet gebouwd ({pakket})",
             "params": {"package": pakket},
         }
+
+
+async def test_het_filter_person_van_z6_geeft_niets_voor_een_onbekende(client, admin, motor):
+    people_search.register()  # een test eerder in de run kan filters.reset() gedaan hebben
+    headers, _ = admin
+    for extra in ({}, {"q": "foto"}, {"q": "foto", "limit": 200}):
+        params = {"person": str(uuid.UUID(int=7)), **extra}
+        r = await client.get("/api/v1/search", params=params, headers=headers)
+        assert r.status_code == 200, (extra, r.text)
+        assert r.json()["results"] == [], extra
 
 
 async def _bibliotheek(settings, owner: uuid.UUID, root_id: str) -> uuid.UUID:
