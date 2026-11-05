@@ -273,6 +273,9 @@ BUILT = {
     ("POST", "/api/v1/albums/{album_id}/rule/confirm"),
     ("DELETE", "/api/v1/albums/{album_id}/rule"),
     ("POST", "/api/v1/albums/{album_id}/refresh"),
+    # Z6: de foto-instellingen (tests/photos/test_photo_settings.py)
+    ("GET", "/api/v1/me/photo-settings"),
+    ("PATCH", "/api/v1/me/photo-settings"),
 }
 # De vraag die een stub nodig heeft om bij de route te komen
 QUERY = {
