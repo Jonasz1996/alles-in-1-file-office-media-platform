@@ -110,6 +110,9 @@ SECRET_PARAMS = re.compile(
 # (/people/faces/…, X2): test_log_hiding.py
 QUERY_PATHS = re.compile(r"(/api/v1/(?:search|photos|people)(?:/[^?\s\"]*)?\?)[^\s\"]*")
 LINK_PATH = re.compile(r"((?:^|[\s\"])/s/)[^/?#\s\"]+")
+# Z6: een regel uit de herinneringen halen zet de dag of het id in het pad
+# (DELETE /photos/memories/hide/{kind}/{ref}); wat na hide/ komt, gaat weg
+MEMORY_HIDE_PATH = re.compile(r"(/api/v1/photos/memories/hide/)[^?\s\"]*")
 # De sid van een afspeelsessie staat in het pad (fase 5, Keuze 35): /api/v1/stream/<node>.<geheim>/…
 # Het hele stuk na /api/v1/stream/ gaat weg, wat er ook in staat (geen punt, een lege naam van de
 # node, een dubbele /). Alleen een nette naam van de node ervoor (kleine letters, cijfers en -)
@@ -119,6 +122,7 @@ STREAM_PATH = re.compile(r"(/api/v1/stream/+(?:[a-z0-9-]{1,63}\.)?)[^/?\s\"]+")
 
 def _hide(value: str) -> str:
     value = QUERY_PATHS.sub(r"\1***", value)
+    value = MEMORY_HIDE_PATH.sub(r"\1***", value)
     value = SECRET_PARAMS.sub(r"\1***", value)
     return STREAM_PATH.sub(r"\1***", LINK_PATH.sub(r"\1***", value))
 
