@@ -74,7 +74,8 @@ export interface Memories {
   years: MemoryYear[];
 }
 
-/** Wat je kunt verbergen: een dag (MM-DD), een map (een node-id) of een persoon (een id). */
+/** Wat je kunt verbergen: een dag (JJJJ-MM-DD, die dag van dat jaar), een map (een node-id) of een
+ * persoon (een id). */
 export type HideKind = "day" | "folder" | "person";
 
 /** POST /photos/memories/hide; DELETE /photos/memories/hide/{kind}/{ref}. 400 memories_bad_hide. */

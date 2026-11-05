@@ -7,7 +7,8 @@
 // Alt+L: een nieuwe link.
 //
 // Fase 6 (Z0): bovenaan een plek voor de waarschuwing over de plek in foto's (LocationWarning.tsx,
-// van Z5): een eigen chunk, pas geladen als het dialoog opengaat.
+// van Z5): een eigen chunk, pas geladen als het dialoog opengaat. Bij een album (Z6, Keuze 42) een
+// plek voor de telling van de regel (photos/people/RuleShareNote.tsx), net zo.
 
 import { type FormEvent, type JSX, type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError, api, type FileNode, type Share } from "../api";
@@ -47,12 +48,17 @@ import { Field } from "../ui/Field";
 import { useScope, useShortcuts } from "../ui/keys";
 import { LazySlot } from "../ui/LazySlot";
 import { toast } from "../ui/toast";
+import type { RuleShareNoteProps } from "../photos/people/RuleShareNote";
 import type { LocationWarningProps } from "./LocationWarning";
 import { type Option, PersonPicker } from "./PersonPicker";
 import "../share.css";
 import "../files.css";
 
 const LocationWarning = lazyWithAreas<LocationWarningProps>(() => import("./LocationWarning"), ["photos_map"]);
+const RuleShareNote = lazyWithAreas<RuleShareNoteProps>(
+  () => import("../photos/people/RuleShareNote"),
+  ["photos_people"],
+);
 
 /** Delen met personen en groepen, en publieke links. Alleen voor de eigenaar. */
 export default function ShareDialogPanel({ node, nodes, onClose, onChanged }: ShareDialogProps): JSX.Element {
@@ -133,6 +139,11 @@ function SingleShareDialog({
       <LazySlot>
         <LocationWarning nodes={[node]} />
       </LazySlot>
+      {node.kind === "album" && (
+        <LazySlot>
+          <RuleShareNote node={node} />
+        </LazySlot>
+      )}
       {error && <p role="alert">{error}</p>}
       {shares === null && !error && <p className="muted">{t("common.loading")}</p>}
       {shares !== null && (
