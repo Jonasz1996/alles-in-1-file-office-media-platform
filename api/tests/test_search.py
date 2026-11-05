@@ -182,19 +182,21 @@ async def test_zoeken_op_soort(client, admin, motor):
         node = hit["node"]
         found = category(node["mime"], node["kind"])
         expected[found].append(node["name"])
-        if motor == "fts" and found == "archive":
-            # §3.4 kent geen archive: een archief is other (mime.ftype, node.ftype)
+        if found == "archive":
+            # §3.4 kent geen archive: een archief is other (mime.ftype, node.ftype), in beide
+            # motoren (Keuze 43; tests/search/test_search_filters.py)
             expected["other"].append(node["name"])
     assert all(expected[c] for c in CATEGORIES)  # elke soort komt voor
-    # De SQL-voorwaarde zegt hetzelfde als mime.category() (en mime.ftype in FtsEngine);
-    # type=archive gaat ook met de index aan naar LikeFallback
+    # De SQL-voorwaarde zegt hetzelfde als mime.ftype() (node.ftype), in beide motoren;
+    # type=archive (0.7.0) gaat ook met de index aan naar LikeFallback, op mime
     for c in CATEGORIES:
         assert names(await find(client, headers, q="item", type=c)) == expected[c], c
     assert expected["document"] == ["item brief.docx", "item notitie.txt"]
+    # In de volgorde van de treffers van q=item in die motor (LikeFallback: op naam)
     assert (
         expected["other"]
         == {
-            "like": ["item leeg", "item onbekend.bin"],
+            "like": ["item archief.zip", "item leeg", "item onbekend.bin"],
             "fts": ["item leeg", "item archief.zip", "item onbekend.bin"],
         }[motor]
     )

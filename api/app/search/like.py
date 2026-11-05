@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import and_, not_, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -38,26 +38,13 @@ MAX_WORDS = 10
 
 
 def of_category(category: str):
-    """SQL-voorwaarde die hetzelfde zegt als mime.category() (de soorten van 0.7.0); ook
-    spreadsheet en presentation (de soorten van zoeken, mime.ftype)."""
-    if category == "folder":
-        return Node.kind == "dir"
-    m = Node.mime
-    groups = {
-        "archive": m.in_(mime.ARCHIVE_TYPES),
-        "pdf": m == "application/pdf",
-        "image": m.like("image/%"),
-        "video": m.like("video/%"),
-        "audio": m.like("audio/%"),
-        "document": or_(m.like("text/%"), m.in_(mime.DOCUMENT_TYPES)),
-    }
-    if category == "spreadsheet":
-        return and_(Node.kind == "file", m.in_(mime.SPREADSHEET_TYPES))
-    if category == "presentation":
-        return and_(Node.kind == "file", m.in_(mime.PRESENTATION_TYPES))
-    if category == "other":
-        return and_(Node.kind == "file", or_(m.is_(None), not_(or_(*groups.values()))))
-    return and_(Node.kind == "file", groups[category])
+    """SQL-voorwaarde voor een soort van zoeken: node.ftype, zoals FtsEngine (Keuze 43). Alleen
+    archive, een soort van 0.7.0 die SearchParams niet kent, gaat nog op mime; Z4 haalt die vraag
+    weg. Eerder was het mime.category(): document gaf dan ook rekenbladen en presentaties, en
+    other geen archieven, anders dan FtsEngine (Z6, tests/search/test_search_filters.py)."""
+    if category == "archive":
+        return and_(Node.kind == "file", Node.mime.in_(mime.ARCHIVE_TYPES))
+    return Node.ftype == category
 
 
 async def own_tag(session: AsyncSession, user: User, tag_id: uuid.UUID) -> Tag:
