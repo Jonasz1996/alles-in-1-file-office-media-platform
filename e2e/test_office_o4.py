@@ -128,6 +128,9 @@ def test_nieuw_document_met_alleen_het_toetsenbord(office: Office, office_browse
     # --- Engels: Tab naar de knop, ↑, ↑, Enter ---
     office.server.call(anna, "PATCH", "/api/v1/auth/me", json={"locale": "en"}, expect=200)
     page.goto(f"/map/{folder}")
+    # De app herlaadt één keer naar het Engels (applyAccountLocale), ná de load waar goto op
+    # wacht: eerst dat, anders kan start() in het herladen vallen
+    expect(page.locator("html")).to_have_attribute("lang", "en")
     button = page.get_by_role("button", name="New", exact=True)
     start(page)
     tab_to(page, button)
