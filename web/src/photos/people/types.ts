@@ -138,13 +138,16 @@ export interface AlbumRuleSaved {
 /** Wat GET /albums en /albums/{id} de eigenaar erbij geven als er een regel is (het veld rule
  * van een album; voor anderen en zonder regel null). count: op hoeveel foto's de regel bij de
  * laatste verversing paste; code: album_rule_too_many als dat er meer dan 10.000 waren (dan
- * bleven de items zoals ze waren). */
+ * bleven de items zoals ze waren). items: hoeveel items nu uit de regel komen; private: hoeveel
+ * daarvan alleen de eigenaar ziet. */
 export interface AlbumRuleInfo {
   rule: AlbumRule;
   share_new: boolean;
   refreshed_at: string;
   count: number;
   code: string | null;
+  items: number;
+  private: number;
 }
 
 /** Waar een item van een album vandaan komt: met de hand of uit de regel. */

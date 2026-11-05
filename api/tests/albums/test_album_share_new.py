@@ -86,6 +86,17 @@ async def eigenaar(client, huis) -> list[tuple[str, str, bool]]:
     return [(i["name"], i["album"]["source"], i["album"]["shared"]) for i in r.json()["items"]]
 
 
+async def telling(client, huis) -> tuple[int, int]:
+    """Wat de eigenaar over de regel hoort (items uit de regel, waarvan alleen voor hem), in
+    GET /albums/{id} en in GET /albums hetzelfde."""
+    h, album = huis["h_eva"], str(huis["album"])
+    rule = (await client.get(f"/api/v1/albums/{album}", headers=h)).json()["rule"]
+    [listed] = [a for a in (await client.get("/api/v1/albums", headers=h)).json()["albums"]
+                if a["id"] == album]  # fmt: skip
+    assert listed["rule"] == rule
+    return rule["items"], rule["private"]
+
+
 async def ziet_bram(client, huis) -> list[str]:
     """Wat Bram van het album ziet, langs elke weg; allemaal hetzelfde."""
     album, h = huis["album"], huis["h_bram"]
@@ -141,9 +152,11 @@ async def test_bram_en_de_link_zien_een_nieuw_rule_item_pas_na_ja(client, huis, 
     ]
     assert await ziet_bram(client, huis) == ["berg.jpg"]
     assert await ziet_de_link(client, huis) == ["berg.jpg"]
+    assert await telling(client, huis) == (2, 2)
     # Ja: alle 'rule'-items gedeeld, en wat er later bij komt ook
     assert await confirm(client, huis["h_eva"], album, True) == {"needs_confirm": False}
     assert [s for _, _, s in await eigenaar(client, huis)] == [True, True, True]
+    assert await telling(client, huis) == (2, 0)
     alle = ["berg.jpg", "strand-2.jpg", "strand-1.jpg"]
     assert await ziet_bram(client, huis) == alle
     assert await ziet_de_link(client, huis) == alle
@@ -156,6 +169,7 @@ async def test_bram_en_de_link_zien_een_nieuw_rule_item_pas_na_ja(client, huis, 
     await rule_router.run(settings, {"album": str(album)})
     assert await ziet_bram(client, huis) == ["strand-3.jpg", *alle]
     assert await ziet_de_link(client, huis) == ["strand-3.jpg", *alle]
+    assert await telling(client, huis) == (3, 0)
     # Al gedeeld: geen vraag meer
     assert await regel(client, huis["h_eva"], album, {"q": "strand"}) == {"needs_confirm": False}
 
@@ -173,6 +187,7 @@ async def test_nee_houdt_ze_voor_de_eigenaar(client, huis, settings):
     await rule_router.run(settings, {"album": str(album)})
     assert ("strand-3.jpg", "rule", False) in await eigenaar(client, huis)
     assert await ziet_bram(client, huis) == ["berg.jpg"]
+    assert await telling(client, huis) == (3, 3)
     # Een nieuwe regel zonder antwoord: de vraag opnieuw; met share_new het antwoord meteen
     assert await regel(client, huis["h_eva"], album, {"q": "strand"}) == {"needs_confirm": True}
     assert await regel(client, huis["h_eva"], album, {"q": "strand"}, share_new=False) == {
@@ -191,6 +206,7 @@ async def test_nee_houdt_ze_voor_de_eigenaar(client, huis, settings):
     await rule_router.run(settings, {"album": str(album)})
     assert (await eigenaar(client, huis))[0] == ("strand-4.jpg", "rule", False)
     assert "strand-4.jpg" not in await ziet_bram(client, huis)
+    assert await telling(client, huis) == (4, 1)
 
 
 async def test_met_de_hand_toevoegen_deelt_een_rule_item(client, huis):
@@ -203,6 +219,7 @@ async def test_met_de_hand_toevoegen_deelt_een_rule_item(client, huis):
     )
     assert r.json() == {"added": 1, "skipped": []}
     assert await ziet_bram(client, huis) == ["berg.jpg", "strand-1.jpg"]
+    assert await telling(client, huis) == (1, 1)  # strand-1 is nu een item met de hand
     assert await ziet_de_link(client, huis) == ["berg.jpg", "strand-1.jpg"]
 
 

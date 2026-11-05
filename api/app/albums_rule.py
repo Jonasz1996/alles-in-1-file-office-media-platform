@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import and_, bindparam, delete, exists, func, literal_column, or_, select
+from sqlalchemy import and_, bindparam, case, delete, exists, func, literal_column, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -327,7 +327,25 @@ async def info(db: AsyncSession, album_ids: list[uuid.UUID]) -> dict[uuid.UUID, 
     """De regel per album (alleen voor de eigenaar), voor GET /albums en /albums/{id}."""
     if not album_ids:
         return {}
-    rows = await db.scalars(select(AlbumRule).where(AlbumRule.album_id.in_(album_ids)))
+    rows = list(await db.scalars(select(AlbumRule).where(AlbumRule.album_id.in_(album_ids))))
+    if not rows:
+        return {}
+    # Per album met een regel: de items uit de regel, en hoeveel daarvan niet gedeeld zijn
+    counts = {
+        album_id: (int(n or 0), int(private or 0))
+        for album_id, n, private in await db.execute(
+            select(
+                AlbumItem.album_id,
+                func.count(),
+                func.sum(case((AlbumItem.shared == 0, 1), else_=0)),
+            )
+            .where(
+                AlbumItem.album_id.in_([row.album_id for row in rows]),
+                AlbumItem.source == "rule",
+            )
+            .group_by(AlbumItem.album_id)
+        )
+    }
     return {
         row.album_id: AlbumRuleInfo(
             rule=load(row.rule),
@@ -335,6 +353,8 @@ async def info(db: AsyncSession, album_ids: list[uuid.UUID]) -> dict[uuid.UUID, 
             refreshed_at=to_utc(row.refreshed_at),  # SQLite bewaart geen tijdzone
             count=row.count,
             code=row.code,
+            items=counts.get(row.album_id, (0, 0))[0],
+            private=counts.get(row.album_id, (0, 0))[1],
         )
         for row in rows
     }

@@ -163,13 +163,16 @@ class AlbumRuleInfo(BaseModel):
     """Wat GET /albums en /albums/{id} de eigenaar over de regel van een album geven (AlbumOut
     .rule; voor anderen en zonder regel null). count: op hoeveel foto's de regel bij de laatste
     verversing paste; code: album_rule_too_many als dat er meer dan 10.000 waren (dan bleven de
-    items zoals ze waren)."""
+    items zoals ze waren). items: hoeveel items van het album nu uit de regel komen; private:
+    hoeveel daarvan alleen de eigenaar ziet (Keuze 42: het deeldialoog zegt het)."""
 
     rule: SearchRule
     share_new: bool
     refreshed_at: datetime
     count: int
     code: str | None = None
+    items: int = 0
+    private: int = 0
 
     @field_serializer("rule")
     def _rule(self, rule: SearchRule) -> dict:
