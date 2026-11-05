@@ -67,16 +67,16 @@ export function FilterBar({ query, tags }: { query: PageQuery; tags: readonly Ta
   const fromField = useRef<HTMLInputElement>(null);
   const toField = useRef<HTMLInputElement>(null);
 
-  // Een datum die van buiten verandert (× op de chip, Terug): het veld volgt, behalve terwijl je
-  // erin typt
+  // Een datum die in de vraag verandert (× op de chip, Terug, Enter in het veld zelf): het veld
+  // volgt, ook als de focus erin staat. Anders houdt het na Terug (Alt+←) de oude datum, en zet
+  // het verlaten van het veld (blur) hem er weer bij. Elk veld volgt alleen zijn eigen datum: wat
+  // je in het andere typt, blijft staan
   useEffect(() => {
-    for (const [el, value] of [
-      [fromField.current, query.from],
-      [toField.current, query.to],
-    ] as const) {
-      if (el && document.activeElement !== el) el.value = value ?? "";
-    }
-  }, [query.from, query.to]);
+    if (fromField.current) fromField.current.value = query.from ?? "";
+  }, [query.from]);
+  useEffect(() => {
+    if (toField.current) toField.current.value = query.to ?? "";
+  }, [query.to]);
 
   useEffect(() => {
     const at = focusAt.current;
