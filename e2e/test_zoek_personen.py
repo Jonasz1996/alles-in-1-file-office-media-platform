@@ -239,6 +239,14 @@ def test_herinneringen_met_een_vaste_dag(server, fien, context_as):
     kop = herinneringen.get_by_role("heading", name="Vandaag, 1 jaar geleden", level=3)
     expect(kop).to_be_visible()
     foto = herinneringen.get_by_role("button", name=re.compile(r"^foto-00000\.webp, "))
+    # Het blok staat boven de tijdlijn en maakt die niet trager (e2e/perf/scroll.py): een jaar
+    # buiten beeld kost niets, en een foto heeft een vaste maat zonder overflow: hidden (dat
+    # maakt een beeld met afgeronde hoeken duur om te tekenen)
+    stijl = foto.evaluate(
+        "(b) => ({ jaar: getComputedStyle(b.closest('.memory-year')).contentVisibility,"
+        " contain: getComputedStyle(b).contain, overflow: getComputedStyle(b).overflow })"
+    )
+    assert stijl == {"jaar": "auto", "contain": "strict", "overflow": "visible"}, stijl
     tab_to(page, foto, limit=60)
     page.keyboard.press("Enter")
     viewer = page.get_by_role("dialog", name="foto-00000.webp", exact=True)

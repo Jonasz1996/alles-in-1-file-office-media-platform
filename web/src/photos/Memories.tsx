@@ -6,6 +6,10 @@
 // Toetsenbord: elke foto is een knop (Tab), Enter opent hem in de viewer (← en → door de foto's
 // van dat jaar); "Deze dag verbergen" (met Ongedaan maken in de melding) zet de focus daarna op de
 // kop van de pagina.
+//
+// Het blok staat boven de tijdlijn en mag die niet trager maken (de scroll-meting van e2e/perf):
+// de thumbnails komen via de wachtrij van het raster (een paar per frame, niets tijdens snel
+// scrollen), en een jaar buiten beeld kost niets (content-visibility in people.css).
 
 import { type JSX, Suspense, useCallback, useEffect, useId, useState } from "react";
 import { errorText, t } from "../i18n";
@@ -13,7 +17,8 @@ import { Button } from "../ui/Button";
 import { focusPage } from "../ui/PageTitle";
 import { toast } from "../ui/toast";
 import { Viewer } from "../viewer";
-import { wallLabel } from "./api";
+import { type PhotoItem, wallLabel } from "./api";
+import { requestImage } from "./Grid";
 import { hideMemories, memories, unhideMemories } from "./people/api";
 import type { MemoryYear } from "./people/types";
 import "./people/people.css";
@@ -69,14 +74,7 @@ export default function Memories(): JSX.Element | null {
           <ul className="memory-strip" aria-labelledby={`${id}-${yi}`}>
             {y.items.map((it, i) => (
               <li key={it.id}>
-                <button
-                  type="button"
-                  className="memory-photo"
-                  aria-label={t("photos_people.memories.photo", { name: it.name, date: wallLabel(it.taken_at) })}
-                  onClick={() => setOpen({ year: yi, index: i })}
-                >
-                  {it.thumb && <img src={it.thumb} alt="" loading="lazy" decoding="async" />}
-                </button>
+                <MemoryPhoto it={it} onOpen={() => setOpen({ year: yi, index: i })} />
               </li>
             ))}
           </ul>
@@ -93,5 +91,23 @@ export default function Memories(): JSX.Element | null {
         </Suspense>
       )}
     </section>
+  );
+}
+
+/** Een foto van een jaar: een knop met de naam en de datum. De thumbnail vraagt een plek in de
+ * wachtrij van het raster, net als een cel van de tijdlijn; eenmaal getoond blijft hij staan. */
+function MemoryPhoto({ it, onOpen }: { it: PhotoItem; onOpen: () => void }): JSX.Element {
+  const [ready, setReady] = useState(false);
+  const want = !!it.thumb && !ready;
+  useEffect(() => (want ? requestImage(() => setReady(true)) : undefined), [want]);
+  return (
+    <button
+      type="button"
+      className="memory-photo"
+      aria-label={t("photos_people.memories.photo", { name: it.name, date: wallLabel(it.taken_at) })}
+      onClick={onOpen}
+    >
+      {ready && it.thumb && <img src={it.thumb} alt="" loading="lazy" decoding="async" draggable={false} />}
+    </button>
   );
 }
