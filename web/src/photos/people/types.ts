@@ -135,13 +135,16 @@ export interface AlbumRuleSaved {
   needs_confirm: boolean;
 }
 
-/** Wat GET /albums/{id} de eigenaar erbij geeft als er een regel is. Nog zonder Python-model:
- * Z6 zet het in de bestaande route (§3.4), en legt het dan naast dit type. */
+/** Wat GET /albums en /albums/{id} de eigenaar erbij geven als er een regel is (het veld rule
+ * van een album; voor anderen en zonder regel null). count: op hoeveel foto's de regel bij de
+ * laatste verversing paste; code: album_rule_too_many als dat er meer dan 10.000 waren (dan
+ * bleven de items zoals ze waren). */
 export interface AlbumRuleInfo {
-  rule: AlbumRule | null;
+  rule: AlbumRule;
   share_new: boolean;
-  refreshed_at: string | null;
+  refreshed_at: string;
   count: number;
+  code: string | null;
 }
 
 /** Waar een item van een album vandaan komt: met de hand of uit de regel. */
@@ -153,10 +156,11 @@ export interface AlbumItemRule {
   shared: boolean;
 }
 
-/** In het antwoord van een nieuwe deling of publieke link op een album met een regel en
- * share_new = 0: zoveel items uit de regel blijven alleen voor de eigenaar. */
+/** In elk antwoord met een deling (ShareOut): bij een nieuwe deling of publieke link op een
+ * album met een regel en share_new = 0 zoveel items uit de regel die alleen voor de eigenaar
+ * blijven; anders null. */
 export interface RuleItemsPrivate {
-  rule_items_private?: number;
+  rule_items_private: number | null;
 }
 
 // --- foutcodes en gebeurtenissen (§3.4) ---

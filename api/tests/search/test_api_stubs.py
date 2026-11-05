@@ -2,7 +2,8 @@
 methode, body, antwoordmodel en status, vraagt eerst de inlog (beheer: de rol; de woorden per
 pagina: het download-token) en geeft dan 501 not_built tot zijn pakket het vult. Zoeken zelf
 werkt al: via select_engine, met LikeFallback. Sinds Z2 zijn ook de woorden per pagina en de
-stand van de analyse gebouwd (BUILT), en sinds Z6 de routes van personen en herinneringen.
+stand van de analyse gebouwd (BUILT), en sinds Z6 de routes van personen, herinneringen en
+slimme albums.
 
 Z0b (Keuze 55) zette de routes van gezichten (X2) en zoeken op beeld (X3) erbij, ook als stub;
 zoeken met mode=image of like geeft 501 not_built("X3").
@@ -267,6 +268,11 @@ BUILT = {
     ("GET", "/api/v1/photos/memories/hide"),
     ("POST", "/api/v1/photos/memories/hide"),
     ("DELETE", "/api/v1/photos/memories/hide/{kind}/{ref}"),
+    # Z6: slimme albums (tests/albums/test_album_rules.py)
+    ("PUT", "/api/v1/albums/{album_id}/rule"),
+    ("POST", "/api/v1/albums/{album_id}/rule/confirm"),
+    ("DELETE", "/api/v1/albums/{album_id}/rule"),
+    ("POST", "/api/v1/albums/{album_id}/refresh"),
 }
 # De vraag die een stub nodig heeft om bij de route te komen
 QUERY = {

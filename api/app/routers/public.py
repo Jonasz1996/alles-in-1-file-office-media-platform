@@ -217,6 +217,8 @@ async def _in_album(session: Session, album: Node, ids: list[uuid.UUID]) -> dict
             .where(
                 AlbumItem.album_id == album.id,
                 AlbumItem.node_id.in_(ids),
+                # Alleen wat gedeeld wordt (fase 6, Keuze 42)
+                AlbumItem.shared == 1,
                 Node.owner_id == album.owner_id,
                 Node.kind == "file",
             )
@@ -381,13 +383,14 @@ async def album_items(
 ) -> PublicPhotoPage:
     """De foto's en video's van een album achter een leeslink, nieuwste eerst, in pagina's
     (zoals GET /api/v1/albums/{id}/items, zonder shared). Alleen wat nu levend in het album
-    staat; downloaden en previews gaan via /download en /previews van deze link."""
+    staat en gedeeld wordt (niet wat de regel van een slim album erbij zette zonder "ja",
+    Keuze 42); downloaden en previews gaan via /download en /previews van deze link."""
     readable(link)
     album = link.node
     if album.kind != "album":
         raise errors.fail(422, "not_an_album", "Deze link is niet voor een album")
     root = await session.scalar(select(User.root_id).where(User.id == album.owner_id))
-    where = [*albums_router.live_items(album, root), *photos.page_where(after)]
+    where = [*albums_router.live_items(album, root, shared_only=True), *photos.page_where(after)]
     rows = (await session.execute(photos.photo_query(*where).limit(limit))).all()
     # Achter een link korter geldig dan in de app (previews.PUBLIC_PERIOD)
     secret, exp = previews.url_key(settings), previews.expiry(period=previews.PUBLIC_PERIOD)

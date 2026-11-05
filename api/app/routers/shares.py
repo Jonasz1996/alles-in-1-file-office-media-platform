@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
-from app import access, errors, events
+from app import access, albums_rule, errors, events
 from app.db import Session
 from app.models import Group, GroupMember, Node, Share, User
 from app.routers import uploads
@@ -71,6 +71,10 @@ class ShareOut(BaseModel):
     user: ShareUser | None = None
     group: ShareGroup | None = None
     link: ShareLink | None = None
+    # Fase 6 (Keuze 42, Z6): een nieuwe deling of link op een album met een regel en
+    # share_new 0: zoveel items uit de regel blijven alleen voor de eigenaar (de vraag in het
+    # deeldialoog); anders null
+    rule_items_private: int | None = None
 
 
 class NewShare(BaseModel):
@@ -308,6 +312,8 @@ async def create_share(
         raise errors.fail(409, "already_shared", "Al gedeeld met deze persoon of groep") from None
     announce(await grantees(session, share), "share.created", share.id, share.node_id)
     [out] = await shares_out(session, [share])
+    if node.kind == "album":
+        out.rule_items_private = await albums_rule.private_count(session, node.id)
     return out
 
 
@@ -340,6 +346,8 @@ async def create_link(
         await session.rollback()  # intussen definitief verwijderd
         raise errors.fail(404, "not_found", "Niet gevonden") from None
     [out] = await shares_out(session, [share])
+    if node.kind == "album":
+        out.rule_items_private = await albums_rule.private_count(session, node.id)
     return out
 
 

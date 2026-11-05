@@ -6,10 +6,10 @@ not_found, en tellingen en omslagen gaan met own_live.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from app.routers.photos import PhotoItem
 from app.search.types import PersonRef, SearchRule
@@ -157,3 +157,29 @@ class RuleConfirmIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     share_new: bool
+
+
+class AlbumRuleInfo(BaseModel):
+    """Wat GET /albums en /albums/{id} de eigenaar over de regel van een album geven (AlbumOut
+    .rule; voor anderen en zonder regel null). count: op hoeveel foto's de regel bij de laatste
+    verversing paste; code: album_rule_too_many als dat er meer dan 10.000 waren (dan bleven de
+    items zoals ze waren)."""
+
+    rule: SearchRule
+    share_new: bool
+    refreshed_at: datetime
+    count: int
+    code: str | None = None
+
+    @field_serializer("rule")
+    def _rule(self, rule: SearchRule) -> dict:
+        """Zoals de web hem stuurt (de namen van §3.4), zonder wat leeg is."""
+        return rule.model_dump(mode="json", by_alias=True, exclude_defaults=True)
+
+
+class AlbumItemRule(BaseModel):
+    """Per item van een album, alleen voor de eigenaar (AlbumPhotoItem.album): met de hand of
+    uit de regel, en of anderen het zien (false: het merkje "alleen voor jou")."""
+
+    source: Literal["hand", "rule"]
+    shared: bool
