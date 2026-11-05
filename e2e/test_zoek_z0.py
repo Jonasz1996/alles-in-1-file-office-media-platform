@@ -35,6 +35,24 @@ def zoek(server: Server, account: Account, q: str, **params: Any) -> dict[str, A
     return server.call(account, "GET", f"{API}/search", params=params, expect=200).json()
 
 
+def zoek_alles(
+    server: Server, account: Account, q: str, **params: Any
+) -> tuple[set[uuid.UUID], bool]:
+    """Alle treffers, 50 per keer met offset (zoals "Meer laden"), tot offset 1.000 (§3.4). Tot
+    Z4 was dit één vraag met limit 200 (de vraag van 0.7.0, nu een 422). Geeft de ids en of er
+    na de laatste pagina nog meer was; geen treffer komt twee keer."""
+    gevonden: list[uuid.UUID] = []
+    offset = 0
+    while True:
+        antwoord = zoek(server, account, q, limit=50, offset=offset, **params)
+        gevonden += [uuid.UUID(h["node"]["id"]) for h in antwoord["results"]]
+        if not antwoord["more"] or offset + 50 > 1000:
+            break
+        offset += 50
+    assert len(gevonden) == len(set(gevonden)), q
+    return set(gevonden), antwoord["more"]
+
+
 def ids(antwoord: dict[str, Any]) -> set[uuid.UUID]:
     return {uuid.UUID(h["node"]["id"]) for h in antwoord["results"]}
 
@@ -77,12 +95,17 @@ def namen(app: ZoekApp, gevonden: set[uuid.UUID]) -> set[str]:
 
 def test_de_wereld_zoekt_zoals_070(zoek_wereld: ZoekApp) -> None:
     """De referentie op naam is die van 0.7.0: de app draait met de index uit, en elke vraag
-    (ook binnen de grenzen van SearchParams) komt van LikeFallback, ook nadat Z1 FtsEngine
-    aanzet (review Z0, haalbaar F4)."""
+    komt van LikeFallback, ook nadat Z1 FtsEngine aanzet (review Z0, haalbaar F4). De vraag van
+    0.7.0 zelf (limit tot 200) is sinds Z4 een 422 ("De overgang" in §3.4)."""
     assert zoek_wereld.server.extra_env.get("PLATFORM_SEARCH_INDEX") == "uit"
     eva = zoek_wereld.accounts["eva"]
-    for params in ({}, {"limit": 200}, {"limit": 10, "type": "document"}):
+    for params in ({}, {"limit": 50}, {"limit": 10, "type": "document"}):
         assert zoek(zoek_wereld.server, eva, "verslag", **params)["engine"] == "like", params
+    for params in ({"limit": 200}, {"type": "archive"}):
+        r = zoek_wereld.server.call(
+            eva, "GET", f"{API}/search", params={"q": "verslag", **params}, expect=422
+        )
+        assert r.json()["detail"]["code"] == "invalid_input", params
 
 
 def test_iedereen_uit_de_wereld_kan_inloggen(zoek_wereld: ZoekApp) -> None:
@@ -100,13 +123,14 @@ def test_zoeken_op_naam_volgt_de_referentie(zoek_wereld: ZoekApp) -> None:
     assert app.wereld is not None
     for naam, account in app.accounts.items():
         for q in W.NAAMVRAGEN:
-            antwoord = zoek(app.server, account, q, limit=200)
-            assert not antwoord["more"], (naam, q)
-            assert ids(antwoord) == ref.op_naam(app.wereld.users[naam], q), (naam, q)
+            gevonden, meer = zoek_alles(app.server, account, q)
+            assert not meer, (naam, q)
+            assert gevonden == ref.op_naam(app.wereld.users[naam], q), (naam, q)
     bram, werk = app.accounts["bram"], app.wereld.ids["werk"]
     for q in ("utrecht", "brief", "a"):
-        antwoord = zoek(app.server, bram, q, limit=200, **{"in": str(werk)})
-        assert ids(antwoord) == ref.op_naam(app.wereld.users["bram"], q, in_=werk), q
+        gevonden, meer = zoek_alles(app.server, bram, q, **{"in": str(werk)})
+        assert not meer, q
+        assert gevonden == ref.op_naam(app.wereld.users["bram"], q, in_=werk), q
     # Iets wat niemand anders mag zien, ziet ook niemand anders
     for naam in ("bram", "cas", "gijs", "dirk", "fien", "hans"):
         assert not ids(zoek(app.server, app.accounts[naam], "privé")), naam
@@ -281,8 +305,9 @@ def boom(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ZoekApp]:
 
 
 def test_de_boom_van_1000_per_rol(boom: ZoekApp) -> None:
-    """Elke rol van §4.4 logt in en zoekt op naam; tot 200 treffers precies de referentie,
-    daarboven 200 ervan en "meer"."""
+    """Elke rol van §4.4 logt in en zoekt op naam, 50 per keer met offset tot 1.000 (§3.4):
+    tot 1.050 treffers precies de referentie, daarboven 1.050 ervan en "meer". (Tot Z4: één
+    vraag met limit 200, de vraag van 0.7.0.)"""
     assert boom.uitkomst is not None
     assert boom.uitkomst.tellingen["bestanden"] == 1_000
     ref = boom.referentie()
@@ -292,13 +317,13 @@ def test_de_boom_van_1000_per_rol(boom: ZoekApp) -> None:
         me = boom.server.call(account, "GET", f"{API}/auth/me", expect=200).json()
         assert me["role"] == ("guest" if rol == "gast" else "user"), rol
         for q in BOOM_VRAGEN:
-            antwoord = zoek(boom.server, account, q, limit=200)
+            gevonden, meer = zoek_alles(boom.server, account, q)
             verwacht = ref.op_naam(gebruikers[rol], q)
-            if len(verwacht) <= 200:
-                assert ids(antwoord) == verwacht and not antwoord["more"], (rol, q)
+            if len(verwacht) <= 1_050:
+                assert gevonden == verwacht and not meer, (rol, q)
             else:
-                assert ids(antwoord) < verwacht and antwoord["more"], (rol, q)
-                assert len(antwoord["results"]) == 200, (rol, q)
+                assert gevonden < verwacht and meer, (rol, q)
+                assert len(gevonden) == 1_050, (rol, q)
             treffers += len(verwacht)
     assert treffers > 1_000  # de vragen vinden echt iets
 

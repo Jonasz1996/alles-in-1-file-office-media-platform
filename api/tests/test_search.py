@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app import analysis, events
 from app.db import get_engine
 from app.events import Hub
-from app.mime import CATEGORIES, category
+from app.mime import FTYPES, ftype
 from app.models import Node, NodeTag, Tag
 from app.routers import search as search_module
 from app.text import fold
@@ -51,8 +51,9 @@ def motor(request, settings, monkeypatch) -> str:
     - de woorden: FtsEngine splitst op alles wat geen letter of cijfer is (Keuze 5; "13-3-42"
       zijn drie woorden, % en _ ook scheidingstekens), en vindt daarna ook stukken van namen
       (Keuze 6); LikeFallback zoekt elk stuk tussen spaties in de naam;
-    - type=other: in §3.4 is een archief other (mime.ftype); type=archive is de vraag van 0.7.0
-      en gaat altijd naar LikeFallback ("De overgang" in §3.4).
+    - niet meer de soort: sinds Z4 is type in beide motoren de soort van §3.4 (mime.ftype, een
+      archief is other); type=archive en limit boven 50 (de vraag van 0.7.0) zijn een 422
+      ("De overgang" in §3.4).
 
     FtsEngine verder: tests/search/test_search_access.py en test_search_reference.py."""
     if request.param == "like":
@@ -158,7 +159,10 @@ async def test_niets_uit_de_prullenbak(client, admin):
 
 
 @pytest.mark.anyio
-async def test_zoeken_op_soort(client, admin, motor):
+async def test_zoeken_op_soort(client, admin, settings, monkeypatch, motor):
+    # Elf zoekvragen binnen een seconde: meer dan de 10 per gebruiker van FtsEngine (Keuze 13,
+    # tests/search/test_search_limits.py); hier gaat het om de soorten
+    monkeypatch.setattr(settings, "rate_limits", False)
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]
     await mkdir(client, headers, root_id, "item map")
@@ -167,6 +171,9 @@ async def test_zoeken_op_soort(client, admin, motor):
         "item scan.pdf": b"%PDF-1.4\n%\xe2",
         "item brief.docx": zip_bytes([("[Content_Types].xml", b"<T/>"), ("word/d.xml", b"<w/>")]),
         "item notitie.txt": b"tekst",
+        "item tabel.csv": b"a,b\n1,2\n",
+        "item reken.xlsx": zip_bytes([("[Content_Types].xml", b"<T/>"), ("xl/w.xml", b"<w/>")]),
+        "item dia.pptx": zip_bytes([("[Content_Types].xml", b"<T/>"), ("ppt/p.xml", b"<p/>")]),
         "item archief.zip": zip_bytes([("a.txt", b"a")]),
         "item film.mp4": b"\0\0\0\x18ftypisom\0\0\0\0isomavc1",
         "item liedje.mp3": b"ID3\x04\0\0\0\0\0\0",
@@ -177,28 +184,25 @@ async def test_zoeken_op_soort(client, admin, motor):
         assert (await put(client, headers, root_id, name, data)).status_code == 201
     everything = (await find(client, headers, q="item"))["results"]
     assert len(everything) == len(samples) + 1
-    expected = {c: [] for c in CATEGORIES}
+    expected = {c: [] for c in FTYPES}
     for hit in everything:
         node = hit["node"]
-        found = category(node["mime"], node["kind"])
-        expected[found].append(node["name"])
-        if motor == "fts" and found == "archive":
-            # §3.4 kent geen archive: een archief is other (mime.ftype, node.ftype)
-            expected["other"].append(node["name"])
-    assert all(expected[c] for c in CATEGORIES)  # elke soort komt voor
-    # De SQL-voorwaarde zegt hetzelfde als mime.category() (en mime.ftype in FtsEngine);
-    # type=archive gaat ook met de index aan naar LikeFallback
-    for c in CATEGORIES:
+        expected[ftype(node["mime"], node["kind"])].append(node["name"])
+    assert all(expected[c] for c in FTYPES)  # elke soort komt voor
+    # De SQL-voorwaarde zegt in beide motoren hetzelfde als mime.ftype() (node.ftype)
+    for c in FTYPES:
         assert names(await find(client, headers, q="item", type=c)) == expected[c], c
-    assert expected["document"] == ["item brief.docx", "item notitie.txt"]
-    assert (
-        expected["other"]
-        == {
-            "like": ["item leeg", "item onbekend.bin"],
-            "fts": ["item leeg", "item archief.zip", "item onbekend.bin"],
-        }[motor]
-    )
-    await find(client, headers, expect=422, type="foto")
+    assert sorted(expected["document"]) == ["item brief.docx", "item notitie.txt"]
+    assert sorted(expected["spreadsheet"]) == ["item reken.xlsx", "item tabel.csv"]
+    assert expected["presentation"] == ["item dia.pptx"]
+    assert sorted(expected["other"]) == ["item archief.zip", "item leeg", "item onbekend.bin"]
+    # Meer soorten tegelijk is OF
+    both = names(await find(client, headers, q="item", type=["pdf", "presentation"]))
+    assert sorted(both) == ["item dia.pptx", "item scan.pdf"]
+    # Geen soort van §3.4: 422, ook archive (de soort van 0.7.0)
+    for bad in ("foto", "archive"):
+        r = await find(client, headers, expect=422, type=bad)
+        assert r["detail"]["params"] == {"field": "query.type.0"}, bad
 
 
 @pytest.mark.anyio
@@ -443,10 +447,10 @@ async def test_tegelijk_tags_zetten(client, admin):
 async def test_lijst_en_zoeken_zonder_query_per_bestand(
     client, admin, settings, monkeypatch, motor
 ):
-    """Tags en paden kosten één query per verzoek, niet één per bestand. Per motor: limit 200 is
-    de vraag van 0.7.0 en gaat altijd naar LikeFallback; FtsEngine gaat tot limit 50."""
+    """Tags en paden kosten één query per verzoek, niet één per bestand. In beide motoren gaat
+    limit tot 50 (§3.4); tot Z4 ging de vraag van 0.7.0 (limit 200) altijd naar LikeFallback."""
     # /search telt voor indexing (Z2) hooguit eens per 5 s; hier bij elk verzoek, zodat beide
-    # zoekvragen hieronder (limit 2 en de vraag van 0.7.0 met limit 200) hem doen
+    # zoekvragen hieronder (limit 2 en limit 50) hem doen
     monkeypatch.setattr(analysis, "INDEXING_TTL", 0)
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]
@@ -474,16 +478,18 @@ async def test_lijst_en_zoeken_zonder_query_per_bestand(
     assert small == large
     assert all(c["tags"] for c in listing["children"] if c["kind"] == "file")
     small, _ = await statements("/api/v1/search", q="bestand", limit=2)
-    large, result = await statements(
-        "/api/v1/search", q="bestand", limit={"like": 200, "fts": 50}[motor]
-    )
+    large, result = await statements("/api/v1/search", q="bestand", limit=50)
     assert small == large
     assert result["engine"] == motor
     assert all(hit["node"]["tags"] for hit in result["results"])
-    _, result = await statements("/api/v1/search", q="bestand", limit=200)
-    assert len(result["results"]) == 62
-    assert all(hit["node"]["tags"] for hit in result["results"])
-    assert max(len(hit["path"]) for hit in result["results"]) == 6
+    # Alle 62 (tot Z4 in één vraag met limit 200): de tweede pagina met offset, zoals "Meer laden"
+    _, rest = await statements("/api/v1/search", q="bestand", limit=50, offset=50)
+    assert (len(result["results"]), result["more"]) == (50, True)
+    assert (len(rest["results"]), rest["more"]) == (12, False)
+    hits = result["results"] + rest["results"]
+    assert len({hit["node"]["id"] for hit in hits}) == 62
+    assert all(hit["node"]["tags"] for hit in hits)
+    assert max(len(hit["path"]) for hit in hits) == 6
 
 
 @pytest.mark.anyio
@@ -529,14 +535,18 @@ async def test_snel_genoeg_met_twintigduizend_bestanden(client, admin, settings,
         await session.commit()
 
     # FtsEngine: "13-3-42" zijn drie woorden (Keuze 5): het hele woord in Foto 13-3-42, en de
-    # stukken van namen in Foto 13-j-42 (Keuze 6); bij "07-3-4" vol (limit 50, meer)
+    # stukken van namen in Foto 13-j-42 (Keuze 6); bij "07-3-4" vol (limit 30, meer). Tot Z4
+    # vroegen "foto 07", de mappen en de tag 200 tegelijk (de vraag van 0.7.0); nu gaat limit
+    # tot 50, en de laatste pagina komt met offset
     cases = [
-        ({"q": "foto 07", "limit": 200}, 200, True),
+        ({"q": "foto 07", "limit": 50}, 50, True),
+        ({"q": "foto 07", "limit": 50, "offset": 950}, 50, False),
         ({"q": "foto 13-3-42"}, {"like": 1, "fts": 10}[motor], False),
-        ({"q": "07-3-4"}, {"like": 11, "fts": 50}[motor], motor == "fts"),
+        ({"q": "07-3-4"}, {"like": 11, "fts": 30}[motor], motor == "fts"),
         ({"q": "foto 00-3-42"}, 0, False),  # in de prullenbak
-        ({"q": "sub", "type": "folder", "limit": 200}, 190, False),
-        ({"tag": str(tag_id), "limit": 200}, 200, True),
+        ({"q": "sub", "type": "folder", "limit": 50}, 50, True),
+        ({"q": "sub", "type": "folder", "limit": 50, "offset": 150}, 40, False),
+        ({"tag": str(tag_id), "limit": 50}, 50, True),
         ({"q": "bestaat niet"}, 0, False),
     ]
     with measuring():

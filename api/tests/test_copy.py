@@ -320,9 +320,9 @@ async def test_grote_map_kopieren_houdt_de_rest_niet_op(client, admin, settings)
     assert kopie["name"] == "Groot (1)"
     assert await ref_counts() == {sha: 2 * n for sha, n in refs.items()}
     # Alles staat erin, ook vindbaar op naam (zoeknaam gezet zonder ORM-objecten)
-    params = {"q": "foto 42", "in": kopie["id"], "limit": 200}
+    params = {"q": "foto 42", "in": kopie["id"], "limit": 50}
     found = (await client.get("/api/v1/search", params=params, headers=headers)).json()
-    assert len(found["results"]) == 50
+    assert (len(found["results"]), found["more"]) == (50, False)
     assert {hit["path"][1]["name"] for hit in found["results"]} == {"Groot (1)"}
 
     await client.delete(f"/api/v1/files/{kopie['id']}", headers=headers)
