@@ -183,3 +183,11 @@ class AlbumItemRule(BaseModel):
 
     source: Literal["hand", "rule"]
     shared: bool
+
+
+class RuleItemsPrivate(BaseModel):
+    """In elk antwoord met een deling (routers/shares.ShareOut erft het): bij een nieuwe deling
+    of publieke link op een album met een regel en share_new 0 zoveel items uit de regel die
+    alleen voor de eigenaar blijven (de vraag in het deeldialoog, Keuze 42); anders null."""
+
+    rule_items_private: int | None = None

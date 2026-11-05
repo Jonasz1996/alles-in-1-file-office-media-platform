@@ -321,6 +321,7 @@ PAREN = [
     ("photos/people/types.ts", "AlbumRuleSaved", P.AlbumRuleSaved),
     ("photos/people/types.ts", "AlbumRuleInfo", P.AlbumRuleInfo),
     ("photos/people/types.ts", "AlbumItemRule", P.AlbumItemRule),
+    ("photos/people/types.ts", "RuleItemsPrivate", P.RuleItemsPrivate),
     ("photos/map/types.ts", "PlaceName", G.PlaceName),
     ("photos/map/types.ts", "FileLocation", G.FileLocation),
     ("photos/map/types.ts", "MapCell", G.MapCell),
@@ -413,6 +414,12 @@ FOUTEN = [
     ),
     ("photos/people/types.ts", "AlbumRuleInfo", "  code: string | null;", "  code: string;"),
     ("photos/people/types.ts", "AlbumItemRule", "  shared: boolean;", "  shared: number;"),
+    (
+        "photos/people/types.ts",
+        "RuleItemsPrivate",
+        "  rule_items_private: number | null;",
+        "  rule_items_private: number;",
+    ),
     ("admin/searchApi.ts", "AdminSearch", "    text_done: number;", "    text_done: boolean;"),
     (
         "photos/people/types.ts",

@@ -26,6 +26,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app import access, albums_rule, errors, events
 from app.db import Session
 from app.models import Group, GroupMember, Node, Share, User
+from app.people.types import RuleItemsPrivate
 from app.routers import uploads
 from app.routers.files import GUEST, NodeOut, OwnerRef, Utc, describe, get_node, is_trashed, to_utc
 from app.security import CurrentUser, RateLimiter, new_password_hash
@@ -60,7 +61,9 @@ class ShareLink(BaseModel):
     has_password: bool
 
 
-class ShareOut(BaseModel):
+class ShareOut(RuleItemsPrivate):
+    """rule_items_private (Fase 6, Keuze 42, Z6) komt van RuleItemsPrivate."""
+
     id: uuid.UUID
     node_id: uuid.UUID
     type: Literal["user", "group", "link"]
@@ -71,10 +74,6 @@ class ShareOut(BaseModel):
     user: ShareUser | None = None
     group: ShareGroup | None = None
     link: ShareLink | None = None
-    # Fase 6 (Keuze 42, Z6): een nieuwe deling of link op een album met een regel en
-    # share_new 0: zoveel items uit de regel blijven alleen voor de eigenaar (de vraag in het
-    # deeldialoog); anders null
-    rule_items_private: int | None = None
 
 
 class NewShare(BaseModel):
