@@ -18,11 +18,12 @@ import asyncio
 import hashlib
 import random
 import statistics
+import sys
 import time
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import analysis, jobs
 from app.db import get_engine
@@ -69,15 +70,25 @@ async def upload(client, headers, parent: str, name: str, data: bytes) -> dict:
 
 
 async def counts(settings, shas: set[str] | None = None) -> tuple[int, int]:
-    """(open, totaal) in analysis; met shas alleen de rijen van die inhouden."""
+    """(open, totaal) in analysis; met shas alleen de rijen van die inhouden.
+
+    In één SELECT, dus van één moment. pysqlite begint geen transactie voor een SELECT: twee
+    losse SELECTs zien elk een eigen stand, ook in één sessie. Committe de rij van een upload
+    (analysis.on_blob_added, na de commit van die upload) tussen de twee in, dan telde hij wel
+    in het totaal maar niet bij open, en stopte de test de pomp terwijl die rij op wait stond
+    (CI run 87)."""
     only = [] if shas is None else [Analysis.blob_sha.in_(shas)]
     async with maker(settings)() as db:
-        open_ = await db.scalar(
-            sa.select(sa.func.count())
-            .select_from(Analysis)
-            .where(Analysis.state.in_(analysis.OPEN), *only)
-        )
-        total = await db.scalar(sa.select(sa.func.count()).select_from(Analysis).where(*only))
+        total, open_ = (
+            await db.execute(
+                sa.select(
+                    sa.func.count(),
+                    sa.func.count().filter(Analysis.state.in_(analysis.OPEN)),
+                )
+                .select_from(Analysis)
+                .where(*only)
+            )
+        ).one()
     return open_, total
 
 
@@ -91,10 +102,13 @@ async def run_backfill_with_uploads(
     (begin, eind).
 
     "De backfill klaar" telt alleen de rijen van de before inhouden van vóór de backfill. Brams
-    eigen uploads komen er om de ±150 ms bij, en de pomp loopt er een paar achter; wachten tot
-    ook die allemaal gelezen waren op het moment van kijken, hing van toeval af (de nacontrole
-    van golf 1: de backfill was na 2 s klaar, en pas na 64 s, of nooit binnen de 240 s, zag de
-    test een keer geen open rij van Bram)."""
+    eigen uploads komen er om de ±150 ms bij; wachten tot er op het moment van kijken geen enkele
+    open rij was, ook niet van Bram, hing van toeval af (de nacontrole van golf 1: de backfill
+    was na 2 s klaar, en pas na 64 s, of nooit binnen de 240 s, zag de test een keer geen open
+    rij van Bram).
+
+    De laatste lus kijkt meteen na de laatste upload, terwijl de rij van die upload nog
+    onderweg is; daarom komen open en totaal uit één SELECT (counts, CI run 87)."""
     waits: list[tuple[float, float]] = []
     async with maker(settings)() as db:
         backfill = set((await db.scalars(sa.select(Blob.sha256))).all())
@@ -182,6 +196,8 @@ async def test_een_upload_wacht_nooit_langer_dan_1_s_tijdens_de_backfill(
             sa.text("SELECT count(*) FROM fts_node WHERE fts_node MATCH :q"),
             {"q": f'body:"{word}"'},
         )
+    # Een rij voor elke inhoud (de 61 van de backfill en elke upload van Bram), en elke rij done
+    assert len(states) == 61 + len(waits), len(states)
     assert set(states) == {"done"}, states
     assert body >= MB - 10
     assert hits >= 11
@@ -195,6 +211,100 @@ async def test_een_upload_wacht_nooit_langer_dan_1_s_tijdens_de_backfill(
         f"de tekst van 1 MB bij 11 nodes {(big_end - big_start) * 1000:.0f} ms"
     )
     assert max(waits) < MAX_WAIT_S, f"een upload wachtte {max(waits):.2f} s"
+
+
+async def test_de_rij_van_een_upload_commit_midden_in_een_telling(
+    settings, client, admin, monkeypatch
+):
+    """CI run 87 (op 7ffe77a): de rij van Brams laatste upload komt uit een taak na de commit
+    (analysis.on_blob_added) en committe midden in de eerste telling van de laatste lus. Las
+    counts() open en totaal met twee SELECTs, dan zag de test open 0 (van vóór die commit) en
+    het volle totaal (van erna), stopte de pomp, en bleef die rij op wait. Hier commit de rij van
+    elke upload met opzet net na het eerste statement van een telling, als de pomp al het andere
+    af heeft: zo valt hij altijd tussen de SELECTs, als die er twee zijn."""
+    async with maker(settings)() as db:
+        await create_user(db, "eva@example.nl", password="lang-genoeg-123")
+        await create_user(db, "bram@example.nl", password="lang-genoeg-123")
+        await db.commit()
+    eva = await login(client, "eva@example.nl")
+    bram = await login(client, "bram@example.nl")
+    eva_root = (await test_files.root(client, eva))["folder"]["id"]
+    bram_root = (await test_files.root(client, bram))["folder"]["id"]
+    for i in range(5):
+        await upload(client, eva, eva_root, f"doc-{i}.txt", f"document {i}".encode())
+
+    plain = maker
+    queue_new = analysis._queue_new
+    ready: list[tuple[asyncio.Event, asyncio.Event]] = []  # (los, gecommit) per rij
+    gated: list[str] = []
+
+    async def open_rows() -> int:
+        async with plain(settings)() as db:
+            return await db.scalar(
+                sa.select(sa.func.count())
+                .select_from(Analysis)
+                .where(Analysis.state.in_(analysis.OPEN))
+            )
+
+    async def held(settings, sha: str, owner) -> None:
+        # Pas als de pomp al het andere af heeft: dan is open 0 zolang deze rij er niet is
+        for _ in range(2000):
+            if not await open_rows():
+                break
+            await asyncio.sleep(0.01)
+        go, committed = asyncio.Event(), asyncio.Event()
+        ready.append((go, committed))
+        await go.wait()
+        try:
+            await queue_new(settings, sha, owner)
+            gated.append(sha)
+        finally:
+            committed.set()
+
+    class Counting(AsyncSession):
+        """Na het eerste statement van elke sessie van de test (dus van elke telling): de rijen
+        die klaarstaan los, en wachten tot ze gecommit zijn."""
+
+        first = True
+
+        async def _after_first(self) -> None:
+            if not self.first:
+                return
+            self.first = False
+            batch = list(ready)
+            ready.clear()
+            for go, _ in batch:
+                go.set()
+            for _, committed in batch:
+                await asyncio.wait_for(committed.wait(), 10)
+
+        async def execute(self, *args, **kwargs):
+            result = await super().execute(*args, **kwargs)
+            await self._after_first()
+            return result
+
+        async def scalar(self, *args, **kwargs):
+            result = await super().scalar(*args, **kwargs)
+            await self._after_first()
+            return result
+
+    monkeypatch.setattr(analysis, "_queue_new", held)
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "maker",
+        lambda settings: async_sessionmaker(
+            get_engine(settings), class_=Counting, expire_on_commit=False
+        ),
+    )
+    spans = await run_backfill_with_uploads(settings, client, bram, bram_root, 5)
+
+    async with plain(settings)() as db:
+        states = (await db.scalars(sa.select(Analysis.state))).all()
+    # Elke upload ging door het hek: de rij van de laatste kwam pas na het eerste statement van
+    # een telling, toen al het andere af was
+    assert len(gated) == len(spans) >= 11
+    assert len(states) == 5 + len(spans)
+    assert set(states) == {"done"}, states
 
 
 async def test_veel_kopieen_houden_de_schrijfactie_klein(settings, client, admin):
