@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app import analysis, jobs
 from app.db import get_engine
 from app.extract import step as extract_step
-from app.models import Analysis, BlobText
+from app.models import Analysis, Blob, BlobText
 from app.search import bench, hooks
 from tests import test_files
 from tests.factories import create_user
@@ -68,15 +68,16 @@ async def upload(client, headers, parent: str, name: str, data: bytes) -> dict:
     return r.json()
 
 
-async def counts(settings) -> tuple[int, int]:
-    """(open, totaal) in analysis."""
+async def counts(settings, shas: set[str] | None = None) -> tuple[int, int]:
+    """(open, totaal) in analysis; met shas alleen de rijen van die inhouden."""
+    only = [] if shas is None else [Analysis.blob_sha.in_(shas)]
     async with maker(settings)() as db:
         open_ = await db.scalar(
             sa.select(sa.func.count())
             .select_from(Analysis)
-            .where(Analysis.state.in_(analysis.OPEN))
+            .where(Analysis.state.in_(analysis.OPEN), *only)
         )
-        total = await db.scalar(sa.select(sa.func.count()).select_from(Analysis))
+        total = await db.scalar(sa.select(sa.func.count()).select_from(Analysis).where(*only))
     return open_, total
 
 
@@ -84,24 +85,36 @@ async def run_backfill_with_uploads(
     settings, client, bram: dict, bram_root: str, before: int
 ) -> list[tuple[float, float]]:
     """De backfill en de pomp in de rij index; intussen uploadt Bram, tot de backfill klaar is
-    (en minstens 10 keer). Daarna wacht de test tot ook Brams laatste upload gelezen is: de
-    rij van een upload komt kort na de commit (analysis.on_blob_added). Geeft de duur van elke
-    upload als (begin, eind)."""
+    (en minstens 10 keer), en daarna nog één keer: die upload begint pas als alles van de
+    backfill gelezen is. Daarna wacht de test tot ook Brams uploads gelezen zijn: de rij van een
+    upload komt kort na de commit (analysis.on_blob_added). Geeft de duur van elke upload als
+    (begin, eind).
+
+    "De backfill klaar" telt alleen de rijen van de before inhouden van vóór de backfill. Brams
+    eigen uploads komen er om de ±150 ms bij, en de pomp loopt er een paar achter; wachten tot
+    ook die allemaal gelezen waren op het moment van kijken, hing van toeval af (de nacontrole
+    van golf 1: de backfill was na 2 s klaar, en pas na 64 s, of nooit binnen de 240 s, zag de
+    test een keer geen open rij van Bram)."""
     waits: list[tuple[float, float]] = []
+    async with maker(settings)() as db:
+        backfill = set((await db.scalars(sa.select(Blob.sha256))).all())
+    assert len(backfill) == before
     await analysis.start_backfill(settings)
     runner = jobs.Runner(settings, "index")
     await runner.start()
     try:
         deadline = time.monotonic() + 240
         i = 0
+        klaar = False
         while time.monotonic() < deadline:
             started = time.monotonic()
             await upload(client, bram, bram_root, f"tussendoor-{i}.txt", f"klein {i}".encode())
             waits.append((started, time.monotonic()))
             i += 1
-            open_, total = await counts(settings)
-            if total >= before and not open_ and i >= 10:
+            if klaar:
                 break
+            open_, total = await counts(settings, backfill)
+            klaar = total == before and not open_ and i >= 10
             await asyncio.sleep(0.1)
         while time.monotonic() < deadline:
             open_, total = await counts(settings)
