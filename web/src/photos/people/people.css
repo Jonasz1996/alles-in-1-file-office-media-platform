@@ -1,0 +1,353 @@
+/* Personen, herinneringen, de filters en de regel van een album (fase 6, Z6). Alleen klassen;
+   geen inline stijlen (CSP), behalve de plek van het kader (style van React). */
+
+/* De combobox met je personen */
+.person-combo {
+  position: relative;
+}
+
+.combo-list {
+  position: absolute;
+  z-index: 5;
+  inset: 100% 0 auto 0;
+  margin: 2px 0 0;
+  padding: var(--space-1) 0;
+  max-height: 16rem;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--bg);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+}
+
+.combo-list[hidden] {
+  display: none;
+}
+
+.combo-list li {
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+.combo-list li.active {
+  background: var(--selected);
+  color: var(--selected-fg);
+}
+
+/* De rij Personen in het infopaneel */
+.people-row {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.people-on {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.people-on li {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.people-on li .muted {
+  font-size: var(--text-s);
+}
+
+.people-on li .icon-button {
+  margin-left: auto;
+}
+
+.people-add {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.people-add label.check,
+.photo-settings label.check,
+.rule-form label.check {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.people-add-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Het kader tekenen */
+.box-editor {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.box-area {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.box-area:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}
+
+.box-area img {
+  display: block;
+  width: 100%;
+  height: auto;
+  pointer-events: none;
+}
+
+.box-blank {
+  display: block;
+  aspect-ratio: 4 / 3;
+}
+
+.box-frame {
+  position: absolute;
+  border: 2px solid #ffffff;
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.6),
+    inset 0 0 0 1px rgb(0 0 0 / 0.6);
+  pointer-events: none;
+}
+
+/* /fotos/personen */
+.people-search {
+  max-width: 24rem;
+}
+
+.people-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.person-card {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.person-card:hover .person-name {
+  text-decoration: underline;
+}
+
+.person-cover {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.person-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.person-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.person-card .muted {
+  font-size: var(--text-s);
+}
+
+/* Herinneringen op /fotos */
+.memories {
+  margin: 0 0 var(--space-4);
+}
+
+.memories h2 {
+  font-size: var(--text-l);
+  margin: var(--space-2) 0;
+}
+
+.memory-year {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.memory-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  align-items: center;
+}
+
+.memory-head h3 {
+  margin: 0;
+  font-size: var(--text-m);
+}
+
+.memory-strip {
+  display: flex;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0 0 var(--space-1);
+  overflow-x: auto;
+  list-style: none;
+}
+
+.memory-photo {
+  flex: none;
+  width: 7rem;
+  height: 7rem;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.memory-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.memory-photo:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* De filters op /fotos */
+.photo-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  align-items: end;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  border: 0;
+}
+
+.photo-filters legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.photo-filters .field {
+  margin: 0;
+}
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.filter-chips li {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  padding: 0 0 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.filter-count {
+  font-size: var(--text-s);
+}
+
+/* De regel van een album */
+.rule-form {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.rule-form fieldset {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.rule-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+/* Account → Foto's */
+.photo-settings {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.rule-state {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: start;
+}
+
+.rule-state p {
+  margin: 0;
+}
+
+/* Meer personen kiezen (de filters en de regel) */
+.person-picker {
+  display: grid;
+  gap: var(--space-1);
+  align-content: start;
+}
+
+/* Het merkje "alleen voor jou" op een foto in een album (alleen de eigenaar ziet het) */
+.photo-note {
+  position: absolute;
+  bottom: var(--space-1);
+  left: var(--space-1);
+  max-width: calc(100% - 2 * var(--space-1));
+  padding: 0 var(--space-1);
+  overflow: hidden;
+  border-radius: var(--radius-s);
+  background: var(--backdrop);
+  color: var(--accent-fg);
+  font-size: var(--text-s);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* /fotos/personen: het vinkje voor verborgen personen */
+.people-page label.check {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* De plek van X2 of X3 in Account → Foto's: leeg tot dat pakket hem vult */
+.photo-switch:empty {
+  display: none;
+}
