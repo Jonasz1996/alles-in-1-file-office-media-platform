@@ -4,8 +4,10 @@ Status: **Z0, Z0b en golf 1 gebouwd**: het fundament (samengevoegd op 3 november
 [z0.md](z0.md)), de contracten van gezichten en zoeken op beeld (samengevoegd op 4 november 2026;
 zie [z0b.md](z0b.md)), en golf 1: de zoekmachine en tekst uit bestanden (samengevoegd op 4
 november 2026; zie [z1.md](z1.md) en [z2.md](z2.md)). De review van golf 1 is verwerkt ("De
-review (golf 1)" in z1.md en z2.md); de poorten van §4.4 zijn hier nu groen, ook 4 tegelijk. Het
-ontwerp is bouwontwerp revisie 3.
+review (golf 1)" in z1.md en z2.md); de poorten van §4.4 zijn hier nu groen, ook 4 tegelijk. De
+nacontrole van die review is gedaan ("De nacontrole (golf 1)" in z1.md en z2.md): vier tests
+erbij, drie aangevuld en één niet meer wisselvallig; geen reparatie bleek fout. Het ontwerp is
+bouwontwerp revisie 3.
 
 ## Wat je koos
 
