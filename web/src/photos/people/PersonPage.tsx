@@ -56,9 +56,23 @@ async function page(id: string, after: string | null) {
 
 export default function PersonPage({ params }: RouteProps): JSX.Element {
   useScope("person");
-  const id = params.id;
-  // Het raster en de selectie gebruiken de teksten van Foto's
+  // Het raster, de selectie en hun toetsen gebruiken de teksten van Foto's (photos.keys.*). De
+  // route laadt alleen photos_people; usePhotoBrowser meldt zijn toetsen meteen aan, dus de pagina
+  // zelf komt pas als ook photos er is. Geen kop in de tussentijd: de kop van de pagina neemt de
+  // focus na de navigatie.
   const ready = useAreas(["photos"]);
+  if (!ready) {
+    return (
+      <main className="wide person-page">
+        <Skeleton />
+      </main>
+    );
+  }
+  return <PersonView key={params.id} params={params} />;
+}
+
+function PersonView({ params }: RouteProps): JSX.Element {
+  const id = params.id;
   const [person, setPerson] = useState<Person | null>(null);
   const [all, setAll] = useState<readonly Person[]>([]);
   const [noMemories, setNoMemories] = useState(false);
@@ -235,11 +249,11 @@ export default function PersonPage({ params }: RouteProps): JSX.Element {
       </LazySlot>
       {error && <p role="alert">{error}</p>}
       <div ref={wrap} className="photos-wrap">
-        {(!person || !ready) && !error && <Skeleton />}
-        {person && ready && count === 0 && (
+        {!person && !error && <Skeleton />}
+        {person && count === 0 && (
           <EmptyState icon="user" title={t("photos_people.personPage.empty", { name: person.name })} />
         )}
-        {person && ready && count > 0 && (
+        {person && count > 0 && (
           <PhotoGrid
             layout={layout}
             rowHeight={rowHeight}
@@ -256,13 +270,11 @@ export default function PersonPage({ params }: RouteProps): JSX.Element {
           />
         )}
       </div>
-      {ready && (
-        <SelectionBar count={b.selection.ids.size} onClear={b.clear} onGone={b.focusGrid}>
-          <Button icon="download" onClick={() => void downloadZip(ids, person?.name ?? t("photos_people.person"))}>
-            {t("photos.download")}
-          </Button>
-        </SelectionBar>
-      )}
+      <SelectionBar count={b.selection.ids.size} onClear={b.clear} onGone={b.focusGrid}>
+        <Button icon="download" onClick={() => void downloadZip(ids, person?.name ?? t("photos_people.person"))}>
+          {t("photos.download")}
+        </Button>
+      </SelectionBar>
       {merging && person && (
         <MergeDialog
           person={person}
@@ -275,7 +287,7 @@ export default function PersonPage({ params }: RouteProps): JSX.Element {
           }}
         />
       )}
-      {ready && b.viewer}
+      {b.viewer}
     </main>
   );
 }

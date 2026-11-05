@@ -49,6 +49,11 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
   const [adding, setAdding] = useState<string[] | null>(null);
   const [filters, setFilters] = useState<PhotoFilters>(NO_FILTERS);
   const filtersRef = useRef<PhotoFilters>(NO_FILTERS);
+  /** De filters waar de getoonde maanden bij horen. Tussen een wijziging en het nieuwe antwoord
+   * zijn dat nog de oude: wis je de filters terwijl er niets paste, dan blijft de balk staan (met
+   * de focus erin) tot de hele tijdlijn er is. */
+  const [monthsFor, setMonthsFor] = useState<PhotoFilters>(NO_FILTERS);
+  const root = useRef<HTMLElement>(null);
   /** De filters waarvoor de tijdlijn opnieuw begint (niets van de vorige maanden houden) */
   const fresh = useRef<PhotoFilters | null>(null);
   // De teksten van Z6 (de knop Zoeken op beeld, de lege staat met filters); FilterBar laadt ze ook
@@ -84,6 +89,7 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
         (s) => before.get(got[s].month) ?? -1,
       );
       setMonths(got);
+      setMonthsFor(f);
       setError(null);
     } catch (e) {
       setError(errorText(e));
@@ -177,10 +183,17 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
     { scope: "photos" },
   );
 
+  /** Filters wissen vanuit de lege staat: die verdwijnt, dus de focus naar het veld Persoon. */
+  function clearFromEmpty() {
+    changeFilters(NO_FILTERS);
+    requestAnimationFrame(() => root.current?.querySelector<HTMLElement>(".photo-filters [role=combobox]")?.focus());
+  }
+
   const empty = months?.length === 0;
   const filtered = hasFilters(filters);
+  const shownFiltered = hasFilters(monthsFor);
   return (
-    <main className="wide photos-page">
+    <main ref={root} className="wide photos-page">
       <PageTitle
         actions={
           <>
@@ -197,7 +210,7 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
       >
         {t("photos.title")}
       </PageTitle>
-      {(filtered || (months && months.length > 0)) && (
+      {(filtered || shownFiltered || (months && months.length > 0)) && (
         <LazySlot>
           <FilterBar filters={filters} onChange={changeFilters} />
         </LazySlot>
@@ -210,16 +223,16 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
       {error && <p role="alert">{error}</p>}
       <div ref={wrap} className="photos-wrap">
         {months === null && !error && <Skeleton />}
-        {empty && !filtered && (
+        {empty && !shownFiltered && (
           <EmptyState icon="photo" title={t("photos.empty.title")}>
             <p>{t("photos.empty.text")}</p>
           </EmptyState>
         )}
-        {empty && filtered && peopleArea && (
+        {empty && shownFiltered && peopleArea && (
           <EmptyState
             icon="filter"
             title={t("photos_people.filters.empty")}
-            action={<Button onClick={() => changeFilters(NO_FILTERS)}>{t("photos_people.filters.clear")}</Button>}
+            action={<Button onClick={clearFromEmpty}>{t("photos_people.filters.clear")}</Button>}
           />
         )}
         {months && months.length > 0 && (

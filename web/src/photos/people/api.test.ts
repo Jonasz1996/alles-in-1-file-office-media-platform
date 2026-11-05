@@ -35,7 +35,6 @@ describe("de aanroepen van personen, herinneringen en slimme albums (§3.4, Z6)"
     await people.setAlbumRule("a1", { rule: { q: "strand", country: "NL" }, share_new: false });
     await people.confirmAlbumRule("a1", true);
     await people.deleteAlbumRule("a1");
-    await people.refreshAlbum("a1");
 
     const V = "/api/v1";
     expect(request.mock.calls).toEqual([
@@ -63,8 +62,28 @@ describe("de aanroepen van personen, herinneringen en slimme albums (§3.4, Z6)"
       ["PUT", `${V}/albums/a1/rule`, { rule: { q: "strand", country: "NL" }, share_new: false }],
       ["POST", `${V}/albums/a1/rule/confirm`, { share_new: true }],
       ["DELETE", `${V}/albums/a1/rule`],
-      ["POST", `${V}/albums/a1/refresh`],
     ]);
+  });
+
+  it("Nu bijwerken: POST /albums/{id}/refresh geeft 202 zonder inhoud, en dat is gewoon gelukt", async () => {
+    const request = vi.spyOn(api, "request");
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+    await expect(people.refreshAlbum("a/1")).resolves.toBeUndefined();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [path, init] = fetch.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/api/v1/albums/a%2F1/refresh");
+    expect(init.method).toBe("POST");
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("Nu bijwerken: een fout van de server komt als fout terug", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: { code: "not_found", message: "Weg." } }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await expect(people.refreshAlbum("a1")).rejects.toMatchObject({ status: 404, code: "not_found" });
   });
 
   it("de catalogus people.ts heeft precies de foutcodes van personen, herinneringen en albums", () => {
