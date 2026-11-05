@@ -1,7 +1,77 @@
-// Zoeken (fase 6, Z4): de zoekpagina, de suggesties en de meldingen. Het gebied is van Z4; Z0
-// zette het leeg neer, met alleen wat de lege plekken tonen. Het veld in de balk bovenaan staat
-// in shell (dat is er altijd), niet hier.
+// Zoeken (fase 6, Z4): de pagina /zoeken, de suggesties onder het veld bovenaan en de meldingen.
+// Het gebied is van Z4. Het veld in de balk bovenaan zelf staat in shell (dat is er altijd); de
+// suggesties laden dit gebied met hun chunk.
 export default {
   title: "Zoeken",
-  notReady: "Deze pagina komt later in fase 6.",
+  field: {
+    label: "Zoekwoorden",
+    placeholder: "Een naam of een woord uit de tekst",
+    placeholderImage: "Beschrijf de foto, bijvoorbeeld: hond op het strand",
+    hintImage: "Zoekt in je eigen foto's. Druk op Enter.",
+    submit: "Zoeken",
+  },
+  mode: {
+    label: "Zoeken op",
+    text: "Namen en tekst",
+    image: "Wat er op de foto staat",
+  },
+  filters: {
+    label: "Filters",
+    addType: "Soort",
+    anyType: "Soort kiezen",
+    addTag: "Tag",
+    anyTag: "Tag kiezen",
+    tagCount: "{name} ({n})",
+    from: "Vanaf",
+    to: "Tot en met",
+    remove: "Filter weghalen: {name}",
+    fromChip: "Vanaf {day}",
+    toChip: "Tot en met {day}",
+    tag: "Tag",
+    person: "Persoon",
+    place: "Plaats",
+    country: "Land: {code}",
+    library: "Mediabibliotheek",
+    camera: "Camera: {name}",
+    folder: "In een map",
+  },
+  types: {
+    folder: "Mappen",
+    image: "Afbeeldingen",
+    video: "Video",
+    audio: "Audio",
+    pdf: "PDF",
+    document: "Documenten",
+    spreadsheet: "Rekenbladen",
+    presentation: "Presentaties",
+    rest: "Overig",
+  },
+  results: "Zoekresultaten",
+  hint: "Typ een naam of een woord uit de tekst, of kies een filter.",
+  none: "Niets gevonden.",
+  // Keuze 9: ronde B of C gaf wat er binnen de tijd was
+  partial: "Dit zijn de eerste treffers, niet per se de beste. Maak je vraag preciezer.",
+  partialNone: "Niets gevonden binnen de tijd. Maak je vraag preciezer.",
+  namesOnly: "Alleen op naam gezocht: de tekst in de bestanden kwam niet aan de beurt.",
+  indexing: "De index is nog bezig ({pct}%)",
+  more: "Meer laden",
+  loadingMore: "Meer treffers laden…",
+  tooMany: "Er zijn nog meer treffers. Maak je vraag preciezer.",
+  // Keuze 81: in de stand tekst, zonder foto's in de treffers
+  noPhoto: "Geen foto met deze naam?",
+  noPhotoAction: "Zoek op wat er op je foto's staat.",
+  groups: {
+    people: "Personen",
+    places: "Plaatsen",
+    count: "{name} ({n})",
+  },
+  suggest: {
+    label: "Suggesties",
+    names: "Namen",
+    people: "Personen",
+    places: "Plaatsen",
+    tags: "Tags",
+    albums: "Albums",
+    image: "Zoek '{q}' op wat er op je foto's staat",
+  },
 } as const;

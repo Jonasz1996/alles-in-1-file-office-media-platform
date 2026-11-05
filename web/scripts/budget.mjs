@@ -18,7 +18,8 @@
 // - music: alles met een module uit src/music/ samen (pagina's, gapless en de balk).
 //
 // Fase 6 (Z0): regels voor de nieuwe chunks (Keuze 45 en 48), op dezelfde manier geteld:
-// - search: de pagina /zoeken (tot Z4 haar vervangt: Search.tsx van 0.7.0);
+// - search: de pagina /zoeken (src/search/SearchPage.tsx, van Z4; de suggesties zijn een eigen
+//   lazy chunk, geteld als elk ander lazy chunk);
 // - mapRoute: /fotos/kaart (≤ 30 kB); mapData: de wereld van de kaart (dist/kaart/*.json, van Z5;
 //   ≤ 60 kB; zolang Z5 hem niet maakt, staat er "nog niet gebouwd");
 // - dupes: /dubbel; people: /fotos/personen en /fotos/personen/:id, elk apart;
@@ -91,7 +92,7 @@ const MEDIA_MODULE = /^src\/(media|player|music)\//;
 const MEDIA_ENTRY = "src/media/index.ts";
 /** De lazy pagina's van fase 6 (routes.tsx) met hun woordenboeken en hun grens (Keuze 48). */
 export const ZOEK_PAGES = {
-  "src/Search.tsx": [["browser", "sharing", "search"], "search"],
+  "src/search/SearchPage.tsx": [["browser", "sharing", "search"], "search"],
   "src/photos/map/MapPage.tsx": [["photos_map"], "mapRoute"],
   "src/dupes/DupesPage.tsx": [["dupes"], "dupes"],
   "src/photos/people/PeoplePage.tsx": [["photos_people"], "people"],

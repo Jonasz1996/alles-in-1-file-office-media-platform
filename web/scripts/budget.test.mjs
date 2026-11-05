@@ -42,7 +42,7 @@ describe("de regels van het budget (fase 6)", () => {
 
   it("de pagina's van fase 6 met hun woordenboeken en hun grens", () => {
     expect(ZOEK_PAGES).toEqual({
-      "src/Search.tsx": [["browser", "sharing", "search"], "search"],
+      "src/search/SearchPage.tsx": [["browser", "sharing", "search"], "search"],
       "src/photos/map/MapPage.tsx": [["photos_map"], "mapRoute"],
       "src/dupes/DupesPage.tsx": [["dupes"], "dupes"],
       "src/photos/people/PeoplePage.tsx": [["photos_people"], "people"],
