@@ -185,6 +185,10 @@ describe("het veld bovenaan als combobox (Keuze 45 en 46)", () => {
 
   it("de suggesties zijn een eigen chunk met het gebied search, niet in de eerste lading", () => {
     expect(appBarSource).toContain('Promise.all([import("./Suggest"), loadAreas(["search"])])');
+    // Zonder lazy() en Suspense: React zou het tonen van de lijst tot 300 ms na de eerste toets
+    // tegenhouden (de eerste suggestie in e2e/perf/zoek_ui.py)
+    expect(appBarSource).not.toContain("<Suspense");
+    expect(appBarSource).not.toMatch(/=\s*lazy[<(]/);
     // Alleen typen uit Suggest.tsx en combo.ts; de modules die echt meekomen, precies deze
     const values = [...appBarSource.matchAll(/^import (?!type )[^;]*?from "([^"]+)";/gm)].map((m) => m[1]);
     expect(values).toEqual(["react", "../i18n", "../router", "../ui/keys", "./appBar"]);

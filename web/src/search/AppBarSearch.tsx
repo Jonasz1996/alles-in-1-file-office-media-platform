@@ -6,18 +6,13 @@
 // Escape (met de lijst dicht): een veld met tekst wordt leeg; een leeg veld geeft de focus terug
 // aan waar hij stond vóór Ctrl/Cmd+K. Op Bestanden zet / de focus in dit veld (#zoekveld; Z4
 // besliste, zie toetsenbord-z4.md).
+//
+// Suggest laadt zonder lazy() en Suspense: React houdt het tonen van wat in een Suspense-grens
+// klaar is tot 300 ms na de fallback tegen (FALLBACK_THROTTLE_MS), en de wachttijd van 120 ms
+// begon pas daarna (e2e/perf/zoek_ui.py, koud: de eerste suggestie 430 ms na de laatste toets,
+// zo 260 ms).
 
-import {
-  type ComponentType,
-  type FormEvent,
-  type JSX,
-  type KeyboardEvent,
-  lazy,
-  Suspense,
-  useCallback,
-  useRef,
-  useState,
-} from "react";
+import { type ComponentType, type FormEvent, type JSX, type KeyboardEvent, useCallback, useRef, useState } from "react";
 import { loadAreas, t } from "../i18n";
 import { navigate } from "../router";
 import { formatCombo, isMacPlatform, useShortcuts } from "../ui/keys";
@@ -25,20 +20,24 @@ import { ariaKeys, MAX_QUERY, SEARCH_INPUT_ID, SEARCH_KEY, SUGGEST_LIST_ID, sear
 import type { ComboState } from "./combo";
 import type { SuggestProps } from "./Suggest";
 
-// Lukt het laden niet (geen verbinding, een oude versie na een update), dan blijft het een gewoon
-// veld: Enter werkt
-const Suggest = lazy<ComponentType<SuggestProps>>(() =>
-  Promise.all([import("./Suggest"), loadAreas(["search"])]).then(
-    ([m]) => m,
-    () => ({ default: () => null }),
-  ),
-);
+type SuggestView = ComponentType<SuggestProps>;
+let loading: Promise<SuggestView> | null = null;
+
+/** Het chunk van de suggesties met zijn teksten, één keer. Lukt het niet (geen verbinding, een
+ * oude versie na een update), dan blijft het een gewoon veld: Enter werkt. */
+function loadSuggest(): Promise<SuggestView> {
+  loading ??= Promise.all([import("./Suggest"), loadAreas(["search"])]).then(
+    ([m]) => m.default,
+    () => () => null,
+  );
+  return loading;
+}
 
 export function AppBarSearch(): JSX.Element {
   const field = useRef<HTMLInputElement>(null);
   // Waar de focus stond vóór Ctrl/Cmd+K
   const back = useRef<Element | null>(null);
-  const [typed, setTyped] = useState(false);
+  const [Suggest, setSuggest] = useState<SuggestView | null>(null);
   const [combo, setCombo] = useState<ComboState>({ open: false, active: null });
   const chosen = useCallback(() => {
     back.current = null;
@@ -94,14 +93,12 @@ export function AppBarSearch(): JSX.Element {
         maxLength={MAX_QUERY}
         enterKeyHint="search"
         autoComplete="off"
-        onInput={() => setTyped(true)}
+        onInput={() => {
+          if (!Suggest) void loadSuggest().then((view) => setSuggest(() => view));
+        }}
         onKeyDown={keyDown}
       />
-      {typed && (
-        <Suspense fallback={null}>
-          <Suggest field={field} onState={setCombo} onChosen={chosen} />
-        </Suspense>
-      )}
+      {Suggest && <Suggest field={field} onState={setCombo} onChosen={chosen} />}
     </form>
   );
 }
