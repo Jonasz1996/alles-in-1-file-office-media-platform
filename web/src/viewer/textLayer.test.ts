@@ -43,6 +43,8 @@ describe("welke woorden de tekstlaag markeert (Keuze 18, zoals parse() en de sni
     // Korter dan drie tekens: een heel woord
     expect(queryTerms("ab")).toEqual({ words: ["ab"], prefix: false });
     expect(queryTerms("e-mail")).toEqual({ words: ["e", "mail"], prefix: true });
+    // Een zero-width space aan het eind telt niet mee (q.rstrip(_ZWSP) in parse())
+    expect(queryTerms("factuur\u200b")).toEqual({ words: ["factuur"], prefix: true });
   });
 
   it("niets te zoeken: null; meer dan 10 woorden: de eerste 10", () => {

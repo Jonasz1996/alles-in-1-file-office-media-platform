@@ -55,7 +55,8 @@ export function queryTerms(q: string | null | undefined): Terms | null {
   }
   if (words.length === 0) return null;
   words.length = Math.min(words.length, MAX_WORDS);
-  const last = [...text.replace(/​+$/u, "")].pop() ?? "";
+  // Zoals q.rstrip(_ZWSP) in parse(): een zero-width space aan het eind telt niet
+  const last = [...text.replace(/\u200b+$/u, "")].pop() ?? "";
   return { words, prefix: ALNUM.test(last) && words[words.length - 1].length >= PREFIX_MIN };
 }
 
