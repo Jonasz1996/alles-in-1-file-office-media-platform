@@ -1,0 +1,15 @@
+# Lokaal draaien zoals in productie: één container met API en web-app op
+# http://localhost:8080. Voor ontwikkelen met hot reload: zie README.
+services:
+  platform:
+    build: .
+    environment:
+      PLATFORM_NODE_NAME: local
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    volumes:
+      - platform-data:/data
+
+volumes:
+  platform-data:

@@ -1,0 +1,2124 @@
+{
+  "tool": "run_all",
+  "generated": "2026-10-25T15:06:33+00:00",
+  "commit": "15e70a4",
+  "dirty": false,
+  "report_only": false,
+  "data": {
+    "n": 10000,
+    "blobs": 2000,
+    "photos": 50000
+  },
+  "timings": {
+    "seed_s": 14.9,
+    "first_view_s": 145.7,
+    "scroll_s": 294.8,
+    "lighthouse_like_s": 541.8
+  },
+  "errors": [
+    "lighthouse_like: public (mobile): score 81 < 91 (runs [81, 78, 82, 81, 83], mediaan {'fcp': 1340, 'si': 4637.5, 'lcp': 1340, 'tbt': 635.0, 'cls': 0.0})"
+  ],
+  "ok": false,
+  "results": {
+    "first_view": {
+      "tool": "first_view",
+      "server": "http://127.0.0.1:52839",
+      "runs": 5,
+      "profile": {
+        "latency_ms": 2,
+        "down_mbit": 100,
+        "up_mbit": 100,
+        "cpu": 1
+      },
+      "gate": {
+        "median_ms": 1500,
+        "p95_ms": 2000
+      },
+      "pages": {
+        "login": {
+          "url": "/",
+          "mark": "app:ready:login",
+          "owner": "P1",
+          "status": "pass",
+          "sources": [
+            "mark:login"
+          ],
+          "service_worker": true,
+          "sw_before_ready": false,
+          "profile": {
+            "latency_ms": 2,
+            "down_mbit": 100,
+            "up_mbit": 100,
+            "network": true,
+            "cpu": 1
+          },
+          "cold": {
+            "runs": [
+              246,
+              212.4,
+              203.5,
+              201.9,
+              207.7
+            ],
+            "median_ms": 207.7,
+            "p95_ms": 246,
+            "gate_ok": true
+          },
+          "warm": {
+            "runs": [
+              126.6,
+              119.1,
+              109.9,
+              121.7,
+              124
+            ],
+            "median_ms": 121.7,
+            "p95_ms": 126.6,
+            "gate_ok": true
+          },
+          "details": {
+            "cold": [
+              {
+                "ms": 246,
+                "source": "mark:login",
+                "ttfb_ms": 7.9,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 212.4,
+                "source": "mark:login",
+                "ttfb_ms": 6.1,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 203.5,
+                "source": "mark:login",
+                "ttfb_ms": 4.5,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 201.9,
+                "source": "mark:login",
+                "ttfb_ms": 5.6,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 207.7,
+                "source": "mark:login",
+                "ttfb_ms": 5.1,
+                "sw_before_ready": false,
+                "controlled": false
+              }
+            ],
+            "warm": [
+              {
+                "ms": 126.6,
+                "source": "mark:login",
+                "ttfb_ms": 10.1,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 119.1,
+                "source": "mark:login",
+                "ttfb_ms": 9.2,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 109.9,
+                "source": "mark:login",
+                "ttfb_ms": 9.1,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 121.7,
+                "source": "mark:login",
+                "ttfb_ms": 8.5,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 124,
+                "source": "mark:login",
+                "ttfb_ms": 8.9,
+                "sw_before_ready": false,
+                "controlled": true
+              }
+            ]
+          },
+          "problems": []
+        },
+        "folder": {
+          "url": "/map/c87ddf03-0b2f-4b36-8b47-75da9fff3e9b",
+          "mark": "app:ready:folder",
+          "owner": "P2",
+          "status": "not yet",
+          "sources": [
+            "mark:route"
+          ],
+          "service_worker": true,
+          "sw_before_ready": false,
+          "profile": {
+            "latency_ms": 2,
+            "down_mbit": 100,
+            "up_mbit": 100,
+            "network": true,
+            "cpu": 1
+          },
+          "cold": {
+            "runs": [
+              608.3,
+              517.7,
+              559,
+              546.6,
+              535.1
+            ],
+            "median_ms": 546.6,
+            "p95_ms": 608.3,
+            "gate_ok": true
+          },
+          "warm": {
+            "runs": [
+              449.9,
+              450.4,
+              513,
+              608.1,
+              549.4
+            ],
+            "median_ms": 513,
+            "p95_ms": 608.1,
+            "gate_ok": true
+          },
+          "details": {
+            "cold": [
+              {
+                "ms": 608.3,
+                "source": "mark:route",
+                "ttfb_ms": 4.4,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 517.7,
+                "source": "mark:route",
+                "ttfb_ms": 5,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 559,
+                "source": "mark:route",
+                "ttfb_ms": 6.5,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 546.6,
+                "source": "mark:route",
+                "ttfb_ms": 6,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 535.1,
+                "source": "mark:route",
+                "ttfb_ms": 6.2,
+                "sw_before_ready": false,
+                "controlled": false
+              }
+            ],
+            "warm": [
+              {
+                "ms": 449.9,
+                "source": "mark:route",
+                "ttfb_ms": 9.4,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 450.4,
+                "source": "mark:route",
+                "ttfb_ms": 9.6,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 513,
+                "source": "mark:route",
+                "ttfb_ms": 9.5,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 608.1,
+                "source": "mark:route",
+                "ttfb_ms": 23.8,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 549.4,
+                "source": "mark:route",
+                "ttfb_ms": 30.6,
+                "sw_before_ready": false,
+                "controlled": true
+              }
+            ]
+          },
+          "problems": []
+        },
+        "public": {
+          "url": "/s/8HuuoCVJwxGzLkDIM3xODYnmUTT7p-VT5EpND-kOW08",
+          "mark": "app:ready:public",
+          "owner": "P4",
+          "status": "not yet",
+          "sources": [
+            "mark:route"
+          ],
+          "service_worker": true,
+          "sw_before_ready": false,
+          "profile": {
+            "latency_ms": 2,
+            "down_mbit": 100,
+            "up_mbit": 100,
+            "network": true,
+            "cpu": 1
+          },
+          "cold": {
+            "runs": [
+              619.6,
+              447.6,
+              441.6,
+              425.5,
+              492.4
+            ],
+            "median_ms": 447.6,
+            "p95_ms": 619.6,
+            "gate_ok": true
+          },
+          "warm": {
+            "runs": [
+              373.4,
+              372.9,
+              375.6,
+              389.2,
+              391.8
+            ],
+            "median_ms": 375.6,
+            "p95_ms": 391.8,
+            "gate_ok": true
+          },
+          "details": {
+            "cold": [
+              {
+                "ms": 619.6,
+                "source": "mark:route",
+                "ttfb_ms": 193.1,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 447.6,
+                "source": "mark:route",
+                "ttfb_ms": 5.6,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 441.6,
+                "source": "mark:route",
+                "ttfb_ms": 5.6,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 425.5,
+                "source": "mark:route",
+                "ttfb_ms": 6.4,
+                "sw_before_ready": false,
+                "controlled": false
+              },
+              {
+                "ms": 492.4,
+                "source": "mark:route",
+                "ttfb_ms": 5.7,
+                "sw_before_ready": false,
+                "controlled": false
+              }
+            ],
+            "warm": [
+              {
+                "ms": 373.4,
+                "source": "mark:route",
+                "ttfb_ms": 8.3,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 372.9,
+                "source": "mark:route",
+                "ttfb_ms": 8.3,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 375.6,
+                "source": "mark:route",
+                "ttfb_ms": 7.5,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 389.2,
+                "source": "mark:route",
+                "ttfb_ms": 11,
+                "sw_before_ready": false,
+                "controlled": true
+              },
+              {
+                "ms": 391.8,
+                "source": "mark:route",
+                "ttfb_ms": 9.1,
+                "sw_before_ready": false,
+                "controlled": true
+              }
+            ]
+          },
+          "problems": []
+        }
+      },
+      "problems": [],
+      "ok": true
+    },
+    "scroll": {
+      "tool": "scroll",
+      "server": "http://127.0.0.1:52839",
+      "n": 10000,
+      "blobs": 2000,
+      "timeline_photos": 50000,
+      "views": [
+        {
+          "path": "/map/c87ddf03-0b2f-4b36-8b47-75da9fff3e9b",
+          "mode": "list",
+          "cpu": 1,
+          "load_s": 3.25,
+          "problems": [],
+          "status": "not yet",
+          "reason": "geen gevirtualiseerde lijst ([aria-rowcount] [role=row])",
+          "virtualized": false,
+          "focused_before": false,
+          "frames": 316,
+          "longest_task_ms": 776,
+          "checks": {
+            "frame_p95_ms": {
+              "value": 799.9,
+              "limit": 20,
+              "ok": false
+            },
+            "long_tasks_over_50ms": {
+              "value": 205,
+              "limit": 0,
+              "ok": false
+            },
+            "rows_rendered": {
+              "value": 10000,
+              "limit": 201,
+              "ok": false
+            },
+            "dom_nodes": {
+              "value": 169071,
+              "limit": 4000,
+              "ok": false
+            },
+            "thumbnails": {
+              "value": 782,
+              "limit": 100,
+              "ok": true
+            },
+            "focus_after_arrow": {
+              "value": {
+                "element": "body",
+                "in_row": false,
+                "rowindex": null,
+                "rowcount": null,
+                "visible": false
+              },
+              "limit": "in een rij",
+              "ok": false
+            },
+            "end_focused_visible": {
+              "value": {
+                "element": "body",
+                "in_row": false,
+                "rowindex": null,
+                "rowcount": null,
+                "visible": false
+              },
+              "limit": "laatste rij, zichtbaar",
+              "ok": false
+            }
+          }
+        },
+        {
+          "path": "/map/c87ddf03-0b2f-4b36-8b47-75da9fff3e9b",
+          "mode": "list",
+          "cpu": 4,
+          "load_s": 3.26,
+          "problems": [],
+          "status": "not yet",
+          "reason": "geen gevirtualiseerde lijst ([aria-rowcount] [role=row])",
+          "virtualized": false,
+          "focused_before": false,
+          "frames": 289,
+          "longest_task_ms": 3874,
+          "checks": {
+            "frame_p95_ms": {
+              "value": 4099.9,
+              "limit": 34,
+              "ok": false
+            },
+            "long_tasks_over_50ms": {
+              "value": 235,
+              "limit": 0,
+              "ok": false
+            },
+            "rows_rendered": {
+              "value": 10000,
+              "limit": 201,
+              "ok": false
+            },
+            "dom_nodes": {
+              "value": 169071,
+              "limit": 4000,
+              "ok": false
+            },
+            "thumbnails": {
+              "value": 636,
+              "limit": 100,
+              "ok": true
+            },
+            "focus_after_arrow": {
+              "value": {
+                "element": "body",
+                "in_row": false,
+                "rowindex": null,
+                "rowcount": null,
+                "visible": false
+              },
+              "limit": "in een rij",
+              "ok": false
+            },
+            "end_focused_visible": {
+              "value": {
+                "element": "body",
+                "in_row": false,
+                "rowindex": null,
+                "rowcount": null,
+                "visible": false
+              },
+              "limit": "laatste rij, zichtbaar",
+              "ok": false
+            }
+          }
+        },
+        {
+          "path": "/map/c87ddf03-0b2f-4b36-8b47-75da9fff3e9b",
+          "mode": "grid",
+          "cpu": 1,
+          "load_s": 3.03,
+          "status": "not yet",
+          "reason": "geen rasterweergave na G ([data-view=grid])",
+          "problems": []
+        },
+        {
+          "path": "/map/c87ddf03-0b2f-4b36-8b47-75da9fff3e9b",
+          "mode": "grid",
+          "cpu": 4,
+          "load_s": 2.87,
+          "status": "not yet",
+          "reason": "geen rasterweergave na G ([data-view=grid])",
+          "problems": []
+        },
+        {
+          "path": "/fotos",
+          "mode": "timeline",
+          "cpu": 1,
+          "status": "not yet",
+          "reason": "geen rijen ([role=row]): empty",
+          "problems": []
+        },
+        {
+          "path": "/fotos",
+          "mode": "timeline",
+          "cpu": 4,
+          "status": "not yet",
+          "reason": "geen rijen ([role=row]): empty",
+          "problems": []
+        }
+      ],
+      "problems": [],
+      "ok": true
+    },
+    "lighthouse_like": {
+      "tool": "lighthouse_like",
+      "server": "http://127.0.0.1:52839",
+      "runs": 5,
+      "gate": 91,
+      "weights": {
+        "fcp": 0.1,
+        "si": 0.1,
+        "lcp": 0.25,
+        "tbt": 0.3,
+        "cls": 0.25
+      },
+      "curves": {
+        "mobile": {
+          "fcp": [
+            1800,
+            3000
+          ],
+          "si": [
+            3387,
+            5800
+          ],
+          "lcp": [
+            2500,
+            4000
+          ],
+          "tbt": [
+            200,
+            600
+          ],
+          "cls": [
+            0.1,
+            0.25
+          ]
+        },
+        "desktop": {
+          "fcp": [
+            934,
+            1600
+          ],
+          "si": [
+            1311,
+            2300
+          ],
+          "lcp": [
+            1200,
+            2400
+          ],
+          "tbt": [
+            150,
+            350
+          ],
+          "cls": [
+            0.1,
+            0.25
+          ]
+        }
+      },
+      "pages": {
+        "login": {
+          "url": "/",
+          "profile": "mobile",
+          "throttling": {
+            "latency_ms": 562.5,
+            "down_mbit": 1.50994944,
+            "up_mbit": 0.6912,
+            "cpu": 4,
+            "viewport": {
+              "width": 412,
+              "height": 823
+            },
+            "device_scale_factor": 1.75,
+            "is_mobile": true,
+            "has_touch": true
+          },
+          "owner": "P1",
+          "status": "pass",
+          "score": 98,
+          "scores": [
+            98,
+            95,
+            98,
+            98,
+            98
+          ],
+          "metrics": {
+            "fcp": 1344,
+            "si": 3261.4,
+            "lcp": 1344,
+            "tbt": 122.0,
+            "cls": 0.0
+          },
+          "errors": [],
+          "details": [
+            {
+              "metrics": {
+                "fcp": 1344,
+                "si": 3225.2,
+                "lcp": 1344,
+                "tbt": 115.0,
+                "cls": 0.0
+              },
+              "tti": 1863.5,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1698,
+                  165
+                ]
+              ],
+              "frames": 38,
+              "marks": {
+                "app:ready:login": 3246.5
+              },
+              "score": 98,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.92,
+                "lcp": 1.0,
+                "tbt": 0.97,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1336,
+                "si": 3357.2,
+                "lcp": 1336,
+                "tbt": 216.0,
+                "cls": 0.0
+              },
+              "tti": 3342.3,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1707,
+                  231
+                ],
+                [
+                  1945,
+                  52
+                ],
+                [
+                  2015,
+                  83
+                ],
+                [
+                  3292,
+                  50
+                ]
+              ],
+              "frames": 44,
+              "marks": {
+                "app:ready:login": 3385.4
+              },
+              "score": 95,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.9,
+                "lcp": 1.0,
+                "tbt": 0.88,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1348,
+                "si": 3242.9,
+                "lcp": 1348,
+                "tbt": 101.0,
+                "cls": 0.0
+              },
+              "tti": 1981.9,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1725,
+                  145
+                ],
+                [
+                  1926,
+                  56
+                ]
+              ],
+              "frames": 38,
+              "marks": {
+                "app:ready:login": 3268.2
+              },
+              "score": 98,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.92,
+                "lcp": 1.0,
+                "tbt": 0.98,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1392,
+                "si": 3323.1,
+                "lcp": 1392,
+                "tbt": 131.0,
+                "cls": 0.0
+              },
+              "tti": 1935.2,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1754,
+                  181
+                ]
+              ],
+              "frames": 40,
+              "marks": {
+                "app:ready:login": 3349.4
+              },
+              "score": 98,
+              "scores": {
+                "fcp": 0.97,
+                "si": 0.91,
+                "lcp": 1.0,
+                "tbt": 0.96,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1312,
+                "si": 3261.4,
+                "lcp": 1312,
+                "tbt": 122.0,
+                "cls": 0.0
+              },
+              "tti": 3243.6,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1688,
+                  156
+                ],
+                [
+                  1902,
+                  50
+                ],
+                [
+                  3178,
+                  66
+                ]
+              ],
+              "frames": 39,
+              "marks": {
+                "app:ready:login": 3293.8
+              },
+              "score": 98,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.91,
+                "lcp": 1.0,
+                "tbt": 0.97,
+                "cls": 1.0
+              },
+              "problems": []
+            }
+          ],
+          "problems": []
+        },
+        "public": {
+          "url": "/s/8HuuoCVJwxGzLkDIM3xODYnmUTT7p-VT5EpND-kOW08",
+          "profile": "mobile",
+          "throttling": {
+            "latency_ms": 562.5,
+            "down_mbit": 1.50994944,
+            "up_mbit": 0.6912,
+            "cpu": 4,
+            "viewport": {
+              "width": 412,
+              "height": 823
+            },
+            "device_scale_factor": 1.75,
+            "is_mobile": true,
+            "has_touch": true
+          },
+          "owner": "P1",
+          "status": "fail",
+          "score": 81,
+          "scores": [
+            81,
+            78,
+            82,
+            81,
+            83
+          ],
+          "metrics": {
+            "fcp": 1340,
+            "si": 4637.5,
+            "lcp": 1340,
+            "tbt": 635.0,
+            "cls": 0.0
+          },
+          "errors": [],
+          "details": [
+            {
+              "metrics": {
+                "fcp": 1352,
+                "si": 4670.5,
+                "lcp": 1352,
+                "tbt": 635.0,
+                "cls": 0.0
+              },
+              "tti": 6557.6,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1704,
+                  142
+                ],
+                [
+                  1851,
+                  114
+                ],
+                [
+                  4765,
+                  253
+                ],
+                [
+                  5020,
+                  151
+                ],
+                [
+                  6282,
+                  164
+                ],
+                [
+                  6447,
+                  111
+                ]
+              ],
+              "frames": 49,
+              "marks": {
+                "app:ready:route": 3247.2
+              },
+              "score": 81,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.7,
+                "lcp": 1.0,
+                "tbt": 0.47,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1340,
+                "si": 4650.8,
+                "lcp": 1340,
+                "tbt": 780.0,
+                "cls": 0.0
+              },
+              "tti": 6652.3,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1699,
+                  160
+                ],
+                [
+                  1864,
+                  93
+                ],
+                [
+                  4696,
+                  149
+                ],
+                [
+                  4845,
+                  309
+                ],
+                [
+                  6283,
+                  202
+                ],
+                [
+                  6485,
+                  167
+                ]
+              ],
+              "frames": 47,
+              "marks": {
+                "app:ready:route": 3203.8
+              },
+              "score": 78,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.7,
+                "lcp": 1.0,
+                "tbt": 0.38,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1336,
+                "si": 4535.5,
+                "lcp": 1336,
+                "tbt": 609.0,
+                "cls": 0.0
+              },
+              "tti": 6240.3,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1700,
+                  174
+                ],
+                [
+                  1875,
+                  76
+                ],
+                [
+                  4653,
+                  168
+                ],
+                [
+                  4829,
+                  180
+                ],
+                [
+                  5929,
+                  153
+                ],
+                [
+                  6082,
+                  158
+                ]
+              ],
+              "frames": 49,
+              "marks": {
+                "app:ready:route": 3181.4
+              },
+              "score": 82,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.72,
+                "lcp": 1.0,
+                "tbt": 0.49,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1316,
+                "si": 4637.5,
+                "lcp": 1316,
+                "tbt": 659.0,
+                "cls": 0.0
+              },
+              "tti": 6509.4,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1696,
+                  188
+                ],
+                [
+                  1887,
+                  97
+                ],
+                [
+                  4730,
+                  223
+                ],
+                [
+                  4953,
+                  188
+                ],
+                [
+                  6246,
+                  146
+                ],
+                [
+                  6392,
+                  117
+                ]
+              ],
+              "frames": 51,
+              "marks": {
+                "app:ready:route": 3243.8
+              },
+              "score": 81,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.7,
+                "lcp": 1.0,
+                "tbt": 0.46,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 1344,
+                "si": 4573.6,
+                "lcp": 1344,
+                "tbt": 567.0,
+                "cls": 0.0
+              },
+              "tti": 6435.6,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  1706,
+                  153
+                ],
+                [
+                  1871,
+                  107
+                ],
+                [
+                  4715,
+                  134
+                ],
+                [
+                  4851,
+                  195
+                ],
+                [
+                  6157,
+                  135
+                ],
+                [
+                  6293,
+                  143
+                ]
+              ],
+              "frames": 50,
+              "marks": {
+                "app:ready:route": 3231.9
+              },
+              "score": 83,
+              "scores": {
+                "fcp": 0.98,
+                "si": 0.71,
+                "lcp": 1.0,
+                "tbt": 0.53,
+                "cls": 1.0
+              },
+              "problems": []
+            }
+          ],
+          "problems": []
+        },
+        "folder": {
+          "url": "/map/c87ddf03-0b2f-4b36-8b47-75da9fff3e9b",
+          "profile": "desktop",
+          "throttling": {
+            "latency_ms": 40,
+            "down_mbit": 10.48576,
+            "up_mbit": 10.48576,
+            "cpu": 1,
+            "viewport": {
+              "width": 1350,
+              "height": 940
+            },
+            "device_scale_factor": 1,
+            "is_mobile": false,
+            "has_touch": false
+          },
+          "owner": "P2",
+          "status": "not yet",
+          "score": 60,
+          "scores": [
+            60,
+            60,
+            60,
+            60,
+            60
+          ],
+          "metrics": {
+            "fcp": 156,
+            "si": 6921.4,
+            "lcp": 156,
+            "tbt": 22091.0,
+            "cls": 0.0011
+          },
+          "errors": [],
+          "details": [
+            {
+              "metrics": {
+                "fcp": 156,
+                "si": 6491.8,
+                "lcp": 156,
+                "tbt": 20840.0,
+                "cls": 0.0011
+              },
+              "tti": 25716.7,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  179,
+                  51
+                ],
+                [
+                  2205,
+                  1410
+                ],
+                [
+                  3615,
+                  4450
+                ],
+                [
+                  8367,
+                  575
+                ],
+                [
+                  8950,
+                  817
+                ],
+                [
+                  9767,
+                  296
+                ],
+                [
+                  10086,
+                  407
+                ],
+                [
+                  10494,
+                  290
+                ],
+                [
+                  10806,
+                  506
+                ],
+                [
+                  11312,
+                  321
+                ],
+                [
+                  11656,
+                  401
+                ],
+                [
+                  12058,
+                  336
+                ],
+                [
+                  12415,
+                  419
+                ],
+                [
+                  12835,
+                  329
+                ],
+                [
+                  13185,
+                  356
+                ],
+                [
+                  13541,
+                  315
+                ],
+                [
+                  13876,
+                  389
+                ],
+                [
+                  14265,
+                  333
+                ],
+                [
+                  14619,
+                  375
+                ],
+                [
+                  14995,
+                  321
+                ],
+                [
+                  15335,
+                  385
+                ],
+                [
+                  15721,
+                  342
+                ],
+                [
+                  16072,
+                  410
+                ],
+                [
+                  16483,
+                  348
+                ],
+                [
+                  16842,
+                  444
+                ],
+                [
+                  17286,
+                  415
+                ],
+                [
+                  17711,
+                  403
+                ],
+                [
+                  18114,
+                  441
+                ],
+                [
+                  18566,
+                  418
+                ],
+                [
+                  18985,
+                  421
+                ],
+                [
+                  19415,
+                  447
+                ],
+                [
+                  19862,
+                  386
+                ],
+                [
+                  20259,
+                  416
+                ],
+                [
+                  20676,
+                  425
+                ],
+                [
+                  21112,
+                  422
+                ],
+                [
+                  21534,
+                  393
+                ],
+                [
+                  21941,
+                  597
+                ],
+                [
+                  22539,
+                  605
+                ],
+                [
+                  23170,
+                  1167
+                ],
+                [
+                  24338,
+                  429
+                ],
+                [
+                  24787,
+                  524
+                ],
+                [
+                  25312,
+                  405
+                ]
+              ],
+              "frames": 13,
+              "marks": {
+                "app:ready:route": 695.8
+              },
+              "score": 60,
+              "scores": {
+                "fcp": 1.0,
+                "si": 0.01,
+                "lcp": 1.0,
+                "tbt": 0.0,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 164,
+                "si": 6921.4,
+                "lcp": 164,
+                "tbt": 22091.0,
+                "cls": 0.0011
+              },
+              "tti": 26931.7,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  2134,
+                  1467
+                ],
+                [
+                  3602,
+                  5032
+                ],
+                [
+                  8902,
+                  496
+                ],
+                [
+                  9408,
+                  855
+                ],
+                [
+                  10263,
+                  445
+                ],
+                [
+                  10736,
+                  418
+                ],
+                [
+                  11155,
+                  322
+                ],
+                [
+                  11501,
+                  401
+                ],
+                [
+                  11902,
+                  350
+                ],
+                [
+                  12275,
+                  383
+                ],
+                [
+                  12658,
+                  337
+                ],
+                [
+                  13017,
+                  383
+                ],
+                [
+                  13400,
+                  357
+                ],
+                [
+                  13783,
+                  457
+                ],
+                [
+                  14240,
+                  354
+                ],
+                [
+                  14614,
+                  375
+                ],
+                [
+                  14990,
+                  355
+                ],
+                [
+                  15366,
+                  452
+                ],
+                [
+                  15818,
+                  361
+                ],
+                [
+                  16192,
+                  531
+                ],
+                [
+                  16723,
+                  425
+                ],
+                [
+                  17162,
+                  468
+                ],
+                [
+                  17630,
+                  380
+                ],
+                [
+                  18022,
+                  425
+                ],
+                [
+                  18447,
+                  408
+                ],
+                [
+                  18866,
+                  377
+                ],
+                [
+                  19244,
+                  423
+                ],
+                [
+                  19677,
+                  420
+                ],
+                [
+                  20098,
+                  382
+                ],
+                [
+                  20490,
+                  455
+                ],
+                [
+                  20945,
+                  474
+                ],
+                [
+                  21431,
+                  433
+                ],
+                [
+                  21865,
+                  411
+                ],
+                [
+                  22287,
+                  417
+                ],
+                [
+                  22704,
+                  417
+                ],
+                [
+                  23136,
+                  513
+                ],
+                [
+                  23649,
+                  453
+                ],
+                [
+                  24114,
+                  638
+                ],
+                [
+                  24755,
+                  1133
+                ],
+                [
+                  25973,
+                  491
+                ],
+                [
+                  26465,
+                  467
+                ]
+              ],
+              "frames": 10,
+              "marks": {
+                "app:ready:route": 696
+              },
+              "score": 60,
+              "scores": {
+                "fcp": 1.0,
+                "si": 0.01,
+                "lcp": 1.0,
+                "tbt": 0.0,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 152,
+                "si": 7379.8,
+                "lcp": 152,
+                "tbt": 24404.0,
+                "cls": 0.0011
+              },
+              "tti": 29413.5,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  2328,
+                  1817
+                ],
+                [
+                  4145,
+                  5105
+                ],
+                [
+                  9545,
+                  591
+                ],
+                [
+                  10145,
+                  871
+                ],
+                [
+                  11016,
+                  339
+                ],
+                [
+                  11378,
+                  404
+                ],
+                [
+                  11782,
+                  383
+                ],
+                [
+                  12188,
+                  560
+                ],
+                [
+                  12749,
+                  509
+                ],
+                [
+                  13289,
+                  647
+                ],
+                [
+                  13936,
+                  427
+                ],
+                [
+                  14388,
+                  636
+                ],
+                [
+                  15025,
+                  391
+                ],
+                [
+                  15442,
+                  472
+                ],
+                [
+                  15914,
+                  410
+                ],
+                [
+                  16349,
+                  491
+                ],
+                [
+                  16841,
+                  495
+                ],
+                [
+                  17361,
+                  520
+                ],
+                [
+                  17881,
+                  425
+                ],
+                [
+                  18329,
+                  461
+                ],
+                [
+                  18790,
+                  459
+                ],
+                [
+                  19260,
+                  764
+                ],
+                [
+                  20024,
+                  550
+                ],
+                [
+                  20590,
+                  447
+                ],
+                [
+                  21037,
+                  555
+                ],
+                [
+                  21607,
+                  561
+                ],
+                [
+                  22168,
+                  429
+                ],
+                [
+                  22611,
+                  452
+                ],
+                [
+                  23063,
+                  401
+                ],
+                [
+                  23475,
+                  479
+                ],
+                [
+                  23955,
+                  415
+                ],
+                [
+                  24381,
+                  442
+                ],
+                [
+                  24823,
+                  404
+                ],
+                [
+                  25238,
+                  401
+                ],
+                [
+                  25639,
+                  405
+                ],
+                [
+                  26054,
+                  440
+                ],
+                [
+                  26495,
+                  440
+                ],
+                [
+                  26945,
+                  485
+                ],
+                [
+                  27431,
+                  586
+                ],
+                [
+                  28028,
+                  939
+                ],
+                [
+                  28968,
+                  446
+                ]
+              ],
+              "frames": 11,
+              "marks": {
+                "app:ready:route": 630.7
+              },
+              "score": 60,
+              "scores": {
+                "fcp": 1.0,
+                "si": 0.0,
+                "lcp": 1.0,
+                "tbt": 0.0,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 160,
+                "si": 8152.4,
+                "lcp": 160,
+                "tbt": 24816.0,
+                "cls": 0.0011
+              },
+              "tti": 30090.7,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  2473,
+                  1888
+                ],
+                [
+                  4362,
+                  5884
+                ],
+                [
+                  10584,
+                  731
+                ],
+                [
+                  11375,
+                  1001
+                ],
+                [
+                  12377,
+                  440
+                ],
+                [
+                  12843,
+                  527
+                ],
+                [
+                  13370,
+                  375
+                ],
+                [
+                  13770,
+                  395
+                ],
+                [
+                  14166,
+                  405
+                ],
+                [
+                  14596,
+                  500
+                ],
+                [
+                  15096,
+                  453
+                ],
+                [
+                  15571,
+                  625
+                ],
+                [
+                  16197,
+                  553
+                ],
+                [
+                  16771,
+                  441
+                ],
+                [
+                  17213,
+                  390
+                ],
+                [
+                  17628,
+                  434
+                ],
+                [
+                  18063,
+                  407
+                ],
+                [
+                  18490,
+                  428
+                ],
+                [
+                  18918,
+                  340
+                ],
+                [
+                  19295,
+                  408
+                ],
+                [
+                  19703,
+                  375
+                ],
+                [
+                  20098,
+                  530
+                ],
+                [
+                  20628,
+                  402
+                ],
+                [
+                  21043,
+                  545
+                ],
+                [
+                  21589,
+                  452
+                ],
+                [
+                  22057,
+                  680
+                ],
+                [
+                  22738,
+                  537
+                ],
+                [
+                  23290,
+                  574
+                ],
+                [
+                  23865,
+                  477
+                ],
+                [
+                  24358,
+                  547
+                ],
+                [
+                  24905,
+                  356
+                ],
+                [
+                  25271,
+                  408
+                ],
+                [
+                  25679,
+                  372
+                ],
+                [
+                  26062,
+                  475
+                ],
+                [
+                  26538,
+                  436
+                ],
+                [
+                  26984,
+                  430
+                ],
+                [
+                  27414,
+                  474
+                ],
+                [
+                  27899,
+                  902
+                ],
+                [
+                  28802,
+                  407
+                ],
+                [
+                  29228,
+                  431
+                ],
+                [
+                  29660,
+                  431
+                ]
+              ],
+              "frames": 11,
+              "marks": {
+                "app:ready:route": 692.4
+              },
+              "score": 60,
+              "scores": {
+                "fcp": 1.0,
+                "si": 0.0,
+                "lcp": 1.0,
+                "tbt": 0.0,
+                "cls": 1.0
+              },
+              "problems": []
+            },
+            {
+              "metrics": {
+                "fcp": 144,
+                "si": 6755.9,
+                "lcp": 144,
+                "tbt": 21055.0,
+                "cls": 0.0011
+              },
+              "tti": 26048.5,
+              "lcp_element": "img.boot-logo",
+              "long_tasks": [
+                [
+                  2328,
+                  1405
+                ],
+                [
+                  3733,
+                  4707
+                ],
+                [
+                  8758,
+                  614
+                ],
+                [
+                  9381,
+                  854
+                ],
+                [
+                  10236,
+                  334
+                ],
+                [
+                  10592,
+                  512
+                ],
+                [
+                  11105,
+                  372
+                ],
+                [
+                  11499,
+                  556
+                ],
+                [
+                  12056,
+                  328
+                ],
+                [
+                  12405,
+                  408
+                ],
+                [
+                  12814,
+                  306
+                ],
+                [
+                  13141,
+                  421
+                ],
+                [
+                  13562,
+                  413
+                ],
+                [
+                  13997,
+                  384
+                ],
+                [
+                  14382,
+                  389
+                ],
+                [
+                  14793,
+                  445
+                ],
+                [
+                  15239,
+                  360
+                ],
+                [
+                  15619,
+                  432
+                ],
+                [
+                  16052,
+                  388
+                ],
+                [
+                  16455,
+                  487
+                ],
+                [
+                  16942,
+                  396
+                ],
+                [
+                  17348,
+                  411
+                ],
+                [
+                  17760,
+                  325
+                ],
+                [
+                  18095,
+                  410
+                ],
+                [
+                  18506,
+                  339
+                ],
+                [
+                  18856,
+                  550
+                ],
+                [
+                  19406,
+                  373
+                ],
+                [
+                  19789,
+                  414
+                ],
+                [
+                  20204,
+                  325
+                ],
+                [
+                  20538,
+                  476
+                ],
+                [
+                  21014,
+                  401
+                ],
+                [
+                  21424,
+                  426
+                ],
+                [
+                  21851,
+                  363
+                ],
+                [
+                  22224,
+                  428
+                ],
+                [
+                  22653,
+                  359
+                ],
+                [
+                  23022,
+                  528
+                ],
+                [
+                  23550,
+                  387
+                ],
+                [
+                  23950,
+                  889
+                ],
+                [
+                  24839,
+                  401
+                ],
+                [
+                  25259,
+                  407
+                ],
+                [
+                  25666,
+                  382
+                ]
+              ],
+              "frames": 13,
+              "marks": {
+                "app:ready:route": 708
+              },
+              "score": 60,
+              "scores": {
+                "fcp": 1.0,
+                "si": 0.01,
+                "lcp": 1.0,
+                "tbt": 0.0,
+                "cls": 1.0
+              },
+              "problems": []
+            }
+          ],
+          "problems": []
+        }
+      },
+      "problems": [],
+      "ok": false
+    }
+  }
+}

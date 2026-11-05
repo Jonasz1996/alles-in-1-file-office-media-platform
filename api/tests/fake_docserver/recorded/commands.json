@@ -1,0 +1,320 @@
+{
+ "bron": "Opgenomen met DS 10.0.0.1 (build 10.0.0.169) in de sandbox; tokens vervangen door <JWT>, md5 van secure links door …, van tokens alleen de claims (iat en exp als verschil). proef/cmd-results.jsonl; de open key, forgotten files (O2), het fout geheim en de callback na forcesave uit de spike (spike/recorded/commands.json): POST /command?shardkey=<key>, token in de body",
+ "version": {
+  "http": 200,
+  "answer": {
+   "error": 0,
+   "version": "10.0.0.169"
+  }
+ },
+ "license": {
+  "http": 200,
+  "answer": {
+   "error": 0,
+   "license": {
+    "start_date": "2026-10-01T00:00:00.000Z",
+    "end_date": null,
+    "timelimited": false,
+    "trial": false,
+    "developer": false,
+    "branding": false,
+    "customization": false,
+    "advanced_api": false,
+    "connections": 2147483647,
+    "connections_view": 2147483647,
+    "users_count": 0,
+    "users_view_count": 0,
+    "users_expire": 1,
+    "customer_id": "",
+    "alias": "",
+    "multitenancy": false
+   },
+   "server": {
+    "workersCount": 1,
+    "resultType": 3,
+    "packageType": 0,
+    "buildDate": "2026-10-11T00:00:00.000Z",
+    "buildVersion": "10.0.0",
+    "buildNumber": 169
+   },
+   "quota": {
+    "users": [],
+    "users_view": []
+   }
+  }
+ },
+ "info": {
+  "http": 200,
+  "answer": {
+   "key": "bestaat-niet",
+   "error": 1
+  }
+ },
+ "forcesave": {
+  "http": 200,
+  "answer": {
+   "key": "bestaat-niet",
+   "error": 1
+  }
+ },
+ "drop": {
+  "http": 200,
+  "answer": {
+   "key": "bestaat-niet",
+   "error": 0
+  }
+ },
+ "meta": {
+  "http": 200,
+  "answer": {
+   "key": "bestaat-niet",
+   "error": 0
+  }
+ },
+ "version zonder token": {
+  "http": 200,
+  "answer": "{\"error\":6}"
+ },
+ "version token alleen in header": {
+  "http": 200,
+  "answer": {
+   "error": 0,
+   "version": "10.0.0.169"
+  }
+ },
+ "version token alleen in body": {
+  "http": 200,
+  "answer": {
+   "error": 0,
+   "version": "10.0.0.169"
+  }
+ },
+ "info open key": {
+  "http": 200,
+  "request": {
+   "c": "info",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0,
+   "users": [
+    "u1"
+   ]
+  }
+ },
+ "forcesave zonder wijzigingen": {
+  "http": 200,
+  "request": {
+   "c": "forcesave",
+   "userdata": "timer",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 4
+  }
+ },
+ "forcesave met wijzigingen": {
+  "http": 200,
+  "request": {
+   "c": "forcesave",
+   "userdata": "timer",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0
+  }
+ },
+ "drop open key": {
+  "http": 200,
+  "request": {
+   "c": "drop",
+   "users": [
+    "u1"
+   ],
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0
+  }
+ },
+ "info na drop": {
+  "http": 200,
+  "request": {
+   "c": "info",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0,
+   "users": []
+  }
+ },
+ "info na sluiten": {
+  "note": "na status 2 of 4: DS kent de key nog, zonder gebruikers (+1 s en later), en stuurt een status 4 (status_4_info)",
+  "bron": "fixer O0, 2026-10-27, DS 10.0.0.1 (e2e/office_ds.sh), via de DocStub van e2e/office_harness.py",
+  "http": 200,
+  "request": {
+   "c": "info",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0,
+   "users": []
+  }
+ },
+ "forcesave na sluiten": {
+  "note": "na status 2 of 4: niets te bewaren, geen callback",
+  "bron": "fixer O0, 2026-10-27, DS 10.0.0.1 (e2e/office_ds.sh), via de DocStub van e2e/office_harness.py",
+  "http": 200,
+  "request": {
+   "c": "forcesave",
+   "userdata": "x",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 4
+  }
+ },
+ "drop na sluiten": {
+  "note": "na status 2: error 0, geen callback",
+  "bron": "fixer O0, 2026-10-27, DS 10.0.0.1 (e2e/office_ds.sh), via de DocStub van e2e/office_harness.py",
+  "http": 200,
+  "request": {
+   "c": "drop",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0
+  }
+ },
+ "info na forgotten": {
+  "note": "de app gaf {\"error\": 1} op status 2: de key staat in getForgottenList, en info en forcesave kennen hem niet meer (geen callback)",
+  "bron": "fixer O0, 2026-10-27, DS 10.0.0.1 (e2e/office_ds.sh), via de DocStub van e2e/office_harness.py",
+  "http": 200,
+  "request": {
+   "c": "info",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 1
+  }
+ },
+ "forcesave na forgotten": {
+  "bron": "fixer O0, 2026-10-27, DS 10.0.0.1 (e2e/office_ds.sh), via de DocStub van e2e/office_harness.py",
+  "http": 200,
+  "request": {
+   "c": "forcesave",
+   "userdata": "x",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 1
+  }
+ },
+ "version token met een fout geheim": {
+  "http": 200,
+  "request": {
+   "c": "version",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "error": 6
+  }
+ },
+ "getForgottenList": {
+  "http": 200,
+  "request": {
+   "c": "getForgottenList",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "error": 0,
+   "keys": [
+    "<key>"
+   ]
+  }
+ },
+ "getForgotten": {
+  "http": 200,
+  "request": {
+   "c": "getForgotten",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0,
+   "url": "http://127.0.0.1:18091/cache/files/forgotten/<key>/output.docx/output.docx?md5=…&expires=<unix>&shardkey=<key>&filename=output.docx"
+  }
+ },
+ "deleteForgotten": {
+  "http": 200,
+  "request": {
+   "c": "deleteForgotten",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 0
+  }
+ },
+ "getForgotten na delete": {
+  "http": 200,
+  "request": {
+   "c": "getForgotten",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 1
+  }
+ },
+ "getForgotten onbekende key": {
+  "http": 200,
+  "request": {
+   "c": "getForgotten",
+   "key": "<key>",
+   "token": "<JWT>"
+  },
+  "answer": {
+   "key": "<key>",
+   "error": 1
+  }
+ },
+ "forcesave callback": {
+  "note": "de velden van de status 6 na forcesave met userdata (alleen deze velden opgenomen)",
+  "body": {
+   "key": "<key>",
+   "status": 6,
+   "users": [
+    "u1"
+   ],
+   "userdata": "timer",
+   "lastsave": "2026-10-26T19:53:18.000Z",
+   "forcesavetype": 0,
+   "token": "<JWT>",
+   "filetype": "docx"
+  }
+ }
+}

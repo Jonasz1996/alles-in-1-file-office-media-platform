@@ -1,0 +1,8076 @@
+{
+ "omschrijving": "De metingen Ma–Mp (§4.5) en de belastingtest (§4.6) van fase 5, in de sandbox en uit CI; zie metingen.md.",
+ "datum": "2026-11-01 en 2026-11-02",
+ "omstandigheden": {
+  "datum": "2026-11-01 20:10:30 UTC",
+  "commit": "a38604d",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "cores": 4,
+  "geheugen_gib": 15.7,
+  "ffmpeg": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+  "worker_cores": [
+   0,
+   1,
+   2
+  ],
+  "max_procs": 3
+ },
+ "ci": {
+  "run": 41341675278,
+  "url": "https://github.com/Jonasz1996/alles-in-1-file-office-media-platform/actions/runs/41341675278",
+  "job_e2e_media_perf": 124952942710,
+  "commit": "d850c4f",
+  "browser": "HeadlessChrome 156.0.8078.4 (Chrome for Testing)",
+  "ma_vp9_ms": [
+   349,
+   353,
+   348,
+   345,
+   344,
+   342,
+   369,
+   345,
+   350,
+   344
+  ],
+  "ma_h264_ms": [
+   491,
+   477,
+   483,
+   477,
+   473,
+   479,
+   477,
+   475,
+   470,
+   476
+  ],
+  "mb_e2e_ms": [
+   1512,
+   1527,
+   1492,
+   1508,
+   1523,
+   1532,
+   1510,
+   1515,
+   1508,
+   1512
+  ],
+  "mc_direct_ms": [
+   1813,
+   1867,
+   1914,
+   1922,
+   1814,
+   1814,
+   1812,
+   1867,
+   1814,
+   1813
+  ],
+  "mc_remux_ms": [
+   855,
+   805,
+   854,
+   805,
+   856,
+   855,
+   855,
+   855,
+   855,
+   854
+  ],
+  "mc_transcode_ms": [
+   2269,
+   2367,
+   2317,
+   2318,
+   2269,
+   2266,
+   2315,
+   2317,
+   2315,
+   2318
+  ],
+  "s13_eerste_beeld_vp9_ms": [
+   1636.3,
+   1154.8,
+   828.4
+  ],
+  "m4_zonder_browser_max_s": {
+   "transcode_1080": 0.976,
+   "naast_twee": 1.978,
+   "sprong_70": 1.282,
+   "remux": 0.152,
+   "runs": 3,
+   "treden": "alleen 1080; drie tegelijk 1080 + 720 + 720"
+  }
+ },
+ "metingen": {
+  "Ma": {
+   "grens_ms": 2000,
+   "sandbox_vp9_chromium141": {
+    "ms": [
+     450,
+     433,
+     441,
+     448,
+     428,
+     430,
+     427,
+     436,
+     439,
+     435
+    ],
+    "mediaan": 436,
+    "slechtste": 450
+   },
+   "ci_vp9": {
+    "waarden": [
+     349,
+     353,
+     348,
+     345,
+     344,
+     342,
+     369,
+     345,
+     350,
+     344
+    ],
+    "mediaan": 346.0,
+    "slechtste": 369
+   },
+   "ci_h264": {
+    "waarden": [
+     491,
+     477,
+     483,
+     477,
+     473,
+     479,
+     477,
+     475,
+     470,
+     476
+    ],
+    "mediaan": 477.0,
+    "slechtste": 491
+   },
+   "geslaagd": true
+  },
+  "Mb": {
+   "e2e": {
+    "grens_ms": 5000,
+    "sandbox_vp9": {
+     "ms": [
+      1801,
+      1704,
+      1668,
+      1844,
+      1732,
+      1595,
+      1638,
+      1580,
+      1659,
+      1480
+     ],
+     "mediaan": 1663,
+     "slechtste": 1844
+    },
+    "ci_h264": {
+     "waarden": [
+      1512,
+      1527,
+      1492,
+      1508,
+      1523,
+      1532,
+      1510,
+      1515,
+      1508,
+      1512
+     ],
+     "mediaan": 1512.0,
+     "slechtste": 1532
+    }
+   },
+   "zonder_browser": {
+    "alleen_1080": {
+     "waarden": [
+      1.477,
+      1.658,
+      1.273,
+      1.337,
+      1.273
+     ],
+     "n": 5,
+     "mediaan": 1.337,
+     "slechtste": 1.658
+    },
+    "alleen_720": {
+     "waarden": [
+      0.767,
+      0.722,
+      0.739,
+      0.723,
+      0.662
+     ],
+     "n": 5,
+     "mediaan": 0.723,
+     "slechtste": 0.767
+    },
+    "naast_2": {
+     "waarden": [
+      1.593,
+      1.243,
+      1.056,
+      1.23,
+      1.009
+     ],
+     "n": 5,
+     "mediaan": 1.23,
+     "slechtste": 1.593
+    },
+    "drie_tegelijk": {
+     "waarden": [
+      2.432,
+      1.098,
+      1.141,
+      1.06,
+      1.119,
+      2.406,
+      2.247,
+      0.833,
+      1.756,
+      2.164,
+      1.036,
+      1.453,
+      1.14,
+      2.255,
+      1.012
+     ],
+     "n": 15,
+     "mediaan": 1.141,
+     "slechtste": 2.432,
+     "per_run": [
+      [
+       2.432,
+       1.098,
+       1.141
+      ],
+      [
+       1.06,
+       1.119,
+       2.406
+      ],
+      [
+       2.247,
+       0.833,
+       1.756
+      ],
+      [
+       2.164,
+       1.036,
+       1.453
+      ],
+      [
+       1.14,
+       2.255,
+       1.012
+      ]
+     ]
+    },
+    "treden": {
+     "alleen_1080": [
+      1080,
+      1080,
+      1080,
+      1080,
+      1080
+     ],
+     "alleen_720": [
+      720,
+      720,
+      720,
+      720,
+      720
+     ],
+     "naast_2": [
+      [
+       1080,
+       480,
+       480
+      ],
+      [
+       1080,
+       480,
+       480
+      ],
+      [
+       1080,
+       480,
+       480
+      ],
+      [
+       1080,
+       480,
+       480
+      ],
+      [
+       1080,
+       480,
+       480
+      ]
+     ],
+     "drie_tegelijk": [
+      [
+       1080,
+       480,
+       480
+      ],
+      [
+       480,
+       480,
+       1080
+      ],
+      [
+       1080,
+       480,
+       480
+      ],
+      [
+       1080,
+       480,
+       480
+      ],
+      [
+       480,
+       1080,
+       480
+      ]
+     ]
+    },
+    "grenzen": {
+     "alleen_mediaan": 2.5,
+     "alleen_slechtste": 3.0,
+     "naast_2": 5.0
+    }
+   },
+   "zonder_browser_ci_m4": {
+    "transcode_1080": 0.976,
+    "naast_twee": 1.978,
+    "sprong_70": 1.282,
+    "remux": 0.152,
+    "runs": 3,
+    "treden": "alleen 1080; drie tegelijk 1080 + 720 + 720"
+   }
+  },
+  "Mc": {
+   "grens_ms_tabel": {
+    "direct": 1500,
+    "remux": 1000,
+    "transcode": 3000
+   },
+   "grens_ms_klaar_als": 3000,
+   "sandbox": {
+    "direct": {
+     "ms": [
+      2078,
+      1822,
+      2095,
+      2020,
+      2020,
+      2021,
+      1824,
+      1821,
+      1834,
+      2079
+     ],
+     "mediaan": 2020,
+     "slechtste": 2095
+    },
+    "remux": {
+     "ms": [
+      859,
+      910,
+      912,
+      856,
+      910,
+      910,
+      859,
+      859,
+      860,
+      918
+     ],
+     "mediaan": 885,
+     "slechtste": 918
+    },
+    "transcode": {
+     "ms": [
+      2362,
+      2477,
+      2324,
+      2483,
+      2322,
+      2278,
+      2485,
+      2320,
+      2279,
+      2370
+     ],
+     "mediaan": 2343,
+     "slechtste": 2485
+    }
+   },
+   "ci": {
+    "direct": {
+     "waarden": [
+      1813,
+      1867,
+      1914,
+      1922,
+      1814,
+      1814,
+      1812,
+      1867,
+      1814,
+      1813
+     ],
+     "mediaan": 1814.0,
+     "slechtste": 1922
+    },
+    "remux": {
+     "waarden": [
+      855,
+      805,
+      854,
+      805,
+      856,
+      855,
+      855,
+      855,
+      855,
+      854
+     ],
+     "mediaan": 855.0,
+     "slechtste": 856
+    },
+    "transcode": {
+     "waarden": [
+      2269,
+      2367,
+      2317,
+      2318,
+      2269,
+      2266,
+      2315,
+      2317,
+      2315,
+      2318
+     ],
+     "mediaan": 2316.0,
+     "slechtste": 2367
+    }
+   },
+   "onderzoek_400_mbit": {
+    "direct": {
+     "ms": [
+      1496,
+      1405,
+      1485,
+      1404,
+      1403,
+      1418,
+      1493,
+      1546,
+      1489,
+      1628
+     ],
+     "mediaan": 1487,
+     "slechtste": 1628
+    },
+    "remux": {
+     "ms": [
+      759,
+      760,
+      832,
+      816,
+      774,
+      762,
+      808,
+      808,
+      818,
+      760
+     ],
+     "mediaan": 791,
+     "slechtste": 832
+    },
+    "transcode": {
+     "ms": [
+      2274,
+      2174,
+      2171,
+      2167,
+      2222,
+      2120,
+      2169,
+      2223,
+      2175,
+      2017
+     ],
+     "mediaan": 2173,
+     "slechtste": 2274
+    }
+   }
+  },
+  "Md": {
+   "standaard": {
+    "bench": {
+     "f": 1.4,
+     "f_dec": 1.529,
+     "at": "2026-11-01T20:11:08.894760Z"
+    },
+    "config": {
+     "enabled": true,
+     "cpu_budget": 3.0,
+     "max_transcodes": 3,
+     "max_user_transcodes": 2,
+     "public_transcode": false,
+     "hdr_1080": false,
+     "cache_gb": 20,
+     "musicbrainz": false,
+     "bench": {
+      "f": 1.4,
+      "f_dec": 1.529,
+      "at": "2026-11-01T20:11:08.894760Z"
+     }
+    },
+    "waakhond": {
+     "ingegrepen": false,
+     "minst_vrij_gib": 12.38
+    },
+    "runs": [
+     {
+      "duur_s": 752.7,
+      "rust_voor_cores": 0.12,
+      "a": {
+       "geslaagd": false,
+       "problemen": [
+        "1 keer haperen"
+       ],
+       "start_s": [
+        1.106,
+        2.009,
+        1.868
+       ],
+       "haperen": 1,
+       "haperen_s": 0.6,
+       "zoeken_s": [
+        3.025,
+        0.078,
+        2.388
+       ],
+       "snelheid": [
+        2.22,
+        2.51,
+        2.08
+       ],
+       "hoogte": [
+        720,
+        480,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 448,
+        "p95_ms": 68.1,
+        "max_ms": 192.4,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 233.7,
+        "app_cores": 0.181,
+        "worker_cores": 1.679,
+        "machine_cores": 2.531,
+        "anders_cores": 0.671,
+        "app_rss_mb_max": 150.9,
+        "worker_rss_mb_max": 37.2,
+        "ffmpeg_rss_mb_max": 527.8,
+        "worker_totaal_rss_mb_max": 564.9,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "480 veryfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [],
+       "docx": null
+      },
+      "b": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        1.873,
+        1.33,
+        1.54
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        1.73,
+        1.94,
+        1.92
+       ],
+       "hoogte": [
+        720,
+        480,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 582,
+        "p95_ms": 48.2,
+        "max_ms": 219.1,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 301.7,
+        "app_cores": 0.099,
+        "worker_cores": 1.229,
+        "machine_cores": 2.279,
+        "anders_cores": 0.951,
+        "app_rss_mb_max": 152.8,
+        "worker_rss_mb_max": 37.2,
+        "ffmpeg_rss_mb_max": 532.8,
+        "worker_totaal_rss_mb_max": 569.9,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "480 veryfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [],
+       "docx": null
+      },
+      "api_p95_binnen_ms": 55.9,
+      "worker_rss_kb": 210980,
+      "cache_mb_per_min": 27.9,
+      "ffmpeg_max": 3
+     },
+     {
+      "duur_s": 533.2,
+      "rust_voor_cores": 0.49,
+      "a": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        0.91,
+        0.937,
+        0.982
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        0.183,
+        0.036,
+        0.01
+       ],
+       "snelheid": [
+        2.75,
+        2.64,
+        2.63
+       ],
+       "hoogte": [
+        720,
+        480,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 441,
+        "p95_ms": 70.9,
+        "max_ms": 395.5,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 229.7,
+        "app_cores": 0.175,
+        "worker_cores": 1.573,
+        "machine_cores": 2.666,
+        "anders_cores": 0.918,
+        "app_rss_mb_max": 154.9,
+        "worker_rss_mb_max": 37.2,
+        "ffmpeg_rss_mb_max": 528.7,
+        "worker_totaal_rss_mb_max": 565.9,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "480 veryfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [],
+       "docx": null
+      },
+      "b": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        1.896,
+        1.342,
+        1.905
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        1.72,
+        1.88,
+        1.9
+       ],
+       "hoogte": [
+        720,
+        480,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 584,
+        "p95_ms": 37.3,
+        "max_ms": 166.3,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 301.0,
+        "app_cores": 0.096,
+        "worker_cores": 1.227,
+        "machine_cores": 1.704,
+        "anders_cores": 0.381,
+        "app_rss_mb_max": 198.9,
+        "worker_rss_mb_max": 37.2,
+        "ffmpeg_rss_mb_max": 532.7,
+        "worker_totaal_rss_mb_max": 569.9,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "480 veryfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [],
+       "docx": null
+      },
+      "api_p95_binnen_ms": 51.7,
+      "worker_rss_kb": 210968,
+      "cache_mb_per_min": 28.1,
+      "ffmpeg_max": 3
+     },
+     {
+      "duur_s": 534.2,
+      "rust_voor_cores": 0.36,
+      "a": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        0.909,
+        1.087,
+        1.387
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        0.009,
+        0.022,
+        0.008
+       ],
+       "snelheid": [
+        2.79,
+        2.71,
+        2.49
+       ],
+       "hoogte": [
+        720,
+        480,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 447,
+        "p95_ms": 40.7,
+        "max_ms": 175.1,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 229.9,
+        "app_cores": 0.181,
+        "worker_cores": 1.638,
+        "machine_cores": 2.333,
+        "anders_cores": 0.514,
+        "app_rss_mb_max": 160.9,
+        "worker_rss_mb_max": 37.2,
+        "ffmpeg_rss_mb_max": 529.3,
+        "worker_totaal_rss_mb_max": 566.5,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "480 veryfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [],
+       "docx": null
+      },
+      "b": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        2.494,
+        1.697,
+        2.425
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        1.63,
+        1.82,
+        1.79
+       ],
+       "hoogte": [
+        720,
+        480,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 582,
+        "p95_ms": 48.8,
+        "max_ms": 248.5,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 301.8,
+        "app_cores": 0.1,
+        "worker_cores": 1.286,
+        "machine_cores": 2.444,
+        "anders_cores": 1.058,
+        "app_rss_mb_max": 162.1,
+        "worker_rss_mb_max": 37.2,
+        "ffmpeg_rss_mb_max": 532.9,
+        "worker_totaal_rss_mb_max": 570.1,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "480 veryfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [],
+       "docx": null
+      },
+      "api_p95_binnen_ms": 46.3,
+      "worker_rss_kb": 211048,
+      "cache_mb_per_min": 28.1,
+      "ffmpeg_max": 3
+     },
+     {
+      "duur_s": 533.5,
+      "rust_voor_cores": 0.47,
+      "a": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        1.037,
+        1.063,
+        1.2
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        2.528,
+        0.007,
+        0.006
+       ],
+       "snelheid": [
+        2.63,
+        2.54,
+        2.44
+       ],
+       "hoogte": [
+        720,
+        480,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 443,
+        "p95_ms": 71.6,
+        "max_ms": 184.9,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 230.1,
+        "app_cores": 0.171,
+        "worker_cores": 1.632,
+        "machine_cores": 2.691,
+        "anders_cores": 0.888,
+        "app_rss_mb_max": 166.1,
+        "worker_rss_mb_max": 37.2,
+        "ffmpeg_rss_mb_max": 529.4,
+        "worker_totaal_rss_mb_max": 566.6,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "480 veryfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [],
+       "docx": null
+      },
+      "b": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        2.16,
+        1.538,
+        1.425
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        1.7,
+        1.88,
+        1.9
+       ],
+       "hoogte": [
+        720,
+        480,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 582,
+        "p95_ms": 40.6,
+        "max_ms": 241.8,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 301.0,
+        "app_cores": 0.098,
+        "worker_cores": 1.282,
+        "machine_cores": 2.199,
+        "anders_cores": 0.819,
+        "app_rss_mb_max": 168.6,
+        "worker_rss_mb_max": 37.2,
+        "ffmpeg_rss_mb_max": 532.6,
+        "worker_totaal_rss_mb_max": 569.7,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "480 veryfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [],
+       "docx": null
+      },
+      "api_p95_binnen_ms": 54.0,
+      "worker_rss_kb": 210892,
+      "cache_mb_per_min": 28.1,
+      "ffmpeg_max": 3
+     },
+     {
+      "duur_s": 534.8,
+      "rust_voor_cores": 0.28,
+      "a": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        0.929,
+        1.12,
+        1.403
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        0.594,
+        0.006,
+        0.643
+       ],
+       "snelheid": [
+        2.67,
+        2.56,
+        2.36
+       ],
+       "hoogte": [
+        720,
+        480,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 436,
+        "p95_ms": 80.4,
+        "max_ms": 447.8,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 230.5,
+        "app_cores": 0.188,
+        "worker_cores": 1.679,
+        "machine_cores": 2.693,
+        "anders_cores": 0.826,
+        "app_rss_mb_max": 360.7,
+        "worker_rss_mb_max": 37.2,
+        "ffmpeg_rss_mb_max": 528.8,
+        "worker_totaal_rss_mb_max": 566.0,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "480 veryfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [],
+       "docx": null
+      },
+      "b": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        1.591,
+        1.676,
+        1.671
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        1.71,
+        1.85,
+        1.85
+       ],
+       "hoogte": [
+        720,
+        480,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 586,
+        "p95_ms": 39.7,
+        "max_ms": 152.8,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 302.0,
+        "app_cores": 0.095,
+        "worker_cores": 1.322,
+        "machine_cores": 2.098,
+        "anders_cores": 0.681,
+        "app_rss_mb_max": 172.9,
+        "worker_rss_mb_max": 37.2,
+        "ffmpeg_rss_mb_max": 532.4,
+        "worker_totaal_rss_mb_max": 569.6,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "480 veryfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [],
+       "docx": null
+      },
+      "api_p95_binnen_ms": 65.9,
+      "worker_rss_kb": 210860,
+      "cache_mb_per_min": 28.1,
+      "ffmpeg_max": 3
+     }
+    ],
+    "a": {
+     "geslaagd": "4 van 5",
+     "start_s": {
+      "waarden": [
+       1.106,
+       2.009,
+       1.868,
+       0.91,
+       0.937,
+       0.982,
+       0.909,
+       1.087,
+       1.387,
+       1.037,
+       1.063,
+       1.2,
+       0.929,
+       1.12,
+       1.403
+      ],
+      "n": 15,
+      "mediaan": 1.087,
+      "slechtste": 2.009
+     },
+     "haperen": {
+      "waarden": [
+       1,
+       0,
+       0,
+       0,
+       0
+      ],
+      "n": 5,
+      "mediaan": 0,
+      "slechtste": 1
+     },
+     "snelheid": {
+      "waarden": [
+       2.22,
+       2.51,
+       2.08,
+       2.75,
+       2.64,
+       2.63,
+       2.79,
+       2.71,
+       2.49,
+       2.63,
+       2.54,
+       2.44,
+       2.67,
+       2.56,
+       2.36
+      ],
+      "n": 15,
+      "mediaan": 2.56,
+      "slechtste": 2.08
+     },
+     "api_buiten_p95_ms": {
+      "waarden": [
+       68.1,
+       70.9,
+       40.7,
+       71.6,
+       80.4
+      ],
+      "n": 5,
+      "mediaan": 70.9,
+      "slechtste": 80.4
+     },
+     "worker_totaal_rss_mb": {
+      "waarden": [
+       564.9,
+       565.9,
+       566.5,
+       566.6,
+       566.0
+      ],
+      "n": 5,
+      "mediaan": 566.0,
+      "slechtste": 566.6
+     },
+     "anders_cores": {
+      "waarden": [
+       0.671,
+       0.918,
+       0.514,
+       0.888,
+       0.826
+      ],
+      "n": 5,
+      "mediaan": 0.826,
+      "slechtste": 0.918
+     },
+     "treden": [
+      "720 veryfast + 480 veryfast + 480 veryfast"
+     ]
+    },
+    "b": {
+     "geslaagd": "5 van 5",
+     "start_s": {
+      "waarden": [
+       1.873,
+       1.33,
+       1.54,
+       1.896,
+       1.342,
+       1.905,
+       2.494,
+       1.697,
+       2.425,
+       2.16,
+       1.538,
+       1.425,
+       1.591,
+       1.676,
+       1.671
+      ],
+      "n": 15,
+      "mediaan": 1.676,
+      "slechtste": 2.494
+     },
+     "haperen": {
+      "waarden": [
+       0,
+       0,
+       0,
+       0,
+       0
+      ],
+      "n": 5,
+      "mediaan": 0,
+      "slechtste": 0
+     },
+     "snelheid": {
+      "waarden": [
+       1.73,
+       1.94,
+       1.92,
+       1.72,
+       1.88,
+       1.9,
+       1.63,
+       1.82,
+       1.79,
+       1.7,
+       1.88,
+       1.9,
+       1.71,
+       1.85,
+       1.85
+      ],
+      "n": 15,
+      "mediaan": 1.85,
+      "slechtste": 1.63
+     },
+     "api_buiten_p95_ms": {
+      "waarden": [
+       48.2,
+       37.3,
+       48.8,
+       40.6,
+       39.7
+      ],
+      "n": 5,
+      "mediaan": 40.6,
+      "slechtste": 48.8
+     },
+     "worker_totaal_rss_mb": {
+      "waarden": [
+       569.9,
+       569.9,
+       570.1,
+       569.7,
+       569.6
+      ],
+      "n": 5,
+      "mediaan": 569.9,
+      "slechtste": 570.1
+     },
+     "anders_cores": {
+      "waarden": [
+       0.951,
+       0.381,
+       1.058,
+       0.819,
+       0.681
+      ],
+      "n": 5,
+      "mediaan": 0.819,
+      "slechtste": 1.058
+     },
+     "treden": [
+      "720 veryfast + 480 veryfast + 480 veryfast"
+     ]
+    },
+    "api_p95_binnen_ms": {
+     "waarden": [
+      55.9,
+      51.7,
+      46.3,
+      54.0,
+      65.9
+     ],
+     "n": 5,
+     "mediaan": 54.0,
+     "slechtste": 65.9
+    }
+   },
+   "met_docx_elke_30_s": {
+    "bench": [
+     {
+      "f": 1.298,
+      "f_dec": 1.35,
+      "at": "2026-11-02T00:11:06.208485Z"
+     },
+     {
+      "f": 1.221,
+      "f_dec": 1.285,
+      "at": "2026-11-02T00:31:50.286102Z"
+     }
+    ],
+    "config": {
+     "enabled": true,
+     "cpu_budget": 3.0,
+     "max_transcodes": 3,
+     "max_user_transcodes": 2,
+     "public_transcode": false,
+     "hdr_1080": false,
+     "cache_gb": 20,
+     "musicbrainz": false,
+     "bench": {
+      "f": 1.298,
+      "f_dec": 1.35,
+      "at": "2026-11-02T00:11:06.208485Z"
+     }
+    },
+    "waakhond": {
+     "ingegrepen": false,
+     "minst_vrij_gib": 12.55
+    },
+    "runs": [
+     {
+      "duur_s": 535.2,
+      "rust_voor_cores": 0.02,
+      "a": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        1.785,
+        2.346,
+        1.791
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        2.384,
+        2.627,
+        0.007
+       ],
+       "snelheid": [
+        2.12,
+        1.57,
+        2.44
+       ],
+       "hoogte": [
+        720,
+        720,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 444,
+        "p95_ms": 71.9,
+        "max_ms": 179.8,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 231.0,
+        "app_cores": 0.175,
+        "worker_cores": 1.812,
+        "machine_cores": 2.574,
+        "anders_cores": 0.587,
+        "app_rss_mb_max": 156.2,
+        "worker_rss_mb_max": 36.9,
+        "ffmpeg_rss_mb_max": 594.9,
+        "worker_totaal_rss_mb_max": 631.8,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "720 veryfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [
+        [
+         "ok",
+         113
+        ]
+       ],
+       "docx": {
+        "geupload": 7,
+        "klaar": 7,
+        "seconden": {
+         "waarden": [
+          5.68,
+          4.57,
+          6.74,
+          6.67,
+          3.59,
+          2.65,
+          2.58
+         ],
+         "n": 7,
+         "mediaan": 4.57,
+         "slechtste": 6.74
+        },
+        "anders": []
+       }
+      },
+      "b": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        2.051,
+        2.418,
+        1.313
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        1.68,
+        1.51,
+        1.89
+       ],
+       "hoogte": [
+        720,
+        720,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 586,
+        "p95_ms": 30.0,
+        "max_ms": 154.2,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 301.8,
+        "app_cores": 0.109,
+        "worker_cores": 1.504,
+        "machine_cores": 2.086,
+        "anders_cores": 0.473,
+        "app_rss_mb_max": 158.9,
+        "worker_rss_mb_max": 36.9,
+        "ffmpeg_rss_mb_max": 600.1,
+        "worker_totaal_rss_mb_max": 637.0,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "720 veryfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [
+        [
+         "ok",
+         148
+        ]
+       ],
+       "docx": {
+        "geupload": 10,
+        "klaar": 10,
+        "seconden": {
+         "waarden": [
+          4.59,
+          4.57,
+          4.59,
+          5.73,
+          3.62,
+          3.58,
+          3.6,
+          3.58,
+          2.59,
+          3.6
+         ],
+         "n": 10,
+         "mediaan": 3.61,
+         "slechtste": 5.73
+        },
+        "anders": []
+       }
+      },
+      "api_p95_binnen_ms": 45.7,
+      "worker_rss_kb": 236336,
+      "cache_mb_per_min": 36.1,
+      "ffmpeg_max": 3,
+      "ds_geheugen_mb_max": 529
+     },
+     {
+      "duur_s": 537.0,
+      "rust_voor_cores": 0.09,
+      "a": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        1.926,
+        1.796,
+        1.622
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        3.058,
+        2.213,
+        1.592
+       ],
+       "snelheid": [
+        1.85,
+        2.03,
+        2.36
+       ],
+       "hoogte": [
+        1080,
+        720,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 440,
+        "p95_ms": 96.1,
+        "max_ms": 459.8,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 232.4,
+        "app_cores": 0.182,
+        "worker_cores": 1.756,
+        "machine_cores": 2.812,
+        "anders_cores": 0.874,
+        "app_rss_mb_max": 165.9,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 649.2,
+        "worker_totaal_rss_mb_max": 686.3,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "1080 superfast",
+        "720 superfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [
+        [
+         "ok",
+         113
+        ]
+       ],
+       "docx": {
+        "geupload": 7,
+        "klaar": 7,
+        "seconden": {
+         "waarden": [
+          6.13,
+          5.72,
+          8.34,
+          5.74,
+          2.55,
+          3.62,
+          3.62
+         ],
+         "n": 7,
+         "mediaan": 5.72,
+         "slechtste": 8.34
+        },
+        "anders": []
+       }
+      },
+      "b": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        2.754,
+        1.968,
+        1.675
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        1.51,
+        1.71,
+        1.84
+       ],
+       "hoogte": [
+        1080,
+        720,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 582,
+        "p95_ms": 46.7,
+        "max_ms": 321.3,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 302.1,
+        "app_cores": 0.11,
+        "worker_cores": 1.44,
+        "machine_cores": 2.577,
+        "anders_cores": 1.027,
+        "app_rss_mb_max": 169.9,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 654.4,
+        "worker_totaal_rss_mb_max": 691.5,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "1080 superfast",
+        "720 superfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [
+        [
+         "ok",
+         147
+        ]
+       ],
+       "docx": {
+        "geupload": 10,
+        "klaar": 10,
+        "seconden": {
+         "waarden": [
+          7.29,
+          5.73,
+          5.63,
+          4.57,
+          3.58,
+          4.64,
+          4.65,
+          3.58,
+          3.59,
+          3.58
+         ],
+         "n": 10,
+         "mediaan": 4.605,
+         "slechtste": 7.29
+        },
+        "anders": []
+       }
+      },
+      "api_p95_binnen_ms": 77.0,
+      "worker_rss_kb": 292184,
+      "cache_mb_per_min": 46.1,
+      "ffmpeg_max": 3,
+      "ds_geheugen_mb_max": 660
+     },
+     {
+      "duur_s": 535.4,
+      "rust_voor_cores": 0.03,
+      "a": {
+       "geslaagd": false,
+       "problemen": [
+        "2 keer haperen"
+       ],
+       "start_s": [
+        1.64,
+        1.588,
+        1.331
+       ],
+       "haperen": 2,
+       "haperen_s": 0.85,
+       "zoeken_s": [
+        2.992,
+        1.912,
+        0.011
+       ],
+       "snelheid": [
+        1.76,
+        1.96,
+        2.35
+       ],
+       "hoogte": [
+        1080,
+        720,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 440,
+        "p95_ms": 71.3,
+        "max_ms": 227.7,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 230.4,
+        "app_cores": 0.178,
+        "worker_cores": 1.774,
+        "machine_cores": 3.094,
+        "anders_cores": 1.142,
+        "app_rss_mb_max": 174.7,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 648.9,
+        "worker_totaal_rss_mb_max": 686.0,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "1080 superfast",
+        "720 superfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [
+        [
+         "ok",
+         112
+        ]
+       ],
+       "docx": {
+        "geupload": 7,
+        "klaar": 7,
+        "seconden": {
+         "waarden": [
+          6.14,
+          7.19,
+          7.18,
+          6.7,
+          3.56,
+          3.61,
+          3.58
+         ],
+         "n": 7,
+         "mediaan": 6.14,
+         "slechtste": 7.19
+        },
+        "anders": []
+       }
+      },
+      "b": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        2.944,
+        1.961,
+        1.452
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        1.47,
+        1.78,
+        1.9
+       ],
+       "hoogte": [
+        1080,
+        720,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 582,
+        "p95_ms": 48.4,
+        "max_ms": 372.4,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 302.9,
+        "app_cores": 0.114,
+        "worker_cores": 1.441,
+        "machine_cores": 2.108,
+        "anders_cores": 0.553,
+        "app_rss_mb_max": 175.3,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 654.8,
+        "worker_totaal_rss_mb_max": 691.9,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "1080 superfast",
+        "720 superfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [
+        [
+         "ok",
+         147
+        ]
+       ],
+       "docx": {
+        "geupload": 10,
+        "klaar": 10,
+        "seconden": {
+         "waarden": [
+          5.71,
+          7.14,
+          6.15,
+          4.58,
+          3.65,
+          4.6,
+          4.59,
+          3.65,
+          3.6,
+          3.58
+         ],
+         "n": 10,
+         "mediaan": 4.585,
+         "slechtste": 7.14
+        },
+        "anders": []
+       }
+      },
+      "api_p95_binnen_ms": 69.9,
+      "worker_rss_kb": 292184,
+      "cache_mb_per_min": 46.3,
+      "ffmpeg_max": 3,
+      "ds_geheugen_mb_max": 671
+     },
+     {
+      "duur_s": 536.0,
+      "rust_voor_cores": 0.04,
+      "a": {
+       "geslaagd": false,
+       "problemen": [
+        "1 keer haperen"
+       ],
+       "start_s": [
+        1.61,
+        1.443,
+        1.744
+       ],
+       "haperen": 1,
+       "haperen_s": 0.91,
+       "zoeken_s": [
+        2.482,
+        2.507,
+        0.017
+       ],
+       "snelheid": [
+        2.06,
+        2.1,
+        2.4
+       ],
+       "hoogte": [
+        1080,
+        720,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 444,
+        "p95_ms": 58.9,
+        "max_ms": 192.5,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 230.6,
+        "app_cores": 0.176,
+        "worker_cores": 1.787,
+        "machine_cores": 2.489,
+        "anders_cores": 0.526,
+        "app_rss_mb_max": 236.7,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 648.8,
+        "worker_totaal_rss_mb_max": 686.0,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "1080 superfast",
+        "720 superfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [
+        [
+         "ok",
+         113
+        ]
+       ],
+       "docx": {
+        "geupload": 7,
+        "klaar": 7,
+        "seconden": {
+         "waarden": [
+          4.59,
+          4.59,
+          3.58,
+          5.61,
+          3.62,
+          3.63,
+          3.59
+         ],
+         "n": 7,
+         "mediaan": 3.63,
+         "slechtste": 5.61
+        },
+        "anders": []
+       }
+      },
+      "b": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        3.028,
+        1.808,
+        1.238
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        1.53,
+        1.7,
+        1.91
+       ],
+       "hoogte": [
+        1080,
+        720,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 582,
+        "p95_ms": 59.8,
+        "max_ms": 279.8,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 303.0,
+        "app_cores": 0.114,
+        "worker_cores": 1.451,
+        "machine_cores": 2.428,
+        "anders_cores": 0.863,
+        "app_rss_mb_max": 180.5,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 654.4,
+        "worker_totaal_rss_mb_max": 691.5,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "1080 superfast",
+        "720 superfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [
+        [
+         "ok",
+         148
+        ]
+       ],
+       "docx": {
+        "geupload": 10,
+        "klaar": 10,
+        "seconden": {
+         "waarden": [
+          6.69,
+          6.88,
+          4.61,
+          4.78,
+          3.62,
+          3.63,
+          3.59,
+          3.58,
+          3.58,
+          3.58
+         ],
+         "n": 10,
+         "mediaan": 3.625,
+         "slechtste": 6.88
+        },
+        "anders": []
+       }
+      },
+      "api_p95_binnen_ms": 53.5,
+      "worker_rss_kb": 292032,
+      "cache_mb_per_min": 46.3,
+      "ffmpeg_max": 3,
+      "ds_geheugen_mb_max": 666
+     },
+     {
+      "duur_s": 534.0,
+      "rust_voor_cores": 0.04,
+      "a": {
+       "geslaagd": false,
+       "problemen": [
+        "1 keer haperen"
+       ],
+       "start_s": [
+        1.776,
+        1.546,
+        1.249
+       ],
+       "haperen": 1,
+       "haperen_s": 0.1,
+       "zoeken_s": [
+        3.287,
+        2.615,
+        0.009
+       ],
+       "snelheid": [
+        1.78,
+        2.12,
+        2.38
+       ],
+       "hoogte": [
+        1080,
+        720,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 438,
+        "p95_ms": 75.1,
+        "max_ms": 379.0,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 230.2,
+        "app_cores": 0.177,
+        "worker_cores": 1.762,
+        "machine_cores": 3.013,
+        "anders_cores": 1.074,
+        "app_rss_mb_max": 351.8,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 648.8,
+        "worker_totaal_rss_mb_max": 685.9,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "1080 superfast",
+        "720 superfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [
+        [
+         "ok",
+         111
+        ]
+       ],
+       "docx": {
+        "geupload": 7,
+        "klaar": 7,
+        "seconden": {
+         "waarden": [
+          5.59,
+          6.16,
+          7.0,
+          5.65,
+          3.6,
+          2.57,
+          3.6
+         ],
+         "n": 7,
+         "mediaan": 5.59,
+         "slechtste": 7.0
+        },
+        "anders": []
+       }
+      },
+      "b": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        2.551,
+        2.004,
+        1.072
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        1.51,
+        1.74,
+        1.89
+       ],
+       "hoogte": [
+        1080,
+        720,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 578,
+        "p95_ms": 67.2,
+        "max_ms": 246.7,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 301.6,
+        "app_cores": 0.116,
+        "worker_cores": 1.487,
+        "machine_cores": 2.667,
+        "anders_cores": 1.064,
+        "app_rss_mb_max": 188.7,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 655.2,
+        "worker_totaal_rss_mb_max": 692.4,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "1080 superfast",
+        "720 superfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [
+        [
+         "ok",
+         147
+        ]
+       ],
+       "docx": {
+        "geupload": 10,
+        "klaar": 10,
+        "seconden": {
+         "waarden": [
+          4.56,
+          6.39,
+          5.74,
+          5.78,
+          3.68,
+          3.65,
+          3.58,
+          3.6,
+          2.57,
+          2.58
+         ],
+         "n": 10,
+         "mediaan": 3.665,
+         "slechtste": 6.39
+        },
+        "anders": []
+       }
+      },
+      "api_p95_binnen_ms": 62.9,
+      "worker_rss_kb": 292284,
+      "cache_mb_per_min": 46.3,
+      "ffmpeg_max": 3,
+      "ds_geheugen_mb_max": 666
+     }
+    ],
+    "a": {
+     "geslaagd": "2 van 5",
+     "start_s": {
+      "waarden": [
+       1.785,
+       2.346,
+       1.791,
+       1.926,
+       1.796,
+       1.622,
+       1.64,
+       1.588,
+       1.331,
+       1.61,
+       1.443,
+       1.744,
+       1.776,
+       1.546,
+       1.249
+      ],
+      "n": 15,
+      "mediaan": 1.64,
+      "slechtste": 2.346
+     },
+     "haperen": {
+      "waarden": [
+       0,
+       0,
+       2,
+       1,
+       1
+      ],
+      "n": 5,
+      "mediaan": 1,
+      "slechtste": 2
+     },
+     "snelheid": {
+      "waarden": [
+       2.12,
+       1.57,
+       2.44,
+       1.85,
+       2.03,
+       2.36,
+       1.76,
+       1.96,
+       2.35,
+       2.06,
+       2.1,
+       2.4,
+       1.78,
+       2.12,
+       2.38
+      ],
+      "n": 15,
+      "mediaan": 2.1,
+      "slechtste": 1.57
+     },
+     "api_buiten_p95_ms": {
+      "waarden": [
+       71.9,
+       96.1,
+       71.3,
+       58.9,
+       75.1
+      ],
+      "n": 5,
+      "mediaan": 71.9,
+      "slechtste": 96.1
+     },
+     "worker_totaal_rss_mb": {
+      "waarden": [
+       631.8,
+       686.3,
+       686.0,
+       686.0,
+       685.9
+      ],
+      "n": 5,
+      "mediaan": 686.0,
+      "slechtste": 686.3
+     },
+     "anders_cores": {
+      "waarden": [
+       0.587,
+       0.874,
+       1.142,
+       0.526,
+       1.074
+      ],
+      "n": 5,
+      "mediaan": 0.874,
+      "slechtste": 1.142
+     },
+     "treden": [
+      "1080 superfast + 720 superfast + 480 veryfast",
+      "720 veryfast + 720 veryfast + 480 veryfast"
+     ]
+    },
+    "b": {
+     "geslaagd": "5 van 5",
+     "start_s": {
+      "waarden": [
+       2.051,
+       2.418,
+       1.313,
+       2.754,
+       1.968,
+       1.675,
+       2.944,
+       1.961,
+       1.452,
+       3.028,
+       1.808,
+       1.238,
+       2.551,
+       2.004,
+       1.072
+      ],
+      "n": 15,
+      "mediaan": 1.968,
+      "slechtste": 3.028
+     },
+     "haperen": {
+      "waarden": [
+       0,
+       0,
+       0,
+       0,
+       0
+      ],
+      "n": 5,
+      "mediaan": 0,
+      "slechtste": 0
+     },
+     "snelheid": {
+      "waarden": [
+       1.68,
+       1.51,
+       1.89,
+       1.51,
+       1.71,
+       1.84,
+       1.47,
+       1.78,
+       1.9,
+       1.53,
+       1.7,
+       1.91,
+       1.51,
+       1.74,
+       1.89
+      ],
+      "n": 15,
+      "mediaan": 1.71,
+      "slechtste": 1.47
+     },
+     "api_buiten_p95_ms": {
+      "waarden": [
+       30.0,
+       46.7,
+       48.4,
+       59.8,
+       67.2
+      ],
+      "n": 5,
+      "mediaan": 48.4,
+      "slechtste": 67.2
+     },
+     "worker_totaal_rss_mb": {
+      "waarden": [
+       637.0,
+       691.5,
+       691.9,
+       691.5,
+       692.4
+      ],
+      "n": 5,
+      "mediaan": 691.5,
+      "slechtste": 692.4
+     },
+     "anders_cores": {
+      "waarden": [
+       0.473,
+       1.027,
+       0.553,
+       0.863,
+       1.064
+      ],
+      "n": 5,
+      "mediaan": 0.863,
+      "slechtste": 1.064
+     },
+     "treden": [
+      "1080 superfast + 720 superfast + 480 veryfast",
+      "720 veryfast + 720 veryfast + 480 veryfast"
+     ]
+    },
+    "api_p95_binnen_ms": {
+     "waarden": [
+      45.7,
+      77.0,
+      69.9,
+      53.5,
+      62.9
+     ],
+     "n": 5,
+     "mediaan": 62.9,
+     "slechtste": 77.0
+    }
+   },
+   "ds_herstart": {
+    "bench": [
+     {
+      "f": 1.239,
+      "f_dec": 1.222,
+      "at": "2026-11-02T00:24:13.179749Z"
+     },
+     {
+      "f": 1.373,
+      "f_dec": 1.385,
+      "at": "2026-11-02T01:11:37.667330Z"
+     }
+    ],
+    "config": {
+     "enabled": true,
+     "cpu_budget": 3.0,
+     "max_transcodes": 3,
+     "max_user_transcodes": 2,
+     "public_transcode": false,
+     "hdr_1080": false,
+     "cache_gb": 20,
+     "musicbrainz": false,
+     "bench": {
+      "f": 1.239,
+      "f_dec": 1.222,
+      "at": "2026-11-02T00:24:13.179749Z"
+     }
+    },
+    "waakhond": {
+     "ingegrepen": false,
+     "minst_vrij_gib": 12.85
+    },
+    "runs": [
+     {
+      "duur_s": 232.2,
+      "rust_voor_cores": 0.03,
+      "a": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        1.91,
+        1.998,
+        1.632
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        2.281,
+        2.668,
+        0.242
+       ],
+       "snelheid": [
+        2.04,
+        2.09,
+        2.39
+       ],
+       "hoogte": [
+        1080,
+        720,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 435,
+        "p95_ms": 104.5,
+        "max_ms": 256.6,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 230.4,
+        "app_cores": 0.174,
+        "worker_cores": 1.767,
+        "machine_cores": 3.077,
+        "anders_cores": 1.136,
+        "app_rss_mb_max": 163.9,
+        "worker_rss_mb_max": 37.2,
+        "ffmpeg_rss_mb_max": 648.3,
+        "worker_totaal_rss_mb_max": 685.5,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "1080 superfast",
+        "720 superfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        3.0
+       ],
+       "ds_starting_s": 0,
+       "office": [
+        [
+         "ok",
+         111
+        ]
+       ],
+       "docx": null
+      },
+      "b": {
+       "geslaagd": false,
+       "problemen": [
+        "een speler faalde",
+        "een start boven 5 s"
+       ],
+       "start_s": [
+        null,
+        null,
+        null
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        null,
+        null,
+        null
+       ],
+       "hoogte": [
+        null,
+        null,
+        null
+       ],
+       "herstarts": [],
+       "api_buiten": null,
+       "processen": null,
+       "treden": [],
+       "budget_totaal": null,
+       "ds_starting_s": null,
+       "office": null,
+       "docx": null
+      },
+      "api_p95_binnen_ms": 110.2,
+      "worker_rss_kb": 291924,
+      "cache_mb_per_min": 101.8,
+      "ffmpeg_max": 3,
+      "ds_herstart": {
+       "na_begin_fase_a_s": 200.2,
+       "herstart_klaar_s": 10.5,
+       "office_na": [
+        [
+         "ok",
+         14
+        ]
+       ]
+      },
+      "ds_geheugen_mb_max": 454
+     },
+     {
+      "duur_s": 234.9,
+      "rust_voor_cores": 0.02,
+      "a": {
+       "geslaagd": false,
+       "problemen": [
+        "2 keer haperen"
+       ],
+       "start_s": [
+        1.407,
+        2.192,
+        1.645
+       ],
+       "haperen": 2,
+       "haperen_s": 1.44,
+       "zoeken_s": [
+        4.752,
+        2.996,
+        0.846
+       ],
+       "snelheid": [
+        2.5,
+        1.77,
+        2.34
+       ],
+       "hoogte": [
+        720,
+        720,
+        480
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 443,
+        "p95_ms": 90.1,
+        "max_ms": 514.6,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 233.4,
+        "app_cores": 0.171,
+        "worker_cores": 1.769,
+        "machine_cores": 3.01,
+        "anders_cores": 1.07,
+        "app_rss_mb_max": 153.7,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 567.6,
+        "worker_totaal_rss_mb_max": 604.6,
+        "ffmpeg_max": 3
+       },
+       "treden": [
+        "720 veryfast",
+        "720 superfast",
+        "480 veryfast"
+       ],
+       "budget_totaal": [
+        2.0,
+        3.0
+       ],
+       "ds_starting_s": 4,
+       "office": [
+        [
+         "ok",
+         110
+        ],
+        [
+         "starting",
+         2
+        ]
+       ],
+       "docx": null
+      },
+      "b": {
+       "geslaagd": false,
+       "problemen": [
+        "een speler faalde",
+        "een start boven 5 s"
+       ],
+       "start_s": [
+        null,
+        null,
+        null
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        null,
+        null,
+        null
+       ],
+       "hoogte": [
+        null,
+        null,
+        null
+       ],
+       "herstarts": [],
+       "api_buiten": null,
+       "processen": null,
+       "treden": [],
+       "budget_totaal": null,
+       "ds_starting_s": null,
+       "office": null,
+       "docx": null
+      },
+      "api_p95_binnen_ms": 92.3,
+      "worker_rss_kb": 208104,
+      "cache_mb_per_min": 79.7,
+      "ffmpeg_max": 3,
+      "ds_herstart": {
+       "na_begin_fase_a_s": 200.8,
+       "herstart_klaar_s": 10.5,
+       "office_na": [
+        [
+         "ok",
+         13
+        ],
+        [
+         "starting",
+         2
+        ]
+       ],
+       "verloop": [
+        [
+         1.7,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         3.7,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         5.7,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         7.8,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         9.8,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         11.9,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         13.9,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         15.9,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         18.0,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         20.1,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         22.2,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         24.4,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         26.5,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         28.6,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         30.8,
+         2.6426,
+         3.0,
+         false,
+         "ok",
+         3
+        ],
+        [
+         32.9,
+         2.6426,
+         2.0,
+         true,
+         "starting",
+         3
+        ],
+        [
+         35.1,
+         2.6426,
+         2.0,
+         true,
+         "starting",
+         3
+        ]
+       ]
+      },
+      "ds_geheugen_mb_max": 453
+     }
+    ],
+    "a": {
+     "geslaagd": "1 van 2",
+     "start_s": {
+      "waarden": [
+       1.91,
+       1.998,
+       1.632,
+       1.407,
+       2.192,
+       1.645
+      ],
+      "n": 6,
+      "mediaan": 1.777,
+      "slechtste": 2.192
+     },
+     "haperen": {
+      "waarden": [
+       0,
+       2
+      ],
+      "n": 2,
+      "mediaan": 1.0,
+      "slechtste": 2
+     },
+     "snelheid": {
+      "waarden": [
+       2.04,
+       2.09,
+       2.39,
+       2.5,
+       1.77,
+       2.34
+      ],
+      "n": 6,
+      "mediaan": 2.215,
+      "slechtste": 1.77
+     },
+     "api_buiten_p95_ms": {
+      "waarden": [
+       104.5,
+       90.1
+      ],
+      "n": 2,
+      "mediaan": 97.3,
+      "slechtste": 104.5
+     },
+     "worker_totaal_rss_mb": {
+      "waarden": [
+       685.5,
+       604.6
+      ],
+      "n": 2,
+      "mediaan": 645.05,
+      "slechtste": 685.5
+     },
+     "anders_cores": {
+      "waarden": [
+       1.136,
+       1.07
+      ],
+      "n": 2,
+      "mediaan": 1.103,
+      "slechtste": 1.136
+     },
+     "treden": [
+      "1080 superfast + 720 superfast + 480 veryfast",
+      "720 veryfast + 720 superfast + 480 veryfast"
+     ]
+    },
+    "b": {
+     "geslaagd": "0 van 2",
+     "start_s": {
+      "waarden": [],
+      "n": 0,
+      "mediaan": null,
+      "slechtste": null
+     },
+     "haperen": {
+      "waarden": [
+       0,
+       0
+      ],
+      "n": 2,
+      "mediaan": 0.0,
+      "slechtste": 0
+     },
+     "snelheid": {
+      "waarden": [],
+      "n": 0,
+      "mediaan": null,
+      "slechtste": null
+     },
+     "api_buiten_p95_ms": {
+      "waarden": [],
+      "n": 0,
+      "mediaan": null,
+      "slechtste": null
+     },
+     "worker_totaal_rss_mb": {
+      "waarden": [],
+      "n": 0,
+      "mediaan": null,
+      "slechtste": null
+     },
+     "anders_cores": {
+      "waarden": [],
+      "n": 0,
+      "mediaan": null,
+      "slechtste": null
+     },
+     "treden": [
+      ""
+     ]
+    },
+    "api_p95_binnen_ms": {
+     "waarden": [
+      110.2,
+      92.3
+     ],
+     "n": 2,
+     "mediaan": 101.25,
+     "slechtste": 110.2
+    }
+   },
+   "fase_c": {
+    "bench": {
+     "f": 1.221,
+     "f_dec": 1.272,
+     "at": "2026-11-01T23:08:52.100551Z"
+    },
+    "config": {
+     "enabled": true,
+     "cpu_budget": 3.0,
+     "max_transcodes": 3,
+     "max_user_transcodes": 2,
+     "public_transcode": false,
+     "hdr_1080": false,
+     "cache_gb": 20,
+     "musicbrainz": false,
+     "bench": {
+      "f": 1.221,
+      "f_dec": 1.272,
+      "at": "2026-11-01T23:08:52.100551Z"
+     }
+    },
+    "waakhond": {
+     "ingegrepen": false,
+     "minst_vrij_gib": 12.34
+    },
+    "runs": [
+     {
+      "duur_s": 305.8,
+      "rust_voor_cores": 0.04,
+      "c": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        2.43,
+        4.201,
+        1.657
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        null,
+        null,
+        null
+       ],
+       "hoogte": [
+        1080,
+        480,
+        720
+       ],
+       "herstarts": [
+        {
+         "weg_s": 4.09,
+         "na_ready_s": 1.73
+        },
+        {
+         "weg_s": 4.57,
+         "na_ready_s": 2.15
+        },
+        {
+         "weg_s": 6.55,
+         "na_ready_s": 3.95
+        }
+       ],
+       "api_buiten": {
+        "n": 472,
+        "p95_ms": 29.6,
+        "max_ms": 122.9,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 242.0,
+        "app_cores": 0.048,
+        "worker_cores": 1.699,
+        "machine_cores": 2.324,
+        "anders_cores": 0.577,
+        "app_rss_mb_max": 146.6,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 753.8,
+        "worker_totaal_rss_mb_max": 790.9,
+        "ffmpeg_max": 3
+       },
+       "treden": [],
+       "budget_totaal": null,
+       "ds_starting_s": null,
+       "office": null,
+       "docx": null
+      },
+      "api_p95_binnen_ms": null,
+      "worker_rss_kb": null,
+      "cache_mb_per_min": null,
+      "ffmpeg_max": 3,
+      "herstart": {
+       "na_s": 60.0,
+       "weg_tot_ready_s": 3.18
+      },
+      "c_venster": {
+       "processen": {
+        "seconden": 242.0,
+        "app_cores": 0.048,
+        "worker_cores": 1.699,
+        "machine_cores": 2.324,
+        "anders_cores": 0.577,
+        "app_rss_mb_max": 146.6,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 753.8,
+        "worker_totaal_rss_mb_max": 790.9,
+        "ffmpeg_max": 3
+       },
+       "api_buiten": {
+        "n": 472,
+        "p95_ms": 29.6,
+        "max_ms": 122.9,
+        "mislukt": 0
+       }
+      }
+     },
+     {
+      "duur_s": 304.7,
+      "rust_voor_cores": 0.09,
+      "c": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        3.055,
+        2.124,
+        1.34
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        null,
+        null,
+        null
+       ],
+       "hoogte": [
+        1080,
+        720,
+        480
+       ],
+       "herstarts": [
+        {
+         "weg_s": 5.24,
+         "na_ready_s": 1.8
+        },
+        {
+         "weg_s": 4.04,
+         "na_ready_s": 1.69
+        },
+        {
+         "weg_s": 7.5,
+         "na_ready_s": 1.88
+        }
+       ],
+       "api_buiten": {
+        "n": 472,
+        "p95_ms": 19.2,
+        "max_ms": 45.4,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 240.9,
+        "app_cores": 0.044,
+        "worker_cores": 1.423,
+        "machine_cores": 1.819,
+        "anders_cores": 0.352,
+        "app_rss_mb_max": 144.9,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 646.9,
+        "worker_totaal_rss_mb_max": 684.0,
+        "ffmpeg_max": 3
+       },
+       "treden": [],
+       "budget_totaal": null,
+       "ds_starting_s": null,
+       "office": null,
+       "docx": null
+      },
+      "api_p95_binnen_ms": null,
+      "worker_rss_kb": null,
+      "cache_mb_per_min": null,
+      "ffmpeg_max": 3,
+      "herstart": {
+       "na_s": 60.0,
+       "weg_tot_ready_s": 3.23
+      },
+      "c_venster": {
+       "processen": {
+        "seconden": 240.9,
+        "app_cores": 0.044,
+        "worker_cores": 1.423,
+        "machine_cores": 1.819,
+        "anders_cores": 0.352,
+        "app_rss_mb_max": 144.9,
+        "worker_rss_mb_max": 37.1,
+        "ffmpeg_rss_mb_max": 646.9,
+        "worker_totaal_rss_mb_max": 684.0,
+        "ffmpeg_max": 3
+       },
+       "api_buiten": {
+        "n": 472,
+        "p95_ms": 19.2,
+        "max_ms": 45.4,
+        "mislukt": 0
+       }
+      }
+     },
+     {
+      "duur_s": 304.4,
+      "rust_voor_cores": 0.04,
+      "c": {
+       "geslaagd": false,
+       "problemen": [
+        "1 keer haperen"
+       ],
+       "start_s": [
+        1.679,
+        1.193,
+        2.912
+       ],
+       "haperen": 1,
+       "haperen_s": 1.51,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        null,
+        null,
+        null
+       ],
+       "hoogte": [
+        720,
+        480,
+        1080
+       ],
+       "herstarts": [
+        {
+         "weg_s": 5.13,
+         "na_ready_s": 1.79
+        },
+        {
+         "weg_s": 5.48,
+         "na_ready_s": 2.12
+        },
+        {
+         "weg_s": 6.79,
+         "na_ready_s": 6.66
+        }
+       ],
+       "api_buiten": {
+        "n": 470,
+        "p95_ms": 22.6,
+        "max_ms": 211.9,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 240.9,
+        "app_cores": 0.045,
+        "worker_cores": 1.704,
+        "machine_cores": 1.906,
+        "anders_cores": 0.157,
+        "app_rss_mb_max": 148.7,
+        "worker_rss_mb_max": 37.0,
+        "ffmpeg_rss_mb_max": 756.1,
+        "worker_totaal_rss_mb_max": 793.1,
+        "ffmpeg_max": 3
+       },
+       "treden": [],
+       "budget_totaal": null,
+       "ds_starting_s": null,
+       "office": null,
+       "docx": null
+      },
+      "api_p95_binnen_ms": null,
+      "worker_rss_kb": null,
+      "cache_mb_per_min": null,
+      "ffmpeg_max": 3,
+      "herstart": {
+       "na_s": 60.0,
+       "weg_tot_ready_s": 3.3
+      },
+      "c_venster": {
+       "processen": {
+        "seconden": 240.9,
+        "app_cores": 0.045,
+        "worker_cores": 1.704,
+        "machine_cores": 1.906,
+        "anders_cores": 0.157,
+        "app_rss_mb_max": 148.7,
+        "worker_rss_mb_max": 37.0,
+        "ffmpeg_rss_mb_max": 756.1,
+        "worker_totaal_rss_mb_max": 793.1,
+        "ffmpeg_max": 3
+       },
+       "api_buiten": {
+        "n": 470,
+        "p95_ms": 22.6,
+        "max_ms": 211.9,
+        "mislukt": 0
+       }
+      }
+     },
+     {
+      "duur_s": 304.3,
+      "rust_voor_cores": 0.08,
+      "c": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        1.648,
+        2.738,
+        1.303
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        null,
+        null,
+        null
+       ],
+       "hoogte": [
+        720,
+        1080,
+        480
+       ],
+       "herstarts": [
+        {
+         "weg_s": 4.81,
+         "na_ready_s": 1.39
+        },
+        {
+         "weg_s": 7.3,
+         "na_ready_s": 7.15
+        },
+        {
+         "weg_s": 5.86,
+         "na_ready_s": 2.49
+        }
+       ],
+       "api_buiten": {
+        "n": 468,
+        "p95_ms": 31.5,
+        "max_ms": 159.9,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 240.7,
+        "app_cores": 0.045,
+        "worker_cores": 1.468,
+        "machine_cores": 2.356,
+        "anders_cores": 0.843,
+        "app_rss_mb_max": 149.2,
+        "worker_rss_mb_max": 36.8,
+        "ffmpeg_rss_mb_max": 662.8,
+        "worker_totaal_rss_mb_max": 699.6,
+        "ffmpeg_max": 3
+       },
+       "treden": [],
+       "budget_totaal": null,
+       "ds_starting_s": null,
+       "office": null,
+       "docx": null
+      },
+      "api_p95_binnen_ms": null,
+      "worker_rss_kb": null,
+      "cache_mb_per_min": null,
+      "ffmpeg_max": 3,
+      "herstart": {
+       "na_s": 60.0,
+       "weg_tot_ready_s": 3.39
+      },
+      "c_venster": {
+       "processen": {
+        "seconden": 240.7,
+        "app_cores": 0.045,
+        "worker_cores": 1.468,
+        "machine_cores": 2.356,
+        "anders_cores": 0.843,
+        "app_rss_mb_max": 149.2,
+        "worker_rss_mb_max": 36.8,
+        "ffmpeg_rss_mb_max": 662.8,
+        "worker_totaal_rss_mb_max": 699.6,
+        "ffmpeg_max": 3
+       },
+       "api_buiten": {
+        "n": 468,
+        "p95_ms": 31.5,
+        "max_ms": 159.9,
+        "mislukt": 0
+       }
+      }
+     },
+     {
+      "duur_s": 304.4,
+      "rust_voor_cores": 0.07,
+      "c": {
+       "geslaagd": true,
+       "problemen": [],
+       "start_s": [
+        1.538,
+        3.046,
+        1.444
+       ],
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        null,
+        null,
+        null
+       ],
+       "hoogte": [
+        720,
+        1080,
+        480
+       ],
+       "herstarts": [
+        {
+         "weg_s": 4.68,
+         "na_ready_s": 1.33
+        },
+        {
+         "weg_s": 5.06,
+         "na_ready_s": 1.62
+        },
+        {
+         "weg_s": 7.37,
+         "na_ready_s": 1.91
+        }
+       ],
+       "api_buiten": {
+        "n": 471,
+        "p95_ms": 20.5,
+        "max_ms": 36.2,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 241.0,
+        "app_cores": 0.046,
+        "worker_cores": 1.444,
+        "machine_cores": 1.723,
+        "anders_cores": 0.233,
+        "app_rss_mb_max": 145.1,
+        "worker_rss_mb_max": 36.9,
+        "ffmpeg_rss_mb_max": 666.6,
+        "worker_totaal_rss_mb_max": 703.5,
+        "ffmpeg_max": 3
+       },
+       "treden": [],
+       "budget_totaal": null,
+       "ds_starting_s": null,
+       "office": null,
+       "docx": null
+      },
+      "api_p95_binnen_ms": null,
+      "worker_rss_kb": null,
+      "cache_mb_per_min": null,
+      "ffmpeg_max": 3,
+      "herstart": {
+       "na_s": 60.0,
+       "weg_tot_ready_s": 3.19
+      },
+      "c_venster": {
+       "processen": {
+        "seconden": 241.0,
+        "app_cores": 0.046,
+        "worker_cores": 1.444,
+        "machine_cores": 1.723,
+        "anders_cores": 0.233,
+        "app_rss_mb_max": 145.1,
+        "worker_rss_mb_max": 36.9,
+        "ffmpeg_rss_mb_max": 666.6,
+        "worker_totaal_rss_mb_max": 703.5,
+        "ffmpeg_max": 3
+       },
+       "api_buiten": {
+        "n": 471,
+        "p95_ms": 20.5,
+        "max_ms": 36.2,
+        "mislukt": 0
+       }
+      }
+     }
+    ],
+    "c": {
+     "geslaagd": "4 van 5",
+     "start_s": {
+      "waarden": [
+       2.43,
+       4.201,
+       1.657,
+       3.055,
+       2.124,
+       1.34,
+       1.679,
+       1.193,
+       2.912,
+       1.648,
+       2.738,
+       1.303,
+       1.538,
+       3.046,
+       1.444
+      ],
+      "n": 15,
+      "mediaan": 1.679,
+      "slechtste": 4.201
+     },
+     "haperen": {
+      "waarden": [
+       0,
+       0,
+       1,
+       0,
+       0
+      ],
+      "n": 5,
+      "mediaan": 0,
+      "slechtste": 1
+     },
+     "snelheid": {
+      "waarden": [],
+      "n": 0,
+      "mediaan": null,
+      "slechtste": null
+     },
+     "api_buiten_p95_ms": {
+      "waarden": [
+       29.6,
+       19.2,
+       22.6,
+       31.5,
+       20.5
+      ],
+      "n": 5,
+      "mediaan": 22.6,
+      "slechtste": 31.5
+     },
+     "worker_totaal_rss_mb": {
+      "waarden": [
+       790.9,
+       684.0,
+       793.1,
+       699.6,
+       703.5
+      ],
+      "n": 5,
+      "mediaan": 703.5,
+      "slechtste": 793.1
+     },
+     "anders_cores": {
+      "waarden": [
+       0.577,
+       0.352,
+       0.157,
+       0.843,
+       0.233
+      ],
+      "n": 5,
+      "mediaan": 0.352,
+      "slechtste": 0.843
+     },
+     "treden": [
+      ""
+     ]
+    },
+    "api_p95_binnen_ms": {
+     "waarden": [],
+     "n": 0,
+     "mediaan": null,
+     "slechtste": null
+    }
+   },
+   "fase_c_voor_de_fix": {
+    "bench": {
+     "f": 1.279,
+     "f_dec": 1.386,
+     "at": "2026-11-01T21:25:00.849542Z"
+    },
+    "config": {
+     "enabled": true,
+     "cpu_budget": 3.0,
+     "max_transcodes": 3,
+     "max_user_transcodes": 2,
+     "public_transcode": false,
+     "hdr_1080": false,
+     "cache_gb": 20,
+     "musicbrainz": false,
+     "bench": {
+      "f": 1.279,
+      "f_dec": 1.386,
+      "at": "2026-11-01T21:25:00.849542Z"
+     }
+    },
+    "waakhond": {
+     "ingegrepen": false,
+     "minst_vrij_gib": 12.91
+    },
+    "runs": [
+     {
+      "duur_s": 303.8,
+      "rust_voor_cores": 0.06,
+      "c": {
+       "geslaagd": false,
+       "problemen": [
+        "een speler faalde",
+        "een start boven 5 s",
+        "2 keer haperen"
+       ],
+       "start_s": [
+        1.716,
+        2.309,
+        null
+       ],
+       "haperen": 2,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        null,
+        null,
+        null
+       ],
+       "hoogte": [
+        720,
+        720,
+        null
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 470,
+        "p95_ms": 19.7,
+        "max_ms": 84.5,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 239.9,
+        "app_cores": 0.036,
+        "worker_cores": 0.001,
+        "machine_cores": 1.007,
+        "anders_cores": 0.97,
+        "app_rss_mb_max": 123.8,
+        "worker_rss_mb_max": 33.6,
+        "ffmpeg_rss_mb_max": 0.0,
+        "worker_totaal_rss_mb_max": 33.6,
+        "ffmpeg_max": 0
+       },
+       "treden": [],
+       "budget_totaal": null,
+       "ds_starting_s": null,
+       "office": null,
+       "docx": null
+      },
+      "api_p95_binnen_ms": null,
+      "worker_rss_kb": null,
+      "cache_mb_per_min": null,
+      "ffmpeg_max": 2,
+      "herstart": {
+       "na_s": 60.0,
+       "weg_tot_ready_s": 3.35
+      },
+      "c_venster": {
+       "processen": {
+        "seconden": 239.9,
+        "app_cores": 0.036,
+        "worker_cores": 0.001,
+        "machine_cores": 1.007,
+        "anders_cores": 0.97,
+        "app_rss_mb_max": 123.8,
+        "worker_rss_mb_max": 33.6,
+        "ffmpeg_rss_mb_max": 0.0,
+        "worker_totaal_rss_mb_max": 33.6,
+        "ffmpeg_max": 0
+       },
+       "api_buiten": {
+        "n": 470,
+        "p95_ms": 19.7,
+        "max_ms": 84.5,
+        "mislukt": 0
+       }
+      }
+     },
+     {
+      "duur_s": 303.7,
+      "rust_voor_cores": 0.03,
+      "c": {
+       "geslaagd": false,
+       "problemen": [
+        "een speler faalde",
+        "een start boven 5 s",
+        "2 keer haperen"
+       ],
+       "start_s": [
+        null,
+        2.161,
+        2.058
+       ],
+       "haperen": 2,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        null,
+        null,
+        null
+       ],
+       "hoogte": [
+        null,
+        720,
+        720
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 470,
+        "p95_ms": 17.7,
+        "max_ms": 24.5,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 239.7,
+        "app_cores": 0.034,
+        "worker_cores": 0.001,
+        "machine_cores": 1.083,
+        "anders_cores": 1.048,
+        "app_rss_mb_max": 124.3,
+        "worker_rss_mb_max": 33.4,
+        "ffmpeg_rss_mb_max": 0.0,
+        "worker_totaal_rss_mb_max": 33.4,
+        "ffmpeg_max": 0
+       },
+       "treden": [],
+       "budget_totaal": null,
+       "ds_starting_s": null,
+       "office": null,
+       "docx": null
+      },
+      "api_p95_binnen_ms": null,
+      "worker_rss_kb": null,
+      "cache_mb_per_min": null,
+      "ffmpeg_max": 2,
+      "herstart": {
+       "na_s": 60.0,
+       "weg_tot_ready_s": 3.4
+      },
+      "c_venster": {
+       "processen": {
+        "seconden": 239.7,
+        "app_cores": 0.034,
+        "worker_cores": 0.001,
+        "machine_cores": 1.083,
+        "anders_cores": 1.048,
+        "app_rss_mb_max": 124.3,
+        "worker_rss_mb_max": 33.4,
+        "ffmpeg_rss_mb_max": 0.0,
+        "worker_totaal_rss_mb_max": 33.4,
+        "ffmpeg_max": 0
+       },
+       "api_buiten": {
+        "n": 470,
+        "p95_ms": 17.7,
+        "max_ms": 24.5,
+        "mislukt": 0
+       }
+      }
+     },
+     {
+      "duur_s": 303.9,
+      "rust_voor_cores": 0.04,
+      "c": {
+       "geslaagd": false,
+       "problemen": [
+        "een speler faalde",
+        "een start boven 5 s",
+        "2 keer haperen"
+       ],
+       "start_s": [
+        1.791,
+        null,
+        2.244
+       ],
+       "haperen": 2,
+       "haperen_s": 0.0,
+       "zoeken_s": [
+        null,
+        null,
+        null
+       ],
+       "snelheid": [
+        null,
+        null,
+        null
+       ],
+       "hoogte": [
+        720,
+        null,
+        720
+       ],
+       "herstarts": [],
+       "api_buiten": {
+        "n": 471,
+        "p95_ms": 19.0,
+        "max_ms": 62.7,
+        "mislukt": 0
+       },
+       "processen": {
+        "seconden": 240.3,
+        "app_cores": 0.034,
+        "worker_cores": 0.001,
+        "machine_cores": 1.092,
+        "anders_cores": 1.057,
+        "app_rss_mb_max": 123.8,
+        "worker_rss_mb_max": 33.4,
+        "ffmpeg_rss_mb_max": 0.0,
+        "worker_totaal_rss_mb_max": 33.4,
+        "ffmpeg_max": 0
+       },
+       "treden": [],
+       "budget_totaal": null,
+       "ds_starting_s": null,
+       "office": null,
+       "docx": null
+      },
+      "api_p95_binnen_ms": null,
+      "worker_rss_kb": null,
+      "cache_mb_per_min": null,
+      "ffmpeg_max": 2,
+      "herstart": {
+       "na_s": 60.0,
+       "weg_tot_ready_s": 3.14
+      },
+      "c_venster": {
+       "processen": {
+        "seconden": 240.3,
+        "app_cores": 0.034,
+        "worker_cores": 0.001,
+        "machine_cores": 1.092,
+        "anders_cores": 1.057,
+        "app_rss_mb_max": 123.8,
+        "worker_rss_mb_max": 33.4,
+        "ffmpeg_rss_mb_max": 0.0,
+        "worker_totaal_rss_mb_max": 33.4,
+        "ffmpeg_max": 0
+       },
+       "api_buiten": {
+        "n": 471,
+        "p95_ms": 19.0,
+        "max_ms": 62.7,
+        "mislukt": 0
+       }
+      }
+     }
+    ],
+    "c": {
+     "geslaagd": "0 van 3",
+     "start_s": {
+      "waarden": [
+       1.716,
+       2.309,
+       2.161,
+       2.058,
+       1.791,
+       2.244
+      ],
+      "n": 6,
+      "mediaan": 2.109,
+      "slechtste": 2.309
+     },
+     "haperen": {
+      "waarden": [
+       2,
+       2,
+       2
+      ],
+      "n": 3,
+      "mediaan": 2,
+      "slechtste": 2
+     },
+     "snelheid": {
+      "waarden": [],
+      "n": 0,
+      "mediaan": null,
+      "slechtste": null
+     },
+     "api_buiten_p95_ms": {
+      "waarden": [
+       19.7,
+       17.7,
+       19.0
+      ],
+      "n": 3,
+      "mediaan": 19.0,
+      "slechtste": 19.7
+     },
+     "worker_totaal_rss_mb": {
+      "waarden": [
+       33.6,
+       33.4,
+       33.4
+      ],
+      "n": 3,
+      "mediaan": 33.4,
+      "slechtste": 33.6
+     },
+     "anders_cores": {
+      "waarden": [
+       0.97,
+       1.048,
+       1.057
+      ],
+      "n": 3,
+      "mediaan": 1.048,
+      "slechtste": 1.057
+     },
+     "treden": [
+      ""
+     ]
+    },
+    "api_p95_binnen_ms": {
+     "waarden": [],
+     "n": 0,
+     "mediaan": null,
+     "slechtste": null
+    }
+   }
+  },
+  "Me": {
+   "bench": {
+    "f": 1.283,
+    "f_dec": 1.465,
+    "at": "2026-11-01T21:49:57.163746Z"
+   },
+   "config": {
+    "enabled": true,
+    "cpu_budget": 3.0,
+    "max_transcodes": 2,
+    "max_user_transcodes": 2,
+    "public_transcode": false,
+    "hdr_1080": false,
+    "cache_gb": 20,
+    "musicbrainz": false,
+    "bench": {
+     "f": 1.283,
+     "f_dec": 1.465,
+     "at": "2026-11-01T21:49:57.163746Z"
+    }
+   },
+   "waakhond": {
+    "ingegrepen": false,
+    "minst_vrij_gib": 12.47
+   },
+   "runs": [
+    {
+     "duur_s": 524.8,
+     "rust_voor_cores": 0.11,
+     "a": {
+      "geslaagd": true,
+      "problemen": [],
+      "start_s": [
+       2.528,
+       2.159
+      ],
+      "haperen": 0,
+      "haperen_s": 0.0,
+      "zoeken_s": [
+       1.369,
+       0.008
+      ],
+      "snelheid": [
+       2.1,
+       2.59
+      ],
+      "hoogte": [
+       1080,
+       720
+      ],
+      "herstarts": [],
+      "api_buiten": {
+       "n": 431,
+       "p95_ms": 24.5,
+       "max_ms": 53.3,
+       "mislukt": 0
+      },
+      "processen": {
+       "seconden": 221.0,
+       "app_cores": 0.127,
+       "worker_cores": 1.661,
+       "machine_cores": 2.018,
+       "anders_cores": 0.23,
+       "app_rss_mb_max": 146.9,
+       "worker_rss_mb_max": 37.1,
+       "ffmpeg_rss_mb_max": 543.4,
+       "worker_totaal_rss_mb_max": 580.4,
+       "ffmpeg_max": 2
+      },
+      "treden": [
+       "1080 veryfast",
+       "720 superfast"
+      ],
+      "budget_totaal": [
+       3.0
+      ],
+      "ds_starting_s": 0,
+      "office": [],
+      "docx": null
+     },
+     "b": {
+      "geslaagd": true,
+      "problemen": [],
+      "start_s": [
+       2.396,
+       1.3
+      ],
+      "haperen": 0,
+      "haperen_s": 0.0,
+      "zoeken_s": [
+       null,
+       null
+      ],
+      "snelheid": [
+       1.69,
+       2.03
+      ],
+      "hoogte": [
+       1080,
+       720
+      ],
+      "herstarts": [],
+      "api_buiten": {
+       "n": 590,
+       "p95_ms": 25.3,
+       "max_ms": 61.4,
+       "mislukt": 0
+      },
+      "processen": {
+       "seconden": 301.5,
+       "app_cores": 0.098,
+       "worker_cores": 1.301,
+       "machine_cores": 1.938,
+       "anders_cores": 0.539,
+       "app_rss_mb_max": 155.9,
+       "worker_rss_mb_max": 37.1,
+       "ffmpeg_rss_mb_max": 545.1,
+       "worker_totaal_rss_mb_max": 582.2,
+       "ffmpeg_max": 2
+      },
+      "treden": [
+       "1080 veryfast",
+       "720 superfast"
+      ],
+      "budget_totaal": [
+       3.0
+      ],
+      "ds_starting_s": 0,
+      "office": [],
+      "docx": null
+     },
+     "api_p95_binnen_ms": 26.4,
+     "worker_rss_kb": 347204,
+     "cache_mb_per_min": 40.3,
+     "ffmpeg_max": 2
+    },
+    {
+     "duur_s": 526.0,
+     "rust_voor_cores": 0.08,
+     "a": {
+      "geslaagd": true,
+      "problemen": [],
+      "start_s": [
+       1.8,
+       1.741
+      ],
+      "haperen": 0,
+      "haperen_s": 0.0,
+      "zoeken_s": [
+       1.412,
+       0.047
+      ],
+      "snelheid": [
+       2.01,
+       2.57
+      ],
+      "hoogte": [
+       1080,
+       720
+      ],
+      "herstarts": [],
+      "api_buiten": {
+       "n": 427,
+       "p95_ms": 49.3,
+       "max_ms": 221.3,
+       "mislukt": 0
+      },
+      "processen": {
+       "seconden": 220.7,
+       "app_cores": 0.132,
+       "worker_cores": 1.655,
+       "machine_cores": 2.705,
+       "anders_cores": 0.918,
+       "app_rss_mb_max": 162.1,
+       "worker_rss_mb_max": 37.1,
+       "ffmpeg_rss_mb_max": 541.3,
+       "worker_totaal_rss_mb_max": 578.4,
+       "ffmpeg_max": 2
+      },
+      "treden": [
+       "1080 veryfast",
+       "720 superfast"
+      ],
+      "budget_totaal": [
+       3.0
+      ],
+      "ds_starting_s": 0,
+      "office": [],
+      "docx": null
+     },
+     "b": {
+      "geslaagd": true,
+      "problemen": [],
+      "start_s": [
+       3.241,
+       1.458
+      ],
+      "haperen": 0,
+      "haperen_s": 0.0,
+      "zoeken_s": [
+       null,
+       null
+      ],
+      "snelheid": [
+       1.6,
+       2.01
+      ],
+      "hoogte": [
+       1080,
+       720
+      ],
+      "herstarts": [],
+      "api_buiten": {
+       "n": 588,
+       "p95_ms": 40.2,
+       "max_ms": 132.1,
+       "mislukt": 0
+      },
+      "processen": {
+       "seconden": 303.1,
+       "app_cores": 0.097,
+       "worker_cores": 1.302,
+       "machine_cores": 2.285,
+       "anders_cores": 0.886,
+       "app_rss_mb_max": 163.8,
+       "worker_rss_mb_max": 37.1,
+       "ffmpeg_rss_mb_max": 544.6,
+       "worker_totaal_rss_mb_max": 581.6,
+       "ffmpeg_max": 2
+      },
+      "treden": [
+       "1080 veryfast",
+       "720 superfast"
+      ],
+      "budget_totaal": [
+       3.0
+      ],
+      "ds_starting_s": 0,
+      "office": [],
+      "docx": null
+     },
+     "api_p95_binnen_ms": 47.8,
+     "worker_rss_kb": 347060,
+     "cache_mb_per_min": 40.3,
+     "ffmpeg_max": 2
+    },
+    {
+     "duur_s": 525.4,
+     "rust_voor_cores": 0.04,
+     "a": {
+      "geslaagd": true,
+      "problemen": [],
+      "start_s": [
+       1.924,
+       1.703
+      ],
+      "haperen": 0,
+      "haperen_s": 0.0,
+      "zoeken_s": [
+       1.398,
+       0.01
+      ],
+      "snelheid": [
+       2.01,
+       2.62
+      ],
+      "hoogte": [
+       1080,
+       720
+      ],
+      "herstarts": [],
+      "api_buiten": {
+       "n": 427,
+       "p95_ms": 44.2,
+       "max_ms": 163.0,
+       "mislukt": 0
+      },
+      "processen": {
+       "seconden": 220.5,
+       "app_cores": 0.131,
+       "worker_cores": 1.686,
+       "machine_cores": 2.735,
+       "anders_cores": 0.918,
+       "app_rss_mb_max": 164.0,
+       "worker_rss_mb_max": 37.1,
+       "ffmpeg_rss_mb_max": 543.0,
+       "worker_totaal_rss_mb_max": 580.1,
+       "ffmpeg_max": 2
+      },
+      "treden": [
+       "1080 veryfast",
+       "720 superfast"
+      ],
+      "budget_totaal": [
+       3.0
+      ],
+      "ds_starting_s": 0,
+      "office": [],
+      "docx": null
+     },
+     "b": {
+      "geslaagd": true,
+      "problemen": [],
+      "start_s": [
+       2.744,
+       1.321
+      ],
+      "haperen": 0,
+      "haperen_s": 0.0,
+      "zoeken_s": [
+       null,
+       null
+      ],
+      "snelheid": [
+       1.64,
+       2.01
+      ],
+      "hoogte": [
+       1080,
+       720
+      ],
+      "herstarts": [],
+      "api_buiten": {
+       "n": 588,
+       "p95_ms": 28.4,
+       "max_ms": 178.0,
+       "mislukt": 0
+      },
+      "processen": {
+       "seconden": 302.8,
+       "app_cores": 0.097,
+       "worker_cores": 1.296,
+       "machine_cores": 2.086,
+       "anders_cores": 0.693,
+       "app_rss_mb_max": 169.7,
+       "worker_rss_mb_max": 37.1,
+       "ffmpeg_rss_mb_max": 545.0,
+       "worker_totaal_rss_mb_max": 582.0,
+       "ffmpeg_max": 2
+      },
+      "treden": [
+       "1080 veryfast",
+       "720 superfast"
+      ],
+      "budget_totaal": [
+       3.0
+      ],
+      "ds_starting_s": 0,
+      "office": [],
+      "docx": null
+     },
+     "api_p95_binnen_ms": 36.8,
+     "worker_rss_kb": 347176,
+     "cache_mb_per_min": 40.3,
+     "ffmpeg_max": 2
+    },
+    {
+     "duur_s": 524.6,
+     "rust_voor_cores": 0.02,
+     "a": {
+      "geslaagd": true,
+      "problemen": [],
+      "start_s": [
+       1.78,
+       1.422
+      ],
+      "haperen": 0,
+      "haperen_s": 0.0,
+      "zoeken_s": [
+       1.467,
+       0.012
+      ],
+      "snelheid": [
+       2.17,
+       2.72
+      ],
+      "hoogte": [
+       1080,
+       720
+      ],
+      "herstarts": [],
+      "api_buiten": {
+       "n": 429,
+       "p95_ms": 24.6,
+       "max_ms": 91.7,
+       "mislukt": 0
+      },
+      "processen": {
+       "seconden": 220.1,
+       "app_cores": 0.127,
+       "worker_cores": 1.683,
+       "machine_cores": 1.951,
+       "anders_cores": 0.141,
+       "app_rss_mb_max": 173.9,
+       "worker_rss_mb_max": 37.1,
+       "ffmpeg_rss_mb_max": 543.4,
+       "worker_totaal_rss_mb_max": 580.4,
+       "ffmpeg_max": 2
+      },
+      "treden": [
+       "1080 veryfast",
+       "720 superfast"
+      ],
+      "budget_totaal": [
+       3.0
+      ],
+      "ds_starting_s": 0,
+      "office": [],
+      "docx": null
+     },
+     "b": {
+      "geslaagd": true,
+      "problemen": [],
+      "start_s": [
+       2.724,
+       1.304
+      ],
+      "haperen": 0,
+      "haperen_s": 0.0,
+      "zoeken_s": [
+       null,
+       null
+      ],
+      "snelheid": [
+       1.69,
+       2.01
+      ],
+      "hoogte": [
+       1080,
+       720
+      ],
+      "herstarts": [],
+      "api_buiten": {
+       "n": 590,
+       "p95_ms": 26.4,
+       "max_ms": 73.4,
+       "mislukt": 0
+      },
+      "processen": {
+       "seconden": 302.3,
+       "app_cores": 0.099,
+       "worker_cores": 1.281,
+       "machine_cores": 1.559,
+       "anders_cores": 0.179,
+       "app_rss_mb_max": 174.7,
+       "worker_rss_mb_max": 37.1,
+       "ffmpeg_rss_mb_max": 544.0,
+       "worker_totaal_rss_mb_max": 581.1,
+       "ffmpeg_max": 2
+      },
+      "treden": [
+       "1080 veryfast",
+       "720 superfast"
+      ],
+      "budget_totaal": [
+       3.0
+      ],
+      "ds_starting_s": 0,
+      "office": [],
+      "docx": null
+     },
+     "api_p95_binnen_ms": 27.6,
+     "worker_rss_kb": 346996,
+     "cache_mb_per_min": 40.3,
+     "ffmpeg_max": 2
+    },
+    {
+     "duur_s": 524.5,
+     "rust_voor_cores": 0.03,
+     "a": {
+      "geslaagd": true,
+      "problemen": [],
+      "start_s": [
+       1.672,
+       1.415
+      ],
+      "haperen": 0,
+      "haperen_s": 0.0,
+      "zoeken_s": [
+       1.517,
+       0.015
+      ],
+      "snelheid": [
+       2.11,
+       2.62
+      ],
+      "hoogte": [
+       1080,
+       720
+      ],
+      "herstarts": [],
+      "api_buiten": {
+       "n": 431,
+       "p95_ms": 22.9,
+       "max_ms": 73.9,
+       "mislukt": 0
+      },
+      "processen": {
+       "seconden": 219.7,
+       "app_cores": 0.126,
+       "worker_cores": 1.657,
+       "machine_cores": 1.958,
+       "anders_cores": 0.175,
+       "app_rss_mb_max": 178.1,
+       "worker_rss_mb_max": 37.1,
+       "ffmpeg_rss_mb_max": 542.6,
+       "worker_totaal_rss_mb_max": 579.7,
+       "ffmpeg_max": 2
+      },
+      "treden": [
+       "1080 veryfast",
+       "720 superfast"
+      ],
+      "budget_totaal": [
+       3.0
+      ],
+      "ds_starting_s": 0,
+      "office": [],
+      "docx": null
+     },
+     "b": {
+      "geslaagd": true,
+      "problemen": [],
+      "start_s": [
+       2.138,
+       1.124
+      ],
+      "haperen": 0,
+      "haperen_s": 0.0,
+      "zoeken_s": [
+       null,
+       null
+      ],
+      "snelheid": [
+       1.71,
+       2.03
+      ],
+      "hoogte": [
+       1080,
+       720
+      ],
+      "herstarts": [],
+      "api_buiten": {
+       "n": 588,
+       "p95_ms": 24.6,
+       "max_ms": 80.8,
+       "mislukt": 0
+      },
+      "processen": {
+       "seconden": 302.4,
+       "app_cores": 0.103,
+       "worker_cores": 1.312,
+       "machine_cores": 1.593,
+       "anders_cores": 0.178,
+       "app_rss_mb_max": 180.8,
+       "worker_rss_mb_max": 37.1,
+       "ffmpeg_rss_mb_max": 537.6,
+       "worker_totaal_rss_mb_max": 574.7,
+       "ffmpeg_max": 2
+      },
+      "treden": [
+       "1080 veryfast",
+       "720 superfast"
+      ],
+      "budget_totaal": [
+       3.0
+      ],
+      "ds_starting_s": 0,
+      "office": [],
+      "docx": null
+     },
+     "api_p95_binnen_ms": 28.7,
+     "worker_rss_kb": 345424,
+     "cache_mb_per_min": 40.4,
+     "ffmpeg_max": 2
+    }
+   ],
+   "a": {
+    "geslaagd": "5 van 5",
+    "start_s": {
+     "waarden": [
+      2.528,
+      2.159,
+      1.8,
+      1.741,
+      1.924,
+      1.703,
+      1.78,
+      1.422,
+      1.672,
+      1.415
+     ],
+     "n": 10,
+     "mediaan": 1.76,
+     "slechtste": 2.528
+    },
+    "haperen": {
+     "waarden": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "n": 5,
+     "mediaan": 0,
+     "slechtste": 0
+    },
+    "snelheid": {
+     "waarden": [
+      2.1,
+      2.59,
+      2.01,
+      2.57,
+      2.01,
+      2.62,
+      2.17,
+      2.72,
+      2.11,
+      2.62
+     ],
+     "n": 10,
+     "mediaan": 2.37,
+     "slechtste": 2.01
+    },
+    "api_buiten_p95_ms": {
+     "waarden": [
+      24.5,
+      49.3,
+      44.2,
+      24.6,
+      22.9
+     ],
+     "n": 5,
+     "mediaan": 24.6,
+     "slechtste": 49.3
+    },
+    "worker_totaal_rss_mb": {
+     "waarden": [
+      580.4,
+      578.4,
+      580.1,
+      580.4,
+      579.7
+     ],
+     "n": 5,
+     "mediaan": 580.1,
+     "slechtste": 580.4
+    },
+    "anders_cores": {
+     "waarden": [
+      0.23,
+      0.918,
+      0.918,
+      0.141,
+      0.175
+     ],
+     "n": 5,
+     "mediaan": 0.23,
+     "slechtste": 0.918
+    },
+    "treden": [
+     "1080 veryfast + 720 superfast"
+    ]
+   },
+   "b": {
+    "geslaagd": "5 van 5",
+    "start_s": {
+     "waarden": [
+      2.396,
+      1.3,
+      3.241,
+      1.458,
+      2.744,
+      1.321,
+      2.724,
+      1.304,
+      2.138,
+      1.124
+     ],
+     "n": 10,
+     "mediaan": 1.798,
+     "slechtste": 3.241
+    },
+    "haperen": {
+     "waarden": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "n": 5,
+     "mediaan": 0,
+     "slechtste": 0
+    },
+    "snelheid": {
+     "waarden": [
+      1.69,
+      2.03,
+      1.6,
+      2.01,
+      1.64,
+      2.01,
+      1.69,
+      2.01,
+      1.71,
+      2.03
+     ],
+     "n": 10,
+     "mediaan": 1.86,
+     "slechtste": 1.6
+    },
+    "api_buiten_p95_ms": {
+     "waarden": [
+      25.3,
+      40.2,
+      28.4,
+      26.4,
+      24.6
+     ],
+     "n": 5,
+     "mediaan": 26.4,
+     "slechtste": 40.2
+    },
+    "worker_totaal_rss_mb": {
+     "waarden": [
+      582.2,
+      581.6,
+      582.0,
+      581.1,
+      574.7
+     ],
+     "n": 5,
+     "mediaan": 581.6,
+     "slechtste": 582.2
+    },
+    "anders_cores": {
+     "waarden": [
+      0.539,
+      0.886,
+      0.693,
+      0.179,
+      0.178
+     ],
+     "n": 5,
+     "mediaan": 0.539,
+     "slechtste": 0.886
+    },
+    "treden": [
+     "1080 veryfast + 720 superfast"
+    ]
+   },
+   "api_p95_binnen_ms": {
+    "waarden": [
+     26.4,
+     47.8,
+     36.8,
+     27.6,
+     28.7
+    ],
+    "n": 5,
+    "mediaan": 28.7,
+    "slechtste": 47.8
+   }
+  },
+  "Mf": {
+   "meting": "hdr",
+   "omstandigheden": {
+    "datum": "2026-11-01 23:36:28 UTC",
+    "commit": "bd93489",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cores": 4,
+    "geheugen_gib": 15.7,
+    "ffmpeg": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+    "worker_cores": [
+     0,
+     1,
+     2
+    ],
+    "max_procs": 3
+   },
+   "runs": [
+    {
+     "run": 1,
+     "variant": "alleen",
+     "max_transcodes": 1,
+     "treden": [
+      1080
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 1080,
+       "preset": "superfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 119.9,
+      "app_cores": 0.013,
+      "worker_cores": 2.177,
+      "machine_cores": 2.248,
+      "anders_cores": 0.058,
+      "app_rss_mb_max": 143.7,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 427.1,
+      "worker_totaal_rss_mb_max": 464.5,
+      "ffmpeg_max": 1
+     },
+     "rust_voor_cores": 0.04
+    },
+    {
+     "run": 1,
+     "variant": "naast_2",
+     "max_transcodes": 3,
+     "treden": [
+      720,
+      480,
+      480
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 720,
+       "preset": "superfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 480,
+       "preset": "veryfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 480,
+       "preset": "veryfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 122.8,
+      "app_cores": 0.018,
+      "worker_cores": 2.044,
+      "machine_cores": 2.111,
+      "anders_cores": 0.049,
+      "app_rss_mb_max": 148.1,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 562.5,
+      "worker_totaal_rss_mb_max": 599.9,
+      "ffmpeg_max": 3
+     },
+     "rust_voor_cores": 0.03
+    },
+    {
+     "run": 1,
+     "variant": "naast_1",
+     "max_transcodes": 2,
+     "treden": [
+      720,
+      720
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 720,
+       "preset": "veryfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 720,
+       "preset": "veryfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 122.9,
+      "app_cores": 0.016,
+      "worker_cores": 2.192,
+      "machine_cores": 2.241,
+      "anders_cores": 0.033,
+      "app_rss_mb_max": 148.6,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 501.0,
+      "worker_totaal_rss_mb_max": 538.4,
+      "ffmpeg_max": 2
+     },
+     "rust_voor_cores": 0.02
+    },
+    {
+     "run": 2,
+     "variant": "alleen",
+     "max_transcodes": 1,
+     "treden": [
+      1080
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 1080,
+       "preset": "superfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 119.8,
+      "app_cores": 0.012,
+      "worker_cores": 2.135,
+      "machine_cores": 2.179,
+      "anders_cores": 0.032,
+      "app_rss_mb_max": 153.9,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 427.5,
+      "worker_totaal_rss_mb_max": 464.9,
+      "ffmpeg_max": 1
+     },
+     "rust_voor_cores": 0.02
+    },
+    {
+     "run": 2,
+     "variant": "naast_2",
+     "max_transcodes": 3,
+     "treden": [
+      720,
+      480,
+      480
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 720,
+       "preset": "superfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 480,
+       "preset": "veryfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 480,
+       "preset": "veryfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 123.4,
+      "app_cores": 0.02,
+      "worker_cores": 2.099,
+      "machine_cores": 2.167,
+      "anders_cores": 0.048,
+      "app_rss_mb_max": 152.4,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 557.3,
+      "worker_totaal_rss_mb_max": 594.7,
+      "ffmpeg_max": 3
+     },
+     "rust_voor_cores": 0.02
+    },
+    {
+     "run": 2,
+     "variant": "naast_1",
+     "max_transcodes": 2,
+     "treden": [
+      720,
+      720
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 720,
+       "preset": "veryfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 720,
+       "preset": "veryfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 122.5,
+      "app_cores": 0.017,
+      "worker_cores": 2.303,
+      "machine_cores": 2.393,
+      "anders_cores": 0.073,
+      "app_rss_mb_max": 152.9,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 500.7,
+      "worker_totaal_rss_mb_max": 538.1,
+      "ffmpeg_max": 2
+     },
+     "rust_voor_cores": 0.06
+    },
+    {
+     "run": 3,
+     "variant": "alleen",
+     "max_transcodes": 1,
+     "treden": [
+      1080
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 1080,
+       "preset": "superfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 120.0,
+      "app_cores": 0.013,
+      "worker_cores": 2.365,
+      "machine_cores": 2.81,
+      "anders_cores": 0.432,
+      "app_rss_mb_max": 157.2,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 427.3,
+      "worker_totaal_rss_mb_max": 464.7,
+      "ffmpeg_max": 1
+     },
+     "rust_voor_cores": 0.1
+    },
+    {
+     "run": 3,
+     "variant": "naast_2",
+     "max_transcodes": 3,
+     "treden": [
+      720,
+      480,
+      480
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 720,
+       "preset": "superfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 480,
+       "preset": "veryfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 480,
+       "preset": "veryfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 123.5,
+      "app_cores": 0.02,
+      "worker_cores": 2.148,
+      "machine_cores": 2.436,
+      "anders_cores": 0.268,
+      "app_rss_mb_max": 154.6,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 556.8,
+      "worker_totaal_rss_mb_max": 594.2,
+      "ffmpeg_max": 3
+     },
+     "rust_voor_cores": 0.02
+    },
+    {
+     "run": 3,
+     "variant": "naast_1",
+     "max_transcodes": 2,
+     "treden": [
+      720,
+      720
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 720,
+       "preset": "veryfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 720,
+       "preset": "veryfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 122.5,
+      "app_cores": 0.015,
+      "worker_cores": 2.3,
+      "machine_cores": 3.278,
+      "anders_cores": 0.963,
+      "app_rss_mb_max": 156.3,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 501.2,
+      "worker_totaal_rss_mb_max": 538.6,
+      "ffmpeg_max": 2
+     },
+     "rust_voor_cores": 0.05
+    },
+    {
+     "run": 4,
+     "variant": "alleen",
+     "max_transcodes": 1,
+     "treden": [
+      1080
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 1080,
+       "preset": "superfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 120.5,
+      "app_cores": 0.012,
+      "worker_cores": 2.247,
+      "machine_cores": 2.818,
+      "anders_cores": 0.559,
+      "app_rss_mb_max": 157.9,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 439.2,
+      "worker_totaal_rss_mb_max": 476.6,
+      "ffmpeg_max": 1
+     },
+     "rust_voor_cores": 0.06
+    },
+    {
+     "run": 4,
+     "variant": "naast_2",
+     "max_transcodes": 3,
+     "treden": [
+      720,
+      480,
+      480
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 720,
+       "preset": "superfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 480,
+       "preset": "veryfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 480,
+       "preset": "veryfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 123.4,
+      "app_cores": 0.02,
+      "worker_cores": 2.12,
+      "machine_cores": 2.572,
+      "anders_cores": 0.432,
+      "app_rss_mb_max": 155.6,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 556.7,
+      "worker_totaal_rss_mb_max": 594.1,
+      "ffmpeg_max": 3
+     },
+     "rust_voor_cores": 0.04
+    },
+    {
+     "run": 4,
+     "variant": "naast_1",
+     "max_transcodes": 2,
+     "treden": [
+      720,
+      720
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 720,
+       "preset": "veryfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 720,
+       "preset": "veryfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 122.6,
+      "app_cores": 0.016,
+      "worker_cores": 2.295,
+      "machine_cores": 3.354,
+      "anders_cores": 1.043,
+      "app_rss_mb_max": 157.3,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 500.8,
+      "worker_totaal_rss_mb_max": 538.2,
+      "ffmpeg_max": 2
+     },
+     "rust_voor_cores": 0.14
+    },
+    {
+     "run": 5,
+     "variant": "alleen",
+     "max_transcodes": 1,
+     "treden": [
+      1080
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 1080,
+       "preset": "superfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 120.1,
+      "app_cores": 0.011,
+      "worker_cores": 2.219,
+      "machine_cores": 3.272,
+      "anders_cores": 1.042,
+      "app_rss_mb_max": 159.1,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 427.3,
+      "worker_totaal_rss_mb_max": 464.7,
+      "ffmpeg_max": 1
+     },
+     "rust_voor_cores": 0.05
+    },
+    {
+     "run": 5,
+     "variant": "naast_2",
+     "max_transcodes": 3,
+     "treden": [
+      720,
+      480,
+      480
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 720,
+       "preset": "superfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 480,
+       "preset": "veryfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 480,
+       "preset": "veryfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 123.4,
+      "app_cores": 0.019,
+      "worker_cores": 2.073,
+      "machine_cores": 2.848,
+      "anders_cores": 0.756,
+      "app_rss_mb_max": 156.5,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 559.7,
+      "worker_totaal_rss_mb_max": 597.1,
+      "ffmpeg_max": 3
+     },
+     "rust_voor_cores": 0.03
+    },
+    {
+     "run": 5,
+     "variant": "naast_1",
+     "max_transcodes": 2,
+     "treden": [
+      720,
+      720
+     ],
+     "treden_beheer": [
+      {
+       "bron": "bron-hdr-1080.mkv",
+       "height": 720,
+       "preset": "veryfast",
+       "codec": "h264"
+      },
+      {
+       "bron": "bron-1080.mkv",
+       "height": 720,
+       "preset": "veryfast",
+       "codec": "h264"
+      }
+     ],
+     "spelers": [
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      },
+      {
+       "haperen": 0,
+       "haperen_s": 0.0,
+       "segmenten": 75
+      }
+     ],
+     "haperen": 0,
+     "processen": {
+      "seconden": 123.4,
+      "app_cores": 0.016,
+      "worker_cores": 2.256,
+      "machine_cores": 3.318,
+      "anders_cores": 1.046,
+      "app_rss_mb_max": 158.3,
+      "worker_rss_mb_max": 37.4,
+      "ffmpeg_rss_mb_max": 502.8,
+      "worker_totaal_rss_mb_max": 540.2,
+      "ffmpeg_max": 2
+     },
+     "rust_voor_cores": 0.04
+    }
+   ],
+   "rust_voor_bench": 0.02,
+   "bench": {
+    "f": 1.261,
+    "f_dec": 1.246,
+    "at": "2026-11-01T23:36:41.053683Z"
+   },
+   "ffmpeg_max": 3,
+   "alleen": {
+    "geweigerd": 0,
+    "haperen": {
+     "waarden": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "n": 5,
+     "mediaan": 0,
+     "slechtste": 0
+    },
+    "worker_totaal_rss_mb": {
+     "waarden": [
+      464.5,
+      464.9,
+      464.7,
+      476.6,
+      464.7
+     ],
+     "n": 5,
+     "mediaan": 464.7,
+     "slechtste": 476.6
+    },
+    "treden": [
+     [
+      1080
+     ],
+     [
+      1080
+     ],
+     [
+      1080
+     ],
+     [
+      1080
+     ],
+     [
+      1080
+     ]
+    ]
+   },
+   "naast_2": {
+    "geweigerd": 0,
+    "haperen": {
+     "waarden": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "n": 5,
+     "mediaan": 0,
+     "slechtste": 0
+    },
+    "worker_totaal_rss_mb": {
+     "waarden": [
+      599.9,
+      594.7,
+      594.2,
+      594.1,
+      597.1
+     ],
+     "n": 5,
+     "mediaan": 594.7,
+     "slechtste": 599.9
+    },
+    "treden": [
+     [
+      720,
+      480,
+      480
+     ],
+     [
+      720,
+      480,
+      480
+     ],
+     [
+      720,
+      480,
+      480
+     ],
+     [
+      720,
+      480,
+      480
+     ],
+     [
+      720,
+      480,
+      480
+     ]
+    ]
+   },
+   "naast_1": {
+    "geweigerd": 0,
+    "haperen": {
+     "waarden": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "n": 5,
+     "mediaan": 0,
+     "slechtste": 0
+    },
+    "worker_totaal_rss_mb": {
+     "waarden": [
+      538.4,
+      538.1,
+      538.6,
+      538.2,
+      540.2
+     ],
+     "n": 5,
+     "mediaan": 538.4,
+     "slechtste": 540.2
+    },
+    "treden": [
+     [
+      720,
+      720
+     ],
+     [
+      720,
+      720
+     ],
+     [
+      720,
+      720
+     ],
+     [
+      720,
+      720
+     ],
+     [
+      720,
+      720
+     ]
+    ]
+   },
+   "waakhond": {
+    "ingegrepen": false,
+    "minst_vrij_gib": 13.41
+   }
+  },
+  "Mg": {
+   "grens_ms": 200,
+   "md_buiten_p95_ms": {
+    "a": {
+     "waarden": [
+      68.1,
+      70.9,
+      40.7,
+      71.6,
+      80.4
+     ],
+     "n": 5,
+     "mediaan": 70.9,
+     "slechtste": 80.4
+    },
+    "b": {
+     "waarden": [
+      48.2,
+      37.3,
+      48.8,
+      40.6,
+      39.7
+     ],
+     "n": 5,
+     "mediaan": 40.6,
+     "slechtste": 48.8
+    }
+   },
+   "md_binnen_p95_ms": {
+    "waarden": [
+     55.9,
+     51.7,
+     46.3,
+     54.0,
+     65.9
+    ],
+    "n": 5,
+    "mediaan": 54.0,
+    "slechtste": 65.9
+   },
+   "md_docx_buiten_p95_ms": {
+    "a": {
+     "waarden": [
+      71.9,
+      96.1,
+      71.3,
+      58.9,
+      75.1
+     ],
+     "n": 5,
+     "mediaan": 71.9,
+     "slechtste": 96.1
+    },
+    "b": {
+     "waarden": [
+      30.0,
+      46.7,
+      48.4,
+      59.8,
+      67.2
+     ],
+     "n": 5,
+     "mediaan": 48.4,
+     "slechtste": 67.2
+    }
+   },
+   "md_ds_buiten_p95_ms": {
+    "a": {
+     "waarden": [
+      104.5,
+      90.1
+     ],
+     "n": 2,
+     "mediaan": 97.3,
+     "slechtste": 104.5
+    },
+    "b": {
+     "waarden": [],
+     "n": 0,
+     "mediaan": null,
+     "slechtste": null
+    }
+   },
+   "fase_c_buiten_p95_ms": {
+    "waarden": [
+     29.6,
+     19.2,
+     22.6,
+     31.5,
+     20.5
+    ],
+    "n": 5,
+    "mediaan": 22.6,
+    "slechtste": 31.5
+   }
+  },
+  "Mh": {
+   "grens_mb": 3072,
+   "md": {
+    "a": {
+     "waarden": [
+      564.9,
+      565.9,
+      566.5,
+      566.6,
+      566.0
+     ],
+     "n": 5,
+     "mediaan": 566.0,
+     "slechtste": 566.6
+    },
+    "b": {
+     "waarden": [
+      569.9,
+      569.9,
+      570.1,
+      569.7,
+      569.6
+     ],
+     "n": 5,
+     "mediaan": 569.9,
+     "slechtste": 570.1
+    }
+   },
+   "me": {
+    "a": {
+     "waarden": [
+      580.4,
+      578.4,
+      580.1,
+      580.4,
+      579.7
+     ],
+     "n": 5,
+     "mediaan": 580.1,
+     "slechtste": 580.4
+    },
+    "b": {
+     "waarden": [
+      582.2,
+      581.6,
+      582.0,
+      581.1,
+      574.7
+     ],
+     "n": 5,
+     "mediaan": 581.6,
+     "slechtste": 582.2
+    }
+   },
+   "fasec": {
+    "c": {
+     "waarden": [
+      790.9,
+      684.0,
+      793.1,
+      699.6,
+      703.5
+     ],
+     "n": 5,
+     "mediaan": 703.5,
+     "slechtste": 793.1
+    }
+   },
+   "md_docx": {
+    "a": {
+     "waarden": [
+      631.8,
+      686.3,
+      686.0,
+      686.0,
+      685.9
+     ],
+     "n": 5,
+     "mediaan": 686.0,
+     "slechtste": 686.3
+    },
+    "b": {
+     "waarden": [
+      637.0,
+      691.5,
+      691.9,
+      691.5,
+      692.4
+     ],
+     "n": 5,
+     "mediaan": 691.5,
+     "slechtste": 692.4
+    }
+   },
+   "md_ds": {
+    "a": {
+     "waarden": [
+      685.5,
+      604.6
+     ],
+     "n": 2,
+     "mediaan": 645.05,
+     "slechtste": 685.5
+    },
+    "b": {
+     "waarden": [],
+     "n": 0,
+     "mediaan": null,
+     "slechtste": null
+    }
+   },
+   "mf": [
+    {
+     "variant": "alleen",
+     "worker_totaal_rss_mb_max": 464.5
+    },
+    {
+     "variant": "naast_2",
+     "worker_totaal_rss_mb_max": 599.9
+    },
+    {
+     "variant": "naast_1",
+     "worker_totaal_rss_mb_max": 538.4
+    },
+    {
+     "variant": "alleen",
+     "worker_totaal_rss_mb_max": 464.9
+    },
+    {
+     "variant": "naast_2",
+     "worker_totaal_rss_mb_max": 594.7
+    },
+    {
+     "variant": "naast_1",
+     "worker_totaal_rss_mb_max": 538.1
+    },
+    {
+     "variant": "alleen",
+     "worker_totaal_rss_mb_max": 464.7
+    },
+    {
+     "variant": "naast_2",
+     "worker_totaal_rss_mb_max": 594.2
+    },
+    {
+     "variant": "naast_1",
+     "worker_totaal_rss_mb_max": 538.6
+    },
+    {
+     "variant": "alleen",
+     "worker_totaal_rss_mb_max": 476.6
+    },
+    {
+     "variant": "naast_2",
+     "worker_totaal_rss_mb_max": 594.1
+    },
+    {
+     "variant": "naast_1",
+     "worker_totaal_rss_mb_max": 538.2
+    },
+    {
+     "variant": "alleen",
+     "worker_totaal_rss_mb_max": 464.7
+    },
+    {
+     "variant": "naast_2",
+     "worker_totaal_rss_mb_max": 597.1
+    },
+    {
+     "variant": "naast_1",
+     "worker_totaal_rss_mb_max": 540.2
+    }
+   ]
+  },
+  "Mi": [
+   {
+    "log": "mi-1.log",
+    "gevonden": [
+     [
+      "0.097",
+      "0.649",
+      "0.570"
+     ]
+    ],
+    "pytest": [
+     "======================= 1 passed, 2 deselected in 17.62s ======================="
+    ]
+   },
+   {
+    "log": "mi-2.log",
+    "gevonden": [
+     [
+      "0.092",
+      "0.104",
+      "0.685"
+     ]
+    ],
+    "pytest": [
+     "======================= 1 passed, 2 deselected in 17.02s ======================="
+    ]
+   },
+   {
+    "log": "mi-3.log",
+    "gevonden": [
+     [
+      "0.087",
+      "0.091",
+      "0.600"
+     ]
+    ],
+    "pytest": [
+     "======================= 1 passed, 2 deselected in 16.38s ======================="
+    ]
+   },
+   {
+    "log": "mi-4.log",
+    "gevonden": [
+     [
+      "0.101",
+      "0.120",
+      "0.576"
+     ]
+    ],
+    "pytest": [
+     "======================= 1 passed, 2 deselected in 16.68s ======================="
+    ]
+   },
+   {
+    "log": "mi-5.log",
+    "gevonden": [
+     [
+      "0.098",
+      "0.100",
+      "0.578"
+     ]
+    ],
+    "pytest": [
+     "======================= 1 passed, 2 deselected in 16.75s ======================="
+    ]
+   }
+  ],
+  "Ml": {
+   "meting": "scannen",
+   "omstandigheden": {
+    "datum": "2026-11-01 21:44:28 UTC",
+    "commit": "a38604d",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cores": 4,
+    "geheugen_gib": 15.7,
+    "ffmpeg": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+    "worker_cores": [
+     0,
+     1,
+     2
+    ],
+    "max_procs": 3
+   },
+   "runs": [
+    {
+     "seconden": 0.57,
+     "items": 1000,
+     "staat": "idle",
+     "rust_voor_cores": 0.05,
+     "processen": {
+      "seconden": 3.5,
+      "app_cores": 0.065,
+      "worker_cores": 0.0,
+      "machine_cores": 0.674,
+      "anders_cores": 0.609,
+      "app_rss_mb_max": 130.7,
+      "worker_rss_mb_max": 36.7,
+      "ffmpeg_rss_mb_max": 0.0,
+      "worker_totaal_rss_mb_max": 36.7,
+      "ffmpeg_max": 0
+     }
+    },
+    {
+     "seconden": 0.72,
+     "items": 1000,
+     "staat": "idle",
+     "rust_voor_cores": 0.06,
+     "processen": {
+      "seconden": 3.5,
+      "app_cores": 0.15,
+      "worker_cores": 0.003,
+      "machine_cores": 0.253,
+      "anders_cores": 0.1,
+      "app_rss_mb_max": 137.2,
+      "worker_rss_mb_max": 36.7,
+      "ffmpeg_rss_mb_max": 0.0,
+      "worker_totaal_rss_mb_max": 36.7,
+      "ffmpeg_max": 0
+     }
+    },
+    {
+     "seconden": 0.58,
+     "items": 1000,
+     "staat": "idle",
+     "rust_voor_cores": 0.11,
+     "processen": {
+      "seconden": 3.0,
+      "app_cores": 0.04,
+      "worker_cores": 0.0,
+      "machine_cores": 0.192,
+      "anders_cores": 0.152,
+      "app_rss_mb_max": 138.5,
+      "worker_rss_mb_max": 36.7,
+      "ffmpeg_rss_mb_max": 0.0,
+      "worker_totaal_rss_mb_max": 36.7,
+      "ffmpeg_max": 0
+     }
+    },
+    {
+     "seconden": 0.67,
+     "items": 1000,
+     "staat": "idle",
+     "rust_voor_cores": 0.04,
+     "processen": {
+      "seconden": 3.5,
+      "app_cores": 0.119,
+      "worker_cores": 0.0,
+      "machine_cores": 0.252,
+      "anders_cores": 0.133,
+      "app_rss_mb_max": 139.6,
+      "worker_rss_mb_max": 36.7,
+      "ffmpeg_rss_mb_max": 0.0,
+      "worker_totaal_rss_mb_max": 36.7,
+      "ffmpeg_max": 0
+     }
+    },
+    {
+     "seconden": 0.75,
+     "items": 1000,
+     "staat": "idle",
+     "rust_voor_cores": 0.18,
+     "processen": {
+      "seconden": 3.5,
+      "app_cores": 0.147,
+      "worker_cores": 0.003,
+      "machine_cores": 1.038,
+      "anders_cores": 0.888,
+      "app_rss_mb_max": 141.0,
+      "worker_rss_mb_max": 36.7,
+      "ffmpeg_rss_mb_max": 0.0,
+      "worker_totaal_rss_mb_max": 36.7,
+      "ffmpeg_max": 0
+     }
+    }
+   ],
+   "seconden": {
+    "waarden": [
+     0.57,
+     0.72,
+     0.58,
+     0.67,
+     0.75
+    ],
+    "n": 5,
+    "mediaan": 0.67,
+    "slechtste": 0.75
+   },
+   "grens_s": 60.0,
+   "waakhond": {
+    "ingegrepen": false,
+    "minst_vrij_gib": 13.9
+   }
+  },
+  "Mn": [
+   {
+    "log": "mn-1.log",
+    "gevonden": [
+     [
+      "flac",
+      "{'rate': 44100, 'jumps': [0.0, -0.0], 'spread': 0.0002, 'holes': [], 'span_s': 11.993, 'total_s': 12.0, 'end_error': 0.0, 'residual_near': 0.00013, 'empty_quanta': 56} buffered={'ranges': [[0, 11.999999]], 'src': 'blob:', 'paused': False, 'ended': False, 't': 1.718277}"
+     ],
+     [
+      "opus",
+      "{'rate': 48000, 'jumps': [0.0143, 0.002], 'spread': 0.0602, 'holes': [], 'span_s': 12.0, 'total_s': 12.0, 'end_error': 1.0, 'residual_near': 0.00646, 'empty_quanta': 40} buffered={'ranges': [[0, 12]], 'src': 'blob:', 'paused': False, 'ended': False, 't': 1.728}"
+     ]
+    ],
+    "pytest": [
+     "======================= 2 passed, 4 deselected in 40.13s ======================="
+    ]
+   },
+   {
+    "log": "mn-2.log",
+    "gevonden": [
+     [
+      "flac",
+      "{'rate': 44100, 'jumps': [0.0, -0.0], 'spread': 0.0002, 'holes': [], 'span_s': 11.993, 'total_s': 12.0, 'end_error': 0.0, 'residual_near': 0.00013, 'empty_quanta': 48} buffered={'ranges': [[0, 11.999999]], 'src': 'blob:', 'paused': False, 'ended': False, 't': 1.76456}"
+     ],
+     [
+      "opus",
+      "{'rate': 48000, 'jumps': [0.0143, 0.002], 'spread': 0.0602, 'holes': [], 'span_s': 12.0, 'total_s': 12.0, 'end_error': 1.0, 'residual_near': 0.00646, 'empty_quanta': 56} buffered={'ranges': [[0, 12]], 'src': 'blob:', 'paused': False, 'ended': False, 't': 1.726791}"
+     ]
+    ],
+    "pytest": [
+     "======================= 2 passed, 4 deselected in 40.27s ======================="
+    ]
+   },
+   {
+    "log": "mn-3.log",
+    "gevonden": [
+     [
+      "flac",
+      "{'rate': 44100, 'jumps': [0.0, -0.0], 'spread': 0.0002, 'holes': [], 'span_s': 11.993, 'total_s': 12.0, 'end_error': 0.0, 'residual_near': 0.00013, 'empty_quanta': 40} buffered={'ranges': [[0, 11.999999]], 'src': 'blob:', 'paused': False, 'ended': False, 't': 1.764717}"
+     ],
+     [
+      "opus",
+      "{'rate': 48000, 'jumps': [0.0143, 0.002], 'spread': 0.0602, 'holes': [], 'span_s': 12.0, 'total_s': 12.0, 'end_error': 1.0, 'residual_near': 0.00646, 'empty_quanta': 40} buffered={'ranges': [[0, 12]], 'src': 'blob:', 'paused': False, 'ended': False, 't': 1.728}"
+     ]
+    ],
+    "pytest": [
+     "======================= 2 passed, 4 deselected in 40.34s ======================="
+    ]
+   },
+   {
+    "log": "mn-4.log",
+    "gevonden": [
+     [
+      "flac",
+      "{'rate': 44100, 'jumps': [0.0, -0.0], 'spread': 0.0002, 'holes': [], 'span_s': 11.993, 'total_s': 12.0, 'end_error': 0.0, 'residual_near': 0.00013, 'empty_quanta': 40} buffered={'ranges': [[0, 11.999999]], 'src': 'blob:', 'paused': False, 'ended': False, 't': 1.764717}"
+     ],
+     [
+      "opus",
+      "{'rate': 48000, 'jumps': [0.0143, 0.002], 'spread': 0.0602, 'holes': [], 'span_s': 12.0, 'total_s': 12.0, 'end_error': 1.0, 'residual_near': 0.00646, 'empty_quanta': 40} buffered={'ranges': [[0, 12]], 'src': 'blob:', 'paused': False, 'ended': False, 't': 1.706667}"
+     ]
+    ],
+    "pytest": [
+     "======================= 2 passed, 4 deselected in 39.75s ======================="
+    ]
+   },
+   {
+    "log": "mn-5.log",
+    "gevonden": [
+     [
+      "flac",
+      "{'rate': 44100, 'jumps': [0.0, -0.0], 'spread': 0.0002, 'holes': [], 'span_s': 11.993, 'total_s': 12.0, 'end_error': 0.0, 'residual_near': 0.00013, 'empty_quanta': 48} buffered={'ranges': [[0, 11.999999]], 'src': 'blob:', 'paused': False, 'ended': False, 't': 1.741497}"
+     ],
+     [
+      "opus",
+      "{'rate': 48000, 'jumps': [0.0143, 0.002], 'spread': 0.0602, 'holes': [], 'span_s': 12.0, 'total_s': 12.0, 'end_error': 1.0, 'residual_near': 0.00646, 'empty_quanta': 40} buffered={'ranges': [[0, 12]], 'src': 'blob:', 'paused': False, 'ended': False, 't': 1.749333}"
+     ]
+    ],
+    "pytest": [
+     "======================= 2 passed, 4 deselected in 40.17s ======================="
+    ]
+   }
+  ],
+  "Mo": {
+   "meting": "namen",
+   "omstandigheden": {
+    "datum": "2026-11-01 20:10:30 UTC",
+    "commit": "a38604d",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cores": 4,
+    "geheugen_gib": 15.7,
+    "ffmpeg": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+    "worker_cores": [
+     0,
+     1,
+     2
+    ],
+    "max_procs": 3
+   },
+   "namen": 10000,
+   "soorten": [
+    "movies",
+    "shows"
+   ],
+   "seconden": {
+    "waarden": [
+     0.338,
+     0.391,
+     0.428,
+     0.385,
+     0.372
+    ],
+    "n": 5,
+    "mediaan": 0.385,
+    "slechtste": 0.428
+   },
+   "grens_s": 0.5,
+   "rust_voor_cores": 0.02
+  },
+  "Mk": {
+   "1080 veryfast": {
+    "kosten_gemeten": {
+     "waarden": [
+      0.764,
+      0.766,
+      0.824,
+      0.852,
+      0.822
+     ],
+     "n": 5,
+     "mediaan": 0.822,
+     "slechtste": 0.852
+    },
+    "kosten_voorspeld": 1.777,
+    "verschil": {
+     "waarden": [
+      -0.57,
+      -0.569,
+      -0.536,
+      -0.521,
+      -0.537
+     ],
+     "n": 5,
+     "mediaan": -0.537,
+     "slechtste": -0.521
+    },
+    "verschil_abs_max": 0.57,
+    "snelheid": {
+     "waarden": [
+      3.764,
+      3.76,
+      3.498,
+      3.238,
+      3.344
+     ],
+     "n": 5,
+     "mediaan": 3.498,
+     "slechtste": 3.238
+    },
+    "cores": {
+     "waarden": [
+      2.877,
+      2.882,
+      2.881,
+      2.758,
+      2.747
+     ],
+     "n": 5,
+     "mediaan": 2.877,
+     "slechtste": 2.882
+    },
+    "hoogte": [
+     1080
+    ],
+    "runs": [
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 1080,
+      "snelheid": 3.764,
+      "cores": 2.877,
+      "kosten_gemeten": 0.764,
+      "kosten_voorspeld": 1.777,
+      "verschil": -0.57,
+      "tegendruk_cpu_s_in_4s": 0.01
+     },
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 1080,
+      "snelheid": 3.76,
+      "cores": 2.882,
+      "kosten_gemeten": 0.766,
+      "kosten_voorspeld": 1.777,
+      "verschil": -0.569,
+      "tegendruk_cpu_s_in_4s": 0.0
+     },
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 1080,
+      "snelheid": 3.498,
+      "cores": 2.881,
+      "kosten_gemeten": 0.824,
+      "kosten_voorspeld": 1.777,
+      "verschil": -0.536,
+      "tegendruk_cpu_s_in_4s": 0.0
+     },
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 1080,
+      "snelheid": 3.238,
+      "cores": 2.758,
+      "kosten_gemeten": 0.852,
+      "kosten_voorspeld": 1.777,
+      "verschil": -0.521,
+      "tegendruk_cpu_s_in_4s": 0.01
+     },
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 1080,
+      "snelheid": 3.344,
+      "cores": 2.747,
+      "kosten_gemeten": 0.822,
+      "kosten_voorspeld": 1.777,
+      "verschil": -0.537,
+      "tegendruk_cpu_s_in_4s": 0.0
+     }
+    ]
+   },
+   "1080 superfast": {
+    "kosten_gemeten": {
+     "waarden": [
+      0.578,
+      0.596,
+      0.576,
+      0.609,
+      0.607
+     ],
+     "n": 5,
+     "mediaan": 0.596,
+     "slechtste": 0.609
+    },
+    "kosten_voorspeld": 1.199,
+    "verschil": {
+     "waarden": [
+      -0.518,
+      -0.503,
+      -0.52,
+      -0.492,
+      -0.494
+     ],
+     "n": 5,
+     "mediaan": -0.503,
+     "slechtste": -0.492
+    },
+    "verschil_abs_max": 0.52,
+    "snelheid": {
+     "waarden": [
+      4.895,
+      4.692,
+      4.88,
+      4.434,
+      4.423
+     ],
+     "n": 5,
+     "mediaan": 4.692,
+     "slechtste": 4.423
+    },
+    "cores": {
+     "waarden": [
+      2.827,
+      2.797,
+      2.813,
+      2.7,
+      2.686
+     ],
+     "n": 5,
+     "mediaan": 2.797,
+     "slechtste": 2.827
+    },
+    "hoogte": [
+     1080
+    ],
+    "runs": [
+     {
+      "cpu_budget": 1.653,
+      "hoogte": 1080,
+      "snelheid": 4.895,
+      "cores": 2.827,
+      "kosten_gemeten": 0.578,
+      "kosten_voorspeld": 1.199,
+      "verschil": -0.518,
+      "tegendruk_cpu_s_in_4s": 0.01
+     },
+     {
+      "cpu_budget": 1.653,
+      "hoogte": 1080,
+      "snelheid": 4.692,
+      "cores": 2.797,
+      "kosten_gemeten": 0.596,
+      "kosten_voorspeld": 1.199,
+      "verschil": -0.503,
+      "tegendruk_cpu_s_in_4s": 0.0
+     },
+     {
+      "cpu_budget": 1.653,
+      "hoogte": 1080,
+      "snelheid": 4.88,
+      "cores": 2.813,
+      "kosten_gemeten": 0.576,
+      "kosten_voorspeld": 1.199,
+      "verschil": -0.52,
+      "tegendruk_cpu_s_in_4s": 0.0
+     },
+     {
+      "cpu_budget": 1.653,
+      "hoogte": 1080,
+      "snelheid": 4.434,
+      "cores": 2.7,
+      "kosten_gemeten": 0.609,
+      "kosten_voorspeld": 1.199,
+      "verschil": -0.492,
+      "tegendruk_cpu_s_in_4s": 0.01
+     },
+     {
+      "cpu_budget": 1.653,
+      "hoogte": 1080,
+      "snelheid": 4.423,
+      "cores": 2.686,
+      "kosten_gemeten": 0.607,
+      "kosten_voorspeld": 1.199,
+      "verschil": -0.494,
+      "tegendruk_cpu_s_in_4s": 0.0
+     }
+    ]
+   },
+   "720 veryfast": {
+    "kosten_gemeten": {
+     "waarden": [
+      0.482,
+      0.505,
+      0.53,
+      0.54,
+      0.544
+     ],
+     "n": 5,
+     "mediaan": 0.53,
+     "slechtste": 0.544
+    },
+    "kosten_voorspeld": 0.941,
+    "verschil": {
+     "waarden": [
+      -0.488,
+      -0.463,
+      -0.437,
+      -0.426,
+      -0.422
+     ],
+     "n": 5,
+     "mediaan": -0.437,
+     "slechtste": -0.422
+    },
+    "verschil_abs_max": 0.488,
+    "snelheid": {
+     "waarden": [
+      5.616,
+      5.418,
+      5.192,
+      4.876,
+      4.865
+     ],
+     "n": 5,
+     "mediaan": 5.192,
+     "slechtste": 4.865
+    },
+    "cores": {
+     "waarden": [
+      2.709,
+      2.738,
+      2.75,
+      2.632,
+      2.646
+     ],
+     "n": 5,
+     "mediaan": 2.709,
+     "slechtste": 2.75
+    },
+    "hoogte": [
+     720
+    ],
+    "runs": [
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 720,
+      "snelheid": 5.616,
+      "cores": 2.709,
+      "kosten_gemeten": 0.482,
+      "kosten_voorspeld": 0.941,
+      "verschil": -0.488,
+      "tegendruk_cpu_s_in_4s": 0.0
+     },
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 720,
+      "snelheid": 5.418,
+      "cores": 2.738,
+      "kosten_gemeten": 0.505,
+      "kosten_voorspeld": 0.941,
+      "verschil": -0.463,
+      "tegendruk_cpu_s_in_4s": 0.0
+     },
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 720,
+      "snelheid": 5.192,
+      "cores": 2.75,
+      "kosten_gemeten": 0.53,
+      "kosten_voorspeld": 0.941,
+      "verschil": -0.437,
+      "tegendruk_cpu_s_in_4s": 0.0
+     },
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 720,
+      "snelheid": 4.876,
+      "cores": 2.632,
+      "kosten_gemeten": 0.54,
+      "kosten_voorspeld": 0.941,
+      "verschil": -0.426,
+      "tegendruk_cpu_s_in_4s": 0.0
+     },
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 720,
+      "snelheid": 4.865,
+      "cores": 2.646,
+      "kosten_gemeten": 0.544,
+      "kosten_voorspeld": 0.941,
+      "verschil": -0.422,
+      "tegendruk_cpu_s_in_4s": 0.01
+     }
+    ]
+   },
+   "720 superfast": {
+    "kosten_gemeten": {
+     "waarden": [
+      0.337,
+      0.371,
+      0.384,
+      0.37,
+      0.395
+     ],
+     "n": 5,
+     "mediaan": 0.371,
+     "slechtste": 0.395
+    },
+    "kosten_voorspeld": 0.793,
+    "verschil": {
+     "waarden": [
+      -0.575,
+      -0.532,
+      -0.516,
+      -0.533,
+      -0.502
+     ],
+     "n": 5,
+     "mediaan": -0.532,
+     "slechtste": -0.502
+    },
+    "verschil_abs_max": 0.575,
+    "snelheid": {
+     "waarden": [
+      7.17,
+      6.692,
+      6.38,
+      6.391,
+      6.104
+     ],
+     "n": 5,
+     "mediaan": 6.391,
+     "slechtste": 6.104
+    },
+    "cores": {
+     "waarden": [
+      2.42,
+      2.482,
+      2.448,
+      2.366,
+      2.408
+     ],
+     "n": 5,
+     "mediaan": 2.42,
+     "slechtste": 2.482
+    },
+    "hoogte": [
+     720
+    ],
+    "runs": [
+     {
+      "cpu_budget": 0.964,
+      "hoogte": 720,
+      "snelheid": 7.17,
+      "cores": 2.42,
+      "kosten_gemeten": 0.337,
+      "kosten_voorspeld": 0.793,
+      "verschil": -0.575,
+      "tegendruk_cpu_s_in_4s": 0.0
+     },
+     {
+      "cpu_budget": 0.964,
+      "hoogte": 720,
+      "snelheid": 6.692,
+      "cores": 2.482,
+      "kosten_gemeten": 0.371,
+      "kosten_voorspeld": 0.793,
+      "verschil": -0.532,
+      "tegendruk_cpu_s_in_4s": 0.01
+     },
+     {
+      "cpu_budget": 0.964,
+      "hoogte": 720,
+      "snelheid": 6.38,
+      "cores": 2.448,
+      "kosten_gemeten": 0.384,
+      "kosten_voorspeld": 0.793,
+      "verschil": -0.516,
+      "tegendruk_cpu_s_in_4s": 0.01
+     },
+     {
+      "cpu_budget": 0.964,
+      "hoogte": 720,
+      "snelheid": 6.391,
+      "cores": 2.366,
+      "kosten_gemeten": 0.37,
+      "kosten_voorspeld": 0.793,
+      "verschil": -0.533,
+      "tegendruk_cpu_s_in_4s": 0.01
+     },
+     {
+      "cpu_budget": 0.964,
+      "hoogte": 720,
+      "snelheid": 6.104,
+      "cores": 2.408,
+      "kosten_gemeten": 0.395,
+      "kosten_voorspeld": 0.793,
+      "verschil": -0.502,
+      "tegendruk_cpu_s_in_4s": 0.0
+     }
+    ]
+   },
+   "480 veryfast": {
+    "kosten_gemeten": {
+     "waarden": [
+      0.291,
+      0.294,
+      0.318,
+      0.295,
+      0.314
+     ],
+     "n": 5,
+     "mediaan": 0.295,
+     "slechtste": 0.318
+    },
+    "kosten_voorspeld": 0.72,
+    "verschil": {
+     "waarden": [
+      -0.596,
+      -0.592,
+      -0.558,
+      -0.59,
+      -0.564
+     ],
+     "n": 5,
+     "mediaan": -0.59,
+     "slechtste": -0.558
+    },
+    "verschil_abs_max": 0.596,
+    "snelheid": {
+     "waarden": [
+      8.201,
+      7.813,
+      7.135,
+      7.462,
+      7.111
+     ],
+     "n": 5,
+     "mediaan": 7.462,
+     "slechtste": 7.111
+    },
+    "cores": {
+     "waarden": [
+      2.388,
+      2.297,
+      2.269,
+      2.203,
+      2.233
+     ],
+     "n": 5,
+     "mediaan": 2.269,
+     "slechtste": 2.388
+    },
+    "hoogte": [
+     480
+    ],
+    "runs": [
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 480,
+      "snelheid": 8.201,
+      "cores": 2.388,
+      "kosten_gemeten": 0.291,
+      "kosten_voorspeld": 0.72,
+      "verschil": -0.596,
+      "tegendruk_cpu_s_in_4s": 0.01
+     },
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 480,
+      "snelheid": 7.813,
+      "cores": 2.297,
+      "kosten_gemeten": 0.294,
+      "kosten_voorspeld": 0.72,
+      "verschil": -0.592,
+      "tegendruk_cpu_s_in_4s": 0.0
+     },
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 480,
+      "snelheid": 7.135,
+      "cores": 2.269,
+      "kosten_gemeten": 0.318,
+      "kosten_voorspeld": 0.72,
+      "verschil": -0.558,
+      "tegendruk_cpu_s_in_4s": 0.01
+     },
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 480,
+      "snelheid": 7.462,
+      "cores": 2.203,
+      "kosten_gemeten": 0.295,
+      "kosten_voorspeld": 0.72,
+      "verschil": -0.59,
+      "tegendruk_cpu_s_in_4s": 0.0
+     },
+     {
+      "cpu_budget": 16.0,
+      "hoogte": 480,
+      "snelheid": 7.111,
+      "cores": 2.233,
+      "kosten_gemeten": 0.314,
+      "kosten_voorspeld": 0.72,
+      "verschil": -0.564,
+      "tegendruk_cpu_s_in_4s": 0.0
+     }
+    ]
+   }
+  },
+  "Mm": {
+   "waarden": [
+    0.01,
+    0.01,
+    0.0,
+    0.0,
+    0.01,
+    0.0,
+    0.0,
+    0.0,
+    0.01,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.01,
+    0.01,
+    0.01,
+    0.01,
+    0.0,
+    0.01,
+    0.0,
+    0.0,
+    0.0,
+    0.01,
+    0.0,
+    0.0
+   ],
+   "n": 25,
+   "mediaan": 0.0,
+   "slechtste": 0.01,
+   "eenheid": "CPU-seconden in 4 s"
+  },
+  "Mj": {
+   "waarden": [
+    0.007,
+    0.007,
+    0.007,
+    0.007,
+    0.007
+   ],
+   "n": 5,
+   "mediaan": 0.007,
+   "slechtste": 0.007,
+   "eenheid": "core per stroom",
+   "grens": 0.05
+  },
+  "Mp": {
+   "regels": [
+    "ok   eerste lading JS                             96.4 KB / 100.0 KB",
+    "ok   eerste lading CSS                             3.4 KB / 12.0 KB",
+    "ok   route Bestanden                              43.6 KB / 45.0 KB",
+    "ok   mediapagina media/LibraryHome.tsx            16.5 KB / 45.0 KB",
+    "ok   mediapagina media/Library.tsx                12.9 KB / 45.0 KB",
+    "ok   mediapagina media/ItemPage.tsx               10.3 KB / 45.0 KB",
+    "ok   mediapagina media/ShowPage.tsx                9.7 KB / 45.0 KB",
+    "ok   mediapagina player/WatchPage.tsx             25.8 KB / 45.0 KB",
+    "ok   speler (src/player)                          25.4 KB / 35.0 KB",
+    "ok   muziek (src/music)                           30.6 KB / 40.0 KB",
+    "ok   highlighter/worker assets/TextView-BudS4K9E.js    6.9 KB / 60.0 KB",
+    "ok   highlighter/worker assets/highlight.worker-BBRihegf.js    2.4 KB / 60.0 KB",
+    "ok   grootste lazy chunk (van 110)                13.3 KB / 50.0 KB",
+    "ok   sw.js                                         3.0 KB / 8.0 KB"
+   ],
+   "geslaagd": true
+  }
+ },
+ "koppelen": {
+  "namen": 125,
+  "taal": "nl-NL",
+  "runs": [
+   {
+    "zoeken": "nep",
+    "regel": "zoals",
+    "samen": {
+     "totaal": {
+      "namen": 125,
+      "automatisch_goed": 101,
+      "automatisch_fout": 3,
+      "nakijken": 21,
+      "nakijken_goede_in_top5": 7,
+      "precisie": 0.971
+     },
+     "films": {
+      "namen": 93,
+      "automatisch_goed": 77,
+      "automatisch_fout": 3,
+      "nakijken": 13,
+      "nakijken_goede_in_top5": 2,
+      "precisie": 0.963
+     },
+     "afleveringen": {
+      "namen": 32,
+      "automatisch_goed": 24,
+      "automatisch_fout": 0,
+      "nakijken": 8,
+      "nakijken_goede_in_top5": 5,
+      "precisie": 1.0
+     },
+     "per_groep": {
+      "buitenlands": {
+       "namen": 11,
+       "automatisch_goed": 10,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "getal": {
+       "namen": 9,
+       "automatisch_goed": 9,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "gewoon": {
+       "namen": 30,
+       "automatisch_goed": 27,
+       "automatisch_fout": 0,
+       "nakijken": 3,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "id": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "jaar-ernaast": {
+       "namen": 3,
+       "automatisch_goed": 3,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "ontbreekt": {
+       "namen": 6,
+       "automatisch_goed": 0,
+       "automatisch_fout": 1,
+       "nakijken": 5,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 0.0
+      },
+      "remake": {
+       "namen": 8,
+       "automatisch_goed": 5,
+       "automatisch_fout": 0,
+       "nakijken": 3,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "serie": {
+       "namen": 32,
+       "automatisch_goed": 24,
+       "automatisch_fout": 0,
+       "nakijken": 8,
+       "nakijken_goede_in_top5": 5,
+       "precisie": 1.0
+      },
+      "vervolg": {
+       "namen": 7,
+       "automatisch_goed": 6,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "voorvoegsel": {
+       "namen": 12,
+       "automatisch_goed": 12,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "voorvoegsel-jaar": {
+       "namen": 3,
+       "automatisch_goed": 1,
+       "automatisch_fout": 2,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 0.333
+      },
+      "voorvoegsel-taal": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      }
+     },
+     "fout": [
+      {
+       "pad": "Cold.Meridian.2018.1080p.BluRay.x264-NEP.mkv",
+       "verwacht": "movie:900560",
+       "gekozen": "movie:900561",
+       "zekerheid": 0.995,
+       "top3": [
+        [
+         "movie:900561",
+         "Cold Meridian Rising",
+         2018,
+         0.995
+        ]
+       ]
+      },
+      {
+       "pad": "Wild.Orchard.2014.720p.BluRay.x264-NEP.mkv",
+       "verwacht": "movie:900562",
+       "gekozen": "movie:900563",
+       "zekerheid": 1.0,
+       "top3": [
+        [
+         "movie:900563",
+         "Wild Orchard Road",
+         2014,
+         1.034
+        ]
+       ]
+      },
+      {
+       "pad": "Family.Weekend.2018.1080p.mp4",
+       "verwacht": null,
+       "gekozen": "movie:900620",
+       "zekerheid": 0.986,
+       "top3": [
+        [
+         "movie:900620",
+         "Family Weekend Getaway",
+         2018,
+         0.986
+        ]
+       ]
+      }
+     ]
+    }
+   },
+   {
+    "zoeken": "ruim",
+    "regel": "zoals",
+    "samen": {
+     "totaal": {
+      "namen": 125,
+      "automatisch_goed": 102,
+      "automatisch_fout": 5,
+      "nakijken": 18,
+      "nakijken_goede_in_top5": 13,
+      "precisie": 0.953
+     },
+     "films": {
+      "namen": 93,
+      "automatisch_goed": 78,
+      "automatisch_fout": 5,
+      "nakijken": 10,
+      "nakijken_goede_in_top5": 6,
+      "precisie": 0.94
+     },
+     "afleveringen": {
+      "namen": 32,
+      "automatisch_goed": 24,
+      "automatisch_fout": 0,
+      "nakijken": 8,
+      "nakijken_goede_in_top5": 7,
+      "precisie": 1.0
+     },
+     "per_groep": {
+      "buitenlands": {
+       "namen": 11,
+       "automatisch_goed": 10,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "getal": {
+       "namen": 9,
+       "automatisch_goed": 7,
+       "automatisch_fout": 0,
+       "nakijken": 2,
+       "nakijken_goede_in_top5": 2,
+       "precisie": 1.0
+      },
+      "gewoon": {
+       "namen": 30,
+       "automatisch_goed": 30,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "id": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "jaar-ernaast": {
+       "namen": 3,
+       "automatisch_goed": 3,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "ontbreekt": {
+       "namen": 6,
+       "automatisch_goed": 0,
+       "automatisch_fout": 2,
+       "nakijken": 4,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 0.0
+      },
+      "remake": {
+       "namen": 8,
+       "automatisch_goed": 7,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "serie": {
+       "namen": 32,
+       "automatisch_goed": 24,
+       "automatisch_fout": 0,
+       "nakijken": 8,
+       "nakijken_goede_in_top5": 7,
+       "precisie": 1.0
+      },
+      "vervolg": {
+       "namen": 7,
+       "automatisch_goed": 7,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "voorvoegsel": {
+       "namen": 12,
+       "automatisch_goed": 10,
+       "automatisch_fout": 0,
+       "nakijken": 2,
+       "nakijken_goede_in_top5": 2,
+       "precisie": 1.0
+      },
+      "voorvoegsel-jaar": {
+       "namen": 3,
+       "automatisch_goed": 1,
+       "automatisch_fout": 2,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 0.333
+      },
+      "voorvoegsel-taal": {
+       "namen": 2,
+       "automatisch_goed": 1,
+       "automatisch_fout": 1,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 0.5
+      }
+     },
+     "fout": [
+      {
+       "pad": "Cold.Meridian.2018.1080p.BluRay.x264-NEP.mkv",
+       "verwacht": "movie:900560",
+       "gekozen": "movie:900561",
+       "zekerheid": 0.995,
+       "top3": [
+        [
+         "movie:900561",
+         "Cold Meridian Rising",
+         2018,
+         0.995
+        ]
+       ]
+      },
+      {
+       "pad": "Wild.Orchard.2014.720p.BluRay.x264-NEP.mkv",
+       "verwacht": "movie:900562",
+       "gekozen": "movie:900563",
+       "zekerheid": 1.0,
+       "top3": [
+        [
+         "movie:900563",
+         "Wild Orchard Road",
+         2014,
+         1.034
+        ]
+       ]
+      },
+      {
+       "pad": "Harbor.of.Night.2014.SWEDISH.1080p.BluRay.x264-NEP.mkv",
+       "verwacht": "movie:900565",
+       "gekozen": "movie:900566",
+       "zekerheid": 1.0,
+       "top3": [
+        [
+         "movie:900566",
+         "Harbor of Nightfall",
+         2014,
+         1.088
+        ],
+        [
+         "movie:900565",
+         "Haven van de nacht",
+         2014,
+         0.629
+        ]
+       ]
+      },
+      {
+       "pad": "Family.Weekend.2018.1080p.mp4",
+       "verwacht": null,
+       "gekozen": "movie:900620",
+       "zekerheid": 0.986,
+       "top3": [
+        [
+         "movie:900620",
+         "Family Weekend Getaway",
+         2018,
+         0.986
+        ]
+       ]
+      },
+      {
+       "pad": "The.Hunt.2020.1080p.mkv",
+       "verwacht": null,
+       "gekozen": "movie:900621",
+       "zekerheid": 0.937,
+       "top3": [
+        [
+         "movie:900621",
+         "The Hunters",
+         2020,
+         0.937
+        ]
+       ]
+      }
+     ]
+    }
+   },
+   {
+    "zoeken": "nep",
+    "regel": "breed",
+    "samen": {
+     "totaal": {
+      "namen": 125,
+      "automatisch_goed": 102,
+      "automatisch_fout": 1,
+      "nakijken": 22,
+      "nakijken_goede_in_top5": 8,
+      "precisie": 0.99
+     },
+     "films": {
+      "namen": 93,
+      "automatisch_goed": 78,
+      "automatisch_fout": 1,
+      "nakijken": 14,
+      "nakijken_goede_in_top5": 3,
+      "precisie": 0.987
+     },
+     "afleveringen": {
+      "namen": 32,
+      "automatisch_goed": 24,
+      "automatisch_fout": 0,
+      "nakijken": 8,
+      "nakijken_goede_in_top5": 5,
+      "precisie": 1.0
+     },
+     "per_groep": {
+      "buitenlands": {
+       "namen": 11,
+       "automatisch_goed": 10,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "getal": {
+       "namen": 9,
+       "automatisch_goed": 9,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "gewoon": {
+       "namen": 30,
+       "automatisch_goed": 27,
+       "automatisch_fout": 0,
+       "nakijken": 3,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "id": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "jaar-ernaast": {
+       "namen": 3,
+       "automatisch_goed": 3,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "ontbreekt": {
+       "namen": 6,
+       "automatisch_goed": 0,
+       "automatisch_fout": 1,
+       "nakijken": 5,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 0.0
+      },
+      "remake": {
+       "namen": 8,
+       "automatisch_goed": 5,
+       "automatisch_fout": 0,
+       "nakijken": 3,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "serie": {
+       "namen": 32,
+       "automatisch_goed": 24,
+       "automatisch_fout": 0,
+       "nakijken": 8,
+       "nakijken_goede_in_top5": 5,
+       "precisie": 1.0
+      },
+      "vervolg": {
+       "namen": 7,
+       "automatisch_goed": 6,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "voorvoegsel": {
+       "namen": 12,
+       "automatisch_goed": 12,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "voorvoegsel-jaar": {
+       "namen": 3,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "voorvoegsel-taal": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      }
+     },
+     "fout": [
+      {
+       "pad": "Family.Weekend.2018.1080p.mp4",
+       "verwacht": null,
+       "gekozen": "movie:900620",
+       "zekerheid": 0.986,
+       "top3": [
+        [
+         "movie:900620",
+         "Family Weekend Getaway",
+         2018,
+         0.986
+        ]
+       ]
+      }
+     ]
+    }
+   },
+   {
+    "zoeken": "ruim",
+    "regel": "breed",
+    "samen": {
+     "totaal": {
+      "namen": 125,
+      "automatisch_goed": 104,
+      "automatisch_fout": 2,
+      "nakijken": 19,
+      "nakijken_goede_in_top5": 14,
+      "precisie": 0.981
+     },
+     "films": {
+      "namen": 93,
+      "automatisch_goed": 80,
+      "automatisch_fout": 2,
+      "nakijken": 11,
+      "nakijken_goede_in_top5": 7,
+      "precisie": 0.976
+     },
+     "afleveringen": {
+      "namen": 32,
+      "automatisch_goed": 24,
+      "automatisch_fout": 0,
+      "nakijken": 8,
+      "nakijken_goede_in_top5": 7,
+      "precisie": 1.0
+     },
+     "per_groep": {
+      "buitenlands": {
+       "namen": 11,
+       "automatisch_goed": 10,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "getal": {
+       "namen": 9,
+       "automatisch_goed": 7,
+       "automatisch_fout": 0,
+       "nakijken": 2,
+       "nakijken_goede_in_top5": 2,
+       "precisie": 1.0
+      },
+      "gewoon": {
+       "namen": 30,
+       "automatisch_goed": 30,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "id": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "jaar-ernaast": {
+       "namen": 3,
+       "automatisch_goed": 3,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "ontbreekt": {
+       "namen": 6,
+       "automatisch_goed": 0,
+       "automatisch_fout": 2,
+       "nakijken": 4,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 0.0
+      },
+      "remake": {
+       "namen": 8,
+       "automatisch_goed": 7,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "serie": {
+       "namen": 32,
+       "automatisch_goed": 24,
+       "automatisch_fout": 0,
+       "nakijken": 8,
+       "nakijken_goede_in_top5": 7,
+       "precisie": 1.0
+      },
+      "vervolg": {
+       "namen": 7,
+       "automatisch_goed": 7,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "voorvoegsel": {
+       "namen": 12,
+       "automatisch_goed": 10,
+       "automatisch_fout": 0,
+       "nakijken": 2,
+       "nakijken_goede_in_top5": 2,
+       "precisie": 1.0
+      },
+      "voorvoegsel-jaar": {
+       "namen": 3,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "voorvoegsel-taal": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      }
+     },
+     "fout": [
+      {
+       "pad": "Family.Weekend.2018.1080p.mp4",
+       "verwacht": null,
+       "gekozen": "movie:900620",
+       "zekerheid": 0.986,
+       "top3": [
+        [
+         "movie:900620",
+         "Family Weekend Getaway",
+         2018,
+         0.986
+        ]
+       ]
+      },
+      {
+       "pad": "The.Hunt.2020.1080p.mkv",
+       "verwacht": null,
+       "gekozen": "movie:900621",
+       "zekerheid": 0.937,
+       "top3": [
+        [
+         "movie:900621",
+         "The Hunters",
+         2020,
+         0.937
+        ],
+        [
+         "movie:900544",
+         "The Hunt",
+         2012,
+         0.709
+        ],
+        [
+         "movie:900545",
+         "The Hunter",
+         2012,
+         0.509
+        ]
+       ]
+      }
+     ]
+    }
+   },
+   {
+    "zoeken": "nep",
+    "regel": "tekst",
+    "samen": {
+     "totaal": {
+      "namen": 125,
+      "automatisch_goed": 101,
+      "automatisch_fout": 0,
+      "nakijken": 24,
+      "nakijken_goede_in_top5": 7,
+      "precisie": 1.0
+     },
+     "films": {
+      "namen": 93,
+      "automatisch_goed": 77,
+      "automatisch_fout": 0,
+      "nakijken": 16,
+      "nakijken_goede_in_top5": 2,
+      "precisie": 1.0
+     },
+     "afleveringen": {
+      "namen": 32,
+      "automatisch_goed": 24,
+      "automatisch_fout": 0,
+      "nakijken": 8,
+      "nakijken_goede_in_top5": 5,
+      "precisie": 1.0
+     },
+     "per_groep": {
+      "buitenlands": {
+       "namen": 11,
+       "automatisch_goed": 10,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "getal": {
+       "namen": 9,
+       "automatisch_goed": 9,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "gewoon": {
+       "namen": 30,
+       "automatisch_goed": 27,
+       "automatisch_fout": 0,
+       "nakijken": 3,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "id": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "jaar-ernaast": {
+       "namen": 3,
+       "automatisch_goed": 3,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "ontbreekt": {
+       "namen": 6,
+       "automatisch_goed": 0,
+       "automatisch_fout": 0,
+       "nakijken": 6,
+       "nakijken_goede_in_top5": 0,
+       "precisie": null
+      },
+      "remake": {
+       "namen": 8,
+       "automatisch_goed": 5,
+       "automatisch_fout": 0,
+       "nakijken": 3,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "serie": {
+       "namen": 32,
+       "automatisch_goed": 24,
+       "automatisch_fout": 0,
+       "nakijken": 8,
+       "nakijken_goede_in_top5": 5,
+       "precisie": 1.0
+      },
+      "vervolg": {
+       "namen": 7,
+       "automatisch_goed": 6,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "voorvoegsel": {
+       "namen": 12,
+       "automatisch_goed": 12,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "voorvoegsel-jaar": {
+       "namen": 3,
+       "automatisch_goed": 1,
+       "automatisch_fout": 0,
+       "nakijken": 2,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "voorvoegsel-taal": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      }
+     },
+     "fout": []
+    }
+   },
+   {
+    "zoeken": "ruim",
+    "regel": "tekst",
+    "samen": {
+     "totaal": {
+      "namen": 125,
+      "automatisch_goed": 101,
+      "automatisch_fout": 0,
+      "nakijken": 24,
+      "nakijken_goede_in_top5": 15,
+      "precisie": 1.0
+     },
+     "films": {
+      "namen": 93,
+      "automatisch_goed": 77,
+      "automatisch_fout": 0,
+      "nakijken": 16,
+      "nakijken_goede_in_top5": 8,
+      "precisie": 1.0
+     },
+     "afleveringen": {
+      "namen": 32,
+      "automatisch_goed": 24,
+      "automatisch_fout": 0,
+      "nakijken": 8,
+      "nakijken_goede_in_top5": 7,
+      "precisie": 1.0
+     },
+     "per_groep": {
+      "buitenlands": {
+       "namen": 11,
+       "automatisch_goed": 10,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "getal": {
+       "namen": 9,
+       "automatisch_goed": 7,
+       "automatisch_fout": 0,
+       "nakijken": 2,
+       "nakijken_goede_in_top5": 2,
+       "precisie": 1.0
+      },
+      "gewoon": {
+       "namen": 30,
+       "automatisch_goed": 30,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "id": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "jaar-ernaast": {
+       "namen": 3,
+       "automatisch_goed": 3,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "ontbreekt": {
+       "namen": 6,
+       "automatisch_goed": 0,
+       "automatisch_fout": 0,
+       "nakijken": 6,
+       "nakijken_goede_in_top5": 0,
+       "precisie": null
+      },
+      "remake": {
+       "namen": 8,
+       "automatisch_goed": 7,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "serie": {
+       "namen": 32,
+       "automatisch_goed": 24,
+       "automatisch_fout": 0,
+       "nakijken": 8,
+       "nakijken_goede_in_top5": 7,
+       "precisie": 1.0
+      },
+      "vervolg": {
+       "namen": 7,
+       "automatisch_goed": 6,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "voorvoegsel": {
+       "namen": 12,
+       "automatisch_goed": 10,
+       "automatisch_fout": 0,
+       "nakijken": 2,
+       "nakijken_goede_in_top5": 2,
+       "precisie": 1.0
+      },
+      "voorvoegsel-jaar": {
+       "namen": 3,
+       "automatisch_goed": 1,
+       "automatisch_fout": 0,
+       "nakijken": 2,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "voorvoegsel-taal": {
+       "namen": 2,
+       "automatisch_goed": 1,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      }
+     },
+     "fout": []
+    }
+   },
+   {
+    "zoeken": "nep",
+    "regel": "breed+tekst",
+    "samen": {
+     "totaal": {
+      "namen": 125,
+      "automatisch_goed": 102,
+      "automatisch_fout": 0,
+      "nakijken": 23,
+      "nakijken_goede_in_top5": 8,
+      "precisie": 1.0
+     },
+     "films": {
+      "namen": 93,
+      "automatisch_goed": 78,
+      "automatisch_fout": 0,
+      "nakijken": 15,
+      "nakijken_goede_in_top5": 3,
+      "precisie": 1.0
+     },
+     "afleveringen": {
+      "namen": 32,
+      "automatisch_goed": 24,
+      "automatisch_fout": 0,
+      "nakijken": 8,
+      "nakijken_goede_in_top5": 5,
+      "precisie": 1.0
+     },
+     "per_groep": {
+      "buitenlands": {
+       "namen": 11,
+       "automatisch_goed": 10,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "getal": {
+       "namen": 9,
+       "automatisch_goed": 9,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "gewoon": {
+       "namen": 30,
+       "automatisch_goed": 27,
+       "automatisch_fout": 0,
+       "nakijken": 3,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "id": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "jaar-ernaast": {
+       "namen": 3,
+       "automatisch_goed": 3,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "ontbreekt": {
+       "namen": 6,
+       "automatisch_goed": 0,
+       "automatisch_fout": 0,
+       "nakijken": 6,
+       "nakijken_goede_in_top5": 0,
+       "precisie": null
+      },
+      "remake": {
+       "namen": 8,
+       "automatisch_goed": 5,
+       "automatisch_fout": 0,
+       "nakijken": 3,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "serie": {
+       "namen": 32,
+       "automatisch_goed": 24,
+       "automatisch_fout": 0,
+       "nakijken": 8,
+       "nakijken_goede_in_top5": 5,
+       "precisie": 1.0
+      },
+      "vervolg": {
+       "namen": 7,
+       "automatisch_goed": 6,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "voorvoegsel": {
+       "namen": 12,
+       "automatisch_goed": 12,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "voorvoegsel-jaar": {
+       "namen": 3,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "voorvoegsel-taal": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      }
+     },
+     "fout": []
+    }
+   },
+   {
+    "zoeken": "ruim",
+    "regel": "breed+tekst",
+    "samen": {
+     "totaal": {
+      "namen": 125,
+      "automatisch_goed": 103,
+      "automatisch_fout": 0,
+      "nakijken": 22,
+      "nakijken_goede_in_top5": 15,
+      "precisie": 1.0
+     },
+     "films": {
+      "namen": 93,
+      "automatisch_goed": 79,
+      "automatisch_fout": 0,
+      "nakijken": 14,
+      "nakijken_goede_in_top5": 8,
+      "precisie": 1.0
+     },
+     "afleveringen": {
+      "namen": 32,
+      "automatisch_goed": 24,
+      "automatisch_fout": 0,
+      "nakijken": 8,
+      "nakijken_goede_in_top5": 7,
+      "precisie": 1.0
+     },
+     "per_groep": {
+      "buitenlands": {
+       "namen": 11,
+       "automatisch_goed": 10,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "getal": {
+       "namen": 9,
+       "automatisch_goed": 7,
+       "automatisch_fout": 0,
+       "nakijken": 2,
+       "nakijken_goede_in_top5": 2,
+       "precisie": 1.0
+      },
+      "gewoon": {
+       "namen": 30,
+       "automatisch_goed": 30,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "id": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "jaar-ernaast": {
+       "namen": 3,
+       "automatisch_goed": 3,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      },
+      "ontbreekt": {
+       "namen": 6,
+       "automatisch_goed": 0,
+       "automatisch_fout": 0,
+       "nakijken": 6,
+       "nakijken_goede_in_top5": 0,
+       "precisie": null
+      },
+      "remake": {
+       "namen": 8,
+       "automatisch_goed": 7,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "serie": {
+       "namen": 32,
+       "automatisch_goed": 24,
+       "automatisch_fout": 0,
+       "nakijken": 8,
+       "nakijken_goede_in_top5": 7,
+       "precisie": 1.0
+      },
+      "vervolg": {
+       "namen": 7,
+       "automatisch_goed": 6,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "voorvoegsel": {
+       "namen": 12,
+       "automatisch_goed": 10,
+       "automatisch_fout": 0,
+       "nakijken": 2,
+       "nakijken_goede_in_top5": 2,
+       "precisie": 1.0
+      },
+      "voorvoegsel-jaar": {
+       "namen": 3,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 1,
+       "nakijken_goede_in_top5": 1,
+       "precisie": 1.0
+      },
+      "voorvoegsel-taal": {
+       "namen": 2,
+       "automatisch_goed": 2,
+       "automatisch_fout": 0,
+       "nakijken": 0,
+       "nakijken_goede_in_top5": 0,
+       "precisie": 1.0
+      }
+     },
+     "fout": []
+    }
+   }
+  ],
+  "per_naam": "api/tests/media/metingen/koppelen.py --uit (niet hier: 0,5 MB)"
+ },
+ "waakhond": {
+  "per_meting": {
+   "md": {
+    "ingegrepen": false,
+    "minst_vrij_gib": 12.38
+   },
+   "me": {
+    "ingegrepen": false,
+    "minst_vrij_gib": 12.47
+   },
+   "fasec": {
+    "ingegrepen": false,
+    "minst_vrij_gib": 12.34
+   },
+   "md_docx": {
+    "ingegrepen": false,
+    "minst_vrij_gib": 12.55
+   },
+   "md_ds": {
+    "ingegrepen": false,
+    "minst_vrij_gib": 12.85
+   },
+   "start": {
+    "ingegrepen": false,
+    "minst_vrij_gib": 12.55
+   },
+   "mf": {
+    "ingegrepen": false,
+    "minst_vrij_gib": 13.41
+   },
+   "ml": {
+    "ingegrepen": false,
+    "minst_vrij_gib": 13.9
+   }
+  },
+  "ingegrepen": false,
+  "minst_vrij_gib": 12.34
+ }
+}

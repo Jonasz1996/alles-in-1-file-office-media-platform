@@ -1,0 +1,20 @@
+{
+  "services": {
+    "CoAuthoring": {
+      "callbackBackoffOptions": { "retries": 8 },
+      "server": { "docbuilderEnable": false }
+    }
+  },
+  "FileConverter": {
+    "converter": {
+      "inputLimits": [
+        { "type": "docx;dotx;docm;dotm", "zip": { "uncompressed": "4MB", "template": "*.xml" } },
+        { "type": "xlsx;xltx;xlsm;xltm", "zip": { "uncompressed": "10MB", "template": "*.xml" } },
+        { "type": "pptx;ppsx;potx;pptm;ppsm;potm", "zip": { "uncompressed": "4MB", "template": "*.xml" } },
+        { "type": "vsdx;vstx;vssx;vsdm;vstm;vssm", "zip": { "uncompressed": "4MB", "template": "*.xml" } },
+        { "type": "odt;ott;odp;otp;ods;ots", "zip": { "uncompressed": "2MB", "template": "*.xml" } }
+      ]
+    }
+  },
+  "aiSettings": { "enable": false }
+}

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- Per kleurschema; boot.js en ui/theme.ts zetten ze allemaal op het gekozen thema (zonder media) -->
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121212" media="(prefers-color-scheme: dark)" />
+    <!-- Het adres van een publieke link (/s/<token>) is de toegang zelf: nooit naar een andere site sturen -->
+    <meta name="referrer" content="same-origin" />
+    <meta name="description" content="Platform: je bestanden, foto's en documenten op je eigen server" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <!-- Thema en taal vóór de eerste paint (een los bestand: de CSP staat geen inline scripts toe) -->
+    <script src="/boot.js"></script>
+    <title>Platform</title>
+  </head>
+  <body>
+    <!-- De statische schil (zonder tekst, dus zonder vertaling): staat er vóór de JavaScript -->
+    <div id="root"><div class="boot" aria-hidden="true"><img class="boot-logo" src="/icons/icon.svg" alt="" width="128" height="128" /><span class="boot-spinner"></span></div></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

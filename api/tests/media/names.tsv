@@ -1,0 +1,725 @@
+# De testset van de parser (Keuze 7): soort<TAB>pad<TAB>sleutel=waarde ...
+# Velden die er niet staan, zijn leeg: year, season, episode, episode_end, absolute,
+# date, part, edition, extra en de id's. Andere velden tellen alleen als ze er staan.
+# De verwachting volgt uit hoe de naam gebouwd is; elke gevonden fout wordt eerst een regel.
+
+# groep: films
+movies	The Matrix (1999)/The Matrix (1999).mkv	title=The Matrix	year=1999
+movies	The Matrix (1999).mp4	title=The Matrix	year=1999
+
+# groep: scene-tokens
+movies	The.Matrix.1999.1080p.BluRay.x264-GRP.mkv	title=The Matrix	year=1999
+movies	The_Matrix_1999_720p.mkv	title=The Matrix	year=1999
+
+# groep: films
+movies	The Matrix (1999)/movie.mkv	title=The Matrix	year=1999
+movies	Inception (2010)/Inception (2010).mkv	title=Inception	year=2010
+movies	Inception (2010).mp4	title=Inception	year=2010
+
+# groep: scene-tokens
+movies	Inception.2010.720p.WEB-DL.DDP5.1.H.264-SPARKS.mkv	title=Inception	year=2010
+
+# groep: films
+movies	Inception [2010].mkv	title=Inception	year=2010
+movies	Films/Inception (2010)/Inception.2010.mkv	title=Inception	year=2010
+movies	Interstellar (2014)/Interstellar (2014).mkv	title=Interstellar	year=2014
+movies	Interstellar (2014).mp4	title=Interstellar	year=2014
+
+# groep: scene-tokens
+movies	Interstellar.2014.2160p.UHD.BluRay.x265.HDR10-YIFY.mkv	title=Interstellar	year=2014
+movies	Interstellar_2014_720p.mkv	title=Interstellar	year=2014
+
+# groep: films
+movies	Parasite (2019)/Parasite (2019).mkv	title=Parasite	year=2019
+movies	Parasite (2019).mp4	title=Parasite	year=2019
+
+# groep: scene-tokens
+movies	Parasite.2019.1080p.WEBRip.AAC2.0.x264-RARBG.mkv	title=Parasite	year=2019
+
+# groep: films
+movies	Parasite [2019].mkv	title=Parasite	year=2019
+movies	Parasite (2019)/movie.mkv	title=Parasite	year=2019
+movies	Spirited Away (2001)/Spirited Away (2001).mkv	title=Spirited Away	year=2001
+movies	Spirited Away (2001).mp4	title=Spirited Away	year=2001
+
+# groep: scene-tokens
+movies	Spirited.Away.2001.BDRip.XviD-FGT.mkv	title=Spirited Away	year=2001
+movies	Spirited_Away_2001_720p.mkv	title=Spirited Away	year=2001
+
+# groep: films
+movies	Pan's Labyrinth (2006)/Pan's Labyrinth (2006).mkv	title=Pan's Labyrinth	year=2006
+movies	Pan's Labyrinth (2006).mp4	title=Pan's Labyrinth	year=2006
+
+# groep: scene-tokens
+movies	Pan's.Labyrinth.2006.DVDRip.AC3-NTb.mkv	title=Pan's Labyrinth	year=2006
+
+# groep: films
+movies	Pan's Labyrinth [2006].mkv	title=Pan's Labyrinth	year=2006
+movies	Films/Pan's Labyrinth (2006)/Pan's.Labyrinth.2006.mkv	title=Pan's Labyrinth	year=2006
+movies	Zwartboek (2006)/Zwartboek (2006).mkv	title=Zwartboek	year=2006
+movies	Zwartboek (2006).mp4	title=Zwartboek	year=2006
+
+# groep: scene-tokens
+movies	Zwartboek.2006.720p.HDTV.x264-EVO.mkv	title=Zwartboek	year=2006
+movies	Zwartboek_2006_720p.mkv	title=Zwartboek	year=2006
+
+# groep: films
+movies	Zwartboek (2006)/movie.mkv	title=Zwartboek	year=2006
+movies	Soldaat van Oranje (1977)/Soldaat van Oranje (1977).mkv	title=Soldaat van Oranje	year=1977
+movies	Soldaat van Oranje (1977).mp4	title=Soldaat van Oranje	year=1977
+
+# groep: scene-tokens
+movies	Soldaat.van.Oranje.1977.1080p.BluRay.DTS-HD.MA.5.1.AVC.REMUX-playHD.mkv	title=Soldaat van Oranje	year=1977
+
+# groep: films
+movies	Soldaat van Oranje [1977].mkv	title=Soldaat van Oranje	year=1977
+movies	Turks Fruit (1973)/Turks Fruit (1973).mkv	title=Turks Fruit	year=1973
+movies	Turks Fruit (1973).mp4	title=Turks Fruit	year=1973
+
+# groep: scene-tokens
+movies	Turks.Fruit.1973.1080p.BluRay.x264-GRP.mkv	title=Turks Fruit	year=1973
+movies	Turks_Fruit_1973_720p.mkv	title=Turks Fruit	year=1973
+
+# groep: films
+movies	De Lift (1983)/De Lift (1983).mkv	title=De Lift	year=1983
+movies	De Lift (1983).mp4	title=De Lift	year=1983
+
+# groep: scene-tokens
+movies	De.Lift.1983.720p.WEB-DL.DDP5.1.H.264-SPARKS.mkv	title=De Lift	year=1983
+
+# groep: films
+movies	De Lift [1983].mkv	title=De Lift	year=1983
+movies	De Lift (1983)/movie.mkv	title=De Lift	year=1983
+movies	Films/De Lift (1983)/De.Lift.1983.mkv	title=De Lift	year=1983
+movies	Alles is Liefde (2007)/Alles is Liefde (2007).mkv	title=Alles is Liefde	year=2007
+movies	Alles is Liefde (2007).mp4	title=Alles is Liefde	year=2007
+
+# groep: scene-tokens
+movies	Alles.is.Liefde.2007.2160p.UHD.BluRay.x265.HDR10-YIFY.mkv	title=Alles is Liefde	year=2007
+movies	Alles_is_Liefde_2007_720p.mkv	title=Alles is Liefde	year=2007
+
+# groep: films
+movies	Oorlogswinter (2008)/Oorlogswinter (2008).mkv	title=Oorlogswinter	year=2008
+movies	Oorlogswinter (2008).mp4	title=Oorlogswinter	year=2008
+
+# groep: scene-tokens
+movies	Oorlogswinter.2008.1080p.WEBRip.AAC2.0.x264-RARBG.mkv	title=Oorlogswinter	year=2008
+
+# groep: films
+movies	Oorlogswinter [2008].mkv	title=Oorlogswinter	year=2008
+movies	Mad Max Fury Road (2015)/Mad Max Fury Road (2015).mkv	title=Mad Max Fury Road	year=2015
+movies	Mad Max Fury Road (2015).mp4	title=Mad Max Fury Road	year=2015
+
+# groep: scene-tokens
+movies	Mad.Max.Fury.Road.2015.BDRip.XviD-FGT.mkv	title=Mad Max Fury Road	year=2015
+movies	Mad_Max_Fury_Road_2015_720p.mkv	title=Mad Max Fury Road	year=2015
+
+# groep: films
+movies	Mad Max Fury Road (2015)/movie.mkv	title=Mad Max Fury Road	year=2015
+movies	The Dark Knight (2008)/The Dark Knight (2008).mkv	title=The Dark Knight	year=2008
+movies	The Dark Knight (2008).mp4	title=The Dark Knight	year=2008
+
+# groep: scene-tokens
+movies	The.Dark.Knight.2008.DVDRip.AC3-NTb.mkv	title=The Dark Knight	year=2008
+
+# groep: films
+movies	The Dark Knight [2008].mkv	title=The Dark Knight	year=2008
+movies	Films/The Dark Knight (2008)/The.Dark.Knight.2008.mkv	title=The Dark Knight	year=2008
+movies	Up (2009)/Up (2009).mkv	title=Up	year=2009
+movies	Up (2009).mp4	title=Up	year=2009
+
+# groep: scene-tokens
+movies	Up.2009.720p.HDTV.x264-EVO.mkv	title=Up	year=2009
+movies	Up_2009_720p.mkv	title=Up	year=2009
+
+# groep: films
+movies	Her (2013)/Her (2013).mkv	title=Her	year=2013
+movies	Her (2013).mp4	title=Her	year=2013
+
+# groep: scene-tokens
+movies	Her.2013.1080p.BluRay.DTS-HD.MA.5.1.AVC.REMUX-playHD.mkv	title=Her	year=2013
+
+# groep: films
+movies	Her [2013].mkv	title=Her	year=2013
+movies	Her (2013)/movie.mkv	title=Her	year=2013
+movies	Us (2019)/Us (2019).mkv	title=Us	year=2019
+movies	Us (2019).mp4	title=Us	year=2019
+
+# groep: scene-tokens
+movies	Us.2019.1080p.BluRay.x264-GRP.mkv	title=Us	year=2019
+movies	Us_2019_720p.mkv	title=Us	year=2019
+
+# groep: films
+movies	It (2017)/It (2017).mkv	title=It	year=2017
+movies	It (2017).mp4	title=It	year=2017
+
+# groep: scene-tokens
+movies	It.2017.720p.WEB-DL.DDP5.1.H.264-SPARKS.mkv	title=It	year=2017
+
+# groep: films
+movies	It [2017].mkv	title=It	year=2017
+movies	Films/It (2017)/It.2017.mkv	title=It	year=2017
+movies	Arrival (2016)/Arrival (2016).mkv	title=Arrival	year=2016
+movies	Arrival (2016).mp4	title=Arrival	year=2016
+
+# groep: scene-tokens
+movies	Arrival.2016.2160p.UHD.BluRay.x265.HDR10-YIFY.mkv	title=Arrival	year=2016
+movies	Arrival_2016_720p.mkv	title=Arrival	year=2016
+
+# groep: films
+movies	Arrival (2016)/movie.mkv	title=Arrival	year=2016
+movies	Whiplash (2014)/Whiplash (2014).mkv	title=Whiplash	year=2014
+movies	Whiplash (2014).mp4	title=Whiplash	year=2014
+
+# groep: scene-tokens
+movies	Whiplash.2014.1080p.WEBRip.AAC2.0.x264-RARBG.mkv	title=Whiplash	year=2014
+
+# groep: films
+movies	Whiplash [2014].mkv	title=Whiplash	year=2014
+movies	Gravity (2013)/Gravity (2013).mkv	title=Gravity	year=2013
+movies	Gravity (2013).mp4	title=Gravity	year=2013
+
+# groep: scene-tokens
+movies	Gravity.2013.BDRip.XviD-FGT.mkv	title=Gravity	year=2013
+movies	Gravity_2013_720p.mkv	title=Gravity	year=2013
+
+# groep: films
+movies	Coco (2017)/Coco (2017).mkv	title=Coco	year=2017
+movies	Coco (2017).mp4	title=Coco	year=2017
+
+# groep: scene-tokens
+movies	Coco.2017.DVDRip.AC3-NTb.mkv	title=Coco	year=2017
+
+# groep: films
+movies	Coco [2017].mkv	title=Coco	year=2017
+movies	Coco (2017)/movie.mkv	title=Coco	year=2017
+movies	Films/Coco (2017)/Coco.2017.mkv	title=Coco	year=2017
+movies	Moonlight (2016)/Moonlight (2016).mkv	title=Moonlight	year=2016
+movies	Moonlight (2016).mp4	title=Moonlight	year=2016
+
+# groep: scene-tokens
+movies	Moonlight.2016.720p.HDTV.x264-EVO.mkv	title=Moonlight	year=2016
+movies	Moonlight_2016_720p.mkv	title=Moonlight	year=2016
+
+# groep: films
+movies	Joker (2019)/Joker (2019).mkv	title=Joker	year=2019
+movies	Joker (2019).mp4	title=Joker	year=2019
+
+# groep: scene-tokens
+movies	Joker.2019.1080p.BluRay.DTS-HD.MA.5.1.AVC.REMUX-playHD.mkv	title=Joker	year=2019
+
+# groep: films
+movies	Joker [2019].mkv	title=Joker	year=2019
+movies	Dune (2021)/Dune (2021).mkv	title=Dune	year=2021
+movies	Dune (2021).mp4	title=Dune	year=2021
+
+# groep: scene-tokens
+movies	Dune.2021.1080p.BluRay.x264-GRP.mkv	title=Dune	year=2021
+movies	Dune_2021_720p.mkv	title=Dune	year=2021
+
+# groep: films
+movies	Dune (2021)/movie.mkv	title=Dune	year=2021
+movies	Tenet (2020)/Tenet (2020).mkv	title=Tenet	year=2020
+movies	Tenet (2020).mp4	title=Tenet	year=2020
+
+# groep: scene-tokens
+movies	Tenet.2020.720p.WEB-DL.DDP5.1.H.264-SPARKS.mkv	title=Tenet	year=2020
+
+# groep: films
+movies	Tenet [2020].mkv	title=Tenet	year=2020
+movies	Films/Tenet (2020)/Tenet.2020.mkv	title=Tenet	year=2020
+movies	Oppenheimer (2023)/Oppenheimer (2023).mkv	title=Oppenheimer	year=2023
+movies	Oppenheimer (2023).mp4	title=Oppenheimer	year=2023
+
+# groep: scene-tokens
+movies	Oppenheimer.2023.2160p.UHD.BluRay.x265.HDR10-YIFY.mkv	title=Oppenheimer	year=2023
+movies	Oppenheimer_2023_720p.mkv	title=Oppenheimer	year=2023
+
+# groep: films
+movies	Barbie (2023)/Barbie (2023).mkv	title=Barbie	year=2023
+movies	Barbie (2023).mp4	title=Barbie	year=2023
+
+# groep: scene-tokens
+movies	Barbie.2023.1080p.WEBRip.AAC2.0.x264-RARBG.mkv	title=Barbie	year=2023
+
+# groep: films
+movies	Barbie [2023].mkv	title=Barbie	year=2023
+movies	Barbie (2023)/movie.mkv	title=Barbie	year=2023
+movies	Ratatouille (2007)/Ratatouille (2007).mkv	title=Ratatouille	year=2007
+movies	Ratatouille (2007).mp4	title=Ratatouille	year=2007
+
+# groep: scene-tokens
+movies	Ratatouille.2007.BDRip.XviD-FGT.mkv	title=Ratatouille	year=2007
+movies	Ratatouille_2007_720p.mkv	title=Ratatouille	year=2007
+
+# groep: films
+movies	WALL-E (2008)/WALL-E (2008).mkv	title=WALL-E	year=2008
+movies	WALL-E (2008).mp4	title=WALL-E	year=2008
+
+# groep: scene-tokens
+movies	WALL-E.2008.DVDRip.AC3-NTb.mkv	title=WALL-E	year=2008
+
+# groep: films
+movies	WALL-E [2008].mkv	title=WALL-E	year=2008
+movies	Films/WALL-E (2008)/WALL-E.2008.mkv	title=WALL-E	year=2008
+movies	Se7en (1995)/Se7en (1995).mkv	title=Se7en	year=1995
+movies	Se7en (1995).mp4	title=Se7en	year=1995
+
+# groep: scene-tokens
+movies	Se7en.1995.720p.HDTV.x264-EVO.mkv	title=Se7en	year=1995
+movies	Se7en_1995_720p.mkv	title=Se7en	year=1995
+
+# groep: films
+movies	Se7en (1995)/movie.mkv	title=Se7en	year=1995
+movies	Alien (1979)/Alien (1979).mkv	title=Alien	year=1979
+movies	Alien (1979).mp4	title=Alien	year=1979
+
+# groep: scene-tokens
+movies	Alien.1979.1080p.BluRay.DTS-HD.MA.5.1.AVC.REMUX-playHD.mkv	title=Alien	year=1979
+
+# groep: films
+movies	Alien [1979].mkv	title=Alien	year=1979
+movies	Aliens (1986)/Aliens (1986).mkv	title=Aliens	year=1986
+movies	Aliens (1986).mp4	title=Aliens	year=1986
+
+# groep: scene-tokens
+movies	Aliens.1986.1080p.BluRay.x264-GRP.mkv	title=Aliens	year=1986
+movies	Aliens_1986_720p.mkv	title=Aliens	year=1986
+
+# groep: films
+movies	Heat (1995)/Heat (1995).mkv	title=Heat	year=1995
+movies	Heat (1995).mp4	title=Heat	year=1995
+
+# groep: scene-tokens
+movies	Heat.1995.720p.WEB-DL.DDP5.1.H.264-SPARKS.mkv	title=Heat	year=1995
+
+# groep: films
+movies	Heat [1995].mkv	title=Heat	year=1995
+movies	Heat (1995)/movie.mkv	title=Heat	year=1995
+movies	Films/Heat (1995)/Heat.1995.mkv	title=Heat	year=1995
+movies	Casablanca (1942)/Casablanca (1942).mkv	title=Casablanca	year=1942
+movies	Casablanca (1942).mp4	title=Casablanca	year=1942
+
+# groep: scene-tokens
+movies	Casablanca.1942.2160p.UHD.BluRay.x265.HDR10-YIFY.mkv	title=Casablanca	year=1942
+movies	Casablanca_1942_720p.mkv	title=Casablanca	year=1942
+
+# groep: films
+movies	Vertigo (1958)/Vertigo (1958).mkv	title=Vertigo	year=1958
+movies	Vertigo (1958).mp4	title=Vertigo	year=1958
+
+# groep: scene-tokens
+movies	Vertigo.1958.1080p.WEBRip.AAC2.0.x264-RARBG.mkv	title=Vertigo	year=1958
+
+# groep: films
+movies	Vertigo [1958].mkv	title=Vertigo	year=1958
+movies	Psycho (1960)/Psycho (1960).mkv	title=Psycho	year=1960
+movies	Psycho (1960).mp4	title=Psycho	year=1960
+
+# groep: scene-tokens
+movies	Psycho.1960.BDRip.XviD-FGT.mkv	title=Psycho	year=1960
+movies	Psycho_1960_720p.mkv	title=Psycho	year=1960
+
+# groep: films
+movies	Psycho (1960)/movie.mkv	title=Psycho	year=1960
+movies	The Lord of the Rings The Two Towers (2002)/The Lord of the Rings The Two Towers (2002).mkv	title=The Lord of the Rings The Two Towers	year=2002
+movies	The Lord of the Rings The Two Towers (2002).mp4	title=The Lord of the Rings The Two Towers	year=2002
+
+# groep: scene-tokens
+movies	The.Lord.of.the.Rings.The.Two.Towers.2002.DVDRip.AC3-NTb.mkv	title=The Lord of the Rings The Two Towers	year=2002
+
+# groep: films
+movies	The Lord of the Rings The Two Towers [2002].mkv	title=The Lord of the Rings The Two Towers	year=2002
+movies	Films/The Lord of the Rings The Two Towers (2002)/The.Lord.of.the.Rings.The.Two.Towers.2002.mkv	title=The Lord of the Rings The Two Towers	year=2002
+movies	No Country for Old Men (2007)/No Country for Old Men (2007).mkv	title=No Country for Old Men	year=2007
+movies	No Country for Old Men (2007).mp4	title=No Country for Old Men	year=2007
+
+# groep: scene-tokens
+movies	No.Country.for.Old.Men.2007.720p.HDTV.x264-EVO.mkv	title=No Country for Old Men	year=2007
+movies	No_Country_for_Old_Men_2007_720p.mkv	title=No Country for Old Men	year=2007
+
+# groep: films
+movies	The Grand Budapest Hotel (2014)/The Grand Budapest Hotel (2014).mkv	title=The Grand Budapest Hotel	year=2014
+movies	The Grand Budapest Hotel (2014).mp4	title=The Grand Budapest Hotel	year=2014
+
+# groep: scene-tokens
+movies	The.Grand.Budapest.Hotel.2014.1080p.BluRay.DTS-HD.MA.5.1.AVC.REMUX-playHD.mkv	title=The Grand Budapest Hotel	year=2014
+
+# groep: films
+movies	The Grand Budapest Hotel [2014].mkv	title=The Grand Budapest Hotel	year=2014
+movies	The Grand Budapest Hotel (2014)/movie.mkv	title=The Grand Budapest Hotel	year=2014
+
+# groep: ids
+movies	The Matrix (1999)/The Matrix (1999) [imdbid-tt0133093] - 1080p.mkv	title=The Matrix	year=1999	imdb=tt0133093
+movies	The Matrix (1999) {imdb-tt0133093}.mkv	title=The Matrix	year=1999	imdb=tt0133093
+movies	The Matrix (1999) {tmdb-603}.mkv	title=The Matrix	year=1999	tmdb=603
+movies	The Matrix (1999) [tmdbid-603].mkv	title=The Matrix	year=1999	tmdb=603
+movies	The.Matrix.1999.tt0133093.1080p.BluRay.mkv	title=The Matrix	year=1999	imdb=tt0133093
+movies	The Matrix (1999) [imdbid-tt0133093]/The Matrix.mkv	title=The Matrix	year=1999	imdb=tt0133093
+movies	Inception (2010) [tmdbid-27205] [imdbid-tt1375666].mkv	title=Inception	year=2010	imdb=tt1375666	tmdb=27205
+movies	Inception (2010) {tmdb-27205}/video.mkv	title=Inception	year=2010	tmdb=27205
+movies	Dune (2021) [imdb=tt1160419].mkv	title=Dune	year=2021	imdb=tt1160419
+movies	Heat.1995.tt0113277.mkv	title=Heat	year=1995	imdb=tt0113277
+shows	Breaking Bad (2008) [tvdbid-81189]/Season 1/Breaking Bad S01E01.mkv	title=Breaking Bad	season=1	episode=1	show=Breaking Bad	show_year=2008	show_tvdb=81189
+shows	Dark {tvdb-334824}/Season 1/Dark - S01E01 - Secrets.mkv	title=Dark	season=1	episode=1	show=Dark	show_tvdb=334824	episode_title=Secrets
+shows	Lost [tmdbid-4607]/S01/Lost.S01E01.mkv	title=Lost	season=1	episode=1	show=Lost	show_tmdb=4607
+
+# groep: edities
+movies	Inception (2010) {edition-Director's Cut}.mkv	title=Inception	year=2010	edition=Director's Cut
+movies	Blade Runner (1982) {edition-Final Cut} {tmdb-78}.mkv	title=Blade Runner	year=1982	edition=Final Cut	tmdb=78
+movies	Blade Runner (1982) - Final Cut.mkv	title=Blade Runner	year=1982	edition=Final Cut
+movies	Alien (1979) - Director's Cut [1080p].mkv	title=Alien	year=1979	edition=Director's Cut
+movies	Aliens.1986.EXTENDED.1080p.BluRay.x264.mkv	title=Aliens	year=1986	edition=EXTENDED
+movies	Aliens.1986.Extended.Cut.1080p.mkv	title=Aliens	year=1986	edition=Extended Cut
+movies	Apocalypse Now (1979) Redux.mkv	title=Apocalypse Now	year=1979	edition=Redux
+movies	Kingdom.of.Heaven.2005.Directors.Cut.720p.mkv	title=Kingdom of Heaven	year=2005	edition=Directors Cut
+movies	Watchmen.2009.Ultimate.Cut.1080p.mkv	title=Watchmen	year=2009	edition=Ultimate Cut
+movies	Avatar.2009.UNRATED.1080p.mkv	title=Avatar	year=2009	edition=UNRATED
+movies	Dune.2021.IMAX.2160p.mkv	title=Dune	year=2021	edition=IMAX
+movies	The Matrix (1999) Remastered 1080p.mkv	title=The Matrix	year=1999	edition=Remastered
+movies	Avatar (2009) - Extended Collector's Edition.mkv	title=Avatar	year=2009	edition=Extended Collector's Edition
+movies	Amadeus.1984.Theatrical.Cut.mkv	title=Amadeus	year=1984	edition=Theatrical Cut
+
+# groep: delen
+movies	Kill Bill (2003)/Kill Bill (2003) cd1.mkv	title=Kill Bill	year=2003	part=1
+movies	Kill Bill (2003)/Kill Bill (2003) cd2.mkv	title=Kill Bill	year=2003	part=2
+movies	Kill.Bill.2003.CD1.avi	title=Kill Bill	year=2003	part=1
+movies	Kill Bill (2003) part1.mkv	title=Kill Bill	year=2003	part=1
+movies	Kill Bill (2003) part 2.mkv	title=Kill Bill	year=2003	part=2
+movies	Kill Bill (2003) pt.2.mkv	title=Kill Bill	year=2003	part=2
+movies	Kill Bill (2003) - pt2.mkv	title=Kill Bill	year=2003	part=2
+movies	Kill Bill (2003) disc 1.mkv	title=Kill Bill	year=2003	part=1
+movies	Kill Bill (2003) - Disk2.mkv	title=Kill Bill	year=2003	part=2
+movies	Lawrence of Arabia (1962) DVD1.mkv	title=Lawrence of Arabia	year=1962	part=1
+movies	Lawrence.of.Arabia.1962.DVDRip.cd2-GRP.avi	title=Lawrence of Arabia	year=1962
+movies	Gone With the Wind cd1.avi	title=Gone With the Wind	part=1
+movies	Gone With the Wind part2.avi	title=Gone With the Wind	part=2
+movies	Harry Potter and the Deathly Hallows Part 1 (2010).mkv	title=Harry Potter and the Deathly Hallows Part 1	year=2010
+movies	Harry.Potter.and.the.Deathly.Hallows.Part.2.2011.1080p.mkv	title=Harry Potter and the Deathly Hallows Part 2	year=2011
+movies	Dune Part Two (2024).mkv	title=Dune Part Two	year=2024
+
+# groep: extras
+movies	Inception (2010)/Extras/Making of.mkv	title=Making of	extra=other
+movies	Inception (2010)/Featurettes/The Dream Is Real.mkv	title=The Dream Is Real	extra=featurette
+movies	Inception (2010)/Trailers/Teaser.mkv	title=Teaser	extra=trailer
+movies	Inception (2010)/Behind The Scenes/On set.mkv	title=On set	extra=behind
+movies	Inception (2010)/Deleted Scenes/Scene 12.mkv	title=Scene 12	extra=deleted
+movies	Inception (2010)/Interviews/Nolan.mkv	title=Nolan	extra=other
+movies	Inception (2010)/Inception (2010)-trailer.mkv	title=Inception	year=2010	extra=trailer
+movies	Inception (2010)/Inception (2010)-featurette.mkv	title=Inception	year=2010	extra=featurette
+movies	Inception (2010)/Inception (2010)-deleted.mkv	title=Inception	year=2010	extra=deleted
+movies	Inception (2010)/Inception (2010) - behindthescenes.mkv	title=Inception	year=2010	extra=behind
+movies	Inception (2010)/trailer.mp4	title=Inception	year=2010	extra=trailer
+movies	Inception (2010)/Inception.2010.1080p-sample.mkv	title=Inception	year=2010	extra=sample
+movies	Inception (2010)/sample.mkv	title=Inception	year=2010	extra=sample
+movies	Inception (2010)/Sample/inception.sample.mkv	title=inception sample	extra=sample
+movies	Heat.1995.1080p.BluRay.x264.sample.mkv	title=Heat	year=1995	extra=sample
+movies	Inception (2010)/extras/Inception (2010)-interview.mkv	title=Inception	year=2010	extra=other
+shows	Breaking Bad/Extras/Gag reel.mkv	title=Gag reel	extra=other	show=Breaking Bad
+shows	Breaking Bad/Season 1/Extras/Commentary.mkv	title=Commentary	extra=other
+
+# groep: sxxeyy
+shows	Breaking Bad/Season 1/Breaking.Bad.S01E01.720p.HDTV.x264-GRP.mkv	title=Breaking Bad	season=1	episode=1	show=Breaking Bad	show_index=0
+shows	Breaking Bad/Seizoen 2/Breaking Bad 2x06.avi	title=Breaking Bad	season=2	episode=6	show=Breaking Bad	show_index=0
+shows	Breaking.Bad.S03E11.1080p.WEB.H264-GRP.mkv	title=Breaking Bad	season=3	episode=11	show=Breaking Bad
+shows	The Office/Season 02/The Office - S02E08 - Titel van de aflevering.mkv	title=The Office	season=2	episode=8	show=The Office	show_index=0	episode_title=Titel van de aflevering
+shows	The Office/The.Office.S03.E13.1080p.WEB-DL.mkv	title=The Office	season=3	episode=13	show=The Office	show_index=0
+shows	The Office/The Office - Season 4 Episode 18.mkv	title=The Office	season=4	episode=18	show=The Office	show_index=0
+shows	Game of Thrones/S03/Game of Thrones s3e15.mkv	title=Game of Thrones	season=3	episode=15	show=Game of Thrones	show_index=0
+shows	Game of Thrones/Season 4/Game of Thrones S04 E20.mkv	title=Game of Thrones	season=4	episode=20	show=Game of Thrones	show_index=0
+shows	Game of Thrones/Game of Thrones Seizoen 5 Aflevering 2.mp4	title=Game of Thrones	season=5	episode=2	show=Game of Thrones	show_index=0
+shows	Flikken Maastricht/Seizoen 4/Flikken Maastricht 4x22.avi	title=Flikken Maastricht	season=4	episode=22	show=Flikken Maastricht	show_index=0
+shows	Flikken.Maastricht.S05E04.1080p.WEB.H264-GRP.mkv	title=Flikken Maastricht	season=5	episode=4	show=Flikken Maastricht
+shows	Flikken Maastricht/Season 6/Flikken Maastricht - 6x09 - Titel.mkv	title=Flikken Maastricht	season=6	episode=9	show=Flikken Maastricht	show_index=0	episode_title=Titel
+shows	Baantjer/Baantjer.S05.E06.1080p.WEB-DL.mkv	title=Baantjer	season=5	episode=6	show=Baantjer	show_index=0
+shows	Baantjer/Baantjer - Season 6 Episode 11.mkv	title=Baantjer	season=6	episode=11	show=Baantjer	show_index=0
+shows	Baantjer/Season 7/Baantjer.S07E16.720p.HDTV.x264-GRP.mkv	title=Baantjer	season=7	episode=16	show=Baantjer	show_index=0
+shows	Penoza/Season 6/Penoza S06 E13.mkv	title=Penoza	season=6	episode=13	show=Penoza	show_index=0
+shows	Penoza/Penoza Seizoen 7 Aflevering 18.mp4	title=Penoza	season=7	episode=18	show=Penoza	show_index=0
+shows	Penoza/Season 08/Penoza - S08E23 - Titel van de aflevering.mkv	title=Penoza	season=8	episode=23	show=Penoza	show_index=0	episode_title=Titel van de aflevering
+shows	Stranger.Things.S07E20.1080p.WEB.H264-GRP.mkv	title=Stranger Things	season=7	episode=20	show=Stranger Things
+shows	Stranger Things/Season 8/Stranger Things - 8x02 - Titel.mkv	title=Stranger Things	season=8	episode=2	show=Stranger Things	show_index=0	episode_title=Titel
+shows	Stranger Things/S09/Stranger Things s9e7.mkv	title=Stranger Things	season=9	episode=7	show=Stranger Things	show_index=0
+shows	The Wire/The Wire - Season 8 Episode 4.mkv	title=The Wire	season=8	episode=4	show=The Wire	show_index=0
+shows	The Wire/Season 9/The.Wire.S09E09.720p.HDTV.x264-GRP.mkv	title=The Wire	season=9	episode=9	show=The Wire	show_index=0
+shows	The Wire/Seizoen 1/The Wire 1x14.avi	title=The Wire	season=1	episode=14	show=The Wire	show_index=0
+shows	Friends/Friends Seizoen 9 Aflevering 11.mp4	title=Friends	season=9	episode=11	show=Friends	show_index=0
+shows	Friends/Season 01/Friends - S01E16 - Titel van de aflevering.mkv	title=Friends	season=1	episode=16	show=Friends	show_index=0	episode_title=Titel van de aflevering
+shows	Friends/Friends.S02.E21.1080p.WEB-DL.mkv	title=Friends	season=2	episode=21	show=Friends	show_index=0
+shows	Sherlock/Season 1/Sherlock - 1x18 - Titel.mkv	title=Sherlock	season=1	episode=18	show=Sherlock	show_index=0	episode_title=Titel
+shows	Sherlock/S02/Sherlock s2e23.mkv	title=Sherlock	season=2	episode=23	show=Sherlock	show_index=0
+shows	Sherlock/Season 3/Sherlock S03 E05.mkv	title=Sherlock	season=3	episode=5	show=Sherlock	show_index=0
+shows	Fawlty Towers/Season 2/Fawlty.Towers.S02E02.720p.HDTV.x264-GRP.mkv	title=Fawlty Towers	season=2	episode=2	show=Fawlty Towers	show_index=0
+shows	Fawlty Towers/Seizoen 3/Fawlty Towers 3x07.avi	title=Fawlty Towers	season=3	episode=7	show=Fawlty Towers	show_index=0
+shows	Fawlty.Towers.S04E12.1080p.WEB.H264-GRP.mkv	title=Fawlty Towers	season=4	episode=12	show=Fawlty Towers
+shows	The Crown/Season 03/The Crown - S03E09 - Titel van de aflevering.mkv	title=The Crown	season=3	episode=9	show=The Crown	show_index=0	episode_title=Titel van de aflevering
+shows	The Crown/The.Crown.S04.E14.1080p.WEB-DL.mkv	title=The Crown	season=4	episode=14	show=The Crown	show_index=0
+shows	The Crown/The Crown - Season 5 Episode 19.mkv	title=The Crown	season=5	episode=19	show=The Crown	show_index=0
+shows	Chernobyl/S04/Chernobyl s4e16.mkv	title=Chernobyl	season=4	episode=16	show=Chernobyl	show_index=0
+shows	Chernobyl/Season 5/Chernobyl S05 E21.mkv	title=Chernobyl	season=5	episode=21	show=Chernobyl	show_index=0
+shows	Chernobyl/Chernobyl Seizoen 6 Aflevering 3.mp4	title=Chernobyl	season=6	episode=3	show=Chernobyl	show_index=0
+shows	Succession/Seizoen 5/Succession 5x23.avi	title=Succession	season=5	episode=23	show=Succession	show_index=0
+shows	Succession.S06E05.1080p.WEB.H264-GRP.mkv	title=Succession	season=6	episode=5	show=Succession
+shows	Succession/Season 7/Succession - 7x10 - Titel.mkv	title=Succession	season=7	episode=10	show=Succession	show_index=0	episode_title=Titel
+shows	Fargo/Fargo.S06.E07.1080p.WEB-DL.mkv	title=Fargo	season=6	episode=7	show=Fargo	show_index=0
+shows	Fargo/Fargo - Season 7 Episode 12.mkv	title=Fargo	season=7	episode=12	show=Fargo	show_index=0
+shows	Fargo/Season 8/Fargo.S08E17.720p.HDTV.x264-GRP.mkv	title=Fargo	season=8	episode=17	show=Fargo	show_index=0
+shows	House of the Dragon/Season 7/House of the Dragon S07 E14.mkv	title=House of the Dragon	season=7	episode=14	show=House of the Dragon	show_index=0
+shows	House of the Dragon/House of the Dragon Seizoen 8 Aflevering 19.mp4	title=House of the Dragon	season=8	episode=19	show=House of the Dragon	show_index=0
+shows	House of the Dragon/Season 09/House of the Dragon - S09E01 - Titel van de aflevering.mkv	title=House of the Dragon	season=9	episode=1	show=House of the Dragon	show_index=0	episode_title=Titel van de aflevering
+shows	Dark.S08E21.1080p.WEB.H264-GRP.mkv	title=Dark	season=8	episode=21	show=Dark
+shows	Dark/Season 9/Dark - 9x03 - Titel.mkv	title=Dark	season=9	episode=3	show=Dark	show_index=0	episode_title=Titel
+shows	Dark/S01/Dark s1e8.mkv	title=Dark	season=1	episode=8	show=Dark	show_index=0
+shows	Toen Was Geluk Heel Gewoon/Toen Was Geluk Heel Gewoon - Season 9 Episode 5.mkv	title=Toen Was Geluk Heel Gewoon	season=9	episode=5	show=Toen Was Geluk Heel Gewoon	show_index=0
+shows	Toen Was Geluk Heel Gewoon/Season 1/Toen.Was.Geluk.Heel.Gewoon.S01E10.720p.HDTV.x264-GRP.mkv	title=Toen Was Geluk Heel Gewoon	season=1	episode=10	show=Toen Was Geluk Heel Gewoon	show_index=0
+shows	Toen Was Geluk Heel Gewoon/Seizoen 2/Toen Was Geluk Heel Gewoon 2x15.avi	title=Toen Was Geluk Heel Gewoon	season=2	episode=15	show=Toen Was Geluk Heel Gewoon	show_index=0
+shows	Spangas/Spangas Seizoen 1 Aflevering 12.mp4	title=Spangas	season=1	episode=12	show=Spangas	show_index=0
+shows	Spangas/Season 02/Spangas - S02E17 - Titel van de aflevering.mkv	title=Spangas	season=2	episode=17	show=Spangas	show_index=0	episode_title=Titel van de aflevering
+shows	Spangas/Spangas.S03.E22.1080p.WEB-DL.mkv	title=Spangas	season=3	episode=22	show=Spangas	show_index=0
+shows	Wie is de Mol/Season 2/Wie is de Mol - 2x19 - Titel.mkv	title=Wie is de Mol	season=2	episode=19	show=Wie is de Mol	show_index=0	episode_title=Titel
+shows	Wie is de Mol/S03/Wie is de Mol s3e1.mkv	title=Wie is de Mol	season=3	episode=1	show=Wie is de Mol	show_index=0
+shows	Wie is de Mol/Season 4/Wie is de Mol S04 E06.mkv	title=Wie is de Mol	season=4	episode=6	show=Wie is de Mol	show_index=0
+
+# groep: meerdere
+shows	Friends/Season 1/Friends.S01E16E17.mkv	title=Friends	season=1	episode=16	episode_end=17	show=Friends
+shows	Friends/Season 1/Friends.S01E16-E17.mkv	title=Friends	season=1	episode=16	episode_end=17	show=Friends
+shows	Friends/Season 1/Friends.S01E16-17.mkv	title=Friends	season=1	episode=16	episode_end=17	show=Friends
+shows	Friends/Season 1/Friends S01E16 E17.mkv	title=Friends	season=1	episode=16	episode_end=17	show=Friends
+shows	Friends/Season 2/Friends.S02E01E02E03.mkv	title=Friends	season=2	episode=1	episode_end=3	show=Friends
+shows	Friends/Season 1/Friends 1x16-17.mkv	title=Friends	season=1	episode=16	episode_end=17	show=Friends
+shows	Friends/Season 1/Friends 1x16x17.mkv	title=Friends	season=1	episode=16	episode_end=17	show=Friends
+shows	Friends/Season 1/Friends 1x16-1x17.mkv	title=Friends	season=1	episode=16	episode_end=17	show=Friends
+shows	Friends/Friends - Season 1 Episode 16-17.mkv	title=Friends	season=1	episode=16	episode_end=17	show=Friends
+shows	Lost/Season 1/Lost.S01E01-E02.Pilot.720p.mkv	title=Lost	season=1	episode=1	episode_end=2	show=Lost
+shows	Lost/S01/lost.s01e01e02.mkv	title=lost	season=1	episode=1	episode_end=2	show=Lost
+shows	The Office/Season 2/The Office - s02e01-e02 - The Dundies.mkv	title=The Office	season=2	episode=1	episode_end=2	show=The Office
+shows	Friends/Season 1/Friends.S01E17-E16.mkv	title=Friends	season=1	episode=17	show=Friends
+
+# groep: specials
+shows	Doctor Who (2005)/Specials/Doctor Who S00E01.mkv	title=Doctor Who	season=0	episode=1	show=Doctor Who	show_year=2005
+shows	Doctor Who (2005)/Season 00/Doctor.Who.S00E05.mkv	title=Doctor Who	season=0	episode=5	show=Doctor Who
+shows	Sherlock/Specials/Sherlock - S00E01 - The Abominable Bride.mkv	title=Sherlock	season=0	episode=1	show=Sherlock	episode_title=The Abominable Bride
+shows	Sherlock/Specials/Sherlock 0x01.mkv	title=Sherlock	season=0	episode=1	show=Sherlock
+shows	Sherlock/Specials/01 - The Abominable Bride.mkv	title=Sherlock	season=0	episode=1	show=Sherlock	episode_title=The Abominable Bride
+shows	Sherlock/Season Specials/Sherlock S00E02.mkv	title=Sherlock	season=0	episode=2	show=Sherlock
+shows	Sherlock/S00/Sherlock.S00E03.mkv	title=Sherlock	season=0	episode=3	show=Sherlock
+
+# groep: seizoensmap
+shows	Lost/Season 1/Lost 102.mkv	title=Lost	season=1	episode=2	show=Lost
+shows	Lost/Season 1/102 - Pilot (2).mkv	title=Lost	season=1	episode=2	show=Lost	episode_title=Pilot (2)
+shows	Lost/Season 3/Lost.315.720p.mkv	title=Lost	season=3	episode=15	show=Lost
+shows	Lost/Season 10/Lost 1012.mkv	title=Lost	season=10	episode=12	show=Lost
+shows	Lost/Season 1/01 - Pilot.mkv	title=Lost	season=1	episode=1	show=Lost	episode_title=Pilot
+shows	Lost/Season 1/01.mkv	title=Lost	season=1	episode=1	show=Lost
+shows	Lost/Season 2/Lost - 05.mkv	title=Lost	season=2	episode=5	show=Lost
+shows	Lost/Season 2/Episode 5.mkv	title=Lost	season=2	episode=5	show=Lost
+shows	Lost/Season 2/E05 - Orientation.mkv	title=Lost	season=2	episode=5	show=Lost	episode_title=Orientation
+shows	Lost/Seizoen 2/Aflevering 6.mkv	title=Lost	season=2	episode=6	show=Lost
+shows	Lost/Season 1/S01E03.mkv	title=Lost	season=1	episode=3	show=Lost
+shows	Lost/S01/Lost.S01E04.mkv	title=Lost	season=1	episode=4	show=Lost
+shows	Lost/Staffel 1/Lost S01E05.mkv	title=Lost	season=1	episode=5	show=Lost
+shows	Season 1/Lost.S01E06.mkv	title=Lost	season=1	episode=6	show=Lost
+shows	Lost/Season 1 (2004)/Lost.S01E07.mkv	title=Lost	season=1	episode=7	show=Lost
+shows	Lost/Lost 102.mkv	title=Lost 102
+shows	Lost/Season 1/Lost.2004.103.mkv	title=Lost	year=2004	season=1	episode=3	show=Lost
+
+# groep: datums
+shows	The Daily Show/The.Daily.Show.2024.03.01.mkv	title=The Daily Show	date=2024-03-01	show=The Daily Show
+shows	The Daily Show/The Daily Show 2024-03-01.mkv	title=The Daily Show	date=2024-03-01	show=The Daily Show
+shows	Jeugdjournaal/Jeugdjournaal 2023.12.31.mp4	title=Jeugdjournaal	date=2023-12-31	show=Jeugdjournaal
+shows	NOS Journaal/NOS.Journaal.2024-01-15.720p.WEB.mkv	title=NOS Journaal	date=2024-01-15	show=NOS Journaal
+shows	The Daily Show/The.Daily.Show.2024.03.04.Guest.Name.720p.WEB.h264.mkv	title=The Daily Show	date=2024-03-04	show=The Daily Show	episode_title=Guest Name
+shows	Pauw/Pauw - 2019-11-28 - Uitzending.mp4	title=Pauw	date=2019-11-28	show=Pauw	episode_title=Uitzending
+shows	Late Night/Late.Night.2022_06_30.mkv	title=Late Night	date=2022-06-30	show=Late Night
+shows	Nieuwsuur 2021-02-29.mkv	title=Nieuwsuur 2021-02-29
+
+# groep: absoluut
+shows	[SubsPlease] Naruto - 012 [1080p].mkv	title=Naruto	absolute=12	show=Naruto
+shows	Naruto/[Group] Naruto - 012 (720p) [ABCD1234].mkv	title=Naruto	absolute=12	show=Naruto
+shows	One Piece/[SubsPlease] One Piece - 1071 (1080p) [5E8B3C21].mkv	title=One Piece	absolute=1071	show=One Piece
+shows	[HorribleSubs] Bleach - 366 [720p].mkv	title=Bleach	absolute=366	show=Bleach
+shows	[Erai-raws] Jujutsu Kaisen - 12 [1080p][Multiple Subtitle].mkv	title=Jujutsu Kaisen	absolute=12	show=Jujutsu Kaisen
+shows	Naruto Shippuden/Naruto Shippuden - 500.mkv	title=Naruto Shippuden	absolute=500	show=Naruto Shippuden
+shows	[Group] Frieren - 01v2 [1080p].mkv	title=Frieren	absolute=1	show=Frieren
+shows	Detective Conan/Detective Conan - 1000.mp4	title=Detective Conan	absolute=1000	show=Detective Conan
+shows	[Judas] Mob Psycho 100 - 05 [1080p][HEVC x265 10bit].mkv	title=Mob Psycho 100	absolute=5	show=Mob Psycho 100
+shows	[Group] Steins Gate 0 - 23 [BD 1080p].mkv	title=Steins Gate 0	absolute=23	show=Steins Gate 0
+shows	Cowboy Bebop/Cowboy Bebop - Episode 05.mkv	title=Cowboy Bebop	absolute=5	show=Cowboy Bebop
+shows	Cowboy Bebop/Cowboy Bebop E06.mkv	title=Cowboy Bebop	absolute=6	show=Cowboy Bebop
+shows	[Group] Naruto 013 [1080p].mkv	title=Naruto	absolute=13	show=Naruto
+
+# groep: nederlands
+shows	Baantjer/Seizoen 01/Baantjer - 1x05 - De Cock en de moord.avi	title=Baantjer	season=1	episode=5	show=Baantjer	episode_title=De Cock en de moord
+shows	Flikken Maastricht/Seizoen 15/Flikken.Maastricht.S15E01.DUTCH.720p.mkv	title=Flikken Maastricht	season=15	episode=1	show=Flikken Maastricht
+shows	Penoza/Penoza Seizoen 2 Aflevering 3.mp4	title=Penoza	season=2	episode=3	show=Penoza
+shows	Wie is de Mol/Seizoen 24/Wie is de Mol - Afl 3.mp4	title=Wie is de Mol	season=24	episode=3	show=Wie is de Mol
+shows	Spangas/Seizoen 1/Aflevering 12.mp4	title=Spangas	season=1	episode=12	show=Spangas
+movies	Zwartboek (2006) NL Gesproken.mkv	title=Zwartboek	year=2006
+movies	Soldaat.van.Oranje.1977.DUTCH.1080p.BluRay.x264.mkv	title=Soldaat van Oranje	year=1977
+movies	Alles Is Familie (2012) NLSubs.mkv	title=Alles Is Familie	year=2012
+movies	De Tweeling (2002).mkv	title=De Tweeling	year=2002
+movies	Kruimeltje (1999)/kruimeltje.avi	title=kruimeltje	year=1999
+movies	Het Meisje met het Rode Haar (1981).mkv	title=Het Meisje met het Rode Haar	year=1981
+
+# groep: jaartallen
+movies	2001 A Space Odyssey (1968).mkv	title=2001 A Space Odyssey	year=1968
+movies	2001.A.Space.Odyssey.1968.1080p.BluRay.mkv	title=2001 A Space Odyssey	year=1968
+movies	1917 (2019).mkv	title=1917	year=2019
+movies	1917.2019.1080p.WEB-DL.mkv	title=1917	year=2019
+movies	Blade Runner 2049 (2017).mkv	title=Blade Runner 2049	year=2017
+movies	Blade.Runner.2049.2017.2160p.UHD.BluRay.x265-TERMiNAL.mkv	title=Blade Runner 2049	year=2017
+movies	Wonder Woman 1984 (2020).mkv	title=Wonder Woman 1984	year=2020
+movies	Wonder.Woman.1984.2020.1080p.mkv	title=Wonder Woman 1984	year=2020
+movies	2012 (2009).mkv	title=2012	year=2009
+movies	1984 (1984).mkv	title=1984	year=1984
+movies	Apollo 13 (1995).mkv	title=Apollo 13	year=1995
+movies	Apollo.13.1995.mkv	title=Apollo 13	year=1995
+movies	Space 1999 (1975).mkv	title=Space 1999	year=1975
+movies	1408 (2007).mkv	title=1408	year=2007
+movies	2046 (2004).mkv	title=2046	year=2004
+movies	Ocean's Eleven (2001).mkv	title=Ocean's Eleven	year=2001
+movies	Ocean's.11.1960.mkv	title=Ocean's 11	year=1960
+movies	Escape from New York 1997 (1981).mkv	title=Escape from New York 1997	year=1981
+movies	The Year 2000 (1999).mkv	title=The Year 2000	year=1999
+movies	2010 The Year We Make Contact (1984).mkv	title=2010 The Year We Make Contact	year=1984
+movies	10.000 BC (2008).mkv	title=10.000 BC	year=2008
+movies	1917.mkv	title=1917
+movies	2001 A Space Odyssey.mkv	title=2001 A Space Odyssey
+
+# groep: unicode
+movies	Amélie (2001).mkv	title=Amélie	year=2001
+movies	Léon (1994).mkv	title=Léon	year=1994
+movies	千と千尋の神隠し (2001).mkv	title=千と千尋の神隠し	year=2001
+movies	Крёстный отец (1972).mkv	title=Крёстный отец	year=1972
+movies	Das Boot (1981).mkv	title=Das Boot	year=1981
+movies	Ça (2017).mkv	title=Ça	year=2017
+movies	Ο Θίασος (1975).mkv	title=Ο Θίασος	year=1975
+movies	Smörgåsbord.2001.720p.mkv	title=Smörgåsbord	year=2001
+movies	Pájaros de Verano (2018).mkv	title=Pájaros de Verano	year=2018
+movies	기생충 (2019).mkv	title=기생충	year=2019
+movies	Üç Maymun (2008).mkv	title=Üç Maymun	year=2008
+movies	Fanny och Alexander (1982)/Fanny och Alexander (1982).mkv	title=Fanny och Alexander	year=1982
+movies	Le Fabuleux Destin d'Amélie Poulain (2001).mkv	title=Le Fabuleux Destin d'Amélie Poulain	year=2001
+movies	Ḿøñstér (2010).mkv	title=Ḿøñstér	year=2010
+shows	Борис/Season 1/Борис S01E02.mkv	title=Борис	season=1	episode=2	show=Борис
+shows	Café Röyale/Café Röyale - 1x03.mkv	title=Café Röyale	season=1	episode=3	show=Café Röyale
+
+# groep: leestekens
+movies	What's Up, Doc! (1972).mkv	title=What's Up, Doc!	year=1972
+movies	What's Up, Doc? (1972).mkv	title=What's Up, Doc?	year=1972
+movies	Mission - Impossible (1996).mkv	title=Mission - Impossible	year=1996
+movies	Spider-Man (2002).mkv	title=Spider-Man	year=2002
+movies	Spider-Man.2002.1080p.mkv	title=Spider-Man	year=2002
+movies	X-Men (2000).mkv	title=X-Men	year=2000
+movies	Dr. Strangelove (1964).mkv	title=Dr. Strangelove	year=1964
+movies	Mr. & Mrs. Smith (2005).mkv	title=Mr. & Mrs. Smith	year=2005
+movies	Monsters, Inc. (2001).mkv	title=Monsters, Inc.	year=2001
+movies	M.A.S.H (1970).mkv	title=M.A.S.H	year=1970
+movies	S.W.A.T. (2003).mkv	title=S.W.A.T.	year=2003
+movies	S.W.A.T.2003.1080p.mkv	title=S.W.A.T	year=2003
+movies	E.T. the Extra-Terrestrial (1982).mkv	title=E.T. the Extra-Terrestrial	year=1982
+movies	Mr. Nobody (2009).mkv	title=Mr. Nobody	year=2009
+movies	(500) Days of Summer (2009).mkv	title=(500) Days of Summer	year=2009
+movies	Star Wars - Episode IV - A New Hope (1977).mkv	title=Star Wars - Episode IV - A New Hope	year=1977
+movies	Les Misérables (Musical) (2012).mkv	title=Les Misérables (Musical)	year=2012
+movies	The Good, the Bad and the Ugly (1966).mkv	title=The Good, the Bad and the Ugly	year=1966
+movies	Who's Afraid of Virginia Woolf (1966).mkv	title=Who's Afraid of Virginia Woolf	year=1966
+movies	Am_I_Wrong_(2010).mkv	title=Am I Wrong	year=2010
+movies	Kill.Bill.Vol.1.2003.mkv	title=Kill Bill Vol 1	year=2003
+movies	Kill Bill Vol. 2 (2004).mkv	title=Kill Bill Vol. 2	year=2004
+movies	Rock & Roll (2017).mkv	title=Rock & Roll	year=2017
+movies	Fast & Furious 6 (2013).mkv	title=Fast & Furious 6	year=2013
+movies	Se7en (1995).mkv	title=Se7en	year=1995
+movies	Ocean's Twelve (2004).mkv	title=Ocean's Twelve	year=2004
+shows	Mr. Robot/Season 1/Mr.Robot.S01E01.mkv	title=Mr Robot	season=1	episode=1	show=Mr. Robot
+shows	Mr. Robot/Season 1/Mr. Robot - S01E02 - eps1.1_ones-and-zer0es.mkv	title=Mr. Robot	season=1	episode=2	show=Mr. Robot
+shows	Marvel's Agents of S.H.I.E.L.D/Season 1/Marvel's Agents of S.H.I.E.L.D. S01E01.mkv	title=Marvel's Agents of S.H.I.E.L.D.	season=1	episode=1	show=Marvel's Agents of S.H.I.E.L.D
+shows	Grey's Anatomy/Grey's.Anatomy.S10E01.mkv	title=Grey's Anatomy	season=10	episode=1	show=Grey's Anatomy
+shows	Doctor Who (2005)/Season 1/Doctor.Who.2005.S01E01.Rose.720p.mkv	title=Doctor Who	year=2005	season=1	episode=1	show=Doctor Who	show_year=2005	episode_title=Rose
+
+# groep: lijkt-op-aflevering
+movies	Film.1920x1080.mkv	title=Film
+movies	Film 1280 x 720.mkv	title=Film
+movies	Heat.1995.720x480.DVD.mkv	title=Heat	year=1995
+shows	Show.x264.mkv	title=Show
+shows	Show.x265.10bit.mkv	title=Show
+shows	Show.H.264.mkv	title=Show
+shows	Show.H.265.HEVC.mkv	title=Show
+shows	Show.5.1.mkv	title=Show
+shows	Show.7.1.mkv	title=Show
+shows	Show.DDP5.1.mkv	title=Show
+shows	Show.AAC2.0.mkv	title=Show
+shows	Show.1920x1080.mkv	title=Show
+shows	Show 720p.mkv	title=Show
+shows	Show.2160p.mkv	title=Show
+shows	2x2 Film.mkv	title=2x2 Film
+shows	100x Faster.mkv	title=100x Faster
+shows	Show.DTS-HD.MA.7.1.mkv	title=Show
+shows	Show.TrueHD.Atmos.7.1.mkv	title=Show
+shows	Concert.2160p.DV.HDR10.mkv	title=Concert
+movies	Film.5.1.mkv	title=Film
+movies	Film.7.1.mkv	title=Film
+movies	Film.H.264.mkv	title=Film
+movies	Film.x264.mkv	title=Film
+movies	2x2 (2010).mkv	title=2x2	year=2010
+
+# groep: cijfers (review golf 3, C8: een serie die alleen uit cijfers bestaat)
+shows	24/Season 1/24 S01E01.mkv	title=24	season=1	episode=1	show=24	show_index=0
+shows	24/Season 2/S02E03.mkv	title=24	season=2	episode=3	show=24	show_index=0
+shows	1883/1883.S01E04.1080p.WEB.H264-GRP.mkv	title=1883	season=1	episode=4	show=1883	show_index=0
+shows	1923/Season 1/1923 S01E02.mkv	title=1923	season=1	episode=2	show=1923	show_index=0
+shows	9-1-1/Season 3/9-1-1 - S03E05 - Titel.mkv	title=9-1-1	season=3	episode=5	show=9-1-1	show_index=0	episode_title=Titel
+shows	90210/Seizoen 1/90210 1x05.avi	title=90210	season=1	episode=5	show=90210	show_index=0
+shows	2023/Mijn Serie S01E01.mkv	title=Mijn Serie	season=1	episode=1	show=Mijn Serie
+shows	2023/S01E01.mkv	title=	season=1	episode=1
+
+# groep: muziek
+music	Artiest/Album (1999)/01 - Titel.flac	title=Titel	year=1999	artist=Artiest	album=Album	track=1
+music	Radiohead/OK Computer (1997)/02 - Paranoid Android.flac	title=Paranoid Android	year=1997	artist=Radiohead	album=OK Computer	track=2
+music	Radiohead/OK Computer (1997)/02. Paranoid Android.mp3	title=Paranoid Android	year=1997	artist=Radiohead	album=OK Computer	track=2
+music	Radiohead/OK Computer/02 Paranoid Android.m4a	title=Paranoid Android	artist=Radiohead	album=OK Computer	track=2
+music	Radiohead/OK Computer/02_Paranoid_Android.ogg	title=Paranoid Android	artist=Radiohead	album=OK Computer	track=2
+music	Pink Floyd/The Wall (1979)/Disc 2/03 - Comfortably Numb.flac	title=Comfortably Numb	year=1979	artist=Pink Floyd	album=The Wall	disc=2	track=3
+music	Pink Floyd/The Wall/CD2/03 - Comfortably Numb.flac	title=Comfortably Numb	artist=Pink Floyd	album=The Wall	disc=2	track=3
+music	Pink Floyd/The Wall/CD 1/01 - In the Flesh.flac	title=In the Flesh	artist=Pink Floyd	album=The Wall	disc=1	track=1
+music	Pink Floyd/The Wall/2-03 Comfortably Numb.mp3	title=Comfortably Numb	artist=Pink Floyd	album=The Wall	disc=2	track=3
+music	Doe Maar/Skunk (1981)/05 - Smoorverliefd.mp3	title=Smoorverliefd	year=1981	artist=Doe Maar	album=Skunk	track=5
+music	Doe Maar/1981 - Skunk/05 - Smoorverliefd.mp3	title=Smoorverliefd	year=1981	artist=Doe Maar	album=Skunk	track=5
+music	Björk/Homogenic [1997]/01 - Hunter.flac	title=Hunter	year=1997	artist=Björk	album=Homogenic	track=1
+music	Various Artists/Top 2000 (2019)/14 - Queen - Bohemian Rhapsody.mp3	title=Queen - Bohemian Rhapsody	year=2019	artist=Various Artists	album=Top 2000	track=14
+music	Queen/A Night at the Opera/11 - Queen - Bohemian Rhapsody.mp3	title=Bohemian Rhapsody	artist=Queen	album=A Night at the Opera	track=11
+music	Losse nummers/Queen - Bohemian Rhapsody.mp3	title=Bohemian Rhapsody	artist=Queen	album=Losse nummers
+music	Bohemian Rhapsody.mp3	title=Bohemian Rhapsody
+music	Queen - Bohemian Rhapsody.mp3	title=Bohemian Rhapsody	artist=Queen
+music	Prince/1999 (1982)/01 - 1999.flac	title=1999	year=1982	artist=Prince	album=1999	track=1
+music	Blur/Parklife/10 - To the End.opus	title=To the End	artist=Blur	album=Parklife	track=10
+music	Miles Davis/Kind of Blue (1959)/001 - So What.wav	title=So What	year=1959	artist=Miles Davis	album=Kind of Blue	track=1
+music	AC-DC/Back in Black/06 - Back in Black.flac	title=Back in Black	artist=AC-DC	album=Back in Black	track=6
+
+# groep: rommel
+movies	video.mkv	title=video
+movies	1.mp4	title=1
+movies	DSC_0001.MOV	title=DSC 0001
+movies	IMG_1234.MOV	title=IMG 1234
+movies	MVI_0042.AVI	title=MVI 0042
+movies	GOPR0001.MP4	title=GOPR0001
+movies	movie.mkv	title=movie
+movies	Inception (2010)/1.mkv	title=Inception	year=2010
+movies	Inception (2010)/DSC_0001.MOV	title=Inception	year=2010
+movies	Inception (2010)/movie.mkv	title=Inception	year=2010
+movies	Inception (2010)/VTS_01_1.VOB.mkv	title=Inception	year=2010
+movies	Rommel/video.mkv	title=Rommel
+
+# groep: eigen-videos
+videos	Vakantie 2019/VID_20190801_123456.mp4	title=VID_20190801_123456	year=2019	date=2019-08-01
+videos	PXL_20230105_101010.mp4	title=PXL_20230105_101010	year=2023	date=2023-01-05
+videos	2024-03-01 Verjaardag Oma.mov	title=2024-03-01 Verjaardag Oma	year=2024	date=2024-03-01
+videos	Verjaardag Oma 2019.mp4	title=Verjaardag Oma 2019	year=2019
+videos	DSC_0001.MOV	title=DSC_0001
+videos	Bruiloft/Ceremonie.mp4	title=Ceremonie
+videos	Screen Recording 2024-05-06 at 10.11.12.mov	title=Screen Recording 2024-05-06 at 10.11.12	year=2024	date=2024-05-06
+
+# groep: geen-aflevering
+shows	Specials/Losse film (2010).mkv	title=Losse film	year=2010
+shows	Breaking Bad/Breaking Bad - Making of.mkv	title=Breaking Bad - Making of	show=Breaking Bad
+movies	Breaking.Bad.S01E01.mkv	title=Breaking Bad S01E01

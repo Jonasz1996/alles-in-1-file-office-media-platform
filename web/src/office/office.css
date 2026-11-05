@@ -1,0 +1,88 @@
+/* De editorpagina (Keuze 32): een kopbalk en de iframe van DS eronder, over de hele breedte.
+   Alleen tokens uit tokens.css. De iframe zet DS zelf op 100% (width en height in de config). */
+
+main.editor-page {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.editor-bar .page-title {
+  flex: 1 1 24rem;
+  min-width: 0;
+}
+
+.editor-bar h1 {
+  margin: 0;
+  font-size: var(--text-l);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-bar .page-title-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.editor-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-s);
+  min-width: 10rem;
+}
+
+.editor-notices {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.editor-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.editor-notice p {
+  margin: 0;
+  flex: 1 1 20rem;
+}
+
+.editor-notice-stale p,
+.editor-notice-busy p {
+  color: var(--fg);
+}
+
+.editor-opening {
+  padding: var(--space-4);
+  margin: 0;
+}
+
+/* De hoogte van het scherm min de balk van de app en de kopbalk; nooit kleiner dan 24rem */
+.editor-frame {
+  flex: 1 1 auto;
+  height: max(24rem, calc(100dvh - 7.5rem));
+  min-height: 0;
+}
+
+.editor-frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
