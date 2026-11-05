@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api";
+import { Api, ApiError, api } from "../api";
 import beeldCatalog from "../i18n/errors/beeld";
 import searchCatalog from "../i18n/errors/search";
 import * as search from "./api";
@@ -52,7 +52,6 @@ describe("de aanroepen van zoeken en tekst (§3.4, Z1, Z2, X1)", () => {
     await search.search(params);
     await search.search({ q: "anna" });
     await search.suggest("an");
-    await search.pageWords("f/1", 3, "tok en");
     await search.analysis("f1");
     await search.requestOcr("f1");
     // Zoeken op beeld (X3, vastgelegd in Z0b): met tekst of vanaf een foto, en de stand
@@ -69,13 +68,72 @@ describe("de aanroepen van zoeken en tekst (§3.4, Z1, Z2, X1)", () => {
       ],
       ["GET", `${V}/search?q=anna`],
       ["GET", `${V}/search/suggest?q=an`],
-      ["GET", `${V}/files/f%2F1/pages/3/words?token=tok+en`],
       ["GET", `${V}/files/f1/analysis`],
       ["POST", `${V}/files/f1/ocr`],
       ["GET", `${V}/search?q=rode+auto&mode=image&type=image`],
       ["GET", `${V}/search?mode=image&like=f%2F2`],
       ["GET", `${V}/photos/beeld`],
     ]);
+  });
+
+  it("pageWords gaat zonder api.request, met alleen het download-token (zoals de pagina's zelf)", async () => {
+    const request = vi.spyOn(api, "request");
+    const calls: [string, RequestInit | undefined][] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([String(input), init]);
+      return new Response(JSON.stringify({ page: 3, words: [{ t: "factuur", x: 0.1, y: 0.2, w: 0.1, h: 0.02 }], source: "pdf" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    try {
+      const words = await search.pageWords("f/1", 3, "tok en");
+      expect(words.words.map((w) => w.t)).toEqual(["factuur"]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0][0]).toBe("/api/v1/files/f%2F1/pages/3/words?token=tok+en");
+      expect(calls[0][1]?.credentials).toBe("same-origin");
+      expect(new Headers(calls[0][1]?.headers).get("Authorization")).toBeNull();
+      expect(request).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("een verlopen download-token bij de woorden logt je niet uit (via api.request wel)", async () => {
+    let loggedOut = 0;
+    const before = api.onLoggedOut;
+    api.onLoggedOut = () => loggedOut++;
+    const expired = () =>
+      new Response(JSON.stringify({ detail: { code: "invalid_token", message: "Ongeldig of verlopen token" } }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    vi.stubGlobal("fetch", async () => expired());
+    try {
+      await expect(search.pageWords("f1", 1, "oud")).rejects.toMatchObject({ status: 401, code: "invalid_token" });
+      expect(loggedOut).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+      api.onLoggedOut = before;
+    }
+    // Waarom: api.request ververst na een 401 de sessie en vraagt nog eens met hetzelfde
+    // download-token; die tweede 401 is voor api.request het einde van de sessie
+    let out = 0;
+    const other = new Api(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/login") || url.endsWith("/refresh")) {
+        const user = { id: "u", email: "j@x.nl", display_name: "J", role: "user", quota_bytes: 0, used_bytes: 0, root_id: "r" };
+        return new Response(JSON.stringify({ access_token: "A1", refresh_token: "R", expires_in: 900, user }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return expired();
+    });
+    other.onLoggedOut = () => out++;
+    await other.login("j@x.nl", "geheim");
+    await expect(other.request("GET", "/api/v1/files/f1/pages/1/words?token=oud")).rejects.toBeInstanceOf(ApiError);
+    expect(out).toBe(1);
   });
 
   it("de catalogus search.ts heeft precies de foutcodes van het contract", () => {
