@@ -785,6 +785,104 @@ async def test_ds_niet_gezond_dan_geen_poging(client, admin, office):
     assert office.converted() == [keys.convert_key(blob.sha256)]
 
 
+async def released_while_ds_returns(client, jonas, office, monkeypatch, at: str) -> dict:
+    """DS weg, een upload, en de taak office.pdf geeft de inhoud zonder poging terug terwijl
+    DS terugkomt: de gezondheidslus zet gezond en de inhaalronde (in de andere worker) draait
+    helemaal, op het punt at. "after": het teruggeven is gecommit, maar jobs.execute zette de
+    taak nog niet op done (CI run 88). "before": de taak zag DS niet gezond, maar gaf de inhoud
+    nog niet terug (de inhaalronde leest nog pending). Geeft de node."""
+    s = office.settings
+    office_state(app).ever_ok = True
+    office_state(app).health = "down"
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")  # de preview: pending en een taak
+    [job] = await office_jobs(s, "queued")
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    fired: list[str] = []
+
+    async def ds_returns() -> None:
+        fired.append(at)
+        office_state(app).health = "ok"  # de gezondheidslus: weer gezond
+        await convert.backfill(s, {"after": ""})  # de inhaalronde die on_healthy start
+
+    set_job, release = jobs._set, convert._release
+
+    async def backfill_before_done(settings, job_id, **values):
+        if job_id == job.id and values.get("status") == "done" and not fired:
+            await ds_returns()
+        await set_job(settings, job_id, **values)
+
+    async def backfill_before_release(maker, sha, asked, r=""):
+        if not fired:
+            await ds_returns()
+        await release(maker, sha, asked, r)
+
+    if at == "after":
+        monkeypatch.setattr(jobs, "_set", backfill_before_done)
+    else:
+        monkeypatch.setattr(convert, "_release", backfill_before_release)
+    await jobs.run_pending(s)  # de taak: DS is weg, dus terug zonder poging
+    monkeypatch.setattr(jobs, "_set", set_job)
+    monkeypatch.setattr(convert, "_release", release)
+    assert fired == [at]
+    assert office.log("convert") == []  # DS was weg toen de taak keek
+    return node
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("at", ["after", "before"])
+async def test_ds_terug_terwijl_de_taak_de_inhoud_teruggeeft(
+    client, admin, office, monkeypatch, at
+):
+    """CI run 88: DS kwam terug precies toen de taak office.pdf de inhoud teruggaf (DS weg:
+    pending terug naar leeg, zonder poging). after: de inhaalronde las de inhoud leeg, maar de
+    taak liep nog (done kwam pas in een eigen commit van jobs.execute): geen nieuwe taak, en
+    toch pending. before: de inhaalronde las nog pending en sloeg hem over; daarna gaf de taak
+    hem terug. Beide keren kwam er nooit een PDF: pending of leeg, zonder taak, ook na een
+    herstart. Nu is het teruggeven één commit met de done van de taak, en is DS daarna gezond,
+    dan zet de taak de inhoud zelf terug in de rij, zoals de inhaalronde."""
+    jonas, _ = admin
+    s = office.settings
+    node = await released_while_ds_returns(client, jonas, office, monkeypatch, at)
+    blob = await blob_of(s, node["id"])
+    queued = await office_jobs(s, "queued")
+    assert blob.pdf_state == "pending"
+    assert [(j.payload, j.attempts) for j in queued] == [
+        ({"sha": blob.sha256, "n": 1, "b": True}, 0)
+    ]
+    # Zoals de inhaalronde: na BACKFILL_DELAY, zodat nieuwe uploads voorgaan
+    assert queued[0].run_after.replace(tzinfo=None) > (
+        jobs.now() + timedelta(seconds=convert.BACKFILL_DELAY - 10)
+    ).replace(tzinfo=None)
+    async with maker(s)() as session:
+        assert await jobs.failed(session) == []
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "ready"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+    assert [j for j in await office_jobs(s) if j.status in jobs.ACTIVE] == []
+
+
+@pytest.mark.anyio
+async def test_teruggeven_en_klaar_zijn_een_commit(client, admin, office):
+    """Wie de inhoud leeg ziet nadat de taak hem teruggaf, ziet de taak ook al klaar (niet meer
+    running): het teruggeven en de done van de taak zijn één transactie. Met DS nog weg zet de
+    taak niets terug in de rij; dat doet de inhaalronde als DS terug is."""
+    jonas, _ = admin
+    s = office.settings
+    office_state(app).health = "down"
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+    assert claimed is not None and claimed.id == job.id
+    await convert.run(s, claimed.payload)  # de taak zelf, zonder jobs.execute eromheen
+    assert (await blob_of(s, node["id"])).pdf_state is None
+    [after] = await office_jobs(s)
+    assert (after.status, after.attempts, after.error) == ("done", 1, None)
+    assert after.finished_at is not None
+
+
 async def set_session_state(s: Settings, key: str, state: str) -> None:
     async with maker(s)() as session:
         await session.execute(

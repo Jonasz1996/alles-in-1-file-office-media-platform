@@ -22,7 +22,9 @@ deze volgorde:
 1. de blob is weg: klaar;
 2. de PDF er al, met de juiste pdf_version: alleen de thumbnails opnieuw (zonder DS);
 3. office uit (niet ingesteld, of uitgezet op /beheer): pdf_state terug (leeg, of ask);
-4. DS niet gezond: pdf_state terug en klaar, zonder poging; de inhaalronde neemt hem terug.
+4. DS niet gezond: pdf_state terug en klaar, zonder poging, in één commit met de done van de
+   taak; de inhaalronde neemt hem terug. Is DS daarna al weer gezond, dan zet de taak hem zelf
+   terug in de rij zoals de inhaalronde (die kan hem al voorbij zijn: _take_back).
    Mislukte er al een poging (DS ging tijdens een conversie onderuit en is nog niet terug),
    dan wacht de tweede poging zolang DS start of korter dan 10 minuten weg is (een herstart
    of update van DS), elke 30 s zonder poging; daarna telt dit wel. Zo krijgt een bestand dat
@@ -365,7 +367,47 @@ async def _release(
     taak van Mislukte opnieuw (r) terug naar failed: leeg nam de inhaalronde hem met de oude key,
     en die geeft bij DS de oude fout."""
     state = "failed" if r else "ask" if asked else None
-    await _set_state(maker, sha, state, only=("pending",))
+    async with maker() as session:
+        await session.execute(
+            update(Blob)
+            .where(Blob.sha256 == sha, Blob.pdf_state == "pending")
+            .values(pdf_state=state)
+            .execution_options(synchronize_session=False)
+        )
+        # In dezelfde commit de eigen taak op done (jobs.execute zet daarna niets meer). Wie de
+        # inhoud leeg ziet, ziet zo ook de taak niet meer lopen. Met twee commits las de
+        # inhaalronde ertussen leeg, hield de lopende taak een nieuwe tegen, en zette toch
+        # pending: pending zonder taak, voorgoed (CI run 88, o3.md afwijking 22)
+        await session.execute(
+            update(Job)
+            .where(Job.type == TYPE, Job.key == job_key(sha), Job.status == "running")
+            .values(status="done", finished_at=jobs.now(), error=None)
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+
+
+async def _take_back(maker: async_sessionmaker[AsyncSession], sha: str) -> None:
+    """De taak gaf de inhoud terug omdat DS niet gezond was, en nu is DS het weer. De
+    inhaalronde die on_healthy daarbij startte, kan hem al voorbij zijn: hij las nog pending (vóór
+    _release) en sloeg hem over. Dus zet de taak hem zelf terug in de rij, zoals de inhaalronde:
+    een taak met b over BACKFILL_DELAY, en pending. Nam de inhaalronde hem toch (hij las hem
+    leeg), dan houdt enqueue de tweede taak tegen."""
+    async with maker() as session:
+        await jobs.enqueue(
+            session,
+            TYPE,
+            {"sha": sha, "n": 1, "b": True},
+            key=job_key(sha),
+            run_after=jobs.now() + timedelta(seconds=BACKFILL_DELAY),
+        )
+        await session.execute(
+            update(Blob)
+            .where(Blob.sha256 == sha, Blob.pdf_state.is_(None))
+            .values(pdf_state="pending")
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
 
 
 async def _own_job(maker: async_sessionmaker[AsyncSession], sha: str, **values: Any) -> None:
@@ -514,6 +556,8 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
                 "mislukte poging"
             )
         await _release(maker, sha, asked, r)
+        if not asked and not r and _healthy():  # intussen weer gezond: zie _take_back
+            await _take_back(maker, sha)
         return
     async with maker() as session:
         busy = await sessions.busy(session)
