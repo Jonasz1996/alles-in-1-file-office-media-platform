@@ -681,17 +681,26 @@ def test_pdf_pagina_s_na_het_verlopen_van_het_token(browser, tmp_path_factory):
             timeout=20_000,
         )
         assert not viewer.locator(".page-failed").count()
-        assert [p for p in pages if p[1] != 200] == [], pages
+        # De afbeeldingen van de pagina's: alle 200. Over /pages/ gaan sinds fase 6 (Z4) ook de
+        # woorden van de tekstlaag (/pages/{n}/words); deze PDF heeft geen tekst, dus elk 404
+        # not_found (het contract van Z2), nooit 401 of 403 van een oud token
+        words = [p for p in pages if "/words?" in p[0]]
+        assert [p for p in pages if p not in words and p[1] != 200] == [], pages
+        assert words and [p for p in words if p[1] != 404] == [], words
         box = viewer.get_by_role("spinbutton")
-        box.fill("9")
-        box.press("Enter")
-        page.wait_for_function(
-            """() => [...document.querySelectorAll(".page img")].some(
-              (i) => i.alt === "Pagina 7" && i.complete && i.naturalWidth > 0)""",
-            timeout=20_000,
-        )
+        with page.expect_response(lambda r: f"/files/{node}/pages/9/words?" in r.url) as late_words:
+            box.fill("9")
+            box.press("Enter")
+            page.wait_for_function(
+                """() => [...document.querySelectorAll(".page img")].some(
+                  (i) => i.alt === "Pagina 7" && i.complete && i.naturalWidth > 0)""",
+                timeout=20_000,
+            )
         late = viewer.get_by_role("img", name="Pagina 7", exact=True).get_attribute("src")
         assert late and first_token and late.split("token=")[1] != first_token.split("token=")[1]
+        # De woorden van een pagina die pas na het vernieuwen laadt: met een nieuw token
+        assert late_words.value.status == 404, late_words.value.url
+        assert late_words.value.url.split("token=")[1] != first_token.split("token=")[1]
         assert not viewer.locator(".page-failed").count()
     finally:
         problems = browsers.close_all()
