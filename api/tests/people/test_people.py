@@ -10,6 +10,7 @@ een kopie.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -19,7 +20,7 @@ from sqlalchemy import func, select
 from app.models import Person, PhotoPerson, Share
 from app.people import people as P
 from app.people import search as people_search
-from app.search import limits
+from app.search import hooks, limits
 from tests.factories import code_of, create_file, create_folder, create_user, maker, params_of
 from tests.test_photos import login, photo
 
@@ -540,6 +541,37 @@ async def test_de_groep_personen_bij_zoeken(client, huis, motor, settings):
     for i in range(6):
         await nieuw(client, eva, f"Annet {i}")
     assert len((await zoek(client, eva, motor, q="ann"))["groups"]["people"]) == 5
+
+
+async def test_een_haak_voor_de_groepen_die_faalt(client, huis, motor, monkeypatch, caplog):
+    """Review golf 2, contract C5: een haak voor de groepen die faalt, geeft geen groep en één
+    logregel met zijn naam, nooit de vraag; de andere haken en de treffers blijven."""
+    eva = huis["h_eva"]
+    await op(client, eva, huis["een"], name="Geheimanna")
+    anna = (await personen(client, eva))["Geheimanna"]["id"]
+
+    async def kapot(db, user, p):
+        raise RuntimeError("stuk")
+
+    monkeypatch.setattr(hooks, "_groups", [kapot, people_search.groups])
+    with caplog.at_level(logging.DEBUG, logger="platform"):
+        page = await zoek(client, eva, motor, q="geheimanna")
+    assert page["groups"] == {
+        "people": [{"id": anna, "name": "Geheimanna", "n": 1}],
+        "places": [],
+    }
+    regels = [r.getMessage() for r in caplog.records]
+    assert [r for r in regels if "search_groups_hook_failed" in r] == [
+        f"search_groups_hook_failed {kapot.__qualname__}"
+    ]
+    assert "geheimanna" not in caplog.text.lower()
+    # Alleen de kapotte haak: geen groepen, wel een antwoord
+    monkeypatch.setattr(hooks, "_groups", [kapot])
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="platform"):
+        page = await zoek(client, eva, motor, q="geheimanna")
+    assert page["groups"] is None
+    assert "geheimanna" not in caplog.text.lower()
 
 
 async def test_de_suggesties_voor_personen(client, huis):
