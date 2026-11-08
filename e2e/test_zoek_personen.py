@@ -5,7 +5,10 @@ Tab, Enter, Spatie, de pijlen en typen; nergens een klik (docs/fase-6/toetsenbor
   toevoegen", een nieuwe naam typen en met Enter kiezen, "Kader tekenen" (Spatie), het kader met
   de pijlen verplaatsen en met Shift groter maken, Toevoegen.
 - Zoeken op de naam: /fotos/personen, typen, Enter opent de persoon; ook de groep personen in
-  GET /search.
+  GET /search. In de web van Z4 (sinds de samenvoeging van golf 2): Ctrl+K en de naam geven de
+  persoon onder Personen in de suggesties; Enter zet het filter person op /zoeken, met de naam
+  op de chip. Op /zoeken?q= staat de persoon in de groep bovenaan, en Enter zet hetzelfde filter
+  (Keuze 38).
 - Het filter op /fotos: de persoon kiezen (↓, Enter), alleen zijn foto; een soort zonder treffers
   (de lege staat), Filters wissen. Het filter blijft in de pagina, nooit in de adresbalk.
 - "Vandaag, N jaar geleden" met een vaste dag: de test zet ?day= op het verzoek (nooit de klok
@@ -52,6 +55,14 @@ def tab_to(page: Page, target: Locator, limit: int = 40, back: bool = False) -> 
             return i + 1
         gezien.append(page.evaluate(ACTIEF))
     raise AssertionError(f"Tab kwam niet bij {target}: {gezien}")
+
+
+def is_zoeken(r) -> bool:
+    return "/api/v1/search?" in r.url and r.request.method == "GET"
+
+
+def is_suggestie(r) -> bool:
+    return "/api/v1/search/suggest?" in r.url and r.request.method == "GET"
 
 
 def patch_instellingen(r) -> bool:
@@ -158,6 +169,44 @@ def test_persoon_toevoegen_met_kader_zoeken_en_filteren(server, fien, context_as
     gevonden = server.call(fien, "GET", "/api/v1/search", params={"q": "oma"}, expect=200).json()
     groep = gevonden["groups"]["people"]
     assert [(g["id"], g["name"], g["n"]) for g in groep] == [(oma, "Oma Ria", 1)]
+
+    # --- het veld bovenaan (Z4): de persoon in de suggesties zet het filter person ---
+    page.keyboard.press("Control+k")
+    zoekveld = page.locator("#zoekveld")
+    expect(zoekveld).to_be_focused()
+    with page.expect_response(is_suggestie) as voorstel:
+        page.keyboard.type("oma")
+    assert [(p["id"], p["name"]) for p in voorstel.value.json()["people"]] == [(oma, "Oma Ria")]
+    lijst = page.get_by_role("listbox", name="Suggesties")
+    expect(lijst.get_by_role("group", name="Personen").get_by_role("option")).to_have_text(
+        ["Oma Ria"]
+    )
+    expect(lijst.get_by_role("option")).to_have_text(
+        ["Oma Ria", "Zoek 'oma' op wat er op je foto's staat"]
+    )
+    page.keyboard.press("ArrowDown")
+    with page.expect_response(is_zoeken) as treffers:
+        page.keyboard.press("Enter")
+    namen = [h["node"]["name"] for h in treffers.value.json()["results"]]
+    assert parse_qs(urlsplit(treffers.value.url).query)["person"] == [oma]
+    assert namen == ["foto-00000.webp"]
+    expect(page).to_have_url(re.compile(f"/zoeken\\?person={oma}$"))
+    rijen = page.locator("#inhoud [role=grid] [role=row][aria-rowindex][data-index]")
+    expect(rijen).to_have_count(1)
+    expect(page.get_by_role("button", name="Filter weghalen: Oma Ria", exact=True)).to_be_visible()
+
+    # --- /zoeken?q=oma: de groep personen bovenaan; Enter zet hetzelfde filter ---
+    with page.expect_response(is_zoeken) as op_naam:
+        page.goto("/zoeken?q=oma")
+    assert [g["id"] for g in op_naam.value.json()["groups"]["people"]] == [oma]
+    in_groep = page.get_by_role("region", name="Personen", exact=True).get_by_role(
+        "link", name="Oma Ria (1)", exact=True
+    )
+    tab_to(page, in_groep, limit=20)
+    with page.expect_response(is_zoeken) as op_persoon:
+        page.keyboard.press("Enter")
+    assert [h["node"]["name"] for h in op_persoon.value.json()["results"]] == ["foto-00000.webp"]
+    expect(page).to_have_url(re.compile(f"/zoeken\\?person={oma}$"))
 
     page.goto("/fotos/personen")
     expect(page.get_by_role("heading", name="Personen", level=1)).to_be_visible()
@@ -309,7 +358,9 @@ def test_account_fotos_gezichten_en_beeld_nog_niet(server, user_factory, context
 
 
 def test_de_knop_zoeken_op_beeld(fien, context_as):
-    """Keuze 81: /fotos heeft de knop "Zoeken op beeld" naar /zoeken?mode=image."""
+    """Keuze 81: /fotos heeft de knop "Zoeken op beeld" naar /zoeken?mode=image; daar staat de
+    focus in het veld (sinds de samenvoeging met de pagina van Z4), met de plaatshouder van de
+    stand beeld."""
     page = context_as(fien).new_page()
     page.goto("/fotos")
     knop = page.get_by_role("link", name="Zoeken op beeld", exact=True)
@@ -317,3 +368,9 @@ def test_de_knop_zoeken_op_beeld(fien, context_as):
     tab_to(page, knop, limit=60)
     page.keyboard.press("Enter")
     expect(page).to_have_url(re.compile(r"/zoeken\?mode=image$"))
+    veld = page.get_by_role("searchbox", name="Zoekwoorden", exact=True)
+    expect(veld).to_be_focused()
+    expect(veld).to_have_attribute(
+        "placeholder", "Beschrijf de foto, bijvoorbeeld: hond op het strand"
+    )
+    expect(page.get_by_role("radio", name="Wat er op de foto staat", exact=True)).to_be_checked()

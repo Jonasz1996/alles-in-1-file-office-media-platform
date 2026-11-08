@@ -14,6 +14,7 @@ import type { Hit } from "./types";
 
 const T1 = "7a7a7a7a-1111-4111-8111-111111111111";
 const MAP = "0b0b0b0b-3333-4333-8333-333333333333";
+const RIA = "5c5c5c5c-2222-4222-8222-222222222222";
 
 beforeEach(async () => {
   resetI18nForTests("nl");
@@ -133,6 +134,35 @@ describe("de chips en het paneel met filters (Keuze 43 en 47)", () => {
     expect(html.match(/type="date"/g)).toHaveLength(2);
   });
 
+  it("een persoon (Z6, Keuze 38): op de chip zijn naam, een onbekende of verborgen persoon heet Persoon", () => {
+    const people = [{ id: RIA, name: "Oma Ria", count: 3 }];
+    expect(chipLabel({ field: "person", value: RIA }, tags, people)).toBe("Oma Ria");
+    expect(chipLabel({ field: "person", value: MAP }, tags, people)).toBe("Persoon");
+    expect(chipLabel({ field: "person", value: RIA }, tags)).toBe("Persoon");
+  });
+
+  it("met eigen personen een vinkje per persoon in het paneel; de gezette aangevinkt, met een chip", () => {
+    const people = [
+      { id: RIA, name: "Oma Ria", count: 3 },
+      { id: MAP, name: "Opa Kees", count: 1 },
+    ];
+    const html = renderToStaticMarkup(createElement(FilterBar, { query: { person: [RIA] }, tags: [], people }));
+    expect(html).toContain('aria-label="Filter weghalen: Oma Ria"');
+    expect(html.match(/<li class="search-chip">/g)).toHaveLength(1);
+    expect(html).toContain("<legend>Persoon</legend>");
+    expect(html).toContain("Oma Ria (3)");
+    expect(html).toContain("Opa Kees (1)");
+    // Negen soorten en twee personen, één aangevinkt
+    expect(html.match(/type="checkbox"/g)).toHaveLength(11);
+    expect(html.match(/type="checkbox" checked=""/g)).toHaveLength(1);
+  });
+
+  it("een persoon in de groep bovenaan zet het filter person, zoals een plaats het filter place", () => {
+    expect(searchPageSource).toContain("<Link to={queryHref(withPerson({}, p.id))}>");
+    expect(searchPageSource).toContain("<Link to={queryHref({ place: Number(p.id) })}>");
+    expect(searchPageSource).not.toContain("/fotos/personen/");
+  });
+
   it("zonder filters geen lijst met chips, wel het paneel", () => {
     const html = renderToStaticMarkup(createElement(FilterBar, { query: { q: "x" }, tags: [] }));
     expect(html).not.toContain("search-chips");
@@ -160,6 +190,11 @@ describe("de stand beeld op /zoeken (Keuze 81): het raster van X3, lazy", () => 
     expect(searchPageSource).toMatch(/<LazySlot>\s*<BeeldResults \/>\s*<\/LazySlot>/);
     // En nergens anders statisch
     expect(searchPageSource).not.toMatch(/import .*from "\.\/beeld\//);
+  });
+
+  it("zonder vraag in de stand beeld (de knop Zoeken op beeld) de focus in het veld, een frame na de kop", () => {
+    expect(searchPageSource).toContain("if (!image || query.q) return;");
+    expect(searchPageSource).toMatch(/requestAnimationFrame\(\(\) => \{[^}]*data-page-title[^}]*field\.current\?\.focus\(\)/s);
   });
 
   it("de keuze tussen de twee standen en de link onder de treffers", () => {

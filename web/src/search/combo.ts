@@ -42,7 +42,8 @@ export function optionsOf(s: Suggestions | null, q: string, withImage: boolean):
         n.kind === "file" ? { file: n.id, name: n.name } : { href: n.kind === "album" ? `/album/${seg(n.id)}` : `/map/${seg(n.id)}` };
       out.push({ group: "names", label: n.name, target });
     }
-    for (const p of s.people) out.push({ group: "people", label: p.name, target: { href: `/fotos/personen/${seg(p.id)}` } });
+    // Een persoon zet het filter person (Keuze 38), zoals een plaats en een tag hun filter zetten
+    for (const p of s.people) out.push({ group: "people", label: p.name, target: { href: queryHref({ person: [p.id] }) } });
     for (const p of s.places) {
       const label = p.admin1 ? `${p.name}, ${p.admin1}` : p.name;
       out.push({ group: "places", label, target: { href: queryHref({ place: p.id }) } });

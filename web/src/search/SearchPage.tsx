@@ -8,11 +8,13 @@
 // in de tekstlaag is van de viewer). "Meer laden" haalt de volgende pagina (offset, of after na
 // ronde B van Keuze 9). De meldingen staan in één role="status": de index is nog bezig, de twee
 // teksten van Keuze 9, alleen op naam, niets gevonden. Bovenaan eigen personen en plaatsen die zo
-// heten (groups, Keuze 38). Zonder foto's in de treffers: "Geen foto met deze naam?" (Keuze 81).
+// heten (groups, Keuze 38): een keuze zet het filter person of place. Zonder foto's in de
+// treffers: "Geen foto met deze naam?" (Keuze 81).
 //
 // Stand beeld: het veld met zijn eigen plaatshouder en uitleg, en het raster van X3 (lazy, met
 // het gebied beeld; tot X3 er is, toont het niets). De pagina vraagt dan zelf niets aan /search:
-// het raster leest q en like uit de URL.
+// het raster leest q en like uit de URL. Kom je er zonder vraag (de knop "Zoeken op beeld" op
+// /fotos), dan staat de focus in het veld (Keuze 81).
 
 import {
   type FormEvent,
@@ -46,11 +48,12 @@ import { PageTitle } from "../ui/PageTitle";
 import { clickSelect, keySelect, SelectionStore, useSelection } from "../ui/selection";
 import { toast } from "../ui/toast";
 import { useViewerParam, Viewer } from "../viewer";
+import { people as listPeople } from "../photos/people/api";
 import { search } from "./api";
-import { FilterBar } from "./FilterBar";
+import { FilterBar, type PersonName } from "./FilterBar";
 import { appendHits, folderHref, hitPath, isPhoto, parentHref, pathText } from "./hits";
 import { Notices, notices, Snippet } from "./Notices";
-import { canSearch, firstParams, nextParams, queryHref, readQuery, withMode } from "./query";
+import { canSearch, firstParams, nextParams, queryHref, readQuery, withMode, withPerson } from "./query";
 import { type Groups, type Hit, MAX_QUERY, type SearchPage as Page } from "./types";
 import "../files.css";
 import "../share.css";
@@ -87,6 +90,7 @@ export default function SearchPage(_: RouteProps): JSX.Element {
   const [results, setResults] = useState<Results | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [people, setPeople] = useState<PersonName[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selection] = useState(() => new SelectionStore());
   const sel = useSelection(selection);
@@ -96,6 +100,7 @@ export default function SearchPage(_: RouteProps): JSX.Element {
   const clip = useSyncExternalStore(clipboard.subscribe, clipboard.getSnapshot, clipboard.getSnapshot);
   const searches = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const field = useRef<HTMLInputElement>(null);
   const scrollTo = useRef<((i: number) => void) | null>(null);
   // Na "Meer laden": de focus naar de eerste nieuwe treffer
   const focusNew = useRef<number | null>(null);
@@ -135,6 +140,26 @@ export default function SearchPage(_: RouteProps): JSX.Element {
 
   useEffect(() => {
     api.tags().then(setTags, () => {});
+  }, []);
+
+  // Je eigen personen (Z6): hun naam op de chips en in het paneel. Een gast heeft er geen
+  useEffect(() => {
+    if (guest) return;
+    listPeople().then((r) => setPeople(r.people), () => {});
+  }, [guest]);
+
+  // Keuze 81: de knop "Zoeken op beeld" (/fotos) opent de stand beeld zonder vraag, met de focus
+  // in het veld. Na de kop: de schil geeft na een navigatie de kop de focus (PageTitle), en dat
+  // kan in hetzelfde commit na dit effect gebeuren; daarom een frame later, en alleen als de
+  // focus dan nog op de kop of nergens staat. Alleen bij het openen van de pagina
+  useEffect(() => {
+    if (!image || query.q) return;
+    const id = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      const free = !active || active === document.body || active.id === "inhoud" || active.hasAttribute("data-page-title");
+      if (free) field.current?.focus();
+    });
+    return () => cancelAnimationFrame(id);
   }, []);
 
   // Alleen de treffers van deze vraag (een antwoord van de vorige telt niet meer)
@@ -303,6 +328,7 @@ export default function SearchPage(_: RouteProps): JSX.Element {
       <PageTitle>{t("search.title")}</PageTitle>
       <form className="search-form" role="search" onSubmit={submit}>
         <input
+          ref={field}
           type="search"
           aria-label={t("search.field.label")}
           aria-describedby={image ? "zoek-beeld-uitleg" : undefined}
@@ -338,7 +364,7 @@ export default function SearchPage(_: RouteProps): JSX.Element {
           ))}
         </div>
       )}
-      <FilterBar query={query} tags={tags} />
+      <FilterBar query={query} tags={tags} people={people} />
 
       {error && <p role="alert">{error}</p>}
       {image ? (
@@ -357,9 +383,7 @@ export default function SearchPage(_: RouteProps): JSX.Element {
                   <ul>
                     {groups.people.map((p) => (
                       <li key={p.id}>
-                        <Link to={`/fotos/personen/${encodeURIComponent(p.id)}`}>
-                          {t("search.groups.count", { name: p.name, n: p.n })}
-                        </Link>
+                        <Link to={queryHref(withPerson({}, p.id))}>{t("search.groups.count", { name: p.name, n: p.n })}</Link>
                       </li>
                     ))}
                   </ul>

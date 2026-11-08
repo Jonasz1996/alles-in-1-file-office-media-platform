@@ -13,6 +13,7 @@ import {
   withDay,
   withMode,
   withoutChip,
+  withPerson,
   withTag,
   withType,
 } from "./query";
@@ -201,6 +202,17 @@ describe("de chips van de filters (Keuze 47)", () => {
     expect(withTag({ tag: [T1] }, "geen-id")).toEqual({ tag: [T1] });
     expect(withDay({ q: "x" }, "from", "2024-05-01")).toEqual({ q: "x", from: "2024-05-01" });
     expect(withDay({ q: "x", to: "2024-05-01" }, "to", "")).toEqual({ q: "x" });
+  });
+
+  it("een persoon erbij (Z6, Keuze 38): meer keer is EN, twee keer dezelfde niet", () => {
+    const een = withPerson({ q: "x" }, P1);
+    expect(een).toEqual({ q: "x", person: [P1] });
+    expect(withPerson(een, P1)).toBe(een);
+    expect(withPerson(een, "geen-id")).toBe(een);
+    const twee = withPerson(een, P2);
+    expect(twee.person).toEqual([P1, P2]);
+    expect(queryHref(twee)).toBe(`/zoeken?q=x&person=${P1}&person=${P2}`);
+    expect(withoutChip(twee, { field: "person", value: P1 })).toEqual({ q: "x", person: [P2] });
   });
 
   it("de andere stand houdt q en de filters; like alleen in de stand beeld", () => {

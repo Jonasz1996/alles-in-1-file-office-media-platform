@@ -30,7 +30,7 @@ describe("de opties van de suggesties (Keuze 46 en 81)", () => {
     expect(options.map((o) => [o.id, o.group, o.label, o.target])).toEqual([
       [`${SUGGEST_LIST_ID}-0`, "names", "Utrecht 2024", { href: `/map/${DIR}` }],
       [`${SUGGEST_LIST_ID}-1`, "names", "utrecht.jpg", { file: FILE, name: "utrecht.jpg" }],
-      [`${SUGGEST_LIST_ID}-2`, "people", "Ute", { href: `/fotos/personen/${PERSON}` }],
+      [`${SUGGEST_LIST_ID}-2`, "people", "Ute", { href: `/zoeken?person=${PERSON}` }],
       [`${SUGGEST_LIST_ID}-3`, "places", "Utrecht, Utrecht", { href: "/zoeken?place=2745912" }],
       [`${SUGGEST_LIST_ID}-4`, "tags", "uitje", { href: `/zoeken?tag=${TAG}` }],
       [`${SUGGEST_LIST_ID}-5`, "albums", "Uit in Utrecht", { href: `/album/${ALBUM}` }],

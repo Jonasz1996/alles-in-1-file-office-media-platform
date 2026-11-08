@@ -1,7 +1,8 @@
 // De filters op /zoeken (fase 6, Z4; Keuze 43 en 47): de chips van wat gezet is, elk met een knop
-// ×, en een paneel om er een soort, een tag of een datum bij te zetten. Elke wijziging is een
-// nieuwe vraag in de URL (query.ts). Met het toetsenbord: Tab naar een chip of het paneel, Enter of
-// spatie op de samenvatting opent het, spatie zet een vinkje, Enter in een datum zet hem.
+// ×, en een paneel om er een soort, een tag, een persoon of een datum bij te zetten. Elke wijziging
+// is een nieuwe vraag in de URL (query.ts). Met het toetsenbord: Tab naar een chip of het paneel,
+// Enter of spatie op de samenvatting opent het, spatie zet een vinkje, Enter in een datum zet hem.
+// De personen (Z6, Keuze 38) zijn je eigen zichtbare personen; meer is EN.
 
 import { type JSX, type KeyboardEvent, useEffect, useRef } from "react";
 import type { Tag } from "../api";
@@ -16,6 +17,7 @@ import {
   queryHref,
   withDay,
   withoutChip,
+  withPerson,
   withTag,
   withType,
 } from "./query";
@@ -26,9 +28,17 @@ export function typeLabel(type: SearchType): string {
   return t(type === "other" ? "search.types.rest" : `search.types.${type}`);
 }
 
-/** Wat er op een chip staat. Personen, plaatsen, een bibliotheek en een map kent de pagina (nog)
- * niet bij naam: dan het soort filter. */
-export function chipLabel(chip: Chip, tags: readonly Tag[]): string {
+/** Een persoon zoals het paneel en de chips hem kennen (GET /people van Z6). */
+export interface PersonName {
+  id: string;
+  name: string;
+  count: number;
+}
+
+/** Wat er op een chip staat. Een tag en een persoon bij naam (een verborgen of onbekende persoon:
+ * "Persoon"); plaatsen, een bibliotheek en een map kent de pagina (nog) niet bij naam: dan het
+ * soort filter. */
+export function chipLabel(chip: Chip, tags: readonly Tag[], people: readonly PersonName[] = []): string {
   switch (chip.field) {
     case "type":
       return typeLabel(chip.value as SearchType);
@@ -39,7 +49,7 @@ export function chipLabel(chip: Chip, tags: readonly Tag[]): string {
     case "tag":
       return tags.find((tag) => tag.id === chip.value)?.name ?? t("search.filters.tag");
     case "person":
-      return t("search.filters.person");
+      return people.find((p) => p.id === chip.value)?.name ?? t("search.filters.person");
     case "place":
       return t("search.filters.place");
     case "country":
@@ -58,7 +68,15 @@ function go(query: PageQuery): void {
   navigate(queryHref(query));
 }
 
-export function FilterBar({ query, tags }: { query: PageQuery; tags: readonly Tag[] }): JSX.Element {
+export function FilterBar({
+  query,
+  tags,
+  people = [],
+}: {
+  query: PageQuery;
+  tags: readonly Tag[];
+  people?: readonly PersonName[];
+}): JSX.Element {
   const list = chips(query);
   const chipsRef = useRef<HTMLUListElement>(null);
   // Na × de focus op de chip die nu op die plek staat (of de vorige); zonder chips naar het paneel
@@ -111,7 +129,7 @@ export function FilterBar({ query, tags }: { query: PageQuery; tags: readonly Ta
       {list.length > 0 && (
         <ul ref={chipsRef} className="search-chips" aria-label={t("search.filters.label")}>
           {list.map((chip, i) => {
-            const label = chipLabel(chip, tags);
+            const label = chipLabel(chip, tags, people);
             return (
               <li key={`${chip.field}:${chip.value}`} className="search-chip">
                 <span>{label}</span>
@@ -158,6 +176,26 @@ export function FilterBar({ query, tags }: { query: PageQuery; tags: readonly Ta
                       onChange={() => go(on ? withoutChip(query, { field: "tag", value: tag.id }) : withTag(query, tag.id))}
                     />
                     {t("search.filters.tagCount", { name: tag.name, n: tag.count })}
+                  </label>
+                );
+              })}
+            </fieldset>
+          )}
+          {people.length > 0 && (
+            <fieldset>
+              <legend>{t("search.filters.addPerson")}</legend>
+              {people.map((person) => {
+                const on = query.person?.includes(person.id) ?? false;
+                return (
+                  <label key={person.id} className="search-check">
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() =>
+                        go(on ? withoutChip(query, { field: "person", value: person.id }) : withPerson(query, person.id))
+                      }
+                    />
+                    {t("search.filters.personCount", { name: person.name, n: person.count })}
                   </label>
                 );
               })}

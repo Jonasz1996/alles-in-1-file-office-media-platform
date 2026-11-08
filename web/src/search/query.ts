@@ -209,6 +209,12 @@ export function withTag(query: PageQuery, tag: string): PageQuery {
   return { ...query, tag: [...(query.tag ?? []), tag] };
 }
 
+/** De vraag met een persoon erbij (meer keer is EN: ze staan er allemaal op; Z6, Keuze 38). */
+export function withPerson(query: PageQuery, person: string): PageQuery {
+  if (!isId(person) || query.person?.includes(person)) return query;
+  return { ...query, person: [...(query.person ?? []), person] };
+}
+
 /** De vraag met een datum (van of tot); leeg of geen datum haalt hem weg. */
 export function withDay(query: PageQuery, field: "from" | "to", day: string): PageQuery {
   const out = { ...query };
