@@ -9,6 +9,9 @@ herinneringen, slimme albums en filters (samengevoegd op 8 november 2026; zie [z
 poorten van §4.4 zijn hier nu groen, ook 4 tegelijk. De nacontrole van die review is gedaan ("De
 nacontrole (golf 1)" in z1.md en z2.md): vier tests erbij en drie aangevuld. Twee tests waren soms
 rood door een fout in de test zelf; die zijn gerepareerd. Geen reparatie van de review bleek fout.
+De review van golf 2 is ook verwerkt ("De review (golf 2)" in z4.md en z6.md): vijftien
+bevindingen, alle gedaan; elke reparatie in code heeft een test die zonder haar faalt (C6 en E
+zijn documentatie). Niet gepusht.
 Het ontwerp is bouwontwerp revisie 3.
 
 ## Wat je koos
