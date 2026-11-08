@@ -277,6 +277,63 @@ async def test_stoppen_zet_lopende_taak_terug(settings, maker, kind):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("outcome", ["klaar", "fout", "laatste_fout", "defer", "stoppen"])
+async def test_de_uitkomst_landt_alleen_op_de_eigen_claim(settings, maker, kind, outcome):
+    """Een taak die zichzelf terug in de rij zet (zoals office.convert bij wachten zonder
+    poging), kan opnieuw zijn opgepakt voordat execute zijn uitkomst schrijft: een verzoek haalde
+    hem naar voren, en een tweede worker pakte hem. Wat execute dan voor de eerste claim schrijft
+    (done, failed, terug in de rij na een fout, Defer of stoppen), raakt die tweede claim niet,
+    en on_dead komt niet. Eerst zette de done van de eerste claim de tweede op done; die stelde
+    zelf ook uit, vond zijn rij niet meer, en de inhoud bleef pending zonder taak (o3.md
+    afwijking 22)."""
+    second: list[jobs.Claimed] = []
+    dead = []
+
+    async def run(_settings, _payload):
+        if second:
+            return  # de tweede claim: gewoon klaar
+        async with maker() as session:  # terug in de rij, zonder poging (convert._postpone)
+            await session.execute(
+                update(Job)
+                .where(Job.key == "eigen", Job.status == "running")
+                .values(status="queued", started_at=None, attempts=Job.attempts - 1)
+            )
+            await session.commit()
+        again = await jobs.claim(settings)  # een tweede worker, vóór de uitkomst van de eerste
+        assert again is not None
+        second.append(again)
+        if outcome in ("fout", "laatste_fout"):
+            raise RuntimeError("kapot")
+        if outcome == "defer":
+            raise jobs.Defer(60)
+        if outcome == "stoppen":
+            raise asyncio.CancelledError
+
+    async def on_dead(_settings, payload, _error):
+        dead.append(payload)
+
+    tries = 1 if outcome == "laatste_fout" else jobs.MAX_ATTEMPTS
+    name = kind("test-eigen-claim", run, on_dead, max_attempts=tries)
+    job = await put(maker, name, key="eigen")
+    first = await jobs.claim(settings)
+    assert first is not None and first.id == job.id
+    if outcome == "stoppen":
+        with pytest.raises(asyncio.CancelledError):
+            await jobs.execute(settings, first)
+    else:
+        await jobs.execute(settings, first)
+    [again] = second
+    assert again.id == job.id and again.started_at != first.started_at
+    row = await get(maker, job.id)
+    assert (row.status, row.attempts, row.error) == ("running", 1, None)
+    assert aware(row.started_at) == again.started_at
+    assert dead == []
+    await jobs.execute(settings, again)
+    row = await get(maker, job.id)
+    assert (row.status, row.attempts, row.error) == ("done", 1, None)
+
+
+@pytest.mark.anyio
 async def test_kick_voor_de_commit_kan_geen_kwaad(settings, maker, kind, monkeypatch):
     """Te vroeg gewekt: de worker ziet niets, en vindt de taak bij het volgende rondje."""
     monkeypatch.setattr(jobs, "POLL", 0.2)

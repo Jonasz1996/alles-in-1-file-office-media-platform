@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tests.extract.lees import lees
+from tests.extract.lees import lees, vaste_klok
 
 # @U staat voor het stuurwoord backslash-u (zo blijft deze bron gewone ASCII)
 BACKSLASH_U = bytes([92, 117])
@@ -53,3 +53,13 @@ def test_kapotte_rtf_geeft_wat_er_is():
 def test_lege_rtf_is_none():
     found, text = lees(b"", "rtf")
     assert (found.state, text) == ("none", "")
+
+
+def test_de_klok_stopt_met_wat_er_is(monkeypatch):
+    """De lezer kijkt om de 4.096 stukjes naar de klok; met vaste_klok is een klok van 10 s op
+    bij de elfde keer, ver voor het eind. Wat er tot dan stond, telt (eerst zat dit alleen in de
+    tests met een kind, met een RTF van ±2,5 s CPU: CI run 89, docs/fase-6/z2.md)."""
+    vaste_klok(monkeypatch)
+    data = rb"{\rtf1 begin\par " + rb"{\*\x a}" * 100_000 + rb" eind}"
+    found, text = lees(data, "rtf", cpu_seconds=10)
+    assert (found.state, found.code, found.truncated, text) == ("done", "too_slow", True, "begin")

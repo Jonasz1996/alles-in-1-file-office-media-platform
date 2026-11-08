@@ -7,7 +7,9 @@ Workers (settings.job_workers stuks) draaien als asyncio-taken in het proces van
 taak wordt door precies één worker opgepakt: een voorwaardelijke UPDATE (status queued ->
 running) die maar één keer slaagt. Mislukt hij, dan gaat hij later opnieuw (na 30 s, daarna
 steeds dubbel zo lang), tot max_attempts keer; daarna staat hij op failed en is hij op
-/beheer te zien en opnieuw te starten.
+/beheer te zien en opnieuw te starten. De uitkomst landt alleen op de claim die de taak
+draaide (zijn started_at): een taak die zichzelf al terug in de rij zette en opnieuw is
+opgepakt, blijft van die nieuwe claim.
 
 attempts telt hoe vaak een taak is begonnen. Stopt het proces midden in een taak (een crash),
 dan gaat hij bij het starten terug in de rij, en telt die poging mee: een bestand dat het
@@ -127,6 +129,8 @@ class Claimed:
     payload: dict[str, Any]
     attempts: int
     max_attempts: int
+    # De started_at van deze claim: wat execute na de taak schrijft, raakt alleen deze claim
+    started_at: datetime
 
 
 _kinds: dict[str, Kind] = {}
@@ -476,25 +480,35 @@ async def claim(
             if candidates:
                 break
         for job_id in candidates:
+            started = now()
             row = (
                 await session.execute(
                     update(Job)
                     .where(Job.id == job_id, Job.status == "queued")
-                    .values(status="running", started_at=now(), attempts=Job.attempts + 1)
+                    .values(status="running", started_at=started, attempts=Job.attempts + 1)
                     .returning(Job.type, Job.payload, Job.attempts, Job.max_attempts)
                     .execution_options(synchronize_session=False)
                 )
             ).first()
             if row is not None:
                 await session.commit()
-                return Claimed(job_id, row.type, row.payload or {}, row.attempts, row.max_attempts)
+                return Claimed(
+                    job_id, row.type, row.payload or {}, row.attempts, row.max_attempts, started
+                )
         await session.commit()
     return None
 
 
 async def execute(settings: Settings, job: Claimed) -> None:
     """Draait een opgepakte taak en legt de uitkomst vast. Bij stoppen (cancel) gaat de
-    taak terug in de rij, zonder dat die poging meetelt."""
+    taak terug in de rij, zonder dat die poging meetelt.
+
+    De uitkomst (done, failed, terug in de rij) landt alleen op deze claim: de taak loopt nog,
+    met de started_at van deze claim (_set). Een taak die zichzelf terug in de rij zet
+    (office.convert: wachten zonder poging), kan voor dat schrijven al opnieuw zijn opgepakt,
+    bijvoorbeeld na een verzoek dat hem naar voren haalde. Die nieuwe claim blijft dan van de
+    worker die hem heeft. Eerst zette de done van de oude claim ook de nieuwe op done, en bleef
+    de inhoud pending zonder taak (o3.md afwijking 22). on_dead alleen als failed landde."""
     kind = _kinds.get(job.type)
     scope: anyio.CancelScope | None = None
     limit = settings.job_timeout
@@ -507,13 +521,13 @@ async def execute(settings: Settings, job: Claimed) -> None:
             await kind.run(settings, job.payload)
     except asyncio.CancelledError:
         with anyio.CancelScope(shield=True), anyio.move_on_after(10):
-            await _requeue(settings, job.id)
+            await _requeue(settings, job)
         raise
     except Defer as e:
         # Nu niet, straks wel: terug in de rij, en deze poging telt niet
         log.info("Achtergrondtaak %s (%s) wacht %g s: %s", job.id, job.type, e.seconds, e)
         with anyio.CancelScope(shield=True):
-            await _requeue(settings, job.id, after=e.seconds)
+            await _requeue(settings, job, after=e.seconds)
         return
     except Exception as e:  # noqa: BLE001 - elke fout telt als mislukte poging
         if isinstance(e, TimeoutError) and scope is not None and scope.cancel_called:
@@ -531,30 +545,32 @@ async def execute(settings: Settings, job: Claimed) -> None:
             exc_info=not isinstance(e, JobError | TimeoutError),
         )
         with anyio.CancelScope(shield=True):
-            await _failed(settings, job, error, final)
-            if final and kind is not None and kind.on_dead is not None:
+            landed = await _failed(settings, job, error, final)
+            if landed and final and kind is not None and kind.on_dead is not None:
                 await _dead(settings, kind, job.payload, error)
         return
     with anyio.CancelScope(shield=True):
-        await _set(settings, job.id, status="done", finished_at=now(), error=None)
+        await _set(settings, job, status="done", finished_at=now(), error=None)
 
 
-async def _set(settings: Settings, job_id: uuid.UUID, **values: Any) -> None:
+async def _set(settings: Settings, job: Claimed, **values: Any) -> bool:
+    """De uitkomst van deze claim (zie execute). True als hij landde."""
     async with _maker(settings)() as session:
-        await session.execute(
+        result = await session.execute(
             update(Job)
-            .where(Job.id == job_id, Job.status == "running")
+            .where(Job.id == job.id, Job.status == "running", Job.started_at == job.started_at)
             .values(**values)
             .execution_options(synchronize_session=False)
         )
         await session.commit()
+    return result.rowcount == 1
 
 
-async def _requeue(settings: Settings, job_id: uuid.UUID, after: float = 0) -> None:
+async def _requeue(settings: Settings, job: Claimed, after: float = 0) -> bool:
     """Terug in de rij zonder dat deze poging telt (stoppen, of Defer na `after` s)."""
-    await _set(
+    return await _set(
         settings,
-        job_id,
+        job,
         status="queued",
         started_at=None,
         attempts=Job.attempts - 1,
@@ -562,18 +578,17 @@ async def _requeue(settings: Settings, job_id: uuid.UUID, after: float = 0) -> N
     )
 
 
-async def _failed(settings: Settings, job: Claimed, error: str, final: bool) -> None:
+async def _failed(settings: Settings, job: Claimed, error: str, final: bool) -> bool:
     if final:
-        await _set(settings, job.id, status="failed", finished_at=now(), error=error)
-    else:
-        await _set(
-            settings,
-            job.id,
-            status="queued",
-            started_at=None,
-            run_after=now() + backoff(job.attempts),
-            error=error,
-        )
+        return await _set(settings, job, status="failed", finished_at=now(), error=error)
+    return await _set(
+        settings,
+        job,
+        status="queued",
+        started_at=None,
+        run_after=now() + backoff(job.attempts),
+        error=error,
+    )
 
 
 async def _dead(settings: Settings, kind: Kind, payload: dict[str, Any], error: str) -> None:

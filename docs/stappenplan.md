@@ -639,6 +639,120 @@ batch met voortgang; het origineel blijft ongewijzigd tenzij je "vervangen" kies
 is het als versie terug te zetten; slepen naar de lade werkt vloeiend in Chrome, Firefox
 en Safari, en lang drukken op een telefoon.
 
+### Fase 11 — Mediaserver en mediabeheer, Plex-achtig (±7 weken)
+
+Doel: van "ik wil deze film of serie" tot "staat klaar om te kijken", in de eigen app.
+Wat [HolyArrs](https://holyarrs.com/) doet door Sonarr, Radarr, Lidarr, Prowlarr, Bazarr
+en Seerr in één Go-proces samen te voegen, doen wij in het platform dat er al is: één
+container, één database, één beheerpagina. Fase 5 kan al afspelen (direct play,
+transcode, ondertitels, voortgang, muziek); deze fase voegt de Plex-ervaring eromheen
+toe en het beheer van wat er in de bibliotheek komt.
+
+Uitgangspunten (de vaste keuzes van Jonas): zelf bouwen, standalone op één node, alleen
+LXC, geen VPN. Geen Sonarr, Radarr, Prowlarr, Bazarr, Overseerr, Tautulli, Recyclarr,
+Unpackerr, Cleanuparr of FlareSolverr ernaast; hun taken worden functies van de app.
+Alles draait als jobs in de job-queue uit fase 2 en gebruikt de metadata-providers
+(TMDB, MusicBrainz) en de import uit fase 5. Sleutels van bronnen en downloaders worden
+versleuteld bewaard, zoals de TMDB-sleutel. Alleen voor bronnen en inhoud die je mag
+gebruiken; de app zit niets in de weg, maar levert ook geen lijst met bronnen mee.
+
+Volgorde: kan starten na fase 5; bouwen pas als fase 6 (zoeken en foto's) klaar is.
+Afspelen op de TV blijft fase 9.
+
+Deel A: de Plex-ervaring (bovenop fase 5)
+
+- [ ] Home met rijen: Verder kijken, Volgende aflevering, Nieuw toegevoegd, Onlangs
+  verschenen, en per bibliotheek; titelpagina's met samenvatting, cast, seizoenen en
+  "ook in deze collectie"; collecties (bijv. alle delen van een filmreeks) uit TMDB
+
+- [ ] Profielen per account en kinderslot: wie kijkt (eigen voortgang en "gezien"),
+  leeftijdsgrens per profiel op de kijkwijzer uit TMDB. De kolom `profile` staat al klaar
+  sinds fase 5 (B45, Vraag 6)
+
+- [ ] Intro en aftiteling overslaan: zelf herkennen door de audio-vingerafdruk van
+  afleveringen in hetzelfde seizoen te vergelijken (ffmpeg in de mediaworker), met de
+  knop "Intro overslaan" in de speler; volgende aflevering automatisch na de aftiteling
+
+- [ ] Activiteit en statistieken (wat Tautulli doet): nu bezig met wie, welk apparaat,
+  direct play of transcode; geschiedenis per gebruiker; meest bekeken; op `/beheer` →
+  Media. Bouwt op de afspeelsessies uit fase 5
+
+Deel B: mediabeheer (wat de *arr-apps doen)
+
+- [ ] Volgen en gewenst (Radarr, Sonarr, Lidarr): een film, serie (alle of bepaalde
+  seizoenen) of artiest toevoegen via zoeken in TMDB of MusicBrainz, of "volgen" aanzetten
+  op wat al in de bibliotheek staat; de app ziet wat ontbreekt. Kalender met wat
+  verschijnt, uit dezelfde providers
+
+- [ ] Verzoeken (Seerr): gezinsleden vragen een titel aan vanuit Ontdekken (populair,
+  trending, zoeken); de beheerder keurt goed of af, of zet automatisch goedkeuren aan per
+  persoon; een limiet per week; melding als het klaarstaat
+
+- [ ] Bronnen (Prowlarr, Jackett): eenmaal toevoegen op `/beheer`, daarna per bibliotheek
+  kiezen waar ze gebruikt worden. Zelf gebouwde clients voor de open standaarden Newznab
+  (usenet) en Torznab (torrents); RSS elke 15 minuten nalopen plus gericht zoeken; test-
+  knop en foutteller per bron. Geen FlareSolverr: een bron die dat nodig heeft valt af
+
+- [ ] Kwaliteit en voorkeuren (de profielen van Sonarr en Radarr, plus wat Recyclarr en
+  Profilarr synchroniseren): de bestandsnaam-parser uit fase 5 uitgebreid voor
+  release-namen (resolutie, bron, codec, HDR, audio, taal, groep, PROPER/REPACK); per
+  bibliotheek een profiel met voorkeur, minimum, maximale grootte en taal; een betere
+  versie vervangt automatisch de oude tot het doel bereikt is. Goede standaardprofielen
+  ingebouwd, zodat er niets te synchroniseren valt
+
+- [ ] Downloaders: downloads uitbesteden aan een downloadprogramma en de voortgang
+  volgen. Hoe, is een open vraag aan Jonas (zie onder); de app praat er via één eigen
+  interface mee, zodat een ander programma of een eigen downloader later in te prikken is
+
+- [ ] Vastgelopen downloads (Cleanuparr, Huntarr): geen voortgang na X uur, of een
+  release die niet uit te pakken of niet af te spelen is: weg ermee, op een zwarte lijst,
+  en automatisch de volgende goede release. Ontbrekende afleveringen en films periodiek
+  rustig opnieuw zoeken, zonder de bronnen te overbelasten
+
+- [ ] Uitpakken en importeren (Unpackerr): rar en zip uitpakken in de app (geen apart
+  programma), controleren met ffprobe, hernoemen naar de vaste mapstructuur en importeren
+  met de import van fase 5. Op hetzelfde ZFS-volume met een harde link, zodat een torrent
+  kan blijven delen zonder dubbele ruimte
+
+- [ ] Ondertitels (Bazarr): per profiel de gewenste talen (bijv. Nederlands, Engels);
+  ontbrekende ondertitels automatisch zoeken bij OpenSubtitles (eigen account en sleutel),
+  opnieuw proberen als er later een komt; timing verschuiven in de speler en de
+  verschuiving bewaren. Haalt het backlog-punt "Ondertitels downloaden" naar deze fase
+
+- [ ] Bibliotheek opruimen (Maintainerr, Janitorr): regels zoals "film door iedereen
+  gezien en 90 dagen niet aangeraakt" of "serie al een jaar niet gekeken"; eerst een lijst
+  "binnenkort weg" die je kunt tegenhouden, dan naar de prullenbak, niet meteen weg
+
+- [ ] Meldingen (Notifiarr): verzoek goedgekeurd, klaar om te kijken, download mislukt,
+  bron stuk; via de notificaties van fase 7 en de live events die er al zijn
+
+- [ ] Geschiedenis en activiteit per titel: wanneer gezocht, welke release gekozen en
+  waarom (score per voorkeur), gedownload, geïmporteerd, vervangen
+
+Niet in deze fase: boeken en strips (Readarr, Mylar en dergelijke), het automatisch
+doordelen van torrents (cross-seed), muziek van streamingdiensten (deemix) en
+kijkgeschiedenis naar Trakt; die kunnen later als aparte backlogpunten.
+
+Open vragen voor Jonas (de rest volgt de vaste keuzes):
+
+1. Downloaders: koppelen aan een bestaand downloadprogramma (qBittorrent of Transmission
+   voor torrents, SABnzbd of NZBGet voor usenet) in een eigen container ernaast, of ook
+   de downloader zelf bouwen? Voorstel: koppelen, want een eigen BitTorrent- en
+   usenet-client is maanden extra werk en moeilijk veilig te krijgen; de interface laat
+   een eigen downloader later toe.
+2. Welke soorten bronnen: alleen usenet, alleen torrents of allebei? Dit bepaalt welke
+   client er als eerste komt.
+3. Mogen gezinsleden zonder goedkeuring aanvragen, of keurt de beheerder alles goed?
+   Voorstel: goedkeuren door de beheerder, per persoon aan te zetten.
+
+Klaar als: een verzoek van een gezinslid wordt na goedkeuring zonder handwerk gezocht,
+gedownload, uitgepakt, geïmporteerd en met Nederlandse ondertitels afspeelbaar, en het
+gezinslid krijgt een melding; een vastgelopen download wordt binnen een uur vervangen
+door een andere release; een betere versie vervangt de oude automatisch; de Home met
+rijen opent binnen 1 s bij 5.000 titels; de app gebruikt in rust niet meer dan 100 MB
+extra geheugen voor deze functies; profielen en kinderslot werken; intro overslaan werkt
+op een serie met een vaste intro.
+
 ### Preview-pipeline per bestandstype
 
 | Type          | Extensies                                                                           | Thumbnail en preview                                | Bekijken of bewerken                         |
@@ -704,7 +818,7 @@ dropdowns aan als je anders prioriteert.
 | Kaartweergave en reverse geocoding                               | foto's op locatie bekijken                                    | middel     | Should     |
 | Duplicaten en near-duplicates                                    | ruimte winnen, makkelijk opruimen                             | klein      | Should     |
 | Chromecast en DLNA                                               | afspelen op TV's zonder app                                   | middel     | Should     |
-| Ondertitels downloaden (OpenSubtitles)                           | altijd passende ondertitels                                   | klein      | Should     |
+| Ondertitels downloaden (OpenSubtitles), zit nu in fase 11       | altijd passende ondertitels                                   | klein      | Should     |
 | Gezinsprofielen en kinderslot                                    | per persoon een eigen bibliotheek en voortgang                | middel     | Should     |
 | Externe opslag koppelen (SMB, NFS, S3)                           | bestaande NAS-mappen meenemen                                 | middel     | Should     |
 | Upload-only droplink                                             | anderen laten aanleveren zonder account                       | klein      | Should     |
@@ -783,3 +897,7 @@ starten als er een tweede ontwikkelaar is.
 
 Fase 10 (omzetten en bewerken) kwam er later bij, op verzoek van Jonas. Ze staat los van
 de mijlpalen en kan na fase 5 starten, net als de app-sporen.
+
+Fase 11 (mediaserver en mediabeheer, Plex-achtig) kwam er op 8-11-2026 bij, op verzoek van
+Jonas, naar het voorbeeld van HolyArrs. Ook die staat los van de mijlpalen; ze kan na
+fase 5 starten en wordt gebouwd als fase 6 klaar is.
