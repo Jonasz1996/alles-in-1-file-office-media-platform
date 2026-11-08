@@ -21,14 +21,17 @@ De taak office.pdf (payload {sha, n, ask?, r?, b?}, max_attempts 2, on_dead -> f
 deze volgorde:
 1. de blob is weg: klaar;
 2. de PDF er al, met de juiste pdf_version: alleen de thumbnails opnieuw (zonder DS);
-3. office uit (niet ingesteld, of uitgezet op /beheer): pdf_state terug (leeg, of ask);
+3. office uit (niet ingesteld, of uitgezet op /beheer): pdf_state terug (leeg, of ask), zoals
+   bij 4;
 4. DS niet gezond: pdf_state terug en klaar, zonder poging, in één commit met de done van de
-   taak; de inhaalronde neemt hem terug. Is DS daarna al weer gezond, dan zet de taak hem zelf
-   terug in de rij zoals de inhaalronde (die kan hem al voorbij zijn: _take_back).
-   Mislukte er al een poging (DS ging tijdens een conversie onderuit en is nog niet terug),
-   dan wacht de tweede poging zolang DS start of korter dan 10 minuten weg is (een herstart
-   of update van DS), elke 30 s zonder poging; daarna telt dit wel. Zo krijgt een bestand dat
-   DS laat vastlopen hooguit twee kansen, en kost een herstart van DS geen document;
+   taak; de inhaalronde neemt hem terug. Dat teruggeven gaat onder _overdracht, net als elk
+   stuk van de inhaalronde, en kijkt daar eerst opnieuw: kan het intussen toch (DS weer
+   gezond, office weer aan), dan niet terug maar over BACK_SECONDS opnieuw, zonder poging
+   (_give_back). Mislukte er al een poging (DS ging tijdens een conversie onderuit en is nog
+   niet terug), dan wacht de tweede poging zolang DS start of korter dan 10 minuten weg is
+   (een herstart of update van DS), elke 30 s zonder poging; daarna telt dit wel. Zo krijgt
+   een bestand dat DS laat vastlopen hooguit twee kansen, en kost een herstart van DS geen
+   document;
 5. een sessie die opent of opslaat (sessions.busy): de taak over 5 s opnieuw in de rij. Loopt
    er al een conversie (één slot in dit proces): over 60 s, maar wie het slot vrijgeeft, zet
    de eerste die wacht meteen klaar (_next). Beide zonder poging; een worker wacht nooit;
@@ -67,7 +70,8 @@ office_auto_convert_bytes: ask), en bij een hogere PDF_VERSION ook ready en fail
 ask, unsafe of none. Elk stuk krijgt run_after +60 s, en het volgende stuk ook. Staan er nog
 200 of meer conversies klaar, dan komt er geen nieuw stuk bij: dezelfde plek over 60 s opnieuw.
 Zo staat nooit de hele bibliotheek in de rij, en gaan nieuwe uploads voor (ook bij het slot).
-Met DS niet gezond stopt de ronde; on_healthy start hem opnieuw.
+Met DS niet gezond stopt de ronde; on_healthy start hem opnieuw, vanaf het begin: een stuk dat
+nog klaarstaat, begint weer vooraan (start_backfill).
 
 Mislukte opnieuw (retry_failed, de knop op /beheer): elke failed meteen een eigen taak met r (8
 hex-tekens), en pending. r komt in de key (keys.convert_key): DS bewaart -3 onder de key
@@ -94,6 +98,7 @@ import secrets
 import shutil
 import tempfile
 import time
+import weakref
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -122,6 +127,7 @@ MAX_ATTEMPTS = 2
 BATCH = 200
 BACKFILL_DELAY = 60.0  # zoals previews.RERENDER_DELAY
 WAIT_SECONDS = 5.0  # een sessie die opent of opslaat
+BACK_SECONDS = 5.0  # bij het teruggeven toch weer gezond (of weer aan): zo opnieuw
 # Het slot is bezet: wie het vrijgeeft, zet de volgende meteen klaar (_next); dit is de terugval
 SLOT_SECONDS = 60.0
 # Zo lang (s) gaat een conversie op verzoek voor bij het slot (langer dan de viewer kijkt)
@@ -183,10 +189,23 @@ _arrivals = itertools.count()
 _asked: dict[str, float] = {}
 # Taken van on_healthy, zodat ze niet halverwege worden opgeruimd
 _tasks: set[asyncio.Task] = set()
+# Het teruggeven van de inhoud (_give_back) en een stuk van de inhaalronde één voor één, binnen
+# dit proces. Eén slot per event loop (de tests draaien elk in een eigen loop)
+_overdrachten: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _maker(settings: Settings) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(get_engine(settings), expire_on_commit=False)
+
+
+def _overdracht() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _overdrachten.get(loop)
+    if lock is None:
+        lock = _overdrachten[loop] = asyncio.Lock()
+    return lock
 
 
 def job_key(sha: str) -> str:
@@ -331,11 +350,20 @@ async def _start_backfill_logged() -> None:
 
 
 async def start_backfill(settings: Settings) -> bool:
-    """Zet de inhaalronde klaar (als die niet al loopt). False zonder office."""
+    """Zet de inhaalronde klaar, vanaf het begin. False zonder office, of als er al een stuk
+    klaarstaat: dat begint dan weer vooraan. Loopt er net een stuk, dan komt er een stuk
+    vooraan bij (jobs.chain), en dat houdt de opvolger van het lopende stuk tegen. Zo neemt de
+    ronde na "weer gezond" ook wat in een korte storing leeg werd vóór de plek van de keten."""
     if engine.current() is None:
         return False
     async with _maker(settings)() as session:
-        added = await jobs.enqueue(session, BACKFILL, {"after": ""}, key=BACKFILL_KEY)
+        await session.execute(
+            update(Job)
+            .where(Job.type == BACKFILL, Job.key == BACKFILL_KEY, Job.status == "queued")
+            .values(payload={"after": ""})
+            .execution_options(synchronize_session=False)
+        )
+        added = await jobs.chain(session, BACKFILL, {"after": ""}, BACKFILL_KEY)
         await session.commit()
     return added is not None
 
@@ -365,7 +393,7 @@ async def _release(
 ) -> None:
     """Niet omgezet en geen poging: pending terug naar leeg (of ask, als erom gevraagd was). Een
     taak van Mislukte opnieuw (r) terug naar failed: leeg nam de inhaalronde hem met de oude key,
-    en die geeft bij DS de oude fout."""
+    en die geeft bij DS de oude fout. Bij office uit en DS niet gezond via _give_back."""
     state = "failed" if r else "ask" if asked else None
     async with maker() as session:
         await session.execute(
@@ -387,27 +415,29 @@ async def _release(
         await session.commit()
 
 
-async def _take_back(maker: async_sessionmaker[AsyncSession], sha: str) -> None:
-    """De taak gaf de inhoud terug omdat DS niet gezond was, en nu is DS het weer. De
-    inhaalronde die on_healthy daarbij startte, kan hem al voorbij zijn: hij las nog pending (vóór
-    _release) en sloeg hem over. Dus zet de taak hem zelf terug in de rij, zoals de inhaalronde:
-    een taak met b over BACKFILL_DELAY, en pending. Nam de inhaalronde hem toch (hij las hem
-    leeg), dan houdt enqueue de tweede taak tegen."""
-    async with maker() as session:
-        await jobs.enqueue(
-            session,
-            TYPE,
-            {"sha": sha, "n": 1, "b": True},
-            key=job_key(sha),
-            run_after=jobs.now() + timedelta(seconds=BACKFILL_DELAY),
-        )
-        await session.execute(
-            update(Blob)
-            .where(Blob.sha256 == sha, Blob.pdf_state.is_(None))
-            .values(pdf_state="pending")
-            .execution_options(synchronize_session=False)
-        )
-        await session.commit()
+async def _give_back(
+    maker: async_sessionmaker[AsyncSession], sha: str, ext: str | None, asked: bool, r: str
+) -> None:
+    """Nu niet omzetten (office uit, DS niet gezond): onder _overdracht eerst opnieuw kijken.
+    Kan het nu toch (office aan, DS gezond), dan niet teruggeven: over BACK_SECONDS opnieuw,
+    zonder poging, en pending blijft. Anders _release.
+
+    Waarom dit genoeg is: health.py zet gezond vóór on_healthy de inhaalronde start, en /beheer
+    zet aan vóór start_backfill; een stuk van de inhaalronde kijkt ook onder _overdracht. Las een
+    stuk de inhoud nog pending en sloeg het hem over, dan had het _overdracht vóór deze taak, en
+    ziet de taak het nu ook gezond. Geeft de taak wel terug, dan was het hier niet gezond: de
+    ronde van de volgende "weer gezond" leest pas na deze commit, ziet de inhoud leeg en de taak
+    klaar, en zet er met zijn eigen regels een taak bij. De taak zelf zet nooit een nieuwe taak
+    klaar, dus komen er ook geen twee."""
+    async with _overdracht():
+        office = engine.current()
+        if office is not None and ext in office.convert_formats and _healthy():
+            async with maker() as session:
+                enabled = await _enabled(session)
+            if enabled:
+                await _postpone(maker, sha, BACK_SECONDS)
+                return
+        await _release(maker, sha, asked, r)
 
 
 async def _own_job(maker: async_sessionmaker[AsyncSession], sha: str, **values: Any) -> None:
@@ -544,7 +574,7 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
         await thumbnails(settings, sha)
         return
     if office is None or not enabled or ext is None or ext not in office.convert_formats:
-        await _release(maker, sha, asked, r)
+        await _give_back(maker, sha, ext, asked, r)
         return
     if not _healthy():
         if await _attempts(maker, sha) > 1:
@@ -555,9 +585,7 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
                 f"{_failed_message(NO_ANSWER)}; de document server is niet gezond na een "
                 "mislukte poging"
             )
-        await _release(maker, sha, asked, r)
-        if not asked and not r and _healthy():  # intussen weer gezond: zie _take_back
-            await _take_back(maker, sha)
+        await _give_back(maker, sha, ext, asked, r)
         return
     async with maker() as session:
         busy = await sessions.busy(session)
@@ -659,6 +687,8 @@ async def _convert_error(
             )
             await session.commit()
     else:  # misconfigured: geen poging; health.py kijkt meteen opnieuw (en zet de melding)
+        # Niet via _give_back: DS zelf zei -8, en _recheck zet zo misconfigured. De inhaalronde
+        # van de volgende "weer gezond" leest dus pas na deze commit
         await _release(maker, sha, asked, r)
         await _recheck()
 
@@ -802,8 +832,13 @@ async def on_dead(settings: Settings, payload: dict[str, Any], _error: str) -> N
 
 
 async def backfill(settings: Settings, payload: dict[str, Any]) -> None:
-    """Eén stuk van de inhaalronde: zie boven."""
-    after = str(payload.get("after") or "")
+    """Eén stuk van de inhaalronde: zie boven. Helemaal onder _overdracht (zie _give_back): de
+    controle van DS, het lezen, de nieuwe taken en de commit."""
+    async with _overdracht():
+        await _backfill(settings, str(payload.get("after") or ""))
+
+
+async def _backfill(settings: Settings, after: str) -> None:
     office = engine.current()
     if office is None or not _healthy():
         return
