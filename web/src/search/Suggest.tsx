@@ -26,6 +26,7 @@ import {
   type ListState,
   type Option,
   onKey,
+  optionsFor,
   optionsOf,
   type SuggestGroup,
 } from "./combo";
@@ -119,6 +120,9 @@ export default function Suggest({ field, onState, onChosen }: SuggestProps): JSX
   // Voor de luisteraars op het veld, die blijven staan
   const now = useRef({ options, list });
   now.current = { options, list };
+  // De vraag waar options het antwoord op is: het veld kan leeg worden zonder input-gebeurtenis
+  // (Esc en Enter in AppBarSearch); dan horen de opties nergens meer bij (review golf 2, web A)
+  const forQ = useRef("");
   const choose = useRef<(o: Option) => void>(() => {});
   const chosen = useRef(onChosen);
   chosen.current = onChosen;
@@ -150,6 +154,7 @@ export default function Suggest({ field, onState, onChosen }: SuggestProps): JSX
       const mine = ++seq;
       const q = el?.value.trim() ?? "";
       if (!q) {
+        forQ.current = "";
         setOptions([]);
         setList(SHUT);
         return;
@@ -162,6 +167,7 @@ export default function Suggest({ field, onState, onChosen }: SuggestProps): JSX
           )
           .then((s) => {
             if (mine !== seq || !el || el.value.trim() !== q || document.activeElement !== el) return;
+            forQ.current = q;
             setOptions(optionsOf(s, q, withImage));
             setList({ open: true, active: -1 });
           });
@@ -171,13 +177,20 @@ export default function Suggest({ field, onState, onChosen }: SuggestProps): JSX
     choose.current = (o: Option) => {
       close();
       if (el) el.value = "";
+      forQ.current = "";
       setOptions([]);
       chosen.current();
       void go(o);
     };
 
     function key(e: KeyboardEvent): void {
-      const { options, list } = now.current;
+      const { list } = now.current;
+      const options = optionsFor(el?.value ?? "", forQ.current, now.current.options);
+      if (options.length === 0 && now.current.options.length > 0) {
+        // Opties van een vraag die niet meer in het veld staat: weg
+        forQ.current = "";
+        setOptions([]);
+      }
       const r = onKey(list, options.length, e);
       if (!r) return;
       if (r.do === "show") {

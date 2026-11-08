@@ -298,3 +298,54 @@ def test_meer_laden_met_het_toetsenbord(z4: Z4App, z4_browsers: Browsers) -> Non
     assert sorted(ids) == sorted(z4.notities) and tweede["more"] is False
     expect(page.locator(f"{ROWS}[data-index='30']")).to_be_focused()
     expect(meer).to_have_count(0)
+
+
+def test_na_esc_of_enter_geen_suggesties_van_de_vorige_vraag(
+    z4: Z4App, z4_browsers: Browsers
+) -> None:
+    """Esc sluit de lijst, nog een Esc maakt het veld leeg; Enter zoekt en maakt het veld leeg.
+    Daarna opent ↓ in het lege veld geen lijst met de suggesties van "kwartaal", en Enter kiest
+    er geen (review golf 2, web A). Eerder bleven die opties staan, want het veld werd leeg
+    zonder input-gebeurtenis."""
+    page = z4_browsers.context_as(z4.admin).new_page()
+    page.goto("/")
+    expect(page.get_by_role("grid")).to_be_visible()
+    lijst = page.get_by_role("listbox", name="Suggesties")
+
+    def typ_kwartaal() -> None:
+        page.keyboard.press("Control+k")
+        expect(veld(page)).to_be_focused()
+        with page.expect_response(is_suggestie) as antwoord:
+            page.keyboard.type("kwartaal")
+        assert [n["name"] for n in antwoord.value.json()["names"]] == [PDF]
+        expect(lijst.get_by_role("option").first).to_have_text(PDF)
+
+    def geen_lijst() -> None:
+        expect(veld(page)).to_be_focused()
+        expect(veld(page)).to_have_value("")
+        page.keyboard.press("ArrowDown")
+        # Een lijst die opent, staat er na twee frames; pas dan telt "geen lijst"
+        page.evaluate(
+            "() => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)))"
+        )
+        expect(lijst).to_have_count(0)
+        expect(veld(page)).to_have_attribute("aria-expanded", "false")
+        expect(veld(page)).not_to_have_attribute("aria-activedescendant", re.compile("."))
+
+    typ_kwartaal()
+    page.keyboard.press("Escape")
+    expect(lijst).to_have_count(0)
+    expect(veld(page)).to_have_value("kwartaal")
+    page.keyboard.press("Escape")
+    geen_lijst()
+    page.keyboard.press("Enter")  # een leeg veld zoekt niets en opent niets
+    expect(page).to_have_url(re.compile(r"/$"))
+    expect(page.get_by_role("dialog")).to_have_count(0)
+
+    typ_kwartaal()
+    with page.expect_response(is_zoeken) as antwoord:
+        page.keyboard.press("Enter")
+    assert [h["node"]["id"] for h in antwoord.value.json()["results"]] == [z4.pdf]
+    expect(page).to_have_url(re.compile(r"/zoeken\?q=kwartaal$"))
+    page.keyboard.press("Control+k")
+    geen_lijst()

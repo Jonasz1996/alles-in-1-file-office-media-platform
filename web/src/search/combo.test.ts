@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SUGGEST_LIST_ID } from "./appBar";
-import { fallbackHref, fieldState, grouped, type ListState, move, onKey, optionId, optionsOf } from "./combo";
+import { fallbackHref, fieldState, grouped, type ListState, move, onKey, optionId, optionsFor, optionsOf } from "./combo";
 import type { Suggestions } from "./types";
 
 const DIR = "1a1a1a1a-0000-4000-8000-000000000001";
@@ -116,5 +116,28 @@ describe("de toetsen van de combobox (Keuze 46)", () => {
     expect(fieldState(open(3), options)).toEqual({ open: true, active: `${SUGGEST_LIST_ID}-3` });
     expect(fieldState({ open: false, active: 3 }, options)).toEqual({ open: false, active: null });
     expect(fieldState(open(0), [])).toEqual({ open: false, active: null });
+  });
+});
+
+describe("opties die bij een oude vraag horen (review golf 2, web A)", () => {
+  const options = optionsOf(FULL, "utr", true);
+
+  it("zolang het veld de vraag heeft: de opties (spaties tellen niet)", () => {
+    expect(optionsFor("utr", "utr", options)).toBe(options);
+    expect(optionsFor("  utr ", "utr", options)).toBe(options);
+  });
+
+  it("een leeg of ander veld, of nog geen vraag: geen opties, dus ↓ opent niets en Enter kiest niets", () => {
+    for (const [value, q] of [
+      ["", "utr"],
+      ["ut", "utr"],
+      ["utrecht", "utr"],
+      ["", ""],
+    ]) {
+      const live = optionsFor(value, q, options);
+      expect(live).toEqual([]);
+      expect(onKey({ open: false, active: -1 }, live.length, { key: "ArrowDown" })).toBeNull();
+      expect(onKey({ open: false, active: -1 }, live.length, { key: "Enter" })).toBeNull();
+    }
   });
 });

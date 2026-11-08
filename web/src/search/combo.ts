@@ -127,6 +127,15 @@ export function onKey(s: ListState, n: number, e: KeyLike): KeyResult {
   }
 }
 
+/**
+ * De opties als ze nog bij de tekst in het veld horen (q: de vraag waar ze het antwoord op zijn);
+ * anders geen. Het veld kan leeg worden zonder input-gebeurtenis (Esc en Enter in AppBarSearch):
+ * dan opent ↓ geen lijst van een vraag die er niet meer staat (review golf 2, web A).
+ */
+export function optionsFor<T>(value: string, q: string, options: readonly T[]): readonly T[] {
+  return q !== "" && value.trim() === q ? options : [];
+}
+
 /** Wat de aria-attributen van het veld zijn: open of dicht, en welke optie actief is. */
 export interface ComboState {
   open: boolean;
