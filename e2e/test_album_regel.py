@@ -9,7 +9,9 @@ met het toetsenbord: Tab, Enter, Spatie en typen (docs/fase-6/toetsenbord-z6.md)
   bijwerken" in het album, maar niet achter de link, tot de eigenaar "ja" kiest (het vinkje in
   de regel, Opslaan): dan ziet de link alles en is er geen merkje meer.
 - Een regel op een album dat al een link heeft: de vraag komt na Opslaan; "Ja, delen" deelt de
-  foto's van de regel meteen.
+  foto's van de regel meteen. Een andere regel daarna, met het vinkje aan maar niet aangeraakt:
+  het vinkje gaat niet mee en de vraag komt opnieuw ("ja" gold voor de regel van toen); een
+  vinkje dat je zelf aanzet, gaat wel mee.
 
 De foto's hebben een vaste dag (mtime), niet die van nu.
 """
@@ -41,12 +43,14 @@ DAYS = {
     "strand-2.png": datetime(2026, 5, 2, 10, 0, tzinfo=UTC),
     "bos-1.png": datetime(2026, 5, 3, 10, 0, tzinfo=UTC),
     "strand-3.png": datetime(2026, 5, 4, 10, 0, tzinfo=UTC),
+    "zee-1.png": datetime(2026, 5, 5, 10, 0, tzinfo=UTC),
 }
 COLORS = {
     "strand-1.png": (230, 200, 120),
     "strand-2.png": (210, 180, 100),
     "bos-1.png": (40, 120, 50),
     "strand-3.png": (240, 220, 150),
+    "zee-1.png": (60, 120, 200),
 }
 
 
@@ -273,6 +277,61 @@ def test_regel_op_een_gedeeld_album_ja_delen(server, user_factory, context_as, n
     assert beantwoord.value.json() == {"needs_confirm": False}
     expect(toast(page, "De foto's uit de regel worden gedeeld.")).to_be_visible()
     expect(vraag).to_be_hidden()
+    expect(cells).to_have_count(3)
+    expect(page.locator(ONLY_YOU)).to_have_count(0)
+    anoniem.reload()
+    expect(link_cells(anoniem)).to_have_count(3)
+
+    # --- een andere regel na ja (nacontrole golf 2, veilig V1): het vinkje staat aan, maar wie
+    # het niet aanraakt, stuurt het niet mee; de vraag komt opnieuw en de link ziet niets nieuws ---
+    upload(server, fien, "zee-1.png")
+    dialog = open_rule(page)
+    delen = dialog.get_by_role("checkbox", name="Nieuwe foto's die passen, ook delen")
+    expect(delen).to_be_checked()
+    page.keyboard.press("ControlOrMeta+a")
+    page.keyboard.type("zee", delay=20)
+    with page.expect_response(
+        lambda r: r.request.method == "PUT" and r.url.endswith(f"/albums/{album_id}/rule")
+    ) as gezet:
+        page.keyboard.press("Enter")
+    assert gezet.value.request.post_data_json == {"rule": {"q": "zee"}}
+    assert gezet.value.json() == {"needs_confirm": True}
+    vraag = page.get_by_role("dialog", name="Nieuwe foto's ook delen?", exact=True)
+    expect(vraag).to_contain_text(
+        "1 foto's in dit album komen uit de regel; 1 daarvan ziet nu alleen jij."
+    )
+    nee = vraag.get_by_role("button", name="Nee, alleen voor mij", exact=True)
+    expect(nee).to_be_focused()
+    with page.expect_response(
+        lambda r: r.request.method == "POST" and r.url.endswith(f"/albums/{album_id}/rule/confirm")
+    ) as beantwoord:
+        page.keyboard.press("Enter")
+    assert beantwoord.value.request.post_data_json == {"share_new": False}
+    expect(vraag).to_be_hidden()
+    expect(cells).to_have_count(2)
+    expect(page.locator(f'{ONLY_YOU}[aria-label^="zee-1.png"]')).to_have_count(1)
+    rule = rule_of(server, fien, album_id)
+    assert (rule["items"], rule["private"], rule["share_new"]) == (1, 1, False)
+    anoniem.reload()
+    expect(link_cells(anoniem)).to_have_count(1)
+
+    # --- een andere regel en het vinkje zelf aangezet (Spatie): dat antwoord gaat mee ---
+    dialog = open_rule(page)
+    expect(delen).not_to_be_checked()
+    page.keyboard.press("ControlOrMeta+a")
+    page.keyboard.type("strand", delay=20)
+    tab_to(page, delen, limit=20)
+    page.keyboard.press("Space")
+    expect(delen).to_be_checked()
+    tab_to(page, dialog.get_by_role("button", name="Opslaan", exact=True), limit=20)
+    with page.expect_response(
+        lambda r: r.request.method == "PUT" and r.url.endswith(f"/albums/{album_id}/rule")
+    ) as gezet:
+        page.keyboard.press("Enter")
+    assert gezet.value.request.post_data_json == {"rule": {"q": "strand"}, "share_new": True}
+    assert gezet.value.json() == {"needs_confirm": False}
+    expect(dialog).to_be_hidden()
+    # zee-1 past niet meer en gaat eruit; de strandfoto's komen terug, meteen gedeeld
     expect(cells).to_have_count(3)
     expect(page.locator(ONLY_YOU)).to_have_count(0)
     anoniem.reload()
