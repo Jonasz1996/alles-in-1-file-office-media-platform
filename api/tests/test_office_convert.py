@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import io
 import itertools
+import logging
 import os
 import struct
 import uuid
@@ -22,10 +23,11 @@ import httpx
 import pypdfium2
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import Select, Update, event, func, select, update
+from sqlalchemy import Column, Select, Update, event, func, select, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import BinaryExpression, BindParameter, BooleanClauseList
 
 from app import jobs, previews
 from app.config import Settings, get_settings
@@ -2936,6 +2938,22 @@ async def test_een_wees_van_een_eerdere_versie(client, admin, office, monkeypatc
     assert await shown() == "ready"
 
 
+def blob_where(statement: Any) -> dict[str, set[Any]]:
+    """De waarden waarmee de WHERE van dit statement (de termen van de AND) blob.sha256 en
+    blob.pdf_state vergelijkt (= of IN)."""
+    found: dict[str, set[Any]] = {"sha256": set(), "pdf_state": set()}
+    where = statement.whereclause
+    for term in where.clauses if isinstance(where, BooleanClauseList) else [where]:
+        if not isinstance(term, BinaryExpression) or not isinstance(term.right, BindParameter):
+            continue
+        column = term.left
+        if isinstance(column, Column) and column.table.name == "blob" and column.name in found:
+            value = term.right.value
+            many = isinstance(value, (list, tuple, set, frozenset))
+            found[column.name] |= set(value) if many else {value}
+    return found
+
+
 @pytest.mark.anyio
 async def test_eerst_de_rij_dan_de_voorwaarde_op_de_taak(client, admin, office, monkeypatch):
     """on_dead en een stuk van de inhaalronde zetten een wees alleen op failed (of leeg) als er
@@ -2944,9 +2962,12 @@ async def test_eerst_de_rij_dan_de_voorwaarde_op_de_taak(client, admin, office, 
     opnieuw), en kijkt hij daarna alleen die rij opnieuw na: de NOT EXISTS over job blijft bij
     de oude snapshot en ziet de taak van de ander niet. Dan failed met een taak in de rij
     (nagebootst met PostgreSQL 16; o3.md afwijking 22). Daarom nemen ze eerst de rij, in een
-    eigen statement in dezelfde transactie (SELECT ... FOR UPDATE; SQLite laat FOR UPDATE weg
+    eigen statement in dezelfde transactie (SELECT ... FOR NO KEY UPDATE; SQLite laat dat weg
     en heeft het niet nodig), en pas dan de UPDATE: die krijgt na het wachten een nieuwe
-    snapshot. De CI draait alleen SQLite; dit legt die volgorde vast."""
+    snapshot. Die SELECT neemt elke sha van de UPDATE, en alleen de rijen in de staat die de
+    UPDATE kan raken: elke rij gaf een deadlock met Mislukte opnieuw, en FOR UPDATE een met een
+    kopie (de FOR KEY SHARE van de nieuwe node; de zevende tegenlezing). De CI draait alleen
+    SQLite; dit legt die volgorde vast."""
     s = office.settings
     dying = await content(s, "on_dead.docx", "pending", "failed")
     dead = await content(s, "dood.docx", "pending", "failed")
@@ -2987,13 +3008,70 @@ async def test_eerst_de_rij_dan_de_voorwaarde_op_de_taak(client, admin, office, 
             for st in before
             if isinstance(st, Select)
             and {getattr(t, "name", "") for t in st.get_final_froms()} == {"blob"}
-            and str(st.compile(dialect=pg)).endswith("FOR UPDATE")
+            and str(st.compile(dialect=pg)).endswith("FOR NO KEY UPDATE")
         ]
-        assert rows_first, sql
+        wanted = blob_where(statement)
+        assert wanted["sha256"] and wanted["pdf_state"], sql
+        assert any(
+            blob_where(st)["sha256"] >= wanted["sha256"]
+            and blob_where(st)["pdf_state"] == wanted["pdf_state"]
+            for st in rows_first
+        ), (sql, [blob_where(st) for st in rows_first], wanted)
     assert guarded == 3
     async with maker(s)() as session:
         states = {sha: (await session.get(Blob, sha)).pdf_state for sha in (dying, dead, loose)}
     assert states == {dying: "failed", dead: "failed", loose: None}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("when", ["al", "tussen"])
+async def test_on_dead_laat_een_pdf_die_er_is(client, admin, office, monkeypatch, caplog, when):
+    """al: de PDF is er (ready, de huidige PDF_VERSION), maar de thumbnails mislukten twee keer
+    als poging (zoals een timeout van de taak). on_dead laat ready staan, en meldt niet dat het
+    omzetten mislukte; de viewer toont de PDF. tussen: de inhoud is nog pending als on_dead hem
+    leest, en een conversie schrijft ready voordat de UPDATE van on_dead komt. In SQLite neemt
+    de SELECT van _rows_first geen slot (pysqlite begint er geen transactie voor), dus dat kan;
+    ook dan blijft ready. Zonder de voorwaarde in de UPDATE werd het failed, met de PDF op
+    schijf (o3.md afwijking 22, de zevende tegenlezing)."""
+    jonas, _ = admin
+    s = office.settings
+    caplog.set_level(logging.WARNING, logger="platform.office")
+    if when == "al":
+
+        async def too_late(_settings, _sha):
+            raise jobs.JobError("De thumbnails van de PDF liepen over hun tijd")
+
+        monkeypatch.setattr(convert, "thumbnails", too_late)
+        node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+        await jobs.run_pending(s, lane="preview")
+        await run_later(s)  # twee pogingen: PDF en thumbnails, dan alleen de thumbnails
+        sha = (await blob_of(s, node["id"])).sha256
+        assert [(j.status, j.attempts) for j in await office_jobs(s)] == [("failed", 2)]
+    else:
+        sha = await content(s, "tussen.docx", "pending", "failed")
+        rows_first = convert._rows_first
+
+        async def landed(session, shas, states):
+            found = await rows_first(session, shas, states)
+            async with maker(s)() as other:  # een conversie is net klaar
+                await other.execute(
+                    update(Blob)
+                    .where(Blob.sha256 == sha)
+                    .values(pdf_state="ready", pdf_version=keys.PDF_VERSION)
+                )
+                await other.commit()
+            return found
+
+        monkeypatch.setattr(convert, "_rows_first", landed)
+        await convert.on_dead(s, {"sha": sha}, "x")
+    async with maker(s)() as session:
+        blob = await session.get(Blob, sha)
+    assert (blob.pdf_state, blob.pdf_version) == ("ready", keys.PDF_VERSION)
+    if when == "al":
+        assert convert.pdf_path(BlobStore(s.blob_dir), sha).is_file()
+        assert not [r for r in caplog.records if "definitief mislukt" in r.getMessage()]
+        r = await client.get(f"/api/v1/files/{node['id']}/preview", headers=jonas)
+        assert r.status_code == 200 and r.json()["meta"].get("pdf_state") == "ready", r.text
 
 
 @pytest.mark.anyio

@@ -882,13 +882,18 @@ async def on_dead(settings: Settings, payload: dict[str, Any], _error: str) -> N
     (die taak maakt het af), niet failed met een taak die klaarstaat. Kwam een stuk van de
     inhaalronde daartussen, dan zette dat hem al op failed (_orphans): dan doet dit niets.
     Komt dit nooit (een crash, of de database liet niet schrijven), dan doet het eerste stuk
-    daarna het (_orphans). Eerst de rij, dan pas de UPDATE met die voorwaarde (_rows_first)."""
+    daarna het (_orphans). Eerst de rij, dan pas de UPDATE met die voorwaarde (_rows_first).
+
+    Is de PDF er (ready met de huidige PDF_VERSION: de thumbnails mislukten), dan blijft die.
+    Dat staat ook in de UPDATE zelf: in SQLite neemt de SELECT van _rows_first geen slot
+    (pysqlite begint er geen transactie voor), dus een conversie kan ertussen ready schrijven."""
     sha = str(payload.get("sha", ""))
     if not SHA.fullmatch(sha):
         return
     maker = _maker(settings)
+    states = ("pending", "ready", "ask")
     async with maker() as session:
-        found = await _rows_first(session, [sha])
+        found = await _rows_first(session, [sha], states)
         if sha not in found:
             return
         state, version = found[sha]
@@ -898,7 +903,8 @@ async def on_dead(settings: Settings, payload: dict[str, Any], _error: str) -> N
             update(Blob)
             .where(
                 Blob.sha256 == sha,
-                Blob.pdf_state.in_(("pending", "ready", "ask")),
+                Blob.pdf_state.in_(states),
+                ~and_(Blob.pdf_state == "ready", Blob.pdf_version >= keys.PDF_VERSION),
                 ~_active(),
             )
             .values(pdf_state="failed", pdf_version=keys.PDF_VERSION)
@@ -997,10 +1003,11 @@ def _active() -> Any:
 
 
 async def _rows_first(
-    session: AsyncSession, shas: list[str]
+    session: AsyncSession, shas: list[str], states: tuple[str, ...]
 ) -> dict[str, tuple[str | None, int | None]]:
-    """Neemt deze rijen van blob tot de commit (SELECT ... FOR UPDATE), en geeft hun
-    (pdf_state, pdf_version). Voor een UPDATE met ~_active(), als eigen statement ervoor.
+    """Neemt de rijen van blob met deze sha's en een pdf_state uit states tot de commit
+    (SELECT ... FOR NO KEY UPDATE), en geeft hun (pdf_state, pdf_version). Voor een UPDATE met
+    ~_active() en dezelfde voorwaarde op pdf_state, als eigen statement ervoor.
 
     In PostgreSQL (READ COMMITTED) wacht een UPDATE op een rij die een ander net schrijft, en
     kijkt hij daarna alleen die rij opnieuw na. De NOT EXISTS over job blijft bij de snapshot
@@ -1009,12 +1016,21 @@ async def _rows_first(
     failed met een taak in de rij. Wacht dit statement op de rij, dan krijgt de UPDATE erna een
     nieuwe snapshot, met die taak (nagebootst met PostgreSQL 16, o3.md afwijking 22). SQLite
     kent FOR UPDATE niet en heeft het niet nodig: één schrijver, en de UPDATE leest pas als hij
-    het schrijfslot heeft."""
+    het schrijfslot heeft.
+
+    Alleen de rijen die de UPDATE erna kan raken (states). Een rij in een andere staat raakt
+    de UPDATE alleen als die er pas na dit statement in kwam, met een commit die zijn snapshot
+    dan ziet, samen met de taak van die commit. Elke rij nemen gaf in PostgreSQL een deadlock
+    met Mislukte opnieuw: dat had een wees die on_dead net failed maakte al genomen, en wachtte
+    op een rij die het stuk al vasthield. FOR NO KEY UPDATE en niet FOR UPDATE: het wacht zo
+    nog op elke UPDATE van blob, maar niet op de FOR KEY SHARE van een INSERT die naar de blob
+    verwijst (een kopie, een nieuwe versie); dat gaf ook een deadlock (o3.md afwijking 22, de
+    zevende tegenlezing)."""
     found = await session.execute(
         select(Blob.sha256, Blob.pdf_state, Blob.pdf_version)
-        .where(Blob.sha256.in_(shas))
+        .where(Blob.sha256.in_(shas), Blob.pdf_state.in_(states))
         .order_by(Blob.sha256)
-        .with_for_update()
+        .with_for_update(key_share=True)
     )
     return {sha: (state, version) for sha, state, version in found.all()}
 
@@ -1118,7 +1134,7 @@ async def _backfill(settings: Settings, after: str, shas: list[str] | None) -> N
                 .execution_options(synchronize_session=False)
             )
         if dead or loose:  # alleen als er intussen geen taak bij kwam (Mislukte opnieuw)
-            await _rows_first(session, sorted(dead | loose))
+            await _rows_first(session, sorted(dead | loose), ("pending",))
             for group, values in (
                 (dead, {"pdf_state": "failed", "pdf_version": keys.PDF_VERSION}),
                 (loose, {"pdf_state": None}),
