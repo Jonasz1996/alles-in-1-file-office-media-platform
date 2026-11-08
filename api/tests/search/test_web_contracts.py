@@ -2,10 +2,11 @@
 met dezelfde namen, dezelfde vaste woorden en dezelfde namen van gebeurtenissen.
 
 Links staat de web (web/src/search/types.ts, photos/people/types.ts, photos/map/types.ts,
-dupes/types.ts, admin/searchApi.ts en photos/faces/types.ts), rechts het model in app/search,
-app/people, app/geo en app/prefs. Bij de samenvoeging van Z0 liepen ze op een paar plekken uiteen
-(docs/fase-6/z0.md); deze test houdt ze gelijk tot Z1–Z7 de routes vullen. Z0b zette de vormen
-van gezichten (X2) en zoeken op beeld (X3) erbij, aan beide kanten.
+dupes/types.ts, admin/searchApi.ts, photos/faces/types.ts, en voor de vormen van 0.7.0 waar
+fase 6 iets bij zette api.ts en photos/api.ts), rechts het model in app/search, app/people,
+app/geo, app/prefs en de routes van albums en delingen. Bij de samenvoeging van Z0 liepen ze op
+een paar plekken uiteen (docs/fase-6/z0.md); deze test houdt ze gelijk tot Z1–Z7 de routes
+vullen. Z0b zette de vormen van gezichten (X2) en zoeken op beeld (X3) erbij, aan beide kanten.
 
 De TypeScript wordt met een eenvoudige lezer gelezen: `export interface X { ... }` (met of zonder
 `extends Y`), velden gescheiden door `;`, een vorm `{ a: t; b: t }` als type van een veld, en
@@ -36,14 +37,16 @@ import uuid
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 
 from app import prefs
 from app.geo import types as G
 from app.people import faces_types as F
 from app.people import types as P
+from app.routers import albums as A
 from app.routers.files import NodeOut, TagRef
 from app.routers.photos import PhotoItem
+from app.routers.shares import ShareOut
 from app.search import types as S
 
 WEB = Path(__file__).resolve().parents[3] / "web" / "src"
@@ -55,6 +58,7 @@ BESTANDEN = [
     "admin/searchApi.ts",
     "photos/faces/types.ts",
     "api.ts",
+    "photos/api.ts",
 ]
 
 COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
@@ -353,6 +357,10 @@ PAREN = [
     ("photos/faces/types.ts", "FaceGroups", F.FaceGroups),
     ("photos/faces/types.ts", "FacesReject", F.FacesRejectIn),
     ("photos/faces/types.ts", "FacesQueued", F.FacesQueued),
+    # De vormen van albums met wat Z6 erbij zette (review golf 2, contract C4): de regel bij een
+    # album, de pagina met items die bron en shared hebben
+    ("photos/api.ts", "AlbumOut", A.AlbumOut),
+    ("photos/api.ts", "AlbumPhotoPage", A.AlbumPhotoPage),
 ]
 
 
@@ -366,6 +374,7 @@ MODELLEN: dict[str, type[BaseModel]] = {
     "PhotoItem": PhotoItem,
     "SearchHit": S.Hit,
     "AlbumRule": S.SearchRule,
+    "AlbumPhotoItem": A.AlbumPhotoItem,
 }
 
 # Wat de web stuurt (vraag), of stuurt en terugkrijgt (beide); de rest stuurt de API (antwoord)
@@ -388,6 +397,59 @@ def _controleer(web, bestand: str, naam: str) -> None:
 @pytest.mark.parametrize(("bestand", "naam", "model"), PAREN, ids=[p[1] for p in PAREN])
 def test_de_web_heeft_dezelfde_velden_als_de_api(web, bestand, naam, model):
     _controleer(web, bestand, naam)
+
+
+# Een vorm van 0.7.0 met een stuk van fase 6, aan beide kanten met extends (review golf 2,
+# contract C4). De velden van 0.7.0 vergelijkt deze test niet (zie MODELLEN); het stuk van fase 6
+# wel: erft de web het stuk, dan staat het stuk zelf in PAREN; breidt de vorm van fase 6 een vorm
+# van 0.7.0 uit, dan vergelijkt ERFT wat erbij komt.
+ERFT = [
+    # (bestand, interface, ouder in de web, model, ouder in de API, wat erbij komt vergelijken)
+    ("api.ts", "Share", "RuleItemsPrivate", ShareOut, P.RuleItemsPrivate, False),
+    ("photos/api.ts", "AlbumPhotoItem", "PhotoItem", A.AlbumPhotoItem, PhotoItem, True),
+]
+
+
+def _controleer_erft(web, bestand, naam, ouder, model, basis, erbij) -> None:
+    assert naam in web[bestand].interfaces, f"interface {naam} niet in {bestand}"
+    web_ouder, blok = web[bestand].interfaces[naam]
+    assert web_ouder == ouder, f"{naam}: de web erft {web_ouder}, niet {ouder}"
+    assert issubclass(model, basis), f"{model.__name__} erft {basis.__name__} niet"
+    if erbij:
+        velden = {n: f for n, f in model.model_fields.items() if n not in basis.model_fields}
+        eigen = create_model(
+            f"{model.__name__}Erbij", **{n: (f.annotation, f) for n, f in velden.items()}
+        )
+        _vergelijk(web, bestand, _velden(blok), eigen, naam, "antwoord")
+
+
+@pytest.mark.parametrize(("bestand", "naam", "ouder", "model", "basis", "erbij"), ERFT,
+                         ids=[e[1] for e in ERFT])  # fmt: skip
+def test_een_vorm_van_070_met_een_stuk_van_fase_6(web, bestand, naam, ouder, model, basis, erbij):
+    _controleer_erft(web, bestand, naam, ouder, model, basis, erbij)
+
+
+@pytest.mark.parametrize(
+    ("bestand", "naam", "oud", "nieuw"),
+    [
+        ("api.ts", "Share", "interface Share extends RuleItemsPrivate {", "interface Share {"),
+        (
+            "photos/api.ts",
+            "AlbumPhotoItem",
+            "  album: AlbumItemRule | null;",
+            "  album?: AlbumItemRule | null;",
+        ),
+        ("photos/api.ts", "AlbumPhotoItem", "  album: AlbumItemRule | null;", "  rule: boolean;"),
+    ],
+    ids=["Share-zonder-extends", "AlbumPhotoItem-album?", "AlbumPhotoItem-rule"],
+)
+def test_erft_ziet_een_ander_type(web, bestand, naam, oud, nieuw):
+    tekst = (WEB / bestand).read_text()
+    assert tekst.count(oud) == 1, oud
+    anders = {**web, bestand: Bron(tekst.replace(oud, nieuw))}
+    [e] = [e for e in ERFT if e[1] == naam]
+    with pytest.raises(AssertionError):
+        _controleer_erft(anders, *e)
 
 
 # Een veld van de web anders dan de API: elk moet de vergelijking zien (review Z0, haalbaar F5)
@@ -445,6 +507,15 @@ FOUTEN = [
         "  suggest: FaceSuggest;",
     ),
     ("photos/people/types.ts", "PhotoSettings", "  beeld: OnOff;\n}", "  beeld: boolean;\n}"),
+    # Review golf 2, contract C4
+    (
+        "photos/api.ts",
+        "AlbumOut",
+        "  rule: AlbumRuleInfo | null;",
+        "  rule?: AlbumRuleInfo | null;",
+    ),
+    ("photos/api.ts", "AlbumOut", "  rule: AlbumRuleInfo | null;", "  rule: AlbumRuleInfo;"),
+    ("photos/api.ts", "AlbumPhotoPage", "  items: AlbumPhotoItem[];", "  items: PhotoItem[];"),
 ]
 
 

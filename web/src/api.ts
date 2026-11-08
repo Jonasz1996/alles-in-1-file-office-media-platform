@@ -3,6 +3,7 @@
 
 import { fmt } from "./i18n/fmt";
 import type { Locale } from "./i18n/types";
+import type { RuleItemsPrivate } from "./photos/people/types";
 
 export interface User {
   id: string;
@@ -259,7 +260,8 @@ export interface Directory {
   groups: GroupRef[];
 }
 
-export interface Share {
+/** rule_items_private (fase 6, Z6, Keuze 42) komt van RuleItemsPrivate, zoals ShareOut in de API. */
+export interface Share extends RuleItemsPrivate {
   id: string;
   node_id: string;
   type: "user" | "group" | "link";

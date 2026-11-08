@@ -23,14 +23,11 @@ import { MediaDates } from "./FilterBar";
 import { PersonPicker } from "./PersonPicker";
 import { formOf, type RuleForm, ruleEmpty, ruleOf, shareAnswer, sharedCount } from "./rule";
 import { askShareNew } from "./shareQuestion";
-import type { AlbumRuleBody, AlbumRuleInfo } from "./types";
+import type { AlbumRuleBody } from "./types";
 import "./people.css";
 
-/** Een album zoals de eigenaar het krijgt: met de regel (of null). */
-export type RuleAlbum = AlbumOut & { rule?: AlbumRuleInfo | null };
-
 export interface AlbumRuleProps {
-  album: RuleAlbum;
+  album: AlbumOut;
   /** Na opslaan, weghalen of de vraag: het album opnieuw laden */
   onChanged(): void;
 }
@@ -52,7 +49,7 @@ function RuleDialog({
   onClose,
   onChanged,
 }: {
-  album: RuleAlbum;
+  album: AlbumOut;
   onClose(): void;
   onChanged(): void;
 }): JSX.Element {
@@ -85,7 +82,7 @@ function RuleDialog({
       toast(t("photos_people.rule.saved"), { kind: "ok" });
       onClose();
       if (saved.needs_confirm) {
-        const fresh = (await photosApi.album(album.id)) as RuleAlbum;
+        const fresh = await photosApi.album(album.id);
         await askShareNew(album.id, fresh.rule ?? null);
       }
       onChanged();

@@ -26,13 +26,12 @@ import { LazySlot } from "../ui/LazySlot";
 import { Skeleton } from "../ui/Spinner";
 import { toast } from "../ui/toast";
 import { useColumns } from "../ui/virtual";
-import { albumNode, type PhotoItem, periodOf, photosApi } from "./api";
+import { type AlbumOut, type AlbumPhotoItem, albumNode, type PhotoItem, periodOf, photosApi } from "./api";
 import { downloadZip, SelectionBar, usePhotoBrowser, useStoreVersion } from "./browse";
 import { GAP, type GridControl, MIN_CELL, PhotoGrid } from "./Grid";
 import { reorders, useThumbPatches } from "./live";
 import { SectionStore } from "./store";
-import type { AlbumRuleProps, RuleAlbum } from "./people/AlbumRule";
-import type { AlbumItemRule } from "./people/types";
+import type { AlbumRuleProps } from "./people/AlbumRule";
 import { buildLayout } from "./timeline";
 import "./photos.css";
 import "./people/people.css";
@@ -42,7 +41,7 @@ const AlbumRule = lazyWithAreas<AlbumRuleProps>(() => import("./people/AlbumRule
 export default function AlbumPage({ params }: RouteProps): JSX.Element {
   useScope("album");
   const id = params.id;
-  const [album, setAlbum] = useState<RuleAlbum | null>(null);
+  const [album, setAlbum] = useState<AlbumOut | null>(null);
   const [gone, setGone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
@@ -72,9 +71,9 @@ export default function AlbumPage({ params }: RouteProps): JSX.Element {
   const store = useMemo(() => new SectionStore((_s, after) => photosApi.albumItems(id, after)), [id]);
   const version = useStoreVersion(store);
 
-  const load = useCallback(async (): Promise<RuleAlbum | null> => {
+  const load = useCallback(async (): Promise<AlbumOut | null> => {
     try {
-      const a: RuleAlbum = await photosApi.album(id);
+      const a = await photosApi.album(id);
       setAlbum(a);
       setCount(a.count);
       store.setSections([a.count], undefined, () => 0);
@@ -120,7 +119,8 @@ export default function AlbumPage({ params }: RouteProps): JSX.Element {
   const notes = owner && peopleArea;
   const note = useCallback(
     (it: PhotoItem) =>
-      notes && (it as PhotoItem & { album?: AlbumItemRule | null }).album?.shared === false
+      // De store kent alleen PhotoItem; wat albumItems gaf, is een AlbumPhotoItem
+      notes && (it as AlbumPhotoItem).album?.shared === false
         ? t("photos_people.onlyYou")
         : null,
     [notes],

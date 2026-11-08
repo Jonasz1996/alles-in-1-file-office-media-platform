@@ -22,8 +22,7 @@ export default function RuleShareNote({ node }: RuleShareNoteProps): JSX.Element
 
   const load = useCallback(async () => {
     try {
-      const a = (await photosApi.album(id)) as { rule?: AlbumRuleInfo | null };
-      setInfo(a.rule ?? null);
+      setInfo((await photosApi.album(id)).rule);
     } catch {
       setInfo(null); // een extraatje: het deeldialoog werkt ook zonder
     }

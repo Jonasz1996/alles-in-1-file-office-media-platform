@@ -191,6 +191,7 @@ const link: Share = {
   user: null,
   group: null,
   link: { url: "/s/abc_DEF-123", label: null, has_password: false },
+  rule_items_private: null,
 };
 
 describe("links", () => {
