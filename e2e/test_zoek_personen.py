@@ -3,7 +3,8 @@ Tab, Enter, Spatie, de pijlen en typen; nergens een klik (docs/fase-6/toetsenbor
 
 - Een persoon toevoegen met een kader: de viewer (Enter), het infopaneel (I), "Persoon
   toevoegen", een nieuwe naam typen en met Enter kiezen, "Kader tekenen" (Spatie), het kader met
-  de pijlen verplaatsen en met Shift groter maken, Toevoegen.
+  de pijlen verplaatsen en met Shift groter maken, Toevoegen. Met het formulier open bladeren →
+  en End niet door de viewer; zonder formulier wel, en dan staat de focus op het beeld.
 - Zoeken op de naam: /fotos/personen, typen, Enter opent de persoon; ook de groep personen in
   GET /search. In de web van Z4 (sinds de samenvoeging van golf 2): Ctrl+K en de naam geven de
   persoon onder Personen in de suggesties; Enter zet het filter person op /zoeken, met de naam
@@ -56,6 +57,13 @@ def tab_to(page: Page, target: Locator, limit: int = 40, back: bool = False) -> 
             return i + 1
         gezien.append(page.evaluate(ACTIEF))
     raise AssertionError(f"Tab kwam niet bij {target}: {gezien}")
+
+
+def twee_frames(page: Page) -> None:
+    """Wat een toets deed (een ander bestand in de viewer), staat er na twee frames."""
+    page.evaluate(
+        "() => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)))"
+    )
 
 
 def is_zoeken(r) -> bool:
@@ -141,10 +149,23 @@ def test_persoon_toevoegen_met_kader_zoeken_en_filteren(server, fien, context_as
     expect(personen.get_by_text(nu, exact=True)).to_be_attached()
     # De pijlen bladerden niet door de viewer
     expect(viewer).to_be_visible()
+    # Ook niet vanaf het vinkje of een knop van het formulier (review golf 2, web C): het
+    # formulier blijft, met de focus waar hij stond
+    tab_to(page, kader_aan, limit=3, back=True)
+    for toets in ("ArrowRight", "End"):
+        page.keyboard.press(toets)
+        twee_frames(page)
+        expect(kader_aan).to_be_focused()
+    expect(viewer).to_be_visible()
+    expect(naam).to_have_value("Oma Ria")
 
     # --- Toevoegen ---
     knop = personen.get_by_role("button", name="Toevoegen", exact=True)
     tab_to(page, knop, limit=5)
+    page.keyboard.press("ArrowRight")
+    twee_frames(page)
+    expect(knop).to_be_focused()
+    expect(viewer).to_be_visible()
     pad = f"/api/v1/files/{eerste['id']}/people"
     with page.expect_response(
         lambda r: r.request.method == "POST" and r.url.endswith(pad)
@@ -163,6 +184,17 @@ def test_persoon_toevoegen_met_kader_zoeken_en_filteren(server, fien, context_as
     assert [(p["person"]["name"], p["source"]) for p in erop["people"]] == [("Oma Ria", "hand")]
     assert erop["people"][0]["box"] == pytest.approx([0.41, 0.25, 0.3, 0.44], abs=1e-6)
     oma = erop["people"][0]["person"]["id"]
+
+    # Zonder formulier bladert → ook vanaf de link naar de persoon. Die link is bij de volgende
+    # foto weg; de focus gaat dan naar het beeld, niet naar de body (review golf 2, web C)
+    tab_to(page, op_foto, limit=5, back=True)
+    page.keyboard.press("ArrowRight")
+    volgende = page.get_by_role("dialog", name="foto-00001.webp", exact=True)
+    expect(volgende).to_be_visible()
+    expect(volgende.locator(".viewer-stage")).to_be_focused()
+    page.keyboard.press("ArrowLeft")
+    expect(viewer).to_be_visible()
+    expect(viewer.locator(".viewer-stage")).to_be_focused()
     page.keyboard.press("Escape")
     expect(viewer).to_be_hidden()
 

@@ -62,6 +62,8 @@ Alleen voor de eigenaar van de foto of video. Voor een ander toont de rij niets.
 | Shift met een pijl | maakt het kader groter (→ en ↓) of kleiner (← en ↑), niet kleiner dan 4 % |
 | Enter op "Toevoegen" | voegt de persoon toe; de melding "Oma Ria staat nu op deze foto." en de focus terug op "Persoon toevoegen" |
 | Esc in het formulier | sluit eerst een open lijst, daarna het formulier; de focus gaat terug naar "Persoon toevoegen". De viewer blijft open |
+| ← → Home End in het formulier | bladeren niet naar een ander bestand, ook niet vanaf "Kader tekenen" of een knop: het formulier blijft. Shift+← → wisselt wel, zoals overal in de viewer |
+| ← → op een link of knop van de rij, zonder formulier | naar het vorige of volgende bestand, zoals elders in de viewer. Wat de focus had, is bij het nieuwe bestand weg; de focus staat dan op het beeld, waar de pijlen verder werken |
 
 - Waar het kader staat, staat in tekst onder het kader (`aria-live`): "Kader 41 % van links,
   25 % van boven, 30 % breed en 44 % hoog.". Een schermlezer leest elke stap voor.

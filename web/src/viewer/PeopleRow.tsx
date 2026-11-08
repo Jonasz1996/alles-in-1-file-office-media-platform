@@ -7,7 +7,8 @@
 // Toetsenbord: Persoon toevoegen opent een formulier met de naam (een combobox: ↓ en ↑ door je
 // personen, Enter kiest, nog een Enter voegt toe), "Kader tekenen" en het kader zelf (de pijlen
 // verplaatsen, Shift met een pijl maakt groter of kleiner). Esc sluit het formulier en zet de
-// focus terug op Persoon toevoegen; de viewer gaat er niet van dicht.
+// focus terug op Persoon toevoegen; de viewer gaat er niet van dicht. Zolang het formulier open
+// is, bladeren ← → Home End niet naar een ander bestand.
 
 import { type FormEvent, type JSX, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type FileNode } from "../api";
@@ -23,9 +24,13 @@ import { type AddPerson, type Box, type FilePerson, PEOPLE_CHANGED, type Person 
 import { seg } from "../search/wire";
 import { permissionOf } from "../sharing";
 import { Button, IconButton } from "../ui/Button";
+import { isTypingTarget } from "../ui/keys";
 import { announce, toast } from "../ui/toast";
 import type { InfoRowProps } from "./infoRows";
 import "../photos/people/people.css";
+
+/** De toetsen waarmee de viewer bladert (Viewer.tsx) */
+const BROWSE = new Set(["ArrowLeft", "ArrowRight", "Home", "End"]);
 
 /** Wat er op de foto staat, en of hij van jou is. */
 type Loaded = { owner: boolean; people: FilePerson[] };
@@ -201,8 +206,16 @@ function AddForm({
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLFormElement>) {
+    if (e.defaultPrevented) return;
+    // ← → Home End bladeren in de viewer; met het formulier open niet, ook niet vanaf het vinkje of
+    // een knop (anders was het formulier weg, review golf 2, web C). Het veld Naam en het kader
+    // gebruiken ze zelf; Shift+← → wisselt altijd, zoals overal in de viewer.
+    if (BROWSE.has(e.key) && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (!isTypingTarget(e.target)) e.preventDefault();
+      return;
+    }
     // De combobox sluit eerst zijn lijst (en zet dan defaultPrevented); daarna sluit Esc het formulier
-    if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (e.key !== "Escape") return;
     e.preventDefault();
     e.stopPropagation();
     onCancel();
