@@ -6,10 +6,10 @@ not_found, en tellingen en omslagen gaan met own_live.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from app.routers.photos import PhotoItem
 from app.search.types import PersonRef, SearchRule
@@ -157,3 +157,40 @@ class RuleConfirmIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     share_new: bool
+
+
+class AlbumRuleInfo(BaseModel):
+    """Wat GET /albums en /albums/{id} de eigenaar over de regel van een album geven (AlbumOut
+    .rule; voor anderen en zonder regel null). count: op hoeveel foto's de regel bij de laatste
+    verversing paste; code: album_rule_too_many als dat er meer dan 10.000 waren (dan bleven de
+    items zoals ze waren). items: hoeveel items van het album nu uit de regel komen; private:
+    hoeveel daarvan alleen de eigenaar ziet (Keuze 42: het deeldialoog zegt het)."""
+
+    rule: SearchRule
+    share_new: bool
+    refreshed_at: datetime
+    count: int
+    code: str | None = None
+    items: int = 0
+    private: int = 0
+
+    @field_serializer("rule")
+    def _rule(self, rule: SearchRule) -> dict:
+        """Zoals de web hem stuurt (de namen van §3.4), zonder wat leeg is."""
+        return rule.model_dump(mode="json", by_alias=True, exclude_defaults=True)
+
+
+class AlbumItemRule(BaseModel):
+    """Per item van een album, alleen voor de eigenaar (AlbumPhotoItem.album): met de hand of
+    uit de regel, en of anderen het zien (false: het merkje "alleen voor jou")."""
+
+    source: Literal["hand", "rule"]
+    shared: bool
+
+
+class RuleItemsPrivate(BaseModel):
+    """In elk antwoord met een deling (routers/shares.ShareOut erft het): bij een nieuwe deling
+    of publieke link op een album met een regel en share_new 0 zoveel items uit de regel die
+    alleen voor de eigenaar blijven (de vraag in het deeldialoog, Keuze 42); anders null."""
+
+    rule_items_private: int | None = None

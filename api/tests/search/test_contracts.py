@@ -714,11 +714,12 @@ async def test_zoeken_zonder_mode_geeft_hetzelfde_antwoord(client, admin):
 
 async def test_een_regel_met_mode_geeft_422(client, admin):
     """Een slim album zoekt nooit op beeld: mode of like in de regel geeft 422 (de body wordt
-    gelezen voor de stub van Z6 antwoordt)."""
+    gelezen voor de route het album zoekt). Sinds Z6 is de route gebouwd: zonder mode en like
+    komt de vraag bij het album, en een album dat er niet is, is 404."""
     headers, _ = admin
     url = f"/api/v1/albums/{uuid.uuid4()}/rule"
     for extra in ({"mode": "image"}, {"like": str(uuid.uuid4())}):
         r = await client.put(url, json={"rule": {"q": "zee", **extra}}, headers=headers)
         assert r.status_code == 422, (extra, r.text)
     r = await client.put(url, json={"rule": {"q": "zee"}}, headers=headers)
-    assert r.status_code == 501 and r.json()["detail"]["params"] == {"package": "Z6"}
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "not_found", r.text

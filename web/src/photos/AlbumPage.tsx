@@ -2,12 +2,18 @@
 // viewer, en downloaden als zip. De eigenaar deelt het album (alleen om te bekijken), hernoemt
 // het, kiest een omslag, haalt foto's eruit en verwijdert het. Wie het gedeeld kreeg, kijkt en
 // downloadt alleen.
+//
+// Slimme albums (fase 6, Z6; Keuze 42): de eigenaar geeft het album een regel (de knop Regel, een
+// eigen chunk met het gebied photos_people) en ziet bij elke foto die alleen hij ziet het merkje
+// "alleen voor jou". Deelt hij een album met een regel waarvan nieuwe foto's nog niet gedeeld
+// worden (een persoon, een groep of een publieke link erbij), dan volgt de vraag of nieuwe foto's
+// ook gedeeld worden (people/shareQuestion.ts).
 
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError } from "../api";
+import { ApiError, api } from "../api";
 import { MAX_BATCH_IDS } from "../crossApi";
 import { useServerEvents } from "../events";
-import { errorText, t } from "../i18n";
+import { areasLoaded, errorText, lazyWithAreas, loadAreas, t } from "../i18n";
 import { Link } from "../links";
 import { navigate, type RouteProps, useNavSection } from "../router";
 import { ShareDialog } from "../ShareDialog";
@@ -16,21 +22,27 @@ import { confirm, prompt } from "../ui/dialogs";
 import { EmptyState } from "../ui/EmptyState";
 import { useScope, useShortcuts } from "../ui/keys";
 import { PageTitle } from "../ui/PageTitle";
+import { LazySlot } from "../ui/LazySlot";
 import { Skeleton } from "../ui/Spinner";
 import { toast } from "../ui/toast";
 import { useColumns } from "../ui/virtual";
-import { type AlbumOut, albumNode, periodOf, photosApi } from "./api";
+import { albumNode, type PhotoItem, periodOf, photosApi } from "./api";
 import { downloadZip, SelectionBar, usePhotoBrowser, useStoreVersion } from "./browse";
 import { GAP, type GridControl, MIN_CELL, PhotoGrid } from "./Grid";
 import { reorders, useThumbPatches } from "./live";
 import { SectionStore } from "./store";
+import type { AlbumRuleProps, RuleAlbum } from "./people/AlbumRule";
+import type { AlbumItemRule } from "./people/types";
 import { buildLayout } from "./timeline";
 import "./photos.css";
+import "./people/people.css";
+
+const AlbumRule = lazyWithAreas<AlbumRuleProps>(() => import("./people/AlbumRule"), ["photos_people"]);
 
 export default function AlbumPage({ params }: RouteProps): JSX.Element {
   useScope("album");
   const id = params.id;
-  const [album, setAlbum] = useState<AlbumOut | null>(null);
+  const [album, setAlbum] = useState<RuleAlbum | null>(null);
   const [gone, setGone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
@@ -41,21 +53,38 @@ export default function AlbumPage({ params }: RouteProps): JSX.Element {
   const rowHeight = Math.max(MIN_CELL / 2, Math.round(cellWidth)) + GAP;
   const owner = album?.permission === "owner";
   useNavSection(album && !owner ? "shared" : null);
+  // Het merkje en "met een regel" komen uit het gebied photos_people: alleen voor de eigenaar laden
+  const [peopleArea, setPeopleArea] = useState(() => areasLoaded(["photos_people"]));
+  useEffect(() => {
+    if (!owner || peopleArea) return;
+    let live = true;
+    loadAreas(["photos_people"]).then(
+      () => live && setPeopleArea(true),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [owner, peopleArea]);
+  // De delingen toen het deeldialoog openging (voor de vraag van Keuze 42)
+  const sharesBefore = useRef<Promise<Set<string> | null> | null>(null);
 
   const store = useMemo(() => new SectionStore((_s, after) => photosApi.albumItems(id, after)), [id]);
   const version = useStoreVersion(store);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<RuleAlbum | null> => {
     try {
-      const a = await photosApi.album(id);
+      const a: RuleAlbum = await photosApi.album(id);
       setAlbum(a);
       setCount(a.count);
       store.setSections([a.count], undefined, () => 0);
       setError(null);
       setGone(null);
+      return a;
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) setGone(t("photos.albumPage.gone"));
       else setError(errorText(e));
+      return null;
     }
   }, [id, store]);
 
@@ -88,6 +117,45 @@ export default function AlbumPage({ params }: RouteProps): JSX.Element {
   const selected = b.selection.ids;
   const ids = useMemo(() => [...selected], [selected]);
   const tooBig = (album?.count ?? 0) > MAX_BATCH_IDS;
+  const notes = owner && peopleArea;
+  const note = useCallback(
+    (it: PhotoItem) =>
+      notes && (it as PhotoItem & { album?: AlbumItemRule | null }).album?.shared === false
+        ? t("photos_people.onlyYou")
+        : null,
+    [notes],
+  );
+
+  function openSharing() {
+    setSharing(true);
+    const rule = album?.rule;
+    // Alleen als nieuwe foto's van de regel nog niet gedeeld worden, is er iets te vragen
+    sharesBefore.current =
+      album && rule && !rule.share_new
+        ? api.shares(album.id).then(
+            (list) => new Set(list.map((s) => s.id)),
+            () => null,
+          )
+        : null;
+  }
+
+  /** Na een wijziging in het deeldialoog: is er een deling of link bij gekomen op een album met
+   * een regel waarvan nieuwe foto's nog niet gedeeld worden, dan de vraag (Keuze 42). */
+  async function afterShareChange() {
+    const a = await load();
+    const before = await sharesBefore.current;
+    if (!a?.rule || a.rule.share_new || !before) return;
+    try {
+      const now = await api.shares(a.id);
+      sharesBefore.current = Promise.resolve(new Set(now.map((s) => s.id)));
+      if (!now.some((s) => !before.has(s.id))) return;
+      const { askShareNew } = await import("./people/shareQuestion");
+      await askShareNew(a.id, a.rule);
+      void load();
+    } catch (e) {
+      toast(errorText(e), { kind: "error" });
+    }
+  }
 
   async function downloadAll() {
     if (!album) return;
@@ -178,7 +246,7 @@ export default function AlbumPage({ params }: RouteProps): JSX.Element {
         label: t("photos.keys.download"),
         run: () => void (selected.size ? downloadZip(ids, album?.name ?? t("photos.album")) : downloadAll()),
       },
-      { combo: "s", label: t("photos.keys.share"), run: () => setSharing(true), when: mine },
+      { combo: "s", label: t("photos.keys.share"), run: openSharing, when: mine },
       { combo: "f2", label: t("photos.keys.rename"), run: () => void rename(), when: mine },
       { combo: "c", label: t("photos.keys.cover"), run: () => coverFrom(ids), when: mine },
       {
@@ -217,9 +285,12 @@ export default function AlbumPage({ params }: RouteProps): JSX.Element {
               </Button>
               {owner && (
                 <>
-                  <Button icon="share" onClick={() => setSharing(true)}>
+                  <Button icon="share" onClick={openSharing}>
                     {t("photos.albumPage.share")}
                   </Button>
+                  <LazySlot>
+                    <AlbumRule album={album} onChanged={() => void load()} />
+                  </LazySlot>
                   <Button icon="rename" onClick={() => void rename()}>
                     {t("photos.albumPage.rename")}
                   </Button>
@@ -243,6 +314,7 @@ export default function AlbumPage({ params }: RouteProps): JSX.Element {
           {period && ` · ${period}`}
           {!owner && ` · ${t("photos.albumPage.by", { name: album.owner.display_name })}`}
           {owner && album.shared && ` · ${t("photos.albumPage.isShared")}`}
+          {notes && album.rule && ` · ${t("photos_people.rule.active")}`}
         </p>
       )}
       {album?.description && <p className="album-description">{album.description}</p>}
@@ -273,6 +345,7 @@ export default function AlbumPage({ params }: RouteProps): JSX.Element {
             onCellClick={b.onCellClick}
             onShiftMove={b.onShiftMove}
             control={control}
+            note={note}
           />
         )}
       </div>
@@ -292,7 +365,11 @@ export default function AlbumPage({ params }: RouteProps): JSX.Element {
         )}
       </SelectionBar>
       {sharing && album && (
-        <ShareDialog node={albumNode(album)} onClose={() => setSharing(false)} onChanged={() => void load()} />
+        <ShareDialog
+          node={albumNode(album)}
+          onClose={() => setSharing(false)}
+          onChanged={() => void afterShareChange()}
+        />
       )}
       {b.viewer}
     </main>

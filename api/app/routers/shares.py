@@ -23,9 +23,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
-from app import access, errors, events
+from app import access, albums_rule, errors, events
 from app.db import Session
 from app.models import Group, GroupMember, Node, Share, User
+from app.people.types import RuleItemsPrivate
 from app.routers import uploads
 from app.routers.files import GUEST, NodeOut, OwnerRef, Utc, describe, get_node, is_trashed, to_utc
 from app.security import CurrentUser, RateLimiter, new_password_hash
@@ -60,7 +61,9 @@ class ShareLink(BaseModel):
     has_password: bool
 
 
-class ShareOut(BaseModel):
+class ShareOut(RuleItemsPrivate):
+    """rule_items_private (Fase 6, Keuze 42, Z6) komt van RuleItemsPrivate."""
+
     id: uuid.UUID
     node_id: uuid.UUID
     type: Literal["user", "group", "link"]
@@ -308,6 +311,8 @@ async def create_share(
         raise errors.fail(409, "already_shared", "Al gedeeld met deze persoon of groep") from None
     announce(await grantees(session, share), "share.created", share.id, share.node_id)
     [out] = await shares_out(session, [share])
+    if node.kind == "album":
+        out.rule_items_private = await albums_rule.private_count(session, node.id)
     return out
 
 
@@ -340,6 +345,8 @@ async def create_link(
         await session.rollback()  # intussen definitief verwijderd
         raise errors.fail(404, "not_found", "Niet gevonden") from None
     [out] = await shares_out(session, [share])
+    if node.kind == "album":
+        out.rule_items_private = await albums_rule.private_count(session, node.id)
     return out
 
 

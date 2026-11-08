@@ -76,7 +76,7 @@ async def counts(settings, shas: set[str] | None = None) -> tuple[int, int]:
     losse SELECTs zien elk een eigen stand, ook in één sessie. Committe de rij van een upload
     (analysis.on_blob_added, na de commit van die upload) tussen de twee in, dan telde hij wel
     in het totaal maar niet bij open, en stopte de test de pomp terwijl die rij op wait stond
-    (CI run 87)."""
+    (CI run 87; Z6 vond hetzelfde in e2e/slim.sh, docs/fase-6/z6.md)."""
     only = [] if shas is None else [Analysis.blob_sha.in_(shas)]
     async with maker(settings)() as db:
         total, open_ = (

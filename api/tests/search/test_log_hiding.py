@@ -30,6 +30,14 @@ from app.main import QUERY_PATHS, SECRET_PARAMS, HideSecrets, _hide
         ("/api/v1/photos/memories?day=2026-11-03", "/api/v1/photos/memories?***"),
         ("/api/v1/people?hidden=1", "/api/v1/people?***"),
         ("/api/v1/people/abc/photos?cursor=xyz", "/api/v1/people/abc/photos?***"),
+        # Z6: de dag of het id van een regel van de herinneringen staat in het pad
+        ("/api/v1/photos/memories/hide/day/2024-07-01", "/api/v1/photos/memories/hide/***"),
+        (
+            "/api/v1/photos/memories/hide/person/4f1c0b2e-0000-4000-8000-000000000001",
+            "/api/v1/photos/memories/hide/***",
+        ),
+        ("/api/v1/photos/memories/hide/day/2024-07-01?x=1", "/api/v1/photos/memories/hide/***?***"),
+        ("/api/v1/photos/memories/hide", "/api/v1/photos/memories/hide"),
         # Z0b: zoeken op beeld (X3) en gezichten (X2)
         ("/api/v1/search?mode=image&q=geheimwoord7", "/api/v1/search?***"),
         ("/api/v1/search?q=geheimwoord7&mode=image&type=image", "/api/v1/search?***"),

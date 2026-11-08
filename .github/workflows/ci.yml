@@ -93,7 +93,8 @@ jobs:
     name: Zoek-perf (spike Z0 op SQLite 3.46.1)
     runs-on: ubuntu-24.04
     container: python:3.12-slim
-    # §4.4 (Z1) bouwt een boom van 100.000 en meet zes rollen over HTTP: ±20 min op 3 cores
+    # §4.4 (Z1) bouwt een boom van 100.000 en meet zes rollen over HTTP: ±20 min op 3 cores; de
+    # herinneringen (Z6) bouwen er nog een en meten één route: ±3 min
     timeout-minutes: 75
     env:
       UV_PYTHON_PREFERENCE: only-system
@@ -139,6 +140,12 @@ jobs:
           set -o pipefail
           ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
             tests/search/test_perf_100k.py | tee "$RUNNER_TEMP/zoek-perf/perf_100k.txt"
+      - name: §4.4 herinneringen binnen 50 ms (Z6; de poort is hard)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
+            tests/photos/test_memories_perf.py | tee "$RUNNER_TEMP/zoek-perf/herinneringen_log.txt"
       - name: S10 de vormen van Keuze 4a (tools/zoekbench/bench.py --los --vormen)
         if: ${{ !cancelled() }}
         run: |
@@ -170,6 +177,7 @@ jobs:
           grep -E "^[0-9.]+s call " "$d/zoek_perf.txt" 2> /dev/null || true
           sed -n '/^=== zoekbench ===/,$p' "$d/bench.txt" 2> /dev/null || echo "S10: de bench liep niet"
           if [ -f "$d/zoek_100k.txt" ]; then cat "$d/zoek_100k.txt"; else echo "§4.4: liep niet of brak af"; fi
+          if [ -f "$d/herinneringen.txt" ]; then cat "$d/herinneringen.txt"; else echo "§4.4 herinneringen: liep niet of brak af"; fi
           echo "S6: $(cat "$d/kaart.txt" 2> /dev/null || echo "liep niet")"
 
   acme:

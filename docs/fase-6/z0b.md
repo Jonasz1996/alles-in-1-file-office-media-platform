@@ -265,7 +265,8 @@ Wat de nacontrole veranderde, in `f74236d` (1–3) en in dit verslag (4–6):
    `PLATFORM_ANALYSE_ENABLED` is `available` False.
 4. **De rij van V2** zegt nu dat de API-test ook op de oude code groen is, en dat de vitest de
    test van de reparatie is.
-5. **Open 5 en 8.** `check_switch()` kent de huidige waarde niet (Open 5, voor Z6). Wat
+5. **Open 5 en 8.** `check_switch()` kent de huidige waarde niet (Open 5, voor Z6; **gedaan
+   door Z6** in `6f77e8a`: PATCH geeft `check_switch()` alleen de velden die echt veranderen). Wat
    `available` betekent, en wie de test van "niemand meldt zich aan" aanpast (Open 8, voor X2 en
    X3).
 6. **Open 11 had de verkeerde oorzaak.** `test_rondes_a_b_en_c` faalde in de eerste volle
@@ -328,7 +329,12 @@ Voor de volgende pakketten:
    transactie, met de test "PATCH `{faces: "aan"}` zonder X2 geeft 409 `faces_unavailable`".
    `check_switch()` kent de huidige waarde niet: `faces: "aan"` terwijl het al aan staat, geeft in
    de stand off ook 409. `PhotoSettingsPatch` is "alleen wat verandert"; Z6 stuurt dus alleen wat
-   verandert, of geeft `check_switch()` alleen de velden die echt veranderen (nacontrole). In
+   verandert, of geeft `check_switch()` alleen de velden die echt veranderen (nacontrole).
+   **De API is gedaan door Z6** (`6f77e8a`): GET en PATCH `/me/photo-settings` in
+   `routers/photo_prefs.py`; PATCH neemt alleen wat anders wordt, roept dan `check_switch()`
+   aan, schrijft en roept `switched()` aan; een weigering schrijft niets
+   (`tests/photos/test_photo_settings.py`, ook "al aan" in de stand off: geen 409). De web
+   (hieronder) is stap 2 van Z6. In
    het blok Foto's onder Account laadt Z6 `photos/faces/FacesSwitch.tsx` (gebied `photos_faces`)
    en `search/beeld/BeeldSwitch.tsx` (gebied `beeld`) lazy. Wie `PeoplePage` of `PersonPage`
    herschrijft, houdt de plek van X2 (`src/lazySlots.test.ts` eist hem in de bron).

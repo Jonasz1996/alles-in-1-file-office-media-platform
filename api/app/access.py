@@ -151,7 +151,9 @@ async def _via_albums(
     session: AsyncSession, user_id: uuid.UUID, node_ids: list[uuid.UUID]
 ) -> set[uuid.UUID]:
     """Welke van deze bestanden in een album staan dat (nog) met deze gebruiker of een groep
-    van hem gedeeld is. Alleen bestanden van de eigenaar van dat album. Eén query."""
+    van hem gedeeld is. Alleen bestanden van de eigenaar van dat album, en alleen items die
+    gedeeld worden (shared 1: een item uit de regel van een slim album zonder "ja" niet; fase 6,
+    Keuze 42). Eén query."""
     album, item = aliased(Node), aliased(Node)
     rows = await session.scalars(
         select(AlbumItem.node_id)
@@ -160,6 +162,7 @@ async def _via_albums(
         .join(item, item.id == AlbumItem.node_id)
         .where(
             AlbumItem.node_id.in_(node_ids),
+            AlbumItem.shared == 1,
             live_share(),
             for_user(user_id),
             album.kind == "album",

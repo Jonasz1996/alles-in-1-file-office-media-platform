@@ -54,6 +54,9 @@ export interface GridProps {
   /** Shift met een pijltje: de reeks van from tot to */
   onShiftMove(from: number, to: number, keep: boolean): void;
   control: MutableRefObject<GridControl | null>;
+  /** Een merkje bij een foto (fase 6, Z6: "alleen voor jou" in een album), of null. Een vaste
+   * functie (useCallback): de rijen tekenen anders opnieuw. */
+  note?(it: PhotoItem): string | null;
 }
 
 /** Zoveel thumbnails per frame (elk start een verzoek en een <img>). */
@@ -273,6 +276,7 @@ export function PhotoGrid(p: GridProps): JSX.Element {
         selection={p.selection}
         focus={focusHere}
         tabbable={focusHere >= 0 || (p.focus < 0 && info.first === 0)}
+        note={p.note}
       />,
     );
   };
@@ -334,6 +338,7 @@ const PhotoRow = memo(function PhotoRow(p: {
   selection: PhotoSelection;
   focus: number;
   tabbable: boolean;
+  note?(it: PhotoItem): string | null;
 }): JSX.Element {
   const cells: JSX.Element[] = [];
   for (let k = 0; k < p.count; k++) {
@@ -346,6 +351,7 @@ const PhotoRow = memo(function PhotoRow(p: {
         it={it}
         selected={!!it && p.selection.ids.has(it.id)}
         tab={p.focus === i || (p.focus < 0 && p.tabbable && k === 0)}
+        note={it && p.note ? p.note(it) : null}
       />,
     );
   }
@@ -371,11 +377,13 @@ const PhotoCell = memo(function PhotoCell({
   it,
   selected,
   tab,
+  note = null,
 }: {
   i: number;
   it: PhotoItem | undefined;
   selected: boolean;
   tab: boolean;
+  note?: string | null;
 }): JSX.Element {
   // Eenmaal getoond, blijft de thumbnail staan (ook als er daarna weer snel gescrold wordt).
   // Hij komt via de wachtrij: een paar per frame, zodat een heel scherm geen lange taak wordt
@@ -389,7 +397,7 @@ const PhotoCell = memo(function PhotoCell({
       data-index={i}
       tabIndex={tab ? 0 : -1}
       aria-selected={selected}
-      aria-label={it ? cellLabel(it) : t("common.loading")}
+      aria-label={it ? (note ? `${cellLabel(it)}, ${note}` : cellLabel(it)) : t("common.loading")}
       className="photo-cell"
     >
       {src ? (
@@ -402,6 +410,11 @@ const PhotoCell = memo(function PhotoCell({
       {it?.media === "video" && (
         <span className="photo-badge" aria-hidden="true">
           {it.duration !== null && fmt.duration(it.duration)}
+        </span>
+      )}
+      {note && (
+        <span className="photo-note" aria-hidden="true">
+          {note}
         </span>
       )}
       {it && <span className="photo-check" aria-hidden="true" />}
