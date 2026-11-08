@@ -768,6 +768,48 @@ async def test_lang_weg_na_een_mislukte_poging_is_failed(client, admin, office):
 
 
 @pytest.mark.anyio
+async def test_ds_terug_terwijl_de_tweede_poging_telt(client, admin, office, monkeypatch):
+    """De tweede poging (de eerste mislukte, DS herstart) ziet DS niet gezond, en DS komt terug
+    terwijl de taak zijn pogingen leest. Dan geen failed: zo opnieuw, zonder poging, en dan een
+    PDF. Eerst keek de taak na dat lezen alleen of DS nog even weg was; gezond is niet even weg,
+    dus was het failed, met DS gewoon terug."""
+    jonas, _ = admin
+    s = office.settings
+    state = office_state(app)
+    state.ever_ok, state.health = True, "down"
+    state.down_since = jobs.now() - timedelta(seconds=30)  # een herstart van DS
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    async with maker(s)() as session:  # de eerste poging mislukte al
+        await session.execute(update(Job).where(Job.id == job.id).values(attempts=1))
+        await session.commit()
+    attempts = convert._attempts
+
+    async def ds_returns(maker, sha):
+        found = await attempts(maker, sha)
+        state.health, state.down_since = "ok", None  # de gezondheidslus, tijdens die await
+        return found
+
+    monkeypatch.setattr(convert, "_attempts", ds_returns)
+    await jobs.run_pending(s)
+    monkeypatch.setattr(convert, "_attempts", attempts)
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    [again] = await office_jobs(s)
+    assert (again.id, again.status, again.attempts) == (job.id, "queued", 1)
+    assert again.run_after.replace(tzinfo=None) <= jobs.now().replace(tzinfo=None) + timedelta(
+        seconds=convert.BACK_SECONDS
+    )
+    assert office.log("convert") == []
+    await run_later(s, 60)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "ready"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+    [done] = await office_jobs(s)
+    assert (done.status, done.attempts) == ("done", 2)
+
+
+@pytest.mark.anyio
 async def test_ds_niet_gezond_dan_geen_poging(client, admin, office):
     jonas, _ = admin
     s = office.settings
@@ -795,9 +837,10 @@ async def released_while_ds_returns(
     DS terugkomt: de gezondheidslus zet gezond en de inhaalronde (in een andere worker) draait,
     op het punt at. "before": de taak zag DS niet gezond, maar heeft het slot van de overdracht
     nog niet; de inhaalronde draait helemaal (en leest nog pending). "during": de taak heeft dat
-    slot en keek al; DS komt nu terug, en de inhaalronde wacht op het slot. "after": het
-    teruggeven is gecommit, maar jobs.execute zette de taak nog niet op done (CI run 88). Geeft
-    de node en de id van de taak."""
+    slot en keek al; DS komt nu terug, en de inhaalronde wacht op het slot (zonder dat slot las
+    hij de inhoud nog pending: pas dan geeft de taak terug). "after": het teruggeven is
+    gecommit, maar jobs.execute zette de taak nog niet op done (CI run 88). Geeft de node en de
+    id van de taak."""
     s = office.settings
     office_state(app).ever_ok = True
     office_state(app).health = "down"
@@ -807,6 +850,7 @@ async def released_while_ds_returns(
     assert (await blob_of(s, node["id"])).pdf_state == "pending"
     fired: list[str] = []
     waiting: list[asyncio.Task] = []
+    read: list[bool] = []
 
     async def ds_returns() -> None:
         fired.append(at)
@@ -814,6 +858,7 @@ async def released_while_ds_returns(
         await convert.backfill(s, {"after": ""})  # de inhaalronde die on_healthy start
 
     attempts, release, set_job = convert._attempts, convert._release, jobs._set
+    enqueue_many = jobs.enqueue_many
 
     async def backfill_before_lock(maker, sha):
         found = await attempts(maker, sha)  # het laatste vóór het slot
@@ -826,7 +871,15 @@ async def released_while_ds_returns(
             fired.append(at)
             office_state(app).health = "ok"
             waiting.append(office.background(convert.backfill(s, {"after": ""})))
+            # Pas teruggeven als de inhaalronde op het slot wacht, of (zonder dat slot) zijn
+            # rijen al las. Zo hangt de volgorde niet af van de threads van aiosqlite
+            lock = convert._overdracht()
+            await until(lambda: bool(read or lock._waiters))
         await release(maker, sha, asked, r)
+
+    async def backfill_reads(*args, **kwargs):  # vlak na het lezen van de rijen
+        read.append(True)
+        return await enqueue_many(*args, **kwargs)
 
     async def backfill_before_done(settings, job_id, **values):
         if job_id == job.id and values.get("status") == "done" and not fired:
@@ -837,6 +890,7 @@ async def released_while_ds_returns(
         monkeypatch.setattr(convert, "_attempts", backfill_before_lock)
     elif at == "during":
         monkeypatch.setattr(convert, "_release", backfill_waits_for_lock)
+        monkeypatch.setattr(jobs, "enqueue_many", backfill_reads)
     else:
         monkeypatch.setattr(jobs, "_set", backfill_before_done)
     await jobs.run_pending(s)  # de taak: DS is weg
@@ -845,6 +899,7 @@ async def released_while_ds_returns(
     monkeypatch.setattr(convert, "_attempts", attempts)
     monkeypatch.setattr(convert, "_release", release)
     monkeypatch.setattr(jobs, "_set", set_job)
+    monkeypatch.setattr(jobs, "enqueue_many", enqueue_many)
     assert fired == [at]
     assert office.log("convert") == []  # DS was weg toen de taak keek
     return node, job.id
@@ -1815,6 +1870,59 @@ async def test_weer_gezond_begint_de_inhaalronde_vooraan(client, admin, office):
     assert [j.key for j in await office_jobs(s)] == [convert.job_key(one), convert.job_key(two)]
     async with maker(s)() as session:
         assert (await session.get(Blob, two)).pdf_state == "pending"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("queue", ["kort", "lang"])
+async def test_een_tweede_worker_pakt_het_stuk_vooraan_al_op(
+    client, admin, office, monkeypatch, queue
+):
+    """Weer gezond terwijl een stuk van de inhaalronde loopt, met zijn plek al voorbij inhoud
+    die in de storing leeg werd. start_backfill zet een stuk vooraan, en de tweede worker
+    (job_workers 2) pakt dat op voordat het lopende stuk zijn opvolger zet; dan houdt niets die
+    opvolger tegen. Het stuk vooraan raakt de ronde toch niet kwijt: de opvolger die klaarstaat
+    krijgt de vroegste plek. kort: het stuk vooraan leest zelf; lang: er staan nog BATCH
+    conversies klaar, dus dezelfde plek later. Eerst hield die opvolger het stuk vooraan tegen,
+    en bleef inhoud vóór de plek van het lopende stuk leeg zonder taak tot DS weer eens
+    terugkwam."""
+    monkeypatch.setattr(convert, "BATCH", 2)
+    s = office.settings
+    shas = []
+    async with maker(s)() as session:
+        owner = await session.scalar(select(User))
+        for n in range(7):
+            node = await create_file(
+                session, owner, name=f"g{n}.docx", data=b"leeg %d" % n, mime=DOCX
+            )
+            (await session.get(Blob, node.blob_id)).preview = "ready"
+            shas.append(node.blob_id)
+        await session.commit()
+    shas.sort()
+    async with maker(s)() as session:  # het stuk dat loopt, met zijn plek na de derde
+        await jobs.enqueue(session, convert.BACKFILL, {"after": shas[2]}, key=convert.BACKFILL_KEY)
+        await session.commit()
+    running = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+    assert running is not None and running.payload == {"after": shas[2]}
+    assert await convert.start_backfill(s)  # on_healthy
+    first = await jobs.claim(s, lane=jobs.DEFAULT_LANE)  # de tweede worker
+    assert first is not None and first.payload == {"after": ""}
+    await jobs.execute(s, running)  # leest de vierde en vijfde, en zet zijn opvolger
+    if queue == "kort":
+        await convert_queued(s)
+    await jobs.execute(s, first)
+    for _ in range(10):  # de rest van de ronde
+        await convert_queued(s)
+        async with maker(s)() as session:
+            left = await session.scalar(
+                select(func.count()).where(Job.type == convert.BACKFILL, Job.status == "queued")
+            )
+        if not left:
+            break
+        await step(s)
+    have = {j.key for j in await office_jobs(s)}
+    assert [n for n, sha in enumerate(shas) if convert.job_key(sha) not in have] == []
+    async with maker(s)() as session:
+        assert {(await session.get(Blob, sha)).pdf_state for sha in shas} == {"pending"}
 
 
 @pytest.mark.anyio

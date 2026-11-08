@@ -29,8 +29,9 @@ deze volgorde:
    gezond, office weer aan), dan niet terug maar over BACK_SECONDS opnieuw, zonder poging
    (_give_back). Mislukte er al een poging (DS ging tijdens een conversie onderuit en is nog
    niet terug), dan wacht de tweede poging zolang DS start of korter dan 10 minuten weg is
-   (een herstart of update van DS), elke 30 s zonder poging; daarna telt dit wel. Zo krijgt
-   een bestand dat DS laat vastlopen hooguit twee kansen, en kost een herstart van DS geen
+   (een herstart of update van DS), elke 30 s zonder poging; daarna telt dit wel. Is DS na
+   het lezen van de pogingen weer gezond, dan over BACK_SECONDS opnieuw. Zo krijgt een
+   bestand dat DS laat vastlopen hooguit twee kansen, en kost een herstart van DS geen
    document;
 5. een sessie die opent of opslaat (sessions.busy): de taak over 5 s opnieuw in de rij. Loopt
    er al een conversie (één slot in dit proces): over 60 s, maar wie het slot vrijgeeft, zet
@@ -71,7 +72,9 @@ ask, unsafe of none. Elk stuk krijgt run_after +60 s, en het volgende stuk ook. 
 200 of meer conversies klaar, dan komt er geen nieuw stuk bij: dezelfde plek over 60 s opnieuw.
 Zo staat nooit de hele bibliotheek in de rij, en gaan nieuwe uploads voor (ook bij het slot).
 Met DS niet gezond stopt de ronde; on_healthy start hem opnieuw, vanaf het begin: een stuk dat
-nog klaarstaat, begint weer vooraan (start_backfill).
+nog klaarstaat, begint weer vooraan (start_backfill). Zet een stuk zijn opvolger terwijl er al
+een stuk klaarstaat, dan houdt dat stuk de vroegste plek van de twee (_chain): zo raakt een
+ronde die vooraan begon nooit kwijt, ook niet naast een stuk dat nog liep.
 
 Mislukte opnieuw (retry_failed, de knop op /beheer): elke failed meteen een eigen taak met r (8
 hex-tekens), en pending. r komt in de key (keys.convert_key): DS bewaart -3 onder de key
@@ -99,7 +102,7 @@ import shutil
 import tempfile
 import time
 import weakref
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -127,7 +130,7 @@ MAX_ATTEMPTS = 2
 BATCH = 200
 BACKFILL_DELAY = 60.0  # zoals previews.RERENDER_DELAY
 WAIT_SECONDS = 5.0  # een sessie die opent of opslaat
-BACK_SECONDS = 5.0  # bij het teruggeven toch weer gezond (of weer aan): zo opnieuw
+BACK_SECONDS = 5.0  # bij het teruggeven of na de pogingen toch weer gezond (of aan): opnieuw
 # Het slot is bezet: wie het vrijgeeft, zet de volgende meteen klaar (_next); dit is de terugval
 SLOT_SECONDS = 60.0
 # Zo lang (s) gaat een conversie op verzoek voor bij het slot (langer dan de viewer kijkt)
@@ -350,21 +353,38 @@ async def _start_backfill_logged() -> None:
 
 
 async def start_backfill(settings: Settings) -> bool:
-    """Zet de inhaalronde klaar, vanaf het begin. False zonder office, of als er al een stuk
-    klaarstaat: dat begint dan weer vooraan. Loopt er net een stuk, dan komt er een stuk
-    vooraan bij (jobs.chain), en dat houdt de opvolger van het lopende stuk tegen. Zo neemt de
-    ronde na "weer gezond" ook wat in een korte storing leeg werd vóór de plek van de keten."""
+    """Zet de inhaalronde klaar, vanaf het begin (_chain met after leeg). False zonder office,
+    of als er al een stuk klaarstaat: dat begint dan weer vooraan. Loopt er net een stuk, dan
+    komt er een stuk vooraan bij. Zo neemt de ronde na "weer gezond" ook wat in een korte
+    storing leeg werd vóór de plek van de keten."""
     if engine.current() is None:
         return False
     async with _maker(settings)() as session:
-        await session.execute(
-            update(Job)
-            .where(Job.type == BACKFILL, Job.key == BACKFILL_KEY, Job.status == "queued")
-            .values(payload={"after": ""})
-            .execution_options(synchronize_session=False)
-        )
-        added = await jobs.chain(session, BACKFILL, {"after": ""}, BACKFILL_KEY)
+        added = await _chain(session, "")
         await session.commit()
+    return added
+
+
+async def _chain(session: AsyncSession, after: str, run_after: datetime | None = None) -> bool:
+    """Het volgende stuk van de inhaalronde, vanaf after, in de transactie van de aanroeper.
+    Staat er al een stuk klaar, dan komt er geen tweede bij, maar houdt dat stuk de vroegste
+    plek van de twee. Twee stukken naast elkaar (een tweede worker pakte het stuk van
+    start_backfill al op terwijl een ouder stuk liep) worden zo weer één keten, vanaf de
+    vroegste plek. Met alleen jobs.chain hield de opvolger van het ene stuk die van het andere
+    tegen, en sloeg de ronde over wat daartussen lag. Eerst de UPDATE: zo is het één
+    schrijftransactie. True als er een nieuw stuk bij kwam."""
+    await session.execute(
+        update(Job)
+        .where(
+            Job.type == BACKFILL,
+            Job.key == BACKFILL_KEY,
+            Job.status == "queued",
+            Job.payload["after"].as_string() > after,
+        )
+        .values(payload={"after": after})
+        .execution_options(synchronize_session=False)
+    )
+    added = await jobs.chain(session, BACKFILL, {"after": after}, BACKFILL_KEY, run_after=run_after)
     return added is not None
 
 
@@ -578,8 +598,11 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
         return
     if not _healthy():
         if await _attempts(maker, sha) > 1:
-            if _restarting():  # de tweede kans pas als DS terug is
-                await _postpone(maker, sha, OUTAGE_WAIT)
+            # Na die await opnieuw kijken: kwam DS intussen terug, dan is _restarting() niet
+            # meer waar, maar is dat geen reden om op te geven. Dan zo opnieuw
+            back = _healthy()
+            if back or _restarting():  # de tweede kans pas als DS terug is
+                await _postpone(maker, sha, BACK_SECONDS if back else OUTAGE_WAIT)
                 return
             raise jobs.JobError(
                 f"{_failed_message(NO_ANSWER)}; de document server is niet gezond na een "
@@ -851,7 +874,7 @@ async def _backfill(settings: Settings, after: str) -> None:
             select(func.count()).where(Job.type == TYPE, Job.status == "queued")
         )
         if (queued or 0) >= BATCH:  # de rij is nog lang genoeg: dit stuk straks opnieuw
-            await jobs.chain(session, BACKFILL, {"after": after}, BACKFILL_KEY, run_after=at)
+            await _chain(session, after, at)
             await session.commit()
             return
         is_content = select(Node.id).where(Node.blob_id == Blob.sha256).exists()
@@ -903,7 +926,7 @@ async def _backfill(settings: Settings, after: str) -> None:
                 .execution_options(synchronize_session=False)
             )
         if len(rows) == BATCH:
-            await jobs.chain(session, BACKFILL, {"after": rows[-1][0]}, BACKFILL_KEY, run_after=at)
+            await _chain(session, rows[-1][0], at)
         await session.commit()
 
 
