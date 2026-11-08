@@ -27,9 +27,14 @@ describe("de plekken van Z6", () => {
     expect(settingsBlock).toMatch(/<BeeldSwitch \/>/);
   });
 
-  it("/fotos: de filters en herinneringen lazy, en de knop Zoeken op beeld naar /zoeken?mode=image", () => {
-    expect(photosPage).toContain('lazyWithAreas<FilterBarProps>(() => import("./people/FilterBar"), ["photos_people"])');
-    expect(photosPage).toContain('lazyWithAreas(() => import("./Memories"), ["photos_people"])');
+  it("/fotos: de filters en herinneringen lazy, met de maanden geladen, en de knop Zoeken op beeld naar /zoeken?mode=image", () => {
+    // Elk een eigen chunk met het gebied photos_people, gevraagd tegelijk met de maanden en getoond in
+    // dezelfde commit als de tijdlijn (review golf 2, web F); alleen hun typen komen statisch mee
+    expect(photosPage).toContain('const areas = loadAreas(["photos_people"]);');
+    expect(photosPage).toContain('Promise.all([import("./people/FilterBar"), areas])');
+    expect(photosPage).toContain('Promise.all([import("./Memories"), areas])');
+    expect(photosPage).not.toMatch(/^import (?!type )[^;]*from "\.\/(people\/FilterBar|Memories)";/m);
+    expect(photosPage).toContain("await topWait.current;");
     expect(photosPage).toContain('to="/zoeken?mode=image"');
   });
 

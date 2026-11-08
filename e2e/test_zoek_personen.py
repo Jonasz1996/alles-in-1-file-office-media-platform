@@ -66,6 +66,25 @@ def twee_frames(page: Page) -> None:
     )
 
 
+# Elke layout shift sinds het laden (zonder invoer vlak ervoor), zoals CLS hem telt
+SCHUIVEN = """
+window.__schuiven = [];
+new PerformanceObserver((l) => l.getEntries().forEach((e) => {
+  if (!e.hadRecentInput) window.__schuiven.push(e.value);
+})).observe({ type: "layout-shift", buffered: true });
+"""
+# Boven de tijdlijn komen de filters en de herinneringen in dezelfde commit als de tijdlijn; voor
+# golf 2 was /fotos 0 (review golf 2, web F: daarna 0,06 en met herinneringen 0,17)
+MAX_SCHUIVEN = 0.01
+
+
+def schuiven(page: Page) -> float:
+    """De som van de layout shifts van deze pagina tot nu."""
+    twee_frames(page)
+    page.wait_for_timeout(300)  # de observer meldt pas na het frame
+    return page.evaluate("() => window.__schuiven.reduce((a, b) => a + b, 0)")
+
+
 def is_zoeken(r) -> bool:
     return "/api/v1/search?" in r.url and r.request.method == "GET"
 
@@ -108,6 +127,7 @@ def test_persoon_toevoegen_met_kader_zoeken_en_filteren(server, fien, context_as
     assert [i["name"] for i in items] == [f"foto-0000{i}.webp" for i in range(PHOTOS)]
     eerste = items[0]
     page = context_as(fien).new_page()
+    page.add_init_script(SCHUIVEN)
     page.goto("/fotos")
     expect(cell(page, 0)).to_have_attribute("aria-label", re.compile(r"^foto-00000\.webp"))
 
@@ -257,10 +277,17 @@ def test_persoon_toevoegen_met_kader_zoeken_en_filteren(server, fien, context_as
     )
 
     # --- het filter op /fotos: de persoon, een soort zonder treffers, wissen ---
+    personen_vragen: list[str] = []
+    page.on(
+        "request", lambda r: personen_vragen.append(r.url) if "/api/v1/people" in r.url else None
+    )
     page.goto("/fotos")
     tijdlijn = page.get_by_role("grid", name="Tijdlijn", exact=True)
     expect(tijdlijn.get_by_role("gridcell")).to_have_count(PHOTOS)
     filter_persoon = page.get_by_role("combobox", name="Persoon", exact=True)
+    expect(filter_persoon).to_be_visible()
+    # De balk Filters kwam met de tijdlijn: die schoof niet omlaag (review golf 2, web F)
+    assert schuiven(page) <= MAX_SCHUIVEN, page.evaluate("() => window.__schuiven")
     tab_to(page, filter_persoon, limit=60)
     page.keyboard.type("oma", delay=20)
     expect(page.get_by_role("option", name="Oma Ria", exact=True)).to_be_visible()
@@ -288,6 +315,8 @@ def test_persoon_toevoegen_met_kader_zoeken_en_filteren(server, fien, context_as
     expect(tijdlijn.get_by_role("gridcell")).to_have_count(PHOTOS)
     expect(filter_persoon).to_be_focused()
     assert not urlsplit(page.url).query
+    # Alleen de getoonde personen: de verborgen pas als een gekozen persoon geen naam heeft (D)
+    assert [urlsplit(u).query for u in personen_vragen] == ["hidden=0"], personen_vragen
 
     # --- een periode: een datum typen geeft één vraag, bij het verlaten van het veld (review
     # golf 2, web B; eerder één per cijfer van het jaar) ---
@@ -339,10 +368,18 @@ def test_herinneringen_met_een_vaste_dag(server, fien, context_as):
 
     context.route("**/api/v1/photos/memories*", met_dag)
     page = context.new_page()
+    page.add_init_script(SCHUIVEN)
+    vragen: list[str] = []
+    page.on("request", lambda r: vragen.append(r.url) if "/photos/memories" in r.url else None)
     page.goto("/fotos")
     herinneringen = page.get_by_role("region", name="Herinneringen", exact=True)
     kop = herinneringen.get_by_role("heading", name="Vandaag, 1 jaar geleden", level=3)
     expect(kop).to_be_visible()
+    expect(
+        page.get_by_role("grid", name="Tijdlijn", exact=True).get_by_role("gridcell").first
+    ).to_be_visible()
+    # Filters en herinneringen kwamen met de tijdlijn: die schoof niet omlaag (review golf 2, F)
+    assert schuiven(page) <= MAX_SCHUIVEN, page.evaluate("() => window.__schuiven")
     foto = herinneringen.get_by_role("button", name=re.compile(r"^foto-00000\.webp, "))
     # Het blok staat boven de tijdlijn en maakt die niet trager (e2e/perf/scroll.py): een jaar
     # buiten beeld kost niets, en een foto heeft een vaste maat zonder overflow: hidden (dat
@@ -352,6 +389,18 @@ def test_herinneringen_met_een_vaste_dag(server, fien, context_as):
         " contain: getComputedStyle(b).contain, overflow: getComputedStyle(b).overflow })"
     )
     assert stijl == {"jaar": "auto", "contain": "strict", "overflow": "visible"}, stijl
+
+    # Een filter verbergt het blok; zonder filter staat het er weer, zonder nieuwe vraag (review
+    # golf 2, D: eerder vroeg het blok na Filters wissen alles opnieuw)
+    soort = page.get_by_role("combobox", name="Soort", exact=True)
+    tab_to(page, soort, limit=60)
+    page.keyboard.press("ArrowDown")
+    expect(soort).to_have_value("image")
+    expect(herinneringen).to_have_count(0)
+    page.keyboard.press("ArrowUp")
+    expect(soort).to_have_value("")
+    expect(kop).to_be_visible()
+    assert len(vragen) == 1, vragen
     tab_to(page, foto, limit=60)
     page.keyboard.press("Enter")
     viewer = page.get_by_role("dialog", name="foto-00000.webp", exact=True)

@@ -4,12 +4,13 @@
 //
 // Fase 6 (Z6): de filters (personen, soort, periode; Keuze 43) in een eigen chunk, "Vandaag, N jaar
 // geleden" (Keuze 41) zonder filters, en de knop "Zoeken op beeld" (Keuze 81). De filters blijven
-// in de state van de pagina, nooit in de adresbalk.
+// in de state van de pagina, nooit in de adresbalk. Filters en herinneringen komen tegelijk met de
+// maanden en verschijnen in dezelfde commit als de tijdlijn (loadTop): niets schuift omlaag.
 
-import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ComponentType, type JSX, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { crossApi } from "../crossApi";
 import { useReloadOn } from "../events";
-import { errorText, lazyWithAreas, t, useAreas } from "../i18n";
+import { errorText, loadAreas, t, useAreas } from "../i18n";
 import { Link } from "../links";
 import { markReady } from "../perf";
 import { type RouteProps, useRestoreScroll } from "../router";
@@ -26,9 +27,11 @@ import { type MonthCount, monthLabel } from "./api";
 import { downloadZip, SelectionBar, usePhotoBrowser, useStoreVersion } from "./browse";
 import { GAP, type GridControl, MIN_CELL, PhotoGrid } from "./Grid";
 import { reorders, useThumbPatches } from "./live";
+import type { MemoriesProps } from "./Memories";
+import { memories } from "./people/api";
 import type { FilterBarProps } from "./people/FilterBar";
 import { filteredApi, hasFilters, NO_FILTERS, type PhotoFilters, sameFilters } from "./people/filters";
-import { PEOPLE_CHANGED } from "./people/types";
+import { type MemoryYear, PEOPLE_CHANGED } from "./people/types";
 import type { Placed } from "./range";
 import { Scrubber } from "./Scrubber";
 import { SectionStore } from "./store";
@@ -39,8 +42,36 @@ const HEADER_H = 48;
 /** Veel wijzigingen vlak na elkaar (een import) geven hooguit zo vaak de maanden opnieuw. */
 const RELOAD_MS = 1000;
 
-const FilterBar = lazyWithAreas<FilterBarProps>(() => import("./people/FilterBar"), ["photos_people"]);
-const Memories = lazyWithAreas(() => import("./Memories"), ["photos_people"]);
+/** Zo lang wacht de tijdlijn hooguit op wat erboven komt; daarna eerst de tijdlijn. */
+const TOP_WAIT_MS = 1500;
+
+/** Wat boven de tijdlijn staat (fase 6, van Z6): de balk Filters en de herinneringen, elk een
+ * eigen chunk met het gebied photos_people, en het antwoord van GET /photos/memories. */
+interface Top {
+  Bar: ComponentType<FilterBarProps> | null;
+  Memories: ComponentType<MemoriesProps> | null;
+  years: MemoryYear[] | null;
+}
+
+/** Begint tegelijk met de maanden. Lukt een chunk niet, dan staat dat deel er niet (de tijdlijn
+ * werkt gewoon); lukt het antwoord niet, dan geen herinneringen. */
+function loadTop(): Promise<Top> {
+  const areas = loadAreas(["photos_people"]);
+  return Promise.all([
+    Promise.all([import("./people/FilterBar"), areas]).then(
+      ([m]) => m.default,
+      () => null,
+    ),
+    Promise.all([import("./Memories"), areas]).then(
+      ([m]) => m.default,
+      () => null,
+    ),
+    memories().then(
+      (r) => r.years,
+      () => [],
+    ),
+  ]).then(([Bar, Memories, years]) => ({ Bar, Memories, years }));
+}
 
 export default function PhotosPage(_: RouteProps): JSX.Element {
   useScope("photos");
@@ -59,6 +90,10 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
   // De teksten van Z6 (de knop Zoeken op beeld, de lege staat met filters); FilterBar laadt ze ook
   const peopleArea = useAreas(["photos_people"]);
   const monthsRef = useRef<MonthCount[]>([]);
+  /** De filters en de herinneringen; de tijdlijn verschijnt in dezelfde commit (topWait), anders
+   * schuift hij omlaag als ze later binnenkomen (CLS, review golf 2, web F) */
+  const [top, setTop] = useState<Top | null>(null);
+  const topWait = useRef<Promise<unknown> | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const control = useRef<GridControl | null>(null);
   const { columns, cellWidth } = useColumns(wrap, MIN_CELL, GAP);
@@ -78,6 +113,7 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
     const f = filtersRef.current;
     try {
       const got = (await filteredApi.months(f)).months;
+      await topWait.current; // alleen de eerste keer echt wachten
       if (f !== filtersRef.current) return; // intussen andere filters: dat antwoord komt nog
       const restart = fresh.current === f;
       if (restart) fresh.current = null;
@@ -95,6 +131,17 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
       setError(errorText(e));
     }
   }, [store]);
+
+  useEffect(() => {
+    let live = true;
+    const loaded = loadTop().then((t) => {
+      if (live) setTop(t);
+    });
+    topWait.current = Promise.race([loaded, new Promise((ok) => setTimeout(ok, TOP_WAIT_MS))]);
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     store.onMismatch = () => void loadMonths();
@@ -191,6 +238,8 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
 
   const empty = months?.length === 0;
   const filtered = hasFilters(filters);
+  const Bar = top?.Bar;
+  const MemoriesView = top?.Memories;
   const shownFiltered = hasFilters(monthsFor);
   return (
     <main ref={root} className="wide photos-page">
@@ -210,19 +259,21 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
       >
         {t("photos.title")}
       </PageTitle>
-      {(filtered || shownFiltered || (months && months.length > 0)) && (
+      {/* Het wachten staat boven wat erna komt en gaat dan weg: wat op zijn plek komt, is nieuw en
+          verschuift niets (een raster dat al stond en omlaag ging, telde wel als layout shift) */}
+      {months === null && !error && <Skeleton />}
+      {Bar && (filtered || shownFiltered || (months && months.length > 0)) && (
         <LazySlot>
-          <FilterBar filters={filters} onChange={changeFilters} />
+          <Bar filters={filters} onChange={changeFilters} />
         </LazySlot>
       )}
-      {!filtered && months && months.length > 0 && (
+      {MemoriesView && months && months.length > 0 && (
         <LazySlot>
-          <Memories />
+          <MemoriesView initial={top?.years ?? null} hidden={filtered} />
         </LazySlot>
       )}
       {error && <p role="alert">{error}</p>}
-      <div ref={wrap} className="photos-wrap">
-        {months === null && !error && <Skeleton />}
+      <div ref={wrap} className={months === null ? "photos-wrap photos-wrap-wait" : "photos-wrap"}>
         {empty && !shownFiltered && (
           <EmptyState icon="photo" title={t("photos.empty.title")}>
             <p>{t("photos.empty.text")}</p>

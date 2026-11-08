@@ -7,6 +7,9 @@
 // van dat jaar); "Deze dag verbergen" (met Ongedaan maken in de melding) zet de focus daarna op de
 // kop van de pagina.
 //
+// /fotos vraagt het antwoord al tegelijk met de maanden (initial) en toont het blok in dezelfde
+// commit als de tijdlijn: zo schuift die niet omlaag (review golf 2, web F).
+//
 // Het blok staat boven de tijdlijn en mag die niet trager maken (de scroll-meting van e2e/perf):
 // de thumbnails komen via de wachtrij van het raster (een paar per frame, niets tijdens snel
 // scrollen), en een jaar buiten beeld kost niets (content-visibility in people.css).
@@ -23,9 +26,16 @@ import { hideMemories, memories, unhideMemories } from "./people/api";
 import type { MemoryYear } from "./people/types";
 import "./people/people.css";
 
-export default function Memories(): JSX.Element | null {
+export interface MemoriesProps {
+  /** Het antwoord dat /fotos al had (tegelijk met de maanden gevraagd); null: zelf vragen */
+  initial?: MemoryYear[] | null;
+  /** Met filters aan: niet tonen, maar wel blijven (geen nieuwe vraag als de filters weg zijn) */
+  hidden?: boolean;
+}
+
+export default function Memories({ initial = null, hidden = false }: MemoriesProps): JSX.Element | null {
   const id = useId();
-  const [years, setYears] = useState<MemoryYear[]>([]);
+  const [years, setYears] = useState<MemoryYear[]>(initial ?? []);
   const [open, setOpen] = useState<{ year: number; index: number } | null>(null);
 
   const load = useCallback(async () => {
@@ -36,9 +46,10 @@ export default function Memories(): JSX.Element | null {
     }
   }, []);
 
+  const asked = initial !== null;
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!asked) void load();
+  }, [asked, load]);
 
   async function hide(y: MemoryYear) {
     try {
@@ -58,7 +69,7 @@ export default function Memories(): JSX.Element | null {
     }
   }
 
-  if (years.length === 0) return null;
+  if (years.length === 0 || hidden) return null;
   const viewing = open ? years[open.year] : undefined;
   return (
     <section className="memories" aria-labelledby={`${id}-kop`}>
