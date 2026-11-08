@@ -34,6 +34,8 @@ export default function PeopleRow({ item, detail, kind }: InfoRowProps): JSX.Ele
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [adding, setAdding] = useState(false);
   const addButton = useRef<HTMLButtonElement>(null);
+  /** Het formulier ging dicht: de focus terug op Persoon toevoegen zodra die knop er weer is */
+  const refocus = useRef(false);
   const fileId = item.id;
 
   const load = useCallback(async () => {
@@ -57,6 +59,15 @@ export default function PeopleRow({ item, detail, kind }: InfoRowProps): JSX.Ele
     if (e.type === PEOPLE_CHANGED) void load();
   });
 
+  // Na de commit: dan staat de knop weer in de pagina. Een requestAnimationFrame na setAdding
+  // kon na Toevoegen (een update buiten een gebeurtenis, na await) vóór die commit komen; dan
+  // was de knop er nog niet en viel de focus op de body.
+  useEffect(() => {
+    if (adding || !refocus.current) return;
+    refocus.current = false;
+    addButton.current?.focus();
+  }, [adding]);
+
   if (!loaded?.owner) return null;
 
   async function remove(p: FilePerson) {
@@ -71,9 +82,8 @@ export default function PeopleRow({ item, detail, kind }: InfoRowProps): JSX.Ele
   }
 
   function close() {
+    refocus.current = true;
     setAdding(false);
-    // Na het renderen bestaat de knop weer
-    requestAnimationFrame(() => addButton.current?.focus());
   }
 
   const headingId = `personen-${fileId}`;
