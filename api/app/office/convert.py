@@ -17,8 +17,8 @@ Haken van O0:
 - on_healthy(): in health.py bij "weer gezond" (ook de eerste keer na de start): de
   inhaalronde.
 
-De taak office.pdf (payload {sha, n, ask?, r?, b?}, max_attempts 2, on_dead -> failed), in
-deze volgorde:
+De taak office.pdf (payload {sha, n, ask?, r?, b?}, max_attempts 2, on_dead -> failed, maar
+niet als er intussen een nieuwe taak klaarstaat), in deze volgorde:
 1. de blob is weg: klaar;
 2. de PDF er al, met de juiste pdf_version: alleen de thumbnails opnieuw (zonder DS);
 3. office uit (niet ingesteld, of uitgezet op /beheer): pdf_state terug (leeg, of ask), zoals
@@ -70,14 +70,19 @@ in één commit (_give_up).
 De inhaalronde (payload {after}): in stukken van 200 blobs op volgorde van sha, alleen inhoud
 van een bestand (geen eerdere versie) waarvan de preview klaar is. Hij neemt NULL (groter dan
 office_auto_convert_bytes: ask), en bij een hogere PDF_VERSION ook ready en failed; nooit
-ask, unsafe of none. Elk stuk krijgt run_after +60 s, en het volgende stuk ook. Staan er nog
-200 of meer conversies klaar, dan komt er geen nieuw stuk bij: dezelfde plek over 60 s opnieuw.
-Zo staat nooit de hele bibliotheek in de rij, en gaan nieuwe uploads voor (ook bij het slot).
-Met DS niet gezond stopt de ronde; on_healthy start hem opnieuw, vanaf het begin: een stuk dat
-nog klaarstaat, begint weer vooraan (start_backfill). Zet een stuk zijn opvolger terwijl er al
-een stuk klaarstaat, dan houdt dat stuk de vroegste plek van de twee (_chain): zo raakt een
-ronde die vooraan begon nooit kwijt, ook niet naast een stuk dat nog liep. start_backfill en
-elk stuk doen dat onder _overdracht, dus nooit tegelijk (ook niet met PostgreSQL).
+ask, unsafe of none. Ook pending zonder taak die klaarstaat of loopt (een wees, _orphans): was
+zijn laatste taak failed (een crash of een fout tussen de failed van jobs.execute en on_dead),
+dan failed, zoals on_dead; anders als NULL. Elk stuk krijgt run_after +60 s, en het volgende
+stuk ook. Staan er nog 200 of meer conversies klaar, dan komt er geen nieuw stuk bij: dezelfde
+plek over 60 s opnieuw. Zo staat nooit de hele bibliotheek in de rij, en gaan nieuwe uploads
+voor (ook bij het slot). Met DS niet gezond stopt de ronde; on_healthy start hem opnieuw, vanaf
+het begin: een stuk dat nog klaarstaat, begint weer vooraan (start_backfill). Zet een stuk zijn
+opvolger terwijl er al een stuk klaarstaat, dan houdt dat stuk de vroegste plek van de twee
+(_chain): zo raakt een ronde die vooraan begon nooit kwijt, ook niet naast een stuk dat nog
+liep. start_backfill en elk stuk doen dat onder _overdracht, dus nooit tegelijk (ook niet met
+PostgreSQL). Het lezen op volgorde van sha (_scan, zonder bruikbare index) gaat zonder dat slot,
+met ook pending erbij; onder het slot leest het stuk alleen die inhouden opnieuw, op sha, en
+beslist het daar. Zo wacht een verzoek niet op dat lezen.
 
 Mislukte opnieuw (retry_failed, de knop op /beheer): elke failed meteen een eigen taak met r (8
 hex-tekens), en pending. r komt in de key (keys.convert_key): DS bewaart -3 onder de key
@@ -93,8 +98,10 @@ leesrecht. Per gebruiker hooguit 10 per 10 minuten (429 rate_limited); hooguit 1
 zip-formaten en office_ole_max_bytes voor doc, xls, ppt en rtf (413 office_too_large). De
 taak krijgt een run_after in het verleden, en staat dus vooraan; moet hij toch op het slot
 wachten, dan is hij de eerste die het daarna krijgt. Ook voor een eerdere versie. Na de
-invoercontrole kijkt het verzoek opnieuw naar de inhoud (intussen failed, none of unsafe: de
-fout), en dan, onder _overdracht zoals een stuk van de inhaalronde, of er al een taak is.
+invoercontrole kijkt het verzoek, onder _overdracht zoals een stuk van de inhaalronde, opnieuw
+naar de inhoud (intussen failed, none of unsafe: de fout). Dan zet het hem op pending, alleen
+als hij dat nog niet is geworden (_take), en pas in die schrijftransactie kijkt het of er al
+een taak is.
 """
 
 import asyncio
@@ -113,7 +120,7 @@ from typing import Any, Literal
 
 import anyio
 import anyio.to_thread
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, case, func, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import errors, jobs, previews
@@ -454,17 +461,19 @@ async def _give_back(
     Kan het nu toch (office aan, DS gezond), dan niet teruggeven: over BACK_SECONDS opnieuw,
     zonder poging, en pending blijft. Anders _release.
 
-    Waarom dit genoeg is: een stuk van de inhaalronde kijkt ook onder _overdracht, en leest
-    alleen met DS gezond en office aan; health.py zet gezond vóór on_healthy de ronde start, en
-    /beheer zet aan vóór start_backfill. Las een stuk de inhoud nog pending en sloeg het hem
-    over, dan had het _overdracht vóór deze taak, en ziet de taak nu ook gezond en aan (of DS
-    ging daarna weer weg, of office weer uit). Geeft de taak terug, dan was onder _overdracht DS
-    niet gezond of office uit; dat laatste kan ook met DS gezond. Het eerste stuk dat de inhoud
-    daarna leest, leest na deze commit, ziet hem leeg en de taak klaar, en zet er met zijn eigen
-    regels een taak bij. Dat stuk komt bij de volgende "weer gezond" (on_healthy) of bij "weer
-    aan" op /beheer (start_backfill). De taak zelf zet nooit een nieuwe taak klaar, dus komen er
-    ook geen twee. Daarom kijkt de taak pas onder _overdracht: met een blik ervoor kon een stuk
-    tussen die blik en het slot de inhoud nog pending lezen, waarna de taak toch teruggaf."""
+    Waarom dit genoeg is: een stuk van de inhaalronde beslist ook onder _overdracht, na de
+    inhoud daar opnieuw te lezen (_scan las zonder slot, met pending erbij), en alleen met DS
+    gezond en office aan; health.py zet gezond vóór on_healthy de ronde start, en /beheer zet
+    aan vóór start_backfill. Las een stuk de inhoud nog pending en sloeg het hem over, dan had
+    het _overdracht vóór deze taak, en ziet de taak nu ook gezond en aan (of DS ging daarna
+    weer weg, of office weer uit). Geeft de taak terug, dan was onder _overdracht DS niet gezond
+    of office uit; dat laatste kan ook met DS gezond. Het eerste stuk dat de inhoud daarna onder
+    het slot leest, leest na deze commit, ziet hem leeg en de taak klaar, en zet er met zijn
+    eigen regels een taak bij. Dat stuk komt bij de volgende "weer gezond" (on_healthy) of bij
+    "weer aan" op /beheer (start_backfill). De taak zelf zet nooit een nieuwe taak klaar, dus
+    komen er ook geen twee. Daarom kijkt de taak pas onder _overdracht: met een blik ervoor kon
+    een stuk tussen die blik en het slot de inhoud nog pending lezen, waarna de taak toch
+    teruggaf."""
     async with _overdracht():
         office = engine.current()
         if office is not None and ext in office.convert_formats and _healthy():
@@ -863,7 +872,14 @@ async def _place_thumbnails(
 
 async def on_dead(settings: Settings, payload: dict[str, Any], _error: str) -> None:
     """Twee keer mislukt: failed. Komt alleen terug met een hogere PDF_VERSION of de knop op
-    /beheer."""
+    /beheer.
+
+    jobs.execute zette de taak al op failed, in een eigen commit. Een verzoek dat daartussen
+    kwam, zag de inhoud pending zonder taak en zette er een taak bij: dan blijft hij pending
+    (die taak maakt het af), niet failed met een taak die klaarstaat. Kwam een stuk van de
+    inhaalronde daartussen, dan zette dat hem al op failed (_orphans): dan doet dit niets.
+    Komt dit nooit (een crash, of de database liet niet schrijven), dan doet het eerste stuk
+    daarna het (_orphans)."""
     sha = str(payload.get("sha", ""))
     if not SHA.fullmatch(sha):
         return
@@ -874,9 +890,17 @@ async def on_dead(settings: Settings, payload: dict[str, Any], _error: str) -> N
             return
         if blob.pdf_state == "ready" and (blob.pdf_version or 0) >= keys.PDF_VERSION:
             return  # de PDF is er (de thumbnails mislukten); die blijft
-    await _set_state(
-        maker, sha, "failed", only=("pending", "ready", "ask"), pdf_version=keys.PDF_VERSION
-    )
+        await session.execute(
+            update(Blob)
+            .where(
+                Blob.sha256 == sha,
+                Blob.pdf_state.in_(("pending", "ready", "ask")),
+                ~_active(),
+            )
+            .values(pdf_state="failed", pdf_version=keys.PDF_VERSION)
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
     log.warning("office: omzetten naar PDF van %s definitief mislukt", sha[:12])
 
 
@@ -884,49 +908,123 @@ async def on_dead(settings: Settings, payload: dict[str, Any], _error: str) -> N
 
 
 async def backfill(settings: Settings, payload: dict[str, Any]) -> None:
-    """Eén stuk van de inhaalronde: zie boven. Helemaal onder _overdracht (zie _give_back): de
-    controle van DS, het lezen, de nieuwe taken en de commit."""
+    """Eén stuk van de inhaalronde: zie boven. Eerst, zonder _overdracht, het dure lezen op
+    volgorde van sha (_scan). Dan onder _overdracht (zie _give_back) de controle van DS, alleen
+    die inhouden opnieuw (op sha), de wezen (_orphans), de nieuwe taken en de commit."""
+    after = str(payload.get("after") or "")
+    office = engine.current()
+    if office is None or not _healthy():
+        return  # onder het slot kijkt het stuk opnieuw; dit spaart alleen het lezen
+    async with _maker(settings)() as session:
+        if not await _enabled(session):
+            return
+        shas = await _scan(session, office, after)
     async with _overdracht():
-        await _backfill(settings, str(payload.get("after") or ""))
+        await _backfill(settings, after, shas)
 
 
-async def _backfill(settings: Settings, after: str) -> None:
+def _candidate(office: engine.Engine) -> list[Any]:
+    """Wat een stuk misschien neemt: inhoud van een bestand van een soort die DS omzet, met een
+    klare preview, en leeg, pending (een wees?) of ready of failed van een lagere PDF_VERSION.
+    Hetzelfde bij het lezen zonder slot en opnieuw onder het slot."""
+    return [
+        Blob.mime.in_([m for m, ext in EXT_BY_MIME.items() if ext in office.convert_formats]),
+        Blob.preview.in_(("ready", "none", "failed")),
+        or_(
+            Blob.pdf_state.is_(None),
+            Blob.pdf_state == "pending",
+            and_(Blob.pdf_state.in_(("ready", "failed")), Blob.pdf_version < keys.PDF_VERSION),
+        ),
+        select(Node.id).where(Node.blob_id == Blob.sha256).exists(),
+    ]
+
+
+async def _scan(session: AsyncSession, office: engine.Engine, after: str) -> list[str] | None:
+    """Het dure deel van een stuk, zonder _overdracht: de sha's na after, op volgorde, hooguit
+    BATCH (zonder bruikbare index leest dit de tabel blob; gemeten met 500.000 andere blobs zo'n
+    0,7 s, en eerst wachtte een verzoek zo lang). None: er staan nog BATCH of meer conversies
+    klaar.
+
+    Waarom dit buiten het slot kan: het stuk beslist pas onder het slot, na deze inhouden daar
+    opnieuw te lezen. Een inhoud die het nu pending leest (de taak loopt nog), zit er dus bij,
+    en geeft die taak hem intussen terug (leeg), dan ziet het stuk dat onder het slot. Een
+    inhoud die hier niet bij zit, wordt niet leeg zonder taak door het teruggeven: dat maakt
+    alleen pending leeg, en pending kwam dan na dit lezen, met een taak. Geeft die taak hem
+    terug voordat het stuk het slot heeft, dan zag hij onder het slot DS niet gezond of office
+    uit, en het stuk daarna gezond en aan: ertussen kwam "weer gezond" of "weer aan", en dus
+    start_backfill, dat na het teruggeven een stuk vooraan zet (_chain)."""
+    queued = await session.scalar(
+        select(func.count()).where(Job.type == TYPE, Job.status == "queued")
+    )
+    if (queued or 0) >= BATCH:
+        return None
+    found = await session.scalars(
+        select(Blob.sha256)
+        .where(Blob.sha256 > after, *_candidate(office))
+        .order_by(Blob.sha256)
+        .limit(BATCH)
+    )
+    return list(found.all())
+
+
+def _active() -> Any:
+    """Heeft deze blob een taak office.pdf die klaarstaat of loopt (in een UPDATE op blob)?"""
+    return (
+        select(Job.id)
+        .where(Job.key == literal(f"{TYPE}:") + Blob.sha256, Job.status.in_(jobs.ACTIVE))
+        .exists()
+    )
+
+
+async def _orphans(session: AsyncSession, shas: list[str]) -> tuple[set[str], set[str]]:
+    """Van deze inhouden (pending): de wezen, zonder taak die klaarstaat of loopt. Geeft
+    (nemen, failed). Was de laatste taak failed, dan stopte hij tussen zijn failed in
+    jobs.execute en on_dead (een crash, of on_dead kon niet schrijven): failed, zoals on_dead.
+    Anders neemt het stuk hem als leeg (een gat van eerder, zoals CI run 88)."""
+    if not shas:
+        return set(), set()
+    found = await session.execute(
+        select(Job.key, Job.status)
+        .where(Job.key.in_([job_key(sha) for sha in shas]))
+        .order_by(Job.created_at)
+    )
+    last: dict[str, str] = {}
+    active: set[str] = set()
+    for key, status in found.all():
+        last[key] = status
+        if status in jobs.ACTIVE:
+            active.add(key)
+    take: set[str] = set()
+    dead: set[str] = set()
+    for sha in shas:
+        key = job_key(sha)
+        if key not in active:
+            (dead if last.get(key) == "failed" else take).add(sha)
+    return take, dead
+
+
+async def _backfill(settings: Settings, after: str, shas: list[str] | None) -> None:
     office = engine.current()
     if office is None or not _healthy():
         return
-    mimes_wanted = [m for m, ext in EXT_BY_MIME.items() if ext in office.convert_formats]
     async with _maker(settings)() as session:
         if not await _enabled(session):
             return
         at = jobs.now() + timedelta(seconds=BACKFILL_DELAY)
-        queued = await session.scalar(
-            select(func.count()).where(Job.type == TYPE, Job.status == "queued")
-        )
-        if (queued or 0) >= BATCH:  # de rij is nog lang genoeg: dit stuk straks opnieuw
+        if shas is None:  # de rij is nog lang genoeg: dit stuk straks opnieuw
             await _chain(session, after, at)
             await session.commit()
             return
-        is_content = select(Node.id).where(Node.blob_id == Blob.sha256).exists()
-        rows = (
-            await session.execute(
+        rows = []
+        if shas:
+            found = await session.execute(
                 select(Blob.sha256, Blob.size, Blob.pdf_state)
-                .where(
-                    Blob.sha256 > after,
-                    Blob.mime.in_(mimes_wanted),
-                    Blob.preview.in_(("ready", "none", "failed")),
-                    or_(
-                        Blob.pdf_state.is_(None),
-                        and_(
-                            Blob.pdf_state.in_(("ready", "failed")),
-                            Blob.pdf_version < keys.PDF_VERSION,
-                        ),
-                    ),
-                    is_content,
-                )
+                .where(Blob.sha256.in_(shas), *_candidate(office))
                 .order_by(Blob.sha256)
-                .limit(BATCH)
             )
-        ).all()
+            rows = found.all()
+        take, dead = await _orphans(session, [sha for sha, _, state in rows if state == "pending"])
+        rows = [row for row in rows if row[2] != "pending" or row[0] in take]
         limit = settings.office_auto_convert_bytes
         ask = {sha for sha, size, state in rows if state != "ready" and size > limit}
         convert = [(sha, state) for sha, _, state in rows if sha not in ask]
@@ -954,8 +1052,15 @@ async def _backfill(settings: Settings, after: str) -> None:
                 .values(pdf_state="pending")
                 .execution_options(synchronize_session=False)
             )
-        if len(rows) == BATCH:
-            await _chain(session, rows[-1][0], at)
+        if dead:  # alleen als er intussen geen taak bij kwam (Mislukte opnieuw)
+            await session.execute(
+                update(Blob)
+                .where(Blob.sha256.in_(dead), Blob.pdf_state == "pending", ~_active())
+                .values(pdf_state="failed", pdf_version=keys.PDF_VERSION)
+                .execution_options(synchronize_session=False)
+            )
+        if len(shas) == BATCH:
+            await _chain(session, shas[-1], at)
         await session.commit()
 
 
@@ -1052,12 +1157,21 @@ async def request(
     # verzoek of van een stuk nog niet (de SELECT gaat vóór het schrijven), en kwamen er twee.
     # De sessie heeft hier niets open (de commit vóór de invoercontrole)
     async with _overdracht():
-        blob = await session.get(Blob, sha, populate_existing=True)
-        if blob is None:
-            raise errors.fail(404, "not_found", "Niet gevonden")
-        # Opnieuw: tijdens de invoercontrole kan de taak de inhoud failed, none of unsafe
-        # hebben gemaakt. Daar kwam anders pending overheen, zonder taak (o3.md afwijking 22)
-        await _refuse_final(session, blob)
+        for _ in range(3):
+            blob = await session.get(Blob, sha, populate_existing=True)
+            if blob is None:
+                raise errors.fail(404, "not_found", "Niet gevonden")
+            # Opnieuw: tijdens de invoercontrole kan de taak de inhoud failed, none of unsafe
+            # hebben gemaakt. Daar kwam anders pending overheen, zonder taak (o3.md afwijking
+            # 22)
+            await _refuse_final(session, blob)
+            if await _take(session, sha):
+                break
+            # Toch failed, none of unsafe: _give_up en on_dead schrijven niet onder dit slot,
+            # en konden net na die blik committen. Nog eens kijken (de fout, met de code)
+            await session.commit()
+        else:
+            raise errors.fail(503, "office_unavailable", UNAVAILABLE)
         asked = blob.pdf_state == "ask"
         first = jobs.now() - timedelta(hours=1)  # vooraan in de rij
         _asked[sha] = time.monotonic() + ASKED_SECONDS  # en de eerste bij het slot
@@ -1074,11 +1188,30 @@ async def request(
             job.run_after = first
             if asked:
                 job.payload = {**(job.payload or {}), "ask": True}
-        if blob.pdf_state != "ready":
-            blob.pdf_state = "pending"
         await session.commit()
     jobs.kick()
     return "pending"
+
+
+async def _take(session: AsyncSession, sha: str) -> bool:
+    """Voor request, onder _overdracht: de inhoud op pending (ready blijft ready), alleen als
+    hij niet failed, none of unsafe is. False als dat intussen zo was. Pas daarna, in dezelfde
+    schrijftransactie, kijkt request of er al een taak is: wie de inhoud en de taak samen
+    schrijft (_give_up, _release na -8, buiten dit slot), commit dus helemaal vóór of helemaal
+    na het verzoek (in SQLite het schrijfslot; in PostgreSQL het slot op de rij, en die twee
+    schrijven ook eerst de inhoud). Eerst las het de inhoud en de taak los: kwam _give_up
+    daartussen, dan zag het pending en geen taak, en zette het een taak met de oude key op
+    inhoud die failed was (o3.md afwijking 22, de vijfde tegenlezing)."""
+    taken = await session.execute(
+        update(Blob)
+        .where(
+            Blob.sha256 == sha,
+            or_(Blob.pdf_state.is_(None), Blob.pdf_state.in_(("ask", "pending", "ready"))),
+        )
+        .values(pdf_state=case((Blob.pdf_state == "ready", "ready"), else_="pending"))
+        .execution_options(synchronize_session=False)
+    )
+    return bool(taken.rowcount)
 
 
 async def _refuse_final(session: AsyncSession, blob: Blob) -> None:
