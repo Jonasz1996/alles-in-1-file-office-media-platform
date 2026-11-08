@@ -3,15 +3,17 @@
 - De regel is een zoekvraag zonder pagina (SearchRule): q en dezelfde filters als zoeken, uit
   het register (filters.apply_all). Hij past alleen op eigen, levende foto's en video's met een
   opnamedag (own_live), hooguit MAX_ITEMS; meer is album_rule_too_many.
-- De verversing zet wat past erbij met source 'rule' en shared = album_rule.share_new, en haalt
-  alleen 'rule'-items weg die levend zijn en niet meer passen. Een item in de prullenbak blijft
+- De verversing zet wat past erbij met source 'rule' en shared = album_rule.share_new (gelezen
+  als ze schrijft, niet vóór het zoeken), en haalt alleen 'rule'-items weg die levend zijn en
+  niet meer passen. Een item in de prullenbak blijft
   lid (het album toont het niet, zoals in 0.7.0); zet je het terug, dan staat het er weer.
   Items met de hand blijven altijd. Wat de eigenaar uit een album met een regel haalt, komt in
   album_skip: de regel zet het niet terug (een item met de hand dat ook past evenmin).
 - Delen: een item met de hand is altijd gedeeld (shared 1); een 'rule'-item krijgt share_new
   (standaard 0). access._via_albums, public._in_album en de routes van albums tonen anderen
   alleen shared 1. confirm(True) zet share_new op 1 en alle 'rule'-items op shared 1;
-  confirm(False) laat ze zoals ze zijn (alleen voor de eigenaar).
+  confirm(False) laat ze zoals ze zijn (alleen voor de eigenaar). Een andere regel zonder
+  antwoord zet share_new weer op 0: "ja" gold voor de regel van toen.
 - Wie het album verversen laat (de route, elke nacht, 60 s na een reeks uploads): zie
   routers/albums_rule.py. Hier staat alleen wat met de database gebeurt; committen doet de
   aanroeper.
@@ -195,8 +197,23 @@ async def refresh(
     row = await db.get(AlbumRule, album_id, populate_existing=True)
     if row is None:
         return None
-    found = await matches(db, settings, owner, album_id, load(row.rule))
-    row.refreshed_at = now()
+    text = row.rule
+    found = await matches(db, settings, owner, album_id, load(text))
+    # Eerst schrijven, dan share_new lezen (review golf 2, veilig V2): de UPDATE neemt de
+    # schrijfsleutel van SQLite, en wat hij teruggeeft verandert niet meer tot de commit. Een
+    # "nee" dat binnenkwam terwijl matches() zocht, telt zo voor wat er nu bij komt. Staat er
+    # intussen een andere regel (of geen), dan doet deze verversing niets: wie de regel zette,
+    # verving het album al.
+    share_new = await db.scalar(
+        sql_update(AlbumRule)
+        .where(AlbumRule.album_id == album_id, AlbumRule.rule == text)
+        .values(refreshed_at=now())
+        .returning(AlbumRule.share_new)
+        .execution_options(synchronize_session=False)
+    )
+    if share_new is None:
+        return None
+    await db.refresh(row)
     if len(found) > MAX_ITEMS:
         row.code = TOO_MANY
         return Refreshed(too_many=True)
@@ -227,12 +244,12 @@ async def refresh(
                     "added_by": owner.id,
                     "added_at": at,
                     "source": "rule",
-                    "shared": row.share_new,
+                    "shared": share_new,
                 }
                 for i in adding
             ],
         )
-        result.shared_changed = bool(row.share_new)
+        result.shared_changed = bool(share_new)
     if stale:
         ids = list(stale)
         for i in range(0, len(ids), _CHUNK):
@@ -250,14 +267,19 @@ async def refresh(
 async def save(
     db: AsyncSession, album_id: uuid.UUID, rule: SearchRule, share_new: bool | None
 ) -> AlbumRule:
-    """De regel van dit album zetten of vervangen (niet gecommit); share_new None laat het zoals
-    het was (een nieuwe regel: 0)."""
+    """De regel van dit album zetten of vervangen (niet gecommit). share_new None: een nieuwe of
+    andere regel krijgt 0, dezelfde regel houdt wat hij had. Een "ja" gold voor wat de regel van
+    toen erbij zou zetten; een andere regel vindt andere foto's die er al zijn, dus de vraag
+    opnieuw (review golf 2, veilig V1). Wat al gedeeld is, blijft gedeeld."""
+    text = dump(rule)
     row = await db.get(AlbumRule, album_id, populate_existing=True)
     if row is None:
-        row = AlbumRule(album_id=album_id, rule=dump(rule), share_new=0, count=0)
+        row = AlbumRule(album_id=album_id, rule=text, share_new=0, count=0)
         db.add(row)
-    else:
-        row.rule = dump(rule)
+    elif row.rule != text:
+        row.rule = text
+        if share_new is None:
+            row.share_new = 0
     await db.flush()
     if share_new is not None:
         await confirm(db, row, share_new)

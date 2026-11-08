@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMPTY_RULE_FORM, formOf, ruleEmpty, ruleOf, sharedCount } from "./rule";
+import { EMPTY_RULE_FORM, formOf, ruleEmpty, ruleOf, sameRule, shareAnswer, sharedCount } from "./rule";
 import type { AlbumRuleInfo } from "./types";
 
 function info(over: Partial<AlbumRuleInfo> = {}): AlbumRuleInfo {
@@ -81,5 +81,30 @@ describe("sharedCount", () => {
   it("hoeveel items uit de regel gedeeld worden, nooit minder dan nul", () => {
     expect(sharedCount({ items: 10, private: 3 })).toBe(7);
     expect(sharedCount({ items: 2, private: 5 })).toBe(0);
+  });
+});
+
+describe("shareAnswer (review golf 2, veilig V1)", () => {
+  const ja = { ...EMPTY_RULE_FORM, q: "strand", shareNew: true };
+
+  it("dezelfde regel: het vinkje zoals het staat", () => {
+    expect(shareAnswer(ja, { q: "strand" }, { q: "strand" }, false)).toBe(true);
+    expect(shareAnswer({ ...ja, shareNew: false }, { q: "strand" }, { q: "strand" }, false)).toBe(false);
+  });
+
+  it("een andere regel zonder dat de eigenaar het vinkje aanraakte: niets, dan vraagt de API opnieuw", () => {
+    expect(shareAnswer(ja, { q: "kinderen" }, { q: "strand" }, false)).toBeUndefined();
+    expect(shareAnswer(ja, { q: "strand", from: "2024-01-01" }, { q: "strand" }, false)).toBeUndefined();
+  });
+
+  it("een andere regel en het vinkje zelf gekozen: dat antwoord", () => {
+    expect(shareAnswer(ja, { q: "kinderen" }, { q: "strand" }, true)).toBe(true);
+    expect(shareAnswer({ ...ja, shareNew: false }, { q: "kinderen" }, { q: "strand" }, true)).toBe(false);
+  });
+
+  it("sameRule kijkt niet naar de volgorde van de velden, wel naar die van een lijst", () => {
+    expect(sameRule({ q: "a", from: "2024-01-01" }, { from: "2024-01-01", q: "a" })).toBe(true);
+    expect(sameRule({ person: ["p1", "p2"] }, { person: ["p2", "p1"] })).toBe(false);
+    expect(sameRule({ q: "a" }, { q: "a", tag: undefined })).toBe(true);
   });
 });

@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app import albums_rule as R
 from app import events
 from app.models import Node, User
 from app.people import search as people_search
@@ -299,3 +300,85 @@ async def test_album_changed_alleen_naar_wie_het_verschil_ziet(client, huis, set
     r = await client.delete(f"/api/v1/albums/{album}/rule", headers=huis["h_eva"])
     assert r.status_code == 204
     assert album_events() == [(eva, "album.changed")]
+
+
+async def test_een_andere_regel_na_ja_vraagt_opnieuw(client, huis, settings):
+    """Review golf 2, veilig V1: "ja" gold voor wat de regel van toen erbij zet. Een andere regel
+    vindt andere foto's die er al zijn: die zijn alleen voor Eva tot ze weer "ja" zegt."""
+    album, eva = huis["album"], huis["h_eva"]
+    async with maker(settings)() as session:
+        user = await session.get(User, huis["eva"])
+        await photo(session, user, "kinderen-badkamer.jpg", BASE + timedelta(days=5))
+        await session.commit()
+    assert await regel(client, eva, album, {"q": "strand"}) == {"needs_confirm": True}
+    await confirm(client, eva, album, True)
+    assert await ziet_bram(client, huis) == ["berg.jpg", "strand-2.jpg", "strand-1.jpg"]
+    # Een andere regel zonder antwoord: de vraag, en wat hij vindt is alleen voor Eva
+    assert await regel(client, eva, album, {"q": "kinderen"}) == {"needs_confirm": True}
+    assert await eigenaar(client, huis) == [
+        ("kinderen-badkamer.jpg", "rule", False),
+        ("berg.jpg", "hand", True),
+    ]
+    assert await ziet_bram(client, huis) == ["berg.jpg"]
+    assert await ziet_de_link(client, huis) == ["berg.jpg"]
+    rule = (await client.get(f"/api/v1/albums/{album}", headers=eva)).json()["rule"]
+    assert (rule["share_new"], rule["items"], rule["private"]) == (False, 1, 1)
+    # Dezelfde regel nog eens zonder antwoord: nog steeds de vraag
+    assert await regel(client, eva, album, {"q": "kinderen"}) == {"needs_confirm": True}
+    assert await ziet_bram(client, huis) == ["berg.jpg"]
+    # Ja: nu wel, en dan geen vraag meer voor dezelfde regel
+    await confirm(client, eva, album, True)
+    assert await ziet_bram(client, huis) == ["kinderen-badkamer.jpg", "berg.jpg"]
+    assert await ziet_de_link(client, huis) == ["kinderen-badkamer.jpg", "berg.jpg"]
+    assert await regel(client, eva, album, {"q": "kinderen"}) == {"needs_confirm": False}
+    # Een andere regel met het antwoord erbij: meteen gedeeld, zonder vraag
+    assert await regel(client, eva, album, {"q": "strand"}, share_new=True) == {
+        "needs_confirm": False}  # fmt: skip
+    assert await ziet_bram(client, huis) == ["berg.jpg", "strand-2.jpg", "strand-1.jpg"]
+
+
+async def test_een_nee_tijdens_het_verversen_telt(client, huis, settings, monkeypatch):
+    """Review golf 2, veilig V2: de verversing leest share_new pas als ze schrijft. Een "nee"
+    dat binnenkomt terwijl de regel nog zoekt, geldt voor wat deze verversing erbij zet."""
+    album, eva = huis["album"], huis["h_eva"]
+    await regel(client, eva, album, {"q": "strand"}, share_new=True)
+    async with maker(settings)() as session:
+        user = await session.get(User, huis["eva"])
+        await photo(session, user, "strand-nieuw.jpg", BASE + timedelta(days=6))
+        await session.commit()
+    echt = R.matches
+
+    async def tussendoor(*args, **kwargs):
+        found = await echt(*args, **kwargs)
+        assert await confirm(client, eva, album, False) == {"needs_confirm": False}
+        return found
+
+    monkeypatch.setattr(R, "matches", tussendoor)
+    await rule_router.run(settings, {"album": str(album)})
+    assert (await eigenaar(client, huis))[0] == ("strand-nieuw.jpg", "rule", False)
+    assert await ziet_bram(client, huis) == ["berg.jpg", "strand-2.jpg", "strand-1.jpg"]
+    assert "strand-nieuw.jpg" not in await ziet_de_link(client, huis)
+
+
+async def test_een_nieuwe_regel_tijdens_het_verversen_wint(client, huis, settings, monkeypatch):
+    """Zelfde venster als V2: zet Eva een andere regel terwijl de verversing nog met de oude
+    zoekt, dan zet die verversing de treffers van de oude regel er niet meer bij."""
+    album, eva = huis["album"], huis["h_eva"]
+    await regel(client, eva, album, {"q": "strand"}, share_new=True)
+    async with maker(settings)() as session:
+        user = await session.get(User, huis["eva"])
+        await photo(session, user, "strand-nieuw.jpg", BASE + timedelta(days=6))
+        await session.commit()
+    echt = R.matches
+
+    async def tussendoor(*args, **kwargs):
+        found = await echt(*args, **kwargs)
+        monkeypatch.setattr(R, "matches", echt)
+        await regel(client, eva, album, {"q": "berg"}, share_new=False)
+        return found
+
+    monkeypatch.setattr(R, "matches", tussendoor)
+    await rule_router.run(settings, {"album": str(album)})
+    assert await eigenaar(client, huis) == [("berg.jpg", "hand", True)]
+    rule = (await client.get(f"/api/v1/albums/{album}", headers=eva)).json()["rule"]
+    assert (rule["rule"], rule["count"], rule["items"]) == ({"q": "berg"}, 1, 0)

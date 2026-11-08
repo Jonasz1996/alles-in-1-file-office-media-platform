@@ -57,3 +57,24 @@ export function ruleEmpty(rule: AlbumRule): boolean {
 export function sharedCount(info: Pick<AlbumRuleInfo, "items" | "private">): number {
   return Math.max(0, info.items - info.private);
 }
+
+/** Dezelfde regel, wat de volgorde van de velden ook is. */
+export function sameRule(a: AlbumRule, b: AlbumRule): boolean {
+  const canon = (r: AlbumRule) =>
+    JSON.stringify(
+      Object.entries(r)
+        .filter(([, v]) => v !== undefined)
+        .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)),
+    );
+  return canon(a) === canon(b);
+}
+
+/**
+ * Wat Opslaan als share_new meestuurt, als het dialoog het vinkje toont (Keuze 42). Dezelfde regel:
+ * het vinkje zoals het staat. Een andere regel: alleen wat de eigenaar in dit dialoog zelf koos
+ * (touched); anders niets, en dan stelt de API de vraag opnieuw (needs_confirm). Een "ja" van
+ * vroeger gold alleen voor de regel van toen (review golf 2, veilig V1).
+ */
+export function shareAnswer(form: RuleForm, rule: AlbumRule, before: AlbumRule, touched: boolean): boolean | undefined {
+  return touched || sameRule(rule, before) ? form.shareNew : undefined;
+}

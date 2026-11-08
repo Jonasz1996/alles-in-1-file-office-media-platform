@@ -84,7 +84,8 @@ async def set_rule(
         await session.rollback()
         raise R.too_many()
     # De vraag alleen als dit verzoek hem niet beantwoordde en nieuwe items nog niet gedeeld
-    # worden (een eerder "nee" vragen we bij een nieuwe regel opnieuw)
+    # worden (een eerder "nee" vragen we bij een nieuwe regel opnieuw; een eerder "ja" gold
+    # alleen voor dezelfde regel, R.save)
     needs = (
         body.share_new is None
         and not row.share_new

@@ -4,7 +4,9 @@
 //
 // Na opslaan ververst de server het album meteen. Is het album gedeeld (of heeft het een publieke
 // link) en is nog niet gezegd of nieuwe foto's ook gedeeld worden, dan volgt de vraag (shareQuestion).
-// Had het album al een regel en is het gedeeld, dan staat die keuze als vinkje in het dialoog.
+// Had het album al een regel en is het gedeeld, dan staat die keuze als vinkje in het dialoog. Een
+// andere regel zonder dat het vinkje aangeraakt is, stuurt het vinkje niet mee: dan komt de vraag
+// opnieuw ("ja" gold voor de regel van toen; review golf 2, veilig V1).
 //
 // Toetsenbord: Tab door de velden, Enter slaat op (ook vanuit het tekstveld), Esc sluit zonder
 // opslaan. In het veld Persoon kies je met ↓, ↑ en Enter.
@@ -19,7 +21,7 @@ import { type AlbumOut, photosApi } from "../api";
 import { deleteAlbumRule, refreshAlbum, setAlbumRule } from "./api";
 import { MediaDates } from "./FilterBar";
 import { PersonPicker } from "./PersonPicker";
-import { formOf, type RuleForm, ruleEmpty, ruleOf, sharedCount } from "./rule";
+import { formOf, type RuleForm, ruleEmpty, ruleOf, shareAnswer, sharedCount } from "./rule";
 import { askShareNew } from "./shareQuestion";
 import type { AlbumRuleBody, AlbumRuleInfo } from "./types";
 import "./people.css";
@@ -59,6 +61,9 @@ function RuleDialog({
   const [form, setForm] = useState<RuleForm>(() => formOf(info));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Heeft de eigenaar het vinkje in dit dialoog zelf aangeraakt? Zo niet en is de regel anders,
+  // dan gaat share_new niet mee en komt de vraag opnieuw (review golf 2, veilig V1)
+  const [touched, setTouched] = useState(false);
   const qField = useRef<HTMLInputElement>(null);
   // De vraag van Keuze 42 als vinkje: alleen als er al een regel is en het album gedeeld is
   const askNew = info !== null && album.shared;
@@ -74,7 +79,8 @@ function RuleDialog({
     }
     setBusy(true);
     try {
-      const body: AlbumRuleBody = askNew ? { rule, share_new: form.shareNew } : { rule };
+      const answer = askNew ? shareAnswer(form, rule, info?.rule ?? {}, touched) : undefined;
+      const body: AlbumRuleBody = answer === undefined ? { rule } : { rule, share_new: answer };
       const saved = await setAlbumRule(album.id, body);
       toast(t("photos_people.rule.saved"), { kind: "ok" });
       onClose();
@@ -158,7 +164,10 @@ function RuleDialog({
                 type="checkbox"
                 checked={form.shareNew}
                 aria-describedby={`${id}-deel`}
-                onChange={(e) => change({ shareNew: e.target.checked })}
+                onChange={(e) => {
+                  setTouched(true);
+                  change({ shareNew: e.target.checked });
+                }}
               />
               {t("photos_people.rule.shareNew")}
             </label>
