@@ -267,9 +267,12 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
           <Bar filters={filters} onChange={changeFilters} />
         </LazySlot>
       )}
-      {MemoriesView && months && months.length > 0 && (
+      {/* Het blok blijft staan zolang de pagina er is (verborgen met filters of zonder maanden):
+          het eerste antwoord is alleen het begin, een verborgen dag komt er niet uit terug als een
+          filter zonder treffers het weghaalde (nacontrole golf 2, D) */}
+      {MemoriesView && (
         <LazySlot>
-          <MemoriesView initial={top?.years ?? null} hidden={filtered} />
+          <MemoriesView initial={top?.years ?? null} hidden={filtered || !months || months.length === 0} />
         </LazySlot>
       )}
       {error && <p role="alert">{error}</p>}

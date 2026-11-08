@@ -427,6 +427,23 @@ def test_herinneringen_met_een_vaste_dag(server, fien, context_as):
     regels = server.call(fien, "GET", "/api/v1/photos/memories/hide", expect=200).json()["hides"]
     assert regels == [{"kind": "day", "ref": dag.isoformat()}]
 
+    # Een filter zonder treffers (de lege staat) en weer zonder filter: de verborgen dag komt
+    # niet terug uit het eerste antwoord, en er is geen nieuwe vraag (nacontrole golf 2, D)
+    tab_to(page, soort, limit=60)
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("ArrowDown")
+    expect(soort).to_have_value("video")
+    expect(page.get_by_text("Geen foto's die bij deze filters passen.", exact=True)).to_be_visible()
+    page.keyboard.press("ArrowUp")
+    page.keyboard.press("ArrowUp")
+    expect(soort).to_have_value("")
+    tijdlijn = page.get_by_role("grid", name="Tijdlijn", exact=True)
+    expect(tijdlijn.get_by_role("gridcell").first).to_be_visible()
+    twee_frames(page)
+    expect(herinneringen).to_have_count(0)
+    gevraagd = [u for u in vragen if urlsplit(u).path == "/api/v1/photos/memories"]
+    assert len(gevraagd) == 1, vragen
+
 
 def test_de_pagina_van_een_persoon_met_het_toetsenbord(server, fien, context_as):
     """De pagina van één persoon, alleen met het toetsenbord (review golf 2, G): de volgorde van
