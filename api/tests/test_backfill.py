@@ -69,15 +69,24 @@ async def upload(client, headers, parent: str, name: str, data: bytes) -> dict:
 
 
 async def counts(settings, shas: set[str] | None = None) -> tuple[int, int]:
-    """(open, totaal) in analysis; met shas alleen de rijen van die inhouden."""
+    """(open, totaal) in analysis; met shas alleen de rijen van die inhouden.
+
+    Beide in één SELECT, dus uit één momentopname. Met twee SELECTs (een SELECT begint bij
+    SQLite geen transactie) kon de rij van Brams laatste upload er net tussen komen: nul open
+    en toch het volle totaal. De test stopte dan de pomp en vond die rij nog op wait
+    (e2e/slim.sh in Z6 stap 2, docs/fase-6/z6.md)."""
     only = [] if shas is None else [Analysis.blob_sha.in_(shas)]
     async with maker(settings)() as db:
-        open_ = await db.scalar(
-            sa.select(sa.func.count())
-            .select_from(Analysis)
-            .where(Analysis.state.in_(analysis.OPEN), *only)
-        )
-        total = await db.scalar(sa.select(sa.func.count()).select_from(Analysis).where(*only))
+        total, open_ = (
+            await db.execute(
+                sa.select(
+                    sa.func.count(),
+                    sa.func.count().filter(Analysis.state.in_(analysis.OPEN)),
+                )
+                .select_from(Analysis)
+                .where(*only)
+            )
+        ).one()
     return open_, total
 
 
