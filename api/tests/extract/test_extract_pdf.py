@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tests.extract.lees import lees
+from tests.extract.lees import lees, vaste_klok
 from tests.search import fixtures
 
 
@@ -36,8 +36,14 @@ def test_kapot_is_failed_zonder_code():
     assert (found.state, found.code, text) == ("failed", None, "")
 
 
-def test_de_klok_stopt_met_wat_er_is():
+def test_de_klok_stopt_met_wat_er_is(monkeypatch):
+    """Halverwege op: done, too_slow, truncated, met de tekst tot dan. Een klok van 100 s die bij
+    elke keer kijken één seconde verder staat (vaste_klok): de lezer kijkt vóór elke pagina (en
+    add() om de 256 stukken, hier pas na pagina 128), dus precies 100 pagina's. Met de echte
+    CPU-tijd (0,05 s) las een snelle runner alle 399 (CI run 89, docs/fase-6/z2.md)."""
+    vaste_klok(monkeypatch)
     paginas = [fixtures._kolom(50, [f"pagina{n}woord"] * 40) for n in range(1, 400)]
-    found, text = lees(fixtures._pdf(paginas), "pdf", cpu_seconds=0.05)
+    found, text = lees(fixtures._pdf(paginas), "pdf", cpu_seconds=100)
     assert (found.state, found.code, found.truncated) == ("done", "too_slow", True)
     assert "pagina1woord" in text and "pagina399woord" not in text
+    assert "pagina100woord" in text and "pagina101woord" not in text

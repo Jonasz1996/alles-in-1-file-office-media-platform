@@ -38,7 +38,6 @@ from tests.search import fixtures
 # zoek: ook in e2e/slim.sh op SQLite 3.46.1 (bouwontwerp §4.1)
 pytestmark = [pytest.mark.anyio, pytest.mark.zoek]
 
-RTF_TRAAG = b"{\\rtf1 " + b"{\\*\\x a}" * 1_000_000 + b"}"  # 8 MB, ~2,6 s CPU, geen tekst
 CRASH = (
     "import os,signal\n"
     "from app.extract import plain\n"
@@ -56,6 +55,23 @@ ONZIN = (
     "    if text.startswith('ONZIN'):fields=dict(fields,state='gekraakt')\n"
     "    return _write(fd,i,fields,text)\n"
     "frame.write=_onzin\n"
+)
+# Een blob die met TRAAG begint, leest het renderproces niet: het rekent tot er 5 s CPU van het
+# proces op zijn en kijkt tussendoor naar de klok van de blob, zoals een lezer. Elke grens
+# hieronder (RLIMIT_CPU 1 s, de klok van 0,3 s, de wandklok van 0,3 s) is dan eerder op, op elke
+# machine. Eerst was dit een RTF van 8 MB: vast werk (±2,5 s CPU op de sandbox), dat een runner
+# die 2,5× zo snel is binnen RLIMIT_CPU klaar heeft (CI run 89, docs/fase-6/z2.md).
+TRAAG = (
+    "import time\n"
+    "from app.extract import plain\n"
+    "_read=plain.read\n"
+    "def _traag(f,out):\n"
+    "    if f.read(5)!=b'TRAAG':\n"
+    "        f.seek(0)\n"
+    "        return _read(f,out)\n"
+    "    end=time.process_time()+5\n"
+    "    while time.process_time()<end:out.check()\n"
+    "plain.read=_traag\n"
 )
 
 
@@ -188,7 +204,8 @@ async def test_de_grenzen_van_het_renderproces(settings, monkeypatch):
     """RLIMIT_CPU (zacht 1, hard 2), RLIMIT_AS 1 GiB en nice 19; de blob wordt too_slow zonder
     nieuwe poging (S15), en de app gaat gewoon door."""
     monkeypatch.setattr(extract_step, "LIMITS", {"child_cpu_s": 1, "blob_cpu_s": 60.0})
-    slow = await put(settings, RTF_TRAAG, "text/rtf")
+    monkeypatch.setattr(previews, "CHILD", child(TRAAG))
+    slow = await put(settings, b"TRAAG en verder niets", "text/plain")
     pump = asyncio.ensure_future(analysis.pump(settings, "index"))
     pid = None
     deadline = time.monotonic() + 10
@@ -216,7 +233,8 @@ async def test_de_grenzen_van_het_renderproces(settings, monkeypatch):
 
 async def test_de_klok_per_blob_maakt_too_slow(settings, monkeypatch):
     monkeypatch.setattr(extract_step, "LIMITS", {"blob_cpu_s": 0.3})
-    slow = await put(settings, RTF_TRAAG, "text/rtf")
+    monkeypatch.setattr(previews, "CHILD", child(TRAAG))
+    slow = await put(settings, b"TRAAG en verder niets", "text/plain")
     ok = await put(settings, b"na de trage", "text/plain")
     await analysis.pump(settings, "index")
     found = await rows(settings)
@@ -229,7 +247,8 @@ async def test_de_wandklok_stopt_het_renderproces(settings, monkeypatch):
     wat het startte dood; de blob wordt too_slow zonder nieuwe poging."""
     monkeypatch.setattr(extract_step, "FALLBACK_WALL_S", 0.3)
     monkeypatch.setattr(extract_step, "LIMITS", {"child_cpu_s": 60, "blob_cpu_s": 60.0})
-    slow = await put(settings, RTF_TRAAG, "text/rtf")
+    monkeypatch.setattr(previews, "CHILD", child(TRAAG))
+    slow = await put(settings, b"TRAAG en verder niets", "text/plain")
     started = time.monotonic()
     await analysis.pump(settings, "index")
     assert time.monotonic() - started < 10

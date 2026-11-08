@@ -3,10 +3,12 @@ een open bestand), met de standaardgrenzen tenzij de test kleinere geeft."""
 
 from __future__ import annotations
 
+import itertools
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
-from app.extract import read
+from app.extract import collect, read
 from app.extract.result import Extracted
 
 MAX = 1_048_576
@@ -23,3 +25,12 @@ def lees(
         f.flush()
         f.seek(0)
         return read.extract("sha", f, kind, max_chars=max_chars, cpu_seconds=cpu_seconds)
+
+
+def vaste_klok(monkeypatch) -> None:
+    """De klok van een blob zonder de CPU-tijd van deze machine: elke keer dat de lezer kijkt
+    (Clock.over), is er precies één seconde om. Een klok van n s is dan op bij de (n + 1)e keer
+    kijken, op elke machine; de echte Clock, Collector, lezer en read.extract draaien gewoon."""
+    tik = itertools.count()
+    nep = SimpleNamespace(process_time=lambda: float(next(tik)))
+    monkeypatch.setattr(collect, "time", nep)
