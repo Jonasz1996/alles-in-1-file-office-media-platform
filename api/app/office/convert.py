@@ -50,7 +50,8 @@ deze volgorde:
 Wachten zonder poging gaat niet via jobs.chain maar door de eigen rij terug in de rij te
 zetten (status queued, attempts - 1): een nieuwe taak zou weer bij 0 pogingen beginnen, en dan
 kreeg een bestand meer dan twee kansen. jobs.execute zet daarna niets meer op done, want het
-zet alleen een rij die nog running is.
+schrijft alleen op zijn eigen claim (nog running, met de started_at van die claim): ook niet
+als een verzoek de taak intussen naar voren haalde en een andere worker hem al oppakte.
 
 Wie op het slot wacht (_waiting, alleen in dit proces), is aan de beurt in deze volgorde: een
 conversie op verzoek (request, het kwartier daarna), dan een upload, dan de inhaalronde
@@ -74,7 +75,8 @@ Zo staat nooit de hele bibliotheek in de rij, en gaan nieuwe uploads voor (ook b
 Met DS niet gezond stopt de ronde; on_healthy start hem opnieuw, vanaf het begin: een stuk dat
 nog klaarstaat, begint weer vooraan (start_backfill). Zet een stuk zijn opvolger terwijl er al
 een stuk klaarstaat, dan houdt dat stuk de vroegste plek van de twee (_chain): zo raakt een
-ronde die vooraan begon nooit kwijt, ook niet naast een stuk dat nog liep.
+ronde die vooraan begon nooit kwijt, ook niet naast een stuk dat nog liep. start_backfill en
+elk stuk doen dat onder _overdracht, dus nooit tegelijk (ook niet met PostgreSQL).
 
 Mislukte opnieuw (retry_failed, de knop op /beheer): elke failed meteen een eigen taak met r (8
 hex-tekens), en pending. r komt in de key (keys.convert_key): DS bewaart -3 onder de key
@@ -356,12 +358,15 @@ async def start_backfill(settings: Settings) -> bool:
     """Zet de inhaalronde klaar, vanaf het begin (_chain met after leeg). False zonder office,
     of als er al een stuk klaarstaat: dat begint dan weer vooraan. Loopt er net een stuk, dan
     komt er een stuk vooraan bij. Zo neemt de ronde na "weer gezond" ook wat in een korte
-    storing leeg werd vóór de plek van de keten."""
+    storing leeg werd vóór de plek van de keten. Onder _overdracht, zoals elk stuk (zie
+    _chain); de sessie gaat pas onder dat slot open, dus wie wacht, houdt geen
+    databaseverbinding vast."""
     if engine.current() is None:
         return False
-    async with _maker(settings)() as session:
-        added = await _chain(session, "")
-        await session.commit()
+    async with _overdracht():
+        async with _maker(settings)() as session:
+            added = await _chain(session, "")
+            await session.commit()
     return added
 
 
@@ -371,8 +376,11 @@ async def _chain(session: AsyncSession, after: str, run_after: datetime | None =
     plek van de twee. Twee stukken naast elkaar (een tweede worker pakte het stuk van
     start_backfill al op terwijl een ouder stuk liep) worden zo weer één keten, vanaf de
     vroegste plek. Met alleen jobs.chain hield de opvolger van het ene stuk die van het andere
-    tegen, en sloeg de ronde over wat daartussen lag. Eerst de UPDATE: zo is het één
-    schrijftransactie. True als er een nieuw stuk bij kwam."""
+    tegen, en sloeg de ronde over wat daartussen lag. True als er een nieuw stuk bij kwam.
+
+    Alleen onder _overdracht, tot en met de commit (start_backfill en elk stuk): twee
+    aanroepen zien zo altijd elkaars stuk. Eerst hing dat af van SQLite (één schrijver): met
+    PostgreSQL (READ COMMITTED) konden start_backfill en een stuk elk een stuk klaarzetten."""
     await session.execute(
         update(Job)
         .where(
@@ -442,13 +450,17 @@ async def _give_back(
     Kan het nu toch (office aan, DS gezond), dan niet teruggeven: over BACK_SECONDS opnieuw,
     zonder poging, en pending blijft. Anders _release.
 
-    Waarom dit genoeg is: health.py zet gezond vóór on_healthy de inhaalronde start, en /beheer
-    zet aan vóór start_backfill; een stuk van de inhaalronde kijkt ook onder _overdracht. Las een
-    stuk de inhoud nog pending en sloeg het hem over, dan had het _overdracht vóór deze taak, en
-    ziet de taak het nu ook gezond. Geeft de taak wel terug, dan was het hier niet gezond: de
-    ronde van de volgende "weer gezond" leest pas na deze commit, ziet de inhoud leeg en de taak
-    klaar, en zet er met zijn eigen regels een taak bij. De taak zelf zet nooit een nieuwe taak
-    klaar, dus komen er ook geen twee."""
+    Waarom dit genoeg is: een stuk van de inhaalronde kijkt ook onder _overdracht, en leest
+    alleen met DS gezond en office aan; health.py zet gezond vóór on_healthy de ronde start, en
+    /beheer zet aan vóór start_backfill. Las een stuk de inhoud nog pending en sloeg het hem
+    over, dan had het _overdracht vóór deze taak, en ziet de taak nu ook gezond en aan (of DS
+    ging daarna weer weg, of office weer uit). Geeft de taak terug, dan was onder _overdracht DS
+    niet gezond of office uit; dat laatste kan ook met DS gezond. Het eerste stuk dat de inhoud
+    daarna leest, leest na deze commit, ziet hem leeg en de taak klaar, en zet er met zijn eigen
+    regels een taak bij. Dat stuk komt bij de volgende "weer gezond" (on_healthy) of bij "weer
+    aan" op /beheer (start_backfill). De taak zelf zet nooit een nieuwe taak klaar, dus komen er
+    ook geen twee. Daarom kijkt de taak pas onder _overdracht: met een blik ervoor kon een stuk
+    tussen die blik en het slot de inhoud nog pending lezen, waarna de taak toch teruggaf."""
     async with _overdracht():
         office = engine.current()
         if office is not None and ext in office.convert_formats and _healthy():
@@ -711,7 +723,9 @@ async def _convert_error(
             await session.commit()
     else:  # misconfigured: geen poging; health.py kijkt meteen opnieuw (en zet de melding)
         # Niet via _give_back: DS zelf zei -8, en _recheck zet zo misconfigured. De inhaalronde
-        # van de volgende "weer gezond" leest dus pas na deze commit
+        # van de volgende "weer gezond" leest dus pas na deze commit. Een stuk dat nog vóór
+        # _recheck leest (DS heet dan nog gezond), ziet de inhoud leeg en de taak klaar (één
+        # commit in _release), en zet er een taak bij
         await _release(maker, sha, asked, r)
         await _recheck()
 

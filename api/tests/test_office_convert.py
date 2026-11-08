@@ -881,10 +881,10 @@ async def released_while_ds_returns(
         read.append(True)
         return await enqueue_many(*args, **kwargs)
 
-    async def backfill_before_done(settings, job_id, **values):
-        if job_id == job.id and values.get("status") == "done" and not fired:
+    async def backfill_before_done(settings, claim, **values):
+        if claim.id == job.id and values.get("status") == "done" and not fired:
             await ds_returns()
-        await set_job(settings, job_id, **values)
+        await set_job(settings, claim, **values)
 
     if at == "before":
         monkeypatch.setattr(convert, "_attempts", backfill_before_lock)
@@ -1107,12 +1107,33 @@ async def test_nooit_twee_taken_voor_een_inhoud(client, admin, office, monkeypat
     assert flip >= 5 and runs >= 15  # voor, in en na het slot
 
 
+def watch_commits(monkeypatch, check: Callable[[], Any]) -> None:
+    """Roept check() aan na elke commit in deze taak (de test zelf, en wat hij draait). Wat
+    check zelf commit, telt niet."""
+    me = asyncio.current_task()
+    real = AsyncSession.commit
+    busy: list[bool] = []
+
+    async def commit(self):
+        await real(self)
+        if busy or asyncio.current_task() is not me:
+            return
+        busy.append(True)
+        try:
+            await check()
+        finally:
+            busy.clear()
+
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+
+
 @pytest.mark.anyio
-async def test_teruggeven_en_klaar_zijn_een_commit(client, admin, office):
+async def test_teruggeven_en_klaar_zijn_een_commit(client, admin, office, monkeypatch):
     """Wie de inhoud leeg ziet nadat de taak hem teruggaf, ziet de taak ook al klaar (niet meer
-    running): het teruggeven en de done van de taak zijn één transactie. Met DS ook onder het
-    slot van de overdracht nog weg zet de taak niets terug in de rij; dat doet de inhaalronde
-    als DS terug is."""
+    running): het teruggeven en de done van de taak zijn één transactie. Daarom kijkt de test na
+    elke commit van de taak, in een eigen sessie: nooit leeg met de taak nog running. Met DS ook
+    onder het slot van de overdracht nog weg zet de taak niets terug in de rij; dat doet de
+    inhaalronde als DS terug is."""
     jonas, _ = admin
     s = office.settings
     office_state(app).health = "down"
@@ -1121,12 +1142,220 @@ async def test_teruggeven_en_klaar_zijn_een_commit(client, admin, office):
     [job] = await office_jobs(s, "queued")
     claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
     assert claimed is not None and claimed.id == job.id
+    sha = (await blob_of(s, node["id"])).sha256
+    seen: list[tuple[str | None, str | None]] = []
+
+    async def look() -> None:
+        async with maker(s)() as session:
+            state = await session.scalar(select(Blob.pdf_state).where(Blob.sha256 == sha))
+            status = await session.scalar(select(Job.status).where(Job.id == job.id))
+        seen.append((state, status))
+
+    commit = AsyncSession.commit
+    watch_commits(monkeypatch, look)
     await convert.run(s, claimed.payload)  # de taak zelf, zonder jobs.execute eromheen
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+    assert seen and seen[-1] == (None, "done"), seen
+    assert (None, "running") not in seen, seen
     assert (await blob_of(s, node["id"])).pdf_state is None
     [after] = await office_jobs(s)
     assert (after.status, after.attempts, after.error) == ("done", 1, None)
     assert after.finished_at is not None
     assert not convert._overdracht().locked()
+
+
+@pytest.mark.anyio
+async def test_min_8_en_de_inhaalronde_na_elke_commit(client, admin, office, monkeypatch):
+    """Na -8 geeft de taak de inhoud terug zonder het slot van de overdracht, en tot _recheck
+    heet DS nog gezond: een stuk van de inhaalronde kan dan meteen lezen. De test laat een stuk
+    draaien na de commit nummer at van de taak, vanaf het antwoord -8, voor elke at. Steeds
+    pending met precies één actieve taak (het stuk las voor _recheck), of leeg zonder taak (het
+    stuk kwam na _recheck en deed niets; de volgende "weer gezond" neemt hem); nooit pending
+    zonder taak. Met het teruggeven en de done van de taak in twee commits las het stuk
+    ertussen leeg, zag de taak nog lopen, zette geen taak maar wel pending. Met het goede geheim
+    komt daarna alles terug."""
+    jonas, _ = admin
+    s = office.settings
+    right = office.fake.secret
+    state = office_state(app)
+    sweep = {"armed": False, "at": -1, "seen": 0}
+    fired: list[int] = []
+
+    async def backfill_after_commit() -> None:
+        if not sweep["armed"]:
+            return
+        seen = sweep["seen"]
+        sweep["seen"] += 1
+        if seen == sweep["at"]:
+            fired.append(seen)
+            await convert.backfill(s, {"after": ""})  # de inhaalronde, in een andere worker
+
+    convert_error = convert._convert_error
+
+    async def armed(*args, **kwargs):  # vanaf het antwoord -8
+        sweep["armed"] = True
+        return await convert_error(*args, **kwargs)
+
+    commit = AsyncSession.commit
+    monkeypatch.setattr(convert, "_convert_error", armed)
+    watch_commits(monkeypatch, backfill_after_commit)
+    nodes = []
+    for at in itertools.count():
+        office.fake.secret = "een-ander-geheim-van-minstens-32-tekens"
+        state.health = "ok"
+        node = await upload(client, jonas, f"m{at}.docx", docx_with_pages(2, f"M{at}"))
+        nodes.append(node)
+        await jobs.run_pending(s, lane="preview")
+        sha = (await blob_of(s, node["id"])).sha256
+        claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+        assert claimed is not None and claimed.payload["sha"] == sha
+        fired.clear()
+        sweep.update(armed=False, at=at, seen=0)
+        await jobs.execute(s, claimed)
+        sweep["armed"] = False
+        assert state.health == "misconfigured", at  # _recheck liep
+        if not fired:
+            break  # de taak commit niet zo vaak meer
+        blob = await blob_of(s, node["id"])
+        active = [
+            j
+            for j in await office_jobs(s)
+            if j.key == convert.job_key(sha) and j.status in jobs.ACTIVE
+        ]
+        assert (blob.pdf_state, len(active)) in (("pending", 1), (None, 0)), (at, blob.pdf_state)
+    assert at >= 2  # na het teruggeven, en na _recheck
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+    monkeypatch.setattr(convert, "_convert_error", convert_error)
+    office.fake.secret = right
+    await health.check_once(app)  # weer gezond: de inhaalronde
+    assert state.healthy
+    await asyncio.gather(*list(convert._tasks))
+    await run_later(s)
+    assert {(await blob_of(s, n["id"])).pdf_state for n in nodes} == {"ready"}
+
+
+@pytest.mark.anyio
+async def test_ds_terug_voordat_de_taak_het_slot_heeft(client, admin, office, monkeypatch):
+    """De taak ziet DS niet gezond en wil de inhoud teruggeven. Vlak voordat hij het slot van de
+    overdracht krijgt, komt DS terug en draait de inhaalronde helemaal (start_backfill en een
+    stuk): dat stuk leest de inhoud nog pending en slaat hem over. Dan mag de taak niet meer
+    teruggeven: hij kijkt pas onder het slot, ziet DS gezond, en komt zelf over BACK_SECONDS
+    terug, zonder poging. Keek hij vóór het slot, dan gaf hij toch terug, en bleef de inhoud
+    leeg zonder taak tot DS weer eens terugkwam."""
+    jonas, _ = admin
+    s = office.settings
+    state = office_state(app)
+    state.ever_ok, state.health = True, "down"
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    real = convert._overdracht
+    fired: list[str] = []
+
+    class Late:
+        """Het slot van de overdracht, maar eerst draait de inhaalronde."""
+
+        def __init__(self, lock: asyncio.Lock) -> None:
+            self.lock = lock
+
+        async def __aenter__(self) -> None:
+            fired.append("ronde")
+            state.health = "ok"  # de gezondheidslus: weer gezond
+            await convert.start_backfill(s)  # on_healthy
+            async with maker(s)() as session:
+                query = select(Job.id).where(Job.type == convert.BACKFILL, Job.status == "queued")
+                [part] = (await session.scalars(query)).all()
+            claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+            assert claimed is not None and claimed.id == part
+            await jobs.execute(s, claimed)  # het stuk: de inhoud is nog pending
+            await self.lock.acquire()
+
+        async def __aexit__(self, *exc) -> None:
+            self.lock.release()
+
+    def late():
+        lock = real()
+        return lock if fired or state.health != "down" else Late(lock)
+
+    monkeypatch.setattr(convert, "_overdracht", late)
+    claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+    assert claimed is not None and claimed.id == job.id
+    await jobs.execute(s, claimed)  # de taak: DS weg
+    monkeypatch.setattr(convert, "_overdracht", real)
+    assert fired == ["ronde"]
+    assert office.log("convert") == []
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "pending"
+    [active] = [j for j in await office_jobs(s) if j.status in jobs.ACTIVE]
+    assert (active.id, active.status, active.attempts) == (job.id, "queued", 0)
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "ready"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("first", ["teruggeven", "slot"])
+async def test_een_verzoek_tussen_uitstel_en_klaar(client, admin, office, monkeypatch, first):
+    """De taak stelt zichzelf uit zonder poging (teruggeven: DS onder het slot van de
+    overdracht weer gezond; slot: er loopt al een conversie), en zet zo zijn eigen rij terug in
+    de rij. Voordat jobs.execute daarna zijn done schrijft, vraagt iemand de PDF (de taak naar
+    voren) en pakt een tweede worker hem al op. Die done raakt de tweede claim niet: de tweede
+    stelt zelf uit (het slot is bezet), en de inhoud blijft pending met zijn taak, en wordt
+    ready. Eerst zette de done van de eerste claim de tweede op done; die vond bij het uitstel
+    zijn rij niet meer, en de inhoud bleef pending zonder taak, voorgoed."""
+    jonas, _ = admin
+    s = office.settings
+    state = office_state(app)
+    state.ever_ok = True
+    state.health = "down" if first == "teruggeven" else "ok"
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    attempts, set_job = convert._attempts, jobs._set
+
+    async def ds_returns(maker, sha):
+        state.health = "ok"  # vlak voor het slot van de overdracht: uitstel
+        return await attempts(maker, sha)
+
+    if first == "teruggeven":
+        monkeypatch.setattr(convert, "_attempts", ds_returns)
+    else:
+        convert._converting.add("1" * 64)  # een andere conversie heeft het slot
+    second: list[jobs.Claimed] = []
+
+    async def request_before_done(settings, claim, **values):
+        if claim.id == job.id and values.get("status") == "done" and not second:
+            r = await client.post(f"/api/v1/office/files/{node['id']}/convert", headers=jonas)
+            assert r.status_code == 202, r.text
+            again = await jobs.claim(s, lane=jobs.DEFAULT_LANE)  # een tweede worker
+            assert again is not None and again.id == job.id
+            second.append(again)
+        return await set_job(settings, claim, **values)
+
+    monkeypatch.setattr(jobs, "_set", request_before_done)
+    claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+    assert claimed is not None and claimed.id == job.id
+    await jobs.execute(s, claimed)  # stelt uit, en dan de done van jobs.execute
+    monkeypatch.setattr(jobs, "_set", set_job)
+    monkeypatch.setattr(convert, "_attempts", attempts)
+    [again] = second
+    row = (await office_jobs(s))[0]
+    assert (row.status, row.attempts) == ("running", 1)  # nog steeds de tweede claim
+    convert._converting.clear()
+    convert._converting.add("0" * 64)  # de tweede claim: het slot is bezet
+    await jobs.execute(s, again)
+    convert._converting.clear()
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    [active] = await office_jobs(s)
+    assert (active.id, active.status, active.attempts) == (job.id, "queued", 0)
+    assert office.log("convert") == []
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "ready"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+    [done] = await office_jobs(s)
+    assert (done.status, done.attempts) == ("done", 1)
 
 
 async def set_session_state(s: Settings, key: str, state: str) -> None:
@@ -1923,6 +2152,61 @@ async def test_een_tweede_worker_pakt_het_stuk_vooraan_al_op(
     assert [n for n, sha in enumerate(shas) if convert.job_key(sha) not in have] == []
     async with maker(s)() as session:
         assert {(await session.get(Blob, sha)).pdf_state for sha in shas} == {"pending"}
+
+
+@pytest.mark.anyio
+async def test_weer_gezond_wacht_op_het_stuk_dat_zijn_opvolger_zet(
+    client, admin, office, monkeypatch
+):
+    """Weer gezond (start_backfill) terwijl een stuk van de inhaalronde zijn opvolger zet, in
+    zijn eigen schrijftransactie. start_backfill wacht dan op het slot van de overdracht, en
+    begint pas na de commit van dat stuk: dan ziet het die opvolger, geeft hem de plek vooraan,
+    en zet er geen tweede stuk naast. Zonder dat slot begon start_backfill meteen, en hing het
+    van de database af: SQLite (één schrijver) liet hem wachten, maar met PostgreSQL (READ
+    COMMITTED) zag hij de opvolger nog niet, en kwamen er twee stukken klaar te staan."""
+    monkeypatch.setattr(convert, "BATCH", 2)
+    s = office.settings
+    shas = []
+    async with maker(s)() as session:
+        owner = await session.scalar(select(User))
+        for n in range(3):
+            node = await create_file(
+                session, owner, name=f"o{n}.docx", data=b"opvolger %d" % n, mime=DOCX
+            )
+            (await session.get(Blob, node.blob_id)).preview = "ready"
+            shas.append(node.blob_id)
+        await session.commit()
+    shas.sort()
+    async with maker(s)() as session:
+        await jobs.enqueue(session, convert.BACKFILL, {"after": ""}, key=convert.BACKFILL_KEY)
+        await session.commit()
+    chain = convert._chain
+    entered: list[str] = []
+    started: list[asyncio.Task] = []
+
+    async def watched(session, after, run_after=None):
+        entered.append(after)
+        added = await chain(session, after, run_after)
+        if after and not started:  # het stuk, met zijn schrijftransactie nog open
+            started.append(office.background(convert.start_backfill(s)))  # on_healthy
+            lock = convert._overdracht()
+            await until(lambda: bool(lock._waiters) or len(entered) > 1)
+            assert entered == [shas[1]], entered  # start_backfill wacht nog
+        return added
+
+    monkeypatch.setattr(convert, "_chain", watched)
+    await step(s)  # leest de eerste twee en zet zijn opvolger na de tweede
+    [start] = started
+    assert await start is False  # er stond al een stuk klaar
+    assert entered == [shas[1], ""]
+    async with maker(s)() as session:
+        query = select(Job).where(Job.type == convert.BACKFILL, Job.status == "queued")
+        [queued] = (await session.scalars(query)).all()
+    assert queued.payload == {"after": ""}  # de opvolger, nu vooraan
+    await convert_queued(s)
+    await step(s)
+    have = {j.key for j in await office_jobs(s)}
+    assert have == {convert.job_key(sha) for sha in shas}
 
 
 @pytest.mark.anyio
