@@ -63,8 +63,9 @@ De fouten van DS (oo/convert.py): new_key (-2, -4) -> een nieuwe taak met n + 1 
 retry -> een gewone poging (JobError), en antwoordde DS niet (code 2), dan eerst meteen de
 controle van health.py: zo verliest wat op het slot wacht niet elk een poging tegen een DS die
 weg is; misconfigured (-8) -> pdf_state terug, en meteen de grote controle van health.py (die
-zet misconfigured; de melding staat dan op /beheer). Blijvend mislukt (failed) staat ook als
-mislukte taak op /beheer, met de code in de melding: "(code -3)".
+zet meestal misconfigured; de melding staat dan op /beheer). Blijvend mislukt (failed) staat
+ook als mislukte taak op /beheer, met de code in de melding: "(code -3)"; de inhoud en de taak
+in één commit (_give_up).
 
 De inhaalronde (payload {after}): in stukken van 200 blobs op volgorde van sha, alleen inhoud
 van een bestand (geen eerdere versie) waarvan de preview klaar is. Hij neemt NULL (groter dan
@@ -91,7 +92,9 @@ Op verzoek (request): POST /api/v1/office/files/{id}/convert en /pdf, alleen ing
 leesrecht. Per gebruiker hooguit 10 per 10 minuten (429 rate_limited); hooguit 100 MB voor
 zip-formaten en office_ole_max_bytes voor doc, xls, ppt en rtf (413 office_too_large). De
 taak krijgt een run_after in het verleden, en staat dus vooraan; moet hij toch op het slot
-wachten, dan is hij de eerste die het daarna krijgt. Ook voor een eerdere versie.
+wachten, dan is hij de eerste die het daarna krijgt. Ook voor een eerdere versie. Na de
+invoercontrole kijkt het verzoek opnieuw naar de inhoud (intussen failed, none of unsafe: de
+fout), en dan, onder _overdracht zoals een stuk van de inhaalronde, of er al een taak is.
 """
 
 import asyncio
@@ -194,8 +197,9 @@ _arrivals = itertools.count()
 _asked: dict[str, float] = {}
 # Taken van on_healthy, zodat ze niet halverwege worden opgeruimd
 _tasks: set[asyncio.Task] = set()
-# Het teruggeven van de inhoud (_give_back) en een stuk van de inhaalronde één voor één, binnen
-# dit proces. Eén slot per event loop (de tests draaien elk in een eigen loop)
+# Het teruggeven van de inhoud (_give_back), een stuk van de inhaalronde (ook start_backfill)
+# en het einde van een verzoek (request) één voor één, binnen dit proces. Wie erop wacht, heeft
+# geen databaseverbinding open. Eén slot per event loop (de tests draaien elk in een eigen loop)
 _overdrachten: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = (
     weakref.WeakKeyDictionary()
 )
@@ -547,15 +551,24 @@ async def _give_up(
     maker: async_sessionmaker[AsyncSession], sha: str, state: str, code: int
 ) -> None:
     """Blijvend: pdf_state failed of none (met de PDF_VERSION van deze poging), en de taak op
-    failed met de code (voor /beheer)."""
-    await _set_state(
-        maker,
-        sha,
-        state,
-        only=("pending", "ready", "failed", "ask"),
-        pdf_version=keys.PDF_VERSION,
-    )
-    await _own_job(maker, sha, status="failed", finished_at=jobs.now(), error=_failed_message(code))
+    failed met de code (voor /beheer). In één commit, zoals _release: wie de inhoud failed
+    ziet, ziet de taak ook niet meer lopen, met de code (last_code). Met twee commits zette
+    Mislukte opnieuw ertussen pending zonder taak (de lopende taak hield een nieuwe tegen), en
+    kreeg een verzoek ertussen code 0 (o3.md afwijking 22)."""
+    async with maker() as session:
+        await session.execute(
+            update(Blob)
+            .where(Blob.sha256 == sha, Blob.pdf_state.in_(("pending", "ready", "failed", "ask")))
+            .values(pdf_state=state, pdf_version=keys.PDF_VERSION)
+            .execution_options(synchronize_session=False)
+        )
+        await session.execute(
+            update(Job)
+            .where(Job.type == TYPE, Job.key == job_key(sha), Job.status == "running")
+            .values(status="failed", finished_at=jobs.now(), error=_failed_message(code))
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
     log.warning("office: %s voor %s", _failed_message(code), sha[:12])
 
 
@@ -722,10 +735,12 @@ async def _convert_error(
             )
             await session.commit()
     else:  # misconfigured: geen poging; health.py kijkt meteen opnieuw (en zet de melding)
-        # Niet via _give_back: DS zelf zei -8, en _recheck zet zo misconfigured. De inhaalronde
-        # van de volgende "weer gezond" leest dus pas na deze commit. Een stuk dat nog vóór
-        # _recheck leest (DS heet dan nog gezond), ziet de inhoud leeg en de taak klaar (één
-        # commit in _release), en zet er een taak bij
+        # Niet via _give_back: DS zelf zei -8, en _recheck zet dan meestal misconfigured. De
+        # inhaalronde van de volgende "weer gezond" leest dus pas na deze commit. Een stuk dat
+        # nog vóór _recheck leest (DS heet dan nog gezond), ziet de inhoud leeg en de taak
+        # klaar (één commit in _release), en zet er een taak bij. Vindt _recheck DS toch gezond
+        # (of mislukt hij), dan blijft de inhoud leeg tot de volgende "weer gezond", "weer aan"
+        # op /beheer of een verzoek (o3.md afwijking 22)
         await _release(maker, sha, asked, r)
         await _recheck()
 
@@ -1006,11 +1021,7 @@ async def request(
         return "ready"
     if not await _enabled(session):
         raise errors.fail(503, "office_off", OFF)
-    if blob.pdf_state == "unsafe":
-        raise unsafe()
-    if blob.pdf_state in ("failed", "none"):
-        code = -5 if blob.pdf_state == "none" else await last_code(session, sha)
-        raise convert_failed(code)
+    await _refuse_final(session, blob)
     limit = limit_for(settings, ext)
     if blob.size > limit:
         raise errors.fail(
@@ -1036,30 +1047,47 @@ async def request(
     if not _healthy():
         raise errors.fail(503, "office_unavailable", UNAVAILABLE)
     ASKS.check(str(user.id))
-    blob = await session.get(Blob, sha, populate_existing=True)
-    if blob is None:
-        raise errors.fail(404, "not_found", "Niet gevonden")
-    asked = blob.pdf_state == "ask"
-    first = jobs.now() - timedelta(hours=1)  # vooraan in de rij
-    _asked[sha] = time.monotonic() + ASKED_SECONDS  # en de eerste bij het slot
-    job = await session.scalar(
-        select(Job)
-        .where(Job.key == job_key(sha), Job.status.in_(jobs.ACTIVE))
-        .order_by(Job.created_at)
-        .limit(1)
-    )
-    if job is None:
-        payload = {"sha": sha, "n": 1, **({"ask": True} if asked else {})}
-        await jobs.enqueue(session, TYPE, payload, key=job_key(sha), run_after=first)
-    elif job.status == "queued":
-        job.run_after = first
-        if asked:
-            job.payload = {**(job.payload or {}), "ask": True}
-    if blob.pdf_state != "ready":
-        blob.pdf_state = "pending"
-    await session.commit()
+    # Onder _overdracht, zoals een stuk van de inhaalronde: wie kijkt of er al een taak is en er
+    # anders een klaarzet, doet dat om de beurt. Eerst zag een verzoek de taak van een ander
+    # verzoek of van een stuk nog niet (de SELECT gaat vóór het schrijven), en kwamen er twee.
+    # De sessie heeft hier niets open (de commit vóór de invoercontrole)
+    async with _overdracht():
+        blob = await session.get(Blob, sha, populate_existing=True)
+        if blob is None:
+            raise errors.fail(404, "not_found", "Niet gevonden")
+        # Opnieuw: tijdens de invoercontrole kan de taak de inhoud failed, none of unsafe
+        # hebben gemaakt. Daar kwam anders pending overheen, zonder taak (o3.md afwijking 22)
+        await _refuse_final(session, blob)
+        asked = blob.pdf_state == "ask"
+        first = jobs.now() - timedelta(hours=1)  # vooraan in de rij
+        _asked[sha] = time.monotonic() + ASKED_SECONDS  # en de eerste bij het slot
+        job = await session.scalar(
+            select(Job)
+            .where(Job.key == job_key(sha), Job.status.in_(jobs.ACTIVE))
+            .order_by(Job.created_at)
+            .limit(1)
+        )
+        if job is None:
+            payload = {"sha": sha, "n": 1, **({"ask": True} if asked else {})}
+            await jobs.enqueue(session, TYPE, payload, key=job_key(sha), run_after=first)
+        elif job.status == "queued":
+            job.run_after = first
+            if asked:
+                job.payload = {**(job.payload or {}), "ask": True}
+        if blob.pdf_state != "ready":
+            blob.pdf_state = "pending"
+        await session.commit()
     jobs.kick()
     return "pending"
+
+
+async def _refuse_final(session: AsyncSession, blob: Blob) -> None:
+    """unsafe, failed of none: dan geen conversie op verzoek, maar de fout van request."""
+    if blob.pdf_state == "unsafe":
+        raise unsafe()
+    if blob.pdf_state in ("failed", "none"):
+        code = -5 if blob.pdf_state == "none" else await last_code(session, blob.sha256)
+        raise convert_failed(code)
 
 
 def unsafe() -> Exception:
