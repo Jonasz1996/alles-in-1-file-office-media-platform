@@ -15,6 +15,10 @@ Tab, Enter, Spatie, de pijlen en typen; nergens een klik (docs/fase-6/toetsenbor
   blijft in de pagina, nooit in de adresbalk.
 - "Vandaag, N jaar geleden" met een vaste dag: de test zet ?day= op het verzoek (nooit de klok
   van vandaag), opent een herinnering en verbergt de dag.
+- De pagina van één persoon: de volgorde van Tab, F2 (hernoemen; de focus gaat terug naar het
+  raster), Verbergen en "Verborgen personen tonen" op /fotos/personen, Niet in herinneringen,
+  Samenvoegen (de combobox in het dialoog), het raster (pijlen, viewer, Spatie, Mod+A en
+  Downloaden als zip) en Wissen (Shift+Delete en de knop, met de vraag).
 - Account → Foto's: gezichten en zoeken op beeld aanzetten kan nog niet (de API zegt 409); de
   reden staat onder het vinkje, het vinkje blijft uit en de rest van de pagina werkt door.
 
@@ -24,6 +28,7 @@ De foto's komen van een vaste dag (LATEST), niet van nu.
 from __future__ import annotations
 
 import re
+import zipfile
 from datetime import UTC, date, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
@@ -421,6 +426,205 @@ def test_herinneringen_met_een_vaste_dag(server, fien, context_as):
     expect(herinneringen).to_have_count(0)
     regels = server.call(fien, "GET", "/api/v1/photos/memories/hide", expect=200).json()["hides"]
     assert regels == [{"kind": "day", "ref": dag.isoformat()}]
+
+
+def test_de_pagina_van_een_persoon_met_het_toetsenbord(server, fien, context_as):
+    """De pagina van één persoon, alleen met het toetsenbord (review golf 2, G): de volgorde van
+    Tab, F2 hernoemt, Verbergen (dan alleen nog onder "Verborgen personen tonen" op
+    /fotos/personen), Niet in herinneringen, Samenvoegen in een dialoog met een combobox, het
+    raster zoals een album (met Downloaden in de balk van de selectie), en Wissen (Shift+Delete:
+    de focus op Annuleren, Esc annuleert; Enter op Wissen wist)."""
+    items = server.call(fien, "GET", "/api/v1/photos", expect=200).json()["items"]
+    for item, naam in ((items[0], "Anna"), (items[1], "Bert")):
+        server.call(
+            fien, "POST", f"/api/v1/files/{item['id']}/people", json={"name": naam}, expect=201
+        )
+    alle = server.call(fien, "GET", "/api/v1/people", params={"hidden": 0}, expect=200).json()
+    ids = {p["name"]: p["id"] for p in alle["people"]}
+    anna, bert = ids["Anna"], ids["Bert"]
+    pad_anna = f"/api/v1/people/{anna}"
+
+    page = context_as(fien).new_page()
+    page.goto(f"/fotos/personen/{anna}")
+    kop = page.get_by_role("heading", level=1)
+    expect(kop).to_have_text("Anna")
+    raster = page.get_by_role("grid", name="Foto's van Anna", exact=True)
+    expect(raster.get_by_role("gridcell")).to_have_count(1)
+
+    # --- de volgorde van Tab vanaf de kop (toetsenbord-z6.md) ---
+    kop.focus()
+    volgorde = []
+    for _ in range(7):
+        page.keyboard.press("Tab")
+        volgorde.append(page.evaluate(ACTIEF))
+    assert volgorde[:6] == [
+        "BUTTON Hernoemen",
+        "BUTTON Samenvoegen",
+        "BUTTON Verbergen",
+        "BUTTON Niet in herinneringen",
+        "BUTTON Wissen",
+        "A Alle personen",
+    ], volgorde
+    expect(raster.locator(FOCUSED)).to_be_focused()
+
+    # --- F2: hernoemen ---
+    page.keyboard.press("F2")
+    dialoog = page.get_by_role("dialog", name="Hernoemen", exact=True)
+    veld = dialoog.get_by_role("textbox", name="Naam", exact=True)
+    expect(veld).to_be_focused()
+    expect(veld).to_have_value("Anna")
+    page.keyboard.press("Control+a")
+    page.keyboard.type("Anna de Vries", delay=10)
+    with page.expect_response(
+        lambda r: r.request.method == "PATCH" and r.url.endswith(pad_anna)
+    ) as hernoemd:
+        page.keyboard.press("Enter")
+    assert hernoemd.value.json()["name"] == "Anna de Vries"
+    expect(dialoog).to_have_count(0)
+    expect(kop).to_have_text("Anna de Vries")
+    # De focus staat weer waar hij was: op de foto in het raster (nu met de nieuwe naam)
+    raster = page.get_by_role("grid", name="Foto's van Anna de Vries", exact=True)
+    expect(raster.locator(FOCUSED)).to_be_focused()
+
+    # --- Verbergen: niet meer in de lijst, wel onder "Verborgen personen tonen" ---
+    verbergen = page.get_by_role("button", name="Verbergen", exact=True)
+    assert tab_to(page, verbergen, limit=10, back=True) == 4
+    with page.expect_response(
+        lambda r: r.request.method == "PATCH" and r.url.endswith(pad_anna)
+    ) as verborgen:
+        page.keyboard.press("Enter")
+    assert verborgen.value.json()["hidden"] is True
+    terug = page.get_by_role("button", name="Niet meer verbergen", exact=True)
+    expect(terug).to_be_visible()
+    expect(
+        page.get_by_text("Verborgen: deze persoon staat niet in de lijst", exact=False)
+    ).to_be_visible()
+
+    lijst = page.get_by_role("link", name="Alle personen", exact=True)
+    tab_to(page, lijst, limit=10)
+    page.keyboard.press("Enter")
+    expect(page).to_have_url(re.compile(r"/fotos/personen$"))
+    kaarten = page.get_by_role("link", name=re.compile(r"^(Anna|Bert)"))
+    expect(kaarten).to_have_count(1)
+    expect(page.get_by_role("link", name=re.compile(r"^Bert"))).to_have_count(1)
+    tonen = page.get_by_label("Verborgen personen tonen", exact=True)
+    tab_to(page, tonen, limit=20)
+    with page.expect_response(
+        lambda r: r.request.method == "GET" and r.url.endswith("/api/v1/people?hidden=1")
+    ) as ook_verborgen:
+        page.keyboard.press("Space")
+    assert [p["id"] for p in ook_verborgen.value.json()["people"]] == [anna]
+    groep = page.get_by_role("region", name="Verborgen personen", exact=True)
+    naar_anna = groep.get_by_role("link", name=re.compile(r"^Anna de Vries"))
+    tab_to(page, naar_anna, limit=10)
+    page.keyboard.press("Enter")
+    expect(kop).to_have_text("Anna de Vries")
+    terug = page.get_by_role("button", name="Niet meer verbergen", exact=True)
+    tab_to(page, terug, limit=10)
+    with page.expect_response(
+        lambda r: r.request.method == "PATCH" and r.url.endswith(pad_anna)
+    ) as zichtbaar:
+        page.keyboard.press("Enter")
+    assert zichtbaar.value.json()["hidden"] is False
+    expect(page.get_by_role("button", name="Verbergen", exact=True)).to_be_visible()
+
+    # --- Niet in herinneringen ---
+    herinneringen = page.get_by_role("button", name="Niet in herinneringen", exact=True)
+    tab_to(page, herinneringen, limit=10)
+    with page.expect_response(
+        lambda r: r.request.method == "POST" and r.url.endswith("/api/v1/photos/memories/hide")
+    ) as uit:
+        page.keyboard.press("Enter")
+    assert uit.value.status in (200, 201, 204), uit.value.text()
+    expect(
+        toast(page, "Foto's met Anna de Vries komen niet meer in je herinneringen.")
+    ).to_be_visible()
+    expect(page.get_by_role("button", name="Weer in herinneringen", exact=True)).to_be_visible()
+    regels = server.call(fien, "GET", "/api/v1/photos/memories/hide", expect=200).json()["hides"]
+    assert regels == [{"kind": "person", "ref": anna}]
+
+    # --- Samenvoegen: de combobox in het dialoog; Esc sluit eerst de lijst ---
+    samenvoegen = page.get_by_role("button", name="Samenvoegen", exact=True)
+    tab_to(page, samenvoegen, limit=10, back=True)
+    page.keyboard.press("Enter")
+    dialoog = page.get_by_role("dialog", name="Anna de Vries samenvoegen", exact=True)
+    met = dialoog.get_by_role("combobox", name="Samenvoegen met", exact=True)
+    expect(met).to_be_focused()
+    page.keyboard.type("ber", delay=20)
+    optie = dialoog.get_by_role("option", name="Bert", exact=True)
+    expect(optie).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(optie).to_have_count(0)
+    expect(dialoog).to_be_visible()
+    page.keyboard.press("ArrowDown")
+    expect(optie).to_have_attribute("aria-selected", "true")
+    page.keyboard.press("Enter")
+    expect(met).to_have_value("Bert")
+    with page.expect_response(
+        lambda r: r.request.method == "POST" and r.url.endswith(f"{pad_anna}/merge")
+    ) as samen:
+        page.keyboard.press("Enter")
+    assert samen.value.json()["id"] == bert
+    expect(page).to_have_url(re.compile(f"/fotos/personen/{bert}$"))
+    expect(kop).to_have_text("Bert")
+    raster = page.get_by_role("grid", name="Foto's van Bert", exact=True)
+    cellen = raster.get_by_role("gridcell")
+    expect(cellen).to_have_count(2)
+
+    # --- Het raster zoals een album: de pijlen, Enter opent de viewer (Esc terug), Spatie
+    # selecteert, Mod+A alles; "Downloaden" in de balk van de selectie maakt een zip ---
+    tab_to(page, raster.locator(FOCUSED), limit=10)
+    expect(cellen.nth(0)).to_be_focused()
+    page.keyboard.press("ArrowRight")
+    expect(cellen.nth(1)).to_be_focused()
+    page.keyboard.press("Enter")
+    viewer = page.get_by_role("dialog", name="foto-00001.webp", exact=True)
+    expect(viewer).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(viewer).to_have_count(0)
+    expect(cellen.nth(1)).to_be_focused()
+    page.keyboard.press("Space")
+    expect(cellen.nth(1)).to_have_attribute("aria-selected", "true")
+    balk = page.get_by_role("toolbar", name="Selectie", exact=True)
+    expect(balk.get_by_text("1 geselecteerd", exact=True)).to_be_visible()
+    page.keyboard.press("ControlOrMeta+a")
+    expect(balk.get_by_text("2 geselecteerd", exact=True)).to_be_visible()
+    expect(cellen.nth(0)).to_have_attribute("aria-selected", "true")
+    downloaden = balk.get_by_role("button", name="Downloaden", exact=True)
+    tab_to(page, downloaden, limit=10)
+    with page.expect_download() as zip_bert:
+        page.keyboard.press("Enter")
+    assert zip_bert.value.suggested_filename == "Bert.zip"
+    with zipfile.ZipFile(zip_bert.value.path()) as zf:
+        assert sorted(zf.namelist()) == ["foto-00000.webp", "foto-00001.webp"]
+    page.keyboard.press("Escape")
+    expect(balk).to_be_hidden()
+    expect(raster.locator(FOCUSED)).to_be_focused()
+
+    # --- Wissen: Shift+Delete vraagt eerst (focus op Annuleren, Esc annuleert) ---
+    kop.focus()
+    page.keyboard.press("Shift+Delete")
+    vraag = page.get_by_role("dialog", name="Wissen", exact=True)
+    expect(vraag.get_by_role("button", name="Annuleren", exact=True)).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(vraag).to_have_count(0)
+    expect(kop).to_have_text("Bert")
+    wissen = page.get_by_role("button", name="Wissen", exact=True)
+    tab_to(page, wissen, limit=10)
+    page.keyboard.press("Enter")
+    expect(vraag.get_by_role("button", name="Annuleren", exact=True)).to_be_focused()
+    page.keyboard.press("Tab")
+    expect(vraag.get_by_role("button", name="Wissen", exact=True)).to_be_focused()
+    with page.expect_response(
+        lambda r: r.request.method == "DELETE" and r.url.endswith(f"/api/v1/people/{bert}")
+    ) as gewist:
+        page.keyboard.press("Enter")
+    assert gewist.value.status == 204, gewist.value.text()
+    expect(page).to_have_url(re.compile(r"/fotos/personen$"))
+    over = server.call(fien, "GET", "/api/v1/people", params={"hidden": 1}, expect=200).json()
+    assert over["people"] == []
+    # De foto's zelf blijven
+    assert len(server.call(fien, "GET", "/api/v1/photos", expect=200).json()["items"]) == PHOTOS
 
 
 def test_account_fotos_gezichten_en_beeld_nog_niet(server, user_factory, context_as):

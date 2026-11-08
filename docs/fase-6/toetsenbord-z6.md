@@ -86,7 +86,7 @@ Wat je typt, blijft in de pagina; het komt niet in de adresbalk. De lege plek va
 
 | Toets | Wat |
 |---|---|
-| Tab | "Alle personen", de knoppen Hernoemen, Samenvoegen, Verbergen (of Niet meer verbergen), Niet in herinneringen (of Weer in herinneringen), Wissen, en het raster |
+| Tab | de knoppen Hernoemen, Samenvoegen, Verbergen (of Niet meer verbergen), Niet in herinneringen (of Weer in herinneringen), Wissen, dan de link "Alle personen" en het raster |
 | F2 | hernoemen (een dialoog met het veld "Naam", Enter slaat op, Esc annuleert) |
 | Enter op Samenvoegen | een dialoog met "Samenvoegen met" (een combobox: typen, ↓ / ↑, Enter); Enter op Samenvoegen voegt samen en opent de andere persoon |
 | Enter op Verbergen | de persoon staat niet meer in de lijst en niet in de suggesties; de knop wordt "Niet meer verbergen" |
