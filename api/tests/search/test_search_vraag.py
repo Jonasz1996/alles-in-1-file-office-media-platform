@@ -123,11 +123,16 @@ async def test_de_filters_van_later_zijn_501(client, admin, motor, param, waarde
 async def test_het_filter_person_van_z6_geeft_niets_voor_een_onbekende(client, admin, motor):
     people_search.register()  # een test eerder in de run kan filters.reset() gedaan hebben
     headers, _ = admin
-    for extra in ({}, {"q": "foto"}, {"q": "foto", "limit": 200}):
+    for extra in ({}, {"q": "foto"}, {"q": "foto", "limit": 50}):
         params = {"person": str(uuid.UUID(int=7)), **extra}
         r = await client.get("/api/v1/search", params=params, headers=headers)
         assert r.status_code == 200, (extra, r.text)
         assert r.json()["results"] == [], extra
+    # De vraag van 0.7.0 (limit 200) is sinds Z4 eerst een 422 op limit, ook met person
+    params = {"person": str(uuid.UUID(int=7)), "q": "foto", "limit": 200}
+    r = await client.get("/api/v1/search", params=params, headers=headers)
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["params"] == {"field": "query.limit"}
 
 
 async def _bibliotheek(settings, owner: uuid.UUID, root_id: str) -> uuid.UUID:
