@@ -15,6 +15,12 @@ attempts telt hoe vaak een taak is begonnen. Stopt het proces midden in een taak
 dan gaat hij bij het starten terug in de rij, en telt die poging mee: een bestand dat het
 proces laat crashen, blijft zo niet eindeloos terugkomen.
 
+Stoppen (Runner.stop) wint altijd. Een lopende taak gaat terug in de rij zonder dat de poging
+telt. Lukt dat terugzetten niet (database is locked), dan blijft hij op running en zet recover()
+hem bij de volgende start terug, zoals na een crash. Een fout bij het opruimen vervangt het
+stopsein niet, en een worker die het sein kreeg, pakt niets meer op; het opruimwerk evenmin
+(fase-5/m0.md, punt 12).
+
 Een taak doet zijn zware rekenwerk in een thread of eigen proces, nooit op de event loop.
 
 Rijen (fase 5, Keuze 14). Elk soort hoort bij één rij (register(..., lane=...)), en elke rij
@@ -520,8 +526,7 @@ async def execute(settings: Settings, job: Claimed) -> None:
         with anyio.fail_after(limit) as scope:
             await kind.run(settings, job.payload)
     except asyncio.CancelledError:
-        with anyio.CancelScope(shield=True), anyio.move_on_after(10):
-            await _requeue(settings, job)
+        await _stopped(settings, job)
         raise
     except Defer as e:
         # Nu niet, straks wel: terug in de rij, en deze poging telt niet
@@ -530,6 +535,11 @@ async def execute(settings: Settings, job: Claimed) -> None:
             await _requeue(settings, job, after=e.seconds)
         return
     except Exception as e:  # noqa: BLE001 - elke fout telt als mislukte poging
+        if stopping():
+            # Het stopsein, vervangen door een fout bij het opruimen van de taak zelf (zoals
+            # database is locked in analysis._back_to_wait): stoppen, geen mislukte poging
+            await _stopped(settings, job)
+            raise asyncio.CancelledError from e
         if isinstance(e, TimeoutError) and scope is not None and scope.cancel_called:
             error = f"Duurde langer dan {limit:g} seconden"
         else:
@@ -551,6 +561,32 @@ async def execute(settings: Settings, job: Claimed) -> None:
         return
     with anyio.CancelScope(shield=True):
         await _set(settings, job, status="done", finished_at=now(), error=None)
+
+
+def stopping() -> bool:
+    """Kreeg deze taak het stopsein (task.cancel() van Runner.stop)? Ook als een fout bij het
+    opruimen de CancelledError verving: cancelling() telt elke cancel() die niemand terugnam
+    (de eigen tijdgrenzen van anyio en asyncio nemen de hunne terug)."""
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
+async def _stopped(settings: Settings, job: Claimed) -> None:
+    """Bij stoppen terug in de rij, zonder dat de poging telt, hooguit 10 s. Nooit een fout
+    hieruit: die verving het stopsein, de worker draaide door en Runner.stop wachtte voor altijd
+    (het harnas van de e2e doodde de app na 30 s). Lukt het niet, dan blijft de taak op running
+    met de started_at van deze claim, en zet recover() hem bij de volgende start terug."""
+    with anyio.CancelScope(shield=True), anyio.move_on_after(10):
+        try:
+            await _requeue(settings, job)
+        except Exception:  # noqa: BLE001 - zie hierboven
+            log.warning(
+                "Achtergrondtaak %s (%s) bij het stoppen niet terug in de rij; hij blijft op "
+                "running tot de volgende start",
+                job.id,
+                job.type,
+                exc_info=True,
+            )
 
 
 async def _set(settings: Settings, job: Claimed, **values: Any) -> bool:
@@ -696,6 +732,10 @@ class Runner:
 
     async def _work(self) -> None:
         while True:
+            if stopping():
+                # stop() gaf het sein, maar een taak slikte de CancelledError: niets meer
+                # oppakken, anders wachtte stop() voor altijd op deze worker
+                raise asyncio.CancelledError
             self._wake.clear()
             try:
                 job = await claim(self.settings, lane=self.lane)
@@ -767,6 +807,10 @@ async def run_housekeeping(settings: Settings, last: dict[str, float] | None = N
         except Exception:  # noqa: BLE001 - opruimen mag de app nooit stoppen
             log.exception("Opruimwerk %s mislukt", item.name)
         ran.append(item.name)
+        if stopping():
+            # Het stopsein, geslikt door dit opruimwerk (of vervangen door een fout bij zijn
+            # opruimen): verder niets, anders wachtte Runner.stop tot na HOUSEKEEPING_TICK
+            raise asyncio.CancelledError
     return ran
 
 
