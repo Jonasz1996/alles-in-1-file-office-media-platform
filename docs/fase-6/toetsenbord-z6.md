@@ -21,7 +21,7 @@ met alleen Tab, Shift+Tab, Enter, Spatie, Esc, de pijlen en typen. Nergens een k
 | Esc in "Persoon" | sluit de lijst; het veld houdt de focus |
 | Enter op een gekozen persoon ("Oma Ria uit het filter halen") | haalt hem uit het filter; de focus gaat terug naar het veld "Persoon" |
 | ↑ / ↓ in "Soort" | foto's en video's, alleen foto's of alleen video's |
-| "Vanaf" en "Tot en met" | gewone datumvelden; een omgekeerde periode wordt omgedraaid |
+| "Vanaf" en "Tot en met" | gewone datumvelden; de datum telt bij het verlaten van het veld (Tab) of Enter, zoals op `/zoeken`: typen geeft één vraag, niet één per cijfer. Een omgekeerde periode wordt omgedraaid |
 | Enter op "Filters wissen" | alle filters uit; de focus gaat naar het veld "Persoon". De knop staat er alleen als er een filter aan is |
 
 - Hoeveel filters er aan staan, staat in een `status` ("1 filter aan", "2 filters aan"). Een

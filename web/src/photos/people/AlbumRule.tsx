@@ -152,7 +152,7 @@ function RuleDialog({
           onChange={(person) => change({ person })}
         />
         <div className="rule-dates">
-          <MediaDates id={id} type={form.type} from={form.from} to={form.to} onChange={change} />
+          <MediaDates id={id} type={form.type} from={form.from} to={form.to} live onChange={change} />
         </div>
         {askNew && (
           <div className="field">

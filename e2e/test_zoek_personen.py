@@ -10,7 +10,8 @@ Tab, Enter, Spatie, de pijlen en typen; nergens een klik (docs/fase-6/toetsenbor
   op de chip. Op /zoeken?q= staat de persoon in de groep bovenaan, en Enter zet hetzelfde filter
   (Keuze 38).
 - Het filter op /fotos: de persoon kiezen (↓, Enter), alleen zijn foto; een soort zonder treffers
-  (de lege staat), Filters wissen. Het filter blijft in de pagina, nooit in de adresbalk.
+  (de lege staat), Filters wissen; een datum Vanaf typen geeft één vraag, bij Tab. Het filter
+  blijft in de pagina, nooit in de adresbalk.
 - "Vandaag, N jaar geleden" met een vaste dag: de test zet ?day= op het verzoek (nooit de klok
   van vandaag), opent een herinnering en verbergt de dag.
 - Account → Foto's: gezichten en zoeken op beeld aanzetten kan nog niet (de API zegt 409); de
@@ -254,6 +255,29 @@ def test_persoon_toevoegen_met_kader_zoeken_en_filteren(server, fien, context_as
     page.keyboard.press("Enter")
     expect(tijdlijn.get_by_role("gridcell")).to_have_count(PHOTOS)
     expect(filter_persoon).to_be_focused()
+    assert not urlsplit(page.url).query
+
+    # --- een periode: een datum typen geeft één vraag, bij het verlaten van het veld (review
+    # golf 2, web B; eerder één per cijfer van het jaar) ---
+    vanaf = page.get_by_label("Vanaf", exact=True)
+    tab_to(page, vanaf, limit=10)
+    vragen: list[str] = []
+    page.on("request", lambda r: vragen.append(r.url) if "/api/v1/photos/months" in r.url else None)
+    page.keyboard.type("03032026")  # dag en maand gelijk: elke volgorde; de twee nieuwste foto's
+    expect(vanaf).to_have_value("2026-03-03")
+    assert vragen == []
+    with page.expect_response(lambda r: "/api/v1/photos/months?" in r.url) as maanden:
+        # In een datumveld gaat Tab eerst langs de delen (dag, maand, jaar); dan naar het
+        # volgende veld (zoals in test_zoek_z4.py)
+        for _ in range(4):
+            if not vanaf.evaluate("(e) => e === document.activeElement"):
+                break
+            page.keyboard.press("Tab")
+    assert parse_qs(urlsplit(maanden.value.url).query)["from"] == ["2026-03-03"]
+    assert sum(m["count"] for m in maanden.value.json()["months"]) == 2
+    expect(tijdlijn.get_by_role("gridcell")).to_have_count(2)
+    expect(page.get_by_label("Tot en met", exact=True)).to_be_focused()
+    assert len(vragen) == 1, vragen
     assert not urlsplit(page.url).query
 
 
