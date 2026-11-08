@@ -47,7 +47,8 @@ Waar een keuze heen gaat:
 
 - een **map**: `/map/<id>`; een **bestand**: de map waar het in staat, met het bestand open in de
   viewer (`?bestand=`). Is het bestand intussen weg of niet meer te zien, dan `/zoeken?q=<naam>`;
-- een **persoon**: `/fotos/personen/<id>`; een **album**: `/album/<id>`;
+- een **persoon**: `/zoeken` met het filter persoon (`?person=<id>`, Keuze 38; tot de merge van
+  golf 2 was dat `/fotos/personen/<id>`, toen gaf het filter nog 501); een **album**: `/album/<id>`;
 - een **plaats** of een **tag**: `/zoeken` met dat filter (`?place=` of `?tag=`);
 - de laatste regel: `/zoeken?q=…&mode=image` (zoeken op wat er op de foto staat).
 
@@ -60,7 +61,9 @@ ook.
 
 ## De pagina /zoeken
 
-Na het openen staat de focus op de kop (zoals elke pagina). Met Tab, in deze volgorde:
+Na het openen staat de focus op de kop (zoals elke pagina). Behalve op `/zoeken?mode=image` zonder
+vraag (de knop "Zoeken op beeld" op `/fotos`, Keuze 81): dan staat de focus in het veld
+"Zoekwoorden" (sinds de merge van golf 2). Met Tab, in deze volgorde:
 
 | Element | Toetsen |
 |---|---|
@@ -69,9 +72,9 @@ Na het openen staat de focus op de kop (zoals elke pagina). Met Tab, in deze vol
 | "Zoeken op": Namen en tekst / Wat er op de foto staat | ← en → kiezen (keuzerondjes); niet voor een gast. In de stand "Wat er op de foto staat" komt het raster van X3 (tot X3 er is: niets) |
 | de chips | per filter een knop × ("Filter weghalen: …"); Enter haalt het filter weg. De focus gaat naar de chip die nu op die plek staat (of de vorige), en zonder chips naar "Filters" |
 | "Filters" | Enter of Spatie opent en sluit het paneel |
-| in het paneel: de soorten en de tags | Spatie zet een vinkje aan of uit; de vraag verandert meteen en de focus blijft op het vinkje |
+| in het paneel: de soorten, de tags en je personen | Spatie zet een vinkje aan of uit; de vraag verandert meteen en de focus blijft op het vinkje. Meer personen is EN: ze staan er allemaal op (sinds de merge van golf 2; de chip toont de naam) |
 | in het paneel: Vanaf en Tot en met | typen (dag, maand, jaar; Tab gaat eerst langs die drie delen), Enter zet de datum. Het veld verlaten zet hem ook |
-| de personen en plaatsen die zo heten | links; Enter opent de persoon of zoekt in die plaats |
+| de personen en plaatsen die zo heten | links; Enter zet het filter persoon (Keuze 38) of zoekt in die plaats |
 | de treffers | één tabstop, dan als de lijst van Bestanden: ↑ ↓ Home End PageUp PageDown, Enter opent (een bestand in de viewer, met `?bestand=` naast de vraag; een map gaat open), Spatie selecteert, Mod+A, Esc heft de selectie op, Shift+F10 of de menutoets voor het menu, en de toetsen van de acties |
 | "Meer laden" | Enter haalt de volgende 30; de focus gaat naar de eerste nieuwe treffer |
 | "Geen foto met deze naam? Zoek op wat er op je foto's staat." | een link naar de stand beeld (alleen als er geen foto bij de treffers zit; niet voor een gast) |
@@ -162,3 +165,15 @@ In stap 2, met een eigen server met de index aan, een PDF van 3 pagina's met tek
 - [x] De melding in de balk is helemaal te lezen (een schermafdruk): eerst stond hij tegen de
       rechterkant en viel "pagina 1" half onder de rand van de schuifbalk (de viewer is 100vw
       breed, `scrollbar-gutter` in `base.css`); nu staat hij na de knoppen.
+
+Bij de merge van golf 2 (Z4 met Z6, `e2e/test_zoek_personen.py`, Chromium 141, de index aan):
+
+- [x] Mod+K, "oma": de lijst met Oma Ria onder Personen en de laatste regel ("Zoek 'oma' op wat er
+      op je foto's staat"); ↓ en Enter: `/zoeken?person=<id>`, één treffer, de chip "Filter
+      weghalen: Oma Ria".
+- [x] `/zoeken?q=oma`: de groep Personen met de link "Oma Ria (1)"; Tab erheen en Enter: hetzelfde
+      adres en dezelfde treffer.
+- [x] Op `/fotos` Enter op "Zoeken op beeld": `/zoeken?mode=image`, de focus in "Zoekwoorden" met de
+      plaatshouder van de stand beeld, "Wat er op de foto staat" gekozen.
+- [x] In het paneel de groep Persoon met een vinkje per persoon ("Oma Ria (3)"); de vitest
+      (`page.test.ts`) toetst de vinkjes en de naam op de chip.
