@@ -507,24 +507,29 @@ def test_een_te_lange_ruwe_cue_wordt_afgekapt_zonder_halve_code() -> None:
     assert subconv.clip("kort {") == "kort {"
 
 
-async def _longest_gap(work) -> tuple[bytes, float]:
-    """Het werk naast een taak die elke ms wakker wil worden: (uitvoer, het langste gat).
+async def _longest_gap(work) -> tuple[bytes, float, float]:
+    """Het werk naast een taak die elke ms wakker wil worden: (uitvoer, het langste gat, de
+    CPU-tijd van deze thread in dat gat).
 
     De heap van dit testproces (na duizenden tests) gaat eerst in gc.freeze: anders meet een
     volle ronde van de garbage collector over al die objecten mee (in de hele set tot 0,5 s),
     en dat is niet wat de omzetter doet. De worker is een eigen proces met een kleine heap; wat
-    de omzetter zelf aan afval maakt, ruimt de collector hier nog steeds op, en dat telt mee."""
-    gaps: list[float] = []
+    de omzetter zelf aan afval maakt, ruimt de collector hier nog steeds op, en dat telt mee.
+
+    Het gat is wandklok, en de grens geldt daarvoor. De CPU-tijd staat erbij in de melding: is die
+    veel kleiner dan het gat, dan kreeg het proces de CPU niet; is die even groot, dan rekende de
+    omzetter zo lang (CI golf 2, docs/fase-5/m5.md)."""
+    gaps: list[tuple[float, float]] = []
     done = asyncio.Event()
     gc.collect()
     gc.freeze()
 
     async def tick() -> None:
-        last = time.perf_counter()
+        last = (time.perf_counter(), time.thread_time())
         while not done.is_set():
             await asyncio.sleep(0.001)
-            now = time.perf_counter()
-            gaps.append(now - last)
+            now = (time.perf_counter(), time.thread_time())
+            gaps.append((now[0] - last[0], now[1] - last[1]))
             last = now
 
     ticker = asyncio.create_task(tick())
@@ -535,7 +540,8 @@ async def _longest_gap(work) -> tuple[bytes, float]:
         done.set()
         await ticker
         gc.unfreeze()
-    return out, max(gaps)
+    gap, cpu = max(gaps)
+    return out, gap, cpu
 
 
 @pytest.mark.anyio
@@ -551,9 +557,9 @@ async def test_de_worker_geeft_zijn_lus_de_beurt(name: str) -> None:
         _file(kind, [unit * (1_000_000 // len(unit))]),
     ]
     for data in inputs:
-        vtt_out, gap = await _longest_gap(subs_op.convert(data, kind))
+        vtt_out, gap, cpu = await _longest_gap(subs_op.convert(data, kind))
         subtitles.parse_vtt(vtt_out)
-        assert gap < 0.25, f"{name}: de lus stond {gap:.2f} s stil"
+        assert gap < 0.25, f"{name}: de lus stond {gap:.2f} s stil ({cpu:.2f} s CPU)"
 
 
 @pytest.mark.parametrize("kind", ["srt", "vtt", "ass"])
@@ -570,23 +576,35 @@ def test_steps_tikt_ook_zonder_cues(kind: str) -> None:
     assert len(steps) >= 25, len(steps)  # 2 MB, een tik per 64 KB: ± 30
 
 
-def test_steps_tikt_ook_binnen_een_cue_van_veel_regels() -> None:
+def test_steps_tikt_ook_binnen_een_cue_van_veel_regels(monkeypatch: pytest.MonkeyPatch) -> None:
     """Een SRT-cue van veel regels zonder lege regel ertussen las steps in één stap: 0,14 s per
     MB, en de lus van de worker stond al die tijd stil (CI golf 2). Nu tikt hij ook daarbinnen, en
-    de cue houdt hooguit MAX_RAW_CUE tekens. Zonder tijd gemeten: het aantal tikken."""
+    bewaart hij van de cue hooguit MAX_RAW_CUE tekens en één regel: meer leest clip toch niet, en
+    de hele cue samenvoegen en knippen was bij 16 MB weer één stap van 0,2 s. Zonder tijd gemeten:
+    het aantal tikken, en hoeveel tekens clip krijgt."""
+    clipped: list[int] = []
+    clip = subconv.clip
+
+    def counted(text: str) -> str:
+        clipped.append(len(text))
+        return clip(text)
+
     data = ("1\n00:00:01,000 --> 00:00:02,000\n" + "a\n" * 1_000_000 + "\n").encode()
+    monkeypatch.setattr(subconv, "clip", counted)
     steps = list(subconv.steps(data, "srt"))
     assert len(steps) - steps.count(None) == 1  # één cue
     assert steps.count(None) >= 25, steps.count(None)  # 2 MB, een tik per 64 KB: ± 30
+    # regels van één teken: tot net over de grens, niet de 2 MB van de hele cue
+    assert len(clipped) == 1 and subconv.MAX_RAW_CUE < clipped[0] <= subconv.MAX_RAW_CUE + 2
     assert subconv.to_vtt(data, "srt").endswith(b" --> 00:00:02.000\n" + b"a\n" * 1_000)
 
 
 def test_een_ingelezen_cue_houdt_niets_vast_voor_de_gc() -> None:
     """ops/subs.convert bewaart alle cues tot het schrijven. Eerst hield elke cue zijn stukken
     (Style, tekst) vast, en die volgt de gc altijd (Style is een NamedTuple): bij 1 MB SRT met
-    "<b> </b> " ± 200.000, en elke volle ronde van de gc liep daarover (11-19 ms) midden in een
-    beurt van de lus (CI golf 2, run 42512418786: de lus stond 0,35 s stil). Nu houdt een cue
-    alleen zijn tekst: niets wat de gc volgt."""
+    "<b> </b> " ± 200.000, en elke volle ronde van de gc liep daarover (11 tot 14 ms CPU) midden
+    in een beurt van de lus. Nu houdt een cue alleen zijn tekst: niets wat de gc volgt. Dat maakt
+    het gat kleiner, maar verklaart de 0,35 s van CI-run 42512418786 niet (docs/fase-5/m5.md)."""
     kind, unit = EVIL["srt_tags"]
     text = unit * (subconv.MAX_RAW_CUE // len(unit))
     data = _file(kind, [_one_cue(kind, text, s % 60) for s in range(1_000_000 // len(text))])
