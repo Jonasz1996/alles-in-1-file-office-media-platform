@@ -1,13 +1,15 @@
 # Fase 6 — Zoeken en foto's
 
-Status: **Z0, Z0b en golf 1 gebouwd**: het fundament (samengevoegd op 3 november 2026; zie
-[z0.md](z0.md)), de contracten van gezichten en zoeken op beeld (samengevoegd op 4 november 2026;
-zie [z0b.md](z0b.md)), en golf 1: de zoekmachine en tekst uit bestanden (samengevoegd op 4
-november 2026; zie [z1.md](z1.md) en [z2.md](z2.md)). De review van golf 1 is verwerkt ("De
-review (golf 1)" in z1.md en z2.md); de poorten van §4.4 zijn hier nu groen, ook 4 tegelijk. De
-nacontrole van die review is gedaan ("De nacontrole (golf 1)" in z1.md en z2.md): vier tests
-erbij en drie aangevuld. Twee tests waren soms rood door een fout in de test zelf; die zijn
-gerepareerd. Geen reparatie van de review bleek fout. Het ontwerp is bouwontwerp revisie 3.
+Status: **Z0, Z0b, golf 1 en golf 2 gebouwd**: het fundament (samengevoegd op 3 november 2026;
+zie [z0.md](z0.md)), de contracten van gezichten en zoeken op beeld (samengevoegd op 4 november
+2026; zie [z0b.md](z0b.md)), golf 1: de zoekmachine en tekst uit bestanden (samengevoegd op 4
+november 2026; zie [z1.md](z1.md) en [z2.md](z2.md)), en golf 2: zoeken in de web, en personen,
+herinneringen, slimme albums en filters (samengevoegd op 8 november 2026; zie [z4.md](z4.md) en
+[z6.md](z6.md)). De review van golf 1 is verwerkt ("De review (golf 1)" in z1.md en z2.md); de
+poorten van §4.4 zijn hier nu groen, ook 4 tegelijk. De nacontrole van die review is gedaan ("De
+nacontrole (golf 1)" in z1.md en z2.md): vier tests erbij en drie aangevuld. Twee tests waren soms
+rood door een fout in de test zelf; die zijn gerepareerd. Geen reparatie van de review bleek fout.
+Het ontwerp is bouwontwerp revisie 3.
 
 ## Wat je koos
 
