@@ -1175,7 +1175,10 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
 
 45. **De ingang** (A, herzien in r2: C15). Een zoekveld in de bovenbalk, hooguit 0,8 kB in de
     initiële JS (nu 96,4 van 100 kB); de combobox is lazy. Ctrl/Cmd+K zet de focus erop. Op
-    Bestanden blijft `/` het naamfilter (J9). Enter opent `/zoeken?q=…`.
+    Bestanden blijft `/` het naamfilter (J9). Enter opent `/zoeken?q=…`. *Noot (Z4): in de code
+    was `/` het zoekveld van Bestanden en Mod+F het naamfilter. Z4 houdt één zoekveld, dat
+    bovenaan: `/` zet daar de focus in, Mod+F blijft het filter (z0.md, Open 12;
+    [toetsenbord-z4.md](toetsenbord-z4.md)).*
 46. **Suggesties** (B). Een lazy chunk na de eerste toets (wacht 120 ms), een ARIA-combobox
     (`listbox`, `aria-activedescendant`), met groepen: namen, personen, plaatsen, tags en albums,
     elk ≤ 5. Esc sluit. Dit is het eerste wat valt als de begroting knelt.

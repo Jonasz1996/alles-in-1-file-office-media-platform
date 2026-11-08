@@ -1,0 +1,164 @@
+# Toetsenbord — Z4 (zoeken in de web)
+
+Z4 maakt het zoeken af dat Z0 klaarzette: het veld bovenaan wordt een combobox met suggesties
+(Keuze 46), en `/zoeken` krijgt chips, snippets, "Meer laden", de meldingen van Keuze 9 en de keuze
+tussen zoeken op naam en tekst of op wat er op de foto staat (Keuze 47 en 81). *Mod* is Ctrl, op
+een Mac ⌘. Er is geen nieuwe sneltoets: Mod+K en `/` bestonden al.
+
+Stap 1 van Z4 bouwde het veld en `/zoeken`; stap 2 de tekstlaag met de markering van `?q=` in de
+PDF-viewer (Keuze 18) en de rest van `e2e/test_zoek_z4.py`. Wat er gebouwd is: [z4.md](z4.md).
+
+## Eén zoekveld (z0.md, Open 12)
+
+In 0.7.1 had Bestanden een eigen zoekveld boven de lijst (`#zoekveld`, met `/`), en `/gedeeld` ook.
+Sinds Z0 doet het veld bovenaan hetzelfde (Enter gaat naar `/zoeken?q=…`). **Z4 besliste: één
+zoekveld, dat bovenaan.** Het veld boven de lijst is weg (op Bestanden en op `/gedeeld`); het veld
+bovenaan heeft nu het id `zoekveld`.
+
+- `/` op Bestanden zet de focus in het veld bovenaan. Zo blijft de toets van fase 3 werken
+  ("/ naar het zoekveld", [toetsenbord-p2.md](../fase-3/toetsenbord-p2.md)).
+- Mod+F blijft het naamfilter van de map.
+- Keuze 45 en J9 zeggen "Op Bestanden blijft `/` het naamfilter". Dat klopte niet met de code: daar
+  was `/` altijd het zoekveld en Mod+F het filter (z0-web.md, noot 11). Z4 houdt wat de code deed.
+- Waarom: twee velden die hetzelfde doen, zijn twee tabstops en twee plekken om te zoeken. Het
+  veld van Bestanden kostte ook ruimte in de begroting: Bestanden ging van 44,3 naar 43,8 kB (grens
+  45).
+
+## Het veld bovenaan (de combobox)
+
+Het veld is een ARIA-combobox: de focus blijft altijd in het veld, de lijst is een `listbox`
+("Suggesties") en de actieve optie staat in `aria-activedescendant`. De lijst laadt pas na de
+eerste toets (een eigen chunk), en vraagt 120 ms na de laatste toets `GET /search/suggest`.
+
+| Toets | Wat |
+|---|---|
+| Mod+K | de focus naar het veld (zoals in Z0) |
+| typen | na 120 ms de lijst: Namen, Personen, Plaatsen, Tags, Albums (elk hooguit 5), en als laatste "Zoek '…' op wat er op je foto's staat" |
+| ↓ | naar de volgende optie; op de laatste blijft hij staan. Is de lijst dicht (na Esc), dan gaat hij open op de eerste |
+| ↑ | naar de vorige optie; vanaf de eerste terug naar het veld zelf (geen optie actief). Is de lijst dicht, dan gaat hij open op de laatste |
+| Enter, met een actieve optie | die kiezen (zie hieronder); het veld wordt leeg |
+| Enter, zonder actieve optie | naar `/zoeken?q=…`, zoals in Z0; de lijst gaat dicht |
+| Esc, lijst open | de lijst dicht; de tekst blijft staan |
+| Esc, lijst dicht | het veld leeg; nog een keer: de focus terug naar waar hij stond (Z0) |
+| Tab / Shift+Tab | de lijst dicht, en verder naar het volgende element (de knop van je account) |
+| Mod, Alt of Cmd erbij, of een teken in samenstelling | de lijst doet niets; de toets is van het veld of de browser |
+
+Waar een keuze heen gaat:
+
+- een **map**: `/map/<id>`; een **bestand**: de map waar het in staat, met het bestand open in de
+  viewer (`?bestand=`). Is het bestand intussen weg of niet meer te zien, dan `/zoeken?q=<naam>`;
+- een **persoon**: `/fotos/personen/<id>`; een **album**: `/album/<id>`;
+- een **plaats** of een **tag**: `/zoeken` met dat filter (`?place=` of `?tag=`);
+- de laatste regel: `/zoeken?q=…&mode=image` (zoeken op wat er op de foto staat).
+
+Met de muis: de optie onder de muis wordt actief, een klik kiest hem; de focus blijft in het veld.
+
+Een gast krijgt de laatste regel niet (hij heeft geen eigen foto's). Zonder index (de instelling
+`search_index` uit, of terwijl de index herbouwd wordt) geeft de server geen suggesties; dan staat
+alleen de laatste regel er. Kan de server niet antwoorden (geen verbinding, te veel vragen), dan
+ook.
+
+## De pagina /zoeken
+
+Na het openen staat de focus op de kop (zoals elke pagina). Met Tab, in deze volgorde:
+
+| Element | Toetsen |
+|---|---|
+| het veld "Zoekwoorden" | Enter zoekt; de filters blijven staan. Dezelfde vraag nog eens zoekt opnieuw |
+| de knop Zoeken | Enter of Spatie |
+| "Zoeken op": Namen en tekst / Wat er op de foto staat | ← en → kiezen (keuzerondjes); niet voor een gast. In de stand "Wat er op de foto staat" komt het raster van X3 (tot X3 er is: niets) |
+| de chips | per filter een knop × ("Filter weghalen: …"); Enter haalt het filter weg. De focus gaat naar de chip die nu op die plek staat (of de vorige), en zonder chips naar "Filters" |
+| "Filters" | Enter of Spatie opent en sluit het paneel |
+| in het paneel: de soorten en de tags | Spatie zet een vinkje aan of uit; de vraag verandert meteen en de focus blijft op het vinkje |
+| in het paneel: Vanaf en Tot en met | typen (dag, maand, jaar; Tab gaat eerst langs die drie delen), Enter zet de datum. Het veld verlaten zet hem ook |
+| de personen en plaatsen die zo heten | links; Enter opent de persoon of zoekt in die plaats |
+| de treffers | één tabstop, dan als de lijst van Bestanden: ↑ ↓ Home End PageUp PageDown, Enter opent (een bestand in de viewer, met `?bestand=` naast de vraag; een map gaat open), Spatie selecteert, Mod+A, Esc heft de selectie op, Shift+F10 of de menutoets voor het menu, en de toetsen van de acties |
+| "Meer laden" | Enter haalt de volgende 30; de focus gaat naar de eerste nieuwe treffer |
+| "Geen foto met deze naam? Zoek op wat er op je foto's staat." | een link naar de stand beeld (alleen als er geen foto bij de treffers zit; niet voor een gast) |
+
+- De vraag staat in het adres. Terug (Alt+←) en Vooruit geven de vorige vraag met haar filters;
+  ook een datumveld waar de focus nog in staat, volgt dan (gevonden bij het nalopen, zie hieronder).
+- De meldingen ("De index is nog bezig (43%)", de twee teksten van Keuze 9, "Alleen op naam
+  gezocht", "Niets gevonden") staan in één `role="status"`: een schermlezer leest ze voor zonder
+  dat de focus verspringt.
+- De snippet onder een treffer is tekst; de woorden uit de vraag staan in `<mark>`.
+- In de viewer: Esc sluit hem en de focus staat weer op de treffer. Een PDF opent met de woorden
+  van `?q=` gemarkeerd (hieronder).
+- Het adres van `/zoeken` met zijn filters komt niet in de toegangslog van de server (alles na `?`
+  wordt `***`, `api/tests/search/test_zoek_adres.py`).
+
+## De tekstlaag in de PDF-viewer (Keuze 18)
+
+Over elke pagina van een PDF (ook een kantoorbestand dat als PDF getoond wordt) liggen de woorden
+van die pagina, doorzichtig, op hun plek. Er komt geen tabstop bij en geen sneltoets: de toetsen
+van de viewer blijven zoals ze waren ([toetsenbord-p4.md](../fase-3/toetsenbord-p4.md), PDF:
+PgDn/PgUp, + en −, 0, T, het paginavak; Esc sluit).
+
+- Selecteren en kopiëren werkt zoals in een gewone tekst (met de muis, of met Shift en de pijlen
+  als de browser caret browsing aan heeft, F7). Tussen de woorden komt een spatie, na een regel een
+  regeleinde.
+- Komt de viewer van `/zoeken` (Enter op een treffer), dan staat `?q=` naast `?bestand=` in het
+  adres. De woorden van de vraag zijn dan gemarkeerd (`<mark>`, geel), op dezelfde manier als de
+  snippet: zonder hoofdletters en accenten, het laatste woord ook als begin van een woord.
+- De viewer zoekt de eerste pagina met een woord van de vraag (hooguit de eerste 50 pagina's) en
+  gaat erheen, als je zelf nog niet gescrold hebt. De focus verspringt niet. In de balk, na de
+  knoppen, staat wat hij vond, in een `role="status"` (een schermlezer leest het voor):
+  "Gevonden op pagina 3", "Niet gevonden in de tekst van de pagina's", "Niet gevonden in de eerste
+  50 pagina's", of "Deze pagina's hebben geen tekst om in te zoeken" (een scan zonder OCR).
+- In de stand "Wat er op de foto staat" (`mode=image`) markeert de viewer niets: dan beschrijft de
+  vraag een foto, geen woorden.
+- Via een publieke link is er geen tekstlaag (de woorden zijn alleen voor wie mag lezen).
+
+## Nagelopen
+
+In de echte app (Chromium 141, de server van de e2e met de wereld van §4.2 en de boom van 1.000,
+de build van deze tak), met alleen het toetsenbord; één keer `focus()` als begin (de kop, een rij
+van de lijst, een knop), zoals in de andere e2e:
+
+- [x] `/` op Bestanden: de focus in het veld bovenaan (de combobox); Mod+F: het naamfilter.
+- [x] Mod+K, "utrecht": de lijst met alleen de laatste regel (de wereld zonder index). Met de
+      index aan (`zoekindex="aan"`): de groepen Namen (vier bestanden) en Albums, en de laatste
+      regel.
+- [x] ↓ zet `aria-activedescendant` op de eerste optie (en `aria-selected`); ↑ gaat terug naar het
+      veld; ↓ blijft op de laatste staan; Esc sluit, ↑ opent weer op de laatste.
+- [x] Enter op de laatste regel: `/zoeken?q=utrecht&mode=image`, het veld bovenaan leeg, "Wat er op
+      de foto staat" gekozen; ← op dat rondje: terug naar Namen en tekst, met de focus erop.
+- [x] Enter op een bestand in de lijst: de map, met de viewer open op dat bestand; Esc sluit hem.
+- [x] Tab met de lijst open: de lijst dicht, de focus op de knop van het account.
+- [x] `/zoeken`: van de kop met Tab naar Zoekwoorden, Zoeken, Namen en tekst en Filters; Enter
+      opent het paneel, Spatie op "Mappen" zet het filter (de focus blijft op het vinkje); Enter op
+      de × van de chip haalt hem weg, de focus staat dan op Filters.
+- [x] Vanaf: 01012024 en Enter geeft de chip "Vanaf 2024-01-01". Terug: het veld is leeg en Tab
+      eruit doet geen nieuwe vraag. **Dat ging eerst mis** (het veld hield de datum en zette hem bij
+      het verlaten terug); hersteld, met `e2e/test_zoek_z4.py`.
+- [x] De lijst: ↓ en Enter op een foto opent de viewer met `?bestand=`; Esc zet de focus terug op
+      die rij.
+- [x] "Meer laden" (de boom, "jpg"): de tweede pagina met `offset=30`, de focus op treffer 31.
+- [x] In het Engels (`test_integratie.py`, stap 11): `/zoeken?q=verslag` zonder Nederlands.
+
+Niet nagelopen in stap 1: een gast (de vitest toetst dat hij de laatste regel en de keuze voor de
+stand niet krijgt), een snippet met `<mark>` in de echte app (de werelden hebben geen tekst met die
+woorden; de vitest toetst de opmaak), en de tekstlaag van de PDF-viewer (stap 2).
+
+In stap 2, met een eigen server met de index aan, een PDF van 3 pagina's met tekst en 33 notities
+(`e2e/test_zoek_z4.py`, Chromium 141):
+
+- [x] Mod+K, "kwartaal": de lijst met het bestand onder Namen en de laatste regel; ↓ zet
+      `aria-activedescendant`, ↑ weer terug naar het veld; ↓ en Enter openen de map met de viewer.
+      De woorden liggen over de pagina, zonder `<mark>` en zonder melding (geen `?q=`).
+- [x] Mod+K, een woord van pagina 3 en Enter: `/zoeken` met de PDF; de snippet heeft het woord in
+      `<mark>`. Van de kop met Tab: Zoekwoorden, Zoeken, Namen en tekst, Filters; Enter opent het
+      paneel, Tab naar PDF, Spatie zet het filter (de chip "Filter weghalen: PDF", de focus blijft
+      op het vinkje).
+- [x] Enter op de treffer: de viewer met `?bestand=` naast `?q=`; "Gevonden op pagina 3", de
+      viewer staat op pagina 3 en het woord is gemarkeerd (in beeld). De woorden kwamen per pagina
+      één keer, alleen met het download-token (niet met de vraag). Esc: de viewer dicht, de focus
+      weer op de treffer.
+- [x] "Meer laden" (33 notities): End naar treffer 30, Tab naar de knop, Enter: `offset=30`, de
+      focus op treffer 31, de knop weg.
+- [x] Kopiëren uit de tekstlaag (een selectie over twee regels in Chromium 141):
+      `getSelection().toString()` geeft "De factuur\nvan maart", met spaties tussen de woorden en
+      een regeleinde per regel.
+- [x] De melding in de balk is helemaal te lezen (een schermafdruk): eerst stond hij tegen de
+      rechterkant en viel "pagina 1" half onder de rand van de schuifbalk (de viewer is 100vw
+      breed, `scrollbar-gutter` in `base.css`); nu staat hij na de knoppen.

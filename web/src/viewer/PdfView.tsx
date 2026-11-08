@@ -2,6 +2,10 @@
 // de pagina's bevat een token dat na een paar minuten verloopt: op tijd een nieuw (renew.ts),
 // en na een pagina die niet laadt nog één keer (mayRenew). Ook voor de omgezette PDF van een
 // kantoordocument (fase 4): dan geeft OfficeView wat /document al gaf (initial) en een label.
+//
+// Fase 6 (Z4, Keuze 18): de tekstlaag (TextLayer.tsx) met het token uit page_url, alleen
+// ingelogd: via een publieke link zijn er geen woorden. Met ?q= in de URL zijn de woorden van de
+// vraag gemarkeerd en gaat de viewer naar de eerste pagina met een treffer.
 
 import { type JSX, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { errorText, t } from "../i18n";
@@ -11,6 +15,8 @@ import { mayRenew } from "./media";
 import PageViewer from "./PageViewer";
 import { keepFresh } from "./renew";
 import type { Source } from "./source";
+import { useTextLayer } from "./TextLayer";
+import { tokenOf } from "./textLayer";
 import type { ViewerItem } from "./types";
 
 export default function PdfView({
@@ -67,6 +73,8 @@ export default function PdfView({
 
   const template = doc?.page_url ?? null;
   const url = useCallback((n: number, w: number) => (template ? pageHref(template, n, w) : ""), [template]);
+  const token = source.kind === "user" && template ? tokenOf(template) : null;
+  const layer = useTextLayer(item, token, doc?.pages ?? 0);
 
   if (error) return <p className="viewer-message" role="alert">{errorText(error)}</p>;
   if (!doc) return <div className="viewer-message"><Spinner label={t("viewer.loading")} /></div>;
@@ -85,6 +93,10 @@ export default function PdfView({
       onPageError={() => {
         if (mayRenew(renewals.current, Date.now())) renew().catch(() => {});
       }}
+      overlay={layer?.overlay}
+      onPageLoad={layer?.onPageLoad}
+      jumpTo={layer?.jumpTo}
+      status={layer?.status}
     />
   );
 }

@@ -7,9 +7,10 @@ hoofdmap en alles wat met je gedeeld is), en stopt bij wat in de prullenbak ligt
 uit (of onder) de prullenbak in de resultaten. Werkt op SQLite en PostgreSQL, en met een SQLite
 zonder FTS5.
 
-Sinds Z1 is hij de terugval (Keuze 10): als FTS5 ontbreekt, met PLATFORM_SEARCH_INDEX=uit,
-tijdens een herbouw, en voor de vraag van 0.7.0 ("De overgang" in §3.4: één soort, met "archive"
-als soort zoals mime.category, één tag, limit tot 200). Hij kent q, type, from/to, tag, library
+Sinds Z1 is hij de terugval (Keuze 10): als FTS5 ontbreekt, met PLATFORM_SEARCH_INDEX=uit en
+tijdens een herbouw. De vraag van 0.7.0 kwam hier tot Z4 ook ("De overgang" in §3.4); die is weg,
+en type is sindsdien de soort van §3.4 (node.ftype: een archief is "other", een rekenblad of
+presentatie geen "document"), net als in FtsEngine. Hij kent q, type, from/to, tag, library
 en in, zonder de kolommen die alleen de triggers van 0010 bijhouden (ftype en mpath: op
 PostgreSQL zijn er geen triggers). from/to gaat zoals filters._dates (de opnamedag van een foto
 of video, anders modified_at), met de soort uit mime; library en in zoeken vanaf die map omlaag
@@ -22,7 +23,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import and_, not_, or_, select
+from sqlalchemy import and_, case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -38,26 +39,23 @@ MAX_WORDS = 10
 
 
 def of_category(category: str):
-    """SQL-voorwaarde die hetzelfde zegt als mime.category() (de soorten van 0.7.0); ook
-    spreadsheet en presentation (de soorten van zoeken, mime.ftype)."""
-    if category == "folder":
-        return Node.kind == "dir"
+    """SQL-voorwaarde die hetzelfde zegt als node.ftype (mime.ftype, de soorten van §3.4), zonder
+    die kolom: op PostgreSQL is hij er niet. Dezelfde volgorde als FTYPE_SQL in schema.py."""
     m = Node.mime
-    groups = {
-        "archive": m.in_(mime.ARCHIVE_TYPES),
-        "pdf": m == "application/pdf",
-        "image": m.like("image/%"),
-        "video": m.like("video/%"),
-        "audio": m.like("audio/%"),
-        "document": or_(m.like("text/%"), m.in_(mime.DOCUMENT_TYPES)),
-    }
-    if category == "spreadsheet":
-        return and_(Node.kind == "file", m.in_(mime.SPREADSHEET_TYPES))
-    if category == "presentation":
-        return and_(Node.kind == "file", m.in_(mime.PRESENTATION_TYPES))
-    if category == "other":
-        return and_(Node.kind == "file", or_(m.is_(None), not_(or_(*groups.values()))))
-    return and_(Node.kind == "file", groups[category])
+    ftype = case(
+        (Node.kind == "dir", "folder"),
+        (or_(Node.kind != "file", m.is_(None), m == ""), "other"),
+        (m.in_(mime.SPREADSHEET_TYPES), "spreadsheet"),
+        (m.in_(mime.PRESENTATION_TYPES), "presentation"),
+        (m.in_(mime.ARCHIVE_TYPES), "other"),
+        (m == "application/pdf", "pdf"),
+        (m.like("image/%"), "image"),
+        (m.like("video/%"), "video"),
+        (m.like("audio/%"), "audio"),
+        (or_(m.like("text/%"), m.in_(mime.DOCUMENT_TYPES)), "document"),
+        else_="other",
+    )
+    return ftype == category
 
 
 async def own_tag(session: AsyncSession, user: User, tag_id: uuid.UUID) -> Tag:

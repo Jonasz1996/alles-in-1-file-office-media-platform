@@ -1,7 +1,6 @@
-// De bestandsbrowser en zoeken (P2).
+// De bestandsbrowser (P2). De teksten van zoeken staan sinds fase 6 (Z4) in het gebied search.
 export default {
   title: "Bestanden",
-  searchTitle: "Zoeken",
   selected: { one: "{n} geselecteerd", other: "{n} geselecteerd" },
   myFiles: "Mijn bestanden",
   sharedWithMe: "Gedeeld met mij",
@@ -52,7 +51,6 @@ export default {
     path: "Map",
   },
   list: "Inhoud van {name}",
-  results: "Zoekresultaten",
   row: {
     select: "{name} selecteren",
     actions: "Acties voor {name}",
@@ -123,32 +121,6 @@ export default {
     count: "{n} van {total}",
     partial: "Alleen wat al geladen is",
     none: "Niets in deze map past bij het filter.",
-  },
-  search: {
-    box: "Zoeken in je bestanden",
-    boxGuest: "Zoeken in wat met je gedeeld is",
-    submit: "Zoeken",
-    words: "Zoekwoorden",
-    wordsPlaceholder: "Naam of een deel ervan",
-    type: "Soort",
-    allTypes: "Alle soorten",
-    tag: "Tag",
-    allTags: "Alle tags",
-    tagCount: "{name} ({n})",
-    hint: "Typ een (deel van een) naam, of kies een soort of tag.",
-    none: "Niets gevonden.",
-    more: "Meer tonen",
-    tooMany: "Er zijn nog meer resultaten; maak je zoekopdracht specifieker.",
-  },
-  categories: {
-    folder: "Mappen",
-    image: "Afbeeldingen",
-    video: "Video",
-    audio: "Audio",
-    pdf: "PDF",
-    document: "Documenten",
-    archive: "Archieven",
-    rest: "Overig",
   },
   picker: {
     mine: "Mijn bestanden",

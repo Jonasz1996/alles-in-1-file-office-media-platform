@@ -704,8 +704,11 @@ async def test_zoeken_zonder_mode_geeft_hetzelfde_antwoord(client, admin):
     ]  # fmt: skip
     assert (body["mode"], body["fallback"]) == ("text", None)
     assert [h["node"]["name"] for h in body["results"]] == ["Jaarverslag 2025.pdf"]
-    # Een vraag van 0.7.0 die niet in SearchParams past (LikeFallback zonder controle): ook
+    # Een vraag van 0.7.0 die niet in SearchParams past: tot Z4 LikeFallback zonder controle,
+    # nu een 422 ("De overgang" in §3.4); met limit 50 dezelfde velden
     r = await client.get("/api/v1/search", params={"q": "x", "limit": 200}, headers=headers)
+    assert r.status_code == 422 and r.json()["detail"]["params"] == {"field": "query.limit"}
+    r = await client.get("/api/v1/search", params={"q": "x", "limit": 50}, headers=headers)
     assert r.status_code == 200 and (r.json()["mode"], r.json()["fallback"]) == ("text", None)
 
 

@@ -212,6 +212,7 @@ zonder melding.
    zet X1 in `photos.ts` (§3.4).
 4. **Twee zoekvelden op Bestanden.** Het veld bovenaan en het veld boven de lijst (`#zoekveld`,
    `/`) doen nu hetzelfde. Z4 beslist of het veld van Bestanden blijft (en wat `/` dan doet).
+   Beslist door Z4: één veld, dat bovenaan; `/` zet de focus erin ([toetsenbord-z4.md](toetsenbord-z4.md)).
 5. **`dist/kaart/*.json`** is een aanname voor de plek van de wereld (Keuze 31 noemt
    `world-110m.<hash>.json`). Kiest Z5 een andere plek, dan past hij `MAP_DATA` aan. De service
    worker cachet `/kaart/` nu niet.

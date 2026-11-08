@@ -426,9 +426,10 @@ async def test_de_woorden_alleen_met_het_token_van_dit_bestand(client, admin, se
 
 
 async def test_zoeken_werkt_via_likefallback(client, admin, settings, monkeypatch):
-    """De vraag van 0.7.0 blijft werken; het antwoord heeft de velden van fase 6 erbij. Met de
+    """Een vraag zoals in 0.7.0 (q) werkt; het antwoord heeft de velden van fase 6 erbij. Met de
     index uit via LikeFallback, met de index aan (sinds Z1) via FtsEngine: dezelfde treffer,
-    met engine fts en een gerangschikte pagina."""
+    met engine fts en een gerangschikte pagina. De grenzen van 0.7.0 (archive als soort, limit
+    tot 200) zijn sinds Z4 in beide motoren een 422 ("De overgang" in §3.4)."""
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]
     await put(client, headers, root_id, "Jaarverslag 2025.pdf", b"%PDF-1.4\n")
@@ -444,10 +445,14 @@ async def test_zoeken_werkt_via_likefallback(client, admin, settings, monkeypatc
     assert hit["match"] == "name" and hit["snippet"] is None
     assert page["more"] is False and page["engine"] == "like" and page["names_only"] is True
     assert page["partial"] is False and page["ranked"] is False and page["offset"] == 0
-    # 0.7.0: archive als soort en limit tot 200
-    for params in ({"type": "archive"}, {"q": "x", "limit": 200}):
+    # De grenzen van 0.7.0: archive als soort en limit tot 200 zijn sinds Z4 een 422
+    for params, veld in (
+        ({"type": "archive"}, "query.type.0"),
+        ({"q": "x", "limit": 200}, "query.limit"),
+    ):
         r = await client.get("/api/v1/search", params=params, headers=headers)
-        assert r.status_code == 200, (params, r.text)
+        assert r.status_code == 422, (params, r.text)
+        assert r.json()["detail"]["params"] == {"field": veld}, params
     r = await client.get("/api/v1/search/suggest", params={"q": "jaar"}, headers=headers)
     assert r.status_code == 200
     assert r.json() == {"names": [], "people": [], "places": [], "tags": [], "albums": []}
@@ -468,11 +473,14 @@ async def test_zoeken_werkt_via_likefallback(client, admin, settings, monkeypatc
     assert page["more"] is False and page["engine"] == "fts" and page["names_only"] is False
     assert page["partial"] is False and page["ranked"] is True and page["offset"] == 0
     assert page["after"] is None and page["mode"] == "text" and page["fallback"] is None
-    # 0.7.0 blijft via LikeFallback lopen, ook met de index aan
-    for params in ({"type": "archive"}, {"q": "x", "limit": 200}):
+    # Ook met de index aan: geen tak meer naar LikeFallback, maar dezelfde 422
+    for params, veld in (
+        ({"type": "archive"}, "query.type.0"),
+        ({"q": "x", "limit": 200}, "query.limit"),
+    ):
         r = await client.get("/api/v1/search", params=params, headers=headers)
-        assert r.status_code == 200, (params, r.text)
-        assert r.json()["engine"] == "like", params
+        assert r.status_code == 422, (params, r.text)
+        assert r.json()["detail"]["params"] == {"field": veld}, params
 
 
 async def test_zoeken_op_beeld_is_van_x3(client, admin):

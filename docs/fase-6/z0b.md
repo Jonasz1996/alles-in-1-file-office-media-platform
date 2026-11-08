@@ -335,8 +335,10 @@ Voor de volgende pakketten:
 6. **Z7** (F4): GET `/admin/search` vult `faces` en `beeld` met `search.hooks.admin_block()`;
    PATCH stuurt `faces_allowed` en `beeld` naar `admin_switch()` (`ADMIN_SWITCHES`); rebuild met
    `what` `faces` of `beeld` gaat naar `admin_rebuild()`. Zonder aanmelding 501 `X2` of `X3`.
-7. **Z4** (F3): in de stand beeld (`?mode=image`) laadt `/zoeken` `search/beeld/BeeldResults.tsx`
-   lazy, met het gebied `beeld`, in plaats van de lijst.
+7. ~~**Z4** (F3): in de stand beeld (`?mode=image`) laadt `/zoeken` `search/beeld/BeeldResults.tsx`
+   lazy, met het gebied `beeld`, in plaats van de lijst.~~ Gedaan door Z4 (`f2590f7`,
+   `search/SearchPage.tsx` met een `LazySlot`; `search/page.test.ts`, "de stand beeld op /zoeken").
+   Zie [z4.md](z4.md).
 8. **X2 en X3** (F3, F4, V4): melden zich aan met `prefs.register_switch()` en
    `search.hooks.register_admin()`, en vullen de bestanden van hun plekken. Een haak van
    `previews.register_large()` zet alleen werk in de rij; na 5 s stopt hij. `SwitchState.available`

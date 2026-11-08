@@ -9,7 +9,7 @@
 // Z0b (Keuze 80): zoeken op beeld (X3) gaat via dezelfde search() met mode "image" en q of like;
 // beeldStatus() is GET /photos/beeld. Tot X3 er is, geeft de API daar 501 not_built.
 
-import { api } from "../api";
+import { api, errorFromBody, fetchOrNetworkError } from "../api";
 import type { Analysis, BeeldStatus, PageWords, SearchPage, SearchParams, Suggestions } from "./types";
 import { seg, wireQuery } from "./wire";
 
@@ -27,9 +27,24 @@ export function suggest(q: string): Promise<Suggestions> {
 }
 
 /** GET /files/{id}/pages/{n}/words?token=: de woorden van een pagina, met het download-token van
- * de viewer (met de versie). 404 not_found als er geen tekst is. */
-export function pageWords(fileId: string, page: number, token: string): Promise<PageWords> {
-  return api.request<PageWords>("GET", `${API}/files/${seg(fileId)}/pages/${page}/words${wireQuery({ token })}`);
+ * de viewer (met de versie). 404 not_found als er geen tekst is.
+ *
+ * Z4: zonder api.request, zoals de pagina's zelf (een <img>): het token is genoeg. Via api.request
+ * zou een verlopen download-token (401 invalid_token) na het verversen van de sessie nog een 401
+ * geven, en die logt je uit. */
+export async function pageWords(fileId: string, page: number, token: string): Promise<PageWords> {
+  const path = `${API}/files/${seg(fileId)}/pages/${page}/words${wireQuery({ token })}`;
+  const res = await fetchOrNetworkError((...args) => fetch(...args), path, { credentials: "same-origin" });
+  if (!res.ok) {
+    let body: unknown = null;
+    try {
+      body = await res.json();
+    } catch {
+      /* geen JSON */
+    }
+    throw errorFromBody(res.status, body);
+  }
+  return (await res.json()) as PageWords;
 }
 
 /** GET /files/{id}/analysis: hoe ver de tekst, de hash en OCR van dit bestand zijn. */

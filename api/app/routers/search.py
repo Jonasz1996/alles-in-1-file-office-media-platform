@@ -6,11 +6,10 @@ de database geen FTS5 heeft of er een herbouw loopt. De vraag is die van §3.4 (
 keer, from, to, person, place of country, tag meer keer, library, camera, in, offset, limit,
 after); het antwoord is SearchPage, met results en more zoals in 0.7.0.
 
-De overgang (review Z0, haalbaar F4; bouwontwerp §3.4): een vraag die niet in SearchParams past
-(type=archive, limit boven 50: wat de web van nu stuurt) gaat altijd naar LikeFallback, ook nu
-Z1 FtsEngine aanzet. De rest gaat via de motor, met een gecontroleerde SearchParams. Z4 zet de
-web op de vraag van §3.4 en haalt deze tak weg; tot dan blijft limit zonder waarde 50, zoals in
-0.7.0 (§3.4 zegt 30).
+De overgang is voorbij (Z4; "De overgang" in §3.4): de web stuurt de vraag van §3.4, en de tak
+die de vraag van 0.7.0 (type=archive, limit tot 200) naar LikeFallback stuurde, is weg. Zo'n
+vraag krijgt nu 422 invalid_input (type, limit), nooit stil een ander antwoord; limit zonder
+waarde is 30. Elke vraag gaat via de motor, met een gecontroleerde SearchParams.
 
 Grenzen (Keuze 13): FtsEngine draait binnen limits.admit (2 tegelijk voor de app met een rij van
 20, 1 per gebruiker, de snelheid per gebruiker). LikeFallback niet: dat is het zoeken van 0.7.0,
@@ -29,9 +28,10 @@ import asyncio
 import re
 import uuid
 from datetime import date
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -49,17 +49,12 @@ from app.search.filters import FILTERS
 from app.search.like import own_tag, search_roots
 from app.search.limits import Replaced, admit
 from app.search.query import MAX_CHARS, QueryTooLong
-from app.search.types import SearchMode, SearchPage, SearchParams, Suggestions
+from app.search.types import FileType, SearchMode, SearchPage, SearchParams, Suggestions
 from app.security import CurrentUser
 from app.text import CONTROL, fold
 
 router = APIRouter(prefix="/api/v1", tags=["zoeken"])
 
-# De soorten van 0.7.0 (mime.category, met archive) en die van node.ftype (§3.4)
-Category = Literal[
-    "folder", "image", "video", "audio", "pdf", "document", "spreadsheet", "presentation",
-    "archive", "other",
-]  # fmt: skip
 COLOR = re.compile(r"^(#[0-9a-f]{6})?$")
 MAX_TAG_NAME = 50
 # Zoveel tags heeft een gebruiker hooguit (bij elke nieuwe naam worden ze allemaal vergeleken)
@@ -103,7 +98,7 @@ async def search(
     settings: Annotated[Settings, Depends(get_settings)],
     response: Response,
     q: str = "",
-    type_: Annotated[list[Category], Query(alias="type")] = [],  # noqa: B006
+    type_: Annotated[list[FileType], Query(alias="type")] = [],  # noqa: B006
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
     person: Annotated[list[uuid.UUID], Query()] = [],  # noqa: B006
@@ -114,7 +109,7 @@ async def search(
     camera: Annotated[str | None, Query(max_length=200)] = None,
     in_: Annotated[uuid.UUID | None, Query(alias="in")] = None,
     offset: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    limit: Annotated[int, Query(ge=1, le=50)] = 30,
     after: int | None = None,
     mode: SearchMode = "text",
     like: uuid.UUID | None = None,
@@ -150,13 +145,11 @@ async def search(
     _built(fields)
     try:
         params = SearchParams(**fields)
-    except ValidationError:
-        # De vraag van 0.7.0 (archive als soort, limit tot 200) past niet in SearchParams:
-        # zonder controle gebouwd, en altijd naar LikeFallback (die leest alleen q, types,
-        # tags, in_, offset en limit), tot Z4 de web op de vraag van §3.4 zet
-        page = await LIKE.search(session, user, SearchParams.model_construct(**fields))
-        page.indexing = await analysis.indexing(session)
-        return page
+    except ValidationError as e:
+        # Kan niet: de grenzen van SearchParams staan hierboven al in Query. Mocht het toch,
+        # dan een gewone 422 (invalid_input, zonder de waarde), geen 500 met q in de log
+        found = [{**err, "loc": ("query", *err["loc"])} for err in e.errors()]
+        raise RequestValidationError(found) from None
     if not q.strip() and not params.has_filter():
         raise errors.fail(400, "search_bad_filter", "Geef een zoekvraag of een filter")
     engine = await engine_for(settings, await session.connection())

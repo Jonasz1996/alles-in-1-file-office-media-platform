@@ -1,0 +1,40 @@
+/* De tekstlaag over een pagina van de PDF-viewer (Z4, Keuze 18): doorzichtige woorden om te
+   selecteren en te kopiëren, en de woorden van de zoekvraag gemarkeerd. De pagina zelf is altijd
+   licht (een afbeelding), dus de markering heeft in beide thema's dezelfde kleur. */
+
+.text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  font-family: sans-serif;
+  color: transparent;
+  cursor: text;
+}
+
+.text-layer > span,
+.text-layer > mark {
+  position: absolute;
+  white-space: pre;
+  transform-origin: 0 0;
+  color: transparent;
+}
+
+.text-layer > mark {
+  background: rgb(255 200 0 / 45%);
+  outline: 1px solid rgb(190 120 0 / 70%);
+  border-radius: 1px;
+  mix-blend-mode: multiply;
+}
+
+.text-layer ::selection {
+  background: rgb(29 95 209 / 30%);
+  color: transparent;
+}
+
+/* Na de knoppen, niet tegen de rechterkant: de viewer is 100vw breed en de rand van de
+   schuifbalk (scrollbar-gutter in base.css) dekt daar de laatste pixels af */
+.pages-found {
+  margin-inline-start: var(--space-2);
+  color: var(--muted);
+}

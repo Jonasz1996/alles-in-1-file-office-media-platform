@@ -107,8 +107,11 @@ SECRET_PARAMS = re.compile(
 # Onder /search, /photos en /people gaat de hele query string weg: filters op een plaats, een
 # persoon, een kaartvak of een datum zeggen ook iets over iemands foto's (fase 6, Keuze 13). Zo
 # ook bij zoeken op beeld (/search?mode=image&q= of &like=, X3) en de routes van gezichten
-# (/people/faces/…, X2): test_log_hiding.py
-QUERY_PATHS = re.compile(r"(/api/v1/(?:search|photos|people)(?:/[^?\s\"]*)?\?)[^\s\"]*")
+# (/people/faces/…, X2): test_log_hiding.py. En de pagina /zoeken zelf (Z4): wie hem herlaadt,
+# stuurt dezelfde filters in het adres (test_zoek_adres.py)
+QUERY_PATHS = re.compile(
+    r"((?:/api/v1/(?:search|photos|people)(?:/[^?\s\"]*)?|(?:^|(?<=[\s\"]))/zoeken/?)\?)[^\s\"]*"
+)
 LINK_PATH = re.compile(r"((?:^|[\s\"])/s/)[^/?#\s\"]+")
 # De sid van een afspeelsessie staat in het pad (fase 5, Keuze 35): /api/v1/stream/<node>.<geheim>/…
 # Het hele stuk na /api/v1/stream/ gaat weg, wat er ook in staat (geen punt, een lege naam van de

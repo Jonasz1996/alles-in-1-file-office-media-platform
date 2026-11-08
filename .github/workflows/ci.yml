@@ -350,6 +350,8 @@ jobs:
         run: uv run --with playwright python -m playwright install --with-deps chromium
       - name: Alle prestatiepoorten (ontwerp §4)
         run: uv run --with playwright python ../e2e/perf/run_all.py --out-dir "$E2E_PERF_OUT"
+      - name: Zoeken in de browser (fase 6, Z4; rapport, zoek_ui.json)
+        run: uv run --with playwright python ../e2e/perf/zoek_ui.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
