@@ -570,6 +570,38 @@ def test_steps_tikt_ook_zonder_cues(kind: str) -> None:
     assert len(steps) >= 25, len(steps)  # 2 MB, een tik per 64 KB: ± 30
 
 
+def test_steps_tikt_ook_binnen_een_cue_van_veel_regels() -> None:
+    """Een SRT-cue van veel regels zonder lege regel ertussen las steps in één stap: 0,14 s per
+    MB, en de lus van de worker stond al die tijd stil (CI golf 2). Nu tikt hij ook daarbinnen, en
+    de cue houdt hooguit MAX_RAW_CUE tekens. Zonder tijd gemeten: het aantal tikken."""
+    data = ("1\n00:00:01,000 --> 00:00:02,000\n" + "a\n" * 1_000_000 + "\n").encode()
+    steps = list(subconv.steps(data, "srt"))
+    assert len(steps) - steps.count(None) == 1  # één cue
+    assert steps.count(None) >= 25, steps.count(None)  # 2 MB, een tik per 64 KB: ± 30
+    assert subconv.to_vtt(data, "srt").endswith(b" --> 00:00:02.000\n" + b"a\n" * 1_000)
+
+
+def test_een_ingelezen_cue_houdt_niets_vast_voor_de_gc() -> None:
+    """ops/subs.convert bewaart alle cues tot het schrijven. Eerst hield elke cue zijn stukken
+    (Style, tekst) vast, en die volgt de gc altijd (Style is een NamedTuple): bij 1 MB SRT met
+    "<b> </b> " ± 200.000, en elke volle ronde van de gc liep daarover (11-19 ms) midden in een
+    beurt van de lus (CI golf 2, run 42512418786: de lus stond 0,35 s stil). Nu houdt een cue
+    alleen zijn tekst: niets wat de gc volgt."""
+    kind, unit = EVIL["srt_tags"]
+    text = unit * (subconv.MAX_RAW_CUE // len(unit))
+    data = _file(kind, [_one_cue(kind, text, s % 60) for s in range(1_000_000 // len(text))])
+    cues = list(subconv.parse(data, kind))
+    gc.collect()
+    held = [
+        ref
+        for cue in cues
+        for ref in gc.get_referents(cue)
+        if gc.is_tracked(ref) and ref is not subconv.Cue  # de klasse zelf telt niet
+    ]
+    assert len(cues) == 1_000_000 // len(text) and held == []
+    assert subconv.render(cues) == subconv.to_vtt(data, kind)
+
+
 # --- fuzz (vaste seed) --------------------------------------------------------------------------
 
 SPECIAL = [
