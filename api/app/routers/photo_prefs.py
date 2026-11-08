@@ -8,6 +8,8 @@ standaarden en de regels voor gezichten en beeld staan in app/prefs.py.
   prefs.switched() in dezelfde transactie: X2 en X3 horen het en zetten hun werk in de rij. Zo
   zet niemand gezichten of beeld aan zonder X2 of X3 en zonder de analyse (review Z0b, veilig V3
   en contract F1 en F4). Een weigering schrijft niets, ook de andere velden niet.
+- Een gast verandert niets (403 guest, voor elk veld): hij heeft geen eigen foto's (review golf 2,
+  veilig V3). Wat niet verandert, geeft ook hem 200.
 - beeld heeft nog geen kolom in photo_pref (die komt met 0012, A0): tot dan blijft het "uit", en
   "aan" weigert check_switch() zolang X3 zich niet aanmeldt.
 """
@@ -17,7 +19,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from app import prefs
+from app import errors, prefs
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import PhotoPref
@@ -46,13 +48,16 @@ async def change_photo_settings(
 ) -> PhotoSettings:
     """Alleen wat verandert. Gezichten of beeld aanzetten: 409 faces_unavailable of
     beeld_not_installed zonder X2, X3 of de analyse; 403 faces_forbidden of 409 beeld_off als de
-    beheerder het verbiedt; 403 guest voor een gast."""
+    beheerder het verbiedt; 403 guest als een gast iets verandert (een gast heeft geen eigen
+    foto's; de web toont hem het blok niet; review golf 2, veilig V3)."""
     before = await prefs.photo_prefs(session, user.id)
     changes = {
         key: value
         for key, value in body.model_dump(exclude_none=True).items()
         if value != before.get(key)
     }
+    if changes and user.role == "guest":
+        raise errors.fail(403, "guest", "Gasten hebben geen eigen foto's")
     patch = PhotoSettingsPatch(**changes)
     await prefs.check_switch(session, user, patch, analyse_enabled=settings.analyse_enabled)
     stored = {key: value for key, value in changes.items() if key in COLUMNS}

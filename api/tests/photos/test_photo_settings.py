@@ -169,6 +169,16 @@ async def test_een_gast(client, eva, settings):
     # Uit terwijl het al uit is: geen verandering, dus ook geen weigering
     await wijzig(client, gast, faces="uit")
     assert await rijen(settings) == []
+    # De andere velden ook niet (review golf 2, veilig V3): een gast heeft geen eigen foto's
+    for body in ({"memories": False}, {"location": "uit"}, {"ocr_photos": True},
+                 {"memories": False, "location": "uit", "ocr_photos": True}):  # fmt: skip
+        r = await wijzig(client, gast, expect=403, **body)
+        assert code_of(r) == "guest"
+    assert await rijen(settings) == []
+    assert await instellingen(client, gast) == STANDAARD
+    # Niets dat verandert: 200, zoals voor iedereen
+    r = await wijzig(client, gast, memories=True, location="mij")
+    assert r.json() == STANDAARD
 
 
 def _vast(state: prefs.SwitchState):
