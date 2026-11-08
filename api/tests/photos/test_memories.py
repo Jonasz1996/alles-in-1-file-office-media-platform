@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app import memories as M
-from app.models import MemoryHide, Person, PhotoPerson, PhotoPref
+from app.models import MemoryHide, Node, Person, PhotoPerson, PhotoPref
 from tests.factories import code_of, create_file, create_folder, create_user, maker, params_of
 from tests.test_photos import login, photo
 
@@ -233,6 +233,39 @@ async def test_verbergen(client, huis, settings):
     )  # fmt: skip
     assert r.status_code == 204
     assert await herinneringen(client, eva, day="2026-11-05") == VIJF_NOVEMBER
+
+
+async def test_een_verborgen_map_raakt_zijn_buren_niet(client, settings):
+    """Review golf 2, contract C1: een map verbergen verbergt alleen zijn eigen boom, niet een map
+    ernaast waarvan het pad erna komt (de bovengrens van het bereik), en niet de map erboven."""
+    async with maker(settings)() as session:
+        eva = await create_user(session, "eva@example.nl")
+        boven = await create_folder(session, eva, name="Boven")
+        a = await create_folder(session, eva, boven.id, name="A")
+        a_onder = await create_folder(session, eva, a.id, name="Onder")
+        b = await create_folder(session, eva, boven.id, name="B")
+        for name, dag, parent in (("in-a.jpg", "2024-11-05", a.id),
+                                  ("onder-a.jpg", "2022-11-05", a_onder.id),
+                                  ("in-b.jpg", "2023-11-05", b.id),
+                                  ("boven.jpg", "2021-11-05", boven.id)):  # fmt: skip
+            await photo(session, eva, name, om(dag), parent)
+        await session.commit()
+        a_id = a.id
+        paden = [
+            await session.scalar(select(Node.mpath).where(Node.id == i))
+            for i in (a.id, a_onder.id, b.id)
+        ]
+    # B komt na A (en na alles onder A): zonder bovengrens viel B er ook onder
+    assert paden[0] < paden[1] < paden[2]
+    eva = await login(client, "eva@example.nl")
+    r = await client.post(
+        "/api/v1/photos/memories/hide", json={"kind": "folder", "ref": str(a_id)}, headers=eva
+    )
+    assert r.status_code == 204, r.text
+    assert await herinneringen(client, eva, day="2026-11-05") == [
+        (3, "2023-11-05", ["in-b.jpg"]),
+        (5, "2021-11-05", ["boven.jpg"]),
+    ]
 
 
 async def test_een_regel_die_niet_klopt(client, huis, settings, monkeypatch):

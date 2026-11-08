@@ -289,6 +289,13 @@ async def test_album_changed_alleen_naar_wie_het_verschil_ziet(client, huis, set
     # Ja: nu ziet Bram ze ook
     await confirm(client, huis["h_eva"], album, True)
     assert album_events() == [(beide, "album.changed")]
+    # Na ja zet een verversing een nieuwe foto er gedeeld bij: ook Bram (review golf 2, C3)
+    async with maker(settings)() as session:
+        eva_user = await session.get(User, huis["eva"])
+        await photo(session, eva_user, "strand-3.jpg", BASE + timedelta(days=3))
+        await session.commit()
+    await rule_router.run(settings, {"album": str(album)})
+    assert album_events() == [(beide, "album.changed")]
     # Een andere regel haalt gedeelde items weg: ook Bram
     await regel(client, huis["h_eva"], album, {"q": "niets"})
     assert album_events() == [(beide, "album.changed")]

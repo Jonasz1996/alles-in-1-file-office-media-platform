@@ -505,13 +505,19 @@ async def test_het_filter_person_in_beide_motoren(client, huis, settings, motor)
     assert namen(await zoek(client, bram, motor, q="samen")) == {"samen.jpg"}
 
 
-async def test_de_groep_personen_bij_zoeken(client, huis, motor):
+async def test_de_groep_personen_bij_zoeken(client, huis, motor, settings):
     eva, bram = huis["h_eva"], huis["h_bram"]
     await op(client, eva, huis["een"], name="Anna")
     await op(client, eva, huis["twee"], name="Annemiek")
     await op(client, eva, huis["samen"], name="Bert")
     p = await personen(client, eva)
     await op(client, eva, huis["twee"], person_id=p["Anna"]["id"])
+    # Anna ook op de foto in de prullenbak (zoals vóór het weggooien): die telt niet, net als in
+    # GET /people (review golf 2, contract C2)
+    async with maker(settings)() as session:
+        session.add(rij(uuid.UUID(p["Anna"]["id"]), huis["weg"], huis["eva"]))
+        await session.commit()
+    assert (await personen(client, eva))["Anna"]["count"] == 2
     verborgen = await nieuw(client, eva, "Anouk")
     await client.patch(f"/api/v1/people/{verborgen}", json={"hidden": True}, headers=eva)
     page = await zoek(client, eva, motor, q="ann")
