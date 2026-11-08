@@ -11,7 +11,9 @@ nacontrole (golf 1)" in z1.md en z2.md): vier tests erbij en drie aangevuld. Twe
 rood door een fout in de test zelf; die zijn gerepareerd. Geen reparatie van de review bleek fout.
 De review van golf 2 is ook verwerkt ("De review (golf 2)" in z4.md en z6.md): vijftien
 bevindingen, alle gedaan; elke reparatie in code heeft een test die zonder haar faalt (C6 en E
-zijn documentatie). Niet gepusht.
+zijn documentatie). De nacontrole daarvan is gedaan ("De nacontrole (golf 2)" in z4.md en z6.md):
+twee regels in de web (V1) hadden geen test die rood werd, en een verborgen herinnering kwam terug
+na een filter zonder treffers (D); beide hebben nu een test, D ook een reparatie. Niet gepusht.
 Het ontwerp is bouwontwerp revisie 3.
 
 ## Wat je koos
