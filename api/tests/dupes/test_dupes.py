@@ -282,3 +282,51 @@ async def test_bijna_gelijk_door_de_keten(client, admin, settings):
     (groep,) = (await lijst(client, eva, "near"))["groups"]
     assert sorted(i["node"]["name"] for i in groep["items"]) == ["a-q60.jpg", "a.jpg"]
     assert photo_hash.VERSION == 1
+
+
+async def test_de_kandidaten_van_een_ander_verdringen_de_eigen_niet(
+    client, admin, settings, monkeypatch
+):
+    """Review golf 3 (veilig F3): de kandidaten van een nieuwe inhoud waren per inhoud hooguit
+    MAX_CANDIDATES over alle eigenaars samen (en de vraag hooguit SCAN rijen). Heeft Eva 24
+    inhouden die dichter bij Brams nieuwe foto liggen dan zijn eigen oude, dan vielen Brams
+    eigen paar weg: geen groep voor Bram, en dat verraadt ook dat een ander iets lijkends heeft.
+    Nu krijgt elke eigenaar van de nieuwe inhoud zijn eigen MAX_CANDIDATES, uit zijn eigen
+    bestanden; de gewone kandidaten (alle eigenaars, voor een latere kopie) blijven erbij.
+    Vast gekozen hashes, dus niet afhankelijk van de volgorde van de sha's."""
+    eva, _ = admin
+    bram, _ = await person(client, eva, "bram@example.com")
+    basis = 0x0123_4567_89AB_CDEF
+    # Eva's 24: 3 bits anders in h0 en 1 in h1 (afstand 4 tot b2 én tot b1); b1 en b2: afstand 6
+    # (alleen in h0, dus ze delen h1–h3)
+    van_eva = []
+    for i in range(24):
+        n = await upload(client, eva, f"e{i}.txt", f"eva {i}".encode())
+        van_eva.append((n["etag"].strip('"'), basis ^ 0b111 ^ (1 << (16 + i % 16))))
+    b1 = (await upload(client, bram, "b1.txt", b"bram 1"))["etag"].strip('"')
+    b2 = (await upload(client, bram, "b2.txt", b"bram 2"))["etag"].strip('"')
+    w1, w2 = basis ^ 0b11_1111, basis
+    paar = (min(b1, b2), max(b1, b2))
+    assert phash.hamming(w1, w2) == 6 and all(phash.hamming(w, w2) == 4 for _, w in van_eva)
+
+    def ok(sha: str, waarde: int) -> photo_hash.Hashed:
+        return photo_hash.Hashed(sha, "ok", waarde)
+
+    # Alles in één stuk van photometa (geen blob_hash): Brams paar is er
+    async with maker(settings)() as db:
+        alles = [ok(s, w) for s, w in van_eva] + [ok(b1, w1), ok(b2, w2)]
+        paren = await photo_hash.candidates(db, alles)
+    assert paren.get(paar) == 6, sorted(paren)
+
+    # Eva's en b1 staan al in blob_hash; b2 is nieuw. Ook als de vraag maar 10 rijen bekijkt
+    async with maker(settings)() as db:
+        await photo_hash.write(db, [ok(s, w) for s, w in van_eva] + [ok(b1, w1)], [])
+        await db.commit()
+    for scan in (photo_hash.SCAN, 10):
+        monkeypatch.setattr(photo_hash, "SCAN", scan)
+        async with maker(settings)() as db:
+            paren = await photo_hash.candidates(db, [ok(b2, w2)])
+        assert paren.get(paar) == 6, (scan, sorted(paren))
+        # De gewone kandidaten van alle eigenaars blijven, ook hooguit MAX_CANDIDATES
+        met_eva = [p for p in paren if p != paar]
+        assert len(met_eva) == min(scan, photo_hash.MAX_CANDIDATES), (scan, len(met_eva))

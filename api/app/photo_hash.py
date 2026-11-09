@@ -5,7 +5,8 @@ In de keten van photometa (app/photometa.py), per stuk van 200 blobs, in vier st
 1. het renderproces rekent de pHash van elke afbeelding (render_meta.run_meta met "hash");
 2. candidates() zoekt per nieuwe hash de kandidaten: inhoud die minstens één stuk van 16 bits
    (h0–h3, op dezelfde plek) deelt en hooguit NEAR bits verschilt; in de database (blob_hash, via
-   ix_hash_0..3) en binnen het stuk zelf. Per inhoud hooguit MAX_CANDIDATES, de dichtste eerst;
+   ix_hash_0..3) en binnen het stuk zelf. Per inhoud hooguit MAX_CANDIDATES, de dichtste eerst,
+   en daarnaast hooguit MAX_CANDIDATES per eigenaar van die inhoud uit zijn eigen bestanden;
 3. het renderproces doet de tweede controle van die paren uit de twee voorbeelden (pairs);
 4. write() zet in de transactie van photometa blob_hash (ok, flat of none) en de paren in
    dup_pair met hun niveau: "zeker" alleen met pHash ≤ 6, de tweede controle, en geen andere
@@ -28,12 +29,23 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Float, Integer, String, bindparam, delete, exists, literal, or_, select
+from sqlalchemy import (
+    Float,
+    Integer,
+    String,
+    bindparam,
+    delete,
+    exists,
+    literal,
+    literal_column,
+    or_,
+    select,
+)
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dupes import phash
-from app.models import Blob, BlobHash, BlobText, DupPair
+from app.models import Blob, BlobHash, BlobText, DupPair, Node
 
 if TYPE_CHECKING:
     from app.search.types import StepState
@@ -74,39 +86,80 @@ def _shares_piece(a: int, b: int) -> bool:
     return any(x == y for x, y in zip(phash.pieces(a), phash.pieces(b), strict=True))
 
 
-async def candidates(db: AsyncSession, hashed: Sequence[Hashed]) -> dict[tuple[str, str], int]:
-    """{(a, b): afstand} met a < b: de kandidaat-paren van deze nieuwe hashes (Keuze 35)."""
-    new = {h.sha: h.value for h in hashed if h.state == "ok" and h.value is not None}
-    found: dict[str, list[tuple[int, str]]] = {sha: [] for sha in new}
-    for sha, value in new.items():
-        p0, p1, p2, p3 = phash.pieces(value)
+async def _owners(db: AsyncSession, shas: Iterable[str]) -> dict[str, set[Any]]:
+    """{sha: eigenaars}: wie een bestand met deze inhoud heeft (ook in de prullenbak: terugzetten
+    maakt het paar weer zichtbaar)."""
+    out: dict[str, set[Any]] = {sha: set() for sha in shas}
+    todo = sorted(out)
+    for i in range(0, len(todo), 500):
         rows = await db.execute(
-            select(BlobHash.blob_sha, BlobHash.phash)
+            select(Node.blob_id, Node.owner_id)
             .where(
-                BlobHash.state == "ok",
-                or_(BlobHash.h0 == p0, BlobHash.h1 == p1, BlobHash.h2 == p2, BlobHash.h3 == p3),
+                Node.blob_id.in_(todo[i : i + 500]), Node.kind == "file", Node.owner_id.is_not(None)
             )
-            .limit(SCAN)
+            .distinct()
         )
-        for other, other_value in rows:
-            if other in new or other_value is None:
-                continue  # wat in dit stuk zit, vergelijken we hieronder met zijn nieuwe hash
-            dist = phash.hamming(value, other_value)
-            if dist <= phash.NEAR:
-                found[sha].append((dist, other))
+        for sha, owner in rows:
+            out[sha].add(owner)
+    return out
+
+
+async def _scan(db: AsyncSession, value: int, owner: Any = None) -> list[tuple[str, int | None]]:
+    """De inhoud in blob_hash die een stuk van 16 bits met value deelt, op volgorde van sha,
+    hooguit SCAN; met owner alleen inhoud waarvan hij een bestand heeft."""
+    p0, p1, p2, p3 = phash.pieces(value)
+    sel = select(BlobHash.blob_sha, BlobHash.phash).where(
+        BlobHash.state == "ok",
+        or_(BlobHash.h0 == p0, BlobHash.h1 == p1, BlobHash.h2 == p2, BlobHash.h3 == p3),
+    )
+    if owner is not None:
+        sel = sel.where(
+            exists().where(
+                Node.blob_id == BlobHash.blob_sha, Node.owner_id == owner, Node.kind == "file"
+            )
+        )
+    # +blob_sha: sorteren na de vier indexen van de stukken, nooit de hele tabel langs de
+    # primaire sleutel om de volgorde
+    rows = await db.execute(sel.order_by(literal_column("+blob_hash.blob_sha")).limit(SCAN))
+    return [(sha, value) for sha, value in rows]
+
+
+async def candidates(db: AsyncSession, hashed: Sequence[Hashed]) -> dict[tuple[str, str], int]:
+    """{(a, b): afstand} met a < b: de kandidaat-paren van deze nieuwe hashes (Keuze 35).
+
+    Per nieuwe inhoud hooguit MAX_CANDIDATES uit alle bestanden (voor een paar dat pas later van
+    één eigenaar wordt, na een kopie), en daarnaast per eigenaar van die inhoud hooguit
+    MAX_CANDIDATES uit zijn eigen bestanden: wat een ander heeft, verdringt nooit een eigen paar
+    (review golf 3, veilig F3)."""
+    new = {h.sha: h.value for h in hashed if h.state == "ok" and h.value is not None}
+    owners = await _owners(db, new) if new else {}
+    # Per inhoud de bakken: None voor alle eigenaars, en een per eigenaar van de inhoud
+    found: dict[str, dict[Any, list[tuple[int, str]]]] = {sha: {None: []} for sha in new}
+    for sha, value in new.items():
+        for owner in [None, *sorted(owners[sha], key=str)]:
+            bak = found[sha].setdefault(owner, [])
+            for other, other_value in await _scan(db, value, owner):
+                if other in new or other_value is None:
+                    continue  # wat in dit stuk zit, vergelijken we hieronder met zijn nieuwe hash
+                dist = phash.hamming(value, other_value)
+                if dist <= phash.NEAR:
+                    bak.append((dist, other))
     shas = sorted(new)
     for i, a in enumerate(shas):
         for b in shas[i + 1 :]:
             if not _shares_piece(new[a], new[b]):
                 continue
             dist = phash.hamming(new[a], new[b])
-            if dist <= phash.NEAR:
-                found[a].append((dist, b))
-                found[b].append((dist, a))
+            if dist > phash.NEAR:
+                continue
+            for owner in (None, *(owners[a] & owners[b])):
+                found[a].setdefault(owner, []).append((dist, b))
+                found[b].setdefault(owner, []).append((dist, a))
     pairs: dict[tuple[str, str], int] = {}
-    for sha, near in found.items():
-        for dist, other in sorted(near)[:MAX_CANDIDATES]:
-            pairs[(min(sha, other), max(sha, other))] = dist
+    for sha, bakken in found.items():
+        for near in bakken.values():
+            for dist, other in sorted(near)[:MAX_CANDIDATES]:
+                pairs[(min(sha, other), max(sha, other))] = dist
     return pairs
 
 
