@@ -297,10 +297,14 @@ Op 3 cores van deze VM:
    `person`, `photo_person`, `dup_pair`), zoals de jobs van Z2, Z3 en Z6 ze zouden schrijven. Zo
    kan elk pakket testen zonder de jobs van een ander. `blob_hash` en `ocr_page` ontbreken: die
    maken de jobs zelf.
-5. **De plaatsen zijn niet nagekeken.** `PLAATS_ID = 2745912` (de stad Utrecht in GeoNames), de
+5. ~~**De plaatsen zijn niet nagekeken.** `PLAATS_ID = 2745912` (de stad Utrecht in GeoNames), de
    grensparen en de punten op de Noordzee zijn met de hand gekozen.
    `download.geonames.org` is hier dicht en Natural Earth is er niet. Z3 moet ze controleren tegen
-   `places.sqlite` en de polygonen.
+   `places.sqlite` en de polygonen.~~ Nagekeken door Z3 met de echte bronnen (Natural Earth 10m
+   v5.1.2 en `rg_cities1000.csv`, met hun sha256): `rg_cities1000.csv` heeft geen GeoNames-id, dus
+   `PLAATS_ID` is nu het vaste id van `app.geo.load.place_id` voor Utrecht (150904566956734); de
+   grensparen en de punten op de Noordzee kloppen zoals ze zijn (`api/tests/geo/test_places.py`,
+   marker `geo`, in de job `api`).
 6. ~~**OCR van een foto staat in dezelfde kolom als OCR van een PDF.** De view `search_src` van
    0010 zet `photo_ocr.text` en `blob_text.ocr` allebei in de kolom `ocr` van `fts_node`.~~ De
    referentie telt OCR-tekst van een foto alleen voor de eigenaar (Keuze 25a: Bram vindt
@@ -348,8 +352,8 @@ Voor andere pakketten:
    - De job `ocr` moet `-m ocr` draaien (api en e2e), met `tesseract-ocr`,
      `tesseract-ocr-nld` en `fonts-dejavu-core` uit apt in de job. Zonder DejaVu tekent
      `fixtures.py` met Pillow, en de scans zijn dan andere.
-3. **Z3** controleert `PLAATS_ID`, `GRENSPAREN` en `ZEE` tegen `places.sqlite` en de polygonen
-   (afwijking 5).
+3. ~~**Z3** controleert `PLAATS_ID`, `GRENSPAREN` en `ZEE` tegen `places.sqlite` en de polygonen
+   (afwijking 5).~~ Gedaan (Z3, `api/tests/geo/test_places.py`).
 4. **Z1 en Z6** maken het verschil tussen OCR van een foto en van een PDF (afwijking 6).
 5. **Wie `test_search_no_replace.py` schrijft**, zondert `bench.py` en `tests/` uit
    (afwijking 1).
