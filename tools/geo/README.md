@@ -9,7 +9,7 @@ plaats, offline. Daarvoor zijn twee bestanden nodig, elk met een vaste sha256:
 | `reverse_geocoder-1.5.1.tar.gz` | de sdist van reverse_geocoder 1.5.1 op PyPI; alleen `rg_cities1000.csv` erin (GeoNames cities1000) | CC BY 4.0 (GeoNames) | 2.246.559 | `2a2e781b…c75c` |
 
 De volledige URL's en sha256 staan in `haal.py` en in `api/app/geo/load.py`; een test
-(`api/tests/search/test_geo_load.py`) eist dat ze gelijk zijn.
+(`api/tests/geo/test_geo_load.py`) eist dat ze gelijk zijn.
 
 - Het pakket `reverse_geocoder` is data, geen afhankelijkheid: het wordt nooit geïnstalleerd of
   geïmporteerd. `geo-load` leest de CSV met `tarfile` uit het archief, zonder uitpakken.

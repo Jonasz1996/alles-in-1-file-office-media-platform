@@ -357,7 +357,7 @@ async def test_db_backup_zonder_database(settings, tmp_path):
 async def test_de_commandos_van_zoeken_zijn_gebouwd(settings):
     """Geen stub meer: geo-load (Z3) bouwt places.sqlite. Zonder bronnen in geo_src (data_dir/geo)
     zegt hij dat, exitcode 1, en maakt hij niets; de rest van het gedrag staat in
-    tests/search/test_geo_load.py."""
+    tests/geo/test_geo_load.py."""
     assert cli.SEARCH_STUBS == {}
     result = await run_cli(settings, "geo-load")
     assert result.returncode == 1, result.stderr.decode()
