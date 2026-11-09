@@ -7,7 +7,11 @@ op 4 november 2026; zie [z1.md](z1.md) en [z2.md](z2.md)), golf 2: zoeken in de 
 herinneringen, slimme albums en filters (samengevoegd op 8 november 2026; zie [z4.md](z4.md) en
 [z6.md](z6.md)), en golf 3: de plek, de plaatsen, duplicaten en delen met een plek, met de kaart,
 `/dubbel` en de waarschuwing bij delen in de web (samengevoegd op 9 november 2026; zie
-[z3.md](z3.md) en [z5.md](z5.md); de review van golf 3 komt nog). De review van golf 1 is
+[z3.md](z3.md) en [z5.md](z5.md)). De review van golf 3 is verwerkt ("De review (golf 3)" in z3.md
+en z5.md): veertien bevindingen; twaalf hebben een reparatie met een test die zonder haar faalt,
+twee zijn documentatie (de bronnen in de README, `/over` komt met X2; een docstring). De kaart met een filter op
+datum, plaats of land haalt de poort van 150 ms; een filter dat `node` nodig heeft (soort, map,
+camera) heeft een eigen poort van 500 ms (Keuze 4a, z3.md Open). De review van golf 1 is
 verwerkt ("De review (golf 1)" in z1.md en z2.md); de poorten van §4.4 zijn hier nu groen, ook 4
 tegelijk. De nacontrole van die review is gedaan ("De
 nacontrole (golf 1)" in z1.md en z2.md): vier tests erbij en drie aangevuld. Twee tests waren soms
