@@ -62,6 +62,13 @@ Wat er bij het bijwerken van 0.7.1 naar fase 6 gebeurt, in deze volgorde:
   voor één core, geschat); de stand staat op `/beheer` → **Zoeken en foto's**;
 - de eindtekst zegt dat, met de stand van de plaatsnamen en waar de reservekopie staat.
 
+Daarna, op `/beheer` → **Zoeken en foto's** (Alt+9): de zoekmachine (`FTS5 (snel)`, of
+`LIKE (langzamer)` tijdens een herbouw), hoeveel bestanden al gelezen zijn, wat mislukte, en de
+knoppen **Index herbouwen**, **Mislukte opnieuw** en **Achtergrondwerk pauzeren**. Hoe snel zoeken
+op jouw machine is, meet `dc exec -T platform python -m app.cli bench --los` (een paar minuten,
+±1,1 GB tijdelijk in `/tank/platform/cache`); de uitkomst staat daarna op dezelfde tab, bij
+**Zoekbench**.
+
 Per schemaversie blijft de nieuwste kopie staan; de kopie van 0.7.1 (`platform-0009-…`) gaat dus
 nooit weg door een volgende update. De kopie heeft geen gezichten en geen beeld (die rekent de app
 na het terugzetten opnieuw), maar verder de hele database: bewaar hem net zo afgeschermd als de

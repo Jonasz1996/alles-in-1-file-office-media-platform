@@ -5,7 +5,7 @@ duplicaten en kent personen. Zoeken op naam zit in de database zelf (triggers) e
 De rest komt op de achtergrond: de inhoud van documenten, de plek, camera en hash van foto's.
 Wat fase 6 is en hoe je bijwerkt, staat in `infra/single/README.md` ("Bijwerken naar fase 6").
 Dit runbook gaat over wat het script doet, de reservekopie, de plaatsnamen, de stand lezen, de
-index herbouwen, zoeken meten en terug naar 0.7.1.
+index herbouwen, zoeken meten, zoeken naast media en office meten, en terug naar 0.7.1.
 
 Alles hieronder gebeurt in de Console van de container (de LXC), als root. `dc` is de functie uit
 de README (Handige commando's): `docker compose` met precies de bestanden van het
@@ -129,21 +129,33 @@ in hetzelfde land. Alles gebeurt in de container, zonder iets online op te zoeke
   Zonder `--force` doet het niets als `places.sqlite` er al goed staat; met `--force` bouwt het
   hem opnieuw. Exitcode 1 als een bron ontbreekt of niet klopt.
 - **De plekken opnieuw.** Na nieuwe bronnen krijgen foto's hun plaats bij de volgende keer dat
-  ze gelezen worden. Alles opnieuw: `/beheer` → Zoeken en foto's → **Herbouwen**, de plekken
-  (hieronder).
+  ze gelezen worden. Alles opnieuw: `/beheer` → Zoeken en foto's → **Plek, camera en datum
+  opnieuw lezen** (hieronder).
 
 ## De stand lezen
 
-Op `/beheer` → **Zoeken en foto's** staat:
+Op `/beheer` → **Zoeken en foto's** (Alt+9; alleen voor een beheerder) staat, van boven naar
+beneden, en elke 5 seconden ververst:
 
-- de motor: `fts` (de index van SQLite) of `like` (de terugval, langzamer, zonder rangorde);
-- de index: namen (altijd klaar), tekst `n` van `m`, wat mislukte (met de sha en een code, nooit
-  een naam), en een herbouw die loopt, met zijn voortgang;
-- of tekst in de zandbak van de mediaworker gelezen wordt of erbuiten;
-- per uur: hoe vaak een zoekvraag tegen zijn tijdsgrens aanliep, en hoe vaak zoeken te druk was;
-- OCR (als die er is), de plaatsnamen (geladen, de bron, de datum) en de laatste meting
-  (hieronder);
-- de knoppen: **Herbouwen**, **Mislukte opnieuw** en **Achtergrondwerk pauzeren**.
+- **Zoekmachine**: `FTS5 (snel)` (de index van SQLite) of `LIKE (langzamer)` (de terugval, zonder
+  rangorde: tijdens een herbouw, of als deze SQLite geen FTS5 kent). Daaronder **Tekst uit
+  documenten lezen**: `in de zandbak van de mediaworker` of `buiten de zandbak (zonder
+  mediaworker)`;
+- **Achtergrondwerk**: `loopt` of `gepauzeerd`, met de knop **Achtergrondwerk pauzeren** (of
+  **Achtergrondwerk hervatten**);
+- **Index**: **Namen** `klaar` (of `worden opnieuw opgebouwd`), **Tekst uit bestanden** `n van m
+  bestanden` met een balk, en **Mislukt** `n inhouden`; de knop **Index herbouwen**;
+- **Herbouwen**, alleen als er een loopt: wat (`De index`, `Plek, camera en datum`,
+  `Duplicaten`), hoe ver, sinds wanneer, met een balk;
+- **Mislukte inhouden**: `Niets mislukt.`, of de knoppen **Mislukte opnieuw** en **Lijst van
+  mislukte tonen**. De lijst noemt per inhoud de sha256, de stap, een code en wanneer; nooit een
+  naam, want één inhoud kan bij meer bestanden horen;
+- **Foto's: plek en duplicaten**: de knoppen **Duplicaten opnieuw berekenen** en **Plek, camera
+  en datum opnieuw lezen**;
+- **Het afgelopen uur**: hoe vaak een zoekvraag tegen zijn tijdsgrens aanliep (ronde B en C), en
+  hoe vaak zoeken te druk was;
+- **OCR** (geïnstalleerd, aan, pagina's in de rij), **Plaatsnamen** (geladen, de bron, de datum)
+  en **Zoekbench** (de laatste meting, hieronder).
 
 Hoe lang de achtergrond duurt (geschat voor één core; de meting hieronder zegt wat jouw CPU
 haalt):
@@ -172,13 +184,20 @@ je tot hij klaar is.
 ## De index herbouwen
 
 Nodig na een melding van `search-check`, of als zoeken iets niet vindt dat er wel is. Herbouwen gaat
-in stukken terwijl de app draait; zoeken werkt ondertussen gewoon (met wat er al is). Op `/beheer`
-→ Zoeken en foto's → **Herbouwen** kies je wat:
+in stukken terwijl de app draait. Tot de nieuwe index klaar is, zoekt iedereen met LIKE: dat werkt,
+alleen langzamer en zonder rangorde. Op `/beheer` → Zoeken en foto's:
 
-- **Namen** of **Tekst**: de index opnieuw uit wat de database al heeft. Documenten worden niet
-  opnieuw gelezen. Loopt er al een, dan zegt `/beheer` dat (`Er loopt al een herbouw`);
-- **Plekken**: plek, camera en datum van alle foto's opnieuw lezen (na nieuwe bronnen);
-- **Hashes**: de hashes voor duplicaten opnieuw; tot een foto zijn nieuwe heeft, blijft de oude.
+- **Index herbouwen** (bij Index): de namen en de tekst opnieuw in de index, uit wat de database
+  al heeft. Documenten worden niet opnieuw gelezen. Eerst vraagt het `De index herbouwen?`;
+  **Herbouwen** begint, **Annuleren** (of Esc) niet. Zolang hij loopt, is de knop weg en staat
+  onder Index de voortgang. Bij 100.000 bestanden duurt het een paar minuten;
+- **Plek, camera en datum opnieuw lezen** (bij Foto's): van alle foto's en video's opnieuw (na
+  nieuwe bronnen);
+- **Duplicaten opnieuw berekenen**: alle foto's een nieuwe pHash; tot een foto zijn nieuwe heeft,
+  blijft de oude.
+
+Ook die twee vragen eerst (**Starten** of **Annuleren**). Er loopt hooguit één herbouw van de index
+tegelijk, en één van de foto's.
 
 Of vanaf de console, dezelfde herbouw van de index:
 
@@ -196,26 +215,78 @@ dc exec -T platform python -m app.cli search-triggers
 
 **Mislukte opnieuw** zet alles wat mislukte weer in de rij (een document of foto die niet te
 lezen was). Wat weer mislukt, komt weer in de lijst; vaak is het bestand zelf
-kapot of versleuteld. **Achtergrondwerk pauzeren** zet het lezen stil (ook een herbouw, tussen twee
-stukken); zoeken blijft werken. Vergeet niet het weer aan te zetten: de pauze blijft staan, ook na
-een herstart.
+kapot of versleuteld. **Achtergrondwerk pauzeren** zet het lezen stil (de index en OCR, en ook een
+herbouw van de index, tussen twee stukken); zoeken blijft werken. Vergeet niet op
+**Achtergrondwerk hervatten** te drukken: de pauze blijft staan, ook na een herstart.
 
 ## Zoeken meten
 
-De meting maakt een boom van 100.000 bestanden in een tijdelijke map naast de app, meet zoeken voor
-"eigenaar" (één persoon) en "alles" (30 personen), en ruimt alles weer op. Er verandert niets aan
-de app of je bestanden. Het duurt ±2 minuten en heeft even ±1,1 GB vrij nodig in `/data/cache`
-(`/tank/platform/cache`). Doe het op een rustig moment: het vraagt veel van de CPU.
+De meting maakt een boom van 100.000 bestanden in een tijdelijke map onder `/data/cache`
+(`/tank/platform/cache`), meet zoeken voor "eigenaar" (één persoon) en "alles" (30 personen), en
+ruimt die map weer op, ook bij een fout of Ctrl-C. Er verandert niets aan de app of je bestanden.
+Het duurt een paar minuten en heeft even ±1,1 GB vrij nodig (plus 512 MB reserve; met minder
+begint hij niet). Doe het op een rustig moment: het vraagt veel van de CPU.
 
 ```bash
-dc exec -T platform mkdir -p /data/cache
-dc exec -T platform python -I - --los --json /data/cache/zoekbench.json < /opt/platform/src/tools/zoekbench/bench.py
+dc exec -T platform python -m app.cli bench --los
 ```
 
 De uitvoer is een tabel per bereik: p50, p95 en max in ms, en hoe vaak een snellere ronde nodig
-was. De poort van het ontwerp is een p95 onder 200 ms. `/beheer` → Zoeken en foto's toont de p95
-van "eigenaar" en "alles" uit `zoekbench.json`, met de tijd van de meting. Exitcode 3 betekent dat
-SQLite geen FTS5 kent; dan zoekt de app met LIKE.
+was. De poort van het ontwerp is een p95 onder 200 ms. Het korte deel komt in
+`/data/cache/zoekbench.json` (alleen tijden, aantallen en de versies van SQLite en Python), en
+`/beheer` → Zoeken en foto's → **Zoekbench** toont de p95 van "eigenaar" en "alles", met de tijd
+van de meting. Exitcode 1: de bench is er niet, er is te weinig ruimte, of hij faalde (de vorige
+uitkomst blijft dan staan). Exitcode 3: deze SQLite kent geen FTS5; dan zoekt de app met LIKE.
+
+## Zoeken naast media en office meten
+
+`e2e/perf/zoek_samen.py` (bouwontwerp §4.5) meet of zoeken, de app en het achtergrondwerk goed
+samengaan met de belastingtest van media en, als je wilt, bewerkers in OnlyOffice. Het draait niet
+in de container van de app, maar in een checkout van de repository met `uv` en `ffmpeg` (de
+sandbox, of een eigen machine), met eigen servers in een tijdelijke map. Je bestanden doen niet
+mee.
+
+Drie stappen, elk zolang de belastingtest loopt (`app.cli media-loadtest`):
+
+1. **pauze**: een rij met documenten om te lezen, maar het achtergrondwerk op pauze. De nulmeting.
+2. **achtergrond**: de pauze eraf zodra media loopt. De index wijkt dan (Defer, standaard bij 2
+   omzettingen); de poort is dat hij binnen 90 s na de belastingtest weer leest.
+3. **zonder_defer**: nieuwe documenten, en Defer uit (`PLATFORM_INDEX_DEFER_TRANSCODES=1000`). Een
+   rapport: wat er gebeurt als alleen `nice` en de idle IO-klasse beschermen.
+
+Tijdens elke stap: 2 zoekvragen per seconde, `GET /files/root` en `/health` elke seconde, en
+`MemAvailable` van de machine. De poorten (stap 2): elke start van media ≤ 5 s en 0 keer haperen,
+zoeken p95 ≤ 200 ms, `/files/root` p95 ≤ 200 ms, `/health` p95 ≤ 50 ms, `MemAvailable` ≥ 1,5 GiB,
+en met OnlyOffice het opslaan ≤ 1,2 × de nulmeting en 0 verloren woorden. Aan het eind staat een
+blok `=== kort ===`.
+
+**Kort** (zoals de job `e2e-media-perf` in CI, als rapport: 60 s per fase, 1 sessie media,
+300 documenten per stap, zonder OnlyOffice; ±5 minuten):
+
+```bash
+cd api
+uv run python ../e2e/perf/zoek_samen.py --kort --json /tmp/zoek-samen.json
+```
+
+**Heel, met OnlyOffice** (300 s per fase, 3 sessies, 5.000 documenten per stap, 5 bewerkers; ±40
+minuten). Dit gebruikt de echte DS van de office-metingen (`e2e/office_ds.sh`, zie
+`docs/fase-4/e2e.md`, "Met de echte DS") en Chromium voor de bewerkers. Draai het op een rustige
+machine met ±8 GB vrij:
+
+```bash
+export OFFICE_DS_NAME=meet-ds OFFICE_DS_PORT=18150 OFFICE_DS_DIR=/tmp/meet-ds \
+  OFFICE_DS_CONFIG=$PWD/infra/single/office/local-production-linux.json
+bash e2e/office_ds.sh start && bash e2e/office_ds.sh wait
+cd web && npm run build && cd ../api
+E2E_REAL_DS=http://127.0.0.1:18150 E2E_REAL_DS_SECRET_FILE=/tmp/meet-ds/jwt.secret \
+  uv run --with playwright python ../e2e/perf/zoek_samen.py --office --json /tmp/zoek-samen.json
+cd .. && bash e2e/office_ds.sh stop
+```
+
+Kleiner kan met `--duur`, `--sessies`, `--docs` en `--bewerkers` (bijvoorbeeld `--sessies 2
+--bewerkers 3`, de maat voor 8 GB van §4.5). Exitcode 1 als een poort van stap 2 niet gehaald is
+(met `--kort` altijd 0). Nog niet in deze meting: foto's, scans voor OCR en de container voor
+gezichten en beeld; zie `docs/fase-6/z7.md`, Open.
 
 ## Terug naar 0.7.1
 
