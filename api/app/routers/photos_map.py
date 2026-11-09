@@ -101,7 +101,7 @@ async def _cells(
                 cx,
                 cy,
                 func.count().label("n"),
-                func.max(PhotoGeo.taken_at).label("t"),
+                func.max(PhotoGeo.taken_at).label("newest"),
                 PhotoGeo.node_id.label("cover"),  # SQLite: de rij van max(taken_at)
                 func.avg(PhotoGeo.x16).label("ax"),
                 func.avg(PhotoGeo.y16).label("ay"),
@@ -116,11 +116,11 @@ async def _cells(
         for r in await session.execute(_filtered(sel, user, filters)):
             cell = found.get((r.cx, r.cy))
             if cell is None:
-                found[(r.cx, r.cy)] = [r.n, r.t, r.cover, r.ax * r.n, r.ay * r.n]
+                found[(r.cx, r.cy)] = [r.n, r.newest, r.cover, r.ax * r.n, r.ay * r.n]
                 continue
             # Dezelfde cel aan beide kanten van 180° (alleen bij heel grote cellen)
-            if r.t is not None and (cell[1] is None or r.t > cell[1]):
-                cell[1], cell[2] = r.t, r.cover
+            if r.newest is not None and (cell[1] is None or r.newest > cell[1]):
+                cell[1], cell[2] = r.newest, r.cover
             cell[0] += r.n
             cell[3] += r.ax * r.n
             cell[4] += r.ay * r.n
