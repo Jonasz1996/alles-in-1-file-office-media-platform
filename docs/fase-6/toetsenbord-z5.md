@@ -8,7 +8,10 @@ of - blijft de zoom van de browser.
 
 De e2e-tests `e2e/test_zoek_kaart.py`, `e2e/test_zoek_dubbel.py` en `e2e/test_share_warning.py`
 doen de stappen hieronder met alleen Tab, Shift+Tab, Enter, Spatie, Esc, de pijlen, Home, End, +
-en -. Nergens een klik. Ze draaien pas na de samenvoeging met Z3 (zie [z5.md](z5.md)).
+en -. Nergens een klik. Sinds de samenvoeging met Z3 (golf 3) zijn ze groen (zie [z5.md](z5.md)).
+
+Sinds de samenvoeging staan op `/fotos` de links "Kaart" en "Dubbele bestanden" (Tab na "Zoeken
+op beeld", zie [toetsenbord-z6.md](toetsenbord-z6.md)); Enter opent `/fotos/kaart` of `/dubbel`.
 
 ## De kaart (`/fotos/kaart`)
 
@@ -82,7 +85,7 @@ Heeft de foto geen plek (404), dan is er geen rij.
 Het deeldialoog opent zoals altijd (S op een rij of een foto, of "Delen"). De zin komt bovenaan
 als het antwoord van de server er is: "12 foto's hierin hebben een locatie in het bestand. Wie ze
 downloadt, krijgt die mee." of "Deze foto heeft een locatie in het bestand. …", en zo nodig "Van
-3 video's weten we het niet (media staat uit)."
+3 foto's of video's weten we het nog niet (nog niet gelezen, of media staat uit)."
 
 - Het dialoog wacht er niet op: Alt+P, Alt+L en Tab werken meteen.
 - De zin heeft `role="note"`. De live-regio leest hem één keer voor; de focus blijft waar hij was
