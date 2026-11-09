@@ -155,7 +155,7 @@ BODY_TIMEOUT = 90.0
 # 'unsafe-inline' voor stijlen: de app zet geen <style> of style-attribuut in de HTML (React
 # style-props lopen via CSSOM en vallen daar niet onder). media-src blob: (fase 5, F4): de
 # speler zet een object-URL van MediaSource in video.src; zonder blob: speelt geen MSE-video.
-# Dezelfde CSP staat 5 keer in web/nginx.conf en in de CI-job images (test_csp_nginx.py).
+# Dezelfde CSP staat 6 keer in web/nginx.conf en in de CI-job images (test_csp_nginx.py).
 WEB_CSP = (
     "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
     "style-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; "
