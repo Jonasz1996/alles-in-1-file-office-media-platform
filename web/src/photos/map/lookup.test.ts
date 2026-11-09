@@ -62,7 +62,7 @@ describe("ophalen per omslag (thumbnails en plaatsnamen)", () => {
   });
 
   it("plaatsnamen pas vanaf zoom 6, voor de grootste groepen, hooguit 16", () => {
-    const dots = Array.from({ length: 20 }, (_, i) => ({ cell: { n: i + 1, cover: `c${i + 1}` } }));
+    const dots = Array.from({ length: 20 }, (_, i) => ({ n: i + 1, cell: { cover: `c${i + 1}` } }));
     expect(labelCovers(dots, PLACE_ZOOM - 0.01)).toEqual([]);
     const covers = labelCovers(dots, PLACE_ZOOM);
     expect(covers).toHaveLength(MAX_LABELS);

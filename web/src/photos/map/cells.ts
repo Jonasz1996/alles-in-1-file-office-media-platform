@@ -60,10 +60,15 @@ export function needsCells(loaded: Loaded | null, v: View, size: Size, z: number
   return !contains(loaded.rect, visibleRect(v, size));
 }
 
-/** Een cel als stip op het scherm. */
+/** Een cel als stip op het scherm; cellen die bijna op dezelfde plek vallen, samen als één. */
 export interface Dot {
   key: string;
+  /** De grootste cel van de stip: daar komen de omslag en het land vandaan */
   cell: MapCell;
+  /** Hoeveel foto's de stip heeft (van alle cellen samen) */
+  n: number;
+  /** Het stuk wereld van de stip: de cel, of de cellen samen (inzoomen en de foto's openen) */
+  rect: Rect;
   /** Het midden, in pixels in het venster */
   sx: number;
   sy: number;
@@ -76,15 +81,43 @@ export function dotRadius(n: number): number {
   return n <= 1 ? 18 : Math.min(34, 16 + 4 * Math.log10(n));
 }
 
+/** Twee stippen die verder dan dit deel van hun stralen samen over elkaar vallen, worden één: een
+ * groep foto's op de grens van twee cellen is dan één stip (met één naam), niet twee halve. */
+const MERGE = 0.75;
+
+function union(a: Rect, b: Rect): Rect {
+  return { x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) };
+}
+
 /** De cellen die in beeld zijn (ook half), als stippen in leesvolgorde: van boven naar beneden en
- * van links naar rechts (dan gaat Tab ook zo). */
+ * van links naar rechts (dan gaat Tab ook zo). De grootste cel eerst: een kleinere stip die er
+ * grotendeels over valt, gaat erin op; het midden is dan dat van alle foto's samen. */
 export function placeDots(cells: readonly MapCell[], z: number, v: View, size: Size): Dot[] {
-  const out: Dot[] = [];
-  for (const cell of cells) {
-    const [sx, sy] = toScreen(v, size, lonToX(cell.lon), latToY(cell.lat));
+  const order = [...cells].sort((a, b) => b.n - a.n || a.y - b.y || a.x - b.x);
+  const groups: { cell: MapCell; n: number; rect: Rect; wx: number; wy: number; sx: number; sy: number; r: number }[] = [];
+  for (const cell of order) {
+    const wx = lonToX(cell.lon);
+    const wy = latToY(cell.lat);
+    const [sx, sy] = toScreen(v, size, wx, wy);
     const r = dotRadius(cell.n);
+    const rect = cellRect(cell.x, cell.y, z);
+    const host = groups.find((g) => Math.hypot(g.sx - sx, g.sy - sy) < (g.r + r) * MERGE);
+    if (host) {
+      const n = host.n + cell.n;
+      host.wx = (host.wx * host.n + wx * cell.n) / n;
+      host.wy = (host.wy * host.n + wy * cell.n) / n;
+      host.n = n;
+      host.rect = union(host.rect, rect);
+      continue;
+    }
+    groups.push({ cell, n: cell.n, rect, wx, wy, sx, sy, r });
+  }
+  const out: Dot[] = [];
+  for (const g of groups) {
+    const [sx, sy] = toScreen(v, size, g.wx, g.wy);
+    const r = dotRadius(g.n);
     if (sx < -r || sy < -r || sx > size.w + r || sy > size.h + r) continue;
-    out.push({ key: `${z}/${cell.x}/${cell.y}`, cell, sx, sy, r });
+    out.push({ key: `${z}/${g.cell.x}/${g.cell.y}`, cell: g.cell, n: g.n, rect: g.rect, sx, sy, r });
   }
   // Rijen van 48 px: stippen die bijna even hoog staan, van links naar rechts
   return out.sort((a, b) => Math.floor(a.sy / 48) - Math.floor(b.sy / 48) || a.sx - b.sx);

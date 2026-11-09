@@ -66,10 +66,10 @@ export function placeOf(loc: FileLocation | null): PlaceName | null {
 
 /** De omslagen waarvoor de kaart een naam zoekt: alleen vanaf PLACE_ZOOM, de grootste groepen
  * eerst, hooguit MAX_LABELS. */
-export function labelCovers(dots: readonly { cell: { n: number; cover: string } }[], zoom: number): string[] {
+export function labelCovers(dots: readonly { n: number; cell: { cover: string } }[], zoom: number): string[] {
   if (zoom < PLACE_ZOOM) return [];
   return [...dots]
-    .sort((a, b) => b.cell.n - a.cell.n)
+    .sort((a, b) => b.n - a.n)
     .slice(0, MAX_LABELS)
     .map((d) => d.cell.cover);
 }

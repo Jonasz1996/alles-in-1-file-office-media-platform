@@ -12,7 +12,7 @@ import {
 } from "./cells";
 import { latToY, lonToX } from "./projection";
 import type { MapCell } from "./types";
-import { contains, visibleRect, WORLD } from "./view";
+import { contains, toScreen, visibleRect, WORLD } from "./view";
 
 const SIZE = { w: 800, h: 600 };
 
@@ -103,6 +103,8 @@ describe("de cellen van de server (Keuze 32)", () => {
     const ams = dots[1];
     expect(ams.key).toBe(`6/${cells[0].x}/${cells[0].y}`);
     expect(ams.r).toBe(dotRadius(120));
+    expect(ams.n).toBe(120);
+    expect(ams.rect).toEqual(cellRect(cells[0].x, cells[0].y, z));
     const [sx, sy] = [ams.sx, ams.sy];
     expect(sx).toBeGreaterThan(0);
     expect(sx).toBeLessThan(SIZE.w);
@@ -112,6 +114,39 @@ describe("de cellen van de server (Keuze 32)", () => {
     const edge = { ...cells[0], lon: 5 + 0.0001, lat: 52 };
     const atEdge = placeDots([edge], z, { ...v, x: v.x + (SIZE.w / 2 + 10) / (256 * 2 ** 6.5) }, SIZE);
     expect(atEdge).toHaveLength(1);
+  });
+
+  it("twee cellen die bijna op dezelfde plek vallen, zijn één stip met alle foto's en beide cellen", () => {
+    // Amsterdam op de grens van twee cellen van zoom 14: 3 en 2 foto's, 110 m uit elkaar
+    const z = 14;
+    const a = cell(52.3762, 4.8936, z, 3, "ams-noord");
+    const b = { ...cell(52.3752, 4.8936, z, 2, "ams-zuid") };
+    expect(b.y).not.toBe(a.y);
+    const v = { x: lonToX(4.8936), y: latToY(52.3757), zoom: 12 };
+    const dots = placeDots([b, a], z, v, SIZE);
+    expect(dots).toHaveLength(1);
+    const [d] = dots;
+    expect(d.cell.cover).toBe("ams-noord");
+    expect(d.key).toBe(`14/${a.x}/${a.y}`);
+    expect(d.n).toBe(5);
+    expect(d.r).toBe(dotRadius(5));
+    expect(d.rect).toEqual({
+      x0: Math.min(cellRect(a.x, a.y, z).x0, cellRect(b.x, b.y, z).x0),
+      y0: cellRect(a.x, a.y, z).y0,
+      x1: Math.max(cellRect(a.x, a.y, z).x1, cellRect(b.x, b.y, z).x1),
+      y1: cellRect(b.x, b.y, z).y1,
+    });
+    // het midden ligt tussen de twee, dichter bij de grootste (3 tegen 2)
+    const [ax, ay] = toScreen(v, SIZE, lonToX(a.lon), latToY(a.lat));
+    const [, by] = toScreen(v, SIZE, lonToX(b.lon), latToY(b.lat));
+    expect(d.sx).toBeCloseTo(ax, 6);
+    expect(d.sy).toBeCloseTo(ay + (by - ay) * 0.4, 6);
+    // ver genoeg ingezoomd staan ze los
+    const close = placeDots([b, a], z, { ...v, zoom: 17 }, SIZE);
+    expect(close.map((x) => [x.cell.cover, x.n])).toEqual([
+      ["ams-noord", 3],
+      ["ams-zuid", 2],
+    ]);
   });
 
   it("een losse foto is een stip van 18 px; een groep groeit met het aantal, tot 34", () => {
