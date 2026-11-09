@@ -722,7 +722,7 @@ async def ffmpeg_count(app) -> int:
     """Hoeveel ffmpeg-processen de worker nu heeft: wat hij zelf telt (caps, ook stervende), en
     bij de lokale worker ook wat /proc onder hem ziet."""
     from app.media import client
-    from app.media.worker.guard import BINARIES  # de namen op één plek (regel 4, M1)
+    from app.media.worker.guard import FFMPEG  # de namen op één plek (regel 4, M1)
 
     count = 0
     with contextlib.suppress(Exception):
@@ -730,7 +730,7 @@ async def ffmpeg_count(app) -> int:
     pid = worker_pid(app)
     if pid is not None:
         seen = await asyncio.to_thread(_children, pid)
-        count = max(count, sum(1 for _, name, *_ in seen if name in BINARIES))
+        count = max(count, sum(1 for _, name, *_ in seen if name in FFMPEG))
     return count
 
 

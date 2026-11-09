@@ -154,7 +154,8 @@ class Settings(BaseSettings):
     # geen plaatsnamen (Z3)
     places: Literal["aan", "uit"] = "aan"
     index_defer_transcodes: int = 2  # index en ocr wachten bij zoveel transcodes
-    # OCR (X1): pas na ja op Vraag 1 (tesseract in het image); tot dan uit, en de rij ocr
+    # OCR (X1): Jonas koos ja (Vraag 1 en 15: de herkenning zit in het image). De worker kan het
+    # sinds X1 stap 1; aan zodra de app-kant er is (X1 stap 2). Tot dan uit, en de rij ocr
     # draait niet (jobs.active_lanes)
     ocr_enabled: bool = False
     ocr_max_pages: int = 200  # per document
