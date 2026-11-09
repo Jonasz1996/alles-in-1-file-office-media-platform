@@ -24,6 +24,20 @@ def test_een_scan_heeft_geen_tekst_maar_wel_een_scanpagina():
     assert (found.state, text, found.scan_pages) == ("none", "", [1])
 
 
+def test_minder_dan_20_tekens_is_ook_een_scanpagina():
+    """Keuze 23 (X1): een pagina met minder dan 20 tekens tekst (zonder witruimte) krijgt OCR;
+    wat er wel op staat (een paginanummer), telt gewoon mee. 20 tekens is geen scan meer."""
+    paginas = [
+        fixtures._kolom(50, ["de factuur voor het project staat in de bijlage"]),
+        fixtures._kolom(50, ["blz 2"]),
+        fixtures._kolom(50, ["1234567890 123456789"]),  # 19 tekens
+        fixtures._kolom(50, ["12345678901234567890"]),  # 20 tekens
+    ]
+    found, text = lees(fixtures._pdf(paginas), "pdf")
+    assert found.scan_pages == [2, 3]
+    assert "blz 2" in text and "1234567890 123456789" in text
+
+
 def test_2001_paginas_geeft_er_2000_en_pages_limit():
     paginas = [fixtures._kolom(50, [f"pagina{n}woord"]) for n in range(1, 2002)]
     found, text = lees(fixtures._pdf(paginas, titel="Lang"), "pdf")
