@@ -16,6 +16,9 @@ nooit AUTOMATIC, nooit een SEARCH op parent_id.
   soort of tijd).
 - De filters van Z3 (place, country, camera; app/search/filters_photo.py) zoeken per node op de
   sleutel van photo_geo of blob_meta, met een vraag en zonder; nooit een SCAN van die tabellen.
+- De duplicaten van Z3 (app/dupes/groups.py): precies gelijk en de leden van een groep via
+  ix_node_owner_blob, de paren van bijna gelijk met per kant één zoekstap daarin (de vorm met
+  EXISTS van S10, nooit de vorm met IN mine).
 - is_small telt via ix_node_mpath; boven 64 wortels telt hij niet (dan altijd langs de tijd).
 - De eigen albums voor suggesties langs (parent_id, kind): een album staat buiten de boom. Met
   owner_id erbij koos de planner ix_node_owner_taken, alle nodes van de eigenaar langs.
@@ -35,6 +38,7 @@ from sqlalchemy import event
 
 from app.config import Settings
 from app.db import get_engine
+from app.dupes import groups as G
 from app.models import User
 from app.search import bench, filters_photo
 from app.search import engine as E
@@ -246,6 +250,40 @@ async def test_de_filters_van_z3_per_node(conn, wortels, filt):
     _per_node(await _plan(conn, sel, require_first="ix_node_live_mod"), filt)
     if wortels <= E.MAX_OR:
         _per_node(await _plan(conn, E.filters_select(scope, K, small=True)), filt)
+
+
+async def _laatste_plan(conn, **eisen):
+    sql, args = conn.info["gezien"][-1]
+    return await conn.run_sync(lambda c: assert_plan(c, sql, args, **eisen))
+
+
+async def test_de_duplicaten_van_z3(conn):
+    """De vragen van GET /duplicates zoals groups.py ze stelt, voor de eigenaar van de bench."""
+    rij = (
+        await conn.exec_driver_sql(
+            'SELECT id FROM "user" WHERE email = ?',
+            (f"{bench.ROLLEN['eigenaar']}@{bench.DOMEIN}",),
+        )
+    ).first()
+    user = User(id=uuid.UUID(hex=rij[0]) if isinstance(rij[0], str) else rij[0], role="user")
+    gezien = conn.info["gezien"]
+    # Precies gelijk: GROUP BY over zijn eigen, levende bestanden, langs (owner_id, blob_id)
+    gezien.clear()
+    exact = await G.exact(conn, user)
+    await _laatste_plan(conn, require_first="INDEX ix_node_owner_blob (owner_id=?)")
+    # Bijna gelijk: alle paren langs, per kant één SEARCH op (owner_id, blob_id)
+    gezien.clear()
+    paren = await G.near_pairs(conn, user)
+    plan = await _laatste_plan(conn)
+    zoeken = [t for _, _, t in plan.regels if "ix_node_owner_blob (owner_id=? AND blob_id=?)" in t]
+    assert len(zoeken) == 2, plan.tekst()
+    assert not any("LIST SUBQUERY" in t for _, _, t in plan.regels), plan.tekst()
+    # De leden van een pagina: per inhoud één SEARCH op (owner_id, blob_id)
+    shas = [g.shas[0] for g in exact[:5]] + [s for a, b, _d, _lv in paren[:5] for s in (a, b)]
+    assert shas, "de bench heeft duplicaten bij de eigenaar"
+    gezien.clear()
+    await G.members(conn, user, shas)
+    await _laatste_plan(conn, require_first="INDEX ix_node_owner_blob (owner_id=? AND blob_id=?)")
 
 
 @pytest.mark.parametrize("wortels", WORTELS)
