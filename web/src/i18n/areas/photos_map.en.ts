@@ -54,14 +54,16 @@ const en: Translation<typeof nl> = {
     photo: "This photo has a location in the file. Anyone who downloads it gets that location too.",
     video: "This video has a location in the file. Anyone who downloads it gets that location too.",
     unknown: {
-      one: "For {n} video we don't know (media is off).",
-      other: "For {n} videos we don't know (media is off).",
+      one: "For {n} photo or video we don't know yet (not read yet, or media is off).",
+      other: "For {n} photos or videos we don't know yet (not read yet, or media is off).",
     },
     unknownOnly: {
-      one: "For {n} video in here we don't know whether it has a location (media is off).",
-      other: "For {n} videos in here we don't know whether they have a location (media is off).",
+      one: "For {n} photo or video in here we don't know yet whether it has a location (not read yet, or media is off).",
+      other:
+        "For {n} photos or videos in here we don't know yet whether they have a location (not read yet, or media is off).",
     },
-    unknownVideo: "We don't know whether this video has a location (media is off).",
+    unknownPhoto: "We don't know yet whether this photo has a location (not read yet).",
+    unknownVideo: "We don't know yet whether this video has a location (not read yet, or media is off).",
     failed: "We could not check whether photos in here have a location.",
     failedOne: "We could not check whether this file has a location.",
   },

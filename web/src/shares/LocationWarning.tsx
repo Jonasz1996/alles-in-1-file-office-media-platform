@@ -1,6 +1,7 @@
 // De waarschuwing in het deeldialoog (fase 6, van Z5; Keuze 30): "12 foto's hierin hebben een
-// locatie in het bestand. Wie ze downloadt, krijgt die mee." en zo nodig "Van 3 video's weten we
-// het niet (media staat uit)." Bij elke soort deling: het dialoog is hetzelfde voor een persoon,
+// locatie in het bestand. Wie ze downloadt, krijgt die mee." en zo nodig "Van 3 foto's of video's
+// weten we het nog niet (nog niet gelezen, of media staat uit)." Bij elke soort deling: het
+// dialoog is hetzelfde voor een persoon,
 // een groep, een gast en een publieke link, op een map, een album of een los bestand, en bij een
 // selectie (de items die gedeeld kunnen worden).
 //

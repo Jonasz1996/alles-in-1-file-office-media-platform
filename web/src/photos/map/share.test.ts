@@ -148,20 +148,22 @@ describe("de zinnen van de waarschuwing, in het Nederlands (Keuze 30)", () => {
     ]);
     expect(warningLines({ with_location: 12, unknown: 3, failed: 0 }, "many")).toEqual([
       "12 foto's hierin hebben een locatie in het bestand. Wie ze downloadt, krijgt die mee.",
-      "Van 3 video's weten we het niet (media staat uit).",
+      "Van 3 foto's of video's weten we het nog niet (nog niet gelezen, of media staat uit).",
     ]);
     expect(warningLines({ with_location: 1, unknown: 1, failed: 0 }, "many")).toEqual([
       "1 foto hierin heeft een locatie in het bestand. Wie hem downloadt, krijgt die mee.",
-      "Van 1 video weten we het niet (media staat uit).",
+      "Van 1 foto of video weten we het nog niet (nog niet gelezen, of media staat uit).",
     ]);
   });
 
+  // Onbekend is wat photometa (nog) niet las (share-check van Z3): een foto of video die net binnen
+  // is, of een video terwijl media uit staat
   it("onbekend zonder foto met een plek: de zin zegt zelf waar het om gaat", () => {
     expect(warningLines({ with_location: 0, unknown: 3, failed: 0 }, "many")).toEqual([
-      "Van 3 video's hierin weten we niet of ze een locatie hebben (media staat uit).",
+      "Van 3 foto's of video's hierin weten we nog niet of ze een locatie hebben (nog niet gelezen, of media staat uit).",
     ]);
     expect(warningLines({ with_location: 0, unknown: 1, failed: 0 }, "many")).toEqual([
-      "Van 1 video hierin weten we niet of hij een locatie heeft (media staat uit).",
+      "Van 1 foto of video hierin weten we nog niet of hij een locatie heeft (nog niet gelezen, of media staat uit).",
     ]);
   });
 
@@ -173,7 +175,11 @@ describe("de zinnen van de waarschuwing, in het Nederlands (Keuze 30)", () => {
       "Deze video heeft een locatie in het bestand. Wie hem downloadt, krijgt die mee.",
     ]);
     expect(warningLines({ with_location: 0, unknown: 1, failed: 0 }, "video")).toEqual([
-      "Of deze video een locatie heeft, weten we niet (media staat uit).",
+      "Of deze video een locatie heeft, weten we nog niet (nog niet gelezen, of media staat uit).",
+    ]);
+    // Een foto die photometa nog niet las: geen "media staat uit", dat gaat over video
+    expect(warningLines({ with_location: 0, unknown: 1, failed: 0 }, "photo")).toEqual([
+      "Of deze foto een locatie heeft, weten we nog niet (nog niet gelezen).",
     ]);
   });
 
@@ -194,7 +200,7 @@ describe("de zinnen van de waarschuwing, in het Nederlands (Keuze 30)", () => {
     expect(renderToStaticMarkup(createElement(LocationWarningText, { lines }))).toBe(
       '<div class="share-place-warning" role="note">' +
         "<p>12 foto&#x27;s hierin hebben een locatie in het bestand. Wie ze downloadt, krijgt die mee.</p>" +
-        "<p>Van 3 video&#x27;s weten we het niet (media staat uit).</p></div>",
+        "<p>Van 3 foto&#x27;s of video&#x27;s weten we het nog niet (nog niet gelezen, of media staat uit).</p></div>",
     );
     expect(renderToStaticMarkup(createElement(LocationWarningText, { lines: [] }))).toBe("");
     // De eerste weergave (vóór het antwoord) is leeg: het dialoog staat er al, zonder te wachten
@@ -210,16 +216,19 @@ describe("de zinnen van de waarschuwing, in het Engels", () => {
   it("meer, één, onbekend en mislukt", () => {
     expect(warningLines({ with_location: 12, unknown: 3, failed: 0 }, "many")).toEqual([
       "12 photos in here have a location in the file. Anyone who downloads them gets that location too.",
-      "For 3 videos we don't know (media is off).",
+      "For 3 photos or videos we don't know yet (not read yet, or media is off).",
     ]);
     expect(warningLines({ with_location: 0, unknown: 2, failed: 0 }, "many")).toEqual([
-      "For 2 videos in here we don't know whether they have a location (media is off).",
+      "For 2 photos or videos in here we don't know yet whether they have a location (not read yet, or media is off).",
     ]);
     expect(warningLines({ with_location: 1, unknown: 0, failed: 0 }, "photo")).toEqual([
       "This photo has a location in the file. Anyone who downloads it gets that location too.",
     ]);
     expect(warningLines({ with_location: 0, unknown: 1, failed: 0 }, "video")).toEqual([
-      "We don't know whether this video has a location (media is off).",
+      "We don't know yet whether this video has a location (not read yet, or media is off).",
+    ]);
+    expect(warningLines({ with_location: 0, unknown: 1, failed: 0 }, "photo")).toEqual([
+      "We don't know yet whether this photo has a location (not read yet).",
     ]);
     expect(warningLines({ with_location: 0, unknown: 0, failed: 2 }, "many")).toEqual([
       "We could not check whether photos in here have a location.",

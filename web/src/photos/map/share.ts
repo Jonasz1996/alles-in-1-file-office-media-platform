@@ -3,8 +3,9 @@
 // functies, zonder React, zodat ze te testen zijn; shares/LocationWarning.tsx toont ze.
 //
 // De server telt met blob_meta.gps: ook als je locatie op "uit" hebt, want de bytes van het bestand
-// gaan gewoon mee. Een video waarvan het onbekend is (media uit), telt als "onbekend". Waar geen
-// foto of video in kan zitten (een los document), vraagt de web niets.
+// gaan gewoon mee. Wat photometa (nog) niet las, telt als "onbekend": een foto of video die net
+// binnen is, of een video terwijl media uit staat (z3.md, Afwijkingen). Waar geen foto of video in
+// kan zitten (een los document), vraagt de web niets.
 
 import { api, type FileNode } from "../../api";
 import { t } from "../../i18n";
@@ -89,9 +90,10 @@ export async function tallyChecks(
 
 /**
  * De zinnen voor het dialoog; leeg als er niets te zeggen is. Bij meer dan één: "12 foto's hierin
- * hebben een locatie in het bestand. Wie ze downloadt, krijgt die mee." en zo nodig "Van 3 video's
- * weten we het niet (media staat uit)." Staat er geen foto met een plek in, dan zegt de zin over
- * de video's zelf waar het om gaat.
+ * hebben een locatie in het bestand. Wie ze downloadt, krijgt die mee." en zo nodig "Van 3 foto's
+ * of video's weten we het nog niet (nog niet gelezen, of media staat uit)." Staat er geen foto met
+ * een plek in, dan zegt de zin over het onbekende zelf waar het om gaat. Bij één bestand: een foto
+ * kan alleen nog niet gelezen zijn, een video ook zonder media.
  */
 export function warningLines(tally: Tally, subject: Subject): string[] {
   const lines: string[] = [];
@@ -103,7 +105,7 @@ export function warningLines(tally: Tally, subject: Subject): string[] {
     return lines;
   }
   if (places > 0) lines.push(t(subject === "video" ? "photos_map.share.video" : "photos_map.share.photo"));
-  else if (unknown > 0) lines.push(t("photos_map.share.unknownVideo"));
+  else if (unknown > 0) lines.push(t(subject === "video" ? "photos_map.share.unknownVideo" : "photos_map.share.unknownPhoto"));
   else if (failed > 0) lines.push(t("photos_map.share.failedOne"));
   return lines;
 }

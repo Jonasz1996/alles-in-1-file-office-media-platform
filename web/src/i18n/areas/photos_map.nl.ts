@@ -48,8 +48,8 @@ export default {
     onlyYou: "Alleen jij ziet de plek.",
   },
   // De waarschuwing in het deeldialoog (Keuze 30). "photos" bij een map, een album of een selectie;
-  // "photo" en "video" bij één bestand. Onbekend is een video waarvan de plek niet gelezen kon
-  // worden omdat media uit staat.
+  // "photo" en "video" bij één bestand. Onbekend is wat photometa (nog) niet las: een foto of video
+  // die net binnen is, of een video terwijl media uit staat (GET /photos/share-check van Z3).
   share: {
     photos: {
       one: "{n} foto hierin heeft een locatie in het bestand. Wie hem downloadt, krijgt die mee.",
@@ -58,14 +58,16 @@ export default {
     photo: "Deze foto heeft een locatie in het bestand. Wie hem downloadt, krijgt die mee.",
     video: "Deze video heeft een locatie in het bestand. Wie hem downloadt, krijgt die mee.",
     unknown: {
-      one: "Van {n} video weten we het niet (media staat uit).",
-      other: "Van {n} video's weten we het niet (media staat uit).",
+      one: "Van {n} foto of video weten we het nog niet (nog niet gelezen, of media staat uit).",
+      other: "Van {n} foto's of video's weten we het nog niet (nog niet gelezen, of media staat uit).",
     },
     unknownOnly: {
-      one: "Van {n} video hierin weten we niet of hij een locatie heeft (media staat uit).",
-      other: "Van {n} video's hierin weten we niet of ze een locatie hebben (media staat uit).",
+      one: "Van {n} foto of video hierin weten we nog niet of hij een locatie heeft (nog niet gelezen, of media staat uit).",
+      other:
+        "Van {n} foto's of video's hierin weten we nog niet of ze een locatie hebben (nog niet gelezen, of media staat uit).",
     },
-    unknownVideo: "Of deze video een locatie heeft, weten we niet (media staat uit).",
+    unknownPhoto: "Of deze foto een locatie heeft, weten we nog niet (nog niet gelezen).",
+    unknownVideo: "Of deze video een locatie heeft, weten we nog niet (nog niet gelezen, of media staat uit).",
     failed: "Of hierin foto's met een locatie zitten, konden we niet nagaan.",
     failedOne: "Of dit bestand een locatie heeft, konden we niet nagaan.",
   },
