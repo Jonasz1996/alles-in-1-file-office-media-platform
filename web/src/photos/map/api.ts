@@ -1,6 +1,7 @@
 // De aanroepen van de plek van een foto, de kaart, de plaatsen, de waarschuwing bij delen en de
 // bronvermelding (fase 6, bouwontwerp §3.4), frozen na Z0: precies de eindpunten van Z3, met de
-// vorm van ./types. Losse functies via api.request; tot Z3 zijn routes vult, geven ze 501.
+// vorm van ./types. Losse functies via api.request; de routes zijn van Z3 (app/routers/geo.py en
+// photos_map.py), en api/tests/search/test_web_contracts.py houdt paden en vragen gelijk.
 
 import { api } from "../../api";
 import type { Filters } from "../../search/types";

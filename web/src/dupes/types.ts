@@ -1,7 +1,7 @@
 // De contracten van de duplicaten (fase 6, bouwontwerp §3.4 en Keuze 34–36), frozen na Z0: wat
 // GET /duplicates en POST /duplicates/ignore van Z3 geven en nemen. Alleen eigen, levende
-// bestanden. Opruimen gaat via de bestaande batchroute van de prullenbak. Tot Z3 zijn routes
-// vult, geven ze 501 (de stub van Z0).
+// bestanden. Opruimen gaat via de bestaande batchroute van de prullenbak. De vormen staan in
+// app/geo/types.py; test_web_contracts.py vergelijkt.
 
 import type { FileNode, SearchHit } from "../api";
 
@@ -34,4 +34,9 @@ export interface DupeGroup {
 export interface DupePage {
   groups: DupeGroup[];
   cursor: string | null;
+}
+
+/** POST /duplicates/ignore: "niet gelijk" voor de groep met deze sleutel (DupeIgnoreIn). */
+export interface DupeIgnore {
+  key: string;
 }

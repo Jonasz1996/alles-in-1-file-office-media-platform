@@ -7,6 +7,8 @@ fase 6 iets bij zette api.ts en photos/api.ts), rechts het model in app/search, 
 app/geo, app/prefs en de routes van albums en delingen. Bij de samenvoeging van Z0 liepen ze op
 een paar plekken uiteen (docs/fase-6/z0.md); deze test houdt ze gelijk tot Z1–Z7 de routes
 vullen. Z0b zette de vormen van gezichten (X2) en zoeken op beeld (X3) erbij, aan beide kanten.
+Bij de samenvoeging van golf 3 kwam erbij: de body van "niet gelijk" (DupeIgnore), en de paden en
+vragen waarmee de web de routes van Z3 aanroept (methode, pad en de namen in de querystring).
 
 De TypeScript wordt met een eenvoudige lezer gelezen: `export interface X { ... }` (met of zonder
 `extends Y`), velden gescheiden door `;`, een vorm `{ a: t; b: t }` als type van een veld, en
@@ -37,10 +39,12 @@ import uuid
 from pathlib import Path
 
 import pytest
+from fastapi.routing import iter_route_contexts
 from pydantic import BaseModel, create_model
 
 from app import prefs
 from app.geo import types as G
+from app.main import app
 from app.people import faces_types as F
 from app.people import types as P
 from app.routers import albums as A
@@ -338,6 +342,8 @@ PAREN = [
     ("dupes/types.ts", "DupeItem", G.DupeItem),
     ("dupes/types.ts", "DupeGroup", G.DupeGroup),
     ("dupes/types.ts", "DupePage", G.DupePage),
+    # De samenvoeging van golf 3: wat de web stuurt bij "niet gelijk"
+    ("dupes/types.ts", "DupeIgnore", G.DupeIgnoreIn),
     # Z0b: zoeken op beeld (X3) en gezichten (X2)
     ("search/types.ts", "BeeldStatus", S.BeeldStatus),
     ("admin/searchApi.ts", "CodeCount", S.CodeCount),
@@ -386,6 +392,7 @@ RICHTING = {
     "MemoryHide": "beide",
     "PhotoSettingsPatch": "vraag",
     "FacesReject": "vraag",
+    "DupeIgnore": "vraag",
 }
 
 
@@ -490,6 +497,8 @@ FOUTEN = [
         "Box = readonly [x: number, y: number, w: number];",
     ),
     ("dupes/types.ts", "DupeItem", "taken_at: string | null;", "taken_at: number | null;"),
+    ("dupes/types.ts", "DupeIgnore", "  key: string;\n}", "  key?: string;\n}"),
+    ("dupes/types.ts", "DupeIgnore", "  key: string;\n}", "  key: string;\n  all: boolean;\n}"),
     # Z0b
     (
         "search/types.ts",
@@ -605,3 +614,151 @@ def test_de_lezer_ziet_de_vormen_van_de_web(web):
         typing.get_args(S.AnalysisCode)
     )
     assert _woorden(web, "search/types.ts", "FileNode") is None
+
+
+# --- De routes van Z3 zoals de web ze aanroept (de samenvoeging van golf 3) ---
+
+# Waar de web de routes van Z3 aanroept: elke `${API}/…` in deze bestanden
+ROEPERS = ["photos/map/api.ts", "photos/map/requests.ts", "photos/map/share.ts", "dupes/api.ts"]
+LETTERLIJK = re.compile(r"`\$\{API\}(/[^`]*)`")
+METHODE = re.compile(r'api\.request<[^>]*>\(\s*"(\w+)",\s*$')
+FUNCTIE = re.compile(r"export function (\w+)\(")
+INVUL = re.compile(r"\$\{[^}]*\}|\{[^}]*\}")
+WIRE = "${wireQuery("
+
+# Precies deze routes roept de web aan; elke andere route van Z3 hoort hier dan ook bij
+Z3_ROUTES = {
+    ("GET", "/api/v1/files/{node_id}/location"),
+    ("GET", "/api/v1/photos/map"),
+    ("GET", "/api/v1/photos/map/items"),
+    ("GET", "/api/v1/photos/places"),
+    ("GET", "/api/v1/photos/share-check"),
+    ("GET", "/api/v1/geo/attribution"),
+    ("GET", "/api/v1/duplicates"),
+    ("POST", "/api/v1/duplicates/ignore"),
+}
+
+
+class Aanroep(typing.NamedTuple):
+    bestand: str
+    methode: str
+    pad: str
+    # De namen in de querystring
+    vraag: frozenset[str]
+
+
+def _sleutels(expr: str, filters: frozenset[str]) -> frozenset[str]:
+    """De namen die wireQuery(expr) in de querystring zet: `{ a: x, b, ...filters }` of
+    `filters`."""
+    expr = expr.strip()
+    if expr == "filters":
+        return filters
+    assert expr.startswith("{") and expr.endswith("}"), f"de lezer kent wireQuery({expr}) niet"
+    uit: set[str] = set()
+    for lid in _delen(expr[1:-1].replace(",", "|")):
+        if lid.startswith("..."):
+            assert lid == "...filters", f"de lezer kent {lid} niet"
+            uit |= filters
+        else:
+            uit.add(lid.split(":")[0].strip())
+    return frozenset(uit)
+
+
+def _aanroepen(teksten: dict[str, str], filters: frozenset[str]) -> list[Aanroep]:
+    uit = []
+    for bestand, tekst in teksten.items():
+        tekst = COMMENT.sub("", tekst)
+        for m in LETTERLIJK.finditer(tekst):
+            letterlijk = m.group(1)
+            pad, vraag = letterlijk, frozenset[str]()
+            if WIRE in letterlijk:
+                i = letterlijk.index(WIRE)
+                assert letterlijk.endswith(")}"), letterlijk
+                pad = letterlijk[:i]
+                vraag = _sleutels(letterlijk[i + len(WIRE) : -2], filters)
+            voor = tekst[: m.start()]
+            if gevonden := METHODE.search(voor):
+                methode = gevonden.group(1)
+            else:
+                # Een functie die alleen het pad geeft (cellsPath, shareCheckPath, …): "Het pad
+                # van GET …", en de aanroep gaat met GET via api.request
+                functies = FUNCTIE.findall(voor)
+                assert functies and functies[-1].endswith("Path"), f"{bestand}: {letterlijk}"
+                methode = "GET"
+            uit.append(Aanroep(bestand, methode, INVUL.sub("{}", "/api/v1" + pad), vraag))
+    return uit
+
+
+def _query(dependant) -> list:
+    """De velden van de querystring van een route, ook die van zijn afhankelijkheden (Filters)."""
+    uit = list(dependant.query_params)
+    for onder in dependant.dependencies:
+        uit += _query(onder)
+    return uit
+
+
+def _routes() -> dict[tuple[str, str], tuple[set[str], set[str]]]:
+    """(methode, pad met {}) → (alle namen, verplichte namen) van de querystring, voor Z3."""
+    uit = {}
+    for c in iter_route_contexts(app.routes):
+        for methode in c.methods or ():
+            if (methode, c.path) in Z3_ROUTES:
+                velden = _query(c.route.dependant)
+                namen = {v.alias for v in velden}
+                nodig = {v.alias for v in velden if v.field_info.is_required()}
+                uit[(methode, INVUL.sub("{}", c.path))] = (namen, nodig)
+    return uit
+
+
+def _controleer_aanroepen(teksten: dict[str, str], filters: frozenset[str]) -> None:
+    routes = _routes()
+    assert len(routes) == len(Z3_ROUTES), "een route van Z3 bestaat niet (meer)"
+    aanroepen = _aanroepen(teksten, filters)
+    assert {(a.methode, a.pad) for a in aanroepen} == set(routes), aanroepen
+    for a in aanroepen:
+        namen, nodig = routes[(a.methode, a.pad)]
+        assert a.vraag <= namen, f"{a.bestand} {a.pad}: {sorted(a.vraag - namen)} kent de API niet"
+        assert nodig <= a.vraag, f"{a.bestand} {a.pad}: {sorted(nodig - a.vraag)} ontbreekt"
+
+
+@pytest.fixture(scope="module")
+def roepers() -> dict[str, str]:
+    return {naam: (WEB / naam).read_text() for naam in ROEPERS}
+
+
+@pytest.fixture(scope="module")
+def filters(web) -> frozenset[str]:
+    """De namen van Filters in de web: die van de querystring (§3.4)."""
+    return frozenset(_interface(web, "search/types.ts", "Filters"))
+
+
+def test_de_web_roept_de_routes_van_z3_aan_zoals_ze_zijn(roepers, filters):
+    """Methode, pad en de namen in de querystring van elke aanroep zijn die van de route; samen
+    precies de routes van Z3, en de filters van de web zijn die van /photos (photo_filters)."""
+    _controleer_aanroepen(roepers, filters)
+    aanroepen = _aanroepen(roepers, filters)
+    kaart = {a.vraag for a in aanroepen if a.pad == "/api/v1/photos/map"}
+    assert kaart == {filters | {"bbox", "z"}}
+    namen, _nodig = _routes()[("GET", "/api/v1/photos/map")]
+    assert namen == filters | {"bbox", "z"}
+
+
+@pytest.mark.parametrize(
+    ("bestand", "oud", "nieuw"),
+    [
+        ("photos/map/api.ts", "/photos/map/items$", "/photos/map/item$"),
+        ("photos/map/requests.ts", "{ bbox: bboxParam(bbox), z,", "{ box: bboxParam(bbox), z,"),
+        ("photos/map/requests.ts", "bboxParam(bbox), z, ...filters", "bboxParam(bbox), ...filters"),
+        ("photos/map/share.ts", "wireQuery({ node: nodeId })", "wireQuery({ id: nodeId })"),
+        ("dupes/api.ts", '<void>("POST"', '<void>("PUT"'),
+        ("dupes/api.ts", "wireQuery({ kind, cursor })", "wireQuery({ soort: kind, cursor })"),
+        ("photos/map/api.ts", "/geo/attribution`", "/geo/bronnen`"),
+    ],
+    ids=["pad", "naam", "z-ontbreekt", "node", "methode", "kind", "pad-weg"],
+)
+def test_de_aanroepen_zien_een_ander_pad_of_een_andere_naam(roepers, filters, bestand, oud, nieuw):
+    tekst = roepers[bestand]
+    assert tekst.count(oud) >= 1, oud
+    anders = {**roepers, bestand: tekst.replace(oud, nieuw)}
+    with pytest.raises(AssertionError):
+        _controleer_aanroepen(anders, filters)
