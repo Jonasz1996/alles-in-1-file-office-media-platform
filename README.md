@@ -103,6 +103,17 @@ Tests: `cd api && uv run pytest` en `cd web && npm test`; de e2e-tests met Playw
 [docs/fase-5/e2e.md](docs/fase-5/e2e.md). De HTTPS-test tegen Pebble (de
 test-CA van Let's Encrypt) heeft Go nodig: `cd api && eval "$(tests/pebble/start.sh)" && uv run pytest tests/test_acme_pebble.py`.
 
+## Bronnen
+
+- **Plaatsnamen**: [GeoNames](https://www.geonames.org/) (`cities1000`, als `rg_cities1000.csv`
+  uit reverse_geocoder 1.5.1), onder [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+- **Landen en de wereldkaart**: [Natural Earth](https://www.naturalearthdata.com/) (de landen
+  1:10m admin-0 v5.1.2, de kaart 1:110m), publiek domein.
+
+De bronnen staan niet in de repo: de app bouwt er bij de start `/data/geo/places.sqlite` van (of
+`app.cli geo-load`). De kaart op `/fotos/kaart` noemt ze onder de kaart; een pagina `/over` met
+deze vermelding komt nog (zie [docs/fase-6/z3.md](docs/fase-6/z3.md), Open).
+
 ## Voortgang
 
 | Fase | Onderwerp | Status |
