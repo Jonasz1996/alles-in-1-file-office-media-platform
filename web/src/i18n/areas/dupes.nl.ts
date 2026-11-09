@@ -32,7 +32,7 @@ export default {
     none: "Naar de prullenbak",
     some: { one: "{n} bestand naar de prullenbak", other: "{n} bestanden naar de prullenbak" },
     hint: "Vink eerst aan wat weg mag.",
-    done: { one: "{n} bestand naar de prullenbak", other: "{n} bestanden naar de prullenbak" },
+    done: { one: "{n} bestand staat in de prullenbak", other: "{n} bestanden staan in de prullenbak" },
     undo: "Ongedaan maken",
     allTitle: "Alles uit deze groep weg?",
     allMessage: {
