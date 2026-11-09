@@ -2,11 +2,13 @@
 // ×, en een paneel om er een soort, een tag, een persoon of een datum bij te zetten. Elke wijziging
 // is een nieuwe vraag in de URL (query.ts). Met het toetsenbord: Tab naar een chip of het paneel,
 // Enter of spatie op de samenvatting opent het, spatie zet een vinkje, Enter in een datum zet hem.
-// De personen (Z6, Keuze 38) zijn je eigen zichtbare personen; meer is EN.
+// De personen (Z6, Keuze 38) zijn je eigen zichtbare personen; meer is EN. Een plaats en een land
+// (Z3) staan op hun chip bij naam.
 
 import { type JSX, type KeyboardEvent, useEffect, useRef } from "react";
 import type { Tag } from "../api";
 import { t } from "../i18n";
+import { regionName } from "../photos/map/text";
 import { navigate } from "../router";
 import { IconButton } from "../ui/Button";
 import {
@@ -21,7 +23,7 @@ import {
   withTag,
   withType,
 } from "./query";
-import { SEARCH_TYPES, type SearchType } from "./types";
+import { type PlaceRef, SEARCH_TYPES, type SearchType } from "./types";
 
 /** De naam van een soort ("other" kan geen sleutel zijn: een object met "other" is een meervoud). */
 export function typeLabel(type: SearchType): string {
@@ -35,10 +37,22 @@ export interface PersonName {
   count: number;
 }
 
-/** Wat er op een chip staat. Een tag en een persoon bij naam (een verborgen of onbekende persoon:
- * "Persoon"); plaatsen, een bibliotheek en een map kent de pagina (nog) niet bij naam: dan het
- * soort filter. */
-export function chipLabel(chip: Chip, tags: readonly Tag[], people: readonly PersonName[] = []): string {
+/** "Hengelo, Overijssel": een plaats met zijn provincie, zoals in de suggesties (zonder dubbel:
+ * "Utrecht", niet "Utrecht, Utrecht"). */
+export function placeLabel(p: Pick<PlaceRef, "name" | "admin1">): string {
+  return p.admin1 && p.admin1 !== p.name ? `${p.name}, ${p.admin1}` : p.name;
+}
+
+/** Wat er op een chip staat. Een tag, een persoon en een plaats bij naam (een verborgen of
+ * onbekende persoon: "Persoon"; een plaats waarvan de naam (nog) niet bekend is: "Plaats"); een
+ * land bij zijn naam in de taal van de app. Een bibliotheek en een map kent de pagina (nog) niet
+ * bij naam: dan het soort filter. */
+export function chipLabel(
+  chip: Chip,
+  tags: readonly Tag[],
+  people: readonly PersonName[] = [],
+  places: readonly Pick<PlaceRef, "id" | "name" | "admin1">[] = [],
+): string {
   switch (chip.field) {
     case "type":
       return typeLabel(chip.value as SearchType);
@@ -50,10 +64,12 @@ export function chipLabel(chip: Chip, tags: readonly Tag[], people: readonly Per
       return tags.find((tag) => tag.id === chip.value)?.name ?? t("search.filters.tag");
     case "person":
       return people.find((p) => p.id === chip.value)?.name ?? t("search.filters.person");
-    case "place":
-      return t("search.filters.place");
+    case "place": {
+      const place = places.find((p) => String(p.id) === chip.value);
+      return place ? placeLabel(place) : t("search.filters.place");
+    }
     case "country":
-      return t("search.filters.country", { code: chip.value });
+      return t("search.filters.country", { name: regionName(chip.value) ?? chip.value });
     case "library":
       return t("search.filters.library");
     case "camera":
@@ -72,10 +88,12 @@ export function FilterBar({
   query,
   tags,
   people = [],
+  places = [],
 }: {
   query: PageQuery;
   tags: readonly Tag[];
   people?: readonly PersonName[];
+  places?: readonly Pick<PlaceRef, "id" | "name" | "admin1">[];
 }): JSX.Element {
   const list = chips(query);
   const chipsRef = useRef<HTMLUListElement>(null);
@@ -129,7 +147,7 @@ export function FilterBar({
       {list.length > 0 && (
         <ul ref={chipsRef} className="search-chips" aria-label={t("search.filters.label")}>
           {list.map((chip, i) => {
-            const label = chipLabel(chip, tags, people);
+            const label = chipLabel(chip, tags, people, places);
             return (
               <li key={`${chip.field}:${chip.value}`} className="search-chip">
                 <span>{label}</span>

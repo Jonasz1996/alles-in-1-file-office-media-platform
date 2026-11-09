@@ -30,7 +30,7 @@ export default {
     tag: "Tag",
     person: "Persoon",
     place: "Plaats",
-    country: "Land: {code}",
+    country: "Land: {name}",
     library: "Mediabibliotheek",
     camera: "Camera: {name}",
     folder: "In een map",

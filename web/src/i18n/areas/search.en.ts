@@ -30,7 +30,7 @@ const en: Translation<typeof nl> = {
     tag: "Tag",
     person: "Person",
     place: "Place",
-    country: "Country: {code}",
+    country: "Country: {name}",
     library: "Media library",
     camera: "Camera: {name}",
     folder: "In a folder",

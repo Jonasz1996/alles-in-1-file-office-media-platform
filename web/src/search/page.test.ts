@@ -114,7 +114,7 @@ describe("de chips en het paneel met filters (Keuze 43 en 47)", () => {
     expect(chipLabel({ field: "to", value: "2024-12-31" }, tags)).toBe("Tot en met 2024-12-31");
     expect(chipLabel({ field: "tag", value: T1 }, tags)).toBe("Vakantie");
     expect(chipLabel({ field: "tag", value: MAP }, tags)).toBe("Tag");
-    expect(chipLabel({ field: "country", value: "NL" }, tags)).toBe("Land: NL");
+    expect(chipLabel({ field: "country", value: "NL" }, tags)).toBe("Land: Nederland");
     expect(chipLabel({ field: "camera", value: "fujifilm x100v" }, tags)).toBe("Camera: fujifilm x100v");
     expect(chipLabel({ field: "in", value: MAP }, tags)).toBe("In een map");
     expect(typeLabel("spreadsheet")).toBe("Rekenbladen");
@@ -139,6 +139,37 @@ describe("de chips en het paneel met filters (Keuze 43 en 47)", () => {
     expect(chipLabel({ field: "person", value: RIA }, tags, people)).toBe("Oma Ria");
     expect(chipLabel({ field: "person", value: MAP }, tags, people)).toBe("Persoon");
     expect(chipLabel({ field: "person", value: RIA }, tags)).toBe("Persoon");
+  });
+
+  // Z3: de naam komt uit GET /photos/places (met het filter place: alleen die plaats)
+  it("een plaats bij naam, met de provincie; zonder bekende naam heet hij Plaats", () => {
+    const places = [
+      { id: 2745912, name: "Utrecht", admin1: "Utrecht" },
+      { id: 2754681, name: "Hengelo", admin1: "Overijssel" },
+      { id: 7, name: "Ergens", admin1: null },
+    ];
+    expect(chipLabel({ field: "place", value: "2754681" }, tags, [], places)).toBe("Hengelo, Overijssel");
+    expect(chipLabel({ field: "place", value: "2745912" }, tags, [], places)).toBe("Utrecht");
+    expect(chipLabel({ field: "place", value: "7" }, tags, [], places)).toBe("Ergens");
+    expect(chipLabel({ field: "place", value: "8" }, tags, [], places)).toBe("Plaats");
+    expect(chipLabel({ field: "place", value: "2754681" }, tags)).toBe("Plaats");
+    const html = renderToStaticMarkup(createElement(FilterBar, { query: { place: 2754681 }, tags: [], places }));
+    expect(html).toContain("<span>Hengelo, Overijssel</span>");
+    expect(html).toContain('aria-label="Filter weghalen: Hengelo, Overijssel"');
+  });
+
+  it("een land bij zijn naam in de taal van de app; een code die de browser niet kent zoals hij is", async () => {
+    expect(chipLabel({ field: "country", value: "BE" }, tags)).toBe("Land: België");
+    expect(chipLabel({ field: "country", value: "XX" }, tags)).toBe("Land: XX");
+    resetI18nForTests("en");
+    await loadAreas(["shell", "browser", "search"]);
+    expect(chipLabel({ field: "country", value: "NL" }, tags)).toBe("Country: Netherlands");
+  });
+
+  it("de pagina vraagt de naam van de plaats op met het filter place, niet voor een gast", () => {
+    expect(searchPageSource).toContain("listPlaces({ place })");
+    expect(searchPageSource).toContain("if (guest || place === undefined) return;");
+    expect(searchPageSource).toContain("places={placeNames}");
   });
 
   it("met eigen personen een vinkje per persoon in het paneel; de gezette aangevinkt, met een chip", () => {

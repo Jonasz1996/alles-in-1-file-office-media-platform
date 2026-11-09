@@ -48,13 +48,14 @@ import { PageTitle } from "../ui/PageTitle";
 import { clickSelect, keySelect, SelectionStore, useSelection } from "../ui/selection";
 import { toast } from "../ui/toast";
 import { useViewerParam, Viewer } from "../viewer";
+import { places as listPlaces } from "../photos/map/api";
 import { people as listPeople } from "../photos/people/api";
 import { search } from "./api";
 import { FilterBar, type PersonName } from "./FilterBar";
 import { appendHits, folderHref, hitPath, isPhoto, parentHref, pathText } from "./hits";
 import { Notices, notices, Snippet } from "./Notices";
 import { canSearch, firstParams, nextParams, queryHref, readQuery, withMode, withPerson } from "./query";
-import { type Groups, type Hit, MAX_QUERY, type SearchPage as Page } from "./types";
+import { type Groups, type Hit, MAX_QUERY, type PlaceRef, type SearchPage as Page } from "./types";
 import "../files.css";
 import "../share.css";
 import "../browser/browser.css";
@@ -91,6 +92,7 @@ export default function SearchPage(_: RouteProps): JSX.Element {
   const [loadingMore, setLoadingMore] = useState(false);
   const [tags, setTags] = useState<Tag[]>([]);
   const [people, setPeople] = useState<PersonName[]>([]);
+  const [placeNames, setPlaceNames] = useState<Pick<PlaceRef, "id" | "name" | "admin1">[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selection] = useState(() => new SelectionStore());
   const sel = useSelection(selection);
@@ -147,6 +149,24 @@ export default function SearchPage(_: RouteProps): JSX.Element {
     if (guest) return;
     listPeople().then((r) => setPeople(r.people), () => {});
   }, [guest]);
+
+  // De naam van de plaats op de chip (Z3): GET /photos/places met het filter place geeft alleen die
+  // plaats, van je eigen foto's. Zonder antwoord (locatie uit, geen eigen foto daar, een gast)
+  // blijft er "Plaats" staan
+  const place = query.place;
+  useEffect(() => {
+    if (guest || place === undefined) return;
+    let live = true;
+    listPlaces({ place }).then(
+      (r) => {
+        if (live) setPlaceNames(r.places);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [guest, place]);
 
   // Keuze 81: de knop "Zoeken op beeld" (/fotos) opent de stand beeld zonder vraag, met de focus
   // in het veld. Na de kop: de schil geeft na een navigatie de kop de focus (PageTitle), en dat
@@ -364,7 +384,7 @@ export default function SearchPage(_: RouteProps): JSX.Element {
           ))}
         </div>
       )}
-      <FilterBar query={query} tags={tags} people={people} />
+      <FilterBar query={query} tags={tags} people={people} places={placeNames} />
 
       {error && <p role="alert">{error}</p>}
       {image ? (
