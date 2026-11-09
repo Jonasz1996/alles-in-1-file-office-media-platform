@@ -76,6 +76,13 @@ jobs:
           if s > 30:
               print(f"::warning::de fixtures duurden {s:.1f} s, meer dan de 30 s van §3.8")
           '
+      # X1: tesseract met de talen, zodat het scenario ocr_vorm van het contract
+      # (tests/media/worker_contract.py) ook tegen de echte worker loopt
+      - name: tesseract met nld, eng en osd (X1)
+        run: |
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-nld \
+            tesseract-ocr-eng tesseract-ocr-osd
+          tesseract --version | head -n 1
       - name: pytest -m media
         run: |
           set -o pipefail
@@ -86,6 +93,58 @@ jobs:
             echo "Tests met media overgeslagen: ffmpeg ontbreekt" && exit 1
           fi
           grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/pytest.txt"
+      - name: Geen OCR overgeslagen (X1)
+        run: |
+          if grep -q "^SKIPPED .*tesseract ontbreekt" "$RUNNER_TEMP/pytest.txt"; then
+            echo "Het contract van ocr overgeslagen: tesseract ontbreekt" && exit 1
+          fi
+
+  # Fase 6, X1 (§4.6): OCR met de echte tesseract van Ubuntu en DejaVu Sans, met marker ocr:
+  # tests/ocr/test_ocr_real.py (een worker in het proces met de echte opdracht ocr: recall, de
+  # vakjes in het beeld zoals de viewer het toont, de OSD alleen waar nodig, en de poort van §4.5:
+  # ≥ 8 pagina's per minuut op één core) en de scans van Z0 (tests/search/test_fixtures.py).
+  # Zonder tesseract, een taal of DejaVu faalt het; overslaan telt als mislukt. Aan het eind van
+  # het log "=== kort ===" met de regels "OCR:" (recall, vakjes, pagina's per minuut)
+  ocr:
+    name: OCR (echte tesseract, marker ocr)
+    runs-on: ubuntu-24.04  # zoals api-media, zie de noot boven jobs
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: tesseract met nld, eng en osd, en DejaVu Sans
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-nld \
+            tesseract-ocr-eng tesseract-ocr-osd fonts-dejavu-core
+          tesseract --version | head -n 1
+          tesseract --list-langs
+          echo "cores: $(nproc)"
+      - run: uv sync --frozen
+      - name: pytest -m ocr
+        run: |
+          set -o pipefail
+          taskset -c 0-2 uv run pytest -q -m ocr -rs -s | tee "$RUNNER_TEMP/ocr.txt"
+          if grep -q "^SKIPPED" "$RUNNER_TEMP/ocr.txt"; then
+            echo "OCR-tests overgeslagen" && exit 1
+          fi
+          grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/ocr.txt"
+      - name: Samenvatting
+        if: always()
+        run: |
+          echo "=== kort ==="
+          echo "X1 OCR met de echte tesseract (pytest -m ocr):"
+          if [ -f "$RUNNER_TEMP/ocr.txt" ]; then
+            grep -o "OCR: .*" "$RUNNER_TEMP/ocr.txt" | sed 's/^/  /' || true
+            tail -n 1 "$RUNNER_TEMP/ocr.txt" | sed 's/^/  /'
+          else
+            echo "  liep niet"
+          fi
 
   # Fase 6, spike Z0 (bouwontwerp §3.7): zoeken op de SQLite van het image. python:3.12-slim is
   # de basis van het Dockerfile (Debian 13, SQLite 3.46.1). De plannen met en zonder ANALYZE
@@ -720,6 +779,67 @@ jobs:
       - name: Logs van de platform-container
         if: always() && matrix.name == 'platform'
         run: docker logs platform-ci || true
+      # Fase 6, X1 (Keuze 24, Vraag 15): tesseract maakt het image hooguit 75 MB groter. Gemeten
+      # in het image zelf, in een wegwerpcontainer als root zonder netwerk: de pakketten die met
+      # tesseract-ocr, -nld, -eng en -osd weg zouden gaan (apt-get -s purge --auto-remove, waarbij
+      # Recommends niets vasthoudt: het Dockerfile installeert zonder; min wat autoremove ook
+      # zonder tesseract al zou weghalen), en de bestanden van die pakketten die er echt staan
+      # (lstat; de slim-basis laat docs en man weg). Zo telt alleen wat er door tesseract bij
+      # kwam: bibliotheken die ffmpeg ook nodig heeft, blijven buiten de som. dpkg Installed-Size
+      # staat ernaast, naast de 69 MiB van spike S5
+      - name: tesseract in het image, hooguit 75 MB erbij (X1)
+        if: ${{ !cancelled() && matrix.name == 'platform' }}
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/grootte.py" << 'PY'
+          import os, re, stat, subprocess, sys
+
+          PAKKETTEN = ["tesseract-ocr", "tesseract-ocr-nld", "tesseract-ocr-eng", "tesseract-ocr-osd"]
+          POORT = 75 * 10**6  # bytes: + ≤ 75 MB (Vraag 15)
+          APT = ["apt-get", "-s", "-o", "APT::AutoRemove::RecommendsImportant=false",
+                 "-o", "APT::AutoRemove::SuggestsImportant=false"]
+
+
+          def purg(*args):
+              done = subprocess.run([*APT, *args], capture_output=True, text=True)
+              if done.returncode != 0:
+                  print(f"apt-get -s {' '.join(args)}: code {done.returncode}: {done.stderr[-300:]}")
+                  sys.exit(1)
+              return set(re.findall(r"^Purg (\S+)", done.stdout, re.M))
+
+
+          al = purg("purge", "--auto-remove")  # wat zonder tesseract ook weg zou gaan
+          weg = sorted(purg("purge", "--auto-remove", *PAKKETTEN) - al)
+          if not set(PAKKETTEN) <= set(weg):
+              print(f"tesseract staat niet (helemaal) in het image: weg zou alleen {weg} gaan")
+              sys.exit(1)
+          gezien, grootte, kib = set(), 0, 0
+          for pakket in weg:
+              q = subprocess.run(["dpkg-query", "-W", "-f", "${Installed-Size}", pakket],
+                                 capture_output=True, text=True, check=True)
+              kib += int(q.stdout.strip() or 0)
+              lijst = subprocess.run(["dpkg-query", "-L", pakket], capture_output=True, text=True,
+                                     check=True)
+              for pad in lijst.stdout.splitlines():
+                  if pad in gezien:
+                      continue
+                  gezien.add(pad)
+                  try:
+                      info = os.lstat(pad)
+                  except FileNotFoundError:
+                      continue  # niet in het image (path-exclude van de slim-basis)
+                  if not stat.S_ISDIR(info.st_mode):
+                      grootte += info.st_size
+          print(f"tesseract erbij: {grootte / 10**6:.1f} MB in bestanden van {len(weg)} pakketten "
+                f"(de poort: ≤ {POORT // 10**6} MB; dpkg Installed-Size {kib / 1024:.1f} MiB, "
+                f"spike S5 mat 69 MiB)")
+          print(f"pakketten: {' '.join(weg)}")
+          if grootte > POORT:
+              print(f"TE GROOT: {grootte} bytes, meer dan {POORT}")
+              sys.exit(1)
+          PY
+          docker run --rm -i --user root --network none platform-platform:ci python3 -I - \
+            < "$RUNNER_TEMP/grootte.py" | tee "$RUNNER_TEMP/tesseract-grootte.txt"
       - name: Web-image starten en controleren
         if: matrix.name == 'web'
         run: |
@@ -737,6 +857,13 @@ jobs:
       - name: Logs van de web-container
         if: always() && matrix.name == 'web'
         run: docker logs web-ci || true
+      # X1: de poort van tesseract als laatste in het log van platform
+      - name: Samenvatting
+        if: always() && matrix.name == 'platform'
+        run: |
+          echo "=== kort ==="
+          echo "X1 tesseract in het image (+ ≤ 75 MB):"
+          sed 's/^/  /' "$RUNNER_TEMP/tesseract-grootte.txt" 2> /dev/null || echo "  liep niet"
 
   # Fase 5 (§4.8): het echte image met wat M0 heeft. Het platform-image met de cache van images
   # (scope platform), en daarin:
@@ -839,6 +966,17 @@ jobs:
         # De sleutel van hello maakt het script zelf (64 hex, in een .env van 0600); hij komt
         # niet in het log
         run: bash infra/single/tests/test_media_container.sh
+      # Fase 6, X1: tesseract in het image, aan het werk alleen in de worker-container
+      # (test_ocr_container.sh): 0711 van root, de talen, een gemaakte PGM als media, Op.OCR
+      # vanuit de app met docker top ernaast, en de handdruk van ocr met de echte keten. De regels
+      # goed en FOUT gaan naar ocr.txt, voor "=== kort ===". Het image is alleen hier te bouwen:
+      # wat dit script toetst, blijkt pas na de push
+      - name: OCR in de worker-container (test_ocr_container.sh, X1)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        env:
+          OCR_TEST_IMAGE: platform:ci
+          OCR_TEST_OUT: ${{ runner.temp }}/media-image
+        run: bash infra/single/tests/test_ocr_container.sh
       - name: selftest.json tonen
         if: always()
         run: |
@@ -897,3 +1035,5 @@ jobs:
           else
             echo "  liep niet"
           fi
+          echo "X1 OCR in de worker-container (test_ocr_container.sh):"
+          sed 's/^/  /' "$d/ocr.txt" 2> /dev/null || echo "  liep niet"
