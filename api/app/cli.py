@@ -66,9 +66,10 @@ de app). search-rebuild herbouwt de zoekindex in stukken terwijl de app draait; 
 zet de triggers van zoeken terug en herbouwt daarna; search-check vergelijkt willekeurige nodes
 met de bron (exitcode 1 bij een verschil).
 
-Dit commando bouwt zijn pakket nog; tot dan zegt het dat het er nog niet is (exitcode 1):
+Plaatsnamen en landen (Z3, Keuze 29): places.sqlite bouwen uit de bronnen in geo_src (de app
+doet het zelf bij de start als hij ontbreekt; exitcode 1 als een bron ontbreekt of niet klopt):
 
-    python -m app.cli geo-load
+    python -m app.cli geo-load [--force]
 """
 
 import argparse
@@ -96,6 +97,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app import previews
 from app.config import Settings, get_settings
 from app.db import get_engine
+from app.geo import load as geo_load
 from app.migrate import alembic_config
 from app.models import AlbumItem, User
 from app.routers.auth import being_deleted, reset_totp
@@ -473,10 +475,9 @@ def _backup(settings: Settings) -> int:
     return 0
 
 
-# De commando's van zoeken en foto's die hun pakket nog moet bouwen (fase 6, §3.5)
-SEARCH_STUBS = {
-    "geo-load": ("Z3", "places.sqlite bouwen uit de bronnen"),
-}
+# De commando's van zoeken en foto's die hun pakket nog moet bouwen (fase 6, §3.5); geo-load
+# is gebouwd (Z3, app/geo/load.py)
+SEARCH_STUBS: dict[str, tuple[str, str]] = {}
 
 
 def _stub(name: str) -> int:
@@ -634,6 +635,7 @@ def main(argv: list[str] | None = None) -> int:
         "db-backup", help="een reservekopie van de database maken, terwijl de app draait"
     )
     search_bench.parsers(commands)
+    geo_load.parsers(commands)
     for name, (package, what) in SEARCH_STUBS.items():
         commands.add_parser(name, help=f"{what} (nog niet gebouwd, {package})")
     _media_parsers(commands)
@@ -643,6 +645,8 @@ def main(argv: list[str] | None = None) -> int:
         return _media(settings, args)
     if args.command in search_bench.COMMANDS:
         return search_bench.run(settings, args)
+    if args.command in geo_load.COMMANDS:
+        return geo_load.run(settings, args)
     if args.command in SEARCH_STUBS:
         return _stub(args.command)
     if args.command == "db-backup":

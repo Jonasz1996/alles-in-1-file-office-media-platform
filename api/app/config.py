@@ -150,6 +150,9 @@ class Settings(BaseSettings):
     geo_src: Path | None = None
     # Gemaakt door geo-load; ontbreekt hij, dan geen plaatsnamen. Leeg = geo_src/places.sqlite
     places_db: Path | None = None
+    # PLAATSEN in .env (Keuze 29): "uit" slaat het bouwen van places.sqlite over, en dan zijn er
+    # geen plaatsnamen (Z3)
+    places: Literal["aan", "uit"] = "aan"
     index_defer_transcodes: int = 2  # index en ocr wachten bij zoveel transcodes
     # OCR (X1): pas na ja op Vraag 1 (tesseract in het image); tot dan uit, en de rij ocr
     # draait niet (jobs.active_lanes)

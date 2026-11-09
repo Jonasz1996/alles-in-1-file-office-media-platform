@@ -53,5 +53,8 @@ markers = [
     "zoek: zoeken en foto's (fase 6); draait gewoon mee",
     "triggers: de triggers en de migratie van zoeken (0010); draait gewoon mee",
     "ocr: met echte tesseract (job ocr); niet in de gewone run",
+    # Z3 (Keuze 29): met de echte bronnen van plaatsen en landen (tools/geo/haal.py); de job api
+    # haalt ze met sha256 en draait -m geo apart
+    "geo: met de echte bronnen van plaatsnamen en landen; niet in de gewone run",
 ]
-addopts = "--strict-markers -m 'not media and not media_perf and not provider_real and not zoek_perf and not ocr'"
+addopts = "--strict-markers -m 'not media and not media_perf and not provider_real and not zoek_perf and not ocr and not geo'"
