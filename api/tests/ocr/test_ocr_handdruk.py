@@ -67,6 +67,9 @@ def keten_klopt(uit: dict) -> None:
 
 def test_niet_als_root(aanval):
     assert aanval["uid"] != 0
+    # Buiten het image zijn nice, ionice en env te lezen: dan de keten als onleesbare kopieën
+    # (de echte keten van het image toetst test_ocr_container.sh)
+    assert aanval["keten"] == "kopie"
 
 
 def test_de_aanvaller_ziet_het_venster_van_een_leesbare_python(aanval):

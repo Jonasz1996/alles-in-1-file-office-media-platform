@@ -12,7 +12,10 @@ en hij kijkt of het merk erin staat.
 Kind 2 (nice, ionice, env en tesseract) loopt hier via kopieën die niemand mag lezen (0111),
 zoals in het image (chmod 0711 in het Dockerfile): elke exec is dan niet-dumpbaar, dus ook de
 herkenning (met de PGM op stdin) is dicht. De tesseract is een kopie van /bin/true: geen woorden
-(none), maar wel de hele keten, met de maat van de PGM in de samenvatting.
+(none), maar wel de hele keten, met de maat van de PGM in de samenvatting. In het image
+(infra/single/tests/test_ocr_container.sh, als media) mag deze uid de vier niet lezen: dan de
+echte keten, met de echte tesseract (ook none: in het verloop staan geen woorden). "keten" in de
+uitvoer zegt welke.
 
 Vormen, alle via de echte opdracht (ops/ocr.py, run.spawn_handshake):
 - "leesbaar, traag": kind 1 uit deze python (leesbaar) en een BOOT die eerst 0,4 s slaapt, vóór
@@ -41,6 +44,13 @@ import tempfile
 from pathlib import Path
 
 SIZE = (300, 200)
+KETEN = ("nice", "ionice", "env", "tesseract")
+
+
+def echte_keten() -> bool:
+    """In het image: nice, ionice, env en tesseract zijn er, en deze uid mag ze niet lezen."""
+    paden = [shutil.which(naam, path="/usr/bin:/bin") for naam in KETEN]
+    return all(p and os.access(p, os.X_OK) and not os.access(p, os.R_OK) for p in paden)
 
 
 def keten(map_: Path) -> Path:
@@ -127,9 +137,12 @@ def main() -> int:
     ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0)  # zoals de worker zelf
     map_ = Path(tempfile.mkdtemp(prefix="handdruk-ocr-", dir=basis))
     try:
-        os.environ["PATH"] = str(keten(map_))  # de kinderen zien alleen de onleesbare keten
+        echt_ = echte_keten()
+        if not echt_:
+            os.environ["PATH"] = str(keten(map_))  # de kinderen zien alleen de onleesbare keten
         kopie_ = kopie(map_)
         uit: dict = {"uid": os.getuid(), "ptrace_scope": ptrace_scope()}
+        uit["keten"] = "echt" if echt_ else "kopie"
         vormen = [
             ("leesbaar, traag", sys.executable, True),
             ("kopie, traag", kopie_, True),
