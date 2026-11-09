@@ -332,7 +332,11 @@ async def start_rebuild(db: AsyncSession, settings: Settings, what: RebuildWhat)
         conn = await db.connection()
         if _fts_running(settings) or await search_engine.rebuilding(conn):
             raise _running()
-        await db.commit()  # de leestransactie dicht: de herbouw schrijft zelf
+        # De cursor op 0 vóór de 202: een GET direct erna ziet de herbouw al (rebuild.what,
+        # LIKE), ook als de taak nog niet liep. De taak gaat daarna verder vanaf die cursor.
+        if await rebuild._has_fts(conn):
+            await rebuild._start(conn, what)
+        await db.commit()
         start_fts(settings, what)
         log.info("Zoeken: herbouw van de index gestart (%s)", what)
         return

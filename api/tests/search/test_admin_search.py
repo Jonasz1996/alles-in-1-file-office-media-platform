@@ -304,6 +304,25 @@ async def test_de_index_herbouwen_loopt_op_de_achtergrond(client, admin, setting
     assert got["rebuild"] is None and got["engine"] == "fts"
 
 
+async def test_na_de_202_ziet_een_get_de_herbouw_al(client, admin, settings, monkeypatch):
+    """De web-app laadt direct na de 202 opnieuw: dan staat de herbouw er al (cursor 0), ook
+    als de taak nog niet liep. De taak gaat daarna verder vanaf die cursor."""
+    headers, _ = admin
+    gestart: list[str] = []
+    monkeypatch.setattr(search_admin, "start_fts", lambda _s, what: gestart.append(what))
+    r = await client.post(f"{ADMIN}/rebuild", json={"what": "text"}, headers=headers)
+    assert r.status_code == 202 and gestart == ["text"]
+    got = (await client.get(ADMIN, headers=headers)).json()
+    assert got["engine"] == "like" and got["index"]["names_done"] is False
+    assert got["rebuild"]["what"] == "text" and got["rebuild"]["done"] == 0.0
+    r = await client.post(f"{ADMIN}/rebuild", json={"what": "names"}, headers=headers)
+    assert r.status_code == 409
+    # De taak zelf maakt hem af
+    await search_admin._run_fts(settings, "text")
+    got = (await client.get(ADMIN, headers=headers)).json()
+    assert got["rebuild"] is None and got["engine"] == "fts"
+
+
 async def test_de_pauze_houdt_een_herbouw_tussen_de_stukken_vast(settings, monkeypatch):
     """De herbouw zelf (rebuild.rebuild) heeft een eigen test; hier de wacht tussen de stukken."""
     gedaan: list[str] = []
