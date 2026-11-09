@@ -9,6 +9,9 @@ of - blijft de zoom van de browser.
 De e2e-tests `e2e/test_zoek_kaart.py`, `e2e/test_zoek_dubbel.py` en `e2e/test_share_warning.py`
 doen de stappen hieronder met alleen Tab, Shift+Tab, Enter, Spatie, Esc, de pijlen, Home, End, +
 en -. Nergens een klik. Sinds de samenvoeging met Z3 (golf 3) zijn ze groen (zie [z5.md](z5.md)).
+Sinds de review van golf 3 doet `test_zoek_kaart.py` ook de lijst Plaatsen (met een
+`places.sqlite` uit de kleine bronnen van `api/tests/geo`), en kijkt hij na dat de focus nergens
+naar de body valt (`test_de_focus_valt_niet_naar_de_body`).
 
 Sinds de samenvoeging staan op `/fotos` de links "Kaart" en "Dubbele bestanden" (Tab na "Zoeken
 op beeld", zie [toetsenbord-z6.md](toetsenbord-z6.md)); Enter opent `/fotos/kaart` of `/dubbel`.
@@ -25,6 +28,8 @@ staat in gewone tekst welke toetsen werken (`aria-describedby`).
 | + of = | één stap inzoomen, rond het midden |
 | - of _ | één stap uitzoomen, rond het midden |
 | Home | al je foto's in beeld (met een plaats gekozen: de foto's van die plaats) |
+| ← → ↑ ↓, +, -, Home op een stip | hetzelfde als op de kaart; de stip is daarna weg (nieuwe stippen), dus de kaart krijgt de focus (review golf 3, web F1) |
+| Enter op Inzoomen of Uitzoomen | één stap; op de grens doet de knop niets en houdt hij de focus (`aria-disabled`, niet `disabled`; review golf 3, web F4) |
 | Enter of Spatie op een stip | meer dan één foto en nog niet op de kleinste cellen: de kaart zoomt in op die stip en de focus gaat terug naar de kaart (de stip is dan weg). Anders: de viewer opent met de foto's van die stip |
 | Esc in de viewer | sluit de viewer; het adres verliest `?bestand=` |
 | ← / → in de viewer | de vorige of volgende foto van de stip |
@@ -45,7 +50,7 @@ staat in gewone tekst welke toetsen werken (`aria-describedby`).
 |---|---|
 | Tab | langs "Alle plaatsen" en daarna elke plaats, met het aantal foto's |
 | Enter of Spatie op een plaats | de kaart toont alleen de foto's van die plaats (`aria-pressed="true"` op die knop) en zet ze in beeld |
-| Enter op "Alle plaatsen" (in de lijst, of naast "Alleen Utrecht" boven de kaart) | het filter weer uit |
+| Enter op "Alle plaatsen" (in de lijst, of naast "Alleen Utrecht" boven de kaart) | het filter weer uit. In de lijst houdt de knop de focus; boven de kaart verdwijnt de knop met het filter, en dan krijgt de kaart de focus (review golf 3, web F2) |
 
 Is `places.sqlite` niet geladen, dan staat er "Nog geen plaatsen. …"; de kaart werkt dan gewoon,
 met landen in plaats van plaatsen.
@@ -55,7 +60,7 @@ met landen in plaats van plaatsen.
 | Toets | Wat |
 |---|---|
 | Tab | in het infopaneel komt de rij Plek mee in de gewone volgorde: de plaats, de coördinaten en de hoogte staan er als tekst; het kaartje erbij is `aria-hidden` |
-| Enter op "Op de kaart" | naar `/fotos/kaart`, ingezoomd op die plek met een ring eromheen. De plek gaat via het geheugen van de pagina mee, nooit via het adres |
+| Enter op "Op de kaart" | naar `/fotos/kaart`, ingezoomd op die plek met een ring eromheen. De plek gaat via het geheugen van de pagina mee, nooit via het adres. Was de viewer al op de kaart open (de foto's van een stip), dan sluit hij en krijgt de kaart de focus (review golf 3, web F3) |
 
 Heeft de foto geen plek (404), dan is er geen rij.
 

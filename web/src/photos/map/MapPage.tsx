@@ -135,11 +135,16 @@ export default function MapPage(_: RouteProps): JSX.Element {
   useEffect(() => () => cancelAnimationFrame(frame.current), []);
   /** Kwam je met "Op de kaart", dan blijft die plek staan als Home daarna binnenkomt */
   const keepFocus = useRef(focus !== null);
+  /** Het element van de kaart (MapView), om de focus erheen te zetten */
+  const mapBox = useRef<HTMLDivElement>(null);
+  /** "Op de kaart" in de viewer: de kaart krijgt de focus zodra de viewer weg is */
+  const focusAfterViewer = useRef(false);
   // "Op de kaart" terwijl de kaart al open is (in de viewer van een groep): meteen erheen
   useEffect(() => {
     clearMapFocus();
     return onMapFocus((f) => {
       keepFocus.current = true;
+      focusAfterViewer.current = true;
       setFocus(f);
       jump({ x: lonToX(f.lon), y: latToY(f.lat), zoom: FOCUS_ZOOM });
     });
@@ -195,10 +200,13 @@ export default function MapPage(_: RouteProps): JSX.Element {
   const homeRef = useRef<Rect | null>(null);
   /** Er kwam al eens een Home binnen (niet bij het dubbele effect van StrictMode) */
   const homeDone = useRef(false);
-  // Opnieuw als de kaart zijn grootte kent, en bij een ander filter
+  // Opnieuw als de kaart zijn grootte kent, en bij een ander filter. Op sized, niet op sizeRef:
+  // MapView meet in zijn eigen effect, en dat draait vóór dit effect. Met sizeRef ging Home dus al
+  // in de eerste ronde (sized nog false) en meteen nog eens als sized true werd: zoom 0 twee keer
+  // gevraagd, de eerste afgebroken (review golf 3, web F6)
   useEffect(() => {
     const s = sizeRef.current;
-    if (!s) return;
+    if (!sized || !s) return;
     // Een ander filter: daarna weer naar Home, tenzij er intussen "Op de kaart" komt
     if (homeDone.current) keepFocus.current = false;
     if (keepFocus.current && focus && !viewRef.current) {
@@ -413,6 +421,14 @@ export default function MapPage(_: RouteProps): JSX.Element {
     if (viewing && !photos) setViewing(null);
   }, []);
   const viewIndex = photos && viewing ? photos.items.findIndex((i) => i.id === viewing) : -1;
+  const shown = photos !== null && viewIndex >= 0;
+  // Na "Op de kaart" sluit de viewer (het adres verliest ?bestand=); de stip die hem opende is na
+  // het springen meestal weg. Dan niet de body maar de kaart (review golf 3, web F3)
+  useEffect(() => {
+    if (shown || !focusAfterViewer.current) return;
+    focusAfterViewer.current = false;
+    mapBox.current?.focus({ preventScroll: true });
+  }, [shown, focus]);
 
   function goHome(): void {
     const s = sizeRef.current;
@@ -426,6 +442,14 @@ export default function MapPage(_: RouteProps): JSX.Element {
     setPhotos(null);
     setPlace(id);
   }
+  /** "Alle plaatsen" boven de kaart: de knop verdwijnt met het filter, dus de kaart krijgt de
+   * focus (review golf 3, web F2) */
+  function chooseAll(): void {
+    mapBox.current?.focus({ preventScroll: true });
+    choose(null);
+  }
+  const atMax = !view || view.zoom >= MAX_VIEW_ZOOM;
+  const atMin = !view || !size || view.zoom <= minZoom(size) + 1e-6;
 
   const chosen = place === null ? null : (placeList?.find((p) => p.id === place) ?? null);
   const empty = home.state === "empty" && place === null && !focus;
@@ -442,7 +466,7 @@ export default function MapPage(_: RouteProps): JSX.Element {
             {chosen && (
               <p className="map-only">
                 {t("photos_map.places.only", { place: chosen.name })}{" "}
-                <Button variant="link" onClick={() => choose(null)}>
+                <Button variant="link" onClick={chooseAll}>
                   {t("photos_map.places.all")}
                 </Button>
               </p>
@@ -461,19 +485,26 @@ export default function MapPage(_: RouteProps): JSX.Element {
               onView={changeView}
               onHome={goHome}
               onActivate={activate}
+              boxRef={mapBox}
             >
+              {/* Op de grens aria-disabled en niets doen, niet disabled: dan zou de focus van
+                  de knop naar de body vallen (review golf 3, web F4) */}
               <div className="map-controls">
                 <IconButton
                   icon="zoom-in"
                   label={t("photos_map.map.zoomIn")}
-                  disabled={!view || view.zoom >= MAX_VIEW_ZOOM}
-                  onClick={() => zoomBy(1)}
+                  aria-disabled={atMax || undefined}
+                  onClick={() => {
+                    if (!atMax) zoomBy(1);
+                  }}
                 />
                 <IconButton
                   icon="zoom-out"
                   label={t("photos_map.map.zoomOut")}
-                  disabled={!view || !size || view.zoom <= minZoom(size) + 1e-6}
-                  onClick={() => zoomBy(-1)}
+                  aria-disabled={atMin || undefined}
+                  onClick={() => {
+                    if (!atMin) zoomBy(-1);
+                  }}
                 />
                 <IconButton icon="fullscreen" label={t("photos_map.map.home")} disabled={!view} onClick={goHome} />
               </div>

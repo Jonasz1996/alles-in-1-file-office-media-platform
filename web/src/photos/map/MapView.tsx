@@ -14,6 +14,7 @@ import {
   memo,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type RefObject,
   useEffect,
   useRef,
 } from "react";
@@ -52,6 +53,8 @@ export interface MapViewProps {
   onActivate(d: Dot): boolean;
   /** Wat boven op de kaart ligt: de knoppen en meldingen */
   children?: ReactNode;
+  /** Het element van de kaart, voor wie de focus erheen moet zetten (de pagina) */
+  boxRef?: RefObject<HTMLDivElement | null>;
 }
 
 type Gesture =
@@ -75,7 +78,8 @@ function countText(n: number): string {
 }
 
 export function MapView(p: MapViewProps): JSX.Element {
-  const box = useRef<HTMLDivElement>(null);
+  const own = useRef<HTMLDivElement>(null);
+  const box = p.boxRef ?? own;
   const size = useRef<Size>({ w: 0, h: 0 });
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<Gesture | null>(null);
@@ -198,6 +202,9 @@ export function MapView(p: MapViewProps): JSX.Element {
     const action = mapKey(e, size.current);
     if (!action) return;
     e.preventDefault();
+    // Op een stip: na het schuiven of zoomen is die stip weg (nieuwe stippen), dus de kaart krijgt
+    // de focus, zoals bij Enter op een stip die inzoomt (review golf 3, web F1)
+    if ((e.target as Element).closest?.("[data-dot]")) box.current?.focus({ preventScroll: true });
     const s = size.current;
     if (action.kind === "pan") p.onView((v) => panBy(v, s, action.dx, action.dy));
     else if (action.kind === "zoom") p.onView((v) => zoomAround(v, s, v.zoom + action.by, s.w / 2, s.h / 2));
