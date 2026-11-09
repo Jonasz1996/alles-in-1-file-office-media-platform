@@ -55,6 +55,14 @@ _GEO = PhotoGeo.__table__
 _META = BlobMeta.__table__
 
 
+def _excluded(table: Any, cols: Iterable[str]) -> dict[str, Any]:
+    """De waarden van de nieuwe rij bij een conflict (excluded.kolom). Een upsert, nooit REPLACE:
+    die wist zonder DELETE-trigger (Keuze 3). De insert staat in dezelfde keten als de upsert,
+    zodat de wachter van tests/search/test_search_no_replace.py de tabel ziet."""
+    excluded = sqlite_insert(table).excluded
+    return {c: excluded[c] for c in cols}
+
+
 def off_key(user_id: uuid.UUID) -> str:
     return f"geo.off:{user_id.hex}"
 
@@ -76,15 +84,9 @@ async def set_meta(db: AsyncSession, rows: Iterable[dict[str, Any]]) -> None:
     values = list(rows)
     if not values:
         return
-    stmt = sqlite_insert(_META)
     await db.execute(
-        stmt.on_conflict_do_update(
-            index_elements=[_META.c.blob_sha],
-            set_={
-                "camera": stmt.excluded.camera,
-                "lens": stmt.excluded.lens,
-                "gps": stmt.excluded.gps,
-            },
+        sqlite_insert(BlobMeta.__table__).on_conflict_do_update(
+            index_elements=[_META.c.blob_sha], set_=_excluded(_META, ("camera", "lens", "gps"))
         ),
         values,
     )
@@ -147,13 +149,17 @@ def _insert(replace: bool) -> Any:
     )
     if not replace:
         sel = sel.where(~exists().where(_GEO.c.node_id == _NODE.c.id))
-    stmt = sqlite_insert(_GEO).from_select(list(_COLS), sel)
     if replace:
-        return stmt.on_conflict_do_update(
-            index_elements=[_GEO.c.node_id],
-            set_={c: getattr(stmt.excluded, c) for c in _COLS[2:]},
+        return (
+            sqlite_insert(PhotoGeo.__table__)
+            .from_select(list(_COLS), sel)
+            .on_conflict_do_update(index_elements=[_GEO.c.node_id], set_=_excluded(_GEO, _COLS[2:]))
         )
-    return stmt.on_conflict_do_nothing(index_elements=[_GEO.c.node_id])
+    return (
+        sqlite_insert(PhotoGeo.__table__)
+        .from_select(list(_COLS), sel)
+        .on_conflict_do_nothing(index_elements=[_GEO.c.node_id])
+    )
 
 
 async def write(
