@@ -16,6 +16,16 @@ def pytest_collection_modifyitems(config, items):
         item.add_marker(pytest.mark.zoek)
 
 
+@pytest.fixture(autouse=True)
+def _aangemeld():
+    """Een test eerder in de run kan search.hooks.reset() of previews.forget_ready() gedaan
+    hebben (tests/extract, test_hotspots); dan ontbreken de start, de kopie en de keten na
+    preview.ready van Z3. register() opnieuw, zoals app/geo/wire.py het vraagt; twee keer kan."""
+    from app.geo import wire
+
+    wire.register()
+
+
 @pytest.fixture
 def plaatsen(settings, monkeypatch):
     """places.sqlite van deze test, gebouwd uit de kleine bronnen van tests/geo/bronnen.py."""
