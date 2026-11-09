@@ -4588,18 +4588,20 @@ Wat het script doet, in deze volgorde (herzien in r2: C7, C12, C13):
    zegt het script "Plaatsnamen: niet geladen" en gaat door; de volgende run probeert het weer.
 3. Office netjes laten opslaan (`checkpoint`, zoals nu).
 4. **Nieuw:** een reservekopie van de database, terwijl de oude app nog draait, met het image dat
-   er nu is (dat van 0.7.0) en alleen de standaardbibliotheek:
+   er nu is (dat van 0.7.1) en alleen de standaardbibliotheek:
 
    ```sh
-   "${compose[@]}" run --rm --no-deps platform python -I -c '<backup>'
+   "${compose[@]}" run --rm --no-deps -T platform python -I -c "$text" /data/platform.db /data/backup </dev/null
    ```
 
-   `<backup>` leest de alembic-head (`0008`), en schrijft met `sqlite3.Connection.backup` naar
-   `/data/backup/platform-0008-<tijd>.db` (bij Jonas `/opt/platform/data/platform/backup/`). Daarna blijft per
-   head alleen de nieuwste, en de laatste kopie van vóór een migratie gaat nooit weg. Lukt de kopie
-   niet, dan stopt het script hier: er is dan nog niets veranderd. Bij een eerste installatie (nog
-   geen database) slaat het script dit over. Dit werkt met elk image, want `app.cli db-backup`
-   bestaat in 0.7.0 niet (V9).
+   `$text` is `api/app/backup.py` van de nieuwe broncode (Z7; `app.cli db-backup` gebruikt
+   dezelfde). Hij leest de alembic-head (`0009`), en schrijft met `sqlite3.Connection.backup` naar
+   `/data/backup/platform-0009-<tijd>.db` (bij Jonas `/opt/platform/data/platform/backup/`), via
+   een `.part` waarin de rijen van gezichten en beeld eerst weg gaan (Keuze 52), met rechten 600.
+   Daarna blijft per head alleen de nieuwste, en de laatste kopie van vóór een migratie gaat nooit
+   weg. Lukt de kopie niet, dan stopt het script hier: er is dan nog niets veranderd. Bij een
+   eerste installatie (nog geen database) slaat het script dit over. Dit werkt met elk image, want
+   `app.cli db-backup` bestaat in 0.7.1 niet (V9).
 5. Het nieuwe image bouwen en de app starten (`up -d --build`, zoals nu, `install.sh:552`); de
    migratie 0010 draait (seconden); de app is gezond (`wait_health`). Bij de start maakt de app
    `/data/geo/places.sqlite` uit de bronnen (`geo-load`, ±1 minuut).
@@ -4619,22 +4621,23 @@ Herzien in r2 met de start van de kinderen (V2), de batches en de polygonen (V6)
 | tweede controle bij duplicaten | alleen kandidaat-paren, twee voorbeelden elk | seconden tot een minuut, afhankelijk van het aantal paren |
 | OCR (X1) | per gescande pagina 3–8 s | ±70–110 min per 1.000 pagina's |
 
-**Terug naar 0.7.0** (als 0.8.0 niet goed is). Herzien in r2 (C7): het script komt van de commit
-van 0.7.0 zelf, niet van de branch. Zo draait het oude script met het oude image. `dc` is de
+**Terug naar 0.7.1** (als 0.8.0 niet goed is). Herzien in r2 (C7): het script komt van de commit
+van 0.7.1 zelf, niet van de branch. Zo draait het oude script met het oude image. `dc` is de
 functie uit `infra/single/README.md` ("Handige commando's"): `docker compose` met precies de
-bestanden die het script gebruikt.
+bestanden die het script gebruikt. Herzien in golf 4 (Z7): 0.7.1 en `80d5bb8` in plaats van 0.7.0
+en `1130e1b` (zie hieronder).
 
 ```bash
-# 1. kijken of 0.7.0 er is, en het script van 0.7.0 in een bestand, vóór je iets stopt
+# 1. kijken of 0.7.1 er is, en het script van 0.7.1 in een bestand, vóór je iets stopt
 git -C /opt/platform/src fetch -q origin
-git -C /opt/platform/src cat-file -e '1130e1bbe86d9e4242c0effb588d7671599f5d8a^{commit}' && echo "goed: 0.7.0 is er"
-curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/1130e1bbe86d9e4242c0effb588d7671599f5d8a/infra/single/install.sh -o /root/platform-install-0.7.0.sh && echo "goed: het script is er"
+git -C /opt/platform/src cat-file -e '80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1^{commit}' && echo "goed: 0.7.1 is er"
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1/infra/single/install.sh -o /root/platform-install-0.7.1.sh && echo "goed: het script is er"
 # 2. stoppen, zodat niets meer naar de nieuwe tabellen schrijft
 dc stop platform media
 # 3. het schema terug, met het image van nu (vraagt om "ja")
-dc run --rm --no-deps platform python -m app.cli db-downgrade 0008
-# 4. 0.7.0 installeren, met het script van 0.7.0
-PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=1130e1bbe86d9e4242c0effb588d7671599f5d8a bash < /root/platform-install-0.7.0.sh
+dc run --rm --no-deps platform python -m app.cli db-downgrade 0009
+# 4. 0.7.1 installeren, met het script van 0.7.1
+PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1 bash < /root/platform-install-0.7.1.sh
 ```
 
 - De downgrade moet met het image van 0.8.0 (dat kent 0010). Daarom eerst stoppen, dan
@@ -4642,20 +4645,28 @@ PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=1130e1bbe86
   dan stop je daar (zoals in het runbook van media).
 - De downgrade gooit de index, de plekken, de hashes, de personen en de regels van albums weg.
   Bestanden, delingen, albums en alles van fase 1–5 blijven. Items uit een regel die niet gedeeld
-  waren, haalt `db-downgrade` eerst uit het album (de vraag van §3.1): in 0.7.0 deelt een album
+  waren, haalt `db-downgrade` eerst uit het album (de vraag van §3.1): in 0.7.1 deelt een album
   elk item.
 - Lukt de downgrade niet, dan is er de reservekopie van stap 4: stoppen, het bestand
-  `platform-0008-<tijd>.db` terugzetten als `platform.db`, het script van 0.7.0.
+  `platform-0009-<tijd>.db` terugzetten als `platform.db`, het script van 0.7.1
+  (`docs/runbooks/zoeken.md`, "Terug naar 0.7.1").
 - **Weer vooruit:** het script van de branch, zonder `PLATFORM_SRC_REF`. De index vult zich
   opnieuw (zie de tabel). Personen die je met de hand benoemde, zijn weg: dat staat in het runbook
   en in de bevestiging van `db-downgrade`.
-- `1130e1b` is de laatste commit vóór Z0; de app-code is gelijk aan `92a0d04` (CI groen op alle
-  jobs). Komen er vóór Z0 nog commits, dan zet Z7 hier de laatste. Bij de integratie komt er een
-  tag `v0.7.0` op. De CI-job `infra` doet precies deze stappen (`test_install_search.sh`).
-- **Nieuw in r3:** dat is gebeurd. Na `1130e1b` kwamen 0.7.1 (`e0496c6`, met migratie 0009) en
-  nog twee commits (tot `245d87a`). Z7 zet dus hier de laatste commit vóór Z0, met de head `0009`
-  in `db-downgrade` en in de naam van de reservekopie. De stappen blijven gelijk; tot Z7 dat doet,
-  staan hier de waarden van revisie 2.
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
+  ```
+
+- `80d5bb8` is de laatste commit vóór Z0: 0.7.1, met migratie 0009. Alleen docs verschillen van
+  `245d87a`, de laatste commit met code van 0.7.1. Een tag `v0.7.1` erop is een keuze van Jonas;
+  de commando's werken zonder. De CI-job `infra` doet precies deze stappen
+  (`test_install_search.sh --stappen`, stap 6 en 7), met het script van die commit.
+- **Waarom niet meer `1130e1b` en 0.7.0** (revisie 2 noemde die, met head `0008`): na `1130e1b`
+  kwamen 0.7.1 (`e0496c6`, met migratie 0009) en nog twee commits tot `245d87a`. Jonas draait dus
+  0.7.1. Terug naar 0.7.0 zou de indexen van 0009 weghalen en een script nemen dat 0.7.1 nooit
+  draaide. Z7 zette in golf 4 de laatste commit vóór Z0 hier, met de head `0009` in `db-downgrade`
+  en in de naam van de reservekopie; de stappen zelf bleven gelijk.
 
 **Van 0.8.1 terug naar 0.8.0** (alleen met twee opleveringen, Vraag 13). Hetzelfde als hierboven,
 met het script van de commit van 0.8.0 en `db-downgrade 0010`. De tabellen van 0011 en 0012 gaan
