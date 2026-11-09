@@ -7,7 +7,8 @@
    Esc in de bevestiging doet niets, Herbouwen start hem (202). Met de pauze blijft hij na het
    eerste stuk staan, met zijn voortgang in procenten; zoeken gaat zolang met LIKE. De lijst van
    mislukte toont alleen de sha256, nooit de naam; "Mislukte opnieuw" zet ze terug in de rij.
-   Hervatten: de herbouw en de mislukte lopen af, alles is weer klaar.
+   Hervatten: de herbouw en de mislukte lopen af, alles is weer klaar. De twee knoppen van de
+   foto's vragen eerst; Esc doet niets (geen POST) en de focus blijft op de knop.
 2. Een gewone gebruiker: geen Beheer in het menu, /beheer/zoeken is "Geen toegang" zonder één
    aanroep van /admin/search, en elke route van Z7 geeft hem 403.
 
@@ -372,6 +373,21 @@ def test_de_tab_met_alleen_het_toetsenbord(beheer: Beheer, browsers: Browsers) -
     ).json()
     assert found["engine"] == "fts"
     assert [h["node"]["name"] for h in found["results"]] == [beheer.mislukt_naam]
+
+    # --- de foto's: elke knop vraagt eerst; Esc doet niets en de focus blijft op de knop ---
+    for knop_naam in ("Duplicaten opnieuw berekenen", "Plek, camera en datum opnieuw lezen"):
+        knop = page.get_by_role("button", name=knop_naam, exact=True)
+        tab_to(page, knop)
+        page.keyboard.press("Enter")
+        dialog = page.get_by_role("dialog", name=f"{knop_naam}?")
+        expect(dialog).to_be_visible()
+        expect(dialog.get_by_role("button", name="Annuleren", exact=True)).to_be_focused()
+        expect(dialog.get_by_role("button", name="Starten", exact=True)).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(dialog).to_have_count(0)
+        expect(knop).to_be_focused()
+    # Alleen de herbouw van de index en "Mislukte opnieuw" gingen naar de server
+    assert [p.split("?", 1)[0].rsplit(ADMIN, 1)[1] for p in posts] == ["/rebuild", "/retry"]
 
 
 # --- 2. een gewone gebruiker: geen tab en 403 --------------------------------------------------
