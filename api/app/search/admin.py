@@ -181,9 +181,19 @@ async def _photometa_progress(db: AsyncSession, what: str) -> float:
     return _fraction(int(done or 0), int(total or 0))
 
 
+async def _photometa_rebuild(db: AsyncSession, saved: dict[str, Any]) -> Rebuild | None:
+    """De herbouw van photometa (hash of geo) die nog loopt; een die klaar is, telt niet meer."""
+    mark = saved.get("rebuild")
+    if isinstance(mark, dict) and mark.get("what") in PHOTOMETA:
+        done = await _photometa_progress(db, mark["what"])
+        if done < 1.0:
+            return Rebuild(what=mark["what"], started_at=str(mark.get("started_at")), done=done)
+    return None
+
+
 async def _rebuild(db: AsyncSession, saved: dict[str, Any]) -> Rebuild | None:
     """De herbouw die nu loopt: eerst die van de index (die raakt zoeken), dan die van
-    photometa. Een herbouw van photometa die klaar is, telt niet meer."""
+    photometa."""
     conn = await db.connection()
     found = await rebuild.progress(conn.engine)
     if found is not None:
@@ -193,12 +203,7 @@ async def _rebuild(db: AsyncSession, saved: dict[str, Any]) -> Rebuild | None:
         what = row[1] if row is not None and row[1] in FTS else "text"
         started = row[0] if row is not None and row[0] else _iso(now())
         return Rebuild(what=what, started_at=started, done=_fraction(found[0], found[1]))
-    mark = saved.get("rebuild")
-    if isinstance(mark, dict) and mark.get("what") in PHOTOMETA:
-        done = await _photometa_progress(db, mark["what"])
-        if done < 1.0:
-            return Rebuild(what=mark["what"], started_at=str(mark.get("started_at")), done=done)
-    return None
+    return await _photometa_rebuild(db, saved)
 
 
 def _places(settings: Settings) -> AdminPlaces:
@@ -331,8 +336,9 @@ async def start_rebuild(db: AsyncSession, settings: Settings, what: RebuildWhat)
         start_fts(settings, what)
         log.info("Zoeken: herbouw van de index gestart (%s)", what)
         return
-    current = await _rebuild(db, await stored(db))
-    if current is not None and current.what in PHOTOMETA:
+    # De herbouw van photometa zelf, ook als er tegelijk een van de index loopt (die toont GET
+    # eerst)
+    if await _photometa_rebuild(db, await stored(db)) is not None:
         raise _running()
     if what == "hash":
         # Een oudere versie: photometa rekent hem opnieuw; tot dan blijft de oude staan

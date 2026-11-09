@@ -368,6 +368,25 @@ async def test_hash_opnieuw_met_voortgang_en_409(client, admin, settings):
     assert r.status_code == 202
 
 
+async def test_hash_loopt_ook_als_de_index_tegelijk_herbouwd_wordt(client, admin, settings):
+    """GET toont de herbouw van de index eerst; een tweede herbouw van photometa blijft toch 409."""
+    headers, _ = admin
+    for i in range(2):
+        await foto(settings, i)
+    r = await client.post(f"{ADMIN}/rebuild", json={"what": "hash"}, headers=headers)
+    assert r.status_code == 202
+    async with db.get_engine(settings).begin() as conn:
+        await conn.exec_driver_sql(
+            "UPDATE search_state SET cursor = 0, started_at = '2026-11-09T10:00:00+00:00', "
+            "what = 'text' WHERE id = 1"
+        )
+    assert (await client.get(ADMIN, headers=headers)).json()["rebuild"]["what"] == "text"
+    for what in ("hash", "geo"):
+        r = await client.post(f"{ADMIN}/rebuild", json={"what": what}, headers=headers)
+        assert r.status_code == 409, what
+        assert r.json()["detail"]["code"] == "search_rebuild_running"
+
+
 async def test_geo_leest_plek_camera_en_datum_opnieuw(client, admin, settings):
     headers, _ = admin
     await foto(settings, 1)
