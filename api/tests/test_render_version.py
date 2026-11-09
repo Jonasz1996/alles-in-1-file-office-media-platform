@@ -7,7 +7,8 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import func, select, update
 
-from app import jobs, previews
+from app import jobs, photometa, previews
+from app.geo import wire
 from app.models import Blob, Job
 from app.storage import BlobStore
 from tests.factories import create_blob, create_file, create_user, maker
@@ -59,6 +60,9 @@ async def test_kantoordocument_opnieuw_en_de_rest_alleen_het_nummer(settings):
 
 @pytest.mark.anyio
 async def test_nieuwe_uploads_gaan_voor(settings):
+    # De app meldt de keten van photometa na preview.ready aan bij de import van app.main; een
+    # test eerder in de run kan previews.forget_ready() gedaan hebben. Deze test telt de jobs.
+    wire.register()
     tiff = await old_blob(settings, picture("TIFF", (64, 64)), "image/tiff", "scan.tiff")
     assert await previews.enqueue_outdated(settings) == 1
     assert await jobs.run_pending(settings) == 1
@@ -75,14 +79,19 @@ async def test_nieuwe_uploads_gaan_voor(settings):
         await previews.queue(session, fresh.blob_id)
         await session.commit()
     later = jobs.now() + timedelta(seconds=previews.RERENDER_DELAY + 1)
-    assert await jobs.run_pending(settings, at=later) == 2
+    # Twee previews, en na elke preview.ready de keten van photometa (Z3, na photometa.DELAY)
+    assert await jobs.run_pending(settings, at=later) == 4
     async with maker(settings)() as session:
         done = (
             await session.scalars(
                 select(Job.payload).where(Job.type == previews.TYPE).order_by(Job.started_at)
             )
         ).all()
+        keten = (
+            await session.scalars(select(Job.attempts).where(Job.type == photometa.TYPE))
+        ).all()
     assert [p["sha"] for p in done] == [fresh.blob_id, tiff]
+    assert keten == [1, 1]  # na elke preview.ready een eigen ronde
 
 
 @pytest.mark.anyio
