@@ -16,7 +16,8 @@ elke functie die foto's leest aan own_live of own_live_geo houdt. Wat foto's lee
 - De job "geo.off" (key per eigenaar): na locatie "uit" alle rijen van die eigenaar weg, in
   stukken van CHUNK (één transactie per stuk: het schrijfslot van SQLite blijft kort). Staat de
   schakelaar intussen weer op "mij", dan stopt hij: dan is wat er staat weer goed, en leest
-  photometa de rest opnieuw.
+  photometa de rest opnieuw. Een nieuwe "uit" zet altijd een nieuwe job klaar, ook als er een
+  loopt; de opruimronde (sweep_off) zet hem opnieuw klaar voor wie "uit" heeft en nog rijen heeft.
 - copied(): heeft een gekopieerd bestand een inhoud met een plek (voor de haak van een kopie).
 
 Nooit een plek, een plaats of een eigenaar in het log: alleen aantallen.
@@ -47,6 +48,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("platform.geo")
 
 OFF_TYPE = "geo.off"
+SWEEP = "geo.off_sweep"
+SWEEP_EVERY = 3600.0
 CHUNK = 2000
 SOURCES = ("exif", "xmp", "video")
 
@@ -253,8 +256,33 @@ async def copied(db: AsyncSession, node_ids: Sequence[uuid.UUID]) -> bool:
 
 
 async def enqueue_off(db: AsyncSession, user_id: uuid.UUID) -> None:
-    """In de transactie van de aanroeper (PATCH /me/photo-settings): de job die wist."""
-    await jobs.enqueue(db, OFF_TYPE, {"user": str(user_id)}, key=off_key(user_id))
+    """In de transactie van de aanroeper (PATCH /me/photo-settings): de job die wist. Alleen
+    ontdubbeld tegen een job die nog klaarstaat, niet tegen een die loopt (jobs.chain): die kan
+    net "mij" gezien hebben en stoppen, en dan moet deze "uit" toch nog wissen (review golf 3,
+    veilig F2)."""
+    await jobs.chain(db, OFF_TYPE, {"user": str(user_id)}, off_key(user_id))
+
+
+async def sweep_off(settings: Settings) -> int:
+    """De opruimronde (bij de start en daarna elk SWEEP_EVERY): geo.off klaarzetten voor elke
+    gebruiker die "uit" heeft en nog rijen heeft (een job die definitief mislukte, of een proces
+    dat stopte). Geeft het aantal nieuwe jobs; staat er al een klaar of loopt er een, dan niet."""
+    added = 0
+    async with _maker(settings)() as db:
+        users = await db.scalars(
+            select(PhotoPref.user_id).where(
+                PhotoPref.location == "uit",
+                exists().where(PhotoGeo.owner_id == PhotoPref.user_id),
+            )
+        )
+        for user_id in users.all():
+            if await jobs.enqueue(db, OFF_TYPE, {"user": str(user_id)}, key=off_key(user_id)):
+                added += 1
+        await db.commit()
+    if added:
+        log.info("geo_off_sweep jobs=%d", added)
+    return added
 
 
 jobs.register(OFF_TYPE, run_off)
+jobs.housekeeping(SWEEP, sweep_off, SWEEP_EVERY)

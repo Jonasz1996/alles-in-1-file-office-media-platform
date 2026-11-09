@@ -8,7 +8,7 @@ import logging
 import uuid
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app import jobs, photo_rows
 from app.geo import places
@@ -164,3 +164,62 @@ async def test_brams_uit_geldt_voor_zijn_kopie(client, admin, settings, plaatsen
     await jobs.run_pending(settings)
     assert set(await rijen(settings)) == {foto}  # alleen Eva's eigen foto
     assert await kaart_ids(client, bram_h) == set()
+
+
+async def test_uit_mij_uit_terwijl_de_job_loopt(client, admin, settings, plaatsen, monkeypatch):
+    """Review golf 3 (veilig F2): "uit" zet geo.off klaar; terwijl die loopt "mij" (de job ziet
+    het en stopt) en weer "uit". Die tweede "uit" moet een nieuwe job geven, ook al loopt de
+    eerste nog: anders bleven alle rijen staan terwijl locatie "uit" is."""
+    h, _tokens = admin
+    for i, kleur in enumerate(("red", "green", "white")):
+        await upload(client, h, f"{i}.jpg", met_gps(kleur))
+    await verwerk(settings)
+    assert len(await rijen(settings)) == 3
+    await zet(client, h, "uit")
+    echt = photo_rows.location_on
+    gezien: list[bool] = []
+
+    async def tussendoor(db, user_id):
+        if gezien:
+            return await echt(db, user_id)
+        await zet(client, h, "mij")
+        gezien.append(await echt(db, user_id))
+        await zet(client, h, "uit")
+        return gezien[0]
+
+    monkeypatch.setattr(photo_rows, "location_on", tussendoor)
+    await jobs.run_pending(settings)
+    assert gezien == [True]
+    assert await rijen(settings) == {}
+    async with maker(settings)() as db:
+        rij = await db.execute(select(Job.status).where(Job.type == photo_rows.OFF_TYPE))
+        assert sorted(s for (s,) in rij) == ["done", "done"]
+
+
+async def test_de_opruimronde_zet_geo_off_klaar_als_er_nog_rijen_zijn(
+    client, admin, settings, plaatsen
+):
+    """Een geo.off die definitief mislukte (of nooit klaarstond) laat rijen staan; de opruimronde
+    (bij de start en daarna elk uur) zet geo.off klaar voor wie "uit" heeft en nog rijen heeft,
+    en voor niemand anders."""
+    h, _tokens = admin
+    await upload(client, h, "a.jpg", met_gps())
+    bram_h, _bram = await person(client, h, "bram@example.com")
+    van_bram = (await upload(client, bram_h, "b.jpg", met_gps("purple")))["id"]
+    await verwerk(settings)
+    await zet(client, h, "uit")
+    async with maker(settings)() as db:
+        await db.execute(delete(Job).where(Job.type == photo_rows.OFF_TYPE))
+        await db.commit()
+    assert len(await rijen(settings)) == 2
+    assert photo_rows.SWEEP in jobs._housekeeping
+    assert await photo_rows.sweep_off(settings) == 1
+    assert await photo_rows.sweep_off(settings) == 0  # staat al klaar
+    await jobs.run_pending(settings)
+    assert set(await rijen(settings)) == {van_bram}
+    assert await photo_rows.sweep_off(settings) == 0  # niets meer te wissen
+    await zet(client, bram_h, "uit")
+    async with maker(settings)() as db:
+        await db.execute(delete(Job).where(Job.type == photo_rows.OFF_TYPE))
+        await db.commit()
+    assert await photo_rows.sweep_off(settings) == 1
