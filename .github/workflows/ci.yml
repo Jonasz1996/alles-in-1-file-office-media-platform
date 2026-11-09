@@ -26,6 +26,10 @@ jobs:
           python-version: "3.12"
       - name: ffmpeg voor de previews van video's
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # X1: de gemaakte scans van OCR (tests/ocr/scans.py: de rechtzetting, het scenario ocr_vorm
+      # met de nep-worker) tekenen in DejaVu Sans; zonder faalt het met een duidelijke melding
+      - name: DejaVu Sans voor de scans van OCR (X1)
+        run: sudo apt-get install -y --no-install-recommends fonts-dejavu-core
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -77,11 +81,11 @@ jobs:
               print(f"::warning::de fixtures duurden {s:.1f} s, meer dan de 30 s van §3.8")
           '
       # X1: tesseract met de talen, zodat het scenario ocr_vorm van het contract
-      # (tests/media/worker_contract.py) ook tegen de echte worker loopt
-      - name: tesseract met nld, eng en osd (X1)
+      # (tests/media/worker_contract.py) ook tegen de echte worker loopt; de scan is in DejaVu Sans
+      - name: tesseract met nld, eng en osd, en DejaVu Sans (X1)
         run: |
           sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-nld \
-            tesseract-ocr-eng tesseract-ocr-osd
+            tesseract-ocr-eng tesseract-ocr-osd fonts-dejavu-core
           tesseract --version | head -n 1
       - name: pytest -m media
         run: |
