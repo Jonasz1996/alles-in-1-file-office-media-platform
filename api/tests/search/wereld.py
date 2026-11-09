@@ -34,7 +34,7 @@ Wat erin staat (de woorden zijn uniek, zodat een test precies weet wat hij hoort
   (deling, in te trekken), **Iris** (een foto met plek en persoon "Joop"; de test wist haar).
 
 De afgeleide rijen staan er al, zoals de jobs van Z2, Z3 en Z6 ze zouden schrijven: blob_text
-(tekst van de documenten) met de rijen van de stap text in analysis, blob_meta, photo_geo,
+(tekst van de documenten) met de rijen van de stappen text en ocr in analysis, blob_meta, photo_geo,
 photo_ocr, person en photo_person, dup_pair. Geen blob_hash en geen ocr_page: die maken de jobs
 zelf. De bestanden zelf staan in blob_dir (gemaakt met tests/search/fixtures.py), dus downloaden
 en de jobs werken op echte inhoud.
@@ -315,9 +315,10 @@ class _Bouwer:
             self.s.execute(update(Blob).where(Blob.sha256 == sha).values(ref_count=n))
 
     def analyse(self) -> None:
-        """De rijen van de stap text zoals de backfill van Z2 ze achterlaat (bench.analyse_rijen):
-        dan leest een server met de wereld bij het starten de documenten niet opnieuw, en
-        verandert de index niet onder een test door."""
+        """De rijen van de stappen text en ocr zoals de backfill van Z2 en de pompen ze
+        achterlaten (bench.analyse_rijen): dan leest een server met de wereld bij het starten
+        de documenten niet opnieuw, en verandert de index niet onder een test door. Een test
+        die OCR een scan van de wereld wil laten lezen, haalt eerst de rij ocr ervan weg."""
         self.s.flush()
         conn = self.s.connection()
         rijen = bench.analyse_rijen(conn.exec_driver_sql(bench.ANALYSE_BLOBS).all())
