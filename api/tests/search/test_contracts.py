@@ -431,12 +431,19 @@ async def test_gezichten_en_beeld_aanzetten_kan_niet_zonder_x2_en_x3():
     await prefs.check_switch(db, gast, _patch(location="uit"), analyse_enabled=True)
 
 
-async def test_x2_en_x3_melden_hun_schakelaar_aan():
+async def test_x2_en_x3_melden_hun_schakelaar_aan(monkeypatch):
     """Review Z0b, contract F4: X2 en X3 melden bij app.prefs wat hun schakelaar mag en doet;
     Z6 hoeft photo_prefs.py dan niet voor ze te openen. De stand van de analyse gaat vóór X2:
-    zonder PLATFORM_ANALYSE_ENABLED is er nooit iets beschikbaar."""
+    zonder PLATFORM_ANALYSE_ENABLED is er nooit iets beschikbaar. location gaat nooit naar X2 of
+    X3, alleen naar wat Z3 aanmeldt (register_location; hier vervangen door een die noteert)."""
     assert prefs.SWITCHES == {"faces": "X2", "beeld": "X3"}
     gezien: list[tuple[str, str]] = []
+
+    async def plek(db, user, value):
+        gezien.append(("location", value))
+
+    monkeypatch.setattr(prefs, "_location", [])
+    prefs.register_location(plek)
     stand = {"faces": prefs.SwitchState(), "beeld": prefs.SwitchState()}
 
     def aanmelden(key: str) -> None:
@@ -475,6 +482,9 @@ async def test_x2_en_x3_melden_hun_schakelaar_aan():
     # Na het schrijven: alleen wat echt veranderde, in de volgorde faces, beeld
     before = dict(prefs.PHOTO_PREFS)
     await prefs.switched(None, eva, before, _patch(location="uit"))
+    assert gezien == [("location", "uit")]
+    gezien.clear()
+    await prefs.switched(None, eva, {**before, "location": "uit"}, _patch(location="uit"))
     await prefs.switched(None, eva, before, _patch(faces="uit", beeld="uit"))
     assert gezien == []
     await prefs.switched(None, eva, before, _patch(beeld="aan", faces="aan"))

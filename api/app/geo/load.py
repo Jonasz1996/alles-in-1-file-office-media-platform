@@ -83,6 +83,8 @@ PLAATSEN = Bron(
     "2a2e781b5f69376d922b78fe8978f1350c84fce0ddb07e02c834ecf98b57c75c",
 )
 CSV_IN_TAR = "reverse_geocoder-1.5.1/reverse_geocoder/rg_cities1000.csv"
+# Voor GET /geo/attribution: de versie van Natural Earth hierboven
+NE_VERSIE = "v5.1.2"
 
 # Grenzen voor onvertrouwde bronnen (de echte zijn 13 MB, 2,2 MB en 7,9 MB uitgepakt)
 MAX_BRON = 64 << 20

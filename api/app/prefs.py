@@ -180,16 +180,33 @@ async def check_switch(
                 )
 
 
+# De schakelaar location (Z3, Keuze 28): wat er na het schrijven gebeurt, in dezelfde transactie
+# ("uit": de job die alle plekken van die gebruiker wist; "mij": photometa leest ze opnieuw). Geen
+# controle vooraf: beide waarden mogen altijd (een gast weigert de route al).
+LocationChanged = Callable[[AsyncSession, "User", str], Awaitable[None]]
+_location: list[LocationChanged] = []
+
+
+def register_location(fn: LocationChanged) -> None:
+    """Z3 (app/geo/wire.py); twee keer dezelfde telt één keer."""
+    if fn not in _location:
+        _location.append(fn)
+
+
 async def switched(
     db: AsyncSession, user: User, before: dict[str, Any], patch: PhotoSettingsPatch
 ) -> None:
     """Na het schrijven van PATCH /me/photo-settings, in dezelfde transactie: X2 en X3 horen
-    welke schakelaar echt veranderde (before: photo_prefs() van vóór het schrijven)."""
+    welke schakelaar echt veranderde (before: photo_prefs() van vóór het schrijven), Z3 of
+    location veranderde."""
     for key in SWITCHES:
         value = getattr(patch, key)
         switch = _switches.get(key)
         if value is not None and value != before.get(key) and switch is not None:
             await switch.changed(db, user, value)
+    if patch.location is not None and patch.location != before.get("location"):
+        for fn in list(_location):
+            await fn(db, user, patch.location)
 
 
 async def photo_settings(db: AsyncSession, user: User, *, analyse_enabled: bool) -> PhotoSettings:

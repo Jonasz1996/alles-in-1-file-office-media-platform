@@ -192,6 +192,25 @@ class Places:
                     uit[pid] = PlaceRow(pid, name, admin1, cc)
         return uit
 
+    def countries(self, codes: Iterable[str]) -> dict[str, str]:
+        """De naam van deze landen (Nederlands, anders Engels); een code die er niet is,
+        ontbreekt."""
+        wanted = sorted({c for c in codes if isinstance(c, str) and len(c) == 2})
+        if not wanted:
+            return {}
+        vragen = ",".join("?" * len(wanted))
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT a2, coalesce(name_nl, name_en) FROM country WHERE a2 IN ({vragen}) "
+                "ORDER BY id",
+                wanted,
+            ).fetchall()
+        uit: dict[str, str] = {}
+        for a2, name in rows:
+            if name:
+                uit.setdefault(a2, name)
+        return uit
+
 
 _open: dict[Path, Places] = {}
 _open_lock = threading.Lock()
