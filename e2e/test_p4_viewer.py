@@ -39,6 +39,17 @@ ORDER = [
     "verslag.docx",
 ]
 
+# De tekst van de pagina buiten de rij Plek (het element dat evaluate krijgt), zoals
+# to_contain_text hem leest (textContent)
+OUTSIDE_ROW = """(row) => {
+  const parts = [];
+  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+    if (!row.contains(node)) parts.push(node.textContent);
+  }
+  return parts.join("");
+}"""
+
 
 @dataclass
 class Library:
@@ -296,7 +307,9 @@ def test_tiff_die_nog_wacht_verschijnt_zodra_de_preview_er_is(
 
 def test_gegevens_zonder_locatie(context_as, library: Library):
     """I opent het paneel met gegevens: de camera-EXIF (P5's render_meta) staat in de groep
-    Foto, met Camera en Belichting; een locatie staat nergens, ook niet buiten het paneel."""
+    Foto, met Camera en Belichting, en nooit een locatie. Sinds fase 6 (Keuze 27 en 28) ziet de
+    eigenaar zijn plek in een eigen rij Plek: daar precies de coördinaten en "Alleen jij ziet de
+    plek.", en buiten die rij nergens een locatie, ook niet buiten het paneel."""
     page = open_folder(context_as, library)
     viewer = open_file(page, "foto.jpg")
     page.keyboard.press("i")
@@ -313,11 +326,15 @@ def test_gegevens_zonder_locatie(context_as, library: Library):
     expect(value("Objectief")).to_have_text("Testlens 35mm")
     expect(value("Belichting")).to_have_text("f/2,8 · 1/250 s · ISO 200 · 35 mm")
     expect(value("Datum")).to_contain_text("2024")
-    # Geen locatie: niet in het paneel en nergens op de pagina (geen label, geen coördinaten)
-    whole = page.locator("body")
+    # De plek alleen in de rij Plek (de eigenaar, Keuze 27): 52°22'30" N, 4°53'0" O
+    plek = info.get_by_role("region", name="Plek", exact=True)
+    expect(plek).to_contain_text("52,3750° N, 4,8833° O")
+    expect(plek).to_contain_text("Alleen jij ziet de plek.")
+    # Geen locatie in de groep Foto, en nergens buiten de rij Plek (geen label, geen coördinaten)
+    outside = plek.evaluate(OUTSIDE_ROW)
     for text in ("Locatie", "Location", "GPS", "52°", "52,375", "52.375", "4°", "4,883", "4.883"):
-        expect(info).not_to_contain_text(text)
-        expect(whole).not_to_contain_text(text)
+        expect(photo).not_to_contain_text(text)
+        assert text not in outside, text
     page.keyboard.press("i")
     expect(info).to_be_hidden()
 
