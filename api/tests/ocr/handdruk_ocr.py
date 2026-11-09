@@ -79,6 +79,49 @@ def png(merk: str) -> bytes:
     return buf.getvalue()
 
 
+# Kind 2 leeft kort (hier /bin/true; nice, ionice en env zijn alleen een exec): tussen
+# /proc/<pid>/stat en de lijst van /proc/<pid>/fd of /proc/<pid>/fd/N kan het proces al weg zijn.
+# Dan zegt de kernel ENOENT, of ESRCH: de dentry van /proc/<pid> staat nog in de cache, maar
+# proc_pid_permission vindt de taak niet meer. De aanvaller van handdruk_tekst.py telt dat als
+# fout (bij de lijst ENOENT en ESRCH, bij fd/N ESRCH). Hier telt het apart als "weg", en alleen
+# als /proc/<pid> er dan echt niet meer is: elke fout op een proces dat er nog is, blijft staan
+# (de test eist daar alleen EACCES). Gemeten met 1200 korte kinderen door de onleesbare keten:
+# naast duizenden EACCES een paar keer "weg" via de lijst en één ESRCH via fd/N.
+_WEG = "ENOENT", "ESRCH"
+_VERVANG = (
+    (
+        """            fds = []
+            fout = errno.errorcode.get(e.errno, str(e.errno))
+""",
+        f"""            fds = []
+            fout = errno.errorcode.get(e.errno, str(e.errno))
+            if fout in {_WEG!r} and not os.path.exists(f"/proc/{{naam}}"):
+                fout = "weg"
+""",
+    ),
+    (
+        """                fout = errno.errorcode.get(e.errno, str(e.errno))
+                if fout != "ENOENT":
+""",
+        f"""                fout = errno.errorcode.get(e.errno, str(e.errno))
+                if fout in {_WEG!r} and not os.path.exists(f"/proc/{{naam}}"):
+                    fout = "weg"
+                if fout != "ENOENT":
+""",
+    ),
+)
+
+
+def aanval_code() -> str:
+    from tests.extract.handdruk_tekst import AANVALLER
+
+    code = AANVALLER
+    for oud, nieuw in _VERVANG:
+        assert code.count(oud) == 1, "de aanvaller van handdruk_tekst.py veranderde"
+        code = code.replace(oud, nieuw)
+    return code
+
+
 async def vorm(map_: Path, naam: str, python: str, traag: bool) -> dict:
     from app.media import client
     from app.media.wire import Op
@@ -86,7 +129,6 @@ async def vorm(map_: Path, naam: str, python: str, traag: bool) -> dict:
     from app.media.worker.ops import ocr as ops_ocr
     from app.media.worker.ops import text as ops_text
     from app.media.worker.server import Config, Worker
-    from tests.extract.handdruk_tekst import AANVALLER
 
     merk = os.urandom(8).hex()
     stop = map_ / f"stop-{naam.replace(' ', '-').replace(',', '')}"
@@ -104,7 +146,7 @@ async def vorm(map_: Path, naam: str, python: str, traag: bool) -> dict:
     pad.write_bytes(png(merk))
     pad.chmod(0o600)
     aanvaller = await asyncio.create_subprocess_exec(
-        sys.executable, "-I", "-c", AANVALLER, str(os.getpid()), str(stop), merk,
+        sys.executable, "-I", "-c", aanval_code(), str(os.getpid()), str(stop), merk,
         stdout=asyncio.subprocess.PIPE,
     )  # fmt: skip
     try:

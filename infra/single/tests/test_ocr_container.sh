@@ -381,7 +381,8 @@ for v in ("kopie, traag", "kopie", "python-tekst, traag", "python-tekst"):
         continue
     if r["aantal geopend"] or r["mem geopend"]:
         fout.append(f"{v}: geopend fd {r['aantal geopend']}, mem {r['mem geopend']}")
-    if not set(r["fouten"]) <= {"EACCES"} or not r["fouten"].get("EACCES"):
+    # "weg": ENOENT of ESRCH terwijl /proc/<pid> niet meer bestond (handdruk_ocr.aanval_code)
+    if {k for k in r["fouten"] if k != "weg"} != {"EACCES"}:
         fout.append(f"{v}: fouten {r['fouten']}")
     if r["samenvatting"] != LEEG:
         fout.append(f"{v}: {r['samenvatting']}")

@@ -56,6 +56,12 @@ def aanval() -> dict:
     return json.loads(done.stdout.strip().splitlines()[-1])
 
 
+def fouten(uit: dict) -> dict:
+    """De fouten op processen die er nog waren: "weg" (ENOENT of ESRCH terwijl /proc/<pid> niet
+    meer bestond; zie handdruk_ocr.aanval_code) is geen weigering en geen lek."""
+    return {k: v for k, v in uit["fouten"].items() if k != "weg"}
+
+
 def keten_klopt(uit: dict) -> None:
     """De hele keten liep: kind 1 gaf de PGM (de maat staat in de samenvatting), en kind 2 (de
     onleesbare /bin/true als tesseract) gaf geen woorden, dus ook de OSD-ronde."""
@@ -99,7 +105,7 @@ def test_uit_de_kopie_vanaf_de_eerste_milliseconde_eacces(aanval, vorm):
     uit = aanval[vorm]
     assert uit["kinderen"] >= 1 and uit["pogingen"] >= 1, uit
     assert uit["aantal geopend"] == 0 and uit["mem geopend"] == 0, uit
-    assert set(uit["fouten"]) <= {"EACCES"} and uit["fouten"].get("EACCES", 0) >= 1, uit
+    assert set(fouten(uit)) == {"EACCES"}, uit
     keten_klopt(uit)
     if vorm == "kopie, traag":
         # 0,4 s lang onafgebroken geprobeerd, vóór kind 1 zelf PR_SET_DUMPABLE zette
