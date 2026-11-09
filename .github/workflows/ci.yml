@@ -158,6 +158,13 @@ jobs:
           set -o pipefail
           python3 -I ../tools/kaart/maak_wereld.py --download --uit "$RUNNER_TEMP/zoek-perf/kaart" \
             | tee "$RUNNER_TEMP/zoek-perf/kaart.txt"
+      - name: S6 de wereld in web/public/kaart is die uit de bron (Z5)
+        if: ${{ !cancelled() }}
+        run: |
+          # De web-app levert het bestand zelf mee (de build heeft geen netwerk nodig); het moet
+          # byte voor byte zijn wat maak_wereld.py uit de vaste bron maakt, en er staat niets naast
+          diff -r "$RUNNER_TEMP/zoek-perf/kaart" ../web/public/kaart
+          echo "gelijk aan de bron: $(ls ../web/public/kaart)" | tee "$RUNNER_TEMP/zoek-perf/kaart-web.txt"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -179,6 +186,7 @@ jobs:
           if [ -f "$d/zoek_100k.txt" ]; then cat "$d/zoek_100k.txt"; else echo "§4.4: liep niet of brak af"; fi
           if [ -f "$d/herinneringen.txt" ]; then cat "$d/herinneringen.txt"; else echo "§4.4 herinneringen: liep niet of brak af"; fi
           echo "S6: $(cat "$d/kaart.txt" 2> /dev/null || echo "liep niet")"
+          echo "S6 web/public/kaart: $(cat "$d/kaart-web.txt" 2> /dev/null || echo "niet gelijk of liep niet")"
 
   acme:
     name: HTTPS (certificaat van Pebble, de test-CA van Let's Encrypt)
