@@ -192,6 +192,36 @@ def test_nginx_conf_heeft_dezelfde_headers():
     assert "try_files $uri =404;" in conf
 
 
+def test_nginx_conf_de_wereld_van_de_kaart_is_immutable():
+    """Ook de losse web-image serveert /kaart/<naam>.<12 hex>.json onveranderlijk, met dezelfde
+    namen als IMMUTABLE_WEB in de API (nacontrole golf 3, web F7). nginx neemt de eerste
+    regex-location die past: die van de kaart staat voor die met de extensie."""
+    import re
+    from pathlib import Path
+
+    from app.main import IMMUTABLE, IMMUTABLE_WEB
+
+    conf = (Path(__file__).resolve().parents[2] / "web" / "nginx.conf").read_text()
+    delen = re.split(r"^\s*(?=location )", conf, flags=re.M)
+    kaart = [d for d in delen if d.startswith('location ~ "^/kaart/')]
+    assert len(kaart) == 1, kaart
+    regex = re.match(r'location ~ "([^"]+)" \{', kaart[0]).group(1)
+    assert f'add_header Cache-Control "{IMMUTABLE}" always;' in kaart[0]
+    assert "application/json json;" in kaart[0]
+    assert "try_files $uri =404;" in kaart[0]
+    assert conf.index(kaart[0]) < conf.index("location ~ \\.[A-Za-z0-9]+$ {")
+    for naam, immutable in (
+        ("kaart/world-110m.f2c3625f1d27.json", True),
+        ("kaart/world-110m.json", False),
+        ("kaart/world-110m.F2C3625F1D27.json", False),
+        ("kaart/world-110m.f2c3625f1d2.json", False),
+        ("kaart/a/world-110m.f2c3625f1d27.json", False),
+        ("assets/world-110m.f2c3625f1d27.json", False),
+    ):
+        assert (IMMUTABLE_WEB.fullmatch(naam) is not None) is immutable, naam
+        assert (re.search(regex, "/" + naam) is not None) is immutable, naam
+
+
 @pytest.mark.anyio
 async def test_de_wereld_van_de_kaart_is_immutable(client, dist):
     """/kaart/world-110m.<hash>.json draagt zijn hash in de naam, zoals assets/ (review golf 3,
