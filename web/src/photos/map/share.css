@@ -1,0 +1,19 @@
+/* De waarschuwing in het deeldialoog (Z5, Keuze 30): bovenaan, met een streep in de kleur van een
+   waarschuwing. Kleuren alleen uit de tokens, zodat licht en donker vanzelf meegaan. */
+
+.share-place-warning {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  line-height: var(--leading);
+}
+
+.share-place-warning p {
+  margin: 0;
+}
+
+.share-place-warning p + p {
+  margin-top: var(--space-1);
+}
