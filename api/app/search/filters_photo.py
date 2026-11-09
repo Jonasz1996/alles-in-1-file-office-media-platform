@@ -66,14 +66,18 @@ def _with_place(n: Any, user: User, column: str, value: Any) -> Any:
     """n is een eigen, levend bestand met een plek waarvan column (place_id of country) value is,
     en locatie staat niet op "uit"."""
     cols = getattr(n, "c", n)
-    # Een eigen alias: de kaart en de plaatsen (photos_map.py) vragen zelf al uit photo_geo, en
-    # zonder alias zou de EXISTS naar die buitenste photo_geo wijzen en geen FROM meer hebben
-    g = PhotoGeo.__table__.alias("plek_filter")
+    g = PhotoGeo.__table__
     geo = g.c
+    # De EXISTS vraagt zelf uit photo_geo, ook als de buitenste vraag dat al doet (de kaart en de
+    # plaatsen in photos_map.py). Zonder correlate_except koppelt SQLAlchemy hem aan die buitenste
+    # photo_geo en blijft er geen FROM over; node koppelt hij wel, zoals bij de andere filters
+    has_place = exists().where(
+        geo.node_id == cols.id, own_live_geo(g, user.id), geo[column] == value
+    )
     return and_(
         own_live(n, user.id),
         photo_rows.not_off(user.id),
-        exists().where(geo.node_id == cols.id, own_live_geo(g, user.id), geo[column] == value),
+        has_place.correlate_except(g),
     )
 
 
