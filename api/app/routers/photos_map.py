@@ -21,7 +21,13 @@ wist; Keuze 28). Een gast heeft geen eigen foto's: 403 guest, zoals /photos.
 - GET /photos/places?<filters>: de plaatsen met het aantal eigen, levende foto's, per verzoek
   geteld (GROUP BY op ix_photo_geo_place), met de namen uit places.sqlite; zonder places.sqlite
   geen namen en dus geen plaatsen.
-- GET /photos/share-check: stap 2 van Z3 (nog 501).
+- GET /photos/share-check?node=: vóór het delen (Keuze 30), hoeveel foto's en video's in wat je
+  deelt een plek in het bestand hebben (blob_meta.gps = 1) en van hoeveel dat onbekend is (gps
+  NULL of nog niet gelezen: een video met media uit, of een foto die photometa nog niet las).
+  Een map: de eigen, levende bestanden eronder (via het pad); een album: zijn eigen, levende
+  items die gedeeld worden (shared 1, Keuze 42); een bestand: dat bestand. Ook voor een
+  eigenaar met locatie "uit": de bytes houden hun plek. Alleen wat van jezelf is (alleen de
+  eigenaar deelt); anders 404 not_found.
 
 Een venster dat niet klopt: 422 invalid_input op query.bbox. bbox, z en de filters komen nooit in
 de log (QUERY_PATHS in app/main.py).
@@ -32,7 +38,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy import Select, and_, exists, func, literal, or_, select
+from sqlalchemy import Select, and_, case, exists, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import errors, photo_rows
@@ -41,7 +47,7 @@ from app.db import Session
 from app.geo import places as geo_places
 from app.geo import tiles, wire  # noqa: F401 - wire meldt Z3 aan
 from app.geo.types import MapCell, MapCells, MapItems, PlaceCount, Places, ShareCheck
-from app.models import Node, PhotoGeo, User
+from app.models import AlbumItem, BlobMeta, Node, PhotoGeo, User
 from app.routers.photos import (
     Filters,
     check_filters,
@@ -51,7 +57,6 @@ from app.routers.photos import (
     photo_items,
     photo_query,
 )
-from app.routers.stubs import not_built
 from app.search.filters import apply_all
 from app.search.live import own_live, own_live_geo
 from app.security import CurrentUser
@@ -261,5 +266,43 @@ async def places(
 
 
 @router.get("/photos/share-check")
-async def share_check(user: CurrentUser, node: uuid.UUID) -> ShareCheck:
-    raise not_built("Z3")
+async def share_check(user: CurrentUser, session: Session, node: uuid.UUID) -> ShareCheck:
+    """Hoeveel foto's en video's in deze map, dit album of dit bestand een plek hebben."""
+    owner_only(user)
+    n = Node.__table__
+    target = (
+        await session.execute(
+            select(n.c.kind, n.c.mpath).where(
+                n.c.id == node, n.c.owner_id == user.id, n.c.dead == 0
+            )
+        )
+    ).first()
+    if target is None:
+        raise errors.fail(404, "not_found", "Niet gevonden")
+    if target.kind == "album":
+        scope = exists().where(
+            AlbumItem.album_id == node, AlbumItem.node_id == n.c.id, AlbumItem.shared == 1
+        )
+    elif target.kind == "file":
+        scope = n.c.id == node
+    else:
+        # Onder de map: het bereik van zijn mpath, zoals filters._under
+        scope = and_(n.c.mpath > target.mpath, n.c.mpath < target.mpath[:-1] + "0")
+    gps = BlobMeta.__table__.c.gps
+    row = (
+        await session.execute(
+            select(
+                func.count(case((gps == 1, 1))),
+                func.count(case((gps.is_(None), 1))),
+            )
+            .select_from(
+                n.outerjoin(BlobMeta.__table__, BlobMeta.__table__.c.blob_sha == n.c.blob_id)
+            )
+            .where(
+                own_live(n, user.id),
+                or_(n.c.mime.like("image/%"), n.c.mime.like("video/%")),
+                scope,
+            )
+        )
+    ).one()
+    return ShareCheck(with_location=row[0] or 0, unknown=row[1] or 0)
