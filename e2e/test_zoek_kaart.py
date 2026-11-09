@@ -11,7 +11,8 @@ pijlen, + en -, Home en Escape; nergens een klik (docs/fase-6/toetsenbord-z5.md)
   viewer; Escape sluit hem.
 - Het venster en de zoom staan nooit in de adresbalk (bbox en z niet, ook niet als query).
 - De focus valt nooit naar de body (review golf 3, web F1–F4): + en de pijlen op een stip, Enter
-  op "Alle plaatsen" boven de kaart, "Op de kaart" in de viewer en Uitzoomen op de grens.
+  op "Alle plaatsen" boven de kaart, "Op de kaart" in de viewer, en Inzoomen en Uitzoomen op de
+  grens.
 - De lijst Plaatsen (review golf 3, web F5), met een places.sqlite uit de kleine bronnen van
   api/tests/geo; en de kaart vraagt bij het openen geen cellen twee keer (web F6).
 
@@ -258,7 +259,8 @@ def test_de_focus_valt_niet_naar_de_body(server: Server, user_factory, context_a
     - F6: bij het openen vraagt de kaart geen cellen twee keer (Home vraagt zoom 0 voor de hele
       wereld, en met foto's in Amsterdam en Sydney vraagt het eerste venster precies hetzelfde).
     - F1: + of een pijl op een stip: de stip is daarna weg, de kaart krijgt de focus.
-    - F4: Uitzoomen tot de grens: de knop houdt de focus (aria-disabled, niet disabled).
+    - F4: Inzoomen en Uitzoomen tot de grens: de knop houdt de focus (aria-disabled, niet
+      disabled).
     - F3: "Op de kaart" in de viewer die op de kaart openging: de viewer sluit en de kaart
       krijgt de focus, met de ring om de plek.
     """
@@ -296,24 +298,22 @@ def test_de_focus_valt_niet_naar_de_body(server: Server, user_factory, context_a
         klaar(kaart)
         expect(kaart).to_be_focused()
 
-    # --- F4: inzoomen op de kaart, dan Uitzoomen tot de grens; de focus blijft op de knop ---
-    page.keyboard.press("+")
-    klaar(kaart)
-    page.keyboard.press("+")
-    klaar(kaart)
-    uit = page.get_by_role("button", name="Uitzoomen", exact=True)
-    tab_to(page, uit, limit=20)
-    expect(uit).not_to_have_attribute("aria-disabled", "true")
-    for _ in range(12):
-        if uit.get_attribute("aria-disabled") == "true":
-            break
+    # --- F4: Inzoomen tot de grens, dan Uitzoomen tot de grens; de focus blijft op de knop ---
+    # (de nacontrole van golf 3 voegde Inzoomen toe: die grens zat er eerst niet in)
+    for naam in ("Inzoomen", "Uitzoomen"):
+        knop = page.get_by_role("button", name=naam, exact=True)
+        tab_to(page, knop, limit=20)
+        expect(knop).not_to_have_attribute("aria-disabled", "true")
+        for _ in range(24):
+            if knop.get_attribute("aria-disabled") == "true":
+                break
+            page.keyboard.press("Enter")
+            klaar(kaart)
+            expect(knop).to_be_focused()
+        expect(knop).to_have_attribute("aria-disabled", "true")
         page.keyboard.press("Enter")
-        klaar(kaart)
-        expect(uit).to_be_focused()
-    expect(uit).to_have_attribute("aria-disabled", "true")
-    page.keyboard.press("Enter")
-    expect(uit).to_be_focused()
-    assert page.evaluate("() => !!document.activeElement.closest('.map-controls')")
+        expect(knop).to_be_focused()
+        assert page.evaluate("() => !!document.activeElement.closest('.map-controls')")
 
     # --- F3: de viewer van de stip in Sydney, de rij Plek, "Op de kaart" ---
     een = kaart.locator('[data-dot][aria-label$="1 foto"]')
