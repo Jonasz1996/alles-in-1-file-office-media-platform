@@ -12,6 +12,7 @@ function setup() {
   const started: { key: string; signal: AbortSignal; resolve(v: string): void; reject(e: unknown): void }[] = [];
   const done: [string, string][] = [];
   const failed: [string, unknown][] = [];
+  const busy: boolean[] = [];
   const loader = new LatestOnly<string>({
     delay: SETTLE_MS,
     run: (key, signal) =>
@@ -21,8 +22,9 @@ function setup() {
       }),
     done: (key, value) => done.push([key, value]),
     failed: (key, e) => failed.push([key, e]),
+    busy: (b) => busy.push(b),
   });
-  return { loader, started, done, failed };
+  return { loader, started, done, failed, busy };
 }
 
 describe("laden terwijl je schuift: alleen het laatste verzoek telt", () => {
@@ -82,6 +84,56 @@ describe("laden terwijl je schuift: alleen het laatste verzoek telt", () => {
     loader.forget();
     loader.request("a", 0);
     expect(started).toHaveLength(3);
+  });
+
+  it("bezig van de vraag tot het antwoord of de fout; afbreken en een vervanger tellen mee", async () => {
+    const { loader, started, busy } = setup();
+    expect(loader.busy).toBe(false);
+    loader.request("a");
+    expect(loader.busy).toBe(true); // wacht nog op het stilstaan
+    vi.advanceTimersByTime(SETTLE_MS);
+    loader.request("b"); // vervangt a: blijft bezig, zonder tussendoor "klaar"
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(busy).toEqual([true]);
+    started[1].resolve("ok");
+    await vi.runAllTimersAsync();
+    expect(loader.busy).toBe(false);
+    expect(busy).toEqual([true, false]);
+    // Dezelfde vraag als het laatste antwoord: niets te doen, en dus niet bezig
+    loader.request("b");
+    expect(loader.busy).toBe(false);
+    // Een fout maakt hem ook klaar, en cancel ook
+    loader.request("c", 0);
+    started[2].reject(new Error("500"));
+    await vi.runAllTimersAsync();
+    loader.request("d");
+    loader.cancel();
+    expect(busy).toEqual([true, false, true, false, true, false]);
+  });
+
+  it("vraagt done zelf meteen iets nieuws, dan blijft hij bezig", async () => {
+    const asked: string[] = [];
+    const busy: boolean[] = [];
+    let resolveFirst: (v: string) => void = () => {};
+    const loader: LatestOnly<string> = new LatestOnly<string>({
+      delay: SETTLE_MS,
+      run: (key) =>
+        new Promise<string>((resolve) => {
+          asked.push(key);
+          if (key === "ruim") resolveFirst = resolve;
+        }),
+      done: (key) => {
+        if (key === "ruim") loader.request("krap", 0);
+      },
+      failed: () => {},
+      busy: (b) => busy.push(b),
+    });
+    loader.request("ruim", 0);
+    resolveFirst("te veel");
+    await vi.runAllTimersAsync();
+    expect(asked).toEqual(["ruim", "krap"]);
+    expect(loader.busy).toBe(true);
+    expect(busy).toEqual([true]);
   });
 
   it("afbreken herkent hij aan de naam AbortError", () => {

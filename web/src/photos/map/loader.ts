@@ -14,6 +14,8 @@ export interface LatestOnlyOptions<T> {
   done(key: string, value: T): void;
   /** Een fout bij de laatste vraag (niet het afbreken zelf) */
   failed(key: string, error: unknown): void;
+  /** Of er iets wacht of loopt, telkens als dat verandert (de kaart zet er aria-busy mee) */
+  busy?(busy: boolean): void;
 }
 
 export function isAbort(e: unknown): boolean {
@@ -26,8 +28,21 @@ export class LatestOnly<T> {
   private controller: AbortController | null = null;
   /** De sleutel die wacht, loopt of klaar is */
   private current: string | null = null;
+  private wasBusy = false;
 
   constructor(private readonly o: LatestOnlyOptions<T>) {}
+
+  /** Wacht er een vraag, of loopt er een verzoek? */
+  get busy(): boolean {
+    return this.timer !== null || this.controller !== null;
+  }
+
+  private tell(): void {
+    const now = this.busy;
+    if (now === this.wasBusy) return;
+    this.wasBusy = now;
+    this.o.busy?.(now);
+  }
 
   /** Vraag key, na de wachttijd. Zelfde sleutel als de laatste: niets. delay 0: meteen. */
   request(key: string, delay = this.o.delay): void {
@@ -36,12 +51,14 @@ export class LatestOnly<T> {
     this.current = key;
     if (delay <= 0) this.start(key);
     else this.timer = setTimeout(() => this.start(key), delay);
+    this.tell();
   }
 
   /** Alles afbreken; de volgende vraag gaat altijd door, ook met dezelfde sleutel. */
   cancel(): void {
     this.stop();
     this.current = null;
+    this.tell();
   }
 
   /** Vergeet het laatste antwoord: dezelfde sleutel opnieuw vragen gaat dan wel door. */
@@ -65,6 +82,7 @@ export class LatestOnly<T> {
         if (controller.signal.aborted) return;
         this.controller = null;
         this.o.done(key, value);
+        this.tell();
       },
       (e: unknown) => {
         if (controller.signal.aborted || isAbort(e)) return;
@@ -72,6 +90,7 @@ export class LatestOnly<T> {
         // Een fout: dezelfde vraag later nog eens mag weer
         if (this.current === key) this.current = null;
         this.o.failed(key, e);
+        this.tell();
       },
     );
   }

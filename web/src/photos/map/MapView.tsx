@@ -40,6 +40,8 @@ export interface MapViewProps {
   thumbOf(d: Dot): string | null | undefined;
   /** Een punt in de wereld (0–1) met een ring eromheen: de plek van "Op de kaart" */
   mark: readonly [number, number] | null;
+  /** Laden er cellen (aria-busy: een schermlezer wacht tot de stippen er staan) */
+  busy?: boolean;
   describedBy: string;
   onSize(size: Size): void;
   /** Het venster veranderen; f krijgt het laatste venster (ook als dat nog niet getekend is) */
@@ -242,6 +244,7 @@ export function MapView(p: MapViewProps): JSX.Element {
       aria-roledescription={t("photos_map.map.role")}
       aria-label={t("photos_map.map.label")}
       aria-describedby={p.describedBy}
+      aria-busy={p.busy ? true : undefined}
       onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

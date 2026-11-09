@@ -85,6 +85,8 @@ export default function MapPage(_: RouteProps): JSX.Element {
   const [home, setHome] = useState<Home>({ state: "loading" });
   const [cells, setCells] = useState<Cells | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Laden er cellen? Dan staat de kaart op aria-busy, tot het antwoord er staat */
+  const [loading, setLoading] = useState(false);
   const [placeList, setPlaceList] = useState<Place[] | null>(null);
   const [placeError, setPlaceError] = useState<string | null>(null);
   const [attribution, setAttribution] = useState<GeoAttribution | null>(null);
@@ -252,6 +254,7 @@ export default function MapPage(_: RouteProps): JSX.Element {
         setCells({ cells: res.cells, z: a.z, truncated: full });
       },
       failed: (_path, e) => setError(errorText(e)),
+      busy: setLoading,
     });
     function ask(a: Ask, delay?: number): void {
       asked.current = a;
@@ -452,6 +455,7 @@ export default function MapPage(_: RouteProps): JSX.Element {
               nameOf={(d) => (labelled.has(d.cell.cover) ? placeName(d) : null)}
               thumbOf={(d) => thumbs.get(d.cell.cover)}
               mark={mark}
+              busy={loading}
               describedBy="kaart-hulp"
               onSize={onSize}
               onView={changeView}
