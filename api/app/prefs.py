@@ -193,12 +193,24 @@ def register_location(fn: LocationChanged) -> None:
         _location.append(fn)
 
 
+# De schakelaar ocr_photos (X1, Keuze 23): aan zet de foto's van die eigenaar in de rij ocr, in
+# dezelfde transactie. Geen controle vooraf: beide waarden mogen altijd.
+OcrPhotosChanged = Callable[[AsyncSession, "User", bool], Awaitable[None]]
+_ocr_photos: list[OcrPhotosChanged] = []
+
+
+def register_ocr_photos(fn: OcrPhotosChanged) -> None:
+    """X1 (app/ocr/step.py); twee keer dezelfde telt één keer."""
+    if fn not in _ocr_photos:
+        _ocr_photos.append(fn)
+
+
 async def switched(
     db: AsyncSession, user: User, before: dict[str, Any], patch: PhotoSettingsPatch
 ) -> None:
     """Na het schrijven van PATCH /me/photo-settings, in dezelfde transactie: X2 en X3 horen
     welke schakelaar echt veranderde (before: photo_prefs() van vóór het schrijven), Z3 of
-    location veranderde."""
+    location veranderde, X1 of ocr_photos veranderde."""
     for key in SWITCHES:
         value = getattr(patch, key)
         switch = _switches.get(key)
@@ -207,6 +219,9 @@ async def switched(
     if patch.location is not None and patch.location != before.get("location"):
         for fn in list(_location):
             await fn(db, user, patch.location)
+    if patch.ocr_photos is not None and patch.ocr_photos != before.get("ocr_photos"):
+        for fn in list(_ocr_photos):
+            await fn(db, user, patch.ocr_photos)
 
 
 async def photo_settings(db: AsyncSession, user: User, *, analyse_enabled: bool) -> PhotoSettings:
