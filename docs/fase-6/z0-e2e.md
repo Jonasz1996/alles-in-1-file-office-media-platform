@@ -324,6 +324,8 @@ Op 3 cores van deze VM:
 8. **`test_plans.py` gebruikt de SQL uit het ontwerp**, niet die van de app (die is er nog niet).
    Z1 en Z3 zetten hun echte SQL in `test_search_plans.py`, onder dezelfde `assert_plan`. Bij de
    samenvoeging kreeg `_bijna` de vorm met `EXISTS` van "Herzien na de spike (S4, S10)".
+   Gedaan door Z3 (golf 3): de filters `place`, `country` en `camera` per node (`249b535`) en de
+   vragen van `GET /duplicates` uit `app/dupes/groups.py` (`5880c50`), met en zonder ANALYZE.
 9. **De e2e gebruikte `/` en Enter, niet Ctrl/Cmd+K**, omdat Ctrl/Cmd+K op de tak van Z0-web
    zat. Sinds de samenvoeging test `test_ctrl_k_en_het_zoekveld_bovenaan` het veld bovenaan ook.
    De e2e heet `test_zoek_z0.py` en test het harnas. `test_zoek_toegang.py` van §4.2 bouwt later
