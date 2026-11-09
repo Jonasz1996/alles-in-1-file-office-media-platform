@@ -38,6 +38,7 @@ plek. Een hoogte die niet klopt, laat alleen de hoogte weg.
 
 import contextlib
 import math
+import numbers
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -95,6 +96,14 @@ def _number(value: Any) -> float | None:
     except (TypeError, ValueError, ZeroDivisionError):
         return None
     return number if math.isfinite(number) else None
+
+
+def _real(value: Any) -> float | None:
+    """Een getal zoals de GPS-IFD het hoort te geven (rationaal of geheel), eindig; tekst, bool
+    en andere soorten geven None (Keuze 25: elke waarde nagekeken)."""
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return None
+    return _number(value)
 
 
 def _whole(value: Any) -> int | None:
@@ -199,7 +208,7 @@ def _degrees(value: Any) -> float | None:
     for part in parts:
         if isinstance(part, tuple | list):
             return None
-        number = _number(part)
+        number = _real(part)
         if number is None or number < 0:
             return None
         numbers.append(number)
@@ -234,7 +243,7 @@ def exif_location(top: Any) -> dict[str, Any] | None:
         return None
     lat = -lat if lat_ref == "S" else lat
     lon = -lon if lon_ref == "W" else lon
-    alt = _number(gps.get(GPS_ALT))
+    alt = _real(gps.get(GPS_ALT))
     if alt is not None and alt >= 0:
         below = gps.get(GPS_ALT_REF)
         if isinstance(below, bytes):
