@@ -354,12 +354,15 @@ async def test_db_backup_zonder_database(settings, tmp_path):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("command", sorted(cli.SEARCH_STUBS))
-async def test_de_commandos_van_zoeken_zijn_nog_niet_gebouwd(settings, command):
-    result = await run_cli(settings, command)
-    assert result.returncode == 1
-    package = cli.SEARCH_STUBS[command][0]
-    assert f"is nog niet gebouwd ({package})" in result.stderr.decode()
+async def test_de_commandos_van_zoeken_zijn_gebouwd(settings):
+    """Geen stub meer: geo-load (Z3) bouwt places.sqlite. Zonder bronnen in geo_src (data_dir/geo)
+    zegt hij dat, exitcode 1, en maakt hij niets; de rest van het gedrag staat in
+    tests/geo/test_geo_load.py."""
+    assert cli.SEARCH_STUBS == {}
+    result = await run_cli(settings, "geo-load")
+    assert result.returncode == 1, result.stderr.decode()
+    assert "De bronnen staan niet in" in result.stderr.decode()
+    assert not (settings.data_dir / "geo" / "places.sqlite").exists()
 
 
 @pytest.mark.anyio

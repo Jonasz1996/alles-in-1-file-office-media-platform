@@ -6,8 +6,10 @@ die tak is weg en die vraag is nu een 422, "De overgang" in §3.4). Dezelfde vra
 hetzelfde antwoord, of dezelfde fout:
 
 - een vraag van meer dan 200 tekens: 400 search_query_too_long, ook bij suggest (N2);
-- place, country en camera: 501 not_built tot Z3 ze aanmeldt (S1); person meldde Z6 aan: een
-  persoon die niet van jou is, geeft niets (tests/people/test_people.py);
+- place, country en camera: tot Z3 ze aanmeldde 501 not_built (S1); nu filters in beide motoren:
+  zonder eigen foto's met een plek of camera geven ze niets (de rest in
+  tests/search/test_search_filters.py en tests/geo/test_photo_filters.py); person meldde Z6 aan:
+  een persoon die niet van jou is, geeft niets (tests/people/test_people.py);
 - library van een bibliotheek die je niet ziet: 404 (veilig F3);
 - de eigen hoofdmap is nooit een treffer, ook niet zonder q (S2);
 - in en library zoeken onder die map; de map zelf is geen treffer (N1); samen alleen onder
@@ -28,6 +30,7 @@ from app.config import Settings
 from app.db import get_engine
 from app.models import MediaLibrary, Node
 from app.people import search as people_search
+from app.search import filters_photo
 from tests.test_files import mkdir, new_user, put, root
 
 pytestmark = pytest.mark.anyio
@@ -102,16 +105,21 @@ async def test_een_te_lange_vraag_is_400(client, admin, motor):
         ("camera", "Canon EOS 5D", "Z3"),
     ],
 )
-async def test_de_filters_van_later_zijn_501(client, admin, motor, param, waarde, pakket):
+async def test_de_filters_van_z3_geven_niets_zonder_eigen_plek(client, admin, motor, param, waarde,
+                                                               pakket):  # fmt: skip
+    """Tot Z3 501 not_built (S1); nu aangemeld: in beide motoren een gewoon antwoord, en zonder
+    eigen foto met een plek of camera geen treffers (ook niet stil alles, zoals vóór S1)."""
+    filters_photo.register()  # een test eerder in de run kan filters.reset() gedaan hebben
     headers, _ = admin
+    # Een foto die zonder het filter wel gevonden wordt
+    root_id = (await root(client, headers))["folder"]["id"]
+    assert (await put(client, headers, root_id, "foto.png", PNG)).status_code == 201
+    assert _namen(await _zoek(client, headers, q="foto")) == {"foto.png"}
     for extra in ({}, {"q": "foto"}, {"q": "foto", "limit": 50}):
         r = await client.get("/api/v1/search", params={param: waarde, **extra}, headers=headers)
-        assert r.status_code == 501, (extra, r.text)
-        assert r.json()["detail"] == {
-            "code": "not_built",
-            "message": f"Nog niet gebouwd ({pakket})",
-            "params": {"package": pakket},
-        }
+        assert r.status_code == 200, (extra, r.text)
+        assert r.json()["results"] == [], (pakket, extra)
+        assert r.json()["engine"] == motor
     # De vraag van 0.7.0 (limit 200) is sinds Z4 eerst een 422 op limit
     r = await client.get(
         "/api/v1/search", params={param: waarde, "q": "foto", "limit": 200}, headers=headers

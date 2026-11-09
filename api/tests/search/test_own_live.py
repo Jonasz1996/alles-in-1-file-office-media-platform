@@ -12,6 +12,13 @@ dup_pair), en neemt own_live_geo aan voor photo_geo zonder join.
 Z0b ("Eigen en levend" van X2, en Keuze 80) zette gezichten en beeld erbij: de router van X2 en
 alles onder app/beeld/ zijn fotofuncties, en de tabellen van 0011 en 0012 met een rij per foto of
 per inhoud (face, face_person, face_scan, blob_embed) tellen als lezen van foto's.
+
+Z3 (de plek, Keuze 25a en 27): de kaart en de plaatsen lezen photo_geo met own_live_geo. Op de
+echte database toont own_live_geo na elke stap precies de foto's met een plek die own_live laat
+staan, ook in de prullenbak via een map erboven, na terugzetten en voor Brams kopie. De route
+/files/{id}/location (routers/geo.py) staat in de lijst. De schrijvers in app/photo_rows.py niet:
+die schrijven per node voor de eigenaar en wissen bij "uit" ook de rijen in de prullenbak, dus
+own_live zou daar juist rijen laten staan.
 """
 
 from __future__ import annotations
@@ -28,8 +35,8 @@ from alembic import command
 from sqlalchemy.orm import aliased
 
 from app.db import get_engine
-from app.models import Node
-from app.search.live import OWN_LIVE_GEO_SQL, OWN_LIVE_SQL, own_live
+from app.models import Node, PhotoGeo
+from app.search.live import OWN_LIVE_GEO_SQL, OWN_LIVE_SQL, own_live, own_live_geo
 from tests.search.migratie import NOW, SHA_JPG, fill_0009, migrate, settings_at
 
 pytestmark = pytest.mark.anyio
@@ -46,6 +53,7 @@ PHOTO_FUNCTIONS = (
     "people",
     "search/filters_photo.py",
     "routers/photos_map.py",
+    "routers/geo.py",  # Z3: GET /files/{id}/location
     "routers/duplicates.py",
     "routers/people.py",
     "routers/memories.py",
@@ -192,6 +200,33 @@ async def _names(settings, me: uuid.UUID) -> tuple[set[str], set[str]]:
     return orm, raw
 
 
+async def _plekken(settings, me: uuid.UUID) -> tuple[set[str], set[str]]:
+    """Wat own_live_geo en OWN_LIVE_GEO_SQL voor deze gebruiker op de kaart laten staan (Z3). De
+    kaart leest photo_geo zonder join; de join op node is hier alleen voor de naam."""
+    async with get_engine(settings).connect() as conn:
+        orm = set(
+            (
+                await conn.execute(
+                    sa.select(Node.name)
+                    .join(PhotoGeo, PhotoGeo.node_id == Node.id)
+                    .where(own_live_geo(PhotoGeo, me))
+                )
+            ).scalars()
+        )
+        raw = set(
+            (
+                await conn.execute(
+                    sa.text(
+                        "SELECT n.name FROM photo_geo g JOIN node n ON n.id = g.node_id WHERE "
+                        + OWN_LIVE_GEO_SQL.format(g="g")
+                    ),
+                    {"me": me.hex},
+                )
+            ).scalars()
+        )
+    return orm, raw
+
+
 @pytest.mark.parametrize("fts5", [True, False], ids=["fts5", "zonder-fts5"])
 async def test_alleen_eigen_levende_bestanden_ook_na_prullenbak_en_terug(tmp_path, fts5):
     settings = settings_at(tmp_path, "db")
@@ -211,14 +246,42 @@ async def test_alleen_eigen_levende_bestanden_ook_na_prullenbak_en_terug(tmp_pat
             await conn.execute(sa.text(sql), {k: v.hex if isinstance(v, uuid.UUID) else v
                                               for k, v in params.items()})  # fmt: skip
 
+    async def plek(node: uuid.UUID, owner: uuid.UUID) -> None:
+        """Een rij in photo_geo zoals photometa hem schrijft; dead en taken_at zet de trigger."""
+        await run(
+            "INSERT INTO photo_geo (node_id, owner_id, lat, lon, x16, y16, source) "
+            "VALUES (:node, :owner, 52.37, 4.89, 33650, 21530, 'exif')",
+            node=node, owner=owner,
+        )  # fmt: skip
+
+    # Z3: de twee foto's krijgen een plek terwijl ze in de prullenbak liggen (via vakantie). De
+    # kaart (own_live_geo, zonder join) toont steeds precies de foto's met een plek die own_live
+    # laat staan
+    met_plek = {"strand.x", "schelp.x"}
+    for naam in ("strand", "schelp"):
+        await plek(ids[naam], eva)
+
+    async def zelfde(me: uuid.UUID, verwacht: set[str]) -> None:
+        assert await _names(settings, me) == (verwacht, verwacht)
+        op_kaart = verwacht & met_plek
+        assert await _plekken(settings, me) == (op_kaart, op_kaart)
+
+    await zelfde(eva, expected)
+    await zelfde(bram, set())
+
     # De map vakantie terug uit de prullenbak: strand en (in diep) schelp komen terug
     await run("UPDATE node SET deleted_at = NULL WHERE id = :id", id=ids["vakantie"])
     expected |= {"strand.x", "schelp.x"}
-    assert await _names(settings, eva) == (expected, expected)
+    await zelfde(eva, expected)
+    # Z3: diep (in vakantie) naar de prullenbak en terug: schelp gaat van de kaart en komt terug
+    await run("UPDATE node SET deleted_at = :t WHERE id = :id", id=ids["diep"], t=NOW)
+    await zelfde(eva, expected - {"schelp.x"})
+    await run("UPDATE node SET deleted_at = NULL WHERE id = :id", id=ids["diep"])
+    await zelfde(eva, expected)
     # De map erboven (werk) naar de prullenbak: verslag is weg, ook al ligt het er zelf niet in
     await run("UPDATE node SET deleted_at = :t WHERE id = :id", id=ids["werk"], t=NOW)
     expected -= {"verslag.x"}
-    assert await _names(settings, eva) == (expected, expected)
+    await zelfde(eva, expected)
 
     # Bram kopieert Eva's foto naar zijn eigen boom (zelfde inhoud): zijn kopie is van hem
     copy = uuid.uuid4()
@@ -230,6 +293,11 @@ async def test_alleen_eigen_levende_bestanden_ook_na_prullenbak_en_terug(tmp_pat
     )  # fmt: skip
     assert await _names(settings, bram) == ({"kopie.x"}, {"kopie.x"})
     assert await _names(settings, eva) == (expected, expected)
+    # Z3: zijn kopie krijgt een eigen plek, met hem als eigenaar: alleen op zijn kaart
+    met_plek.add("kopie.x")
+    await plek(copy, bram)
+    await zelfde(bram, {"kopie.x"})
+    await zelfde(eva, expected)
 
 
 def test_de_wachter_ziet_een_fotofunctie_zonder_own_live():
@@ -254,6 +322,14 @@ def test_de_wachter_ziet_een_fotofunctie_zonder_own_live():
     nest = "def f(me):\n    own_live\n    def g():\n        return select(Node)\n    return g\n"
     assert offenders(nest) == ["g"]
     assert OWN_LIVE_GEO_SQL.startswith("{g}.owner_id")
+
+
+def test_de_wachter_kijkt_naar_de_kaart_en_de_plek():
+    """Z3: de kaart, de plaatsen, /location en de haken onder app/geo/ staan in de lijst."""
+    namen = {str(p.relative_to(APP)) for p in photo_files()}
+    z3 = {"routers/photos_map.py", "routers/geo.py", "geo/places.py", "geo/wire.py"}
+    assert z3 <= namen, z3 - namen
+    assert "geo/types.py" not in namen
 
 
 def test_elke_fotofunctie_gebruikt_own_live():

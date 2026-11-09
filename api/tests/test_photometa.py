@@ -9,7 +9,7 @@ from sqlalchemy import event, func, select
 
 from app import jobs, photometa, previews, render_meta
 from app.db import get_engine
-from app.models import Blob, Job, Node, User
+from app.models import Blob, BlobMeta, Job, Node, PhotoGeo, User
 from app.storage import BlobStore
 from tests.factories import create_file, create_user, maker
 from tests.test_render_meta import camera_jpeg, no_gps
@@ -188,8 +188,19 @@ async def test_een_stuk_schrijft_kort(settings):
 
     first = next(i for i, s in enumerate(seen) if s.split()[-1] in ("UPDATE", "INSERT", "DELETE"))
     burst = seen[first : seen.index("COMMIT", first)]
-    # De blobs en de bestanden, elk één executemany; geen leesronde per blob meer
-    assert burst == ["many UPDATE", "many UPDATE"], seen
+    # De blobs en de bestanden, elk één executemany; geen leesronde per blob meer. Sinds
+    # VERSION 2 (Z3) ook blob_meta en de plek per node, ook elk één executemany. Sinds de pHash
+    # (Z3 stap 2) ook blob_hash (één executemany) en de oude paren van dit stuk weg (één DELETE;
+    # een stuk van 200 past in één IN). Deze egale foto's zijn vlak: geen paren (die zouden nog
+    # één executemany zijn). Hoe groot het stuk ook is, zes statements
+    assert burst == [
+        "many UPDATE",
+        "many UPDATE",
+        "many INSERT",
+        "many INSERT",
+        "many INSERT",
+        "DELETE",
+    ], seen
     async with maker(settings)() as session:
         for d, node_id in enumerate(ids, start=1):
             node = await session.get(Node, node_id)
@@ -197,6 +208,9 @@ async def test_een_stuk_schrijft_kort(settings):
             assert node.taken_day == 20240700 + d
             assert blob.meta_version == render_meta.VERSION
             assert blob.preview_meta["exif"]["model"] == "Camera X1"
+            meta = await session.get(BlobMeta, node.blob_id)
+            assert (meta.camera, meta.gps) == ("fabrikant camera x1", 1)
+            assert (await session.get(PhotoGeo, node_id)).source == "exif"
 
 
 async def test_video_met_de_worker_weg_blijft_over_tot_de_worker_er_is(settings, monkeypatch):

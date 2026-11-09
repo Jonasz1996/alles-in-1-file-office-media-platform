@@ -64,11 +64,9 @@ def vragen() -> list[tuple[str, dict]]:
 
 
 def gedaan(r) -> bool:
-    """Een antwoord zonder fout van de server; de kaart en herinneringen zijn tot Z3 een stub
-    (501 not_built), en ook dan mag de vraag niet in de log."""
-    if r.status_code == 501:
-        return r.json()["detail"]["code"] == "not_built"
-    return r.status_code < 500
+    """Elke vraag is gewoon gelukt: alle routes zijn er nu (de kaart, de plaats en het land sinds
+    Z3), dus geen 501 meer."""
+    return r.status_code == 200
 
 
 def lekken(tekst: str) -> list[str]:

@@ -103,8 +103,10 @@ INBOX_SCAN_WOORD = "inboxscanw"
 PERSOON = "Anna"
 IRIS_PERSOON = "Joop"
 PLAATS = "Utrecht"
-# GeoNames-id van de stad Utrecht (cities1000); Z3 controleert hem tegen places.sqlite
-PLAATS_ID = 2745912
+# Het id van de stad Utrecht in places.sqlite. rg_cities1000.csv heeft geen GeoNames-id, dus
+# geo-load geeft elke plaats een vast id uit land, provincie, naam en plek (app.geo.load.place_id;
+# Z3). tests/geo/test_places.py controleert hem tegen de echte bronnen.
+PLAATS_ID = 150904566956734
 
 # naam -> (rol, weergavenaam)
 GEBRUIKERS = {

@@ -592,7 +592,16 @@ async def proces(request, monkeypatch):
 async def test_crash_van_het_voorbeeldproces(
     client, admin, settings, maker, monkeypatch, hub, proces
 ):
-    """Een bestand dat de decoder laat crashen raakt de server niet; na 3 pogingen failed."""
+    """Een bestand dat de decoder laat crashen raakt de server niet; na 3 pogingen failed. Na
+    preview.ready (ook een mislukte) volgt de keten van photometa (Z3); die leest in hetzelfde
+    soort renderproces, crasht dus ook, en markeert na 3 pogingen het stuk als gelezen."""
+    from app import photometa, render_meta
+    from app.geo import wire
+    from app.models import BlobMeta
+
+    # De app meldt de keten na preview.ready aan bij de import van app.main; een test eerder in
+    # de run kan previews.forget_ready() gedaan hebben. Deze test telt de jobs: dus vast aan.
+    wire.register()
     headers, tokens = admin
     node = await upload(client, headers, "boos.png", picture("PNG"))
     original = previews.CHILD
@@ -600,14 +609,22 @@ async def test_crash_van_het_voorbeeldproces(
         previews, "CHILD", "import os, signal; os.kill(os.getpid(), signal.SIGSEGV)"
     )
     with hub.subscribe(uuid.UUID(tokens["user"]["id"])) as sub:
-        # Drie pogingen, met de wachttijd ertussen (de klok een dag vooruit)
-        assert await jobs.run_pending(settings, datetime.now(UTC) + timedelta(days=1)) == 3
+        # Drie pogingen van de preview en drie van photometa, met de wachttijd ertussen (de klok
+        # een dag vooruit)
+        assert await jobs.run_pending(settings, datetime.now(UTC) + timedelta(days=1)) == 6
         ready = await asyncio.wait_for(anext(aiter(sub)), 1)
     assert ready["type"] == "preview.ready"
     async with maker() as session:
-        job = (await session.scalars(select(Job))).one()
+        job = (await session.scalars(select(Job).where(Job.type == previews.TYPE))).one()
         assert job.status == "failed" and job.attempts == 3
         assert job.error == "Het voorbeeldproces stopte onverwacht (signaal 11)"
+        keten = (await session.scalars(select(Job).where(Job.type == photometa.TYPE))).one()
+        assert (keten.status, keten.attempts, keten.error) == ("failed", 3, job.error)
+        # Eén kapot bestand houdt de keten niet op: gelezen, met gps onbekend
+        blob = await session.get(Blob, job.payload["sha"])
+        assert blob.meta_version == render_meta.VERSION
+        meta = await session.get(BlobMeta, job.payload["sha"])
+        assert (meta.camera, meta.lens, meta.gps) == (None, None, None)
     info = (await preview_of(client, headers, node["id"]))[node["id"]]
     assert info["state"] == "failed" and info["thumb"] is None
 

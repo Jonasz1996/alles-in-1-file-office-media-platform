@@ -2,8 +2,9 @@
 methode, body, antwoordmodel en status, vraagt eerst de inlog (beheer: de rol; de woorden per
 pagina: het download-token) en geeft dan 501 not_built tot zijn pakket het vult. Zoeken zelf
 werkt al: via select_engine, met LikeFallback. Sinds Z2 zijn ook de woorden per pagina en de
-stand van de analyse gebouwd (BUILT), en sinds Z6 de routes van personen, herinneringen en
-slimme albums.
+stand van de analyse gebouwd (BUILT), sinds Z6 de routes van personen, herinneringen en
+slimme albums, sinds Z3 (stap 1) de plek, de kaart, de plaatsen en de bronnen, en sinds Z3
+(stap 2) share-check en de duplicaten.
 
 Z0b (Keuze 55) zette de routes van gezichten (X2) en zoeken op beeld (X3) erbij, ook als stub;
 zoeken met mode=image of like geeft 501 not_built("X3").
@@ -276,6 +277,18 @@ BUILT = {
     # Z6: de foto-instellingen (tests/photos/test_photo_settings.py)
     ("GET", "/api/v1/me/photo-settings"),
     ("PATCH", "/api/v1/me/photo-settings"),
+    # Z3, stap 1: de plek, de kaart, de plaatsen en de bronnen (tests/geo/test_geo_access.py,
+    # test_map_clusters.py)
+    ("GET", "/api/v1/files/{node_id}/location"),
+    ("GET", "/api/v1/photos/map"),
+    ("GET", "/api/v1/photos/map/items"),
+    ("GET", "/api/v1/photos/places"),
+    ("GET", "/api/v1/geo/attribution"),
+    # Z3, stap 2: share-check en de duplicaten (tests/photos/test_share_check.py,
+    # tests/dupes/test_dupes.py)
+    ("GET", "/api/v1/photos/share-check"),
+    ("GET", "/api/v1/duplicates"),
+    ("POST", "/api/v1/duplicates/ignore"),
 }
 # De vraag die een stub nodig heeft om bij de route te komen
 QUERY = {

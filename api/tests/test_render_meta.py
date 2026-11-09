@@ -1,5 +1,6 @@
-"""EXIF en opnamedatum lezen (app/render_meta.py): camera, objectief, belichting en datum, en
-nooit GPS."""
+"""EXIF en opnamedatum lezen (app/render_meta.py): camera, objectief, belichting en datum. De
+plek alleen in mode "meta" (VERSION 2, Keuze 25), nooit voor de preview; de plek zelf staat in
+tests/geo/test_geo_read.py."""
 
 import io
 import json
@@ -254,9 +255,22 @@ def test_run_meta_veel_bestanden_in_een_proces(tmp_path):
     assert results["a"]["exif"]["model"] == "Camera X1"
     assert results["a"]["taken_at"] == "2024-07-01T12:30:05"
     assert "error" in results["b"] and "error" in results["d"]
-    assert results["c"] == {"taken_at": "2024-06-30T22:30:00", "taken_kind": "utc"}
+    # VERSION 2: mode meta geeft ook de plek (Keuze 25), None als er gelezen is en er geen is
+    assert results["a"]["location"] == {
+        "lat": 52.3669444,
+        "lon": 4.8838889,
+        "alt": None,
+        "source": "exif",
+    }
+    assert results["c"] == {
+        "taken_at": "2024-06-30T22:30:00",
+        "taken_kind": "utc",
+        "location": None,
+    }
     assert results["e"] == {}
-    no_gps(results)
+    # Verder nergens een plek: niet in de fouten, niet in de rest van de metadata
+    rest = {sha: {k: v for k, v in r.items() if k != "location"} for sha, r in results.items()}
+    no_gps(rest)
 
 
 def render_meta_child() -> str:

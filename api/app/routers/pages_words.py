@@ -31,7 +31,7 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import analysis as analysis_steps
-from app import errors, render
+from app import errors, photo_hash, render
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Analysis, Blob, BlobText
@@ -191,8 +191,8 @@ _SHOWN = (analysis_steps.Step.TEXT, analysis_steps.Step.HASH, analysis_steps.Ste
 
 def _missing(step: analysis_steps.Step, sha: str, mime: str | None) -> StepState:
     """Een stap zonder rij: queued als hij voor deze inhoud geldt (de upload of de backfill
-    zet hem klaar), anders skip. Een stap die (nog) niet gebouwd is (hash in Z3, ocr in X1),
-    geldt nergens: skip."""
+    zet hem klaar), anders skip. Een stap die (nog) niet gebouwd is (ocr in X1), geldt nergens:
+    skip. hash komt niet hier langs: die staat in blob_hash (photo_hash.analysis_state)."""
     found = analysis_steps.registered().get(step)
     return "queued" if found is not None and found.eligible(sha, mime) else "skip"
 
@@ -224,4 +224,6 @@ async def analysis(node_id: uuid.UUID, user: CurrentUser, session: Session) -> A
         states[step.value] = _STATES.get(row.state, "queued") if row else _missing(step, sha, mime)
         if code is None and row is not None and row.code in _CODES:
             code = row.code
+    # De pHash rekent photometa, niet de pomp (Keuze 35; Z3): zijn stand staat in blob_hash
+    states["hash"] = await photo_hash.analysis_state(session, sha, mime)
     return AnalysisOut(**states, truncated=bool(truncated), code=code)
