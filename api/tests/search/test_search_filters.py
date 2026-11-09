@@ -14,10 +14,16 @@ FtsEngine en op_naam voor LikeFallback), en per filter de regel uit de tabel van
 - person: eigen, levende bestanden met elk van die eigen personen erop (EN); een persoon van een
   ander geeft niets;
 - tag: elk van die eigen tags erop (EN);
-- library en in: onder die map (de keten omhoog), niet de map zelf.
+- library en in: onder die map (de keten omhoog), niet de map zelf;
+- place en country (Z3): eigen, levende bestanden met een plek (photo_geo) met die plaats of dat
+  land (de code in hoofdletters of niet); de plek van een gedeelde foto van een ander telt niet;
+- camera (Z3): eigen, levende bestanden waarvan de inhoud (blob_meta) precies die camera heeft
+  (gevouwen), of een camera die met die woorden begint ("canon" vindt "canon eos 5d", niet
+  "canonical scanner").
 
-place, country en camera meldt Z3 aan; tot dan zijn ze 501 not_built, ook op /photos. Z3 voegt
-ze hier toe (een regel in past() en waarden in WAARDEN), dan doen ze vanzelf mee in de paren.
+place, country en camera meldt Z3 aan (app/search/filters_photo.py); ze staan hier in past() en
+in waarden(), en doen zo mee in de paren. De randen (locatie "uit", een onbekende code, de
+suggesties) staan in tests/geo/test_photo_filters.py.
 """
 
 from __future__ import annotations
@@ -33,13 +39,25 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app import albums_rule, analysis, mime
 from app.db import get_engine
-from app.models import MediaLibrary, Node, NodeTag, Person, PhotoPerson, Share, Tag, User
+from app.geo import tiles
+from app.models import (
+    BlobMeta,
+    MediaLibrary,
+    Node,
+    NodeTag,
+    Person,
+    PhotoGeo,
+    PhotoPerson,
+    Share,
+    Tag,
+    User,
+)
 from app.people import search as people_search
-from app.search import limits
+from app.search import filters_photo, limits
 from app.search.filters import DATED
 from app.search.types import SearchRule
 from app.text import fold
@@ -54,6 +72,35 @@ STANDAARD_DAG = datetime(2024, 6, 1, 12, tzinfo=UTC)
 # De vragen naast een filter: een heel woord (ook in de tekst van het verslag), een voorvoegsel
 # en een stuk van een naam
 VRAGEN = ("feest", "fee", "ee")
+# Plaatsen (ids zoals in places.sqlite; de namen doen hier niet mee)
+AMSTERDAM, ZANDVOORT, PARIJS = 2759794, 2744102, 2988507
+# (plaats, land, lat, lon) per bestand met een plek: ook in de prullenbak, een gedeelde map en bij
+# Bram (die van Bram in "Voor eva" ziet Eva wel, maar met zijn plek vindt ze hem nooit)
+PLEKKEN = {
+    "strand-1.jpg": (ZANDVOORT, "NL", 52.37, 4.53),
+    "strand-2.jpg": (ZANDVOORT, "NL", 52.37, 4.53),
+    "zee.mp4": (None, "NL", 52.40, 4.40),
+    "feest.jpg": (AMSTERDAM, "NL", 52.37, 4.89),
+    "weg-feest.jpg": (AMSTERDAM, "NL", 52.37, 4.89),
+    "verwijderd.jpg": (AMSTERDAM, "NL", 52.37, 4.89),
+    "hoes.jpg": (PARIJS, "FR", 48.85, 2.35),
+    "samen.jpg": (AMSTERDAM, "NL", 52.37, 4.89),
+    "bram-feest.jpg": (AMSTERDAM, "NL", 52.37, 4.89),
+    "film.mp4": (AMSTERDAM, "NL", 52.37, 4.89),
+}
+# De camera van de inhoud (blob_meta, gevouwen zoals render_meta.camera)
+CAMERAS = {
+    "strand-1.jpg": "canon eos 5d",
+    "strand-2.jpg": "canon eos r5",
+    "feest.jpg": "nikon d750",
+    "feest-2.png": "canonical scanner",
+    "scan.jpg": "canon",
+    "verwijderd.jpg": "canon eos 5d",
+    "weg-feest.jpg": "nikon d750",
+    "samen.jpg": "canon eos 5d",
+    "bram-feest.jpg": "canon eos 5d",
+    "film.mp4": "canon eos 5d",
+}
 
 
 @pytest.fixture(params=["fts", "like"])
@@ -65,10 +112,11 @@ def motor(request, settings, monkeypatch) -> str:
 
 @pytest.fixture(autouse=True)
 def _ruim(settings, monkeypatch):
-    """Het filter person staat in het register (een andere test kan filters.reset() gedaan
-    hebben); geen grens van de snelheid per gebruiker of van ronde A: het gaat hier om wat er
-    gevonden wordt."""
+    """De filters person, place, country en camera staan in het register (een andere test kan
+    filters.reset() gedaan hebben); geen grens van de snelheid per gebruiker of van ronde A: het
+    gaat hier om wat er gevonden wordt."""
     people_search.register()
+    filters_photo.register()
     monkeypatch.setattr(limits, "RATE", {"search": 100_000, "suggest": 100_000})
     monkeypatch.setattr(settings, "search_deadline_ms", 60_000)
 
@@ -89,6 +137,8 @@ class Wereld:
     persoon_van: dict[uuid.UUID, uuid.UUID] = field(default_factory=dict)
     bieb: dict[uuid.UUID, uuid.UUID] = field(default_factory=dict)
     namen: dict[uuid.UUID, str] = field(default_factory=dict)
+    plek: dict[uuid.UUID, tuple[int | None, str | None]] = field(default_factory=dict)
+    camera: dict[uuid.UUID, str] = field(default_factory=dict)
 
     def naam(self, ids) -> list[str]:
         return sorted(self.namen.get(i, str(i)) for i in ids)
@@ -231,6 +281,16 @@ async def _bouw(settings) -> Wereld:
         for node, welke in tags.items():
             for t in welke:
                 s.add(NodeTag(node_id=ids[node], tag_id=ids[t]))
+        # De plek per node, van de eigenaar van die node (de triggers zetten dead en taken_at)
+        for node, (plaats, land, lat, lon) in PLEKKEN.items():
+            x16, y16 = tiles.tile16(lat, lon)
+            owner = bram.id if node in ("bram-feest.jpg", "film.mp4") else eva.id
+            s.add(PhotoGeo(node_id=ids[node], owner_id=owner, lat=lat, lon=lon, x16=x16, y16=y16,
+                           place_id=plaats, country=land, source="exif"))  # fmt: skip
+        await s.flush()
+        for node, naam in CAMERAS.items():
+            blob = await s.scalar(select(Node.blob_id).where(Node.id == ids[node]))
+            s.add(BlobMeta(blob_sha=blob, camera=naam, gps=1 if node in PLEKKEN else 0))
         await s.commit()
         sha = verslag.blob_id
     async with maker(settings)() as s:
@@ -261,6 +321,13 @@ def _lees(conn, w: Wereld) -> None:
         w.op_foto.setdefault(u(node_id), set()).add(u(person_id))
     w.persoon_van = {u(p): u(o) for p, o in sql("SELECT id, owner_id FROM person")}
     w.bieb = {u(i): u(r) for i, r in sql("SELECT id, root_id FROM media_library")}
+    w.plek = {u(n): (p, c) for n, p, c in sql("SELECT node_id, place_id, country FROM photo_geo")}
+    w.camera = {
+        u(n): cam
+        for n, cam in sql(
+            "SELECT node.id, blob_meta.camera FROM node JOIN blob_meta ON blob_sha = node.blob_id"
+        )
+    }
 
 
 # --- De referentie van de filters -------------------------------------------------------------
@@ -292,6 +359,16 @@ def past(w: Wereld, user: uuid.UUID, n: uuid.UUID, f: dict[str, Any], zone: str)
                 return False
     for t in f.get("tag", ()):
         if t not in w.tags.get(n, ()) or w.tag_van.get(t) != user:
+            return False
+    eigen = node.owner == user and node.kind == "file" and ref.levend(n)
+    plaats, land = w.plek.get(n, (None, None))
+    if "place" in f and not (eigen and n in w.plek and plaats == f["place"]):
+        return False
+    if "country" in f and not (eigen and n in w.plek and land == f["country"].upper()):
+        return False
+    if "camera" in f:
+        cam, key = w.camera.get(n), fold(f["camera"])
+        if not eigen or cam is None or not (cam == key or cam.startswith(key + " ")):
             return False
     for key in ("library", "in"):
         if key in f:
@@ -382,6 +459,9 @@ def waarden(w: Wereld, wie: str) -> dict[str, list[dict[str, Any]]]:
             "tag": [{"tag": [i["vakantie"]]}, {"tag": [i["vakantie"], i["familie"]]}],
             "library": [{"library": i["Muziek-bieb"]}, {"library": i["Films van Bram"]}],
             "in": [{"in": i["Fotos"]}, {"in": i["Gedeeld"]}, {"in": i["Voor eva"]}],
+            "place": [{"place": AMSTERDAM}, {"place": ZANDVOORT}],
+            "country": [{"country": "NL"}, {"country": "fr"}],
+            "camera": [{"camera": "Canon"}, {"camera": "Nikon D750"}],
         }
     return {
         "type": [{"type": ["image", "pdf"]}],
@@ -390,6 +470,9 @@ def waarden(w: Wereld, wie: str) -> dict[str, list[dict[str, Any]]]:
         "tag": [{"tag": [i["bram-tag"]]}],
         "library": [{"library": i["Films van Bram"]}],
         "in": [{"in": i["Voor eva"]}, {"in": i["Gedeeld"]}],
+        "place": [{"place": AMSTERDAM}],
+        "country": [{"country": "NL"}],
+        "camera": [{"camera": "canon eos 5d"}],
     }
 
 
@@ -525,7 +608,9 @@ async def test_de_filters_vinden_echt_iets(client, settings):
     assert w.naam(feest) == ["verslag.docx"]
 
 
-async def test_wat_je_niet_ziet_is_404_en_z3_is_501(client, settings, motor):
+async def test_wat_je_niet_ziet_is_404_en_een_onbekende_plek_niets(client, settings, motor):
+    """Een tag, bibliotheek of map die je niet ziet: 404. De filters van Z3 (tot Z3 501
+    not_built) kennen geen 404: een plaats, land of camera die je niet hebt, geeft niets."""
     w = await _bouw(settings)
     eva = await login(client, "eva@example.nl")
     i = w.ids
@@ -535,9 +620,6 @@ async def test_wat_je_niet_ziet_is_404_en_z3_is_501(client, settings, motor):
         ({"library": uuid.uuid4()}, 404, None),
         ({"in": i["Prive"]}, 404, "not_found"),
         ({"in": i["Weg"]}, 404, "folder_not_found"),
-        ({"place": 2759794}, 501, "not_built"),
-        ({"country": "NL"}, 501, "not_built"),
-        ({"camera": "canon eos"}, 501, "not_built"),
     ]
     for f, status, code in fouten:
         for pad in ("/api/v1/search", "/api/v1/photos", "/api/v1/photos/months"):
@@ -545,6 +627,12 @@ async def test_wat_je_niet_ziet_is_404_en_z3_is_501(client, settings, motor):
             assert r.status_code == status, (pad, f, r.text)
             if code is not None:
                 assert code_of(r) == code, (pad, f, r.text)
+    niets = [{"place": 1}, {"country": "BE"}, {"country": "N1"}, {"country": "NLD"},
+             {"camera": "canon eos 1d"}, {"camera": "   "}, {"camera": "nikon d7"}]  # fmt: skip
+    for f in niets:
+        assert await zoek(client, eva, motor, query(f)) == set(), f
+        kreeg, per_maand = await foto_s(client, eva, query(f))
+        assert (kreeg, per_maand) == (set(), []), f
     # Een onbekende soort: 422, zoals bij zoeken
     for pad in ("/api/v1/photos", "/api/v1/photos/months"):
         r = await client.get(pad, params={"type": "archief"}, headers=eva)

@@ -13,6 +13,8 @@ filters.reset() of previews.forget_ready() deed, roept register() opnieuw aan; t
   de plek dan voor de eigenaar van de kopie, als die locatie niet op "uit" heeft.
 - prefs.register_location: "uit" zet de job geo.off klaar (alle rijen van die gebruiker weg),
   "mij" de keten in fase nodes (zijn foto's opnieuw lezen) (Keuze 28).
+- app.search.filters_photo.register: de filters place, country en camera, de suggesties
+  "plaatsen" en de groep plaatsen bovenaan de resultaten (Keuze 43).
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from sqlalchemy import select
 from app import photo_rows, photometa, prefs, previews
 from app.geo import load
 from app.models import Blob
-from app.search import hooks
+from app.search import filters_photo, hooks
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -66,6 +68,7 @@ def register() -> None:
     hooks.register_photo_copy(on_copy)
     previews.register_ready(on_ready)
     prefs.register_location(on_location)
+    filters_photo.register()
 
 
 register()
