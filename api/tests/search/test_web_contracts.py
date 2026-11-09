@@ -697,12 +697,15 @@ def _query(dependant) -> list:
     return uit
 
 
-def _routes() -> dict[tuple[str, str], tuple[set[str], set[str]]]:
-    """(methode, pad met {}) → (alle namen, verplichte namen) van de querystring, voor Z3."""
+def _routes(
+    welke: set[tuple[str, str]] = Z3_ROUTES,
+) -> dict[tuple[str, str], tuple[set[str], set[str]]]:
+    """(methode, pad met {}) → (alle namen, verplichte namen) van de querystring, voor de routes
+    van welke (standaard die van Z3)."""
     uit = {}
     for c in iter_route_contexts(app.routes):
         for methode in c.methods or ():
-            if (methode, c.path) in Z3_ROUTES:
+            if (methode, c.path) in welke:
                 velden = _query(c.route.dependant)
                 namen = {v.alias for v in velden}
                 nodig = {v.alias for v in velden if v.field_info.is_required()}
@@ -710,9 +713,11 @@ def _routes() -> dict[tuple[str, str], tuple[set[str], set[str]]]:
     return uit
 
 
-def _controleer_aanroepen(teksten: dict[str, str], filters: frozenset[str]) -> None:
-    routes = _routes()
-    assert len(routes) == len(Z3_ROUTES), "een route van Z3 bestaat niet (meer)"
+def _controleer_aanroepen(
+    teksten: dict[str, str], filters: frozenset[str], welke: set[tuple[str, str]] = Z3_ROUTES
+) -> None:
+    routes = _routes(welke)
+    assert len(routes) == len(welke), "een route bestaat niet (meer)"
     aanroepen = _aanroepen(teksten, filters)
     assert {(a.methode, a.pad) for a in aanroepen} == set(routes), aanroepen
     for a in aanroepen:
@@ -762,3 +767,52 @@ def test_de_aanroepen_zien_een_ander_pad_of_een_andere_naam(roepers, filters, be
     anders = {**roepers, bestand: tekst.replace(oud, nieuw)}
     with pytest.raises(AssertionError):
         _controleer_aanroepen(anders, filters)
+
+
+# --- De routes van de tab "Zoeken en foto's" op /beheer (Z7, Keuze 51) ---
+
+# Precies deze routes roept admin/searchApi.ts aan: die van Z7, en DELETE beeld van X3 (Z0b)
+Z7_ROUTES = {
+    ("GET", "/api/v1/admin/search"),
+    ("PATCH", "/api/v1/admin/search"),
+    ("POST", "/api/v1/admin/search/rebuild"),
+    ("GET", "/api/v1/admin/search/failed"),
+    ("POST", "/api/v1/admin/search/retry"),
+    ("DELETE", "/api/v1/admin/search/beeld"),
+}
+Z7_ROEPERS = ["admin/searchApi.ts"]
+
+
+@pytest.fixture(scope="module")
+def z7_roepers() -> dict[str, str]:
+    return {naam: (WEB / naam).read_text() for naam in Z7_ROEPERS}
+
+
+def test_de_web_roept_de_routes_van_z7_aan_zoals_ze_zijn(z7_roepers, filters, web):
+    """Methode, pad en querystring van elke aanroep van de tab zijn die van de route, samen precies
+    de routes van Z7; wat herbouwd kan worden, is RebuildWhat van de API, en de body van herbouwen
+    is RebuildIn."""
+    _controleer_aanroepen(z7_roepers, filters, Z7_ROUTES)
+    vraag = {a.pad: a.vraag for a in _aanroepen(z7_roepers, filters)}
+    assert vraag["/api/v1/admin/search/failed"] == {"cursor"}
+    assert web["admin/searchApi.ts"].lijsten["REBUILD_WHAT"] == set(typing.get_args(S.RebuildWhat))
+    assert "{ what })" in z7_roepers["admin/searchApi.ts"]
+    assert set(S.RebuildIn.model_fields) == {"what"}
+
+
+@pytest.mark.parametrize(
+    ("oud", "nieuw"),
+    [
+        ('<AdminSearch>("PATCH"', '<AdminSearch>("PUT"'),
+        ("/admin/search/retry`", "/admin/search/opnieuw`"),
+        ("wireQuery({ cursor })", "wireQuery({ na: cursor })"),
+        ("/admin/search/rebuild`", "/admin/search/herbouw`"),
+    ],
+    ids=["methode", "pad", "naam", "pad-weg"],
+)
+def test_de_aanroepen_van_z7_zien_een_ander_pad_of_een_andere_naam(z7_roepers, filters, oud, nieuw):
+    tekst = z7_roepers["admin/searchApi.ts"]
+    assert tekst.count(oud) == 1, oud
+    anders = {"admin/searchApi.ts": tekst.replace(oud, nieuw)}
+    with pytest.raises(AssertionError):
+        _controleer_aanroepen(anders, filters, Z7_ROUTES)
