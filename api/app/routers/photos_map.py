@@ -11,8 +11,10 @@ wist; Keuze 28). Een gast heeft geen eigen foto's: 403 guest, zoals /photos.
   index); cover: de nieuwste foto. Meer dan MAX_CELLS cellen: de server neemt de kleinste
   grotere s waarbij het past, zodat er nooit iets wegvalt (door halveren: hooguit vier vragen
   meer, ook voor de hele wereld op zoom 14). west > oost gaat over 180° heen: twee
-  stukken in x, samengevoegd. Met een filter van Keuze 43 de join op node over de al smallere
-  set (zoals /photos: hetzelfde register, filters.apply_all).
+  stukken in x, samengevoegd. Met een filter van Keuze 43: datum, plaats en land op photo_geo
+  zelf (taken_at, place_id, country; _geo_where), nog steeds zonder join; de andere (soort, map,
+  camera, persoon, tag) doen de join op node over de al smallere set (zoals /photos: hetzelfde
+  register, filters.apply_all). Dezelfde foto's als /photos (tests/geo/test_map_filters.py).
 - GET /photos/map/items?bbox=&<filters>&cursor=: de foto's in het venster in de volgorde van de
   tijdlijn, per PAGE, met de cursor van /photos. Twee wegen naar dezelfde rijen: weinig foto's in
   het venster (minder dan MANY): vanaf photo_geo en dan sorteren; veel: langs de tijdlijn
@@ -34,11 +36,12 @@ de log (QUERY_PATHS in app/main.py).
 """
 
 import uuid
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy import Select, and_, case, exists, func, literal, or_, select
+from sqlalchemy import Select, and_, case, exists, false, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import errors, photo_rows
@@ -58,7 +61,9 @@ from app.routers.photos import (
     photo_query,
 )
 from app.search.filters import apply_all
+from app.search.filters_photo import country_code
 from app.search.live import own_live, own_live_geo
+from app.search.types import SearchParams
 from app.security import CurrentUser
 
 router = APIRouter(prefix="/api/v1", tags=["foto's"])
@@ -80,13 +85,48 @@ def _bbox(text: str) -> tuple[list[tuple[int, int]], int, int]:
         ) from None
 
 
-def _filtered(sel: Select, user: User, filters: Any) -> Select:
-    """Met een filter van Keuze 43: de join op node (eigen en levend, zoals photo_geo al is), en
-    dan het register (zoals /photos)."""
+# De filters die photo_geo zelf heeft (Keuze 4a): daarvoor geen join op node
+GEO_FILTERS = {"date_from": None, "date_to": None, "place": None, "country": None}
+
+
+def _day(day: date) -> datetime:
+    """Het begin van een dag als zwevende tijd, zoals taken_at is opgeslagen (app/photodate.py)."""
+    return datetime.combine(day, time.min, tzinfo=UTC)
+
+
+def _geo_where(p: SearchParams, user: User) -> list[Any]:
+    """from, to, place en country op de kolommen van photo_geo, met dezelfde uitkomst als de
+    filters van het register op node: taken_at van photo_geo is die van de node (trigger), en de
+    dag van taken_at is taken_day (photodate.day_of). Een bestand zonder opnamedatum (geen foto of
+    video) staat niet op de tijdlijn en valt bij een datumfilter weg, zoals in /photos/map/items."""
+    out: list[Any] = []
+    if p.date_from is not None:
+        out.append(PhotoGeo.taken_at >= _day(p.date_from))
+    if p.date_to is not None:
+        out.append(PhotoGeo.taken_at < _day(p.date_to + timedelta(days=1)))
+    if p.place is not None:
+        out.append(PhotoGeo.place_id == p.place)
+    if p.country:
+        code = country_code(p.country)
+        out.append(false() if code is None else PhotoGeo.country == code)
+    if p.place is not None or p.country:
+        out.append(photo_rows.not_off(user.id))
+    return out
+
+
+def _filtered(sel: Select, user: User, filters: SearchParams | None) -> Select:
+    """Met een filter van Keuze 43 (Keuze 4a; review golf 3, contract F1): datum, plaats en land
+    op photo_geo zelf, langs zijn eigen indexen. Alleen voor de rest (soort, camera, map, tag,
+    bibliotheek, persoon) de join op node (eigen en levend, zoals photo_geo al is) over de al
+    smallere set, en dan het register (zoals /photos)."""
     if filters is None:
         return sel
+    sel = sel.where(*_geo_where(filters, user))
+    rest = filters.model_copy(update=GEO_FILTERS)
+    if not rest.has_filter():
+        return sel
     on = and_(Node.id == PhotoGeo.node_id, own_live(Node, user.id))
-    return apply_all(sel.join(Node, on), Node.__table__, filters, user)
+    return apply_all(sel.join(Node, on), Node.__table__, rest, user)
 
 
 def _grid(s: int, xs: list[tuple[int, int]], y0: int, y1: int) -> int:

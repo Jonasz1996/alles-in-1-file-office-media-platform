@@ -579,6 +579,14 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
      verplaatsen 0,23 s; zonder plekken 0,17–0,22, 0,13–0,19 en 0,20–0,23 s (3.53.1; marker
      `zoek_perf`, grens 1 s). Een datumfilter gaat op `g.taken_at`; een filter op persoon, tag,
      map of camera doet de join met `node` over de al smallere set, met een eigen poort (Z3).
+     **Herzien na de review van golf 3 (contract F1).** Ook plaats en land gaan op `photo_geo`
+     zelf (`place_id`, `country`; datum op `taken_at` met de grens van de dag als zwevende
+     tijd), zonder join: p95 79 ms op 3.46.1 en 78 ms op 3.53.1, onder de poort van 150 ms. Soort,
+     map, camera, persoon en tag doen de join; per foto in het venster kost dat ±5 µs (de rij
+     uit `node` en zijn `ftype`), bij de hele wereld op zoom 0–2 alle 55.000. Hun eigen poort is
+     p95 ≤ 500 ms: gemeten 340 ms op 3.46.1 en 310 ms op 3.53.1 (`tests/photos/test_map_perf.py`,
+     8 filters om de beurt). Onder de 150 ms kan dat alleen met soort en camera als kolom op
+     `photo_geo`, dus een migratie (z3.md, Open).
    - **Duplicaten** (Keuze 34–36), met `ix_node_owner_blob (owner_id, blob_id) WHERE dead = 0`:
 
      ```sql

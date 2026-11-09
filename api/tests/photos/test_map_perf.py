@@ -14,6 +14,13 @@ fase 6, Keuze 4a en 32; Z3; marker zoek_perf, job zoek-perf in python:3.12-slim 
    rondes van 100 (vaste seed); p95 = de mediaan van de p95 van de rondes. Hard: p95 ≤ 150 ms en
    geen fout. Rapport: p50, p99, max, cellen per antwoord, de items van het venster, en het
    ergste venster (de hele wereld op zoom 14: grotere cellen tot het past).
+4. Met een filter van Keuze 43 (review golf 3, contract F1): dezelfde vensters, om de beurt met
+   één van de filters van _filters() (plaats, land, datum, soort, map, camera, en twee samen).
+   De rijen van de eigenaar hebben daarvoor een plaats en een land (zoals photometa ze zet: de
+   plekken van de bench elk hun plaats, een reis een plaats per graad), en de foto's een inhoud
+   met een camera in blob_meta. Twee poorten (Keuze 4a): de filters die photo_geo zelf heeft
+   (datum, plaats, land) dezelfde als zonder filter, p95 ≤ 150 ms; die met de join op node
+   (soort, map, camera) een eigen poort, p95 ≤ POORT_NODE. Geen fout; het rapport per filter.
 
 ZOEK_PERF_N maakt de boom kleiner en ZOEK_PERF_KAART het aantal foto's met een plek (alleen om
 dit bestand zelf te proberen); ZOEK_PERF_UIT is een map voor de JSON en het verslag (CI: het
@@ -33,6 +40,7 @@ import time
 import uuid
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -47,12 +55,21 @@ pytestmark = pytest.mark.zoek_perf
 N = int(os.environ.get("ZOEK_PERF_N", "100000"))
 MET_PLEK = int(os.environ.get("ZOEK_PERF_KAART", "55000"))
 POORT = 150.0
+# De eigen poort van de filters met de join op node (Keuze 4a): per foto in het venster een rij
+# uit node, ook bij de hele wereld op zoom 0–2. Gemeten p95 310 ms op 3.53.1 en 340 ms op 3.46.1;
+# de poort ×1,5 daarboven (docs/fase-6/z3.md, De review (golf 3))
+POORT_NODE = 500.0
 RONDES = 3
 PER_RONDE = 100
 SCHERM = (1280, 800)
 PRULLENBAK = 0.02
 # Een reis over 180°: Fiji aan beide kanten
 OVER_180 = ((-17.7, 179.6), (-16.8, -179.8))
+# Het land van de plekken van de bench (bench.PLEKKEN, in die volgorde), en van een reis
+LAND_PLEK = ("NL", "NL", "NL", "NL", "NL", "FR", "DE", "ES", "IT", "PT")
+LANDEN = ("US", "BR", "JP", "AU", "ZA", "IN", "CA", "MX", "NZ", "FJ", "NO", "GR", "TH", "AR")
+PLAATS_PLEK = 1000  # + de plek in bench.PLEKKEN
+PLAATS_REIS = 100_000  # + een graad (lat, lon)
 
 
 def _p(waarden: list[float], q: float) -> float:
@@ -71,7 +88,20 @@ def _plek(rng: random.Random, reizen: list[tuple[float, float]]) -> tuple[float,
     return lat, lon
 
 
-def _meer_plekken(db: Path, naam: str, doel: int) -> dict[str, int]:
+def _plaats(lat: float, lon: float) -> tuple[int, str]:
+    """(place_id, land) van een plek: de dichtstbijzijnde plek van de bench als die binnen een
+    halve graad ligt, anders een plaats per graad op de wereld."""
+    afstand, i = min(
+        ((p_lat - lat) ** 2 + (p_lon - lon) ** 2, i)
+        for i, (_naam, p_lat, p_lon) in enumerate(bench.PLEKKEN)
+    )
+    if afstand < 0.25:
+        return PLAATS_PLEK + i, LAND_PLEK[i]
+    graad = math.floor(lat + 90) * 360 + math.floor(lon + 180)
+    return PLAATS_REIS + graad, LANDEN[math.floor(lon + 180) // 30 % len(LANDEN)]
+
+
+def _meer_plekken(db: Path, naam: str, doel: int) -> dict[str, Any]:
     """Foto's met een plek erbij voor naam tot hij er doel levende heeft. Rechtstreeks in
     SQLite: de triggers van 0010 zetten mpath, dead, de index, en dead en taken_at in photo_geo.
     Een deel in een map die daarna naar de prullenbak gaat."""
@@ -83,9 +113,14 @@ def _meer_plekken(db: Path, naam: str, doel: int) -> dict[str, int]:
         owner, root = con.execute(
             "SELECT id, root_id FROM user WHERE email = ?", (f"{naam}@{bench.DOMEIN}",)
         ).fetchone()
-        sha = con.execute(
-            "SELECT blob_id FROM node WHERE owner_id = ? AND mime = 'image/jpeg' LIMIT 1", (owner,)
-        ).fetchone()[0]
+        # De inhoud van zijn eigen foto's (met een camera in blob_meta), vast gekozen: een
+        # eigen rng, zodat de plekken dezelfde blijven
+        shas = [r[0] for r in con.execute(
+            "SELECT DISTINCT n.blob_id FROM node n JOIN blob_meta m ON m.blob_sha = n.blob_id "
+            "WHERE n.owner_id = ? AND n.mime = 'image/jpeg' ORDER BY n.blob_id LIMIT 500",
+            (owner,),
+        )]  # fmt: skip
+        inhoud = random.Random("kaart:inhoud")
         al = con.execute(
             "SELECT count(*) FROM photo_geo WHERE owner_id = ? AND dead = 0", (owner,)
         ).fetchone()[0]
@@ -105,7 +140,8 @@ def _meer_plekken(db: Path, naam: str, doel: int) -> dict[str, int]:
             map_ = weg if rng.random() < PRULLENBAK else rng.choice(mappen[:-1])
             node = uuid.uuid4().hex
             nodes.append((
-                node, map_, owner, naam_, "file", "image/jpeg", 2_000_000, sha, nu, nu,
+                node, map_, owner, naam_, "file", "image/jpeg", 2_000_000, inhoud.choice(shas),
+                nu, nu,
                 fold(naam_), genomen.strftime("%Y-%m-%d %H:%M:%S.%f"),
                 int(genomen.strftime("%Y%m%d")),
             ))  # fmt: skip
@@ -124,6 +160,13 @@ def _meer_plekken(db: Path, naam: str, doel: int) -> dict[str, int]:
             plekken,
         )
         con.execute("UPDATE node SET deleted_at = ? WHERE id = ?", (nu, weg))
+        # Een plaats en een land voor elke rij van hem (zoals photometa ze zet)
+        con.executemany(
+            "UPDATE photo_geo SET place_id = ?, country = ? WHERE node_id = ?",
+            [(*_plaats(lat, lon), node) for node, lat, lon in con.execute(
+                "SELECT node_id, lat, lon FROM photo_geo WHERE owner_id = ?", (owner,)
+            ).fetchall()],
+        )  # fmt: skip
         levend, dood = con.execute(
             "SELECT sum(dead = 0), sum(dead = 1) FROM photo_geo WHERE owner_id = ?", (owner,)
         ).fetchone()
@@ -133,7 +176,10 @@ def _meer_plekken(db: Path, naam: str, doel: int) -> dict[str, int]:
             (owner,),
         ).fetchall()
         midden = random.Random("midden").sample(alle, min(2000, len(alle)))
-    return {"al": al, "extra": extra, "levend": levend, "dood": dood, "midden": midden}
+    return {
+        "al": al, "extra": extra, "levend": levend, "dood": dood, "midden": midden,
+        "map": mappen[0],
+    }  # fmt: skip
 
 
 @pytest.fixture(scope="module")
@@ -298,4 +344,113 @@ def test_de_kaart_binnen_150_ms(boom, tmp_path):
     assert extra["levend"] >= MET_PLEK, extra["levend"]
     assert cellen and max(cellen) > 0, "de meting moet cellen teruggeven"
     assert over_180 > 0, "de meting moet ook over 180° vragen"
+    assert not niet, niet
+
+
+def _filters(extra: dict[str, Any]) -> dict[str, tuple[str, dict[str, Any]]]:
+    """De filters van de tweede meting, met hun poort: "geo" voor wat photo_geo zelf heeft,
+    "node" voor wat de join op node vraagt (ook samen met een van "geo")."""
+    jaar = bench.DAG.year
+    datum = {"from": f"{jaar - 5}-01-01", "to": f"{jaar - 4}-12-31"}
+    return {
+        "plaats": ("geo", {"place": PLAATS_PLEK + 1}),  # Amsterdam
+        "land": ("geo", {"country": "NL"}),
+        "datum": ("geo", datum),
+        "plaats+datum": ("geo", {"place": PLAATS_PLEK + 1, **datum}),
+        "soort": ("node", {"type": "image"}),
+        "map": ("node", {"in": extra["map"]}),
+        "camera": ("node", {"camera": "canon eos 80d"}),
+        "land+soort": ("node", {"country": "nl", "type": "image"}),
+    }
+
+
+def test_de_kaart_met_een_filter(boom, tmp_path):
+    """Keuze 4a: met een filter van Keuze 43 binnen de poort van zijn soort (review golf 3,
+    contract F1)."""
+    data, extra = boom
+    filters = _filters(extra)
+    namen = list(filters)
+    poorten = {"geo": POORT, "node": POORT_NODE}
+    app = App(data, tmp_path / "server.log", env={"PLATFORM_PLACES": "uit"})
+    app.start()
+    rondes: dict[str, list[list[float]]] = {soort: [] for soort in poorten}
+    per_filter: dict[str, list[float]] = {naam: [] for naam in namen}
+    fotos: dict[str, int] = dict.fromkeys(namen, 0)
+    fout: list[str] = []
+    try:
+        with httpx.Client(base_url=app.url, trust_env=False, timeout=30) as client:
+            login = {
+                "email": f"{bench.ROLLEN['eigenaar']}@{bench.DOMEIN}",
+                "password": bench.WACHTWOORD,
+            }
+            r = client.post("/api/v1/auth/login", json=login)
+            assert r.status_code == 200, r.text
+            client.headers["Authorization"] = f"Bearer {r.json()['access_token']}"
+            for i, (bbox, z) in enumerate(_vragen(10, extra["midden"], 20)):
+                params = {"bbox": bbox, "z": z, **filters[namen[i % len(namen)]][1]}
+                client.get("/api/v1/photos/map", params=params)
+            for ronde in range(1, RONDES + 1):
+                tijden: dict[str, list[float]] = {soort: [] for soort in poorten}
+                for i, (bbox, z) in enumerate(_vragen(10 + ronde, extra["midden"], PER_RONDE)):
+                    naam = namen[(i + ronde) % len(namen)]
+                    soort, f = filters[naam]
+                    begin = time.perf_counter()
+                    r = client.get("/api/v1/photos/map", params={"bbox": bbox, "z": z, **f})
+                    tijd = (time.perf_counter() - begin) * 1000
+                    tijden[soort].append(tijd)
+                    per_filter[naam].append(tijd)
+                    if r.status_code != 200:
+                        fout.append(f"{naam} z={z}: {r.status_code}")
+                        continue
+                    fotos[naam] += sum(c["n"] for c in r.json()["cells"])
+                for soort, t in tijden.items():
+                    rondes[soort].append(t)
+    finally:
+        app.stop()
+    p95 = {soort: statistics.median(_p(t, 0.95) for t in r) for soort, r in rondes.items()}
+    uitkomst = {
+        "sqlite": sqlite3.sqlite_version,
+        "filters": {naam: {"poort": soort, **f} for naam, (soort, f) in filters.items()},
+        "p95": p95,
+        "p95_per_ronde": {soort: [_p(t, 0.95) for t in r] for soort, r in rondes.items()},
+        "poorten": poorten,
+        "per_filter": {
+            naam: {"p50": _p(t, 0.5), "p95": _p(t, 0.95), "max": max(t), "fotos": fotos[naam]}
+            for naam, t in per_filter.items()
+        },
+        "fout": fout,
+    }
+    niet = [
+        f"{soort}: p95 {p95[soort]:.1f} > {poort:.0f}"
+        for soort, poort in poorten.items()
+        if p95[soort] > poort
+    ]
+    if fout:
+        niet.append(f"fouten {len(fout)}")
+    uitkomst["poort"] = {"gehaald": not niet, "niet": niet}
+    verslag = "\n".join([
+        "=== kaart met een filter ===",
+        f"SQLite {sqlite3.sqlite_version}, dezelfde boom; {len(namen)} filters om de beurt",
+        *(
+            f"GET /photos/map met een filter op {'photo_geo' if soort == 'geo' else 'node'}: "
+            f"p95 {p95[soort]:.1f} ms (rondes "
+            + ", ".join(f"{x:.1f}" for x in uitkomst["p95_per_ronde"][soort])
+            + f"), poort {poorten[soort]:.0f} ms"
+            for soort in poorten
+        ),
+        *(
+            f"  {naam} ({filters[naam][0]}): p50 {v['p50']:.1f}, p95 {v['p95']:.1f}, "
+            f"max {v['max']:.1f} ms, {v['fotos']} foto's in de cellen"
+            for naam, v in uitkomst["per_filter"].items()
+        ),
+        "poorten: gehaald" if not niet else "poorten: NIET: " + "; ".join(niet),
+        "=== einde kaart met een filter ===",
+    ])  # fmt: skip
+    print(verslag)
+    if map_ := os.environ.get("ZOEK_PERF_UIT"):
+        Path(map_).mkdir(parents=True, exist_ok=True)
+        (Path(map_) / "fotokaart_filters.json").write_text(json.dumps(uitkomst, indent=2) + "\n")
+        (Path(map_) / "fotokaart_filters.txt").write_text(verslag + "\n")
+    # Elk filter vond iets (anders meet hij niets)
+    assert all(fotos.values()), fotos
     assert not niet, niet

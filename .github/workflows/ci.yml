@@ -153,7 +153,7 @@ jobs:
           set -o pipefail
           ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
             tests/photos/test_memories_perf.py | tee "$RUNNER_TEMP/zoek-perf/herinneringen_log.txt"
-      - name: §4.4 de kaart binnen 150 ms bij 55.000 foto's met een plek (Z3; de poort is hard)
+      - name: §4.4 de kaart binnen 150 ms bij 55.000 foto's met een plek, ook met een filter (Z3; de poorten zijn hard)
         if: ${{ !cancelled() }}
         run: |
           set -o pipefail
@@ -205,6 +205,7 @@ jobs:
           if [ -f "$d/zoek_100k.txt" ]; then cat "$d/zoek_100k.txt"; else echo "§4.4: liep niet of brak af"; fi
           if [ -f "$d/herinneringen.txt" ]; then cat "$d/herinneringen.txt"; else echo "§4.4 herinneringen: liep niet of brak af"; fi
           if [ -f "$d/fotokaart.txt" ]; then cat "$d/fotokaart.txt"; else echo "§4.4 kaart: liep niet of brak af"; fi
+          if [ -f "$d/fotokaart_filters.txt" ]; then cat "$d/fotokaart_filters.txt"; else echo "§4.4 kaart met een filter: liep niet of brak af"; fi
           if [ -f "$d/duplicaten.txt" ]; then cat "$d/duplicaten.txt"; else echo "§4.4 duplicaten: liep niet of brak af"; fi
           echo "S6: $(cat "$d/kaart.txt" 2> /dev/null || echo "liep niet")"
           echo "S6 web/public/kaart: $(cat "$d/kaart-web.txt" 2> /dev/null || echo "niet gelijk of liep niet")"
