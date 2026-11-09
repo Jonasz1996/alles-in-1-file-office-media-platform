@@ -100,7 +100,8 @@ jobs:
     runs-on: ubuntu-24.04
     container: python:3.12-slim
     # §4.4 (Z1) bouwt een boom van 100.000 en meet zes rollen over HTTP: ±20 min op 3 cores; de
-    # herinneringen (Z6) bouwen er nog een en meten één route: ±3 min; de kaart (Z3) ook: ±2 min
+    # herinneringen (Z6) bouwen er nog een en meten één route: ±3 min; de kaart en de duplicaten
+    # (Z3) ook: elk ±2,5 min
     timeout-minutes: 75
     env:
       UV_PYTHON_PREFERENCE: only-system
@@ -158,6 +159,12 @@ jobs:
           set -o pipefail
           ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
             tests/photos/test_map_perf.py | tee "$RUNNER_TEMP/zoek-perf/fotokaart_log.txt"
+      - name: §4.4 de duplicaten binnen 300 ms bij 55.000 foto's (Z3; de poort is hard)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
+            tests/photos/test_dupes_perf.py | tee "$RUNNER_TEMP/zoek-perf/duplicaten_log.txt"
       - name: S10 de vormen van Keuze 4a (tools/zoekbench/bench.py --los --vormen)
         if: ${{ !cancelled() }}
         run: |
@@ -191,6 +198,7 @@ jobs:
           if [ -f "$d/zoek_100k.txt" ]; then cat "$d/zoek_100k.txt"; else echo "§4.4: liep niet of brak af"; fi
           if [ -f "$d/herinneringen.txt" ]; then cat "$d/herinneringen.txt"; else echo "§4.4 herinneringen: liep niet of brak af"; fi
           if [ -f "$d/fotokaart.txt" ]; then cat "$d/fotokaart.txt"; else echo "§4.4 kaart: liep niet of brak af"; fi
+          if [ -f "$d/duplicaten.txt" ]; then cat "$d/duplicaten.txt"; else echo "§4.4 duplicaten: liep niet of brak af"; fi
           echo "S6: $(cat "$d/kaart.txt" 2> /dev/null || echo "liep niet")"
 
   acme:
