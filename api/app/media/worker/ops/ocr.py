@@ -35,8 +35,9 @@ komen in stukken: {"ev": "result", "data": {"part": i, "words": [...]}}, elk ≤
 
 done: er is tekst; none: geen woord met genoeg zekerheid, of (code ocr_missing) geen tesseract op
 deze machine (een ouder image of een eigen build; caps zegt dan ocr: false); failed: de bron is
-niet te lezen (error), de PGM klopt niet (ocr_bad_image) of het duurde te lang (too_slow). Geen
-tekst van de pagina in een fout, een log of de staart van stderr.
+niet te lezen (error), de PGM klopt niet (ocr_bad_image) of het duurde te lang (too_slow: de
+wandklok of RLIMIT_CPU van kind 1, of ocr_s van een herkenning). Geen tekst van de pagina in
+een fout, een log of de staart van stderr.
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import time
 from collections.abc import Iterable
 
@@ -387,6 +389,8 @@ async def _kind1(ctx: Context) -> tuple[int, int, bytes, dict] | dict:
         os.close(r)
         sock.close()
     if not pixels:
+        if done.rc == -signal.SIGXCPU:  # RLIMIT_CPU (child_cpu_s): te veel werk voor één pagina
+            return _summary("failed", "too_slow")
         # niets op de pipe: kind 1 kon de bron niet lezen (of zweeg)
         error = "kind 1 gaf niets"
         with contextlib.suppress(ValueError, TypeError, AttributeError):
