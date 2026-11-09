@@ -6,7 +6,7 @@ Alles gaat door de echte code: het voorbeeld van 256 zoals de preview-taak het s
 (render_meta.run_meta, hier in dit proces), de kandidaten uit blob_hash (photo_hash.candidates),
 het niveau (photo_hash.levels) en de klieken (dupes.groups.cliques).
 
-- De grenzen liggen hier vast, ook de gemeten MAD64 en die per blok van 8 × 8 (docs/fase-6/z3.md).
+- De grenzen liggen hier vast, ook de gemeten MAD64 en die per blok van 4 × 4 (docs/fase-6/z3.md).
 - De varianten van V5: half zo groot en JPEG q35 zijn "zeker"; 3–8% bijgesneden en ±4° gedraaid
   zijn nooit "zeker" (hooguit "lijkt").
 - Vlak is geen hash: de zwarte en de muur-foto's van §3.6 krijgen state flat.

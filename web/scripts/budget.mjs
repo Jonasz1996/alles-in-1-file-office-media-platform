@@ -115,6 +115,20 @@ export const ZOEK_GROUPS = [
 /** De wereld van de kaart (Z5, Keuze 31): public/kaart/world-110m.<hash>.json. */
 export const MAP_DATA = /^kaart\/[^/]+\.json$/;
 
+/** De rijen van de wereld van de kaart: elk bestand onder kaart/ (gzip, via size) tegen mapData.
+ * Geen wereld in de dist is een fout: dan blijft de kaart leeg (review golf 3, contract F4). */
+export function mapDataRows(distFiles, size) {
+  const worlds = [...distFiles].filter((f) => MAP_DATA.test(f)).sort();
+  if (worlds.length === 0) {
+    const detail = "geen dist/kaart/world-110m.<hash>.json; tools/kaart/maak_wereld.py";
+    return [{ name: "mapData ontbreekt (Z5)", size: 0, limit: LIMITS.mapData, ok: false, detail }];
+  }
+  return worlds.map((f) => {
+    const n = size(f);
+    return { name: `mapData ${f}`, size: n, limit: LIMITS.mapData, ok: n <= LIMITS.mapData, detail: "" };
+  });
+}
+
 /** Een highlighter of worker mag groter zijn. */
 const HEAVY = /(\.worker\.ts|highlight)/i;
 
@@ -301,11 +315,10 @@ function main() {
     const group = extra(roots, [area]);
     check(`${limit} (${pkg})`, sum(group), LIMITS[limit], [...group].sort().join(", "));
   }
-  const worlds = [...distFiles].filter((f) => MAP_DATA.test(f)).sort();
-  if (worlds.length === 0) {
-    rows.push({ name: "mapData (nog niet gebouwd, Z5)", size: 0, limit: LIMITS.mapData, ok: true, detail: "" });
+  for (const r of mapDataRows(distFiles, gz)) {
+    rows.push(r);
+    if (!r.ok) problems.push(r.size ? `${r.name}: ${kb(r.size)} > ${kb(r.limit)}` : `${r.name} (${r.detail})`);
   }
-  for (const f of worlds) check(`mapData ${f}`, gz(f), LIMITS.mapData);
 
   // 5. Elk ander lazy chunk apart
   let lazyCount = 0;
