@@ -11,6 +11,9 @@
 # Office uit: curl … | OFFICE=uit bash. Weer aan: OFFICE=aan.
 # Media (fase 5) draait standaard afgeschermd in een eigen container. Nooduitgang, zonder die
 # afscherming: curl … | MEDIA_SANDBOX=uit bash. Weer afgeschermd: MEDIA_SANDBOX=aan.
+# Plaatsnamen en landen bij foto's (fase 6): het script haalt twee bronnen op. Uit: curl … |
+# PLAATSEN=uit bash. Vóór elke update maakt het een reservekopie van de database in
+# <data>/backup (zonder gezichten en beeld); lukt die niet, dan stopt het vóór er iets verandert.
 #
 # Voor tests (Jonas heeft ze niet nodig): PLATFORM_REPO (ook een lokaal pad of file://),
 # PLATFORM_SRC_REF (een commit of tag in plaats van de branch) en PLATFORM_ROOT (in plaats van
@@ -78,6 +81,18 @@ want_media() {
   esac
 }
 
+# En voor plaatsnamen (fase 6, Keuze 29): PLAATSEN uit de omgeving wint van .env. Alleen aan of
+# uit.
+want_places() {
+  case "${PLAATSEN-}" in
+    "" | aan | uit) printf '%s' "${PLAATSEN-}" ;;
+    *)
+      echo "PLAATSEN moet aan of uit zijn (nu: $PLAATSEN)." >&2
+      return 1
+      ;;
+  esac
+}
+
 # Na het maken of lezen van .env: de sleutels van office erbij, nooit overschreven. Een
 # gevraagde OFFICE vervangt daarna de waarde.
 merge_env() {
@@ -94,6 +109,17 @@ office_supported() { [ -f "$SRC/infra/single/compose.office.yaml" ]; }
 
 # En media? 0.6.0 (terugrollen, Keuze 47) heeft het nog niet.
 media_supported() { [ -f "$SRC/infra/single/compose.media.yaml" ]; }
+
+# En plaatsnamen? 0.7.1 (terugrollen, §3.10) heeft ze nog niet.
+places_supported() { [ -f "$SRC/api/app/geo/load.py" ]; }
+
+# Na het maken of lezen van .env, als de versie plaatsnamen heeft: PLAATSEN=aan erbij als hij
+# ontbreekt. Een bestaande waarde blijft; een gevraagde PLAATSEN vervangt hem.
+merge_places_env() {
+  add_key PLAATSEN aan
+  [ -z "$1" ] || set_key PLAATSEN "$1"
+  chmod 600 "$ENV_FILE"
+}
 
 # Na het maken of lezen van .env, als de versie media heeft. Een bestaande waarde blijft; een
 # gevraagde MEDIA_SANDBOX vervangt hem. MEDIA_WORKER_KEY (de sleutel waarmee de worker zich bij
@@ -128,6 +154,121 @@ decide_media() {
 
 # De mappen voor media en de import, van de gebruiker van de app (10001)
 media_dirs() { install -d -m 750 -o 10001 -g 10001 "$DATA_ROOT/media" "$DATA_ROOT/import"; }
+
+# Na het lezen van .env: een andere waarde dan aan of uit (met de hand bewerkt) zou de nieuwe app
+# niet laten starten (PLATFORM_PLACES, compose.yaml). Dan stopt het script hier, vóór er iets
+# veranderd is aan de app.
+check_places() {
+  places_supported || return 0
+  case "${PLAATSEN:-aan}" in
+    aan | uit) return 0 ;;
+  esac
+  echo "PLAATSEN in $ENV_FILE moet aan of uit zijn (nu: $PLAATSEN). Zet het goed en draai dit"
+  echo "script opnieuw; de app is niet aangeraakt."
+  return 1
+}
+
+# De twee bronnen voor plaatsnamen en landen (Keuze 29): naam, bytes, sha256 en adres. Gelijk aan
+# api/app/geo/load.py (LANDEN, PLAATSEN) en tools/geo/haal.py; een test vergelijkt ze.
+geo_bronnen() {
+  cat <<'BRONNEN'
+ne_10m_admin_0_countries.geojson 13287234 239eec57ac17f100a11e2536cffc56752c318b50ae765b0918ff7aab4ce8f255 https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_0_countries.geojson
+reverse_geocoder-1.5.1.tar.gz 2246559 2a2e781b5f69376d922b78fe8978f1350c84fce0ddb07e02c834ecf98b57c75c https://files.pythonhosted.org/packages/0b/0f/b7d5d4b36553731f11983e19e1813a1059ad0732c5162c01b3220c927d31/reverse_geocoder-1.5.1.tar.gz
+BRONNEN
+}
+
+# Staat dit bestand er goed: precies zoveel bytes en deze sha256?
+geo_ok() {
+  [ -f "$1" ] && [ "$(stat -c %s "$1")" = "$2" ] && [ "$(sha256sum "$1" | cut -d' ' -f1)" = "$3" ]
+}
+
+# Stap 2 van §3.10: de bronnen naar DATA_ROOT/geo, als PLAATSEN=aan en ze er nog niet (goed)
+# staan. Elk bestand gaat via naam.part en komt pas op zijn plek als grootte en sha256 kloppen.
+# Breekt nooit af: lukt het niet, dan "Plaatsnamen: niet geladen", en de volgende run probeert
+# het opnieuw. De app bouwt er bij de start places.sqlite van (±1 minuut). Zet GEO_STATE: uit,
+# klaar (stonden er al), nieuw (net opgehaald), mislukt, of leeg (deze versie heeft het niet).
+geo_download() {
+  local dir=$DATA_ROOT/geo name size sha url part failed=0 new=0
+  GEO_STATE=""
+  places_supported || return 0
+  if [ "${PLAATSEN:-aan}" = uit ]; then
+    GEO_STATE=uit
+    echo "Plaatsnamen: uit (PLAATSEN=uit); er wordt niets opgehaald."
+    return 0
+  fi
+  install -d -m 750 -o 10001 -g 10001 "$dir"
+  while read -r name size sha url; do
+    geo_ok "$dir/$name" "$size" "$sha" && continue
+    part=$dir/$name.part
+    rm -f "$part"
+    if curl -fsSL --retry 2 --connect-timeout 20 --max-time 600 --max-filesize "$size" -o "$part" "$url" </dev/null &&
+      geo_ok "$part" "$size" "$sha"; then
+      chown 10001:10001 "$part"
+      chmod 640 "$part"
+      mv -f "$part" "$dir/$name"
+      new=1
+    else
+      rm -f "$part"
+      failed=1
+      echo "Kon $name niet ophalen, of de sha256 klopt niet ($url)."
+    fi
+  done < <(geo_bronnen)
+  if [ "$failed" = 1 ]; then
+    GEO_STATE=mislukt
+    echo "Plaatsnamen: niet geladen. Het platform werkt verder zonder; de volgende run probeert het opnieuw."
+  elif [ "$new" = 1 ]; then
+    GEO_STATE=nieuw
+    echo "Plaatsnamen: de bronnen staan klaar in $dir; de app laadt ze bij de start (±1 minuut)."
+  else
+    GEO_STATE=klaar
+    echo "Plaatsnamen: de bronnen staan er al ($dir)."
+  fi
+}
+
+# Stap 4 van §3.10 (Keuze 52): een reservekopie van de database, terwijl de oude app nog draait,
+# met het image dat er nu is (ook dat van 0.7.1) en alleen de standaardbibliotheek. De tekst is
+# api/app/backup.py van de broncode die nu klaarstaat; app.cli db-backup gebruikt dezelfde. Hij
+# heet naar de alembic-head: DATA_ROOT/backup/platform-<head>-<tijd>.db, rechten 600, van de
+# gebruiker van de app, zonder gezichten en beeld. Per head blijft de nieuwste. Een eerste
+# installatie (nog geen database) slaat dit over. Lukt de kopie niet, dan stopt het script: er is
+# dan nog niets veranderd aan de app, de database en office. Zet BACKUP_FILE.
+reservekopie() {
+  local text out
+  BACKUP_FILE=""
+  if [ ! -f "$DATA_ROOT/platform.db" ]; then
+    echo "Reservekopie: nog geen database (eerste installatie)."
+    return 0
+  fi
+  if [ ! -f "$SRC/api/app/backup.py" ]; then
+    echo "Reservekopie: deze versie van het platform kent hem nog niet; overgeslagen."
+    return 0
+  fi
+  text=$(cat "$SRC/api/app/backup.py")
+  install -d -m 700 -o 10001 -g 10001 "$DATA_ROOT/backup"
+  if ! out=$("${compose[@]}" run --rm --no-deps -T platform python -I -c "$text" /data/platform.db /data/backup </dev/null); then
+    echo "De reservekopie van de database lukte niet (de melding staat hierboven). Er is nog niets"
+    echo "veranderd: de app draait zoals hij draaide. Los het op en draai dit script opnieuw."
+    return 1
+  fi
+  BACKUP_FILE=$DATA_ROOT/backup/$(basename "${out##*$'\n'}")
+  echo "Reservekopie: $BACKUP_FILE"
+}
+
+# Na de app: de bronnen zijn in deze run opgehaald, maar de app is niet opnieuw gestart (hetzelfde
+# image en dezelfde instellingen). Dan bouwt geo-load places.sqlite nu, in de draaiende app; de app
+# opent hem zelf bij de volgende vraag. Breekt nooit af.
+geo_load_running() {
+  [ "${GEO_STATE-}" = nieuw ] || return 0
+  [ -n "$1" ] && [ "$1" = "$2" ] || return 0
+  echo "Plaatsnamen laden (±1 minuut)…"
+  "${compose[@]}" exec -T platform python -m app.cli geo-load </dev/null ||
+    echo "Let op: plaatsnamen laden lukte niet (zie hierboven); het platform werkt verder."
+}
+
+# De container van de app (draaiend), of niets
+platform_container() {
+  docker ps -q --filter "label=com.docker.compose.project=$PROJECT" --filter label=com.docker.compose.service=platform | head -n 1
+}
 
 # overlay2, of overlayfs bij Docker 29 met de opslag van containerd (M8). Bij vfs wordt het image
 # vele malen groter.
@@ -430,7 +571,7 @@ broncode() {
 }
 
 instellingen() {
-  local want=$1 want_m=$2
+  local want=$1 want_m=$2 want_p=${3-}
   mkdir -p "$PLATFORM_ROOT"
   if [ -f "$ENV_FILE" ] && grep -q '^POSTGRES_PASSWORD=' "$ENV_FILE"; then
     # Instellingen van de eerste versie (met Traefik, PostgreSQL en SeaweedFS)
@@ -468,6 +609,13 @@ ENV
     add_key MEDIA_SANDBOX "$want_m"
     set_key MEDIA_SANDBOX "$want_m"
   fi
+  if places_supported; then
+    merge_places_env "$want_p"
+  elif [ -n "$want_p" ]; then
+    # Een versie zonder plaatsnamen (terugrollen naar 0.7.1): de wens bewaren, verder niets
+    add_key PLAATSEN "$want_p"
+    set_key PLAATSEN "$want_p"
+  fi
   chmod 600 "$ENV_FILE"
   # shellcheck disable=SC1090
   . "$ENV_FILE"
@@ -498,10 +646,12 @@ wait_health() {
 }
 
 main() {
-  local want want_m old_app new_app previous="" pin="" container
-  # Eerst: OFFICE en MEDIA_SANDBOX uit de omgeving, vóór er een .env gelezen wordt (M13)
+  local want want_m want_p old_app new_app previous="" pin="" container app_before app_after
+  # Eerst: OFFICE, MEDIA_SANDBOX en PLAATSEN uit de omgeving, vóór er een .env gelezen wordt (M13)
   want=$(want_office) || exit 1
   want_m=$(want_media) || exit 1
+  want_p=$(want_places) || exit 1
+  GEO_STATE="" BACKUP_FILE=""
   check_host
 
   stap "Pakketten"
@@ -514,7 +664,13 @@ main() {
   broncode
 
   stap "Instellingen"
-  instellingen "$want" "$want_m"
+  instellingen "$want" "$want_m" "$want_p"
+  check_places || exit 1
+
+  if places_supported; then
+    stap "Plaatsnamen"
+    geo_download
+  fi
 
   stap "Office"
   decide_office
@@ -543,6 +699,8 @@ main() {
   stap "Platform bouwen en starten (de eerste keer duurt dit een paar minuten)"
   watchers
   checkpoint
+  reservekopie || exit 1
+  app_before=$(platform_container)
   if [ "$OFFICE_ON" = 0 ] && [ -n "$container" ]; then
     # Eerst DS netjes stoppen, terwijl de app er nog is: zo vindt zijn laatste opslag de app
     echo "Office stoppen (slaat open documenten op)…"
@@ -557,6 +715,8 @@ main() {
     "${compose[@]}" logs --tail 50 platform
     exit 1
   fi
+  app_after=$(platform_container)
+  geo_load_running "$app_before" "$app_after"
 
   if [ "$MEDIA_ON" = 1 ] || [ "$MEDIA_LOCAL" = 1 ]; then
     stap "Media starten"
@@ -621,6 +781,7 @@ KLAAR
     office_supported && echo "  Aan: $script | ${pre}OFFICE=aan bash"
   fi
   slot_media "$script" "$pre"
+  slot_search "$script" "$pre"
   cat <<KLAAR
 
 Instellingen: $ENV_FILE
@@ -632,6 +793,29 @@ KLAAR
       echo "Map '$oud' van de eerste versie wordt niet meer gebruikt; die mag weg."
     fi
   done
+}
+
+# De regels over zoeken en foto's in de eindtekst (fase 6, §3.10 stap 7): zoeken, de plaatsnamen
+# (en hoe het verder kan) en de reservekopie van deze run. Een versie zonder fase 6: niets.
+slot_search() {
+  local script=$1 pre=$2
+  places_supported || return 0
+  echo "Zoeken op naam werkt meteen. De inhoud wordt nu op de achtergrond gelezen; volg het op /beheer → Zoeken en foto's."
+  case "${GEO_STATE-}" in
+    uit)
+      echo "Plaatsnamen: uit (PLAATSEN=uit)."
+      echo "  Aan: $script | ${pre}PLAATSEN=aan bash"
+      ;;
+    mislukt)
+      echo "Plaatsnamen: niet geladen (de download lukte niet)."
+      echo "  Opnieuw proberen: $script | ${pre}bash"
+      ;;
+    nieuw | klaar)
+      echo "Plaatsnamen: aan."
+      echo "  Uit: $script | ${pre}PLAATSEN=uit bash"
+      ;;
+  esac
+  [ -z "${BACKUP_FILE-}" ] || echo "Reservekopie van vóór deze run: $BACKUP_FILE"
 }
 
 # De regels over media in de eindtekst: aan (afgeschermd), of waarom niet, en hoe het verder kan

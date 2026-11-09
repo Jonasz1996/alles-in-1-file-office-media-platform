@@ -23,5 +23,8 @@ services:
       PLATFORM_SECURE_COOKIES: ${SECURE_COOKIES:-false}
       # De grootste upload in bytes (fase 5, M10): standaard 50 GiB, voor een film
       PLATFORM_MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-53687091200}
+      # Plaatsnamen en landen bij foto's (fase 6, Keuze 29): aan of uit. install.sh haalt de
+      # bronnen naar DATA_ROOT/geo; de app bouwt er bij de start places.sqlite van
+      PLATFORM_PLACES: ${PLAATSEN:-aan}
     volumes:
       - ${DATA_ROOT:?}:/data

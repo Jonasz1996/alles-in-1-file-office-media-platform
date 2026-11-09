@@ -541,8 +541,8 @@ unset OFFICE
 echo "== curl | bash: geen commando leest de rest van het script van stdin"
 # Bij `curl … | bash` leest bash het script van stdin. Een `docker run` of `compose exec` die
 # stdin openhoudt, eet de rest van het script op; dan stopt het zonder melding.
-readers=$(grep -nE '(docker run|compose\[@\]\}" exec) ' "$install_sh" | grep -v '</dev/null' || true)
-check "elke docker run en compose exec krijgt </dev/null" test -z "$readers"
+readers=$(grep -nE '(docker run|compose\[@\]\}" (exec|run)) ' "$install_sh" | grep -v '</dev/null' || true)
+check "elke docker run, compose run en compose exec krijgt </dev/null" test -z "$readers"
 [ -z "$readers" ] || printf '      %s\n' "$readers"
 
 echo

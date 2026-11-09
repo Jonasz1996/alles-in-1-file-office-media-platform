@@ -28,8 +28,9 @@ vraagt hij of album-items van een regel die niet gedeeld worden eerst uit hun al
 db-backup maakt een reservekopie van de database met sqlite3.Connection.backup, terwijl de app
 draait (Keuze 52 van fase 6). Het bestand komt in /data/backup en heet naar de alembic-head en
 de tijd: platform-0010-<tijd>.db. Per head blijft de nieuwste; zo staat de kopie van vóór een
-migratie er na nieuwe kopieën nog. Het migreert niets. install.sh maakt zijn eigen kopie, met
-alleen de standaardbibliotheek, want dit commando bestaat in oudere images niet.
+migratie er na nieuwe kopieën nog. Het migreert niets. De kopie heeft geen gezichten en geen
+beeld. install.sh draait dezelfde tekst (app/backup.py, alleen de standaardbibliotheek) met het
+image dat er nog draait, want dit commando bestaat in oudere images niet.
 
 office-checkpoint vraagt de document server om alle open documenten tussentijds op te slaan
 en wacht daar hooguit --wait seconden op (vóór het stoppen of bijwerken van office). Het
@@ -75,14 +76,10 @@ doet het zelf bij de start als hij ontbreekt; exitcode 1 als een bron ontbreekt 
 import argparse
 import asyncio
 import json
-import os
-import re
 import sqlite3
 import sys
 import uuid
 from collections.abc import Awaitable, Callable
-from contextlib import closing
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +91,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, make_url, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app import previews
+from app import backup, previews
 from app.config import Settings, get_settings
 from app.db import get_engine
 from app.geo import load as geo_load
@@ -233,19 +230,8 @@ async def unshared_rule_items(settings: Settings) -> int:
 
 
 BACKUP_DIR = "backup"
-HEAD_RE = re.compile(r"^[A-Za-z0-9_]{1,40}$")
-# platform-<head>-<tijd>.db, met de tijd in UTC. install.sh gaat zijn eigen kopie schrijven
-# zonder de milliseconden (Z7, §3.10); die naam hoort er dus ook bij.
-BACKUP_RE = re.compile(
-    r"^platform-(?P<head>[A-Za-z0-9_]{1,40})-(?P<tijd>\d{8}T\d{6}(?:\.\d{3})?Z)\.db$"
-)
-
-
-def now_stamp() -> str:
-    """De tijd in de naam van een kopie: UTC, tot milliseconden, zo dat namen op volgorde
-    staan."""
-    moment = datetime.now(UTC)
-    return f"{moment:%Y%m%dT%H%M%S}.{moment.microsecond // 1000:03d}Z"
+# De kopie zelf staat in app/backup.py: één tekst, die install.sh ook draait (Z7, Keuze 52)
+BACKUP_RE = backup.NAME_RE
 
 
 def sqlite_file(settings: Settings) -> Path:
@@ -256,70 +242,21 @@ def sqlite_file(settings: Settings) -> Path:
     return Path(url.database)
 
 
-def read_head(conn: sqlite3.Connection) -> str | None:
-    """De alembic-head in deze database (None: geen of meer dan één)."""
-    if not conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='alembic_version'"
-    ).fetchone():
-        return None
-    rows = conn.execute("SELECT version_num FROM alembic_version").fetchall()
-    if len(rows) != 1 or not HEAD_RE.match(str(rows[0][0])):
-        return None
-    return str(rows[0][0])
-
-
-def keep_newest_per_head(folder: Path) -> list[Path]:
-    """Per head blijft de nieuwste kopie; de rest gaat weg (Keuze 52). De naam draagt de tijd,
-    dus de nieuwste is de laatste op naam. Zo blijft de kopie van vóór een migratie staan: die
-    heeft een eigen head. Wat niet naar een kopie van ons lijkt, blijft ook staan."""
-    found: dict[str, list[Path]] = {}
-    for path in sorted(folder.glob("platform-*.db")):
-        match = BACKUP_RE.match(path.name)
-        if match is not None:
-            found.setdefault(match["head"], []).append(path)
-    newest = []
-    for paths in found.values():
-        newest.append(paths[-1])
-        for old in paths[:-1]:
-            old.unlink(missing_ok=True)
-    return sorted(newest)
-
-
 def db_backup(settings: Settings) -> Path:
     """Een reservekopie van de database naar data_dir/backup, terwijl de app draait (Keuze 52).
 
-    sqlite3.Connection.backup geeft een kopie die klopt, ook met schrijvers erbij. Dit commando
-    migreert niets en raakt de database zelf niet aan. Het bestand heet naar de alembic-head en
-    de tijd; per head blijft de nieuwste.
+    sqlite3.Connection.backup geeft een kopie die klopt, ook met schrijvers erbij; de kopie heeft
+    geen gezichten en geen beeld (app/backup.py). Dit commando migreert niets en raakt de
+    database zelf niet aan. Het bestand heet naar de alembic-head en de tijd; per head blijft de
+    nieuwste.
     """
     source = sqlite_file(settings)
     if not source.exists():
         raise NoDatabase(source)
-    folder = settings.data_dir / BACKUP_DIR
-    folder.mkdir(parents=True, exist_ok=True)
-    folder.chmod(0o700)
-    with closing(sqlite3.connect(source)) as src:
-        src.execute("PRAGMA busy_timeout=5000")
-        head = read_head(src)
-        if head is None:
-            raise NoRevision(str(source))
-        target = folder / f"platform-{head}-{now_stamp()}.db"
-        for _ in range(2000):  # twee kopieën in dezelfde milliseconde: wacht op de volgende
-            if not target.exists():
-                break
-            target = folder / f"platform-{head}-{now_stamp()}.db"
-        part = target.with_name(target.name + ".part")
-        part.unlink(missing_ok=True)
-        try:
-            with closing(sqlite3.connect(part)) as dst:
-                src.backup(dst)
-            part.chmod(0o600)
-            os.replace(part, target)
-        except BaseException:
-            part.unlink(missing_ok=True)
-            raise
-    keep_newest_per_head(folder)
-    return target
+    try:
+        return backup.copy(source, settings.data_dir / BACKUP_DIR)
+    except backup.NoHead as exc:
+        raise NoRevision(str(source)) from exc
 
 
 async def office_checkpoint(settings: Settings, wait: float) -> int:
