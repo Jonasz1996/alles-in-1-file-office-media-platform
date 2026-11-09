@@ -105,14 +105,20 @@ jobs:
 
   # Fase 6, X1 (§4.6): OCR met de echte tesseract van Ubuntu en DejaVu Sans, met marker ocr:
   # tests/ocr/test_ocr_real.py (een worker in het proces met de echte opdracht ocr: recall, de
-  # vakjes in het beeld zoals de viewer het toont, de OSD alleen waar nodig, en de poort van §4.5:
-  # ≥ 8 pagina's per minuut op één core) en de scans van Z0 (tests/search/test_fixtures.py).
-  # Zonder tesseract, een taal of DejaVu faalt het; overslaan telt als mislukt. Aan het eind van
-  # het log "=== kort ===" met de regels "OCR:" (recall, vakjes, pagina's per minuut)
+  # vakjes in het beeld zoals de viewer het toont, de OSD alleen waar nodig, en ≥ 8 pagina's per
+  # minuut op één core over vier bronnen) en de scans van Z0 (tests/search/test_fixtures.py);
+  # dan e2e/test_zoek_ocr.py (marker ocr: de app met media en de lokale worker, een scan zonder
+  # tekstlaag en een foto van een bon, zoeken, de snippet, de markering in de viewer, en een
+  # kopie van Bram die Eva's tekst niet vindt); en als laatste de poort van §4.5 (hard): 100
+  # gemaakte scans van A4 op 300 dpi (0°, 3°, 7°, −5° en 90°) onder taskset -c 0, ≥ 8 pagina's
+  # per minuut (tests/ocr/poort.py). Zonder tesseract, een taal of DejaVu faalt het; overslaan
+  # telt als mislukt. Aan het eind van het log "=== kort ===" met de regels "OCR:", de uitkomst
+  # van de e2e en de regels "OCR-poort".
   ocr:
     name: OCR (echte tesseract, marker ocr)
     runs-on: ubuntu-24.04  # zoals api-media, zie de noot boven jobs
-    timeout-minutes: 20
+    # pytest ±2 min, de web-build en Chromium ±3 min, de e2e ±1 min, de poort ±4 min
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: api
@@ -121,11 +127,18 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-      - name: tesseract met nld, eng en osd, en DejaVu Sans
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # ffmpeg voor de lokale worker van de e2e (zoals e2e-media); de stap ocr zelf heeft hem
+      # niet nodig
+      - name: tesseract met nld, eng en osd, DejaVu Sans en ffmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-nld \
-            tesseract-ocr-eng tesseract-ocr-osd fonts-dejavu-core
+            tesseract-ocr-eng tesseract-ocr-osd fonts-dejavu-core ffmpeg
           tesseract --version | head -n 1
           tesseract --list-langs
           echo "cores: $(nproc)"
@@ -138,6 +151,33 @@ jobs:
             echo "OCR-tests overgeslagen" && exit 1
           fi
           grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/ocr.txt"
+      - name: Productie-build van de web-app
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Chromium voor Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      - name: e2e -m ocr (tekst in beeld in de echte app)
+        env:
+          E2E_ARTIFACTS: ${{ runner.temp }}/ocr-artefacten
+        run: |
+          set -o pipefail
+          taskset -c 0-2 uv run --with playwright python -m pytest ../e2e -m ocr -rs -s \
+            | tee "$RUNNER_TEMP/ocr-e2e.txt"
+          if grep -q "^SKIPPED" "$RUNNER_TEMP/ocr-e2e.txt"; then
+            echo "e2e van OCR overgeslagen" && exit 1
+          fi
+          grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/ocr-e2e.txt"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-ocr
+          path: ${{ runner.temp }}/ocr-artefacten
+          if-no-files-found: ignore
+      - name: De poort van §4.5 (100 scans, taskset -c 0, ≥ 8 pagina's per minuut)
+        run: |
+          set -o pipefail
+          taskset -c 0 uv run python -m tests.ocr.poort --json "$RUNNER_TEMP/ocr-poort.json" \
+            | tee "$RUNNER_TEMP/ocr-poort.txt"
       - name: Samenvatting
         if: always()
         run: |
@@ -146,6 +186,19 @@ jobs:
           if [ -f "$RUNNER_TEMP/ocr.txt" ]; then
             grep -o "OCR: .*" "$RUNNER_TEMP/ocr.txt" | sed 's/^/  /' || true
             tail -n 1 "$RUNNER_TEMP/ocr.txt" | sed 's/^/  /'
+          else
+            echo "  liep niet"
+          fi
+          echo "X1 e2e (e2e -m ocr):"
+          if [ -f "$RUNNER_TEMP/ocr-e2e.txt" ]; then
+            grep -o "X1 markering: .*" "$RUNNER_TEMP/ocr-e2e.txt" | sed 's/^/  /' || true
+            tail -n 1 "$RUNNER_TEMP/ocr-e2e.txt" | sed 's/^/  /'
+          else
+            echo "  liep niet"
+          fi
+          echo "X1 poort van §4.5 (tests/ocr/poort.py, taskset -c 0):"
+          if [ -f "$RUNNER_TEMP/ocr-poort.txt" ]; then
+            grep "^OCR-poort" "$RUNNER_TEMP/ocr-poort.txt" | sed 's/^/  /' || true
           else
             echo "  liep niet"
           fi
