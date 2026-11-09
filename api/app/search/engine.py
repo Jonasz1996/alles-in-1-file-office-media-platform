@@ -65,7 +65,7 @@ from app.access import Step
 from app.config import Settings, get_settings
 from app.models import Node, PhotoOcr, User
 from app.routers.files import describe, get_dir, is_trashed, tags_by_node
-from app.search import snippets
+from app.search import perhour, snippets
 from app.search.access import MAX_OR, Ranges, ranges_sql, search_ranges, second_check
 from app.search.deadline import STOP, deadline
 from app.search.filters import apply_all
@@ -576,12 +576,15 @@ class FtsEngine:
             return await self._page(
                 db, scope, page, parsed, more=more, partial=True, ranked=False, after=after
             )
+        perhour.note("deadline_b")  # /beheer (Z7): ronde B raakte de grens
         if p.after is not None:
             # Een volgende pagina van ronde B: geen namen ertussen, die waren er al
             return await self._page(db, scope, [], parsed, partial=True, ranked=False)
         # Ronde C: alleen de namen
         small = await self._small(conn, scope, parsed)
         c = await run(conn, names_select(parsed, scope, k, p.offset, small=small), C_MS, "names")
+        if c.hit and not stopped():
+            perhour.note("deadline_c")  # /beheer (Z7): ook ronde C raakte de grens
         return await self._page(
             db,
             scope,

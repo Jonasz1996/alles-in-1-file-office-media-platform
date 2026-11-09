@@ -80,6 +80,9 @@ class Step(StrEnum):
 VERSIONS: dict[Step, int] = {Step.TEXT: 1, Step.HASH: 1, Step.OCR: 1, Step.EMBED: 1}
 
 STATES = ("wait", "busy", "done", "none", "skip", "failed")
+# Gepauzeerd op /beheer (Z7, Keuze 51; app/search/admin.py zet en wist dit): de pomp van deze
+# rijen wijkt, zoals voor busy_elsewhere
+PAUSED: set[str] = set()
 OPEN = ("wait", "busy")
 MAX_TRIES = 3
 RETRY_AFTER = timedelta(minutes=1)  # na de eerste mislukte poging; daarna steeds dubbel
@@ -529,7 +532,7 @@ async def pump(settings: Settings, lane: str) -> int:
     """Eén batch van een stap in deze rij met werk (om de beurt per stap); geeft het aantal
     inhouden. Zet daarna de volgende job klaar: nu als er werk klaarstaat, anders bij de eerste
     nieuwe poging. jobs.Defer als de app moet wijken; een batch gaat dan terug op wait."""
-    if busy_elsewhere(settings):
+    if lane in PAUSED or busy_elsewhere(settings):
         raise jobs.Defer(DEFER_S)
     maker = _maker(settings)
     count = 0

@@ -18,6 +18,9 @@ de haken niets, en is de app precies 0.7.1.
   zodat X2 en X3 app/search/admin.py en routers/admin_search.py niet open hoeven. Zonder
   aanmelding is het blok None (de standaard van AdminSearch), en geven de schakelaar en het
   herbouwen 501 not_built("X2") of not_built("X3"), net als de stubs.
+  Z7 (golf 4) zette OCR (X1) erbij, op dezelfde manier: het blok AdminSearch.ocr (AdminOcr), de
+  schakelaar ocr in PATCH en POST rebuild {what: ocr}. Zonder aanmelding toont /beheer "OCR niet
+  geïnstalleerd" (app/search/admin.py) en geven schakelaar en herbouwen 501 not_built("X1").
 """
 
 from __future__ import annotations
@@ -89,17 +92,18 @@ def suggesters() -> list[SuggestFn]:
     return list(_suggest)
 
 
-# De delen van /admin/search die van X2 en X3 zijn, met hun pakket
-ADMIN_PARTS: dict[str, str] = {"faces": "X2", "beeld": "X3"}
+# De delen van /admin/search die van X1, X2 en X3 zijn, met hun pakket
+ADMIN_PARTS: dict[str, str] = {"faces": "X2", "beeld": "X3", "ocr": "X1"}
 # Welk veld van AdminSearchPatch bij welk deel hoort
-ADMIN_SWITCHES: dict[str, str] = {"faces_allowed": "faces", "beeld": "beeld"}
+ADMIN_SWITCHES: dict[str, str] = {"faces_allowed": "faces", "beeld": "beeld", "ocr": "ocr"}
 
 
 @dataclass(frozen=True)
 class AdminPart:
-    """De aanmelding van X2 (faces) of X3 (beeld) voor /admin/search. block: AdminFaces of
-    AdminBeeld; switch: faces_allowed of beeld uit de PATCH (X2: een verbod zet iedereen uit en
-    wist, Keuze 64; X3: Keuze 82); rebuild: POST rebuild met what faces of beeld."""
+    """De aanmelding van X1 (ocr), X2 (faces) of X3 (beeld) voor /admin/search. block: AdminOcr,
+    AdminFaces of AdminBeeld; switch: ocr, faces_allowed of beeld uit de PATCH (X2: een verbod
+    zet iedereen uit en wist, Keuze 64; X3: Keuze 82); rebuild: POST rebuild met what ocr, faces
+    of beeld."""
 
     block: Callable[[AsyncSession], Awaitable[Any]]
     switch: Callable[[AsyncSession, bool], Awaitable[None]]
@@ -109,10 +113,15 @@ class AdminPart:
 _admin: dict[str, AdminPart] = {}
 
 
-def register_admin(name: Literal["faces", "beeld"], part: AdminPart) -> None:
+def register_admin(name: Literal["faces", "beeld", "ocr"], part: AdminPart) -> None:
     if name not in ADMIN_PARTS:
         raise ValueError(name)
     _admin[name] = part
+
+
+def admin_registered(name: str) -> bool:
+    """Heeft het pakket van dit deel zich aangemeld? (PATCH kijkt dit vóór het iets verandert.)"""
+    return name in _admin
 
 
 async def admin_block(name: str, db: AsyncSession) -> Any:
