@@ -66,11 +66,14 @@ def _with_place(n: Any, user: User, column: str, value: Any) -> Any:
     """n is een eigen, levend bestand met een plek waarvan column (place_id of country) value is,
     en locatie staat niet op "uit"."""
     cols = getattr(n, "c", n)
-    geo = PhotoGeo.__table__.c
+    # Een eigen alias: de kaart en de plaatsen (photos_map.py) vragen zelf al uit photo_geo, en
+    # zonder alias zou de EXISTS naar die buitenste photo_geo wijzen en geen FROM meer hebben
+    g = PhotoGeo.__table__.alias("plek_filter")
+    geo = g.c
     return and_(
         own_live(n, user.id),
         photo_rows.not_off(user.id),
-        exists().where(geo.node_id == cols.id, own_live_geo(geo, user.id), geo[column] == value),
+        exists().where(geo.node_id == cols.id, own_live_geo(g, user.id), geo[column] == value),
     )
 
 

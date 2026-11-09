@@ -87,6 +87,42 @@ async def test_de_kaart_en_de_plaatsen_per_gebruiker(client, wereld):
     assert {i["id"] for i in items} == {str(w.ids[k]) for k in ("foto", "foto_kopie", "foto_klein")}
 
 
+async def test_de_filters_plaats_land_en_camera_op_de_kaart_en_de_plaatsen(client, wereld):
+    """De lijst Plaatsen op /fotos/kaart zet place, en /zoeken vraagt de naam van de plaats op met
+    GET /photos/places?place=…: de filters van zoeken werken ook op de kaart en de plaatsen (die
+    zelf al uit photo_geo vragen). Eva's drie foto's liggen in Utrecht, NL, camera fujifilm."""
+    w = wereld
+    eva = await kop(client, "eva")
+    alle = {str(w.ids[k]) for k in ("foto", "foto_kopie", "foto_klein")}
+    utrecht = {"id": W.PLAATS_ID, "name": "Utrecht", "admin1": "Utrecht", "country": "NL", "n": 3}
+    ja = (
+        {"place": W.PLAATS_ID},
+        {"country": "NL"},
+        {"country": " nl "},
+        {"camera": "Fujifilm"},
+        {"place": W.PLAATS_ID, "country": "NL", "camera": "fujifilm x-t30", "type": "image"},
+    )
+    nee = ({"place": W.PLAATS_ID + 1}, {"country": "FR"}, {"country": "N1"}, {"camera": "canon"})
+    for filters in ja + nee:
+        kaart = await get(client, eva, "/photos/map", bbox=VENSTER, z=8, **filters)
+        items = await get(client, eva, "/photos/map/items", bbox=VENSTER, **filters)
+        plaatsen = await get(client, eva, "/photos/places", **filters)
+        for r in (kaart, items, plaatsen):
+            assert r.status_code == 200, (filters, r.text)
+        if filters in ja:
+            assert sum(c["n"] for c in kaart.json()["cells"]) == 3, filters
+            assert {i["id"] for i in items.json()["items"]} == alle, filters
+            assert plaatsen.json() == {"places": [utrecht]}, filters
+        else:
+            assert kaart.json() == {"cells": []}, filters
+            assert items.json() == {"items": [], "cursor": None}, filters
+            assert plaatsen.json() == {"places": []}, filters
+    # Bram heeft een eigen kopie in Utrecht; Eva's plaats-id geeft hem alleen die ene
+    bram = await kop(client, "bram")
+    r = await get(client, bram, "/photos/places", place=W.PLAATS_ID)
+    assert r.json() == {"places": [{**utrecht, "n": 1}]}
+
+
 async def test_wat_naar_de_prullenbak_gaat_is_van_de_kaart(client, wereld):
     w = wereld
     eva = await kop(client, "eva")
