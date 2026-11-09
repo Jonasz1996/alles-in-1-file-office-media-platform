@@ -11,7 +11,12 @@ herinneringen, slimme albums en filters (samengevoegd op 8 november 2026; zie [z
 en z5.md): veertien bevindingen; twaalf hebben een reparatie met een test die zonder haar faalt,
 twee zijn documentatie (de bronnen in de README, `/over` komt met X2; een docstring). De kaart met een filter op
 datum, plaats of land haalt de poort van 150 ms; een filter dat `node` nodig heeft (soort, map,
-camera) heeft een eigen poort van 500 ms (Keuze 4a, z3.md Open). De review van golf 1 is
+camera) heeft een eigen poort van 500 ms (Keuze 4a, z3.md Open). De nacontrole van die review
+is gedaan ("De nacontrole (golf 3)" in z3.md en z5.md): elke regel op zich weggehaald; vier
+regels hadden geen test die rood werd (de start en `struct.error` bij een kapotte
+`places.sqlite`, de voorwaarde "uit" van de opruimronde, Inzoomen op de grens). Die tests zijn
+er nu. De losse web-image (`web/nginx.conf`) gaf de wereld van de kaart nog no-cache; nu
+immutable, zoals de API. Geen reparatie van de review bleek fout. De review van golf 1 is
 verwerkt ("De review (golf 1)" in z1.md en z2.md); de poorten van §4.4 zijn hier nu groen, ook 4
 tegelijk. De nacontrole van die review is gedaan ("De
 nacontrole (golf 1)" in z1.md en z2.md): vier tests erbij en drie aangevuld. Twee tests waren soms
@@ -20,7 +25,7 @@ De review van golf 2 is ook verwerkt ("De review (golf 2)" in z4.md en z6.md): v
 bevindingen, alle gedaan; elke reparatie in code heeft een test die zonder haar faalt (C6 en E
 zijn documentatie). De nacontrole daarvan is gedaan ("De nacontrole (golf 2)" in z4.md en z6.md):
 twee regels in de web (V1) hadden geen test die rood werd, en een verborgen herinnering kwam terug
-na een filter zonder treffers (D); beide hebben nu een test, D ook een reparatie. Niet gepusht.
+na een filter zonder treffers (D); beide hebben nu een test, D ook een reparatie. Gepusht tot en met golf 3.
 Het ontwerp is bouwontwerp revisie 3.
 
 ## Wat je koos
