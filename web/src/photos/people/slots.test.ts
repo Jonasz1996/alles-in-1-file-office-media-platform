@@ -36,6 +36,9 @@ describe("de plekken van Z6", () => {
     expect(photosPage).not.toMatch(/^import (?!type )[^;]*from "\.\/(people\/FilterBar|Memories)";/m);
     expect(photosPage).toContain("await topWait.current;");
     expect(photosPage).toContain('to="/zoeken?mode=image"');
+    // De ingangen naar de kaart en de duplicaten (golf 3), elk een gewone link
+    expect(photosPage).toContain('<Link to="/fotos/kaart" className="btn">');
+    expect(photosPage).toContain('<Link to="/dubbel" className="btn">');
   });
 
   it("een album: de regel lazy, en de vraag pas bij delen (dynamisch geladen)", () => {

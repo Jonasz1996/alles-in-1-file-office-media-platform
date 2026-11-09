@@ -2,6 +2,9 @@
 export default {
   title: "Foto's",
   albums: "Albums",
+  // De ingangen naar de kaart en de duplicaten (fase 6, Z5), naast Albums
+  map: "Kaart",
+  dupes: "Dubbele bestanden",
   album: "Album",
   addToAlbum: "Toevoegen aan album",
 

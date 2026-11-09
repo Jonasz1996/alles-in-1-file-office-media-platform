@@ -13,7 +13,7 @@ met alleen Tab, Shift+Tab, Enter, Spatie, Esc, de pijlen en typen. Nergens een k
 
 | Toets | Wat |
 |---|---|
-| Tab | na de kop: "Zoeken op beeld", "Albums", dan het blok Filters, de herinneringen (als die er zijn) en de tijdlijn |
+| Tab | na de kop: "Zoeken op beeld", "Kaart", "Dubbele bestanden" (sinds de samenvoeging van golf 3), "Albums", dan het blok Filters, de herinneringen (als die er zijn) en de tijdlijn |
 | Enter op "Zoeken op beeld" | naar `/zoeken?mode=image` (Keuze 81); de focus staat in het veld "Zoekwoorden" (de pagina van Z4, sinds de merge van golf 2) |
 | typen in "Persoon" | de lijst met je personen die zo heten (een woord van de naam begint met wat je typt, zonder accenten of hoofdletters) |
 | ↓ / ↑ in "Persoon" | door de lijst; is hij dicht, dan gaat hij open |

@@ -251,6 +251,13 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
                 {t("photos_people.filters.beeld")}
               </Link>
             )}
+            {/* Fase 6 (golf 3): de kaart en de duplicaten (Z5) hadden geen ingang op /fotos */}
+            <Link to="/fotos/kaart" className="btn">
+              {t("photos.map")}
+            </Link>
+            <Link to="/dubbel" className="btn">
+              {t("photos.dupes")}
+            </Link>
             <Link to="/albums" className="btn">
               {t("photos.albums")}
             </Link>
