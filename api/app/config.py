@@ -155,7 +155,7 @@ class Settings(BaseSettings):
     places: Literal["aan", "uit"] = "aan"
     index_defer_transcodes: int = 2  # index en ocr wachten bij zoveel transcodes
     # OCR (X1): Jonas koos ja (Vraag 1 en 15: de herkenning zit in het image). Aan; de rij ocr
-    # draait alleen met media aan (jobs.active_lanes), en zonder tesseract in de worker blijven
+    # draait alleen met media aan (jobs.active_lanes), en zonder OCR in de worker (caps) blijven
     # de rijen none met ocr_missing (Keuze 24)
     ocr_enabled: bool = True
     ocr_max_pages: int = 200  # per document

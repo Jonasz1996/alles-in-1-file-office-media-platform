@@ -9,7 +9,7 @@ POST /files/{id}/ocr zet het bestand vooraan in de rij ocr (app/ocr/step.py) en 
   opnieuw gelezen.
 - Iets anders (een map, een tekstbestand): 422 ocr_unsupported.
 - 503 ocr_off: OCR draait niet (media uit, PLATFORM_OCR_ENABLED uit, uit op /beheer, of een
-  worker zonder tesseract).
+  worker zonder OCR in caps).
 - 409 ocr_running: hij staat al in de rij of wordt nu gelezen. 409 ocr_has_text: een PDF met al
   ≥ 200.000 tekens tekst (C11).
 - 429 ocr_limit: per gebruiker hooguit ocr_per_hour (20) verzoeken per uur en ocr_pages_per_day

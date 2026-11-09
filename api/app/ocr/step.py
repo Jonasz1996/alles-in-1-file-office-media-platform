@@ -20,7 +20,7 @@ PLATFORM_OCR_ENABLED (jobs.active_lanes), één opdracht tegelijk, om de beurt p
   willen (store.photo_targets: een verzoek met "Tekst herkennen", of een eigenaar met "Tekst in
   foto's herkennen" aan). Eén keer Op.OCR; de tekst gaat naar photo_ocr van elk van die nodes
   (Keuze 25a), en search.ready alleen naar die eigenaar. Niemand wil hem (meer): skip.
-- **Geen tesseract** (caps ocr false, een ouder image): none met code ocr_missing, en de job
+- **Geen OCR in de worker** (caps ocr false, een ouder image): none met code ocr_missing, en de job
   ocr.recheck kijkt elke RECHECK_S of caps OCR meldt; dan gaan die rijen terug op wait (Keuze 24).
   Bij het starten kijkt hij ook (on_start).
 - **Uit op /beheer** (Setting "ocr" {"on": false}, het deel ocr van /admin/search): de pomp wijkt
@@ -151,7 +151,7 @@ def runs(settings: Settings) -> bool:
 
 async def available(db: AsyncSession, settings: Settings) -> bool:
     """Draait OCR nu? media en PLATFORM_OCR_ENABLED, de schakelaar van /beheer, en geen worker
-    waarvan bekend is dat hij geen tesseract heeft. Anders 503 ocr_off op POST."""
+    waarvan bekend is dat hij geen OCR kan (caps). Anders 503 ocr_off op POST."""
     if not runs(settings):
         return False
     if installed() is False:
@@ -418,7 +418,7 @@ async def announce_pdf(settings: Settings, sha: str) -> None:
         _publish([user_id], list(node_ids))
 
 
-# --- geen tesseract: later opnieuw kijken (Keuze 24) ---------------------------------------------
+# --- geen OCR in de worker: later opnieuw kijken (Keuze 24) ---------------------------------------
 
 
 async def recheck_later(db: AsyncSession, seconds: float = RECHECK_S) -> None:
