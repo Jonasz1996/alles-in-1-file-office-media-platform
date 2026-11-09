@@ -12,7 +12,7 @@ from sqlalchemy import delete, func, select
 
 from app import jobs, photo_rows
 from app.geo import places
-from app.models import Job
+from app.models import Job, PhotoPref
 from tests.factories import maker
 from tests.geo.hulp import (
     AMSTERDAM,
@@ -201,19 +201,26 @@ async def test_de_opruimronde_zet_geo_off_klaar_als_er_nog_rijen_zijn(
 ):
     """Een geo.off die definitief mislukte (of nooit klaarstond) laat rijen staan; de opruimronde
     (bij de start en daarna elk uur) zet geo.off klaar voor wie "uit" heeft en nog rijen heeft,
-    en voor niemand anders."""
-    h, _tokens = admin
+    en voor niemand anders: ook niet voor Bram, die rijen en een rij in photo_pref heeft (hij
+    zette herinneringen uit), met locatie "mij" (nacontrole golf 3)."""
+    h, tokens = admin
     await upload(client, h, "a.jpg", met_gps())
     bram_h, _bram = await person(client, h, "bram@example.com")
     van_bram = (await upload(client, bram_h, "b.jpg", met_gps("purple")))["id"]
     await verwerk(settings)
+    r = await client.patch("/api/v1/me/photo-settings", json={"memories": False}, headers=bram_h)
+    assert (r.status_code, r.json()["location"]) == (200, "mij"), r.text
     await zet(client, h, "uit")
     async with maker(settings)() as db:
         await db.execute(delete(Job).where(Job.type == photo_rows.OFF_TYPE))
         await db.commit()
+        assert len((await db.execute(select(PhotoPref.user_id))).all()) == 2
     assert len(await rijen(settings)) == 2
     assert photo_rows.SWEEP in jobs._housekeeping
     assert await photo_rows.sweep_off(settings) == 1
+    async with maker(settings)() as db:
+        klaar_voor = await db.scalars(select(Job.payload).where(Job.type == photo_rows.OFF_TYPE))
+        assert [p["user"] for p in klaar_voor] == [str(uid(tokens))]
     assert await photo_rows.sweep_off(settings) == 0  # staat al klaar
     await jobs.run_pending(settings)
     assert set(await rijen(settings)) == {van_bram}
