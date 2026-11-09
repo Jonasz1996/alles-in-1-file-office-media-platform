@@ -196,16 +196,18 @@ geo_download() {
     echo "Plaatsnamen: uit (PLAATSEN=uit); er wordt niets opgehaald."
     return 0
   fi
-  install -d -m 750 -o 10001 -g 10001 "$dir"
+  if ! install -d -m 750 -o 10001 -g 10001 "$dir"; then
+    GEO_STATE=mislukt
+    echo "Plaatsnamen: niet geladen ($dir is geen map). Het platform werkt verder zonder; de volgende run probeert het opnieuw."
+    return 0
+  fi
   while read -r name size sha url; do
     geo_ok "$dir/$name" "$size" "$sha" && continue
     part=$dir/$name.part
     rm -f "$part"
     if curl -fsSL --retry 2 --connect-timeout 20 --max-time 600 --max-filesize "$size" -o "$part" "$url" </dev/null &&
-      geo_ok "$part" "$size" "$sha"; then
-      chown 10001:10001 "$part"
-      chmod 640 "$part"
-      mv -f "$part" "$dir/$name"
+      geo_ok "$part" "$size" "$sha" && chown 10001:10001 "$part" && chmod 640 "$part" &&
+      mv -f "$part" "$dir/$name"; then
       new=1
     else
       rm -f "$part"
@@ -233,7 +235,7 @@ geo_download() {
 # installatie (nog geen database) slaat dit over. Lukt de kopie niet, dan stopt het script: er is
 # dan nog niets veranderd aan de app, de database en office. Zet BACKUP_FILE.
 reservekopie() {
-  local text out
+  local text out="" name
   BACKUP_FILE=""
   if [ ! -f "$DATA_ROOT/platform.db" ]; then
     echo "Reservekopie: nog geen database (eerste installatie)."
@@ -243,15 +245,22 @@ reservekopie() {
     echo "Reservekopie: deze versie van het platform kent hem nog niet; overgeslagen."
     return 0
   fi
-  text=$(cat "$SRC/api/app/backup.py")
-  install -d -m 700 -o 10001 -g 10001 "$DATA_ROOT/backup"
-  if ! out=$("${compose[@]}" run --rm --no-deps -T platform python -I -c "$text" /data/platform.db /data/backup </dev/null); then
-    echo "De reservekopie van de database lukte niet (de melding staat hierboven). Er is nog niets"
-    echo "veranderd: de app draait zoals hij draaide. Los het op en draai dit script opnieuw."
-    return 1
+  # In `reservekopie || exit 1` doet set -e niets: elke stap zegt dus zelf dat het stopt. De
+  # laatste regel van de uitvoer is het pad van de kopie in de container
+  if text=$(cat "$SRC/api/app/backup.py") && install -d -m 700 -o 10001 -g 10001 "$DATA_ROOT/backup" &&
+    out=$("${compose[@]}" run --rm --no-deps -T platform python -I -c "$text" /data/platform.db /data/backup </dev/null); then
+    name=$(basename "${out##*$'\n'}")
+    case "$name" in
+      platform-*.db)
+        BACKUP_FILE=$DATA_ROOT/backup/$name
+        echo "Reservekopie: $BACKUP_FILE"
+        return 0
+        ;;
+    esac
   fi
-  BACKUP_FILE=$DATA_ROOT/backup/$(basename "${out##*$'\n'}")
-  echo "Reservekopie: $BACKUP_FILE"
+  echo "De reservekopie van de database lukte niet (de melding staat hierboven). Er is nog niets"
+  echo "veranderd: de app draait zoals hij draaide. Los het op en draai dit script opnieuw."
+  return 1
 }
 
 # Na de app: de bronnen zijn in deze run opgehaald, maar de app is niet opnieuw gestart (hetzelfde
