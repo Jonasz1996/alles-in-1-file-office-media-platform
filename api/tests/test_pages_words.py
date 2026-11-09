@@ -416,8 +416,8 @@ async def test_de_stand_van_de_analyse(client, admin, settings):
     root_id = (await root(client, jonas))["folder"]["id"]
     note = (await put(client, jonas, root_id, "notitie.txt", b"het zoekwoord staat hier")).json()
     sha = note["etag"].strip('"')
-    # Nog geen rij (de backfill of de pomp komt nog): queued; hash (Z3) en ocr (X1) zijn er nog
-    # niet: skip
+    # Nog geen rij (de backfill of de pomp komt nog): queued; hash (Z3) is er alleen voor een
+    # afbeelding en ocr (X1) is er nog niet: skip
     assert await analysis_of(client, jonas, note["id"]) == {
         "text": "queued", "hash": "skip", "ocr": "skip", "truncated": False, "code": None,
     }  # fmt: skip

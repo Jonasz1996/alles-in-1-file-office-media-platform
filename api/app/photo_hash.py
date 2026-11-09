@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Float, Integer, String, bindparam, delete, exists, literal, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -34,6 +34,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dupes import phash
 from app.models import Blob, BlobHash, BlobText, DupPair
+
+if TYPE_CHECKING:
+    from app.search.types import StepState
 
 # Omhoog als de hash anders gerekend wordt: photometa rekent dan alles opnieuw
 VERSION = 1
@@ -210,6 +213,21 @@ async def write(db: AsyncSession, hashed: Sequence[Hashed], rows: Sequence[dict[
         ),
         list(rows),
     )
+
+
+async def analysis_state(db: AsyncSession, sha: str, mime: str | None) -> StepState:
+    """De stand van "hash" in GET /files/{id}/analysis. De pHash zit niet in de pomp van analysis
+    maar in de keten van photometa (Keuze 35), dus komt de stand uit blob_hash: done met een
+    hash, none voor een vlak beeld of een afbeelding zonder hash, queued zolang photometa hem nog
+    moet rekenen, en skip voor wat geen afbeelding is."""
+    if not (mime or "").startswith("image/"):
+        return "skip"
+    row = (
+        await db.execute(select(BlobHash.state, BlobHash.version).where(BlobHash.blob_sha == sha))
+    ).first()
+    if row is None or row.version < VERSION:
+        return "queued"
+    return "done" if row.state == "ok" else "none"
 
 
 def not_hashed() -> Any:
