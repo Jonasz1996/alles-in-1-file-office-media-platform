@@ -508,8 +508,12 @@ def busy_elsewhere(settings: Settings) -> bool:
     if settings.media_enabled:
         try:
             from app.media import admin as media_admin
+            from app.media import analysis as media_analysis
 
-            if media_admin.transcodes_running() >= settings.index_defer_transcodes:
+            # Ook de belastingtest van media: die telt niet als kijker, maar zet busy_live zolang
+            # hij loopt op minstens 2, zodat de analyse wacht (Z7, §4.5 stap 2 tegen stap 3)
+            live = max(media_admin.transcodes_running(), media_analysis.busy_live())
+            if live >= settings.index_defer_transcodes:
                 return True
         except Exception:  # noqa: BLE001 - de teller hoort de analyse nooit te breken
             log.debug("transcodes_running", exc_info=True)
