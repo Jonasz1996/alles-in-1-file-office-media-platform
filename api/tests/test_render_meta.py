@@ -1,6 +1,6 @@
 """EXIF en opnamedatum lezen (app/render_meta.py): camera, objectief, belichting en datum. De
 plek alleen in mode "meta" (VERSION 2, Keuze 25), nooit voor de preview; de plek zelf staat in
-tests/search/test_geo_read.py."""
+tests/geo/test_geo_read.py."""
 
 import io
 import json

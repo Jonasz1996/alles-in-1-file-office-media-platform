@@ -276,7 +276,7 @@ BUILT = {
     # Z6: de foto-instellingen (tests/photos/test_photo_settings.py)
     ("GET", "/api/v1/me/photo-settings"),
     ("PATCH", "/api/v1/me/photo-settings"),
-    # Z3, stap 1: de plek, de kaart, de plaatsen en de bronnen (tests/search/test_geo_access.py,
+    # Z3, stap 1: de plek, de kaart, de plaatsen en de bronnen (tests/geo/test_geo_access.py,
     # test_map_clusters.py); share-check en de duplicaten komen in stap 2
     ("GET", "/api/v1/files/{node_id}/location"),
     ("GET", "/api/v1/photos/map"),
