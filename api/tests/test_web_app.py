@@ -190,3 +190,21 @@ def test_nginx_conf_heeft_dezelfde_headers():
         assert conf.count(line) == locations, line
     assert "gzip_static on;" in conf
     assert "try_files $uri =404;" in conf
+
+
+@pytest.mark.anyio
+async def test_de_wereld_van_de_kaart_is_immutable(client, dist):
+    """/kaart/world-110m.<hash>.json draagt zijn hash in de naam, zoals assets/ (review golf 3,
+    web F7); een naam zonder hash, of ernaast, blijft no-cache."""
+    (dist / "kaart").mkdir()
+    (dist / "kaart" / "world-110m.f2c3625f1d27.json").write_text('{"landen": []}')
+    (dist / "kaart" / "world-110m.json").write_text("{}")
+    (dist / "kaart" / "world-110m.F2C3625F1D27.json").write_text("{}")
+    r = await client.get("/kaart/world-110m.f2c3625f1d27.json")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/json")
+    assert r.headers["cache-control"] == "public, max-age=31536000, immutable"
+    for pad in ("/kaart/world-110m.json", "/kaart/world-110m.F2C3625F1D27.json", "/sw.js"):
+        r = await client.get(pad)
+        assert r.status_code == 200, pad
+        assert r.headers["cache-control"] == "no-cache", pad

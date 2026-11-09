@@ -179,6 +179,9 @@ WEB_TYPES = {
 # Voorgecomprimeerde varianten (vite.config.ts, precompress), in volgorde van voorkeur
 ENCODINGS = (("br", ".br"), ("gzip", ".gz"))
 IMMUTABLE = "public, max-age=31536000, immutable"
+# De wereld van de kaart (Z5, tools/kaart/maak_wereld.py) draagt zijn hash in de naam, zoals
+# assets/: een nieuwe versie is een nieuwe naam (review golf 3, web F7)
+IMMUTABLE_WEB = re.compile(r"kaart/[^/]+\.[0-9a-f]{12}\.json")
 
 
 def _bounded(receive):
@@ -678,7 +681,7 @@ def _etag_matches(header: str, etag: str) -> bool:
 def _web_file(request: Request, file: Path, rel: str) -> Response:
     """Eén bestand van de web-app: voorgecomprimeerd als dat kan, met ETag en 304."""
     media_type = WEB_TYPES.get(file.suffix.lower()) or mimetypes.guess_type(file.name)[0]
-    immutable = Path(rel).parts[:1] == ("assets",)
+    immutable = Path(rel).parts[:1] == ("assets",) or IMMUTABLE_WEB.fullmatch(rel) is not None
     headers = {
         "Cache-Control": IMMUTABLE if immutable else "no-cache",
         "Content-Security-Policy": WEB_CSP,
