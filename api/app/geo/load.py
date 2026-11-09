@@ -24,8 +24,9 @@ Het id van een plaats is een vaste hash van land, provincie, naam en plek (48 bi
 getal van JavaScript): de CSV heeft geen id van GeoNames, en een regelnummer verschuift bij een
 nieuwe versie van de bron. `photo_geo.place_id` blijft zo geldig na een nieuwe bouw.
 
-De app bouwt bij de start (ensure) als het bestand ontbreekt of met andere bronnen gebouwd is
-(een nieuwe versie van de app met een nieuwe sha256), op de achtergrond. `PLATFORM_PLACES=uit`
+De app bouwt bij de start (ensure) als het bestand ontbreekt, met andere bronnen gebouwd is
+(een nieuwe versie van de app met een nieuwe sha256) of kapot is (PRAGMA quick_check), op de
+achtergrond. `PLATFORM_PLACES=uit`
 (`PLAATSEN=uit` in .env) slaat het over. Bouwen gaat naar `<places_db>.part` en dan
 `os.replace`: een lezer ziet nooit een half bestand.
 """
@@ -371,25 +372,59 @@ def current(pad: Path) -> bool:
     return gebouwd == (SCHEMA, LANDEN.sha256, PLAATSEN.sha256)
 
 
+def heel(pad: Path) -> bool:
+    """PRAGMA quick_check: zijn de pagina's van places.sqlite heel? De meta kan kloppen terwijl
+    een pagina van de plaatsen of de vlakken kapot is (review golf 3, veilig F1)."""
+    try:
+        db = sqlite3.connect(f"{pad.as_uri()}?mode=ro", uri=True)
+        try:
+            return db.execute("PRAGMA quick_check").fetchall() == [("ok",)]
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return False
+
+
+def _opzij(pad: Path) -> None:
+    """Een kapotte places.sqlite die niet opnieuw gebouwd kon worden: opzij (<naam>.kapot), zodat
+    de app hem niet meer opent en de volgende start niet steeds opnieuw kijkt."""
+    try:
+        os.replace(pad, pad.with_name(pad.name + ".kapot"))
+    except OSError as e:
+        log.warning("Plaatsnamen: de kapotte places.sqlite kon niet opzij (%s)", type(e).__name__)
+
+
 def ensure(settings: Settings, *, force: bool = False) -> str:
     """Bij de start (en vanuit de CLI): bouwen als het nodig is. Faalt nooit; geeft terug wat er
-    gebeurde: "uit", "klaar" (al goed), "gebouwd", "geen_bron" of "fout"."""
+    gebeurde: "uit", "klaar" (al goed), "gebouwd", "geen_bron" of "fout". Een places.sqlite van
+    deze bronnen die toch kapot is (quick_check), wordt opnieuw gebouwd; lukt dat niet, dan gaat
+    hij opzij en zijn er geen plaatsnamen."""
     if settings.places == "uit":
         return "uit"
     pad, src = Path(settings.places_db), Path(settings.geo_src)
     with _bouwen:
+        kapot = False
         if not force and current(pad):
-            return "klaar"
+            if heel(pad):
+                return "klaar"
+            log.warning("Plaatsnamen: places.sqlite is kapot (quick_check); opnieuw bouwen")
+            kapot = True
         if not (src / LANDEN.naam).exists() or not (src / PLAATSEN.naam).exists():
             log.info("Plaatsnamen: niet geladen (de bronnen staan niet in geo_src)")
+            if kapot:
+                _opzij(pad)
             return "geen_bron"
         try:
             n = build(src, pad)
         except BronFout as e:
             log.warning("Plaatsnamen: niet geladen (%s)", e)
+            if kapot:
+                _opzij(pad)
             return "fout"
         except (OSError, sqlite3.Error, MemoryError) as e:
             log.warning("Plaatsnamen: niet geladen (%s)", type(e).__name__)
+            if kapot:
+                _opzij(pad)
             return "fout"
     from app.geo import places  # na het bouwen opnieuw openen
 
@@ -416,8 +451,10 @@ async def start(settings: Settings) -> None:
         except Exception:  # noqa: BLE001 - zonder plaatsnamen werkt de rest gewoon
             log.exception("Plaatsnamen: bouwen mislukt")
 
-    if settings.places == "uit" or current(Path(settings.places_db)):
+    if settings.places == "uit":
         return
+    # Ook als de meta klopt: ensure() kijkt in de thread met quick_check of hij heel is (±0,15 s
+    # bij de echte bronnen), niet in de lus
     task = asyncio.get_running_loop().create_task(_bouw())
     _taken.add(task)
     task.add_done_callback(_taken.discard)

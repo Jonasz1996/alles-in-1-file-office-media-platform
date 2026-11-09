@@ -10,26 +10,36 @@
 Ontbreekt places.sqlite of hoort hij bij een ander schema, dan is er niets (get() geeft None):
 geen plaatsnamen, de rest werkt gewoon. Alleen lezen; één verbinding per bestand, achter een
 slot (photometa leest in een thread, de routes in de lus).
+
+Is hij kapot (een beschadigde pagina, een vlak dat niet uit te pakken is: sqlite3, zlib of
+struct geeft een fout), dan is het net alsof hij er niet is: lookup() geeft NIETS, names() en
+countries() geven {}, één regel in het log (zonder plek), en get() opent dat bestand niet
+opnieuw tot het een ander bestand is (een nieuwe bouw). Bij de volgende start ziet
+load.ensure() het met quick_check en bouwt hem opnieuw (review golf 3, veilig F1).
 """
 
 from __future__ import annotations
 
+import functools
+import logging
 import math
 import sqlite3
 import struct
 import threading
 import zlib
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.geo import load
 from app.geo.types import Place
 
 if TYPE_CHECKING:
     from app.config import Settings
+
+log = logging.getLogger("platform.geo")
 
 R_KM = 6371.0  # zoals haversine_km in de tests
 KM = 30.0  # de grens van Keuze 29
@@ -85,10 +95,47 @@ def _kruisingen(x: float, y: float, xs: list[float], ys: list[float]) -> bool:
     return binnen
 
 
+# Wat een kapotte places.sqlite geeft: een beschadigde pagina (sqlite3.DatabaseError), een vlak
+# waarvan de ringen niet uit te pakken zijn (zlib, struct)
+_FOUTEN = (sqlite3.Error, zlib.error, struct.error)
+
+
+def _ident(pad: Path) -> tuple[int, ...] | None:
+    """Welk bestand dit is: een nieuwe bouw (os.replace) of een ander bestand geeft iets anders."""
+    try:
+        st = pad.stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _veilig[T](leeg: Callable[[], T]) -> Callable[[Callable[..., T]], Callable[..., T]]:
+    """Een fout in places.sqlite: zoals zonder places.sqlite (leeg()), nooit een uitzondering
+    naar de route of naar photometa."""
+
+    def deco(fn: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(fn)
+        def wrapper(self: Places, *args: Any, **kwargs: Any) -> T:
+            if self.kapot:
+                return leeg()
+            try:
+                return fn(self, *args, **kwargs)
+            except _FOUTEN as e:
+                self._stuk(e)
+                return leeg()
+
+        return wrapper
+
+    return deco
+
+
 class Places:
     """Een geopende places.sqlite."""
 
     def __init__(self, pad: Path) -> None:
+        self.pad = pad
+        self.ident = _ident(pad)
+        self.kapot = False
         self._db = sqlite3.connect(f"{pad.as_uri()}?mode=ro", uri=True, check_same_thread=False)
         self._lock = threading.Lock()
         self._vlakken: OrderedDict[int, list] = OrderedDict()
@@ -97,6 +144,25 @@ class Places:
             self._db.close()
             raise sqlite3.DatabaseError("ander schema")
         self.meta = meta
+
+    def _stuk(self, e: Exception) -> None:
+        """Een fout bij het lezen. Een gesloten verbinding (een nieuwe bouw sloot hem terwijl
+        photometa nog las) is geen kapot bestand; al het andere wel: dan niet meer openen."""
+        if isinstance(e, sqlite3.ProgrammingError):
+            return
+        with _open_lock:
+            if self.kapot:
+                return
+            self.kapot = True
+            if _open.get(self.pad) is self:
+                del _open[self.pad]
+            if self.ident is not None:
+                _kapot[self.pad] = self.ident
+        log.warning(
+            "Plaatsnamen: places.sqlite is niet te lezen (%s); verder zonder plaatsnamen",
+            type(e).__name__,
+        )
+        self.close()
 
     def close(self) -> None:
         with self._lock:
@@ -113,6 +179,7 @@ class Places:
             self._vlakken.move_to_end(part)
         return ringen
 
+    @_veilig(lambda: (False, None))
     def country(self, lat: float, lon: float) -> tuple[bool, str | None]:
         """(op land, de code). Op land kan de code None zijn (Natural Earth zegt -99)."""
         with self._lock:
@@ -155,6 +222,7 @@ class Places:
             ).fetchall()
         return uit
 
+    @_veilig(lambda: None)
     def nearest(self, lat: float, lon: float, cc: str, km: float = KM) -> Place | None:
         """De dichtstbijzijnde plaats in land cc binnen km, of None."""
         with self._lock:
@@ -171,6 +239,7 @@ class Places:
             return None
         return Place(id=gevonden[0], name=gevonden[1], admin1=gevonden[2], cc=cc, km=beste[0])
 
+    @_veilig(lambda: NIETS)
     def lookup(self, lat: float, lon: float) -> Place:
         """Land en plaats bij een plek. Op zee: NIETS."""
         op_land, cc = self.country(lat, lon)
@@ -178,6 +247,7 @@ class Places:
             return NIETS
         return self.nearest(lat, lon, cc) or Place(id=None, name=None, admin1=None, cc=cc, km=None)
 
+    @_veilig(dict)
     def names(self, ids: Iterable[int]) -> dict[int, PlaceRow]:
         """De namen van deze plaatsen (een id dat er niet is, ontbreekt)."""
         ids = sorted({int(i) for i in ids})
@@ -192,6 +262,7 @@ class Places:
                     uit[pid] = PlaceRow(pid, name, admin1, cc)
         return uit
 
+    @_veilig(dict)
     def countries(self, codes: Iterable[str]) -> dict[str, str]:
         """De naam van deze landen (Nederlands, anders Engels); een code die er niet is,
         ontbreekt."""
@@ -213,6 +284,8 @@ class Places:
 
 
 _open: dict[Path, Places] = {}
+# Bestanden die kapot bleken (pad -> _ident): niet opnieuw openen zolang het dat bestand is
+_kapot: dict[Path, tuple[int, ...]] = {}
 _open_lock = threading.Lock()
 
 
@@ -224,6 +297,8 @@ def get(settings: Settings) -> Places | None:
         if p is not None:
             return p
         if settings.places == "uit" or not pad.is_file():
+            return None
+        if pad in _kapot and _kapot[pad] == _ident(pad):
             return None
         try:
             p = Places(pad)
@@ -239,3 +314,4 @@ def forget() -> None:
         for p in _open.values():
             p.close()
         _open.clear()
+        _kapot.clear()

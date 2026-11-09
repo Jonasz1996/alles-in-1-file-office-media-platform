@@ -50,6 +50,7 @@ housekeeping van media (runtime.PHOTOMETA, eens per 5 minuten en alleen met een 
 worker) roept enqueue_backfill dan weer aan. Media uit: zoals 0.6.0.
 """
 
+import logging
 import shutil
 import tempfile
 from datetime import datetime, timedelta
@@ -67,6 +68,8 @@ from app.config import Settings
 from app.db import get_engine
 from app.models import Blob, BlobMeta, Node, PhotoGeo, PhotoPref
 from app.storage import BlobStore
+
+log = logging.getLogger("platform.photometa")
 
 TYPE = "photometa"
 KEY = "photometa:backfill"
@@ -237,7 +240,16 @@ async def _places(settings: Settings, found: dict[str, Any]) -> list[tuple[str, 
         db = places.get(settings)
         out = []
         for sha, spot in spots:
-            place = places.NIETS if db is None else db.lookup(spot.lat, spot.lon)
+            place = places.NIETS
+            if db is not None:
+                try:
+                    place = db.lookup(spot.lat, spot.lon)
+                except Exception as e:  # noqa: BLE001 - de plek blijft, alleen zonder plaats
+                    # Een kapotte places.sqlite vangt Places zelf (review golf 3, veilig F1);
+                    # dit is wat het niet kent. Nooit het stuk laten mislukken: dan zette
+                    # mark_dead gps op NULL en de hash op "none". In het log alleen de soort
+                    log.warning("photometa: plaats niet opgezocht (%s)", type(e).__name__)
+                    db = None
             out.append((sha, spot, place))
         return out
 
