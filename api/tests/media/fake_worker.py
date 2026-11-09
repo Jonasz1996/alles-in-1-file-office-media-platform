@@ -32,6 +32,13 @@ Wat hij anders doet:
   (`speed`, mediaseconden per seconde; None: zo snel als de pipe toelaat). Er wordt alleen
   geschreven als de lezer leest: de tegendruk is echt. Na elk fragment een `progress` met t_ms
   (het eind van het fragment in mediatijd);
+- **ocr** (fase 6, X1) spreekt het contract van ops/ocr.py zonder tesseract: de woorden in
+  stukken (`{"part": i, "words": [...]}`, ops/ocr.parts) en dan de samenvatting. Zonder `ocr`
+  (standaard uit, zoals een worker zonder tesseract; caps zegt het ook) is dat `none` met
+  `ocr_missing`. Met `ocr = True` komt het antwoord uit wat de test aanmeldt
+  (`register_ocr(bron, woorden, ...)`, per bron en pagina, op de inhoud); een andere bron geeft
+  `failed` met de fout die kind 1 dan geeft (een PDF: PdfiumError, een beeld:
+  UnidentifiedImageError);
 - elke andere opdracht geeft `not_built` na `started` (zoals een stub van de worker), tenzij de
   test er een eigen antwoord voor geeft (`on`).
 
@@ -70,6 +77,7 @@ from app.media import wire
 from app.media.wire import Code, Op, WorkClass
 from app.media.worker import args as A
 from app.media.worker import server as real_server
+from app.media.worker.ops import ocr as real_ocr
 from app.media.worker.server import TIMEOUT
 from tests.media import boxes, record
 from tests.media import fixtures as F
@@ -143,6 +151,19 @@ Handler = Callable[[Job], Awaitable[dict | None]]
 
 
 @dataclass
+class OcrAnswer:
+    """Wat de nep op ocr antwoordt voor één bron en pagina (zie register_ocr)."""
+
+    words: list[list]  # [tekst, links, boven, breedte, hoogte, regel], zoals ops/ocr.keep
+    width: int
+    height: int
+    skew: float = 0.0
+    source: tuple[int, int] | None = None
+    conf: float = 90.0
+    rotate: int = 0
+
+
+@dataclass
 class Request:
     """Eén vraag zoals de nep hem kreeg (voor de test)."""
 
@@ -169,6 +190,7 @@ class FakeWorker:
         self.mode = mode
         self.loadtest = loadtest
         self.speed: float | None = None
+        self.ocr = False  # zoals een worker met tesseract (caps ocr; Keuze 24)
         self.remux_variant: Literal["h264", "vp9"] = "h264"
         self.timeouts: dict[Op, float | None] = dict(TIMEOUT)
         self.fallback_timeout: float | None = real_server.KEYFRAMES_FALLBACK_TIMEOUT
@@ -179,6 +201,7 @@ class FakeWorker:
         self._faults: list[Fault] = []
         self._handlers: dict[Op, Handler] = {}
         self._registered: dict[str, str] = {}  # sha256 → naam van de opname
+        self._ocr: dict[tuple[str, int], OcrAnswer] = {}  # (sha256, pagina) → antwoord
         self._index: dict[str, str] | None = None
         self._tasks: set[asyncio.Task] = set()
         self._listener: socket.socket | None = None
@@ -203,6 +226,15 @@ class FakeWorker:
         """Deze bron krijgt bij probe de opname van fixture `name`."""
         data = source if isinstance(source, bytes) else Path(source).read_bytes()
         self._registered[hashlib.sha256(data).hexdigest()] = name
+
+    def register_ocr(
+        self, source: Path | bytes, words: list[list], *, page: int = 1, **answer: Any
+    ) -> None:
+        """Deze bron (pagina page) geeft bij ocr deze woorden; answer vult OcrAnswer aan
+        (width en height zijn nodig)."""
+        data = source if isinstance(source, bytes) else Path(source).read_bytes()
+        key = (hashlib.sha256(data).hexdigest(), page)
+        self._ocr[key] = OcrAnswer(words=[list(w) for w in words], **answer)
 
     @property
     def processes(self) -> int:
@@ -283,7 +315,7 @@ class FakeWorker:
             op = Op(message.get("op"))
         except ValueError:
             raise OpError(Code.UNKNOWN_OP, "onbekende opdracht") from None
-        if op not in A.ARGS:  # zoals de echte worker: text en ocr (fase 6) nog niet
+        if op not in A.ARGS:  # zoals de echte worker: een opdracht zonder argumenten
             raise OpError(Code.NOT_BUILT, f"{op.value} is nog niet gebouwd")
         try:
             parsed = A.parse(op, message.get("args", {}))
@@ -457,6 +489,8 @@ class FakeWorker:
             return await self._probe(job)
         if job.op == Op.STREAM:
             return await self._stream(job)
+        if job.op == Op.OCR:
+            return await self._ocr_page(job)
         raise OpError(Code.NOT_BUILT, f"{job.op.value} doet de nep-worker niet (on)")
 
     # --- caps en probe ---
@@ -464,6 +498,7 @@ class FakeWorker:
     def caps(self) -> dict[str, Any]:
         out = record.load_caps()
         out.update(
+            ocr=self.ocr,
             protocol=wire.PROTOCOL,
             mode=self.mode,
             sandbox="off" if self.mode == "local" else "unchecked",  # zoals caps.gather
@@ -502,6 +537,38 @@ class FakeWorker:
         if "error" in found:
             raise OpError(Code(found["error"]["code"]), found["error"].get("detail", ""))
         return found["data"]
+
+    # --- ocr ---
+
+    async def _ocr_page(self, job: Job) -> dict:
+        """Zoals ops/ocr.run: eerst de stukken met woorden, dan de samenvatting."""
+        args = job.args
+        assert isinstance(args, A.OcrArgs)
+        if not self.ocr:
+            return real_ocr._summary("none", "ocr_missing")
+        digest = await asyncio.to_thread(_sha_fd, job.inputs[0]) or ""
+        found = self._ocr.get((digest, args.page))
+        if found is None:
+            error = "PdfiumError" if args.kind == "pdf" else "UnidentifiedImageError"
+            return real_ocr._summary("failed", error=error)
+        chunks = real_ocr.parts(found.words)
+        for i, chunk in enumerate(chunks):
+            await job.send({"ev": "result", "data": {"part": i, "words": chunk}})
+        source = list(found.source or (found.width, found.height))
+        return real_ocr._summary(
+            "done" if found.words else "none",
+            parts=len(chunks),
+            words=len(found.words),
+            chars=len(real_ocr.text_of(found.words)),
+            conf=found.conf,
+            skew=found.skew,
+            width=found.width,
+            height=found.height,
+            source=source,
+            rotate=found.rotate,
+            osd=bool(found.rotate),
+            ms={"render": 0, "deskew": 0, "ocr": 0},
+        )
 
     # --- stream ---
 
