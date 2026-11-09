@@ -1,0 +1,245 @@
+/* De kaart (/fotos/kaart, Z5): de kaart met de knoppen, de lijst Plaatsen ernaast, en de
+   bronvermelding. Kleuren alleen uit de tokens, zodat licht en donker vanzelf meegaan. */
+
+.map-page {
+  --map-sea: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  --map-land: var(--surface);
+  --map-border: var(--line-strong);
+}
+
+.map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18rem;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.map-main {
+  min-width: 0;
+}
+
+.map-view {
+  position: relative;
+  height: min(70vh, 44rem);
+  min-height: 20rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--map-sea);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+
+.map-view:active {
+  cursor: grabbing;
+}
+
+.map-view:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}
+
+.map-svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.map-land path {
+  fill: var(--map-land);
+  fill-rule: evenodd;
+  stroke: var(--map-border);
+  stroke-width: 0.75;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-mark {
+  fill: none;
+  stroke: var(--warn);
+  stroke-width: 3;
+  stroke-dasharray: 6 4;
+}
+
+.map-dot {
+  cursor: pointer;
+  outline: none;
+}
+
+.map-dot-ring {
+  fill: var(--bg);
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.map-dot-fill {
+  fill: var(--accent);
+}
+
+.map-dot:hover .map-dot-ring {
+  stroke-width: 4;
+}
+
+.map-dot:focus-visible .map-dot-ring {
+  stroke: var(--focus);
+  stroke-width: 5;
+}
+
+.map-count rect {
+  fill: var(--accent);
+  stroke: var(--bg);
+  stroke-width: 1.5;
+}
+
+.map-count text {
+  fill: var(--accent-fg);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.map-label {
+  fill: var(--fg);
+  stroke: var(--bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  paint-order: stroke;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.map-controls {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.map-controls .icon-button {
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+
+.map-notices {
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  pointer-events: none;
+}
+
+.map-notices p {
+  margin: 0;
+  max-width: 100%;
+  padding: 0.35rem 0.75rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  font-size: var(--text-s);
+}
+
+.map-only {
+  margin: 0 0 0.5rem;
+}
+
+.map-help {
+  margin: 0.5rem 0 0;
+  font-size: var(--text-s);
+}
+
+.map-side h2 {
+  margin: 0 0 0.25rem;
+  font-size: var(--text-l);
+}
+
+.map-places > p {
+  margin: 0 0 0.5rem;
+  font-size: var(--text-s);
+}
+
+.map-places ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(60vh, 36rem);
+  overflow: auto;
+}
+
+.map-place {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 0;
+  border-radius: var(--radius-m);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.map-place > span {
+  overflow-wrap: anywhere;
+}
+
+.map-place .muted {
+  grid-column: 1;
+  font-size: var(--text-s);
+}
+
+.map-place-count {
+  grid-column: 2;
+  grid-row: 1;
+  color: var(--muted);
+  font-size: var(--text-s);
+  white-space: nowrap;
+}
+
+.map-place:hover {
+  background: var(--hover);
+}
+
+.map-place[aria-pressed="true"] {
+  background: var(--selected);
+  color: var(--selected-fg);
+}
+
+.map-place[aria-pressed="true"] .muted,
+.map-place[aria-pressed="true"] .map-place-count {
+  color: inherit;
+}
+
+.map-place:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: -2px;
+}
+
+.map-attribution {
+  margin-top: 1rem;
+  font-size: var(--text-s);
+}
+
+.map-attribution p {
+  margin: 0 0 0.25rem;
+}
+
+@media (max-width: 52rem) {
+  .map-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .map-view {
+    height: 60vh;
+  }
+}
