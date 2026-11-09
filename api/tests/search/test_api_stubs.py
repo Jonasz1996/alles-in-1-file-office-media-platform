@@ -289,6 +289,8 @@ BUILT = {
     ("GET", "/api/v1/photos/share-check"),
     ("GET", "/api/v1/duplicates"),
     ("POST", "/api/v1/duplicates/ignore"),
+    # X1: tekst herkennen (tests/ocr/test_ocr_limits.py, test_ocr_access.py)
+    ("POST", "/api/v1/files/{node_id}/ocr"),
 }
 # De vraag die een stub nodig heeft om bij de route te komen
 QUERY = {
