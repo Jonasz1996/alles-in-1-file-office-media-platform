@@ -14,6 +14,8 @@ nooit AUTOMATIC, nooit een SEARCH op parent_id.
   bij één soort ix_node_ftype_mod, en vanaf de paden (ix_node_mpath) als het bereik klein is,
   ook met een filter op soort of datum (zonder INDEXED BY koos de planner daar zelf de index op
   soort of tijd).
+- De filters van Z3 (place, country, camera; app/search/filters_photo.py) zoeken per node op de
+  sleutel van photo_geo of blob_meta, met een vraag en zonder; nooit een SCAN van die tabellen.
 - is_small telt via ix_node_mpath; boven 64 wortels telt hij niet (dan altijd langs de tijd).
 - De eigen albums voor suggesties langs (parent_id, kind): een album staat buiten de boom. Met
   owner_id erbij koos de planner ix_node_owner_taken, alle nodes van de eigenaar langs.
@@ -34,7 +36,7 @@ from sqlalchemy import event
 from app.config import Settings
 from app.db import get_engine
 from app.models import User
-from app.search import bench
+from app.search import bench, filters_photo
 from app.search import engine as E
 from app.search import suggest as S
 from app.search.access import Ranges, end_of
@@ -86,6 +88,12 @@ async def conn(request, databases):
         event.remove(engine.sync_engine, "before_cursor_execute", bij)
 
 
+@pytest.fixture(autouse=True)
+def _filters():
+    """Een test eerder in de run kan filters.reset() gedaan hebben (test_contracts.py)."""
+    filters_photo.register()
+
+
 async def _scope(conn, wortels: int, shared: bool, p: SearchParams) -> E.Scope:
     sql = "SELECT mpath, owner_id FROM node WHERE kind = 'dir' AND dead = 0 ORDER BY num LIMIT ?"
     rijen = (await conn.exec_driver_sql(sql, (wortels,))).all()
@@ -127,6 +135,10 @@ FILTERS = {
     "pdf-en-foto": {"types": ["pdf", "image"]},
     "datum": {"date_from": date(2020, 1, 1), "date_to": date(2026, 12, 31)},
     "tag": {"tags": [uuid.UUID(int=7)]},
+    # Z3 (app/search/filters_photo.py): eigen, levende bestanden met een plek of een camera
+    "plaats": {"place": 2759794},
+    "land": {"country": "NL"},
+    "camera": {"camera": "canon eos"},
 }
 
 
@@ -203,6 +215,37 @@ async def test_alleen_filters_vanaf_de_paden(conn, wortels, filt):
     scope = await _scope(conn, wortels, True, p)
     assert await E.is_small(conn, scope.roots)
     _vanaf_de_paden(await _plan(conn, E.filters_select(scope, K, small=True)), wortels)
+
+
+# De filters van Z3 kijken per node op de sleutel van hun tabel, nooit een SCAN ervan
+PER_NODE = {
+    "plaats": ("photo_geo", "(node_id=?)"),
+    "land": ("photo_geo", "(node_id=?)"),
+    "camera": ("blob_meta", "(blob_sha=?)"),
+}
+
+
+def _per_node(plan, filt: str) -> None:
+    tabel, sleutel = PER_NODE[filt]
+    regels = [t for _, _, t in plan.regels]
+    assert any(t.startswith(f"SEARCH {tabel} ") and sleutel in t for t in regels), plan.tekst()
+    assert not any(t.startswith(f"SCAN {tabel}") for t in regels), plan.tekst()
+
+
+@pytest.mark.parametrize("wortels", WORTELS)
+@pytest.mark.parametrize("filt", list(PER_NODE))
+async def test_de_filters_van_z3_per_node(conn, wortels, filt):
+    """Met een vraag (ronde A, begint bij FTS) en met alleen filters (langs de tijd, en vanaf de
+    paden als het bereik klein is)."""
+    p = SearchParams(q="factuur", **FILTERS[filt])
+    scope = await _scope(conn, wortels, True, p)
+    eisen = {"require_first": "fts_node VIRTUAL TABLE", "require": ["ix_node_num (num=?)"]}
+    _per_node(await _plan(conn, E.ranked_select(parse(p.q), scope, K), **eisen), filt)
+    scope = await _scope(conn, wortels, True, SearchParams(**FILTERS[filt]))
+    sel = E.filters_select(scope, K, small=False)
+    _per_node(await _plan(conn, sel, require_first="ix_node_live_mod"), filt)
+    if wortels <= E.MAX_OR:
+        _per_node(await _plan(conn, E.filters_select(scope, K, small=True)), filt)
 
 
 @pytest.mark.parametrize("wortels", WORTELS)
