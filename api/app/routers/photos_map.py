@@ -8,12 +8,16 @@ wist; Keuze 28). Een gast heeft geen eigen foto's: 403 guest, zoals /photos.
   node: GROUP BY over photo_geo met own_live_geo, langs ix_photo_geo_tile (dekkend: geen rij per
   foto). Een cel is (x16 >> s, y16 >> s) met s = 14 − z, dus vier cellen per tegelbreedte. lat en
   lon van een cel: het midden van zijn foto's (het gemiddelde van x16 en y16, dus ook uit de
-  index); cover: de nieuwste foto. Meer dan MAX_CELLS cellen: de server neemt grotere cellen
-  (s + 1) tot het past, zodat er nooit iets wegvalt. west > oost gaat over 180° heen: twee
+  index); cover: de nieuwste foto. Meer dan MAX_CELLS cellen: de server neemt de kleinste
+  grotere s waarbij het past, zodat er nooit iets wegvalt (door halveren: hooguit vier vragen
+  meer, ook voor de hele wereld op zoom 14). west > oost gaat over 180° heen: twee
   stukken in x, samengevoegd. Met een filter van Keuze 43 de join op node over de al smallere
   set (zoals /photos: hetzelfde register, filters.apply_all).
 - GET /photos/map/items?bbox=&<filters>&cursor=: de foto's in het venster in de volgorde van de
-  tijdlijn, per PAGE, met de cursor van /photos.
+  tijdlijn, per PAGE, met de cursor van /photos. Twee wegen naar dezelfde rijen: weinig foto's in
+  het venster (minder dan MANY): vanaf photo_geo en dan sorteren; veel: langs de tijdlijn
+  (ix_node_owner_taken) met per foto een blik in photo_geo, tot er PAGE zijn. Zo blijft het
+  onder de 20 ms, waar één weg tot 180 ms kost (de hele wereld, of een leeg venster).
 - GET /photos/places?<filters>: de plaatsen met het aantal eigen, levende foto's, per verzoek
   geteld (GROUP BY op ix_photo_geo_place), met de namen uit places.sqlite; zonder places.sqlite
   geen namen en dus geen plaatsen.
@@ -28,7 +32,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy import Select, and_, func, literal, or_, select
+from sqlalchemy import Select, and_, exists, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import errors, photo_rows
@@ -58,6 +62,7 @@ router = APIRouter(prefix="/api/v1", tags=["foto's"])
 BBOX = Query(max_length=100, pattern=r"^[0-9eE.,+-]+$")
 MAX_CELLS = 500
 PAGE = 200
+MANY = 4000  # foto's in het venster vanaf waar items langs de tijdlijn gaat
 MAX_PLACES = 500
 
 
@@ -77,6 +82,11 @@ def _filtered(sel: Select, user: User, filters: Any) -> Select:
         return sel
     on = and_(Node.id == PhotoGeo.node_id, own_live(Node, user.id))
     return apply_all(sel.join(Node, on), Node.__table__, filters, user)
+
+
+def _grid(s: int, xs: list[tuple[int, int]], y0: int, y1: int) -> int:
+    """Hoeveel cellen het venster bij s hooguit heeft: het raster zelf, los van de foto's."""
+    return sum((x1 >> s) - (x0 >> s) + 1 for x0, x1 in xs) * ((y1 >> s) - (y0 >> s) + 1)
 
 
 def _in_window(x16: Any, y16: Any, xs: list[tuple[int, int]], y0: int, y1: int) -> Any:
@@ -142,11 +152,22 @@ async def photo_map(
     if not await photo_rows.location_on(session, user.id):
         return MapCells(cells=[])
     s = tiles.shift(z)
-    while True:
-        found = await _cells(session, user, s, xs, y0, y1, filters)
-        if len(found) <= MAX_CELLS or s >= 16:
-            break
-        s += 1  # te veel: grotere cellen
+    found = await _cells(session, user, s, xs, y0, y1, filters)
+    if len(found) > MAX_CELLS:
+        # Te veel: de kleinste grotere s waarbij het past. Het aantal cellen daalt met s (elke
+        # cel valt in precies één grotere), dus halveren tussen s + 1 en de eerste s waarbij het
+        # raster van het venster zelf al past (bij 16 hooguit twee cellen)
+        lo = s + 1
+        hi = next(t for t in range(lo, 17) if _grid(t, xs, y0, y1) <= MAX_CELLS)
+        at_hi: dict[tuple[int, int], list[Any]] | None = None
+        while lo < hi:
+            mid = (lo + hi) // 2
+            tried = await _cells(session, user, mid, xs, y0, y1, filters)
+            if len(tried) <= MAX_CELLS:
+                hi, at_hi = mid, tried
+            else:
+                lo = mid + 1
+        found = at_hi if at_hi is not None else await _cells(session, user, hi, xs, y0, y1, filters)
     cells = [
         MapCell(
             x=x,
@@ -181,13 +202,21 @@ async def photo_map_items(
         raise errors.fail(422, "invalid_input", "Ongeldige invoer", field="query.cursor") from None
     if not await photo_rows.location_on(session, user.id):
         return MapItems(items=[], cursor=None)
-    query = photo_query(
-        own_live(Node, user.id),
-        own_live_geo(PhotoGeo, user.id),
-        _in_window(PhotoGeo.x16, PhotoGeo.y16, xs, y0, y1),
-        Node.taken_day.is_not(None),
-        *after,
-    ).join(PhotoGeo, PhotoGeo.node_id == Node.id)
+    window = _in_window(PhotoGeo.x16, PhotoGeo.y16, xs, y0, y1)
+    # Hoeveel foto's in het venster (tot MANY, uit de dekkende index): dat kiest de weg
+    some = select(literal(1)).where(own_live_geo(PhotoGeo, user.id), window).limit(MANY)
+    n = await session.scalar(select(func.count()).select_from(some.subquery()))
+    if (n or 0) >= MANY:
+        geo = exists().where(PhotoGeo.node_id == Node.id, own_live_geo(PhotoGeo, user.id), window)
+        query = photo_query(own_live(Node, user.id), Node.taken_day.is_not(None), geo, *after)
+    else:
+        query = photo_query(
+            own_live(Node, user.id),
+            own_live_geo(PhotoGeo, user.id),
+            window,
+            Node.taken_day.is_not(None),
+            *after,
+        ).join(PhotoGeo, PhotoGeo.node_id == Node.id)
     if filters is not None:
         query = apply_all(query, Node.__table__, filters, user)
     found = (await session.execute(query.limit(PAGE))).all()

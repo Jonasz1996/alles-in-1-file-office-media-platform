@@ -85,7 +85,7 @@ async def test_cellen_tellen_en_de_omslag_is_de_nieuwste(client, admin, settings
     assert sum(c["n"] for c in await kaart(client, h, EUROPA, 14)) == 4
 
 
-async def test_meer_dan_500_cellen_worden_grotere_cellen(client, admin, settings):
+async def test_meer_dan_500_cellen_worden_grotere_cellen(client, admin, settings, monkeypatch):
     h, _tokens = admin
     # 40 x 40 punten op een raster in Nederland: op zoom 14 elk een eigen cel (1.600 > 500)
     punten = [(51.0 + i * 0.05, 3.5 + j * 0.08) for i in range(40) for j in range(40)]
@@ -105,6 +105,32 @@ async def test_meer_dan_500_cellen_worden_grotere_cellen(client, admin, settings
         == {(c["x"], c["y"]) for c in cellen}
     )  # fmt: skip
     assert s > tiles.shift(14)
+    # De kleinste s die past: bij s - 1 waren het er te veel
+    te_veel = {((x >> (s - 1)), (y >> (s - 1))) for x, y in (tiles.tile16(*p) for p in punten)}
+    assert len(te_veel) > photos_map.MAX_CELLS
+    # Door halveren: de hele wereld op zoom 14 kost hooguit vijf vragen (niet één per s), en
+    # geeft dezelfde cellen als een s na de andere proberen
+    vragen = []
+    echt = photos_map._cells
+
+    async def tel(session, user, s, *rest):
+        vragen.append(s)
+        return await echt(session, user, s, *rest)
+
+    monkeypatch.setattr(photos_map, "_cells", tel)
+    wereld = await kaart(client, h, "-180,-85,180,85", 14)
+    assert len(vragen) <= 5, vragen
+    s_w = next(
+        s for s in range(17)
+        if len({((x >> s), (y >> s)) for x, y in (tiles.tile16(*p) for p in punten)})
+        <= photos_map.MAX_CELLS
+    )  # fmt: skip
+    verwacht_w = {}
+    for p in punten:
+        x, y = tiles.tile16(*p)
+        verwacht_w[(x >> s_w, y >> s_w)] = verwacht_w.get((x >> s_w, y >> s_w), 0) + 1
+    assert {(c["x"], c["y"]): c["n"] for c in wereld} == verwacht_w
+    monkeypatch.undo()
     # Op zoom 6 past alles: precies de cellen van die zoom (s = 8)
     cellen = await kaart(client, h, venster, 6)
     s6 = tiles.shift(6)
@@ -170,10 +196,13 @@ async def test_een_zoom_die_niet_klopt(client, admin, z):
     assert r.status_code == 422 and params_of(r)["field"] == "query.z"
 
 
-async def test_de_items_per_pagina_met_de_cursor(client, admin, settings, monkeypatch):
+@pytest.mark.parametrize("veel", [False, True], ids=["vanaf-het-venster", "langs-de-tijdlijn"])
+async def test_de_items_per_pagina_met_de_cursor(client, admin, settings, monkeypatch, veel):
+    """Beide wegen van /photos/map/items geven dezelfde foto's in dezelfde volgorde."""
     h, _tokens = admin
     ids = await zet_punten(client, admin, settings, [UTRECHT] * 5 + [PARIJS])
     monkeypatch.setattr(photos_map, "PAGE", 2)
+    monkeypatch.setattr(photos_map, "MANY", 1 if veel else 10_000)
     gezien, cursor, paginas = [], None, 0
     while True:
         params = {"bbox": "4.0,51.0,6.0,53.0"}
