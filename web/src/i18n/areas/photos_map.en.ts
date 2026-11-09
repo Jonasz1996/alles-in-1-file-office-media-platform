@@ -46,6 +46,25 @@ const en: Translation<typeof nl> = {
     onMap: "On the map",
     onlyYou: "Only you can see the location.",
   },
+  share: {
+    photos: {
+      one: "{n} photo in here has a location in the file. Anyone who downloads it gets that location too.",
+      other: "{n} photos in here have a location in the file. Anyone who downloads them gets that location too.",
+    },
+    photo: "This photo has a location in the file. Anyone who downloads it gets that location too.",
+    video: "This video has a location in the file. Anyone who downloads it gets that location too.",
+    unknown: {
+      one: "For {n} video we don't know (media is off).",
+      other: "For {n} videos we don't know (media is off).",
+    },
+    unknownOnly: {
+      one: "For {n} video in here we don't know whether it has a location (media is off).",
+      other: "For {n} videos in here we don't know whether they have a location (media is off).",
+    },
+    unknownVideo: "We don't know whether this video has a location (media is off).",
+    failed: "We could not check whether photos in here have a location.",
+    failedOne: "We could not check whether this file has a location.",
+  },
 };
 
 export default en;

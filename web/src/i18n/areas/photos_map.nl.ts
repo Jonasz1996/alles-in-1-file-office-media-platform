@@ -47,4 +47,26 @@ export default {
     onMap: "Op de kaart",
     onlyYou: "Alleen jij ziet de plek.",
   },
+  // De waarschuwing in het deeldialoog (Keuze 30). "photos" bij een map, een album of een selectie;
+  // "photo" en "video" bij één bestand. Onbekend is een video waarvan de plek niet gelezen kon
+  // worden omdat media uit staat.
+  share: {
+    photos: {
+      one: "{n} foto hierin heeft een locatie in het bestand. Wie hem downloadt, krijgt die mee.",
+      other: "{n} foto's hierin hebben een locatie in het bestand. Wie ze downloadt, krijgt die mee.",
+    },
+    photo: "Deze foto heeft een locatie in het bestand. Wie hem downloadt, krijgt die mee.",
+    video: "Deze video heeft een locatie in het bestand. Wie hem downloadt, krijgt die mee.",
+    unknown: {
+      one: "Van {n} video weten we het niet (media staat uit).",
+      other: "Van {n} video's weten we het niet (media staat uit).",
+    },
+    unknownOnly: {
+      one: "Van {n} video hierin weten we niet of hij een locatie heeft (media staat uit).",
+      other: "Van {n} video's hierin weten we niet of ze een locatie hebben (media staat uit).",
+    },
+    unknownVideo: "Of deze video een locatie heeft, weten we niet (media staat uit).",
+    failed: "Of hierin foto's met een locatie zitten, konden we niet nagaan.",
+    failedOne: "Of dit bestand een locatie heeft, konden we niet nagaan.",
+  },
 } as const;
