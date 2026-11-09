@@ -62,10 +62,14 @@ Zoeken en foto's (fase 6), elk een dunne aanroep van app/search/bench.py (Z1):
     python -m app.cli search-triggers
     python -m app.cli search-check [--n 1000] [--volledig] [--seed 6]
 
+    python -m app.cli bench --los [--n 100000] [--seed 6]
+
 search-bench maakt de boom van 100.000 om zoeken te meten, in een nieuwe map (nooit in die van
 de app). search-rebuild herbouwt de zoekindex in stukken terwijl de app draait; search-triggers
 zet de triggers van zoeken terug en herbouwt daarna; search-check vergelijkt willekeurige nodes
-met de bron (exitcode 1 bij een verschil).
+met de bron (exitcode 1 bij een verschil). bench --los (Z7, Keuze 54; app/search/benchlos.py)
+meet zoeken op deze machine met tools/zoekbench/bench.py, in een tijdelijke map onder de data,
+en zet de uitkomst op /beheer.
 
 Plaatsnamen en landen (Z3, Keuze 29): places.sqlite bouwen uit de bronnen in geo_src (de app
 doet het zelf bij de start als hij ontbreekt; exitcode 1 als een bron ontbreekt of niet klopt):
@@ -99,6 +103,7 @@ from app.migrate import alembic_config
 from app.models import AlbumItem, User
 from app.routers.auth import being_deleted, reset_totp
 from app.search import bench as search_bench
+from app.search import benchlos
 
 
 class BeingDeleted(Exception):
@@ -572,6 +577,7 @@ def main(argv: list[str] | None = None) -> int:
         "db-backup", help="een reservekopie van de database maken, terwijl de app draait"
     )
     search_bench.parsers(commands)
+    benchlos.parsers(commands)
     geo_load.parsers(commands)
     for name, (package, what) in SEARCH_STUBS.items():
         commands.add_parser(name, help=f"{what} (nog niet gebouwd, {package})")
@@ -582,6 +588,8 @@ def main(argv: list[str] | None = None) -> int:
         return _media(settings, args)
     if args.command in search_bench.COMMANDS:
         return search_bench.run(settings, args)
+    if args.command == benchlos.COMMAND:
+        return benchlos.run(settings, args)
     if args.command in geo_load.COMMANDS:
         return geo_load.run(settings, args)
     if args.command in SEARCH_STUBS:

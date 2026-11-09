@@ -19,7 +19,7 @@ Wat GET /admin/search laat zien (AdminSearch, de vorm van §3.4 en web/src/admin
   geïnstalleerd" (NOT_INSTALLED);
 - places: geladen, bron en datum van places.sqlite (Z3, app/geo/load.py); met PLAATSEN=uit niet
   geladen;
-- bench: de uitkomst van de zoekbench (tools/zoekbench/bench.py --los --json, Keuze 54) in
+- bench: de uitkomst van app.cli bench --los (app/search/benchlos.py, Keuze 54) in
   <data>/cache/zoekbench.json, of None;
 - faces en beeld: de blokken van X2 en X3 via search.hooks.admin_block; None zonder hen.
 
@@ -54,8 +54,8 @@ from app.extract import step as text_step
 from app.geo import load as geo_load
 from app.models import Analysis, Blob, BlobHash, Setting, User, now
 from app.routers.stubs import not_built
+from app.search import benchlos, hooks, perhour, rebuild
 from app.search import engine as search_engine
-from app.search import hooks, perhour, rebuild
 from app.search.types import (
     EVENT_SEARCH_PROGRESS,
     AdminBench,
@@ -83,7 +83,7 @@ LANES = ("index", "ocr")  # wat de pauze stilzet
 PAGE = 50  # mislukte per pagina
 FAILED_STEPS = ("text", "hash", "ocr")  # de stappen van de analyse in FailedItem.step
 TICK = 10.0  # search.progress, elke zoveel seconden (§3.4)
-BENCH = Path("cache") / "zoekbench.json"  # onder data_dir
+BENCH = benchlos.RESULT  # onder data_dir: cache/zoekbench.json
 BENCH_MAX = 1 << 20
 SOURCE = f"GeoNames cities1000 (CC BY 4.0) en Natural Earth {geo_load.NE_VERSIE}"
 # Wat de app zelf herbouwt; ocr, faces en beeld zijn van X1, X2 en X3 (search.hooks)

@@ -25,6 +25,9 @@ RUN uv sync --frozen --no-dev
 
 COPY api/app ./app
 COPY api/migrations ./migrations
+# De zoekbench (fase 6, Z7, Keuze 54): `python -m app.cli bench --los` laadt hem van hier. Alleen
+# de standaardbibliotheek; hij maakt zijn boom in /data/cache en ruimt hem weer op
+COPY tools/zoekbench/bench.py ./tools/zoekbench/bench.py
 COPY --from=web /src/dist ./web
 
 RUN useradd --system --uid 10001 platform && install -d -o platform -g platform /data
