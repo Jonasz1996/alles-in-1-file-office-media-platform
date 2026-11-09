@@ -85,7 +85,13 @@ def _paper(size: tuple[int, int], seed: str) -> Image.Image:
 
 @cache
 def _upright() -> tuple[Image.Image, tuple[Word, ...], tuple[tuple, ...]]:
-    page = _paper(A4, "a4")
+    return _draw(0)
+
+
+def _draw(variant: int) -> tuple[Image.Image, tuple[Word, ...], tuple[tuple, ...]]:
+    """De brief rechtop; variant 0 is die van _upright, een andere variant hetzelfde papier met
+    andere ruis (voor de poort van §4.5: 100 pagina's die niet bit voor bit gelijk zijn)."""
+    page = _paper(A4, "a4" if variant == 0 else f"a4-{variant}")
     draw = ImageDraw.Draw(page)
     f = font()
     space = draw.textlength(" ", font=f)
@@ -102,10 +108,11 @@ def _upright() -> tuple[Image.Image, tuple[Word, ...], tuple[tuple, ...]]:
     return page, tuple(words), tuple(found)
 
 
-def page(angle: float = 0.0) -> Image.Image:
+def page(angle: float = 0.0, variant: int = 0) -> Image.Image:
     """De brief (grijs, A4 op 300 dpi), over angle graden tegen de klok in gedraaid: scheef
-    (|angle| < 45, de pagina blijft A4) of een kwartslag (90, 180, 270: liggend of op zijn kop)."""
-    upright, _, _ = _upright()
+    (|angle| < 45, de pagina blijft A4) of een kwartslag (90, 180, 270: liggend of op zijn kop).
+    variant: andere ruis op het papier (alleen variant 0 blijft in het geheugen)."""
+    upright, _, _ = _upright() if variant == 0 else _draw(variant)
     if angle % 90 == 0:
         return upright.rotate(angle, expand=True) if angle % 360 else upright.copy()
     return upright.rotate(angle, resample=Image.BICUBIC, fillcolor=PAPER)
@@ -173,11 +180,65 @@ def heic(angle: float = 0.0) -> bytes:
     return buf.getvalue()
 
 
-def pdf(angle: float = 0.0) -> bytes:
+def pdf(angle: float = 0.0, variant: int = 0) -> bytes:
     """De brief als PDF zonder tekstlaag: één pagina A4 met de scan als beeld (300 dpi)."""
     buf = io.BytesIO()
-    page(angle).save(buf, "PDF", resolution=float(DPI))
+    page(angle, variant).save(buf, "PDF", resolution=float(DPI))
     return buf.getvalue()
+
+
+# --- een bon, met een telefoon gefotografeerd (de e2e van X1) ---
+
+BON = (1000, 1500)  # rechtop, zoals de viewer hem toont
+BON_SIZE = 44
+BON_LEFT, BON_TOP, BON_LINE = 90, 140, 96
+BON_LINES = (
+    "Bakkerij De Korenaar",
+    "Kassabon nummer 0412",
+    "Volkorenbrood 3,10",
+    "Krentenbollen 2,45",
+    "Totaal 5,55",
+    "Spaarcode {woord}",
+    "Tot ziens",
+)
+
+
+def bon(woord: str, angle: float = 2.0) -> tuple[bytes, dict[str, tuple[float, float]]]:
+    """Een foto van een kassabon zoals een telefoon hem opslaat: wit papier met ruis, iets
+    scheef (angle graden tegen de klok in), de pixels een kwartslag tegen de klok in (liggend)
+    met EXIF-draaiing 6. woord staat alleen in het beeld (de regel Spaarcode).
+
+    Geeft de JPEG, en per woord het midden als deel (0..1) van de breedte en de hoogte van de
+    bon rechtop, zoals de viewer hem toont: daar moet de markering liggen."""
+    width, height = BON
+    blad = _paper(BON, f"bon-{woord}").point(lambda v: min(255, v + 12))
+    draw = ImageDraw.Draw(blad)
+    f = font(BON_SIZE)
+    space = draw.textlength(" ", font=f)
+    midden: dict[str, tuple[float, float]] = {}
+    for i, line in enumerate(BON_LINES):
+        x, y = float(BON_LEFT), BON_TOP + i * BON_LINE
+        for w in line.format(woord=woord).split():
+            left, top, right, bottom = draw.textbbox((x, y), w, font=f)
+            draw.text((x, y), w, fill=INK, font=f)
+            midden.setdefault(w, ((left + right) / 2, (top + bottom) / 2))
+            x += draw.textlength(w, font=f) + space
+    scheef = blad.rotate(angle, resample=Image.BICUBIC, fillcolor=PAPER + 12)
+    a = math.radians(angle)
+    c, s = math.cos(a), math.sin(a)
+    cx, cy = width / 2, height / 2
+    deel = {
+        w: (
+            ((x - cx) * c + (y - cy) * s + cx) / width,
+            (-(x - cx) * s + (y - cy) * c + cy) / height,
+        )
+        for w, (x, y) in midden.items()
+    }
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    buf = io.BytesIO()
+    scheef.rotate(90, expand=True).convert("RGB").save(buf, "JPEG", quality=90, exif=exif)
+    return buf.getvalue(), deel
 
 
 def tokens(text: str) -> list[str]:
