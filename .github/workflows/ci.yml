@@ -475,12 +475,13 @@ jobs:
 
   # Fase 5 (§4.8): -m media_perf in Chrome for Testing, alleen een rapport (zoals perf). Het
   # artefact noemt de browserversie en wat isTypeSupported zegt voor avc1.640028 en mp4a.40.2
-  # (S13 van de spike). Ma en Mb komen met M6.
+  # (S13 van de spike). Ma en Mb komen met M6. Fase 6 (Z7): daarna zoek_samen --kort en
+  # zoek_backfill, ook als rapport (±10 minuten erbij, daarom 35 in plaats van 20).
   e2e-media-perf:
     name: e2e media-prestaties (alleen rapport, S13)
     runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
     needs: [web]
-    timeout-minutes: 20
+    timeout-minutes: 35
     continue-on-error: true
     env:
       E2E_PERF_REPORT_ONLY: "1"
@@ -533,12 +534,47 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
               f.write(zin + "\n")
           '
+      # Fase 6 (Z7, §4.5 B): zoeken naast media in drie stappen (pauze, achtergrond, Defer
+      # uit), de korte versie: 60 s per fase, 1 sessie, zonder OnlyOffice. Een rapport; de hele
+      # test met OnlyOffice staat in docs/runbooks/zoeken.md
+      - name: Zoeken naast media (fase 6, Z7; rapport, zoek_samen --kort)
+        if: always()
+        run: |
+          uv run python ../e2e/perf/zoek_samen.py --kort \
+            --kort-uit "$E2E_PERF_OUT/zoek-samen-kort.txt" || echo "zoek_samen gaf exitcode $?"
+      # Fase 6 (Z2, §4.5): de snelheid van de backfill van de tekst, klein (500 documenten, 1
+      # keer per soort), als rapport; de poort van 1.000 per minuut per core meet de sandbox
+      - name: De backfill van de tekst (fase 6, Z2; rapport, zoek_backfill)
+        if: always()
+        run: |
+          mkdir -p "$E2E_PERF_OUT"
+          set -o pipefail
+          uv run python ../e2e/perf/zoek_backfill.py --n 500 --keer 1 \
+            --json "$E2E_PERF_OUT/zoek-backfill.json" | tee "$E2E_PERF_OUT/zoek-backfill.txt" \
+            || echo "zoek_backfill gaf exitcode $?"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: media-prestaties
           path: media-perf-results
           if-no-files-found: warn
+      # De logs tonen alleen de staart: het korte blok van zoeken staat daarom als laatste
+      - name: Kort (zoek_samen en zoek_backfill)
+        if: always()
+        run: |
+          d="$E2E_PERF_OUT"
+          echo "=== kort ==="
+          if [ -s "$d/zoek-samen-kort.txt" ]; then
+            grep -v '^=== kort ===$' "$d/zoek-samen-kort.txt"
+          else
+            echo "zoek_samen: liep niet tot het eind (zie de stap hierboven)"
+          fi
+          if grep -qs '^=== kort ===$' "$d/zoek-backfill.txt"; then
+            sed -n '/^=== kort ===$/,$p' "$d/zoek-backfill.txt" | tail -n +2 \
+              | sed 's/^/zoek_backfill: /'
+          else
+            echo "zoek_backfill: liep niet tot het eind (zie de stap hierboven)"
+          fi
 
   infra:
     name: Infra (lint, templates en images)
