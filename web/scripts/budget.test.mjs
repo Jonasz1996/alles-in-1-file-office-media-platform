@@ -85,7 +85,14 @@ describe("de regels van het budget (fase 6)", () => {
   });
 
   it("de modules van fase 6, ook gezichten en het raster van beeld; in de eerste lading alleen het zoekveld", () => {
-    for (const m of ["src/photos/faces/api.ts", "src/search/beeld/Grid.tsx", "src/photos/people/api.ts", "src/dupes/api.ts"]) {
+    for (const m of [
+      "src/photos/faces/api.ts",
+      "src/search/beeld/Grid.tsx",
+      "src/photos/people/api.ts",
+      "src/dupes/api.ts",
+      "src/ocr/OcrRow.tsx",
+      "src/ocr/PhotoWords.tsx",
+    ]) {
       expect(ZOEK_MODULE.test(m), m).toBe(true);
     }
     // De blokken op /beheer zitten in de chunk van de tab, niet bij de modules van fase 6

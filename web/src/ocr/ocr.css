@@ -1,0 +1,19 @@
+/* Tekst in beeld (fase 6, X1): de rij in het infopaneel en de markering in een foto. */
+
+.ocr-row p {
+  margin: 0 0 var(--space-2);
+}
+
+/* De woorden van een foto liggen precies over het beeld (ZoomView geeft dezelfde maat en
+   transform als de img); de muis gaat erdoorheen naar het beeld (slepen, zoomen) */
+.photo-words {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-origin: center;
+  pointer-events: none;
+}
+
+.photo-words .text-layer {
+  cursor: inherit;
+}

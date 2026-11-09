@@ -128,6 +128,9 @@ const en: Translation<typeof nl> = {
     beeld: "Search by image",
     beeldHint:
       "Your photos are looked at in the background, so you can find them by what is on them ('beach', 'dog'). This happens on this server; nothing goes outside.",
+    ocr: "Recognise text in photos",
+    ocrHint:
+      "Receipts, signs and photos of paper become searchable by their text. The text stays with your photos: only you can find it, also when you share a photo. This happens on this server; nothing goes outside.",
     notYet: "Not available on this server yet.",
     saved: "Saved.",
   },

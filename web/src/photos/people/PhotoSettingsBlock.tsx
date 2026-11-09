@@ -8,6 +8,9 @@
 // vinkje en blijft het uit; de rest van de pagina werkt gewoon door. Vult X2 of X3 de plek, dan
 // verdwijnt het eigen vinkje.
 //
+// X1 (Keuze 23): "Tekst in foto's herkennen" (ocr_photos, standaard uit) is een gewoon vinkje
+// hier, zoals de plek en herinneringen: de tekst blijft bij jouw foto's, alleen jij vindt hem.
+//
 // Toetsenbord: Tab door de vinkjes, Spatie zet aan of uit.
 
 import { type JSX, type ReactNode, useEffect, useId, useRef, useState } from "react";
@@ -68,6 +71,12 @@ export default function PhotoSettingsBlock(): JSX.Element {
             label={t("photos_people.settings.memories")}
             checked={s.memories}
             onChange={(on) => void change({ memories: on })}
+          />
+          <Check
+            label={t("photos_people.settings.ocr")}
+            hint={t("photos_people.settings.ocrHint")}
+            checked={s.ocr_photos}
+            onChange={(on) => void change({ ocr_photos: on })}
           />
           <Slot
             fallback={
