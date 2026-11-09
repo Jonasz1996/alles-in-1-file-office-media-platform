@@ -9,12 +9,14 @@ database, geen tabellen.
   phash() None. pHash kijkt niet naar helderheid: alle bijna egale beelden hadden afstand 0 (V5).
 - De tweede controle (compare en check_ok) vergelijkt twee voorbeelden: de verhouding binnen
   ASPECT, de afstand van de dHash (9 × 8 grijs, 64 bits) ≤ DHASH, MAD64 (de gemiddelde
-  afwijking van 64 × 64 grijs, 0–255) ≤ MAD64, en dezelfde afwijking in elk blok van 8 × 8
+  afwijking van 64 × 64 grijs, 0–255) ≤ MAD64, en dezelfde afwijking in elk blok van 4 × 4
   van dat beeld ≤ BLOCK64. Dat laatste staat niet in Keuze 35: op de fixtures van §3.6 hebben
-  twee verschillende formulieren op één sjabloon een MAD64 van maar 0,86, lager dan een echte
-  variant (JPEG q35 van een brief: 1,40); de afwijking zit dan in een paar blokken (de ingevulde
-  tekst), en per blok scheidt het wel (verschillend ≥ 6,34, varianten ≤ 3,58). Beide grenzen
-  zijn gemeten en liggen vast in tests/dupes/test_phash.py (docs/fase-6/z3.md).
+  twee verschillende formulieren op één sjabloon een MAD64 van maar 0,66–0,86, lager dan een
+  echte variant (JPEG q35: 1,07); de afwijking zit dan in een paar blokken (de ingevulde
+  tekst), en per blok van 4 × 4 scheidt het wel (verschillend ≥ 10,6, varianten ≤ 4,4). Blokken
+  van 8 × 8 waren te grof: met het lettertype van Pillow in plaats van DejaVu Sans (e2e/slim.sh)
+  zakte een formulier daar tot 3,95. Beide grenzen zijn gemeten, met beide lettertypen, en
+  liggen vast in tests/dupes/test_phash.py (docs/fase-6/z3.md).
 - Tekst telt mee: hebben beide inhouden tekst en is de gevouwen tekst anders, dan is een paar
   nooit "zeker" (text_key, text_differs).
 
@@ -37,11 +39,13 @@ SURE = 6
 # De tweede controle (Keuze 35)
 ASPECT = 0.02
 DHASH = 10
-# Gemeten op de fixtures van §3.6 met de voorbeelden van 256 (tests/dupes/test_phash.py): echte
-# varianten (half, kwart, JPEG q35–q75) hebben MAD64 ≤ 1,40 en per blok ≤ 3,58; verschillende
-# brieven, formulieren en schermen met pHash ≤ 6 hebben per blok ≥ 6,34 (MAD64 vanaf 0,86)
+# Gemeten op de fixtures van §3.6 met de voorbeelden van 256 (tests/dupes/test_phash.py), met
+# DejaVu Sans en met het lettertype van Pillow: echte varianten (half, kwart, JPEG q35–q75)
+# hebben MAD64 ≤ 1,07 en per blok van 4 × 4 ≤ 4,31; verschillende brieven, formulieren en
+# schermen met pHash ≤ 6 hebben per blok ≥ 10,6 (MAD64 vanaf 0,66)
 MAD64 = 2.0
-BLOCK64 = 5.0
+BLOCK64 = 6.0
+_BLOCK = 4
 # Een paar dat niet te meten was (een voorbeeld weg of kapot): dup_pair.mad is NOT NULL
 NO_MAD = -1.0
 
@@ -152,14 +156,15 @@ def aspect_ok(a: Look, b: Look) -> bool:
 
 def mad64(a: bytes, b: bytes) -> tuple[float, float]:
     """(MAD64, de grootste per blok): de gemiddelde absolute afwijking van twee grijsbeelden
-    van 64 × 64 (0–255), over het geheel en in het ergste blok van 8 × 8."""
+    van 64 × 64 (0–255), over het geheel en in het ergste blok van 4 × 4."""
     diff = bytes(abs(x - y) for x, y in zip(a, b, strict=True))
+    n = _BLOCK
     worst = 0
-    for by in range(0, 64, 8):
-        for bx in range(0, 64, 8):
-            total = sum(sum(diff[y * 64 + bx : y * 64 + bx + 8]) for y in range(by, by + 8))
+    for by in range(0, 64, n):
+        for bx in range(0, 64, n):
+            total = sum(sum(diff[y * 64 + bx : y * 64 + bx + n]) for y in range(by, by + n))
             worst = max(worst, total)
-    return sum(diff) / len(diff), worst / 64
+    return sum(diff) / len(diff), worst / (n * n)
 
 
 def compare(a: Look, b: Look) -> dict[str, Any]:

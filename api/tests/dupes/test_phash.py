@@ -12,7 +12,9 @@ het niveau (photo_hash.levels) en de klieken (dupes.groups.cliques).
 - Vlak is geen hash: de zwarte en de muur-foto's van §3.6 krijgen state flat.
 - De poort: op alle fixtures van §3.6 samen (varianten, brieven, formulieren, schermen, egaal,
   anders) 0 groepen "zeker" met twee verschillende originelen; en elk paar van verschillende
-  originelen met pHash ≤ 6 zakt voor de tweede controle.
+  originelen met pHash ≤ 6 zakt voor de tweede controle. Met het lettertype van hier (DejaVu
+  Sans als dat er is) en met dat van Pillow (zoals in python:3.12-slim van e2e/slim.sh): de
+  ingevulde tekst van de formulieren verschilt dan anders.
 - Tekst telt mee: andere tekst maakt een paar nooit "zeker".
 """
 
@@ -33,15 +35,16 @@ from tests.search import fixtures as fx
 
 pytestmark = [pytest.mark.anyio, pytest.mark.zoek]
 
-# Keuze 35, met de grenzen die Z3 gemeten heeft (MAD64 2,0 en per blok 5,0; de voorlopige 3,0
-# van het ontwerp liet 520 paren van verschillende brieven door)
+# Keuze 35, met de grenzen die Z3 gemeten heeft (MAD64 2,0 en per blok van 4 × 4 6,0; de
+# voorlopige 3,0 van het ontwerp liet 520 paren van verschillende brieven door)
 GRENZEN = {
     "FLAT": 3.0, "NEAR": 10, "SURE": 6, "ASPECT": 0.02, "DHASH": 10, "MAD64": 2.0,
-    "BLOCK64": 5.0,
+    "BLOCK64": 6.0,
 }  # fmt: skip
-# Wat de varianten van V5 hooguit halen en verschillende bestanden minstens (gemeten, z3.md)
-VARIANT_MAD, VARIANT_BLOK = 1.5, 4.0
-ANDERS_BLOK = 6.0
+# Wat de varianten hooguit halen (gemeten: MAD64 1,07, per blok 4,31) en verschillende bestanden
+# met pHash ≤ 6 per blok minstens (gemeten: 10,6 met het lettertype van Pillow, 14,3 met DejaVu)
+VARIANT_MAD, VARIANT_BLOK = 1.5, 4.5
+ANDERS_BLOK = 10.0
 CATEGORIEEN = ("varianten", "brieven", "formulieren", "schermen", "egaal", "anders")
 
 
@@ -191,7 +194,17 @@ def _origineel(naam: str) -> str:
     return naam
 
 
-async def test_de_poort_geen_groep_zeker_met_twee_originelen(settings, tmp_path):
+@pytest.fixture(params=["hier", "pillow"])
+def lettertype(request, monkeypatch):
+    """De fixtures met het lettertype van hier, en met dat van Pillow (DejaVu Sans ontbreekt in
+    python:3.12-slim): elk krijgt zijn eigen map in de cache (fixtures.sleutel)."""
+    if request.param == "pillow":
+        monkeypatch.setattr(fx, "LETTERTYPEN", ())
+    return request.param
+
+
+@pytest.mark.filterwarnings("ignore:DejaVu Sans ontbreekt")
+async def test_de_poort_geen_groep_zeker_met_twee_originelen(settings, tmp_path, lettertype):
     b = Beelden(tmp_path)
     for soort in CATEGORIEEN:
         for pad in sorted(fx.make(f"bijna/{soort}").iterdir()):
@@ -232,7 +245,8 @@ async def test_de_poort_geen_groep_zeker_met_twee_originelen(settings, tmp_path)
     metingen = b.meet(dicht)
     door = [paar for paar in dicht if phash.check_ok(metingen.get(paar))]
     assert door == [], door[:5]
-    # De marge: per blok wijken ze allemaal ver genoeg af (gemeten minimum 6,34)
+    # De marge: per blok wijken ze allemaal ver genoeg af (gemeten minimum 10,6 met het
+    # lettertype van Pillow; met blokken van 8 × 8 was dat 3,95, onder de grens)
     assert min(metingen[p]["block"] for p in dicht) >= ANDERS_BLOK
 
 
@@ -254,9 +268,9 @@ async def test_tekst_telt_mee():
 
 async def test_de_tweede_controle_per_grens():
     """Elke grens van de tweede controle apart, en wat het renderproces kapot teruggeeft."""
-    goed = {"aspect": True, "dhash": 10, "mad": 2.0, "block": 5.0}
+    goed = {"aspect": True, "dhash": 10, "mad": 2.0, "block": 6.0}
     assert phash.check_ok(goed)
-    for fout in ({"aspect": False}, {"dhash": 11}, {"mad": 2.001}, {"block": 5.001},
+    for fout in ({"aspect": False}, {"dhash": 11}, {"mad": 2.001}, {"block": 6.001},
                  {"mad": -1.0}, {"mad": "0"}, {"dhash": True}, {"block": None}):  # fmt: skip
         assert not phash.check_ok({**goed, **fout}), fout
     assert not phash.check_ok(None) and not phash.check_ok({"error": True})
