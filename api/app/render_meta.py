@@ -34,6 +34,15 @@ het onbekend (een video zonder ffprobe). De bronnen:
 Elke waarde is onvertrouwd: NaN en oneindig weg (IFDRational(0, 0) geeft NaN), |lat| > 90 of
 |lon| > 180 weg, (0, 0) is "geen plek", en zonder GPSLatitudeRef of GPSLongitudeRef ook geen
 plek. Een hoogte die niet klopt, laat alleen de hoogte weg.
+
+De pHash (fase 6, Keuze 35; Z3) rekent run_meta voor een afbeelding met "hash": true in zijn item:
+uit het voorbeeld van 256 px ("thumb", al gedraaid, J6) als dat er is, anders uit het origineel
+met draft() en verkleind tot 256. Per bestand "hash": {"state": "ok", "phash": int} (64 bits,
+zonder teken), {"state": "flat"} (vlak: geen hash) of {"state": "none"} (niet te lezen); los van
+de metadata, dus ook als de headers niet te lezen waren (een RAW met een voorbeeld). En met
+"pairs": [[a, b], …] en "looks": {sha: {"thumb", "source"}} de tweede controle van die paren uit
+dezelfde voorbeelden: "pairs": [{"a", "b", "aspect", "dhash", "mad", "block"}], of {"a", "b",
+"error": true} als een van beide niet te lezen was (app/dupes/phash.py).
 """
 
 import contextlib
@@ -530,9 +539,67 @@ def _image(source: Path, max_pixels: int) -> dict[str, Any]:
         return {**image_meta(img), "location": image_location(img)}
 
 
+def _picture(item: dict[str, Any], max_pixels: int) -> Any:
+    """Het beeld voor de pHash en de tweede controle (RGB, hooguit 256 px): het voorbeeld van 256
+    als dat er is, anders het origineel met draft(), gedraaid zoals het voorbeeld (J6)."""
+    from PIL import ImageOps
+
+    from app import render
+
+    Image = render._pillow(max_pixels)
+    thumb = item.get("thumb")
+    if thumb and Path(thumb).is_file():
+        with Image.open(thumb, formats=["WEBP"]) as img:
+            img.load()
+            return img.convert("RGB")
+    with Image.open(Path(item["source"]), formats=render.IMAGE_FORMATS) as img:
+        img.draft("RGB", (render.THUMB, render.THUMB))
+        img = ImageOps.exif_transpose(img).convert("RGB")
+    img.thumbnail((render.THUMB, render.THUMB), Image.Resampling.LANCZOS)
+    return img
+
+
+def _hash(item: dict[str, Any], max_pixels: int) -> dict[str, Any]:
+    from app.dupes import phash
+
+    try:
+        img = _picture(item, max_pixels)
+        value = phash.phash(img)
+    except Exception:  # noqa: BLE001 - niet te lezen: geen hash, en niet opnieuw proberen
+        return {"state": "none"}
+    return {"state": "flat"} if value is None else {"state": "ok", "phash": value}
+
+
+def _pairs(request: dict[str, Any], max_pixels: int) -> list[dict[str, Any]]:
+    """De tweede controle voor elk paar (Keuze 35), elk voorbeeld één keer gelezen."""
+    from app.dupes import phash
+
+    looks: dict[str, Any] = request.get("looks") or {}
+    seen: dict[str, Any] = {}
+
+    def look(sha: str) -> Any:
+        if sha not in seen:
+            try:
+                seen[sha] = phash.look(_picture(looks[sha], max_pixels))
+            except Exception:  # noqa: BLE001 - weg of kapot: dit paar is niet te meten
+                seen[sha] = None
+        return seen[sha]
+
+    out: list[dict[str, Any]] = []
+    for pair in request.get("pairs") or []:
+        a, b = str(pair[0]), str(pair[1])
+        la, lb = look(a), look(b)
+        if la is None or lb is None:
+            out.append({"a": a, "b": b, "error": True})
+        else:
+            out.append({"a": a, "b": b, **phash.compare(la, lb)})
+    return out
+
+
 def run_meta(request: dict[str, Any]) -> dict[str, Any]:
-    """Mode "meta": {"items": [{"sha", "source", "mime"}], "max_pixels"}. Per bestand de
-    metadata, of {"error": ...} als het niet lukte; een fout in één bestand stopt de rest niet."""
+    """Mode "meta": {"items": [{"sha", "source", "mime", "thumb"?, "hash"?}], "max_pixels",
+    "pairs"?, "looks"?}. Per bestand de metadata, of {"error": ...} als het niet lukte; een fout
+    in één bestand stopt de rest niet. Met "hash" ook de pHash; met "pairs" de tweede controle."""
     max_pixels = int(request.get("max_pixels") or 100_000_000)
     results: dict[str, Any] = {}
     videos = _Videos(request.get("worker"))
@@ -550,4 +617,9 @@ def run_meta(request: dict[str, Any]) -> dict[str, Any]:
                     results[sha] = {}
             except Exception as e:  # noqa: BLE001 - per bestand: kapot, weg of te groot
                 results[sha] = {"error": f"{type(e).__name__}: {e}"[:200]}
-    return {"state": "ready", "results": results}
+            if item.get("hash") and mime.startswith("image/"):
+                results[sha]["hash"] = _hash(item, max_pixels)
+    answer: dict[str, Any] = {"state": "ready", "results": results}
+    if request.get("pairs"):
+        answer["pairs"] = _pairs(request, max_pixels)
+    return answer

@@ -34,9 +34,15 @@ gebeurt onder BlobStore.lock, net als het neerzetten van een preview (previews._
 overschrijft de een nooit het preview_meta dat de ander net schreef. De plaats (places.sqlite)
 zoeken we vóór het schrijven op, in een thread.
 
+Sinds fase 6 (Z3, Keuzes 35 en 36) rekent fase blobs ook de pHash van elke afbeelding zonder
+blob_hash van photo_hash.VERSION, in hetzelfde renderproces (uit het voorbeeld van 256 px, of
+het origineel met draft()), zoekt de kandidaten, doet de tweede controle van die paren in een
+tweede renderproces (in stukken van PAIRS) en schrijft blob_hash en dup_pair in dezelfde
+transactie als de rest (app/photo_hash.py).
+
 Mislukt een run definitief (het proces crasht steeds op hetzelfde bestand), dan zet on_dead
-meta_version voor dat stuk toch op VERSION, blob_meta.gps op NULL (onbekend), en gaat de keten
-verder: geen eindeloze lus.
+meta_version voor dat stuk toch op VERSION, blob_meta.gps op NULL (onbekend), blob_hash op
+"none" (geen hash), en gaat de keten verder: geen eindeloze lus.
 
 Met media aan (fase 5) leest de mediaworker de video's. Is die weg, druk of zonder ffmpeg, dan
 geeft render_meta {"error", "later"} en blijft de blob over (integratie, punt 3): de
@@ -52,11 +58,11 @@ from typing import Any
 
 import anyio
 import anyio.to_thread
-from sqlalchemy import exists, or_, select, update
+from sqlalchemy import and_, exists, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import jobs, photodate, previews, render_meta
+from app import jobs, photo_hash, photodate, previews, render_meta
 from app.config import Settings
 from app.db import get_engine
 from app.models import Blob, BlobMeta, Node, PhotoGeo, PhotoPref
@@ -69,6 +75,9 @@ BLOBS, NODES = "blobs", "nodes"
 # Na preview.ready: zo lang wachten, zodat een import van honderden foto's één keten geeft
 DELAY = timedelta(seconds=5)
 MEDIA = or_(Blob.mime.like("image/%"), Blob.mime.like("video/%"))
+IMAGE = Blob.mime.like("image/%")
+# Paren per renderproces voor de tweede controle (het antwoord blijft ruim onder OUTPUT_BYTES)
+PAIRS = 1000
 
 
 def _maker(settings: Settings) -> async_sessionmaker[AsyncSession]:
@@ -80,9 +89,17 @@ def _no_meta():
 
 
 def _todo():
-    """Blobs die (opnieuw) gelezen moeten worden: een oude meta_version, of nog geen blob_meta
-    (een nieuwe upload: de preview-taak zet meta_version al, maar leest geen plek)."""
-    return (or_(Blob.meta_version < render_meta.VERSION, _no_meta()), MEDIA)
+    """Blobs die (opnieuw) gelezen moeten worden: een oude meta_version, nog geen blob_meta (een
+    nieuwe upload: de preview-taak zet meta_version al, maar leest geen plek), of een afbeelding
+    zonder blob_hash van photo_hash.VERSION (Keuze 35)."""
+    return (
+        or_(
+            Blob.meta_version < render_meta.VERSION,
+            _no_meta(),
+            and_(IMAGE, photo_hash.not_hashed()),
+        ),
+        MEDIA,
+    )
 
 
 def _missing():
@@ -118,10 +135,8 @@ async def _batch(
     return [(sha, mime) for sha, mime in rows]
 
 
-async def _read(settings: Settings, items: list[dict[str, Any]]) -> dict[str, Any]:
-    """Metadata van deze bestanden uit één renderproces, met een eigen werkmap."""
-    if not items:
-        return {}
+async def _render(settings: Settings, request: dict[str, Any]) -> dict[str, Any]:
+    """Eén renderproces in mode meta, met een eigen werkmap."""
     blobs = BlobStore(settings.blob_dir)
     tmp = previews.root(blobs) / ".tmp"
     await anyio.Path(tmp).mkdir(parents=True, exist_ok=True)
@@ -129,18 +144,64 @@ async def _read(settings: Settings, items: list[dict[str, Any]]) -> dict[str, An
     try:
         request = {
             "mode": "meta",
-            "items": items,
             "max_pixels": settings.preview_max_pixels,
             "memory_mb": settings.preview_memory_mb,
+            **request,
         }
-        result = await previews.render(settings, request, work)
+        return await previews.render(settings, request, work)
     finally:
         with anyio.CancelScope(shield=True):
             await anyio.to_thread.run_sync(shutil.rmtree, work, True)
+
+
+async def _read(settings: Settings, items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Metadata van deze bestanden uit één renderproces."""
+    if not items:
+        return {}
+    result = await _render(settings, {"items": items})
     found = result.get("results")
     if not isinstance(found, dict):
         raise jobs.JobError("Het metadataproces gaf een onverwacht antwoord")
     return found
+
+
+def _thumb(blobs: BlobStore, sha: str) -> str:
+    return str(previews.directory(blobs, sha) / f"{previews.THUMB}.webp")
+
+
+async def _need_hash(session: AsyncSession, batch: list[tuple[str, str | None]]) -> set[str]:
+    """De afbeeldingen in dit stuk zonder blob_hash van photo_hash.VERSION."""
+    rows = await session.scalars(
+        select(Blob.sha256).where(
+            Blob.sha256.in_([sha for sha, _mime in batch]), IMAGE, photo_hash.not_hashed()
+        )
+    )
+    return set(rows)
+
+
+async def _pairs(settings: Settings, hashed: list[photo_hash.Hashed]) -> list[dict[str, Any]]:
+    """De paren van deze nieuwe hashes met hun niveau (Keuze 35): kandidaten zoeken, dan de
+    tweede controle in het renderproces, en de tekst erbij."""
+    blobs = BlobStore(settings.blob_dir)
+    async with _maker(settings)() as session:
+        pairs = await photo_hash.candidates(session, hashed)
+        if not pairs:
+            return []
+        shas = {sha for pair in pairs for sha in pair}
+        alive = await photo_hash.looks(session, shas)
+        texts = await photo_hash.text_keys(session, shas)
+    measured: dict[tuple[str, str], dict[str, Any]] = {}
+    todo = [pair for pair in sorted(pairs) if pair[0] in alive and pair[1] in alive]
+    for i in range(0, len(todo), PAIRS):
+        part = todo[i : i + PAIRS]
+        looks = {
+            sha: {"thumb": _thumb(blobs, sha), "source": str(blobs.path(sha))}
+            for pair in part
+            for sha in pair
+        }
+        answer = await _render(settings, {"items": [], "pairs": part, "looks": looks})
+        measured.update(photo_hash.parse_pairs(answer.get("pairs")))
+    return photo_hash.levels(pairs, measured, texts)
 
 
 def _gps(meta: Any) -> int | None:
@@ -184,17 +245,21 @@ async def _places(settings: Settings, found: dict[str, Any]) -> list[tuple[str, 
 
 
 async def _read_batch(
-    settings: Settings, batch: list[tuple[str, str | None]]
+    settings: Settings, batch: list[tuple[str, str | None]], need: set[str] | None = None
 ) -> tuple[set[str], dict[str, Any]]:
+    """Lees dit stuk; need: de afbeeldingen die ook hun pHash krijgen."""
     blobs = BlobStore(settings.blob_dir)
     present = {
         sha: mime
         for sha, mime in batch
         if await anyio.Path(blobs.path(sha)).is_file()  # weg op schijf: niets te lezen
     }
-    items = [
-        {"sha": sha, "source": str(blobs.path(sha)), "mime": mime} for sha, mime in present.items()
-    ]
+    items = []
+    for sha, mime in present.items():
+        item: dict[str, Any] = {"sha": sha, "source": str(blobs.path(sha)), "mime": mime}
+        if need and sha in need:
+            item.update(hash=True, thumb=_thumb(blobs, sha))
+        items.append(item)
     return set(present), await _read(settings, items)
 
 
@@ -205,15 +270,21 @@ async def _run_blobs(settings: Settings, after: str) -> str | None:
     maker = _maker(settings)
     async with maker() as session:
         batch = await _batch(session, after, BLOBS)
+        need = await _need_hash(session, batch) if batch else set()
     if not batch:
         return None
-    present, results = await _read_batch(settings, batch)
+    present, results = await _read_batch(settings, batch, need)
     usable = {
         sha: meta.get("location")
         for sha, meta in results.items()
         if sha in present and isinstance(meta, dict) and "error" not in meta
     }
     located = await _places(settings, usable)
+    hashed = [
+        photo_hash.parse(sha, (results.get(sha) or {}).get("hash") if sha in present else None)
+        for sha in sorted(need)
+    ]
+    pair_rows = await _pairs(settings, hashed)
     blobs = BlobStore(settings.blob_dir)
     async with blobs.lock:
         async with maker() as session:
@@ -265,6 +336,8 @@ async def _run_blobs(settings: Settings, after: str) -> str | None:
             spotted = {sha for sha, _spot, _place in with_spot}
             gone = [m["blob_sha"] for m in metas if m["gps"] == 0]
             await rows.clear(session, [sha for sha in gone if sha not in spotted])
+            # De pHash en de paren (Keuze 35); wat intussen opgeruimd is, niet
+            await photo_hash.write(session, [h for h in hashed if h.sha in found], pair_rows)
             await session.commit()
     return batch[-1][0] if len(batch) == BATCH else None
 
@@ -358,6 +431,7 @@ async def mark_dead(settings: Settings, payload: dict[str, Any], _error: str) ->
             )
             # Wat al een blob_meta had, houdt die
             await session.execute(sqlite_insert(BlobMeta).on_conflict_do_nothing(), unknown)
+            await photo_hash.mark_none(session, shas)
         else:
             await session.execute(
                 update(BlobMeta)

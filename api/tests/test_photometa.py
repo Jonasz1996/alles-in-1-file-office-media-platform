@@ -189,9 +189,18 @@ async def test_een_stuk_schrijft_kort(settings):
     first = next(i for i, s in enumerate(seen) if s.split()[-1] in ("UPDATE", "INSERT", "DELETE"))
     burst = seen[first : seen.index("COMMIT", first)]
     # De blobs en de bestanden, elk één executemany; geen leesronde per blob meer. Sinds
-    # VERSION 2 (Z3) ook blob_meta en de plek per node, ook elk één executemany: hoe groot het
-    # stuk ook is, vier statements
-    assert burst == ["many UPDATE", "many UPDATE", "many INSERT", "many INSERT"], seen
+    # VERSION 2 (Z3) ook blob_meta en de plek per node, ook elk één executemany. Sinds de pHash
+    # (Z3 stap 2) ook blob_hash (één executemany) en de oude paren van dit stuk weg (één DELETE;
+    # een stuk van 200 past in één IN). Deze egale foto's zijn vlak: geen paren (die zouden nog
+    # één executemany zijn). Hoe groot het stuk ook is, zes statements
+    assert burst == [
+        "many UPDATE",
+        "many UPDATE",
+        "many INSERT",
+        "many INSERT",
+        "many INSERT",
+        "DELETE",
+    ], seen
     async with maker(settings)() as session:
         for d, node_id in enumerate(ids, start=1):
             node = await session.get(Node, node_id)
