@@ -1195,6 +1195,17 @@ c.close()' "$1" </dev/null
   is_copy() { [[ $1 =~ ^platform-$2-[0-9]{8}T[0-9]{6}\.[0-9]{3}Z\.db$ ]]; }
   # Eigenaar en rechten
   owner_mode() { as_root stat -c '%u:%g %a' "$1"; }
+  # Wat de app zelf schrijft, is van zijn gebruiker in het image: uid 10001 met de groep die
+  # useradd --system hem gaf (in deze images 999). Gevraagd aan de app die draait
+  app_user() {
+    local c
+    c=$(cid platform) && [ -n "$c" ] || return 1
+    printf '%s:%s\n' "$(docker exec "$c" id -u)" "$(docker exec "$c" id -g)"
+  }
+  app_file() {
+    local who
+    who=$(app_user) && [ "${who%%:*}" = 10001 ] && [ "$(owner_mode "$1")" = "$who $2" ]
+  }
   # Een kopie op de host, alleen lezen: head, integrity_check en het aantal gebruikers
   copy_facts() {
     as_root python3 -I -c 'import sqlite3, sys
@@ -1279,7 +1290,7 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
   }
   image_id() { docker image inspect --format '{{.Id}}' platform:local 2>/dev/null; }
 
-  local schema_head file_id file_sha root app1 app2 app3 app4 cid4 media3 copy0009 copy0010 rev
+  local schema_head file_id file_sha root app1 app2 app_vorige app3 app4 cid4 media3 copy0009 copy0010 rev
   schema_head=$(head_rev "$TO") || stop "geen migraties gevonden in $TO (api/migrations/versions)"
   printf 'Een bestand dat de update en de weg terug overleeft (installatietest van zoeken).\n' >"$WORK/bestand/notities.txt"
   file_sha=$(sha256sum "$WORK/bestand/notities.txt" | cut -d' ' -f1)
@@ -1308,7 +1319,7 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
   check "2: de kopie vóór de nieuwe app (compose run, dan up)" compose_before 2-bijwerken "run --rm --no-deps -T platform python -I -c <tekst> /data/platform.db /data/backup" "up -d --build --remove-orphans platform"
   copy0009=$(backups)
   check "2: één kopie platform-$ROLLBACK_HEAD-<tijd>.db (gezien: $copy0009)" is_copy "$copy0009" "$ROLLBACK_HEAD"
-  check "2: de kopie: 600, van 10001" test "$(owner_mode "$BACKUP_DIR/$copy0009")" = "10001:10001 600"
+  check "2: de kopie: 600, van de gebruiker van de app (uid 10001, zoals platform.db)" app_file "$BACKUP_DIR/$copy0009" 600
   check "2: de map backup: 700, van 10001" test "$(owner_mode "$BACKUP_DIR")" = "10001:10001 700"
   check "2: de kopie is heel: $ROLLBACK_HEAD, integrity ok, de beheerder (gezien: $(copy_facts "$copy0009"))" test "$(copy_facts "$copy0009")" = "$ROLLBACK_HEAD ok 1"
   check "2: install.sh noemt de kopie, ook in de eindtekst" eval 'said 2-bijwerken "Reservekopie: $BACKUP_DIR/$copy0009" && said 2-bijwerken "Reservekopie van vóór deze run: $BACKUP_DIR/$copy0009"'
@@ -1358,13 +1369,18 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
 
   # --- 5. de update erbovenop, met PLAATSEN=uit en dan weer aan ------------------------------
   STAGE=5
+  # Het image van de vorige run is platform:local zoals stap 4 het achterliet. Met de opslag van
+  # containerd (Docker 29) kan dat een andere id zijn dan app2, ook als er niets veranderde: de
+  # id is die van de manifest-lijst, met de provenance van die build erin. Compose liet de app
+  # dan draaien (zelfde config), en de kopie hoort met dit image te gaan
+  app_vorige=$(image_id)
   step 5-uit "$NEW_SH" PLATFORM_SRC_REF="$TO2" PLAATSEN=uit || fout "5: install.sh (PLAATSEN=uit) gaf een fout"
   check "5: de app draait" app_up
   check "5: PLAATSEN=uit: geen download" test -z "$(in_step 5-uit curl.log)"
   check "5: PLAATSEN=uit in .env, PLATFORM_PLACES=uit in de app" eval '[ "$(env_value PLAATSEN)" = uit ] && [ "$(container_env "$(cid platform)" PLATFORM_PLACES)" = uit ]'
   check "5: de eindtekst: uit, en hoe het aan gaat" eval 'said 5-uit "Plaatsnamen: uit (PLAATSEN=uit)." && said_part 5-uit "| PLAATSEN=aan bash"'
   check "5: /api/v1/admin/search: plaatsen uit" test "$(places_loaded)" = false
-  check "5: de kopie met het image van de vorige run (${app2:7:12})" test "$(run_image 5-uit)" = "$app2"
+  check "5: de kopie met het image van de vorige run (${app_vorige:7:12})" test "$(run_image 5-uit)" = "$app_vorige"
   local newest
   newest=$(backups)
   newest=${newest#"$copy0009 "}
@@ -1399,8 +1415,10 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
     fout "6.3: db-downgrade $ROLLBACK_HEAD"
     tail -n 20 "$WORK/logs/6-downgrade.log"
   fi
-  check "6.3: het commando zegt wat weg is, en dat het schema op $ROLLBACK_HEAD staat" eval \
-    'grep -qF "Weg zijn daarna: de zoekindex" "$WORK/logs/6-downgrade.log" && grep -qxF "De database staat nu op revisie $ROLLBACK_HEAD." "$WORK/logs/6-downgrade.log"'
+  # Zonder terminal (-T, "ja" uit een pipe) komt de Enter van het antwoord niet in de uitvoer:
+  # de uitkomst staat op de regel van de vraag
+  check "6.3: het commando zegt wat weg is, vraagt om \"ja\", en zegt dat het schema op $ROLLBACK_HEAD staat" eval \
+    'grep -qF "Weg zijn daarna: de zoekindex" "$WORK/logs/6-downgrade.log" && grep -qxF "Typ \"ja\" om door te gaan: De database staat nu op revisie $ROLLBACK_HEAD." "$WORK/logs/6-downgrade.log"'
   step 6-terug "$OLD_SH" PLATFORM_BRANCH=installatietest-van PLATFORM_SRC_REF="$FROM" || fout "6.4: het script van 0.7.1 gaf een fout"
   check "6: de app draait" app_up
   check "6: de broncode staat op ${FROM:0:12}" test "$(src_head)" = "$(git -C "$WORK/repo.git" rev-parse "$FROM^{commit}")"
@@ -1428,7 +1446,7 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
   check "7: een nieuwe kopie van $ROLLBACK_HEAD (per head de nieuwste), en de $schema_head blijft (gezien: $(backups))" \
     eval 'is_copy "$newest" "$ROLLBACK_HEAD" && [[ $newest > $copy0009 ]] && [ "$(backups)" = "$newest $copy0010" ]'
   check "7: de nieuwe kopie is heel: $ROLLBACK_HEAD, integrity ok (gezien: $(copy_facts "$newest"))" test "$(copy_facts "$newest")" = "$ROLLBACK_HEAD ok 1"
-  check "7: de kopie: 600, van 10001" test "$(owner_mode "$BACKUP_DIR/$newest")" = "10001:10001 600"
+  check "7: de kopie: 600, van de gebruiker van de app (uid 10001, zoals platform.db)" app_file "$BACKUP_DIR/$newest" 600
   check "7: plaatsen geladen" wait_places 300 true
   check "7: het bestand is er nog, heel" test "$(api sha "$file_id")" = "$file_sha"
   check "7: één image van de app, platform:local (gezien: $(app_images_text))" one_app_image
