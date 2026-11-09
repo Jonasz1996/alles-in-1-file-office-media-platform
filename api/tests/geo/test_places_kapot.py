@@ -7,6 +7,7 @@ volgende start (of geo-load) ziet ensure() het met quick_check en bouwt hem opni
 
 import logging
 import sqlite3
+import zlib
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,9 @@ from sqlalchemy import select
 from app.geo import load, places
 from app.models import BlobHash, Job
 from tests.factories import maker
+from tests.geo import bronnen
 from tests.geo.hulp import AMSTERDAM, gps_van, met_gps, rijen, uid, verwerk
+from tests.geo.test_geo_load import _bouw_klaar, _gestart
 from tests.test_previews import upload
 
 pytestmark = pytest.mark.anyio
@@ -103,11 +106,19 @@ async def test_kapot_zonder_bronnen_wordt_opzij_gezet(settings, plaatsen, caplog
     assert any("places.sqlite is kapot" in r for r in regels), regels
 
 
-async def test_een_vlak_dat_niet_uit_te_pakken_is(settings, plaatsen, caplog):
+@pytest.mark.parametrize(
+    "ringen",
+    [
+        pytest.param(bytes.fromhex("78da0000"), id="zlib"),
+        # Een heel zlib-blok, maar 5 ringen zonder lengtes erachter (nacontrole golf 3)
+        pytest.param(zlib.compress(b"\x05\x00\x00\x00"), id="struct"),
+    ],
+)
+async def test_een_vlak_dat_niet_uit_te_pakken_is(settings, plaatsen, caplog, ringen):
     """De pagina's zijn heel, maar de ringen van een vlak niet (zlib of struct): geen land."""
     pad = Path(settings.places_db)
     db = sqlite3.connect(pad)
-    db.execute("UPDATE country_part SET rings = x'78da0000'")
+    db.execute("UPDATE country_part SET rings = ?", (ringen,))
     db.commit()
     db.close()
     places.forget()
@@ -116,6 +127,30 @@ async def test_een_vlak_dat_niet_uit_te_pakken_is(settings, plaatsen, caplog):
     assert p.lookup(52.0907, 5.1214) == places.NIETS
     assert places.get(settings) is None
     assert sum("places.sqlite is niet te lezen" in r.getMessage() for r in caplog.records) == 1
+
+
+async def test_de_start_bouwt_een_kapotte_places_sqlite_opnieuw(tmp_path, monkeypatch, caplog):
+    """Niet alleen geo-load: ook de start (load.start, de haak van search.hooks) kijkt met
+    quick_check, ook als de meta klopt, en bouwt hem dan opnieuw (nacontrole golf 3). Vroeger
+    sloeg de start alles over zodra de meta bij de bronnen hoorde."""
+    bronnen.gebruik(monkeypatch, bronnen.maak(tmp_path / "geo"))
+    try:
+        async with _gestart(tmp_path, monkeypatch) as s:
+            await _bouw_klaar()
+            pad = Path(s.places_db)
+            assert places.get(s).lookup(52.0907, 5.1214).name == "Utrecht"
+        places.forget()
+        beschadig(pad)
+        assert load.current(pad) and not load.heel(pad)
+        caplog.set_level(logging.INFO, "platform.geo")
+        async with _gestart(tmp_path, monkeypatch) as s:
+            await _bouw_klaar()
+            assert load.heel(pad)
+            assert places.get(s).lookup(52.0907, 5.1214).name == "Utrecht"
+        regels = [r.getMessage() for r in caplog.records if r.name == "platform.geo"]
+        assert sum("places.sqlite is kapot (quick_check)" in r for r in regels) == 1, regels
+    finally:
+        places.forget()
 
 
 async def test_photometa_faalt_niet_op_een_fout_in_de_plaatsen(
