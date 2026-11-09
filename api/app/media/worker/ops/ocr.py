@@ -355,7 +355,10 @@ async def _kind1(ctx: Context) -> tuple[int, int, bytes, dict] | dict:
         cpu_s=args.child_cpu_s,
     )
     ctx.children.append(child)
-    r, w = os.pipe2(os.O_CLOEXEC | os.O_NONBLOCK)
+    # Alleen de leeskant niet-blokkerend: de vlag hoort bij het open bestand, en een
+    # niet-blokkerende schrijfkant gaf kind 1 BlockingIOError zodra de pijp vol was
+    r, w = os.pipe2(os.O_CLOEXEC)
+    os.set_blocking(r, False)
     try:
         request = {"kind": args.kind, "page": args.page, "max_pixels": args.max_pixels}
         try:

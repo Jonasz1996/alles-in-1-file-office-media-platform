@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from PIL import Image
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import previews
@@ -307,9 +308,10 @@ def _render(request: dict) -> dict:
     return json.loads(done.stdout)
 
 
-def test_render_leest_text_en_ocr_page_nog_niet(tmp_path):
+def test_render_leest_text_en_maakt_de_pgm_van_ocr_page(tmp_path):
     """De ingangen van §3.5: text leest sinds Z2 (hier mode text met paden, de terugval zonder
-    media; tests/extract heeft de rest), ocr_page geeft "none" tot X1."""
+    media; tests/extract heeft de rest), ocr_page maakt sinds X1 een grijze PGM (hier mode
+    ocr_page met paden; tests/ocr heeft de rest: de handdruk, de rechtzetting, de worker)."""
     source = tmp_path / "doc.txt"
     source.write_text("Er staat tekst in dit bestand.")
     uit = tmp_path / "uit"
@@ -330,5 +332,18 @@ def test_render_leest_text_en_ocr_page_nog_niet(tmp_path):
     assert first == frame.Found(0, "done", False, [], "", None, "Er staat tekst in dit bestand.")
     assert second == frame.Found(1, "failed", False, [], "", None, "")
     assert end is None
-    page = _render({"mode": "ocr_page", "source": str(source), "page": 1})
-    assert page == {"state": "none", "chars": 0, "truncated": False, "code": "ocr_missing"}
+    pgm = tmp_path / "pagina.pgm"
+    page = _render({"mode": "ocr_page", "source": str(source), "out": str(pgm), "kind": "image"})
+    assert page == {"state": "failed", "error": "UnidentifiedImageError"}
+    beeld = tmp_path / "wit.png"
+    Image.new("RGB", (300, 200), "white").save(beeld)
+    page = _render({"mode": "ocr_page", "source": str(beeld), "out": str(pgm), "kind": "image"})
+    assert set(page.pop("ms")) == {"render", "deskew"}
+    assert page == {
+        "state": "ready",
+        "skew": 0.0,
+        "width": 300,
+        "height": 200,
+        "source": [300, 200],
+    }
+    assert pgm.read_bytes() == b"P5\n300 200\n255\n" + b"\xff" * 300 * 200

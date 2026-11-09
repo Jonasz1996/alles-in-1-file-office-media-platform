@@ -1633,8 +1633,10 @@ def ocr_page(f, request: dict, out_fd: int) -> dict:
         width, height = deskew.expanded(img.size, turn)
         if width * height > pgm.OCR_PIXELS or max(width, height) > pgm.MAX_SIDE:
             # na het draaien te groot: de bron eerst kleiner, zodat het gedraaide beeld past
-            f = min((pgm.OCR_PIXELS / (width * height)) ** 0.5, pgm.MAX_SIDE / max(width, height))
-            img = _fit(img, int(img.width * img.height * f * f), int(max(img.size) * f))
+            factor = min(
+                (pgm.OCR_PIXELS / (width * height)) ** 0.5, pgm.MAX_SIDE / max(width, height)
+            )
+            img = _fit(img, int(img.width * img.height * factor**2), int(max(img.size) * factor))
         straight = deskew.turn(img, turn)
     else:
         straight = img
