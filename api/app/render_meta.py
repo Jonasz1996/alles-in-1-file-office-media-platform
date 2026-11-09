@@ -18,8 +18,22 @@ zwevende tijd, ook als er een offset bij stond: die kloktijd houden we); "utc" i
 moment dat de API zelf omzet naar settings.timezone (het renderproces heeft geen tijdzone).
 Zie app/photodate.py.
 
-GPS en locatie lezen we nooit (fase 6): de GPS-IFD (0x8825) wordt niet geopend en
-locatietags van video's worden overgeslagen.
+De plek (fase 6, Keuze 25; VERSION 2) lezen we alleen in mode "meta" (run_meta, de batch van
+app/photometa.py), nooit voor de preview: image_meta en video_meta geven hem niet, en wat in
+preview_meta komt, gaat ook nog door previews.clean_meta (SECRET_META). Per bestand zet run_meta
+"location": {"lat", "lon", "alt", "source"} of None (gelezen, geen plek); zonder die sleutel is
+het onbekend (een video zonder ffprobe). De bronnen:
+
+- de GPS-IFD (0x8825) van JPEG, HEIC, TIFF, PNG (eXIf) en WebP, via Pillow;
+- anders de XMP in de bytes van im.info["xmp"] (hooguit 1 MB), gelezen met office.reader.sax()
+  (weigert DOCTYPE en entiteiten), alleen exif:GPSLatitude, exif:GPSLongitude en
+  exif:GPSAltitude;
+- bij een video de tags die de worker-opdracht meta doorgeeft (ISO 6709:
+  com.apple.quicktime.location.ISO6709, en ©xyz dat ffprobe als location toont).
+
+Elke waarde is onvertrouwd: NaN en oneindig weg (IFDRational(0, 0) geeft NaN), |lat| > 90 of
+|lon| > 180 weg, (0, 0) is "geen plek", en zonder GPSLatitudeRef of GPSLongitudeRef ook geen
+plek. Een hoogte die niet klopt, laat alleen de hoogte weg.
 """
 
 import contextlib
@@ -30,8 +44,8 @@ from pathlib import Path
 from typing import Any
 
 # Omhoog bij elke wijziging in wat er gelezen wordt: de backfill (app/photometa.py) leest dan
-# alles met een lagere Blob.meta_version opnieuw
-VERSION = 1
+# alles met een lagere Blob.meta_version opnieuw. 2: ook de plek, camera en objectief (Z3)
+VERSION = 2
 
 FIRST_YEAR, LAST_YEAR = 1900, 2100
 TEXT_CHARS = 200
@@ -43,6 +57,19 @@ EXPOSURE, FNUMBER, ISO = 0x829A, 0x829D, 0x8827
 ORIGINAL, DIGITIZED = 0x9003, 0x9004
 BIAS, FLASH, FOCAL = 0x9204, 0x9209, 0x920A
 FOCAL35, LENS_MAKE, LENS_MODEL = 0xA405, 0xA433, 0xA434
+# GPS-IFD (Keuze 25)
+GPS_IFD = 0x8825
+GPS_LAT_REF, GPS_LAT, GPS_LON_REF, GPS_LON, GPS_ALT_REF, GPS_ALT = 1, 2, 3, 4, 5, 6
+XMP_BYTES = 1 << 20
+XMP_EXIF = "{http://ns.adobe.com/exif/1.0/}"
+MAX_ALT = 100_000.0  # meter; daarbuiten is de hoogte onzin
+# Video: de tags met een plek, zoals de worker ze doorgeeft (kleine letters)
+VIDEO_LOCATION_TAGS = ("com.apple.quicktime.location.iso6709", "location", "location-eng")
+ISO6709 = re.compile(
+    r"([+-])(\d{2}(?:\d{2}(?:\d{2})?)?(?:\.\d{1,12})?)"
+    r"([+-])(\d{3}(?:\d{2}(?:\d{2})?)?(?:\.\d{1,12})?)"
+    r"([+-]\d{1,6}(?:\.\d{1,6})?)?(?:CRS[A-Za-z0-9_:]{0,32})?/?"
+)
 # Een klok die nooit gezet is: als "geen datum"
 EPOCHS = {datetime(1904, 1, 1), datetime(1970, 1, 1)}
 EXIF_DATE = re.compile(r"(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})")
@@ -139,6 +166,246 @@ def image_meta(img: Any) -> dict[str, Any]:
     return meta
 
 
+def location(
+    lat: float | None, lon: float | None, alt: float | None, source: str
+) -> dict[str, Any] | None:
+    """De controle op elke plek (Keuze 25): None als hij niet klopt of (0, 0) is."""
+    if lat is None or lon is None:
+        return None
+    if not (math.isfinite(lat) and math.isfinite(lon)) or abs(lat) > 90 or abs(lon) > 180:
+        return None
+    if lat == 0 and lon == 0:
+        return None
+    if alt is not None and (not math.isfinite(alt) or abs(alt) > MAX_ALT):
+        alt = None
+    return {
+        "lat": round(lat, 7),
+        "lon": round(lon, 7),
+        "alt": None if alt is None else round(alt, 2),
+        "source": source,
+    }
+
+
+def _degrees(value: Any) -> float | None:
+    """Graden uit de GPS-IFD: (graden, minuten, seconden) of één getal; elk deel eindig en niet
+    negatief, minuten en seconden onder 60."""
+    if isinstance(value, tuple | list):
+        parts = list(value)
+    else:
+        parts = [value]
+    if not 1 <= len(parts) <= 3:
+        return None
+    numbers = []
+    for part in parts:
+        if isinstance(part, tuple | list):
+            return None
+        number = _number(part)
+        if number is None or number < 0:
+            return None
+        numbers.append(number)
+    numbers += [0.0] * (3 - len(numbers))
+    d, m, sec = numbers
+    if m >= 60 or sec >= 60:
+        return None
+    return d + m / 60 + sec / 3600
+
+
+def _ref(value: Any, allowed: str) -> str | None:
+    text = _text(value)
+    if text is None:
+        return None
+    text = text.upper()[:1]
+    return text if text and text in allowed else None
+
+
+def exif_location(top: Any) -> dict[str, Any] | None:
+    """De plek uit de GPS-IFD van een Pillow-Exif, of None."""
+    try:
+        gps = top.get_ifd(GPS_IFD)
+    except Exception:  # noqa: BLE001 - kapotte GPS-IFD: dan geen plek
+        return None
+    if not gps:
+        return None
+    lat_ref, lon_ref = _ref(gps.get(GPS_LAT_REF), "NS"), _ref(gps.get(GPS_LON_REF), "EW")
+    if lat_ref is None or lon_ref is None:
+        return None
+    lat, lon = _degrees(gps.get(GPS_LAT)), _degrees(gps.get(GPS_LON))
+    if lat is None or lon is None:
+        return None
+    lat = -lat if lat_ref == "S" else lat
+    lon = -lon if lon_ref == "W" else lon
+    alt = _number(gps.get(GPS_ALT))
+    if alt is not None and alt >= 0:
+        below = gps.get(GPS_ALT_REF)
+        if isinstance(below, bytes):
+            below = below[:1] == b"\x01"
+        elif isinstance(below, int):
+            below = below == 1
+        else:
+            below = False
+        alt = -alt if below else alt
+    else:
+        alt = None
+    return location(lat, lon, alt, "exif")
+
+
+def _xmp_coordinate(text: str | None, positive: str, negative: str) -> float | None:
+    """Een GPSCoordinate van XMP: "DDD,MM,SSk" of "DDD,MM.mmk" (k is N, S, E of W)."""
+    if not text:
+        return None
+    text = text.strip()
+    if len(text) > 40 or len(text) < 2:
+        return None
+    ref = text[-1].upper()
+    if ref not in positive + negative:
+        return None
+    parts = text[:-1].split(",")
+    if not 2 <= len(parts) <= 3:
+        return None
+    try:
+        numbers = [float(p) for p in parts]
+    except ValueError:
+        return None
+    value = _degrees(tuple(numbers))
+    if value is None:
+        return None
+    return -value if ref == negative else value
+
+
+def _xmp_rational(text: str | None) -> float | None:
+    if not text or len(text) > 40:
+        return None
+    top, _, bottom = text.strip().partition("/")
+    try:
+        number = float(top) / float(bottom) if bottom else float(top)
+    except (ValueError, ZeroDivisionError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def xmp_location(data: Any) -> dict[str, Any] | None:
+    """De plek uit de ruwe XMP, of None. Een DOCTYPE of entiteit ("billion laughs") weigert
+    office.reader.sax(); dan geen plek."""
+    import io
+
+    from app.office import reader
+
+    if isinstance(data, str):
+        data = data.encode("utf-8", errors="replace")
+    if not isinstance(data, bytes | bytearray) or not data or len(data) > XMP_BYTES:
+        return None
+    wanted = {f"{XMP_EXIF}GPSLatitude", f"{XMP_EXIF}GPSLongitude", f"{XMP_EXIF}GPSAltitude"}
+    found: dict[str, str] = {}
+    current: list[str] = []
+    texts: list[str] = []
+
+    def start(tag: str, attrs: dict[str, str]) -> None:
+        for name, value in attrs.items():
+            if name in wanted and name not in found:
+                found[name] = value[:64]
+        current.append(tag)
+        texts.clear()
+
+    def end(tag: str) -> None:
+        if tag in wanted and tag not in found and texts:
+            found[tag] = "".join(texts)[:64]
+        if current:
+            current.pop()
+        texts.clear()
+
+    def text(data: str) -> None:
+        if current and current[-1] in wanted and sum(map(len, texts)) < 64:
+            texts.append(data)
+
+    try:
+        reader.sax(io.BytesIO(bytes(data)), start, end, text)
+    except reader.Unreadable:
+        return None
+    lat = _xmp_coordinate(found.get(f"{XMP_EXIF}GPSLatitude"), "N", "S")
+    lon = _xmp_coordinate(found.get(f"{XMP_EXIF}GPSLongitude"), "E", "W")
+    alt = _xmp_rational(found.get(f"{XMP_EXIF}GPSAltitude"))
+    return location(lat, lon, alt, "xmp")
+
+
+def image_location(img: Any) -> dict[str, Any] | None:
+    """De plek van een geopende Pillow-afbeelding: eerst de GPS-IFD, dan de XMP."""
+    try:
+        top = img.getexif()
+    except Exception:  # noqa: BLE001 - kapotte EXIF: dan de XMP nog
+        top = None
+    found = exif_location(top) if top else None
+    if found is None:
+        info = getattr(img, "info", None) or {}
+        xmp = info.get("xmp") or info.get("XML:com.adobe.xmp")
+        found = xmp_location(xmp) if xmp else None
+    return found
+
+
+def iso6709(text: Any) -> dict[str, Any] | None:
+    """Een plek in ISO 6709 ("+52.0907+005.1214+010.000/", ook DDMM en DDMMSS), of None."""
+    text = _text(text)
+    if text is None or len(text) > 64:
+        return None
+    match = ISO6709.fullmatch(text)
+    if match is None:
+        return None
+    lat_sign, lat_text, lon_sign, lon_text, alt_text = match.groups()
+
+    def value(digits: str, deg: int) -> float | None:
+        whole, _, frac = digits.partition(".")
+        frac = f".{frac}" if frac else ""
+        if len(whole) == deg:
+            return float(whole + frac)
+        if len(whole) == deg + 2:
+            return _degrees((float(whole[:deg]), float(whole[deg:] + frac)))
+        return _degrees(
+            (float(whole[:deg]), float(whole[deg : deg + 2]), float(whole[deg + 2 :] + frac))
+        )
+
+    lat, lon = value(lat_text, 2), value(lon_text, 3)
+    if lat is None or lon is None:
+        return None
+    lat = -lat if lat_sign == "-" else lat
+    lon = -lon if lon_sign == "-" else lon
+    alt = float(alt_text) if alt_text else None
+    return location(lat, lon, alt, "video")
+
+
+def video_location(probe: Any) -> dict[str, Any] | None:
+    """De plek van een video uit het antwoord van meta van de worker, of None."""
+    if not isinstance(probe, dict):
+        return None
+    streams = [s for s in probe.get("streams") or [] if isinstance(s, dict)]
+    tags = _tags(probe.get("format"), *streams)
+    for name in VIDEO_LOCATION_TAGS:
+        found = iso6709(tags.get(name))
+        if found is not None:
+            return found
+    return None
+
+
+def camera(exif: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    """(camera, objectief) voor blob_meta (Keuze 26): "merk model" gevouwen; staat het merk al
+    vooraan in het model, dan niet twee keer."""
+    from app.text import CONTROL, fold
+
+    if not isinstance(exif, dict):
+        return None, None
+
+    def clean(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        value = " ".join(CONTROL.sub(" ", value).split())
+        return fold(value)[:TEXT_CHARS] or None
+
+    make, model = clean(exif.get("make")), clean(exif.get("model"))
+    if make and model and not model.startswith(make):
+        name = f"{make} {model}"
+    else:
+        name = model or make
+    return name, clean(exif.get("lens"))
+
+
 def _iso(value: Any) -> datetime | None:
     text = _text(value)
     if not text:
@@ -195,7 +462,10 @@ def _probe(source: Path, media: Any) -> dict[str, Any]:
     if not media.ready():
         return {}  # geen ffprobe in de worker: zoals 0.6.0 zonder ffprobe
     info = media.meta(source, fmt)
-    return video_meta(info) if info is not None else {}
+    if info is None:
+        return {}
+    # De worker las de video: nu is ook bekend of er een plek in staat (mode meta, Keuze 25)
+    return {**video_meta(info), "location": video_location(info)}
 
 
 class _Videos:
@@ -248,7 +518,7 @@ def _image(source: Path, max_pixels: int) -> dict[str, Any]:
 
     Image = render._pillow(max_pixels)
     with Image.open(source, formats=render.IMAGE_FORMATS) as img:  # leest alleen de headers
-        return image_meta(img)
+        return {**image_meta(img), "location": image_location(img)}
 
 
 def run_meta(request: dict[str, Any]) -> dict[str, Any]:

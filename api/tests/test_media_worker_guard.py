@@ -616,7 +616,7 @@ def test_fuzz_meta_clean_en_wat_de_app_ervan_leest():
             assert isinstance(stream["index"], int) and 0 <= stream["index"] < 2**31
             assert stream.get("codec_type") in meta.TYPES
             for name in stream.get("tags", {}):
-                assert name in meta.TAGS  # nooit locatie
+                assert name in meta.TAGS  # alleen de witte lijst
         # wat render.py en render_meta.py ermee doen, faalt nooit
         render.codecs_of(out)
         render_meta.video_meta(out)
