@@ -60,6 +60,7 @@ describe("de zin en de knop bij elke stand", () => {
     expect(ocrView("pdf", state("queued"))).toEqual({ text: "ocr.row.queued", button: "run", waiting: true });
     expect(ocrView("pdf", state("done"))).toEqual({ text: "ocr.row.donePdf", button: "again", waiting: false });
     expect(ocrView("pdf", state("skip", "ocr_has_text"))).toEqual({ text: "ocr.row.hasText", button: null, waiting: false });
+    expect(ocrView("pdf", state("none", "ocr_has_text"))).toEqual({ text: "ocr.row.hasText", button: null, waiting: false });
   });
 
   it("zonder tesseract (ocr_missing) geen knop: de API gaf 503 ocr_off", () => {

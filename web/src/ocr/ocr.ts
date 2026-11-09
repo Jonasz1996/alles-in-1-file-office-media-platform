@@ -30,6 +30,10 @@ export interface OcrView {
  * de eerste code van text, hash en ocr, en een code van text gaat de rij niet aan. */
 export function ocrView(kind: ViewKind, state: Pick<Analysis, "ocr" | "code">): OcrView {
   const photo = kind === "image";
+  // Een PDF met al genoeg tekst (C11): de stap zet skip met ocr_has_text, de knop gaf 409
+  if (!photo && state.code === "ocr_has_text" && (state.ocr === "skip" || state.ocr === "none")) {
+    return { text: "ocr.row.hasText", button: null, waiting: false };
+  }
   switch (state.ocr) {
     case "queued":
       return { text: "ocr.row.queued", button: "run", waiting: true };
@@ -44,8 +48,7 @@ export function ocrView(kind: ViewKind, state: Pick<Analysis, "ocr" | "code">): 
       return { text, button: "again", waiting: false };
     }
     default:
-      // skip: nog niet gevraagd, of een PDF met al genoeg tekst (409 ocr_has_text)
-      if (!photo && state.code === "ocr_has_text") return { text: "ocr.row.hasText", button: null, waiting: false };
+      // skip: nog niet gevraagd (of OCR draait niet: dan zegt de knop 503 ocr_off)
       return { text: photo ? "ocr.row.notYetPhoto" : "ocr.row.notYetPdf", button: "run", waiting: false };
   }
 }
