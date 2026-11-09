@@ -23,7 +23,7 @@ app start niet op een nieuwer schema. Het vraagt eerst om bevestiging (typ "ja")
 Wat alleen in de nieuwere kolommen en tabellen stond, is daarna weg. Stop de app eerst.
 Haalt de downgrade 0010 weg (fase 6), dan zegt hij ook wat er van zoeken en foto's weggaat, en
 vraagt hij of album-items van een regel die niet gedeeld worden eerst uit hun album moeten
-(standaard ja): in 0.7.0 deelt een album elk item.
+(standaard ja): in 0.7.1 deelt een album elk item.
 
 db-backup maakt een reservekopie van de database met sqlite3.Connection.backup, terwijl de app
 draait (Keuze 52 van fase 6). Het bestand komt in /data/backup en heet naar de alembic-head en
@@ -223,7 +223,7 @@ async def unshared_rule_items(settings: Settings) -> int:
     """Hoeveel album-items van een regel niet gedeeld worden (source 'rule', shared 0).
 
     Na een downgrade naar 0009 is de kolom shared weg en deelt een album elk item, zoals in
-    0.7.0 (fase 6, §3.1). Die items zouden dus ineens wél gedeeld zijn.
+    0.7.1 (fase 6, §3.1). Die items zouden dus ineens wél gedeeld zijn.
     """
     async with get_engine(settings).connect() as conn:
         found = await conn.scalar(
@@ -301,7 +301,7 @@ def _ask_rule_items(count: int) -> bool:
     """De vraag van §3.1: standaard ja, dus leeg of "ja" is ja."""
     print(
         f"{count} item(s) in een album komen van een regel en worden niet gedeeld. Na de "
-        "downgrade deelt een album elk item, zoals in 0.7.0: die items zijn dan ineens wél "
+        "downgrade deelt een album elk item, zoals in 0.7.1: die items zijn dan ineens wél "
         "gedeeld met iedereen die het album heeft."
     )
     try:

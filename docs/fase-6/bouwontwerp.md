@@ -2576,15 +2576,16 @@ schakelaars en het herbouwen van gezichten en beeld via `search.hooks.admin_bloc
 standaardbibliotheek in `install.sh`, en de opruimregel per alembic-head (Keuze 52); het
 downloaden van de twee bronnen voor plaatsen naar `DATA_ROOT/geo/` met sha256, en `PLAATSEN` in
 `.env.example` (Keuze 29); `app.cli bench --los` (de versie van Z0, nu met de uitkomst op
-`/beheer`); `docs/runbooks/zoeken.md` (bijwerken, de index herbouwen, terug naar 0.7.0, de
+`/beheer`); `docs/runbooks/zoeken.md` (bijwerken, de index herbouwen, terug naar 0.7.1, de
 meting); de belastingtest naast OnlyOffice en media (§4.5); de README.
 
 **Tests:** `infra/single/tests/test_install_search.sh`: de reservekopie gemaakt met het image van
-0.7.0 én van 0.8.0; een mislukte reservekopie stopt het script vóór elke wijziging; na twee runs
-op 0010 staat de kopie van 0008 er nog; `PLAATSEN=uit`; een download die faalt, is niet fataal en
-wordt de volgende run opnieuw geprobeerd; terug naar 0.7.0 met het script van de commit van
-0.7.0, en weer vooruit (precies de stappen van §3.10). `e2e/test_zoek_beheer.py`; vitest voor de
-tab.
+0.7.1 én van 0.8.0; een mislukte reservekopie stopt het script vóór elke wijziging; na twee runs
+op 0010 staat de kopie van 0009 er nog; `PLAATSEN=uit`; een download die faalt, is niet fataal en
+wordt de volgende run opnieuw geprobeerd; terug naar 0.7.1 met het script van de commit van
+0.7.1 (`80d5bb8`), en weer vooruit (precies de stappen van §3.10). `e2e/test_zoek_beheer.py`;
+vitest voor de tab. Herzien in golf 4 (Z7): 0.7.1, `80d5bb8` en `0009` in plaats van 0.7.0 en
+`0008`, zoals in §3.10 (waarom: daar, "Waarom niet meer `1130e1b` en 0.7.0").
 
 **Klaar als:** de tests groen; de CI-job `infra` doet de weg terug echt; de toetsenbordlijst.
 
@@ -5346,7 +5347,7 @@ drukt aan het eind een blok `=== kort ===` af, omdat de logs alleen de staart to
 | `e2e` (bestaat) | elke push | marker `zoek` (Chromium), ook `test_zoek_gezichten.py` en `test_zoek_beeld.py` met de nep-worker; de marker-regel krijgt `not analyse` | hard |
 | `media-image` (bestaat) | elke push | de handdruk (S11) in de echte worker-container; tesseract in het image en `test_ocr_container.sh`; de installatietest met `ANALYSE=uit`, zodat deze job geen modellen downloadt | hard |
 | `images` (bestaat) | elke push | de grootte van het image (tesseract + ≤ 75 MB, Vraag 15; de extra + ≤ 160 MB); `find_spec("numpy")` en `find_spec("onnxruntime")` zijn `None` voor uid 10001 en 10002, en `numpy.ndarray` bestaat voor uid 10003 | hard |
-| `infra` (bestaat) | elke push | `test_install_search.sh` (reservekopie met het image van 0.7.0 en van 0.8.0, de download van `geo`, terug naar 0.7.0 en weer vooruit); `compose config` voor de combinaties met `analyse`; `test_install_analyse.sh` en `test_install_beeld.sh` (symlinks, sha256, `df`, niet fataal) | hard |
+| `infra` (bestaat) | elke push | `test_install_search.sh` (reservekopie met het image van 0.7.1 en van 0.8.0, de download van `geo`, terug naar 0.7.1 en weer vooruit; herzien in golf 4, zie §3.10); `compose config` voor de combinaties met `analyse`; `test_install_analyse.sh` en `test_install_beeld.sh` (symlinks, sha256, `df`, niet fataal) | hard |
 | `web` (bestaat) | elke push | begrotingen (ook `mapData`, `mapRoute`, en de chunks van gezichten en beeld), i18n streng, vitest; `world-110m.<hash>.json` opnieuw maken en vergelijken | hard |
 | `perf` (bestaat, rapport) | elke push | `e2e/perf/zoek_ui.py` | rapport |
 | `e2e-media-perf` (bestaat, rapport) | elke push | `zoek_samen.py --kort`, met `analyse` (nep-worker) | rapport |
