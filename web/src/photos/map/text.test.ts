@@ -24,6 +24,13 @@ const ATTRIBUTION: GeoAttribution = {
   world: { source: "Natural Earth 110m", license: "public domain" },
 };
 
+/** Wat GET /geo/attribution van Z3 geeft met geladen bronnen (api/tests/geo/test_geo_access.py). */
+const REAL: GeoAttribution = {
+  places: { source: "GeoNames cities1000", license: "CC BY 4.0", date: "2026-11-01" },
+  countries: { source: "Natural Earth 1:10m admin-0", license: "publiek domein", version: "v5.1.2" },
+  world: { source: "Natural Earth 1:110m admin-0", license: "publiek domein" },
+};
+
 const PLACES: Place[] = [
   { id: 3, name: "Zwolle", admin1: "Overijssel", country: "NL", n: 2 },
   { id: 1, name: "Utrecht", admin1: "Utrecht", country: "NL", n: 34 },
@@ -74,6 +81,14 @@ describe("de teksten van de kaart, in het Nederlands", () => {
       "Landen: Natural Earth 110m (publiek domein).",
     ]);
     expect(attributionLines(null)).toEqual(["Landen: Natural Earth (publiek domein)."]);
+    // Wat de API van Z3 echt geeft (app/routers/geo.py, test_bronvermelding): geen dubbele haakjes
+    expect(attributionLines(REAL)).toEqual([
+      "Plaatsnamen: GeoNames cities1000, CC BY 4.0.",
+      "Landen: Natural Earth 1:10m admin-0 (publiek domein).",
+    ]);
+    expect(attributionLines({ ...REAL, places: null, countries: null })).toEqual([
+      "Landen: Natural Earth 1:110m admin-0 (publiek domein).",
+    ]);
     expect(licenseText("Public Domain")).toBe("publiek domein");
     expect(licenseText("CC BY 4.0")).toBe("CC BY 4.0");
   });
@@ -101,6 +116,10 @@ describe("de teksten van de kaart, in het Engels", () => {
     expect(attributionLines(ATTRIBUTION)).toEqual([
       "Place names: GeoNames cities500, CC BY 4.0.",
       "Countries: Natural Earth 10m (public domain).",
+    ]);
+    expect(attributionLines(REAL)).toEqual([
+      "Place names: GeoNames cities1000, CC BY 4.0.",
+      "Countries: Natural Earth 1:10m admin-0 (public domain).",
     ]);
     expect(locationLines(UTRECHT)).toEqual(["Utrecht, Netherlands", "52.0907° N, 5.1214° E", "4 m altitude"]);
   });

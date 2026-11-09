@@ -38,7 +38,9 @@ from app.security import CurrentUser
 
 router = APIRouter(prefix="/api/v1", tags=["foto's"])
 
-WORLD = WorldSource(source="Natural Earth 1:110m (landsgrenzen)", license="publiek domein")
+# De landsgrenzen van de kaart (web/public/kaart/). Zonder woorden in een taal of haakjes: de web
+# zet er "Landen: {source} ({license})." van, in het Nederlands en in het Engels
+WORLD = WorldSource(source="Natural Earth 1:110m admin-0", license="publiek domein")
 
 
 @router.get("/files/{node_id}/location")

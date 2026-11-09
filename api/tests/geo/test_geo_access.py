@@ -112,4 +112,4 @@ async def test_bronvermelding(client, wereld, settings):
     assert body["countries"] == {
         "source": "Natural Earth 1:10m admin-0", "license": "publiek domein", "version": "v5.1.2"
     }  # fmt: skip
-    assert body["world"]["license"] == "publiek domein"
+    assert body["world"] == {"source": "Natural Earth 1:110m admin-0", "license": "publiek domein"}
