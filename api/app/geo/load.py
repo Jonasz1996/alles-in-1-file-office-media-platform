@@ -15,7 +15,7 @@ plaatsen en een regel in het log; de app start gewoon.
 
 Wat erin komt (SCHEMA):
 
-- `meta`: de sha256 van beide bronnen, het schema en de aantallen;
+- `meta`: de sha256 van beide bronnen, het schema, de aantallen en een id per bouw (`bouw`);
 - `place` met een R*Tree `place_box` (een punt per plaats): naam, provincie (admin1), land;
 - `country` (code, naam) en `country_part`: per vlak de ringen als float32 (lengte, breedte)
   met zlib, met een R*Tree `country_box` op het kader van elk vlak.
@@ -34,7 +34,9 @@ Na een nieuwe bouw (bij de start of met geo-load) zetten we de job geo.places kl
 van photo_geo die photometa las voordat places.sqlite er was (bij de upgrade naar 0.8.0 leest hij
 alles opnieuw terwijl dit bestand nog gebouwd wordt), krijgen zo alsnog hun plaats en land (I1,
 A4). Die job schrijft in photo_geo voor elke eigenaar, dus staat hij bij de andere schrijvers in
-app/photo_rows.py, niet hier (tests/search/test_own_live.py).
+app/photo_rows.py, niet hier (tests/search/test_own_live.py). Eén keer per bouw: Setting
+"geo.places" onthoudt het id van de bouw (meta `bouw`). Elke start kijkt het na, ook als
+places.sqlite al "klaar" is: mislukte het klaarzetten na de bouw, dan doet deze start het.
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ import struct
 import sys
 import tarfile
 import threading
+import uuid
 import zlib
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -345,6 +348,7 @@ def build(
             "vlakken": str(n_vlakken),
             "plaatsen": str(n_plaatsen),
             "gebouwd": datetime.now(UTC).date().isoformat(),
+            "bouw": uuid.uuid4().hex,  # voor geo.places: één keer per bouw
         }
         db.executemany("INSERT INTO meta (key, value) VALUES (?, ?)", meta.items())
         db.commit()
@@ -369,6 +373,16 @@ def read_meta(pad: Path) -> dict[str, str] | None:
             db.close()
     except sqlite3.Error:
         return None
+
+
+def bouw_id(pad: Path) -> str | None:
+    """Welke bouw van places.sqlite dit is (meta "bouw"), of None zonder leesbare places.sqlite.
+    Een bestand van vóór I1 heeft geen id: dan de dag van de bouw, vast zolang het dat bestand
+    is."""
+    meta = read_meta(pad)
+    if meta is None:
+        return None
+    return meta.get("bouw") or f"zonder-id:{meta.get('gebouwd', '')}"
 
 
 def current(pad: Path) -> bool:
@@ -457,11 +471,16 @@ async def start(settings: Settings) -> None:
         except Exception:  # noqa: BLE001 - zonder plaatsnamen werkt de rest gewoon
             log.exception("Plaatsnamen: bouwen mislukt")
             return
-        if uitkomst == "gebouwd":
+        if uitkomst in ("gebouwd", "klaar"):
+            # Ook bij "klaar": mislukte het klaarzetten na de vorige bouw, dan nu
             try:
                 await _na_de_bouw(settings)
             except Exception as e:  # noqa: BLE001 - de plaatsnamen zelf zijn er wel
-                log.warning("Plaatsnamen: geo.places niet klaargezet (%s)", type(e).__name__)
+                log.warning(
+                    "Plaatsnamen: geo.places niet klaargezet (%s); de volgende start probeert "
+                    "het opnieuw",
+                    type(e).__name__,
+                )
 
     if settings.places == "uit":
         return
@@ -476,11 +495,16 @@ _taken: set[Any] = set()
 
 
 async def _na_de_bouw(settings: Settings) -> None:
-    """Eén keer per nieuwe bouw: de job geo.places (app/photo_rows.py) vult de plaats en het
-    land in van de rijen die gelezen werden voordat places.sqlite er was."""
+    """Eén keer per bouw: de job geo.places (app/photo_rows.py) vult de plaats en het land in
+    van de rijen die gelezen werden voordat places.sqlite er was. Voor een bouw die al een keten
+    kreeg (Setting "geo.places"), niets."""
+    from anyio import to_thread
+
     from app import photo_rows
 
-    await photo_rows.enqueue_places(settings)
+    bouw = await to_thread.run_sync(bouw_id, Path(settings.places_db))
+    if bouw is not None:
+        await photo_rows.enqueue_places(settings, bouw)
 
 
 def _na_de_bouw_cli(settings: Settings) -> bool:
@@ -518,8 +542,8 @@ def run(settings: Settings, args: argparse.Namespace) -> int:
     uitkomst = ensure(settings, force=args.force)
     if uitkomst == "gebouwd" and not _na_de_bouw_cli(settings):
         print(
-            "Let op: de plaatsen van foto's die al gelezen waren, komen pas na een nieuwe "
-            "geo-load --force (zie het log).",
+            "Let op: de plaatsen van foto's die al gelezen waren, zet de app klaar bij zijn "
+            "volgende start (zie het log).",
             file=sys.stderr,
         )
     tekst = {

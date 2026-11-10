@@ -205,7 +205,8 @@ def _geo_places(data_dir: Path) -> list[str]:
 def test_cli_geo_load(tmp_path, monkeypatch, capsys):
     """Zonder event loop, zoals het commando echt draait (install.sh, naast de app): een nieuwe
     bouw zet geo.places klaar voor de app (I1, A4); een tweede geo-load bouwt niet en zet niets
-    klaar."""
+    klaar. Lukt het klaarzetten niet, dan zegt hij dat de app het bij zijn volgende start doet
+    (die kijkt Setting "geo.places" na, review I1 F2); places.sqlite zelf is wel gebouwd."""
     settings = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8)
 
     async def migreer() -> None:
@@ -230,6 +231,16 @@ def test_cli_geo_load(tmp_path, monkeypatch, capsys):
         assert _geo_places(settings.data_dir) == ["queued"]
         assert cli_main(["geo-load"]) == 0
         assert "hoort al bij deze bronnen" in capsys.readouterr().out
+        assert _geo_places(settings.data_dir) == ["queued"]
+
+        async def op_slot(*_args, **_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(photo_rows.jobs, "enqueue", op_slot)
+        assert cli_main(["geo-load", "--force"]) == 0
+        uit = capsys.readouterr()
+        assert "gebouwd" in uit.out
+        assert "Let op" in uit.err and "volgende start" in uit.err
         assert _geo_places(settings.data_dir) == ["queued"]
     finally:
         get_settings.cache_clear()

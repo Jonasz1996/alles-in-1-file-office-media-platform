@@ -11,6 +11,7 @@ van photometa die vóór de bouw begon.
 """
 
 import logging
+import sqlite3
 import sys
 import uuid
 from datetime import UTC, timedelta
@@ -63,6 +64,19 @@ def _uuid(node_id: str) -> uuid.UUID:
     return uuid.UUID(node_id)
 
 
+def bouw(settings) -> str | None:
+    """Het id van de bouw van places.sqlite (meta "bouw")."""
+    return load.bouw_id(Path(settings.places_db))
+
+
+async def gestart(settings) -> None:
+    """load.start, en wachten tot zijn taak op de achtergrond klaar is."""
+    await load.start(settings)
+    while load._taken:
+        for taak in list(load._taken):
+            await taak
+
+
 async def jobs_van(settings, type_: str) -> list[str]:
     async with maker(settings)() as db:
         rows = await db.scalars(
@@ -75,10 +89,7 @@ async def bouw_bij_de_start(settings, monkeypatch) -> None:
     """Zoals de app bij de start: load.start (de haak van de backfill) bouwt op de achtergrond;
     wachten tot die klaar is, dan de jobs."""
     bronnen.gebruik(monkeypatch, bronnen.maak(settings.geo_src))
-    await load.start(settings)
-    while load._taken:
-        for taak in list(load._taken):
-            await taak
+    await gestart(settings)
     await jobs.run_pending(settings)
 
 
@@ -98,11 +109,75 @@ async def test_fotos_van_voor_places_sqlite_krijgen_na_de_bouw_hun_plaats(
     assert await rijen(settings) == {foto: (eva, 0, AMSTERDAM, "exif")}
     assert await jobs_van(settings, photo_rows.PLACES_TYPE) == ["done"]
     # Een start zonder nieuwe bouw ("klaar") zet niets klaar: één keer per bouw
-    await load.start(settings)
-    while load._taken:
-        for taak in list(load._taken):
-            await taak
+    await gestart(settings)
     assert await jobs_van(settings, photo_rows.PLACES_TYPE) == ["done"]
+
+
+async def test_mislukt_klaarzetten_doet_de_volgende_start(
+    client, admin, settings, monkeypatch, caplog
+):
+    """Mislukt het klaarzetten van geo.places na de bouw (database is locked na de busy_timeout
+    tijdens de upgrade, of de app stopt tussen os.replace en de commit), dan doet de volgende
+    start het, ook al is places.sqlite dan "klaar": Setting "geo.places" komt in dezelfde
+    transactie als de job, en elke start kijkt hem na (review I1, F2)."""
+    h, _tokens = admin
+    foto = (await upload(client, h, "a.jpg", met_gps()))["id"]
+    await verwerk(settings)
+    echt = jobs.enqueue
+
+    async def op_slot(db, type_, *args, **kwargs):
+        if type_ == photo_rows.PLACES_TYPE:
+            raise sqlite3.OperationalError("database is locked")
+        return await echt(db, type_, *args, **kwargs)
+
+    monkeypatch.setattr(jobs, "enqueue", op_slot)
+    with caplog.at_level(logging.WARNING, logger="platform.geo"):
+        await bouw_bij_de_start(settings, monkeypatch)
+    assert "geo.places niet klaargezet (OperationalError)" in caplog.text
+    assert await jobs_van(settings, photo_rows.PLACES_TYPE) == []
+    assert await plaatsen_van(settings) == {foto: (None, None, None)}
+
+    monkeypatch.setattr(jobs, "enqueue", echt)
+    await gestart(settings)  # places.sqlite is er al: "klaar"
+    await jobs.run_pending(settings)
+    assert await plaatsen_van(settings) == {foto: (AMSTERDAM, "NL", "North Holland")}
+    await gestart(settings)
+    assert await jobs_van(settings, photo_rows.PLACES_TYPE) == ["done"]
+
+
+async def test_een_nieuwe_bouw_begint_vooraan(client, admin, settings, monkeypatch, caplog):
+    """Komt er een nieuwe bouw terwijl de keten van de vorige nog loopt (geo-load --force), dan
+    krijgt die bouw een eigen keten die vooraan begint: ook de rijen vóór de cursor van de oude
+    keten worden met de nieuwe places.sqlite opgezocht. De oude keten stopt bij zijn volgende
+    stuk."""
+    h, _tokens = admin
+    fotos = sorted(
+        [(await upload(client, h, f"{k}.jpg", met_gps(k)))["id"] for k in ("red", "green")],
+        key=_uuid,
+    )
+    await verwerk(settings)
+    monkeypatch.setattr(photo_rows, "PLACES_CHUNK", 1)
+    bronnen.gebruik(monkeypatch, bronnen.maak(settings.geo_src))
+    assert load.ensure(settings) == "gebouwd"
+    assert await photo_rows.enqueue_places(settings, bouw(settings))
+    assert await jobs.run_one(settings)  # het eerste stuk; zijn opvolger staat klaar
+    amsterdam = (AMSTERDAM, "NL", "North Holland")
+    assert await plaatsen_van(settings) == {fotos[0]: amsterdam, fotos[1]: (None, None, None)}
+    # Alsof de vorige bouw de eerste foto niet kon plaatsen
+    async with maker(settings)() as db:
+        await db.execute(
+            update(PhotoGeo)
+            .where(PhotoGeo.node_id == _uuid(fotos[0]))
+            .values(place_id=None, country=None, admin1=None)
+        )
+        await db.commit()
+
+    assert load.ensure(settings, force=True) == "gebouwd"
+    assert await photo_rows.enqueue_places(settings, bouw(settings))
+    with caplog.at_level(logging.INFO, logger="platform.geo"):
+        await jobs.run_pending(settings)
+    assert await plaatsen_van(settings) == {fotos[0]: amsterdam, fotos[1]: amsterdam}
+    assert "geo_places_stop rows=1" in "\n".join(r.getMessage() for r in caplog.records)
 
 
 async def test_zee_uit_prullenbak_eigenaar_en_stukken(client, admin, settings, monkeypatch, caplog):
@@ -133,8 +208,9 @@ async def test_zee_uit_prullenbak_eigenaar_en_stukken(client, admin, settings, m
     monkeypatch.setattr(photo_rows, "PLACES_CHUNK", 2)
     bronnen.gebruik(monkeypatch, bronnen.maak(settings.geo_src))
     assert load.ensure(settings) == "gebouwd"
-    assert await photo_rows.enqueue_places(settings)
-    assert not await photo_rows.enqueue_places(settings)  # staat al klaar: geen tweede
+    assert await photo_rows.enqueue_places(settings, bouw(settings))
+    # Voor deze bouw staat hij al klaar: geen tweede
+    assert not await photo_rows.enqueue_places(settings, bouw(settings))
     with caplog.at_level(logging.INFO, logger="platform.geo"):
         await jobs.run_pending(settings)
 
@@ -154,8 +230,11 @@ async def test_zee_uit_prullenbak_eigenaar_en_stukken(client, admin, settings, m
     for geheim in ("52.36", "4.88", "Amsterdam", "Grensdorp", "Limburg", eva, bram):
         assert geheim not in tekst
 
-    # Nog een keer (een volgende bouw): wat al een plaats heeft blijft, zee blijft NULL
-    assert await photo_rows.enqueue_places(settings)
+    # Een volgende bouw (een nieuw id): wat al een plaats heeft blijft, zee blijft NULL
+    eerste = bouw(settings)
+    assert load.ensure(settings, force=True) == "gebouwd"
+    assert bouw(settings) != eerste
+    assert await photo_rows.enqueue_places(settings, bouw(settings))
     await jobs.run_pending(settings)
     assert (await plaatsen_van(settings))[zee] == (None, None, None)
     assert (await plaatsen_van(settings))[grens] == (GRENSDORP, "NL", "Limburg")
@@ -199,7 +278,7 @@ async def test_wat_tijdens_het_opzoeken_verandert_krijgt_geen_plaats(
             return echt.lookup(lat, lon)
 
     monkeypatch.setattr(places, "get", lambda _settings: Midden())
-    assert await photo_rows.enqueue_places(settings)
+    assert await photo_rows.enqueue_places(settings, bouw(settings))
     with caplog.at_level(logging.INFO, logger="platform.geo"):
         await jobs.run_pending(settings)
 
@@ -220,7 +299,8 @@ async def test_wacht_op_photometa_van_voor_de_bouw(client, admin, settings, monk
     foto = (await upload(client, h, "a.jpg", met_gps()))["id"]
     await verwerk(settings)
     # Zonder places.sqlite doet de job niets (en faalt niet)
-    assert await photo_rows.enqueue_places(settings)
+    assert bouw(settings) is None
+    assert await photo_rows.enqueue_places(settings, "nog-geen")
     await jobs.run_pending(settings)
     assert await jobs_van(settings, photo_rows.PLACES_TYPE) == ["done"]
     assert await plaatsen_van(settings) == {foto: (None, None, None)}
@@ -234,7 +314,7 @@ async def test_wacht_op_photometa_van_voor_de_bouw(client, admin, settings, monk
         lopend_id = lopend.id
     bronnen.gebruik(monkeypatch, bronnen.maak(settings.geo_src))
     assert load.ensure(settings) == "gebouwd"
-    assert await photo_rows.enqueue_places(settings)
+    assert await photo_rows.enqueue_places(settings, bouw(settings))
     await jobs.run_pending(settings)
     assert await plaatsen_van(settings) == {foto: (None, None, None)}
     async with maker(settings)() as db:
@@ -257,7 +337,9 @@ async def test_wacht_op_photometa_van_voor_de_bouw(client, admin, settings, monk
         await db.execute(update(PhotoGeo).values(place_id=None, country=None, admin1=None))
         await db.commit()
     built = jobs.now() - timedelta(seconds=1)
-    await photo_rows.run_places(settings, {"after": "", "built": built.isoformat(), "rows": 0})
+    await photo_rows.run_places(
+        settings, {"after": "", "built": built.isoformat(), "rows": 0, "bouw": bouw(settings)}
+    )
     assert await plaatsen_van(settings) == {foto: (AMSTERDAM, "NL", "North Holland")}
 
 

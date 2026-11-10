@@ -24,7 +24,11 @@ elke functie die foto's leest aan own_live of own_live_geo houdt. Wat foto's lee
   de lat en lon die er staan. Dat zijn foto's die photometa las voordat places.sqlite er was: bij
   de upgrade naar 0.8.0 bouwt de app hem op de achtergrond terwijl photometa alles opnieuw leest,
   en niets las die rijen daarna nog. Eén keten per bouw, in stukken van PLACES_CHUNK op node_id
-  (jobs.chain, zoals photometa): per stuk eerst opzoeken in een thread, dan één korte transactie,
+  (jobs.chain, zoals photometa). Setting "geo.places" onthoudt voor welke bouw (meta "bouw" van
+  places.sqlite) de keten klaarstaat, in de transactie van de job zelf: mislukt het klaarzetten,
+  dan staat er niets en zet de volgende start hem alsnog klaar. De key hoort bij de bouw: een
+  keten van een vorige bouw houdt de nieuwe niet tegen, en stopt bij zijn volgende stuk (de
+  nieuwe begint vooraan). Per stuk eerst opzoeken in een thread, dan één korte transactie,
   zodat een upload nooit lang op het schrijfslot wacht. Alleen rijen met place_id én country
   NULL; op zee blijft dat zo. Met de controle van write() in dezelfde statement: de node is een
   bestand van de eigenaar van de rij, en die heeft locatie niet op "uit". Loopt er nog een run
@@ -52,7 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app import jobs
 from app.db import get_engine
 from app.geo import tiles
-from app.models import BlobMeta, Job, Node, PhotoGeo, PhotoPref
+from app.models import BlobMeta, Job, Node, PhotoGeo, PhotoPref, Setting
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -301,15 +305,34 @@ async def sweep_off(settings: Settings) -> int:
     return added
 
 
-async def enqueue_places(settings: Settings) -> bool:
-    """Na een nieuwe bouw van places.sqlite (load.start en geo-load): de keten geo.places
-    klaarzetten, met het moment van de bouw. Geeft of er een bij kwam; staat er al een klaar of
-    loopt er een, dan niet (die gaat verder met de nieuwe places.sqlite)."""
-    payload = {"after": "", "built": jobs.now().isoformat(), "rows": 0}
+def _places_key(bouw: str) -> str:
+    return f"{PLACES_TYPE}:{bouw}"
+
+
+def _wanted(row: Setting | None) -> str | None:
+    """De bouw waarvoor de laatste keten geo.places klaargezet is (Setting "geo.places")."""
+    bouw = row.value.get("bouw") if row is not None and isinstance(row.value, dict) else None
+    return bouw if isinstance(bouw, str) else None
+
+
+async def enqueue_places(settings: Settings, bouw: str) -> bool:
+    """Na een bouw van places.sqlite (load.start, ook als hij al "klaar" was, en geo-load): de
+    keten geo.places voor deze bouw klaarzetten, één keer, met het moment ervan. Setting
+    "geo.places" komt in dezelfde transactie: lukt het niet (database is locked, een stop vlak na
+    de bouw), dan staat er niets en zet de volgende start hem alsnog klaar. Geeft of er een keten
+    bij kwam; voor deze bouw al gedaan: niet."""
     async with _maker(settings)() as db:
-        added = await jobs.enqueue(db, PLACES_TYPE, payload, key=PLACES_TYPE)
+        row = await db.get(Setting, PLACES_TYPE, populate_existing=True)
+        if _wanted(row) == bouw:
+            return False
+        if row is None:
+            db.add(Setting(key=PLACES_TYPE, value={"bouw": bouw}))
+        else:
+            row.value = {"bouw": bouw}  # een nieuw dict: SQLAlchemy ziet de wijziging
+        payload = {"after": "", "built": jobs.now().isoformat(), "rows": 0, "bouw": bouw}
+        await jobs.enqueue(db, PLACES_TYPE, payload, key=_places_key(bouw))
         await db.commit()
-    return added is not None
+    return True
 
 
 # Plaats, land en provincie voor één rij, alleen als hij nog geen plaats en geen land heeft en
@@ -350,7 +373,12 @@ async def run_places(settings: Settings, payload: dict[str, Any]) -> None:
     built = _built(payload)
     after = str(payload.get("after") or "")
     rows_done = int(payload.get("rows") or 0)
+    bouw = str(payload.get("bouw") or "")
     async with maker() as db:
+        if _wanted(await db.get(Setting, PLACES_TYPE, populate_existing=True)) not in (None, bouw):
+            # Een nieuwere bouw heeft zijn eigen keten, die vooraan begint
+            log.info("geo_places_stop rows=%d", rows_done)
+            return
         if built is not None:
             early = await db.scalar(
                 select(Job.id)
@@ -392,8 +420,9 @@ async def run_places(settings: Settings, payload: dict[str, Any]) -> None:
             result = await db.execute(_FILL, found)
             rows_done += max(int(result.rowcount or 0), 0)
         if len(rows) == PLACES_CHUNK:
-            nxt = {"after": rows[-1][0].hex, "built": payload.get("built"), "rows": rows_done}
-            await jobs.chain(db, PLACES_TYPE, nxt, PLACES_TYPE)
+            nxt = {"after": rows[-1][0].hex, "built": payload.get("built"), "rows": rows_done,
+                   "bouw": bouw}  # fmt: skip
+            await jobs.chain(db, PLACES_TYPE, nxt, _places_key(bouw))
         await db.commit()
     if len(rows) < PLACES_CHUNK:
         log.info("geo_places_done rows=%d", rows_done)
