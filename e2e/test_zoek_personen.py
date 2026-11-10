@@ -21,6 +21,10 @@ Tab, Enter, Spatie, de pijlen en typen; nergens een klik (docs/fase-6/toetsenbor
   Downloaden als zip) en Wissen (Shift+Delete en de knop, met de vraag).
 - Account → Foto's: gezichten en zoeken op beeld aanzetten kan nog niet (de API zegt 409); de
   reden staat onder het vinkje, het vinkje blijft uit en de rest van de pagina werkt door.
+- Land, Plaats en Camera op /fotos (I1, S7): met een places.sqlite uit de kleine bronnen van
+  api/tests/geo (zoals test_zoek_kaart.py) komen Land en Plaats met de tijdlijn; een land maakt de
+  lijst Plaatsen korter en haalt een plaats buiten dat land uit het filter, een camera telt pas bij
+  Enter (één vraag), Filters wissen zet alles terug.
 
 De foto's komen van een vaste dag (LATEST), niet van nu.
 """
@@ -34,8 +38,10 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
+from tests.search import fixtures as F
 
 import seed
+from test_zoek_kaart import AMSTERDAM, met_plaatsen, upload, wacht_op_plek, zonder_plaatsen
 
 pytestmark = pytest.mark.zoek
 
@@ -345,6 +351,159 @@ def test_persoon_toevoegen_met_kader_zoeken_en_filteren(server, fien, context_as
     expect(page.get_by_label("Tot en met", exact=True)).to_be_focused()
     assert len(vragen) == 1, vragen
     assert not urlsplit(page.url).query
+
+
+# In het België van de kleine bronnen (api/tests/geo/bronnen.py), 1 km van Grenshoek
+GRENSHOEK = (50.731, 5.0)
+
+
+def maanden_vraag(r) -> bool:
+    return "/api/v1/photos/months?" in r.url and r.request.method == "GET"
+
+
+def vraag_van(r) -> dict[str, list[str]]:
+    return parse_qs(urlsplit(r.url).query)
+
+
+def test_plek_land_en_camera_op_fotos(server, user_factory, context_as, seeded):
+    """I1 (S7, Keuze 43): de balk Filters op /fotos heeft Land, Plaats en Camera, met de filters
+    place, country en camera van Z3 op GET /photos en /photos/months. Alleen het toetsenbord: Tab,
+    de pijlen in een keuzelijst, typen en Enter (docs/fase-6/toetsenbord-z6.md).
+
+    Vier foto's: twee in Amsterdam en één in Grenshoek (FUJIFILM X-T30), en een telefoonfoto in
+    Utrecht (Apple iPhone 13). Land Nederland laat de drie in Nederland zien, en in Plaats alleen
+    Amsterdam en Utrecht; Amsterdam twee. Land België haalt Amsterdam weer uit het filter (hij ligt
+    daar niet). Camera telt pas bij Enter (typen geeft geen vraag), op
+    de eerste woorden van "merk model"; hoofdletters maken niet uit. Filters wissen zet alles
+    terug, met de focus in Persoon. Niets in de adresbalk, en de balk schuift de tijdlijn niet."""
+    seeded(met_plaatsen)
+    try:
+        pia = user_factory(name="Pia Plek")
+        ids = [
+            upload(server, pia, f"amsterdam-{i}.jpg", F.foto_gps(lat, lon, zaad=f"pia{i}"))["id"]
+            for i, (lat, lon) in enumerate(AMSTERDAM, start=1)
+        ]
+        ids.append(upload(server, pia, "grenshoek.jpg", F.foto_gps(*GRENSHOEK, zaad="pia-g"))["id"])
+        ids.append(upload(server, pia, "telefoon.jpg", F.foto_draaiing6())["id"])
+        wacht_op_plek(server, pia, *ids)
+        lijst = server.call(pia, "GET", "/api/v1/photos/places", expect=200).json()["places"]
+        plaats = {p["name"]: p for p in lijst}
+        assert sorted(plaats) == ["Amsterdam", "Grenshoek", "Utrecht"], lijst
+        assert [plaats[n]["country"] for n in ("Amsterdam", "Grenshoek", "Utrecht")] == [
+            "NL",
+            "BE",
+            "NL",
+        ]
+        amsterdam = str(plaats["Amsterdam"]["id"])
+
+        page = context_as(pia).new_page()
+        page.add_init_script(SCHUIVEN)
+        vragen: list[str] = []
+        page.on(
+            "request",
+            lambda r: vragen.append(r.url) if "/api/v1/photos/months" in r.url else None,
+        )
+        page.goto("/fotos")
+        tijdlijn = page.get_by_role("grid", name="Tijdlijn", exact=True)
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(4)
+        land = page.get_by_role("combobox", name="Land", exact=True)
+        plek = page.get_by_role("combobox", name="Plaats", exact=True)
+        camera = page.get_by_role("textbox", name="Camera", exact=True)
+        expect(land).to_be_visible()
+        # Land en Plaats kwamen met de tijdlijn: die schoof niet omlaag
+        assert schuiven(page) <= MAX_SCHUIVEN, page.evaluate("() => window.__schuiven")
+        expect(land.locator("option")).to_have_text(["Alle landen", "België", "Nederland"])
+        expect(plek.locator("option")).to_have_text(
+            ["Alle plaatsen", "Amsterdam, North Holland", "Grenshoek, Flanders", "Utrecht"]
+        )
+
+        # --- Land: ↓ België (één foto), ↓ Nederland (drie) ---
+        tab_to(page, land, limit=60)
+        with page.expect_response(maanden_vraag) as r:
+            page.keyboard.press("ArrowDown")
+        assert vraag_van(r.value) == {"country": ["BE"]}
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(1)
+        with page.expect_response(maanden_vraag) as r:
+            page.keyboard.press("ArrowDown")
+        assert vraag_van(r.value) == {"country": ["NL"]}
+        assert sum(m["count"] for m in r.value.json()["months"]) == 3
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(3)
+        expect(page.get_by_role("status").filter(has_text="1 filter aan")).to_be_visible()
+        # Een land maakt de lijst Plaatsen korter
+        expect(plek.locator("option")).to_have_text(
+            ["Alle plaatsen", "Amsterdam, North Holland", "Utrecht"]
+        )
+
+        # --- Plaats: ↓ Amsterdam (twee) ---
+        page.keyboard.press("Tab")
+        expect(plek).to_be_focused()
+        with page.expect_response(maanden_vraag) as r:
+            page.keyboard.press("ArrowDown")
+        assert vraag_van(r.value) == {"place": [amsterdam], "country": ["NL"]}
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(2)
+        expect(page.get_by_role("status").filter(has_text="2 filters aan")).to_be_visible()
+
+        # --- Land ↑ België: Amsterdam ligt daar niet, dus hij gaat uit het filter (review I1,
+        # W1); ↓ weer Nederland: de plaats komt niet terug ---
+        page.keyboard.press("Shift+Tab")
+        expect(land).to_be_focused()
+        with page.expect_response(maanden_vraag) as r:
+            page.keyboard.press("ArrowUp")
+        assert vraag_van(r.value) == {"country": ["BE"]}
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(1)
+        expect(plek).to_have_value("")
+        expect(plek.locator("option")).to_have_text(["Alle plaatsen", "Grenshoek, Flanders"])
+        expect(page.get_by_role("status").filter(has_text="1 filter aan")).to_be_visible()
+        with page.expect_response(maanden_vraag) as r:
+            page.keyboard.press("ArrowDown")
+        assert vraag_van(r.value) == {"country": ["NL"]}
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(3)
+        expect(plek).to_have_value("")
+
+        # --- Plaats: ↓ Amsterdam, ↑ weer alle plaatsen ---
+        page.keyboard.press("Tab")
+        expect(plek).to_be_focused()
+        with page.expect_response(maanden_vraag) as r:
+            page.keyboard.press("ArrowDown")
+        assert vraag_van(r.value) == {"place": [amsterdam], "country": ["NL"]}
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(2)
+        with page.expect_response(maanden_vraag) as r:
+            page.keyboard.press("ArrowUp")
+        assert vraag_van(r.value) == {"country": ["NL"]}
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(3)
+
+        # --- Camera: typen geeft geen vraag, Enter één; de eerste woorden, elke hoofdletter ---
+        page.keyboard.press("Tab")
+        expect(camera).to_be_focused()
+        voor = len(vragen)
+        page.keyboard.type("Apple iPhone", delay=20)
+        page.wait_for_timeout(300)
+        assert len(vragen) == voor, vragen[voor:]
+        with page.expect_response(maanden_vraag) as r:
+            page.keyboard.press("Enter")
+        assert vraag_van(r.value) == {"country": ["NL"], "camera": ["Apple iPhone"]}
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(1)
+        expect(tijdlijn.get_by_role("gridcell").first).to_have_attribute(
+            "aria-label", re.compile(r"^telefoon\.jpg")
+        )
+        expect(page.get_by_role("status").filter(has_text="2 filters aan")).to_be_visible()
+        assert len(vragen) == voor + 1, vragen[voor:]
+        # Nooit in de adresbalk
+        assert urlsplit(page.url).path == "/fotos" and not urlsplit(page.url).query
+
+        # --- Filters wissen: alles terug, de focus in Persoon ---
+        wissen = page.get_by_role("button", name="Filters wissen", exact=True).first
+        tab_to(page, wissen, limit=10)
+        with page.expect_response(lambda r: urlsplit(r.url).path == "/api/v1/photos/months"):
+            page.keyboard.press("Enter")
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(4)
+        expect(page.get_by_role("combobox", name="Persoon", exact=True)).to_be_focused()
+        expect(land).to_have_value("")
+        expect(plek).to_have_value("")
+        expect(camera).to_have_value("")
+        assert not urlsplit(page.url).query
+    finally:
+        seeded(zonder_plaatsen)
 
 
 def test_herinneringen_met_een_vaste_dag(server, fien, context_as):
@@ -700,3 +859,6 @@ def test_de_knop_zoeken_op_beeld(fien, context_as):
         "placeholder", "Beschrijf de foto, bijvoorbeeld: hond op het strand"
     )
     expect(page.get_by_role("radio", name="Wat er op de foto staat", exact=True)).to_be_checked()
+    # I1 (S8): tot X3 het raster vult, één zin zonder versienummer
+    later = page.get_by_text("Zoeken op beeld komt in een volgende versie.", exact=True)
+    expect(later).to_be_visible()

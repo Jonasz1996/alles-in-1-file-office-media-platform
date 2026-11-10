@@ -5,7 +5,8 @@
 // Fase 6 (Z6): de filters (personen, soort, periode; Keuze 43) in een eigen chunk, "Vandaag, N jaar
 // geleden" (Keuze 41) zonder filters, en de knop "Zoeken op beeld" (Keuze 81). De filters blijven
 // in de state van de pagina, nooit in de adresbalk. Filters en herinneringen komen tegelijk met de
-// maanden en verschijnen in dezelfde commit als de tijdlijn (loadTop): niets schuift omlaag.
+// maanden en verschijnen in dezelfde commit als de tijdlijn (loadTop): niets schuift omlaag. Zo ook
+// de plaatsen voor Land en Plaats in de balk (I1, S7): staan ze er, dan vanaf het begin.
 
 import { type ComponentType, type JSX, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { crossApi } from "../crossApi";
@@ -28,6 +29,8 @@ import { downloadZip, SelectionBar, usePhotoBrowser, useStoreVersion } from "./b
 import { GAP, type GridControl, MIN_CELL, PhotoGrid } from "./Grid";
 import { reorders, useThumbPatches } from "./live";
 import type { MemoriesProps } from "./Memories";
+import { places } from "./map/api";
+import type { Place } from "./map/types";
 import { memories } from "./people/api";
 import type { FilterBarProps } from "./people/FilterBar";
 import { filteredApi, hasFilters, NO_FILTERS, type PhotoFilters, sameFilters } from "./people/filters";
@@ -46,15 +49,17 @@ const RELOAD_MS = 1000;
 const TOP_WAIT_MS = 1500;
 
 /** Wat boven de tijdlijn staat (fase 6, van Z6): de balk Filters en de herinneringen, elk een
- * eigen chunk met het gebied photos_people, en het antwoord van GET /photos/memories. */
+ * eigen chunk met het gebied photos_people, het antwoord van GET /photos/memories, en (I1, S7) de
+ * plaatsen van je foto's voor Land en Plaats in de balk (GET /photos/places). */
 interface Top {
   Bar: ComponentType<FilterBarProps> | null;
   Memories: ComponentType<MemoriesProps> | null;
   years: MemoryYear[] | null;
+  places: Place[];
 }
 
 /** Begint tegelijk met de maanden. Lukt een chunk niet, dan staat dat deel er niet (de tijdlijn
- * werkt gewoon); lukt het antwoord niet, dan geen herinneringen. */
+ * werkt gewoon); lukt een antwoord niet, dan geen herinneringen of geen Land en Plaats. */
 function loadTop(): Promise<Top> {
   const areas = loadAreas(["photos_people"]);
   return Promise.all([
@@ -70,7 +75,11 @@ function loadTop(): Promise<Top> {
       (r) => r.years,
       () => [],
     ),
-  ]).then(([Bar, Memories, years]) => ({ Bar, Memories, years }));
+    places().then(
+      (r) => r.places,
+      () => [],
+    ),
+  ]).then(([Bar, Memories, years, placeList]) => ({ Bar, Memories, years, places: placeList }));
 }
 
 export default function PhotosPage(_: RouteProps): JSX.Element {
@@ -271,7 +280,7 @@ export default function PhotosPage(_: RouteProps): JSX.Element {
       {months === null && !error && <Skeleton />}
       {Bar && (filtered || shownFiltered || (months && months.length > 0)) && (
         <LazySlot>
-          <Bar filters={filters} onChange={changeFilters} />
+          <Bar filters={filters} onChange={changeFilters} places={top?.places} />
         </LazySlot>
       )}
       {/* Het blok blijft staan zolang de pagina er is (verborgen met filters of zonder maanden):

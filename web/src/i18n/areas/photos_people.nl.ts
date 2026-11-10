@@ -84,6 +84,15 @@ export default {
     video: "Alleen video's",
     from: "Vanaf",
     to: "Tot en met",
+    // I1 (S7): plek en camera, met dezelfde filters als /zoeken (Z3)
+    country: "Land",
+    allCountries: "Alle landen",
+    place: "Plaats",
+    allPlaces: "Alle plaatsen",
+    // Achter twee plaatsen met dezelfde naam, provincie en land (review I1, W5)
+    placePhotos: { one: "{n} foto", other: "{n} foto's" },
+    camera: "Camera",
+    cameraHint: "Merk en model, of de eerste woorden ervan (bijvoorbeeld canon). Telt als je op Enter drukt of het veld verlaat.",
     clear: "Filters wissen",
     active: { one: "{n} filter aan", other: "{n} filters aan" },
     empty: "Geen foto's die bij deze filters passen.",
