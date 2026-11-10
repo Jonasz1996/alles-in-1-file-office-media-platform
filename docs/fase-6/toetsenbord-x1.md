@@ -59,6 +59,19 @@ tekst bij jouw foto's blijft, ook als je een foto deelt. Een fout van de API sta
 - Alleen de eigenaar krijgt de woorden van een foto. Een ander (ook met een deling of een kopie)
   krijgt 404 op de woorden en ziet geen kader; de e2e controleert dat met de kopie van Bram.
 
+## Het blok OCR op /beheer (golf 4, met Z7)
+
+In de tab "Zoeken en foto's" (Alt+9, [toetsenbord-z7.md](toetsenbord-z7.md)) staat het blok OCR
+met drie regels (Geïnstalleerd, Aan, In de rij) en, als de worker OCR heeft, twee knoppen. Zonder
+OCR in de worker staat er "OCR: niet geïnstalleerd." met waarom, en geen knoppen.
+
+| Toets | Wat |
+|---|---|
+| Tab naar "OCR uitzetten", Enter | OCR uit (`PATCH /admin/search`, `ocr: false`), zonder vraag vooraf; de knop heet nu "OCR aanzetten" (`aria-pressed="false"`), een melding zegt "OCR staat uit.", de focus blijft op de knop |
+| Enter op "OCR aanzetten" | de vraag "OCR aanzetten?" met de focus op Annuleren; Esc sluit zonder aanroep (focus terug op de knop); Tab naar "Aanzetten" en Enter zet OCR aan ("OCR staat aan.") |
+| Tab naar "Alles opnieuw herkennen", Enter | de vraag "Alles opnieuw herkennen?" met de focus op Annuleren; Esc doet niets; Tab naar "Starten" en Enter (`POST /admin/search/rebuild`, `what: ocr`, 202): "Het opnieuw herkennen is gestart." |
+| "Achtergrondwerk pauzeren" (bovenaan de tab) | ook de rij ocr staat stil: een scan of foto blijft "In de rij" tot je hervat |
+
 ## Nagelopen
 
 Met alleen het toetsenbord, in de e2e (lokaal Chromium 141, in de job `ocr` van CI Chrome
@@ -76,3 +89,10 @@ Headless Shell):
   Spatie zet het weer uit met de focus nog op het vinkje
   (`test_tekst_in_foto_s_herkennen_met_het_toetsenbord`). De vitest-check op de bron
   (`ocr.test.ts`) houdt het vinkje vast aan `ocr_photos`.
+- Het blok OCR op /beheer (golf 4,
+  `test_ocr_op_beheer_pauzeren_uitzetten_en_opnieuw_herkennen`): Alt+9, de stand (ja, ja, 0 in de
+  rij), pauzeren met Enter (een foto blijft in de rij en de tab telt hem), hervatten (hij wordt
+  gelezen), "OCR uitzetten" (de focus blijft op de knop; `POST ocr` geeft 503 `ocr_off`), "Alles
+  opnieuw herkennen" (Esc doet niets, Starten zet de scan terug in de rij) en "OCR aanzetten" (Esc
+  doet niets, Aanzetten; de scan wordt binnen 90 s gelezen, niet pas na de vijf minuten van de
+  pomp die voor "uit" weg stond).

@@ -38,8 +38,8 @@ Zoeken op beeld (van X2 en X3; nu "komt later", zonder knoppen).
 
 | Toets | Wat |
 |---|---|
-| Tab / Shift+Tab | door de knoppen, van boven naar beneden: "Achtergrondwerk pauzeren" (of "hervatten"), "Index herbouwen", "Mislukte opnieuw" en "Lijst van mislukte tonen" (alleen als er iets mislukte), "Meer laden" (als de lijst langer is), "Duplicaten opnieuw berekenen", "Plek, camera en datum opnieuw lezen", "OCR aanzetten" of "uitzetten" (alleen als X1 zich aanmeldde) |
-| Enter of spatie op een knop | de knop. "Index herbouwen", de twee knoppen van de foto's en "OCR aanzetten" vragen eerst een bevestiging |
+| Tab / Shift+Tab | door de knoppen, van boven naar beneden: "Achtergrondwerk pauzeren" (of "hervatten"), "Index herbouwen", "Mislukte opnieuw" en "Lijst van mislukte tonen" (alleen als er iets mislukte), "Meer laden" (als de lijst langer is), "Duplicaten opnieuw berekenen", "Plek, camera en datum opnieuw lezen", "OCR aanzetten" of "uitzetten" en "Alles opnieuw herkennen" (alleen als de worker OCR heeft, `ocr.installed`; golf 4) |
+| Enter of spatie op een knop | de knop. "Index herbouwen", de twee knoppen van de foto's, "OCR aanzetten" en "Alles opnieuw herkennen" vragen eerst een bevestiging; "OCR uitzetten" niet |
 | In de bevestiging | de focus staat eerst op Annuleren (de veilige keuze); Tab gaat naar "Herbouwen", "Starten" of "Aanzetten" en Enter bevestigt dan. Esc (of Enter op Annuleren) sluit zonder iets te doen en zonder aanroep; de focus gaat terug naar de knop |
 | Enter op "Achtergrondwerk pauzeren" | de index en OCR staan stil (`PATCH`, `paused: true`); de knop heet nu "Achtergrondwerk hervatten" en heeft `aria-pressed="true"`. Nog eens Enter hervat |
 | Enter op "Lijst van mislukte tonen" | de tabel met de sha256, de stap, de code en het tijdstip (nooit een naam of pad). De knop heet dan "Lijst verbergen" en heeft `aria-expanded="true"`; Enter klapt de lijst weer dicht |
@@ -74,9 +74,12 @@ Staat de focus al ergens anders (je tabde verder terwijl de aanroep liep), dan b
 - "Meer laden" in de lijst van mislukte: die knop komt pas bij meer dan 50 mislukte inhouden (één
   bladzijde van `GET /admin/search/failed`); de e2e heeft er één. De knop is dezelfde `Button` met
   dezelfde focusregel; de bladzijden zelf toetst `api/tests/search/test_admin_search.py`.
-- "OCR aanzetten" en "uitzetten": de knop staat er pas als X1 zich aanmeldt (`ocr.installed`).
+- ~~"OCR aanzetten" en "uitzetten": de knop staat er pas als X1 zich aanmeldt (`ocr.installed`).
   Dezelfde bevestiging en focusregel als hierboven; de e2e met het toetsenbord komt bij X1
-  (`e2e/test_zoek_ocr.py`).
+  (`e2e/test_zoek_ocr.py`).~~ Gedaan bij de samenvoeging (golf 4):
+  `test_ocr_op_beheer_pauzeren_uitzetten_en_opnieuw_herkennen` in `e2e/test_zoek_ocr.py` (marker
+  `ocr`, de job `ocr` van CI) doet het blok OCR met alleen het toetsenbord; zie
+  [toetsenbord-x1.md](toetsenbord-x1.md).
 - De herbouw van de foto's echt starten: de e2e stopt bij Esc in de bevestiging. Of de focus dan
   op de knop of op de kop landt, hangt af van hoe snel de herbouw klaar is (de boom van de test
   heeft weinig foto's); de regel is dezelfde als bij "Index herbouwen", die de e2e wel doet.
@@ -92,6 +95,9 @@ Staat de focus al ergens anders (je tabde verder terwijl de aanroep liep), dan b
 - [x] "Lijst van mislukte tonen" met `aria-expanded`; de lijst toont alleen de sha256.
 - [x] "Mislukte opnieuw": daarna de focus op de kop "Mislukte inhouden".
 - [x] De twee knoppen van de foto's: de bevestiging met de focus op Annuleren; Esc doet niets.
+- [x] Het blok OCR (golf 4, in `e2e/test_zoek_ocr.py`): "OCR uitzetten" zonder vraag, de focus
+      blijft op de knop (`aria-pressed` volgt); "OCR aanzetten" en "Alles opnieuw herkennen" met
+      de bevestiging, Esc doet niets en zet de focus terug op de knop.
 - [x] Een gewone gebruiker: geen tab, Alt+9 doet niets, geen aanroep van `/admin/search`.
 - [x] Nergens een fout in de console, een CSP-melding of een ontbrekende tekst (de bewaker van
       de e2e).

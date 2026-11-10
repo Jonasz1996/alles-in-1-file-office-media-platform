@@ -12,6 +12,11 @@ zonder tekstlaag (A4 op 300 dpi, met "ocrwoordx"). Die leest de app vanzelf. Een
 (scans.bon: een telefoonfoto met EXIF-draaiing 6, iets scheef) leest hij pas als Eva erom vraagt
 met "Tekst herkennen" (Keuze 23); de tekst hoort dan bij haar node alleen (Keuze 25a).
 
+Golf 4 (Z7 met X1): het blok OCR in de tab "Zoeken en foto's" op /beheer, met alleen het
+toetsenbord: de stand, pauzeren en hervatten (een foto blijft in de rij en wordt daarna gelezen),
+OCR uit (POST ocr geeft 503 ocr_off), "Alles opnieuw herkennen" en OCR weer aan (de pomp die voor
+"uit" vijf minuten weg stond, komt meteen).
+
 Elk antwoord van GET /search en van de woorden wordt meteen gelezen (expect_response). Zonder
 tesseract (of zonder nld, eng of osd) of zonder DejaVu Sans faalt dit met een duidelijke melding;
 overslaan doet het nooit.
@@ -20,9 +25,11 @@ overslaan doet het nooit.
 from __future__ import annotations
 
 import re
+import sqlite3
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -34,12 +41,14 @@ from conftest import Account, Browsers, Server, _browsers_teardown, artifacts_di
 pytestmark = pytest.mark.ocr
 
 API = "/api/v1"
+ADMIN = f"{API}/admin/search"
 ROWS = "#inhoud [role=grid] [role=row][aria-rowindex][data-index]"  # zonder de kopregel
 PDF = "Brief gemeente.pdf"
 PDF_WOORD = "ocrwoordx"  # staat alleen in het beeld van de scan (scans.LINES)
 BON_WOORD = "bonwoordx"
 KOPIE_WOORD = "spaarwoordx"
 VINKJE_WOORD = "kapwoordx"
+BEHEER_WOORD = "pauzewoordx"
 WACHT_S = 90.0
 # De markering ligt op het woord: het midden binnen 2% van de breedte en de hoogte van de foto
 PLEK = 0.02
@@ -379,3 +388,225 @@ def test_tekst_in_foto_s_herkennen_met_het_toetsenbord(x1: X1App, x1_browsers: B
     assert uit.value.json()["ocr_photos"] is False
     expect(vinkje).not_to_be_checked()
     expect(vinkje).to_be_focused()
+
+
+# --- golf 4: het blok OCR op /beheer (Z7 met X1) -------------------------------------------------
+
+
+def is_admin_search(method: str, suffix: str = ""):
+    def match(r: Any) -> bool:
+        path = r.url.split("?", 1)[0]
+        return r.request.method == method and path.endswith(f"{ADMIN}{suffix}")
+
+    return match
+
+
+def toast(page: Page, tekst: str) -> Locator:
+    """Een melding (niet de kopie voor de schermlezer)."""
+    return page.get_by_role("region", name="Meldingen").get_by_text(tekst, exact=True)
+
+
+def in_de_rij(n: int) -> str:
+    """De regel "In de rij" zoals de tab hem schrijft (nl-NL)."""
+    if n == 1:
+        return "1 inhoud (een PDF of foto)"
+    return f"{n:,}".replace(",", ".") + " inhouden (PDF's en foto's)"
+
+
+def ocr_blok(x1: X1App) -> dict[str, Any]:
+    return x1.server.call(x1.app.admin, "GET", ADMIN, expect=200).json()["ocr"]
+
+
+def wacht_op_blok(x1: X1App, klaar: Any, wat: str) -> dict[str, Any]:
+    eind = time.monotonic() + WACHT_S
+    gezien: dict[str, Any] = {}
+    while time.monotonic() < eind:
+        gezien = ocr_blok(x1)
+        if klaar(gezien):
+            return gezien
+        time.sleep(0.25)
+    raise AssertionError(f"{wat} niet binnen {WACHT_S:.0f} s: {gezien}")
+
+
+def pomp_later(x1: X1App) -> bool:
+    """Staat de pomp van de rij ocr minstens een minuut later klaar (jobs.Defer van OCR uit)?
+    Alleen lezen, uit de database van de draaiende app."""
+    from app.analysis import pump_type
+
+    db = x1.server.data_dir / "platform.db"
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+    try:
+        rows = con.execute(
+            "SELECT run_after FROM job WHERE type = ? AND status = 'queued'", (pump_type("ocr"),)
+        ).fetchall()
+    finally:
+        con.close()
+    grens = datetime.now(UTC) + timedelta(seconds=60)
+    for (waarde,) in rows:
+        moment = datetime.fromisoformat(str(waarde))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        if moment > grens:
+            return True
+    return False
+
+
+def tab_terug(page: Page, target: Locator, limit: int = 40) -> None:
+    """Shift+Tab tot target de focus heeft."""
+    target.wait_for(state="attached")
+    for _ in range(limit):
+        page.keyboard.press("Shift+Tab")
+        if target.evaluate("(e) => e === document.activeElement"):
+            return
+    raise AssertionError(f"Shift+Tab kwam niet bij {target}")
+
+
+def test_ocr_op_beheer_pauzeren_uitzetten_en_opnieuw_herkennen(
+    x1: X1App, x1_browsers: Browsers
+) -> None:
+    """Golf 4: de beheerder opent met Alt+9 de tab "Zoeken en foto's". Het blok OCR zegt
+    geïnstalleerd, aan en een lege rij, met de knoppen "OCR uitzetten" en "Alles opnieuw
+    herkennen". Met de pauze blijft een foto waar Eva om vroeg in de rij (de tab telt hem);
+    hervatten en hij wordt gelezen. OCR uit (geen vraag vooraf): POST ocr geeft 503 ocr_off.
+    "Alles opnieuw herkennen": Esc in de vraag doet niets, Starten zet de scan terug in de rij
+    (zoeken vindt de oude tekst nog), en de pomp wijkt voor "uit". OCR aanzetten vraagt eerst
+    (Esc doet niets); daarna leest de app de scan meteen opnieuw, niet pas na vijf minuten."""
+    from tests.ocr import scans
+
+    wacht_op_blok(x1, lambda o: o["pages_queued"] == 0, "een lege rij ocr")
+    page = x1_browsers.context_as(x1.app.admin).new_page()
+    patches: list[str] = []
+    posts: list[str] = []
+    page.on(
+        "request",
+        lambda r: (
+            (patches if r.method == "PATCH" else posts).append(r.url)
+            if r.method in ("PATCH", "POST") and ADMIN in r.url
+            else None
+        ),
+    )
+    page.goto("/beheer")
+    tabs = page.get_by_role("navigation", name="Onderdelen van beheer")
+    expect(tabs.get_by_role("link", name="Zoeken en foto's", exact=True)).to_be_visible()
+    with page.expect_response(is_admin_search("GET")) as eerste:
+        page.keyboard.press("Alt+9")
+    assert eerste.value.status == 200
+    begin = eerste.value.json()
+    assert begin["ocr"] == {"installed": True, "on": True, "pages_queued": 0}
+    assert begin["paused"] is False
+    expect(page).to_have_url(re.compile(r"/beheer/zoeken$"))
+
+    blok = page.get_by_role("region", name="OCR", exact=True)
+    rij = page.locator('[data-search="ocr-queued"]')
+    aan = blok.locator("dl > div").filter(has=page.get_by_text("Aan", exact=True)).locator("dd")
+    expect(
+        blok.locator("dl > div")
+        .filter(has=page.get_by_text("Geïnstalleerd", exact=True))
+        .locator("dd")
+    ).to_have_text("ja")
+    expect(aan).to_have_text("ja")
+    expect(rij).to_have_text(in_de_rij(0))
+    expect(blok.get_by_text("OCR: niet geïnstalleerd", exact=False)).to_have_count(0)
+    knop = page.locator('[data-search="ocr-button"]')
+    opnieuw = page.locator('[data-search="rebuild-ocr"]')
+    expect(knop).to_have_text("OCR uitzetten")
+    expect(knop).to_have_attribute("aria-pressed", "true")
+    expect(opnieuw).to_have_text("Alles opnieuw herkennen")
+
+    # --- de pauze: een foto blijft in de rij, de tab telt hem; hervatten en hij wordt gelezen ---
+    pauze = page.locator('[data-search="pause-button"]')
+    tab_to(page, pauze)
+    with page.expect_response(is_admin_search("PATCH")) as patch:
+        page.keyboard.press("Enter")
+    assert patch.value.status == 200
+    assert patch.value.json()["paused"] is True
+    expect(toast(page, "Het achtergrondwerk staat op pauze.")).to_be_visible()
+    data, _ = scans.bon(BEHEER_WOORD)
+    foto = upload(x1.server, x1.eva, x1.map, "bon pauze.jpg", data)
+    x1.server.call(x1.eva, "POST", f"{API}/files/{foto}/ocr", expect=202)
+    expect(rij).to_have_text(in_de_rij(1), timeout=20_000)  # de tab peilt elke 5 s
+    time.sleep(3)
+    assert stand(x1.server, x1.eva, foto)["ocr"] == "queued"
+    assert ocr_blok(x1)["pages_queued"] == 1
+    expect(pauze).to_be_focused()
+    with page.expect_response(is_admin_search("PATCH")) as patch:
+        page.keyboard.press("Enter")
+    assert patch.value.status == 200
+    assert patch.value.json()["paused"] is False
+    expect(toast(page, "Het achtergrondwerk loopt weer.")).to_be_visible()
+    wacht_op_ocr(x1.server, x1.eva, foto)
+    assert gevonden(x1.server, x1.eva, BEHEER_WOORD) == {foto: "ocr"}
+    expect(rij).to_have_text(in_de_rij(0), timeout=20_000)
+
+    # --- OCR uitzetten: geen vraag vooraf; POST ocr geeft dan 503 ocr_off ---
+    tab_to(page, knop)
+    with page.expect_response(is_admin_search("PATCH")) as patch:
+        page.keyboard.press("Enter")
+    assert patch.value.status == 200
+    assert patch.value.json()["ocr"] == {"installed": True, "on": False, "pages_queued": 0}
+    expect(toast(page, "OCR staat uit.")).to_be_visible()
+    expect(knop).to_have_text("OCR aanzetten")
+    expect(knop).to_have_attribute("aria-pressed", "false")
+    expect(knop).to_be_focused()
+    expect(aan).to_have_text("nee")
+    r = x1.server.call(x1.eva, "POST", f"{API}/files/{foto}/ocr", expect=503)
+    assert r.json()["detail"]["code"] == "ocr_off"
+
+    # --- Alles opnieuw herkennen: Esc doet niets, Starten zet de scan terug in de rij ---
+    tab_to(page, opnieuw)
+    vraag = page.get_by_role("dialog", name="Alles opnieuw herkennen?")
+    page.keyboard.press("Enter")
+    expect(vraag).to_be_visible()
+    expect(vraag.get_by_role("button", name="Annuleren", exact=True)).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(vraag).to_have_count(0)
+    expect(opnieuw).to_be_focused()
+    assert posts == []
+    page.keyboard.press("Enter")
+    expect(vraag).to_be_visible()
+    page.keyboard.press("Tab")
+    expect(vraag.get_by_role("button", name="Starten", exact=True)).to_be_focused()
+    with page.expect_response(is_admin_search("POST", "/rebuild")) as gestart:
+        page.keyboard.press("Enter")
+    assert gestart.value.status == 202, gestart.value.text()
+    expect(toast(page, "Het opnieuw herkennen is gestart.")).to_be_visible()
+    assert stand(x1.server, x1.eva, x1.pdf)["ocr"] == "queued"
+    # De oude tekst blijft vindbaar tot de nieuwe er is
+    assert gevonden(x1.server, x1.eva, PDF_WOORD) == {x1.pdf: "ocr"}
+    rij_nu = ocr_blok(x1)["pages_queued"]
+    assert rij_nu >= 1
+    expect(rij).to_have_text(in_de_rij(rij_nu), timeout=20_000)
+    # OCR staat uit: de pomp wijkt (jobs.Defer van vijf minuten), de scan blijft wachten
+    eind = time.monotonic() + 20
+    while not pomp_later(x1):
+        assert time.monotonic() < eind, "de pomp van ocr week niet voor OCR uit"
+        time.sleep(0.25)
+    assert stand(x1.server, x1.eva, x1.pdf)["ocr"] == "queued"
+
+    # --- OCR aanzetten: eerst de vraag (Esc doet niets), dan meteen weer lezen ---
+    tab_terug(page, knop)
+    vraag = page.get_by_role("dialog", name="OCR aanzetten?")
+    page.keyboard.press("Enter")
+    expect(vraag).to_be_visible()
+    expect(vraag.get_by_role("button", name="Annuleren", exact=True)).to_be_focused()
+    gezien = len(patches)
+    page.keyboard.press("Escape")
+    expect(vraag).to_have_count(0)
+    expect(knop).to_be_focused()
+    assert len(patches) == gezien
+    page.keyboard.press("Enter")
+    expect(vraag).to_be_visible()
+    page.keyboard.press("Tab")
+    expect(vraag.get_by_role("button", name="Aanzetten", exact=True)).to_be_focused()
+    with page.expect_response(is_admin_search("PATCH")) as patch:
+        page.keyboard.press("Enter")
+    assert patch.value.status == 200
+    assert patch.value.json()["ocr"]["on"] is True
+    expect(toast(page, "OCR staat aan.")).to_be_visible()
+    expect(knop).to_have_text("OCR uitzetten")
+    expect(aan).to_have_text("ja")
+    # Ruim binnen de vijf minuten van de pomp die voor "uit" weg stond
+    wacht_op_ocr(x1.server, x1.eva, x1.pdf)
+    assert gevonden(x1.server, x1.eva, PDF_WOORD) == {x1.pdf: "ocr"}
+    wacht_op_blok(x1, lambda o: o["pages_queued"] == 0, "de rij ocr na opnieuw herkennen")
+    expect(rij).to_have_text(in_de_rij(0), timeout=20_000)
