@@ -117,6 +117,55 @@ async def test_na_acht_verzoeken_op_rij_komt_de_achtergrond_aan_de_beurt():
     await asyncio.gather(*tasks)
 
 
+async def test_na_een_beurt_van_de_achtergrond_telt_de_reeks_opnieuw():
+    """Na de beurt van de achtergrond begint de reeks van FG_STREAK weer bij 0: de volgende
+    achtergrondschrijver wacht dus weer acht verzoeken, niet één."""
+    gate = dbgate.Gate(asyncio.get_running_loop())
+    h, b0, b1 = object(), object(), object()
+    fg = {object(): f"v{i}" for i in range(9)}
+    assert gate.try_take(h, None, False)
+    tasks = [await queue(gate, b0, True), await queue(gate, b1, True)]
+    tasks += [await queue(gate, c, False) for c in fg]
+    order = drain(gate, {b0: "a0", b1: "a1", **fg})
+    assert order == [f"v{i}" for i in range(8)] + ["a0", "v8", "a1"]
+    await asyncio.gather(*tasks)
+
+
+async def test_verzoeken_zonder_wachtende_achtergrond_tellen_niet_mee():
+    """De reeks telt alleen verzoeken die vóór een wachtende achtergrondschrijver gingen. Tien
+    verzoeken op rij zonder achtergrond (via de rij, en via try_take): een verzoek dat daarna
+    samen met een achtergrondschrijver wacht, gaat nog steeds voor."""
+    names = {}
+
+    async def daarna(gate: dbgate.Gate) -> list[str]:
+        b, f = object(), object()
+        names.update({b: "achtergrond", f: "verzoek"})
+        tasks = [await queue(gate, b, True), await queue(gate, f, False)]
+        order = drain(gate, names)
+        await asyncio.gather(*tasks)
+        return order
+
+    # Via de rij: tien keer doorgegeven, de tiende heeft hem nog
+    gate = dbgate.Gate(asyncio.get_running_loop())
+    assert gate.try_take(object(), None, False)
+    fg = {object(): f"v{i}" for i in range(10)}
+    names.update(fg)
+    tasks = [await queue(gate, c, False) for c in fg]
+    for _ in range(10):
+        gate.release(gate.holder)
+    assert names[gate.holder] == "v9"
+    assert await daarna(gate) == ["verzoek", "achtergrond"]
+    await asyncio.gather(*tasks)
+    # Via try_take: tien keer meteen genomen
+    gate = dbgate.Gate(asyncio.get_running_loop())
+    for _ in range(10):
+        c = object()
+        assert gate.try_take(c, None, False)
+        gate.release(c)
+    assert gate.try_take(object(), None, False)
+    assert await daarna(gate) == ["verzoek", "achtergrond"]
+
+
 async def houd_slot(lock: dbgate.BoostLock) -> tuple[asyncio.Task, asyncio.Event]:
     """Een taak heeft lock (zoals een upload BlobStore.lock) tot het teken."""
     holds, go = asyncio.Event(), asyncio.Event()
@@ -438,6 +487,83 @@ async def test_de_poort_gaat_terug_op_elk_pad(settings):
         assert (await s.execute(text("SELECT n FROM kladblok WHERE id = 1"))).scalar() == 2
 
 
+async def test_de_poort_blijft_tot_de_commit_klaar_is(settings):
+    """De poort gaat pas terug als de COMMIT van de driver (met zijn fsync) klaar is: anders
+    begint de volgende schrijver terwijl SQLite het slot nog heeft, en wacht hij in de busy
+    handler."""
+    engine = get_engine(settings)
+    await kladblok(engine)
+    gate = dbgate.gate_for(engine)
+    seen: list[bool] = []
+    async with engine.connect() as c:
+        await c.exec_driver_sql("UPDATE kladblok SET n = n + 1 WHERE id = 1")
+        raw = (await c.get_raw_connection()).dbapi_connection
+        driver = raw.driver_connection
+        commit = driver.commit
+
+        async def recorded():
+            seen.append(gate.holder is raw)
+            return await commit()
+
+        driver.commit = recorded
+        try:
+            await c.commit()
+        finally:
+            del driver.commit
+        assert gate.holder is None
+    assert seen == [True]
+
+
+async def test_een_commit_wekt_de_checkpointer(settings, monkeypatch):
+    """Na elke geslaagde schrijftransactie heeft de checkpointer werk (wal_autocheckpoint=0:
+    anders groeit de WAL zonder eind)."""
+    engine = get_engine(settings)
+    await kladblok(engine)
+    kicks: list[int] = []
+    monkeypatch.setattr(dbgate._Checkpointer, "kick", lambda self, loop: kicks.append(1))
+    async with engine.begin() as c:
+        await c.exec_driver_sql("UPDATE kladblok SET n = n + 1 WHERE id = 1")
+    assert kicks == [1]
+    async with maker(settings)() as s:
+        await s.execute(text("UPDATE kladblok SET n = n + 1 WHERE id = 2"))
+        await s.commit()
+    assert kicks == [1, 1]
+    async with engine.connect() as c:  # alleen lezen: niets
+        await c.exec_driver_sql("SELECT n FROM kladblok")
+        await c.commit()
+    assert kicks == [1, 1]
+
+
+async def test_een_mislukte_schrijfactie_buiten_een_transactie_geeft_de_poort_terug(settings):
+    """DDL draait in autocommit (pysqlite opent er geen transactie voor). Mislukt hij, dan is er
+    geen transactie die hem later teruggeeft: handle_error doet het, ook al blijft de
+    verbinding open."""
+    engine = get_engine(settings)
+    await kladblok(engine)
+    gate = dbgate.gate_for(engine)
+    async with engine.connect() as c:
+        with pytest.raises(OperationalError):
+            await c.exec_driver_sql("CREATE TABLE kladblok (id INTEGER PRIMARY KEY)")
+        assert gate.holder is None
+        async with asyncio.timeout(2):
+            await asyncio.create_task(schrijf_ergens(engine, 2))
+
+
+async def test_een_rollback_op_een_open_verbinding_geeft_de_poort_terug(settings):
+    """De rollback van de driver geeft de poort terug, ook als de verbinding nog niet terug in
+    de pool is (een sessie doet dat wel; engine.connect() niet)."""
+    engine = get_engine(settings)
+    await kladblok(engine)
+    gate = dbgate.gate_for(engine)
+    async with engine.connect() as c:
+        await c.exec_driver_sql("UPDATE kladblok SET n = n + 1 WHERE id = 1")
+        assert gate.holder is not None
+        await c.rollback()
+        assert gate.holder is None
+        async with asyncio.timeout(2):
+            await asyncio.create_task(schrijf_ergens(engine, 2))
+
+
 async def schrijf_ergens(engine, row: int) -> None:
     async with engine.begin() as c:
         await c.exec_driver_sql("UPDATE kladblok SET n = n + 1 WHERE id = ?", (row,))
@@ -513,6 +639,43 @@ def test_een_commit_bij_het_afbreken_laat_geen_checkpointer_achter(tmp_path):
         assert ck is None or ck.task is None or ck.task.done(), ck.task
     finally:
         asyncio.run(engine.dispose())
+
+
+async def test_de_checkpointer_maakt_geen_bestand_en_stopt_als_er_niets_meer_is(
+    settings, tmp_path, monkeypatch
+):
+    """mode=rw: een database die er niet is, wordt geen nieuw leeg bestand. En zonder nieuwe
+    commits stopt de checkpointer na CHECKPOINT_IDLE rondes (tot de volgende commit)."""
+    import sqlite3
+
+    missing = tmp_path / "er-niet.db"
+    with pytest.raises(sqlite3.OperationalError):
+        dbgate._checkpoint(str(missing))
+    assert not missing.exists()
+    monkeypatch.setattr(dbgate, "CHECKPOINT_EVERY", 0.01)
+    engine = get_engine(settings)
+    await kladblok(engine)
+    ck = dbgate._Checkpointer(engine.url.database)
+    ck.kick(asyncio.get_running_loop())
+    task = ck.task
+    await tot(lambda: task.done(), 2)
+    assert not ck.dirty
+
+
+async def test_wie_de_poort_lang_heeft_komt_in_de_log(settings, monkeypatch, caplog):
+    """Langer dan SLOW_HOLD: een waarschuwing met werkwoord, tabel en taak, zonder SQL."""
+    monkeypatch.setattr(dbgate, "SLOW_HOLD", 0.0)
+    engine = get_engine(settings)
+    await kladblok(engine)
+    with caplog.at_level(logging.WARNING, logger="platform.dbgate"):
+        await asyncio.create_task(schrijf_ergens(engine, 1), name="langzaam")
+    [line] = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "platform.dbgate" and "langzaam" in r.getMessage()
+    ]
+    assert "UPDATE kladblok" in line and "had de poort" in line
+    assert "SET" not in line and "n + 1" not in line
 
 
 async def test_sqlite_heeft_de_poort_en_geen_autocheckpoint(settings):
