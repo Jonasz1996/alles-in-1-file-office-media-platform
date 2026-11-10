@@ -1,6 +1,8 @@
-"""python -m app.cli db-downgrade, db-backup en de stub van geo-load (§3.5, §3.8): db-downgrade
-0007 vraagt om bevestiging en doet daarna precies dat; een onbekende of latere revisie doet
-niets. db-backup maakt een kopie van de database terwijl de app draait (fase 6, Keuze 52)."""
+"""python -m app.cli db-downgrade, db-backup, geo-load zonder bronnen en office-checkpoint (§3.5,
+§3.8): db-downgrade 0007 vraagt om bevestiging en doet daarna precies dat; een onbekende of
+latere revisie doet niets. db-backup maakt een kopie van de database terwijl de app draait (fase
+6, Keuze 52). geo-load is geen stub meer (Z3): hier alleen zonder bronnen, de rest staat in
+tests/geo/test_geo_load.py."""
 
 import os
 import sqlite3

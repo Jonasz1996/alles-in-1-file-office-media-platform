@@ -124,6 +124,24 @@ async def test_niets_in_de_log_van_de_app(client, settings, monkeypatch, caplog,
         assert lekken(tekst) == [], (record.name, lekken(tekst))
 
 
+async def test_niets_in_de_log_met_de_wortel_op_debug(client, settings, caplog):
+    """Ook als de wortel-logger op DEBUG staat (een ontwikkelaar, een debugger): aiosqlite logt
+    op DEBUG elke SQL met zijn parameters, dus de zoekvraag. main.py zet die logger daarom vast
+    op INFO (I1, S5; Keuze 13). Geen enkele regel van welke logger dan ook bevat iets van de
+    vragen."""
+    await W.bouw_async(settings)
+    eva = await kop(client, "eva")
+    caplog.set_level(logging.DEBUG)
+    assert logging.getLogger().isEnabledFor(logging.DEBUG)
+    for pad, params in vragen():
+        r = await client.get(pad, params=params, headers=eva)
+        assert gedaan(r), (pad, r.text)
+    assert caplog.records  # er werd wel gelogd
+    for record in caplog.records:
+        tekst = logging.Formatter().format(record)
+        assert lekken(tekst) == [], (record.name, lekken(tekst))
+
+
 def test_niets_in_de_toegangslog(tmp_path):
     """De echte server (python -m app.serve) met de wereld; de toegangslog van uvicorn naar een
     bestand. Elk pad staat erin, zonder query string (?***), en niets van de vragen."""

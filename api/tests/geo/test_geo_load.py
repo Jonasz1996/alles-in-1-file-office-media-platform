@@ -8,13 +8,16 @@ import logging
 import sqlite3
 from pathlib import Path
 
+import anyio
 import pytest
 
-from app import main
+from app import db, main, photo_rows
 from app.cli import main as cli_main
-from app.config import get_settings
+from app.config import Settings, get_settings
+from app.db import get_engine
 from app.geo import load, places
 from app.main import app
+from app.migrate import upgrade
 from app.routers import uploads
 from tests.geo import bronnen
 
@@ -192,20 +195,56 @@ async def test_places_sqlite_van_een_ander_schema(settings, plaatsen):
     assert places.get(settings) is not None
 
 
-async def test_cli_geo_load(settings, monkeypatch, capsys):
+def _geo_places(data_dir: Path) -> list[str]:
+    """De status van elke job geo.places, rechtstreeks uit de database."""
+    with contextlib.closing(sqlite3.connect(data_dir / "platform.db")) as con:
+        rows = con.execute("SELECT status FROM job WHERE type = ?", (photo_rows.PLACES_TYPE,))
+        return [status for (status,) in rows]
+
+
+def test_cli_geo_load(tmp_path, monkeypatch, capsys):
+    """Zonder event loop, zoals het commando echt draait (install.sh, naast de app): een nieuwe
+    bouw zet geo.places klaar voor de app (I1, A4); een tweede geo-load bouwt niet en zet niets
+    klaar. Lukt het klaarzetten niet, dan zegt hij dat de app het bij zijn volgende start doet
+    (die kijkt Setting "geo.places" na, review I1 F2); places.sqlite zelf is wel gebouwd."""
+    settings = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8)
+
+    async def migreer() -> None:
+        try:
+            await upgrade(settings)
+        finally:
+            await get_engine(settings).dispose()
+
+    anyio.run(migreer)
     monkeypatch.setenv("PLATFORM_DATA_DIR", str(settings.data_dir))
     monkeypatch.setenv("PLATFORM_JWT_SECRET", "test" * 8)
     get_settings.cache_clear()
     try:
         assert cli_main(["geo-load"]) == 1
         assert "De bronnen staan niet in" in capsys.readouterr().err
+        assert _geo_places(settings.data_dir) == []
         bronnen.gebruik(monkeypatch, bronnen.maak(settings.geo_src))
         assert cli_main(["geo-load"]) == 0
-        assert "gebouwd" in capsys.readouterr().out
+        uit = capsys.readouterr()
+        assert "gebouwd" in uit.out
+        assert "Let op" not in uit.err
+        assert _geo_places(settings.data_dir) == ["queued"]
         assert cli_main(["geo-load"]) == 0
         assert "hoort al bij deze bronnen" in capsys.readouterr().out
+        assert _geo_places(settings.data_dir) == ["queued"]
+
+        async def op_slot(*_args, **_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(photo_rows.jobs, "enqueue", op_slot)
+        assert cli_main(["geo-load", "--force"]) == 0
+        uit = capsys.readouterr()
+        assert "gebouwd" in uit.out
+        assert "Let op" in uit.err and "volgende start" in uit.err
+        assert _geo_places(settings.data_dir) == ["queued"]
     finally:
         get_settings.cache_clear()
+        db._engine.cache_clear()
 
 
 @contextlib.asynccontextmanager
