@@ -709,7 +709,9 @@ def test_de_zelftest_wil_elk_programma_van_het_voorvoegsel_op_0711(tmp_path, mon
         used |= {w for w in prefix if not w.startswith("-") and not w.lstrip("-").isdigit()}
     assert used == {"nice", "ionice"}
     assert used | set(guard.BINARIES) | {"env"} == set(selftest.EXEC_PROGRAMS)
-    # leesbaar (0755): de controle faalt met de modus, per programma
+    assert selftest.EXEC_PROGRAMS == ("ffmpeg", "ffprobe", "nice", "ionice", "env", "tesseract")
+    assert selftest.OPTIONAL_PROGRAMS == ("tesseract",)
+    # leesbaar (0755): de controle faalt met de modus, per programma (ook tesseract, X1)
     paths = {}
     for name in selftest.EXEC_PROGRAMS:
         path = tmp_path / name
@@ -721,14 +723,33 @@ def test_de_zelftest_wil_elk_programma_van_het_voorvoegsel_op_0711(tmp_path, mon
     selftest._binaries(report)
     checks = {c.name: c for c in report.checks}
     assert sorted(checks) == sorted(f"{n} 0711 van root" for n in selftest.EXEC_PROGRAMS)
-    for name in ("nice", "ionice"):
+    for name in selftest.EXEC_PROGRAMS:
         check = checks[f"{name} 0711 van root"]
         assert not check.ok and check.sandbox and "modus 0755" in check.detail
-    # en niet gevonden is ook een fout
+    # en niet gevonden is ook een fout, behalve voor tesseract: zonder hem staat OCR uit (Keuze 24)
     monkeypatch.setattr(selftest.shutil, "which", lambda name: None)
     report = selftest.Report()
     selftest._binaries(report)
-    assert all(not c.ok and c.detail == "niet gevonden" for c in report.checks)
+    assert [(c.name, c.ok, c.detail, c.sandbox) for c in report.checks] == [
+        ("ffmpeg 0711 van root", False, "niet gevonden", True),
+        ("ffprobe 0711 van root", False, "niet gevonden", True),
+        ("nice 0711 van root", False, "niet gevonden", True),
+        ("ionice 0711 van root", False, "niet gevonden", True),
+        ("env 0711 van root", False, "niet gevonden", True),
+        ("tesseract 0711 van root", True, "niet geïnstalleerd: OCR uit", True),
+    ]
+    # alleen tesseract weg: de rest 0711 telt gewoon mee, en de zelftest is goed
+    monkeypatch.setattr(selftest.shutil, "which", lambda name: paths.get(name))
+    for path in paths.values():
+        Path(path).chmod(0o711)
+    monkeypatch.setattr(selftest.os, "access", lambda path, mode: False)
+    del paths["tesseract"]
+    report = selftest.Report()
+    selftest._binaries(report)
+    uid = os.getuid()
+    got = {c.name: c.ok for c in report.checks}
+    assert got["tesseract 0711 van root"] is True
+    assert all(got[f"{n} 0711 van root"] is (uid == 0) for n in selftest.EXEC_PROGRAMS[:5])
 
 
 def test_de_zelftest_wil_python_tekst_0711_van_root(tmp_path, monkeypatch):

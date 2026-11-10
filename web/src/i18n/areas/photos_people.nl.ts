@@ -129,6 +129,9 @@ export default {
     beeld: "Zoeken op beeld",
     beeldHint:
       "Je foto's worden op de achtergrond bekeken, zodat je ze kunt vinden op wat erop staat ('strand', 'hond'). Dat gebeurt op deze server; er gaat niets naar buiten.",
+    ocr: "Tekst in foto's herkennen",
+    ocrHint:
+      "Bonnen, borden en foto's van papier worden doorzoekbaar op hun tekst. De tekst blijft bij jouw foto's: alleen jij vindt hem, ook als je een foto deelt. Dat gebeurt op deze server; er gaat niets naar buiten.",
     notYet: "Nog niet beschikbaar op deze server.",
     saved: "Opgeslagen.",
   },

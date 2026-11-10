@@ -4,7 +4,8 @@ van de echte probe, en de fouten op bestelling.
 - test_contract_nep: elk scenario uit tests/media/worker_contract.py tegen de nep (standaard;
   met ffmpeg voor de fixtures, anders overgeslagen);
 - test_contract_echt (marker media): dezelfde scenario's tegen de echte lokale worker, voor wat
-  M0 heeft (caps, probe, stoppen). stream bouwt M4: die scenario's slaan hier over;
+  hij doet (caps, probe, stoppen, stream sinds M4; ocr sinds X1, met tesseract op deze machine:
+  zonder slaat dat scenario over met "tesseract ontbreekt", en dan faalt de job api-media);
 - de opnames (tests/media/recorded): compleet, actueel met PROBE_VERSION en de recepten, en
   geldig. Zijn ze dat niet: `cd api && uv run python -m tests.media.record`;
 - de fouten van de nep (crash_after, hang, busy, slow_start, garbage, new_stsd), het tempo, de
@@ -29,6 +30,7 @@ from app.media.client import WorkerBusy, WorkerDown, WorkerFailed
 from app.media.types import Probe, SegmentGrid, WorkerCaps
 from app.media.wire import Code, Op, WorkClass
 from app.media.worker import args as A
+from app.media.worker.ops import ocr as ocr_op
 from tests.media import boxes, record
 from tests.media import fixtures as F
 from tests.media import worker_contract as C
@@ -39,6 +41,7 @@ pytestmark = pytest.mark.anyio
 needs_ffmpeg = pytest.mark.skipif(not F.available(), reason="ffmpeg ontbreekt (fixtures)")
 SCENARIOS = pytest.mark.parametrize("scenario", C.SCENARIOS, ids=lambda s: s.__name__)
 RECORD = "cd api && uv run python -m tests.media.record"
+OCR_APT = "apt install tesseract-ocr tesseract-ocr-nld tesseract-ocr-eng tesseract-ocr-osd"
 
 
 # --- de drivers ------------------------------------------------------------------------------
@@ -48,7 +51,7 @@ RECORD = "cd api && uv run python -m tests.media.record"
 class FakeDriver:
     fake: FakeWorker
     name: str = "nep"
-    has: frozenset[Op] = frozenset({Op.CAPS, Op.PROBE, Op.STREAM})
+    has: frozenset[Op] = frozenset({Op.CAPS, Op.PROBE, Op.STREAM, Op.OCR})
 
     @property
     def socket(self) -> Path:
@@ -77,6 +80,10 @@ class FakeDriver:
 
     def source(self, name: str) -> Path:
         return F.make(name)
+
+    def ocr_known(self, source: Path, words: list[list], width: int, height: int) -> None:
+        self.fake.ocr = True  # zoals een worker met tesseract
+        self.fake.register_ocr(source, words, width=width, height=height)
 
 
 # Op een fd slapen zolang de vlag er is (een trage opdracht), anders de echte ffprobe
@@ -111,7 +118,7 @@ class RealDriver:
     worker: local.LocalWorker
     flag: Path
     name: str = "echt"
-    # Sinds M4 doet de echte worker ook stream
+    # Sinds M4 doet de echte worker ook stream; ocr (X1) als tesseract er is (real_driver)
     has: frozenset[Op] = frozenset({Op.CAPS, Op.PROBE, Op.STREAM})
     max_procs: int = 3
     max_transcodes: int = 1
@@ -136,6 +143,9 @@ class RealDriver:
 
     def source(self, name: str) -> Path:
         return F.make(name)
+
+    def ocr_known(self, source: Path, words: list[list], width: int, height: int) -> None:
+        """De echte worker leest de woorden zelf (tesseract)."""
 
 
 @pytest.fixture
@@ -170,8 +180,9 @@ async def real_driver(tmp_path, monkeypatch):
     )
     worker = await local.start(settings, tmp_path / "run" / "worker.sock")
     client.bind(worker.socket, worker.key)
+    has = RealDriver.has | ({Op.OCR} if ocr_op.program() else set())
     try:
-        yield RealDriver(worker, flag)
+        yield RealDriver(worker, flag, has=frozenset(has))
     finally:
         flag.unlink(missing_ok=True)
         await local.stop(worker)
@@ -192,6 +203,8 @@ async def test_contract_nep(scenario, fake_driver):
 @SCENARIOS
 async def test_contract_echt(scenario, real_driver):
     missing = C.required(scenario) - real_driver.has
+    if Op.OCR in missing:
+        pytest.skip(f"tesseract ontbreekt ({OCR_APT})")
     if missing:
         pytest.skip(f"de echte worker doet {', '.join(sorted(missing))} nog niet (M4)")
     await scenario(real_driver)
@@ -597,6 +610,49 @@ async def test_caps_zonder_ffmpeg_in_de_test(fake):
     assert caps.max_procs == 3 and caps.max_transcodes == 2
     assert caps.places == {"transcode": 2, "remux": 6, "background": 1, "short": 2}
     assert caps.ffmpeg == record.load_meta()["ffmpeg"]
+    assert caps.ocr is False  # standaard zoals een worker zonder tesseract (fake.ocr)
+
+
+async def test_ocr_van_de_nep(fake, tmp_path):
+    """Zonder fake.ocr: none met ocr_missing (caps ocr false). Met: wat de test aanmeldde, per
+    bron en pagina, in stukken van hooguit ops/ocr.PART_BYTES; een andere bron of pagina geeft
+    de fout van kind 1."""
+    source = tmp_path / "scan.pdf"
+    source.write_bytes(b"%PDF-1.4 een scan")
+    job, _ = await client.call(Op.OCR, A.OcrArgs(kind="pdf"), source=source)
+    assert await job.result() == ocr_op._summary("none", "ocr_missing")
+    fake.ocr = True
+    assert (await client.caps()).ocr is True
+    many = [[f"woord{i:05d}", i, 2 * i, 30, 12, i // 10] for i in range(6000)]
+    fake.register_ocr(source, many, page=2, width=2480, height=3508, skew=1.5, conf=81.2)
+    job, _ = await client.call(Op.OCR, A.OcrArgs(kind="pdf", page=2), source=source)
+    async with job:
+        *chunks, summary = [e["data"] async for e in job.events()]
+    assert len(chunks) == summary["parts"] > 1
+    assert [c["part"] for c in chunks] == list(range(len(chunks)))
+    assert [w for c in chunks for w in c["words"]] == many
+    assert all(len(wire.encode({"ev": "result", "data": c})) <= wire.MAX_MESSAGE for c in chunks)
+    assert summary == ocr_op._summary(
+        "done",
+        parts=len(chunks),
+        words=6000,
+        chars=len(ocr_op.text_of(many)),
+        conf=81.2,
+        skew=1.5,
+        width=2480,
+        height=3508,
+        source=[2480, 3508],
+        ms={"render": 0, "deskew": 0, "ocr": 0},
+    )
+    other = tmp_path / "ander.png"
+    other.write_bytes(b"een ander beeld")
+    for kind, path, error in (
+        ("pdf", source, "PdfiumError"),  # pagina 1 is niet aangemeld
+        ("image", other, "UnidentifiedImageError"),
+    ):
+        job, _ = await client.call(Op.OCR, A.OcrArgs(kind=kind), source=path)
+        assert await job.result() == ocr_op._summary("failed", error=error)
+    assert [r.op for r in fake.requests] == ["ocr", "caps", "ocr", "ocr", "ocr"]
 
 
 class _App:

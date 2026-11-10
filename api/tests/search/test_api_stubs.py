@@ -295,6 +295,8 @@ BUILT = {
     ("POST", "/api/v1/admin/search/rebuild"),
     ("GET", "/api/v1/admin/search/failed"),
     ("POST", "/api/v1/admin/search/retry"),
+    # X1: tekst herkennen (tests/ocr/test_ocr_limits.py, test_ocr_access.py)
+    ("POST", "/api/v1/files/{node_id}/ocr"),
 }
 # De vraag die een stub nodig heeft om bij de route te komen
 QUERY = {

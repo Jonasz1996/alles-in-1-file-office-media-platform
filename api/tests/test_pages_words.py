@@ -417,7 +417,7 @@ async def test_de_stand_van_de_analyse(client, admin, settings):
     note = (await put(client, jonas, root_id, "notitie.txt", b"het zoekwoord staat hier")).json()
     sha = note["etag"].strip('"')
     # Nog geen rij (de backfill of de pomp komt nog): queued; hash (Z3) is er alleen voor een
-    # afbeelding en ocr (X1) is er nog niet: skip
+    # afbeelding en ocr (X1) alleen voor een PDF of foto: skip
     assert await analysis_of(client, jonas, note["id"]) == {
         "text": "queued", "hash": "skip", "ocr": "skip", "truncated": False, "code": None,
     }  # fmt: skip

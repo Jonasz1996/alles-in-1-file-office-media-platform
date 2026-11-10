@@ -26,7 +26,8 @@ Andere soorten verzoeken (veld "mode"):
 - "docinfo": {"source"} -> {"state", "pages", "page_sizes", "toc", "labels"} van een PDF;
 - "meta": alleen metadata van veel bestanden (render_meta.run_meta, P5);
 - "text": de tekst uit documenten (fase 6, Z2): zie run_text en text_child;
-- "ocr_page": één pagina of foto door tesseract (fase 6, X1; nu een stub).
+- "ocr_page": één pagina of foto als grijs beeld voor OCR (fase 6, X1): zie ocr_page en
+  ocr_child.
 
 serve() is de forkserver van previews.py: één voorgeladen proces dat per verzoek een kind maakt
 met fork, in plaats van elke keer een nieuwe Python met Pillow (zie daar).
@@ -783,9 +784,9 @@ class Later(Exception):
 
 def installed() -> bool:
     """Staan ffmpeg en ffprobe op deze machine (voor de eigen worker bij media uit)?"""
-    from app.media.worker.guard import BINARIES
+    from app.media.worker.guard import FFMPEG
 
-    return all(shutil.which(name) for name in BINARIES)
+    return all(shutil.which(name) for name in FFMPEG)
 
 
 class Media:
@@ -1502,12 +1503,198 @@ def run_text(request: dict) -> dict:
     return {"state": "ready", "done": done}
 
 
+# --- een pagina als grijs beeld voor OCR (fase 6, X1; bouwontwerp Keuze 22) ------------------
+#
+# Kind 1 van Op.OCR (app/media/worker/ops/ocr.py). De herkenning zelf krijgt nooit de blob: alleen
+# het grijze beeld dat dit proces ervan maakt (app/ocr/pgm.py), want haar eigen decoders kennen
+# geen HEIC, geen EXIF-draaiing en geen grens op de pixels (S7). Hier:
+# - een PDF-pagina op OCR_DPI (pdfium, zoals de viewer: de draaiing van de pagina meegerekend);
+#   een foto na ImageOps.exif_transpose, HEIC via pillow-heif, met de grens max_pixels
+#   (preview_max_pixels; een JPEG mag JPEG_PIXELS keer zoveel en wordt met draft kleiner gelezen);
+# - grijs, en hooguit pgm.OCR_PIXELS (en pgm.MAX_SIDE per kant): groter wordt kleiner gemaakt;
+# - de eigen rechtzetting (app/ocr/deskew.py). Past het gedraaide beeld niet meer in de grens,
+#   dan wordt de bron eerst kleiner gemaakt.
+# Het antwoord: {"skew": de scheefstand van de bron (graden tegen de klok in), "width" en
+# "height" van het grijze beeld, "source": [breedte, hoogte] van de bron zoals de viewer hem toont
+# (na de EXIF-draaiing en het kleiner maken), "ms": {"render", "deskew"}}. Met skew, de maten en
+# app/ocr/geometry.py draait de app de middens van de vakjes terug.
+#
+# - ocr_child(): het kind van de worker, met de handdruk van Keuze 17 (zoals text_child): eerst
+#   niet-dumpbaar, "klaar" op de socket (fd 3), dan de vraag {"kind": "pdf" | "image", "page",
+#   "max_pixels"} met twee fd's: de blob en de schrijfkant van de pipe naar de worker. Daar komt
+#   de PGM op; daarna het antwoord, of {"error": soort}, op de socket.
+# - run_ocr_page(request) (mode "ocr_page"): hetzelfde met paden ({"source", "out", "kind",
+#   "page", "max_pixels"}), voor tests en metingen: de PGM komt in het bestand out.
+
+OCR_DPI = 300
+OCR_REQUEST_BYTES = 4096
+OCR_FDS = 2
+_SIXTEEN_BITS = ("I;16", "I;16B", "I;16L", "I;16N")
+
+
+def _grey(img):
+    """img als grijs beeld (mode L); doorzichtig wordt wit."""
+    from PIL import Image
+
+    if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        white = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        img = Image.alpha_composite(white, rgba)
+    elif img.mode in _SIXTEEN_BITS or img.mode == "I":
+        img = img.convert("I").point(lambda v: v * (1 / 256))
+    return img if img.mode == "L" else img.convert("L")
+
+
+def _fit(img, pixels: int, side: int):
+    """img kleiner gemaakt tot hooguit pixels pixels en side per kant (of img zelf)."""
+    from PIL import Image
+
+    width, height = img.size
+    factor = min(1.0, (pixels / (width * height)) ** 0.5, side / max(width, height))
+    if factor >= 1.0:
+        return img
+    size = (max(1, int(width * factor)), max(1, int(height * factor)))
+    return img.resize(size, Image.LANCZOS, reducing_gap=3.0)
+
+
+def _ocr_source(f, request: dict):
+    """De bron (een open bestand) als grijs beeld zoals de viewer hem toont, hooguit
+    pgm.OCR_PIXELS."""
+    from app.ocr import pgm
+
+    max_pixels = int(request.get("max_pixels") or 10**8)
+    kind = request.get("kind")
+    f.seek(0)
+    if kind == "pdf":
+        import pypdfium2 as pdfium
+
+        _pillow(max_pixels)
+        document = pdfium.PdfDocument(f)
+        try:
+            n = int(request.get("page") or 1)
+            if not 1 <= n <= min(len(document), MAX_PAGES):
+                raise Unreadable("geen pagina")
+            page = document[n - 1]
+            try:
+                width, height = page.get_size()
+                if width <= 0 or height <= 0:
+                    raise Unreadable("lege pagina")
+                scale = min(
+                    OCR_DPI / 72,
+                    (pgm.OCR_PIXELS / (width * height)) ** 0.5,
+                    pgm.MAX_SIDE / max(width, height),
+                )
+                img = page.render(scale=scale, grayscale=True, may_draw_forms=True).to_pil()
+            finally:
+                page.close()
+        finally:
+            document.close()
+    elif kind == "image":
+        jpeg = f.read(3) == b"\xff\xd8\xff"
+        f.seek(0)
+        Image = _pillow(max_pixels * JPEG_PIXELS if jpeg else max_pixels)
+        from PIL import ImageFile, ImageOps
+
+        truncated = ImageFile.LOAD_TRUNCATED_IMAGES
+        try:
+            with Image.open(f, formats=IMAGE_FORMATS) as src:
+                if src.format != "JPEG" and src.size[0] * src.size[1] > max_pixels:
+                    raise Unreadable("te veel pixels")
+                ImageFile.LOAD_TRUNCATED_IMAGES = src.format == "JPEG"
+                if src.format == "JPEG":
+                    factor = min(1.0, (pgm.OCR_PIXELS / (src.size[0] * src.size[1])) ** 0.5)
+                    src.draft("L", (int(src.size[0] * factor), int(src.size[1] * factor)))
+                _decoded(src, max_pixels)
+                img = _grey(ImageOps.exif_transpose(src))
+        finally:
+            ImageFile.LOAD_TRUNCATED_IMAGES = truncated
+    else:
+        raise ValueError("soort")
+    return _fit(_grey(img), pgm.OCR_PIXELS, pgm.MAX_SIDE)
+
+
+def _write_all(fd: int, data) -> None:
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view) :]
+
+
+def ocr_page(f, request: dict, out_fd: int) -> dict:
+    """De bron als grijze PGM op out_fd (rechtgezet); geeft skew, de maten en de tijden."""
+    import time
+
+    from app.ocr import deskew, pgm
+
+    start = time.monotonic()
+    img = _ocr_source(f, request)
+    rendered = time.monotonic()
+    turn = deskew.measure(img)
+    if turn:
+        width, height = deskew.expanded(img.size, turn)
+        if width * height > pgm.OCR_PIXELS or max(width, height) > pgm.MAX_SIDE:
+            # na het draaien te groot: de bron eerst kleiner, zodat het gedraaide beeld past
+            factor = min(
+                (pgm.OCR_PIXELS / (width * height)) ** 0.5, pgm.MAX_SIDE / max(width, height)
+            )
+            img = _fit(img, int(img.width * img.height * factor**2), int(max(img.size) * factor))
+        straight = deskew.turn(img, turn)
+    else:
+        straight = img
+    done = time.monotonic()
+    _write_all(out_fd, pgm.header(straight.width, straight.height))
+    _write_all(out_fd, straight.tobytes())
+    return {
+        "skew": -turn if turn else 0.0,
+        "width": straight.width,
+        "height": straight.height,
+        "source": [img.width, img.height],
+        "ms": {
+            "render": round((rendered - start) * 1000),
+            "deskew": round((done - rendered) * 1000),
+        },
+    }
+
+
+def ocr_child() -> int:
+    """Het kind van Op.OCR (kind 1); zie hierboven. Geeft de exitcode."""
+    import ctypes
+    import socket
+
+    # Als eerste: niet-dumpbaar, vóór er iets van een ander in dit proces komt
+    if ctypes.CDLL(None, use_errno=True).prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
+        return 3
+    sock = socket.socket(fileno=3)
+    fds: list[int] = []
+    try:
+        sock.sendall(b"klaar")
+        data, fds, _flags, _addr = socket.recv_fds(sock, OCR_REQUEST_BYTES, OCR_FDS)
+        request = json.loads(data)
+        if len(fds) != OCR_FDS:
+            raise ValueError("aantal fd's")
+        blob, out_fd = fds
+        with os.fdopen(blob, "rb", closefd=False) as f:
+            answer = ocr_page(f, request, out_fd)
+        os.close(out_fd)  # de worker ziet EOF: de PGM is compleet
+        sock.sendall(json.dumps(answer).encode())
+        return 0
+    except Exception as e:  # noqa: BLE001 - de fout gaat over de socket, stderr is /dev/null
+        with contextlib.suppress(OSError):
+            sock.sendall(json.dumps({"error": type(e).__name__}).encode())
+        return 1
+
+
 def run_ocr_page(request: dict) -> dict:
-    """mode "ocr_page" (fase 6, X1): één pagina of foto door tesseract. Z0 is een stub: zonder
-    tesseract in het image kan dit niet, en X1 bouwt het (Vraag 1). "none" betekent: geen
-    tekst gevonden; code zegt waarom (ocr_missing: tesseract staat er niet).
-    """
-    return {"state": "none", "chars": 0, "truncated": False, "code": "ocr_missing"}
+    """mode "ocr_page": één pagina of foto via paden; de PGM in het bestand out."""
+    fd = os.open(request["source"], os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    out = os.open(request["out"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "rb") as f:
+            answer = ocr_page(f, request, out)
+    except Exception as e:  # noqa: BLE001 - zoals ocr_child: alleen de soort fout
+        return {"state": "failed", "error": type(e).__name__}
+    finally:
+        os.close(out)
+    return {"state": "ready", **answer}
 
 
 def main() -> None:
@@ -1529,7 +1716,7 @@ def main() -> None:
     elif request.get("mode") == "text":
         result = run_text(request)  # de tekst uit een document (fase 6, Z2)
     elif request.get("mode") == "ocr_page":
-        result = run_ocr_page(request)  # één pagina door tesseract (fase 6, X1)
+        result = run_ocr_page(request)  # één pagina als grijs beeld voor OCR (fase 6, X1)
     else:
         result = render(request)
     sys.stdout.write(json.dumps(result))

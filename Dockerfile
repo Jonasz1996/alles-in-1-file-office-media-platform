@@ -15,9 +15,13 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/opt/venv \
 WORKDIR /srv
 
 # ffmpeg/ffprobe voor de mediaworker (fase 5): de previews van video's en media. Alleen de worker
-# start ze; zonder ffmpeg krijgen video's gewoon geen preview
+# start ze; zonder ffmpeg krijgen video's gewoon geen preview.
+# tesseract met Nederlands, Engels en de OSD voor de OCR van scans en foto's (fase 6, X1, Keuze 24;
+# Jonas: "Ja, erin", Vraag 15; spike S5: 69 MiB). Ook alleen de worker start hem (ops/ocr.py), en
+# alleen op een grijs beeld dat render zelf maakte, nooit op de ruwe blob (Keuze 22)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
+       tesseract-ocr tesseract-ocr-nld tesseract-ocr-eng tesseract-ocr-osd \
     && rm -rf /var/lib/apt/lists/*
 
 COPY api/pyproject.toml api/uv.lock ./
@@ -39,12 +43,14 @@ RUN useradd --system --uid 10001 platform && install -d -o platform -g platform 
 # nice en ionice ook: zij staan vóór ffmpeg in de argv van een job (args.niceness), en een
 # leesbare nice maakt het kind dumpbaar tot zijn exec van ffmpeg, terwijl het de fd's van de job
 # al heeft (review golf 1, S1). env ook 0711: de healthcheck van media start via `env -i`, en
-# zo is de sleutel van hello ook in die korte tijd niet in /proc/<pid>/environ te lezen.
+# zo is de sleutel van hello ook in die korte tijd niet in /proc/<pid>/environ te lezen; en env
+# staat vóór tesseract (OMP_THREAD_LIMIT=1). tesseract 0711 om dezelfde reden: hij heeft de PGM
+# van een opdracht op stdin (fase 6, X1, C14).
 # /srv/zelftest-10001 (leeg, van platform) is voor de zelftest van de worker (V1: opnieuw
 # openen om te schrijven faalt).
 RUN useradd --system --uid 10002 --no-create-home media \
     && install -d -o media -g platform -m 2750 /run/media \
-    && chmod 0711 /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/env /usr/bin/nice /usr/bin/ionice \
+    && chmod 0711 /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/env /usr/bin/nice /usr/bin/ionice /usr/bin/tesseract \
     && install -o platform -g platform -m 0644 /dev/null /srv/zelftest-10001
 # Fase 6, Z2 (Keuze 17, spike S11): het kind van de opdracht text (tekst uit documenten) start
 # uit deze kopie van python die niemand mag lezen; dan is het vanaf zijn exec niet dumpbaar. Hij

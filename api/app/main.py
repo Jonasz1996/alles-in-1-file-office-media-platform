@@ -31,6 +31,7 @@ from app.extract import step as extract_step  # noqa: F401 - registreert de stap
 from app.media import analysis as media_analysis  # noqa: F401 - registreert media.analyse
 from app.media import runtime as media_runtime
 from app.migrate import upgrade
+from app.ocr import step as ocr_step  # noqa: F401 - registreert de stap ocr (X1)
 from app.office import convert as office_convert
 from app.office import engine as office_engine
 from app.office import health as office_health
