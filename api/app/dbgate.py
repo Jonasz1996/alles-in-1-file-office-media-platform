@@ -29,7 +29,9 @@ Deze poort zet de schrijvers van het proces in een rij, vóór SQLite:
   de schrijfpoort).
 - Wachten op de poort duurt hooguit TIMEOUT (5 s, zoals busy_timeout); daarna dezelfde fout als
   nu: OperationalError "database is locked".
-- Eindigt de taak die de poort heeft zonder hem terug te geven, dan gaat hij alsnog door.
+- Eindigt de taak die de poort heeft zonder hem terug te geven, dan gaat hij alsnog door; zit
+  zijn verbinding nog in een schrijftransactie, dan pas bij de commit, rollback of de pool (zo
+  lang heeft SQLite het slot ook).
 - Het checkpoint van de WAL zit niet meer in een COMMIT (wal_autocheckpoint=0 in app/db.py):
   hooguit eens per seconde, zolang er commits komen, doet een eigen verbinding van sqlite3 in een
   thread een PASSIVE checkpoint. Dat neemt het schrijfslot niet en houdt niemand op.
@@ -300,6 +302,18 @@ class Gate:
     def _task_done(self, conn: object, grant_id: int, task: asyncio.Task) -> None:
         if self.holder is conn and self.grant_id == grant_id:
             self.counts["holder_done"] += 1
+            if _in_txn(conn):
+                # De verbinding zit nog in zijn schrijftransactie: SQLite heeft het slot nog. Een
+                # ander met de poort zou daar in de busy handler op wachten, en deze verbinding
+                # op de poort. De commit, rollback of de pool geeft hem terug, zoals altijd.
+                log.warning(
+                    "Schrijfpoort: taak %s stopte midden in een schrijftransactie (%s); de "
+                    "poort blijft bij de verbinding tot die klaar is",
+                    task.get_name(),
+                    self.holder_what or "-",
+                )
+                self.holder_task = self._done_cb = None
+                return
             log.warning(
                 "Schrijfpoort: taak %s stopte met de poort (%s) nog in handen; die gaat door",
                 task.get_name(),
@@ -462,6 +476,12 @@ class _Checkpointer:
     def kick(self, loop: asyncio.AbstractEventLoop) -> None:
         self.dirty = True
         if self.task is None or self.task.done():
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                # Een schrijfactie bij het afbreken (asyncio.run ruimt op): een nieuwe taak bleef
+                # dan hangen in een gesloten loop. De volgende commit start de checkpointer, en
+                # bij het sluiten van de laatste verbinding doet SQLite het zelf.
+                return
             self.task = loop.create_task(self._run(), name="wal-checkpoint")
 
     async def _run(self) -> None:

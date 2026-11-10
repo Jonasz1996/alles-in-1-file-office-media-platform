@@ -438,6 +438,83 @@ async def test_de_poort_gaat_terug_op_elk_pad(settings):
         assert (await s.execute(text("SELECT n FROM kladblok WHERE id = 1"))).scalar() == 2
 
 
+async def schrijf_ergens(engine, row: int) -> None:
+    async with engine.begin() as c:
+        await c.exec_driver_sql("UPDATE kladblok SET n = n + 1 WHERE id = ?", (row,))
+
+
+async def test_een_taak_die_midden_in_een_transactie_stopt(settings, monkeypatch):
+    """De review van de schrijfpoort (HANG-1): een taak schrijft op een sessie en stopt, de
+    transactie loopt nog (de aanroeper commit later). SQLite heeft het slot dan nog; gaf de
+    poort zich bij het einde van de taak over, dan kreeg een ander hem, wachtte die in de busy
+    handler op dit slot en deze sessie op de poort: allebei vast tot een time-out. Zonder poort
+    gaat dit gewoon."""
+    monkeypatch.setattr(dbgate, "TIMEOUT", 1.0)
+    engine = get_engine(settings)
+    await kladblok(engine)
+    gate = dbgate.gate_for(engine)
+    s = maker(settings)()
+    done: list[str] = []
+
+    async def eerste():
+        await s.execute(text("UPDATE kladblok SET n = n + 1 WHERE id = 1"))
+
+    async def ander():
+        await schrijf_ergens(engine, 2)
+        done.append("ander")
+
+    other = None
+    try:
+        await asyncio.create_task(eerste(), name="eerste")  # stopt midden in de transactie
+        await asyncio.sleep(0.01)  # de callbacks van het einde van die taak
+        other = asyncio.create_task(ander())
+        await asyncio.sleep(0.1)
+        await s.execute(text("UPDATE kladblok SET n = n + 1 WHERE id = 3"))
+        done.append("sessie")
+        await s.commit()
+        await asyncio.wait_for(other, 5)
+    finally:
+        await s.close()
+        if other is not None and not other.done():
+            await asyncio.wait({other}, timeout=6)
+    assert done == ["sessie", "ander"]
+    assert dbgate.stats(gate)["holder_done"] == 1
+    assert dbgate.stats(gate)["timeouts"] == 0
+    assert gate.holder is None
+
+
+def test_een_commit_bij_het_afbreken_laat_geen_checkpointer_achter(tmp_path):
+    """De review van de schrijfpoort (HANG-2): asyncio.run breekt een taak af die bij het
+    afbreken nog schrijft (zoals jobs._stopped). Een nieuwe checkpointer die daar begon, bleef
+    hangen in de gesloten loop ("Task was destroyed but it is pending!")."""
+    engine = db._engine.__wrapped__(f"sqlite+aiosqlite:///{tmp_path / 'afbreken.db'}")
+    loops: list[asyncio.AbstractEventLoop] = []
+
+    async def afbreken():
+        loops.append(asyncio.get_running_loop())
+        started = asyncio.Event()
+
+        async def slaper():
+            try:
+                started.set()
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                await schrijf_ergens(engine, 1)
+                raise
+
+        asyncio.create_task(slaper())
+        await started.wait()  # en klaar: asyncio.run breekt slaper af
+
+    asyncio.run(kladblok(engine))
+    asyncio.run(engine.dispose())
+    asyncio.run(afbreken())
+    try:
+        ck = engine.sync_engine._dbgate_ckpts.get(loops[0])
+        assert ck is None or ck.task is None or ck.task.done(), ck.task
+    finally:
+        asyncio.run(engine.dispose())
+
+
 async def test_sqlite_heeft_de_poort_en_geen_autocheckpoint(settings):
     """De WAL krijgt zijn checkpoint niet meer in een COMMIT, terwijl die het slot heeft."""
     engine = get_engine(settings)
