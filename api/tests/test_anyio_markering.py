@@ -7,9 +7,15 @@ van tests/search/conftest.py, die anyio_backend vraagt. Onder pytest 9.1 hangen 
 een conftest aan de map-node die het eerst verzameld werd. Staat op de commandoregel een bestand
 uit tests/ tussen twee bestanden uit tests/search (zoals "tests/search/test_own_live.py
 tests/test_photometa.py tests/search/test_log_hiding.py"), dan verzamelt pytest tests/ opnieuw.
-tests/search krijgt dan een nieuwe node zonder die fixtures, en de async tests van
+tests/search kreeg dan een nieuwe node zonder die fixtures, en de async tests van
 test_log_hiding.py gaven bij de setup "requested an async fixture 'settings', with no plugin or
 hook that handled it" (I1, C2).
+
+De oorzaak is daarmee niet weg: hetzelfde gold voor elke submap met een conftest.py (tests/geo,
+tests/ocr) en voor elke fixture daarvan, ook voor synchrone tests die een async fixture vragen
+(review R1). Dat lost de hook pytest_make_collect_report in tests/conftest.py op; daar waakt
+test_conftest_volgorde.py over. Deze test houdt alleen elke module met async tests los van een
+autouse-fixture voor anyio.
 """
 
 from __future__ import annotations

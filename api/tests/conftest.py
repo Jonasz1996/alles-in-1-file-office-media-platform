@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -9,6 +10,26 @@ from app.config import Settings, get_settings
 from app.main import app
 from app.migrate import upgrade
 from app.security import SecurityConfig, SecurityPolicy, login_limiter
+
+# De eerste map-node per map (zie pytest_make_collect_report hieronder)
+_MAPNODES: dict[Path, pytest.Directory] = {}
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(collector):
+    """pytest 9.1 hangt de fixtures van een conftest.py aan de eerste map-node van die map. Staat
+    op de commandoregel een bestand uit tests/ tussen twee bestanden uit één submap (zoals
+    "tests/search/a.py tests/test_b.py tests/search/c.py"), dan verzamelt pytest tests/ opnieuw en
+    krijgt de submap een tweede node, zonder de fixtures van zijn conftest: autouse-fixtures als
+    _databases_dicht en _aangemeld vielen dan stil weg, en plaatsen of stappen bestonden niet.
+    Zo'n tweede node krijgt ze hier alsnog (I1, C2 en review R1; test_conftest_volgorde.py)."""
+    rapport = yield
+    if isinstance(collector, pytest.Directory):
+        eerste = _MAPNODES.setdefault(collector.path, collector)
+        conftest = collector.config.pluginmanager.get_plugin(str(collector.path / "conftest.py"))
+        if eerste is not collector and conftest is not None:
+            collector.session._fixturemanager.parsefactories(holder=conftest, node=collector)
+    return rapport
 
 
 @pytest.fixture
