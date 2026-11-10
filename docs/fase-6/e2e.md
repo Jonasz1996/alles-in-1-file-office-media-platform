@@ -16,7 +16,7 @@ uitslag van I1 komt onder [Uitslag I1](#uitslag-i1); de integratie zelf in
 | `geo` | `api/tests/geo` | de echte bronnen van plaatsen en landen, gehaald met `tools/geo/haal.py` (met sha256) | `api` (een eigen stap) | hard |
 | `zoek_perf` | `api/tests/search`, `api/tests/photos` | `python:3.12-slim` (SQLite 3.46.1, zoals het image), op 3 cores | `zoek-perf` | hard (de p95), rapport (de p99, de max) |
 | `ocr` | `api/tests` en `e2e/` | de echte tesseract van Ubuntu met nld, eng en osd, en DejaVu Sans | `ocr` | hard |
-| `zoek` | `e2e/` | de echte app en Chromium, met alleen het toetsenbord | `e2e` | hard |
+| `zoek` | `e2e/` | de echte app; in Chromium met alleen het toetsenbord (`test_zoek_z2.py` alleen via de API) | `e2e` | hard |
 | (meetscript) | `e2e/perf/zoek_ui.py` | Chromium met het profiel van `first_view.py` | `perf` | alleen een rapport |
 | (meetscript) | `e2e/perf/zoek_samen.py --kort` en `e2e/perf/zoek_backfill.py` | de app met media aan, de lokale worker en echte ffmpeg | `e2e-media-perf` | alleen een rapport |
 
@@ -107,8 +107,8 @@ haalt het script alleen door `shellcheck`.
 
 ## De meetscripts in `e2e/perf`
 
-Elk script drukt aan het eind een blok `=== kort ===` af en schrijft met `--json` (of
-`$E2E_PERF_OUT`) alles als JSON. `zoek_100k.py` en `zoek_ui.py` drukken geen vraag af, alleen
+Elk script drukt aan het eind een blok `=== kort ===` af en schrijft met `--json` alles als JSON
+(`zoek_samen.py` en `zoek_ui.py` ook via `$E2E_PERF_OUT`). `zoek_100k.py` en `zoek_ui.py` drukken geen vraag af, alleen
 soorten en getallen.
 
 | Script | Wat het meet | Wie het draait | Soort |
@@ -124,13 +124,15 @@ staan in [metingen.md](metingen.md).
 ## De e2e van zoeken
 
 Alle bestanden hieronder hebben de marker `zoek`, behalve `test_zoek_ocr.py` (marker `ocr`).
-Elke test werkt met alleen het toetsenbord; de toetsen staan in de lijsten `toetsenbord-z*.md` en
-`toetsenbord-x1.md`.
+Elke test in de browser werkt met alleen het toetsenbord; de toetsen staan in de lijsten
+`toetsenbord-z*.md` en `toetsenbord-x1.md`. `test_zoek_z2.py` praat alleen met de API, zonder
+browser.
 
 - `test_zoek_z0.py` (Z0): het harnas in de echte app; de wereld van §4.2, zoeken op naam, een
   upload met tekst en de toetsen van het zoeken.
 - `test_zoek_z2.py` (Z2): tekst uit bestanden; een upload, de stap `text`, en het woord staat in
-  de index met een snippet.
+  de index met een snippet; de backfill na een herstart. De test met de worker heeft ook de marker
+  `media` en draait in de job `e2e-media`.
 - `test_zoek_z4.py` (Z4): het veld bovenaan, `/zoeken` en de viewer met de markering.
 - `test_zoek_personen.py` en `test_album_regel.py` (Z6): personen met een kader, zoeken en
   filteren op een persoon; een album met een regel en een publieke link.
