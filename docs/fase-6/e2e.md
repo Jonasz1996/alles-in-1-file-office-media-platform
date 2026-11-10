@@ -12,7 +12,7 @@ uitslag van I1 komt onder [Uitslag I1](#uitslag-i1); de integratie zelf in
 
 | Marker | Waar | Tegen | Job in CI | Poort |
 |---|---|---|---|---|
-| (geen), `zoek`, `triggers` | `api/tests` | de app in het proces, met de nep-worker. `zoek` staat op de tests van zoeken en foto's: in `tests/search` zet `conftest.py` hem op elke test, elders staat hij per bestand. `triggers` zet dezelfde `conftest.py` op de bestanden over de triggers, de migratie 0010 en de churn | `api` | hard |
+| (geen), `zoek`, `triggers` | `api/tests` | de app in het proces, met de nep-worker. `zoek` staat op de tests van zoeken en foto's: in `tests/search` zet `conftest.py` hem op elke test, elders staat hij per bestand. `triggers` zet dezelfde `conftest.py` op de bestanden over de triggers, de migratie 0010 en de churn | `api`; `triggers` ook in `zoek-perf`, op 3.46.1 | hard |
 | `geo` | `api/tests/geo` | de echte bronnen van plaatsen en landen, gehaald met `tools/geo/haal.py` (met sha256) | `api` (een eigen stap) | hard |
 | `zoek_perf` | `api/tests/search`, `api/tests/photos` | `python:3.12-slim` (SQLite 3.46.1, zoals het image), op 3 cores | `zoek-perf` | hard (de p95), rapport (de p99, de max) |
 | `ocr` | `api/tests` en `e2e/` | de echte tesseract van Ubuntu met nld, eng en osd, en DejaVu Sans | `ocr` | hard |
@@ -154,9 +154,9 @@ in het log (het blok `=== kort ===`) en in het artefact.
 | `api` | de hele suite, met `zoek` en `triggers` (op de runner, niet in `python:3.12-slim`); daarna `-m geo` met de echte bronnen | hard |
 | `api-media` | `-m media`, met onder meer de opdracht `text` in de echte worker (`tests/extract/test_media_text_handshake.py`) | hard |
 | `ocr` | `-m ocr` in `api` en in `e2e`, dan de poort van §4.5 (`python -m tests.ocr.poort` onder `taskset -c 0`) | hard |
-| `zoek-perf` | in `python:3.12-slim`: de plannen (S4), de vormen per woord (S8), het schema van de bench (S9), de kaart (S6), de marker `zoek_perf` (S1, S2, S3, S7), de poorten van §4.4 (zoeken, herinneringen, kaart, duplicaten), de vormen van Keuze 4a (S10) en de wereld uit Natural Earth | hard |
+| `zoek-perf` | in `python:3.12-slim`: de plannen (S4), de vormen per woord (S8), het schema van de bench (S9), de kaart (S6), de churn en de hele set triggers (marker `triggers` zonder `zoek_perf`, `media`, `media_perf` en `ocr`, zoals stap 1 van `slim.sh`), de marker `zoek_perf` (S1, S2, S3, S7), de poorten van §4.4 (zoeken, herinneringen, kaart, duplicaten), de vormen van Keuze 4a (S10) en de wereld uit Natural Earth | hard |
 | `e2e` | de e2e met `zoek`, naast de rest zonder `ocr` | hard |
-| `media-image` | de handdruk (S11) en `test_ocr_container.sh` in het echte image; ook nog de meting S5 van de spike | hard |
+| `media-image` | de handdruk (S11) en `test_ocr_container.sh` in het echte image | hard |
 | `images` | de grootte van het image met tesseract (Vraag 15) | hard |
 | `infra` | `test_install_search.sh`, de functies en `--stappen` (de update en terug naar 0.7.1); `shellcheck` over onder meer `e2e/slim.sh` | hard |
 | `web` | typecheck, vitest, de build, i18n streng en de begrotingen | hard |
@@ -166,10 +166,15 @@ in het log (het blok `=== kort ===`) en in het artefact.
 Geen nieuwe actions (§4.6): de jobs gebruiken alleen wat `ci.yml` al gebruikte. De jobs van X2 en
 X3 (`api-analyse`, `analyse-image`, `beeld-model`) komen later, niet in I1.
 
-**Wat I1 hier verandert.** Twee punten van I1 raken deze tabel. I1 (A3) zet de triggers en de
-churn op SQLite 3.46.1 in de job `zoek-perf`; nu draaien ze op 3.46.1 alleen in `slim.sh`.
-I1 (S11) haalt de meting S5 van de spike uit `media-image`. Werk de tabel bij zodra die punten
-samengevoegd zijn.
+**Wat I1 hier veranderde.** Twee punten van I1 raken deze tabel, en de tabel staat er al mee.
+I1 (A3, `f211d7b`) gaf `zoek-perf` de stap "Churn en de triggers op 3.46.1"
+(`.github/workflows/ci.yml:262-267`): de 34 tests met de marker `triggers` die niet ook
+`zoek_perf` hebben (de vier met `zoek_perf` in die bestanden draait de stap daarna al, één keer).
+Daarvoor draaiden ze op 3.46.1 alleen in `slim.sh`. I1 (S11, `86a4c47`) haalde de meting S5 van
+de spike uit `media-image`: tesseract zit sinds X1 in het image, en wat het kost, bewaakt de job
+`images`. `api/tests/search/test_zoek_ci.py` houdt beide vast. Of de nieuwe stap in CI groen is
+en hoe lang `zoek-perf` dan duurt (geschat 22 tot 24 minuten, de timeout is 75), laat pas de run
+na de push van I1 zien.
 
 ## Uitslag I1
 

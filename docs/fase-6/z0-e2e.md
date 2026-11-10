@@ -366,7 +366,9 @@ Voor andere pakketten:
 5. ~~**Wie `test_search_no_replace.py` schrijft**, zondert `bench.py` en `tests/` uit
    (afwijking 1).~~ Gedaan door Z1: de test leest alleen `app/` en zondert `search/bench.py` uit.
 6. ~~**Z1** zet `test_search_churn.py` in `tests/search/` (afwijking 10).~~ Gedaan door Z1
-   (`api/tests/search/test_search_churn.py`). Die test op 3.46.1 in CI draaien is I1 (A3).
+   (`api/tests/search/test_search_churn.py`). ~~Die test op 3.46.1 in CI draaien is I1 (A3).~~
+   Sinds I1 (A3, `f211d7b`) draait `zoek-perf` hem op 3.46.1, in de stap "Churn en de triggers op
+   3.46.1" (`.github/workflows/ci.yml:262-267`).
 
 Vragen voor Jonas (de standaard waar dit deel op bouwt staat erbij):
 
