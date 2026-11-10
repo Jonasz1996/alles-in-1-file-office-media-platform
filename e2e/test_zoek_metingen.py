@@ -505,6 +505,7 @@ def leeg(tmp_path: Path) -> tuple[Path, str, str]:
     eigenaar met zijn hoofdmap. Geeft (data_dir, eigenaar, hoofdmap)."""
     import asyncio
     import uuid
+    from concurrent.futures import ThreadPoolExecutor
 
     from app import db
     from app.config import Settings
@@ -520,7 +521,10 @@ def leeg(tmp_path: Path) -> tuple[Path, str, str]:
         await upgrade(settings)
         await db.get_engine(settings).dispose()
 
-    asyncio.run(migreer())
+    # In een eigen draad met een eigen lus: na een test met een browser draait de lus van
+    # Playwright nog in deze draad, en dan weigert asyncio.run (CI run 42890910950)
+    with ThreadPoolExecutor(1) as pool:
+        pool.submit(asyncio.run, migreer()).result()
     db._engine.cache_clear()
     eigenaar, root = uuid.uuid4(), uuid.uuid4()
     with connect(data) as conn:
