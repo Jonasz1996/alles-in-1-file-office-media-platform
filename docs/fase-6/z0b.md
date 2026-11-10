@@ -327,19 +327,20 @@ Voor de volgende pakketten:
    nagelopen (zie De samenvoeging), niet in een vaste test. De vaste test dekt alleen de soort fout
    die het vond (een vast getal in de query). Wie een route vult, draait zijn aanroepen uit de
    vitest het best ook een keer tegen de echte route.
-5. **Z6** (na de review, V3, F1, F3 en F4): GET `/me/photo-settings` met `prefs.photo_settings()`;
+5. ~~**Z6** (na de review, V3, F1, F3 en F4): GET `/me/photo-settings` met `prefs.photo_settings()`;
    PATCH met eerst `prefs.check_switch()`, dan schrijven, dan `prefs.switched()` in dezelfde
    transactie, met de test "PATCH `{faces: "aan"}` zonder X2 geeft 409 `faces_unavailable`".
    `check_switch()` kent de huidige waarde niet: `faces: "aan"` terwijl het al aan staat, geeft in
    de stand off ook 409. `PhotoSettingsPatch` is "alleen wat verandert"; Z6 stuurt dus alleen wat
-   verandert, of geeft `check_switch()` alleen de velden die echt veranderen (nacontrole).
+   verandert, of geeft `check_switch()` alleen de velden die echt veranderen (nacontrole).~~
    **De API is gedaan door Z6** (`6f77e8a`): GET en PATCH `/me/photo-settings` in
    `routers/photo_prefs.py`; PATCH neemt alleen wat anders wordt, roept dan `check_switch()`
    aan, schrijft en roept `switched()` aan; een weigering schrijft niets
-   (`tests/photos/test_photo_settings.py`, ook "al aan" in de stand off: geen 409). De web
-   (hieronder) is stap 2 van Z6. In
-   het blok Foto's onder Account laadt Z6 `photos/faces/FacesSwitch.tsx` (gebied `photos_faces`)
-   en `search/beeld/BeeldSwitch.tsx` (gebied `beeld`) lazy. Wie `PeoplePage` of `PersonPage`
+   (`tests/photos/test_photo_settings.py`, ook "al aan" in de stand off: geen 409). ~~De web
+   (hieronder) is stap 2 van Z6.~~ **De web is ook gedaan door Z6** (`6297f02`): in het blok
+   Foto's onder Account (`photos/people/PhotoSettingsBlock.tsx`) laadt hij
+   `photos/faces/FacesSwitch.tsx` (gebied `photos_faces`) en `search/beeld/BeeldSwitch.tsx`
+   (gebied `beeld`) lazy. Wie `PeoplePage` of `PersonPage`
    herschrijft, houdt de plek van X2 (`src/lazySlots.test.ts` eist hem in de bron).
 6. ~~**Z7** (F4): GET `/admin/search` vult `faces` en `beeld` met `search.hooks.admin_block()`;
    PATCH stuurt `faces_allowed` en `beeld` naar `admin_switch()` (`ADMIN_SWITCHES`); rebuild met
@@ -369,14 +370,15 @@ Bekend en niet van Z0b:
     faalde één keer in een volle run van Z0b-api: de nep-ffmpeg doet `sleep 60 &`, en de test leest
     de naam van het kind voordat de kopie van sh `exec sleep` gedaan heeft (Open 6 van
     [z0b-api.md](z0b-api.md)). Van media, niet van Z0b; hij staat ongewijzigd. In de volle run
-    van deze samenvoeging was hij groen.
-11. `tests/search/test_spike_deadline.py::test_rondes_a_b_en_c` (S1, van Z0-spike) faalde één keer
+    van deze samenvoeging was hij groen. Dit is I1 (S3): de test wacht tot het kind `sleep` heet.
+11. ~~`tests/search/test_spike_deadline.py::test_rondes_a_b_en_c` (S1, van Z0-spike) faalde één keer
     in stap 1 van `e2e/slim.sh`, die naast de volle API-suite op dezelfde cores 0–2 liep, en in de
     nacontrole één keer in de volle API-suite zonder andere last: in stap 2 van de test gaf ronde A
     voor `"de"` een antwoord ("A") waar "B" moest komen. De grens is daar een derde van één meting
     van ronde A: A duurt ±4 ms, dus de grens is meestal 1 ms. Nagemeten met precies die stap van de
     test (dezelfde helpers en fixtures, in `python:3.12-slim`, 12 × 30 keer): naast de volle suite
-    2 van de 360 keer "A" (A duurde toen 6 en 8 ms), zonder die suite 0 van de 360.
+    2 van de 360 keer "A" (A duurde toen 6 en 8 ms), zonder die suite 0 van de 360.~~
+    Opgelost door Z1 (`f0bbb64`, zie hieronder).
 
     **De oorzaak (nacontrole).** De interrupt komt dan niet te laat, maar te vroeg. SQLite negeert
     `interrupt()` als er op dat moment geen statement loopt, ook voor het statement dat daarna
@@ -399,6 +401,10 @@ Bekend en niet van Z0b:
     opvangen, bijvoorbeeld door de interrupt te herhalen tot de vraag klaar is, of met een progress
     handler die de tijd bijhoudt. Stap 2 van de test heeft ±1 ms marge; draai slim.sh niet naast
     een andere zware run (en een CI-runner met buren kan hetzelfde zien).
+
+    **Opgelost door Z1** (`f0bbb64`): `deadline()` in `api/app/search/deadline.py` herhaalt de
+    interrupt elke `HERHAAL_MS` tot het blok klaar is, en `test_spike_deadline.py` gebruikt nu
+    die `deadline()` in plaats van de eigen grens van de spike.
 12. **De module-cache van vitest** (`node_modules/.vitest-cache`) kan bij een ander bestand met een
     glob nog steeds oude lijsten bewaren als iemand er een typeargument in zet;
     `src/globCache.test.ts` vangt dat in de bron. Een checkout die al een oude kopie in de cache
