@@ -219,12 +219,14 @@ zonder melding.
    die plek (`31dc85e`): `web/public/kaart/world-110m.f2c3625f1d27.json`, en `MAP_DATA` in
    `web/scripts/budget.mjs` past erop. Open blijft: de service worker cachet `/kaart/` nu niet
    (niets in `web/src/pwa/`).
-6. ~~**De gebeurtenissen** (`search.ready`, `search.progress`, `people.changed`) zijn alleen namen
-   en vormen; geen code luistert er nog naar.~~ Deels gedaan: naar `search.ready` luisteren
-   `viewer/TextLayer.tsx`, `ocr/OcrRow.tsx` en `ocr/PhotoWords.tsx`; naar `people.changed`
-   luisteren `viewer/PeopleRow.tsx`, `photos/PhotosPage.tsx` en de pagina's van personen. Naar
-   `search.progress` luistert nog niets: het tabblad Zoeken in Beheer vraagt elke 5 s
-   (`POLL_MS` in `admin/SearchTab.tsx`). Zie de afwijking in [z7.md](z7.md).
+6. **De gebeurtenissen** (~~`search.ready`~~, `search.progress`, ~~`people.changed`~~) zijn alleen
+   namen en vormen; geen code luistert er nog naar. Gedaan voor `search.ready` en
+   `people.changed`: naar `search.ready` luisteren `viewer/TextLayer.tsx`, `ocr/OcrRow.tsx` en
+   `ocr/PhotoWords.tsx`; naar `people.changed` luisteren `viewer/PeopleRow.tsx`,
+   `photos/PhotosPage.tsx` en de pagina's van personen. Open blijft `search.progress`: in de web
+   staat alleen de naam (`SEARCH_PROGRESS` in `search/types.ts`), en geen code luistert ernaar.
+   Het tabblad Zoeken in Beheer vraagt elke 5 s (`POLL_MS` in `admin/SearchTab.tsx`). Zie de
+   afwijking in [z7.md](z7.md).
 7. ~~**`e2e/slim.sh`** (§3.5) is niet van Z0-web; hij staat er niet in deze tak.~~ Hij is van
    Z0-e2e ([z0-e2e.md](z0-e2e.md)) en staat er sinds de samenvoeging.
 8. **De plekken bij de foto van een ander.** De viewer weet niet wie de eigenaar is, dus Plek en
