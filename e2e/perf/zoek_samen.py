@@ -83,6 +83,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import json
 import os
 import random
@@ -421,6 +422,18 @@ class Opzet:
     url: str | None = None
     fotos: int = 0  # foto's in de map "Foto's" (dan de herbouw hash in stap 2 en 3)
     ds_host: dict[str, bool] | None = None  # docker_grenzen(), met --office
+
+
+def pauze_eraf(opzet: Opzet) -> dict[str, Any] | None:
+    """Het begin van stap 2 en 3, zodra de belastingtest loopt: de pauze eraf, en met foto's de
+    herbouw hash. photometa kent de pauze niet: pas nu, net als de index, leest hij alle foto's
+    opnieuw. Hoeveel hij dan te doen heeft, staat in de uitkomst (de peiling voor de stap ziet
+    0)."""
+    pauze(opzet.server, opzet.admin, False)
+    if not opzet.fotos:
+        return None
+    herbouw = herbouw_hash(opzet.server, opzet.admin)
+    return {"herbouw_hash": herbouw, "fotos_te_doen": foto_stand(opzet.server).get("te_doen")}
 
 
 def start(base: Path, env: dict[str, str], office: bool) -> Opzet:
@@ -787,15 +800,7 @@ def main(argv: list[str] | None = None) -> int:
 
             return zaai
 
-        def eraf() -> dict[str, Any] | None:
-            pauze(server, admin, False)
-            if not opzet.fotos:
-                return None
-            # photometa kent de pauze niet: pas nu, net als de index, alle foto's opnieuw. Hoeveel
-            # hij dan te doen heeft, staat in de uitkomst (de peiling voor de stap ziet 0)
-            herbouw = herbouw_hash(server, admin)
-            return {"herbouw_hash": herbouw, "fotos_te_doen": foto_stand(server).get("te_doen")}
-
+        eraf = functools.partial(pauze_eraf, opzet)
         # 1. pauze: de rij index vol, maar stil (de pauze staat in Setting search, dus ook na
         # de herstart van seeded; de backfill bij het starten zet de rijen klaar). De foto's
         # staan er als gelezen: photometa heeft niets te doen tot de herbouw van stap 2

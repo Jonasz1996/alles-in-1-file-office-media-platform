@@ -9,7 +9,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
+import sqlite3
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -389,3 +391,106 @@ def test_kort_zonder_tesseract_slaat_de_scans_over(
     assert "zoek_samen: de scans voor X1 overgeslagen: geen tesseract" in uit
     assert "300 foto's, 0 scans" in uit
     assert "niet in deze meting: de last" not in uit
+
+
+# --- zoek_samen: de processen, het begin van stap 2 en 3; zoek_backfill.stand per stap ---
+
+
+class _Proc:
+    def __init__(self, pid: int, klaar: int | None = None) -> None:
+        self.pid, self._klaar = pid, klaar
+
+    def poll(self) -> int | None:
+        return self._klaar
+
+
+class _Antwoord:
+    def __init__(self, status: int, body: dict[str, Any] | None = None) -> None:
+        self.status_code, self._body = status, body or {}
+
+    def json(self) -> dict[str, Any]:
+        return self._body
+
+
+class _NepServer:
+    """Wat zoek_samen van een Server gebruikt: proc, data_dir en call (opgeschreven)."""
+
+    def __init__(self, proc: _Proc | None = None, herbouw: int = 202) -> None:
+        self.proc, self.herbouw, self.data_dir = proc, herbouw, Path("/bestaat-niet")
+        self.verzoeken: list[tuple[str, str, Any]] = []
+
+    def call(self, _account: Any, method: str, path: str, json: Any = None, **_kw: Any) -> Any:
+        self.verzoeken.append((method, path, json))
+        if method == "PATCH":
+            return _Antwoord(200, {"paused": json["paused"]})
+        return _Antwoord(self.herbouw)
+
+
+# pid → (ppid, starttijd, state): de app (100) met zijn forkserver (120) en de worker (300),
+# die zelf forkt (250 en 400, en 500 onder 250): een fork erft de opdrachtregel van de worker
+TABEL = {
+    100: (1, 5, "S"),
+    120: (100, 6, "S"),
+    300: (100, 7, "S"),
+    250: (300, 8, "S"),
+    400: (300, 9, "S"),
+    500: (250, 10, "S"),
+    600: (1, 11, "S"),
+}
+WORKER = "python -m app.media.worker --socket /run/w.sock"
+REGELS = {100: "uvicorn app.main:app", 120: "python -m app.render.forkserver", 300: WORKER,
+          250: WORKER, 400: WORKER, 500: WORKER, 600: WORKER}  # fmt: skip
+
+
+def test_processen_kiest_de_worker_zelf_en_niet_een_fork(monkeypatch: pytest.MonkeyPatch) -> None:
+    """De worker is het kind van de app met app.media.worker op de opdrachtregel dat zelf geen
+    kind van een worker is; een lagere of hogere pid van een fork doet er niet toe (review van
+    I1, breken F2). 600 is een worker buiten de app."""
+    monkeypatch.setattr(zs, "process_table", lambda: dict(TABEL))
+    monkeypatch.setattr(zs, "cmdline", lambda pid: REGELS.get(pid, ""))
+    server = _NepServer(_Proc(100))
+    assert zs.processen(server) == {"app": [100, 5], "worker": [300, 7]}
+    zonder = {pid: rij for pid, rij in TABEL.items() if pid not in (250, 300, 400, 500)}
+    monkeypatch.setattr(zs, "process_table", lambda: dict(zonder))
+    assert zs.processen(server) == {"app": [100, 5], "worker": None}
+    leeg = {"app": None, "worker": None}
+    assert zs.processen(_NepServer(_Proc(100, klaar=0))) == leeg
+    assert zs.processen(_NepServer(_Proc(999))) == leeg
+    assert zs.processen(_NepServer(None)) == leeg
+
+
+def _opzet(server: _NepServer, fotos: int) -> Any:
+    return zs.Opzet(server=server, admin=object(), fotos=fotos)
+
+
+def test_pauze_eraf_en_dan_de_herbouw_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Het begin van stap 2 en 3: eerst de pauze eraf, dan (met foto's) POST rebuild hash, zodat
+    photometa alle foto's opnieuw leest; zonder dat zou stap 2 geen photometa meten (review van
+    I1, breken F2)."""
+    monkeypatch.setattr(zs, "foto_stand", lambda _server: {"open": 1, "te_doen": 300})
+    eraf = ("PATCH", "/api/v1/admin/search", {"paused": False})
+    herbouw = ("POST", "/api/v1/admin/search/rebuild", {"what": "hash"})
+    zonder_fotos = _NepServer()
+    assert zs.pauze_eraf(_opzet(zonder_fotos, 0)) is None
+    assert zonder_fotos.verzoeken == [eraf]
+    met = _NepServer()
+    assert zs.pauze_eraf(_opzet(met, 300)) == {"herbouw_hash": "gestart", "fotos_te_doen": 300}
+    assert met.verzoeken == [eraf, herbouw]
+    bezig = _NepServer(herbouw=409)
+    assert zs.pauze_eraf(_opzet(bezig, 300)) == {"herbouw_hash": "liep nog", "fotos_te_doen": 300}
+
+
+def test_stand_per_stap_van_de_analyse(tmp_path: Path) -> None:
+    con = sqlite3.connect(tmp_path / "platform.db")
+    con.execute("CREATE TABLE analysis (step TEXT, state TEXT)")
+    rijen = [("text", "done")] * 2 + [("text", "wait"), ("ocr", "busy")] + [("ocr", "skip")] * 3
+    con.executemany("INSERT INTO analysis VALUES (?, ?)", rijen)
+    con.commit()
+    con.close()
+    assert zb.stand(tmp_path) == Counter({"done": 2, "wait": 1})
+    assert zb.stand(tmp_path, "ocr") == Counter({"skip": 3, "busy": 1})
+    assert zb.stand(tmp_path, "hash") == Counter()
+    leeg = tmp_path / "leeg"
+    leeg.mkdir()
+    sqlite3.connect(leeg / "platform.db").close()  # de server start net: nog geen tabellen
+    assert zb.stand(leeg, "ocr") == Counter()
