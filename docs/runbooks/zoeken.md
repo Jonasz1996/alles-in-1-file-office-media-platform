@@ -258,29 +258,45 @@ mee.
 Drie stappen, elk zolang de belastingtest loopt (`app.cli media-loadtest`):
 
 1. **pauze**: een rij met documenten om te lezen, maar het achtergrondwerk op pauze. De nulmeting.
-2. **achtergrond**: de pauze eraf zodra media loopt. De index wijkt dan (Defer, standaard bij 2
-   omzettingen); de poort is dat hij binnen 90 s na de belastingtest weer leest.
+2. **achtergrond**: de pauze eraf zodra media loopt, en photometa leest alle foto's opnieuw (de
+   herbouw hash). De index wijkt dan (Defer, standaard bij 2 omzettingen); de poort is dat hij
+   binnen 90 s na de belastingtest weer leest.
 3. **zonder_defer**: nieuwe documenten, en Defer uit (`PLATFORM_INDEX_DEFER_TRANSCODES=1000`). Een
    rapport: wat er gebeurt als alleen `nice` en de idle IO-klasse beschermen.
 
-Tijdens elke stap: 2 zoekvragen per seconde, `GET /files/root` en `/health` elke seconde, en
-`MemAvailable` van de machine. De poorten (stap 2): elke start van media ≤ 5 s en 0 keer haperen,
-zoeken p95 ≤ 200 ms, `/files/root` p95 ≤ 200 ms, `/health` p95 ≤ 50 ms, `MemAvailable` ≥ 1,5 GiB,
-en met OnlyOffice het opslaan ≤ 1,2 × de nulmeting en 0 verloren woorden. Aan het eind staat een
-blok `=== kort ===`.
+De last van §4.5: per stap 5.000 documenten, en één keer 5.000 foto's (640 × 480 met EXIF, 85%
+met een plek, elk met zijn voorbeeld; in de map "Foto's") en 500 gescande PDF's voor OCR (in de map
+"Scans"). De foto's staan er als al gelezen, zodat photometa pas bij de herbouw van stap 2 en 3 aan
+het werk gaat.
+
+Tijdens elke stap: 2 zoekvragen per seconde, `GET /files/root` en `/health` elke seconde,
+`MemAvailable` van de machine, hoe ver text, ocr en photometa zijn, en of de app en de worker nog
+dezelfde processen zijn. De poorten (stap 2): elke start van media ≤ 5 s en 0 keer haperen, zoeken
+p95 ≤ 200 ms, `/files/root` p95 ≤ 200 ms, `/health` p95 ≤ 50 ms, `MemAvailable` ≥ 1,5 GiB, geen
+container `OOMKilled` (DS, met een geheugengrens), de app en de worker leven nog, de index leest
+weer binnen 90 s, en met OnlyOffice het opslaan ≤ 1,2 × de nulmeting en 0 verloren woorden. Elke
+poort zegt `gehaald`, `niet gehaald` of `niet te meten`. Aan het eind staat een blok `=== kort ===`.
+
+Nodig, naast `uv` en `ffmpeg`: een gebouwde web-app (`cd web && npm run build`), en voor de scans
+`tesseract` met `nld`, `eng` en `osd` en het lettertype DejaVu Sans (`fonts-dejavu-core`). Met
+`--kort` slaat het script de scans zonder die over en zegt dat (`niet in deze meting`); zonder
+`--kort` stopt het meteen met de reden.
 
 **Kort** (zoals de job `e2e-media-perf` in CI, als rapport: 60 s per fase, 1 sessie media,
-300 documenten per stap, zonder OnlyOffice; ±5 minuten):
+300 documenten per stap, 300 foto's en, met `tesseract`, 20 scans; zonder OnlyOffice; ±5 minuten):
 
 ```bash
 cd api
 uv run python ../e2e/perf/zoek_samen.py --kort --json /tmp/zoek-samen.json
 ```
 
-**Heel, met OnlyOffice** (300 s per fase, 3 sessies, 5.000 documenten per stap, 5 bewerkers; ±40
-minuten). Dit gebruikt de echte DS van de office-metingen (`e2e/office_ds.sh`, zie
-`docs/fase-4/e2e.md`, "Met de echte DS") en Chromium voor de bewerkers. Draai het op een rustige
-machine met ±8 GB vrij:
+**Heel, met OnlyOffice** (300 s per fase, 3 sessies, 5.000 documenten per stap, 5.000 foto's,
+500 scans, 5 bewerkers; ±40 minuten, plus het maken van de foto's en scans). Dit gebruikt de echte
+DS van de office-metingen (`e2e/office_ds.sh`, zie `docs/fase-4/e2e.md`, "Met de echte DS") en
+Chromium voor de bewerkers. DS moet een geheugengrens hebben, anders zegt `OOMKilled` niets en
+stopt het script: `office_ds.sh` zet `--memory 2g` alleen als
+`docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}'` `true true` zegt (anders start DS met
+de hand met `--memory 2g --memory-swap 2g`). Draai het op een rustige machine met ±8 GB vrij:
 
 ```bash
 export OFFICE_DS_NAME=meet-ds OFFICE_DS_PORT=18150 OFFICE_DS_DIR=/tmp/meet-ds \
@@ -292,10 +308,13 @@ E2E_REAL_DS=http://127.0.0.1:18150 E2E_REAL_DS_SECRET_FILE=/tmp/meet-ds/jwt.secr
 cd .. && bash e2e/office_ds.sh stop
 ```
 
-Kleiner kan met `--duur`, `--sessies`, `--docs` en `--bewerkers` (bijvoorbeeld `--sessies 2
---bewerkers 3`, de maat voor 8 GB van §4.5). Exitcode 1 als een poort van stap 2 niet gehaald is
-(met `--kort` altijd 0). Nog niet in deze meting: foto's, scans voor OCR en de container voor
-gezichten en beeld; zie `docs/fase-6/z7.md`, Open.
+Kleiner kan met `--duur`, `--sessies` en `--bewerkers` (bijvoorbeeld `--sessies 2 --bewerkers 3`,
+de maat voor 8 GB van §4.5). Met `--docs`, `--fotos` of `--scans` kleiner is het niet meer de last
+van §4.5; dat staat dan onder `niet in deze meting`. Exitcode 1 als een poort van stap 2 niet
+gehaald of niet te meten is (met `--kort` altijd 0). Zonder `--office` zijn de poorten van
+OnlyOffice en van `OOMKilled` niet te meten, dus eindigt een hele meting zonder OnlyOffice altijd
+op `niet geslaagd` (exitcode 1): de andere poorten staan er wel. Nog niet in deze meting (0.8.1):
+de container `analyse` (gezichten en beeld) en de beeldvraag.
 
 ## Terug naar 0.7.1
 
