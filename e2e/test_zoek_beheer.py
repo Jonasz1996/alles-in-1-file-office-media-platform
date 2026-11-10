@@ -238,6 +238,12 @@ def test_de_tab_met_alleen_het_toetsenbord(beheer: Beheer, browsers: Browsers) -
     expect(failed).to_have_text("1 inhoud")
     expect(gepauzeerd).to_have_text("loopt")
     expect(page.locator('[data-search="rebuild"]')).to_have_count(0)
+    # De wekelijkse search-check (I1): de regel staat er; liep hij al (kort na het starten), dan
+    # zonder verschil met de bron
+    assert begin["check"] is None or begin["check"]["bad"] == 0
+    expect(page.locator('[data-search="check"]')).to_have_text(
+        re.compile(r"^(nog niet gedaan|.+: [\d.]+ bestanden vergeleken, geen verschil)$")
+    )
 
     # --- na een upload staan er vanzelf meer (de tab peilt) ---
     node = upload(

@@ -1,8 +1,9 @@
 // De tab "Zoeken en foto's" op /beheer (fase 6, van Z7; Keuze 51): de motor, de stand van de
 // index, mislukt, een herbouw met zijn voortgang, waar tekst gelezen wordt, het afgelopen uur,
-// OCR, de plek en de duplicaten van foto's, de plaatsnamen en de uitkomst van bench --los. De
-// knoppen: index herbouwen, mislukte opnieuw, achtergrondwerk pauzeren of hervatten, duplicaten en
-// plek opnieuw, en OCR aan of uit en alles opnieuw herkennen (alleen als de worker OCR meldt, X1).
+// OCR, de plek en de duplicaten van foto's, de plaatsnamen en de uitkomst van bench --los; bij
+// Index ook de laatste wekelijkse search-check (I1). De knoppen: index herbouwen, mislukte
+// opnieuw, achtergrondwerk pauzeren of hervatten, duplicaten en plek opnieuw, en OCR aan of uit
+// en alles opnieuw herkennen (alleen als de worker OCR meldt, X1).
 // Wat zwaar is, vraagt eerst.
 //
 // Z0 zette de tab (Beheer.tsx, Alt+9, een eigen chunk); de aanroepen staan in ./searchApi. Ververst
@@ -48,6 +49,18 @@ export function indexRebuilding(s: AdminSearch): boolean {
 /** Een herbouw van de foto's loopt (hash of geo): dan zijn die twee knoppen weg. */
 export function photosRebuilding(s: AdminSearch): boolean {
   return s.rebuild?.what === "hash" || s.rebuild?.what === "geo";
+}
+
+/** De regel van de wekelijkse search-check (I1): nog niet gedaan, geen verschil, of hoeveel
+ * verschillen met de bron. */
+export function checkText(check: AdminSearch["check"]): string {
+  if (!check) return t("admin.search.index.checkNone");
+  const time = fmt.dateTime(check.at);
+  const count = fmt.number(check.sampled);
+  if (check.bad > 0) {
+    return t("admin.search.index.checkBad", { n: check.bad, bad: fmt.number(check.bad), count, time });
+  }
+  return t("admin.search.index.checkOk", { n: check.sampled, count, time });
 }
 
 /** De tekst van de index als deel van 1 (0 tot 1); null zonder bestanden met tekst. */
@@ -232,6 +245,7 @@ function Index({ s, reload }: { s: AdminSearch; reload: Reload }): JSX.Element {
   const act = useAction(reload, heading);
   const fraction = textFraction(s.index);
   const total = s.index.text_total;
+  const bad = (s.check?.bad ?? 0) > 0;
   return (
     <section aria-labelledby="admin-search-index">
       <Head id="admin-search-index" title={t("admin.search.index.title")} heading={heading}>
@@ -273,7 +287,11 @@ function Index({ s, reload }: { s: AdminSearch; reload: Reload }): JSX.Element {
         <Row label={t("admin.search.index.failed")} testid="failed">
           {t("admin.search.index.failedValue", { n: s.index.failed })}
         </Row>
+        <Row label={t("admin.search.index.check")} testid="check">
+          {bad ? <span className="badge degraded">{checkText(s.check)}</span> : checkText(s.check)}
+        </Row>
       </dl>
+      {bad && <p className="muted">{t("admin.search.index.checkHelp")}</p>}
       {act.error && <p role="alert">{act.error}</p>}
     </section>
   );
