@@ -139,6 +139,9 @@ class HideSecrets(logging.Filter):
 
 
 logging.getLogger("uvicorn.access").addFilter(HideSecrets())
+# aiosqlite logt op DEBUG elke SQL met zijn parameters, dus ook de zoekvraag; vast op INFO, ook
+# als de wortel-logger op DEBUG staat (Keuze 13; I1, S5)
+logging.getLogger("aiosqlite").setLevel(logging.INFO)
 
 SECURITY_HEADERS = [
     (b"x-content-type-options", b"nosniff"),
