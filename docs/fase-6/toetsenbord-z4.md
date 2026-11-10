@@ -63,13 +63,16 @@ ook.
 
 Na het openen staat de focus op de kop (zoals elke pagina). Behalve op `/zoeken?mode=image` zonder
 vraag (de knop "Zoeken op beeld" op `/fotos`, Keuze 81): dan staat de focus in het veld
-"Zoekwoorden" (sinds de merge van golf 2). Met Tab, in deze volgorde:
+"Zoekwoorden" (sinds de merge van golf 2). In die stand beschrijft het veld zich met
+`aria-describedby`: tot X3 er is eerst "Zoeken op beeld komt in een volgende versie." (verborgen,
+dus niet zichtbaar dubbel), dan de uitleg "Zoekt in je eigen foto's. Druk op Enter." (I1, review
+R4). Met Tab, in deze volgorde:
 
 | Element | Toetsen |
 |---|---|
 | het veld "Zoekwoorden" | Enter zoekt; de filters blijven staan. Dezelfde vraag nog eens zoekt opnieuw |
 | de knop Zoeken | Enter of Spatie |
-| "Zoeken op": Namen en tekst / Wat er op de foto staat | ← en → kiezen (keuzerondjes); niet voor een gast. In de stand "Wat er op de foto staat" komt het raster van X3 (tot X3 er is: niets) |
+| "Zoeken op": Namen en tekst / Wat er op de foto staat | ← en → kiezen (keuzerondjes); niet voor een gast. In de stand "Wat er op de foto staat" komt het raster van X3 (tot X3 er is: de zin "Zoeken op beeld komt in een volgende versie.") |
 | de chips | per filter een knop × ("Filter weghalen: …"); Enter haalt het filter weg. De focus gaat naar de chip die nu op die plek staat (of de vorige), en zonder chips naar "Filters" |
 | "Filters" | Enter of Spatie opent en sluit het paneel |
 | in het paneel: de soorten, de tags en je personen | Spatie zet een vinkje aan of uit; de vraag verandert meteen en de focus blijft op het vinkje. Meer personen is EN: ze staan er allemaal op (sinds de merge van golf 2; de chip toont de naam) |
@@ -174,6 +177,8 @@ Bij de merge van golf 2 (Z4 met Z6, `e2e/test_zoek_personen.py`, Chromium 141, d
 - [x] `/zoeken?q=oma`: de groep Personen met de link "Oma Ria (1)"; Tab erheen en Enter: hetzelfde
       adres en dezelfde treffer.
 - [x] Op `/fotos` Enter op "Zoeken op beeld": `/zoeken?mode=image`, de focus in "Zoekwoorden" met de
-      plaatshouder van de stand beeld, "Wat er op de foto staat" gekozen.
+      plaatshouder van de stand beeld, "Wat er op de foto staat" gekozen. Sinds I1 (review R4) ook
+      de beschrijving van het veld: "Zoeken op beeld komt in een volgende versie. Zoekt in je eigen
+      foto's. Druk op Enter." (`to_have_accessible_description` in dezelfde test).
 - [x] In het paneel de groep Persoon met een vinkje per persoon ("Oma Ria (3)"); de vitest
       (`page.test.ts`) toetst de vinkjes en de naam op de chip.

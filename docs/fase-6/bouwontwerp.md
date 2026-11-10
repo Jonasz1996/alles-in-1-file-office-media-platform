@@ -2502,7 +2502,9 @@ Na de review van Z0b (contract F3) ook wat Keuze 81 aan Z4 geeft: de keuze "Name
 "Wat er op de foto staat", de laatste suggestie en de regel "Geen foto met deze naam?"; in de
 stand beeld laadt `/zoeken` het raster van X3 lazy uit `src/search/beeld/BeeldResults.tsx`, met
 het gebied `beeld` (de plek zette Z0b; tot X3 toont hij één zin, zonder versienummer, dat zoeken
-op beeld in een volgende versie komt: I1, S8).
+op beeld in een volgende versie komt: I1, S8). Die zin staat ook in de beschrijving van het veld,
+uit het gebied `search` en zonder de lazy chunk (`src/search/ImageHint.tsx`, I1 review R4); X3
+zet daar `IMAGE_SEARCH_READY` op `true`.
 
 **Tests:** vitest voor `query.ts` (URL heen en terug), de combobox (pijlen, Esc, Enter,
 `aria-activedescendant`), de snippets (alleen tekst, geen HTML), de meldingen bij `partial` en
