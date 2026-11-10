@@ -10,12 +10,16 @@ Deze test leest ci.yml als tekst, zoals test_media_ci.py:
   zelf -o pipefail);
 - F9: de e2e draait met `uv run --with playwright python -m pytest`, zodat pytest zeker uit de
   omgeving met playwright komt.
+
+Sinds de integratie (I1) ook: zoek-perf draait churn en de hele set triggers op 3.46.1 (§4.6),
+één keer, en media-image heeft de stap S5 van de spike niet meer (x1.md, Open 8).
 """
 
 from __future__ import annotations
 
 import re
 
+from tests.search.conftest import TRIGGERS
 from tests.test_media_ci import CI, ROOT, job
 
 RUNNER_TEMP = re.compile(r"\$\{\{\s*runner\.temp\s*\}\}")
@@ -52,7 +56,17 @@ def _runs(lines: list[str]) -> list[tuple[int, str]]:
 def test_de_lezer_vindt_de_jobs_en_hun_blokken():
     assert {"zoek-perf", "media-image", "e2e", "acme"} <= set(_jobs())
     blokken = [tekst for _, tekst in _runs(job("media-image"))]
-    assert any("tesseract.txt" in tekst for tekst in blokken)
+    assert any("handdruk.json" in tekst for tekst in blokken)
+
+
+def test_media_image_heeft_de_stap_s5_niet_meer():
+    """De stap S5 van de spike (wat tesseract in Debian 13 kost) is weg: tesseract zit sinds X1
+    in het image, en S5 mat daar 0 MiB (x1.md, Open 8). De grootte bewaakt de job images."""
+    regels = job("media-image")
+    blokken = [tekst for _, tekst in _runs(regels)]
+    assert not any("tesseract.txt" in tekst or "s5.sh" in tekst for tekst in blokken)
+    assert not any(re.match(r"^\s+- name: S5\b", line) for line in regels)
+    assert any("tesseract-grootte.txt" in tekst for _, tekst in _runs(job("images")))
 
 
 def test_een_job_in_een_container_gebruikt_runner_temp_niet():
@@ -81,3 +95,31 @@ def test_de_e2e_draait_pytest_met_python_m():
         tekst = pad.read_text()
         assert "--with playwright pytest" not in tekst, pad
     assert "--with playwright python -m pytest ../e2e" in (ROOT / "e2e" / "slim.sh").read_text()
+
+
+def _niet(expressie: str) -> set[str]:
+    """De markers die een expressie van -m uitsluit (`not x`)."""
+    return set(re.findall(r"\bnot (\w+)", expressie))
+
+
+def test_zoek_perf_draait_churn_en_de_triggers_op_3_46_1():
+    """§4.6: churn en de hele set triggers (marker triggers) op de SQLite van het image, in
+    zoek-perf. Met dezelfde uitsluitingen als MARKERS_DB in e2e/slim.sh: de metingen met
+    zoek_perf in die bestanden draait de stap met marker zoek_perf al; zo lopen ze één keer."""
+    assert "churn" in TRIGGERS
+    blokken = [re.sub(r"\\\n\s*", "", tekst) for _, tekst in _runs(job("zoek-perf"))]
+    stap = [tekst for tekst in blokken if re.search(r'-m "triggers\b', tekst)]
+    assert len(stap) == 1, stap
+    m = re.search(r'taskset -c "\$CORES" uv run pytest -q -m "([^"]+)" tests/search(?=\s)', stap[0])
+    assert m, stap[0]
+    assert m.group(1) == "triggers and not zoek_perf and not media and not media_perf and not ocr"
+    slim = re.search(r'^MARKERS_DB="([^"]+)"$', (ROOT / "e2e" / "slim.sh").read_text(), re.M)
+    assert slim and _niet(m.group(1)) == _niet(slim.group(1)), slim
+    assert "triggers.txt" in stap[0]
+    # De metingen met zoek_perf van tests/search: precies één stap, zonder marker triggers
+    perf = [tekst for tekst in blokken if re.search(r"-m zoek_perf tests/search(?=\s)", tekst)]
+    assert len(perf) == 1 and "triggers" not in perf[0], perf
+    samenvatting = [tekst for tekst in blokken if "=== kort ===" in tekst]
+    assert len(samenvatting) == 1 and "$d/triggers.txt" in samenvatting[0]
+    # Elke regel van het kort-blok leest als "naam: uitkomst", met een spatie na de dubbele punt
+    assert ":$(" not in samenvatting[0], re.findall(r".*:\$\(.*", samenvatting[0])

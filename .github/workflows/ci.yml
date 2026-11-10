@@ -207,7 +207,8 @@ jobs:
   # Fase 6, spike Z0 (bouwontwerp §3.7): zoeken op de SQLite van het image. python:3.12-slim is
   # de basis van het Dockerfile (Debian 13, SQLite 3.46.1). De plannen met en zonder ANALYZE
   # (S4), de twee vormen per woord (S8), het schema van de zoekbench (S9) en de landsgrenzen
-  # (S6, test met een eigen bron); dan de metingen met marker zoek_perf: de echte tijdsgrenzen
+  # (S6, test met een eigen bron); churn en de triggers (§4.6, marker triggers, zonder
+  # zoek_perf); dan de metingen met marker zoek_perf: de echte tijdsgrenzen
   # (S1), de herbouw van 100.000 (S2), de migratie van 100.000 (S3) en het zaad van 100.000 van
   # app/search/bench.py in < 3 minuten (S7); de vormen van Keuze 4a (S10) met
   # tools/zoekbench/bench.py --vormen; en world-110m.<hash>.json uit Natural Earth (S6, ≤ 60 kB
@@ -218,7 +219,8 @@ jobs:
     container: python:3.12-slim
     # §4.4 (Z1) bouwt een boom van 100.000 en meet zes rollen over HTTP: ±20 min op 3 cores; de
     # herinneringen (Z6) bouwen er nog een en meten één route: ±3 min; de kaart en de duplicaten
-    # (Z3) ook: elk ±2,5 min
+    # (Z3) ook: elk ±2,5 min. Churn en de triggers (§4.6, I1): ±3,5 min (lokaal 34 tests in 202 s
+    # op één core, churn alleen 153 s). De job duurde op 16ccb8d 18 min 43 s
     timeout-minutes: 75
     env:
       UV_PYTHON_PREFERENCE: only-system
@@ -252,6 +254,17 @@ jobs:
           taskset -c "$CORES" uv run pytest -q -s tests/search/test_spike_plannen.py \
             tests/search/test_spike_vouwen.py tests/search/test_zoekbench.py tests/search/test_spike_kaart.py \
             | tee "$RUNNER_TEMP/zoek-perf/plannen.txt"
+      # §4.6 (integratie I1): churn en de hele set triggers op 3.46.1. Marker triggers zet
+      # tests/search/conftest.py (de bestanden migration_0010, *trigger* en *churn*). Dezelfde
+      # uitsluitingen als MARKERS_DB in e2e/slim.sh: de vier metingen met zoek_perf in die
+      # bestanden (S2, S3, die van de prullenbak en die van de plekken) draait de stap hierna al,
+      # één keer
+      - name: Churn en de triggers op 3.46.1 (marker triggers, §4.6)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          taskset -c "$CORES" uv run pytest -q -m "triggers and not zoek_perf and not media and not media_perf and not ocr" \
+            tests/search -rs | tee "$RUNNER_TEMP/zoek-perf/triggers.txt"
       - name: S1, S2, S3 en S7 (marker zoek_perf)
         if: ${{ !cancelled() }}
         run: |
@@ -315,6 +328,7 @@ jobs:
           cat "$d/versie.txt" 2> /dev/null || echo "(geen versie)"
           echo "S4, S8, S9, S6: $(tail -n 1 "$d/plannen.txt" 2> /dev/null || echo "liep niet")"
           grep -E "^ *(S4 op|laatste jaar|langs de tijd|type),? " "$d/plannen.txt" 2> /dev/null || true
+          echo "churn en de triggers (§4.6): $(tail -n 1 "$d/triggers.txt" 2> /dev/null || echo "liep niet")"
           echo "zoek_perf (S1, S2, S3, S7): $(tail -n 1 "$d/zoek_perf.txt" 2> /dev/null || echo "liep niet")"
           grep -E "^[.FEsx]*(S1|S2|S7) " "$d/zoek_perf.txt" 2> /dev/null | sed 's/^[.FEsx]*//' || true
           grep -E "^[0-9.]+s call " "$d/zoek_perf.txt" 2> /dev/null || true
@@ -1052,43 +1066,6 @@ jobs:
           echo "=== kern.json ==="
           cat "$RUNNER_TEMP/media-image/kern.json" || echo "(geen kern.json)"
           echo "=== einde kern.json ==="
-      # Fase 6, spike S5 (Vraag 1): wat tesseract in Debian 13 kost, en of de ffmpeg van het
-      # image libtesseract al meebrengt. In een wegwerpcontainer van het image, als root en met
-      # netwerk; het image zelf verandert niet. De regel van X1: tesseract-ocr met nld, eng en osd
-      - name: S5 tesseract in Debian 13 (alleen meten)
-        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
-        run: |
-          set -o pipefail
-          mkdir -p "$RUNNER_TEMP/media-image"
-          cat > "$RUNNER_TEMP/s5.sh" << 'SH'
-          set -e
-          . /etc/os-release
-          echo "debian: $PRETTY_NAME"
-          avfilter="$(ls /usr/lib/*/libavfilter.so.* | head -n 1)"
-          if ldd "$avfilter" | grep -q libtesseract; then
-            echo "libtesseract via ffmpeg: ja ($(ldd "$avfilter" | grep libtesseract | awk '{print $1}'))"
-          else
-            echo "libtesseract via ffmpeg: nee"
-          fi
-          if ffmpeg -hide_banner -buildconf 2> /dev/null | grep -q -- --enable-libtesseract; then
-            echo "ffmpeg gebouwd met --enable-libtesseract: ja"
-          else
-            echo "ffmpeg gebouwd met --enable-libtesseract: nee"
-          fi
-          echo "al in het image: $(dpkg-query -W -f '${Package} ' 'libtesseract*' 'tesseract*' 2> /dev/null || true)"
-          voor="$(dpkg-query -W -f '${Installed-Size}\n' | awk '{s += $1} END {print s}')"
-          apt-get update -qq
-          apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-nld tesseract-ocr-eng \
-            tesseract-ocr-osd > /tmp/apt.log
-          grep -E "^(Need to get|After this operation)" /tmp/apt.log || true
-          echo "nieuwe pakketten: $(sed -n '/NEW packages will be installed/,/^[0-9]* upgraded/p' /tmp/apt.log | sed '1d;$d' | tr -s ' \n' ' ')"
-          na="$(dpkg-query -W -f '${Installed-Size}\n' | awk '{s += $1} END {print s}')"
-          echo "tesseract erbij: $(((na - voor) / 1024)) MiB (dpkg Installed-Size)"
-          echo "taaldata: $(du -sh /usr/share/tesseract-ocr | cut -f1)"
-          echo "$(tesseract --version 2>&1 | head -n 1); talen: $(tesseract --list-langs 2>&1 | tail -n +2 | tr '\n' ' ')"
-          if ldd "$avfilter" | grep -q libtesseract; then echo "ffmpeg na de installatie: ook libtesseract"; fi
-          SH
-          docker run --rm -i --user root platform:ci sh -s < "$RUNNER_TEMP/s5.sh" | tee "$RUNNER_TEMP/media-image/tesseract.txt"
       # De container-test draait ook als de kern faalde: losse uitkomsten. Hij heeft sinds M4
       # ook S3 punt 17 van de spike (de remux naar een pipe van de app, met stream) en R12; de
       # aparte stap S3 met het afgeleide image van de spike is daarom weg. Sinds de review van
@@ -1150,11 +1127,9 @@ jobs:
             echo "=== einde samenvatting ==="
           fi
           grep -E '^(FOUT|STOP) ' "$log" 2>/dev/null || true
-          # Fase 6, spike Z0: S5, S9 en S11, als laatste in het log
+          # Fase 6, spike Z0: S9 en S11, als laatste in het log
           d="$RUNNER_TEMP/media-image"
           echo "=== kort ==="
-          echo "S5 tesseract (het image verandert niet):"
-          sed 's/^/  /' "$d/tesseract.txt" 2> /dev/null || echo "  liep niet"
           echo "S9 de zoekbench in de container van de app:"
           sed -n '/^=== zoekbench ===/,$p' "$d/zoekbench.log" 2> /dev/null | sed 's/^/  /' || true
           [ -f "$d/zoekbench.log" ] || echo "  liep niet"

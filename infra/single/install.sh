@@ -211,15 +211,33 @@ reverse_geocoder-1.5.1.tar.gz 2246559 2a2e781b5f69376d922b78fe8978f1350c84fce0dd
 BRONNEN
 }
 
-# Staat dit bestand er goed: precies zoveel bytes en deze sha256?
-geo_ok() {
-  [ -f "$1" ] && [ "$(stat -c %s "$1")" = "$2" ] && [ "$(sha256sum "$1" | cut -d' ' -f1)" = "$3" ]
+# Staat dit bestand er goed: een gewoon bestand (geen symlink) met precies zoveel bytes en deze
+# sha256? geo_ok <pad> <bytes> <sha256>, als tekst voor sh -c: root kijkt zo in zijn eigen
+# tijdelijke map, en 10001 zelf in DATA_ROOT/geo (geo_ok_app). Zet de app net na stat iets
+# anders op die plek, dan klopt de hash niet en houdt dd toch op: hij leest met iflag=nonblock
+# (een FIFO zonder schrijver: niets, in plaats van te wachten), nofollow (een symlink die na
+# [ ! -L ] kwam, volgt hij niet, ook niet naar /dev/zero) en ten hoogste één byte meer dan de
+# grootte (count_bytes: een groter of eindeloos bestand, of een FIFO waar de app in blijft
+# schrijven, leest hij niet tot het eind)
+# shellcheck disable=SC2016  # $1, $2 en $3 zijn van sh -c
+GEO_OK='[ ! -L "$1" ] && [ -f "$1" ] && [ "$(stat -c %s -- "$1")" = "$2" ] && [ "$(dd if="$1" iflag=nonblock,nofollow,count_bytes count=$(($2 + 1)) bs=64K status=none 2>/dev/null | sha256sum | cut -d" " -f1)" = "$3" ]'
+geo_ok() { sh -c "$GEO_OK" sh "$@"; }
+
+# Staat <naam> in <map> van de app er goed? 10001 kijkt zelf, met de naam in die map (as_app_in):
+# root leest in DATA_ROOT/geo niets. Zo kan de app, door net na de controle op een symlink er een
+# neer te zetten, root geen bestand van de host meer laten hashen (nacontrole golf 4, z7.md).
+# geo_ok_app <map> <naam> <bytes> <sha256>
+geo_ok_app() {
+  local dir=$1
+  shift
+  as_app_in "$dir" sh -c "$GEO_OK" sh "$@"
 }
 
 # Stap 2 van §3.10: de bronnen naar DATA_ROOT/geo, als PLAATSEN=aan en ze er nog niet (goed)
-# staan. Elk bestand komt eerst in een eigen map van root buiten DATA_ROOT (mktemp -d) en gaat pas
-# naar zijn plek als grootte en sha256 kloppen; daar zet 10001 het zelf neer, via naam.part
-# (as_app_in: root schrijft nooit in DATA_ROOT/geo).
+# staan. Of ze er goed staan, kijkt 10001 zelf (geo_ok_app). Elk bestand komt eerst in een eigen
+# map van root buiten DATA_ROOT (mktemp -d) en gaat pas naar zijn plek als grootte en sha256
+# kloppen; daar zet 10001 het zelf neer, via naam.part (as_app_in: root schrijft en leest nooit
+# in DATA_ROOT/geo).
 # Breekt nooit af: lukt het niet, dan "Plaatsnamen: niet geladen", en de volgende run probeert
 # het opnieuw. De app bouwt er bij de start places.sqlite van (±1 minuut). Zet GEO_STATE: uit,
 # klaar (stonden er al), nieuw (net opgehaald), mislukt, of leeg (deze versie heeft het niet).
@@ -243,7 +261,7 @@ geo_download() {
     return 0
   fi
   while read -r name size sha url; do
-    [ ! -L "$dir/$name" ] && geo_ok "$dir/$name" "$size" "$sha" && continue
+    geo_ok_app "$dir" "$name" "$size" "$sha" && continue
     # shellcheck disable=SC2016  # $1 is van sh -c
     if curl -fsSL --retry 2 --connect-timeout 20 --max-time 600 --max-filesize "$size" -o "$tmp/$name" "$url" </dev/null &&
       geo_ok "$tmp/$name" "$size" "$sha" &&

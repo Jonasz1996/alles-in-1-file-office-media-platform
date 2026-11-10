@@ -17,7 +17,10 @@
 # - de download van de twee bronnen (Keuze 29) van een nepnetwerk: via .part, alleen met de
 #   juiste grootte en sha256, rechten 640; een download die faalt (geen netwerk, een halve, een
 #   verkeerde sha256) is niet fataal, laat niets achter en de volgende run probeert het opnieuw;
-#   staan ze er al, dan haalt het niets; PLAATSEN=uit haalt niets;
+#   staan ze er al, dan haalt het niets; PLAATSEN=uit haalt niets; of ze er goed staan, kijkt
+#   10001 zelf in de map geo (ook als root, met de echte setpriv), en wat de app net na stat op
+#   die plek zet (een FIFO, een symlink, ook naar /dev/zero, of een groter bestand), laat die
+#   controle niet hangen en telt niet als goed;
 # - de reservekopie (Keuze 52): met het image dat er nog draait, vóór office stopt en vóór de
 #   nieuwe app; de tekst is precies api/app/backup.py van de nieuwe broncode; rechten 600, zonder
 #   gezichten; een mislukte kopie (compose run faalt, of de kopie zelf) stopt het script vóór er
@@ -296,6 +299,14 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   done >"$work/bronnen"
   # shellcheck disable=SC2329  # geo_download roept ze aan
   geo_bronnen() { cat "$work/bronnen"; }
+  # De echte geo_ok van install.sh, met een regel in install.log: zo is te zien wat root zelf
+  # nakijkt (alleen in zijn eigen tijdelijke map, nooit in de map geo)
+  eval "_geo_ok_echt() $(declare -f geo_ok | tail -n +2)"
+  # shellcheck disable=SC2329
+  geo_ok() {
+    printf 'root geo_ok %s\n' "$*" >>"$work/install.log"
+    _geo_ok_echt "$@"
+  }
   # NET: aan, uit (geen verbinding), half (de verbinding valt weg na de helft), race (de app zet
   # terwijl curl loopt een symlink naar een bestand van de host op <bron>.part in de map geo) of
   # de naam van een bron die verkeerd binnenkomt (dezelfde grootte, een andere inhoud)
@@ -370,6 +381,8 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   check "beide bronnen op hun plek, heel" eval 'same_as_net landen.geojson && same_as_net plaatsen.tar.gz'
   check "rechten 640" test "$(stat -c %a "$geo_dir/landen.geojson" "$geo_dir/plaatsen.tar.gz" | sort -u)" = 640
   check "door 10001 zelf neergezet, root schrijft niet in de map geo" eval 'grep -qF "als 10001 in $geo_dir: sh -c " "$work/install.log" && ! grep -qF "$geo_dir/" "$work/install.log"'
+  check "root kijkt de download alleen na in zijn eigen tijdelijke map (geo_ok), niet in DATA_ROOT" eval '
+    [ "$(grep -c "^root geo_ok " "$work/install.log")" = 1 ] && ! grep "^root geo_ok " "$work/install.log" | grep -qF "$DATA_ROOT"'
   check "geen .part over" no_part
   check "met die regel" said_geo "Plaatsnamen: de bronnen staan klaar in $geo_dir; de app laadt ze bij de start (±1 minuut)."
   : >"$work/curl.log"
@@ -381,6 +394,44 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   check "nog een run: klaar" test "$(geo)" = klaar
   check "nog een run: geen curl" test ! -s "$work/curl.log"
   check "nog een run: met die regel" said_geo "Plaatsnamen: de bronnen staan er al ($geo_dir)."
+  # Integratie I1 (nacontrole golf 4, z7.md): of de bronnen er goed staan, kijkt 10001 zelf in de
+  # map geo, met de naam; root kijkt niets na (er kwam niets binnen) en leest daar niets
+  want=$(while read -r n s h _; do
+    printf 'als 10001 in %s: sh -c %s sh %s %s %s\n' "$geo_dir" "${GEO_OK-}" "$n" "$s" "$h"
+  done <"$work/bronnen")
+  check "nog een run: 10001 kijkt beide bronnen zelf na in de map geo (as_app_in), root niets en geen pad erin" eval '
+    [ -n "${GEO_OK-}" ] && [ "$(grep -c . <<<"$want")" = 2 ] &&
+    [ "$(grep -F "als 10001 in $geo_dir: sh -c " "$work/install.log")" = "$want" ] &&
+    ! grep -q "^root geo_ok " "$work/install.log" && ! grep -qF "$geo_dir/" "$work/install.log"'
+  # De race van z7.md: de app zet net na stat iets anders op de plek van de bron. Een nep-stat
+  # doet hier precies dat (en geeft de grootte van de bron); de controle mag dan niet blijven
+  # wachten of lezen, en zegt nee. na_stat <wat de app doet, als sh, met de bron in $f>
+  local race=$work/race size sha
+  read -r _ size sha _ <"$work/bronnen"
+  na_stat() {
+    rm -rf "$race"
+    mkdir -p "$race/bin" "$race/geo" "$race/elders"
+    cp "$work/net/landen.geojson" "$race/geo/landen.geojson"
+    cp "$work/net/landen.geojson" "$race/elders/landen.geojson"
+    printf '#!/bin/sh\nfor a; do f=$a; done\necho %s\n%s\n' "$size" "$1" >"$race/bin/stat"
+    command chmod 755 "$race/bin/stat"
+    code=0
+    (cd "$race/geo" && PATH="$race/bin:$PATH" timeout 20 sh -c "$GEO_OK" sh landen.geojson "$size" "$sha") || code=$?
+  }
+  na_stat 'rm -f -- "$f" && mkfifo -- "$f"'
+  check "een FIFO net na stat: de controle wacht niet op een schrijver en zegt nee ($code)" eval '[ "$code" = 1 ] && [ -p "$race/geo/landen.geojson" ]'
+  : <>"$race/geo/landen.geojson" # een lezer die toch wacht, laat hij zo los
+  # Integratie I1 (review): een symlink die na [ ! -L ] kwam, volgt dd niet (nofollow), ook niet
+  # naar een bestand elders met precies de goede inhoud, en niet naar /dev/zero
+  na_stat "ln -sfn -- '$race/elders/landen.geojson' \"\$f\""
+  check "een symlink net na stat naar de goede inhoud elders: dd volgt hem niet en zegt nee ($code)" eval '[ "$code" = 1 ] && [ -L "$race/geo/landen.geojson" ]'
+  na_stat 'ln -sfn -- /dev/zero "$f"'
+  check "een symlink net na stat naar /dev/zero: de controle leest niet eindeloos en zegt nee ($code)" eval '[ "$code" = 1 ] && [ -L "$race/geo/landen.geojson" ]'
+  # Een groter bestand dat met de bron begint (1 TiB, ijl): dd leest ten hoogste één byte meer
+  # dan de grootte, dus niet tot het eind, en ziet toch dat het de bron niet is
+  na_stat 'cp -- "$f" "$f.groot" && truncate -s 1T -- "$f.groot" && mv -f -- "$f.groot" "$f"'
+  check "een groter bestand net na stat dat met de bron begint: niet uitgelezen, en nee ($code)" eval '[ "$code" = 1 ] && [ "$(stat -c %s "$race/geo/landen.geojson")" -gt "$size" ]'
+  rm -rf "$race"
   printf 'kapot\n' >"$geo_dir/plaatsen.tar.gz"
   check "een kapotte bron op schijf: opnieuw gehaald" eval '[ "$(geo)" = nieuw ] && same_as_net plaatsen.tar.gz'
   without_places
@@ -538,6 +589,14 @@ c "beide bronnen echte bestanden van 10001, 640, heel" eval '[ ! -L "$DATA_ROOT/
   cmp -s "$DATA_ROOT/geo/landen.geojson" "$R/net/landen.geojson" && cmp -s "$DATA_ROOT/geo/plaatsen.tar.gz" "$R/net/plaatsen.tar.gz" &&
   [ "$(stat -c "%u:%g %a" "$DATA_ROOT/geo/landen.geojson" "$DATA_ROOT/geo/plaatsen.tar.gz" | sort -u)" = "10001:10001 640" ]'
 c "geen .part over" test -z "$(find "$DATA_ROOT/geo" -name "*.part")"
+# Integratie I1: of een bron er goed staat, kijkt 10001 zelf. Een gewoon bestand van root (600)
+# met precies de goede inhoud kan 10001 niet lezen; root zou het "klaar" noemen
+cp "$R/net/landen.geojson" "$DATA_ROOT/geo/landen.geojson"
+chown 0:0 "$DATA_ROOT/geo/landen.geojson" && chmod 600 "$DATA_ROOT/geo/landen.geojson"
+geo_download >/dev/null
+c "een bron van root (600) met de goede inhoud: 10001 leest hem niet, dus opnieuw gehaald en van 10001" eval '[ "$GEO_STATE" = nieuw ] && host_same &&
+  cmp -s "$DATA_ROOT/geo/landen.geojson" "$R/net/landen.geojson" &&
+  [ "$(stat -c "%u:%g %a" "$DATA_ROOT/geo/landen.geojson")" = "10001:10001 640" ]'
 ALS_ROOT
     ) || true
     while IFS= read -r line; do
@@ -547,7 +606,7 @@ ALS_ROOT
         *) printf '      %s\n' "$line" ;;
       esac
     done <<<"$root_out"
-    check "als root: alle 10 controles liepen ($n_root)" test "$n_root" = 10
+    check "als root: alle 11 controles liepen ($n_root)" test "$n_root" = 11
   fi
 
   # --- de nep-Docker voor reservekopie en main ---------------------------------------------
