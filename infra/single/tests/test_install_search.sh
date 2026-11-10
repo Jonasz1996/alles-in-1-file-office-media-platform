@@ -298,6 +298,14 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   done >"$work/bronnen"
   # shellcheck disable=SC2329  # geo_download roept ze aan
   geo_bronnen() { cat "$work/bronnen"; }
+  # De echte geo_ok van install.sh, met een regel in install.log: zo is te zien wat root zelf
+  # nakijkt (alleen in zijn eigen tijdelijke map, nooit in de map geo)
+  eval "_geo_ok_echt() $(declare -f geo_ok | tail -n +2)"
+  # shellcheck disable=SC2329
+  geo_ok() {
+    printf 'root geo_ok %s\n' "$*" >>"$work/install.log"
+    _geo_ok_echt "$@"
+  }
   # NET: aan, uit (geen verbinding), half (de verbinding valt weg na de helft), race (de app zet
   # terwijl curl loopt een symlink naar een bestand van de host op <bron>.part in de map geo) of
   # de naam van een bron die verkeerd binnenkomt (dezelfde grootte, een andere inhoud)
@@ -372,6 +380,8 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   check "beide bronnen op hun plek, heel" eval 'same_as_net landen.geojson && same_as_net plaatsen.tar.gz'
   check "rechten 640" test "$(stat -c %a "$geo_dir/landen.geojson" "$geo_dir/plaatsen.tar.gz" | sort -u)" = 640
   check "door 10001 zelf neergezet, root schrijft niet in de map geo" eval 'grep -qF "als 10001 in $geo_dir: sh -c " "$work/install.log" && ! grep -qF "$geo_dir/" "$work/install.log"'
+  check "root kijkt de download alleen na in zijn eigen tijdelijke map (geo_ok), niet in DATA_ROOT" eval '
+    [ "$(grep -c "^root geo_ok " "$work/install.log")" = 1 ] && ! grep "^root geo_ok " "$work/install.log" | grep -qF "$DATA_ROOT"'
   check "geen .part over" no_part
   check "met die regel" said_geo "Plaatsnamen: de bronnen staan klaar in $geo_dir; de app laadt ze bij de start (±1 minuut)."
   : >"$work/curl.log"
@@ -384,11 +394,14 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   check "nog een run: geen curl" test ! -s "$work/curl.log"
   check "nog een run: met die regel" said_geo "Plaatsnamen: de bronnen staan er al ($geo_dir)."
   # Integratie I1 (nacontrole golf 4, z7.md): of de bronnen er goed staan, kijkt 10001 zelf in de
-  # map geo, met de naam; root leest daar niets
-  check "nog een run: 10001 kijkt beide bronnen zelf na in de map geo (as_app_in), root geen pad erin" eval '
-    [ "$(grep -F "als 10001 in $geo_dir: sh -c " "$work/install.log")" = "$(while read -r n s h _; do
-      printf "als 10001 in %s: sh -c %s sh %s %s %s\n" "$geo_dir" "$GEO_OK" "$n" "$s" "$h"; done <"$work/bronnen")" ] &&
-    ! grep -qF "$geo_dir/" "$work/install.log"'
+  # map geo, met de naam; root kijkt niets na (er kwam niets binnen) en leest daar niets
+  want=$(while read -r n s h _; do
+    printf 'als 10001 in %s: sh -c %s sh %s %s %s\n' "$geo_dir" "${GEO_OK-}" "$n" "$s" "$h"
+  done <"$work/bronnen")
+  check "nog een run: 10001 kijkt beide bronnen zelf na in de map geo (as_app_in), root niets en geen pad erin" eval '
+    [ -n "${GEO_OK-}" ] && [ "$(grep -c . <<<"$want")" = 2 ] &&
+    [ "$(grep -F "als 10001 in $geo_dir: sh -c " "$work/install.log")" = "$want" ] &&
+    ! grep -q "^root geo_ok " "$work/install.log" && ! grep -qF "$geo_dir/" "$work/install.log"'
   # De race van z7.md: de app zet net na stat een FIFO op de plek van de bron. Een nep-stat doet
   # hier precies dat (en geeft de grootte van de bron); de controle mag dan niet blijven wachten
   local race=$work/race size sha
