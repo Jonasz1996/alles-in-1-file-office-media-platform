@@ -23,7 +23,8 @@ Tab, Enter, Spatie, de pijlen en typen; nergens een klik (docs/fase-6/toetsenbor
   reden staat onder het vinkje, het vinkje blijft uit en de rest van de pagina werkt door.
 - Land, Plaats en Camera op /fotos (I1, S7): met een places.sqlite uit de kleine bronnen van
   api/tests/geo (zoals test_zoek_kaart.py) komen Land en Plaats met de tijdlijn; een land maakt de
-  lijst Plaatsen korter, een camera telt pas bij Enter (één vraag), Filters wissen zet alles terug.
+  lijst Plaatsen korter en haalt een plaats buiten dat land uit het filter, een camera telt pas bij
+  Enter (één vraag), Filters wissen zet alles terug.
 
 De foto's komen van een vaste dag (LATEST), niet van nu.
 """
@@ -371,7 +372,8 @@ def test_plek_land_en_camera_op_fotos(server, user_factory, context_as, seeded):
 
     Vier foto's: twee in Amsterdam en één in Grenshoek (FUJIFILM X-T30), en een telefoonfoto in
     Utrecht (Apple iPhone 13). Land Nederland laat de drie in Nederland zien, en in Plaats alleen
-    Amsterdam en Utrecht; Amsterdam twee. Camera telt pas bij Enter (typen geeft geen vraag), op
+    Amsterdam en Utrecht; Amsterdam twee. Land België haalt Amsterdam weer uit het filter (hij ligt
+    daar niet). Camera telt pas bij Enter (typen geeft geen vraag), op
     de eerste woorden van "merk model"; hoofdletters maken niet uit. Filters wissen zet alles
     terug, met de focus in Persoon. Niets in de adresbalk, en de balk schuift de tijdlijn niet."""
     seeded(met_plaatsen)
@@ -432,7 +434,7 @@ def test_plek_land_en_camera_op_fotos(server, user_factory, context_as, seeded):
             ["Alle plaatsen", "Amsterdam, North Holland", "Utrecht"]
         )
 
-        # --- Plaats: ↓ Amsterdam (twee), ↑ weer alle plaatsen ---
+        # --- Plaats: ↓ Amsterdam (twee) ---
         page.keyboard.press("Tab")
         expect(plek).to_be_focused()
         with page.expect_response(maanden_vraag) as r:
@@ -440,6 +442,31 @@ def test_plek_land_en_camera_op_fotos(server, user_factory, context_as, seeded):
         assert vraag_van(r.value) == {"place": [amsterdam], "country": ["NL"]}
         expect(tijdlijn.get_by_role("gridcell")).to_have_count(2)
         expect(page.get_by_role("status").filter(has_text="2 filters aan")).to_be_visible()
+
+        # --- Land ↑ België: Amsterdam ligt daar niet, dus hij gaat uit het filter (review I1,
+        # W1); ↓ weer Nederland: de plaats komt niet terug ---
+        page.keyboard.press("Shift+Tab")
+        expect(land).to_be_focused()
+        with page.expect_response(maanden_vraag) as r:
+            page.keyboard.press("ArrowUp")
+        assert vraag_van(r.value) == {"country": ["BE"]}
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(1)
+        expect(plek).to_have_value("")
+        expect(plek.locator("option")).to_have_text(["Alle plaatsen", "Grenshoek, Flanders"])
+        expect(page.get_by_role("status").filter(has_text="1 filter aan")).to_be_visible()
+        with page.expect_response(maanden_vraag) as r:
+            page.keyboard.press("ArrowDown")
+        assert vraag_van(r.value) == {"country": ["NL"]}
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(3)
+        expect(plek).to_have_value("")
+
+        # --- Plaats: ↓ Amsterdam, ↑ weer alle plaatsen ---
+        page.keyboard.press("Tab")
+        expect(plek).to_be_focused()
+        with page.expect_response(maanden_vraag) as r:
+            page.keyboard.press("ArrowDown")
+        assert vraag_van(r.value) == {"place": [amsterdam], "country": ["NL"]}
+        expect(tijdlijn.get_by_role("gridcell")).to_have_count(2)
         with page.expect_response(maanden_vraag) as r:
             page.keyboard.press("ArrowUp")
         assert vraag_van(r.value) == {"country": ["NL"]}

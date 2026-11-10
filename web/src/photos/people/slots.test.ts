@@ -7,6 +7,7 @@ import shareDialog from "../../shares/ShareDialogPanel.tsx?raw";
 import albumPage from "../AlbumPage.tsx?raw";
 import photosPage from "../PhotosPage.tsx?raw";
 import FilterBar from "./FilterBar";
+import filterBar from "./FilterBar.tsx?raw";
 import { NO_FILTERS } from "./filters";
 import PhotoSettingsBlock from "./PhotoSettingsBlock";
 import settingsBlock from "./PhotoSettingsBlock.tsx?raw";
@@ -116,6 +117,14 @@ describe("de filters op /fotos", () => {
     expect(html).toMatch(/<input id="[^"]+-camera" type="text" maxLength="200" autoComplete="off" spellCheck="false" aria-describedby="[^"]+-camera-hint" value="fujifilm"\/>/);
     expect(html).toContain("3 filters aan");
     expect(html).toContain("Filters wissen");
+  });
+
+  // Review I1, W1: zette Land alleen het land, dan bleef een plaats buiten dat land in het filter (0
+  // foto's, en Plaats leeg zonder passende keuze). De keuzelijst gaat via withCountry; dat het in de
+  // browser werkt, toont de e2e test_plek_land_en_camera_op_fotos (Plaats Amsterdam, dan Land België)
+  it("Land kiezen gaat via withCountry: een plaats buiten het nieuwe land gaat uit het filter", () => {
+    expect(filterBar).toContain("onChange={(e) => onChange(withCountry(filters, e.target.value || null, places))}");
+    expect(filterBar.match(/country: e\.target\.value/g)).toBeNull();
   });
 
   it("de volgorde in de balk: Persoon, Soort, de periode, Land, Plaats, Camera", async () => {
