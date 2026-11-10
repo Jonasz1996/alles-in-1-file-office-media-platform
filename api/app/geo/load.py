@@ -29,6 +29,12 @@ De app bouwt bij de start (ensure) als het bestand ontbreekt, met andere bronnen
 achtergrond. `PLATFORM_PLACES=uit`
 (`PLAATSEN=uit` in .env) slaat het over. Bouwen gaat naar `<places_db>.part` en dan
 `os.replace`: een lezer ziet nooit een half bestand.
+
+Na een nieuwe bouw (bij de start of met geo-load) zetten we de job geo.places klaar: de rijen
+van photo_geo die photometa las voordat places.sqlite er was (bij de upgrade naar 0.8.0 leest hij
+alles opnieuw terwijl dit bestand nog gebouwd wordt), krijgen zo alsnog hun plaats en land (I1,
+A4). Die job schrijft in photo_geo voor elke eigenaar, dus staat hij bij de andere schrijvers in
+app/photo_rows.py, niet hier (tests/search/test_own_live.py).
 """
 
 from __future__ import annotations
@@ -447,9 +453,15 @@ async def start(settings: Settings) -> None:
 
     async def _bouw() -> None:
         try:
-            await to_thread.run_sync(ensure, settings)
+            uitkomst = await to_thread.run_sync(ensure, settings)
         except Exception:  # noqa: BLE001 - zonder plaatsnamen werkt de rest gewoon
             log.exception("Plaatsnamen: bouwen mislukt")
+            return
+        if uitkomst == "gebouwd":
+            try:
+                await _na_de_bouw(settings)
+            except Exception as e:  # noqa: BLE001 - de plaatsnamen zelf zijn er wel
+                log.warning("Plaatsnamen: geo.places niet klaargezet (%s)", type(e).__name__)
 
     if settings.places == "uit":
         return
@@ -461,6 +473,35 @@ async def start(settings: Settings) -> None:
 
 
 _taken: set[Any] = set()
+
+
+async def _na_de_bouw(settings: Settings) -> None:
+    """Eén keer per nieuwe bouw: de job geo.places (app/photo_rows.py) vult de plaats en het
+    land in van de rijen die gelezen werden voordat places.sqlite er was."""
+    from app import photo_rows
+
+    await photo_rows.enqueue_places(settings)
+
+
+def _na_de_bouw_cli(settings: Settings) -> bool:
+    """Vanuit geo-load (een eigen proces naast de draaiende app, zie install.sh): de job
+    klaarzetten; de app draait hem. False als dat niet lukte (nog geen database)."""
+    import asyncio
+
+    from app.db import get_engine
+
+    async def zet() -> None:
+        try:
+            await _na_de_bouw(settings)
+        finally:
+            await get_engine(settings).dispose()
+
+    try:
+        asyncio.run(zet())
+    except Exception as e:  # noqa: BLE001 - places.sqlite zelf is wel gebouwd
+        log.warning("Plaatsnamen: geo.places niet klaargezet (%s)", type(e).__name__)
+        return False
+    return True
 
 
 # --- De CLI (app.cli geo-load) ---
@@ -475,6 +516,12 @@ def parsers(commands: Any) -> None:
 
 def run(settings: Settings, args: argparse.Namespace) -> int:
     uitkomst = ensure(settings, force=args.force)
+    if uitkomst == "gebouwd" and not _na_de_bouw_cli(settings):
+        print(
+            "Let op: de plaatsen van foto's die al gelezen waren, komen pas na een nieuwe "
+            "geo-load --force (zie het log).",
+            file=sys.stderr,
+        )
     tekst = {
         "uit": "Plaatsnamen staan uit (PLAATSEN=uit): niets gedaan.",
         "klaar": f"{settings.places_db} hoort al bij deze bronnen.",

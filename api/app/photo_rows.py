@@ -19,6 +19,17 @@ elke functie die foto's leest aan own_live of own_live_geo houdt. Wat foto's lee
   photometa de rest opnieuw. Een nieuwe "uit" zet altijd een nieuwe job klaar, ook als er een
   loopt; de opruimronde (sweep_off) zet hem opnieuw klaar voor wie "uit" heeft en nog rijen heeft.
 - copied(): heeft een gekopieerd bestand een inhoud met een plek (voor de haak van een kopie).
+- De job "geo.places" (I1, A4): na een nieuwe bouw van places.sqlite (load.start bij de start,
+  of geo-load) krijgen de rijen zonder plaats en zonder land die er al stonden die alsnog, uit
+  de lat en lon die er staan. Dat zijn foto's die photometa las voordat places.sqlite er was: bij
+  de upgrade naar 0.8.0 bouwt de app hem op de achtergrond terwijl photometa alles opnieuw leest,
+  en niets las die rijen daarna nog. Eén keten per bouw, in stukken van PLACES_CHUNK op node_id
+  (jobs.chain, zoals photometa): per stuk eerst opzoeken in een thread, dan één korte transactie,
+  zodat een upload nooit lang op het schrijfslot wacht. Alleen rijen met place_id én country
+  NULL; op zee blijft dat zo. Met de controle van write() in dezelfde statement: de node is een
+  bestand van de eigenaar van de rij, en die heeft locatie niet op "uit". Loopt er nog een run
+  van photometa die vóór de bouw begon, dan wacht hij (Defer): die kan zijn plaats nog zonder
+  places.sqlite opgezocht hebben en de rijen pas na dit stuk schrijven.
 
 Nooit een plek, een plaats of een eigenaar in het log: alleen aantallen.
 """
@@ -30,16 +41,18 @@ import math
 import uuid
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Float, Integer, String, Text, bindparam, delete, exists, select
+import anyio.to_thread
+from sqlalchemy import Float, Integer, String, Text, bindparam, delete, exists, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import jobs
 from app.db import get_engine
 from app.geo import tiles
-from app.models import BlobMeta, Node, PhotoGeo, PhotoPref
+from app.models import BlobMeta, Job, Node, PhotoGeo, PhotoPref
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -52,6 +65,10 @@ SWEEP = "geo.off_sweep"
 SWEEP_EVERY = 3600.0
 CHUNK = 2000
 SOURCES = ("exif", "xmp", "video")
+# De job die na een nieuwe bouw van places.sqlite de plaats en het land invult (I1, A4)
+PLACES_TYPE = "geo.places"
+PLACES_CHUNK = 1000  # rijen per run: opzoeken ±1–3 s in een thread, schrijven een paar ms
+PLACES_WAIT = 5.0  # seconden: opnieuw kijken of photometa van vóór de bouw klaar is
 
 _NODE = Node.__table__
 _GEO = PhotoGeo.__table__
@@ -284,5 +301,104 @@ async def sweep_off(settings: Settings) -> int:
     return added
 
 
+async def enqueue_places(settings: Settings) -> bool:
+    """Na een nieuwe bouw van places.sqlite (load.start en geo-load): de keten geo.places
+    klaarzetten, met het moment van de bouw. Geeft of er een bij kwam; staat er al een klaar of
+    loopt er een, dan niet (die gaat verder met de nieuwe places.sqlite)."""
+    payload = {"after": "", "built": jobs.now().isoformat(), "rows": 0}
+    async with _maker(settings)() as db:
+        added = await jobs.enqueue(db, PLACES_TYPE, payload, key=PLACES_TYPE)
+        await db.commit()
+    return added is not None
+
+
+# Plaats, land en provincie voor één rij, alleen als hij nog geen plaats en geen land heeft en
+# nog dezelfde plek heeft; met de controle van write() (Keuze 25a en 28) in dezelfde statement
+_FILL = (
+    update(_GEO)
+    .where(
+        _GEO.c.node_id == bindparam("g_node"),
+        _GEO.c.lat == bindparam("g_lat"),
+        _GEO.c.lon == bindparam("g_lon"),
+        _GEO.c.place_id.is_(None),
+        _GEO.c.country.is_(None),
+        exists().where(
+            _NODE.c.id == _GEO.c.node_id,
+            _NODE.c.kind == "file",
+            _NODE.c.owner_id == _GEO.c.owner_id,
+        ),
+        not_off(_GEO.c.owner_id),
+    )
+    .values(place_id=bindparam("g_place"), country=bindparam("g_cc"), admin1=bindparam("g_admin1"))
+)
+
+
+def _built(payload: dict[str, Any]) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(payload.get("built")))
+    except ValueError:
+        return None
+
+
+async def run_places(settings: Settings, payload: dict[str, Any]) -> None:
+    """De job geo.places: één stuk van hooguit PLACES_CHUNK rijen zonder plaats en land (na
+    payload["after"], op node_id), dan zijn opvolger. Zonder places.sqlite (uit, kapot): niets."""
+    from app import photometa
+    from app.geo import places
+
+    maker = _maker(settings)
+    built = _built(payload)
+    after = str(payload.get("after") or "")
+    rows_done = int(payload.get("rows") or 0)
+    async with maker() as db:
+        if built is not None:
+            early = await db.scalar(
+                select(Job.id)
+                .where(Job.type == photometa.TYPE, Job.status == "running", Job.started_at <= built)
+                .limit(1)
+            )
+            if early is not None:
+                raise jobs.Defer(PLACES_WAIT)
+        todo = select(_GEO.c.node_id, _GEO.c.lat, _GEO.c.lon).where(
+            _GEO.c.place_id.is_(None), _GEO.c.country.is_(None), not_off(_GEO.c.owner_id)
+        )
+        if after:
+            todo = todo.where(_GEO.c.node_id > uuid.UUID(after))
+        rows = (await db.execute(todo.order_by(_GEO.c.node_id).limit(PLACES_CHUNK))).all()
+    if not rows:
+        log.info("geo_places_done rows=%d", rows_done)
+        return
+
+    def lookup() -> list[dict[str, Any]] | None:
+        geo = places.get(settings)
+        if geo is None:
+            return None
+        found = []
+        for node_id, lat, lon in rows:
+            place = geo.lookup(lat, lon)
+            if place.cc is None:
+                continue  # op zee (of een land zonder code): blijft NULL
+            found.append(
+                {"g_node": node_id, "g_lat": lat, "g_lon": lon, "g_place": place.id,
+                 "g_cc": place.cc, "g_admin1": place.admin1}
+            )  # fmt: skip
+        return found
+
+    found = await anyio.to_thread.run_sync(lookup)
+    if found is None:
+        return
+    async with maker() as db:
+        if found:
+            result = await db.execute(_FILL, found)
+            rows_done += max(int(result.rowcount or 0), 0)
+        if len(rows) == PLACES_CHUNK:
+            nxt = {"after": rows[-1][0].hex, "built": payload.get("built"), "rows": rows_done}
+            await jobs.chain(db, PLACES_TYPE, nxt, PLACES_TYPE)
+        await db.commit()
+    if len(rows) < PLACES_CHUNK:
+        log.info("geo_places_done rows=%d", rows_done)
+
+
 jobs.register(OFF_TYPE, run_off)
+jobs.register(PLACES_TYPE, run_places)
 jobs.housekeeping(SWEEP, sweep_off, SWEEP_EVERY)
