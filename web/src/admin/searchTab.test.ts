@@ -5,7 +5,14 @@ import { SEARCH_TAB_AREAS } from "../Beheer";
 import { fmt, loadAreas, resetI18nForTests } from "../i18n";
 import { BeeldBlock } from "./BeeldBlock";
 import { FacesBlock } from "./FacesBlock";
-import SearchTab, { indexRebuilding, photosRebuilding, POLL_MS, SearchView, textFraction } from "./SearchTab";
+import SearchTab, {
+  checkText,
+  indexRebuilding,
+  photosRebuilding,
+  POLL_MS,
+  SearchView,
+  textFraction,
+} from "./SearchTab";
 import type { AdminBeeld, AdminFaces, AdminSearch } from "./searchApi";
 
 // De tab "Zoeken en foto's" op /beheer (Z7, Keuze 51), met onderaan de blokken "Gezichten" (X2)
@@ -59,6 +66,7 @@ function state(over: Partial<AdminSearch> = {}): AdminSearch {
     bench: { at: "2026-11-09T10:00:00+00:00", p95_owner_ms: 12.5, p95_all_ms: 48 },
     faces: null,
     beeld: null,
+    check: null,
     ...over,
   };
 }
@@ -171,6 +179,7 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     expect(field(html, "text")).toBe("3 van 4 bestanden ");
     expect(html).toContain('<progress max="1" value="0.75" aria-label="Tekst uit bestanden gelezen"></progress>');
     expect(field(html, "failed")).toBe("2 inhouden");
+    expect(field(html, "check")).toBe("nog niet gedaan");
     expect(field(html, "hour-b")).toBe("5");
     expect(field(html, "hour-c")).toBe("6");
     expect(field(html, "hour-busy")).toBe("7");
@@ -202,11 +211,46 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     expect(html).toContain("Niets mislukt.");
   });
 
+  it("de wekelijkse search-check (I1): geen verschil, of een verschil in rood met wat Jonas doet", () => {
+    const at = "2026-11-08T03:00:00+00:00";
+    const help = "Herbouw de index (de knop hierboven).";
+    const goed = view(state({ check: { at, sampled: 200, bad: 0 } }));
+    expect(field(goed, "check")).toBe(`${fmt.dateTime(at)}: 200 bestanden vergeleken, geen verschil`);
+    expect(goed).not.toContain("badge degraded");
+    expect(goed).not.toContain(help);
+    const fout = view(state({ check: { at, sampled: 200, bad: 3 } }));
+    expect(fout).toContain('<dd data-search="check"><span class="badge degraded">');
+    expect(field(fout, "check")).toBe(`${fmt.dateTime(at)}: 3 verschillen met de bron (200 vergeleken)`);
+    expect(fout).toContain(help);
+    // Na een verschil kijkt de app elk uur opnieuw (weekcheck.AGAIN): na de herbouw ziet Jonas binnen
+    // een uur of het verschil terugkomt
+    expect(fout).toContain("Na een verschil controleert de app elk uur opnieuw.");
+    expect(fout).toContain("python -m app.cli search-triggers");
+    // Enkelvoud, en duizendtallen
+    expect(checkText({ at, sampled: 1, bad: 0 })).toBe(`${fmt.dateTime(at)}: 1 bestand vergeleken, geen verschil`);
+    expect(checkText({ at, sampled: 1200, bad: 1 })).toBe(
+      `${fmt.dateTime(at)}: 1 verschil met de bron (1.200 vergeleken)`,
+    );
+    expect(checkText(null)).toBe("nog niet gedaan");
+  });
+
   it("met LIKE: de uitleg erbij", () => {
     const html = view(state({ engine: "like", extract_in_sandbox: false }));
     expect(field(html, "engine")).toBe("LIKE (langzamer)");
     expect(field(html, "sandbox")).toBe("buiten de zandbak (zonder mediaworker)");
     expect(html).toContain("Zoeken gaat nu met LIKE");
+    // De wekelijkse search-check loopt dan niet: geen "nog niet gedaan" en geen oude uitkomst
+    // (review I1, F5)
+    expect(field(html, "check")).toBe("loopt alleen met FTS5");
+    const at = "2026-11-08T03:00:00+00:00";
+    const oud = view(state({ engine: "like", check: { at, sampled: 200, bad: 3 } }));
+    expect(field(oud, "check")).toBe("loopt alleen met FTS5");
+    expect(oud).not.toContain('<dd data-search="check"><span class="badge degraded">');
+    expect(oud).not.toContain("Herbouw de index (de knop hierboven).");
+    // Tijdens een herbouw zoekt de app ook met LIKE: dan blijft de laatste uitkomst staan
+    const index = { names_done: false, text_done: 3, text_total: 4, failed: 0 };
+    const bezig = view(state({ engine: "like", index, check: { at, sampled: 200, bad: 3 } }));
+    expect(field(bezig, "check")).toBe(`${fmt.dateTime(at)}: 3 verschillen met de bron (200 vergeleken)`);
   });
 
   it("gepauzeerd: de knop zegt wat hij doet (hervatten), zonder aria-pressed, en de uitleg staat erbij", () => {
@@ -310,6 +354,15 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     expect(ocr).toMatch(/data-search="rebuild-ocr"[^>]*>Recognise everything again</);
     expect(ocr).not.toMatch(/admin\.search|\{[a-z]+\}/);
     expect(view(state())).toContain("OCR: not installed.");
+    const at = "2026-11-08T03:00:00+00:00";
+    expect(field(view(state()), "check")).toBe("not done yet");
+    expect(checkText({ at, sampled: 200, bad: 0 })).toBe(`${fmt.dateTime(at)}: 200 files compared, no differences`);
+    const fout = view(state({ check: { at, sampled: 200, bad: 1 } }));
+    expect(field(fout, "check")).toBe(`${fmt.dateTime(at)}: 1 difference from the source (200 compared)`);
+    expect(fout).toContain("Rebuild the index (the button above).");
+    expect(fout).toContain("After a difference the app checks again every hour.");
+    expect(field(view(state({ engine: "like" })), "check")).toBe("runs only with FTS5");
+    expect(fout).not.toMatch(/admin\.search|\{[a-z]+\}/);
   });
 });
 

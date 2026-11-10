@@ -741,6 +741,19 @@ const en: Translation<typeof nl> = {
         "Until the new index is ready, everyone searches with LIKE: that works, but slower. With 100,000 files it takes a few minutes.",
       rebuildConfirm: "Rebuild",
       started: "The rebuild has started.",
+      check: "Check (weekly)",
+      checkNone: "not done yet",
+      checkOff: "runs only with FTS5",
+      checkOk: {
+        one: "{time}: {count} file compared, no difference",
+        other: "{time}: {count} files compared, no differences",
+      },
+      checkBad: {
+        one: "{time}: {bad} difference from the source ({count} compared)",
+        other: "{time}: {bad} differences from the source ({count} compared)",
+      },
+      checkHelp:
+        "Rebuild the index (the button above). After a difference the app checks again every hour. If the difference comes back after the rebuild, restore the triggers: python -m app.cli search-triggers (search runbook).",
     },
     rebuild: {
       title: "Rebuilding",

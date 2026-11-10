@@ -752,6 +752,19 @@ export default {
         "Tot de nieuwe index klaar is, zoekt iedereen met LIKE: dat werkt, maar langzamer. Bij 100.000 bestanden duurt het een paar minuten.",
       rebuildConfirm: "Herbouwen",
       started: "Het herbouwen is gestart.",
+      check: "Controle (wekelijks)",
+      checkNone: "nog niet gedaan",
+      checkOff: "loopt alleen met FTS5",
+      checkOk: {
+        one: "{time}: {count} bestand vergeleken, geen verschil",
+        other: "{time}: {count} bestanden vergeleken, geen verschil",
+      },
+      checkBad: {
+        one: "{time}: {bad} verschil met de bron ({count} vergeleken)",
+        other: "{time}: {bad} verschillen met de bron ({count} vergeleken)",
+      },
+      checkHelp:
+        "Herbouw de index (de knop hierboven). Na een verschil controleert de app elk uur opnieuw. Komt het verschil na de herbouw terug, zet dan de triggers terug: python -m app.cli search-triggers (runbook Zoeken).",
     },
     rebuild: {
       title: "Herbouwen",

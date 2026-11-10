@@ -637,7 +637,12 @@ def test_een_oude_vraag_en_een_oud_antwoord_blijven_gelijk():
         "places": {"loaded": False, "source": None, "date": None},
         "bench": None,
     }
-    assert t.AdminSearch.model_validate(z0).model_dump() == {**z0, "faces": None, "beeld": None}
+    assert t.AdminSearch.model_validate(z0).model_dump() == {
+        **z0,
+        "faces": None,
+        "beeld": None,
+        "check": None,  # I1: de wekelijkse search-check
+    }
     assert t.AdminSearchPatch.model_validate({"paused": True}).model_dump(exclude_none=True) == {
         "paused": True
     }
