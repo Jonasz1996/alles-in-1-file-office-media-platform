@@ -239,6 +239,18 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     expect(field(html, "engine")).toBe("LIKE (langzamer)");
     expect(field(html, "sandbox")).toBe("buiten de zandbak (zonder mediaworker)");
     expect(html).toContain("Zoeken gaat nu met LIKE");
+    // De wekelijkse search-check loopt dan niet: geen "nog niet gedaan" en geen oude uitkomst
+    // (review I1, F5)
+    expect(field(html, "check")).toBe("loopt alleen met FTS5");
+    const at = "2026-11-08T03:00:00+00:00";
+    const oud = view(state({ engine: "like", check: { at, sampled: 200, bad: 3 } }));
+    expect(field(oud, "check")).toBe("loopt alleen met FTS5");
+    expect(oud).not.toContain('<dd data-search="check"><span class="badge degraded">');
+    expect(oud).not.toContain("Herbouw de index (de knop hierboven).");
+    // Tijdens een herbouw zoekt de app ook met LIKE: dan blijft de laatste uitkomst staan
+    const index = { names_done: false, text_done: 3, text_total: 4, failed: 0 };
+    const bezig = view(state({ engine: "like", index, check: { at, sampled: 200, bad: 3 } }));
+    expect(field(bezig, "check")).toBe(`${fmt.dateTime(at)}: 3 verschillen met de bron (200 vergeleken)`);
   });
 
   it("gepauzeerd: de knop zegt wat hij doet (hervatten), zonder aria-pressed, en de uitleg staat erbij", () => {
@@ -349,6 +361,7 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     expect(field(fout, "check")).toBe(`${fmt.dateTime(at)}: 1 difference from the source (200 compared)`);
     expect(fout).toContain("Rebuild the index (the button above).");
     expect(fout).toContain("After a difference the app checks again every hour.");
+    expect(field(view(state({ engine: "like" })), "check")).toBe("runs only with FTS5");
     expect(fout).not.toMatch(/admin\.search|\{[a-z]+\}/);
   });
 });

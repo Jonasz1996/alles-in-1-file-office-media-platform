@@ -51,6 +51,13 @@ export function photosRebuilding(s: AdminSearch): boolean {
   return s.rebuild?.what === "hash" || s.rebuild?.what === "geo";
 }
 
+/** De wekelijkse search-check loopt alleen met FTS5. Zoekt de app met LIKE zonder dat er een
+ * herbouw loopt (geen FTS5, PLATFORM_SEARCH_INDEX=uit of PostgreSQL), dan komt er nooit een
+ * uitkomst: "nog niet gedaan" of een oude uitkomst klopt dan niet (review I1, F5). */
+export function checkOff(s: AdminSearch): boolean {
+  return s.engine === "like" && !indexRebuilding(s);
+}
+
 /** De regel van de wekelijkse search-check (I1): nog niet gedaan, geen verschil, of hoeveel
  * verschillen met de bron. */
 export function checkText(check: AdminSearch["check"]): string {
@@ -245,7 +252,8 @@ function Index({ s, reload }: { s: AdminSearch; reload: Reload }): JSX.Element {
   const act = useAction(reload, heading);
   const fraction = textFraction(s.index);
   const total = s.index.text_total;
-  const bad = (s.check?.bad ?? 0) > 0;
+  const off = checkOff(s);
+  const bad = !off && (s.check?.bad ?? 0) > 0;
   return (
     <section aria-labelledby="admin-search-index">
       <Head id="admin-search-index" title={t("admin.search.index.title")} heading={heading}>
@@ -288,7 +296,13 @@ function Index({ s, reload }: { s: AdminSearch; reload: Reload }): JSX.Element {
           {t("admin.search.index.failedValue", { n: s.index.failed })}
         </Row>
         <Row label={t("admin.search.index.check")} testid="check">
-          {bad ? <span className="badge degraded">{checkText(s.check)}</span> : checkText(s.check)}
+          {off ? (
+            t("admin.search.index.checkOff")
+          ) : bad ? (
+            <span className="badge degraded">{checkText(s.check)}</span>
+          ) : (
+            checkText(s.check)
+          )}
         </Row>
       </dl>
       {bad && <p className="muted">{t("admin.search.index.checkHelp")}</p>}

@@ -743,6 +743,7 @@ const en: Translation<typeof nl> = {
       started: "The rebuild has started.",
       check: "Check (weekly)",
       checkNone: "not done yet",
+      checkOff: "runs only with FTS5",
       checkOk: {
         one: "{time}: {count} file compared, no difference",
         other: "{time}: {count} files compared, no differences",

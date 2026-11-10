@@ -754,6 +754,7 @@ export default {
       started: "Het herbouwen is gestart.",
       check: "Controle (wekelijks)",
       checkNone: "nog niet gedaan",
+      checkOff: "loopt alleen met FTS5",
       checkOk: {
         one: "{time}: {count} bestand vergeleken, geen verschil",
         other: "{time}: {count} bestanden vergeleken, geen verschil",
