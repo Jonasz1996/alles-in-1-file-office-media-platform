@@ -102,7 +102,10 @@ SLIM_CPUS=0-2 e2e/slim.sh   # alles op die cores (docker --cpuset-cpus en taskse
 Aan het eind staat een blok `=== kort ===`. Stap 1 heeft docker en het image
 `python:3.12-slim` nodig. Draai `slim.sh` alleen, niet naast een andere zware run. Ook alleen was
 een test met een grens van 1 s bij een upload er één keer rood (zie "Open na de nacontrole" in
-[z7.md](z7.md)); de oorzaak zoeken is I1 (D1). CI draait `slim.sh` zelf niet; de job `infra`
+[z7.md](z7.md)): een upload wachtte zonder rij op het schrijfslot van SQLite. Dat is opgelost in
+I1 (D1) met de schrijfpoort (`app/dbgate.py`, [z2.md](z2.md), Open 12). Die grens hangt wel aan
+de `fsync` van de schijf (tot ±200 ms extra houdt hij), dus ook daarom alleen. CI draait `slim.sh`
+zelf niet; de job `infra`
 haalt het script alleen door `shellcheck`.
 
 ## De meetscripts in `e2e/perf`
