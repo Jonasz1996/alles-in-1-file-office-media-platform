@@ -40,6 +40,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from app import dbgate
 from app.search import schema
 from app.search.query import parse
 
@@ -158,15 +159,21 @@ async def rebuild(
 ) -> list[float]:
     """De herbouw in stukken; geeft de duur per stuk in ms. after_chunk(cursor) na de commit van
     elk stuk behalve het laatste (voor tests en de voortgang)."""
-    async with engine.begin() as conn:
-        if not await _has_fts(conn):
-            return []
-        await _start(conn, what)
+    # De herbouw is achtergrondwerk: verzoeken schrijven eerst (app/dbgate.py); after_chunk niet
+    with dbgate.background():
+        async with engine.begin() as conn:
+            if not await _has_fts(conn):
+                return []
+            await _start(conn, what)
+    # Ook na het begin een pauze: de herbouw van de CLI draait in een eigen proces, waar alleen
+    # de busy handler van SQLite geldt
+    await asyncio.sleep(pause)
     times: list[float] = []
     while True:
         start = time.perf_counter()
-        async with engine.begin() as conn:
-            hi, done = await _chunk(conn, chunk)
+        with dbgate.background():
+            async with engine.begin() as conn:
+                hi, done = await _chunk(conn, chunk)
         times.append((time.perf_counter() - start) * 1000)
         if done:
             return times
