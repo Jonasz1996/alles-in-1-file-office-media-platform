@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import analysis, db, events, jobs, photo_hash, photometa, render_meta
 from app.analysis import Step
+from app.extract import step as extract_step
 from app.geo import load as geo_load
 from app.models import Analysis, Blob, BlobHash, Job, Setting
 from app.search import admin as search_admin
@@ -557,6 +558,8 @@ async def test_mislukt_per_pagina_de_nieuwste_eerst(client, admin, settings, mon
 
 
 async def test_mislukte_opnieuw_in_de_rij(client, admin, settings):
+    # zoals main.py; een eerdere test kan analysis.reset() gedaan hebben (test_contracts.py)
+    extract_step.register()
     headers, _ = admin
     await add(settings, *[Blob(sha256=sha(i), size=1, mime="application/pdf") for i in range(3)])
     await add(
@@ -647,6 +650,8 @@ async def test_search_progress_alleen_naar_beheerders(client, admin, settings):
 async def test_bij_het_starten(client, admin, settings):
     """De pauze terug, een klare herbouw weg, de eerste pHash als herbouw "hash", en een
     onderbroken herbouw van de index gaat verder."""
+    # zoals main.py; een eerdere test kan analysis.reset() gedaan hebben (test_contracts.py)
+    extract_step.register()
     async with maker(settings)() as s:
         await search_admin._store(
             s, paused=True, rebuild={"what": "geo", "started_at": "2026-11-01T00:00:00+00:00"}
