@@ -9,7 +9,9 @@ Debian- of Ubuntu-container. Het platform draait daarin als één Docker-contain
 
 - Debian 13-template, **Unprivileged** aan
 - 4 cores, 16 GB RAM, swap 0, rootdisk 64 GB
-- Mount point `/tank` van 700 GB op je ZFS-opslag (optioneel; zonder komt de data op de rootdisk)
+- Mount point `/tank` van 700 GB op je ZFS-opslag (optioneel; zonder komt de data op de rootdisk,
+  in `/opt/platform/data/platform`: lees dan dat pad waar hieronder `/tank/platform` staat. Het
+  script zet de map als `DATA_ROOT` in `/opt/platform/.env`)
 - Options → Features: **nesting** en **keyctl** aan
 - Vast IP
 
@@ -53,7 +55,8 @@ Wat er bij het bijwerken van 0.7.1 naar fase 6 gebeurt, in deze volgorde:
   gewoon door; de volgende run probeert het opnieuw. Liever zonder plaatsnamen:
   `… | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLAATSEN=uit bash`;
 - het laat open documenten opslaan en maakt dan een **reservekopie** van de database, terwijl de
-  oude app nog draait: `/tank/platform/backup/platform-0009-<tijd>.db` (rechten 600). Lukt die
+  oude app nog draait: `/tank/platform/backup/platform-0009-<tijd>.db`, zonder `/tank`
+  `/opt/platform/data/platform/backup/platform-0009-<tijd>.db` (rechten 600). Lukt die
   niet, dan stopt het script daar: er is dan nog niets veranderd, en de app draait zoals hij
   draaide;
 - het bouwt het nieuwe platform en start het; de database krijgt bij de start migratie 0010
@@ -201,6 +204,9 @@ Zodra https werkt, gaat `http://<domein>` vanzelf naar `https://`. Via het IP-ad
 blijft http werken.
 
 ## Wat er draait
+
+Zonder `/tank` staat wat hier in `/tank/platform` staat in `/opt/platform/data/platform`
+(`DATA_ROOT` in `/opt/platform/.env`).
 
 | Onderdeel | Waar |
 |-----------|------|
@@ -438,6 +444,7 @@ een geldige back-up: de database overleeft een snapshot zoals een stroomstoring.
 office horen er niet bij; wat daar nog niet opgeslagen is, zet het platform binnen enkele
 minuten zelf in `/tank/platform` (zie "Niet-opgeslagen werk").
 Vanaf fase 6 maakt het installatiescript vóór elke update ook een kopie van de database in
-`/tank/platform/backup` (zie "Bijwerken naar fase 6"). Dat is een vangnet voor de update, geen
+`DATA_ROOT/backup`: `/tank/platform/backup`, zonder `/tank` `/opt/platform/data/platform/backup`
+(zie "Bijwerken naar fase 6"). Dat is een vangnet voor de update, geen
 back-up: hij staat op dezelfde schijf.
 Offsite-backups volgen in fase 1 deel 2.

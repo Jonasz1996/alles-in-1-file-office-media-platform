@@ -9,8 +9,14 @@ index herbouwen, zoeken meten, zoeken naast media en office meten, en terug naar
 
 Alles hieronder gebeurt in de Console van de container (de LXC), als root. `dc` is de functie uit
 de README (Handige commando's): `docker compose` met precies de bestanden van het
-installatiescript. `/tank/platform` is `DATA_ROOT` uit `/opt/platform/.env`; zonder `/tank` is
-dat `/opt/platform/data/platform`. In de app heet die map `/data`.
+installatiescript. De data staat in `DATA_ROOT` uit `/opt/platform/.env`: `/tank/platform`, of
+zonder mount point `/tank` `/opt/platform/data/platform`. In de app heet die map `/data`. De
+commando's hieronder gebruiken `$DATA_ROOT`; zet die eerst in de Console (review golf 4, contract
+F3):
+
+```bash
+DATA_ROOT=$(sed -n 's/^DATA_ROOT=//p' /opt/platform/.env) && echo "$DATA_ROOT"
+```
 
 Het installatiescript staat, zolang fase 6 niet op `main` staat, op de branch:
 
@@ -28,8 +34,8 @@ Hieronder heet dat kortweg "het script"; een instelling zet je vóór `bash`, zo
    `aan` of `uit`, dan stopt het ook, met de vraag het goed te zetten.
 2. Ontbreekt `PLAATSEN` in `.env`, dan komt `PLAATSEN=aan` erbij. Een bestaande waarde blijft,
    tenzij je er zelf een meegeeft.
-3. **Plaatsnamen.** Bij `aan` haalt het de twee bronnen op naar `/tank/platform/geo`, als ze er nog
-   niet (goed) staan. Elk bestand komt eerst in `<naam>.part`, en pas op zijn plek als het
+3. **Plaatsnamen.** Bij `aan` haalt het de twee bronnen op naar `$DATA_ROOT/geo`, als ze er nog niet
+   (goed) staan. Elk bestand komt eerst in `<naam>.part`, en pas op zijn plek als het
    precies zoveel bytes heeft en de sha256 klopt (rechten 640, van uid 10001). Lukt het niet, dan
    zegt het script `Plaatsnamen: niet geladen` en gaat het door: dit stopt het script nooit.
 4. Office laat open documenten opslaan, zoals altijd.
@@ -48,7 +54,7 @@ Hieronder heet dat kortweg "het script"; een instelling zet je vóór `bash`, zo
 ## De reservekopie
 
 Vóór elke update maakt het script een kopie van de database:
-`/tank/platform/backup/platform-<schemaversie>-<tijd>.db`, bijvoorbeeld
+`$DATA_ROOT/backup/platform-<schemaversie>-<tijd>.db`, bijvoorbeeld
 `platform-0009-20261109T201502.123Z.db` (de tijd in UTC). De schemaversie is de alembic-head van
 de database op dat moment: `0009` voor 0.7.1, `0010` voor 0.8.0.
 
@@ -69,19 +75,19 @@ de database op dat moment: `0009` voor 0.7.1, `0010` voor 0.8.0.
   grootte van `platform.db`.
 - **Mislukt.** Dan is er geen kopie (ook geen `.part`), staat de melding boven de regel "De
   reservekopie van de database lukte niet", en stopt het script. De app draait zoals hij draaide.
-  Bijvoorbeeld een volle schijf (`df -h /tank`), of iets anders op de plek van de map `backup`.
-  Los het op en draai het script opnieuw.
+  Bijvoorbeeld een volle schijf (`df -h "$DATA_ROOT"`), of iets anders op de plek van de map
+  `backup`. Los het op en draai het script opnieuw.
 - **Eerste installatie** (nog geen database): geen kopie.
 
 Een kopie voor de hand, met de app van 0.8.0 (dezelfde tekst, dezelfde regels):
 
 ```bash
 dc exec -T platform python -m app.cli db-backup
-ls -l /tank/platform/backup
+ls -l "$DATA_ROOT/backup"
 ```
 
 Dit is een vangnet voor de update, geen back-up: de kopie staat op dezelfde schijf. De back-up
-blijft de ZFS-snapshot van `/tank/platform` (README, "Back-up").
+blijft de ZFS-snapshot van `/tank/platform` (README, "Back-up"; zonder `/tank` is er geen).
 
 **Een kopie terugzetten.** Alleen als de database zelf kapot is, of `db-downgrade` (hieronder)
 niet lukt. Alles wat na de kopie veranderde, staat er niet in: nieuwe mappen, uploads, delingen
@@ -91,7 +97,7 @@ mee, anders leest SQLite ze bij de kopie in:
 
 ```bash
 dc stop platform media
-cd /tank/platform
+cd "$DATA_ROOT"
 ls -l backup/
 mkdir -m 700 database-voor-terugzetten
 for f in platform.db platform.db-wal platform.db-shm; do [ ! -e "$f" ] || mv "$f" database-voor-terugzetten/; done
@@ -109,7 +115,7 @@ Gezichten en beeld rekent de app daarna opnieuw; de index van zoeken staat gewoo
 Het land komt uit de grenzen van Natural Earth 10m (publiek domein), de plaats uit GeoNames
 cities1000 (CC BY 4.0, de vermelding staat op `/over`): de dichtstbijzijnde plaats binnen 30 km,
 in hetzelfde land. Alles gebeurt in de container, zonder iets online op te zoeken. De bronnen
-(±16 MB) staan in `/tank/platform/geo`, met de tabel die de app ervan maakt (`places.sqlite`).
+(±16 MB) staan in `$DATA_ROOT/geo`, met de tabel die de app ervan maakt (`places.sqlite`).
 
 - **Aan of uit.** `PLAATSEN=aan` (standaard) of `PLAATSEN=uit` in `/opt/platform/.env`. Veranderen
   doe je met het script: `… | PLATFORM_BRANCH=… PLAATSEN=uit bash`, en weer aan met `PLAATSEN=aan`.
@@ -222,7 +228,7 @@ herbouw van de index, tussen twee stukken); zoeken blijft werken. Vergeet niet o
 ## Zoeken meten
 
 De meting maakt een boom van 100.000 bestanden in een tijdelijke map onder `/data/cache`
-(`/tank/platform/cache`), meet zoeken voor "eigenaar" (één persoon) en "alles" (30 personen), en
+(`$DATA_ROOT/cache`), meet zoeken voor "eigenaar" (één persoon) en "alles" (30 personen), en
 ruimt die map weer op, ook bij een fout of Ctrl-C. Er verandert niets aan de app of je bestanden.
 Het duurt een paar minuten en heeft even ±1,1 GB vrij nodig (plus 512 MB reserve; met minder
 begint hij niet). Doe het op een rustig moment: het vraagt veel van de CPU.
@@ -324,7 +330,7 @@ Per stap:
    `De database staat nu op revisie 0009.` Zegt het iets anders, stop dan, en zet de reservekopie
    terug (hierboven).
 4. **0.7.1 installeren** met het script van 0.7.1. Het bouwt het image van 0.7.1 en start het.
-   De reservekopieën en `/tank/platform/geo` blijven staan; 0.7.1 gebruikt ze niet.
+   De reservekopieën en `$DATA_ROOT/geo` blijven staan; 0.7.1 gebruikt ze niet.
 
 Wat blijft: je bestanden en hun versies, mappen, delingen, albums (zonder regels), accounts en 2FA,
 office en media. Wat weg is: de index (0.7.1 zoekt op naam zoals vroeger), plaatsnamen, plekken op

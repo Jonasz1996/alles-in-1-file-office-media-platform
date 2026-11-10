@@ -22,9 +22,10 @@ Op één Proxmox-container, vanuit de console: zie [infra/single/README.md](infr
 
 Fase 6 (straks 0.8.0: zoeken in de inhoud, plaatsnamen, duplicaten, personen) wordt nog gebouwd.
 Bijwerken gaat met hetzelfde commando als bij 0.7.1 hieronder. Het script maakt dan eerst een
-reservekopie van de database (`/tank/platform/backup`; mislukt die, dan stopt het vóór er iets
-verandert), haalt de plaatsnamen op (`PLAATSEN=aan`, ±16 MB; mislukt dat, dan gaat het gewoon
-door) en zegt aan het eind waar de kopie staat. Zoeken op naam werkt meteen; de inhoud van
+reservekopie van de database (`/tank/platform/backup`, zonder `/tank`
+`/opt/platform/data/platform/backup`; mislukt die, dan stopt het vóór er iets verandert), haalt
+de plaatsnamen op (`PLAATSEN=aan`, ±16 MB; mislukt dat, dan gaat het gewoon door) en zegt aan
+het eind waar de kopie staat. Zoeken op naam werkt meteen; de inhoud van
 documenten en de plekken en hashes van foto's komen op de achtergrond, te volgen op `/beheer` →
 **Zoeken en foto's** (Alt+9). Wat er gebeurt en de weg terug naar 0.7.1:
 [infra/single/README.md](infra/single/README.md) ("Bijwerken naar fase 6"); de stand lezen, de
