@@ -769,7 +769,9 @@ NEP
 # - Kan een container geen Debian-spiegel bereiken (de sandbox), dan krijgt python:3.12-slim een
 #   leeg pakket ffmpeg, met lege /usr/bin/ffmpeg en /usr/bin/ffprobe (het Dockerfile zet die op
 #   0711; uitvoeren geeft ENOEXEC, dus "ffmpeg ontbreekt"), zoals test_install_update.sh:53–55.
-#   Wat ffmpeg nodig heeft (de transcode, docker top, de belastingtest), bewijst CI.
+#   Net zo lege pakketten tesseract-ocr (met een lege /usr/bin/tesseract), -nld, -eng en -osd
+#   (X1): de worker meldt dan geen OCR. Wat ffmpeg en tesseract nodig hebben (de transcode, OCR,
+#   docker top, de belastingtest), bewijst CI.
 # - Staat er al een python:3.12-slim van een ander, dan leent de test die naam: het image krijgt
 #   even een tweede naam, en aan het eind (ook bij een fout) weer zijn eigen naam. Het image zelf
 #   blijft altijd.
@@ -986,7 +988,7 @@ SH
     FFMPEG=echt
   else
     FFMPEG=leeg
-    echo "  geen Debian-spiegel bereikbaar: een leeg pakket ffmpeg (en unattended-upgrades)"
+    echo "  geen Debian-spiegel bereikbaar: lege pakketten ffmpeg en tesseract (en unattended-upgrades)"
   fi
   if [ "$apt_ok" = 1 ] && [ -z "$ca" ]; then
     name_as mirror.gcr.io/library/python:3.12-slim python:3.12-slim
@@ -1006,7 +1008,11 @@ SH
       fi
       if [ "$apt_ok" = 0 ]; then
         echo "COPY leeg-pakket.sh /tmp/leeg-pakket.sh"
-        echo "RUN sh /tmp/leeg-pakket.sh ffmpeg /usr/bin/ffmpeg /usr/bin/ffprobe && rm /tmp/leeg-pakket.sh"
+        # tesseract met nld, eng en osd (X1, fase 6): de Dockerfile zet /usr/bin/tesseract op 0711
+        echo "RUN sh /tmp/leeg-pakket.sh ffmpeg /usr/bin/ffmpeg /usr/bin/ffprobe \\"
+        echo "    && sh /tmp/leeg-pakket.sh tesseract-ocr /usr/bin/tesseract \\"
+        echo "    && for p in tesseract-ocr-nld tesseract-ocr-eng tesseract-ocr-osd; do sh /tmp/leeg-pakket.sh \$p; done \\"
+        echo "    && rm /tmp/leeg-pakket.sh"
       fi
     } >"$WORK/build/python.Dockerfile"
     docker build -q -t python:3.12-slim -f "$WORK/build/python.Dockerfile" "$WORK/build" >/dev/null

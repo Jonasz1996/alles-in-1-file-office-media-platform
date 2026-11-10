@@ -994,7 +994,7 @@ SH
     ca=1
     echo "  de builds vertrouwen ook $EXTRA_CA (de proxy van deze omgeving)"
   fi
-  [ "$apt_ok" = 1 ] || echo "  geen Debian-spiegel bereikbaar: een leeg pakket ffmpeg (en unattended-upgrades)"
+  [ "$apt_ok" = 1 ] || echo "  geen Debian-spiegel bereikbaar: lege pakketten ffmpeg en tesseract (en unattended-upgrades)"
   if [ "$apt_ok" = 1 ] && [ -z "$ca" ]; then
     name_as mirror.gcr.io/library/python:3.12-slim python:3.12-slim
   else
@@ -1012,7 +1012,11 @@ SH
       fi
       if [ "$apt_ok" = 0 ]; then
         echo "COPY leeg-pakket.sh /tmp/leeg-pakket.sh"
-        echo "RUN sh /tmp/leeg-pakket.sh ffmpeg /usr/bin/ffmpeg /usr/bin/ffprobe && rm /tmp/leeg-pakket.sh"
+        # tesseract met nld, eng en osd (X1, fase 6): de Dockerfile zet /usr/bin/tesseract op 0711
+        echo "RUN sh /tmp/leeg-pakket.sh ffmpeg /usr/bin/ffmpeg /usr/bin/ffprobe \\"
+        echo "    && sh /tmp/leeg-pakket.sh tesseract-ocr /usr/bin/tesseract \\"
+        echo "    && for p in tesseract-ocr-nld tesseract-ocr-eng tesseract-ocr-osd; do sh /tmp/leeg-pakket.sh \$p; done \\"
+        echo "    && rm /tmp/leeg-pakket.sh"
       fi
     } >"$WORK/build/python.Dockerfile"
     docker build -q -t python:3.12-slim -f "$WORK/build/python.Dockerfile" "$WORK/build" >/dev/null
