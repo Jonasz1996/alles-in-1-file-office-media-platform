@@ -12,7 +12,9 @@ PLATFORM_OCR_ENABLED (jobs.active_lanes), één opdracht tegelijk, om de beurt p
   (daarboven code pages_limit); de woorden van elke pagina gaan meteen naar ocr_page (store.py),
   in een eigen korte transactie. Na RUN_BUDGET_S geeft een PDF zijn beurt weg (geen uitkomst:
   terug op wait, zonder poging) en gaat de volgende keer verder waar hij was: een PDF van 200
-  pagina's houdt de rij zo niet een kwartier bezet. Alle pagina's klaar: hun tekst naar
+  pagina's houdt de rij zo niet een kwartier bezet. Net zo na elke pagina als de rij op pauze
+  staat, de app wijkt (analysis.busy_elsewhere), OCR uit staat op /beheer, of de index een batch
+  heeft (review golf 4, uitrol F3 en F1). Alle pagina's klaar: hun tekst naar
   blob_text.ocr (analysis.write_text), en search.ready (step ocr) naar wie de PDF ziet. Een pagina
   die te traag is (too_slow) of een kapot beeld geeft (ocr_bad_image), krijgt een lege rij en de
   code; een nieuw verzoek leest hem opnieuw (store.forget_failed_pages).
@@ -25,6 +27,10 @@ PLATFORM_OCR_ENABLED (jobs.active_lanes), één opdracht tegelijk, om de beurt p
   Bij het starten kijkt hij ook (on_start).
 - **Uit op /beheer** (Setting "ocr" {"on": false}, het deel ocr van /admin/search): de pomp wijkt
   (jobs.Defer), de rijen blijven op wait.
+- **De index gaat vóór** (review golf 4, uitrol F1): Op.TEXT en Op.OCR delen de ene plaats
+  background van de worker. Heeft de stap text een batch met de worker (batch.index_first), dan
+  begint OCR geen nieuwe opdracht (jobs.Defer INDEX_DEFER_S, of midden in een PDF de beurt weg);
+  de index wacht zo hooguit de pagina die OCR nog leest.
 - **"Tekst in foto's herkennen" aan** (prefs.register_ocr_photos): de job ocr.photos zet de foto's
   van die eigenaar zonder tekst in de rij, per PHOTOS_CHUNK. Bij het starten ook, voor iedereen met
   het aan (een foto met een inhoud die er al was, meldt files.add_ref niet). Uit: de rij leest
@@ -76,6 +82,7 @@ RUN_BUDGET_S = 90.0  # daarna geeft een PDF zijn beurt weg (de rest later)
 # Eén pagina: kind 1 (hooguit 300 s), twee herkenningen van 60 s en de OSD, met wat ruimte
 PAGE_LIMIT_S = 480.0
 WORKER_DEFER_S = 30.0  # de worker is druk of weg
+INDEX_DEFER_S = 5.0  # de index heeft een batch met de worker: die gaat vóór (uitrol F1)
 OFF_DEFER_S = 300.0  # OCR staat uit op /beheer
 RECHECK = "ocr.recheck"
 RECHECK_S = 600.0
@@ -261,18 +268,38 @@ async def _ocr(settings: Settings, path: Path, kind: str, page: int) -> tuple[di
     args = OcrArgs(kind=kind, page=page, max_pixels=settings.preview_max_pixels, **LIMITS)
     words: list[list] = []
     summary: dict = {}
-    async with asyncio.timeout(PAGE_LIMIT_S):
-        job, _ = await client.call(Op.OCR, args, source=path)
-        async with job:
-            async for event in job.events():
-                data = event.get("data")
-                if event.get("ev") != "result" or not isinstance(data, dict):
-                    continue
-                if "part" in data:
-                    words.extend(w for w in data.get("words") or [] if _word(w))
-                else:
-                    summary = data
+    _index_first()
+    with batch.ocr_call():
+        async with asyncio.timeout(PAGE_LIMIT_S):
+            job, _ = await client.call(Op.OCR, args, source=path)
+            async with job:
+                async for event in job.events():
+                    data = event.get("data")
+                    if event.get("ev") != "result" or not isinstance(data, dict):
+                        continue
+                    if "part" in data:
+                        words.extend(w for w in data.get("words") or [] if _word(w))
+                    else:
+                        summary = data
     return summary, words
+
+
+def _index_first() -> None:
+    """Heeft de index (de stap text) een batch met de worker, dan begint OCR niets nieuws: de
+    plaats background is van hen samen, en de index gaat vóór (review golf 4, uitrol F1)."""
+    if batch.index_running():
+        raise jobs.Defer(INDEX_DEFER_S)
+
+
+async def _must_yield(settings: Settings) -> bool:
+    """Tussen twee pagina's van een PDF: moet de pomp nu wijken? De index heeft een batch (die
+    gaat vóór, uitrol F1), de rij staat op pauze, de app wijkt voor omzettingen of OnlyOffice
+    (analysis.busy_elsewhere), of OCR staat uit op /beheer (uitrol F3). analysis.pump en
+    run_batch kijken dat alleen bij het begin van een batch."""
+    if batch.index_running() or LANE in analysis.PAUSED or analysis.busy_elsewhere(settings):
+        return True
+    async with _maker(settings)() as db:
+        return not await switched_on(db)
 
 
 def _word(w: Any) -> bool:
@@ -296,7 +323,9 @@ async def _survey(settings: Settings, sha: str, path: Path) -> Survey | Outcome:
         log.warning("ocr: de inhoud %s is niet te openen", sha[:12])
         return Outcome("failed")
     try:
-        ran = await batch.via_worker([fd], ["pdf"], max_chars=HAS_TEXT)
+        _index_first()
+        with batch.ocr_call():
+            ran = await batch.via_worker([fd], ["pdf"], max_chars=HAS_TEXT)
     except client.WorkerFailed as exc:
         log.warning("ocr: de tekst van %s lezen mislukte (%s)", sha[:12], exc.args[0])
         return Outcome("failed")
@@ -335,7 +364,7 @@ async def _run_pdf(settings: Settings, sha: str, path: Path) -> Outcome | None:
     for n in pages:
         if n in done:
             continue
-        if read and time.monotonic() - start > RUN_BUDGET_S:
+        if read and (time.monotonic() - start > RUN_BUDGET_S or await _must_yield(settings)):
             return None  # de beurt weg (na minstens één pagina): de volgende keer verder
         read += 1
         summary, words = await _ocr(settings, path, "pdf", n)

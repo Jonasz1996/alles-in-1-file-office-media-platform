@@ -19,10 +19,11 @@ Dit bestand importeert geen lezer (test_extract_no_pdfium_in_app.py).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import signal
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 
 from app.extract import frame
@@ -35,6 +36,50 @@ log = logging.getLogger("platform.extract")
 # De worker stopt een opdracht text na 900 s (server.TIMEOUT); de app wacht iets langer
 LIMIT_S = 930.0
 READ_LIMIT = 1 << 20  # de buffer van de StreamReader (readexactly leest ook meer)
+
+
+# --- de plaats background van de worker: de index gaat vóór OCR ----------------------------------
+#
+# Op.TEXT (de index) en Op.OCR delen de ene plaats background van de worker (Keuze 12, Keuze 22).
+# Zonder afspraak pakte de pomp van ocr na elke pagina meteen de volgende, en vond de index de
+# plaats bijna altijd bezet (busy, dan WORKER_DEFER_S later opnieuw): een grote achterstand van
+# OCR hield de index zo uren op (review golf 4, uitrol F1). Daarom: zolang de stap text een batch
+# heeft (index_first), begint OCR geen nieuwe opdracht in de worker (ocr/step.py wijkt), en
+# wacht text op een pagina die OCR nog leest (ocr_holds). Zo wacht de index hooguit één pagina.
+_index = 0  # batches van de stap text die nu de worker gebruiken
+_ocr = 0  # opdrachten van OCR die nu in de worker lopen
+
+
+@contextlib.contextmanager
+def index_first() -> Iterator[None]:
+    """Om een batch van de stap text met de worker: OCR begint zolang niets nieuws."""
+    global _index
+    _index += 1
+    try:
+        yield
+    finally:
+        _index -= 1
+
+
+def index_running() -> bool:
+    """Heeft de stap text nu een batch met de worker (dan wijkt OCR)?"""
+    return _index > 0
+
+
+@contextlib.contextmanager
+def ocr_call() -> Iterator[None]:
+    """Om een opdracht van OCR in de worker: een pagina of foto, of welke pagina's scans zijn."""
+    global _ocr
+    _ocr += 1
+    try:
+        yield
+    finally:
+        _ocr -= 1
+
+
+def ocr_holds() -> bool:
+    """Loopt er nu een opdracht van OCR in de worker (dan is de plaats na die pagina vrij)?"""
+    return _ocr > 0
 
 
 @dataclass

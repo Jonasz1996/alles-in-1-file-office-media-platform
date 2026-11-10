@@ -915,6 +915,13 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
       (`429 ocr_limit`).
     - Hooguit 200 pagina's per document. Eén opdracht tegelijk in de rij `ocr`, om de beurt per
       eigenaar (Keuze 20), alleen als media aan staat en OCR aan staat.
+    - **De index gaat vóór** (review golf 4, uitrol F1). `ocr` en `text` delen de ene plaats
+      `background` van de worker. Heeft de stap `text` een batch met de worker, dan begint OCR
+      geen nieuwe pagina (ook geen overzicht van de pagina's), en wacht `text` op de pagina die
+      OCR nog leest. Zo wacht de index hooguit één pagina, en houdt een achterstand van OCR hem
+      niet op. Geen eigen plaats voor OCR: die zou de grens voor live werk (`live_max`) met één
+      verlagen. Na elke pagina kijkt de pomp ook naar pauze, wijken (Keuze 50) en uit op
+      `/beheer` (uitrol F3).
 24. **tesseract in het image** (herzien in r3: Jonas koos ja). In de apt-RUN van de Dockerfile
     (regel 19–21) komen `tesseract-ocr tesseract-ocr-nld tesseract-ocr-eng tesseract-ocr-osd`,
     en in de RUN van media (regel 42–45) `chmod 0711 /usr/bin/tesseract`. **Herzien na S5:**
