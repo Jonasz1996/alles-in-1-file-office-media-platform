@@ -4,7 +4,9 @@ rebuild.check() 200 willekeurige nodes van de index met de bron. De uitkomst sta
 met de hand (de knop "Index herbouwen", of app.cli search-triggers; runbook zoeken.md).
 
 - Opruimwerk van de Runner (jobs.housekeeping), elk uur: is de vorige uitkomst een week oud, of
-  er is er nog geen, dan nu. De week telt zo ook over een herstart heen.
+  er is er nog geen, dan nu. De week telt zo ook over een herstart heen. Na een verschil kijkt
+  hij het volgende uur opnieuw: na de herbouw is de regel op /beheer dan binnen een uur weer
+  groen, of het verschil komt terug.
 - Niet tijdens de pauze van /beheer (admin.apply_pause zet de rij index stil), niet zonder FTS5
   (de motor is dan like, ook op PostgreSQL) en niet tijdens een herbouw: dan het volgende uur
   opnieuw, zonder uitkomst. Ook zonder nodes geen uitkomst: een lege database is niets
@@ -46,6 +48,9 @@ NAME = "search.check"  # jobs.housekeeping
 SAMPLE = 200  # nodes per keer (bouwontwerp: "een wekelijkse job draait hem met 200 nodes")
 EVERY = timedelta(days=7)
 TICK = 3600.0  # zo vaak kijkt het opruimwerk of het weer tijd is
+# Na een verschil: bij het volgende uur van het opruimwerk opnieuw, niet pas na een week. Dat uur
+# telt vanaf het begin van de vorige controle, de tijd van de uitkomst vanaf zijn eind: speling.
+AGAIN = timedelta(seconds=TICK) - timedelta(minutes=10)
 
 
 def _stored(value: Any) -> AdminCheck | None:
@@ -66,13 +71,16 @@ async def last(db: AsyncSession) -> AdminCheck | None:
 
 
 def _due(found: AdminCheck | None, moment: datetime) -> bool:
+    """Is het tijd? Zonder uitkomst meteen; na een verschil het volgende uur (AGAIN): na de
+    herbouw die /beheer aanraadt, staat er dan binnen een uur of het verschil terugkomt (review
+    I1, F2/B2); anders na een week."""
     if found is None:
         return True
     try:
         at = datetime.fromisoformat(found.at)
     except ValueError:
         return True
-    return at.tzinfo is None or moment - at >= EVERY
+    return at.tzinfo is None or moment - at >= (AGAIN if found.bad else EVERY)
 
 
 def _check(url: str) -> rebuild.Checked:

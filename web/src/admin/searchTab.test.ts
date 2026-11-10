@@ -222,6 +222,9 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     expect(fout).toContain('<dd data-search="check"><span class="badge degraded">');
     expect(field(fout, "check")).toBe(`${fmt.dateTime(at)}: 3 verschillen met de bron (200 vergeleken)`);
     expect(fout).toContain(help);
+    // Na een verschil kijkt de app elk uur opnieuw (weekcheck.AGAIN): na de herbouw ziet Jonas binnen
+    // een uur of het verschil terugkomt
+    expect(fout).toContain("Na een verschil controleert de app elk uur opnieuw.");
     expect(fout).toContain("python -m app.cli search-triggers");
     // Enkelvoud, en duizendtallen
     expect(checkText({ at, sampled: 1, bad: 0 })).toBe(`${fmt.dateTime(at)}: 1 bestand vergeleken, geen verschil`);
@@ -345,6 +348,7 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     const fout = view(state({ check: { at, sampled: 200, bad: 1 } }));
     expect(field(fout, "check")).toBe(`${fmt.dateTime(at)}: 1 difference from the source (200 compared)`);
     expect(fout).toContain("Rebuild the index (the button above).");
+    expect(fout).toContain("After a difference the app checks again every hour.");
     expect(fout).not.toMatch(/admin\.search|\{[a-z]+\}/);
   });
 });

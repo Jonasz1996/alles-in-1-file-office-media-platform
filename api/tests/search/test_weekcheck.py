@@ -5,7 +5,8 @@ GET /admin/search (AdminSearch.check).
 Wat hier vastligt:
 - de eerste keer meteen, daarna pas na een week; de tijd staat in Setting "search_check", dus
   ook over een herstart heen; de uitkomst staat in GET /admin/search;
-- een verschil komt op /beheer, met in het log alleen aantallen (geen num, naam of tekst);
+- een verschil komt op /beheer, met in het log alleen aantallen (geen num, naam of tekst); na
+  een verschil kijkt hij het volgende uur opnieuw, zodat de regel na de herbouw weer groen wordt;
 - niet tijdens de pauze van /beheer, niet tijdens een herbouw, niet zonder FTS5 of op
   PostgreSQL, en zonder nodes geen uitkomst;
 - de controle loopt in een eigen draad, met 200 nodes, en kan niet schrijven (query_only): hij
@@ -133,6 +134,40 @@ async def test_een_verschil_komt_op_beheer_met_alleen_aantallen(client, settings
     assert [r.levelno for r in regels] == [logging.WARNING]
     tekst = regels[0].getMessage().lower()
     assert "brief" not in tekst and "ander" not in tekst and str(found.bad) in tekst
+
+
+async def test_na_een_verschil_het_volgende_uur_opnieuw(client, settings):
+    """Na een verschil doet Jonas wat /beheer zegt (de index herbouwen, of de triggers terug).
+    Daarna moet de regel binnen een uur kloppen: groen, of het verschil komt terug. Eerst keek
+    de controle pas na een week weer, en bleef het oude verschil zo lang staan (review I1,
+    F2/B2). Zonder verschil blijft het een week."""
+    w = await W.bouw_async(settings)
+    engine = get_engine(settings)
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql("DROP TRIGGER node_au_text")
+        await conn.execute(
+            update(Node)
+            .where(Node.id == w.ids["brief"])
+            .values(name="Ander.txt", search_name="ander.txt")
+        )
+    rood = await weekcheck.run(settings)
+    assert rood is not None and rood.bad > 0
+    # Wat checkHelp zegt: de triggers terug en de herbouw (app.cli search-triggers)
+    await rebuild.restore_triggers(engine)
+    await rebuild.rebuild(engine, pause=0)
+    assert (await rebuild.check(engine, sample=100_000)).bad == []
+    # Niet meteen opnieuw; wel bij het volgende uur van het opruimwerk (dat telt vanaf het begin
+    # van de vorige controle, de tijd van de uitkomst vanaf zijn eind: een minuut speling)
+    assert await weekcheck.run(settings) is None
+    uur = now() - timedelta(seconds=weekcheck.TICK) + timedelta(minutes=1)
+    await zet_tijd(settings, rood.model_dump(), uur)
+    groen = await weekcheck.run(settings)
+    assert groen is not None and groen.bad == 0 and groen.sampled == rood.sampled
+    ada = await kop(client, "ada")
+    assert (await client.get(ADMIN, headers=ada)).json()["check"] == groen.model_dump()
+    # Zonder verschil pas weer na een week
+    await zet_tijd(settings, groen.model_dump(), uur)
+    assert await weekcheck.run(settings) is None
 
 
 async def test_niet_tijdens_de_pauze(client, settings, monkeypatch):

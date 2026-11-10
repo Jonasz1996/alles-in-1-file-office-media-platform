@@ -752,7 +752,7 @@ const en: Translation<typeof nl> = {
         other: "{time}: {bad} differences from the source ({count} compared)",
       },
       checkHelp:
-        "Rebuild the index (the button above). If the difference comes back after that, restore the triggers: python -m app.cli search-triggers (search runbook).",
+        "Rebuild the index (the button above). After a difference the app checks again every hour. If the difference comes back after the rebuild, restore the triggers: python -m app.cli search-triggers (search runbook).",
     },
     rebuild: {
       title: "Rebuilding",
