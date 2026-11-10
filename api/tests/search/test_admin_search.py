@@ -582,6 +582,43 @@ async def test_mislukte_opnieuw_in_de_rij(client, admin, settings):
     assert (await client.get(ADMIN, headers=headers)).json()["index"]["failed"] == 0
 
 
+async def test_een_mislukte_ocr_gaat_terug_in_de_rij_van_ocr(client, admin, settings):
+    """Golf 4: "Mislukte opnieuw" zet ook een mislukte ocr (X1) terug op wait, en wekt de pomp
+    van de rij ocr (niet die van index). De lijst van mislukte toont hem met stap ocr."""
+    from app.ocr import step as ocr_step
+
+    if Step.OCR not in analysis.registered():  # een eerdere test deed analysis.reset()
+        analysis.register_step(
+            Step.OCR,
+            ocr_step.LANE,
+            ocr_step.eligible,
+            ocr_step.run_one,
+            batch=ocr_step.run_batch,
+            size=ocr_step.batch_size,
+        )
+    headers, _ = admin
+    await add(settings, Blob(sha256=sha(0), size=1, mime="application/pdf"))
+    await add(
+        settings,
+        Analysis(blob_sha=sha(0), step="ocr", version=1, state="failed", tries=3, code="ocr_x"),
+    )
+    items = (await client.get(f"{ADMIN}/failed", headers=headers)).json()["items"]
+    assert [(i["sha"], i["step"], i["code"]) for i in items] == [(sha(0), "ocr", "ocr_x")]
+    r = await client.post(f"{ADMIN}/retry", headers=headers)
+    assert r.status_code == 202
+    async with maker(settings)() as s:
+        row = (await s.execute(sa.select(Analysis))).scalars().one()
+        pompen = {
+            kind
+            for (kind,) in await s.execute(sa.select(Job.type).where(Job.status == "queued"))
+            if kind.startswith("analysis.")
+        }
+    assert (row.step, row.state, row.tries, row.code) == ("ocr", "wait", 0, None)
+    assert pompen == {analysis.pump_type(ocr_step.LANE)}
+    got = (await client.get(ADMIN, headers=headers)).json()
+    assert got["index"]["failed"] == 0 and got["ocr"]["pages_queued"] == 1
+
+
 # --- search.progress en het starten --------------------------------------------------------------
 
 
