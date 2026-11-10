@@ -525,6 +525,19 @@ FOUTEN = [
     ),
     ("photos/api.ts", "AlbumOut", "  rule: AlbumRuleInfo | null;", "  rule: AlbumRuleInfo;"),
     ("photos/api.ts", "AlbumPhotoPage", "  items: AlbumPhotoItem[];", "  items: PhotoItem[];"),
+    # I1: de wekelijkse search-check
+    (
+        "admin/searchApi.ts",
+        "AdminSearch",
+        "  check: { at: string; sampled: number; bad: number } | null;",
+        "  check: { at: string; sampled: number; bad: number };",
+    ),
+    (
+        "admin/searchApi.ts",
+        "AdminSearch",
+        "  check: { at: string; sampled: number; bad: number } | null;",
+        "  check: { at: string; sampled: number; bad: string } | null;",
+    ),
 ]
 
 

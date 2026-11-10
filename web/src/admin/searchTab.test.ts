@@ -59,6 +59,7 @@ function state(over: Partial<AdminSearch> = {}): AdminSearch {
     bench: { at: "2026-11-09T10:00:00+00:00", p95_owner_ms: 12.5, p95_all_ms: 48 },
     faces: null,
     beeld: null,
+    check: null,
     ...over,
   };
 }

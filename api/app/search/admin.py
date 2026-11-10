@@ -21,7 +21,8 @@ Wat GET /admin/search laat zien (AdminSearch, de vorm van §3.4 en web/src/admin
   geladen;
 - bench: de uitkomst van app.cli bench --los (app/search/benchlos.py, Keuze 54) in
   <data>/cache/zoekbench.json, of None;
-- faces en beeld: de blokken van X2 en X3 via search.hooks.admin_block; None zonder hen.
+- faces en beeld: de blokken van X2 en X3 via search.hooks.admin_block; None zonder hen;
+- check: de laatste wekelijkse search-check (app/search/weekcheck.py, I1), of None.
 
 De pauze en een herbouw van hash of geo staan in Setting "search" ({"paused": bool, "rebuild":
 {"what", "started_at"}}), zodat ze een herstart overleven. Bij het starten (search.hooks
@@ -54,7 +55,7 @@ from app.extract import step as text_step
 from app.geo import load as geo_load
 from app.models import Analysis, Blob, BlobHash, Setting, User, now
 from app.routers.stubs import not_built
-from app.search import benchlos, hooks, perhour, rebuild
+from app.search import benchlos, hooks, perhour, rebuild, weekcheck
 from app.search import engine as search_engine
 from app.search.types import (
     EVENT_SEARCH_PROGRESS,
@@ -272,6 +273,7 @@ async def state(db: AsyncSession, settings: Settings) -> AdminSearch:
         bench=bench,
         faces=await hooks.admin_block("faces", db),
         beeld=await hooks.admin_block("beeld", db),
+        check=await weekcheck.last(db),
     )
 
 

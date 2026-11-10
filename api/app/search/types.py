@@ -255,6 +255,15 @@ class AdminBench(BaseModel):
     p95_all_ms: float
 
 
+class AdminCheck(BaseModel):
+    """De wekelijkse search-check (Keuze 12, R4; app/search/weekcheck.py): wanneer, hoeveel
+    nodes vergeleken en hoeveel verschillen. Nooit een num, naam of tekst."""
+
+    at: str
+    sampled: int
+    bad: int
+
+
 # --- De container analyse en de blokken van X2 en X3 (Z0b; Keuze 59, 67 en 82) ---
 
 # De stand van de container analyse (Keuze 59), gedeeld door gezichten en beeld: off als
@@ -369,7 +378,8 @@ class AdminBeeld(BaseModel):
 
 class AdminSearch(BaseModel):
     """GET en PATCH /admin/search: de stand van Keuze 51. faces en beeld (Z0b): None zolang X2
-    en X3 er niet zijn."""
+    en X3 er niet zijn. check (I1): de laatste wekelijkse search-check, None zolang er geen
+    was."""
 
     engine: EngineName
     paused: bool
@@ -382,6 +392,7 @@ class AdminSearch(BaseModel):
     bench: AdminBench | None
     faces: AdminFaces | None = None
     beeld: AdminBeeld | None = None
+    check: AdminCheck | None = None
 
 
 class AdminSearchPatch(BaseModel):

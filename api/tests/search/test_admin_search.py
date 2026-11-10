@@ -87,6 +87,7 @@ async def leeg(settings) -> dict:
         "bench": None,
         "faces": None,
         "beeld": None,
+        "check": None,
     }
 
 
