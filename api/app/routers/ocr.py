@@ -15,8 +15,14 @@ POST /files/{id}/ocr zet het bestand vooraan in de rij ocr (app/ocr/step.py) en 
 - 429 ocr_limit: per gebruiker hooguit ocr_per_hour (20) verzoeken per uur en ocr_pages_per_day
   (200) pagina's per dag (de laatste 24 uur). Een foto telt als één pagina; een PDF als zijn
   aantal pagina's (uit de preview; hooguit ocr_max_pages, en nooit meer dan op een dag mag: één
-  document kan dus altijd). Alleen een verzoek dat doorgaat (202) telt. De tellers staan in het
-  geheugen van dit proces, zoals de andere grenzen per gebruiker (security.RateLimiter).
+  document kan dus altijd). Weet de preview het aantal (nog) niet, dan telt hij als het meeste
+  dat de stap kan lezen: min(ocr_max_pages, ocr_pages_per_day). Alleen een verzoek dat doorgaat
+  (202) telt. De tellers staan in het geheugen van dit proces, zoals de andere grenzen per
+  gebruiker (security.RateLimiter).
+
+De plek wordt in één stap gecontroleerd en genomen (reserve, zonder await ertussen), vóór het
+eerste await na de controle; faalt het verzoek daarna, dan geeft release hem terug. Zo kunnen
+verzoeken die tegelijk binnenkomen samen niet over de grens (review golf 4, veilig F1).
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections import deque
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response
@@ -50,39 +57,58 @@ UNSUPPORTED = {
 }
 
 
+@dataclass(eq=False)
+class Slot:
+    """Eén verzoek dat telt: wanneer, en voor hoeveel pagina's. Vergeleken op wie het is (eq=False),
+    zodat release precies deze weghaalt."""
+
+    moment: float
+    pages: int
+
+
 class Limits:
     """Per gebruiker de verzoeken van het laatste uur en de pagina's van de laatste 24 uur."""
 
     def __init__(self) -> None:
-        self._requests: dict[str, deque[float]] = {}
-        self._pages: dict[str, deque[tuple[float, int]]] = {}
+        self._requests: dict[str, deque[Slot]] = {}
+        self._pages: dict[str, deque[Slot]] = {}
 
-    def _trim(self, user: str, moment: float) -> tuple[deque[float], deque[tuple[float, int]]]:
+    def _trim(self, user: str, moment: float) -> tuple[deque[Slot], deque[Slot]]:
         requests = self._requests.setdefault(user, deque())
         pages = self._pages.setdefault(user, deque())
-        while requests and moment - requests[0] >= HOUR:
+        while requests and moment - requests[0].moment >= HOUR:
             requests.popleft()
-        while pages and moment - pages[0][0] >= DAY:
+        while pages and moment - pages[0].moment >= DAY:
             pages.popleft()
         return requests, pages
 
-    def check(self, user: str, settings: Settings, pages: int) -> None:
-        """429 ocr_limit als er dit uur al genoeg verzoeken waren, of als deze pagina's er
-        vandaag niet meer bij passen."""
-        requests, done = self._trim(user, time.monotonic())
-        used = sum(n for _, n in done)
+    def reserve(self, user: str, settings: Settings, pages: int) -> Slot:
+        """Controleren en nemen in één stap (synchroon: geen ander verzoek ertussen). 429
+        ocr_limit als er dit uur al genoeg verzoeken waren, of als deze pagina's er vandaag niet
+        meer bij passen."""
+        moment = time.monotonic()
+        requests, done = self._trim(user, moment)
+        used = sum(slot.pages for slot in done)
+        pages = max(1, pages)
         if len(requests) >= settings.ocr_per_hour or used + pages > settings.ocr_pages_per_day:
             raise errors.fail(
                 429,
                 "ocr_limit",
                 "Je hebt al veel tekst laten herkennen; probeer het later opnieuw",
             )
+        slot = Slot(moment, pages)
+        requests.append(slot)
+        done.append(slot)
+        return slot
 
-    def add(self, user: str, pages: int) -> None:
-        moment = time.monotonic()
-        requests, used = self._trim(user, moment)
-        requests.append(moment)
-        used.append((moment, max(1, pages)))
+    def release(self, user: str, slot: Slot) -> None:
+        """Een verzoek dat toch niet doorging, telt niet: zijn plek komt terug."""
+        for queue in (self._requests.get(user), self._pages.get(user)):
+            if queue is not None:
+                try:
+                    queue.remove(slot)
+                except ValueError:
+                    pass  # al weg (ouder dan het venster)
 
     def reset(self) -> None:
         """Alleen voor tests."""
@@ -134,23 +160,25 @@ async def request_ocr(
         if (body or 0) >= ocr_step.HAS_TEXT or (row is not None and row.code == "ocr_has_text"):
             raise errors.fail(409, "ocr_has_text", "Dit document heeft al genoeg tekst")
         meta = blob.preview_meta if blob is not None and isinstance(blob.preview_meta, dict) else {}
-        count = meta.get("pages") if isinstance(meta.get("pages"), int) else 1
-        pages = min(
-            max(1, count), max(1, settings.ocr_max_pages), max(1, settings.ocr_pages_per_day)
-        )
+        most = min(max(1, settings.ocr_max_pages), max(1, settings.ocr_pages_per_day))
+        count = meta.get("pages")
+        pages = min(max(1, count), most) if isinstance(count, int) else most
     else:
         asked = await ocr_store.photo_row(session, node.id)
         if asked is not None and asked.words == ocr_store.PENDING:
             if row is not None and row.state in OPEN:
                 raise running
         pages = 1
-    limits.check(str(user.id), settings, pages)
-    if kind == "pdf":
-        await ocr_step.queue_pdf(session, sha, user.id)
-    else:
-        await ocr_store.request_photo(session, node)
-        await ocr_step.queue_photo(session, sha, user.id, first=True)
-    await session.commit()
-    limits.add(str(user.id), pages)
+    slot = limits.reserve(str(user.id), settings, pages)
+    try:
+        if kind == "pdf":
+            await ocr_step.queue_pdf(session, sha, user.id)
+        else:
+            await ocr_store.request_photo(session, node)
+            await ocr_step.queue_photo(session, sha, user.id, first=True)
+        await session.commit()
+    except BaseException:
+        limits.release(str(user.id), slot)
+        raise
     jobs.kick([ocr_step.LANE])
     return Response(status_code=202)

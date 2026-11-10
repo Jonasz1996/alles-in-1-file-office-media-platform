@@ -7,11 +7,13 @@
 - 409 ocr_running als hij al wacht of gelezen wordt; 409 ocr_has_text voor een PDF met al
   ≥ 200.000 tekens tekst; 503 ocr_off als OCR niet draait;
 - 429 ocr_limit: per gebruiker hooguit 20 verzoeken per uur en 200 pagina's per dag; alleen een
-  verzoek dat doorgaat, telt.
+  verzoek dat doorgaat, telt; verzoeken die tegelijk komen, samen ook niet meer (review golf 4,
+  veilig F1); een PDF zonder bekend aantal pagina's telt als het meeste dat de stap leest.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
@@ -64,6 +66,9 @@ async def test_een_foto_alleen_de_eigenaar_een_pdf_met_schrijfrecht(client, mens
     foto_schrijven = await upload(client, eva, "b.jpg", nep.photo("b"), schrijft)
     pdf_lezen = await upload(client, eva, "a.pdf", pdf_scan("alezen"), leest)
     pdf_schrijven = await upload(client, eva, "b.pdf", pdf_scan("bschrijven"), schrijft)
+    # Eén pagina, zoals de preview het vindt (zonder telt een PDF als het meeste, zie onder)
+    for data in (pdf_scan("alezen"), pdf_scan("bschrijven")):
+        await set_pages(aan, nep.sha(data), 1)
     niet_er = await ask(client, bram, str(uuid.uuid4()))
     assert niet_er.status_code == 404
     # Een foto van Eva: voor Bram 404, net als iets dat er niet is (ook met schrijfrecht)
@@ -95,6 +100,7 @@ async def test_409_als_hij_al_wacht_en_weer_als_hij_klaar_is(client, mensen, aan
     (eva, _), _ = mensen
     foto = await upload(client, eva, "bon.jpg", nep.photo("dubbel"))
     pdf = await upload(client, eva, "scan.pdf", pdf_scan("dubbel"))
+    await set_pages(aan, nep.sha(pdf_scan("dubbel")), 1)
     for node in (foto, pdf):
         assert (await ask(client, eva, node["id"])).status_code == 202
         r = await ask(client, eva, node["id"])
@@ -183,3 +189,61 @@ async def test_429_na_200_pagina_s_per_dag(client, mensen, aan, monkeypatch):
     await nep.set_row(aan, nep.sha(nep.photo("dag")), "done")
     r = await ask(client, eva, foto["id"])
     assert r.status_code == 429 and code_of(r) == "ocr_limit"
+
+
+async def test_tegelijk_niet_meer_dan_de_grens(client, mensen, aan):
+    """Review golf 4 (veilig F1): verzoeken die tegelijk binnenkomen, kunnen samen niet meer dan
+    de grens. 40 tegelijk voor 40 foto's: precies 20 keer 202, de rest 429; 10 tegelijk voor een
+    PDF van 150 pagina's: precies één keer 202 (een tweede past niet meer in 200 per dag)."""
+    (eva, _), (bram, _) = mensen
+    fotos = [await upload(client, eva, f"f{i}.jpg", nep.photo(f"tegelijk{i}")) for i in range(40)]
+    rs = await asyncio.gather(*(ask(client, eva, node["id"]) for node in fotos))
+    codes = sorted(r.status_code for r in rs)
+    assert codes == [202] * 20 + [429] * 20
+    assert all(code_of(r) == "ocr_limit" for r in rs if r.status_code == 429)
+    pdfs = []
+    for i in range(10):
+        data = pdf_scan(f"tegelijk{i}")
+        pdfs.append(await upload(client, bram, f"p{i}.pdf", data))
+        await set_pages(aan, nep.sha(data), 150)
+    rs = await asyncio.gather(*(ask(client, bram, node["id"]) for node in pdfs))
+    assert sorted(r.status_code for r in rs) == [202] + [429] * 9
+
+
+async def test_een_verzoek_dat_faalt_geeft_zijn_plek_terug(client, mensen, aan, monkeypatch):
+    """Alleen een verzoek dat doorgaat (202), telt: faalt het na de grens (hier de rij), dan is
+    zijn plek weer vrij."""
+    (eva, _), _ = mensen
+    data = pdf_scan("faalt")
+    node = await upload(client, eva, "faalt.pdf", data)
+    await set_pages(aan, nep.sha(data), 200)
+    echt = ocr_router.ocr_step.queue_pdf
+
+    async def kapot(*args, **kwargs):
+        raise RuntimeError("de rij is stuk")
+
+    monkeypatch.setattr(ocr_router.ocr_step, "queue_pdf", kapot)
+    with pytest.raises(RuntimeError):
+        await ask(client, eva, node["id"])
+    monkeypatch.setattr(ocr_router.ocr_step, "queue_pdf", echt)
+    assert (await ask(client, eva, node["id"])).status_code == 202
+
+
+async def test_een_pdf_zonder_bekend_aantal_telt_als_het_meeste(client, mensen, aan):
+    """Weet de preview het aantal pagina's (nog) niet, dan telt een PDF als
+    min(ocr_max_pages, ocr_pages_per_day): de stap leest er hooguit zoveel. Eén kan altijd;
+    daarna past er die dag niets meer bij."""
+    (eva, _), (bram, _) = mensen
+    onbekend = [await upload(client, eva, f"o{i}.pdf", pdf_scan(f"onbekend{i}")) for i in range(2)]
+    assert (await ask(client, eva, onbekend[0]["id"])).status_code == 202
+    r = await ask(client, eva, onbekend[1]["id"])
+    assert r.status_code == 429 and code_of(r) == "ocr_limit"
+    foto = await upload(client, eva, "na.jpg", nep.photo("na-onbekend"))
+    r = await ask(client, eva, foto["id"])
+    assert r.status_code == 429 and code_of(r) == "ocr_limit"
+    # Met een kleinere grens per document telt hij als ocr_max_pages
+    klein = aan.model_copy(update={"ocr_max_pages": 50})
+    app.dependency_overrides[get_settings] = lambda: klein
+    vier = [await upload(client, bram, f"b{i}.pdf", pdf_scan(f"bram{i}")) for i in range(5)]
+    codes = [(await ask(client, bram, node["id"])).status_code for node in vier]
+    assert codes == [202, 202, 202, 202, 429]
