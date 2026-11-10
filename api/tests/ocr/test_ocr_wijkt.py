@@ -126,6 +126,70 @@ async def test_een_index_die_loopt_houdt_ocr_tegen(client, admin, aan, tmp_path)
     assert await nep.row(aan, nep.sha(scan)) == ("done", None, 0)
 
 
+async def test_een_index_die_loopt_houdt_ook_een_foto_tegen(client, admin, aan, tmp_path):
+    """Nacontrole golf 4: een foto heeft geen overzicht van pagina's; de wacht voor de index zit
+    dan alleen in _ocr. Heeft de index een batch met de worker, dan vraagt OCR geen foto:
+    jobs.Defer, de rij blijft wait, de worker kreeg geen vraag van OCR."""
+    headers, _ = admin
+    data = nep.photo("wachtfoto")
+    sha = nep.sha(data)
+    node = await upload(client, headers, "wacht.jpg", data)
+    async with nep.worker(tmp_path) as w:
+        w.page(data, 1, "fotowoord")
+        await backfill(aan)
+        r = await client.post(f"/api/v1/files/{node['id']}/ocr", headers=headers)
+        assert r.status_code == 202, r.text
+        assert await nep.row(aan, sha) == ("wait", None, 0)
+        with extract_step.batch.index_first(), pytest.raises(jobs.Defer):
+            await nep.pump(aan)
+        assert w.ocr_calls() == []
+        assert await nep.row(aan, sha) == ("wait", None, 0)
+        assert await nep.pump(aan) == 1
+        assert [(c["kind"], c["page"]) for c in w.ocr_calls()] == [("image", 1)]
+    assert await nep.row(aan, sha) == ("done", None, 0)
+    assert (await nep.photo_text(aan, node["id"]))[0] == "fotowoord"
+
+
+async def test_de_index_wacht_ook_op_het_overzicht_van_ocr(client, admin, aan, tmp_path):
+    """Nacontrole golf 4: ook het overzicht van de pagina's (Op.TEXT voor OCR, _survey) bezet de
+    plaats background als opdracht van OCR (batch.ocr_call). De index die dan komt, wacht tot
+    het overzicht klaar is, in plaats van busy en WORKER_DEFER_S later opnieuw; daarna begint OCR
+    geen pagina zolang de index loopt."""
+    headers, _ = admin
+    scan = pdf_scan("overzicht")
+    scan_sha = nep.sha(scan)
+    await upload(client, headers, "overzicht.pdf", scan)
+    note = b"Nog een briefje voor de index.\n"
+    await upload(client, headers, "briefje2.txt", note)
+    async with nep.worker(tmp_path) as w:
+        w.pdf(scan, [1])
+        w.page(scan, 1, "overzichtwoord")
+        w.pdf(note, [], "Nog een briefje voor de index.")
+        await backfill(aan)
+        assert await _text_state(aan, nep.sha(note)) == "wait"
+        # Het overzicht van OCR en daarna de batch van de index duren elk PAGE_S, met de plaats
+        # background bezet
+        w.fake.fault("slow_start", op=Op.TEXT, times=2, seconds=PAGE_S)
+        loop = asyncio.get_running_loop()
+        ocr = asyncio.create_task(nep.pump(aan))
+        await _until(lambda: [r.op for r in w.fake.requests].count(Op.TEXT.value) == 1)
+        start = loop.time()
+        assert await analysis.pump(aan, "index") >= 1
+        took = loop.time() - start
+        assert await _text_state(aan, nep.sha(note)) == "done"
+        assert took < 3 * PAGE_S, took
+        # Na het overzicht vroeg OCR geen pagina: de index liep
+        with pytest.raises(jobs.Defer):
+            await ocr
+        assert w.ocr_calls() == []
+        assert await nep.row(aan, scan_sha) == ("wait", None, 0)
+        w.fake.clear_faults()
+        assert await nep.pump(aan) == 1
+        assert [c["page"] for c in w.ocr_calls()] == [1]
+    assert await nep.row(aan, scan_sha) == ("done", None, 0)
+    assert await nep.pdf_ocr(aan, scan_sha) == "overzichtwoord"
+
+
 @pytest.mark.parametrize("why", ["pauze", "elders", "uit"])
 async def test_tussen_twee_pagina_s_wijkt_de_pomp(client, admin, aan, tmp_path, monkeypatch, why):
     headers, _ = admin
