@@ -192,6 +192,15 @@ ENV
   }
   # shellcheck disable=SC2329
   chown() { printf 'chown %s\n' "$*" >>"$work/install.log"; }
+  # Als 10001 in een map (setpriv kan alleen root): hier als de gebruiker van de test, in die map.
+  # De echte, als root met setpriv, staat onder "als root" hieronder en in --stappen (stap 4)
+  # shellcheck disable=SC2329
+  as_app_in() {
+    printf 'als 10001 in %s: %s\n' "$1" "${*:2}" >>"$work/install.log"
+    local dir=$1
+    shift
+    (cd -P -- "$dir" && "$@")
+  }
   # shellcheck disable=SC2329
   mountpoint() { return 1; }
   # shellcheck disable=SC2329
@@ -287,8 +296,9 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   done >"$work/bronnen"
   # shellcheck disable=SC2329  # geo_download roept ze aan
   geo_bronnen() { cat "$work/bronnen"; }
-  # NET: aan, uit (geen verbinding), half (de verbinding valt weg na de helft) of de naam van een
-  # bron die verkeerd binnenkomt (dezelfde grootte, een andere inhoud)
+  # NET: aan, uit (geen verbinding), half (de verbinding valt weg na de helft), race (de app zet
+  # terwijl curl loopt een symlink naar een bestand van de host op <bron>.part in de map geo) of
+  # de naam van een bron die verkeerd binnenkomt (dezelfde grootte, een andere inhoud)
   NET=aan
   # shellcheck disable=SC2329
   curl() {
@@ -301,6 +311,10 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
     [ -n "$target" ] || return 2
     case "$NET" in
       uit) return 6 ;;
+      race)
+        ln -sfn "$work/host/bestand" "$geo_dir/${url##*/}.part"
+        cp "$work/net/${url##*/}" "$target"
+        ;;
       half)
         head -c 5 "$work/net/${url##*/}" >"$target"
         return 18
@@ -326,6 +340,7 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   same_as_net() { cmp -s "$geo_dir/$1" "$work/net/$1"; }
   DATA_ROOT=$work/data
   rm -rf "$DATA_ROOT"
+  mkdir -p "$DATA_ROOT" # zoals instellingen: DATA_ROOT is er altijd vóór de download
 
   echo "== de download (Keuze 29): niet fataal, en de volgende run probeert het opnieuw"
   PLAATSEN=uit
@@ -338,7 +353,7 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   check "geen netwerk: mislukt, en het script loopt door" test "$(geo)" = mislukt
   check "geen netwerk: Plaatsnamen: niet geladen" said_geo "Plaatsnamen: niet geladen. Het platform werkt verder zonder; de volgende run probeert het opnieuw."
   check "geen netwerk: per bron een regel" test "$(grep -c '^Kon .* niet ophalen, of de sha256 klopt niet (https://bron.invalid/pad/' "$work/geo.out")" = 2
-  check "geen netwerk: de map geo, 750, van 10001" grep -qxF "install -d -m 750 -o 10001 -g 10001 $geo_dir" "$work/install.log"
+  check "geen netwerk: de map geo, 750, door 10001 zelf gemaakt" eval 'grep -qxF "als 10001 in $DATA_ROOT: mkdir -m 750 -- geo" "$work/install.log" && [ "$(mode "$geo_dir")" = 750 ]'
   check "geen netwerk: geen bestand en geen .part" test -z "$(ls -A "$geo_dir")"
   NET=half
   check "een halve download: mislukt" test "$(geo)" = mislukt
@@ -354,13 +369,15 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   check "alleen de ontbrekende bron gehaald" eval '[ "$(grep -c "^curl " "$work/curl.log")" = 1 ] && grep -q "pad/landen.geojson$" "$work/curl.log"'
   check "beide bronnen op hun plek, heel" eval 'same_as_net landen.geojson && same_as_net plaatsen.tar.gz'
   check "rechten 640" test "$(stat -c %a "$geo_dir/landen.geojson" "$geo_dir/plaatsen.tar.gz" | sort -u)" = 640
-  check "van 10001 (chown vóór de mv)" grep -qxF "chown 10001:10001 $geo_dir/landen.geojson.part" "$work/install.log"
+  check "door 10001 zelf neergezet, root schrijft niet in de map geo" eval 'grep -qF "als 10001 in $geo_dir: sh -c " "$work/install.log" && ! grep -qF "$geo_dir/" "$work/install.log"'
   check "geen .part over" no_part
   check "met die regel" said_geo "Plaatsnamen: de bronnen staan klaar in $geo_dir; de app laadt ze bij de start (±1 minuut)."
   : >"$work/curl.log"
   rm -f "$geo_dir"/*
   geo >/dev/null
-  check "curl met -f, --max-filesize en de grootte van de bron" grep -qF -- "-fsSL --retry 2 --connect-timeout 20 --max-time 600 --max-filesize $(sed -n 's/^landen.geojson \([0-9]*\) .*/\1/p' "$work/bronnen") -o $geo_dir/landen.geojson.part https://bron.invalid/pad/landen.geojson" "$work/curl.log"
+  check "curl met -f, --max-filesize en de grootte van de bron" grep -qE -- "-fsSL --retry 2 --connect-timeout 20 --max-time 600 --max-filesize $(sed -n 's/^landen.geojson \([0-9]*\) .*/\1/p' "$work/bronnen") -o [^ ]+/landen.geojson https://bron.invalid/pad/landen.geojson$" "$work/curl.log"
+  out=$(sed -n 's/.* -o \([^ ]*\)\/landen.geojson .*/\1/p' "$work/curl.log")
+  check "curl schrijft in een eigen tijdelijke map buiten DATA_ROOT ($out), die daarna weg is" eval '[ -n "$out" ] && [ "${out#"$DATA_ROOT"}" = "$out" ] && [ ! -e "$out" ]'
   check "nog een run: klaar" test "$(geo)" = klaar
   check "nog een run: geen curl" test ! -s "$work/curl.log"
   check "nog een run: met die regel" said_geo "Plaatsnamen: de bronnen staan er al ($geo_dir)."
@@ -375,6 +392,142 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   check "het bestand blijft" test -f "$geo_dir"
   check "geen curl" test ! -s "$work/curl.log"
   rm -f "$geo_dir"
+
+  echo "== een symlink van de app in DATA_ROOT volgt het script nooit (review golf 4, veilig F2)"
+  # DATA_ROOT is van de app: een app die gekraakt is, kan er symlinks neerzetten. Een map en twee
+  # bestanden van de host (buiten DATA_ROOT) moeten blijven zoals ze waren
+  local host=$work/host
+  mkdir -p "$host/map"
+  printf 'van de host\n' >"$host/bestand"
+  printf 'ook van de host\n' >"$host/ander"
+  command chmod 600 "$host/bestand" "$host/ander"
+  command chmod 755 "$host/map"
+  host_same() {
+    [ "$(cat "$host/bestand")" = "van de host" ] && [ "$(cat "$host/ander")" = "ook van de host" ] &&
+      [ "$(stat -c %a "$host/bestand" "$host/ander" "$host/map" | tr '\n' ' ')" = "600 600 755 " ] &&
+      [ -z "$(ls -A "$host/map")" ]
+  }
+  NET=aan
+  ln -s "$host/map" "$geo_dir"
+  check "de map geo is een symlink: mislukt, niet fataal" test "$(geo)" = mislukt
+  check "de map geo is een symlink: met uitleg" said_geo "$geo_dir is geen gewone map maar een symlink of een bestand; dit script raakt hem niet aan."
+  check "de map geo is een symlink: geen curl, de map van de host blijft" eval '[ ! -s "$work/curl.log" ] && host_same'
+  rm -f "$geo_dir"
+  geo >/dev/null
+  rm -f "$geo_dir"/*
+  ln -s "$host/ander" "$geo_dir/plaatsen.tar.gz"
+  NET=race
+  check "een symlink op de .part terwijl curl loopt, en een bron als symlink: nieuw" test "$(geo)" = nieuw
+  check "de bestanden van de host blijven zoals ze waren" host_same
+  check "beide bronnen echte bestanden, heel, 640" eval '[ ! -L "$geo_dir/landen.geojson" ] && [ ! -L "$geo_dir/plaatsen.tar.gz" ] &&
+    same_as_net landen.geojson && same_as_net plaatsen.tar.gz &&
+    [ "$(stat -c %a "$geo_dir/landen.geojson" "$geo_dir/plaatsen.tar.gz" | sort -u)" = 640 ]'
+  check "geen .part over (ook de symlink van de app niet)" eval 'no_part && [ ! -L "$geo_dir/landen.geojson.part" ]'
+  NET=aan
+  ln -s "$host/map" "$work/data/media"
+  code=0
+  out=$(media_dirs) || code=$?
+  check "media_dirs: de map media is een symlink: return 1, met uitleg" eval '[ "$code" = 1 ] && grep -qxF "$work/data/media is geen gewone map maar een symlink of een bestand; dit script raakt hem niet aan." <<<"$out"'
+  check "media_dirs: de map van de host blijft" host_same
+  rm -f "$work/data/media"
+  : >"$work/install.log"
+  mkdir -p "$work/data/import"
+  command chmod 700 "$work/data/import"
+  code=0
+  media_dirs >/dev/null || code=$?
+  check "media_dirs: een nieuwe map maakt 10001, een bestaande krijgt chown -h en chmod van 10001" eval '[ "$code" = 0 ] &&
+    [ "$(cat "$work/install.log")" = "als 10001 in $work/data: mkdir -m 750 -- media
+chown -h 10001:10001 $work/data/import
+als 10001 in $work/data/import: chmod 750 ." ] && [ "$(mode "$work/data/media") $(mode "$work/data/import")" = "750 750" ]'
+  rm -rf "$work/data/media" "$work/data/import"
+
+  # --- als root, met de echte setpriv -----------------------------------------------------
+  # Hierboven doet as_app_in alles als de gebruiker van de test. Hier draait een stuk als root
+  # (in CI met sudo -n), met de echte functies van install.sh: de symlinks van "de app" wijzen
+  # naar een map en bestanden van root buiten DATA_ROOT, en die moeten blijven zoals ze waren
+  echo "== als root, met de echte setpriv: een symlink van de app geeft root niets (review golf 4, veilig F2)"
+  local root_run=() root_out line n_root=0
+  if [ "$(id -u)" = 0 ]; then
+    root_run=(bash -s)
+  elif sudo -n true 2>/dev/null; then
+    root_run=(sudo -n bash -s)
+  fi
+  if [ "${#root_run[@]}" = 0 ]; then
+    fout "als root: geen root en geen sudo -n, dus deze controles liepen niet"
+  else
+    root_out=$("${root_run[@]}" "$install_sh" 2>&1 <<'ALS_ROOT'
+INSTALL_SH=$1
+R=$(mktemp -d)
+trap 'rm -rf "$R"' EXIT
+export INSTALL_LIB=1 PLATFORM_ROOT=$R/root
+unset PLAATSEN
+# shellcheck source=/dev/null
+. "$INSTALL_SH"
+set +e
+c() {
+  local name=$1
+  shift
+  if "$@"; then echo "ok    als root: $name"; else echo "FOUT  als root: $name"; fi
+}
+DATA_ROOT=$R/data host=$R/host
+mkdir -p "$DATA_ROOT" "$host/map" "$R/net" "$SRC/api/app/geo"
+: >"$SRC/api/app/geo/load.py"
+chown 10001:10001 "$DATA_ROOT" && chmod 750 "$DATA_ROOT"
+printf 'van de host\n' >"$host/bestand"
+printf 'ook van de host\n' >"$host/ander"
+chmod 600 "$host/bestand" "$host/ander"
+chmod 755 "$host/map"
+host_same() {
+  [ "$(cat "$host/bestand")" = "van de host" ] && [ "$(cat "$host/ander")" = "ook van de host" ] &&
+    [ "$(stat -c '%u %a' "$host/bestand" "$host/ander" "$host/map" | tr '\n' ' ')" = "0 600 0 600 0 755 " ] &&
+    [ -z "$(ls -A "$host/map")" ]
+}
+ln -s "$host/map" "$DATA_ROOT/backup"
+c "de map backup is een symlink: app_dir weigert" eval '! app_dir 700 "$DATA_ROOT/backup" >/dev/null'
+c "as_app_in in een symlink naar een map van root (de race): weigert, schrijft niets" eval '! as_app_in "$DATA_ROOT/backup" touch x'
+c "de map van de host blijft (eigenaar, rechten, leeg)" host_same
+rm -f "$DATA_ROOT/backup"
+c "een nieuwe map backup: van 10001, 700" eval 'app_dir 700 "$DATA_ROOT/backup" && [ "$(stat -c "%u:%g %a" "$DATA_ROOT/backup")" = "10001:10001 700" ]'
+mkdir -m 755 "$DATA_ROOT/import"
+c "media_dirs: nieuw (media) en van root (import): beide van 10001, 750" eval 'media_dirs && [ "$(stat -c "%u:%g %a" "$DATA_ROOT/media" "$DATA_ROOT/import" | sort -u)" = "10001:10001 750" ]'
+printf 'landen\n' >"$R/net/landen.geojson"
+printf 'plaatsen\n' >"$R/net/plaatsen.tar.gz"
+geo_bronnen() {
+  local n
+  for n in landen.geojson plaatsen.tar.gz; do
+    printf '%s %s %s https://bron.invalid/%s\n' "$n" "$(stat -c %s "$R/net/$n")" "$(sha256sum "$R/net/$n" | cut -d' ' -f1)" "$n"
+  done
+}
+# De app zet terwijl curl loopt een symlink op <bron>.part in de map geo
+curl() {
+  local url=${!#} target="" prev="" a
+  for a in "$@"; do
+    [ "$prev" != -o ] || target=$a
+    prev=$a
+  done
+  ln -sfn "$host/bestand" "$DATA_ROOT/geo/${url##*/}.part"
+  cp "$R/net/${url##*/}" "$target"
+}
+app_dir 750 "$DATA_ROOT/geo"
+ln -s "$host/ander" "$DATA_ROOT/geo/plaatsen.tar.gz"
+geo_download >/dev/null
+c "de download met symlinks van de app: nieuw" test "$GEO_STATE" = nieuw
+c "de bestanden van de host blijven (inhoud, eigenaar root, 600)" host_same
+c "beide bronnen echte bestanden van 10001, 640, heel" eval '[ ! -L "$DATA_ROOT/geo/landen.geojson" ] && [ ! -L "$DATA_ROOT/geo/plaatsen.tar.gz" ] &&
+  cmp -s "$DATA_ROOT/geo/landen.geojson" "$R/net/landen.geojson" && cmp -s "$DATA_ROOT/geo/plaatsen.tar.gz" "$R/net/plaatsen.tar.gz" &&
+  [ "$(stat -c "%u:%g %a" "$DATA_ROOT/geo/landen.geojson" "$DATA_ROOT/geo/plaatsen.tar.gz" | sort -u)" = "10001:10001 640" ]'
+c "geen .part over" test -z "$(find "$DATA_ROOT/geo" -name "*.part")"
+ALS_ROOT
+    ) || true
+    while IFS= read -r line; do
+      case "$line" in
+        "ok    "*) ok "${line#ok    }" && n_root=$((n_root + 1)) ;;
+        "FOUT  "*) fout "${line#FOUT  }" && n_root=$((n_root + 1)) ;;
+        *) printf '      %s\n' "$line" ;;
+      esac
+    done <<<"$root_out"
+    check "als root: alle 9 controles liepen ($n_root)" test "$n_root" = 9
+  fi
 
   # --- de nep-Docker voor reservekopie en main ---------------------------------------------
   # De staat staat in variabelen; run_main draait main in een subshell en geeft de staat aan het
@@ -472,7 +625,7 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   check "met de uitvoer Reservekopie: <pad>" grep -qxF "Reservekopie: $DATA_ROOT/backup/$copies" "$work/kopie.out"
   check "gemaakt met het image dat draait" grep -qF "run met image sha256:app-oud," "$LOG"
   check "de tekst is precies api/app/backup.py van de nieuwe broncode" grep -qF "tekst $(printf '%s' "$(cat "$SRC/api/app/backup.py")" | sha256sum | cut -c1-64)" "$LOG"
-  check "de map backup: 700, van 10001" eval 'grep -qxF "install -d -m 700 -o 10001 -g 10001 $DATA_ROOT/backup" "$work/install.log" && [ "$(mode "$DATA_ROOT/backup")" = 700 ]'
+  check "de map backup: 700, door 10001 zelf gemaakt" eval 'grep -qxF "als 10001 in $DATA_ROOT: mkdir -m 700 -- backup" "$work/install.log" && [ "$(mode "$DATA_ROOT/backup")" = 700 ]'
   check "de kopie: 600" test "$(mode "$DATA_ROOT/backup/$copies")" = 600
   check "de kopie: zonder gezichten, ook niet in de bytes" eval '[ "$(db_get "$DATA_ROOT/backup/$copies" "SELECT count(*) FROM face")" = 0 ] && ! grep -q MERKTEKEN "$DATA_ROOT/backup/$copies"'
   check "de kopie: de gebruiker en de head" eval '[ "$(db_get "$DATA_ROOT/backup/$copies" "SELECT count(*) FROM \"user\"")" = 1 ] && [ "$(db_get "$DATA_ROOT/backup/$copies" "SELECT version_num FROM alembic_version")" = 0009 ]'
@@ -498,6 +651,14 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   reservekopie >"$work/kopie.out" 2>&1 || code=$?
   check "de map backup kan er niet komen: return 1, met uitleg, zonder compose run" eval \
     '[ "$code" = 1 ] && grep -qF "De reservekopie van de database lukte niet" "$work/kopie.out" && [ ! -s "$LOG" ]'
+  rm -f "$DATA_ROOT/backup"
+  ln -s "$host/map" "$DATA_ROOT/backup"
+  : >"$LOG"
+  code=0
+  reservekopie >"$work/kopie.out" 2>&1 || code=$?
+  check "de map backup is een symlink: return 1, met uitleg, zonder compose run" eval \
+    '[ "$code" = 1 ] && grep -qxF "$DATA_ROOT/backup is geen gewone map maar een symlink of een bestand; dit script raakt hem niet aan." "$work/kopie.out" && [ ! -s "$LOG" ]'
+  check "de map backup is een symlink: de map van de host blijft" host_same
   rm -f "$DATA_ROOT/backup"
   mv "$work/backup.bewaard" "$DATA_ROOT/backup"
 
@@ -802,7 +963,7 @@ NEP
 #   | 1 | 0.7.1 installeren met het script van 80d5bb8; een bestand uploaden | schema 0009, geen map backup |
 #   | 2 | bijwerken naar deze versie (de branch), zonder netwerk naar de bronnen | de kopie platform-0009 met het image van 0.7.1, vóór de nieuwe app; 600 en 10001; schema 0010; "niet geladen" |
 #   | 3 | nog een update (een commit erbovenop), maar de kopie faalt (een trigger op een tabel face) | exit 1; dezelfde container, hetzelfde image, schema 0010, geen nieuwe kopie en geen .part |
-#   | 4 | opnieuw, met netwerk | de bronnen gehaald; geo-load in de draaiende app; places.loaded; de kopie van 0010 met het image van deze versie |
+#   | 4 | opnieuw, met netwerk, en een symlink van de app op <bron>.part naar een bestand van root | de bronnen gehaald; het bestand van root blijft, geen .part en geen symlink; geo-load in de draaiende app; places.loaded; de kopie van 0010 met het image van deze versie |
 #   | 5 | de commit erbovenop met PLAATSEN=uit, dan weer aan | na twee en drie runs op 0010: de 0009 staat er nog, van 0010 alleen de nieuwste; geen download; PLATFORM_PLACES=uit |
 #   | 6 | terug naar 0.7.1: precies de stappen van §3.10 | git fetch en cat-file; dc stop; db-downgrade 0009 (met "ja"); het script van 80d5bb8 met PLATFORM_SRC_REF; schema 0009, de app van 0.7.1, het bestand heel |
 #   | 7 | weer vooruit: het script van de branch, zonder PLATFORM_SRC_REF | schema 0010; een nieuwe kopie van 0009, gemaakt met het image van 0.7.1; plaatsen geladen |
@@ -1356,6 +1517,11 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
   # --- 4. opnieuw, met netwerk: de bronnen, en geo-load in de draaiende app ------------------
   STAGE=4
   net aan
+  # De app zet een symlink op <bron>.part in de map geo, naar een bestand van root buiten DATA_ROOT
+  # (review golf 4, veilig F2): install.sh als root volgt hem niet
+  # shellcheck disable=SC2016  # $1 en $2 zijn van sh -c
+  as_root sh -c 'printf "van root\n" >"$1" && chmod 600 "$1" && ln -sfn "$1" "$2" && chown -h 10001:10001 "$2"' sh \
+    "$WORK/van-root" "$GEO_DIR/ne_10m_admin_0_countries.geojson.part" || fout "4: de symlink van de app zetten lukte niet"
   step 4-opnieuw "$NEW_SH" PLATFORM_BRANCH=installatietest-naar || fout "4: install.sh gaf een fout"
   check "4: de app draait" app_up
   check "4: de bronnen gehaald (van het nepnetwerk)" eval '[ "$(in_step 4-opnieuw curl.log | grep -c .)" = 2 ] && said_part 4-opnieuw "Plaatsnamen: de bronnen staan klaar in "'
@@ -1363,6 +1529,9 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
     as_root cmp -s "$GEO_DIR/ne_10m_admin_0_countries.geojson" "$WORK/net/ne_10m_admin_0_countries.geojson" &&
     as_root cmp -s "$GEO_DIR/reverse_geocoder-1.5.1.tar.gz" "$WORK/net/reverse_geocoder-1.5.1.tar.gz" &&
     [ "$(as_root stat -c "%u:%g %a" "$GEO_DIR/ne_10m_admin_0_countries.geojson" "$GEO_DIR/reverse_geocoder-1.5.1.tar.gz" | sort -u)" = "10001:10001 640" ]'
+  check "4: de symlink van de app op de .part: het bestand van root blijft (inhoud, root, 600), geen .part en geen symlink" eval '
+    [ "$(as_root cat "$WORK/van-root")" = "van root" ] && [ "$(as_root stat -c "%u %a" "$WORK/van-root")" = "0 600" ] &&
+    [ -z "$(as_root find "$GEO_DIR" -name "*.part" -o -type l)" ]'
   check "4: dezelfde app (niets veranderde), dus geo-load in de draaiende app" eval '[ "$(cid platform)" = "$cid2" ] && said 4-opnieuw "Plaatsnamen laden (±1 minuut)…" && compose_before 4-opnieuw "up -d --build" "exec -T platform python -m app.cli geo-load"'
   check "4: /api/v1/admin/search: plaatsen geladen" wait_places 300 true
   check "4: de kopie van $schema_head met het image van deze versie (${app2:7:12})" test "$(run_image 4-opnieuw)" = "$app2"

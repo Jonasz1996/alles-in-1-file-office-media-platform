@@ -152,8 +152,42 @@ decide_media() {
   fi
 }
 
+# DATA_ROOT is van de gebruiker van de app (10001): wat root daar met een pad doet, volgt een
+# symlink die de app er kan neerzetten. install -d, chown, chmod en curl -o zouden zo een pad
+# buiten DATA_ROOT aan 10001 geven, of overschrijven (review golf 4, veilig F2). Daarom doet root
+# daar niets met een pad dat een symlink volgt. as_app_in gaat de map in (cd -P: de map die er nu
+# is), kijkt dat die van 10001 is, en laat 10001 zelf het commando doen, met namen in die map.
+# Een symlink geeft dan nooit meer dan wat 10001 al mag.
+as_app_in() {
+  local dir=$1
+  shift
+  (cd -P -- "$dir" && [ "$(stat -c %u .)" = 10001 ] &&
+    exec setpriv --reuid=10001 --regid=10001 --clear-groups -- "$@")
+}
+
+# Mappen direct onder DATA_ROOT voor de app, met deze rechten: app_dir <rechten> <map>…. Een
+# symlink of iets anders dan een map raakt hij niet aan: uitleg en return 1. Een nieuwe map maakt
+# 10001 zelf; een map die er al is, krijgt 10001 als eigenaar met chown -h (dat volgt nooit een
+# symlink) en zijn rechten van 10001 zelf.
+app_dir() {
+  local mode=$1 dir
+  shift
+  for dir in "$@"; do
+    if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+      echo "$dir is geen gewone map maar een symlink of een bestand; dit script raakt hem niet aan."
+      echo "Maak er een gewone map van (of haal hem weg) en draai dit script opnieuw."
+      return 1
+    fi
+    if [ ! -d "$dir" ]; then
+      as_app_in "$(dirname -- "$dir")" mkdir -m "$mode" -- "$(basename -- "$dir")" || return 1
+    else
+      chown -h 10001:10001 "$dir" && as_app_in "$dir" chmod "$mode" . || return 1
+    fi
+  done
+}
+
 # De mappen voor media en de import, van de gebruiker van de app (10001)
-media_dirs() { install -d -m 750 -o 10001 -g 10001 "$DATA_ROOT/media" "$DATA_ROOT/import"; }
+media_dirs() { app_dir 750 "$DATA_ROOT/media" "$DATA_ROOT/import"; }
 
 # Na het lezen van .env: een andere waarde dan aan of uit (met de hand bewerkt) zou de nieuwe app
 # niet laten starten (PLATFORM_PLACES, compose.yaml). Dan stopt het script hier, vóór er iets
@@ -183,12 +217,14 @@ geo_ok() {
 }
 
 # Stap 2 van §3.10: de bronnen naar DATA_ROOT/geo, als PLAATSEN=aan en ze er nog niet (goed)
-# staan. Elk bestand gaat via naam.part en komt pas op zijn plek als grootte en sha256 kloppen.
+# staan. Elk bestand komt eerst in een eigen map van root buiten DATA_ROOT (mktemp -d) en gaat pas
+# naar zijn plek als grootte en sha256 kloppen; daar zet 10001 het zelf neer, via naam.part
+# (as_app_in: root schrijft nooit in DATA_ROOT/geo).
 # Breekt nooit af: lukt het niet, dan "Plaatsnamen: niet geladen", en de volgende run probeert
 # het opnieuw. De app bouwt er bij de start places.sqlite van (±1 minuut). Zet GEO_STATE: uit,
 # klaar (stonden er al), nieuw (net opgehaald), mislukt, of leeg (deze versie heeft het niet).
 geo_download() {
-  local dir=$DATA_ROOT/geo name size sha url part failed=0 new=0
+  local dir=$DATA_ROOT/geo name size sha url tmp failed=0 new=0
   GEO_STATE=""
   places_supported || return 0
   if [ "${PLAATSEN:-aan}" = uit ]; then
@@ -196,25 +232,30 @@ geo_download() {
     echo "Plaatsnamen: uit (PLAATSEN=uit); er wordt niets opgehaald."
     return 0
   fi
-  if ! install -d -m 750 -o 10001 -g 10001 "$dir"; then
+  if ! app_dir 750 "$dir"; then
     GEO_STATE=mislukt
-    echo "Plaatsnamen: niet geladen ($dir is geen map). Het platform werkt verder zonder; de volgende run probeert het opnieuw."
+    echo "Plaatsnamen: niet geladen ($dir is geen gewone map). Het platform werkt verder zonder; de volgende run probeert het opnieuw."
+    return 0
+  fi
+  if ! tmp=$(mktemp -d); then
+    GEO_STATE=mislukt
+    echo "Plaatsnamen: niet geladen (geen tijdelijke map). Het platform werkt verder zonder; de volgende run probeert het opnieuw."
     return 0
   fi
   while read -r name size sha url; do
-    geo_ok "$dir/$name" "$size" "$sha" && continue
-    part=$dir/$name.part
-    rm -f "$part"
-    if curl -fsSL --retry 2 --connect-timeout 20 --max-time 600 --max-filesize "$size" -o "$part" "$url" </dev/null &&
-      geo_ok "$part" "$size" "$sha" && chown 10001:10001 "$part" && chmod 640 "$part" &&
-      mv -f "$part" "$dir/$name"; then
+    [ ! -L "$dir/$name" ] && geo_ok "$dir/$name" "$size" "$sha" && continue
+    # shellcheck disable=SC2016  # $1 is van sh -c
+    if curl -fsSL --retry 2 --connect-timeout 20 --max-time 600 --max-filesize "$size" -o "$tmp/$name" "$url" </dev/null &&
+      geo_ok "$tmp/$name" "$size" "$sha" &&
+      as_app_in "$dir" sh -c 'umask 027 && rm -f -- "$1.part" && { cat >"$1.part" && mv -fT -- "$1.part" "$1" || { rm -f -- "$1.part"; exit 1; }; }' sh "$name" <"$tmp/$name"; then
       new=1
     else
-      rm -f "$part"
       failed=1
       echo "Kon $name niet ophalen, of de sha256 klopt niet ($url)."
     fi
+    rm -f "$tmp/$name"
   done < <(geo_bronnen)
+  rm -rf "$tmp"
   if [ "$failed" = 1 ]; then
     GEO_STATE=mislukt
     echo "Plaatsnamen: niet geladen. Het platform werkt verder zonder; de volgende run probeert het opnieuw."
@@ -247,7 +288,7 @@ reservekopie() {
   fi
   # In `reservekopie || exit 1` doet set -e niets: elke stap zegt dus zelf dat het stopt. De
   # laatste regel van de uitvoer is het pad van de kopie in de container
-  if text=$(cat "$SRC/api/app/backup.py") && install -d -m 700 -o 10001 -g 10001 "$DATA_ROOT/backup" &&
+  if text=$(cat "$SRC/api/app/backup.py") && app_dir 700 "$DATA_ROOT/backup" &&
     out=$("${compose[@]}" run --rm --no-deps -T platform python -I -c "$text" /data/platform.db /data/backup </dev/null); then
     name=$(basename "${out##*$'\n'}")
     case "$name" in

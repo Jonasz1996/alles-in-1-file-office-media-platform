@@ -193,6 +193,11 @@ ENV
   install() { printf 'install %s\n' "$*" >>"$work/install.log"; }
   # shellcheck disable=SC2329
   chown() { :; }
+  # Als 10001 in een map (setpriv, alleen root; de mappen van media maakt 10001 zelf sinds de
+  # review van golf 4 van fase 6, veilig F2): hier alleen opschrijven
+  echte_as_app_in=$(declare -f as_app_in)
+  # shellcheck disable=SC2329
+  as_app_in() { printf 'als 10001 in %s: %s\n' "$1" "${*:2}" >>"$work/install.log"; }
   # shellcheck disable=SC2329
   mountpoint() { return 1; }
   fase4_env
@@ -213,10 +218,12 @@ ENV
   instellingen "" "" >/dev/null
   check "met media: de sleutel erbij" is_hex64 "$(value MEDIA_WORKER_KEY)"
   check "met media: MEDIA_SANDBOX=aan" has_line "MEDIA_SANDBOX=aan"
-  check "met media: de mappen media en import, van 10001, 750" grep -qxF \
-    "install -d -m 750 -o 10001 -g 10001 /tank/platform/media /tank/platform/import" "$work/install.log"
+  check "met media: de mappen media en import, door 10001 zelf gemaakt, 750" test "$(grep '^als 10001 ' "$work/install.log")" = \
+    "als 10001 in /tank/platform: mkdir -m 750 -- media
+als 10001 in /tank/platform: mkdir -m 750 -- import"
   check "met media: chmod 600" test "$(mode "$ENV_FILE")" = 600
   unset -f install chown mountpoint
+  eval "$echte_as_app_in"
   unset MEDIA_SANDBOX DATA_ROOT
 
   echo "== decide_media stopt nooit (set -e), en kiest de veilige kant"
