@@ -39,6 +39,7 @@ PDF = "Brief gemeente.pdf"
 PDF_WOORD = "ocrwoordx"  # staat alleen in het beeld van de scan (scans.LINES)
 BON_WOORD = "bonwoordx"
 KOPIE_WOORD = "spaarwoordx"
+VINKJE_WOORD = "kapwoordx"
 WACHT_S = 90.0
 # De markering ligt op het woord: het midden binnen 2% van de breedte en de hoogte van de foto
 PLEK = 0.02
@@ -57,6 +58,10 @@ def is_zoeken(response) -> bool:
 
 def is_woorden(node: str):
     return lambda r: f"/api/v1/files/{node}/pages/1/words?" in r.url
+
+
+def patch_instellingen(r) -> bool:
+    return r.request.method == "PATCH" and r.url.endswith("/api/v1/me/photo-settings")
 
 
 @dataclass
@@ -342,3 +347,35 @@ def test_een_kopie_van_bram_vindt_de_tekst_uit_eva_s_foto_niet(
     tekst = viewer.get_by_role("region", name="Tekst in beeld", exact=True)
     expect(tekst.get_by_role("status")).to_have_text(NOG_NIET)
     expect(viewer.locator(".photo-words")).to_have_count(0)
+
+
+def test_tekst_in_foto_s_herkennen_met_het_toetsenbord(x1: X1App, x1_browsers: Browsers) -> None:
+    """Keuze 23: het vinkje "Tekst in foto's herkennen" onder Account (standaard uit), met Tab en
+    Spatie. Aan: een nieuwe foto van Fien wordt vanzelf gelezen, zonder "Tekst herkennen", en ze
+    vindt hem op een woord van de bon. Weer Spatie zet het uit; de focus blijft op het vinkje."""
+    from tests.ocr import scans
+
+    fien = x1.app.user(name="Fien Vinkje")
+    page = x1_browsers.context_as(fien).new_page()
+    page.goto("/account")
+    blok = page.get_by_role("region", name="Foto's", exact=True)
+    vinkje = blok.get_by_label("Tekst in foto's herkennen", exact=True)
+    expect(vinkje).not_to_be_checked()
+    tab_to(page, vinkje, limit=60)
+    with page.expect_response(patch_instellingen) as aan:
+        page.keyboard.press("Space")
+    assert aan.value.status == 200, aan.value.text()
+    assert aan.value.json()["ocr_photos"] is True
+    expect(vinkje).to_be_checked()
+
+    data, _ = scans.bon(VINKJE_WOORD)
+    foto = upload(x1.server, fien, str(fien.root_id), "bon kapper.jpg", data)
+    wacht_op_ocr(x1.server, fien, foto)
+    assert gevonden(x1.server, fien, VINKJE_WOORD) == {foto: "ocr"}
+
+    with page.expect_response(patch_instellingen) as uit:
+        page.keyboard.press("Space")
+    assert uit.value.status == 200, uit.value.text()
+    assert uit.value.json()["ocr_photos"] is False
+    expect(vinkje).not_to_be_checked()
+    expect(vinkje).to_be_focused()
