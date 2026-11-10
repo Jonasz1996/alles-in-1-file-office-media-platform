@@ -207,17 +207,26 @@ zonder melding.
    ze gelijk. Wat er anders was en hoe het nu is: [z0.md](z0.md).
 2. ~~**De foutcode van de stubs.**~~ De stubs geven `501 not_built`; die staat in
    `i18n/errors/common.ts`, en `test_error_catalog.py` is groen.
-3. **De codes `ocr_*`.** Z0-api gebruikt alleen `ocr_missing` in `app/` (de stub van
+3. ~~**De codes `ocr_*`.** Z0-api gebruikt alleen `ocr_missing` in `app/` (de stub van
    `ocr_page` in `render.py`); die staat in `i18n/errors/admin.ts`. De rest van de codes `ocr_*`
-   zet X1 in `photos.ts` (§3.4).
-4. **Twee zoekvelden op Bestanden.** Het veld bovenaan en het veld boven de lijst (`#zoekveld`,
-   `/`) doen nu hetzelfde. Z4 beslist of het veld van Bestanden blijft (en wat `/` dan doet).
+   zet X1 in `photos.ts` (§3.4).~~ Gedaan door X1: `web/src/i18n/errors/photos.ts` heeft
+   `ocr_off`, `ocr_running`, `ocr_limit`, `ocr_has_text` en `ocr_unsupported`.
+4. ~~**Twee zoekvelden op Bestanden.** Het veld bovenaan en het veld boven de lijst (`#zoekveld`,
+   `/`) doen nu hetzelfde. Z4 beslist of het veld van Bestanden blijft (en wat `/` dan doet).~~
    Beslist door Z4: één veld, dat bovenaan; `/` zet de focus erin ([toetsenbord-z4.md](toetsenbord-z4.md)).
-5. **`dist/kaart/*.json`** is een aanname voor de plek van de wereld (Keuze 31 noemt
-   `world-110m.<hash>.json`). Kiest Z5 een andere plek, dan past hij `MAP_DATA` aan. De service
-   worker cachet `/kaart/` nu niet.
-6. **De gebeurtenissen** (`search.ready`, `search.progress`, `people.changed`) zijn alleen namen
-   en vormen; geen code luistert er nog naar.
+5. ~~**`dist/kaart/*.json`** is een aanname voor de plek van de wereld (Keuze 31 noemt
+   `world-110m.<hash>.json`). Kiest Z5 een andere plek, dan past hij `MAP_DATA` aan.~~ Z5 koos
+   die plek (`31dc85e`): `web/public/kaart/world-110m.f2c3625f1d27.json`, en `MAP_DATA` in
+   `web/scripts/budget.mjs` past erop. Open blijft: de service worker cachet `/kaart/` nu niet
+   (niets in `web/src/pwa/`).
+6. **De gebeurtenissen** (~~`search.ready`~~, `search.progress`, ~~`people.changed`~~) zijn alleen
+   namen en vormen; geen code luistert er nog naar. Gedaan voor `search.ready` en
+   `people.changed`: naar `search.ready` luisteren `viewer/TextLayer.tsx`, `ocr/OcrRow.tsx` en
+   `ocr/PhotoWords.tsx`; naar `people.changed` luisteren `viewer/PeopleRow.tsx`,
+   `photos/PhotosPage.tsx` en de pagina's van personen. Open blijft `search.progress`: in de web
+   staat alleen de naam (`SEARCH_PROGRESS` in `search/types.ts`), en geen code luistert ernaar.
+   Het tabblad Zoeken in Beheer vraagt elke 5 s (`POLL_MS` in `admin/SearchTab.tsx`). Zie de
+   afwijking in [z7.md](z7.md).
 7. ~~**`e2e/slim.sh`** (§3.5) is niet van Z0-web; hij staat er niet in deze tak.~~ Hij is van
    Z0-e2e ([z0-e2e.md](z0-e2e.md)) en staat er sinds de samenvoeging.
 8. **De plekken bij de foto van een ander.** De viewer weet niet wie de eigenaar is, dus Plek en
