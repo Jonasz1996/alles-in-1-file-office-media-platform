@@ -141,7 +141,10 @@ in hetzelfde land. Alles gebeurt in de container, zonder iets online op te zoeke
 - **De plekken opnieuw.** Na elke nieuwe bouw van `places.sqlite` (door de app bij de start, of
   met `geo-load`) krijgen foto's met een GPS-plek maar nog zonder plaats en land die vanzelf: op
   de achtergrond, één keer per bouw. Zet je `PLAATSEN` van `uit` weer op `aan`, dan doet de
-  eerstvolgende start dat ook. Op zee blijft de plaats leeg. Een foto die al een plaats had,
+  eerstvolgende start dat ook. Dat vraagt wel dat de start met `uit` zijn notitie van de vorige
+  bouw kon wissen. Staat in het log van die start `Plaatsnamen: Setting geo.places niet gewist`,
+  dan krijgen de foto's die met `uit` gelezen zijn pas een plaats na **Plek, camera en datum
+  opnieuw lezen**. Op zee blijft de plaats leeg. Een foto die al een plaats had,
   houdt die tot hij opnieuw gelezen wordt. Alles opnieuw: `/beheer` → Zoeken en foto's → **Plek,
   camera en datum opnieuw lezen** (hieronder).
 

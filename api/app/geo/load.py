@@ -488,9 +488,13 @@ async def start(settings: Settings) -> None:
         # Hier en niet op de achtergrond: bij "uit" begint load.start geen taak
         from app import photo_rows
 
+        # Lukt het wissen niet, dan probeert alleen een volgende start met "uit" het weer. Is de
+        # volgende start meteen "aan", dan noemt de Setting nog deze bouw en komt er geen keten:
+        # wat nu gelezen wordt, krijgt pas een plaats na "Plek, camera en datum opnieuw lezen"
+        # (runbook zoeken.md, "De plekken opnieuw"; review R2)
         try:
             await photo_rows.places_off(settings)
-        except Exception as e:  # noqa: BLE001 - de volgende start met "uit" probeert het weer
+        except Exception as e:  # noqa: BLE001 - zie hierboven
             log.warning("Plaatsnamen: Setting geo.places niet gewist (%s)", type(e).__name__)
         return
     # Ook als de meta klopt: ensure() kijkt in de thread met quick_check of hij heel is (±0,15 s
