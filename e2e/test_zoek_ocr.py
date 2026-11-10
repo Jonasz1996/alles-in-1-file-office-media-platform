@@ -510,7 +510,8 @@ def test_ocr_op_beheer_pauzeren_uitzetten_en_opnieuw_herkennen(
     knop = page.locator('[data-search="ocr-button"]')
     opnieuw = page.locator('[data-search="rebuild-ocr"]')
     expect(knop).to_have_text("OCR uitzetten")
-    expect(knop).to_have_attribute("aria-pressed", "true")
+    # De tekst zegt wat de knop doet, dus geen aria-pressed (review golf 4, contract F1)
+    assert knop.get_attribute("aria-pressed") is None
     expect(opnieuw).to_have_text("Alles opnieuw herkennen")
 
     # --- de pauze: een foto blijft in de rij, de tab telt hem; hervatten en hij wordt gelezen ---
@@ -546,7 +547,7 @@ def test_ocr_op_beheer_pauzeren_uitzetten_en_opnieuw_herkennen(
     assert patch.value.json()["ocr"] == {"installed": True, "on": False, "pages_queued": 0}
     expect(toast(page, "OCR staat uit.")).to_be_visible()
     expect(knop).to_have_text("OCR aanzetten")
-    expect(knop).to_have_attribute("aria-pressed", "false")
+    assert knop.get_attribute("aria-pressed") is None
     expect(knop).to_be_focused()
     expect(aan).to_have_text("nee")
     r = x1.server.call(x1.eva, "POST", f"{API}/files/{foto}/ocr", expect=503)

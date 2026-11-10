@@ -246,7 +246,8 @@ def test_de_tab_met_alleen_het_toetsenbord(beheer: Beheer, browsers: Browsers) -
     # --- pauzeren met Enter ---
     pauze = page.locator('[data-search="pause-button"]')
     expect(pauze).to_have_text("Achtergrondwerk pauzeren")
-    expect(pauze).to_have_attribute("aria-pressed", "false")
+    # De tekst zegt wat de knop doet, dus geen aria-pressed (review golf 4, contract F1)
+    assert pauze.get_attribute("aria-pressed") is None
     tab_to(page, pauze)
     with page.expect_response(is_admin_search("PATCH")) as patch:
         page.keyboard.press("Enter")
@@ -254,7 +255,7 @@ def test_de_tab_met_alleen_het_toetsenbord(beheer: Beheer, browsers: Browsers) -
     assert patch.value.json()["paused"] is True
     expect(gepauzeerd).to_have_text("gepauzeerd")
     expect(pauze).to_have_text("Achtergrondwerk hervatten")
-    expect(pauze).to_have_attribute("aria-pressed", "true")
+    assert pauze.get_attribute("aria-pressed") is None
     expect(pauze).to_be_focused()
     expect(toast(page, "Het achtergrondwerk staat op pauze.")).to_be_visible()
 

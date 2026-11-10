@@ -41,7 +41,7 @@ Zoeken op beeld (van X2 en X3; nu "komt later", zonder knoppen).
 | Tab / Shift+Tab | door de knoppen, van boven naar beneden: "Achtergrondwerk pauzeren" (of "hervatten"), "Index herbouwen", "Mislukte opnieuw" en "Lijst van mislukte tonen" (alleen als er iets mislukte), "Meer laden" (als de lijst langer is), "Duplicaten opnieuw berekenen", "Plek, camera en datum opnieuw lezen", "OCR aanzetten" of "uitzetten" en "Alles opnieuw herkennen" (alleen als de worker OCR heeft, `ocr.installed`; golf 4) |
 | Enter of spatie op een knop | de knop. "Index herbouwen", de twee knoppen van de foto's, "OCR aanzetten" en "Alles opnieuw herkennen" vragen eerst een bevestiging; "OCR uitzetten" niet |
 | In de bevestiging | de focus staat eerst op Annuleren (de veilige keuze); Tab gaat naar "Herbouwen", "Starten" of "Aanzetten" en Enter bevestigt dan. Esc (of Enter op Annuleren) sluit zonder iets te doen en zonder aanroep; de focus gaat terug naar de knop |
-| Enter op "Achtergrondwerk pauzeren" | de index en OCR staan stil (`PATCH`, `paused: true`); de knop heet nu "Achtergrondwerk hervatten" en heeft `aria-pressed="true"`. Nog eens Enter hervat |
+| Enter op "Achtergrondwerk pauzeren" | de index en OCR staan stil (`PATCH`, `paused: true`); de knop heet nu "Achtergrondwerk hervatten". Nog eens Enter hervat. De tekst zegt wat de knop doet, dus geen `aria-pressed` (review golf 4, contract F1); de stand staat eronder ("loopt" of "gepauzeerd") |
 | Enter op "Lijst van mislukte tonen" | de tabel met de sha256, de stap, de code en het tijdstip (nooit een naam of pad). De knop heet dan "Lijst verbergen" en heeft `aria-expanded="true"`; Enter klapt de lijst weer dicht |
 
 Na een knop die iets deed, blijft de focus op die knop. Gaat de knop weg, dan gaat de focus naar
@@ -88,7 +88,8 @@ Staat de focus al ergens anders (je tabde verder terwijl de aanroep liep), dan b
 
 - [x] Alt+9 opent de tab; de link heeft `aria-current="page"`; de kop is "Zoeken en foto's".
 - [x] Tab bereikt elke knop; Enter en spatie doen de knop.
-- [x] Pauzeren en hervatten met Enter; `aria-pressed` volgt; de focus blijft op de knop.
+- [x] Pauzeren en hervatten met Enter; de tekst van de knop wisselt (zonder `aria-pressed`,
+      review golf 4, contract F1); de focus blijft op de knop.
 - [x] "Index herbouwen": de bevestiging met de focus op Annuleren; Esc doet niets en zet de focus
       terug op de knop; Tab en Enter op "Herbouwen" starten; de focus gaat naar de kop "Index".
 - [x] De voortgang van de herbouw is `role="status"` met een voortgangsbalk.
@@ -96,7 +97,7 @@ Staat de focus al ergens anders (je tabde verder terwijl de aanroep liep), dan b
 - [x] "Mislukte opnieuw": daarna de focus op de kop "Mislukte inhouden".
 - [x] De twee knoppen van de foto's: de bevestiging met de focus op Annuleren; Esc doet niets.
 - [x] Het blok OCR (golf 4, in `e2e/test_zoek_ocr.py`): "OCR uitzetten" zonder vraag, de focus
-      blijft op de knop (`aria-pressed` volgt); "OCR aanzetten" en "Alles opnieuw herkennen" met
+      blijft op de knop (de tekst wisselt, zonder `aria-pressed`); "OCR aanzetten" en "Alles opnieuw herkennen" met
       de bevestiging, Esc doet niets en zet de focus terug op de knop.
 - [x] Een gewone gebruiker: geen tab, Alt+9 doet niets, geen aanroep van `/admin/search`.
 - [x] Nergens een fout in de console, een CSP-melding of een ontbrekende tekst (de bewaker van

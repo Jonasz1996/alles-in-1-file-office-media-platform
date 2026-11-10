@@ -201,9 +201,9 @@ function Pause({ s, reload }: { s: AdminSearch; reload: Reload }): JSX.Element {
   return (
     <section aria-labelledby="admin-search-pause">
       <Head id="admin-search-pause" title={t("admin.search.pause.title")} heading={heading}>
+        {/* De tekst zegt wat de knop doet, dus geen aria-pressed (review golf 4, contract F1) */}
         <Button
           busy={act.busy === "pause"}
-          aria-pressed={paused}
           data-search="pause-button"
           onClick={() => {
             act.press();
@@ -502,7 +502,7 @@ function Ocr({ s, reload }: { s: AdminSearch; reload: Reload }): JSX.Element {
       <Head id="admin-search-ocr" title={t("admin.search.ocr.title")} heading={heading}>
         {ocr.installed && (
           <div className="toolbar">
-            <Button busy={act.busy === "ocr"} aria-pressed={ocr.on} data-search="ocr-button" onClick={() => void toggle()}>
+            <Button busy={act.busy === "ocr"} data-search="ocr-button" onClick={() => void toggle()}>
               {ocr.on ? t("admin.search.ocr.turnOff") : t("admin.search.ocr.turnOn")}
             </Button>
             <Button busy={act.busy === "again"} data-search="rebuild-ocr" onClick={() => void again()}>

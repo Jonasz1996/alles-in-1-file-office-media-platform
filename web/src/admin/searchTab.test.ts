@@ -112,6 +112,13 @@ function field(html: string, name: string): string {
   return m ? m[1].replace(/<[^>]+>/g, "") : "";
 }
 
+/** De tekst van de knop met data-search=name, en of die knop aria-pressed heeft. */
+function button(html: string, name: string): [string, boolean] {
+  const m = new RegExp(`<button([^>]*data-search="${name}"[^>]*)>(.*?)</button>`).exec(html);
+  expect(m, name).not.toBeNull();
+  return [m![2].replace(/<[^>]+>/g, ""), m![1].includes("aria-pressed")];
+}
+
 beforeEach(async () => {
   resetI18nForTests("nl");
   await loadAreas(["common", "admin", ...SEARCH_TAB_AREAS]);
@@ -202,12 +209,14 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     expect(html).toContain("Zoeken gaat nu met LIKE");
   });
 
-  it("gepauzeerd: de knop zegt hervatten (aria-pressed) en de uitleg staat erbij", () => {
+  it("gepauzeerd: de knop zegt wat hij doet (hervatten), zonder aria-pressed, en de uitleg staat erbij", () => {
+    // Een tekst die wisselt met de stand en aria-pressed samen zeggen het dubbel (een
+    // schermlezer: "hervatten, ingedrukt"); de knop noemt de actie (review golf 4, contract F1)
     const html = view(state({ paused: true }));
     expect(field(html, "paused")).toBe("gepauzeerd");
-    expect(html).toMatch(/aria-pressed="true"[^>]*data-search="pause-button"[^>]*>Achtergrondwerk hervatten</);
+    expect(button(html, "pause-button")).toEqual(["Achtergrondwerk hervatten", false]);
     expect(html).toContain("De index en OCR staan stil tot je hervat.");
-    expect(view(state())).toMatch(/aria-pressed="false"[^>]*data-search="pause-button"[^>]*>Achtergrondwerk pauzeren</);
+    expect(button(view(state()), "pause-button")).toEqual(["Achtergrondwerk pauzeren", false]);
   });
 
   it("een herbouw van de index: voortgang, en de knop index herbouwen is weg", () => {
@@ -241,12 +250,12 @@ describe("de tab Zoeken en foto's (Z7)", () => {
 
   it("OCR zoals X1 het meldt: geïnstalleerd, aan, wat er in de rij staat, met de twee knoppen", () => {
     const uit = view(state({ ocr: { installed: true, on: false, pages_queued: 1 } }));
-    expect(uit).toMatch(/aria-pressed="false"[^>]*data-search="ocr-button"[^>]*>OCR aanzetten</);
+    expect(button(uit, "ocr-button")).toEqual(["OCR aanzetten", false]);
     expect(uit).toMatch(/data-search="rebuild-ocr"[^>]*>Alles opnieuw herkennen</);
     expect(uit).not.toContain(NIET_GEINSTALLEERD);
     expect(field(uit, "ocr-queued")).toBe("1 inhoud (een PDF of foto)");
     const aan = view(state({ ocr: { installed: true, on: true, pages_queued: 1234 } }));
-    expect(aan).toMatch(/aria-pressed="true"[^>]*data-search="ocr-button"[^>]*>OCR uitzetten</);
+    expect(button(aan, "ocr-button")).toEqual(["OCR uitzetten", false]);
     expect(aan).toMatch(/data-search="rebuild-ocr"[^>]*>Alles opnieuw herkennen</);
     expect(aan).toContain(
       '<dl class="admin-totals" data-search="ocr"><div><dt>Geïnstalleerd</dt><dd>ja</dd></div>' +
