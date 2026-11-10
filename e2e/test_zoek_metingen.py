@@ -277,3 +277,24 @@ def test_kort_blok_noemt_elke_poort() -> None:
 def test_klaar_en_open_over_text_en_ocr() -> None:
     standen = {"text": {"done": 3, "wait": 2, "none": 1}, "ocr": {"busy": 1, "failed": 1}}
     assert zs.klaar_en_open(standen) == (5, 3)
+
+
+def test_tekst_en_ocr_klaar_tellen_skip_niet_mee() -> None:
+    """De foto's en de documenten die ocr niet leest, staan vanaf de backfill op skip: in de
+    regels "tekst klaar" en "ocr klaar" is dat geen voortgang (review van I1, breken F3). Het
+    hervatten telt skip wel mee (klaar_en_open), want dat kijkt naar het verschil."""
+    # Zoals de --kort-run: 300 foto's (text skip), 300 documenten en 20 scans
+    voor = {"text": {"skip": 300, "wait": 320}, "ocr": {"skip": 481, "wait": 139}}
+    na_media = {"text": {"skip": 300, "done": 40, "wait": 280}, "ocr": {"skip": 481, "wait": 139}}
+    na = {
+        "text": {"skip": 300, "done": 300, "none": 20},
+        "ocr": {"skip": 481, "done": 9, "busy": 1, "wait": 129},
+    }
+    assert zs.gelezen(voor["text"]) == 0
+    assert zs.gelezen({"skip": 4, "done": 2, "none": 1, "failed": 1, "wait": 9}) == 4
+    v = zs.voortgang(voor, na_media, na)
+    assert (v["tekst_klaar_voor"], v["tekst_klaar_na_media"], v["tekst_klaar_na"]) == (0, 40, 320)
+    assert v["ocr"] == {"voor": voor["ocr"], "na_media": na_media["ocr"], "na": na["ocr"]}
+    stap = {"ocr": v["ocr"], "fotos": None, "processen": None}
+    assert zs.achtergrond_regel(stap).startswith("ocr klaar 0 → 0 (na media) → 9, open 130;")
+    assert zs.klaar_en_open(voor) == (781, 459)

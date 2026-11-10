@@ -36,10 +36,11 @@ Tijdens elke stap
 - zoeken: 2 vragen per seconde (GET /search, een woord uit de documenten), de p95;
 - de app: GET /files/root en GET /health elke seconde, de p95;
 - geheugen: MemAvailable van de machine, elke seconde, het minimum;
-- achtergrondwerk: de rijen van de stappen text en ocr die klaar zijn en wat photometa nog te
-  doen heeft, aan het begin, direct na de herbouw hash, na de belastingtest en aan het eind (en
-  hoeveel foto's een pHash hebben); na de belastingtest hoe lang
-  het duurt tot de index (text of ocr) weer leest (poort ≤ 90 s);
+- achtergrondwerk: de rijen van de stappen text en ocr die klaar zijn (zonder skip: wat de stap
+  nooit leest, zoals de foto's voor text) en wat photometa nog te doen heeft, aan het begin,
+  direct na de herbouw hash, na de belastingtest en aan het eind (en hoeveel foto's een pHash
+  hebben); na de belastingtest hoe lang het duurt tot de index (text of ocr) weer leest (poort
+  ≤ 90 s);
 - de processen: de app en de lokale worker (pid en starttijd) aan het begin en het eind; een
   ander proces of geen proces is een crash of een OOM-kill (die ziet docker inspect niet: ze
   draaien op de host);
@@ -216,10 +217,6 @@ def belastingtest(server: Server, sessies: int, duur: int, uit: Path) -> dict[st
     return json.loads(uit.read_text())
 
 
-def tekst_stand(server: Server) -> dict[str, int]:
-    return dict(zb.stand(server.data_dir))
-
-
 def analyse_stand(server: Server) -> dict[str, dict[str, int]]:
     """De rijen van text en ocr per state."""
     return {step: dict(zb.stand(server.data_dir, step)) for step in STAPPEN}
@@ -227,6 +224,29 @@ def analyse_stand(server: Server) -> dict[str, dict[str, int]]:
 
 def klaar(stand: dict[str, int]) -> int:
     return sum(stand.get(s, 0) for s in zb.KLAAR)
+
+
+def gelezen(stand: dict[str, int]) -> int:
+    """klaar() zonder skip: de rijen die de stap echt gelezen heeft. skip is wat hij nooit leest
+    (de foto's voor text; voor ocr alles wat geen PDF of afbeelding is) en staat er al vanaf de
+    backfill, dus telt dat niet als voortgang (review van I1, breken F3). Alleen voor wat er te
+    zien is; het hervatten telt met klaar(), als verschil."""
+    return klaar(stand) - stand.get("skip", 0)
+
+
+def voortgang(
+    voor: dict[str, dict[str, int]],
+    na_media: dict[str, dict[str, int]],
+    na: dict[str, dict[str, int]],
+) -> dict[str, Any]:
+    """Uit analyse_stand aan het begin, na de belastingtest en aan het eind: hoeveel rijen van
+    text gelezen zijn (zonder skip), en de rijen van ocr per state."""
+    return {
+        "tekst_klaar_voor": gelezen(voor["text"]),
+        "tekst_klaar_na_media": gelezen(na_media["text"]),
+        "tekst_klaar_na": gelezen(na["text"]),
+        "ocr": {"voor": voor["ocr"], "na_media": na_media["ocr"], "na": na["ocr"]},
+    }
 
 
 def klaar_en_open(standen: dict[str, dict[str, int]]) -> tuple[int, int]:
@@ -515,10 +535,7 @@ def stap(
         "fouten": meter.fouten,
         "mem_min_mb": None if meter.mem_min is None else meter.mem_min // 2**20,
         "mem_min_bytes": meter.mem_min,
-        "tekst_klaar_voor": klaar(voor["text"]),
-        "tekst_klaar_na_media": klaar(na_media["text"]),
-        "tekst_klaar_na": klaar(na["text"]),
-        "ocr": {"voor": voor["ocr"], "na_media": na_media["ocr"], "na": na["ocr"]},
+        **voortgang(voor, na_media, na),
         "fotos": fotos,
         "hervat_s": hervat,
         "processen": {"voor": procs_voor, "na": processen(server)},
@@ -614,8 +631,8 @@ def achtergrond_regel(s: dict[str, Any]) -> str:
     """OCR, photometa, de processen en DS van één stap, op één regel."""
     ocr = s.get("ocr") or {}
     delen = [
-        f"ocr klaar {klaar(ocr.get('voor') or {})} → {klaar(ocr.get('na_media') or {})} "
-        f"(na media) → {klaar(ocr.get('na') or {})}, open "
+        f"ocr klaar {gelezen(ocr.get('voor') or {})} → {gelezen(ocr.get('na_media') or {})} "
+        f"(na media) → {gelezen(ocr.get('na') or {})}, open "
         f"{klaar_en_open({'ocr': ocr.get('na') or {}})[1]}"
     ]
     fotos = s.get("fotos")
