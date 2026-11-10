@@ -3,7 +3,7 @@
 // places.sqlite of met locatie "uit"). Een land staat erbij als er een van je plaatsen in ligt; de
 // API heeft geen eigen lijst van landen. Los van React, zodat het te testen is.
 
-import { collator } from "../../i18n";
+import { collator, t } from "../../i18n";
 import { regionName } from "../map/text";
 import type { Place } from "../map/types";
 import type { PhotoFilters } from "./filters";
@@ -36,18 +36,57 @@ export function countryChoices(places: readonly Place[]): Choice<string>[] {
     .sort((a, b) => collator.compare(a.label, b.label) || a.value.localeCompare(b.value));
 }
 
+interface Row {
+  place: Place;
+  label: string;
+}
+
+/** Rijen met hetzelfde label krijgen `more` erachter, maar alleen in een groep waar dat ze uit
+ * elkaar houdt: "Bergen, Nederland" en "Bergen, Noorwegen", niet twee keer ", Nederland". */
+function apart(rows: readonly Row[], more: (p: Place) => string): Row[] {
+  const groups = new Map<string, Row[]>();
+  for (const r of rows) {
+    const group = groups.get(r.label);
+    if (group) group.push(r);
+    else groups.set(r.label, [r]);
+  }
+  const labels = new Map<Row, string>();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const extra = group.map((r) => more(r.place));
+    if (new Set(extra).size < 2) continue;
+    group.forEach((r, i) => labels.set(r, r.label + extra[i]));
+  }
+  return rows.map((r) => ({ place: r.place, label: labels.get(r) ?? r.label }));
+}
+
+/** Wat dan nog gelijk is (zelfde naam, provincie, land en aantal foto's), krijgt een volgnummer:
+ * twee keuzes die je niet uit elkaar houdt, zijn er nooit. */
+function numbered(rows: readonly Row[]): Row[] {
+  const total = new Map<string, number>();
+  for (const r of rows) total.set(r.label, (total.get(r.label) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  return rows.map((r) => {
+    if ((total.get(r.label) ?? 0) < 2) return r;
+    const i = (seen.get(r.label) ?? 0) + 1;
+    seen.set(r.label, i);
+    return { place: r.place, label: `${r.label} (${i})` };
+  });
+}
+
 /** De plaatsen op naam; met een land alleen die in dat land. Twee met dezelfde naam en provincie
- * (in een ander land) krijgen het land erachter. */
+ * krijgen het land erachter als dat verschilt, anders hun aantal foto's ("Neustadt, Bayern (12
+ * foto's)"), en is dat ook gelijk een volgnummer (review I1, W5). */
 export function placeChoices(places: readonly Place[], country: string | null): Choice<number>[] {
   const shown = places.filter((p) => country === null || code(p.country) === country);
-  const labels = new Map<string, number>();
-  for (const p of shown) labels.set(placeLabel(p), (labels.get(placeLabel(p)) ?? 0) + 1);
-  return shown
-    .map((p) => {
-      const label = placeLabel(p);
-      const land = (labels.get(label) ?? 0) > 1 ? regionName(p.country) : null;
-      return { value: p.id, label: land ? `${label}, ${land}` : label };
-    })
+  let rows: Row[] = shown.map((place) => ({ place, label: placeLabel(place) }));
+  rows = apart(rows, (p) => {
+    const land = regionName(p.country);
+    return land ? `, ${land}` : "";
+  });
+  rows = apart(rows, (p) => ` (${t("photos_people.filters.placePhotos", { n: p.n })})`);
+  return numbered(rows)
+    .map((r) => ({ value: r.place.id, label: r.label }))
     .sort((a, b) => collator.compare(a.label, b.label) || a.value - b.value);
 }
 

@@ -87,6 +87,7 @@ const en: Translation<typeof nl> = {
     allCountries: "All countries",
     place: "Place",
     allPlaces: "All places",
+    placePhotos: { one: "{n} photo", other: "{n} photos" },
     camera: "Camera",
     cameraHint: "Make and model, or the first words of it (for example canon). Applies when you press Enter or leave the field.",
     clear: "Clear filters",

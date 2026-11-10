@@ -89,6 +89,8 @@ export default {
     allCountries: "Alle landen",
     place: "Plaats",
     allPlaces: "Alle plaatsen",
+    // Achter twee plaatsen met dezelfde naam, provincie en land (review I1, W5)
+    placePhotos: { one: "{n} foto", other: "{n} foto's" },
     camera: "Camera",
     cameraHint: "Merk en model, of de eerste woorden ervan (bijvoorbeeld canon). Telt als je op Enter drukt of het veld verlaat.",
     clear: "Filters wissen",
