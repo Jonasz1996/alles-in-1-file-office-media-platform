@@ -379,6 +379,80 @@ async def test_geo_load_naast_de_draaiende_app(client, admin, settings):
         assert await db.scalar(select(func.count()).select_from(PhotoGeo)) == 1
 
 
+async def test_gelezen_met_plaatsen_uit_krijgt_zijn_plaats_als_ze_weer_aan_gaan(
+    client, admin, settings, monkeypatch
+):
+    """PLAATSEN=uit staat in .env, dus het geldt vanaf een start. places.sqlite blijft staan. Wat
+    photometa dan leest, krijgt geen plaats en geen land (places.get() geeft None). Gaat PLAATSEN
+    weer aan, dan is het dezelfde bouw en is places.sqlite "klaar". Toch krijgen die foto's hun
+    plaats: de start met "uit" wist Setting "geo.places", zodat de start daarna de keten voor deze
+    bouw opnieuw klaarzet (I1, C3a)."""
+    h, _tokens = admin
+    await bouw_bij_de_start(settings, monkeypatch)
+    assert await jobs_van(settings, photo_rows.PLACES_TYPE) == ["done"]
+
+    uit = settings.model_copy(update={"places": "uit"})
+    places.forget()  # een nieuwe start: niets open
+    await gestart(uit)
+    foto = (await upload(client, h, "a.jpg", met_gps()))["id"]
+    await verwerk(uit)
+    assert await plaatsen_van(settings) == {foto: (None, None, None)}
+
+    places.forget()
+    await gestart(settings)  # weer aan; places.sqlite is "klaar"
+    await jobs.run_pending(settings)
+    assert await plaatsen_van(settings) == {foto: (AMSTERDAM, "NL", "North Holland")}
+    assert await jobs_van(settings, photo_rows.PLACES_TYPE) == ["done", "done"]
+    # Een volgende start met "aan" zet niets meer klaar; een start met "uit" zonder Setting
+    # schrijft niets
+    await gestart(settings)
+    assert await jobs_van(settings, photo_rows.PLACES_TYPE) == ["done", "done"]
+    places.forget()
+    await gestart(uit)
+    assert not await photo_rows.places_off(uit)
+
+
+async def test_een_keten_die_nog_klaarstaat_bij_plaatsen_uit_begint_daarna_vooraan(
+    client, admin, settings, monkeypatch
+):
+    """De app stopt terwijl de keten nog loopt, start met PLAATSEN=uit en stopt weer voor zijn
+    runner die keten oppakt. Dan stond de keten met zijn cursor nog klaar, en de start met "aan"
+    daarna zette er geen nieuwe naast (enqueue ontdubbelt op de key): een rij vóór de cursor die
+    photometa met "uit" las, bleef zonder plaats. De start met "uit" haalt zo'n keten weg, in de
+    transactie die Setting "geo.places" wist (I1, C3a)."""
+    h, _tokens = admin
+    fotos = sorted(
+        [(await upload(client, h, f"{k}.jpg", met_gps(k)))["id"] for k in ("red", "green")],
+        key=_uuid,
+    )
+    await verwerk(settings)
+    monkeypatch.setattr(photo_rows, "PLACES_CHUNK", 1)
+    bronnen.gebruik(monkeypatch, bronnen.maak(settings.geo_src))
+    await gestart(settings)  # de bouw; de keten staat klaar
+    assert await jobs.run_one(settings)  # het eerste stuk; zijn opvolger staat klaar
+    amsterdam = (AMSTERDAM, "NL", "North Holland")
+    leeg = (None, None, None)
+    assert await plaatsen_van(settings) == {fotos[0]: amsterdam, fotos[1]: leeg}
+
+    uit = settings.model_copy(update={"places": "uit"})
+    places.forget()
+    await gestart(uit)  # geen jobs: de app stopt voor zijn runner de keten oppakt
+    assert await jobs_van(settings, photo_rows.PLACES_TYPE) == ["done"]
+    # Alsof photometa de eerste foto met "uit" opnieuw las: geen plaats en geen land
+    async with maker(settings)() as db:
+        await db.execute(
+            update(PhotoGeo)
+            .where(PhotoGeo.node_id == _uuid(fotos[0]))
+            .values(place_id=None, country=None, admin1=None)
+        )
+        await db.commit()
+
+    places.forget()
+    await gestart(settings)  # weer aan; places.sqlite is "klaar"
+    await jobs.run_pending(settings)
+    assert await plaatsen_van(settings) == {fotos[0]: amsterdam, fotos[1]: amsterdam}
+
+
 def _zonder_nederland() -> bytes:
     """De landen van bronnen.geojson() zonder NL: een plek in Nederland ligt dan op zee."""
     data = json.loads(bronnen.geojson())

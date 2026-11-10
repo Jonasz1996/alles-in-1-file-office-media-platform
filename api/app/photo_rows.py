@@ -335,6 +335,34 @@ async def enqueue_places(settings: Settings, bouw: str) -> bool:
     return True
 
 
+async def places_off(settings: Settings) -> bool:
+    """Bij een start met PLAATSEN=uit (load.start): Setting "geo.places" weg. Wat photometa nu
+    leest, krijgt geen plaats en geen land (places.get() geeft None). Gaat PLAATSEN weer aan met
+    dezelfde places.sqlite (dezelfde bouw, "klaar"), dan zet de start daarna de keten voor die bouw
+    zo opnieuw klaar, en vult hij ook deze rijen. Een keten die nog klaarstaat (de app stopte
+    terwijl hij liep; jobs.recover zette hem terug) gaat mee weg: met "uit" doet hij toch niets,
+    en anders ontdubbelt die nieuwe keten ertegen en gaat hij verder na de oude cursor. Eerst
+    lezen: alleen de eerste start met "uit" schrijft, in één korte transactie. Geeft of er iets
+    weg moest."""
+    async with _maker(settings)() as db:
+        row = await db.get(Setting, PLACES_TYPE, populate_existing=True)
+        queued = await db.scalar(
+            select(Job.id).where(Job.type == PLACES_TYPE, Job.status == "queued").limit(1)
+        )
+        if row is None and queued is None:
+            return False
+        if row is not None:
+            await db.delete(row)
+        if queued is not None:
+            await db.execute(
+                delete(Job)
+                .where(Job.type == PLACES_TYPE, Job.status == "queued")
+                .execution_options(synchronize_session=False)
+            )
+        await db.commit()
+    return True
+
+
 # Plaats, land en provincie voor één rij, alleen als hij nog geen plaats en geen land heeft en
 # nog dezelfde plek heeft; met de controle van write() (Keuze 25a en 28) in dezelfde statement
 _FILL = (

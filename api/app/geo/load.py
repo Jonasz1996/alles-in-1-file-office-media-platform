@@ -483,6 +483,15 @@ async def start(settings: Settings) -> None:
                 )
 
     if settings.places == "uit":
+        # Wat photometa nu leest, krijgt geen plaats. Zonder dit zette een start met PLAATSEN
+        # weer aan en dezelfde places.sqlite ("klaar") de keten niet opnieuw klaar (I1, C3).
+        # Hier en niet op de achtergrond: bij "uit" begint load.start geen taak
+        from app import photo_rows
+
+        try:
+            await photo_rows.places_off(settings)
+        except Exception as e:  # noqa: BLE001 - de volgende start met "uit" probeert het weer
+            log.warning("Plaatsnamen: Setting geo.places niet gewist (%s)", type(e).__name__)
         return
     # Ook als de meta klopt: ensure() kijkt in de thread met quick_check of hij heel is (±0,15 s
     # bij de echte bronnen), niet in de lus
