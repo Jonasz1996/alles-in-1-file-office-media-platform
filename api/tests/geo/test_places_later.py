@@ -10,6 +10,7 @@ controle als het gewone schrijven (locatie "uit", de eigenaar van de node), en w
 van photometa die vóór de bouw begon.
 """
 
+import json
 import logging
 import sqlite3
 import sys
@@ -376,3 +377,61 @@ async def test_geo_load_naast_de_draaiende_app(client, admin, settings):
     assert await plaatsen_van(settings) == {foto: (AMSTERDAM, "NL", "North Holland")}
     async with maker(settings)() as db:
         assert await db.scalar(select(func.count()).select_from(PhotoGeo)) == 1
+
+
+def _zonder_nederland() -> bytes:
+    """De landen van bronnen.geojson() zonder NL: een plek in Nederland ligt dan op zee."""
+    data = json.loads(bronnen.geojson())
+    data["features"] = [f for f in data["features"] if f["properties"]["ISO_A2"] != "NL"]
+    return json.dumps(data).encode()
+
+
+async def test_geo_load_force_naast_de_app_zoekt_op_in_de_nieuwe_bouw(
+    client, admin, settings, monkeypatch, caplog
+):
+    """geo-load --force draait als eigen proces naast de app (runbook zoeken.md), terwijl de app
+    de vorige bouw open heeft en zijn keten nog loopt. De keten van de nieuwe bouw draait in de
+    app en zoekt op in de nieuwe places.sqlite, ook de rijen vóór de cursor van de oude keten; de
+    oude keten stopt (I1, C3b). Eerst hield places.get() het oude bestand open tot een herstart,
+    en na die herstart zette niets de keten opnieuw klaar."""
+    h, _tokens = admin
+    fotos = sorted(
+        [(await upload(client, h, f"{k}.jpg", met_gps(k)))["id"] for k in ("red", "green")],
+        key=_uuid,
+    )
+    await verwerk(settings)
+    monkeypatch.setattr(photo_rows, "PLACES_CHUNK", 1)
+    # De vorige bouw kent Nederland niet
+    bronnen.gebruik(monkeypatch, bronnen.maak(settings.geo_src, landen=_zonder_nederland()))
+    assert load.ensure(settings) == "gebouwd"
+    assert await photo_rows.enqueue_places(settings, bouw(settings))
+    assert await jobs.run_one(settings)  # het eerste stuk; zijn opvolger staat klaar
+    leeg = (None, None, None)
+    assert await plaatsen_van(settings) == {fotos[0]: leeg, fotos[1]: leeg}
+    assert places.get(settings) is not None  # de app heeft de vorige bouw open
+
+    b = bronnen.maak(settings.geo_src)
+    script = (
+        "import sys\n"
+        "from app.geo import load\n"
+        "load.LANDEN = load.Bron(load.LANDEN.naam, '', int(sys.argv[2]), sys.argv[1])\n"
+        "load.PLAATSEN = load.Bron(load.PLAATSEN.naam, '', int(sys.argv[4]), sys.argv[3])\n"
+        "from app.cli import main\n"
+        "sys.exit(main(['geo-load', '--force']))\n"
+    )
+    result = await anyio.run_process(
+        [sys.executable, "-c", script, b.landen.sha256, str(b.landen.grootte),
+         b.plaatsen.sha256, str(b.plaatsen.grootte)],
+        cwd=API_DIR,
+        env={"PATH": "/usr/bin:/bin", "PLATFORM_DATA_DIR": str(settings.data_dir),
+             "PLATFORM_JWT_SECRET": "test" * 8, "PYTHONDONTWRITEBYTECODE": "1"},
+        check=False,
+    )  # fmt: skip
+    assert result.returncode == 0, result.stderr.decode()
+    assert "gebouwd" in result.stdout.decode()
+
+    with caplog.at_level(logging.INFO, logger="platform.geo"):
+        await jobs.run_pending(settings)
+    amsterdam = (AMSTERDAM, "NL", "North Holland")
+    assert await plaatsen_van(settings) == {fotos[0]: amsterdam, fotos[1]: amsterdam}
+    assert "geo_places_stop rows=0" in "\n".join(r.getMessage() for r in caplog.records)

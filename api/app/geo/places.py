@@ -295,7 +295,12 @@ def get(settings: Settings) -> Places | None:
     with _open_lock:
         p = _open.get(pad)
         if p is not None:
-            return p
+            if p.ident == _ident(pad):
+                return p
+            # Een nieuwe bouw door een ander proces (geo-load naast de draaiende app; een bouw
+            # hier doet zelf forget()): het nieuwe bestand openen, zoals na forget()
+            del _open[pad]
+            p.close()
         if settings.places == "uit" or not pad.is_file():
             return None
         if pad in _kapot and _kapot[pad] == _ident(pad):
