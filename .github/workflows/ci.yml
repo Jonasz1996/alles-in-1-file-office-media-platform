@@ -256,8 +256,9 @@ jobs:
             | tee "$RUNNER_TEMP/zoek-perf/plannen.txt"
       # §4.6 (integratie I1): churn en de hele set triggers op 3.46.1. Marker triggers zet
       # tests/search/conftest.py (de bestanden migration_0010, *trigger* en *churn*). Dezelfde
-      # uitsluitingen als MARKERS_DB in e2e/slim.sh: de metingen met zoek_perf in die bestanden
-      # (S2, S3) draait de stap hierna al, één keer
+      # uitsluitingen als MARKERS_DB in e2e/slim.sh: de vier metingen met zoek_perf in die
+      # bestanden (S2, S3, die van de prullenbak en die van de plekken) draait de stap hierna al,
+      # één keer
       - name: Churn en de triggers op 3.46.1 (marker triggers, §4.6)
         if: ${{ !cancelled() }}
         run: |
@@ -328,7 +329,7 @@ jobs:
           echo "S4, S8, S9, S6: $(tail -n 1 "$d/plannen.txt" 2> /dev/null || echo "liep niet")"
           grep -E "^ *(S4 op|laatste jaar|langs de tijd|type),? " "$d/plannen.txt" 2> /dev/null || true
           echo "churn en de triggers (§4.6): $(tail -n 1 "$d/triggers.txt" 2> /dev/null || echo "liep niet")"
-          echo "zoek_perf (S1, S2, S3, S7):$(tail -n 1 "$d/zoek_perf.txt" 2> /dev/null || echo "liep niet")"
+          echo "zoek_perf (S1, S2, S3, S7): $(tail -n 1 "$d/zoek_perf.txt" 2> /dev/null || echo "liep niet")"
           grep -E "^[.FEsx]*(S1|S2|S7) " "$d/zoek_perf.txt" 2> /dev/null | sed 's/^[.FEsx]*//' || true
           grep -E "^[0-9.]+s call " "$d/zoek_perf.txt" 2> /dev/null || true
           sed -n '/^=== zoekbench ===/,$p' "$d/bench.txt" 2> /dev/null || echo "S10: de bench liep niet"

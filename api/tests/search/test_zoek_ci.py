@@ -121,3 +121,5 @@ def test_zoek_perf_draait_churn_en_de_triggers_op_3_46_1():
     assert len(perf) == 1 and "triggers" not in perf[0], perf
     samenvatting = [tekst for tekst in blokken if "=== kort ===" in tekst]
     assert len(samenvatting) == 1 and "$d/triggers.txt" in samenvatting[0]
+    # Elke regel van het kort-blok leest als "naam: uitkomst", met een spatie na de dubbele punt
+    assert ":$(" not in samenvatting[0], re.findall(r".*:\$\(.*", samenvatting[0])
