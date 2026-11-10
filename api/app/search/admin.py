@@ -48,7 +48,7 @@ from anyio import to_thread
 from sqlalchemy import func, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import analysis, errors, events, photo_hash, photometa, render_meta
+from app import analysis, errors, events, jobs, photo_hash, photometa, render_meta
 from app.analysis import Step
 from app.db import get_engine
 from app.extract import step as text_step
@@ -141,16 +141,17 @@ def is_paused() -> bool:
     return bool(analysis.PAUSED.intersection(LANES))
 
 
-async def _wake_lanes(db: AsyncSession) -> None:
+async def _wake_lanes(db: AsyncSession) -> list[str]:
     """Hervatten: de pomp van elke rij die de pauze stilzette, nu (zoals retry hieronder). Een
     pomp die tijdens de pauze week, staat anders DEFER_S later; dan las de index na "Hervatten"
     pas na een halve minuut weer (z7.md, Open na de samenvoeging). Pas na apply_pause(False):
     een pomp die eerder loopt, ziet de pauze nog en wijkt opnieuw. In de transactie van de
-    aanroeper."""
+    aanroeper; geeft de rijen, die de aanroeper na zijn commit wekt (jobs.kick)."""
     moment = now()
-    lanes = {reg.lane for reg in analysis.registered().values()} & set(LANES)
-    for lane in sorted(lanes):
+    lanes = sorted({reg.lane for reg in analysis.registered().values()} & set(LANES))
+    for lane in lanes:
         await analysis._wake(db, lane, moment)
+    return lanes
 
 
 # --- De stand ------------------------------------------------------------------------------------
@@ -296,8 +297,11 @@ async def change(db: AsyncSession, body: AdminSearchPatch) -> None:
         await db.commit()
         apply_pause(body.paused)
         if not body.paused:
-            await _wake_lanes(db)
+            lanes = await _wake_lanes(db)
             await db.commit()
+            # _wake wekt de rij al vóór de commit; dan ziet hij nog de oude run_after en pakt hij
+            # de pomp pas bij zijn rondje (jobs.POLL, 5 s) op. Nu staat hij op nu.
+            jobs.kick(lanes)
         log.info("Zoeken: achtergrondwerk %s", "gepauzeerd" if body.paused else "weer aan")
     # De schakelaars van X1, X2 en X3 werken in deze transactie (search.hooks); hier vast
     for part, value in switches.items():

@@ -43,8 +43,8 @@ API = "/api/v1"
 ADMIN = f"{API}/admin/search"
 WACHT_S = 60.0
 # Na "Hervatten": de herbouw en de mislukte zijn binnen een paar seconden klaar. Hervatten wekt de
-# pompen van index en ocr (I1, S1); eerst kwam de pomp van de mislukte pas terug na
-# analysis.DEFER_S (30 s), en wachtte deze test daarop. Ruim onder die 30 s.
+# pompen van index en ocr, en na de commit hun workers (I1, S1); eerst kwam de pomp van de
+# mislukte pas terug na analysis.DEFER_S (30 s), en wachtte deze test daarop. Ruim onder die 30 s.
 HERVAT_S = 15.0
 N = 3_000  # meer nodes dan rebuild.CHUNK (2.000): de herbouw heeft twee stukken
 WOORD = "notulenwoordbeheer"  # alleen in de tekst van de docx die op failed komt

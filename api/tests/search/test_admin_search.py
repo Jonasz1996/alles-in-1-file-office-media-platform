@@ -295,6 +295,28 @@ async def test_hervatten_wekt_de_pompen_van_index_en_ocr(client, admin, settings
         gezien.append((lane, set(analysis.PAUSED)))
         await echt(db, lane, at)
 
+    # De workers van de rij: wat zien ze als ze gewekt worden? Een seintje vóór de commit ziet
+    # nog de oude run_after; dan pakt de Runner de pomp pas bij zijn rondje (jobs.POLL) op.
+    bestand = settings.db_url.removeprefix("sqlite+aiosqlite:///")
+    gewekt: list[tuple[str, datetime]] = []
+
+    def waker(lane: str):
+        def wake() -> None:
+            con = sqlite3.connect(bestand)
+            try:
+                rows = con.execute(
+                    "SELECT run_after FROM job WHERE type = ? AND status = 'queued'",
+                    (analysis.pump_type(lane),),
+                ).fetchall()
+            finally:
+                con.close()
+            for (at,) in rows:
+                found = datetime.fromisoformat(at)
+                gewekt.append((lane, found if found.tzinfo else found.replace(tzinfo=UTC)))
+
+        return wake
+
+    monkeypatch.setattr(jobs, "_wakers", {waker(lane): lane for lane in search_admin.LANES})
     monkeypatch.setattr(analysis, "_wake", wake)
     r = await client.patch(ADMIN, json={"paused": False}, headers=headers)
     assert r.status_code == 200 and r.json()["paused"] is False
@@ -302,6 +324,9 @@ async def test_hervatten_wekt_de_pompen_van_index_en_ocr(client, admin, settings
     for pomp, at in (await queued_pumps(settings)).items():
         assert len(at) == 1 and at[0] <= na, (pomp, at, na)
     assert gezien == [("index", set()), ("ocr", set())]
+    # Na de commit gewekt: de workers zien de pomp op nu, en pakken hem meteen op
+    for lane in search_admin.LANES:
+        assert any(wie == lane and at <= na for wie, at in gewekt), (lane, gewekt)
     # En de pomp van index loopt nu echt (zonder werk: klaar, geen nieuwe job)
     assert await jobs.run_pending(settings, lane="index") == 1
     assert (await queued_pumps(settings))[analysis.pump_type("index")] == []
