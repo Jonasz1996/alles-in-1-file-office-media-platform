@@ -368,7 +368,8 @@ Voor andere pakketten:
 6. ~~**Z1** zet `test_search_churn.py` in `tests/search/` (afwijking 10).~~ Gedaan door Z1
    (`api/tests/search/test_search_churn.py`). ~~Die test op 3.46.1 in CI draaien is I1 (A3).~~
    Sinds I1 (A3, `f211d7b`) draait `zoek-perf` hem op 3.46.1, in de stap "Churn en de triggers op
-   3.46.1" (`.github/workflows/ci.yml:262-267`).
+   3.46.1" (`.github/workflows/ci.yml:262-267`). Of die stap in CI groen is, laat pas de run na de
+   push van I1 zien.
 
 Vragen voor Jonas (de standaard waar dit deel op bouwt staat erbij):
 
