@@ -222,5 +222,8 @@ Bekend en niet van Z0b:
    doet `sleep 60 &`, dus sh maakt eerst een kopie van zichzelf (die heet nog `ffmpeg`) en die doet
    pas daarna `exec sleep`. De test leest `comm` zodra het kind er is, en onder de last van de
    volle run is die `exec` dan soms nog niet gebeurd. Los vijf keer groen; Z0b raakt dat bestand
-   en `app/media` niet. De test moet wachten tot het kind `sleep` heet (van media, niet van Z0b).
-   Dit is I1 (S3).
+   en `app/media` niet. ~~De test moet wachten tot het kind `sleep` heet (van media, niet van Z0b).
+   Dit is I1 (S3).~~ Gedaan in I1 (S3, `f9edfb7`): de test wacht tot het kleinkind `sleep` heet
+   (`api/tests/test_media_worker_guard.py:283`); de grens van 3 s blijft. Op de kop van I1 groen
+   (`-k kleinkinderen`). De race zelf is lokaal niet gezien (0 van 200 in het pakket van I1); de
+   reparatie volgt de oorzaak hierboven.

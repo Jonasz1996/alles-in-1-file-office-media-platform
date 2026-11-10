@@ -138,9 +138,12 @@ in hetzelfde land. Alles gebeurt in de container, zonder iets online op te zoeke
 
   Zonder `--force` doet het niets als `places.sqlite` er al goed staat; met `--force` bouwt het
   hem opnieuw. Exitcode 1 als een bron ontbreekt of niet klopt.
-- **De plekken opnieuw.** Na nieuwe bronnen krijgen foto's hun plaats bij de volgende keer dat
-  ze gelezen worden. Alles opnieuw: `/beheer` → Zoeken en foto's → **Plek, camera en datum
-  opnieuw lezen** (hieronder).
+- **De plekken opnieuw.** Na elke nieuwe bouw van `places.sqlite` (door de app bij de start, of
+  met `geo-load`) krijgen foto's met een GPS-plek maar nog zonder plaats en land die vanzelf: op
+  de achtergrond, één keer per bouw. Zet je `PLAATSEN` van `uit` weer op `aan`, dan doet de
+  eerstvolgende start dat ook. Op zee blijft de plaats leeg. Een foto die al een plaats had,
+  houdt die tot hij opnieuw gelezen wordt. Alles opnieuw: `/beheer` → Zoeken en foto's → **Plek,
+  camera en datum opnieuw lezen** (hieronder).
 
 ## De stand lezen
 

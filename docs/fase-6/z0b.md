@@ -370,7 +370,10 @@ Bekend en niet van Z0b:
     faalde één keer in een volle run van Z0b-api: de nep-ffmpeg doet `sleep 60 &`, en de test leest
     de naam van het kind voordat de kopie van sh `exec sleep` gedaan heeft (Open 6 van
     [z0b-api.md](z0b-api.md)). Van media, niet van Z0b; hij staat ongewijzigd. In de volle run
-    van deze samenvoeging was hij groen. Dit is I1 (S3): de test wacht tot het kind `sleep` heet.
+    van deze samenvoeging was hij groen. ~~Dit is I1 (S3): de test wacht tot het kind `sleep`
+    heet.~~ Gedaan in I1 (S3, `f9edfb7`): de test wacht daarop
+    (`api/tests/test_media_worker_guard.py:283`), de grens van 3 s blijft; zie Open 6 van
+    [z0b-api.md](z0b-api.md).
 11. ~~`tests/search/test_spike_deadline.py::test_rondes_a_b_en_c` (S1, van Z0-spike) faalde één keer
     in stap 1 van `e2e/slim.sh`, die naast de volle API-suite op dezelfde cores 0–2 liep, en in de
     nacontrole één keer in de volle API-suite zonder andere last: in stap 2 van de test gaf ronde A
