@@ -22,8 +22,8 @@ met alleen Tab, Shift+Tab, Enter, Spatie, Esc, de pijlen en typen. Nergens een k
 | Enter op een gekozen persoon ("Oma Ria uit het filter halen") | haalt hem uit het filter; de focus gaat terug naar het veld "Persoon" |
 | ↑ / ↓ in "Soort" | foto's en video's, alleen foto's of alleen video's |
 | "Vanaf" en "Tot en met" | gewone datumvelden; de datum telt bij het verlaten van het veld (Tab) of Enter, zoals op `/zoeken`: typen geeft één vraag, niet één per cijfer. Een omgekeerde periode wordt omgedraaid |
-| ↑ / ↓ in "Land" (I1) | alle landen of één land. Een land maakt de lijst "Plaats" korter; een gekozen plaats die niet in dat land ligt, gaat uit het filter |
-| ↑ / ↓ in "Plaats" (I1) | alle plaatsen of één plaats ("Amsterdam, Noord-Holland"). Land en Plaats samen: de foto moet aan allebei voldoen |
+| ↑ / ↓ in "Land" (I1) | alle landen of één land. Een land maakt de lijst "Plaats" korter; een gekozen plaats die niet in dat land ligt, gaat uit het filter. Net als bij "Soort" telt elke stap van ↑ of ↓: pijl je met een gekozen plaats naar een ander land, dan gaat de plaats al weg bij het eerste land waar hij niet in ligt, en komt hij niet terug. Typ daarom de eerste letters van het land, of open de lijst eerst (Alt+↓) en kies met Enter |
+| ↑ / ↓ in "Plaats" (I1) | alle plaatsen of één plaats ("Amsterdam, Noord-Holland"). Land en Plaats samen: de foto moet aan allebei voldoen. Twee plaatsen met dezelfde naam en provincie krijgen het land erachter, of in hetzelfde land hun aantal foto's ("Neustadt, Bayern (12 foto's)"); geen twee keuzes zijn gelijk |
 | typen in "Camera", dan Enter of Tab (I1) | het merk en model, of de eerste woorden ervan: "canon" vindt "Canon EOS 5D", "canon eos" ook "Canon EOS R5", maar "can" niets. Hoofdletters maken niet uit. Het telt bij Enter of het verlaten van het veld, zoals een datum: typen geeft één vraag, niet één per letter |
 | Enter op "Filters wissen" | alle filters uit; de focus gaat naar het veld "Persoon". De knop staat er alleen als er een filter aan is |
 
@@ -31,6 +31,10 @@ met alleen Tab, Shift+Tab, Enter, Spatie, Esc, de pijlen en typen. Nergens een k
   Hebben je foto's geen plaats (geen plaatsenbestand, of de plek in je foto's staat uit onder
   Account → Foto's), dan staan ze er niet; "Camera" staat er altijd. De volgorde met Tab: "Persoon",
   "Soort", "Vanaf", "Tot en met", "Land", "Plaats", "Camera", "Filters wissen".
+- Die lijst heeft hooguit 500 plaatsen, die met de meeste foto's eerst (`MAX_PLACES` van
+  `GET /photos/places`): wie meer plaatsen heeft, mist in "Plaats" de kleinste, en in "Land" een land
+  waarvan geen enkele plaats bij die 500 hoort. Een land met alleen foto's verder dan 30 km van een
+  plaats staat er ook niet in (de API heeft geen eigen lijst van landen).
 - Hoeveel filters er aan staan, staat in een `status` ("1 filter aan", "2 filters aan"). Een
   schermlezer leest dat voor.
 - Past er niets, dan staat er "Geen foto's die bij deze filters passen.", met nog een knop

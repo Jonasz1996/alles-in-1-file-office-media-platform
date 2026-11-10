@@ -2501,7 +2501,8 @@ de vraag van 0.7.0 uit `routers/search.py` weg, met de grenzen van 0.7.0 in `sea
 Na de review van Z0b (contract F3) ook wat Keuze 81 aan Z4 geeft: de keuze "Namen en tekst" /
 "Wat er op de foto staat", de laatste suggestie en de regel "Geen foto met deze naam?"; in de
 stand beeld laadt `/zoeken` het raster van X3 lazy uit `src/search/beeld/BeeldResults.tsx`, met
-het gebied `beeld` (de plek zette Z0b; tot X3 toont hij niets).
+het gebied `beeld` (de plek zette Z0b; tot X3 toont hij één zin, zonder versienummer, dat zoeken
+op beeld in een volgende versie komt: I1, S8).
 
 **Tests:** vitest voor `query.ts` (URL heen en terug), de combobox (pijlen, Esc, Enter,
 `aria-activedescendant`), de snippets (alleen tekst, geen HTML), de meldingen bij `partial` en
