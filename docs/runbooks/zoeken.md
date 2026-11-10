@@ -5,7 +5,8 @@ duplicaten en kent personen. Zoeken op naam zit in de database zelf (triggers) e
 De rest komt op de achtergrond: de inhoud van documenten, de plek, camera en hash van foto's.
 Wat fase 6 is en hoe je bijwerkt, staat in `infra/single/README.md` ("Bijwerken naar fase 6").
 Dit runbook gaat over wat het script doet, de reservekopie, de plaatsnamen, de stand lezen, de
-index herbouwen, zoeken meten, zoeken naast media en office meten, en terug naar 0.7.1.
+wekelijkse controle, de index herbouwen, zoeken meten, zoeken naast media en office meten, en
+terug naar 0.7.1.
 
 Alles hieronder gebeurt in de Console van de container (de LXC), als root. `dc` is de functie uit
 de README (Handige commando's): `docker compose` met precies de bestanden van het
@@ -153,7 +154,8 @@ beneden, en elke 5 seconden ververst:
 - **Achtergrondwerk**: `loopt` of `gepauzeerd`, met de knop **Achtergrondwerk pauzeren** (of
   **Achtergrondwerk hervatten**);
 - **Index**: **Namen** `klaar` (of `worden opnieuw opgebouwd`), **Tekst uit bestanden** `n van m
-  bestanden` met een balk, en **Mislukt** `n inhouden`; de knop **Index herbouwen**;
+  bestanden` met een balk, **Mislukt** `n inhouden` en **Controle (wekelijks)** (zie "De
+  wekelijkse controle" hieronder); de knop **Index herbouwen**;
 - **Herbouwen**, alleen als er een loopt: wat (`De index`, `Plek, camera en datum`,
   `Duplicaten`), hoe ver, sinds wanneer, met een balk;
 - **Mislukte inhouden**: `Niets mislukt.`, of de knoppen **Mislukte opnieuw** en **Lijst van
@@ -190,11 +192,46 @@ dc exec -T platform python -m app.cli search-check --volledig
 en noemt elk verschil; exitcode 1 bij een verschil. Loopt er een herbouw, dan zegt het dat en wacht
 je tot hij klaar is.
 
+## De wekelijkse controle
+
+De app kijkt zelf of de index nog klopt met de bron. Eens per week vergelijkt hij 200 willekeurige
+bestanden in de index met wat de database heeft, zoals `search-check` hierboven, maar met minder
+bestanden. Hij leest alleen, in één momentopname, en houdt het schrijven van de app niet op: wie
+iets uploadt of opslaat, merkt er niets van.
+
+- **Wanneer.** Elk uur kijkt de app of het tijd is. Is er nog geen uitkomst, dan meteen: de eerste
+  keer dus kort na de eerste start van 0.8.0. Daarna een week na de vorige uitkomst. Die tijd staat
+  in de database, dus een herstart begint de week niet opnieuw.
+- **Geen uitkomst: het volgende uur opnieuw.** Staat het achtergrondwerk op pauze (**Achtergrondwerk
+  pauzeren**), loopt er een herbouw van de index, of zijn er nog geen bestanden, dan slaat hij zijn
+  beurt over en probeert hij het een uur later. De vorige uitkomst blijft dan staan.
+- **Alleen met FTS5.** Zoekt de app met LIKE omdat er geen index is (deze SQLite kent geen FTS5,
+  `PLATFORM_SEARCH_INDEX=uit`, of PostgreSQL), dan valt er niets te vergelijken en loopt hij niet.
+- **Waar je het ziet.** Op `/beheer` → Zoeken en foto's, bij Index, de regel **Controle
+  (wekelijks)**: `nog niet gedaan`, `<tijd>: 200 bestanden vergeleken, geen verschil`, of in rood
+  `<tijd>: 3 verschillen met de bron (200 vergeleken)`. Elk bestand met een verschil telt één keer.
+  Met LIKE staat er `loopt alleen met FTS5`. In het log van de app staat alleen hoeveel bestanden
+  hij vergeleek en hoeveel verschillen hij vond, nooit een naam of tekst.
+
+**Bij een verschil.** Onder de rode regel zegt `/beheer` wat je doet:
+
+1. Herbouw de index: de knop **Index herbouwen** (zie "De index herbouwen" hieronder). Wil je eerst
+   weten welke bestanden het zijn, draai dan `search-check` (hierboven); die noemt elk verschil
+   dat hij vindt.
+2. Wacht tot de herbouw klaar is. Na een verschil kijkt de app niet pas na een week, maar elk uur
+   opnieuw. Binnen een uur na de herbouw staat er dus `geen verschil`, of komt het verschil terug.
+3. Komt het verschil na de herbouw terug, dan zijn de triggers van zoeken zelf stuk. Zet ze terug
+   met `search-triggers` (onder "De index herbouwen"); dat herbouwt de index daarna ook.
+4. Komt het daarna nog terug, dan klopt er iets in de app zelf niet. Bewaar de uitvoer van
+   `search-check` (alleen de nummers van de bestanden, geen namen) voor wie het uitzoekt.
+
+Herstellen doet de controle zelf nooit: dat blijft met de hand.
+
 ## De index herbouwen
 
-Nodig na een melding van `search-check`, of als zoeken iets niet vindt dat er wel is. Herbouwen gaat
-in stukken terwijl de app draait. Tot de nieuwe index klaar is, zoekt iedereen met LIKE: dat werkt,
-alleen langzamer en zonder rangorde. Op `/beheer` → Zoeken en foto's:
+Nodig na een verschil in de wekelijkse controle of van `search-check`, of als zoeken iets niet vindt
+dat er wel is. Herbouwen gaat in stukken terwijl de app draait. Tot de nieuwe index klaar is, zoekt
+iedereen met LIKE: dat werkt, alleen langzamer en zonder rangorde. Op `/beheer` → Zoeken en foto's:
 
 - **Index herbouwen** (bij Index): de namen en de tekst opnieuw in de index, uit wat de database
   al heeft. Documenten worden niet opnieuw gelezen. Eerst vraagt het `De index herbouwen?`;
@@ -215,8 +252,9 @@ dc exec -T platform python -m app.cli search-rebuild
 ```
 
 Het zegt per stuk hoe ver het is (`tot num … van …`), en aan het eind hoe lang het langste stuk
-duurde. Zijn de triggers van zoeken zelf stuk (een melding van `search-check` die na een herbouw
-terugkomt), dan zet `search-triggers` ze terug en herbouwt het daarna:
+duurde. Zijn de triggers van zoeken zelf stuk (een verschil van de wekelijkse controle of van
+`search-check` dat na een herbouw terugkomt), dan zet `search-triggers` ze terug en herbouwt het
+daarna:
 
 ```bash
 dc exec -T platform python -m app.cli search-triggers
