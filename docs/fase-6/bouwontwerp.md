@@ -1228,7 +1228,10 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
     C), `search_busy` per uur, OCR (geïnstalleerd, aan, pagina's in de rij), plaatsnamen (geladen,
     bron, datum), en de uitkomst van `bench --los`. Daarnaast de blokken "Gezichten" en "Zoeken op
     beeld" (Keuze 67, 82): alleen aantallen, nooit een vector of een naam. Knoppen: index
-    herbouwen, mislukte opnieuw, achtergrondwerk pauzeren.
+    herbouwen, mislukte opnieuw, achtergrondwerk pauzeren. Gebouwd (golf 4): het veld
+    `ocr.pages_queued` telt de inhouden in de rij (PDF's en foto's), geen pagina's, want de
+    pagina's van een PDF kent de app pas na de eerste blik van de worker; de tab zegt "inhouden"
+    (review golf 4, contract F5; x1.md, Open 3).
 52. **Een reservekopie vóór de migratie, met elk image** (A, herzien in r2: C7, C13).
     - `install.sh` maakt de kopie met alleen de standaardbibliotheek:
       `compose run --rm --no-deps platform python -I -c '<sqlite3.Connection.backup>'`, terwijl de
