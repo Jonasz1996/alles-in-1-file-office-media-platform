@@ -49,6 +49,7 @@ import contextlib
 import math
 import numbers
 import re
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -486,6 +487,20 @@ def _probe(source: Path, media: Any) -> dict[str, Any]:
     return {**video_meta(info), "location": video_location(info)}
 
 
+def _work() -> Path:
+    """De map waarin een eigen worker (media uit) zijn socket maakt: de werkmap van dit proces.
+    previews en photometa geven elke run een eigen map en ruimen die daarna op. Mag dit proces
+    daar niet schrijven (als nobody vanuit api/, dat van root is) of is hij weg, dan de
+    tijdelijke map van het systeem (I1, S4). Echt proberen, niet os.access: als root zegt die
+    ook ja bij een map waar mkdir faalt (/sys)."""
+    try:
+        cwd = Path.cwd()
+        Path(tempfile.mkdtemp(prefix=".werk-", dir=cwd)).rmdir()
+    except OSError:
+        return Path(tempfile.gettempdir())
+    return cwd
+
+
 class _Videos:
     """De worker voor de video's van één run_meta, pas gestart bij de eerste video (media uit:
     een eigen worker, render.Media). Lukt dat niet, dan krijgt elke video dezelfde fout."""
@@ -505,7 +520,7 @@ class _Videos:
             return {}  # media uit en geen ffprobe: zoals 0.6.0
         if self.media is None:
             try:
-                self.media = self.stack.enter_context(render.Media(self.worker, Path.cwd()))
+                self.media = self.stack.enter_context(render.Media(self.worker, _work()))
             except Exception as e:  # noqa: BLE001 - de eigen worker start niet
                 self.failed = f"mediaworker: {type(e).__name__}: {e}"[:200]
                 return {"error": self.failed}
