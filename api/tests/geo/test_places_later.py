@@ -22,7 +22,7 @@ from sqlalchemy import delete, func, select, update
 
 from app import jobs, photo_rows, photometa
 from app.geo import load, places
-from app.models import Job, PhotoGeo
+from app.models import Job, PhotoGeo, PhotoPref
 from tests.factories import maker
 from tests.geo import bronnen
 from tests.geo.hulp import AMSTERDAM, met_gps, rijen, uid, verwerk
@@ -159,6 +159,57 @@ async def test_zee_uit_prullenbak_eigenaar_en_stukken(client, admin, settings, m
     await jobs.run_pending(settings)
     assert (await plaatsen_van(settings))[zee] == (None, None, None)
     assert (await plaatsen_van(settings))[grens] == (GRENSDORP, "NL", "Limburg")
+
+
+async def test_wat_tijdens_het_opzoeken_verandert_krijgt_geen_plaats(
+    client, admin, settings, monkeypatch, caplog
+):
+    """Tussen het lezen van een stuk en het schrijven ervan zoekt geo.places op in een thread (±1–3
+    s per stuk). In die tijd kan Bram locatie op "uit" zetten (geo.off heeft zijn rijen dan nog
+    niet gewist), en kan photometa een foto opnieuw lezen met een andere plek. De UPDATE controleert
+    dat zelf, net als write(): Bram krijgt niets, en de verplaatste foto niet de plaats van zijn
+    oude plek (review I1, F1)."""
+    h, _tokens = admin
+    gewoon, verplaatst = [
+        (await upload(client, h, f"{k}.jpg", met_gps(k)))["id"] for k in ("red", "green")
+    ]
+    bram_h, bram = await person(client, h, "bram@example.com")
+    van_bram = (await upload(client, bram_h, "b.jpg", met_gps("purple")))["id"]
+    await verwerk(settings)
+    assert set((await plaatsen_van(settings)).values()) == {(None, None, None)}
+    bronnen.gebruik(monkeypatch, bronnen.maak(settings.geo_src))
+    assert load.ensure(settings) == "gebouwd"
+    echt = places.get(settings)
+
+    async def tussendoor() -> None:
+        async with maker(settings)() as db:
+            await db.merge(PhotoPref(user_id=_uuid(bram), location="uit"))
+            await db.commit()
+        await zet_plek(settings, verplaatst, *bronnen.GRENS)
+
+    class Midden:
+        """places.get() van run_places: vóór de eerste lookup gebeurt tussendoor()."""
+
+        gedaan = False
+
+        def lookup(self, lat: float, lon: float) -> places.Place:
+            if not Midden.gedaan:
+                Midden.gedaan = True
+                anyio.from_thread.run(tussendoor)
+            return echt.lookup(lat, lon)
+
+    monkeypatch.setattr(places, "get", lambda _settings: Midden())
+    assert await photo_rows.enqueue_places(settings)
+    with caplog.at_level(logging.INFO, logger="platform.geo"):
+        await jobs.run_pending(settings)
+
+    assert Midden.gedaan
+    assert await plaatsen_van(settings) == {
+        gewoon: (AMSTERDAM, "NL", "North Holland"),
+        verplaatst: (None, None, None),
+        van_bram: (None, None, None),
+    }
+    assert "geo_places_done rows=1" in "\n".join(r.getMessage() for r in caplog.records)
 
 
 async def test_wacht_op_photometa_van_voor_de_bouw(client, admin, settings, monkeypatch):
