@@ -110,6 +110,13 @@ def key_in_worker_environ(pid: int, key: str) -> None:
             environ(pid)
 
 
+def nice_plus(n: int) -> int:
+    """De niceness van een kind met het voorvoegsel "nice -n <n>": nice telt op bij die van de
+    worker, en die draait hier in het testproces; boven 19 kan niet. Zonder nice eromheen (CI)
+    is dat precies n; onder "nice -n 10" (een lokale run naast een meting) 19."""
+    return min(19, os.getpriority(os.PRIO_PROCESS, 0) + n)
+
+
 def ionice(pid: int) -> str:
     return subprocess.run(["ionice", "-p", str(pid)], capture_output=True, text=True).stdout
 
@@ -471,7 +478,7 @@ async def test_nice_rlimits_en_kale_omgeving_van_frame(tmp_path, monkeypatch, so
             (pid,) = ffmpegs()
             st = proc_stat(pid)
             assert st is not None
-            assert int(st[16]) == 15  # nice -n 15 voor één beeld
+            assert int(st[16]) == nice_plus(15)  # nice -n 15 voor één beeld
             assert int(st[3]) == pid  # eigen procesgroep (en sessie)
             lim = limits(pid)
             assert lim["Max data size"] == (str(512 * 1024 * 1024),) * 2
@@ -498,7 +505,7 @@ async def test_nice_ionice_en_geheugen_van_bench(tmp_path, monkeypatch):
             assert await until(lambda: len(ffmpegs()) == 1)
             (pid,) = ffmpegs()
             st = proc_stat(pid)
-            assert st is not None and int(st[16]) == 15
+            assert st is not None and int(st[16]) == nice_plus(15)
             assert ionice(pid).strip() == "idle"
             assert limits(pid)["Max data size"][0] == str(900 * 1024 * 1024)
             caps = await client.caps()
