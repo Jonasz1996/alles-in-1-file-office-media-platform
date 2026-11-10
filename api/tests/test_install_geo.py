@@ -28,8 +28,9 @@ def test_de_bronnen_in_install_sh_zijn_die_van_de_app(tmp_path):
     assert _bronnen() == [
         (b.naam, str(b.grootte), b.sha256, b.url) for b in (load.LANDEN, load.PLAATSEN)
     ]
-    # De bestanden komen waar de app ze zoekt: geo_src is standaard data_dir/geo
-    assert "  local dir=$DATA_ROOT/geo name size sha url part failed=0 new=0\n" in (
+    # De bestanden komen waar de app ze zoekt: geo_src is standaard data_dir/geo (sinds de review
+    # van golf 4, veilig F2, eerst in een eigen map tmp van root buiten DATA_ROOT)
+    assert "  local dir=$DATA_ROOT/geo name size sha url tmp failed=0 new=0\n" in (
         INSTALL_SH.read_text(encoding="utf-8")
     )
     assert Settings(data_dir=tmp_path).geo_src == tmp_path / "geo"

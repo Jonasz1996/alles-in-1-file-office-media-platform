@@ -713,8 +713,8 @@ async def photo_state(
     db: AsyncSession, node: Node, user_id: uuid.UUID, row: Any | None
 ) -> tuple[str, str | None]:
     """De stand van ocr voor een foto, per node (Keuze 25a): alleen de eigenaar ziet iets; een
-    ander krijgt skip, ook als de eigenaar tekst heeft. Zonder tesseract (installed() is False)
-    en zonder tekst: none met ocr_missing. row: de rij van de blob in analysis (met state en
+    ander krijgt skip, ook als de eigenaar tekst heeft. Zonder OCR in de worker (installed() is
+    False) en zonder tekst: none met ocr_missing. row: de rij van de blob in analysis (met state en
     code), of None. Geeft (stand voor de API, code)."""
     if node.owner_id != user_id:
         return "skip", None
@@ -723,8 +723,8 @@ async def photo_state(
     if mine is not None and mine.words != store.PENDING:
         return ("done" if store.unpack(mine.words) else "none"), None
     if installed() is False:
-        # Zonder tesseract kan het niet: net als een PDF none met ocr_missing (de web toont dan
-        # geen knop die 503 ocr_off zou geven; review golf 4, contract F2)
+        # Zonder OCR in de worker kan het niet: net als een PDF none met ocr_missing (de web toont
+        # dan geen knop die 503 ocr_off zou geven; review golf 4, contract F2)
         return "none", "ocr_missing"
     if mine is None:
         on = await db.scalar(select(PhotoPref.ocr_photos).where(PhotoPref.user_id == user_id))
