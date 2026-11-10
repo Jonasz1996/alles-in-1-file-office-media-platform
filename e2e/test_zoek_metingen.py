@@ -378,7 +378,7 @@ def test_zonder_kort_en_zonder_tesseract_stopt_het_voor_de_server(zonder_server:
     """De volle meting van §4.5 heeft de scans nodig: zonder tesseract een duidelijke stop, nog
     voordat er documenten of een server zijn."""
     with pytest.raises(SystemExit) as e:
-        zs.main([])
+        zs.main(["--docs", "1"])  # klein: gaat het toch door, dan faalt de test snel
     assert "zonder --kort heeft de 500 scans van X1 nodig: geen tesseract" in str(e.value.code)
 
 
@@ -494,3 +494,141 @@ def test_stand_per_stap_van_de_analyse(tmp_path: Path) -> None:
     leeg.mkdir()
     sqlite3.connect(leeg / "platform.db").close()  # de server start net: nog geen tabellen
     assert zb.stand(leeg, "ocr") == Counter()
+
+
+# --- zoek_foto: de standen op het echte schema (review van I1, breken F1 en regels F2) ---
+
+
+@pytest.fixture
+def leeg(tmp_path: Path) -> tuple[Path, str, str]:
+    """Een gemigreerde database zonder server (zoals een gestopte server na make_admin): één
+    eigenaar met zijn hoofdmap. Geeft (data_dir, eigenaar, hoofdmap)."""
+    import asyncio
+    import uuid
+
+    from app import db
+    from app.config import Settings
+    from app.migrate import upgrade
+    from app.models import Node, User
+    from seed import connect
+
+    data = tmp_path / "data"
+    data.mkdir()
+    settings = Settings(data_dir=data, database_url="", web_dist=tmp_path / "web")
+
+    async def migreer() -> None:
+        await upgrade(settings)
+        await db.get_engine(settings).dispose()
+
+    asyncio.run(migreer())
+    db._engine.cache_clear()
+    eigenaar, root = uuid.uuid4(), uuid.uuid4()
+    with connect(data) as conn:
+        conn.execute(User.__table__.insert(), [{"id": eigenaar, "email": "foto@example.nl",
+                     "display_name": "Foto", "password_hash": "x", "role": "admin"}])  # fmt: skip
+        conn.execute(Node.__table__.insert(), [{"id": root, "owner_id": eigenaar, "name": "",
+                     "kind": "dir", "size": 0}])  # fmt: skip
+        conn.execute(User.__table__.update().values(root_id=root))
+    return data, str(eigenaar), str(root)
+
+
+def _photometa_todo(data_dir: Path) -> tuple[int, int]:
+    """(blobs, plekken) die photometa zelf te doen heeft: zijn _todo() en _nodes_todo(), de
+    twee fasen van zijn keten, rechtstreeks op de database."""
+    from sqlalchemy import func, select
+
+    from app import photometa
+    from app.models import Blob
+    from seed import connect
+
+    def tel(conn: Any, waar: tuple[Any, ...]) -> int:
+        return conn.execute(select(func.count()).select_from(Blob).where(*waar)).scalar_one()
+
+    with connect(data_dir) as conn:
+        return tel(conn, photometa._todo()), tel(conn, photometa._nodes_todo())
+
+
+N_FOTOS = 20  # met een kopie (19) en drie zonder GPS (4, 9 en 14)
+
+
+@pytest.mark.parametrize(
+    ("stand", "verwacht"),
+    [
+        # OUD: zoals 0.7.1 (meta_version 1, geen blob_meta/blob_hash): photometa leest alles,
+        # en heeft pas na het lezen plekken (blob_meta.gps) om op te zoeken
+        (zf.OUD, lambda n, gps: {"te_doen": n, "todo": (n, 0)}),
+        # GEO: na de herbouw geo: alles opnieuw lezen, en elke plek nog zonder photo_geo
+        (zf.GEO, lambda n, gps: {"te_doen": n, "todo": (n, gps)}),
+        # KLAAR: niets te doen, tot de herbouw hash van zoek_samen
+        (zf.KLAAR, lambda n, gps: {"te_doen": 0, "todo": (0, 0)}),
+    ],
+)
+def test_zaai_in_elke_stand_zoals_photometa_het_ziet(
+    leeg: tuple[Path, str, str], stand: str, verwacht: Any
+) -> None:
+    """De stand van zaai() en de telling te_doen van foto_stand() (een kopie van photometa._todo
+    in SQL) tegen photometa zelf. Bij KLAAR moet photometa in stap 1 van zoek_samen stil zijn;
+    bij OUD en GEO stopt zoek_backfill pas als te_doen 0 is (anders wacht het WACHT_S of stopt
+    het te vroeg)."""
+    data, eigenaar, root = leeg
+    fotos = list(zf.fotos(N_FOTOS, zaad=13))
+    teller = zf.zaai(data, eigenaar, root, fotos, stand)
+    met_gps = sum(f.gps is not None for f in fotos)
+    assert teller == {"fotos": N_FOTOS, "met_gps": met_gps}
+    assert 0 < met_gps < N_FOTOS
+    stand_ = zf.foto_stand(data)
+    todo = _photometa_todo(data)
+    assert {"te_doen": stand_["te_doen"], "todo": todo} == verwacht(N_FOTOS, met_gps)
+    assert stand_["te_doen"] == todo[0]  # dezelfde telling als photometa
+    assert stand_["open"] == 0 and stand_["gehasht"] == 0 and stand_["plekken"] == 0
+    # Een voorbeeld van 256 per foto, waar de pHash het leest
+    store = zf.BlobStore(zf.Settings(data_dir=data).blob_dir)
+    for f in fotos[:3]:
+        sha = hashlib.sha256(f.data).hexdigest()
+        assert (zf.previews.directory(store, sha) / "256.webp").read_bytes() == f.thumb
+    assert zf.foto_stand(data, volledig=False) == {"open": 0, "te_doen": stand_["te_doen"]}
+
+
+def test_foto_stand_kijkt_ook_naar_de_versie_van_de_hash(leeg: tuple[Path, str, str]) -> None:
+    """Een blob_hash van een oudere versie is voor photometa nog te doen; foto_stand moet dat
+    ook zo tellen (anders stopt zoek_backfill voordat de pHash er is)."""
+    data, eigenaar, root = leeg
+    zf.zaai(data, eigenaar, root, zf.fotos(10, zaad=17), zf.KLAAR)
+    assert zf.foto_stand(data)["te_doen"] == 0
+    con = sqlite3.connect(data / "platform.db")
+    con.execute("UPDATE blob_hash SET version = ?", (zf.photo_hash.VERSION - 1,))
+    con.commit()
+    con.close()
+    assert zf.foto_stand(data)["te_doen"] == 10 == _photometa_todo(data)[0]
+
+
+def test_zaai_en_zaai_documenten_in_een_eigen_map(leeg: tuple[Path, str, str]) -> None:
+    data, eigenaar, root = leeg
+    fotos = list(zf.fotos(4, zaad=19))
+    zf.zaai(data, eigenaar, root, fotos + fotos[:2], zf.KLAAR)  # dezelfde inhoud: één keer
+    docs = [zb.Document(f"scan-{i}.txt", "text/plain", f"scan {i}".encode()) for i in range(3)]
+    assert zf.zaai_documenten(data, eigenaar, root, docs, "Scans") == 3
+    con = sqlite3.connect(data / "platform.db")
+    try:
+        mappen = dict(con.execute("SELECT name, id FROM node WHERE kind = 'dir' AND name != ''"))
+        assert set(mappen) == {"Foto's", "Scans"}
+        per_map = dict(con.execute("SELECT parent_id, count(*) FROM node WHERE kind = 'file' "
+                                   "GROUP BY parent_id"))  # fmt: skip
+        assert per_map == {mappen["Foto's"]: 4, mappen["Scans"]: 3}
+        assert con.execute("SELECT count(*) FROM blob").fetchone()[0] == 7
+        assert con.execute("SELECT count(*) FROM analysis").fetchone()[0] == 0  # zoals vóór Z2
+    finally:
+        con.close()
+    store = zf.BlobStore(zf.Settings(data_dir=data).blob_dir)
+    assert store.path(hashlib.sha256(b"scan 2").hexdigest()).read_bytes() == b"scan 2"
+
+
+def test_plaatsen_uit_places_sqlite_op_id(tmp_path: Path) -> None:
+    db = tmp_path / "places.sqlite"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE place (id INTEGER PRIMARY KEY, lat REAL, lon REAL, name TEXT)")
+    con.executemany("INSERT INTO place VALUES (?, ?, ?, ?)",
+                    [(3, 52.09, 5.12, "Utrecht"), (1, -33.87, 151.21, "Sydney")])  # fmt: skip
+    con.commit()
+    con.close()
+    assert zf.plaatsen_uit(db) == [(-33.87, 151.21), (52.09, 5.12)]
