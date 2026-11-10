@@ -71,7 +71,8 @@ het script, want dan zegt OOMKilled niets) en Playwright (uv run --with playwrig
 --kort (CI, job e2e-media-perf, rapport): 60 s per fase van de belastingtest, 1 sessie, zonder
 OnlyOffice, 300 documenten per stap, 300 foto's en (met tesseract) 20 scans. Zonder --kort:
 300 s, 3 sessies, 5.000 documenten, 5.000 foto's en 500 scans; met --office ook 5 bewerkers
-(docs/runbooks/zoeken.md).
+(docs/runbooks/zoeken.md). Kleiner dan de last van §4.5 (--docs, --fotos of --scans) kan, maar
+dan staat dat onder "niet in deze meting".
 
 Aan het eind "=== kort ===" (ook in --kort-uit, voor het einde van het log in CI). In --kort is de
 uitkomst altijd 0 (een rapport); zonder --kort 1 als een poort van stap 2 niet gehaald of niet te
@@ -121,7 +122,8 @@ POORT = {
 }
 ZONDER_DEFER = "1000"  # zoveel omzettingen tegelijk zijn er nooit: de index wijkt niet
 HERVAT_WACHT_S = 180.0
-# De last van §4.5 naast de documenten (--kort, anders)
+# De last van §4.5 in stap 2 (--kort, anders): documenten per stap, foto's en scans
+DOCS = (300, 5_000)
 FOTOS = (300, 5_000)
 SCANS = (20, 500)
 STAPPEN = ("text", "ocr")  # de stappen van de analyse die de pauze vasthoudt
@@ -675,6 +677,24 @@ def achtergrond_regel(s: dict[str, Any]) -> str:
     return "; ".join(delen)
 
 
+def kleiner_dan_45(args: argparse.Namespace) -> list[str]:
+    """Zonder --kort: wat er minder is dan de last van §4.5 (bouwontwerp: 5.000 documenten,
+    5.000 foto's en 500 scans voor X1), voor "niet in deze meting" in het blok kort en de JSON.
+    De poorten zeggen daar niets over: met --docs, --fotos of --scans kleiner kan de uitkomst nog
+    "geslaagd" zijn, maar dan niet voor de last van §4.5 (review van I1, regels F3)."""
+    if args.kort:
+        return []
+    uit = []
+    for wat, n, vol in (
+        ("documenten per stap", args.docs, DOCS[1]),
+        ("foto's", args.fotos, FOTOS[1]),
+        ("scans voor X1", args.scans, SCANS[1]),
+    ):
+        if n < vol:
+            uit.append(f"de last van §4.5: {n:,} {wat} in plaats van {vol:,}".replace(",", "."))
+    return uit
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--kort", action="store_true", help="60 s, 1 sessie, zonder OnlyOffice")
@@ -694,12 +714,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--kort is zonder OnlyOffice")
     args.duur = args.duur or (60 if args.kort else 300)
     args.sessies = args.sessies or (1 if args.kort else 3)
-    args.docs = args.docs or (300 if args.kort else 5_000)
+    args.docs = args.docs or DOCS[0 if args.kort else 1]
     args.fotos = FOTOS[0 if args.kort else 1] if args.fotos is None else args.fotos
     args.scans = SCANS[0 if args.kort else 1] if args.scans is None else args.scans
     if not zb.media_beschikbaar():
         raise SystemExit("zoek_samen heeft ffmpeg en ffprobe nodig (de belastingtest van media)")
-    overgeslagen = []
+    overgeslagen = kleiner_dan_45(args)
+    for wat in overgeslagen:
+        print(f"zoek_samen: niet in deze meting: {wat}", flush=True)
     reden = zf.scan_reden() if args.scans else None
     if reden and not args.kort:
         raise SystemExit(f"zoek_samen zonder --kort heeft de {args.scans} scans van X1 nodig: "

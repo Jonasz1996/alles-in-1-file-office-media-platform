@@ -6,6 +6,7 @@ opvalt.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import io
 import sys
@@ -318,3 +319,73 @@ def test_tekst_en_ocr_klaar_tellen_skip_niet_mee() -> None:
     stap = {"ocr": v["ocr"], "fotos": None, "processen": None}
     assert zs.achtergrond_regel(stap).startswith("ocr klaar 0 → 0 (na media) → 9, open 130;")
     assert zs.klaar_en_open(voor) == (781, 459)
+
+
+# --- zoek_samen: wat main doet voordat er een server start ---
+
+
+class _Gestart(Exception):
+    """zoek_samen.start werd aangeroepen: alles daarvoor is gedaan."""
+
+
+@pytest.fixture
+def zonder_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    """main tot aan de server: ffmpeg is er, tesseract niet, en start stopt de test."""
+
+    def start(*_a: Any, **_kw: Any) -> None:
+        raise _Gestart
+
+    monkeypatch.setattr(zb, "media_beschikbaar", lambda: True)
+    monkeypatch.setattr(zf, "scan_reden", lambda: "geen tesseract met nld, eng en osd")
+    monkeypatch.setattr(zs, "start", start)
+
+
+def _args(**over: Any) -> argparse.Namespace:
+    return argparse.Namespace(**{"kort": False, "docs": 5_000, "fotos": 5_000, "scans": 500,
+                                 **over})  # fmt: skip
+
+
+def test_minder_dan_de_last_van_paragraaf_4_5_staat_erbij() -> None:
+    """Zonder --kort met --docs, --fotos of --scans kleiner: de poorten zeggen daar niets over,
+    dus staat het onder "niet in deze meting" (review van I1, regels F3)."""
+    assert zs.kleiner_dan_45(_args()) == []
+    assert zs.kleiner_dan_45(_args(fotos=6_000)) == []
+    assert zs.kleiner_dan_45(_args(kort=True, docs=300, fotos=300, scans=0)) == []
+    assert zs.kleiner_dan_45(_args(docs=2_000, scans=0)) == [
+        "de last van §4.5: 2.000 documenten per stap in plaats van 5.000",
+        "de last van §4.5: 0 scans voor X1 in plaats van 500",
+    ]
+    assert zs.kleiner_dan_45(_args(fotos=0)) == ["de last van §4.5: 0 foto's in plaats van 5.000"]
+
+
+def test_een_kleinere_last_zonder_kort_wordt_gemeld(
+    zonder_server: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(_Gestart):
+        zs.main(["--docs", "2", "--fotos", "10", "--scans", "0"])
+    uit = capsys.readouterr().out
+    for regel in (
+        "de last van §4.5: 2 documenten per stap in plaats van 5.000",
+        "de last van §4.5: 10 foto's in plaats van 5.000",
+        "de last van §4.5: 0 scans voor X1 in plaats van 500",
+    ):
+        assert f"zoek_samen: niet in deze meting: {regel}" in uit
+
+
+def test_zonder_kort_en_zonder_tesseract_stopt_het_voor_de_server(zonder_server: None) -> None:
+    """De volle meting van §4.5 heeft de scans nodig: zonder tesseract een duidelijke stop, nog
+    voordat er documenten of een server zijn."""
+    with pytest.raises(SystemExit) as e:
+        zs.main([])
+    assert "zonder --kort heeft de 500 scans van X1 nodig: geen tesseract" in str(e.value.code)
+
+
+def test_kort_zonder_tesseract_slaat_de_scans_over(
+    zonder_server: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(_Gestart):
+        zs.main(["--kort", "--docs", "1"])
+    uit = capsys.readouterr().out
+    assert "zoek_samen: de scans voor X1 overgeslagen: geen tesseract" in uit
+    assert "300 foto's, 0 scans" in uit
+    assert "niet in deze meting: de last" not in uit
