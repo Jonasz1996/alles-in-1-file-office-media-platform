@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { loadAreas, resetI18nForTests } from "./i18n";
 import FacesRow from "./photos/faces/FacesRow";
 import FacesSwitch from "./photos/faces/FacesSwitch";
 import PeopleFaces from "./photos/faces/PeopleFaces";
@@ -42,8 +43,30 @@ describe("elke plek van X2 en X3 toont niets tot zijn pakket hem vult", () => {
       createElement(FacesRow, { item, detail: undefined, kind: "image" }),
       createElement(FacesSwitch),
       createElement(BeeldSwitch),
-      createElement(BeeldResults),
     ].map((el) => renderToStaticMarkup(el));
-    expect(html).toEqual(["", "", "", "", "", ""]);
+    expect(html).toEqual(["", "", "", "", ""]);
+  });
+});
+
+// I1 (S8): in de stand beeld op /zoeken stond niets onder de knoppen. Nu één zin, zonder
+// versienummer (de go/no-go na I1 beslist of X3 in deze fase komt). De plek blijft dezelfde: de
+// default export zonder props, die X3 vervangt.
+describe("de stand beeld op /zoeken zolang X3 het raster niet vult", () => {
+  afterEach(() => resetI18nForTests("nl"));
+
+  it("nl: één zin dat zoeken op beeld in een volgende versie komt", async () => {
+    resetI18nForTests("nl");
+    await loadAreas(["beeld"]);
+    expect(renderToStaticMarkup(createElement(BeeldResults))).toBe(
+      '<p class="muted">Zoeken op beeld komt in een volgende versie.</p>',
+    );
+  });
+
+  it("en: dezelfde zin in het Engels, en nergens een versienummer", async () => {
+    resetI18nForTests("en");
+    await loadAreas(["beeld"]);
+    const html = renderToStaticMarkup(createElement(BeeldResults));
+    expect(html).toBe('<p class="muted">Search by image is coming in a future version.</p>');
+    expect(html).not.toMatch(/\d/);
   });
 });

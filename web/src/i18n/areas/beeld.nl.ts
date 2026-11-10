@@ -4,6 +4,8 @@
 export default {
   title: "Zoeken op beeld",
   notReady: "Zoeken op beeld komt later in fase 6.",
+  // De stand beeld op /zoeken zolang X3 het raster niet vult (I1, S8): zonder versienummer
+  later: "Zoeken op beeld komt in een volgende versie.",
   // De aantallen in het blok op /beheer zolang X3 het niet zelf vult (Z7, Keuze 51: alleen
   // aantallen, nooit een vector of een naam)
   admin: {
