@@ -125,6 +125,8 @@ HERVAT_WACHT_S = 180.0
 FOTOS = (300, 5_000)
 SCANS = (20, 500)
 STAPPEN = ("text", "ocr")  # de stappen van de analyse die de pauze vasthoudt
+# Wat docker info moet zeggen voordat e2e/office_ds.sh DS een geheugengrens geeft
+GRENZEN = ("MemoryLimit", "CPUCfsQuota")
 
 
 @dataclass
@@ -346,22 +348,41 @@ def ds_toestand(naam: str | None) -> dict[str, Any] | None:
         return None
 
 
-def docker_grenzen() -> bool | None:
-    """Kan deze docker-host een geheugengrens zetten (docker info: MemoryLimit)? None als docker
-    niet antwoordt."""
+def docker_grenzen() -> dict[str, bool] | None:
+    """Wat deze docker-host kan (docker info: MemoryLimit en CPUCfsQuota): e2e/office_ds.sh zet
+    --memory alleen als ze allebei true zijn. None als docker niet antwoordt."""
+    formaat = " ".join(f"{{{{.{k}}}}}" for k in GRENZEN)
     try:
-        out = subprocess.run(["docker", "info", "--format", "{{.MemoryLimit}}"],
+        out = subprocess.run(["docker", "info", "--format", formaat],
                              capture_output=True, text=True, timeout=20, check=True)  # fmt: skip
     except (OSError, subprocess.SubprocessError):
         return None
-    return out.stdout.strip() == "true"
+    return grenzen_lees(out.stdout)
 
 
-def zonder_grens(host: bool | None) -> str:
-    """Waarom OOMKilled van DS niets zegt als hij geen geheugengrens heeft."""
+def grenzen_lees(tekst: str) -> dict[str, bool] | None:
+    """De uitvoer van docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}'; None als die er
+    anders uitziet."""
+    delen = tekst.split()
+    if len(delen) != len(GRENZEN):
+        return None
+    return {k: d == "true" for k, d in zip(GRENZEN, delen, strict=True)}
+
+
+def zonder_grens(host: dict[str, bool] | None) -> str:
+    """Waarom OOMKilled van DS niets zegt als hij geen geheugengrens heeft, en wat eraan te doen
+    is (host: docker_grenzen())."""
     tekst = "de container van DS heeft geen geheugengrens (HostConfig.Memory 0)"
-    if host is False:
+    mist = [k for k in GRENZEN if host is not None and not host.get(k)]
+    if "MemoryLimit" in mist:
         return tekst + "; deze docker-host kan er geen zetten (docker info: MemoryLimit false)"
+    if mist:
+        # Zoals office_ds.sh: zonder CPUCfsQuota ook geen --memory (review van I1, regels F4)
+        return tekst + (
+            f"; e2e/office_ds.sh zet --memory alleen als MemoryLimit en CPUCfsQuota true zijn, en "
+            f"deze docker-host zegt {mist[0]} false: start DS met de hand met --memory 2g "
+            f"--memory-swap 2g"
+        )
     return tekst + "; start hem met e2e/office_ds.sh (--memory 2g)"
 
 
@@ -397,7 +418,7 @@ class Opzet:
     ds_name: str | None = None
     url: str | None = None
     fotos: int = 0  # foto's in de map "Foto's" (dan de herbouw hash in stap 2 en 3)
-    ds_host: bool | None = None  # docker_grenzen(), met --office
+    ds_host: dict[str, bool] | None = None  # docker_grenzen(), met --office
 
 
 def start(base: Path, env: dict[str, str], office: bool) -> Opzet:

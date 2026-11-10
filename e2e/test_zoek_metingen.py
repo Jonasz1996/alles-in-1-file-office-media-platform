@@ -24,6 +24,7 @@ import zoek_samen as zs  # noqa: E402
 pytestmark = pytest.mark.zoek
 
 GIB = 1024**3
+KAN = {"MemoryLimit": True, "CPUCfsQuota": True}  # docker_grenzen() op een gewone host
 
 
 # --- zoek_backfill: de poorten per soort ---
@@ -155,7 +156,7 @@ def test_kleine_fotos_elk_een_eigen_inhoud_met_gps() -> None:
 def _ds(**na: Any) -> dict[str, Any]:
     voor = {"geheugen": 2 * GIB, "oom": False, "status": "running", "herstarts": 0,
             "gestart": "2026-11-10T10:00:00Z"}  # fmt: skip
-    return {"voor": voor, "na": {**voor, **na}, "host": True}
+    return {"voor": voor, "na": {**voor, **na}, "host": KAN}
 
 
 def _stap2(**over: Any) -> dict[str, Any]:
@@ -230,8 +231,27 @@ def test_ds_oordeel() -> None:
     zonder["voor"]["geheugen"] = 0
     ok, waarom = zs.ds_oordeel(zonder)
     assert ok is None and "geen geheugengrens" in waarom
-    zonder["host"] = False
+    assert "start hem met e2e/office_ds.sh" in waarom
+    zonder["host"] = {"MemoryLimit": False, "CPUCfsQuota": False}
     assert "MemoryLimit false" in zs.ds_oordeel(zonder)[1]
+
+
+def test_docker_grenzen_zoals_office_ds_sh() -> None:
+    """office_ds.sh zet --memory alleen als docker info MemoryLimit en CPUCfsQuota allebei true
+    zegt; zonder CPUCfsQuota is "start hem met office_ds.sh" dus een raad die niet werkt (review
+    van I1, regels F4)."""
+    assert zs.grenzen_lees("true true\n") == KAN
+    assert zs.grenzen_lees("true false") == {"MemoryLimit": True, "CPUCfsQuota": False}
+    assert zs.grenzen_lees("") is None
+    assert zs.grenzen_lees("true") is None
+    sh = (Path(__file__).resolve().parent / "office_ds.sh").read_text()
+    assert "'{{.MemoryLimit}} {{.CPUCfsQuota}}'" in sh and '= "true true" ]' in sh
+    zonder_cfs = zs.zonder_grens({"MemoryLimit": True, "CPUCfsQuota": False})
+    assert "CPUCfsQuota false" in zonder_cfs and "--memory 2g" in zonder_cfs
+    assert "start hem met e2e/office_ds.sh" not in zonder_cfs
+    assert "MemoryLimit false" in zs.zonder_grens({"MemoryLimit": False, "CPUCfsQuota": True})
+    assert zs.zonder_grens(KAN).endswith("start hem met e2e/office_ds.sh (--memory 2g)")
+    assert zs.zonder_grens(None).endswith("start hem met e2e/office_ds.sh (--memory 2g)")
 
 
 def test_overleefd() -> None:
