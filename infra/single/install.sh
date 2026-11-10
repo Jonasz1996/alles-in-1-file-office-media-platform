@@ -213,11 +213,14 @@ BRONNEN
 
 # Staat dit bestand er goed: een gewoon bestand (geen symlink) met precies zoveel bytes en deze
 # sha256? geo_ok <pad> <bytes> <sha256>, als tekst voor sh -c: root kijkt zo in zijn eigen
-# tijdelijke map, en 10001 zelf in DATA_ROOT/geo (geo_ok_app). dd leest met iflag=nonblock: zet
-# de app net na stat een FIFO neer, dan leest hij niets en klopt de hash niet, in plaats van te
-# blijven wachten op een schrijver
+# tijdelijke map, en 10001 zelf in DATA_ROOT/geo (geo_ok_app). Zet de app net na stat iets
+# anders op die plek, dan klopt de hash niet en houdt dd toch op: hij leest met iflag=nonblock
+# (een FIFO zonder schrijver: niets, in plaats van te wachten), nofollow (een symlink die na
+# [ ! -L ] kwam, volgt hij niet, ook niet naar /dev/zero) en ten hoogste één byte meer dan de
+# grootte (count_bytes: een groter of eindeloos bestand, of een FIFO waar de app in blijft
+# schrijven, leest hij niet tot het eind)
 # shellcheck disable=SC2016  # $1, $2 en $3 zijn van sh -c
-GEO_OK='[ ! -L "$1" ] && [ -f "$1" ] && [ "$(stat -c %s -- "$1")" = "$2" ] && [ "$(dd if="$1" iflag=nonblock bs=64K status=none 2>/dev/null | sha256sum | cut -d" " -f1)" = "$3" ]'
+GEO_OK='[ ! -L "$1" ] && [ -f "$1" ] && [ "$(stat -c %s -- "$1")" = "$2" ] && [ "$(dd if="$1" iflag=nonblock,nofollow,count_bytes count=$(($2 + 1)) bs=64K status=none 2>/dev/null | sha256sum | cut -d" " -f1)" = "$3" ]'
 geo_ok() { sh -c "$GEO_OK" sh "$@"; }
 
 # Staat <naam> in <map> van de app er goed? 10001 kijkt zelf, met de naam in die map (as_app_in):

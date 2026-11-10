@@ -18,8 +18,9 @@
 #   juiste grootte en sha256, rechten 640; een download die faalt (geen netwerk, een halve, een
 #   verkeerde sha256) is niet fataal, laat niets achter en de volgende run probeert het opnieuw;
 #   staan ze er al, dan haalt het niets; PLAATSEN=uit haalt niets; of ze er goed staan, kijkt
-#   10001 zelf in de map geo (ook als root, met de echte setpriv), en een FIFO die de app net na
-#   stat neerzet, laat die controle niet hangen;
+#   10001 zelf in de map geo (ook als root, met de echte setpriv), en wat de app net na stat op
+#   die plek zet (een FIFO, een symlink, ook naar /dev/zero, of een groter bestand), laat die
+#   controle niet hangen en telt niet als goed;
 # - de reservekopie (Keuze 52): met het image dat er nog draait, vóór office stopt en vóór de
 #   nieuwe app; de tekst is precies api/app/backup.py van de nieuwe broncode; rechten 600, zonder
 #   gezichten; een mislukte kopie (compose run faalt, of de kopie zelf) stopt het script vóór er
@@ -402,18 +403,34 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
     [ -n "${GEO_OK-}" ] && [ "$(grep -c . <<<"$want")" = 2 ] &&
     [ "$(grep -F "als 10001 in $geo_dir: sh -c " "$work/install.log")" = "$want" ] &&
     ! grep -q "^root geo_ok " "$work/install.log" && ! grep -qF "$geo_dir/" "$work/install.log"'
-  # De race van z7.md: de app zet net na stat een FIFO op de plek van de bron. Een nep-stat doet
-  # hier precies dat (en geeft de grootte van de bron); de controle mag dan niet blijven wachten
+  # De race van z7.md: de app zet net na stat iets anders op de plek van de bron. Een nep-stat
+  # doet hier precies dat (en geeft de grootte van de bron); de controle mag dan niet blijven
+  # wachten of lezen, en zegt nee. na_stat <wat de app doet, als sh, met de bron in $f>
   local race=$work/race size sha
-  mkdir -p "$race/bin" "$race/geo"
   read -r _ size sha _ <"$work/bronnen"
-  printf '#!/bin/sh\nfor a; do f=$a; done\necho %s\nrm -f -- "$f" && mkfifo -- "$f"\n' "$size" >"$race/bin/stat"
-  command chmod 755 "$race/bin/stat"
-  cp "$work/net/landen.geojson" "$race/geo/landen.geojson"
-  code=0
-  (cd "$race/geo" && PATH="$race/bin:$PATH" timeout 20 sh -c "$GEO_OK" sh landen.geojson "$size" "$sha") || code=$?
+  na_stat() {
+    rm -rf "$race"
+    mkdir -p "$race/bin" "$race/geo" "$race/elders"
+    cp "$work/net/landen.geojson" "$race/geo/landen.geojson"
+    cp "$work/net/landen.geojson" "$race/elders/landen.geojson"
+    printf '#!/bin/sh\nfor a; do f=$a; done\necho %s\n%s\n' "$size" "$1" >"$race/bin/stat"
+    command chmod 755 "$race/bin/stat"
+    code=0
+    (cd "$race/geo" && PATH="$race/bin:$PATH" timeout 20 sh -c "$GEO_OK" sh landen.geojson "$size" "$sha") || code=$?
+  }
+  na_stat 'rm -f -- "$f" && mkfifo -- "$f"'
   check "een FIFO net na stat: de controle wacht niet op een schrijver en zegt nee ($code)" eval '[ "$code" = 1 ] && [ -p "$race/geo/landen.geojson" ]'
   : <>"$race/geo/landen.geojson" # een lezer die toch wacht, laat hij zo los
+  # Integratie I1 (review): een symlink die na [ ! -L ] kwam, volgt dd niet (nofollow), ook niet
+  # naar een bestand elders met precies de goede inhoud, en niet naar /dev/zero
+  na_stat "ln -sfn -- '$race/elders/landen.geojson' \"\$f\""
+  check "een symlink net na stat naar de goede inhoud elders: dd volgt hem niet en zegt nee ($code)" eval '[ "$code" = 1 ] && [ -L "$race/geo/landen.geojson" ]'
+  na_stat 'ln -sfn -- /dev/zero "$f"'
+  check "een symlink net na stat naar /dev/zero: de controle leest niet eindeloos en zegt nee ($code)" eval '[ "$code" = 1 ] && [ -L "$race/geo/landen.geojson" ]'
+  # Een groter bestand dat met de bron begint (1 TiB, ijl): dd leest ten hoogste één byte meer
+  # dan de grootte, dus niet tot het eind, en ziet toch dat het de bron niet is
+  na_stat 'cp -- "$f" "$f.groot" && truncate -s 1T -- "$f.groot" && mv -f -- "$f.groot" "$f"'
+  check "een groter bestand net na stat dat met de bron begint: niet uitgelezen, en nee ($code)" eval '[ "$code" = 1 ] && [ "$(stat -c %s "$race/geo/landen.geojson")" -gt "$size" ]'
   rm -rf "$race"
   printf 'kapot\n' >"$geo_dir/plaatsen.tar.gz"
   check "een kapotte bron op schijf: opnieuw gehaald" eval '[ "$(geo)" = nieuw ] && same_as_net plaatsen.tar.gz'
