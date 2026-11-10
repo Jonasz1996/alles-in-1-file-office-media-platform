@@ -194,8 +194,11 @@ dc exec -T platform python -m app.cli search-check
 dc exec -T platform python -m app.cli search-check --volledig
 ```
 
-`search-check` vergelijkt 1.000 willekeurige bestanden in de index met de bron (`--volledig`: alle)
-en noemt elk verschil; exitcode 1 bij een verschil. Loopt er een herbouw, dan zegt het dat en wacht
+`search-check` vergelijkt 1.000 willekeurige bestanden in de index met de bron; met `--n` kies je
+een ander aantal, en een `--n` boven het aantal bestanden vergelijkt ze allemaal. Het noemt de
+eerste 50 verschillen (met het nummer van de node, geen naam) en telt de rest; exitcode 1 bij een
+verschil. `--volledig` doet daarnaast de integrity-check van FTS5, die de hele index leest; het
+aantal vergeleken bestanden blijft dat van `--n`. Loopt er een herbouw, dan zegt het dat en wacht
 je tot hij klaar is.
 
 ## De wekelijkse controle
@@ -214,16 +217,19 @@ iets uploadt of opslaat, merkt er niets van.
 - **Alleen met FTS5.** Zoekt de app met LIKE omdat er geen index is (deze SQLite kent geen FTS5,
   `PLATFORM_SEARCH_INDEX=uit`, of PostgreSQL), dan valt er niets te vergelijken en loopt hij niet.
 - **Waar je het ziet.** Op `/beheer` → Zoeken en foto's, bij Index, de regel **Controle
-  (wekelijks)**: `nog niet gedaan`, `<tijd>: 200 bestanden vergeleken, geen verschil`, of in rood
-  `<tijd>: 3 verschillen met de bron (200 vergeleken)`. Elk bestand met een verschil telt één keer.
-  Met LIKE staat er `loopt alleen met FTS5`. In het log van de app staat alleen hoeveel bestanden
-  hij vergeleek en hoeveel verschillen hij vond, nooit een naam of tekst.
+  (wekelijks)**: `nog niet gedaan`, `<tijd>: 200 bestanden vergeleken, geen verschil`, of in
+  oranje, als waarschuwing, `<tijd>: 3 verschillen met de bron (200 vergeleken)`. Elk bestand met
+  een verschil telt één keer. Met LIKE staat er `loopt alleen met FTS5`. In het log van de app
+  staat alleen hoeveel bestanden hij vergeleek en hoeveel verschillen hij vond, nooit een naam of
+  tekst.
 
-**Bij een verschil.** Onder de rode regel zegt `/beheer` wat je doet:
+**Bij een verschil.** Onder de oranje regel zegt `/beheer` wat je doet:
 
 1. Herbouw de index: de knop **Index herbouwen** (zie "De index herbouwen" hieronder). Wil je eerst
-   weten welke bestanden het zijn, draai dan `search-check` (hierboven); die noemt elk verschil
-   dat hij vindt.
+   weten welke bestanden het zijn, draai dan `search-check --n <meer dan het aantal bestanden>`
+   (hierboven). De wekelijkse controle bewaart alleen aantallen, en `search-check` trekt een eigen
+   steekproef; met zo'n `--n` vergelijkt hij alle bestanden (dat leest alles en duurt bij veel
+   bestanden even). Hij noemt de eerste 50 verschillen.
 2. Wacht tot de herbouw klaar is. Na een verschil kijkt de app niet pas na een week, maar elk uur
    opnieuw. Binnen een uur na de herbouw staat er dus `geen verschil`, of komt het verschil terug.
 3. Komt het verschil na de herbouw terug, dan zijn de triggers van zoeken zelf stuk. Zet ze terug
