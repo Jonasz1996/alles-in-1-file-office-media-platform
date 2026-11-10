@@ -344,6 +344,32 @@ async def test_na_de_samenvoeging_gaan_schakelaar_en_herbouw_van_ocr_naar_x1(
     assert got == {"installed": False, "on": False, "pages_queued": 2}
 
 
+async def test_ocr_weer_aan_haalt_de_pomp_naar_voren(client, admin, settings):
+    """Stond OCR uit, dan week de pomp van de rij ocr 300 s (jobs.Defer; zijn job staat dan op
+    later). "OCR aanzetten" op /beheer zet die job op nu, zodat de scans meteen gelezen worden en
+    niet pas na vijf minuten; er komt geen tweede pomp bij."""
+    from app.ocr import step as ocr_step
+
+    headers, _ = admin
+    pomp = analysis.pump_type(ocr_step.LANE)
+    later = datetime.now(UTC) + timedelta(seconds=ocr_step.OFF_DEFER_S)
+    async with maker(settings)() as s:
+        await jobs.chain(s, pomp, {}, key=pomp, run_after=later)
+        await s.commit()
+    voor = datetime.now(UTC)
+    r = await client.patch(ADMIN, json={"ocr": True}, headers=headers)
+    assert r.status_code == 200
+    async with maker(settings)() as s:
+        rows = (
+            await s.execute(
+                sa.select(Job.run_after).where(Job.type == pomp, Job.status == "queued")
+            )
+        ).all()
+    assert len(rows) == 1
+    gepland = rows[0][0] if rows[0][0].tzinfo else rows[0][0].replace(tzinfo=UTC)
+    assert gepland <= voor + timedelta(seconds=5), (gepland, voor)
+
+
 # --- POST rebuild --------------------------------------------------------------------------------
 
 

@@ -461,8 +461,10 @@ async def requeue_missing(db: AsyncSession) -> int:
 
 
 async def _wake(db: AsyncSession) -> None:
-    kind = analysis.pump_type(LANE)
-    await jobs.enqueue(db, kind, {}, key=kind)
+    """De pomp van de rij ocr nu: een nieuwe job, of de job die al klaarstaat naar voren. Na
+    OCR uit wachtte die OFF_DEFER_S (jobs.Defer); "OCR aanzetten" op /beheer mag niet vijf
+    minuten op hem wachten (golf 4). In de transactie van de aanroeper."""
+    await analysis._wake(db, LANE, now())
 
 
 # --- "Tekst in foto's herkennen" (photo_pref.ocr_photos) -----------------------------------------
