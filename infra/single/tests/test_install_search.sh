@@ -595,6 +595,7 @@ ALS_ROOT
             return "${PIPESTATUS[0]}"
             ;;
           *" up -d --build --remove-orphans platform")
+            printf 'up met BUILDX_NO_DEFAULT_ATTESTATIONS=%s\n' "${BUILDX_NO_DEFAULT_ATTESTATIONS-niet gezet}" >>"$LOG"
             BUILDS=$((BUILDS + 1))
             APP=sha256:app-$BUILDS
             if [ "$RECREATE" = 1 ] || [ -z "$CID" ]; then CID=c-app-$BUILDS; fi
@@ -725,6 +726,7 @@ ALS_ROOT
   check "A: eerste installatie: Klaar." said_part "Klaar. Het platform draait op"
   check "A: geen reservekopie (nog geen database)" said "Reservekopie: nog geen database (eerste installatie)."
   check "A: geen compose run" not logged " run --rm --no-deps"
+  check "A: de build zonder herkomstverklaring (anders een nieuwe image-id bij elke herbouw)" logged "up met BUILDX_NO_DEFAULT_ATTESTATIONS=1"
   check "A: PLAATSEN=aan in de nieuwe .env" has_line "PLAATSEN=aan"
   check "A: de bronnen gehaald" said "Plaatsnamen: de bronnen staan klaar in $DATA_ROOT/geo; de app laadt ze bij de start (±1 minuut)."
   check "A: geen geo-load (er draaide nog geen app)" not logged "geo-load"
@@ -1568,6 +1570,7 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
   check "4: de symlink van de app op de .part: het bestand van root blijft (inhoud, root, 600), geen .part en geen symlink" eval '
     [ "$(as_root cat "$WORK/van-root")" = "van root" ] && [ "$(as_root stat -c "%u %a" "$WORK/van-root")" = "0 600" ] &&
     [ -z "$(as_root find "$GEO_DIR" -name "*.part" -o -type l)" ]'
+  check "4: hetzelfde image als na stap 2 (${app2:7:12}): opnieuw bouwen zonder verandering geeft dezelfde id" test "$(image_id)" = "$app2"
   check "4: dezelfde app (niets veranderde), dus geo-load in de draaiende app" eval '[ "$(cid platform)" = "$cid2" ] && said 4-opnieuw "Plaatsnamen laden (±1 minuut)…" && compose_before 4-opnieuw "up -d --build" "exec -T platform python -m app.cli geo-load"'
   check "4: /api/v1/admin/search: plaatsen geladen" wait_places 300 true
   check "4: de kopie van $schema_head met het image van deze versie (${app2:7:12})" test "$(run_image 4-opnieuw)" = "$app2"
@@ -1578,10 +1581,9 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
 
   # --- 5. de update erbovenop, met PLAATSEN=uit en dan weer aan ------------------------------
   STAGE=5
-  # Het image van de vorige run is platform:local zoals stap 4 het achterliet. Met de opslag van
-  # containerd (Docker 29) kan dat een andere id zijn dan app2, ook als er niets veranderde: de
-  # id is die van de manifest-lijst, met de provenance van die build erin. Compose liet de app
-  # dan draaien (zelfde config), en de kopie hoort met dit image te gaan
+  # Het image van de vorige run is platform:local zoals stap 4 het achterliet. install.sh bouwt
+  # zonder herkomstverklaring (BUILDX_NO_DEFAULT_ATTESTATIONS=1), dus stap 4 zag daar app2 terug;
+  # de kopie hoort met dit image te gaan
   app_vorige=$(image_id)
   step 5-uit "$NEW_SH" PLATFORM_SRC_REF="$TO2" PLAATSEN=uit || fout "5: install.sh (PLAATSEN=uit) gaf een fout"
   check "5: de app draait" app_up

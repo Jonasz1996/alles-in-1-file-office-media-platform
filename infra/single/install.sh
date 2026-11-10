@@ -757,7 +757,10 @@ main() {
     docker stop -t 60 "$container" >/dev/null || true
   fi
   old_app=$(image_id platform:local)
-  OFFICE_IMAGE=$OFFICE_IMG "${compose[@]}" up -d --build --remove-orphans platform
+  # Zonder BUILDX_NO_DEFAULT_ATTESTATIONS hangt Docker (29+, containerd-opslag) aan elke build een
+  # herkomstverklaring met de bouwtijd: dan krijgt dezelfde code toch een nieuwe image-id, en
+  # zet compose de app voor niets opnieuw op (en ruimt hieronder het "oude" image op)
+  BUILDX_NO_DEFAULT_ATTESTATIONS=1 OFFICE_IMAGE=$OFFICE_IMG "${compose[@]}" up -d --build --remove-orphans platform
   new_app=$(image_id platform:local)
 
   if ! wait_health; then
