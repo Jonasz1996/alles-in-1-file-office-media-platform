@@ -31,6 +31,42 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest -q
 
+  # Het cluster (B12, B15) draait op PostgreSQL. Deze job draait alle tests elk op een eigen
+  # PostgreSQL-database (PLATFORM_TEST_DATABASE_URL, tests/conftest.py). Hij blokkeert nog niet:
+  # bij de start (november 2026) faalden er ±120 van de ±4.950, vooral zoeken (FTS5) en de
+  # SQLite-commando's van de CLI. Zodra hij groen is, gaat continue-on-error eruit.
+  api-postgres:
+    name: API op PostgreSQL (cluster)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: platform
+          POSTGRES_PASSWORD: platform
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U platform" --health-interval 5s --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: api
+    env:
+      PLATFORM_TEST_DATABASE_URL: postgresql+asyncpg://platform:platform@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: ffmpeg voor de previews van video's
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --frozen
+      - run: uv run pytest -q -rf tests/test_dbcopy.py
+      - run: uv run pytest -q -rf
+
   # Fase 5 (§4.8): de tests met de marker media, met de lokale worker en echte ffmpeg (6.1 van
   # Ubuntu), naast de rest. Alles onder taskset -c 0-2: de tests, de worker en elke ffmpeg op 3
   # cores, zoals op de LXC. De job api slaat media over (addopts in api/pyproject.toml).
