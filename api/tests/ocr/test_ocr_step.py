@@ -243,6 +243,40 @@ async def test_zonder_tesseract_ocr_missing_en_terug_als_caps_het_meldt(
     assert await nep.pdf_ocr(aan, sha) == "later"
 
 
+async def test_zonder_tesseract_zegt_ook_een_foto_ocr_missing(client, mensen, aan, tmp_path):
+    """Review golf 4, contract F2: zonder tesseract zegt een foto ook none met ocr_missing (de web
+    toont dan "niet geïnstalleerd" zonder knop, net als bij een PDF), niet skip met een knop die
+    503 ocr_off geeft. Zolang de app het niet weet (caps nog niet gevraagd): skip. Tekst die er
+    al is, blijft done."""
+    (eva, _), _bram = mensen
+    data = nep.photo("zonderfoto")
+    node = await upload(client, eva, "bon.jpg", data)
+    other = await upload(client, eva, "kassa.jpg", nep.photo("kassa"))
+
+    async def ocr_of(n: dict) -> tuple[str, str | None]:
+        r = await client.get(f"/api/v1/files/{n['id']}/analysis", headers=eva)
+        assert r.status_code == 200, r.text
+        return r.json()["ocr"], r.json()["code"]
+
+    assert ocr_step.installed() is None
+    assert await ocr_of(node) == ("skip", None)
+    async with nep.worker(tmp_path) as w:
+        w.page(data, 1, "Bakkerij", WORD)
+        await backfill(aan)
+        r = await client.post(f"/api/v1/files/{node['id']}/ocr", headers=eva)
+        assert r.status_code == 202, r.text
+        assert await nep.pump(aan) == 1
+    assert await ocr_of(node) == ("done", None)
+    assert await ocr_of(other) == ("skip", None)
+    ocr_step._set_installed(False)
+    assert await ocr_of(other) == ("none", "ocr_missing")
+    assert await ocr_of(node) == ("done", None)  # de tekst die er is, blijft
+    r = await client.post(f"/api/v1/files/{other['id']}/ocr", headers=eva)
+    assert r.status_code == 503 and r.json()["detail"]["code"] == "ocr_off"
+    ocr_step._set_installed(True)
+    assert await ocr_of(other) == ("skip", None)
+
+
 async def test_een_foto_alleen_op_verzoek(client, mensen, aan, tmp_path):
     """Zonder verzoek en zonder "Tekst in foto's herkennen" leest de rij geen foto (skip). Na
     "Tekst herkennen" (POST): de tekst in photo_ocr bij die node, in de index (pocr), en via
