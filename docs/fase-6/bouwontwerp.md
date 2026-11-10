@@ -4645,22 +4645,27 @@ git -C /opt/platform/src cat-file -e '80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1^{
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1/infra/single/install.sh -o /root/platform-install-0.7.1.sh && echo "goed: het script is er"
 # 2. stoppen, zodat niets meer naar de nieuwe tabellen schrijft
 dc stop platform media
-# 3. het schema terug, met het image van nu (vraagt om "ja")
+# 3. een verse kopie van de database op 0010, met het image van nu
+dc run --rm --no-deps platform python -m app.cli db-backup
+# 4. het schema terug, met het image van nu (vraagt om "ja")
 dc run --rm --no-deps platform python -m app.cli db-downgrade 0009
-# 4. 0.7.1 installeren, met het script van 0.7.1
+# 5. 0.7.1 installeren, met het script van 0.7.1
 PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1 bash < /root/platform-install-0.7.1.sh
 ```
 
-- De downgrade moet met het image van 0.8.0 (dat kent 0010). Daarom eerst stoppen, dan
-  `db-downgrade`, dan pas het oude script. Zeggen de twee regels van stap 1 niet allebei "goed",
+- De downgrade moet met het image van 0.8.0 (dat kent 0010). Daarom eerst stoppen, dan de kopie
+  en `db-downgrade`, dan pas het oude script. Zeggen de twee regels van stap 1 niet allebei "goed",
   dan stop je daar (zoals in het runbook van media).
 - De downgrade gooit de index, de plekken, de hashes, de personen en de regels van albums weg.
   Bestanden, delingen, albums en alles van fase 1–5 blijven. Items uit een regel die niet gedeeld
   waren, haalt `db-downgrade` eerst uit het album (de vraag van §3.1): in 0.7.1 deelt een album
   elk item.
-- Lukt de downgrade niet, dan is er de reservekopie van stap 4: stoppen, het bestand
-  `platform-0009-<tijd>.db` terugzetten als `platform.db`, het script van 0.7.1
-  (`docs/runbooks/zoeken.md`, "Terug naar 0.7.1").
+- Lukt de downgrade niet, dan is er de verse kopie van stap 3: het bestand
+  `platform-0010-<tijd>.db` terugzetten als `platform.db` en op 0.8.0 blijven, met het script van
+  de branch; zo is er niets kwijt. De kopie `platform-0009-<tijd>.db` die het script bij de
+  update maakte (stap 4 van "Bijwerken naar 0.8.0") is van vóór de migratie: wat daarna
+  veranderde, staat er niet in, en wie 0.8.0 vers installeerde, heeft er geen. Daarom de verse
+  kopie (review golf 4, uitrol F5; `docs/runbooks/zoeken.md`, "Terug naar 0.7.1").
 - **Weer vooruit:** het script van de branch, zonder `PLATFORM_SRC_REF`. De index vult zich
   opnieuw (zie de tabel). Personen die je met de hand benoemde, zijn weg: dat staat in het runbook
   en in de bevestiging van `db-downgrade`.

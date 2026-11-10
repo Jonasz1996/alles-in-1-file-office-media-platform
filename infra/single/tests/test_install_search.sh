@@ -848,6 +848,9 @@ WANT = [
     ("cat-file met de hash", re.escape("git -C /opt/platform/src cat-file -e '%s^{commit}' && echo " % SHA)),
     ("curl van de commit -o " + FILE, re.escape("curl -fsSL %s/%s/infra/single/install.sh -o %s && echo " % (RAW, SHA, FILE))),
     ("dc stop", re.escape("dc stop platform media")),
+    # Eerst een verse kopie op de head van nu: lukt de downgrade niet, dan is die het vangnet
+    # zonder verlies (review golf 4, uitrol F5)
+    ("db-backup", re.escape("dc run --rm --no-deps platform python -m app.cli db-backup")),
     ("db-downgrade " + HEAD, re.escape("dc run --rm --no-deps platform python -m app.cli db-downgrade %s" % HEAD)),
     ("bash < " + FILE, re.escape("PLATFORM_BRANCH=%s PLATFORM_SRC_REF=%s bash < %s" % (BRANCH, SHA, FILE))),
     (
@@ -1582,17 +1585,33 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
     fout "6.1: de commit van 0.7.1 is er niet"
   fi
   if dc stop platform media >"$WORK/logs/6-stop.log" 2>&1; then ok "6.2: dc stop platform media"; else fout "6.2: dc stop platform media"; fi
-  if printf 'ja\n' | dc run --rm --no-deps -T platform python -m app.cli db-downgrade "$ROLLBACK_HEAD" >"$WORK/logs/6-downgrade.log" 2>&1; then
-    ok "6.3: dc run --rm --no-deps platform python -m app.cli db-downgrade $ROLLBACK_HEAD (met \"ja\")"
+  # Een verse kopie op $schema_head vóór de downgrade (review golf 4, uitrol F5): die van
+  # $ROLLBACK_HEAD is van de dag van de update, en wie 0.8.0 vers installeerde, heeft er geen
+  if dc run --rm --no-deps -T platform python -m app.cli db-backup </dev/null >"$WORK/logs/6-kopie.log" 2>&1; then
+    ok "6.3: dc run --rm --no-deps platform python -m app.cli db-backup"
   else
-    fout "6.3: db-downgrade $ROLLBACK_HEAD"
+    fout "6.3: db-backup"
+    tail -n 20 "$WORK/logs/6-kopie.log"
+  fi
+  vers=$(backups)
+  vers=${vers#"$copy0009 "}
+  check "6.3: een verse kopie van $schema_head (de vorige vervangen), en de $ROLLBACK_HEAD blijft (gezien: $(backups))" \
+    eval 'is_copy "$vers" "$schema_head" && [[ $vers > $copy0010 ]] && [ "$(backups)" = "$copy0009 $vers" ]'
+  check "6.3: het commando zegt waar de kopie staat" grep -qxE "De reservekopie staat in /data/backup/$vers \([0-9.]+ MB\)\." "$WORK/logs/6-kopie.log"
+  check "6.3: de verse kopie is heel: $schema_head, integrity ok (gezien: $(copy_facts "$vers"))" test "$(copy_facts "$vers")" = "$schema_head ok 1"
+  check "6.3: de kopie: 600, van de gebruiker van de app (uid 10001, zoals platform.db)" app_file "$BACKUP_DIR/$vers" 600
+  copy0010=$vers
+  if printf 'ja\n' | dc run --rm --no-deps -T platform python -m app.cli db-downgrade "$ROLLBACK_HEAD" >"$WORK/logs/6-downgrade.log" 2>&1; then
+    ok "6.4: dc run --rm --no-deps platform python -m app.cli db-downgrade $ROLLBACK_HEAD (met \"ja\")"
+  else
+    fout "6.4: db-downgrade $ROLLBACK_HEAD"
     tail -n 20 "$WORK/logs/6-downgrade.log"
   fi
   # Zonder terminal (-T, "ja" uit een pipe) komt de Enter van het antwoord niet in de uitvoer:
   # de uitkomst staat op de regel van de vraag
-  check "6.3: het commando zegt wat weg is, vraagt om \"ja\", en zegt dat het schema op $ROLLBACK_HEAD staat" eval \
+  check "6.4: het commando zegt wat weg is, vraagt om \"ja\", en zegt dat het schema op $ROLLBACK_HEAD staat" eval \
     'grep -qF "Weg zijn daarna: de zoekindex" "$WORK/logs/6-downgrade.log" && grep -qxF "Typ \"ja\" om door te gaan: De database staat nu op revisie $ROLLBACK_HEAD." "$WORK/logs/6-downgrade.log"'
-  step 6-terug "$OLD_SH" PLATFORM_BRANCH=installatietest-van PLATFORM_SRC_REF="$FROM" || fout "6.4: het script van 0.7.1 gaf een fout"
+  step 6-terug "$OLD_SH" PLATFORM_BRANCH=installatietest-van PLATFORM_SRC_REF="$FROM" || fout "6.5: het script van 0.7.1 gaf een fout"
   check "6: de app draait" app_up
   check "6: de broncode staat op ${FROM:0:12}" test "$(src_head)" = "$(git -C "$WORK/repo.git" rev-parse "$FROM^{commit}")"
   check "6: het schema staat op $ROLLBACK_HEAD" test "$(db_rev)" = "$ROLLBACK_HEAD"

@@ -72,7 +72,9 @@ de database op dat moment: `0009` voor 0.7.1, `0010` voor 0.8.0.
 - **Welke blijven.** Per schemaversie de nieuwste. Een tweede run op 0.8.0 vervangt dus de vorige
   kopie van `0010`, maar de laatste kopie van `0009` (van vóór de migratie) blijft altijd staan.
   Bestanden in de map die niet zo heten, raakt het script niet aan. Ruimte: reken op twee keer de
-  grootte van `platform.db`.
+  grootte van `platform.db`. Die kopie van `0009` is van de dag van de update: wat daarna
+  veranderde, staat er niet in. Wie 0.8.0 vers installeerde, heeft er geen. "Terug naar 0.7.1"
+  (hieronder) maakt daarom eerst een verse kopie van `0010` (review golf 4, uitrol F5).
 - **Mislukt.** Dan is er geen kopie (ook geen `.part`), staat de melding boven de regel "De
   reservekopie van de database lukte niet", en stopt het script. De app draait zoals hij draaide.
   Bijvoorbeeld een volle schijf (`df -h "$DATA_ROOT"`), of iets anders op de plek van de map
@@ -106,8 +108,9 @@ install -m 600 -o 10001 -g 10001 backup/platform-0009-<tijd>.db platform.db
 
 Kies bij `install` de kopie die je wilt (de tijd staat in de naam). Daarna het script van de versie
 die bij de kopie hoort. Bij een kopie van `0009` is dat het script van 0.7.1: de eerste drie regels
-en de laatste van "Terug naar 0.7.1" (hieronder); `dc stop` en de downgrade sla je over, want de app
-staat al stil en de kopie staat al op 0009. Bij een kopie van `0010` is het het gewone script.
+en de laatste van "Terug naar 0.7.1" (hieronder); `dc stop`, de kopie en de downgrade sla je over,
+want de app staat al stil en de kopie staat al op 0009. Bij een kopie van `0010` is het het gewone
+script.
 Gezichten en beeld rekent de app daarna opnieuw; de index van zoeken staat gewoon in de kopie.
 
 ## Plaatsnamen
@@ -305,6 +308,7 @@ git -C /opt/platform/src fetch -q origin
 git -C /opt/platform/src cat-file -e '80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1^{commit}' && echo "goed: 0.7.1 is er"
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1/infra/single/install.sh -o /root/platform-install-0.7.1.sh && echo "goed: het script is er"
 dc stop platform media
+dc run --rm --no-deps platform python -m app.cli db-backup
 dc run --rm --no-deps platform python -m app.cli db-downgrade 0009
 PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1 bash < /root/platform-install-0.7.1.sh
 ```
@@ -317,7 +321,12 @@ Per stap:
    script met het oude image. In een bestand, omdat `curl … | bash` met een adres dat er niet is
    één regel van curl geeft en verder niets doet; dan stond de app al stil met het schema terug.
 2. **Stoppen** (`dc stop platform media`), zodat niets meer naar de nieuwe tabellen schrijft.
-3. **Het schema terug** met het image van nu, want alleen dat kent 0010. `db-downgrade` vraagt
+3. **Een verse kopie** van de database zoals hij nu is, op `0010`, met het image van nu
+   (`db-backup`, dezelfde kopie als die van het script). Hij zegt
+   `De reservekopie staat in /data/backup/platform-0010-<tijd>.db (… MB).` (in de Console is dat
+   `$DATA_ROOT/backup/…`). Zegt hij iets anders, stop dan: zonder deze kopie geen downgrade. Hij
+   vervangt de vorige kopie van `0010`; die van `0009` blijft.
+4. **Het schema terug** met het image van nu, want alleen dat kent 0010. `db-downgrade` vraagt
    eerst, als die er zijn, naar album-items die uit een regel van een slim album komen en niet
    gedeeld worden: in 0.7.1 deelt een album elk item, dus die items zouden ineens gedeeld zijn.
    Enter of "ja" haalt ze eerst uit het album (de standaard). Dan zegt het wat er weggaat:
@@ -327,9 +336,11 @@ Per stap:
    > blijven, en zoeken op naam werkt gewoon.
 
    en vraagt om "ja". Alles anders dan "ja" doet niets. Aan het eind:
-   `De database staat nu op revisie 0009.` Zegt het iets anders, stop dan, en zet de reservekopie
-   terug (hierboven).
-4. **0.7.1 installeren** met het script van 0.7.1. Het bouwt het image van 0.7.1 en start het.
+   `De database staat nu op revisie 0009.` Zegt het iets anders, stop dan, en zet de kopie van
+   stap 3 terug (`backup/platform-0010-<tijd>.db`, zie "Een kopie terugzetten" hierboven). Blijf
+   dan op 0.8.0: het gewone script van de branch ("Weer vooruit" hieronder), niet dat van 0.7.1.
+   Zo ben je niets kwijt.
+5. **0.7.1 installeren** met het script van 0.7.1. Het bouwt het image van 0.7.1 en start het.
    De reservekopieën en `$DATA_ROOT/geo` blijven staan; 0.7.1 gebruikt ze niet.
 
 Wat blijft: je bestanden en hun versies, mappen, delingen, albums (zonder regels), accounts en 2FA,

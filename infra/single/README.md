@@ -86,16 +86,19 @@ git -C /opt/platform/src fetch -q origin
 git -C /opt/platform/src cat-file -e '80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1^{commit}' && echo "goed: 0.7.1 is er"
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1/infra/single/install.sh -o /root/platform-install-0.7.1.sh && echo "goed: het script is er"
 dc stop platform media
+dc run --rm --no-deps platform python -m app.cli db-backup
 dc run --rm --no-deps platform python -m app.cli db-downgrade 0009
 PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1 bash < /root/platform-install-0.7.1.sh
 ```
 
 Zeggen de tweede en de derde regel niet allebei "goed", stop dan: de rest pas als de commit en het
 script er zijn. Het script komt van de commit van 0.7.1 zelf, niet van de branch: zo draait het
-oude script met het oude image. `db-downgrade` noemt wat er weggaat (de zoekindex, de plekken van
-foto's, de hashes voor duplicaten, de personen die je met de hand benoemde en de regels van slimme
-albums) en vraagt om "ja"; bestanden, delingen en albums blijven. Weer vooruit: het commando van
-de branch, zonder `PLATFORM_SRC_REF`:
+oude script met het oude image. `db-backup` maakt eerst een verse kopie van de database zoals hij
+nu is (`platform-0010-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de zoekindex, de plekken
+van foto's, de hashes voor duplicaten, de personen die je met de hand benoemde en de regels van
+slimme albums) en vraagt om "ja"; bestanden, delingen en albums blijven. Lukt de downgrade niet,
+zet dan die verse kopie terug en blijf op 0.8.0 (`docs/runbooks/zoeken.md`). Weer vooruit: het
+commando van de branch, zonder `PLATFORM_SRC_REF`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
