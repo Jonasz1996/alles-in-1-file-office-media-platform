@@ -11,7 +11,10 @@ zonder tekstlaag. Per bron:
   geometry.centre, ligt binnen 8 px van waar het in het beeld staat zoals de viewer het toont
   (gemeten: mediaan 0,5 tot 1,0 px, hooguit 2,6 px);
 - de OSD alleen waar het nodig is: niet bij een rechte pagina, wel bij 90° en 180°;
-- de poort van §4.5: ≥ 8 pagina's per minuut op één core (gemeten 45).
+- een kleine snelheidstoets: ≥ 8 pagina's per minuut op één core over vier bronnen van de brief
+  (12 regels; gemeten 45–48). Dat zegt weinig over een pagina vol tekst: de poort van §4.5 is
+  tests/ocr/poort.py, met naast 100 brieven ook 30 volle pagina's van 44 regels (gemeten 21,3
+  pagina's per minuut over alles, 10,7 voor de volle pagina's; review golf 4, uitrol F4).
 
 Zonder tesseract (of zonder nld, eng of osd) of zonder DejaVu Sans faalt dit met een duidelijke
 melding; overslaan doet het nooit.
@@ -161,7 +164,8 @@ async def test_een_pdf_zonder_tekstlaag(tmp_path, worker):
 
 
 async def test_poort_pagina_per_minuut_per_core(tmp_path, worker):
-    """§4.5: ≥ 8 pagina's per minuut op één core (kind 1, de rechtzetting en tesseract)."""
+    """≥ 8 pagina's per minuut op één core (kind 1, de rechtzetting en tesseract), voor de brief
+    van 12 regels; de poort van §4.5 met volle pagina's is tests/ocr/poort.py."""
     sources = []
     for i, data in enumerate((scans.png(0), scans.png(3), scans.pdf(0), scans.jpeg_exif6())):
         path = tmp_path / f"p{i}"

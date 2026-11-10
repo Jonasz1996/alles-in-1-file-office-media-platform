@@ -109,15 +109,16 @@ jobs:
   # minuut op één core over vier bronnen) en de scans van Z0 (tests/search/test_fixtures.py);
   # dan e2e/test_zoek_ocr.py (marker ocr: de app met media en de lokale worker, een scan zonder
   # tekstlaag en een foto van een bon, zoeken, de snippet, de markering in de viewer, en een
-  # kopie van Bram die Eva's tekst niet vindt); en als laatste de poort van §4.5 (hard): 100
-  # gemaakte scans van A4 op 300 dpi (0°, 3°, 7°, −5° en 90°) onder taskset -c 0, ≥ 8 pagina's
-  # per minuut (tests/ocr/poort.py). Zonder tesseract, een taal of DejaVu faalt het; overslaan
-  # telt als mislukt. Aan het eind van het log "=== kort ===" met de regels "OCR:", de uitkomst
-  # van de e2e en de regels "OCR-poort".
+  # kopie van Bram die Eva's tekst niet vindt); en als laatste de poort van §4.5 (hard): 130
+  # gemaakte scans van A4 op 300 dpi onder taskset -c 0, 100 brieven (0°, 3°, 7°, −5° en 90°) en
+  # 30 volle pagina's van 44 regels (0°, 3° en 90°), ≥ 8 pagina's per minuut over alles, met de
+  # cijfers per dichtheid (tests/ocr/poort.py). Zonder tesseract, een taal of DejaVu faalt het;
+  # overslaan telt als mislukt. Aan het eind van het log "=== kort ===" met de regels "OCR:", de
+  # uitkomst van de e2e en de regels "OCR-poort".
   ocr:
     name: OCR (echte tesseract, marker ocr)
     runs-on: ubuntu-24.04  # zoals api-media, zie de noot boven jobs
-    # pytest ±2 min, de web-build en Chromium ±3 min, de e2e ±1 min, de poort ±4 min
+    # pytest ±2 min, de web-build en Chromium ±3 min, de e2e ±1 min, de poort ±7 min
     timeout-minutes: 35
     defaults:
       run:
@@ -173,7 +174,7 @@ jobs:
           name: e2e-ocr
           path: ${{ runner.temp }}/ocr-artefacten
           if-no-files-found: ignore
-      - name: De poort van §4.5 (100 scans, taskset -c 0, ≥ 8 pagina's per minuut)
+      - name: De poort van §4.5 (130 scans, taskset -c 0, ≥ 8 pagina's per minuut)
         run: |
           set -o pipefail
           taskset -c 0 uv run python -m tests.ocr.poort --json "$RUNNER_TEMP/ocr-poort.json" \

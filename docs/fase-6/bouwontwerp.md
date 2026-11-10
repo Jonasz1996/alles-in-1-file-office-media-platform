@@ -5310,7 +5310,7 @@ het schrijven.
 | land en plaats | 55.000 punten | ≥ 20.000 per minuut | ±69.000 [V6, H6] |
 | index bijwerken | 20.000 teksten via de triggers | rapport | ±26 s [gemeten] |
 | schrijven met kopieën | 1 MB tekst, 10 kopieën | een upload ernaast wacht ≤ 1 s | ±650 ms per schrijfactie [C11] |
-| OCR (X1) | 100 gescande pagina's, A4, 300 dpi, op 0°, 3°, 7°, −5° en 90° | ≥ 8 pagina's per minuut | 10–20 [V7] |
+| OCR (X1) | 100 gescande pagina's, A4, 300 dpi, op 0°, 3°, 7°, −5° en 90°; sinds de review van golf 4 (uitrol F4) ook 30 volle pagina's van 44 regels (0°, 3° en 90°), met de cijfers per dichtheid | ≥ 8 pagina's per minuut (over alles) | 10–20 [V7] |
 | gezichten (X2), in de container | gemaakte foto's van 1024 × 768 met één gezicht | ≥ 250 foto's per minuut | ±365–420 [K2-04] |
 | beeld (X3), in de container | dezelfde foto's, uit de preview van 256 | ≥ 500 foto's per minuut | ±750–870 [K2-04] |
 

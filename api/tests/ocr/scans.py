@@ -2,6 +2,9 @@
 DejaVu Sans, zoals een scanner hem geeft, en wat daarvan afgeleid is (scheef, een kwartslag, een
 foto met EXIF-draaiing 6, een HEIC, een PDF zonder tekstlaag).
 
+Naast de brief (12 regels) is er een volle pagina van 44 regels in een kleinere letter
+(`page(…, vol=True)`, `pdf(…, vol=True)`, `VOL_WORDS`) voor de poort van §4.5.
+
 Alles is vast: hetzelfde papier (ruis uit een vast zaad), dezelfde regels, dezelfde plekken.
 Per woord weet de fixture waar het midden staat (`words`), in het beeld zoals de viewer het
 toont; zo kan een test de vakjes van de OCR terugrekenen en vergelijken.
@@ -51,6 +54,59 @@ LINES = (
 )
 WORDS = tuple(w for line in LINES for w in line.split())
 
+# Een volle pagina (de poort van §4.5, review golf 4, uitrol F4): 44 regels in een kleinere letter
+# (34 px, ±8 punt op 300 dpi), zoals een contract. De brief hierboven heeft 12 regels; met alleen
+# die zegt de poort te weinig over een echte pagina vol tekst.
+VOL_SIZE = 34
+VOL_LEFT, VOL_TOP, VOL_LINE = 200, 220, 70
+VOL_LINES = (
+    "Huurovereenkomst woonruimte tussen verhuurder en huurder voor de woning aan de Oudegracht",
+    "Artikel 1 de verhuurder verhuurt aan de huurder de woning met tuin en schuur en een berging",
+    "gelegen aan de Oudegracht nummer 214 te Utrecht met een oppervlak van tachtig vierkante meter",
+    "Artikel 2 de huur gaat in op de eerste dag van de maand die volgt op de dag van ondertekening",
+    "en wordt aangegaan voor een periode van twaalf maanden en daarna steeds voor onbepaalde tijd",
+    "Artikel 3 de huurprijs bedraagt negenhonderd euro per maand exclusief de kosten van energie",
+    "te voldoen voor de eerste dag van elke kalendermaand door overmaking naar de verhuurder",
+    "Artikel 4 de huurder betaalt een waarborgsom van twee maanden huur bij het tekenen",
+    "die na afloop wordt terugbetaald zonder rente zodra de woning in goede staat is opgeleverd",
+    "Artikel 5 de huurder gebruikt de woning alleen om te wonen en niet voor een bedrijf of winkel",
+    "en houdt de tuin en de schuur netjes en schoon en zet het afval op tijd aan de straat",
+    "Artikel 6 kleine herstellingen komen voor rekening van de huurder zoals kranen en sloten",
+    "groot onderhoud aan dak en gevel doet de verhuurder na overleg met de huurder",
+    "Artikel 7 huisdieren zijn toegestaan na schriftelijke toestemming van de verhuurder vooraf",
+    "Artikel 8 de huurder mag de woning niet onderverhuren of in gebruik geven aan een ander",
+    "Artikel 9 opzeggen kan per aangetekende brief of per email aan het adres van de verhuurder",
+    "met een opzegtermijn van ten minste een maand voor de huurder en drie voor de verhuurder",
+    "Artikel 10 bij het einde van de huur volgt een inspectie en wordt een verslag gemaakt",
+    "van de staat van de woning in bijzijn van beide partijen en ondertekend door allebei",
+    "Artikel 11 op deze overeenkomst is Nederlands recht van toepassing en de rechter in Utrecht",
+    "Kenmerk dichtwoordx bij elke betaling en brief vermelden zodat de administratie klopt",
+    "Aldus opgemaakt in tweevoud en ondertekend te Utrecht door de verhuurder en de huurder",
+    "Residential tenancy agreement between landlord and tenant for the dwelling at the Oudegracht",
+    "Clause 1 the landlord lets to the tenant the dwelling with garden and shed and a storage room",
+    "located at Oudegracht number 214 in Utrecht with a floor area of eighty square metres",
+    "Clause 2 the tenancy starts on the first day of the month following the day of signing",
+    "and is entered into for a period of twelve months and thereafter for an indefinite period",
+    "Clause 3 the rent amounts to nine hundred euros per month excluding the cost of energy",
+    "payable before the first day of every calendar month by transfer to the landlord",
+    "Clause 4 the tenant pays a deposit equal to two months of rent when signing this contract",
+    "which is returned without interest at the end once the dwelling is handed back in good order",
+    "Clause 5 the tenant uses the dwelling only as a home and not for a business or a shop",
+    "and keeps the garden and the shed tidy and clean and puts the waste out on the right days",
+    "Clause 6 minor repairs are at the expense of the tenant such as taps and locks and hinges",
+    "major maintenance of roof and walls is done by the landlord after agreeing with the tenant",
+    "Clause 7 pets are allowed after written permission from the landlord given in advance",
+    "Clause 8 the tenant may not sublet the dwelling or let anyone else make use of it",
+    "Clause 9 notice is given by registered letter or by email to the address of the landlord",
+    "with a notice period of at least one full month for the tenant and three for the landlord",
+    "Clause 10 at the end of the tenancy an inspection follows and a written report is made",
+    "of the state of the dwelling in presence of both parties and signed by both of them",
+    "Clause 11 this agreement is governed by Dutch law and the court in Utrecht has jurisdiction",
+    "Reference dichtwoordx must be quoted with every payment so that the records are correct",
+    "Drawn up in duplicate and signed in Utrecht by the landlord and by the tenant on this day",
+)
+VOL_WORDS = tuple(w for line in VOL_LINES for w in line.split())
+
 
 class NoFont(RuntimeError):
     """DejaVu Sans ontbreekt."""
@@ -88,17 +144,21 @@ def _upright() -> tuple[Image.Image, tuple[Word, ...], tuple[tuple, ...]]:
     return _draw(0)
 
 
-def _draw(variant: int) -> tuple[Image.Image, tuple[Word, ...], tuple[tuple, ...]]:
+def _draw(
+    variant: int, vol: bool = False
+) -> tuple[Image.Image, tuple[Word, ...], tuple[tuple, ...]]:
     """De brief rechtop; variant 0 is die van _upright, een andere variant hetzelfde papier met
-    andere ruis (voor de poort van §4.5: 100 pagina's die niet bit voor bit gelijk zijn)."""
+    andere ruis (voor de poort van §4.5: pagina's die niet bit voor bit gelijk zijn). vol: de
+    volle pagina (VOL_LINES in VOL_SIZE) in plaats van de brief."""
     page = _paper(A4, "a4" if variant == 0 else f"a4-{variant}")
     draw = ImageDraw.Draw(page)
-    f = font()
+    f = font(VOL_SIZE if vol else SIZE)
+    x0, y0, step = (VOL_LEFT, VOL_TOP, VOL_LINE) if vol else (LEFT, TOP, LINE)
     space = draw.textlength(" ", font=f)
     words = []
     found = []
-    for i, line in enumerate(LINES):
-        x, y = float(LEFT), TOP + i * LINE
+    for i, line in enumerate(VOL_LINES if vol else LINES):
+        x, y = float(x0), y0 + i * step
         for word in line.split():
             left, top, right, bottom = draw.textbbox((x, y), word, font=f)
             draw.text((x, y), word, fill=INK, font=f)
@@ -108,11 +168,12 @@ def _draw(variant: int) -> tuple[Image.Image, tuple[Word, ...], tuple[tuple, ...
     return page, tuple(words), tuple(found)
 
 
-def page(angle: float = 0.0, variant: int = 0) -> Image.Image:
+def page(angle: float = 0.0, variant: int = 0, vol: bool = False) -> Image.Image:
     """De brief (grijs, A4 op 300 dpi), over angle graden tegen de klok in gedraaid: scheef
     (|angle| < 45, de pagina blijft A4) of een kwartslag (90, 180, 270: liggend of op zijn kop).
-    variant: andere ruis op het papier (alleen variant 0 blijft in het geheugen)."""
-    upright, _, _ = _upright() if variant == 0 else _draw(variant)
+    variant: andere ruis op het papier (alleen variant 0 van de brief blijft in het geheugen).
+    vol: de volle pagina van 44 regels in plaats van de brief."""
+    upright, _, _ = _upright() if variant == 0 and not vol else _draw(variant, vol)
     if angle % 90 == 0:
         return upright.rotate(angle, expand=True) if angle % 360 else upright.copy()
     return upright.rotate(angle, resample=Image.BICUBIC, fillcolor=PAPER)
@@ -180,10 +241,11 @@ def heic(angle: float = 0.0) -> bytes:
     return buf.getvalue()
 
 
-def pdf(angle: float = 0.0, variant: int = 0) -> bytes:
-    """De brief als PDF zonder tekstlaag: één pagina A4 met de scan als beeld (300 dpi)."""
+def pdf(angle: float = 0.0, variant: int = 0, vol: bool = False) -> bytes:
+    """De brief (of met vol de volle pagina) als PDF zonder tekstlaag: één pagina A4 met de scan
+    als beeld (300 dpi)."""
     buf = io.BytesIO()
-    page(angle, variant).save(buf, "PDF", resolution=float(DPI))
+    page(angle, variant, vol).save(buf, "PDF", resolution=float(DPI))
     return buf.getvalue()
 
 
@@ -246,15 +308,16 @@ def tokens(text: str) -> list[str]:
     return [t for t in (re.sub(r"^\W+|\W+$", "", w).lower() for w in text.split()) if t]
 
 
-def recall(found: list[str]) -> float:
-    """Welk deel van WORDS de herkenning vond (elk woord zo vaak als het erin staat)."""
+def recall(found: list[str], words: tuple[str, ...] = WORDS) -> float:
+    """Welk deel van words (de brief, of VOL_WORDS) de herkenning vond (elk woord zo vaak als het
+    erin staat)."""
     pool: dict[str, int] = {}
     for t in found:
         pool[t] = pool.get(t, 0) + 1
     hit = 0
-    for w in WORDS:
+    for w in words:
         t = w.lower()
         if pool.get(t, 0) > 0:
             pool[t] -= 1
             hit += 1
-    return hit / len(WORDS)
+    return hit / len(words)
