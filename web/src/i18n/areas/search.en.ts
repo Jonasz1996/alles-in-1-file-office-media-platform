@@ -8,6 +8,7 @@ const en: Translation<typeof nl> = {
     placeholder: "A name or a word from the text",
     placeholderImage: "Describe the photo, for example: dog on the beach",
     hintImage: "Searches your own photos. Press Enter.",
+    imageLater: "Search by image is coming in a future version.",
     submit: "Search",
   },
   mode: {

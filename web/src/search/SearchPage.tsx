@@ -11,8 +11,9 @@
 // heten (groups, Keuze 38): een keuze zet het filter person of place. Zonder foto's in de
 // treffers: "Geen foto met deze naam?" (Keuze 81).
 //
-// Stand beeld: het veld met zijn eigen plaatshouder en uitleg, en het raster van X3 (lazy, met
-// het gebied beeld; tot X3 er is, toont het niets). De pagina vraagt dan zelf niets aan /search:
+// Stand beeld: het veld met zijn eigen plaatshouder en uitleg (ImageHint), en het raster van X3
+// (lazy, met het gebied beeld; tot X3 er is, één zin dat zoeken op beeld later komt, die ImageHint
+// ook in de beschrijving van het veld zet). De pagina vraagt dan zelf niets aan /search:
 // het raster leest q en like uit de URL. Kom je er zonder vraag (de knop "Zoeken op beeld" op
 // /fotos), dan staat de focus in het veld (Keuze 81).
 
@@ -52,6 +53,7 @@ import { places as listPlaces } from "../photos/map/api";
 import { people as listPeople } from "../photos/people/api";
 import { search } from "./api";
 import { FilterBar, type PersonName } from "./FilterBar";
+import { ImageHint, imageDescribedBy } from "./ImageHint";
 import { appendHits, folderHref, hitPath, isPhoto, parentHref, pathText } from "./hits";
 import { Notices, notices, Snippet } from "./Notices";
 import { canSearch, firstParams, nextParams, queryHref, readQuery, withMode, withPerson } from "./query";
@@ -351,7 +353,7 @@ export default function SearchPage(_: RouteProps): JSX.Element {
           ref={field}
           type="search"
           aria-label={t("search.field.label")}
-          aria-describedby={image ? "zoek-beeld-uitleg" : undefined}
+          aria-describedby={image ? imageDescribedBy() : undefined}
           placeholder={image ? t("search.field.placeholderImage") : t("search.field.placeholder")}
           maxLength={MAX_QUERY}
           enterKeyHint="search"
@@ -362,11 +364,7 @@ export default function SearchPage(_: RouteProps): JSX.Element {
           {t("search.field.submit")}
         </Button>
       </form>
-      {image && (
-        <p id="zoek-beeld-uitleg" className="muted">
-          {t("search.field.hintImage")}
-        </p>
-      )}
+      {image && <ImageHint />}
       {/* De stand (Keuze 81): ← en → kiezen, zoals bij elke groep keuzerondjes. Een gast heeft
           geen eigen foto's, dus geen zoeken op beeld */}
       {!guest && (

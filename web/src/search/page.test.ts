@@ -1,12 +1,13 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
-import { loadAreas, resetI18nForTests } from "../i18n";
+import { loadAreas, resetI18nForTests, t } from "../i18n";
 import { AppBarSearch } from "./AppBarSearch";
 import appBarSource from "./AppBarSearch.tsx?raw";
 import { optionsOf } from "./combo";
 import { chipLabel, FilterBar, typeLabel } from "./FilterBar";
 import { appendHits, isPhoto } from "./hits";
+import { IMAGE_SEARCH_READY, ImageHint, imageDescribedBy } from "./ImageHint";
 import { Notices, notices, Snippet } from "./Notices";
 import searchPageSource from "./SearchPage.tsx?raw";
 import { SuggestList } from "./Suggest";
@@ -232,6 +233,53 @@ describe("de stand beeld op /zoeken (Keuze 81): het raster van X3, lazy", () => 
     expect(searchPageSource).toContain('role="radiogroup"');
     expect(searchPageSource).toContain('t("search.noPhoto")');
     expect(searchPageSource).toContain("queryHref(withMode(query, \"image\"))");
+  });
+});
+
+// I1, review R4: in de stand beeld staat de focus in het veld (Keuze 81) voordat de lazy chunk van
+// BeeldResults er is. Daarom zegt de beschrijving van het veld zelf dat zoeken op beeld later komt,
+// met een tekst uit het gebied search. De beforeEach laadt het gebied beeld niet: deze tests tonen
+// dus ook dat de zin niet op die chunk wacht.
+describe("de beschrijving van het veld in de stand beeld, zolang X3 er niet is (I1, R4)", () => {
+  const HINT_NL = '<p id="zoek-beeld-uitleg" class="muted">Zoekt in je eigen foto&#x27;s. Druk op Enter.</p>';
+
+  it("nl: eerst de verborgen zin dat het later komt, dan de uitleg", () => {
+    expect(IMAGE_SEARCH_READY).toBe(false);
+    const html = renderToStaticMarkup(createElement(ImageHint));
+    expect(html).toBe(
+      `${HINT_NL}<span id="zoek-beeld-later" hidden="">Zoeken op beeld komt in een volgende versie.</span>`,
+    );
+    expect(imageDescribedBy()).toBe("zoek-beeld-later zoek-beeld-uitleg");
+    for (const id of imageDescribedBy().split(" ")) expect(html).toContain(`id="${id}"`);
+  });
+
+  it("en: dezelfde zin in het Engels, zonder versienummer", async () => {
+    resetI18nForTests("en");
+    await loadAreas(["search"]);
+    const html = renderToStaticMarkup(createElement(ImageHint));
+    expect(html).toContain(
+      '<span id="zoek-beeld-later" hidden="">Search by image is coming in a future version.</span>',
+    );
+    expect(t("search.field.imageLater")).not.toMatch(/\d/);
+  });
+
+  it("de zin is dezelfde als die van BeeldResults (beeld.later), in nl en in en", async () => {
+    for (const l of ["nl", "en"] as const) {
+      resetI18nForTests(l);
+      await loadAreas(["search", "beeld"]);
+      expect(t("search.field.imageLater")).toBe(t("beeld.later"));
+    }
+  });
+
+  it("met het raster van X3 (de schakelaar op true): alleen de uitleg", () => {
+    expect(renderToStaticMarkup(createElement(ImageHint, { ready: true }))).toBe(HINT_NL);
+    expect(imageDescribedBy(true)).toBe("zoek-beeld-uitleg");
+  });
+
+  it("SearchPage beschrijft het veld zo in de stand beeld, en anders niet", () => {
+    expect(searchPageSource).toContain("aria-describedby={image ? imageDescribedBy() : undefined}");
+    expect(searchPageSource).toContain("{image && <ImageHint />}");
+    expect(searchPageSource).not.toContain('"zoek-beeld-uitleg"');
   });
 });
 

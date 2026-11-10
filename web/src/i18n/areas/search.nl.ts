@@ -8,6 +8,9 @@ export default {
     placeholder: "Een naam of een woord uit de tekst",
     placeholderImage: "Beschrijf de foto, bijvoorbeeld: hond op het strand",
     hintImage: "Zoekt in je eigen foto's. Druk op Enter.",
+    // Ook de beschrijving van het veld zolang het raster van X3 er niet is (I1, review R4; de
+    // schakelaar staat in search/ImageHint.tsx). Dezelfde zin als beeld.later, zonder versienummer
+    imageLater: "Zoeken op beeld komt in een volgende versie.",
     submit: "Zoeken",
   },
   mode: {

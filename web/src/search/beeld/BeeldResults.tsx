@@ -5,7 +5,9 @@
 // zonder props, een eigen chunk.
 //
 // Tot X3 het vult, staat er één zin dat het later komt (I1, S8), zonder versienummer: of X3 in
-// deze fase komt, beslist de go/no-go na I1 (bouwontwerp §5). X3 vervangt dit bestand.
+// deze fase komt, beslist de go/no-go na I1 (bouwontwerp §5). X3 vervangt dit bestand. Dezelfde
+// zin staat ook verborgen in de beschrijving van het veld (search/ImageHint.tsx, I1 review R4),
+// omdat dit bestand lazy komt; X3 zet daar IMAGE_SEARCH_READY op true.
 
 import type { JSX } from "react";
 import { t } from "../../i18n";
