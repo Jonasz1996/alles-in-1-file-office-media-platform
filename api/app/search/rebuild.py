@@ -78,6 +78,16 @@ async def _start(conn: AsyncConnection, what: str) -> None:
         await conn.exec_driver_sql("INSERT INTO fts_name(fts_name) VALUES ('delete-all')")
 
 
+async def begin(conn: AsyncConnection, what: str) -> bool:
+    """De cursor van een nieuwe herbouw al zetten, vóór de taak van rebuild() loopt
+    (POST /admin/search/rebuild, Z7: een GET direct na de 202 ziet de herbouw dan al). False
+    zonder FTS-index. rebuild() gaat daarna verder vanaf deze cursor."""
+    if not await _has_fts(conn):
+        return False
+    await _start(conn, what)
+    return True
+
+
 # De volgende hooguit :chunk nodes na de cursor, met de tekst tot en met elke node opgeteld.
 # octet_length leest alleen de kop van de rij, niet de tekst zelf (SQLite 3.43 en later).
 _NEXT = (

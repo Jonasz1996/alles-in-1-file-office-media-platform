@@ -44,13 +44,18 @@ def sha(i: int) -> str:
 
 @pytest.fixture(autouse=True)
 def schoon():
-    """Elke test begint zonder tellers, zonder pauze en zonder aanmelding van X1."""
+    """Elke test begint zonder tellers en zonder pauze. De aanmelding van X1 (ocr, bij het
+    importeren van app.ocr.step) staat na elke test weer zoals hij was, ook als een test hem
+    vervangt of weghaalt."""
     perhour.reset()
     analysis.PAUSED.clear()
+    x1 = hooks._admin.get("ocr")
     yield
     perhour.reset()
     analysis.PAUSED.clear()
     hooks._admin.pop("ocr", None)
+    if x1 is not None:
+        hooks._admin["ocr"] = x1
     for task in list(search_admin._tasks):
         task.cancel()
     search_admin._fts.clear()
@@ -243,7 +248,12 @@ async def test_pauze_zet_de_rijen_index_en_ocr_stil_en_blijft_na_een_herstart(
     assert await analysis.pump(settings, "index") == 0
 
 
-async def test_zonder_x1_x2_en_x3_geeft_hun_schakelaar_501_en_verandert_niets(client, admin):
+async def test_zonder_x1_x2_en_x3_geeft_hun_schakelaar_501_en_verandert_niets(
+    client, admin, monkeypatch
+):
+    """Het contract van search.hooks zonder aanmelding. X1 meldt zich sinds golf 4 bij het
+    importeren aan; hier is hij er even niet."""
+    monkeypatch.delitem(hooks._admin, "ocr", raising=False)
     headers, _ = admin
     for field, package in (("ocr", "X1"), ("faces_allowed", "X2"), ("beeld", "X3")):
         r = await client.patch(ADMIN, json={"paused": True, field: True}, headers=headers)
@@ -286,6 +296,52 @@ async def test_x1_meldt_zich_aan_met_het_blok_ocr(client, admin):
     r = await client.post(f"{ADMIN}/rebuild", json={"what": "ocr"}, headers=headers)
     assert r.status_code == 202
     assert gezien == [("switch", True), ("rebuild",)]
+
+
+async def test_na_de_samenvoeging_gaan_schakelaar_en_herbouw_van_ocr_naar_x1(
+    client, admin, settings
+):
+    """Golf 4: X1 (app.ocr.step) meldt zich zelf aan. Het blok telt de open rijen ocr, de
+    schakelaar staat in Setting "ocr" en "Alles opnieuw herkennen" zet een mislukte rij terug in
+    de rij. Zonder worker (media uit) is OCR niet geïnstalleerd en dus niet aan."""
+    from app.ocr import step as ocr_step
+
+    part = hooks._admin["ocr"]
+    assert (part.block, part.switch, part.rebuild) == (
+        ocr_step.admin_block,
+        ocr_step.admin_switch,
+        ocr_step.admin_rebuild,
+    )
+    headers, _ = admin
+    blobs = [Blob(sha256=sha(i), size=10, mime="application/pdf") for i in range(3)]
+    rows = [
+        Analysis(blob_sha=sha(0), step="ocr", version=1, state="wait", code=None),
+        Analysis(blob_sha=sha(1), step="ocr", version=1, state="failed", code="ocr_x"),
+        Analysis(blob_sha=sha(2), step="ocr", version=1, state="skip", code=None),
+    ]
+    await add(settings, *blobs, *rows)
+    got = (await client.get(ADMIN, headers=headers)).json()["ocr"]
+    assert got == {"installed": False, "on": False, "pages_queued": 1}
+    r = await client.patch(ADMIN, json={"ocr": False}, headers=headers)
+    assert r.status_code == 200
+    async with maker(settings)() as s:
+        assert (await s.get(Setting, ocr_step.SETTING)).value == {"on": False}
+    r = await client.patch(ADMIN, json={"ocr": True}, headers=headers)
+    assert r.status_code == 200
+    async with maker(settings)() as s:
+        assert (await s.get(Setting, ocr_step.SETTING)).value == {"on": True}
+        pomp = analysis.pump_type(ocr_step.LANE)
+        assert await s.scalar(sa.select(sa.func.count()).where(Job.type == pomp)) == 1
+    r = await client.post(f"{ADMIN}/rebuild", json={"what": "ocr"}, headers=headers)
+    assert r.status_code == 202
+    async with maker(settings)() as s:
+        found = await s.execute(
+            sa.select(Analysis.blob_sha, Analysis.state).where(Analysis.step == "ocr")
+        )
+        states = {sha_: state for sha_, state in found.all()}
+    assert states == {sha(0): "wait", sha(1): "wait", sha(2): "skip"}
+    got = (await client.get(ADMIN, headers=headers)).json()["ocr"]
+    assert got == {"installed": False, "on": False, "pages_queued": 2}
 
 
 # --- POST rebuild --------------------------------------------------------------------------------

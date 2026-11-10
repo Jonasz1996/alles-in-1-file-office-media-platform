@@ -281,19 +281,20 @@ def test_niemand_meldt_zich_aan_na_de_grote_preview():
     assert done.stdout.strip() == "0"
 
 
-def test_niemand_meldt_een_schakelaar_of_een_deel_van_beheer_aan():
-    """Ook de haken van de review van Z0b (contract F4) hebben nog niemand: geen schakelaar in
-    app.prefs en geen deel van /admin/search in search.hooks, als de hele app geladen is. Dan
-    weigert check_switch "aan" en geven admin_switch en admin_rebuild 501, tot X2 en X3 er zijn
-    (nacontrole van Z0b)."""
+def test_geen_schakelaar_en_alleen_ocr_als_deel_van_beheer():
+    """De haken van de review van Z0b (contract F4), als de hele app geladen is: geen schakelaar
+    in app.prefs, en van de delen van /admin/search in search.hooks alleen ocr (X1, sinds de
+    samenvoeging van golf 4: /beheer zegt "OCR: niet geïnstalleerd" uit dat deel, Keuze 24). Dan
+    weigert check_switch "aan" en geven admin_switch en admin_rebuild voor faces en beeld 501,
+    tot X2 en X3 er zijn (nacontrole van Z0b)."""
     code = (
         "import app.main; from app import prefs; from app.search import hooks; "
-        "print(len(prefs._switches), len(hooks._admin))"
+        "print(len(prefs._switches), sorted(hooks._admin))"
     )
     done = subprocess.run(
         [sys.executable, "-c", code], cwd=API_DIR, capture_output=True, check=True, text=True
     )
-    assert done.stdout.strip() == "0 0"
+    assert done.stdout.strip() == "0 ['ocr']"
 
 
 def _render(request: dict) -> dict:

@@ -282,8 +282,11 @@ async def change(db: AsyncSession, body: AdminSearchPatch) -> None:
         await db.commit()
         apply_pause(body.paused)
         log.info("Zoeken: achtergrondwerk %s", "gepauzeerd" if body.paused else "weer aan")
+    # De schakelaars van X1, X2 en X3 werken in deze transactie (search.hooks); hier vast
     for part, value in switches.items():
         await hooks.admin_switch(part, db, value)
+    if switches:
+        await db.commit()
 
 
 # --- Herbouwen (POST rebuild) --------------------------------------------------------------------
@@ -327,6 +330,7 @@ async def start_rebuild(db: AsyncSession, settings: Settings, what: RebuildWhat)
     """POST /admin/search/rebuild. 409 search_rebuild_running als dezelfde soort al loopt."""
     if what in ("ocr", "faces", "beeld"):
         await hooks.admin_rebuild(what, db)
+        await db.commit()
         return
     if what in FTS:
         conn = await db.connection()
@@ -334,8 +338,7 @@ async def start_rebuild(db: AsyncSession, settings: Settings, what: RebuildWhat)
             raise _running()
         # De cursor op 0 vóór de 202: een GET direct erna ziet de herbouw al (rebuild.what,
         # LIKE), ook als de taak nog niet liep. De taak gaat daarna verder vanaf die cursor.
-        if await rebuild._has_fts(conn):
-            await rebuild._start(conn, what)
+        await rebuild.begin(conn, what)
         await db.commit()
         start_fts(settings, what)
         log.info("Zoeken: herbouw van de index gestart (%s)", what)
