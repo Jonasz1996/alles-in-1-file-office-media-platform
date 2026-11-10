@@ -201,10 +201,11 @@ async def test_niet_tijdens_een_herbouw_zonder_fts5_of_zonder_nodes(client, sett
     assert await weekcheck.run(pg) is None
     assert len(gelopen) == 1 and await opgeslagen(settings) is None
 
-    # Begint er een herbouw tussen de keuze en de controle, dan ook geen uitkomst
+    # Begint er een herbouw tussen de keuze en de controle, dan ook geen uitkomst; ook niet als
+    # check() dan toch al nodes telde (anders vangt sampled == 0 het al af)
     def herbouw(url: str) -> rebuild.Checked:
         gelopen.append(url)
-        return rebuild.Checked(rebuilding=True)
+        return rebuild.Checked(rebuilding=True, sampled=5)
 
     monkeypatch.setattr(weekcheck, "_check", herbouw)
     assert await weekcheck.run(settings) is None
