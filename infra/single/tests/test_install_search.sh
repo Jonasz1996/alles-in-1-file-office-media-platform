@@ -1381,9 +1381,10 @@ c.close()' "$1" </dev/null
     c=$(cid platform) && [ -n "$c" ] || return 1
     printf '%s:%s\n' "$(docker exec "$c" id -u)" "$(docker exec "$c" id -g)"
   }
+  # app_file PAD RECHTEN [GEBRUIKER]: GEBRUIKER (uid:gid) als de app niet draait, eerder gevraagd
   app_file() {
     local who
-    who=$(app_user) && [ "${who%%:*}" = 10001 ] && [ "$(owner_mode "$1")" = "$who $2" ]
+    who=${3:-$(app_user)} && [ "${who%%:*}" = 10001 ] && [ "$(owner_mode "$1")" = "$who $2" ]
   }
   # Een kopie op de host, alleen lezen: head, integrity_check en het aantal gebruikers
   copy_facts() {
@@ -1589,6 +1590,8 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
   echo
   echo "== 6: terug naar 0.7.1 (§3.10)"
   media3=$(cid media)
+  # Na dc stop is er geen app meer om te vragen wie hij is (6.3); dus nu
+  who6=$(app_user) || who6=
   if as_root env GIT_CONFIG_GLOBAL="$WORK/gitconfig" git -C "$ROOT/src" fetch -q origin &&
     as_root git -C "$ROOT/src" cat-file -e "$FROM^{commit}"; then
     ok "6.1: git fetch en cat-file -e '${FROM:0:12}^{commit}' (het script van 0.7.1: $OLD_SH)"
@@ -1610,7 +1613,8 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
     eval 'is_copy "$vers" "$schema_head" && [[ $vers > $copy0010 ]] && [ "$(backups)" = "$copy0009 $vers" ]'
   check "6.3: het commando zegt waar de kopie staat" grep -qxE "De reservekopie staat in /data/backup/$vers \([0-9.]+ MB\)\." "$WORK/logs/6-kopie.log"
   check "6.3: de verse kopie is heel: $schema_head, integrity ok (gezien: $(copy_facts "$vers"))" test "$(copy_facts "$vers")" = "$schema_head ok 1"
-  check "6.3: de kopie: 600, van de gebruiker van de app (uid 10001, zoals platform.db)" app_file "$BACKUP_DIR/$vers" 600
+  check "6.3: de kopie: 600, van de gebruiker van de app (uid 10001, zoals platform.db; gevraagd vóór dc stop: ${who6:-geen})" \
+    app_file "$BACKUP_DIR/$vers" 600 "${who6:-geen}"
   copy0010=$vers
   if printf 'ja\n' | dc run --rm --no-deps -T platform python -m app.cli db-downgrade "$ROLLBACK_HEAD" >"$WORK/logs/6-downgrade.log" 2>&1; then
     ok "6.4: dc run --rm --no-deps platform python -m app.cli db-downgrade $ROLLBACK_HEAD (met \"ja\")"
