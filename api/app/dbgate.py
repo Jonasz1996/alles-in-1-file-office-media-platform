@@ -21,6 +21,12 @@ Deze poort zet de schrijvers van het proces in een rij, vóór SQLite:
   wat een Runner draait (mark_background bovenaan zijn taken) en de herbouw van de index
   (background()). Wie BlobStore.lock of een gebruikersslot heeft (BoostLock), is voorgrond
   zolang hij dat heeft: daar kan een upload op wachten.
+- Wie op een BoostLock wacht of hem heeft, gaat zo schrijven (uploads staan in de rij van
+  BlobStore.lock, niet in die van de poort). Zolang er zo iemand is, gaat een vrije poort niet
+  naar de achtergrond: hij blijft vrij voor dat verzoek, hooguit HOLD_BACK per keer en binnen
+  FG_STREAK. Anders kreeg de achtergrond de poort na elke upload, en wachtte de volgende upload
+  achter het slot op die hele schrijfactie (vier uploaders: tot drie na elkaar, de review van
+  de schrijfpoort).
 - Wachten op de poort duurt hooguit TIMEOUT (5 s, zoals busy_timeout); daarna dezelfde fout als
   nu: OperationalError "database is locked".
 - Eindigt de taak die de poort heeft zonder hem terug te geven, dan gaat hij alsnog door.
@@ -61,6 +67,7 @@ log = logging.getLogger("platform.dbgate")
 TIMEOUT = 5.0  # s: zo lang als busy_timeout; daarna "database is locked", zoals nu
 FG_STREAK = 8  # zoveel verzoeken op rij, dan een wachtende achtergrondschrijver
 SLOW_HOLD = 2.0  # s: een waarschuwing als iemand de poort langer heeft
+HOLD_BACK = 0.2  # s: zo lang hooguit blijft een vrije poort vrij voor een verzoek dat eraan komt
 CHECKPOINT_EVERY = 1.0  # s
 CHECKPOINT_IDLE = 3  # rondes zonder commit, dan stopt de checkpointer (tot de volgende commit)
 
@@ -174,6 +181,21 @@ class _Entry:
 
 _all_gates: weakref.WeakSet[Gate] = weakref.WeakSet()
 
+# Per loop: hoeveel keer er op een BoostLock gewacht wordt of er een vastgehouden wordt
+_boosted: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, int] = weakref.WeakKeyDictionary()
+
+
+def _boost(loop: asyncio.AbstractEventLoop, n: int) -> None:
+    left = _boosted.get(loop, 0) + n
+    if left > 0:
+        _boosted[loop] = left
+        return
+    _boosted.pop(loop, None)
+    # Niemand meer: een poort die vrij werd gehouden, gaat nu naar de achtergrond
+    for gate in list(_all_gates):
+        if gate._loop() is loop and gate.holder is None:
+            gate._dispatch()
+
 
 class Gate:
     """De rij van één engine in één event loop. Alles hierin gebeurt in de thread van die loop
@@ -192,6 +214,8 @@ class Gate:
         self.fg: collections.deque[_Entry] = collections.deque()
         self.bg: collections.deque[_Entry] = collections.deque()
         self.streak = 0
+        self._timer: asyncio.TimerHandle | None = None  # het einde van HOLD_BACK
+        self._expired = False
         self.counts: collections.Counter[str] = collections.Counter()
         _all_gates.add(self)
 
@@ -203,11 +227,22 @@ class Gate:
         return bool(self.fg or self.bg)
 
     def try_take(self, conn: object, task: asyncio.Task | None, bg: bool, what: str = "") -> bool:
-        """Neemt de poort meteen, als niemand hem heeft en niemand wacht."""
-        if self.holder is None and not self._live():
-            self._grant(conn, task, bg, what)
-            return True
-        return False
+        """Neemt de poort meteen, als niemand hem heeft en niemand voor gaat. Een verzoek mag ook
+        als alleen de achtergrond wacht (de poort werd voor hem vrijgehouden), zolang die niet
+        aan de beurt is (FG_STREAK). De achtergrond niet als hij vrijgehouden wordt."""
+        if self.holder is not None:
+            return False
+        self._live()
+        if bg:
+            if self.fg or self.bg or self._holding_back():
+                return False
+            self.streak = 0
+        else:
+            if self.fg or (self.bg and self.streak >= FG_STREAK):
+                return False
+            self.streak = self.streak + 1 if self.bg else 0
+        self._grant(conn, task, bg, what)
+        return True
 
     async def acquire(
         self, conn: object, task: asyncio.Task | None, bg: bool, what: str = ""
@@ -217,6 +252,8 @@ class Gate:
         entry = _Entry(loop.create_future(), conn, task, bg, what)
         (self.bg if bg else self.fg).append(entry)
         self.counts["waits"] += 1
+        if self.holder is None:
+            self._dispatch()  # vrij (vrijgehouden): wie gaat er nu voor
         try:
             async with asyncio.timeout(TIMEOUT):
                 await entry.fut
@@ -253,6 +290,7 @@ class Gate:
         self.grant_id += 1
         self.counts["grants"] += 1
         self._done_cb = None
+        self._disarm()
         if task is not None and not task.done():
             # Eindigt de taak met de poort nog in handen, dan gaat hij alsnog door
             cb = functools.partial(self._task_done, conn, self.grant_id)
@@ -294,28 +332,69 @@ class Gate:
         self.holder_what = ""
         if task is not None and cb is not None:
             task.remove_done_callback(cb)
-        while (entry := self._next()) is not None:
+        self._dispatch()
+        return True
+
+    def _dispatch(self) -> None:
+        """De poort is vrij: naar de volgende, of vrij houden voor een verzoek dat eraan komt."""
+        while self.holder is None:
+            self._live()
+            if self.fg and (not self.bg or self.streak < FG_STREAK):
+                entry = self.fg.popleft()
+                self.streak = self.streak + 1 if self.bg else 0
+            elif self.bg and not self._holding_back():
+                entry = self.bg.popleft()
+                self.streak = 0
+            else:
+                if self.bg:
+                    self._arm()
+                else:
+                    self._disarm()
+                return
             if entry.fut.done():
                 continue
             self._grant(entry.conn, entry.task, entry.bg, entry.what)
             entry.fut.set_result(None)
-            break
-        return True
 
-    def _next(self) -> _Entry | None:
-        self._live()
-        if self.fg and (not self.bg or self.streak < FG_STREAK):
-            self.streak = self.streak + 1 if self.bg else 0
-            return self.fg.popleft()
-        if self.bg:
-            self.streak = 0
-            return self.bg.popleft()
-        return None
+    # --- vrij houden voor een verzoek ----------------------------------------------------
+    def _holding_back(self) -> bool:
+        """Een vrije poort niet aan de achtergrond: iemand wacht op een BoostLock of heeft er
+        een (een upload achter BlobStore.lock), de achtergrond is nog niet aan de beurt en
+        HOLD_BACK is nog niet om."""
+        loop = self._loop()
+        return (
+            not self._expired
+            and self.streak < FG_STREAK
+            and loop is not None
+            and _boosted.get(loop, 0) > 0
+        )
+
+    def _arm(self) -> None:
+        if self._timer is None and not self._expired:
+            loop = self._loop()
+            if loop is not None and not loop.is_closed():
+                self.counts["held_back"] += 1
+                self._timer = loop.call_later(HOLD_BACK, self._expire)
+
+    def _disarm(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        self._expired = False
+
+    def _expire(self) -> None:
+        self._timer = None
+        self._expired = True
+        self.counts["hold_expired"] += 1
+        if self.holder is None:
+            self._dispatch()
 
 
 def stats(gate: Gate) -> dict[str, int]:
-    """Tellers voor de tests: grants, waits, holder_done, timeouts."""
-    return {k: gate.counts[k] for k in ("grants", "waits", "holder_done", "timeouts")}
+    """Tellers voor de tests: grants, waits, holder_done, timeouts, held_back (de poort bleef
+    vrij voor een verzoek) en hold_expired (HOLD_BACK was om)."""
+    keys = ("grants", "waits", "holder_done", "timeouts", "held_back", "hold_expired")
+    return {k: gate.counts[k] for k in keys}
 
 
 def _holds_gate(task: asyncio.Task) -> bool:
@@ -325,26 +404,39 @@ def _holds_gate(task: asyncio.Task) -> bool:
 class BoostLock(asyncio.Lock):
     """Een asyncio.Lock (BlobStore.lock, het slot per gebruiker van files.py) waarvan de houder
     voorgrond is zolang hij het heeft: een upload die op dit slot wacht, wacht anders ook op de
-    beurt van een achtergrondtaak achter de rij verzoeken. Wachten op dit slot terwijl de taak
-    de poort heeft, legt het vast als lock_in_txn (kan vastlopen tot TIMEOUT)."""
+    beurt van een achtergrondtaak achter de rij verzoeken. Wie erop wacht of hem heeft, telt
+    als een verzoek dat zo gaat schrijven: een vrije poort blijft dan vrij (Gate._holding_back).
+    Wachten op dit slot terwijl de taak de poort heeft, legt het vast als lock_in_txn (kan
+    vastlopen tot TIMEOUT)."""
 
     def __init__(self) -> None:
         super().__init__()
         self._token: Any = None
+        self._boost_loop: asyncio.AbstractEventLoop | None = None
 
     async def __aenter__(self) -> None:
         task = asyncio.current_task()
         if task is not None and _holds_gate(task):
             _violation("lock_in_txn", type(self).__name__, task)
-        await self.acquire()
+        loop = asyncio.get_running_loop()
+        _boost(loop, 1)
+        try:
+            await self.acquire()
+        except BaseException:
+            _boost(loop, -1)
+            raise
+        self._boost_loop = loop
         self._token = BACKGROUND.set(False)
 
     async def __aexit__(self, *exc: object) -> None:
         token, self._token = self._token, None
+        loop, self._boost_loop = self._boost_loop, None
         if token is not None:
             with contextlib.suppress(ValueError):
                 BACKGROUND.reset(token)
         self.release()
+        if loop is not None:
+            _boost(loop, -1)
 
 
 # --- het checkpoint van de WAL -------------------------------------------------------------

@@ -117,6 +117,87 @@ async def test_na_acht_verzoeken_op_rij_komt_de_achtergrond_aan_de_beurt():
     await asyncio.gather(*tasks)
 
 
+async def houd_slot(lock: dbgate.BoostLock) -> tuple[asyncio.Task, asyncio.Event]:
+    """Een taak heeft lock (zoals een upload BlobStore.lock) tot het teken."""
+    holds, go = asyncio.Event(), asyncio.Event()
+
+    async def houder():
+        async with lock:
+            holds.set()
+            await go.wait()
+
+    task = asyncio.create_task(houder())
+    await holds.wait()
+    return task, go
+
+
+async def test_een_vrije_poort_blijft_vrij_voor_wie_een_blobslot_heeft():
+    """De review van de schrijfpoort (F1): uploads staan in de rij van BlobStore.lock, niet in die
+    van de poort. Wie op een BoostLock wacht of hem heeft, gaat zo schrijven; zolang er zo iemand
+    is, gaat een vrije poort niet naar de achtergrond. Een verzoek mag er dan meteen in, ook met
+    een achtergrondschrijver in de rij; daarna weer vrij; pas als niemand meer een slot heeft of
+    erop wacht, de achtergrond."""
+    gate = dbgate.Gate(asyncio.get_running_loop())
+    upload, go = await houd_slot(dbgate.BoostLock())
+    b, f1, f2 = object(), object(), object()
+    assert not gate.try_take(b, None, True)  # een vrije poort: niet voor de achtergrond
+    waiter = await queue(gate, b, True)
+    assert gate.holder is None
+    assert gate.try_take(f1, None, False)  # het verzoek wel, meteen
+    gate.release(f1)
+    assert gate.holder is None  # het slot is er nog: weer vrijgehouden
+    assert gate.try_take(f2, None, False)
+    gate.release(f2)
+    assert gate.holder is None
+    go.set()
+    await upload  # niemand meer met een slot: nu de achtergrond
+    assert gate.holder is b
+    await waiter
+    gate.release(b)
+    assert dbgate.stats(gate)["held_back"] == 3  # na de rij, na f1, na f2
+    assert dbgate.stats(gate)["hold_expired"] == 0
+    assert not dbgate._boosted
+
+
+async def test_vrijhouden_duurt_hooguit_hold_back(monkeypatch):
+    """Schrijft wie het slot heeft niet, dan krijgt de achtergrond de poort na HOLD_BACK, en na
+    zijn beurt wordt de poort weer vrijgehouden (opnieuw hooguit HOLD_BACK)."""
+    monkeypatch.setattr(dbgate, "HOLD_BACK", 0.05)
+    gate = dbgate.Gate(asyncio.get_running_loop())
+    upload, go = await houd_slot(dbgate.BoostLock())
+    b1, b2 = object(), object()
+    waiter = await queue(gate, b1, True)
+    await tot(lambda: gate.holder is b1)
+    await waiter
+    w2 = await queue(gate, b2, True)
+    gate.release(b1)
+    assert gate.holder is None
+    await tot(lambda: gate.holder is b2)
+    await w2
+    gate.release(b2)
+    assert dbgate.stats(gate)["hold_expired"] == 2
+    go.set()
+    await upload
+
+
+async def test_vrijhouden_stopt_na_fg_streak_verzoeken():
+    """Ook met een slot dat steeds bezet is: na FG_STREAK verzoeken op rij de achtergrond."""
+    gate = dbgate.Gate(asyncio.get_running_loop())
+    upload, go = await houd_slot(dbgate.BoostLock())
+    b = object()
+    waiter = await queue(gate, b, True)
+    for _ in range(dbgate.FG_STREAK):
+        f = object()
+        assert gate.try_take(f, None, False)
+        gate.release(f)
+    assert gate.holder is b
+    assert not gate.try_take(object(), None, False)  # nu wacht het verzoek
+    await waiter
+    gate.release(b)
+    go.set()
+    await upload
+
+
 async def test_wie_te_lang_wacht_krijgt_database_is_locked(settings, monkeypatch, caplog):
     """Na TIMEOUT dezelfde fout als na busy_timeout, en de rij is weer leeg. De waarschuwing
     noemt alleen werkwoord, tabel en taak: geen SQL."""
@@ -532,6 +613,85 @@ async def test_een_upload_wacht_niet_achter_een_schrijver_die_steeds_terugkomt(
     assert codes == [201] * 5, codes
     assert commits.overtaken(holds) == [0] * 5, (commits.asked, commits.committed, holds)
     assert len(holds) >= 3  # de achtergrond kwam ook aan de beurt
+
+
+async def test_uploads_tegelijk_wachten_niet_achter_de_achtergrond(
+    settings, client, admin, monkeypatch
+):
+    """De review van de schrijfpoort (F1): drie gebruikers uploaden tegelijk terwijl een taak in
+    de rij index het slot steeds 0,3 s houdt. Uploads wachten op elkaar in de rij van
+    BlobStore.lock, niet in die van de poort. Ging de poort na elke upload naar de achtergrond
+    (de rij van verzoeken was leeg), dan wachtte de volgende upload op die hele schrijfactie,
+    en de derde op twee. Per upload: hoeveel schrijfacties van de achtergrond vroegen de poort
+    pas nadat de upload om zijn slot vroeg, en waren toch klaar vóór zijn commit. Moet 0 zijn.
+    HOLD_BACK ruim, zodat de volgorde niet van de klok afhangt."""
+    monkeypatch.setattr(dbgate, "HOLD_BACK", 3.0)
+    engine = get_engine(settings)
+    await kladblok(engine)
+    users = []
+    async with maker(settings)() as s:
+        for i in range(3):
+            await create_user(s, f"tegelijk{i}@example.nl", password="lang-genoeg-123")
+        await s.commit()
+    for i in range(3):
+        h = await login(client, f"tegelijk{i}@example.nl")
+        users.append((h, (await test_files.root(client, h))["folder"]["id"]))
+    asked: dict[asyncio.Task, float] = {}
+    committed: dict[asyncio.Task, float] = {}
+    user_lock = files.user_lock
+
+    def vraagt(user_id):
+        asked.setdefault(asyncio.current_task(), time.monotonic())
+        return user_lock(user_id)
+
+    def commit(conn):
+        task = asyncio.current_task()
+        if task in asked and task not in committed:
+            committed[task] = time.monotonic()
+
+    started, stop = asyncio.Event(), asyncio.Event()
+    holds: list[tuple[float, float]] = []
+
+    async def hold(settings, payload):
+        while not stop.is_set():
+            async with maker(settings)() as s:
+                vraag = time.monotonic()
+                await s.execute(text("UPDATE kladblok SET n = n + 1 WHERE id = 1"))
+                started.set()
+                await asyncio.sleep(0.3)  # een open schrijftransactie
+                await s.commit()
+                holds.append((vraag, time.monotonic()))
+
+    jobs.register("test.hold3", hold, lane="index", timeout=120)
+    async with maker(settings)() as s:
+        await jobs.enqueue(s, "test.hold3", {})
+        await s.commit()
+    runner = jobs.Runner(settings, "index")
+    monkeypatch.setattr(files, "user_lock", vraagt)
+    event.listen(engine.sync_engine, "commit", commit)
+    try:
+        await runner.start()
+        await asyncio.wait_for(started.wait(), 10)
+        codes = await asyncio.gather(
+            *(
+                test_files.put(client, h, root, f"tegelijk-{i}.txt", b"tegelijk %d" % i)
+                for i, (h, root) in enumerate(users)
+            )
+        )
+        n = len(holds)
+        await tot(lambda: len(holds) > n, 10)  # en de achtergrond gaat daarna gewoon door
+    finally:
+        event.remove(engine.sync_engine, "commit", commit)
+        stop.set()
+        await runner.stop()
+        jobs._kinds.pop("test.hold3", None)
+    assert [r.status_code for r in codes] == [201] * 3, [r.text for r in codes]
+    assert len(asked) == len(committed) == 3
+    overtaken = [
+        sum(1 for vraag, end in holds if vraag > asked[t] and end < committed[t]) for t in asked
+    ]
+    assert overtaken == [0, 0, 0], (overtaken, asked, committed, holds)
+    assert dbgate.stats(dbgate.gate_for(engine))["hold_expired"] == 0
 
 
 async def test_wat_een_runner_doet_is_achtergrond(settings):
