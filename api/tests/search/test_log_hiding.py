@@ -19,6 +19,10 @@ from sqlalchemy.exc import DBAPIError
 from app.db import get_engine
 from app.main import QUERY_PATHS, SECRET_PARAMS, HideSecrets, _hide
 
+# Zelf, niet via _databases_dicht in conftest.py: die fixture ziet pytest niet altijd (zie
+# tests/test_anyio_markering.py)
+pytestmark = pytest.mark.anyio
+
 
 @pytest.mark.parametrize(
     ("path", "want"),
