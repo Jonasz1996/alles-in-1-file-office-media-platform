@@ -1,6 +1,7 @@
-"""De rekenkant van de metingen van §4.5 (fase 6, I1): zoek_backfill --soort photometa en geo en
-de invoer uit zoek_foto. Zonder server: alleen de functies die een uitkomst beoordelen of invoer
-maken, zodat een fout in het oordeel niet pas in een lange meting opvalt.
+"""De rekenkant van de metingen van §4.5 (fase 6, I1): zoek_backfill --soort photometa en geo, de
+poorten van zoek_samen en de invoer uit zoek_foto. Zonder server: alleen de functies die een
+uitkomst beoordelen of invoer maken, zodat een fout in het oordeel niet pas in een lange meting
+opvalt.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ import hashlib
 import io
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from PIL import Image
@@ -17,8 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "perf"))
 
 import zoek_backfill as zb  # noqa: E402
 import zoek_foto as zf  # noqa: E402
+import zoek_samen as zs  # noqa: E402
 
 pytestmark = pytest.mark.zoek
+
+GIB = 1024**3
 
 
 # --- zoek_backfill: de poorten per soort ---
@@ -142,3 +147,133 @@ def test_kleine_fotos_elk_een_eigen_inhoud_met_gps() -> None:
     assert all(f.thumb is None for f in fotos)
     exif = Image.open(io.BytesIO(fotos[0].data)).getexif()
     assert exif.get_ifd(0x8825)  # GPSInfo
+
+
+# --- zoek_samen: de poorten van stap 2 ---
+
+
+def _ds(**na: Any) -> dict[str, Any]:
+    voor = {"geheugen": 2 * GIB, "oom": False, "status": "running", "herstarts": 0,
+            "gestart": "2026-11-10T10:00:00Z"}  # fmt: skip
+    return {"voor": voor, "na": {**voor, **na}, "host": True}
+
+
+def _stap2(**over: Any) -> dict[str, Any]:
+    procs = {"app": [100, 5], "worker": [120, 7]}
+    stap = {
+        "media": {"passed": True},
+        "zoeken_p95_ms": 80.0,
+        "files_root_p95_ms": 40.0,
+        "health_p95_ms": 5.0,
+        "mem_min_bytes": 3 * GIB,
+        "ds": _ds(),
+        "processen": {"voor": procs, "na": dict(procs)},
+        "hervat_s": 12.0,
+        "office": {"opslaan_s": 2.0, "verloren": 0},
+    }
+    stap.update(over)
+    return stap
+
+
+NUL = {"office": {"opslaan_s": 2.0, "verloren": 0}}
+
+
+def test_alle_poorten_gemeten_en_gehaald() -> None:
+    poorten = zs.oordeel(_stap2(), NUL)
+    assert len(poorten) == 10
+    assert all(ok is True for _, ok in poorten), poorten
+    assert zs.geslaagd(poorten)
+
+
+def test_een_poort_die_niet_te_meten_is_telt_niet_als_gehaald() -> None:
+    poorten = zs.oordeel(_stap2(hervat_s=None), NUL)
+    hervat = [ok for regel, ok in poorten if "leest weer" in regel]
+    assert hervat == [None]
+    assert not zs.geslaagd(poorten)
+
+
+def test_zonder_office_zijn_de_poorten_van_onlyoffice_en_ds_niet_te_meten() -> None:
+    poorten = zs.oordeel(_stap2(office=None, ds=None), {"office": None})
+    niet = [regel for regel, ok in poorten if ok is None]
+    assert len(niet) == 3
+    assert all("zonder OnlyOffice" in regel for regel in niet)
+    assert not zs.geslaagd(poorten)
+    assert not zs.geslaagd(zs.oordeel(_stap2(office={"fout": "weg"}), NUL))
+
+
+def test_onlyoffice_opslaan_en_verloren_woorden() -> None:
+    traag = dict(zs.oordeel(_stap2(office={"opslaan_s": 2.5, "verloren": 0}), NUL))
+    assert traag["OnlyOffice: opslaan ≤ 1,2 × de nulmeting (2.4 s)"] is False
+    kwijt = dict(zs.oordeel(_stap2(office={"opslaan_s": 2.0, "verloren": 3}), NUL))
+    assert kwijt["OnlyOffice: 0 verloren woorden"] is False
+
+
+def test_ds_lees_uit_docker_inspect() -> None:
+    info = {
+        "HostConfig": {"Memory": 2147483648, "NanoCpus": 2_000_000_000},
+        "State": {"Status": "running", "OOMKilled": False, "StartedAt": "t0"},
+        "RestartCount": 0,
+    }
+    assert zs.ds_lees(info) == {"geheugen": 2 * GIB, "oom": False, "status": "running",
+                                "herstarts": 0, "gestart": "t0"}  # fmt: skip
+    assert zs.ds_lees({})["geheugen"] == 0
+
+
+def test_ds_oordeel() -> None:
+    assert zs.ds_oordeel(_ds()) == (True, "OOMKilled false, grens 2048 MiB")
+    assert zs.ds_oordeel(_ds(oom=True)) == (False, "DS OOMKilled")
+    ok, waarom = zs.ds_oordeel(_ds(gestart="t1", oom=False))  # herstart wist OOMKilled
+    assert ok is False and "herstart" in waarom
+    assert zs.ds_oordeel(_ds(status="exited"))[0] is False
+    assert zs.ds_oordeel(None) == (None, "zonder OnlyOffice")
+    zonder = _ds()
+    zonder["voor"]["geheugen"] = 0
+    ok, waarom = zs.ds_oordeel(zonder)
+    assert ok is None and "geen geheugengrens" in waarom
+    zonder["host"] = False
+    assert "MemoryLimit false" in zs.ds_oordeel(zonder)[1]
+
+
+def test_overleefd() -> None:
+    voor = {"app": [100, 5], "worker": [120, 7]}
+    assert zs.overleefd(voor, dict(voor)) == (True, "dezelfde processen")
+    assert zs.overleefd(voor, {"app": [100, 5], "worker": [130, 9]}) == (
+        False, "niet meer hetzelfde proces: worker")  # fmt: skip
+    assert zs.overleefd(voor, {"app": None, "worker": None})[0] is False
+    assert zs.overleefd(voor, {"app": [100, 6], "worker": [120, 7]})[0] is False  # pid hergebruikt
+    assert zs.overleefd({"app": [100, 5], "worker": None}, voor)[0] is None
+    assert zs.overleefd(None, voor)[0] is None
+
+
+def test_kort_blok_noemt_elke_poort() -> None:
+    stap = _stap2(office=None, ds=None)
+    stap.update(stap="achtergrond", media={"passed": True, "samenvatting": ["fase b: ok"]},
+                zoeken_n=10, mem_min_mb=3072, tekst_klaar_voor=0, tekst_klaar_na_media=5,
+                tekst_klaar_na=9, fouten={}, ocr={"voor": {}, "na_media": {}, "na": {}},
+                fotos={"voor": {"te_doen": 0}, "na_media": {"te_doen": 10},
+                       "na": {"te_doen": 0, "gehasht": 300}},
+                begin={"herbouw_hash": "gestart", "fotos_te_doen": 300})  # fmt: skip
+    poorten = zs.oordeel(stap, {"office": None})
+    uitkomst = {"soort": "zonder office", "opzet": "x", "duur_s": 1, "stappen": [stap],
+                "poorten": poorten, "geslaagd": zs.geslaagd(poorten),
+                "overgeslagen": ["de 20 scans voor X1 (geen tesseract)"]}  # fmt: skip
+    blok = zs.kort_blok(uitkomst)
+    poortregels = [r for r in blok if r.startswith("poort (stap achtergrond): ")]
+    assert len(poortregels) == 10
+    assert all(r.endswith((": gehaald", ": niet gehaald", ": niet te meten")) for r in poortregels)
+    assert sum(r.endswith(": niet te meten") for r in poortregels) == 3
+    assert blok[-1] == "uitkomst: niet geslaagd"
+    assert "niet in deze meting: de 20 scans voor X1 (geen tesseract)" in blok
+    assert any(
+        "photometa te doen 0 → 300 (herbouw hash gestart) → 10 (na media) → 0, gehasht 300" in r
+        for r in blok
+    )
+    # stap 1 (zonder herbouw): voor, na media en na
+    stap.update(begin=None, fotos={"voor": {"te_doen": 0}, "na_media": {"te_doen": 0},
+                                   "na": {"te_doen": 0}})  # fmt: skip
+    assert "photometa te doen 0 → 0 (na media) → 0;" in zs.achtergrond_regel(stap)
+
+
+def test_klaar_en_open_over_text_en_ocr() -> None:
+    standen = {"text": {"done": 3, "wait": 2, "none": 1}, "ocr": {"busy": 1, "failed": 1}}
+    assert zs.klaar_en_open(standen) == (5, 3)
