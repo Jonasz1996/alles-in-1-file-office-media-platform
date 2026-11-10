@@ -121,6 +121,14 @@ soorten en getallen.
 Hoe je ze met de hand draait, staat bovenaan elk script. De metingen van I1 met deze scripts
 staan in [metingen.md](metingen.md).
 
+De woorden van een poort verschillen per script. `zoek_backfill.py` drukt `poort ≥ N: gehaald` of
+`poort ≥ N: NIET gehaald` af (`e2e/perf/zoek_backfill.py:352`), net als de poort van OCR
+(`api/tests/ocr/poort.py:234`); `zoek_samen.py` drukt `gehaald`, `niet gehaald` of `niet te meten`
+af (`e2e/perf/zoek_samen.py:636`). Dat blijft zo: `e2e/test_zoek_metingen.py` toetst beide vormen
+letterlijk (`:45-49` met `NIET`, `:286` zonder), dus gelijk maken breekt een test, welke kant je
+ook kiest. De blokken kort in `ci.yml` zoeken niet op deze woorden. `NIET gehaald` en `niet
+gehaald` betekenen hetzelfde.
+
 ## De e2e van zoeken
 
 Alle bestanden hieronder hebben de marker `zoek`, behalve `test_zoek_ocr.py` (marker `ocr`).
