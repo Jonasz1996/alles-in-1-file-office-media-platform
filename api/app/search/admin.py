@@ -447,10 +447,14 @@ async def retry(db: AsyncSession) -> int:
         .execution_options(synchronize_session=False)
     )
     retried = [row[0] for row in found.all()]
-    lanes = {reg.lane for step, reg in analysis.registered().items() if step.value in retried}
-    for lane in sorted(lanes):
+    registered = analysis.registered().items()
+    lanes = sorted({reg.lane for step, reg in registered if step.value in retried})
+    for lane in lanes:
         await analysis._wake(db, lane, moment)
     await db.commit()
+    # Zoals change() bij Hervatten: _wake wekt al vóór de commit, en dan ziet de worker nog de
+    # oude run_after en pakt hij de pomp pas bij zijn rondje (jobs.POLL, 5 s) op
+    jobs.kick(lanes)
     log.info("Zoeken: %d mislukte stap(pen) opnieuw in de rij", len(retried))
     return len(retried)
 

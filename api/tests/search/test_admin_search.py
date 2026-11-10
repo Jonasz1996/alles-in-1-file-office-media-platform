@@ -263,6 +263,34 @@ async def queued_pumps(settings) -> dict[str, list[datetime]]:
     return found
 
 
+def lezende_wekkers(settings, monkeypatch) -> list[tuple[str, datetime]]:
+    """De workers van de rijen index en ocr (jobs._wakers) vervangen door wekkers die lezen wat
+    een worker dan zou zien: de run_after van de pomp die klaarstaat, zoals hij gecommit is. Een
+    seintje vóór de commit ziet nog de oude run_after; dan pakt de Runner de pomp pas bij zijn
+    rondje (jobs.POLL, 5 s) op. Geeft de lijst (rij, run_after) die bij elk seintje groeit."""
+    bestand = settings.db_url.removeprefix("sqlite+aiosqlite:///")
+    gewekt: list[tuple[str, datetime]] = []
+
+    def waker(lane: str):
+        def wake() -> None:
+            con = sqlite3.connect(bestand)
+            try:
+                rows = con.execute(
+                    "SELECT run_after FROM job WHERE type = ? AND status = 'queued'",
+                    (analysis.pump_type(lane),),
+                ).fetchall()
+            finally:
+                con.close()
+            for (at,) in rows:
+                found = datetime.fromisoformat(at)
+                gewekt.append((lane, found if found.tzinfo else found.replace(tzinfo=UTC)))
+
+        return wake
+
+    monkeypatch.setattr(jobs, "_wakers", {waker(lane): lane for lane in search_admin.LANES})
+    return gewekt
+
+
 async def test_hervatten_wekt_de_pompen_van_index_en_ocr(client, admin, settings, monkeypatch):
     """Een pomp die tijdens de pauze aan de beurt kwam, week (jobs.Defer) en staat DEFER_S later.
     "Hervatten" zet hem op nu, voor de rij index en de rij ocr, zoals "Mislukte opnieuw" dat doet;
@@ -295,28 +323,7 @@ async def test_hervatten_wekt_de_pompen_van_index_en_ocr(client, admin, settings
         gezien.append((lane, set(analysis.PAUSED)))
         await echt(db, lane, at)
 
-    # De workers van de rij: wat zien ze als ze gewekt worden? Een seintje vóór de commit ziet
-    # nog de oude run_after; dan pakt de Runner de pomp pas bij zijn rondje (jobs.POLL) op.
-    bestand = settings.db_url.removeprefix("sqlite+aiosqlite:///")
-    gewekt: list[tuple[str, datetime]] = []
-
-    def waker(lane: str):
-        def wake() -> None:
-            con = sqlite3.connect(bestand)
-            try:
-                rows = con.execute(
-                    "SELECT run_after FROM job WHERE type = ? AND status = 'queued'",
-                    (analysis.pump_type(lane),),
-                ).fetchall()
-            finally:
-                con.close()
-            for (at,) in rows:
-                found = datetime.fromisoformat(at)
-                gewekt.append((lane, found if found.tzinfo else found.replace(tzinfo=UTC)))
-
-        return wake
-
-    monkeypatch.setattr(jobs, "_wakers", {waker(lane): lane for lane in search_admin.LANES})
+    gewekt = lezende_wekkers(settings, monkeypatch)
     monkeypatch.setattr(analysis, "_wake", wake)
     r = await client.patch(ADMIN, json={"paused": False}, headers=headers)
     assert r.status_code == 200 and r.json()["paused"] is False
@@ -702,6 +709,42 @@ async def test_een_mislukte_ocr_gaat_terug_in_de_rij_van_ocr(client, admin, sett
     assert pompen == {analysis.pump_type(ocr_step.LANE)}
     got = (await client.get(ADMIN, headers=headers)).json()
     assert got["index"]["failed"] == 0 and got["ocr"]["pages_queued"] == 1
+
+
+async def test_mislukte_opnieuw_wekt_de_pompen_na_de_commit(client, admin, settings, monkeypatch):
+    """Staat de pomp van een rij later (een pomp die week, DEFER_S), dan zet "Mislukte opnieuw"
+    hem op nu, en wekt de workers van index en ocr pas na de commit: zo zien ze de pomp op nu en
+    pakken ze hem meteen op, niet pas bij hun rondje (jobs.POLL, 5 s). Net als "Hervatten"
+    (I1, C1)."""
+    from app.ocr import step as ocr_step
+
+    # zoals main.py; een eerdere test kan analysis.reset() gedaan hebben
+    extract_step.register()
+    ocr_step.register()
+    headers, _ = admin
+    await add(settings, *[Blob(sha256=sha(i), size=1, mime="application/pdf") for i in range(2)])
+    await add(
+        settings,
+        Analysis(blob_sha=sha(0), step="text", version=1, state="failed", tries=3, code="pdf_bad"),
+        Analysis(blob_sha=sha(1), step="ocr", version=1, state="failed", tries=3, code="ocr_x"),
+    )
+    later = datetime.now(UTC) + timedelta(seconds=analysis.DEFER_S)
+    async with maker(settings)() as s:
+        for lane in search_admin.LANES:
+            await analysis._wake(s, lane, later)
+        await s.commit()
+    voor = datetime.now(UTC)
+    for pomp, at in (await queued_pumps(settings)).items():
+        assert len(at) == 1 and at[0] > voor + timedelta(seconds=analysis.DEFER_S - 5), (pomp, at)
+
+    gewekt = lezende_wekkers(settings, monkeypatch)
+    r = await client.post(f"{ADMIN}/retry", headers=headers)
+    assert r.status_code == 202
+    na = datetime.now(UTC)
+    for pomp, at in (await queued_pumps(settings)).items():
+        assert len(at) == 1 and at[0] <= na, (pomp, at, na)
+    for lane in search_admin.LANES:
+        assert any(wie == lane and at <= na for wie, at in gewekt), (lane, gewekt)
 
 
 # --- search.progress en het starten --------------------------------------------------------------
