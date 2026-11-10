@@ -185,6 +185,25 @@ def test_een_fout_halverwege_laat_geen_part_achter(tmp_path):
     assert list(folder.iterdir()) == []
 
 
+def test_een_fout_halverwege_ruimt_ook_een_oude_part_op(tmp_path):
+    """Nacontrole golf 4: een kopie die halverwege faalt, komt niet bij keep_newest. Een oude .part
+    van een eerder afgebroken kopie (met de hele database) gaat dan toch weg: copy() ruimt ook aan
+    het begin op."""
+    source, folder = tmp_path / "platform.db", tmp_path / "backup"
+    folder.mkdir()
+    _db(source)
+    with sqlite3.connect(source) as conn:
+        conn.execute(
+            "CREATE TRIGGER face_ad AFTER DELETE ON face BEGIN SELECT RAISE(ABORT, 'nee'); END"
+        )
+    oud = "platform-0010-20261101T120000.123Z.db.part"
+    for naam in (oud, oud + "-journal"):
+        (folder / naam).write_bytes(MERK)
+    result = _run(source, folder, cwd=tmp_path)
+    assert result.returncode == 1 and "Reservekopie mislukt" in result.stderr
+    assert list(folder.iterdir()) == []
+
+
 def test_een_map_die_er_niet_kan_komen(tmp_path):
     """Waar de map moet komen, staat een bestand: exit 1, en het bestand blijft zoals het was."""
     source, folder = tmp_path / "platform.db", tmp_path / "backup"
@@ -276,4 +295,30 @@ def test_sigterm_laat_niets_achter(tmp_path):
     )
     assert result.returncode == 128 + 15, (result.returncode, result.stderr)
     assert "SIGTERM kwam niet aan" not in result.stderr
+    assert list(folder.iterdir()) == []
+
+
+def test_sighup_laat_niets_achter(tmp_path):
+    """Nacontrole golf 4: ook SIGHUP (de terminal van install.sh die dichtgaat) midden in de kopie
+    laat geen .part, geen journaal en geen kopie achter; exitcode 128 + 1."""
+    source, folder = tmp_path / "platform.db", tmp_path / "backup"
+    _db(source)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            DRIVER.replace("SIGTERM", "SIGHUP"),
+            TEXT,
+            str(source),
+            str(folder),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 128 + 1, (result.returncode, result.stderr)
+    assert "SIGHUP kwam niet aan" not in result.stderr
     assert list(folder.iterdir()) == []
