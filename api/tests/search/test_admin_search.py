@@ -306,6 +306,7 @@ async def test_na_de_samenvoeging_gaan_schakelaar_en_herbouw_van_ocr_naar_x1(
     de rij. Zonder worker (media uit) is OCR niet geïnstalleerd en dus niet aan."""
     from app.ocr import step as ocr_step
 
+    ocr_step.register()  # zoals main.py; een eerdere test kan search.hooks.reset() gedaan hebben
     part = hooks._admin["ocr"]
     assert (part.block, part.switch, part.rebuild) == (
         ocr_step.admin_block,
@@ -350,6 +351,7 @@ async def test_ocr_weer_aan_haalt_de_pomp_naar_voren(client, admin, settings):
     niet pas na vijf minuten; er komt geen tweede pomp bij."""
     from app.ocr import step as ocr_step
 
+    ocr_step.register()  # zoals main.py; een eerdere test kan search.hooks.reset() gedaan hebben
     headers, _ = admin
     pomp = analysis.pump_type(ocr_step.LANE)
     later = datetime.now(UTC) + timedelta(seconds=ocr_step.OFF_DEFER_S)
@@ -587,15 +589,8 @@ async def test_een_mislukte_ocr_gaat_terug_in_de_rij_van_ocr(client, admin, sett
     van de rij ocr (niet die van index). De lijst van mislukte toont hem met stap ocr."""
     from app.ocr import step as ocr_step
 
-    if Step.OCR not in analysis.registered():  # een eerdere test deed analysis.reset()
-        analysis.register_step(
-            Step.OCR,
-            ocr_step.LANE,
-            ocr_step.eligible,
-            ocr_step.run_one,
-            batch=ocr_step.run_batch,
-            size=ocr_step.batch_size,
-        )
+    # zoals main.py; een eerdere test kan analysis.reset() of search.hooks.reset() gedaan hebben
+    ocr_step.register()
     headers, _ = admin
     await add(settings, Blob(sha256=sha(0), size=1, mime="application/pdf"))
     await add(
