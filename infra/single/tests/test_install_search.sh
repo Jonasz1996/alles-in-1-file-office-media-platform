@@ -710,6 +710,17 @@ ALS_ROOT
   check "A: de eindtekst van §3.10 stap 7" said "$SEARCH_LINE"
   check "A: Plaatsnamen: aan, met hoe het uit gaat" eval 'said "Plaatsnamen: aan." && said "  Uit: $script_main | PLAATSEN=uit bash"'
   check "A: geen regel over een reservekopie" not said_part "Reservekopie van vóór deze run"
+  # Het runbook zet eerst DATA_ROOT uit .env en gebruikt dan "$DATA_ROOT", nooit /tank zelf: zonder
+  # mount point /tank staat de data op de rootdisk (review golf 4, contract F3). De regel van het
+  # runbook, op de .env die main net schreef (hier zonder /tank)
+  local runbook=$top/docs/runbooks/zoeken.md line got
+  line=$(grep -m1 -F "DATA_ROOT=\$(sed -n 's/^DATA_ROOT=//p' /opt/platform/.env)" "$runbook" || true)
+  got=$(bash -c "${line//\/opt\/platform\/.env/$PLATFORM_ROOT/.env}" 2>&1 || true)
+  check "A: de regel van het runbook geeft DATA_ROOT uit .env ($DATA_ROOT)" eval '[ -n "$line" ] && [ "$got" = "$DATA_ROOT" ]'
+  got=$(awk '/^```/ { code = !code; next } code && /\/tank/' "$runbook")
+  check "A: geen commando in het runbook met /tank (${got:-geen})" test -z "$got"
+  check "A: de README's geven bij de reservekopie ook het pad zonder /tank" eval 'grep -qF "/opt/platform/data/platform/backup" "$top/README.md" &&
+    grep -qF "/opt/platform/data/platform/backup/platform-0009-<tijd>.db" "$here/../README.md"'
 
   # B. Bijwerken vanaf 0.7.1: de database op 0009, de oude app en DS draaien
   make_db "$db" 0009
