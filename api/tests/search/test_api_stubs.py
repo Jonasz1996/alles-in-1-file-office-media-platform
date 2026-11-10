@@ -289,6 +289,12 @@ BUILT = {
     ("GET", "/api/v1/photos/share-check"),
     ("GET", "/api/v1/duplicates"),
     ("POST", "/api/v1/duplicates/ignore"),
+    # Z7: zoeken en foto's op /beheer (tests/search/test_admin_search.py)
+    ("GET", "/api/v1/admin/search"),
+    ("PATCH", "/api/v1/admin/search"),
+    ("POST", "/api/v1/admin/search/rebuild"),
+    ("GET", "/api/v1/admin/search/failed"),
+    ("POST", "/api/v1/admin/search/retry"),
 }
 # De vraag die een stub nodig heeft om bij de route te komen
 QUERY = {

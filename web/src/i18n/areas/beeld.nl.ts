@@ -4,4 +4,12 @@
 export default {
   title: "Zoeken op beeld",
   notReady: "Zoeken op beeld komt later in fase 6.",
+  // De aantallen in het blok op /beheer zolang X3 het niet zelf vult (Z7, Keuze 51: alleen
+  // aantallen, nooit een vector of een naam)
+  admin: {
+    seen: "Bekeken",
+    seenValue: "{seen} van {photos} foto's",
+    queries: "Vragen het afgelopen uur",
+    failed: "Mislukt",
+  },
 } as const;

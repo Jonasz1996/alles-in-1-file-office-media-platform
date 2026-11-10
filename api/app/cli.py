@@ -23,13 +23,14 @@ app start niet op een nieuwer schema. Het vraagt eerst om bevestiging (typ "ja")
 Wat alleen in de nieuwere kolommen en tabellen stond, is daarna weg. Stop de app eerst.
 Haalt de downgrade 0010 weg (fase 6), dan zegt hij ook wat er van zoeken en foto's weggaat, en
 vraagt hij of album-items van een regel die niet gedeeld worden eerst uit hun album moeten
-(standaard ja): in 0.7.0 deelt een album elk item.
+(standaard ja): in 0.7.1 deelt een album elk item.
 
 db-backup maakt een reservekopie van de database met sqlite3.Connection.backup, terwijl de app
 draait (Keuze 52 van fase 6). Het bestand komt in /data/backup en heet naar de alembic-head en
 de tijd: platform-0010-<tijd>.db. Per head blijft de nieuwste; zo staat de kopie van vóór een
-migratie er na nieuwe kopieën nog. Het migreert niets. install.sh maakt zijn eigen kopie, met
-alleen de standaardbibliotheek, want dit commando bestaat in oudere images niet.
+migratie er na nieuwe kopieën nog. Het migreert niets. De kopie heeft geen gezichten en geen
+beeld. install.sh draait dezelfde tekst (app/backup.py, alleen de standaardbibliotheek) met het
+image dat er nog draait, want dit commando bestaat in oudere images niet.
 
 office-checkpoint vraagt de document server om alle open documenten tussentijds op te slaan
 en wacht daar hooguit --wait seconden op (vóór het stoppen of bijwerken van office). Het
@@ -61,10 +62,14 @@ Zoeken en foto's (fase 6), elk een dunne aanroep van app/search/bench.py (Z1):
     python -m app.cli search-triggers
     python -m app.cli search-check [--n 1000] [--volledig] [--seed 6]
 
+    python -m app.cli bench --los [--n 100000] [--seed 6]
+
 search-bench maakt de boom van 100.000 om zoeken te meten, in een nieuwe map (nooit in die van
 de app). search-rebuild herbouwt de zoekindex in stukken terwijl de app draait; search-triggers
 zet de triggers van zoeken terug en herbouwt daarna; search-check vergelijkt willekeurige nodes
-met de bron (exitcode 1 bij een verschil).
+met de bron (exitcode 1 bij een verschil). bench --los (Z7, Keuze 54; app/search/benchlos.py)
+meet zoeken op deze machine met tools/zoekbench/bench.py, in een tijdelijke map onder de data,
+en zet de uitkomst op /beheer.
 
 Plaatsnamen en landen (Z3, Keuze 29): places.sqlite bouwen uit de bronnen in geo_src (de app
 doet het zelf bij de start als hij ontbreekt; exitcode 1 als een bron ontbreekt of niet klopt):
@@ -75,14 +80,10 @@ doet het zelf bij de start als hij ontbreekt; exitcode 1 als een bron ontbreekt 
 import argparse
 import asyncio
 import json
-import os
-import re
 import sqlite3
 import sys
 import uuid
 from collections.abc import Awaitable, Callable
-from contextlib import closing
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +95,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, make_url, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app import previews
+from app import backup, previews
 from app.config import Settings, get_settings
 from app.db import get_engine
 from app.geo import load as geo_load
@@ -102,6 +103,7 @@ from app.migrate import alembic_config
 from app.models import AlbumItem, User
 from app.routers.auth import being_deleted, reset_totp
 from app.search import bench as search_bench
+from app.search import benchlos
 
 
 class BeingDeleted(Exception):
@@ -221,7 +223,7 @@ async def unshared_rule_items(settings: Settings) -> int:
     """Hoeveel album-items van een regel niet gedeeld worden (source 'rule', shared 0).
 
     Na een downgrade naar 0009 is de kolom shared weg en deelt een album elk item, zoals in
-    0.7.0 (fase 6, §3.1). Die items zouden dus ineens wél gedeeld zijn.
+    0.7.1 (fase 6, §3.1). Die items zouden dus ineens wél gedeeld zijn.
     """
     async with get_engine(settings).connect() as conn:
         found = await conn.scalar(
@@ -233,19 +235,8 @@ async def unshared_rule_items(settings: Settings) -> int:
 
 
 BACKUP_DIR = "backup"
-HEAD_RE = re.compile(r"^[A-Za-z0-9_]{1,40}$")
-# platform-<head>-<tijd>.db, met de tijd in UTC. install.sh gaat zijn eigen kopie schrijven
-# zonder de milliseconden (Z7, §3.10); die naam hoort er dus ook bij.
-BACKUP_RE = re.compile(
-    r"^platform-(?P<head>[A-Za-z0-9_]{1,40})-(?P<tijd>\d{8}T\d{6}(?:\.\d{3})?Z)\.db$"
-)
-
-
-def now_stamp() -> str:
-    """De tijd in de naam van een kopie: UTC, tot milliseconden, zo dat namen op volgorde
-    staan."""
-    moment = datetime.now(UTC)
-    return f"{moment:%Y%m%dT%H%M%S}.{moment.microsecond // 1000:03d}Z"
+# De kopie zelf staat in app/backup.py: één tekst, die install.sh ook draait (Z7, Keuze 52)
+BACKUP_RE = backup.NAME_RE
 
 
 def sqlite_file(settings: Settings) -> Path:
@@ -256,70 +247,21 @@ def sqlite_file(settings: Settings) -> Path:
     return Path(url.database)
 
 
-def read_head(conn: sqlite3.Connection) -> str | None:
-    """De alembic-head in deze database (None: geen of meer dan één)."""
-    if not conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='alembic_version'"
-    ).fetchone():
-        return None
-    rows = conn.execute("SELECT version_num FROM alembic_version").fetchall()
-    if len(rows) != 1 or not HEAD_RE.match(str(rows[0][0])):
-        return None
-    return str(rows[0][0])
-
-
-def keep_newest_per_head(folder: Path) -> list[Path]:
-    """Per head blijft de nieuwste kopie; de rest gaat weg (Keuze 52). De naam draagt de tijd,
-    dus de nieuwste is de laatste op naam. Zo blijft de kopie van vóór een migratie staan: die
-    heeft een eigen head. Wat niet naar een kopie van ons lijkt, blijft ook staan."""
-    found: dict[str, list[Path]] = {}
-    for path in sorted(folder.glob("platform-*.db")):
-        match = BACKUP_RE.match(path.name)
-        if match is not None:
-            found.setdefault(match["head"], []).append(path)
-    newest = []
-    for paths in found.values():
-        newest.append(paths[-1])
-        for old in paths[:-1]:
-            old.unlink(missing_ok=True)
-    return sorted(newest)
-
-
 def db_backup(settings: Settings) -> Path:
     """Een reservekopie van de database naar data_dir/backup, terwijl de app draait (Keuze 52).
 
-    sqlite3.Connection.backup geeft een kopie die klopt, ook met schrijvers erbij. Dit commando
-    migreert niets en raakt de database zelf niet aan. Het bestand heet naar de alembic-head en
-    de tijd; per head blijft de nieuwste.
+    sqlite3.Connection.backup geeft een kopie die klopt, ook met schrijvers erbij; de kopie heeft
+    geen gezichten en geen beeld (app/backup.py). Dit commando migreert niets en raakt de
+    database zelf niet aan. Het bestand heet naar de alembic-head en de tijd; per head blijft de
+    nieuwste.
     """
     source = sqlite_file(settings)
     if not source.exists():
         raise NoDatabase(source)
-    folder = settings.data_dir / BACKUP_DIR
-    folder.mkdir(parents=True, exist_ok=True)
-    folder.chmod(0o700)
-    with closing(sqlite3.connect(source)) as src:
-        src.execute("PRAGMA busy_timeout=5000")
-        head = read_head(src)
-        if head is None:
-            raise NoRevision(str(source))
-        target = folder / f"platform-{head}-{now_stamp()}.db"
-        for _ in range(2000):  # twee kopieën in dezelfde milliseconde: wacht op de volgende
-            if not target.exists():
-                break
-            target = folder / f"platform-{head}-{now_stamp()}.db"
-        part = target.with_name(target.name + ".part")
-        part.unlink(missing_ok=True)
-        try:
-            with closing(sqlite3.connect(part)) as dst:
-                src.backup(dst)
-            part.chmod(0o600)
-            os.replace(part, target)
-        except BaseException:
-            part.unlink(missing_ok=True)
-            raise
-    keep_newest_per_head(folder)
-    return target
+    try:
+        return backup.copy(source, settings.data_dir / BACKUP_DIR)
+    except backup.NoHead as exc:
+        raise NoRevision(str(source)) from exc
 
 
 async def office_checkpoint(settings: Settings, wait: float) -> int:
@@ -359,7 +301,7 @@ def _ask_rule_items(count: int) -> bool:
     """De vraag van §3.1: standaard ja, dus leeg of "ja" is ja."""
     print(
         f"{count} item(s) in een album komen van een regel en worden niet gedeeld. Na de "
-        "downgrade deelt een album elk item, zoals in 0.7.0: die items zijn dan ineens wél "
+        "downgrade deelt een album elk item, zoals in 0.7.1: die items zijn dan ineens wél "
         "gedeeld met iedereen die het album heeft."
     )
     try:
@@ -635,6 +577,7 @@ def main(argv: list[str] | None = None) -> int:
         "db-backup", help="een reservekopie van de database maken, terwijl de app draait"
     )
     search_bench.parsers(commands)
+    benchlos.parsers(commands)
     geo_load.parsers(commands)
     for name, (package, what) in SEARCH_STUBS.items():
         commands.add_parser(name, help=f"{what} (nog niet gebouwd, {package})")
@@ -645,6 +588,8 @@ def main(argv: list[str] | None = None) -> int:
         return _media(settings, args)
     if args.command in search_bench.COMMANDS:
         return search_bench.run(settings, args)
+    if args.command == benchlos.COMMAND:
+        return benchlos.run(settings, args)
     if args.command in geo_load.COMMANDS:
         return geo_load.run(settings, args)
     if args.command in SEARCH_STUBS:

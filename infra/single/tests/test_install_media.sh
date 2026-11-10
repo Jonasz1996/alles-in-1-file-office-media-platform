@@ -681,8 +681,8 @@ PY
 
   echo "== geen geheim in de uitvoer, en elke exec krijgt </dev/null"
   check "de sleutel staat niet in de uitvoer van main" not grep -qE '[0-9a-f]{64}' "$work/main.out"
-  out=$(grep -nE '(docker run|compose\[@\]\}" exec) ' "$install_sh" | grep -v '</dev/null' || true)
-  check "elke docker run en compose exec krijgt </dev/null" test -z "$out"
+  out=$(grep -nE '(docker run|compose\[@\]\}" (exec|run)) ' "$install_sh" | grep -v '</dev/null' || true)
+  check "elke docker run, compose run en compose exec krijgt </dev/null" test -z "$out"
 
   # De trap van --stappen staat vóór de voorcontrole (de samenvatting komt er altijd) en haalt
   # WORK weg, als root. Een map die de test weigert, mag daarbij nooit verdwijnen (review van

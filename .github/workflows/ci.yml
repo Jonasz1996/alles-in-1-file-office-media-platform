@@ -475,12 +475,13 @@ jobs:
 
   # Fase 5 (§4.8): -m media_perf in Chrome for Testing, alleen een rapport (zoals perf). Het
   # artefact noemt de browserversie en wat isTypeSupported zegt voor avc1.640028 en mp4a.40.2
-  # (S13 van de spike). Ma en Mb komen met M6.
+  # (S13 van de spike). Ma en Mb komen met M6. Fase 6 (Z7): daarna zoek_samen --kort en
+  # zoek_backfill, ook als rapport (±10 minuten erbij, daarom 35 in plaats van 20).
   e2e-media-perf:
     name: e2e media-prestaties (alleen rapport, S13)
     runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
     needs: [web]
-    timeout-minutes: 20
+    timeout-minutes: 35
     continue-on-error: true
     env:
       E2E_PERF_REPORT_ONLY: "1"
@@ -533,18 +534,58 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
               f.write(zin + "\n")
           '
+      # Fase 6 (Z7, §4.5 B): zoeken naast media in drie stappen (pauze, achtergrond, Defer
+      # uit), de korte versie: 60 s per fase, 1 sessie, zonder OnlyOffice. Een rapport; de hele
+      # test met OnlyOffice staat in docs/runbooks/zoeken.md
+      - name: Zoeken naast media (fase 6, Z7; rapport, zoek_samen --kort)
+        if: always()
+        run: |
+          uv run python ../e2e/perf/zoek_samen.py --kort \
+            --kort-uit "$E2E_PERF_OUT/zoek-samen-kort.txt" || echo "zoek_samen gaf exitcode $?"
+      # Fase 6 (Z2, §4.5): de snelheid van de backfill van de tekst, klein (500 documenten, 1
+      # keer per soort), als rapport; de poort van 1.000 per minuut per core meet de sandbox
+      - name: De backfill van de tekst (fase 6, Z2; rapport, zoek_backfill)
+        if: always()
+        run: |
+          mkdir -p "$E2E_PERF_OUT"
+          set -o pipefail
+          uv run python ../e2e/perf/zoek_backfill.py --n 500 --keer 1 \
+            --json "$E2E_PERF_OUT/zoek-backfill.json" | tee "$E2E_PERF_OUT/zoek-backfill.txt" \
+            || echo "zoek_backfill gaf exitcode $?"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: media-prestaties
           path: media-perf-results
           if-no-files-found: warn
+      # De logs tonen alleen de staart: het korte blok van zoeken staat daarom als laatste
+      - name: Kort (zoek_samen en zoek_backfill)
+        if: always()
+        run: |
+          d="$E2E_PERF_OUT"
+          echo "=== kort ==="
+          if [ -s "$d/zoek-samen-kort.txt" ]; then
+            grep -v '^=== kort ===$' "$d/zoek-samen-kort.txt"
+          else
+            echo "zoek_samen: liep niet tot het eind (zie de stap hierboven)"
+          fi
+          if grep -qs '^=== kort ===$' "$d/zoek-backfill.txt"; then
+            sed -n '/^=== kort ===$/,$p' "$d/zoek-backfill.txt" | tail -n +2 \
+              | sed 's/^/zoek_backfill: /'
+          else
+            echo "zoek_backfill: liep niet tot het eind (zie de stap hierboven)"
+          fi
 
   infra:
     name: Infra (lint, templates en images)
     runs-on: ubuntu-latest
+    # Z7: de installatietest van zoeken bouwt het platform drie keer (0.7.1, deze versie en een
+    # commit erbovenop) en gaat terug naar 0.7.1 en weer vooruit
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Z7: de installatietest begint bij 0.7.1 (80d5bb8)
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -622,6 +663,10 @@ jobs:
       # combinaties (office aan/uit × media aan/uit × grenzen ja/nee)
       - name: Media in install.sh controleren (test_install_media.sh)
         run: bash infra/single/tests/test_install_media.sh
+      # Zoeken en foto's in install.sh (Z7): PLAATSEN, de download van de bronnen, de reservekopie
+      # met het image dat draait, de eindtekst en de commando's van de weg terug in de docs
+      - name: Zoeken in install.sh controleren (test_install_search.sh)
+        run: bash infra/single/tests/test_install_search.sh
       - name: PostgreSQL-image bouwen en Patroni-configuratie valideren
         run: |
           base=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['postgres_base_image'])")
@@ -654,6 +699,40 @@ jobs:
             ip link add "$IFACE" type veth peer name ci-peer
             for n in /tmp/render/*/; do keepalived -t -f "$n/keepalived/keepalived.conf"; done
           '
+      # De update en terug, echt (Z7, §3.10, Keuze 52 en 53): 0.7.1 met het script van 80d5bb8,
+      # bijwerken met een reservekopie van het image van 0.7.1, een kopie die faalt, de bronnen van
+      # plaatsen, PLAATSEN=uit, terug naar 0.7.1 met precies de stappen van §3.10 en weer vooruit.
+      # De bronnen haalt tools/geo/haal.py vooraf; de test geeft ze via een nep-curl aan install.sh
+      - name: Bronnen van plaatsen ophalen (tools/geo/haal.py)
+        if: ${{ !cancelled() }}
+        run: python3 -I tools/geo/haal.py --naar "$RUNNER_TEMP/geo"
+      - name: De update en terug naar 0.7.1 (test_install_search.sh --stappen, Z7)
+        if: ${{ !cancelled() }}
+        env:
+          INSTALL_TEST_GEO: ${{ runner.temp }}/geo
+          INSTALL_TEST_LOGS: ${{ runner.temp }}/infra/installatietest
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/infra"
+          bash infra/single/tests/test_install_search.sh --stappen 2>&1 | tee "$RUNNER_TEMP/infra/installatietest.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: infra-installatietest
+          path: ${{ runner.temp }}/infra
+          if-no-files-found: warn
+      - name: Samenvatting
+        if: always()
+        run: |
+          log="$RUNNER_TEMP/infra/installatietest.log"
+          if grep -q '^=== Samenvatting' "$log" 2>/dev/null; then
+            sed -n '/^=== Samenvatting/,/^=== einde samenvatting ===$/p' "$log"
+          else
+            echo "=== Samenvatting (test_install_search.sh --stappen) ==="
+            echo "(geen samenvatting: de installatietest liep niet of brak af)"
+            echo "=== einde samenvatting ==="
+          fi
+          grep -E '^(FOUT|STOP) ' "$log" 2>/dev/null || true
 
   images:
     name: Images bouwen

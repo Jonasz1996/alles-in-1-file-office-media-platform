@@ -376,6 +376,31 @@ async def test_wijkt_voor_omzettingen_en_een_startende_onlyoffice(settings, monk
     assert (await rows(settings))[sha(1)].state == "done"
 
 
+async def test_wijkt_ook_tijdens_de_belastingtest_van_media(settings, monkeypatch):
+    """De belastingtest van media (fase 5) telt niet als omzetting van een kijker
+    (transcodes_running), maar zet zolang hij loopt media.analysis.busy_live op minstens 2. Ook de
+    index en OCR wijken dan; anders meet zoek_samen (§4.5, stap 2 tegen stap 3) Defer niet.
+    Met index_defer_transcodes hoog (Defer uit) leest de index gewoon door."""
+    from app.media import admin as media_admin
+    from app.media import analysis as media_analysis
+
+    nep = Nep()
+    aanmelden(nep)
+    await queue(settings, [sha(1)])
+    aan = settings.model_copy(update={"media_enabled": True})
+    monkeypatch.setattr(media_admin, "transcodes_running", lambda: 0)
+    monkeypatch.setattr(media_analysis, "busy_live", lambda: 2)
+
+    with pytest.raises(jobs.Defer):
+        await pomp(aan)
+    assert nep.batches == []
+    assert (await rows(settings))[sha(1)].state == "wait"
+
+    uit = aan.model_copy(update={"index_defer_transcodes": 1000})
+    assert await pomp(uit) == 1
+    assert (await rows(settings))[sha(1)].state == "done"
+
+
 def test_de_pomp_is_een_job_in_de_rij_index():
     aanmelden(Nep())
     assert jobs.lane_of(analysis.pump_type("index")) == "index"
