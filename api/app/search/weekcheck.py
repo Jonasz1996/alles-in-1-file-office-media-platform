@@ -129,7 +129,10 @@ async def run(settings: Settings) -> AdminCheck | None:
     found = await to_thread.run_sync(_check, settings.db_url)
     if found.rebuilding or found.sampled == 0:
         return None
-    result = AdminCheck(at=now().isoformat(), sampled=found.sampled, bad=len(found.bad))
+    # check() geeft een regel per index en reden (fts_node, fts_name, een woord, ...); /beheer telt
+    # bestanden: elke num één keer, een spook in de index ook, en nodes zonder num samen één (num 0)
+    bad = len({num for num, _ in found.bad})
+    result = AdminCheck(at=now().isoformat(), sampled=found.sampled, bad=bad)
     async with maker() as db:
         row = await db.get(Setting, KEY)
         if row is None:

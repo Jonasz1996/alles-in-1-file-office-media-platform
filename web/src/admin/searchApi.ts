@@ -118,8 +118,8 @@ export interface AdminSearch {
   faces: AdminFaces | null;
   /** Het blok "Zoeken op beeld" (X3); null zolang X3 er niet is */
   beeld: AdminBeeld | null;
-  /** De laatste wekelijkse search-check (I1): wanneer, hoeveel nodes vergeleken en hoeveel
-   * verschillen met de bron; null zolang er geen was */
+  /** De laatste wekelijkse search-check (I1): wanneer, hoeveel nodes vergeleken en bij hoeveel
+   * een verschil met de bron (elk bestand één keer); null zolang er geen was */
   check: { at: string; sampled: number; bad: number } | null;
 }
 

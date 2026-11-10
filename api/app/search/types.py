@@ -257,7 +257,8 @@ class AdminBench(BaseModel):
 
 class AdminCheck(BaseModel):
     """De wekelijkse search-check (Keuze 12, R4; app/search/weekcheck.py): wanneer, hoeveel
-    nodes vergeleken en hoeveel verschillen. Nooit een num, naam of tekst."""
+    nodes vergeleken en bij hoeveel een verschil (elke num één keer, ook als fts_node en fts_name
+    allebei afwijken). Nooit een num, naam of tekst."""
 
     at: str
     sampled: int

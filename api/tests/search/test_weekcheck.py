@@ -127,7 +127,9 @@ async def test_een_verschil_komt_op_beheer_met_alleen_aantallen(client, settings
     with caplog.at_level(logging.INFO, logger="platform.search"):
         found = await weekcheck.run(settings)
     assert found is not None
-    assert found.bad >= 2  # fts_node en fts_name van brief
+    # Eén bestand: één verschil, ook al wijken fts_node en fts_name van brief allebei af (review
+    # I1, B3: check() geeft een regel per index; /beheer zet het naast "bestanden vergeleken")
+    assert found.bad == 1
     ada = await kop(client, "ada")
     assert (await client.get(ADMIN, headers=ada)).json()["check"] == found.model_dump()
     regels = [r for r in caplog.records if "wekelijkse controle" in r.getMessage()]
