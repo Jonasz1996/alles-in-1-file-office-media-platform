@@ -1,4 +1,6 @@
 import logging
+import os
+import uuid
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -45,9 +47,34 @@ def mismatch_verwacht():
     """Deze test lokt search_access_mismatch expres uit en controleert de regel zelf."""
 
 
+# Met PLATFORM_TEST_DATABASE_URL (postgresql+asyncpg://…/postgres) draait elke test op een eigen,
+# nieuwe PostgreSQL-database in plaats van SQLite: zo houdt CI het cluster (B12, B15) eerlijk.
+PG_URL = os.environ.get("PLATFORM_TEST_DATABASE_URL", "")
+
+
+async def _pg_database(name: str, drop: bool = False) -> str:
+    import asyncpg
+
+    base = PG_URL.replace("postgresql+asyncpg://", "postgresql://")
+    conn = await asyncpg.connect(base)
+    try:
+        if drop:
+            await conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        else:
+            await conn.execute(f'CREATE DATABASE "{name}"')
+    finally:
+        await conn.close()
+    return PG_URL.rsplit("/", 1)[0] + "/" + name
+
+
 @pytest.fixture
 async def settings(tmp_path):
-    s = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8)
+    extra = {}
+    name = ""
+    if PG_URL:
+        name = "t_" + uuid.uuid4().hex
+        extra["database_url"] = await _pg_database(name)
+    s = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8, **extra)
     await upgrade(s)
     yield s
     # De engine van deze datamap dicht en uit de cache: anders blijven zijn verbindingen (elk met
@@ -55,6 +82,8 @@ async def settings(tmp_path):
     # snelheidstests) trager naarmate de run langer is
     await db.get_engine(s).dispose()
     db._engine.cache_clear()
+    if name:
+        await _pg_database(name, drop=True)
 
 
 @pytest.fixture

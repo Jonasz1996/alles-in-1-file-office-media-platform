@@ -31,6 +31,11 @@ de tijd: platform-0010-<tijd>.db. Per head blijft de nieuwste; zo staat de kopie
 migratie er na nieuwe kopieën nog. Het migreert niets. install.sh maakt zijn eigen kopie, met
 alleen de standaardbibliotheek, want dit commando bestaat in oudere images niet.
 
+    docker exec <container> python -m app.cli db-copy <postgresql+asyncpg://…> [--leegmaken]
+
+db-copy zet de database van één node (SQLite) over naar PostgreSQL, voor het cluster: schema
+tot dezelfde revisie, alle rijen, reeksen en een natelling per tabel (app/dbcopy.py).
+
 office-checkpoint vraagt de document server om alle open documenten tussentijds op te slaan
 en wacht daar hooguit --wait seconden op (vóór het stoppen of bijwerken van office). Het
 zegt hoeveel documenten zijn opgeslagen.
@@ -480,6 +485,17 @@ def _backup(settings: Settings) -> int:
 SEARCH_STUBS: dict[str, tuple[str, str]] = {}
 
 
+def _db_copy(settings: Settings, target: str, empty_first: bool) -> int:
+    from app.dbcopy import CopyError, db_copy
+
+    try:
+        asyncio.run(db_copy(settings, target, empty_first=empty_first))
+    except (CopyError, NotSqlite) as exc:
+        print(f"Overzetten mislukt: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _stub(name: str) -> int:
     package, what = SEARCH_STUBS[name]
     print(f"{name} ({what}) is nog niet gebouwd ({package}).", file=sys.stderr)
@@ -634,6 +650,15 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "db-backup", help="een reservekopie van de database maken, terwijl de app draait"
     )
+    copy = commands.add_parser(
+        "db-copy", help="de database (SQLite) overzetten naar PostgreSQL, voor het cluster"
+    )
+    copy.add_argument("doel", help="postgresql+asyncpg://gebruiker:wachtwoord@host:poort/database")
+    copy.add_argument(
+        "--leegmaken",
+        action="store_true",
+        help="de tabellen van het platform op het doel eerst weghalen",
+    )
     search_bench.parsers(commands)
     geo_load.parsers(commands)
     for name, (package, what) in SEARCH_STUBS.items():
@@ -651,6 +676,8 @@ def main(argv: list[str] | None = None) -> int:
         return _stub(args.command)
     if args.command == "db-backup":
         return _backup(settings)
+    if args.command == "db-copy":
+        return _db_copy(settings, args.doel, args.leegmaken)
     if args.command == "db-downgrade":
         return _downgrade(settings, args.revision, args.ja)
     if args.command == "office-checkpoint":
