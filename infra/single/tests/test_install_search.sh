@@ -423,7 +423,22 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
     same_as_net landen.geojson && same_as_net plaatsen.tar.gz &&
     [ "$(stat -c %a "$geo_dir/landen.geojson" "$geo_dir/plaatsen.tar.gz" | sort -u)" = 640 ]'
   check "geen .part over (ook de symlink van de app niet)" eval 'no_part && [ ! -L "$geo_dir/landen.geojson.part" ]'
+  # Nacontrole golf 4: een bron als symlink naar een bestand van de host met precies de goede
+  # inhoud telt niet als "klaar" (dan bleef de symlink staan en las root via hem een bestand van
+  # de host), en een bron als symlink naar een map van de host: mv -T vervangt de symlink en zet
+  # niets in die map
   NET=aan
+  cp "$work/net/landen.geojson" "$host/landen-kopie"
+  rm -f "$geo_dir"/*
+  ln -s "$host/landen-kopie" "$geo_dir/landen.geojson"
+  ln -s "$host/map" "$geo_dir/plaatsen.tar.gz"
+  check "een bron als symlink met de goede inhoud, een als symlink naar een map: nieuw" test "$(geo)" = nieuw
+  check "beide nu echte bestanden, heel, 640; de map van de host blijft leeg" eval 'host_same &&
+    [ ! -L "$geo_dir/landen.geojson" ] && [ ! -L "$geo_dir/plaatsen.tar.gz" ] &&
+    same_as_net landen.geojson && same_as_net plaatsen.tar.gz &&
+    [ "$(stat -c %a "$geo_dir/landen.geojson" "$geo_dir/plaatsen.tar.gz" | sort -u)" = 640 ]'
+  check "de kopie op de host met de goede inhoud blijft zoals hij was" cmp -s "$host/landen-kopie" "$work/net/landen.geojson"
+  rm -f "$host/landen-kopie"
   ln -s "$host/map" "$work/data/media"
   code=0
   out=$(media_dirs) || code=$?
@@ -487,6 +502,12 @@ c "de map backup is een symlink: app_dir weigert" eval '! app_dir 700 "$DATA_ROO
 c "as_app_in in een symlink naar een map van root (de race): weigert, schrijft niets" eval '! as_app_in "$DATA_ROOT/backup" touch x'
 c "de map van de host blijft (eigenaar, rechten, leeg)" host_same
 rm -f "$DATA_ROOT/backup"
+# Nacontrole golf 4: ook een map van root waar iedereen mag schrijven (zoals /tmp, 1777): daar zou
+# 10001 wel iets kunnen neerzetten, dus as_app_in kijkt zelf of de map van 10001 is
+mkdir -m 1777 "$host/open"
+ln -s "$host/open" "$DATA_ROOT/open"
+c "as_app_in in een symlink naar een map van root die iedereen mag schrijven (1777): weigert, schrijft niets" eval '! as_app_in "$DATA_ROOT/open" touch x && [ -z "$(ls -A "$host/open")" ]'
+rm -f "$DATA_ROOT/open"
 c "een nieuwe map backup: van 10001, 700" eval 'app_dir 700 "$DATA_ROOT/backup" && [ "$(stat -c "%u:%g %a" "$DATA_ROOT/backup")" = "10001:10001 700" ]'
 mkdir -m 755 "$DATA_ROOT/import"
 c "media_dirs: nieuw (media) en van root (import): beide van 10001, 750" eval 'media_dirs && [ "$(stat -c "%u:%g %a" "$DATA_ROOT/media" "$DATA_ROOT/import" | sort -u)" = "10001:10001 750" ]'
@@ -526,7 +547,7 @@ ALS_ROOT
         *) printf '      %s\n' "$line" ;;
       esac
     done <<<"$root_out"
-    check "als root: alle 9 controles liepen ($n_root)" test "$n_root" = 9
+    check "als root: alle 10 controles liepen ($n_root)" test "$n_root" = 10
   fi
 
   # --- de nep-Docker voor reservekopie en main ---------------------------------------------
