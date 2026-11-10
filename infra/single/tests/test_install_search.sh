@@ -17,7 +17,9 @@
 # - de download van de twee bronnen (Keuze 29) van een nepnetwerk: via .part, alleen met de
 #   juiste grootte en sha256, rechten 640; een download die faalt (geen netwerk, een halve, een
 #   verkeerde sha256) is niet fataal, laat niets achter en de volgende run probeert het opnieuw;
-#   staan ze er al, dan haalt het niets; PLAATSEN=uit haalt niets;
+#   staan ze er al, dan haalt het niets; PLAATSEN=uit haalt niets; of ze er goed staan, kijkt
+#   10001 zelf in de map geo (ook als root, met de echte setpriv), en een FIFO die de app net na
+#   stat neerzet, laat die controle niet hangen;
 # - de reservekopie (Keuze 52): met het image dat er nog draait, vóór office stopt en vóór de
 #   nieuwe app; de tekst is precies api/app/backup.py van de nieuwe broncode; rechten 600, zonder
 #   gezichten; een mislukte kopie (compose run faalt, of de kopie zelf) stopt het script vóór er
@@ -381,6 +383,25 @@ print("ok" if got == want else "install.sh %r, haal.py %r" % (got, want))' "$top
   check "nog een run: klaar" test "$(geo)" = klaar
   check "nog een run: geen curl" test ! -s "$work/curl.log"
   check "nog een run: met die regel" said_geo "Plaatsnamen: de bronnen staan er al ($geo_dir)."
+  # Integratie I1 (nacontrole golf 4, z7.md): of de bronnen er goed staan, kijkt 10001 zelf in de
+  # map geo, met de naam; root leest daar niets
+  check "nog een run: 10001 kijkt beide bronnen zelf na in de map geo (as_app_in), root geen pad erin" eval '
+    [ "$(grep -F "als 10001 in $geo_dir: sh -c " "$work/install.log")" = "$(while read -r n s h _; do
+      printf "als 10001 in %s: sh -c %s sh %s %s %s\n" "$geo_dir" "$GEO_OK" "$n" "$s" "$h"; done <"$work/bronnen")" ] &&
+    ! grep -qF "$geo_dir/" "$work/install.log"'
+  # De race van z7.md: de app zet net na stat een FIFO op de plek van de bron. Een nep-stat doet
+  # hier precies dat (en geeft de grootte van de bron); de controle mag dan niet blijven wachten
+  local race=$work/race size sha
+  mkdir -p "$race/bin" "$race/geo"
+  read -r _ size sha _ <"$work/bronnen"
+  printf '#!/bin/sh\nfor a; do f=$a; done\necho %s\nrm -f -- "$f" && mkfifo -- "$f"\n' "$size" >"$race/bin/stat"
+  command chmod 755 "$race/bin/stat"
+  cp "$work/net/landen.geojson" "$race/geo/landen.geojson"
+  code=0
+  (cd "$race/geo" && PATH="$race/bin:$PATH" timeout 20 sh -c "$GEO_OK" sh landen.geojson "$size" "$sha") || code=$?
+  check "een FIFO net na stat: de controle wacht niet op een schrijver en zegt nee ($code)" eval '[ "$code" = 1 ] && [ -p "$race/geo/landen.geojson" ]'
+  : <>"$race/geo/landen.geojson" # een lezer die toch wacht, laat hij zo los
+  rm -rf "$race"
   printf 'kapot\n' >"$geo_dir/plaatsen.tar.gz"
   check "een kapotte bron op schijf: opnieuw gehaald" eval '[ "$(geo)" = nieuw ] && same_as_net plaatsen.tar.gz'
   without_places
@@ -538,6 +559,14 @@ c "beide bronnen echte bestanden van 10001, 640, heel" eval '[ ! -L "$DATA_ROOT/
   cmp -s "$DATA_ROOT/geo/landen.geojson" "$R/net/landen.geojson" && cmp -s "$DATA_ROOT/geo/plaatsen.tar.gz" "$R/net/plaatsen.tar.gz" &&
   [ "$(stat -c "%u:%g %a" "$DATA_ROOT/geo/landen.geojson" "$DATA_ROOT/geo/plaatsen.tar.gz" | sort -u)" = "10001:10001 640" ]'
 c "geen .part over" test -z "$(find "$DATA_ROOT/geo" -name "*.part")"
+# Integratie I1: of een bron er goed staat, kijkt 10001 zelf. Een gewoon bestand van root (600)
+# met precies de goede inhoud kan 10001 niet lezen; root zou het "klaar" noemen
+cp "$R/net/landen.geojson" "$DATA_ROOT/geo/landen.geojson"
+chown 0:0 "$DATA_ROOT/geo/landen.geojson" && chmod 600 "$DATA_ROOT/geo/landen.geojson"
+geo_download >/dev/null
+c "een bron van root (600) met de goede inhoud: 10001 leest hem niet, dus opnieuw gehaald en van 10001" eval '[ "$GEO_STATE" = nieuw ] && host_same &&
+  cmp -s "$DATA_ROOT/geo/landen.geojson" "$R/net/landen.geojson" &&
+  [ "$(stat -c "%u:%g %a" "$DATA_ROOT/geo/landen.geojson")" = "10001:10001 640" ]'
 ALS_ROOT
     ) || true
     while IFS= read -r line; do
@@ -547,7 +576,7 @@ ALS_ROOT
         *) printf '      %s\n' "$line" ;;
       esac
     done <<<"$root_out"
-    check "als root: alle 10 controles liepen ($n_root)" test "$n_root" = 10
+    check "als root: alle 11 controles liepen ($n_root)" test "$n_root" = 11
   fi
 
   # --- de nep-Docker voor reservekopie en main ---------------------------------------------
