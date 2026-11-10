@@ -9,18 +9,20 @@ Wat hier vastligt:
 - niet tijdens de pauze van /beheer, niet tijdens een herbouw, niet zonder FTS5 of op
   PostgreSQL, en zonder nodes geen uitkomst;
 - de controle loopt in een eigen draad, met 200 nodes, en kan niet schrijven (query_only): hij
-  houdt de schrijver nooit vast.
+  houdt de schrijver nooit vast;
+- hij leest alles in één momentopname: wat de app intussen schrijft, is geen verschil.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import threading
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import event, update
 from sqlalchemy.exc import OperationalError
 
 from app import analysis, jobs
@@ -195,3 +197,44 @@ async def test_de_controle_leest_alleen_in_een_eigen_draad(client, settings, mon
     assert gezien["draad"] != threading.get_ident()
     assert (await sql(settings, "SELECT cursor FROM search_state WHERE id = 1")) == [(None,)]
     assert await opgeslagen(settings) == found.model_dump()
+
+
+async def test_wat_de_app_intussen_schrijft_is_geen_verschil(client, settings, monkeypatch):
+    """check() leest bron en index in losse SELECTs. Zonder eigen leestransactie ziet elke SELECT
+    een andere stand van de WAL (pysqlite opent voor een SELECT geen transactie): een naam die de
+    app tussen twee vragen wijzigt, telde dan als verschil, en dat bleef rood op /beheer (review
+    I1, F1/B1). Hier wijzigt een gewone schrijver een naam vlak voor de vraag naar de docsize."""
+    await W.bouw_async(settings)
+    assert await tel(settings) <= weekcheck.SAMPLE  # dus alles zit erin
+    bestand = settings.db_url.removeprefix("sqlite+aiosqlite:///")
+    hernoemd: list[int] = []
+    echt = weekcheck.create_async_engine
+
+    def engine(url, **opties):
+        found = echt(url, **opties)
+
+        @event.listens_for(found.sync_engine, "before_cursor_execute")
+        def tussendoor(_conn, _cursor, statement, params, _context, _many):
+            if hernoemd or "FROM fts_node_docsize WHERE id IN" not in statement:
+                return
+            # Zoals de app: een eigen verbinding, en de triggers houden de index bij
+            con = sqlite3.connect(bestand)
+            try:
+                con.execute("PRAGMA busy_timeout=5000")
+                con.execute(
+                    "UPDATE node SET name = ?, search_name = ? WHERE num = ?",
+                    ("Een heel andere naam.txt", "een heel andere naam.txt", params[0]),
+                )
+                con.commit()
+            finally:
+                con.close()
+            hernoemd.append(params[0])
+
+        return found
+
+    monkeypatch.setattr(weekcheck, "create_async_engine", engine)
+    found = await weekcheck.run(settings)
+    assert len(hernoemd) == 1
+    assert found is not None and found.sampled > 20 and found.bad == 0
+    # De index klopte de hele tijd: ook daarna geen verschil
+    assert (await rebuild.check(get_engine(settings), sample=100_000)).bad == []

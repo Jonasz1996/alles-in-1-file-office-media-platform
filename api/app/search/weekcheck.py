@@ -11,8 +11,9 @@ met de hand (de knop "Index herbouwen", of app.cli search-triggers; runbook zoek
   vergeleken.
 - De controle zelf loopt in een eigen draad met een eigen event loop en engine, met PRAGMA
   query_only: hij schrijft niets en houdt de schrijver dus nooit vast, en de FTS5-tabel in het
-  geheugen van check() houdt de event loop van de app niet bezig. Daarna is de uitkomst één korte
-  schrijfactie.
+  geheugen van check() houdt de event loop van de app niet bezig. Hij leest in één
+  leestransactie (één momentopname): wat de app intussen schrijft, is geen verschil. Daarna is
+  de uitkomst één korte schrijfactie.
 - In het log alleen aantallen: geen num, geen naam, geen tekst.
 """
 
@@ -75,17 +76,27 @@ def _due(found: AdminCheck | None, moment: datetime) -> bool:
 
 
 def _check(url: str) -> rebuild.Checked:
-    """In een eigen draad: een eigen loop en engine, alleen lezen (query_only)."""
+    """In een eigen draad: een eigen loop en engine, alleen lezen (query_only), in één
+    leestransactie. check() leest bron en index in losse SELECTs; pysqlite opent voor een SELECT
+    geen transactie (bouwontwerp, Keuze 12), dus zag elke SELECT een andere stand van de WAL. Wat
+    de app tussen twee vragen schreef (een naam, de tekst van de backfill bij het starten), telde
+    dan als verschil (review I1, F1/B1). Nu leest hij alles in één momentopname: in WAL houdt die
+    de schrijver niet tegen, en hij duurt zo lang als de controle."""
 
     async def run() -> rebuild.Checked:
         engine = create_async_engine(url, poolclass=NullPool, hide_parameters=True)
 
         @event.listens_for(engine.sync_engine, "connect")
         def _read_only(conn, _record):
+            conn.isolation_level = None  # geen BEGIN van pysqlite: die komt van _begin
             cur = conn.cursor()
             cur.execute("PRAGMA busy_timeout=5000")
             cur.execute("PRAGMA query_only=ON")
             cur.close()
+
+        @event.listens_for(engine.sync_engine, "begin")
+        def _begin(conn):
+            conn.exec_driver_sql("BEGIN")
 
         try:
             return await rebuild.check(engine, sample=SAMPLE)
