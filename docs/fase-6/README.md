@@ -1,13 +1,16 @@
 # Fase 6 — Zoeken en foto's
 
-Status: **Z0, Z0b, golf 1, golf 2 en golf 3 gebouwd**: het fundament (samengevoegd op 3 november
+Status: **Z0, Z0b, golf 1, golf 2, golf 3 en golf 4 gebouwd**: het fundament (samengevoegd op 3 november
 2026; zie [z0.md](z0.md)), de contracten van gezichten en zoeken op beeld (samengevoegd op 4
 november 2026; zie [z0b.md](z0b.md)), golf 1: de zoekmachine en tekst uit bestanden (samengevoegd
 op 4 november 2026; zie [z1.md](z1.md) en [z2.md](z2.md)), golf 2: zoeken in de web, en personen,
 herinneringen, slimme albums en filters (samengevoegd op 8 november 2026; zie [z4.md](z4.md) en
-[z6.md](z6.md)), en golf 3: de plek, de plaatsen, duplicaten en delen met een plek, met de kaart,
+[z6.md](z6.md)), golf 3: de plek, de plaatsen, duplicaten en delen met een plek, met de kaart,
 `/dubbel` en de waarschuwing bij delen in de web (samengevoegd op 9 november 2026; zie
-[z3.md](z3.md) en [z5.md](z5.md)). De review van golf 3 is verwerkt ("De review (golf 3)" in z3.md
+[z3.md](z3.md) en [z5.md](z5.md)), en golf 4: de tab "Zoeken en foto's" op `/beheer`, de
+reservekopie en de plaatsnamen in `install.sh`, de weg terug naar 0.7.1, en tekst in beeld (OCR)
+met tesseract in het image (samengevoegd op 10 november 2026; zie [z7.md](z7.md) en
+[x1.md](x1.md)). De review van golf 3 is verwerkt ("De review (golf 3)" in z3.md
 en z5.md): veertien bevindingen; twaalf hebben een reparatie met een test die zonder haar faalt,
 twee zijn documentatie (de bronnen in de README, `/over` komt met X2; een docstring). De kaart met een filter op
 datum, plaats of land haalt de poort van 150 ms; een filter dat `node` nodig heeft (soort, map,
@@ -25,7 +28,7 @@ De review van golf 2 is ook verwerkt ("De review (golf 2)" in z4.md en z6.md): v
 bevindingen, alle gedaan; elke reparatie in code heeft een test die zonder haar faalt (C6 en E
 zijn documentatie). De nacontrole daarvan is gedaan ("De nacontrole (golf 2)" in z4.md en z6.md):
 twee regels in de web (V1) hadden geen test die rood werd, en een verborgen herinnering kwam terug
-na een filter zonder treffers (D); beide hebben nu een test, D ook een reparatie. Gepusht tot en met golf 3.
+na een filter zonder treffers (D); beide hebben nu een test, D ook een reparatie. Gepusht tot en met golf 3; golf 4 nog niet.
 Het ontwerp is bouwontwerp revisie 3.
 
 ## Wat je koos

@@ -250,8 +250,11 @@ Wat de nacontrole veranderde, in `f74236d` (1–3) en in dit verslag (4–6):
    (`tests/search/test_contracts.py`): `register_switch` met een instelling van Z6 (`location`,
    `memories`, `ocr_photos`) of iets anders dan `faces` en `beeld`, en `register_admin` met een
    deel van Z7 (`names`, `text`, `geo`, `hash`, `ocr`), geven `ValueError` en melden niets aan.
-   Rood met elk van de twee mutaties die groen bleven.
+   Rood met elk van de twee mutaties die groen bleven. Sinds golf 4 is `ocr` het deel van X1
+   (Z7 zette het in `ADMIN_PARTS`); de test weigert nu `Ocr` in plaats van `ocr`.
 2. **Niemand meldt zich aan.** `test_niemand_meldt_een_schakelaar_of_een_deel_van_beheer_aan`
+   (sinds de samenvoeging van golf 4 `test_geen_schakelaar_en_alleen_ocr_als_deel_van_beheer`,
+   met de stand `0 ['ocr']`: X1 meldt bij het laden het deel `ocr` aan)
    (`tests/search/test_hotspots.py`), zoals die van `register_large`: de hele app geladen in een
    eigen proces, en dan geen schakelaar in `app.prefs` en geen deel in `search.hooks`. Daarop rust
    dat een oude client hetzelfde antwoord krijgt: zonder aanmelding weigert `check_switch` "aan",
@@ -338,9 +341,13 @@ Voor de volgende pakketten:
    het blok Foto's onder Account laadt Z6 `photos/faces/FacesSwitch.tsx` (gebied `photos_faces`)
    en `search/beeld/BeeldSwitch.tsx` (gebied `beeld`) lazy. Wie `PeoplePage` of `PersonPage`
    herschrijft, houdt de plek van X2 (`src/lazySlots.test.ts` eist hem in de bron).
-6. **Z7** (F4): GET `/admin/search` vult `faces` en `beeld` met `search.hooks.admin_block()`;
+6. ~~**Z7** (F4): GET `/admin/search` vult `faces` en `beeld` met `search.hooks.admin_block()`;
    PATCH stuurt `faces_allowed` en `beeld` naar `admin_switch()` (`ADMIN_SWITCHES`); rebuild met
-   `what` `faces` of `beeld` gaat naar `admin_rebuild()`. Zonder aanmelding 501 `X2` of `X3`.
+   `what` `faces` of `beeld` gaat naar `admin_rebuild()`. Zonder aanmelding 501 `X2` of `X3`.~~
+   Gedaan door Z7 (`d292ba6`), samengevoegd in golf 4, ook voor `ocr` van X1: X1 meldt
+   `admin_block`, `admin_switch` en `admin_rebuild` aan met `register_admin("ocr", …)`. Bij de
+   samenvoeging kwam er een commit na de haken bij (`e359bde`): de schakelaar en de herbouw
+   werken in de transactie van de aanroeper. Zie [z7.md](z7.md) en [x1.md](x1.md).
 7. ~~**Z4** (F3): in de stand beeld (`?mode=image`) laadt `/zoeken` `search/beeld/BeeldResults.tsx`
    lazy, met het gebied `beeld`, in plaats van de lijst.~~ Gedaan door Z4 (`f2590f7`,
    `search/SearchPage.tsx` met een `LazySlot`; `search/page.test.ts`, "de stand beeld op /zoeken").
@@ -350,7 +357,9 @@ Voor de volgende pakketten:
    `previews.register_large()` zet alleen werk in de rij; na 5 s stopt hij. `SwitchState.available`
    is False in de stand off (Keuze 59) en voor X2 zonder `PLATFORM_FACES_KEYS`, niet in `down` of
    `models_missing`: dan wacht het werk in de rij (nacontrole). Wie zich aanmeldt, past
-   `test_niemand_meldt_een_schakelaar_of_een_deel_van_beheer_aan` aan (die eist nu 0 en 0).
+   ~~`test_niemand_meldt_een_schakelaar_of_een_deel_van_beheer_aan` aan (die eist nu 0 en 0)~~
+   `test_geen_schakelaar_en_alleen_ocr_als_deel_van_beheer` aan (die eist sinds golf 4
+   `0 ['ocr']`: X1 deed dat met `register_admin`).
 
 Bekend en niet van Z0b:
 
