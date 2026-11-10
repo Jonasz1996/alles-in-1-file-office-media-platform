@@ -2,7 +2,8 @@
 // index, mislukt, een herbouw met zijn voortgang, waar tekst gelezen wordt, het afgelopen uur,
 // OCR, de plek en de duplicaten van foto's, de plaatsnamen en de uitkomst van bench --los. De
 // knoppen: index herbouwen, mislukte opnieuw, achtergrondwerk pauzeren of hervatten, duplicaten en
-// plek opnieuw, en OCR aan of uit (alleen als X1 zich aanmeldde). Wat zwaar is, vraagt eerst.
+// plek opnieuw, en OCR aan of uit en alles opnieuw herkennen (alleen als de worker OCR meldt, X1).
+// Wat zwaar is, vraagt eerst.
 //
 // Z0 zette de tab (Beheer.tsx, Alt+9, een eigen chunk); de aanroepen staan in ./searchApi. Ververst
 // elke 5 seconden zolang het tabblad zichtbaar is (usePolling, zoals de andere tabbladen).
@@ -480,20 +481,42 @@ function Ocr({ s, reload }: { s: AdminSearch; reload: Reload }): JSX.Element {
     });
   }
 
+  // Alles opnieuw herkennen (POST rebuild met ocr, van X1): de rijen van ocr terug in de rij
+  async function again(): Promise<void> {
+    act.press();
+    const yes = await confirm({
+      title: t("admin.search.ocr.againTitle"),
+      message: t("admin.search.ocr.againText"),
+      confirm: t("admin.search.photos.start"),
+    });
+    if (!yes) return;
+    await act.run("again", async () => {
+      await rebuildSearch("ocr");
+      return t("admin.search.ocr.againToast");
+    });
+  }
+
   const yesNo = (v: boolean) => (v ? t("admin.search.ocr.yes") : t("admin.search.ocr.no"));
   return (
     <section aria-labelledby="admin-search-ocr">
       <Head id="admin-search-ocr" title={t("admin.search.ocr.title")} heading={heading}>
         {ocr.installed && (
-          <Button busy={act.busy === "ocr"} aria-pressed={ocr.on} data-search="ocr-button" onClick={() => void toggle()}>
-            {ocr.on ? t("admin.search.ocr.turnOff") : t("admin.search.ocr.turnOn")}
-          </Button>
+          <div className="toolbar">
+            <Button busy={act.busy === "ocr"} aria-pressed={ocr.on} data-search="ocr-button" onClick={() => void toggle()}>
+              {ocr.on ? t("admin.search.ocr.turnOff") : t("admin.search.ocr.turnOn")}
+            </Button>
+            <Button busy={act.busy === "again"} data-search="rebuild-ocr" onClick={() => void again()}>
+              {t("admin.search.ocr.again")}
+            </Button>
+          </div>
         )}
       </Head>
       <dl className="admin-totals" data-search="ocr">
         <Row label={t("admin.search.ocr.installed")}>{yesNo(ocr.installed)}</Row>
         <Row label={t("admin.search.ocr.on")}>{yesNo(ocr.on)}</Row>
-        <Row label={t("admin.search.ocr.queued")}>{fmt.number(ocr.pages_queued)}</Row>
+        <Row label={t("admin.search.ocr.queued")} testid="ocr-queued">
+          {t("admin.search.ocr.queuedValue", { n: ocr.pages_queued, count: fmt.number(ocr.pages_queued) })}
+        </Row>
       </dl>
       {!ocr.installed && <p className="muted">{t("admin.search.ocr.notInstalled")}</p>}
       {act.error && <p role="alert">{act.error}</p>}

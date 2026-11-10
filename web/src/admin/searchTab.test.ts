@@ -29,6 +29,10 @@ const LOADING_NL =
   '<section aria-labelledby="admin-search-title"><h2 id="admin-search-title">Zoeken en foto&#x27;s</h2>' +
   '<p class="muted">Het overzicht van zoeken laden…</p></section>';
 
+// Keuze 24: zonder OCR in de worker (caps ocr false, of media uit) zegt /beheer dit
+const NIET_GEINSTALLEERD =
+  "OCR: niet geïnstalleerd. De mediaworker meldt geen OCR: media staat uit, of het image is ouder. Scans wachten tot OCR er is.";
+
 // De delen van Z7, in deze volgorde; "admin-search-rebuild" alleen met een herbouw
 const PARTS = [
   "admin-search-engine",
@@ -163,7 +167,7 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     expect(field(html, "hour-b")).toBe("5");
     expect(field(html, "hour-c")).toBe("6");
     expect(field(html, "hour-busy")).toBe("7");
-    expect(html).toContain("OCR zit niet in deze installatie.");
+    expect(html).toContain(NIET_GEINSTALLEERD);
     expect(field(html, "places")).toBe(
       `Geladen: GeoNames cities1000 (CC BY 4.0) en Natural Earth 5.1.1, gebouwd op ${fmt.date("2026-11-01")}.`,
     );
@@ -174,8 +178,10 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     for (const knop of ["rebuild-index", "retry", "failed-toggle", "pause-button", "rebuild-hash", "rebuild-geo"]) {
       expect(html).toContain(`data-search="${knop}"`);
     }
-    // Zonder OCR geen knop; zonder herbouw geen voortgang
+    // Zonder OCR geen knoppen; zonder herbouw geen voortgang
     expect(html).not.toContain('data-search="ocr-button"');
+    expect(html).not.toContain('data-search="rebuild-ocr"');
+    expect(field(html, "ocr-queued")).toBe("0 inhouden (PDF&#x27;s en foto&#x27;s)");
     expect(html).not.toContain('data-search="rebuild"');
   });
 
@@ -233,16 +239,28 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     expect(html).toContain('data-search="rebuild-index"');
   });
 
-  it("OCR zoals X1 het meldt: geïnstalleerd, aan, pagina's in de rij, met de knop", () => {
-    const uit = view(state({ ocr: { installed: true, on: false, pages_queued: 0 } }));
+  it("OCR zoals X1 het meldt: geïnstalleerd, aan, wat er in de rij staat, met de twee knoppen", () => {
+    const uit = view(state({ ocr: { installed: true, on: false, pages_queued: 1 } }));
     expect(uit).toMatch(/aria-pressed="false"[^>]*data-search="ocr-button"[^>]*>OCR aanzetten</);
-    expect(uit).not.toContain("OCR zit niet in deze installatie.");
+    expect(uit).toMatch(/data-search="rebuild-ocr"[^>]*>Alles opnieuw herkennen</);
+    expect(uit).not.toContain(NIET_GEINSTALLEERD);
+    expect(field(uit, "ocr-queued")).toBe("1 inhoud (een PDF of foto)");
     const aan = view(state({ ocr: { installed: true, on: true, pages_queued: 1234 } }));
     expect(aan).toMatch(/aria-pressed="true"[^>]*data-search="ocr-button"[^>]*>OCR uitzetten</);
+    expect(aan).toMatch(/data-search="rebuild-ocr"[^>]*>Alles opnieuw herkennen</);
     expect(aan).toContain(
       '<dl class="admin-totals" data-search="ocr"><div><dt>Geïnstalleerd</dt><dd>ja</dd></div>' +
-        "<div><dt>Aan</dt><dd>ja</dd></div><div><dt>Pagina&#x27;s in de rij</dt><dd>1.234</dd></div></dl>",
+        '<div><dt>Aan</dt><dd>ja</dd></div><div><dt>In de rij</dt><dd data-search="ocr-queued">' +
+        "1.234 inhouden (PDF&#x27;s en foto&#x27;s)</dd></div></dl>",
     );
+  });
+
+  it("OCR niet geïnstalleerd (ocr_missing, Keuze 24): de zin, en geen knoppen", () => {
+    const html = view(state({ ocr: { installed: false, on: false, pages_queued: 7 } }));
+    expect(html).toContain(NIET_GEINSTALLEERD);
+    expect(html).not.toContain('data-search="ocr-button"');
+    expect(html).not.toContain('data-search="rebuild-ocr"');
+    expect(field(html, "ocr-queued")).toBe("7 inhouden (PDF&#x27;s en foto&#x27;s)");
   });
 
   it("zonder plaatsnamen en zonder meting: wat Jonas kan doen", () => {
@@ -278,6 +296,11 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     expect(field(html, "rebuild")).toMatch(/^Place, camera and date: 50%, since /);
     expect(html).not.toMatch(/admin\.search|\{[a-z]+\}/);
     expect(view(state())).not.toMatch(/admin\.search|\{[a-z]+\}/);
+    const ocr = view(state({ ocr: { installed: true, on: true, pages_queued: 2 } }));
+    expect(field(ocr, "ocr-queued")).toBe("2 contents (PDFs and photos)");
+    expect(ocr).toMatch(/data-search="rebuild-ocr"[^>]*>Recognise everything again</);
+    expect(ocr).not.toMatch(/admin\.search|\{[a-z]+\}/);
+    expect(view(state())).toContain("OCR: not installed.");
   });
 });
 

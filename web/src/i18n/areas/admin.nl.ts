@@ -802,10 +802,12 @@ export default {
       title: "OCR",
       installed: "Geïnstalleerd",
       on: "Aan",
-      queued: "Pagina's in de rij",
+      queued: "In de rij",
+      queuedValue: { one: "{count} inhoud (een PDF of foto)", other: "{count} inhouden (PDF's en foto's)" },
       yes: "ja",
       no: "nee",
-      notInstalled: "OCR zit niet in deze installatie.",
+      notInstalled:
+        "OCR: niet geïnstalleerd. De mediaworker meldt geen OCR: media staat uit, of het image is ouder. Scans wachten tot OCR er is.",
       turnOn: "OCR aanzetten",
       turnOff: "OCR uitzetten",
       onTitle: "OCR aanzetten?",
@@ -813,6 +815,11 @@ export default {
       onConfirm: "Aanzetten",
       onToast: "OCR staat aan.",
       offToast: "OCR staat uit.",
+      again: "Alles opnieuw herkennen",
+      againTitle: "Alles opnieuw herkennen?",
+      againText:
+        "De gescande pagina's van PDF's worden opnieuw gelezen, en de foto's waar iemand om vroeg. Dat kost een tijd rekenwerk; zoeken vindt de oude tekst tot de nieuwe er is.",
+      againToast: "Het opnieuw herkennen is gestart.",
     },
     places: {
       title: "Plaatsnamen",

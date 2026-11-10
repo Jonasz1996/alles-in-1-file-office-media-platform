@@ -791,10 +791,12 @@ const en: Translation<typeof nl> = {
       title: "OCR",
       installed: "Installed",
       on: "On",
-      queued: "Pages in the queue",
+      queued: "In the queue",
+      queuedValue: { one: "{count} content (a PDF or photo)", other: "{count} contents (PDFs and photos)" },
       yes: "yes",
       no: "no",
-      notInstalled: "OCR is not part of this installation.",
+      notInstalled:
+        "OCR: not installed. The media worker reports no OCR: media is off, or the image is older. Scans wait until OCR is there.",
       turnOn: "Turn OCR on",
       turnOff: "Turn OCR off",
       onTitle: "Turn OCR on?",
@@ -802,6 +804,11 @@ const en: Translation<typeof nl> = {
       onConfirm: "Turn on",
       onToast: "OCR is on.",
       offToast: "OCR is off.",
+      again: "Recognise everything again",
+      againTitle: "Recognise everything again?",
+      againText:
+        "The scanned pages of PDFs are read again, and the photos someone asked for. This takes a while of computing; search finds the old text until the new text is there.",
+      againToast: "Recognising again has started.",
     },
     places: {
       title: "Place names",
