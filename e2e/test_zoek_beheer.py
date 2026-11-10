@@ -42,6 +42,10 @@ pytestmark = pytest.mark.zoek
 API = "/api/v1"
 ADMIN = f"{API}/admin/search"
 WACHT_S = 60.0
+# Na "Hervatten": de herbouw en de mislukte zijn binnen een paar seconden klaar. Hervatten wekt de
+# pompen van index en ocr (I1, S1); eerst kwam de pomp van de mislukte pas terug na
+# analysis.DEFER_S (30 s), en wachtte deze test daarop. Ruim onder die 30 s.
+HERVAT_S = 15.0
 N = 3_000  # meer nodes dan rebuild.CHUNK (2.000): de herbouw heeft twee stukken
 WOORD = "notulenwoordbeheer"  # alleen in de tekst van de docx die op failed komt
 ACTIEF = """() => {
@@ -93,15 +97,15 @@ def stand(beheer: Beheer) -> dict[str, Any]:
     return beheer.server.call(beheer.admin, "GET", ADMIN, expect=200).json()
 
 
-def wacht_op_stand(beheer: Beheer, klaar: Any, wat: str) -> dict[str, Any]:
-    eind = time.monotonic() + WACHT_S
+def wacht_op_stand(beheer: Beheer, klaar: Any, wat: str, wacht: float = WACHT_S) -> dict[str, Any]:
+    eind = time.monotonic() + wacht
     gezien: dict[str, Any] = {}
     while time.monotonic() < eind:
         gezien = stand(beheer)
         if klaar(gezien):
             return gezien
         time.sleep(0.2)
-    raise AssertionError(f"{wat} niet binnen {WACHT_S:.0f} s: {gezien}")
+    raise AssertionError(f"{wat} niet binnen {wacht:.0f} s: {gezien}")
 
 
 @pytest.fixture(scope="module")
@@ -358,6 +362,7 @@ def test_de_tab_met_alleen_het_toetsenbord(beheer: Beheer, browsers: Browsers) -
         beheer,
         lambda s: s["rebuild"] is None and s["index"]["text_done"] == s["index"]["text_total"],
         "het einde van de herbouw en de mislukte",
+        wacht=HERVAT_S,
     )
     assert eind["engine"] == "fts" and eind["paused"] is False
     assert eind["index"] == {

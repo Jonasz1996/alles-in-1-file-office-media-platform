@@ -140,6 +140,18 @@ def is_paused() -> bool:
     return bool(analysis.PAUSED.intersection(LANES))
 
 
+async def _wake_lanes(db: AsyncSession) -> None:
+    """Hervatten: de pomp van elke rij die de pauze stilzette, nu (zoals retry hieronder). Een
+    pomp die tijdens de pauze week, staat anders DEFER_S later; dan las de index na "Hervatten"
+    pas na een halve minuut weer (z7.md, Open na de samenvoeging). Pas na apply_pause(False):
+    een pomp die eerder loopt, ziet de pauze nog en wijkt opnieuw. In de transactie van de
+    aanroeper."""
+    moment = now()
+    lanes = {reg.lane for reg in analysis.registered().values()} & set(LANES)
+    for lane in sorted(lanes):
+        await analysis._wake(db, lane, moment)
+
+
 # --- De stand ------------------------------------------------------------------------------------
 
 
@@ -268,7 +280,7 @@ async def state(db: AsyncSession, settings: Settings) -> AdminSearch:
 
 async def change(db: AsyncSession, body: AdminSearchPatch) -> None:
     """De velden die gezet zijn. Een deel van X1, X2 of X3 dat zich niet aanmeldde, geeft 501
-    not_built vóór er iets verandert."""
+    not_built vóór er iets verandert. Hervatten wekt daarna de pompen van index en ocr."""
     switches = {
         part: getattr(body, field)
         for field, part in hooks.ADMIN_SWITCHES.items()
@@ -281,6 +293,9 @@ async def change(db: AsyncSession, body: AdminSearchPatch) -> None:
         await _store(db, paused=body.paused)
         await db.commit()
         apply_pause(body.paused)
+        if not body.paused:
+            await _wake_lanes(db)
+            await db.commit()
         log.info("Zoeken: achtergrondwerk %s", "gepauzeerd" if body.paused else "weer aan")
     # De schakelaars van X1, X2 en X3 werken in deze transactie (search.hooks); hier vast
     for part, value in switches.items():

@@ -249,6 +249,67 @@ async def test_pauze_zet_de_rijen_index_en_ocr_stil_en_blijft_na_een_herstart(
     assert await analysis.pump(settings, "index") == 0
 
 
+async def queued_pumps(settings) -> dict[str, list[datetime]]:
+    """De pompen van de rijen index en ocr die klaarstaan, met hun run_after (in UTC)."""
+    pompen = [analysis.pump_type(lane) for lane in search_admin.LANES]
+    async with maker(settings)() as s:
+        rows = await s.execute(
+            sa.select(Job.type, Job.run_after).where(Job.type.in_(pompen), Job.status == "queued")
+        )
+        found: dict[str, list[datetime]] = {pomp: [] for pomp in pompen}
+        for kind, at in rows.all():
+            found[kind].append(at if at.tzinfo else at.replace(tzinfo=UTC))
+    return found
+
+
+async def test_hervatten_wekt_de_pompen_van_index_en_ocr(client, admin, settings, monkeypatch):
+    """Een pomp die tijdens de pauze aan de beurt kwam, week (jobs.Defer) en staat DEFER_S later.
+    "Hervatten" zet hem op nu, voor de rij index en de rij ocr, zoals "Mislukte opnieuw" dat doet;
+    er komt geen tweede pomp bij. De pomp wordt pas gewekt als de pauze uit het geheugen is (anders
+    kan hij nog wijken). Eerst las de index na hervatten pas een halve minuut later weer (z7.md,
+    Open na de samenvoeging; I1, S1)."""
+    from app.ocr import step as ocr_step
+
+    # zoals main.py; een eerdere test kan analysis.reset() gedaan hebben
+    extract_step.register()
+    ocr_step.register()
+    headers, _ = admin
+    r = await client.patch(ADMIN, json={"paused": True}, headers=headers)
+    assert r.status_code == 200
+    # Werk komt binnen: de pomp staat op nu, draait, en wijkt voor de pauze
+    async with maker(settings)() as s:
+        for lane in search_admin.LANES:
+            await analysis._wake(s, lane, datetime.now(UTC))
+        await s.commit()
+    for lane in search_admin.LANES:
+        assert await jobs.run_pending(settings, lane=lane) == 1, lane
+    voor = datetime.now(UTC)
+    for pomp, at in (await queued_pumps(settings)).items():
+        assert len(at) == 1 and at[0] > voor + timedelta(seconds=analysis.DEFER_S - 5), (pomp, at)
+
+    gezien: list[tuple[str, set[str]]] = []
+    echt = analysis._wake
+
+    async def wake(db, lane, at):
+        gezien.append((lane, set(analysis.PAUSED)))
+        await echt(db, lane, at)
+
+    monkeypatch.setattr(analysis, "_wake", wake)
+    r = await client.patch(ADMIN, json={"paused": False}, headers=headers)
+    assert r.status_code == 200 and r.json()["paused"] is False
+    na = datetime.now(UTC)
+    for pomp, at in (await queued_pumps(settings)).items():
+        assert len(at) == 1 and at[0] <= na, (pomp, at, na)
+    assert gezien == [("index", set()), ("ocr", set())]
+    # En de pomp van index loopt nu echt (zonder werk: klaar, geen nieuwe job)
+    assert await jobs.run_pending(settings, lane="index") == 1
+    assert (await queued_pumps(settings))[analysis.pump_type("index")] == []
+    # Pauzeren wekt niets
+    gezien.clear()
+    r = await client.patch(ADMIN, json={"paused": True}, headers=headers)
+    assert r.status_code == 200 and gezien == []
+
+
 async def test_zonder_x1_x2_en_x3_geeft_hun_schakelaar_501_en_verandert_niets(
     client, admin, monkeypatch
 ):
