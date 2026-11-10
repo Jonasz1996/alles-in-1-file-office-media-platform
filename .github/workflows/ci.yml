@@ -207,7 +207,8 @@ jobs:
   # Fase 6, spike Z0 (bouwontwerp §3.7): zoeken op de SQLite van het image. python:3.12-slim is
   # de basis van het Dockerfile (Debian 13, SQLite 3.46.1). De plannen met en zonder ANALYZE
   # (S4), de twee vormen per woord (S8), het schema van de zoekbench (S9) en de landsgrenzen
-  # (S6, test met een eigen bron); dan de metingen met marker zoek_perf: de echte tijdsgrenzen
+  # (S6, test met een eigen bron); churn en de triggers (§4.6, marker triggers, zonder
+  # zoek_perf); dan de metingen met marker zoek_perf: de echte tijdsgrenzen
   # (S1), de herbouw van 100.000 (S2), de migratie van 100.000 (S3) en het zaad van 100.000 van
   # app/search/bench.py in < 3 minuten (S7); de vormen van Keuze 4a (S10) met
   # tools/zoekbench/bench.py --vormen; en world-110m.<hash>.json uit Natural Earth (S6, ≤ 60 kB
@@ -218,7 +219,8 @@ jobs:
     container: python:3.12-slim
     # §4.4 (Z1) bouwt een boom van 100.000 en meet zes rollen over HTTP: ±20 min op 3 cores; de
     # herinneringen (Z6) bouwen er nog een en meten één route: ±3 min; de kaart en de duplicaten
-    # (Z3) ook: elk ±2,5 min
+    # (Z3) ook: elk ±2,5 min. Churn en de triggers (§4.6, I1): ±3,5 min (lokaal 34 tests in 202 s
+    # op één core, churn alleen 153 s). De job duurde op 16ccb8d 18 min 43 s
     timeout-minutes: 75
     env:
       UV_PYTHON_PREFERENCE: only-system
@@ -252,6 +254,16 @@ jobs:
           taskset -c "$CORES" uv run pytest -q -s tests/search/test_spike_plannen.py \
             tests/search/test_spike_vouwen.py tests/search/test_zoekbench.py tests/search/test_spike_kaart.py \
             | tee "$RUNNER_TEMP/zoek-perf/plannen.txt"
+      # §4.6 (integratie I1): churn en de hele set triggers op 3.46.1. Marker triggers zet
+      # tests/search/conftest.py (de bestanden migration_0010, *trigger* en *churn*). Dezelfde
+      # uitsluitingen als MARKERS_DB in e2e/slim.sh: de metingen met zoek_perf in die bestanden
+      # (S2, S3) draait de stap hierna al, één keer
+      - name: Churn en de triggers op 3.46.1 (marker triggers, §4.6)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          taskset -c "$CORES" uv run pytest -q -m "triggers and not zoek_perf and not media and not media_perf and not ocr" \
+            tests/search -rs | tee "$RUNNER_TEMP/zoek-perf/triggers.txt"
       - name: S1, S2, S3 en S7 (marker zoek_perf)
         if: ${{ !cancelled() }}
         run: |
@@ -315,7 +327,8 @@ jobs:
           cat "$d/versie.txt" 2> /dev/null || echo "(geen versie)"
           echo "S4, S8, S9, S6: $(tail -n 1 "$d/plannen.txt" 2> /dev/null || echo "liep niet")"
           grep -E "^ *(S4 op|laatste jaar|langs de tijd|type),? " "$d/plannen.txt" 2> /dev/null || true
-          echo "zoek_perf (S1, S2, S3, S7): $(tail -n 1 "$d/zoek_perf.txt" 2> /dev/null || echo "liep niet")"
+          echo "churn en de triggers (§4.6): $(tail -n 1 "$d/triggers.txt" 2> /dev/null || echo "liep niet")"
+          echo "zoek_perf (S1, S2, S3, S7):$(tail -n 1 "$d/zoek_perf.txt" 2> /dev/null || echo "liep niet")"
           grep -E "^[.FEsx]*(S1|S2|S7) " "$d/zoek_perf.txt" 2> /dev/null | sed 's/^[.FEsx]*//' || true
           grep -E "^[0-9.]+s call " "$d/zoek_perf.txt" 2> /dev/null || true
           sed -n '/^=== zoekbench ===/,$p' "$d/bench.txt" 2> /dev/null || echo "S10: de bench liep niet"
