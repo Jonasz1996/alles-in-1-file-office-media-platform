@@ -15,6 +15,7 @@ eerst) en geeft hem meteen door.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import random
 import threading
@@ -740,3 +741,37 @@ async def test_herbouw_schrijft_als_achtergrond(settings, client, admin, monkeyp
     begin = next(i for i, (what, _) in enumerate(log) if "cursor = 0" in what)
     stuk = next(i for i, (what, _) in enumerate(log) if "cursor = cursor" in what)
     assert begin < [i for i, (what, _) in enumerate(log) if what == "pauze"][0] < stuk, log
+
+
+async def test_opruimen_zonder_wezen_pakt_het_blobslot_niet(settings, client, admin, monkeypatch):
+    """Elke upload eindigt met collect_garbage. Zonder blob met ref_count 0 neemt die het slot
+    niet: het wachtte op wie het had (een PATCH met zijn commit). Met een wees wel, en die gaat
+    ook van schijf."""
+    headers, _ = admin
+    top = (await test_files.root(client, headers))["folder"]["id"]
+    taken: list[int] = []
+
+    class Counting(dbgate.BoostLock):
+        async def __aenter__(self):
+            taken.append(1)
+            return await super().__aenter__()
+
+    monkeypatch.setattr(BlobStore, "_locks", {settings.blob_dir: Counting()})
+    monkeypatch.setattr(files, "MAX_VERSIONS", 1)
+    blobs = BlobStore(settings.blob_dir)
+
+    async def put(data: bytes, **params) -> int:
+        taken.clear()
+        r = await test_files.put(client, headers, top, "a.txt", data, **params)
+        assert r.status_code in (200, 201), r.text
+        return len(taken)
+
+    assert await put(b"een") == 1  # nieuw bestand
+    assert await put(b"twee", conflict="replace") == 1  # "een" wordt een versie
+    first = blobs.path(hashlib.sha256(b"een").hexdigest())
+    assert first.exists()
+    # Met MAX_VERSIONS 1 valt "een" nu weg: een wees, dus opruimen met het slot
+    assert await put(b"drie", conflict="replace") == 2
+    assert not first.exists()
+    async with maker(settings)() as s:
+        assert await s.scalar(text("SELECT count(*) FROM blob WHERE ref_count <= 0")) == 0

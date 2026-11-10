@@ -1473,7 +1473,15 @@ async def drop_versions(session: AsyncSession, node_ids: list[uuid.UUID]) -> Cou
 async def collect_garbage(session: AsyncSession, blobs: BlobStore) -> None:
     """Verwijdert blobs waar niemand meer naar verwijst. De database beslist: alleen een rij
     met ref_count 0 waar ook echt geen bestand of versie naar wijst, gaat weg, en pas als dat
-    vastligt ook de inhoud op schijf."""
+    vastligt ook de inhoud op schijf.
+
+    Is er geen enkele rij met ref_count 0, dan niet eens het slot (elke upload komt hier; het
+    slot wachtte op wie het had, met zijn commit erbij: de nacontrole van golf 4). Zo'n rij
+    ontstaat alleen door een verlaging die gecommit is, en wie verlaagt, roept dit na zijn
+    eigen commit aan: een rij van een ander die hier net gemist wordt, ruimt die ander op."""
+    if (await session.scalar(select(Blob.sha256).where(Blob.ref_count <= 0).limit(1))) is None:
+        await session.commit()  # de leestransactie dicht (PostgreSQL); in SQLite niets
+        return
     async with blobs.lock:
         orphans = (await session.scalars(select(Blob.sha256).where(Blob.ref_count <= 0))).all()
         gone = []
