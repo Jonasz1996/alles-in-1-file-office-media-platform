@@ -736,6 +736,25 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
       komt pas vóór de eerste schrijfactie. Leest het laatste stuk `next` daarvoor, dan mist de
       index een node die er net bij kwam (in de test 3 in `fts_node`, 18 in `fts_name`). Bij
       100.000 nodes is het langste stuk 201–294 ms en wacht een upload tot 687 ms.
+    - **Aangevuld na de nacontrole van golf 4.** De pauze alleen geeft een wachtende upload de
+      schrijver niet: SQLite heeft geen rij, en de busy handler slaapt tot 100 ms per poging. Met
+      een trage `fsync` wachtte een upload zo meer dan 1 s (z7.md). Daarom gaat in de app elke
+      schrijfactie door een schrijfpoort (`app/dbgate.py`): één rij per proces, verzoeken vóór
+      achtergrondwerk (de herbouw, wat een Runner draait, Keuze 20), bij het vrijgeven meteen
+      door naar de volgende, en na 5 s `database is locked` zoals eerst. Het checkpoint van de
+      WAL doet een eigen verbinding (PASSIVE, hooguit eens per seconde), niet meer een COMMIT
+      (`wal_autocheckpoint=0`). Een schrijver in een ander proces (de CLI) gaat nog via de busy
+      handler.
+    - **Na de review van de schrijfpoort.** Wie op `BlobStore.lock` of een gebruikersslot wacht
+      of het heeft, telt als een verzoek dat eraan komt: een vrije poort gaat dan niet naar de
+      achtergrond, hooguit 0,2 s per keer en binnen de reeks van 8. Anders wachtte bij vier
+      uploaders de ene na de andere op een hele schrijfactie van de achtergrond (tot 1,24 s). De
+      grens van 1 s hangt aan de schijf: een schrijfactie die bezig is, wordt niet onderbroken,
+      en elke commit doet een `fsync` (WAL, synchronous FULL). Hij houdt tot ±200 ms extra per
+      `fsync` (de tekst van 1 MiB bij 11 nodes langs het UPDATE-pad 0,66–0,72 s, een upload
+      erachter tot 0,9 s); bij +300 ms, of als een ander proces gigabytes naar dezelfde schijf
+      schrijft, niet (z2.md Open 12, z1.md). `synchronous=NORMAL` haalt die `fsync` weg, maar dan
+      kan een commit na stroomuitval weg zijn; die keuze is niet gemaakt.
 13. **Logs, grenzen en tijden** (herzien in r2: S12, S16).
     - **Logs.** Voor elk pad onder `/api/v1/search`, `/api/v1/photos` en `/api/v1/people` gaat de
       hele query string uit de toegangslog (`?***`). Zo staan `q`, `bbox`, `z`, `place`,
@@ -861,7 +880,8 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
       en wie het langst niet aan de beurt was, gaat voor. Binnen een eigenaar de nieuwste eerst.
       Een nieuwe upload van Bram wacht zo hooguit één batch op de 100 trage PDF's van Eva.
     - Elke blob wordt geschreven in een eigen korte transactie (via `write_text()`, Keuze 3),
-      zodat de schrijver vrij blijft (WAL, één schrijver).
+      zodat de schrijver vrij blijft (WAL, één schrijver). **Na de nacontrole van golf 4:** kort
+      alleen is niet genoeg; de pomp schrijft als achtergrond door de schrijfpoort (Keuze 12).
     - Zolang hij loopt, geeft `/search` `indexing: {"done": 0.43}`.
     - Poort over de hele keten (starten, lezen, schrijven): ≥ 1.000 documenten per minuut per
       core; verwachting 1.500–2.000 (§4.5, §3.10).

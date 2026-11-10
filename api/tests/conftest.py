@@ -61,6 +61,20 @@ def _geen_mismatch(request):
     check(handler.lines, "mismatch_verwacht" in request.fixturenames)
 
 
+@pytest.fixture(autouse=True)
+def _schrijfpoort():
+    """Geen schrijfactie buiten de schrijfpoort van SQLite (app/dbgate.py), geen tweede
+    verbinding die schrijft terwijl dezelfde taak de poort heeft, en niet wachten op
+    BlobStore.lock of een gebruikersslot met de poort in handen: dat kan vastlopen tot de
+    poort na 5 s opgeeft. Een test die dat expres doet, haalt het zelf op (take_violations)."""
+    from app import dbgate
+
+    dbgate.take_violations()
+    yield
+    found = [v for v in dbgate.take_violations() if v[0] in ("ungated", "same_task", "lock_in_txn")]
+    assert not found, f"schrijfpoort: {found}"
+
+
 @pytest.fixture
 def mismatch_verwacht():
     """Deze test lokt search_access_mismatch expres uit en controleert de regel zelf."""

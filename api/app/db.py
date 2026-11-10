@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
+from app import dbgate
 from app.config import Settings, get_settings
 
 
@@ -37,7 +38,13 @@ def _engine(url: str) -> AsyncEngine:
             cur.execute("PRAGMA journal_mode=WAL")
             cur.execute("PRAGMA foreign_keys=ON")
             cur.execute("PRAGMA busy_timeout=5000")
+            # Het checkpoint van de WAL niet in een COMMIT, terwijl die het schrijfslot heeft:
+            # dat doet de checkpointer van app/dbgate.py, op een eigen verbinding
+            cur.execute("PRAGMA wal_autocheckpoint=0")
             cur.close()
+
+        # Eén schrijver tegelijk, op volgorde (de nacontrole van golf 4, app/dbgate.py)
+        dbgate.install(engine)
 
     return engine
 

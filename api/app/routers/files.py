@@ -39,6 +39,7 @@ from app import access, errors, events, photodate, previews
 from app.access import Grant, Step
 from app.config import Settings, get_settings
 from app.db import Session
+from app.dbgate import BoostLock
 from app.media import hooks as media_hooks
 from app.mime import read_head, sniff
 from app.models import Blob, GroupMember, Node, NodeTag, Share, Tag, Upload, User, Version
@@ -87,11 +88,12 @@ MOVED = {
 # Per eigenaar: quotum controleren en ruimte innemen in één keer (hervatbare uploads
 # reserveren, kopiëren maakt de kopie), zodat twee verzoeken samen niet over het quotum gaan.
 # Ook als anderen in een gedeelde map van die eigenaar uploaden: het is zijn quotum.
-user_locks: dict[uuid.UUID, asyncio.Lock] = {}
+# Wie het heeft, schrijft als voorgrond (BoostLock, app/dbgate.py).
+user_locks: dict[uuid.UUID, BoostLock] = {}
 
 
-def user_lock(user_id: uuid.UUID) -> asyncio.Lock:
-    return user_locks.setdefault(user_id, asyncio.Lock())
+def user_lock(user_id: uuid.UUID) -> BoostLock:
+    return user_locks.setdefault(user_id, BoostLock())
 
 
 def _utc(value: datetime) -> datetime:
@@ -1471,7 +1473,15 @@ async def drop_versions(session: AsyncSession, node_ids: list[uuid.UUID]) -> Cou
 async def collect_garbage(session: AsyncSession, blobs: BlobStore) -> None:
     """Verwijdert blobs waar niemand meer naar verwijst. De database beslist: alleen een rij
     met ref_count 0 waar ook echt geen bestand of versie naar wijst, gaat weg, en pas als dat
-    vastligt ook de inhoud op schijf."""
+    vastligt ook de inhoud op schijf.
+
+    Is er geen enkele rij met ref_count 0, dan niet eens het slot (elke upload komt hier; het
+    slot wachtte op wie het had, met zijn commit erbij: de nacontrole van golf 4). Zo'n rij
+    ontstaat alleen door een verlaging die gecommit is, en wie verlaagt, roept dit na zijn
+    eigen commit aan: een rij van een ander die hier net gemist wordt, ruimt die ander op."""
+    if (await session.scalar(select(Blob.sha256).where(Blob.ref_count <= 0).limit(1))) is None:
+        await session.commit()  # de leestransactie dicht (PostgreSQL); in SQLite niets
+        return
     async with blobs.lock:
         orphans = (await session.scalars(select(Blob.sha256).where(Blob.ref_count <= 0))).all()
         gone = []

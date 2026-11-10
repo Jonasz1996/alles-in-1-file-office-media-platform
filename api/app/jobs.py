@@ -55,6 +55,7 @@ from sqlalchemy import and_, bindparam, case, delete, event, false, func, or_, s
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session as OrmSession
 
+from app import dbgate
 from app.config import Settings
 from app.db import get_engine
 from app.models import Job
@@ -731,6 +732,8 @@ class Runner:
         return bool(self._tasks) and not any(task.done() for task in self._tasks)
 
     async def _work(self) -> None:
+        # Achtergrondwerk: schrijft na de verzoeken (app/dbgate.py), ook de taken die dit start
+        dbgate.mark_background()
         while True:
             if stopping():
                 # stop() gaf het sein, maar een taak slikte de CancelledError: niets meer
@@ -749,6 +752,7 @@ class Runner:
                 await self._wake.wait()
 
     async def _housekeeping(self) -> None:
+        dbgate.mark_background()
         last: dict[str, float] = {}
         while True:
             await run_housekeeping(self.settings, last)
