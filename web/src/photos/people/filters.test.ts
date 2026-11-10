@@ -3,11 +3,13 @@ import { api } from "../../api";
 import type { PhotoItem, PhotoPage } from "../api";
 import { cursorOf, MAX_RANGE } from "../range";
 import {
+  cameraOrNull,
   dayOrNull,
   filterCount,
   filteredApi,
   filterQuery,
   hasFilters,
+  MAX_CAMERA,
   NO_FILTERS,
   pagedIds,
   sameFilters,
@@ -43,7 +45,7 @@ describe("de filters op /fotos (Keuze 43)", () => {
   });
 
   it("personen (EN), soort en periode met dezelfde namen als /search", () => {
-    const f = { person: ["p1", "p2"], type: "video" as const, from: "2024-01-01", to: "2024-12-31" };
+    const f = { ...NO_FILTERS, person: ["p1", "p2"], type: "video" as const, from: "2024-01-01", to: "2024-12-31" };
     expect(hasFilters(f)).toBe(true);
     expect(filterCount(f)).toBe(4);
     expect(filterQuery(f)).toBe("?person=p1&person=p2&type=video&from=2024-01-01&to=2024-12-31");
@@ -68,6 +70,45 @@ describe("de filters op /fotos (Keuze 43)", () => {
     expect(sameFilters(NO_FILTERS, { ...NO_FILTERS, type: "image" })).toBe(false);
   });
 
+  // I1 (S7): plaats, land en camera, met de namen van GET /search (de filters van Z3)
+  it("plaats, land en camera: elk één filter, met dezelfde namen als /search", () => {
+    const f = { ...NO_FILTERS, place: 2759794, country: "NL", camera: "fujifilm x-t30" };
+    expect(hasFilters(f)).toBe(true);
+    expect(filterCount(f)).toBe(3);
+    expect(filterQuery(f)).toBe("?place=2759794&country=NL&camera=fujifilm+x-t30");
+    expect(filterQuery({ ...f, person: ["p1"], type: "image" }, { month: "2024-06" })).toBe(
+      "?month=2024-06&person=p1&type=image&place=2759794&country=NL&camera=fujifilm+x-t30",
+    );
+    for (const one of [{ place: 1 }, { country: "BE" }, { camera: "canon" }]) {
+      const g = { ...NO_FILTERS, ...one };
+      expect(hasFilters(g)).toBe(true);
+      expect(filterCount(g)).toBe(1);
+    }
+    // Plaats 0 is een id als elk ander (geen "niets")
+    expect(filterQuery({ ...NO_FILTERS, place: 0 })).toBe("?place=0");
+    expect(hasFilters({ ...NO_FILTERS, place: 0 })).toBe(true);
+  });
+
+  it("sameFilters ziet een andere plaats, een ander land en een andere camera", () => {
+    const f = { ...NO_FILTERS, place: 1, country: "NL", camera: "canon" };
+    expect(sameFilters(f, { ...f })).toBe(true);
+    expect(sameFilters(f, { ...f, place: 2 })).toBe(false);
+    expect(sameFilters(f, { ...f, place: null })).toBe(false);
+    expect(sameFilters(f, { ...f, country: "BE" })).toBe(false);
+    expect(sameFilters(f, { ...f, camera: "canon eos" })).toBe(false);
+    expect(sameFilters(NO_FILTERS, { ...NO_FILTERS, camera: "canon" })).toBe(false);
+  });
+
+  it("het veld Camera: witruimte samen en eromheen weg, leeg is geen filter, hooguit 200 tekens", () => {
+    expect(cameraOrNull("  Canon   EOS\t5D ")).toBe("Canon EOS 5D");
+    expect(cameraOrNull("")).toBeNull();
+    expect(cameraOrNull(" \n\t ")).toBeNull();
+    expect(MAX_CAMERA).toBe(200);
+    expect(cameraOrNull("x".repeat(250))).toBe("x".repeat(MAX_CAMERA));
+    // Afgekapt op een spatie: geen spatie op het eind
+    expect(cameraOrNull(`${"x".repeat(199)} y`)).toBe("x".repeat(199));
+  });
+
   it("met filters vraagt de tijdlijn /photos en /photos/months met de filters", async () => {
     const calls: string[] = [];
     vi.spyOn(api, "request").mockImplementation(async (_m: string, path: string) => {
@@ -78,10 +119,15 @@ describe("de filters op /fotos (Keuze 43)", () => {
     await filteredApi.months(f);
     await filteredApi.page(f, "2024-06", null);
     await filteredApi.months(NO_FILTERS);
+    const g = { ...NO_FILTERS, country: "NL", camera: "canon" };
+    await filteredApi.months(g);
+    await filteredApi.page(g, "2024-06", null);
     expect(calls).toEqual([
       "/api/v1/photos/months?person=p1",
       "/api/v1/photos?month=2024-06&limit=500&person=p1",
       "/api/v1/photos/months",
+      "/api/v1/photos/months?country=NL&camera=canon",
+      "/api/v1/photos?month=2024-06&limit=500&country=NL&camera=canon",
     ]);
   });
 });

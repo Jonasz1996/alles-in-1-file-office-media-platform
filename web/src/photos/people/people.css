@@ -264,6 +264,11 @@
   margin: 0;
 }
 
+/* Land en Plaats (I1, S7): een lange plaatsnaam maakt de keuzelijst niet breder dan de balk */
+.photo-filters select {
+  max-width: min(16rem, 100%);
+}
+
 .filter-chips {
   display: flex;
   flex-wrap: wrap;

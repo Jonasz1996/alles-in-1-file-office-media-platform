@@ -35,6 +35,9 @@ describe("de plekken van Z6", () => {
     expect(photosPage).toContain('Promise.all([import("./Memories"), areas])');
     expect(photosPage).not.toMatch(/^import (?!type )[^;]*from "\.\/(people\/FilterBar|Memories)";/m);
     expect(photosPage).toContain("await topWait.current;");
+    // I1 (S7): de plaatsen voor Land en Plaats komen met de rest van loadTop, in dezelfde commit
+    expect(photosPage).toMatch(/places\(\)\.then\(\s*\(r\) => r\.places,\s*\(\) => \[\],\s*\)/);
+    expect(photosPage).toContain("<Bar filters={filters} onChange={changeFilters} places={top?.places} />");
     expect(photosPage).toContain('to="/zoeken?mode=image"');
     // De ingangen naar de kaart en de duplicaten (golf 3), elk een gewone link
     expect(photosPage).toContain('<Link to="/fotos/kaart" className="btn">');
@@ -74,6 +77,54 @@ describe("de filters op /fotos", () => {
     expect(html).toContain("2 filters aan");
     expect(html).toContain("Filters wissen");
     expect(html).toMatch(/<option value="video" selected="">Alleen video&#x27;s<\/option>/);
+  });
+
+  // I1 (S7): Land en Plaats uit de plaatsen van je foto's, en het veld Camera
+  const AMSTERDAM = { id: 2759794, name: "Amsterdam", admin1: "Noord-Holland", country: "NL", n: 2 };
+  const GENT = { id: 2797656, name: "Gent", admin1: "Vlaanderen", country: "BE", n: 1 };
+
+  it("zonder plaatsen geen Land en Plaats; Camera staat er altijd, met uitleg voor de schermlezer", async () => {
+    await loadAreas(["photos_people"]);
+    const html = renderToStaticMarkup(createElement(FilterBar, { filters: NO_FILTERS, onChange: () => {} }));
+    expect(html).not.toContain(">Land</label>");
+    expect(html).not.toContain(">Plaats</label>");
+    expect(html).toMatch(/<label for="([^"]+)-camera">Camera<\/label><input id="\1-camera" type="text"/);
+    expect(html).toMatch(/maxLength="200"/);
+    expect(html).toMatch(/aria-describedby="([^"]+)-camera-hint"/);
+    expect(html).toContain(
+      'class="sr-only">Merk en model, of de eerste woorden ervan (bijvoorbeeld canon). Telt als je op Enter drukt of het veld verlaat.</span>',
+    );
+  });
+
+  it("met plaatsen: Land en Plaats als keuzelijst, een land maakt de lijst Plaatsen korter", async () => {
+    await loadAreas(["photos_people"]);
+    const places = [AMSTERDAM, GENT];
+    const alle = renderToStaticMarkup(createElement(FilterBar, { filters: NO_FILTERS, onChange: () => {}, places }));
+    expect(alle).toMatch(
+      /<label for="[^"]+-land">Land<\/label><select id="[^"]+-land"><option value="" selected="">Alle landen<\/option><option value="BE">België<\/option><option value="NL">Nederland<\/option><\/select>/,
+    );
+    expect(alle).toMatch(
+      /<label for="[^"]+-plaats">Plaats<\/label><select id="[^"]+-plaats"><option value="" selected="">Alle plaatsen<\/option><option value="2759794">Amsterdam, Noord-Holland<\/option><option value="2797656">Gent, Vlaanderen<\/option><\/select>/,
+    );
+    expect(alle).not.toContain("Filters wissen");
+
+    const filters = { ...NO_FILTERS, country: "NL", place: AMSTERDAM.id, camera: "fujifilm" };
+    const html = renderToStaticMarkup(createElement(FilterBar, { filters, onChange: () => {}, places }));
+    expect(html).toContain('<option value="NL" selected="">Nederland</option>');
+    expect(html).toContain('<option value="2759794" selected="">Amsterdam, Noord-Holland</option>');
+    expect(html).not.toContain("Gent, Vlaanderen");
+    expect(html).toMatch(/<input id="[^"]+-camera" type="text" maxLength="200" autoComplete="off" spellCheck="false" aria-describedby="[^"]+-camera-hint" value="fujifilm"\/>/);
+    expect(html).toContain("3 filters aan");
+    expect(html).toContain("Filters wissen");
+  });
+
+  it("de volgorde in de balk: Persoon, Soort, de periode, Land, Plaats, Camera", async () => {
+    await loadAreas(["photos_people"]);
+    const html = renderToStaticMarkup(
+      createElement(FilterBar, { filters: NO_FILTERS, onChange: () => {}, places: [AMSTERDAM] }),
+    );
+    const labels = [...html.matchAll(/<label[^>]*>([^<]+)<\/label>/g)].map((m) => m[1]);
+    expect(labels).toEqual(["Persoon", "Soort", "Vanaf", "Tot en met", "Land", "Plaats", "Camera"]);
   });
 
   it("het blok Foto's toont eerst alleen zijn kop (de instellingen komen van de API)", async () => {
