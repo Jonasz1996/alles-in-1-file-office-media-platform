@@ -10,6 +10,8 @@ Wat er gebeurt:
    weigert het, tenzij --leegmaken: dan gaan eerst alle tabellen van het platform weg.
 3. Elke tabel van de modellen gaat over in stukken van BATCH rijen, in de volgorde van de
    foreign keys, met de types van de modellen (tijden, ja/nee en JSON worden echte waarden).
+   De foreign keys gaan pas aan het eind na (uitgesteld), want een map kan een hoger id hebben
+   dan wat erin staat; daarna zijn ze weer zoals Alembic ze maakte.
    Berekende kolommen (node.ftype) rekent PostgreSQL zelf.
 4. De reeksen van de primaire sleutels komen achter de hoogste id, en per tabel moet het aantal
    rijen in bron en doel gelijk zijn; anders faalt het commando.
@@ -100,6 +102,39 @@ def _copyable(table) -> list:
     return [c for c in table.columns if c.computed is None]
 
 
+def _quote(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+async def _defer_foreign_keys(conn: AsyncConnection) -> list[tuple[str, str]]:
+    """Maakt de foreign keys van het schema even uitstelbaar en stelt ze uit tot het eind."""
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT c.conrelid::regclass::text, c.conname FROM pg_constraint c "
+                "JOIN pg_namespace n ON n.oid = c.connamespace "
+                "WHERE c.contype = 'f' AND NOT c.condeferrable AND n.nspname = current_schema()"
+            )
+        )
+    ).all()
+    for table, name in rows:
+        await conn.execute(text(f"ALTER TABLE {table} ALTER CONSTRAINT {_quote(name)} DEFERRABLE"))
+    await conn.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+    return [(t, n) for t, n in rows]
+
+
+async def _restore_foreign_keys(conn: AsyncConnection, deferred: list[tuple[str, str]]) -> None:
+    """Controleert de uitgestelde foreign keys nu en zet ze terug zoals Alembic ze maakte."""
+    try:
+        await conn.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    except Exception as e:  # noqa: BLE001
+        raise CopyError(f"foreign keys kloppen niet na het kopiëren: {e.__cause__ or e}") from e
+    for table, name in deferred:
+        await conn.execute(
+            text(f"ALTER TABLE {table} ALTER CONSTRAINT {_quote(name)} NOT DEFERRABLE")
+        )
+
+
 async def _fix_sequences(conn: AsyncConnection, table) -> None:
     for col in table.primary_key.columns:
         seq = (
@@ -172,16 +207,10 @@ async def db_copy(
                 }
                 for name in src_names
             }
-            # Zonder foreign-key-triggers tijdens het kopiëren: een map kan een hoger id hebben
-            # dan wat erin staat (verplaatsen). Mag dat niet (geen superuser), dan gaat het op
-            # volgorde van de primaire sleutel, wat bij de meeste data volstaat.
-            try:
-                async with dst.begin_nested():
-                    await dst.execute(text("SET LOCAL session_replication_role = replica"))
-            except Exception:  # noqa: BLE001
-                say(
-                    "Let op: geen rechten om foreign keys even uit te zetten; kopiëren op volgorde."
-                )
+            # Foreign keys pas aan het eind controleren: een map kan een hoger id hebben dan wat
+            # erin staat (verplaatsen), dus op volgorde kopiëren volstaat niet. Daarvoor is
+            # geen superuser nodig, alleen eigenaar van de tabellen (Alembic maakte ze net).
+            deferred = await _defer_foreign_keys(dst)
             for table in Base.metadata.sorted_tables:
                 if table.name not in src_names:
                     continue
@@ -195,6 +224,7 @@ async def db_copy(
                     copied += len(part)
                 result.rows[table.name] = copied
                 await _fix_sequences(dst, table)
+            await _restore_foreign_keys(dst, deferred)
             for name, count in result.rows.items():
                 table = Base.metadata.tables[name]
                 got = (await dst.execute(select(func.count()).select_from(table))).scalar_one()

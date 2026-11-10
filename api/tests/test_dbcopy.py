@@ -7,6 +7,7 @@ import uuid
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.engine import make_url
 
 from app import db
 from app.config import Settings
@@ -133,6 +134,44 @@ async def test_copy_to_postgres(sqlite_with_data):
     finally:
         db._engine.cache_clear()
         await _database(name, drop=True)
+
+
+async def test_copy_without_superuser(sqlite_with_data):
+    """Zoals op het cluster: de gebruiker is eigenaar van de database, geen superuser. Een keten
+    van mappen die elk in de vorige staan, komt dan toch over, ongeacht de volgorde van de id's."""
+    import asyncpg
+
+    s = sqlite_with_data
+    from tests.factories import create_folder, maker
+
+    async with maker(s)() as session:
+        owner = await session.scalar(select(User).where(User.email == "foto@example.nl"))
+        parent = None
+        for i in range(12):
+            parent = (await create_folder(session, owner, parent, name=f"diep{i}")).id
+
+    name = "c_" + uuid.uuid4().hex
+    role = "r_" + uuid.uuid4().hex[:12]
+    admin = await asyncpg.connect(PG.replace("postgresql+asyncpg://", "postgresql://"))
+    try:
+        await admin.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'pw' NOSUPERUSER")
+        await admin.execute(f'CREATE DATABASE "{name}" OWNER {role}')
+        base = make_url(PG).set(username=role, password="pw", database=name)
+        url = base.render_as_string(hide_password=False)
+        res = await db_copy(s, url, say=lambda _: None)
+        assert res.rows["node"] == await _count(s, Node)
+        conn = await asyncpg.connect(url.replace("postgresql+asyncpg://", "postgresql://"))
+        try:
+            deferrable = await conn.fetchval(
+                "SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND condeferrable"
+            )
+        finally:
+            await conn.close()
+        assert deferrable == 0
+    finally:
+        await admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        await admin.execute(f"DROP ROLE IF EXISTS {role}")
+        await admin.close()
 
 
 async def test_refuses_sqlite_target(sqlite_with_data):
