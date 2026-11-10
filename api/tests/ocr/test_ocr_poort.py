@@ -9,6 +9,9 @@ onder 0,9) de poort laat falen, hoe snel ook, en dat de volle pagina's meetellen
 
 from __future__ import annotations
 
+import json
+from collections import Counter
+
 from tests.ocr import poort, scans
 
 
@@ -94,3 +97,30 @@ def test_de_volle_pagina_is_vol():
     assert len(scans.VOL_WORDS) == 696 and len(scans.WORDS) == 68
     assert scans.VOL_TOP + len(scans.VOL_LINES) * scans.VOL_LINE < scans.A4[1] - 200
     assert "dichtwoordx" in scans.VOL_WORDS and "dichtwoordx" not in scans.WORDS
+
+
+def test_zonder_opties_meet_de_poort_alle_130_scans(monkeypatch, tmp_path, capsys):
+    """Nacontrole golf 4: de job ocr draait de poort zonder --paginas en --vol. Zonder opties
+    meet hij dus 20 brieven per stand en 10 volle pagina's per stand, en de JSON zegt 130
+    pagina's (zonder herkenning: de meting zelf is hier nep)."""
+    seen: list[tuple[str, int]] = []
+
+    async def measure(folder, sources):
+        seen.extend((density, angle) for density, angle, _path in sources)
+        return [row(angle, 1.0, density=density) for density, angle, _path in sources]
+
+    monkeypatch.setattr(poort.ocr, "program", lambda: "/nep/ocr")
+    monkeypatch.setattr(poort.caps_op, "ocr", lambda: True)
+    monkeypatch.setattr(poort.scans, "font", lambda: None)
+    monkeypatch.setattr(poort.scans, "pdf", lambda angle, variant, vol=False: b"%PDF-nep")
+    monkeypatch.setattr(poort, "one_core", lambda: 0)
+    monkeypatch.setattr(poort, "measure", measure)
+    out = tmp_path / "poort.json"
+    assert poort.main(["--json", str(out)]) == 0
+    want = {("brief", a): 20 for a in poort.ANGLES} | {("vol", a): 10 for a in poort.VOL_ANGLES}
+    assert Counter(seen) == want
+    data = json.loads(out.read_text())
+    assert data["pages"] == 130
+    assert data["per_density"]["brief"]["pages"] == 100
+    assert data["per_density"]["vol"]["pages"] == 30
+    assert "130 scans gemaakt" in capsys.readouterr().out
