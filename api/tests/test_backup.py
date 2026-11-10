@@ -76,6 +76,7 @@ def test_alleen_de_standaardbibliotheek():
         "os",
         "pathlib",
         "re",
+        "signal",
         "sqlite3",
         "sys",
     }
@@ -203,3 +204,76 @@ def test_install_sh_draait_deze_tekst():
         '"${compose[@]}" run --rm --no-deps -T platform python -I -c "$text" '
         "/data/platform.db /data/backup </dev/null"
     ) in sh
+
+
+def test_een_oude_part_gaat_weg(tmp_path):
+    """Review golf 4 (veilig F3): een .part van een kopie die ooit afgebroken werd (SIGKILL, een
+    timeout van compose), met zijn journaal, gaat bij de volgende kopie weg; ook als de tijd in de
+    naam anders is. Wat niet van ons is, blijft."""
+    source, folder = tmp_path / "platform.db", tmp_path / "backup"
+    folder.mkdir()
+    _db(source)
+    oud = "platform-0010-20261101T120000.123Z.db.part"
+    namen = [
+        oud,
+        oud + "-journal",
+        oud + "-wal",
+        oud + "-shm",
+        "platform-0009-20261101T120000Z.db.part",
+    ]
+    for naam in namen:
+        (folder / naam).write_bytes(MERK)
+    vreemd = folder / "platform-met-de-hand.db.part"
+    vreemd.write_bytes(b"")
+    result = _run(source, folder, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    pad = Path(result.stdout.strip())
+    assert sorted(p.name for p in folder.iterdir()) == sorted([pad.name, vreemd.name])
+
+
+def test_keep_newest_ruimt_ook_een_part_op(tmp_path):
+    """app.cli db-backup en install.sh ruimen via dezelfde functie op."""
+    folder = tmp_path / "backup"
+    folder.mkdir()
+    for naam in (
+        "platform-0010-20261101T120000.123Z.db",
+        "platform-0010-20261102T120000.123Z.db",
+        "platform-0010-20261103T120000.123Z.db.part",
+        "platform-0010-20261103T120000.123Z.db.part-journal",
+    ):
+        (folder / naam).write_bytes(b"")
+    assert [p.name for p in backup.keep_newest(folder)] == ["platform-0010-20261102T120000.123Z.db"]
+    assert sorted(p.name for p in folder.iterdir()) == ["platform-0010-20261102T120000.123Z.db"]
+
+
+# Zoals install.sh, maar de kopie krijgt SIGTERM terwijl hij loopt (docker compose run die stopt):
+# _wipe stuurt het signaal aan het eigen proces en wacht even.
+DRIVER = """
+import os, signal, sys, time
+ns = {"__name__": "backup_tekst"}
+exec(compile(sys.argv[1], "backup.py", "exec"), ns)
+def wipe(dst):
+    os.kill(os.getpid(), signal.SIGTERM)
+    time.sleep(5)
+    raise AssertionError("SIGTERM kwam niet aan")
+ns["_wipe"] = wipe
+sys.exit(ns["main"](sys.argv[2:]))
+"""
+
+
+def test_sigterm_laat_niets_achter(tmp_path):
+    """Review golf 4 (veilig F3): SIGTERM midden in de kopie (de standaard van Python stopt het
+    proces zonder de opruiming) laat geen .part en geen journaal achter, en geen kopie."""
+    source, folder = tmp_path / "platform.db", tmp_path / "backup"
+    _db(source)
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", DRIVER, TEXT, str(source), str(folder)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 128 + 15, (result.returncode, result.stderr)
+    assert "SIGTERM kwam niet aan" not in result.stderr
+    assert list(folder.iterdir()) == []

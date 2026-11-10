@@ -20,12 +20,18 @@ De naam is `platform-<alembic-head>-<tijd in UTC>.db`, met rechten 600. Per head
 alleen de nieuwste. Zo gaat de laatste kopie van vóór een migratie nooit weg: die heeft een eigen
 head. Mislukt een stap, dan is er geen kopie (ook geen .part) en is de exitcode 1; install.sh
 stopt dan, vóór er iets veranderd is. De database zelf leest dit alleen.
+
+Een .part die toch bleef staan (SIGKILL, of een timeout van compose; review golf 4, veilig F3)
+gaat bij de volgende kopie weg, met zijn journaal: elke kopie begint en eindigt met het opruimen
+van alle .part van ons in de map. Op SIGTERM en SIGHUP stopt main() met exitcode 128 + het
+signaal, na dezelfde opruiming als bij een fout.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import signal
 import sqlite3
 import sys
 from contextlib import closing
@@ -36,6 +42,10 @@ HEAD_RE = re.compile(r"^[A-Za-z0-9_]{1,40}$")
 # platform-<head>-<tijd>.db, met de tijd in UTC, tot milliseconden (een oudere kopie zonder)
 NAME_RE = re.compile(
     r"^platform-(?P<head>[A-Za-z0-9_]{1,40})-(?P<tijd>\d{8}T\d{6}(?:\.\d{3})?Z)\.db$"
+)
+# Een kopie die nog niet klaar is, met wat SQLite ernaast kan zetten
+PART_RE = re.compile(
+    r"^platform-[A-Za-z0-9_]{1,40}-\d{8}T\d{6}(?:\.\d{3})?Z\.db\.part(?:-journal|-wal|-shm)?$"
 )
 # Nooit in een kopie: de gezichten (X2) en de vectoren van beeld (X3)
 WIPE = ("face_person", "face", "face_scan", "face_owner", "blob_embed")
@@ -63,9 +73,19 @@ def read_head(conn: sqlite3.Connection) -> str | None:
     return str(rows[0][0])
 
 
+def drop_parts(folder: Path) -> None:
+    """Elke .part van ons (met -journal, -wal of -shm) weg: een kopie die ooit afgebroken werd,
+    heeft de hele database."""
+    for path in folder.glob("platform-*.db.part*"):
+        if PART_RE.match(path.name):
+            path.unlink(missing_ok=True)
+
+
 def keep_newest(folder: Path) -> list[Path]:
-    """Per head blijft de nieuwste kopie; de rest gaat weg (Keuze 52). De naam draagt de tijd,
-    dus de nieuwste is de laatste op naam. Wat niet naar een kopie van ons lijkt, blijft staan."""
+    """Per head blijft de nieuwste kopie; de rest gaat weg (Keuze 52), en elke .part ook. De naam
+    draagt de tijd, dus de nieuwste is de laatste op naam. Wat niet naar een kopie van ons lijkt,
+    blijft staan."""
+    drop_parts(folder)
     found: dict[str, list[Path]] = {}
     for path in sorted(folder.glob("platform-*.db")):
         match = NAME_RE.match(path.name)
@@ -105,6 +125,7 @@ def copy(source: Path, folder: Path) -> Path:
     NoHead als de database op geen revisie staat."""
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     folder.chmod(0o700)
+    drop_parts(folder)
     with closing(sqlite3.connect(source)) as src:
         src.execute("PRAGMA busy_timeout = 5000")
         head = read_head(src)
@@ -137,9 +158,16 @@ def copy(source: Path, folder: Path) -> Path:
     return target
 
 
+def _stop(signum: int, frame: object) -> None:
+    """SIGTERM of SIGHUP: stoppen via SystemExit, zodat copy() zijn .part opruimt."""
+    raise SystemExit(128 + signum)
+
+
 def main(argv: list[str]) -> int:
     """Voor install.sh: `<platform.db> <map>`. Print het pad van de kopie; exitcode 1 met een
     regel uitleg als het niet lukt."""
+    for signum in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, _stop)
     if len(argv) != 2:
         print("Gebruik: <platform.db> <map voor de kopie>", file=sys.stderr)
         return 2
