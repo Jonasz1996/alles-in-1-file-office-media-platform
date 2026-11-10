@@ -12,7 +12,7 @@ Deze test leest ci.yml als tekst, zoals test_media_ci.py:
   omgeving met playwright komt.
 
 Sinds de integratie (I1) ook: zoek-perf draait churn en de hele set triggers op 3.46.1 (§4.6),
-één keer.
+één keer, en media-image heeft de stap S5 van de spike niet meer (x1.md, Open 8).
 """
 
 from __future__ import annotations
@@ -56,7 +56,17 @@ def _runs(lines: list[str]) -> list[tuple[int, str]]:
 def test_de_lezer_vindt_de_jobs_en_hun_blokken():
     assert {"zoek-perf", "media-image", "e2e", "acme"} <= set(_jobs())
     blokken = [tekst for _, tekst in _runs(job("media-image"))]
-    assert any("tesseract.txt" in tekst for tekst in blokken)
+    assert any("handdruk.json" in tekst for tekst in blokken)
+
+
+def test_media_image_heeft_de_stap_s5_niet_meer():
+    """De stap S5 van de spike (wat tesseract in Debian 13 kost) is weg: tesseract zit sinds X1
+    in het image, en S5 mat daar 0 MiB (x1.md, Open 8). De grootte bewaakt de job images."""
+    regels = job("media-image")
+    blokken = [tekst for _, tekst in _runs(regels)]
+    assert not any("tesseract.txt" in tekst or "s5.sh" in tekst for tekst in blokken)
+    assert not any(re.match(r"^\s+- name: S5\b", line) for line in regels)
+    assert any("tesseract-grootte.txt" in tekst for _, tekst in _runs(job("images")))
 
 
 def test_een_job_in_een_container_gebruikt_runner_temp_niet():

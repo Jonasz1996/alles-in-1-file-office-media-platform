@@ -1065,43 +1065,6 @@ jobs:
           echo "=== kern.json ==="
           cat "$RUNNER_TEMP/media-image/kern.json" || echo "(geen kern.json)"
           echo "=== einde kern.json ==="
-      # Fase 6, spike S5 (Vraag 1): wat tesseract in Debian 13 kost, en of de ffmpeg van het
-      # image libtesseract al meebrengt. In een wegwerpcontainer van het image, als root en met
-      # netwerk; het image zelf verandert niet. De regel van X1: tesseract-ocr met nld, eng en osd
-      - name: S5 tesseract in Debian 13 (alleen meten)
-        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
-        run: |
-          set -o pipefail
-          mkdir -p "$RUNNER_TEMP/media-image"
-          cat > "$RUNNER_TEMP/s5.sh" << 'SH'
-          set -e
-          . /etc/os-release
-          echo "debian: $PRETTY_NAME"
-          avfilter="$(ls /usr/lib/*/libavfilter.so.* | head -n 1)"
-          if ldd "$avfilter" | grep -q libtesseract; then
-            echo "libtesseract via ffmpeg: ja ($(ldd "$avfilter" | grep libtesseract | awk '{print $1}'))"
-          else
-            echo "libtesseract via ffmpeg: nee"
-          fi
-          if ffmpeg -hide_banner -buildconf 2> /dev/null | grep -q -- --enable-libtesseract; then
-            echo "ffmpeg gebouwd met --enable-libtesseract: ja"
-          else
-            echo "ffmpeg gebouwd met --enable-libtesseract: nee"
-          fi
-          echo "al in het image: $(dpkg-query -W -f '${Package} ' 'libtesseract*' 'tesseract*' 2> /dev/null || true)"
-          voor="$(dpkg-query -W -f '${Installed-Size}\n' | awk '{s += $1} END {print s}')"
-          apt-get update -qq
-          apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-nld tesseract-ocr-eng \
-            tesseract-ocr-osd > /tmp/apt.log
-          grep -E "^(Need to get|After this operation)" /tmp/apt.log || true
-          echo "nieuwe pakketten: $(sed -n '/NEW packages will be installed/,/^[0-9]* upgraded/p' /tmp/apt.log | sed '1d;$d' | tr -s ' \n' ' ')"
-          na="$(dpkg-query -W -f '${Installed-Size}\n' | awk '{s += $1} END {print s}')"
-          echo "tesseract erbij: $(((na - voor) / 1024)) MiB (dpkg Installed-Size)"
-          echo "taaldata: $(du -sh /usr/share/tesseract-ocr | cut -f1)"
-          echo "$(tesseract --version 2>&1 | head -n 1); talen: $(tesseract --list-langs 2>&1 | tail -n +2 | tr '\n' ' ')"
-          if ldd "$avfilter" | grep -q libtesseract; then echo "ffmpeg na de installatie: ook libtesseract"; fi
-          SH
-          docker run --rm -i --user root platform:ci sh -s < "$RUNNER_TEMP/s5.sh" | tee "$RUNNER_TEMP/media-image/tesseract.txt"
       # De container-test draait ook als de kern faalde: losse uitkomsten. Hij heeft sinds M4
       # ook S3 punt 17 van de spike (de remux naar een pipe van de app, met stream) en R12; de
       # aparte stap S3 met het afgeleide image van de spike is daarom weg. Sinds de review van
@@ -1163,11 +1126,9 @@ jobs:
             echo "=== einde samenvatting ==="
           fi
           grep -E '^(FOUT|STOP) ' "$log" 2>/dev/null || true
-          # Fase 6, spike Z0: S5, S9 en S11, als laatste in het log
+          # Fase 6, spike Z0: S9 en S11, als laatste in het log
           d="$RUNNER_TEMP/media-image"
           echo "=== kort ==="
-          echo "S5 tesseract (het image verandert niet):"
-          sed 's/^/  /' "$d/tesseract.txt" 2> /dev/null || echo "  liep niet"
           echo "S9 de zoekbench in de container van de app:"
           sed -n '/^=== zoekbench ===/,$p' "$d/zoekbench.log" 2> /dev/null | sed 's/^/  /' || true
           [ -f "$d/zoekbench.log" ] || echo "  liep niet"
