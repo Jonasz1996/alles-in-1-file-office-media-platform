@@ -1,6 +1,7 @@
 """De backfill van opnamedatums en EXIF (app/photometa.py): een keten van taken in stukken
 van 200 blobs, die maar één keer tegelijk loopt en niet eindeloos herhaalt."""
 
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -211,6 +212,45 @@ async def test_een_stuk_schrijft_kort(settings):
             meta = await session.get(BlobMeta, node.blob_id)
             assert (meta.camera, meta.gps) == ("fabrikant camera x1", 1)
             assert (await session.get(PhotoGeo, node_id)).source == "exif"
+
+
+# In het renderproces: run_meta zet de nice van het proces zelf in het antwoord, ná render.main
+NICE_IN_HET_KIND = (
+    "import os\n"
+    "from app import render_meta\n"
+    "_run=render_meta.run_meta\n"
+    "def _met_nice(request):\n"
+    "    return {**_run(request),'nice':os.getpriority(os.PRIO_PROCESS,0)}\n"
+    "render_meta.run_meta=_met_nice\n"
+)
+
+
+@pytest.mark.parametrize("proces", ["eigen proces", "forkserver"])
+async def test_het_renderproces_draait_op_nice_19(settings, monkeypatch, tmp_path, proces):
+    """P7: het renderproces van photometa is achtergrondwerk, op nice 19. Zonder "nice" in het
+    verzoek zette render.main niets, en draaide het kind op 0 (M7d). Gemeten in het kind zelf: in
+    een eigen proces en als kind van de forkserver. Ook een verzoek met een eigen "nice" krijgt 19
+    (de tweede controle van paren gaat door dezelfde _render). Dit meet de nice, niet het deel van
+    de CPU: dat hangt van de cgroup en de sessie af (previews.NICE)."""
+    anchor = "from app.render import main"
+    assert anchor in previews.CHILD
+    child = previews.CHILD.replace(anchor, f"exec({NICE_IN_HET_KIND!r}); {anchor}")
+    monkeypatch.setattr(previews, "CHILD", child)
+    foto = tmp_path / "foto.jpg"
+    foto.write_bytes(camera_jpeg())
+    items = [{"sha": "a" * 64, "source": str(foto), "mime": "image/jpeg"}]
+    own = os.getpriority(os.PRIO_PROCESS, 0)
+    # Draait pytest zelf al op 19, dan erft het kind 19 ook zonder "nice": dan bewijst dit niets
+    assert own < previews.TEXT_NICE, f"pytest draait op nice {own}"
+    if proces == "forkserver":
+        assert await previews.start_forkserver() is not None
+    try:
+        for request in ({"items": items}, {"items": items, "nice": 0}):
+            answer = await photometa._render(settings, request)
+            assert answer["results"]["a" * 64]["exif"]["model"] == "Camera X1"
+            assert answer["nice"] == min(19, own + previews.TEXT_NICE) == 19
+    finally:
+        await previews.stop_forkserver()
 
 
 async def test_video_met_de_worker_weg_blijft_over_tot_de_worker_er_is(settings, monkeypatch):

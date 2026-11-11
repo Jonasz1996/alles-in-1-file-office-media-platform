@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import json
 import os
 import uuid
 from pathlib import Path
@@ -164,6 +165,8 @@ async def test_de_rooktest_van_ci(lt, client, admin):
     assert report["summary"][-1] == "uitkomst: geslaagd"
     view = (await client.get(BASE, headers=headers)).json()
     assert view["state"] == "done" and view["report"]["passed"] is True
+    for player in view["report"]["phases"]["b"]["players"]:
+        assert player["stall_at"] == player["stall_after_seek"] == []  # niet gehaperd (de JSON)
     nothing_left()
     names = sorted(p.name for p in loadtest.loadtest_dir(settings).iterdir())
     assert names == sorted(report["sources"])  # geen .part
@@ -188,6 +191,9 @@ async def test_fase_a_en_b(lt, client, admin):
     # a springt (voorbij wat de producent al maakte), b niet
     assert all(p["seek_s"] is not None for p in report["phases"]["a"]["players"])
     assert all(p["seek_s"] is None for p in report["phases"]["b"]["players"])
+    # de voorraad na de sprong: meer dan niets en hooguit één segment (en het eerste is iets langer)
+    assert all(0 < p["seek_buffer_s"] <= 2.1 for p in report["phases"]["a"]["players"])
+    assert all(p["seek_buffer_s"] is None for p in report["phases"]["b"]["players"])
     assert report["passed"] is True
     assert report["api_p95_ms"] is not None  # de API werd gemeten
     nothing_left()
@@ -496,6 +502,7 @@ class FakeApp:
         self.down = 0  # zoveel keer weigert open nog (de app start)
         self.lost = "410"  # wat de speler bij de herstart ziet: 410, 502 of geen verbinding
         self.gets: list[str] = []
+        self.origin = 0  # het rooster zoals grid.py het maakt: segment 0 loopt tot origin + 2 s
 
     async def open(self, start_ms: int, replace: str | None) -> loadtest.LoadtestPlay:
         if self.down:
@@ -512,7 +519,8 @@ class FakeApp:
         if sid in self.gone:
             return httpx.Response(410)
         if rest == "map.json":
-            segs = [[k * 2000, 2000] for k in range(self.count)]
+            o = self.origin
+            segs = [[0, o + 2000]] + [[o + k * 2000, 2000] for k in range(1, self.count)]
             return httpx.Response(200, json={"init": "init.mp4?g=1", "segments": segs})
         if rest.startswith("init.mp4"):
             return httpx.Response(200, content=b"init")
@@ -546,6 +554,78 @@ async def test_de_speler_telt_haperen(monkeypatch):
     assert r.played_s == pytest.approx(10, abs=0.3)
     found = loadtest.judge("b", [r], None)
     assert not found["passed"] and found["problems"] == ["1 keer haperen"]
+    # Wanneer (I1, M7): één tijdstip per keer haperen, zonder sprong None. Na de 6 s van segment
+    # 0 tot 2 (de plek loopt nooit voor op de klok; gemeten 6,3) en ruim vóór segment 3 er is
+    # (na 1,5 s: 15 s in de tijd van de test, scale 0,1)
+    assert len(r.stall_at) == r.stalls == len(r.stall_after_seek)
+    assert r.stall_after_seek == [None]
+    assert 6.0 <= r.stall_at[0] < 10.0
+    assert found["players"][0]["stall_after_seek"] == [None]
+
+
+async def test_de_speler_weet_wanneer_hij_hapert_na_de_sprong():
+    """Fase a (I1, M7): haperen na de sprong. De sprong van 2 naar 42 s wacht 0,3 s op segment
+    21, en segment 23 komt pas 1 s na de sprong; de speler (10× sneller) speelt het restje van 21
+    en heel 22 op en staat dan stil. De start wacht 0,5 s op segment 0. stall_after_seek telt
+    vanaf het eind van de sprong, stall_at vanaf het begin van het spelen (niet vanaf de start);
+    beide in summary() en in de JSON van het rapport. judge telt het zoals altijd."""
+    fake = FakeApp(count=40)  # 80 s: met hooguit 30 s vooruit vraagt hij 21 en 23 pas na de sprong
+    fake.slow.update({0: 0.5, 21: 0.3, 23: 1.0})
+    timing = loadtest.Timing(seek_at_s=2.0, seek_jump_s=40.0, tick_s=0.02, scale=0.1)
+    p = player(fake, timing)
+    # zoals _phase het fase a meegeeft
+    await p.run(20, seek_at=timing.s(timing.seek_at_s), jump_ms=int(timing.seek_jump_s * 1000))
+    r = p.report
+    assert r.error is None and r.seek_s is not None and "s1/21.m4s" in fake.gets
+    assert r.start_s is not None and r.start_s >= 0.5 and r.seek_s >= 0.3  # echte seconden
+    assert len(r.stall_at) == r.stalls == len(r.stall_after_seek) == 1
+    [after] = r.stall_after_seek
+    # De plek loopt nooit voor op de klok: van ~42 s tot 46 s (het restje van 21 en heel 22) is
+    # ~4 s (gemeten 4,3); een late tik bij de sprong (hooguit 0,2 s, 2 s in de tijd van de test)
+    # schuift het doel op. En vóór segment 23 er is (1 s: 10 s). Zonder / scale: ~0,4
+    assert after is not None and 2.0 <= after < 10
+    # stall_at - after: van het begin van het spelen tot het eind van de sprong. De 2 s tot de
+    # sprong en de sprong zelf (seek_s: echte seconden, dus / scale) zitten erin, de start niet
+    # (5 s); 2 s ruimte voor die late tik. Vanaf t0 of vanaf de start valt het erbuiten
+    before = r.stall_at[0] - after
+    seek = r.seek_s / timing.scale
+    assert timing.seek_at_s + seek - 0.01 <= before < timing.seek_at_s + seek + 2.0
+    out = r.summary()
+    assert out["stall_at"] == [round(r.stall_at[0], 2)]
+    assert out["stall_after_seek"] == [round(after, 2)]
+    found = json.loads(json.dumps(loadtest.judge("a", [r], None)))
+    assert found["problems"] == ["1 keer haperen"]
+    [player_json] = found["players"]
+    assert player_json["stall_at"] == out["stall_at"]
+    assert player_json["stall_after_seek"] == out["stall_after_seek"]
+
+
+@pytest.mark.parametrize(("tick", "buffer", "stalls"), [(2.0, 0.021, 1), (2.5, 1.521, 0)])
+async def test_de_speler_weet_hoeveel_voorraad_hij_na_de_sprong_heeft(tick, buffer, stalls):
+    """I1, M7e: de voorraad na de sprong hangt af van waar het doel in het rooster valt. Het rooster
+    begint op 21 ms (de voorloop van AAC). De sprong komt op de eerste tik na 2 s en gaat 40 s
+    verder. Op de tik van 2,0 s is het doel 42,000 s: 21 ms voor het eind van segment 20 (40,021
+    tot 42,021); dan is er 0,021 s voorraad en hapert de speler 0,2 s na de sprong, want segment
+    21 komt pas later. Op een tik van 2,5 s valt het doel in segment 21 en is er 1,521 s."""
+    fake = FakeApp(count=40)
+    fake.origin = 21
+    fake.slow[21] = 0.5  # echte seconden: veel later dan de tikken van de klok hieronder
+    # begin, start_s, played_from; tikken op 1,0 en de sprong; t0, seek_done en last; dan
+    # nog twee tikken; daarna 100 (het eind van de run)
+    times = iter([0.0, 0.0, 0.0, 1.0, tick, tick, tick, tick, tick + 0.1, tick + 0.2])
+    http = httpx.AsyncClient(transport=httpx.MockTransport(fake.handle), base_url="http://x")
+    report = loadtest.PlayerReport(name="a1", phase="a", source="0")
+    p = loadtest.Player(http, fake.open, report, timing=loadtest.Timing(tick_s=0.001, scale=1.0),
+                        clock=lambda: next(times, 100.0))  # fmt: skip
+    await p.run(10, seek_at=2.0, jump_ms=40_000)
+    assert report.error is None and report.seek_s == 0.0
+    assert report.seek_buffer_s == buffer
+    assert report.stalls == stalls
+    if stalls:
+        assert report.stall_after_seek == [pytest.approx(0.2)]
+    assert report.summary()["seek_buffer_s"] == buffer
+    found = json.loads(json.dumps(loadtest.judge("a", [report], None)))
+    assert found["players"][0]["seek_buffer_s"] == buffer
 
 
 async def test_de_speler_telt_niet_meer_dan_er_binnen_is():
