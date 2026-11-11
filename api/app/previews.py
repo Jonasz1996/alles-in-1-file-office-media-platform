@@ -87,7 +87,7 @@ SIZES = (THUMB, LARGE, DISPLAY)
 # en JPEG 2000 (alles wat eerder geen preview kreeg, en TIFF: daar zit RAW in)
 RENDER_VERSION = 2
 # Zoveel stappen lager draait het renderproces van achtergrondwerk (os.nice): de API en het
-# afspelen gaan voor (die van media draaien op 15, live transcoderen op 0)
+# afspelen gaan voor (die van media draaien op 15, live transcoderen op 5: worker/args.py)
 NICE = 10
 OUTDATED = "preview.outdated"
 OUTDATED_KEY = "preview:outdated"

@@ -139,17 +139,21 @@ async def _batch(
 
 
 async def _render(settings: Settings, request: dict[str, Any]) -> dict[str, Any]:
-    """Eén renderproces in mode meta, met een eigen werkmap."""
+    """Eén renderproces in mode meta, met een eigen werkmap, op nice 19 (P7)."""
     blobs = BlobStore(settings.blob_dir)
     tmp = previews.root(blobs) / ".tmp"
     await anyio.Path(tmp).mkdir(parents=True, exist_ok=True)
     work = Path(await anyio.to_thread.run_sync(lambda: tempfile.mkdtemp(dir=tmp)))
     try:
+        # nice 19 ná request: geen aanroeper laat hem weg of zet hem lager (P7, zoals render_text).
+        # photometa wijkt zo voor live transcoderen (nice 5) en de API. Zonder nice zet
+        # render.main niets, en draaide het kind op 0 (M7d)
         request = {
             "mode": "meta",
             "max_pixels": settings.preview_max_pixels,
             "memory_mb": settings.preview_memory_mb,
             **request,
+            "nice": previews.TEXT_NICE,
         }
         return await previews.render(settings, request, work)
     finally:
