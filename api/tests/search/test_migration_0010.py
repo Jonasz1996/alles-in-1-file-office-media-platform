@@ -1,4 +1,4 @@
-"""Migratie 0010 (bouwontwerp fase 6, §3.1 en §3.8): leeg naar head; een database van 0009 met
+"""Migratie 0010 (bouwontwerp fase 6, §3.1 en §3.8): leeg naar 0010; een database van 0009 met
 data heen, terug en weer heen, met en zonder FTS5; num, de paden, dead en de FTS-tabellen
 kloppen; de modellen zijn gelijk aan de migratie; en de downgrade is precies 0009 (zodat
 v0.7.1 weer start: app.cli db-downgrade 0009)."""
@@ -47,9 +47,11 @@ async def xcolumns(settings, table: str) -> set[str]:
 
 
 @pytest.mark.anyio
-async def test_lege_database_naar_head(tmp_path):
+async def test_lege_database_naar_0010(tmp_path):
+    """Precies 0010, niet de head (K2-16): sinds 0011 en 0012 is dat een andere revisie, met
+    meer triggers."""
     settings = settings_at(tmp_path, "db")
-    await migrate(settings, command.upgrade, "head")
+    await migrate(settings, command.upgrade, "0010")
     found = await schema_of(settings)
     assert found["alembic_version"] == ["0010"]
     assert set(schema.NEW_TABLES) <= set(found)
@@ -57,7 +59,7 @@ async def test_lege_database_naar_head(tmp_path):
     assert NEW_NODE_COLUMNS <= await xcolumns(settings, "node")
     assert {"source", "shared"} <= await xcolumns(settings, "album_item")
     assert set(schema.NODE_INDEXES) <= set(found["node"]["indexes"])
-    assert await objects(settings, "trigger") == schema.TRIGGERS
+    assert await objects(settings, "trigger") == schema.TRIGGERS_0010
     assert await objects(settings, "view") == {"search_src": schema.VIEW_SQL}
     async with get_engine(settings).connect() as conn:
         assert (await conn.exec_driver_sql("SELECT id, next FROM search_seq")).all() == [(1, 1)]

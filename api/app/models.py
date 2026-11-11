@@ -1004,6 +1004,9 @@ class PhotoPref(Base):
     ocr_photos: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     faces: Mapped[str] = mapped_column(String(8), default="uit", server_default="uit")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # Zoeken op beeld (0012): aan of uit; NULL is de standaard uit PHOTO_PREFS (Vraag 11), zodat
+    # een ander antwoord op die vraag alleen de code verandert, niet de tabel
+    beeld: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class MemoryHide(Base):
@@ -1046,3 +1049,165 @@ class AlbumSkip(Base):
     node_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
     )
+
+
+# --- Gezichten (0011) en zoeken op beeld (0012): bouwontwerp §3.1a ---------------------------
+#
+# De triggers van deze tabellen staan in app/search/schema.py (TRIGGERS_0011 en TRIGGERS_0012).
+# Elke vraag op face doet een join met node en gebruikt own_live(n) (tests/search/
+# test_own_live.py). De vectoren zijn biometrische gegevens: nooit in de API, een log, een
+# gebeurtenis of een reservekopie (Keuze 64; backup.WIPE).
+
+
+class Face(Base):
+    """Een gezicht in een foto, per node en alleen voor de eigenaar (X2). x, y, w en h: 0–1,
+    zoals getoond; px: de korte kant in de preview. vec: AES-GCM over 128 × float32 (Keuze 68),
+    NULL is gewist. hidden = 1 is "niet tonen": vec, suggest_* en cluster zijn dan NULL, alleen
+    het kader blijft, zodat een nieuwe scan hetzelfde gezicht niet terugbrengt. suggest_score
+    gaat nooit naar buiten; suggest_why: sim of tag."""
+
+    __tablename__ = "face"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    node_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("node.id", ondelete="CASCADE"))
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    x: Mapped[float] = mapped_column(Float)
+    y: Mapped[float] = mapped_column(Float)
+    w: Mapped[float] = mapped_column(Float)
+    h: Mapped[float] = mapped_column(Float)
+    score: Mapped[float] = mapped_column(Float)
+    px: Mapped[int] = mapped_column(Integer)
+    vec: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    version: Mapped[int] = mapped_column(Integer)
+    cluster: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    suggest_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("person.id", ondelete="SET NULL"), nullable=True
+    )
+    suggest_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    suggest_why: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hidden: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class FacePerson(Base):
+    """Een oordeel over een gezicht en een persoon (X2): verdict ja of nee. Hooguit één ja per
+    gezicht (ux_fp_ja)."""
+
+    __tablename__ = "face_person"
+
+    face_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("face.id", ondelete="CASCADE"), primary_key=True
+    )
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("person.id", ondelete="CASCADE"), primary_key=True
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    verdict: Mapped[str] = mapped_column(String(8))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class FaceScan(Base):
+    """De scan van een foto op gezichten, per node (X2). state: wait, busy, done, skip of
+    failed; prio: de datum van de tijdlijn (nieuwste eerst)."""
+
+    __tablename__ = "face_scan"
+
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    version: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(8))
+    faces: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prio: Mapped[str] = mapped_column(Text)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class FaceOwner(Base):
+    """Per eigenaar (X2): de laatste groepsronde (run), wanneer er gegroepeerd, voorgesteld,
+    geoordeeld en geserveerd is, en of er een wisronde loopt (wiping)."""
+
+    __tablename__ = "face_owner"
+
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    run: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    grouped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    suggested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verdict_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    served_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    wiping: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class NodeOrigin(Base):
+    """Wie een bestand uploadde (Keuze 69): created_by is NULL bij een upload via een link
+    (via_link = 1), of als die gebruiker weg is. Een node zonder rij (van vóór 0011) telt als
+    door de eigenaar zelf geüpload (Vraag 9). Alleen via app/origin.py."""
+
+    __tablename__ = "node_origin"
+
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    via_link: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class BlobEmbed(Base):
+    """De beeldvector van een inhoud (X3, Keuze 76): 768 × float16, L2-genormaliseerd. Een
+    gewone rowid-tabel met een unieke index op blob_sha. Alleen via write_embed(); niet in de
+    reservekopie."""
+
+    __tablename__ = "blob_embed"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    blob_sha: Mapped[str] = mapped_column(ForeignKey("blob.sha256", ondelete="CASCADE"))
+    model: Mapped[str] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer)
+    vec: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class BeeldOwner(Base):
+    """Het bestand per eigenaar voor zoeken op beeld (X3, Keuze 76). gen gaat omhoog bij elke
+    wijziging die het bestand raakt (de triggers van 0012); de job maakt het opnieuw als
+    gen > built_gen. built_at NULL: nog nooit gemaakt."""
+
+    __tablename__ = "beeld_owner"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    gen: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    built_gen: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    built_rows: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# De indexen van 0011 en 0012; de SQL staat in app/search/schema.py (INDEXES_0011, INDEXES_0012)
+_SHOWN = "hidden = 0"
+Index("ix_face_node", Face.node_id)
+Index(
+    "ix_face_open",
+    Face.owner_id,
+    Face.suggest_id,
+    Face.suggest_score.desc(),
+    sqlite_where=text(f"suggest_id IS NOT NULL AND {_SHOWN}"),
+)
+Index(
+    "ix_face_cluster",
+    Face.owner_id,
+    Face.cluster,
+    sqlite_where=text(f"cluster IS NOT NULL AND {_SHOWN}"),
+)
+Index("ix_face_new", Face.owner_id, Face.created_at.desc(), sqlite_where=text(_SHOWN))
+Index("ux_fp_ja", FacePerson.face_id, unique=True, sqlite_where=text("verdict = 'ja'"))
+Index("ix_fp_person", FacePerson.owner_id, FacePerson.person_id, FacePerson.verdict)
+Index("ix_face_scan_todo", FaceScan.state, FaceScan.owner_id, FaceScan.prio.desc())
+Index("ux_blob_embed_sha", BlobEmbed.blob_sha, unique=True)

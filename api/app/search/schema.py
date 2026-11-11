@@ -1,9 +1,10 @@
-"""Het schema van de zoekindex zoals migratie 0010 het maakt (bouwontwerp §3.1).
+"""Het schema van de zoekindex zoals migratie 0010 het maakt (bouwontwerp §3.1), en de
+triggers en indexen van 0011 (gezichten) en 0012 (zoeken op beeld, §3.1a).
 
-De migratie heeft een eigen, bevroren kopie van deze SQL. tests/search/test_schema_triggers.py
-eist dat de triggers in sqlite_master gelijk zijn aan TRIGGERS hier, en de kopie in de migratie
-aan TRIGGERS_0010; en tests/search/test_ftype.py dat FTYPE_SQL hetzelfde zegt als mime.ftype().
-Wie hier iets verandert, schrijft dus ook een nieuwe migratie.
+Elke migratie heeft een eigen, bevroren kopie van haar SQL. tests/search/test_schema_triggers.py
+eist dat de triggers in sqlite_master gelijk zijn aan TRIGGERS hier, en de kopie in elke migratie
+aan TRIGGERS_0010, TRIGGERS_0011 en TRIGGERS_0012; en tests/search/test_ftype.py dat FTYPE_SQL
+hetzelfde zegt als mime.ftype(). Wie hier iets verandert, schrijft dus ook een nieuwe migratie.
 
 De macro's van het ontwerp staan hieronder als functies: IN(n), DEL(w), INS(w), NDEL(n, s),
 NINS(n, s), END(p) en DEAD_SUBTREE.
@@ -340,16 +341,126 @@ def triggers(fts: bool) -> dict[str, str]:
     return t
 
 
-# De bevroren delen per migratie: 0010 heeft er een kopie van (test_schema_triggers.py eist dat
-# die gelijk zijn). TRIGGERS en TRIGGERS_NO_FTS zijn alle triggers die er na head zijn, en dat
-# is precies wat in sqlite_master staat. De plek voor 0011 (gezichten) en 0012 (zoeken op beeld):
-# A0 zet hier TRIGGERS_0011 en TRIGGERS_0012 neer, elk gelijk aan de kopie in zijn migratie, en
-# voegt ze hieronder toe (bouwontwerp §3.1a, Keuze 55; review Z0b, contract F5). 0010 blijft dan
-# zoals hij is.
+# --- Gezichten (0011) en zoeken op beeld (0012): bouwontwerp §3.1a ---------------------------
+#
+# Geen van deze triggers raakt een FTS-tabel: met en zonder FTS5 zijn ze gelijk. De indexen van
+# de nieuwe tabellen staan hier ook, als SQL zoals sqlite_master hem bewaart (gedeeltelijk en
+# met DESC: dat zegt compare_metadata niet).
+
+INDEXES_0011 = {
+    "ix_face_node": "CREATE INDEX ix_face_node ON face (node_id)",
+    "ix_face_open": (
+        "CREATE INDEX ix_face_open ON face (owner_id, suggest_id, suggest_score DESC) "
+        "WHERE suggest_id IS NOT NULL AND hidden = 0"
+    ),
+    "ix_face_cluster": (
+        "CREATE INDEX ix_face_cluster ON face (owner_id, cluster) "
+        "WHERE cluster IS NOT NULL AND hidden = 0"
+    ),
+    "ix_face_new": (
+        "CREATE INDEX ix_face_new ON face (owner_id, created_at DESC) WHERE hidden = 0"
+    ),
+    "ux_fp_ja": "CREATE UNIQUE INDEX ux_fp_ja ON face_person (face_id) WHERE verdict = 'ja'",
+    "ix_fp_person": "CREATE INDEX ix_fp_person ON face_person (owner_id, person_id, verdict)",
+    "ix_face_scan_todo": (
+        "CREATE INDEX ix_face_scan_todo ON face_scan (state, owner_id, prio DESC)"
+    ),
+}
+
+
+def triggers_0011() -> dict[str, str]:
+    t: dict[str, str] = {}
+    # Een andere eigenaar: geen gezicht van de oude eigenaar blijft aan de node hangen (Keuze 25a)
+    t["node_au_owner_face"] = _trigger(
+        "node_au_owner_face AFTER UPDATE OF owner_id ON node\n"
+        "WHEN OLD.owner_id IS NOT NEW.owner_id",
+        "DELETE FROM face WHERE node_id = NEW.id;",
+        "DELETE FROM face_scan WHERE node_id = NEW.id;",
+    )
+    # Nieuwe inhoud: de gezichten van de oude inhoud weg. Personen blijven, zonder kader (Keuze
+    # 25a). Het kader leegmaken hoort eigenlijk bij node_bu_text van 0010, maar 0010 is gepusht
+    # (Keuze 55, z0b.md Afwijking 1).
+    t["node_au_blob_face"] = _trigger(
+        "node_au_blob_face AFTER UPDATE OF blob_id ON node\nWHEN OLD.blob_id IS NOT NEW.blob_id",
+        "DELETE FROM face WHERE node_id = NEW.id;",
+        "DELETE FROM face_scan WHERE node_id = NEW.id;",
+        "UPDATE photo_person SET x = NULL, y = NULL, w = NULL, h = NULL WHERE node_id = NEW.id;",
+    )
+    # Een persoon weg: zijn bevestigde gezichten worden "niet tonen", zonder vector, zodat hij
+    # niet terugkomt als "Wie is dit?" (Keuze 64). face_person gaat via de cascade, suggest_id
+    # via SET NULL.
+    t["person_bd_face"] = _trigger(
+        "person_bd_face BEFORE DELETE ON person",
+        "UPDATE face SET vec = NULL, hidden = 1, suggest_id = NULL, suggest_score = NULL,\n"
+        "                suggest_why = NULL, cluster = NULL\n"
+        "WHERE id IN (SELECT face_id FROM face_person"
+        " WHERE person_id = OLD.id AND verdict = 'ja');",
+    )
+    return t
+
+
+# De nieuwe tabellen van 0011, in de volgorde waarin de downgrade ze leegmaakt en weghaalt
+# (kinderen eerst)
+TABLES_0011 = ("face_person", "face", "face_scan", "face_owner", "node_origin")
+
+
+INDEXES_0012 = {
+    "ux_blob_embed_sha": "CREATE UNIQUE INDEX ux_blob_embed_sha ON blob_embed (blob_sha)",
+}
+
+
+# De nieuwe tabellen van 0012, ook kinderen eerst
+TABLES_0012 = ("blob_embed", "beeld_owner")
+
+
+def bump(user: str) -> tuple[str, str]:
+    """BUMP(u) van Keuze 76: gen van die eigenaar één hoger, en zijn rij erbij als die er nog
+    niet is. Geen upsert, zoals de rest van dit schema. Alleen als de gebruiker nog bestaat
+    (BZ8): als een gebruiker gewist wordt, gaan zijn nodes via de cascade weg, en dan mag er
+    geen rij van hem terugkomen."""
+    return (
+        f"INSERT INTO beeld_owner (user_id, gen) SELECT {user}, 0\n"
+        f"  WHERE NOT EXISTS (SELECT 1 FROM beeld_owner WHERE user_id = {user})\n"
+        f'    AND EXISTS (SELECT 1 FROM "user" WHERE id = {user});',
+        f"UPDATE beeld_owner SET gen = gen + 1 WHERE user_id = {user};",
+    )
+
+
+def triggers_0012() -> dict[str, str]:
+    t: dict[str, str] = {}
+    t["node_ai_beeld"] = _trigger(
+        "node_ai_beeld AFTER INSERT ON node\nWHEN NEW.kind = 'file' AND NEW.ftype = 'image'",
+        *bump("NEW.owner_id"),
+    )
+    # Ook als de nieuwe inhoud geen beeld meer is (OLD.ftype): dan moet hij uit het bestand per
+    # eigenaar. ftype is de virtuele kolom van 0010; in WHEN werkt hij op 3.46.1 (BZ8,
+    # test_triggers_beeld.py).
+    t["node_au_beeld"] = _trigger(
+        "node_au_beeld AFTER UPDATE OF owner_id, blob_id ON node\n"
+        "WHEN NEW.kind = 'file' AND (OLD.ftype = 'image' OR NEW.ftype = 'image')\n"
+        " AND (OLD.owner_id IS NOT NEW.owner_id OR OLD.blob_id IS NOT NEW.blob_id)",
+        *bump("OLD.owner_id"),
+        *bump("NEW.owner_id"),
+    )
+    t["node_ad_beeld"] = _trigger(
+        "node_ad_beeld AFTER DELETE ON node\nWHEN OLD.kind = 'file' AND OLD.ftype = 'image'",
+        *bump("OLD.owner_id"),
+    )
+    return t
+
+
+# De bevroren delen per migratie: 0010, 0011 en 0012 hebben er elk een kopie van
+# (test_schema_triggers.py eist dat die gelijk zijn). TRIGGERS en TRIGGERS_NO_FTS zijn alle
+# triggers die er na head zijn, en dat is precies wat in sqlite_master staat (bouwontwerp §3.1a,
+# Keuze 55; review Z0b, contract F5). 0010 blijft zoals hij is.
 TRIGGERS_0010 = triggers(fts=True)
 TRIGGERS_NO_FTS_0010 = triggers(fts=False)
-TRIGGERS = {**TRIGGERS_0010}
-TRIGGERS_NO_FTS = {**TRIGGERS_NO_FTS_0010}
+TRIGGERS_0011 = triggers_0011()
+TRIGGERS_NO_FTS_0011 = triggers_0011()
+TRIGGERS_0012 = triggers_0012()
+TRIGGERS_NO_FTS_0012 = triggers_0012()
+TRIGGERS = {**TRIGGERS_0010, **TRIGGERS_0011, **TRIGGERS_0012}
+TRIGGERS_NO_FTS = {**TRIGGERS_NO_FTS_0010, **TRIGGERS_NO_FTS_0011, **TRIGGERS_NO_FTS_0012}
 
 # --- Vullen in de migratie ---------------------------------------------------------------
 

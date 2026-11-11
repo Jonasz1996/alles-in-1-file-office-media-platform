@@ -5,8 +5,9 @@ eigen foto's zie alleen jij (Vraag 4); "uit": ook jij niet, en geen plaatsen. fa
 zolang X2 er niet is (Vraag 2).
 
 Z0b (Keuze 55, 66 en 80) zette faces (X2) en beeld (X3) in de API, allebei standaard "uit" per
-gebruiker (Vraag 11). beeld heeft nog geen kolom (die komt met 0012, A0): tot dan geeft
-photo_prefs() de standaard. faces_forbidden en faces_available komen van X2 (de schakelaar van de
+gebruiker (Vraag 11). beeld staat sinds 0012 (A0) in photo_pref.beeld, TEXT NULL: NULL is de
+standaard uit PHOTO_PREFS, zodat een ander antwoord op Vraag 11 alleen de code verandert, niet de
+tabel. faces_forbidden en faces_available komen van X2 (de schakelaar van de
 beheerder en de container analyse, Keuze 59); zonder X2 zijn ze False.
 
 De route GET en PATCH /me/photo-settings is van Z6 (routers/photo_prefs.py). Wat gezichten en
@@ -75,7 +76,7 @@ class PhotoSettingsPatch(BaseModel):
 
 
 async def photo_prefs(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any]:
-    """Alle vijf, met de standaard voor wat er niet is (beeld: altijd, tot 0012)."""
+    """Alle vijf, met de standaard voor wat er niet is: geen rij, of beeld NULL (0012)."""
     row = await db.get(PhotoPref, user_id)
     if row is None:
         return dict(PHOTO_PREFS)
@@ -84,7 +85,7 @@ async def photo_prefs(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any]:
         "memories": bool(row.memories),
         "ocr_photos": bool(row.ocr_photos),
         "faces": row.faces,
-        "beeld": PHOTO_PREFS["beeld"],
+        "beeld": PHOTO_PREFS["beeld"] if row.beeld is None else row.beeld,
     }
 
 
