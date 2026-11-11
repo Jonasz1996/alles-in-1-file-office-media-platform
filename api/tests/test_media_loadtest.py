@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import json
 import os
 import uuid
 from pathlib import Path
@@ -164,6 +165,8 @@ async def test_de_rooktest_van_ci(lt, client, admin):
     assert report["summary"][-1] == "uitkomst: geslaagd"
     view = (await client.get(BASE, headers=headers)).json()
     assert view["state"] == "done" and view["report"]["passed"] is True
+    for player in view["report"]["phases"]["b"]["players"]:
+        assert player["stall_at"] == player["stall_after_seek"] == []  # niet gehaperd (de JSON)
     nothing_left()
     names = sorted(p.name for p in loadtest.loadtest_dir(settings).iterdir())
     assert names == sorted(report["sources"])  # geen .part
@@ -546,6 +549,42 @@ async def test_de_speler_telt_haperen(monkeypatch):
     assert r.played_s == pytest.approx(10, abs=0.3)
     found = loadtest.judge("b", [r], None)
     assert not found["passed"] and found["problems"] == ["1 keer haperen"]
+    # Wanneer (I1, M7): één tijdstip per keer haperen, zonder sprong None. Na de 6 s van segment
+    # 0 tot 2 (de plek loopt nooit voor op de klok; gemeten 6,3) en ruim vóór segment 3 er is
+    # (na 1,5 s: 15 s in de tijd van de test, scale 0,1)
+    assert len(r.stall_at) == r.stalls == len(r.stall_after_seek)
+    assert r.stall_after_seek == [None]
+    assert 6.0 <= r.stall_at[0] < 10.0
+    assert found["players"][0]["stall_after_seek"] == [None]
+
+
+async def test_de_speler_weet_wanneer_hij_hapert_na_de_sprong():
+    """Fase a (I1, M7): haperen na de sprong. Segment 22 komt pas 1 s na de sprong van 2 naar
+    42 s; de speler (10× sneller) speelt het restje van segment 21 op en staat dan stil.
+    stall_after_seek telt vanaf de sprong, stall_at vanaf de start; beide in summary() en in de
+    JSON van het rapport. judge telt het zoals altijd."""
+    fake = FakeApp(count=40)  # 80 s: met hooguit 30 s vooruit vraagt hij 22 pas na de sprong
+    fake.slow[22] = 1.0
+    timing = loadtest.Timing(seek_at_s=2.0, seek_jump_s=40.0, tick_s=0.02, scale=0.1)
+    p = player(fake, timing)
+    # zoals _phase het fase a meegeeft
+    await p.run(20, seek_at=timing.s(timing.seek_at_s), jump_ms=int(timing.seek_jump_s * 1000))
+    r = p.report
+    assert r.error is None and r.seek_s is not None and "s1/21.m4s" in fake.gets
+    assert len(r.stall_at) == r.stalls == len(r.stall_after_seek) == 1
+    [after] = r.stall_after_seek
+    # het restje van segment 21 na de sprong (gemeten 2,2), en vóór segment 22 er is (1 s: 10 s)
+    assert after is not None and 0 <= after < 10
+    # stall_at telt vanaf de start: de 2 s tot de sprong zitten erin
+    assert r.stall_at[0] - after >= timing.seek_at_s - 1e-6
+    out = r.summary()
+    assert out["stall_at"] == [round(r.stall_at[0], 2)]
+    assert out["stall_after_seek"] == [round(after, 2)]
+    found = json.loads(json.dumps(loadtest.judge("a", [r], None)))
+    assert found["problems"] == ["1 keer haperen"]
+    [player_json] = found["players"]
+    assert player_json["stall_at"] == out["stall_at"]
+    assert player_json["stall_after_seek"] == out["stall_after_seek"]
 
 
 async def test_de_speler_telt_niet_meer_dan_er_binnen_is():
