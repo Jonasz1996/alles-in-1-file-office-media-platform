@@ -130,7 +130,8 @@ async def test_een_upload_wacht_niet_op_het_hele_wissen(client, admin, settings,
         assert r.json()["purged"] == 1
 
     # Tussen twee stukken door (asyncio.Lock is eerlijk: wie wacht, is eerst), niet pas na
-    # de hele boom; en binnen 1 s
+    # de hele boom; en binnen 1 s. Het getal voor de meting (I1, M6; zichtbaar met -s)
+    print(f"\n=== wissen ({hoe}) === upload {duur * 1000:.0f} ms, {al_weg} van {TOTAAL} weg")
     assert al_weg < TOTAAL, "de upload wachtte op het hele wissen"
     assert duur < 1.0, f"de upload wachtte {duur:.2f} s op het wissen"
     assert max(teller.calls) <= purge.CHUNK, teller.calls
