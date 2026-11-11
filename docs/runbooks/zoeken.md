@@ -1,9 +1,10 @@
 # Runbook: zoeken en foto's
 
-Fase 6 (0.8.0) zoekt in de inhoud van documenten, zet plaatsnamen en landen bij foto's, vindt
-duplicaten en kent personen. Zoeken op naam zit in de database zelf (triggers) en werkt meteen.
-De rest komt op de achtergrond: de inhoud van documenten, de plek, camera en hash van foto's.
-Wat fase 6 is en hoe je bijwerkt, staat in `infra/single/README.md` ("Bijwerken naar fase 6").
+Versie 0.8.0 (de kern van fase 6) zoekt in de inhoud van documenten, ook van scans met OCR, zet
+plaatsnamen en landen bij foto's, vindt duplicaten en kent personen. Zoeken op naam zit in de
+database zelf (triggers) en werkt meteen. De rest komt op de achtergrond: de inhoud van
+documenten, de tekst van scans, de plek, camera en hash van foto's. Wat 0.8.0 is en hoe je
+bijwerkt, staat in `infra/single/README.md` ("Bijwerken naar 0.8.0 (zoeken en foto's)").
 Dit runbook gaat over wat het script doet, de reservekopie, de plaatsnamen, de stand lezen, de
 wekelijkse controle, de index herbouwen, zoeken meten, zoeken naast media en office meten, en
 terug naar 0.7.1.
@@ -19,7 +20,7 @@ F3):
 DATA_ROOT=$(sed -n 's/^DATA_ROOT=//p' /opt/platform/.env) && echo "$DATA_ROOT"
 ```
 
-Het installatiescript staat, zolang fase 6 niet op `main` staat, op de branch:
+Het installatiescript staat, zolang 0.8.0 niet op `main` staat, op de branch:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
@@ -117,9 +118,11 @@ Gezichten en beeld rekent de app daarna opnieuw; de index van zoeken staat gewoo
 ## Plaatsnamen
 
 Het land komt uit de grenzen van Natural Earth 10m (publiek domein), de plaats uit GeoNames
-cities1000 (CC BY 4.0, de vermelding staat op `/over`): de dichtstbijzijnde plaats binnen 30 km,
-in hetzelfde land. Alles gebeurt in de container, zonder iets online op te zoeken. De bronnen
-(±16 MB) staan in `$DATA_ROOT/geo`, met de tabel die de app ervan maakt (`places.sqlite`).
+cities1000 (CC BY 4.0; de vermelding staat onder de kaart op `/fotos/kaart`, uit
+`/geo/attribution`, en in de README onder Bronnen; een pagina `/over` komt later): de
+dichtstbijzijnde plaats binnen 30 km, in hetzelfde land. Alles gebeurt in de container, zonder
+iets online op te zoeken. De bronnen (±16 MB) staan in `$DATA_ROOT/geo`, met de tabel die de app
+ervan maakt (`places.sqlite`).
 
 - **Aan of uit.** `PLAATSEN=aan` (standaard) of `PLAATSEN=uit` in `/opt/platform/.env`. Veranderen
   doe je met het script: `… | PLATFORM_BRANCH=… PLAATSEN=uit bash`, en weer aan met `PLAATSEN=aan`.
@@ -184,8 +187,25 @@ haalt):
 | GPS, camera en hash van foto's | ±2,5–5 minuten |
 | land en plaats | ±1 minuut |
 
+OCR staat niet in de tabel: dat hangt aan hoeveel gescande pagina's je hebt. Gescande PDF's leest
+OCR vanzelf, na de tekst (hooguit 200 pagina's per document); foto's alleen op verzoek of met
+"Tekst in foto's herkennen". Een volle liggende scan (90° gedraaid) haalt ±6,0–6,6 pagina's per
+minuut op één core: een stapel van alleen zulke scans kost ±160 minuten per 1.000 pagina's, volle
+rechte scans ±60 (`docs/fase-6/x1.md`, "Metingen" en "Open na de review"). Te lang: zet OCR uit
+op dezelfde tab (**OCR uitzetten**); de rij blijft dan staan tot je hem weer aanzet.
+
 Het achtergrondwerk wijkt voor media en office: lopen er 2 of meer omzettingen van video, of start
 OnlyOffice, dan wacht het even. Zoeken op naam wacht nooit.
+
+Uploads en opslaan gaan vóór het achtergrondwerk. De app schrijft één ding tegelijk in de
+database (SQLite heeft één schrijfslot) en zet de schrijvers in een rij: verzoeken eerst, het
+achtergrondwerk daarna (`app/dbgate.py`). Een upload wacht zo hooguit op de schrijfactie van de
+achtergrond die al bezig is. Dat blijft binnen 1 s op een schijf waar een `fsync` (het vastleggen
+op de schijf) tot ±0,2 s extra kost; bij ±0,3 s, of als een ander proces gigabytes naar dezelfde
+schijf schrijft, niet meer (`docs/fase-6/z2.md`, Open 12). Komen er veel uploads op een trage
+schijf, dan loopt het achtergrondwerk trager, want verzoeken gaan voor. `synchronous=NORMAL` in
+SQLite zou die `fsync` weghalen, maar dan kan een opgeslagen wijziging na een stroomstoring weg
+zijn; die keuze is niet gemaakt (`docs/fase-6/bouwontwerp.md`, Keuze 12).
 
 Vanaf de console:
 
@@ -276,7 +296,8 @@ dc exec -T platform python -m app.cli search-triggers
 lezen was). Wat weer mislukt, komt weer in de lijst; vaak is het bestand zelf
 kapot of versleuteld. **Achtergrondwerk pauzeren** zet het lezen stil (de index en OCR, en ook een
 herbouw van de index, tussen twee stukken); zoeken blijft werken. Vergeet niet op
-**Achtergrondwerk hervatten** te drukken: de pauze blijft staan, ook na een herstart.
+**Achtergrondwerk hervatten** te drukken: de pauze blijft staan, ook na een herstart. Hervatten
+zet de index en OCR meteen weer aan het lezen.
 
 ## Zoeken meten
 
@@ -363,8 +384,9 @@ de maat voor 8 GB van §4.5). Met `--docs`, `--fotos` of `--scans` kleiner is he
 van §4.5; dat staat dan onder `niet in deze meting`. Exitcode 1 als een poort van stap 2 niet
 gehaald of niet te meten is (met `--kort` altijd 0). Zonder `--office` zijn de poorten van
 OnlyOffice en van `OOMKilled` niet te meten, dus eindigt een hele meting zonder OnlyOffice altijd
-op `niet geslaagd` (exitcode 1): de andere poorten staan er wel. Nog niet in deze meting (0.8.1):
-de container `analyse` (gezichten en beeld) en de beeldvraag.
+op `niet geslaagd` (exitcode 1): de andere poorten staan er wel. Nog niet in deze meting: de
+container `analyse` (gezichten en beeld) en de beeldvraag. Gezichten staan gepland voor 0.8.1;
+zoeken op beeld ook, maar dat kan naar een eigen fase 6b schuiven.
 
 ## Terug naar 0.7.1
 

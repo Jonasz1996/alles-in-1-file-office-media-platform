@@ -503,23 +503,76 @@ beantwoord.
 
 Doel: alles terugvinden, ook op inhoud en op wat er op een foto staat.
 
-- [ ] Full-text: tekstextractie voor pdf, docx, xlsx, pptx, txt, md; OCR
-  voor scans en foto's met tekst
+- [x] Full-text: tekstextractie voor pdf, docx, xlsx, pptx, txt, md; OCR
+  voor scans en foto's met tekst. Eén zoekindex (FTS5, de zoekfunctie
+  van SQLite) in de database die er al is; geen Typesense en geen nieuwe
+  dienst (B17, B49). Ook odt, ods, odp, csv, html, rtf, en de titel,
+  artiest en album van muziek en video. De tekst wordt gelezen in de
+  afgeschermde mediaworker van fase 5; staat media uit, dan in een apart
+  proces van de app, met grenzen, en zegt `/beheer` dat (B52). OCR (tekst
+  herkennen in een beeld) met tesseract op de eigen server (B53): een
+  gescande pdf wordt vanzelf gelezen zolang media aan staat en OCR aan
+  staat op `/beheer`; een foto alleen als de eigenaar "Tekst in foto's
+  herkennen" aanzet (standaard uit) of op "Tekst herkennen" drukt
 
-- [ ] EXIF en GPS: datum, camera, locatie; kaartweergave; offline
-  reverse geocoding
+- [x] EXIF en GPS: datum, camera, locatie; kaartweergave; offline
+  reverse geocoding. Datum en camera kwamen in fase 3 (B22); nieuw is de
+  plek uit GPS. Alleen de eigenaar ziet die in de app (de standaard van
+  Vraag 4, Jonas koos nog niet). In het bestand zelf blijft de plek
+  staan; wie zo'n foto deelt, krijgt daar een waarschuwing over. Wie de
+  plek uitzet op `/account`, wist zijn plekken (B54). Een eigen kaart
+  (SVG) met alleen landsgrenzen, zonder kaarttegels van buiten. Land en
+  plaats zoekt de server zelf op, in Natural Earth en GeoNames;
+  `install.sh` downloadt die, en `PLAATSEN=uit` zet het uit (B55)
 
-- [ ] Duplicaten en near-duplicates (SHA-256 + perceptual hash)
+- [x] Duplicaten en near-duplicates (SHA-256 + perceptual hash). Op
+  `/dubbel`: precies gelijk op de SHA-256, bijna gelijk op een pHash (een
+  vingerafdruk van hoe het beeld eruitziet) met een tweede controle per
+  paar (B56). Er staat nooit iets vooraf aangevinkt; opruimen gaat via
+  de prullenbak
 
 - [ ] Gezichten en objecten met lokale modellen (bijv. InsightFace +
-  CLIP); semantisch zoeken via pgvector
+  CLIP); semantisch zoeken via pgvector. Niet in 0.8.0. Personen
+  benoem je in 0.8.0 met de hand (zo nodig met een kader op de foto), en
+  die zijn te zoeken. Gezichten vanzelf herkennen (YuNet en SFace) is
+  gepland voor 0.8.1. Zoeken op wat er op een foto staat (SigLIP 2, met
+  de vectoren in de SQLite in plaats van pgvector) is ook gepland voor
+  0.8.1, maar kan naar een eigen fase 6b schuiven (B57, B66, B68)
 
-- [ ] Herinneringen (vandaag X jaar geleden) en slimme albums
+- [x] Herinneringen (vandaag X jaar geleden) en slimme albums.
+  Herinneringen staan op `/fotos` en zijn uit te zetten op `/account`.
+  Een album kan een regel krijgen met dezelfde filters als zoeken; een
+  slim album deelt nieuwe foto's niet vanzelf (standaard nee, B58)
 
-- [ ] Filters: type, datum, persoon, locatie, tag, bibliotheek
+- [x] Filters: type, datum, persoon, locatie, tag, bibliotheek. Op
+  `/zoeken`: soort, datum, tag, persoon, plaats, land, camera, map en
+  mediabibliotheek. Op `/fotos`: persoon, foto of video, periode,
+  plaats, land en camera
 
 Klaar als: een zoekopdracht over 100.000 bestanden antwoordt binnen 200
 ms; OCR-tekst is doorzoekbaar; gezichten zijn te benoemen en te zoeken.
+
+Versie 0.8.0 (⟦C2: datum⟧): de kern van fase 6, zonder gezichten vanzelf
+herkennen en zonder zoeken op beeld. Zoeken over 100.000 bestanden moet
+binnen 200 ms antwoorden (p95: 95 van de 100 vragen zijn sneller); in de
+meting was het slechtste geval
+⟦C2: de hoogste p95 van zoeken over de toegangsprofielen, uit M1⟧ ms.
+Die grens blijft een harde eis in de automatische tests (CI): haalt een
+wijziging hem niet, dan faalt de test. OCR-tekst is doorzoekbaar: in de
+browser zijn een scan zonder tekstlaag en een foto van een bon te vinden
+op een woord dat alleen in het beeld staat, getest met de echte
+tesseract. OCR leest
+⟦C2: pagina's per minuut over de mix, uit M5⟧ pagina's per minuut op
+één processorkern (de grens is 8). Personen zijn te benoemen en te
+zoeken, maar alleen met de hand; gezichten vanzelf herkennen hoort bij 0.8.1. Het
+laatste bewijs is de eigen server (de LXC). De metingen staan in
+[docs/fase-6/metingen.md](fase-6/metingen.md), de integratie in
+[docs/fase-6/integratie.md](fase-6/integratie.md), wat er is, de
+grenzen en de vragen voor Jonas in
+[docs/fase-6/README.md](fase-6/README.md). Van B49–B70 zijn alleen B53
+en B57 besloten; de rest is nog voorstel, en 0.8.0 draait op de
+standaarden van het bouwontwerp (ook Vraag 4: alleen de eigenaar ziet de
+plek van een foto).
 
 Duur en omvang (3-11-2026): Jonas koos voor "alles": OCR, gezichten
 automatisch en zoeken op wat er op een foto staat, met een kaart zonder
