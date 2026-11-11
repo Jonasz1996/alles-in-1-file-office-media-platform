@@ -319,13 +319,15 @@ met een plek, elk met zijn voorbeeld; in de map "Foto's") en 500 gescande PDF's 
 "Scans"). De foto's staan er als al gelezen, zodat photometa pas bij de herbouw van stap 2 en 3 aan
 het werk gaat.
 
-Tijdens elke stap: 2 zoekvragen per seconde, `GET /files/root` en `/health` elke seconde,
-`MemAvailable` van de machine, hoe ver text, ocr en photometa zijn, en of de app en de worker nog
-dezelfde processen zijn. De poorten (stap 2): elke start van media ≤ 5 s en 0 keer haperen, zoeken
-p95 ≤ 200 ms, `/files/root` p95 ≤ 200 ms, `/health` p95 ≤ 50 ms, `MemAvailable` ≥ 1,5 GiB, geen
+Tijdens elke stap: 2 zoekvragen per seconde, `GET /files/root?limit=200` (de eerste pagina, zoals
+de web-app een map opent) en `/health` elke seconde, `MemAvailable` van de machine, hoe ver text,
+ocr en photometa zijn, en of de app en de worker nog dezelfde processen zijn. De poorten (stap 2):
+elke start van media ≤ 5 s en 0 keer haperen, zoeken p95 ≤ 200 ms, `/files/root?limit=200` p95 ≤
+200 ms, `/health` p95 ≤ 50 ms (elk zonder één mislukt verzoek), `MemAvailable` ≥ 1,5 GiB, geen
 container `OOMKilled` (DS, met een geheugengrens), de app en de worker leven nog, de index leest
-weer binnen 90 s, en met OnlyOffice het opslaan ≤ 1,2 × de nulmeting en 0 verloren woorden. Elke
-poort zegt `gehaald`, `niet gehaald` of `niet te meten`. Aan het eind staat een blok `=== kort ===`.
+weer binnen 90 s, en met OnlyOffice het opslaan ≤ 1,2 × de nulmeting en 0 verloren woorden (alleen
+als de bewerkers in beide stappen naast de belastingtest volledig liepen). Elke poort zegt
+`gehaald`, `niet gehaald` of `niet te meten`. Aan het eind staat een blok `=== kort ===`.
 
 Nodig, naast `uv` en `ffmpeg`: een gebouwde web-app (`cd web && npm run build`), en voor de scans
 `tesseract` met `nld`, `eng` en `osd` en het lettertype DejaVu Sans (`fonts-dejavu-core`). Met

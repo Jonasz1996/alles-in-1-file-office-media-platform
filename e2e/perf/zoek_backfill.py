@@ -83,6 +83,7 @@ from tests.search import fixtures as F  # noqa: E402
 from app import previews  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.models import Blob, Node  # noqa: E402
+from app.office.convert import EXT_BY_MIME  # noqa: E402
 from conftest import Server, make_admin  # noqa: E402
 from seed import connect  # noqa: E402
 
@@ -106,6 +107,9 @@ KLAAR = ("done", "none", "skip", "failed")
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+# keys.PDF_VERSION in 0.7.x (0.7.1 = e0496c6): wat een upgrade naar 0.8.0 aantreft. Komt er een
+# hogere PDF_VERSION, dan zet de upgrade echt alles opnieuw om, en dan hoort dat in de meting
+PDF_VERSION_07 = 1
 # Het deel van elke soort (§4.5)
 MIX = (("pdf", 0.40), ("docx", 0.30), ("xlsx", 0.10), ("pptx", 0.10), ("klein", 0.10))
 
@@ -159,8 +163,18 @@ def documenten(n: int, zaad: int = 45) -> list[Document]:
     return uit
 
 
-def zaai(data_dir: Path, owner: str, root: str, docs: list[Document]) -> None:
-    """De documenten als blob en node van owner, zonder rij in analysis (zoals vóór Z2)."""
+def zaai(
+    data_dir: Path, owner: str, root: str, docs: list[Document], office_klaar: bool = False
+) -> None:
+    """De documenten als blob en node van owner, zonder rij in analysis (zoals vóór Z2).
+
+    office_klaar: zoals op een 0.7.x met OnlyOffice aan, waar de inhaalronde van O3 al liep:
+    elk document dat DS omzet (convert.EXT_BY_MIME), staat op pdf_state ready met de
+    PDF_VERSION van 0.7.x (PDF_VERSION_07), zodat de inhaalronde er niets mee doet zolang die
+    niet omhoog gaat. Het bestand van de PDF zelf staat er niet; de stap text leest docx, xlsx,
+    pptx en rtf zelf, alleen doc, xls en ppt lezen de PDF (extract.LEGACY_MIMES), en die zitten
+    niet in MIX."""
+    pdf_mimes = set(EXT_BY_MIME) if office_klaar else set()
     blob_dir = Settings(data_dir=data_dir).blob_dir
     with connect(data_dir) as conn:
         s = Session(bind=conn)
@@ -169,9 +183,12 @@ def zaai(data_dir: Path, owner: str, root: str, docs: list[Document]) -> None:
             pad = blob_dir / sha[:2] / sha[2:4] / sha
             pad.parent.mkdir(parents=True, exist_ok=True)
             pad.write_bytes(doc.data)
+            pdf = doc.mime in pdf_mimes
             s.add(Blob(sha256=sha, size=len(doc.data), ref_count=1, created_at=DAG,
                        mime=doc.mime, preview="none",
-                       render_version=previews.RENDER_VERSION))  # fmt: skip
+                       render_version=previews.RENDER_VERSION,
+                       pdf_state="ready" if pdf else None,
+                       pdf_version=PDF_VERSION_07 if pdf else 0))  # fmt: skip
             s.add(
                 Node(
                     id=uuid.uuid4(),

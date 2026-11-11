@@ -5,7 +5,10 @@ Stappen
 1. pauze: het achtergrondwerk staat op pauze (PATCH /admin/search, paused), met een volle rij
    index: n documenten zonder tekst, zoals vóór Z2 (zoek_backfill.zaai; de backfill bij het
    starten zet ze klaar), en sinds I1 ook de foto's en de scans van §4.5 (zie onder). De
-   nulmeting.
+   nulmeting. Met --office heeft, zoals op een 0.7.x met OnlyOffice, elk document dat DS omzet
+   zijn PDF al (zaai_stap, zaai office_klaar): de inhaalronde van O3 (fase 4) hoort niet bij de
+   upgrade naar 0.8.0. Zonder dat zette DS in elke stap, ook de nulmeting, ±2.700 documenten om
+   (docx, xlsx, pptx en rtf; I1, M7).
 2. achtergrond: dezelfde rij; de pauze gaat eraf zodra de belastingtest loopt (GET
    /admin/media/loadtest zegt running), zodat de index geen voorsprong krijgt. Op dat moment
    leest photometa ook alle foto's opnieuw (POST /admin/search/rebuild hash: GPS, camera en
@@ -34,7 +37,8 @@ Tijdens elke stap
   belastingtest van fase 5, in de app: fase a gespreid, fase b tegelijk; korter dan 120 s
   alleen fase b, op 720p en de laagste trede);
 - zoeken: 2 vragen per seconde (GET /search, een woord uit de documenten), de p95;
-- de app: GET /files/root en GET /health elke seconde, de p95;
+- de app: GET /files/root (de eerste pagina van 200, zoals de web-app een map opent) en GET
+  /health elke seconde, de p95;
 - geheugen: MemAvailable van de machine, elke seconde, het minimum;
 - achtergrondwerk: de rijen van de stappen text en ocr die klaar zijn (zonder skip: wat de stap
   nooit leest, zoals de foto's voor text) en wat photometa nog te doen heeft, aan het begin,
@@ -46,15 +50,17 @@ Tijdens elke stap
   draaien op de host);
 - met --office (de echte DS, E2E_REAL_DS en E2E_REAL_DS_SECRET_FILE; docs/fase-4/e2e.md): B
   bewerkers in OnlyOffice die D seconden typen en dan sluiten (office_editors.one_round, met
-  de CallbackClock): de tijd van sluiten tot opgeslagen, en de woorden die niet in het bestand
-  kwamen; en de container van DS (docker inspect): zijn geheugengrens, OOMKilled, en of hij
-  intussen herstart is.
+  de CallbackClock), in elke stap vanaf het moment dat de belastingtest loopt: de tijd van
+  sluiten tot opgeslagen, en de woorden die niet in het bestand kwamen; en de container van DS
+  (docker inspect): zijn geheugengrens, OOMKilled, en of hij intussen herstart is.
 
 Poorten (stap 2; stap 3 is een rapport): elke start van media ≤ 5 s en 0 keer haperen (de
-poorten van de belastingtest zelf); zoeken p95 ≤ 200 ms; GET /files/root p95 ≤ 200 ms; GET /health
-p95 ≤ 50 ms; MemAvailable ≥ 1,5 GiB; geen container OOMKilled (DS, met een geheugengrens); de app
-en de worker leven nog (dezelfde processen); de index leest weer binnen 90 s na de laatste
-transcode; het opslaan in OnlyOffice ≤ 1,2 × de nulmeting en 0 verloren woorden. Elke poort zegt
+poorten van de belastingtest zelf); zoeken p95 ≤ 200 ms; GET /files/root?limit=200 p95 ≤ 200 ms;
+GET /health p95 ≤ 50 ms (elk zonder één mislukt verzoek); MemAvailable ≥ 1,5 GiB; geen container
+OOMKilled (DS, met een geheugengrens); de app en de worker leven nog (dezelfde processen); de
+index leest weer binnen 90 s na de laatste transcode; het opslaan in OnlyOffice ≤ 1,2 × de
+nulmeting en 0 verloren woorden (alleen als de ronde volledig liep, in beide stappen naast de
+belastingtest: iedereen open, één status 2 per document; onvolledig()). Elke poort zegt
 "gehaald", "niet gehaald" of "niet te meten"; zonder --kort telt "niet te meten" als niet gehaald
 (ook de poorten van OnlyOffice zonder --office).
 
@@ -123,6 +129,11 @@ POORT = {
 }
 ZONDER_DEFER = "1000"  # zoveel omzettingen tegelijk zijn er nooit: de index wijkt niet
 HERVAT_WACHT_S = 180.0
+# GET /files/root zoals de web-app een map opent: de eerste pagina (web/src/browser/api.ts
+# FIRST_PAGE). Zonder limit kost de lijst van alle 5.000 documenten in de hoofdmap zelf al
+# p95 ±320 ms (10.000: ±640 ms), ook zonder last; met limit 200 ±40 ms (I1, M7). Dan meet de
+# poort de lengte van de map in plaats van de app naast het achtergrondwerk
+EERSTE_PAGINA = 200
 # De last van §4.5 in stap 2 (--kort, anders): documenten per stap, foto's en scans
 DOCS = (300, 5_000)
 FOTOS = (300, 5_000)
@@ -169,21 +180,30 @@ def _get(http: httpx.Client, path: str, **kw: Any) -> float | None:
     return ms if r.status_code == 200 else None
 
 
-def zoekers(server: Server, token: str, woorden: list[str], meter: Meter) -> list[threading.Thread]:
-    """2 zoekvragen per seconde; elke seconde /files/root en /health; elke seconde het geheugen."""
-    headers = {"Authorization": f"Bearer {token}"}
+def zoekers(
+    server: Server, token: Callable[[], str], woorden: list[str], meter: Meter
+) -> list[threading.Thread]:
+    """2 zoekvragen per seconde; elke seconde /files/root (de eerste pagina, EERSTE_PAGINA) en
+    /health; elke seconde het geheugen. token per verzoek (Server.token: hooguit 10 minuten oud,
+    het access-token leeft er 15): met één token per stap kreeg in M7 het laatste deel van stap 3
+    alleen 401's (375 zoekvragen), en een mislukt verzoek telt niet in de p95 (wel in fouten, en
+    dan haalt oordeel() de poort niet)."""
     rng = random.Random(7)
+
+    def kop() -> dict[str, str]:
+        return {"Authorization": f"Bearer {token()}"}
 
     def zoek() -> None:
         with httpx.Client(base_url=server.url, trust_env=False, timeout=30) as http:
             while not meter.stop.wait(0.5):
                 q = rng.choice(woorden)
-                meter.tel("zoeken", _get(http, f"{API}/search", params={"q": q}, headers=headers))
+                meter.tel("zoeken", _get(http, f"{API}/search", params={"q": q}, headers=kop()))
 
     def app() -> None:
         with httpx.Client(base_url=server.url, trust_env=False, timeout=30) as http:
             while not meter.stop.wait(1.0):
-                meter.tel("files_root", _get(http, f"{API}/files/root", headers=headers))
+                meter.tel("files_root", _get(http, f"{API}/files/root", headers=kop(),
+                                             params={"limit": EERSTE_PAGINA}))  # fmt: skip
                 meter.tel("health", _get(http, "/health"))
                 vrij = mem_available()
                 meter.mem_min = vrij if meter.mem_min is None else min(meter.mem_min, vrij)
@@ -453,10 +473,21 @@ def start(base: Path, env: dict[str, str], office: bool) -> Opzet:
     return Opzet(bench.server, bench.office.admin, office=bench, ds_name=ds_name, url=url)
 
 
-def bewerkers(opzet: Opzet, n: int, seconden: float, ronde: int) -> dict[str, Any]:
+def bewerkers(
+    opzet: Opzet, n: int, seconden: float, ronde: int, start: threading.Event | None = None
+) -> dict[str, Any]:
     """B bewerkers (5 documenten met elk n // 5, minstens 1) die typen en sluiten, zoals
-    office_editors.one_round; zonder het wachten op een stille machine, want hier loopt de rest
-    juist."""
+    office_editors.one_round; zonder het wachten op een stille machine of een lege wachtrij
+    (quiet=False), want hier loopt de rest juist. Met dat wachten begonnen ze in de eerste volle
+    meting (M7) in geen enkele stap: in stap 1 zette DS nog de documenten van zaai om, in stap 2
+    en 3 is de rij nooit leeg, en make_docs gaf na 300 s op.
+
+    start: pas typen als dit gezet is (stap: de belastingtest loopt), zodat de bewerkers in elke
+    stap op hetzelfde moment van de belastingtest opslaan; het team maken gaat ervoor. Wat
+    office_editors.check als fout ziet (niet iedereen open, geen of twee keer status 2 per
+    document, te weinig geheugen) komt mee; oordeel() rekent het (onvolledig()). Te weinig
+    geheugen is hier de poort van §4.5 (MemAvailable < 1,5 GiB), niet LOW_FREE van fase 4 (3 GiB):
+    daaronder stoppen openen en typen."""
     import office_bench as ob
     import office_editors as oe
 
@@ -464,13 +495,11 @@ def bewerkers(opzet: Opzet, n: int, seconden: float, ronde: int) -> dict[str, An
     per_doc = max(1, n // docs)
     if opzet.squad is None:
         opzet.squad = ob.team(opzet.office, {}, members=docs * per_doc - 1)
-    stil = ob.wait_quiet
-    ob.wait_quiet = lambda **_kw: {"quiet": False}  # type: ignore[assignment]
-    try:
-        r = oe.one_round(opzet.office, opzet.squad, docs, per_doc, seconden, ronde,
-                         opzet.ds_name or "", opzet.url or "")  # fmt: skip
-    finally:
-        ob.wait_quiet = stil  # type: ignore[assignment]
+    if start is not None:
+        start.wait()
+    r = oe.one_round(opzet.office, opzet.squad, docs, per_doc, seconden, ronde,
+                     opzet.ds_name or "", opzet.url or "", quiet=False,
+                     min_free=int(POORT["mem_min_bytes"]))  # fmt: skip
     callbacks = [s for p in r["per_doc_results"] for s in p["callback_s"]]
     return {
         "bewerkers": r["editors"],
@@ -480,7 +509,32 @@ def bewerkers(opzet: Opzet, n: int, seconden: float, ronde: int) -> dict[str, An
         "getypt": r["typed"],
         "opgeslagen": r["saved"],
         "verloren": r["lost_saving"] + (r["typed"] - r["saved"]),
+        "status2": [p["status2"] for p in r["per_doc_results"]],
+        "weinig_geheugen": bool(r["low_memory"]),
+        "fouten_open": [str(f)[:200] for f in r["open_errors"][:3]],
     }
+
+
+def onvolledig(office: dict[str, Any] | None) -> str | None:
+    """Waarom de ronde van de bewerkers niet telt (None: ze telt), zoals office_editors.check:
+    de belastingtest liep niet (stap: na_de_start_van_media), niet iedereen open, een document
+    zonder (of met twee keer) status 2, niets getypt, of te weinig geheugen (dan stopten openen
+    en typen eerder). Zonder dat haalde een ronde waarin niemand opende de poorten: opslaan ±0 s
+    en 0 verloren woorden (review van de herstelling van M7)."""
+    if not office or "fout" in office:
+        return (office or {}).get("fout", "geen bewerkers")
+    if office.get("na_de_start_van_media") is not True:
+        return "de belastingtest liep niet: de bewerkers typten zonder media"
+    if not office.get("bewerkers") or office.get("open") != office.get("bewerkers"):
+        return f"{office.get('open')} van {office.get('bewerkers')} bewerkers open"
+    status2 = office.get("status2")
+    if not status2 or any(s != 1 for s in status2):
+        return f"status 2 per document: {status2}"
+    if not office.get("getypt"):
+        return "niets getypt"
+    if office.get("weinig_geheugen") is not False:  # niet gemeten telt als te weinig
+        return "te weinig geheugen vrij (MemAvailable < 1,5 GiB): de bewerkers stopten eerder"
+    return None
 
 
 def stap(
@@ -497,20 +551,28 @@ def stap(
     komt onder "begin" in de uitkomst."""
     server, admin = opzet.server, opzet.admin
     meter = Meter()
-    token = server.token(admin)
     voor = analyse_stand(server)
     fotos_voor = foto_stand(server) if opzet.fotos else None
     procs_voor = processen(server)
     ds_voor = ds_toestand(opzet.ds_name) if opzet.office is not None else None
     print(f"[{naam}] begin: {voor}, foto's {fotos_voor}, processen {procs_voor}", flush=True)
-    draden = zoekers(server, token, woorden, meter)
+    draden = zoekers(server, lambda: server.token(admin), woorden, meter)
     office: dict[str, Any] | None = None
     office_draad = None
+    # De bewerkers typen pas als de belastingtest loopt: in stap 1 maakt hij eerst zijn bronnen
+    # (±2 minuten; daarna liggen ze er), dus zonder dit sloegen ze daar op een ander moment van
+    # de belastingtest op dan in stap 2 (review van de herstelling van M7)
+    media_loopt = threading.Event()
     if opzet.office is not None:
         uitkomst: dict[str, Any] = {}
 
         def typ() -> None:
-            uitkomst.update(bewerkers(opzet, args.bewerkers, float(args.duur), ronde))
+            try:
+                uitkomst.update(
+                    bewerkers(opzet, args.bewerkers, float(args.duur), ronde, start=media_loopt)
+                )
+            except Exception as exc:  # in de uitkomst, niet alleen op stderr
+                uitkomst["fout"] = f"{type(exc).__name__}: {exc}"[:300]
 
         office_draad = threading.Thread(target=typ, daemon=True)
         office_draad.start()
@@ -528,10 +590,13 @@ def stap(
 
     media_draad = threading.Thread(target=last, daemon=True)
     media_draad.start()
-    begonnen = None
+    begonnen = loopt = None
     bij_begin: dict[str, Any] | None = None
+    if begin is not None or office_draad is not None:
+        loopt = wacht_op_de_belastingtest(server, admin, media_klaar)
+        media_loopt.set()  # ook als hij niet kwam: dan haalt media zijn poort niet
     if begin is not None:
-        begonnen = wacht_op_de_belastingtest(server, admin, media_klaar)
+        begonnen = loopt
         bij_begin = begin()
     media_draad.join()
     media_s = round(time.monotonic() - klok, 1)
@@ -542,7 +607,11 @@ def stap(
         d.join(timeout=35)
     if office_draad is not None:
         office_draad.join(timeout=60 * 15)
-        office = uitkomst or {"fout": "de bewerkers kwamen niet terug"}
+        if office_draad.is_alive():
+            office = {"fout": "de bewerkers kwamen na 15 minuten niet terug"}
+        else:
+            office = uitkomst or {"fout": "de bewerkers gaven niets terug"}
+        office["na_de_start_van_media"] = loopt
     hervat = None
     if naam != "pauze":
         hervat = wacht_tot_de_index_leest(server, klaar_en_open(na_media)[0])
@@ -595,12 +664,23 @@ def oordeel(stap2: dict[str, Any], nul: dict[str, Any]) -> list[tuple[str, bool 
     out: list[tuple[str, bool | None]] = [
         ("media: elke start ≤ 5 s, 0 keer haperen", stap2["media"]["passed"]),
     ]
-    for sleutel, regel in (
-        ("zoeken_p95_ms", "zoeken p95 ≤ {:g} ms"),
-        ("files_root_p95_ms", "GET /files/root p95 ≤ {:g} ms"),
-        ("health_p95_ms", "GET /health p95 ≤ {:g} ms"),
+    # Een mislukt verzoek (geen 200, of na 30 s geen antwoord) zit niet in de p95; elke mislukte
+    # telt daarom als niet gehaald, anders mat de poort alleen wat lukte (M7: 401's in stap 3)
+    fouten = stap2.get("fouten") or {}
+    for sleutel, soort, regel in (
+        ("zoeken_p95_ms", "zoeken", "zoeken p95 ≤ {:g} ms"),
+        (
+            "files_root_p95_ms",
+            "files_root",
+            "GET /files/root?limit=" + str(EERSTE_PAGINA) + " p95 ≤ {:g} ms",
+        ),
+        ("health_p95_ms", "health", "GET /health p95 ≤ {:g} ms"),
     ):
-        out.append((regel.format(POORT[sleutel]), onder(stap2[sleutel], POORT[sleutel])))
+        regel = regel.format(POORT[sleutel])
+        if fouten.get(soort):
+            out.append((f"{regel} ({fouten[soort]} mislukt)", False))
+        else:
+            out.append((regel, onder(stap2[sleutel], POORT[sleutel])))
     out.append(("MemAvailable ≥ 1,5 GiB", boven(stap2["mem_min_bytes"], POORT["mem_min_bytes"])))
     ok, waarom = ds_oordeel(stap2.get("ds"))
     out.append((f"geen container OOMKilled (DS: {waarom})", ok))
@@ -612,15 +692,26 @@ def oordeel(stap2: dict[str, Any], nul: dict[str, Any]) -> list[tuple[str, bool 
         regel += " (er kwam binnen de tijd geen rij van text of ocr klaar)"
     out.append((regel, onder(stap2["hervat_s"], POORT["hervat_s"])))
     office, basis = stap2.get("office"), nul.get("office")
+    # Een ronde die niet volledig liep (onvolledig()), telt niet: in stap 2 is dat niet gehaald,
+    # in de nulmeting is er dan niets om mee te vergelijken
+    mis2, mis1 = onvolledig(office), onvolledig(basis)
     regel = "OnlyOffice: opslaan ≤ 1,2 × de nulmeting"
     if office and basis and "opslaan_s" in office and "opslaan_s" in basis:
         grens = POORT["opslaan_factor"] * max(basis["opslaan_s"], 0.1)
-        out.append((f"{regel} ({grens:.1f} s)", office["opslaan_s"] <= grens))
+        if mis2:
+            out.append((f"{regel} ({grens:.1f} s; stap 2: {mis2})", False))
+        elif mis1:
+            out.append((f"{regel} (de nulmeting: {mis1})", None))
+        else:
+            out.append((f"{regel} ({grens:.1f} s)", office["opslaan_s"] <= grens))
     else:
         waarom = "zonder OnlyOffice" if not office and not basis else "geen opslaantijd gemeten"
         out.append((f"{regel} ({waarom})", None))
     if office and "verloren" in office:
-        out.append(("OnlyOffice: 0 verloren woorden", office["verloren"] == 0))
+        if mis2:
+            out.append((f"OnlyOffice: 0 verloren woorden (stap 2: {mis2})", False))
+        else:
+            out.append(("OnlyOffice: 0 verloren woorden", office["verloren"] == 0))
     else:
         waarom = "zonder OnlyOffice" if not office else office.get("fout", "niet gemeten")
         out.append((f"OnlyOffice: 0 verloren woorden ({waarom})", None))
@@ -646,7 +737,8 @@ def kort_blok(uitkomst: dict[str, Any]) -> list[str]:
         hervat = "-" if s["hervat_s"] is None else f"{s['hervat_s']} s"
         regels.append(
             f"{s['stap']}: zoeken p95 {s['zoeken_p95_ms']} ms ({s['zoeken_n']} vragen), "
-            f"/files/root p95 {s['files_root_p95_ms']} ms, /health p95 {s['health_p95_ms']} ms, "
+            f"/files/root?limit={EERSTE_PAGINA} p95 {s['files_root_p95_ms']} ms, "
+            f"/health p95 {s['health_p95_ms']} ms, "
             f"MemAvailable min {s['mem_min_mb']} MB, tekst klaar {s['tekst_klaar_voor']} → "
             f"{s['tekst_klaar_na_media']} (na media) → {s['tekst_klaar_na']}, hervat {hervat}; "
             f"media: {media}"
@@ -706,6 +798,34 @@ def kleiner_dan_45(args: argparse.Namespace) -> list[str]:
         if n < vol:
             uit.append(f"de last van §4.5: {n:,} {wat} in plaats van {vol:,}".replace(",", "."))
     return uit
+
+
+def zaai_stap(
+    data_dir: Path,
+    admin: Account,
+    docs: list[zb.Document],
+    args: argparse.Namespace,
+    opzet: Opzet,
+    last: bool,
+) -> None:
+    """Wat seeded() schrijft voor stap 1 (last: ook de foto's en de scans) en voor stap 3: de
+    documenten in de hoofdmap. Met --office zoals op een 0.7.x met OnlyOffice: elk document dat
+    DS omzet, heeft zijn PDF al (zaai office_klaar); zonder dat zette DS in elke stap, ook de
+    nulmeting, ±2.700 documenten om (docx, xlsx, pptx en rtf; I1, M7)."""
+    eigenaar, root = admin.id, admin.root_id or ""
+    zb.zaai(data_dir, eigenaar, root, docs, office_klaar=bool(args.office))
+    if not last:
+        return
+    klok = time.monotonic()
+    if args.fotos:
+        teller = zf.zaai(data_dir, eigenaar, root, zf.fotos(args.fotos), zf.KLAAR)
+        opzet.fotos = teller["fotos"]
+        print(f"{teller['fotos']} foto's ({teller['met_gps']} met een plek) gemaakt "
+              f"in {time.monotonic() - klok:.1f} s", flush=True)  # fmt: skip
+    if args.scans:
+        klok = time.monotonic()
+        n = zf.zaai_documenten(data_dir, eigenaar, root, zf.scans(args.scans), "Scans")
+        print(f"{n} scans gemaakt in {time.monotonic() - klok:.1f} s", flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -783,20 +903,7 @@ def main(argv: list[str] | None = None) -> int:
         ) -> Callable[[Path], None]:
             def zaai(data_dir: Path) -> None:
                 server.extra_env.update(extra)
-                eigenaar, root = admin.id, admin.root_id or ""
-                zb.zaai(data_dir, eigenaar, root, docs)
-                if not last:
-                    return
-                klok = time.monotonic()
-                if args.fotos:
-                    teller = zf.zaai(data_dir, eigenaar, root, zf.fotos(args.fotos), zf.KLAAR)
-                    opzet.fotos = teller["fotos"]
-                    print(f"{teller['fotos']} foto's ({teller['met_gps']} met een plek) gemaakt "
-                          f"in {time.monotonic() - klok:.1f} s", flush=True)  # fmt: skip
-                if args.scans:
-                    klok = time.monotonic()
-                    n = zf.zaai_documenten(data_dir, eigenaar, root, zf.scans(args.scans), "Scans")
-                    print(f"{n} scans gemaakt in {time.monotonic() - klok:.1f} s", flush=True)
+                zaai_stap(data_dir, admin, docs, args, opzet, last)
 
             return zaai
 

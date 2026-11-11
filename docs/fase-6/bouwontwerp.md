@@ -5362,6 +5362,13 @@ het schrijven.
 | zoeken op beeld (X3) | p95 ≤ 250 ms, ook met `werk` vol (Vraag 14); de terugval is een rapport |
 | de container `analyse` | geen `OOMKilled`; maxrss ≤ 2,5 GB (BZ5) |
 
+*Bij de integratie (I1, M7):* `GET /files/root` is de eerste pagina zoals de web-app een map opent
+(`?limit=200`, `FIRST_PAGE`). Zonder limit kost de lijst van alle 5.000 documenten die de meting
+in de hoofdmap zet, al p95 ±320 ms zonder enige last (fase 3, ongewijzigd sinds 0.7.1); dan meet de
+poort de lengte van die map en niet de app naast het achtergrondwerk. Een mislukt verzoek telt als
+niet gehaald, en de poorten van OnlyOffice tellen alleen een volledige ronde naast de
+belastingtest. De grenzen zelf zijn niet veranderd.
+
 **Waar:** in CI (`e2e-media-perf`) een korte versie als rapport (60 s, 1 sessie, zonder
 OnlyOffice); in de integratie de hele test in de sandbox als poort (2 sessies media en 3
 bewerkers, binnen 8 GB); op de LXC via het runbook `zoeken.md`.
