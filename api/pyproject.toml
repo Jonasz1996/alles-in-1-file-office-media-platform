@@ -65,5 +65,10 @@ markers = [
     # Z3 (Keuze 29): met de echte bronnen van plaatsen en landen (tools/geo/haal.py); de job api
     # haalt ze met sha256 en draait -m geo apart
     "geo: met de echte bronnen van plaatsnamen en landen; niet in de gewone run",
+    # De container analyse (fase 6, §4.6; A0): analyse draait gewoon mee (de nep-worker, zonder
+    # numpy); analyse_echt en beeld_echt zijn voor api/tests_analyse/ (X2a, X3a; job api-analyse)
+    "analyse: de container analyse met de nep-worker (fase 6); draait gewoon mee",
+    "analyse_echt: de echte worker van de analyse, met numpy (job api-analyse)",
+    "beeld_echt: het echte beeldmodel (X3, job beeld-model)",
 ]
 addopts = "--strict-markers -m 'not media and not media_perf and not provider_real and not zoek_perf and not ocr and not geo'"
