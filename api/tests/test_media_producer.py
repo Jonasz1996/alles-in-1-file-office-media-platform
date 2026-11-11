@@ -270,12 +270,13 @@ async def test_een_run_die_een_segment_te_laat_begint(case):
         return await case.fake._stream(dataclasses.replace(job, args=args))
 
     case.fake.on(Op.STREAM, late)
-    case.fake.speed = 2.0
+    # de eerste run maakt 0 en 1 en staat dan stil: 7 komt alleen uit de herstart (zoals in
+    # test_een_andere_stsd_geeft_generatie_2, ook als het verzoek laat komt)
+    case.fake.fault("hang", op=Op.STREAM, after=2)
     sid = await case.play()
     await case.seg(sid, 0)
     st = case.stream(sid)
     st.wait_s = 4.0
-    case.fake.speed = None
     r = await case.seg(sid, 7)
     assert r.headers["x-init"] == "1"
     assert case.runs() == [0.0, pytest.approx(st.layout.start_s(7))]
@@ -393,11 +394,14 @@ async def test_een_andere_stsd_geeft_generatie_2(case):
     """Een herstart met een andere stsd: generatie 2 en X-Init 2. Een latere herstart met de
     oude stsd hoort weer bij generatie 1 (de veiligere lezing van Keuze 22: de generatie hangt
     aan de inhoud van de stsd, niet aan de volgorde)."""
-    case.fake.speed = 2.0
+    # De eerste run maakt 0 en 1 en staat dan stil: hij haalt 8 nooit zelf, hoe laat het
+    # verzoek ook komt. Eerder liep hij op 2× en ging hij vrij (speed None) vóór het verzoek
+    # om 8; kwam dat verzoek pas na ±1 s (een drukke machine), dan maakte de eerste run 8 zelf
+    # en kwam er geen herstart (X-Init 1).
+    case.fake.fault("hang", op=Op.STREAM, after=2)
     case.fake.fault("new_stsd", op=Op.STREAM)
     sid = await case.play()
     await case.seg(sid, 0)
-    case.fake.speed = None
     r = await case.seg(sid, 8)
     assert r.headers["x-init"] == "2"
     m = (await case.get(sid, "map.json")).json()
