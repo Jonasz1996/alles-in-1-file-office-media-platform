@@ -556,13 +556,13 @@ Versie 0.8.0 (⟦C2: datum⟧): de kern van fase 6, zonder gezichten vanzelf
 herkennen en zonder zoeken op beeld. Zoeken over 100.000 bestanden moet
 binnen 200 ms antwoorden (p95: 95 van de 100 vragen zijn sneller); in de
 meting was het slechtste geval
-⟦C2: de hoogste p95 van zoeken over de toegangsprofielen, uit M1⟧ ms.
+126,7 ms.
 Die grens blijft een harde eis in de automatische tests (CI): haalt een
 wijziging hem niet, dan faalt de test. OCR-tekst is doorzoekbaar: in de
 browser zijn een scan zonder tekstlaag en een foto van een bon te vinden
 op een woord dat alleen in het beeld staat, getest met de echte
 tesseract. OCR leest
-⟦C2: pagina's per minuut over de mix, uit M5⟧ pagina's per minuut op
+23,2 pagina's per minuut op
 één processorkern (de grens is 8). Personen zijn te benoemen en te
 zoeken, maar alleen met de hand; gezichten vanzelf herkennen hoort bij 0.8.1. Het
 laatste bewijs is de eigen server (de LXC). De metingen staan in

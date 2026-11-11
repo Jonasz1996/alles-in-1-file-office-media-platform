@@ -35,7 +35,7 @@ een foto staat ("strand", "hond") ook nog niet. Dat staat ook gepland voor 0.8.1
 een eigen stap (fase 6b) schuiven.
 
 Bij 95 van de 100 zoekopdrachten over 100.000 bestanden kwam het antwoord in de meting binnen
-⟦C2: de hoogste p95 van zoeken over de toegangsprofielen, uit M1⟧ ms;
+126,7 ms;
 de grens is 200 ms.
 
 Versie 0.8.0 staat nog niet op `main`, maar op de branch `claude/stappenplan-uitwerken-lu4uv3`.

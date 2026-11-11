@@ -35,31 +35,32 @@ vragen zijn sneller.
 
 - **Zoeken over 100.000 bestanden binnen 200 ms** (p95), voor elke soort gebruiker: van iemand
   met alleen zijn eigen map tot iemand die 30 hoofdmappen ziet. In de meting was het slechtste
-  geval ⟦C2: de hoogste p95 van zoeken over de toegangsprofielen, uit M1⟧ ms. Met vier mensen
-  tegelijk is de grens 300 ms; gemeten is ⟦C2: de p95 met 4 clients tegelijk, uit M1⟧ ms. De grens
+  geval 126,7 ms (M1). Met vier mensen
+  tegelijk is de grens 300 ms; gemeten is 209,4 ms. De grens
   van 200 ms wordt in CI nooit ruimer gemaakt of overgeslagen (die regel staat in
   [e2e.md](e2e.md)).
 - **OCR-tekst is doorzoekbaar.** Een gescande PDF zonder tekst en een foto van een bon zijn te
   vinden op een woord dat alleen in het beeld staat, en de viewer markeert dat woord (getest in
   de browser, met de echte tesseract). De grens is 8 pagina's per minuut op één core. Tijdens de
   bouw haalde CI 20,5 per minuut ([x1.md](x1.md), "Klaar als"); bij de integratie
-  ⟦C2: pagina's per minuut over de mix, uit M5⟧.
+  23,2 per minuut over de mix van brieven en volle pagina's (M5).
 - **Personen zijn te benoemen en te zoeken**, in 0.8.0 met de hand: je zet een persoon op een
   foto, zo nodig met een kader, en vindt hem terug met zoeken en met het filter Persoon. Gezichten
   automatisch herkennen hoort bij 0.8.1.
 - **De tekst uit documenten** (PDF, docx, xlsx, pptx, txt, md) is doorzoekbaar. Het lezen op de
   achtergrond moet minstens 1.000 documenten per minuut halen op één core; gemeten
-  ⟦C2: documenten per minuut met de worker, uit M2⟧.
+  1.977 per minuut (M2).
 - **Foto-gegevens, de kaart en plaatsnamen zonder internet.** GPS, camera en hash lezen moet
-  minstens 5.000 foto's per minuut halen (gemeten ⟦C2: foto's per minuut, uit M3⟧), land en plaats
-  opzoeken minstens 20.000 per minuut (gemeten ⟦C2: punten per minuut, uit M4⟧). De kaart antwoordt
-  binnen 150 ms (gemeten ⟦C2: de p95 van de kaart, uit M1⟧ ms) en vraagt niets aan een andere
+  minstens 5.000 foto's per minuut halen (gemeten 13.713, M3), land en plaats
+  opzoeken minstens 20.000 per minuut (gemeten 44.495, M4). De kaart antwoordt
+  binnen 150 ms (gemeten 51,9 ms, M1) en vraagt niets aan een andere
   server. Na de update heeft elke foto met een GPS-plek op land een land, en een plaats als er
-  een binnen 30 km ligt: ⟦C2: de uitkomst van M9⟧.
+  een binnen 30 km ligt: gehaald in M9, met 248 foto's bij echte plaatsen, over de wereld, op
+  grenzen, op zee en op 180°.
 - **Duplicaten en bijna-duplicaten.** `/dubbel` antwoordt bij 55.000 foto's binnen 300 ms;
-  gemeten ⟦C2: de p95 van de duplicaten, uit M1⟧ ms.
+  gemeten 192,7 ms (M1).
 - **Herinneringen en slimme albums.** De herinneringen komen binnen 50 ms; gemeten
-  ⟦C2: de p95 van de herinneringen, uit M1⟧ ms. De slimme albums zijn getest, ook het delen van
+  27,0 ms (M1). De slimme albums zijn getest, ook het delen van
   nieuwe foto's uit een regel.
 - **Filters** op soort, datum, persoon, plek, tag en bibliotheek: elk filter en elke combinatie van
   twee is getest tegen een eenvoudige referentie, met en zonder de index.
@@ -70,7 +71,7 @@ vragen zijn sneller.
   woord verloren. De uitkomst per regel staat in metingen.md; samengevat:
   ⟦C2: elke poortregel van stap 2 gehaald of niet en het hoogste geheugengebruik, uit M7⟧.
 - **Een upload wacht hooguit 1 s**, ook als de index tegelijk een tekst van 1 MB met 10 kopieën
-  schrijft. De langste wachttijd was ⟦C2: de langste wachttijd van een upload, uit M6⟧ ms.
+  schrijft. De langste wachttijd was 337 ms (M6).
 
 Per punt waar het bewezen is (in de sandbox, in CI of op de LXC): [integratie.md](integratie.md).
 
