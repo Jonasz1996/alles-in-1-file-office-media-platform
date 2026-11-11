@@ -151,10 +151,10 @@ die van office (`docs/runbooks/office.md`, "De app terugrollen"). Office blijft 
    ```
    Zeggen ze niet allebei "goed", stop dan hier. Met een versie die niet bestaat, faalt stap 4
    pas als de app al gestopt is en het schema terug is. En `curl … | bash` met een adres dat er
-   niet is (zoals `main` zolang 0.7.0 op de branch staat), geeft één regel van curl en doet verder
-   niets: daarom komt het script hier al in een bestand. Het adres is dat van de branch, zoals bij
-   het bijwerken; staat 0.7.0 op `main`, dan mag `main` in het adres, en in stap 4 zonder
-   `PLATFORM_BRANCH`.
+   niet is (zoals `main` zolang de nieuwste versie op de branch staat), geeft één regel van curl
+   en doet verder niets: daarom komt het script hier al in een bestand. Het adres is dat van de
+   branch, zoals bij het bijwerken; staat de nieuwste versie op `main`, dan mag `main` in het
+   adres, en in stap 4 zonder `PLATFORM_BRANCH`.
 2. Stop de app en de worker, zodat niets meer naar de tabellen van media schrijft:
    ```bash
    dc stop platform media

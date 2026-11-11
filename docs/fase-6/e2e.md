@@ -125,11 +125,11 @@ Hoe je ze met de hand draait, staat bovenaan elk script. De metingen van I1 met 
 staan in [metingen.md](metingen.md).
 
 De woorden van een poort verschillen per script. `zoek_backfill.py` drukt `poort ≥ N: gehaald` of
-`poort ≥ N: NIET gehaald` af (`e2e/perf/zoek_backfill.py:352`), net als de poort van OCR
-(`api/tests/ocr/poort.py:234`); `zoek_samen.py` drukt `gehaald`, `niet gehaald` of `niet te meten`
-af (`e2e/perf/zoek_samen.py:636`). Dat blijft zo: `e2e/test_zoek_metingen.py` toetst beide vormen
-letterlijk (`:45-49` met `NIET`, `:286` zonder), dus gelijk maken breekt een test, welke kant je
-ook kiest. De blokken kort in `ci.yml` zoeken niet op deze woorden. `NIET gehaald` en `niet
+`poort ≥ N: NIET gehaald` af (`oordeel()` in `e2e/perf/zoek_backfill.py`), net als de poort van OCR
+(`main()` in `api/tests/ocr/poort.py`); `zoek_samen.py` drukt `gehaald`, `niet gehaald` of `niet te
+meten` af (`woord()` in `e2e/perf/zoek_samen.py`). Dat blijft zo: `e2e/test_zoek_metingen.py` toetst
+beide vormen letterlijk (`test_oordeel_per_soort` met `NIET`, `test_kort_blok_noemt_elke_poort`
+zonder), dus gelijk maken breekt een test, welke kant je ook kiest. De blokken kort in `ci.yml` zoeken niet op deze woorden. `NIET gehaald` en `niet
 gehaald` betekenen hetzelfde.
 
 ## De e2e van zoeken

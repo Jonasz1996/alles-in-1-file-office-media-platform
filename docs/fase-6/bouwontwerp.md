@@ -276,6 +276,9 @@ Afkortingen:
   aan `92a0d04`). Bij de integratie komt daar een tag `v0.7.0` op. Dit zijn de waarden van
   revisie 2: daarna kwam 0.7.1, met migratie 0009. Z7 zet ze op de laatste commit vóór Z0, met
   head `0009` (§3.10).
+  **Notitie bij 0.8.0 (I1).** Gebouwd: terug naar 0.7.1, commit `80d5bb8`, met
+  `db-downgrade 0009` (§3.10). De tag `v0.7.0` is er niet gekomen, en `v0.7.1` ook niet; de
+  stappen gebruiken de volledige commit. Of er een tag komt, kiest Jonas.
 - **J6. Het voorbeeld van 256 px is al gedraaid volgens EXIF** (`render.py:357` en `:370`)
   [code]. De pHash daarop heeft geen eigen draaiing nodig.
 - **J7. GPS uit downloads halen** hoort bij de bewerking "metadata en GPS-locatie weghalen" van
@@ -358,6 +361,13 @@ gezichten zijn te benoemen en te zoeken.
 | P6 | **Privacy standaard dicht** | Plek, personen en tekst uit foto's horen bij een bestand van één eigenaar, met zijn toestemming (Keuze 25a). Nooit in `preview_meta`, nooit via een publieke link, nooit in een log. Een gedeeld album deelt alleen wat de eigenaar koos. Geen totalen of scores naar buiten. |
 | P7 | **Achtergrondwerk wijkt, en is eerlijk** | Drie rijen (`index`, `ocr`, `analyse`), `nice` 19 en de idle IO-klasse, korte transacties, batches, om de beurt per eigenaar, en wachten als er ≥ 2 transcodes lopen of OnlyOffice start. `analyse` begint pas na de backfill van de index. |
 | P8 | **Onvertrouwde bestanden in de zandbak** | Wat de app vanzelf leest (tekst, OCR), leest de worker. Gezichten en beeld rekent de container `analyse`, op de preview, nooit op de blob. Een decoder krijgt een begrensd, genormaliseerd beeld, nooit de ruwe blob als het anders kan. |
+
+*Notitie bij 0.8.0 (I1, M7).* `nice` 19 weegt alleen binnen één cpu-cgroup, en met autogroup alleen
+binnen één sessie. Het renderproces van photometa en ffmpeg hebben elk een eigen sessie, en in de
+standaard installatie draait de worker in een eigen container: daar wijkt photometa niet voor live
+transcoderen. Dat het renderproces nu echt op nice 19 draait (`66e5565`, `30c17d1`), helpt alleen
+binnen de app. Of photometa ook wacht als er omzettingen lopen (Defer, zoals de index), is nog open
+([metingen.md](metingen.md), M7).
 
 ### 0.3 Hoe een bestand vindbaar wordt, en hoe een vraag loopt
 
@@ -1065,6 +1075,10 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
       (Vraag 4b).
     - Tests: een album met een publieke link, een los bestand, een eigenaar met "uit", een video
       zonder media.
+    - **Notitie bij 0.8.0 (I1).** Zo gebouwd, met één verschil: "onbekend" telt ook een foto die
+      photometa nog niet las (`gps` is dan leeg), niet alleen een video met media uit
+      (`api/app/routers/photos_map.py:26-28`). De web zegt daarom "nog niet gelezen, of media
+      staat uit" (`web/src/i18n/areas/photos_map.nl.ts`).
 
 ### De kaart
 
@@ -1115,6 +1129,11 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
       gemiddelde afwijking van 64 × 64 grijs (MAD64) ≤ 3,0. Echte varianten (half zo groot,
       JPEG q35) haalden ≤ 2,18; verschillende brieven op één sjabloon ≥ 3,94 (V5). De grens van
       3,0 is voorlopig: Z3 meet hem op de fixtures van §3.6 en legt hem vast in de test.
+      **Notitie bij 0.8.0 (I1).** Gebouwd is MAD64 ≤ 2,0, plus dezelfde afwijking in elk blok van
+      4 × 4 van dat beeld ≤ 6,0 (`MAD64` en `BLOCK64` in `api/app/dupes/phash.py:46-47`). Die
+      controle per blok staat hierboven niet: twee formulieren op één sjabloon hadden een MAD64
+      van maar 0,66–0,86, lager dan een echte variant; per blok scheidt het wel
+      (`phash.py:10-19`, [z3.md](z3.md)).
     - **Tekst telt mee.** Hebben beide blobs tekst (`blob_text`), en is die tekst anders (een hash
       van de gevouwen tekst), dan zijn ze nooit "bijna zeker gelijk".
     - **Het niveau** in `dup_pair.level`: `zeker` als pHash ≤ 6 én de tweede controle slaagt;
@@ -1252,11 +1271,21 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
     `ocr.pages_queued` telt de inhouden in de rij (PDF's en foto's), geen pagina's, want de
     pagina's van een PDF kent de app pas na de eerste blik van de worker; de tab zegt "inhouden"
     (review golf 4, contract F5; x1.md, Open 3).
+    **Notitie bij 0.8.0 (I1).** Gebouwd zijn ook de knoppen "Duplicaten opnieuw berekenen" en
+    "Plek, camera en datum opnieuw lezen" (`POST /admin/search/rebuild` met `hash` en `geo`),
+    "OCR aanzetten" of "OCR uitzetten" (`PATCH` met `ocr`) en "Alles opnieuw herkennen" (rebuild
+    met `ocr`). De knop voor de pauze heet "Achtergrondwerk hervatten" zolang het werk stilstaat.
+    Een regel "Controle (wekelijks)" toont de wekelijkse vergelijking van 200 willekeurige
+    bestanden in de index met de bron (`api/app/search/weekcheck.py`); herstellen blijft met de
+    hand (`web/src/admin/SearchTab.tsx`).
 52. **Een reservekopie vóór de migratie, met elk image** (A, herzien in r2: C7, C13).
     - `install.sh` maakt de kopie met alleen de standaardbibliotheek:
       `compose run --rm --no-deps platform python -I -c '<sqlite3.Connection.backup>'`, terwijl de
       oude app nog draait. Dat werkt met het image van 0.7.0 en van 0.8.0; `app.cli db-backup`
       bestaat in 0.7.0 niet (V9).
+      **Notitie bij 0.8.0 (I1).** De update naar 0.8.0 komt van 0.7.1; `test_install_search.sh`
+      (stap B) controleert dat de kopie met het image van 0.7.1 draait en
+      `platform-0009-<tijd>.db` heet.
     - Het bestand heet naar de alembic-head en de tijd: `/data/backup/platform-0008-<tijd>.db`.
       Dat is het voorbeeld van revisie 2; vanaf 0.7.1 is de head `0009`, en Z7 zet de namen
       daarop (§3.10).
@@ -1271,6 +1300,10 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
 53. **Terug naar 0.7.0 is beschreven en getest** (A, herzien in r2: C7, §3.10). Het script komt
     van de commit van 0.7.0, niet van de branch: dan draait het oude script met het oude image.
     `test_install_search.sh` draait precies de stappen van §3.10.
+    **Notitie bij 0.8.0 (I1).** Sinds 0.7.1 gaat de weg terug naar 0.7.1: commit `80d5bb8`, met
+    `db-downgrade 0009` (§3.10). `test_install_search.sh` gebruikt die commit en head
+    (`ROLLBACK_SHA` en `ROLLBACK_HEAD`). Een tag `v0.7.0` of `v0.7.1` is er niet; of die komt,
+    kiest Jonas.
 54. **Meten op de LXC** (A). `app.cli bench --los` maakt een boom van 100.000 in
     `/data/cache/zoekbench` (±2 minuten, ±500 MB), meet zoeken voor "eigenaar" en "alles", en
     wist hem weer. De uitkomst komt op `/beheer`. Al in week 1 kan Jonas de losse versie uit Z0
@@ -4369,6 +4402,10 @@ referentie op naam is die van 0.7.0; wie de index wil, geeft `zoekindex="aan"`.
 | `GET /files/{id}/analysis` | leesrecht | `{"text": "done", "hash": "done", "ocr": "none", "truncated": false, "code": null}` |
 | `POST /files/{id}/ocr` (X1) | een foto: alleen de eigenaar; een PDF: schrijfrecht | `202`; `409 ocr_running`; `503 ocr_off`; `429 ocr_limit`; `409 ocr_has_text` |
 
+**Notitie bij 0.8.0 (I1).** Gebouwd is ook `422 ocr_unsupported` op `POST /files/{id}/ocr`, voor
+iets dat geen foto of PDF is, zoals een map of een tekstbestand (`api/app/routers/ocr.py:10`,
+`:133` en `:143`; de tekst in `web/src/i18n/errors/photos.ts`).
+
 **Foto's, plaats en kaart** (alleen eigen, levende bestanden: `own_live`)
 
 | Methode en pad | Antwoord |
@@ -4714,6 +4751,10 @@ weg: de gezichten en de beeldindex. Alles van 0010 blijft. Ook `node_origin` gaa
 zoals bestanden van vóór de update (Vraag 9). De sleutels in `SLEUTELS_ROOT` en de modellen in
 `MODELLEN_ROOT` blijven op schijf; het runbook (`docs/runbooks/analyse.md`) zegt hoe je ze wist.
 `test_install_analyse.sh` doet die stappen (§4.6).
+
+**Notitie bij 0.8.0 (I1).** De commit van 0.8.0 staat in [integratie.md](integratie.md), "Afronden en 0.8.0". Een tag `v0.8.0` is er niet;
+of die komt, kiest Jonas. 0.8.1 is er nog niet: deze weg terug, het runbook `analyse.md` en
+`test_install_analyse.sh` komen pas met 0.8.1.
 
 ### 3.11 De container `analyse` (A0, X2a en X3a; Keuze 56–59, 68, 73, 75, 84)
 
@@ -5319,6 +5360,10 @@ verhuizen. **De p95 ≤ 200 ms blijft altijd hard in CI** (C17). Dat staat als r
 de CPU van Jonas p95 ≤ 200 ms niet, dan zegt `/beheer` het; de tijdsgrens van 120 ms met de
 rondes B en C (Keuze 9) houdt het antwoord dan nog onder de 200 ms, met de eerlijke melding.
 
+**Notitie bij 0.8.0 (I1).** Gebouwd: de Zoekbench op `/beheer` → Zoeken en foto's toont de p95
+van "eigenaar" en "alles" en de tijd van de meting. Een eigen waarschuwing boven 200 ms geeft
+`/beheer` niet (`web/src/admin/SearchTab.tsx`, `Bench`).
+
 ### 4.5 Meten: backfill en CPU naast OnlyOffice en media
 
 **Snelheid van de backfill** (`e2e/perf/zoek_backfill.py`, elk 3 keer, één core, niets anders
@@ -5370,7 +5415,11 @@ niet gehaald, en de poorten van OnlyOffice tellen alleen een volledige ronde naa
 belastingtest. De worker draait op 3 cores en de app niet, zoals regel 14 van fase 5 en
 `compose.media-limits.yaml` (`cpus: 3`, een core vrij voor de app): in de eerste volle meting liep
 het hele script onder `taskset -c 0-2`, en dan deelde de app de cores van ffmpeg en de bewerkers.
-De grenzen zelf zijn niet veranderd.
+Hetzelfde geldt voor de probe van de belastingtest zelf (fase 5, §4.6 punt 6), die de poort media
+voedt: die vroeg elke seconde de hele hoofdmap op, en met deze 5.000 documenten kostte dat de app
+220–320 ms per seconde op zijn event loop, ook zonder media (M7, de diagnose in
+[metingen.md](metingen.md)). Hij vraagt nu ook `?limit=200` (`7992c1c`). De grenzen zelf zijn niet
+veranderd.
 
 **Waar:** in CI (`e2e-media-perf`) een korte versie als rapport (60 s, 1 sessie, zonder
 OnlyOffice); in de integratie de hele test in de sandbox als poort (2 sessies media en 3
@@ -5421,6 +5470,11 @@ lopen naast elkaar.
 - Een kader tekenen kan met het toetsenbord (Keuze 37).
 - De waarschuwing bij delen en de vraag bij een slim album staan in het dialoog zelf, met de focus
   erop, niet als losse melding.
+  **Notitie bij 0.8.0 (I1).** De waarschuwing bij delen staat in het dialoog, maar krijgt geen
+  focus: het antwoord komt pas als het dialoog al open is, en de focus verplaatsen zou wie al
+  typt onderbreken. De zinnen hebben `role="note"` en gaan één keer door de live-regio
+  (`announce`); de focus blijft waar hij was (`web/src/shares/LocationWarning.tsx:41` en `:55`;
+  [z5.md](z5.md), "Afwijkingen"; getest in `test_share_warning.py`).
 - Alle tekst in NL en EN; i18n streng in CI; foutcodes in de catalogus van het pakket.
 
 ---
@@ -5455,6 +5509,11 @@ voor review, fixer en nacontrole, dan samenvoegen in de volgorde van de tabel en
 Samen ±43 werkdagen (≈ 9 weken). Na dag 27 is 0.8.0 er met de kern; na dag 43 0.8.1 met
 gezichten en beeld (Vraag 13). Met één oplevering (Vraag 13b) vervalt de integratie op dag 25–27,
 en duurt de laatste integratie 4 dagen: 0.8.0 rond dag 41.
+
+**Notitie bij 0.8.0 (I1).** De rij "Integratie 1" noemt een tag `v0.7.0`. Die tag is er niet
+gekomen, en ook geen `v0.7.1` of `v0.8.0`: de weg terug gebruikt de volledige commit van 0.7.1
+(`80d5bb8`, §3.10). Of er tags komen, kiest Jonas. 0.8.0 (11 november 2026) staat op de branch
+`claude/stappenplan-uitwerken-lu4uv3`.
 
 **De go/no-go van X3** (aan het eind van dag 33, K2-12). Ja als de omzetter op de kleine vorm
 gelijk is aan de eigen numpy-versie (fp32 ≤ 1·10⁻⁵, int8 cosinus ≥ 0,99) en twee keer dezelfde

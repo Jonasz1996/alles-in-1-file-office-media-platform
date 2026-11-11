@@ -43,6 +43,8 @@ slagen; de oorzaak staat bij elke bevinding:
   van Keuze 26 geldt alleen tot het eerste segment van een sessie. Het gebeurde in 5 van de 12
   runs van fase a met 3 sessies (vaker met OnlyOffice ernaast) en in 1 van de 5 van fase c;
   nooit zonder sprong of herstart (fase b: 0 keer in 15 runs). Een voorstel voor het ontwerp;
+  in fase 6 gebouwd als B71 (voorstel) en deels aangepakt; of het haperen daardoor minder werd,
+  is niet bewezen (zie bevinding 3 en [fase 6](../fase-6/metingen.md#bevindingen), Bevinding 2);
 - **direct play bij zoeken** (bevinding 4): Chromium zelf, en het netwerk;
 - **Mk** (bevinding 6): de tabel van Keuze 24 is met opzet een bovengrens;
 - **de herstart van DS** (bevinding 7): met de `f` van de sandbox laat de reserve bij `B − 1,0`
@@ -568,6 +570,14 @@ test als het een fout in onze code is. Getallen zijn nergens bijgesteld om te sl
    Samen: 5 van de 12 runs van fase a met 3 sessies. In fase b, zonder sprong, nooit (15 runs).
    Zolang de startvoorrang niet ook na een sprong geldt, haalt fase a de grens in de sandbox dus
    niet betrouwbaar.
+   *Fase 6 (integratie I1, 0.8.0):* de voorrang geldt nu ook na elke herstart van een stroom
+   (B71, voorstel): de andere producenten lezen dan hooguit 10 s vooruit, tot de nieuwe run 10 s
+   media maakte, hooguit 20 s. Dat is half de oplossing. De metingen van fase 6
+   ([metingen.md](../fase-6/metingen.md), M7) vonden twee oorzaken. Na de herstart maakt de
+   producent onder drukte te weinig: daar is de voorrang voor. En landt de sprong in de laatste
+   21 ms van een segment (het rooster begint op 21 ms), dan moet het volgende segment er binnen
+   ±0,2 s zijn; dat haalt geen herstart, en daar helpt voorrang niet. Wat de poort dan telt,
+   kiest Jonas. Fase c is niet opnieuw gemeten.
 4. **Zoeken bij direct play haalt de 1,5 s van de tabel niet** (niet van ons). Bij direct play
    (`src=`) beslist Chromium wanneer hij na een sprong weer speelt: hij haalt eerst een stuk van
    het bestand binnen (m6.md: ±4 s beeld) en decodeert vanaf het keyframe vóór het doel. De

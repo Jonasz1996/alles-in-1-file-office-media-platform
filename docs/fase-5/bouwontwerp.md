@@ -2658,7 +2658,10 @@ tegendruk en de cache.
     plus de getekende offset (`trun` v1), ook bij transcode.
   - Schrijft `<n>.m4s.tmp` en hernoemt atomair. Wekt wachtende verzoeken.
   - Leest niet verder bij 60 s voorsprong in mediatijd (tegendruk), en niet verder dan 10 s
-    zolang een andere sessie nog geen segment 0 heeft (startvoorrang, Keuze 26).
+    zolang een andere sessie nog geen segment 0 heeft (startvoorrang, Keuze 26). *Notitie bij
+    fase 6 (0.8.0):* ook niet verder dan 10 s zolang een andere stroom na een herstart nog geen
+    10 s media maakte, hooguit 20 s (herstartvoorrang, B71, voorstel; fase 5
+    [metingen.md](metingen.md#bevindingen), bevinding 3).
   - Vergelijkt de `stsd` van elke nieuwe init (Keuze 22).
   - Herstart bij een sprong (Keuze 25), en één keer na een fout of "vast" (Keuze 46).
 - `grid.py`: het rooster van 2 s en het rooster uit keyframes (Keuze 22, 23). (spike) Het rooster
@@ -4356,6 +4359,16 @@ knipper en cache.
 6. **Meet:** de start per sessie; haperen (aantal en totaal); de snelheid van elke run; de trede die
    de toelating koos; de CPU van de worker (uit de cgroup, anders `/proc`); de RSS per proces; de
    cache in MB per minuut; de p95 van `GET /api/v1/files/root` en `/api/v1/media/home` elke seconde.
+   *Noot (fase 6, integratie I1, M7):* de belastingtest in de app vraagt van de hoofdmap nu de eerste
+   pagina, `GET /api/v1/files/root?limit=200`, zoals de web-app een map opent (`FIRST_PAGE` in
+   `web/src/browser/api.ts`; de rest haalt hij later in pagina's van 1.000). Zonder limit kostte de
+   lijst van een hoofdmap met 5.000 bestanden de app zelf elke seconde 220–320 ms op zijn event loop,
+   en die tijd ging af van de spelers en van elke vraag ernaast: dan mat de test de lengte van de map
+   in plaats van de API naast media (`docs/fase-6/metingen.md`, M7). De grens van 200 ms (punt 7)
+   blijft. Met de hoofdmap van fase 5 (±10 bestanden) geven beide vragen dezelfde lijst, dus de
+   cijfers van Md blijven vergelijkbaar. De meting Mg van buiten (`belasting.py`) vraagt nog de hele
+   lijst, tegen diezelfde kleine hoofdmap; wie hem naast een volle hoofdmap draait, meet weer de
+   lengte van de map.
 7. **Slaagt als,** per fase:
    - a: elke start ≤ 5 s, 0 keer haperen na de start, elke run gemiddeld ≥ 1,1× (marge boven de
      1,0× die het rooster van 2 s nodig heeft), en de API ≤ 200 ms (p95);
