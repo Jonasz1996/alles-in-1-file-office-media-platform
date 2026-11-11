@@ -559,24 +559,32 @@ async def test_de_speler_telt_haperen(monkeypatch):
 
 
 async def test_de_speler_weet_wanneer_hij_hapert_na_de_sprong():
-    """Fase a (I1, M7): haperen na de sprong. Segment 22 komt pas 1 s na de sprong van 2 naar
-    42 s; de speler (10× sneller) speelt het restje van segment 21 op en staat dan stil.
-    stall_after_seek telt vanaf de sprong, stall_at vanaf de start; beide in summary() en in de
-    JSON van het rapport. judge telt het zoals altijd."""
-    fake = FakeApp(count=40)  # 80 s: met hooguit 30 s vooruit vraagt hij 22 pas na de sprong
-    fake.slow[22] = 1.0
+    """Fase a (I1, M7): haperen na de sprong. De sprong van 2 naar 42 s wacht 0,3 s op segment
+    21, en segment 23 komt pas 1 s na de sprong; de speler (10× sneller) speelt het restje van 21
+    en heel 22 op en staat dan stil. De start wacht 0,5 s op segment 0. stall_after_seek telt
+    vanaf het eind van de sprong, stall_at vanaf het begin van het spelen (niet vanaf de start);
+    beide in summary() en in de JSON van het rapport. judge telt het zoals altijd."""
+    fake = FakeApp(count=40)  # 80 s: met hooguit 30 s vooruit vraagt hij 21 en 23 pas na de sprong
+    fake.slow.update({0: 0.5, 21: 0.3, 23: 1.0})
     timing = loadtest.Timing(seek_at_s=2.0, seek_jump_s=40.0, tick_s=0.02, scale=0.1)
     p = player(fake, timing)
     # zoals _phase het fase a meegeeft
     await p.run(20, seek_at=timing.s(timing.seek_at_s), jump_ms=int(timing.seek_jump_s * 1000))
     r = p.report
     assert r.error is None and r.seek_s is not None and "s1/21.m4s" in fake.gets
+    assert r.start_s is not None and r.start_s >= 0.5 and r.seek_s >= 0.3  # echte seconden
     assert len(r.stall_at) == r.stalls == len(r.stall_after_seek) == 1
     [after] = r.stall_after_seek
-    # het restje van segment 21 na de sprong (gemeten 2,2), en vóór segment 22 er is (1 s: 10 s)
-    assert after is not None and 0 <= after < 10
-    # stall_at telt vanaf de start: de 2 s tot de sprong zitten erin
-    assert r.stall_at[0] - after >= timing.seek_at_s - 1e-6
+    # De plek loopt nooit voor op de klok: van ~42 s tot 46 s (het restje van 21 en heel 22) is
+    # ~4 s (gemeten 4,3); een late tik bij de sprong (hooguit 0,2 s, 2 s in de tijd van de test)
+    # schuift het doel op. En vóór segment 23 er is (1 s: 10 s). Zonder / scale: ~0,4
+    assert after is not None and 2.0 <= after < 10
+    # stall_at - after: van het begin van het spelen tot het eind van de sprong. De 2 s tot de
+    # sprong en de sprong zelf (seek_s: echte seconden, dus / scale) zitten erin, de start niet
+    # (5 s); 2 s ruimte voor die late tik. Vanaf t0 of vanaf de start valt het erbuiten
+    before = r.stall_at[0] - after
+    seek = r.seek_s / timing.scale
+    assert timing.seek_at_s + seek - 0.01 <= before < timing.seek_at_s + seek + 2.0
     out = r.summary()
     assert out["stall_at"] == [round(r.stall_at[0], 2)]
     assert out["stall_after_seek"] == [round(after, 2)]

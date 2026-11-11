@@ -431,7 +431,8 @@ class PlayerReport:
     # Per keer haperen één waarde, alleen om te lezen (I1, M7; judge en GATES kijken er niet
     # naar): stall_at in s sinds de speler begon te spelen (played_from), stall_after_seek in s
     # sinds de sprong klaar was (waar seek_s gezet wordt), None vóór de sprong en zonder sprong.
-    # Net als stall_s: echte seconden gedeeld door scale. Een nieuwe sessie (gone, _reopen) zet
+    # Net als stall_s: echte seconden gedeeld door scale (start_s en seek_s niet: die blijven
+    # echte seconden, met scale ≠ 1 een andere maat). Een nieuwe sessie (gone, _reopen) zet
     # geen van beide klokken terug. Een sprong die in SessionGone eindigt, sprong niet (_reopen
     # opent op de oude plek): daarna blijft het None
     stall_at: list[float] = field(default_factory=list)
