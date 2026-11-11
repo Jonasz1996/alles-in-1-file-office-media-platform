@@ -438,6 +438,12 @@ class PlayerReport:
     stall_at: list[float] = field(default_factory=list)
     stall_after_seek: list[float | None] = field(default_factory=list)
     seek_s: float | None = None
+    # Ook alleen om te lezen (I1, M7e): de voorraad direct na de sprong, in mediaseconden: het
+    # eind van het segment waar het doel in valt, min het doel. Een herstart levert eerst dat
+    # segment en pas dan het volgende; ligt het doel vlak voor het eind van een segment (het
+    # rooster begint op origin_ms, meestal 21 ms), dan hapert de speler meteen, hoe snel de
+    # producent ook is. None zonder sprong
+    seek_buffer_s: float | None = None
     played_s: float = 0.0
     mode: str | None = None
     reasons: list[str] = field(default_factory=list)
@@ -643,6 +649,7 @@ class Player:
                             continue
                         seek_done = self.clock()
                         self.report.seek_s = round(seek_done - t0, 3)
+                        self.report.seek_buffer_s = round((self.buffered - self.pos) / 1000, 3)
                         self._start_fetch()
                         stalled_at, last = None, self.clock()
         except Exception as exc:
