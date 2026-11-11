@@ -35,8 +35,23 @@ die een segment van een andere generatie dan zijn playlist, dan gaat de sessie d
 laadt de speler opnieuw (`native_reloads` telt het, voor /beheer).
 
 **De tegendruk** (Keuze 26): de producent leest niet verder dan 60 s in mediatijd voor het
-laatst gevraagde segment, en niet verder dan 10 s zolang een andere sessie nog geen eerste
-segment heeft (startvoorrang, hooguit 20 s per sessie).
+laatst gevraagde segment, en niet verder dan 10 s zolang een andere sessie voorrang heeft:
+- startvoorrang: ze heeft nog geen eerste segment (hooguit 20 s per sessie);
+- herstartvoorrang (B71, voorstel; fase-5 Bevinding 3): na elke herstart (een sprong buiten de
+  cache, de nieuwe poging van Keuze 46, verder na idle) tot de nieuwe run 10 s maakte, hooguit
+  20 s. Zonder die voorrang speelt de speler na een sprong met minder dan één segment buffer,
+  terwijl de andere producenten de cores houden. De eerste run (open) heeft alleen
+  startvoorrang.
+De eigen voorrang remt de eigen producent nooit.
+
+De prijs van de herstartvoorrang (review M7). Een andere sessie die nog voorsprong opbouwt,
+staat zo lang stil: haar eigen sprong later valt dan vaker buiten de cache (een herstart in
+plaats van een treffer). Ook remux, verder na idle en de nieuwe poging krijgen hem (voorstel a),
+al hebben ze hem minder nodig. Dat het tegenhouden veilig is, rust op de buffer: wie stilstaat,
+heeft meer dan 10 s in de cache na het laatst gevraagde segment, plus de buffer van de speler.
+Niet op fase 5: daar hield de startvoorrang vrijwel nooit een producent tegen. Bevinding 3 van
+fase 5 is maar half opgelost: na een herstart van de app is elke sessie nieuw (open, alleen
+startvoorrang) en ligt geen stroom 10 s voor, dus het dunne buffer van fase c blijft.
 
 **De cache** (Keuze 31, cache.py): `sessions/<uuid>/<n>.m4s` (eerst `.tmp`, dan atomair
 hernoemd, in een thread), de inits in het geheugen (hooguit 1 MB per stuk, meestal 1 KB). Na elk
@@ -80,8 +95,8 @@ log = logging.getLogger("platform.media")
 AHEAD = 3  # zoveel segmenten voor op de producent: wachten, geen herstart (Keuze 25)
 SEEK_MERGE_S = 0.3  # zoekverzoeken binnen 300 ms: één herstart
 LEAD_MS = 60_000  # de tegendruk: zo ver voor het laatst gevraagde segment (mediatijd)
-PRIORITY_MS = 10_000  # zolang een andere sessie nog geen eerste segment heeft
-PRIORITY_S = 20.0  # de startvoorrang van een sessie duurt hooguit zo lang
+PRIORITY_MS = 10_000  # zolang een andere sessie voorrang heeft (start of herstart)
+PRIORITY_S = 20.0  # de start- en de herstartvoorrang duren elk hooguit zo lang
 TIMEOUTS_MAX = 3  # zoveel keer achter elkaar media_timeout: de sessie dicht
 ATTEMPTS = 2  # runs per segment: de eerste en één nieuwe poging (Keuze 46)
 AUDIO_COPY_K = 256  # de schatting van gekopieerd geluid zonder bitrate in de probe (kbit/s)
@@ -205,6 +220,9 @@ class Stream:
         self.last_request = producers.clock()
         self.playhead = 0
         self.first_pending = True
+        # De herstartvoorrang (B71): de run van de laatste herstart, en sinds wanneer (clock)
+        self.priority_run: producers.Producer | None = None
+        self.priority_from = 0.0
         self._signal = _Signal()
         self._wants: list[_Want] = []  # de verzoeken die nu op een segment wachten
         self._seek_at = 0.0  # het laatste verzoek of nieuwe doel (de 300 ms van Keuze 12)
@@ -246,6 +264,7 @@ class Stream:
         if self.first_pending:
             self.first_pending = False
             _kick()
+        self.restarting()  # de run haalde PRIORITY_MS: de herstartvoorrang meteen weg
         self._signal.fire()
         budget = cache.window(_cache_gb(), len(_streams))
         if self.bytes > budget:
@@ -264,9 +283,10 @@ class Stream:
         return self.playhead
 
     def limit_ms(self) -> int:
-        """60 s, of 10 s zolang een andere sessie op haar eerste segment wacht."""
+        """60 s, of 10 s zolang een andere sessie voorrang heeft: start- of herstartvoorrang.
+        Alleen een andere: de eigen voorrang remt de eigen producent nooit."""
         for other in builtins.list(_streams.values()):
-            if other is not self and other.waiting_first():
+            if other is not self and other.has_priority():
                 return PRIORITY_MS
         return LEAD_MS
 
@@ -281,6 +301,7 @@ class Stream:
         if self.closed or producer is not self.producer:
             return
         self.producer = None
+        self._end_priority(producer)
         count = self.layout.count
         if error is None and not producer.idle and producer.completed == 0:
             if producer.start < count and producer.start not in self.segments:
@@ -297,6 +318,10 @@ class Stream:
             self._count_failure(n, error)
         self._signal.fire()
 
+    def has_priority(self) -> bool:
+        """Remt deze sessie de andere producenten (tot PRIORITY_MS)?"""
+        return self.waiting_first() or self.restarting()
+
     def waiting_first(self) -> bool:
         """Heeft deze sessie startvoorrang (nog geen eerste segment, hooguit 20 s)?"""
         if not self.first_pending or self.closed:
@@ -306,6 +331,39 @@ class Stream:
             _kick()
             return False
         return True
+
+    def restarting(self) -> bool:
+        """Heeft deze sessie herstartvoorrang (B71, voorstel; fase-5 Bevinding 3)? Die hoort bij
+        de run die start() begon, en houdt op bij het eerste van: de stroom dicht; de run is
+        niet meer de producent of leeft niet meer (klaar, mislukt, gestopt, of een nieuwe
+        herstart: die krijgt zijn eigen); PRIORITY_S voorbij; de run maakte PRIORITY_MS. Wat
+        hier ophoudt, gaat lui (zoals waiting_first): de flow van de andere producenten (per
+        stuk, per segment, de waakhond) vraagt het; store, ended, start en shutdown meteen.
+
+        Gemaakt is produced_ms min het begin van het startsegment. Valt het eerste beeld na het
+        startsegment (review golf 2, C2: MPEG-TS die onnauwkeurig zoekt), dan telt het gat tot
+        dat beeld mee: de voorrang is dan korter, nooit langer (review M7)."""
+        p = self.priority_run
+        if p is None:
+            return False
+        if (
+            self.closed
+            or p is not self.producer
+            or not p.alive
+            or producers.clock() - self.priority_from >= PRIORITY_S
+            or p.produced_ms - self.layout.begin(p.start) >= PRIORITY_MS
+        ):
+            self._end_priority()
+            return False
+        return True
+
+    def _end_priority(self, run: producers.Producer | None = None) -> None:
+        """De herstartvoorrang weg (alleen die van `run`, als die er is). Eerst weg, dan pas de
+        kick: een geneste flow ziet hem al weg, dus elke voorrang kickt één keer."""
+        if self.priority_run is None or (run is not None and self.priority_run is not run):
+            return
+        self.priority_run = None
+        _kick()
 
     # --- de herstart ------------------------------------------------------------------------
 
@@ -386,24 +444,33 @@ class Stream:
 
     async def start(self, n: int) -> None:
         """Een producent vanaf segment n. busy of down bij het starten: het verzoek om n krijgt
-        de fout; een andere fout telt als een mislukte run."""
+        de fout; een andere fout telt als een mislukte run.
+
+        Elke start hier is een herstart (een sprong, de nieuwe poging, verder na idle): de
+        eerste run start open zelf, met alleen startvoorrang. Deze run krijgt herstartvoorrang
+        (B71), en de andere producenten kijken meteen opnieuw (_kick)."""
         p = producers.Producer(self, n, self.args_for(n), self.source, inputs=self.inputs)
         self.producer = p
+        self.priority_run, self.priority_from = p, producers.clock()
+        _kick()
         try:
             await p.run()
         except asyncio.CancelledError:
             if self.producer is p:
                 self.producer = None
+            self._end_priority(p)
             await p.stop()
             raise
         except (client.WorkerBusy, client.WorkerDown) as exc:
             if self.producer is p:
                 self.producer = None
+            self._end_priority(p)
             await p.stop()
             self.problem = (n, exc)
         except Exception as exc:
             if self.producer is p:
                 self.producer = None
+            self._end_priority(p)
             await p.stop()
             self._count_failure(n, exc)
         finally:
@@ -595,6 +662,7 @@ class Stream:
 
     async def shutdown(self) -> None:
         self.closed = True
+        self._end_priority()  # de andere producenten lezen meteen weer door
         for task in (self._restart, self._trimming):
             if task is not None and not task.done() and task is not asyncio.current_task():
                 task.cancel()
@@ -625,7 +693,12 @@ def _not_found() -> HTTPException:
 
 
 def _kick() -> None:
-    """De startvoorrang veranderde: elke producent kijkt opnieuw of hij mag lezen."""
+    """Een voorrang (start of herstart) begon of hield op: elke producent kijkt opnieuw of hij
+    mag lezen. flow kan via limit_ms een andere voorrang laten ophouden en zo weer kicken; dat
+    is begrensd, want een voorrang gaat eerst uit en dan pas kickt hij (elke één keer), en een
+    voorrang begint nooit in flow (startvoorrang bij open, herstartvoorrang in start). Wie
+    alleen om een voorrang pauzeerde, leest dus weer: hier, of uiterlijk bij zijn waakhond
+    (TICK_S)."""
     for st in builtins.list(_streams.values()):
         p = st.producer
         if p is not None:

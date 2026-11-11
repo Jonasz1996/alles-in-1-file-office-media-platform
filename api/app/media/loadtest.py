@@ -39,11 +39,11 @@ sessies, controle, producenten, knipper en cache.
    wat de producent al maakte), b (allemaal tegelijk). c (de app herstart) loopt alleen met de
    spelers buiten de app (`--extern`): elke speler meldt dan zijn herstarts. d (DS herstart) kan
    de app niet zelf: het rapport zegt dat, en het runbook hoe Jonas het met de hand doet.
-6. **Meet**: de start per sessie, haperen (aantal en duur), de snelheid van elke run (uit de
-   producent), de trede, de ffmpeg-processen (elke 0,5 s), bij de lokale worker de CPU en de RSS
-   van zijn kinderen (/proc; in een container ziet de app die niet), de cache in MB per minuut,
-   en de p95 van GET /api/v1/files/root (de eerste pagina, zoals de web-app een map opent) en
-   /api/v1/media/home elke seconde.
+6. **Meet**: de start per sessie, haperen (aantal, duur, en wanneer: sinds de start en sinds de
+   sprong), de snelheid van elke run (uit de producent), de trede, de ffmpeg-processen (elke
+   0,5 s), bij de lokale worker de CPU en de RSS van zijn kinderen (/proc; in een container ziet
+   de app die niet), de cache in MB per minuut, en de p95 van GET /api/v1/files/root (de eerste
+   pagina, zoals de web-app een map opent) en /api/v1/media/home elke seconde.
 7. **Slaagt als** (GATES): a: elke start ≤ 5 s, 0 keer haperen, elke run gemiddeld ≥ 1,1×, de
    API ≤ 200 ms (p95); b: elke start ≤ 5 s en 0 keer haperen; c: weer spelen ≤ 10 s na "ready",
    en daarna niet haperen.
@@ -428,7 +428,22 @@ class PlayerReport:
     start_s: float | None = None
     stalls: int = 0
     stall_s: float = 0.0
+    # Per keer haperen één waarde, alleen om te lezen (I1, M7; judge en GATES kijken er niet
+    # naar): stall_at in s sinds de speler begon te spelen (played_from), stall_after_seek in s
+    # sinds de sprong klaar was (waar seek_s gezet wordt), None vóór de sprong en zonder sprong.
+    # Net als stall_s: echte seconden gedeeld door scale (start_s en seek_s niet: die blijven
+    # echte seconden, met scale ≠ 1 een andere maat). Een nieuwe sessie (gone, _reopen) zet
+    # geen van beide klokken terug. Een sprong die in SessionGone eindigt, sprong niet (_reopen
+    # opent op de oude plek): daarna blijft het None
+    stall_at: list[float] = field(default_factory=list)
+    stall_after_seek: list[float | None] = field(default_factory=list)
     seek_s: float | None = None
+    # Ook alleen om te lezen (I1, M7e): de voorraad direct na de sprong, in mediaseconden: het
+    # eind van het segment waar het doel in valt, min het doel. Na de sprong haalt de speler
+    # alleen dat segment. Is de voorraad kleiner dan een tik en staat het volgende segment niet
+    # in de cache, dan moet een herstart dat volgende segment (2 s media) binnen ±twee tikken
+    # leveren, anders telt de speler één keer haperen. None zonder sprong
+    seek_buffer_s: float | None = None
     played_s: float = 0.0
     mode: str | None = None
     reasons: list[str] = field(default_factory=list)
@@ -442,6 +457,9 @@ class PlayerReport:
         out["speed"] = round(statistics.fmean(self.speeds), 2) if self.speeds else None
         del out["speeds"]
         out["stall_s"] = round(self.stall_s, 2)
+        out["stall_at"] = [round(s, 2) for s in self.stall_at]
+        after = self.stall_after_seek
+        out["stall_after_seek"] = [None if s is None else round(s, 2) for s in after]
         out["played_s"] = round(self.played_s, 1)
         return out
 
@@ -588,6 +606,7 @@ class Player:
         self._start_fetch()
         played_from = last = self.clock()
         stalled_at: float | None = None
+        seek_done: float | None = None
         seeked = False
         try:
             while True:
@@ -612,6 +631,9 @@ class Player:
                 elif self.pos < self.duration and stalled_at is None:
                     stalled_at = now
                     self.report.stalls += 1
+                    self.report.stall_at.append((now - played_from) / self.timing.scale)
+                    after = None if seek_done is None else (now - seek_done) / self.timing.scale
+                    self.report.stall_after_seek.append(after)
                 if self.pos >= self.duration or now - played_from >= self.timing.s(seconds):
                     break
                 if seek_at is not None and not seeked and now - played_from >= seek_at:
@@ -625,7 +647,9 @@ class Player:
                         except SessionGone:
                             self.gone.set()
                             continue
-                        self.report.seek_s = round(self.clock() - t0, 3)
+                        seek_done = self.clock()
+                        self.report.seek_s = round(seek_done - t0, 3)
+                        self.report.seek_buffer_s = round((self.buffered - self.pos) / 1000, 3)
                         self._start_fetch()
                         stalled_at, last = None, self.clock()
         except Exception as exc:
