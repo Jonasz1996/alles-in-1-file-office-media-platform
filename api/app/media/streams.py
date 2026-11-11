@@ -44,6 +44,15 @@ laatst gevraagde segment, en niet verder dan 10 s zolang een andere sessie voorr
   startvoorrang.
 De eigen voorrang remt de eigen producent nooit.
 
+De prijs van de herstartvoorrang (review M7). Een andere sessie die nog voorsprong opbouwt,
+staat zo lang stil: haar eigen sprong later valt dan vaker buiten de cache (een herstart in
+plaats van een treffer). Ook remux, verder na idle en de nieuwe poging krijgen hem (voorstel a),
+al hebben ze hem minder nodig. Dat het tegenhouden veilig is, rust op de buffer: wie stilstaat,
+heeft meer dan 10 s in de cache na het laatst gevraagde segment, plus de buffer van de speler.
+Niet op fase 5: daar hield de startvoorrang vrijwel nooit een producent tegen. Bevinding 3 van
+fase 5 is maar half opgelost: na een herstart van de app is elke sessie nieuw (open, alleen
+startvoorrang) en ligt geen stroom 10 s voor, dus het dunne buffer van fase c blijft.
+
 **De cache** (Keuze 31, cache.py): `sessions/<uuid>/<n>.m4s` (eerst `.tmp`, dan atomair
 hernoemd, in een thread), de inits in het geheugen (hooguit 1 MB per stuk, meestal 1 KB). Na elk
 segment houdt de stroom zich aan zijn venster: cache_gb gedeeld door het aantal stromen.
@@ -329,7 +338,11 @@ class Stream:
         niet meer de producent of leeft niet meer (klaar, mislukt, gestopt, of een nieuwe
         herstart: die krijgt zijn eigen); PRIORITY_S voorbij; de run maakte PRIORITY_MS. Wat
         hier ophoudt, gaat lui (zoals waiting_first): de flow van de andere producenten (per
-        stuk, per segment, de waakhond) vraagt het; store, ended, start en shutdown meteen."""
+        stuk, per segment, de waakhond) vraagt het; store, ended, start en shutdown meteen.
+
+        Gemaakt is produced_ms min het begin van het startsegment. Valt het eerste beeld na het
+        startsegment (review golf 2, C2: MPEG-TS die onnauwkeurig zoekt), dan telt het gat tot
+        dat beeld mee: de voorrang is dan korter, nooit langer (review M7)."""
         p = self.priority_run
         if p is None:
             return False
