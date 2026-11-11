@@ -57,7 +57,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from app import dbgate
 from app.config import Settings
-from app.db import get_engine
+from app.db import get_engine, sqlite_path, wal_truncate
 from app.models import Job
 
 log = logging.getLogger("platform.jobs")
@@ -793,6 +793,29 @@ async def _remove_old(settings: Settings) -> None:
 
 
 housekeeping("jobs.remove_old", _remove_old, HOUSEKEEPING)
+
+
+async def _checkpoint(settings: Settings) -> None:
+    """Eens per uur de WAL leeg (bouwontwerp fase 6, "Het wissen"; K2-08): zo staat na een gewone
+    verwijdering hooguit ±1 uur iets in -wal. Eén poging (db.wal_truncate), in een thread, op een
+    eigen verbinding met busy_timeout 0 en buiten elke transactie van een rij: hij wacht op
+    niemand, en niemand wacht op hem. Zit een lezer of schrijver in de weg, dan het volgende uur
+    opnieuw. In de log alleen de getallen."""
+    path = sqlite_path(settings.db_url)
+    if path is None:
+        return
+    found = await asyncio.to_thread(wal_truncate, path)
+    if found.busy:
+        log.info(
+            "WAL-checkpoint van het uur bezet: busy=%d log=%d done=%d",
+            found.busy,
+            found.log,
+            found.done,
+        )
+
+
+CHECKPOINT = "db.checkpoint"
+housekeeping(CHECKPOINT, _checkpoint, HOUSEKEEPING)
 
 
 async def run_housekeeping(settings: Settings, last: dict[str, float] | None = None) -> list[str]:
