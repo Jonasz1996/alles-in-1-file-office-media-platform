@@ -24,6 +24,15 @@ dependencies = [
     "mutagen>=1.48.1",
 ]
 
+[project.optional-dependencies]
+# Alleen voor de container analyse (fase 6, Keuze 57). De Dockerfile zet ze in /opt/analyse,
+# nooit in /opt/venv. De app importeert ze nooit (test_no_numpy_in_app.py). onnxruntime brengt
+# protobuf, flatbuffers en packaging mee.
+analyse = [
+    "numpy>=2.5.4",
+    "onnxruntime>=1.31.1",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8",
