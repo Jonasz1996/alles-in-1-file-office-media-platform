@@ -15,7 +15,7 @@ TABLES_0012); tests/search/test_schema_triggers.py eist dat ze gelijk zijn. Met 
 zijn ze gelijk.
 
 Op PostgreSQL alleen de tabellen, de index en de kolom, geen triggers: beeld staat daar uit,
-zoals FTS (Keuze 10; niet getest).
+zoals FTS (Keuze 10). Met de hand nagelopen op PostgreSQL 16, net als 0011; geen vaste test.
 
 De downgrade haalt eerst de triggers weg, dan de twee tabellen, dan de kolom (gewone DROP
 COLUMN, geen kopie van photo_pref). De beeldindex is daarna weg; de foto's blijven. De cachemap

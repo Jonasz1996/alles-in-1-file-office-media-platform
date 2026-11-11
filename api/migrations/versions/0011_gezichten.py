@@ -12,7 +12,8 @@ De SQL hieronder is een bevroren kopie van app/search/schema.py (TRIGGERS_0011, 
 TABLES_0011); tests/search/test_schema_triggers.py eist dat ze gelijk zijn. Geen van de triggers
 raakt een FTS-tabel: met en zonder FTS5 zijn ze gelijk.
 
-Op PostgreSQL alleen de tabellen en de indexen, geen triggers (Keuze 10; niet getest).
+Op PostgreSQL alleen de tabellen en de indexen, geen triggers (Keuze 10). Met de hand
+nagelopen op PostgreSQL 16 (heen, terug naar 0010 en 0009, weer heen); geen vaste test.
 
 De downgrade wist eerst alle rijen met secure_delete aan (de gezichten zijn biometrische
 gegevens), dan de triggers en de tabellen. app.migrate en app.cli doen na de transactie een
