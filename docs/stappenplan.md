@@ -552,7 +552,7 @@ Doel: alles terugvinden, ook op inhoud en op wat er op een foto staat.
 Klaar als: een zoekopdracht over 100.000 bestanden antwoordt binnen 200
 ms; OCR-tekst is doorzoekbaar; gezichten zijn te benoemen en te zoeken.
 
-Versie 0.8.0 (⟦C2: datum⟧): de kern van fase 6, zonder gezichten vanzelf
+Versie 0.8.0 (11 november 2026): de kern van fase 6, zonder gezichten vanzelf
 herkennen en zonder zoeken op beeld. Zoeken over 100.000 bestanden moet
 binnen 200 ms antwoorden (p95: 95 van de 100 vragen zijn sneller); in de
 meting was het slechtste geval

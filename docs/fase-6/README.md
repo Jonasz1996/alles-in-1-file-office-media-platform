@@ -1,14 +1,14 @@
 # Fase 6 — Zoeken en foto's
 
-Status: **kern gebouwd, versie 0.8.0 (⟦C2: datum⟧)**. De kern van fase 6 staat op de branch
-`claude/stappenplan-uitwerken-lu4uv3`, commit `⟦C2: commit⟧`: zoeken in de inhoud van je
+Status: **kern gebouwd, versie 0.8.0 (11 november 2026)**. De kern van fase 6 staat op de branch
+`claude/stappenplan-uitwerken-lu4uv3`: zoeken in de inhoud van je
 bestanden, tekst in scans en foto's, de kaart met plaatsen en landen, dubbele bestanden, personen,
 herinneringen en slimme albums. Gezichten automatisch herkennen en zoeken op wat er op een foto
 staat zitten er nog niet in ([Wat komt in 0.8.1](#wat-komt-in-081)). Het ontwerp stelt grenzen
 aan de snelheid en het geheugen (§4.4 en §4.5 van het [bouwontwerp](bouwontwerp.md)). Daarvan
 zijn er in de sandbox (de machine waarop gebouwd is) en in CI (de automatische tests op GitHub)
-⟦C2: hoeveel van de hoeveel, uit de tabel Kort van metingen.md⟧ gehaald. De uitslag van CI op de
-commit van 0.8.0 is ⟦C2: het aantal groene jobs en de run, uit integratie.md "Afronden en 0.8.0"⟧.
+alle 27 gehaald die bij 0.8.0 horen, en ook de grens voor de grootte van het image. In CI waren
+met de code van 0.8.0 alle 16 jobs groen (run 105).
 Het laatste bewijs is je eigen server: [Op de LXC](#op-de-lxc).
 
 Zoeken gebruikt één index in de database die er al is (SQLite met FTS5, de zoekfunctie van
@@ -68,8 +68,12 @@ vragen zijn sneller.
   [toetsenbord-x1.md](toetsenbord-x1.md)).
 - **Naast media en OnlyOffice.** Met films die spelen en mensen die typen in OnlyOffice, terwijl
   het achtergrondwerk vol staat, blijft zoeken binnen 200 ms, hapert geen film en gaat er geen
-  woord verloren. De uitkomst per regel staat in metingen.md; samengevat:
-  ⟦C2: elke poortregel van stap 2 gehaald of niet en het hoogste geheugengebruik, uit M7⟧.
+  woord verloren. De uitkomst per regel staat in [metingen.md](metingen.md) (M7); samengevat:
+  in de vijfde meetronde haalde elke regel zijn grens, drie van de drie keer: zoeken
+  hoogstens 54 ms, geen film haperde, opslaan in OnlyOffice even snel als zonder de drukte, en geen
+  woord verloren. Er was nooit meer dan ±3,6 GiB van de 15,7 GiB geheugen in gebruik. De vier
+  rondes ervoor haalden het niet, drie door fouten in de meetopzet en één op haperen na
+  verspringen (zie daar de Bevindingen).
 - **Een upload wacht hooguit 1 s**, ook als de index tegelijk een tekst van 1 MB met 10 kopieën
   schrijft. De langste wachttijd was 337 ms (M6).
 
@@ -252,7 +256,7 @@ In 0.8.0 (gemeten, of geschat waar dat erbij staat):
 
 | Wat | Hoeveel |
 |---|---|
-| het image | ±72 MB extra voor tesseract met Nederlands, Engels en de stand van de pagina (OCR): 69 MiB (±72 MB) geïnstalleerd, gemeten in de spike ([spike.md](spike.md), S5). CI laat het image hooguit 75 MB groeien. Op 0.8.0 groeit het image ⟦C2: met hoeveel MB, uit M8⟧. |
+| het image | ±72 MB extra voor tesseract met Nederlands, Engels en de stand van de pagina (OCR): 69 MiB (±72 MB) geïnstalleerd, gemeten in de spike ([spike.md](spike.md), S5). CI laat het image hooguit 75 MB groeien. In CI groeide het image met 71,6 MB (M8). |
 | de plaatsnamen | ±16 MB download bij het bijwerken (het runbook, "Plaatsnamen") |
 | de database | ±370 MB per 100.000 bestanden (geschat; risico R8 in het [bouwontwerp](bouwontwerp.md)) |
 | eenmalig rekenen, 100.000 bestanden | op één core, geschat: tekst ±10–15 minuten, de index ±30 seconden, GPS, camera en hash ±2,5–5 minuten, land en plaats ±1 minuut (het runbook, "De stand lezen") |
@@ -350,6 +354,21 @@ Nieuw bij 0.8.0, ook elk met een standaard:
   of tag?** Gemeten in de sandbox 0,31–0,34 s voor de hele wereld; zonder zo'n filter binnen 0,15 s. Sneller kan
   alleen met een nieuwe migratie, na die van 0.8.1. Standaard: **ja**, met een eigen grens van
   0,5 s ([z3.md](z3.md), Open).
+- **Voorrang voor een video die na verspringen opnieuw moet starten?** Springt iemand voorbij wat
+  al klaar is, dan start het omzetten opnieuw met minder dan één stukje voorraad, terwijl een
+  andere video op volle kracht doorwerkt; dan kan het beeld kort haperen (fase 5, Bevinding 3).
+  Standaard: **ja, na elke herstart** (verspringen, een nieuwe poging na een fout, verder na een
+  pauze): die video krijgt voorrang tot 10 s beeld klaar is, hooguit 20 s, en andere kijkers
+  houden zolang 10 s voorsprong in plaats van 60 s. Zo zit het in 0.8.0. Anders: alleen na
+  verspringen, alleen de eerste twee stukjes, of niets veranderen
+  ([beslissingen.md](../fase-0/beslissingen.md), B71).
+- **Wat telt de meting van media als haperen, vlak na verspringen?** Landt de meetspeler na een
+  sprong in de laatste fractie van een stukje van 2 s, dan telt hij 0,2 s later één keer
+  haperen, omdat geen server het volgende stukje zo snel maakt. Dat gebeurt bij ±1 op 4 sprongen,
+  hoe rustig de server ook is; een browser telt het niet. Voorstel: **wachten op voorraad** (na een
+  sprong speelt de meetspeler pas verder als er een heel stukje klaarstaat; dat wachten telt als
+  springtijd, met een harde grens van 3 s). Anders: tellen zoals de browser, of zo laten. Tot je
+  kiest, telt de meting zoals nu ([metingen.md](metingen.md), Bevindingen 3).
 
 ## Op de LXC
 

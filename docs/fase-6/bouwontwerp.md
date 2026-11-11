@@ -4752,7 +4752,7 @@ zoals bestanden van vóór de update (Vraag 9). De sleutels in `SLEUTELS_ROOT` e
 `MODELLEN_ROOT` blijven op schijf; het runbook (`docs/runbooks/analyse.md`) zegt hoe je ze wist.
 `test_install_analyse.sh` doet die stappen (§4.6).
 
-**Notitie bij 0.8.0 (I1).** De commit van 0.8.0 is `⟦C2: commit⟧`. Een tag `v0.8.0` is er niet;
+**Notitie bij 0.8.0 (I1).** De commit van 0.8.0 staat in [integratie.md](integratie.md), "Afronden en 0.8.0". Een tag `v0.8.0` is er niet;
 of die komt, kiest Jonas. 0.8.1 is er nog niet: deze weg terug, het runbook `analyse.md` en
 `test_install_analyse.sh` komen pas met 0.8.1.
 
@@ -5512,7 +5512,7 @@ en duurt de laatste integratie 4 dagen: 0.8.0 rond dag 41.
 
 **Notitie bij 0.8.0 (I1).** De rij "Integratie 1" noemt een tag `v0.7.0`. Die tag is er niet
 gekomen, en ook geen `v0.7.1` of `v0.8.0`: de weg terug gebruikt de volledige commit van 0.7.1
-(`80d5bb8`, §3.10). Of er tags komen, kiest Jonas. 0.8.0 (⟦C2: datum⟧) staat op de branch
+(`80d5bb8`, §3.10). Of er tags komen, kiest Jonas. 0.8.0 (11 november 2026) staat op de branch
 `claude/stappenplan-uitwerken-lu4uv3`.
 
 **De go/no-go van X3** (aan het eind van dag 33, K2-12). Ja als de omzetter op de kleine vorm
