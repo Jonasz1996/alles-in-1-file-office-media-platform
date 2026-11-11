@@ -105,8 +105,8 @@ GATES = {"start_s": 5.0, "speed": 1.1, "api_p95_ms": 200.0, "restart_s": 10.0}
 # De API zoals de web-app hem vraagt: van de hoofdmap de eerste pagina (FIRST_PAGE in
 # web/src/browser/api.ts), nooit de hele lijst. Zonder limit kostte de lijst van een hoofdmap met
 # 5.000 bestanden de app zelf elke seconde ±220-320 ms, en die tijd ging af van de spelers en van
-# elke vraag ernaast (I1, M7: zoeken p95 van 23 naar 80 ms zonder media); dan mat de test de lengte
-# van de map in plaats van de API naast media. De grens van 200 ms is dezelfde
+# elke vraag ernaast (I1, M7: zoeken p95 van 23 naar 80-129 ms zonder media); dan mat de test de
+# lengte van de map in plaats van de API naast media. De grens van 200 ms is dezelfde.
 FIRST_PAGE = 200
 API_PATHS = (f"/api/v1/files/root?limit={FIRST_PAGE}", "/api/v1/media/home")
 

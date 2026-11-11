@@ -33,6 +33,7 @@ from app.media import analysis, loadtest, runtime, sessions, streams
 from app.media.state import MediaPolicy, MediaState
 from app.media.wire import Code, Op
 from app.models import MediaProbe, Node
+from app.routers import files as files_router
 from tests.media import fake_worker as FW
 from tests.media.media_contract import failed
 from tests.test_files import put, root
@@ -690,6 +691,16 @@ async def test_de_api_vraagt_de_eerste_pagina_zoals_de_web_app():
 def test_de_eerste_pagina_is_die_van_de_web_app():
     web = (Path(__file__).resolve().parents[2] / "web" / "src" / "browser" / "api.ts").read_text()
     assert f"export const FIRST_PAGE = {loadtest.FIRST_PAGE};" in web
+    assert loadtest.FIRST_PAGE <= files_router.MAX_PAGE
+
+
+async def test_de_api_paden_antwoorden_200(lt, client, admin):
+    """Watch.sample telt de tijd van elk antwoord, ook van een 422: de paden moeten de echte
+    routes zijn, met een limit die de app aanneemt (I1, M7)."""
+    headers, _ = admin
+    for path in loadtest.API_PATHS:
+        r = await client.get(path, headers=headers)
+        assert r.status_code == 200, (path, r.text[:200])
 
 
 def test_het_profiel_vraagt_transcode():

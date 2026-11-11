@@ -699,6 +699,11 @@ def stap(
             "passed": media.get("passed"),
             "samenvatting": media.get("summary") or [media.get("fout", "")],
             "api_p95_ms": media.get("api_p95_ms"),
+            # per fase de spelers (start, seek, haperen, herstarts) en de worker: alleen om te
+            # lezen, zodat haperen naast de seeks en het werk ernaast te leggen is (I1, M7)
+            "fasen": media.get("phases"),
+            "worker_cpu_cores": media.get("worker_cpu_cores"),
+            "ffmpeg_max": media.get("ffmpeg_max"),
         },
         "zoeken_p95_ms": meter.p95("zoeken"),
         "zoeken_n": len(meter.ms.get("zoeken", [])),
