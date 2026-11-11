@@ -362,6 +362,13 @@ gezichten zijn te benoemen en te zoeken.
 | P7 | **Achtergrondwerk wijkt, en is eerlijk** | Drie rijen (`index`, `ocr`, `analyse`), `nice` 19 en de idle IO-klasse, korte transacties, batches, om de beurt per eigenaar, en wachten als er ≥ 2 transcodes lopen of OnlyOffice start. `analyse` begint pas na de backfill van de index. |
 | P8 | **Onvertrouwde bestanden in de zandbak** | Wat de app vanzelf leest (tekst, OCR), leest de worker. Gezichten en beeld rekent de container `analyse`, op de preview, nooit op de blob. Een decoder krijgt een begrensd, genormaliseerd beeld, nooit de ruwe blob als het anders kan. |
 
+*Notitie bij 0.8.0 (I1, M7).* `nice` 19 weegt alleen binnen één cpu-cgroup, en met autogroup alleen
+binnen één sessie. Het renderproces van photometa en ffmpeg hebben elk een eigen sessie, en in de
+standaard installatie draait de worker in een eigen container: daar wijkt photometa niet voor live
+transcoderen. Dat het renderproces nu echt op nice 19 draait (`66e5565`, `30c17d1`), helpt alleen
+binnen de app. Of photometa ook wacht als er omzettingen lopen (Defer, zoals de index), is nog open
+([metingen.md](metingen.md), M7).
+
 ### 0.3 Hoe een bestand vindbaar wordt, en hoe een vraag loopt
 
 ```

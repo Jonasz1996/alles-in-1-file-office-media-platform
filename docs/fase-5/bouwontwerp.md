@@ -2658,7 +2658,10 @@ tegendruk en de cache.
     plus de getekende offset (`trun` v1), ook bij transcode.
   - Schrijft `<n>.m4s.tmp` en hernoemt atomair. Wekt wachtende verzoeken.
   - Leest niet verder bij 60 s voorsprong in mediatijd (tegendruk), en niet verder dan 10 s
-    zolang een andere sessie nog geen segment 0 heeft (startvoorrang, Keuze 26).
+    zolang een andere sessie nog geen segment 0 heeft (startvoorrang, Keuze 26). *Notitie bij
+    fase 6 (0.8.0):* ook niet verder dan 10 s zolang een andere stroom na een herstart nog geen
+    10 s media maakte, hooguit 20 s (herstartvoorrang, B71, voorstel; fase 5
+    [metingen.md](metingen.md#bevindingen), bevinding 3).
   - Vergelijkt de `stsd` van elke nieuwe init (Keuze 22).
   - Herstart bij een sprong (Keuze 25), en één keer na een fout of "vast" (Keuze 46).
 - `grid.py`: het rooster van 2 s en het rooster uit keyframes (Keuze 22, 23). (spike) Het rooster

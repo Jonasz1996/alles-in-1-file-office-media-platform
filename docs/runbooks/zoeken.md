@@ -197,6 +197,12 @@ op dezelfde tab (**OCR uitzetten**); de rij blijft dan staan tot je hem weer aan
 Het achtergrondwerk wijkt voor media en office: lopen er 2 of meer omzettingen van video, of start
 OnlyOffice, dan wacht het even. Zoeken op naam wacht nooit.
 
+Het lezen van foto-gegevens (photometa: de datum, de plek, de hash voor duplicaten) wacht niet. Het
+draait op `nice` 19, maar `nice` weegt alleen binnen één container. De omzettingen van video draaien
+in de mediaworker, een andere container, dus daar wijkt photometa niet voor. Lees je veel foto's
+opnieuw terwijl iemand een film kijkt, dan kan die film na verspringen kort haperen
+([metingen](../fase-6/metingen.md), M7).
+
 Uploads en opslaan gaan vóór het achtergrondwerk. De app schrijft één ding tegelijk in de
 database (SQLite heeft één schrijfslot) en zet de schrijvers in een rij: verzoeken eerst, het
 achtergrondwerk daarna (`app/dbgate.py`). Een upload wacht zo hooguit op de schrijfactie van de
