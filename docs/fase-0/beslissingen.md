@@ -90,7 +90,7 @@ hand) is gebouwd en samengevoegd, en zit in 0.8.0 (11 november 2026). Gezichten 
 zoeken op beeld (de rest van B57) zijn er nog niet. Van B61–B70 zitten alleen de contracten van
 B67 erin, en 0.8.0 is de eerste oplevering uit de planning van B68; de rest is gepland voor
 0.8.1, en zoeken op beeld kan naar een eigen fase 6b schuiven (B68). Op 3 november 2026 zei Jonas
-"ja voeg alles toe", en koos hij op een kaartje "Ook gezichten" (en dus geen tegels van buiten).
+"ja voeg alles toe", en koos Jonas op een kaartje "Ook gezichten" (en dus geen tegels van buiten).
 Daarom zijn B53 (OCR) en B57 (gezichten en beeld) **besloten**; hoe ze gebouwd worden, blijft
 voorstel. Vraag 7 (de duur) is daarmee ook beantwoord: alles, ±43 werkdagen (B68). De
 kaartjes van Vraag 5 en 6 zijn ingetrokken; hun standaard geldt (B55). Vraag 4 (wie de plek van

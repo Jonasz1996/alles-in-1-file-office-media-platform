@@ -43,7 +43,8 @@ slagen; de oorzaak staat bij elke bevinding:
   van Keuze 26 geldt alleen tot het eerste segment van een sessie. Het gebeurde in 5 van de 12
   runs van fase a met 3 sessies (vaker met OnlyOffice ernaast) en in 1 van de 5 van fase c;
   nooit zonder sprong of herstart (fase b: 0 keer in 15 runs). Een voorstel voor het ontwerp;
-  in fase 6 gebouwd als B71 (voorstel), en half opgelost (zie bevinding 3);
+  in fase 6 gebouwd als B71 (voorstel) en deels aangepakt; of het haperen daardoor minder werd,
+  is niet bewezen (zie bevinding 3 en [fase 6](../fase-6/metingen.md#bevindingen), Bevinding 2);
 - **direct play bij zoeken** (bevinding 4): Chromium zelf, en het netwerk;
 - **Mk** (bevinding 6): de tabel van Keuze 24 is met opzet een bovengrens;
 - **de herstart van DS** (bevinding 7): met de `f` van de sandbox laat de reserve bij `B − 1,0`

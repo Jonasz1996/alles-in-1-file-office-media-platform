@@ -10,8 +10,9 @@ om te slagen; de oorzaak staat bij elke meting en onder [Bevindingen](#bevinding
 Elke poort van §4.4 en §4.5 die bij 0.8.0 hoort, is gehaald: 27 van de 27, en ook de grens voor de
 grootte van het image (X1). De vier poorten van gezichten en beeld (X2 en X3) horen bij 0.8.1 en
 zijn niet gemeten. M7 haalde het pas in de vijfde ronde (M7e); de rondes ervoor staan bij
-[M7](#m7-zoeken-naast-media-en-onlyoffice-45-deel-b). Bij een poort over meer runs staat de
-slechtste waarde.
+[M7](#m7-zoeken-naast-media-en-onlyoffice-45-deel-b). Bij een poort over meer runs staat bij M1
+tot en met M5 de mediaan van de 3 rondes of runs (elke run staat bij de meting zelf), bij M6 en
+M7e de slechtste waarde.
 
 | Poort | Grens | Gemeten | Meting | Uitkomst |
 |---|---|---|---|---|
@@ -36,7 +37,7 @@ slechtste waarde.
 | §4.5 zoeken p95 | ≤ 200 ms | 54,1 ms | M7e | gehaald |
 | §4.5 `GET /files/root?limit=200` p95 | ≤ 200 ms | 87,8 ms | M7e | gehaald |
 | §4.5 `GET /health` p95 | ≤ 50 ms | 6,1 ms | M7e | gehaald |
-| §4.5 `MemAvailable` | ≥ 1,5 GiB | 12.434 MB | M7e | gehaald |
+| §4.5 `MemAvailable` | ≥ 1,5 GiB | 12.434 MiB | M7e | gehaald |
 | §4.5 geen container `OOMKilled` | DS met een grens van 2 GiB | nee | M7e | gehaald |
 | §4.5 de app en de worker leven nog | dezelfde processen | ja | M7e | gehaald |
 | §4.5 het achtergrondwerk hervat | ≤ 90 s na de laatste transcode | 22,8 s | M7e | gehaald |
@@ -52,16 +53,19 @@ bijwerken van de index) staan bij M1, M2 en M8.
 - **Machine:** de sandbox, een Firecracker-VM met 4 vCPU (Intel Xeon @ 2,10 GHz), 15,7 GiB RAM,
   geen swap, geen GPU. SQLite 3.53.1 op de host en 3.46.1 in `python:3.12-slim` (Python 3.12.16);
   ffmpeg 6.1.1 (Ubuntu); tesseract 5.3.4.
-- **De commits:** M2–M6 op `d5624b5`, M9 op `d5624b5` (die commit is M9), M7 op `98ec2bc` (M7e,
-  de laatste ronde; de rondes ervoor staan bij M7), M8 op `47d62eb` (dezelfde code als `98ec2bc`,
-  op een commentaar na). M1 komt uit CI (run 102 op `0e19180`); de getallen uit CI in M8 komen
-  uit run 105 op `47d62eb`.
+- **De commits:** M2–M4 en run 1 van M5 op `d5624b5`; run 2 en 3 van M5 op `77292fe`, na een
+  herstart van de sandbox (die commit voegt alleen een `print` toe aan een test, de app is
+  dezelfde); M6 op `d5624b5`, met die `print` al in de werkboom; M9 op `d5624b5` (die commit is M9);
+  M7 op `98ec2bc` (M7e, de laatste ronde; de rondes ervoor staan bij M7), M8 op `47d62eb` (dezelfde
+  code als `98ec2bc`, op een commentaar na). M1 komt uit CI (run 102 op `0e19180`); de getallen uit
+  CI in M8 komen uit run 105 op `47d62eb`.
 - **De cores:** elke meting liep alleen. M2, M3 en M4 op één core (`taskset -c 1` en
   `--core 1`), M5 op core 0 (`taskset -c 0`, zoals de job `ocr`), M6 op 0-2 (`taskset -c 0-2` op
   de host, `--cpuset-cpus 0-2` in `python:3.12-slim`). M7: de worker op 0-2 en de app niet
   (regel 14 van fase 5; zie M7 voor de eerste rondes, die anders liepen).
-- **Geheugen:** het minst vrije geheugen staat bij M7; bij de andere metingen bleef `MemAvailable`
-  boven de 12 GiB.
+- **Geheugen:** het minst vrije geheugen staat bij M7; bij de andere metingen in de sandbox is het
+  niet gemeten. `MemAvailable` staat overal in MiB: `zoek_samen.py` rekent in MiB, al schrijft het
+  "MB".
 
 ## M1: zoeken en foto's (§4.4)
 
@@ -90,7 +94,7 @@ bestanden (`--n 100000 --seed 6`, profiel "groot"), de app in `python:3.12-slim`
 | de kaart met een filter op soort, map of camera (de join op `node`) | p95 ≤ 500 ms | 430,0 ms (437,5, 430,0, 275,1) | gehaald |
 | `/duplicates`, 55.000 foto's | p95 ≤ 300 ms | 192,7 ms (193,2, 192,7, 190,8); p99 204,1 | gehaald |
 
-Elke poort van §4.4 gehaald; alle 13 jobs van die run waren groen. De hoogste p95 van zoeken over
+Elke poort van §4.4 gehaald; alle 16 jobs van die run waren groen. De hoogste p95 van zoeken over
 de profielen is 126,7 ms ("alles", het ergste geval, met 9 keer ronde B). Rapporten uit dezelfde
 job: de herbouw van 100.000 in 51 stukken, het langste 184 ms, met 202 uploads ernaast (mediaan 55 ms,
 max 255 ms); de boom van 100.000 in 69,7 s.
@@ -157,8 +161,8 @@ naast de index wacht ≤ 1 s, ook als de index een tekst van 1 MB met 10 kopieë
 | Waar | Langste upload (3 runs) | Schrijven van 1 MB bij 11 nodes | Wissen (los / legen) | Uitkomst |
 |---|---|---|---|---|
 | host | 241 / 263 / 204 ms | 245–284 ms | 105–121 / 102–122 ms | gehaald |
-| `python:3.12-slim` | 137 / 337 / 277 ms | 226–303 ms | 131–144 / 124–142 ms | gehaald |
-| host, elke `fsync` 200 ms trager | 731 ms | 819 ms | 718 / 739 ms | gehaald |
+| `python:3.12-slim` | 173 / 337 / 277 ms | 226–303 ms | 131–144 / 124–142 ms | gehaald |
+| host, elke `fsync` 200 ms trager | 739 ms | 819 ms | 718 / 739 ms | gehaald |
 
 De langste wachttijd van een upload was **337 ms** (in `python:3.12-slim`), en 739 ms met een
 schijf die bij elke `fsync` 200 ms wacht (een shim met `LD_PRELOAD`, alleen in de sandbox). De
@@ -167,15 +171,17 @@ langste upload ernaast 73–217 ms. Alle 20 tests slaagden in elke run.
 
 ## M7: zoeken naast media en OnlyOffice (§4.5, deel B)
 
-`e2e/perf/zoek_samen.py --office --sessies 2 --bewerkers 3 --duur 300 --docs 5000`, met de echte
-DS (`e2e/office_ds.sh`, grens 2 GiB) en 5.000 foto's en 500 scans ernaast, drie keer, alleen op de
-machine. Elke run heeft drie stappen van 5 minuten: `pauze` (de nulmeting, het achtergrondwerk
-staat stil), `achtergrond` (de poort: de pauze gaat eraf zodra de belastingtest loopt) en
-`zonder_defer` (een rapport: 5.000 documenten erbij, en het achtergrondwerk wijkt niet voor media).
-Er waren vijf rondes. De eerste drie faalden door de testopzet en niet door de app; de vierde
-(M7d) faalde alleen op het haperen in fase a, waarna de app en de belastingtest iets veranderden
-(zie "Het herstel na M7d"); de vijfde (M7e) haalde elke poort, drie van de drie keer. De grenzen
-zijn in geen enkele ronde veranderd.
+`e2e/perf/zoek_samen.py --office --sessies 2 --bewerkers 3 --duur 300 --docs 5000`, met de echte DS
+(`e2e/office_ds.sh`, grens 2 GiB) en 5.000 foto's en 500 scans ernaast, drie keer, alleen op de
+machine. Elke run heeft drie stappen; in elke stap draait de belastingtest fase a en daarna fase b
+(`--duur 300` is de duur per fase), ±9–11 minuten per stap en ±32–34 minuten per run: `pauze` (de
+nulmeting, het achtergrondwerk staat stil), `achtergrond` (de poort: de pauze gaat eraf zodra de
+belastingtest loopt) en `zonder_defer` (een rapport: 5.000 documenten erbij, en het achtergrondwerk
+wijkt niet voor media). Er waren vijf rondes. De eerste drie faalden vooral door de testopzet; de
+derde (M7c) haperde daarnaast al 2 / 2 / 2 keer in fase a, zoals M7d. De vierde (M7d) faalde alleen
+op het haperen in fase a, waarna de app en de belastingtest iets veranderden (zie "Het herstel na
+M7d"); de vijfde (M7e) haalde elke poort, drie van de drie keer. De grenzen zijn in geen enkele
+ronde veranderd.
 
 **Ronde 1 (M7, `77292fe`).** Niet gehaald, maar niet te lezen: de bewerkers begonnen in geen
 enkele stap (ze wachtten op een stille machine), de gezaaide documenten hadden geen PDF zodat
@@ -201,7 +207,7 @@ LXC (`compose.media-limits.yaml` begrenst alleen de worker, `cpus: 3`) en zo mat
 | media | 2 / 2 / 2 keer haperen in fase a; de API van de belastingtest 499–522 ms | niet gehaald |
 | OnlyOffice opslaan | 9,1 / 9,6 / 10,4 s tegen 9,5 / 9,4 / 8,9 s in de nulmeting (hoogstens 1,17×) | ≤ 1,2×: gehaald |
 | verloren woorden | 0 | gehaald |
-| `MemAvailable` (laagst) | 12.483 MB | ≥ 1,5 GiB: gehaald |
+| `MemAvailable` (laagst) | 12.483 MiB | ≥ 1,5 GiB: gehaald |
 | DS `OOMKilled`, dezelfde processen | nee, ja | gehaald |
 | het achtergrondwerk hervat | 6,6 / 22,9 / 26,9 s | ≤ 90 s: gehaald |
 
@@ -212,13 +218,13 @@ iets dat in alle drie de stappen meeliep.
 **De diagnose.** Een eigen script (in de sandbox, niet in de repository) draaide alleen de app, de
 zoekers van `zoek_samen` en een poller die doet wat `Watch.sample` van de belastingtest deed: elke
 seconde `GET /api/v1/files/root` zonder limit en `GET /api/v1/media/home`. Zonder media en zonder
-DS, 90 s per variant, drie keer:
+DS, 120 s per variant, drie keer:
 
 | Variant | zoeken p95 | `files_root?limit=200` p95 | CPU van de app | de poller, `files/root` p50 / p95 |
 |---|---|---|---|---|
 | 5.000 documenten in de hoofdmap, geen poller | 22–25 ms | 38–42 ms | 0,06–0,07 core | — |
 | idem, met de poller | 80–129 ms | 111–144 ms | 0,24 core | 217–225 / 284–329 ms |
-| dezelfde documenten in een map `Documenten`, geen poller | 24–29 ms | 20–26 ms | 0,05–0,06 core | — |
+| dezelfde documenten in een map `Documenten`, geen poller | 24–29 ms | 21–26 ms | 0,05–0,06 core | — |
 | idem, met de poller | 24–29 ms | 20–26 ms | 0,07–0,08 core | 13–15 / 18–27 ms |
 
 De belastingtest zelf vroeg dus elke seconde de lijst van 5.000 bestanden op, en die kostte de app
@@ -246,7 +252,7 @@ voorraad).
 | media | elke start ≤ 2,6 s; 3 / 2 / 0 keer haperen in fase a, 0 in fase b; de API van de belastingtest 86–91 ms | niet gehaald (twee van de drie runs) |
 | OnlyOffice opslaan | 8,9 / 8,8 / 9,3 s tegen 8,5 / 8,6 / 8,8 s in de nulmeting (hoogstens 1,06×) | ≤ 1,2×: gehaald |
 | verloren woorden | 0 | gehaald |
-| `MemAvailable` (laagst) | 12.488 MB | ≥ 1,5 GiB: gehaald |
+| `MemAvailable` (laagst) | 12.488 MiB | ≥ 1,5 GiB: gehaald |
 | DS `OOMKilled`, dezelfde processen | nee, ja | gehaald |
 | het achtergrondwerk hervat | 20,8 / 16,2 / 20,3 s | ≤ 90 s: gehaald |
 
@@ -337,13 +343,15 @@ haperen op 1,27–1,71. M7d draaide vóór de herstartvoorrang en vóór de nice
 | media | elke start ≤ 2,6 s; 0 keer haperen in fase a en b; de API van de belastingtest 54–56 ms | gehaald |
 | OnlyOffice opslaan | 7,8 / 7,8 / 7,7 s tegen 8,2 / 7,9 / 7,8 s in de nulmeting (hoogstens 0,99×) | ≤ 1,2×: gehaald |
 | verloren woorden | 0 | gehaald |
-| `MemAvailable` (laagst) | 12.434 MB | ≥ 1,5 GiB: gehaald |
+| `MemAvailable` (laagst) | 12.434 MiB | ≥ 1,5 GiB: gehaald |
 | DS `OOMKilled`, dezelfde processen | nee, ja | gehaald |
 | het achtergrondwerk hervat | 18,3 / 22,8 / 20,8 s | ≤ 90 s: gehaald |
 
 M7e haalt elke poort, drie van de drie keer. In de nulmeting haperde geen speler. In
 `zonder_defer` (een rapport, geen poort) haperde a1 één keer in run 1 en één keer in run 2, elk
-0,2 s na de sprong, met 0,067 en 0,012 s voorraad: precies het geval uit het rooster hierboven. a2
+0,2 s na de sprong, met 0,067 en 0,012 s voorraad, minder dan één tik van 0,1 s: hetzelfde
+mechanisme als in het rooster hierboven (0,067 s is meer dan de 21 ms daar; de speler stond bij die
+sprong dus niet precies op 60 s). a2
 landde drie keer met hooguit 0,012 s voorraad, maar startte niet opnieuw: zijn volgende segment
 was er op tijd, en hij haperde niet.
 
@@ -351,9 +359,10 @@ Te weinig productie zoals in M7d is niet meer gezien: geen speler haperde meer d
 liep op 1,35–2,04 keer realtime. Waardoor dat komt, zegt M7e niet, want elke run had zowel de
 herstartvoorrang als de nice van photometa. De proefmetingen zonder herstartvoorrang (E2) haperden
 ook niet door te weinig productie, de nice weegt hier niet (zie hierboven), en ook de nulmeting,
-waar geen van beide iets doet, was sneller dan in M7d (a1 op 2,03–2,04 tegen 1,27–1,71 keer
-realtime, bij een gemiddelde load van de machine van 5,5 tegen 6,6). Het kan dus ook verschil
-tussen runs zijn.
+waar de nice van photometa niets doet (het achtergrondwerk staat stil) en b1 (zonder sprong) geen
+herstartvoorrang krijgt, was sneller dan in M7d (b1 op 1,73–1,77 tegen 1,53–1,62 keer realtime, a1
+op 2,03–2,04 tegen 1,27–1,71 keer realtime, bij een gemiddelde load van de machine van 5,5 tegen
+6,6). Het kan dus ook verschil tussen runs zijn.
 
 De poort blijft gevoelig voor het geval uit het rooster. a1 startte in M7e bij elke sprong
 opnieuw, en ±1 op 4 sprongen landt in het laatste stukje van een segment. In een ronde van drie
@@ -415,9 +424,9 @@ X1 liepen niet mee: de runner heeft geen tesseract met `nld`, `eng` en `osd`.
 
 | Stap | zoeken p95 | `files/root?limit=200` p95 | `/health` p95 | `MemAvailable` min | media (fase b) | uitkomst |
 |---|---|---|---|---|---|---|
-| `pauze` | 15,9 ms | 19,7 ms | 2,1 ms | 14.419 MB | start 0,53 s, 0 keer haperen | geslaagd |
-| `achtergrond` | 16,9 ms | 25,5 ms | 2,5 ms | 14.560 MB | start 0,32 s, 0 keer haperen; hervat 0,5 s | geslaagd |
-| `zonder_defer` | 28,7 ms | 31,7 ms | 2,8 ms | 14.528 MB | start 0,68 s, 0 keer haperen | geslaagd |
+| `pauze` | 15,9 ms | 19,7 ms | 2,1 ms | 14.419 MiB | start 0,53 s, 0 keer haperen | geslaagd |
+| `achtergrond` | 16,9 ms | 25,5 ms | 2,5 ms | 14.560 MiB | start 0,32 s, 0 keer haperen; hervat 0,5 s | geslaagd |
+| `zonder_defer` | 28,7 ms | 31,7 ms | 2,8 ms | 14.528 MiB | start 0,68 s, 0 keer haperen | geslaagd |
 
 Van de poorten van stap `achtergrond` zijn er zeven gehaald en drie niet te meten (`OOMKilled`,
 opslaan en verloren woorden: er is geen OnlyOffice); het blok eindigt met "uitkomst: rapport".
@@ -453,11 +462,13 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
    `GET /files/root` of `/files/{id}/children` zonder `limit`) kost bij een grote map nog evenveel;
    dat staat bij de open punten in [integratie.md](integratie.md).
 2. **Een speler hapert na een sprong als de stroom opnieuw start** (fase 5 Bevinding 3; deels
-   aangepakt). M7d haperde 3 / 2 / 0 keer in fase a van `achtergrond`, M7e 0 keer. Tussen die twee
-   kwamen de herstartvoorrang (B71, een voorstel) en photometa op nice 19. Of het verschil daardoor
-   komt, is niet bewezen (zie M7e).
+   aangepakt). M7c haperde 2 / 2 / 2 en M7d 3 / 2 / 0 keer in fase a van `achtergrond`, M7e 0 keer.
+   Tussen die twee kwamen de herstartvoorrang (B71, een voorstel) en photometa op nice 19. Of het
+   verschil daardoor komt, is niet bewezen (zie M7e).
 3. **Een sprong die in het laatste stukje van een segment landt, hapert als het volgende segment van
-   een herstart komt** (niet te repareren in de server). De speler heeft dan bijna geen voorraad, en
+   een herstart komt** (de server doet niets fout; in de server is het alleen te verhelpen door bij
+   zo'n herstart het eerste segment pas te geven als het volgende ook klaar is, en dan duurt elke
+   sprong met een herstart 0,6–1 s langer). De speler heeft dan bijna geen voorraad, en
    2 s media binnen ±0,2 s haalt geen herstart. ±1 op 4 sprongen landt zo; in een ronde van drie
    runs is de kans op minstens één keer haperen in `achtergrond` daarom ±40–60 %. Een browser telt
    dit niet (`mse.ts`). Wat de poort hier telt, is een vraag aan Jonas.
@@ -476,11 +487,13 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
 8. **De p95 van `bench --los` is de tijdsgrens** (M8, een rapport). De 12 vragen met een
    voorvoegsel (zoals `ver*`) raken de grens van ronde A en B en krijgen alleen namen uit ronde C;
    zonder de grens was de p95 van de profielen 347,8 en 436,0 ms.
-9. **Het krapst bij §4.4** (M1): de kaart met een filter op soort, map of camera (de join op `node`),
-   430,0 tegen 500 ms, en 4 clients tegelijk, 209,4 tegen 300 ms. Het profiel "alles" (30
-   hoofdmappen) had 9 keer ronde B nodig.
-10. **CI ziet fase a niet.** `zoek_samen --kort` in `e2e-media-perf` draait alleen fase b, zonder
-    sprong en zonder OnlyOffice. Het haperen van punt 2 en 3 ziet alleen een volle M7.
+9. **Het krapst bij §4.4** (M1): de kaart met een filter op soort, map of camera (de join op
+   `node`), 430,0 tegen 500 ms; daarna de kaart met een filter op datum, plaats of land, 110,4 tegen
+   150 ms, en 4 clients tegelijk, 209,4 tegen 300 ms. Het profiel "alles" (30 hoofdmappen) had 9
+   keer ronde B nodig.
+10. **CI ziet het haperen in fase a niet.** `zoek_samen --kort` in `e2e-media-perf` draait alleen
+    fase b, zonder sprong en zonder OnlyOffice; fase a draait in CI alleen in `test_fase_a_en_b`
+    (job `api`), met een nep-worker. Het haperen van punt 2 en 3 ziet alleen een volle M7.
 
 ## Wat alleen de LXC of CI kan laten zien
 
@@ -495,11 +508,14 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
 ## Opnieuw meten
 
 Elke meting alleen op de machine, vanuit `api/` (M6 in `python:3.12-slim` vanuit de wortel van
-de repository). Het blok `=== kort ===` aan het eind van elke uitvoer is wat hier staat.
+de repository). Waar een script zijn uitvoer afsluit met het blok `=== kort ===` (M2–M4, M6, M7 en
+het zoekscherm), is dat blok wat hier staat; `bench --los` sluit af met `=== zoekbench ===`, en M1,
+M5 en M9 met hun eigen slotregels.
 
 ```bash
 # M1: de job zoek-perf in CI (§4.4); met de hand:
-uv run pytest -q -s -m zoek_perf tests/search --durations=0 -rA
+uv run pytest -q -s -m zoek_perf tests/search tests/photos/test_memories_perf.py \
+  tests/photos/test_map_perf.py tests/photos/test_dupes_perf.py --durations=0 -rA
 # M2, M3 en M4: de backfill op één core
 taskset -c 1 uv run python ../e2e/perf/zoek_backfill.py --n 2000 --keer 3 --soort beide --core 1
 taskset -c 1 uv run python ../e2e/perf/zoek_backfill.py --soort photometa --n 5000 --keer 3 --core 1

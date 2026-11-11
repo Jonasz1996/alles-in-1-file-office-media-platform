@@ -64,11 +64,12 @@ lopen. D1 liep apart.
 | 23:12 tot 11 november 01:30 | B1: alle checks | [De checks](#de-checks) |
 | 11 november 00:11 | C1: de teksten voor 0.8.0, met plekken voor de metingen, op `wip/i1-docs` | `ebcbb4f` |
 | 11 november 01:41 | M9: de update met de echte bronnen | `d5624b5` |
-| 11 november 02:09 | M6: de wis-test `test_een_upload_wacht_niet_op_het_hele_wissen` laat met `-s` zien hoe lang de upload wachtte | `77292fe` |
-| daarna | M1–M6, elk alleen, en de eerste ronde van M7 | [metingen.md](metingen.md) |
+| 11 november 01:42–02:31 | M6, M2, M3, M4 en M5, elk alleen; run 2 en 3 van M5 na een herstart van de sandbox, op `77292fe`. M1 komt uit CI (run 102 op `0e19180`) | [metingen.md](metingen.md) |
+| 02:09 | M6: de wis-test `test_een_upload_wacht_niet_op_het_hele_wissen` laat met `-s` zien hoe lang de upload wachtte (die regel stond tijdens M6 al in de werkboom) | `77292fe` |
+| 02:32–04:18 | de eerste ronde van M7, op `77292fe` | [metingen.md](metingen.md) |
 | 05:27 | M7, ronde 1 niet te lezen (de testopzet); het herstel | `0a2705d` |
 | 07:17 | M7b niet gehaald: het hele script liep onder `taskset -c 0-2`; nu alleen de worker | `ad71b8c` |
-| 09:56–10:19 | M7c niet gehaald: de belastingtest vroeg elke seconde de hele hoofdmap op; nu de eerste pagina | `7992c1c`, `329e707` |
+| 09:56–10:19 | M7c niet gehaald: de belastingtest vroeg elke seconde de hele hoofdmap op (nu de eerste pagina), en de speler haperde al in fase a | `7992c1c`, `329e707` |
 | 10:19–12:58 | M7d: alleen het haperen in fase a niet gehaald | op `329e707` |
 | 12:58–14:51 | het herstel na M7d: photometa op nice 19, wanneer de speler hapert, en de herstartvoorrang (B71, voorstel) met zijn review | `66e5565`, `30c17d1`; `6db0fcf`, `9ac71be`; `4303800`, `b4a93c9`, `609bee8` |
 | 17:47 | de voorraad na de sprong in het rapport; daarna M7e: elke poort gehaald, drie van de drie | `98ec2bc` |
@@ -77,7 +78,7 @@ lopen. D1 liep apart.
 
 CI liep na de integratie op `2adccd2` (run 101): alle 16 jobs groen. `zoek-perf` deed er 21
 minuten over, met de nieuwe stap voor churn en de triggers op 3.46.1. Op `0e19180` (run 102, de
-samenvoeging van D1): alle 13 jobs groen. Op `47d62eb` (run 105, het werk van M7 samengevoegd):
+samenvoeging van D1): alle 16 jobs groen. Op `47d62eb` (run 105, het werk van M7 samengevoegd):
 alle 16 jobs groen, met `zoek-perf` in 12 min 16 s en `e2e-media-perf` in 7 min 37 s.
 
 Wat er onderweg misging, met de oorzaak:
@@ -118,12 +119,12 @@ Wat er onderweg misging, met de oorzaak:
   rekende minuten en seconden los en gaf voor 54,8 en 6,1 graden (…, 60.0) seconden.
   `render_meta` leest alleen seconden onder 60, dus de testfoto's bij de Doggersbank en
   Herzogenrath hadden geen GPS. Gerepareerd in `d5624b5` (zie [Metingen](#metingen), M9).
-- **M7 haalde het pas in de vijfde ronde.** De eerste drie rondes faalden door de testopzet: de
-  bewerkers begonnen niet, de documenten hadden geen PDF, het hele script liep onder `taskset`, en
-  de belastingtest van fase 5 vroeg elke seconde de hele hoofdmap op, wat de app met 5.000
-  documenten ±220–320 ms op zijn event loop kostte. M7d faalde alleen op het haperen in fase a,
-  na een sprong die de stroom opnieuw start (fase 5 Bevinding 3). Na de herstartvoorrang, photometa
-  op nice 19 en de tijdstippen van haperen haalde M7e elke poort, drie van de drie keer. Waardoor
+- **M7 haalde het pas in de vijfde ronde.** De eerste drie rondes faalden vooral door de testopzet:
+  de bewerkers begonnen niet, de documenten hadden geen PDF, het hele script liep onder `taskset`,
+  en de belastingtest van fase 5 vroeg elke seconde de hele hoofdmap op, wat de app met 5.000
+  documenten ±220–320 ms op zijn event loop kostte. M7d faalde alleen op het haperen in fase a, na
+  een sprong die de stroom opnieuw start (fase 5 Bevinding 3). Na de herstartvoorrang, photometa op
+  nice 19 en de tijdstippen van haperen haalde M7e elke poort, drie van de drie keer. Waardoor
   precies, bewijst M7e niet ([metingen.md](metingen.md), M7 en Bevindingen).
 
 ## Open punten
@@ -228,7 +229,7 @@ personen; personen zijn Keuze 38, en Vraag 4 gaat over wie de plek van een foto 
 | Migraties na 0010: een index op (ftype, taken_day), de tabel `dup_group`, en een bewaking tegen een kapotte index als één UPDATE `owner_id` en `search_name` samen wijzigt | 0010 ligt vast; geen pad in de app doet zo'n UPDATE, en Z3 had `dup_group` niet nodig; ze komen met een migratie na A0 | het plan van I1; [z1.md](z1.md) en [z3.md](z3.md), Open |
 | Land en Plaats op `/fotos` met meer dan 500 plaatsen | `GET /photos/places` geeft er hooguit 500, de meeste foto's eerst | README, "Bekende grenzen" |
 | Een GPS-waarde met 60,0 seconden, zoals (54, 47, 60.0), geeft geen plek: `render_meta` leest minuten en seconden alleen onder 60 (`api/app/render_meta.py`) | zo ontworpen; M9 vond het in de testfoto's, niet bij een camera. Het blijft zo in 0.8.0, een open punt voor I2 | [Metingen](#metingen), M9 |
-| S10 echt gedraaid: `test_install_update.sh --stappen` | mocht niet in de sandbox (en er was te weinig schijfruimte); in B1 weigerde de test omdat `python:3.12-slim` al bestaat; de test staat niet in CI | [De checks](#de-checks) |
+| S10 echt gedraaid: `test_install_update.sh` (de hele update-test van fase 4, met Docker) | mocht niet in de sandbox (en er was te weinig schijfruimte); in B1 weigerde de test omdat `python:3.12-slim` al bestaat; de test staat niet in CI | [De checks](#de-checks) |
 | S13: de engines van aiosqlite sluiten in `test_geo_read.py` en `test_location_off.py` | niet na te spelen: drie keer 53 goed, zonder waarschuwing; niets veranderd | dit document |
 | De woorden van de poorten verschillen: `zoek_backfill.py` en de poort van OCR (`api/tests/ocr/poort.py`) schrijven `NIET gehaald`, `zoek_samen.py` schrijft `niet gehaald` | `e2e/test_zoek_metingen.py` toetst beide vormen letterlijk, dus gelijktrekken maakt aan een van beide kanten een test rood; de blokken kort in `ci.yml` zoeken niet op deze woorden, en beide betekenen hetzelfde | [e2e.md](e2e.md), "De meetscripts in `e2e/perf`" (`3280946`) |
 | Wijzigingen aan contracten voor later: het paginanummer bij een treffer, 204 in plaats van 404 voor `/pages/{n}/words`, kaders op gedraaide pagina's, een vriendelijke naam van de camera in de chip, "Niet gelijk" ongedaan maken, en een eigen zin bij een PDF zonder gescande pagina | de meeste vragen een wijziging aan een contract, en I1 voegde alleen toe; het plan schuift ze naar een latere ronde | het plan van I1; README, "Bekende grenzen" ("Niet gelijk"); [z4.md](z4.md), Open; [x1.md](x1.md), Open 6 |
@@ -267,13 +268,14 @@ de werkmap van `render_meta` (S4), en `places.get` en `places_off` (C3).
 
 ## Metingen
 
-De metingen van I1 zijn M1–M9. Elk liep alleen, op de kop van I1. M1 komt uit het artefact van
-de job `zoek-perf` in CI; M2–M8 liepen in de sandbox (een VM met 4 vCPU en 15,7 GiB RAM, zonder
-GPU): M2–M6 op `d5624b5`, M7 op `98ec2bc` (de vijfde ronde, M7e) en M8 op `47d62eb`, dezelfde
-code; welke cores elke meting had, staat in metingen.md onder "Omstandigheden". M8 haalt ook
-getallen uit CI (run 105), en M9 is een test. Alle getallen, de commando's en de bevindingen
-staan in [metingen.md](metingen.md). Per poort staat hieronder de uitkomst zoals het script hem
-zegt: gehaald, niet gehaald of niet te meten, nooit alleen de exitcode.
+De metingen van I1 zijn M1–M9. Elk liep alleen, op de kop van I1. M1 komt uit het artefact van de
+job `zoek-perf` in CI; M2–M8 liepen in de sandbox (een VM met 4 vCPU en 15,7 GiB RAM, zonder GPU):
+M2–M6 op `d5624b5` (run 2 en 3 van M5 na een herstart op `77292fe`, dat alleen een `print` in een
+test toevoegt; M6 met die regel al in de werkboom), M7 op `98ec2bc` (de vijfde ronde, M7e) en M8 op
+`47d62eb`, dezelfde code; welke cores elke meting had, staat in metingen.md onder "Omstandigheden".
+M8 haalt ook getallen uit CI (run 105), en M9 is een test. Alle getallen, de commando's en de
+bevindingen staan in [metingen.md](metingen.md). Per poort staat hieronder de uitkomst zoals het
+script hem zegt: gehaald, niet gehaald of niet te meten, nooit alleen de exitcode.
 
 | Meting | Poort | Uitkomst |
 |---|---|---|
@@ -287,13 +289,13 @@ zegt: gehaald, niet gehaald of niet te meten, nooit alleen de exitcode.
 | M3, photometa | ≥ 5.000 foto's per minuut | 13.713 per minuut (mediaan van 3), gehaald |
 | M4, land en plaats | ≥ 20.000 punten per minuut | 44.495 per minuut (mediaan van 3), gehaald |
 | M5, OCR | ≥ 8 pagina's per minuut over de mix, op één core | 23,2 per minuut over de mix (mediaan van 3: 26,2, 19,6, 23,2), gehaald; brieven 38,7–47,7 per minuut bij −5°, 0°, 3° en 7°, 17,5 bij 90°; volle pagina's 17,9–18,0 bij 0° en 3°, 6,9 bij 90° (run 3) |
-| M6, uploaden naast de index | een upload wacht ≤ 1 s, ook als de index een tekst van 1 MB met 10 kopieën schrijft | `test_backfill.py`, `test_search_rebuild.py` en `test_search_purge_batches.py`, elk 3 keer op de host en 3 keer in python:3.12-slim: host 241, 263 en 204 ms, `python:3.12-slim` 137, 337 en 277 ms, gehaald; 1 keer op de host met +200 ms per `fsync` (een shim met `LD_PRELOAD`): 739 ms, gehaald |
+| M6, uploaden naast de index | een upload wacht ≤ 1 s, ook als de index een tekst van 1 MB met 10 kopieën schrijft | `test_backfill.py`, `test_search_rebuild.py` en `test_search_purge_batches.py`, elk 3 keer op de host en 3 keer in python:3.12-slim: host 241, 263 en 204 ms, `python:3.12-slim` 173, 337 en 277 ms, gehaald; 1 keer op de host met +200 ms per `fsync` (een shim met `LD_PRELOAD`): 739 ms, gehaald |
 | M8, rapporten | geen poort, behalve de grootte van het image (tesseract hooguit 75 MB erbij) | het zoekscherm in CI: de eerste suggestie na een toets koud 163,0 ms en warm 136,1 ms, `/zoeken` laden 489,9 ms en Enter 58,5 ms (medianen); `bench --los` in de sandbox p95 164,4 ms (eigenaar) en 161,7 ms (alles), in CI 161,0 en 160,6 ms; de index bijwerken in CI (S7): 100.000 bestanden in 37,4 s; `e2e-media-perf` 7 min 37 s, en in het blok kort elke stap geslaagd (zeven poorten gehaald, drie niet te meten zonder OnlyOffice); het image 71,6 MB erbij, gehaald |
 
-**M7, zoeken naast media en OnlyOffice** (`e2e/perf/zoek_samen.py`, §4.5 deel B), per regel van
-stap 2 zoals het script hem schrijft, in de vijfde ronde (M7e op `98ec2bc`, drie runs). De vier
-rondes ervoor faalden: drie door de testopzet, en M7d op het haperen in fase a (zie
-[metingen.md](metingen.md), M7 en Bevindingen 1–3).
+**M7, zoeken naast media en OnlyOffice** (`e2e/perf/zoek_samen.py`, §4.5 deel B), per regel van stap
+2 zoals het script hem schrijft, in de vijfde ronde (M7e op `98ec2bc`, drie runs). De vier rondes
+ervoor faalden: drie vooral door de testopzet (de derde haperde daarnaast al in fase a), en M7d op
+het haperen in fase a (zie [metingen.md](metingen.md), M7 en Bevindingen 1–3).
 
 | Poortregel | Uitkomst |
 |---|---|
@@ -301,7 +303,7 @@ rondes ervoor faalden: drie door de testopzet, en M7d op het haperen in fase a (
 | zoeken p95 ≤ 200 ms | gehaald: 46,6 / 54,1 / 48,9 ms |
 | GET /files/root p95 ≤ 200 ms | gehaald: 80,9 / 76,2 / 87,8 ms (`?limit=200`) |
 | GET /health p95 ≤ 50 ms | gehaald: 5,1 / 5,2 / 6,1 ms |
-| MemAvailable ≥ 1,5 GiB | gehaald: laagst 12.434 MB |
+| MemAvailable ≥ 1,5 GiB | gehaald: laagst 12.434 MiB |
 | geen container OOMKilled (DS) | gehaald: DS met `HostConfig.Memory` 2147483648 (2 GiB), `OOMKilled` false vóór en na elke stap |
 | de app en de worker leven nog, geen crash of OOM-kill | gehaald: dezelfde processen in elke stap |
 | de index leest weer ≤ 90 s na de laatste transcode | gehaald: 18,3 / 22,8 / 20,8 s |
@@ -313,7 +315,7 @@ De poort op OOMKilled zegt alleen iets als DS een geheugengrens heeft: `zoek_sam
 stopt het dan. In M7e had DS een grens van 2 GiB (`--memory 2g` in `e2e/office_ds.sh`), en
 `OOMKilled` bleef false vóór en na elke stap van elke run. DS was de enige container: de app, de
 worker en de bewerkers (Chromium) liepen als processen in de sandbox, zonder grens. Het hoogste
-geheugengebruik was ±3,6 GiB van de 15,7 GiB: `MemAvailable` zakte tot 12.434 MB (run 1, stap
+geheugengebruik was ±3,6 GiB van de 15,7 GiB: `MemAvailable` zakte tot 12.434 MiB (run 1, stap
 `achtergrond`). De poorten van de beeldvraag en de container
 `analyse` horen bij 0.8.1 en zijn niet gemeten.
 
@@ -565,7 +567,7 @@ Na de reparaties: 117 goed op de geraakte tests.
 ## De checks
 
 B1 liep op `8a679bd`, de kop met D1. `0e19180` kwam er twee minuten later bij en raakt alleen
-e2e.md en z2.md, dus de code is voor alle checks dezelfde. De sandbox heeft 4 cores en 16,5 GB.
+e2e.md en z2.md, dus de code is voor alle checks dezelfde. De sandbox heeft 4 cores en 15,7 GiB RAM.
 
 Het zware deel liep na elkaar onder `taskset -c 0-2`, van 23:12 tot 01:30, met niets anders
 ernaast. Het lichte deel (web, shellcheck, yamllint, `git diff --check`) liep apart op core 3
@@ -695,7 +697,7 @@ Daarnaast twee punten uit §4.5 die de README onder "Klaar als" noemt:
 
 | Punt | Waar | Bewijs |
 |---|---|---|
-| **Naast media en OnlyOffice** blijft zoeken binnen 200 ms, hapert geen film en gaat geen woord verloren | **hier**, de CPU van Jonas **op de LXC** | M7 (`e2e/perf/zoek_samen.py`): in de vijfde ronde (M7e) elke poortregel van stap 2 gehaald, drie van de drie keer: zoeken p95 hoogstens 54,1 ms, `files_root` 87,8 ms, `/health` 6,1 ms, elke start ≤ 2,6 s en 0 keer haperen, opslaan hoogstens 0,99 ×, 0 verloren woorden en hervat binnen 22,8 s; het hoogste geheugengebruik ±3,6 GiB (`MemAvailable` laagst 12.434 MB). De rondes ervoor faalden ([metingen.md](metingen.md), Bevindingen 1–3). In CI alleen `--kort`, als rapport, in `e2e-media-perf` |
+| **Naast media en OnlyOffice** blijft zoeken binnen 200 ms, hapert geen film en gaat geen woord verloren | **hier**, de CPU van Jonas **op de LXC** | M7 (`e2e/perf/zoek_samen.py`): in de vijfde ronde (M7e) elke poortregel van stap 2 gehaald, drie van de drie keer: zoeken p95 hoogstens 54,1 ms, `files_root` 87,8 ms, `/health` 6,1 ms, elke start ≤ 2,6 s en 0 keer haperen, opslaan hoogstens 0,99 ×, 0 verloren woorden en hervat binnen 22,8 s; het hoogste geheugengebruik ±3,6 GiB (`MemAvailable` laagst 12.434 MiB). De rondes ervoor faalden ([metingen.md](metingen.md), Bevindingen 1–3). In CI alleen `--kort`, als rapport, in `e2e-media-perf` |
 | **Een upload wacht hooguit 1 s**, ook als de index een tekst van 1 MB met 10 kopieën schrijft | **hier** en **in CI**; de schijf van Jonas is niet gemeten | `test_backfill.py::test_een_upload_wacht_nooit_langer_dan_1_s_tijdens_de_backfill`, `test_search_rebuild.py::test_een_upload_wacht_hooguit_1_s_en_de_index_klopt` en `test_search_purge_batches.py::test_een_upload_wacht_niet_op_het_hele_wissen` in `api`, en `test_db_gate.py` voor de volgorde zonder klok; M6: 337 ms. Geldt tot ±200 ms extra per `fsync` |
 
 Open voor 0.8.1 blijven X2 (gezichten automatisch, met hun privacy) en X3 (zoeken op beeld), met

@@ -66,14 +66,15 @@ vragen zijn sneller.
   twee is getest tegen een eenvoudige referentie, met en zonder de index.
 - **Alles met het toetsenbord**, zoals sinds fase 3 (de lijsten `toetsenbord-z*.md` en
   [toetsenbord-x1.md](toetsenbord-x1.md)).
-- **Naast media en OnlyOffice.** Met films die spelen en mensen die typen in OnlyOffice, terwijl
-  het achtergrondwerk vol staat, blijft zoeken binnen 200 ms, hapert geen film en gaat er geen
-  woord verloren. De uitkomst per regel staat in [metingen.md](metingen.md) (M7); samengevat:
-  in de vijfde meetronde haalde elke regel zijn grens, drie van de drie keer: zoeken
-  hoogstens 54 ms, geen film haperde, opslaan in OnlyOffice even snel als zonder de drukte, en geen
-  woord verloren. Er was nooit meer dan ±3,6 GiB van de 15,7 GiB geheugen in gebruik. De vier
-  rondes ervoor haalden het niet, drie door fouten in de meetopzet en één op haperen na
-  verspringen (zie daar de Bevindingen).
+- **Naast media en OnlyOffice.** Met films die spelen en mensen die typen in OnlyOffice, terwijl het
+  achtergrondwerk vol staat, blijft zoeken binnen 200 ms, hapert geen film en gaat er geen woord
+  verloren. De uitkomst per regel staat in [metingen.md](metingen.md) (M7); samengevat: in de vijfde
+  meetronde haalde de stap met de poort elke regel, drie van de drie keer: zoeken hoogstens 54 ms,
+  geen film haperde, opslaan in OnlyOffice even snel als zonder de drukte, en geen woord verloren.
+  In de stap zonder poort, waar het achtergrondwerk niet wijkt voor media, haperde een film in twee
+  van de drie runs één keer, vlak na verspringen. Er was nooit meer dan ±3,6 GiB van de 15,7 GiB
+  geheugen in gebruik. De vier rondes ervoor haalden het niet, drie vooral door fouten in de
+  meetopzet en één op haperen na verspringen (zie daar de Bevindingen).
 - **Een upload wacht hooguit 1 s**, ook als de index tegelijk een tekst van 1 MB met 10 kopieën
   schrijft. De langste wachttijd was 337 ms (M6).
 
@@ -182,7 +183,7 @@ schakelaars gaan nog niet aan.
 | Zoeken zonder index | Tijdens **Index herbouwen**, en op PostgreSQL, zoekt het platform alleen op naam, zoals 0.7.0 (met LIKE). Het werkt, maar langzamer; `/beheer` zegt het. PostgreSQL is niet getest. | het runbook, "De index herbouwen"; [z0-api.md](z0-api.md) |
 | Een vraag die te lang duurt | Na ±120 ms geeft zoeken de eerste treffers, niet per se de beste, met een melding. Dat kan bij iemand met meer dan 64 gedeelde mappen, en bij alleen een datumfilter op foto's; dan kan die pagina ook leeg zijn, met de melding "Niets gevonden binnen de tijd". | [z1.md](z1.md), Open |
 | De volgorde | Zoeken telt woorden over alle gebruikers. De volgorde van bijna gelijke treffers zegt daardoor een heel klein beetje over bestanden van anderen. Er is geen score en geen totaal. | risico R7 in het [bouwontwerp](bouwontwerp.md) |
-| De kaart met een filter op soort, map, camera, persoon of tag | tot een halve seconde voor de hele wereld (gemeten in de sandbox 0,31–0,34 s, eigen grens 0,5 s); zonder zo'n filter binnen 0,15 s. Sneller kan alleen met een nieuwe migratie. | [z3.md](z3.md), Open; een vraag hieronder |
+| De kaart met een filter op soort, map, camera, persoon of tag | tot een halve seconde voor de hele wereld (gemeten in de sandbox 0,31–0,34 s en in CI 0,43 s, eigen grens 0,5 s); zonder zo'n filter binnen 0,15 s. Sneller kan alleen met een nieuwe migratie. | [z3.md](z3.md), Open; een vraag hieronder |
 | Land en Plaats op `/fotos` | hooguit 500 plaatsen, de meeste foto's eerst: wie meer plaatsen heeft, mist de kleinste en soms een land. Camera is een tekstveld. | [z6.md](z6.md), Open |
 | "Niet gelijk" op `/dubbel` | kan niet ongedaan: die groep komt niet terug. | [z5.md](z5.md), Open |
 | Herinneringen per map verbergen | kan niet in de web-app; wel een dag, of een persoon. | [z6.md](z6.md), Open |
@@ -350,10 +351,10 @@ Nieuw bij 0.8.0, ook elk met een standaard:
   groep zo zeker als zijn zwakste paar. Lijkt één foto in een groep maar een beetje, dan staat de
   hele groep onder "Lijkt erop", ook als de andere onderling bijna zeker gelijk zijn. Standaard:
   **zo laten** ([z3.md](z3.md), Open).
-- **Is een halve seconde goed genoeg voor de kaart met een filter op soort, map, camera, persoon
-  of tag?** Gemeten in de sandbox 0,31–0,34 s voor de hele wereld; zonder zo'n filter binnen 0,15 s. Sneller kan
-  alleen met een nieuwe migratie, na die van 0.8.1. Standaard: **ja**, met een eigen grens van
-  0,5 s ([z3.md](z3.md), Open).
+- **Is een halve seconde goed genoeg voor de kaart met een filter op soort, map, camera, persoon of
+  tag?** Gemeten in de sandbox 0,31–0,34 s en in CI 0,43 s (M1) voor de hele wereld; zonder zo'n
+  filter binnen 0,15 s. Sneller kan alleen met een nieuwe migratie, na die van 0.8.1. Standaard:
+  **ja**, met een eigen grens van 0,5 s ([z3.md](z3.md), Open).
 - **Voorrang voor een video die na verspringen opnieuw moet starten?** Springt iemand voorbij wat
   al klaar is, dan start het omzetten opnieuw met minder dan één stukje voorraad, terwijl een
   andere video op volle kracht doorwerkt; dan kan het beeld kort haperen (fase 5, Bevinding 3).
@@ -363,12 +364,13 @@ Nieuw bij 0.8.0, ook elk met een standaard:
   verspringen, alleen de eerste twee stukjes, of niets veranderen
   ([beslissingen.md](../fase-0/beslissingen.md), B71).
 - **Wat telt de meting van media als haperen, vlak na verspringen?** Landt de meetspeler na een
-  sprong in de laatste fractie van een stukje van 2 s, dan telt hij 0,2 s later één keer
-  haperen, omdat geen server het volgende stukje zo snel maakt. Dat gebeurt bij ±1 op 4 sprongen,
-  hoe rustig de server ook is; een browser telt het niet. Voorstel: **wachten op voorraad** (na een
-  sprong speelt de meetspeler pas verder als er een heel stukje klaarstaat; dat wachten telt als
-  springtijd, met een harde grens van 3 s). Anders: tellen zoals de browser, of zo laten. Tot je
-  kiest, telt de meting zoals nu ([metingen.md](metingen.md), Bevindingen 3).
+  sprong in de laatste fractie van een stukje van 2 s, en moet het volgende stukje van een herstart
+  komen, dan telt hij 0,2 s later één keer haperen, omdat geen herstart dat stukje zo snel maakt,
+  hoe rustig de server ook is. Zo landt ±1 op 4 sprongen; een browser telt het niet. Voorstel:
+  **wachten op voorraad** (na een sprong speelt de meetspeler pas verder als er een heel stukje
+  klaarstaat; dat wachten telt als springtijd, met een harde grens van 3 s). Anders: tellen zoals de
+  browser, of zo laten. Tot je kiest, telt de meting zoals nu ([metingen.md](metingen.md),
+  Bevinding 3).
 
 ## Op de LXC
 
