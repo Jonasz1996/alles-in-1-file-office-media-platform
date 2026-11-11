@@ -166,4 +166,28 @@ niet gemeten.
 
 ## Opnieuw meten
 
-⟦C2: de opdrachten per meting⟧
+Elke meting alleen op de machine, vanuit `api/` (M6 in `python:3.12-slim` vanuit de wortel van
+de repository). Het blok `=== kort ===` aan het eind van elke uitvoer is wat hier staat.
+
+```bash
+# M1: de job zoek-perf in CI (§4.4); met de hand:
+uv run pytest -q -s -m zoek_perf tests/search --durations=0 -rA
+# M2, M3 en M4: de backfill op één core
+taskset -c 1 uv run python ../e2e/perf/zoek_backfill.py --n 2000 --keer 3 --soort beide --core 1
+taskset -c 1 uv run python ../e2e/perf/zoek_backfill.py --soort photometa --n 5000 --keer 3 --core 1
+taskset -c 1 uv run python ../e2e/perf/zoek_backfill.py --soort geo --n 55000 --keer 3 --core 1 \
+  --geo-bron <map met de bronnen van places.sqlite>
+# M5: de poort van X1 op core 0, zoals de job ocr
+taskset -c 0 uv run python -m tests.ocr.poort --json /tmp/ocr-poort.json
+# M6: schrijven met kopieën, op de host (en in python:3.12-slim met e2e/slim.sh)
+taskset -c 0-2 uv run pytest -q -s tests/test_backfill.py tests/search/test_search_rebuild.py \
+  tests/search/test_search_purge_batches.py
+# M7: niet onder taskset (het script zet de worker zelf op 0-2); de DS zoals in het runbook
+E2E_REAL_DS=http://127.0.0.1:18150 E2E_REAL_DS_SECRET_FILE=<map>/jwt.secret \
+  uv run --with playwright python ../e2e/perf/zoek_samen.py --office --sessies 2 --bewerkers 3 \
+  --duur 300 --docs 5000 --json /tmp/zoek-samen.json
+# M9: de update met de echte bronnen (marker geo)
+uv run pytest -q -m geo tests/geo/test_places_later_echt.py
+```
+
+⟦C2: de opdrachten van M8⟧
