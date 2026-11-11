@@ -195,7 +195,98 @@ niet: dat zag fase 5 ook al met een bijna lege hoofdmap (fase 5, [metingen.md](.
 Bevinding 3: na een sprong start een nieuwe ffmpeg, en de speler heeft dan minder dan één segment
 voorraad).
 
-**Ronde 4 (M7d, `329e707`).** ⟦C2: M7d⟧
+**Ronde 4 (M7d, `329e707`).**
+
+| Stap 2 (`achtergrond`), drie runs | Waarde | Poort |
+|---|---|---|
+| zoeken p95 | 82,8 / 81,2 / 86,8 ms | ≤ 200 ms: gehaald |
+| `GET /files/root?limit=200` p95 | 121,7 / 118,7 / 135,3 ms | ≤ 200 ms: gehaald |
+| `GET /health` p95 | 8,1 / 7,7 / 6,8 ms | ≤ 50 ms: gehaald |
+| media | elke start ≤ 2,6 s; 3 / 2 / 0 keer haperen in fase a, 0 in fase b; de API van de belastingtest 86–91 ms | niet gehaald (twee van de drie runs) |
+| OnlyOffice opslaan | 8,9 / 8,8 / 9,3 s tegen 8,5 / 8,6 / 8,8 s in de nulmeting (hoogstens 1,06×) | ≤ 1,2×: gehaald |
+| verloren woorden | 0 | gehaald |
+| `MemAvailable` (laagst) | 12.488 MB | ≥ 1,5 GiB: gehaald |
+| DS `OOMKilled`, dezelfde processen | nee, ja | gehaald |
+| het achtergrondwerk hervat | 20,8 / 16,2 / 20,3 s | ≤ 90 s: gehaald |
+
+Na het herstel van ronde 3 zitten zoeken, `files_root` en de API van de belastingtest ruim onder hun
+grens, ook in de nulmeting (58–70 ms en 85–103 ms) en in het rapport `zonder_defer` (109–121 ms en
+132–171 ms). Alleen media faalt nog, en alleen op haperen in fase a: 0 / 0 / 1 keer in de nulmeting,
+3 / 2 / 0 in `achtergrond` en 4 / 7 / 9 in `zonder_defer`. Fase b haperde in geen van de negen stappen.
+
+**Waarom fase a hapert.** Drie onderzoekers en een rechter lazen de rapporten, de CPU-tellingen en de
+code (zekerheid: middel; drie runs per stap, altijd in dezelfde volgorde):
+
+1. De hoofdoorzaak is fase 5 Bevinding 3. In fase a springt elke speler na 60 s 90 s vooruit
+   (`api/app/media/loadtest.py`). Valt de sprong buiten wat al klaar is, dan start de stroom opnieuw
+   en heeft de speler minder dan één segment van 2 s voorraad. De startvoorrang van Keuze 26 geldt
+   alleen voor de eerste start van een stroom, dus de andere stroom blijft op volle kracht werken
+   tot hij 60 s voorsprong heeft. Het onderscheid in M7d: a2 (720p) had bij zijn eigen sprong een
+   treffer in de cache (0,01 s) in precies de drie runs zonder haperen, en startte opnieuw (1,4–2,5 s)
+   in alle zes runs die haperden.
+2. Het verergert door drukte op cores 0-2 in de eerste minuut van fase a: de editors openen, en in
+   `achtergrond` loopt de herbouw van de foto-hashes. Photometa hield zich daarbij niet aan P7: zijn
+   renderprocessen draaiden op nice 0, boven live transcoderen op nice 5.
+3. In `zonder_defer` is er aanhoudende drukte van de index en OCR. Dat is hetzelfde mechanisme onder
+   meer last, en voor een stap zonder Defer verwacht.
+
+**Het herstel na M7d.**
+
+- **Herstartvoorrang** (B71, voorstel; `4303800`, tests in `b4a93c9` en `609bee8`). Na elke herstart
+  van een stroom (een sprong buiten de cache, een nieuwe poging van Keuze 46, verder na idle) lezen
+  de andere producenten hooguit `PRIORITY_MS` (10 s) vooruit, tot de nieuwe run 10 s media maakte,
+  hooguit `PRIORITY_S` (20 s). Er is geen nieuwe constante. De eerste start van een stroom houdt de
+  startvoorrang van Keuze 26.
+- **Photometa op nice 19** (P7; `66e5565`, `30c17d1`). Het renderproces van photometa draaide op
+  nice 0, boven live transcoderen op nice 5. Nu draait het op 19. Maar nice weegt alleen binnen één
+  cpu-cgroup, en met autogroup (zo staat de sandbox) alleen binnen één sessie. Het renderkind en
+  ffmpeg hebben elk een eigen sessie, en in de standaard installatie draait de worker in een eigen
+  container. Gemeten op één core, nice 5 tegen nice 19: in één sessie 95,7 / 4,3 %, in twee sessies
+  50 / 50. Hier en in de standaard installatie wijkt photometa dus niet voor live transcoderen. Of
+  photometa tijdens een herstart wacht (Defer), is nog open.
+- **Wanneer de speler hapert** (`6db0fcf`, `9ac71be`, `98ec2bc`). Het rapport van elke speler noemt
+  nu elk moment van haperen (`stall_at`, `stall_after_seek`) en de voorraad direct na de sprong
+  (`seek_buffer_s`). Dat is alleen om te lezen: `judge()` en de poorten bleven byte voor byte gelijk.
+
+**De proefmetingen.** Alleen de belastingtest van media (2 sessies, 300 s, zonder zoeken en zonder
+OnlyOffice), afwisselend zonder herstartvoorrang (`2998b39`) en met (`609bee8`). In E0 liep er
+niets naast, in E2 vanaf de eerste live transcode 50 s een volle core op nice 0 op cores 0-2 (zoals
+photometa vóór de nice).
+
+| Proef | zonder herstartvoorrang | met herstartvoorrang |
+|---|---|---|
+| E0, niets ernaast, 4 + 4 runs | 0 keer haperen; elke sprong een treffer in de cache | 0 keer haperen; elke sprong een treffer in de cache |
+| E2, een volle core ernaast, 3 + 3 runs | 1 keer haperen in fase a (a2) | 4 keer haperen in fase a (a1 3, a2 1) |
+
+Fase b haperde in geen van de 14 runs. In E0 is elke sprong een treffer: de sprong van 90 s is
+precies `AHEAD_MS` (30 s) plus `LEAD_MS` (60 s), dus zonder drukte staat het doel al klaar.
+
+**Het haperen in E2 komt door waar de sprong in het rooster valt.** Het rooster begint op 21 ms
+(de priming van AAC): segment 0 loopt van 0 tot 2,021 s, segment k begint op 2k + 0,021 s. De
+speler springt na 60 s spelen 90 s vooruit en kijkt elke 0,1 s. Valt die kijk in de eerste 21 ms na
+60 s, dan ligt het doel in segment 74 (148,021–150,021 s) met hooguit 21 ms voorraad; anders ligt
+het in segment 75 met bijna 2 s. Komt het volgende segment dan van een herstart, dan moet het er
+binnen ±0,2 s zijn: de speler telt het haperen pas bij zijn tweede tik. Dat is 2 s media in 0,2 s,
+±10 keer realtime, en dat haalt geen herstart op deze machine (zonder drukte 3,0–3,4 keer).
+
+- In E2 landden 5 sprongen in segment 74 met een herstart erachter, en die haperden alle 5 (0,2–0,6
+  s). De 7 sprongen in segment 75 haperden geen enkele keer.
+- In E0 landden 2 sprongen in segment 74 met het volgende segment al in de cache: geen haperen.
+- 7 van de 28 sprongen in fase a landden in segment 74, zoals de kans van ±21 % per sprong voorspelt.
+- Het verschil tussen met en zonder herstartvoorrang (4 tegen 1) is precies het aantal sprongen in
+  segment 74 (4 tegen 1). Over de voorrang zegt het dus niets; die kan hier ook niet helpen.
+
+Een browser telt dit niet: `web/src/player/mse.ts` telt een wachten binnen 2 s na `seeked` niet als
+haperen. De virtuele speler is strenger, zoals fase 5 bedoelt ("zonder haperen is hier strenger dan
+in een browser", [bouwontwerp](../fase-5/bouwontwerp.md) §4.7). Wat de poort telt, blijft zo tot
+Jonas kiest.
+
+Voor M7d betekent dit: er is één sprong per speler per stap, dus hooguit 7 van de 26 keer haperen
+kunnen zo komen. De rest (minstens 19 keer, minstens 9,5 van de 16,3 s) is te weinig productie na de
+herstart onder drukte: de runs van a1 die haperden liepen op 1,02–1,23 keer realtime, die zonder
+haperen op 1,27–1,71. M7d draaide vóór de herstartvoorrang en vóór de nice van photometa.
+
+⟦C2: ronde 5 (M7e)⟧
 
 ## M8: rapporten
 
