@@ -5408,7 +5408,11 @@ niet gehaald, en de poorten van OnlyOffice tellen alleen een volledige ronde naa
 belastingtest. De worker draait op 3 cores en de app niet, zoals regel 14 van fase 5 en
 `compose.media-limits.yaml` (`cpus: 3`, een core vrij voor de app): in de eerste volle meting liep
 het hele script onder `taskset -c 0-2`, en dan deelde de app de cores van ffmpeg en de bewerkers.
-De grenzen zelf zijn niet veranderd.
+Hetzelfde geldt voor de probe van de belastingtest zelf (fase 5, §4.6 punt 6), die de poort media
+voedt: die vroeg elke seconde de hele hoofdmap op, en met deze 5.000 documenten kostte dat de app
+220–320 ms per seconde op zijn event loop, ook zonder media (M7, de diagnose in
+[metingen.md](metingen.md)). Hij vraagt nu ook `?limit=200` (`7992c1c`). De grenzen zelf zijn niet
+veranderd.
 
 **Waar:** in CI (`e2e-media-perf`) een korte versie als rapport (60 s, 1 sessie, zonder
 OnlyOffice); in de integratie de hele test in de sandbox als poort (2 sessies media en 3
