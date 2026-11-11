@@ -458,9 +458,13 @@ def _checkpoint(path: str) -> tuple[int, int, int]:
     """Eén PASSIVE checkpoint op een eigen, korte verbinding (de sqlite3 van de stdlib, dezelfde
     als die van aiosqlite). Neemt het schrijfslot niet; mode=rw maakt nooit een bestand.
     Geeft (busy, pagina's in de WAL, daarvan in de database)."""
+    # Hier geïmporteerd: app.db importeert dit bestand
+    from app.db import privacy
+
     uri = Path(path).absolute().as_uri() + "?mode=rw"
     con = sqlite3.connect(uri, uri=True, timeout=0, isolation_level=None)
     try:
+        privacy(con)  # zoals elke verbinding (fase 6, §3.1a)
         busy, wal, done = con.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
         return busy, wal, done
     finally:

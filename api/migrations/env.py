@@ -1,10 +1,11 @@
 import asyncio
 
 from alembic import context
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app import models  # noqa: F401 - registreert de tabellen
-from app.db import Base
+from app.db import Base, privacy
 
 config = context.config
 target_metadata = Base.metadata
@@ -26,6 +27,10 @@ async def main() -> None:
         run(connection)
         return
     engine = create_async_engine(config.get_main_option("sqlalchemy.url"))
+    if engine.dialect.name == "sqlite":
+        # Alleen met alembic zelf (de app geeft zijn eigen verbinding mee): ook hier secure_delete
+        # en temp_store, zoals op elke verbinding (fase 6, §3.1a)
+        event.listen(engine.sync_engine, "connect", lambda conn, _record: privacy(conn))
     async with engine.connect() as conn:
         await conn.run_sync(run)
     await engine.dispose()
