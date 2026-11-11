@@ -5367,7 +5367,10 @@ het schrijven.
 in de hoofdmap zet, al p95 ±320 ms zonder enige last (fase 3, ongewijzigd sinds 0.7.1); dan meet de
 poort de lengte van die map en niet de app naast het achtergrondwerk. Een mislukt verzoek telt als
 niet gehaald, en de poorten van OnlyOffice tellen alleen een volledige ronde naast de
-belastingtest. De grenzen zelf zijn niet veranderd.
+belastingtest. De worker draait op 3 cores en de app niet, zoals regel 14 van fase 5 en
+`compose.media-limits.yaml` (`cpus: 3`, een core vrij voor de app): in de eerste volle meting liep
+het hele script onder `taskset -c 0-2`, en dan deelde de app de cores van ffmpeg en de bewerkers.
+De grenzen zelf zijn niet veranderd.
 
 **Waar:** in CI (`e2e-media-perf`) een korte versie als rapport (60 s, 1 sessie, zonder
 OnlyOffice); in de integratie de hele test in de sandbox als poort (2 sessies media en 3

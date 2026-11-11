@@ -48,6 +48,10 @@ Tijdens elke stap
 - de processen: de app en de lokale worker (pid en starttijd) aan het begin en het eind; een
   ander proces of geen proces is een crash of een OOM-kill (die ziet docker inspect niet: ze
   draaien op de host);
+- de cores (regel 14 van fase 5): aan het begin van elke stap de lokale worker en zijn kinderen
+  op cores 0-2, de grens van de LXC (compose.media-limits.yaml: cpus 3.0, een core vrij voor de
+  app); de app, DS en de bewerkers niet. Draai het script zelf dus niet onder taskset: dan deelt
+  de app de cores van ffmpeg (zo liep M7 van I1), en dat staat onder "niet in deze meting";
 - met --office (de echte DS, E2E_REAL_DS en E2E_REAL_DS_SECRET_FILE; docs/fase-4/e2e.md): B
   bewerkers in OnlyOffice die D seconden typen en dan sluiten (office_editors.one_round, met
   de CallbackClock), in elke stap vanaf het moment dat de belastingtest loopt: de tijd van
@@ -115,7 +119,13 @@ import zoek_backfill as zb  # noqa: E402
 import zoek_foto as zf  # noqa: E402
 
 from conftest import API_DIR, Account, Server, make_admin, percentile  # noqa: E402
-from media_harness import cmdline, descendants, media_env, process_table  # noqa: E402
+from media_harness import (  # noqa: E402
+    cmdline,
+    descendants,
+    media_env,
+    process_table,
+    set_affinity,
+)
 
 API = "/api/v1"
 GIB = 1024**3
@@ -141,6 +151,13 @@ SCANS = (20, 500)
 STAPPEN = ("text", "ocr")  # de stappen van de analyse die de pauze vasthoudt
 # Wat docker info moet zeggen voordat e2e/office_ds.sh DS een geheugengrens geeft
 GRENZEN = ("MemoryLimit", "CPUCfsQuota")
+# Regel 14 (fase 5): de worker en wat hij start op 3 cores, zoals de LXC hem begrenst
+# (compose.media-limits.yaml: cpus 3.0, "houdt een core vrij voor de app"). De app, DS en de
+# bewerkers (Chromium) niet. In M7 (I1) liep het hele script onder taskset -c 0-2: dan deelde de
+# app de cores van ffmpeg en de bewerkers, en bleef de vierde core bijna leeg; zo staat hij op de
+# LXC niet
+WORKER_CORES = frozenset({0, 1, 2})
+WORKER_WACHT_S = 30.0  # na seeded() start de app de worker opnieuw
 
 
 @dataclass
@@ -330,6 +347,54 @@ def processen(server: Server) -> dict[str, list[int] | None]:
     if eerste:
         uit["worker"] = [eerste[0], tabel[eerste[0]][1]]
     return uit
+
+
+def worker_op_zijn_cores(
+    server: Server, wacht_s: float = WORKER_WACHT_S
+) -> dict[str, list[int] | None]:
+    """Regel 14, aan het begin van elke stap (seeded() start de app en dus de worker opnieuw): de
+    lokale worker en al zijn kinderen op WORKER_CORES, of wat deze machine daarvan heeft (zoals
+    MediaApp.pin); wat hij daarna start, erft het. Wacht tot de worker er is. Geeft de cores van
+    de worker en van de app (None: er is er geen), voor de uitkomst."""
+    einde = time.monotonic() + wacht_s
+    procs = processen(server)
+    while procs["app"] and not procs["worker"] and time.monotonic() < einde:
+        time.sleep(0.5)
+        procs = processen(server)
+    uit: dict[str, list[int] | None] = {"worker": None, "app": None}
+    if procs["app"]:
+        with contextlib.suppress(OSError):
+            uit["app"] = sorted(os.sched_getaffinity(procs["app"][0]))
+    if not procs["worker"]:
+        return uit
+    beschikbaar = os.sched_getaffinity(0)
+    cores = (WORKER_CORES & beschikbaar) or beschikbaar
+    pid = procs["worker"][0]
+    for p in {pid, *descendants([pid], process_table())}:
+        set_affinity(p, cores)
+    uit["worker"] = sorted(cores)
+    return uit
+
+
+def deelt_de_cores_van_de_worker() -> str | None:
+    """Zonder --kort: draait het script zelf (en dus de app) alleen op de cores van de worker
+    terwijl de machine er meer heeft (taskset rond het script, zoals in M7)? Dan staat dat onder
+    "niet in deze meting": de poorten zijn dan strenger dan op de LXC, niet zachter."""
+    eigen = os.sched_getaffinity(0)
+    if eigen <= WORKER_CORES and (os.cpu_count() or 0) > len(WORKER_CORES):
+        return (f"een core voor de app (regel 14): het script draait op cores {cores_tekst(eigen)}"
+                f" van {os.cpu_count()}, dus de app deelt de cores van de worker")  # fmt: skip
+    return None
+
+
+def cores_tekst(cores: Any) -> str:
+    """{0, 1, 2} → "0-2"; [0, 2] → "0,2"; None → "-"."""
+    if not cores:
+        return "-"
+    rij = sorted(cores)
+    if rij == list(range(rij[0], rij[-1] + 1)) and len(rij) > 1:
+        return f"{rij[0]}-{rij[-1]}"
+    return ",".join(str(c) for c in rij)
 
 
 def overleefd(voor: dict[str, Any] | None, na: dict[str, Any] | None) -> tuple[bool | None, str]:
@@ -553,9 +618,11 @@ def stap(
     meter = Meter()
     voor = analyse_stand(server)
     fotos_voor = foto_stand(server) if opzet.fotos else None
+    cores = worker_op_zijn_cores(server)
     procs_voor = processen(server)
     ds_voor = ds_toestand(opzet.ds_name) if opzet.office is not None else None
-    print(f"[{naam}] begin: {voor}, foto's {fotos_voor}, processen {procs_voor}", flush=True)
+    print(f"[{naam}] begin: {voor}, foto's {fotos_voor}, processen {procs_voor}, cores {cores}",
+          flush=True)  # fmt: skip
     draden = zoekers(server, lambda: server.token(admin), woorden, meter)
     office: dict[str, Any] | None = None
     office_draad = None
@@ -644,6 +711,7 @@ def stap(
         "fotos": fotos,
         "hervat_s": hervat,
         "processen": {"voor": procs_voor, "na": processen(server)},
+        "cores": cores,
         "ds": ds,
         "office": office,
     }
@@ -777,6 +845,10 @@ def achtergrond_regel(s: dict[str, Any]) -> str:
                      + ("" if gehasht is None else f", gehasht {gehasht}"))  # fmt: skip
     procs = s.get("processen") or {}
     delen.append(f"processen: {overleefd(procs.get('voor'), procs.get('na'))[1]}")
+    if s.get("cores") is not None:
+        cores = s["cores"]
+        delen.append(f"cores: worker {cores_tekst(cores.get('worker'))}, "
+                     f"app {cores_tekst(cores.get('app'))}")  # fmt: skip
     if s.get("ds") is not None:
         delen.append(f"DS: {ds_oordeel(s['ds'])[1]}")
     return "; ".join(delen)
@@ -853,6 +925,9 @@ def main(argv: list[str] | None = None) -> int:
     if not zb.media_beschikbaar():
         raise SystemExit("zoek_samen heeft ffmpeg en ffprobe nodig (de belastingtest van media)")
     overgeslagen = kleiner_dan_45(args)
+    gedeeld = None if args.kort else deelt_de_cores_van_de_worker()
+    if gedeeld:
+        overgeslagen.append(gedeeld)
     for wat in overgeslagen:
         print(f"zoek_samen: niet in deze meting: {wat}", flush=True)
     reden = zf.scan_reden() if args.scans else None

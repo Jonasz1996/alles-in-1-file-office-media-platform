@@ -348,7 +348,10 @@ DS van de office-metingen (`e2e/office_ds.sh`, zie `docs/fase-4/e2e.md`, "Met de
 Chromium voor de bewerkers. DS moet een geheugengrens hebben, anders zegt `OOMKilled` niets en
 stopt het script: `office_ds.sh` zet `--memory 2g` alleen als
 `docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}'` `true true` zegt (anders start DS met
-de hand met `--memory 2g --memory-swap 2g`). Draai het op een rustige machine met ±8 GB vrij:
+de hand met `--memory 2g --memory-swap 2g`). Het script zet de worker zelf op 3 cores, zoals
+`compose.media-limits.yaml` hem op de LXC begrenst (`cpus: 3`, een core vrij voor de app); de app,
+DS en de bewerkers niet. Draai het dus niet onder `taskset`: dan deelt de app de cores van ffmpeg en
+staat dat onder `niet in deze meting`. Draai het op een rustige machine met ±8 GB vrij:
 
 ```bash
 export OFFICE_DS_NAME=meet-ds OFFICE_DS_PORT=18150 OFFICE_DS_DIR=/tmp/meet-ds \

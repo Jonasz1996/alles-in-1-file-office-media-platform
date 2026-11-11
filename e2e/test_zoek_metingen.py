@@ -546,6 +546,103 @@ def test_processen_kiest_de_worker_zelf_en_niet_een_fork(monkeypatch: pytest.Mon
     assert zs.processen(_NepServer(None)) == leeg
 
 
+def test_de_worker_op_3_cores_en_de_app_niet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regel 14 van fase 5 (compose.media-limits.yaml: de worker cpus 3.0, een core vrij voor de
+    app): aan het begin van een stap de worker (300) en al zijn kinderen op 0-2, de app (100),
+    zijn forkserver (120) en een worker buiten de app (600) niet. In M7 (I1) liep het hele
+    script onder taskset -c 0-2 en deelde de app de cores van ffmpeg."""
+    gezet: dict[int, set[int]] = {}
+    affiniteit = {0: {0, 1, 2, 3}, 100: {0, 1, 2, 3}}
+    monkeypatch.setattr(zs, "process_table", lambda: dict(TABEL))
+    monkeypatch.setattr(zs, "cmdline", lambda pid: REGELS.get(pid, ""))
+    monkeypatch.setattr(zs, "set_affinity", lambda pid, cores: gezet.__setitem__(pid, set(cores)))
+    monkeypatch.setattr(zs.os, "sched_getaffinity", lambda pid: affiniteit[pid])
+    server = _NepServer(_Proc(100))
+    assert zs.worker_op_zijn_cores(server, wacht_s=0) == {"worker": [0, 1, 2], "app": [0, 1, 2, 3]}
+    assert gezet == {pid: {0, 1, 2} for pid in (300, 250, 400, 500)}
+    # een machine met minder cores: de worker krijgt wat er is
+    gezet.clear()
+    affiniteit[0] = {0, 1}
+    assert zs.worker_op_zijn_cores(server, wacht_s=0)["worker"] == [0, 1]
+    assert set(gezet) == {300, 250, 400, 500}
+    # geen worker (ook niet na het wachten): niets gezet, en de uitkomst zegt het
+    gezet.clear()
+    zonder = {pid: rij for pid, rij in TABEL.items() if pid not in (250, 300, 400, 500)}
+    monkeypatch.setattr(zs, "process_table", lambda: dict(zonder))
+    assert zs.worker_op_zijn_cores(server, wacht_s=0) == {"worker": None, "app": [0, 1, 2, 3]}
+    assert gezet == {}
+
+
+def test_de_cores_wachten_op_de_worker_na_de_herstart(monkeypatch: pytest.MonkeyPatch) -> None:
+    """seeded() start de app opnieuw; de worker komt iets later. Zonder wachten bleef hij in die
+    stap op alle cores."""
+    rij: list[dict[str, Any]] = [{"app": [100, 5], "worker": None}] * 3
+    rij.append({"app": [100, 5], "worker": [300, 7]})
+    gezet: list[int] = []
+    monkeypatch.setattr(zs, "processen", lambda _server: rij.pop(0) if len(rij) > 1 else rij[0])
+    monkeypatch.setattr(zs, "process_table", lambda: {300: (100, 7, "S")})
+    monkeypatch.setattr(zs, "set_affinity", lambda pid, _cores: gezet.append(pid))
+    monkeypatch.setattr(zs.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(zs.os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3})
+    assert zs.worker_op_zijn_cores(_NepServer(_Proc(100)))["worker"] == [0, 1, 2]
+    assert gezet == [300]
+
+
+def test_onder_taskset_deelt_de_app_de_cores_van_de_worker(
+    zonder_server: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Draait het script zelf op alleen de cores van de worker (taskset -c 0-2 rond het script,
+    zoals M7) terwijl de machine er meer heeft, dan staat dat onder "niet in deze meting"."""
+    monkeypatch.setattr(zs.os, "cpu_count", lambda: 4)
+    monkeypatch.setattr(zs.os, "sched_getaffinity", lambda _pid: {0, 1, 2})
+    regel = "een core voor de app (regel 14): het script draait op cores 0-2 van 4, dus de app "
+    regel += "deelt de cores van de worker"
+    assert zs.deelt_de_cores_van_de_worker() == regel
+    with pytest.raises(_Gestart):
+        zs.main(["--docs", "2", "--scans", "0"])
+    assert f"zoek_samen: niet in deze meting: {regel}" in capsys.readouterr().out
+    with pytest.raises(_Gestart):
+        zs.main(["--kort", "--docs", "1"])  # --kort (CI, onder taskset): een rapport
+    assert "regel 14" not in capsys.readouterr().out
+    monkeypatch.setattr(zs.os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3})
+    assert zs.deelt_de_cores_van_de_worker() is None
+    monkeypatch.setattr(zs.os, "cpu_count", lambda: 3)
+    monkeypatch.setattr(zs.os, "sched_getaffinity", lambda _pid: {0, 1, 2})
+    assert zs.deelt_de_cores_van_de_worker() is None
+
+
+def test_een_stap_zet_de_worker_op_zijn_cores_voor_hij_de_processen_peilt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """stap(): eerst de cores (regel 14), dan de processen; de cores staan in de uitkomst en in
+    het blok kort."""
+    gebeurd: list[str] = []
+    stand = {"text": {}, "ocr": {}}
+    cores = {"worker": [0, 1, 2], "app": [0, 1, 2, 3]}
+
+    def worker_op_zijn_cores(_server: Any) -> dict[str, Any]:
+        gebeurd.append("cores")
+        return cores
+
+    def processen(_server: Any) -> dict[str, Any]:
+        gebeurd.append("processen")
+        return {"app": [100, 5], "worker": [300, 7]}
+
+    monkeypatch.setattr(zs, "analyse_stand", lambda _server: stand)
+    monkeypatch.setattr(zs, "worker_op_zijn_cores", worker_op_zijn_cores)
+    monkeypatch.setattr(zs, "processen", processen)
+    monkeypatch.setattr(zs, "zoekers", lambda *_a: [])
+    monkeypatch.setattr(zs, "belastingtest", lambda *_a: {"passed": True, "summary": ["ok"]})
+    opzet = zs.Opzet(server=_NepServer(_Proc(100)), admin=object())  # type: ignore[arg-type]
+    args = argparse.Namespace(sessies=1, duur=60, bewerkers=0)
+    uit = zs.stap(opzet, "pauze", args, ["a"], Path("/bestaat-niet"), 1)
+    assert gebeurd[:2] == ["cores", "processen"]
+    assert uit["cores"] == cores
+    assert "cores: worker 0-2, app 0-3" in zs.achtergrond_regel(uit)
+    assert zs.cores_tekst([0, 2]) == "0,2"
+    assert zs.cores_tekst(None) == "-"
+
+
 def _opzet(server: _NepServer, fotos: int) -> Any:
     return zs.Opzet(server=server, admin=object(), fotos=fotos)
 
