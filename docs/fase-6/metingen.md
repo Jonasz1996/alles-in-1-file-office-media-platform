@@ -128,7 +128,74 @@ langste upload ernaast 73–217 ms. Alle 20 tests slaagden in elke run.
 
 ## M7: zoeken naast media en OnlyOffice (§4.5, deel B)
 
-⟦C2: M7 na de laatste rondes⟧
+`e2e/perf/zoek_samen.py --office --sessies 2 --bewerkers 3 --duur 300 --docs 5000`, met de echte
+DS (`e2e/office_ds.sh`, grens 2 GiB) en 5.000 foto's en 500 scans ernaast, drie keer, alleen op de
+machine. Elke run heeft drie stappen van 5 minuten: `pauze` (de nulmeting, het achtergrondwerk
+staat stil), `achtergrond` (de poort: de pauze gaat eraf zodra de belastingtest loopt) en
+`zonder_defer` (een rapport: 5.000 documenten erbij, en het achtergrondwerk wijkt niet voor media).
+Er waren vier rondes. De eerste drie faalden, en elke keer lag de oorzaak bij de testopzet en niet
+bij de app; de grenzen zijn in geen enkele ronde veranderd.
+
+**Ronde 1 (M7, `77292fe`).** Niet gehaald, maar niet te lezen: de bewerkers begonnen in geen
+enkele stap (ze wachtten op een stille machine), de gezaaide documenten hadden geen PDF zodat
+OnlyOffice in elke stap ±2.700 bestanden omzette, en `GET /files/root` in het script vroeg de hele
+hoofdmap op (stap 2: p95 567–662 ms). Hersteld in `0a2705d` (de bewerkers typen zodra de
+belastingtest loopt, de documenten liggen klaar zoals op een 0.7.x met OnlyOffice, het script vraagt
+`?limit=200` zoals de web-app, een token per verzoek, en alleen een volledige ronde telt).
+
+**Ronde 2 (M7b, `0a2705d`).** OnlyOffice haalde zijn poorten (opslaan 8,9–9,0 s tegen 8,6–9,2 s in
+de nulmeting, 0 verloren woorden), maar zoeken (p95 303–378 ms), `files_root` (407–445 ms) en
+media (6–10 keer haperen in fase a) niet. Het hele script liep onder `taskset -c 0-2`: de app deelde
+de cores van ffmpeg en de bewerkers, en de vierde core bleef bijna leeg. Zo staat het niet op de
+LXC (`compose.media-limits.yaml` begrenst alleen de worker, `cpus: 3`) en zo mat fase 5 het ook niet
+(regel 14). Hersteld in `ad71b8c`: het script zet de worker en zijn kinderen op 0-2, de app niet.
+
+**Ronde 3 (M7c, `ad71b8c`).**
+
+| Stap 2 (`achtergrond`), drie runs | Waarde | Poort |
+|---|---|---|
+| zoeken p95 | 250 / 265 / 273 ms | ≤ 200 ms: niet gehaald |
+| `GET /files/root?limit=200` p95 | 292 / 314 / 334 ms | ≤ 200 ms: niet gehaald |
+| `GET /health` p95 | 10,6 / 9,0 / 11,4 ms | ≤ 50 ms: gehaald |
+| media | 2 / 2 / 2 keer haperen in fase a; de API van de belastingtest 499–522 ms | niet gehaald |
+| OnlyOffice opslaan | 9,1 / 9,6 / 10,4 s tegen 9,5 / 9,4 / 8,9 s in de nulmeting (hoogstens 1,17×) | ≤ 1,2×: gehaald |
+| verloren woorden | 0 | gehaald |
+| `MemAvailable` (laagst) | 12.483 MB | ≥ 1,5 GiB: gehaald |
+| DS `OOMKilled`, dezelfde processen | nee, ja | gehaald |
+| het achtergrondwerk hervat | 6,6 / 22,9 / 26,9 s | ≤ 90 s: gehaald |
+
+Ook de nulmeting zonder achtergrondwerk haalde zoeken net niet (p95 208–209 ms) en `files_root`
+niet (230–285 ms), en de API van de belastingtest stond in elke stap boven de 440 ms. Dat wees op
+iets dat in alle drie de stappen meeliep.
+
+**De diagnose.** Een eigen script (in de sandbox, niet in de repository) draaide alleen de app, de
+zoekers van `zoek_samen` en een poller die doet wat `Watch.sample` van de belastingtest deed: elke
+seconde `GET /api/v1/files/root` zonder limit en `GET /api/v1/media/home`. Zonder media en zonder
+DS, 90 s per variant, drie keer:
+
+| Variant | zoeken p95 | `files_root?limit=200` p95 | CPU van de app | de poller, `files/root` p50 / p95 |
+|---|---|---|---|---|
+| 5.000 documenten in de hoofdmap, geen poller | 22–25 ms | 38–42 ms | 0,06–0,07 core | — |
+| idem, met de poller | 80–129 ms | 111–144 ms | 0,24 core | 217–225 / 284–329 ms |
+| dezelfde documenten in een map `Documenten`, geen poller | 24–29 ms | 20–26 ms | 0,05–0,06 core | — |
+| idem, met de poller | 24–29 ms | 20–26 ms | 0,07–0,08 core | 13–15 / 18–27 ms |
+
+De belastingtest zelf vroeg dus elke seconde de lijst van 5.000 bestanden op, en die kostte de app
+±220–320 ms op zijn event loop, ook zonder media; die tijd ging af van de spelers en van elke vraag
+ernaast. Met de documenten in een submap verdwijnt het effect helemaal. De belastingtest is van
+fase 5, met een hoofdmap van ±10 bestanden; daar was het niet te zien.
+
+**Het herstel (`7992c1c`, `329e707`).** De probe van de belastingtest vraagt nu de eerste pagina,
+`GET /api/v1/files/root?limit=200`, zoals de web-app een map opent (`FIRST_PAGE` in
+`web/src/browser/api.ts`); een test toetst dat de paden de echte routes zijn en 200 geven. De grens
+van 200 ms is gebleven (fase 5, §4.6 punt 6 heeft een noot). `zoek_samen` bewaart nu per stap ook de
+spelers van de belastingtest (start, seek, haperen), zodat haperen naast het werk ernaast te leggen
+is. Het herstel verklaart zoeken, `files_root` en de API van de belastingtest; het haperen in fase a
+niet: dat zag fase 5 ook al met een bijna lege hoofdmap (fase 5, [metingen.md](../fase-5/metingen.md),
+Bevinding 3: na een sprong start een nieuwe ffmpeg, en de speler heeft dan minder dan één segment
+voorraad).
+
+**Ronde 4 (M7d, `329e707`).** ⟦C2: M7d⟧
 
 ## M8: rapporten
 
