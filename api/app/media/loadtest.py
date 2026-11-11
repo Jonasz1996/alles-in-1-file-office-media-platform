@@ -439,10 +439,10 @@ class PlayerReport:
     stall_after_seek: list[float | None] = field(default_factory=list)
     seek_s: float | None = None
     # Ook alleen om te lezen (I1, M7e): de voorraad direct na de sprong, in mediaseconden: het
-    # eind van het segment waar het doel in valt, min het doel. Een herstart levert eerst dat
-    # segment en pas dan het volgende; ligt het doel vlak voor het eind van een segment (het
-    # rooster begint op origin_ms, meestal 21 ms), dan hapert de speler meteen, hoe snel de
-    # producent ook is. None zonder sprong
+    # eind van het segment waar het doel in valt, min het doel. Na de sprong haalt de speler
+    # alleen dat segment. Is de voorraad kleiner dan een tik en staat het volgende segment niet
+    # in de cache, dan moet een herstart dat volgende segment (2 s media) binnen ±twee tikken
+    # leveren, anders telt de speler één keer haperen. None zonder sprong
     seek_buffer_s: float | None = None
     played_s: float = 0.0
     mode: str | None = None
