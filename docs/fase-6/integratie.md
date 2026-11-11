@@ -29,7 +29,7 @@ Zoeken en foto's op `/beheer`. Het ontwerp staat in [bouwontwerp.md](bouwontwerp
 Van de poorten van §4.4 en §4.5 zijn er ⟦C2: hoeveel van de hoeveel, uit de tabel Kort van
 metingen.md⟧ gehaald ([Metingen](#metingen)). In CI is de commit van 0.8.0
 ⟦C2: de run in CI op de commit van 0.8.0 en het aantal groene jobs⟧. Elke wijziging aan een
-contract is additief, zoals het nieuwe veld `check` in `AdminSearch`
+contract van de API is additief, zoals het nieuwe veld `check` in `AdminSearch`
 ([Wijzigingen aan contracten](#wijzigingen-aan-contracten)).
 
 Voor 0.8.1 blijft: gezichten automatisch herkennen (X2) en zoeken op wat er op een foto staat
@@ -62,11 +62,12 @@ lopen. D1 liep apart.
 | 23:12 tot 11 november 01:30 | B1: alle checks | [De checks](#de-checks) |
 | 11 november 00:11 | C1: de teksten voor 0.8.0, met plekken voor de metingen, op `wip/i1-docs` | `ebcbb4f` |
 | 11 november 01:41 | M9: de update met de echte bronnen | `d5624b5` |
+| 11 november 02:09 | M6: de wis-test `test_een_upload_wacht_niet_op_het_hele_wissen` laat met `-s` zien hoe lang de upload wachtte | `77292fe` |
 | daarna | M1–M8, elk alleen | [metingen.md](metingen.md) |
 
 CI liep na de integratie op `2adccd2` (run 101): alle 16 jobs groen. `zoek-perf` deed er 21
-minuten over, met de nieuwe stap voor churn en de triggers op 3.46.1. Op `0e19180` (run 102):
-⟦C2: de uitslag van run 102 op 0e19180⟧.
+minuten over, met de nieuwe stap voor churn en de triggers op 3.46.1. Op `0e19180` (run 102, de
+samenvoeging van D1): alle 13 jobs groen.
 
 Wat er onderweg misging, met de oorzaak:
 
@@ -119,7 +120,7 @@ M9). In de z*.md en x1.md is elk gedaan punt doorgestreept met de commit en de t
 | Punt | Wat er veranderde | Commit | Test |
 |---|---|---|---|
 | A1 | `e2e/perf/zoek_samen.py` zaait in stap 1 ook 5.000 foto's (640 × 480, 85 % met GPS, 5 % bijna gelijk) en 500 scans van X1, met `--kort` 300 en 20. Tien poorten, elk gehaald, niet gehaald of niet te meten; buiten `--kort` telt niet te meten als niet gehaald. De poort op OOMKilled kijkt eerst of DS een geheugengrens heeft (`HostConfig.Memory` > 0), want zonder grens zegt OOMKilled niets. Lokaal één run met `--kort`, op één core en zonder OnlyOffice: exit 0 in 242 s | `46eb037`; review `e144074`, `53f85d9`, `67443c3`, `f0a1341`, `112415b`, `2b17f78` | `e2e/test_zoek_metingen.py`, onder andere `test_alle_poorten_gemeten_en_gehaald`, `test_een_poort_die_niet_te_meten_is_telt_niet_als_gehaald`, `test_ds_oordeel` en `test_overleefd` |
-| A2 | `e2e/perf/zoek_backfill.py --soort photometa` en `--soort geo` (met `--geo-bron`), met de poorten 5.000 foto's en 20.000 punten per minuut. In stap A: photometa met n = 300 4.988,4 per minuut (alleen een rapport); geo met n = 2.000 23.223,7 per minuut, gehaald, met een `places.sqlite` van 258 landen, 4.274 gebieden en 144.521 plaatsen, gebouwd in 4,8 s | `361d2e2` | de metingen M3 en M4 |
+| A2 | `e2e/perf/zoek_backfill.py --soort photometa` en `--soort geo` (met `--geo-bron`), met de poorten 5.000 foto's en 20.000 punten per minuut. In stap A: photometa met n = 300 4.988,4 per minuut (alleen een rapport); geo met n = 2.000 23.223,7 per minuut, gehaald, met een `places.sqlite` van 258 landen, 4.274 gebieden en 144.521 plaatsen, gebouwd in 4,8 s | `361d2e2` | `e2e/test_zoek_metingen.py`, onder andere `test_de_poorten_van_paragraaf_4_5_per_soort`, `test_oordeel_per_soort`, `test_geo_zonder_bronmap_stopt_met_uitleg` en `test_bouw_places_zonder_bronnen_noemt_haal_py`; de metingen M3 en M4 |
 | A3 | De job `zoek-perf` draait de churn en de hele set triggers op SQLite 3.46.1 (marker `triggers`, 34 tests). Lokaal 201,58 s, waarvan de churn 152,79 s | `f211d7b`; review `bf62237` | `api/tests/search/test_zoek_ci.py::test_zoek_perf_draait_churn_en_de_triggers_op_3_46_1` (twee mutanten maken hem rood); in CI groen in run 101 |
 | A4 | Een nieuwe job `geo.places`: na elke bouw van `places.sqlite` vult een keten (sleutel `geo.places:<bouw>`, stukken van 1.000) land en plaats in bij foto's waar `place_id` en `country` allebei leeg zijn; zee blijft leeg. De keten wacht op photometa van vóór de bouw. Elke bouw krijgt een eigen id (meta `bouw`; een bestand van vóór I1 heet `zonder-id:<datum>`), dus een nieuwe bouw begint vooraan, en een mislukt klaarzetten doet de volgende start. `geo-load` zet de keten ook klaar. Vóór de fix bleef een foto `(None, None, None)` | `7f9f6f9`; review `36b684f`, `5ae0651`; integratie `4acfc52`, `1dc4dc1` | `api/tests/geo/test_places_later.py`: `test_fotos_van_voor_places_sqlite_krijgen_na_de_bouw_hun_plaats`, `test_zee_uit_prullenbak_eigenaar_en_stukken`, `test_wacht_op_photometa_van_voor_de_bouw`, `test_geo_load_naast_de_draaiende_app`, `test_wat_tijdens_het_opzoeken_verandert_krijgt_geen_plaats`, `test_mislukt_klaarzetten_doet_de_volgende_start`, `test_een_nieuwe_bouw_begint_vooraan`; `tests/geo/test_geo_load.py::test_cli_geo_load`; met de echte bronnen M9 |
 | S1 | Hervatten in `/admin/search` wekt de pompen van index en ocr, net als Opnieuw, en pas na de commit. De e2e `test_zoek_beheer.py` wacht daarom 15 s (`HERVAT_S`) in plaats van 30, en duurt 33,61 s in plaats van 53,96 s | `487e590`, `a710466` | `api/tests/search/test_admin_search.py::test_hervatten_wekt_de_pompen_van_index_en_ocr` |
@@ -128,7 +129,7 @@ M9). In de z*.md en x1.md is elk gedaan punt doorgestreept met de commit en de t
 | S4 | `render_meta` zoekt een werkmap waar hij mag schrijven (als nobody faalde hij in een map van root) | `b4e0e5f` | `api/tests/test_render_meta.py::test_run_meta_met_een_werkmap_waar_niets_in_mag[alleen_lezen]` en `[weg]` (met de oude regel `PermissionError` en `FileNotFoundError`); als nobody groen in B1 |
 | S5 | De logger van aiosqlite staat vast op INFO, zodat een wortel op DEBUG geen zoekwoorden in de log zet | `6eaaf95` | `api/tests/search/test_search_logs.py::test_niets_in_de_log_met_de_wortel_op_debug` (zonder: `('aiosqlite', ['geheimwoord7'])`) |
 | S6 | `api/app/search/weekcheck.py`: eens per week vergelijkt de app 200 bestanden in de index met de database, in een eigen draad die alleen leest, in één momentopname. Na een verschil kijkt hij het volgende uur opnieuw; tijdens de pauze, een herbouw, zonder FTS5 of zonder nodes geeft hij geen uitkomst. De uitkomst (alleen aantallen) staat in `AdminSearch.check` en op `/beheer` in de regel "Controle (wekelijks)", oranje bij een verschil; met LIKE zegt de regel dat hij alleen met FTS5 loopt | `a9b8913`, `e84dd5d`; review `507d1ef`, `e1109f6`, `4e73235`, `afed2fb`, `7565237` | `api/tests/search/test_weekcheck.py` (onder andere `test_de_eerste_keer_meteen_en_daarna_pas_na_een_week`, `test_wat_de_app_intussen_schrijft_is_geen_verschil`, `test_na_een_verschil_het_volgende_uur_opnieuw`); `web/src/admin/searchTab.test.ts` |
-| S7 | Land, Plaats en Camera in de balk Filters op `/fotos`. Twee plaatsen met dezelfde naam zijn uit elkaar te houden (eerst het land, dan het aantal foto's, dan een volgnummer) | `c4a20f2`, `9f08c06`; review `acdd152`, `fd9f396`, `1535021` | e2e `test_zoek_personen.py::test_plek_land_en_camera_op_fotos`; `web/src/photos/people/places.test.ts` en `slots.test.ts`. De eerste lading JS ging van 98.018 naar 98.062 B |
+| S7 | Land, Plaats en Camera in de balk Filters op `/fotos`. Twee plaatsen met dezelfde naam zijn uit elkaar te houden (eerst het land, dan het aantal foto's, dan een volgnummer) | `c4a20f2`, `9f08c06`; review `acdd152`, `fd9f396`, `1535021` | e2e `test_zoek_personen.py::test_plek_land_en_camera_op_fotos`; `web/src/photos/people/places.test.ts` en `slots.test.ts`. De eerste lading JS ging van 98.018 naar 98.062 B, en na de review was het 98.047 B van de 100.000 |
 | S8 | De stand beeld op `/zoeken` zegt "Zoeken op beeld komt in een volgende versie.", zonder versienummer; sinds web R4 ook als beschrijving van het zoekveld, voor een schermlezer | `af07df7`; `6f7ed56`, `0a82ed3`, `9d27e28` | e2e `test_zoek_personen.py::test_de_knop_zoeken_op_beeld` (toetst ook de beschrijving); `web/src/lazySlots.test.ts`, `web/src/search/page.test.ts` |
 | S9 | `install.sh`: uid 10001 kijkt de bronnen in `DATA_ROOT/geo` zelf na (`geo_ok_app` via `as_app_in`); root hasht geen bestand meer dat de app kan neerzetten. Wat root wel leest, leest hij zonder een symlink te volgen en hooguit één byte meer dan de bron | `5d15206`; review `ba76dfc`, `e928d6c` | `infra/single/tests/test_install_search.sh` (209 controles, waarvan 11 als root); mutanten rood, zie [De na-controle van de review](#de-na-controle-van-de-review) |
 | S10 | Lege pakketten voor tesseract ook in `test_install_update.sh`, zodat die test zonder Debian-spiegel kan bouwen | `7c3a2f1` | alleen shellcheck en een losse container zonder netwerk; de test zelf liep niet (zie [Niet gedaan](#niet-gedaan-met-de-reden)) |
@@ -182,31 +183,43 @@ personen; personen zijn Keuze 38, en Vraag 4 gaat over wie de plek van een foto 
 |---|---|---|
 | Gezichten automatisch herkennen (X2), met de container `analyse`, migratie 0011 en de jobs `api-analyse` en `analyse-image` | hoort bij 0.8.1 (B68, Vraag 13 met standaard twee opleveringen) | README, "Wat komt in 0.8.1" |
 | Zoeken op wat er op een foto staat (X3), met migratie 0012 en de job `beeld-model` | 0.8.1, of een fase 6b als het uitloopt | README, "Wat komt in 0.8.1" en "Planning" |
+| De vormen van Z0b voor gezichten en zoeken op beeld (onder andere `AdminFaces`, `AdminBeeld`, `BeeldStatus` en `FacesConfirm`) | een voorstel tot A0, X2 en X3 ze vastleggen (0.8.1) | het plan van I1; [z0b.md](z0b.md), Open 1–3 |
 | De pagina `/over` met de bronvermelding | komt met de gezichten (X2); tot dan staan GeoNames en Natural Earth onder de kaart en in de README | README, "Bekende grenzen" (De bronvermelding) |
 | Het kader van een persoon bij een nieuwe versie van een foto | kan pas met migratie 0011, want 0010 ligt vast | README, "Bekende grenzen" |
 | Zoeken op PostgreSQL: de tak van 0010, `select_engine` en het opruimen in stukken | niet getest; PostgreSQL zoekt alleen op naam (LIKE) | README, "Bekende grenzen" (Zoeken zonder index); z0-api.md Open 5 |
 | Niemand luistert naar `search.progress` in de web | de tab op `/beheer` peilt elke 5 s, dus Jonas ziet hetzelfde; geen pakket had het, en het heeft geen eigenaar | z7.md (Afwijkingen), z0-web.md Open 6; niet in de README |
 | De service worker bewaart `/kaart/` niet | klein, later | z0-web.md Open 5 |
+| Herinneringen per map verbergen in de web (de API kan het, `kind = folder`), en een link naar `/dubbel` in het menu (nu alleen op `/fotos`) | geen pakket van I1 had het; klein, later | README, "Bekende grenzen" (herinneringen per map); [z6.md](z6.md) en [z5.md](z5.md), Open |
 | De koude eerste weergave van ±8 s (één keer gezien, oorzaak onbekend) | geen meting in I1 draait `run_all.py` met een trace; naar I2 | z5.md, Open; niet in de README |
 | Een e2e voor "Meer laden" in de lijst van mislukte op `/beheer` | daarvoor zijn meer dan 50 mislukte inhouden nodig; de bladzijden toetst `test_admin_search.py`; naar I2 | z7.md, Open |
 | OCR voor een foto met dezelfde inhoud als een bestand dat er al was (`add_ref`) | vraagt een haak in Z0; zo'n foto krijgt zijn tekst bij de volgende start | README, "Bekende grenzen" (OCR); x1.md, Open |
+| De rij van OCR staat alleen bij wie OCR mag vragen: wie een PDF alleen mag lezen, ziet niet of OCR klaar is (de tekst vindt hij wel met Zoeken) | klein; geen pakket van I1 had het | [x1.md](x1.md), Open 7 |
 | Het camerafilter onder een libc-collatie op PostgreSQL (W2 van de review van web) | dat is de API van Z3, en PostgreSQL is niet getest; op SQLite werkt het | `api/app/search/filters_photo.py`; dit document |
 | De teksten `beeld.notReady` en `photos_faces.notReady` op `/beheer` zeggen nog "komt later in fase 6" (W6 en R3 van de review van web) | horen bij de go/no-go van X2 en X3 | `web/src/i18n/areas/beeld.nl.ts`; dit document |
 | De zichtbare uitleg in de stand beeld zegt nog "Druk op Enter" | buiten S8; de beschrijving van het veld begint nu met de zin dat het later komt | `web/src/search/ImageHint.tsx` (`IMAGE_SEARCH_READY`) |
 | `uploads.cleanup_loop` en de lus van de mediascanner zijn niet als achtergrond gemerkt | hun schrijfacties staan bij de verzoeken in de rij, zoals vóór de poort | z2.md, Open 12 |
+| De runner kijkt na een `Defer` pas na `jobs.POLL` (5 s) weer, tenzij iets hem wekt; bij een start met media aan kost dat tot 5 s voor de eerste tekst | het plan nam het alleen mee als D1 `jobs.py` toch zou raken; D1 zette daar alleen het achtergrondwerk van de Runner achter de poort. Hervatten wekt de pompen al zelf (S1) | [z2.md](z2.md), Open 11 |
 | `synchronous=NORMAL` (geen `fsync` bij een commit) | dan kan een opgeslagen wijziging na een stroomstoring weg zijn; een open keuze, geen vraag in de README | README, "Bekende grenzen" (Uploaden terwijl de index schrijft); z1.md, Open na de nacontrole |
+| Eén upload duurde 2.659 ms in `tests/test_pages.py::test_eerdere_versie`, in een volle suite tijdens de bouw van D1. De test heeft geen tijdgrens en slaagde; alleen gedraaid (twee keer) duurde de upload 36–40 ms | oorzaak niet gevonden; de poort was het niet, want in die test wachtte niemand op de poort | dit document |
 | Kaart met een filter op soort, map, camera, persoon of tag sneller dan een halve seconde | kan alleen met een nieuwe migratie | README, "Bekende grenzen" en een vraag |
+| Migraties na 0010: een index op (ftype, taken_day), de tabel `dup_group`, en een bewaking tegen een kapotte index als één UPDATE `owner_id` en `search_name` samen wijzigt | 0010 ligt vast; geen pad in de app doet zo'n UPDATE, en Z3 had `dup_group` niet nodig; ze komen met een migratie na A0 | het plan van I1; [z1.md](z1.md) en [z3.md](z3.md), Open |
 | Land en Plaats op `/fotos` met meer dan 500 plaatsen | `GET /photos/places` geeft er hooguit 500, de meeste foto's eerst | README, "Bekende grenzen" |
+| Een GPS-waarde met 60,0 seconden, zoals (54, 47, 60.0), geeft geen plek: `render_meta` leest minuten en seconden alleen onder 60 (`api/app/render_meta.py`) | zo ontworpen; M9 vond het in de testfoto's, niet bij een camera. Het blijft zo in 0.8.0, een open punt voor I2 | [Metingen](#metingen), M9 |
 | S10 echt gedraaid: `test_install_update.sh --stappen` | mocht niet in de sandbox (en er was te weinig schijfruimte); in B1 weigerde de test omdat `python:3.12-slim` al bestaat; de test staat niet in CI | [De checks](#de-checks) |
 | S13: de engines van aiosqlite sluiten in `test_geo_read.py` en `test_location_off.py` | niet na te spelen: drie keer 53 goed, zonder waarschuwing; niets veranderd | dit document |
+| De woorden van de poorten verschillen: `zoek_backfill.py` en de poort van OCR (`api/tests/ocr/poort.py`) schrijven `NIET gehaald`, `zoek_samen.py` schrijft `niet gehaald` | `e2e/test_zoek_metingen.py` toetst beide vormen letterlijk, dus gelijktrekken maakt aan een van beide kanten een test rood; de blokken kort in `ci.yml` zoeken niet op deze woorden, en beide betekenen hetzelfde | [e2e.md](e2e.md), "De meetscripts in `e2e/perf`" (`3280946`) |
+| Wijzigingen aan contracten voor later: het paginanummer bij een treffer, 204 in plaats van 404 voor `/pages/{n}/words`, kaders op gedraaide pagina's, een vriendelijke naam van de camera in de chip, "Niet gelijk" ongedaan maken, en een eigen zin bij een PDF zonder gescande pagina | de meeste vragen een wijziging aan een contract, en I1 voegde alleen toe; het plan schuift ze naar een latere ronde | het plan van I1; README, "Bekende grenzen" ("Niet gelijk"); [z4.md](z4.md), Open; [x1.md](x1.md), Open 6 |
 | Teksten in het ontwerp (de handtekening van `admit()`, de wandklok van Keuze 8, `Hit.path`, de schatting van de minuten van `zoek-perf`) en kleine dingen in de web (`color-mix`, het samenvoegen van stippen, de scrollbalk van de viewer) | klein, later | het plan van I1 |
+| De titels van een mediabestand als de probe pas na de stap text komt; `after_ready` voor een oud doc, xls of ppt als de miniaturen van OnlyOffice mislukken; de plek na een dedupe, een versie terug of een andere eigenaar (die komt pas bij de volgende ronde van de keten) | geen pakket van I1 had het; later, bij de robuustheid | het plan van I1; [z2.md](z2.md), Open 4 en 5; [z3.md](z3.md), Open |
+| Een vlag in de viewer dat een foto van een ander is, zodat hij geen verzoeken doet die 404 of een lege lijst geven | klein, later | het plan van I1 |
 | `files.free_name`, de grenzen van OCR per gebruiker in het geheugen, `jobs._runners` | horen bij het harden in fase 8 | het plan van I1 |
 
 ## Wijzigingen aan contracten
 
-Alles additief. Er kwam geen route, gebeurtenis of migratie bij of af (het schema blijft op
-`0010`), en `api/app/config.py` is niet veranderd. Met zoeken op PostgreSQL verandert er niets:
-de schrijfpoort komt alleen op SQLite.
+Alles additief, op één punt in een meetscript na: buiten `--kort` geeft `zoek_samen.py` nu ook
+exitcode 1 als een poort niet te meten is. Er kwam geen route, gebeurtenis of migratie bij of af
+(het schema blijft op `0010`), en `api/app/config.py` is niet veranderd. Met zoeken op PostgreSQL
+verandert er niets: de schrijfpoort komt alleen op SQLite.
 
 | Contract | Wat | Waarom | Test |
 |---|---|---|---|
@@ -218,7 +231,8 @@ de schrijfpoort komt alleen op SQLite.
 | `app.cli geo-load` | zet na de bouw de keten `geo.places` klaar; lukt dat niet, dan een hint op stderr en de exitcode blijft 0 | A4 | `test_cli_geo_load` |
 | `PhotoFilters` en `FilterBarProps` (web) | `place`, `country` en `camera` erbij, naar de parameters die de API al had; `places` optioneel in `FilterBarProps` | S7; geen wijziging aan de API | `places.test.ts`, `slots.test.ts`, de e2e van S7 |
 | `ImageHint` (web, nieuw) en de vlag `IMAGE_SEARCH_READY` | de zin dat zoeken op beeld later komt, ook als beschrijving van het veld; de slot `BeeldResults` blijft gelijk | S8, web R4 | `page.test.ts`, `lazySlots.test.ts` |
-| i18n | nieuwe sleutels `search.field.imageLater`, `beeld.later`, `photos_people.filters.placePhotos` en `admin.search.index.checkOff` (NL en EN) | S8, S7 (W5), S6 (F5) | `check:i18n --strict` |
+| De meetscripts `e2e/perf/zoek_backfill.py` en `e2e/perf/zoek_samen.py` (geen API) | `zoek_backfill.py`: `--soort photometa` en `--soort geo`, `--geo-bron DIR` (nodig bij geo), de poorten `POORT_PHOTOMETA` 5.000 en `POORT_GEO` 20.000, en bij geo een blok `places` in de JSON. `zoek_samen.py`: `--fotos` en `--scans` (300 en 20 met `--kort`, anders 5.000 en 500), tien poorten waarvan de waarde ook `None` (niet te meten) kan zijn, de sleutel `overgeslagen` in de JSON, en buiten `--kort` geeft nu ook een poort die niet te meten is exitcode 1 (net als een poort die niet gehaald is) | A1, A2 | `e2e/test_zoek_metingen.py` |
+| i18n | nieuwe sleutels, in NL en EN en alleen toegevoegd: `admin.search.index.check`, `checkNone`, `checkOk`, `checkBad` en `checkHelp` (S6) en `checkOff` (S6, review F5); `photos_people.filters.country`, `allCountries`, `place`, `allPlaces`, `camera` en `cameraHint` (S7) en `placePhotos` (S7, review W5); `beeld.later` (S8); `search.field.imageLater` (web R4) | S6, S7, S8, web R4 | `check:i18n --strict` |
 
 Intern, zonder contract: de schrijfpoort (`dbgate.py`, met haken in `db.py`, `jobs.py`,
 `storage.py`, `routers/files.py` en `search/rebuild.py`), de logger van aiosqlite op INFO (S5),
@@ -244,7 +258,7 @@ zegt: gehaald, niet gehaald of niet te meten, nooit alleen de exitcode.
 | M3, photometa | ≥ 5.000 foto's per minuut | ⟦C2: foto's per minuut, uit M3⟧, ⟦C2: gehaald of niet, uit M3⟧ |
 | M4, land en plaats | ≥ 20.000 punten per minuut | ⟦C2: punten per minuut, uit M4⟧, ⟦C2: gehaald of niet, uit M4⟧ |
 | M5, OCR | ≥ 8 pagina's per minuut over de mix, op één core | ⟦C2: pagina's per minuut over de mix, uit M5⟧, ⟦C2: gehaald of niet, en per hoek en dichtheid, uit M5⟧ |
-| M6, uploaden naast de index | een upload wacht ≤ 1 s, ook als de index een tekst van 1 MB met 10 kopieën schrijft | ⟦C2: de langste wachttijd van een upload per run, op de host en in python:3.12-slim, uit M6⟧ |
+| M6, uploaden naast de index | een upload wacht ≤ 1 s, ook als de index een tekst van 1 MB met 10 kopieën schrijft | `test_backfill.py`, `test_search_rebuild.py` en `test_search_purge_batches.py`, elk 3 keer op de host en 3 keer in python:3.12-slim: ⟦C2: de langste wachttijd van een upload per run, op de host en in python:3.12-slim, uit M6⟧; 1 keer op de host met +200 ms per `fsync` (een shim met `LD_PRELOAD`): ⟦C2: de langste wachttijd van een upload met +200 ms per fsync, uit M6⟧ |
 | M8, rapporten | geen poort, behalve de grootte van het image (tesseract hooguit 75 MB erbij) | ⟦C2: zoek_ui, bench --los, het bijwerken van de index in CI, de duur van e2e-media-perf en het blok kort, uit M8⟧; het image ⟦C2: met hoeveel MB, uit M8⟧ |
 
 **M7, zoeken naast media en OnlyOffice** (`e2e/perf/zoek_samen.py`, §4.5 deel B), per regel van
@@ -492,9 +506,9 @@ blokkerend):
 | regressie F1 | de poort moest blijven tot de commit klaar is, en een commit moet de checkpointer wekken | `test_de_poort_blijft_tot_de_commit_klaar_is`, `test_een_commit_wekt_de_checkpointer` |
 | regressie F2 | de reeks van `FG_STREAK` | `test_na_een_beurt_van_de_achtergrond_telt_de_reeks_opnieuw`, `test_verzoeken_zonder_wachtende_achtergrond_tellen_niet_mee` |
 | regressie F3 | de poort terug na een fout of een rollback | `test_een_mislukte_schrijfactie_buiten_een_transactie_geeft_de_poort_terug`, `test_een_rollback_op_een_open_verbinding_geeft_de_poort_terug` |
-| regressie F4 | | niet gedaan (overlappende paden) |
-| regressie F5 | de checkpointer en de log | `test_de_checkpointer_maakt_geen_bestand_en_stopt_als_er_niets_meer_is`, `test_wie_de_poort_lang_heeft_komt_in_de_log`; een deel (R10b) niet gedaan |
-| regressie F6 | | niet gedaan |
+| regressie F4 | een paar paden die de poort teruggeven, zijn elk alleen gedekt door een ander pad: de uitzondering in de commit, de afzonderlijke listeners van de pool, en de controle op de rij in `try_take` | niet gedaan: die paden vangen elkaar op, en alle listeners van de pool samen weghalen maakt al een test rood |
+| regressie F5 | de checkpointer en de log | `test_de_checkpointer_maakt_geen_bestand_en_stopt_als_er_niets_meer_is`, `test_wie_de_poort_lang_heeft_komt_in_de_log`; R10b (de commit vóór het vroege einde van `collect_garbage` in `routers/files.py`) niet, want die sluit alleen een leestransactie die de sessie toch sluit |
+| regressie F6 | `uploads.cleanup_loop` en de lus van de mediascanner zijn niet als achtergrond gemerkt; hun schrijfacties staan bij de verzoeken in de rij | niet gedaan: die bestanden horen niet bij D1, en ze schrijven zoals vóór de poort; zie [Niet gedaan](#niet-gedaan-met-de-reden) en z2.md, Open 12 |
 
 De reparaties van de review staan in `6944820`, `a0e8975`, `1cd0778` en `9acd6ff`. Op `9acd6ff`
 liep de volle suite twee keer: 5821 goed.
@@ -525,7 +539,7 @@ niet alleen.
 
 | Check | Uitkomst |
 |---|---|
-| `ruff check` en `ruff format --check` (api) | alles goed, 730 bestanden al opgemaakt |
+| `ruff check` en `ruff format --check` (api en e2e) | alles goed, 730 bestanden al opgemaakt |
 | `uv run pytest -q` (api), eerste keer | 5853 goed, 2 overgeslagen, 237 niet geselecteerd, 2 waarschuwingen, in 39:05 |
 | `-m media` | 191 goed |
 | `-m ocr` | 13 goed |
@@ -547,13 +561,17 @@ niet alleen.
 | web: budget | binnen het budget; de eerste lading JS 98,0 van 100 KB |
 | shellcheck, `yamllint -s .`, `git diff --check 2adccd2 HEAD` | schoon |
 
-De set als nobody is die van de nacontrole van golf 4 ([z7.md](z7.md), Gedraaid), plus
-`tests/geo` en de bestanden van D1 en S4: `tests/search`, `tests/ocr`, `tests/extract`,
-`tests/geo`, `test_backup.py`, `test_analysis_versions.py`, `test_install_geo.py`,
-`test_cli_db.py`, `test_jobs_lanes.py`, `test_media_off.py`, `test_pages_words.py`,
-`test_fake_worker.py`, `test_media_worker_core.py`, `test_media_worker_guard.py`,
-`test_media_no_ffmpeg_outside.py`, `test_db_gate.py`, `test_db.py`, `test_backfill.py`,
-`test_uploads.py` en `test_render_meta.py`.
+De set als nobody is die van golf 4 ([z7.md](z7.md), "Gedraaid op de kop na de nacontrole":
+`tests/search`, `tests/ocr`, `tests/extract`, `test_backup.py`, `test_analysis_versions.py`,
+`test_install_geo.py`, `test_cli_db.py`, `test_jobs_lanes.py`, `test_media_off.py`,
+`test_pages_words.py`, `test_fake_worker.py`, `test_media_worker_core.py`,
+`test_media_worker_guard.py` en `test_media_no_ffmpeg_outside.py`), plus `tests/geo`, de tests
+rond D1 (`test_db_gate.py`, `test_db.py`, `test_backfill.py` en `test_uploads.py`) en die van S4
+(`test_render_meta.py`).
+
+De twee e2e die [z4.md](z4.md) wisselvallig noemt,
+`test_browser.py::test_tienduizend_openen_scrollen_en_selecteren` en `test_integratie.py`, zitten
+in de set van CI en waren in B1 groen (208 goed, geen fout).
 
 Wat niet groen was, met de oorzaak:
 
@@ -644,7 +662,7 @@ Daarnaast twee punten uit §4.5 die de README onder "Klaar als" noemt:
 | Punt | Waar | Bewijs |
 |---|---|---|
 | **Naast media en OnlyOffice** blijft zoeken binnen 200 ms, hapert geen film en gaat geen woord verloren | **hier**, de CPU van Jonas **op de LXC** | M7 (`e2e/perf/zoek_samen.py`): ⟦C2: elke poortregel van stap 2 gehaald of niet en het hoogste geheugengebruik, uit M7⟧. In CI alleen `--kort`, als rapport, in `e2e-media-perf` |
-| **Een upload wacht hooguit 1 s**, ook als de index een tekst van 1 MB met 10 kopieën schrijft | **hier** en **in CI**; de schijf van Jonas is niet gemeten | `test_backfill.py::test_een_upload_wacht_nooit_langer_dan_1_s_tijdens_de_backfill` in `api`, en `test_db_gate.py` voor de volgorde zonder klok; M6: ⟦C2: de langste wachttijd van een upload, uit M6⟧ ms. Geldt tot ±200 ms extra per `fsync` |
+| **Een upload wacht hooguit 1 s**, ook als de index een tekst van 1 MB met 10 kopieën schrijft | **hier** en **in CI**; de schijf van Jonas is niet gemeten | `test_backfill.py::test_een_upload_wacht_nooit_langer_dan_1_s_tijdens_de_backfill`, `test_search_rebuild.py::test_een_upload_wacht_hooguit_1_s_en_de_index_klopt` en `test_search_purge_batches.py::test_een_upload_wacht_niet_op_het_hele_wissen` in `api`, en `test_db_gate.py` voor de volgorde zonder klok; M6: ⟦C2: de langste wachttijd van een upload, uit M6⟧ ms. Geldt tot ±200 ms extra per `fsync` |
 
 Open voor 0.8.1 blijven X2 (gezichten automatisch, met hun privacy) en X3 (zoeken op beeld), met
 de container `analyse` en de jobs `api-analyse`, `analyse-image` en `beeld-model`. Schuift X3 naar
