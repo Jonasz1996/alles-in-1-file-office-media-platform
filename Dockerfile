@@ -27,6 +27,32 @@ RUN apt-get update \
 COPY api/pyproject.toml api/uv.lock ./
 RUN uv sync --frozen --no-dev
 
+# Analyse (fase 6, Keuze 57): de extra `analyse` staat NIET in /opt/venv, maar in /opt/analyse
+# (0750 root:analyse). Alleen de kinderen van de worker zetten die map in sys.path. Voor 10001 en
+# 10002 bestaat numpy dan niet, ook niet als iemand de map zelf in sys.path zet (find_spec is
+# None; haalbaarheid.md, K2-09). In /opt/venv met o-rwx zou `import numpy` een leeg
+# namespace-pakket geven. Precies vijf pakketten: een zesde laat de build falen, want een nieuw
+# pakket is een vraag aan Jonas (B19). chown en chmod in dezelfde RUN: een latere laag kopieert
+# alle bestanden opnieuw. --no-cache: anders blijven de wheels en hun uitgepakte kopie (±120 MB)
+# in /root/.cache/uv achter, en dan haalt het image de grens van +160 MB niet (A0, a0.md). g-w:
+# niets in /opt/analyse is schrijfbaar voor de groep analyse (ook .lock van uv niet).
+# 10004 (omzetten) is de gebruiker van analyse-omzetten (X3, K1-05): groep analyse, zodat hij
+# numpy kan lezen, maar zonder sleutel, zonder socket en zonder /models.
+RUN groupadd --system --gid 10003 analyse \
+    && useradd --system --uid 10003 --gid 10003 --no-create-home analyse \
+    && useradd --system --uid 10004 --gid 10003 --no-create-home omzetten \
+    && uv export --frozen --no-dev --no-emit-project --no-hashes --extra analyse \
+       | grep -E '^[a-z]' | sort > /tmp/alles.txt \
+    && uv export --frozen --no-dev --no-emit-project --no-hashes \
+       | grep -E '^[a-z]' | sort > /tmp/basis.txt \
+    && comm -23 /tmp/alles.txt /tmp/basis.txt > /tmp/analyse.txt \
+    && test "$(wc -l < /tmp/analyse.txt)" -eq 5 \
+    && uv pip install --no-cache --python /opt/venv/bin/python --no-deps --compile-bytecode \
+       --target /opt/analyse -r /tmp/analyse.txt \
+    && rm /tmp/alles.txt /tmp/basis.txt /tmp/analyse.txt \
+    && chown -R root:analyse /opt/analyse \
+    && chmod -R g-w,o-rwx /opt/analyse && chmod 0750 /opt/analyse
+
 COPY api/app ./app
 COPY api/migrations ./migrations
 # De zoekbench (fase 6, Z7, Keuze 54): `python -m app.cli bench --los` laadt hem van hier. Alleen
@@ -47,9 +73,11 @@ RUN useradd --system --uid 10001 platform && install -d -o platform -g platform 
 # staat vóór tesseract (OMP_THREAD_LIMIT=1). tesseract 0711 om dezelfde reden: hij heeft de PGM
 # van een opdracht op stdin (fase 6, X1, C14).
 # /srv/zelftest-10001 (leeg, van platform) is voor de zelftest van de worker (V1: opnieuw
-# openen om te schrijven faalt).
+# openen om te schrijven faalt); de zelftest van de analyse gebruikt hem ook. /run/analyse
+# (fase 6, §3.11) volgt het patroon van /run/media: van analyse met groep platform.
 RUN useradd --system --uid 10002 --no-create-home media \
     && install -d -o media -g platform -m 2750 /run/media \
+    && install -d -o analyse -g platform -m 2750 /run/analyse \
     && chmod 0711 /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/env /usr/bin/nice /usr/bin/ionice /usr/bin/tesseract \
     && install -o platform -g platform -m 0644 /dev/null /srv/zelftest-10001
 # Fase 6, Z2 (Keuze 17, spike S11): het kind van de opdracht text (tekst uit documenten) start
