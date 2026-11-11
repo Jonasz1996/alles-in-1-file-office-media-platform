@@ -10,9 +10,10 @@ om te slagen; de oorzaak staat bij elke meting en onder [Bevindingen](#bevinding
 Elke poort van §4.4 en §4.5 die bij 0.8.0 hoort, is gehaald: 27 van de 27, en ook de grens voor de
 grootte van het image (X1). De vier poorten van gezichten en beeld (X2 en X3) horen bij 0.8.1 en
 zijn niet gemeten. M7 haalde het pas in de vijfde ronde (M7e); de rondes ervoor staan bij
-[M7](#m7-zoeken-naast-media-en-onlyoffice-45-deel-b). Bij een poort over meer runs staat bij M1
-tot en met M5 de mediaan van de 3 rondes of runs (elke run staat bij de meting zelf), bij M6 en
-M7e de slechtste waarde.
+[M7](#m7-zoeken-naast-media-en-onlyoffice-45-deel-b). Bij een poort over meer runs staat bij M1 tot
+en met M5 de mediaan van de 3 rondes of runs, bij M6 en M7e de slechtste waarde. Bij M2 tot en met
+M5 staat elke run bij de meting zelf. Bij M1 staan de rondes alleen bij de herinneringen, de kaart,
+de kaart met een filter op soort, map of camera en `/duplicates`.
 
 | Poort | Grens | Gemeten | Meting | Uitkomst |
 |---|---|---|---|---|
@@ -358,11 +359,12 @@ was er op tijd, en hij haperde niet.
 Te weinig productie zoals in M7d is niet meer gezien: geen speler haperde meer dan één keer, en a1
 liep op 1,35–2,04 keer realtime. Waardoor dat komt, zegt M7e niet, want elke run had zowel de
 herstartvoorrang als de nice van photometa. De proefmetingen zonder herstartvoorrang (E2) haperden
-ook niet door te weinig productie, de nice weegt hier niet (zie hierboven), en ook de nulmeting,
-waar de nice van photometa niets doet (het achtergrondwerk staat stil) en b1 (zonder sprong) geen
-herstartvoorrang krijgt, was sneller dan in M7d (b1 op 1,73–1,77 tegen 1,53–1,62 keer realtime, a1
-op 2,03–2,04 tegen 1,27–1,71 keer realtime, bij een gemiddelde load van de machine van 5,5 tegen
-6,6). Het kan dus ook verschil tussen runs zijn.
+ook niet door te weinig productie, de nice weegt hier niet (zie hierboven), en ook de nulmeting was
+sneller dan in M7d. Daar doet de nice van photometa niets (het achtergrondwerk staat stil), en b1
+springt niet en krijgt dus geen herstartvoorrang. b1 liep er op 1,73–1,77 tegen 1,53–1,62 keer
+realtime, bij een gemiddelde load van de machine van 5,5 tegen 6,6. a1 liep er ook sneller
+(2,03–2,04 tegen 1,27–1,71 keer realtime), maar a1 startte ook in de nulmeting bij de sprong opnieuw
+en kreeg dus herstartvoorrang; bij a1 kan die meetellen. Het kan dus ook verschil tussen runs zijn.
 
 De poort blijft gevoelig voor het geval uit het rooster. a1 startte in M7e bij elke sprong
 opnieuw, en ±1 op 4 sprongen landt in het laatste stukje van een segment. In een ronde van drie
@@ -463,7 +465,7 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
    dat staat bij de open punten in [integratie.md](integratie.md).
 2. **Een speler hapert na een sprong als de stroom opnieuw start** (fase 5 Bevinding 3; deels
    aangepakt). M7c haperde 2 / 2 / 2 en M7d 3 / 2 / 0 keer in fase a van `achtergrond`, M7e 0 keer.
-   Tussen die twee kwamen de herstartvoorrang (B71, een voorstel) en photometa op nice 19. Of het
+   Tussen M7d en M7e kwamen de herstartvoorrang (B71, een voorstel) en photometa op nice 19. Of het
    verschil daardoor komt, is niet bewezen (zie M7e).
 3. **Een sprong die in het laatste stukje van een segment landt, hapert als het volgende segment van
    een herstart komt** (de server doet niets fout; in de server is het alleen te verhelpen door bij
@@ -507,10 +509,11 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
 
 ## Opnieuw meten
 
-Elke meting alleen op de machine, vanuit `api/` (M6 in `python:3.12-slim` vanuit de wortel van
-de repository). Waar een script zijn uitvoer afsluit met het blok `=== kort ===` (M2–M4, M6, M7 en
-het zoekscherm), is dat blok wat hier staat; `bench --los` sluit af met `=== zoekbench ===`, en M1,
-M5 en M9 met hun eigen slotregels.
+Elke meting alleen op de machine, vanuit `api/` (M6 in `python:3.12-slim` vanuit de wortel van de
+repository). Waar een script zijn uitvoer afsluit met het blok `=== kort ===` (M2–M4, M7 en het
+zoekscherm), is dat blok wat hier staat; `bench --los` sluit af met `=== zoekbench ===`, en M1, M5
+en M9 met hun eigen slotregels. M6 heeft geen blok aan het eind: de getallen komen uit de regels
+`=== kort ===`, `herbouw:` en `=== wissen ===` midden in de uitvoer van de drie tests.
 
 ```bash
 # M1: de job zoek-perf in CI (§4.4); met de hand:
