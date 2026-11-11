@@ -17,6 +17,8 @@ import asyncio
 import gc
 import os
 import uuid
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -662,6 +664,32 @@ def test_p95_en_de_grenzen():
     assert lines == ["fase b: start 1.00 s, 0 keer haperen, geslaagd",
                      "fase d: niet gedraaid (met de hand)", "API p95: 12.5 ms",
                      "uitkomst: geslaagd"]  # fmt: skip
+
+
+async def test_de_api_vraagt_de_eerste_pagina_zoals_de_web_app():
+    """Watch.sample vraagt van de hoofdmap de eerste pagina (FIRST_PAGE), zoals de web-app een
+    map opent, en nooit de hele lijst: met 5.000 bestanden in de hoofdmap kostte die de app elke
+    seconde ±220-320 ms, ten koste van de spelers en van elke vraag ernaast (I1, M7)."""
+    seen: list[str] = []
+    watch: loadtest.Watch
+
+    class Http:
+        async def get(self, path: str, **_kw: Any) -> httpx.Response:
+            seen.append(path)
+            if len(seen) == len(loadtest.API_PATHS):
+                watch.stop.set()
+            return httpx.Response(200)
+
+    app_ = SimpleNamespace(state=SimpleNamespace())
+    watch = loadtest.Watch(app_, None, Http(), "token", FAST)
+    await asyncio.wait_for(watch.sample(), 5)
+    assert seen == [f"/api/v1/files/root?limit={loadtest.FIRST_PAGE}", "/api/v1/media/home"]
+    assert len(watch.samples.api_ms) == 2
+
+
+def test_de_eerste_pagina_is_die_van_de_web_app():
+    web = (Path(__file__).resolve().parents[2] / "web" / "src" / "browser" / "api.ts").read_text()
+    assert f"export const FIRST_PAGE = {loadtest.FIRST_PAGE};" in web
 
 
 def test_het_profiel_vraagt_transcode():
