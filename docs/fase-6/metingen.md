@@ -286,7 +286,41 @@ kunnen zo komen. De rest (minstens 19 keer, minstens 9,5 van de 16,3 s) is te we
 herstart onder drukte: de runs van a1 die haperden liepen op 1,02–1,23 keer realtime, die zonder
 haperen op 1,27–1,71. M7d draaide vóór de herstartvoorrang en vóór de nice van photometa.
 
-⟦C2: ronde 5 (M7e)⟧
+**Ronde 5 (M7e, `98ec2bc`).** Dezelfde code als de merge `47d62eb`; alleen een commentaar verschilt.
+
+| Stap 2 (`achtergrond`), drie runs | Waarde | Poort |
+|---|---|---|
+| zoeken p95 | 46,6 / 54,1 / 48,9 ms | ≤ 200 ms: gehaald |
+| `GET /files/root?limit=200` p95 | 80,9 / 76,2 / 87,8 ms | ≤ 200 ms: gehaald |
+| `GET /health` p95 | 5,1 / 5,2 / 6,1 ms | ≤ 50 ms: gehaald |
+| media | elke start ≤ 2,6 s; 0 keer haperen in fase a en b; de API van de belastingtest 54–56 ms | gehaald |
+| OnlyOffice opslaan | 7,8 / 7,8 / 7,7 s tegen 8,2 / 7,9 / 7,8 s in de nulmeting (hoogstens 0,99×) | ≤ 1,2×: gehaald |
+| verloren woorden | 0 | gehaald |
+| `MemAvailable` (laagst) | 12.434 MB | ≥ 1,5 GiB: gehaald |
+| DS `OOMKilled`, dezelfde processen | nee, ja | gehaald |
+| het achtergrondwerk hervat | 18,3 / 22,8 / 20,8 s | ≤ 90 s: gehaald |
+
+M7e haalt elke poort, drie van de drie keer. In de nulmeting haperde geen speler. In
+`zonder_defer` (een rapport, geen poort) haperde a1 één keer in run 1 en één keer in run 2, elk
+0,2 s na de sprong, met 0,067 en 0,012 s voorraad: precies het geval uit het rooster hierboven. a2
+landde drie keer met hooguit 0,012 s voorraad, maar startte niet opnieuw: zijn volgende segment
+was er op tijd, en hij haperde niet.
+
+Te weinig productie zoals in M7d is niet meer gezien: geen speler haperde meer dan één keer, en a1
+liep op 1,35–2,04 keer realtime. Waardoor dat komt, zegt M7e niet, want elke run had zowel de
+herstartvoorrang als de nice van photometa. De proefmetingen zonder herstartvoorrang (E2) haperden
+ook niet door te weinig productie, de nice weegt hier niet (zie hierboven), en ook de nulmeting,
+waar geen van beide iets doet, was sneller dan in M7d (a1 op 2,03–2,04 tegen 1,27–1,71 keer
+realtime, bij een gemiddelde load van de machine van 5,5 tegen 6,6). Het kan dus ook verschil
+tussen runs zijn.
+
+De poort blijft gevoelig voor het geval uit het rooster. a1 startte in M7e bij elke sprong
+opnieuw, en ±1 op 4 sprongen landt in het laatste stukje van een segment. In een ronde van drie
+runs is de kans op minstens één keer haperen in `achtergrond` daarom ±40–60 %, zonder dat de
+server iets fout doet; dat M7e drie keer goed ging, is dus deels geluk. CI merkt het niet: daar
+draait `zoek_samen --kort` alleen fase b (geen sprong), en de test van de belastingtest springt
+nooit zo dicht bij het eind van een segment. Wat de meting hier telt, is een vraag aan Jonas
+(kaartje van 11 november 2026); tot Jonas kiest, blijft het zoals het is.
 
 ## M8: rapporten
 
