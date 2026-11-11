@@ -18,8 +18,8 @@ Daarna één vraag, met de fd's als SCM_RIGHTS in de volgorde van FDS[op]:
 
     vraag:   {"v": 1, "op": "<Op>", "deadline_ms": <int>, "args": {…}}
     worker:  {"ev": "started", "n": <nummer>, "child": "werk" | "zoeken"}   (alleen bij een kind)
-             {"ev": "done", "code": "ok", "data": {…}}
-             {"ev": "done", "code": "<Code>", "detail": "…"}
+             {"ev": "done", "code": "<Code>", "data": {…}}       (Code.OK)
+             {"ev": "done", "code": "<Code>", "detail": "…"}     (elke andere Code)
 
 - Elke vraag eindigt met precies één done. caps en cancel doet pid 1 zelf: meteen done, zonder
   started en zonder nummer. Een weigering (bad_request, not_built, busy, sandbox) is ook meteen
