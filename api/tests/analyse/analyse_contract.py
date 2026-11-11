@@ -5,11 +5,15 @@ Dit bestand heet niet test_*.py en wordt niet zelf verzameld. test_fake_analyse_
 elk scenario uit SCENARIOS met een Driver voor de nep; X2a draait dezelfde lijst in
 api/tests_analyse/ met een Driver voor de echte worker, zonder dit bestand te wijzigen:
 
-    @pytest.mark.parametrize("scenario", C.SCENARIOS, ids=lambda s: s.__name__)
+    GEBOUWD = frozenset({Op.FACES, Op.GROUP})  # wat de echte worker nu doet
+    LIJST = [s for s in C.SCENARIOS if C.required(s) <= GEBOUWD]
+
+    @pytest.mark.parametrize("scenario", LIJST, ids=lambda s: s.__name__)
     async def test_contract_echt(scenario, echte_driver):
-        if missing := C.required(scenario) - echte_driver.has:
-            pytest.skip(...)
         await scenario(echte_driver)
+
+Een scenario wordt nooit overgeslagen: wat een worker nog niet doet, staat niet in zijn lijst,
+en een test kijkt dat de lijst klopt (zoals PAREN in test_fake_analyse_worker.py).
 
 Alleen de standaardbibliotheek en de app: geen numpy (laag 1 draait in de job api).
 
@@ -18,8 +22,8 @@ Afspraken voor elke Driver:
 - `socket` en `key`: waar de worker luistert en de sleutel van de handdruk; `settings()` geeft
   Settings waarmee app.analyse.client hem bereikt (PLATFORM_ANALYSE_ENABLED aan);
 - `has`: de opdrachten die deze worker doet naast caps en cancel (caps.built zonder die twee).
-  Een scenario met `needs(...)` vraagt opdrachten die er misschien nog niet zijn: zonder slaat
-  het over (`required`);
+  Een scenario met `needs(...)` vraagt opdrachten die er misschien nog niet zijn: zonder staat
+  het niet in de lijst van die worker (`required`);
 - `models`: de namen die caps hoort te melden (de regels van models.lock, en later die van X3);
 - `lang(op)`: vanaf nu blijft elke vraag van `op` lopen tot cancel, tot de verbinding dichtgaat
   of tot zijn deadline. Geeft de Opdracht (args en de fd's) waarmee dat zo is: de nep houdt de

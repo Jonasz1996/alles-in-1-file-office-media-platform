@@ -336,7 +336,8 @@ class BeeldCaps(_Data):
 
 
 class LimitsCaps(_Data):
-    """De grenzen van de container zoals de worker ze ziet (cgroup); None zonder grenzen."""
+    """De grenzen van de container zoals de worker ze ziet (cgroup). Kent de worker ze niet, dan
+    is CapsData.limits None."""
 
     cpus: float
     mem_mb: int
