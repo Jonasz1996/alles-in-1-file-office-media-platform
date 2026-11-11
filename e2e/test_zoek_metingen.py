@@ -173,13 +173,21 @@ def _stap2(**over: Any) -> dict[str, Any]:
         "ds": _ds(),
         "processen": {"voor": procs, "na": dict(procs)},
         "hervat_s": 12.0,
-        "office": {"opslaan_s": 2.0, "verloren": 0},
+        "office": _office(),
     }
     stap.update(over)
     return stap
 
 
-NUL = {"office": {"opslaan_s": 2.0, "verloren": 0}}
+def _office(**over: Any) -> dict[str, Any]:
+    """Een volledige ronde van 3 bewerkers op 1 document naast de belastingtest (zoals stap() hem
+    na bewerkers() heeft)."""
+    return {"bewerkers": 3, "open": 3, "opslaan_s": 2.0, "getypt": 10, "opgeslagen": 10,
+            "verloren": 0, "status2": [1], "weinig_geheugen": False,
+            "na_de_start_van_media": True, **over}  # fmt: skip
+
+
+NUL = {"office": _office()}
 
 
 def test_alle_poorten_gemeten_en_gehaald() -> None:
@@ -187,6 +195,41 @@ def test_alle_poorten_gemeten_en_gehaald() -> None:
     assert len(poorten) == 10
     assert all(ok is True for _, ok in poorten), poorten
     assert zs.geslaagd(poorten)
+
+
+def test_de_grenzen_van_paragraaf_4_5_deel_b() -> None:
+    """De poorten van §4.5 (deel B) letterlijk, en elke grens precies: erop is gehaald, erover
+    niet."""
+    assert zs.POORT == {"zoeken_p95_ms": 200.0, "files_root_p95_ms": 200.0,
+                        "health_p95_ms": 50.0, "mem_min_bytes": 1.5 * GIB, "hervat_s": 90.0,
+                        "opslaan_factor": 1.2}  # fmt: skip
+    for sleutel, op, erover in (
+        ("zoeken_p95_ms", 200.0, 200.1),
+        ("files_root_p95_ms", 200.0, 200.1),
+        ("health_p95_ms", 50.0, 50.1),
+        ("mem_min_bytes", 1.5 * GIB, 1.5 * GIB - 1),
+        ("hervat_s", 90.0, 90.1),
+    ):
+        assert zs.geslaagd(zs.oordeel(_stap2(**{sleutel: op}), NUL)), sleutel
+        assert not zs.geslaagd(zs.oordeel(_stap2(**{sleutel: erover}), NUL)), sleutel
+    assert zs.geslaagd(zs.oordeel(_stap2(office=_office(opslaan_s=2.4)), NUL))
+    assert not zs.geslaagd(zs.oordeel(_stap2(office=_office(opslaan_s=2.41)), NUL))
+
+
+@pytest.mark.parametrize("soort", ["zoeken", "files_root", "health"])
+def test_een_mislukt_verzoek_haalt_de_poort_niet(soort: str) -> None:
+    """Een mislukt verzoek zit niet in de p95. In M7 kreeg het laatste deel van stap 3 alleen
+    401's (het token van de stap verliep): de p95 van wat lukte, haalde dan de poort."""
+    poorten = dict(zs.oordeel(_stap2(fouten={soort: 3}), NUL))
+    mislukt = [(regel, ok) for regel, ok in poorten.items() if regel.endswith("(3 mislukt)")]
+    assert len(mislukt) == 1 and mislukt[0][1] is False
+    assert not zs.geslaagd(list(poorten.items()))
+    assert zs.geslaagd(zs.oordeel(_stap2(fouten={soort: 0}), NUL))
+
+
+def test_de_poort_van_de_app_noemt_de_eerste_pagina() -> None:
+    regels = [regel for regel, _ in zs.oordeel(_stap2(), NUL)]
+    assert "GET /files/root?limit=200 p95 ≤ 200 ms" in regels
 
 
 def test_een_poort_die_niet_te_meten_is_telt_niet_als_gehaald() -> None:
@@ -206,10 +249,54 @@ def test_zonder_office_zijn_de_poorten_van_onlyoffice_en_ds_niet_te_meten() -> N
 
 
 def test_onlyoffice_opslaan_en_verloren_woorden() -> None:
-    traag = dict(zs.oordeel(_stap2(office={"opslaan_s": 2.5, "verloren": 0}), NUL))
+    traag = dict(zs.oordeel(_stap2(office=_office(opslaan_s=2.5)), NUL))
     assert traag["OnlyOffice: opslaan ≤ 1,2 × de nulmeting (2.4 s)"] is False
-    kwijt = dict(zs.oordeel(_stap2(office={"opslaan_s": 2.0, "verloren": 3}), NUL))
+    kwijt = dict(zs.oordeel(_stap2(office=_office(verloren=3)), NUL))
     assert kwijt["OnlyOffice: 0 verloren woorden"] is False
+
+
+@pytest.mark.parametrize(
+    ("over", "reden"),
+    [
+        ({"open": 0}, "0 van 3 bewerkers open"),
+        ({"bewerkers": 0, "open": 0}, "0 van 0 bewerkers open"),
+        ({"status2": [0]}, "status 2 per document: [0]"),
+        ({"status2": [1, 2]}, "status 2 per document: [1, 2]"),
+        ({"status2": []}, "status 2 per document: []"),
+        ({"getypt": 0, "opgeslagen": 0}, "niets getypt"),
+        ({"weinig_geheugen": True}, "te weinig geheugen"),
+        ({"weinig_geheugen": None}, "te weinig geheugen"),
+        ({"na_de_start_van_media": False}, "de belastingtest liep niet"),
+        ({"na_de_start_van_media": None}, "de belastingtest liep niet"),
+    ],
+)
+def test_een_onvolledige_ronde_haalt_de_poorten_van_onlyoffice_niet(
+    over: dict[str, Any], reden: str
+) -> None:
+    """Een ronde waarin niet iedereen opende of opsloeg, telt niet: in M7 haalde een ronde met 0
+    bewerkers de poorten (opslaan ±0 s, 0 verloren woorden). In stap 2 is dat niet gehaald, in de
+    nulmeting niet te meten; de regel zegt waarom."""
+    assert zs.onvolledig(_office()) is None
+    assert reden in (zs.onvolledig(_office(**over)) or "")
+    for sleutel, reden in (("weinig_geheugen", "te weinig geheugen"),
+                           ("na_de_start_van_media", "de belastingtest liep niet")):  # fmt: skip
+        zonder = _office()
+        del zonder[sleutel]  # niet gemeten telt niet als in orde
+        assert reden in (zs.onvolledig(zonder) or "")
+    assert zs.onvolledig(None) == "geen bewerkers"
+    assert zs.onvolledig({"fout": "de bewerkers kwamen niet terug"}) == (
+        "de bewerkers kwamen niet terug")  # fmt: skip
+
+    def oo(poorten: list[tuple[str, bool | None]]) -> list[tuple[str, bool | None]]:
+        return [(regel, ok) for regel, ok in poorten if regel.startswith("OnlyOffice")]
+
+    stap2 = oo(zs.oordeel(_stap2(office=_office(opslaan_s=0.0, **over)), NUL))
+    assert [ok for _, ok in stap2] == [False, False]
+    assert all(f"stap 2: {zs.onvolledig(_office(**over))}" in regel for regel, _ in stap2)
+    nul = oo(zs.oordeel(_stap2(), {"office": _office(**over)}))
+    assert [ok for _, ok in nul] == [None, True]
+    assert "de nulmeting: " in nul[0][0]
+    assert not zs.geslaagd(zs.oordeel(_stap2(), {"office": _office(**over)}))
 
 
 def test_ds_lees_uit_docker_inspect() -> None:
@@ -459,6 +546,103 @@ def test_processen_kiest_de_worker_zelf_en_niet_een_fork(monkeypatch: pytest.Mon
     assert zs.processen(_NepServer(None)) == leeg
 
 
+def test_de_worker_op_3_cores_en_de_app_niet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regel 14 van fase 5 (compose.media-limits.yaml: de worker cpus 3.0, een core vrij voor de
+    app): aan het begin van een stap de worker (300) en al zijn kinderen op 0-2, de app (100),
+    zijn forkserver (120) en een worker buiten de app (600) niet. In M7 (I1) liep het hele
+    script onder taskset -c 0-2 en deelde de app de cores van ffmpeg."""
+    gezet: dict[int, set[int]] = {}
+    affiniteit = {0: {0, 1, 2, 3}, 100: {0, 1, 2, 3}}
+    monkeypatch.setattr(zs, "process_table", lambda: dict(TABEL))
+    monkeypatch.setattr(zs, "cmdline", lambda pid: REGELS.get(pid, ""))
+    monkeypatch.setattr(zs, "set_affinity", lambda pid, cores: gezet.__setitem__(pid, set(cores)))
+    monkeypatch.setattr(zs.os, "sched_getaffinity", lambda pid: affiniteit[pid])
+    server = _NepServer(_Proc(100))
+    assert zs.worker_op_zijn_cores(server, wacht_s=0) == {"worker": [0, 1, 2], "app": [0, 1, 2, 3]}
+    assert gezet == {pid: {0, 1, 2} for pid in (300, 250, 400, 500)}
+    # een machine met minder cores: de worker krijgt wat er is
+    gezet.clear()
+    affiniteit[0] = {0, 1}
+    assert zs.worker_op_zijn_cores(server, wacht_s=0)["worker"] == [0, 1]
+    assert set(gezet) == {300, 250, 400, 500}
+    # geen worker (ook niet na het wachten): niets gezet, en de uitkomst zegt het
+    gezet.clear()
+    zonder = {pid: rij for pid, rij in TABEL.items() if pid not in (250, 300, 400, 500)}
+    monkeypatch.setattr(zs, "process_table", lambda: dict(zonder))
+    assert zs.worker_op_zijn_cores(server, wacht_s=0) == {"worker": None, "app": [0, 1, 2, 3]}
+    assert gezet == {}
+
+
+def test_de_cores_wachten_op_de_worker_na_de_herstart(monkeypatch: pytest.MonkeyPatch) -> None:
+    """seeded() start de app opnieuw; de worker komt iets later. Zonder wachten bleef hij in die
+    stap op alle cores."""
+    rij: list[dict[str, Any]] = [{"app": [100, 5], "worker": None}] * 3
+    rij.append({"app": [100, 5], "worker": [300, 7]})
+    gezet: list[int] = []
+    monkeypatch.setattr(zs, "processen", lambda _server: rij.pop(0) if len(rij) > 1 else rij[0])
+    monkeypatch.setattr(zs, "process_table", lambda: {300: (100, 7, "S")})
+    monkeypatch.setattr(zs, "set_affinity", lambda pid, _cores: gezet.append(pid))
+    monkeypatch.setattr(zs.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(zs.os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3})
+    assert zs.worker_op_zijn_cores(_NepServer(_Proc(100)))["worker"] == [0, 1, 2]
+    assert gezet == [300]
+
+
+def test_onder_taskset_deelt_de_app_de_cores_van_de_worker(
+    zonder_server: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Draait het script zelf op alleen de cores van de worker (taskset -c 0-2 rond het script,
+    zoals M7) terwijl de machine er meer heeft, dan staat dat onder "niet in deze meting"."""
+    monkeypatch.setattr(zs.os, "cpu_count", lambda: 4)
+    monkeypatch.setattr(zs.os, "sched_getaffinity", lambda _pid: {0, 1, 2})
+    regel = "een core voor de app (regel 14): het script draait op cores 0-2 van 4, dus de app "
+    regel += "deelt de cores van de worker"
+    assert zs.deelt_de_cores_van_de_worker() == regel
+    with pytest.raises(_Gestart):
+        zs.main(["--docs", "2", "--scans", "0"])
+    assert f"zoek_samen: niet in deze meting: {regel}" in capsys.readouterr().out
+    with pytest.raises(_Gestart):
+        zs.main(["--kort", "--docs", "1"])  # --kort (CI, onder taskset): een rapport
+    assert "regel 14" not in capsys.readouterr().out
+    monkeypatch.setattr(zs.os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3})
+    assert zs.deelt_de_cores_van_de_worker() is None
+    monkeypatch.setattr(zs.os, "cpu_count", lambda: 3)
+    monkeypatch.setattr(zs.os, "sched_getaffinity", lambda _pid: {0, 1, 2})
+    assert zs.deelt_de_cores_van_de_worker() is None
+
+
+def test_een_stap_zet_de_worker_op_zijn_cores_voor_hij_de_processen_peilt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """stap(): eerst de cores (regel 14), dan de processen; de cores staan in de uitkomst en in
+    het blok kort."""
+    gebeurd: list[str] = []
+    stand = {"text": {}, "ocr": {}}
+    cores = {"worker": [0, 1, 2], "app": [0, 1, 2, 3]}
+
+    def worker_op_zijn_cores(_server: Any) -> dict[str, Any]:
+        gebeurd.append("cores")
+        return cores
+
+    def processen(_server: Any) -> dict[str, Any]:
+        gebeurd.append("processen")
+        return {"app": [100, 5], "worker": [300, 7]}
+
+    monkeypatch.setattr(zs, "analyse_stand", lambda _server: stand)
+    monkeypatch.setattr(zs, "worker_op_zijn_cores", worker_op_zijn_cores)
+    monkeypatch.setattr(zs, "processen", processen)
+    monkeypatch.setattr(zs, "zoekers", lambda *_a: [])
+    monkeypatch.setattr(zs, "belastingtest", lambda *_a: {"passed": True, "summary": ["ok"]})
+    opzet = zs.Opzet(server=_NepServer(_Proc(100)), admin=object())  # type: ignore[arg-type]
+    args = argparse.Namespace(sessies=1, duur=60, bewerkers=0)
+    uit = zs.stap(opzet, "pauze", args, ["a"], Path("/bestaat-niet"), 1)
+    assert gebeurd[:2] == ["cores", "processen"]
+    assert uit["cores"] == cores
+    assert "cores: worker 0-2, app 0-3" in zs.achtergrond_regel(uit)
+    assert zs.cores_tekst([0, 2]) == "0,2"
+    assert zs.cores_tekst(None) == "-"
+
+
 def _opzet(server: _NepServer, fotos: int) -> Any:
     return zs.Opzet(server=server, admin=object(), fotos=fotos)
 
@@ -636,3 +820,252 @@ def test_plaatsen_uit_places_sqlite_op_id(tmp_path: Path) -> None:
     con.commit()
     con.close()
     assert zf.plaatsen_uit(db) == [(-33.87, 151.21), (52.09, 5.12)]
+
+
+# --- zoek_samen --office: de bewerkers en de inhaalronde van O3 (I1, M7) ---
+
+
+def test_de_bewerkers_wachten_niet_op_de_wachtrij(monkeypatch: pytest.MonkeyPatch) -> None:
+    """In stap 2 en 3 is de rij nooit leeg. Wachten op de hele wachtrij (make_docs) of op een
+    stille machine liet de bewerkers in de eerste volle meting (M7) nooit beginnen: na 300 s gaf
+    make_docs op, en de poorten van OnlyOffice waren niet te meten. De meting van fase 4 (quiet,
+    standaard) wacht nog wel."""
+    import office_bench as ob
+    import office_editors as oe
+
+    gewacht: list[str] = []
+    monkeypatch.setattr(ob, "wait_background", lambda *_a, **_kw: gewacht.append("wachtrij"))
+    monkeypatch.setattr(ob, "wait_quiet", lambda *_a, **_kw: gewacht.append("stil"))
+    monkeypatch.setattr(oe.of, "make", lambda kind, seed, budget=None: (f"{kind} {seed}", {}))
+    gezet: list[tuple[str, Any]] = []
+    monkeypatch.setattr(
+        ob, "upload", lambda _server, _owner, _map, naam, data: gezet.append((naam, data)) or naam
+    )
+    bench = argparse.Namespace(server=object(), clock=argparse.Namespace(exchanges=[]), pid=1)
+    squad = argparse.Namespace(owner=object(), folder="map", everyone=[object()])
+    assert oe.make_docs(bench, squad, 2, "t", 7, wait=False) == ["t-1.docx", "t-2.docx"]
+    assert len(gezet) == 2 and gewacht == []
+    oe.make_docs(bench, squad, 1, "t", 7)
+    assert gewacht == ["wachtrij"]  # fase 4: standaard wel
+
+    # one_round geeft quiet door aan make_docs en slaat dan ook wait_quiet over; hij komt tot
+    # de Sampler (daarna Playwright)
+    gevraagd: list[bool] = []
+
+    class Klaar(Exception):
+        pass
+
+    def make_docs(*_a: Any, wait: bool = True) -> list[str]:
+        gevraagd.append(wait)
+        return ["n1"]
+
+    grens: list[int] = []
+
+    def sampler(*_a: Any, min_free: int) -> Any:
+        grens.append(min_free)
+        raise Klaar
+
+    monkeypatch.setattr(oe, "make_docs", make_docs)
+    monkeypatch.setattr(oe.oc, "Sampler", sampler)
+    gewacht.clear()
+    with pytest.raises(Klaar):
+        oe.one_round(bench, squad, 1, 1, 1.0, 1, "ds", "url", quiet=False)
+    assert gevraagd == [False] and gewacht == []
+    with pytest.raises(Klaar):
+        oe.one_round(bench, squad, 1, 1, 1.0, 1, "ds", "url", quiet=False, min_free=7)
+    with pytest.raises(Klaar):
+        oe.one_round(bench, squad, 1, 1, 1.0, 1, "ds", "url")
+    assert gevraagd == [False, False, True] and gewacht == ["stil"]  # fase 4: standaard wel
+    assert grens == [oe.LOW_FREE, 7, oe.LOW_FREE]
+
+    # en zoek_samen vraagt quiet=False en zijn eigen geheugenpoort
+    rondes: list[dict[str, Any]] = []
+
+    def one_round(*a: Any, **kw: Any) -> dict[str, Any]:
+        rondes.append(kw)
+        return _ronde()
+
+    monkeypatch.setattr(oe, "one_round", one_round)
+    opzet = zs.Opzet(server=object(), admin=object(), office=object(), squad=object())  # type: ignore[arg-type]
+    uit = zs.bewerkers(opzet, 3, 1.0, 1)
+    assert rondes == [{"quiet": False, "min_free": int(1.5 * GIB)}]
+    assert uit["verloren"] == 0 and uit["opslaan_s"] == 1.5
+    assert zs.onvolledig({**uit, "na_de_start_van_media": True}) is None
+
+
+def _ronde(**over: Any) -> dict[str, Any]:
+    """Wat office_editors.one_round teruggeeft (de velden die bewerkers() leest): 3 bewerkers
+    op 1 document, volledig."""
+    return {"per_doc_results": [{"callback_s": [1.0], "status2": 1}], "editors": 3, "opened": 3,
+            "save_s": 1.5, "typed": 10, "saved": 10, "lost_saving": 0, "low_memory": False,
+            "open_errors": [], **over}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("over", "reden"),
+    [
+        ({"opened": 2, "open_errors": ["time-out"]}, "2 van 3 bewerkers open"),
+        ({"per_doc_results": [{"callback_s": [], "status2": 0}]}, "status 2 per document: [0]"),
+        ({"per_doc_results": [{"callback_s": [1.0, 2.0], "status2": 2}]}, "[2]"),
+        ({"per_doc_results": []}, "status 2 per document: []"),
+        ({"typed": 0, "saved": 0}, "niets getypt"),
+        ({"low_memory": True}, "te weinig geheugen"),
+    ],
+)
+def test_een_onvolledige_ronde_van_one_round_komt_door(
+    monkeypatch: pytest.MonkeyPatch, over: dict[str, Any], reden: str
+) -> None:
+    """Van one_round via bewerkers() tot onvolledig(): elk teken van een onvolledige ronde komt
+    mee (anders zag M7 een ronde zonder bewerkers als gehaald)."""
+    import office_editors as oe
+
+    monkeypatch.setattr(oe, "one_round", lambda *_a, **_kw: _ronde(**over))
+    opzet = zs.Opzet(server=object(), admin=object(), office=object(), squad=object())  # type: ignore[arg-type]
+    uit = {**zs.bewerkers(opzet, 3, 1.0, 1), "na_de_start_van_media": True}
+    assert reden in (zs.onvolledig(uit) or "")
+
+
+def test_de_bewerkers_typen_pas_als_de_belastingtest_loopt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Het team komt eerst; typen pas na start (stap: de belastingtest loopt), in elke stap op
+    hetzelfde moment. In stap 1 maakt de belastingtest eerst ±2 minuten zijn bronnen; zonder dit
+    sloegen de bewerkers daar op een ander moment op dan in stap 2 (review van de herstelling
+    van M7)."""
+    import threading
+
+    import office_bench as ob
+    import office_editors as oe
+
+    gebeurd: list[str] = []
+    start = threading.Event()
+
+    def team(*_a: Any, members: int) -> Any:
+        gebeurd.append(f"team {members + 1}")
+        return object()
+
+    def one_round(*_a: Any, **_kw: Any) -> dict[str, Any]:
+        gebeurd.append("typen" if start.is_set() else "typen voor de start")
+        return {"per_doc_results": [], "editors": 0, "opened": 0, "save_s": 0.0, "typed": 0,
+                "saved": 0, "lost_saving": 0, "low_memory": True, "open_errors": ["x"]}  # fmt: skip
+
+    monkeypatch.setattr(ob, "team", team)
+    monkeypatch.setattr(oe, "one_round", one_round)
+    opzet = zs.Opzet(server=object(), admin=object(), office=object())  # type: ignore[arg-type]
+    uit: dict[str, Any] = {}
+    draad = threading.Thread(
+        target=lambda: uit.update(zs.bewerkers(opzet, 3, 1.0, 1, start=start)), daemon=True
+    )
+    draad.start()
+    try:
+        draad.join(timeout=1.0)
+        assert draad.is_alive() and gebeurd == ["team 3"]
+    finally:
+        start.set()
+        draad.join(timeout=10)
+    assert gebeurd == ["team 3", "typen"]
+    assert "0 van 0 bewerkers open" in (zs.onvolledig({**uit, "na_de_start_van_media": True}) or "")
+
+
+def test_de_app_peilt_de_eerste_pagina_zoals_de_web_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GET /files/root met limit = FIRST_PAGE van de web-app: zonder limit meet de poort de
+    lengte van de hoofdmap (5.000 documenten: p95 ±320 ms zonder enige last; I1, M7)."""
+    import re
+    import threading
+
+    ts = (Path(__file__).resolve().parents[1] / "web/src/browser/api.ts").read_text()
+    eerste = re.search(r"export const FIRST_PAGE = (\d+);", ts)
+    assert eerste and int(eerste.group(1)) == zs.EERSTE_PAGINA
+    gevraagd: list[tuple[str, dict[str, Any]]] = []
+    meter = zs.Meter()
+    klaar = threading.Event()
+
+    def get(_http: Any, path: str, **kw: Any) -> float:
+        gevraagd.append((path, kw.get("params") or {}))
+        if path.endswith("/files/root"):
+            klaar.set()
+        return 1.0
+
+    tokens: list[str] = []
+
+    def token() -> str:
+        tokens.append(f"t{len(tokens)}")
+        return tokens[-1]
+
+    monkeypatch.setattr(zs, "_get", get)
+    monkeypatch.setattr(zs, "mem_available", lambda: 4 * GIB)
+    server = argparse.Namespace(url="http://127.0.0.1:9")
+    draden = zs.zoekers(server, token, ["a"], meter)  # type: ignore[arg-type]
+    assert klaar.wait(10)
+    meter.stop.set()
+    for d in draden:
+        d.join(timeout=5)
+    root = [params for path, params in gevraagd if path == f"{zs.API}/files/root"]
+    assert root and all(params == {"limit": zs.EERSTE_PAGINA} for params in root)
+    # het token per verzoek (Server.token ververst het na 10 minuten): niet één voor de hele
+    # stap, want dat verliep in M7 halverwege stap 3
+    met_token = [path for path, _ in gevraagd if path != "/health"]
+    assert len(tokens) == len(met_token)
+
+
+def test_zaai_stap_met_office_zoals_een_07_met_onlyoffice(monkeypatch: pytest.MonkeyPatch) -> None:
+    """zoek_samen --office zaait de documenten met hun PDF al klaar (in elke stap), zonder
+    --office zoals voorheen."""
+    gezaaid: list[bool] = []
+    monkeypatch.setattr(zb, "zaai", lambda *_a, office_klaar=False: gezaaid.append(office_klaar))
+    admin = argparse.Namespace(id="eigenaar", root_id="root")
+    opzet = zs.Opzet(server=object(), admin=admin)  # type: ignore[arg-type]
+    for office in (True, False):
+        args = argparse.Namespace(office=office, fotos=0, scans=0)
+        zs.zaai_stap(Path("/x"), admin, [], args, opzet, last=False)
+        zs.zaai_stap(Path("/x"), admin, [], args, opzet, last=True)
+    assert gezaaid == [True, True, False, False]
+
+
+def test_zaai_office_klaar_geeft_de_inhaalronde_van_o3_niets_te_doen(
+    leeg: tuple[Path, str, str],
+) -> None:
+    """Zoals op een 0.7.x met OnlyOffice: de documenten die DS omzet, hebben hun PDF al. Zonder
+    office_klaar zette DS in elke stap van zoek_samen (ook de nulmeting) de ±2.700 docx, xlsx,
+    pptx en rtf om (I1, M7), werk dat niet bij de upgrade naar 0.8.0 hoort."""
+    from sqlalchemy import func, select
+
+    from app.extract import LEGACY_MIMES
+    from app.models import Blob
+    from app.office import convert
+    from app.office.oo import CONVERT_FORMATS
+    from seed import connect
+
+    data, eigenaar, root = leeg
+    office = argparse.Namespace(convert_formats=CONVERT_FORMATS)
+
+    def kandidaten() -> int:
+        """Wat de inhaalronde zou nemen (convert._candidate, zoals _backfill het vraagt)."""
+        with connect(data) as conn:
+            return conn.execute(
+                select(func.count()).select_from(Blob).where(*convert._candidate(office))
+            ).scalar_one()
+
+    def rtf(i: int) -> zb.Document:
+        return zb.Document(f"rtf-{i}.rtf", "application/rtf", b"{\\rtf1 rtf %d\\par}" % i)
+
+    docs = zb.documenten(60)
+    docs = [*docs[:30], rtf(1), *docs[30:], rtf(2)]  # rtf zet DS ook om
+    zb.zaai(data, eigenaar, root, docs[:31])
+    zonder = kandidaten()
+    assert zonder > 0  # zo liep M7
+    zb.zaai(data, eigenaar, root, docs[31:], office_klaar=True)
+    assert kandidaten() == zonder  # van de nieuwe geen enkele
+    con = sqlite3.connect(data / "platform.db")
+    try:
+        staten = Counter(dict(con.execute(
+            "SELECT coalesce(pdf_state, '-'), count(*) FROM blob GROUP BY 1")))  # fmt: skip
+    finally:
+        con.close()
+    omgezet = sum(1 for d in docs[31:] if d.mime in convert.EXT_BY_MIME)
+    assert omgezet > 0 and staten["ready"] == omgezet
+    with connect(data) as conn:
+        rijen = conn.execute(
+            select(Blob.pdf_state, Blob.pdf_version).where(Blob.mime == "application/rtf")
+        ).all()
+    assert {tuple(r) for r in rijen} == {(None, 0), ("ready", zb.PDF_VERSION_07)}  # ook rtf
+    # De stap text heeft de PDF (die er niet is) alleen voor doc, xls en ppt nodig
+    assert not {d.mime for d in docs} & LEGACY_MIMES

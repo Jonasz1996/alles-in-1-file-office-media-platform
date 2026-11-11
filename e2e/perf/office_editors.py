@@ -86,17 +86,21 @@ def wait_all_closed(bench: ob.Bench, nodes: list[str], seconds: float) -> bool:
     return False
 
 
-def make_docs(bench: ob.Bench, squad: ob.Team, docs: int, tag: str, seed: int) -> list[str]:
+def make_docs(
+    bench: ob.Bench, squad: ob.Team, docs: int, tag: str, seed: int, wait: bool = True
+) -> list[str]:
     """docs nieuwe docx-bestanden; seed telt bij de seed van de run op (office_files.run_seed),
     zodat geen run of stap de bestanden van een andere krijgt (en DS geen conversie uit zijn
-    cache haalt)."""
+    cache haalt). wait: daarna tot de hele wachtrij leeg is (ob.wait_background); zonder wait
+    meteen verder (zoek_samen: daar loopt de rest juist, en is de rij nooit leeg)."""
     nodes = []
     for d in range(docs):
         data, _made = of.make("docx", 10_000 * of.run_seed() + seed + d, budget=BUDGET)
         nodes.append(
             ob.upload(bench.server, squad.owner, squad.folder, f"{tag}-{d + 1}.docx", data)
         )
-    ob.wait_background(bench.server)
+    if wait:
+        ob.wait_background(bench.server)
     return nodes
 
 
@@ -145,15 +149,21 @@ def one_round(
     n: int,
     ds_name: str,
     url: str,
+    quiet: bool = True,
+    min_free: int = LOW_FREE,
 ) -> dict[str, Any]:
+    """Eén ronde. quiet: eerst tot de wachtrij leeg en de machine stil is (de meting van fase
+    4); zonder quiet meteen (zoek_samen, waar de rest juist loopt). min_free: onder zoveel
+    MemAvailable stoppen openen en typen (low_memory); zoek_samen geeft zijn eigen poort mee."""
     tag = f"r{n}"
-    nodes = make_docs(bench, squad, docs, f"samen-{tag}", 100 * docs * per_doc + 10 * n)
+    nodes = make_docs(bench, squad, docs, f"samen-{tag}", 100 * docs * per_doc + 10 * n, wait=quiet)
     editors = editors_for(squad, nodes, per_doc, tag)
     clock = bench.clock
     assert clock is not None
     seen = len(clock.exchanges)
-    ob.wait_quiet()
-    sampler = oc.Sampler(bench.pid, min_free=LOW_FREE).start()
+    if quiet:
+        ob.wait_quiet()
+    sampler = oc.Sampler(bench.pid, min_free=min_free).start()
     watch = ob.DsWatch(ds_name, url, interval=1.0, health_every=2.0).start()
     try:
         t, browser = asyncio.run(run_crowd(bench, editors, seconds, sampler))

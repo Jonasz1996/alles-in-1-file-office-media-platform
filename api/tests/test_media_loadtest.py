@@ -17,6 +17,8 @@ import asyncio
 import gc
 import os
 import uuid
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -31,6 +33,7 @@ from app.media import analysis, loadtest, runtime, sessions, streams
 from app.media.state import MediaPolicy, MediaState
 from app.media.wire import Code, Op
 from app.models import MediaProbe, Node
+from app.routers import files as files_router
 from tests.media import fake_worker as FW
 from tests.media.media_contract import failed
 from tests.test_files import put, root
@@ -662,6 +665,42 @@ def test_p95_en_de_grenzen():
     assert lines == ["fase b: start 1.00 s, 0 keer haperen, geslaagd",
                      "fase d: niet gedraaid (met de hand)", "API p95: 12.5 ms",
                      "uitkomst: geslaagd"]  # fmt: skip
+
+
+async def test_de_api_vraagt_de_eerste_pagina_zoals_de_web_app():
+    """Watch.sample vraagt van de hoofdmap de eerste pagina (FIRST_PAGE), zoals de web-app een
+    map opent, en nooit de hele lijst: met 5.000 bestanden in de hoofdmap kostte die de app elke
+    seconde ±220-320 ms, ten koste van de spelers en van elke vraag ernaast (I1, M7)."""
+    seen: list[str] = []
+    watch: loadtest.Watch
+
+    class Http:
+        async def get(self, path: str, **_kw: Any) -> httpx.Response:
+            seen.append(path)
+            if len(seen) == len(loadtest.API_PATHS):
+                watch.stop.set()
+            return httpx.Response(200)
+
+    app_ = SimpleNamespace(state=SimpleNamespace())
+    watch = loadtest.Watch(app_, None, Http(), "token", FAST)
+    await asyncio.wait_for(watch.sample(), 5)
+    assert seen == [f"/api/v1/files/root?limit={loadtest.FIRST_PAGE}", "/api/v1/media/home"]
+    assert len(watch.samples.api_ms) == 2
+
+
+def test_de_eerste_pagina_is_die_van_de_web_app():
+    web = (Path(__file__).resolve().parents[2] / "web" / "src" / "browser" / "api.ts").read_text()
+    assert f"export const FIRST_PAGE = {loadtest.FIRST_PAGE};" in web
+    assert loadtest.FIRST_PAGE <= files_router.MAX_PAGE
+
+
+async def test_de_api_paden_antwoorden_200(lt, client, admin):
+    """Watch.sample telt de tijd van elk antwoord, ook van een 422: de paden moeten de echte
+    routes zijn, met een limit die de app aanneemt (I1, M7)."""
+    headers, _ = admin
+    for path in loadtest.API_PATHS:
+        r = await client.get(path, headers=headers)
+        assert r.status_code == 200, (path, r.text[:200])
 
 
 def test_het_profiel_vraagt_transcode():
