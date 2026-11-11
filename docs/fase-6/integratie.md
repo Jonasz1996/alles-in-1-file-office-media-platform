@@ -248,17 +248,17 @@ zegt: gehaald, niet gehaald of niet te meten, nooit alleen de exitcode.
 
 | Meting | Poort | Uitkomst |
 |---|---|---|
-| M1, zoeken (§4.4) | p95 ≤ 200 ms per toegangsprofiel, de mediaan over 3 rondes | ⟦C2: de hoogste p95 van zoeken over de toegangsprofielen, uit M1⟧ ms, ⟦C2: gehaald of niet, uit M1⟧ |
-| M1, 4 tegelijk | p95 ≤ 300 ms | ⟦C2: de p95 met 4 clients tegelijk, uit M1⟧ ms, ⟦C2: gehaald of niet, uit M1⟧ |
-| M1, herinneringen | p95 ≤ 50 ms | ⟦C2: de p95 van de herinneringen, uit M1⟧ ms, ⟦C2: gehaald of niet, uit M1⟧ |
-| M1, de kaart | p95 ≤ 150 ms bij 55.000 foto's met een plek | ⟦C2: de p95 van de kaart, uit M1⟧ ms, ⟦C2: gehaald of niet, uit M1⟧ |
-| M1, duplicaten | p95 ≤ 300 ms bij 55.000 foto's | ⟦C2: de p95 van de duplicaten, uit M1⟧ ms, ⟦C2: gehaald of niet, uit M1⟧ |
-| M2, de tekst met de worker | ≥ 1.000 documenten per minuut op één core | ⟦C2: documenten per minuut met de worker, uit M2⟧, ⟦C2: gehaald of niet, uit M2⟧ |
-| M2, de terugval zonder media | rapport | ⟦C2: documenten per minuut met de terugval, uit M2⟧ |
-| M3, photometa | ≥ 5.000 foto's per minuut | ⟦C2: foto's per minuut, uit M3⟧, ⟦C2: gehaald of niet, uit M3⟧ |
-| M4, land en plaats | ≥ 20.000 punten per minuut | ⟦C2: punten per minuut, uit M4⟧, ⟦C2: gehaald of niet, uit M4⟧ |
-| M5, OCR | ≥ 8 pagina's per minuut over de mix, op één core | ⟦C2: pagina's per minuut over de mix, uit M5⟧, ⟦C2: gehaald of niet, en per hoek en dichtheid, uit M5⟧ |
-| M6, uploaden naast de index | een upload wacht ≤ 1 s, ook als de index een tekst van 1 MB met 10 kopieën schrijft | `test_backfill.py`, `test_search_rebuild.py` en `test_search_purge_batches.py`, elk 3 keer op de host en 3 keer in python:3.12-slim: ⟦C2: de langste wachttijd van een upload per run, op de host en in python:3.12-slim, uit M6⟧; 1 keer op de host met +200 ms per `fsync` (een shim met `LD_PRELOAD`): ⟦C2: de langste wachttijd van een upload met +200 ms per fsync, uit M6⟧ |
+| M1, zoeken (§4.4) | p95 ≤ 200 ms per toegangsprofiel, de mediaan over 3 rondes | 126,7 ms (het profiel "alles", het ergste; de andere 72,3–85,8), gehaald |
+| M1, 4 tegelijk | p95 ≤ 300 ms | 209,4 ms (`/health` ernaast 8,5 ms), gehaald |
+| M1, herinneringen | p95 ≤ 50 ms | 27,0 ms, gehaald |
+| M1, de kaart | p95 ≤ 150 ms bij 55.000 foto's met een plek | 51,9 ms bij 55.011 foto's, gehaald; met een filter op datum, plaats of land 110,4 ms (≤ 150), op soort, map of camera 430,0 ms (≤ 500), beide gehaald |
+| M1, duplicaten | p95 ≤ 300 ms bij 55.000 foto's | 192,7 ms, gehaald |
+| M2, de tekst met de worker | ≥ 1.000 documenten per minuut op één core | 1.977 per minuut (mediaan van 3), gehaald |
+| M2, de terugval zonder media | rapport | 4.817 per minuut (mediaan van 3) |
+| M3, photometa | ≥ 5.000 foto's per minuut | 13.713 per minuut (mediaan van 3), gehaald |
+| M4, land en plaats | ≥ 20.000 punten per minuut | 44.495 per minuut (mediaan van 3), gehaald |
+| M5, OCR | ≥ 8 pagina's per minuut over de mix, op één core | 23,2 per minuut over de mix (mediaan van 3: 26,2, 19,6, 23,2), gehaald; brieven 38,7–47,7 per minuut bij −5°, 0°, 3° en 7°, 17,5 bij 90°; volle pagina's 17,9–18,0 bij 0° en 3°, 6,9 bij 90° (run 3) |
+| M6, uploaden naast de index | een upload wacht ≤ 1 s, ook als de index een tekst van 1 MB met 10 kopieën schrijft | `test_backfill.py`, `test_search_rebuild.py` en `test_search_purge_batches.py`, elk 3 keer op de host en 3 keer in python:3.12-slim: host 241, 263 en 204 ms, `python:3.12-slim` 137, 337 en 277 ms, gehaald; 1 keer op de host met +200 ms per `fsync` (een shim met `LD_PRELOAD`): 739 ms, gehaald |
 | M8, rapporten | geen poort, behalve de grootte van het image (tesseract hooguit 75 MB erbij) | ⟦C2: zoek_ui, bench --los, het bijwerken van de index in CI, de duur van e2e-media-perf en het blok kort, uit M8⟧; het image ⟦C2: met hoeveel MB, uit M8⟧ |
 
 **M7, zoeken naast media en OnlyOffice** (`e2e/perf/zoek_samen.py`, §4.5 deel B), per regel van
