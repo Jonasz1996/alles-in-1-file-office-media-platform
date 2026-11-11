@@ -146,8 +146,11 @@ async def _render(settings: Settings, request: dict[str, Any]) -> dict[str, Any]
     work = Path(await anyio.to_thread.run_sync(lambda: tempfile.mkdtemp(dir=tmp)))
     try:
         # nice 19 ná request: geen aanroeper laat hem weg of zet hem lager (P7, zoals render_text).
-        # photometa wijkt zo voor live transcoderen (nice 5) en de API. Zonder nice zet
-        # render.main niets, en draaide het kind op 0 (M7d)
+        # Zonder nice zet render.main niets, en draaide het kind op 0 (M7d). Alleen dit
+        # renderproces: een video leest de worker (meta, kort werk: nice 0), de kandidaten van
+        # pHash zoekt de app zelf. En nice weegt alleen binnen één cpu-cgroup en sessie (zie
+        # previews.NICE): voor ffmpeg in de container van media wijkt het niet, in de sandbox
+        # (autogroup) voor niets
         request = {
             "mode": "meta",
             "max_pixels": settings.preview_max_pixels,

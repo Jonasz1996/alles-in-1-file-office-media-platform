@@ -87,7 +87,11 @@ SIZES = (THUMB, LARGE, DISPLAY)
 # en JPEG 2000 (alles wat eerder geen preview kreeg, en TIFF: daar zit RAW in)
 RENDER_VERSION = 2
 # Zoveel stappen lager draait het renderproces van achtergrondwerk (os.nice): de API en het
-# afspelen gaan voor (die van media draaien op 15, live transcoderen op 5: worker/args.py)
+# afspelen gaan voor (die van media draaien op 15, live transcoderen op 5: worker/args.py).
+# Maar nice weegt alleen binnen één cpu-cgroup: de worker in zijn eigen container (de standaard,
+# compose.media.yaml) is een andere, daar helpt het niet; binnen de app en met MEDIA_SANDBOX=uit
+# wel. In de root-cgroup met autogroup (de sandbox) weegt het alleen binnen één sessie, en dit
+# kind en ffmpeg hebben elk een eigen sessie (killpg): daar helpt het niets (I1, M7)
 NICE = 10
 OUTDATED = "preview.outdated"
 OUTDATED_KEY = "preview:outdated"

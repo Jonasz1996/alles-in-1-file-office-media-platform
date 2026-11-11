@@ -227,11 +227,11 @@ NICE_IN_HET_KIND = (
 
 @pytest.mark.parametrize("proces", ["eigen proces", "forkserver"])
 async def test_het_renderproces_draait_op_nice_19(settings, monkeypatch, tmp_path, proces):
-    """P7: photometa is achtergrondwerk en wijkt voor live transcoderen (nice 5, worker/args.py).
-    Zonder "nice" in het verzoek zette render.main niets, en draaide het kind op 0, boven ffmpeg
-    (M7d). Gemeten in het kind zelf: in een eigen proces en als kind van de forkserver. Ook een
-    verzoek met een eigen "nice" krijgt 19 (de tweede controle van paren gaat door dezelfde
-    _render)."""
+    """P7: het renderproces van photometa is achtergrondwerk, op nice 19. Zonder "nice" in het
+    verzoek zette render.main niets, en draaide het kind op 0 (M7d). Gemeten in het kind zelf: in
+    een eigen proces en als kind van de forkserver. Ook een verzoek met een eigen "nice" krijgt 19
+    (de tweede controle van paren gaat door dezelfde _render). Dit meet de nice, niet het deel van
+    de CPU: dat hangt van de cgroup en de sessie af (previews.NICE)."""
     anchor = "from app.render import main"
     assert anchor in previews.CHILD
     child = previews.CHILD.replace(anchor, f"exec({NICE_IN_HET_KIND!r}); {anchor}")
@@ -240,6 +240,8 @@ async def test_het_renderproces_draait_op_nice_19(settings, monkeypatch, tmp_pat
     foto.write_bytes(camera_jpeg())
     items = [{"sha": "a" * 64, "source": str(foto), "mime": "image/jpeg"}]
     own = os.getpriority(os.PRIO_PROCESS, 0)
+    # Draait pytest zelf al op 19, dan erft het kind 19 ook zonder "nice": dan bewijst dit niets
+    assert own < previews.TEXT_NICE, f"pytest draait op nice {own}"
     if proces == "forkserver":
         assert await previews.start_forkserver() is not None
     try:
