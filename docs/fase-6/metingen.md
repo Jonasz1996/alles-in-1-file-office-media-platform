@@ -7,16 +7,55 @@ om te slagen; de oorzaak staat bij elke meting en onder [Bevindingen](#bevinding
 
 ## Kort
 
-⟦C2: de tabel met elke poort van §4.4 en §4.5, de waarde en gehaald of niet, na M7 en M8⟧
+Elke poort van §4.4 en §4.5 die bij 0.8.0 hoort, is gehaald: 27 van de 27, en ook de grens voor de
+grootte van het image (X1). De vier poorten van gezichten en beeld (X2 en X3) horen bij 0.8.1 en
+zijn niet gemeten. M7 haalde het pas in de vijfde ronde (M7e); de rondes ervoor staan bij
+[M7](#m7-zoeken-naast-media-en-onlyoffice-45-deel-b). Bij een poort over meer runs staat de
+slechtste waarde.
+
+| Poort | Grens | Gemeten | Meting | Uitkomst |
+|---|---|---|---|---|
+| §4.4 zoeken p95, elk toegangsprofiel | ≤ 200 ms | 72,3–126,7 ms (het ergste: "alles") | M1 | gehaald |
+| §4.4 volgende pagina's p95 | ≤ 200 ms | hoogstens 134,1 ms | M1 | gehaald |
+| §4.4 alleen filters p95 | ≤ 150 ms | hoogstens 76,7 ms | M1 | gehaald |
+| §4.4 suggesties p95 | ≤ 50 ms | hoogstens 30,8 ms | M1 | gehaald |
+| §4.4 `snip` p95 | ≤ 40 ms | hoogstens 11,1 ms | M1 | gehaald |
+| §4.4 4 clients tegelijk p95 | ≤ 300 ms | 209,4 ms | M1 | gehaald |
+| §4.4 `GET /health` tijdens die 4 | ≤ 50 ms | 8,5 ms | M1 | gehaald |
+| §4.4 `/photos/memories` p95 | ≤ 50 ms | 27,0 ms | M1 | gehaald |
+| §4.4 `/photos/map` p95, 55.011 foto's | ≤ 150 ms | 51,9 ms | M1 | gehaald |
+| §4.4 de kaart met een filter op datum, plaats of land | ≤ 150 ms | 110,4 ms | M1 | gehaald |
+| §4.4 de kaart met een filter op soort, map of camera | ≤ 500 ms | 430,0 ms | M1 | gehaald |
+| §4.4 `/duplicates` p95, 55.000 foto's | ≤ 300 ms | 192,7 ms | M1 | gehaald |
+| §4.5 tekst met de worker | ≥ 1.000 per minuut per core | 1.977 | M2 | gehaald |
+| §4.5 photometa | ≥ 5.000 per minuut per core | 13.713 | M3 | gehaald |
+| §4.5 land en plaats | ≥ 20.000 per minuut per core | 44.495 | M4 | gehaald |
+| §4.5 OCR | ≥ 8 pagina's per minuut | 23,2 over de mix | M5 | gehaald |
+| §4.5 een upload naast de index | ≤ 1 s | 337 ms | M6 | gehaald |
+| §4.5 media naast zoeken en OnlyOffice | elke start ≤ 5 s, 0 keer haperen | elke start ≤ 2,6 s, 0 keer haperen | M7e | gehaald |
+| §4.5 zoeken p95 | ≤ 200 ms | 54,1 ms | M7e | gehaald |
+| §4.5 `GET /files/root?limit=200` p95 | ≤ 200 ms | 87,8 ms | M7e | gehaald |
+| §4.5 `GET /health` p95 | ≤ 50 ms | 6,1 ms | M7e | gehaald |
+| §4.5 `MemAvailable` | ≥ 1,5 GiB | 12.434 MB | M7e | gehaald |
+| §4.5 geen container `OOMKilled` | DS met een grens van 2 GiB | nee | M7e | gehaald |
+| §4.5 de app en de worker leven nog | dezelfde processen | ja | M7e | gehaald |
+| §4.5 het achtergrondwerk hervat | ≤ 90 s na de laatste transcode | 22,8 s | M7e | gehaald |
+| §4.5 OnlyOffice opslaan | ≤ 1,2 × de nulmeting | 0,99 × | M7e | gehaald |
+| §4.5 OnlyOffice verloren woorden | 0 | 0 | M7e | gehaald |
+| X1 tesseract in het image | ≤ 75 MB erbij | 71,6 MB | M8 | gehaald |
+
+De rapporten zonder poort (de terugval van de tekst, de p99, het zoekscherm, `bench --los`, het
+bijwerken van de index) staan bij M1, M2 en M8.
 
 ## Omstandigheden
 
 - **Machine:** de sandbox, een Firecracker-VM met 4 vCPU (Intel Xeon @ 2,10 GHz), 15,7 GiB RAM,
   geen swap, geen GPU. SQLite 3.53.1 op de host en 3.46.1 in `python:3.12-slim` (Python 3.12.16);
   ffmpeg 6.1.1 (Ubuntu); tesseract 5.3.4.
-- **De commits:** M2–M6 op `d5624b5`, M9 op `d5624b5` (die commit is M9), M7 op ⟦C2: de commit
-  van de laatste M7⟧, M8 op ⟦C2: commit van M8⟧. M1 komt uit CI (run 102 op `0e19180`), net als
-  de getallen van het image en `e2e-media-perf` in M8.
+- **De commits:** M2–M6 op `d5624b5`, M9 op `d5624b5` (die commit is M9), M7 op `98ec2bc` (M7e,
+  de laatste ronde; de rondes ervoor staan bij M7), M8 op `47d62eb` (dezelfde code als `98ec2bc`,
+  op een commentaar na). M1 komt uit CI (run 102 op `0e19180`); de getallen uit CI in M8 komen
+  uit run 105 op `47d62eb`.
 - **De cores:** elke meting liep alleen. M2, M3 en M4 op één core (`taskset -c 1` en
   `--core 1`), M5 op core 0 (`taskset -c 0`, zoals de job `ocr`), M6 op 0-2 (`taskset -c 0-2` op
   de host, `--cpuset-cpus 0-2` in `python:3.12-slim`). M7: de worker op 0-2 en de app niet
@@ -133,8 +172,10 @@ DS (`e2e/office_ds.sh`, grens 2 GiB) en 5.000 foto's en 500 scans ernaast, drie 
 machine. Elke run heeft drie stappen van 5 minuten: `pauze` (de nulmeting, het achtergrondwerk
 staat stil), `achtergrond` (de poort: de pauze gaat eraf zodra de belastingtest loopt) en
 `zonder_defer` (een rapport: 5.000 documenten erbij, en het achtergrondwerk wijkt niet voor media).
-Er waren vier rondes. De eerste drie faalden, en elke keer lag de oorzaak bij de testopzet en niet
-bij de app; de grenzen zijn in geen enkele ronde veranderd.
+Er waren vijf rondes. De eerste drie faalden door de testopzet en niet door de app; de vierde
+(M7d) faalde alleen op het haperen in fase a, waarna de app en de belastingtest iets veranderden
+(zie "Het herstel na M7d"); de vijfde (M7e) haalde elke poort, drie van de drie keer. De grenzen
+zijn in geen enkele ronde veranderd.
 
 **Ronde 1 (M7, `77292fe`).** Niet gehaald, maar niet te lezen: de bewerkers begonnen in geen
 enkele stap (ze wachtten op een stille machine), de gezaaide documenten hadden geen PDF zodat
@@ -324,8 +365,64 @@ nooit zo dicht bij het eind van een segment. Wat de meting hier telt, is een vra
 
 ## M8: rapporten
 
-⟦C2: zoek_ui, bench --los, het bijwerken van de index in CI, de grootte van het image, de duur van
-e2e-media-perf en het blok kort uit CI⟧
+Geen poort, behalve de grootte van het image. Het zoekscherm en `bench --los` liepen alleen in de
+sandbox op `47d62eb`, na `npm run build` in `web/`; de rest komt uit CI, run 105 (id 43088438680) op
+`47d62eb`, waarin alle 16 jobs groen waren.
+
+**Zoeken in de browser** (`e2e/perf/zoek_ui.py`, Chromium, latency 2 ms, 100 Mbit/s, CPU 1×; de
+boom van 10.000 bestanden met de index aan, als de eigenaar; 5 keer koud en 20 keer warm). In de
+sandbox onder `taskset -c 0-2`, in CI in de job `perf`. Mediaan / p95 / max in ms, met tussen haakjes
+de duur van het verzoek zelf (mediaan / p95):
+
+| | sandbox | CI |
+|---|---|---|
+| eerste suggestie na een toets, koud (met de chunk) | 162,9 / 173,7 / 173,7 (17,7 / 23,5) | 163,0 / 171,4 / 171,4 (13,9 / 22,2) |
+| eerste suggestie na een toets, warm | 141,9 / 144,9 / 145,1 (17,2 / 20,1) | 136,1 / 138,5 / 141,0 (13,3 / 15,2) |
+| `/zoeken?q=` laden tot de eerste treffer getekend is | 529,2 / 584,5 / 584,5 (56,2 / 61,9) | 489,9 / 511,6 / 511,6 (51,1 / 63,6) |
+| Enter in Zoekwoorden tot de eerste treffer getekend is | 61,8 / 77,1 / 95,5 (33,3 / 50,1) | 58,5 / 65,9 / 90,3 (32,8 / 35,7) |
+
+Ongeveer wat Z4 mat in zijn slotmeting ([z4.md](z4.md), `ef8d7a9`: mediaan 155,2, 137,0, 471,5 en
+51,0 ms). Warm is de eerste suggestie vooral de wachttijd van 120 ms na de laatste toets.
+
+**`bench --los`** (`app.cli bench --los --n 100000 --seed 6` onder `taskset -c 0-2`, met een lege
+tijdelijke datamap; SQLite 3.53.1 en Python 3.12.13 op de host): de boom van 100.000 (108.452 nodes,
+233 M tekens) in 22,8 s en de bench in 37,9 s. Elk profiel kreeg 171 vragen:
+
+| Profiel | p50 | p95 | max | ronde C | p95 zonder de tijdsgrens |
+|---|---|---|---|---|---|
+| eigenaar (1 hoofdmap, 6.623 zichtbaar) | 5,7 ms | 164,4 ms | 172,6 ms | 12 keer | 347,8 ms |
+| alles (30 hoofdmappen, 97.022 zichtbaar) | 9,5 ms | 161,7 ms | 172,7 ms | 12 keer | 436,0 ms |
+
+Onder de 200 ms van de LXC. In CI (`zoek-perf`, SQLite 3.46.1) gaf dezelfde bench 161,0 en
+160,6 ms. De p95 komt van de 12 vragen met een voorvoegsel (zoals `ver*`): die raken de tijdsgrens en krijgen
+hun antwoord uit ronde C (zie [Bevindingen](#bevindingen)).
+
+**Het bijwerken van de index** (§4.5, een rapport; de stap S7 van de spike in `zoek-perf`, SQLite
+3.46.1): 100.000 bestanden en 5.900 mappen met 230 M tekens via de triggers in 37,4 s, waarvan de
+tekst 7,7 s en de nodes 25,3 s; 600 MB. Het ontwerp schatte ±26 s voor 20.000 teksten. De herbouw
+van 100.000 in 51 stukken: het langste stuk 141 ms, de 202 uploads ernaast mediaan 27 ms en max
+333 ms.
+
+**Het image** (job `images`, platform): tesseract maakt het image 71,6 MB groter, in de bestanden
+van 18 pakketten (dpkg Installed-Size 69,0 MiB; de spike mat 69 MiB, S5). De poort is ≤ 75 MB
+erbij: gehaald.
+
+**De duur in CI:** `e2e-media-perf` 7 min 37 s, `zoek-perf` 12 min 16 s.
+
+**Het blok kort van `e2e-media-perf`** (`zoek_samen --kort`: 1 sessie media, alleen fase b, 60 s per
+fase, 300 documenten per stap en 300 foto's, zonder OnlyOffice; 211 s in totaal). De 20 scans voor
+X1 liepen niet mee: de runner heeft geen tesseract met `nld`, `eng` en `osd`.
+
+| Stap | zoeken p95 | `files/root?limit=200` p95 | `/health` p95 | `MemAvailable` min | media (fase b) | uitkomst |
+|---|---|---|---|---|---|---|
+| `pauze` | 15,9 ms | 19,7 ms | 2,1 ms | 14.419 MB | start 0,53 s, 0 keer haperen | geslaagd |
+| `achtergrond` | 16,9 ms | 25,5 ms | 2,5 ms | 14.560 MB | start 0,32 s, 0 keer haperen; hervat 0,5 s | geslaagd |
+| `zonder_defer` | 28,7 ms | 31,7 ms | 2,8 ms | 14.528 MB | start 0,68 s, 0 keer haperen | geslaagd |
+
+Van de poorten van stap `achtergrond` zijn er zeven gehaald en drie niet te meten (`OOMKilled`,
+opslaan en verloren woorden: er is geen OnlyOffice); het blok eindigt met "uitkomst: rapport".
+`zoek_backfill` kort in dezelfde job: de tekst met de worker 1.934,6 per minuut per core (poort
+≥ 1.000: gehaald), de terugval 5.133,2 (rapport).
 
 ## M9: plaatsen na de update (I1, A4)
 
@@ -344,7 +441,46 @@ niet gemeten.
 
 ## Bevindingen
 
-⟦C2: de bevindingen uit M1–M9, na M7 en M8⟧
+Een grens die niet gehaald werd, is een bevinding: de oorzaak gezocht, en gerepareerd met een test
+als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
+
+1. **De testopzet liet M7 drie rondes falen** (gerepareerd in `0a2705d`, `ad71b8c`, `7992c1c` en
+   `329e707`). Ronde 1 en 2 door het script zelf (zie [M7](#m7-zoeken-naast-media-en-onlyoffice-45-deel-b)).
+   In ronde 3 vroeg de belastingtest van fase 5 elke seconde de hele hoofdmap op: met 5.000
+   documenten kostte dat de app ±220–320 ms per seconde op zijn event loop, en die tijd ging af van
+   zoeken, `files_root` en de spelers. De probe vraagt nu de eerste pagina (`?limit=200`), zoals de
+   web-app. Wat blijft: een lijst zonder pagina's (de openbare map achter een link, en
+   `GET /files/root` of `/files/{id}/children` zonder `limit`) kost bij een grote map nog evenveel;
+   dat staat bij de open punten in [integratie.md](integratie.md).
+2. **Een speler hapert na een sprong als de stroom opnieuw start** (fase 5 Bevinding 3; deels
+   aangepakt). M7d haperde 3 / 2 / 0 keer in fase a van `achtergrond`, M7e 0 keer. Tussen die twee
+   kwamen de herstartvoorrang (B71, een voorstel) en photometa op nice 19. Of het verschil daardoor
+   komt, is niet bewezen (zie M7e).
+3. **Een sprong die in het laatste stukje van een segment landt, hapert als het volgende segment van
+   een herstart komt** (niet te repareren in de server). De speler heeft dan bijna geen voorraad, en
+   2 s media binnen ±0,2 s haalt geen herstart. ±1 op 4 sprongen landt zo; in een ronde van drie
+   runs is de kans op minstens één keer haperen in `achtergrond` daarom ±40–60 %. Een browser telt
+   dit niet (`mse.ts`). Wat de poort hier telt, is een vraag aan Jonas.
+4. **Photometa wijkt niet voor live transcoderen** (open). Nice 19 weegt alleen binnen één sessie of
+   cpu-cgroup, en het renderkind, ffmpeg en de worker in zijn eigen container zitten elk apart
+   (gemeten: 50 / 50 in twee sessies). Of photometa tijdens een herstart moet wachten (Defer), is
+   open.
+5. **Een GPS-waarde met 60,0 seconden geeft geen plek** (de testfoto's gerepareerd in `d5624b5`; de
+   app is een open punt voor I2). M9 vond het: `_dms` in de testfoto's gaf (54, 47, 60.0), en
+   `render_meta` leest seconden alleen onder 60. Bij een camera is het niet gezien.
+6. **Een pagina op zijn kant kost OCR ±3× zo veel** (M5, een rapport). Elke pagina van 90° gaat door
+   OSD; over de mix haalt OCR de poort ruim (23,2 tegen 8 pagina's per minuut). De trage brieven
+   van 0° in run 2 zijn niet verklaard.
+7. **Een trage schijf** (M6). Met 200 ms extra per `fsync` wachtte een upload hooguit 739 ms, onder
+   de poort van 1 s. Hoe snel de ZFS-schijf van de LXC is, is niet gemeten.
+8. **De p95 van `bench --los` is de tijdsgrens** (M8, een rapport). De 12 vragen met een
+   voorvoegsel (zoals `ver*`) raken de grens van ronde A en B en krijgen alleen namen uit ronde C;
+   zonder de grens was de p95 van de profielen 347,8 en 436,0 ms.
+9. **Het krapst bij §4.4** (M1): de kaart met een filter op soort, map of camera (de join op `node`),
+   430,0 tegen 500 ms, en 4 clients tegelijk, 209,4 tegen 300 ms. Het profiel "alles" (30
+   hoofdmappen) had 9 keer ronde B nodig.
+10. **CI ziet fase a niet.** `zoek_samen --kort` in `e2e-media-perf` draait alleen fase b, zonder
+    sprong en zonder OnlyOffice. Het haperen van punt 2 en 3 ziet alleen een volle M7.
 
 ## Wat alleen de LXC of CI kan laten zien
 
@@ -380,6 +516,8 @@ E2E_REAL_DS=http://127.0.0.1:18150 E2E_REAL_DS_SECRET_FILE=<map>/jwt.secret \
   --duur 300 --docs 5000 --json /tmp/zoek-samen.json
 # M9: de update met de echte bronnen (marker geo)
 uv run pytest -q -m geo tests/geo/test_places_later_echt.py
+# M8: het zoekscherm (na npm run build in web/) en bench --los met een lege datamap
+taskset -c 0-2 uv run --with playwright python ../e2e/perf/zoek_ui.py --json /tmp/zoek-ui.json
+PLATFORM_DATA_DIR=<lege map> taskset -c 0-2 uv run python -m app.cli bench --los --n 100000 --seed 6
+# de rest van M8 staat in de blokken kort van de jobs zoek-perf, perf, images en e2e-media-perf in CI
 ```
-
-⟦C2: de opdrachten van M8⟧
