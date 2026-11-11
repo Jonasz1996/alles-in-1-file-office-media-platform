@@ -1,8 +1,9 @@
 """De producent en de stroom met de nep-worker (M4, §2 M4 test_media_producer.py): de tegendruk,
 de herstart bij een sprong, één nieuwe poging na een crash, "vast", te lang wachten, idle, een
-andere stsd, de startvoorrang en een sessie die dichtgaat terwijl open nog loopt. Uit de review
-van golf 2: tien keer zoeken in 1 s (K1), een segment uit het venster terwijl de run loopt (C1),
-een run die een segment te laat begint (C2) en de speling van 1 ms bij een grens (C7).
+andere stsd, de start- en de herstartvoorrang (B71) en een sessie die dichtgaat terwijl open nog
+loopt. Uit de review van golf 2: tien keer zoeken in 1 s (K1), een segment uit het venster
+terwijl de run loopt (C1), een run die een segment te laat begint (C2) en de speling van 1 ms
+bij een grens (C7).
 
 De echte app (play van M3, de routes van M4) met de nep-worker eronder; de bron is een
 HEVC-film (de probe van stream_src.mkv) die dus altijd een transcode is. De nep schrijft
@@ -440,6 +441,235 @@ async def test_startvoorrang(case, monkeypatch):
     assert first.limit_ms() == streams.LEAD_MS
     await until(lambda: len(first.segments) == first.layout.count, 10)
     case.fake.clear_faults()
+
+
+# --- de herstartvoorrang (B71, voorstel; fase-5 Bevinding 3) ----------------------------------
+
+
+def _gate(case: Case) -> asyncio.Event:
+    """Een run van de nep die niet op 0 begint (een herstart) levert pas iets als de test het
+    event zet. Zo heeft de nieuwe run zo lang 0 ms gemaakt en loopt de voorrang, zonder klok."""
+    gate = asyncio.Event()
+
+    async def gated(job: FW.Job) -> dict:
+        assert isinstance(job.args, StreamArgs)
+        if job.args.start_s > 0:
+            await gate.wait()
+        return await case.fake._stream(job)
+
+    case.fake.on(Op.STREAM, gated)
+    return gate
+
+
+def _lead(st: streams.Stream) -> int:
+    """Hoe ver de producent voor de speler ligt (mediatijd, zoals Producer.flow)."""
+    assert st.producer is not None
+    return st.producer.produced_ms - st.playhead_ms()
+
+
+def _running(st: streams.Stream) -> bool:
+    """De herstart loopt: herstartvoorrang, en de worker gaf de run al (`started`)."""
+    p = st.producer
+    return st.restarting() and p is not None and p.job is not None
+
+
+def _held(st: streams.Stream) -> bool:
+    """Gepauzeerd om de voorsprong (meer dan PRIORITY_MS), niet even om de rij van de schrijver."""
+    p = st.producer
+    return p is not None and p.paused and _lead(st) > streams.PRIORITY_MS
+
+
+async def _two(case: Case) -> tuple[str, str, streams.Stream, streams.Stream]:
+    """B speelt al en A start: allebei hun eerste segment (de startvoorrang is dan voorbij)."""
+    b = await case.play(0)
+    await case.seg(b, 0)
+    a = await case.play(1)
+    await case.seg(a, 0)
+    sa, sb = case.stream(a), case.stream(b)
+    assert not sa.has_priority() and not sb.has_priority()
+    assert sb.limit_ms() == sa.limit_ms() == streams.LEAD_MS
+    return a, b, sa, sb
+
+
+async def test_herstartvoorrang_na_zoeken(case, monkeypatch):
+    """A zoekt buiten zijn cache: een herstart. Zolang de nieuwe run van A nog geen PRIORITY_MS
+    maakte, leest B hooguit ongeveer PRIORITY_MS vóór zijn speler; daarna weer tot LEAD_MS. A's
+    eigen voorrang remt A niet."""
+    monkeypatch.setattr(streams, "PRIORITY_MS", 2000)
+    monkeypatch.setattr(producers, "TICK_S", 0.05)
+    gate = _gate(case)
+    case.fake.speed = 4.0
+    a, b, sa, sb = await _two(case)
+    jump = asyncio.ensure_future(case.seg(a, 8))
+    await until(lambda: _running(sa))
+    assert case.runs() == [0.0, 0.0, pytest.approx(sa.layout.start_s(8))]
+    assert sb.limit_ms() == 2000 and sa.limit_ms() == streams.LEAD_MS
+    await until(lambda: _held(sb))
+    # B's speler schuift op tot zijn producent: B leest weer, tot hooguit PRIORITY_MS plus het
+    # fragment dat de grens passeerde (2 s), en blijft dan staan
+    await case.seg(b, max(sb.segments))
+    await until(lambda: _held(sb))
+    assert _lead(sb) <= 2000 + 2000 + 100, _lead(sb)
+    held = sb.producer.produced_ms
+    await asyncio.sleep(0.3)  # zes tikken van de waakhond
+    assert sa.restarting() and sb.producer.paused and sb.producer.produced_ms == held
+    # A's run maakt PRIORITY_MS: de voorrang is weg en B leest door (tot LEAD_MS)
+    gate.set()
+    r = await jump
+    assert r.headers["x-init"] == "1"
+    await until(lambda: sa.priority_run is None)  # store of B's waakhond, niet de test
+    assert sb.limit_ms() == streams.LEAD_MS
+    await until(lambda: len(sb.segments) == sb.layout.count, 10)
+    assert len(case.runs()) == 3
+
+
+async def test_herstartvoorrang_hooguit_priority_s(case, monkeypatch):
+    """De nieuwe run van A hangt (geen enkel segment): na PRIORITY_S is de voorrang toch weg en
+    leest B door. Lui, zoals de startvoorrang: B's waakhond ziet het."""
+    monkeypatch.setattr(streams, "PRIORITY_MS", 2000)
+    monkeypatch.setattr(streams, "PRIORITY_S", 1.0)
+    monkeypatch.setattr(producers, "TICK_S", 0.05)
+    case.fake.speed = 4.0
+    a, b, sa, sb = await _two(case)
+    case.fake.fault("hang", op=Op.STREAM)  # de herstart van A
+    jump = asyncio.ensure_future(case.get(a, "8.m4s"))
+    try:
+        await until(lambda: _running(sa))
+        run = sa.producer
+        assert sb.limit_ms() == 2000
+        await until(lambda: _held(sb))
+        held = sb.producer.produced_ms
+        await until(lambda: sa.priority_run is None, 3)  # B's waakhond, niet de test
+        assert producers.clock() - sa.priority_from >= 1.0
+        assert sa.producer is run and run is not None and run.alive  # hangt nog: de klok
+        assert run.produced_ms == sa.layout.begin(8)
+        assert sb.limit_ms() == streams.LEAD_MS
+        await until(lambda: sb.producer is None or sb.producer.produced_ms > held)
+    finally:
+        jump.cancel()
+        await asyncio.gather(jump, return_exceptions=True)
+        case.fake.clear_faults()
+
+
+async def test_geen_voorrang_bij_een_treffer(case, monkeypatch):
+    """Een verzoek dat de lopende run dekt (covers(n, AHEAD)) of dat de cache beantwoordt: geen
+    herstart, dus ook geen voorrang; B houdt LEAD_MS."""
+    monkeypatch.setattr(streams, "PRIORITY_MS", 2000)
+    case.fake.speed = 4.0
+    a, b, sa, sb = await _two(case)
+    kicks = []
+    monkeypatch.setattr(streams, "_kick", lambda: kicks.append(1))
+    p = sa.producer
+    assert p is not None and (3 in sa.segments or p.covers(3, streams.AHEAD))
+    await case.seg(a, 3)
+    await case.seg(a, 0)  # in de cache
+    assert sa.producer in (p, None) and sa.priority_run is None and not sa.restarting()
+    assert sb.limit_ms() == streams.LEAD_MS
+    assert len(case.runs()) == 2 and kicks == []
+
+
+async def test_voorrang_bij_een_nieuwe_poging(case, monkeypatch):
+    """Keuze 46: de run van A crasht, de nieuwe poging (via _count_failure en schedule) is een
+    herstart en krijgt herstartvoorrang. Die is weg zodra de run PRIORITY_MS maakte, ook al
+    loopt hij door; de waakhond tikt hier niet (TICK_S 30 s), dus dat ziet store meteen, en
+    alleen die kick wekt B."""
+    monkeypatch.setattr(streams, "PRIORITY_MS", 2000)
+    monkeypatch.setattr(producers, "TICK_S", 30.0)
+    gate = _gate(case)
+    case.fake.speed = 4.0
+    b = await case.play(0)
+    await case.seg(b, 0)
+    sb = case.stream(b)
+    case.fake.fault("crash_after", op=Op.STREAM, n=2)  # de eerste run van A
+    a = await case.play(1)
+    await case.seg(a, 0)
+    await case.seg(a, 1)
+    sa = case.stream(a)
+    await until(lambda: _running(sa))  # de run stopte vóór 2; de nieuwe poging begint op 2
+    run = sa.producer
+    assert sa.attempts == {2: 1}
+    assert case.runs() == [0.0, 0.0, pytest.approx(sa.layout.start_s(2))]
+    assert sb.limit_ms() == 2000
+    await until(lambda: _held(sb))
+    held = sb.producer.produced_ms
+    gate.set()
+    r = await case.seg(a, 2)
+    assert r.headers["x-init"] == "1"
+    await until(lambda: sa.priority_run is None)
+    assert sa.producer is run and run is not None and run.alive  # 2 tot 9: hij loopt nog
+    assert sb.limit_ms() == streams.LEAD_MS
+    await until(lambda: sb.producer is None or sb.producer.produced_ms > held)
+    assert sa.attempts == {} and sa.failed == {}
+
+
+async def test_voorrang_weg_bij_sluiten(case, monkeypatch):
+    """A sluit tijdens zijn herstartvoorrang: de voorrang is meteen weg en B leest door. De
+    waakhond tikt hier niet (TICK_S 30 s): alleen de kick van shutdown kan B wekken."""
+    monkeypatch.setattr(streams, "PRIORITY_MS", 2000)
+    monkeypatch.setattr(producers, "TICK_S", 30.0)
+    _gate(case)
+    case.fake.speed = 4.0
+    a, b, sa, sb = await _two(case)
+    jump = asyncio.ensure_future(case.get(a, "8.m4s"))
+    await until(lambda: _running(sa))
+    await until(lambda: _held(sb))
+    held = sb.producer.produced_ms
+    r = await case.client.delete(f"/api/v1/stream/{a}", headers=case.headers)
+    assert r.status_code == 204, r.text
+    await until(lambda: sb.producer is None or sb.producer.produced_ms > held)
+    assert sa.closed and sa.priority_run is None
+    assert sb.limit_ms() == streams.LEAD_MS
+    assert (await jump).status_code == 410
+    await settle()
+
+
+async def test_herstarte_stromen_niet_gepauzeerd(case, monkeypatch):
+    """A en B zoeken tegelijk buiten hun cache: allebei herstartvoorrang, en dus allebei
+    PRIORITY_MS als grens. Geen van beide staat stil zolang zijn eigen voorsprong onder
+    PRIORITY_MS ligt (de eigen voorrang remt nooit zichzelf), en allebei komen ze er.
+    WRITE_QUEUE hoog: dan pauzeert flow alleen om de voorsprong."""
+    monkeypatch.setattr(streams, "PRIORITY_MS", 2000)
+    monkeypatch.setattr(producers, "TICK_S", 0.05)
+    monkeypatch.setattr(producers, "WRITE_QUEUE", 100)
+    gate = _gate(case)
+    case.fake.speed = 4.0
+    a, b, sa, sb = await _two(case)
+    jumps = [asyncio.ensure_future(case.seg(sid, 8)) for sid in (a, b)]
+    await until(lambda: _running(sa) and _running(sb))
+    assert len(case.runs()) == 4
+    assert sa.limit_ms() == sb.limit_ms() == 2000
+    paused: list[int] = []
+
+    def made() -> bool:
+        for st in (sa, sb):
+            if st.producer is not None and st.producer.paused:
+                paused.append(_lead(st))
+        return 8 in sa.segments and 8 in sb.segments
+
+    gate.set()
+    await until(made, 10)
+    assert all(lead > 2000 for lead in paused), paused
+    assert all(r.headers["x-init"] == "1" for r in await asyncio.gather(*jumps))
+    await until(lambda: sa.priority_run is None and sb.priority_run is None)
+    assert sa.limit_ms() == sb.limit_ms() == streams.LEAD_MS
+
+
+async def test_eerste_start_ongewijzigd(case, monkeypatch):
+    """De eerste run van een stroom (open) heeft alleen startvoorrang: na het eerste segment is
+    die weg, ook al maakte de run nog geen PRIORITY_MS (hier de echte 10 s)."""
+    case.fake.speed = 2.0
+    a = await case.play(0)
+    await case.seg(a, 0)
+    first = case.stream(a)
+    b = await case.play(1)
+    second = case.stream(b)
+    assert second.priority_run is None and not second.restarting()
+    await case.seg(b, 0)
+    p = second.producer
+    assert p is not None and p.produced_ms - second.layout.begin(p.start) < streams.PRIORITY_MS
+    assert not second.has_priority()
+    assert first.limit_ms() == streams.LEAD_MS
+    assert len(case.runs()) == 2
 
 
 # --- dicht -------------------------------------------------------------------------------------
