@@ -213,6 +213,7 @@ personen; personen zijn Keuze 38, en Vraag 4 gaat over wie de plek van een foto 
 | De titels van een mediabestand als de probe pas na de stap text komt; `after_ready` voor een oud doc, xls of ppt als de miniaturen van OnlyOffice mislukken; de plek na een dedupe, een versie terug of een andere eigenaar (die komt pas bij de volgende ronde van de keten) | geen pakket van I1 had het; later, bij de robuustheid | het plan van I1; [z2.md](z2.md), Open 4 en 5; [z3.md](z3.md), Open |
 | Een vlag in de viewer dat een foto van een ander is, zodat hij geen verzoeken doet die 404 of een lege lijst geven | klein, later | het plan van I1 |
 | `files.free_name`, de grenzen van OCR per gebruiker in het geheugen, `jobs._runners` | horen bij het harden in fase 8 | het plan van I1 |
+| Een lijst zonder pagina's kost de app zijn hele map op de event loop: `GET /public/listing` (de map achter een openbare link, `public.children` in `api/app/routers/public.py`) en `GET /files/{id}/children` of `/files/root` zonder `limit`. Met 5.000 bestanden in één map is dat 220–320 ms per vraag (M7) | de web-app vraagt een eigen map altijd in pagina's (`FIRST_PAGE` 200, daarna 1.000); de openbare pagina en de oude vorm zonder `limit` niet. Pagina's voor de openbare lijst vragen een wijziging aan een contract, en I1 voegde alleen toe | dit document; [Metingen](#metingen), M7 |
 
 ## Wijzigingen aan contracten
 
