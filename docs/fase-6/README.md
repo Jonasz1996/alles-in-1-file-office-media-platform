@@ -1,15 +1,15 @@
 # Fase 6 — Zoeken en foto's
 
 Status: **kern gebouwd, versie 0.8.0 (11 november 2026)**. De kern van fase 6 staat op de branch
-`claude/stappenplan-uitwerken-lu4uv3`: zoeken in de inhoud van je
-bestanden, tekst in scans en foto's, de kaart met plaatsen en landen, dubbele bestanden, personen,
-herinneringen en slimme albums. Gezichten automatisch herkennen en zoeken op wat er op een foto
-staat zitten er nog niet in ([Wat komt in 0.8.1](#wat-komt-in-081)). Het ontwerp stelt grenzen
-aan de snelheid en het geheugen (§4.4 en §4.5 van het [bouwontwerp](bouwontwerp.md)). Daarvan
-zijn er in de sandbox (de machine waarop gebouwd is) en in CI (de automatische tests op GitHub)
-alle 27 gehaald die bij 0.8.0 horen, en ook de grens voor de grootte van het image. In CI waren
-met de code van 0.8.0 alle 16 jobs groen (run 105).
-Het laatste bewijs is je eigen server: [Op de LXC](#op-de-lxc).
+`claude/stappenplan-uitwerken-lu4uv3`: zoeken in de inhoud van je bestanden, tekst in scans en
+foto's, de kaart met plaatsen en landen, dubbele bestanden, personen, herinneringen en slimme
+albums. Gezichten automatisch herkennen en zoeken op wat er op een foto staat zitten er nog niet in
+([Wat komt in 0.8.1](#wat-komt-in-081)). Het ontwerp stelt grenzen aan de snelheid en het geheugen
+(§4.4 en §4.5 van het [bouwontwerp](bouwontwerp.md)). Daarvan zijn er in de sandbox (de machine
+waarop gebouwd is) en in CI (de automatische tests op GitHub) alle 27 gehaald die bij 0.8.0 horen,
+en ook de grens voor de grootte van het image. In CI waren met de code van 0.8.0 alle 16 jobs groen
+(run 105), en ook op de commit van 0.8.0 zelf (`3fca440`, run 106). Het laatste bewijs is je eigen
+server: [Op de LXC](#op-de-lxc).
 
 Zoeken gebruikt één index in de database die er al is (SQLite met FTS5, de zoekfunctie van
 SQLite). Er komt geen nieuwe database of dienst bij. Zoeken op naam werkt meteen na de update; de

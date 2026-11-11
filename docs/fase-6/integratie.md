@@ -26,13 +26,13 @@ Zoeken en foto's op `/beheer`. Het ontwerp staat in [bouwontwerp.md](bouwontwerp
   [De checks](#de-checks)) en de metingen M1–M9 (B2). M9 vond een fout in de testfoto's
   (`d5624b5`).
 
-Van de poorten van §4.4 en §4.5 die bij 0.8.0 horen, zijn er 27 van de 27 gehaald, en ook de
-grens voor de grootte van het image (X1) ([Metingen](#metingen)). M7 (zoeken naast media en
-OnlyOffice) haalde het pas in de vijfde ronde; de rondes ervoor faalden op de testopzet en op het
-haperen na een sprong. In CI waren op `47d62eb` (run 105), met de code van 0.8.0, alle 16 jobs
-groen. Elke wijziging aan een
-contract van de API is additief, zoals het nieuwe veld `check` in `AdminSearch`
-([Wijzigingen aan contracten](#wijzigingen-aan-contracten)).
+Van de poorten van §4.4 en §4.5 die bij 0.8.0 horen, zijn er 27 van de 27 gehaald, en ook de grens
+voor de grootte van het image (X1) ([Metingen](#metingen)). M7 (zoeken naast media en OnlyOffice)
+haalde het pas in de vijfde ronde; de rondes ervoor faalden op de testopzet en op het haperen na een
+sprong. In CI waren op `47d62eb` (run 105), met de code van 0.8.0, alle 16 jobs groen, en ook op de
+commit van 0.8.0 zelf (`3fca440`, run 106). Elke wijziging aan een contract van de API is additief,
+zoals het nieuwe veld `check` in `AdminSearch` ([Wijzigingen aan
+contracten](#wijzigingen-aan-contracten)).
 
 Voor 0.8.1 blijft: gezichten automatisch herkennen (X2) en zoeken op wat er op een foto staat
 (X3, dat ook naar een fase 6b kan schuiven), met de container `analyse`, de migraties 0011 en
@@ -74,12 +74,15 @@ lopen. D1 liep apart.
 | 12:58–14:51 | het herstel na M7d: photometa op nice 19, wanneer de speler hapert, en de herstartvoorrang (B71, voorstel) met zijn review | `66e5565`, `30c17d1`; `6db0fcf`, `9ac71be`; `4303800`, `b4a93c9`, `609bee8` |
 | 17:47 | de voorraad na de sprong in het rapport; daarna M7e: elke poort gehaald, drie van de drie | `98ec2bc` |
 | 19:33 | samengevoegd op de branch | `6aafa7b`, `47d62eb` |
-| daarna | M8 (het zoekscherm, `bench --los` en CI run 105) en C2: de teksten en 0.8.0 | [metingen.md](metingen.md) |
+| daarna | M8 (het zoekscherm, `bench --los` en CI run 105) en C2: de teksten, twee keer nagelopen tegen de meetdata | [metingen.md](metingen.md), `48dcca2`, `abfbceb` |
+| 21:22 | 0.8.0 op de branch: `wip/i1-docs` samengevoegd, met het nieuwe versienummer; CI run 106 groen | `3fca440` |
 
-CI liep na de integratie op `2adccd2` (run 101): alle 16 jobs groen. `zoek-perf` deed er 21
-minuten over, met de nieuwe stap voor churn en de triggers op 3.46.1. Op `0e19180` (run 102, de
-samenvoeging van D1): alle 16 jobs groen. Op `47d62eb` (run 105, het werk van M7 samengevoegd):
-alle 16 jobs groen, met `zoek-perf` in 12 min 16 s en `e2e-media-perf` in 7 min 37 s.
+CI liep na de integratie op `2adccd2` (run 101): alle 16 jobs groen. `zoek-perf` deed er 21 minuten
+over, met de nieuwe stap voor churn en de triggers op 3.46.1. Op `0e19180` (run 102, de samenvoeging
+van D1): alle 16 jobs groen. Op `47d62eb` (run 105, het werk van M7 samengevoegd): alle 16 jobs
+groen, met `zoek-perf` in 12 min 16 s en `e2e-media-perf` in 7 min 37 s. Op `3fca440` (run 106,
+0.8.0): alle 16 jobs groen, met `zoek-perf` in 20 min 53 s en `e2e-media-perf` in 10 min 18 s; die
+runner was trager (de boom van 100.000 in 67,2 s tegen 37,4 s in run 105).
 
 Wat er onderweg misging, met de oorzaak:
 
@@ -392,9 +395,9 @@ delen:
   7. weer vooruit, met het script van de branch.
 
 `--stappen` draait alleen in de job `infra`, stap "De update en terug naar 0.7.1
-(test_install_search.sh --stappen, Z7)". Lokaal mag het niet, en er is te weinig schijfruimte.
-In run 99 op `16ccb8d`: 79 goed, 0 fout. In run 105 op `47d62eb`, met de code van 0.8.0: 79
-goed, 0 fout.
+(test_install_search.sh --stappen, Z7)". Lokaal mag het niet, en er is te weinig schijfruimte. In
+run 99 op `16ccb8d`: 79 goed, 0 fout. In run 105 op `47d62eb`, met de code van 0.8.0: 79 goed, 0
+fout. In run 106 op `3fca440`, de commit van 0.8.0: 79 goed, 0 fout.
 
 Terug naar 0.7.1 gaat met de stappen van het runbook ([zoeken.md](../runbooks/zoeken.md),
 "Terug naar 0.7.1"): kijken of commit `80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1` er is en het
@@ -415,15 +418,15 @@ niet opnieuw getest; de stappen van `--stappen` in `infra` en `test_install_medi
 
 **Alleen in CI:**
 
-- **De jobs met het image.** `media-image`: `test_ocr_container.sh` (tesseract in het image,
-  modus 0711, alleen in de worker), `test_media_container.sh` en `test_install_media.sh
-  --stappen`. `images`: tesseract hooguit 75 MB erbij (X1); in run 105 71,6 MB, in de bestanden van 18
-  pakketten (M8).
+- **De jobs met het image.** `media-image`: `test_ocr_container.sh` (tesseract in het image, modus
+  0711, alleen in de worker), `test_media_container.sh` en `test_install_media.sh --stappen`.
+  `images`: tesseract hooguit 75 MB erbij (X1); in run 105 en run 106 71,6 MB, in de bestanden van
+  18 pakketten (M8).
 - **De update en terug met Docker:** `test_install_search.sh --stappen` in `infra` (zie
   hierboven).
-- **SQLite 3.46.1 met de boom van 100.000:** `zoek-perf`, met de harde poorten van §4.4 en sinds
-  A3 ook churn en de triggers. M1 komt uit het artefact van deze job. De duur in run 105 op
-  `47d62eb`: 12 min 16 s.
+- **SQLite 3.46.1 met de boom van 100.000:** `zoek-perf`, met de harde poorten van §4.4 en sinds A3
+  ook churn en de triggers. M1 komt uit het artefact van deze job. De duur in run 105 op `47d62eb`:
+  12 min 16 s; in run 106 op `3fca440`: 20 min 53 s, op een tragere runner.
 - **H.264 in de browser:** `e2e-media` en `e2e-media-perf` met `MEDIA_REQUIRE_H264=1`. De
   Chromium 141 van de sandbox kan `avc1.64001f` en `avc1.640028` niet spelen; hier slaan 4 e2e
   over.
@@ -465,9 +468,12 @@ Stap C2 vulde de plekken in met M1–M9, en zette de versie op 0.8.0, op zes reg
 `api/app/__init__.py`, `api/pyproject.toml`, `api/uv.lock`, `web/package.json` en twee regels in
 `web/package-lock.json`. Daarna ging het op de branch `claude/stappenplan-uitwerken-lu4uv3`:
 
-- de commit van 0.8.0: de samenvoeging van `wip/i1-docs` met het nieuwe versienummer, op
+- de commit van 0.8.0: `3fca440`, de samenvoeging van `wip/i1-docs` met het nieuwe versienummer, op
   11 november 2026;
-- de run in CI op die commit: de commit erna vult hem hier in, met de hash.
+- de run in CI op die commit: run 106 (id 43102433248), alle 16 jobs groen. In `zoek-perf` haalde
+  §4.4 elke poort (het ergste geval, "alles", p95 121,1 ms; vier tegelijk p95 198,9 ms), en
+  `--stappen` in `infra` gaf 79 goed, 0 fout. Het image werd door tesseract 71,6 MB groter (grens
+  75 MB).
 
 Er komt geen tag zonder het ja van Jonas. De README vraagt het Jonas ("Een tag voor 0.8.0 en
 0.7.1?", standaard geen tags), net als waar 0.8.0 staat (standaard op de branch).
@@ -674,10 +680,11 @@ en F1–F4 van de integratie).
 
 ## Klaar als: waar elk punt bewezen is
 
-Per regel van §4.0 van het [bouwontwerp](bouwontwerp.md), met waar het laatste bewijs ligt:
-**hier** (in de sandbox), **in CI** (de job en de stap) of **op de LXC** (de lijst
-[Op de LXC](README.md#op-de-lxc)). "In CI" is groen in run 99 op `16ccb8d` en run 101 op
-`2adccd2`, en run 105 op `47d62eb` met de code van 0.8.0 (alle 16 jobs).
+Per regel van §4.0 van het [bouwontwerp](bouwontwerp.md), met waar het laatste bewijs ligt: **hier**
+(in de sandbox), **in CI** (de job en de stap) of **op de LXC** (de lijst [Op de
+LXC](README.md#op-de-lxc)). "In CI" is groen in run 99 op `16ccb8d` en run 101 op `2adccd2`, run 105
+op `47d62eb` met de code van 0.8.0, en run 106 op `3fca440`, de commit van 0.8.0 (in die twee alle
+16 jobs).
 
 | Klaar als (stappenplan) | Waar | Bewijs |
 |---|---|---|
