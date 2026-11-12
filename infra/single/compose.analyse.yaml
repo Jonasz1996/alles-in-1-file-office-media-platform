@@ -1,0 +1,104 @@
+# Analyse (fase 6, Keuze 56–59, 73): gezichten en beeld in een eigen container, zonder netwerk en
+# zonder data. De app geeft elke preview als open file descriptor over de socket in analyse-run.
+# install.sh neemt dit bestand alleen mee met ANALYSE=aan in /opt/platform/.env (tot 0.8.1 staat
+# de analyse uit als ANALYSE ontbreekt; install.sh, ANALYSE_STANDAARD).
+#
+# ANALYSE_WORKER_KEY (64 hex; install.sh maakt hem één keer en vervangt hem nooit) gaat naar de
+# app en naar analyse, maar nooit in `command` en nooit naar analyse-omzetten (K1-05). Zonder
+# sleutel stopt de worker met code 2, en zegt de app "down: key_missing". De rest van het
+# platform werkt gewoon.
+#
+# De worker start zoals runtime.BOOT: `python -I -m` vindt `app` niet (WORKDIR /srv, niets
+# geïnstalleerd), dus zet BOOT /srv er zelf in. test_compose_analyse.py houdt x-analyse-boot
+# gelijk aan app/analyse/runtime.BOOT en x-omzet-boot aan OMZET_BOOT.
+x-analyse-boot: &boot "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('app.analyse.worker',run_name='__main__',alter_sys=True)"
+x-omzet-boot: &omzet "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('app.analyse.worker.omzetten.siglip',run_name='__main__',alter_sys=True)"
+
+services:
+  platform:
+    environment:
+      PLATFORM_ANALYSE_ENABLED: "true"
+      PLATFORM_ANALYSE_WORKER: /run/analyse/worker.sock
+      PLATFORM_ANALYSE_WORKER_KEY: ${ANALYSE_WORKER_KEY:-}
+      PLATFORM_FACES_KEYS: /keys
+    volumes:
+      - analyse-run:/run/analyse
+      # Keuze 68: de sleutels per eigenaar staan buiten DATA_ROOT, niet in een kopie van alleen de data
+      - ${SLEUTELS_ROOT:-/opt/platform/sleutels/gezichten}:/keys
+
+  analyse:
+    image: platform:local
+    pull_policy: never
+    restart: unless-stopped
+    user: analyse  # uid 10003: kan de bestanden van 10001 niet openen, en /opt/analyse wel
+    # Geen `init: true`: docker-init is dumpbaar en heeft de sleutel in zijn omgeving (m1.md)
+    command: [python, -I, -c, *boot, /srv, --socket, /run/analyse/worker.sock, --models, /models]
+    environment:
+      PLATFORM_ANALYSE_WORKER_KEY: ${ANALYSE_WORKER_KEY:-}
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /data:size=1m,mode=0700,uid=10003,gid=10003  # overschaduwt VOLUME /data
+    volumes:
+      - analyse-run:/run/analyse
+      - ${MODELLEN_ROOT:-/opt/platform/modellen}:/models:ro  # van root, buiten $DATA_ROOT (K1-06)
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    ulimits:
+      core: 0
+      nofile: {soft: 256, hard: 256}
+    # Leeft de worker? hello zonder sleutel (--check SOCKET, app/analyse/health.py). Via `env -i`:
+    # een exec in de container krijgt de omgeving van de container, met de sleutel
+    healthcheck:
+      test: [CMD, /usr/bin/env, -i, "PATH=/opt/venv/bin:/usr/local/bin:/usr/bin:/bin", python, -I, -c, *boot, /srv, --check, /run/analyse/worker.sock]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 5s
+
+  # X3a (Keuze 73, 84; K1-05): zet SigLIP 2 één keer om. Alleen met `--profile omzetten`, en
+  # alleen via install.sh. Geen sleutel, geen analyse-run, geen /models: een gekraakte omzetter
+  # kan zich niet als worker voordoen en geen model vervangen. Root kopieert de uitkomst.
+  analyse-omzetten:
+    image: platform:local
+    pull_policy: never
+    profiles: [omzetten]
+    user: omzetten  # uid 10004, groep analyse: leest /opt/analyse, verder niets van 10003
+    command: [python, -I, -c, *omzet, /srv, --bron, /bron, --uit, /uit]
+    environment:
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /data:size=1m,mode=0700,uid=10004,gid=10003
+    # OMZET_BRON is een mktemp -d van root onder MODELLEN_ROOT (Keuze 84, stap 4), OMZET_UIT een
+    # lege map van 10004 (stap 5); install.sh zet ze alleen voor deze dienst. Niet ${…:?}: compose
+    # werkt de variabelen van elk bestand uit, ook van een dienst in een profiel dat niet aan
+    # staat, en dan zou elke `up` zonder die twee falen (x2a.md, afwijkingen). Zonder variabele
+    # wijst hij naar een pad dat niet bestaat, en met create_host_path: false maakt Docker dat
+    # niet aan: de omzetter start dan niet.
+    volumes:
+      - type: bind
+        source: ${OMZET_BRON:-/nonexistent/omzet-bron}
+        target: /bron
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${OMZET_UIT:-/nonexistent/omzet-uit}
+        target: /uit
+        bind: {create_host_path: false}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 16
+    ulimits:
+      core: 0
+
+volumes:
+  analyse-run:
