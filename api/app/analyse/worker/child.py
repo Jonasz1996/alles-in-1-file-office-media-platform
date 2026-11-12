@@ -218,6 +218,7 @@ class Kid:
     ops: int = 0
     born: float = 0.0
     generation: int = 0
+    ready: dict = field(default_factory=dict)  # wat het kind bij klaar zei (pid, dumpable)
     _stderr: asyncio.Task | None = None
     _lines: int = 0
     pids: list[int] = field(default_factory=list)  # elk kind dat ooit startte (voor de tests)
@@ -269,6 +270,7 @@ class Kid:
             wire.close_all(fds)
             if message.get("ev") != "klaar":
                 raise ChildError("het kind zei geen klaar")
+            self.ready = message
         except (TimeoutError, wire.Closed, wire.WireError, OSError) as exc:
             await self.retire(kill=True)
             raise ChildError(f"het kind {self.name} start niet ({type(exc).__name__})") from None
