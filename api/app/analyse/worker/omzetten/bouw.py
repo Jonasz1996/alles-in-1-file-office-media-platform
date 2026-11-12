@@ -73,7 +73,10 @@ from app.analyse.worker.omzetten import (
 from app.analyse.worker.omzetten.safetensors import FLOATS, Safetensors
 
 VERSIE = 1  # van de omzetter; staat in meta.json
-MAX_JSON = 1_000_000  # config.json en zijn twee buren zijn een paar kB
+MAX_JSON = 1_000_000  # config.json en preprocessor_config.json zijn een paar kB
+# tokenizer_config.json noemt soms elk toegevoegd token (bij Gemma 3 ±1,2 MB); de echte grootte
+# staat in models.lock
+MAX_TOKENIZER_CONFIG = 16_000_000
 BLOK_RIJEN = 4096  # rijen van de embedding per keer (4096 × 768 × 4 = 12,6 MB)
 
 GELU = {"gelu_pytorch_tanh": "tanh", "gelu_new": "tanh", "gelu": "erf"}
@@ -126,14 +129,14 @@ class Uitkomst:
 # --- de bronnen lezen ----------------------------------------------------------------------------
 
 
-def _json(pad: Path) -> dict:
+def _json(pad: Path, grens: int = MAX_JSON) -> dict:
     try:
         with pad.open("rb") as f:
-            data = f.read(MAX_JSON + 1)
+            data = f.read(grens + 1)
     except OSError as e:
         raise OmzetFout(f"{pad.name}: kan niet gelezen worden ({e.strerror})") from None
-    if len(data) > MAX_JSON:
-        raise OmzetFout(f"{pad.name}: groter dan {MAX_JSON} bytes")
+    if len(data) > grens:
+        raise OmzetFout(f"{pad.name}: groter dan {grens} bytes")
     try:
         doc = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, ValueError, RecursionError):
@@ -731,7 +734,8 @@ def _omzet(bron, uit, *, fp32, melden, gemaakt) -> list[Uitkomst]:
         raise OmzetFout(str(e)) from None
     if len(tok) > vorm.woorden:
         raise OmzetFout(f"{TOKENIZER_JSON}: {len(tok)} stukken, het model kent er {vorm.woorden}")
-    tok_meta = controleer_tokenizer_config(_json(bron / TOKENIZER_CONFIG), tok)
+    tok_config = _json(bron / TOKENIZER_CONFIG, MAX_TOKENIZER_CONFIG)
+    tok_meta = controleer_tokenizer_config(tok_config, tok)
     schaal = st.lees("logit_scale")
     bias = st.lees("logit_bias")
     _eindig(schaal, "logit_scale")

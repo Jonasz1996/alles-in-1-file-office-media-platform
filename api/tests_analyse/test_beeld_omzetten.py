@@ -607,7 +607,21 @@ BRON_FOUT = {
     ),
     "config.json geen JSON": (lambda b: (b / "config.json").write_text("[1,"), "config.json"),
     "bronbestand ontbreekt": (lambda b: (b / "tokenizer_config.json").unlink(), "ontbreekt"),
+    "config.json te groot": (
+        lambda b: _json(b, "config.json", opvulling="x" * bouw.MAX_JSON),
+        "config.json: groter dan 1000000 bytes",
+    ),
+    "tokenizer_config.json te groot": (
+        lambda b: _json(b, "tokenizer_config.json", opvulling="x" * bouw.MAX_TOKENIZER_CONFIG),
+        "tokenizer_config.json: groter dan 16000000 bytes",
+    ),
 }
+
+
+def test_tokenizer_config_mag_groter_zijn_dan_config(bron):
+    """Een tokenizer_config.json die elk toegevoegd token noemt (Gemma 3: ±1,2 MB) kan wel."""
+    _json(bron, "tokenizer_config.json", opvulling="x" * 2 * bouw.MAX_JSON)
+    assert [u.naam for u in bouw.omzet(bron, bron.parent / "uit")][-1] == META
 
 
 @pytest.mark.parametrize("geval", sorted(BRON_FOUT))
