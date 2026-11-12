@@ -36,6 +36,9 @@ RUN uv sync --frozen --no-dev
 # alle bestanden opnieuw. --no-cache: anders blijven de wheels en hun uitgepakte kopie (±120 MB)
 # in /root/.cache/uv achter, en dan haalt het image de grens van +160 MB niet (A0, a0.md). g-w:
 # niets in /opt/analyse is schrijfbaar voor de groep analyse (ook .lock van uv niet).
+# --require-hashes: de vijf komen met hun sha256 uit uv.lock (awk neemt uit de export met
+# hashes de blokken van precies de vijf namen), net als de sync van /opt/venv; een wheel met een
+# andere hash laat de build falen (review A0, veilig F1).
 # 10004 (omzetten) is de gebruiker van analyse-omzetten (X3, K1-05): groep analyse, zodat hij
 # numpy kan lezen, maar zonder sleutel, zonder socket en zonder /models.
 RUN groupadd --system --gid 10003 analyse \
@@ -47,9 +50,13 @@ RUN groupadd --system --gid 10003 analyse \
        | grep -E '^[a-z]' | sort > /tmp/basis.txt \
     && comm -23 /tmp/alles.txt /tmp/basis.txt > /tmp/analyse.txt \
     && test "$(wc -l < /tmp/analyse.txt)" -eq 5 \
+    && uv export --frozen --no-dev --no-emit-project --no-header --no-annotate --extra analyse \
+       | awk 'NR == FNR { vijf[$1]; next } /^[a-z]/ { mee = $1 in vijf } mee' /tmp/analyse.txt - \
+       > /tmp/hashes.txt \
+    && test "$(grep -c '^[a-z]' /tmp/hashes.txt)" -eq 5 \
     && uv pip install --no-cache --python /opt/venv/bin/python --no-deps --compile-bytecode \
-       --target /opt/analyse -r /tmp/analyse.txt \
-    && rm /tmp/alles.txt /tmp/basis.txt /tmp/analyse.txt \
+       --require-hashes --target /opt/analyse -r /tmp/hashes.txt \
+    && rm /tmp/alles.txt /tmp/basis.txt /tmp/analyse.txt /tmp/hashes.txt \
     && chown -R root:analyse /opt/analyse \
     && chmod -R g-w,o-rwx /opt/analyse && chmod 0750 /opt/analyse
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -47,6 +48,10 @@ def test_het_blok_staat_direct_na_uv_sync():
     assert "" not in lines[run : end - 1]  # één blok: de RUN loopt door tot vlak voor COPY
 
 
+# Uit de export met hashes de blokken van precies de vijf namen van analyse.txt (veilig F1)
+AWK = "awk 'NR == FNR { vijf[$1]; next } /^[a-z]/ { mee = $1 in vijf } mee'"
+
+
 def test_het_blok_zet_precies_vijf_pakketten_in_opt_analyse():
     run = _analyse_run()
     stappen = [
@@ -59,14 +64,55 @@ def test_het_blok_zet_precies_vijf_pakketten_in_opt_analyse():
         " | grep -E '^[a-z]' | sort > /tmp/basis.txt",
         "comm -23 /tmp/alles.txt /tmp/basis.txt > /tmp/analyse.txt",
         'test "$(wc -l < /tmp/analyse.txt)" -eq 5',
+        "uv export --frozen --no-dev --no-emit-project --no-header --no-annotate --extra analyse"
+        f" | {AWK} /tmp/analyse.txt - > /tmp/hashes.txt",
+        "test \"$(grep -c '^[a-z]' /tmp/hashes.txt)\" -eq 5",
         "uv pip install --no-cache --python /opt/venv/bin/python --no-deps --compile-bytecode"
-        " --target /opt/analyse -r /tmp/analyse.txt",
-        "rm /tmp/alles.txt /tmp/basis.txt /tmp/analyse.txt",
+        " --require-hashes --target /opt/analyse -r /tmp/hashes.txt",
+        "rm /tmp/alles.txt /tmp/basis.txt /tmp/analyse.txt /tmp/hashes.txt",
         "chown -R root:analyse /opt/analyse",
         "chmod -R g-w,o-rwx /opt/analyse",
         "chmod 0750 /opt/analyse",
     ]
     assert run.removeprefix("RUN ").split(" && ") == stappen
+
+
+EXPORT = """\
+anyio==4.9.0 \\
+    --hash=sha256:aa \\
+    --hash=sha256:bb
+numpy==2.5.4 \\
+    --hash=sha256:cc
+numpyx==2.5.4 \\
+    --hash=sha256:dd
+pywin32==311 ; sys_platform == 'win32' \\
+    --hash=sha256:ee
+protobuf==7.36.2 ; python_full_version >= '3.12' \\
+    --hash=sha256:ff \\
+    --hash=sha256:00
+"""
+
+
+def test_awk_neemt_precies_de_blokken_van_de_vijf(tmp_path):
+    """Review A0, veilig F1: uv pip install kreeg de vijf als naam==versie, zonder hash, terwijl
+    uv sync de rest met de sha256 uit uv.lock haalt. Nu gaat --require-hashes mee, met de
+    blokken uit de export met hashes. De stap met awk uit de Dockerfile, hier gedraaid: een
+    naam uit analyse.txt komt mee met al zijn --hash-regels (ook met een marker), een andere
+    naam niet, ook niet een die ermee begint."""
+    run = _analyse_run()
+    (stap,) = [s for s in run.removeprefix("RUN ").split(" && ") if f"| {AWK} " in s]
+    pijp = stap.split(" | ", 1)[1].replace("/tmp/", f"{tmp_path}/")
+    (tmp_path / "analyse.txt").write_text(
+        "numpy==2.5.4\nprotobuf==7.36.2 ; python_full_version >= '3.12'\n", encoding="utf-8"
+    )
+    subprocess.run(["sh", "-c", pijp], input=EXPORT, text=True, check=True, cwd=tmp_path)
+    assert (tmp_path / "hashes.txt").read_text(encoding="utf-8").splitlines() == [
+        "numpy==2.5.4 \\",
+        "    --hash=sha256:cc",
+        "protobuf==7.36.2 ; python_full_version >= '3.12' \\",
+        "    --hash=sha256:ff \\",
+        "    --hash=sha256:00",
+    ]
 
 
 def test_de_groep_analyse_bestaat_voor_run_analyse():
