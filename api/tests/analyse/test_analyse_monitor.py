@@ -33,6 +33,18 @@ pytestmark = pytest.mark.anyio
 API = Path(__file__).resolve().parents[2]
 YUNET = "face_detection_yunet_2026may.onnx"
 SFACE = "face_recognition_sface_2021dec.onnx"
+VERSIE = {m.name: m.sha256[:12] for m in lock.load()}
+
+
+def caps_regels(yunet: str = "klopt", built: str = "cancel, caps") -> list[str]:
+    """De regels van analyse-status na de eerste (X2a, app/analyse/status.py) voor de nep: de
+    twee modellen van models.lock, zonder grenzen."""
+    return [
+        f"  model {YUNET} (versie {VERSIE[YUNET]}): {yunet}",
+        f"  model {SFACE} (versie {VERSIE[SFACE]}): klopt",
+        "  grenzen: geen (de container heeft geen cgroup-grenzen)",
+        f"  opdrachten: {built}",
+    ]
 
 
 def _off(tmp_path: Path, **extra) -> Settings:
@@ -425,7 +437,8 @@ async def test_cli_als_proces(fake, tmp_path):
         PLATFORM_ANALYSE_WORKER=str(fake.socket),
         PLATFORM_ANALYSE_WORKER_KEY=fake.key,
     )
-    assert (result.returncode, result.stdout.decode().strip()) == (0, "Analyse: ok")
+    assert result.returncode == 0
+    assert result.stdout.decode().splitlines() == ["Analyse: ok", *caps_regels()]
     assert fake.hellos == 1
     assert fake.key not in (result.stdout + result.stderr).decode()
 
@@ -443,7 +456,16 @@ async def test_cli_de_standen(fake, tmp_path, capsys):
 
     fake.models[YUNET] = "anders"
     missing = await _status(fake.settings(tmp_path), capsys)
-    assert missing == (1, f"Analyse: models_missing (een model ontbreekt of klopt niet: {YUNET})")
+    anders = "klopt niet (een andere grootte of sha256, of geen gewoon bestand)"
+    assert missing == (
+        1,
+        "\n".join(
+            [
+                f"Analyse: models_missing (een model ontbreekt of klopt niet: {YUNET})",
+                *caps_regels(yunet=anders),
+            ]
+        ),
+    )
 
     short = await _status(fake.settings(tmp_path, analyse_worker_key="kort"), capsys)
     assert short == (1, "Analyse: down (" + monitor.TEXT["key_missing"] + ")")
@@ -475,7 +497,7 @@ async def test_cli_wacht_en_geeft_dan_0(fake, tmp_path, capsys):
             fake.settings(tmp_path, analyse_worker=moved.socket), capsys, wait=20
         )
     await moved.stop()
-    assert result == (0, "Analyse: ok")
+    assert result == (0, "\n".join(["Analyse: ok", *caps_regels()]))
     assert time.monotonic() - started_at < 5
 
 
@@ -514,3 +536,230 @@ async def test_op_postgresql_blijft_de_analyse_uit(fake, tmp_path):
     sqlite = fake.settings(tmp_path)
     assert sqlite.analyse_on and "analyse" in jobs.active_lanes(sqlite)
     assert (await monitor.check(sqlite)).state == "ok"
+
+
+# --- de echte pid 1 (X2a): de standen tegen app/analyse/worker/server.py ---
+#
+# pid 1 draait hier in dit proces, zonder numpy (caps start geen kind). De modellen zijn twee
+# bestanden met een eigen models.lock; de inhoud doet er voor caps niet toe, alleen de grootte en
+# de sha256. De cgroup is een map met cpu.max en memory.max.
+
+
+def _lock_regels(root: Path, files: dict[str, bytes]) -> Path:
+    import hashlib
+
+    root.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for name, data in files.items():
+        (root / name).write_bytes(data)
+        sha = hashlib.sha256(data).hexdigest()
+        lines.append(f"{sha} {len(data)} {name} https://example.invalid/{name}")
+    path = root.parent / "models.lock"
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+MODELLEN = {YUNET: b"yunet" * 1000, SFACE: b"sface" * 3000}
+
+
+@contextlib.asynccontextmanager
+async def echte_pid1(tmp_path: Path, *, refuse: str | None = None, cgroup: bool = True):
+    from app.analyse.worker import server
+
+    models = tmp_path / "modellen" / "m"
+    lock_path = _lock_regels(models, MODELLEN)
+    group = tmp_path / "cgroup"
+    group.mkdir()
+    if cgroup:
+        (group / "cpu.max").write_text("150000 100000\n")
+        (group / "memory.max").write_text(f"{3 * 1024**3}\n")
+    config = server.Config(
+        socket=tmp_path / "run" / "worker.sock", models=models, key="k" * 64,
+        lock=lock_path, cgroup=group,
+    )  # fmt: skip
+    worker = server.Worker(config) if refuse is None else server.RefusingWorker(config, refuse)
+    await worker.start()
+    try:
+        yield worker
+    finally:
+        await worker.stop()
+
+
+def _echt(worker, tmp_path: Path, **extra) -> Settings:
+    values: dict = {
+        "data_dir": tmp_path,
+        "web_dist": tmp_path / "web",
+        "jwt_secret": "test" * 8,
+        "analyse_enabled": True,
+        "analyse_worker": worker.config.socket,
+        "analyse_worker_key": worker.config.key,
+    }
+    values.update(extra)
+    return Settings(**values)
+
+
+async def test_echt_ok_met_modellen_grenzen_en_opdrachten(tmp_path):
+    from app.analyse import state, status
+
+    async with echte_pid1(tmp_path) as worker:
+        found = await monitor.check(_echt(worker, tmp_path))
+        assert (found.state, found.reason, found.missing) == ("ok", None, ())
+        assert found.caps is not None
+        assert found.caps.built == ["cancel", "caps", "faces"]
+        assert found.built(Op.FACES) and not found.built(Op.GROUP)
+        shown = state.view(found, lock_path=worker.config.lock)
+        versions = {m.name: m.sha256[:12] for m in lock.load(worker.config.lock)}
+        assert [(m.name, m.version, m.sha_ok) for m in shown.models] == [
+            (YUNET, versions[YUNET], True),
+            (SFACE, versions[SFACE], True),
+        ]
+        assert (shown.limits.cpus, shown.limits.mem_mb) == (1.5, 3072)
+        assert (shown.analyse, shown.reason, shown.problem) == ("ok", None, None)
+        assert status.lines(found)[0] == "Analyse: ok"
+        assert status.lines(found)[-2:] == [
+            "  grenzen: 1.5 cpus, 3072 MB geheugen",
+            "  opdrachten: cancel, caps, faces",
+        ]
+
+
+async def test_echt_een_model_ontbreekt_of_is_anders(tmp_path):
+    from app.analyse import state
+
+    async with echte_pid1(tmp_path) as worker:
+        settings = _echt(worker, tmp_path)
+        root = worker.config.models
+        (root / SFACE).unlink()
+        found = await monitor.check(settings)
+        assert (found.state, found.reason, found.missing) == ("models_missing", SFACE, (SFACE,))
+        assert found.ready([YUNET]) and not found.ready([YUNET, SFACE])
+        assert monitor.wait([SFACE], found).seconds == monitor.DEFER_MODEL
+        shown = state.view(found, lock_path=worker.config.lock)
+        assert [(m.name, m.sha_ok) for m in shown.models] == [(YUNET, True), (SFACE, False)]
+        assert shown.reason == SFACE
+
+        # Andere bytes met dezelfde grootte: anders (de sha256 gaat over de bytes)
+        (root / SFACE).write_bytes(b"x" * len(MODELLEN[SFACE]))
+        assert (await monitor.check(settings)).missing == (SFACE,)
+        assert [m.state for m in (await client.caps(settings)).models] == ["ok", "anders"]
+
+        # Een symlink naar het goede bestand telt niet (O_NOFOLLOW)
+        (root / SFACE).unlink()
+        good = tmp_path / "elders"
+        good.write_bytes(MODELLEN[SFACE])
+        (root / SFACE).symlink_to(good)
+        assert [m.state for m in (await client.caps(settings)).models] == ["ok", "anders"]
+
+        # Terug: weer ok
+        (root / SFACE).unlink()
+        (root / SFACE).write_bytes(MODELLEN[SFACE])
+        assert (await monitor.check(settings)).state == "ok"
+
+
+async def test_echt_zonder_cgroup_geen_grenzen(tmp_path):
+    from app.analyse import state, status
+
+    async with echte_pid1(tmp_path, cgroup=False) as worker:
+        found = await monitor.check(_echt(worker, tmp_path))
+        assert found.state == "ok" and found.caps is not None and found.caps.limits is None
+        assert state.view(found).limits is None
+        assert "  grenzen: geen (de container heeft geen cgroup-grenzen)" in status.lines(found)
+
+
+async def test_echt_down_sandbox_handdruk_en_geen_socket(tmp_path):
+    from app.analyse import state
+
+    async with echte_pid1(tmp_path, refuse="zelftest: uid 10003: uid 0") as worker:
+        found = await monitor.check(_echt(worker, tmp_path))
+        assert (found.state, found.reason, found.caps) == ("down", "sandbox", None)
+        shown = state.view(found)
+        assert (shown.analyse, shown.reason, shown.models, shown.limits) == (
+            "down",
+            "sandbox",
+            [],
+            None,
+        )
+        assert shown.problem == monitor.TEXT["sandbox"]
+        assert "uid 0" not in (shown.problem or "")  # de reden van de worker blijft daar
+    async with echte_pid1(tmp_path / "2") as worker:
+        other = _echt(worker, tmp_path, analyse_worker_key="a" * 64)
+        assert (await monitor.check(other)).reason == "handshake"
+    gone = (await monitor.check(_echt(worker, tmp_path))).reason
+    assert gone == "no_socket"
+
+
+async def test_echt_de_lus_ziet_de_worker_komen_en_gaan(tmp_path, monkeypatch):
+    """De monitor tegen de echte pid 1: ok, dan weg (down: no_socket), en terug."""
+
+    async def kort(seconds: float) -> None:
+        await asyncio.sleep(min(seconds, 0.05))
+
+    monkeypatch.setattr(monitor, "_pause", kort)
+    async with echte_pid1(tmp_path) as worker:
+        settings = _echt(worker, tmp_path)
+        monitor.start(settings)
+        try:
+            await until(lambda: monitor.status().state == "ok")
+            await worker.stop()
+            await until(lambda: monitor.status().reason == "no_socket")
+            await worker.start()
+            await until(lambda: monitor.status().state == "ok")
+        finally:
+            await monitor.stop()
+
+
+async def test_echt_analyse_status_als_proces(tmp_path):
+    async with echte_pid1(tmp_path) as worker:
+        result = await run_cli(
+            tmp_path,
+            PLATFORM_ANALYSE_ENABLED="true",
+            PLATFORM_ANALYSE_WORKER=str(worker.config.socket),
+            PLATFORM_ANALYSE_WORKER_KEY=worker.config.key,
+        )
+    out = result.stdout.decode().splitlines()
+    assert result.returncode == 0
+    assert out[0] == "Analyse: ok"
+    # models.lock van de app noemt dezelfde namen; de versie komt uit die lock
+    assert out[1:] == [
+        f"  model {YUNET} (versie {VERSIE[YUNET]}): klopt",
+        f"  model {SFACE} (versie {VERSIE[SFACE]}): klopt",
+        "  grenzen: 1.5 cpus, 3072 MB geheugen",
+        "  opdrachten: cancel, caps, faces",
+    ]
+    assert worker.config.key not in (result.stdout + result.stderr).decode()
+
+
+def test_de_stand_voor_beheer_zonder_caps():
+    """state.view zonder caps (off, down): geen modellen en geen grenzen, want de app weet dan
+    niet wat er in de container staat; reason is de sleutel van TEXT, problem de zin."""
+    from app.analyse import state, status
+
+    off = state.view(monitor.OFF)
+    assert (off.analyse, off.reason, off.models, off.limits) == ("off", None, [], None)
+    assert off.problem == "de analyse staat uit (PLATFORM_ANALYSE_ENABLED)"
+    for reason in monitor.TEXT:
+        down = state.view(monitor.AnalyseStatus("down", reason))
+        assert (down.analyse, down.reason, down.problem) == ("down", reason, monitor.TEXT[reason])
+        assert status.lines(monitor.AnalyseStatus("down", reason)) == [
+            f"Analyse: down ({monitor.TEXT[reason]})"
+        ]
+    assert state.view().analyse == "off"  # zonder argument: monitor.status()
+    assert status.exit_code(monitor.OFF, 0) == 0
+    assert status.exit_code(monitor.AnalyseStatus("down", "no_socket"), 0) == 1
+    assert status.exit_code(monitor.AnalyseStatus("down", "no_socket"), 5) == 0
+
+
+def test_een_model_buiten_de_lock_van_de_app_heeft_versie_vraagteken(tmp_path):
+    from app.analyse import state
+
+    caps = wire.CapsData(
+        models=[wire.ModelCaps(name="nieuw.onnx", state="ok")],
+        built=["cancel", "caps"],
+        limits=wire.LimitsCaps(cpus=2, mem_mb=2048),
+    )
+    shown = state.view(monitor.AnalyseStatus("ok", caps=caps))
+    assert [(m.name, m.version, m.sha_ok) for m in shown.models] == [("nieuw.onnx", "?", True)]
+    broken = tmp_path / "models.lock"
+    broken.write_text("geen lock\n")
+    shown = state.view(monitor.AnalyseStatus("ok", caps=caps), lock_path=broken)
+    assert shown.models[0].version == "?"
+    assert (shown.limits.cpus, shown.limits.mem_mb) == (2.0, 2048)

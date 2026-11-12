@@ -86,10 +86,11 @@ De container analyse (fase 6, Keuze 59; gezichten en zoeken op beeld):
     python -m app.cli analyse-status [--wait 20]
 
 analyse-status zegt de stand: ok, off, down (met de reden) of models_missing (met de modellen).
-Met --wait wacht hij hooguit zoveel seconden tot de stand ok is (install.sh, na de start van
-de container) en is de exitcode altijd 0: de regel zegt wat er is, zoals media-status. Zonder
---wait is de exitcode 1 bij down en models_missing. Staat de analyse uit, dan raakt hij de
-socket niet aan.
+Antwoordt de worker, dan volgen per model of het klopt, de grenzen van de container en de
+opdrachten die hij kent (app/analyse/status.py, X2a). Met --wait wacht hij hooguit zoveel
+seconden tot de stand ok is (install.sh, na de start van de container) en is de exitcode altijd
+0: de regels zeggen wat er is, zoals media-status. Zonder --wait is de exitcode 1 bij down en
+models_missing. Staat de analyse uit, dan raakt hij de socket niet aan.
 
 analyse-bench en analyse-kwaliteit (X2), en beeld-bench, beeld-kwaliteit en beeld-status (X3)
 zijn nog stubs (§3.5): ze zeggen welk pakket ze bouwt, met exitcode 1.
@@ -518,25 +519,13 @@ def _stub(name: str) -> int:
 
 
 def _analyse_status(settings: Settings, wait: float) -> int:
-    """analyse-status: de stand van Keuze 59, één regel. Met wait hooguit zoveel seconden
-    opnieuw kijken (elke seconde) tot de stand ok is."""
-    from app.analyse import monitor
+    """analyse-status: de stand van Keuze 59 (app/analyse/status.py, X2a). Met wait hooguit
+    zoveel seconden opnieuw kijken (elke seconde) tot de stand ok is."""
+    from app.analyse import status
 
-    async def run() -> monitor.AnalyseStatus:
-        loop = asyncio.get_running_loop()
-        end = loop.time() + max(wait, 0)
-        while True:
-            found = await monitor.check(settings)
-            if found.state in ("ok", "off") or loop.time() >= end:
-                return found
-            await asyncio.sleep(min(1.0, max(end - loop.time(), 0)))
-
-    found = asyncio.run(run())
-    problem = monitor.analyse_problem(found)
-    print(f"Analyse: {found.state}" + (f" ({problem})" if problem else ""))
-    if wait > 0 or found.state in ("ok", "off"):
-        return 0
-    return 1
+    lines, code = asyncio.run(status.collect(settings, wait))
+    print("\n".join(lines))
+    return code
 
 
 def _media_failed(exc: HTTPException) -> int:
