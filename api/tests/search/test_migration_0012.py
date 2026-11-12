@@ -16,6 +16,8 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 
+from app import cli
+from app import migrate as migrate_mod
 from app.db import get_engine, sqlite_path, wal_truncate
 from app.migrate import checkpoint
 from app.models import Base
@@ -125,6 +127,53 @@ async def test_terug_naar_0010_en_0009_in_een_keer(tmp_path):
             "blob": [],
         }
         assert marks(settings) == {"platform.db": 0, "platform.db-wal": 0}
+
+
+def _wal(settings) -> int:
+    path = sqlite_path(settings.db_url)
+    assert path is not None
+    wal = path.with_name(path.name + "-wal")
+    return wal.stat().st_size if wal.exists() else 0
+
+
+async def test_db_downgrade_maakt_zelf_de_wal_leeg(tmp_path):
+    """Review A0, contract F1: app.cli.db_downgrade, zoals het commando hem aanroept, maakt na
+    de downgrade zelf de WAL leeg. Hier geen checkpoint erna: zonder dat van db_downgrade blijven
+    de gewiste gezichten en vectoren in platform.db staan (de nulpagina's staan dan alleen in
+    -wal)."""
+    for target in ("0010", "0009"):
+        settings = settings_at(tmp_path, f"cli{target}")
+        await migrate(settings, command.upgrade, "0009")
+        ids = await fill_0009(settings)
+        await migrate(settings, command.upgrade, "head")
+        await fill_faces(settings, ids)
+        await fill_beeld(settings, ids)
+        path = sqlite_path(settings.db_url)
+        assert path is not None
+        assert not wal_truncate(path).busy  # zoals na een tijd: alles in platform.db
+        assert marks(settings)["platform.db"] > 0 and _wal(settings) == 0
+
+        await cli.db_downgrade(settings, target)
+        assert marks(settings) == {"platform.db": 0, "platform.db-wal": 0}
+        assert _wal(settings) == 0
+
+
+async def test_de_migratie_bij_het_starten_maakt_zelf_de_wal_leeg(tmp_path):
+    """Review A0, contract F1: app.migrate.upgrade (de start van de app) maakt na de migratie
+    zelf de WAL leeg; 0010 naar 0012 schrijft tientallen pagina's in -wal."""
+    settings = settings_at(tmp_path, "start")
+    await migrate(settings, command.upgrade, "0009")
+    await fill_0009(settings)
+    await migrate(settings, command.upgrade, "0010")
+    path = sqlite_path(settings.db_url)
+    assert path is not None
+    assert not wal_truncate(path).busy
+
+    await migrate_mod.upgrade(settings)
+    async with get_engine(settings).connect() as conn:
+        found = await conn.execute(sa.text("SELECT version_num FROM alembic_version"))
+        assert found.scalars().all() == ["0012"]
+    assert _wal(settings) == 0
 
 
 async def test_modellen_gelijk_aan_0011_en_0012(tmp_path):
