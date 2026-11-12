@@ -2,7 +2,7 @@
 # ruff: noqa: E501
 """Zoekbench: hoe snel zoeken is op déze machine (bouwontwerp fase 6, Keuze 54; spike S9).
 
-Alleen de standaardbibliotheek. Maakt het schema van migratie 0010 (een bevroren kopie, onderaan)
+Alleen de standaardbibliotheek. Maakt het schema van head (een bevroren kopie, onderaan)
 en een boom van 100.000 bestanden in een tijdelijke map, meet zoeken voor "eigenaar" (één
 hoofdmap) en "alles" (30 hoofdmappen), en ruimt alles weer op. Er verandert niets aan de app of
 aan /data: het draait naast de app, in dezelfde container, met dezelfde SQLite.
@@ -800,10 +800,11 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-# --- Het schema van 0010 (bevroren kopie) ---------------------------------------------------
-# Een kopie van wat migratie 0010 maakt, voor zover zoeken het gebruikt: de tabellen zoals op
-# head (media_item en photo_person alleen met wat de view en de triggers lezen), de indexen op
-# node, photo_geo en dup_pair, de view, de twee FTS-tabellen en alle triggers.
+# --- Het schema van head (bevroren kopie) ---------------------------------------------------
+# Een kopie van wat de migraties 0010, 0011 en 0012 maken, voor zover zoeken en de triggers op
+# node het gebruiken: de tabellen zoals op head (media_item en photo_person alleen met wat de
+# view en de triggers lezen; van 0011 en 0012 alleen de tabellen die hun triggers raken, leeg),
+# de indexen op node, photo_geo en dup_pair, de view, de twee FTS-tabellen en alle triggers.
 # api/tests/search/test_zoekbench.py eist dat de view, de FTS-tabellen, de indexen en de
 # triggers letterlijk gelijk zijn aan die in een database op head.
 DDL = (
@@ -827,8 +828,18 @@ DDL = (
     "CREATE TABLE search_state (id INTEGER PRIMARY KEY CHECK (id = 1), cursor INTEGER, started_at TEXT, what TEXT)",
     # tabel media_item (alleen wat de view en de triggers lezen)
     "CREATE TABLE media_item (node_id CHAR(32) NOT NULL PRIMARY KEY, title VARCHAR(255) NOT NULL)",
-    # tabel photo_person (alleen wat de triggers lezen)
-    "CREATE TABLE photo_person (person_id CHAR(32) NOT NULL, node_id CHAR(32) NOT NULL, PRIMARY KEY (person_id, node_id))",
+    # tabel photo_person (alleen wat de triggers lezen en schrijven)
+    "CREATE TABLE photo_person (person_id CHAR(32) NOT NULL, node_id CHAR(32) NOT NULL, x FLOAT, y FLOAT, w FLOAT, h FLOAT, PRIMARY KEY (person_id, node_id))",
+    # tabel person
+    "CREATE TABLE person (\n\tid CHAR(32) NOT NULL, \n\towner_id CHAR(32) NOT NULL, \n\tname TEXT NOT NULL, \n\tsearch_name TEXT NOT NULL, \n\thidden INTEGER DEFAULT '0' NOT NULL, \n\tcover_node CHAR(32), \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(owner_id) REFERENCES user (id) ON DELETE CASCADE, \n\tFOREIGN KEY(cover_node) REFERENCES node (id) ON DELETE SET NULL\n)",
+    # tabel face (0011)
+    "CREATE TABLE face (\n\tid CHAR(32) NOT NULL, \n\tnode_id CHAR(32) NOT NULL, \n\towner_id CHAR(32) NOT NULL, \n\tx FLOAT NOT NULL, \n\ty FLOAT NOT NULL, \n\tw FLOAT NOT NULL, \n\th FLOAT NOT NULL, \n\tscore FLOAT NOT NULL, \n\tpx INTEGER NOT NULL, \n\tvec BLOB, \n\tversion INTEGER NOT NULL, \n\tcluster INTEGER, \n\tsuggest_id CHAR(32), \n\tsuggest_score FLOAT, \n\tsuggest_why TEXT, \n\thidden INTEGER DEFAULT '0' NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(node_id) REFERENCES node (id) ON DELETE CASCADE, \n\tFOREIGN KEY(owner_id) REFERENCES user (id) ON DELETE CASCADE, \n\tFOREIGN KEY(suggest_id) REFERENCES person (id) ON DELETE SET NULL\n)",
+    # tabel face_person (0011)
+    "CREATE TABLE face_person (\n\tface_id CHAR(32) NOT NULL, \n\tperson_id CHAR(32) NOT NULL, \n\towner_id CHAR(32) NOT NULL, \n\tverdict VARCHAR(8) NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (face_id, person_id), \n\tFOREIGN KEY(face_id) REFERENCES face (id) ON DELETE CASCADE, \n\tFOREIGN KEY(person_id) REFERENCES person (id) ON DELETE CASCADE, \n\tFOREIGN KEY(owner_id) REFERENCES user (id) ON DELETE CASCADE\n)",
+    # tabel face_scan (0011)
+    "CREATE TABLE face_scan (\n\tnode_id CHAR(32) NOT NULL, \n\towner_id CHAR(32) NOT NULL, \n\tversion INTEGER NOT NULL, \n\tstate VARCHAR(8) NOT NULL, \n\tfaces INTEGER DEFAULT '0' NOT NULL, \n\ttries INTEGER DEFAULT '0' NOT NULL, \n\tcode TEXT, \n\tprio TEXT NOT NULL, \n\tqueued_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (node_id), \n\tFOREIGN KEY(node_id) REFERENCES node (id) ON DELETE CASCADE, \n\tFOREIGN KEY(owner_id) REFERENCES user (id) ON DELETE CASCADE\n)",
+    # tabel beeld_owner (0012)
+    "CREATE TABLE beeld_owner (\n\tuser_id CHAR(32) NOT NULL, \n\tgen INTEGER DEFAULT '0' NOT NULL, \n\tbuilt_gen INTEGER DEFAULT '0' NOT NULL, \n\tbuilt_rows INTEGER DEFAULT '0' NOT NULL, \n\tbuilt_at DATETIME, \n\tPRIMARY KEY (user_id), \n\tFOREIGN KEY(user_id) REFERENCES user (id) ON DELETE CASCADE\n)",
     # index ix_dup_b
     "CREATE INDEX ix_dup_b ON dup_pair (b)",
     # index ix_node_blob
@@ -921,6 +932,18 @@ DDL = (
     "CREATE TRIGGER geo_ai AFTER INSERT ON photo_geo BEGIN\n  UPDATE photo_geo SET (dead, taken_at) =\n    (SELECT n.dead, n.taken_at FROM node n WHERE n.id = NEW.node_id)\n  WHERE node_id = NEW.node_id;\nEND",
     # trigger geo_bu
     "CREATE TRIGGER geo_bu BEFORE UPDATE ON photo_geo\nWHEN NEW.node_id IS NOT OLD.node_id OR NEW.owner_id IS NOT OLD.owner_id\n  OR NEW.dead IS NOT (SELECT n.dead FROM node n WHERE n.id = NEW.node_id)\n  OR NEW.taken_at IS NOT (SELECT n.taken_at FROM node n WHERE n.id = NEW.node_id) BEGIN\n  SELECT RAISE(ABORT, 'photo_geo: node_id, owner_id, dead en taken_at volgen de node');\nEND",
+    # trigger node_au_owner_face
+    "CREATE TRIGGER node_au_owner_face AFTER UPDATE OF owner_id ON node\nWHEN OLD.owner_id IS NOT NEW.owner_id BEGIN\n  DELETE FROM face WHERE node_id = NEW.id;\n  DELETE FROM face_scan WHERE node_id = NEW.id;\nEND",
+    # trigger node_au_blob_face
+    "CREATE TRIGGER node_au_blob_face AFTER UPDATE OF blob_id ON node\nWHEN OLD.blob_id IS NOT NEW.blob_id BEGIN\n  DELETE FROM face WHERE node_id = NEW.id;\n  DELETE FROM face_scan WHERE node_id = NEW.id;\n  UPDATE photo_person SET x = NULL, y = NULL, w = NULL, h = NULL WHERE node_id = NEW.id;\nEND",
+    # trigger person_bd_face
+    "CREATE TRIGGER person_bd_face BEFORE DELETE ON person BEGIN\n  UPDATE face SET vec = NULL, hidden = 1, suggest_id = NULL, suggest_score = NULL,\n                  suggest_why = NULL, cluster = NULL\n  WHERE id IN (SELECT face_id FROM face_person WHERE person_id = OLD.id AND verdict = 'ja');\nEND",
+    # trigger node_ai_beeld
+    "CREATE TRIGGER node_ai_beeld AFTER INSERT ON node\nWHEN NEW.kind = 'file' AND NEW.ftype = 'image' BEGIN\n  INSERT INTO beeld_owner (user_id, gen) SELECT NEW.owner_id, 0\n    WHERE NOT EXISTS (SELECT 1 FROM beeld_owner WHERE user_id = NEW.owner_id)\n      AND EXISTS (SELECT 1 FROM \"user\" WHERE id = NEW.owner_id);\n  UPDATE beeld_owner SET gen = gen + 1 WHERE user_id = NEW.owner_id;\nEND",
+    # trigger node_au_beeld
+    "CREATE TRIGGER node_au_beeld AFTER UPDATE OF owner_id, blob_id ON node\nWHEN NEW.kind = 'file' AND (OLD.ftype = 'image' OR NEW.ftype = 'image')\n AND (OLD.owner_id IS NOT NEW.owner_id OR OLD.blob_id IS NOT NEW.blob_id) BEGIN\n  INSERT INTO beeld_owner (user_id, gen) SELECT OLD.owner_id, 0\n    WHERE NOT EXISTS (SELECT 1 FROM beeld_owner WHERE user_id = OLD.owner_id)\n      AND EXISTS (SELECT 1 FROM \"user\" WHERE id = OLD.owner_id);\n  UPDATE beeld_owner SET gen = gen + 1 WHERE user_id = OLD.owner_id;\n  INSERT INTO beeld_owner (user_id, gen) SELECT NEW.owner_id, 0\n    WHERE NOT EXISTS (SELECT 1 FROM beeld_owner WHERE user_id = NEW.owner_id)\n      AND EXISTS (SELECT 1 FROM \"user\" WHERE id = NEW.owner_id);\n  UPDATE beeld_owner SET gen = gen + 1 WHERE user_id = NEW.owner_id;\nEND",
+    # trigger node_ad_beeld
+    "CREATE TRIGGER node_ad_beeld AFTER DELETE ON node\nWHEN OLD.kind = 'file' AND OLD.ftype = 'image' BEGIN\n  INSERT INTO beeld_owner (user_id, gen) SELECT OLD.owner_id, 0\n    WHERE NOT EXISTS (SELECT 1 FROM beeld_owner WHERE user_id = OLD.owner_id)\n      AND EXISTS (SELECT 1 FROM \"user\" WHERE id = OLD.owner_id);\n  UPDATE beeld_owner SET gen = gen + 1 WHERE user_id = OLD.owner_id;\nEND",
 )
 
 if __name__ == "__main__":
