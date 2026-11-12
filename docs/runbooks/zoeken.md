@@ -6,8 +6,8 @@ database zelf (triggers) en werkt meteen. De rest komt op de achtergrond: de inh
 documenten, de tekst van scans, de plek, camera en hash van foto's. Wat 0.8.0 is en hoe je
 bijwerkt, staat in `infra/single/README.md` ("Bijwerken naar 0.8.0 (zoeken en foto's)").
 Dit runbook gaat over wat het script doet, de reservekopie, de plaatsnamen, de stand lezen, de
-wekelijkse controle, de index herbouwen, zoeken meten, zoeken naast media en office meten, en
-terug naar 0.7.1.
+wekelijkse controle, de index herbouwen, zoeken meten, zoeken naast media en office meten,
+terug naar 0.8.0 van `59e0250` en terug naar 0.7.1.
 
 Alles hieronder gebeurt in de Console van de container (de LXC), als root. `dc` is de functie uit
 de README (Handige commando's): `docker compose` met precies de bestanden van het
@@ -58,7 +58,9 @@ Hieronder heet dat kortweg "het script"; een instelling zet je vóór `bash`, zo
 Vóór elke update maakt het script een kopie van de database:
 `$DATA_ROOT/backup/platform-<schemaversie>-<tijd>.db`, bijvoorbeeld
 `platform-0009-20261109T201502.123Z.db` (de tijd in UTC). De schemaversie is de alembic-head van
-de database op dat moment: `0009` voor 0.7.1, `0010` voor 0.8.0.
+de database op dat moment: `0009` voor 0.7.1, `0010` voor 0.8.0 tot en met `59e0250`, en `0012`
+voor de branch daarna (met de tabellen voor gezichten en zoeken op beeld, die nog uit staan; zie
+"Terug naar 0.8.0 van `59e0250`").
 
 - **Hoe.** Met `sqlite3.Connection.backup`, terwijl de app draait: de kopie klopt, ook als er
   net iemand iets opslaat. Het script draait daarvoor `api/app/backup.py` van de nieuwe code, met
@@ -71,12 +73,14 @@ de database op dat moment: `0009` voor 0.7.1, `0010` voor 0.8.0.
   met accounts, delingen en de geheimen van 2FA: daarom rechten 600 (de map 700), van de gebruiker
   van de app, en nooit in een log. Bewaar een kopie die je ergens anders neerzet, net zo afgeschermd
   als de `.env`.
-- **Welke blijven.** Per schemaversie de nieuwste. Een tweede run op 0.8.0 vervangt dus de vorige
-  kopie van `0010`, maar de laatste kopie van `0009` (van vóór de migratie) blijft altijd staan.
-  Bestanden in de map die niet zo heten, raakt het script niet aan. Ruimte: reken op twee keer de
-  grootte van `platform.db`. Die kopie van `0009` is van de dag van de update: wat daarna
-  veranderde, staat er niet in. Wie 0.8.0 vers installeerde, heeft er geen. "Terug naar 0.7.1"
-  (hieronder) maakt daarom eerst een verse kopie van `0010` (review golf 4, uitrol F5).
+- **Welke blijven.** Per schemaversie de nieuwste. Een tweede run op de branch vervangt dus de
+  vorige kopie van `0012`, maar de laatste kopie van `0009` (van vóór de migratie) en die van
+  `0010` blijven altijd staan. Bestanden in de map die niet zo heten, raakt het script niet aan.
+  Ruimte: per kopie de grootte van `platform.db`, en er staan er hooguit drie (`0009`, `0010` en
+  `0012`). Die kopie van `0009` is van de dag van de update: wat daarna veranderde, staat er niet
+  in. Wie 0.8.0 vers installeerde, heeft er geen. "Terug naar 0.8.0" en "Terug naar 0.7.1"
+  (hieronder) maken daarom eerst een verse kopie van `0012` (review golf 4, uitrol F5; review A0,
+  uitrol U2).
 - **Mislukt.** Dan is er geen kopie (ook geen `.part`), staat de melding boven de regel "De
   reservekopie van de database lukte niet", en stopt het script. De app draait zoals hij draaide.
   Bijvoorbeeld een volle schijf (`df -h "$DATA_ROOT"`), of iets anders op de plek van de map
@@ -111,8 +115,8 @@ install -m 600 -o 10001 -g 10001 backup/platform-0009-<tijd>.db platform.db
 Kies bij `install` de kopie die je wilt (de tijd staat in de naam). Daarna het script van de versie
 die bij de kopie hoort. Bij een kopie van `0009` is dat het script van 0.7.1: de eerste drie regels
 en de laatste van "Terug naar 0.7.1" (hieronder); `dc stop`, de kopie en de downgrade sla je over,
-want de app staat al stil en de kopie staat al op 0009. Bij een kopie van `0010` is het het gewone
-script.
+want de app staat al stil en de kopie staat al op 0009. Bij een kopie van `0010` of `0012` is het
+het gewone script; dat zet een kopie van `0010` bij de start weer op `0012`.
 Gezichten en beeld rekent de app daarna opnieuw; de index van zoeken staat gewoon in de kopie.
 
 ## Plaatsnamen
@@ -399,6 +403,59 @@ op `niet geslaagd` (exitcode 1): de andere poorten staan er wel. Nog niet in dez
 container `analyse` (gezichten en beeld) en de beeldvraag. Gezichten staan gepland voor 0.8.1;
 zoeken op beeld ook, maar dat kan naar een eigen fase 6b schuiven.
 
+## Terug naar 0.8.0 van `59e0250`
+
+De versie heet nog 0.8.0, maar de branch heeft sinds 12 november ook de basis voor gezichten en
+zoeken op beeld (A0: migratie 0011 en 0012, en de container `analyse`, die standaard uit staat).
+Werkt de branch sindsdien niet goed, ga dan eerst hierheen terug en niet naar 0.7.1: zoeken,
+plaatsnamen, duplicaten, personen en slimme albums blijven. Het zijn deze commando's, in deze
+volgorde, met de volledige commit van 0.8.0 (`59e0250`, de laatste vóór A0):
+
+```bash
+git -C /opt/platform/src fetch -q origin
+git -C /opt/platform/src cat-file -e '59e0250ba63d31c41b92f7ec8430446810db8a74^{commit}' && echo "goed: 0.8.0 is er"
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/59e0250ba63d31c41b92f7ec8430446810db8a74/infra/single/install.sh -o /root/platform-install-0.8.0.sh && echo "goed: het script is er"
+dc stop platform media
+dc run --rm --no-deps platform python -m app.cli db-backup
+dc run --rm --no-deps platform python -m app.cli db-downgrade 0010
+PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=59e0250ba63d31c41b92f7ec8430446810db8a74 bash < /root/platform-install-0.8.0.sh
+```
+
+Per stap (zoals bij 0.7.1 hieronder):
+
+1. **Kijken of 0.8.0 er is, en het script in een bestand, vóór je iets stopt.** Zeggen de tweede
+   en de derde regel niet allebei "goed", stop dan.
+2. **Stoppen** (`dc stop platform media`).
+3. **Een verse kopie** met het image van nu. Hij zegt
+   `De reservekopie staat in /data/backup/platform-0012-<tijd>.db (… MB).` Zegt hij iets anders,
+   stop dan: zonder deze kopie geen downgrade.
+4. **Het schema terug naar `0010`** met het image van nu, want alleen dat kent 0011 en 0012.
+   `db-downgrade` zegt wat er weggaat:
+
+   > De beeldindex gaat weg. Je foto's blijven.
+   > De gezichten gaan weg: wat de analyse vond, met de voorstellen en de groepen, en wie welk
+   > bestand uploadde. Je foto's blijven.
+
+   en vraagt om "ja". Stond de analyse nooit aan, dan zijn er geen gezichten en geen beeldindex;
+   weg is dan alleen wie welk bestand uploadde. Aan het eind: `De database staat nu op revisie
+   0010.` Zegt het daarna `De WAL is niet leeg: …` (exitcode 3), dan is het schema wel terug, maar
+   had nog iets de database open, en kan wat net gewist is nog in `platform.db-wal` staan. Kijk
+   met `docker ps` of platform en media echt stilstaan, en draai dan
+   `dc run --rm --no-deps platform python -m app.cli db-checkpoint` tot het `De WAL is leeg.` zegt.
+   Zegt `db-downgrade` iets anders, stop dan, zet de kopie van stap 3 terug
+   (`backup/platform-0012-<tijd>.db`, zie "Een kopie terugzetten" hierboven) en draai het gewone
+   script van de branch.
+5. **0.8.0 installeren** met het script van `59e0250`. Het maakt eerst nog een kopie (nu van
+   `0010`; die vervangt de kopie van `0010` van de update naar de branch, en die van `0012` uit
+   stap 3 blijft), bouwt het image van 0.8.0 en start het.
+
+Wat blijft: alles van 0.8.0. Wat weg is: wie welk bestand uploadde, en de gezichten en de
+beeldindex als de analyse aan stond.
+
+**Weer vooruit.** Het script van de branch, zonder `PLATFORM_SRC_REF` (hetzelfde commando als bij
+"Terug naar 0.7.1" hieronder). De database gaat bij de start weer naar `0012`. Wie welk bestand
+uploadde, komt niet terug: een bestand zonder die regel telt als door de eigenaar geüpload.
+
 ## Terug naar 0.7.1
 
 Alleen als 0.8.0 niet goed werkt. Liever niet: wat in fase 6 bijkwam, is daarna weg. Het zijn deze
@@ -423,23 +480,29 @@ Per stap:
    script met het oude image. In een bestand, omdat `curl … | bash` met een adres dat er niet is
    één regel van curl geeft en verder niets doet; dan stond de app al stil met het schema terug.
 2. **Stoppen** (`dc stop platform media`), zodat niets meer naar de nieuwe tabellen schrijft.
-3. **Een verse kopie** van de database zoals hij nu is, op `0010`, met het image van nu
+3. **Een verse kopie** van de database zoals hij nu is, op `0012`, met het image van nu
    (`db-backup`, dezelfde kopie als die van het script). Hij zegt
-   `De reservekopie staat in /data/backup/platform-0010-<tijd>.db (… MB).` (in de Console is dat
+   `De reservekopie staat in /data/backup/platform-0012-<tijd>.db (… MB).` (in de Console is dat
    `$DATA_ROOT/backup/…`). Zegt hij iets anders, stop dan: zonder deze kopie geen downgrade. Hij
-   vervangt de vorige kopie van `0010`; die van `0009` blijft.
-4. **Het schema terug** met het image van nu, want alleen dat kent 0010. `db-downgrade` vraagt
-   eerst, als die er zijn, naar album-items die uit een regel van een slim album komen en niet
-   gedeeld worden: in 0.7.1 deelt een album elk item, dus die items zouden ineens gedeeld zijn.
-   Enter of "ja" haalt ze eerst uit het album (de standaard). Dan zegt het wat er weggaat:
+   vervangt de vorige kopie van `0012`; die van `0009` en `0010` blijven.
+4. **Het schema terug** met het image van nu, want alleen dat kent 0010, 0011 en 0012.
+   `db-downgrade` vraagt eerst, als die er zijn, naar album-items die uit een regel van een slim
+   album komen en niet gedeeld worden: in 0.7.1 deelt een album elk item, dus die items zouden
+   ineens gedeeld zijn. Enter of "ja" haalt ze eerst uit het album (de standaard). Dan zegt het
+   wat er weggaat:
 
+   > De beeldindex gaat weg. Je foto's blijven.
+   > De gezichten gaan weg: wat de analyse vond, met de voorstellen en de groepen, en wie welk
+   > bestand uploadde. Je foto's blijven.
    > Weg zijn daarna: de zoekindex, de plekken van foto's, de hashes voor duplicaten, de personen
    > die je met de hand benoemde en de regels van slimme albums. Bestanden, delingen en albums
    > blijven, en zoeken op naam werkt gewoon.
 
    en vraagt om "ja". Alles anders dan "ja" doet niets. Aan het eind:
-   `De database staat nu op revisie 0009.` Zegt het iets anders, stop dan, en zet de kopie van
-   stap 3 terug (`backup/platform-0010-<tijd>.db`, zie "Een kopie terugzetten" hierboven). Blijf
+   `De database staat nu op revisie 0009.` Zegt het daarna `De WAL is niet leeg: …` (exitcode 3),
+   draai dan eerst `dc run --rm --no-deps platform python -m app.cli db-checkpoint`, zoals bij
+   0.8.0 hierboven. Zegt `db-downgrade` iets anders, stop dan, en zet de kopie van
+   stap 3 terug (`backup/platform-0012-<tijd>.db`, zie "Een kopie terugzetten" hierboven). Blijf
    dan op 0.8.0: het gewone script van de branch ("Weer vooruit" hieronder), niet dat van 0.7.1.
    Zo ben je niets kwijt.
 5. **0.7.1 installeren** met het script van 0.7.1. Het bouwt het image van 0.7.1 en start het.
@@ -455,9 +518,10 @@ de kaart, duplicaten, personen en de regels van slimme albums.
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
 ```
 
-Het maakt eerst een nieuwe kopie van `0009` (die vervangt de vorige), migreert weer naar 0010, en
-de achtergrond vult de index, de plekken en de hashes opnieuw (zie de tabel bij "De stand lezen").
-Personen die je met de hand benoemde, en de regels van slimme albums, komen niet terug.
+Het maakt eerst een nieuwe kopie van `0009` (die vervangt de vorige), migreert weer naar `0012`,
+en de achtergrond vult de index, de plekken en de hashes opnieuw (zie de tabel bij "De stand
+lezen"). Personen die je met de hand benoemde, de regels van slimme albums en wie welk bestand
+uploadde, komen niet terug.
 
 De CI-job `infra` doet deze weg elke push echt (`infra/single/tests/test_install_search.sh
 --stappen`, stap 6 en 7): met het script van `80d5bb8`, `db-downgrade 0009` en weer vooruit.

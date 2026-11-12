@@ -71,8 +71,9 @@ ouder, kijk dan ook bij "Van 0.7.0 of 0.6.0" hieronder):
   `/opt/platform/data/platform/backup/platform-0009-<tijd>.db` (rechten 600). Lukt die
   niet, dan stopt het script daar: er is dan nog niets veranderd, en de app draait zoals hij
   draaide;
-- het bouwt het nieuwe platform en start het; de database krijgt bij de start migratie 0010
-  (seconden). Zoeken op naam werkt meteen. De inhoud van documenten, de plekken en de hashes van
+- het bouwt het nieuwe platform en start het; de database krijgt bij de start migratie 0010 tot en
+  met 0012 (seconden; 0011 en 0012 zijn de tabellen voor gezichten en zoeken op beeld, die nog uit
+  staan). Zoeken op naam werkt meteen. De inhoud van documenten, de plekken en de hashes van
   foto's komen op de achtergrond (voor 20.000 documenten en 55.000 foto's ±15–20 minuten werk
   voor één core, geschat); de stand staat op `/beheer` → **Zoeken en foto's**. Gescande pagina's
   in PDF's leest OCR daarna ook op de achtergrond, na de tekst; dat gaat langzamer (zie
@@ -91,6 +92,30 @@ nooit weg door een volgende update. De kopie heeft geen gezichten en geen beeld 
 na het terugzetten opnieuw), maar verder de hele database: bewaar hem net zo afgeschermd als de
 `.env`. Hoe je hem terugzet, de index herbouwt en zoeken meet: `docs/runbooks/zoeken.md`.
 
+**Terug naar 0.8.0 van `59e0250`.** De versie heet nog 0.8.0, maar de branch heeft sinds 12
+november ook de basis voor gezichten en zoeken op beeld (migratie 0011 en 0012; de analyse staat
+uit). Werkt de branch sindsdien niet goed, ga dan eerst hierheen terug en niet naar 0.7.1: alles
+van 0.8.0 blijft. Het zijn deze commando's, in deze volgorde en met de volledige commit van 0.8.0
+(`dc` uit Handige commando's hieronder; de uitleg per stap staat in `docs/runbooks/zoeken.md`,
+"Terug naar 0.8.0 van `59e0250`"):
+
+```bash
+git -C /opt/platform/src fetch -q origin
+git -C /opt/platform/src cat-file -e '59e0250ba63d31c41b92f7ec8430446810db8a74^{commit}' && echo "goed: 0.8.0 is er"
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/59e0250ba63d31c41b92f7ec8430446810db8a74/infra/single/install.sh -o /root/platform-install-0.8.0.sh && echo "goed: het script is er"
+dc stop platform media
+dc run --rm --no-deps platform python -m app.cli db-backup
+dc run --rm --no-deps platform python -m app.cli db-downgrade 0010
+PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=59e0250ba63d31c41b92f7ec8430446810db8a74 bash < /root/platform-install-0.8.0.sh
+```
+
+Zeggen de tweede en de derde regel niet allebei "goed", stop dan. `db-backup` maakt eerst een
+verse kopie (`platform-0012-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de beeldindex, de
+gezichten en wie welk bestand uploadde; stond de analyse nooit aan, dan alleen dat laatste) en
+vraagt om "ja". Eindigt het met `De WAL is niet leeg` (exitcode 3), draai dan
+`dc run --rm --no-deps platform python -m app.cli db-checkpoint` tot het `De WAL is leeg.` zegt.
+Weer vooruit: het commando van de branch hieronder, zonder `PLATFORM_SRC_REF`.
+
 **Terug naar 0.7.1.** Alleen als 0.8.0 niet goed werkt. Het zijn deze commando's, in deze
 volgorde en met de volledige commit van 0.7.1 (`dc` uit Handige commando's hieronder; de uitleg
 per stap staat in `docs/runbooks/zoeken.md`, "Terug naar 0.7.1"):
@@ -108,9 +133,10 @@ PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=80d5bb8ce9c
 Zeggen de tweede en de derde regel niet allebei "goed", stop dan: de rest pas als de commit en het
 script er zijn. Het script komt van de commit van 0.7.1 zelf, niet van de branch: zo draait het
 oude script met het oude image. `db-backup` maakt eerst een verse kopie van de database zoals hij
-nu is (`platform-0010-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de zoekindex, de plekken
-van foto's, de hashes voor duplicaten, de personen die je met de hand benoemde en de regels van
-slimme albums) en vraagt om "ja"; bestanden, delingen en albums blijven. Lukt de downgrade niet,
+nu is (`platform-0012-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de beeldindex, de
+gezichten, wie welk bestand uploadde, de zoekindex, de plekken van foto's, de hashes voor
+duplicaten, de personen die je met de hand benoemde en de regels van slimme albums) en vraagt om
+"ja"; bestanden, delingen en albums blijven. Lukt de downgrade niet,
 zet dan die verse kopie terug en blijf op 0.8.0 (`docs/runbooks/zoeken.md`). Weer vooruit: het
 commando van de branch, zonder `PLATFORM_SRC_REF`:
 

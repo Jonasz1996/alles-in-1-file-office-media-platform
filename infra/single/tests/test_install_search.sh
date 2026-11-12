@@ -30,6 +30,9 @@
 # - de eindtekst van §3.10 stap 7, met de plaatsnamen en de reservekopie;
 # - de weg terug naar 0.7.1 en weer vooruit in §3.10, infra/single/README.md en
 #   docs/runbooks/zoeken.md: precies de commando's, in die volgorde, met de volledige hash;
+# - de weg terug naar 0.8.0 van 59e0250 (head 0010) in de README en het runbook, net zo; in beide
+#   blokken de kopie van de head van nu, en in het runbook precies wat db-downgrade zegt dat
+#   weggaat (de teksten van api/app/cli.py);
 # - de voorcontrole van --stappen (met een nep-docker; er wordt niets gebouwd): een werkmap die
 #   de test weigert, blijft zoals hij was, en het blok Samenvatting staat altijd als laatste.
 #
@@ -47,6 +50,9 @@ install_sh=$here/../install.sh
 # verschillen van 245d87a, de laatste commit met code van 0.7.1.
 ROLLBACK_SHA=80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1
 ROLLBACK_HEAD=0009
+# De weg terug naar 0.8.0 zelf: de laatste commit vóór A0, met migratie 0010 (review A0, uitrol U2)
+BACK080_SHA=59e0250ba63d31c41b92f7ec8430446810db8a74
+BACK080_HEAD=0010
 BRANCH_NAME=claude/stappenplan-uitwerken-lu4uv3
 SEARCH_LINE="Zoeken op naam werkt meteen. De inhoud wordt nu op de achtergrond gelezen; volg het op /beheer → Zoeken en foto's."
 
@@ -927,56 +933,119 @@ ALS_ROOT
   # Het script komt van de commit zelf (niet van de branch: dan draait het oude script met het
   # oude image), en in een bestand vóór er iets stopt. Daarna weer vooruit met de branch.
   echo
-  echo "== terug naar 0.7.1 en weer vooruit: de commando's van §3.10 in het ontwerp, de README en het runbook"
-  out=$(python3 -I - "$ROLLBACK_SHA" "$ROLLBACK_HEAD" "$BRANCH_NAME" "$top/docs/fase-6/bouwontwerp.md" \
-    "$here/../README.md" "$top/docs/runbooks/zoeken.md" <<'PY'
+  echo "== terug naar 0.8.0 en 0.7.1 en weer vooruit: de commando's van §3.10 in het ontwerp, de README en het runbook"
+  out=$(python3 -I - "$ROLLBACK_SHA" "$ROLLBACK_HEAD" "$BACK080_SHA" "$BACK080_HEAD" "$BRANCH_NAME" "$top" <<'PY'
+import ast
+import pathlib
 import re
 import sys
 
-SHA, HEAD, BRANCH = sys.argv[1:4]
+SHA, HEAD, SHA80, HEAD80, BRANCH, TOP = sys.argv[1:7]
+top = pathlib.Path(TOP)
 RAW = "https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform"
-FILE = "/root/platform-install-0.7.1.sh"
-WANT = [
-    ("git fetch", re.escape("git -C /opt/platform/src fetch -q origin")),
-    ("cat-file met de hash", re.escape("git -C /opt/platform/src cat-file -e '%s^{commit}' && echo " % SHA)),
-    ("curl van de commit -o " + FILE, re.escape("curl -fsSL %s/%s/infra/single/install.sh -o %s && echo " % (RAW, SHA, FILE))),
-    ("dc stop", re.escape("dc stop platform media")),
-    # Eerst een verse kopie op de head van nu: lukt de downgrade niet, dan is die het vangnet
-    # zonder verlies (review golf 4, uitrol F5)
-    ("db-backup", re.escape("dc run --rm --no-deps platform python -m app.cli db-backup")),
-    ("db-downgrade " + HEAD, re.escape("dc run --rm --no-deps platform python -m app.cli db-downgrade %s" % HEAD)),
-    ("bash < " + FILE, re.escape("PLATFORM_BRANCH=%s PLATFORM_SRC_REF=%s bash < %s" % (BRANCH, SHA, FILE))),
-    (
-        "weer vooruit met de branch",
-        re.escape("curl -fsSL %s/%s/infra/single/install.sh | PLATFORM_BRANCH=%s bash" % (RAW, BRANCH, BRANCH)),
-    ),
-]
-problems = []
-for path in sys.argv[4:]:
-    name = path.rsplit("/", 1)[-1]
-    text = open(path, encoding="utf-8").read()
-    if name == "bouwontwerp.md":  # alleen §3.10
-        start = text.find("\n### 3.10 ")
-        end = text.find("\n### 3.11 ", start)
-        if start < 0 or end < 0:
-            problems.append("bouwontwerp.md: geen §3.10")
-            continue
-        text = text[start:end]
+# De head van nu: de nieuwste migratie. db-backup noemt zijn kopie daarnaar
+NOW = max(p.name[:4] for p in (top / "api/migrations/versions").glob("[0-9][0-9][0-9][0-9]_*.py"))
+
+
+def want(sha, head, version):
+    file = "/root/platform-install-%s.sh" % version
+    return [
+        ("git fetch", re.escape("git -C /opt/platform/src fetch -q origin")),
+        ("cat-file met de hash", re.escape("git -C /opt/platform/src cat-file -e '%s^{commit}' && echo " % sha)),
+        ("curl van de commit -o " + file, re.escape("curl -fsSL %s/%s/infra/single/install.sh -o %s && echo " % (RAW, sha, file))),
+        ("dc stop", re.escape("dc stop platform media")),
+        # Eerst een verse kopie op de head van nu: lukt de downgrade niet, dan is die het vangnet
+        # zonder verlies (review golf 4, uitrol F5)
+        ("db-backup", re.escape("dc run --rm --no-deps platform python -m app.cli db-backup")),
+        ("db-downgrade " + head, re.escape("dc run --rm --no-deps platform python -m app.cli db-downgrade %s" % head)),
+        ("bash < " + file, re.escape("PLATFORM_BRANCH=%s PLATFORM_SRC_REF=%s bash < %s" % (BRANCH, sha, file))),
+    ]
+
+
+FORWARD = (
+    "weer vooruit met de branch",
+    re.escape("curl -fsSL %s/%s/infra/single/install.sh | PLATFORM_BRANCH=%s bash" % (RAW, BRANCH, BRANCH)),
+)
+WANT71 = want(SHA, HEAD, "0.7.1") + [FORWARD]
+WANT80 = want(SHA80, HEAD80, "0.8.0")
+
+# Wat db-downgrade zegt dat weggaat, uit api/app/cli.py zelf (de nieuwste eerst, zoals lost_lines)
+consts = {}
+for node in ast.parse((top / "api/app/cli.py").read_text(encoding="utf-8")).body:
+    if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+        if node.targets[0].id in ("BEELD_LOST", "FACES_LOST", "SEARCH_LOST"):
+            consts[node.targets[0].id] = ast.literal_eval(node.value)
+LOST80 = [consts.get("BEELD_LOST"), consts.get("FACES_LOST")]
+LOST71 = LOST80 + [consts.get("SEARCH_LOST")]
+
+
+def section(text, start, ends):
+    """Van de regel die met start begint tot de eerste regel daarna die met een van ends begint."""
+    lines = text.splitlines()
+    at = [i for i, line in enumerate(lines) if line.startswith(start)]
+    if len(at) != 1:
+        return None
+    rest = [i for i in range(at[0] + 1, len(lines)) if lines[i].startswith(ends)]
+    return "\n".join(lines[at[0] : rest[0] if rest else len(lines)])
+
+
+def in_order(name, text, wanted):
     lines = [line.strip() for line in text.splitlines()]
     at = -1
-    for label, pat in WANT:
+    for label, pat in wanted:
         hits = [i for i, line in enumerate(lines) if i > at and re.match(pat + "(?:$| |(?<=echo ))", line)]
         if not hits:
             problems.append("%s mist (of niet in volgorde): %s" % (name, label))
             continue
         at = hits[0]
-    for i, line in enumerate(lines):
+
+
+def quoted(text):
+    """De regels van de citaten (> …) achter elkaar, met één spatie."""
+    parts = [line.strip()[1:] for line in text.splitlines() if line.strip().startswith(">")]
+    return " ".join(" ".join(parts).split())
+
+
+problems = []
+design = (top / "docs/fase-6/bouwontwerp.md").read_text(encoding="utf-8")
+start = design.find("\n### 3.10 ")
+end = design.find("\n### 3.11 ", start)
+if start < 0 or end < 0:
+    problems.append("bouwontwerp.md: geen §3.10")
+else:
+    in_order("bouwontwerp.md §3.10", design[start:end], WANT71)
+if None in LOST71:
+    problems.append("api/app/cli.py: BEELD_LOST, FACES_LOST of SEARCH_LOST niet gevonden")
+docs = {
+    "README.md": ((top / "infra/single/README.md"), "**Terug naar 0.8.0 van `59e0250`.**", "**Terug naar 0.7.1.**", ("## ", "**Terug naar ")),
+    "zoeken.md": ((top / "docs/runbooks/zoeken.md"), "## Terug naar 0.8.0 van `59e0250`", "## Terug naar 0.7.1", ("## ",)),
+}
+for name, (path, mark80, mark71, ends) in docs.items():
+    text = path.read_text(encoding="utf-8")
+    for i, line in enumerate(text.splitlines()):
         if "PLATFORM_SRC_REF=" in line and "| " in line and "bash" in line.split("PLATFORM_SRC_REF=", 1)[1]:
             problems.append("%s r. %d: PLATFORM_SRC_REF met curl | bash, niet met het bestand" % (name, i + 1))
+    for version, mark, wanted, lost in (("0.8.0", mark80, WANT80, LOST80), ("0.7.1", mark71, WANT71, LOST71)):
+        part = section(text, mark, ends)
+        label = "%s, terug naar %s" % (name, version)
+        if part is None:
+            problems.append("%s: geen blok %r" % (name, mark))
+            continue
+        in_order(label, part, wanted)
+        # De verse kopie van db-backup heet naar de head van nu, niet meer naar 0010 (review A0, uitrol U2)
+        if "platform-%s-<tijd>.db" % NOW not in part:
+            problems.append("%s: noemt de kopie platform-%s-<tijd>.db niet" % (label, NOW))
+        if version == "0.7.1" and NOW != "0010" and "platform-0010-<tijd>.db" in part:
+            problems.append("%s: noemt nog platform-0010-<tijd>.db" % label)
+        if name == "zoeken.md":
+            if quoted(part) != " ".join(lost):
+                problems.append("%s: het citaat is niet precies wat db-downgrade zegt" % label)
+            if "python -m app.cli db-checkpoint" not in part:
+                problems.append("%s: noemt db-checkpoint niet (exitcode 3)" % label)
 print("; ".join(problems) or "ok")
 PY
   ) || out="(geen uitvoer)"
-  check "de commando's van §3.10 met de volledige hash, in het ontwerp, de README en het runbook ($out)" test "$out" = ok
+  check "de commando's terug naar 0.8.0 en 0.7.1 met de volledige hash, in het ontwerp, de README en het runbook ($out)" test "$out" = ok
   check "§3.10: de downgrade naar $ROLLBACK_HEAD, niet meer 0008" eval '! sed -n "/^### 3.10 /,/^### 3.11 /p" "$top/docs/fase-6/bouwontwerp.md" | grep -qE "db-downgrade 0008|platform-0008-"'
 
   # De trap van --stappen staat vóór de voorcontrole (de samenvatting komt er altijd) en haalt
@@ -1707,8 +1776,10 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
   fi
   # Zonder terminal (-T, "ja" uit een pipe) komt de Enter van het antwoord niet in de uitvoer:
   # de uitkomst staat op de regel van de vraag
+  # Van de head van nu (0012) gaan ook de beeldindex en de gezichten weg (review A0, uitrol U2)
   check "6.4: het commando zegt wat weg is, vraagt om \"ja\", en zegt dat het schema op $ROLLBACK_HEAD staat" eval \
-    'grep -qF "Weg zijn daarna: de zoekindex" "$WORK/logs/6-downgrade.log" && grep -qxF "Typ \"ja\" om door te gaan: De database staat nu op revisie $ROLLBACK_HEAD." "$WORK/logs/6-downgrade.log"'
+    'grep -qxF "De beeldindex gaat weg. Je foto'"'"'s blijven." "$WORK/logs/6-downgrade.log" && grep -qF "De gezichten gaan weg: " "$WORK/logs/6-downgrade.log" &&
+      grep -qF "Weg zijn daarna: de zoekindex" "$WORK/logs/6-downgrade.log" && grep -qxF "Typ \"ja\" om door te gaan: De database staat nu op revisie $ROLLBACK_HEAD." "$WORK/logs/6-downgrade.log"'
   step 6-terug "$OLD_SH" PLATFORM_BRANCH=installatietest-van PLATFORM_SRC_REF="$FROM" || fout "6.5: het script van 0.7.1 gaf een fout"
   check "6: de app draait" app_up
   check "6: de broncode staat op ${FROM:0:12}" test "$(src_head)" = "$(git -C "$WORK/repo.git" rev-parse "$FROM^{commit}")"
