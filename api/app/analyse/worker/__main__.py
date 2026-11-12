@@ -76,7 +76,11 @@ async def serve(worker: Worker) -> int:
         for sig in STOP_SIGNALS:
             loop.remove_signal_handler(sig)
         raise
-    log.info("analyse-worker luistert (%s)", "lokaal" if not worker.config.sandbox else "container")
+    if isinstance(worker, RefusingWorker):
+        where = "weigert elke hello: de afscherming faalt"
+    else:
+        where = "container" if worker.config.sandbox else "lokaal"
+    log.info("analyse-worker luistert (%s)", where)
     stopped = asyncio.ensure_future(stop.wait())
     try:
         await asyncio.wait({stopped, worker.accepting}, return_when=asyncio.FIRST_COMPLETED)
