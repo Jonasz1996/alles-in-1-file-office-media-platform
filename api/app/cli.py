@@ -88,6 +88,9 @@ Met --wait wacht hij hooguit zoveel seconden tot de stand ok is (install.sh, na 
 de container) en is de exitcode altijd 0: de regel zegt wat er is, zoals media-status. Zonder
 --wait is de exitcode 1 bij down en models_missing. Staat de analyse uit, dan raakt hij de
 socket niet aan.
+
+analyse-bench en analyse-kwaliteit (X2), en beeld-bench, beeld-kwaliteit en beeld-status (X3)
+zijn nog stubs (§3.5): ze zeggen welk pakket ze bouwt, met exitcode 1.
 """
 
 import argparse
@@ -461,10 +464,19 @@ def _backup(settings: Settings) -> int:
 # De commando's van zoeken en foto's die hun pakket nog moet bouwen (fase 6, §3.5); geo-load
 # is gebouwd (Z3, app/geo/load.py)
 SEARCH_STUBS: dict[str, tuple[str, str]] = {}
+# De commando's van gezichten (X2) en zoeken op beeld (X3), als stub van A0 (§3.5); wie er een
+# bouwt, haalt hem hier weg. analyse-status is gebouwd (A0)
+ANALYSE_STUBS: dict[str, tuple[str, str]] = {
+    "analyse-bench": ("X2", "gezichten op deze CPU meten"),
+    "analyse-kwaliteit": ("X2b", "de kwaliteit van gezichten meten"),
+    "beeld-bench": ("X3", "zoeken op beeld op deze CPU meten"),
+    "beeld-kwaliteit": ("X3", "de kwaliteit van zoeken op beeld meten"),
+    "beeld-status": ("X3", "de stand van zoeken op beeld"),
+}
 
 
 def _stub(name: str) -> int:
-    package, what = SEARCH_STUBS[name]
+    package, what = {**SEARCH_STUBS, **ANALYSE_STUBS}[name]
     print(f"{name} ({what}) is nog niet gebouwd ({package}).", file=sys.stderr)
     return 1
 
@@ -646,7 +658,7 @@ def main(argv: list[str] | None = None) -> int:
     search_bench.parsers(commands)
     benchlos.parsers(commands)
     geo_load.parsers(commands)
-    for name, (package, what) in SEARCH_STUBS.items():
+    for name, (package, what) in {**SEARCH_STUBS, **ANALYSE_STUBS}.items():
         commands.add_parser(name, help=f"{what} (nog niet gebouwd, {package})")
     _media_parsers(commands)
     args = parser.parse_args(argv)
@@ -659,7 +671,7 @@ def main(argv: list[str] | None = None) -> int:
         return benchlos.run(settings, args)
     if args.command in geo_load.COMMANDS:
         return geo_load.run(settings, args)
-    if args.command in SEARCH_STUBS:
+    if args.command in SEARCH_STUBS or args.command in ANALYSE_STUBS:
         return _stub(args.command)
     if args.command == "db-backup":
         return _backup(settings)
