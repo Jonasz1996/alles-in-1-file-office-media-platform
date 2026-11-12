@@ -536,3 +536,81 @@ def _driver(fake: FakeAnalyseWorker, settings):
             return settings
 
     return D()
+
+
+# --- wat de worker in caps zegt, komt in het log en in /beheer (review A0, veilig F3) ---
+
+GOEDE_NAMEN = ["face_detection_yunet_2026may.onnx", "siglip2/vision.onnx", "a-b_c.1"]
+SLECHTE_NAMEN = [
+    "a.onnx\nanalyse bereikbaar (was down)",  # een tweede regel in het log
+    "a.onnx\r",
+    "a.onnx\n",
+    "a\x1b[31m.onnx",
+    "a b.onnx",
+    "",
+    "/a.onnx",
+    "a//b.onnx",
+    "x" * 201,
+]
+
+
+@pytest.mark.parametrize("name", GOEDE_NAMEN)
+def test_een_modelnaam_als_in_models_lock(name):
+    caps = wire.CapsData.model_validate(
+        {
+            "models": [{"name": name, "state": "ontbreekt"}],
+            "beeld": {"model": name, "dim": 768, "scale": 1.0, "bias": 0.0},
+        }
+    )
+    assert caps.missing() == [name] and caps.beeld.model == name
+
+
+@pytest.mark.parametrize("name", SLECHTE_NAMEN)
+def test_een_modelnaam_met_een_regeleinde_of_stuurteken_klopt_niet(name):
+    with pytest.raises(ValidationError):
+        wire.CapsData.model_validate({"models": [{"name": name, "state": "ontbreekt"}]})
+    with pytest.raises(ValidationError):
+        wire.CapsData.model_validate(
+            {"beeld": {"model": name, "dim": 768, "scale": 1.0, "bias": 0.0}}
+        )
+
+
+def test_caps_heeft_grenzen():
+    model = {"name": "a.onnx", "state": "ok"}
+    wire.CapsData.model_validate({"models": [model] * wire.CAPS_MODELS_MAX})
+    with pytest.raises(ValidationError):
+        wire.CapsData.model_validate({"models": [model] * (wire.CAPS_MODELS_MAX + 1)})
+    wire.CapsData.model_validate({"built": [op.value for op in Op]})
+    for built in (["caps\nok"], ["Caps"], ["x" * 33], ["caps"] * (wire.CAPS_BUILT_MAX + 1)):
+        with pytest.raises(ValidationError):
+            wire.CapsData.model_validate({"built": built})
+
+
+async def test_een_valse_modelnaam_komt_niet_in_het_log(fake, settings_fake, caplog):
+    """Een worker die een regel in het log wil zetten: caps klopt niet, down/bad_answer, en het
+    log heeft één regel zonder die naam."""
+    from app.analyse import monitor
+
+    fake.caps = lambda: {
+        "models": [{"name": "a.onnx\nanalyse bereikbaar (was down)", "state": "ontbreekt"}],
+        "built": ["caps", "cancel"],
+    }
+    caplog.set_level("INFO", logger="platform.analyse")
+    found = await monitor.check(settings_fake)
+    assert (found.state, found.reason) == ("down", "bad_answer")
+    monitor._set(found)
+    try:
+        lines = [r.getMessage() for r in caplog.records if r.name == "platform.analyse"]
+        assert lines == ["analyse down: " + monitor.TEXT["bad_answer"]]
+    finally:
+        monitor._set_quiet(monitor.OFF)
+
+
+def test_een_fout_van_de_worker_is_een_regel_zonder_stuurtekens():
+    with pytest.raises(client.AnalyseFailed) as exc:
+        client._raise({"ev": "done", "code": "x\ny", "detail": "a\nb\x1b[31m c"}, Op.FACES)
+    assert (exc.value.code, exc.value.detail) == ("internal", "a b [31m c")
+    assert "\n" not in str(exc.value) and "\x1b" not in str(exc.value)
+    with pytest.raises(client.AnalyseFailed) as exc:
+        client._raise({"ev": "done", "code": "timeout", "detail": "te laat"}, Op.FACES)
+    assert (exc.value.code, exc.value.detail) == ("timeout", "te laat")

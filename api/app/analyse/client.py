@@ -156,9 +156,20 @@ async def connect(settings: Settings) -> socket.socket:
     return sock
 
 
+_CODES = frozenset(code.value for code in Code)
+
+
+def _plain(text: str) -> str:
+    """Eén regel zonder stuurtekens: de detail van de worker kan in een fout en in het log
+    (review A0, veilig F3)."""
+    return " ".join("".join(c if c.isprintable() else " " for c in text).split())
+
+
 def _raise(message: dict, op: Op) -> None:
     code = str(message.get("code") or Code.INTERNAL.value)
-    detail = str(message.get("detail") or "")[: wire.DETAIL_CHARS]
+    if code not in _CODES:
+        code = Code.INTERNAL.value  # een code die de app niet kent, komt niet in een fout
+    detail = _plain(str(message.get("detail") or "")[: wire.DETAIL_CHARS])
     if code == Code.BUSY:
         child = wire.CHILD[op]
         raise AnalyseBusy(child.value if child else "pid1")

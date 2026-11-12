@@ -50,7 +50,7 @@ import re
 import struct
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -317,19 +317,31 @@ class _Data(BaseModel):
 
 ModelState = Literal["ok", "ontbreekt", "anders"]
 
+# Wat de worker in caps noemt, komt in het log, in /beheer en in analyse-status. Een naam is
+# daarom een pad als in models.lock (lock._name_ok): delen van [A-Za-z0-9._-], gescheiden door
+# één /, nooit een regeleinde, spatie of stuurteken (review A0, veilig F3). Wat er niet aan
+# voldoet, maakt caps ongeldig: dan is de analyse down (bad_answer), zonder de naam.
+MODEL_NAME = r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"
+MODEL_NAME_MAX = 200
+OP_NAME = r"^[a-z_]{1,32}$"  # een opdracht in caps.built (Op, of een die de app nog niet kent)
+CAPS_MODELS_MAX = 64
+CAPS_BUILT_MAX = 32
+
+ModelName = Annotated[str, Field(pattern=MODEL_NAME, max_length=MODEL_NAME_MAX)]
+
 
 class ModelCaps(_Data):
     """Een modelbestand uit models.lock (of de lijst van X3): ok, ontbreekt, of anders (een
     andere grootte of sha256)."""
 
-    name: str
+    name: ModelName
     state: ModelState
 
 
 class BeeldCaps(_Data):
     """Het model van beeld (X3, Keuze 75): naam, dimensie, en logit_scale en logit_bias."""
 
-    model: str
+    model: ModelName
     dim: int = Field(ge=1, le=4096)
     scale: float
     bias: float
@@ -346,8 +358,10 @@ class LimitsCaps(_Data):
 class CapsData(_Data):
     """caps: de modellen, de opdrachten die er zijn, en (X3) het beeldmodel."""
 
-    models: list[ModelCaps] = []
-    built: list[str] = []
+    models: list[ModelCaps] = Field(default=[], max_length=CAPS_MODELS_MAX)
+    built: list[Annotated[str, Field(pattern=OP_NAME)]] = Field(
+        default=[], max_length=CAPS_BUILT_MAX
+    )
     beeld: BeeldCaps | None = None
     limits: LimitsCaps | None = None
 
