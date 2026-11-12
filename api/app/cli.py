@@ -78,6 +78,16 @@ Plaatsnamen en landen (Z3, Keuze 29): places.sqlite bouwen uit de bronnen in geo
 doet het zelf bij de start als hij ontbreekt; exitcode 1 als een bron ontbreekt of niet klopt):
 
     python -m app.cli geo-load [--force]
+
+De container analyse (fase 6, Keuze 59; gezichten en zoeken op beeld):
+
+    python -m app.cli analyse-status [--wait 20]
+
+analyse-status zegt de stand: ok, off, down (met de reden) of models_missing (met de modellen).
+Met --wait wacht hij hooguit zoveel seconden tot de stand ok is (install.sh, na de start van
+de container) en is de exitcode altijd 0: de regel zegt wat er is, zoals media-status. Zonder
+--wait is de exitcode 1 bij down en models_missing. Staat de analyse uit, dan raakt hij de
+socket niet aan.
 """
 
 import argparse
@@ -459,6 +469,28 @@ def _stub(name: str) -> int:
     return 1
 
 
+def _analyse_status(settings: Settings, wait: float) -> int:
+    """analyse-status: de stand van Keuze 59, één regel. Met wait hooguit zoveel seconden
+    opnieuw kijken (elke seconde) tot de stand ok is."""
+    from app.analyse import monitor
+
+    async def run() -> monitor.AnalyseStatus:
+        loop = asyncio.get_running_loop()
+        end = loop.time() + max(wait, 0)
+        while True:
+            found = await monitor.check(settings)
+            if found.state in ("ok", "off") or loop.time() >= end:
+                return found
+            await asyncio.sleep(min(1.0, max(end - loop.time(), 0)))
+
+    found = asyncio.run(run())
+    problem = monitor.analyse_problem(found)
+    print(f"Analyse: {found.state}" + (f" ({problem})" if problem else ""))
+    if wait > 0 or found.state in ("ok", "off"):
+        return 0
+    return 1
+
+
 def _media_failed(exc: HTTPException) -> int:
     detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
     code = detail.get("code")
@@ -607,6 +639,10 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "db-backup", help="een reservekopie van de database maken, terwijl de app draait"
     )
+    analyse = commands.add_parser("analyse-status", help="de stand van de container analyse")
+    analyse.add_argument(
+        "--wait", type=float, default=0.0, help="hooguit zoveel seconden wachten tot hij ok is"
+    )
     search_bench.parsers(commands)
     benchlos.parsers(commands)
     geo_load.parsers(commands)
@@ -633,6 +669,8 @@ def main(argv: list[str] | None = None) -> int:
         return _checkpoint(settings, args.wait)
     if args.command == "previews-recheck":
         return _recheck(settings)
+    if args.command == "analyse-status":
+        return _analyse_status(settings, args.wait)
     action = make_admin if args.command == "make-admin" else reset_2fa
 
     async def run() -> bool:

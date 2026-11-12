@@ -991,6 +991,103 @@ jobs:
           PY
           docker run --rm -i --user root --network none platform-platform:ci python3 -I - \
             < "$RUNNER_TEMP/grootte.py" | tee "$RUNNER_TEMP/tesseract-grootte.txt"
+      # Fase 6, A0 (Keuze 57, K2-09, K2-15): de extra analyse staat in /opt/analyse (0750
+      # root:analyse), nooit in /opt/venv. Voor platform (10001) en media (10002) bestaat numpy niet,
+      # ook niet met /opt/analyse in sys.path; voor analyse (10003) en omzetten (10004) wel, precies
+      # de vijf versies van uv.lock, en ze kunnen er niets schrijven. /opt/analyse is hooguit 160 MB
+      # (X2: het image ≤ +160 MB), zonder kopie van de wheels in de cache van uv. Zonder netwerk
+      - name: analyse in het image, alleen voor 10003 en 10004 (A0)
+        if: ${{ !cancelled() && matrix.name == 'platform' }}
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/analyse.py" << 'PY'
+          import grp, importlib, importlib.util, os, pwd, stat, sys
+
+          WIE = sys.argv[1]
+          MAP = "/opt/analyse"
+          VIJF = {"flatbuffers": "25.12.19", "google.protobuf": "7.36.2", "numpy": "2.5.4",
+                  "onnxruntime": "1.31.1", "packaging": "26.3"}
+          POORT = 160 * 10**6  # bytes (X2: het image is hooguit 160 MB groter)
+          UID = {"root": 0, "platform": 10001, "media": 10002, "analyse": 10003, "omzetten": 10004}
+
+
+          def spec(naam):
+              try:
+                  return importlib.util.find_spec(naam)
+              except ModuleNotFoundError:  # google bestaat niet
+                  return None
+
+
+          def fout(tekst):
+              print(f"{WIE}: {tekst}")
+              sys.exit(1)
+
+
+          if os.getuid() != UID[WIE]:
+              fout(f"draait als uid {os.getuid()}")
+          if WIE == "root":
+              gevonden = [n for n in VIJF if spec(n) is not None]
+              if gevonden:
+                  fout(f"in /opt/venv: {gevonden}")
+              analyse = grp.getgrnam("analyse").gr_gid
+              ids = {n: (pwd.getpwnam(n).pw_uid, pwd.getpwnam(n).pw_gid) for n in ("analyse", "omzetten")}
+              if analyse != 10003 or ids != {"analyse": (10003, 10003), "omzetten": (10004, 10003)}:
+                  fout(f"de gebruikers: groep {analyse}, {ids}")
+              st = os.stat(MAP)
+              if (st.st_uid, st.st_gid, stat.S_IMODE(st.st_mode)) != (0, analyse, 0o750):
+                  fout(f"{MAP}: {st.st_uid}:{st.st_gid} {oct(stat.S_IMODE(st.st_mode))}")
+              run = os.stat("/run/analyse")
+              platform = grp.getgrnam("platform").gr_gid
+              if (run.st_uid, run.st_gid, stat.S_IMODE(run.st_mode)) != (10003, platform, 0o2750):
+                  fout(f"/run/analyse: {run.st_uid}:{run.st_gid} {oct(stat.S_IMODE(run.st_mode))}")
+              grootte, aantal, mis = 0, 0, []
+              for map_, mappen, bestanden in os.walk(MAP):
+                  for naam in mappen + bestanden:
+                      pad = os.path.join(map_, naam)
+                      info = os.lstat(pad)
+                      modus = stat.S_IMODE(info.st_mode)
+                      if (info.st_uid, info.st_gid) != (0, analyse) or modus & 0o027:
+                          mis.append(f"{pad} {info.st_uid}:{info.st_gid} {oct(modus)}")
+                      if stat.S_ISREG(info.st_mode):
+                          grootte += info.st_size
+                          aantal += 1
+              if mis:
+                  fout(f"{len(mis)} paden niet van root:analyse of te open, zoals {mis[:3]}")
+              cache = [m for m, d, _ in os.walk("/root/.cache/uv") if {"numpy", "onnxruntime"} & set(d)]
+              if cache:
+                  fout(f"de wheels staan nog in de cache van uv: {cache[:3]}")
+              print(f"/opt/analyse: {grootte / 10**6:.1f} MB in {aantal} bestanden (de poort: ≤ {POORT // 10**6} MB)")
+              if grootte > POORT:
+                  fout(f"TE GROOT: {grootte} bytes")
+          elif WIE in ("platform", "media"):
+              sys.path.insert(0, MAP)
+              gevonden = [n for n in VIJF if spec(n) is not None]
+              if gevonden:
+                  fout(f"vindt {gevonden}")
+          else:
+              sys.path.insert(0, MAP)
+              versies = {n: importlib.import_module(n).__version__ for n in VIJF}
+              if versies != VIJF:
+                  fout(f"versies {versies}")
+              import numpy, onnxruntime
+
+              a = numpy.arange(6, dtype=numpy.float32).reshape(2, 3)
+              if float((a @ a.T)[1, 1]) != 50.0:
+                  fout("numpy rekent niet")
+              if "CPUExecutionProvider" not in onnxruntime.get_available_providers():
+                  fout(f"providers {onnxruntime.get_available_providers()}")
+              try:
+                  open(os.path.join(MAP, "numpy", "x"), "w")
+              except PermissionError:
+                  pass
+              else:
+                  fout("kan schrijven in /opt/analyse")
+          print(f"{WIE}: goed")
+          PY
+          for wie in root platform media analyse omzetten; do
+            docker run --rm -i --user "$wie" --network none platform-platform:ci python3 -I - "$wie" \
+              < "$RUNNER_TEMP/analyse.py"
+          done
       - name: Web-image starten en controleren
         if: matrix.name == 'web'
         run: |

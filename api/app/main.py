@@ -25,6 +25,7 @@ from fastapi.responses import (
 from pydantic import BaseModel
 
 from app import __version__, errors, events, jobs, photometa, previews
+from app.analyse import monitor as analyse_monitor
 from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.extract import step as extract_step  # noqa: F401 - registreert de stap text (Z2)
@@ -528,6 +529,9 @@ async def lifespan(app: FastAPI):
     # media-eindpunt 503 media_off)
     media_runtime.bind(app, settings)
     await media_runtime.start(app, settings)
+    # De analyse (fase 6, Keuze 59): zonder PLATFORM_ANALYSE_ENABLED gebeurt hier niets (geen
+    # taak, geen socket; de stand is off)
+    analyse_monitor.start(settings)
     log.info("Platform %s gestart (%s), data in %s", __version__, settings.mode, settings.data_dir)
     with _streams_end_on_signal(app):
         yield
@@ -539,6 +543,7 @@ async def lifespan(app: FastAPI):
     await previews.stop_forkserver()  # na de rijen: een lopende preview gebruikt hem nog
     await media_runtime.stop(app)  # na de rijen: een taak van media gebruikt de worker nog
     media_runtime.unbind()
+    await analyse_monitor.stop()  # na de rijen: een taak van de rij analyse leest de stand
     cleaner.cancel()
     await certs.stop()
     log.info("Platform %s gestopt", __version__)
