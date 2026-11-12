@@ -122,7 +122,7 @@ done < "$1"
 
 def test_de_licenties():
     names = sorted(p.name for p in lock.LICENSES.iterdir())
-    assert names == ["sface-Apache-2.0.txt", "yunet-MIT.txt"]
+    assert names == ["sface-Apache-2.0.txt", "siglip2-Apache-2.0.txt", "yunet-MIT.txt"]
     mit = (lock.LICENSES / "yunet-MIT.txt").read_text()
     assert mit.startswith("MIT License\n")
     assert "Copyright (c) 2020 Shiqi Yu" in mit
@@ -130,6 +130,8 @@ def test_de_licenties():
     apache = (lock.LICENSES / "sface-Apache-2.0.txt").read_text()
     assert "Apache License" in apache and "Version 2.0, January 2004" in apache
     assert "END OF TERMS AND CONDITIONS" in apache
+    # SigLIP 2 (X3a, Keuze 73): dezelfde Apache-tekst, byte voor byte
+    assert (lock.LICENSES / "siglip2-Apache-2.0.txt").read_text() == apache
     text = lock.LOCK_PATH.read_text()
     assert "MIT, Copyright (c) 2020 Shiqi Yu" in text and "Apache-2.0" in text
 
