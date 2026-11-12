@@ -12,7 +12,9 @@ ergens komt, de rij in node_origin (created_by, via_link):
 - een bestand van vóór 0011 heeft geen rij (Vraag 9).
 """
 
+import re
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import delete, select
@@ -206,3 +208,47 @@ async def test_van_voor_0011_geen_rij(client, world, settings):
     )
     assert r.status_code == 201, r.text
     assert await origins(settings) == {r.json()["id"]: (w["anna_id"], 0)}
+
+
+SQL = (
+    "INSERT INTO node_origin (node_id, created_by, via_link) VALUES (?, ?, ?) ON CONFLICT "
+    "(node_id) DO UPDATE SET created_by = excluded.created_by, via_link = excluded.via_link"
+)
+
+
+class _Sessie:
+    """Genoeg van een AsyncSession voor placed(): de database en wat er uitgevoerd wordt."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.stmts: list = []
+
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name=self.name))
+
+    async def execute(self, stmt):
+        self.stmts.append(stmt)
+
+
+@pytest.mark.parametrize("name", ["sqlite", "postgresql"])
+async def test_de_upsert_ook_op_postgresql(name):
+    """Review A0, contract F2: placed() schrijft bij elke upload met nieuwe inhoud. De vorm van
+    SQLite (sqlalchemy.dialects.sqlite.insert) compileert niet op PostgreSQL, en dan faalde elke
+    upload daar. placed() kiest de vorm van de database van de sessie; beide geven dezelfde
+    upsert op node_id."""
+    from sqlalchemy.dialects import postgresql, sqlite
+
+    from app import origin
+
+    dialect = {"sqlite": sqlite.dialect(), "postgresql": postgresql.asyncpg.dialect()}[name]
+    node, actor = uuid.uuid4(), uuid.uuid4()
+    sessie = _Sessie(name)
+    await origin.placed(sessie, node, actor)
+    await origin.placed(sessie, node, None)
+    eigen, link = sessie.stmts
+    sql = " ".join(str(eigen.compile(dialect=dialect)).split())
+    assert re.sub(r"\$\d+::\w+", "?", sql) == SQL  # asyncpg: $1::UUID, $2::UUID, $3::INTEGER
+    params = eigen.compile(dialect=dialect).params
+    assert (params["node_id"], params["created_by"], params["via_link"]) == (node, actor, 0)
+    params = link.compile(dialect=dialect).params
+    assert (params["created_by"], params["via_link"]) == (None, 1)

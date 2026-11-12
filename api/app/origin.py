@@ -23,8 +23,8 @@ import uuid
 from collections.abc import Sequence
 from itertools import batched
 
-from sqlalchemy import insert, or_, select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy import Executable, insert, or_, select
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Node, NodeOrigin
@@ -32,19 +32,27 @@ from app.models import Node, NodeOrigin
 CHUNK = 500  # rijen per INSERT of IN (...), zoals de kopie zelf
 
 
-async def placed(session: AsyncSession, node_id: uuid.UUID, actor_id: uuid.UUID | None) -> None:
-    """De rij van een bestand met nieuwe inhoud (nieuw, of vervangen): actor_id is wie het
-    neerzette, None via een uploadlink. Een bestaande rij wordt vervangen."""
-    # In één keten, zodat de wachter van Keuze 3 (test_search_no_replace) de tabel ziet
-    excluded = sqlite_insert(NodeOrigin).excluded
-    await session.execute(
-        sqlite_insert(NodeOrigin)
+def placed_stmt(dialect_name: str, node_id: uuid.UUID, actor_id: uuid.UUID | None) -> Executable:
+    """De upsert van placed() in de vorm van deze database: de vorm van SQLite compileert niet op
+    PostgreSQL (review A0, contract F2). In één keten, zodat de wachter van Keuze 3
+    (test_search_no_replace) de tabel ziet."""
+    dialect = postgresql if dialect_name == "postgresql" else sqlite
+    excluded = dialect.insert(NodeOrigin).excluded
+    return (
+        dialect.insert(NodeOrigin)
         .values(node_id=node_id, created_by=actor_id, via_link=int(actor_id is None))
         .on_conflict_do_update(
             index_elements=[NodeOrigin.node_id],
             set_={"created_by": excluded.created_by, "via_link": excluded.via_link},
         )
     )
+
+
+async def placed(session: AsyncSession, node_id: uuid.UUID, actor_id: uuid.UUID | None) -> None:
+    """De rij van een bestand met nieuwe inhoud (nieuw, of vervangen): actor_id is wie het
+    neerzette, None via een uploadlink. Een bestaande rij wordt vervangen."""
+    name = session.get_bind().dialect.name
+    await session.execute(placed_stmt(name, node_id, actor_id))
 
 
 async def copied(
