@@ -1,0 +1,152 @@
+// Het paneel met gegevens (toets I): het bestand, wat de server in de inhoud vond (afmetingen,
+// duur, codecs, codering) en bij een foto Camera, Objectief, Belichting en Datum.
+//
+// Fase 6 (Z0): twee plekken, elk een eigen bestand en chunk: Plek (LocationRow.tsx, van Z5) en
+// Personen (PeopleRow.tsx, van Z6), alleen ingelogd bij een foto of video (infoRows.ts). De plek
+// van een foto komt nooit uit de EXIF hier: alleen de eigenaar ziet hem, via zijn eigen route.
+// Z0b (Keuze 55): een derde plek, "Meer zoals deze" (LikeRow.tsx, van X3), alleen bij een foto; na
+// de review (contract F3) een vierde, de gezichten (photos/faces/FacesRow.tsx, van X2), na
+// Personen en ook alleen bij een foto.
+// X1: een vijfde, "Tekst in beeld" met de knop "Tekst herkennen" (ocr/OcrRow.tsx, Keuze 23), bij
+// een foto of een PDF; de rij zelf toont alleen iets voor wie mag vragen.
+
+import type { JSX, ReactNode } from "react";
+import { formatBytes } from "../api";
+import { fmt, lazyWithAreas, t } from "../i18n";
+import { IconButton } from "../ui/Button";
+import { LazySlot } from "../ui/LazySlot";
+import type { Exif, ViewerDetail } from "./api";
+import { type InfoRowProps, showFacesRow, showLikeRow, showOcrRow, showPhotoRows } from "./infoRows";
+import { formatDuration, type ViewKind } from "./media";
+import type { ViewerItem } from "./types";
+
+const LocationRow = lazyWithAreas<InfoRowProps>(() => import("./LocationRow"), ["photos_map"]);
+const PeopleRow = lazyWithAreas<InfoRowProps>(() => import("./PeopleRow"), ["photos_people"]);
+const LikeRow = lazyWithAreas<InfoRowProps>(() => import("./LikeRow"), ["beeld"]);
+const FacesRow = lazyWithAreas<InfoRowProps>(() => import("../photos/faces/FacesRow"), ["photos_faces"]);
+const OcrRow = lazyWithAreas<InfoRowProps>(() => import("../ocr/OcrRow"), ["ocr"]);
+
+function num(v: number | string | undefined): number | null {
+  if (v === undefined || v === null || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** "f/2,8 · 1/250 s · ISO 100 · 35 mm" */
+export function exposureText(exif: Exif): string {
+  const parts: string[] = [];
+  const f = num(exif.fnumber);
+  if (f !== null) parts.push(`f/${fmt.number(f, { maximumFractionDigits: 1 })}`);
+  else if (typeof exif.fnumber === "string" && exif.fnumber) parts.push(exif.fnumber);
+  const time = num(exif.exposure);
+  if (time !== null && time > 0) {
+    parts.push(time < 1 ? `1/${Math.round(1 / time)} s` : `${fmt.number(time, { maximumFractionDigits: 1 })} s`);
+  } else if (typeof exif.exposure === "string" && exif.exposure) parts.push(exif.exposure);
+  if (exif.iso !== undefined && exif.iso !== "") parts.push(`ISO ${exif.iso}`);
+  const focal = num(exif.focal);
+  if (focal !== null) parts.push(`${fmt.number(focal, { maximumFractionDigits: 1 })} mm`);
+  const bias = num(exif.bias);
+  if (bias) parts.push(`${bias > 0 ? "+" : ""}${fmt.number(bias, { maximumFractionDigits: 1 })} EV`);
+  return parts.join(" · ");
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  if (children === null || children === undefined || children === "") return null;
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{children}</dd>
+    </div>
+  );
+}
+
+export default function InfoPanel({
+  item,
+  detail,
+  kind,
+  signedIn,
+  onClose,
+}: {
+  item: ViewerItem;
+  detail: ViewerDetail | undefined;
+  kind: ViewKind;
+  /** Ingelogd (niet via een publieke link): dan ook Plek en Personen */
+  signedIn: boolean;
+  onClose(): void;
+}): JSX.Element {
+  const meta = detail?.meta ?? {};
+  const exif = meta.exif ?? {};
+  const camera = [exif.make, exif.model].filter(Boolean).join(" ");
+  const exposure = exposureText(exif);
+  const isPhoto = kind === "image" || !!detail?.taken_at || !!camera;
+  const codecs = [
+    meta.video?.codec && `${meta.video.codec}${meta.video.profile ? ` (${meta.video.profile})` : ""}`,
+    meta.audio?.codec &&
+      `${meta.audio.codec}${meta.audio.channels ? ` · ${t("viewer.info.channels", { n: meta.audio.channels })}` : ""}`,
+  ]
+    .filter(Boolean)
+    .join(" / ");
+
+  return (
+    <aside className="viewer-info" aria-label={t("viewer.info.title")}>
+      <header>
+        <h3>{t("viewer.info.title")}</h3>
+        <IconButton icon="close" className="ghost" label={t("viewer.info.close")} onClick={onClose} />
+      </header>
+      <dl>
+        <Row label={t("viewer.info.name")}>{item.name}</Row>
+        {item.version && <Row label={t("viewer.info.version")}>{item.version.label}</Row>}
+        <Row label={t("viewer.info.type")}>{item.mime ?? t("viewer.info.unknown")}</Row>
+        <Row label={t("viewer.info.size")}>{formatBytes(item.size)}</Row>
+        <Row label={t("viewer.info.modified")}>{fmt.dateTime(item.modified_at)}</Row>
+        <Row label={t("viewer.info.dimensions")}>
+          {meta.width && meta.height ? t("viewer.info.pixels", { w: meta.width, h: meta.height }) : null}
+        </Row>
+        <Row label={t("viewer.info.duration")}>{meta.duration ? formatDuration(meta.duration) : null}</Row>
+        <Row label={t("viewer.info.pages")}>{meta.pages ? String(meta.pages) : null}</Row>
+        <Row label={t("viewer.info.codecs")}>{codecs || null}</Row>
+        <Row label={t("viewer.info.container")}>{meta.container ? meta.container.split(",")[0] : null}</Row>
+        <Row label={t("viewer.info.encoding")}>{meta.encoding ?? null}</Row>
+        <Row label={t("viewer.info.titleTag")}>{kind === "audio" || meta.office ? (meta.title ?? null) : null}</Row>
+        <Row label={t("viewer.info.artist")}>{meta.artist ?? meta.author ?? null}</Row>
+        <Row label={t("viewer.info.album")}>{meta.album ?? null}</Row>
+      </dl>
+      {isPhoto && (camera || exif.lens || exposure || detail?.taken_at) && (
+        <section>
+          <h4>{t("viewer.info.photo")}</h4>
+          <dl>
+            <Row label={t("viewer.info.camera")}>{camera || null}</Row>
+            <Row label={t("viewer.info.lens")}>{exif.lens ?? null}</Row>
+            <Row label={t("viewer.info.exposure")}>{exposure || null}</Row>
+            <Row label={t("viewer.info.date")}>{detail?.taken_at ? fmt.wallClock(detail.taken_at) : null}</Row>
+          </dl>
+        </section>
+      )}
+      {showPhotoRows(kind, item, signedIn) && (
+        <>
+          <LazySlot key={`plek-${item.id}`}>
+            <LocationRow item={item} detail={detail} kind={kind} />
+          </LazySlot>
+          <LazySlot key={`personen-${item.id}`}>
+            <PeopleRow item={item} detail={detail} kind={kind} />
+          </LazySlot>
+        </>
+      )}
+      {showFacesRow(kind, item, signedIn) && (
+        <LazySlot key={`gezichten-${item.id}`}>
+          <FacesRow item={item} detail={detail} kind={kind} />
+        </LazySlot>
+      )}
+      {showLikeRow(kind, item, signedIn) && (
+        <LazySlot key={`zoals-${item.id}`}>
+          <LikeRow item={item} detail={detail} kind={kind} />
+        </LazySlot>
+      )}
+      {showOcrRow(kind, item, signedIn) && (
+        <LazySlot key={`tekst-${item.id}`}>
+          <OcrRow item={item} detail={detail} kind={kind} />
+        </LazySlot>
+      )}
+    </aside>
+  );
+}

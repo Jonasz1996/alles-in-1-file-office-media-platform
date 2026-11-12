@@ -1,0 +1,83 @@
+{
+ "data": {
+  "bit_rate": 1848474,
+  "chapters": [],
+  "container": "avi",
+  "duration_ms": 6040,
+  "error": null,
+  "start_ms": 0,
+  "state": "ready",
+  "streams": [
+   {
+    "attached_pic": false,
+    "bit_depth": 8,
+    "bitrate": 1705973,
+    "channels": null,
+    "codec": "mpeg4",
+    "codec_string": null,
+    "color": {
+     "matrix": null,
+     "primaries": null,
+     "transfer": null
+    },
+    "default": false,
+    "duration_ms": 6040,
+    "dv_profile": null,
+    "forced": false,
+    "fps": 25.0,
+    "hdr": "none",
+    "hdr_meta": null,
+    "hearing_impaired": false,
+    "height": 360,
+    "index": 0,
+    "interlaced": false,
+    "lang": null,
+    "last_frame_ms": 6000,
+    "layout": null,
+    "level": 1,
+    "pix_fmt": "yuv420p",
+    "profile": "Simple Profile",
+    "sample_rate": null,
+    "start_ms": 0,
+    "title": null,
+    "type": "video",
+    "width": 640
+   },
+   {
+    "attached_pic": false,
+    "bit_depth": null,
+    "bitrate": 128000,
+    "channels": 1,
+    "codec": "mp3",
+    "codec_string": "mp3",
+    "color": null,
+    "default": false,
+    "duration_ms": 6024,
+    "dv_profile": null,
+    "forced": false,
+    "fps": null,
+    "hdr": "none",
+    "hdr_meta": null,
+    "hearing_impaired": false,
+    "height": null,
+    "index": 1,
+    "interlaced": false,
+    "lang": null,
+    "last_frame_ms": null,
+    "layout": "mono",
+    "level": null,
+    "pix_fmt": null,
+    "profile": null,
+    "sample_rate": 48000,
+    "start_ms": 0,
+    "title": null,
+    "type": "audio",
+    "width": null
+   }
+  ],
+  "tags": {
+   "software": "Lavf60.16.100"
+  },
+  "truncated": {}
+ }
+}

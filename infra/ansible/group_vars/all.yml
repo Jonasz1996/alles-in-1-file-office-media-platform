@@ -1,0 +1,30 @@
+# Standaardwaarden voor alle nodes. Geheimen horen in group_vars/all.local.yml
+# (versleuteld met ansible-vault, staat niet in git); zie infra/README.md.
+
+# Netwerk
+cluster_vip: 192.168.50.10          # VIP voor het webverkeer; de router stuurt 80/443 hierheen
+cluster_vip_prefix: 24
+cluster_cidr: 192.168.50.0/24       # subnet van de 3 nodes
+vip_interface: eth0                 # netwerkkaart in de LXC-container
+vrrp_router_id: 51                  # uniek per VRRP-groep in je LAN
+
+# Domein en certificaten (alles via de webinterface, geen VPN)
+domain: example.nl
+app_host: app                       # https://app.example.nl
+acme_email: beheer@example.nl
+acme_staging: true                  # eerst testen met Let's Encrypt staging, daarna false
+
+# Opslag: de 700 GB mount point van de LXC-container
+data_root: /tank
+platform_root: /opt/platform
+
+# Versies van de onderdelen die we niet zelf bouwen
+etcd_image: quay.io/coreos/etcd:v3.5.21
+postgres_base_image: postgres:17-bookworm
+patroni_version: "4.0.6"
+seaweedfs_image: chrislusf/seaweedfs:3.97
+traefik_image: traefik:v3.5
+
+# Beveiliging aan de rand
+rate_limit_average: 50              # requests per seconde per IP
+rate_limit_burst: 100

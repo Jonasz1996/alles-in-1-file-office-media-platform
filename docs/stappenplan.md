@@ -1,0 +1,956 @@
+# Stappenplan: alles-in-één file/office/media-platform (3 nodes)
+
+Oct 20, 2026 · @Jonas
+
+## Samenvatting
+
+Doel: één self-hosted platform voor bestanden, office-bewerking en
+mediastreaming (de rol van Nextcloud, OnlyOffice en Plex samen), op 3
+nodes, met een web-app eerst en apps voor Windows, Android en LG webOS
+daarna.
+
+De kern (API, opslag, bibliotheek, streaming) bouw je zelf in
+Python/FastAPI achter nginx. Office-bewerking komt van een ingebouwde
+OnlyOffice Document Server, video van ffmpeg. Alle clients praten tegen
+dezelfde API, zodat de TV-app en de Windows-app grotendeels de webcode
+hergebruiken.
+
+Belangrijkste conclusies:
+
+- Replicatie "om de paar uur" en "geen dataverlies bij failover" gaan
+  niet samen: alles sinds de laatste sync is dan weg. Daarom: PostgreSQL
+  met synchrone streaming-replicatie (1 master, 2 standbys) en bestanden
+  in een object store die elke write synchroon op 2 nodes zet. De
+  uursync blijft bestaan als snapshot- en backuplaag.
+
+- 3 × 700 GB = 2,1 TB ruw ≈ 1,0 TB netto bij 2 synchrone kopieën
+  (aanbevolen) of ≈ 0,7 TB bij 3 kopieën.
+
+- [cluster-forge](https://github.com/silogen/cluster-forge) (silogen) is
+  een Kubernetes-operator die platformtools op een bestaand cluster
+  uitrolt; het plan gaat daarom uit van k3s op de 3 nodes, met Docker
+  Compose als eenvoudiger terugvaloptie.
+
+- Doorlooptijd: circa 26 weken tot productie (fase 0 t/m 8) voor één
+  voltijdse ontwikkelaar; de drie apps daarna in sporen van 5 tot 10
+  weken elk. Fase 6 duurt sinds 3-11-2026 ±9 weken in plaats van 3,
+  omdat Jonas voor "alles" koos (zie fase 6).
+
+## Uitgangspunten en kernbeslissingen
+
+Bouw de kern zelf, hergebruik wat je niet kunt winnen (office-engine,
+transcoder, zoekmachine) en houd elke laag vervangbaar via
+standaard-API's (S3, WebDAV, OpenAPI).
+
+| Onderdeel                          | Beslissing                                                                                    | Waarom                                                                                                                                            |
+|------------------------------------|-----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
+| Kern (API, bestanden, bibliotheek) | Zelf bouwen in FastAPI                                                                        | Eén datamodel voor bestanden én media; volledige controle over snelheid en features                                                               |
+| Office-bewerking                   | OnlyOffice Document Server (community) inbouwen via de JS-API en een save-callback            | Een office-suite zelf bouwen is onhaalbaar; de community-versie had een limiet van 20 gelijktijdige verbindingen, maar 10.0 heeft die niet meer (fase 4: de app telt zelf, met een eigen grens per document) |
+| Video en audio                     | Eigen bibliotheek + ffmpeg (HLS/CMAF); direct play waar de client het aankan                  | Plex-functionaliteit zonder Plex; transcoderen alleen als het moet                                                                                |
+| Object storage                     | SeaweedFS (S3-API) met 2 synchrone kopieën; Garage als alternatief                            | MinIO community wordt sinds begin 2026 niet meer onderhouden; de S3-API houdt de laag uitwisselbaar                                               |
+| Database                           | PostgreSQL 17: 1 primary + 2 standbys, synchrone replicatie                                   | Eén master zoals gewenst, zonder dataverlies bij failover                                                                                         |
+| Orkestratie                        | k3s op 3 VM's (één per Proxmox-host) + cluster-forge; alternatief Docker Compose + keepalived | cluster-forge veronderstelt Kubernetes; Compose is simpeler maar automatiseert failover minder                                                    |
+| Edge                               | nginx als ingress: TLS, HTTP/2 en HTTP/3, cache, range requests, X-Accel-Redirect             | Snelste pad voor statische assets, thumbnails en videosegmenten                                                                                   |
+| Frontend                           | React + TypeScript + Vite als PWA                                                             | Zelfde code op LG webOS (web-app) en in Windows (Tauri)                                                                                           |
+| Apps                               | Tauri (Windows), Kotlin/Compose + Media3 (Android), webOS-web-app (LG)                        | Beste native afspeel- en sync-ervaring per platform, één API                                                                                      |
+| Zoeken                             | Typesense als 3-node cluster                                                                  | HA via Raft; Meilisearch draait alleen single-node                                                                                                |
+| Hardware (aanname)                 | 3 bestaande Proxmox-hosts; per host 1 VM met aparte OS-disk en de 700 GB datadisk             | Geen dubbele replicatie: Proxmox repliceert de datadisk niet, de app-laag wel                                                                     |
+
+Niet in scope voor nu: eigen office-engine, iOS-app, meerdere locaties.
+
+## Architectuur
+
+Elke node draait dezelfde stateless app-laag (nginx, API, workers) plus
+een deel van de datalaag; alleen PostgreSQL heeft één master, de rest
+werkt met replica's of quorum.
+
+<img src="media/image1.png" style="width:6in;height:4.63393in"
+alt="3-node architectuur · clients, edge, componenten per node, replicatie" />
+
+3-node architectuur · clients, edge, componenten per node, replicatie
+
+Node 1 is alleen voor PostgreSQL de master; API, workers, opslag en
+zoeken draaien op alle drie, en OnlyOffice draait als één replica die
+bij uitval op een vrij slot van een andere node herstart.
+
+### Dataflows
+
+| Flow                | Pad                                                                                                                                                                                                           |
+|---------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Upload              | client → nginx → API (TUS, chunks van 8–16 MB) → SeaweedFS (S3 put, 2 kopieën) → DB-record → jobs: thumbnail, tekstextractie, index                                                                           |
+| Download en preview | client → nginx (cache voor thumbnails) → API autoriseert → X-Accel-Redirect of presigned URL naar SeaweedFS; range requests en ETag                                                                           |
+| Streamen            | client vraagt afspeelinfo → API kiest direct play, remux of transcode op basis van het clientprofiel → ffmpeg-worker schrijft HLS-segmenten in de lokale cache → nginx serveert; de sessie blijft op één node |
+| Office bewerken     | client laadt de editor van OnlyOffice DS → DS haalt het bestand op via de API (JWT) → bij opslaan callback naar de API → nieuwe versie in SeaweedFS                                                           |
+| Events              | API publiceert op Redis pub/sub → WebSocket naar alle clients van die gebruiker (upload klaar, nieuwe deling, kijkvoortgang)                                                                                  |
+
+## Storage, replicatie en failover
+
+Zet replicatie synchroon in de datalaag (database en object store) en
+gebruik de "om de paar uur"-sync alleen als snapshot- en backuplaag;
+alleen zo is het dataverlies bij failover nul.
+
+### Waarom niet alleen om de paar uur repliceren
+
+- Bij failover verlies je alles sinds de laatste sync (RPO = uren): de
+  uploads en bewerkingen van die middag zijn weg.
+
+- Een oude master die terugkomt heeft nieuwere data dan de nieuwe
+  master: conflicten of split-brain.
+
+- Replicatie kopieert ook fouten en ransomware mee; het is geen backup.
+
+### Opties voor de bestandslaag (3 × 700 GB)
+
+| Optie                                                                               | Verlies bij failover | Schrijven bij 1 node down | Netto capaciteit            | Complexiteit    |
+|-------------------------------------------------------------------------------------|----------------------|---------------------------|-----------------------------|-----------------|
+| SeaweedFS, replicatie 001 (2 synchrone kopieën op verschillende nodes) — aanbevolen | 0                    | ja                        | ≈ 1,0 TB                    | laag tot middel |
+| Garage, replicatiefactor 3 (quorum 2 van 3)                                         | 0                    | ja                        | ≈ 0,7 TB                    | laag            |
+| SeaweedFS, replicatie 002 (3 kopieën)                                               | 0                    | nee, 3 servers nodig      | ≈ 0,7 TB                    | middel          |
+| Ceph via Proxmox (pool size 3, min_size 2)                                          | 0                    | ja                        | ≈ 0,7 TB (size 2: ≈ 1,0 TB) | hoog            |
+| 1 master + ZFS-send of rsync om de paar uur                                         | tot enkele uren      | alleen op de master       | ≈ 0,7 TB                    | laag            |
+
+Aanbeveling: SeaweedFS met replicatie 001 voor alles, plus een
+nachtelijke offsite-backup van de onvervangbare buckets (foto's,
+documenten). Twee synchrone kopieën overleven één node-uitval zonder
+verlies; de backup dekt een dubbele uitval en menselijke fouten. Bron
+voor de MinIO-status: [It's FOSS, MinIO stapt af van open
+source](https://itsfoss.com/news/minio-moves-away-from-open-source/).
+
+### Database
+
+- 1 primary + 2 standbys met synchronous_commit = on en
+  synchronous_standby_names = 'ANY 1 (n2, n3)': een commit is pas klaar
+  als minstens één standby hem op disk heeft (RPO 0; kost ongeveer 1 ms
+  per commit op LAN).
+
+- Automatische failover met quorum: CloudNativePG op k3s, of Patroni +
+  etcd zonder Kubernetes. Promotie alleen bij meerderheid, dus geen
+  split-brain; de oude primary keert terug als standby via pg_rewind.
+
+- Apps verbinden via één service of VIP die de primary volgt, met
+  PgBouncer ervoor; leesverkeer kan optioneel naar de standbys.
+
+- pgBackRest: continue WAL-archivering naar de object store plus een
+  dagelijkse basisbackup, zodat point-in-time restore mogelijk is.
+
+### Disk-indeling per node (richtlijn, 700 GB)
+
+| Deel             | Grootte  | Inhoud                                                   |
+|------------------|----------|----------------------------------------------------------|
+| SeaweedFS volume | ≈ 560 GB | bestanden, versies, thumbnails (2 kopieën cluster-breed) |
+| PostgreSQL       | 30 GB    | metadata, gebruikers, bibliotheek, zoek-embeddings       |
+| Typesense        | 20 GB    | zoekindex (Raft-replica)                                 |
+| Transcode-cache  | 60 GB    | HLS-segmenten, lokaal, regenereerbaar                    |
+| Logs en metrics  | 20 GB    | Loki en Prometheus, lokaal                               |
+
+### Snapshots en backups (de "om de paar uur"-laag)
+
+- ZFS op de datadisk: snapshot elk uur, bewaar 24 uur, 7 dagen en 4
+  weken (sanoid); beschermt tegen verwijderen en ransomware.
+
+- Nachtelijks restic of kopia naar een externe disk of offsite (Hetzner
+  Storage Box, Backblaze B2), append-only: de 3-2-1-regel.
+
+- Restore-oefening elk kwartaal: DB point-in-time en één bucket
+  terugzetten.
+
+### Failover-scenario: node 1 (master) valt uit
+
+1.  De health-check faalt (10 tot 30 s); de synchrone standby wordt
+    primary, 0 commits verloren.
+
+2.  VIP en ingress sturen verkeer naar nodes 2 en 3; lopende uploads
+    hervatten via hun TUS-offset; streamingsessies van node 1 starten
+    binnen seconden opnieuw op een andere node.
+
+3.  SeaweedFS blijft lezen en schrijven met 2 van de 3 volume servers;
+    volumes met een kopie op node 1 zijn read-only tot node 1 terug is
+    en volume.fix.replication ze aanvult.
+
+4.  Node 1 keert terug als standby (DB) en als volume server
+    (bestanden); niets wordt handmatig gepromoveerd.
+
+## Techstack
+
+Elke laag heeft één hoofdkeuze en één terugvaloptie; de koppelvlakken
+(S3, SQL, OpenAPI, HLS) blijven standaard zodat je later kunt wisselen
+zonder de rest aan te raken.
+
+| Laag                     | Keuze                                                                                                                      | Terugvaloptie                 | Opmerking                                                                 |
+|--------------------------|----------------------------------------------------------------------------------------------------------------------------|-------------------------------|---------------------------------------------------------------------------|
+| Edge                     | nginx (ingress-nginx op k3s): TLS 1.3, HTTP/2 + HTTP/3, brotli, proxy_cache voor thumbnails, slice/range, X-Accel-Redirect | HAProxy                       | VIP via kube-vip (k3s) of keepalived (Compose)                            |
+| Backend                  | Python 3.12, FastAPI, uvicorn + uvloop, Pydantic v2, SQLAlchemy 2 async + asyncpg, Alembic, orjson, httpx                  | Granian als server            | Alles async; geen blocking werk in de request-cyclus                      |
+| Jobs                     | Celery met Redis-broker; queues: thumbs, index, transcode                                                                  | Dramatiq, arq                 | Transcode-queue alleen op nodes met GPU of vrije CPU                      |
+| Database                 | PostgreSQL 17 + pgvector; CloudNativePG; PgBouncer                                                                         | Patroni + etcd                | Synchrone replicatie, zie storage-sectie                                  |
+| Object storage           | SeaweedFS (master ×3, volume server per node, S3-gateway)                                                                  | Garage, Ceph RGW              | Buckets: vault, media, thumbs, cache                                      |
+| Cache, pub/sub           | Redis 7 met Sentinel (3)                                                                                                   | Valkey                        | Sessies, rate limits, events, Celery-broker                               |
+| Zoeken                   | Typesense 3-node cluster                                                                                                   | Meilisearch (single node)     | Full-text, facetten, typo-tolerantie                                      |
+| Office                   | OnlyOffice Document Server (community)                                                                                     | Collabora Online (WOPI)       | Geen eigen Postgres/Redis/RabbitMQ: Community 10.0 draait als één proces (fase 4) |
+| Media                    | ffmpeg 7 + ffprobe, HLS/CMAF (fMP4), VAAPI/QSV/NVENC; guessit voor bestandsnamen; TMDB/TVDB/MusicBrainz                    | —                             | Direct play eerst, dan remux, dan transcode                               |
+| Afbeeldingen en previews | libvips (pyvips), libheif, rawpy, exiftool; poppler voor PDF; OnlyOffice-conversie of LibreOffice headless voor office     | ImageMagick                   | Thumbnails 256/1024 px als WebP/AVIF                                      |
+| Tekst en OCR             | Apache Tika of unstructured; ocrmypdf + tesseract (nld, eng)                                                               | —                             | Draait als job, nooit in de request                                       |
+| Auth                     | Eigen in FastAPI: argon2id, JWT access (15 min) + roterende refresh, TOTP, passkeys (py_webauthn)                          | OIDC via Authentik            | Later ook OIDC-login voor apps                                            |
+| Uploads                  | TUS-protocol (resumable, parallel chunks), SHA-256 voor dedupe, libmagic voor mime                                         | —                             | ClamAV-scan asynchroon                                                    |
+| Realtime                 | WebSocket in FastAPI + Redis pub/sub                                                                                       | SSE                           | Per gebruiker een kanaal                                                  |
+| Web                      | React 19, TypeScript, Vite, TanStack Query/Router, hls.js, PDF.js, virtualized grid, PWA (workbox)                         | Svelte                        | Zelfde componenten voor de TV-app                                         |
+| Windows                  | Tauri 2 (Rust shell) + web-UI; sync-engine in Rust                                                                         | Electron                      | WebView2 speelt HLS via hls.js                                            |
+| Android                  | Kotlin, Jetpack Compose, Media3/ExoPlayer, WorkManager                                                                     | React Native                  | Native afspelen, auto-upload, offline                                     |
+| LG TV                    | webOS-web-app (HTML5, React of Enact)                                                                                      | —                             | Native \<video\> speelt HLS; afstandsbediening via spatial navigation     |
+| Infra en CI              | Ansible (VM's, k3s), Helm/Kustomize, cluster-forge, Argo CD of Flux, GitHub Actions of Gitea Actions, eigen registry       | Docker Compose + shellscripts | GitOps: elke deploy is een commit                                         |
+| Observability            | Prometheus, Grafana, Loki, Alertmanager; OpenTelemetry in FastAPI                                                          | —                             | Alerts: node down, replicatielag, disk \> 80 %                            |
+| Backup                   | pgBackRest (PITR), restic of kopia offsite, ZFS-snapshots (sanoid)                                                         | —                             | Restore-test per kwartaal                                                 |
+| Security                 | cert-manager (Let's Encrypt, DNS-01 wildcard), CrowdSec, Coraza/ModSecurity WAF, ClamAV, sops + age voor secrets           | WireGuard-only toegang        | Admin-UI op apart subdomein                                               |
+
+## Kern-datamodel
+
+Bestanden en media delen één boom: een media-item verwijst altijd naar
+een bestand in de boom, en de inhoud zelf ligt content-addressed in de
+object store zodat dubbele uploads geen ruimte kosten.
+
+| Entiteit                | Kernvelden                                                                                                                                                                     | Opmerking                                                         |
+|-------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------|
+| user                    | id, email, password_hash, totp_secret, role, quota_bytes, created_at                                                                                                           | groepen via user_group; gezinsprofielen onder één account         |
+| session, refresh_token  | user_id, device, token_hash, expires_at, revoked_at                                                                                                                            | per apparaat intrekbaar                                           |
+| node (boom)             | id, parent_id, owner_id, name, kind (file/dir), mime, size, blob_id, etag, created_at, modified_at, deleted_at                                                                 | prullenbak = deleted_at gezet; pad als materialized path of ltree |
+| blob                    | sha256 (PK), size, bucket, key, ref_count                                                                                                                                      | content-addressed; dedupe; opschonen bij ref_count 0              |
+| version                 | node_id, blob_id, created_by, created_at, comment                                                                                                                              | elke save van OnlyOffice of overschrijving wordt een versie       |
+| share                   | node_id, grantee (user, group of link), permissions, expires_at, password_hash, upload_only                                                                                    | publieke links met token                                          |
+| tag, node_tag, favorite | naam, kleur; node_id, user_id                                                                                                                                                  | handmatig én automatisch (AI)                                     |
+| library                 | id, type (movies, series, music, photos), root_node_id, scan_interval, owner                                                                                                   | scanner werkt per bibliotheek                                     |
+| media_item              | library_id, node_id, kind (movie, episode, track, photo), title, year, external_ids (tmdb, tvdb, musicbrainz), duration_ms, streams (jsonb: codecs, HDR, kanalen, ondertitels) | series: show en season als eigen rijen                            |
+| playback_state          | user_id, media_item_id, position_ms, watched, updated_at                                                                                                                       | synchroniseert tussen apparaten                                   |
+| photo_meta              | node_id, taken_at, lat, lon, camera, width, height, phash, embedding (vector)                                                                                                  | tijdlijn, kaart, duplicaten, semantisch zoeken                    |
+| person, face            | naam; node_id, bbox, embedding, person_id                                                                                                                                      | gezichtsherkenning (lokaal)                                       |
+| job                     | type, status, payload (jsonb), attempts, started_at, finished_at, error                                                                                                        | zichtbaar in de admin-UI                                          |
+| device, push_token      | user_id, platform, name, capabilities (jsonb), token                                                                                                                           | clientprofiel bepaalt direct play of transcode                    |
+| audit_log               | actor_id, action, target, ip, created_at                                                                                                                                       | onveranderlijk, apart bewaard                                     |
+
+## Stappenplan per fase
+
+Negen fasen met harde "klaar als"-criteria; elke fase is één epic in je
+projecttool en elke taak hieronder één ticket. Duur is een richtlijn
+voor één voltijdse ontwikkelaar.
+
+### Fase 0 — Kaders (1 week)
+
+Doel: alle beslissingen vast voordat er infrastructuur staat.
+
+- [ ] Projectnaam, domein, monorepo-structuur: /api, /web, /infra,
+  /apps/windows, /apps/android, /apps/webos
+
+- [ ] Beslissen: k3s + cluster-forge of Docker Compose; SeaweedFS 001 of
+  Garage; OnlyOffice of Collabora
+
+- [ ] Hardware-inventaris per node: CPU, RAM, disk, NIC, GPU of iGPU
+  voor transcoding (QSV/VAAPI)
+
+- [ ] Capaciteitsplan: verdeling van de 700 GB, groeipad (extra disks of
+  nodes)
+
+- [ ] Netwerk: eigen VLAN voor het cluster, VIP-adres, interne en
+  externe DNS, toegang van buiten (WireGuard of reverse proxy)
+
+- [ ] Niet-functionele eisen vastleggen: aantal gelijktijdige streams,
+  max. uploadgrootte, RPO 0, RTO \< 2 min, backupretentie
+
+- [ ] Repo met CI-skelet (lint, tests, image-build)
+
+Klaar als: beslissingen en architectuurschets zijn vastgelegd in dit
+document en het repo bouwt een lege API- en web-image.
+
+### Fase 1 — Infrastructuur (3 weken)
+
+Doel: 3 nodes die een node-uitval overleven zonder dataverlies, nog
+zonder applicatie.
+
+- [ ] 3 VM's (1 per Proxmox-host) via Ansible: OS-disk, 700 GB datadisk
+  met ZFS, vast IP, hardening (sshd, firewall, unattended upgrades)
+
+- [ ] k3s-cluster met 3 control-plane nodes (embedded etcd) en kube-vip
+  voor de VIP; alternatief Compose + keepalived
+
+- [ ] cluster-forge uitrollen; vastleggen welke componenten het levert
+  (Postgres-operator, storage, ingress, cert-manager, monitoring) en wat
+  je zelf toevoegt
+
+- [ ] PostgreSQL-cluster: 1 primary + 2 standbys, synchrone replicatie
+  (ANY 1), PgBouncer, pgBackRest met WAL-archivering
+
+- [ ] SeaweedFS: 3 masters (Raft), volume server per node, filer +
+  S3-gateway, replicatie 001, buckets vault/media/thumbs/cache
+
+- [ ] Redis Sentinel (3) en Typesense-cluster (3)
+
+- [ ] nginx ingress + TLS via cert-manager (Let's Encrypt, DNS-01
+  wildcard)
+
+- [ ] Monitoring: Prometheus, Grafana, Loki, Alertmanager; alerts op
+  node down, replicatielag, disk \> 80 %, backup mislukt
+
+- [ ] Backups: ZFS-snapshots per uur (sanoid), nachtelijke restic-backup
+  naar externe disk of offsite, pgBackRest-basisbackup
+
+- [ ] GitOps: Argo CD of Flux; deploy = merge naar main
+
+- [ ] Failover-test: node 1 hard uit; meet promotietijd, VIP-overname,
+  S3-writes; herstel en re-sync documenteren als runbook
+
+Klaar als: node uitschakelen geeft 0 verloren commits en 0 verloren
+objecten, service terug binnen 2 min; restore-test van DB
+(point-in-time) en één bucket geslaagd.
+
+### Fase 2 — Core backend (4 weken)
+
+Doel: een volledige bestanden-API waar web en apps op kunnen bouwen.
+
+- [ ] FastAPI-skelet: settings, logging, OpenTelemetry,
+  health/ready-endpoints, Alembic-migraties, pytest + testcontainers
+
+- [ ] Auth: registratie en login (argon2id), JWT + roterende refresh,
+  TOTP, rate limiting, sessies per apparaat, rollen (admin, user, guest)
+
+- [ ] Bestandsboom-API: mappen, hernoemen, verplaatsen, kopiëren,
+  prullenbak, versies, quota, ETag
+
+- [ ] Upload via TUS: resumable, parallelle chunks, SHA-256 en dedupe,
+  mime-detectie (libmagic), ClamAV-scan als job
+
+- [ ] Download en preview: X-Accel-Redirect of presigned URL, range
+  requests, 304 op ETag
+
+- [ ] Workers: thumbnails en previews voor alle types uit de tabel
+  hieronder; retries en dead-letter-queue
+
+- [ ] Zoeken v1: Typesense-index op naam, pad, type, tags
+
+- [ ] Delen v1: met gebruiker of groep, publieke link met wachtwoord en
+  vervaldatum, upload-only link
+
+- [ ] WebSocket-events: upload klaar, preview klaar, nieuwe deling
+
+- [ ] Load-test met k6: 50 parallelle uploads, 200 req/s op listing
+
+Klaar als: een upload van 1 GB hervat na een netwerkbreuk; dedupe werkt;
+elk type uit de tabel krijgt een preview; de OpenAPI-spec genereert een
+werkende TypeScript- en Kotlin-client.
+
+### Fase 3 — Web-app (3 weken)
+
+Doel: dagelijks bruikbare web-app voor bestanden en foto's.
+
+- [x] React + Vite + TypeScript, design-system (tokens, dark mode),
+  routing, auth-flows incl. 2FA
+
+- [x] Bestandsbrowser: lijst en grid (virtualized), drag-and-drop,
+  bulkacties, contextmenu, sneltoetsen (slepen naar de navigatiebalk
+  niet)
+
+- [x] Upload-UI: TUS, voortgang, pauze en hervat, mapupload
+
+- [x] Viewers: afbeeldingen (zoom, EXIF), PDF (PDF.js), video (hls.js),
+  audio, tekst en code, office-preview (zonder PDF.js en hls.js, B19
+  en B20: de server rendert PDF-pagina's, video speelt native;
+  HLS en transcoding in fase 5, de tekstlaag in fase 6)
+
+- [x] Foto-tijdlijn op datum, albums, selectie en delen
+
+- [x] Delen-UI, prullenbak, versiegeschiedenis
+
+- [x] PWA: installeerbaar, offline-shell; i18n NL en EN
+
+- [x] Admin: gebruikers, quota, jobs, systeemstatus, opslaggebruik per
+  node (standalone is er één node; de andere komen erbij met het
+  cluster)
+
+Klaar als: Lighthouse performance \> 90; eerste weergave \< 1,5 s op
+LAN; alle acties ook via toetsenbord; 10.000 bestanden in één map
+scrollen soepel.
+
+Gehaald in versie 0.5.0 (26-10-2026): de metingen staan in
+[docs/fase-3/prestaties.md](fase-3/prestaties.md), wat er is en de
+bekende grenzen in [docs/fase-3/README.md](fase-3/README.md).
+
+### Fase 4 — Office (2 weken)
+
+Doel: documenten bekijken, maken en samen bewerken.
+
+- [x] OnlyOffice Document Server uitrollen met JWT-secret (OnlyOffice
+  Docs Community 10.0.0.1 op digest, als tweede container met
+  `install.sh`, op een intern netwerk zonder poort; een eigen geheim en
+  JWT in elke richting). Geen eigen Postgres, Redis en RabbitMQ:
+  Community draait sinds 9.4 als één proces met de bewerkstatus in het
+  geheugen, en heeft ze niet nodig. Op een andere node starten komt met
+  het cluster
+
+- [x] Editor-integratie: config vanuit de API, document-key per versie,
+  callback-endpoint (save en forcesave), co-editing (een nieuwe key na
+  elke afgesloten sessie, niet na tussentijds opslaan; via de eigen
+  proxy en tunnel op `/office/`)
+
+- [x] Nieuw document (docx, xlsx, pptx), uit eigen lege bestanden in
+  plaats van de sjablonen van de editor (B36)
+
+- [x] Conversie-API gebruiken voor previews en PDF-export van
+  office-bestanden (ook odt, ods, odp, doc, xls, ppt en rtf)
+
+- [x] Limiet community-editie meten en bewaken; Collabora als
+  terugvaloptie klaarzetten. De limiet van 20 verbindingen bestaat in
+  OnlyOffice 10.0 Community niet meer (`license` geeft geen limiet):
+  de app telt zelf, toont het op `/beheer`, en heeft een eigen grens
+  van 20 bewerkers per document (`max_editors`, gemeten). Collabora is
+  klaargezet, niet gebouwd: de kern kent OnlyOffice niet, en
+  [docs/fase-4/collabora.md](fase-4/collabora.md) zegt hoe omschakelen
+  gaat
+
+Klaar als: twee gebruikers bewerken tegelijk één docx; opslaan maakt een
+nieuwe versie; office-preview werkt zonder editor te openen.
+
+Gehaald in versie 0.6.0 (28-10-2026): het bewijs met de echte editor
+staat in [docs/fase-4/klaar.md](fase-4/klaar.md), de installatietest in
+[docs/fase-4/integratie.md](fase-4/integratie.md), de metingen in
+[docs/fase-4/metingen.md](fase-4/metingen.md), wat er is en de bekende
+grenzen in [docs/fase-4/README.md](fase-4/README.md).
+
+### Fase 5 — Media en streaming (5 weken)
+
+Doel: films, series en muziek afspelen op elk apparaat, met zo weinig
+mogelijk transcoding.
+
+- [x] Bibliotheken (films, series, muziek, foto's) met scanner
+  (inotify + periodiek) en bestandsnaam-parsing (guessit). De soorten
+  zijn films, series, muziek en eigen video's: de fototijdlijn van
+  fase 3 is de fotobibliotheek. Geen inotify: alles komt via de app
+  binnen en de bestanden heten naar hun inhoud, dus de scanner luistert
+  naar de app en loopt bij de start en elke 6 uur alles na. Geen
+  guessit maar een eigen parser met een testset van meer dan 500 namen
+  (B14: geen nieuwe afhankelijkheden). Een bestaande verzameling komt
+  binnen met een import op `/beheer` (B39)
+
+- [x] Metadata: TMDB, TVDB, MusicBrainz; posters en fanart; handmatig
+  koppelen en corrigeren. Lokaal eerst (de naam, NFO en plaatjes in de
+  map); TMDB alleen met een eigen sleutel, MusicBrainz en de Cover Art
+  Archive standaard uit. Geen TVDB (kost geld; TMDB heeft ook series)
+  en geen fanart.tv (B44). Koppelen en Bewerken onder Nakijken
+
+- [x] ffprobe-analyse: codecs, streams, HDR, audiokanalen, ondertitels
+  (in de mediaworker, één analyse per inhoud)
+
+- [x] Afspeelbeslissing per clientprofiel: direct play, remux of
+  transcode. De browser meet zelf wat hij kan en stuurt dat mee met elk
+  afspeelverzoek; geen tabel `device` (B41). Apparaten registreren hoort
+  bij de apps (fase 9)
+
+- [x] Transcoder-worker: ffmpeg naar HLS/CMAF, ladder 1080p/720p/480p,
+  hardware-acceleratie, tone-mapping HDR naar SDR. ffmpeg alleen in een
+  eigen afgeschermde container (B40); fMP4-segmenten van 2 s, één trede
+  per sessie (B42). Alleen de CPU: hardwareversnelling is klaargezet,
+  niet gebouwd (B5 is open). Tone-mapping standaard naar 720p, van een
+  bron tot 1080p (B43)
+
+- [x] Sessiebeheer: sessie gepind op één node, segmenten in lokale
+  cache, opruimen na afloop, hervatten op andere node bij uitval.
+  Standalone is er één node; "hervatten op een andere" wordt: de speler
+  vraagt bij `410` zelf een nieuwe sessie op zijn positie. Dat vangt nu
+  een herstart van de app op, en later met het cluster de uitval van een
+  node (Keuze 48 in het bouwontwerp)
+
+- [x] Ondertitels: extractie naar WebVTT, externe .srt, keuze in de
+  player (een beeldondertitel, PGS of VobSub, wordt in het beeld gebrand)
+
+- [x] Scrub-thumbnails (sprites) en hoofdstukken
+
+- [x] Kijkvoortgang per gebruiker en profiel: verder kijken, volgende
+  aflevering, gezien markeren. Per account; profielen nog niet, de
+  kolom `profile` staat klaar (B45, Vraag 6 aan Jonas)
+
+- [x] Muziek: albums, artiesten, afspeellijsten, gapless afspelen
+  (bewezen voor FLAC en Opus; MP3 en AAC niet gegarandeerd)
+
+- [x] Web-player: hls.js, kwaliteitskeuze, audiotrack,
+  picture-in-picture, toetsenbord. Geen hls.js: een eigen speler op MSE
+  (B19), en native HLS voor Safari en iOS (B42)
+
+- [ ] Load-test: aantal gelijktijdige transcodes per node vastleggen.
+  Gebouwd (de knop op `/beheer` → Media en `app.cli media-loadtest`) en
+  in de sandbox gedraaid; de standaard is 3 tegelijk, maar niet alle
+  drie op 1080p: de eerste kijker hoger, de andere lager (B43, Vraag 3).
+  Bij een tragere CPU (`f` boven 1,6) wordt het 2. Vastleggen voor de
+  node zelf kan alleen op de LXC: stap 5 in
+  [docs/fase-5/README.md](fase-5/README.md#op-de-lxc-stap-5)
+
+Klaar als: een 1080p-film start binnen 2 s (direct play) en 5 s
+(transcode); seek werkt; 3 gelijktijdige transcodes zonder haperen;
+voortgang synchroniseert tussen apparaten.
+
+Versie 0.7.0 (2-11-2026): in de sandbox gehaald op één eis na. Direct
+play van een 1080p-film start binnen 0,5 s. Een transcode start in de
+browser binnen 1,9 s (de slechtste van 10), maar die bron was 720p
+(HEVC HDR, 6 s); een 1080p-bron mat alleen de speler zonder browser
+(binnen 1,7 s). Een 1080p-film met transcode in de browser laat de LXC
+zien. Seek werkt (weer spelen binnen 2,5 s) en de voortgang
+staat in ±0,1 s op het andere apparaat. Drie transcodes tegelijk lopen zonder haperen als
+ze samen starten; na een sprong hapert soms één speler 0,1 tot 1,5 s.
+Het laatste bewijs, en het aantal transcodes voor de node, is de
+meting op de LXC. De metingen staan in
+[docs/fase-5/metingen.md](fase-5/metingen.md), de integratie in
+[docs/fase-5/integratie.md](fase-5/integratie.md), wat er is, de
+grenzen en de vragen voor Jonas in
+[docs/fase-5/README.md](fase-5/README.md). De keuzes B39–B48 zijn nog
+voorstel: Jonas heeft de beslissingskaarten van fase 5 nog niet
+beantwoord.
+
+### Fase 6 — Zoeken en foto's (±9 weken)
+
+Doel: alles terugvinden, ook op inhoud en op wat er op een foto staat.
+
+- [x] Full-text: tekstextractie voor pdf, docx, xlsx, pptx, txt, md; OCR
+  voor scans en foto's met tekst. Eén zoekindex (FTS5, de zoekfunctie
+  van SQLite) in de database die er al is; geen Typesense en geen nieuwe
+  dienst (B17, B49). Ook odt, ods, odp, csv, html, rtf, en de titel,
+  artiest en album van muziek en video. De tekst wordt gelezen in de
+  afgeschermde mediaworker van fase 5; staat media uit, dan in een apart
+  proces van de app, met grenzen, en zegt `/beheer` dat (B52). OCR (tekst
+  herkennen in een beeld) met tesseract op de eigen server (B53): een
+  gescande pdf wordt vanzelf gelezen zolang media aan staat en OCR aan
+  staat op `/beheer`; een foto alleen als de eigenaar "Tekst in foto's
+  herkennen" aanzet (standaard uit) of op "Tekst herkennen" drukt
+
+- [x] EXIF en GPS: datum, camera, locatie; kaartweergave; offline
+  reverse geocoding. Datum en camera kwamen in fase 3 (B22); nieuw is de
+  plek uit GPS. Alleen de eigenaar ziet die in de app (de standaard van
+  Vraag 4, Jonas koos nog niet). In het bestand zelf blijft de plek
+  staan; wie zo'n foto deelt, krijgt daar een waarschuwing over. Wie de
+  plek uitzet op `/account`, wist zijn plekken (B54). Een eigen kaart
+  (SVG) met alleen landsgrenzen, zonder kaarttegels van buiten. Land en
+  plaats zoekt de server zelf op, in Natural Earth en GeoNames;
+  `install.sh` downloadt die, en `PLAATSEN=uit` zet het uit (B55)
+
+- [x] Duplicaten en near-duplicates (SHA-256 + perceptual hash). Op
+  `/dubbel`: precies gelijk op de SHA-256, bijna gelijk op een pHash (een
+  vingerafdruk van hoe het beeld eruitziet) met een tweede controle per
+  paar (B56). Er staat nooit iets vooraf aangevinkt; opruimen gaat via
+  de prullenbak
+
+- [ ] Gezichten en objecten met lokale modellen (bijv. InsightFace +
+  CLIP); semantisch zoeken via pgvector. Niet in 0.8.0. Personen
+  benoem je in 0.8.0 met de hand (zo nodig met een kader op de foto), en
+  die zijn te zoeken. Gezichten vanzelf herkennen (YuNet en SFace) is
+  gepland voor 0.8.1. Zoeken op wat er op een foto staat (SigLIP 2, met
+  de vectoren in de SQLite in plaats van pgvector) is ook gepland voor
+  0.8.1, maar kan naar een eigen fase 6b schuiven (B57, B66, B68)
+
+- [x] Herinneringen (vandaag X jaar geleden) en slimme albums.
+  Herinneringen staan op `/fotos` en zijn uit te zetten op `/account`.
+  Een album kan een regel krijgen met dezelfde filters als zoeken; een
+  slim album deelt nieuwe foto's niet vanzelf (standaard nee, B58)
+
+- [x] Filters: type, datum, persoon, locatie, tag, bibliotheek. Op
+  `/zoeken`: soort, datum, tag, persoon, plaats, land, camera, map en
+  mediabibliotheek. Op `/fotos`: persoon, foto of video, periode,
+  plaats, land en camera
+
+Klaar als: een zoekopdracht over 100.000 bestanden antwoordt binnen 200
+ms; OCR-tekst is doorzoekbaar; gezichten zijn te benoemen en te zoeken.
+
+Versie 0.8.0 (11 november 2026): de kern van fase 6, zonder gezichten vanzelf
+herkennen en zonder zoeken op beeld. Zoeken over 100.000 bestanden moet
+binnen 200 ms antwoorden (p95: 95 van de 100 vragen zijn sneller); in de
+meting was het slechtste geval
+126,7 ms.
+Die grens blijft een harde eis in de automatische tests (CI): haalt een
+wijziging hem niet, dan faalt de test. OCR-tekst is doorzoekbaar: in de
+browser zijn een scan zonder tekstlaag en een foto van een bon te vinden
+op een woord dat alleen in het beeld staat, getest met de echte
+tesseract. OCR leest
+23,2 pagina's per minuut op
+één processorkern (de grens is 8). Personen zijn te benoemen en te
+zoeken, maar alleen met de hand; gezichten vanzelf herkennen hoort bij 0.8.1. Het
+laatste bewijs is de eigen server (de LXC). De metingen staan in
+[docs/fase-6/metingen.md](fase-6/metingen.md), de integratie in
+[docs/fase-6/integratie.md](fase-6/integratie.md), wat er is, de
+grenzen en de vragen voor Jonas in
+[docs/fase-6/README.md](fase-6/README.md). Van B49–B70 zijn alleen B53
+en B57 besloten; de rest is nog voorstel, en 0.8.0 draait op de
+standaarden van het bouwontwerp (ook Vraag 4: alleen de eigenaar ziet de
+plek van een foto).
+
+Duur en omvang (3-11-2026): Jonas koos voor "alles": OCR, gezichten
+automatisch en zoeken op wat er op een foto staat, met een kaart zonder
+tegels van buiten. Daarmee is fase 6 ±43 werkdagen (±9 weken) in plaats
+van 3 weken, standaard in twee opleveringen (Vraag 13): 0.8.0 rond
+dag 27 met de kern, en 0.8.1 rond dag 43 met gezichten en beeld. Anders dan hierboven staat:
+YuNet en SFace in plaats van InsightFace (die gewichten zijn alleen voor
+niet-commercieel onderzoek), SigLIP 2 in plaats van CLIP (beter in het
+Nederlands), en de vectoren in de SQLite die er al is in plaats van
+pgvector (standalone draait op SQLite, B15). Gezichten en beeld rekenen
+in een eigen afgeschermde container, en staan per gebruiker standaard
+uit. Zoeken op beeld mag standaard 250 ms duren (Vraag 14); gewoon zoeken
+houdt zijn 200 ms.
+Wie de plek van een foto ziet, heeft Jonas nog niet gekozen; tot dan
+ziet alleen de eigenaar hem. Het ontwerp, de planning en de open vragen
+staan in [docs/fase-6/README.md](fase-6/README.md) en
+[docs/fase-6/bouwontwerp.md](fase-6/bouwontwerp.md); de keuzes in
+B49–B70.
+
+### Fase 7 — Sync, delen en integraties (3 weken)
+
+Doel: bestanden overal in sync en bereikbaar voor andere software.
+
+- [ ] WebDAV-endpoint, compatibel met rclone en bestaande sync-clients
+
+- [ ] Delta-sync-API voor eigen apps (change-feed met cursor),
+  conflictafhandeling
+
+- [ ] Auto-upload-API voor mobiel (camerarol), dedupe op client-hash
+
+- [ ] Externe opslag koppelen (SMB, NFS, S3) als alleen-lezen
+  bibliotheken
+
+- [ ] Notificaties: web-push en e-mail; activiteitenfeed
+
+- [ ] Optioneel: Chromecast, DLNA, Kodi-plugin
+
+Klaar als: rclone sync werkt; een wijziging op apparaat A is binnen 5 s
+zichtbaar op apparaat B.
+
+### Fase 8 — Hardening en productie (2 weken)
+
+Doel: veilig open naar buiten en aantoonbaar herstelbaar.
+
+- [ ] Security-review: CSP, HSTS, CSRF, rate limits,
+  brute-force-lockout, dependency-scanning in CI
+
+- [ ] WAF (Coraza/ModSecurity) + CrowdSec; toegang van buiten alleen via
+  WireGuard of reverse proxy met 2FA
+
+- [ ] Audit-log, data-export en account verwijderen
+
+- [ ] Runbooks: failover, node vervangen, disk vol, certificaat
+  verlopen, restore
+
+- [ ] Chaos-test: node uit, disk vol, netwerkpartitie, Redis weg
+
+- [ ] Documentatie voor beheerder en gebruiker
+
+Klaar als: RPO 0 en RTO \< 2 min zijn aangetoond met een opgenomen test;
+de security-checklist is afgevinkt; volledige restore uit backup
+geoefend.
+
+### Fase 9 — Apps
+
+Zie de sectie Apps: drie sporen die na fase 5 kunnen starten zodra de
+media-API stabiel is.
+
+### Fase 10 — Omzetten en bewerken (2 weken)
+
+Doel: wat [Tangerine](https://tangerineformac.com/) op de Mac doet, maar dan in de web-app
+en dus op elk apparaat: een bestand met een paar klikken omzetten naar een ander formaat of
+snel bewerken, zonder dat het het platform verlaat. Geen Mac-app installeren; het werk
+draait als job in de eigen container, net als de previews.
+
+Volgorde: staat los van de productie-poort na fase 8 en kan starten na fase 5 (ffmpeg en
+hardware-acceleratie) en fase 4 (office-conversie). Afbeeldingen, audio en archieven kunnen
+al eerder, want die hebben alleen de job-queue uit fase 2 nodig.
+
+- [ ] Omzet-engine als job (de eigen job-queue uit fase 2): per brontype de mogelijke
+  doelen; het resultaat komt als nieuw bestand naast het origineel, of als nieuwe versie
+  als je "vervangen" kiest; voortgang en klaar-melding via de live events
+
+- [ ] Afbeeldingen: jpg, png, webp, avif, heic, gif, bmp, tiff en ico onderling, en naar pdf
+
+- [ ] Audio: mp3, aac/m4a, flac, ogg/opus en wav onderling, met keuze voor kwaliteit
+
+- [ ] Video: mp4 (H.264, HEVC), webm, mkv, mov en gif; alleen het geluid eruit halen
+
+- [ ] Documenten: docx, odt, rtf, txt, md en html naar pdf en onderling; xlsx, ods en csv
+  onderling; pptx en odp naar pdf (via de office-conversie uit fase 4)
+
+- [ ] Archieven: inpakken als zip, tar.gz of 7z (meerdere bestanden of een map) en
+  uitpakken naar een map
+
+- [ ] Bewerktools: verkleinen, comprimeren (op kwaliteit of doelgrootte), draaien,
+  spiegelen, bijsnijden, metadata en GPS-locatie weghalen; pdf's samenvoegen, splitsen,
+  pagina's draaien en comprimeren; video en audio inkorten en het volume gelijk trekken
+
+- [ ] Bediening, gewoon in de bestandsverkenner van de cloud (geen aparte pagina):
+  "Omzetten naar…" en "Bewerken" in het actiemenu, op één bestand of een hele selectie;
+  dezelfde acties via de API voor de apps
+
+- [ ] Het schuifeffect van Tangerine: begin je een bestand (of selectie) te slepen, dan
+  schuift er een omzet-lade in vanaf de rand met de doelformaten die bij dat type passen,
+  gegroepeerd (bijv. "Afbeelding", "Document", "Kleiner maken"). Het doel onder je cursor
+  licht op en schuift wat open; loslaten start de omzetting en het bestand "vliegt" de lade
+  in, waarna de voortgang op die plek verschijnt. Zelf gebouwd met CSS-transities, geen
+  animatiebibliotheek; met `prefers-reduced-motion` zonder beweging. Op een telefoon of
+  tablet opent lang drukken dezelfde lade, en met het toetsenbord gaat het ook
+
+- [ ] Voorinstellingen voor wat vaak voorkomt, met één klik (bijv. "HEIC naar JPG",
+  "video kleiner voor WhatsApp", "foto's zonder locatie")
+
+Klaar als: elke omzetting uit de lijst heeft een test; 100 foto's omzetten loopt als één
+batch met voortgang; het origineel blijft ongewijzigd tenzij je "vervangen" kiest, en dan
+is het als versie terug te zetten; slepen naar de lade werkt vloeiend in Chrome, Firefox
+en Safari, en lang drukken op een telefoon.
+
+### Fase 11 — Mediaserver en mediabeheer, Plex-achtig (±7 weken)
+
+Doel: van "ik wil deze film of serie" tot "staat klaar om te kijken", in de eigen app.
+Wat [HolyArrs](https://holyarrs.com/) doet door Sonarr, Radarr, Lidarr, Prowlarr, Bazarr
+en Seerr in één Go-proces samen te voegen, doen wij in het platform dat er al is: één
+container, één database, één beheerpagina. Fase 5 kan al afspelen (direct play,
+transcode, ondertitels, voortgang, muziek); deze fase voegt de Plex-ervaring eromheen
+toe en het beheer van wat er in de bibliotheek komt.
+
+Uitgangspunten (de vaste keuzes van Jonas): zelf bouwen, standalone op één node, alleen
+LXC, geen VPN. Geen Sonarr, Radarr, Prowlarr, Bazarr, Overseerr, Tautulli, Recyclarr,
+Unpackerr, Cleanuparr of FlareSolverr ernaast; hun taken worden functies van de app.
+Alles draait als jobs in de job-queue uit fase 2 en gebruikt de metadata-providers
+(TMDB, MusicBrainz) en de import uit fase 5. Sleutels van bronnen en downloaders worden
+versleuteld bewaard, zoals de TMDB-sleutel. Alleen voor bronnen en inhoud die je mag
+gebruiken; de app zit niets in de weg, maar levert ook geen lijst met bronnen mee.
+
+Volgorde: kan starten na fase 5; bouwen pas als fase 6 (zoeken en foto's) klaar is.
+Afspelen op de TV blijft fase 9.
+
+Deel A: de Plex-ervaring (bovenop fase 5)
+
+- [ ] Home met rijen: Verder kijken, Volgende aflevering, Nieuw toegevoegd, Onlangs
+  verschenen, en per bibliotheek; titelpagina's met samenvatting, cast, seizoenen en
+  "ook in deze collectie"; collecties (bijv. alle delen van een filmreeks) uit TMDB
+
+- [ ] Profielen per account en kinderslot: wie kijkt (eigen voortgang en "gezien"),
+  leeftijdsgrens per profiel op de kijkwijzer uit TMDB. De kolom `profile` staat al klaar
+  sinds fase 5 (B45, Vraag 6)
+
+- [ ] Intro en aftiteling overslaan: zelf herkennen door de audio-vingerafdruk van
+  afleveringen in hetzelfde seizoen te vergelijken (ffmpeg in de mediaworker), met de
+  knop "Intro overslaan" in de speler; volgende aflevering automatisch na de aftiteling
+
+- [ ] Activiteit en statistieken (wat Tautulli doet): nu bezig met wie, welk apparaat,
+  direct play of transcode; geschiedenis per gebruiker; meest bekeken; op `/beheer` →
+  Media. Bouwt op de afspeelsessies uit fase 5
+
+Deel B: mediabeheer (wat de *arr-apps doen)
+
+- [ ] Volgen en gewenst (Radarr, Sonarr, Lidarr): een film, serie (alle of bepaalde
+  seizoenen) of artiest toevoegen via zoeken in TMDB of MusicBrainz, of "volgen" aanzetten
+  op wat al in de bibliotheek staat; de app ziet wat ontbreekt. Kalender met wat
+  verschijnt, uit dezelfde providers
+
+- [ ] Verzoeken (Seerr): gezinsleden vragen een titel aan vanuit Ontdekken (populair,
+  trending, zoeken); de beheerder keurt goed of af, of zet automatisch goedkeuren aan per
+  persoon; een limiet per week; melding als het klaarstaat
+
+- [ ] Bronnen (Prowlarr, Jackett): eenmaal toevoegen op `/beheer`, daarna per bibliotheek
+  kiezen waar ze gebruikt worden. Zelf gebouwde clients voor de open standaarden Newznab
+  (usenet) en Torznab (torrents); RSS elke 15 minuten nalopen plus gericht zoeken; test-
+  knop en foutteller per bron. Geen FlareSolverr: een bron die dat nodig heeft valt af
+
+- [ ] Kwaliteit en voorkeuren (de profielen van Sonarr en Radarr, plus wat Recyclarr en
+  Profilarr synchroniseren): de bestandsnaam-parser uit fase 5 uitgebreid voor
+  release-namen (resolutie, bron, codec, HDR, audio, taal, groep, PROPER/REPACK); per
+  bibliotheek een profiel met voorkeur, minimum, maximale grootte en taal; een betere
+  versie vervangt automatisch de oude tot het doel bereikt is. Goede standaardprofielen
+  ingebouwd, zodat er niets te synchroniseren valt
+
+- [ ] Downloaders: downloads uitbesteden aan een downloadprogramma en de voortgang
+  volgen. Hoe, is een open vraag aan Jonas (zie onder); de app praat er via één eigen
+  interface mee, zodat een ander programma of een eigen downloader later in te prikken is
+
+- [ ] Vastgelopen downloads (Cleanuparr, Huntarr): geen voortgang na X uur, of een
+  release die niet uit te pakken of niet af te spelen is: weg ermee, op een zwarte lijst,
+  en automatisch de volgende goede release. Ontbrekende afleveringen en films periodiek
+  rustig opnieuw zoeken, zonder de bronnen te overbelasten
+
+- [ ] Uitpakken en importeren (Unpackerr): rar en zip uitpakken in de app (geen apart
+  programma), controleren met ffprobe, hernoemen naar de vaste mapstructuur en importeren
+  met de import van fase 5. Op hetzelfde ZFS-volume met een harde link, zodat een torrent
+  kan blijven delen zonder dubbele ruimte
+
+- [ ] Ondertitels (Bazarr): per profiel de gewenste talen (bijv. Nederlands, Engels);
+  ontbrekende ondertitels automatisch zoeken bij OpenSubtitles (eigen account en sleutel),
+  opnieuw proberen als er later een komt; timing verschuiven in de speler en de
+  verschuiving bewaren. Haalt het backlog-punt "Ondertitels downloaden" naar deze fase
+
+- [ ] Bibliotheek opruimen (Maintainerr, Janitorr): regels zoals "film door iedereen
+  gezien en 90 dagen niet aangeraakt" of "serie al een jaar niet gekeken"; eerst een lijst
+  "binnenkort weg" die je kunt tegenhouden, dan naar de prullenbak, niet meteen weg
+
+- [ ] Meldingen (Notifiarr): verzoek goedgekeurd, klaar om te kijken, download mislukt,
+  bron stuk; via de notificaties van fase 7 en de live events die er al zijn
+
+- [ ] Geschiedenis en activiteit per titel: wanneer gezocht, welke release gekozen en
+  waarom (score per voorkeur), gedownload, geïmporteerd, vervangen
+
+Niet in deze fase: boeken en strips (Readarr, Mylar en dergelijke), het automatisch
+doordelen van torrents (cross-seed), muziek van streamingdiensten (deemix) en
+kijkgeschiedenis naar Trakt; die kunnen later als aparte backlogpunten.
+
+Open vragen voor Jonas (de rest volgt de vaste keuzes):
+
+1. Downloaders: koppelen aan een bestaand downloadprogramma (qBittorrent of Transmission
+   voor torrents, SABnzbd of NZBGet voor usenet) in een eigen container ernaast, of ook
+   de downloader zelf bouwen? Voorstel: koppelen, want een eigen BitTorrent- en
+   usenet-client is maanden extra werk en moeilijk veilig te krijgen; de interface laat
+   een eigen downloader later toe.
+2. Welke soorten bronnen: alleen usenet, alleen torrents of allebei? Dit bepaalt welke
+   client er als eerste komt.
+3. Mogen gezinsleden zonder goedkeuring aanvragen, of keurt de beheerder alles goed?
+   Voorstel: goedkeuren door de beheerder, per persoon aan te zetten.
+
+Klaar als: een verzoek van een gezinslid wordt na goedkeuring zonder handwerk gezocht,
+gedownload, uitgepakt, geïmporteerd en met Nederlandse ondertitels afspeelbaar, en het
+gezinslid krijgt een melding; een vastgelopen download wordt binnen een uur vervangen
+door een andere release; een betere versie vervangt de oude automatisch; de Home met
+rijen opent binnen 1 s bij 5.000 titels; de app gebruikt in rust niet meer dan 100 MB
+extra geheugen voor deze functies; profielen en kinderslot werken; intro overslaan werkt
+op een serie met een vaste intro.
+
+### Preview-pipeline per bestandstype
+
+| Type          | Extensies                                                                           | Thumbnail en preview                                | Bekijken of bewerken                         |
+|---------------|-------------------------------------------------------------------------------------|-----------------------------------------------------|----------------------------------------------|
+| Afbeeldingen  | jpg, jpeg, png, gif, webp, avif, heic, bmp, tiff, ico, svg; RAW: cr2, nef, arw, dng | libvips (+ libheif, rawpy) naar WebP 256 en 1024 px | viewer met zoom, EXIF, draaien en bijsnijden |
+| PDF           | pdf                                                                                 | poppler (pdftoppm) eerste pagina                    | PDF.js, later annotaties                     |
+| Office        | docx, xlsx, pptx, odt, ods, odp, doc, xls, ppt, rtf, csv                            | OnlyOffice-conversie naar PDF en PNG                | OnlyOffice-editor                            |
+| Tekst en code | txt, md, json, yaml, xml, html, py, js, ts, sh en meer                              | eerste regels als tekst                             | CodeMirror met highlighting, Markdown-render |
+| Video         | mp4, mkv, avi, mov, webm, m4v, ts, wmv, flv                                         | ffmpeg-frame + sprite-sheet                         | HLS of direct play, ondertitels              |
+| Audio         | mp3, flac, aac, m4a, ogg, opus, wav                                                 | ingesloten cover art                                | player, afspeellijsten                       |
+| Archieven     | zip, rar, 7z, tar, gz                                                               | inhoudslijst                                        | uitpakken naar map                           |
+| E-books       | epub, mobi                                                                          | cover                                               | reader (later)                               |
+| Overig        | alle andere                                                                         | mime-icoon                                          | download                                     |
+
+## Apps: Windows, Android en LG webOS
+
+Alle apps gebruiken dezelfde REST- en WebSocket-API en zo veel mogelijk
+dezelfde webcode: LG webOS is een web-app, Windows een web-shell met
+native sync, alleen Android is volledig native omdat afspelen en
+achtergrondsync daar het meeste winnen.
+
+| Platform | Stack                                                  | Deelt met web               | Platform-specifiek                                                                                                         | Richtduur      |
+|----------|--------------------------------------------------------|-----------------------------|----------------------------------------------------------------------------------------------------------------------------|----------------|
+| Windows  | Tauri 2 (Rust shell) + React-web-UI                    | hele UI en player           | sync-engine (watch folder, delta-sync, conflicten, selectieve sync), tray-icoon, autostart, notificaties, installer (MSI)  | 6 tot 8 weken  |
+| Android  | Kotlin, Jetpack Compose, Media3/ExoPlayer, WorkManager | OpenAPI-gegenereerde client | auto-upload camerarol, offline downloads, achtergrondsync, Chromecast, biometrie, Android TV-variant later                 | 8 tot 10 weken |
+| LG TV    | webOS-web-app (HTML5; React of Enact)                  | player en componenten       | 10-foot UI, afstandsbediening (spatial navigation), native \<video\> met HLS, profielen, verder kijken, screensaver-gedrag | 4 tot 6 weken  |
+
+Wat de API al in fase 2 en 5 moet hebben voor de apps:
+
+- Apparaatregistratie met clientprofiel (codecs, containers, max.
+  bitrate, HDR) en push-token
+
+- Token-refresh per apparaat en op afstand uitloggen
+
+- Delta-sync-cursor en conflictregels (laatste schrijver wint +
+  conflictkopie)
+
+- Download-tokens voor offline gebruik met vervaldatum
+
+- Afspeelinfo-endpoint dat direct play, remux of transcode teruggeeft
+  met de HLS-URL
+
+Volgorde: eerst LG TV (kleinste, hergebruikt de web-player en bewijst de
+media-API), dan Windows (sync), dan Android.
+
+## Extra features (backlog)
+
+De Must-rijen zitten al in de fasen; Should en Could zijn de echte
+extra's, gesorteerd op waarde voor een thuis- of gezinsplatform. Pas de
+dropdowns aan als je anders prioriteert.
+
+| Feature                                                          | Wat het oplevert                                              | Inspanning | Prioriteit |
+|------------------------------------------------------------------|---------------------------------------------------------------|------------|------------|
+| Resumable uploads met dedupe                                     | grote uploads hervatten; dubbele bestanden kosten geen ruimte | middel     | Must       |
+| Versies en prullenbak                                            | fouten en ransomware terugdraaien                             | klein      | Must       |
+| 2FA met TOTP                                                     | accountbeveiliging bij toegang van buiten                     | klein      | Must       |
+| HLS met hardware-transcoding                                     | afspelen op elk apparaat, ook oude TV's                       | groot      | Must       |
+| Kijkvoortgang en verder kijken op elk apparaat                   | het Plex-gevoel                                               | klein      | Must       |
+| Full-text zoeken en OCR                                          | documenten en scans terugvinden op inhoud                     | middel     | Must       |
+| Passkeys (WebAuthn)                                              | wachtwoordloos inloggen                                       | klein      | Should     |
+| Gezichts- en objectherkenning, semantisch zoeken                 | zoeken op persoon en op wat er te zien is                     | groot      | Should     |
+| Auto-upload camerarol (Android)                                  | foto's automatisch veilig                                     | middel     | Should     |
+| Kaartweergave en reverse geocoding                               | foto's op locatie bekijken                                    | middel     | Should     |
+| Duplicaten en near-duplicates                                    | ruimte winnen, makkelijk opruimen                             | klein      | Should     |
+| Chromecast en DLNA                                               | afspelen op TV's zonder app                                   | middel     | Should     |
+| Ondertitels downloaden (OpenSubtitles), zit nu in fase 11       | altijd passende ondertitels                                   | klein      | Should     |
+| Gezinsprofielen en kinderslot                                    | per persoon een eigen bibliotheek en voortgang                | middel     | Should     |
+| Externe opslag koppelen (SMB, NFS, S3)                           | bestaande NAS-mappen meenemen                                 | middel     | Should     |
+| Upload-only droplink                                             | anderen laten aanleveren zonder account                       | klein      | Should     |
+| Activiteitenfeed en notificaties                                 | zien wat er gebeurt, ook op mobiel                            | middel     | Should     |
+| Intro overslaan en volgende aflevering                           | series kijken zonder frictie                                  | middel     | Could      |
+| E2EE-mappen (client-side encryptie)                              | de server kan de inhoud niet lezen                            | groot      | Could      |
+| PDF-annotaties en ondertekenen                                   | documenten afhandelen zonder andere tool                      | middel     | Could      |
+| Documenten samenvatten en bevragen (lokale LLM, RAG op pgvector) | kennis uit je eigen archief halen                             | groot      | Could      |
+| Automatische tags en albums                                      | minder handwerk bij foto's                                    | middel     | Could      |
+| Pre-transcoding van populaire titels 's nachts                   | sneller starten, minder piekbelasting                         | klein      | Could      |
+| Audiobooks en podcasts                                           | één app voor alle media                                       | middel     | Could      |
+| Foto-bewerking (bijsnijden, filters, RAW)                        | geen aparte editor nodig                                      | middel     | Could      |
+| Kodi-plugin                                                      | bestaande mediacenters aansluiten                             | klein      | Could      |
+| Federatie tussen instanties                                      | delen met een andere server                                   | groot      | Later      |
+| iOS, Android TV en Apple TV                                      | meer schermen                                                 | groot      | Later      |
+
+## Risico's en mitigaties
+
+De twee grootste risico's zijn dataverlies door asynchrone replicatie en
+scope creep; allebei zijn ze in het plan afgedekt met synchrone
+datalagen en harde fasecriteria.
+
+| Risico                                                         | Kans                  | Impact | Mitigatie                                                                                                              |
+|----------------------------------------------------------------|-----------------------|--------|------------------------------------------------------------------------------------------------------------------------|
+| Replicatie om de paar uur geeft dataverlies bij failover       | hoog zonder maatregel | hoog   | synchrone DB-replicatie en 2 synchrone objectkopieën; de uursync alleen als snapshotlaag                               |
+| Split-brain na een netwerkpartitie (twee masters)              | middel                | hoog   | quorum via etcd of Kubernetes; nooit handmatig een tweede primary; fencing in de failover-runbook                      |
+| 1,0 TB netto is te klein voor een mediabibliotheek             | hoog                  | middel | replicatie 001 voor media, groeipad met extra disks; herdownloadbare content krijgt geen derde kopie of offsite-backup |
+| OnlyOffice community-limiet van 20 verbindingen                | geen (10.0)           | middel | de limiet bestaat in 10.0 niet meer; de app telt zelf en meldt het als een image toch een limiet heeft; Collabora klaar |
+| Transcoding te zwaar voor CPU's van 5 jaar oud                 | middel                | middel | direct play maximaliseren; goedkope Intel Arc-kaart voor QSV (ook AV1); pre-transcoding 's nachts                      |
+| Afhankelijkheid die stopt (zoals MinIO community)              | middel                | middel | standaard-API's als abstractie: SeaweedFS, Garage en Ceph zijn uitwisselbaar achter S3                                 |
+| Scope creep: Nextcloud + Plex + OnlyOffice is groot            | hoog                  | hoog   | fasen met "klaar als"-criteria; web-MVP in fase 3 vóór media; backlog met dropdowns, niet in de fasen                  |
+| Ransomware of een fout wist alles, replicatie kopieert het mee | middel                | hoog   | ZFS-snapshots per uur, offsite append-only backup, prullenbak en versies                                               |
+| 1 GbE tussen de nodes wordt de bottleneck                      | middel                | laag   | 2,5 of 10 GbE tussen de nodes, of een aparte replicatie-VLAN                                                           |
+| k3s en cluster-forge leercurve vertraagt fase 1                | middel                | middel | Compose als terugvaloptie met dezelfde containers; cluster-forge eerst in een test-VM proberen                         |
+| Toegang van buiten lekt data                                   | laag                  | hoog   | WireGuard-only als standaard; publiek alleen achter WAF, 2FA en rate limiting                                          |
+
+## Open beslissingen
+
+Deze punten bepalen fase 0; zonder antwoord start fase 1 niet.
+
+- [ ] Kubernetes (k3s + cluster-forge) of Docker Compose per node?
+
+- [ ] SeaweedFS met replicatie 001 (≈ 1,0 TB netto) of Garage met factor
+  3 (≈ 0,7 TB)? Of Ceph via Proxmox?
+
+- [ ] OnlyOffice of Collabora?
+
+- [ ] Toegang van buiten: alleen via WireGuard, of publiek via reverse
+  proxy met WAF en 2FA?
+
+- [ ] Welke node krijgt een GPU voor transcoding, en welke kaart (Intel
+  Arc voor QSV)?
+
+- [ ] Offsite-backupdoel: externe disk, Hetzner Storage Box of Backblaze
+  B2?
+
+- [ ] Eén ontwikkelaar of meerdere? Dit bepaalt of de app-sporen
+  parallel lopen.
+
+- [ ] Frontend definitief React, zodat LG webOS en Windows de webcode
+  hergebruiken?
+
+- [ ] Doet cluster-forge alleen de platformtools, of ook de app-deploys
+  (Argo CD of Flux)?
+
+## Mijlpalen en planning
+
+<img src="media/image2.png" style="width:6in;height:4.89286in"
+alt="planning in weken · 9 fasen, 3 mijlpalen, 3 app-sporen" />
+
+planning in weken · 9 fasen, 3 mijlpalen, 3 app-sporen
+
+Drie mijlpalen gelden als poort: de failover-test na fase 1, de web-MVP
+na fase 3 en productie na fase 8; de app-sporen kunnen al na fase 5
+starten als er een tweede ontwikkelaar is.
+
+Fase 10 (omzetten en bewerken) kwam er later bij, op verzoek van Jonas. Ze staat los van
+de mijlpalen en kan na fase 5 starten, net als de app-sporen.
+
+Fase 11 (mediaserver en mediabeheer, Plex-achtig) kwam er op 8-11-2026 bij, op verzoek van
+Jonas, naar het voorbeeld van HolyArrs. Ook die staat los van de mijlpalen; ze kan na
+fase 5 starten en wordt gebouwd als fase 6 klaar is.

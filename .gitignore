@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+# Node
+node_modules/
+dist/
+# Lokaal
+.env
+*.local
+infra/inventaris/*.txt
+*.tsbuildinfo
+infra/ansible/group_vars/all.local.yml
+infra/ansible/inventory/hosts.yml
+# Data van lokaal draaien
+api/data/

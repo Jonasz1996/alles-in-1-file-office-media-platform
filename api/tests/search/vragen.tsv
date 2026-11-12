@@ -1,0 +1,201 @@
+# soort	vraag  (gemaakt door referentie.maak_vragen(); niet met de hand)
+heel	hypotheek
+heel	agenda
+heel	school
+heel	supplier
+heel	kwartaal
+heel	request
+heel	quote
+heel	heeft
+heel	verzekering
+heel	duizend
+heel	project
+heel	overzicht
+heel	dinsdag
+heel	woensdag
+heel	samenvatting
+heel	train
+heel	planning
+heel	maandag
+heel	vlistpeshoofttrek
+heel	wetschoorkestnand
+heel	goschielschiet
+heel	gohaang
+heel	luirtresttres
+heel	zendvestbraalfuil
+heel	plongdra
+heel	scheistkaatsoustpir
+heel	lietvloukroek
+heel	lemvlistsluftvleem
+heel	kriftzok
+heel	sonslart
+twee	garantie invoice
+twee	provincie request
+twee	minutes donderdag
+twee	contract december
+twee	samenvatting huisarts
+twee	offerte project
+twee	bestelling september
+twee	agenda betaling
+twee	budget recipe
+twee	keuken fiets
+twee	insurance contract
+twee	maand kunnen
+twee	oktober agenda
+twee	klant approval
+twee	contract maart
+twee	aangifte minutes
+twee	huisarts waterschap
+twee	woensdag herinnering
+twee	salaris schade
+twee	quote factuur
+voorvoegsel	budg
+voorvoegsel	aang
+voorvoegsel	honde
+voorvoegsel	warr
+voorvoegsel	dinsd
+voorvoegsel	negen
+voorvoegsel	polis
+voorvoegsel	bes
+voorvoegsel	att
+voorvoegsel	rappo
+voorvoegsel	paym
+voorvoegsel	maan
+voorvoegsel	vers
+voorvoegsel	acco
+voorvoegsel	schoo
+voorvoegsel	kwar
+voorvoegsel	huisa
+voorvoegsel	vaka
+voorvoegsel	brest
+voorvoegsel	scha
+voorvoegsel	wur
+voorvoegsel	neemk
+voorvoegsel	södui
+voorvoegsel	fein
+voorvoegsel	reg
+voorvoegsel	simb
+voorvoegsel	vissl
+voorvoegsel	saf
+voorvoegsel	komb
+voorvoegsel	set
+naamstuk	port
+naamstuk	img
+naamstuk	foto
+naamstuk	ouder
+naamstuk	_2019
+naamstuk	0612
+naamstuk	ectuur
+naamstuk	aard
+naamstuk	ecip
+naamstuk	itsp
+naamstuk	ien
+naamstuk	oftw
+naamstuk	uto
+naamstuk	ratz
+naamstuk	arra
+kort	de
+kort	q3
+kort	a4
+kort	nl
+kort	vu
+kort	op
+kort	en
+kort	2
+kort	it
+kort	of
+kort	de q3
+kort	a4 nl
+kort	x
+kort	kp
+kort	in
+diakriet	café
+diakriet	cafe
+diakriet	reünie
+diakriet	reunie
+diakriet	coördinatie
+diakriet	coordinatie
+diakriet	één
+diakriet	naïef
+diakriet	naief
+diakriet	patiënt
+diakriet	patient
+diakriet	ideeën
+diakriet	ideeen
+diakriet	résumé
+diakriet	resume
+diakriet	façade
+diakriet	facade
+diakriet	überhaupt
+diakriet	uberhaupt
+diakriet	CAFÉ
+ss	grosse
+ss	große
+ss	GROẞE
+ss	strasse
+ss	Straße
+ss	STRASSE
+ss	fussball
+ss	fußball
+ss	grüße
+ss	grusse
+ss	weiß
+ss	weiss
+cijfer	2019
+cijfer	2024
+cijfer	2026
+cijfer	117
+cijfer	nl91abna0417164300
+cijfer	2016 factuur
+cijfer	q3 2024
+cijfer	1
+cijfer	20
+cijfer	2025 rapport
+cijfer	iban nl91abna0417164300
+cijfer	202
+frase	"de factuur"
+frase	"annual report"
+frase	"het project"
+frase	"van de"
+frase	"in de"
+frase	"factuur voor"
+frase	"de klant"
+frase	"meeting minutes"
+frase	"in het"
+frase	"de rekening"
+frase	"op de"
+frase	"het verslag"
+frase	"de offerte"
+frase	"voor de"
+frase	"en de factuur"
+frase	"de fact
+leeg	xyzzyqq
+leeg	onbestaandwoord
+leeg	qqqq
+leeg	zzzzzzz
+leeg	nietbestaand 2019
+leeg	factuur xyzzyqq
+leeg	"factuur offerte rekening jaarverslag"
+leeg	wwwwvvvv
+leeg	kqkqkq
+leeg	ççç
+operator	factuur AND offerte
+operator	NEAR(factuur offerte)
+operator	fact*
+operator	"factuur
+operator	name:factuur
+operator	body:rapport
+operator	factuur OR offerte
+operator	NOT factuur
+operator	-factuur
+operator	factuur^2
+operator	(factuur)
+operator	a:b
+operator	*
+operator	""
+operator	AND
+operator	NEAR
+operator	factuur NEAR offerte
+operator	{name}: test
+operator	factuur + offerte
+operator	'factuur'

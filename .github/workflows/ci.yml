@@ -1,0 +1,1248 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# De jobs die ffmpeg uit apt halen draaien vast op ubuntu-24.04 (ffmpeg 6.1). ubuntu-latest werd
+# in november 2026 Ubuntu 26.04 met ffmpeg 8.0, en daar geeft de probe van de worker geen
+# last_frame_ms meer en weigert mjpeg een frame voorbij het einde (open punt in docs/fase-5/README.md).
+# Het image zelf gebruikt ffmpeg 7.1 van Debian 13 en hangt hier niet van af.
+jobs:
+  api:
+    name: API (lint en tests)
+    runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: ffmpeg voor de previews van video's
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # X1: de gemaakte scans van OCR (tests/ocr/scans.py: de rechtzetting, het scenario ocr_vorm
+      # met de nep-worker) tekenen in DejaVu Sans; zonder faalt het met een duidelijke melding
+      - name: DejaVu Sans voor de scans van OCR (X1)
+        run: sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest -q
+      # Z3 (Keuze 29): de plaatsen en landen met de echte bronnen, met hun sha256 uit
+      # tools/geo/haal.py (nooit in de repository); de gewone run slaat de marker geo over
+      - name: De bronnen voor plaatsen en landen (Natural Earth 10m, GeoNames cities1000)
+        run: python3 -I ../tools/geo/haal.py --naar "$RUNNER_TEMP/geo"
+      - name: pytest -m geo (grenzen, zee, de plaats tegen brute kracht, 180°)
+        run: PLATFORM_GEO_TEST_SRC="$RUNNER_TEMP/geo" uv run pytest -q -m geo tests/geo
+
+  # Fase 5 (§4.8): de tests met de marker media, met de lokale worker en echte ffmpeg (6.1 van
+  # Ubuntu), naast de rest. Alles onder taskset -c 0-2: de tests, de worker en elke ffmpeg op 3
+  # cores, zoals op de LXC. De job api slaat media over (addopts in api/pyproject.toml).
+  api-media:
+    name: API media (lokale worker en echte ffmpeg)
+    runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: ffmpeg (6.1 van Ubuntu)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --frozen
+      - name: Versies en cores
+        run: |
+          ffmpeg -hide_banner -version | head -n 1
+          ffprobe -hide_banner -version | head -n 1
+          n="$(nproc)"
+          echo "cores: $n"
+          # taskset -c 0-2; een runner met minder dan 3 cores krijgt ze allemaal, met een waarschuwing
+          if [ "$n" -ge 3 ]; then cores=0-2; else cores="0-$((n - 1))"; echo "::warning::maar $n cores: taskset -c $cores"; fi
+          echo "CORES=$cores" >> "$GITHUB_ENV"
+      - name: De fixtures maken (§3.8, ≤ 30 s; geen cache)
+        run: |
+          taskset -c "$CORES" uv run python -c '
+          import time
+          from tests.media import fixtures
+          t = time.monotonic()
+          n = len(fixtures.make_all())
+          s = time.monotonic() - t
+          print(f"{n} fixtures in {s:.1f} s")
+          if s > 30:
+              print(f"::warning::de fixtures duurden {s:.1f} s, meer dan de 30 s van §3.8")
+          '
+      # X1: tesseract met de talen, zodat het scenario ocr_vorm van het contract
+      # (tests/media/worker_contract.py) ook tegen de echte worker loopt; de scan is in DejaVu Sans
+      - name: tesseract met nld, eng en osd, en DejaVu Sans (X1)
+        run: |
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-nld \
+            tesseract-ocr-eng tesseract-ocr-osd fonts-dejavu-core
+          tesseract --version | head -n 1
+      - name: pytest -m media
+        run: |
+          set -o pipefail
+          taskset -c "$CORES" uv run pytest -q -m media -rs | tee "$RUNNER_TEMP/pytest.txt"
+          # Overslaan omdat ffmpeg ontbreekt telt als mislukt. Wat de worker nog niet doet (stream,
+          # tot M4) mag overslaan, met de reden in de uitvoer (-rs)
+          if grep -q "^SKIPPED .*ffmpeg ontbreekt" "$RUNNER_TEMP/pytest.txt"; then
+            echo "Tests met media overgeslagen: ffmpeg ontbreekt" && exit 1
+          fi
+          grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/pytest.txt"
+      - name: Geen OCR overgeslagen (X1)
+        run: |
+          if grep -q "^SKIPPED .*tesseract ontbreekt" "$RUNNER_TEMP/pytest.txt"; then
+            echo "Het contract van ocr overgeslagen: tesseract ontbreekt" && exit 1
+          fi
+
+  # Fase 6, X1 (§4.6): OCR met de echte tesseract van Ubuntu en DejaVu Sans, met marker ocr:
+  # tests/ocr/test_ocr_real.py (een worker in het proces met de echte opdracht ocr: recall, de
+  # vakjes in het beeld zoals de viewer het toont, de OSD alleen waar nodig, en ≥ 8 pagina's per
+  # minuut op één core over vier bronnen) en de scans van Z0 (tests/search/test_fixtures.py);
+  # dan e2e/test_zoek_ocr.py (marker ocr: de app met media en de lokale worker, een scan zonder
+  # tekstlaag en een foto van een bon, zoeken, de snippet, de markering in de viewer, en een
+  # kopie van Bram die Eva's tekst niet vindt); en als laatste de poort van §4.5 (hard): 130
+  # gemaakte scans van A4 op 300 dpi onder taskset -c 0, 100 brieven (0°, 3°, 7°, −5° en 90°) en
+  # 30 volle pagina's van 44 regels (0°, 3° en 90°), ≥ 8 pagina's per minuut over alles, met de
+  # cijfers per dichtheid (tests/ocr/poort.py). Zonder tesseract, een taal of DejaVu faalt het;
+  # overslaan telt als mislukt. Aan het eind van het log "=== kort ===" met de regels "OCR:", de
+  # uitkomst van de e2e en de regels "OCR-poort".
+  ocr:
+    name: OCR (echte tesseract, marker ocr)
+    runs-on: ubuntu-24.04  # zoals api-media, zie de noot boven jobs
+    # pytest ±2 min, de web-build en Chromium ±3 min, de e2e ±1 min, de poort ±7 min
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # ffmpeg voor de lokale worker van de e2e (zoals e2e-media); de stap ocr zelf heeft hem
+      # niet nodig
+      - name: tesseract met nld, eng en osd, DejaVu Sans en ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-nld \
+            tesseract-ocr-eng tesseract-ocr-osd fonts-dejavu-core ffmpeg
+          tesseract --version | head -n 1
+          tesseract --list-langs
+          echo "cores: $(nproc)"
+      - run: uv sync --frozen
+      - name: pytest -m ocr
+        run: |
+          set -o pipefail
+          taskset -c 0-2 uv run pytest -q -m ocr -rs -s | tee "$RUNNER_TEMP/ocr.txt"
+          if grep -q "^SKIPPED" "$RUNNER_TEMP/ocr.txt"; then
+            echo "OCR-tests overgeslagen" && exit 1
+          fi
+          grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/ocr.txt"
+      - name: Productie-build van de web-app
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Chromium voor Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      - name: e2e -m ocr (tekst in beeld in de echte app)
+        env:
+          E2E_ARTIFACTS: ${{ runner.temp }}/ocr-artefacten
+        run: |
+          set -o pipefail
+          taskset -c 0-2 uv run --with playwright python -m pytest ../e2e -m ocr -rs -s \
+            | tee "$RUNNER_TEMP/ocr-e2e.txt"
+          if grep -q "^SKIPPED" "$RUNNER_TEMP/ocr-e2e.txt"; then
+            echo "e2e van OCR overgeslagen" && exit 1
+          fi
+          grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/ocr-e2e.txt"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-ocr
+          path: ${{ runner.temp }}/ocr-artefacten
+          if-no-files-found: ignore
+      - name: De poort van §4.5 (130 scans, taskset -c 0, ≥ 8 pagina's per minuut)
+        run: |
+          set -o pipefail
+          taskset -c 0 uv run python -m tests.ocr.poort --json "$RUNNER_TEMP/ocr-poort.json" \
+            | tee "$RUNNER_TEMP/ocr-poort.txt"
+      - name: Samenvatting
+        if: always()
+        run: |
+          echo "=== kort ==="
+          echo "X1 OCR met de echte tesseract (pytest -m ocr):"
+          if [ -f "$RUNNER_TEMP/ocr.txt" ]; then
+            grep -o "OCR: .*" "$RUNNER_TEMP/ocr.txt" | sed 's/^/  /' || true
+            tail -n 1 "$RUNNER_TEMP/ocr.txt" | sed 's/^/  /'
+          else
+            echo "  liep niet"
+          fi
+          echo "X1 e2e (e2e -m ocr):"
+          if [ -f "$RUNNER_TEMP/ocr-e2e.txt" ]; then
+            grep -o "X1 markering: .*" "$RUNNER_TEMP/ocr-e2e.txt" | sed 's/^/  /' || true
+            tail -n 1 "$RUNNER_TEMP/ocr-e2e.txt" | sed 's/^/  /'
+          else
+            echo "  liep niet"
+          fi
+          echo "X1 poort van §4.5 (tests/ocr/poort.py, taskset -c 0):"
+          if [ -f "$RUNNER_TEMP/ocr-poort.txt" ]; then
+            grep "^OCR-poort" "$RUNNER_TEMP/ocr-poort.txt" | sed 's/^/  /' || true
+          else
+            echo "  liep niet"
+          fi
+
+  # Fase 6, spike Z0 (bouwontwerp §3.7): zoeken op de SQLite van het image. python:3.12-slim is
+  # de basis van het Dockerfile (Debian 13, SQLite 3.46.1). De plannen met en zonder ANALYZE
+  # (S4), de twee vormen per woord (S8), het schema van de zoekbench (S9) en de landsgrenzen
+  # (S6, test met een eigen bron); churn en de triggers (§4.6, marker triggers, zonder
+  # zoek_perf); dan de metingen met marker zoek_perf: de echte tijdsgrenzen
+  # (S1), de herbouw van 100.000 (S2), de migratie van 100.000 (S3) en het zaad van 100.000 van
+  # app/search/bench.py in < 3 minuten (S7); de vormen van Keuze 4a (S10) met
+  # tools/zoekbench/bench.py --vormen; en world-110m.<hash>.json uit Natural Earth (S6, ≤ 60 kB
+  # gzip). Alles op 3 cores (taskset), en aan het eind van het log het blok "=== kort ===".
+  zoek-perf:
+    name: Zoek-perf (spike Z0 op SQLite 3.46.1)
+    runs-on: ubuntu-24.04
+    container: python:3.12-slim
+    # §4.4 (Z1) bouwt een boom van 100.000 en meet zes rollen over HTTP: ±20 min op 3 cores; de
+    # herinneringen (Z6) bouwen er nog een en meten één route: ±3 min; de kaart en de duplicaten
+    # (Z3) ook: elk ±2,5 min. Churn en de triggers (§4.6, I1): ±3,5 min (lokaal 34 tests in 202 s
+    # op één core, churn alleen 153 s). De job duurde op 16ccb8d 18 min 43 s
+    timeout-minutes: 75
+    env:
+      UV_PYTHON_PREFERENCE: only-system
+      UV_LINK_MODE: copy
+    defaults:
+      run:
+        shell: bash
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Versies en cores
+        run: |
+          mkdir -p "$RUNNER_TEMP/zoek-perf"
+          # In een container geeft de expressie runner.temp het pad op de host, niet dat in de
+          # container: upload-artifact krijgt daarom dit pad (review Z0, haalbaar F6)
+          echo "ZP=$RUNNER_TEMP/zoek-perf" >> "$GITHUB_ENV"
+          python3 -c 'import sqlite3, sys; print(f"python {sys.version.split()[0]}, SQLite {sqlite3.sqlite_version}")' \
+            | tee "$RUNNER_TEMP/zoek-perf/versie.txt"
+          if ! grep -q "SQLite 3.46.1$" "$RUNNER_TEMP/zoek-perf/versie.txt"; then
+            echo "::warning::python:3.12-slim heeft niet meer SQLite 3.46.1: de metingen gelden voor deze versie"
+          fi
+          n="$(nproc)"
+          if [ "$n" -ge 3 ]; then cores=0-2; else cores="0-$((n - 1))"; echo "::warning::maar $n cores: taskset -c $cores"; fi
+          echo "cores: $n, taskset -c $cores"
+          echo "CORES=$cores" >> "$GITHUB_ENV"
+      - run: uv sync --frozen
+      - name: S4, S8, S9 en S6 (de plannen, de vormen per woord, het schema van de bench, de kaart)
+        run: |
+          set -o pipefail
+          taskset -c "$CORES" uv run pytest -q -s tests/search/test_spike_plannen.py \
+            tests/search/test_spike_vouwen.py tests/search/test_zoekbench.py tests/search/test_spike_kaart.py \
+            | tee "$RUNNER_TEMP/zoek-perf/plannen.txt"
+      # §4.6 (integratie I1): churn en de hele set triggers op 3.46.1. Marker triggers zet
+      # tests/search/conftest.py (de bestanden migration_0010, *trigger* en *churn*). Dezelfde
+      # uitsluitingen als MARKERS_DB in e2e/slim.sh: de vier metingen met zoek_perf in die
+      # bestanden (S2, S3, die van de prullenbak en die van de plekken) draait de stap hierna al,
+      # één keer
+      - name: Churn en de triggers op 3.46.1 (marker triggers, §4.6)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          taskset -c "$CORES" uv run pytest -q -m "triggers and not zoek_perf and not media and not media_perf and not ocr" \
+            tests/search -rs | tee "$RUNNER_TEMP/zoek-perf/triggers.txt"
+      - name: S1, S2, S3 en S7 (marker zoek_perf)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          taskset -c "$CORES" uv run pytest -q -s -m zoek_perf tests/search --durations=0 -rA \
+            --ignore=tests/search/test_perf_100k.py | tee "$RUNNER_TEMP/zoek-perf/zoek_perf.txt"
+      - name: §4.4 100.000 bestanden binnen 200 ms (Z1; de poorten zijn hard)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
+            tests/search/test_perf_100k.py | tee "$RUNNER_TEMP/zoek-perf/perf_100k.txt"
+      - name: §4.4 herinneringen binnen 50 ms (Z6; de poort is hard)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
+            tests/photos/test_memories_perf.py | tee "$RUNNER_TEMP/zoek-perf/herinneringen_log.txt"
+      - name: §4.4 de kaart binnen 150 ms bij 55.000 foto's met een plek, ook met een filter (Z3; de poorten zijn hard)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
+            tests/photos/test_map_perf.py | tee "$RUNNER_TEMP/zoek-perf/fotokaart_log.txt"
+      - name: §4.4 de duplicaten binnen 300 ms bij 55.000 foto's (Z3; de poort is hard)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
+            tests/photos/test_dupes_perf.py | tee "$RUNNER_TEMP/zoek-perf/duplicaten_log.txt"
+      - name: S10 de vormen van Keuze 4a (tools/zoekbench/bench.py --los --vormen)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          taskset -c "$CORES" python3 -I ../tools/zoekbench/bench.py --los --vormen --map "$RUNNER_TEMP" \
+            --json "$RUNNER_TEMP/zoek-perf/bench.json" | tee "$RUNNER_TEMP/zoek-perf/bench.txt"
+      - name: S6 world-110m.<hash>.json uit Natural Earth 110m v5.1.2
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          python3 -I ../tools/kaart/maak_wereld.py --download --uit "$RUNNER_TEMP/zoek-perf/kaart" \
+            | tee "$RUNNER_TEMP/zoek-perf/kaart.txt"
+      - name: S6 de wereld in web/public/kaart is die uit de bron (Z5)
+        if: ${{ !cancelled() }}
+        run: |
+          # De web-app levert het bestand zelf mee (de build heeft geen netwerk nodig); het moet
+          # byte voor byte zijn wat maak_wereld.py uit de vaste bron maakt, en er staat niets naast
+          diff -r "$RUNNER_TEMP/zoek-perf/kaart" ../web/public/kaart
+          echo "gelijk aan de bron: $(ls ../web/public/kaart)" | tee "$RUNNER_TEMP/zoek-perf/kaart-web.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zoek-perf
+          path: ${{ env.ZP }}
+          if-no-files-found: warn
+      - name: Samenvatting
+        if: always()
+        run: |
+          d="$RUNNER_TEMP/zoek-perf"
+          echo "=== kort ==="
+          cat "$d/versie.txt" 2> /dev/null || echo "(geen versie)"
+          echo "S4, S8, S9, S6: $(tail -n 1 "$d/plannen.txt" 2> /dev/null || echo "liep niet")"
+          grep -E "^ *(S4 op|laatste jaar|langs de tijd|type),? " "$d/plannen.txt" 2> /dev/null || true
+          echo "churn en de triggers (§4.6): $(tail -n 1 "$d/triggers.txt" 2> /dev/null || echo "liep niet")"
+          echo "zoek_perf (S1, S2, S3, S7): $(tail -n 1 "$d/zoek_perf.txt" 2> /dev/null || echo "liep niet")"
+          grep -E "^[.FEsx]*(S1|S2|S7) " "$d/zoek_perf.txt" 2> /dev/null | sed 's/^[.FEsx]*//' || true
+          grep -E "^[0-9.]+s call " "$d/zoek_perf.txt" 2> /dev/null || true
+          sed -n '/^=== zoekbench ===/,$p' "$d/bench.txt" 2> /dev/null || echo "S10: de bench liep niet"
+          if [ -f "$d/zoek_100k.txt" ]; then cat "$d/zoek_100k.txt"; else echo "§4.4: liep niet of brak af"; fi
+          if [ -f "$d/herinneringen.txt" ]; then cat "$d/herinneringen.txt"; else echo "§4.4 herinneringen: liep niet of brak af"; fi
+          if [ -f "$d/fotokaart.txt" ]; then cat "$d/fotokaart.txt"; else echo "§4.4 kaart: liep niet of brak af"; fi
+          if [ -f "$d/fotokaart_filters.txt" ]; then cat "$d/fotokaart_filters.txt"; else echo "§4.4 kaart met een filter: liep niet of brak af"; fi
+          if [ -f "$d/duplicaten.txt" ]; then cat "$d/duplicaten.txt"; else echo "§4.4 duplicaten: liep niet of brak af"; fi
+          echo "S6: $(cat "$d/kaart.txt" 2> /dev/null || echo "liep niet")"
+          echo "S6 web/public/kaart: $(cat "$d/kaart-web.txt" 2> /dev/null || echo "niet gelijk of liep niet")"
+
+  acme:
+    name: HTTPS (certificaat van Pebble, de test-CA van Let's Encrypt)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - name: Pebble starten en certificaat aanvragen
+        run: |
+          set -o pipefail
+          eval "$(tests/pebble/start.sh)"
+          test -n "$PEBBLE_DIRECTORY"
+          # Overgeslagen telt als mislukt: deze job bestaat juist voor deze test
+          uv run pytest -q tests/test_acme_pebble.py -rs | tee "$RUNNER_TEMP/pytest.txt"
+          grep -q "1 passed" "$RUNNER_TEMP/pytest.txt"
+      - name: Logs van Pebble
+        if: failure()
+        run: cat "${TMPDIR:-/tmp}/pebble/pebble.log" || true
+
+  web:
+    name: Web (typecheck, tests en build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Teksten buiten t() (ontwerp §5.4, faalt bij een melding)
+        run: npm run check:i18n -- --strict
+      - name: Groottebudget (ontwerp §4.1)
+        run: npm run budget
+
+  e2e:
+    name: e2e (Playwright tegen de echte server)
+    runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
+    needs: [web]
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: ffmpeg voor de previews van video's
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --frozen
+      - name: Productie-build van de web-app (die serveert python -m app.serve)
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Chromium voor Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      # Zonder media (fase 5, §4.8): die draait in e2e-media en e2e-media-perf. Zoeken (marker
+      # zoek, fase 6) draait hier mee; ocr (echte tesseract) niet: die draait in de job ocr van
+      # §4.6 (X1)
+      - run: >-
+          uv run --with playwright python -m pytest ../e2e
+          -m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"
+      - name: Office met de nep-DS (marker office, fase 4 §4.4; in elke run)
+        run: uv run --with playwright python -m pytest ../e2e -m office
+
+  office:
+    name: Office (de echte DS 10.0.0.1, marker office_real)
+    runs-on: ubuntu-latest
+    needs: [web]
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      # Als eerste: DS bouwt zijn fonts terwijl de web-app bouwt (fase 4 §4.5, docs/fase-4/e2e.md).
+      # Op digest, eerst van mirror.gcr.io en dan van Docker Hub; de geheimen maakt het script zelf.
+      - name: DS starten
+        run: bash ../e2e/office_ds.sh start
+        env:
+          # De instellingen van de installatie (O6, §4.5 stap 2, spike A21): 8 pogingen voor een
+          # callback, docbuilder en AI uit, en de grenzen van de invoercontrole
+          OFFICE_DS_CONFIG: ${{ github.workspace }}/infra/single/office/local-production-linux.json
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: uv sync --frozen
+      - name: Productie-build van de web-app
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Chromium voor Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      - name: Wachten op DS (gezond en na zijn font-herstart, hooguit 6 minuten)
+        run: bash ../e2e/office_ds.sh wait
+      - name: e2e met de echte DS
+        env:
+          E2E_REAL_DS: http://127.0.0.1:18080
+          E2E_REAL_DS_SECRET_FILE: ${{ runner.temp }}/office-ds/jwt.secret
+          E2E_ARTIFACTS: ${{ runner.temp }}/office-artefacten
+        run: |
+          set -o pipefail
+          uv run --with playwright python -m pytest ../e2e -m office_real -rs | tee "$RUNNER_TEMP/pytest.txt"
+          # Overgeslagen telt als mislukt: deze job bestaat juist voor deze tests
+          if grep -Eq "[0-9]+ skipped" "$RUNNER_TEMP/pytest.txt"; then
+            echo "Tests met office_real overgeslagen" && exit 1
+          fi
+          grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/pytest.txt"
+      - name: Logs van DS
+        if: failure()
+        env:
+          E2E_ARTIFACTS: ${{ runner.temp }}/office-artefacten
+        run: bash ../e2e/office_ds.sh logs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: office
+          path: ${{ runner.temp }}/office-artefacten
+          if-no-files-found: ignore
+      - name: DS stoppen
+        if: always()
+        run: bash ../e2e/office_ds.sh stop
+
+  perf:
+    name: Prestaties (alleen rapport)
+    runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
+    needs: [web]
+    # Runners zijn te wisselend voor een harde poort; in de sandbox en bij de integratie wel
+    continue-on-error: true
+    env:
+      E2E_PERF_REPORT_ONLY: "1"
+      E2E_PERF_OUT: ${{ github.workspace }}/perf-results
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: ffmpeg voor de previews van video's
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --frozen
+      - name: Productie-build van de web-app
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Chromium voor Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      - name: Alle prestatiepoorten (ontwerp §4)
+        run: uv run --with playwright python ../e2e/perf/run_all.py --out-dir "$E2E_PERF_OUT"
+      - name: Zoeken in de browser (fase 6, Z4; rapport, zoek_ui.json)
+        run: uv run --with playwright python ../e2e/perf/zoek_ui.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prestaties
+          path: perf-results
+          if-no-files-found: warn
+
+  # Fase 5 (§4.8): e2e van media met de lokale worker, echte ffmpeg en Chrome for Testing (zoals
+  # e2e), naast de rest. Het harnas: e2e/media_harness.py en docs/fase-5/e2e.md.
+  e2e-media:
+    name: e2e media (lokale worker, echte ffmpeg)
+    runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
+    needs: [web]
+    timeout-minutes: 20
+    env:
+      # Aan sinds S13 (job e2e-media-perf, run op e35445c): Chrome for Testing 156.0.8078.4 kan
+      # H.264 en AAC via MSE. Een test zonder die codecs faalt dus, in plaats van over te slaan
+      MEDIA_REQUIRE_H264: "1"
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: ffmpeg (6.1 van Ubuntu)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --frozen
+      - name: Productie-build van de web-app
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Chromium voor Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      - name: e2e met media
+        env:
+          E2E_ARTIFACTS: ${{ runner.temp }}/media-artefacten
+        run: |
+          set -o pipefail
+          # De junit bewaart ook de uitvoer van geslaagde tests (de metingen, M10)
+          uv run --with playwright python -m pytest ../e2e -m media -rs --junitxml="$RUNNER_TEMP/media-junit.xml" \
+            -o junit_logging=system-out | tee "$RUNNER_TEMP/pytest.txt"
+          # Zonder ffmpeg slaat alles over: dat telt als mislukt. Met MEDIA_REQUIRE_H264=1 faalt
+          # een test als de browser H.264 of AAC niet heeft; een andere codec slaat over met de reden
+          if grep -q "^SKIPPED .*geen ffmpeg en ffprobe" "$RUNNER_TEMP/pytest.txt"; then
+            echo "Tests met media overgeslagen: ffmpeg ontbreekt" && exit 1
+          fi
+          grep -Eq "[0-9]+ passed" "$RUNNER_TEMP/pytest.txt"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-media
+          path: ${{ runner.temp }}/media-artefacten
+          if-no-files-found: ignore
+      # M10: wat de geslaagde tests maten (M7: het synchroniseren, p95; M9: de fase van gapless,
+      # en wat MP3 en AAC doen), kort aan het eind van het log
+      - name: Metingen van de geslaagde tests
+        if: always()
+        run: |
+          python3 -I - "$RUNNER_TEMP/media-junit.xml" <<'PY'
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          path = sys.argv[1]
+          print("=== Metingen (e2e media, alleen geslaagde tests) ===")
+          if not os.path.exists(path):
+              print("(geen junit: pytest liep niet)")
+          else:
+              for case in ET.parse(path).getroot().iter("testcase"):
+                  if any(case.find(k) is not None for k in ("failure", "error", "skipped")):
+                      continue
+                  for line in (case.findtext("system-out") or "").splitlines():
+                      if line.startswith(("M7 ", "gapless ")):
+                          print(line if len(line) <= 400 else line[:400] + " …")
+          print("=== einde metingen ===")
+          PY
+
+  # Fase 5 (§4.8): -m media_perf in Chrome for Testing, alleen een rapport (zoals perf). Het
+  # artefact noemt de browserversie en wat isTypeSupported zegt voor avc1.640028 en mp4a.40.2
+  # (S13 van de spike). Ma en Mb komen met M6. Fase 6 (Z7): daarna zoek_samen --kort en
+  # zoek_backfill, ook als rapport (±10 minuten erbij, daarom 35 in plaats van 20).
+  e2e-media-perf:
+    name: e2e media-prestaties (alleen rapport, S13)
+    runs-on: ubuntu-24.04  # ffmpeg 6.1 van Ubuntu, zie de noot boven jobs
+    needs: [web]
+    timeout-minutes: 35
+    continue-on-error: true
+    env:
+      E2E_PERF_REPORT_ONLY: "1"
+      E2E_PERF_OUT: ${{ github.workspace }}/media-perf-results
+      # Zoals e2e-media (M10): Chrome for Testing kan H.264 en AAC; zonder faalt een test
+      MEDIA_REQUIRE_H264: "1"
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: ffmpeg (6.1 van Ubuntu)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --frozen
+      - name: Productie-build van de web-app
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Chromium voor Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      - name: Prestaties van media (marker media_perf)
+        run: uv run --with playwright python -m pytest ../e2e -m media_perf -rs -s
+      - name: S13 tonen (de browser, H.264 en AAC)
+        if: always()
+        run: |
+          python3 -I -c '
+          import json, os, sys
+          path = os.path.join(os.environ["E2E_PERF_OUT"], "media-m0-s13.json")
+          if not os.path.exists(path):
+              print("(geen media-m0-s13.json)")
+              sys.exit(0)
+          r = json.load(open(path))
+          s13 = r["s13"]
+          print("browser:", r["browser"])
+          print("user agent:", r["user_agent"])
+          for codec in ("avc1.640028", "mp4a.40.2"):
+              print(f"{codec}: {s13[codec]}")
+          print("H.264 en AAC (MSE):", s13["h264_en_aac"])
+          print("eerste beeld VP9 (ms):", r["eerste_beeld_vp9_ms"])
+          kan = "ja" if s13["h264_en_aac"] else "nee"
+          zin = "S13: " + r["browser"] + ", H.264 en AAC via MSE: " + kan
+          print("::notice::" + zin)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(zin + "\n")
+          '
+      # Fase 6 (Z7, §4.5 B): zoeken naast media in drie stappen (pauze, achtergrond, Defer
+      # uit), de korte versie: 60 s per fase, 1 sessie, zonder OnlyOffice. Een rapport; de hele
+      # test met OnlyOffice staat in docs/runbooks/zoeken.md
+      - name: Zoeken naast media (fase 6, Z7; rapport, zoek_samen --kort)
+        if: always()
+        run: |
+          uv run python ../e2e/perf/zoek_samen.py --kort \
+            --kort-uit "$E2E_PERF_OUT/zoek-samen-kort.txt" || echo "zoek_samen gaf exitcode $?"
+      # Fase 6 (Z2, §4.5): de snelheid van de backfill van de tekst, klein (500 documenten, 1
+      # keer per soort), als rapport; de poort van 1.000 per minuut per core meet de sandbox
+      - name: De backfill van de tekst (fase 6, Z2; rapport, zoek_backfill)
+        if: always()
+        run: |
+          mkdir -p "$E2E_PERF_OUT"
+          set -o pipefail
+          uv run python ../e2e/perf/zoek_backfill.py --n 500 --keer 1 \
+            --json "$E2E_PERF_OUT/zoek-backfill.json" | tee "$E2E_PERF_OUT/zoek-backfill.txt" \
+            || echo "zoek_backfill gaf exitcode $?"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: media-prestaties
+          path: media-perf-results
+          if-no-files-found: warn
+      # De logs tonen alleen de staart: het korte blok van zoeken staat daarom als laatste
+      - name: Kort (zoek_samen en zoek_backfill)
+        if: always()
+        run: |
+          d="$E2E_PERF_OUT"
+          echo "=== kort ==="
+          if [ -s "$d/zoek-samen-kort.txt" ]; then
+            grep -v '^=== kort ===$' "$d/zoek-samen-kort.txt"
+          else
+            echo "zoek_samen: liep niet tot het eind (zie de stap hierboven)"
+          fi
+          if grep -qs '^=== kort ===$' "$d/zoek-backfill.txt"; then
+            sed -n '/^=== kort ===$/,$p' "$d/zoek-backfill.txt" | tail -n +2 \
+              | sed 's/^/zoek_backfill: /'
+          else
+            echo "zoek_backfill: liep niet tot het eind (zie de stap hierboven)"
+          fi
+
+  infra:
+    name: Infra (lint, templates en images)
+    runs-on: ubuntu-latest
+    # Z7: de installatietest van zoeken bouwt het platform drie keer (0.7.1, deze versie en een
+    # commit erbovenop) en gaat terug naar 0.7.1 en weer vooruit
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Z7: de installatietest begint bij 0.7.1 (80d5bb8)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ansible ansible-lint yamllint shellcheck-py
+      - run: shellcheck infra/single/install.sh infra/single/tests/*.sh infra/scripts/*.sh api/tests/pebble/start.sh e2e/office_ds.sh e2e/slim.sh
+      - run: yamllint -s .
+      - name: Ansible lint
+        working-directory: infra/ansible
+        run: |
+          cp inventory/hosts.example.yml inventory/hosts.yml
+          ansible-playbook --syntax-check site.yml
+          ansible-lint site.yml
+      - name: Templates renderen
+        working-directory: infra/ansible
+        run: ansible-playbook -i inventory/hosts.example.yml tests/render.yml -e render_dir=/tmp/render
+      - name: Compose-bestanden controleren
+        run: |
+          for n in /tmp/render/*/; do docker compose -f "$n/compose.yaml" config -q; done
+          docker compose --project-directory infra/single -f infra/single/compose.yaml \
+            --env-file infra/single/.env.example config -q
+          # infra/single met office (Keuze 31): de geheimen zijn leeg in .env.example (install.sh
+          # vult ze), dus hier een kopie met eenmalige waarden, alleen voor deze job
+          env_file="$RUNNER_TEMP/single.env"
+          sed -e "s/^OFFICE_JWT_SECRET=$/OFFICE_JWT_SECRET=$(openssl rand -hex 32)/" \
+            -e "s/^OFFICE_LINK_SECRET=$/OFFICE_LINK_SECRET=$(openssl rand -hex 32)/" \
+            infra/single/.env.example > "$env_file"
+          single=(docker compose --project-directory infra/single --env-file "$env_file" -f infra/single/compose.yaml)
+          "${single[@]}" config -q
+          "${single[@]}" -f infra/single/compose.office.yaml config -q
+          "${single[@]}" -f infra/single/compose.office.yaml -f infra/single/compose.office-limits.yaml config -q
+          # De afscherming van DS zoals ontworpen: geen poort naar buiten, een intern netwerk,
+          # cap_drop ALL met alleen deze capabilities, no-new-privileges en pids_limit
+          "${single[@]}" -f infra/single/compose.office.yaml -f infra/single/compose.office-limits.yaml \
+            config --format json | python3 -c '
+          import json, sys
+          c = json.load(sys.stdin)
+          o = c["services"]["office"]
+          caps = {"CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER", "NET_BIND_SERVICE", "KILL"}
+          assert not o.get("ports") and not o.get("expose"), "DS mag geen poort hebben"
+          assert o.get("cap_drop") == ["ALL"] and set(o.get("cap_add", [])) == caps, (o.get("cap_drop"), o.get("cap_add"))
+          assert o.get("security_opt") == ["no-new-privileges:true"] and o.get("pids_limit") == 512
+          assert not o.get("privileged") and "network_mode" not in o
+          assert list(o["networks"]) == ["office"] and c["networks"]["office"].get("internal") is True
+          assert "office" in c["services"]["platform"]["networks"]
+          print("afscherming van DS: goed")
+          '
+      - name: Images bestaan
+        run: |
+          # De eigen images (:local) bouwt de node zelf; die staan in geen registry
+          grep -h 'image:' /tmp/render/*/compose.yaml | awk '{print $2}' | grep -v ':local$' | sort -u \
+            | while read -r img; do echo "$img"; docker manifest inspect "$img" > /dev/null; done
+          # infra/single: de images volgens compose zelf, met office (zonder het eigen image).
+          # Docker Hub weigert soms (429): dan een paar pogingen, en mirror.gcr.io als terugval,
+          # zoals install.sh ook doet
+          bestaat() {
+            for i in 1 2 3; do
+              docker manifest inspect "$1" > /dev/null && return 0
+              docker manifest inspect "mirror.gcr.io/$1" > /dev/null && echo "  (via mirror.gcr.io)" && return 0
+              sleep $((i * 10))
+            done
+            return 1
+          }
+          docker compose --project-directory infra/single --env-file "$RUNNER_TEMP/single.env" \
+            -f infra/single/compose.yaml -f infra/single/compose.office.yaml config --images \
+            | grep -v ':local$' | sort -u > "$RUNNER_TEMP/single-images"
+          test -s "$RUNNER_TEMP/single-images"
+          while read -r img; do echo "$img"; bestaat "$img"; done < "$RUNNER_TEMP/single-images"
+          # DS ook op de digest van install.sh: compose noemt alleen de tag, die install.sh op die
+          # digest zet (review van fase 4, uitrol-1)
+          ds="$(sed -n 's/^OFFICE_REPO=//p' infra/single/install.sh)@$(sed -n 's/^OFFICE_DIGEST=//p' infra/single/install.sh)"
+          echo "$ds"; bestaat "$ds"
+      - name: install.sh controleren (test_install_env.sh)
+        run: bash infra/single/tests/test_install_env.sh
+      # Media in install.sh (M10): de functies, en docker compose config -q voor alle 8
+      # combinaties (office aan/uit × media aan/uit × grenzen ja/nee)
+      - name: Media in install.sh controleren (test_install_media.sh)
+        run: bash infra/single/tests/test_install_media.sh
+      # Zoeken en foto's in install.sh (Z7): PLAATSEN, de download van de bronnen, de reservekopie
+      # met het image dat draait, de eindtekst en de commando's van de weg terug in de docs
+      - name: Zoeken in install.sh controleren (test_install_search.sh)
+        run: bash infra/single/tests/test_install_search.sh
+      - name: PostgreSQL-image bouwen en Patroni-configuratie valideren
+        run: |
+          base=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['postgres_base_image'])")
+          patroni=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['patroni_version'])")
+          docker build -q -t platform-postgres:ci --build-arg BASE_IMAGE="$base" --build-arg PATRONI_VERSION="$patroni" /tmp/render/node1/postgres
+          # De validatie controleert ook of etcd bereikbaar is: start er lokaal één
+          # en wijs de gerenderde configuratie daarheen.
+          etcd=$(grep -h 'image: quay.io/coreos/etcd' /tmp/render/node1/compose.yaml | awk '{print $2}')
+          docker run -d --rm --name etcd-ci --network host "$etcd" etcd \
+            --listen-client-urls=http://127.0.0.1:2379 --advertise-client-urls=http://127.0.0.1:2379
+          sleep 3
+          for n in /tmp/render/*/; do
+            cfg="$RUNNER_TEMP/patroni-$(basename "$n").yml"
+            sed 's/^  hosts: .*/  hosts: 127.0.0.1:2379/' "$n/postgres/patroni.yml" > "$cfg"
+            chmod 644 "$cfg"
+            docker run --rm --network host -v "$cfg:/etc/patroni/patroni.yml:ro" \
+              --entrypoint /opt/patroni/bin/patroni platform-postgres:ci \
+              --validate-config --ignore-listen-port /etc/patroni/patroni.yml
+          done
+      - name: keepalived-configuratie controleren
+        run: |
+          sudo apt-get install -y -q keepalived > /dev/null
+          # keepalived -t eist dat de netwerkkaart uit de configuratie bestaat. Die kaart hoort bij
+          # de LXC (vip_interface), niet bij de runner, en op sommige runners van ubuntu-latest
+          # bestaat eth0 niet (4-11-2026: "Non-existent interface", exit 5). Daarom draait de
+          # controle in een eigen netwerk-namespace met alleen die kaart (een veth), los van het
+          # netwerk van de runner.
+          iface=$(python3 -c "import yaml; print(yaml.safe_load(open('infra/ansible/group_vars/all.yml'))['vip_interface'])")
+          sudo unshare -n env IFACE="$iface" sh -ec '
+            ip link add "$IFACE" type veth peer name ci-peer
+            for n in /tmp/render/*/; do keepalived -t -f "$n/keepalived/keepalived.conf"; done
+          '
+      # De update en terug, echt (Z7, §3.10, Keuze 52 en 53): 0.7.1 met het script van 80d5bb8,
+      # bijwerken met een reservekopie van het image van 0.7.1, een kopie die faalt, de bronnen van
+      # plaatsen, PLAATSEN=uit, terug naar 0.7.1 met precies de stappen van §3.10 en weer vooruit.
+      # De bronnen haalt tools/geo/haal.py vooraf; de test geeft ze via een nep-curl aan install.sh
+      - name: Bronnen van plaatsen ophalen (tools/geo/haal.py)
+        if: ${{ !cancelled() }}
+        run: python3 -I tools/geo/haal.py --naar "$RUNNER_TEMP/geo"
+      - name: De update en terug naar 0.7.1 (test_install_search.sh --stappen, Z7)
+        if: ${{ !cancelled() }}
+        env:
+          INSTALL_TEST_GEO: ${{ runner.temp }}/geo
+          INSTALL_TEST_LOGS: ${{ runner.temp }}/infra/installatietest
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/infra"
+          bash infra/single/tests/test_install_search.sh --stappen 2>&1 | tee "$RUNNER_TEMP/infra/installatietest.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: infra-installatietest
+          path: ${{ runner.temp }}/infra
+          if-no-files-found: warn
+      - name: Samenvatting
+        if: always()
+        run: |
+          log="$RUNNER_TEMP/infra/installatietest.log"
+          if grep -q '^=== Samenvatting' "$log" 2>/dev/null; then
+            sed -n '/^=== Samenvatting/,/^=== einde samenvatting ===$/p' "$log"
+          else
+            echo "=== Samenvatting (test_install_search.sh --stappen) ==="
+            echo "(geen samenvatting: de installatietest liep niet of brak af)"
+            echo "=== einde samenvatting ==="
+          fi
+          grep -E '^(FOUT|STOP) ' "$log" 2>/dev/null || true
+
+  images:
+    name: Images bouwen
+    runs-on: ubuntu-latest
+    needs: [api, web]
+    strategy:
+      matrix:
+        include:
+          - name: platform
+            context: .
+          - name: api
+            context: api
+          - name: web
+            context: web
+    env:
+      # Exact de CSP van api/app/main.py (WEB_CSP) en web/nginx.conf
+      WEB_CSP: >-
+        default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self';
+        object-src 'none'; base-uri 'self'; frame-ancestors 'none'; manifest-src 'self';
+        worker-src 'self'
+      # import- of export-syntaxis (een service worker als klassiek script heeft die niet)
+      MODULE_SYNTAX: >-
+        (^|[;}])[[:space:]]*(import[[:space:]]*[{*"]|import[[:space:]]+[a-zA-Z_$]|export[[:space:]]*[{*]|export[[:space:]]+[a-z])
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: false
+          load: ${{ matrix.name != 'api' }}
+          tags: platform-${{ matrix.name }}:ci
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - name: Platform-image starten en controleren
+        if: matrix.name == 'platform'
+        run: |
+          docker run -d --name platform-ci -p 8080:8080 platform-platform:ci
+          for _ in $(seq 1 30); do curl -fs -o /dev/null localhost:8080/health && break; sleep 1; done
+          curl -fsS localhost:8080/ | grep -q '<div id="root">'
+          curl -fsS localhost:8080/bestanden | grep -q '<div id="root">'
+          curl -fsS localhost:8080/api/v1/auth/status | grep -q '"setup_required":true'
+          curl -fsSI localhost:8080/ | tr -d '\r' | grep -qixF "content-security-policy: $WEB_CSP"
+          # Een ontbrekend chunk is 404, nooit index.html
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/assets/nope.js)" = 404
+          # De service worker: een los script zonder import of export, als text/javascript
+          curl -fsSI localhost:8080/sw.js | tr -d '\r' | grep -qi '^content-type: text/javascript'
+          curl -fsS localhost:8080/sw.js -o "$RUNNER_TEMP/sw.js"
+          if grep -Eq "$MODULE_SYNTAX" "$RUNNER_TEMP/sw.js"; then
+            echo "sw.js bevat een import of export" && exit 1
+          fi
+          # Voorgecomprimeerd: brotli als de browser het vraagt
+          curl -fsSI -H 'Accept-Encoding: br' localhost:8080/ | tr -d '\r' | grep -qi '^content-encoding: br'
+          # Office (fase 4): zonder DS is /office/ 404 (nooit de web-app), en /internal/ bestaat
+          # niet op de publieke poort, voor geen enkele methode
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/office/)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/office/web-apps/apps/api/documents/api.js)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/internal/)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/internal/office/callback)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/internal/office/doc/x)" = 404
+          curl -fsS -X POST localhost:8080/api/v1/auth/setup -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.com","display_name":"CI","password":"lang-genoeg-wachtwoord"}' \
+            | grep -q access_token
+      - name: Logs van de platform-container
+        if: always() && matrix.name == 'platform'
+        run: docker logs platform-ci || true
+      # Fase 6, X1 (Keuze 24, Vraag 15): tesseract maakt het image hooguit 75 MB groter. Gemeten
+      # in het image zelf, in een wegwerpcontainer als root zonder netwerk: de pakketten die met
+      # tesseract-ocr, -nld, -eng en -osd weg zouden gaan (apt-get -s purge --auto-remove, waarbij
+      # Recommends niets vasthoudt: het Dockerfile installeert zonder; min wat autoremove ook
+      # zonder tesseract al zou weghalen), en de bestanden van die pakketten die er echt staan
+      # (lstat; de slim-basis laat docs en man weg). Zo telt alleen wat er door tesseract bij
+      # kwam: bibliotheken die ffmpeg ook nodig heeft, blijven buiten de som. dpkg Installed-Size
+      # staat ernaast, naast de 69 MiB van spike S5
+      - name: tesseract in het image, hooguit 75 MB erbij (X1)
+        if: ${{ !cancelled() && matrix.name == 'platform' }}
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/grootte.py" << 'PY'
+          import os, re, stat, subprocess, sys
+
+          PAKKETTEN = ["tesseract-ocr", "tesseract-ocr-nld", "tesseract-ocr-eng", "tesseract-ocr-osd"]
+          POORT = 75 * 10**6  # bytes: + ≤ 75 MB (Vraag 15)
+          APT = ["apt-get", "-s", "-o", "APT::AutoRemove::RecommendsImportant=false",
+                 "-o", "APT::AutoRemove::SuggestsImportant=false"]
+
+
+          def purg(*args):
+              done = subprocess.run([*APT, *args], capture_output=True, text=True)
+              if done.returncode != 0:
+                  print(f"apt-get -s {' '.join(args)}: code {done.returncode}: {done.stderr[-300:]}")
+                  sys.exit(1)
+              return set(re.findall(r"^Purg (\S+)", done.stdout, re.M))
+
+
+          al = purg("purge", "--auto-remove")  # wat zonder tesseract ook weg zou gaan
+          weg = sorted(purg("purge", "--auto-remove", *PAKKETTEN) - al)
+          if not set(PAKKETTEN) <= set(weg):
+              print(f"tesseract staat niet (helemaal) in het image: weg zou alleen {weg} gaan")
+              sys.exit(1)
+          gezien, grootte, kib = set(), 0, 0
+          for pakket in weg:
+              q = subprocess.run(["dpkg-query", "-W", "-f", "${Installed-Size}", pakket],
+                                 capture_output=True, text=True, check=True)
+              kib += int(q.stdout.strip() or 0)
+              lijst = subprocess.run(["dpkg-query", "-L", pakket], capture_output=True, text=True,
+                                     check=True)
+              for pad in lijst.stdout.splitlines():
+                  if pad in gezien:
+                      continue
+                  gezien.add(pad)
+                  try:
+                      info = os.lstat(pad)
+                  except FileNotFoundError:
+                      continue  # niet in het image (path-exclude van de slim-basis)
+                  if not stat.S_ISDIR(info.st_mode):
+                      grootte += info.st_size
+          print(f"tesseract erbij: {grootte / 10**6:.1f} MB in bestanden van {len(weg)} pakketten "
+                f"(de poort: ≤ {POORT // 10**6} MB; dpkg Installed-Size {kib / 1024:.1f} MiB, "
+                f"spike S5 mat 69 MiB)")
+          print(f"pakketten: {' '.join(weg)}")
+          if grootte > POORT:
+              print(f"TE GROOT: {grootte} bytes, meer dan {POORT}")
+              sys.exit(1)
+          PY
+          docker run --rm -i --user root --network none platform-platform:ci python3 -I - \
+            < "$RUNNER_TEMP/grootte.py" | tee "$RUNNER_TEMP/tesseract-grootte.txt"
+      # Fase 6, A0 (Keuze 57, K2-09, K2-15): de extra analyse staat in /opt/analyse (0750
+      # root:analyse), nooit in /opt/venv. Voor platform (10001) en media (10002) bestaat numpy niet,
+      # ook niet met /opt/analyse in sys.path; voor analyse (10003) en omzetten (10004) wel, precies
+      # de vijf versies van uv.lock, en ze kunnen er niets schrijven. /opt/analyse is hooguit 160 MB
+      # (X2: het image ≤ +160 MB), zonder kopie van de wheels in de cache van uv. Zonder netwerk
+      - name: analyse in het image, alleen voor 10003 en 10004 (A0)
+        if: ${{ !cancelled() && matrix.name == 'platform' }}
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/analyse.py" << 'PY'
+          import grp, importlib, importlib.util, os, pwd, stat, sys
+
+          WIE = sys.argv[1]
+          MAP = "/opt/analyse"
+          VIJF = {"flatbuffers": "25.12.19", "google.protobuf": "7.36.2", "numpy": "2.5.4",
+                  "onnxruntime": "1.31.1", "packaging": "26.3"}
+          POORT = 160 * 10**6  # bytes (X2: het image is hooguit 160 MB groter)
+          UID = {"root": 0, "platform": 10001, "media": 10002, "analyse": 10003, "omzetten": 10004}
+
+
+          def spec(naam):
+              try:
+                  return importlib.util.find_spec(naam)
+              except ModuleNotFoundError:  # google bestaat niet
+                  return None
+
+
+          def fout(tekst):
+              print(f"{WIE}: {tekst}")
+              sys.exit(1)
+
+
+          if os.getuid() != UID[WIE]:
+              fout(f"draait als uid {os.getuid()}")
+          if WIE == "root":
+              gevonden = [n for n in VIJF if spec(n) is not None]
+              if gevonden:
+                  fout(f"in /opt/venv: {gevonden}")
+              analyse = grp.getgrnam("analyse").gr_gid
+              ids = {n: (pwd.getpwnam(n).pw_uid, pwd.getpwnam(n).pw_gid) for n in ("analyse", "omzetten")}
+              if analyse != 10003 or ids != {"analyse": (10003, 10003), "omzetten": (10004, 10003)}:
+                  fout(f"de gebruikers: groep {analyse}, {ids}")
+              st = os.stat(MAP)
+              if (st.st_uid, st.st_gid, stat.S_IMODE(st.st_mode)) != (0, analyse, 0o750):
+                  fout(f"{MAP}: {st.st_uid}:{st.st_gid} {oct(stat.S_IMODE(st.st_mode))}")
+              run = os.stat("/run/analyse")
+              platform = grp.getgrnam("platform").gr_gid
+              if (run.st_uid, run.st_gid, stat.S_IMODE(run.st_mode)) != (10003, platform, 0o2750):
+                  fout(f"/run/analyse: {run.st_uid}:{run.st_gid} {oct(stat.S_IMODE(run.st_mode))}")
+              grootte, aantal, mis = 0, 0, []
+              for map_, mappen, bestanden in os.walk(MAP):
+                  for naam in mappen + bestanden:
+                      pad = os.path.join(map_, naam)
+                      info = os.lstat(pad)
+                      modus = stat.S_IMODE(info.st_mode)
+                      if (info.st_uid, info.st_gid) != (0, analyse) or modus & 0o027:
+                          mis.append(f"{pad} {info.st_uid}:{info.st_gid} {oct(modus)}")
+                      if stat.S_ISREG(info.st_mode):
+                          grootte += info.st_size
+                          aantal += 1
+              if mis:
+                  fout(f"{len(mis)} paden niet van root:analyse of te open, zoals {mis[:3]}")
+              cache = [m for m, d, _ in os.walk("/root/.cache/uv") if {"numpy", "onnxruntime"} & set(d)]
+              if cache:
+                  fout(f"de wheels staan nog in de cache van uv: {cache[:3]}")
+              print(f"/opt/analyse: {grootte / 10**6:.1f} MB in {aantal} bestanden (de poort: ≤ {POORT // 10**6} MB)")
+              if grootte > POORT:
+                  fout(f"TE GROOT: {grootte} bytes")
+          elif WIE in ("platform", "media"):
+              sys.path.insert(0, MAP)
+              gevonden = [n for n in VIJF if spec(n) is not None]
+              if gevonden:
+                  fout(f"vindt {gevonden}")
+          else:
+              sys.path.insert(0, MAP)
+              versies = {n: importlib.import_module(n).__version__ for n in VIJF}
+              if versies != VIJF:
+                  fout(f"versies {versies}")
+              import numpy, onnxruntime
+
+              a = numpy.arange(6, dtype=numpy.float32).reshape(2, 3)
+              if float((a @ a.T)[1, 1]) != 50.0:
+                  fout("numpy rekent niet")
+              if "CPUExecutionProvider" not in onnxruntime.get_available_providers():
+                  fout(f"providers {onnxruntime.get_available_providers()}")
+              try:
+                  open(os.path.join(MAP, "numpy", "x"), "w")
+              except PermissionError:
+                  pass
+              else:
+                  fout("kan schrijven in /opt/analyse")
+          print(f"{WIE}: goed")
+          PY
+          for wie in root platform media analyse omzetten; do
+            docker run --rm -i --user "$wie" --network none platform-platform:ci python3 -I - "$wie" \
+              < "$RUNNER_TEMP/analyse.py"
+          done
+      - name: Web-image starten en controleren
+        if: matrix.name == 'web'
+        run: |
+          docker run --rm platform-web:ci nginx -t
+          docker run -d --name web-ci -p 8081:8080 platform-web:ci
+          for _ in $(seq 1 30); do curl -fs -o /dev/null localhost:8081/ && break; sleep 1; done
+          curl -fsS localhost:8081/map/iets | grep -q '<div id="root">'
+          curl -fsSI localhost:8081/ | tr -d '\r' | grep -qixF "content-security-policy: $WEB_CSP"
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8081/assets/nope.js)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8081/nope.png)" = 404
+          curl -fsSI localhost:8081/sw.js | tr -d '\r' | grep -qi '^content-type: text/javascript'
+          curl -fsSI localhost:8081/sw.js | tr -d '\r' | grep -qi '^cache-control: no-cache'
+          curl -fsSI localhost:8081/manifest.webmanifest | tr -d '\r' | grep -qi '^content-type: application/manifest+json'
+          curl -fsSI -H 'Accept-Encoding: gzip' localhost:8081/ | tr -d '\r' | grep -qi '^content-encoding: gzip'
+      - name: Logs van de web-container
+        if: always() && matrix.name == 'web'
+        run: docker logs web-ci || true
+      # X1: de poort van tesseract als laatste in het log van platform
+      - name: Samenvatting
+        if: always() && matrix.name == 'platform'
+        run: |
+          echo "=== kort ==="
+          echo "X1 tesseract in het image (+ ≤ 75 MB):"
+          sed 's/^/  /' "$RUNNER_TEMP/tesseract-grootte.txt" 2> /dev/null || echo "  liep niet"
+
+  # Fase 5 (§4.8): het echte image met wat M0 heeft. Het platform-image met de cache van images
+  # (scope platform), en daarin:
+  # - de kern van de worker (api/tests/media/image_kern.py, alleen-lezen erin gezet): caps op
+  #   ffmpeg 7.1, en probe op fixtures die in het image gemaakt zijn; zonder netwerk, zonder
+  #   capabilities, onder --cpus 3 (regel 14);
+  # - S3 van de spike (fd's tussen containers, de afscherming van Keuze 11 en 47) met de scripts
+  #   van de spike (api/tests/media/spike).
+  # Van M1: infra/single/tests/test_media_container.sh, met de echte compose (compose.yaml +
+  # compose.media.yaml + de grenzen): de worker-container met de afscherming van Keuze 11, de
+  # zelftest (--selftest, ffmpeg 7.1) daarin, probe, meta en frame vanuit de app, en down binnen
+  # 30 s. S3 blijft tot M4: de remux van S3 (fMP4 naar een pipe van de app) heeft de opdracht
+  # stream van M4 nodig (docs/fase-5/m1.md).
+  # M10 voegt toe: het bewijs van R12 (installeren vanaf de commit van 0.6.0, bijwerken naar deze
+  # versie, een transcode via curl en dan docker top) en de rooktest van de belastingtest.
+  media-image:
+    name: Media-image (de kern van de worker in het image)
+    runs-on: ubuntu-latest
+    # M10: de installatietest bouwt het platform drie keer (0.6.0, deze versie en een commit
+    # erbovenop)
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # M10: de installatietest begint bij 0.6.0 (263abd7)
+      - uses: docker/setup-buildx-action@v3
+      - name: Platform-image bouwen (de cache van images)
+        id: bouw
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: platform:ci
+          cache-from: type=gha,scope=platform
+          cache-to: type=gha,mode=max,scope=platform,ignore-error=true
+      - name: De kern van de worker in het image (caps en probe, ffmpeg 7.1)
+        run: |
+          mkdir -p "$RUNNER_TEMP/media-image"
+          # Het verloop staat in het log, de uitkomst in kern.json; exitcode 1 als een controle faalt
+          docker run --rm --cpus 3 --memory 3g --memory-swap 3g --network none --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 256 --read-only --tmpfs /tmp:size=1g \
+            -v "$PWD/api/tests:/srv/tests:ro" platform:ci \
+            python3 -I /srv/tests/media/image_kern.py --alles --ffmpeg 7. \
+            > "$RUNNER_TEMP/media-image/kern.json"
+      - name: kern.json tonen
+        if: always()
+        run: |
+          echo "=== kern.json ==="
+          cat "$RUNNER_TEMP/media-image/kern.json" || echo "(geen kern.json)"
+          echo "=== einde kern.json ==="
+      # De container-test draait ook als de kern faalde: losse uitkomsten. Hij heeft sinds M4
+      # ook S3 punt 17 van de spike (de remux naar een pipe van de app, met stream) en R12; de
+      # aparte stap S3 met het afgeleide image van de spike is daarom weg. Sinds de review van
+      # golf 2 ook subs en sprites van M5 op de ffmpeg van het image (de regels "goed: subs: …"
+      # en "goed: sprites: …"); de fixtures maakt hij in de app, met api/tests alleen te lezen
+      - name: De mediaworker in zijn container (--selftest en test_media_container.sh, M1 en M4)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        env:
+          MEDIA_TEST_IMAGE: platform:ci
+          MEDIA_TEST_FFMPEG: "7.1."
+          MEDIA_TEST_OUT: ${{ runner.temp }}/media-image
+        # De sleutel van hello maakt het script zelf (64 hex, in een .env van 0600); hij komt
+        # niet in het log
+        run: bash infra/single/tests/test_media_container.sh
+      # Fase 6, X1: tesseract in het image, aan het werk alleen in de worker-container
+      # (test_ocr_container.sh): 0711 van root, de talen, een gemaakte PGM als media, Op.OCR
+      # vanuit de app met docker top ernaast, en de handdruk van ocr met de echte keten. De regels
+      # goed en FOUT gaan naar ocr.txt, voor "=== kort ===". Het image is alleen hier te bouwen:
+      # wat dit script toetst, blijkt pas na de push
+      - name: OCR in de worker-container (test_ocr_container.sh, X1)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        env:
+          OCR_TEST_IMAGE: platform:ci
+          OCR_TEST_OUT: ${{ runner.temp }}/media-image
+        run: bash infra/single/tests/test_ocr_container.sh
+      - name: selftest.json tonen
+        if: always()
+        run: |
+          echo "=== selftest.json ==="
+          cat "$RUNNER_TEMP/media-image/selftest.json" || echo "(geen selftest.json)"
+          echo "=== einde selftest.json ==="
+      # M10: 0.6.0 installeren, bijwerken naar deze versie, een transcode via curl met docker top
+      # (R12: geen ffmpeg in de app, één in media), de rooktest van de belastingtest,
+      # /api/v1/admin/media en media-status, nog een update (één image), MEDIA_SANDBOX=uit en weer
+      # aan. Terugrollen (stap 4) bewijst de sandbox (docs/fase-5/m10.md)
+      - name: De installatietest van media (test_install_media.sh --stappen, M10)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        env:
+          INSTALL_TEST_ROLLBACK: "0"
+          INSTALL_TEST_LOGS: ${{ runner.temp }}/media-image/installatietest
+        run: |
+          set -o pipefail
+          bash infra/single/tests/test_install_media.sh --stappen 2>&1 | tee "$RUNNER_TEMP/media-image/installatietest.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: media-image
+          path: ${{ runner.temp }}/media-image
+          if-no-files-found: warn
+      - name: Samenvatting
+        if: always()
+        run: |
+          log="$RUNNER_TEMP/media-image/installatietest.log"
+          if grep -q '^=== Samenvatting' "$log" 2>/dev/null; then
+            sed -n '/^=== Samenvatting/,/^=== einde samenvatting ===$/p' "$log"
+          else
+            echo "=== Samenvatting (test_install_media.sh --stappen) ==="
+            echo "(geen samenvatting: de installatietest liep niet of brak af)"
+            echo "=== einde samenvatting ==="
+          fi
+          grep -E '^(FOUT|STOP) ' "$log" 2>/dev/null || true
+          # Fase 6, spike Z0: S9 en S11, als laatste in het log
+          d="$RUNNER_TEMP/media-image"
+          echo "=== kort ==="
+          echo "S9 de zoekbench in de container van de app:"
+          sed -n '/^=== zoekbench ===/,$p' "$d/zoekbench.log" 2> /dev/null | sed 's/^/  /' || true
+          [ -f "$d/zoekbench.log" ] || echo "  liep niet"
+          echo "S11 de handdruk in de worker-container:"
+          if [ -f "$d/handdruk.json" ]; then
+            python3 -I - "$d/handdruk.json" << 'PY' || echo "  handdruk.json is niet te lezen"
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          print(f"  ok {d.get('ok')}, S11 {d.get('S11')}, ptrace_scope {d.get('ptrace_scope')}")
+          for v in ("ontwerp", "vork", "0711"):
+              r = d.get(v, {})
+              o = r.get("oordeel")
+              print(f"  {v}: " + (json.dumps(o, ensure_ascii=False) if o else str(r.get("niet te proberen"))))
+          PY
+          else
+            echo "  liep niet"
+          fi
+          echo "X1 OCR in de worker-container (test_ocr_container.sh):"
+          sed 's/^/  /' "$d/ocr.txt" 2> /dev/null || echo "  liep niet"

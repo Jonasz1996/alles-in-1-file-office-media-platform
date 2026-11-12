@@ -1,0 +1,9 @@
+# Grenzen voor office (Keuze 29). install.sh neemt dit bestand alleen mee als
+# `docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}'` "true true" zegt; anders start de
+# container niet in een LXC zonder die cgroup-controllers. Met de grens raakt een geheugentekort
+# DS en niet de app; cpus: 2 houdt 2 cores vrij voor de app terwijl DS na een start fonts maakt.
+services:
+  office:
+    mem_limit: 2g
+    memswap_limit: 2g
+    cpus: 2

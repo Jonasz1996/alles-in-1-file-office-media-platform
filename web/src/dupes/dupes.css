@@ -1,0 +1,150 @@
+/* /dubbel (Z5, Keuze 36): de groepen onder elkaar, de bestanden van een groep naast elkaar. Kleuren
+   alleen uit de tokens, zodat licht en donker vanzelf meegaan. */
+
+.dupes-intro {
+  max-width: 48rem;
+}
+
+.dupes-panel {
+  padding-top: var(--space-3);
+}
+
+.dupes-panel:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}
+
+.dupe-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.dupe-group {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+}
+
+.dupe-group-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-l);
+}
+
+.dupe-group-title:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}
+
+.dupe-group-title .muted {
+  font-size: var(--text-s);
+  font-weight: normal;
+}
+
+.dupe-level {
+  padding: 0 var(--space-2);
+  border-left: 3px solid var(--line-strong);
+}
+
+.dupe-level-exact,
+.dupe-level-zeker {
+  border-left-color: var(--ok);
+}
+
+.dupe-level-lijkt {
+  border-left-color: var(--warn);
+}
+
+.dupe-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dupe-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 180px;
+  padding: var(--space-2);
+  border: 2px solid transparent;
+  border-radius: var(--radius-m);
+}
+
+.dupe-item.picked {
+  border-color: var(--bad);
+  background: var(--surface);
+}
+
+.dupe-view {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-m);
+  background: none;
+  cursor: zoom-in;
+}
+
+.dupe-view:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}
+
+.dupe-name {
+  margin: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dupe-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0 var(--space-2);
+  margin: 0;
+  font-size: var(--text-s);
+}
+
+.dupe-facts dt {
+  color: var(--muted);
+}
+
+.dupe-facts dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dupe-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  cursor: pointer;
+}
+
+.dupe-pick input {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.dupe-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.dupes-error p {
+  margin: 0 0 var(--space-2);
+}

@@ -1,0 +1,3124 @@
+"""PDF via de conversie van DS (O3, Keuze 25 en 26), met de nep-DS in dit proces.
+
+De nep-DS praat via ASGI met de interne app (de bron ophalen) en de app via ASGI met de nep-DS
+(/converter en de uitvoer). De taken draaien met jobs.run_pending, zonder achtergrondlus.
+"""
+
+import asyncio
+import contextlib
+import io
+import itertools
+import logging
+import os
+import struct
+import uuid
+import weakref
+import zipfile
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import timedelta
+from typing import Any
+
+import httpx
+import pypdfium2
+import pytest
+from fastapi import FastAPI
+from sqlalchemy import Column, Select, Update, event, func, select, update
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import BinaryExpression, BindParameter, BooleanClauseList
+
+from app import jobs, previews
+from app.config import Settings, get_settings
+from app.db import get_engine
+from app.main import app, internal_app
+from app.mime import DOCX
+from app.models import Blob, Job, Node, OfficeSession, User, Version
+from app.office import convert, engine, grants, health, inspect, keys, runtime, sessions
+from app.office.oo import client as ds_client
+from app.office.oo import convert as oo_convert
+from app.office.state import OfficeConfig, office_policy, office_state
+from app.storage import BlobStore
+from tests.factories import code_of, create_blob, create_file, maker, params_of
+from tests.fake_docserver import FakeConfig, create_app, protocol
+from tests.test_files import mkdir, root
+from tests.test_office import docx_bytes, jpeg, odt_bytes, pptx_bytes, xlsx_bytes
+from tests.test_office_inspect import ZEROS, central_offsets, local_offset
+from tests.test_office_routes import office_settings
+from tests.test_previews import picture
+from tests.test_public import new_link, open_link, tus_create, tus_send
+from tests.test_shares import person, share_with
+from tests.test_viewer import listing, upload
+
+MB = 1024**2
+OLE = inspect.OLE_MAGIC + bytes(504)  # de kop van OLE2: genoeg voor mime.py en inspect
+RTF = b"{\\rtf1\\ansi hallo}"
+
+
+class Recording(httpx.AsyncBaseTransport):
+    """Het verkeer van de app naar DS, met de host van elk verzoek."""
+
+    def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
+        self.inner = inner
+        self.hosts: list[str] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.hosts.append(request.url.host)
+        return await self.inner.handle_async_request(request)
+
+
+@dataclass
+class Office:
+    settings: Settings
+    fake: Any  # tests.fake_docserver.app.FakeDocServer
+    fake_app: FastAPI
+    transport: Recording
+    tasks: list[asyncio.Task] = field(default_factory=list)
+
+    @property
+    def conversions(self):
+        return self.fake.conversions
+
+    def log(self, *kinds: str) -> list[dict]:
+        return [e for e in self.fake.entries if not kinds or e["kind"] in kinds]
+
+    def converted(self) -> list[str]:
+        """De keys waarvoor DS een conversie kreeg (getekend), elk één keer: opnieuw vragen
+        (async) is dezelfde conversie."""
+        found = [e["key"] for e in self.log("convert") if e.get("signed")]
+        return list(dict.fromkeys(found))
+
+    def background(self, coro) -> asyncio.Task:
+        task = asyncio.ensure_future(coro)
+        self.tasks.append(task)
+        return task
+
+
+@pytest.fixture
+async def office(client, settings, monkeypatch):
+    """Office aan met de nep-DS, zoals de lifespan het zou binden; DS gezond."""
+    s = office_settings(settings)
+    app.dependency_overrides[get_settings] = lambda: s
+    runtime.bind(app, s)
+    fake_app = create_app(
+        FakeConfig(secret=s.office_secret, transport=httpx.ASGITransport(app=internal_app))
+    )
+    transport = Recording(httpx.ASGITransport(app=fake_app))
+    ds_client.transport = transport
+    office_state(app).health = "ok"
+    monkeypatch.setattr(oo_convert, "POLL_SECONDS", 0.01)
+    convert.ASKS.reset()
+    inspect.forget()
+    grants.clear()
+    convert._converting.clear()
+    convert._waiting.clear()
+    convert._asked.clear()
+    world = Office(s, fake_app.state.fake, fake_app, transport)
+    yield world
+    if world.conversions.hold is not None:
+        world.conversions.hold.set()
+    for task in world.tasks:
+        task.cancel()
+    for task in world.tasks:
+        with contextlib.suppress(BaseException):
+            await task
+    for task in list(convert._tasks):
+        task.cancel()
+    await fake_app.state.fake.aclose()
+    await ds_client.close()
+    ds_client.transport = None
+    runtime.unbind()
+    engine.reset()
+    convert.ASKS.reset()
+    convert._converting.clear()
+    convert._waiting.clear()
+    convert._asked.clear()
+    inspect.forget()
+    grants.clear()
+    for name in ("office", "office_policy"):
+        if hasattr(app.state, name):
+            delattr(app.state, name)
+
+
+async def until(check: Callable[[], bool], seconds: float = 10.0) -> None:
+    """Wacht (begrensd) tot check() waar is."""
+    for _ in range(int(seconds / 0.01)):
+        if check():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("de voorwaarde werd niet waar")
+
+
+async def blob_of(s: Settings, node_id: str) -> Blob:
+    async with maker(s)() as session:
+        node = await session.get(Node, uuid.UUID(str(node_id)))
+        return await session.get(Blob, node.blob_id)
+
+
+async def office_jobs(s: Settings, status: str | None = None) -> list[Job]:
+    async with maker(s)() as session:
+        query = select(Job).where(Job.type == convert.TYPE).order_by(Job.created_at)
+        if status:
+            query = query.where(Job.status == status)
+        return list((await session.scalars(query)).all())
+
+
+async def run_later(s: Settings, seconds: float = 600) -> int:
+    """De taken die nu en tot seconds vanaf nu klaarstaan."""
+    return await jobs.run_pending(s, jobs.now() + timedelta(seconds=seconds))
+
+
+def pdf_pages(path) -> int:
+    document = pypdfium2.PdfDocument(str(path))
+    try:
+        return len(document)
+    finally:
+        document.close()
+
+
+def ole(size: int = 4096) -> bytes:
+    return (OLE + bytes(size))[:size]
+
+
+def docx_with_pages(pages: int, word: str = "Eerste") -> bytes:
+    """Een docx met pages - 1 pagina-einden: de nep-DS geeft dan zoveel pagina's."""
+    breaks = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>' * (pages - 1)
+    return docx_bytes(f"<w:p><w:r><w:t>{word}</w:t></w:r></w:p>{breaks}")
+
+
+def replace_part(data: bytes, name: str, content: bytes) -> bytes:
+    """Dezelfde zip met één onderdeel vervangen."""
+    out = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(data)) as source,
+        zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target,
+    ):
+        for info in source.infolist():
+            target.writestr(info, content if info.filename == name else source.read(info))
+    return out.getvalue()
+
+
+def odt_bomb(megabytes: int = 1024) -> bytes:
+    """Een odt van een paar MB met megabytes nullen erin (uitgepakt een gigabyte)."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
+        archive.writestr(zipfile.ZipInfo("mimetype"), "application/vnd.oasis.opendocument.text")
+        archive.writestr("content.xml", "<office:document-content/>")
+        with archive.open("Pictures/nul.bin", "w") as target:
+            for _ in range(megabytes):
+                target.write(ZEROS)
+    return out.getvalue()
+
+
+def lying_docx() -> bytes:
+    """Een docx waarvan word/document.xml zegt 10 bytes te zijn, maar 5000 bytes uitpakt."""
+    data = bytearray(docx_bytes("<w:p><w:r><w:t>" + "x" * 5000 + "</w:t></w:r></w:p>"))
+    for central in central_offsets(bytes(data)):
+        name_length = struct.unpack_from("<H", data, central + 28)[0]
+        if bytes(data[central + 46 : central + 46 + name_length]) == b"word/document.xml":
+            local = local_offset(bytes(data), central)
+            struct.pack_into("<I", data, central + 24, 10)
+            struct.pack_into("<I", data, local + 22, 10)
+    return bytes(data)
+
+
+def pptx_with_photos(count: int = 8, megabytes: int = 10) -> bytes:
+    """Een pptx met count opgeslagen foto's van megabytes MB: groot, maar geen bom."""
+    out = io.BytesIO(pptx_bytes(["<p:sp/>"]))
+    with zipfile.ZipFile(out, "a") as archive:
+        for n in range(count):
+            info = zipfile.ZipInfo(f"ppt/media/image{n}.jpeg")
+            info.compress_type = zipfile.ZIP_STORED
+            archive.writestr(info, b"\xff\xd8\xff\xe0" + os.urandom(megabytes * MB))
+    return out.getvalue()
+
+
+async def ask(client, headers, node_id: str, expect: int = 202, **params) -> httpx.Response:
+    r = await client.post(f"/api/v1/office/files/{node_id}/convert", headers=headers, params=params)
+    assert r.status_code == expect, r.text
+    return r
+
+
+async def trash_and_purge(client, headers, node_id: str) -> None:
+    assert (await client.delete(f"/api/v1/files/{node_id}", headers=headers)).status_code == 204
+    r = await client.post("/api/v1/trash/purge", json={"ids": [node_id]}, headers=headers)
+    assert r.status_code == 200, r.text
+
+
+# --- omzetten na een upload ----------------------------------------------------------------
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("name", "make", "pages", "doc"),
+    [
+        ("brief.docx", lambda: docx_with_pages(3), 3, True),
+        ("cijfers.xlsx", xlsx_bytes, 2, True),  # twee bladen
+        ("dia.pptx", lambda: pptx_bytes(["<p:sp/>", "<p:sp/>"]), 2, True),
+        ("tekst.odt", odt_bytes, 1, True),
+        ("oud.doc", ole, 1, False),
+        ("oud.xls", ole, 1, False),
+        ("oud.ppt", ole, 1, False),
+        ("opmaak.rtf", lambda: RTF, 1, False),
+    ],
+)
+async def test_omzetten_geeft_een_pdf_en_thumbnails(client, admin, office, name, make, pages, doc):
+    jonas, _ = admin
+    s = office.settings
+    node = await upload(client, jonas, name, make())
+    await jobs.run_pending(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "ready" and blob.pdf_version == keys.PDF_VERSION
+    blobs = BlobStore(s.blob_dir)
+    path = convert.pdf_path(blobs, blob.sha256)
+    assert path.is_file() and pdf_pages(path) == pages
+    # De thumbnails komen nu uit pagina 1 van de PDF; doc, xls, ppt en rtf hebben zo voor het
+    # eerst een preview (B21 heeft er geen)
+    meta = blob.preview_meta or {}
+    assert {256, 1024} <= set(meta["sizes"]) and meta["pages"] == pages
+    assert blob.preview == "ready"
+    target = previews.directory(blobs, blob.sha256)
+    assert (target / "256.webp").is_file() and (target / "1024.webp").is_file()
+    # doc.json van B21 blijft (de eenvoudige weergave)
+    assert previews.doc_path(blobs, blob.sha256).is_file() == doc
+    # DS kreeg de inhoud en een neutrale titel, nooit de naam van het bestand
+    assert office.converted() == [keys.convert_key(blob.sha256, 1)]
+    source = office.log("convert_source")
+    assert len(source) == 1 and source[0]["http"] == 200 and source[0]["digest"]
+    assert source[0]["bytes"] == blob.size
+    assert all(name not in str(e) for e in office.log())
+    assert set(office.transport.hosts) == {"office"}
+    # Eén taak, klaar
+    assert [j.status for j in await office_jobs(s)] == ["done"]
+
+
+@pytest.mark.anyio
+async def test_dezelfde_inhoud_in_twee_bestanden_is_een_conversie(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    data = docx_with_pages(2)
+    first = await upload(client, jonas, "a.docx", data)
+    second = await upload(client, jonas, "b.docx", data)
+    await jobs.run_pending(s)
+    assert (await blob_of(s, first["id"])).pdf_state == "ready"
+    assert (await blob_of(s, second["id"])).pdf_state == "ready"
+    assert len(office.converted()) == 1 and office.conversions.started == 1
+    assert len(await office_jobs(s)) == 1
+
+
+@pytest.mark.anyio
+async def test_een_key_per_inhoud(client, admin, office):
+    """DS geeft bij dezelfde key het oude resultaat, ook voor een ander bestand (de nep-DS doet
+    dat ook, zie test_fake_docserver). Onze key bevat de sha, dus elk bestand zijn eigen PDF."""
+    jonas, _ = admin
+    s = office.settings
+    two = await upload(client, jonas, "twee.docx", docx_with_pages(2))
+    four = await upload(client, jonas, "vier.docx", docx_with_pages(4))
+    await jobs.run_pending(s)
+    blobs = BlobStore(s.blob_dir)
+    two_blob, four_blob = await blob_of(s, two["id"]), await blob_of(s, four["id"])
+    assert pdf_pages(convert.pdf_path(blobs, two_blob.sha256)) == 2
+    assert pdf_pages(convert.pdf_path(blobs, four_blob.sha256)) == 4
+    assert sorted(office.converted()) == sorted(
+        [keys.convert_key(two_blob.sha256), keys.convert_key(four_blob.sha256)]
+    )
+
+
+@pytest.mark.anyio
+async def test_na_onze_tijdslimiet_dezelfde_key(client, admin, office, monkeypatch):
+    """DS werkt na onze tijdslimiet door: de volgende poging vraagt dezelfde key en krijgt dan
+    het resultaat, zonder tweede conversie."""
+    jonas, _ = admin
+    s = office.settings
+    monkeypatch.setattr(s, "office_convert_timeout", 0.3)
+    office.conversions.configure({"hold": True})
+    node = await upload(client, jonas, "traag.docx", docx_with_pages(2))
+    await jobs.run_pending(s)
+    blob = await blob_of(s, node["id"])
+    key = keys.convert_key(blob.sha256)
+    assert blob.pdf_state == "pending"
+    [job] = await office_jobs(s)
+    assert (job.status, job.attempts) == ("queued", 1) and "(code 1)" in job.error
+    office.conversions.configure({"hold": False})
+    await until(lambda: office.conversions.cache[key].done.is_set())
+    await run_later(s, 60)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    assert office.converted() == [key] and office.conversions.started == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("code", [-2, -4])
+async def test_een_nieuwe_key_pas_na_min_2_of_min_4(client, admin, office, code):
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"fail": [code]})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "pending"
+    done, queued = await office_jobs(s)
+    assert done.status == "done" and queued.status == "queued"
+    assert queued.payload["n"] == 2 and queued.attempts == 0
+    assert queued.run_after.replace(tzinfo=None) >= (
+        jobs.now() + timedelta(seconds=convert.NEW_KEY_SECONDS - 5)
+    ).replace(tzinfo=None)
+    await run_later(s, 60)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    assert office.converted() == [
+        keys.convert_key(blob.sha256, 1),
+        keys.convert_key(blob.sha256, 2),
+    ]
+
+
+@pytest.mark.anyio
+async def test_hooguit_drie_nieuwe_keys(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"fail": [-4, -4, -4, -4, -4]})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "failed" and blob.pdf_version == keys.PDF_VERSION
+    assert office.converted() == [keys.convert_key(blob.sha256, n) for n in (1, 2, 3, 4)]
+    last = (await office_jobs(s))[-1]
+    assert last.status == "failed" and "(code -4)" in last.error
+    # Een verzoek zegt waarom
+    r = await ask(client, jonas, node["id"], expect=502)
+    assert code_of(r) == "office_convert_failed" and params_of(r) == {"code": -4}
+
+
+RETRY = "/api/v1/admin/office/conversions/retry"
+
+
+@pytest.mark.anyio
+async def test_mislukte_opnieuw_krijgt_eigen_keys(client, admin, office):
+    """Na -4 op alle vier keys (DS kon de bron even niet ophalen) vraagt "Mislukte opnieuw" op
+    /beheer andere keys: of DS een fout onder de key bewaart, maakt dan niet uit (-4 bewaart
+    hij niet, gemeten; -1, -2, -3 en -6 niet gemeten, en de nep-DS bewaart die). Een -4 in die
+    ronde geeft een nieuwe key binnen dezelfde ronde."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"fail": [-4, -4, -4, -4]})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "failed"
+    before = office.converted()
+    assert before == [keys.convert_key(blob.sha256, n) for n in (1, 2, 3, 4)]
+
+    office.conversions.configure({"fail": [-4]})  # nog één keer, daarna is de storing voorbij
+    r = await client.post(RETRY, headers=jonas)
+    assert r.status_code == 200 and r.json() == {"queued": 1}
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    first, second = office.converted()[len(before) :]
+    assert first.startswith(f"{keys.convert_key(blob.sha256)}-r") and first not in before
+    assert second == f"{first}-a2"
+
+
+@pytest.mark.anyio
+async def test_mislukte_opnieuw_met_ds_weg_blijft_failed(client, admin, office):
+    """Is DS niet gezond als de taak van "Mislukte opnieuw" aan de beurt is, dan gaat de inhoud
+    terug naar failed, niet naar leeg: de inhaalronde zou anders de oude key nemen en de oude
+    fout terugkrijgen. Met DS weg weigert de knop zelf (503)."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"fail": [-3]})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+    r = await client.post(RETRY, headers=jonas)
+    assert r.json() == {"queued": 1}
+    tried = len(office.converted())
+    office_state(app).health = "down"
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+    assert len(office.converted()) == tried
+    r = await client.post(RETRY, headers=jonas)
+    assert r.status_code == 503 and code_of(r) == "office_unavailable"
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+    office_state(app).health = "ok"
+    office_policy(app).config = OfficeConfig(enabled=False)
+    r = await client.post(RETRY, headers=jonas)
+    assert r.status_code == 503 and code_of(r) == "office_off"
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+
+
+# --- de invoercontrole ---------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_een_bom_en_een_liegende_zip_komen_nooit_bij_ds(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    bomb = await upload(client, jonas, "bom.odt", odt_bomb())
+    lying = await upload(client, jonas, "liegt.docx", lying_docx())
+    await jobs.run_pending(s)
+    for node in (bomb, lying):
+        r = await ask(client, jonas, node["id"], expect=422)
+        assert code_of(r) == "office_unsafe"
+        assert (await blob_of(s, node["id"])).pdf_state == "unsafe"
+    # De nep-DS zag niets: geen conversie, geen enkel verzoek
+    assert office.log() == [] and office.transport.hosts == []
+    # En ook later niet vanzelf
+    await convert.start_backfill(s)
+    await run_later(s)
+    assert office.log() == []
+
+
+@pytest.mark.anyio
+async def test_een_pptx_met_80_mb_fotos_gaat_wel(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    data = pptx_with_photos()
+    assert len(data) > 80 * MB
+    node = await upload(client, jonas, "fotos.pptx", data)
+    await jobs.run_pending(s)
+    # Boven office_auto_convert_bytes (20 MB): alleen op verzoek
+    assert (await blob_of(s, node["id"])).pdf_state == "ask"
+    assert office.converted() == []
+    r = await ask(client, jonas, node["id"])
+    assert r.json() == {"pdf_state": "pending"}
+    await jobs.run_pending(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    [source] = office.log("convert_source")
+    assert source["bytes"] == len(data)
+
+
+@pytest.mark.anyio
+async def test_te_groot_voor_een_verzoek(client, admin, office, monkeypatch):
+    jonas, _ = admin
+    s = office.settings
+    monkeypatch.setattr(s, "office_ole_max_bytes", 4000)
+    node = await upload(client, jonas, "groot.doc", ole(5000))
+    await jobs.run_pending(s)
+    # De taak liet de invoercontrole het zeggen (boven 4000 bytes: unsafe)
+    assert (await blob_of(s, node["id"])).pdf_state == "unsafe"
+    async with maker(s)() as session:
+        await session.execute(update(Blob).values(pdf_state="ask"))
+        await session.commit()
+    r = await ask(client, jonas, node["id"], expect=413)
+    assert code_of(r) == "office_too_large"
+    assert office.converted() == []
+
+
+@pytest.mark.anyio
+async def test_een_trage_controle_is_niet_blijvend_unsafe(client, admin, office, monkeypatch):
+    """De tijdgrens van de invoercontrole (of een leesfout) zegt iets over de machine, niet over
+    het bestand: de taak telt het als een gewone poging (failed na twee), niet als unsafe. Dan
+    zet de knop Mislukte opnieuw op /beheer hem terug, en komt de PDF er alsnog."""
+    jonas, _ = admin
+    s = office.settings
+    monkeypatch.setattr(inspect, "SECONDS", -1)  # een drukke machine: altijd te laat
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+    [job] = await office_jobs(s, "failed")
+    assert job.attempts == 2 and "invoercontrole" in job.error
+    assert office.converted() == []  # DS zag niets
+    monkeypatch.setattr(inspect, "SECONDS", 20.0)  # zonder inspect.forget: niets bewaard
+    r = await client.post(RETRY, headers=jonas)
+    assert r.status_code == 200 and r.json() == {"queued": 1}
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+
+
+@pytest.mark.anyio
+async def test_een_trage_controle_bij_een_verzoek_is_503(client, admin, office, monkeypatch):
+    """Op verzoek: 503 office_unavailable (zo opnieuw proberen), en de inhoud wordt niet
+    unsafe; de volgende vraag kijkt opnieuw en zet hem om."""
+    jonas, _ = admin
+    s = office.settings
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))  # nog geen taak gedaan
+    monkeypatch.setattr(inspect, "SECONDS", -1)
+    r = await ask(client, jonas, node["id"], expect=503)
+    assert code_of(r) == "office_unavailable"
+    assert (await blob_of(s, node["id"])).pdf_state is None
+    monkeypatch.setattr(inspect, "SECONDS", 20.0)
+    r = await ask(client, jonas, node["id"])
+    assert r.json() == {"pdf_state": "pending"}
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+
+
+# --- uploads via een link en verzoeken -----------------------------------------------------
+
+
+async def link_upload(client, headers, folder: str, name: str, data: bytes) -> None:
+    link = await new_link(client, headers, folder, permission="upload")
+    key = (await open_link(client, link))["key"]
+    r = await tus_create(client, key, name, len(data))
+    assert r.status_code == 201, r.text
+    r = await tus_send(client, key, r.headers["location"], 0, data)
+    assert r.status_code == 204, r.text
+
+
+@pytest.mark.anyio
+async def test_een_upload_via_een_link_wacht_op_een_verzoek(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    anna, anna_id = await person(client, jonas, "anna@example.nl")
+    folder = await mkdir(client, jonas, (await root(client, jonas))["folder"]["id"], "Inbox")
+    await share_with(client, jonas, folder, user_id=anna_id, permission="read")
+    await link_upload(client, jonas, folder, "van-buiten.docx", docx_with_pages(2))
+    await link_upload(client, jonas, folder, "ook.docx", docx_with_pages(3))
+    await run_later(s)
+    children = (await client.get(f"/api/v1/files/{folder}/children", headers=jonas)).json()
+    nodes = {c["name"]: c["id"] for c in children["children"]}
+    for node_id in nodes.values():
+        assert (await blob_of(s, node_id)).pdf_state == "ask"
+    # Niet vanzelf, ook niet in de inhaalronde
+    await convert.start_backfill(s)
+    await run_later(s)
+    assert office.converted() == [] and office.log() == []
+    # Jonas (eigenaar) en Anna (alleen lezen) mogen het vragen
+    for headers, name in ((jonas, "van-buiten.docx"), (anna, "ook.docx")):
+        r = await ask(client, headers, nodes[name])
+        assert r.json() == {"pdf_state": "pending"}
+        await jobs.run_pending(s)
+        assert (await blob_of(s, nodes[name])).pdf_state == "ready"
+        r = await ask(client, headers, nodes[name])
+        assert r.json() == {"pdf_state": "ready"}
+    assert len(office.converted()) == 2
+
+
+@pytest.mark.anyio
+async def test_de_elfde_vraag_in_tien_minuten(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    anna, anna_id = await person(client, jonas, "anna@example.nl")
+    folder = await mkdir(client, jonas, (await root(client, jonas))["folder"]["id"], "Inbox")
+    await share_with(client, jonas, folder, user_id=anna_id, permission="read")
+    await link_upload(client, jonas, folder, "a.docx", docx_with_pages(2))
+    await jobs.run_pending(s)
+    node = (await client.get(f"/api/v1/files/{folder}/children", headers=jonas)).json()
+    node_id = node["children"][0]["id"]
+    office_state(app).health = "down"
+    for _ in range(3):  # wat niet doorgaat (DS weg), telt niet mee
+        assert code_of(await ask(client, jonas, node_id, expect=503)) == "office_unavailable"
+    office_state(app).health = "ok"
+    for _ in range(10):
+        await ask(client, jonas, node_id)
+    r = await ask(client, jonas, node_id, expect=429)
+    assert code_of(r) == "rate_limited"
+    # Per gebruiker: Anna mag nog
+    await ask(client, anna, node_id)
+    # Er staat één taak klaar, vooraan
+    [job] = await office_jobs(s)
+    assert job.status == "queued" and job.run_after.replace(tzinfo=None) < (
+        jobs.now().replace(tzinfo=None)
+    )
+
+
+@pytest.mark.anyio
+async def test_een_eerdere_versie_alleen_op_verzoek(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    parent = (await root(client, jonas))["folder"]["id"]
+    first = await upload(client, jonas, "brief.docx", docx_with_pages(2, "Oud"), parent)
+    await jobs.run_pending(s)
+    old_sha = (await blob_of(s, first["id"])).sha256
+    # De inhoud vervangen: de oude wordt een eerdere versie (met een PDF)
+    await upload(
+        client, jonas, "brief.docx", docx_with_pages(3, "Nieuw"), parent, conflict="replace"
+    )
+    await jobs.run_pending(s)
+    assert len(office.converted()) == 2
+    # Een eerdere versie die nog geen PDF had (zoals van vóór office), krijgt er vanzelf geen:
+    # niet na een nieuwe preview, en niet in de inhaalronde
+    convert.pdf_path(BlobStore(s.blob_dir), old_sha).unlink()
+    async with maker(s)() as session:
+        version = await session.scalar(select(Version).where(Version.blob_id == old_sha))
+        await session.execute(
+            update(Blob)
+            .where(Blob.sha256 == old_sha)
+            .values(pdf_state=None, pdf_version=0, render_version=0)
+        )
+        await jobs.enqueue(session, previews.TYPE, {"sha": old_sha}, key=f"preview:{old_sha}")
+        await session.commit()
+    convert_jobs = len(await office_jobs(s))
+    await jobs.run_pending(s)
+    await convert.start_backfill(s)
+    await run_later(s)
+    assert len(await office_jobs(s)) == convert_jobs
+    async with maker(s)() as session:
+        assert (await session.get(Blob, old_sha)).pdf_state is None
+    # Op verzoek wel (met ?version=)
+    r = await ask(client, jonas, first["id"], version=str(version.id))
+    assert r.json() == {"pdf_state": "pending"}
+    await jobs.run_pending(s)
+    async with maker(s)() as session:
+        assert (await session.get(Blob, old_sha)).pdf_state == "ready"
+    assert convert.pdf_path(BlobStore(s.blob_dir), old_sha).is_file()
+    assert len(await office_jobs(s)) == convert_jobs + 1
+
+
+# --- vastlopen, gezondheid en wachten ------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_kill_tijdens_een_conversie(client, admin, office):
+    """Een bestand dat DS laat vastlopen, krijgt hooguit twee kansen; daarna failed en een
+    mislukte taak op /beheer, en nooit meer vanzelf."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"hold": True})
+    node = await upload(client, jonas, "zwaar.docx", docx_with_pages(2))
+    task = office.background(jobs.run_pending(s))
+    await until(lambda: office.log("convert_source"))
+    await office.fake.kill()
+    await task
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "pending"
+    [job] = await office_jobs(s)
+    assert (job.status, job.attempts) == ("queued", 1) and "(code 2)" in job.error
+    # De gezondheidslus zag het intussen; de tweede kans telt dan toch
+    office_state(app).health = "down"
+    await run_later(s, 60)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "failed"
+    [job] = await office_jobs(s)
+    assert (job.status, job.attempts) == ("failed", 2)
+    async with maker(s)() as session:
+        assert [j.id for j in await jobs.failed(session)] == [job.id]
+    # DS terug: de inhaalronde en een nieuwe preview laten hem staan
+    await office.fake.restart()
+    office_state(app).health = "ok"
+    async with maker(s)() as session:
+        await session.execute(
+            update(Blob).where(Blob.sha256 == blob.sha256).values(render_version=0)
+        )
+        await jobs.enqueue(session, previews.TYPE, {"sha": blob.sha256}, key="preview:opnieuw")
+        await session.commit()
+    await convert.start_backfill(s)
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+    assert len(await office_jobs(s)) == 1
+
+
+@pytest.mark.anyio
+async def test_een_herstart_van_ds_kost_geen_pogingen(client, admin, office):
+    """DS gaat onderuit tijdens een conversie (een update van de container). De app kijkt dan
+    meteen of DS nog gezond is: wat op het slot wacht, gaat zonder poging terug in plaats van
+    elk een poging te verliezen tegen een DS die weg is. De conversie die liep, wacht met zijn
+    tweede poging tot DS terug is. Daarna is alles gewoon klaar, niets is mislukt."""
+    jonas, _ = admin
+    s = office.settings
+    office_state(app).ever_ok = True  # DS draaide al: weg is down, niet starting
+    office.conversions.configure({"hold": True})
+    first = await upload(client, jonas, "een.docx", docx_with_pages(2))
+    await jobs.run_one(s)  # de preview
+    task = office.background(jobs.run_one(s))  # de conversie loopt
+    await until(lambda: office.log("convert_source"))
+    others = [
+        await upload(client, jonas, f"rij{n}.docx", docx_with_pages(2, f"Rij{n}")) for n in range(3)
+    ]
+    await jobs.run_pending(s)  # de previews; de conversies wachten op het slot
+    await office.fake.kill()
+    await task
+    assert office_state(app).health == "down"
+    async with maker(s)() as session:  # alles wat wacht is nu aan de beurt
+        await session.execute(
+            update(Job).where(Job.type == convert.TYPE).values(run_after=jobs.now())
+        )
+        await session.commit()
+    await jobs.run_pending(s)
+    assert (await blob_of(s, first["id"])).pdf_state == "pending"
+    for node in others:
+        assert (await blob_of(s, node["id"])).pdf_state is None  # terug, zonder poging
+    async with maker(s)() as session:
+        assert await jobs.failed(session) == []
+    [job] = [j for j in await office_jobs(s) if j.status == "queued"]
+    assert job.attempts == 1  # de tweede poging wacht
+    # DS terug: de tweede poging, en de inhaalronde neemt de rest
+    office.conversions.configure({"hold": False})
+    await office.fake.restart()
+    await health.check_once(app)
+    assert office_state(app).healthy
+    await asyncio.gather(*list(convert._tasks))
+    await run_later(s)
+    for node in [first, *others]:
+        assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    async with maker(s)() as session:
+        assert await jobs.failed(session) == []
+
+
+@pytest.mark.anyio
+async def test_lang_weg_na_een_mislukte_poging_is_failed(client, admin, office):
+    """Is DS na een mislukte poging al langer dan tien minuten weg, dan wacht de tweede poging
+    niet meer: failed, zoals een bestand dat DS laat vastlopen."""
+    jonas, _ = admin
+    s = office.settings
+    office_state(app).ever_ok = True
+    office.conversions.configure({"hold": True})
+    node = await upload(client, jonas, "zwaar.docx", docx_with_pages(2))
+    task = office.background(jobs.run_pending(s))
+    await until(lambda: office.log("convert_source"))
+    await office.fake.kill()
+    await task
+    assert office_state(app).health == "down"
+    office_state(app).down_since = jobs.now() - timedelta(minutes=11)
+    await run_later(s, 60)
+    assert (await blob_of(s, node["id"])).pdf_state == "failed"
+    [job] = await office_jobs(s)
+    assert (job.status, job.attempts) == ("failed", 2)
+    # De viewer en /beheer noemen code 2 (DS antwoordde niet), niet een onbekende 0
+    assert "(code 2)" in job.error
+    office_state(app).health = "ok"
+    r = await ask(client, jonas, node["id"], expect=502)
+    assert code_of(r) == "office_convert_failed" and params_of(r) == {"code": 2}
+
+
+@pytest.mark.anyio
+async def test_ds_terug_terwijl_de_tweede_poging_telt(client, admin, office, monkeypatch):
+    """De tweede poging (de eerste mislukte, DS herstart) ziet DS niet gezond, en DS komt terug
+    terwijl de taak zijn pogingen leest. Dan geen failed: zo opnieuw, zonder poging, en dan een
+    PDF. Eerst keek de taak na dat lezen alleen of DS nog even weg was; gezond is niet even weg,
+    dus was het failed, met DS gewoon terug."""
+    jonas, _ = admin
+    s = office.settings
+    state = office_state(app)
+    state.ever_ok, state.health = True, "down"
+    state.down_since = jobs.now() - timedelta(seconds=30)  # een herstart van DS
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    async with maker(s)() as session:  # de eerste poging mislukte al
+        await session.execute(update(Job).where(Job.id == job.id).values(attempts=1))
+        await session.commit()
+    attempts = convert._attempts
+
+    async def ds_returns(maker, sha):
+        found = await attempts(maker, sha)
+        state.health, state.down_since = "ok", None  # de gezondheidslus, tijdens die await
+        return found
+
+    monkeypatch.setattr(convert, "_attempts", ds_returns)
+    await jobs.run_pending(s)
+    monkeypatch.setattr(convert, "_attempts", attempts)
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    [again] = await office_jobs(s)
+    assert (again.id, again.status, again.attempts) == (job.id, "queued", 1)
+    assert again.run_after.replace(tzinfo=None) <= jobs.now().replace(tzinfo=None) + timedelta(
+        seconds=convert.BACK_SECONDS
+    )
+    assert office.log("convert") == []
+    await run_later(s, 60)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "ready"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+    [done] = await office_jobs(s)
+    assert (done.status, done.attempts) == ("done", 2)
+
+
+@pytest.mark.anyio
+async def test_ds_niet_gezond_dan_geen_poging(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    office_state(app).health = "down"
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state is None
+    [job] = await office_jobs(s)
+    assert (job.status, job.attempts) == ("done", 1)
+    assert office.log() == [] and office.transport.hosts == []
+    # Weer gezond (de gezondheidslus): de inhaalronde neemt hem terug
+    await health.check_once(app)
+    assert office_state(app).healthy
+    await asyncio.gather(*list(convert._tasks))
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+
+
+async def released_while_ds_returns(
+    client, jonas, office, monkeypatch, at: str
+) -> tuple[dict, uuid.UUID]:
+    """DS weg, een upload, en de taak office.pdf wil de inhoud zonder poging teruggeven terwijl
+    DS terugkomt: de gezondheidslus zet gezond en de inhaalronde (in een andere worker) draait,
+    op het punt at. "before": de taak zag DS niet gezond, maar heeft het slot van de overdracht
+    nog niet; de inhaalronde draait helemaal (en leest nog pending). "during": de taak heeft dat
+    slot en keek al; DS komt nu terug, en de inhaalronde wacht op het slot (zonder dat slot las
+    hij de inhoud nog pending: pas dan geeft de taak terug). "after": het teruggeven is
+    gecommit, maar jobs.execute zette de taak nog niet op done (CI run 88). Geeft de node en de
+    id van de taak."""
+    s = office.settings
+    office_state(app).ever_ok = True
+    office_state(app).health = "down"
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")  # de preview: pending en een taak
+    [job] = await office_jobs(s, "queued")
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    fired: list[str] = []
+    waiting: list[asyncio.Task] = []
+    read: list[bool] = []
+
+    async def ds_returns() -> None:
+        fired.append(at)
+        office_state(app).health = "ok"  # de gezondheidslus: weer gezond
+        await convert.backfill(s, {"after": ""})  # de inhaalronde die on_healthy start
+
+    attempts, release, set_job = convert._attempts, convert._release, jobs._set
+    enqueue_many = jobs.enqueue_many
+
+    async def backfill_before_lock(maker, sha):
+        found = await attempts(maker, sha)  # het laatste vóór het slot
+        if not fired:
+            await ds_returns()
+        return found
+
+    async def backfill_waits_for_lock(maker, sha, asked, r=""):
+        if not fired:
+            fired.append(at)
+            office_state(app).health = "ok"
+            waiting.append(office.background(convert.backfill(s, {"after": ""})))
+            # Pas teruggeven als de inhaalronde op het slot wacht, of (zonder dat slot) zijn
+            # rijen al las. Zo hangt de volgorde niet af van de threads van aiosqlite
+            lock = convert._overdracht()
+            await until(lambda: bool(read or lock._waiters))
+        await release(maker, sha, asked, r)
+
+    async def backfill_reads(*args, **kwargs):  # vlak na het lezen van de rijen
+        read.append(True)
+        return await enqueue_many(*args, **kwargs)
+
+    async def backfill_before_done(settings, claim, **values):
+        if claim.id == job.id and values.get("status") == "done" and not fired:
+            await ds_returns()
+        return await set_job(settings, claim, **values)
+
+    if at == "before":
+        monkeypatch.setattr(convert, "_attempts", backfill_before_lock)
+    elif at == "during":
+        monkeypatch.setattr(convert, "_release", backfill_waits_for_lock)
+        monkeypatch.setattr(jobs, "enqueue_many", backfill_reads)
+    else:
+        monkeypatch.setattr(jobs, "_set", backfill_before_done)
+    await jobs.run_pending(s)  # de taak: DS is weg
+    for task in waiting:
+        await task
+    monkeypatch.setattr(convert, "_attempts", attempts)
+    monkeypatch.setattr(convert, "_release", release)
+    monkeypatch.setattr(jobs, "_set", set_job)
+    monkeypatch.setattr(jobs, "enqueue_many", enqueue_many)
+    assert fired == [at]
+    assert office.log("convert") == []  # DS was weg toen de taak keek
+    return node, job.id
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("at", ["before", "during", "after"])
+async def test_ds_terug_terwijl_de_taak_de_inhoud_teruggeeft(
+    client, admin, office, monkeypatch, at
+):
+    """CI run 88: DS kwam terug precies toen de taak office.pdf de inhoud teruggaf (DS weg:
+    pending terug naar leeg, zonder poging). after: de inhaalronde las de inhoud leeg, maar de
+    taak liep nog (done kwam pas in een eigen commit van jobs.execute): geen nieuwe taak, en
+    toch pending. before: de inhaalronde las nog pending en sloeg hem over; daarna gaf de taak
+    hem terug. Beide keren kwam er nooit een PDF: pending of leeg, zonder taak, ook na een
+    herstart. Nu gaan het teruggeven en de inhaalronde om de beurt (het slot van de
+    overdracht), en is het teruggeven één commit met de done van de taak. before: de taak ziet
+    onder dat slot DS gezond en geeft niet terug, maar komt zelf zo terug. during en after: de
+    taak geeft terug, en de inhaalronde zet er een taak bij. Steeds pending met precies één
+    taak, en dan een PDF."""
+    jonas, _ = admin
+    s = office.settings
+    node, first = await released_while_ds_returns(client, jonas, office, monkeypatch, at)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "pending"
+    [active] = [j for j in await office_jobs(s) if j.status in jobs.ACTIVE]
+    assert (active.status, active.attempts) == ("queued", 0)
+    run_after = active.run_after.replace(tzinfo=None)
+    now = jobs.now().replace(tzinfo=None)
+    if at == "before":  # de eigen taak, uitgesteld zonder poging; niet die van de inhaalronde
+        assert active.id == first
+        assert active.payload == {"sha": blob.sha256, "n": 1}
+        assert run_after <= now + timedelta(seconds=convert.BACK_SECONDS)
+    else:  # van de inhaalronde: na BACKFILL_DELAY, zodat nieuwe uploads voorgaan
+        assert active.id != first
+        assert active.payload == {"sha": blob.sha256, "n": 1, "b": True}
+        assert run_after > now + timedelta(seconds=convert.BACKFILL_DELAY - 10)
+    async with maker(s)() as session:
+        assert await jobs.failed(session) == []
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "ready"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+    assert [j for j in await office_jobs(s) if j.status in jobs.ACTIVE] == []
+
+
+@pytest.mark.anyio
+async def test_weer_gezond_onder_het_slot_dan_uitstel(client, admin, office, monkeypatch):
+    """De taak zag DS niet gezond, maar onder het slot van de overdracht is DS weer gezond (de
+    gezondheidslus zette het net; de inhaalronde liep nog niet). Dan geeft hij de inhoud niet
+    terug: pending blijft, dezelfde taak staat over BACK_SECONDS weer klaar, en de poging telt
+    niet. Daarna gewoon een PDF, in de eerste poging."""
+    jonas, _ = admin
+    s = office.settings
+    office_state(app).ever_ok = True
+    office_state(app).health = "down"
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    attempts = convert._attempts
+
+    async def ds_returns(maker, sha):
+        office_state(app).health = "ok"  # vlak vóór het slot
+        return await attempts(maker, sha)
+
+    monkeypatch.setattr(convert, "_attempts", ds_returns)
+    started = jobs.now().replace(tzinfo=None)
+    await jobs.run_pending(s)
+    monkeypatch.setattr(convert, "_attempts", attempts)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "pending"
+    [again] = await office_jobs(s)
+    assert (again.id, again.status, again.attempts) == (job.id, "queued", 0)
+    assert again.payload == job.payload == {"sha": blob.sha256, "n": 1}
+    assert started < again.run_after.replace(tzinfo=None)
+    assert again.run_after.replace(tzinfo=None) <= jobs.now().replace(tzinfo=None) + timedelta(
+        seconds=convert.BACK_SECONDS
+    )
+    assert office.log("convert") == []
+    await run_later(s, 60)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "ready"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+    [done] = await office_jobs(s)
+    assert (done.id, done.status, done.attempts) == (job.id, "done", 1)
+
+
+@pytest.mark.anyio
+async def test_weer_aan_onder_het_slot_dan_uitstel(client, admin, office, monkeypatch):
+    """Zoals hierboven voor office uit op /beheer: de taak las uit, maar onder het slot van de
+    overdracht staat office weer aan (/beheer zette aan en startte de inhaalronde). Dan ook
+    uitstel, niet terug naar leeg."""
+    jonas, _ = admin
+    s = office.settings
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    enabled, answers = convert._enabled, iter([False])  # de taak leest eerst uit
+
+    async def switched_on(session):
+        return next(answers, True) and await enabled(session)
+
+    monkeypatch.setattr(convert, "_enabled", switched_on)
+    await jobs.run_pending(s)
+    monkeypatch.setattr(convert, "_enabled", enabled)
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    [again] = await office_jobs(s)
+    assert (again.id, again.status, again.attempts) == (job.id, "queued", 0)
+    await run_later(s, 60)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+
+
+@pytest.mark.anyio
+async def test_nooit_twee_taken_voor_een_inhoud(client, admin, office, monkeypatch):
+    """Zoals test_ds_terug_terwijl_de_taak_de_inhoud_teruggeeft, maar op elk punt waarop de
+    taak office.pdf (DS weg) de database in gaat: DS komt terug vóór punt flip, en de
+    inhaalronde draait vóór punt step (niet eerder dan flip), of pas na de taak. Heeft de taak
+    dan het slot van de overdracht, dan wacht de inhaalronde daarop; schrijft de sessie van de
+    taak al, dan is het geen punt (de inhaalronde wacht dan op SQLite, één schrijver). Steeds
+    hooguit één actieve taak voor de inhoud (enqueue kijkt met een SELECT vóór het schrijven, en
+    dat houdt in twee sessies geen tweede taak tegen), nooit leeg zonder taak, en dan een PDF."""
+    jonas, _ = admin
+    s = office.settings
+    office_state(app).ever_ok = True
+    me = asyncio.current_task()
+    writing: weakref.WeakSet = weakref.WeakSet()
+    sweep = {"flip": -1, "step": -1, "seen": 0}
+    happened: list[str] = []
+    waiting: list[asyncio.Task] = []
+
+    async def point(session) -> None:
+        if sweep["flip"] < 0 or len(happened) == 2 or asyncio.current_task() is not me:
+            return
+        held = convert._overdracht().locked()
+        if session in writing and not held:
+            return
+        seen = sweep["seen"]
+        sweep["seen"] += 1
+        if seen == sweep["flip"]:
+            happened.append("flip")
+            office_state(app).health = "ok"  # de gezondheidslus
+        if seen == sweep["step"]:
+            happened.append("step")
+            backfill = convert.backfill(s, {"after": ""})  # de inhaalronde van on_healthy
+            if held:
+                waiting.append(office.background(backfill))
+            else:
+                await backfill
+
+    def wrap(name: str):
+        real = getattr(AsyncSession, name)
+
+        async def wrapped(self, *args, **kwargs):
+            await point(self)
+            if getattr(args[0] if args else None, "is_dml", False) or self.new or self.dirty:
+                writing.add(self)
+            try:
+                return await real(self, *args, **kwargs)
+            finally:
+                if name == "commit":
+                    writing.discard(self)
+
+        return wrapped
+
+    for name in ("execute", "scalar", "scalars", "get", "commit"):
+        monkeypatch.setattr(AsyncSession, name, wrap(name))
+    runs = 0
+    for flip in itertools.count():
+        for step in itertools.count(flip):
+            runs += 1
+            office_state(app).health = "down"
+            node = await upload(client, jonas, f"b{runs}.docx", docx_with_pages(2, f"B{runs}"))
+            await jobs.run_pending(s, lane="preview")
+            [job] = await office_jobs(s, "queued")
+            claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+            assert claimed is not None and claimed.id == job.id
+            happened.clear()
+            sweep.update(flip=flip, step=step, seen=0)
+            await jobs.execute(s, claimed)  # de taak
+            sweep["flip"] = -1
+            for task in waiting:
+                await task
+            waiting.clear()
+            if "flip" not in happened:
+                break  # DS kwam pas na de taak terug: test_ds_niet_gezond_dan_geen_poging
+            if "step" not in happened:
+                await convert.backfill(s, {"after": ""})  # de inhaalronde na de taak
+            where = (flip, step, happened)
+            blob = await blob_of(s, node["id"])
+            active = [
+                j
+                for j in await office_jobs(s)
+                if j.key == convert.job_key(blob.sha256) and j.status in jobs.ACTIVE
+            ]
+            assert blob.pdf_state in ("pending", "ready"), where
+            assert len(active) == (1 if blob.pdf_state == "pending" else 0), where
+            converted = keys.convert_key(blob.sha256) in office.converted()
+            await run_later(s)
+            assert (await blob_of(s, node["id"])).pdf_state == "ready", where
+            assert [j for j in await office_jobs(s) if j.status in jobs.ACTIVE] == [], where
+            if "step" not in happened or converted:
+                break  # de inhaalronde na de taak, of DS was terug voordat de taak keek
+        if "flip" not in happened:
+            break
+    assert flip >= 5 and runs >= 15  # voor, in en na het slot
+
+
+def watch_commits(monkeypatch, check: Callable[[], Any]) -> None:
+    """Roept check() aan na elke commit in deze taak (de test zelf, en wat hij draait). Wat
+    check zelf commit, telt niet."""
+    me = asyncio.current_task()
+    real = AsyncSession.commit
+    busy: list[bool] = []
+
+    async def commit(self):
+        await real(self)
+        if busy or asyncio.current_task() is not me:
+            return
+        busy.append(True)
+        try:
+            await check()
+        finally:
+            busy.clear()
+
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+
+
+@pytest.mark.anyio
+async def test_teruggeven_en_klaar_zijn_een_commit(client, admin, office, monkeypatch):
+    """Wie de inhoud leeg ziet nadat de taak hem teruggaf, ziet de taak ook al klaar (niet meer
+    running): het teruggeven en de done van de taak zijn één transactie. Daarom kijkt de test na
+    elke commit van de taak, in een eigen sessie: nooit leeg met de taak nog running. Met DS ook
+    onder het slot van de overdracht nog weg zet de taak niets terug in de rij; dat doet de
+    inhaalronde als DS terug is."""
+    jonas, _ = admin
+    s = office.settings
+    office_state(app).health = "down"
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+    assert claimed is not None and claimed.id == job.id
+    sha = (await blob_of(s, node["id"])).sha256
+    seen: list[tuple[str | None, str | None]] = []
+
+    async def look() -> None:
+        async with maker(s)() as session:
+            state = await session.scalar(select(Blob.pdf_state).where(Blob.sha256 == sha))
+            status = await session.scalar(select(Job.status).where(Job.id == job.id))
+        seen.append((state, status))
+
+    commit = AsyncSession.commit
+    watch_commits(monkeypatch, look)
+    await convert.run(s, claimed.payload)  # de taak zelf, zonder jobs.execute eromheen
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+    assert seen and seen[-1] == (None, "done"), seen
+    assert (None, "running") not in seen, seen
+    assert (await blob_of(s, node["id"])).pdf_state is None
+    [after] = await office_jobs(s)
+    assert (after.status, after.attempts, after.error) == ("done", 1, None)
+    assert after.finished_at is not None
+    assert not convert._overdracht().locked()
+
+
+@pytest.mark.anyio
+async def test_min_8_en_de_inhaalronde_na_elke_commit(client, admin, office, monkeypatch):
+    """Na -8 geeft de taak de inhoud terug zonder het slot van de overdracht, en tot _recheck
+    heet DS nog gezond: een stuk van de inhaalronde kan dan meteen lezen. De test laat een stuk
+    draaien na de commit nummer at van de taak, vanaf het antwoord -8, voor elke at. Steeds
+    pending met precies één actieve taak (het stuk las voor _recheck), of leeg zonder taak (het
+    stuk kwam na _recheck en deed niets; de volgende "weer gezond" neemt hem); nooit pending
+    zonder taak. Met het teruggeven en de done van de taak in twee commits las het stuk
+    ertussen leeg, zag de taak nog lopen, zette geen taak maar wel pending. Met het goede geheim
+    komt daarna alles terug."""
+    jonas, _ = admin
+    s = office.settings
+    right = office.fake.secret
+    state = office_state(app)
+    sweep = {"armed": False, "at": -1, "seen": 0}
+    fired: list[int] = []
+
+    async def backfill_after_commit() -> None:
+        if not sweep["armed"]:
+            return
+        seen = sweep["seen"]
+        sweep["seen"] += 1
+        if seen == sweep["at"]:
+            fired.append(seen)
+            await convert.backfill(s, {"after": ""})  # de inhaalronde, in een andere worker
+
+    convert_error = convert._convert_error
+
+    async def armed(*args, **kwargs):  # vanaf het antwoord -8
+        sweep["armed"] = True
+        return await convert_error(*args, **kwargs)
+
+    commit = AsyncSession.commit
+    monkeypatch.setattr(convert, "_convert_error", armed)
+    watch_commits(monkeypatch, backfill_after_commit)
+    nodes = []
+    for at in itertools.count():
+        office.fake.secret = "een-ander-geheim-van-minstens-32-tekens"
+        state.health = "ok"
+        node = await upload(client, jonas, f"m{at}.docx", docx_with_pages(2, f"M{at}"))
+        nodes.append(node)
+        await jobs.run_pending(s, lane="preview")
+        sha = (await blob_of(s, node["id"])).sha256
+        claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+        assert claimed is not None and claimed.payload["sha"] == sha
+        fired.clear()
+        sweep.update(armed=False, at=at, seen=0)
+        await jobs.execute(s, claimed)
+        sweep["armed"] = False
+        assert state.health == "misconfigured", at  # _recheck liep
+        if not fired:
+            break  # de taak commit niet zo vaak meer
+        blob = await blob_of(s, node["id"])
+        active = [
+            j
+            for j in await office_jobs(s)
+            if j.key == convert.job_key(sha) and j.status in jobs.ACTIVE
+        ]
+        assert (blob.pdf_state, len(active)) in (("pending", 1), (None, 0)), (at, blob.pdf_state)
+    assert at >= 2  # na het teruggeven, en na _recheck
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+    monkeypatch.setattr(convert, "_convert_error", convert_error)
+    office.fake.secret = right
+    await health.check_once(app)  # weer gezond: de inhaalronde
+    assert state.healthy
+    await asyncio.gather(*list(convert._tasks))
+    await run_later(s)
+    assert {(await blob_of(s, n["id"])).pdf_state for n in nodes} == {"ready"}
+
+
+def whole_round_first(monkeypatch, s: Settings, change: Callable[[], Any]) -> list[str]:
+    """Het slot van de overdracht, maar wie er als eerste om vraagt (de taak, bij het
+    teruggeven), krijgt het pas na change() en de hele inhaalronde: start_backfill en een stuk,
+    dat de inhoud nog pending leest en overslaat. Geeft fired: ["ronde"] als dat gebeurde."""
+    real = convert._overdracht
+    fired: list[str] = []
+
+    class Late:
+        def __init__(self, lock: asyncio.Lock) -> None:
+            self.lock = lock
+
+        async def __aenter__(self) -> None:
+            await change()
+            await convert.start_backfill(s)
+            async with maker(s)() as session:
+                query = select(Job.id).where(Job.type == convert.BACKFILL, Job.status == "queued")
+                [part] = (await session.scalars(query)).all()
+            claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+            assert claimed is not None and claimed.id == part
+            await jobs.execute(s, claimed)  # het stuk: de inhoud is nog pending
+            await self.lock.acquire()
+
+        async def __aexit__(self, *exc) -> None:
+            self.lock.release()
+
+    def late():
+        lock = real()
+        if fired:
+            return lock
+        fired.append("ronde")
+        return Late(lock)
+
+    monkeypatch.setattr(convert, "_overdracht", late)
+    return fired
+
+
+@pytest.mark.anyio
+async def test_ds_terug_voordat_de_taak_het_slot_heeft(client, admin, office, monkeypatch):
+    """De taak ziet DS niet gezond en wil de inhoud teruggeven. Vlak voordat hij het slot van de
+    overdracht krijgt, komt DS terug en draait de inhaalronde helemaal (start_backfill en een
+    stuk): dat stuk leest de inhoud nog pending en slaat hem over. Dan mag de taak niet meer
+    teruggeven: hij kijkt pas onder het slot, ziet DS gezond, en komt zelf over BACK_SECONDS
+    terug, zonder poging. Keek hij vóór het slot, dan gaf hij toch terug, en bleef de inhoud
+    leeg zonder taak tot DS weer eens terugkwam."""
+    jonas, _ = admin
+    s = office.settings
+    state = office_state(app)
+    state.ever_ok, state.health = True, "down"
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+
+    async def ds_returns() -> None:
+        state.health = "ok"  # de gezondheidslus: weer gezond (en dan on_healthy)
+
+    fired = whole_round_first(monkeypatch, s, ds_returns)
+    claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+    assert claimed is not None and claimed.id == job.id
+    await jobs.execute(s, claimed)  # de taak: DS weg
+    assert fired == ["ronde"]
+    assert office.log("convert") == []
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "pending"
+    [active] = [j for j in await office_jobs(s) if j.status in jobs.ACTIVE]
+    assert (active.id, active.status, active.attempts) == (job.id, "queued", 0)
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "ready"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+
+
+@pytest.mark.anyio
+async def test_weer_aan_voordat_de_taak_het_slot_heeft(client, admin, office, monkeypatch):
+    """Zoals hierboven, voor office uit op /beheer (DS gezond): de taak leest uit en wil de
+    inhoud teruggeven. Vlak voordat hij het slot krijgt, zet /beheer office weer aan en draait
+    de hele inhaalronde, die de inhoud nog pending leest. Ook aan of uit leest de taak pas
+    onder het slot: hij ziet aan, en komt zelf over BACK_SECONDS terug, zonder poging. Las hij
+    het vóór het slot, dan gaf hij toch terug, en bleef de inhoud leeg zonder taak tot office
+    weer eens aan ging of DS terugkwam."""
+    jonas, _ = admin
+    s = office.settings
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    policy = office_policy(app)
+    async with maker(s)() as session:
+        await policy.save(session, OfficeConfig(enabled=False))  # uit op /beheer
+
+    async def switched_on() -> None:
+        async with maker(s)() as session:
+            await policy.save(session, OfficeConfig())  # weer aan (en dan start_backfill)
+
+    fired = whole_round_first(monkeypatch, s, switched_on)
+    claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+    assert claimed is not None and claimed.id == job.id
+    await jobs.execute(s, claimed)  # de taak: office uit
+    assert fired == ["ronde"]
+    assert office.log("convert") == []
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "pending"
+    [active] = [j for j in await office_jobs(s) if j.status in jobs.ACTIVE]
+    assert (active.id, active.status, active.attempts) == (job.id, "queued", 0)
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "ready"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("first", ["teruggeven", "slot"])
+async def test_een_verzoek_tussen_uitstel_en_klaar(client, admin, office, monkeypatch, first):
+    """De taak stelt zichzelf uit zonder poging (teruggeven: DS onder het slot van de
+    overdracht weer gezond; slot: er loopt al een conversie), en zet zo zijn eigen rij terug in
+    de rij. Voordat jobs.execute daarna zijn done schrijft, vraagt iemand de PDF (de taak naar
+    voren) en pakt een tweede worker hem al op. Die done raakt de tweede claim niet: de tweede
+    stelt zelf uit (het slot is bezet), en de inhoud blijft pending met zijn taak, en wordt
+    ready. Eerst zette de done van de eerste claim de tweede op done; die vond bij het uitstel
+    zijn rij niet meer, en de inhoud bleef pending zonder taak, voorgoed."""
+    jonas, _ = admin
+    s = office.settings
+    state = office_state(app)
+    state.ever_ok = True
+    state.health = "down" if first == "teruggeven" else "ok"
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    attempts, set_job = convert._attempts, jobs._set
+
+    async def ds_returns(maker, sha):
+        state.health = "ok"  # vlak voor het slot van de overdracht: uitstel
+        return await attempts(maker, sha)
+
+    if first == "teruggeven":
+        monkeypatch.setattr(convert, "_attempts", ds_returns)
+    else:
+        convert._converting.add("1" * 64)  # een andere conversie heeft het slot
+    second: list[jobs.Claimed] = []
+
+    async def request_before_done(settings, claim, **values):
+        if claim.id == job.id and values.get("status") == "done" and not second:
+            r = await client.post(f"/api/v1/office/files/{node['id']}/convert", headers=jonas)
+            assert r.status_code == 202, r.text
+            again = await jobs.claim(s, lane=jobs.DEFAULT_LANE)  # een tweede worker
+            assert again is not None and again.id == job.id
+            second.append(again)
+        return await set_job(settings, claim, **values)
+
+    monkeypatch.setattr(jobs, "_set", request_before_done)
+    claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+    assert claimed is not None and claimed.id == job.id
+    await jobs.execute(s, claimed)  # stelt uit, en dan de done van jobs.execute
+    monkeypatch.setattr(jobs, "_set", set_job)
+    monkeypatch.setattr(convert, "_attempts", attempts)
+    [again] = second
+    row = (await office_jobs(s))[0]
+    assert (row.status, row.attempts) == ("running", 1)  # nog steeds de tweede claim
+    convert._converting.clear()
+    convert._converting.add("0" * 64)  # de tweede claim: het slot is bezet
+    await jobs.execute(s, again)
+    convert._converting.clear()
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    [active] = await office_jobs(s)
+    assert (active.id, active.status, active.attempts) == (job.id, "queued", 0)
+    assert office.log("convert") == []
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "ready"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+    [done] = await office_jobs(s)
+    assert (done.status, done.attempts) == ("done", 1)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("who", ["verzoek", "opnieuw"])
+async def test_opgeven_en_failed_zijn_een_commit(client, admin, office, monkeypatch, who):
+    """DS geeft een blijvende fout (-9): de taak zet de inhoud op failed, en zichzelf op failed
+    met de code. Vlak na de commit die de inhoud failed maakt, komt er iemand langs. verzoek:
+    een POST .../convert die de inhoud nog pending las, en net uit de invoercontrole komt. Dat
+    kijkt opnieuw, krijgt 502 met code -9, en zet geen pending over failed. opnieuw: Mislukte
+    opnieuw op /beheer zet er een taak bij, pending, en dan komt er een PDF. Eerst waren het
+    twee commits, en keek het verzoek na de invoercontrole niet opnieuw: ertussen zag het de
+    taak nog lopen en zette het toch pending, of zette Mislukte opnieuw pending zonder nieuwe
+    taak. Daarna zette de taak zich op failed: pending zonder taak, voorgoed."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"fail": [-9]})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    sha = (await blob_of(s, node["id"])).sha256
+    check, checking, go = inspect.check, asyncio.Event(), asyncio.Event()
+
+    async def slow_check(*args, **kwargs):  # de invoercontrole van het verzoek duurt even
+        verdict = await check(*args, **kwargs)
+        if not checking.is_set():
+            checking.set()
+            await asyncio.wait_for(go.wait(), 10)
+        return verdict
+
+    asked: list[asyncio.Task] = []
+    if who == "verzoek":
+        monkeypatch.setattr(inspect, "check", slow_check)
+        url = f"/api/v1/office/files/{node['id']}/convert"
+        asked.append(office.background(client.post(url, headers=jonas)))
+        await asyncio.wait_for(checking.wait(), 10)  # het verzoek las de inhoud pending
+    answers: list[httpx.Response] = []
+
+    async def after_commit() -> None:
+        async with maker(s)() as session:
+            state = await session.scalar(select(Blob.pdf_state).where(Blob.sha256 == sha))
+        if answers or state != "failed":
+            return
+        if who == "verzoek":
+            go.set()
+            answers.append(await asyncio.wait_for(asked[0], 10))
+        else:
+            answers.append(await client.post(RETRY, headers=jonas))
+
+    commit = AsyncSession.commit
+    watch_commits(monkeypatch, after_commit)
+    claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+    assert claimed is not None and claimed.id == job.id
+    await jobs.execute(s, claimed)  # de taak: -9
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+    monkeypatch.setattr(inspect, "check", check)
+    [r] = answers
+    if who == "verzoek":
+        assert r.status_code == 502 and code_of(r) == "office_convert_failed", r.text
+        assert params_of(r) == {"code": -9}
+        assert (await blob_of(s, node["id"])).pdf_state == "failed"
+        [after] = await office_jobs(s)
+        assert after.status == "failed" and "(code -9)" in after.error
+        return
+    assert r.status_code == 200 and r.json() == {"queued": 1}
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    [active] = [j for j in await office_jobs(s) if j.status in jobs.ACTIVE]
+    assert active.id != job.id and active.payload["r"]
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+
+
+def active_jobs(found: list[Job]) -> list[Job]:
+    return [j for j in found if j.status in jobs.ACTIVE]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("code", [-9, -8])
+async def test_de_taak_schrijft_tussen_de_stappen_van_een_verzoek(
+    client, admin, office, monkeypatch, code
+):
+    """De taak schrijft niet onder het slot van de overdracht. Hier schrijft hij vlak vóór elke
+    stap die het verzoek onder dat slot in de database zet, tot het verzoek zelf iets schreef
+    (daarna wacht de taak op de commit van het verzoek: in SQLite op het schrijfslot, in
+    PostgreSQL op de rij): steeds met een nieuwe inhoud, tot er geen stap meer over is.
+    -9: _give_up, de inhoud en de taak failed in één commit. Het verzoek geeft dan 502 met code
+    -9 en zet geen taak klaar; Mislukte opnieuw krijgt daarna een eigen taak met r, en een PDF.
+    -8: _release, de inhoud leeg en de taak done in één commit. Het verzoek zet dan pending met
+    een nieuwe taak, en er komt een PDF. Eerst las het verzoek de inhoud en daarna de taak, los:
+    bij -9 zette het een taak met de oude key op inhoud die failed was, met 202, en dan zette
+    Mislukte opnieuw geen taak met r klaar (die taak hield hem tegen); bij -8 bleef de inhoud
+    leeg. Met eerst de taak en dan de inhoud lezen bleef hij bij -8 pending zonder taak, en gaf
+    het bij -9 202 op inhoud die failed was."""
+    jonas, _ = admin
+    s = office.settings
+    right = office.fake.secret
+    real_lock = convert._overdracht
+    now = {"held": False, "wrote": False, "task": False, "step": 0, "at": 0, "job": None}
+
+    async def task_writes() -> None:
+        now["task"] = True
+        try:
+            if code == -8:
+                office.fake.secret = "een-ander-geheim-van-minstens-32-tekens"
+            claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+            assert claimed is not None and claimed.id == now["job"]
+            await jobs.execute(s, claimed)
+        finally:
+            now["task"] = False
+
+    def step_of(name: str):
+        real = getattr(AsyncSession, name)
+
+        async def step(self, *args, **kwargs):
+            if now["held"] and not now["task"] and not now["wrote"]:
+                now["step"] += 1
+                if now["step"] == now["at"]:
+                    await task_writes()
+            result = await real(self, *args, **kwargs)
+            if name == "commit" and not now["task"]:
+                now["wrote"] = False
+            return result
+
+        return step
+
+    def wrote(_conn, _cursor, statement, *_args) -> None:
+        if now["held"] and not now["task"] and statement.lstrip().startswith(("INSERT", "UPDATE")):
+            now["wrote"] = True
+
+    class Held:
+        def __init__(self) -> None:
+            self.lock = real_lock()
+
+        async def __aenter__(self) -> None:
+            await self.lock.acquire()
+            now["held"], now["wrote"] = True, False
+
+        async def __aexit__(self, *exc) -> None:
+            now["held"] = False
+            self.lock.release()
+
+    for name in ("get", "execute", "scalar", "scalars", "flush", "commit"):
+        monkeypatch.setattr(AsyncSession, name, step_of(name))
+    monkeypatch.setattr(convert, "_overdracht", Held)
+    target = get_engine(s).sync_engine
+    event.listen(target, "before_cursor_execute", wrote)
+    written = []
+    try:
+        while True:
+            now["at"] += 1
+            now["step"] = 0
+            if code == -9:
+                office.conversions.configure({"fail": [-9]})
+            name = f"brief{now['at']}.docx"
+            node = await upload(client, jonas, name, docx_with_pages(2, f"Brief{now['at']}"))
+            await jobs.run_pending(s, lane="preview")
+            [job] = await office_jobs(s, "queued")
+            now["job"] = job.id
+            r = await client.post(f"/api/v1/office/files/{node['id']}/convert", headers=jonas)
+            blob = await blob_of(s, node["id"])
+            active = active_jobs(await office_jobs(s))
+            if now["step"] < now["at"]:  # geen stap meer over: de taak schreef niet
+                assert r.status_code == 202, r.text
+                assert (blob.pdf_state, [j.id for j in active]) == ("pending", [job.id])
+                break
+            written.append(now["at"])
+            if code == -9:
+                assert r.status_code == 502 and params_of(r) == {"code": -9}, (now, r.text)
+                assert (blob.pdf_state, active) == ("failed", []), now
+                r = await client.post(RETRY, headers=jonas)
+                assert r.status_code == 200 and r.json() == {"queued": 1}
+                [active] = active_jobs(await office_jobs(s))
+                assert active.payload["r"]
+            else:
+                assert r.status_code == 202, (now, r.text)
+                assert blob.pdf_state == "pending", now
+                assert [j.id != job.id for j in active] == [True], now
+                office.fake.secret = right
+                await health.check_once(app)
+                assert office_state(app).healthy
+                await asyncio.gather(*list(convert._tasks))
+            await run_later(s)
+            assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    finally:
+        event.remove(target, "before_cursor_execute", wrote)
+    assert written[:2] == [1, 2], written
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("between", ["niets", "stuk", "verzoek"])
+async def test_tussen_de_failed_van_de_taak_en_on_dead(client, admin, office, monkeypatch, between):
+    """De tweede poging mislukt ook (-1): jobs.execute zet de taak op failed, en pas daarna,
+    in een eigen commit, zet on_dead de inhoud op failed. Daartussen is de inhoud pending
+    zonder taak. niets: on_dead komt niet verder (de database liet niet schrijven; een crash
+    daartussen is hetzelfde). Het eerste stuk van de inhaalronde daarna zet hem op failed,
+    zoals on_dead, want zijn laatste taak was failed. Eerst nam de inhaalronde alleen leeg (en
+    ready of failed van een lagere PDF_VERSION), en bleef hij pending zonder taak, voorgoed.
+    stuk: een stuk precies daartussen zet hem op failed, zonder nieuwe taak; on_dead doet dan
+    niets meer. verzoek: een POST .../convert daartussen zet er een taak bij; on_dead laat hem
+    dan pending, en die taak maakt hem af. Eerst zette on_dead failed met die taak nog in de
+    rij, en dan zette Mislukte opnieuw geen taak met r klaar. Daarna steeds: failed zonder
+    taak, en Mislukte opnieuw geeft een PDF (DS bewaart -1 onder de key, net als de nep-DS)."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"fail": [-1]})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    await jobs.run_pending(s)  # de eerste poging: -1
+    [job] = await office_jobs(s)
+    assert (job.status, job.attempts) == ("queued", 1)
+    kind = jobs._kinds[convert.TYPE]
+    on_dead, answers = kind.on_dead, []
+
+    async def dead(settings, payload, error):
+        assert (await blob_of(s, node["id"])).pdf_state == "pending"
+        if between == "niets":
+            raise OperationalError("UPDATE blob", {}, Exception("database is locked"))
+        if between == "stuk":
+            assert await convert.start_backfill(s)
+            await step(s)
+        else:
+            url = f"/api/v1/office/files/{node['id']}/convert"
+            answers.append(await client.post(url, headers=jonas))
+        await on_dead(settings, payload, error)
+
+    monkeypatch.setattr(kind, "on_dead", dead)
+    claimed = await jobs.claim(s, jobs.now() + timedelta(seconds=600), lane=jobs.DEFAULT_LANE)
+    assert claimed is not None and claimed.id == job.id
+    await jobs.execute(s, claimed)  # de tweede poging: -1, de laatste
+    monkeypatch.setattr(kind, "on_dead", on_dead)
+    blob = await blob_of(s, node["id"])
+    if between == "verzoek":
+        [r] = answers
+        assert r.status_code == 202, r.text
+        assert blob.pdf_state == "pending"
+        assert len(active_jobs(await office_jobs(s))) == 1
+        await run_later(s)  # de taak van het verzoek: dezelfde key, dus weer -1
+        blob = await blob_of(s, node["id"])
+    elif between == "niets":
+        assert (blob.pdf_state, active_jobs(await office_jobs(s))) == ("pending", [])
+        assert await convert.start_backfill(s)
+        await step(s)
+        blob = await blob_of(s, node["id"])
+    assert (blob.pdf_state, blob.pdf_version) == ("failed", keys.PDF_VERSION)
+    found = await office_jobs(s)
+    assert {j.status for j in found} == {"failed"} and "(code -1)" in found[-1].error
+    r = await client.post(RETRY, headers=jonas)
+    assert r.status_code == 200 and r.json() == {"queued": 1}
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+
+
+async def empty_without_job(client, jonas, s: Settings) -> dict:
+    """Een inhoud leeg en zonder taak, met office aan en DS gezond: geüpload toen office uit
+    stond op /beheer."""
+    policy = office_policy(app)
+    policy.config = OfficeConfig(enabled=False)
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    policy.config = OfficeConfig()
+    assert (await blob_of(s, node["id"])).pdf_state is None
+    assert await office_jobs(s) == []
+    return node
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("other", ["verzoek", "stuk"])
+async def test_een_verzoek_om_de_beurt(client, admin, office, monkeypatch, other):
+    """Een verzoek kijkt of er al een taak is en zet er anders een klaar onder het slot van de
+    overdracht, net als een stuk van de inhaalronde. verzoek: twee verzoeken tegelijk. stuk:
+    een verzoek terwijl een stuk de inhoud leeg las. Steeds één taak voor de inhoud, pending,
+    en dan een PDF. Zonder dat slot zag de een de taak van de ander nog niet (die SELECT gaat
+    vóór het schrijven), en kwamen er twee: DS zette dezelfde inhoud dan twee keer om, en het
+    uitstel van de ene taak zette ook de andere terug in de rij (_own_job kijkt naar de key)."""
+    jonas, _ = admin
+    s = office.settings
+    node = await empty_without_job(client, jonas, s)
+    url = f"/api/v1/office/files/{node['id']}/convert"
+    lock = convert._overdracht()
+    if other == "verzoek":
+        enqueue, added = jobs.enqueue, []
+
+        async def both(*args, **kwargs):  # de taak van een verzoek, nog niet gecommit
+            added.append(await enqueue(*args, **kwargs))
+            await until(lambda: len(added) == 2 or bool(lock._waiters))
+            return added[-1]
+
+        monkeypatch.setattr(jobs, "enqueue", both)
+        answers = await asyncio.gather(*(client.post(url, headers=jonas) for _ in range(2)))
+        monkeypatch.setattr(jobs, "enqueue", enqueue)
+    else:
+        enqueue_many, asked = jobs.enqueue_many, []
+
+        async def during(*args, **kwargs):  # de taken van het stuk, nog niet gecommit
+            found = await enqueue_many(*args, **kwargs)
+            if not asked:
+                asked.append(office.background(client.post(url, headers=jonas)))
+                await until(lambda: asked[0].done() or bool(lock._waiters))
+            return found
+
+        monkeypatch.setattr(jobs, "enqueue_many", during)
+        await convert.backfill(s, {"after": ""})
+        monkeypatch.setattr(jobs, "enqueue_many", enqueue_many)
+        answers = [await asked[0]]
+    assert [r.status_code for r in answers] == [202] * len(answers)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "pending"
+    active = [j for j in await office_jobs(s) if j.status in jobs.ACTIVE]
+    assert len(active) == 1, [(j.status, j.payload) for j in active]
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "ready"
+    assert office.converted() == [keys.convert_key(blob.sha256)]
+    assert [j.status for j in await office_jobs(s)] == ["done"]
+
+
+async def set_session_state(s: Settings, key: str, state: str) -> None:
+    async with maker(s)() as session:
+        await session.execute(
+            update(OfficeSession).where(OfficeSession.key == key).values(state=state)
+        )
+        await session.commit()
+
+
+@pytest.mark.anyio
+async def test_een_sessie_die_opent_of_opslaat_laat_de_conversie_wachten(client, admin, office):
+    """Met de echte sessies van O2: een sessie die opent (pending, de config is uitgegeven) of
+    opslaat (saving, de laatste is weg en DS slaat op) laat de conversie wachten, zonder poging.
+    Een open sessie (iemand bewerkt) en een dichte niet."""
+    jonas, _ = admin
+    s = office.settings
+    edited = await upload(client, jonas, "bewerkt.docx", docx_with_pages(1, "Bewerkt"))
+    r = await client.post(f"/api/v1/office/files/{edited['id']}/session", json={}, headers=jonas)
+    assert r.status_code == 200, r.text
+    key = r.json()["key"]
+    async with maker(s)() as session:
+        assert (await sessions.find_by_key(session, key)).state == "pending"
+        assert await sessions.busy(session)
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    photo = await upload(client, jonas, "foto.png", picture("PNG", (300, 200)))
+    before = jobs.now()
+    await jobs.run_pending(s)
+    # De foto kreeg zijn preview; de conversies wachten, zonder poging
+    assert (await blob_of(s, photo["id"])).preview == "ready"
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    waiting = await office_jobs(s)
+    assert len(waiting) == 2
+    for job in waiting:
+        assert (job.status, job.attempts) == ("queued", 0)
+        wait = job.run_after.replace(tzinfo=None) - before.replace(tzinfo=None)
+        assert timedelta(seconds=4) < wait < timedelta(seconds=30)
+    assert office.converted() == []
+    # De laatste bewerker is weg en DS slaat op: nog steeds wachten
+    await set_session_state(s, key, "saving")
+    await run_later(s, 10)
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    assert [(j.status, j.attempts) for j in await office_jobs(s)] == [("queued", 0)] * 2
+    assert office.converted() == []
+    # Open (iemand bewerkt, er wordt niets geopend of opgeslagen): de conversie loopt
+    await set_session_state(s, key, "open")
+    async with maker(s)() as session:
+        assert not await sessions.busy(session)
+    await run_later(s, 10)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    assert (await blob_of(s, edited["id"])).pdf_state == "ready"
+    assert [(j.status, j.attempts) for j in await office_jobs(s)] == [("done", 1)] * 2
+    assert len(office.converted()) == 2
+
+
+@pytest.mark.anyio
+async def test_een_tweede_conversie_wacht_op_het_slot(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"hold": True})
+    first = await upload(client, jonas, "een.docx", docx_with_pages(2))
+    second = await upload(client, jonas, "twee.docx", docx_with_pages(3))
+    # Eerst de previews; dan de eerste conversie, die blijft lopen
+    await jobs.run_one(s)
+    await jobs.run_one(s)
+    task = office.background(jobs.run_one(s))
+    await until(lambda: office.log("convert_source"))
+    # De tweede komt over 5 s terug, zonder poging
+    assert await jobs.run_one(s)
+    waiting = [j for j in await office_jobs(s) if j.status == "queued"]
+    assert len(waiting) == 1 and waiting[0].attempts == 0
+    assert waiting[0].run_after.replace(tzinfo=None) > (jobs.now() + timedelta(seconds=3)).replace(
+        tzinfo=None
+    )
+    # Een previewtaak voor een foto loopt intussen gewoon
+    photo = await upload(client, jonas, "foto.png", picture("PNG", (300, 200)))
+    assert await jobs.run_one(s)
+    assert (await blob_of(s, photo["id"])).preview == "ready"
+    office.conversions.configure({"hold": False})
+    await task
+    assert (await blob_of(s, first["id"])).pdf_state == "ready"
+    assert (await blob_of(s, second["id"])).pdf_state == "pending"
+    await run_later(s, 10)
+    assert (await blob_of(s, second["id"])).pdf_state == "ready"
+    assert len(office.converted()) == 2
+
+
+@pytest.mark.anyio
+async def test_het_slot_staat_niet_stil(client, admin, office, monkeypatch):
+    """Komt het slot vrij, dan is de conversie die erop wacht meteen aan de beurt, niet pas na
+    de wachttijd. Wachten op het slot doet geen invoercontrole: die komt pas als hij omzet."""
+    jonas, _ = admin
+    s = office.settings
+    checked: list[str] = []
+    check = inspect.check
+
+    async def counting(settings, path, ext, sha):
+        checked.append(sha)
+        return await check(settings, path, ext, sha)
+
+    monkeypatch.setattr(inspect, "check", counting)
+    office.conversions.configure({"hold": True})
+    first = await upload(client, jonas, "een.docx", docx_with_pages(2))
+    await jobs.run_one(s)  # de preview
+    task = office.background(jobs.run_one(s))  # de eerste conversie blijft lopen
+    await until(lambda: office.log("convert_source"))
+    second = await upload(client, jonas, "twee.docx", docx_with_pages(3))
+    await jobs.run_pending(s)  # de preview; de conversie wacht op het slot
+    sha = (await blob_of(s, second["id"])).sha256
+    [waiting] = [j for j in await office_jobs(s) if j.status == "queued"]
+    assert waiting.run_after.replace(tzinfo=None) > jobs.now().replace(tzinfo=None)
+    assert sha not in checked
+    office.conversions.configure({"hold": False})
+    await task
+    assert (await blob_of(s, first["id"])).pdf_state == "ready"
+    # Nu meteen, niet pas over een paar seconden
+    assert await jobs.run_pending(s) == 1
+    assert (await blob_of(s, second["id"])).pdf_state == "ready"
+    assert checked.count(sha) == 1
+
+
+@pytest.mark.anyio
+async def test_het_slot_komt_vrij_terwijl_de_volgende_uitstelt(client, admin, office, monkeypatch):
+    """Integratie deel 3: de tweede conversie ziet het slot bezet en stelt uit; precies terwijl
+    ze dat in de database zet, komt het slot vrij. Dan is ze toch meteen aan de beurt, niet pas
+    na SLOT_SECONDS. Eerder stond ze al in de rij (_waiting) terwijl haar taak nog liep: _next
+    vond haar taak dan niet in queued, haalde haar uit de rij, en het uitstel van 60 s bleef
+    (in de hele api-set: test_een_rij_conversies_loopt_door, één nog pending na 13 s)."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"hold": True})
+    first = await upload(client, jonas, "een.docx", docx_with_pages(2))
+    await jobs.run_one(s)  # de preview
+    task = office.background(jobs.run_one(s))  # de eerste conversie houdt het slot
+    await until(lambda: office.log("convert_source"))
+    second = await upload(client, jonas, "twee.docx", docx_with_pages(3))
+    sha = (await blob_of(s, second["id"])).sha256
+    postpone = convert._postpone
+    entered, go = asyncio.Event(), asyncio.Event()
+
+    async def slow_postpone(maker_, sha_, seconds):
+        if sha_ == sha:
+            entered.set()
+            await go.wait()  # het slot komt nu vrij, vóór het uitstel in de database staat
+        await postpone(maker_, sha_, seconds)
+
+    monkeypatch.setattr(convert, "_postpone", slow_postpone)
+    pending = office.background(jobs.run_pending(s))  # de preview, dan de conversie: uitstel
+    await asyncio.wait_for(entered.wait(), 10)
+    office.conversions.configure({"hold": False})
+    await task  # de eerste is klaar en geeft het slot vrij (_next)
+    assert (await blob_of(s, first["id"])).pdf_state == "ready"
+    go.set()
+    await asyncio.wait_for(pending, 10)
+    await jobs.run_pending(s)  # wat nu klaarstaat, niet over 60 s
+    assert (await blob_of(s, second["id"])).pdf_state == "ready"
+    assert len(office.converted()) == 2
+
+
+@pytest.mark.anyio
+async def test_gevraagd_gaat_voor_ook_na_uitstel(client, admin, office):
+    """Een conversie op verzoek is de volgende zodra het slot vrijkomt, ook als een worker hem
+    al oppakte terwijl het slot bezet was (en hij dus moest wachten)."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"hold": True})
+    await upload(client, jonas, "een.docx", docx_with_pages(2))
+    await jobs.run_one(s)  # de preview
+    task = office.background(jobs.run_one(s))  # de eerste conversie blijft lopen
+    await until(lambda: office.log("convert_source"))
+    for n in range(5):
+        await upload(client, jonas, f"rij{n}.docx", docx_with_pages(2, f"Rij{n}"))
+    wanted = await upload(client, jonas, "gevraagd.docx", docx_with_pages(2, "Gevraagd"))
+    await jobs.run_pending(s)  # de previews; de conversies wachten op het slot
+    await ask(client, jonas, wanted["id"])
+    await jobs.run_pending(s)  # opgepakt terwijl het slot nog bezet is: hij wacht ook
+    office.conversions.configure({"hold": False})
+    await task
+    await run_later(s, 120)
+    blob = await blob_of(s, wanted["id"])
+    assert blob.pdf_state == "ready"
+    order = office.converted()
+    assert len(order) == 7
+    assert order.index(keys.convert_key(blob.sha256)) == 1
+
+
+@pytest.mark.anyio
+async def test_een_upload_gaat_voor_de_inhaalronde(client, admin, office):
+    """Wachten ze allebei op het slot, dan krijgt een nieuwe upload het eerder dan de inhaalronde,
+    ook als die er al langer op wacht."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"hold": True})
+    await upload(client, jonas, "een.docx", docx_with_pages(2))
+    await jobs.run_one(s)  # de preview
+    task = office.background(jobs.run_one(s))  # de eerste conversie blijft lopen
+    await until(lambda: office.log("convert_source"))
+    async with maker(s)() as session:
+        owner = await session.scalar(select(User))
+        for n in range(3):
+            node = await create_file(
+                session,
+                owner,
+                name=f"oud{n}.docx",
+                data=docx_with_pages(2, f"Oud{n}"),
+                mime=DOCX,
+                blobs=BlobStore(s.blob_dir),
+            )
+            (await session.get(Blob, node.blob_id)).preview = "ready"
+        await session.commit()
+    await convert.start_backfill(s)
+    await step(s)
+    async with maker(s)() as session:  # de inhaalronde is aan de beurt, en wacht op het slot
+        await session.execute(
+            update(Job).where(Job.type == convert.TYPE).values(run_after=jobs.now())
+        )
+        await session.commit()
+    await jobs.run_pending(s)
+    new = await upload(client, jonas, "nieuw.docx", docx_with_pages(2, "Nieuw"))
+    await jobs.run_pending(s)  # de preview; de conversie wacht op het slot
+    office.conversions.configure({"hold": False})
+    await task
+    await run_later(s, 120)
+    blob = await blob_of(s, new["id"])
+    assert blob.pdf_state == "ready"
+    order = office.converted()
+    assert len(order) == 5
+    assert order.index(keys.convert_key(blob.sha256)) == 1
+
+
+@pytest.mark.anyio
+async def test_een_rij_conversies_loopt_door(client, admin, office, monkeypatch):
+    """Met de echte workers: vijf conversies in de rij zijn na elkaar klaar, zonder dat het slot
+    tussendoor seconden leeg staat (vroeger één per WAIT_SECONDS)."""
+    jonas, _ = admin
+    s = office.settings
+
+    async def no_thumbnails(_settings, _sha):
+        return False  # alleen het omzetten telt hier
+
+    monkeypatch.setattr(convert, "thumbnails", no_thumbnails)
+    nodes = [
+        await upload(client, jonas, f"d{n}.docx", docx_with_pages(2, f"Doc{n}")) for n in range(5)
+    ]
+    convert._converting.add("0" * 64)  # het slot bezet: de previews lopen, de conversies wachten
+    await jobs.run_pending(s)
+    convert._converting.clear()
+    assert len(await office_jobs(s, "queued")) == 5
+    async with maker(s)() as session:
+        await session.execute(
+            update(Job).where(Job.type == convert.TYPE).values(run_after=jobs.now())
+        )
+        await session.commit()
+
+    async def states() -> list[str | None]:
+        return [(await blob_of(s, node["id"])).pdf_state for node in nodes]
+
+    runner = jobs.Runner(s)
+    started = asyncio.get_running_loop().time()
+    await runner.start()
+    try:
+        for _ in range(500):
+            if await states() == ["ready"] * 5:
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        await runner.stop()
+    took = asyncio.get_running_loop().time() - started
+    assert await states() == ["ready"] * 5, f"na {took:.1f} s"
+    assert took < convert.WAIT_SECONDS
+
+
+# --- foutcodes en adressen -----------------------------------------------------------------
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("code", "state", "shown"),
+    [
+        (-3, "failed", -3),
+        (-7, "failed", -7),
+        (-9, "failed", -9),
+        (-10, "failed", -10),
+        (-5, "none", -5),
+    ],
+)
+async def test_blijvende_fouten(client, admin, office, code, state, shown):
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"fail": [code]})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == state
+    [job] = await office_jobs(s)
+    assert job.status == "failed" and f"(code {code})" in job.error
+    r = await ask(client, jonas, node["id"], expect=502)
+    assert code_of(r) == "office_convert_failed" and params_of(r) == {"code": shown}
+    assert len(office.converted()) == 1  # geen tweede poging
+
+
+@pytest.mark.anyio
+async def test_min_1_is_een_gewone_poging(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"fail": [-1]})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    [job] = await office_jobs(s)
+    assert (job.status, job.attempts) == ("queued", 1) and "(code -1)" in job.error
+
+
+@pytest.mark.anyio
+async def test_min_8_geeft_de_melding(client, admin, office):
+    """DS weigert ons token: geen poging, en meteen de grote controle van health.py, die de
+    melding zet (misconfigured). Met het goede geheim komt alles terug."""
+    jonas, _ = admin
+    s = office.settings
+    right = office.fake.secret
+    office.fake.secret = "een-ander-geheim-van-minstens-32-tekens"
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state is None
+    state = office_state(app)
+    assert state.health == "misconfigured" and state.problem == health.SECRET_PROBLEM
+    assert [e["signed"] for e in office.log("convert")] == [False]
+    assert office.log("convert_source") == []
+    office.fake.secret = right
+    await health.check_once(app)
+    assert state.healthy
+    await asyncio.gather(*list(convert._tasks))
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+
+
+@pytest.mark.anyio
+async def test_een_vreemde_host_volgen_we_nooit(client, admin, office):
+    """fileUrl wijst naar een andere host: de app haalt de PDF bij PLATFORM_OFFICE_URL (alleen
+    pad en query) en spreekt die host nooit aan."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"host": "elders.example:9999"})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    assert set(office.transport.hosts) == {"office"}
+
+
+@pytest.mark.anyio
+async def test_een_adres_van_een_andere_key_geweigerd(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"wrong_key": True})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "failed"
+    [job] = await office_jobs(s)
+    assert job.status == "failed" and f"(code {oo_convert.BAD_RESULT})" in job.error
+    assert office.log("convert_file") == []  # nooit opgehaald
+    assert not convert.pdf_path(BlobStore(s.blob_dir), blob.sha256).exists()
+
+
+@pytest.mark.anyio
+async def test_geen_pdf_terug(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"not_pdf": True})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert blob.pdf_state == "failed"
+    assert not convert.pdf_path(BlobStore(s.blob_dir), blob.sha256).exists()
+
+
+@pytest.mark.anyio
+async def test_een_grant_verloopt(client, admin, office, monkeypatch):
+    jonas, _ = admin
+    s = office.settings
+    monkeypatch.setattr(grants, "TTL", 0.0)  # al verlopen als DS hem ophaalt
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s)
+    blob = await blob_of(s, node["id"])
+    [source] = office.log("convert_source")
+    assert source["http"] == 404  # DS kreeg -4 en vraagt een nieuwe key
+    assert blob.pdf_state == "pending"
+    monkeypatch.setattr(grants, "TTL", 600.0)
+    await run_later(s, 60)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+    assert office.converted()[-1] == keys.convert_key(blob.sha256, 2)
+
+
+@pytest.mark.anyio
+async def test_de_bron_alleen_met_het_token_van_ds(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    data = docx_with_pages(2)
+    node = await upload(client, jonas, "brief.docx", data)
+    sha = (await blob_of(s, node["id"])).sha256
+    grant = grants.grant(sha)
+    path = f"/internal/office/src/{grant}"
+    url = f"{s.office_app_url}{path}"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=internal_app), base_url=s.office_app_url
+    ) as internal:
+        assert (await internal.get(path)).status_code == 401
+        other = protocol.download_token(
+            s.office_secret, f"{s.office_app_url}/internal/office/src/anders"
+        )
+        r = await internal.get(path, headers={"Authorization": f"Bearer {other}"})
+        assert r.status_code == 401
+        token = protocol.download_token(s.office_secret, url)
+        r = await internal.get(path, headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200 and r.content == data
+        assert r.headers["repr-digest"].startswith("sha-256=:")
+        grants.clear()
+        r = await internal.get(path, headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 404
+    # Niet op de gewone poort
+    assert (await client.get(path)).status_code == 404
+
+
+# --- opruimen en caches --------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_een_nieuwe_preview_houdt_de_pdf(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(3))
+    await jobs.run_pending(s)
+    blob = await blob_of(s, node["id"])
+    blobs = BlobStore(s.blob_dir)
+    path = convert.pdf_path(blobs, blob.sha256)
+    before = path.read_bytes()
+    async with maker(s)() as session:
+        await session.execute(
+            update(Blob).where(Blob.sha256 == blob.sha256).values(render_version=0)
+        )
+        await jobs.enqueue(session, previews.TYPE, {"sha": blob.sha256}, key="preview:opnieuw")
+        await session.commit()
+    await jobs.run_pending(s)
+    after = await blob_of(s, node["id"])
+    assert after.pdf_state == "ready" and path.read_bytes() == before
+    assert {256, 1024} <= set(after.preview_meta["sizes"]) and after.preview_meta["pages"] == 3
+    assert (previews.directory(blobs, blob.sha256) / "256.webp").is_file()
+    assert office.converted() == [keys.convert_key(blob.sha256)]  # geen tweede conversie
+    assert [j.status for j in await office_jobs(s)] == ["done", "done"]
+
+
+@pytest.mark.anyio
+async def test_de_blob_verdwijnt_tijdens_het_omzetten(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"hold": True})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    sha = None
+    task = office.background(jobs.run_pending(s))
+    await until(lambda: office.log("convert_source"))
+    sha = (await blob_of(s, node["id"])).sha256
+    await trash_and_purge(client, jonas, node["id"])
+    async with maker(s)() as session:
+        assert await session.get(Blob, sha) is None
+    office.conversions.configure({"hold": False})
+    await task
+    blobs = BlobStore(s.blob_dir)
+    assert office.log("convert_file")  # de PDF kwam wel binnen
+    assert not convert.pdf_path(blobs, sha).exists()
+    assert not previews.directory(blobs, sha).exists()
+    assert list((convert.office_dir(blobs) / ".tmp").iterdir()) == []
+
+
+@pytest.mark.anyio
+async def test_opruimen_haalt_de_pdf_weg(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s)
+    sha = (await blob_of(s, node["id"])).sha256
+    path = convert.pdf_path(BlobStore(s.blob_dir), sha)
+    assert path.is_file()
+    await trash_and_purge(client, jonas, node["id"])
+    assert not path.exists()
+
+
+@pytest.mark.anyio
+async def test_een_nieuw_adres_voor_de_thumbnails(client, admin, office):
+    """Een pptx met een ingebedde thumbnail heeft al een preview (B21). Na de conversie komen
+    256 en 1024 uit de PDF, met een ander adres: anders hield de browser de oude."""
+    jonas, _ = admin
+    s = office.settings
+    office_state(app).health = "down"  # eerst zonder conversie
+    data = replace_part(pptx_bytes(), "docProps/thumbnail.jpeg", jpeg((400, 300)))
+    node = await upload(client, jonas, "dia.pptx", data)
+    await jobs.run_pending(s)
+    old = (await listing(client, jonas, node["id"]))[node["id"]]
+    assert old["state"] == "ready" and "v=" not in old["thumb"]
+    old_thumb = (await client.get(old["thumb"])).content
+    office_state(app).health = "ok"
+    await convert.start_backfill(s)
+    await run_later(s)
+    new = (await listing(client, jonas, node["id"]))[node["id"]]
+    assert f"v={keys.PDF_VERSION}" in new["thumb"] and f"v={keys.PDF_VERSION}" in new["large"]
+    assert new["thumb"] != old["thumb"] and new["large"] != old["large"]
+    r = await client.get(new["thumb"])
+    assert r.status_code == 200 and r.content != old_thumb
+
+
+@pytest.mark.anyio
+async def test_een_hogere_pdf_version(client, admin, office, monkeypatch):
+    """Een nieuwe PDF_VERSION: de inhaalronde zet opnieuw om (een nieuwe key), de paginacache
+    gaat leeg, de ETag en info.json dragen de nieuwe versie, en het aantal pagina's klopt."""
+    jonas, _ = admin
+    s = office.settings
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s)
+    doc = (await client.get(f"/api/v1/files/{node['id']}/document", headers=jonas)).json()
+    assert (doc["kind"], doc["source"], doc["pages"]) == ("pdf", "office", 2)
+    page = doc["page_url"].replace("{n}", "2").replace("{w}", "640")
+    r = await client.get(page)
+    assert r.status_code == 200 and r.headers["etag"].endswith('-p1"')
+    old_page = r.content
+    monkeypatch.setattr(keys, "PDF_VERSION", 2)
+    office.conversions.configure({"pages": 5})
+    await convert.start_backfill(s)
+    await run_later(s)
+    blob = await blob_of(s, node["id"])
+    assert (blob.pdf_state, blob.pdf_version) == ("ready", 2)
+    assert office.converted()[-1] == f"p2-{blob.sha256}"
+    doc = (await client.get(f"/api/v1/files/{node['id']}/document", headers=jonas)).json()
+    assert doc["pages"] == 5
+    r = await client.get(doc["page_url"].replace("{n}", "2").replace("{w}", "640"))
+    assert r.status_code == 200 and r.headers["etag"].endswith('-p2"')
+    assert r.content != old_page
+    r = await client.get(doc["page_url"].replace("{n}", "5").replace("{w}", "640"))
+    assert r.status_code == 200
+    thumb = (await listing(client, jonas, node["id"]))[node["id"]]["thumb"]
+    assert "v=2" in thumb
+
+
+# --- de inhaalronde ------------------------------------------------------------------------
+
+
+async def step(s: Settings) -> Job:
+    """Eén stuk van de inhaalronde: de taak die klaarstaat, zoals jobs.claim en execute."""
+    async with maker(s)() as session:
+        job = await session.scalar(
+            select(Job).where(Job.type == convert.BACKFILL, Job.status == "queued")
+        )
+        job.status = "running"
+        await session.commit()
+    await convert.backfill(s, job.payload)
+    async with maker(s)() as session:
+        await session.execute(update(Job).where(Job.id == job.id).values(status="done"))
+        await session.commit()
+    return job
+
+
+async def convert_queued(s: Settings, keep: int = 0) -> None:
+    """Alsof de conversies die klaarstaan liepen (op keep na): hun taken op done, en de inhoud
+    ready. Alleen done liet de inhoud pending zonder taak (een wees, die de inhaalronde nu
+    terugneemt)."""
+    async with maker(s)() as session:
+        found = (
+            await session.execute(
+                select(Job.id, Job.payload)
+                .where(Job.type == convert.TYPE, Job.status == "queued")
+                .order_by(Job.created_at)
+            )
+        ).all()
+        done = found[: max(0, len(found) - keep)]
+        await session.execute(
+            update(Job).where(Job.id.in_([i for i, _ in done])).values(status="done")
+        )
+        await session.execute(
+            update(Blob)
+            .where(Blob.sha256.in_([payload["sha"] for _, payload in done]))
+            .values(pdf_state="ready", pdf_version=keys.PDF_VERSION)
+        )
+        await session.commit()
+
+
+@pytest.mark.anyio
+async def test_de_inhaalronde_wacht_tot_de_rij_korter_is(client, admin, office, monkeypatch):
+    """Het volgende stuk komt pas als er minder dan een stuk aan conversies klaarstaat. Zo
+    staat na het installeren nooit de hele bibliotheek in de rij."""
+    monkeypatch.setattr(convert, "BATCH", 3)
+    s = office.settings
+    async with maker(s)() as session:
+        owner = await session.scalar(select(User))
+        for n in range(8):
+            node = await create_file(
+                session, owner, name=f"d{n}.docx", data=b"docx %d" % n, mime=DOCX
+            )
+            (await session.get(Blob, node.blob_id)).preview = "ready"
+        await session.commit()
+    assert await convert.start_backfill(s)
+    first = await step(s)
+    assert len(await office_jobs(s, "queued")) == 3
+    # Drie in de rij: geen nieuw stuk, maar dezelfde plek over 60 s opnieuw
+    before = jobs.now().replace(tzinfo=None)
+    waited = await step(s)
+    assert waited.payload != first.payload
+    assert len(await office_jobs(s, "queued")) == 3
+    async with maker(s)() as session:
+        again = await session.scalar(
+            select(Job).where(Job.type == convert.BACKFILL, Job.status == "queued")
+        )
+    assert again.payload == waited.payload
+    assert again.run_after.replace(tzinfo=None) - before >= timedelta(seconds=59)
+    # Nog één in de rij: wel het volgende stuk
+    await convert_queued(s, keep=1)
+    await step(s)
+    assert len(await office_jobs(s, "queued")) == 4
+    await convert_queued(s)
+    await step(s)
+    assert len(await office_jobs(s)) == 8
+    async with maker(s)() as session:
+        assert (
+            await session.scalar(
+                select(func.count()).where(Job.type == convert.BACKFILL, Job.status == "queued")
+            )
+        ) == 0
+
+
+@pytest.mark.anyio
+async def test_de_inhaalronde_in_stukken(client, admin, office):
+    s = office.settings
+    async with maker(s)() as session:
+        owner = await session.scalar(select(User))
+        for n in range(450):
+            node = await create_file(
+                session, owner, name=f"d{n}.docx", data=b"docx %d" % n, mime=DOCX
+            )
+            blob = await session.get(Blob, node.blob_id)
+            blob.preview = "ready"
+        # Niet: ask, unsafe, none, een preview die nog loopt, alleen een eerdere versie
+        for n, (state, preview) in enumerate(
+            [("ask", "ready"), ("unsafe", "ready"), ("none", "ready"), (None, None)]
+        ):
+            node = await create_file(
+                session, owner, name=f"x{n}.docx", data=b"anders %d" % n, mime=DOCX
+            )
+            blob = await session.get(Blob, node.blob_id)
+            blob.preview, blob.pdf_state = preview, state
+        old = await create_blob(session, b"alleen een versie", mime=DOCX)
+        old.preview = "ready"
+        await session.commit()
+        old_sha = old.sha256
+    started = jobs.now().replace(tzinfo=None)
+    assert await convert.start_backfill(s)
+    assert not await convert.start_backfill(s)  # er staat er al een
+    counts, times, ran = [], [], []
+    for _ in range(3):
+        ran.append(jobs.now().replace(tzinfo=None))
+        job = await step(s)
+        times.append(job.run_after.replace(tzinfo=None))
+        counts.append(len(await office_jobs(s)))
+        await convert_queued(s)  # zo is er plek voor het volgende stuk
+    assert counts == [200, 400, 450]
+    async with maker(s)() as session:
+        assert (await session.scalar(select(func.count()).where(Job.type == convert.BACKFILL))) == 3
+        assert (
+            await session.scalar(
+                select(func.count()).where(Job.type == convert.BACKFILL, Job.status == "queued")
+            )
+        ) == 0
+        ready = await session.scalar(
+            select(func.count()).select_from(Blob).where(Blob.pdf_state == "ready")
+        )
+        assert ready == 450
+        assert (await session.get(Blob, old_sha)).pdf_state is None
+        office_runs = (
+            await session.scalars(select(Job.run_after).where(Job.type == convert.TYPE))
+        ).all()
+    # Elk volgend stuk pas 60 s nadat het vorige liep; de conversies van een stuk ook pas na
+    # 60 s (nieuwe uploads gaan voor)
+    assert times[0] <= started + timedelta(seconds=5)
+    for previous, chained in zip(ran, times[1:], strict=False):
+        assert chained - previous >= timedelta(seconds=59)
+    assert min(t.replace(tzinfo=None) for t in office_runs) >= started + timedelta(seconds=59)
+
+
+@pytest.mark.anyio
+async def test_de_inhaalronde_maakt_groot_ask(client, admin, office):
+    s = office.settings
+    async with maker(s)() as session:
+        owner = await session.scalar(select(User))
+        node = await create_file(session, owner, name="groot.docx", data=b"groot", mime=DOCX)
+        blob = await session.get(Blob, node.blob_id)
+        blob.preview, blob.size = "ready", s.office_auto_convert_bytes + 1
+        await session.commit()
+        sha = blob.sha256
+    await convert.start_backfill(s)
+    await step(s)
+    async with maker(s)() as session:
+        assert (await session.get(Blob, sha)).pdf_state == "ask"
+    assert await office_jobs(s) == []
+
+
+@pytest.mark.anyio
+async def test_weer_gezond_begint_de_inhaalronde_vooraan(client, admin, office):
+    """Een korte storing: het volgende stuk van de inhaalronde staat nog klaar (of loopt net),
+    al voorbij een inhoud die in de storing leeg werd. Weer gezond begint de ronde dan toch
+    vooraan: een stuk dat klaarstaat, begint weer bij het begin, en naast een stuk dat loopt komt
+    een stuk vooraan, dat de opvolger van het lopende tegenhoudt. Eerst hield het stuk dat er al
+    was de nieuwe ronde tegen, en bleef de inhoud leeg zonder taak tot DS weer eens terugkwam."""
+    s = office.settings
+    past = {"after": "f" * 64}  # voorbij elke inhoud
+
+    async def empty(name: str) -> str:
+        async with maker(s)() as session:
+            owner = await session.scalar(select(User))
+            node = await create_file(session, owner, name=name, data=name.encode(), mime=DOCX)
+            (await session.get(Blob, node.blob_id)).preview = "ready"
+            await session.commit()
+            return node.blob_id
+
+    async def backfills(status: str) -> list[Job]:
+        async with maker(s)() as session:
+            query = select(Job).where(Job.type == convert.BACKFILL, Job.status == status)
+            return list((await session.scalars(query)).all())
+
+    # Het volgende stuk staat klaar
+    one = await empty("een.docx")
+    async with maker(s)() as session:
+        await jobs.enqueue(session, convert.BACKFILL, past, key=convert.BACKFILL_KEY)
+        await session.commit()
+    assert not await convert.start_backfill(s)  # geen tweede ronde, maar wel vooraan
+    assert (await step(s)).payload == {"after": ""}
+    assert [j.key for j in await office_jobs(s)] == [convert.job_key(one)]
+    # Er loopt net een stuk
+    two = await empty("twee.docx")
+    [running] = await backfills("done")
+    async with maker(s)() as session:
+        await session.execute(
+            update(Job).where(Job.id == running.id).values(status="running", payload=past)
+        )
+        await session.commit()
+    assert await convert.start_backfill(s)
+    [queued] = await backfills("queued")
+    assert queued.payload == {"after": ""}
+    async with maker(s)() as session:  # de opvolger van het lopende stuk
+        assert await jobs.chain(session, convert.BACKFILL, past, convert.BACKFILL_KEY) is None
+        await session.execute(update(Job).where(Job.id == running.id).values(status="done"))
+        await session.commit()
+    await step(s)
+    assert [j.key for j in await office_jobs(s)] == [convert.job_key(one), convert.job_key(two)]
+    async with maker(s)() as session:
+        assert (await session.get(Blob, two)).pdf_state == "pending"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("queue", ["kort", "lang"])
+async def test_een_tweede_worker_pakt_het_stuk_vooraan_al_op(
+    client, admin, office, monkeypatch, queue
+):
+    """Weer gezond terwijl een stuk van de inhaalronde loopt, met zijn plek al voorbij inhoud
+    die in de storing leeg werd. start_backfill zet een stuk vooraan, en de tweede worker
+    (job_workers 2) pakt dat op voordat het lopende stuk zijn opvolger zet; dan houdt niets die
+    opvolger tegen. Het stuk vooraan raakt de ronde toch niet kwijt: de opvolger die klaarstaat
+    krijgt de vroegste plek. kort: het stuk vooraan leest zelf; lang: er staan nog BATCH
+    conversies klaar, dus dezelfde plek later. Eerst hield die opvolger het stuk vooraan tegen,
+    en bleef inhoud vóór de plek van het lopende stuk leeg zonder taak tot DS weer eens
+    terugkwam."""
+    monkeypatch.setattr(convert, "BATCH", 2)
+    s = office.settings
+    shas = []
+    async with maker(s)() as session:
+        owner = await session.scalar(select(User))
+        for n in range(7):
+            node = await create_file(
+                session, owner, name=f"g{n}.docx", data=b"leeg %d" % n, mime=DOCX
+            )
+            (await session.get(Blob, node.blob_id)).preview = "ready"
+            shas.append(node.blob_id)
+        await session.commit()
+    shas.sort()
+    async with maker(s)() as session:  # het stuk dat loopt, met zijn plek na de derde
+        await jobs.enqueue(session, convert.BACKFILL, {"after": shas[2]}, key=convert.BACKFILL_KEY)
+        await session.commit()
+    running = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+    assert running is not None and running.payload == {"after": shas[2]}
+    assert await convert.start_backfill(s)  # on_healthy
+    first = await jobs.claim(s, lane=jobs.DEFAULT_LANE)  # de tweede worker
+    assert first is not None and first.payload == {"after": ""}
+    await jobs.execute(s, running)  # leest de vierde en vijfde, en zet zijn opvolger
+    if queue == "kort":
+        await convert_queued(s)
+    await jobs.execute(s, first)
+    for _ in range(10):  # de rest van de ronde
+        await convert_queued(s)
+        async with maker(s)() as session:
+            left = await session.scalar(
+                select(func.count()).where(Job.type == convert.BACKFILL, Job.status == "queued")
+            )
+        if not left:
+            break
+        await step(s)
+    have = {j.key for j in await office_jobs(s)}
+    assert [n for n, sha in enumerate(shas) if convert.job_key(sha) not in have] == []
+    async with maker(s)() as session:
+        assert {(await session.get(Blob, sha)).pdf_state for sha in shas} == {"ready"}
+
+
+@pytest.mark.anyio
+async def test_weer_gezond_wacht_op_het_stuk_dat_zijn_opvolger_zet(
+    client, admin, office, monkeypatch
+):
+    """Weer gezond (start_backfill) terwijl een stuk van de inhaalronde zijn opvolger zet, in
+    zijn eigen schrijftransactie. start_backfill wacht dan op het slot van de overdracht, en
+    begint pas na de commit van dat stuk: dan ziet het die opvolger, geeft hem de plek vooraan,
+    en zet er geen tweede stuk naast. Zonder dat slot begon start_backfill meteen, en hing het
+    van de database af: SQLite (één schrijver) liet hem wachten, maar met PostgreSQL (READ
+    COMMITTED) zag hij de opvolger nog niet, en kwamen er twee stukken klaar te staan."""
+    monkeypatch.setattr(convert, "BATCH", 2)
+    s = office.settings
+    shas = []
+    async with maker(s)() as session:
+        owner = await session.scalar(select(User))
+        for n in range(3):
+            node = await create_file(
+                session, owner, name=f"o{n}.docx", data=b"opvolger %d" % n, mime=DOCX
+            )
+            (await session.get(Blob, node.blob_id)).preview = "ready"
+            shas.append(node.blob_id)
+        await session.commit()
+    shas.sort()
+    async with maker(s)() as session:
+        await jobs.enqueue(session, convert.BACKFILL, {"after": ""}, key=convert.BACKFILL_KEY)
+        await session.commit()
+    chain = convert._chain
+    entered: list[str] = []
+    started: list[asyncio.Task] = []
+
+    async def watched(session, after, run_after=None):
+        entered.append(after)
+        added = await chain(session, after, run_after)
+        if after and not started:  # het stuk, met zijn schrijftransactie nog open
+            started.append(office.background(convert.start_backfill(s)))  # on_healthy
+            lock = convert._overdracht()
+            await until(lambda: bool(lock._waiters) or len(entered) > 1)
+            assert entered == [shas[1]], entered  # start_backfill wacht nog
+        return added
+
+    monkeypatch.setattr(convert, "_chain", watched)
+    await step(s)  # leest de eerste twee en zet zijn opvolger na de tweede
+    [start] = started
+    assert await start is False  # er stond al een stuk klaar
+    assert entered == [shas[1], ""]
+    async with maker(s)() as session:
+        query = select(Job).where(Job.type == convert.BACKFILL, Job.status == "queued")
+        [queued] = (await session.scalars(query)).all()
+    assert queued.payload == {"after": ""}  # de opvolger, nu vooraan
+    await convert_queued(s)
+    await step(s)
+    have = {j.key for j in await office_jobs(s)}
+    assert have == {convert.job_key(sha) for sha in shas}
+
+
+async def content(
+    s: Settings, name: str, state: str | None = None, job: str | None = None, version: bool = False
+) -> str:
+    """Inhoud van een bestand (version: alleen van een eerdere versie, zonder bestand) met een
+    klare preview, met deze pdf_state, en zo nodig een taak office.pdf met deze status."""
+    async with maker(s)() as session:
+        if version:
+            blob = await create_blob(session, name.encode(), mime=DOCX)
+            blob.ref_count = 1
+        else:
+            owner = await session.scalar(select(User))
+            node = await create_file(session, owner, name=name, data=name.encode(), mime=DOCX)
+            blob = await session.get(Blob, node.blob_id)
+        blob.preview, blob.pdf_state = "ready", state
+        if job is not None:
+            await jobs.enqueue(
+                session, convert.TYPE, {"sha": blob.sha256, "n": 1}, convert.job_key(blob.sha256)
+            )
+        await session.commit()
+        sha = blob.sha256
+    if job not in (None, "queued"):
+        async with maker(s)() as session:
+            await session.execute(
+                update(Job).where(Job.key == convert.job_key(sha)).values(status=job)
+            )
+            await session.commit()
+    return sha
+
+
+@pytest.mark.anyio
+async def test_een_stuk_leest_de_tabel_zonder_het_slot(client, admin, office):
+    """Het lezen op volgorde van sha (zonder bruikbare index: de hele tabel blob) gaat zonder
+    het slot van de overdracht; een verzoek (POST .../convert) wacht zo niet meer op dat lezen
+    (gemeten met 500.000 andere blobs: 0,7 s, nu een paar ms; o3.md afwijking 22). Onder het
+    slot alleen de inhouden die het las, op sha, en al het schrijven. Wat het stuk neemt, bleef
+    gelijk: leeg en een wees (pending zonder taak, de laatste taak done) krijgen een taak,
+    pending met een taak blijft zo, en een wees met een laatste taak failed wordt failed."""
+    s = office.settings
+    empty = [await content(s, f"leeg{n}.docx") for n in range(3)]
+    running = await content(s, "loopt.docx", "pending", "running")
+    orphan = await content(s, "wees.docx", "pending", "done")
+    dead = await content(s, "dood.docx", "pending", "failed")
+    lock = convert._overdracht()
+    seen: list[tuple[str, bool]] = []
+
+    def record(_conn, _cursor, statement, *_args) -> None:
+        seen.append((" ".join(statement.split()), lock.locked()))
+
+    target = get_engine(s).sync_engine
+    event.listen(target, "before_cursor_execute", record)
+    try:
+        await convert.backfill(s, {"after": ""})
+    finally:
+        event.remove(target, "before_cursor_execute", record)
+    scans = [locked for sql, locked in seen if "FROM blob" in sql and "blob.sha256 >" in sql]
+    assert scans == [False], seen
+    writes = [(sql, locked) for sql, locked in seen if sql.startswith(("INSERT", "UPDATE"))]
+    assert writes and all(locked for _, locked in writes), writes
+    async with maker(s)() as session:
+        states = {
+            sha: (await session.get(Blob, sha)).pdf_state for sha in [*empty, running, orphan, dead]
+        }
+        found = (
+            await session.execute(select(Job.key, Job.status).where(Job.type == convert.TYPE))
+        ).all()
+    active = sorted(key for key, status in found if status in jobs.ACTIVE)
+    assert states == {**dict.fromkeys([*empty, running, orphan], "pending"), dead: "failed"}
+    assert active == sorted(convert.job_key(sha) for sha in [*empty, running, orphan])
+
+
+@pytest.mark.anyio
+async def test_teruggeven_tussen_het_lezen_en_het_slot(client, admin, office, monkeypatch):
+    """Een stuk leest de inhoud nog pending (zijn taak loopt), en voordat het het slot van de
+    overdracht heeft, geeft die taak hem terug (DS was even weg): leeg, de taak klaar. Onder
+    het slot leest het stuk die inhoud opnieuw, ziet hem leeg, en zet er een taak bij; daarna
+    een PDF. Daarom leest het stuk zonder het slot ook pending: met alleen leeg (en ready of
+    failed van een lagere PDF_VERSION) sloeg het hem over, en bleef hij leeg zonder taak tot
+    DS weer eens terugkwam."""
+    jonas, _ = admin
+    s = office.settings
+    state = office_state(app)
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    real = convert._overdracht
+    fired: list[str] = []
+
+    class GiveBackFirst:
+        def __init__(self, lock: asyncio.Lock) -> None:
+            self.lock = lock
+
+        async def __aenter__(self) -> None:
+            state.health = "down"
+            claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+            assert claimed is not None and claimed.id == job.id
+            await jobs.execute(s, claimed)  # geeft terug, onder het slot (nog vrij)
+            assert (await blob_of(s, node["id"])).pdf_state is None
+            state.health = "ok"
+            await self.lock.acquire()
+
+        async def __aexit__(self, *exc) -> None:
+            self.lock.release()
+
+    def overdracht():
+        lock = real()
+        if fired:
+            return lock
+        fired.append("teruggeven")
+        return GiveBackFirst(lock)
+
+    monkeypatch.setattr(convert, "_overdracht", overdracht)
+    await convert.backfill(s, {"after": ""})
+    monkeypatch.setattr(convert, "_overdracht", real)
+    assert fired == ["teruggeven"]
+    assert (await blob_of(s, node["id"])).pdf_state == "pending"
+    [active] = active_jobs(await office_jobs(s))
+    assert active.id != job.id and active.payload["b"]
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+
+
+def after_a_look(monkeypatch, tables: set[str], run: Callable[[], Any]) -> list[str]:
+    """Laat run() één keer lopen, direct na de eerste blik van een stuk onder het slot van de
+    overdracht op een van deze tabellen (een SELECT). Geeft de tabellen van die blik."""
+    real = AsyncSession.execute
+    lock = convert._overdracht()
+    seen: list[str] = []
+
+    async def execute(self, statement, *args, **kwargs):
+        result = await real(self, statement, *args, **kwargs)
+        if not seen and lock.locked() and isinstance(statement, Select):
+            found = {getattr(t, "name", "") for t in statement.get_final_froms()} & tables
+            if found:
+                seen.extend(sorted(found))
+                await run()
+        return result
+
+    monkeypatch.setattr(AsyncSession, "execute", execute)
+    return seen
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("size", ["klein", "groot"])
+@pytest.mark.parametrize("end", ["ready", "unsafe"])
+async def test_de_taak_eindigt_tussen_de_twee_blikken_van_een_stuk(
+    client, admin, office, monkeypatch, end, size
+):
+    """Een stuk leest onder het slot van de overdracht de taken en de inhoud, in twee blikken.
+    De taak schrijft niet onder dat slot. Hier eindigt hij precies na de eerste blik: ready (de
+    PDF), of unsafe (de invoercontrole weigert), en dan done. Die inhoud blijft zo, zonder
+    nieuwe taak, ook als hij groter is dan office_auto_convert_bytes. Eerst las het stuk de
+    inhoud en dan pas de taken: het zag de inhoud nog pending en daarna geen taak meer die
+    klaarstond of liep, dus een wees. Dan kreeg ready of unsafe een taak met de oude key
+    (klein), of werd het ask (groot), en toonde de viewer de PDF niet meer. Nu eerst de taken:
+    wie een taak afsluit, schrijft de inhoud ervoor of in dezelfde commit (o3.md afwijking 22)."""
+    jonas, _ = admin
+    s = office.settings
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    [job] = await office_jobs(s, "queued")
+    sha = (await blob_of(s, node["id"])).sha256
+    if size == "groot":
+        async with maker(s)() as session:
+            await session.execute(
+                update(Blob).where(Blob.sha256 == sha).values(size=s.office_auto_convert_bytes + 1)
+            )
+            await session.commit()
+    if end == "unsafe":
+
+        async def refuse(*_args, **_kwargs):
+            return inspect.Verdict(False, "method")
+
+        monkeypatch.setattr(inspect, "check", refuse)
+
+    async def finish() -> None:
+        claimed = await jobs.claim(s, lane=jobs.DEFAULT_LANE)
+        assert claimed is not None and claimed.id == job.id
+        await jobs.execute(s, claimed)
+
+    seen = after_a_look(monkeypatch, {"blob", "job"}, finish)
+    await convert.backfill(s, {"after": ""})
+    assert seen
+    blob = await blob_of(s, node["id"])
+    found = await office_jobs(s)
+    assert blob.pdf_state == end
+    assert [(j.id, j.status) for j in found] == [(job.id, "done")]
+    assert convert.pdf_path(BlobStore(s.blob_dir), sha).is_file() == (end == "ready")
+
+
+@pytest.mark.anyio
+async def test_ask_niet_over_de_weigering_van_een_verzoek(client, admin, office, monkeypatch):
+    """Een stuk las een inhoud leeg, groter dan office_auto_convert_bytes: die wordt ask. Een
+    verzoek (POST .../convert) schrijft niet onder het slot van de overdracht als de
+    invoercontrole weigert. Komt dat net nadat het stuk de inhoud las, dan blijft hij unsafe.
+    Eerst zette het stuk ask zonder te kijken, en dan vroeg de viewer weer om een conversie die
+    de controle toch weigert."""
+    jonas, _ = admin
+    s = office.settings
+    node = await empty_without_job(client, jonas, s)
+    sha = (await blob_of(s, node["id"])).sha256
+    async with maker(s)() as session:
+        await session.execute(
+            update(Blob).where(Blob.sha256 == sha).values(size=s.office_auto_convert_bytes + 1)
+        )
+        await session.commit()
+
+    async def refuse(*_args, **_kwargs):
+        return inspect.Verdict(False, "method")
+
+    monkeypatch.setattr(inspect, "check", refuse)
+    answers = []
+
+    async def refused() -> None:
+        answers.append(
+            await client.post(f"/api/v1/office/files/{node['id']}/convert", headers=jonas)
+        )
+
+    seen = after_a_look(monkeypatch, {"blob"}, refused)
+    await convert.backfill(s, {"after": ""})
+    [r] = answers
+    assert seen == ["blob"] and r.status_code == 422 and code_of(r) == "office_unsafe"
+    assert (await blob_of(s, node["id"])).pdf_state == "unsafe"
+    assert await office_jobs(s) == []
+
+
+@pytest.mark.anyio
+async def test_on_dead_en_mislukte_opnieuw_terwijl_een_stuk_beslist(
+    client, admin, office, monkeypatch
+):
+    """De tweede poging mislukt ook (-1), en een stuk van de inhaalronde komt vóór on_dead: het
+    ziet de inhoud pending, zonder taak die klaarstaat of loopt, met een laatste taak failed.
+    Dan, voordat het stuk schrijft, zet on_dead hem toch op failed, en zet Mislukte opnieuw op
+    /beheer hem op pending met een eigen taak (r); geen van beide wacht op het slot van de
+    overdracht. Het stuk zet dan geen failed meer: pending met die ene taak, en dan een PDF.
+    Zonder de voorwaarde op de taak in het schrijven van het stuk werd het failed met die taak
+    in de rij."""
+    jonas, _ = admin
+    s = office.settings
+    office.conversions.configure({"fail": [-1]})
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s, lane="preview")
+    await jobs.run_pending(s)  # de eerste poging: -1
+    [job] = await office_jobs(s)
+    kind = jobs._kinds[convert.TYPE]
+    on_dead, orphans = kind.on_dead, convert._orphans
+    seen: dict[str, Any] = {}
+
+    async def deciding(session, shas):
+        take, dead = await orphans(session, shas)
+        if dead and not seen:
+            seen["dead"] = sorted(dead)
+            await on_dead(s, {"sha": seen["dead"][0]}, "x")
+            r = await client.post(RETRY, headers=jonas)
+            seen["retry"] = (r.status_code, r.json())
+        return take, dead
+
+    async def step_first(settings, payload, error):
+        monkeypatch.setattr(convert, "_orphans", deciding)
+        assert await convert.start_backfill(s)
+        await step(s)
+
+    monkeypatch.setattr(kind, "on_dead", step_first)
+    claimed = await jobs.claim(s, jobs.now() + timedelta(seconds=600), lane=jobs.DEFAULT_LANE)
+    assert claimed is not None and claimed.id == job.id
+    await jobs.execute(s, claimed)  # de tweede poging: -1, de laatste
+    monkeypatch.setattr(kind, "on_dead", on_dead)
+    sha = (await blob_of(s, node["id"])).sha256
+    assert seen == {"dead": [sha], "retry": (200, {"queued": 1})}
+    blob = await blob_of(s, node["id"])
+    [active] = active_jobs(await office_jobs(s))
+    assert blob.pdf_state == "pending" and active.payload["r"]
+    await run_later(s)
+    assert (await blob_of(s, node["id"])).pdf_state == "ready"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("last", ["failed", "done"])
+async def test_een_wees_van_een_eerdere_versie(client, admin, office, monkeypatch, last):
+    """Een eerdere versie wordt alleen op verzoek omgezet (POST .../convert?version=). Bleef zijn
+    inhoud daarna pending zonder taak die klaarstaat of loopt (een wees), dan nam de inhaalronde
+    hem niet terug: die nam alleen inhoud van een bestand. De viewer bleef dan "wordt gemaakt"
+    tonen, zonder knop. Nu neemt het eerste stuk ook zo'n wees. failed: de laatste poging
+    mislukte (-1) en on_dead kon niet schrijven (een crash daartussen is hetzelfde); dan
+    failed, zoals on_dead, en Mislukte opnieuw geeft een PDF. done: een gat zoals in CI run 88
+    (de taak klaar, de inhoud pending); dan leeg, zonder taak (een eerdere versie wordt niet
+    vanzelf omgezet), en de viewer toont ask, met de knop."""
+    jonas, _ = admin
+    s = office.settings
+    parent = (await root(client, jonas))["folder"]["id"]
+    first = await upload(client, jonas, "brief.docx", docx_with_pages(2, "Oud"), parent)
+    await jobs.run_pending(s)
+    old_sha = (await blob_of(s, first["id"])).sha256
+    await upload(
+        client, jonas, "brief.docx", docx_with_pages(3, "Nieuw"), parent, conflict="replace"
+    )
+    await jobs.run_pending(s)
+    convert.pdf_path(BlobStore(s.blob_dir), old_sha).unlink()
+    async with maker(s)() as session:
+        version = await session.scalar(select(Version).where(Version.blob_id == old_sha))
+        await session.execute(
+            update(Blob).where(Blob.sha256 == old_sha).values(pdf_state=None, pdf_version=0)
+        )
+        await session.commit()
+    params = {"version": str(version.id)}
+    key = convert.job_key(old_sha)
+    kind = jobs._kinds[convert.TYPE]
+    on_dead = kind.on_dead
+
+    async def shown() -> str | None:
+        r = await client.get(f"/api/v1/files/{first['id']}/preview", params=params, headers=jonas)
+        assert r.status_code == 200, r.text
+        return r.json()["meta"].get("pdf_state")
+
+    if last == "failed":
+        office.conversions.configure({"reset": True})  # de nep-DS vergeet de eerste conversie
+        office.conversions.configure({"fail": [-1]})
+
+        async def locked(settings, payload, error):
+            raise OperationalError("UPDATE blob", {}, Exception("database is locked"))
+
+        monkeypatch.setattr(kind, "on_dead", locked)
+    r = await ask(client, jonas, first["id"], **params)
+    assert r.json() == {"pdf_state": "pending"}
+    if last == "failed":
+        await run_later(s)  # -1, en nog eens -1 (DS bewaart -1 onder de key): on_dead faalt
+        monkeypatch.setattr(kind, "on_dead", on_dead)
+    else:
+        async with maker(s)() as session:  # het gat: de taak klaar, de inhoud nog pending
+            await session.execute(
+                update(Job).where(Job.key == key, Job.status == "queued").values(status="done")
+            )
+            await session.commit()
+    before = [j for j in await office_jobs(s) if j.key == key]
+    assert [j.status for j in before] == ["done", last]
+    assert await shown() == "pending"
+    assert await convert.start_backfill(s)
+    await step(s)
+    async with maker(s)() as session:
+        blob = await session.get(Blob, old_sha)
+    assert [j.id for j in await office_jobs(s) if j.key == key] == [j.id for j in before]
+    if last == "failed":
+        assert (blob.pdf_state, blob.pdf_version) == ("failed", keys.PDF_VERSION)
+        assert await shown() == "failed"
+        r = await client.post(RETRY, headers=jonas)
+        assert r.status_code == 200 and r.json() == {"queued": 1}
+    else:
+        assert blob.pdf_state is None
+        assert await shown() == "ask"
+        r = await ask(client, jonas, first["id"], **params)
+        assert r.json() == {"pdf_state": "pending"}
+    await run_later(s)
+    assert await shown() == "ready"
+
+
+def blob_where(statement: Any) -> dict[str, set[Any]]:
+    """De waarden waarmee de WHERE van dit statement (de termen van de AND) blob.sha256 en
+    blob.pdf_state vergelijkt (= of IN)."""
+    found: dict[str, set[Any]] = {"sha256": set(), "pdf_state": set()}
+    where = statement.whereclause
+    for term in where.clauses if isinstance(where, BooleanClauseList) else [where]:
+        if not isinstance(term, BinaryExpression) or not isinstance(term.right, BindParameter):
+            continue
+        column = term.left
+        if isinstance(column, Column) and column.table.name == "blob" and column.name in found:
+            value = term.right.value
+            many = isinstance(value, (list, tuple, set, frozenset))
+            found[column.name] |= set(value) if many else {value}
+    return found
+
+
+@pytest.mark.anyio
+async def test_eerst_de_rij_dan_de_voorwaarde_op_de_taak(client, admin, office, monkeypatch):
+    """on_dead en een stuk van de inhaalronde zetten een wees alleen op failed (of leeg) als er
+    geen taak klaarstaat of loopt (~_active() in de UPDATE). In PostgreSQL (READ COMMITTED)
+    wacht zo'n UPDATE op een rij die een ander net schrijft (een verzoek na _take, Mislukte
+    opnieuw), en kijkt hij daarna alleen die rij opnieuw na: de NOT EXISTS over job blijft bij
+    de oude snapshot en ziet de taak van de ander niet. Dan failed met een taak in de rij
+    (nagebootst met PostgreSQL 16; o3.md afwijking 22). Daarom nemen ze eerst de rij, in een
+    eigen statement in dezelfde transactie (SELECT ... FOR NO KEY UPDATE; SQLite laat dat weg
+    en heeft het niet nodig), en pas dan de UPDATE: die krijgt na het wachten een nieuwe
+    snapshot. Die SELECT neemt elke sha van de UPDATE, en alleen de rijen in de staat die de
+    UPDATE kan raken: elke rij gaf een deadlock met Mislukte opnieuw, en FOR UPDATE een met een
+    kopie (de FOR KEY SHARE van de nieuwe node; de zevende tegenlezing). De CI draait alleen
+    SQLite; dit legt die volgorde vast."""
+    s = office.settings
+    dying = await content(s, "on_dead.docx", "pending", "failed")
+    dead = await content(s, "dood.docx", "pending", "failed")
+    loose = await content(s, "oud.docx", "pending", "done", version=True)
+    events: list[tuple[int, Any]] = []
+    execute, commit = AsyncSession.execute, AsyncSession.commit
+
+    async def recorded(self, statement, *args, **kwargs):
+        events.append((id(self), statement))
+        return await execute(self, statement, *args, **kwargs)
+
+    async def committed(self):
+        events.append((id(self), "commit"))
+        return await commit(self)
+
+    monkeypatch.setattr(AsyncSession, "execute", recorded)
+    monkeypatch.setattr(AsyncSession, "commit", committed)
+    await convert.on_dead(s, {"sha": dying}, "x")
+    assert await convert.start_backfill(s)
+    await step(s)
+    monkeypatch.setattr(AsyncSession, "execute", execute)
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+    pg = postgresql.dialect()
+    guarded = 0
+    for n, (who, statement) in enumerate(events):
+        if not isinstance(statement, Update) or statement.table.name != "blob":
+            continue
+        sql = str(statement.compile(dialect=pg))
+        if "EXISTS" not in sql or "FROM job" not in sql:
+            continue
+        guarded += 1
+        before: list[str] = []
+        for other, earlier in events[:n]:
+            if other == who:
+                before = [] if earlier == "commit" else [*before, earlier]
+        rows_first = [
+            st
+            for st in before
+            if isinstance(st, Select)
+            and {getattr(t, "name", "") for t in st.get_final_froms()} == {"blob"}
+            and str(st.compile(dialect=pg)).endswith("FOR NO KEY UPDATE")
+        ]
+        wanted = blob_where(statement)
+        assert wanted["sha256"] and wanted["pdf_state"], sql
+        assert any(
+            blob_where(st)["sha256"] >= wanted["sha256"]
+            and blob_where(st)["pdf_state"] == wanted["pdf_state"]
+            for st in rows_first
+        ), (sql, [blob_where(st) for st in rows_first], wanted)
+    assert guarded == 3
+    async with maker(s)() as session:
+        states = {sha: (await session.get(Blob, sha)).pdf_state for sha in (dying, dead, loose)}
+    assert states == {dying: "failed", dead: "failed", loose: None}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("when", ["al", "tussen"])
+async def test_on_dead_laat_een_pdf_die_er_is(client, admin, office, monkeypatch, caplog, when):
+    """al: de PDF is er (ready, de huidige PDF_VERSION), maar de thumbnails mislukten twee keer
+    als poging (zoals een timeout van de taak). on_dead laat ready staan, en meldt niet dat het
+    omzetten mislukte; de viewer toont de PDF. tussen: de inhoud is nog pending als on_dead hem
+    leest, en een conversie schrijft ready voordat de UPDATE van on_dead komt. In SQLite neemt
+    de SELECT van _rows_first geen slot (pysqlite begint er geen transactie voor), dus dat kan;
+    ook dan blijft ready. Zonder de voorwaarde in de UPDATE werd het failed, met de PDF op
+    schijf (o3.md afwijking 22, de zevende tegenlezing)."""
+    jonas, _ = admin
+    s = office.settings
+    caplog.set_level(logging.WARNING, logger="platform.office")
+    if when == "al":
+
+        async def too_late(_settings, _sha):
+            raise jobs.JobError("De thumbnails van de PDF liepen over hun tijd")
+
+        monkeypatch.setattr(convert, "thumbnails", too_late)
+        node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+        await jobs.run_pending(s, lane="preview")
+        await run_later(s)  # twee pogingen: PDF en thumbnails, dan alleen de thumbnails
+        sha = (await blob_of(s, node["id"])).sha256
+        assert [(j.status, j.attempts) for j in await office_jobs(s)] == [("failed", 2)]
+    else:
+        sha = await content(s, "tussen.docx", "pending", "failed")
+        rows_first = convert._rows_first
+
+        async def landed(session, shas, states):
+            found = await rows_first(session, shas, states)
+            async with maker(s)() as other:  # een conversie is net klaar
+                await other.execute(
+                    update(Blob)
+                    .where(Blob.sha256 == sha)
+                    .values(pdf_state="ready", pdf_version=keys.PDF_VERSION)
+                )
+                await other.commit()
+            return found
+
+        monkeypatch.setattr(convert, "_rows_first", landed)
+        await convert.on_dead(s, {"sha": sha}, "x")
+    async with maker(s)() as session:
+        blob = await session.get(Blob, sha)
+    assert (blob.pdf_state, blob.pdf_version) == ("ready", keys.PDF_VERSION)
+    if when == "al":
+        assert convert.pdf_path(BlobStore(s.blob_dir), sha).is_file()
+        assert not [r for r in caplog.records if "definitief mislukt" in r.getMessage()]
+        r = await client.get(f"/api/v1/files/{node['id']}/preview", headers=jonas)
+        assert r.status_code == 200 and r.json()["meta"].get("pdf_state") == "ready", r.text
+
+
+@pytest.mark.anyio
+async def test_zonder_office_niets_klaargezet(client, admin, settings):
+    jonas, _ = admin
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(settings)
+    assert (await blob_of(settings, node["id"])).pdf_state is None
+    assert await office_jobs(settings) == []
+    assert not await convert.start_backfill(settings)
+    await convert.backfill(settings, {"after": ""})
+    assert await office_jobs(settings) == []
+    r = await client.post(f"/api/v1/office/files/{node['id']}/convert", headers=jonas)
+    assert r.status_code == 503 and code_of(r) == "office_off"
+
+
+@pytest.mark.anyio
+async def test_uitgezet_op_beheer(client, admin, office):
+    jonas, _ = admin
+    s = office.settings
+    office_policy(app).config = OfficeConfig(enabled=False)
+    node = await upload(client, jonas, "brief.docx", docx_with_pages(2))
+    await jobs.run_pending(s)
+    assert (await blob_of(s, node["id"])).pdf_state is None
+    assert await office_jobs(s) == []
+    r = await ask(client, jonas, node["id"], expect=503)
+    assert code_of(r) == "office_off"
+    await convert.start_backfill(s)
+    await run_later(s)
+    assert await office_jobs(s) == [] and office.log() == []
+
+
+@pytest.mark.anyio
+async def test_bij_het_starten_weg_wat_een_crash_liet_staan(tmp_path, monkeypatch):
+    """Stopte het proces midden in een conversie of in het ophalen van een opgeslagen document
+    (een kill, OOM, de stroom weg), dan bleef het tussenbestand staan, tot 512 MB per keer, en
+    niets ruimde het op. Bij het starten gaat het nu weg; de PDF's zelf blijven."""
+    from tests.test_rate_limits import started
+
+    blobs = BlobStore(Settings(data_dir=tmp_path).blob_dir)
+    stray = [convert.office_dir(blobs) / ".tmp" / "tmpabc" / "out.pdf", blobs.tmp / "tmpdef"]
+    for path in stray:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF-1.7 half")
+    pdf = convert.pdf_path(blobs, "a" * 64)
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.7")
+    async with started(tmp_path, monkeypatch):
+        assert [path for path in stray if path.exists()] == []
+    assert pdf.is_file()

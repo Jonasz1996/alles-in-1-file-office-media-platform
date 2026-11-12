@@ -1,0 +1,216 @@
+{
+ "bron": "Opgenomen met DS 10.0.0.1 (build 10.0.0.169) in de sandbox, spike O0 (spike/recorded/convert.json): POST /converter met Accept: application/json, token in de body; tokens vervangen door <JWT>, md5 door …. Voor het deel conversie van de nep-DS (O3).",
+ "digest_none": {
+  "verzoek": {
+   "async": false,
+   "filetype": "docx",
+   "outputtype": "pdf",
+   "key": "<key>",
+   "url": "<intern>/src/<grant>",
+   "title": "spike.docx",
+   "token": "<JWT: dezelfde velden>"
+  },
+  "http": 200,
+  "antwoord": {
+   "fileUrl": "http://127.0.0.1:18091/cache/files/data/conv_<key>_513/output.pdf/spike.pdf?md5=…&expires=<unix>&shardkey=<key>&filename=spike.pdf",
+   "fileType": "pdf",
+   "percent": 100,
+   "endConvert": true
+  }
+ },
+ "digest_ok": {
+  "verzoek": {
+   "async": false,
+   "filetype": "docx",
+   "outputtype": "pdf",
+   "key": "<key>",
+   "url": "<intern>/src/<grant>",
+   "title": "spike.docx",
+   "token": "<JWT: dezelfde velden>"
+  },
+  "http": 200,
+  "antwoord": {
+   "fileUrl": "http://127.0.0.1:18091/cache/files/data/conv_<key>_513/output.pdf/spike.pdf?md5=…&expires=<unix>&shardkey=<key>&filename=spike.pdf",
+   "fileType": "pdf",
+   "percent": 100,
+   "endConvert": true
+  }
+ },
+ "digest_bad": {
+  "verzoek": {
+   "async": false,
+   "filetype": "docx",
+   "outputtype": "pdf",
+   "key": "<key>",
+   "url": "<intern>/src/<grant>",
+   "title": "spike.docx",
+   "token": "<JWT: dezelfde velden>"
+  },
+  "http": 200,
+  "antwoord": {
+   "error": -4
+  }
+ },
+ "sync_ok": {
+  "verzoek": {
+   "async": false,
+   "filetype": "docx",
+   "outputtype": "pdf",
+   "key": "<key>",
+   "url": "<intern>/src/<grant>",
+   "title": "spike.docx",
+   "token": "<JWT: dezelfde velden>"
+  },
+  "http": 200,
+  "antwoord": {
+   "fileUrl": "http://127.0.0.1:18091/cache/files/data/conv_<key>_513/output.pdf/spike.pdf?md5=…&expires=<unix>&shardkey=<key>&filename=spike.pdf",
+   "fileType": "pdf",
+   "percent": 100,
+   "endConvert": true
+  }
+ },
+ "input_limit_odt": {
+  "verzoek": {
+   "async": false,
+   "filetype": "odt",
+   "outputtype": "pdf",
+   "key": "<key>",
+   "url": "<intern>/src/<grant>",
+   "title": "spike.odt",
+   "token": "<JWT: dezelfde velden>"
+  },
+  "http": 200,
+  "antwoord": {
+   "error": -10
+  }
+ },
+ "input_limit_docx": {
+  "verzoek": {
+   "async": false,
+   "filetype": "docx",
+   "outputtype": "pdf",
+   "key": "<key>",
+   "url": "<intern>/src/<grant>",
+   "title": "spike.docx",
+   "token": "<JWT: dezelfde velden>"
+  },
+  "http": 200,
+  "antwoord": {
+   "error": -10
+  }
+ },
+ "no_token": {
+  "verzoek": {
+   "async": false,
+   "filetype": "docx",
+   "outputtype": "pdf",
+   "key": "<key>",
+   "url": "<intern>/src/<grant>",
+   "title": "spike.docx",
+   "token": null
+  },
+  "http": 200,
+  "antwoord": {
+   "error": -8
+  }
+ },
+ "token_header_only": {
+  "verzoek": {
+   "async": false,
+   "filetype": "docx",
+   "outputtype": "pdf",
+   "key": "<key>",
+   "url": "<intern>/src/<grant>",
+   "title": "spike.docx",
+   "token": null
+  },
+  "http": 200,
+  "antwoord": {
+   "fileUrl": "http://127.0.0.1:18091/cache/files/data/conv_<key>_513/output.pdf/spike.pdf?md5=…&expires=<unix>&shardkey=<key>&filename=spike.pdf",
+   "fileType": "pdf",
+   "percent": 100,
+   "endConvert": true
+  }
+ },
+ "download_404": {
+  "verzoek": {
+   "async": false,
+   "filetype": "docx",
+   "outputtype": "pdf",
+   "key": "<key>",
+   "url": "<intern>/src/<grant>",
+   "title": "spike.docx",
+   "token": "<JWT: dezelfde velden>"
+  },
+  "http": 200,
+  "antwoord": {
+   "error": -4
+  }
+ },
+ "corrupt": {
+  "verzoek": {
+   "async": false,
+   "filetype": "docx",
+   "outputtype": "pdf",
+   "key": "<key>",
+   "url": "<intern>/src/<grant>",
+   "title": "spike.docx",
+   "token": "<JWT: dezelfde velden>"
+  },
+  "http": 200,
+  "antwoord": {
+   "fileUrl": "http://127.0.0.1:18091/cache/files/data/conv_<key>_513/output.pdf/spike.pdf?md5=…&expires=<unix>&shardkey=<key>&filename=spike.pdf",
+   "fileType": "pdf",
+   "percent": 100,
+   "endConvert": true
+  }
+ },
+ "async_first": {
+  "verzoek": {
+   "async": true,
+   "filetype": "docx",
+   "outputtype": "pdf",
+   "key": "<key>",
+   "url": "<intern>/src/<grant>",
+   "title": "spike.docx",
+   "token": "<JWT: dezelfde velden>"
+  },
+  "http": 200,
+  "antwoord": {
+   "percent": 0,
+   "endConvert": false
+  }
+ },
+ "async_polls": [
+  {
+   "http": 200,
+   "antwoord": {
+    "percent": 0,
+    "endConvert": false
+   }
+  },
+  {
+   "http": 200,
+   "antwoord": {
+    "percent": 0,
+    "endConvert": false
+   }
+  },
+  {
+   "http": 200,
+   "antwoord": {
+    "percent": 0,
+    "endConvert": false
+   }
+  },
+  {
+   "http": 200,
+   "antwoord": {
+    "fileUrl": "http://127.0.0.1:18091/cache/files/data/conv_<key>_513/output.pdf/spike.pdf?md5=…&expires=<unix>&shardkey=<key>&filename=spike.pdf",
+    "fileType": "pdf",
+    "percent": 100,
+    "endConvert": true
+   }
+  }
+ ]
+}
