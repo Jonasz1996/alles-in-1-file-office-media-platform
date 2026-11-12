@@ -187,7 +187,7 @@ schakelaars gaan nog niet aan.
 | Land en Plaats op `/fotos` | hooguit 500 plaatsen, de meeste foto's eerst: wie meer plaatsen heeft, mist de kleinste en soms een land. Camera is een tekstveld. | [z6.md](z6.md), Open |
 | "Niet gelijk" op `/dubbel` | kan niet ongedaan: die groep komt niet terug. | [z5.md](z5.md), Open |
 | Herinneringen per map verbergen | kan niet in de web-app; wel een dag, of een persoon. | [z6.md](z6.md), Open |
-| Het kader van een persoon | blijft staan als een foto een nieuwe versie krijgt, ook als het beeld anders is. Dat wordt rechtgezet met migratie 0011 (0.8.1). | [z0b.md](z0b.md) |
+| Het kader van een persoon | blijft staan als een foto een nieuwe versie krijgt, ook als het beeld anders is. Migratie 0011 zet dat recht; die staat al op de branch (A0) en hoort bij 0.8.1. | [z0b.md](z0b.md), [a0.md](a0.md) |
 | OCR | Een foto met precies dezelfde inhoud als een bestand dat er al was, krijgt zijn tekst pas bij de volgende start. "Tekst in foto's herkennen" uit wist de tekst die er is niet (een vraag hieronder). Van een PDF leest OCR hooguit 200 gescande pagina's. Met de knop **Tekst herkennen**: 20 keer per uur en 200 pagina's per dag per gebruiker. Een volle, liggende scan kost ±6 pagina's per minuut, ±160 minuten per 1.000 pagina's. | [x1.md](x1.md), Open |
 | Uploaden terwijl de index schrijft | De upload wacht hooguit ±1 s op een schijf waar het wegschrijven (`fsync`) tot ±200 ms extra kost. Op een tragere schijf langer. | [z2.md](z2.md); `api/app/dbgate.py` |
 | De wekelijkse controle | loopt alleen met de index (FTS5), niet met LIKE of op PostgreSQL. | het runbook, "De wekelijkse controle" |
