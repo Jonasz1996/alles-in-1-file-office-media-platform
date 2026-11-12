@@ -177,6 +177,10 @@ async def test_op_postgresql_niet_beschikbaar(client, eva, settings, monkeypatch
     r = await wijzig(client, eva, expect=409, beeld="aan")
     assert code_of(r) == "beeld_not_installed"
     assert gezien == [] and await rijen(settings) == []
+    # Nacontrole A0: ook het antwoord op een andere wijziging zegt dat gezichten er niet zijn
+    r = await wijzig(client, eva, memories=False)
+    assert r.json() == {**STANDAARD, "memories": False}
+    assert gezien == [] and await rijen(settings) == [("mij", False, False, "uit")]
 
 
 async def test_een_gast(client, eva, settings):
