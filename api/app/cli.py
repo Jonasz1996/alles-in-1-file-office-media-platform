@@ -26,7 +26,9 @@ vraagt hij of album-items van een regel die niet gedeeld worden eerst uit hun al
 (standaard ja): in 0.7.1 deelt een album elk item. Haalt hij 0012 (zoeken op beeld) of 0011
 (gezichten) weg, dan zegt hij ook dat; 0011 wist de gezichten met secure_delete. Na de downgrade
 gaat de WAL leeg (wal_checkpoint(TRUNCATE)), zodat er niets van in -wal blijft. Terug naar 0.8.0
-is db-downgrade 0010, naar 0.7.1 db-downgrade 0009.
+is db-downgrade 0010, naar 0.7.1 db-downgrade 0009. Houdt een ander proces de database open, dan
+lukt dat laatste niet binnen 10 s: de downgrade is dan gedaan, maar het commando zegt het op
+stderr en eindigt met exitcode 3. Stop dan de app en draai `python -m app.cli db-checkpoint`.
 
 db-backup maakt een reservekopie van de database met sqlite3.Connection.backup, terwijl de app
 draait (Keuze 52 van fase 6). Het bestand komt in /data/backup en heet naar de alembic-head en
@@ -199,11 +201,15 @@ def check_downgrade(current: str | None, revision: str) -> None:
         raise UnknownRevision(revision)
 
 
-async def db_downgrade(settings: Settings, revision: str, *, drop_rule_items: bool = False) -> int:
+async def db_downgrade(
+    settings: Settings, revision: str, *, drop_rule_items: bool = False
+) -> tuple[int, bool]:
     """Alembic downgrade naar revision, in één transactie. drop_rule_items: eerst de album-items
     van een regel die niet gedeeld worden uit hun album (§3.1), in dezelfde transactie; faalt de
     downgrade, dan staan ze er nog. Daarna de WAL leeg (app.migrate.checkpoint, §3.1a): wat 0011
-    met secure_delete wiste, staat dan ook niet meer in -wal. Het aantal items dat eruit ging."""
+    met secure_delete wiste, staat dan ook niet meer in platform.db of -wal. Het aantal items dat
+    eruit ging, en of de WAL leeg is: False als een lezer het checkpoint tegenhield, en dan staat
+    wat de downgrade wiste nog in platform.db (review A0, veilig F2)."""
     cfg = alembic_config(settings.db_url)
 
     def run(connection) -> int:
@@ -220,8 +226,7 @@ async def db_downgrade(settings: Settings, revision: str, *, drop_rule_items: bo
 
     async with get_engine(settings).begin() as conn:
         removed = await conn.run_sync(run)
-    await wal_checkpoint(settings)
-    return removed
+    return removed, await wal_checkpoint(settings)
 
 
 # De revisie van zoeken en foto's: alleen een downgrade die hém weghaalt, raakt de zoekindex,
@@ -403,12 +408,43 @@ def _downgrade(settings: Settings, revision: str, yes: bool) -> int:
         finally:
             await get_engine(settings).dispose()
 
-    removed = asyncio.run(run())
+    removed, emptied = asyncio.run(run())
     if drop:
         print(f"{removed} item(s) zijn uit hun album gehaald.")
     elif found:
         print("Die items blijven in hun album staan.")
     print(f"De database staat nu op revisie {revision}.")
+    if not emptied:
+        print(WAL_BUSY, file=sys.stderr)
+        return WAL_EXIT
+    return 0
+
+
+# Na db-downgrade: de downgrade is gedaan, maar een lezer hield het checkpoint tegen (review A0,
+# veilig F2). Een eigen exitcode, zodat een script het verschil ziet met "niets gedaan" (1)
+WAL_EXIT = 3
+WAL_BUSY = (
+    "De WAL is niet leeg: de app of een ander proces heeft de database nog open. Wat net gewist "
+    "is, staat dan nog in platform.db. Stop de app en draai daarna: python -m app.cli "
+    "db-checkpoint"
+)
+
+
+def _db_checkpoint(settings: Settings) -> int:
+    """db-checkpoint: de WAL leeg, zoals na een migratie (hooguit migrate.CHECKPOINT_BUDGET s).
+    Na een db-downgrade die met WAL_EXIT eindigde."""
+    try:
+        source = sqlite_file(settings)
+    except NotSqlite:
+        print("Dit commando werkt alleen met SQLite.", file=sys.stderr)
+        return 1
+    if not source.exists():
+        print(f"Er is nog geen database ({source}).", file=sys.stderr)
+        return 1
+    if not asyncio.run(wal_checkpoint(settings)):
+        print(WAL_BUSY, file=sys.stderr)
+        return WAL_EXIT
+    print("De WAL is leeg.")
     return 0
 
 
@@ -651,6 +687,9 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "db-backup", help="een reservekopie van de database maken, terwijl de app draait"
     )
+    commands.add_parser(
+        "db-checkpoint", help="de WAL leegmaken (na een db-downgrade die dat niet kon)"
+    )
     analyse = commands.add_parser("analyse-status", help="de stand van de container analyse")
     analyse.add_argument(
         "--wait", type=float, default=0.0, help="hooguit zoveel seconden wachten tot hij ok is"
@@ -677,6 +716,8 @@ def main(argv: list[str] | None = None) -> int:
         return _backup(settings)
     if args.command == "db-downgrade":
         return _downgrade(settings, args.revision, args.ja)
+    if args.command == "db-checkpoint":
+        return _db_checkpoint(settings)
     if args.command == "office-checkpoint":
         return _checkpoint(settings, args.wait)
     if args.command == "previews-recheck":

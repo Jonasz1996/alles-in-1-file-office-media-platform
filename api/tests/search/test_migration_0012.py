@@ -153,9 +153,72 @@ async def test_db_downgrade_maakt_zelf_de_wal_leeg(tmp_path):
         assert not wal_truncate(path).busy  # zoals na een tijd: alles in platform.db
         assert marks(settings)["platform.db"] > 0 and _wal(settings) == 0
 
-        await cli.db_downgrade(settings, target)
+        assert await cli.db_downgrade(settings, target) == (0, True)
         assert marks(settings) == {"platform.db": 0, "platform.db-wal": 0}
         assert _wal(settings) == 0
+
+
+async def test_db_downgrade_met_een_lezer_zegt_het_en_eindigt_met_3(tmp_path, monkeypatch, capsys):
+    """Review A0, veilig F2: houdt een lezer het checkpoint na db-downgrade tegen, dan is de
+    downgrade gedaan, maar staan de gewiste gezichten nog in platform.db. Het commando zegt dat
+    op stderr en eindigt met 3 (niet 0); db-checkpoint maakt het daarna af."""
+    import sqlite3
+
+    import anyio
+
+    from tests.test_cli_db import run_cli
+
+    settings = settings_at(tmp_path, "db")
+    await migrate(settings, command.upgrade, "0009")
+    ids = await fill_0009(settings)
+    await migrate(settings, command.upgrade, "head")
+    await fill_faces(settings, ids)
+    await fill_beeld(settings, ids)
+    path = sqlite_path(settings.db_url)
+    assert path is not None
+    assert not wal_truncate(path).busy
+    monkeypatch.setattr(migrate_mod, "CHECKPOINT_BUDGET", 0.3)
+    # Het commando draait zijn eigen event loop: de pool van deze loop eerst dicht
+    await get_engine(settings).dispose()
+
+    # De app: een verbinding die openblijft, en een verzoek dat net leest
+    app = sqlite3.connect(path)
+    app.execute("SELECT count(*) FROM node").fetchone()
+    lezer = sqlite3.connect(path)
+    try:
+        lezer.execute("BEGIN")
+        assert lezer.execute("SELECT count(*) FROM face").fetchone() == (4,)
+        code = await anyio.to_thread.run_sync(cli._downgrade, settings, "0010", True)
+        lezer.close()
+        out, err = capsys.readouterr()
+        assert code == 3 == cli.WAL_EXIT
+        assert out.splitlines()[-1] == "De database staat nu op revisie 0010."
+        assert err.strip() == cli.WAL_BUSY
+        assert "db-checkpoint" in cli.WAL_BUSY
+        # De downgrade is gedaan, maar de gezichten staan nog in platform.db
+        assert marks(settings)["platform.db"] > 0
+
+        result = await run_cli(settings, "db-checkpoint")
+        assert result.returncode == 0, result.stderr.decode()
+        assert result.stdout.decode().strip() == "De WAL is leeg."
+        assert marks(settings) == {"platform.db": 0, "platform.db-wal": 0}
+        assert _wal(settings) == 0
+    finally:
+        lezer.close()
+        app.close()
+    async with get_engine(settings).connect() as conn:
+        found = await conn.execute(sa.text("SELECT version_num FROM alembic_version"))
+        assert found.scalars().all() == ["0010"]
+
+
+async def test_db_checkpoint_zonder_database(tmp_path):
+    from tests.test_cli_db import run_cli
+
+    settings = settings_at(tmp_path, "leeg")
+    result = await run_cli(settings, "db-checkpoint")
+    assert result.returncode == 1
+    assert result.stderr.decode().startswith("Er is nog geen database (")
+    assert not (settings.data_dir / "platform.db").exists()
 
 
 async def test_de_migratie_bij_het_starten_maakt_zelf_de_wal_leeg(tmp_path):
