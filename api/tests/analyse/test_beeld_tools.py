@@ -99,6 +99,7 @@ def nep(monkeypatch):
     monkeypatch.setattr(bm, "HF", n.url)
     monkeypatch.setattr(bm, "COMMONS", f"{n.url}/w/api.php")
     monkeypatch.setattr(bm, "UPLOAD", f"{n.url}/upload/")
+    monkeypatch.setattr(bm, "NASA", f"{n.url}/nasa/")
     monkeypatch.setattr(bm.time, "sleep", lambda s: None)
     yield n
     n.sluit()
@@ -179,6 +180,7 @@ def test_bereik_meldt_elke_host(nep, werk, monkeypatch):
         "BZ1 huggingface.co: bereikbaar (HTTP 200)",
         "BZ1 commons.wikimedia.org: niet bereikbaar (ConnectionRefusedError)",
         "BZ1 upload.wikimedia.org: bereikbaar (HTTP 404)",
+        "BZ1 images-assets.nasa.gov: bereikbaar (HTTP 404)",
     ]
     _ua_algemeen(nep)
 

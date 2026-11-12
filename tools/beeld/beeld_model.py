@@ -67,6 +67,8 @@ MAX_RSS_MIB = 1536  # BZ2: maxrss van één omzetting ≤ 1,5 GB
 
 COMMONS = "https://commons.wikimedia.org/w/api.php"
 UPLOAD = "https://upload.wikimedia.org/"
+# BZ1 noemt ook NASA; de set komt alleen van Commons (Vraag 12a), dus alleen de regel in het blok
+NASA = "https://images-assets.nasa.gov/"
 # Keuze 83: twaalf categorieën met hun item op Wikidata (P180, "beeldt af")
 CATEGORIEEN = {
     "strand": "Q40080",
@@ -244,6 +246,7 @@ def bereik(werk: Werk) -> int:
         ("huggingface.co", f"{HF}/api/models/{REPO}"),
         ("commons.wikimedia.org", f"{COMMONS}?action=query&meta=siteinfo&format=json"),
         ("upload.wikimedia.org", UPLOAD),
+        ("images-assets.nasa.gov", NASA),
     )
     for naam, url in hosts:
         try:
