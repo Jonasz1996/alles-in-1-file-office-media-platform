@@ -256,6 +256,10 @@ Zonder `/tank` staat wat hier in `/tank/platform` staat in `/opt/platform/data/p
 | Reservekopieën van de database | `/tank/platform/backup` (rechten 700): vóór elke update één, `platform-<schemaversie>-<tijd>.db` (rechten 600), zonder gezichten en beeld; per schemaversie blijft de nieuwste |
 | Plaatsnamen en landen | `/tank/platform/geo`: de twee bronnen en `places.sqlite` |
 | Instellingen van zoeken | `/opt/platform/.env`: `PLAATSEN`; de rest op `/beheer` → Zoeken en foto's |
+| Analyse (gezichten; tot 0.8.1 uit) | alleen met `ANALYSE=aan`: de container `platform-analyse-1`, zonder netwerk en zonder je bestanden; hij krijgt per opdracht alleen een preview van de app, over de socket in het Docker-volume `platform_analyse-run` |
+| Modellen van de analyse | `/opt/platform/modellen` (`MODELLEN_ROOT`, van root, alleen-lezen in de container), met hun licenties ernaast |
+| Sleutels van gezichten | `/opt/platform/sleutels/gezichten` (`SLEUTELS_ROOT`, rechten 700, van de app), bewust niet in `/tank` |
+| Instellingen van de analyse | `/opt/platform/.env`: `ANALYSE`, `ANALYSE_WORKER_KEY`, `MODELLEN_ROOT` en `SLEUTELS_ROOT` (alleen als de analyse ooit aan stond) |
 
 Bijwerken: draai het installatiescript opnieuw (met de branch: zie hierboven). Het laat eerst de
 open documenten opslaan, maakt een reservekopie van de database (vanaf 0.8.0), vervangt dan het
@@ -287,6 +291,12 @@ dc() {
   elif [ -f "$d/compose.media-local.yaml" ] && grep -qx 'MEDIA_SANDBOX=uit' /opt/platform/.env; then
     f+=(-f "$d/compose.media-local.yaml")
   fi
+  if docker container inspect platform-analyse-1 >/dev/null 2>&1; then
+    f+=(-f "$d/compose.analyse.yaml")
+    if [ "$limits" = "true true" ]; then
+      f+=(-f "$d/compose.analyse-limits.yaml")
+    fi
+  fi
   docker compose --project-directory "$d" --env-file /opt/platform/.env "${f[@]}" "$@"
 }
 ```
@@ -297,14 +307,16 @@ dc logs -f platform
 dc logs --tail 100 office
 dc logs --tail 100 media
 dc exec -T platform python -m app.cli media-status --sessions
+dc logs --tail 100 analyse
+dc exec -T platform python -m app.cli analyse-status
 ```
 
 Iets veranderen (aan, uit, bijwerken, opnieuw starten) doe je met het installatiescript, niet
 met `docker compose up` of `down`. Vooral nooit `docker compose up -d` met alleen
 `compose.yaml`: dan start het platform zonder de instellingen van office en media (geen editor
 en geen worker meer) en blijven DS en de worker los draaien. Draai daarna gewoon het
-installatiescript opnieuw; dat zet het recht. Nooit `dc exec media` zonder `env -i` (zie
-`docs/runbooks/media.md`).
+installatiescript opnieuw; dat zet het recht. Nooit `dc exec media` of `dc exec analyse` zonder
+`env -i` (zie `docs/runbooks/media.md` en `docs/runbooks/analyse.md`).
 
 ## Office: documenten bewerken in de browser
 
@@ -452,6 +464,39 @@ op `main`, dan mag `main` in het adres, zonder `PLATFORM_BRANCH`.
 
 Meer, zoals de status lezen, de cache opruimen en de belastingtest op de LXC, staat in
 `docs/runbooks/media.md`.
+
+## Gezichten: de container analyse (tot 0.8.1 uit)
+
+Vanaf 0.8.1 kan het platform gezichten op je foto's vinden, als voorstel bij de personen. Tot
+dan staat dit uit, en hoef je niets te doen: zonder `ANALYSE` in `/opt/platform/.env` doet het
+installatiescript precies wat 0.8.0 deed (geen download, geen container, geen nieuwe regel).
+
+**De container.** Het zoeken naar gezichten draait in een eigen container, `platform-analyse-1`,
+uit hetzelfde image als het platform: zonder netwerk, alleen-lezen, als een eigen gebruiker
+(10003), zonder capabilities, en met hooguit 3 GB geheugen en 1 core (als de kernel die grenzen
+kan zetten, zoals bij office en media). Hij kan je bestanden niet openen: de app geeft hem per
+foto alleen de preview, en krijgt alleen kaders en getallen terug. Twee kleine modellen van
+OpenCV (YuNet, MIT, en SFace, Apache-2.0) staan in `/opt/platform/modellen`; de container mag ze
+alleen lezen.
+
+**Aan, om te proberen** (vóór 0.8.1 doet de app er nog niets mee: alleen de status):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | ANALYSE=aan bash
+```
+
+Het script haalt dan de modellen (±39 MB, met hun sha256 nagekeken), zet de licenties ernaast,
+maakt `/opt/platform/sleutels/gezichten`, zet één keer een eigen sleutel `ANALYSE_WORKER_KEY` in
+`.env`, en start de container. Lukt een download of de start niet, dan zegt het script
+`Let op: …` en werkt het platform gewoon verder; het volgende script probeert het opnieuw. De
+stand: `dc exec -T platform python -m app.cli analyse-status` (de eerste regel is
+`Analyse: ok`, of `down` met de reden).
+
+**Uit:** hetzelfde commando met `ANALYSE=uit`. Dan geen download en geen container meer; de
+modellen blijven in `/opt/platform/modellen` tot je die map zelf weggooit. Terug naar 0.8.0
+(hierboven) gaat ook met de analyse aan: het script van 0.8.0 haalt de container weg, en de
+modellen, de sleutels en `.env` blijven; weer vooruit wordt er niets opnieuw gehaald. Meer, ook
+wat elke melding betekent: `docs/runbooks/analyse.md`.
 
 ## 2FA kwijt
 
