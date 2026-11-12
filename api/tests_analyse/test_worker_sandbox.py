@@ -149,11 +149,14 @@ async def test_de_sleutel_staat_nooit_in_een_opdrachtregel(worker):
 
 
 async def test_proc_van_pid1_en_het_kind_is_dicht(worker):
-    """K1-04: pid 1 en het kind zijn niet-dumpbaar, dus /proc/<pid> is van root. Een tweede
-    proces van dezelfde uid (deze test, buiten root) krijgt EACCES op fd en environ."""
+    """K1-04: pid 1 en het kind zijn niet-dumpbaar, dus environ, mem en fd onder /proc/<pid> zijn
+    van root. De map /proc/<pid> zelf (0555) houdt de uid van het proces, ook niet-dumpbaar
+    (task_dump_owner in de kernel): daar valt niets aan af te lezen. Een tweede proces van
+    dezelfde uid (deze test, buiten root) krijgt EACCES op fd, environ en mem."""
     await echt.faces(worker.settings(), [_gezicht()])
     for pid in (worker.pid, *worker.children()):
-        assert os.stat(f"/proc/{pid}").st_uid == 0
+        for part in ("environ", "mem", "fd"):
+            assert os.stat(f"/proc/{pid}/{part}").st_uid == 0, part
         if not ROOT:
             assert _dicht(f"/proc/{pid}/fd")
             assert _dicht(f"/proc/{pid}/environ")
