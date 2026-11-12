@@ -2,7 +2,8 @@
 
 Dit is het deel van de database van A0 ([bouwontwerp.md](bouwontwerp.md), §2 "A0", §3.1a, §3.5
 en "Het wissen"; Keuze 61–64, 69 en 76). Het andere deel, de container `analyse` als contract,
-is A0-analyse en staat in [a0.md](a0.md). A0-db bouwt geen functie: het legt de tabellen, de
+is A0-analyse en staat in [a0-analyse.md](a0-analyse.md); het geheel na de samenvoeging staat in
+[a0.md](a0.md). A0-db bouwt geen functie: het legt de tabellen, de
 triggers, het wissen en de haken vast, zodat X2a en X3a kunnen beginnen zonder een bestand van
 A0 te wijzigen.
 
@@ -199,7 +200,8 @@ Wat het ontwerp open liet, en hoe het nu is. X2a en X3a bouwen hierop.
    ze raken; die blijven in de bench leeg, en de boom bouwt nu met de BUMP van `node_ai_beeld`,
    zoals de app schrijft).
 3. **Dit stuk heet `a0-db.md`**, naast `a0.md` van A0-analyse, zodat de twee takken niet in
-   hetzelfde bestand schrijven.
+   hetzelfde bestand schrijven. Bij de samenvoeging werd dat `a0-analyse.md`, en is
+   [a0.md](a0.md) het verslag van het geheel.
 
 ## Metingen
 
@@ -240,7 +242,8 @@ zware schijflast (dd ernaast) hield één TRUNCATE het schrijfslot eens ±267 ms
    inhoud. In 0.8.0 bleef het staan. Wie 0.8.0 precies wil houden zolang de analyse uit staat,
    haalt vóór de push de regel `UPDATE photo_person SET x = NULL …` uit `triggers_0011()` en uit
    0011 (en de controle daarvan uit `test_nieuwe_inhoud`); na de push kan dat alleen nog met een
-   nieuwe migratie.
+   nieuwe migratie. Bij de samenvoeging zo gelaten, zoals het ontwerp het vraagt; zie Open 1 van
+   [a0.md](a0.md).
 2. **`gen` bij een andere mime zonder nieuwe inhoud.** `node_au_beeld` luistert alleen naar
    `owner_id` en `blob_id`. Wordt een bestand een beeld (of geen beeld meer) zonder nieuwe
    inhoud, dan telt dat niet. Dat komt in de app niet voor; X3 kan het bij het maken van het

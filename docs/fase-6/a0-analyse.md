@@ -1,0 +1,300 @@
+# A0-analyse: de container analyse als contract
+
+Dit is het deel van de container analyse van A0 ([bouwontwerp.md](bouwontwerp.md), §2 "A0",
+§3.11, Keuze 56–59 en 75). A0 bouwt geen functie: het legt vast waar X2 (gezichten) en X3 (zoeken
+op beeld) op bouwen, zodat X2a en X3a kunnen beginnen zonder een bestand van A0 te wijzigen.
+
+A0 is in twee takken gebouwd. Dit stuk is **A0-analyse** (wip/a0-analyse): de container analyse
+als contract. Het deel van de database (migratie 0011 en 0012, `secure_delete` en `temp_store`,
+het checkpoint, `node_origin`, de haken in `routers/people.py`) is A0-db, in
+[a0-db.md](a0-db.md). Wat er samen staat, en wat de samenvoeging veranderde, staat in
+[a0.md](a0.md). Tot de samenvoeging heette dit stuk zelf `a0.md`.
+
+Wat vaststaat: 0.8.0 is uit, en zolang de analyse uit staat (de standaard), is het platform
+precies 0.8.0: niets zichtbaar anders, geen nieuwe fout, geen tragere weg. Er is geen model
+gedownload (github.com, huggingface.co en media.githubusercontent.com zijn dicht in de sandbox).
+Er is geen pakket bijgekomen behalve de vijf van de extra `analyse`. De versie blijft 0.8.0.
+Van B49–B70 zijn alleen B53 en B57 beslist; Vraag 4 en 8–14 staan op de standaard.
+
+## Wat er is
+
+### Het protocol: `app/analyse/wire.py`
+
+Eén verbinding per opdracht, over de Unix-socket in analyse-run. Het framing (4 bytes lengte en
+JSON), `MAX_MESSAGE` (64 KB), `MAX_FDS` (32), `KEY_MIN` (32), `peer_uid` en SCM_RIGHTS (met
+`MSG_CMSG_CLOEXEC`) komen uit `app.media.wire`; daar is niets aan veranderd.
+
+- **De handdruk** is eigen: `PROTOCOL = 1` en `LABEL = "platform-analyse-worker"`, en
+  `proof = HMAC-SHA256(sleutel, "platform-analyse-worker|1|<nonce>|<uid>")`, met de uid van de
+  app zoals de worker die ziet (SO_PEERCRED). Een bewijs van de mediaworker werkt dus nooit bij
+  de analyse, en omgekeerd (getest in beide richtingen). Een worker waarvan de zelftest faalde,
+  antwoordt op hello met `done`/`sandbox`.
+- **`Op`** is compleet: `caps`, `cancel`, `faces`, `group`, `embed_image`, `embed_text`, `rank`,
+  `forget`. **`Code`**: `ok`, `bad_request`, `not_built`, `busy`, `timeout`, `cancelled`,
+  `unreadable`, `too_big`, `image_bad`, `model_missing`, `sandbox`, `internal`.
+- **Het werkmodel** (Keuze 56): `CHILD` zegt per opdracht welk kind hem doet (`faces`, `group`,
+  `embed_image`: werk; `embed_text`, `rank`, `forget`: zoeken; `caps` en `cancel`: pid 1 zelf,
+  zonder `started` en zonder nummer). Per kind een rij van één: een tweede opdracht voor
+  hetzelfde kind krijgt `busy`, een opdracht voor het andere kind niet. `CHILDREN` zegt hoe elk
+  kind leeft: werk nice 19, 1 GiB data, nieuw na `ANALYSE_CHILD_BATCHES` (8) opdrachten of
+  `CHILD_MAX_AGE_S` (600 s); zoeken nice 0, 1,5 GiB, leeft lang (de cache).
+- **De deadline**: elke vraag heeft `deadline_ms` (1 tot en met `DEADLINE_MS[op]`), geteld vanaf
+  `started`. Daarna `timeout`, en na `KILL_GRACE_S` (5 s) een nieuw kind.
+- **Afbreken**: `cancel` met het nummer uit `started`; of de verbinding sluiten.
+- **Een vector staat nooit in een bericht**: de invoer van `group` in een verzegelde memfd
+  (`sealed_memfd`), de uitvoer in een memfd van de app (`out_memfd`, `read_all`); `rank` krijgt
+  voor "Meer zoals deze" een `num`. Een test loopt elk JSON-schema van de args en data af: geen
+  lijst van getallen.
+- **De vormen** van elke vraag en elk antwoord (`ARGS`, `DATA`, `FDS`), en `parse()` die een
+  vraag nakijkt in een vaste volgorde (PROTOCOL, onbekende velden, op, gebouwd, `deadline_ms`,
+  args, fd's). Een reden noemt nooit een waarde (zoektekst, K1-08).
+- **De constanten van de worker** staan hier, zodat X2a en X3a ze importeren:
+  `ANALYSE_CHILD_BATCHES`, `CHILD_MAX_AGE_S`, `ANALYSE_BEELD_CACHE_MB` (400), `KILL_GRACE_S`,
+  `ANSWER_S` (5 s), `DEADLINE_MS`, `CHILDREN`, `FDS`, `FACE_DIM` (128), `FACES_MAX` (40),
+  `PHOTOS_PER_OP` (16), `GROUP_HEAD`, `GROUP_OUT`, `BEELD_DIM` (768), `TEXT_MAX` (200),
+  `RANK_K_MAX` (1.000).
+
+### `client.py` en `monitor.py`, als contract
+
+Allebei zijn van A0 tot X2a ze overneemt (§2.0: `app/analyse/{client,…,monitor}.py` zijn van
+X2a). X2a bouwt erop; wat hier vastligt, zijn de vormen.
+
+- **`client`**: `call(settings, op, args, fds, deadline_ms)`, `start(…)` → `Job` (`n`, `child`,
+  `result()`, `close()`), `caps(settings)`, `cancel(settings, n)`. Vóór er een fd naar de worker
+  gaat: een verse nonce, de eigen euid van de app in het antwoord, en een kloppend bewijs (zoals
+  `media.client._hello`). Een vraag groter dan `MAX_MESSAGE` of met meer dan `MAX_FDS` fd's gaat
+  er niet heen (`bad_request`, zonder verbinding). Fouten: `AnalyseDown(reason)` met een reden
+  uit `REASONS` (`key_missing`, `key_reused`, `no_socket`, `refused`, `handshake`, `no_answer`,
+  `sandbox`), `AnalyseBusy(child)`, `AnalyseFailed(code, detail)`. De fd's blijven van de
+  aanroeper. De sleutel staat nooit in een fout of een log (getest), en een bericht ook niet.
+- **`monitor`**: de standen van Keuze 59 (`off`, `down`, `models_missing`, `ok`) en
+  `analyse_problem()` in het Nederlands. Zonder `PLATFORM_ANALYSE_ENABLED` gebeurt er niets: geen
+  taak, geen socket, de sleutel wordt niet gelezen (getest door die drie te laten falen als ze
+  toch gebeuren). Een sleutel korter dan 32 tekens is `down`/`key_missing`; gelijk aan het geheim
+  van de app of aan de sleutel van de mediaworker (ook de lokale `media_key()`) is
+  `down`/`key_reused`; dan start er geen lus. Anders: eerst na 0,2 s, dan elke 30 s (`INTERVAL`)
+  één `caps` met hooguit 5 s voor een antwoord; is hij `down`, dan na 1, 2, 4 … hooguit 30 s.
+  Elke overgang komt één keer in het log. `status().ready(names)` zegt of precies die modellen er
+  zijn. Voor een job in de rij analyse: `wait(names)` vóór de opdracht (`down`/`off`:
+  `Defer(300)`, een model weg: `Defer(3600)`) en `deferral(fout)` erna (`AnalyseDown`:
+  `Defer(300)`, `AnalyseBusy`: `Defer(30)`, `model_missing`: `Defer(3600)`); een `Defer` telt
+  geen poging (getest met een echte job in de rij `analyse`).
+
+### Instellingen, lifespan en CLI
+
+- `config.py` (§3.11): `analyse_worker` (`/run/analyse/worker.sock`), `analyse_worker_key`
+  (`repr=False`), `faces_keys`, `faces_batch` (16), `faces_min_px` (40),
+  `faces_max_per_photo` (40), `faces_group_max` (60.000), en `analyse_key_problem()`.
+  `analyse_enabled` (standaard uit) was er al (Z0b).
+- `main.py`: `analyse_monitor.start(settings)` in de lifespan en `stop()` na de rijen. Uit: geen
+  taak (getest met de echte lifespan).
+- `cli.py`: `python -m app.cli analyse-status [--wait N]`: één regel `Analyse: <stand>` met de
+  reden. Met `--wait` wacht hij hooguit N s tot `ok` (voor install.sh) en is de exitcode altijd 0;
+  zonder `--wait` is hij 1 bij `down` en `models_missing`. Uit: hij raakt de socket niet aan.
+- De routes: `routers/people_faces.py` (501 `not_built("X2")`) en `routers/beeld.py`
+  (`not_built("X3")`) blijven zoals Z0b ze zette.
+
+### `models.lock` en de licenties
+
+- `app/analyse/models.lock`: één regel per bestand, `sha256 bytes naam url`; `#` begint een
+  opmerking (ook achter de velden), lege regels tellen niet. `naam` is een pad onder
+  `MODELLEN_ROOT` (mag een submap hebben, nooit `..`, `/` vooraan, `//` of `.`); `url` is
+  `https://…`, of `-` voor een bestand dat de host zelf maakt (de omzetting van X3). De twee
+  regels van YuNet (2026may, 229.738 bytes) en SFace (2021dec, 38.696.353 bytes) staan erin,
+  van opencv_zoo op commit `48b10fa505aeb51fbd127fc60a5c660040e823b7`.
+- `app/analyse/lock.py`: `parse()` (een fout noemt het regelnummer), `load()`, en `digest(files)`:
+  de sha256 over de regels die je geeft. `digest` van de twee regels van de gezichten is
+  `c34829c2…3d60`; hij blijft gelijk als X3 regels toevoegt (getest). Bash leest hetzelfde bestand
+  met `while read -r sha bytes naam url rest` (getest met de echte bash).
+- `app/analyse/licenties/`: `yunet-MIT.txt` (MIT, "Copyright (c) 2020 Shiqi Yu") en
+  `sface-Apache-2.0.txt`. De Apache-tekst is byte voor byte die van `LICENSE.APACHE` in
+  packaging 26.3 (van PyPI; sha256 `0d542e0c…4594`). Ze gaan mee in het image met
+  `COPY api/app ./app`.
+
+### De nep-worker en het contract (`api/tests/analyse/`)
+
+- `fake_worker.py`: `FakeAnalyseWorker` spreekt het echte protocol over een echte Unix-socket
+  (de handdruk met SO_PEERCRED, het framing en de fd's van `app.media.wire`, `wire.parse` voor
+  elke vraag), met beide kinderen, `busy` per kind, de deadline, `cancel` op nummer, een nieuw
+  werk-kind na 8 opdrachten of 10 minuten (de klok is in te stellen), en `not_built` voor elke
+  opdracht zonder handler. Te sturen: `on(op, handler)`, `hold(op)`, `fail(op, code)`,
+  `models[naam] = "ontbreekt"`, `busy.add(kind)`, `refuse = Code.SANDBOX`, `hello_fault`
+  (`silent`, `close`, `wrong_uid`, `wrong_proof`, `media_proof`), `settings(tmp_path)`. Zonder
+  numpy (getest in een eigen proces).
+- `analyse_contract.py`: de scenario's van laag 1 en 2 (handdruk, eerst hello, PROTOCOL, te grote
+  vraag, onbekende en niet gebouwde opdracht, args, deadline, fd's, cancel, bezet per kind,
+  zoeken naast werk, sluiten is afbreken, deadline is timeout). `test_fake_analyse_worker.py`
+  draait ze tegen de nep; X2a draait dezelfde lijst tegen de echte worker in `api/tests_analyse/`.
+  Een scenario wordt nooit overgeslagen: wat een worker nog niet doet, staat niet in zijn lijst.
+- `conftest.py`: de fixtures `fake` en `settings_fake`, de marker `analyse` op elke test in de
+  map, en `_stand_terug` (de stand van de monitor terug op `off` na elke test).
+
+### Het image
+
+- **De Dockerfile**: het blok van §3.11 direct na `RUN uv sync --frozen --no-dev` (die regel
+  blijft): groep en gebruiker `analyse` (10003), gebruiker `omzetten` (10004, groep analyse), en
+  precies de vijf pakketten van de extra in `/opt/analyse` (0750 `root:analyse`); een zesde laat
+  de build falen. Twee kleine afwijkingen, zie hieronder. In de RUN van media:
+  `install -d -o analyse -g platform -m 2750 /run/analyse`.
+- **De extra** in `api/pyproject.toml` (`numpy>=2.5.4`, `onnxruntime>=1.31.1`) en `uv.lock`
+  (+137 regels, geen regel weg of anders).
+- **De job `images`** in `ci.yml` kijkt het echte image na, zonder netwerk, als root, platform,
+  media, analyse en omzetten: de vijf staan niet in `/opt/venv`; voor 10001 en 10002 vindt
+  `find_spec` ze niet, ook niet met `/opt/analyse` in `sys.path`; voor 10003 en 10004 wel, met
+  precies de versies van uv.lock, en ze kunnen er niets schrijven; elk pad in `/opt/analyse` is van
+  `root:analyse` zonder `g+w` en zonder iets voor anderen; `/run/analyse` is 2750
+  `analyse:platform`; `/opt/analyse` is hooguit 160 MB; de wheels staan niet meer in de cache van
+  uv. Alleen actions die er al waren.
+- **De markers** `analyse`, `analyse_echt` en `beeld_echt` in `api/pyproject.toml` en
+  `e2e/pytest.ini` (§4.6). `analyse` draait gewoon mee in de job `api` (de nep-worker).
+
+## Vormen die A0 vastlegde
+
+Waar het ontwerp een vorm open liet, staat hij nu zo (in `wire.py`, getest):
+
+- `faces` neemt 1 tot en met 16 previews (de 1024.webp) en geeft per foto een uitkomst
+  (`code`, `w`, `h`, `faces`, `n`); de vectoren van alle foto's staan achter elkaar in één
+  memfd `uit`, `n × 512` bytes per foto, in de volgorde van de previews.
+- `embed_image` heeft per foto een vak van `caps.beeld.dim × 2` bytes (float16) in `uit`; een
+  vak van een foto die niet `ok` is, blijft nul. `embed_text` schrijft één vak.
+- `group`: de invoer begint met `GROUP_HEAD` (`<4s4I`: `PFG1`, n, known, persons, rejects),
+  dan n × 512 B vectoren, known × int32 persoon, rejects × (int32 gezicht, int32 persoon); de
+  uitvoer is per gezicht `GROUP_OUT` (`<ifi`: voorstel, score, groep; −1 is geen).
+- `rank`: `owner` (32 hex die de app kiest, nooit een naam), `gen`, en met `k > 0` precies één
+  van `text` en `num`; met `k = 0` geen van beide (alleen opwarmen). Het antwoord: `[[num, s]…]`
+  met `s` de cosinus × 10.000.
+- `caps`: per model `ok`, `ontbreekt` of `anders` (een andere grootte of sha256), `built` (de
+  opdrachten naast caps en cancel), en optioneel `beeld` (model, dim, scale, bias) en `limits`.
+- De args weigeren een onbekend veld (`extra="forbid"`); de data laten een onbekend veld liggen
+  (`extra="ignore"`), zodat een nieuwere worker een oude app niet breekt.
+- Een antwoord op caps dat niet klopt, is `down` met de reden `bad_answer` (een reden naast die
+  van Keuze 59).
+- `models_missing` geldt als een model van caps niet `ok` is; `ready(names)` zegt het per set
+  modellen.
+- `analyse-status --wait` heeft altijd exitcode 0 (zoals `media-status`); zonder `--wait` 1 bij
+  `down` en `models_missing`.
+- De client weigert een vraag boven `MAX_MESSAGE` of met meer dan `MAX_FDS` fd's vóór hij
+  verbindt.
+- De nep geeft het kind vrij vóór hij `done` stuurt: wie op `done` wacht en meteen de volgende
+  opdracht stuurt, krijgt nooit een onterechte `busy`.
+
+## Afwijkingen van het ontwerp
+
+- **`uv pip install --no-cache` in het blok.** Letterlijk zoals in §3.11 laat `uv pip install`
+  de wheels en hun uitgepakte kopie in `/root/.cache/uv` staan: de laag werd 276 MB (gemeten in
+  een stand-in), en dan haalt het image de grens van +160 MB van X2 niet. Met `--no-cache` is de
+  laag 147 MB. Zonder deze regel had X2a de Dockerfile van A0 moeten wijzigen.
+- **`chmod -R g-w,o-rwx` in plaats van `chmod -R o-rwx`.** uv laat `/opt/analyse/.lock` achter
+  met 0660 na de chown: de groep analyse kon hem schrijven. Nu is niets in `/opt/analyse`
+  schrijfbaar voor de groep (de stap in `images` kijkt het na).
+- **De deadline van `faces`** staat bovenaan de vraag (`deadline_ms`, zoals elke opdracht), niet
+  als `"timeout": 10` in de args; de hoogste is 16 × 10 s.
+- **`LOCK_SHA` van de gezichten** is `lock.digest()` over de twee regels van YuNet en SFace, niet
+  de sha256 van het hele bestand: zo verandert hij niet als X3 zijn regels toevoegt (zie Open).
+- **Bestanden die A0 niet bezit**: `api/tests/test_conftest_volgorde.py` (de lijst `BESTANDEN`
+  kent nu de map `analyse`, met twee asserts erbij); `.github/workflows/ci.yml` (één stap in
+  `images`); `e2e/pytest.ini` (de drie markers, zoals §4.6 zegt).
+
+## Wat alleen CI bewijst
+
+Het image bouwt alleen in CI (de web-stage met npm, apt met ffmpeg en tesseract, uv uit
+ghcr.io). In de sandbox is het blok nagekeken met een stand-in: `python:3.12-slim`, de uv van de
+host (0.11.32; de Dockerfile neemt `ghcr.io/astral-sh/uv:0.11`), `uv sync --frozen --no-dev`, en
+het blok, de regel van platform en de RUN van media letterlijk uit de Dockerfile (zonder de
+`chmod 0711` van ffmpeg en tesseract, die er zonder apt niet zijn). Alleen in de stand-in: de
+CA van de proxy van de sandbox. Wat daaruit bleek:
+
+- de build slaagt; `comm` geeft precies vijf regels; `/opt/venv` heeft 45 pakketten en geen van
+  de vijf;
+- de gid's zijn dezelfde als in een stand-in van 0.8.0 (platform 10001/999, media 10002/998); de
+  groep analyse heeft 10003, omzetten is 10004 met groep 10003;
+- voor 10001 en 10002 geeft `find_spec` `None` voor alle vijf, ook met `/opt/analyse` in
+  `sys.path`; 10003 en 10004 importeren ze, met de goede versies, en onnxruntime heeft
+  `CPUExecutionProvider`;
+- het script van de stap in `images` draait groen tegen de stand-in en rood tegen de stand-in
+  van 0.8.0; en rood bij elk van vier fouten die erin gezet zijn (de wheels in de cache, een
+  bestand `g+w`, `/opt/analyse` 0755, alles leesbaar voor anderen).
+
+CI bewijst daarna: de build van het echte image, de stap in `images` op dat image, en dat het
+image van het platform nog start zoals in 0.8.0.
+
+## Metingen
+
+| Wat | Waarde | Hoe |
+|---|---|---|
+| `uv export` met en zonder de extra | 50 en 45 regels; verschil precies 5 (flatbuffers 25.12.19, numpy 2.5.4, onnxruntime 1.31.1, packaging 26.3, protobuf 7.36.2), omgekeerd 0 | `uv export --frozen --no-dev --no-emit-project --no-hashes [--extra analyse] \| grep -E '^[a-z]' \| sort`, `comm` |
+| de basis tegen 0.8.0 | gelijk (`cmp`) | dezelfde export op uv.lock van `59e0250` |
+| uv.lock | +137, −0 | `git diff --stat 59e0250` |
+| wheels (x86_64, cp312) | 41,0 MB: onnxruntime 23,76, numpy 16,73, protobuf 0,34, packaging 0,13, flatbuffers 0,03 | de `size` in uv.lock |
+| `/opt/analyse` | 140,7 MB in 2.170 bestanden: onnxruntime 68,7, numpy 68,4, protobuf 2,4, packaging 1,0, flatbuffers 0,2 | som van `lstat` (stand-in, en `uv pip install --target` op de host) |
+| de laag van het blok | 147 MB met `--no-cache`; 276 MB zonder | `docker history` van de stand-in |
+| de cache van uv in het image | 146 MiB, gelijk aan 0.8.0 (van `uv sync`, niet van A0) | `du -sm /root/.cache/uv` in beide stand-ins |
+| import van `app.main` | + ±12 ms eigen tijd van `app.analyse` (wire 10,5–11,6 ms, de rest < 1 ms) op ±1,4 s | `python -X importtime -c "import app.main"`, drie keer |
+| tests in `tests/analyse` | 155 (wire 52, nep 43, monitor 27, lock 23, no_numpy 6, image 4), ±35 s | pytest, ook als nobody |
+
+## Open
+
+- **onnxruntime 1.31.1 heeft telemetrie (1DS).** Bij de import schrijft hij op stderr "Failed to
+  persist telemetry device ID". X2a: de container zonder netwerk, en in de worker
+  `onnxruntime.disable_telemetry_events()` vóór de eerste sessie; de regel op stderr mag geen
+  probleem zijn voor de logregels van K1-16.
+- **`LOCK_SHA` als X3 regels toevoegt.** Het ontwerp noemt de sha256 van `models.lock`; A0 legt
+  `lock.digest()` over de eigen regels vast. X2a en X3a kiezen elk de regels van hun modellen.
+- **`models_missing` met beeld uit.** Een model van X3 dat niet `ok` is, maakt de hele stand
+  `models_missing`, ook voor gezichten. Gezichten vragen daarom `ready(FACES_MODELS)`, niet de
+  stand. Of `/beheer` dat zo laat zien, is van X2a en X3a.
+- **De cache van `uv sync` (146 MiB)** staat al sinds 0.8.0 in het image. Niet van A0: de regel
+  blijft zoals hij is (§3.11). Een `--no-cache` daar zou 146 MiB schelen.
+- **De e2e-markers in CI.** `-m` van de job `e2e` sluit `analyse_echt` en `beeld_echt` niet uit;
+  er is nog geen e2e-test met die markers. X2a en X2b zetten dat in de regel als ze er een maken.
+- **De licenties niet tegen opencv_zoo vergeleken**: github.com is dicht in de sandbox. X2a
+  vergelijkt ze met de bestanden op de commit van `models.lock` (de job `api-analyse` heeft
+  netwerk).
+- **De Python van uv kent `F_SEAL_*` niet** in `fcntl` (python-build-standalone 3.12.13).
+  `wire.py` valt terug op de waarden van Linux; een test pint ze. In het image (Debian) zijn de
+  namen er gewoon.
+- **`python -m app.cli` start traag** (±3,7 s, waarvan 2,8 s de import van `app.search.bench`).
+  Dat was er al; `analyse-status --wait` heeft er geen last van, de tests wel (één subprocess).
+- ~~A0-db schrijft misschien ook in dit bestand: bij het samenvoegen allebei houden.~~ Gedaan
+  bij de samenvoeging: dit stuk heet nu `a0-analyse.md`, naast [a0-db.md](a0-db.md); het geheel
+  staat in [a0.md](a0.md).
+
+## Klaar als
+
+| Regel (bouwontwerp, A0) | Bewijs | Uitkomst |
+|---|---|---|
+| `test_analyse_wire.py` (de handdruk, de enum, `busy` per kind, `cancel`) | `test_op_is_vanaf_a0_compleet`, `test_het_label_en_het_bewijs`, `test_een_bewijs_van_media_telt_niet_bij_analyse` en `test_een_bewijs_van_analyse_telt_niet_bij_media`, `test_busy_per_kind`, `test_cancel_met_het_nummer` e.a. (52) | groen |
+| `test_fake_analyse_worker.py` (beide kinderen, het protocol) | `test_contract_nep` over alle scenario's (`test_elk_scenario_draait_tegen_de_nep`), `test_beide_kinderen_tegelijk_met_eigen_nummers`, `test_werk_krijgt_een_nieuw_kind_na_acht_opdrachten` en `…_na_tien_minuten`, `test_de_nep_importeert_geen_numpy` e.a. (43) | groen |
+| `test_no_numpy_in_app.py` (de app en de job `api` zonder de extra) | geen import buiten `app/analyse/worker/` (AST), `python -I` met `app.main` en `app.cli` en met elke module laadt ze niet, `find_spec` is `None` (6) | groen |
+| `uv sync --frozen` zonder extra installeert geen numpy | `test_de_job_api_heeft_ze_niet` | groen (ook als nobody) |
+| `uv export` met en zonder extra verschilt in precies vijf | `test_de_extra_analyse_is_precies_vijf_pakketten` (uit uv.lock), en `uv export`/`comm` met de hand (Metingen) | groen |
+| het blok in de Dockerfile, de extra, `/run/analyse` | `test_analyse_image.py` (4), de stand-in, de stap in `images` | groen hier; het image in CI na de push |
+| `models.lock` en de licenties | `test_models_lock.py` (23) | groen |
+| `client.py` en `monitor.py` als contract (de standen van Keuze 59) | `test_analyse_monitor.py` (27): `test_off_zonder_taak_socket_of_sleutel`, `test_down_*` (elke reden, ook `test_down_door_de_sleutel`), `test_models_missing`, `test_ok`, `test_een_job_wacht_zonder_poging` (`Defer(300)` en `Defer(30)`), `test_de_lifespan_zonder_analyse`, `test_cli_*` | groen |
+| X2a en X3a beginnen zonder een bestand van A0 te wijzigen | de constanten in `wire.py`, `analyse_contract.py` voor laag 2, de nep met `on()`, de Dockerfile binnen de grens van 160 MB | zie Open (LOCK_SHA, telemetrie) |
+
+## Gedraaid
+
+In de sandbox, als root, steeds onder `taskset -c 0-2`.
+
+- `uv run ruff check .` en `uv run ruff format --check .`: groen (655 bestanden).
+- De volledige suite (`uv run pytest -q`) op `2c3c17d`: 6040 groen, 2 overgeslagen (die waren er
+  al), 238 niet gekozen, en **1 rood**: `test_error_catalog.py::test_elke_code_van_de_api_heeft_een_engelse_tekst`
+  (38 min). Oorzaak: het voorbeeld van `done` in de docstring van `wire.py` schreef
+  `"code": "ok"`, en die test leest elke `"code": "…"` onder `app/` als een foutcode van de API.
+  Hersteld in de docstring (`4d75d7a`), de test is niet veranderd. Daarna opnieuw: de negen tests
+  die alle bestanden onder `app/` lezen (`test_error_catalog`, `test_office_gate`,
+  `test_office_imports`, `test_media_no_ffmpeg_outside`, en in `tests/search/` `test_own_live`,
+  `test_no_temp_table`, `test_search_no_raw`, `test_search_no_replace`) en `tests/analyse/`:
+  721 groen. `test_fuzz_10000_namen_met_vaste_seed` was groen.
+- Als nobody (`/tmp/ci-nobody/run.sh`): `tests/analyse`, `test_conftest_volgorde.py`,
+  `test_media_compose.py` en `test_error_catalog.py`: 176 groen in 33 s.
+- `test_zoek_ci`, `test_csp_nginx`, `test_media_ci`, `test_media_compose`, `test_benchlos` en
+  `test_models_lock` (de tests die `ci.yml` en de Dockerfile lezen): 57 groen; `yamllint -s .`:
+  groen.
+- `SLIM_CPUS=0-2 e2e/slim.sh`, alleen: groen in 883 s (stap 1 in python:3.12-slim met SQLite
+  3.46.1: 1259 groen; stap 3, de e2e met marker zoek: 101 groen).
+- `npm run build` en de e2e-set van CI (`-m "not perf and not media and not media_perf and not
+  office and not office_real and not provider_real and not ocr"`): 238 groen, 135 niet gekozen,
+  in 14 min.
+- De stand-in (zie "Wat alleen CI bewijst"); de images daarvan zijn weer weg.

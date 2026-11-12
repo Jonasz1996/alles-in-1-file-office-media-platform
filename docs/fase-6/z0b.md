@@ -308,7 +308,7 @@ elk twee meer dan na de review (4346 en 395).
 
 Voor de volgende pakketten:
 
-1. **A0**: de migraties 0011 en 0012 (de tabellen van gezichten en beeld, de kolom `beeld` op
+1. ~~**A0**: de migraties 0011 en 0012 (de tabellen van gezichten en beeld, de kolom `beeld` op
    `photo_pref`) en de fix van `node_bu_text` (Afwijking 1). De wachter van `own_live` kent de
    tabellen al (`face`, `face_person`, `face_scan`, `blob_embed`) en hun modellen onder een
    aangenomen naam (`Face`, `FacePerson`, `FaceScan`, `BlobEmbed`): A0 gebruikt die namen, of zet
@@ -317,12 +317,19 @@ Voor de volgende pakketten:
    triggers van 0011 en 0012 komen als `TRIGGERS_0011` en `TRIGGERS_0012` (en hun vorm zonder
    FTS5) naast `TRIGGERS_0010` in `app/search/schema.py`, elk gelijk aan de kopie in zijn
    migratie, en erbij in `TRIGGERS`; beide vergelijkingen in `test_schema_triggers.py` blijven
-   exact. Met 0012 leest `photo_prefs()` de kolom `beeld` (nu geeft hij de standaard).
+   exact. Met 0012 leest `photo_prefs()` de kolom `beeld` (nu geeft hij de standaard).~~
+   Gedaan door A0 ([a0.md](a0.md)): 0011 en 0012 met de modellen onder die namen (de lijst van
+   `own_live` bleef gelijk), het kader leeg bij nieuwe inhoud in `node_au_blob_face` van 0011,
+   `TRIGGERS_0011` en `TRIGGERS_0012` naast `TRIGGERS_0010` met beide vergelijkingen exact,
+   `photo_prefs()` leest `beeld`; van §3.11 de contracten, de instellingen, het blok in de
+   Dockerfile en de extra. `compose.analyse.yaml`, de worker en de modellen zelf zijn van X2a en
+   X3a (§2.0).
 2. **X2**: zet de 422 van meer dan 200 gezichten om naar `faces_too_many`, of het ontwerp laat
    die code vallen. `FacesConfirm` is een union in de web en één model met een controle in de API;
    de contracttest vergelijkt alleen de velden, de vitest de twee bodies.
-3. **A0, X2 en X3**: de vormen van Z0b zijn een voorstel tot ze vastliggen. Een vorm die verandert,
-   verandert in de web en de API tegelijk; `test_web_contracts.py` houdt ze gelijk.
+3. **~~A0,~~ X2 en X3**: de vormen van Z0b zijn een voorstel tot ze vastliggen. Een vorm die verandert,
+   verandert in de web en de API tegelijk; `test_web_contracts.py` houdt ze gelijk. Voor A0
+   gedaan: A0 veranderde geen vorm van Z0b, en zijn eigen vormen staan in [a0.md](a0.md) (Vormen).
 4. **De aanroepen van de web tegen de API** zijn bij deze samenvoeging één keer met de hand
    nagelopen (zie De samenvoeging), niet in een vaste test. De vaste test dekt alleen de soort fout
    die het vond (een vast getal in de query). Wie een route vult, draait zijn aanroepen uit de

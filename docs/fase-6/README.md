@@ -450,6 +450,9 @@ en keek of die test dan rood werd. De details staan per pakket in zijn eigen bes
   wekelijkse controle, de plaatsen voor foto's van vóór de plaatsnamen, en Land, Plaats en Camera
   op `/fotos`), een rij voor het schrijven naar de database (zodat een upload niet achter het
   achtergrondwerk wacht), de metingen ([metingen.md](metingen.md)) en de tests ([e2e.md](e2e.md)).
-- **Nog niet:** A0 (de container `analyse` en migratie 0011 en 0012), X2 (gezichten automatisch)
-  en X3 (zoeken op beeld). Die horen bij 0.8.1; zoeken op beeld kan naar een fase 6b schuiven. Zie
-  [Wat komt in 0.8.1](#wat-komt-in-081).
+- **A0** (12 november): het fundament van gezichten en zoeken op beeld, migratie 0011 en 0012 en
+  de container `analyse` als contract ([a0.md](a0.md)). Zolang de analyse uit staat, doet het
+  platform wat 0.8.0 doet, op één ding na: krijgt een foto nieuwe inhoud, dan gaat het kader van
+  een persoon erop weg (Keuze 25a).
+- **Nog niet:** X2 (gezichten automatisch) en X3 (zoeken op beeld). Die horen bij 0.8.1; zoeken op
+  beeld kan naar een fase 6b schuiven. Zie [Wat komt in 0.8.1](#wat-komt-in-081).
