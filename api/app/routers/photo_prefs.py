@@ -39,7 +39,7 @@ DEFAULTED = ("beeld",)
 async def photo_settings(
     user: CurrentUser, session: Session, settings: Annotated[Settings, Depends(get_settings)]
 ) -> PhotoSettings:
-    return await prefs.photo_settings(session, user, analyse_enabled=settings.analyse_enabled)
+    return await prefs.photo_settings(session, user, analyse_enabled=settings.analyse_on)
 
 
 @router.patch("/me/photo-settings")
@@ -62,7 +62,7 @@ async def change_photo_settings(
     if changes and user.role == "guest":
         raise errors.fail(403, "guest", "Gasten hebben geen eigen foto's")
     patch = PhotoSettingsPatch(**changes)
-    await prefs.check_switch(session, user, patch, analyse_enabled=settings.analyse_enabled)
+    await prefs.check_switch(session, user, patch, analyse_enabled=settings.analyse_on)
     stored = {key: value for key, value in changes.items() if key in COLUMNS}
     if stored:
         row = await session.get(PhotoPref, user.id)
@@ -77,4 +77,4 @@ async def change_photo_settings(
         await session.flush()
     await prefs.switched(session, user, before, patch)
     await session.commit()
-    return await prefs.photo_settings(session, user, analyse_enabled=settings.analyse_enabled)
+    return await prefs.photo_settings(session, user, analyse_enabled=settings.analyse_on)

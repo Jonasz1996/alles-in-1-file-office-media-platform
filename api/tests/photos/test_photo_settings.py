@@ -161,6 +161,24 @@ async def test_met_x2_aangemeld(client, eva, settings, monkeypatch):
     assert (await instellingen(client, eva))["faces_forbidden"] is True
 
 
+async def test_op_postgresql_niet_beschikbaar(client, eva, settings, monkeypatch):
+    """Review A0, veilig F5: de route vraagt analyse_on, niet alleen PLATFORM_ANALYSE_ENABLED.
+    Op PostgreSQL (analyse_on False, zie test_op_postgresql_blijft_de_analyse_uit) gaan
+    gezichten en beeld niet aan, ook als X2 en X3 zich aanmelden."""
+    gezien: list[tuple] = []
+    aanmelden("faces", prefs.SwitchState(available=True), gezien)
+    aanmelden("beeld", prefs.SwitchState(available=True), gezien)
+    monkeypatch.setattr(settings, "analyse_enabled", True)
+    assert (await instellingen(client, eva))["faces_available"] is True
+    monkeypatch.setattr(type(settings), "analyse_on", property(lambda self: False))
+    assert (await instellingen(client, eva))["faces_available"] is False
+    r = await wijzig(client, eva, expect=409, faces="aan")
+    assert code_of(r) == "faces_unavailable"
+    r = await wijzig(client, eva, expect=409, beeld="aan")
+    assert code_of(r) == "beeld_not_installed"
+    assert gezien == [] and await rijen(settings) == []
+
+
 async def test_een_gast(client, eva, settings):
     gast = await login(client, "gast@example.nl")
     assert await instellingen(client, gast) == STANDAARD

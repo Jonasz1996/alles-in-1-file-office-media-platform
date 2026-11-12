@@ -169,7 +169,7 @@ async def test_down_door_de_sleutel(extra, reason, fake, tmp_path):
 
 
 def test_elke_reden_heeft_een_nederlandse_tekst():
-    assert set(monitor.TEXT) == set(client.REASONS) | {"bad_answer"}
+    assert set(monitor.TEXT) == set(client.REASONS) | {"bad_answer", "no_sqlite"}
     for reason, text in monitor.TEXT.items():
         found = monitor.AnalyseStatus("down", reason)
         assert monitor.analyse_problem(found) == text
@@ -488,3 +488,29 @@ async def _leeg(req):
 
 def _previews() -> list[int]:
     return [wire.sealed_memfd("p", b"x"), wire.out_memfd("uit")]
+
+
+PG = "postgresql+asyncpg://u:p@127.0.0.1:1/x"
+
+
+async def test_op_postgresql_blijft_de_analyse_uit(fake, tmp_path):
+    """Review A0, veilig F5: op PostgreSQL maken 0011 en 0012 alleen de tabellen, zonder de
+    triggers die gezichten en beeld wissen. Daar blijft de analyse dus uit, ook met
+    PLATFORM_ANALYSE_ENABLED: down met no_sqlite, zonder taak, socket of sleutel, en de rij
+    analyse draait niet."""
+    settings = fake.settings(tmp_path, database_url=PG)
+    assert settings.analyse_enabled and not settings.analyse_on
+    assert monitor.start(settings) is None
+    assert monitor._task is None
+    assert (monitor.status().state, monitor.status().reason) == ("down", "no_sqlite")
+    assert monitor.analyse_problem() == monitor.TEXT["no_sqlite"]
+    assert (await monitor.check(settings)).reason == "no_sqlite"
+    assert "analyse" not in jobs.active_lanes(settings)
+    # Ook zonder sleutel: no_sqlite, de sleutel wordt niet gelezen
+    bare = fake.settings(tmp_path, database_url=PG, analyse_worker_key="")
+    assert (await monitor.check(bare)).reason == "no_sqlite"
+    assert fake.hellos == 0
+    # Met SQLite gewoon aan
+    sqlite = fake.settings(tmp_path)
+    assert sqlite.analyse_on and "analyse" in jobs.active_lanes(sqlite)
+    assert (await monitor.check(sqlite)).state == "ok"

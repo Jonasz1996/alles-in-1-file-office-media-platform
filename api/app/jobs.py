@@ -770,7 +770,7 @@ def active_lanes(settings: Settings) -> tuple[str, ...]:
         BASE_LANES
         + (MEDIA_LANES if settings.media_enabled else ())
         + (("ocr",) if settings.media_enabled and settings.ocr_enabled else ())
-        + (("analyse",) if settings.analyse_enabled else ())
+        + (("analyse",) if settings.analyse_on else ())
     )
 
 

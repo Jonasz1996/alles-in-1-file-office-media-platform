@@ -6,7 +6,8 @@ Vier standen (app.search.types.AnalyseState):
 - off: PLATFORM_ANALYSE_ENABLED staat niet aan. Dan start er geen taak en raakt de app de
   socket nooit aan; de rij analyse draait niet (jobs.active_lanes).
 - down: met een reden uit client.REASONS. Een sleutel die niet deugt (key_missing, key_reused)
-  zegt de app bij de start, zonder lus: de sleutel verandert pas met een nieuwe start.
+  zegt de app bij de start, zonder lus: de sleutel verandert pas met een nieuwe start. Zo ook
+  no_sqlite: op PostgreSQL blijft de analyse uit (Settings.analyse_on; review A0, veilig F5).
 - models_missing: caps meldt een model dat ontbreekt of anders is (reason: de namen).
 - ok: de handdruk klopt en de modellen kloppen.
 
@@ -69,6 +70,10 @@ TEXT = {
     "no_answer": "de analyse antwoordt niet binnen 5 s",
     "sandbox": "de afscherming van de container analyse klopt niet (de zelftest faalde)",
     "bad_answer": "de analyse geeft een antwoord op caps dat niet klopt",
+    "no_sqlite": (
+        "de analyse werkt alleen met SQLite: op PostgreSQL blijven gezichten en beeld uit "
+        "(Keuze 76)"
+    ),
 }
 
 
@@ -94,6 +99,7 @@ class AnalyseStatus:
 
 
 OFF = AnalyseStatus("off")
+NO_SQLITE = AnalyseStatus("down", "no_sqlite")  # Settings.analyse_on (review A0, veilig F5)
 _status: AnalyseStatus = OFF
 _task: asyncio.Task | None = None
 
@@ -141,9 +147,12 @@ def deferral(exc: BaseException) -> jobs.Defer | None:
 
 
 async def check(settings: Settings) -> AnalyseStatus:
-    """Eén keer caps; zonder PLATFORM_ANALYSE_ENABLED meteen OFF (zonder de socket)."""
+    """Eén keer caps; zonder PLATFORM_ANALYSE_ENABLED meteen OFF, op PostgreSQL meteen down met
+    no_sqlite (allebei zonder de socket)."""
     if not settings.analyse_enabled:
         return OFF
+    if not settings.analyse_on:
+        return NO_SQLITE
     try:
         caps = await client.caps(settings)
     except client.AnalyseDown as exc:
@@ -191,10 +200,14 @@ async def _loop(settings: Settings) -> None:
 
 def start(settings: Settings) -> asyncio.Task | None:
     """Vanuit de lifespan. Zonder PLATFORM_ANALYSE_ENABLED gebeurt er niets: geen taak, geen
-    socket, geen sleutel, de stand blijft OFF. Met een sleutel die niet deugt: down, zonder taak."""
+    socket, geen sleutel, de stand blijft OFF. Op PostgreSQL: down met no_sqlite, en ook geen
+    taak, socket of sleutel. Met een sleutel die niet deugt: down, zonder taak."""
     global _task
     _set_quiet(OFF)
     if not settings.analyse_enabled:
+        return None
+    if not settings.analyse_on:
+        _set(NO_SQLITE)
         return None
     problem = settings.analyse_key_problem()
     if problem is not None:

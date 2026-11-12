@@ -199,6 +199,14 @@ class Settings(BaseSettings):
         return self.database_url or f"sqlite+aiosqlite:///{self.data_dir / 'platform.db'}"
 
     @property
+    def analyse_on(self) -> bool:
+        """PLATFORM_ANALYSE_ENABLED, en de database is SQLite. Op PostgreSQL maken 0011 en 0012
+        alleen de tabellen, zonder de triggers die gezichten en beeld wissen; daar blijven
+        gezichten en beeld uit, zoals FTS (Keuze 76; review A0, veilig F5). De monitor zegt dan
+        down met no_sqlite, de rij analyse draait niet en de schakelaars gaan niet aan."""
+        return self.analyse_enabled and self.db_url.startswith("sqlite")
+
+    @property
     def blob_dir(self) -> Path:
         return self.data_dir / "blobs"
 
