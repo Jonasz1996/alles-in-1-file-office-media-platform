@@ -402,7 +402,7 @@ def _downgrade(settings: Settings, revision: str, yes: bool) -> int:
         print("Niets gedaan.", file=sys.stderr)
         return 1
 
-    async def run() -> int:
+    async def run() -> tuple[int, bool]:
         try:
             return await db_downgrade(settings, revision, drop_rule_items=drop)
         finally:
