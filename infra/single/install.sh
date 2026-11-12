@@ -14,6 +14,8 @@
 # Plaatsnamen en landen bij foto's (fase 6): het script haalt twee bronnen op. Uit: curl … |
 # PLAATSEN=uit bash. Vóór elke update maakt het een reservekopie van de database in
 # <data>/backup (zonder gezichten en beeld); lukt die niet, dan stopt het vóór er iets verandert.
+# Gezichten (fase 6, de container analyse) staan tot 0.8.1 uit: zonder ANALYSE in .env doet het
+# script niets met de analyse (ANALYSE_STANDAARD hieronder). Aan: curl … | ANALYSE=aan bash.
 #
 # Voor tests (Jonas heeft ze niet nodig): PLATFORM_REPO (ook een lokaal pad of file://),
 # PLATFORM_SRC_REF (een commit of tag in plaats van de branch) en PLATFORM_ROOT (in plaats van
@@ -36,6 +38,10 @@ OFFICE_DIGEST=sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7
 OFFICE_MIN_FREE_GB=8
 # Het project heet "platform" (compose.yaml)
 PROJECT=platform
+# De analyse (gezichten, fase 6, Keuze 56–58) als ANALYSE niet in .env en niet in de omgeving
+# staat. Tot 0.8.1 uit: dan doet dit script precies wat 0.8.0 deed (geen download, geen container,
+# geen compose.analyse.yaml en geen nieuwe regel in .env). I2 zet hem op aan.
+ANALYSE_STANDAARD=uit
 
 stap() { printf '\n== %s\n' "$1"; }
 
@@ -93,6 +99,17 @@ want_places() {
   esac
 }
 
+# En voor de analyse (fase 6, Keuze 56): ANALYSE uit de omgeving wint van .env. Alleen aan of uit.
+want_analyse() {
+  case "${ANALYSE-}" in
+    "" | aan | uit) printf '%s' "${ANALYSE-}" ;;
+    *)
+      echo "ANALYSE moet aan of uit zijn (nu: $ANALYSE)." >&2
+      return 1
+      ;;
+  esac
+}
+
 # Na het maken of lezen van .env: de sleutels van office erbij, nooit overschreven. Een
 # gevraagde OFFICE vervangt daarna de waarde.
 merge_env() {
@@ -113,6 +130,9 @@ media_supported() { [ -f "$SRC/infra/single/compose.media.yaml" ]; }
 # En plaatsnamen? 0.7.1 (terugrollen, §3.10) heeft ze nog niet.
 places_supported() { [ -f "$SRC/api/app/geo/load.py" ]; }
 
+# En de analyse? 0.8.0 (terugrollen) heeft hem nog niet.
+analyse_supported() { [ -f "$SRC/infra/single/compose.analyse.yaml" ]; }
+
 # Na het maken of lezen van .env, als de versie plaatsnamen heeft: PLAATSEN=aan erbij als hij
 # ontbreekt. Een bestaande waarde blijft; een gevraagde PLAATSEN vervangt hem.
 merge_places_env() {
@@ -130,6 +150,27 @@ merge_media_env() {
   add_key MAX_UPLOAD_BYTES 53687091200
   add_key MEDIA_WORKER_KEY "$(hex)"
   [ -z "$1" ] || set_key MEDIA_SANDBOX "$1"
+  chmod 600 "$ENV_FILE"
+}
+
+# Na het maken of lezen van .env, als de versie de analyse heeft. Is hij aan (gevraagd, al aan in
+# .env, of ANALYSE_STANDAARD), dan komen ANALYSE=aan, de sleutel van de worker en de twee mappen
+# erbij. ANALYSE_WORKER_KEY (compose.analyse.yaml) komt er één keer bij, zoals MEDIA_WORKER_KEY,
+# en wordt nooit vervangen; ook niet als de analyse daarna uit en weer aan gaat. Anders verandert
+# er niets, behalve een gevraagde uit op een regel die er al is: een ontbrekende ANALYSE blijft
+# ontbreken (tot 0.8.1).
+merge_analyse_env() {
+  local now
+  now=$(sed -n 's/^ANALYSE=//p' "$ENV_FILE" | tail -n 1)
+  if [ "${1:-${now:-$ANALYSE_STANDAARD}}" = aan ]; then
+    add_key ANALYSE aan
+    set_key ANALYSE aan
+    add_key ANALYSE_WORKER_KEY "$(hex)"
+    add_key MODELLEN_ROOT "$PLATFORM_ROOT/modellen"
+    add_key SLEUTELS_ROOT "$PLATFORM_ROOT/sleutels/gezichten"
+  elif [ -n "$1" ] && grep -q '^ANALYSE=' "$ENV_FILE"; then
+    set_key ANALYSE "$1"
+  fi
   chmod 600 "$ENV_FILE"
 }
 
@@ -333,6 +374,262 @@ geo_load_running() {
     echo "Let op: plaatsnamen laden lukte niet (zie hierboven); het platform werkt verder."
 }
 
+# --- de analyse (fase 6, Keuze 56–58; K1-06) --------------------------------------------------
+# Zegt het script iets over de analyse? Alleen als de versie hem heeft en ANALYSE in .env (of de
+# omgeving) staat, of de standaard aan is. Zonder ANALYSE (tot 0.8.1): geen regel uitvoer.
+analyse_shown() {
+  analyse_supported && { [ -n "${ANALYSE-}" ] || [ "$ANALYSE_STANDAARD" = aan ]; }
+}
+
+# Een pad voor de analyse (K1-06): analyse_path_ok <pad> <1: het laatste deel mag van 10001 zijn>.
+# Absoluut, zonder . of .. of //, geen deel een symlink of iets anders dan een map, elk deel dat er
+# is van root (behalve het laatste van SLEUTELS_ROOT) en niet door anderen te schrijven, tenzij
+# met de sticky bit (zoals /tmp: daar kan niemand anders een map van root vervangen). Het pad ligt
+# niet onder DATA_ROOT, en DATA_ROOT niet eronder: DATA_ROOT is van de app, en een symlink die de
+# app daar neerzet, zou root anders volgen. Zegt waarom niet, en return 1.
+analyse_path_ok() {
+  local path=$1 app_last=$2 rest now="" part data
+  case "$path/" in
+    /*) ;;
+    *)
+      echo "$path is geen absoluut pad."
+      return 1
+      ;;
+  esac
+  case "$path/" in
+    // | *//* | */./* | */../*)
+      echo "$path hoort een pad zonder . of .. of // te zijn, en niet / zelf."
+      return 1
+      ;;
+  esac
+  data=$(realpath -m -- "$DATA_ROOT")
+  case "$path/" in
+    "$data/"*)
+      echo "$path ligt in DATA_ROOT ($DATA_ROOT), en dat is van de app; kies een map daarbuiten."
+      return 1
+      ;;
+  esac
+  case "$data/" in
+    "$path/"*)
+      echo "DATA_ROOT ($DATA_ROOT) ligt in $path; kies een eigen map voor de analyse."
+      return 1
+      ;;
+  esac
+  rest=${path#/}
+  while [ -n "$rest" ]; do
+    part=${rest%%/*}
+    if [ "$part" = "$rest" ]; then rest=""; else rest=${rest#*/}; fi
+    now=$now/$part
+    if [ -L "$now" ]; then
+      echo "$now is een symlink; dit script raakt hem niet aan. Maak er een gewone map van."
+      return 1
+    fi
+    [ -e "$now" ] || return 0
+    if [ ! -d "$now" ]; then
+      echo "$now is geen map; dit script raakt het niet aan."
+      return 1
+    fi
+    [ -z "$rest" ] && [ "$app_last" = 1 ] && return 0
+    if [ "$(stat -c %u -- "$now")" != 0 ]; then
+      echo "$now is niet van root; dit script raakt het niet aan."
+      return 1
+    fi
+    if [ -n "$(find "$now" -maxdepth 0 -perm /022 ! -perm -1000)" ]; then
+      echo "$now mag door anderen dan root beschreven worden; dit script raakt het niet aan."
+      return 1
+    fi
+  done
+}
+
+# De mappen van de analyse, buiten DATA_ROOT (Keuze 68, K1-06): MODELLEN_ROOT (0755, van root) en
+# SLEUTELS_ROOT (0700, van 10001: de app bewaart er de sleutel per eigenaar). Klopt een pad niet
+# (analyse_path_ok), of ligt het ene in het andere, dan weigert het met uitleg en return 1, en
+# is er niets aangemaakt. Root maakt alleen mappen onder mappen van root; nooit iets onder een
+# map van de app.
+analyse_dirs() {
+  local m=$MODELLEN_ROOT s=$SLEUTELS_ROOT
+  analyse_path_ok "$m" 0 || return 1
+  analyse_path_ok "$s" 1 || return 1
+  case "$m/" in
+    "$s/"*)
+      echo "MODELLEN_ROOT ($m) ligt in SLEUTELS_ROOT ($s); kies twee aparte mappen."
+      return 1
+      ;;
+  esac
+  case "$s/" in
+    "$m/"*)
+      echo "SLEUTELS_ROOT ($s) ligt in MODELLEN_ROOT ($m); kies twee aparte mappen."
+      return 1
+      ;;
+  esac
+  (umask 022 && mkdir -p -- "$m" "$(dirname -- "$s")") || return 1
+  chown root:root "$m" && chmod 0755 "$m" || return 1
+  if [ ! -d "$s" ]; then mkdir -m 0700 -- "$s" || return 1; fi
+  chown -h 10001:10001 "$s" && chmod 0700 "$s"
+}
+
+# Een naam uit models.lock: delen van [A-Za-z0-9._-], gescheiden door /, zonder . of .. (zoals
+# app/analyse/lock.py). Een andere naam zou buiten MODELLEN_ROOT kunnen wijzen.
+model_name_ok() {
+  case "/$1/" in
+    // | *//* | */./* | */../*) return 1 ;;
+    *[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/-]*) return 1 ;;
+  esac
+}
+
+# Haalt <url> naar <doel> (in een eigen map van root) en kijkt of grootte en sha256 kloppen:
+# ophalen <url> <bytes> <sha256> <doel>. curl stopt bij meer bytes dan verwacht (--max-filesize)
+# en heeft per MB een seconde extra. Alleen de bestanden van de analyse: de bronnen van geo houden
+# hun eigen curl (--retry 2, zoals in 0.8.0).
+ophalen() {
+  curl -fsSL --retry 3 --connect-timeout 20 --max-time $((600 + $2 / 1000000)) --max-filesize "$2" -o "$4" "$1" </dev/null &&
+    geo_ok "$4" "$2" "$3"
+}
+
+# Een map in MODELLEN_ROOT voor een model met een map in de naam (X3: siglip2-b32-256/…): elk deel
+# een gewone map van root (0755), nooit een symlink. model_dir <naam>
+model_dir() {
+  local rest=$1 now=$MODELLEN_ROOT part
+  while [ "${rest#*/}" != "$rest" ]; do
+    part=${rest%%/*}
+    rest=${rest#*/}
+    now=$now/$part
+    if [ -L "$now" ] || { [ -e "$now" ] && [ ! -d "$now" ]; }; then
+      echo "$now is een symlink of geen map; dit script raakt het niet aan."
+      return 1
+    fi
+    [ -d "$now" ] || mkdir -m 0755 -- "$now" || return 1
+    if [ "$(stat -c %u -- "$now")" != 0 ]; then
+      echo "$now is niet van root; dit script raakt het niet aan."
+      return 1
+    fi
+  done
+}
+
+# Zet een bestand van root in zijn eigen tijdelijke map neer als <doel> (0644, van root): eerst
+# install in die map, dan mv -T (een rename: een symlink op het doel volgt hij niet, hij vervangt
+# hem). zet_neer <bron> <tijdelijke map> <doel>
+zet_neer() {
+  install -m 0644 -o root -g root -- "$1" "$2/klaar" && mv -fT -- "$2/klaar" "$3"
+}
+
+# De modellen van models.lock in MODELLEN_ROOT (Keuze 58, K1-06). Per regel: staat het bestand er
+# al goed (geen symlink, gewoon bestand, grootte en sha256), dan niets. Anders ophalen naar een map
+# van mktemp -d onder MODELLEN_ROOT (0700, van root) en pas dan op zijn plek. Een symlink of iets
+# anders op die plek raakt het niet aan. Een url "-" maakt de host zelf (X3). Een model dat niet
+# lukt, is niet fataal: de container start, en zegt models_missing. Daarna: *.onnx die niet meer
+# in de lock staan weg, en de licenties ernaast. Zet MODELS_CHANGED (1: --force-recreate) en
+# MODELS_FAILED (de namen die niet lukten).
+modellen_ophalen() {
+  local root=$MODELLEN_ROOT lock=$SRC/api/app/analyse/models.lock lic=$SRC/api/app/analyse/licenties
+  local sha size name url rest target tmp need=0 avail keep="" f rel line todo=()
+  MODELS_CHANGED=0 MODELS_FAILED=""
+  if [ ! -f "$lock" ]; then
+    echo "Let op: deze versie heeft geen models.lock; er wordt niets opgehaald."
+    return 0
+  fi
+  while read -r sha size name url rest; do
+    case "$sha" in "" | "#"*) continue ;; esac
+    if ! [[ $sha =~ ^[0123456789abcdef]{64}$ && $size =~ ^[123456789][0123456789]{0,11}$ ]] ||
+      ! model_name_ok "$name" || [ -z "$url" ] || { [ -n "$rest" ] && [ "${rest#\#}" = "$rest" ]; }; then
+      echo "Let op: een regel van models.lock klopt niet (${name:-$sha}); overgeslagen."
+      continue
+    fi
+    keep=$keep$name$'\n'
+    geo_ok "$root/$name" "$size" "$sha" && continue
+    [ "$url" != - ] || continue
+    todo+=("$sha $size $name $url")
+    need=$((need + size))
+  done <"$lock"
+  rm -rf -- "$root"/.ophalen.*
+  if [ "${#todo[@]}" -gt 0 ]; then
+    avail=$(df --output=avail -B1 -- "$root" | tail -n 1 | tr -d ' ')
+    if ! [[ $avail =~ ^[0-9]+$ ]] || [ "$avail" -lt $((need + 100000000)) ]; then
+      echo "Let op: te weinig ruimte in $root voor de modellen ($((need / 1000000)) MB nodig, plus 100 MB marge)."
+      for line in "${todo[@]}"; do
+        read -r sha size name url <<<"$line"
+        MODELS_FAILED="$MODELS_FAILED $name"
+        echo "Let op: $name kon niet geladen worden; gezichten wachten tot de volgende installatie."
+      done
+      todo=()
+    fi
+  fi
+  if ! tmp=$(mktemp -d -- "$root/.ophalen.XXXXXX"); then
+    echo "Let op: geen tijdelijke map in $root; er wordt niets opgehaald."
+    for line in "${todo[@]}"; do
+      read -r sha size name url <<<"$line"
+      MODELS_FAILED="$MODELS_FAILED $name"
+      echo "Let op: $name kon niet geladen worden; gezichten wachten tot de volgende installatie."
+    done
+    MODELS_FAILED=${MODELS_FAILED# }
+    return 0
+  fi
+  for line in "${todo[@]}"; do
+    read -r sha size name url <<<"$line"
+    target=$root/$name
+    if ! model_dir "$name"; then
+      :
+    elif [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
+      echo "$target is een symlink of geen gewoon bestand; dit script raakt het niet aan."
+    elif ophalen "$url" "$size" "$sha" "$tmp/model" && zet_neer "$tmp/model" "$tmp" "$target"; then
+      MODELS_CHANGED=1
+      echo "Model geladen: $name"
+      rm -f -- "$tmp/model"
+      continue
+    else
+      echo "Kon $name niet ophalen, of de grootte of de sha256 klopt niet ($url)."
+    fi
+    rm -f -- "$tmp/model" "$tmp/klaar"
+    MODELS_FAILED="$MODELS_FAILED $name"
+    echo "Let op: $name kon niet geladen worden; gezichten wachten tot de volgende installatie."
+  done
+  while IFS= read -r -d '' f; do
+    rel=${f#"$root"/}
+    if ! grep -qxF -- "$rel" <<<"$keep"; then
+      rm -f -- "$f" && MODELS_CHANGED=1 && echo "Oud model weg: $rel"
+    fi
+  done < <(find "$root" -mindepth 1 -maxdepth 2 -path "$root/.ophalen.*" -prune -o -type f -name '*.onnx' -print0)
+  for f in "$lic"/*.txt; do
+    [ -f "$f" ] || continue
+    target=$root/${f##*/}
+    if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
+      echo "Let op: $target is een symlink of geen gewoon bestand; de licentie staat er niet naast."
+    elif ! cmp -s -- "$f" "$target"; then
+      zet_neer "$f" "$tmp" "$target" || echo "Let op: de licentie ${f##*/} kon niet naast de modellen."
+    fi
+  done
+  rm -rf -- "$tmp"
+  MODELS_FAILED=${MODELS_FAILED# }
+}
+
+# Beslist over de analyse voor deze run (Keuze 56–58). Zet ANALYSE_ON (1: de container analyse en
+# compose.analyse.yaml) en ANALYSE_REASON (waarom uit, of wat er niet goed ging). Bij aan eerst de
+# mappen en dan de modellen. Breekt nooit af: weigert het script een map, dan draait het platform
+# deze keer zonder analyse; mist er een model, dan start de container en zegt hij models_missing.
+# Een andere waarde dan aan of uit in .env (met de hand bewerkt): uit, met uitleg.
+decide_analyse() {
+  ANALYSE_ON=0 ANALYSE_REASON="" MODELS_CHANGED=0 MODELS_FAILED=""
+  analyse_shown || return 0
+  case "${ANALYSE:-$ANALYSE_STANDAARD}" in
+    aan) ;;
+    uit)
+      ANALYSE_REASON="ANALYSE=uit in $ENV_FILE"
+      return 0
+      ;;
+    *)
+      ANALYSE_REASON="ANALYSE in $ENV_FILE moet aan of uit zijn (nu: $ANALYSE); de analyse blijft uit"
+      return 0
+      ;;
+  esac
+  if ! analyse_dirs; then
+    ANALYSE_REASON="de mappen voor de analyse kloppen niet (zie hierboven); het platform draait deze keer zonder"
+    return 0
+  fi
+  modellen_ophalen
+  ANALYSE_ON=1
+  [ -z "$MODELS_FAILED" ] || ANALYSE_REASON="niet alle modellen zijn er ($MODELS_FAILED); gezichten wachten tot de volgende installatie"
+}
+
 # De container van de app (draaiend), of niets
 platform_container() {
   docker ps -q --filter "label=com.docker.compose.project=$PROJECT" --filter label=com.docker.compose.service=platform | head -n 1
@@ -460,6 +757,7 @@ decide_office() {
 # De compose-bestanden voor deze run (zet de array compose). $1 = office, $2 = media in zijn
 # eigen container, $3 = media zonder afscherming (MEDIA_SANDBOX=uit: de app krijgt media, maar
 # geen PLATFORM_MEDIA_WORKER, en start de worker zelf). Zonder $2 en $3: geen media (0.6.0).
+# $4 = de analyse (fase 6): compose.analyse.yaml, en met grenzen compose.analyse-limits.yaml.
 compose_files() {
   local dir=$SRC/infra/single
   compose=(docker compose --project-directory "$dir" --env-file "$ENV_FILE" -f "$dir/compose.yaml")
@@ -472,6 +770,10 @@ compose_files() {
     if limits_supported; then compose+=(-f "$dir/compose.media-limits.yaml"); fi
   elif [ "${3:-0}" = 1 ]; then
     compose+=(-f "$dir/compose.media-local.yaml")
+  fi
+  if [ "${4:-0}" = 1 ]; then
+    compose+=(-f "$dir/compose.analyse.yaml")
+    if limits_supported; then compose+=(-f "$dir/compose.analyse-limits.yaml"); fi
   fi
 }
 
@@ -491,6 +793,29 @@ media_start() {
   fi
   "${compose[@]}" exec -T platform python -m app.cli media-status --wait 20 </dev/null ||
     echo "Let op: media meldt een probleem (zie hierboven); het platform werkt verder."
+}
+
+# Na de app en media: de container analyse, en daarna zijn stand (app.cli analyse-status, de eerste
+# regel in ANALYSE_STATUS). Is er een model veranderd, dan met --force-recreate: de worker leest
+# de modellen bij de start. Lukt de start niet, of is de stand niet ok, dan alleen een
+# waarschuwing (zoals media_start): de app draait al, en gezichten wachten.
+analyse_start() {
+  local force=() out
+  ANALYSE_STATUS=""
+  [ "${MODELS_CHANGED:-0}" != 1 ] || force=(--force-recreate)
+  if ! "${compose[@]}" up -d --no-deps "${force[@]}" analyse </dev/null; then
+    ANALYSE_REASON="de container analyse kon niet starten (de melding van Docker staat hierboven)"
+    echo "Let op: $ANALYSE_REASON; het platform werkt verder zonder gezichten."
+    return 0
+  fi
+  if out=$("${compose[@]}" exec -T platform python -m app.cli analyse-status --wait 20 </dev/null); then
+    printf '%s\n' "$out"
+    ANALYSE_STATUS=${out%%$'\n'*}
+  fi
+  if [ "$ANALYSE_STATUS" != "Analyse: ok" ]; then
+    [ -n "$ANALYSE_REASON" ] || ANALYSE_REASON="de analyse meldt een probleem (zie hierboven)"
+    echo "Let op: $ANALYSE_REASON; het platform werkt verder."
+  fi
 }
 
 # Vóór het vervangen van de app: kijkt er iemand? Alleen een waarschuwing (Keuze 47): die
@@ -639,7 +964,7 @@ broncode() {
 }
 
 instellingen() {
-  local want=$1 want_m=$2 want_p=${3-}
+  local want=$1 want_m=$2 want_p=${3-} want_a=${4-}
   mkdir -p "$PLATFORM_ROOT"
   if [ -f "$ENV_FILE" ] && grep -q '^POSTGRES_PASSWORD=' "$ENV_FILE"; then
     # Instellingen van de eerste versie (met Traefik, PostgreSQL en SeaweedFS)
@@ -684,6 +1009,13 @@ ENV
     add_key PLAATSEN "$want_p"
     set_key PLAATSEN "$want_p"
   fi
+  if analyse_supported; then
+    merge_analyse_env "$want_a"
+  elif [ "$want_a" = aan ] || { [ -n "$want_a" ] && grep -q '^ANALYSE=' "$ENV_FILE"; }; then
+    # Een versie zonder analyse (terugrollen naar 0.8.0): de wens bewaren, verder niets
+    add_key ANALYSE "$want_a"
+    set_key ANALYSE "$want_a"
+  fi
   chmod 600 "$ENV_FILE"
   # shellcheck disable=SC1090
   . "$ENV_FILE"
@@ -714,11 +1046,13 @@ wait_health() {
 }
 
 main() {
-  local want want_m want_p old_app new_app previous="" pin="" container app_before app_after
-  # Eerst: OFFICE, MEDIA_SANDBOX en PLAATSEN uit de omgeving, vóór er een .env gelezen wordt (M13)
+  local want want_m want_p want_a old_app new_app previous="" pin="" container app_before app_after
+  # Eerst: OFFICE, MEDIA_SANDBOX, PLAATSEN en ANALYSE uit de omgeving, vóór er een .env gelezen
+  # wordt (M13)
   want=$(want_office) || exit 1
   want_m=$(want_media) || exit 1
   want_p=$(want_places) || exit 1
+  want_a=$(want_analyse) || exit 1
   GEO_STATE="" BACKUP_FILE=""
   check_host
 
@@ -732,7 +1066,7 @@ main() {
   broncode
 
   stap "Instellingen"
-  instellingen "$want" "$want_m" "$want_p"
+  instellingen "$want" "$want_m" "$want_p" "$want_a"
   check_places || exit 1
 
   if places_supported; then
@@ -759,7 +1093,16 @@ main() {
   else
     echo "Media: uit ($MEDIA_REASON)"
   fi
-  compose_files "$OFFICE_ON" "$MEDIA_ON" "$MEDIA_LOCAL"
+
+  # De analyse (fase 6): zonder ANALYSE in .env (tot 0.8.1) geen stap en geen regel uitvoer
+  if analyse_shown; then stap "Analyse (gezichten)"; fi
+  decide_analyse
+  if [ "$ANALYSE_ON" = 1 ]; then
+    echo "Analyse: aan (modellen in $MODELLEN_ROOT)"
+  elif analyse_shown; then
+    echo "Analyse: uit ($ANALYSE_REASON)"
+  fi
+  compose_files "$OFFICE_ON" "$MEDIA_ON" "$MEDIA_LOCAL" "$ANALYSE_ON"
   container=$(office_container)
   if [ -n "$container" ]; then previous=$(docker inspect --format '{{.Image}}' "$container" 2>/dev/null || true); fi
   [ -z "${OFFICE_IMAGE:-}" ] || pin=$(image_id "$OFFICE_IMAGE")
@@ -794,13 +1137,19 @@ main() {
     media_start
   fi
 
+  if [ "$ANALYSE_ON" = 1 ]; then
+    stap "Analyse starten"
+    analyse_start
+  fi
+
   if [ "$OFFICE_ON" = 1 ]; then
     stap "Office starten"
     office_start "$container" "$previous" "$pin"
   fi
 
   # Pas nu het vorige image van de app weg (alleen dat; geen prune van andermans images): de
-  # oude mediaworker draaide er tot media_start nog op, en dan faalde het weghalen stil
+  # oude mediaworker en de oude analyse draaiden er tot media_start en analyse_start nog op, en
+  # dan faalde het weghalen stil
   if [ -n "$old_app" ] && [ "$old_app" != "$new_app" ]; then docker image rm "$old_app" >/dev/null 2>&1 || true; fi
 
   slot
@@ -852,6 +1201,7 @@ KLAAR
     office_supported && echo "  Aan: $script | ${pre}OFFICE=aan bash"
   fi
   slot_media "$script" "$pre"
+  slot_analyse "$script" "$pre"
   slot_search "$script" "$pre"
   cat <<KLAAR
 
@@ -887,6 +1237,29 @@ slot_search() {
       ;;
   esac
   [ -z "${BACKUP_FILE-}" ] || echo "Reservekopie van vóór deze run: $BACKUP_FILE"
+}
+
+# De regels over de analyse in de eindtekst: aan, of waarom niet, en hoe het verder kan. Zonder
+# ANALYSE in .env (tot 0.8.1), of zonder decide_analyse (een test die alleen slot draait): niets.
+slot_analyse() {
+  local script=$1 pre=$2
+  [ -n "${ANALYSE_ON+x}" ] && analyse_shown || return 0
+  if [ "$ANALYSE_ON" = 1 ] && [ -z "$ANALYSE_REASON" ]; then
+    echo "Gezichten (de container analyse): aan."
+    echo "  Uit: $script | ${pre}ANALYSE=uit bash"
+  elif [ "$ANALYSE_ON" = 1 ]; then
+    echo "Gezichten (de container analyse): aan, maar $ANALYSE_REASON."
+    echo "  Opnieuw proberen: $script | ${pre}bash"
+    echo "  Uit: $script | ${pre}ANALYSE=uit bash"
+  elif [ "${ANALYSE:-$ANALYSE_STANDAARD}" = uit ]; then
+    echo "Gezichten (de container analyse): uit (ANALYSE=uit)."
+    if [ -d "${MODELLEN_ROOT-}" ]; then
+      echo "  De modellen blijven in $MODELLEN_ROOT tot je die map weggooit."
+    fi
+    echo "  Aan: $script | ${pre}ANALYSE=aan bash"
+  else
+    echo "Gezichten (de container analyse): uit, want $ANALYSE_REASON."
+  fi
 }
 
 # De regels over media in de eindtekst: aan (afgeschermd), of waarom niet, en hoe het verder kan
