@@ -31,19 +31,18 @@ from app.models import Node, NodeOrigin
 
 CHUNK = 500  # rijen per INSERT of IN (...), zoals de kopie zelf
 
-_TABLE = NodeOrigin.__table__
-
 
 async def placed(session: AsyncSession, node_id: uuid.UUID, actor_id: uuid.UUID | None) -> None:
     """De rij van een bestand met nieuwe inhoud (nieuw, of vervangen): actor_id is wie het
     neerzette, None via een uploadlink. Een bestaande rij wordt vervangen."""
-    stmt = sqlite_insert(_TABLE).values(
-        node_id=node_id, created_by=actor_id, via_link=int(actor_id is None)
-    )
+    # In één keten, zodat de wachter van Keuze 3 (test_search_no_replace) de tabel ziet
+    excluded = sqlite_insert(NodeOrigin).excluded
     await session.execute(
-        stmt.on_conflict_do_update(
-            index_elements=[_TABLE.c.node_id],
-            set_={"created_by": stmt.excluded.created_by, "via_link": stmt.excluded.via_link},
+        sqlite_insert(NodeOrigin)
+        .values(node_id=node_id, created_by=actor_id, via_link=int(actor_id is None))
+        .on_conflict_do_update(
+            index_elements=[NodeOrigin.node_id],
+            set_={"created_by": excluded.created_by, "via_link": excluded.via_link},
         )
     )
 
@@ -76,4 +75,4 @@ async def copied(
         for old, new in chunk:
             created_by, via_link = foreign.get(old, own)
             values.append({"node_id": new, "created_by": created_by, "via_link": via_link})
-        await session.execute(insert(_TABLE), values)
+        await session.execute(insert(NodeOrigin), values)
