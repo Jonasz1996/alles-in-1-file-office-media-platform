@@ -268,7 +268,9 @@ class FakeAnalyseWorker:
         uid = wire.peer_uid(sock)
         reply = wire.hello_reply(self.key, nonce, uid)
         if fault == "wrong_uid":
-            reply = wire.hello_reply(self.key, nonce, uid + 1)
+            # Een goed bewijs over de echte uid, maar een andere uid in het antwoord: zo faalt
+            # alleen de vergelijking van de uid in de client (review A0, contract F3)
+            reply["uid"] = uid + 1
         elif fault == "wrong_proof":
             reply["proof"] = wire.proof(secrets.token_hex(32), nonce, uid)
         elif fault == "media_proof":
