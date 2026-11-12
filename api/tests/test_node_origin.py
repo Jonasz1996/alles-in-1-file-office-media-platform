@@ -125,6 +125,32 @@ async def test_nieuwe_inhoud_en_een_versie_terugzetten(client, world, settings):
     assert await origins(settings) == {foto: (w["anna_id"], 0)}
 
 
+async def test_een_versie_van_een_link_terugzetten(client, world, settings):
+    """Review A0, veilig F4 (nit, niet veranderd): wie een versie maakte, staat nergens (a0.md,
+    Open 8, voor X2). Zet de eigenaar de inhoud van een uploadlink terug, dan is die van hem: hij
+    kiest die inhoud zelf, zoals downloaden en opnieuw uploaden. Deze test legt dat vast; wil X2
+    het strenger, dan faalt hij en hoort er een kolom op version bij (een eigen migratie)."""
+    w = world
+    link = await new_link(client, w["jonas"], w["gedeeld"], permission="upload")
+    key = (await open_link(client, link))["key"]
+    r = await tus_create(client, key, "gast.jpg", 6)
+    await tus_send(client, key, r.headers["location"], 0, b"\xff\xd8gast")
+    gast = (await children(client, w["jonas"], w["gedeeld"]))["gast.jpg"]
+    assert await origins(settings) == {gast: (None, 1)}
+    r = await client.put(
+        f"/api/v1/files/{gast}/content", content=b"\xff\xd8eigen", headers=w["jonas"]
+    )
+    assert r.status_code == 200, r.text
+    assert await origins(settings) == {gast: (w["jonas_id"], 0)}
+    r = await client.get(f"/api/v1/files/{gast}/versions", headers=w["jonas"])
+    (van_de_link,) = r.json()
+    r = await client.post(
+        f"/api/v1/files/{gast}/versions/{van_de_link['id']}/restore", headers=w["jonas"]
+    )
+    assert r.status_code == 200, r.text
+    assert await origins(settings) == {gast: (w["jonas_id"], 0)}
+
+
 async def test_kopieren(client, world, settings):
     w = world
     link = await new_link(client, w["jonas"], w["gedeeld"], permission="upload")
