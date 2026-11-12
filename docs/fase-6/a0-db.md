@@ -248,19 +248,24 @@ zware schijflast (dd ernaast) hield één TRUNCATE het schrijfslot eens ±267 ms
    `owner_id` en `blob_id`. Wordt een bestand een beeld (of geen beeld meer) zonder nieuwe
    inhoud, dan telt dat niet. Dat komt in de app niet voor; X3 kan het bij het maken van het
    bestand per eigenaar toch nakijken.
-3. **Wie een versie maakte**, staat nergens: terugzetten telt als van wie terugzet.
+3. **Wie een versie maakte**, staat nergens: terugzetten telt als van wie terugzet. [Review A0,
+   veilig F4: zo gelaten, en vastgelegd in `test_een_versie_van_een_link_terugzetten`; zie
+   [a0.md](a0.md), De review.]
 4. **Na `search-triggers` zonder triggers**: wat in die tijd nieuwe inhoud kreeg, houdt zijn
    gezichten (rebuild ruimt alleen een andere eigenaar op). `face_scan.version` zegt niet welke
    inhoud gescand is; X2 kan het daar vastleggen.
-5. **`--stappen` van `test_install_search.sh`** (de update van 0.7.1 naar deze versie en terug)
-   draait alleen in CI. Stap 3 is hier met de echte `backup.py` op een database op 0012
-   nagespeeld: exit 1 met "Reservekopie mislukt: installatietest", geen kopie; daarna weer een
-   kopie.
+5. ~~**`--stappen` van `test_install_search.sh`** (de update van 0.7.1 naar deze versie en terug)
+   draait alleen in CI.~~ [Review A0, uitrol U3: hij draait ook hier, met Docker; na de review 79
+   goed en 0 fout op `60df77a`, zie [a0.md](a0.md), De review.] Stap 3 is hier met de echte
+   `backup.py` op een database op 0012 nagespeeld: exit 1 met "Reservekopie mislukt:
+   installatietest", geen kopie; daarna weer een kopie.
 6. **De langste upload in M6 kort** was na twee keer 268 en 269 ms (voor: hooguit 201 ms), met
    dezelfde mediaan; zie Metingen. Met 11 uploads per run is dat niet te scheiden van de ruis.
    Wie het zeker wil weten, draait M6 vaker om en om op een rustige machine.
 7. **PostgreSQL** is alleen met de hand nagelopen (heen, terug naar 0010 en 0009, weer heen,
-   PostgreSQL 16); er is geen vaste test die 0011 en 0012 op PostgreSQL draait.
+   PostgreSQL 16); er is geen vaste test die 0011 en 0012 op PostgreSQL draait. [Review A0:
+   `node_origin` faalde daar bij elke upload (contract F2, gerepareerd, met een test die de
+   upsert voor PostgreSQL compileert), en de analyse blijft daar nu uit (veilig F5).]
 8. **Het checkpoint bij het starten** loopt elke keer, ook als er niets te migreren was. Meestal is
    de WAL dan leeg en duurt het milliseconden. Staat er nog iets in de WAL en houdt een ander proces
    een lezer open (bijvoorbeeld een `sqlite3`-shell van de beheerder), dan probeert het tot 10 s,
@@ -305,6 +310,7 @@ Op deze machine, elk zwaar ding alleen en onder `taskset -c 0-2`.
   bij Metingen. M6 ook daar.
 - Infra: `shellcheck` en `bash -n` op de scripts van de infra-job, `docker compose config -q`
   (alleen, met office, met de grenzen), `test_install_env.sh` (alle controles),
-  `test_install_media.sh` (127) en `test_install_search.sh` (209): groen. `--stappen` niet (Open 5).
+  `test_install_media.sh` (127) en `test_install_search.sh` (209): groen. `--stappen` toen niet
+  (Open 5; na de review wel, 79 goed: zie [a0.md](a0.md)).
 - PostgreSQL 16 met de hand: van 0010 naar head, terug naar 0010, weer naar head, terug naar
   0009 en weer naar head (Open 7).

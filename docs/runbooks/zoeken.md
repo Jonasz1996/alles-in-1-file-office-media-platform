@@ -44,7 +44,10 @@ Hieronder heet dat kortweg "het script"; een instelling zet je vóór `bash`, zo
 5. **De reservekopie** van de database, terwijl de oude app nog draait (hieronder). Lukt die niet,
    dan stopt het script hier, vóór er iets verandert aan de app.
 6. Het vervangt de app en wacht tot `/health` antwoordt. Bij de eerste start van 0.8.0 draait
-   migratie 0010 (seconden). Bij de start bouwt de app `geo/places.sqlite` uit de bronnen
+   migratie 0010 (seconden). Wie van 0.7.1 naar deze branch bijwerkt, ziet de app bij die start
+   één keer meer geheugen gebruiken: het vullen van 0010 houdt zijn tijdelijke rijen in het
+   geheugen, nooit in een bestand naast de database (±120 MB bij 100.000 bestanden, ±770 MB bij
+   300.000). Bij de start bouwt de app `geo/places.sqlite` uit de bronnen
    (±1 minuut). Werd de app in deze run niet opnieuw gestart (hetzelfde image, dezelfde
    instellingen) maar zijn de bronnen nieuw, dan bouwt het script hem in de draaiende app
    (`app.cli geo-load`).

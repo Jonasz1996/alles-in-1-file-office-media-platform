@@ -67,18 +67,21 @@ X2a). X2a bouwt erop; wat hier vastligt, zijn de vormen.
   uit `REASONS` (`key_missing`, `key_reused`, `no_socket`, `refused`, `handshake`, `no_answer`,
   `sandbox`), `AnalyseBusy(child)`, `AnalyseFailed(code, detail)`. De fd's blijven van de
   aanroeper. De sleutel staat nooit in een fout of een log (getest), en een bericht ook niet.
+  [Review A0, veilig F3: een code die de app niet kent, wordt `internal`, en de detail is één
+  regel zonder stuurtekens.]
 - **`monitor`**: de standen van Keuze 59 (`off`, `down`, `models_missing`, `ok`) en
   `analyse_problem()` in het Nederlands. Zonder `PLATFORM_ANALYSE_ENABLED` gebeurt er niets: geen
   taak, geen socket, de sleutel wordt niet gelezen (getest door die drie te laten falen als ze
-  toch gebeuren). Een sleutel korter dan 32 tekens is `down`/`key_missing`; gelijk aan het geheim
-  van de app of aan de sleutel van de mediaworker (ook de lokale `media_key()`) is
-  `down`/`key_reused`; dan start er geen lus. Anders: eerst na 0,2 s, dan elke 30 s (`INTERVAL`)
-  één `caps` met hooguit 5 s voor een antwoord; is hij `down`, dan na 1, 2, 4 … hooguit 30 s.
-  Elke overgang komt één keer in het log. `status().ready(names)` zegt of precies die modellen er
-  zijn. Voor een job in de rij analyse: `wait(names)` vóór de opdracht (`down`/`off`:
-  `Defer(300)`, een model weg: `Defer(3600)`) en `deferral(fout)` erna (`AnalyseDown`:
-  `Defer(300)`, `AnalyseBusy`: `Defer(30)`, `model_missing`: `Defer(3600)`); een `Defer` telt
-  geen poging (getest met een echte job in de rij `analyse`).
+  toch gebeuren). [Review A0, veilig F5: op PostgreSQL ook niet; de stand is daar `down` met de
+  reden `no_sqlite` (`Settings.analyse_on`).] Een sleutel korter dan 32 tekens is
+  `down`/`key_missing`; gelijk aan het geheim van de app of aan de sleutel van de mediaworker (ook
+  de lokale `media_key()`) is `down`/`key_reused`; dan start er geen lus. Anders: eerst na 0,2 s,
+  dan elke 30 s (`INTERVAL`) één `caps` met hooguit 5 s voor een antwoord; is hij `down`, dan na
+  1, 2, 4 … hooguit 30 s. Elke overgang komt één keer in het log. `status().ready(names)` zegt of
+  precies die modellen er zijn. Voor een job in de rij analyse: `wait(names)` vóór de opdracht
+  (`down`/`off`: `Defer(300)`, een model weg: `Defer(3600)`) en `deferral(fout)` erna
+  (`AnalyseDown`: `Defer(300)`, `AnalyseBusy`: `Defer(30)`, `model_missing`: `Defer(3600)`); een
+  `Defer` telt geen poging (getest met een echte job in de rij `analyse`).
 
 ### Instellingen, lifespan en CLI
 
@@ -168,7 +171,9 @@ Waar het ontwerp een vorm open liet, staat hij nu zo (in `wire.py`, getest):
 - De args weigeren een onbekend veld (`extra="forbid"`); de data laten een onbekend veld liggen
   (`extra="ignore"`), zodat een nieuwere worker een oude app niet breekt.
 - Een antwoord op caps dat niet klopt, is `down` met de reden `bad_answer` (een reden naast die
-  van Keuze 59).
+  van Keuze 59). [Review A0, veilig F3: caps klopt ook niet met een modelnaam die geen pad is als
+  in `models.lock` (`wire.MODEL_NAME`, hooguit 200 tekens), een opdracht in `built` die niet
+  `OP_NAME` is, of meer dan 64 modellen of 32 opdrachten; de naam komt dan nergens.]
 - `models_missing` geldt als een model van caps niet `ok` is; `ready(names)` zegt het per set
   modellen.
 - `analyse-status --wait` heeft altijd exitcode 0 (zoals `media-status`); zonder `--wait` 1 bij
@@ -194,6 +199,9 @@ Waar het ontwerp een vorm open liet, staat hij nu zo (in `wire.py`, getest):
 - **Bestanden die A0 niet bezit**: `api/tests/test_conftest_volgorde.py` (de lijst `BESTANDEN`
   kent nu de map `analyse`, met twee asserts erbij); `.github/workflows/ci.yml` (één stap in
   `images`); `e2e/pytest.ini` (de drie markers, zoals §4.6 zegt).
+- **Met hashes** (review A0, veilig F1). §3.11 geeft de vijf aan `uv pip install` met alleen
+  naam en versie. Nu neemt awk hun blokken, met `--hash`, uit `uv export` met hashes, en gaat
+  `--require-hashes` mee; zie [a0.md](a0.md), De review.
 
 ## Wat alleen CI bewijst
 
@@ -217,6 +225,10 @@ CA van de proxy van de sandbox. Wat daaruit bleek:
 
 CI bewijst daarna: de build van het echte image, de stap in `images` op dat image, en dat het
 image van het platform nog start zoals in 0.8.0.
+
+Na de review A0 (veilig F1) is de stand-in opnieuw gebouwd met het blok met hashes: de build
+slaagt met precies vijf pakketten in `/opt/analyse`, en faalt (exit 1) met één verkeerde hash in
+`uv.lock`. CI bewijst de build met hashes op het echte image.
 
 ## Metingen
 
