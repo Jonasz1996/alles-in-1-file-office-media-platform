@@ -12,7 +12,10 @@
 # geïnstalleerd), dus zet BOOT /srv er zelf in. test_compose_analyse.py houdt x-analyse-boot
 # gelijk aan app/analyse/runtime.BOOT en x-omzet-boot aan OMZET_BOOT.
 x-analyse-boot: &boot "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('app.analyse.worker',run_name='__main__',alter_sys=True)"
-x-omzet-boot: &omzet "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('app.analyse.worker.omzetten.siglip',run_name='__main__',alter_sys=True)"
+# (De regel van x-omzet-boot is te lang voor yamllint: een \ aan het eind van een regel tussen
+# dubbele aanhalingstekens plakt de twee delen aan elkaar, zonder spatie.)
+x-omzet-boot: &omzet "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));\
+  runpy.run_module('app.analyse.worker.omzetten.siglip',run_name='__main__',alter_sys=True)"
 
 services:
   platform:
