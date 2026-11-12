@@ -23,11 +23,14 @@ app start niet op een nieuwer schema. Het vraagt eerst om bevestiging (typ "ja")
 Wat alleen in de nieuwere kolommen en tabellen stond, is daarna weg. Stop de app eerst.
 Haalt de downgrade 0010 weg (fase 6), dan zegt hij ook wat er van zoeken en foto's weggaat, en
 vraagt hij of album-items van een regel die niet gedeeld worden eerst uit hun album moeten
-(standaard ja): in 0.7.1 deelt een album elk item.
+(standaard ja): in 0.7.1 deelt een album elk item. Haalt hij 0012 (zoeken op beeld) of 0011
+(gezichten) weg, dan zegt hij ook dat; 0011 wist de gezichten met secure_delete. Na de downgrade
+gaat de WAL leeg (wal_checkpoint(TRUNCATE)), zodat er niets van in -wal blijft. Terug naar 0.8.0
+is db-downgrade 0010, naar 0.7.1 db-downgrade 0009.
 
 db-backup maakt een reservekopie van de database met sqlite3.Connection.backup, terwijl de app
 draait (Keuze 52 van fase 6). Het bestand komt in /data/backup en heet naar de alembic-head en
-de tijd: platform-0010-<tijd>.db. Per head blijft de nieuwste; zo staat de kopie van vóór een
+de tijd: platform-0012-<tijd>.db. Per head blijft de nieuwste; zo staat de kopie van vóór een
 migratie er na nieuwe kopieën nog. Het migreert niets. De kopie heeft geen gezichten en geen
 beeld. install.sh draait dezelfde tekst (app/backup.py, alleen de standaardbibliotheek) met het
 image dat er nog draait, want dit commando bestaat in oudere images niet.
@@ -100,6 +103,7 @@ from app.config import Settings, get_settings
 from app.db import get_engine
 from app.geo import load as geo_load
 from app.migrate import alembic_config
+from app.migrate import checkpoint as wal_checkpoint
 from app.models import AlbumItem, User
 from app.routers.auth import being_deleted, reset_totp
 from app.search import bench as search_bench
@@ -185,7 +189,8 @@ def check_downgrade(current: str | None, revision: str) -> None:
 async def db_downgrade(settings: Settings, revision: str, *, drop_rule_items: bool = False) -> int:
     """Alembic downgrade naar revision, in één transactie. drop_rule_items: eerst de album-items
     van een regel die niet gedeeld worden uit hun album (§3.1), in dezelfde transactie; faalt de
-    downgrade, dan staan ze er nog. Het aantal items dat eruit ging."""
+    downgrade, dan staan ze er nog. Daarna de WAL leeg (app.migrate.checkpoint, §3.1a): wat 0011
+    met secure_delete wiste, staat dan ook niet meer in -wal. Het aantal items dat eruit ging."""
     cfg = alembic_config(settings.db_url)
 
     def run(connection) -> int:
@@ -201,12 +206,17 @@ async def db_downgrade(settings: Settings, revision: str, *, drop_rule_items: bo
         return removed
 
     async with get_engine(settings).begin() as conn:
-        return await conn.run_sync(run)
+        removed = await conn.run_sync(run)
+    await wal_checkpoint(settings)
+    return removed
 
 
 # De revisie van zoeken en foto's: alleen een downgrade die hém weghaalt, raakt de zoekindex,
 # de plekken, de hashes, de personen en de regels van slimme albums (fase 6, §3.1)
 SEARCH_REVISION = "0010"
+# De revisies van gezichten en van zoeken op beeld (fase 6, §3.1a)
+FACES_REVISION = "0011"
+BEELD_REVISION = "0012"
 
 
 def removed_revisions(current: str, revision: str) -> list[str]:
@@ -283,13 +293,33 @@ SEARCH_LOST = (
 )
 
 
-def _confirm(current: str | None, revision: str, *, search: bool) -> bool:
+# Wat een downgrade die 0012 of 0011 weghaalt, kwijtmaakt (§3.1a, Keuze 76)
+BEELD_LOST = "De beeldindex gaat weg. Je foto's blijven."
+FACES_LOST = (
+    "De gezichten gaan weg: wat de analyse vond, met de voorstellen en de groepen, en wie welk "
+    "bestand uploadde. Je foto's blijven."
+)
+
+
+def lost_lines(removed: list[str]) -> list[str]:
+    """Wat een downgrade die deze revisies weghaalt kwijtmaakt, de nieuwste eerst."""
+    lines = []
+    if BEELD_REVISION in removed:
+        lines.append(BEELD_LOST)
+    if FACES_REVISION in removed:
+        lines.append(FACES_LOST)
+    if SEARCH_REVISION in removed:
+        lines.append(SEARCH_LOST)
+    return lines
+
+
+def _confirm(current: str | None, revision: str, *, lost: list[str]) -> bool:
     print(
         f"De database gaat van revisie {current} terug naar {revision}. Wat alleen in de "
         "nieuwere kolommen en tabellen staat, is daarna weg. Is de app gestopt?"
     )
-    if search:
-        print(SEARCH_LOST)
+    for line in lost:
+        print(line)
     try:
         answer = input('Typ "ja" om door te gaan: ')
     except EOFError:
@@ -347,9 +377,10 @@ def _downgrade(settings: Settings, revision: str, yes: bool) -> int:
         )
         return 1
     assert now is not None  # check_downgrade laat None niet door
-    search = SEARCH_REVISION in removed_revisions(now, revision)
+    removed_revs = removed_revisions(now, revision)
+    search = SEARCH_REVISION in removed_revs
     found, drop = _rule_items_answer(settings, yes, search)
-    if not yes and not _confirm(now, revision, search=search):
+    if not yes and not _confirm(now, revision, lost=lost_lines(removed_revs)):
         print("Niets gedaan.", file=sys.stderr)
         return 1
 

@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import access, errors
+from app import access, errors, origin
 from app.db import Session
 from app.models import Node, User
 
@@ -265,7 +265,7 @@ async def copy_many(body: CopyMany, user: CurrentUser, session: Session, blobs: 
             tops: dict[uuid.UUID, uuid.UUID] = {}
             refs: Counter[str] = Counter()
             for node, rows in part:
-                tops[node.id] = await _copy_tree(session, node, rows, target)
+                tops[node.id] = await _copy_tree(session, node, rows, target, user.id)
                 refs.update(r.blob_id for r in rows if r.blob_id)
             await files.add_refs(session, refs)
             await session.commit()
@@ -281,10 +281,12 @@ async def copy_many(body: CopyMany, user: CurrentUser, session: Session, blobs: 
     return _ordered(body.ids, results)
 
 
-async def _copy_tree(session: AsyncSession, node: Node, rows: list, target: Node) -> uuid.UUID:
+async def _copy_tree(
+    session: AsyncSession, node: Node, rows: list, target: Node, actor_id: uuid.UUID
+) -> uuid.UUID:
     """De kopie van node (rows: zijn subtree, ouders voor kinderen) in map target, met een vrije
-    naam; geeft het id van de kopie. Rechtstreeks in stukken (zoals files.copy): één
-    ORM-object per kopie houdt de event loop te lang bezig."""
+    naam; geeft het id van de kopie. actor_id: wie kopieert (node_origin). Rechtstreeks in
+    stukken (zoals files.copy): één ORM-object per kopie houdt de event loop te lang bezig."""
     name = await files.free_name(session, target.id, node.name)
     now = datetime.now(UTC)
     new_ids: dict[uuid.UUID, uuid.UUID] = {}
@@ -314,7 +316,7 @@ async def _copy_tree(session: AsyncSession, node: Node, rows: list, target: Node
         await asyncio.sleep(0)
     # Fase 6, §3.5: wat aan een bestand hangt, gaat mee naar de kopie (Z6: personen als de
     # eigenaar gelijk is). Nog in deze transactie, vóór de commit van de aanroeper.
-    await search_hooks.photo_copy(
-        session, [(n.id, new_ids[n.id]) for n in rows if n.kind == "file"]
-    )
+    pairs = [(n.id, new_ids[n.id]) for n in rows if n.kind == "file"]
+    await search_hooks.photo_copy(session, pairs)
+    await origin.copied(session, pairs, actor_id)  # fase 6, Keuze 69
     return new_ids[node.id]

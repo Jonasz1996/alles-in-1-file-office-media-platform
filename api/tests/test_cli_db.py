@@ -20,7 +20,7 @@ from app.db import get_engine
 from app.migrate import upgrade
 
 API_DIR = Path(__file__).resolve().parents[1]
-HEAD = "0010"
+HEAD = "0012"
 
 
 async def run_cli(settings, *args: str, stdin: bytes | None = None):
@@ -73,7 +73,10 @@ async def test_downgrade_vraagt_om_bevestiging(settings):
     result = await run_cli(settings, "db-downgrade", "0007", stdin=b"nee\n")
     assert result.returncode == 1
     out = result.stdout.decode()
-    assert "van revisie 0010 terug naar 0007" in out
+    assert "van revisie 0012 terug naar 0007" in out
+    # Wat er weggaat, de nieuwste revisie eerst (§3.1a)
+    assert cli.BEELD_LOST in out and cli.FACES_LOST in out and cli.SEARCH_LOST in out
+    assert out.index(cli.BEELD_LOST) < out.index(cli.FACES_LOST) < out.index(cli.SEARCH_LOST)
     assert 'Typ "ja" om door te gaan' in out
     assert "Niets gedaan." in result.stderr.decode()
     assert await revision(settings) == HEAD
@@ -114,11 +117,29 @@ async def test_downgrade_met_ja_vraagt_niets(settings):
 
 
 def test_welke_revisies_een_downgrade_weghaalt():
-    """Alleen een downgrade die 0010 weghaalt, raakt zoeken en foto's (fase 6, §3.1)."""
-    assert cli.removed_revisions(HEAD, "0009") == ["0010"]
-    assert cli.removed_revisions(HEAD, "0007") == ["0010", "0009", "0008"]
+    """Alleen een downgrade die 0010 weghaalt, raakt zoeken en foto's (fase 6, §3.1); 0011 de
+    gezichten en 0012 de beeldindex (§3.1a)."""
+    assert cli.removed_revisions(HEAD, "0011") == ["0012"]
+    assert cli.removed_revisions(HEAD, "0010") == ["0012", "0011"]
+    assert cli.removed_revisions(HEAD, "0009") == ["0012", "0011", "0010"]
+    assert cli.removed_revisions(HEAD, "0007") == ["0012", "0011", "0010", "0009", "0008"]
     assert cli.removed_revisions("0009", "0008") == ["0009"]
     assert cli.SEARCH_REVISION == "0010"
+    assert cli.FACES_REVISION == "0011"
+    assert cli.BEELD_REVISION == "0012"
+
+
+def test_wat_een_downgrade_kwijtmaakt():
+    """Per weggehaalde revisie één regel, de nieuwste eerst; een downgrade vóór 0010 zegt niets
+    extra."""
+    assert cli.lost_lines(["0012"]) == [cli.BEELD_LOST]
+    assert cli.lost_lines(["0012", "0011"]) == [cli.BEELD_LOST, cli.FACES_LOST]
+    assert cli.lost_lines(["0012", "0011", "0010"]) == [
+        cli.BEELD_LOST,
+        cli.FACES_LOST,
+        cli.SEARCH_LOST,
+    ]
+    assert cli.lost_lines(["0009", "0008"]) == []
 
 
 async def _album_met_regel_items(settings) -> tuple[uuid.UUID, uuid.UUID]:
@@ -238,7 +259,7 @@ async def test_downgrade_met_ja_haalt_ze_eruit_zonder_vragen(settings):
 async def test_downgrade_die_niet_doorgaat_haalt_ook_geen_items_weg(settings, stdin):
     """Review Z0, veilig F1: het antwoord op de vraag naar de regel-items doet pas iets na het
     laatste "ja". Wie daarna "nee" zegt, of geen invoer meer heeft, houdt alles: de items en
-    revisie 0010."""
+    de head."""
     await _album_met_regel_items(settings)
     result = await run_cli(settings, "db-downgrade", "0009", stdin=stdin)
     assert result.returncode == 1

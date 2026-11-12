@@ -209,11 +209,12 @@ _TREE = (
     "UPDATE node SET mpath = t.mpath, dead = t.dead FROM t\n"
     "WHERE node.id = t.id AND (node.mpath IS NOT t.mpath OR node.dead IS NOT t.dead)"
 )
-# De foto-rijen horen bij een bestand van de eigenaar van de node (Keuze 25a, node_au_owner)
+# De foto-rijen horen bij een bestand van de eigenaar van de node (Keuze 25a, node_au_owner),
+# en de gezichten ook (0011, node_au_owner_face; face_person gaat mee via de cascade)
 _PHOTO_OWNER = tuple(
     f"DELETE FROM {table} WHERE NOT EXISTS (SELECT 1 FROM node n "
     f"WHERE n.id = {table}.node_id AND n.owner_id = {table}.owner_id)"
-    for table in ("photo_ocr", "photo_geo", "photo_person")
+    for table in ("photo_ocr", "photo_geo", "photo_person", "face", "face_scan")
 )
 _GEO = (
     "UPDATE photo_geo SET (dead, taken_at) =\n"
@@ -278,6 +279,10 @@ async def restore_triggers(engine: AsyncEngine) -> Restored:
         out.tree = await _changes(conn, _TREE)
         for sql in (*_PHOTO_OWNER, _GEO):
             out.photo_rows += await _changes(conn, sql)
+        if out.created:
+            # Zonder de triggers van 0012 telde gen niet mee: elk bestand per eigenaar voor
+            # zoeken op beeld opnieuw (Keuze 76)
+            await conn.exec_driver_sql("UPDATE beeld_owner SET gen = gen + 1")
         if fts:
             # De herbouw begint hier, ook als er al een liep: alles opnieuw
             await conn.exec_driver_sql("UPDATE search_state SET cursor = NULL WHERE id = 1")

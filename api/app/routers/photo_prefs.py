@@ -10,8 +10,9 @@ standaarden en de regels voor gezichten en beeld staan in app/prefs.py.
   en contract F1 en F4). Een weigering schrijft niets, ook de andere velden niet.
 - Een gast verandert niets (403 guest, voor elk veld): hij heeft geen eigen foto's (review golf 2,
   veilig V3). Wat niet verandert, geeft ook hem 200.
-- beeld heeft nog geen kolom in photo_pref (die komt met 0012, A0): tot dan blijft het "uit", en
-  "aan" weigert check_switch() zolang X3 zich niet aanmeldt.
+- beeld staat sinds 0012 (A0) in photo_pref.beeld, met NULL als de standaard van Vraag 11. Een
+  nieuwe rij laat hem NULL, tenzij beeld zelf verandert; "aan" weigert check_switch() zolang X3
+  zich niet aanmeldt.
 """
 
 from datetime import UTC, datetime
@@ -28,8 +29,10 @@ from app.security import CurrentUser
 
 router = APIRouter(prefix="/api/v1", tags=["foto's"])
 
-# De velden met een kolom in photo_pref (beeld nog niet: 0012)
-COLUMNS = ("location", "memories", "ocr_photos", "faces")
+# De velden met een kolom in photo_pref (beeld sinds 0012)
+COLUMNS = ("location", "memories", "ocr_photos", "faces", "beeld")
+# Kolommen waarin NULL de standaard uit PHOTO_PREFS is: een nieuwe rij zet ze niet vast
+DEFAULTED = ("beeld",)
 
 
 @router.get("/me/photo-settings")
@@ -64,7 +67,9 @@ async def change_photo_settings(
     if stored:
         row = await session.get(PhotoPref, user.id)
         if row is None:
-            row = PhotoPref(user_id=user.id, **{k: before[k] for k in COLUMNS})
+            row = PhotoPref(
+                user_id=user.id, **{k: before[k] for k in COLUMNS if k not in DEFAULTED}
+            )
             session.add(row)
         for key, value in stored.items():
             setattr(row, key, value)

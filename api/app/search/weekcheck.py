@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app import analysis, jobs
-from app.db import get_engine
+from app.db import get_engine, privacy
 from app.models import Setting, now
 from app.search import engine as search_engine
 from app.search import rebuild
@@ -97,6 +97,7 @@ def _check(url: str) -> rebuild.Checked:
         @event.listens_for(engine.sync_engine, "connect")
         def _read_only(conn, _record):
             conn.isolation_level = None  # geen BEGIN van pysqlite: die komt van _begin
+            privacy(conn)  # zoals elke verbinding (fase 6, §3.1a)
             cur = conn.cursor()
             cur.execute("PRAGMA busy_timeout=5000")
             cur.execute("PRAGMA query_only=ON")

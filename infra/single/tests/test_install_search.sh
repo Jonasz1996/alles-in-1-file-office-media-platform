@@ -1057,12 +1057,12 @@ NEP
 #   | Stap | Wat | Wat de test nakijkt |
 #   |---|---|---|
 #   | 1 | 0.7.1 installeren met het script van 80d5bb8; een bestand uploaden | schema 0009, geen map backup |
-#   | 2 | bijwerken naar deze versie (de branch), zonder netwerk naar de bronnen | de kopie platform-0009 met het image van 0.7.1, vóór de nieuwe app; 600 en 10001; schema 0010; "niet geladen" |
-#   | 3 | nog een update (een commit erbovenop), maar de kopie faalt (een trigger op een tabel face) | exit 1; dezelfde container, hetzelfde image, schema 0010, geen nieuwe kopie en geen .part |
-#   | 4 | opnieuw, met netwerk, en een symlink van de app op <bron>.part naar een bestand van root | de bronnen gehaald; het bestand van root blijft, geen .part en geen symlink; geo-load in de draaiende app; places.loaded; de kopie van 0010 met het image van deze versie |
-#   | 5 | de commit erbovenop met PLAATSEN=uit, dan weer aan | na twee en drie runs op 0010: de 0009 staat er nog, van 0010 alleen de nieuwste; geen download; PLATFORM_PLACES=uit |
+#   | 2 | bijwerken naar deze versie (de branch), zonder netwerk naar de bronnen | de kopie platform-0009 met het image van 0.7.1, vóór de nieuwe app; 600 en 10001; schema 0012 (de head van deze versie); "niet geladen" |
+#   | 3 | nog een update (een commit erbovenop), maar de kopie faalt (een trigger op de tabel face_owner) | exit 1; dezelfde container, hetzelfde image, schema 0012 (de head van deze versie), geen nieuwe kopie en geen .part |
+#   | 4 | opnieuw, met netwerk, en een symlink van de app op <bron>.part naar een bestand van root | de bronnen gehaald; het bestand van root blijft, geen .part en geen symlink; geo-load in de draaiende app; places.loaded; de kopie van 0012 met het image van deze versie |
+#   | 5 | de commit erbovenop met PLAATSEN=uit, dan weer aan | na twee en drie runs op 0012: de 0009 staat er nog, van 0012 alleen de nieuwste; geen download; PLATFORM_PLACES=uit |
 #   | 6 | terug naar 0.7.1: precies de stappen van §3.10 | git fetch en cat-file; dc stop; db-downgrade 0009 (met "ja"); het script van 80d5bb8 met PLATFORM_SRC_REF; schema 0009, de app van 0.7.1, het bestand heel |
-#   | 7 | weer vooruit: het script van de branch, zonder PLATFORM_SRC_REF | schema 0010; een nieuwe kopie van 0009, gemaakt met het image van 0.7.1; plaatsen geladen |
+#   | 7 | weer vooruit: het script van de branch, zonder PLATFORM_SRC_REF | schema 0012 (de head van deze versie); een nieuwe kopie van 0009, gemaakt met het image van 0.7.1; plaatsen geladen |
 #
 # - De bronnen van plaatsen komen nooit echt van internet: een shim van curl in de runner geeft ze
 #   uit $WORK/net (een kopie van INSTALL_TEST_GEO, standaard PLATFORM_GEO_TEST_SRC; in CI haalt
@@ -1596,8 +1596,9 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
 
   # --- 3. een update waarbij de reservekopie faalt: het script stopt vóór elke wijziging -----
   STAGE=3
-  app_sql "CREATE TABLE face (id INTEGER PRIMARY KEY, data BLOB); INSERT INTO face (data) VALUES (x'00');
-    CREATE TRIGGER face_ad AFTER DELETE ON face BEGIN SELECT RAISE(ABORT, 'installatietest'); END;" ||
+  # Een rij in face_owner (0011) met een trigger die het wissen in de kopie tegenhoudt
+  app_sql "INSERT INTO face_owner (owner_id) SELECT id FROM \"user\" LIMIT 1;
+    CREATE TRIGGER face_owner_ad AFTER DELETE ON face_owner BEGIN SELECT RAISE(ABORT, 'installatietest'); END;" ||
     fout "3: de trigger in de database zetten lukte niet"
   local cid2 media2 rc3=0
   cid2=$(cid platform) media2=$(cid media)
@@ -1609,7 +1610,7 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
   check "3: dezelfde worker draait" eval '[ "$(cid media)" = "$media2" ] && running "$media2"'
   check "3: het schema staat nog op $schema_head" test "$(db_rev)" = "$schema_head"
   check "3: geen nieuwe kopie en geen .part (gezien: $(backups))" test "$(backups)" = "$copy0009"
-  app_sql "DROP TABLE face;" || fout "3: de tabel face weghalen lukte niet"
+  app_sql "DROP TRIGGER face_owner_ad; DELETE FROM face_owner;" || fout "3: de trigger en de rij weghalen lukte niet"
 
   # --- 4. opnieuw, met netwerk: de bronnen, en geo-load in de draaiende app ------------------
   STAGE=4

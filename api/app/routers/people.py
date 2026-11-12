@@ -17,6 +17,7 @@ from app import errors
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Node, PhotoPerson
+from app.people import hooks
 from app.people import people as P
 from app.people import search as _search  # noqa: F401 - meldt filter, groep en kopie aan
 from app.people.types import (
@@ -100,6 +101,8 @@ async def merge_person(
             raise errors.fail(
                 400, "people_merge_self", "Een persoon kan niet met zichzelf samengaan"
             )
+        # Gezichten (X2, Keuze 63): vóór het wissen van de bron
+        await hooks.persons_merged(session, user.id, source.id, into.id)
         await P.merge(session, user, source, into)
         await session.commit()
     P.changed(user.id)
@@ -112,6 +115,8 @@ async def delete_person(person_id: uuid.UUID, user: CurrentUser, session: Sessio
     async with P.lock(user.id):
         person = await P.own_person(session, user, person_id)
         await session.delete(person)
+        await session.flush()  # de trigger person_bd_face loopt nu (fase 6, §3.1a)
+        await hooks.person_deleted(session, user.id, person_id)
         await session.commit()
     P.changed(user.id)
 
@@ -174,5 +179,6 @@ async def remove_file_person(
     async with P.lock(user.id):
         person = await P.own_person(session, user, person_id)
         await P.take_off(session, user, node_id, person)
+        await hooks.person_removed(session, user.id, node_id, person.id)
         await session.commit()
     P.changed(user.id)
