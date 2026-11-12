@@ -189,7 +189,6 @@ async def test_db_downgrade_met_een_lezer_zegt_het_en_eindigt_met_3(tmp_path, mo
         lezer.execute("BEGIN")
         assert lezer.execute("SELECT count(*) FROM face").fetchone() == (4,)
         code = await anyio.to_thread.run_sync(cli._downgrade, settings, "0010", True)
-        lezer.close()
         out, err = capsys.readouterr()
         assert code == 3 == cli.WAL_EXIT
         assert out.splitlines()[-1] == "De database staat nu op revisie 0010."
@@ -197,6 +196,14 @@ async def test_db_downgrade_met_een_lezer_zegt_het_en_eindigt_met_3(tmp_path, mo
         assert "db-checkpoint" in cli.WAL_BUSY
         # De downgrade is gedaan, maar de gezichten staan nog in platform.db
         assert marks(settings)["platform.db"] > 0
+
+        # Nacontrole A0: zolang de lezer er is, lukt ook db-checkpoint niet. Dan zegt het dat,
+        # zoals db-downgrade, en eindigt het met 3, niet met 0 en "De WAL is leeg."
+        code = await anyio.to_thread.run_sync(cli._db_checkpoint, settings)
+        out, err = capsys.readouterr()
+        assert (code, out, err.strip()) == (cli.WAL_EXIT, "", cli.WAL_BUSY)
+        assert marks(settings)["platform.db"] > 0
+        lezer.close()
 
         result = await run_cli(settings, "db-checkpoint")
         assert result.returncode == 0, result.stderr.decode()
@@ -219,6 +226,17 @@ async def test_db_checkpoint_zonder_database(tmp_path):
     assert result.returncode == 1
     assert result.stderr.decode().startswith("Er is nog geen database (")
     assert not (settings.data_dir / "platform.db").exists()
+
+
+def test_db_checkpoint_alleen_met_sqlite(tmp_path, capsys):
+    """Nacontrole A0: op PostgreSQL is er geen WAL om leeg te maken; db-checkpoint zegt dat en
+    eindigt met 1, zonder iets aan te raken."""
+    settings = settings_at(tmp_path, "pg")
+    settings.database_url = "postgresql+asyncpg://u:p@127.0.0.1:1/x"
+    assert cli._db_checkpoint(settings) == 1
+    out, err = capsys.readouterr()
+    assert (out, err) == ("", "Dit commando werkt alleen met SQLite.\n")
+    assert list(settings.data_dir.iterdir()) == []
 
 
 async def test_de_migratie_bij_het_starten_maakt_zelf_de_wal_leeg(tmp_path):
