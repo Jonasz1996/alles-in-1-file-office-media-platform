@@ -427,14 +427,17 @@ langs "Wat X3a nodig heeft":
 
 - Open 1 en 3–8 hierboven blijven staan; Open 2 is gedaan, Open 4 deels (de omzetter).
 - **De pins van SigLIP in `models.lock` horen bij X3b** (x3a.md, Open 1 en 2). Komen de tien
-  regels erin zonder de functies voor beeld in `install.sh`, dan: haalt `install.sh` met
-  `ANALYSE=aan` ook de 1,51 GB van de bron, en houdt die; zegt `caps` `ontbreekt` voor de vijf
+  regels erin zonder de functies voor beeld in `install.sh`, dan: ~~haalt `install.sh` met
+  `ANALYSE=aan` ook de 1,51 GB van de bron, en houdt die;~~ zegt `caps` `ontbreekt` voor de vijf
   uitkomsten (niemand maakt ze), dus de stand `models_missing` (gezichten kunnen door, `/beheer`
-  zegt het wel); wordt `analyse-image` rood (`test_analyse_container.sh` haalt elke regel met een
-  url, en eist `Analyse: ok` met precies twee modellen die kloppen, en in `caps` precies twee
-  keer `ok`); en zegt een bron die niet te halen is `Let op: … kon niet geladen worden; gezichten
-  wachten tot de volgende installatie.`, terwijl gezichten dan niet wachten. `test_lock_siglip.py`
-  toont de stand die je dan krijgt.
+  zegt het wel); wordt `analyse-image` rood (~~`test_analyse_container.sh` haalt elke regel met een
+  url, en~~ hij eist `Analyse: ok` met precies twee modellen die kloppen, en in `caps` precies twee
+  keer `ok`); ~~en zegt een bron die niet te halen is `Let op: … kon niet geladen worden; gezichten
+  wachten tot de volgende installatie.`, terwijl gezichten dan niet wachten.~~ `test_lock_siglip.py`
+  toont de stand die je dan krijgt. [Review golf 5, uitrol F3 (`03908c9`): `modellen_ophalen`,
+  laag 3 en `test_analyse_container.sh` slaan de regels onder `siglip2-b32-256/` over, dus geen
+  1,51 GB en geen melding over een bron; de stand `models_missing` en de rode `analyse-image`
+  blijven, en `beeld_model.py uitslag` zegt nu de regels pas samen met X3b te zetten.]
 - Alleen in CI, na de push: `api-analyse` (188 en 11, de licenties met opencv_zoo), `analyse-image`
   (het echte image, met de omzetter via de dienst) en `beeld-model`.
 
@@ -466,3 +469,73 @@ Niet gedraaid: `test_install_update.sh` (Open 8: hij weigert zolang `python:3.12
 dat image blijft) en `test_install_search.sh --stappen` (de update en terug, alleen in de job
 `infra`: lokaal te weinig schijfruimte, [integratie.md](integratie.md)). Zonder `ANALYSE` doet
 `install.sh` wat 0.8.0 deed; `test_install_analyse.sh` toetst terug naar 0.8.0 en weer vooruit.
+
+## De review (golf 5)
+
+Drie reviews van de samengevoegde kop (`deccbee`, de code op `dd6cbc6`): "veilig", "uitrol" en
+"contract". Elke bevinding eerst zelf nagekeken; ze klopten alle veertien (contract G5-C1 is
+veilig F1): twee blocking (uitrol F1 en F2, in x3a.md), acht should en vier nits. Per bevinding een
+test die zonder de reparatie faalt: de oude code in een kopie, of de reparatie weer weggehaald. Hier wat X2a raakt; wat X3a raakt (veilig F2–F4, uitrol F1 en F2, het deel van
+uitrol F3 in `beeld_model.py`, contract G5-C3), staat in "De review (golf 5)" in [x3a.md](x3a.md).
+Niets gepusht, geen tag; de versie blijft 0.8.0, en zonder `ANALYSE` doet `install.sh` wat 0.8.0
+deed.
+
+| Bevinding | Wat er was | Wat er gedaan is | Test (rood zonder de reparatie) | Commit |
+|---|---|---|---|---|
+| veilig F1, contract G5-C1 (should) | De stop (fd 4) en de vraag (fd 3) komen over twee kanalen. Kwam de stop van pid 1 binnen voordat het kind `begin(n)` deed, dan viel hij weg: de opdracht liep door, pid 1 wachtte `KILL_GRACE_S` en het warme kind kreeg SIGKILL | `StopFlag` onthoudt het hoogste nummer dat moet stoppen (onder een lock); `begin(n)` kijkt daarnaar, en een stop voor een ouder nummer telt niet. De proef `VROEG` (`proef.py`) laat het kind pas beginnen als de stop er is | `test_analyse_kinderen.py`: `test_een_cancel_die_er_is_voor_het_kind_begint_stopt_de_opdracht` (het echte paar, met `VROEG`) en `test_een_stop_voor_begin_telt_en_een_oude_stop_niet`; op de oude `child.py` 2 rood; met twee drukke lussen ernaast drie keer groen | `55c38bd` |
+| veilig F5 (nit) | `set_key` zette een waarde met `sed -i "s\|…\|KEY=<waarde>\|"`. Bij een `.env` met een lege regel `ANALYSE_WORKER_KEY=` (zoals `.env.example`) kwam de nieuwe sleutel zo in de argv van sed, voor iedereen op de host te lezen in `/proc/<pid>/cmdline`; zo ook `MEDIA_WORKER_KEY` en de twee sleutels van office | `set_key` leest en schrijft de regels met builtins van bash (`read`, `printf`); `mktemp`, `chmod`/`chown --reference` en `mv` krijgen alleen paden. Zoals `sed -i`: een nieuw bestand met de rechten en de eigenaar van het oude, dan `mv`; een laatste regel zonder regeleinde blijft zonder; de waarde letterlijk (`\|`, `&` en `\` braken sed) | `test_install_analyse.sh`: een PATH met nep-`sed`, -`awk`, -`mv`, … die hun argv opschrijven: "de sleutel staat in de argv van geen enkel proces" en "set_key: letterlijk …"; op de oude `set_key` 3 controles rood (123 goed). `test_install_env.sh`, `_media` en `_search` blijven groen | `1177605` |
+| veilig F6 (nit) | compose startte pid 1 met `python`: dumpbaar van de exec tot zijn eigen `prctl` in `__main__`, met de sleutel in `/proc/1/environ` | `command` start uit `/opt/venv/bin/python-tekst` (0711 van root, uit de Dockerfile): een proces uit een programma dat zijn gebruiker niet mag lezen, is vanaf de exec niet dumpbaar. De healthcheck heeft de sleutel niet (`env -i`) en blijft `python`. `__main__`, Start hierboven en bouwontwerp §3.11 zeggen het | `test_compose_analyse.py`: de nieuwe exacte `command`, gelijk aan `runtime.serve_argv(python=python-tekst)`, de regel 0711 in de Dockerfile en `COPY_NAME` van `child.py`; op de oude compose 1 rood. De kernel: `test_analyse_container.sh` eist dat een proces uit `python-tekst` `PR_GET_DUMPABLE` 0 geeft vanaf de exec (uit `python` 1) en dat argv[0] van pid 1 `python-tekst` is; alleen in `analyse-image`, want de kernel van deze sandbox (6.18.44, `suid_dumpable` 0) houdt een programma dat alleen uitgevoerd mag worden dumpbaar | `9a9722b` |
+| uitrol F3 (should) | Na de eerste run van `beeld-model` krijgt `models.lock` tien regels van SigLIP. Dan haalde `modellen_ophalen` met `ANALYSE=aan` ook de vijf bronnen (1,51 GB), terwijl Keuze 84 ze aan de stap `BEELD` van X3b geeft (met `BEELD=aan` en een eigen controle op de ruimte). Laag 3 (`test_models_real.py`) en `test_analyse_container.sh` haalden elke regel met een url | `modellen_ophalen` slaat de regels onder `siglip2-b32-256/` over; ze blijven in de lijst die niet weg mag (een omzetting die er staat, blijft). `test_models_real.py` haalt met `gezichten()` alleen YuNet en SFace; `test_analyse_container.sh` slaat ze over; `beeld_model.py uitslag` (X3a) zegt de regels pas samen met X3b te zetten. Wat met de pins zonder X3b blijft (`models_missing`), staat onder Open na de samenvoeging (doorgestreept wat niet meer klopt), x3a.md Open 1 en het runbook | `test_install_analyse.sh` ("de bron van SigLIP: geen curl, …", "de omzetting die er al staat, blijft staan"): op de oude `install.sh` 1 controle rood (121 goed); `test_models_real.py::test_alleen_de_modellen_van_gezichten`: op de oude code rood; de container in `analyse-image` | `03908c9` |
+| uitrol F4 (nit) | `decide_analyse` zei "ANALYSE=uit in .env" ook als de uit alleen van de aanroep kwam: bij een `.env` zonder regel `ANALYSE` schrijft `merge_analyse_env` de uit niet | Met een regel in `.env` blijft de oude tekst; zonder zegt de reden "ANALYSE=uit bij de aanroep; <.env> heeft geen regel ANALYSE" | `test_install_analyse.sh`: `main` met `ANALYSE=uit` op een verse `.env` eist die reden letterlijk (de vergelijking met 0.8.0 filtert nu precies die regel, niet meer een patroon), en "ANALYSE=uit na aan" eist "ANALYSE=uit in <.env>"; op de oude `install.sh` 2 rood (126 goed) | `b137c6a` |
+| contract G5-C2 (should) | Het nepmodel zette de vijf punten altijd precies in het kader, op een effen vlak. Een kolom voor een rij in de punten, een draai de verkeerde kant op, fx en fy verwisseld of een rand die niet zwart is: dezelfde vector, en de oude tests van `test_worker_faces.py` bleven groen | Twee tests; de code klopte. Het decoderen van YuNet op 64 × 96, elk anker van elke stride, tegen een rekensom zoals `FaceDetectorYN`; en een nep-YuNet met de punten 20° gedraaid en (5, −3) px verschoven (`fake_models`: `draai`, `verschuif`) op een preview met een patroon in rood en groen, een gezicht in het midden en een aan de rand, tegen een eigen bilineaire uitlijning met een rand van nullen | `test_worker_faces.py::test_de_uitvoer_van_yunet_gedecodeerd_zoals_opencv` en `::test_gedraaide_punten_op_een_patroon_zoals_de_rekensom`. Zeven mutaties van `ops/faces.py`: M1 (de x van de punten uit de rij), M3 (de draai getransponeerd), M5 (fx en fy verwisseld) en M6 (de rand herhaald in plaats van zwart) lieten alle oude tests groen; alle zeven (ook M2 de y verkeerd opgeteld, M4 de matrix niet omgekeerd, M7 rij en kolom van het kader verwisseld) maken een nieuwe test rood | `ee33704` |
+| contract G5-C4 (should) | X2b (`group`) en X3b (`embed_image`, `embed_text`, `rank`, `forget`) moeten in golf 6 allebei een regel zetten in `server.BUILT` en in `child.handlers()`, bestanden van X2a: twee pakketten in hetzelfde bestand | Nagekeken of een tabel ze uit elkaar kan halen: elke vorm daarvan (een dict per op) is weer één plek waar beide een regel bijzetten, en pid 1 mag de modules onder `ops/` niet laden (numpy). Dus vastgelegd als hotspots: bouwontwerp §2.0 ("De hotspots van golf 6") en §3.5 (een tabel: wie wat in welk bestand zet; de handler in een eigen bestand onder `ops/`; samenvoegen X3b, dan X2b, en de tweede houdt beide regels), en Vormen 3 hierboven. Een test houdt `BUILT` en de handlers gelijk | `test_analyse_kinderen.py::test_built_en_de_handlers_van_de_kinderen_zijn_gelijk`: precies gelijk, elke op in het kind van `wire.CHILD`, en de exacte lijsten van nu (golf 6 zet ze bij). Een `BUILT` met `group` zonder handler, of `embed_text` in `werk`: elk 1 rood | `913c318` |
+| contract G5-C5 (nit) | `test_elke_maat_werkt_dankzij_het_opvullen` bewaakte het opvullen tot een veelvoud van 32 niet: het nepmodel geeft met en zonder opvullen dezelfde cellen | Hernoemd naar `test_elke_maat_ook_geen_veelvoud_van_32`, met een eerlijke docstring; Klaar als noemt voor het opvullen `test_models_real.py::test_laden_met_alleen_de_cpu_en_de_vormen` (de echte YuNet op 1024 × 683, 704 hoog) | Met `padded()` die `n` teruggeeft: de hernoemde test groen (zoals hij nu zegt), `test_laden_met_alleen_de_cpu_en_de_vormen` rood (683 tegen 704) | `ee33704` |
+
+### Klaar als, na de review
+
+| Regel | Bewijs | Uitkomst |
+|---|---|---|
+| Een `cancel` die er is voordat het kind begint, stopt de opdracht; geen SIGKILL voor een warm kind | `test_analyse_kinderen.py` (de twee hierboven; het bestand nu 15) | groen, als root en als nobody |
+| Het decoderen van YuNet en het uitlijnen liggen vast in een test; het opvullen tot een veelvoud van 32 met de echte YuNet | `test_worker_faces.py` (nu 21), `test_models_real.py::test_laden_met_alleen_de_cpu_en_de_vormen` | groen |
+| `install.sh` haalt alleen de modellen van gezichten; een sleutel komt in geen argv; de reden van uit klopt | `test_install_analyse.sh` | groen: 128 controles |
+| Laag 3 haalt alleen de modellen van gezichten | `test_models_real.py::test_alleen_de_modellen_van_gezichten` (het bestand nu 6) | groen |
+| pid 1 is vanaf de exec niet dumpbaar | `test_compose_analyse.py` (11 met de parameters); `test_analyse_container.sh` | compose groen; de kernel in `analyse-image` na de push |
+| `BUILT` en de handlers gelijk; golf 6 weet waar het samenkomt | `test_built_en_de_handlers_van_de_kinderen_zijn_gelijk`; bouwontwerp §2.0 en §3.5 | groen |
+| De telling van `api-analyse` | `ci.yml`: `ANALYSE_TESTS` 209 (188, en 21 van de review: 2 + 12 + 1 + 1 + 2 + 2 + 1, zie de uitleg erboven), `ANALYSE_DESELECTED` 11 | 209 groen, 11 niet gekozen (root 47,3 s, nobody 66,3 s) |
+
+### Open na de review
+
+- De punten onder "Open na de samenvoeging" blijven staan; bij de pins is doorgestreept wat
+  sinds uitrol F3 niet meer klopt.
+- **Golf 6: `server.py` en `child.py` zijn hotspots** (G5-C4). X3b en X2b zetten er allebei
+  regels in; samenvoegen X3b, dan X2b. `test_built_en_de_handlers_van_de_kinderen_zijn_gelijk`
+  krijgt dan de nieuwe exacte lijsten.
+- **Alleen in CI, na de push:** `api-analyse` (209 en 11), `analyse-image` (met de nieuwe
+  controles: pid 1 uit `python-tekst`, `PR_GET_DUMPABLE` 0 vanaf de exec, de regels van SigLIP
+  overgeslagen) en `beeld-model`.
+- **`actionlint` niet gedraaid**: het staat niet in de sandbox, en het ophalen (`uvx --from
+  actionlint-py`) werd hier geweigerd. De job `infra` draait het ook niet; `yamllint -s .` wel
+  (groen).
+
+### Gedraaid na de review
+
+Lokaal in de sandbox, als root en als nobody (zoals CI). Elke zware run alleen, onder `taskset -c
+0-2`. De code op `913c318`; daarna kwam alleen deze documentatie erbij (en het runbook).
+
+| Wat | Hoe | Uitkomst |
+|---|---|---|
+| ruff | `ruff check` en `ruff format --check` in `api/` | schoon, 717 bestanden |
+| `tests_analyse` als root | `.venv-analyse`, `-m "not beeld_echt"`, `ANALYSE_MODELLEN` met de echte YuNet en SFace | 209 groen, 11 niet gekozen, in 47,3 s |
+| `tests_analyse` als nobody | `setpriv` naar 65534, een venv en de modellen in `/tmp/ci-nobody` (daarna weg) | 209 groen, 11 niet gekozen, in 66,3 s |
+| API als gewone gebruiker | `/tmp/ci-nobody/run.sh` met `tests/analyse`, `tests/beeld`, `tests/test_compose_analyse.py` en `tests/test_cli_db.py` | 451 groen in 136 s |
+| infra, statisch | `shellcheck` met de regel van CI, `bash -n`, `yamllint -s .`, `docker compose config -q` zoals de job `infra` (zonder office, met office en de grenzen, met analyse, met het profiel `omzetten`) | schoon |
+| infra, de installatie | `test_install_analyse.sh`, `test_install_env.sh`, `test_install_media.sh`, `test_install_search.sh` | groen: 128, 137, 127 en 209 controles geslaagd |
+| de links | relatieve links en ankers in alle `.md` (een eigen script, GitHub-ankers) | 1117 links in 120 bestanden, 0 fout |
+| de API-suite | `taskset -c 0-2 uv run pytest -q -rs` op `913c318` | **niet af**: gestopt bij 41 % zonder rood (de stap moest eerder eindigen) |
+
+Nog niet gedraaid na de review (de stap moest eerder eindigen): de hele API-suite (met
+`test_fuzz_10000_namen_met_vaste_seed`), `SLIM_CPUS=0-2 e2e/slim.sh` alleen (met
+`test_een_stuk_vol_lange_teksten_houdt_de_schrijver_kort`), de e2e-set van CI en `-m office`, en
+`test_analyse_container.sh` tegen een stand-in (verwacht daar één FOUT: de kernel van de sandbox
+houdt een programma dat alleen uitgevoerd mag worden dumpbaar). Golf 5 raakt `web/` en `e2e/`
+niet (`git diff deccbee` leeg).

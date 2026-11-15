@@ -188,8 +188,10 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
 
 - `BZ1 <host>: bereikbaar (HTTP …)` of `niet bereikbaar (…)`, voor huggingface.co,
   commons.wikimedia.org, upload.wikimedia.org en images-assets.nasa.gov;
-- `BZ2 …`: de commit, de tijd en maxrss van elke omzetting (grens 1,5 GB), of twee omzettingen
-  dezelfde sha256 geven, en of ze kloppen met `models.lock`;
+- `BZ2 …`: de commit; de tijd en maxrss van de twee omzettingen zoals de dienst (grens 1,5 GB),
+  of die twee dezelfde sha256 geven en of ze kloppen met `models.lock`; en van de derde omzetting
+  met `--fp32` (alleen voor BZ4) de tijd en maxrss zonder grens, en of hij dezelfde vijf bestanden
+  geeft;
 - `BZ3`, `BZ4`, `BZ6`, `BZ7`: de uitkomsten van de tests, met `goed` of `FOUT`;
 - `UITSLAG …`: waarom de job rood is, als er een voorstel ligt;
 - per pytest-stap de laatste regel.
@@ -206,8 +208,9 @@ zelf nooit iets in het repo; een mens doet dat, zo:
 
 1. Kijk in `=== kort ===` of BZ1 bij huggingface.co en Commons kon. Kon dat niet, dan gaat de rest
    naar de LXC (X3b: `beeld-kwaliteit`, `beeld-bench`, trust-on-first-use).
-2. Kijk of BZ2 zegt "dezelfde sha256 voor alle 5 bestanden" en of maxrss onder de 1,5 GB bleef.
-   Zo niet: niets vastzetten, eerst de omzetter nakijken.
+2. Kijk of BZ2 zegt "dezelfde sha256 voor alle 5 bestanden" (twee keer omzetten, en met `--fp32`)
+   en of maxrss van de twee omzettingen zoals de dienst onder de 1,5 GB bleef. Zo niet: niets
+   vastzetten, eerst de omzetter nakijken.
 3. Haal het artifact `beeld-model` op. `voorstel-models.lock` heeft tien regels: vijf bronnen
    (`siglip2-b32-256/bron/<naam>` met de URL op één vaste commit) en vijf uitkomsten
    (`siglip2-b32-256/<naam>` met url `-`). Kijk na: de commit in de URL's is dezelfde als in het
@@ -227,10 +230,11 @@ zelf nooit iets in het repo; een mens doet dat, zo:
 6. Push. De job draait dan weer (de lock is veranderd), nu streng: een andere sha256 of grootte
    is rood. Groen is BZ2 en BZ4 gehaald: dan kan de go/no-go van X3 (Keuze 73) beslist worden.
 
-Let op bij stap 5: `install.sh` (X2) haalt elke regel van `models.lock` met een URL op zodra de
-analyse aan staat. Met de bronregels erin zou dat ook de 1,51 GB van `model.safetensors` zijn,
-ook zonder zoeken op beeld. Zet de regels daarom pas als `install.sh` de regels onder `*/bron/`
-overslaat (X3b), of samen met die wijziging (x3a.md, Open 1).
+Let op bij stap 5: zet de regels pas samen met X3b (de stap `BEELD` van `install.sh`) in
+`models.lock`. `install.sh` haalt de regels onder `siglip2-b32-256/` niet (de 1,51 GB van
+`model.safetensors` is van die stap), maar de container meldt elke regel van `models.lock`: zonder
+de stap `BEELD` maakt niemand de omzetting, en zegt `/beheer` dat er modellen ontbreken
+(`models_missing`; gezichten werken wel). `beeld_model.py uitslag` zegt het ook (x3a.md, Open 1).
 
 ### De omzetter met de hand draaien (alleen om te testen)
 

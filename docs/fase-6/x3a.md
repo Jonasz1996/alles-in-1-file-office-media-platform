@@ -290,9 +290,11 @@ Verwachting voor het echte model (Keuze 73, 77): bron 1,55 GB; maxrss van één 
 
 1. **De bronregels in `models.lock` en X2.** Twee dingen van X2a lezen elke regel van
    `models.lock`:
-   - `modellen_ophalen` in `install.sh` haalt elke regel met een URL. Met de bronregels erin haalt
+   - ~~`modellen_ophalen` in `install.sh` haalt elke regel met een URL. Met de bronregels erin haalt
      een installatie met `ANALYSE=aan` ook de 1,51 GB van `model.safetensors`, en houdt die, ook
-     zonder zoeken op beeld; de uitkomsten (url `-`) slaat hij over;
+     zonder zoeken op beeld; de uitkomsten (url `-`) slaat hij over;~~ [Review golf 5, uitrol F3:
+     `modellen_ophalen` slaat de regels onder `siglip2-b32-256/` nu over (`03908c9`), ook laag 3
+     en `test_analyse_container.sh`; die bronnen zijn van de stap `BEELD` van X3b.]
    - caps meldt elke regel. Na het omzetten haalt `install.sh` de bron weg (Keuze 73), dus
      `siglip2-b32-256/bron/*` staat dan op `ontbreekt`; en zonder omzetting staan de uitkomsten op
      `ontbreekt`. Gezichten vragen `ready(FACES_MODELS)` (a0.md, Open 4), maar `/beheer` moet het
@@ -303,7 +305,9 @@ Verwachting voor het echte model (Keuze 73, 77): bron 1,55 GB; maxrss van één 
    beeld in `install.sh`. Tot dan: de pins (punt 2) niet op een tak zetten waar `ANALYSE=aan`
    gebruikt wordt, of samen met die wijziging. Op de LXC van Jonas staat `ANALYSE` tot 0.8.1 uit.
    [Golf 5: zo nagekeken met `test_lock_siglip.py`; het blijft open voor X3b, zie De
-   samenvoeging.]
+   samenvoeging. Review golf 5, uitrol F3: het deel van `install.sh` is gedaan; caps blijft open
+   voor X3b, en `beeld_model.py uitslag` zegt nu dat de regels pas samen met X3b in
+   `models.lock` horen.]
 2. **De pins**: na de eerste run zet een mens de regels uit `voorstel-models.lock` in
    `app/analyse/models.lock` en `voorstel-beeld.tsv` als `api/tests/analyse/sets/beeld.tsv` (zie
    de runbook). In dezelfde commit krijgt `test_models_lock.py::test_de_twee_modellen_van_gezichten`
@@ -429,9 +433,9 @@ hier wat X3a raakt, langs "Voor de samenvoeging met X2a". Niets gepusht, geen ta
   van de gezichten: de parser en `line()`, de vingerafdruk van de gezichten (gelijk), de lus van
   `install.sh` in bash, `caps` (`ontbreekt` voor de vijf uitkomsten), de monitor
   (`models_missing` met precies die vijf; gezichten kunnen door) en `Models.entry`. Zo staat vast
-  wat Open 1 zegt: met de pins en zonder X3b is de stand `models_missing` en haalt `install.sh` de
-  bron. De commit en de bytes in de test zijn een voorbeeld; geen sha256 is verzonnen voor
-  `models.lock`.
+  wat Open 1 zegt: met de pins en zonder X3b is de stand `models_missing` ~~en haalt `install.sh`
+  de bron~~ [Review golf 5, uitrol F3: `install.sh` haalt de bron niet meer, `03908c9`]. De
+  commit en de bytes in de test zijn een voorbeeld; geen sha256 is verzonnen voor `models.lock`.
 - **De licenties**: drie naast de modellen; `test_install_analyse.sh` eist nu precies de drie namen
   in plaats van het getal 2 (`ac6950c`). `test_models_lock.py::test_de_licenties` (de tekst van
   SigLIP 2 op zijn sha256, SFace begint met dezelfde bytes) is groen tegen het bestand van X2a.
@@ -462,3 +466,60 @@ hier wat X3a raakt, langs "Voor de samenvoeging met X2a". Niets gepusht, geen ta
 ### Gedraaid op de samengevoegde kop
 
 Zie "Gedraaid op de samengevoegde kop" in [x2a.md](x2a.md): één run voor beide delen.
+
+## De review (golf 5)
+
+Drie reviews van de samengevoegde kop (`deccbee`): "veilig", "uitrol" en "contract". Hoe er
+gewerkt is, wat X2a raakt en wat er gedraaid is, staat in "De review (golf 5)" in
+[x2a.md](x2a.md); hier wat X3a raakt. Elke bevinding eerst zelf nagekeken; ze klopten alle. Per
+bevinding een test die zonder de reparatie faalt (de oude code in een kopie). Niets gepusht, geen
+tag.
+
+| Bevinding | Wat er was | Wat er gedaan is | Test (rood zonder de reparatie) | Commit |
+|---|---|---|---|---|
+| veilig F2 (should) | `safetensors.py` keek niet of `dtype` tekst is en of de vorm redelijke getallen heeft. Een dtype als lijst of object gaf `TypeError` (`unhashable type`), een vorm met reuzen van getallen `ValueError` (een getal van meer dan 4300 cijfers in de f-string van de melding): een traceback (code 1) in plaats van code 2 met één regel | `OmzetFout` voor een dtype dat geen tekst is, een as boven 2^40, en een vorm groter dan het bestand (ook als product van redelijke assen) | `test_beeld_omzetten.py::test_een_kop_die_liegt[dtype lijst, dtype object, vorm met reuzen, vorm van 1000 assen, vorm groter dan het bestand]` en `::test_wat_eerst_een_traceback_gaf_is_nu_code_2[dtype lijst, vorm met reuzen]` (als proces, zoals compose: code 2, één regel `omzetten: …`, geen traceback, niets in `/uit`) | `4a6cbb2` |
+| veilig F3 (should) | `bouw.py` keek met `act not in GELU` naar `hidden_act` uit `config.json`; een lijst of object gaf `TypeError` | `OmzetFout` als `hidden_act` geen tekst is ("hidden_act = list") | `::test_een_bron_die_niet_klopt[hidden_act lijst, hidden_act object]`, `::test_wat_eerst_een_traceback_gaf_is_nu_code_2[hidden_act lijst]` | `4a6cbb2` |
+| veilig F4 (should) | De tokenizer las een normalizer van het soort `Sequence` recursief zonder grens: 1200 diep (geldige JSON) gaf `RecursionError`; `added_tokens` als getal gaf `TypeError` | `MAX_NESTING` (4; SigLIP 2 heeft er één): dieper is `TokenizerFout`; `added_tokens` die geen lijst is ook; en een vangnet voor `RecursionError` in `from_json` | `tests/beeld/test_tokenizer.py::test_json_die_niet_kan` (diep genest, 5 en 1200; `added_tokens` 5 en `true`) en `test_een_sequence_in_een_sequence_tot_de_grens_kan` (de grens laat de normalizer van SigLIP 2 in nog drie Sequences toe); `test_beeld_omzetten.py::…[tokenizer.json diep genest]` (twee keer, ook als proces) | `4a6cbb2` |
+| uitrol F1 (blocking) | `meta.json` noemde de fp32-grafen als de omzetting `--fp32` kreeg. De job deed de eerste van de twee omzettingen met `--fp32`, dus gaf die een ander `meta.json` dan de tweede: BZ2 altijd FOUT, en nooit een voorstel voor `models.lock` | `meta.json` noemt alleen de vaste uitvoer (`UITVOER`); met of zonder `--fp32` zijn de vijf bestanden byte voor byte gelijk. `ci.yml` zet twee keer om precies zoals de dienst (`uit1`, `uit2`), dan een derde keer met `--fp32` (`uitfp32`), alleen voor BZ4 | `test_beeld_omzetten.py::test_met_en_zonder_fp32_dezelfde_vijf_bestanden`: op de oude `bouw.py` rood. Op ware grootte (zie hieronder) gaf de oude code "BZ2 FOUT meta.json: twee omzettingen geven 2f48409f… en 344211ae…" | `0313774` |
+| uitrol F2 (blocking) | De grens van 1,5 GB voor maxrss gold ook voor de omzetting met `--fp32`; op ware grootte is die 1582 MiB (de fp32-embedding van 256.000 × 768 is 786 MB) | De grens geldt voor de omzettingen zoals de dienst. `beeld_model.py vergelijk` kreeg `--uit-fp32` en `--log-fp32`: tijd en maxrss van die omzetting staan in het log zonder grens, maar de vijf bestanden moeten dezelfde zijn als zonder `--fp32`. BZ4 rekent met `uitfp32`, BZ3 en BZ6 met `uit1`. "De job `beeld-model`" hierboven en het runbook zeggen het | `test_beeld_ci.py::test_bz2_begrenst_alleen_de_omzettingen_zoals_de_dienst` (op de oude `ci.yml` rood); `test_beeld_tools.py::test_vergelijk_met_fp32_heeft_geen_grens_op_maxrss`, `::test_vergelijk_met_fp32_andere_uitvoer_is_rood`, `::test_vergelijk_met_fp32_wil_de_fp32_grafen_en_beide_opties` (op de oude `beeld_model.py` 3 rood) | `0313774` |
+| uitrol F3 (should), het deel van X3a | De uitslag van `beeld-model` zei alleen dat er een voorstel ligt; niets over wat de pins zonder X3b doen | `beeld_model.py uitslag` zegt ook: "zet die regels pas samen met X3b in models.lock: zonder de stap BEELD van install.sh maakt niemand de omzetting, en meldt de container ze als ontbrekend (models_missing)". De rest (`install.sh`, laag 3, de container) staat in x2a.md | `test_beeld_tools.py::test_uitslag_is_rood_zolang_er_een_voorstel_ligt` (de nieuwe exacte lijst): op de oude `beeld_model.py` rood | `03908c9` |
+| contract G5-C3 (should) | Niets legde de schalen van int8 vast. Een schaal per tensor in plaats van per kolom, een vaste schaal voor de embedding of een Linear die fp32 bleef: alle 84 tests van `test_beeld_omzetten.py` bleven groen (de cosinus ≥ 0,99 op de kleine vorm merkt het niet; `test_int8_echt_int8` kijkt alleen of de op er is) | Twee tests; de code klopte. Een eigen lezer van het protobuf (zonder `onnxw` en zonder `onnx`) leest beide int8-grafen: elke Linear is `DynamicQuantizeMatMul` (com.microsoft) met B int8 [in, uit], `B_scale` [uit] en een nulpunt [uit] van nullen; de schalen en de int8 gelijk aan max \|kolom\| / 127 uit de bron; elke kolom haalt 127; geen `MatMul` of `Gemm` met een gewicht; de embedding een schaal [woorden, 1] per rij. En een uitvoer van `fc1`, een van `k_proj` (in qkv na q) en een rij van de embedding 100 × zo groot: alleen hun eigen schaal wordt 100 ×, de rest blijft byte voor byte gelijk | `test_beeld_omzetten.py::test_int8_een_schaal_per_kolom_en_per_rij` en `::test_int8_een_uitschieter_raakt_alleen_zijn_eigen_kolom`. Vijf mutaties van `bouw.py`: MQ1 (een schaal per tensor), MQ3 (een vaste schaal voor de embedding) en MQ5 (de kop van tekst fp32) lieten de 84 oude tests groen; alle vijf (ook MQ2 de as verwisseld, MQ4 een nulpunt van 1) maken een nieuwe test rood | `e0cce6e` |
+
+**De oude code tegen de nieuwe tests** (veilig F2–F4), in een kopie van de boom vóór `4a6cbb2`:
+`test_beeld_omzetten.py` 11 rood, 72 groen: van de twaalf nieuwe gevallen gaf alleen "vorm van
+1000 assen" al een `OmzetFout`, en dat geval blijft als bewaking. `test_tokenizer.py` (met alleen
+de constante `MAX_NESTING` erbij, zodat het bestand laadt) 4 rood, 90 groen: de vier gevallen van
+`test_json_die_niet_kan`; `test_een_sequence_in_een_sequence_tot_de_grens_kan` was al groen en
+bewaakt dat de grens SigLIP 2 zelf niet weigert.
+
+**BZ2 op ware grootte** (uitrol F1 en F2). huggingface.co is vanuit de sandbox dicht, dus een bron
+op de maat van SigLIP 2 B/32-256 met willekeurige gewichten (breedte 768, MLP 3072, 12 koppen, 12
+lagen, 256.000 woorden; 1,5 GB `model.safetensors`, gemaakt met de vormen van `siglip_klein.py`),
+en de stappen van BZ2 uit `ci.yml` na, onder `taskset -c 0-2`. De bron is daarna weg.
+
+| Omzetting | Vóór de reparatie | Na de reparatie |
+|---|---|---|
+| met `--fp32` | 18,7 s, maxrss 1582 MiB: "BZ2 FOUT omzetting 1: maxrss 1582 MiB > 1536" | `uitfp32`: 18,0 s, maxrss 1582 MiB, "(geen grens)"; dezelfde sha256 voor alle 5 bestanden als `uit1` |
+| zoals de dienst | 9,4 s, maxrss 294 MiB; "BZ2 FOUT meta.json" (de andere was met `--fp32`) | `uit1` 10,1 s en `uit2` 9,6 s, maxrss 293 MiB elk; dezelfde sha256 voor alle 5 bestanden |
+| `vergelijk` | rood (FOUT) | code 3: een voorstel voor `models.lock` (de bron staat er nog niet in) |
+
+### Klaar als, na de review
+
+| Regel | Bewijs | Uitkomst |
+|---|---|---|
+| Een bron die liegt (dtype, vorm, `hidden_act`, een tokenizer die te diep nest) geeft code 2 met één regel, geen traceback | `test_beeld_omzetten.py` (nu 86), `tests/beeld/test_tokenizer.py` | groen |
+| BZ2 kan groen worden: twee omzettingen zoals de dienst met dezelfde sha256 en ≤ 1,5 GB; de fp32 apart | `test_met_en_zonder_fp32_dezelfde_vijf_bestanden`, `test_beeld_ci.py`, `test_beeld_tools.py`; BZ2 op ware grootte (hierboven) | groen; 293 MiB tegen de grens van 1536; met het echte model in `beeld-model` na de push |
+| De schalen van int8 liggen vast in een test | de twee tests van G5-C3 | groen |
+| De uitslag zegt de pins pas samen met X3b te zetten | `test_uitslag_is_rood_zolang_er_een_voorstel_ligt` | groen |
+| De telling van `api-analyse` | `ci.yml` (209 en 11) | zie Gedraaid na de review in [x2a.md](x2a.md) |
+
+### Open na de review
+
+- De punten onder "Open na de samenvoeging" blijven staan; Open 1 is voor `install.sh` gedaan
+  (uitrol F3), caps blijft van X3b.
+- Alleen in CI, na de push: `beeld-model` (BZ1–BZ4, BZ6, BZ7) met het echte model, nu met drie
+  omzettingen, en de tests van X3a in `api-analyse`.
+
+### Gedraaid na de review
+
+Zie "Gedraaid na de review" in [x2a.md](x2a.md): één run voor beide delen.
