@@ -48,7 +48,29 @@ stap() { printf '\n== %s\n' "$1"; }
 # 64 hex-tekens uit /dev/urandom: veilig om .env als shell te lezen (Keuze 10)
 hex() { od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; }
 
-set_key() { sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"; }
+# Een sleutel op een waarde zetten: elke regel die met "$1=" begint. Met alleen builtins van bash
+# voor de waarde: een sleutel als ANALYSE_WORKER_KEY komt zo nooit in de argv of de omgeving van
+# een ander proces (sed -i had hem in zijn argv, voor iedereen te lezen in /proc/<pid>/cmdline;
+# review golf 5, veilig F5), en |, & en \ in de waarde zijn gewoon tekens. Zoals sed -i: een nieuw
+# bestand ernaast met de rechten en de eigenaar van het oude, dan mv; een laatste regel zonder
+# regeleinde blijft zonder. mktemp, chmod, chown en mv krijgen alleen paden.
+set_key() {
+  local line end out="" tmp
+  [ -f "$ENV_FILE" ] || return 1
+  while :; do
+    if IFS= read -r line; then end=$'\n'; else [ -n "$line" ] || break; end=""; fi
+    case $line in "$1="*) line=$1=$2 ;; esac
+    out+=$line$end
+    [ -n "$end" ] || break
+  done <"$ENV_FILE"
+  tmp=$(mktemp "$ENV_FILE.XXXXXX") || return 1
+  if printf '%s' "$out" >"$tmp" && chmod --reference="$ENV_FILE" -- "$tmp" &&
+    chown --reference="$ENV_FILE" -- "$tmp" && mv -f -- "$tmp" "$ENV_FILE"; then
+    return 0
+  fi
+  rm -f -- "$tmp"
+  return 1
+}
 
 # Een ontbrekende sleutel toevoegen; een lege waarde (zoals in .env.example) vullen. Een
 # bestaande waarde blijft altijd staan. Eindigt .env niet op een regeleinde (met de hand

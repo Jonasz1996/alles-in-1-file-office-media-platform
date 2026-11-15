@@ -11,7 +11,9 @@
 # - ANALYSE_STANDAARD is uit (tot 0.8.1, I2); ANALYSE uit de omgeving: alleen aan of uit, een
 #   andere waarde stopt install.sh op de eerste regel;
 # - .env: zonder ANALYSE, of met uit, komt er niets bij; bij aan ANALYSE=aan, een sleutel van
-#   64 hex (één keer, nooit vervangen, ook niet na uit en weer aan) en de twee mappen;
+#   64 hex (één keer, nooit vervangen, ook niet na uit en weer aan) en de twee mappen; een lege
+#   sleutel vullen zet hem in de argv van geen enkel proces (een PATH met nep-commando's), en
+#   set_key neemt de waarde letterlijk;
 # - main zonder ANALYSE doet precies wat install.sh van 0.8.0 doet (dezelfde uitvoer, dezelfde
 #   aanroepen van Docker, dezelfde .env, geen nieuwe map), en met ANALYSE=uit dezelfde aanroepen,
 #   .env en mappen;
@@ -309,6 +311,33 @@ check "weer aan: dezelfde sleutel (nooit vervangen)" eval 'has_line "ANALYSE=aan
 check "één regel per sleutel" eval '[ "$(grep -c "^ANALYSE=" "$ENV_FILE")" = 1 ] && [ "$(grep -c "^ANALYSE_WORKER_KEY=" "$ENV_FILE")" = 1 ] && [ "$(grep -c "^MODELLEN_ROOT=" "$ENV_FILE")" = 1 ]'
 check "een lege sleutel (zoals .env.example) wordt gevuld" eval '
   set_key ANALYSE_WORKER_KEY ""; instellingen "" "" "" "" >/dev/null; [[ $(value ANALYSE_WORKER_KEY) =~ ^[0-9a-f]{64}$ ]]'
+# Een lege sleutel vullen gaat via set_key: de sleutel komt nooit in de argv van een ander proces
+# (sed -i had hem in zijn argv; review golf 5, veilig F5). Een PATH met een nep-sed, -awk, -mv, …
+# die hun argv opschrijven en dan het echte commando starten.
+shim=$work/shim
+mkdir -p "$shim"
+for c in sed awk gawk mawk perl python3 grep tail head cat cp mv mktemp chmod chown tee dd od tr install ed; do
+  real=$(command -v "$c") || continue
+  cat >"$shim/$c" <<SH
+#!/bin/sh
+printf '%s\n' "$c \$*" >>"$work/argv.log"
+exec "$real" "\$@"
+SH
+  chmod 755 "$shim/$c"
+done
+set_key ANALYSE_WORKER_KEY ""
+: >"$work/argv.log"
+PATH=$shim:$PATH instellingen "" "" "" "" >/dev/null
+key=$(value ANALYSE_WORKER_KEY)
+check "de lege sleutel gevuld via de nep-PATH (64 hex)" eval '[[ $key =~ ^[0-9a-f]{64}$ ]]'
+check "de nep-PATH werkte (grep en mv staan in het logboek)" eval 'grep -q "^grep " "$work/argv.log" && grep -q "^mv " "$work/argv.log"'
+check "de sleutel staat in de argv van geen enkel proces" not grep -qF "$key" "$work/argv.log"
+printf 'ANALYSE_X=1\nANALYSE=aan\nLAATSTE=zonder' >"$work/set_key.env"
+chmod 640 "$work/set_key.env"
+check "set_key: letterlijk (| & \\), alleen die sleutel, rechten en een laatste regel zonder regeleinde blijven" eval '
+  ENV_FILE=$work/set_key.env set_key ANALYSE "a|b&c\\d" && ENV_FILE=$work/set_key.env set_key LAATSTE "nu" &&
+  [ "$(cat "$work/set_key.env"; echo .)" = "$(printf "ANALYSE_X=1\nANALYSE=a|b&c\\\\d\nLAATSTE=nu.")" ] &&
+  [ "$(stat -c %a "$work/set_key.env")" = 640 ] && [ -z "$(ls "$work" | grep "^set_key.env.")" ]'
 base_env
 check "met ANALYSE_STANDAARD=aan (I2): een ontbrekende ANALYSE wordt aan" eval '
   ANALYSE_STANDAARD=aan; instellingen "" "" "" "" >/dev/null; ANALYSE_STANDAARD=uit; has_line "ANALYSE=aan" && [ -n "$(value ANALYSE_WORKER_KEY)" ]'
