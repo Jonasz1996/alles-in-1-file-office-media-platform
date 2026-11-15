@@ -3,7 +3,7 @@
 pid 1 draait in dit proces (echt.binnen) met de kinderen van proef.py: echte kinderen (dezelfde
 BOOT, grenzen en fd's) die ook WACHT, NEGEER en embed_text kennen. Zo is te zien wat pid 1 doet
 terwijl een opdracht loopt: busy per kind, cancel, de deadline, en een beeldvraag (zoeken) naast
-een lange opdracht van werk. group (X2b) en rank (X3) zijn er nog niet; embed_text van de proef
+een lange opdracht van werk. group is er sinds X2b, rank (X3) nog niet; embed_text van de proef
 staat in voor de beeldvraag.
 """
 
@@ -118,7 +118,7 @@ async def test_een_tweede_opdracht_voor_werk_is_busy_en_pid1_antwoordt_gewoon(pa
             await _begin_faces(settings, _preview())
         assert exc.value.child == Child.WERK.value
         caps = await client.caps(settings)
-        assert caps.built == ["cancel", "caps", "embed_text", "faces"]
+        assert caps.built == ["cancel", "caps", "embed_text", "faces", "group"]
     finally:
         werk.close()
 
@@ -280,7 +280,7 @@ async def test_werk_start_opnieuw_na_10_minuten(paar, klok):
 async def test_zoeken_leeft_lang_en_decodeert_nooit_een_beeld(paar):
     worker, settings = paar
     assert kids.handlers(Child.ZOEKEN) == {}
-    assert set(kids.handlers(Child.WERK)) == {Op.FACES.value}
+    assert set(kids.handlers(Child.WERK)) == {Op.FACES.value, Op.GROUP.value}
     seen = {(await _embed(settings, f"vraag {i}"))["pid"] for i in range(12)}
     assert len(seen) == 1
     data = await _embed(settings, "pil")

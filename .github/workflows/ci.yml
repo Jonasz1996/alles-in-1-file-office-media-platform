@@ -128,10 +128,11 @@ jobs:
       # bron die liegt), 1 (met en zonder --fp32), 1 (laag 3 alleen de gezichten), 2 (de punten
       # decoderen en uitlijnen), 2 (de schalen van int8) en 1 (BUILT en de handlers gelijk);
       # en van de nacontrole van golf 5: 2 (het uitgelijnde gezicht pixel voor pixel en de
-      # invoer van SFace in NCHW); van X2b (golf 6): 15 (test_worker_group.py 14 en
-      # test_group_perf.py 1); gedeselecteerd: de 11 tests van de job beeld-model. Noem hun
-      # marker hier niet: test_beeld_ci.py eist dat deze job hem precies één keer noemt (-m)
-      ANALYSE_TESTS: "226"
+      # invoer van SFace in NCHW); van X2b (golf 6): 18 (test_worker_group.py 14,
+      # test_group_perf.py 1 en de drie scenario's met group tegen de echte worker in
+      # test_analyse_contract_real.py); gedeselecteerd: de 11 tests van de job beeld-model. Noem
+      # hun marker hier niet: test_beeld_ci.py eist dat deze job hem precies één keer noemt (-m)
+      ANALYSE_TESTS: "229"
       ANALYSE_DESELECTED: "11"
     steps:
       - uses: actions/checkout@v4

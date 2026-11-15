@@ -1,8 +1,8 @@
 """analyse_contract.py tegen de echte worker (fase 6, X2 "De tests", laag 2; X2a).
 
 Dezelfde scenario's als tegen de nep (tests/analyse/test_fake_analyse_worker.py). De echte worker
-van X2a doet faces; een scenario dat group of rank vraagt (needs), staat niet in zijn lijst. X2b
-(group) en X3 (rank) zetten hun opdracht in GEBOUWD, en de lijst groeit vanzelf.
+doet faces (X2a) en group (X2b); een scenario dat rank vraagt (needs), staat niet in zijn lijst. X3
+(rank) zet zijn opdracht in GEBOUWD, en de lijst groeit vanzelf.
 """
 
 from __future__ import annotations
@@ -16,12 +16,12 @@ from tests_analyse import echt, fake_models
 
 pytestmark = [pytest.mark.anyio, pytest.mark.analyse_echt]
 
-GEBOUWD = frozenset({Op.FACES})
+GEBOUWD = frozenset({Op.FACES, Op.GROUP})
 LIJST = [s for s in C.SCENARIOS if C.required(s) <= GEBOUWD]
 
 
 def test_de_lijst_volgt_wat_de_worker_doet():
-    """GEBOUWD is wat de worker van X2a meldt (caps.built zonder caps en cancel); elk scenario
+    """GEBOUWD is wat de worker meldt (caps.built zonder caps en cancel); elk scenario
     zonder needs staat in de lijst, en geen enkel scenario wordt overgeslagen."""
     assert server.BUILT - {Op.CAPS, Op.CANCEL} == GEBOUWD == echt.EchteDriver.has
     assert [s.__name__ for s in LIJST] == [
@@ -37,6 +37,9 @@ def test_de_lijst_volgt_wat_de_worker_doet():
         "verkeerde_deadline",
         "verkeerd_aantal_fds",
         "cancel_onbekend",
+        "bezet_per_kind_werk",
+        "dicht_is_afbreken",
+        "deadline_is_timeout",
     ]
 
 

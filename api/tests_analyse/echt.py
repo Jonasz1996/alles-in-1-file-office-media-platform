@@ -4,7 +4,8 @@
   `python -I -c BOOT`), maar met --local: geen zelftest, sandbox "off", en de kinderen starten uit
   de python van deze venv (er is geen python-tekst). De sleutel staat alleen in de omgeving; wat
   de worker op stderr zet, komt in een bestand (K1-16 kijkt daarin).
-- EchteDriver: de Driver van tests/analyse/analyse_contract.py voor zo'n worker (has: faces).
+- EchteDriver: de Driver van tests/analyse/analyse_contract.py voor zo'n worker (has: faces en
+  group; de lange opdracht is group over GROEP_N gemaakte gezichten).
 - binnen(): pid 1 in dit proces, met een eigen BOOT voor de kinderen (proef.py) of andere
   grenzen; voor wat alleen met een naad te testen is.
 """
@@ -32,6 +33,10 @@ from tests.analyse import analyse_contract as C
 from tests_analyse import fake_models
 
 START_S = 30.0
+# group over zoveel gemaakte gezichten (groep_maak.py) duurt 3,5 s op 3 kernen (X2b): lang
+# genoeg voor busy, cancel, dicht en een deadline van 300 ms; elke stopvlag-check komt per blok
+GROEP_N = 30_000
+VRIJ_S = 10.0
 
 
 def settings_for(base: Path, socket_path: Path, key: str) -> Settings:
@@ -139,26 +144,54 @@ class EchteWorker:
 
 
 class EchteDriver:
-    """De Driver van analyse_contract.py voor de echte worker van X2a (faces, nog geen group)."""
+    """De Driver van analyse_contract.py voor de echte worker: faces (X2a) en group (X2b); rank
+    (X3) nog niet."""
 
     name = "echt"
-    has = frozenset({Op.FACES})
+    has = frozenset({Op.FACES, Op.GROUP})
 
     def __init__(self, worker: EchteWorker) -> None:
         self.worker = worker
         self.socket = worker.socket
         self.key = worker.key
         self.models = tuple(m.name for m in lock.load(worker.models.lock))
+        self._groep: bytes | None = None
 
     def settings(self) -> Settings:
         return self.worker.settings()
 
     async def lang(self, op: Op) -> C.Opdracht:
-        # Elk scenario met lang() vraagt group of rank (needs); die staan niet in de lijst van X2a
-        raise AssertionError(f"geen lange opdracht voor {op.value} in X2a")
+        """Een opdracht die lang genoeg loopt: group (mode full) over GROEP_N gemaakte gezichten,
+        verzegeld in een verse memfd per begin."""
+        assert op is Op.GROUP, op  # rank (X3) staat niet in has
+        if self._groep is None:
+            from tests_analyse.groep_maak import invoer, maak  # numpy: niet in pid 1 of de proef
+
+            self._groep = invoer(maak(GROEP_N)[0], [], 0)
+        data = self._groep
+        return C.Opdracht(
+            Op.GROUP,
+            wire.GroupArgs(mode="full"),
+            lambda: [wire.sealed_memfd("in", data), wire.out_memfd("uit")],
+        )
 
     async def los(self) -> None:
-        return None
+        """Na elk scenario: wacht tot werk weer vrij is. Een afgebroken group stopt pas bij de
+        volgende check van zijn stopvlag (per blok); het volgende scenario begint met een vrij kind
+        werk, zoals bij de nep na het loslaten van zijn poorten."""
+
+        async def vrij() -> bool:
+            try:
+                job = await C.begin(self, C.STANDAARD[Op.GROUP])  # 0 gezichten: meteen klaar
+            except client.AnalyseBusy:
+                return False
+            try:
+                await job.result()
+            finally:
+                job.close()
+            return True
+
+        await C.until(vrij, VRIJ_S)
 
 
 # --- pid 1 in dit proces --------------------------------------------------------------------
