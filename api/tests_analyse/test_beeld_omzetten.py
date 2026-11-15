@@ -282,6 +282,8 @@ def test_meta_json(omgezet):
     _, runs = omgezet
     uit = runs[0][0]
     meta = json.loads((uit / META).read_text())
+    # omzetter 2: het gewicht van een Linear met |q| ≤ 64 (de int8-bytes anders dan bij 1)
+    assert meta["formaat"] == 1 and meta["omzetter"] == bouw.VERSIE == 2
     assert meta["dim"] == klein.BREEDTE and meta["model"] == MAP
     assert meta["logit_scale"] == float(np.float32(klein.LOGIT_SCALE))
     assert meta["logit_bias"] == float(np.float32(klein.LOGIT_BIAS))
@@ -418,17 +420,22 @@ def _wt(w: dict, label: str) -> np.ndarray:
     return rijen.T
 
 
-def _q8_per_kolom(wt: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Keuze 73: s = max |kolom| / 127 (in float32), q = rint(w / s), nulpunt 0."""
-    s = (np.abs(wt).max(axis=0) / 127.0).astype(np.float32)
-    return np.clip(np.rint(wt / s.astype(np.float64)), -127, 127).astype(np.int8), s
+# De grootste |q|: 64 voor een Linear (DynamicQuantizeMatMul; zonder VNNI loopt een paar van
+# uint8 maal int8 met 127 over in int16, CI op 7569d48), 127 voor de embedding (geen matmul)
+LINEAR, EMBEDDING = 64, 127
+
+
+def _q8_per_kolom(wt: np.ndarray, top: int) -> tuple[np.ndarray, np.ndarray]:
+    """Keuze 73: s = max |kolom| / top (in float32), q = rint(w / s), nulpunt 0."""
+    s = (np.abs(wt).max(axis=0) / float(top)).astype(np.float32)
+    return np.clip(np.rint(wt / s.astype(np.float64)), -top, top).astype(np.int8), s
 
 
 def test_int8_een_schaal_per_kolom_en_per_rij(omgezet):
     """Elke Linear is DynamicQuantizeMatMul met B int8 [in, uit], B_scale [uit] en een nulpunt
-    [uit] van nullen; de schalen per kolom tegen de gewichten van de bron, en elke kolom haalt
-    127. Geen MatMul of Gemm meer met een gewicht. De embedding van de tekst: een schaal per rij,
-    [woorden, 1], en elke rij haalt 127."""
+    [uit] van nullen; de schalen per kolom tegen de gewichten van de bron, |q| ≤ 64 en elke kolom
+    haalt 64. Geen MatMul of Gemm meer met een gewicht. De embedding van de tekst: een schaal per
+    rij, [woorden, 1], en elke rij haalt 127."""
     w, runs = omgezet
     uit = runs[0][0]
     for model, toren in ((BEELD, "vision_model"), (TEKST, "text_model")):
@@ -445,10 +452,10 @@ def test_int8_een_schaal_per_kolom_en_per_rij(omgezet):
             assert s.dtype == np.float32 and s.shape == (wt.shape[1],), label
             assert z.dtype == np.int8 and z.shape == (wt.shape[1],) and not z.any(), label
             assert inits[f"{label}.b"].shape == (wt.shape[1],), label
-            q_ref, s_ref = _q8_per_kolom(wt)
+            q_ref, s_ref = _q8_per_kolom(wt, LINEAR)
             assert np.array_equal(s, s_ref), label
             assert np.array_equal(q, q_ref), label
-            assert (np.abs(q.astype(np.int16)).max(axis=0) == 127).all(), label
+            assert (np.abs(q.astype(np.int16)).max(axis=0) == LINEAR).all(), label
         for op, _domein, invoer in nodes:
             if op in ("MatMul", "Gemm"):
                 assert not any(i in inits for i in invoer), (model, op, invoer)
@@ -457,9 +464,26 @@ def test_int8_een_schaal_per_kolom_en_per_rij(omgezet):
     tabel, schaal, emb = inits[f"{naam}.w8"], inits[f"{naam}.s"], _w(w, naam)
     assert tabel.dtype == np.int8 and tabel.shape == emb.shape
     assert schaal.dtype == np.float32 and schaal.shape == (emb.shape[0], 1)
-    q_ref, s_ref = _q8_per_kolom(emb.T)
+    q_ref, s_ref = _q8_per_kolom(emb.T, EMBEDDING)
     assert np.array_equal(schaal[:, 0], s_ref) and np.array_equal(tabel, q_ref.T)
-    assert (np.abs(tabel.astype(np.int16)).max(axis=1) == 127).all()
+    assert (np.abs(tabel.astype(np.int16)).max(axis=1) == EMBEDDING).all()
+
+
+def test_int8_geen_gewicht_van_een_linear_boven_64(omgezet):
+    """Elk int8-gewicht dat B is van een DynamicQuantizeMatMul, in beide grafen, heeft |q| ≤ 64:
+    zo past elk paar van vpmaddubsw (255·64·2 = 32.640) in int16, ook op een CPU zonder VNNI. Het
+    enige andere int8-gewicht is de embedding van de tekst, en die mag tot 127."""
+    uit = omgezet[1][0][0]
+    for model in (BEELD, TEKST):
+        nodes, inits = lees_onnx(uit / model)
+        b = {invoer[1] for op, _domein, invoer in nodes if op == "DynamicQuantizeMatMul"}
+        int8 = {naam for naam, a in inits.items() if a.dtype == np.int8 and a.ndim == 2}
+        assert b and b <= int8, model
+        for naam in b:
+            assert int(np.abs(inits[naam].astype(np.int16)).max()) <= LINEAR, (model, naam)
+        rest = int8 - b
+        emb = "text_model.embeddings.token_embedding.weight.w8"
+        assert rest == ({emb} if model == TEKST else set()), (model, rest)
 
 
 def test_int8_een_uitschieter_raakt_alleen_zijn_eigen_kolom(bron, tmp_path):

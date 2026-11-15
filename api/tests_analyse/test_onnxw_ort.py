@@ -5,6 +5,8 @@ numpy-versie in float64, tot op 1·10⁻⁵: voor elke op die de nepmodellen van
 en de graaf van SigLIP (Keuze 73) nodig hebben, met dynamische hoogte en breedte, alle zes de
 typen als raw_data, DynamicQuantizeMatMul van com.microsoft, en een model dat in stukken naar een
 bestand geschreven is. De vorm op de draad zelf toetst tests/analyse/test_onnxw.py (zonder numpy).
+Daarnaast DynamicQuantizeMatMul zoals een x86-CPU zonder VNNI hem rekent, nagedaan in numpy: met
+het gewicht van de omzetter kapt daar niets af (CI op 7569d48).
 """
 
 from __future__ import annotations
@@ -17,6 +19,8 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 from app.analyse import onnxw
 from app.analyse.onnxw import FLOAT, FLOAT16, INT8, INT32, INT64, UINT8, Graph, Model
+from app.analyse.worker.omzetten import bouw
+from app.analyse.worker.omzetten.bouw import per_kolom
 
 TOL = 1e-5
 
@@ -127,19 +131,28 @@ def test_gemm(sessie):
     same(y, 0.5 * (a.astype(np.float64) @ w.T) + 2.0 * b)
 
 
-@pytest.mark.parametrize("met_nulpunt", [True, False])
-def test_dynamic_quantize_matmul(sessie, met_nulpunt):
-    """com.microsoft DynamicQuantizeMatMul zoals de omzetter hem gebruikt (Keuze 73): int8 met
-    een schaal per kolom. De invoer ligt op het rooster dat onnxruntime zelf kiest (min −128·s,
-    max 127·s, s = 2⁻⁶): zo is de kwantisering van de invoer exact en is het verschil met numpy
-    alleen afronding."""
+def _dqmm_invoer() -> tuple[np.ndarray, np.ndarray, float, np.ndarray]:
+    """De invoer van test_dynamic_quantize_matmul: k op het rooster −128..127 (beide uitersten
+    erin), x = k·s met s = 2⁻⁶, en een gewicht W [16, 6]. onnxruntime kiest voor deze x zelf
+    schaal s en nulpunt 128: de invoer als uint8 is dan precies k + 128, van 0 tot 255."""
     s = 2.0**-6
     k = rng(5).integers(-128, 128, size=(2, 3, 16))
     k[0, 0, 0], k[0, 0, 1] = -128, 127
-    x = (k * s).astype(np.float32)
     w = rng(6).normal(0, 0.05, size=(16, 6))
-    scale = (np.abs(w).max(axis=0) / 127).astype(np.float32)
-    q = np.clip(np.round(w / scale), -127, 127).astype(np.int8)
+    return k, (k * s).astype(np.float32), s, w
+
+
+@pytest.mark.parametrize("met_nulpunt", [True, False])
+def test_dynamic_quantize_matmul(sessie, met_nulpunt):
+    """com.microsoft DynamicQuantizeMatMul zoals de omzetter hem gebruikt (Keuze 73): het gewicht
+    uit bouw.per_kolom, int8 met een schaal per kolom en |q| ≤ 64. De invoer ligt op het rooster
+    dat onnxruntime zelf kiest (min −128·s, max 127·s, s = 2⁻⁶): zo is de kwantisering van de
+    invoer exact en is het verschil met numpy alleen afronding. Met |q| tot 127 faalde dit op een
+    runner zonder VNNI (CI op 7569d48: verschil 0,167): daar telt onnxruntime twee buren in int16
+    op, en dat liep over. Met 64 kan dat niet meer (zie de tests hieronder, die dat op elke CPU
+    nadoen)."""
+    _, x, _, w = _dqmm_invoer()
+    q, scale = per_kolom(w)
     bias = f32(6, seed=7)
     g = Graph("dqmm")
     g.input("x", FLOAT, [2, "t", 16])
@@ -154,6 +167,99 @@ def test_dynamic_quantize_matmul(sessie, met_nulpunt):
     (y,) = run(sessie, g, {"x": x})
     want = x.astype(np.float64) @ (q.astype(np.float64) * scale)
     same(y, want + bias if met_nulpunt else want)
+    assert q.dtype == np.int8 and int(np.abs(q.astype(np.int16)).max()) == 64
+
+
+# --- DynamicQuantizeMatMul op een CPU zonder VNNI -----------------------------------------------
+#
+# onnxruntime maakt van de invoer uint8 en rekent met MLAS (uint8 maal int8). Op een x86-CPU zonder
+# AVX-VNNI of AVX512-VNNI is dat vpmaddubsw: per paar buren langs K a·b + a'·b' in int16, afgekapt
+# op −32.768..32.767, daarna opgeteld in int32. Met VNNI kapt niets af. Deze tests doen het zonder
+# VNNI na in numpy, dus op elke CPU, ook op een runner of host met VNNI.
+
+INT16 = (-32768, 32767)
+# Het verschil van test_dynamic_quantize_matmul met |q| tot 127, op de runner zonder VNNI van CI
+# op 7569d48 (run 43758619443; [True] en [False] gaven 0,16686297…)
+CI_7569D48 = 0.166862974
+
+
+def _paren(a: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """a uint8 [m, K], q int8 [K, n]: a_k·q_k + a_k+1·q_k+1 voor elk paar buren (k even), exact,
+    als [m, K/2, n]."""
+    a, q = a.astype(np.int64), q.astype(np.int64)
+    return a[:, 0::2, None] * q[None, 0::2, :] + a[:, 1::2, None] * q[None, 1::2, :]
+
+
+def _zonder_vnni(a: np.ndarray, nulpunt: int, q: np.ndarray) -> np.ndarray:
+    """Σ_k (a_k − nulpunt)·q_k zoals MLAS zonder VNNI: elk paar afgekapt op int16 (vpmaddubsw), de
+    paren opgeteld in int32, dan het nulpunt eraf met de som van de kolom (die is exact)."""
+    return np.clip(_paren(a, q), *INT16).sum(axis=1) - nulpunt * q.astype(np.int64).sum(axis=0)
+
+
+def _exact(a: np.ndarray, nulpunt: int, q: np.ndarray) -> np.ndarray:
+    return (a.astype(np.int64) - nulpunt) @ q.astype(np.int64)
+
+
+def _slechtst(q: np.ndarray) -> np.ndarray:
+    """De ergste invoer voor elke kolom: 255 waar q > 0 (en verder 0) maakt elk paar zo groot
+    mogelijk, 255 waar q < 0 zo klein mogelijk. Twee rijen per kolom, en alles 0 en alles 255."""
+    rijen = [np.where(q[:, j] > 0, 255, 0) for j in range(q.shape[1])]
+    rijen += [np.where(q[:, j] < 0, 255, 0) for j in range(q.shape[1])]
+    rijen += [np.zeros(q.shape[0]), np.full(q.shape[0], 255)]
+    return np.array(rijen, dtype=np.uint8)
+
+
+def _uitersten() -> np.ndarray:
+    """Een gewicht W [64, 8] waarin elke kolom twee paren buren op zijn grootste |w| heeft: q wordt
+    daar 64, 64 en −64, −64, het ergste geval voor een paar."""
+    w = f32(64, 8, seed=8, scale=0.05)
+    w[0:2], w[2:4] = 1.0, -1.0
+    return w
+
+
+def test_zonder_vnni_rekent_de_omzetter_exact():
+    """Met het gewicht van bouw.per_kolom kapt geen paar af, op de ergste invoer (255 en 0 per
+    kolom gekozen) en op het rooster van test_dynamic_quantize_matmul, met elk nulpunt: het model
+    zonder VNNI geeft precies het product. Het ergste paar haalt ±255·64·2 = ±32.640."""
+    k, _, _, w = _dqmm_invoer()
+    grens, top = 0, 0
+    for gewicht, rooster in ((w, (k + 128).reshape(-1, 16)), (_uitersten(), None)):
+        q, _ = per_kolom(gewicht)
+        a = _slechtst(q) if rooster is None else np.concatenate([_slechtst(q), rooster])
+        for nulpunt in (0, 128, 255):
+            assert np.array_equal(_zonder_vnni(a, nulpunt, q), _exact(a, nulpunt, q)), nulpunt
+        grens = max(grens, int(np.abs(_paren(a, q)).max()))
+        top = max(top, int(np.abs(q.astype(np.int16)).max()))
+    assert grens == 255 * 64 * 2 == 32640
+    assert top == 64
+
+
+@pytest.mark.parametrize("q_max", [65, 127])
+def test_zonder_vnni_kapt_een_gewicht_boven_64_af(monkeypatch, q_max):
+    """De grens is scherp: met q tot 65 (of 127, zoals tot en met 7569d48) kapt het model zonder
+    VNNI een paar af op de ergste invoer, en is de uitkomst niet meer het product."""
+    monkeypatch.setattr(bouw, "Q_MAX", q_max)
+    q, _ = per_kolom(_uitersten())
+    assert int(np.abs(q.astype(np.int16)).max()) == q_max
+    a = _slechtst(q)
+    assert int(_paren(a, q).max()) == 255 * q_max * 2 > INT16[1]
+    assert not np.array_equal(_zonder_vnni(a, 128, q), _exact(a, 128, q))
+
+
+def test_het_model_zonder_vnni_geeft_het_verschil_van_ci(monkeypatch):
+    """Het model is de CPU van CI: met |q| tot 127 geeft het voor test_dynamic_quantize_matmul het
+    verschil dat de runner zonder VNNI gaf (op 8 cijfers), met 64 geen verschil."""
+    k, x, s, w = _dqmm_invoer()
+    a = (k + 128).reshape(-1, 16).astype(np.uint8)
+    verschil = {}
+    for q_max in (127, 64):
+        monkeypatch.setattr(bouw, "Q_MAX", q_max)
+        q, scale = per_kolom(w)
+        want = x.astype(np.float64).reshape(-1, 16) @ (q.astype(np.float64) * scale)
+        got = _zonder_vnni(a, 128, q) * (s * scale.astype(np.float64))
+        verschil[q_max] = float(np.abs(got - want).max())
+    assert verschil[127] == pytest.approx(CI_7569D48, abs=1e-8)
+    assert verschil[64] <= 1e-12
 
 
 # --- normaliseren -----------------------------------------------------------------------------

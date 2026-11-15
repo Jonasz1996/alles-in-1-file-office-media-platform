@@ -79,7 +79,8 @@ of vreemde invoer, geen tekst in een fout, kapotte en te grote bestanden, en BZ7
     positie, `text_model.head`, L2;
   - int8 zoals Keuze 73: elke Linear `DynamicQuantizeMatMul` met int8-gewichten, een schaal per
     kolom en nulpunt 0; q, k en v van een laag in één MatMul; de embedding van de tekst in int8 met
-    een schaal per rij (Gather, Cast, Mul); de Conv van de patches blijft fp32;
+    een schaal per rij (Gather, Cast, Mul); de Conv van de patches blijft fp32 [CI op `7569d48`:
+    het gewicht van een Linear nu met |q| ≤ 64, de embedding met 127; zie daar];
   - elke initializer is een callable: er staat één gewicht tegelijk in het geheugen, de embedding
     in blokken van 4.096 rijen;
   - uitvoer: `beeld.int8.onnx`, `tekst.int8.onnx`, `tokenizer.bin`, `meta.json` (`logit_scale`,
@@ -179,7 +180,7 @@ Keuze 73 en K2-12 noemen drie delen. De beslissing valt na CI, niet hier.
 
 | Deel | Waar bewezen | Stand |
 |---|---|---|
-| De kleine vorm rekent als een eigen numpy-versie | `test_beeld_omzetten.py` in `api-analyse` (hier gedraaid) | **gehaald hier**: fp32 grootste verschil 2,5·10⁻⁷ (beeld) en 1,1·10⁻⁷ (tekst), grens 1·10⁻⁵; int8 kleinste cosinus 0,99969 (beeld) en 0,99985 (tekst), grens 0,99; twee keer dezelfde sha256 |
+| De kleine vorm rekent als een eigen numpy-versie | `test_beeld_omzetten.py` in `api-analyse` (hier gedraaid) | **gehaald hier**: fp32 grootste verschil 2,5·10⁻⁷ (beeld) en 1,1·10⁻⁷ (tekst), grens 1·10⁻⁵; int8 kleinste cosinus 0,99969 (beeld) en 0,99985 (tekst), grens 0,99 [CI op `7569d48`: met \|q\| ≤ 64 voor een Linear beeld 0,99941, tekst 0,99970]; twee keer dezelfde sha256 |
 | Twee keer omzetten geeft dezelfde sha256 (BZ2) | de stap `vergelijk` in `beeld-model` | **in CI na de push**. Met het echte model nog niet gedaan: huggingface.co is vanuit de sandbox dicht. Op de kleine vorm hier wel (drie keer, zelfde bytes) |
 | De kwaliteitspoort is groen (BZ4) | `test_beeld_kwaliteit.py` in `beeld-model` | **in CI na de push**, en pas als `beeld.tsv` er is: de eerste run stelt de set voor en is rood. Daarna een tweede run met de set |
 
@@ -208,7 +209,7 @@ Hier gemeten, in de sandbox, onder `taskset -c 0-2`. Met het echte model is hier
 |---|---|---|
 | Omzetter, kleine vorm (2 lagen, breedte 64), met `--fp32` | drie processen zoals de dienst, `wait4` | 0,22 / 0,23 / 0,24 s; maxrss 71,5 MiB elk; dezelfde sha256 |
 | Kleine vorm, fp32 tegen numpy | grootste absolute verschil | beeld 2,47·10⁻⁷, tekst 1,10·10⁻⁷ (grens 1·10⁻⁵) |
-| Kleine vorm, int8 tegen numpy | kleinste cosinus | beeld 0,99969, tekst 0,99985 (grens 0,99) |
+| Kleine vorm, int8 tegen numpy | kleinste cosinus | beeld 0,99969, tekst 0,99985 (grens 0,99) [CI op `7569d48`: met \|q\| ≤ 64 voor een Linear beeld 0,99941, tekst 0,99970] |
 | Kleine vorm, grootte | bytes | `beeld.int8.onnx` 981.742, `tekst.int8.onnx` 161.642 (fp32: 1.412.840 en 517.284) |
 | BZ7 synthetisch: `tokenizer.bin` met 256.000 stukken en ±600.000 merges (13,6 MB) | `from_bin` vijf keer; maxrss-groei in een vers proces | 0,117 s; +13,3 MB (grens 0,5 s en 100 MB); de test in `api` eist het |
 | Tokenizer, één vraag | `encode` op de kleine woordenlijst | ±50 µs |
@@ -493,7 +494,7 @@ tag.
 | uitrol F1 (blocking) | `meta.json` noemde de fp32-grafen als de omzetting `--fp32` kreeg. De job deed de eerste van de twee omzettingen met `--fp32`, dus gaf die een ander `meta.json` dan de tweede: BZ2 altijd FOUT, en nooit een voorstel voor `models.lock` | `meta.json` noemt alleen de vaste uitvoer (`UITVOER`); met of zonder `--fp32` zijn de vijf bestanden byte voor byte gelijk. `ci.yml` zet twee keer om precies zoals de dienst (`uit1`, `uit2`), dan een derde keer met `--fp32` (`uitfp32`), alleen voor BZ4 | `test_beeld_omzetten.py::test_met_en_zonder_fp32_dezelfde_vijf_bestanden`: op de oude `bouw.py` rood. Op ware grootte (zie hieronder) gaf de oude code "BZ2 FOUT meta.json: twee omzettingen geven 2f48409f… en 344211ae…" | `0313774` |
 | uitrol F2 (blocking) | De grens van 1,5 GB voor maxrss gold ook voor de omzetting met `--fp32`; op ware grootte is die 1582 MiB (de fp32-embedding van 256.000 × 768 is 786 MB) | De grens geldt voor de omzettingen zoals de dienst. `beeld_model.py vergelijk` kreeg `--uit-fp32` en `--log-fp32`: tijd en maxrss van die omzetting staan in het log zonder grens, maar de vijf bestanden moeten dezelfde zijn als zonder `--fp32`. BZ4 rekent met `uitfp32`, BZ3 en BZ6 met `uit1`. "De job `beeld-model`" hierboven en het runbook zeggen het | `test_beeld_ci.py::test_bz2_begrenst_alleen_de_omzettingen_zoals_de_dienst` (op de oude `ci.yml` rood); `test_beeld_tools.py::test_vergelijk_met_fp32_heeft_geen_grens_op_maxrss`, `::test_vergelijk_met_fp32_andere_uitvoer_is_rood`, `::test_vergelijk_met_fp32_wil_de_fp32_grafen_en_beide_opties` (op de oude `beeld_model.py` 3 rood) | `0313774` |
 | uitrol F3 (should), het deel van X3a | De uitslag van `beeld-model` zei alleen dat er een voorstel ligt; niets over wat de pins zonder X3b doen | `beeld_model.py uitslag` zegt ook: "zet die regels pas samen met X3b in models.lock: zonder de stap BEELD van install.sh maakt niemand de omzetting, en meldt de container ze als ontbrekend (models_missing)". De rest (`install.sh`, laag 3, de container) staat in x2a.md | `test_beeld_tools.py::test_uitslag_is_rood_zolang_er_een_voorstel_ligt` (de nieuwe exacte lijst): op de oude `beeld_model.py` rood | `03908c9` |
-| contract G5-C3 (should) | Niets legde de schalen van int8 vast. Een schaal per tensor in plaats van per kolom, een vaste schaal voor de embedding of een Linear die fp32 bleef: alle 84 tests van `test_beeld_omzetten.py` bleven groen (de cosinus ≥ 0,99 op de kleine vorm merkt het niet; `test_int8_echt_int8` kijkt alleen of de op er is) | Twee tests; de code klopte. Een eigen lezer van het protobuf (zonder `onnxw` en zonder `onnx`) leest beide int8-grafen: elke Linear is `DynamicQuantizeMatMul` (com.microsoft) met B int8 [in, uit], `B_scale` [uit] en een nulpunt [uit] van nullen; de schalen en de int8 gelijk aan max \|kolom\| / 127 uit de bron; elke kolom haalt 127; geen `MatMul` of `Gemm` met een gewicht; de embedding een schaal [woorden, 1] per rij. En een uitvoer van `fc1`, een van `k_proj` (in qkv na q) en een rij van de embedding 100 × zo groot: alleen hun eigen schaal wordt 100 ×, de rest blijft byte voor byte gelijk | `test_beeld_omzetten.py::test_int8_een_schaal_per_kolom_en_per_rij` en `::test_int8_een_uitschieter_raakt_alleen_zijn_eigen_kolom`. Vijf mutaties van `bouw.py`: MQ1 (een schaal per tensor), MQ3 (een vaste schaal voor de embedding) en MQ5 (de kop van tekst fp32) lieten de 84 oude tests groen; alle vijf (ook MQ2 de as verwisseld, MQ4 een nulpunt van 1) maken een nieuwe test rood | `e0cce6e` |
+| contract G5-C3 (should) | Niets legde de schalen van int8 vast. Een schaal per tensor in plaats van per kolom, een vaste schaal voor de embedding of een Linear die fp32 bleef: alle 84 tests van `test_beeld_omzetten.py` bleven groen (de cosinus ≥ 0,99 op de kleine vorm merkt het niet; `test_int8_echt_int8` kijkt alleen of de op er is) | Twee tests; de code klopte. Een eigen lezer van het protobuf (zonder `onnxw` en zonder `onnx`) leest beide int8-grafen: elke Linear is `DynamicQuantizeMatMul` (com.microsoft) met B int8 [in, uit], `B_scale` [uit] en een nulpunt [uit] van nullen; de schalen en de int8 gelijk aan max \|kolom\| / 127 uit de bron; elke kolom haalt 127 [CI op `7569d48`: voor een Linear nu / 64 en 64; de embedding blijft 127]; geen `MatMul` of `Gemm` met een gewicht; de embedding een schaal [woorden, 1] per rij. En een uitvoer van `fc1`, een van `k_proj` (in qkv na q) en een rij van de embedding 100 × zo groot: alleen hun eigen schaal wordt 100 ×, de rest blijft byte voor byte gelijk | `test_beeld_omzetten.py::test_int8_een_schaal_per_kolom_en_per_rij` en `::test_int8_een_uitschieter_raakt_alleen_zijn_eigen_kolom`. Vijf mutaties van `bouw.py`: MQ1 (een schaal per tensor), MQ3 (een vaste schaal voor de embedding) en MQ5 (de kop van tekst fp32) lieten de 84 oude tests groen; alle vijf (ook MQ2 de as verwisseld, MQ4 een nulpunt van 1) maken een nieuwe test rood | `e0cce6e` |
 
 **De oude code tegen de nieuwe tests** (veilig F2–F4), in een kopie van de boom vóór `4a6cbb2`:
 `test_beeld_omzetten.py` 11 rood, 72 groen: van de twaalf nieuwe gevallen gaf alleen "vorm van
@@ -583,7 +584,7 @@ en of BZ1 bij de bron kan. Wat er nu van elk deel bewezen is:
 
 | Deel | Waar | Stand na de nacontrole |
 |---|---|---|
-| 1. De kleine vorm rekent als een eigen numpy-versie | `test_beeld_omzetten.py` (86) in `api-analyse`; opnieuw gemeten op `e609341` met een eigen script dat de rekensom van die tests gebruikt, drie omzettingen met `--fp32` zoals `_start_meet` | **gehaald hier**: fp32 grootste verschil 2,47·10⁻⁷ (beeld) en 1,1·10⁻⁷ (tekst), grens 1·10⁻⁵; int8 kleinste cosinus 0,99969 en 0,99985, grens 0,99; de drie omzettingen byte voor byte gelijk (zeven bestanden); 0,20, 0,14 en 0,17 s, maxrss 72,8 MiB; `beeld.int8.onnx` 981.742 en `tekst.int8.onnx` 161.642 bytes (fp32 1.412.840 en 517.284). Dezelfde getallen als bij X3a. In CI (`api-analyse`) na de push |
+| 1. De kleine vorm rekent als een eigen numpy-versie | `test_beeld_omzetten.py` (86) in `api-analyse`; opnieuw gemeten op `e609341` met een eigen script dat de rekensom van die tests gebruikt, drie omzettingen met `--fp32` zoals `_start_meet` | **gehaald hier**: fp32 grootste verschil 2,47·10⁻⁷ (beeld) en 1,1·10⁻⁷ (tekst), grens 1·10⁻⁵; int8 kleinste cosinus 0,99969 en 0,99985, grens 0,99 [CI op `7569d48`: met \|q\| ≤ 64 voor een Linear beeld 0,99941, tekst 0,99970; de grootte gelijk]; de drie omzettingen byte voor byte gelijk (zeven bestanden); 0,20, 0,14 en 0,17 s, maxrss 72,8 MiB; `beeld.int8.onnx` 981.742 en `tekst.int8.onnx` 161.642 bytes (fp32 1.412.840 en 517.284). Dezelfde getallen als bij X3a. In CI (`api-analyse`) na de push |
 | 2. Twee keer omzetten geeft dezelfde sha256 (BZ2) | de stap `vergelijk` in `beeld-model` | [CI op `26c49ca`: **gehaald**, zie onderaan] **met het echte model nergens gedaan**: huggingface.co is vanuit de sandbox dicht. Wel: de review deed BZ2 op ware grootte met willekeurige gewichten (hierboven, `uit1`, `uit2` en `uitfp32` gelijk, 293 MiB). In CI na de push |
 | 3. De kwaliteitspoort is groen (BZ4) | `test_beeld_kwaliteit.py` in `beeld-model` | **nergens gedaan**. De eerste run van `beeld-model` rekent BZ4 op de voorgestelde set en is rood (geen pins, geen `beeld.tsv`); die getallen zijn een eerste beeld, geen uitslag. Streng wordt BZ4 pas in de run na de commit met de pins en `beeld.tsv`, en het runbook en `beeld_model.py uitslag` zeggen de pins pas samen met X3b te zetten (uitrol F3). Een strenge, groene BZ4 komt dus op zijn vroegst met X3b |
 
@@ -672,3 +673,80 @@ Hersteld na de run:
   in de sneeuw" en "hond op het strand"; de andere vier koos X3a. Commons had in de pagina's die
   de job bekijkt geen bruikbare foto met fiets én stad. Of "berg met sneeuw" en "stad" alleen
   genoeg foto's hebben, zegt de volgende run (met de reserves als het niet zo is).
+
+## CI op 7569d48
+
+`api-analyse` op `7569d48` (run 43758619443) was rood: drie tests die op elke eerdere runner groen
+waren, faalden op één runner.
+
+| Test | Uitkomst |
+|---|---|
+| `test_onnxw_ort.py::test_dynamic_quantize_matmul[True]` en `[False]` | verschil met numpy 0,16686297 (grens `TOL` 1·10⁻⁵) |
+| `test_beeld_omzetten.py::test_int8_cosinus_minstens_0_99` | beeld 0,9795, 0,9885 en 0,9727 (grens `COS` 0,99) |
+
+**De oorzaak.** `DynamicQuantizeMatMul` maakt van de invoer uint8 (0..255, met een nulpunt per
+oproep) en rekent dan uint8 maal int8 (MLAS, U8S8). Op een x86-CPU zonder AVX-VNNI en zonder
+AVX512-VNNI doet MLAS dat met `vpmaddubsw`: die telt twee buren langs K op (a·b + a'·b') in int16,
+en kapt af op −32.768..32.767. Met een gewicht tot 127 kan zo'n paar 255·127·2 = 64.770 zijn. Die
+runner had geen VNNI. De sandbox heeft AVX512-VNNI en AVX-VNNI; daar, en op de eerdere runners,
+rekende het goed. Een nabootsing in numpy van de afgekapte paren, met de invoer van
+`test_dynamic_quantize_matmul`, geeft 0,16686297783599: gelijk aan CI op 8 cijfers. De
+documentatie van onnxruntime ([Quantize ONNX models](https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html))
+noemt dit: U8S8 gebruikt op AVX2 en AVX512 zonder VNNI `vpmaddubsw`, dat kan verzadigen, en
+`reduce_range` (het gewicht in 7 bits) is daarvoor bedoeld.
+Zonder VNNI zijn onder meer AMD Zen 2 en Zen 3 en Intel Xeon E5 v3 en v4 en Skylake-SP: gewone
+CPU's in een thuislab. Welke CPU de host van Jonas heeft, is niet bekend (BZ9).
+
+**De reparatie** (`bouw.py`, `Q_MAX = 64`). Elke Linear krijgt een schaal per kolom van
+max |kolom| / 64, en q = rint(w / s) tussen −64 en 64. Het blijft int8, en `DynamicQuantizeMatMul`
+met nulpunt 0. Het ergste paar is nu 255·64·2 = 32.640: dat past in int16, op elke CPU. De
+kwantiseerder van onnxruntime doet het met `reduce_range` net zo (int8 −64..64). De embedding van
+de tekst blijft 127: die gaat door Gather, Cast en Mul, zonder matmul in gehele getallen.
+Afgevallen: het gewicht als uint8 (U8U8). Dat kapt ook niet af, maar onnxruntime kiest
+`vpmaddubsw` voor U8S8 juist om de snelheid, en noemt U8U8 pas als `reduce_range` niet genoeg
+helpt. Hoeveel trager U8U8 hier zou zijn, is niet gemeten; BZ6 (poort ≥ 500 foto's per minuut
+per core, verwachting 750–870 [berekend, K2-04]) heeft weinig ruimte.
+
+**De tests.** Alleen de eerste hangt af van de CPU:
+
+- `test_onnxw_ort.py::test_dynamic_quantize_matmul` neemt het gewicht nu uit `bouw.per_kolom`, met
+  hetzelfde rooster (de invoer als uint8 van 0 tot 255), `TOL` 1·10⁻⁵ en beide varianten. Op een
+  CPU zonder VNNI is dit weer de echte toets van onnxruntime.
+- `test_zonder_vnni_rekent_de_omzetter_exact`: een model van `vpmaddubsw` in numpy (paren langs K,
+  afgekapt op int16, opgeteld in int32, dan het nulpunt eraf). Met het gewicht van `per_kolom`, de
+  ergste invoer per kolom (255 waar q > 0 en 0 elders, en andersom), het rooster van de test
+  hierboven en de nulpunten 0, 128 en 255 geeft het model precies het product. Het ergste paar haalt
+  ±32.640.
+- `test_zonder_vnni_kapt_een_gewicht_boven_64_af[65]` en `[127]`: de grens is scherp. Met q tot 65
+  (of 127) kapt het model op de ergste invoer af.
+- `test_het_model_zonder_vnni_geeft_het_verschil_van_ci`: met q tot 127 geeft het model voor
+  `test_dynamic_quantize_matmul` het verschil van CI (0,166862974, op 1·10⁻⁸), met 64 geen
+  verschil. Zo is het model de CPU van die runner.
+- `test_beeld_omzetten.py`: de schalen van elke Linear zijn nu max |kolom| / 64 en elke kolom haalt
+  64; de embedding blijft per rij met 127. Nieuw: `test_int8_geen_gewicht_van_een_linear_boven_64`
+  leest beide int8-grafen met de eigen lezer van het protobuf: elk gewicht dat B is van een
+  `DynamicQuantizeMatMul` heeft |q| ≤ 64, en het enige andere int8-gewicht is de embedding.
+  `test_meta_json` eist nu `omzetter` 2 (`bouw.VERSIE`): dezelfde bron geeft andere int8-bytes.
+
+Teruggezet naar `Q_MAX = 127` (hier, met VNNI): vijf tests rood.
+`test_dynamic_quantize_matmul[True]` en `[False]` (q haalt 127, niet 64; onnxruntime zelf rekent
+hier goed), `test_zonder_vnni_rekent_de_omzetter_exact` (het model kapt af: 30.472 in plaats van
+57.375), `test_int8_een_schaal_per_kolom_en_per_rij` (de schaal van
+`vision_model.encoder.layers.0.self_attn.qkv`) en `test_int8_geen_gewicht_van_een_linear_boven_64`
+(127 > 64). De drie andere nieuwe tests zetten `Q_MAX` zelf en blijven groen. `ANALYSE_TESTS` in
+`ci.yml` gaat van 211 naar 216 (vijf nieuwe tests).
+
+**Wat het kost.** Eén bit van het gewicht. Op de kleine vorm (hier gemeten, met VNNI): de kleinste
+cosinus van int8 tegen de numpy-versie was beeld 0,99969 en tekst 0,99985 met 127, en is beeld
+0,99941 en tekst 0,99970 met 64 (grens 0,99). Wat het bij het echte model kost, meet BZ4 (int8
+tegen fp32) zodra de set en de pins er zijn.
+
+**Gevolg voor de pins.** De sha256 van `beeld.int8.onnx` en `tekst.int8.onnx` verandert, en
+daarmee ook die van `meta.json` (die noemt de sha256 van beide, en `omzetter` gaat van 1 naar 2).
+De grootte blijft gelijk (de vormen veranderen niet; op de kleine vorm nagemeten). De regels die
+`beeld-model` vóór deze reparatie voorstelde (runs 43755501967 op `26c49ca`, 43756857465 op
+`625e946` en 43757977938 op `f16ed5a`), gelden dus niet meer voor die drie bestanden. Op `7569d48`
+draaide `beeld-model` niet (geen pad van de job veranderd). Die regels staan nog nergens in het
+repo. Neem de pins pas uit de eerste run van `beeld-model` op een commit met `Q_MAX = 64` (die
+draait vanzelf: `bouw.py` is een pad van de job). Een oude regel in `models.lock` zou
+`beeld_model.py vergelijk` rood maken (een andere sha256), maar kost dan een ronde CI.

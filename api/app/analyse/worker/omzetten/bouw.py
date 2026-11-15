@@ -19,10 +19,13 @@ config.json een sleutel niet noemt, geldt de standaard van SiglipTextConfig en S
 - beide: L2-genormaliseerd. De logits zijn cos · exp(logit_scale) + logit_bias (meta.json).
 
 **int8** (zoals de proxy van B6): elke Linear wordt `DynamicQuantizeMatMul` (com.microsoft) met
-gewichten in int8, symmetrisch, een schaal per kolom (max |kolom| / 127) en nulpunt 0; de invoer
-kwantiseert onnxruntime zelf per oproep. De Conv van de patches blijft fp32. De embedding van de
-tekst is int8 met een schaal per rij: Gather, Cast, en Mul met de geschaalde rij. q, k en v van een
-laag zijn één MatMul (de kolommen naast elkaar); de schaal per kolom verandert daardoor niet.
+gewichten in int8, symmetrisch, een schaal per kolom (max |kolom| / Q_MAX) en nulpunt 0; de invoer
+kwantiseert onnxruntime zelf per oproep, naar uint8 (0..255). Q_MAX is 64, niet 127: op een x86-CPU
+zonder VNNI telt onnxruntime twee producten van uint8 en int8 op in int16, en dat loopt bij 127 over
+(zie Q_MAX). De Conv van de patches blijft fp32. De embedding van de tekst is int8 met een schaal
+per rij (max |rij| / 127): Gather, Cast, en Mul met de geschaalde rij. Daar zit geen matmul in
+gehele getallen, dus 127 kan daar. q, k en v van een laag zijn één MatMul (de kolommen naast
+elkaar); de schaal per kolom verandert daardoor niet.
 
 **Altijd dezelfde bytes.** Alleen bewerkingen per element (abs, max, delen in float64, rint) en
 herschikken; geen BLAS, geen draden, geen tijd of pad in de uitvoer. meta.json met gesorteerde
@@ -75,7 +78,9 @@ from app.analyse.worker.omzetten import (
 )
 from app.analyse.worker.omzetten.safetensors import FLOATS, Safetensors
 
-VERSIE = 1  # van de omzetter; staat in meta.json
+# Van de omzetter; staat in meta.json. Omhoog als dezelfde bron andere bytes geeft. 2: het gewicht
+# van een Linear met |q| ≤ 64 (Q_MAX), CI op 7569d48.
+VERSIE = 2
 MAX_JSON = 1_000_000  # config.json en preprocessor_config.json zijn een paar kB
 # tokenizer_config.json noemt soms elk toegevoegd token (bij Gemma 3 ±1,2 MB); de echte grootte
 # staat in models.lock
@@ -394,6 +399,14 @@ def controleer_tokenizer_config(doc: dict, tok: Tokenizer) -> dict:
 
 # --- int8 --------------------------------------------------------------------------------------
 
+# De grootste |q| van een gewicht van een Linear. DynamicQuantizeMatMul maakt van de invoer uint8
+# (0..255). Op een x86-CPU zonder VNNI rekent onnxruntime met vpmaddubsw: die telt twee buren
+# a·b + a'·b' langs K op in int16, en wat daar niet in past wordt 32.767 of −32.768. Met |q| tot
+# 127 kan zo'n paar 255·127·2 = 64.770 zijn: een fout antwoord. Met 64 is het hooguit
+# 255·64·2 = 32.640, op elke CPU. onnxruntime doet het zelf zo met reduce_range (int8 −64..64).
+# Het kost één bit van het gewicht.
+Q_MAX = 64
+
 
 def _eindig(a: np.ndarray, naam: str) -> None:
     if not np.isfinite(a).all():
@@ -401,16 +414,18 @@ def _eindig(a: np.ndarray, naam: str) -> None:
 
 
 def per_kolom(wt: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """W (in × uit) naar int8 met een schaal per kolom: q = rint(w / s), s = max |kolom| / 127.
-    Een kolom van nullen krijgt schaal 1 (q is daar 0)."""
-    s = (np.abs(wt).max(axis=0).astype(np.float64) / 127.0).astype(np.float32)
+    """W (in × uit) naar int8 met een schaal per kolom: q = rint(w / s), s = max |kolom| / Q_MAX.
+    Dus |q| ≤ Q_MAX, en elke kolom haalt Q_MAX, behalve een kolom van nullen: die krijgt schaal 1
+    (q is daar 0)."""
+    s = (np.abs(wt).max(axis=0).astype(np.float64) / Q_MAX).astype(np.float32)
     s[s == 0] = 1.0
     q = np.rint(wt.astype(np.float64) / s.astype(np.float64)[None, :])
-    return np.clip(q, -127, 127).astype(np.int8), s
+    return np.clip(q, -Q_MAX, Q_MAX).astype(np.int8), s
 
 
 def per_rij(w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Een blok rijen van de embedding naar int8 met een schaal per rij (vorm [r, 1])."""
+    """Een blok rijen van de embedding naar int8 met een schaal per rij (vorm [r, 1]). Hier wel
+    127: de rij gaat door Gather, Cast en Mul, niet door een matmul in gehele getallen."""
     s = (np.abs(w).max(axis=1).astype(np.float64) / 127.0).astype(np.float32)
     s[s == 0] = 1.0
     q = np.rint(w.astype(np.float64) / s.astype(np.float64)[:, None])

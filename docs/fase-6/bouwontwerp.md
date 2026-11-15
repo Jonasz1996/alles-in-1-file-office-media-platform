@@ -1603,6 +1603,12 @@ Keuze 70–84 van X3.
         komt uit `config.json` en de namen in safetensors, niet uit ons geheugen.
       - int8 met numpy, in de vorm van de proxy van B6: `DynamicQuantizeMatMul` met een schaal per
         kolom, en de embedding in int8 met een schaal per rij.
+        *Noot (CI op `7569d48`, 2026-11-15):* het gewicht van een Linear krijgt een bit minder:
+        s = max |kolom| / 64 en q tussen −64 en 64, nog steeds int8. Op een x86-CPU zonder VNNI
+        telt onnxruntime twee buren uint8 maal int8 op in int16 (`vpmaddubsw`), en met 127 liep
+        dat over (255·127·2 = 64.770). Met 64 is het hooguit 32.640, op elke CPU; zo doet
+        onnxruntime het zelf met `reduce_range`. De embedding blijft 127: daar zit geen matmul in
+        gehele getallen. Uitleg en metingen in [x3a.md](x3a.md), "CI op 7569d48".
     - **Uitkomst** in `MODELLEN_ROOT/siglip2-b32-256/`: `beeld.int8.onnx`, `tekst.int8.onnx`,
       `tokenizer.bin` (Keuze 74), `meta.json` (de `logit_scale` en `logit_bias` van het model, en de
       voorbewerking uit `preprocessor_config.json`) en de licentie. Root kopieert ze uit de
