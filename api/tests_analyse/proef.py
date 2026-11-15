@@ -6,6 +6,8 @@ grenzen, dezelfde fd's). Wat de proef doet, kiest de test met de eerste bytes va
 (faces, in werk) of met de tekst (embed_text, in zoeken):
 
 - WACHT: blijft lopen tot pid 1 de opdracht stopt (cancel, deadline), dan Stopped;
+- VROEG: als WACHT, maar het kind begint pas aan de opdracht (StopFlag.begin) nadat de draad van
+  fd 4 de stop al las: de stop komt vóór begin aan (de race van de review, veilig F1);
 - NEGEER: blijft lopen en luistert niet naar stop (dan SIGKILL na KILL_GRACE_S);
 - VREET-SHM <MB>: gedeeld geheugen (mmap, MAP_SHARED) dat RLIMIT_DATA niet telt: de wachter moet
   het kind stoppen (K1-07);
@@ -23,6 +25,7 @@ from __future__ import annotations
 import mmap
 import os
 import sys
+import threading
 import time
 
 from app.analyse.worker import child
@@ -39,6 +42,34 @@ BOOT = (
     "from tests_analyse import proef\n"
     "sys.exit(proef.main())"
 )
+
+
+# VROEG: de nummers die de draad van fd 4 doorgaf (StopFlag.stop)
+_STOPS: set[int] = set()
+_STOP_KWAM = threading.Condition()
+VROEG_S = 10.0
+
+
+class _Vlag(child.StopFlag):
+    def stop(self, n: int) -> None:
+        super().stop(n)
+        with _STOP_KWAM:
+            _STOPS.add(n)
+            _STOP_KWAM.notify_all()
+
+
+def _recv(sock):
+    """child._recv, maar bij een preview VROEG pas terug als de stop van die opdracht binnen is
+    (dan komt StopFlag.begin zeker na StopFlag.stop)."""
+    message, fds = _echte_recv(sock)
+    if message.get("op") == "faces" and fds and os.pread(fds[0], 6, 0) == b"VROEG ":
+        n = int(message.get("n") or 0)
+        with _STOP_KWAM:
+            _STOP_KWAM.wait_for(lambda: n in _STOPS, VROEG_S)
+    return message, fds
+
+
+_echte_recv = child._recv
 
 
 def _merk_bytes() -> bytes:
@@ -78,7 +109,7 @@ def faces(job: child.Job) -> dict:
 
     head = os.pread(job.fds[0], 64, 0)
     word, _, rest = head.partition(b" ")
-    if word == b"WACHT":
+    if word in (b"WACHT", b"VROEG"):
         return _wacht(job)
     if word == b"NEGEER":
         return _wacht(job, luister=False)
@@ -112,4 +143,6 @@ def embed_text(job: child.Job) -> dict:
 
 def main() -> int:
     child.HANDLERS.update({"faces": faces, "embed_text": embed_text})
+    child.StopFlag = _Vlag  # type: ignore[misc]
+    child._recv = _recv
     return child.main()

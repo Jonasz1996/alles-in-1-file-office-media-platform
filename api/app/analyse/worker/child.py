@@ -51,6 +51,7 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -478,22 +479,34 @@ class OpFailed(Exception):
 
 class StopFlag:
     """Gezet door de draad van fd 4 als pid 1 het nummer van de lopende opdracht stuurt. De
-    lopende sessie van onnxruntime krijgt terminate (tussen twee nodes)."""
+    lopende sessie van onnxruntime krijgt terminate (tussen twee nodes).
+
+    De stop (fd 4) en de vraag (fd 3) komen over twee kanalen: de stop kan er zijn voordat het
+    kind de vraag gelezen heeft en begin(n) deed (cancel vlak na started). asked onthoudt het
+    hoogste nummer dat pid 1 liet stoppen, en begin(n) kijkt daarnaar. De nummers van pid 1 lopen
+    op (server.Worker._n), dus een late stop voor een eerdere opdracht raakt nooit een latere
+    (veilig F1, contract G5-C1). De lock: stop() draait in de draad van fd 4."""
 
     def __init__(self) -> None:
         self.n = 0
+        self.asked = 0
         self.set = False
         self.run_options: Any = None  # onnxruntime.RunOptions van de sessie die nu draait
+        self._lock = threading.Lock()
 
     def begin(self, n: int) -> None:
-        self.n, self.set, self.run_options = n, False, None
+        with self._lock:
+            self.n, self.run_options = n, None
+            self.set = bool(n) and n <= self.asked
 
     def stop(self, n: int) -> None:
-        if n == self.n and n:
-            self.set = True
-            options = self.run_options
-            if options is not None:
-                options.terminate = True
+        with self._lock:
+            self.asked = max(self.asked, n)
+            if n == self.n and n:
+                self.set = True
+                options = self.run_options
+                if options is not None:
+                    options.terminate = True
 
     def check(self) -> None:
         if self.set:
@@ -602,8 +615,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     models_dir, extra, lock_path = Path(args[1]), args[2], Path(args[3])
     if extra and os.path.isdir(extra) and extra not in sys.path:
         sys.path.append(extra)  # pas na prctl, de grenzen en nice (Keuze 57, K1-04)
-    import threading
-
     import onnxruntime
 
     onnxruntime.disable_telemetry_events()  # vóór de eerste sessie (a0.md, Open 2)

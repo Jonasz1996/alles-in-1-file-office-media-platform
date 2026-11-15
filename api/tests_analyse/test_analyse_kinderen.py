@@ -143,6 +143,50 @@ async def test_cancel_breekt_een_opdracht_af_en_het_kind_blijft(paar):
     assert _pid(worker, Child.WERK) == eerste
 
 
+async def test_een_cancel_die_er_is_voor_het_kind_begint_stopt_de_opdracht(paar):
+    """veilig F1 / contract G5-C1: de stop (fd 4) kan het kind bereiken voordat het de vraag
+    (fd 3) gelezen heeft. Die stop telt: cancelled meteen, geen SIGKILL na KILL_GRACE_S, en het
+    is hetzelfde kind. VROEG (proef.py) laat het kind pas beginnen als de stop binnen is."""
+    worker, settings = paar
+    await _klein(settings)
+    eerste = _pid(worker, Child.WERK)
+    werk = await _begin_faces(settings, b"VROEG ")
+    started = time.monotonic()
+    try:
+        assert await client.cancel(settings, werk.n) is True
+        with pytest.raises(client.AnalyseFailed) as exc:
+            await werk.result()
+        assert exc.value.code == Code.CANCELLED.value
+        took = time.monotonic() - started
+        assert took < 2 < wire.KILL_GRACE_S, took
+    finally:
+        werk.close()
+    await _klein(settings)
+    assert _pid(worker, Child.WERK) == eerste
+    assert worker.kids[Child.WERK].pids == [eerste]
+
+
+def test_een_stop_voor_begin_telt_en_een_oude_stop_niet():
+    """De StopFlag zelf: een stop die er al is als begin(n) komt, geldt voor n; een stop voor een
+    eerdere opdracht geldt niet voor de volgende, en begin(0) (tussen twee opdrachten) wist."""
+    vlag = kids.StopFlag()
+    vlag.stop(5)
+    vlag.begin(5)
+    with pytest.raises(kids.Stopped):
+        vlag.check()
+    vlag.begin(0)
+    vlag.check()
+    vlag.begin(6)
+    vlag.check()  # de stop van 5 is oud
+    vlag.stop(6)
+    with pytest.raises(kids.Stopped):
+        vlag.check()
+    vlag.begin(0)
+    vlag.stop(4)  # te laat, voor een opdracht die al klaar is
+    vlag.begin(7)
+    vlag.check()
+
+
 async def test_een_kind_dat_niet_stopt_gaat_na_kill_grace_weg(paar):
     worker, settings = paar
     await _klein(settings)
