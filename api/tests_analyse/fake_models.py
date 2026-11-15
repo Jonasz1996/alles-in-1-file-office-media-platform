@@ -11,7 +11,9 @@ uitvoeren cls_8 … kps_32 met [1, anchors, 1 | 4 | 10], in de volgorde van het 
 - Het kader staat in het midden van de cel (b0 = b1 = 0,5), en zijn breedte en hoogte zijn het
   gemiddelde groen van de cel in px (b2 = b3 = log(groen / 32), via Log).
 - De vijf punten liggen in het kader zoals het sjabloon van SFace in 112 × 112 (TEMPLATE): het
-  uitlijnen legt het kader dan precies op 112 × 112.
+  uitlijnen legt het kader dan precies op 112 × 112. Met `draai` (graden) en `verschuif` (px)
+  liggen ze gedraaid om het midden van de cel en verschoven (review golf 5, G5-C2): dan legt het
+  uitlijnen een gedraaid vierkant van groen × groen px rond midden + verschuif op 112 × 112.
 
 Een vierkant van 32 × 32 op het raster met blauw 255 en groen g is dus één gezicht van g × g px
 met score 1. `slow` zet er zoveel Conv-nodes van 1 × 1 voor: dan duurt één run lang, en kan de
@@ -74,7 +76,7 @@ def _flat(g: Graph, t: str, last: int, transpose: bool) -> str:
     return g.op("Reshape", [t, shape])
 
 
-def yunet(slow: int = 0) -> bytes:
+def yunet(slow: int = 0, draai: float = 0.0, verschuif: tuple[float, float] = (0.0, 0.0)) -> bytes:
     g = Graph("yunet_nep")
     x = g.input("input", FLOAT, [1, 3, "height", "width"])
     for _ in range(slow):
@@ -94,10 +96,13 @@ def yunet(slow: int = 0) -> bytes:
         size = g.op("Log", [_conv(g, x, 2, s, _channel(2, s, 1, [1 / s] * 2), [1e-6] * 2)])
         box = g.op("Concat", [center, size], axis=1)
         parts[f"bbox_{s}"] = _flat(g, box, 4, True)
+        cos, sin = math.cos(math.radians(draai)), math.sin(math.radians(draai))
         offsets = []
         for tx, ty in TEMPLATE:
-            offsets += [(tx - 56) / 112 / s, (ty - 56) / 112 / s]
-        kps = _conv(g, x, 10, s, _channel(10, s, 1, offsets), [0.5] * 10)
+            dx, dy = (tx - 56) / 112, (ty - 56) / 112
+            offsets += [(cos * dx - sin * dy) / s, (sin * dx + cos * dy) / s]
+        bias = [0.5 + verschuif[0] / s, 0.5 + verschuif[1] / s] * 5
+        kps = _conv(g, x, 10, s, _channel(10, s, 1, offsets), bias)
         parts[f"kps_{s}"] = _flat(g, kps, 10, True)
     dims = {"cls": 1, "obj": 1, "bbox": 4, "kps": 10}
     for name in ("cls", "obj", "bbox", "kps"):
@@ -133,11 +138,18 @@ class Installed:
     lock: Path  # een eigen models.lock met hun sha256 (--lock)
 
 
-def install(root: Path, *, slow: int = 0, skip: tuple[str, ...] = ()) -> Installed:
+def install(
+    root: Path,
+    *,
+    slow: int = 0,
+    skip: tuple[str, ...] = (),
+    draai: float = 0.0,
+    verschuif: tuple[float, float] = (0.0, 0.0),
+) -> Installed:
     """De twee nepmodellen in root, en een models.lock ernaast met hun sha256 en grootte."""
     root.mkdir(parents=True, exist_ok=True)
     lines = []
-    for name, data in ((YUNET, yunet(slow)), (SFACE, sface())):
+    for name, data in ((YUNET, yunet(slow, draai, verschuif)), (SFACE, sface())):
         if name not in skip:
             (root / name).write_bytes(data)
         lines.append(f"{hashlib.sha256(data).hexdigest()} {len(data)} {name} -\n")

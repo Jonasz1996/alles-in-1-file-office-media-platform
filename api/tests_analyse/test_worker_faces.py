@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 import os
 import signal
 import time
@@ -21,6 +22,7 @@ from PIL import Image
 
 from app.analyse import client, wire
 from app.analyse.wire import Code, Op
+from app.analyse.worker.ops import faces as F
 from tests_analyse import echt, fake_models
 
 pytestmark = [pytest.mark.anyio, pytest.mark.analyse_echt]
@@ -86,8 +88,12 @@ def plat(kaders) -> list[float]:
 
 
 @pytest.mark.parametrize("w,h", [(1024, 683), (683, 1024), (1023, 767)])
-async def test_elke_maat_werkt_dankzij_het_opvullen(worker, w, h):
-    """K2-05: zonder opvullen tot 32 past de uitvoer van YuNet niet bij de cellen (internal)."""
+async def test_elke_maat_ook_geen_veelvoud_van_32(worker, w, h):
+    """Een preview die geen veelvoud van 32 is: het kader in de coördinaten van de preview, één
+    vector. Het opvullen zelf (K2-05: zonder faalt de echte YuNet op 1024 × 683) bewaakt deze test
+    niet: het nepmodel geeft met en zonder opvullen dezelfde cellen (review golf 5, G5-C5). Dat
+    doet test_models_real.py::test_laden_met_alleen_de_cpu_en_de_vormen, met de echte YuNet op
+    yunet_input() van 1024 × 683 (704 hoog)."""
     img = beeld(w, h, rood=90, groen=60)
     gezicht(img, 3, 2, 60)
     data, raw = await zoek(worker, img)
@@ -285,6 +291,127 @@ async def test_uit_wordt_eerst_leeggemaakt(worker):
         assert os.fstat(out).st_size == wire.FACE_VEC_BYTES
     finally:
         wire.close_all([fd, out])
+
+
+# --- de punten decoderen en uitlijnen (review golf 5, G5-C2) ---------------------------------
+#
+# Het gewone nepmodel zet de vijf punten precies in het kader, op een effen vlak: een kolom en rij
+# die verwisseld zijn, een vergeten stride, een draai de verkeerde kant op of een spiegeling in het
+# uitlijnen geven daar dezelfde vector. Deze tests rekenen het na zonder faces.py.
+
+
+def test_de_uitvoer_van_yunet_gedecodeerd_zoals_opencv():
+    """Elk anker van elke stride zoals FaceDetectorYN::postProcess, met de hand uitgerekend: de
+    cel is rij × kolommen + kolom, het kader (kolom + b0) · stride en exp(b2) · stride, de punten
+    (k + kolom, k + rij) · stride, de score √(cls · obj) met beide eerst tussen 0 en 1. Een
+    opgevulde invoer die niet vierkant is (64 × 96), zodat rij en kolom niet te verwisselen zijn."""
+    pad_h, pad_w = 64, 96
+    rng = np.random.default_rng(62)
+    outs: dict[str, np.ndarray] = {}
+    kaders, scores, punten = [], [], []
+    for s in (8, 16, 32):
+        rows, cols = pad_h // s, pad_w // s
+        n = rows * cols
+        outs[f"cls_{s}"] = rng.uniform(-0.2, 1.2, (1, n, 1)).astype(np.float32)
+        outs[f"obj_{s}"] = rng.uniform(-0.2, 1.2, (1, n, 1)).astype(np.float32)
+        outs[f"bbox_{s}"] = rng.uniform(-1, 1, (1, n, 4)).astype(np.float32)
+        outs[f"kps_{s}"] = rng.uniform(-2, 2, (1, n, 10)).astype(np.float32)
+        for r in range(rows):
+            for c in range(cols):
+                i = r * cols + c
+                cls = min(max(float(outs[f"cls_{s}"][0, i, 0]), 0.0), 1.0)
+                obj = min(max(float(outs[f"obj_{s}"][0, i, 0]), 0.0), 1.0)
+                b = [float(v) for v in outs[f"bbox_{s}"][0, i]]
+                k = [float(v) for v in outs[f"kps_{s}"][0, i]]
+                bw, bh = math.exp(b[2]) * s, math.exp(b[3]) * s
+                kaders.append([(c + b[0]) * s - bw / 2, (r + b[1]) * s - bh / 2, bw, bh])
+                scores.append(math.sqrt(cls * obj))
+                punten.append([[(k[2 * j] + c) * s, (k[2 * j + 1] + r) * s] for j in range(5)])
+    got_kaders, got_scores, got_punten = F.decode_yunet(outs, pad_h, pad_w)
+    assert got_kaders.shape == (8 * 12 + 4 * 6 + 2 * 3, 4)
+    np.testing.assert_allclose(got_kaders, kaders, rtol=0, atol=1e-9)
+    np.testing.assert_allclose(got_scores, scores, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(got_punten, punten, rtol=0, atol=1e-9)
+
+
+DRAAI = 20.0  # graden, met de klok mee in beeldcoördinaten (y omlaag)
+VERSCHUIF = (5.0, -3.0)  # px
+
+
+@pytest.fixture(scope="module")
+def gedraaide_worker(tmp_path_factory):
+    """YuNet met de vijf punten DRAAI gedraaid om het midden van de cel en VERSCHUIF verschoven."""
+    root = tmp_path_factory.mktemp("gedraaid") / "modellen"
+    models = fake_models.install(root, draai=DRAAI, verschuif=VERSCHUIF)
+    with echt.EchteWorker(tmp_path_factory.mktemp("gedraaid-w"), models) as w:
+        yield w
+
+
+def patroon(w: int, h: int) -> np.ndarray:
+    """Rood en groen die over de preview golven, zonder blauw (geen gezicht): een ander stuk, een
+    andere draai of een spiegeling van het uitgelijnde gezicht geeft een ander gemiddelde."""
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float64)
+    img = np.zeros((h, w, 3), np.uint8)
+    img[..., 0] = np.round(127.5 + 127.5 * np.sin(xs / 7.0 + ys / 23.0))
+    img[..., 1] = np.round(127.5 + 127.5 * np.cos(ys / 5.0 - xs / 17.0) * np.sin(xs / 11.0))
+    return img
+
+
+def uitgelijnd(img: np.ndarray, midden: tuple[float, float], g: int) -> np.ndarray:
+    """Het uitgelijnde gezicht (112 × 112, RGB) zonder faces.py. De punten zijn het sjabloon,
+    g / 112 groot, DRAAI gedraaid en naar midden + VERSCHUIF geschoven; het uitlijnen draait dat
+    precies terug. Pixel (u, v) komt dus uit midden + VERSCHUIF + g / 112 · R(DRAAI) · (u − 56,
+    v − 56) van de preview: bilineair tussen de vier buren, met een rand van nullen om de preview
+    (zoals cv2.warpAffine met BORDER_CONSTANT)."""
+    rand = 200
+    h, w = img.shape[:2]
+    groot = np.zeros((h + 2 * rand, w + 2 * rand, 3), np.float64)
+    groot[rand : rand + h, rand : rand + w] = img
+    cos, sin = math.cos(math.radians(DRAAI)), math.sin(math.radians(DRAAI))
+    uit = np.zeros((112, 112, 3), np.float64)
+    for v in range(112):
+        for u in range(112):
+            du, dv = (u - 56) * g / 112, (v - 56) * g / 112
+            x = midden[0] + VERSCHUIF[0] + cos * du - sin * dv + rand
+            y = midden[1] + VERSCHUIF[1] + sin * du + cos * dv + rand
+            x0, y0 = math.floor(x), math.floor(y)
+            fx, fy = x - x0, y - y0
+            uit[v, u] = (
+                groot[y0, x0] * (1 - fx) * (1 - fy)
+                + groot[y0, x0 + 1] * fx * (1 - fy)
+                + groot[y0 + 1, x0] * (1 - fx) * fy
+                + groot[y0 + 1, x0 + 1] * fx * fy
+            )
+    return uit
+
+
+def rood_groen(vec: np.ndarray) -> tuple[float, float]:
+    """Het gemiddelde rood en groen dat het nep-SFace zag, terug uit de vector: vec · n =
+    W0 · rood + W1 · groen + B, drie onbekenden en 128 vergelijkingen."""
+    a = np.column_stack([np.array(fake_models.SFACE_W[:2]).T, -vec.astype(np.float64)])
+    (rood, groen, _n), *_ = np.linalg.lstsq(a, -np.array(fake_models.SFACE_B), rcond=None)
+    return float(rood), float(groen)
+
+
+async def test_gedraaide_punten_op_een_patroon_zoals_de_rekensom(gedraaide_worker):
+    """De hele keten (decoderen, Umeyama, warpAffine, SFace in RGB) tegen uitgelijnd(): een
+    gezicht midden in de preview en een aan de rand, waar een deel van het uitgelijnde gezicht
+    buiten de preview valt en zwart is."""
+    w, h = 352, 288
+    img = patroon(w, h)
+    gezichten = {(5, 4): 60, (0, 0): 56}  # (kolom, rij): groen; de grootste eerst
+    for (kol, rij), g in gezichten.items():
+        gezicht(img, kol, rij, g)  # blauw 255 en groen g in de cel, rood blijft het patroon
+    data, raw = await zoek(gedraaide_worker, img)
+    (photo,) = data.photos
+    assert [f.px for f in photo.faces] == [60, 44]  # aan de rand 44 × 44 binnen de preview
+    vecs = vectoren(raw)
+    assert len(vecs) == 2
+    for vec, ((kol, rij), g) in zip(vecs, gezichten.items(), strict=True):
+        ref = uitgelijnd(img, ((kol + 0.5) * CEL, (rij + 0.5) * CEL), g)
+        rood, groen = float(ref[..., 0].mean()), float(ref[..., 1].mean())
+        assert rood_groen(vec) == pytest.approx((rood, groen), abs=0.05)
+        assert vec == pytest.approx(np.array(fake_models.expected_vector(rood, groen)), abs=1e-5)
 
 
 # --- de modellen ------------------------------------------------------------------------------
