@@ -701,8 +701,9 @@ Deel B: mediabeheer (wat de *arr-apps doen)
   ingebouwd, zodat er niets te synchroniseren valt
 
 - [ ] Downloaders: downloads uitbesteden aan een downloadprogramma en de voortgang
-  volgen. Hoe, is een open vraag aan Jonas (zie onder); de app praat er via één eigen
-  interface mee, zodat een ander programma of een eigen downloader later in te prikken is
+  volgen. Een bestaand programma in een eigen container ernaast (besloten, zie onder); de
+  app praat er via één eigen interface mee, zodat een ander programma of een eigen
+  downloader later in te prikken is
 
 - [ ] Vastgelopen downloads (Cleanuparr, Huntarr): geen voortgang na X uur, of een
   release die niet uit te pakken of niet af te spelen is: weg ermee, op een zwarte lijst,
@@ -733,13 +734,12 @@ Niet in deze fase: boeken en strips (Readarr, Mylar en dergelijke), het automati
 doordelen van torrents (cross-seed), muziek van streamingdiensten (deemix) en
 kijkgeschiedenis naar Trakt; die kunnen later als aparte backlogpunten.
 
-Open vragen voor Jonas (de rest volgt de vaste keuzes):
+Keuzes en open vragen voor Jonas (de rest volgt de vaste keuzes):
 
-1. Downloaders: koppelen aan een bestaand downloadprogramma (qBittorrent of Transmission
-   voor torrents, SABnzbd of NZBGet voor usenet) in een eigen container ernaast, of ook
-   de downloader zelf bouwen? Voorstel: koppelen, want een eigen BitTorrent- en
-   usenet-client is maanden extra werk en moeilijk veilig te krijgen; de interface laat
-   een eigen downloader later toe.
+1. Downloaders, besloten door Jonas op 15-11-2026: een bestaand downloadprogramma
+   koppelen (qBittorrent of Transmission voor torrents, SABnzbd of NZBGet voor usenet), in
+   een eigen container ernaast, door de app volledig aangestuurd. De downloader zelf
+   bouwen we niet; de interface laat een eigen downloader later nog toe.
 2. Welke soorten bronnen: alleen usenet, alleen torrents of allebei? Dit bepaalt welke
    client er als eerste komt.
 3. Mogen gezinsleden zonder goedkeuring aanvragen, of keurt de beheerder alles goed?
