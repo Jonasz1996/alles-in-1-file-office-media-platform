@@ -16,11 +16,14 @@ de worker met zijn kinderen (die erven het van de test).
   job na de build doet): NIEUW keer een foto erbij, een nieuw bestand, opwarmen, één vraag; p95
   ≤ 100 ms (zoals BZ6: de p95 over de eerste vragen).
 - Elk antwoord is echt zoeken op beeld (geen fallback) met treffers.
+- De heap van het testproces staat in gc.freeze zolang de test loopt, zoals serve.freeze_heap
+  dat in de echte app na de start doet (frozen_heap hieronder).
 """
 
 from __future__ import annotations
 
 import contextlib
+import gc
 import math
 import os
 import secrets
@@ -73,6 +76,22 @@ def een_kern():
         yield kern
     finally:
         _alle_draden(voor)
+
+
+@pytest.fixture
+def frozen_heap():
+    """De heap van dit testproces gaat in gc.freeze zolang de test loopt, zoals python -m
+    app.serve dat na de start doet (serve.freeze_heap, review golf 1 van fase 6, H2) en zoals
+    frozen_heap in test_media_loadtest. Zonder dat liep een volle ronde van de gc hier over
+    ±298.000 objecten van het testproces (pytest, de testmodules, de app) en hield die de event
+    loop 100–170 ms vast, ±3 keer per run, telkens midden in een gemeten vraag (gemeten met een
+    spion op gc.callbacks, deze test alleen). De echte app heeft die ronde niet. Wat de vragen
+    zelf aan afval maken, ruimt de gc nog steeds op (een volle ronde kost dan 2–6 ms), en de
+    grens van 100 ms blijft."""
+    gc.collect()
+    gc.freeze()
+    yield
+    gc.unfreeze()
 
 
 @pytest.fixture
@@ -206,7 +225,14 @@ async def _vraag(client, headers, q: str) -> float:  # noqa: F811
     return ms
 
 
-async def test_p95_bij_55000_en_100000_fotos(client, admin, settings, worker, een_kern):  # noqa: F811
+async def test_p95_bij_55000_en_100000_fotos(
+    client,  # noqa: F811
+    admin,  # noqa: F811
+    settings,
+    worker,
+    een_kern,
+    frozen_heap,
+):
     jonas, _ = admin
     eva, eva_id = await person(client, jonas, "eva@example.nl")
     eigenaar = uuid.UUID(eva_id)
