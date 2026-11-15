@@ -28,7 +28,9 @@ import contextlib
 import logging
 import os
 import secrets
+import stat
 import sys
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +47,7 @@ log = logging.getLogger("platform.beeld")
 
 CHUNK = 2000  # rijen per keer lezen (Keuze 76)
 SUFFIX = ".vec"
+TMP_STALE_S = 3600.0  # een tijdelijk bestand dat zo oud is, is van een gestopte build
 
 
 def on_users_sql() -> str:
@@ -89,6 +92,25 @@ def owner_of(path: Path) -> uuid.UUID | None:
         return uuid.UUID(hex=path.stem)
     except ValueError:
         return None
+
+
+def stale_tmp(path: Path, at: float | None = None) -> bool:
+    """Een tijdelijk bestand van build() (.<32 hex>.<12 hex>.tmp, een gewoon bestand) dat ouder
+    is dan TMP_STALE_S: een build die halverwege stopte (de app ging uit). Een build die nog
+    loopt, is nooit zo oud (de job stopt na 600 s)."""
+    name = path.name
+    if not (name.startswith(".") and name.endswith(".tmp")):
+        return False
+    parts = name[1:-4].split(".")
+    if len(parts) != 2 or len(parts[0]) != 32 or len(parts[1]) != 12:
+        return False
+    try:
+        found = path.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(found.st_mode):
+        return False
+    return (time.time() if at is None else at) - found.st_mtime > TMP_STALE_S
 
 
 def ensure_dir(directory: Path) -> Path:

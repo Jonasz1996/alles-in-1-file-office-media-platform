@@ -597,8 +597,9 @@ async def _behind(db: AsyncSession, user_id: uuid.UUID, settings: Settings) -> b
 
 
 async def sweep(settings: Settings) -> None:
-    """Het opruimwerk (eens per SWEEP_S): bestanden die achterlopen klaarzetten, en bestanden
-    weghalen van wie er niet meer is of beeld uit heeft (met forget)."""
+    """Het opruimwerk (eens per SWEEP_S): bestanden die achterlopen klaarzetten, bestanden
+    weghalen van wie er niet meer is of beeld uit heeft (met forget), en een tijdelijk bestand
+    dat een gestopte build liet staan (vecfile.stale_tmp)."""
     if _settings is None:
         return
     maker = _maker(settings)
@@ -615,6 +616,10 @@ async def sweep(settings: Settings) -> None:
     if not directory.is_dir() or directory.is_symlink():
         return
     for path in directory.iterdir():
+        if vecfile.stale_tmp(path):
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+            continue
         owner = vecfile.owner_of(path)
         if owner is None or owner in keep:
             continue

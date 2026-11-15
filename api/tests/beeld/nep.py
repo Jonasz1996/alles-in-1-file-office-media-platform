@@ -66,11 +66,12 @@ def unpack(raw: bytes) -> list[float]:
 
 
 def photo(rgb: tuple[int, int, int], seed: int = 0) -> bytes:
-    """Een JPEG van één kleur; seed maakt de inhoud uniek (één pixel in de hoek)."""
+    """Een JPEG van één kleur; seed maakt de inhoud uniek (één pixel in de hoek, en het
+    commentaar: na de JPEG-compressie kan die pixel bij twee seeds gelijk zijn)."""
     img = Image.new("RGB", (48, 32), rgb)
     img.putpixel((0, 0), (seed % 256, (seed // 256) % 256, 7))
     out = io.BytesIO()
-    img.save(out, "JPEG", quality=95)
+    img.save(out, "JPEG", quality=95, comment=f"seed {seed}".encode())
     return out.getvalue()
 
 
