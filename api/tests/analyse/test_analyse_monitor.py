@@ -605,7 +605,15 @@ async def test_echt_ok_met_modellen_grenzen_en_opdrachten(tmp_path):
         found = await monitor.check(_echt(worker, tmp_path))
         assert (found.state, found.reason, found.missing) == ("ok", None, ())
         assert found.caps is not None
-        assert found.caps.built == ["cancel", "caps", "faces"]
+        assert found.caps.built == [
+            "cancel",
+            "caps",
+            "embed_image",
+            "embed_text",
+            "faces",
+            "forget",
+            "rank",
+        ]
         assert found.built(Op.FACES) and not found.built(Op.GROUP)
         shown = state.view(found, lock_path=worker.config.lock)
         versions = {m.name: m.sha256[:12] for m in lock.load(worker.config.lock)}
@@ -618,7 +626,7 @@ async def test_echt_ok_met_modellen_grenzen_en_opdrachten(tmp_path):
         assert status.lines(found)[0] == "Analyse: ok"
         assert status.lines(found)[-2:] == [
             "  grenzen: 1.5 cpus, 3072 MB geheugen",
-            "  opdrachten: cancel, caps, faces",
+            "  opdrachten: cancel, caps, embed_image, embed_text, faces, forget, rank",
         ]
 
 
@@ -723,7 +731,7 @@ async def test_echt_analyse_status_als_proces(tmp_path):
         f"  model {YUNET} (versie {VERSIE[YUNET]}): klopt",
         f"  model {SFACE} (versie {VERSIE[SFACE]}): klopt",
         "  grenzen: 1.5 cpus, 3072 MB geheugen",
-        "  opdrachten: cancel, caps, faces",
+        "  opdrachten: cancel, caps, embed_image, embed_text, faces, forget, rank",
     ]
     assert worker.config.key not in (result.stdout + result.stderr).decode()
 

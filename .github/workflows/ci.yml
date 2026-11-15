@@ -128,9 +128,10 @@ jobs:
       # bron die liegt), 1 (met en zonder --fp32), 1 (laag 3 alleen de gezichten), 2 (de punten
       # decoderen en uitlijnen), 2 (de schalen van int8) en 1 (BUILT en de handlers gelijk);
       # en van de nacontrole van golf 5: 2 (het uitgelijnde gezicht pixel voor pixel en de
-      # invoer van SFace in NCHW); gedeselecteerd: de 11 tests van de job beeld-model. Noem hun
+      # invoer van SFace in NCHW); van X3b: 13 (test_beeld_ops.py), 9 (test_beeld_cache.py) en 1
+      # (bezet per kind, zoeken); gedeselecteerd: de 11 tests van de job beeld-model. Noem hun
       # marker hier niet: test_beeld_ci.py eist dat deze job hem precies één keer noemt (-m)
-      ANALYSE_TESTS: "211"
+      ANALYSE_TESTS: "234"
       ANALYSE_DESELECTED: "11"
     steps:
       - uses: actions/checkout@v4

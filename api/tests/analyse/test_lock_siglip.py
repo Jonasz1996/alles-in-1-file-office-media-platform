@@ -12,7 +12,10 @@ ook in, en een naam mag er maar één keer in staan):
 - de vingerafdruk van de gezichten (lock.digest over YuNet en SFace) blijft dezelfde, waar de
   regels van SigLIP ook staan;
 - caps van pid 1 zegt per regel ok of ontbreekt, en de monitor zegt models_missing met precies
-  de vijf uitkomsten, terwijl gezichten (ready met YuNet en SFace) door kunnen;
+  de vijf uitkomsten, terwijl gezichten (ready met YuNet en SFace) door kunnen. Sinds X3b telt
+  caps de bronnen niet mee (die haalt install.sh alleen om om te zetten, en het haalt ze daarna
+  weg), en een uitkomst in een map pas als die map er is: zonder siglip2-b32-256/ (BEELD=uit)
+  is de stand ok, met caps.beeld leeg;
 - Models.entry van het kind vindt een bestand van SigLIP op zijn naam.
 
 De commit, de bytes en dus de sha256 hieronder zijn een voorbeeld: de echte zet de job in zijn
@@ -177,14 +180,15 @@ def _modellen(tmp_path: Path, voorstel: str) -> tuple[Path, Path]:
 async def test_caps_en_de_monitor(voorstel, tmp_path, monkeypatch):
     root, pad = _modellen(tmp_path, voorstel)
     data = caps.gather(caps.ModelStates(root, pad), frozenset({Op.FACES}), tmp_path / "geen")
-    # over de draad: twaalf namen met mappen passen in wire (MODEL_NAME, CAPS_MODELS_MAX)
+    # over de draad: zeven namen met mappen passen in wire (MODEL_NAME, CAPS_MODELS_MAX)
     data = wire.CapsData.model_validate_json(data.model_dump_json())
+    # de bronnen tellen niet mee (X3b); de map siglip2-b32-256 is er, dus de uitkomsten wel
     assert [(m.name, m.state) for m in data.models] == [
         (YUNET, "ok"),
         (SFACE, "ok"),
-        *[(n, "ok") for n in SIGLIP_BRON],
         *[(n, "ontbreekt") for n in SIGLIP_UIT],
     ]
+    assert data.beeld is None
 
     async def nep_caps(settings):
         return data
@@ -207,8 +211,41 @@ async def test_caps_en_de_monitor(voorstel, tmp_path, monkeypatch):
         + ", ".join(SIGLIP_UIT)
         + ")"
     )
-    assert len([r for r in regels if r.startswith("  model ")]) == 12
+    assert len([r for r in regels if r.startswith("  model ")]) == 7
     assert status.exit_code(found, 0) == 1 and status.exit_code(found, 20) == 0
+
+
+@pytest.mark.anyio
+async def test_zonder_de_map_van_siglip_is_de_stand_ok(voorstel, tmp_path, monkeypatch):
+    """BEELD=uit of nog niet omgezet: install.sh zet siglip2-b32-256/ pas in één keer neer als
+    alles klopt (Keuze 84). Zonder die map telt caps alleen de gezichten; beeld is niet klaar
+    (caps.beeld leeg), gezichten merken er niets van."""
+    root, pad = _modellen(tmp_path, voorstel)
+    for naam in BRON:
+        (root / omzetten.MAP / "bron" / naam).unlink()
+    (root / omzetten.MAP / "bron").rmdir()
+    (root / omzetten.MAP).rmdir()
+    data = caps.gather(caps.ModelStates(root, pad), frozenset({Op.FACES}), tmp_path / "geen")
+    data = wire.CapsData.model_validate_json(data.model_dump_json())
+    assert [(m.name, m.state) for m in data.models] == [(YUNET, "ok"), (SFACE, "ok")]
+    assert data.beeld is None
+
+    async def nep_caps(settings):
+        return data
+
+    monkeypatch.setattr(client, "caps", nep_caps)
+    settings = Settings(
+        data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8, analyse_enabled=True
+    )
+    found = await monitor.check(settings)
+    assert found.state == "ok" and found.missing == ()
+    assert found.ready([YUNET, SFACE])
+    # een symlink op de plaats van de map telt niet als map (lstat)
+    elders = tmp_path / "elders"
+    elders.mkdir()
+    (root / omzetten.MAP).symlink_to(elders)
+    data = caps.gather(caps.ModelStates(root, pad), frozenset({Op.FACES}), tmp_path / "geen")
+    assert [m.name for m in data.models] == [YUNET, SFACE]
 
 
 def test_het_kind_vindt_een_bestand_van_siglip(voorstel, tmp_path):
