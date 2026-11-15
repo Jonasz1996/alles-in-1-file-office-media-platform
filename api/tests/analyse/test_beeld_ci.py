@@ -4,7 +4,9 @@ Leest ci.yml als tekst, zoals test_media_ci.py en test_zoek_ci.py:
 
 - de job draait alleen als git diff een wijziging ziet in de omzetter, tokenizer.py, onnxw.py,
   models.lock of wat de job zelf meet (tools/beeld, de tests beeld_echt en hun lijsten), of als de
-  PR een regel "beeld-model: ja" heeft; geen workflow_dispatch, geen cache;
+  PR een regel "beeld-model: ja" heeft; geen workflow_dispatch; de bron nooit in een cache, de
+  foto's van beeld.tsv wel (één stap actions/cache@v4 vóór BZ4 set, op de sha256 van beeld.tsv,
+  alleen als die er is; sinds CI op f16ed5a);
 - de tekst van de PR komt via env binnen, nooit als expressie in een script;
 - de omzetter start zoals de dienst analyse-omzetten (compose van X2a);
 - BZ1, BZ2, BZ3, BZ4, BZ6 en BZ7 hebben elk een stap; de tests met marker beeld_echt draaien
@@ -54,13 +56,38 @@ def _blokken() -> list[str]:
     return [re.sub(r"\\\n\s*", "", tekst) for _, tekst in _runs(job("beeld-model"))]
 
 
-def test_alleen_push_en_pull_request_zonder_cache():
+TSV_HASH = "hashFiles('api/tests/analyse/sets/beeld.tsv')"
+
+
+def test_alleen_push_en_pull_request_en_alleen_de_set_in_de_cache():
     doc = yaml.safe_load(CI.read_text())
     # PyYAML leest de sleutel on als True; dus ook geen workflow_dispatch
     assert set(doc[True]) == {"push", "pull_request"}
     regels = "\n".join(job("beeld-model"))
-    assert "actions/cache" not in regels and "cache:" not in regels
+    # De bron komt nooit uit een cache (geen cache van uv, geen tweede stap); alleen de foto's van
+    # beeld.tsv (CI op f16ed5a: de robotregels van Wikimedia, zo weinig mogelijk downloads)
+    assert regels.count("actions/cache") == 1 and "cache:" not in regels
     assert "enable-cache" not in regels
+    stappen = _stappen()
+    cache = [s for s in stappen if "cache" in str(s.get("uses", ""))]
+    assert len(cache) == 1
+    stap = cache[0]
+    # dezelfde action en versie als elders in ci.yml
+    assert stap["uses"] == "actions/cache@v4"
+    assert set(re.findall(r"uses: (actions/cache\S*)", CI.read_text())) == {"actions/cache@v4"}
+    # alleen set/ (nooit bron/ of uit*/), op de sha256 van beeld.tsv, zonder restore-keys
+    assert stap["with"] == {
+        "path": "${{ runner.temp }}/beeld/set",
+        "key": f"beeld-set-${{{{ {TSV_HASH} }}}}",
+    }
+    # alleen als beeld.tsv er is (een voorstel krijgt geen cache), en als de job draait
+    assert stap["if"] == (
+        "${{ !cancelled() && steps.poort.outputs.draaien == 'ja' && " + TSV_HASH + " != '' }}"
+    )
+    # direct vóór de stap set, die de foto's nakijkt
+    i = stappen.index(stap)
+    assert stappen[i + 1].get("id") == "set"
+    assert "beeld_model.py set " in stappen[i + 1]["run"]
 
 
 def test_de_poort_kijkt_naar_git_diff_en_de_tekst_van_de_pr():

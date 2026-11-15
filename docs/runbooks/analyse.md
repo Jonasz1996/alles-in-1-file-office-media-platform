@@ -181,8 +181,13 @@ kwaliteitsset, zet het model twee keer om en draait de poorten van Keuze 83. Hij
   `app/analyse/onnxw.py` of `app/analyse/models.lock` verandert (`git diff --name-only`);
 - of als de tekst van de PR een regel `beeld-model: ja` heeft.
 
-Er is geen knop om hem met de hand te starten en geen cache. Draait hij niet, dan zegt het blok
-`=== kort ===` aan het eind van het log "beeld-model: draaien nee" met de reden.
+Er is geen knop om hem met de hand te starten. Het model komt nooit uit een cache: elke run haalt
+de bron van huggingface.co. De 120 foto's wel, zodra `beeld.tsv` er is: een cache op de sha256
+van `beeld.tsv`, omdat de robotregels van Wikimedia zo weinig mogelijk downloads vragen. `set`
+kijkt elke foto uit de cache na (grootte en sha256) en haalt alleen wat ontbreekt of niet klopt;
+de cache wordt alleen bewaard als de job groen eindigt. Van upload.wikimedia.org haalt de job
+gemiddeld hooguit 2,5 MB/s (20 Mbps; de robotregels staan 25 Mbps toe). Draait hij niet, dan zegt
+het blok `=== kort ===` aan het eind van het log "beeld-model: draaien nee" met de reden.
 
 Het blok `=== kort ===` staat aan het eind van het log, met per regel:
 
@@ -192,6 +197,9 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
   of die twee dezelfde sha256 geven en of ze kloppen met `models.lock`; en van de derde omzetting
   met `--fp32` (alleen voor BZ4) de tijd en maxrss zonder grens, en of hij dezelfde vijf bestanden
   geeft;
+- `BZ4 set: 120 foto's kloppen met beeld.tsv (… uit de cache, … van Commons)`, of het voorstel;
+- `FOUT <stap>: … HTTP 429 (…)` of `HTTP 5xx (…)`: de host gaf ook na zes pogingen nee; tussen
+  haakjes de laatste Retry-After en de eerste regel van zijn antwoord;
 - `BZ3`, `BZ4`, `BZ6`, `BZ7`: de uitkomsten van de tests, met `goed` of `FOUT`;
 - `UITSLAG …`: waarom de job rood is, als er een voorstel ligt;
 - per pytest-stap de laatste regel.

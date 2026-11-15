@@ -11,7 +11,11 @@ alsof hij Hugging Face, de API van Commons en upload.wikimedia.org is:
   models.lock (dat lock.py zelf weer leest), of streng tegen de regels; de omzetting met --fp32
   (voor BZ4) zonder grens op maxrss, maar met dezelfde vijf bestanden;
 - set: 120 foto's volgens Keuze 83 uit de gestructureerde gegevens, zonder mens, alleen CC0 of
-  publiek domein, alleen JPEG; beeld.tsv streng nagekeken;
+  publiek domein, alleen JPEG; beeld.tsv streng nagekeken, en met beeld.tsv alleen halen wat in
+  set/ ontbreekt of niet klopt;
+- het netwerk: een pauze per host van Commons, Retry-After, van upload gemiddeld hooguit
+  BANDBREEDTE, en bij een opgegeven 429 of 5xx de laatste Retry-After en de eerste regel van het
+  antwoord in de fout;
 - elke vraag heeft een algemene User-Agent, zonder persoon, e-mail of repository.
 """
 
@@ -387,6 +391,97 @@ def test_tussen_twee_vragen_aan_commons_zit_een_pauze(nep, monkeypatch):
     assert bm.PAUZE_S >= 1.0
 
 
+ROBOT_BPS = 25_000_000 // 8  # de robotregels van Wikimedia (media): samen hooguit 25 Mbps
+
+
+def test_van_upload_hooguit_bandbreedte_andere_hosts_niet(nep, tmp_path, monkeypatch):
+    """CI op f16ed5a: upload.wikimedia.org gaf na ±9 minuten HTTP 429. De robotregels (wikitech,
+    Robot_policy) staan van media samen hooguit 25 Mbps toe, gemeten over stukken van 10 s; een
+    origineel kwam zonder grens in een fractie van een seconde binnen. Van upload nu gemiddeld
+    hooguit BANDBREEDTE, per download en over downloads samen, en een pauze spaart geen tegoed
+    op. Hugging Face en andere hosts wachten niet."""
+    klok = [1000.0]
+    slapen: list[float] = []
+
+    def slaap(s: float) -> None:
+        slapen.append(s)
+        klok[0] += s
+
+    monkeypatch.setattr(bm.time, "monotonic", lambda: klok[0])
+    monkeypatch.setattr(bm.time, "sleep", slaap)
+    monkeypatch.setattr(bm, "_vorige", {})
+    monkeypatch.setattr(bm, "_klaar", {}, raising=False)
+    rnd = random.Random(16)
+    groot = rnd.randbytes(3 * (1 << 20) + 12345)  # meer dan drie stukken van 1 MiB
+    klein = rnd.randbytes(500_000)
+    nep.zet("/upload/a.jpg", groot)
+    nep.zet("/upload/b.jpg", klein)
+    begin = klok[0]
+    assert bm.haal(f"{bm.UPLOAD}a.jpg", tmp_path / "a", max_bytes=len(groot))[1] == len(groot)
+    tussen = klok[0]
+    assert bm.haal(f"{bm.UPLOAD}b.jpg", tmp_path / "b", max_bytes=len(klein))[1] == len(klein)
+    # samen onder de 25 Mbps van de robotregels, en elke download apart niet boven BANDBREEDTE
+    # (1e-9: afronding van de klok in float)
+    assert len(groot) + len(klein) <= ROBOT_BPS * (klok[0] - begin)
+    assert len(groot) <= bm.BANDBREEDTE * (tussen - begin) * (1 + 1e-9)
+    assert len(klein) <= bm.BANDBREEDTE * (klok[0] - tussen) * (1 + 1e-9)
+    assert bm.BANDBREEDTE <= ROBOT_BPS
+    # 100 s niets: dat geeft geen tegoed, de volgende download gaat weer op BANDBREEDTE
+    klok[0] += 100.0
+    na_pauze = klok[0]
+    bm.haal(f"{bm.UPLOAD}a.jpg", tmp_path / "a2", max_bytes=len(groot))
+    assert len(groot) <= bm.BANDBREEDTE * (klok[0] - na_pauze) * (1 + 1e-9)
+    # Hugging Face (en elke andere host): geen pauze en geen rem
+    nep.zet(f"/{bm.REPO}/resolve/{COMMIT}/model.safetensors", groot)
+    slapen.clear()
+    hf = klok[0]
+    url = f"{bm.HF}/{bm.REPO}/resolve/{COMMIT}/model.safetensors"
+    assert bm.haal(url, tmp_path / "m", max_bytes=len(groot))[1] == len(groot)
+    assert slapen == [] and klok[0] == hf
+
+
+def test_een_opgegeven_429_zegt_wat_wikimedia_zei(nep, tmp_path):
+    """CI op f16ed5a: "FOUT set: strand-1.jpg: HTTP 429" zei niet wat Wikimedia vroeg. Nu staan
+    de laatste Retry-After die hij zag en de eerste regel met tekst van het antwoord erbij: alleen
+    afdrukbare ASCII, hooguit MAX_REGEL tekens, en niets anders van het antwoord."""
+    body = (
+        b"\r\n\x1b[2J\x1b[31mToo many requests\x07 \xc3\xa9\x00 see https://w.wiki/4wJS\r\n"
+        b"X-Client-IP: 10.0.0.1\n"
+    )
+    nep.paden["/dicht"] = [(429, body, {"Retry-After": "7"})] * 9
+    with pytest.raises(bm.Fout) as fout:
+        bm.haal(f"{nep.url}/dicht", tmp_path / "strand-1.jpg", max_bytes=99)
+    zin = str(fout.value)
+    assert zin == (
+        "strand-1.jpg: HTTP 429 (Retry-After 7; antwoord: "
+        "?[2J?[31mToo many requests? ??? see https://w.wiki/4wJS)"
+    )
+    assert [p for p, _ in nep.vragen].count("/dicht") == 6
+    # de laatste Retry-After die hij zag, ook als het laatste antwoord er geen heeft; een leeg
+    # antwoord
+    nep.paden["/druk"] = [
+        (429, b"", {"Retry-After": "3"}),
+        (503, b"", {"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"}),
+        *([(503, b"\n \n")] * 9),
+    ]
+    with pytest.raises(bm.Fout) as fout:
+        bm.haal(f"{nep.url}/druk", tmp_path / "d.jpg", max_bytes=99)
+    assert str(fout.value) == (
+        "d.jpg: HTTP 503 (Retry-After Wed, 21 Oct 2015 07:28:00 GMT; antwoord zonder tekst)"
+    )
+    # zonder Retry-After, via json_van, en hooguit MAX_REGEL tekens van de eerste regel
+    nep.paden["/w/api.php"] = [(502, b"x" * 500 + b"\ntweede regel")] * 9
+    with pytest.raises(bm.Fout) as fout:
+        bm.json_van(f"{nep.url}/w/api.php?action=query")
+    assert bm.MAX_REGEL == 160
+    assert str(fout.value) == f"127.0.0.1: HTTP 502 (geen Retry-After; antwoord: {'x' * 160})"
+    # wat niet opnieuw geprobeerd wordt, houdt de korte vorm
+    with pytest.raises(bm.Fout) as fout:
+        bm.haal(f"{nep.url}/weg", tmp_path / "w.jpg", max_bytes=99)
+    assert str(fout.value) == "w.jpg: HTTP 404"
+    assert list(tmp_path.iterdir()) == []
+
+
 # --- vergelijk ---------------------------------------------------------------------------------
 
 
@@ -678,7 +773,9 @@ def test_set_met_beeld_tsv_is_streng(nep, commons, werk, tmp_path):
     werk2 = bm.Werk(tmp_path / "werk2")
     assert bm.set_(werk2, set_pad) == 0
     assert len(list(werk2.set.iterdir())) == 120
-    assert _kort(werk2) == ["BZ4 set: 120 foto's kloppen met beeld.tsv"]
+    assert _kort(werk2) == [
+        "BZ4 set: 120 foto's kloppen met beeld.tsv (0 uit de cache, 120 van Commons)"
+    ]
     regels = set_pad.read_text().splitlines()
     i = next(n for n, r in enumerate(regels) if r.startswith("kat-2\t"))
     v = regels[i].split("\t")
@@ -687,6 +784,47 @@ def test_set_met_beeld_tsv_is_streng(nep, commons, werk, tmp_path):
     set_pad.write_text("\n".join(regels) + "\n")
     with pytest.raises(bm.Fout, match="kat-2.jpg: sha256"):
         bm.set_(bm.Werk(tmp_path / "werk3"), set_pad)
+
+
+def test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt(nep, commons, werk, tmp_path):
+    """CI op f16ed5a: in CI staat set/ nu in een cache op de sha256 van beeld.tsv (de robotregels
+    van Wikimedia: zo min mogelijk downloads). Een foto die er al staat met de juiste grootte en
+    sha256, haalt set niet opnieuw; een die niet klopt, ontbreekt of een symlink is wel, via .part
+    eroverheen. Het blok zegt hoeveel er uit de cache kwamen."""
+    assert bm.set_(werk, tmp_path / "geen.tsv") == bm.VOORSTEL
+    set_pad = tmp_path / "beeld.tsv"
+    set_pad.write_text(werk.voorstel_set.read_text())
+    fotos = {f.sleutel: f for f in bm.lees_set(set_pad.read_text())}
+    werk2 = bm.Werk(tmp_path / "werk2")
+    werk2.set.mkdir()
+    elders = tmp_path / "elders"
+    elders.mkdir()
+    for s in fotos:
+        data = (werk.set / f"{s}.jpg").read_bytes()
+        doel = werk2.set / f"{s}.jpg"
+        if s == "kat-2":  # dezelfde grootte, een andere sha256
+            doel.write_bytes(bytes([data[0] ^ 1]) + data[1:])
+        elif s == "hond-1":  # te kort
+            doel.write_bytes(data[:-1])
+        elif s == "boot-1":  # de juiste bytes, maar via een symlink
+            (elders / "boot-1.jpg").write_bytes(data)
+            doel.symlink_to(elders / "boot-1.jpg")
+        elif s != "strand-3":  # strand-3 ontbreekt
+            doel.write_bytes(data)
+    opnieuw = ("kat-2", "hond-1", "boot-1", "strand-3")
+    nep.vragen.clear()
+    assert bm.set_(werk2, set_pad) == 0
+    assert sorted(p for p, _ in nep.vragen) == sorted(
+        urllib.parse.urlsplit(fotos[s].url).path for s in opnieuw
+    )
+    for s, f in fotos.items():
+        doel = werk2.set / f"{s}.jpg"
+        assert not doel.is_symlink() and bm.sha256_van(doel) == f.sha256, s
+    assert (elders / "boot-1.jpg").read_bytes() == (werk.set / "boot-1.jpg").read_bytes()
+    assert sorted(p.name for p in werk2.set.iterdir()) == sorted(f"{s}.jpg" for s in fotos)
+    assert _kort(werk2) == [
+        "BZ4 set: 120 foto's kloppen met beeld.tsv (116 uit de cache, 4 van Commons)"
+    ]
 
 
 def test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld(nep, commons, werk, tmp_path):

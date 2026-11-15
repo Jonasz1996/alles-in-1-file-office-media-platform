@@ -28,9 +28,12 @@ Twee standen, zoals fotos.lock (het patroon van het ontwerp):
 - Met de regels: streng. Een andere sha256 of grootte is rood (code 1).
 Zo ook de set: zonder api/tests/analyse/sets/beeld.tsv stelt `set` er een voor uit de
 gestructureerde gegevens van Wikimedia Commons (voorstel-beeld.tsv) en haalt hij die foto's op.
-`uitslag` faalt met "models.lock mist de regels van SigLIP" en "beeld.tsv ontbreekt" zolang er
-een voorstel ligt; een mens zet de regels erin, nooit de job zelf, en die van SigLIP pas samen met
-X3b (de stap BEELD van install.sh; anders meldt de container ze als ontbrekend).
+Met beeld.tsv haalt hij alleen wat in set/ ontbreekt of niet klopt (in CI staat set/ in een cache
+op de sha256 van beeld.tsv). Van upload.wikimedia.org gemiddeld hooguit BANDBREEDTE (de
+robotregels van Wikimedia). `uitslag` faalt met "models.lock mist de regels van SigLIP" en
+"beeld.tsv ontbreekt" zolang er een voorstel ligt; een mens zet de regels erin, nooit de job zelf,
+en die van SigLIP pas samen met X3b (de stap BEELD van install.sh; anders meldt de container ze
+als ontbrekend).
 
 Codes: 0 goed, 1 fout, 3 voorstel geschreven (de job gaat door, `uitslag` maakt hem rood).
 """
@@ -40,6 +43,7 @@ from __future__ import annotations
 import argparse
 import email.utils
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -159,7 +163,19 @@ def _vraag(url: str, *, methode: str = "GET") -> urllib.request.Request:
 # gaf commons.wikimedia.org na ±10 s HTTP 429, ook na drie pogingen (CI-run op 26c49ca)
 PAUZE_S = 1.0  # tussen twee vragen aan Commons (de API of upload.wikimedia.org)
 MAX_WACHT_S = 120.0  # hooguit zo lang wachten na een 429 of 503, ook als Retry-After meer zegt
+# De robotregels van Wikimedia (wikitech, Robot_policy, het deel over media): samen hooguit 2
+# vragen tegelijk, samen hooguit 25 Mbps gemeten over stukken van 10 s, alleen originelen of de
+# vaste maten van de thumbnails, en na een 429 Retry-After volgen. De job vraagt één ding
+# tegelijk, maar een origineel is tot MAX_FOTO groot en kwam zonder grens in een fractie van een
+# seconde binnen; na ±9 minuten gaf upload.wikimedia.org HTTP 429 (CI-run op f16ed5a). Dus van
+# upload gemiddeld hooguit BANDBREEDTE, onder die 25 Mbps. De originelen blijven: een thumbnail
+# kan Wikimedia opnieuw maken, met andere bytes, en dan klopt de sha256 in beeld.tsv niet meer
+BANDBREEDTE = 2_500_000  # bytes per seconde van upload.wikimedia.org (20 Mbps)
+# Wat het log van een opgegeven 429 of 5xx overneemt: alleen de eerste regel van het antwoord
+MAX_REGEL = 160  # tekens, alleen afdrukbare ASCII
+MAX_ANTWOORD = 4096  # zoveel bytes van het antwoord leest hij hooguit om die regel te vinden
 _vorige: dict[str, float] = {}
+_klaar: dict[str, float] = {}  # per host: wanneer de bytes tot nu toe op BANDBREEDTE binnen zijn
 
 
 def _pauze(url: str) -> None:
@@ -171,6 +187,42 @@ def _pauze(url: str) -> None:
     if rest > 0:
         time.sleep(rest)
     _vorige[host] = time.monotonic()
+
+
+def _rem(url: str, n: int) -> None:
+    """Na n bytes van upload.wikimedia.org: wachten tot alles wat er tot nu toe binnenkwam, op
+    BANDBREEDTE binnen had kunnen zijn. De schuld loopt door van de ene download naar de
+    volgende; stilte spaart geen tegoed op (na een pauze telt hij vanaf nu). Andere hosts wachten
+    niet."""
+    if not url.startswith(UPLOAD):
+        return
+    host = _host(url)
+    nu = time.monotonic()
+    klaar = max(_klaar.get(host, nu), nu) + n / BANDBREEDTE
+    _klaar[host] = klaar
+    if klaar > nu:
+        time.sleep(klaar - nu)
+
+
+def _leesbaar(tekst: str, max_tekens: int) -> str:
+    """Tekst van buiten voor het log: alleen afdrukbare ASCII (de rest wordt ?), hooguit
+    max_tekens."""
+    return "".join(c if " " <= c <= "~" else "?" for c in tekst.strip())[:max_tekens].strip()
+
+
+def _uitleg(e: urllib.error.HTTPError, retry_after: str | None) -> str:
+    """Wat het log zegt als _open het opgeeft na een 429 of 5xx: de laatste Retry-After die hij
+    zag en de eerste regel met tekst van het antwoord. Niets anders van het antwoord."""
+    ra = f"Retry-After {_leesbaar(retry_after, 64)}" if retry_after else "geen Retry-After"
+    try:
+        data = e.read(MAX_ANTWOORD)
+    except (OSError, ValueError, http.client.HTTPException):
+        data = b""
+    finally:
+        e.close()
+    tekst = data.decode("ascii", errors="replace")
+    regel = _leesbaar(next((r for r in tekst.split("\n") if r.strip()), ""), MAX_REGEL)
+    return f"{ra}; antwoord: {regel}" if regel else f"{ra}; antwoord zonder tekst"
 
 
 def _retry_after(e: urllib.error.HTTPError) -> float:
@@ -187,15 +239,23 @@ def _retry_after(e: urllib.error.HTTPError) -> float:
 
 def _open(url: str, *, pogingen: int = 6, timeout: float = 60):
     """urlopen met pogingen bij 429, 5xx of een netwerkfout: wachten 2, 4, 8, 16, 32 s, of zo
-    lang als Retry-After zegt als dat langer is (hooguit MAX_WACHT_S)."""
+    lang als Retry-After zegt als dat langer is (hooguit MAX_WACHT_S). Geeft hij het op na een
+    429 of 5xx, dan krijgt de HTTPError een uitleg voor het log mee (_uitleg, _reden): op
+    f16ed5a zei "HTTP 429" niet wat Wikimedia vroeg."""
     wacht = 2.0
+    retry_after: str | None = None  # de laatste die hij zag, zoals hij binnenkwam
     for poging in range(pogingen):
         _pauze(url)
         na = 0.0
         try:
             return urllib.request.urlopen(_vraag(url), timeout=timeout)
         except urllib.error.HTTPError as e:
-            if e.code != 429 and e.code < 500 or poging == pogingen - 1:
+            if e.code != 429 and e.code < 500:
+                raise
+            if e.headers is not None and e.headers.get("Retry-After"):
+                retry_after = e.headers.get("Retry-After")
+            if poging == pogingen - 1:
+                e.uitleg = _uitleg(e, retry_after)
                 raise
             na = _retry_after(e)
             e.close()
@@ -227,7 +287,9 @@ def _host(url: str) -> str:
 
 def _reden(e: BaseException) -> str:
     if isinstance(e, urllib.error.HTTPError):
-        return f"HTTP {e.code}"
+        # vars(): HTTPError geeft een onbekend attribuut door aan zijn antwoord
+        uitleg = vars(e).get("uitleg")
+        return f"HTTP {e.code} ({uitleg})" if uitleg else f"HTTP {e.code}"
     if isinstance(e, urllib.error.URLError):
         return f"niet bereikbaar ({type(e.reason).__name__})"
     return type(e).__name__
@@ -249,6 +311,7 @@ def haal(url: str, doel: Path, *, max_bytes: int, grootte=None, sha256=None) -> 
                         raise Fout(f"{doel.name}: groter dan {grens} bytes")
                     h.update(stuk)
                     f.write(stuk)
+                    _rem(url, len(stuk))
         except (urllib.error.URLError, OSError) as e:
             raise Fout(f"{doel.name}: {_reden(e)}") from None
         if grootte is not None and n != grootte:
@@ -269,6 +332,13 @@ def sha256_van(pad: Path) -> str:
         for stuk in iter(lambda: f.read(1 << 20), b""):
             h.update(stuk)
     return h.hexdigest()
+
+
+def _klopt(pad: Path, grootte: int, sha256: str) -> bool:
+    """Staat pad er al als gewoon bestand (geen symlink) met deze grootte en sha256?"""
+    if not pad.is_file() or pad.is_symlink():
+        return False
+    return pad.stat().st_size == grootte and sha256_van(pad) == sha256
 
 
 # --- de werkmap --------------------------------------------------------------------------------
@@ -772,10 +842,21 @@ def set_(werk: Werk, set_pad: Path, *, combis=None) -> int:
     if set_pad.is_file():
         fotos = lees_set(set_pad.read_text(encoding="utf-8"), combis)
         werk.set.mkdir(exist_ok=True)
+        uit_cache = 0
         for f in fotos:
-            haal(f.url, werk.set / f"{f.sleutel}.jpg", max_bytes=f.bytes, grootte=f.bytes,
-                 sha256=f.sha256)  # fmt: skip
-        werk.meld(f"BZ4 set: {len(fotos)} foto's kloppen met beeld.tsv")
+            doel = werk.set / f"{f.sleutel}.jpg"
+            # Wat er al staat (in CI uit de cache op de sha256 van beeld.tsv) en klopt, haalt hij
+            # niet opnieuw: de robotregels van Wikimedia vragen zo min mogelijk downloads. Een
+            # bestand dat niet klopt, haalt hij opnieuw, via .part eroverheen
+            if _klopt(doel, f.bytes, f.sha256):
+                uit_cache += 1
+                continue
+            haal(f.url, doel, max_bytes=f.bytes, grootte=f.bytes, sha256=f.sha256)
+        gehaald = len(fotos) - uit_cache
+        werk.meld(
+            f"BZ4 set: {len(fotos)} foto's kloppen met beeld.tsv "
+            f"({uit_cache} uit de cache, {gehaald} van Commons)"
+        )
         return 0
     fotos = stel_voor(werk, combis=combis)
     tekst = set_tsv(fotos)

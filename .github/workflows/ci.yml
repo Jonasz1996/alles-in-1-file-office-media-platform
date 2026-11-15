@@ -1397,8 +1397,11 @@ jobs:
   # B/32-256. Alleen als de omzetter, de tokenizer, onnxw.py of models.lock verandert, of wat de job
   # zelf meet (tools/beeld, de tests beeld_echt en hun lijsten) (git diff over de push of de PR),
   # of als de PR een regel "beeld-model: ja" heeft (K2-03). Geen
-  # workflow_dispatch en geen cache: de bron komt elke keer van huggingface.co, met de sha256 uit
-  # models.lock. tools/beeld/beeld_model.py (alleen de standaardbibliotheek) haalt en vergelijkt;
+  # workflow_dispatch. De bron komt nooit uit een cache: elke keer van huggingface.co, met de
+  # sha256 uit models.lock. De foto's van beeld.tsv wel (sinds CI op f16ed5a; actions/cache op de
+  # sha256 van beeld.tsv): de robotregels van Wikimedia vragen zo weinig mogelijk downloads, en
+  # set haalt alleen wat ontbreekt of niet klopt. Een voorstel (geen beeld.tsv) heeft geen
+  # cache. tools/beeld/beeld_model.py (alleen de standaardbibliotheek) haalt en vergelijkt;
   # zolang models.lock geen regels van SigLIP heeft of beeld.tsv ontbreekt, schrijft hij een
   # voorstel (verslag via upload-artifact) en maakt de laatste stap de job rood. Een mens zet de
   # regels erin, nooit de job. De tests met marker beeld_echt draaien alleen hier. Aan het eind van
@@ -1501,6 +1504,15 @@ jobs:
             --uit "$WERK/uit1" --uit "$WERK/uit2" --log "$WERK/omzetten1.log" --log "$WERK/omzetten2.log" \
             --uit-fp32 "$WERK/uitfp32" --log-fp32 "$WERK/omzettenfp32.log" \
             || [ $? -eq 3 ]
+      # Alleen met beeld.tsv, en alleen de foto's (nooit de bron): set kijkt elke foto na
+      # (grootte en sha256) en haalt alleen wat ontbreekt of niet klopt. De cache bewaart pas aan
+      # het eind van een groene job (en alleen als de sleutel nog niet bestaat)
+      - name: BZ4 de foto's van beeld.tsv uit de cache (op de sha256 van beeld.tsv)
+        if: ${{ !cancelled() && steps.poort.outputs.draaien == 'ja' && hashFiles('api/tests/analyse/sets/beeld.tsv') != '' }}
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/beeld/set
+          key: beeld-set-${{ hashFiles('api/tests/analyse/sets/beeld.tsv') }}
       - name: BZ4 de 120 foto's (beeld.tsv, of een voorstel uit Commons)
         id: set
         if: ${{ !cancelled() && steps.poort.outputs.draaien == 'ja' }}

@@ -155,7 +155,8 @@ voor wat een mens na een run doet.
    `before` naar de commit, bij een PR van de basis naar de kop, bij `synchronize` van `before`
    naar `after`. Een regel `beeld-model: ja` in de PR zet hem ook aan. De tekst van de PR komt via
    `env` binnen, nooit als expressie in het script, en komt niet in het log. Geen
-   `workflow_dispatch`, geen cache.
+   `workflow_dispatch`, geen cache (sinds [CI op `f16ed5a`](#ci-op-f16ed5a): de bron nooit, de
+   foto's van `beeld.tsv` wel).
 2. `uv sync --frozen --extra analyse`.
 3. BZ1 `bereik`, dan `bron` (de vijf bestanden, of het voorstel), dan twee keer omzetten met
    precies de opdrachtregel van de dienst (`uit1`, `uit2`) en een derde keer met `--fp32`
@@ -170,7 +171,7 @@ voor wat een mens na een run doet.
    het blok `=== kort ===`.
 
 `tests/analyse/test_beeld_ci.py` (6 tests) houdt die vorm vast: alleen `push` en `pull_request`,
-geen cache, de paden, geen `${{` in het script van de poort, dezelfde opdrachtregel als
+geen cache (sinds `f16ed5a`: alleen die van de foto's van `beeld.tsv`), de paden, geen `${{` in het script van de poort, dezelfde opdrachtregel als
 `OMZET_BOOT` (na de samenvoeging ook tegen `app/analyse/runtime.py` van X2a), elke BZ een stap, en
 `beeld_echt` in geen andere job.
 
@@ -673,6 +674,72 @@ Hersteld na de run:
   in de sneeuw" en "hond op het strand"; de andere vier koos X3a. Commons had in de pagina's die
   de job bekijkt geen bruikbare foto met fiets én stad. Of "berg met sneeuw" en "stad" alleen
   genoeg foto's hebben, zegt de volgende run (met de reserves als het niet zo is).
+
+## CI op f16ed5a
+
+`beeld-model` op `f16ed5a` (run 43757977938), na de reparaties hierboven. De stap BZ4 `set`
+(zonder `beeld.tsv`, dus een voorstel) koos deze keer alle foto's: geen tekort, de reserves waren
+niet nodig. `stel_voor` haalt elk gekozen origineel meteen op (`neem`, dan `haal`) van
+upload.wikimedia.org. Na ±9 minuten stopte de stap met "FOUT set: strand-1.jpg: HTTP 429", na de
+zes pogingen van `_open` (2, 4, 8, 16 en 32 s ertussen, of langer als Retry-After dat zei, hooguit
+120 s). BZ4 rekende dus niet: **rood**.
+
+**De waarschijnlijke oorzaak.** De robotregels van Wikimedia (wikitech, Robot_policy, het deel over
+media) vragen: samen hooguit 2 vragen tegelijk, samen hooguit 25 Mbps gemeten over stukken van
+10 s, alleen originelen of de vaste maten van de thumbnails (liever thumbnails), en na een 429
+Retry-After volgen. De job vroeg één ding tegelijk en hooguit één ding per seconde per host
+(`PAUZE_S`), maar een origineel is tot 25 MiB (`MAX_FOTO`) en komt op een runner in een fractie
+van een seconde binnen. Zo kon de job ver boven die 25 Mbps uitkomen. Zeker weten doen we het
+niet: de tool schreef geen Retry-After en niets van het antwoord in het log.
+
+Hersteld na de run (`tools/beeld/beeld_model.py` en `ci.yml`):
+
+- **De originelen blijven.** Een thumbnail kan Wikimedia opnieuw maken, met andere bytes; dan
+  klopt de sha256 in `beeld.tsv` niet meer.
+- **Een grens op de bandbreedte van upload.wikimedia.org**: gemiddeld hooguit `BANDBREEDTE` =
+  2,5 MB/s (20 Mbps, onder de 25 Mbps). Na elk stuk van 1 MiB wacht `haal` tot alles wat er van
+  die host binnenkwam, op 2,5 MB/s binnen had kunnen zijn. Die schuld loopt door naar de volgende
+  download, en een pauze spaart geen tegoed op (anders mag na stilte een hele foto weer op volle
+  snelheid, en dat telt in een stuk van 10 s). Hugging Face en andere hosts houden hun snelheid.
+  Bij gemiddeld 5 MB per foto kost de set zo ±4 minuten; het uiterste (120 × 25 MiB) ±21
+  minuten. Test: `test_van_upload_hooguit_bandbreedte_andere_hosts_niet`.
+- **Wat Wikimedia zei, in het log.** Geeft `_open` het op na een 429 of 5xx, dan noemt de fout de
+  code, de laatste Retry-After die hij zag (of "geen Retry-After") en de eerste regel met tekst van
+  het antwoord: alleen afdrukbare ASCII (de rest wordt `?`), hooguit 160 tekens (`MAX_REGEL`), en
+  niets anders van het antwoord. Bijvoorbeeld "strand-1.jpg: HTTP 429 (Retry-After 7; antwoord:
+  Too many requests)". Andere fouten houden hun korte vorm ("HTTP 404", "niet bereikbaar (…)").
+  Test: `test_een_opgegeven_429_zegt_wat_wikimedia_zei`.
+- **Streng haalt alleen wat ontbreekt of niet klopt.** Met `beeld.tsv` haalt `set` een foto die al
+  in `set/` staat als gewoon bestand met de juiste grootte en sha256 (`sha256_van`) niet opnieuw;
+  een die niet klopt, ontbreekt of een symlink is, haalt hij opnieuw, via `.part` eroverheen. De
+  regel in het blok zegt hoeveel er uit de cache kwamen: "BZ4 set: 120 foto's kloppen met
+  beeld.tsv (116 uit de cache, 4 van Commons)". Test:
+  `test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt`; `test_set_met_beeld_tsv_is_streng`
+  verwacht nu "(0 uit de cache, 120 van Commons)".
+- **Een cache voor de foto's, nooit voor de bron.** Een stap `actions/cache@v4` (dezelfde action en
+  versie als in `api-analyse` en `analyse-image`) direct vóór BZ4 `set` bewaart
+  `$RUNNER_TEMP/beeld/set` onder de sha256 van `api/tests/analyse/sets/beeld.tsv`, alleen als die
+  er is (`hashFiles(...) != ''`). Een voorstel krijgt geen cache; de bron komt elke keer van
+  huggingface.co. `test_beeld_ci.py` houdt de stap vast: het pad, de sleutel, geen restore-keys,
+  de voorwaarde, de plek vóór `set`, en maar één `actions/cache` in de job.
+
+Teruggedraaid getest (de oude `beeld_model.py` terug, de nieuwe tests ongewijzigd): de drie nieuwe
+tests en `test_set_met_beeld_tsv_is_streng` zijn rood. 3.658.073 bytes van upload in 1,0 s (alleen
+`PAUZE_S`), boven de 25 Mbps; "strand-1.jpg: HTTP 429" zonder Retry-After of antwoord; 120 vragen
+aan upload in plaats van 4. Twee mutaties apart, ook rood: tegoed opsparen na een pauze, en een
+symlink als foto uit de cache tellen.
+
+### Open na f16ed5a
+
+- **De cache bewaart alleen na een groene job.** `actions/cache` bewaart in zijn post-stap alleen
+  als de job geslaagd is. Zolang de job rood eindigt (de kwaliteitspoort, of `uitslag` omdat
+  `models.lock` de regels van SigLIP nog mist terwijl `beeld.tsv` er al is), haalt elke strenge run
+  de 120 originelen opnieuw, wel binnen de grens. Altijd bewaren vraagt `actions/cache/save`, een
+  andere action; niet gedaan.
+- **`timeout-minutes: 60` is niet veranderd.** Met de grens duurt het ophalen langer (zie boven);
+  of het past, zegt de volgende run.
+- **Of de bandbreedte de oorzaak was**, zegt de volgende run: komt er weer een 429, dan staat er nu
+  wat Wikimedia zei.
 
 ## CI op 7569d48
 
