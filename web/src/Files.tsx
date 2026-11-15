@@ -51,7 +51,7 @@ import { useOfficeStatus } from "./office";
 import { newItems } from "./office/newItems";
 import { markReady } from "./perf";
 import { type RouteProps, useNavSection, useRestoreScroll } from "./router";
-import { SEARCH_INPUT_ID, SearchBox } from "./browser/SearchBox";
+import { SEARCH_INPUT_ID } from "./search/appBar";
 import { ShareDialog } from "./ShareDialog";
 import { canWrite, folderActions, isShared, permissionOf } from "./sharing";
 import { Button, IconButton } from "./ui/Button";
@@ -665,7 +665,6 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
             total={snap.ids.length}
             partial={!snap.complete}
           />
-          <SearchBox />
         </div>
       )}
 

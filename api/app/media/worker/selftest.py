@@ -63,6 +63,7 @@ from typing import Any
 
 from app.media import wire
 from app.media.worker import args as A
+from app.media.worker import guard
 from app.media.worker import run as R
 from app.media.worker.ops import caps as caps_op
 from app.media.worker.ops import text as text_op
@@ -78,8 +79,12 @@ PROTOCOLS = ("fd", "pipe")
 # Wat de worker en de healthcheck starten. Een proces uit een programma dat zijn uid niet mag
 # lezen, is na execve niet dumpbaar; een leesbaar programma maakt het weer dumpbaar. nice en
 # ionice staan vóór ffmpeg in de argv (args.niceness): het kind heeft dan de fd's van de job al
-# (de blob, de pipe van de app), dus ook zij 0711 (review golf 1, S1). env start de healthcheck.
-EXEC_PROGRAMS = ("ffmpeg", "ffprobe", "nice", "ionice", "env")
+# (de blob, de pipe van de app), dus ook zij 0711 (review golf 1, S1). env start de healthcheck,
+# en zet OMP_THREAD_LIMIT voor de OCR (X1). Het programma van de OCR (guard.OCR, fase 6, Keuze 22
+# en 24) krijgt de PGM van een opdracht: ook 0711. Ontbreekt het (een eigen build zonder), dan is
+# dat geen fout: OCR staat dan uit (caps ocr: false, de rijen ocr_missing).
+EXEC_PROGRAMS = ("ffmpeg", "ffprobe", "nice", "ionice", "env", guard.OCR)
+OPTIONAL_PROGRAMS = (guard.OCR,)
 STEP_S = 60.0
 MKV_LIMIT = 4 * 1024 * 1024
 FMP4_LIMIT = 32 * 1024 * 1024
@@ -206,9 +211,12 @@ def _reopen(report: Report) -> None:
 
 def _binaries(report: Report) -> None:
     """V2: elk programma dat de worker of de healthcheck start, is 0711 van root, en de worker
-    kan het niet lezen (EXEC_PROGRAMS)."""
+    kan het niet lezen (EXEC_PROGRAMS). Een programma uit OPTIONAL_PROGRAMS mag ontbreken."""
     for name in EXEC_PROGRAMS:
         path = shutil.which(name)
+        if path is None and name in OPTIONAL_PROGRAMS:
+            report.add(f"{name} 0711 van root", True, "niet geïnstalleerd: OCR uit", sandbox=True)
+            continue
         if path is None:
             report.add(f"{name} 0711 van root", False, "niet gevonden", sandbox=True)
             continue

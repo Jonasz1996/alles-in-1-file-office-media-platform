@@ -150,17 +150,34 @@ class Settings(BaseSettings):
     geo_src: Path | None = None
     # Gemaakt door geo-load; ontbreekt hij, dan geen plaatsnamen. Leeg = geo_src/places.sqlite
     places_db: Path | None = None
+    # PLAATSEN in .env (Keuze 29): "uit" slaat het bouwen van places.sqlite over, en dan zijn er
+    # geen plaatsnamen (Z3)
+    places: Literal["aan", "uit"] = "aan"
     index_defer_transcodes: int = 2  # index en ocr wachten bij zoveel transcodes
-    # OCR (X1): pas na ja op Vraag 1 (tesseract in het image); tot dan uit, en de rij ocr
-    # draait niet (jobs.active_lanes)
-    ocr_enabled: bool = False
+    # OCR (X1): Jonas koos ja (Vraag 1 en 15: de herkenning zit in het image). Aan; de rij ocr
+    # draait alleen met media aan (jobs.active_lanes), en zonder OCR in de worker (caps) blijven
+    # de rijen none met ocr_missing (Keuze 24)
+    ocr_enabled: bool = True
     ocr_max_pages: int = 200  # per document
     ocr_per_hour: int = 20  # verzoeken per gebruiker per uur
     ocr_pages_per_day: int = 200  # pagina's per gebruiker per dag
     # De container analyse (Keuze 59: gezichten X2 en zoeken op beeld X3). compose.analyse.yaml
-    # zet hem aan; tot dan draait de rij analyse niet (jobs.active_lanes). De rest van §3.11 is
-    # van A0
+    # zet hem aan; tot dan draait de rij analyse niet (jobs.active_lanes), en kijkt de app nooit
+    # naar de socket (app/analyse/monitor.py: de stand is off)
     analyse_enabled: bool = False
+    # De socket in analyse-run, en de sleutel waarmee de worker zich bewijst (§3.11): 64 hex uit
+    # .env (ANALYSE_WORKER_KEY). Leeg of korter dan 32 tekens is down: key_missing; gelijk aan
+    # het geheim van de app of aan de sleutel van de mediaworker is down: key_reused
+    analyse_worker: Path = Path("/run/analyse/worker.sock")
+    analyse_worker_key: str = Field(default="", repr=False)
+    # Gezichten (X2, §3.11): de map met de sleutels per eigenaar (/keys, Keuze 68; leeg is 409
+    # faces_unavailable), foto's per job, het kleinste gezicht (korte kant in de preview, px),
+    # het maximum per foto, en open gezichten per groepsronde (daarboven de nieuwste; K2-06)
+    faces_keys: str = ""
+    faces_batch: int = 16
+    faces_min_px: int = 40
+    faces_max_per_photo: int = 40
+    faces_group_max: int = 60000
 
     @model_validator(mode="after")
     def _geo_paths(self) -> "Settings":
@@ -180,6 +197,14 @@ class Settings(BaseSettings):
     @property
     def db_url(self) -> str:
         return self.database_url or f"sqlite+aiosqlite:///{self.data_dir / 'platform.db'}"
+
+    @property
+    def analyse_on(self) -> bool:
+        """PLATFORM_ANALYSE_ENABLED, en de database is SQLite. Op PostgreSQL maken 0011 en 0012
+        alleen de tabellen, zonder de triggers die gezichten en beeld wissen; daar blijven
+        gezichten en beeld uit, zoals FTS (Keuze 76; review A0, veilig F5). De monitor zegt dan
+        down met no_sqlite, de rij analyse draait niet en de schakelaars gaan niet aan."""
+        return self.analyse_enabled and self.db_url.startswith("sqlite")
 
     @property
     def blob_dir(self) -> Path:
@@ -227,6 +252,16 @@ class Settings(BaseSettings):
             return "PLATFORM_MEDIA_WORKER_KEY ontbreekt of is korter dan 32 tekens"
         if key == self.secret():
             return "PLATFORM_MEDIA_WORKER_KEY mag niet gelijk zijn aan het geheim van de app"
+        return None
+
+    def analyse_key_problem(self) -> Literal["key_missing", "key_reused"] | None:
+        """Waarom de sleutel van de analyse niet goed is (de reden van down), of None. Alleen
+        met analyse_enabled: secret() maakt het geheim aan als het er nog niet is."""
+        key = self.analyse_worker_key
+        if len(key) < 32:
+            return "key_missing"
+        if key == self.secret() or key in (self.media_worker_key, self.media_key()):
+            return "key_reused"
         return None
 
     def office_problem(self) -> str | None:

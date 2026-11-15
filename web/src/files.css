@@ -28,16 +28,6 @@
   background: var(--hover);
 }
 
-.search-box {
-  display: flex;
-  gap: 0.4rem;
-  margin-left: auto;
-}
-
-.search-box input {
-  width: min(16rem, 55vw);
-}
-
 .search-form {
   display: flex;
   gap: var(--space-2);

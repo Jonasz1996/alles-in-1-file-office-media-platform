@@ -163,6 +163,7 @@ class WorkerCaps(BaseModel):
     protocols: list[str] = Field(default_factory=list)
     hwaccels: list[str] = Field(default_factory=list)
     dri: bool = False
+    ocr: bool = False  # fase 6, X1 (additief): de worker kan OCR (Keuze 24)
     missing: list[str] = Field(default_factory=list)  # wat §3.3 nodig heeft en er niet is
     # on: de zelftest van Keuze 11 slaagde (M1); off: de lokale worker; unchecked: niet lokaal,
     # maar (nog) zonder zelftest. Alleen on is "afgeschermd"

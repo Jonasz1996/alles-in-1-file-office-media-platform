@@ -2,6 +2,7 @@
 
 import { api, type FileNode } from "../api";
 import { bcp47 } from "../i18n/locale";
+import type { AlbumItemRule, AlbumRuleInfo } from "./people/types";
 import { cursorOf, type Placed } from "./range";
 
 /** Een foto of video op de tijdlijn of in een album. taken_at is de kloktijd van de camera,
@@ -54,6 +55,19 @@ export interface AlbumOut {
   shared: boolean;
   created_at: string;
   modified_at: string;
+  /** De regel van een slim album (fase 6, Z6): alleen voor de eigenaar; anders, en zonder regel,
+   * null. */
+  rule: AlbumRuleInfo | null;
+}
+
+/** Een item van een album: album (bron en shared, Keuze 42) alleen voor de eigenaar; anders null. */
+export interface AlbumPhotoItem extends PhotoItem {
+  album: AlbumItemRule | null;
+}
+
+export interface AlbumPhotoPage {
+  items: AlbumPhotoItem[];
+  next: string | null;
 }
 
 /** Een pagina is hooguit zoveel items (de server). */
@@ -84,7 +98,7 @@ export const photosApi = {
     api.request<AlbumOut>("PATCH", `/api/v1/albums/${id}`, change),
   deleteAlbum: (id: string) => api.request<void>("DELETE", `/api/v1/albums/${id}`),
   albumItems: (id: string, after: string | null, limit = PAGE) =>
-    api.request<PhotoPage>("GET", `/api/v1/albums/${id}/items${query({ after, limit })}`),
+    api.request<AlbumPhotoPage>("GET", `/api/v1/albums/${id}/items${query({ after, limit })}`),
   albumIds: (id: string) => api.request<IdRange>("GET", `/api/v1/albums/${id}/ids`),
   removeFromAlbum: (id: string, nodeIds: string[]) =>
     api.request<{ removed: number }>("POST", `/api/v1/albums/${id}/items/remove`, { node_ids: nodeIds }),

@@ -4,6 +4,8 @@ import type nl from "./photos.nl";
 const en: Translation<typeof nl> = {
   title: "Photos",
   albums: "Albums",
+  map: "Map",
+  dupes: "Duplicate files",
   album: "Album",
   addToAlbum: "Add to album",
 

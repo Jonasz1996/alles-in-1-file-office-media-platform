@@ -1,6 +1,7 @@
 import logging
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -11,6 +12,26 @@ from app.config import Settings, get_settings
 from app.main import app
 from app.migrate import upgrade
 from app.security import SecurityConfig, SecurityPolicy, login_limiter
+
+# De eerste map-node per map (zie pytest_make_collect_report hieronder)
+_MAPNODES: dict[Path, pytest.Directory] = {}
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(collector):
+    """pytest 9.1 hangt de fixtures van een conftest.py aan de eerste map-node van die map. Staat
+    op de commandoregel een bestand uit tests/ tussen twee bestanden uit één submap (zoals
+    "tests/search/a.py tests/test_b.py tests/search/c.py"), dan verzamelt pytest tests/ opnieuw en
+    krijgt de submap een tweede node, zonder de fixtures van zijn conftest: autouse-fixtures als
+    _databases_dicht en _aangemeld vielen dan stil weg, en plaatsen of stappen bestonden niet.
+    Zo'n tweede node krijgt ze hier alsnog (I1, C2 en review R1; test_conftest_volgorde.py)."""
+    rapport = yield
+    if isinstance(collector, pytest.Directory):
+        eerste = _MAPNODES.setdefault(collector.path, collector)
+        conftest = collector.config.pluginmanager.get_plugin(str(collector.path / "conftest.py"))
+        if eerste is not collector and conftest is not None:
+            collector.session._fixturemanager.parsefactories(holder=conftest, node=collector)
+    return rapport
 
 
 @pytest.fixture
@@ -40,6 +61,20 @@ def _geen_mismatch(request):
     finally:
         logging.getLogger(LOGGER).removeHandler(handler)
     check(handler.lines, "mismatch_verwacht" in request.fixturenames)
+
+
+@pytest.fixture(autouse=True)
+def _schrijfpoort():
+    """Geen schrijfactie buiten de schrijfpoort van SQLite (app/dbgate.py), geen tweede
+    verbinding die schrijft terwijl dezelfde taak de poort heeft, en niet wachten op
+    BlobStore.lock of een gebruikersslot met de poort in handen: dat kan vastlopen tot de
+    poort na 5 s opgeeft. Een test die dat expres doet, haalt het zelf op (take_violations)."""
+    from app import dbgate
+
+    dbgate.take_violations()
+    yield
+    found = [v for v in dbgate.take_violations() if v[0] in ("ungated", "same_task", "lock_in_txn")]
+    assert not found, f"schrijfpoort: {found}"
 
 
 @pytest.fixture

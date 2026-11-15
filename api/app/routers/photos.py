@@ -10,6 +10,16 @@ Volgorde: taken_day aflopend, dan taken_at en id aflopend (nieuwste eerst). Een 
 base64url("<taken_day>|<taken_at ISO>|<id>") van het laatste item van een pagina; de web-app
 maakt hem ook zelf uit een item (voor /photos/ids). Albums (routers/albums.py) en publieke
 albums (routers/public.py) gebruiken dezelfde PhotoItem en cursor.
+
+De filters van Keuze 43 (Z6) op GET /photos en /photos/months: type (meer keer is OF), from en
+to, person en tag (meer keer is EN), place, country, library, camera en in, met dezelfde namen
+als GET /search. Ze gaan door hetzelfde register als zoeken en de regels van slimme albums
+(filters.apply_all), dus ze betekenen hier hetzelfde; de tijdlijn blijft alleen eigen, levende
+foto's en video's. Zoals bij zoeken: place, country en camera zijn 501 not_built tot Z3 ze
+aanmeldt; een tag die niet van jou is, een bibliotheek die je niet ziet en een map die je niet
+ziet (of in de prullenbak) zijn 404. Een persoon die niet van jou is, geeft niets. De query
+string van /photos komt nooit in de log (QUERY_PATHS in app/main.py). /photos/ids heeft geen
+filters: from en to zijn daar de cursors van de reeks.
 """
 
 import base64
@@ -17,7 +27,7 @@ import binascii
 import re
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
@@ -32,6 +42,11 @@ from app.db import Session
 from app.models import Blob, Node, User
 from app.photodate import FIRST_YEAR, LAST_YEAR
 from app.routers.files import GUEST, Utc, shared_ids
+from app.routers.stubs import not_built
+from app.search.engine import check_in
+from app.search.filters import FILTERS, apply_all
+from app.search.like import check_library, own_tag
+from app.search.types import FileType, SearchParams
 from app.security import CurrentUser
 
 router = APIRouter(prefix="/api/v1", tags=["foto's"])
@@ -270,17 +285,76 @@ def owner_only(user: User) -> None:
 
 Limit = Annotated[int, Query(ge=1, le=MAX_PAGE)]
 
+# De filters van een ander pakket (zoals routers/search.LATER): 501 not_built tot dat pakket
+# ze aanmeldt
+LATER = (("persons", "person", "Z6"), ("place", "place", "Z3"), ("country", "country", "Z3"),
+         ("camera", "camera", "Z3"))  # fmt: skip
+
+
+def photo_filters(
+    type_: Annotated[list[FileType], Query(alias="type")] = [],  # noqa: B006
+    date_from: Annotated[date | None, Query(alias="from")] = None,
+    date_to: Annotated[date | None, Query(alias="to")] = None,
+    person: Annotated[list[uuid.UUID], Query()] = [],  # noqa: B006
+    place: int | None = None,
+    country: Annotated[str | None, Query(max_length=8)] = None,
+    tag: Annotated[list[uuid.UUID], Query()] = [],  # noqa: B006
+    library: uuid.UUID | None = None,
+    camera: Annotated[str | None, Query(max_length=200)] = None,
+    in_: Annotated[uuid.UUID | None, Query(alias="in")] = None,
+) -> SearchParams | None:
+    """De filters van Keuze 43 uit de query string, zoals GET /search ze leest; None zonder
+    filter."""
+    p = SearchParams(
+        types=type_,
+        date_from=date_from,
+        date_to=date_to,
+        persons=person,
+        place=place,
+        country=country,
+        tags=tag,
+        library=library,
+        camera=camera,
+        in_=in_,
+    )
+    return p if p.has_filter() else None
+
+
+Filters = Annotated[SearchParams | None, Depends(photo_filters)]
+
+
+async def check_filters(session: AsyncSession, user: User, p: SearchParams | None) -> None:
+    """Zoals bij zoeken, vóór de vraag: 501 voor een filter dat nog niet is aangemeld, 404 voor
+    een map, bibliotheek of tag die je niet ziet of die niet van jou is."""
+    if p is None:
+        return
+    for field, name, package in LATER:
+        value = getattr(p, field)
+        if (value is not None if field == "place" else bool(value)) and name not in FILTERS:
+            raise not_built(package)
+    if p.in_ is not None:
+        await check_in(session, user, p.in_)
+    if p.library is not None:
+        await check_library(session, user, p.library)
+    for tag_id in dict.fromkeys(p.tags):
+        await own_tag(session, user, tag_id)
+
+
+def filtered(query: Select, user: User, p: SearchParams | None) -> Select:
+    """query (over node) met de filters erbij, via hetzelfde register als zoeken."""
+    return query if p is None else apply_all(query, Node.__table__, p, user)
+
 
 @router.get("/photos/months")
-async def months(user: CurrentUser, session: Session) -> Months:
-    """Hoeveel foto's en video's per maand, nieuwste maand eerst."""
+async def months(user: CurrentUser, session: Session, filters: Filters) -> Months:
+    """Hoeveel foto's en video's per maand, nieuwste maand eerst (met de filters: alleen wat
+    erop past)."""
     owner_only(user)
+    await check_filters(session, user, filters)
     month = (Node.taken_day // 100).label("month")
+    query = select(month, func.count()).where(*on_timeline(user.id, user.root_id))
     rows = await session.execute(
-        select(month, func.count())
-        .where(*on_timeline(user.id, user.root_id))
-        .group_by(month)
-        .order_by(month.desc())
+        filtered(query, user, filters).group_by(month).order_by(month.desc())
     )
     return Months(months=[Month(month=f"{m // 100:04d}-{m % 100:02d}", count=n) for m, n in rows])
 
@@ -291,18 +365,21 @@ async def photos(
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
     background: BackgroundTasks,
+    filters: Filters,
     month: Annotated[str | None, Query(max_length=7)] = None,
     after: Annotated[str | None, Query(max_length=300)] = None,
     limit: Limit = MAX_PAGE,
 ) -> PhotoPage:
-    """Een pagina van de tijdlijn (met month alleen die maand, "2026-10"); next is de cursor
-    voor de volgende pagina, of null."""
+    """Een pagina van de tijdlijn (met month alleen die maand, "2026-10"; met de filters van
+    Keuze 43 alleen wat erop past); next is de cursor voor de volgende pagina, of null."""
     owner_only(user)
+    await check_filters(session, user, filters)
     where = on_timeline(user.id, user.root_id) + page_where(after)
     if month:
         start, end = month_range(month)
         where += [Node.taken_day >= start, Node.taken_day < end]
-    rows = (await session.execute(photo_query(*where).limit(limit))).all()
+    query = filtered(photo_query(*where), user, filters)
+    rows = (await session.execute(query.limit(limit))).all()
     return PhotoPage(
         items=await photo_items(session, user, rows, settings, background),
         next=next_cursor(rows, limit),

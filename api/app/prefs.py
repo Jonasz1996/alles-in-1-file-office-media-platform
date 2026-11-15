@@ -5,8 +5,9 @@ eigen foto's zie alleen jij (Vraag 4); "uit": ook jij niet, en geen plaatsen. fa
 zolang X2 er niet is (Vraag 2).
 
 Z0b (Keuze 55, 66 en 80) zette faces (X2) en beeld (X3) in de API, allebei standaard "uit" per
-gebruiker (Vraag 11). beeld heeft nog geen kolom (die komt met 0012, A0): tot dan geeft
-photo_prefs() de standaard. faces_forbidden en faces_available komen van X2 (de schakelaar van de
+gebruiker (Vraag 11). beeld staat sinds 0012 (A0) in photo_pref.beeld, TEXT NULL: NULL is de
+standaard uit PHOTO_PREFS, zodat een ander antwoord op Vraag 11 alleen de code verandert, niet de
+tabel. faces_forbidden en faces_available komen van X2 (de schakelaar van de
 beheerder en de container analyse, Keuze 59); zonder X2 zijn ze False.
 
 De route GET en PATCH /me/photo-settings is van Z6 (routers/photo_prefs.py). Wat gezichten en
@@ -75,7 +76,7 @@ class PhotoSettingsPatch(BaseModel):
 
 
 async def photo_prefs(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any]:
-    """Alle vijf, met de standaard voor wat er niet is (beeld: altijd, tot 0012)."""
+    """Alle vijf, met de standaard voor wat er niet is: geen rij, of beeld NULL (0012)."""
     row = await db.get(PhotoPref, user_id)
     if row is None:
         return dict(PHOTO_PREFS)
@@ -84,7 +85,7 @@ async def photo_prefs(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any]:
         "memories": bool(row.memories),
         "ocr_photos": bool(row.ocr_photos),
         "faces": row.faces,
-        "beeld": PHOTO_PREFS["beeld"],
+        "beeld": PHOTO_PREFS["beeld"] if row.beeld is None else row.beeld,
     }
 
 
@@ -180,16 +181,48 @@ async def check_switch(
                 )
 
 
+# De schakelaar location (Z3, Keuze 28): wat er na het schrijven gebeurt, in dezelfde transactie
+# ("uit": de job die alle plekken van die gebruiker wist; "mij": photometa leest ze opnieuw). Geen
+# controle vooraf: beide waarden mogen altijd (een gast weigert de route al).
+LocationChanged = Callable[[AsyncSession, "User", str], Awaitable[None]]
+_location: list[LocationChanged] = []
+
+
+def register_location(fn: LocationChanged) -> None:
+    """Z3 (app/geo/wire.py); twee keer dezelfde telt één keer."""
+    if fn not in _location:
+        _location.append(fn)
+
+
+# De schakelaar ocr_photos (X1, Keuze 23): aan zet de foto's van die eigenaar in de rij ocr, in
+# dezelfde transactie. Geen controle vooraf: beide waarden mogen altijd.
+OcrPhotosChanged = Callable[[AsyncSession, "User", bool], Awaitable[None]]
+_ocr_photos: list[OcrPhotosChanged] = []
+
+
+def register_ocr_photos(fn: OcrPhotosChanged) -> None:
+    """X1 (app/ocr/step.py); twee keer dezelfde telt één keer."""
+    if fn not in _ocr_photos:
+        _ocr_photos.append(fn)
+
+
 async def switched(
     db: AsyncSession, user: User, before: dict[str, Any], patch: PhotoSettingsPatch
 ) -> None:
     """Na het schrijven van PATCH /me/photo-settings, in dezelfde transactie: X2 en X3 horen
-    welke schakelaar echt veranderde (before: photo_prefs() van vóór het schrijven)."""
+    welke schakelaar echt veranderde (before: photo_prefs() van vóór het schrijven), Z3 of
+    location veranderde, X1 of ocr_photos veranderde."""
     for key in SWITCHES:
         value = getattr(patch, key)
         switch = _switches.get(key)
         if value is not None and value != before.get(key) and switch is not None:
             await switch.changed(db, user, value)
+    if patch.location is not None and patch.location != before.get("location"):
+        for fn in list(_location):
+            await fn(db, user, patch.location)
+    if patch.ocr_photos is not None and patch.ocr_photos != before.get("ocr_photos"):
+        for fn in list(_ocr_photos):
+            await fn(db, user, patch.ocr_photos)
 
 
 async def photo_settings(db: AsyncSession, user: User, *, analyse_enabled: bool) -> PhotoSettings:

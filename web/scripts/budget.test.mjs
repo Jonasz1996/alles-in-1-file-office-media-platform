@@ -5,7 +5,15 @@
 import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { LIMITS, ZOEK_GROUPS, ZOEK_INITIAL, ZOEK_MODULE, ZOEK_PAGES, ZOEK_SLOTS } from "./budget.mjs";
+import {
+  LIMITS,
+  mapDataRows,
+  ZOEK_GROUPS,
+  ZOEK_INITIAL,
+  ZOEK_MODULE,
+  ZOEK_PAGES,
+  ZOEK_SLOTS,
+} from "./budget.mjs";
 
 const KB = 1000;
 const SRC = fileURLToPath(new URL("../src", import.meta.url));
@@ -42,7 +50,7 @@ describe("de regels van het budget (fase 6)", () => {
 
   it("de pagina's van fase 6 met hun woordenboeken en hun grens", () => {
     expect(ZOEK_PAGES).toEqual({
-      "src/Search.tsx": [["browser", "sharing", "search"], "search"],
+      "src/search/SearchPage.tsx": [["browser", "sharing", "search"], "search"],
       "src/photos/map/MapPage.tsx": [["photos_map"], "mapRoute"],
       "src/dupes/DupesPage.tsx": [["dupes"], "dupes"],
       "src/photos/people/PeoplePage.tsx": [["photos_people"], "people"],
@@ -77,7 +85,14 @@ describe("de regels van het budget (fase 6)", () => {
   });
 
   it("de modules van fase 6, ook gezichten en het raster van beeld; in de eerste lading alleen het zoekveld", () => {
-    for (const m of ["src/photos/faces/api.ts", "src/search/beeld/Grid.tsx", "src/photos/people/api.ts", "src/dupes/api.ts"]) {
+    for (const m of [
+      "src/photos/faces/api.ts",
+      "src/search/beeld/Grid.tsx",
+      "src/photos/people/api.ts",
+      "src/dupes/api.ts",
+      "src/ocr/OcrRow.tsx",
+      "src/ocr/PhotoWords.tsx",
+    ]) {
       expect(ZOEK_MODULE.test(m), m).toBe(true);
     }
     // De blokken op /beheer zitten in de chunk van de tab, niet bij de modules van fase 6
@@ -85,5 +100,16 @@ describe("de regels van het budget (fase 6)", () => {
       expect(ZOEK_MODULE.test(m), m).toBe(false);
     }
     expect([...ZOEK_INITIAL].sort()).toEqual(["src/search/AppBarSearch.tsx", "src/search/appBar.ts", "src/search/types.ts"]);
+  });
+
+  it("de wereld van de kaart: binnen mapData, en zonder wereld in de dist een fout (review golf 3, contract F4)", () => {
+    const world = "kaart/world-110m.f2c3625f1d27.json";
+    const dist = new Set(["index.html", "assets/index-abc.js", world, `${world}.gz`, `${world}.br`]);
+    expect(mapDataRows(dist, () => 42 * KB)).toEqual([
+      { name: `mapData ${world}`, size: 42 * KB, limit: 60 * KB, ok: true, detail: "" },
+    ]);
+    expect(mapDataRows(dist, () => 61 * KB).map((r) => r.ok)).toEqual([false]);
+    const zonder = mapDataRows(new Set(["index.html", "assets/index-abc.js"]), () => 0);
+    expect(zonder.map(({ name, ok }) => ({ name, ok }))).toEqual([{ name: "mapData ontbreekt (Z5)", ok: false }]);
   });
 });

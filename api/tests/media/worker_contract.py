@@ -23,7 +23,12 @@ Afspraken voor elke Driver:
   er een zouden hebben). Na stoppen 0: er blijft geen proces over;
 - `slow()`: elke probe vanaf nu blijft hangen tot de verbinding dichtgaat (bij de echte: een
   nep-ffprobe die op `fd:` slaapt); `fast()` zet dat terug;
-- `source(name)`: het pad van een fixture (`tests/media/fixtures.py`).
+- `source(name)`: het pad van een fixture (`tests/media/fixtures.py`);
+- `ocr_known(bron, woorden, breedte, hoogte)`: deze bron geeft bij ocr deze woorden (de nep
+  meldt ze aan met register_ocr; de echte leest ze zelf met tesseract en doet hier niets).
+
+ocr (fase 6, X1) heeft een gemaakte scan (`tests/ocr/scans.py`, DejaVu Sans) en, voor de echte
+worker, tesseract met nld, eng en osd; zonder slaat het scenario voor hem over.
 
 Het rooster (Keuze 22, spike punten 10 en 12): de stroom komt uit `stream_src.mkv` (H.264 +
 AAC, 20 s, S = −0,021). Fragment k begint op mediatijd `origin + 2k` (fragment 0 op `origin`),
@@ -40,6 +45,7 @@ import contextlib
 import os
 import socket
 import struct
+import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -52,7 +58,9 @@ from app.media.client import WorkerBusy, WorkerFailed
 from app.media.types import SegmentGrid
 from app.media.wire import Code, Op, WorkClass
 from app.media.worker import args as A
+from app.ocr import geometry
 from tests.media import boxes
+from tests.ocr import scans
 
 FRAME_MS = 42  # één beeld bij 24 fps, naar boven
 SOURCE = "stream_src.mkv"
@@ -73,6 +81,8 @@ class WorkerDriver(Protocol):
     async def fast(self) -> None: ...
 
     def source(self, name: str) -> Path: ...
+
+    def ocr_known(self, source: Path, words: list[list], width: int, height: int) -> None: ...
 
 
 Scenario = Callable[[WorkerDriver], Awaitable[None]]
@@ -537,6 +547,78 @@ async def stroom_dicht_is_stoppen(d: WorkerDriver) -> None:
     await free(d)
 
 
+# De samenvatting van ocr (ops/ocr.py): precies deze sleutels
+OCR_SUMMARY = {
+    "state", "code", "error", "parts", "words", "chars", "conf", "skew", "width", "height",
+    "source", "rotate", "osd", "ms",
+}  # fmt: skip
+
+
+async def run_ocr(d: WorkerDriver, args: A.OcrArgs, source: Path) -> tuple[list[dict], dict]:
+    """Eén ocr van begin tot eind: de stukken met woorden en de samenvatting."""
+    job, _ = await client.call(Op.OCR, args, source=source)
+    async with job:
+        events = [e async for e in job.events()]
+    for event in events:
+        assert len(wire.encode(event)) <= wire.MAX_MESSAGE
+    assert events and all(e["ev"] == "result" for e in events), [e["ev"] for e in events]
+    return [e["data"] for e in events[:-1]], events[-1]["data"]
+
+
+@needs(Op.OCR)
+async def ocr_vorm(d: WorkerDriver) -> None:
+    """Een A4-scan op 300 dpi: de woorden in stukken, dan de samenvatting; de vakjes in pixels
+    van het beeld zoals de viewer het toont (na geometry.centre). Een bron die geen beeld of PDF
+    is: failed met de soort fout van kind 1, zonder woorden."""
+    with tempfile.TemporaryDirectory() as tmp:
+        scan = Path(tmp) / "brief.png"
+        scan.write_bytes(scans.png(0))
+        d.ocr_known(scan, scans.boxes(), *scans.A4)
+        assert (await client.caps()).ocr is True
+        chunks, summary = await run_ocr(d, A.OcrArgs(kind="image"), scan)
+        assert set(summary) == OCR_SUMMARY
+        assert summary["state"] == "done" and summary["code"] is None
+        assert summary["error"] is None
+        assert (summary["width"], summary["height"]) == scans.A4
+        assert summary["source"] == list(scans.A4)
+        assert abs(summary["skew"]) <= 0.3 and summary["rotate"] == 0
+        assert summary["osd"] is False and summary["conf"] >= 60
+        assert set(summary["ms"]) == {"render", "deskew", "ocr"}
+        assert [c["part"] for c in chunks] == list(range(summary["parts"]))
+        words = [w for c in chunks for w in c["words"]]
+        assert len(words) == summary["words"]
+        for w in words:
+            assert isinstance(w[0], str) and w[0]
+            assert len(w) == 6 and all(isinstance(v, int) for v in w[1:]), w
+        lines: dict[int, list[str]] = {}
+        for w in words:
+            lines.setdefault(w[5], []).append(w[0])
+        text = "\n".join(" ".join(lines[n]) for n in sorted(lines))
+        assert summary["chars"] == len(text)
+        assert scans.recall(scans.tokens(text)) >= 0.95, text
+        assert "ocrwoordx" in scans.tokens(text)
+        # Het midden van elk vak, terug in de bron: waar het woord echt staat
+        want = {w.text: w for w in scans.words(0) if w.text in scans.unique()}
+        size = (summary["width"], summary["height"])
+        for w in words:
+            if w[0] in want:
+                x, y = geometry.centre(tuple(w[1:5]), summary["skew"], size, scans.A4)
+                assert abs(x - want[w[0]].x) <= 10 and abs(y - want[w[0]].y) <= 10, (w, x, y)
+        # geen beeld en geen PDF
+        junk = Path(tmp) / "rommel.bin"
+        junk.write_bytes(b"geen beeld " * 200)
+        for kind, error in (("image", "UnidentifiedImageError"), ("pdf", "PdfiumError")):
+            chunks, summary = await run_ocr(d, A.OcrArgs(kind=kind), junk)
+            assert chunks == [] and set(summary) == OCR_SUMMARY
+            assert (summary["state"], summary["code"], summary["error"]) == (
+                "failed",
+                None,
+                error,
+            )
+            assert summary["words"] == 0 and summary["parts"] == 0
+    await free(d)
+
+
 SCENARIOS: list[Scenario] = [
     caps_vorm,
     probe_vorm,
@@ -552,4 +634,5 @@ SCENARIOS: list[Scenario] = [
     stroom_op_rooster,
     tegendruk,
     stroom_dicht_is_stoppen,
+    ocr_vorm,
 ]

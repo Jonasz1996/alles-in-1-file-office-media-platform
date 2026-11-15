@@ -431,12 +431,19 @@ async def test_gezichten_en_beeld_aanzetten_kan_niet_zonder_x2_en_x3():
     await prefs.check_switch(db, gast, _patch(location="uit"), analyse_enabled=True)
 
 
-async def test_x2_en_x3_melden_hun_schakelaar_aan():
+async def test_x2_en_x3_melden_hun_schakelaar_aan(monkeypatch):
     """Review Z0b, contract F4: X2 en X3 melden bij app.prefs wat hun schakelaar mag en doet;
     Z6 hoeft photo_prefs.py dan niet voor ze te openen. De stand van de analyse gaat vóór X2:
-    zonder PLATFORM_ANALYSE_ENABLED is er nooit iets beschikbaar."""
+    zonder PLATFORM_ANALYSE_ENABLED is er nooit iets beschikbaar. location gaat nooit naar X2 of
+    X3, alleen naar wat Z3 aanmeldt (register_location; hier vervangen door een die noteert)."""
     assert prefs.SWITCHES == {"faces": "X2", "beeld": "X3"}
     gezien: list[tuple[str, str]] = []
+
+    async def plek(db, user, value):
+        gezien.append(("location", value))
+
+    monkeypatch.setattr(prefs, "_location", [])
+    prefs.register_location(plek)
     stand = {"faces": prefs.SwitchState(), "beeld": prefs.SwitchState()}
 
     def aanmelden(key: str) -> None:
@@ -475,6 +482,9 @@ async def test_x2_en_x3_melden_hun_schakelaar_aan():
     # Na het schrijven: alleen wat echt veranderde, in de volgorde faces, beeld
     before = dict(prefs.PHOTO_PREFS)
     await prefs.switched(None, eva, before, _patch(location="uit"))
+    assert gezien == [("location", "uit")]
+    gezien.clear()
+    await prefs.switched(None, eva, {**before, "location": "uit"}, _patch(location="uit"))
     await prefs.switched(None, eva, before, _patch(faces="uit", beeld="uit"))
     assert gezien == []
     await prefs.switched(None, eva, before, _patch(beeld="aan", faces="aan"))
@@ -514,12 +524,12 @@ async def test_x2_en_x3_melden_hun_deel_van_beheer_aan():
     /admin/search gaan via search.hooks, zodat Z7 admin.py en admin_search.py niet voor X2 en X3
     open hoeft. Zonder aanmelding: het blok None (de standaard van AdminSearch), en de schakelaar
     en herbouwen geven 501 not_built van het pakket."""
-    assert hooks.ADMIN_PARTS == {"faces": "X2", "beeld": "X3"}
+    assert hooks.ADMIN_PARTS == {"faces": "X2", "beeld": "X3", "ocr": "X1"}
     assert set(hooks.ADMIN_PARTS) == set(t.RebuildWhat.__args__) - {
-        "names", "text", "geo", "hash", "ocr"
+        "names", "text", "geo", "hash"
     }  # fmt: skip
-    assert set(hooks.ADMIN_PARTS) == {"faces", "beeld"} <= set(t.AdminSearch.model_fields)
-    assert hooks.ADMIN_SWITCHES == {"faces_allowed": "faces", "beeld": "beeld"}
+    assert set(hooks.ADMIN_PARTS) == {"faces", "beeld", "ocr"} <= set(t.AdminSearch.model_fields)
+    assert hooks.ADMIN_SWITCHES == {"faces_allowed": "faces", "beeld": "beeld", "ocr": "ocr"}
     assert set(hooks.ADMIN_SWITCHES) <= set(t.AdminSearchPatch.model_fields)
     for name, package in hooks.ADMIN_PARTS.items():
         assert await hooks.admin_block(name, None) is None
@@ -542,7 +552,9 @@ async def test_x2_en_x3_melden_hun_deel_van_beheer_aan():
     async def rebuild(db):
         gezien.append(("rebuild", db))
 
+    assert not hooks.admin_registered("faces")
     hooks.register_admin("faces", hooks.AdminPart(block=block, switch=switch, rebuild=rebuild))
+    assert hooks.admin_registered("faces") and not hooks.admin_registered("ocr")
     assert await hooks.admin_block("faces", "db") == "blok"
     await hooks.admin_switch("faces", "db", False)
     await hooks.admin_rebuild("faces", "db")
@@ -554,8 +566,9 @@ async def test_x2_en_x3_melden_hun_deel_van_beheer_aan():
 
 async def test_alleen_faces_en_beeld_melden_zich_aan():
     """Nacontrole van Z0b: register_switch neemt alleen de schakelaars van X2 en X3, en
-    register_admin alleen hun delen van /beheer. Een andere sleutel (een instelling van Z6, of een
-    deel van Z7) geeft ValueError en meldt niets aan."""
+    register_admin alleen hun delen van /beheer en (sinds Z7, golf 4) dat van X1: ocr. Een andere
+    sleutel (een instelling van Z6, of een deel van Z7 zelf) geeft ValueError en meldt niets
+    aan."""
 
     async def state(db, user):
         return prefs.SwitchState(available=True)
@@ -569,7 +582,7 @@ async def test_alleen_faces_en_beeld_melden_zich_aan():
     for key in ("location", "memories", "ocr_photos", "faces_allowed", "Faces", ""):
         with pytest.raises(ValueError):
             prefs.register_switch(key, prefs.Switch(state=state, changed=changed))
-    for name in ("names", "text", "geo", "hash", "ocr", "faces_allowed", "Beeld", ""):
+    for name in ("names", "text", "geo", "hash", "Ocr", "faces_allowed", "Beeld", ""):
         with pytest.raises(ValueError):
             hooks.register_admin(name, hooks.AdminPart(block=niets, switch=niets, rebuild=niets))
     assert prefs._switches == {}
@@ -624,7 +637,12 @@ def test_een_oude_vraag_en_een_oud_antwoord_blijven_gelijk():
         "places": {"loaded": False, "source": None, "date": None},
         "bench": None,
     }
-    assert t.AdminSearch.model_validate(z0).model_dump() == {**z0, "faces": None, "beeld": None}
+    assert t.AdminSearch.model_validate(z0).model_dump() == {
+        **z0,
+        "faces": None,
+        "beeld": None,
+        "check": None,  # I1: de wekelijkse search-check
+    }
     assert t.AdminSearchPatch.model_validate({"paused": True}).model_dump(exclude_none=True) == {
         "paused": True
     }
@@ -704,18 +722,22 @@ async def test_zoeken_zonder_mode_geeft_hetzelfde_antwoord(client, admin):
     ]  # fmt: skip
     assert (body["mode"], body["fallback"]) == ("text", None)
     assert [h["node"]["name"] for h in body["results"]] == ["Jaarverslag 2025.pdf"]
-    # Een vraag van 0.7.0 die niet in SearchParams past (LikeFallback zonder controle): ook
+    # Een vraag van 0.7.0 die niet in SearchParams past: tot Z4 LikeFallback zonder controle,
+    # nu een 422 ("De overgang" in §3.4); met limit 50 dezelfde velden
     r = await client.get("/api/v1/search", params={"q": "x", "limit": 200}, headers=headers)
+    assert r.status_code == 422 and r.json()["detail"]["params"] == {"field": "query.limit"}
+    r = await client.get("/api/v1/search", params={"q": "x", "limit": 50}, headers=headers)
     assert r.status_code == 200 and (r.json()["mode"], r.json()["fallback"]) == ("text", None)
 
 
 async def test_een_regel_met_mode_geeft_422(client, admin):
     """Een slim album zoekt nooit op beeld: mode of like in de regel geeft 422 (de body wordt
-    gelezen voor de stub van Z6 antwoordt)."""
+    gelezen voor de route het album zoekt). Sinds Z6 is de route gebouwd: zonder mode en like
+    komt de vraag bij het album, en een album dat er niet is, is 404."""
     headers, _ = admin
     url = f"/api/v1/albums/{uuid.uuid4()}/rule"
     for extra in ({"mode": "image"}, {"like": str(uuid.uuid4())}):
         r = await client.put(url, json={"rule": {"q": "zee", **extra}}, headers=headers)
         assert r.status_code == 422, (extra, r.text)
     r = await client.put(url, json={"rule": {"q": "zee"}}, headers=headers)
-    assert r.status_code == 501 and r.json()["detail"]["params"] == {"package": "Z6"}
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "not_found", r.text

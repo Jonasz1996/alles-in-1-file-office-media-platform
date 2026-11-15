@@ -4,4 +4,13 @@
 export default {
   title: "Gezichten",
   notReady: "Gezichten herkennen komt later in fase 6.",
+  // De aantallen in het blok op /beheer zolang X2 het niet zelf vult (Z7, Keuze 51: alleen
+  // aantallen, nooit per gebruiker of gezicht)
+  admin: {
+    faces: "Gezichten",
+    named: "Waarvan benoemd",
+    usersOn: "Gebruikers met gezichten aan",
+    waiting: "Foto's in de rij",
+    failed: "Mislukt",
+  },
 } as const;

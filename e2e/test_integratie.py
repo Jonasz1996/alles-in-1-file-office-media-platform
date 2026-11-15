@@ -37,6 +37,16 @@ from verhaal import (
 )
 
 MB = 1024 * 1024
+# De tekst van de pagina buiten de rij Plek (het element dat evaluate krijgt), zoals
+# to_contain_text hem leest (textContent)
+OUTSIDE_ROW = """(row) => {
+  const parts = [];
+  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+    if (!row.contains(node)) parts.push(node.textContent);
+  }
+  return parts.join("");
+}"""
 
 
 @pytest.fixture(scope="module")
@@ -472,7 +482,8 @@ def test_04_fotos_tijdlijn_album_delen_en_publieke_link(verhaal: Verhaal, tmp_pa
     """Foto's van voor het lezen van de metadata: de backfill zet de EXIF-datum en die van de
     video (UTC omgezet) alsnog. Een album uit de tijdlijn, alleen-bekijken gedeeld met Bram
     (geen Kopiëren, niet als map te downloaden) en met Gijs (de gast ziet alleen dat), een
-    publieke link zonder GPS in enig antwoord, en de zip van het album."""
+    publieke link zonder GPS in enig antwoord, en de zip van het album. De eigenaar ziet zijn plek
+    alleen in de rij Plek van de viewer (fase 6, Keuze 27)."""
     import hashlib
     import io
     from datetime import datetime
@@ -563,7 +574,8 @@ def test_04_fotos_tijdlijn_album_delen_en_publieke_link(verhaal: Verhaal, tmp_pa
     expect(video).to_have_attribute("aria-label", re.compile(r"1 jan 2024.*00:30"))
     expect(plain).to_have_attribute("aria-label", re.compile(r"5 mrt 2022.*10:00"))
 
-    # De viewer: I toont de EXIF uit de backfill (Camera, Belichting) en geen locatie
+    # De viewer: I toont de EXIF uit de backfill (Camera, Belichting); de plek alleen in de rij
+    # Plek, die alleen de eigenaar ziet (fase 6, Keuze 27)
     jpg.focus()
     page.keyboard.press("Enter")
     viewer = page.get_by_role("dialog", name="zomer.jpg", exact=True)
@@ -578,8 +590,16 @@ def test_04_fotos_tijdlijn_album_delen_en_publieke_link(verhaal: Verhaal, tmp_pa
     expect(value(viewer, "Camera")).to_have_text("Testmerk Model X")
     expect(value(viewer, "Belichting")).to_have_text("f/2,8 · 1/250 s · ISO 200 · 35 mm")
     expect(value(viewer, "Datum")).to_have_text(re.compile(r"1 mei 2024.*12:30"))
-    for text in ("Locatie", "GPS", "52°", "52,375", "52.375"):
-        expect(page.locator("body")).not_to_contain_text(text)
+    # 52°22'30" N, 4°53'0" O; buiten de rij Plek geen locatie (geen label, geen coördinaten)
+    info = viewer.get_by_role("complementary", name="Gegevens")
+    photo = info.locator("section").filter(has=page.get_by_role("heading", name="Foto"))
+    plek = info.get_by_role("region", name="Plek", exact=True)
+    expect(plek).to_contain_text("52,3750° N, 4,8833° O")
+    expect(plek).to_contain_text("Alleen jij ziet de plek.")
+    outside = plek.evaluate(OUTSIDE_ROW)
+    for text in ("Locatie", "Location", "GPS", "52°", "52,375", "52.375", "4°", "4,883", "4.883"):
+        expect(photo).not_to_contain_text(text)
+        assert text not in outside, text
     page.keyboard.press("ArrowRight")  # de video: de datum in Amsterdam
     viewer = page.get_by_role("dialog", name="oudjaar.webm", exact=True)
     expect(value(viewer, "Datum")).to_have_text(re.compile(r"1 jan.* 2024.*00:30"))

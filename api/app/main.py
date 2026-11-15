@@ -25,12 +25,14 @@ from fastapi.responses import (
 from pydantic import BaseModel
 
 from app import __version__, errors, events, jobs, photometa, previews
+from app.analyse import monitor as analyse_monitor
 from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.extract import step as extract_step  # noqa: F401 - registreert de stap text (Z2)
 from app.media import analysis as media_analysis  # noqa: F401 - registreert media.analyse
 from app.media import runtime as media_runtime
 from app.migrate import upgrade
+from app.ocr import step as ocr_step  # noqa: F401 - registreert de stap ocr (X1)
 from app.office import convert as office_convert
 from app.office import engine as office_engine
 from app.office import health as office_health
@@ -107,9 +109,15 @@ SECRET_PARAMS = re.compile(
 # Onder /search, /photos en /people gaat de hele query string weg: filters op een plaats, een
 # persoon, een kaartvak of een datum zeggen ook iets over iemands foto's (fase 6, Keuze 13). Zo
 # ook bij zoeken op beeld (/search?mode=image&q= of &like=, X3) en de routes van gezichten
-# (/people/faces/…, X2): test_log_hiding.py
-QUERY_PATHS = re.compile(r"(/api/v1/(?:search|photos|people)(?:/[^?\s\"]*)?\?)[^\s\"]*")
+# (/people/faces/…, X2): test_log_hiding.py. En de pagina /zoeken zelf (Z4): wie hem herlaadt,
+# stuurt dezelfde filters in het adres (test_zoek_adres.py)
+QUERY_PATHS = re.compile(
+    r"((?:/api/v1/(?:search|photos|people)(?:/[^?\s\"]*)?|(?:^|(?<=[\s\"]))/zoeken/?)\?)[^\s\"]*"
+)
 LINK_PATH = re.compile(r"((?:^|[\s\"])/s/)[^/?#\s\"]+")
+# Z6: een regel uit de herinneringen halen zet de dag of het id in het pad
+# (DELETE /photos/memories/hide/{kind}/{ref}); wat na hide/ komt, gaat weg
+MEMORY_HIDE_PATH = re.compile(r"(/api/v1/photos/memories/hide/)[^?\s\"]*")
 # De sid van een afspeelsessie staat in het pad (fase 5, Keuze 35): /api/v1/stream/<node>.<geheim>/…
 # Het hele stuk na /api/v1/stream/ gaat weg, wat er ook in staat (geen punt, een lege naam van de
 # node, een dubbele /). Alleen een nette naam van de node ervoor (kleine letters, cijfers en -)
@@ -119,6 +127,7 @@ STREAM_PATH = re.compile(r"(/api/v1/stream/+(?:[a-z0-9-]{1,63}\.)?)[^/?\s\"]+")
 
 def _hide(value: str) -> str:
     value = QUERY_PATHS.sub(r"\1***", value)
+    value = MEMORY_HIDE_PATH.sub(r"\1***", value)
     value = SECRET_PARAMS.sub(r"\1***", value)
     return STREAM_PATH.sub(r"\1***", LINK_PATH.sub(r"\1***", value))
 
@@ -131,6 +140,9 @@ class HideSecrets(logging.Filter):
 
 
 logging.getLogger("uvicorn.access").addFilter(HideSecrets())
+# aiosqlite logt op DEBUG elke SQL met zijn parameters, dus ook de zoekvraag; vast op INFO, ook
+# als de wortel-logger op DEBUG staat (Keuze 13; I1, S5)
+logging.getLogger("aiosqlite").setLevel(logging.INFO)
 
 SECURITY_HEADERS = [
     (b"x-content-type-options", b"nosniff"),
@@ -148,7 +160,7 @@ BODY_TIMEOUT = 90.0
 # 'unsafe-inline' voor stijlen: de app zet geen <style> of style-attribuut in de HTML (React
 # style-props lopen via CSSOM en vallen daar niet onder). media-src blob: (fase 5, F4): de
 # speler zet een object-URL van MediaSource in video.src; zonder blob: speelt geen MSE-video.
-# Dezelfde CSP staat 5 keer in web/nginx.conf en in de CI-job images (test_csp_nginx.py).
+# Dezelfde CSP staat 6 keer in web/nginx.conf en in de CI-job images (test_csp_nginx.py).
 WEB_CSP = (
     "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
     "style-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; "
@@ -172,6 +184,9 @@ WEB_TYPES = {
 # Voorgecomprimeerde varianten (vite.config.ts, precompress), in volgorde van voorkeur
 ENCODINGS = (("br", ".br"), ("gzip", ".gz"))
 IMMUTABLE = "public, max-age=31536000, immutable"
+# De wereld van de kaart (Z5, tools/kaart/maak_wereld.py) draagt zijn hash in de naam, zoals
+# assets/: een nieuwe versie is een nieuwe naam (review golf 3, web F7)
+IMMUTABLE_WEB = re.compile(r"kaart/[^/]+\.[0-9a-f]{12}\.json")
 
 
 def _bounded(receive):
@@ -514,6 +529,9 @@ async def lifespan(app: FastAPI):
     # media-eindpunt 503 media_off)
     media_runtime.bind(app, settings)
     await media_runtime.start(app, settings)
+    # De analyse (fase 6, Keuze 59): zonder PLATFORM_ANALYSE_ENABLED gebeurt hier niets (geen
+    # taak, geen socket; de stand is off)
+    analyse_monitor.start(settings)
     log.info("Platform %s gestart (%s), data in %s", __version__, settings.mode, settings.data_dir)
     with _streams_end_on_signal(app):
         yield
@@ -525,6 +543,7 @@ async def lifespan(app: FastAPI):
     await previews.stop_forkserver()  # na de rijen: een lopende preview gebruikt hem nog
     await media_runtime.stop(app)  # na de rijen: een taak van media gebruikt de worker nog
     media_runtime.unbind()
+    await analyse_monitor.stop()  # na de rijen: een taak van de rij analyse leest de stand
     cleaner.cancel()
     await certs.stop()
     log.info("Platform %s gestopt", __version__)
@@ -671,7 +690,7 @@ def _etag_matches(header: str, etag: str) -> bool:
 def _web_file(request: Request, file: Path, rel: str) -> Response:
     """Eén bestand van de web-app: voorgecomprimeerd als dat kan, met ETag en 304."""
     media_type = WEB_TYPES.get(file.suffix.lower()) or mimetypes.guess_type(file.name)[0]
-    immutable = Path(rel).parts[:1] == ("assets",)
+    immutable = Path(rel).parts[:1] == ("assets",) or IMMUTABLE_WEB.fullmatch(rel) is not None
     headers = {
         "Cache-Control": IMMUTABLE if immutable else "no-cache",
         "Content-Security-Policy": WEB_CSP,

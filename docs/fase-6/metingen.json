@@ -1,0 +1,702 @@
+{
+ "omschrijving": "De metingen M1–M9 van de integratie I1 van fase 6 (§4.4 en §4.5 van het bouwontwerp), in de sandbox en uit CI; zie metingen.md. Alleen getallen, nooit een zoekvraag.",
+ "datum": "2026-11-11",
+ "omstandigheden": {
+  "machine": "sandbox, Firecracker-VM, 4 vCPU (Intel Xeon @ 2,10 GHz), 15,7 GiB RAM, geen swap, geen GPU",
+  "sqlite_host": "3.53.1",
+  "sqlite_slim": "3.46.1",
+  "python_slim": "3.12.16",
+  "python_host": "3.12.13",
+  "ffmpeg": "6.1.1 (Ubuntu)",
+  "tesseract": "5.3.4",
+  "commits": {
+   "M2-M4": "d5624b5",
+   "M5": "d5624b5 (run 1), 77292fe (run 2 en 3, na een herstart; alleen een print in een test anders)",
+   "M6": "d5624b5, met de print van 77292fe al in de werkboom",
+   "M9": "d5624b5",
+   "M7e": "98ec2bc",
+   "M8": "47d62eb"
+  },
+  "ci": {
+   "M1": {
+    "run": 102,
+    "id": 42939492812,
+    "commit": "0e19180",
+    "jobs_groen": 16
+   },
+   "M8": {
+    "run": 105,
+    "id": 43088438680,
+    "commit": "47d62eb",
+    "jobs_groen": 16
+   }
+  },
+  "geheugen_eenheid": "MiB (zoek_samen.py rekent in MiB, al schrijft het MB)"
+ },
+ "M1": {
+  "bron": "CI run 102, job zoek-perf, SQLite 3.46.1, --n 100000 --seed 6, profiel groot; p95 = mediaan van 3 rondes",
+  "zoeken": {
+   "eigenaar": {
+    "p95": 73.4,
+    "p99": 107.3,
+    "max": 120.8,
+    "ronde_B": 0,
+    "ronde_C": 0,
+    "volgende_p95": 73.1,
+    "filters_p95": 49.3,
+    "suggesties_p95": 14.9,
+    "snip_p95": 10.3
+   },
+   "ontvanger5": {
+    "p95": 80.8,
+    "p99": 118.0,
+    "max": 129.3,
+    "ronde_B": 0,
+    "ronde_C": 0,
+    "volgende_p95": 88.8,
+    "filters_p95": 65.0,
+    "suggesties_p95": 24.9,
+    "snip_p95": 10.6
+   },
+   "ontvanger20": {
+    "p95": 85.8,
+    "p99": 129.4,
+    "max": 136.3,
+    "ronde_B": 0,
+    "ronde_C": 0,
+    "volgende_p95": 94.9,
+    "filters_p95": 76.7,
+    "suggesties_p95": 30.3,
+    "snip_p95": 11.1
+   },
+   "groepslid": {
+    "p95": 81.9,
+    "p99": 115.8,
+    "max": 129.4,
+    "ronde_B": 0,
+    "ronde_C": 0,
+    "volgende_p95": 81.2,
+    "filters_p95": 60.4,
+    "suggesties_p95": 23.9,
+    "snip_p95": 11.1
+   },
+   "gast": {
+    "p95": 72.3,
+    "p99": 118.0,
+    "max": 153.7,
+    "ronde_B": 0,
+    "ronde_C": 0,
+    "volgende_p95": 53.5,
+    "filters_p95": 25.1,
+    "suggesties_p95": 24.6,
+    "snip_p95": 6.3
+   },
+   "alles": {
+    "p95": 126.7,
+    "p99": 165.1,
+    "max": 184.7,
+    "ronde_B": 9,
+    "ronde_C": 0,
+    "volgende_p95": 134.1,
+    "filters_p95": 58.7,
+    "suggesties_p95": 30.8,
+    "snip_p95": 8.7
+   }
+  },
+  "vier_tegelijk": {
+   "p95": 209.4,
+   "p99": 244.5,
+   "max": 277.8,
+   "health_p95": 8.5,
+   "poort": 300
+  },
+  "eerste_vraag_na_herstart_ms": 85.5,
+  "herinneringen": {
+   "p95": 27.0,
+   "rondes": [
+    34.1,
+    27.0,
+    16.5
+   ],
+   "p99": 34.9,
+   "poort": 50
+  },
+  "kaart": {
+   "fotos_met_plek": 55011,
+   "p95": 51.9,
+   "rondes": [
+    75.0,
+    51.6,
+    51.9
+   ],
+   "p99": 78.7,
+   "items_p95": 44.4,
+   "poort": 150
+  },
+  "kaart_filter": {
+   "photo_geo_p95": 110.4,
+   "photo_geo_poort": 150,
+   "node_p95": 430.0,
+   "node_rondes": [
+    437.5,
+    430.0,
+    275.1
+   ],
+   "node_poort": 500
+  },
+  "duplicaten": {
+   "p95": 192.7,
+   "rondes": [
+    193.2,
+    192.7,
+    190.8
+   ],
+   "p99": 204.1,
+   "poort": 300
+  },
+  "uitkomst": "gehaald"
+ },
+ "M2": {
+  "n": 2000,
+  "core": 1,
+  "worker_per_minuut": [
+   1972.5,
+   1980.9,
+   1977.1
+  ],
+  "worker_mediaan": 1977.1,
+  "poort": 1000,
+  "terugval_per_minuut": [
+   4709.1,
+   4816.8,
+   4832.3
+  ],
+  "terugval_mediaan": 4816.8,
+  "uitkomst": "gehaald"
+ },
+ "M3": {
+  "n": 5000,
+  "core": 1,
+  "per_minuut": [
+   13405.7,
+   13801.3,
+   13713.3
+  ],
+  "mediaan": 13713.3,
+  "poort": 5000,
+  "uitkomst": "gehaald"
+ },
+ "M4": {
+  "n": 55000,
+  "core": 1,
+  "per_minuut": [
+   44397.5,
+   44494.8,
+   45922.9
+  ],
+  "mediaan": 44494.8,
+  "poort": 20000,
+  "met_land": 42169,
+  "met_plaats": 39025,
+  "uitkomst": "gehaald"
+ },
+ "M5": {
+  "pagina_s": 130,
+  "core": 0,
+  "per_minuut_mix": [
+   26.2,
+   19.6,
+   23.2
+  ],
+  "mediaan": 23.2,
+  "poort": 8.0,
+  "uitkomst": "gehaald"
+ },
+ "M6": {
+  "poort_ms": 1000,
+  "langste_upload_ms": {
+   "host": [
+    241,
+    263,
+    204
+   ],
+   "slim": [
+    173,
+    337,
+    277
+   ],
+   "host_fsync_plus_200ms": 739
+  },
+  "uitkomst": "gehaald"
+ },
+ "M7": {
+  "script": "e2e/perf/zoek_samen.py --office --sessies 2 --bewerkers 3 --duur 300 --docs 5000",
+  "rondes": {
+   "M7": {
+    "commit": "77292fe",
+    "uitkomst": "niet te lezen (testopzet)"
+   },
+   "M7b": {
+    "commit": "0a2705d",
+    "uitkomst": "niet gehaald (alles onder taskset -c 0-2)"
+   },
+   "M7c": {
+    "commit": "ad71b8c",
+    "uitkomst": "niet gehaald (de probe van de belastingtest vroeg elke seconde de hele hoofdmap)"
+   },
+   "M7d": {
+    "commit": "329e707",
+    "uitkomst": "niet gehaald (haperen in fase a, 3 / 2 / 0 keer)"
+   },
+   "M7e": {
+    "commit": "98ec2bc",
+    "uitkomst": "gehaald, 3 van 3"
+   }
+  },
+  "M7e": {
+   "run 1": {
+    "geslaagd": true,
+    "duur_s": 1910,
+    "stappen": {
+     "pauze": {
+      "zoeken_p95_ms": 44.1,
+      "zoeken_n": 1210,
+      "files_root_limit200_p95_ms": 66.4,
+      "health_p95_ms": 4.9,
+      "mem_available_min_mib": 12524,
+      "hervat_s": null,
+      "media": [
+       "fase a: start 1.34, 2.29 s, 0 keer haperen, geslaagd",
+       "fase b: start 1.78, 1.12 s, 0 keer haperen, geslaagd",
+       "fase c: niet gedraaid (alleen met de spelers buiten de app (--extern))",
+       "fase d: niet gedraaid (DS herstart Jonas met de hand (runbook media.md))",
+       "API p95: 59.8 ms",
+       "uitkomst: geslaagd"
+      ],
+      "media_api_p95_ms": 59.8,
+      "media_geslaagd": true,
+      "ds_geheugengrens_bytes": 2147483648,
+      "ds_oom": false,
+      "dezelfde_processen": true,
+      "office_opslaan_s": 8.2,
+      "office_getypt": 359,
+      "office_opgeslagen": 359,
+      "office_verloren": 0
+     },
+     "achtergrond": {
+      "zoeken_p95_ms": 46.6,
+      "zoeken_n": 1012,
+      "files_root_limit200_p95_ms": 80.9,
+      "health_p95_ms": 5.1,
+      "mem_available_min_mib": 12434,
+      "hervat_s": 18.3,
+      "media": [
+       "fase a: start 1.36, 1.56 s, 0 keer haperen, geslaagd",
+       "fase b: start 1.40, 1.06 s, 0 keer haperen, geslaagd",
+       "fase c: niet gedraaid (alleen met de spelers buiten de app (--extern))",
+       "fase d: niet gedraaid (DS herstart Jonas met de hand (runbook media.md))",
+       "API p95: 55.9 ms",
+       "uitkomst: geslaagd"
+      ],
+      "media_api_p95_ms": 55.9,
+      "media_geslaagd": true,
+      "ds_geheugengrens_bytes": 2147483648,
+      "ds_oom": false,
+      "dezelfde_processen": true,
+      "office_opslaan_s": 7.8,
+      "office_getypt": 354,
+      "office_opgeslagen": 354,
+      "office_verloren": 0
+     },
+     "zonder_defer": {
+      "zoeken_p95_ms": 85.0,
+      "zoeken_n": 992,
+      "files_root_limit200_p95_ms": 118.8,
+      "health_p95_ms": 8.4,
+      "mem_available_min_mib": 12454,
+      "hervat_s": 0.5,
+      "media": [
+       "fase a: start 2.33, 3.20 s, 1 keer haperen, niet geslaagd: 1 keer haperen",
+       "fase b: start 1.93, 1.12 s, 0 keer haperen, geslaagd",
+       "fase c: niet gedraaid (alleen met de spelers buiten de app (--extern))",
+       "fase d: niet gedraaid (DS herstart Jonas met de hand (runbook media.md))",
+       "API p95: 93.3 ms",
+       "uitkomst: niet geslaagd"
+      ],
+      "media_api_p95_ms": 93.3,
+      "media_geslaagd": false,
+      "ds_geheugengrens_bytes": 2147483648,
+      "ds_oom": false,
+      "dezelfde_processen": true,
+      "office_opslaan_s": 8.8,
+      "office_getypt": 347,
+      "office_opgeslagen": 347,
+      "office_verloren": 0
+     }
+    }
+   },
+   "run 2": {
+    "geslaagd": true,
+    "duur_s": 1909,
+    "stappen": {
+     "pauze": {
+      "zoeken_p95_ms": 49.8,
+      "zoeken_n": 1201,
+      "files_root_limit200_p95_ms": 73.8,
+      "health_p95_ms": 5.0,
+      "mem_available_min_mib": 12526,
+      "hervat_s": null,
+      "media": [
+       "fase a: start 1.50, 1.87 s, 0 keer haperen, geslaagd",
+       "fase b: start 1.51, 1.00 s, 0 keer haperen, geslaagd",
+       "fase c: niet gedraaid (alleen met de spelers buiten de app (--extern))",
+       "fase d: niet gedraaid (DS herstart Jonas met de hand (runbook media.md))",
+       "API p95: 66.1 ms",
+       "uitkomst: geslaagd"
+      ],
+      "media_api_p95_ms": 66.1,
+      "media_geslaagd": true,
+      "ds_geheugengrens_bytes": 2147483648,
+      "ds_oom": false,
+      "dezelfde_processen": true,
+      "office_opslaan_s": 7.9,
+      "office_getypt": 359,
+      "office_opgeslagen": 359,
+      "office_verloren": 0
+     },
+     "achtergrond": {
+      "zoeken_p95_ms": 54.1,
+      "zoeken_n": 1011,
+      "files_root_limit200_p95_ms": 76.2,
+      "health_p95_ms": 5.2,
+      "mem_available_min_mib": 12519,
+      "hervat_s": 22.8,
+      "media": [
+       "fase a: start 1.35, 1.58 s, 0 keer haperen, geslaagd",
+       "fase b: start 1.55, 1.15 s, 0 keer haperen, geslaagd",
+       "fase c: niet gedraaid (alleen met de spelers buiten de app (--extern))",
+       "fase d: niet gedraaid (DS herstart Jonas met de hand (runbook media.md))",
+       "API p95: 54.4 ms",
+       "uitkomst: geslaagd"
+      ],
+      "media_api_p95_ms": 54.4,
+      "media_geslaagd": true,
+      "ds_geheugengrens_bytes": 2147483648,
+      "ds_oom": false,
+      "dezelfde_processen": true,
+      "office_opslaan_s": 7.8,
+      "office_getypt": 356,
+      "office_opgeslagen": 356,
+      "office_verloren": 0
+     },
+     "zonder_defer": {
+      "zoeken_p95_ms": 78.4,
+      "zoeken_n": 995,
+      "files_root_limit200_p95_ms": 101.6,
+      "health_p95_ms": 6.1,
+      "mem_available_min_mib": 12557,
+      "hervat_s": 0.5,
+      "media": [
+       "fase a: start 2.80, 2.40 s, 1 keer haperen, niet geslaagd: 1 keer haperen",
+       "fase b: start 1.75, 1.46 s, 0 keer haperen, geslaagd",
+       "fase c: niet gedraaid (alleen met de spelers buiten de app (--extern))",
+       "fase d: niet gedraaid (DS herstart Jonas met de hand (runbook media.md))",
+       "API p95: 81.4 ms",
+       "uitkomst: niet geslaagd"
+      ],
+      "media_api_p95_ms": 81.4,
+      "media_geslaagd": false,
+      "ds_geheugengrens_bytes": 2147483648,
+      "ds_oom": false,
+      "dezelfde_processen": true,
+      "office_opslaan_s": 8.3,
+      "office_getypt": 347,
+      "office_opgeslagen": 347,
+      "office_verloren": 0
+     }
+    }
+   },
+   "run 3": {
+    "geslaagd": true,
+    "duur_s": 1914,
+    "stappen": {
+     "pauze": {
+      "zoeken_p95_ms": 48.0,
+      "zoeken_n": 1211,
+      "files_root_limit200_p95_ms": 66.4,
+      "health_p95_ms": 4.5,
+      "mem_available_min_mib": 12627,
+      "hervat_s": null,
+      "media": [
+       "fase a: start 1.51, 1.80 s, 0 keer haperen, geslaagd",
+       "fase b: start 1.40, 0.95 s, 0 keer haperen, geslaagd",
+       "fase c: niet gedraaid (alleen met de spelers buiten de app (--extern))",
+       "fase d: niet gedraaid (DS herstart Jonas met de hand (runbook media.md))",
+       "API p95: 57.5 ms",
+       "uitkomst: geslaagd"
+      ],
+      "media_api_p95_ms": 57.5,
+      "media_geslaagd": true,
+      "ds_geheugengrens_bytes": 2147483648,
+      "ds_oom": false,
+      "dezelfde_processen": true,
+      "office_opslaan_s": 7.8,
+      "office_getypt": 359,
+      "office_opgeslagen": 359,
+      "office_verloren": 0
+     },
+     "achtergrond": {
+      "zoeken_p95_ms": 48.9,
+      "zoeken_n": 1016,
+      "files_root_limit200_p95_ms": 87.8,
+      "health_p95_ms": 6.1,
+      "mem_available_min_mib": 12470,
+      "hervat_s": 20.8,
+      "media": [
+       "fase a: start 1.02, 2.54 s, 0 keer haperen, geslaagd",
+       "fase b: start 1.66, 0.99 s, 0 keer haperen, geslaagd",
+       "fase c: niet gedraaid (alleen met de spelers buiten de app (--extern))",
+       "fase d: niet gedraaid (DS herstart Jonas met de hand (runbook media.md))",
+       "API p95: 53.6 ms",
+       "uitkomst: geslaagd"
+      ],
+      "media_api_p95_ms": 53.6,
+      "media_geslaagd": true,
+      "ds_geheugengrens_bytes": 2147483648,
+      "ds_oom": false,
+      "dezelfde_processen": true,
+      "office_opslaan_s": 7.7,
+      "office_getypt": 355,
+      "office_opgeslagen": 355,
+      "office_verloren": 0
+     },
+     "zonder_defer": {
+      "zoeken_p95_ms": 81.0,
+      "zoeken_n": 991,
+      "files_root_limit200_p95_ms": 103.7,
+      "health_p95_ms": 5.7,
+      "mem_available_min_mib": 12514,
+      "hervat_s": 0.5,
+      "media": [
+       "fase a: start 2.40, 1.79 s, 0 keer haperen, geslaagd",
+       "fase b: start 1.88, 1.11 s, 0 keer haperen, geslaagd",
+       "fase c: niet gedraaid (alleen met de spelers buiten de app (--extern))",
+       "fase d: niet gedraaid (DS herstart Jonas met de hand (runbook media.md))",
+       "API p95: 83.2 ms",
+       "uitkomst: geslaagd"
+      ],
+      "media_api_p95_ms": 83.2,
+      "media_geslaagd": true,
+      "ds_geheugengrens_bytes": 2147483648,
+      "ds_oom": false,
+      "dezelfde_processen": true,
+      "office_opslaan_s": 8.3,
+      "office_getypt": 348,
+      "office_opgeslagen": 348,
+      "office_verloren": 0
+     }
+    }
+   }
+  },
+  "poort": {
+   "zoeken_p95_ms": 200,
+   "files_root_p95_ms": 200,
+   "health_p95_ms": 50,
+   "mem_available_min_gib": 1.5,
+   "hervat_s": 90,
+   "opslaan_factor": 1.2,
+   "verloren_woorden": 0,
+   "media": "elke start ≤ 5 s, 0 keer haperen"
+  }
+ },
+ "M8": {
+  "zoek_ui_sandbox": {
+   "commit": "47d62eb",
+   "cores": "0-2",
+   "metingen": {
+    "suggestie_koud": {
+     "n": 5,
+     "mediaan": 162.9,
+     "p95": 173.7,
+     "max": 173.7,
+     "verzoek": {
+      "n": 5,
+      "mediaan": 17.7,
+      "p95": 23.5,
+      "max": 23.5
+     },
+     "met_namen": 2
+    },
+    "suggestie_warm": {
+     "n": 20,
+     "mediaan": 141.9,
+     "p95": 144.9,
+     "max": 145.1,
+     "verzoek": {
+      "n": 20,
+      "mediaan": 17.2,
+      "p95": 20.1,
+      "max": 20.4
+     },
+     "met_namen": 8
+    },
+    "zoeken_koud": {
+     "n": 5,
+     "mediaan": 529.2,
+     "p95": 584.5,
+     "max": 584.5,
+     "verzoek": {
+      "n": 5,
+      "mediaan": 56.2,
+      "p95": 61.9,
+      "max": 61.9
+     },
+     "zonder_treffers": 2
+    },
+    "zoeken_warm": {
+     "n": 20,
+     "mediaan": 61.8,
+     "p95": 77.1,
+     "max": 95.5,
+     "verzoek": {
+      "n": 20,
+      "mediaan": 33.3,
+      "p95": 50.1,
+      "max": 50.4
+     },
+     "zonder_treffers": 1
+    }
+   },
+   "n": 10000
+  },
+  "zoek_ui_ci_ms": {
+   "suggestie_koud": [
+    163.0,
+    171.4,
+    171.4
+   ],
+   "suggestie_warm": [
+    136.1,
+    138.5,
+    141.0
+   ],
+   "zoeken_laden": [
+    489.9,
+    511.6,
+    511.6
+   ],
+   "enter": [
+    58.5,
+    65.9,
+    90.3
+   ]
+  },
+  "bench_los_sandbox": {
+   "versie": 1,
+   "sqlite": "3.53.1",
+   "python": "3.12.13",
+   "cores": 4,
+   "n": 100000,
+   "seed": 6,
+   "nodes": 108452,
+   "duur s": 37.9,
+   "opgeruimd": true,
+   "zoeken": {
+    "eigenaar": {
+     "p50": 5.7,
+     "p95": 164.4,
+     "max": 172.6,
+     "vragen": 171,
+     "wortels": 1,
+     "zichtbaar": 6623,
+     "ronde B": 0,
+     "ronde C": 12,
+     "zonder grens p95": 347.8
+    },
+    "alles": {
+     "p50": 9.5,
+     "p95": 161.7,
+     "max": 172.7,
+     "vragen": 171,
+     "wortels": 30,
+     "zichtbaar": 97022,
+     "ronde B": 0,
+     "ronde C": 12,
+     "zonder grens p95": 436.0
+    }
+   },
+   "bouwen s": 22.8,
+   "tekens": 232587944
+  },
+  "bench_ci_p95_ms": {
+   "eigenaar": 161.0,
+   "alles": 160.6,
+   "sqlite": "3.46.1"
+  },
+  "index_bijwerken_ci": {
+   "bestanden": 100000,
+   "mappen": 5900,
+   "tekens_m": 230,
+   "seconden": 37.4,
+   "tekst_s": 7.7,
+   "nodes_s": 25.3,
+   "mb": 600
+  },
+  "herbouw_ci": {
+   "stukken": 51,
+   "langste_stuk_ms": 141,
+   "uploads": 202,
+   "upload_mediaan_ms": 27,
+   "upload_max_ms": 333
+  },
+  "image_tesseract_mb": 71.6,
+  "image_poort_mb": 75,
+  "image_pakketten": 18,
+  "image_dpkg_mib": 69.0,
+  "image_uitkomst": "gehaald",
+  "e2e_media_perf_duur_s": 457,
+  "zoek_perf_duur_s": 736,
+  "e2e_media_perf_kort": {
+   "pauze": {
+    "zoeken_p95": 15.9,
+    "files_root_p95": 19.7,
+    "health_p95": 2.1,
+    "mem_min_mib": 14419,
+    "media": "fase b: start 0,53 s, 0 keer haperen"
+   },
+   "achtergrond": {
+    "zoeken_p95": 16.9,
+    "files_root_p95": 25.5,
+    "health_p95": 2.5,
+    "mem_min_mib": 14560,
+    "hervat_s": 0.5,
+    "media": "fase b: start 0,32 s, 0 keer haperen"
+   },
+   "zonder_defer": {
+    "zoeken_p95": 28.7,
+    "files_root_p95": 31.7,
+    "health_p95": 2.8,
+    "mem_min_mib": 14528,
+    "media": "fase b: start 0,68 s, 0 keer haperen"
+   },
+   "niet_te_meten": [
+    "OOMKilled (zonder OnlyOffice)",
+    "opslaan (zonder OnlyOffice)",
+    "verloren woorden (zonder OnlyOffice)"
+   ],
+   "zoek_backfill_worker_per_minuut": 1934.6,
+   "zoek_backfill_terugval_per_minuut": 5133.2
+  }
+ },
+ "M9": {
+  "fotos": 248,
+  "op_land": 193,
+  "met_plaats": 179,
+  "zee_of_geen_land": 55,
+  "lezen_s": 45.5,
+  "bouw_s": 3.1,
+  "keten_s": 0.26,
+  "stukken": 7,
+  "uitkomst": "gehaald"
+ }
+}

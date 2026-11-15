@@ -297,10 +297,14 @@ Op 3 cores van deze VM:
    `person`, `photo_person`, `dup_pair`), zoals de jobs van Z2, Z3 en Z6 ze zouden schrijven. Zo
    kan elk pakket testen zonder de jobs van een ander. `blob_hash` en `ocr_page` ontbreken: die
    maken de jobs zelf.
-5. **De plaatsen zijn niet nagekeken.** `PLAATS_ID = 2745912` (de stad Utrecht in GeoNames), de
+5. ~~**De plaatsen zijn niet nagekeken.** `PLAATS_ID = 2745912` (de stad Utrecht in GeoNames), de
    grensparen en de punten op de Noordzee zijn met de hand gekozen.
    `download.geonames.org` is hier dicht en Natural Earth is er niet. Z3 moet ze controleren tegen
-   `places.sqlite` en de polygonen.
+   `places.sqlite` en de polygonen.~~ Nagekeken door Z3 met de echte bronnen (Natural Earth 10m
+   v5.1.2 en `rg_cities1000.csv`, met hun sha256): `rg_cities1000.csv` heeft geen GeoNames-id, dus
+   `PLAATS_ID` is nu het vaste id van `app.geo.load.place_id` voor Utrecht (150904566956734); de
+   grensparen en de punten op de Noordzee kloppen zoals ze zijn (`api/tests/geo/test_places.py`,
+   marker `geo`, in de job `api`).
 6. ~~**OCR van een foto staat in dezelfde kolom als OCR van een PDF.** De view `search_src` van
    0010 zet `photo_ocr.text` en `blob_text.ocr` allebei in de kolom `ocr` van `fts_node`.~~ De
    referentie telt OCR-tekst van een foto alleen voor de eigenaar (Keuze 25a: Bram vindt
@@ -320,6 +324,8 @@ Op 3 cores van deze VM:
 8. **`test_plans.py` gebruikt de SQL uit het ontwerp**, niet die van de app (die is er nog niet).
    Z1 en Z3 zetten hun echte SQL in `test_search_plans.py`, onder dezelfde `assert_plan`. Bij de
    samenvoeging kreeg `_bijna` de vorm met `EXISTS` van "Herzien na de spike (S4, S10)".
+   Gedaan door Z3 (golf 3): de filters `place`, `country` en `camera` per node (`249b535`) en de
+   vragen van `GET /duplicates` uit `app/dupes/groups.py` (`5880c50`), met en zonder ANALYZE.
 9. **De e2e gebruikte `/` en Enter, niet Ctrl/Cmd+K**, omdat Ctrl/Cmd+K op de tak van Z0-web
    zat. Sinds de samenvoeging test `test_ctrl_k_en_het_zoekveld_bovenaan` het veld bovenaan ook.
    De e2e heet `test_zoek_z0.py` en test het harnas. `test_zoek_toegang.py` van §4.2 bouwt later
@@ -343,22 +349,33 @@ Voor andere pakketten:
 
 1. ~~**Ctrl/Cmd+K in de e2e** komt na het samenvoegen met Z0-web.~~ Gedaan bij de samenvoeging
    (`test_ctrl_k_en_het_zoekveld_bovenaan`). Z4's `test_zoek_z4.py` test de combobox.
-2. **De CI-jobs `zoek-perf` en `ocr`** (§4.6) zijn van de spike.
+2. ~~**De CI-jobs `zoek-perf` en `ocr`** (§4.6) zijn van de spike.~~
    - Deze tak voegt alleen `and not ocr` toe aan de e2e-stap en shellcheck op `slim.sh`.
-   - De job `ocr` moet `-m ocr` draaien (api en e2e), met `tesseract-ocr`,
+   - ~~De job `ocr` moet `-m ocr` draaien (api en e2e), met `tesseract-ocr`,
      `tesseract-ocr-nld` en `fonts-dejavu-core` uit apt in de job. Zonder DejaVu tekent
-     `fixtures.py` met Pillow, en de scans zijn dan andere.
-3. **Z3** controleert `PLAATS_ID`, `GRENSPAREN` en `ZEE` tegen `places.sqlite` en de polygonen
-   (afwijking 5).
-4. **Z1 en Z6** maken het verschil tussen OCR van een foto en van een PDF (afwijking 6).
-5. **Wie `test_search_no_replace.py` schrijft**, zondert `bench.py` en `tests/` uit
-   (afwijking 1).
-6. **Z1** zet `test_search_churn.py` in `tests/search/` (afwijking 10).
+     `fixtures.py` met Pillow, en de scans zijn dan andere.~~
+
+   Gedaan: de job `zoek-perf` kwam met de spike, de job `ocr` met X1. `ocr` installeert
+   `tesseract-ocr` met nld, eng en osd en `fonts-dejavu-core` met apt en draait `-m ocr` in api en
+   e2e (`.github/workflows/ci.yml`). Beide zijn groen in run 42827893297 (nummer 99) op `16ccb8d`.
+3. ~~**Z3** controleert `PLAATS_ID`, `GRENSPAREN` en `ZEE` tegen `places.sqlite` en de polygonen
+   (afwijking 5).~~ Gedaan (Z3, `api/tests/geo/test_places.py`).
+4. ~~**Z1 en Z6** maken het verschil tussen OCR van een foto en van een PDF (afwijking 6).~~
+   Gedaan in de review van Z0 (veilig F3): de OCR van een foto staat in een eigen kolom `pocr`
+   van `fts_node` (`api/app/search/schema.py`).
+5. ~~**Wie `test_search_no_replace.py` schrijft**, zondert `bench.py` en `tests/` uit
+   (afwijking 1).~~ Gedaan door Z1: de test leest alleen `app/` en zondert `search/bench.py` uit.
+6. ~~**Z1** zet `test_search_churn.py` in `tests/search/` (afwijking 10).~~ Gedaan door Z1
+   (`api/tests/search/test_search_churn.py`). ~~Die test op 3.46.1 in CI draaien is I1 (A3).~~
+   Sinds I1 (A3, `f211d7b`) draait `zoek-perf` hem op 3.46.1, in de stap "Churn en de triggers op
+   3.46.1" (`.github/workflows/ci.yml:262-267`). Of die stap in CI groen is, laat pas de run na de
+   push van I1 zien.
 
 Vragen voor Jonas (de standaard waar dit deel op bouwt staat erbij):
 
-7. **Tesseract in het image** (Vraag 1, B-keuze). Nu niet. De test onder `ocr` draait alleen waar
-   tesseract er is.
+7. ~~**Tesseract in het image** (Vraag 1, B-keuze). Nu niet. De test onder `ocr` draait alleen waar
+   tesseract er is.~~ Beantwoord: ja (Vraag 1 en 15, B53). X1 zette tesseract in het image, en
+   de job `ocr` draait de tests onder `ocr` met een echte tesseract. Zie [x1.md](x1.md).
 
 Bekend en niet van Z0-e2e:
 

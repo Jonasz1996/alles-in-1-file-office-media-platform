@@ -44,6 +44,7 @@ from typing import Literal
 from app import errors
 from app.config import Settings, get_settings
 from app.models import User
+from app.search import perhour
 from app.search.deadline import STOP, Stop
 
 Kind = Literal["search", "suggest"]
@@ -135,6 +136,7 @@ async def _enter(
             state.running += 1
             return
         if len(state.waiting) >= settings.search_queue:
+            perhour.note("busy")  # /beheer (Z7): search_busy per uur
             raise errors.fail(429, "search_busy", "Zoeken is even te druk", headers=RETRY)
         turn = state.loop.create_future()
         mine.place = _Place(turn)

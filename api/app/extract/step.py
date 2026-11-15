@@ -11,6 +11,9 @@ met de haken van Z2 erbij (register()).
   kind: een kind dat een kwaadaardig bestand las, krijgt zo nooit de bestanden van een ander
   (de batch zelf is om de beurt per eigenaar, Keuze 20). Is de worker weg, dan wacht de pomp
   (jobs.Defer, zonder poging) 1, 2, 4 … s, hooguit WORKER_DEFER_S; is hij druk, WORKER_DEFER_S.
+  De plaats background van de worker deelt de index met OCR: zolang een batch hier loopt, begint
+  OCR geen nieuwe opdracht, en op een pagina die OCR nog leest wacht de batch (hooguit
+  OCR_WAIT_S). Zo houdt een achterstand van OCR de index niet op (review golf 4, uitrol F1).
 - Met media uit (de terugval): het renderproces van de app (previews.render_text, een kind van
   de forkserver of een eigen proces), met batches tot FALLBACK_BATCH, RLIMIT_AS 1 GiB,
   RLIMIT_CPU en nice 19. Dat is geen zandbak: /beheer zegt het (in_sandbox(), Z7 toont het).
@@ -82,6 +85,9 @@ _down_s = DOWN_FIRST_S
 # Na een kind dat de app zelf stopte (onzin op de pipe): de worker geeft zijn plek pas vrij als
 # hij het kind heeft opgeruimd; zo lang mag de volgende helft op busy wachten
 SETTLE_S = 5.0
+# Zo lang wacht de index hooguit op de pagina die OCR nog leest (meestal 3–8 s, met de OSD meer);
+# OCR begint dan geen nieuwe (batch.index_first)
+OCR_WAIT_S = 120.0
 # De terugval zonder media: hooguit zoveel inhouden per renderproces, en zo lang mag één
 # renderproces duren (de klok van de batch, batch_cpu_s, stopt het meestal veel eerder)
 FALLBACK_BATCH = 50
@@ -178,12 +184,14 @@ async def run_batch(settings: Settings, shas: list[str]) -> dict[str, Outcome]:
             if items:
                 await _run_group(settings, items, out, _via_render)
         else:
-            # Per eigenaar een eigen kind, in de volgorde van de batch
+            # Per eigenaar een eigen kind, in de volgorde van de batch. Zolang begint OCR geen
+            # nieuwe opdracht in de worker (de index gaat vóór, review golf 4, uitrol F1)
             order = {item.sha: i for i, item in enumerate(items)}
             by_owner = sorted(items, key=lambda item: (str(item.owner), order[item.sha]))
-            for _, group in groupby(by_owner, key=lambda item: item.owner):
-                await _run_group(settings, list(group), out, _via_worker_group)
-                _worker_back()
+            with batch.index_first():
+                for _, group in groupby(by_owner, key=lambda item: item.owner):
+                    await _run_group(settings, list(group), out, _via_worker_group)
+                    _worker_back()
     except (client.WorkerBusy, client.WorkerDown, jobs.JobError) as exc:
         if not any(item.sha in out for item in items):
             raise jobs.Defer(_defer_s(exc)) from exc
@@ -252,14 +260,18 @@ async def _run_group(
 
 
 async def _via_worker(settings: Settings, fds: list[int], kinds: list[str], *, settle: bool):
-    """batch.via_worker; met settle wacht hij even op busy (de plek van het vorige kind)."""
-    end = time.monotonic() + (SETTLE_S if settle else 0.0)
+    """batch.via_worker. Op busy wacht hij: met settle even (de plek van het vorige kind), en
+    op een pagina die OCR nog leest hooguit OCR_WAIT_S (OCR begint zolang niets nieuws,
+    batch.index_first; review golf 4, uitrol F1). Anders busy: de pomp probeert het later."""
+    start = time.monotonic()
+    end = start + (SETTLE_S if settle else 0.0)
     pause = 0.05
     while True:
         try:
             return await batch.via_worker(fds, kinds, max_chars=settings.search_max_text, **LIMITS)
         except client.WorkerBusy:
-            if time.monotonic() + pause > end:
+            limit = max(end, start + OCR_WAIT_S) if batch.ocr_holds() else end
+            if time.monotonic() + pause > limit:
                 raise
             await asyncio.sleep(pause)
             pause = min(pause * 2, 0.5)

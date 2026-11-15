@@ -23,13 +23,19 @@ app start niet op een nieuwer schema. Het vraagt eerst om bevestiging (typ "ja")
 Wat alleen in de nieuwere kolommen en tabellen stond, is daarna weg. Stop de app eerst.
 Haalt de downgrade 0010 weg (fase 6), dan zegt hij ook wat er van zoeken en foto's weggaat, en
 vraagt hij of album-items van een regel die niet gedeeld worden eerst uit hun album moeten
-(standaard ja): in 0.7.0 deelt een album elk item.
+(standaard ja): in 0.7.1 deelt een album elk item. Haalt hij 0012 (zoeken op beeld) of 0011
+(gezichten) weg, dan zegt hij ook dat; 0011 wist de gezichten met secure_delete. Na de downgrade
+gaat de WAL leeg (wal_checkpoint(TRUNCATE)), zodat er niets van in -wal blijft. Terug naar 0.8.0
+is db-downgrade 0010, naar 0.7.1 db-downgrade 0009. Houdt een ander proces de database open, dan
+lukt dat laatste niet binnen 10 s: de downgrade is dan gedaan, maar het commando zegt het op
+stderr en eindigt met exitcode 3. Stop dan de app en draai `python -m app.cli db-checkpoint`.
 
 db-backup maakt een reservekopie van de database met sqlite3.Connection.backup, terwijl de app
 draait (Keuze 52 van fase 6). Het bestand komt in /data/backup en heet naar de alembic-head en
-de tijd: platform-0010-<tijd>.db. Per head blijft de nieuwste; zo staat de kopie van vóór een
-migratie er na nieuwe kopieën nog. Het migreert niets. install.sh maakt zijn eigen kopie, met
-alleen de standaardbibliotheek, want dit commando bestaat in oudere images niet.
+de tijd: platform-0012-<tijd>.db. Per head blijft de nieuwste; zo staat de kopie van vóór een
+migratie er na nieuwe kopieën nog. Het migreert niets. De kopie heeft geen gezichten en geen
+beeld. install.sh draait dezelfde tekst (app/backup.py, alleen de standaardbibliotheek) met het
+image dat er nog draait, want dit commando bestaat in oudere images niet.
 
     docker exec <container> python -m app.cli db-copy <postgresql+asyncpg://…> [--leegmaken]
 
@@ -66,27 +72,41 @@ Zoeken en foto's (fase 6), elk een dunne aanroep van app/search/bench.py (Z1):
     python -m app.cli search-triggers
     python -m app.cli search-check [--n 1000] [--volledig] [--seed 6]
 
+    python -m app.cli bench --los [--n 100000] [--seed 6]
+
 search-bench maakt de boom van 100.000 om zoeken te meten, in een nieuwe map (nooit in die van
 de app). search-rebuild herbouwt de zoekindex in stukken terwijl de app draait; search-triggers
 zet de triggers van zoeken terug en herbouwt daarna; search-check vergelijkt willekeurige nodes
-met de bron (exitcode 1 bij een verschil).
+met de bron (exitcode 1 bij een verschil). bench --los (Z7, Keuze 54; app/search/benchlos.py)
+meet zoeken op deze machine met tools/zoekbench/bench.py, in een tijdelijke map onder de data,
+en zet de uitkomst op /beheer.
 
-Dit commando bouwt zijn pakket nog; tot dan zegt het dat het er nog niet is (exitcode 1):
+Plaatsnamen en landen (Z3, Keuze 29): places.sqlite bouwen uit de bronnen in geo_src (de app
+doet het zelf bij de start als hij ontbreekt; exitcode 1 als een bron ontbreekt of niet klopt):
 
-    python -m app.cli geo-load
+    python -m app.cli geo-load [--force]
+
+De container analyse (fase 6, Keuze 59; gezichten en zoeken op beeld):
+
+    python -m app.cli analyse-status [--wait 20]
+
+analyse-status zegt de stand: ok, off, down (met de reden) of models_missing (met de modellen).
+Met --wait wacht hij hooguit zoveel seconden tot de stand ok is (install.sh, na de start van
+de container) en is de exitcode altijd 0: de regel zegt wat er is, zoals media-status. Zonder
+--wait is de exitcode 1 bij down en models_missing. Staat de analyse uit, dan raakt hij de
+socket niet aan.
+
+analyse-bench en analyse-kwaliteit (X2), en beeld-bench, beeld-kwaliteit en beeld-status (X3)
+zijn nog stubs (§3.5): ze zeggen welk pakket ze bouwt, met exitcode 1.
 """
 
 import argparse
 import asyncio
 import json
-import os
-import re
 import sqlite3
 import sys
 import uuid
 from collections.abc import Awaitable, Callable
-from contextlib import closing
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -98,13 +118,16 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, make_url, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app import previews
+from app import backup, previews
 from app.config import Settings, get_settings
 from app.db import get_engine
+from app.geo import load as geo_load
 from app.migrate import alembic_config
+from app.migrate import checkpoint as wal_checkpoint
 from app.models import AlbumItem, User
 from app.routers.auth import being_deleted, reset_totp
 from app.search import bench as search_bench
+from app.search import benchlos
 
 
 class BeingDeleted(Exception):
@@ -183,10 +206,15 @@ def check_downgrade(current: str | None, revision: str) -> None:
         raise UnknownRevision(revision)
 
 
-async def db_downgrade(settings: Settings, revision: str, *, drop_rule_items: bool = False) -> int:
+async def db_downgrade(
+    settings: Settings, revision: str, *, drop_rule_items: bool = False
+) -> tuple[int, bool]:
     """Alembic downgrade naar revision, in één transactie. drop_rule_items: eerst de album-items
     van een regel die niet gedeeld worden uit hun album (§3.1), in dezelfde transactie; faalt de
-    downgrade, dan staan ze er nog. Het aantal items dat eruit ging."""
+    downgrade, dan staan ze er nog. Daarna de WAL leeg (app.migrate.checkpoint, §3.1a): wat 0011
+    met secure_delete wiste, staat dan ook niet meer in platform.db of -wal. Het aantal items dat
+    eruit ging, en of de WAL leeg is: False als een lezer het checkpoint tegenhield, en dan staat
+    wat de downgrade wiste nog in platform.db (review A0, veilig F2)."""
     cfg = alembic_config(settings.db_url)
 
     def run(connection) -> int:
@@ -202,12 +230,16 @@ async def db_downgrade(settings: Settings, revision: str, *, drop_rule_items: bo
         return removed
 
     async with get_engine(settings).begin() as conn:
-        return await conn.run_sync(run)
+        removed = await conn.run_sync(run)
+    return removed, await wal_checkpoint(settings)
 
 
 # De revisie van zoeken en foto's: alleen een downgrade die hém weghaalt, raakt de zoekindex,
 # de plekken, de hashes, de personen en de regels van slimme albums (fase 6, §3.1)
 SEARCH_REVISION = "0010"
+# De revisies van gezichten en van zoeken op beeld (fase 6, §3.1a)
+FACES_REVISION = "0011"
+BEELD_REVISION = "0012"
 
 
 def removed_revisions(current: str, revision: str) -> list[str]:
@@ -224,7 +256,7 @@ async def unshared_rule_items(settings: Settings) -> int:
     """Hoeveel album-items van een regel niet gedeeld worden (source 'rule', shared 0).
 
     Na een downgrade naar 0009 is de kolom shared weg en deelt een album elk item, zoals in
-    0.7.0 (fase 6, §3.1). Die items zouden dus ineens wél gedeeld zijn.
+    0.7.1 (fase 6, §3.1). Die items zouden dus ineens wél gedeeld zijn.
     """
     async with get_engine(settings).connect() as conn:
         found = await conn.scalar(
@@ -236,19 +268,8 @@ async def unshared_rule_items(settings: Settings) -> int:
 
 
 BACKUP_DIR = "backup"
-HEAD_RE = re.compile(r"^[A-Za-z0-9_]{1,40}$")
-# platform-<head>-<tijd>.db, met de tijd in UTC. install.sh gaat zijn eigen kopie schrijven
-# zonder de milliseconden (Z7, §3.10); die naam hoort er dus ook bij.
-BACKUP_RE = re.compile(
-    r"^platform-(?P<head>[A-Za-z0-9_]{1,40})-(?P<tijd>\d{8}T\d{6}(?:\.\d{3})?Z)\.db$"
-)
-
-
-def now_stamp() -> str:
-    """De tijd in de naam van een kopie: UTC, tot milliseconden, zo dat namen op volgorde
-    staan."""
-    moment = datetime.now(UTC)
-    return f"{moment:%Y%m%dT%H%M%S}.{moment.microsecond // 1000:03d}Z"
+# De kopie zelf staat in app/backup.py: één tekst, die install.sh ook draait (Z7, Keuze 52)
+BACKUP_RE = backup.NAME_RE
 
 
 def sqlite_file(settings: Settings) -> Path:
@@ -259,70 +280,21 @@ def sqlite_file(settings: Settings) -> Path:
     return Path(url.database)
 
 
-def read_head(conn: sqlite3.Connection) -> str | None:
-    """De alembic-head in deze database (None: geen of meer dan één)."""
-    if not conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='alembic_version'"
-    ).fetchone():
-        return None
-    rows = conn.execute("SELECT version_num FROM alembic_version").fetchall()
-    if len(rows) != 1 or not HEAD_RE.match(str(rows[0][0])):
-        return None
-    return str(rows[0][0])
-
-
-def keep_newest_per_head(folder: Path) -> list[Path]:
-    """Per head blijft de nieuwste kopie; de rest gaat weg (Keuze 52). De naam draagt de tijd,
-    dus de nieuwste is de laatste op naam. Zo blijft de kopie van vóór een migratie staan: die
-    heeft een eigen head. Wat niet naar een kopie van ons lijkt, blijft ook staan."""
-    found: dict[str, list[Path]] = {}
-    for path in sorted(folder.glob("platform-*.db")):
-        match = BACKUP_RE.match(path.name)
-        if match is not None:
-            found.setdefault(match["head"], []).append(path)
-    newest = []
-    for paths in found.values():
-        newest.append(paths[-1])
-        for old in paths[:-1]:
-            old.unlink(missing_ok=True)
-    return sorted(newest)
-
-
 def db_backup(settings: Settings) -> Path:
     """Een reservekopie van de database naar data_dir/backup, terwijl de app draait (Keuze 52).
 
-    sqlite3.Connection.backup geeft een kopie die klopt, ook met schrijvers erbij. Dit commando
-    migreert niets en raakt de database zelf niet aan. Het bestand heet naar de alembic-head en
-    de tijd; per head blijft de nieuwste.
+    sqlite3.Connection.backup geeft een kopie die klopt, ook met schrijvers erbij; de kopie heeft
+    geen gezichten en geen beeld (app/backup.py). Dit commando migreert niets en raakt de
+    database zelf niet aan. Het bestand heet naar de alembic-head en de tijd; per head blijft de
+    nieuwste.
     """
     source = sqlite_file(settings)
     if not source.exists():
         raise NoDatabase(source)
-    folder = settings.data_dir / BACKUP_DIR
-    folder.mkdir(parents=True, exist_ok=True)
-    folder.chmod(0o700)
-    with closing(sqlite3.connect(source)) as src:
-        src.execute("PRAGMA busy_timeout=5000")
-        head = read_head(src)
-        if head is None:
-            raise NoRevision(str(source))
-        target = folder / f"platform-{head}-{now_stamp()}.db"
-        for _ in range(2000):  # twee kopieën in dezelfde milliseconde: wacht op de volgende
-            if not target.exists():
-                break
-            target = folder / f"platform-{head}-{now_stamp()}.db"
-        part = target.with_name(target.name + ".part")
-        part.unlink(missing_ok=True)
-        try:
-            with closing(sqlite3.connect(part)) as dst:
-                src.backup(dst)
-            part.chmod(0o600)
-            os.replace(part, target)
-        except BaseException:
-            part.unlink(missing_ok=True)
-            raise
-    keep_newest_per_head(folder)
-    return target
+    try:
+        return backup.copy(source, settings.data_dir / BACKUP_DIR)
+    except backup.NoHead as exc:
+        raise NoRevision(str(source)) from exc
 
 
 async def office_checkpoint(settings: Settings, wait: float) -> int:
@@ -344,13 +316,33 @@ SEARCH_LOST = (
 )
 
 
-def _confirm(current: str | None, revision: str, *, search: bool) -> bool:
+# Wat een downgrade die 0012 of 0011 weghaalt, kwijtmaakt (§3.1a, Keuze 76)
+BEELD_LOST = "De beeldindex gaat weg. Je foto's blijven."
+FACES_LOST = (
+    "De gezichten gaan weg: wat de analyse vond, met de voorstellen en de groepen, en wie welk "
+    "bestand uploadde. Je foto's blijven."
+)
+
+
+def lost_lines(removed: list[str]) -> list[str]:
+    """Wat een downgrade die deze revisies weghaalt kwijtmaakt, de nieuwste eerst."""
+    lines = []
+    if BEELD_REVISION in removed:
+        lines.append(BEELD_LOST)
+    if FACES_REVISION in removed:
+        lines.append(FACES_LOST)
+    if SEARCH_REVISION in removed:
+        lines.append(SEARCH_LOST)
+    return lines
+
+
+def _confirm(current: str | None, revision: str, *, lost: list[str]) -> bool:
     print(
         f"De database gaat van revisie {current} terug naar {revision}. Wat alleen in de "
         "nieuwere kolommen en tabellen staat, is daarna weg. Is de app gestopt?"
     )
-    if search:
-        print(SEARCH_LOST)
+    for line in lost:
+        print(line)
     try:
         answer = input('Typ "ja" om door te gaan: ')
     except EOFError:
@@ -362,7 +354,7 @@ def _ask_rule_items(count: int) -> bool:
     """De vraag van §3.1: standaard ja, dus leeg of "ja" is ja."""
     print(
         f"{count} item(s) in een album komen van een regel en worden niet gedeeld. Na de "
-        "downgrade deelt een album elk item, zoals in 0.7.0: die items zijn dan ineens wél "
+        "downgrade deelt een album elk item, zoals in 0.7.1: die items zijn dan ineens wél "
         "gedeeld met iedereen die het album heeft."
     )
     try:
@@ -408,24 +400,56 @@ def _downgrade(settings: Settings, revision: str, yes: bool) -> int:
         )
         return 1
     assert now is not None  # check_downgrade laat None niet door
-    search = SEARCH_REVISION in removed_revisions(now, revision)
+    removed_revs = removed_revisions(now, revision)
+    search = SEARCH_REVISION in removed_revs
     found, drop = _rule_items_answer(settings, yes, search)
-    if not yes and not _confirm(now, revision, search=search):
+    if not yes and not _confirm(now, revision, lost=lost_lines(removed_revs)):
         print("Niets gedaan.", file=sys.stderr)
         return 1
 
-    async def run() -> int:
+    async def run() -> tuple[int, bool]:
         try:
             return await db_downgrade(settings, revision, drop_rule_items=drop)
         finally:
             await get_engine(settings).dispose()
 
-    removed = asyncio.run(run())
+    removed, emptied = asyncio.run(run())
     if drop:
         print(f"{removed} item(s) zijn uit hun album gehaald.")
     elif found:
         print("Die items blijven in hun album staan.")
     print(f"De database staat nu op revisie {revision}.")
+    if not emptied:
+        print(WAL_BUSY, file=sys.stderr)
+        return WAL_EXIT
+    return 0
+
+
+# Na db-downgrade: de downgrade is gedaan, maar een lezer hield het checkpoint tegen (review A0,
+# veilig F2). Een eigen exitcode, zodat een script het verschil ziet met "niets gedaan" (1)
+WAL_EXIT = 3
+WAL_BUSY = (
+    "De WAL is niet leeg: de app of een ander proces heeft de database nog open. Wat net gewist "
+    "is, staat dan nog in platform.db. Stop de app en draai daarna: python -m app.cli "
+    "db-checkpoint"
+)
+
+
+def _db_checkpoint(settings: Settings) -> int:
+    """db-checkpoint: de WAL leeg, zoals na een migratie (hooguit migrate.CHECKPOINT_BUDGET s).
+    Na een db-downgrade die met WAL_EXIT eindigde."""
+    try:
+        source = sqlite_file(settings)
+    except NotSqlite:
+        print("Dit commando werkt alleen met SQLite.", file=sys.stderr)
+        return 1
+    if not source.exists():
+        print(f"Er is nog geen database ({source}).", file=sys.stderr)
+        return 1
+    if not asyncio.run(wal_checkpoint(settings)):
+        print(WAL_BUSY, file=sys.stderr)
+        return WAL_EXIT
+    print("De WAL is leeg.")
     return 0
 
 
@@ -478,9 +502,17 @@ def _backup(settings: Settings) -> int:
     return 0
 
 
-# De commando's van zoeken en foto's die hun pakket nog moet bouwen (fase 6, §3.5)
-SEARCH_STUBS = {
-    "geo-load": ("Z3", "places.sqlite bouwen uit de bronnen"),
+# De commando's van zoeken en foto's die hun pakket nog moet bouwen (fase 6, §3.5); geo-load
+# is gebouwd (Z3, app/geo/load.py)
+SEARCH_STUBS: dict[str, tuple[str, str]] = {}
+# De commando's van gezichten (X2) en zoeken op beeld (X3), als stub van A0 (§3.5); wie er een
+# bouwt, haalt hem hier weg. analyse-status is gebouwd (A0)
+ANALYSE_STUBS: dict[str, tuple[str, str]] = {
+    "analyse-bench": ("X2", "gezichten op deze CPU meten"),
+    "analyse-kwaliteit": ("X2b", "de kwaliteit van gezichten meten"),
+    "beeld-bench": ("X3", "zoeken op beeld op deze CPU meten"),
+    "beeld-kwaliteit": ("X3", "de kwaliteit van zoeken op beeld meten"),
+    "beeld-status": ("X3", "de stand van zoeken op beeld"),
 }
 
 
@@ -496,8 +528,30 @@ def _db_copy(settings: Settings, target: str, empty_first: bool) -> int:
 
 
 def _stub(name: str) -> int:
-    package, what = SEARCH_STUBS[name]
+    package, what = {**SEARCH_STUBS, **ANALYSE_STUBS}[name]
     print(f"{name} ({what}) is nog niet gebouwd ({package}).", file=sys.stderr)
+    return 1
+
+
+def _analyse_status(settings: Settings, wait: float) -> int:
+    """analyse-status: de stand van Keuze 59, één regel. Met wait hooguit zoveel seconden
+    opnieuw kijken (elke seconde) tot de stand ok is."""
+    from app.analyse import monitor
+
+    async def run() -> monitor.AnalyseStatus:
+        loop = asyncio.get_running_loop()
+        end = loop.time() + max(wait, 0)
+        while True:
+            found = await monitor.check(settings)
+            if found.state in ("ok", "off") or loop.time() >= end:
+                return found
+            await asyncio.sleep(min(1.0, max(end - loop.time(), 0)))
+
+    found = asyncio.run(run())
+    problem = monitor.analyse_problem(found)
+    print(f"Analyse: {found.state}" + (f" ({problem})" if problem else ""))
+    if wait > 0 or found.state in ("ok", "off"):
+        return 0
     return 1
 
 
@@ -658,8 +712,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="de tabellen van het platform op het doel eerst weghalen",
     )
+    commands.add_parser(
+        "db-checkpoint", help="de WAL leegmaken (na een db-downgrade die dat niet kon)"
+    )
+    analyse = commands.add_parser("analyse-status", help="de stand van de container analyse")
+    analyse.add_argument(
+        "--wait", type=float, default=0.0, help="hooguit zoveel seconden wachten tot hij ok is"
+    )
     search_bench.parsers(commands)
-    for name, (package, what) in SEARCH_STUBS.items():
+    benchlos.parsers(commands)
+    geo_load.parsers(commands)
+    for name, (package, what) in {**SEARCH_STUBS, **ANALYSE_STUBS}.items():
         commands.add_parser(name, help=f"{what} (nog niet gebouwd, {package})")
     _media_parsers(commands)
     args = parser.parse_args(argv)
@@ -668,7 +731,11 @@ def main(argv: list[str] | None = None) -> int:
         return _media(settings, args)
     if args.command in search_bench.COMMANDS:
         return search_bench.run(settings, args)
-    if args.command in SEARCH_STUBS:
+    if args.command == benchlos.COMMAND:
+        return benchlos.run(settings, args)
+    if args.command in geo_load.COMMANDS:
+        return geo_load.run(settings, args)
+    if args.command in SEARCH_STUBS or args.command in ANALYSE_STUBS:
         return _stub(args.command)
     if args.command == "db-backup":
         return _backup(settings)
@@ -676,10 +743,14 @@ def main(argv: list[str] | None = None) -> int:
         return _db_copy(settings, args.doel, args.leegmaken)
     if args.command == "db-downgrade":
         return _downgrade(settings, args.revision, args.ja)
+    if args.command == "db-checkpoint":
+        return _db_checkpoint(settings)
     if args.command == "office-checkpoint":
         return _checkpoint(settings, args.wait)
     if args.command == "previews-recheck":
         return _recheck(settings)
+    if args.command == "analyse-status":
+        return _analyse_status(settings, args.wait)
     action = make_admin if args.command == "make-admin" else reset_2fa
 
     async def run() -> bool:

@@ -7,6 +7,8 @@
 // Z0b (Keuze 55): een derde plek, "Meer zoals deze" (LikeRow.tsx, van X3), alleen bij een foto; na
 // de review (contract F3) een vierde, de gezichten (photos/faces/FacesRow.tsx, van X2), na
 // Personen en ook alleen bij een foto.
+// X1: een vijfde, "Tekst in beeld" met de knop "Tekst herkennen" (ocr/OcrRow.tsx, Keuze 23), bij
+// een foto of een PDF; de rij zelf toont alleen iets voor wie mag vragen.
 
 import type { JSX, ReactNode } from "react";
 import { formatBytes } from "../api";
@@ -14,7 +16,7 @@ import { fmt, lazyWithAreas, t } from "../i18n";
 import { IconButton } from "../ui/Button";
 import { LazySlot } from "../ui/LazySlot";
 import type { Exif, ViewerDetail } from "./api";
-import { type InfoRowProps, showFacesRow, showLikeRow, showPhotoRows } from "./infoRows";
+import { type InfoRowProps, showFacesRow, showLikeRow, showOcrRow, showPhotoRows } from "./infoRows";
 import { formatDuration, type ViewKind } from "./media";
 import type { ViewerItem } from "./types";
 
@@ -22,6 +24,7 @@ const LocationRow = lazyWithAreas<InfoRowProps>(() => import("./LocationRow"), [
 const PeopleRow = lazyWithAreas<InfoRowProps>(() => import("./PeopleRow"), ["photos_people"]);
 const LikeRow = lazyWithAreas<InfoRowProps>(() => import("./LikeRow"), ["beeld"]);
 const FacesRow = lazyWithAreas<InfoRowProps>(() => import("../photos/faces/FacesRow"), ["photos_faces"]);
+const OcrRow = lazyWithAreas<InfoRowProps>(() => import("../ocr/OcrRow"), ["ocr"]);
 
 function num(v: number | string | undefined): number | null {
   if (v === undefined || v === null || v === "") return null;
@@ -137,6 +140,11 @@ export default function InfoPanel({
       {showLikeRow(kind, item, signedIn) && (
         <LazySlot key={`zoals-${item.id}`}>
           <LikeRow item={item} detail={detail} kind={kind} />
+        </LazySlot>
+      )}
+      {showOcrRow(kind, item, signedIn) && (
+        <LazySlot key={`tekst-${item.id}`}>
+          <OcrRow item={item} detail={detail} kind={kind} />
         </LazySlot>
       )}
     </aside>

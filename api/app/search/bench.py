@@ -869,7 +869,8 @@ def app_blob() -> dict[str, object]:
     }
 
 
-# De inhouden zonder rij voor de stap text in analysis (Z2), met hun soort en of ze tekst hebben
+# De inhouden zonder rij voor de stap text in analysis (Z2), met hun soort en of ze tekst hebben;
+# analyse_rijen geeft ze ook hun rij voor de stap ocr (X1)
 ANALYSE_BLOBS = (
     "SELECT b.sha256, b.mime, t.blob_sha IS NOT NULL FROM blob b "
     "LEFT JOIN blob_text t ON t.blob_sha = b.sha256 WHERE NOT EXISTS "
@@ -882,20 +883,25 @@ ANALYSE_SQL = (
 
 
 def analyse_rijen(blobs: Iterable[tuple[str, str | None, int]]) -> list[tuple]:
-    """De rijen van de stap text zoals de backfill van Z2 ze achterlaat als hij klaar is: done
-    voor een inhoud met tekst in blob_text, none als de stap er wel bij past maar het zaad hem
-    geen tekst gaf, skip als de stap er niet bij past. blobs: de rijen van ANALYSE_BLOBS. Dan
-    leest de backfill bij het starten niets opnieuw (de bestanden staan niet op schijf, of de
-    tekst is die van het zaad). Importeert de app (dus niet in tools/zoekbench)."""
+    """De rijen van de stappen text en ocr zoals de backfill van Z2 en de pompen ze achterlaten
+    als ze klaar zijn. text: done voor een inhoud met tekst in blob_text, none als de stap er
+    wel bij past maar het zaad hem geen tekst gaf, skip als de stap er niet bij past. ocr (X1):
+    none voor een PDF (gelezen, geen tekst uit het beeld: het zaad heeft geen blob_text.ocr),
+    skip voor de rest (een foto leest hij alleen op verzoek, Keuze 23). blobs: de rijen van
+    ANALYSE_BLOBS. Dan leest de backfill bij het starten niets opnieuw (de bestanden staan niet
+    op schijf, of de tekst is die van het zaad). Importeert de app (dus niet in
+    tools/zoekbench)."""
     from app.analysis import VERSIONS, Step
     from app.extract.step import eligible
+    from app.ocr.step import kind_of
 
     nu = _tijd(DAG)
-    versie = VERSIONS[Step.TEXT]
     rijen = []
     for sha, mime, tekst in blobs:
         staat = "done" if tekst else "none" if eligible(sha, mime) else "skip"
-        rijen.append((sha, Step.TEXT.value, versie, staat, nu, nu))
+        rijen.append((sha, Step.TEXT.value, VERSIONS[Step.TEXT], staat, nu, nu))
+        ocr = "none" if kind_of(mime) == "pdf" else "skip"
+        rijen.append((sha, Step.OCR.value, VERSIONS[Step.OCR], ocr, nu, nu))
     return rijen
 
 

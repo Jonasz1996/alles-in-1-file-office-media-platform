@@ -40,6 +40,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from app import dbgate
 from app.search import schema
 from app.search.query import parse
 
@@ -76,6 +77,16 @@ async def _start(conn: AsyncConnection, what: str) -> None:
     if started.first() is not None:
         await conn.exec_driver_sql("INSERT INTO fts_node(fts_node) VALUES ('delete-all')")
         await conn.exec_driver_sql("INSERT INTO fts_name(fts_name) VALUES ('delete-all')")
+
+
+async def begin(conn: AsyncConnection, what: str) -> bool:
+    """De cursor van een nieuwe herbouw al zetten, vóór de taak van rebuild() loopt
+    (POST /admin/search/rebuild, Z7: een GET direct na de 202 ziet de herbouw dan al). False
+    zonder FTS-index. rebuild() gaat daarna verder vanaf deze cursor."""
+    if not await _has_fts(conn):
+        return False
+    await _start(conn, what)
+    return True
 
 
 # De volgende hooguit :chunk nodes na de cursor, met de tekst tot en met elke node opgeteld.
@@ -148,15 +159,21 @@ async def rebuild(
 ) -> list[float]:
     """De herbouw in stukken; geeft de duur per stuk in ms. after_chunk(cursor) na de commit van
     elk stuk behalve het laatste (voor tests en de voortgang)."""
-    async with engine.begin() as conn:
-        if not await _has_fts(conn):
-            return []
-        await _start(conn, what)
+    # De herbouw is achtergrondwerk: verzoeken schrijven eerst (app/dbgate.py); after_chunk niet
+    with dbgate.background():
+        async with engine.begin() as conn:
+            if not await _has_fts(conn):
+                return []
+            await _start(conn, what)
+    # Ook na het begin een pauze: de herbouw van de CLI draait in een eigen proces, waar alleen
+    # de busy handler van SQLite geldt
+    await asyncio.sleep(pause)
     times: list[float] = []
     while True:
         start = time.perf_counter()
-        async with engine.begin() as conn:
-            hi, done = await _chunk(conn, chunk)
+        with dbgate.background():
+            async with engine.begin() as conn:
+                hi, done = await _chunk(conn, chunk)
         times.append((time.perf_counter() - start) * 1000)
         if done:
             return times
@@ -192,11 +209,12 @@ _TREE = (
     "UPDATE node SET mpath = t.mpath, dead = t.dead FROM t\n"
     "WHERE node.id = t.id AND (node.mpath IS NOT t.mpath OR node.dead IS NOT t.dead)"
 )
-# De foto-rijen horen bij een bestand van de eigenaar van de node (Keuze 25a, node_au_owner)
+# De foto-rijen horen bij een bestand van de eigenaar van de node (Keuze 25a, node_au_owner),
+# en de gezichten ook (0011, node_au_owner_face; face_person gaat mee via de cascade)
 _PHOTO_OWNER = tuple(
     f"DELETE FROM {table} WHERE NOT EXISTS (SELECT 1 FROM node n "
     f"WHERE n.id = {table}.node_id AND n.owner_id = {table}.owner_id)"
-    for table in ("photo_ocr", "photo_geo", "photo_person")
+    for table in ("photo_ocr", "photo_geo", "photo_person", "face", "face_scan")
 )
 _GEO = (
     "UPDATE photo_geo SET (dead, taken_at) =\n"
@@ -261,6 +279,10 @@ async def restore_triggers(engine: AsyncEngine) -> Restored:
         out.tree = await _changes(conn, _TREE)
         for sql in (*_PHOTO_OWNER, _GEO):
             out.photo_rows += await _changes(conn, sql)
+        if out.created:
+            # Zonder de triggers van 0012 telde gen niet mee: elk bestand per eigenaar voor
+            # zoeken op beeld opnieuw (Keuze 76)
+            await conn.exec_driver_sql("UPDATE beeld_owner SET gen = gen + 1")
         if fts:
             # De herbouw begint hier, ook als er al een liep: alles opnieuw
             await conn.exec_driver_sql("UPDATE search_state SET cursor = NULL WHERE id = 1")

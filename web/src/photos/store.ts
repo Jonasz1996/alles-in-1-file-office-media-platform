@@ -153,9 +153,13 @@ export class SectionStore {
     return (!this.data.has(s) || this.stale.has(s)) && !this.failed.has(s);
   }
 
-  /** Deze secties zijn in beeld: die eerst laden, de rest van de wachtrij vervalt. */
+  /** Deze secties zijn in beeld: die eerst laden, de rest van de wachtrij vervalt. Ook wat al
+   * geladen is, blijft in de lijst (pump kijkt naar needs): maakt setSections hem daarna
+   * verouderd, dan laadt hij opnieuw, ook als het beeld niet verandert. Zonder dat bleef een
+   * sectie die al binnen was toen de rij tekende verouderd staan (het merkje "alleen voor jou"
+   * na "Ja, delen", Z6). */
   want(sections: readonly number[]): void {
-    this.wanted = sections.filter((s) => this.needs(s));
+    this.wanted = [...sections];
     this.pump();
   }
 

@@ -45,10 +45,6 @@
   width: min(14rem, 50vw);
 }
 
-.browser-toolbar .search-box {
-  margin-left: auto;
-}
-
 .selection-bar {
   position: sticky;
   top: 0;
@@ -349,10 +345,6 @@
   .file-row .cell-date,
   .file-row .cell-path {
     display: none;
-  }
-
-  .browser-toolbar .search-box {
-    margin-left: 0;
   }
 }
 

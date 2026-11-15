@@ -3,7 +3,7 @@ import { Api, ApiError, type FileNode, type SearchHit, type Share } from "./api"
 import { isGuest } from "./currentUser";
 import { affectsFolder, affectsSharedWithMe } from "./events";
 import { fmt, loadAreas, resetI18nForTests, t } from "./i18n";
-import { folderHref, hitPath, parentHref, pathLabel } from "./searchQuery";
+import { folderHref, hitPath, parentHref, pathLabel } from "./search/hits";
 import {
   alreadyShared,
   canWrite,
@@ -191,6 +191,7 @@ const link: Share = {
   user: null,
   group: null,
   link: { url: "/s/abc_DEF-123", label: null, has_password: false },
+  rule_items_private: null,
 };
 
 describe("links", () => {

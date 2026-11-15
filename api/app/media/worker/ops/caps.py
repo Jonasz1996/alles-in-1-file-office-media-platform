@@ -14,6 +14,7 @@ import subprocess
 from typing import Any
 
 from app.media import wire
+from app.media.worker import guard
 from app.media.worker.args import DEMUXERS
 
 # Wat de commando's van §3.3 nodig hebben
@@ -26,6 +27,8 @@ PROTOCOLS = ("fd", "pipe")
 DEVICES = ("lavfi",)
 EXTRA_DEMUXERS = ("hevc",)  # bench: HEVC10 decoderen uit een pipe
 HW = re.compile(r"(vaapi|qsv|nvenc|v4l2m2m|videotoolbox)")
+# OCR (fase 6, X1; ops/ocr.py): de talen en de OSD die de opdracht gebruikt
+OCR_LANGS = ("nld", "eng", "osd")
 LIST_TIMEOUT = 10
 
 
@@ -89,6 +92,15 @@ def _hwaccels(text: str | None) -> list[str]:
     return [line for line in lines[1:] if line and " " not in line]
 
 
+def ocr() -> bool:
+    """Kan de worker OCR (fase 6, X1)? Het programma start, en kent nld, eng en osd. Zonder
+    (een ouder image, een eigen build) antwoordt ocr met ocr_missing (Keuze 24)."""
+    if _out([guard.OCR, "--version"]) is None:
+        return False
+    langs = _out([guard.OCR, "--list-langs"]) or ""
+    return set(OCR_LANGS) <= {line.strip() for line in langs.splitlines()[1:]}
+
+
 def gather(*, local: bool, max_procs: int, max_transcodes: int) -> dict[str, Any]:
     """Alles één keer, bij de start, na elkaar (nooit meer dan één ffmpeg tegelijk)."""
     ffmpeg = _out(["ffmpeg", "-hide_banner", "-version"])
@@ -105,6 +117,7 @@ def gather(*, local: bool, max_procs: int, max_transcodes: int) -> dict[str, Any
         "max_procs": max_procs,
         "max_transcodes": max_transcodes,
         "dri": os.path.isdir("/dev/dri"),
+        "ocr": ocr(),
     }
     if ffmpeg is None:
         caps.update(encoders=[], filters=[], demuxers=[], protocols=[], hwaccels=[])

@@ -59,7 +59,8 @@ const own: Pick<RouteDef, "roles"> = { roles: ["admin", "user"] };
 export const routes: readonly RouteDef[] = [
   route("/", files, browse, "browser.title", "files", { preload: () => preloadFolder(null) }),
   route("/map/:id", files, browse, "browser.title", "files", { preload: (p) => preloadFolder(p.id) }),
-  route("/zoeken", () => import("./Search"), ["browser", "sharing"], "browser.searchTitle", null),
+  // Fase 6 (Z4): de zoekpagina met chips, snippets en de stand beeld (search/SearchPage.tsx)
+  route("/zoeken", () => import("./search/SearchPage"), ["browser", "sharing", "search"], "search.title", null),
   route("/gedeeld", () => import("./SharedWithMe"), ["sharing", "browser"], "sharing.sharedWithMe", "shared"),
   route("/gedeeld/door-mij", () => import("./shares/MyShares"), ["sharing", "browser"], "sharing.myShares", "shared"),
   route("/prullenbak", () => import("./Trash"), ["trash", "browser"], "trash.title", "trash", {

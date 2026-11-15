@@ -9,7 +9,9 @@ Debian- of Ubuntu-container. Het platform draait daarin als één Docker-contain
 
 - Debian 13-template, **Unprivileged** aan
 - 4 cores, 16 GB RAM, swap 0, rootdisk 64 GB
-- Mount point `/tank` van 700 GB op je ZFS-opslag (optioneel; zonder komt de data op de rootdisk)
+- Mount point `/tank` van 700 GB op je ZFS-opslag (optioneel; zonder komt de data op de rootdisk,
+  in `/opt/platform/data/platform`: lees dan dat pad waar hieronder `/tank/platform` staat. Het
+  script zet de map als `DATA_ROOT` in `/opt/platform/.env`)
 - Options → Features: **nesting** en **keyctl** aan
 - Vast IP
 
@@ -34,12 +36,14 @@ Een andere poort kiezen kan bij de eerste installatie met `curl … | PORT=8080 
 commando hierboven, met `PORT=8080` vóór `bash`), of later in `/opt/platform/.env` (daarna het
 script opnieuw draaien).
 
-## Bijwerken naar 0.7.1 (met media)
+## Bijwerken naar 0.8.0 (zoeken en foto's)
 
-Versie 0.7.1 (fase 5, met de verbeteringen aan delen en foto's) staat nog niet op `main`, maar op
-de branch
-`claude/stappenplan-uitwerken-lu4uv3`. Tot hij op `main` staat, werk je zo bij (en geldt dit ook
-voor elk ander commando hieronder met `curl … | bash`):
+Versie 0.8.0 is de kern van fase 6: zoeken in de inhoud van documenten, ook van scans met OCR
+(tekstherkenning: het platform haalt de letters uit een plaatje), plaatsnamen en een kaart,
+dubbele bestanden, personen die je zelf aanwijst, herinneringen en slimme albums. Gezichten
+vanzelf herkennen en zoeken op wat er op een foto staat, zitten er nog niet in. 0.8.0 staat nog
+niet op `main`, maar op de branch `claude/stappenplan-uitwerken-lu4uv3`. Tot hij op `main` staat,
+werk je zo bij (en geldt dit ook voor elk ander commando hieronder met `curl … | bash`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
@@ -52,6 +56,98 @@ adres en `PLATFORM_BRANCH` van de branch waarmee je het draaide; die kun je zo o
 tabblad **Office** op `/beheer` noemt altijd de commando's van `main`: zet daar zolang hetzelfde
 adres en `PLATFORM_BRANCH=…` in. Een instelling erbij gaat net zo:
 `… | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 OFFICE=uit bash`.
+
+Wat er bij het bijwerken van 0.7.1 naar 0.8.0 gebeurt, in deze volgorde (draai je nog 0.7.0 of
+ouder, kijk dan ook bij "Van 0.7.0 of 0.6.0" hieronder):
+
+- `PLAATSEN=aan` komt in `/opt/platform/.env`, als hij er nog niet staat. Dan haalt het script
+  twee bronnen op naar `/tank/platform/geo` (±16 MB: de landen van Natural Earth en de plaatsen
+  van GeoNames, elk met een vaste sha256). De app maakt er bij de start `places.sqlite` van
+  (±1 minuut). Lukt het ophalen niet, dan zegt het script `Plaatsnamen: niet geladen` en gaat het
+  gewoon door; de volgende run probeert het opnieuw. Liever zonder plaatsnamen:
+  `… | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLAATSEN=uit bash`;
+- het laat open documenten opslaan en maakt dan een **reservekopie** van de database, terwijl de
+  oude app nog draait: `/tank/platform/backup/platform-0009-<tijd>.db`, zonder `/tank`
+  `/opt/platform/data/platform/backup/platform-0009-<tijd>.db` (rechten 600). Lukt die
+  niet, dan stopt het script daar: er is dan nog niets veranderd, en de app draait zoals hij
+  draaide;
+- het bouwt het nieuwe platform en start het; de database krijgt bij de start migratie 0010 tot en
+  met 0012 (seconden; 0011 en 0012 zijn de tabellen voor gezichten en zoeken op beeld, die nog uit
+  staan). Zoeken op naam werkt meteen. De inhoud van documenten, de plekken en de hashes van
+  foto's komen op de achtergrond (voor 20.000 documenten en 55.000 foto's ±15–20 minuten werk
+  voor één core, geschat); de stand staat op `/beheer` → **Zoeken en foto's**. Gescande pagina's
+  in PDF's leest OCR daarna ook op de achtergrond, na de tekst; dat gaat langzamer (zie
+  `docs/runbooks/zoeken.md`) en kan op dezelfde tab uit (**OCR uitzetten**);
+- de eindtekst zegt dat, met de stand van de plaatsnamen en waar de reservekopie staat.
+
+Daarna, op `/beheer` → **Zoeken en foto's** (Alt+9): de zoekmachine (`FTS5 (snel)`, of
+`LIKE (langzamer)` tijdens een herbouw), hoeveel bestanden al gelezen zijn, wat mislukte, en de
+knoppen **Index herbouwen**, **Mislukte opnieuw** en **Achtergrondwerk pauzeren**. Hoe snel zoeken
+op jouw machine is, meet `dc exec -T platform python -m app.cli bench --los` (een paar minuten,
+±1,1 GB tijdelijk in `/tank/platform/cache`); de uitkomst staat daarna op dezelfde tab, bij
+**Zoekbench**.
+
+Per schemaversie blijft de nieuwste kopie staan; de kopie van 0.7.1 (`platform-0009-…`) gaat dus
+nooit weg door een volgende update. De kopie heeft geen gezichten en geen beeld (die rekent de app
+na het terugzetten opnieuw), maar verder de hele database: bewaar hem net zo afgeschermd als de
+`.env`. Hoe je hem terugzet, de index herbouwt en zoeken meet: `docs/runbooks/zoeken.md`.
+
+**Terug naar 0.8.0 van `59e0250`.** De versie heet nog 0.8.0, maar de branch heeft sinds 12
+november ook de basis voor gezichten en zoeken op beeld (migratie 0011 en 0012; de analyse staat
+uit). Werkt de branch sindsdien niet goed, ga dan eerst hierheen terug en niet naar 0.7.1: alles
+van 0.8.0 blijft. Het zijn deze commando's, in deze volgorde en met de volledige commit van 0.8.0
+(`dc` uit Handige commando's hieronder; de uitleg per stap staat in `docs/runbooks/zoeken.md`,
+"Terug naar 0.8.0 van `59e0250`"):
+
+```bash
+git -C /opt/platform/src fetch -q origin
+git -C /opt/platform/src cat-file -e '59e0250ba63d31c41b92f7ec8430446810db8a74^{commit}' && echo "goed: 0.8.0 is er"
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/59e0250ba63d31c41b92f7ec8430446810db8a74/infra/single/install.sh -o /root/platform-install-0.8.0.sh && echo "goed: het script is er"
+dc stop platform media
+dc run --rm --no-deps platform python -m app.cli db-backup
+dc run --rm --no-deps platform python -m app.cli db-downgrade 0010
+PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=59e0250ba63d31c41b92f7ec8430446810db8a74 bash < /root/platform-install-0.8.0.sh
+```
+
+Zeggen de tweede en de derde regel niet allebei "goed", stop dan. `db-backup` maakt eerst een
+verse kopie (`platform-0012-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de beeldindex, de
+gezichten en wie welk bestand uploadde; stond de analyse nooit aan, dan alleen dat laatste) en
+vraagt om "ja". Eindigt het met `De WAL is niet leeg` (exitcode 3), draai dan
+`dc run --rm --no-deps platform python -m app.cli db-checkpoint` tot het `De WAL is leeg.` zegt.
+Weer vooruit: het commando van de branch hieronder, zonder `PLATFORM_SRC_REF`.
+
+**Terug naar 0.7.1.** Alleen als 0.8.0 niet goed werkt. Het zijn deze commando's, in deze
+volgorde en met de volledige commit van 0.7.1 (`dc` uit Handige commando's hieronder; de uitleg
+per stap staat in `docs/runbooks/zoeken.md`, "Terug naar 0.7.1"):
+
+```bash
+git -C /opt/platform/src fetch -q origin
+git -C /opt/platform/src cat-file -e '80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1^{commit}' && echo "goed: 0.7.1 is er"
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1/infra/single/install.sh -o /root/platform-install-0.7.1.sh && echo "goed: het script is er"
+dc stop platform media
+dc run --rm --no-deps platform python -m app.cli db-backup
+dc run --rm --no-deps platform python -m app.cli db-downgrade 0009
+PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=80d5bb8ce9cd937534f06a5bc5e4f54ec8509ad1 bash < /root/platform-install-0.7.1.sh
+```
+
+Zeggen de tweede en de derde regel niet allebei "goed", stop dan: de rest pas als de commit en het
+script er zijn. Het script komt van de commit van 0.7.1 zelf, niet van de branch: zo draait het
+oude script met het oude image. `db-backup` maakt eerst een verse kopie van de database zoals hij
+nu is (`platform-0012-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de beeldindex, de
+gezichten, wie welk bestand uploadde, de zoekindex, de plekken van foto's, de hashes voor
+duplicaten, de personen die je met de hand benoemde en de regels van slimme albums) en vraagt om
+"ja"; bestanden, delingen en albums blijven. Lukt de downgrade niet,
+zet dan die verse kopie terug en blijf op 0.8.0 (`docs/runbooks/zoeken.md`). Weer vooruit: het
+commando van de branch, zonder `PLATFORM_SRC_REF`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
+```
+
+## Van 0.7.0 of 0.6.0: delen, foto's en media (0.7.1 en 0.7.0)
+
+Draai je nog 0.7.0 of 0.6.0, dan komt wat 0.7.1 en 0.7.0 brachten in dezelfde run erbij, met het
+commando hierboven bij 0.8.0.
 
 Wat er bij het bijwerken van 0.7.0 naar 0.7.1 gebeurt:
 
@@ -66,7 +162,7 @@ Wat er bij het bijwerken van 0.7.0 naar 0.7.1 gebeurt:
 - terug naar 0.7.0: het schema eerst naar 0008, met de app gestopt (`docs/fotos-indexeren.md`,
   "Database: migratie 0009").
 
-Wat er bij het bijwerken van 0.6.0 naar 0.7.0 gebeurt (van 0.6.0 komt 0.7.1 in dezelfde run):
+Wat er bij het bijwerken van 0.6.0 naar 0.7.0 gebeurt (van 0.6.0 komt 0.8.0 in dezelfde run):
 
 - het script laat open documenten opslaan, bouwt het nieuwe platform en start het; de database
   gaat bij de start vanzelf naar het nieuwe schema;
@@ -138,6 +234,9 @@ blijft http werken.
 
 ## Wat er draait
 
+Zonder `/tank` staat wat hier in `/tank/platform` staat in `/opt/platform/data/platform`
+(`DATA_ROOT` in `/opt/platform/.env`).
+
 | Onderdeel | Waar |
 |-----------|------|
 | Platform (web-app en API) | poort `PORT` (http, standaard 80) en `HTTPS_PORT` (https, standaard 443) van de container, in Docker 8080 en 8443 |
@@ -154,10 +253,13 @@ blijft http werken.
 | Cache van media | `/tank/platform/media` (standaard hooguit 20 GB) |
 | Import | `/tank/platform/import`, in de app `/data/import` |
 | Instellingen van media | `/opt/platform/.env`: `MEDIA_SANDBOX`, `MAX_UPLOAD_BYTES` en `MEDIA_WORKER_KEY`; de rest op `/beheer` → Media |
+| Reservekopieën van de database | `/tank/platform/backup` (rechten 700): vóór elke update één, `platform-<schemaversie>-<tijd>.db` (rechten 600), zonder gezichten en beeld; per schemaversie blijft de nieuwste |
+| Plaatsnamen en landen | `/tank/platform/geo`: de twee bronnen en `places.sqlite` |
+| Instellingen van zoeken | `/opt/platform/.env`: `PLAATSEN`; de rest op `/beheer` → Zoeken en foto's |
 
-Bijwerken: draai het installatiescript opnieuw (naar 0.7.1: zie hierboven). Het laat eerst de
-open documenten opslaan, vervangt dan het platform en werkt pas daarna de mediaworker en office
-bij. Had je de
+Bijwerken: draai het installatiescript opnieuw (met de branch: zie hierboven). Het laat eerst de
+open documenten opslaan, maakt een reservekopie van de database (vanaf 0.8.0), vervangt dan het
+platform en werkt pas daarna de mediaworker en office bij. Had je de
 eerste versie met Traefik, PostgreSQL en SeaweedFS al geïnstalleerd, dan ruimt het script die
 containers op; de oude mappen `/tank/postgres`, `/tank/seaweedfs` en `/tank/traefik` mag je
 daarna weghalen.
@@ -345,7 +447,7 @@ script er zijn. Het script komt eerst in een bestand, vóór er iets stopt: `cur
 adres dat er niet is, geeft één regel van curl en doet verder niets, en dan stond de app al stil
 met het schema terug. `db-downgrade` vraagt om "ja". Daarna zijn de bibliotheken, de voortgang en de
 afspeellijsten weg; je bestanden, ook de films en muziek, blijven. Weer vooruit: het script zonder
-`PLATFORM_SRC_REF`. Het adres is dat van de branch, zoals bij het bijwerken hierboven; staat 0.7.1
+`PLATFORM_SRC_REF`. Het adres is dat van de branch, zoals bij het bijwerken hierboven; staat 0.8.0
 op `main`, dan mag `main` in het adres, zonder `PLATFORM_BRANCH`.
 
 Meer, zoals de status lezen, de cache opruimen en de belastingtest op de LXC, staat in
@@ -370,4 +472,8 @@ Alles staat in `/tank/platform`. Een ZFS-snapshot van het mount point op de Prox
 een geldige back-up: de database overleeft een snapshot zoals een stroomstoring. De volumes van
 office horen er niet bij; wat daar nog niet opgeslagen is, zet het platform binnen enkele
 minuten zelf in `/tank/platform` (zie "Niet-opgeslagen werk").
+Vanaf 0.8.0 maakt het installatiescript vóór elke update ook een kopie van de database in
+`DATA_ROOT/backup`: `/tank/platform/backup`, zonder `/tank` `/opt/platform/data/platform/backup`
+(zie "Bijwerken naar 0.8.0 (zoeken en foto's)"). Dat is een vangnet voor de update, geen
+back-up: hij staat op dezelfde schijf.
 Offsite-backups volgen in fase 1 deel 2.

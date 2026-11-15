@@ -55,7 +55,7 @@ class CopyResult:
 
 def _snapshot(source: Path, folder: Path, stamp: str) -> tuple[Path, str]:
     """Een kopie van SQLite die klopt, ook als de app schrijft; met de alembic-head."""
-    from app.cli import read_head
+    from app.backup import read_head
 
     folder.mkdir(parents=True, exist_ok=True)
     folder.chmod(0o700)
@@ -159,7 +159,8 @@ async def db_copy(
     empty_first: bool = False,
     say: Callable[[str], None] = print,
 ) -> CopyResult:
-    from app.cli import BACKUP_DIR, now_stamp, sqlite_file
+    from app.backup import stamp as now_stamp
+    from app.cli import BACKUP_DIR, sqlite_file
     from app.migrate import alembic_config
 
     _check_target(target_url)

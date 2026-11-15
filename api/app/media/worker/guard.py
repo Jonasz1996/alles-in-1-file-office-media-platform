@@ -38,8 +38,11 @@ log = logging.getLogger("platform.media.worker")
 
 INTERVAL = 2.0
 # De programma's van de worker; buiten app/media/worker/ staat hun naam nergens
-# (test_media_no_ffmpeg_outside.py)
-BINARIES = ("ffmpeg", "ffprobe")
+# (test_media_no_ffmpeg_outside.py). FFMPEG voor wie alleen naar ffmpeg vraagt (render.installed,
+# de belastingtest); OCR (fase 6, X1) voor ops/ocr.py en caps
+FFMPEG = ("ffmpeg", "ffprobe")
+OCR = "tesseract"
+BINARIES = (*FFMPEG, OCR)
 COALESCE_S = 0.3
 FINISH_LIMIT_S = 10.0  # SIGTERM, 2 s, SIGKILL, waitpid: ruim binnen deze tijd
 _KILLED_MAX = 64

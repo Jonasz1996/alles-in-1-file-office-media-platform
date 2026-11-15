@@ -6,8 +6,9 @@ from app import db
 from tests.search.migratie import MADE
 
 HIER = Path(__file__).resolve().parent
-# De bestanden over de triggers en de migratie van zoeken (0010): marker triggers erbij
-TRIGGERS = ("migration_0010", "trigger", "churn")
+# De bestanden over de triggers en de migraties van zoeken (0010), gezichten (0011) en zoeken op
+# beeld (0012): marker triggers erbij, zodat ze ook op SQLite 3.46.1 lopen (zoek-perf, slim.sh)
+TRIGGERS = ("migration_0010", "migration_0011", "migration_0012", "trigger", "churn")
 
 
 @pytest.hookimpl(tryfirst=True)

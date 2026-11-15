@@ -746,11 +746,13 @@ def beeld(zaad: object, breedte: int = 640, hoogte: int = 480) -> Image.Image:
 
 
 def _dms(waarde: float) -> tuple[float, float, float]:
-    waarde = abs(waarde)
-    graden = int(waarde)
-    minuten = int((waarde - graden) * 60)
-    seconden = round((waarde - graden - minuten / 60) * 3600, 4)
-    return (float(graden), float(minuten), seconden)
+    """Graden, minuten en seconden (op 4 decimalen), minuten en seconden altijd onder 60.
+    Eerst de seconden in totaal afronden en dan delen: los gerekend gaf 54,8 (54, 47, 60.0) en
+    6,1 (6, 5, 60.0), en die plek leest render_meta niet (seconden onder 60), dus zonder GPS."""
+    totaal = round(abs(waarde) * 3600, 4)
+    graden, rest = divmod(totaal, 3600)
+    minuten, seconden = divmod(rest, 60)
+    return (float(graden), float(minuten), round(seconden, 4))
 
 
 def exif(

@@ -193,6 +193,11 @@ ENV
   install() { printf 'install %s\n' "$*" >>"$work/install.log"; }
   # shellcheck disable=SC2329
   chown() { :; }
+  # Als 10001 in een map (setpriv, alleen root; de mappen van media maakt 10001 zelf sinds de
+  # review van golf 4 van fase 6, veilig F2): hier alleen opschrijven
+  echte_as_app_in=$(declare -f as_app_in)
+  # shellcheck disable=SC2329
+  as_app_in() { printf 'als 10001 in %s: %s\n' "$1" "${*:2}" >>"$work/install.log"; }
   # shellcheck disable=SC2329
   mountpoint() { return 1; }
   fase4_env
@@ -213,10 +218,12 @@ ENV
   instellingen "" "" >/dev/null
   check "met media: de sleutel erbij" is_hex64 "$(value MEDIA_WORKER_KEY)"
   check "met media: MEDIA_SANDBOX=aan" has_line "MEDIA_SANDBOX=aan"
-  check "met media: de mappen media en import, van 10001, 750" grep -qxF \
-    "install -d -m 750 -o 10001 -g 10001 /tank/platform/media /tank/platform/import" "$work/install.log"
+  check "met media: de mappen media en import, door 10001 zelf gemaakt, 750" test "$(grep '^als 10001 ' "$work/install.log")" = \
+    "als 10001 in /tank/platform: mkdir -m 750 -- media
+als 10001 in /tank/platform: mkdir -m 750 -- import"
   check "met media: chmod 600" test "$(mode "$ENV_FILE")" = 600
   unset -f install chown mountpoint
+  eval "$echte_as_app_in"
   unset MEDIA_SANDBOX DATA_ROOT
 
   echo "== decide_media stopt nooit (set -e), en kiest de veilige kant"
@@ -681,8 +688,8 @@ PY
 
   echo "== geen geheim in de uitvoer, en elke exec krijgt </dev/null"
   check "de sleutel staat niet in de uitvoer van main" not grep -qE '[0-9a-f]{64}' "$work/main.out"
-  out=$(grep -nE '(docker run|compose\[@\]\}" exec) ' "$install_sh" | grep -v '</dev/null' || true)
-  check "elke docker run en compose exec krijgt </dev/null" test -z "$out"
+  out=$(grep -nE '(docker run|compose\[@\]\}" (exec|run)) ' "$install_sh" | grep -v '</dev/null' || true)
+  check "elke docker run, compose run en compose exec krijgt </dev/null" test -z "$out"
 
   # De trap van --stappen staat vóór de voorcontrole (de samenvatting komt er altijd) en haalt
   # WORK weg, als root. Een map die de test weigert, mag daarbij nooit verdwijnen (review van
@@ -769,7 +776,9 @@ NEP
 # - Kan een container geen Debian-spiegel bereiken (de sandbox), dan krijgt python:3.12-slim een
 #   leeg pakket ffmpeg, met lege /usr/bin/ffmpeg en /usr/bin/ffprobe (het Dockerfile zet die op
 #   0711; uitvoeren geeft ENOEXEC, dus "ffmpeg ontbreekt"), zoals test_install_update.sh:53–55.
-#   Wat ffmpeg nodig heeft (de transcode, docker top, de belastingtest), bewijst CI.
+#   Net zo lege pakketten tesseract-ocr (met een lege /usr/bin/tesseract), -nld, -eng en -osd
+#   (X1): de worker meldt dan geen OCR. Wat ffmpeg en tesseract nodig hebben (de transcode, OCR,
+#   docker top, de belastingtest), bewijst CI.
 # - Staat er al een python:3.12-slim van een ander, dan leent de test die naam: het image krijgt
 #   even een tweede naam, en aan het eind (ook bij een fout) weer zijn eigen naam. Het image zelf
 #   blijft altijd.
@@ -986,7 +995,7 @@ SH
     FFMPEG=echt
   else
     FFMPEG=leeg
-    echo "  geen Debian-spiegel bereikbaar: een leeg pakket ffmpeg (en unattended-upgrades)"
+    echo "  geen Debian-spiegel bereikbaar: lege pakketten ffmpeg en tesseract (en unattended-upgrades)"
   fi
   if [ "$apt_ok" = 1 ] && [ -z "$ca" ]; then
     name_as mirror.gcr.io/library/python:3.12-slim python:3.12-slim
@@ -1006,7 +1015,11 @@ SH
       fi
       if [ "$apt_ok" = 0 ]; then
         echo "COPY leeg-pakket.sh /tmp/leeg-pakket.sh"
-        echo "RUN sh /tmp/leeg-pakket.sh ffmpeg /usr/bin/ffmpeg /usr/bin/ffprobe && rm /tmp/leeg-pakket.sh"
+        # tesseract met nld, eng en osd (X1, fase 6): de Dockerfile zet /usr/bin/tesseract op 0711
+        echo "RUN sh /tmp/leeg-pakket.sh ffmpeg /usr/bin/ffmpeg /usr/bin/ffprobe \\"
+        echo "    && sh /tmp/leeg-pakket.sh tesseract-ocr /usr/bin/tesseract \\"
+        echo "    && for p in tesseract-ocr-nld tesseract-ocr-eng tesseract-ocr-osd; do sh /tmp/leeg-pakket.sh \$p; done \\"
+        echo "    && rm /tmp/leeg-pakket.sh"
       fi
     } >"$WORK/build/python.Dockerfile"
     docker build -q -t python:3.12-slim -f "$WORK/build/python.Dockerfile" "$WORK/build" >/dev/null

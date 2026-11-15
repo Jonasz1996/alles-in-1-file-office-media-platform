@@ -279,13 +279,28 @@ async def test_onbekende_opdracht(worker):
     assert reply["code"] == Code.UNKNOWN_OP
 
 
-@pytest.mark.parametrize("op", [Op.OCR])
-async def test_ocr_geeft_not_built_tot_zijn_pakket(worker, op):
+async def test_ocr_is_gebouwd_en_controleert_eerst_argumenten_en_fds(worker, tmp_path):
     # Fase 6 legt de opdrachten vast (wire.Op); text kent de worker sinds Z2
-    # (tests/extract/test_extract_subprocess.py), ocr pas met X1
-    assert op not in A.ARGS
-    reply = await ask(worker.config.socket, request(op, {}))
-    assert reply["ev"] == "error" and reply["code"] == Code.NOT_BUILT
+    # (tests/extract/test_extract_subprocess.py), ocr sinds X1 (ops/ocr.py; de echte keten in
+    # tests/ocr/test_ocr_worker.py). Wat niet klopt, komt niet verder dan de controle: geen
+    # plaats bezet, geen kind gestart
+    from app.media.worker.ops import ocr
+
+    assert A.ARGS[Op.OCR] is A.OcrArgs and server.handler(Op.OCR) is ocr.run
+    reply = await ask(worker.config.socket, request(Op.OCR, {}))
+    assert reply["ev"] == "error" and reply["code"] == Code.BAD_ARGS
+    reply = await ask(worker.config.socket, request(Op.OCR, {"kind": "tiff"}))
+    assert reply["ev"] == "error" and reply["code"] == Code.BAD_ARGS
+    reply = await ask(worker.config.socket, request(Op.OCR, {"kind": "pdf"}))
+    assert reply == wire.error(Code.BAD_FDS, "1 fd's verwacht, 0 gekregen")
+    pipe_r, pipe_w = os.pipe()
+    try:
+        reply = await ask(worker.config.socket, request(Op.OCR, {"kind": "image"}), [pipe_r])
+    finally:
+        os.close(pipe_r)
+        os.close(pipe_w)
+    assert reply == wire.error(Code.BAD_FDS, "invoer 0 is geen gewoon bestand")
+    assert A.work_class(Op.OCR, A.OcrArgs(kind="pdf")) == WorkClass.BACKGROUND
     caps = await client.caps()
     assert caps.in_use == {"transcode": 0, "remux": 0, "background": 0, "short": 0}
 

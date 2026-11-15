@@ -248,17 +248,25 @@ Van Z0 zelf:
    [z0-e2e.md](z0-e2e.md).
 3. ~~**De CI-jobs van §4.6** bestaan nog niet.~~ Bij de samenvoeging: `zoek-perf` en de stappen
    S5, S9 en S11 in `media-image` zijn er (spike.md); de job `ocr` niet ([z0.md](z0.md), Open).
-4. **`install.sh` maakt nog geen reservekopie** vóór een update; `db-backup` is er wel. Z7.
+   De job `ocr` kwam met X1 en is groen in run 42827893297 (nummer 99) op `16ccb8d`; zie
+   [x1.md](x1.md).
+4. ~~**`install.sh` maakt nog geen reservekopie** vóór een update; `db-backup` is er wel. Z7.~~
+   Gedaan door Z7 (`2148508`): `install.sh` maakt de kopie vóór er iets verandert. Zie
+   [z7.md](z7.md).
 5. **De PostgreSQL-tak** van 0010 en van `select_engine` is niet getest (afwijking 5).
 
 Vragen voor Jonas (de standaard waar Z0 op bouwt staat erbij):
 
-6. **Tesseract in het image?** Nu niet, dus `ocr_enabled` staat uit en de rij `ocr` draait niet.
-   Een nieuw hulpprogramma in het image is een vraag voor Jonas.
-7. **GeoNames en Natural Earth** haalt `install.sh` bij de installatie (Z7); `places_db` wijst
+6. ~~**Tesseract in het image?** Nu niet, dus `ocr_enabled` staat uit en de rij `ocr` draait niet.
+   Een nieuw hulpprogramma in het image is een vraag voor Jonas.~~ Beantwoord: ja (B53, en Vraag
+   15 op 4 november 2026). X1 zette tesseract in het image, en `ocr_enabled` staat standaard aan
+   (`api/app/config.py`). Zie [x1.md](x1.md).
+7. ~~**GeoNames en Natural Earth** haalt `install.sh` bij de installatie (Z7); `places_db` wijst
    naar `/data/geo/places.sqlite`. Ontbreekt dat bestand, dan zijn er geen plaatsnamen. Beide
    bronnen zijn van buiten en kunnen hier in de sandbox niet gedownload worden
-   (`download.geonames.org` is dicht), dus Z3 en Z7 moeten dat op een echte machine doen.
+   (`download.geonames.org` is dicht), dus Z3 en Z7 moeten dat op een echte machine doen.~~
+   Gedaan door Z3 (`tools/geo/haal.py`, met sha256) en Z7 (`2148508`: `install.sh` haalt beide
+   bronnen naar `DATA_ROOT/geo`). Zie [z3.md](z3.md) en [z7.md](z7.md).
 
 Bekend en niet van Z0:
 

@@ -34,7 +34,9 @@ echte registry van `ui/keys.ts`.
   (`#zoekveld`, scope `browser`) en Mod+F in het naamfilter, zoals in 0.7.1. Keuze 45 zegt
   "Op Bestanden blijft `/` het naamfilter (J9)"; in de code is `/` het zoekveld van Bestanden en
   Mod+F het naamfilter. Z0 laat beide staan; Z4 beslist of het veld van Bestanden blijft naast
-  het veld bovenaan (zie [z0-web.md](z0-web.md)).
+  het veld bovenaan (zie [z0-web.md](z0-web.md)). **Sinds Z4** is er één zoekveld: het veld
+  boven de lijst is weg, en `/` zet de focus in het veld bovenaan (zie
+  [toetsenbord-z4.md](toetsenbord-z4.md)).
 
 ## /beheer (scope `admin`)
 

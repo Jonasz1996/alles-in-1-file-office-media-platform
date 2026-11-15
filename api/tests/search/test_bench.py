@@ -143,6 +143,11 @@ NUL = {
     "WHERE a.blob_sha = b.sha256 AND a.step = 'text' AND a.version = "
     f"{analysis.VERSIONS[analysis.Step.TEXT]} AND a.state IN ('done', 'none', 'skip') AND "
     "(a.state = 'done') = EXISTS (SELECT 1 FROM blob_text t WHERE t.blob_sha = b.sha256))",
+    # En die van ocr (X1): elke inhoud een rij voor de stap ocr, none bij een PDF, anders skip
+    "ocr": "SELECT count(*) FROM blob b WHERE NOT EXISTS (SELECT 1 FROM analysis a "
+    "WHERE a.blob_sha = b.sha256 AND a.step = 'ocr' AND a.version = "
+    f"{analysis.VERSIONS[analysis.Step.OCR]} AND a.state = CASE WHEN b.mime = "
+    "'application/pdf' THEN 'none' ELSE 'skip' END)",
 }
 
 
@@ -176,8 +181,8 @@ def test_wat_er_geschreven_is(boom):
 @pytest.mark.anyio
 async def test_de_backfill_van_z2_heeft_niets_te_doen(boom):
     """De echte backfill van Z2 (analysis.backfill_job, zoals bij het starten) zet in de boom
-    niets klaar: de bestanden staan niet op schijf, dus anders las de stap text bij een meting
-    duizenden documenten die er niet zijn (§4.4)."""
+    niets klaar: de bestanden staan niet op schijf, dus anders las de stap text (of de stap ocr
+    van X1) bij een meting duizenden documenten die er niet zijn (§4.4)."""
     data, _ = boom
     settings = Settings(data_dir=data)
     engine = get_engine(settings)

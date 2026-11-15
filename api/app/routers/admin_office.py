@@ -142,7 +142,10 @@ async def save_office_admin(
     if config.enabled and not before.enabled:
         log.info("office: weer aangezet op /beheer")
         if state.healthy and engine.current() is not None:
-            # De inhaalronde van O3: wat tijdens "uit" binnenkwam, krijgt alsnog een PDF
+            # De inhaalronde van O3: wat tijdens "uit" binnenkwam, krijgt alsnog een PDF.
+            # start_backfill wacht op het slot van de overdracht: niet met een
+            # databaseverbinding op een slot wachten (policy.save committe al)
+            await session.commit()
             try:
                 await convert.start_backfill(settings)
             except Exception:  # noqa: BLE001 - de instelling staat; de volgende "weer gezond"

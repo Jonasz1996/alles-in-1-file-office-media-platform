@@ -13,6 +13,12 @@ staat het er weer. Definitief verwijderen haalt het lid weg (ON DELETE CASCADE).
 Gebeurtenissen (na de commit): album.changed {id} en album.deleted {id} naar de eigenaar en
 wie het album via een deling ziet (access.watchers); bij verwijderen eerst share.deleted naar
 wie het gedeeld kreeg.
+
+Slimme albums (fase 6, Keuze 42; Z6, app/albums_rule.py): een item heeft een bron (hand of
+rule) en shared. Wie het album gedeeld kreeg (en een publieke link, routers/public.py) ziet
+alleen items met shared 1; de eigenaar ziet alles, met per item AlbumItemRule en bij het album
+de regel (AlbumOut.rule). Met de hand toevoegen maakt van een item uit de regel een item met de
+hand (gedeeld); weghalen uit een album met een regel zet het in album_skip.
 """
 
 import uuid
@@ -27,16 +33,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import access, errors, events, photodate, previews
+from app import albums_rule as rules
 from app.config import Settings, get_settings
 from app.db import Session
 from app.errors import ItemResult
 from app.models import Album, AlbumItem, Blob, Node, Share, User
+from app.people.types import AlbumItemRule, AlbumRuleInfo
 from app.routers.files import GUEST, OwnerRef, Utc, clean_name, get_access, owner_refs, shared_ids
 from app.routers.photos import (
     MAX_PAGE,
     IdRange,
     Limit,
-    PhotoPage,
+    PhotoItem,
     id_range,
     live_dirs,
     next_cursor,
@@ -73,6 +81,19 @@ class AlbumOut(BaseModel):
     shared: bool
     created_at: Utc
     modified_at: Utc
+    # De regel van een slim album (alleen voor de eigenaar; anders, en zonder regel, null)
+    rule: AlbumRuleInfo | None = None
+
+
+class AlbumPhotoItem(PhotoItem):
+    """Een item van een album; album (bron en shared) alleen voor de eigenaar (Keuze 42)."""
+
+    album: AlbumItemRule | None = None
+
+
+class AlbumPhotoPage(BaseModel):
+    items: list[AlbumPhotoItem]
+    next: str | None
 
 
 class Albums(BaseModel):
@@ -119,10 +140,12 @@ async def get_album(
     return found.node
 
 
-def live_items(album: Node, root_id: uuid.UUID | None):
-    """Voorwaarden voor de levende leden van dit album (join AlbumItem op Node)."""
+def live_items(album: Node, root_id: uuid.UUID | None, shared_only: bool = False):
+    """Voorwaarden voor de levende leden van dit album (join AlbumItem op Node). shared_only:
+    alleen wat anderen zien (shared 1; voor wie niet de eigenaar is en voor een publieke link,
+    Keuze 42)."""
     dirs = live_dirs(root_id)
-    return [
+    where = [
         AlbumItem.album_id == album.id,
         Node.id == AlbumItem.node_id,
         Node.owner_id == album.owner_id,
@@ -131,6 +154,9 @@ def live_items(album: Node, root_id: uuid.UUID | None):
         Node.deleted_at.is_(None),
         Node.parent_id.in_(select(dirs.c.id)),
     ]
+    if shared_only:
+        where.append(AlbumItem.shared == 1)
+    return where
 
 
 async def roots_of(session: AsyncSession, owner_ids: set[uuid.UUID]) -> dict[uuid.UUID, uuid.UUID]:
@@ -154,6 +180,7 @@ async def albums_out(
     roots = await roots_of(session, {a.owner_id for a in albums})
     owners = await owner_refs(session, user, {a.owner_id for a in albums})
     shared = await shared_ids(session, [a.id for a in albums if a.owner_id == user.id])
+    rule_info = await rules.info(session, [a.id for a in albums if a.owner_id == user.id])
     stats: dict[uuid.UUID, tuple[int, datetime | None, datetime | None]] = {}
     covers: dict[uuid.UUID, str | None] = {}
     by_owner: dict[uuid.UUID, list[Node]] = defaultdict(list)
@@ -169,6 +196,9 @@ async def albums_out(
             Node.deleted_at.is_(None),
             Node.parent_id.in_(select(dirs.c.id)),
         ]
+        if owner_id != user.id:
+            # Wie het album gedeeld kreeg, ziet en telt alleen wat gedeeld wordt (Keuze 42)
+            alive.append(AlbumItem.shared == 1)
         rows = await session.execute(
             select(
                 AlbumItem.album_id, func.count(), func.min(Node.taken_at), func.max(Node.taken_at)
@@ -237,6 +267,7 @@ async def albums_out(
                 shared=album.owner_id == user.id and album.id in shared,
                 created_at=album.created_at,
                 modified_at=album.modified_at,
+                rule=rule_info.get(album.id) if album.owner_id == user.id else None,
             )
         )
     return result
@@ -385,14 +416,27 @@ async def album_items(
     background: BackgroundTasks,
     after: Annotated[str | None, Query(max_length=300)] = None,
     limit: Limit = MAX_PAGE,
-) -> PhotoPage:
-    """De foto's en video's in het album, nieuwste eerst, in pagina's (zoals /photos)."""
+) -> AlbumPhotoPage:
+    """De foto's en video's in het album, nieuwste eerst, in pagina's (zoals /photos). Wie het
+    album gedeeld kreeg, ziet alleen wat gedeeld wordt; de eigenaar ziet alles, met per item
+    album (bron en shared)."""
     album = await get_album(session, user, album_id, "read")
+    mine = album.owner_id == user.id
     root = (await roots_of(session, {album.owner_id})).get(album.owner_id)
-    query = photo_query(*live_items(album, root), *page_where(after))
+    query = photo_query(*live_items(album, root, shared_only=not mine), *page_where(after))
+    query = query.add_columns(AlbumItem.source, AlbumItem.shared.label("in_album_shared"))
     rows = (await session.execute(query.limit(limit))).all()
-    return PhotoPage(
-        items=await photo_items(session, user, rows, settings, background),
+    items = await photo_items(session, user, rows, settings, background)
+    return AlbumPhotoPage(
+        items=[
+            AlbumPhotoItem.model_construct(
+                **item.__dict__,
+                album=AlbumItemRule(source=row.source, shared=bool(row.in_album_shared))
+                if mine
+                else None,
+            )
+            for item, row in zip(items, rows, strict=True)
+        ],
         next=next_cursor(rows, limit),
     )
 
@@ -403,7 +447,7 @@ async def album_ids(album_id: uuid.UUID, user: CurrentUser, session: Session) ->
     downloaden als zip en selecteren."""
     album = await get_album(session, user, album_id, "read")
     root = (await roots_of(session, {album.owner_id})).get(album.owner_id)
-    return await id_range(session, live_items(album, root))
+    return await id_range(session, live_items(album, root, shared_only=album.owner_id != user.id))
 
 
 @router.post("/albums/{album_id}/items")
@@ -412,7 +456,9 @@ async def add_items(
 ) -> Added:
     """Eigen foto's en video's toevoegen (hooguit 1000). Wat niet kan, staat in skipped met een
     code: not_found, not_own (van een ander), not_media (geen foto of video, of een map),
-    trashed (in de prullenbak) of already (staat er al in)."""
+    trashed (in de prullenbak) of already (staat er al in met de hand). Een item dat de regel
+    van een slim album erin zette, wordt een item met de hand: gedeeld zoals elk item met de
+    hand (Keuze 42), en het telt als toegevoegd."""
     return await _add(session, user, album_id, body.node_ids)
 
 
@@ -422,10 +468,10 @@ async def _add(
     album = await get_album(session, user, album_id, "owner")
     ids = list(dict.fromkeys(node_ids))
     nodes = {n.id: n for n in await session.scalars(select(Node).where(Node.id.in_(ids)))}
-    present = set(
+    present = dict(
         (
-            await session.scalars(
-                select(AlbumItem.node_id).where(
+            await session.execute(
+                select(AlbumItem.node_id, AlbumItem.source).where(
                     AlbumItem.album_id == album.id, AlbumItem.node_id.in_(ids)
                 )
             )
@@ -435,7 +481,7 @@ async def _add(
     gone = set(
         (await session.scalars(select(up.c.origin).where(up.c.deleted_at.is_not(None)))).all()
     )
-    skipped, adding = [], []
+    skipped, adding, promoting = [], [], []
     for node_id in ids:
         node = nodes.get(node_id)
         if node is None:
@@ -452,19 +498,23 @@ async def _add(
             )
         elif node_id in gone:
             skipped.append(errors.item_fail(node_id, "trashed", "Dit ligt in de prullenbak"))
+        elif present.get(node_id) == "rule":
+            promoting.append(node_id)
         elif node_id in present:
             skipped.append(errors.item_fail(node_id, "already", "Staat al in dit album"))
         else:
             adding.append(node_id)
-    if adding:
+    if adding or promoting:
+        await rules.by_hand(session, album.id, adding + promoting)
         at = now()
-        await session.execute(
-            insert(AlbumItem),
-            [
-                {"album_id": album.id, "node_id": i, "added_by": user.id, "added_at": at}
-                for i in adding
-            ],
-        )
+        if adding:
+            await session.execute(
+                insert(AlbumItem),
+                [
+                    {"album_id": album.id, "node_id": i, "added_by": user.id, "added_at": at}
+                    for i in adding
+                ],
+            )
         album.modified_at = at
         try:
             await session.commit()
@@ -476,21 +526,29 @@ async def _add(
                 raise errors.fail(409, "moved", MOVED_TEXT) from None
             return await _add(session, user, album_id, node_ids, retry=False)
         await changed(session, album)
-    return Added(added=len(adding), skipped=skipped)
+    return Added(added=len(adding) + len(promoting), skipped=skipped)
 
 
 @router.post("/albums/{album_id}/items/remove")
 async def remove_items(
     album_id: uuid.UUID, body: NodeIds, user: CurrentUser, session: Session
 ) -> Removed:
-    """Uit het album halen (de bestanden zelf blijven staan). Alleen de eigenaar."""
+    """Uit het album halen (de bestanden zelf blijven staan). Alleen de eigenaar. Heeft het
+    album een regel, dan zet die ze er niet meer terug (album_skip)."""
     album = await get_album(session, user, album_id, "owner")
     ids = list(dict.fromkeys(body.node_ids))
-    result = await session.execute(
-        delete(AlbumItem).where(AlbumItem.album_id == album.id, AlbumItem.node_id.in_(ids))
+    taken = list(
+        (
+            await session.scalars(
+                delete(AlbumItem)
+                .where(AlbumItem.album_id == album.id, AlbumItem.node_id.in_(ids))
+                .returning(AlbumItem.node_id)
+            )
+        ).all()
     )
-    removed = result.rowcount or 0
+    removed = len(taken)
     if removed:
+        await rules.skip(session, album.id, taken)
         extra = await session.get(Album, album.id)
         if extra is not None and extra.cover_id in ids:
             extra.cover_id = None

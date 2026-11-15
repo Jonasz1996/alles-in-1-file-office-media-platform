@@ -64,11 +64,9 @@ def vragen() -> list[tuple[str, dict]]:
 
 
 def gedaan(r) -> bool:
-    """Een antwoord zonder fout van de server; de kaart en herinneringen zijn tot Z3 een stub
-    (501 not_built), en ook dan mag de vraag niet in de log."""
-    if r.status_code == 501:
-        return r.json()["detail"]["code"] == "not_built"
-    return r.status_code < 500
+    """Elke vraag is gewoon gelukt: alle routes zijn er nu (de kaart, de plaats en het land sinds
+    Z3), dus geen 501 meer."""
+    return r.status_code == 200
 
 
 def lekken(tekst: str) -> list[str]:
@@ -121,6 +119,24 @@ async def test_niets_in_de_log_van_de_app(client, settings, monkeypatch, caplog,
         event.remove(sync, "do_execute", op_slot)
     logging.getLogger("uvicorn.error").error("Exception in ASGI application", exc_info=fout.value)
     assert "database is locked" in _alles(caplog) or any(r.exc_info for r in caplog.records)
+    for record in caplog.records:
+        tekst = logging.Formatter().format(record)
+        assert lekken(tekst) == [], (record.name, lekken(tekst))
+
+
+async def test_niets_in_de_log_met_de_wortel_op_debug(client, settings, caplog):
+    """Ook als de wortel-logger op DEBUG staat (een ontwikkelaar, een debugger): aiosqlite logt
+    op DEBUG elke SQL met zijn parameters, dus de zoekvraag. main.py zet die logger daarom vast
+    op INFO (I1, S5; Keuze 13). Geen enkele regel van welke logger dan ook bevat iets van de
+    vragen."""
+    await W.bouw_async(settings)
+    eva = await kop(client, "eva")
+    caplog.set_level(logging.DEBUG)
+    assert logging.getLogger().isEnabledFor(logging.DEBUG)
+    for pad, params in vragen():
+        r = await client.get(pad, params=params, headers=eva)
+        assert gedaan(r), (pad, r.text)
+    assert caplog.records  # er werd wel gelogd
     for record in caplog.records:
         tekst = logging.Formatter().format(record)
         assert lekken(tekst) == [], (record.name, lekken(tekst))

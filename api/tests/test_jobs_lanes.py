@@ -387,7 +387,13 @@ def test_de_bestaande_soorten_veranderen_niet():
     assert jobs._kinds["analysis.index"].timeout == 3600
     assert jobs._kinds["analysis.backfill"].lane == "index"
     assert jobs._kinds["analysis.backfill"].timeout == 600
-    for t in known - {"preview", "preview.large", "analysis.index", "analysis.backfill"}:
+    # X1: de pomp van ocr, ocr.recheck (geen tesseract, Keuze 24) en ocr.photos ("Tekst in
+    # foto's herkennen") draaien in de rij ocr, elk met een eigen grens
+    ocr = {"analysis.ocr": 3600, "ocr.recheck": 60, "ocr.photos": 600}
+    assert {t: (jobs._kinds[t].lane, jobs._kinds[t].timeout) for t in ocr} == {
+        t: ("ocr", limit) for t, limit in ocr.items()
+    }
+    for t in known - {"preview", "preview.large", "analysis.index", "analysis.backfill", *ocr}:
         assert jobs._kinds[t].lane == "default", t
         assert jobs._kinds[t].timeout is None, t
     assert jobs.lane_of("bestaat.niet") == "default"

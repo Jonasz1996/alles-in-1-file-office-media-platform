@@ -1,5 +1,6 @@
-"""EXIF en opnamedatum lezen (app/render_meta.py): camera, objectief, belichting en datum, en
-nooit GPS."""
+"""EXIF en opnamedatum lezen (app/render_meta.py): camera, objectief, belichting en datum. De
+plek alleen in mode "meta" (VERSION 2, Keuze 25), nooit voor de preview; de plek zelf staat in
+tests/geo/test_geo_read.py."""
 
 import io
 import json
@@ -254,9 +255,53 @@ def test_run_meta_veel_bestanden_in_een_proces(tmp_path):
     assert results["a"]["exif"]["model"] == "Camera X1"
     assert results["a"]["taken_at"] == "2024-07-01T12:30:05"
     assert "error" in results["b"] and "error" in results["d"]
-    assert results["c"] == {"taken_at": "2024-06-30T22:30:00", "taken_kind": "utc"}
+    # VERSION 2: mode meta geeft ook de plek (Keuze 25), None als er gelezen is en er geen is
+    assert results["a"]["location"] == {
+        "lat": 52.3669444,
+        "lon": 4.8838889,
+        "alt": None,
+        "source": "exif",
+    }
+    assert results["c"] == {
+        "taken_at": "2024-06-30T22:30:00",
+        "taken_kind": "utc",
+        "location": None,
+    }
     assert results["e"] == {}
-    no_gps(results)
+    # Verder nergens een plek: niet in de fouten, niet in de rest van de metadata
+    rest = {sha: {k: v for k, v in r.items() if k != "location"} for sha, r in results.items()}
+    no_gps(rest)
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("werkmap", ["alleen_lezen", "weg"])
+def test_run_meta_met_een_werkmap_waar_niets_in_mag(tmp_path, werkmap):
+    """Media uit: de eigen worker maakt zijn socket in de werkmap van het renderproces. Mag
+    daar niets in (als nobody vanuit api/, dat van root is) of is die weg, dan in de tijdelijke
+    map van het systeem; de video krijgt gewoon zijn datum (I1, S4)."""
+    film = make_video(tmp_path / "c.mp4", "creation_time=2024-06-30T22:30:00Z")
+    request = {"mode": "meta", "items": [{"sha": "c", "source": str(film), "mime": "video/mp4"}]}
+    child = render_meta_child()
+    if werkmap == "alleen_lezen":
+        # Daar mag niemand iets maken, ook root niet (chmod 555 houdt root niet tegen)
+        cwd = Path("/sys")
+    else:
+        cwd = tmp_path / "werk"
+        cwd.mkdir()
+        child = f"import os; os.rmdir(os.getcwd()); {child}"
+    proc = subprocess.run(
+        [sys.executable, "-I", "-c", child],
+        input=json.dumps(request).encode(),
+        capture_output=True,
+        cwd=cwd,
+        check=True,
+    )
+    out = json.loads(proc.stdout)
+    assert out["results"]["c"] == {
+        "taken_at": "2024-06-30T22:30:00",
+        "taken_kind": "utc",
+        "location": None,
+    }
 
 
 def render_meta_child() -> str:

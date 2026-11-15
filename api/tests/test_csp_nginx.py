@@ -1,9 +1,9 @@
 """F4 (fase 5, §3.5): media-src 'self' blob: in de CSP, op alle drie de plekken gelijk.
 
 Zonder blob: speelt geen enkele MSE-video (video.src is een object-URL van MediaSource). De CSP
-van de web-app staat in main.WEB_CSP, 5 keer in web/nginx.conf (het web-image van de opzet met
+van de web-app staat in main.WEB_CSP, 6 keer in web/nginx.conf (het web-image van de opzet met
 twee containers) en in WEB_CSP van de CI-job images, die beide images op dezelfde CSP
-controleert. Deze test leest de 5 koppen uit nginx.conf en de waarde uit ci.yml, en eist dat ze
+controleert. Deze test leest de 6 koppen uit nginx.conf en de waarde uit ci.yml, en eist dat ze
 gelijk zijn aan main.WEB_CSP.
 """
 
@@ -54,9 +54,10 @@ def test_media_src_staat_in_web_csp():
     assert "unsafe-inline" not in WEB_CSP
 
 
-def test_de_vijf_koppen_in_nginx_zijn_web_csp():
+def test_de_zes_koppen_in_nginx_zijn_web_csp():
+    # Zes sinds de wereld van de kaart een eigen location heeft (nacontrole golf 3, web F7)
     headers = HEADER.findall(NGINX.read_text())
-    assert len(headers) == 5, headers
+    assert len(headers) == 6, headers
     for value in headers:
         assert value == WEB_CSP
 

@@ -3,6 +3,10 @@
 // beeld is (plus twee) staat in de DOM. srcset kiest de breedte (640 .. 2560) die bij het
 // scherm past. Passend op breedte of hele pagina, 50–400 %, een paginavak en een
 // inhoudsopgave.
+//
+// Fase 6 (Z4): over elke pagina een laag van wie de pagina's toont (overlay: de tekstlaag van
+// PdfView), een seintje als de afbeelding van een pagina geladen is, één keer naar een plek
+// springen (jumpTo: de eerste treffer van ?q=) en een status achteraan in de werkbalk.
 
 import { type JSX, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
@@ -26,6 +30,15 @@ export interface PageViewerProps {
   /** Vooraan in de werkbalk: waar de pagina's vandaan komen (fase 4: "Voorbeeld" bij een
    * omgezet kantoordocument) */
   note?: ReactNode;
+  /** Over de afbeelding van pagina n (vanaf 1), die w bij h pixels groot is (de tekstlaag, Z4) */
+  overlay?(n: number, w: number, h: number): ReactNode;
+  /** De afbeelding van pagina n is geladen */
+  onPageLoad?(n: number): void;
+  /** Eén keer hierheen: pagina page (vanaf 1), y als deel van de pagina (de eerste treffer van
+   * ?q=). Niet als je zelf al gescrold hebt. */
+  jumpTo?: { page: number; y: number } | null;
+  /** Achteraan in de werkbalk (waar de eerste treffer staat) */
+  status?: ReactNode;
 }
 
 const GAP = 16;
@@ -82,6 +95,10 @@ export default function PageViewer({
   labels,
   onPageError,
   note,
+  overlay,
+  onPageLoad,
+  jumpTo,
+  status,
 }: PageViewerProps): JSX.Element {
   const scroller = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ w: 0, h: 0, top: 0 });
@@ -95,6 +112,7 @@ export default function PageViewer({
   // adres, anders zou een kapotte pagina eindeloos opnieuw laden.)
   const used = useRef(new Map<number, PageSource>());
   const anchor = useRef<{ page: number; frac: number } | null>(null);
+  const jumped = useRef<PageViewerProps["jumpTo"]>(null);
 
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -121,6 +139,17 @@ export default function PageViewer({
     anchor.current = null;
     el.scrollTop = PAD + offsets[a.page] + a.frac * (offsets[a.page + 1] - offsets[a.page]);
   }, [k]);
+
+  // Naar de eerste treffer: een derde van de hoogte onder de bovenkant, als je nog bovenaan staat
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !jumpTo || jumped.current === jumpTo || view.h === 0) return;
+    jumped.current = jumpTo;
+    const i = jumpTo.page - 1;
+    if (el.scrollTop > 0 || i < 0 || i >= count) return;
+    el.scrollTop = Math.max(0, PAD + offsets[i] + jumpTo.y * (dims[i]?.[1] ?? 0) - view.h / 3);
+    setView((v) => ({ ...v, top: el.scrollTop }));
+  }, [jumpTo, view.h]);
 
   function setZoom(next: Fit) {
     const top = Math.max(0, view.top - PAD);
@@ -214,6 +243,7 @@ export default function PageViewer({
               const now = e.currentTarget.currentSrc;
               const hit = src.candidates.find(([, href]) => new URL(href, document.baseURI).href === now);
               src.loaded = hit ? { w: hit[0], href: hit[1] } : null;
+              onPageLoad?.(n);
             }}
             onError={() => {
               // Was hij al geladen (een andere breedte, of weer in beeld na het verlopen van de
@@ -225,6 +255,7 @@ export default function PageViewer({
             }}
           />
         )}
+        {!src.failed && overlay?.(n, w, h)}
       </div>,
     );
   }
@@ -272,6 +303,7 @@ export default function PageViewer({
         <button type="button" className="btn ghost" aria-pressed={fit === "page"} onClick={() => setZoom("page")}>
           {t("viewer.pdf.fitPage")}
         </button>
+        {status}
       </div>
       <div className="pages-body">
         {tocOpen && (

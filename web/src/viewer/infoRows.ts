@@ -1,7 +1,8 @@
 // De plekken in het infopaneel voor fase 6 (Z0): Plek (LocationRow.tsx, van Z5) en Personen
 // (PeopleRow.tsx, van Z6); Z0b zette de derde erbij: "Meer zoals deze" (LikeRow.tsx, van X3), en
-// na de review een vierde: de gezichten (photos/faces/FacesRow.tsx, van X2). Elk een eigen
-// bestand en een eigen chunk; het infopaneel laadt ze pas als ze iets kunnen tonen.
+// na de review een vierde: de gezichten (photos/faces/FacesRow.tsx, van X2). X1 zette er een vijfde
+// bij: "Tekst in beeld" (ocr/OcrRow.tsx). Elk een eigen bestand en een eigen chunk; het infopaneel
+// laadt ze pas als ze iets kunnen tonen.
 // Puur, zodat het in vitest te testen is.
 
 import type { ViewerDetail } from "./api";
@@ -40,4 +41,13 @@ export function showFacesRow(kind: ViewKind, item: Pick<ViewerItem, "version">, 
  */
 export function showLikeRow(kind: ViewKind, item: Pick<ViewerItem, "version">, signedIn: boolean): boolean {
   return showPhotoRows(kind, item, signedIn) && kind === "image";
+}
+
+/**
+ * "Tekst in beeld" (X1; Keuze 23 en 25a) bij een foto of een PDF, ingelogd (nooit via een publieke
+ * link) en bij de huidige versie: de tekst van OCR hoort bij de inhoud van nu. Of je "Tekst
+ * herkennen" mag vragen (een foto: de eigenaar; een PDF: schrijven), weet de rij zelf.
+ */
+export function showOcrRow(kind: ViewKind, item: Pick<ViewerItem, "version">, signedIn: boolean): boolean {
+  return signedIn && !item.version && (kind === "image" || kind === "pdf");
 }

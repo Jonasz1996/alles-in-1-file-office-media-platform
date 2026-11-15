@@ -110,6 +110,13 @@ def key_in_worker_environ(pid: int, key: str) -> None:
             environ(pid)
 
 
+def nice_plus(n: int) -> int:
+    """De niceness van een kind met het voorvoegsel "nice -n <n>": nice telt op bij die van de
+    worker, en die draait hier in het testproces; boven 19 kan niet. Zonder nice eromheen (CI)
+    is dat precies n; onder "nice -n 10" (een lokale run naast een meting) 19."""
+    return min(19, os.getpriority(os.PRIO_PROCESS, 0) + n)
+
+
 def ionice(pid: int) -> str:
     return subprocess.run(["ionice", "-p", str(pid)], capture_output=True, text=True).stdout
 
@@ -271,9 +278,11 @@ async def test_verbinding_dicht_stopt_ffmpeg_en_kleinkinderen_binnen_3_s(
         job = await frame_job(source)
         assert await until(lambda: len(ffmpegs()) == 1)
         (pid,) = ffmpegs()
-        assert await until(lambda: len(guard.children(pid)) == 1)
-        ((grandchild, comm),) = guard.children(pid)
-        assert comm == "sleep" and alive(grandchild)
+        # Wachten op de naam, niet alleen op het aantal: tussen fork en exec heet het kleinkind
+        # nog "sh" (I1, S3)
+        assert await until(lambda: [comm for _, comm in guard.children(pid)] == ["sleep"])
+        ((grandchild, _comm),) = guard.children(pid)
+        assert alive(grandchild)
         began = time.monotonic()
         await job.cancel()
         assert await until(lambda: not alive(pid) and not alive(grandchild), limit=3)
@@ -469,7 +478,7 @@ async def test_nice_rlimits_en_kale_omgeving_van_frame(tmp_path, monkeypatch, so
             (pid,) = ffmpegs()
             st = proc_stat(pid)
             assert st is not None
-            assert int(st[16]) == 15  # nice -n 15 voor één beeld
+            assert int(st[16]) == nice_plus(15)  # nice -n 15 voor één beeld
             assert int(st[3]) == pid  # eigen procesgroep (en sessie)
             lim = limits(pid)
             assert lim["Max data size"] == (str(512 * 1024 * 1024),) * 2
@@ -496,7 +505,7 @@ async def test_nice_ionice_en_geheugen_van_bench(tmp_path, monkeypatch):
             assert await until(lambda: len(ffmpegs()) == 1)
             (pid,) = ffmpegs()
             st = proc_stat(pid)
-            assert st is not None and int(st[16]) == 15
+            assert st is not None and int(st[16]) == nice_plus(15)
             assert ionice(pid).strip() == "idle"
             assert limits(pid)["Max data size"][0] == str(900 * 1024 * 1024)
             caps = await client.caps()
@@ -616,7 +625,7 @@ def test_fuzz_meta_clean_en_wat_de_app_ervan_leest():
             assert isinstance(stream["index"], int) and 0 <= stream["index"] < 2**31
             assert stream.get("codec_type") in meta.TYPES
             for name in stream.get("tags", {}):
-                assert name in meta.TAGS  # nooit locatie
+                assert name in meta.TAGS  # alleen de witte lijst
         # wat render.py en render_meta.py ermee doen, faalt nooit
         render.codecs_of(out)
         render_meta.video_meta(out)
@@ -709,7 +718,9 @@ def test_de_zelftest_wil_elk_programma_van_het_voorvoegsel_op_0711(tmp_path, mon
         used |= {w for w in prefix if not w.startswith("-") and not w.lstrip("-").isdigit()}
     assert used == {"nice", "ionice"}
     assert used | set(guard.BINARIES) | {"env"} == set(selftest.EXEC_PROGRAMS)
-    # leesbaar (0755): de controle faalt met de modus, per programma
+    assert selftest.EXEC_PROGRAMS == ("ffmpeg", "ffprobe", "nice", "ionice", "env", "tesseract")
+    assert selftest.OPTIONAL_PROGRAMS == ("tesseract",)
+    # leesbaar (0755): de controle faalt met de modus, per programma (ook tesseract, X1)
     paths = {}
     for name in selftest.EXEC_PROGRAMS:
         path = tmp_path / name
@@ -721,14 +732,33 @@ def test_de_zelftest_wil_elk_programma_van_het_voorvoegsel_op_0711(tmp_path, mon
     selftest._binaries(report)
     checks = {c.name: c for c in report.checks}
     assert sorted(checks) == sorted(f"{n} 0711 van root" for n in selftest.EXEC_PROGRAMS)
-    for name in ("nice", "ionice"):
+    for name in selftest.EXEC_PROGRAMS:
         check = checks[f"{name} 0711 van root"]
         assert not check.ok and check.sandbox and "modus 0755" in check.detail
-    # en niet gevonden is ook een fout
+    # en niet gevonden is ook een fout, behalve voor tesseract: zonder hem staat OCR uit (Keuze 24)
     monkeypatch.setattr(selftest.shutil, "which", lambda name: None)
     report = selftest.Report()
     selftest._binaries(report)
-    assert all(not c.ok and c.detail == "niet gevonden" for c in report.checks)
+    assert [(c.name, c.ok, c.detail, c.sandbox) for c in report.checks] == [
+        ("ffmpeg 0711 van root", False, "niet gevonden", True),
+        ("ffprobe 0711 van root", False, "niet gevonden", True),
+        ("nice 0711 van root", False, "niet gevonden", True),
+        ("ionice 0711 van root", False, "niet gevonden", True),
+        ("env 0711 van root", False, "niet gevonden", True),
+        ("tesseract 0711 van root", True, "niet geïnstalleerd: OCR uit", True),
+    ]
+    # alleen tesseract weg: de rest 0711 telt gewoon mee, en de zelftest is goed
+    monkeypatch.setattr(selftest.shutil, "which", lambda name: paths.get(name))
+    for path in paths.values():
+        Path(path).chmod(0o711)
+    monkeypatch.setattr(selftest.os, "access", lambda path, mode: False)
+    del paths["tesseract"]
+    report = selftest.Report()
+    selftest._binaries(report)
+    uid = os.getuid()
+    got = {c.name: c.ok for c in report.checks}
+    assert got["tesseract 0711 van root"] is True
+    assert all(got[f"{n} 0711 van root"] is (uid == 0) for n in selftest.EXEC_PROGRAMS[:5])
 
 
 def test_de_zelftest_wil_python_tekst_0711_van_root(tmp_path, monkeypatch):

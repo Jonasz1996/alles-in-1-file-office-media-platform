@@ -489,6 +489,10 @@ def test_toetsenbord_openen_opslaan_en_sluiten(office: Office, office_browsers) 
     for lang, words in WORDS.items():
         office.server.call(d.anna, "PATCH", "/api/v1/auth/me", json={"locale": lang}, expect=200)
         page.goto(f"/map/{d.folder}")
+        # Staat de app nog in de andere taal, dan herlaadt hij één keer zodra /auth/me binnen is
+        # (applyAccountLocale), ná de load waar goto op wacht. Pas in de taal van het account is
+        # de pagina er; anders kan start() in dat herladen vallen
+        expect(page.locator("html")).to_have_attribute("lang", lang)
         start(page)
         tab_to(page, page.locator(ROW).filter(has_text="verslag.docx"))
         with page.expect_response(is_session(d.node)) as answer:

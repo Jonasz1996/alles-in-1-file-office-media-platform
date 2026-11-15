@@ -2,7 +2,9 @@
 methode, body, antwoordmodel en status, vraagt eerst de inlog (beheer: de rol; de woorden per
 pagina: het download-token) en geeft dan 501 not_built tot zijn pakket het vult. Zoeken zelf
 werkt al: via select_engine, met LikeFallback. Sinds Z2 zijn ook de woorden per pagina en de
-stand van de analyse gebouwd (BUILT).
+stand van de analyse gebouwd (BUILT), sinds Z6 de routes van personen, herinneringen en
+slimme albums, sinds Z3 (stap 1) de plek, de kaart, de plaatsen en de bronnen, en sinds Z3
+(stap 2) share-check en de duplicaten.
 
 Z0b (Keuze 55) zette de routes van gezichten (X2) en zoeken op beeld (X3) erbij, ook als stub;
 zoeken met mode=image of like geeft 501 not_built("X3").
@@ -252,6 +254,49 @@ BUILT = {
     # Z2: de woorden per pagina en de stand van de analyse (tests/test_pages_words.py)
     ("GET", "/api/v1/files/{node_id}/pages/{n}/words"),
     ("GET", "/api/v1/files/{node_id}/analysis"),
+    # Z6: personen (tests/people/test_people.py)
+    ("GET", "/api/v1/people"),
+    ("POST", "/api/v1/people"),
+    ("PATCH", "/api/v1/people/{person_id}"),
+    ("POST", "/api/v1/people/{person_id}/merge"),
+    ("DELETE", "/api/v1/people/{person_id}"),
+    ("GET", "/api/v1/people/{person_id}/photos"),
+    ("GET", "/api/v1/files/{node_id}/people"),
+    ("POST", "/api/v1/files/{node_id}/people"),
+    ("DELETE", "/api/v1/files/{node_id}/people/{person_id}"),
+    # Z6: herinneringen (tests/photos/test_memories.py)
+    ("GET", "/api/v1/photos/memories"),
+    ("GET", "/api/v1/photos/memories/hide"),
+    ("POST", "/api/v1/photos/memories/hide"),
+    ("DELETE", "/api/v1/photos/memories/hide/{kind}/{ref}"),
+    # Z6: slimme albums (tests/albums/test_album_rules.py)
+    ("PUT", "/api/v1/albums/{album_id}/rule"),
+    ("POST", "/api/v1/albums/{album_id}/rule/confirm"),
+    ("DELETE", "/api/v1/albums/{album_id}/rule"),
+    ("POST", "/api/v1/albums/{album_id}/refresh"),
+    # Z6: de foto-instellingen (tests/photos/test_photo_settings.py)
+    ("GET", "/api/v1/me/photo-settings"),
+    ("PATCH", "/api/v1/me/photo-settings"),
+    # Z3, stap 1: de plek, de kaart, de plaatsen en de bronnen (tests/geo/test_geo_access.py,
+    # test_map_clusters.py)
+    ("GET", "/api/v1/files/{node_id}/location"),
+    ("GET", "/api/v1/photos/map"),
+    ("GET", "/api/v1/photos/map/items"),
+    ("GET", "/api/v1/photos/places"),
+    ("GET", "/api/v1/geo/attribution"),
+    # Z3, stap 2: share-check en de duplicaten (tests/photos/test_share_check.py,
+    # tests/dupes/test_dupes.py)
+    ("GET", "/api/v1/photos/share-check"),
+    ("GET", "/api/v1/duplicates"),
+    ("POST", "/api/v1/duplicates/ignore"),
+    # Z7: zoeken en foto's op /beheer (tests/search/test_admin_search.py)
+    ("GET", "/api/v1/admin/search"),
+    ("PATCH", "/api/v1/admin/search"),
+    ("POST", "/api/v1/admin/search/rebuild"),
+    ("GET", "/api/v1/admin/search/failed"),
+    ("POST", "/api/v1/admin/search/retry"),
+    # X1: tekst herkennen (tests/ocr/test_ocr_limits.py, test_ocr_access.py)
+    ("POST", "/api/v1/files/{node_id}/ocr"),
 }
 # De vraag die een stub nodig heeft om bij de route te komen
 QUERY = {
@@ -346,13 +391,15 @@ async def test_elke_stub_geeft_501_not_built(client, admin, settings):
 async def test_een_vast_getal_in_de_query_string_komt_bij_de_stub(client, admin):
     """Een keuze uit vaste getallen in de query (?size=96, ?hidden=1) komt als tekst binnen, zoals
     de web hem stuurt (wireQuery). Literal[96, 192] alleen neemt geen "96": dan gaf elke waarde
-    422 en kwam niemand bij de route (gevonden bij de samenvoeging van Z0b)."""
+    422 en kwam niemand bij de route (gevonden bij de samenvoeging van Z0b). Een stub geeft dan
+    501, een gebouwde route zijn gewone antwoord (Z6: GET /people?hidden=1)."""
     headers, _ = admin
     schema = app.openapi()["paths"]
     gezien = set()
-    for method, path, body, who, *_ in ENDPOINTS:
-        if (method, path) in BUILT or who == "token":
+    for method, path, body, who, _model, _out, status, _package in ENDPOINTS:
+        if who == "token":
             continue
+        expect = (status or 200) if (method, path) in BUILT else 501
         for param in schema[path][method.lower()].get("parameters", []):
             keuzes = param["schema"].get("enum", [])
             if param["in"] != "query" or not keuzes or not all(type(k) is int for k in keuzes):
@@ -362,7 +409,7 @@ async def test_een_vast_getal_in_de_query_string_komt_bij_de_stub(client, admin)
                 r = await client.request(
                     method, url_of(path), json=body, params=params, headers=headers
                 )
-                assert r.status_code == 501, (method, path, params, r.status_code, r.text)
+                assert r.status_code == expect, (method, path, params, r.status_code, r.text)
             params = {**QUERY.get(path, {}), param["name"]: str(max(keuzes) + 1)}
             r = await client.request(
                 method, url_of(path), json=body, params=params, headers=headers
@@ -426,9 +473,10 @@ async def test_de_woorden_alleen_met_het_token_van_dit_bestand(client, admin, se
 
 
 async def test_zoeken_werkt_via_likefallback(client, admin, settings, monkeypatch):
-    """De vraag van 0.7.0 blijft werken; het antwoord heeft de velden van fase 6 erbij. Met de
+    """Een vraag zoals in 0.7.0 (q) werkt; het antwoord heeft de velden van fase 6 erbij. Met de
     index uit via LikeFallback, met de index aan (sinds Z1) via FtsEngine: dezelfde treffer,
-    met engine fts en een gerangschikte pagina."""
+    met engine fts en een gerangschikte pagina. De grenzen van 0.7.0 (archive als soort, limit
+    tot 200) zijn sinds Z4 in beide motoren een 422 ("De overgang" in §3.4)."""
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]
     await put(client, headers, root_id, "Jaarverslag 2025.pdf", b"%PDF-1.4\n")
@@ -444,10 +492,14 @@ async def test_zoeken_werkt_via_likefallback(client, admin, settings, monkeypatc
     assert hit["match"] == "name" and hit["snippet"] is None
     assert page["more"] is False and page["engine"] == "like" and page["names_only"] is True
     assert page["partial"] is False and page["ranked"] is False and page["offset"] == 0
-    # 0.7.0: archive als soort en limit tot 200
-    for params in ({"type": "archive"}, {"q": "x", "limit": 200}):
+    # De grenzen van 0.7.0: archive als soort en limit tot 200 zijn sinds Z4 een 422
+    for params, veld in (
+        ({"type": "archive"}, "query.type.0"),
+        ({"q": "x", "limit": 200}, "query.limit"),
+    ):
         r = await client.get("/api/v1/search", params=params, headers=headers)
-        assert r.status_code == 200, (params, r.text)
+        assert r.status_code == 422, (params, r.text)
+        assert r.json()["detail"]["params"] == {"field": veld}, params
     r = await client.get("/api/v1/search/suggest", params={"q": "jaar"}, headers=headers)
     assert r.status_code == 200
     assert r.json() == {"names": [], "people": [], "places": [], "tags": [], "albums": []}
@@ -468,11 +520,14 @@ async def test_zoeken_werkt_via_likefallback(client, admin, settings, monkeypatc
     assert page["more"] is False and page["engine"] == "fts" and page["names_only"] is False
     assert page["partial"] is False and page["ranked"] is True and page["offset"] == 0
     assert page["after"] is None and page["mode"] == "text" and page["fallback"] is None
-    # 0.7.0 blijft via LikeFallback lopen, ook met de index aan
-    for params in ({"type": "archive"}, {"q": "x", "limit": 200}):
+    # Ook met de index aan: geen tak meer naar LikeFallback, maar dezelfde 422
+    for params, veld in (
+        ({"type": "archive"}, "query.type.0"),
+        ({"q": "x", "limit": 200}, "query.limit"),
+    ):
         r = await client.get("/api/v1/search", params=params, headers=headers)
-        assert r.status_code == 200, (params, r.text)
-        assert r.json()["engine"] == "like", params
+        assert r.status_code == 422, (params, r.text)
+        assert r.json()["detail"]["params"] == {"field": veld}, params
 
 
 async def test_zoeken_op_beeld_is_van_x3(client, admin):

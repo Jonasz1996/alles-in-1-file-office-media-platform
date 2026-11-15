@@ -1,0 +1,10 @@
+# De modellen van de container analyse (fase 6, Keuze 58; formaat van A0, app/analyse/lock.py).
+# Eén regel per bestand: sha256 bytes naam url. Een veld dat met # begint, begint een opmerking.
+# naam is een pad onder MODELLEN_ROOT; url is https://, of - voor een bestand dat de host zelf
+# maakt (de omzetting van X3). install.sh haalt elk bestand, controleert de grootte en de
+# sha256, en de worker rekent de sha256 na over de bytes die hij laadt. X3 voegt zijn regels toe.
+#
+# YuNet 2026may (MIT, Copyright (c) 2020 Shiqi Yu) en SFace 2021dec fp32 (Apache-2.0), van
+# opencv_zoo op een vaste commit; de licenties staan in licenties/.
+ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0 229738 face_detection_yunet_2026may.onnx https://media.githubusercontent.com/media/opencv/opencv_zoo/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_detection_yunet/face_detection_yunet_2026may.onnx
+0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79 38696353 face_recognition_sface_2021dec.onnx https://media.githubusercontent.com/media/opencv/opencv_zoo/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_recognition_sface/face_recognition_sface_2021dec.onnx

@@ -20,9 +20,12 @@
 - **Schrijven** gebeurt door de stroom (`Sink.store`: `<n>.m4s.tmp`, dan atomair hernoemen, en
   de wachtende verzoeken wekken), op volgorde, in een eigen taak.
 - **Tegendruk** (Keuze 26): de app leest niet verder als hij `Sink.limit_ms()` voor ligt op de
-  speler (60 s in mediatijd, of 10 s zolang een andere sessie nog geen eerste segment heeft:
-  startvoorrang), of als er twee segmenten op schrijven wachten. ffmpeg blokkeert dan op de
-  pipe en kost niets.
+  speler (60 s in mediatijd, of 10 s zolang een andere sessie voorrang heeft: startvoorrang tot
+  haar eerste segment, of herstartvoorrang tot de run na een herstart 10 s maakte (B71,
+  voorstel; fase-5 Bevinding 3), elk hooguit 20 s), of als er twee segmenten op schrijven
+  wachten. ffmpeg blokkeert dan op de pipe en kost niets. `flow` kijkt het na per stuk van de
+  pipe, per geschreven segment, bij een verzoek en bij de waakhond; een voorrang die begint of
+  ophoudt, kickt alle producenten (streams._kick).
 - **Vast** (Keuze 26, 46): 30 s geen fragment terwijl de app leest: de run faalt
   (`Stalled`). **Pauze**: 120 s geen verzoek van de speler: de run stopt (`idle`); de sessie
   blijft. Allebei ziet de waakhond (elke seconde).
