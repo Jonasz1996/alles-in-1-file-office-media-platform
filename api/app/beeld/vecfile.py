@@ -1,0 +1,195 @@
+"""Het bestand per eigenaar van zoeken op beeld maken (bouwontwerp fase 6, X3; Keuze 76; X3b).
+
+build() leest de rijen van blob_embed voor de beeldbestanden van één eigenaar en schrijft
+`<beeld_dir>/<user_id als 32 hex>.vec` in het formaat van types.py: eerst naar een tijdelijk
+bestand (O_EXCL, O_NOFOLLOW) in dezelfde map, dan os.replace. Zo krijgt de worker voor een nieuwe
+inhoud altijd een nieuwe inode (zijn cache onthoudt de sha256 per inode, K2-23).
+
+- **Wat erin staat**: elke node van die eigenaar met kind file en ftype image en een vector van de
+  versie van nu, ook in de prullenbak (de vraag filtert met own_live, Keuze 78), op num. Niet wat
+  Keuze 69 uitsluit (origin_ok): een upload via een link nooit, die van een ander alleen als die
+  ander zelf beeld aan heeft. Een node zonder rij in node_origin (van vóór 0011) telt als door de
+  eigenaar zelf geüpload (Vraag 9).
+- **Eén momentopname**: het aantal, gen uit beeld_owner en de rijen komen uit één leestransactie;
+  de kop klopt dus altijd met de inhoud. Per CHUNK rijen gelezen (op num), nooit alles tegelijk.
+- **Daarna** beeld_owner: built_gen (de gen van de momentopname), built_rows en built_at.
+
+Geen vector in een log of een fout (K1-16); het log noemt alleen aantallen.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+import os
+import secrets
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+
+from sqlalchemy import text, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.analysis import VERSIONS, Step
+from app.beeld import types as vt
+from app.models import BeeldOwner, now
+from app.prefs import PHOTO_PREFS
+
+log = logging.getLogger("platform.beeld")
+
+CHUNK = 2000  # rijen per keer lezen (Keuze 76)
+SUFFIX = ".vec"
+
+
+def on_users_sql() -> str:
+    """De gebruikers met beeld aan, als subquery. NULL in photo_pref.beeld is de standaard van
+    PHOTO_PREFS (Vraag 11: uit); zo verandert een ander antwoord alleen de code."""
+    if PHOTO_PREFS["beeld"] == "aan":
+        return (
+            'SELECT u.id FROM "user" AS u LEFT JOIN photo_pref AS pp ON pp.user_id = u.id '
+            "WHERE pp.beeld IS NULL OR pp.beeld = 'aan'"
+        )
+    return "SELECT pp.user_id FROM photo_pref AS pp WHERE pp.beeld = 'aan'"
+
+
+def origin_ok(n: str = "n") -> str:
+    """Keuze 69 voor beeld, als voorwaarde op node {n}: geen rij in node_origin (Vraag 9), of
+    niet via een link en neergezet door de eigenaar zelf of door iemand met beeld aan."""
+    return (
+        f"(NOT EXISTS (SELECT 1 FROM node_origin AS o WHERE o.node_id = {n}.id) "
+        f"OR EXISTS (SELECT 1 FROM node_origin AS o WHERE o.node_id = {n}.id "
+        f"AND o.via_link = 0 AND o.created_by IS NOT NULL "
+        f"AND (o.created_by = {n}.owner_id OR o.created_by IN ({on_users_sql()}))))"
+    )
+
+
+def _base(me_param: str = ":me") -> str:
+    return (
+        "FROM node AS n JOIN blob_embed AS e ON e.blob_sha = n.blob_id "
+        f"WHERE n.owner_id = {me_param} AND n.kind = 'file' AND n.ftype = 'image' "
+        f"AND e.version = :v AND length(e.vec) = :size AND {origin_ok()}"
+    )
+
+
+def path_for(directory: Path, user_id: uuid.UUID) -> Path:
+    return directory / f"{user_id.hex}{SUFFIX}"
+
+
+def owner_of(path: Path) -> uuid.UUID | None:
+    """De eigenaar uit een bestandsnaam van ons (<32 hex>.vec), anders None."""
+    if path.suffix != SUFFIX or len(path.stem) != 32:
+        return None
+    try:
+        return uuid.UUID(hex=path.stem)
+    except ValueError:
+        return None
+
+
+def ensure_dir(directory: Path) -> Path:
+    """De map (0700, van de app). Een symlink op de plek van de map weigeren we."""
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if directory.is_symlink() or not directory.is_dir():
+        raise OSError("de map voor beeld is geen gewone map")
+    return directory
+
+
+@dataclass(frozen=True)
+class Built:
+    rows: int
+    gen: int
+    path: Path
+
+
+def _write_all(fd: int, data: bytes | memoryview) -> None:
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view) :]
+
+
+async def build(
+    maker: async_sessionmaker[AsyncSession], directory: Path, user_id: uuid.UUID
+) -> Built:
+    """Het bestand van deze eigenaar opnieuw maken; geeft het aantal rijen en de gen."""
+    version = VERSIONS[Step.EMBED]
+    params = {"me": user_id.hex, "v": version, "size": vt.DIM * 2}
+    ensure_dir(directory)
+    final = path_for(directory, user_id)
+    tmp = directory / f".{user_id.hex}.{secrets.token_hex(6)}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    done = False
+    try:
+        async with maker() as db:
+            # Eén leestransactie: aantal, gen en rijen uit dezelfde momentopname
+            count = int(await db.scalar(text(f"SELECT count(*) {_base()}"), params) or 0)
+            gen = int(
+                await db.scalar(
+                    text("SELECT gen FROM beeld_owner WHERE user_id = :me"), {"me": user_id.hex}
+                )
+                or 0
+            )
+            head = vt.Head(vt.MODEL, version, vt.DIM, count, gen)
+            _write_all(fd, vt.pack_head(head))
+            nums_at, vecs_at = head.nums_at(), head.vectors_at()
+            seen, last = 0, -1
+            while seen < count:
+                rows = (
+                    await db.execute(
+                        text(
+                            f"SELECT n.num, e.vec {_base()} AND n.num > :last "
+                            "ORDER BY n.num LIMIT :chunk"
+                        ),
+                        {**params, "last": last, "chunk": CHUNK},
+                    )
+                ).all()
+                if not rows:
+                    break
+                rows = rows[: count - seen]
+                nums = b"".join(vt.NUM.pack(int(r[0])) for r in rows)
+                vecs = b"".join(bytes(r[1]) for r in rows)
+                os.pwrite(fd, nums, nums_at + seen * vt.NUM.size)
+                os.pwrite(fd, vecs, vecs_at + seen * vt.DIM * 2)
+                seen += len(rows)
+                last = int(rows[-1][0])
+            if seen != count:
+                raise RuntimeError("het aantal rijen veranderde tijdens het lezen")
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, final)
+        done = True
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if not done:
+            with contextlib.suppress(FileNotFoundError):
+                tmp.unlink()
+    async with maker() as db:
+        await db.execute(
+            update(BeeldOwner)
+            .where(BeeldOwner.user_id == user_id)
+            .values(built_gen=gen, built_rows=count, built_at=now())
+        )
+        await db.commit()
+    log.info("beeld: bestand gemaakt met %d foto's", count)
+    return Built(count, gen, final)
+
+
+def remove(directory: Path, user_id: uuid.UUID) -> bool:
+    """Het bestand van deze eigenaar weg; True als het er was."""
+    try:
+        path_for(directory, user_id).unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def open_for_worker(directory: Path, user_id: uuid.UUID) -> int | None:
+    """Een fd (alleen lezen, zonder symlinks) voor rank; None zonder bestand."""
+    try:
+        return os.open(path_for(directory, user_id), os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return None
+
+
+def read_head_of(fd: int) -> vt.Head:
+    return vt.read_head(os.pread(fd, vt.HEAD.size, 0))

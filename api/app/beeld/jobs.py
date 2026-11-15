@@ -1,0 +1,650 @@
+"""Het achterwerk van zoeken op beeld (bouwontwerp fase 6, X3; Keuzes 69, 76, 77, 82; X3b).
+
+**Alleen met de analyse aan** (FACTS van golf 6: 0.8.0 blijft onzichtbaar). Bij het importeren meldt
+dit bestand alleen on_start aan (search.hooks.backfill), en die doet niets zonder
+Settings.analyse_on. Met de analyse aan zet enable() de stap embed, de jobs, de haak na
+preview.ready, de schakelaar beeld in de foto-instellingen en het deel beeld van /admin/search
+erbij. Zonder: geen rij in analysis voor embed, geen job in de rij analyse, geen bestand onder
+DATA_ROOT, en elke route van X3 antwoordt zoals in 0.8.0.
+
+- **write_embed()** is de enige schrijver van blob_embed (zoals write_text, Keuze 3): eerst een
+  SELECT, dan een gewone INSERT of één UPDATE. In dezelfde transactie gaat beeld_owner.gen + 1
+  voor elke eigenaar van een beeldbestand met die sha (gewone INSERT … WHERE NOT EXISTS en UPDATE,
+  zoals de triggers van 0012). tests/beeld/test_embed_step.py houdt dat vast met een AST-test.
+- **De stap embed** (Step.EMBED, rij analyse, batches van PLATFORM_BEELD_BATCH): eligible zegt
+  alleen "dit is een foto" (mime.ftype); run_batch beslist de rest. Wijkt (jobs.Defer) als de
+  beheerder beeld uit heeft, zolang de index nog een backfill heeft (K2-07: de tekst gaat vóór),
+  zonder container (DEFER_DOWN) of zonder beeldmodel (DEFER_MODEL). Per inhoud: skip als geen
+  eigenaar met beeld aan hem wil (Keuze 69: zelf geüpload, of door iemand met beeld aan; via een
+  link nooit), none met no_preview zonder 256.webp, anders samen met de rest van de batch één
+  embed_image met de previews als fd (nooit het pad, P8). Wat de container per foto zegt: ok is
+  write_embed; image_bad, unreadable en too_big zijn meteen failed.
+- **Na preview.ready** gaat een inhoud met none/no_preview terug op wait.
+- **Het bestand per eigenaar** (job beeld.vec, rij index): als gen > built_gen, hooguit eens per
+  PLATFORM_BEELD_REBUILD_S, en al na FRESH_S als die eigenaar net zocht. Daarna opwarmen (rank met
+  k = 0) als die eigenaar de afgelopen RECENT_S zocht (K2-13). Het opruimwerk (housekeeping
+  "beeld") zet elke minuut de bestanden klaar die achterlopen, en ruimt bestanden op van wie er
+  niet meer is of beeld uit heeft (met forget naar de container).
+- **Aan** (job beeld.on): de foto's van die eigenaar terug op wait, en de backfill.
+- **Uit** (job beeld.off, rij default): het bestand weg, forget, de rijen van blob_embed die geen
+  andere eigenaar met beeld aan nog heeft, en die stappen op skip (K1-08).
+- **Wissen** door de beheerder (job beeld.wipe, rij default): alle rijen van blob_embed, alle
+  bestanden, forget voor elke eigenaar; de stappen terug op wait (de backfill als beeld aan staat).
+
+Nooit in een log of fout: een vector, een vraag, de naam van een bestand (alleen 12 tekens sha).
+"""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+import os
+import time
+import uuid
+from datetime import timedelta
+from itertools import batched
+from pathlib import Path
+from typing import Any
+
+from sqlalchemy import bindparam, func, select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app import analysis, jobs, mime, prefs, previews
+from app.analyse import client, monitor, wire
+from app.analyse.wire import Op
+from app.analysis import Outcome, Step
+from app.beeld import types as vt
+from app.beeld import vecfile
+from app.config import Settings
+from app.db import get_engine
+from app.models import Analysis, BeeldOwner, BlobEmbed, Job, Setting, now
+from app.search import hooks as search_hooks
+from app.storage import BlobStore
+
+log = logging.getLogger("platform.beeld")
+
+LANE = "analyse"
+VEC = "beeld.vec"
+ON = "beeld.on"
+OFF = "beeld.off"
+WIPE = "beeld.wipe"
+SWEEP = "beeld"  # housekeeping
+SWEEP_S = 60.0
+SETTING = "search"  # Setting "search" {"beeld": bool}: de schakelaar van de beheerder (Keuze 82)
+PREVIEW = f"{previews.THUMB}.webp"  # Keuze 77: de preview van 256
+OFF_DEFER_S = 300.0
+INDEX_DEFER_S = 60.0
+RECENT_S = 24 * 3600.0  # wie zo kort geleden zocht, krijgt zijn nieuwe bestand opgewarmd
+FRESH_S = 30.0  # een eigenaar die net zocht: het bestand opnieuw als het ouder is dan dit
+SOON_S = 10.0  # en dan na zoveel seconden
+FINAL = frozenset({"image_bad", "unreadable", "too_big"})
+# De bestanden van het beeldmodel die de container moet hebben (models.lock, Keuze 84)
+FILES = tuple(
+    f"{vt.MODEL}/{name}"
+    for name in ("beeld.int8.onnx", "tekst.int8.onnx", "tokenizer.bin", "meta.json")
+)
+CHUNK = 500
+
+_settings: Settings | None = None  # gezet door enable(); None: beeld doet niet mee
+_searched: dict[uuid.UUID, float] = {}  # wanneer elke eigenaar het laatst op beeld zocht
+
+
+def _maker(settings: Settings) -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(get_engine(settings), expire_on_commit=False)
+
+
+def enabled() -> Settings | None:
+    return _settings
+
+
+def searched(user_id: uuid.UUID) -> None:
+    """De zoekroute: deze eigenaar zocht nu (opwarmen en sneller een nieuw bestand)."""
+    _searched[user_id] = time.time()
+
+
+def recently(user_id: uuid.UUID, seconds: float = RECENT_S) -> bool:
+    return time.time() - _searched.get(user_id, 0.0) < seconds
+
+
+# --- aan of uit ----------------------------------------------------------------------------------
+
+
+async def admin_on(db: AsyncSession) -> bool:
+    """De schakelaar van de beheerder (Setting "search", veld beeld; standaard aan)."""
+    row = await db.get(Setting, SETTING, populate_existing=True)
+    value = row.value if row is not None and isinstance(row.value, dict) else {}
+    return bool(value.get("beeld", True))
+
+
+async def set_admin(db: AsyncSession, value: bool) -> None:
+    """In de transactie van de aanroeper."""
+    row = await db.get(Setting, SETTING, populate_existing=True)
+    merged = {**(row.value if row is not None and isinstance(row.value, dict) else {})}
+    merged["beeld"] = bool(value)
+    if row is None:
+        db.add(Setting(key=SETTING, value=merged))
+    else:
+        row.value = merged
+    await db.flush()
+
+
+async def user_on(db: AsyncSession, user_id: uuid.UUID) -> bool:
+    return (await prefs.photo_prefs(db, user_id))["beeld"] == "aan"
+
+
+def ready(found: monitor.AnalyseStatus | None = None) -> bool:
+    """De container is er en heeft het beeldmodel (caps.beeld uit een goede meta.json)."""
+    found = monitor.status() if found is None else found
+    return (
+        found.state in ("ok", "models_missing")
+        and found.caps is not None
+        and found.caps.beeld is not None
+        and found.caps.beeld.dim == vt.DIM
+        and found.built(Op.RANK)
+        and found.ready(FILES)
+    )
+
+
+def _wait(found: monitor.AnalyseStatus) -> jobs.Defer | None:
+    if found.state in ("off", "down"):
+        return jobs.Defer(monitor.DEFER_DOWN)
+    if not ready(found) or not found.built(Op.EMBED_IMAGE):
+        return jobs.Defer(monitor.DEFER_MODEL)
+    return None
+
+
+# --- write_embed (Keuze 76) ----------------------------------------------------------------------
+
+_BUMP_NEW = text(
+    "INSERT INTO beeld_owner (user_id, gen, built_gen, built_rows) "
+    "SELECT DISTINCT n.owner_id, 0, 0, 0 FROM node AS n "
+    "WHERE n.blob_id = :sha AND n.kind = 'file' AND n.ftype = 'image' "
+    "AND NOT EXISTS (SELECT 1 FROM beeld_owner AS b WHERE b.user_id = n.owner_id)"
+)
+_BUMP = text(
+    "UPDATE beeld_owner SET gen = gen + 1 WHERE user_id IN (SELECT n.owner_id FROM node AS n "
+    "WHERE n.blob_id = :sha AND n.kind = 'file' AND n.ftype = 'image')"
+)
+
+
+async def write_embed(db: AsyncSession, sha: str, vec: bytes, model: str = vt.MODEL) -> None:
+    """De vector van een inhoud (768 × float16, L2 = 1), in de transactie van de aanroeper (die
+    commit; één korte transactie per blob). De enige schrijver van blob_embed."""
+    if len(vec) != vt.DIM * 2:
+        raise ValueError("een vector heeft dim × 2 bytes")
+    version = analysis.VERSIONS[Step.EMBED]
+    found = await db.scalar(select(BlobEmbed.id).where(BlobEmbed.blob_sha == sha))
+    values = {"model": model, "version": version, "vec": vec, "updated_at": now()}
+    if found is None:
+        await db.execute(BlobEmbed.__table__.insert().values(blob_sha=sha, **values))
+    else:
+        await db.execute(
+            BlobEmbed.__table__.update().where(BlobEmbed.__table__.c.id == found).values(**values)
+        )
+    await db.execute(_BUMP_NEW, {"sha": sha})
+    await db.execute(_BUMP, {"sha": sha})
+
+
+# --- de stap embed (Keuze 77) --------------------------------------------------------------------
+
+
+def eligible(sha: str, mime_type: str | None) -> bool:
+    return mime.ftype((mime_type or "").split(";")[0].strip().lower()) == "image"
+
+
+def batch_size(settings: Settings) -> int:
+    return settings.beeld_batch
+
+
+def _in(sql: str) -> Any:
+    return text(sql).bindparams(bindparam("shas", expanding=True))
+
+
+def _wanted_sql() -> str:
+    return (
+        "SELECT DISTINCT n.blob_id FROM node AS n WHERE n.blob_id IN :shas "
+        "AND n.kind = 'file' AND n.ftype = 'image' AND n.dead = 0 "
+        f"AND n.owner_id IN ({vecfile.on_users_sql()}) AND {vecfile.origin_ok()}"
+    )
+
+
+def _owners_sql() -> str:
+    return (
+        "SELECT DISTINCT n.owner_id FROM node AS n WHERE n.blob_id IN :shas "
+        f"AND n.kind = 'file' AND n.ftype = 'image' AND n.owner_id IN ({vecfile.on_users_sql()})"
+    )
+
+
+async def _index_busy(db: AsyncSession) -> bool:
+    """K2-07: de tekst gaat vóór. Zolang de backfill van de analyse klaarstaat of loopt, of de
+    index nog veel open heeft, wacht beeld."""
+    pending = await db.scalar(
+        select(func.count())
+        .select_from(Job)
+        .where(Job.type == analysis.BACKFILL, Job.status.in_(("queued", "running")))
+    )
+    if pending:
+        return True
+    return await analysis.indexing(db, Step.TEXT) is not None
+
+
+def _open_preview(store: BlobStore, sha: str) -> int | None:
+    path = previews.directory(store, sha) / PREVIEW
+    try:
+        return os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return None
+
+
+async def run_one(settings: Settings, sha: str) -> Outcome | None:
+    return (await run_batch(settings, [sha])).get(sha)
+
+
+async def run_batch(settings: Settings, shas: list[str]) -> dict[str, Outcome]:
+    maker = _maker(settings)
+    async with maker() as db:
+        if not await admin_on(db):
+            raise jobs.Defer(OFF_DEFER_S)
+        if await _index_busy(db):
+            raise jobs.Defer(INDEX_DEFER_S)
+    found = monitor.status()
+    defer = _wait(found)
+    if defer is not None:
+        raise defer
+    assert found.caps is not None and found.caps.beeld is not None
+    model = found.caps.beeld.model
+    async with maker() as db:
+        wanted = set((await db.execute(_in(_wanted_sql()), {"shas": shas})).scalars())
+    outcomes: dict[str, Outcome] = {}
+    todo: list[str] = []
+    fds: list[int] = []
+    store = BlobStore(settings.blob_dir)
+    size = vt.DIM * 2
+    try:
+        for sha in shas:
+            if sha not in wanted:
+                outcomes[sha] = Outcome("skip")
+                continue
+            fd = _open_preview(store, sha)
+            if fd is None:
+                outcomes[sha] = Outcome("none", "no_preview")
+                continue
+            todo.append(sha)
+            fds.append(fd)
+        if not todo:
+            return outcomes
+        out = wire.out_memfd("uit")
+        try:
+            data = await client.call(
+                settings, Op.EMBED_IMAGE, wire.EmbedImageArgs(), fds=[*fds, out]
+            )
+            raw = wire.read_all(out, len(todo) * size)
+        finally:
+            os.close(out)
+    except (client.AnalyseDown, client.AnalyseBusy, client.AnalyseFailed) as exc:
+        deferred = monitor.deferral(exc)
+        if deferred is not None:
+            raise deferred from None
+        code = exc.code if isinstance(exc, client.AnalyseFailed) else "internal"
+        log.warning("beeld: embed_image mislukt (%s)", code)
+        for sha in todo:
+            outcomes[sha] = Outcome("failed", code)
+        return outcomes
+    finally:
+        for fd in fds:
+            os.close(fd)
+    try:
+        photos = wire.EmbedImageData.model_validate(data).photos
+    except ValueError:
+        photos = []
+    for i, sha in enumerate(todo):
+        code = photos[i].code if i < len(photos) else "internal"
+        vec = raw[i * size : (i + 1) * size]
+        if code == "ok" and len(vec) == size and any(vec):
+            async with maker() as db:
+                await write_embed(db, sha, vec, model)
+                await db.commit()
+            outcomes[sha] = Outcome("done")
+        elif code in FINAL:
+            outcomes[sha] = Outcome("failed", code, retry=False)
+        else:
+            outcomes[sha] = Outcome("failed", "internal" if code == "ok" else code)
+    done = [sha for sha, o in outcomes.items() if o.state == "done"]
+    if done:
+        async with maker() as db:
+            owners = (await db.execute(_in(_owners_sql()), {"shas": done})).scalars().all()
+            for owner in owners:
+                await queue_vec(db, _uuid(owner), settings)
+            await db.commit()
+    return outcomes
+
+
+def _uuid(value: Any) -> uuid.UUID:
+    return value if isinstance(value, uuid.UUID) else uuid.UUID(hex=str(value))
+
+
+async def on_preview_ready(maker: async_sessionmaker[AsyncSession], sha: str, dated: bool) -> None:
+    """previews.register_ready: een inhoud die op zijn preview wachtte, gaat terug op wait."""
+    if _settings is None:
+        return
+    async with maker() as db:
+        row = (
+            await db.execute(
+                select(Analysis.state, Analysis.code).where(
+                    Analysis.blob_sha == sha, Analysis.step == Step.EMBED.value
+                )
+            )
+        ).first()
+        if row is None or (row.state == "none" and row.code == "no_preview"):
+            await analysis.queue(db, sha, [Step.EMBED], owner=None, again=True)
+            await db.commit()
+
+
+# --- het bestand per eigenaar (job beeld.vec) ----------------------------------------------------
+
+
+def _key(user_id: uuid.UUID) -> str:
+    return f"{VEC}:{user_id.hex}"
+
+
+def wait_s(row: BeeldOwner, settings: Settings, at: float | None = None) -> float:
+    """Hoe lang nog tot het bestand opnieuw mag: hooguit eens per PLATFORM_BEELD_REBUILD_S, en
+    al na FRESH_S als de eigenaar net zocht (Keuze 76)."""
+    if row.built_at is None:
+        return 0.0
+    built = row.built_at.timestamp()
+    gap = FRESH_S if recently(row.user_id, settings.beeld_rebuild_s) else settings.beeld_rebuild_s
+    return max(0.0, built + gap - (time.time() if at is None else at))
+
+
+async def queue_vec(
+    db: AsyncSession, user_id: uuid.UUID, settings: Settings, *, soon: bool = False
+) -> None:
+    """De job beeld.vec voor deze eigenaar klaarzetten (in de transactie van de aanroeper)."""
+    row = await db.get(BeeldOwner, user_id, populate_existing=True)
+    delay = SOON_S if soon else 0.0
+    if row is not None:
+        delay = max(delay, wait_s(row, settings))
+    await jobs.enqueue(
+        db,
+        VEC,
+        {"user": user_id.hex},
+        key=_key(user_id),
+        run_after=now() + timedelta(seconds=delay) if delay else None,
+    )
+
+
+async def vec_job(settings: Settings, payload: dict[str, Any]) -> None:
+    user_id = uuid.UUID(hex=str(payload["user"]))
+    maker = _maker(settings)
+    async with maker() as db:
+        row = await db.get(BeeldOwner, user_id, populate_existing=True)
+        on = await admin_on(db) and await user_on(db, user_id)
+    if row is None or not on:
+        return
+    path = vecfile.path_for(settings.beeld_dir, user_id)
+    if row.gen <= row.built_gen and row.built_at is not None and path.exists():
+        return
+    delay = wait_s(row, settings)
+    if delay > 0:
+        async with maker() as db:
+            await jobs.chain(
+                db,
+                VEC,
+                {"user": user_id.hex},
+                _key(user_id),
+                run_after=now() + timedelta(seconds=delay),
+            )
+            await db.commit()
+        return
+    built = await vecfile.build(maker, settings.beeld_dir, user_id)
+    if recently(user_id):
+        await warm(settings, user_id)
+    del built
+
+
+async def warm(settings: Settings, user_id: uuid.UUID) -> bool:
+    """rank met k = 0: het bestand alvast in het geheugen van de container (K2-13). Faalt stil
+    (alleen de code in het log)."""
+    if not ready():
+        return False
+    fd = vecfile.open_for_worker(settings.beeld_dir, user_id)
+    if fd is None:
+        return False
+    try:
+        head = vecfile.read_head_of(fd)
+        await client.call(
+            settings,
+            Op.RANK,
+            wire.RankArgs(owner=user_id.hex, gen=head.gen, k=0),
+            fds=[fd],
+        )
+        return True
+    except (client.AnalyseDown, client.AnalyseBusy, client.AnalyseFailed, vt.VecFileError) as exc:
+        log.info("beeld: opwarmen lukte niet (%s)", type(exc).__name__)
+        return False
+    finally:
+        os.close(fd)
+
+
+async def forget(settings: Settings, user_id: uuid.UUID) -> None:
+    """forget naar de container (K1-08). Zonder container: Defer, zodat de job het later nog eens
+    doet (alles ervoor is dan al gedaan, en mag nog eens)."""
+    if monitor.status().state == "off":
+        return
+    try:
+        await client.call(settings, Op.FORGET, wire.ForgetArgs(owner=user_id.hex))
+    except (client.AnalyseDown, client.AnalyseBusy, client.AnalyseFailed) as exc:
+        deferred = monitor.deferral(exc)
+        if deferred is not None:
+            raise deferred from None
+        if not (isinstance(exc, client.AnalyseFailed) and exc.code == "not_built"):
+            raise
+
+
+# --- aan, uit en wissen --------------------------------------------------------------------------
+
+
+def _mine_sql() -> str:
+    return (
+        "SELECT n.blob_id FROM node AS n WHERE n.owner_id = :me AND n.kind = 'file' "
+        "AND n.ftype = 'image' AND n.blob_id IS NOT NULL"
+    )
+
+
+async def on_job(settings: Settings, payload: dict[str, Any]) -> None:
+    """Beeld weer aan: de foto's van die eigenaar terug op wait, en de backfill voor de rest."""
+    user_id = uuid.UUID(hex=str(payload["user"]))
+    maker = _maker(settings)
+    async with maker() as db:
+        if not await user_on(db, user_id):
+            return
+        at = now()
+        await db.execute(
+            text(
+                "UPDATE analysis SET state = 'wait', tries = 0, code = NULL, owner_id = :me, "
+                "queued_at = :at, updated_at = :at WHERE step = :step "
+                "AND state IN ('skip', 'none', 'failed') "
+                f"AND blob_sha IN ({_mine_sql()} AND n.dead = 0)"
+            ),
+            {"me": user_id.hex, "at": at, "step": Step.EMBED.value},
+        )
+        await queue_vec(db, user_id, settings)
+        await db.commit()
+    await analysis.recover(settings)
+    await analysis.start_backfill(settings)
+
+
+async def off_job(settings: Settings, payload: dict[str, Any]) -> None:
+    """Beeld uit voor één eigenaar (K1-08): bestand weg, rijen weg die niemand met beeld aan nog
+    heeft, die stappen op skip, en forget naar de container."""
+    user_id = uuid.UUID(hex=str(payload["user"]))
+    maker = _maker(settings)
+    vecfile.remove(settings.beeld_dir, user_id)
+    async with maker() as db:
+        if await user_on(db, user_id):
+            return  # intussen weer aan
+        others = (
+            "SELECT 1 FROM node AS m WHERE m.blob_id = e.blob_sha AND m.kind = 'file' "
+            "AND m.ftype = 'image' AND m.owner_id != :me "
+            f"AND m.owner_id IN ({vecfile.on_users_sql()})"
+        )
+        shas = (
+            (
+                await db.execute(
+                    text(
+                        f"SELECT e.blob_sha FROM blob_embed AS e WHERE e.blob_sha IN "
+                        f"({_mine_sql()}) AND NOT EXISTS ({others})"
+                    ),
+                    {"me": user_id.hex},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for chunk in batched(shas, CHUNK):
+            await db.execute(BlobEmbed.__table__.delete().where(BlobEmbed.blob_sha.in_(chunk)))
+            await db.execute(
+                update(Analysis)
+                .where(Analysis.step == Step.EMBED.value, Analysis.blob_sha.in_(chunk))
+                .values(state="skip", code=None, updated_at=now())
+            )
+        await db.execute(
+            update(BeeldOwner)
+            .where(BeeldOwner.user_id == user_id)
+            .values(built_gen=0, built_rows=0, built_at=None)
+        )
+        await db.commit()
+    _searched.pop(user_id, None)
+    await forget(settings, user_id)
+
+
+async def wipe_job(settings: Settings, payload: dict[str, Any]) -> None:
+    """De beeldindex wissen (Keuze 82): alle vectoren, alle bestanden, het geheugen van de
+    container. De stappen gaan terug op wait: staat beeld aan, dan begint de backfill opnieuw."""
+    maker = _maker(settings)
+    async with maker() as db:
+        await db.execute(BlobEmbed.__table__.delete())
+        await db.execute(
+            update(Analysis)
+            .where(Analysis.step == Step.EMBED.value, Analysis.state.in_(("done", "failed")))
+            .values(state="wait", tries=0, code=None, queued_at=now(), updated_at=now())
+        )
+        await db.execute(update(BeeldOwner).values(built_gen=0, built_rows=0, built_at=None))
+        owners = set((await db.scalars(select(BeeldOwner.user_id))).all())
+        await db.commit()
+    owners |= remove_all(settings.beeld_dir)
+    _searched.clear()
+    for owner in sorted(owners):
+        await forget(settings, owner)
+    await analysis.recover(settings)
+
+
+def remove_all(directory: Path) -> set[uuid.UUID]:
+    """Alle bestanden van ons in de map weg (ook tijdelijke); geeft de eigenaren."""
+    found: set[uuid.UUID] = set()
+    if not directory.is_dir() or directory.is_symlink():
+        return found
+    for path in directory.iterdir():
+        owner = vecfile.owner_of(path)
+        if owner is not None:
+            found.add(owner)
+        elif not (path.name.startswith(".") and path.name.endswith(".tmp")):
+            continue
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+    return found
+
+
+async def sweep(settings: Settings) -> None:
+    """Het opruimwerk (eens per SWEEP_S): bestanden die achterlopen klaarzetten, en bestanden
+    weghalen van wie er niet meer is of beeld uit heeft (met forget)."""
+    if _settings is None:
+        return
+    maker = _maker(settings)
+    on = f"SELECT b.user_id FROM beeld_owner AS b WHERE b.user_id IN ({vecfile.on_users_sql()})"
+    async with maker() as db:
+        stale = (await db.execute(text(f"{on} AND b.gen > b.built_gen"))).scalars().all()
+        if stale and await admin_on(db):
+            for owner in stale:
+                await queue_vec(db, _uuid(owner), settings)
+            await db.commit()
+        keep = {_uuid(owner) for owner in (await db.execute(text(on))).scalars().all()}
+    directory = settings.beeld_dir
+    if not directory.is_dir() or directory.is_symlink():
+        return
+    for path in directory.iterdir():
+        owner = vecfile.owner_of(path)
+        if owner is None or owner in keep:
+            continue
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+        _searched.pop(owner, None)
+        with contextlib.suppress(jobs.Defer, client.AnalyseFailed):
+            await forget(settings, owner)
+
+
+# --- de schakelaar per gebruiker (prefs, Keuze 82) -----------------------------------------------
+
+
+async def switch_state(db: AsyncSession, user: Any) -> prefs.SwitchState:
+    return prefs.SwitchState(forbidden=not await admin_on(db), available=True)
+
+
+async def switch_changed(db: AsyncSession, user: Any, value: str) -> None:
+    """Na het schrijven van PATCH /me/photo-settings, in dezelfde transactie."""
+    kind = ON if value == "aan" else OFF
+    await jobs.enqueue(db, kind, {"user": user.id.hex}, key=f"{kind}:{user.id.hex}")
+
+
+# --- aanmelden -----------------------------------------------------------------------------------
+
+
+def enable(settings: Settings) -> bool:
+    """Alles van beeld aanmelden, alleen met de analyse aan; twee keer kan."""
+    global _settings
+    if not settings.analyse_on:
+        return False
+    _settings = settings
+    if Step.EMBED not in analysis.registered():
+        analysis.register_step(
+            Step.EMBED, LANE, eligible, run_one, batch=run_batch, size=batch_size
+        )
+    jobs.register(VEC, vec_job, lane="index", timeout=600.0)
+    jobs.register(ON, on_job, lane="default", timeout=600.0)
+    jobs.register(OFF, off_job, lane="default", timeout=600.0)
+    jobs.register(WIPE, wipe_job, lane="default", timeout=600.0)
+    jobs.housekeeping(SWEEP, sweep, SWEEP_S)
+    search_hooks.register_blob_added(analysis.on_blob_added)
+    previews.register_ready(on_preview_ready)
+    prefs.register_switch("beeld", prefs.Switch(state=switch_state, changed=switch_changed))
+    from app.beeld import admin
+
+    admin.register()
+    return True
+
+
+def disable() -> None:
+    """Alleen voor tests: alles van enable() weer weg, zodat een volgende test met de analyse
+    uit 0.8.0 ziet."""
+    global _settings
+    _settings = None
+    analysis._steps.pop(Step.EMBED, None)
+    prefs._switches.pop("beeld", None)
+    search_hooks._admin.pop("beeld", None)
+    with contextlib.suppress(ValueError):
+        previews._ready.remove(on_preview_ready)
+    jobs.forget_housekeeping(SWEEP)
+    _searched.clear()
+
+
+async def on_start(settings: Settings) -> None:
+    """search.hooks.backfill bij het starten: met de analyse aan alles aanmelden, de rijen van
+    embed herstellen en de backfill (die na de index komt: run_batch wacht daarop)."""
+    if not enable(settings):
+        return
+    await analysis.recover(settings)
+    await analysis.start_backfill(settings)
+
+
+search_hooks.register_backfill(on_start)
