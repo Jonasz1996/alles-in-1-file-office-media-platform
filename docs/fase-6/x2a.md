@@ -159,6 +159,12 @@ Wat het ontwerp open liet en X2a vastlegde; X2b bouwt erop.
    `server.BUILT`, een handler in `child.handlers(kind)` (`Callable[[Job], dict]`, met `Job.n`,
    `args`, `fds`, `deadline_ms`, `stop` en `models`), tussen de stappen `job.stop.check()`, en
    `OpFailed(code, detail)` met een detail zonder waarden. `caps.built` volgt `BUILT` vanzelf.
+   **Dit zijn de hotspots van golf 6** (review golf 5, G5-C4; bouwontwerp §2.0 en §3.5): X2b
+   en X3b schrijven allebei in `BUILT` en `handlers()`, elk alleen hun eigen regels; de handler
+   zelf staat in een eigen bestand onder `ops/`. Samenvoegen: X3b, dan X2b, en de tweede houdt
+   beide regels. `test_analyse_kinderen.py::test_built_en_de_handlers_van_de_kinderen_zijn_gelijk`
+   eist dat `BUILT` en de handlers precies gelijk zijn (elke op in het kind van `wire.CHILD`), en
+   krijgt in golf 6 de nieuwe exacte lijsten.
 4. **De stand voor `/beheer`.** `state.view(monitor.status())` geeft `AnalyseView` (analyse,
    reason, problem, models, limits); de web vertaalt de sleutel van `reason`.
 5. **`analyse-status`** schrijft de eerste regel zoals A0 (install.sh leest die), daarna de regels

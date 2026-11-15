@@ -2365,6 +2365,18 @@ rijen en leest met `own_live_geo`.
 `InfoPanel.tsx` krijgt in Z0 twee lege plekken (`LocationRow`, `PeopleRow`), en in Z0b een derde
 (`LikeRow`, voor X3); Z5, Z6 en X3 vullen elk hun eigen plek in een eigen bestand.
 
+**De hotspots van golf 6** (na de review van golf 5, G5-C4). De worker is van X2a, maar een
+opdracht erbij kost twee regels in zijn bestanden: de op in `server.BUILT`
+(`app/analyse/worker/server.py`) en een handler in `child.handlers()`
+(`app/analyse/worker/child.py`). In golf 6 doen X2b (`group` in `werk`) en X3b (`embed_image` in
+`werk`; `embed_text`, `rank` en `forget` in `zoeken`) dat allebei. Elk pakket raakt in die twee
+bestanden alleen die twee plekken, en verder niets; de handler zelf staat in een eigen bestand
+onder `ops/` (`ops/group.py` van X2b, `ops/beeld.py` van X3b). Samenvoegen gaat zoals in §5: X3b,
+dan X2b; wie als tweede samenvoegt, houdt beide regels. Daarna eist
+`tests_analyse/test_analyse_kinderen.py::test_built_en_de_handlers_van_de_kinderen_zijn_gelijk`
+dat `BUILT` en de handlers precies gelijk zijn, elke opdracht in het kind van `wire.CHILD`; die
+test krijgt dan de nieuwe exacte lijsten. `wire.CHILD` en de enum `Op` (A0) veranderen niet.
+
 **Regels** (zoals fase 5):
 
 - elk pakket in een eigen worktree; hooguit 3 tegelijk (de sandbox heeft 8 GB en hooguit 3 zware
@@ -4521,6 +4533,16 @@ dag vóór de review van Z0. A0 komt na de eerste integratie, als alle bestanden
 | `app/routers/files.py`, de uploads, `files.place_file` | A0 | `node_origin` vullen bij upload, kopie en `place_file` (Keuze 69) |
 | `app/main.py`, `app/cli.py`, `app/config.py` | A0 | de monitor van `analyse` in de lifespan; `analyse-status`, `analyse-bench`, `analyse-kwaliteit`, `beeld-*` (stubs); de instellingen van §3.11 |
 | `Dockerfile`, `api/pyproject.toml`, `uv.lock` | A0 | het blok van §3.11 en de extra `analyse` |
+
+**Hotspots van golf 6** (na de review van golf 5, G5-C4; zie "De hotspots van golf 6" in §2.0).
+Beide bestanden zijn van X2a; in golf 6 schrijven twee pakketten er één regel per opdracht in.
+Samenvoegen: X3b, dan X2b.
+
+| Bestand | Wie | Wat |
+|---|---|---|
+| `app/analyse/worker/server.py` | X3b en X2b | `BUILT`: X3b `Op.EMBED_IMAGE`, `Op.EMBED_TEXT`, `Op.RANK`, `Op.FORGET`; X2b `Op.GROUP` |
+| `app/analyse/worker/child.py` | X3b en X2b | `handlers()`: X3b `embed_image` in `werk` en `embed_text`, `rank`, `forget` in `zoeken` (uit `ops/beeld.py`); X2b `group` in `werk` (uit `ops/group.py`) |
+| `api/tests_analyse/test_analyse_kinderen.py` | X3b en X2b | de exacte lijsten van `test_built_en_de_handlers_van_de_kinderen_zijn_gelijk` |
 
 ### 3.6 Het harnas en de fixtures
 

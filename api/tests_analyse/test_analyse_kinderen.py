@@ -187,6 +187,24 @@ def test_een_stop_voor_begin_telt_en_een_oude_stop_niet():
     vlag.check()
 
 
+def test_built_en_de_handlers_van_de_kinderen_zijn_gelijk():
+    """Review golf 5, G5-C4: in golf 6 voegen X3b en X2b elk regels toe aan server.BUILT en
+    child.handlers() (de hotspots van golf 6, bouwontwerp §2.0). Na het samenvoegen moeten die
+    twee precies gelijk zijn: elke opdracht in BUILT (behalve caps en cancel, die pid 1 zelf doet)
+    heeft een handler, in het kind dat wire.CHILD noemt, en geen kind doet iets dat niet in BUILT
+    staat. Anders zegt caps.built dat iets gebouwd is dat het kind met not_built weigert."""
+    zelf = {op for op, kind in wire.CHILD.items() if kind is None}
+    assert zelf == {Op.CAPS, Op.CANCEL} and zelf <= server.BUILT
+    for kind in Child:
+        verwacht = {op.value for op in server.BUILT if wire.CHILD[op] is kind}
+        assert set(kids.handlers(kind)) == verwacht, kind
+    assert server.BUILT == frozenset({Op.CAPS, Op.CANCEL, Op.FACES})  # X2a; golf 6 zet hier bij
+    assert {kind: sorted(kids.handlers(kind)) for kind in Child} == {
+        Child.WERK: ["faces"],
+        Child.ZOEKEN: [],
+    }
+
+
 async def test_een_kind_dat_niet_stopt_gaat_na_kill_grace_weg(paar):
     worker, settings = paar
     await _klein(settings)
