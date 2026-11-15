@@ -287,6 +287,11 @@ De groei van het echte image meet de job `images` (A0: ≤ 160 MB); X2a voegt ge
    dat venster groter. Herstel (niet van X2a): in de test eerst wachten tot Brams status geen
    "met 1 ander" meer zegt, of in de web de breedte van de status vastzetten zodat Sluiten niet
    verschuift.
+8. **`test_install_update.sh`** (fase 4, niet in CI: ±17 minuten, het platform vier keer bouwen)
+   is niet gedraaid. Hij weigert in deze sandbox omdat `python:3.12-slim` er al is
+   ([integratie.md](integratie.md), De checks), en dat image mag niet weg. Wat X2a aan
+   `install.sh` veranderde, staat zonder `ANALYSE` uit; `test_install_analyse.sh` toetst terug
+   naar 0.8.0 en weer vooruit.
 
 ## Klaar als
 
