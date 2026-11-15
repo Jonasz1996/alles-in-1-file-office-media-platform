@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import analysis, jobs
@@ -176,11 +176,19 @@ def register() -> None:
 
 
 async def progress(db: AsyncSession, user_id: uuid.UUID) -> float | None:
-    """Hoeveel van de eigen foto's al bekeken is (0..1), of None als er niets meer open staat."""
+    """Hoeveel van de eigen foto's al bekeken is (0..1), of None als er niets meer open staat.
+
+    Eerst of er nog iets open staat (wait of busy: twee zoekstappen in ix_analysis_todo); zo niet,
+    dan None zonder te tellen. Elke beeldvraag vraagt dit, en het tellen liep over alle foto's van
+    de eigenaar: ±9 ms bij 100.000 foto's op één core, bij elke vraag (test_beeld_perf)."""
+    mine = (Analysis.step == Step.EMBED.value, Analysis.owner_id == user_id)
+    busy = await db.scalar(
+        select(literal(1)).where(*mine, Analysis.state.in_(analysis.OPEN)).limit(1)
+    )
+    if busy is None:
+        return None
     rows = await db.execute(
-        select(Analysis.state, func.count())
-        .where(Analysis.step == Step.EMBED.value, Analysis.owner_id == user_id)
-        .group_by(Analysis.state)
+        select(Analysis.state, func.count()).where(*mine).group_by(Analysis.state)
     )
     found = {state: int(n) for state, n in rows.all()}
     open_ = sum(found.get(state, 0) for state in analysis.OPEN)

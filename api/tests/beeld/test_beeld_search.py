@@ -217,3 +217,40 @@ async def test_het_plan_van_stap_5(client, mensen, beeld):
                 lambda c: assert_plan(c, sql, args, require=("ix_node_num",))
             )
             assert "json_each" in plan.eerste or plan.eerste.startswith("SCAN r"), plan.tekst()
+
+
+async def test_de_voortgang_telt_alleen_als_er_iets_open_staat(client, mensen, beeld):
+    """indexing bij zoeken op beeld (admin.progress): staat er niets meer open, dan None zonder
+    te tellen, met één zoekstap in ix_analysis_todo (de GROUP BY over alle foto's van de eigenaar
+    kostte bij elke vraag ±9 ms bij 100.000 foto's, test_beeld_perf). Staat er wel iets open, dan
+    het deel dat klaar is, zoals eerst."""
+    (eva, _), _ = mensen
+    fake, settings = beeld
+    rood, *_ = await _wereld(client, settings, eva)
+    engine = get_engine(settings)
+    gezien: list[tuple[str, object]] = []
+
+    def kijk(conn, cursor, statement, parameters, context, executemany):
+        if "analysis.step" in statement and "analysis.owner_id" in statement:
+            gezien.append((statement, parameters))
+
+    event.listen(engine.sync_engine, "before_cursor_execute", kijk)
+    try:
+        body = (await nep.zoek(client, eva, "rood")).json()
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", kijk)
+    assert (body["mode"], body["indexing"]) == ("image", None), body
+    assert len(gezien) == 1, [sql for sql, _ in gezien]
+    sql, args = gezien[0]
+    assert "GROUP BY" not in sql and "LIMIT" in sql, sql
+    async with engine.connect() as conn:
+        await conn.run_sync(lambda c: assert_plan(c, sql, args, require=("ix_analysis_todo",)))
+    # één van de vier weer open: dan telt hij wel, en 3 van de 4 zijn klaar
+    sha = await nep.sha_of(settings, rood["id"])
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.text("UPDATE analysis SET state = 'wait' WHERE blob_sha = :sha AND step = 'embed'"),
+            {"sha": sha},
+        )
+    body = (await nep.zoek(client, eva, "blauw")).json()
+    assert (body["mode"], body["indexing"]) == ("image", {"done": 0.75}), body
