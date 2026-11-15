@@ -294,36 +294,37 @@ async def write_group(
                 .values(cluster=None)
             )
         await db.execute(update(FaceOwner).where(FaceOwner.owner_id == owner).values(**values))
-    where = [Face.id == bindparam("b_id"), Face.owner_id == owner, Face.hidden == 0]
+    # Core op de tabel (executemany met bindparams): een ORM-update met een lijst van rijen is
+    # "bulk UPDATE by primary key" en wil de id als kolomnaam
+    t = Face.__table__
+    where = [t.c.id == bindparam("b_id"), t.c.owner_id == owner, t.c.hidden == 0]
     sim = [r for r in rows if r["suggest_id"] is not None]
     none = [{"b_id": r["b_id"]} for r in rows if r["suggest_id"] is None]
     if sim:
         await db.execute(
-            update(Face)
+            update(t)
             .where(*where)
             .values(
-                suggest_id=bindparam("suggest_id"),
-                suggest_score=bindparam("suggest_score"),
+                suggest_id=bindparam("b_suggest"),
+                suggest_score=bindparam("b_score"),
                 suggest_why="sim",
-            )
-            .execution_options(synchronize_session=False),
-            [{k: r[k] for k in ("b_id", "suggest_id", "suggest_score")} for r in sim],
+            ),
+            [
+                {"b_id": r["b_id"], "b_suggest": r["suggest_id"], "b_score": r["suggest_score"]}
+                for r in sim
+            ],
         )
     if none:
         await db.execute(
-            update(Face)
-            .where(*where, or_(Face.suggest_why.is_(None), Face.suggest_why == "sim"))
-            .values(suggest_id=None, suggest_score=None, suggest_why=None)
-            .execution_options(synchronize_session=False),
+            update(t)
+            .where(*where, or_(t.c.suggest_why.is_(None), t.c.suggest_why == "sim"))
+            .values(suggest_id=None, suggest_score=None, suggest_why=None),
             none,
         )
     if full:
         await db.execute(
-            update(Face)
-            .where(*where)
-            .values(cluster=bindparam("cluster"))
-            .execution_options(synchronize_session=False),
-            [{"b_id": r["b_id"], "cluster": r["cluster"]} for r in rows],
+            update(t).where(*where).values(cluster=bindparam("b_cluster")),
+            [{"b_id": r["b_id"], "b_cluster": r["cluster"]} for r in rows],
         )
 
 

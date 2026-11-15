@@ -76,6 +76,11 @@ async def test_plannen_zoeken_en_versleuteld_opslaan(settings, nep, fake):
     # De nep kreeg de previews als fd (twee foto's in één opdracht), en groepeerde daarna
     assert nep.seen == 2 and nep.groups >= 1
     assert [s.previews for s in fake.requests if s.op is wire.Op.FACES] == [2]
+    # Elke job (plan, scan, group) liep zonder fout: ook het schrijven van de voorstellen
+    async with maker(settings)() as session:
+        rows = list(await session.execute(select(jobs.Job.type, jobs.Job.error)))
+    assert {t for t, _e in rows} >= {"faces.plan", "faces.scan", "faces.group"}
+    assert [(t, e) for t, e in rows if e is not None] == []
 
 
 async def test_zonder_1024_wacht_en_daarna_klaar(settings, nep):
