@@ -13,13 +13,13 @@ Leest ci.yml als tekst, zoals test_media_ci.py en test_zoek_ci.py:
 
 from __future__ import annotations
 
-import importlib.util
 import re
 
 import yaml
 
+from app.analyse import runtime
 from tests.search.test_zoek_ci import _runs
-from tests.test_media_ci import CI, ROOT, job
+from tests.test_media_ci import CI, job
 
 # De opdrachtregel van de dienst analyse-omzetten: python -I -c <boot> /srv --bron /bron --uit /uit
 BOOT = (
@@ -76,13 +76,9 @@ def test_de_omzetter_start_zoals_de_dienst_analyse_omzetten():
     assert omzetten["env"]["BOOT"] == BOOT
     assert 'python -I -c "$BOOT" "$PWD" --bron "$WERK/bron" --uit "$WERK/uit$n"' in omzetten["run"]
     assert "extra=(--fp32)" in omzetten["run"]
-    # Na de merge met X2a: dezelfde regel als app/analyse/runtime.py
-    runtime = ROOT / "api" / "app" / "analyse" / "runtime.py"
-    if runtime.is_file():
-        spec = importlib.util.spec_from_file_location("runtime_ci", runtime)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        assert mod.OMZET_BOOT == BOOT
+    # Sinds de samenvoeging met X2a: dezelfde regel als app/analyse/runtime.py (de dienst
+    # analyse-omzetten in compose.analyse.yaml start OMZET_BOOT, test_compose_analyse.py)
+    assert runtime.OMZET_BOOT == BOOT
 
 
 def test_elke_bz_heeft_een_stap():
@@ -113,7 +109,13 @@ def test_het_verslag_en_als_laatste_het_blok_kort():
 
 
 def test_beeld_echt_draait_nergens_anders():
+    # api-analyse (X2a) sluit hem uit, met precies één -m "not beeld_echt"; elke andere job
+    # noemt hem niet
     for naam in re.findall(r"^  ([\w-]+):$", CI.read_text(), re.M):
         if naam == "beeld-model":
             continue
-        assert "beeld_echt" not in "\n".join(job(naam)), naam
+        regels = "\n".join(job(naam))
+        if naam == "api-analyse":
+            assert regels.count("beeld_echt") == regels.count('-m "not beeld_echt"') == 1
+            continue
+        assert "beeld_echt" not in regels, naam

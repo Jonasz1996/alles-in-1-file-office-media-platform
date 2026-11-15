@@ -394,7 +394,8 @@ check "de bytes kloppen" eval 'cmp -s "$MODELLEN_ROOT/a.onnx" "$net/a.onnx" && c
 check "0644 van root, de map 0755 van root" eval '[ "$(owner_mode "$MODELLEN_ROOT/a.onnx")" = "0:0 644" ] && [ "$(owner_mode "$MODELLEN_ROOT/map/b.onnx")" = "0:0 644" ] && [ "$(owner_mode "$MODELLEN_ROOT/map")" = "0:0 755" ]'
 check "curl met -f, --retry 3, --max-filesize <bytes> en een eigen map onder MODELLEN_ROOT" grep -qE -- "^curl -fsSL --retry 3 --connect-timeout 20 --max-time 600 --max-filesize $(size "$net/a.onnx") -o $MODELLEN_ROOT/\.ophalen\.[A-Za-z0-9]+/model $base/a.onnx$" "$work/curl.log"
 check "de tijdelijke map is weg" test -z "$(find "$MODELLEN_ROOT" -name '.ophalen.*')"
-check "de licenties ernaast, 0644 van root, gelijk aan api/app/analyse/licenties" eval 'for f in "$top"/api/app/analyse/licenties/*.txt; do cmp -s "$f" "$MODELLEN_ROOT/${f##*/}" && [ "$(owner_mode "$MODELLEN_ROOT/${f##*/}")" = "0:0 644" ] || exit 1; done; [ "$(ls "$MODELLEN_ROOT"/*.txt | wc -l)" = 2 ]'
+# Drie licenties sinds golf 5: YuNet en SFace (X2a) en SigLIP 2 (X3a), K1-13
+check "de drie licenties ernaast, 0644 van root, gelijk aan api/app/analyse/licenties" eval 'for f in "$top"/api/app/analyse/licenties/*.txt; do cmp -s "$f" "$MODELLEN_ROOT/${f##*/}" && [ "$(owner_mode "$MODELLEN_ROOT/${f##*/}")" = "0:0 644" ] || exit 1; done; [ "$(cd "$MODELLEN_ROOT" && echo *.txt)" = "sface-Apache-2.0.txt siglip2-Apache-2.0.txt yunet-MIT.txt" ]'
 check "met de uitvoer" eval 'grep -qxF "Model geladen: a.onnx" "$work/m.out" && grep -qxF "Model geladen: map/b.onnx" "$work/m.out"'
 : >"$work/curl.log"
 modellen_ophalen >"$work/m.out" 2>&1

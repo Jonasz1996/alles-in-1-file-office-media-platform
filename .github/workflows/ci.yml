@@ -123,8 +123,10 @@ jobs:
         working-directory: api
     env:
       UV_PROJECT_ENVIRONMENT: .venv-analyse
-      ANALYSE_TESTS: "107"
-      ANALYSE_DESELECTED: "0"
+      # 107 van X2a (met de 42 van test_onnxw_ort.py) en 81 van X3a (test_beeld_omzetten.py 71,
+      # test_beeld_echt_hulp.py 10); gedeselecteerd: de 11 tests met beeld_echt
+      ANALYSE_TESTS: "188"
+      ANALYSE_DESELECTED: "11"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

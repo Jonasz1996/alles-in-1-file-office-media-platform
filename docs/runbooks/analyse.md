@@ -52,7 +52,8 @@ van de branch en `PLATFORM_BRANCH`, zoals in `infra/single/README.md`.
      gezichten wachten tot de volgende installatie.` De container start toch, en zegt
      `models_missing`;
    - een `*.onnx` die niet meer in `models.lock` staat, gaat weg (`Oud model weg: …`);
-   - de licenties (`yunet-MIT.txt`, `sface-Apache-2.0.txt`) komen naast de modellen.
+   - de licenties (`yunet-MIT.txt`, `sface-Apache-2.0.txt` en, voor zoeken op beeld,
+     `siglip2-Apache-2.0.txt`) komen naast de modellen.
 6. **De start**, na de app en media: `up -d --no-deps analyse`, met `--force-recreate` als er
    een model veranderde (de worker leest de modellen bij de start). Daarna
    `app.cli analyse-status --wait 20`. Lukt de start niet, of is de stand niet `ok`, dan alleen
