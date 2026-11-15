@@ -27,13 +27,14 @@ Twee standen, zoals fotos.lock (het patroon van het ontwerp):
   commit; uitkomst: sha256 bytes naam -) naar voorstel-models.lock. Code 3.
 - Met de regels: streng. Een andere sha256 of grootte is rood (code 1).
 Zo ook de set: zonder api/tests/analyse/sets/beeld.tsv stelt `set` er een voor uit de
-gestructureerde gegevens van Wikimedia Commons (voorstel-beeld.tsv) en haalt hij die foto's op.
-Met beeld.tsv haalt hij alleen wat in set/ ontbreekt of niet klopt (in CI staat set/ in een cache
-op de sha256 van beeld.tsv). Van upload.wikimedia.org gemiddeld hooguit BANDBREEDTE (de
-robotregels van Wikimedia). `uitslag` faalt met "models.lock mist de regels van SigLIP" en
-"beeld.tsv ontbreekt" zolang er een voorstel ligt; een mens zet de regels erin, nooit de job zelf,
-en die van SigLIP pas samen met X3b (de stap BEELD van install.sh; anders meldt de container ze
-als ontbrekend).
+gestructureerde gegevens van Wikimedia Commons (voorstel-beeld.tsv) en haalt hij die foto's op,
+elk als thumbnail van de vaste breedte DUIM_BREEDTE (1280 px), niet als origineel. Met beeld.tsv
+haalt hij alleen wat in set/ ontbreekt of niet klopt (in CI staat set/ in een cache op de sha256
+van beeld.tsv). Van upload.wikimedia.org gemiddeld hooguit BANDBREEDTE, en Retry-After altijd
+gevolgd (de robotregels van Wikimedia). `uitslag` faalt met "models.lock mist de regels van
+SigLIP" en "beeld.tsv ontbreekt" zolang er een voorstel ligt; een mens zet de regels erin, nooit
+de job zelf, en die van SigLIP pas samen met X3b (de stap BEELD van install.sh; anders meldt de
+container ze als ontbrekend).
 
 Codes: 0 goed, 1 fout, 3 voorstel geschreven (de job gaat door, `uitslag` maakt hem rood).
 """
@@ -126,9 +127,35 @@ RESERVE_COMBIS = (
 LICENTIES = {"CC0": "P275=Q6938433", "publiek domein": "P6216=Q19652"}
 PER_CATEGORIE = 5
 PER_ANDER = 5
-MAX_FOTO = 25 << 20
-MIN_ZIJDE = 640
-MAX_PIXELS = 50_000_000
+MAX_FOTO = 25 << 20  # elke download van de set, ook een origineel dat als thumbnail terugkomt
+MIN_ZIJDE = 640  # de korte kant van het origineel
+MAX_PIXELS = 50_000_000  # van het origineel
+# De set haalt van elke foto een thumbnail van DUIM_BREEDTE breed, niet het origineel. Op 9ebf298
+# gaf upload.wikimedia.org ook met BANDBREEDTE na ±30 minuten HTTP 429 (Retry-After 600), en
+# begin 2026 trof zo'n 429 juist originelen voor clients zonder browser, terwijl thumbnails bleven
+# laden (phabricator T413570). De richtlijn van Wikimedia voor media: liever thumbnails, en dan
+# alleen de vaste maten. Die komen uit de cache van upload; een andere maat weigert Wikimedia of
+# remt hij af. De vaste maten ($wgThumbnailSteps; mediawiki.org, "Common thumbnail sizes", en
+# phabricator T402792): 20, 40, 60, 120, 250, 330, 500, 960, 1280, 1920 en 3840 px breed.
+# DUIM_BREEDTE is de kleinste ≥ 1024: de app geeft het model nooit het origineel maar zijn eigen
+# previews (256.webp, of 1024.webp als BZ4 dat zegt: Keuze 77; de gezichten uit 1024.webp: Keuze
+# 60). Een thumbnail met een lange kant ≥ 1280 geeft in de kwaliteitstest (app.render.image)
+# dezelfde maten van 1024.webp en 256.webp als het origineel in de app.
+# Een thumbnail maakt Wikimedia zelf, en kan hem later opnieuw maken met andere bytes (een andere
+# versie van de software). beeld.tsv heeft daarom de URL, de grootte en de sha256 van precies het
+# bestand dat set ophaalt (de thumbnail); streng is dan rood op de sha256, met de sleutel, nooit
+# stil. De cache in CI (op de sha256 van beeld.tsv) houdt de eerste goede kopie. De
+# bestandspagina van het origineel blijft in de kolom bron (de naamsvermelding).
+DUIM_BREEDTE = 1280
+# Hoe groot de thumbnail minstens is. De kwaliteitstest maakt er met app.render.image 1024.webp en
+# 256.webp van, zoals de app (lange kant 1024 en 256, nooit vergroot), en het model krijgt die als
+# INVOER × INVOER (meta.json: vierkant, zonder bijsnijden). Het model rekent uit 256.webp; BZ4
+# zet dat af tegen 1024.webp, en daaruit rekent X3 als 256 te veel verliest (Keuze 77). Dus is de
+# korte kant van die 1024.webp ≥ INVOER: anders rekt de voorbewerking ook 1024.webp op die kant
+# op, en meet "256 tegen 1024" daar niets. Voor een liggende thumbnail van 1280 breed is dat een
+# korte kant van ≥ 320 px; een staande mag tot 4 × 1280 = 5120 px hoog zijn (_genoeg)
+PREVIEW = 1024  # de lange kant van 1024.webp (app.render.SIZES)
+INVOER = 256  # de zijde van de invoer van het beeldmodel (meta.json; SigLIP 2 B/32 op 256)
 KOLOMMEN = ("sleutel", "categorieen", "licentie", "sha256", "bytes", "url", "bron")
 _SLEUTEL = re.compile(r"[a-z]+(-[a-z]+)?-[1-9]|[a-z]+\+[a-z]+")
 _SHA = re.compile(r"[0-9a-f]{64}")
@@ -162,20 +189,29 @@ def _vraag(url: str, *, methode: str = "GET") -> urllib.request.Request:
 # Wikimedia vraagt om vragen na elkaar en om Retry-After te volgen (API:Etiquette). Zonder pauze
 # gaf commons.wikimedia.org na ±10 s HTTP 429, ook na drie pogingen (CI-run op 26c49ca)
 PAUZE_S = 1.0  # tussen twee vragen aan Commons (de API of upload.wikimedia.org)
-MAX_WACHT_S = 120.0  # hooguit zo lang wachten na een 429 of 503, ook als Retry-After meer zegt
+# Retry-After geldt altijd (de robotregels): na een 429 of 503 vraagt _open nooit eerder opnieuw
+# dan hij zegt. Op 9ebf298 zei upload.wikimedia.org "Retry-After 600", en de tool wachtte toen
+# hooguit 120 s: vijf keer te vroeg opnieuw. Zegt Retry-After meer dan MAX_WACHT_S, of past het
+# wachten niet meer in wat er van WACHT_TOTAAL_S over is, dan stopt _open meteen, zonder nog een
+# vraag, met een fout die dat zegt
+MAX_WACHT_S = 600.0  # de langste wachttijd na één 429 of 5xx die we aannemen
+WACHT_TOTAAL_S = 900.0  # samen hooguit zo lang wachten na 429 en 5xx, per proces (per stap)
 # De robotregels van Wikimedia (wikitech, Robot_policy, het deel over media): samen hooguit 2
 # vragen tegelijk, samen hooguit 25 Mbps gemeten over stukken van 10 s, alleen originelen of de
 # vaste maten van de thumbnails, en na een 429 Retry-After volgen. De job vraagt één ding
 # tegelijk, maar een origineel is tot MAX_FOTO groot en kwam zonder grens in een fractie van een
 # seconde binnen; na ±9 minuten gaf upload.wikimedia.org HTTP 429 (CI-run op f16ed5a). Dus van
-# upload gemiddeld hooguit BANDBREEDTE, onder die 25 Mbps. De originelen blijven: een thumbnail
-# kan Wikimedia opnieuw maken, met andere bytes, en dan klopt de sha256 in beeld.tsv niet meer
+# upload gemiddeld hooguit BANDBREEDTE, onder die 25 Mbps. Ook met die grens kwam er na ±30
+# minuten een 429 (CI-run op 9ebf298); sindsdien haalt de set thumbnails (DUIM_BREEDTE)
 BANDBREEDTE = 2_500_000  # bytes per seconde van upload.wikimedia.org (20 Mbps)
-# Wat het log van een opgegeven 429 of 5xx overneemt: alleen de eerste regel van het antwoord
+# Wat het log van een opgegeven 429 of 5xx overneemt: de tekst van <title>, anders de eerste
+# regel met tekst zonder de tags van HTML (_antwoord)
 MAX_REGEL = 160  # tekens, alleen afdrukbare ASCII
 MAX_ANTWOORD = 4096  # zoveel bytes van het antwoord leest hij hooguit om die regel te vinden
 _vorige: dict[str, float] = {}
 _klaar: dict[str, float] = {}  # per host: wanneer de bytes tot nu toe op BANDBREEDTE binnen zijn
+_gewacht = 0.0  # seconden, samen gewacht na 429 en 5xx in dit proces (WACHT_TOTAAL_S)
+_opgehaald = 0  # bytes die haal in dit proces binnenkreeg (de voortgang van set)
 
 
 def _pauze(url: str) -> None:
@@ -210,18 +246,40 @@ def _leesbaar(tekst: str, max_tekens: int) -> str:
     return "".join(c if " " <= c <= "~" else "?" for c in tekst.strip())[:max_tekens].strip()
 
 
-def _uitleg(e: urllib.error.HTTPError, retry_after: str | None) -> str:
+_TITEL = re.compile(r"<title\b[^>]*>(.*?)</title\s*>", re.I | re.S)
+# script, style en commentaar zijn geen tekst; ook niet als het antwoord na MAX_ANTWOORD ophoudt
+_BLOK = re.compile(r"<(script|style)\b.*?(?:</\1\s*>|\Z)|<!--.*?(?:-->|\Z)", re.I | re.S)
+_TAG = re.compile(r"<[^>]*>")
+
+
+def _antwoord(tekst: str) -> str:
+    """De tekst van <title> als die er is, anders de eerste regel met tekst zonder de tags van
+    HTML. Op 9ebf298 was de eerste regel van een 429 van upload.wikimedia.org "<!DOCTYPE html>":
+    die zei niets."""
+    titel = _TITEL.search(tekst)
+    if titel:
+        kaal = " ".join(_TAG.sub(" ", titel.group(1)).split())
+        if kaal:
+            return kaal
+    kaal = _TAG.sub("", _BLOK.sub("", tekst))
+    return next((r for r in kaal.split("\n") if r.strip()), "")
+
+
+def _uitleg(e: urllib.error.HTTPError, retry_after: str | None, stop: str | None = None) -> str:
     """Wat het log zegt als _open het opgeeft na een 429 of 5xx: de laatste Retry-After die hij
-    zag en de eerste regel met tekst van het antwoord. Niets anders van het antwoord."""
+    zag, waarom hij meteen stopte (stop, als dat zo was) en de tekst van het antwoord volgens
+    _antwoord, alleen afdrukbare ASCII en hooguit MAX_REGEL tekens. Niets anders van het
+    antwoord."""
     ra = f"Retry-After {_leesbaar(retry_after, 64)}" if retry_after else "geen Retry-After"
+    if stop:
+        ra = f"{ra}; {stop}"
     try:
         data = e.read(MAX_ANTWOORD)
     except (OSError, ValueError, http.client.HTTPException):
         data = b""
     finally:
         e.close()
-    tekst = data.decode("ascii", errors="replace")
-    regel = _leesbaar(next((r for r in tekst.split("\n") if r.strip()), ""), MAX_REGEL)
+    regel = _leesbaar(_antwoord(data.decode("ascii", errors="replace")), MAX_REGEL)
     return f"{ra}; antwoord: {regel}" if regel else f"{ra}; antwoord zonder tekst"
 
 
@@ -237,16 +295,32 @@ def _retry_after(e: urllib.error.HTTPError) -> float:
         return 0.0
 
 
+def _te_lang(na: float, tijd: float) -> str | None:
+    """Waarom _open na een 429 of 5xx meteen stopt, of None als hij tijd seconden mag wachten.
+    na: wat Retry-After zei (0 zonder)."""
+    if na > MAX_WACHT_S:
+        return f"langer dan MAX_WACHT_S ({MAX_WACHT_S:.0f} s), dus meteen gestopt"
+    if _gewacht + tijd > WACHT_TOTAAL_S:
+        over = max(0.0, WACHT_TOTAAL_S - _gewacht)
+        return (
+            f"{tijd:.0f} s wachten past niet in wat er over is van WACHT_TOTAAL_S "
+            f"({over:.0f} van {WACHT_TOTAAL_S:.0f} s), dus meteen gestopt"
+        )
+    return None
+
+
 def _open(url: str, *, pogingen: int = 6, timeout: float = 60):
     """urlopen met pogingen bij 429, 5xx of een netwerkfout: wachten 2, 4, 8, 16, 32 s, of zo
-    lang als Retry-After zegt als dat langer is (hooguit MAX_WACHT_S). Geeft hij het op na een
-    429 of 5xx, dan krijgt de HTTPError een uitleg voor het log mee (_uitleg, _reden): op
-    f16ed5a zei "HTTP 429" niet wat Wikimedia vroeg."""
+    lang als Retry-After zegt als dat langer is. Na een 429 of 5xx nooit eerder dan Retry-After
+    zegt: is dat meer dan MAX_WACHT_S, of past het wachten (ook 2 tot 32 s zonder Retry-After)
+    niet meer in WACHT_TOTAAL_S, dan stopt hij meteen. Geeft hij het op na een 429 of 5xx, dan
+    krijgt de HTTPError een uitleg voor het log mee (_uitleg, _reden): op f16ed5a zei "HTTP 429"
+    niet wat Wikimedia vroeg."""
+    global _gewacht
     wacht = 2.0
     retry_after: str | None = None  # de laatste die hij zag, zoals hij binnenkwam
     for poging in range(pogingen):
         _pauze(url)
-        na = 0.0
         try:
             return urllib.request.urlopen(_vraag(url), timeout=timeout)
         except urllib.error.HTTPError as e:
@@ -258,11 +332,18 @@ def _open(url: str, *, pogingen: int = 6, timeout: float = 60):
                 e.uitleg = _uitleg(e, retry_after)
                 raise
             na = _retry_after(e)
+            tijd = max(wacht, na)
+            stop = _te_lang(na, tijd)
+            if stop:
+                e.uitleg = _uitleg(e, retry_after, stop)
+                raise
             e.close()
+            _gewacht += tijd
         except (urllib.error.URLError, TimeoutError, ConnectionError):
             if poging == pogingen - 1:
                 raise
-        time.sleep(min(max(wacht, na), MAX_WACHT_S))
+            tijd = wacht
+        time.sleep(tijd)
         wacht *= 2
     raise AssertionError("onbereikbaar")
 
@@ -298,6 +379,7 @@ def _reden(e: BaseException) -> str:
 def haal(url: str, doel: Path, *, max_bytes: int, grootte=None, sha256=None) -> tuple[str, int]:
     """Eén bestand naar doel via doel.part. Met grootte en sha256: alleen die bytes komen op hun
     plek. Geeft (sha256, bytes)."""
+    global _opgehaald
     part = doel.with_name(doel.name + ".part")
     grens = grootte if grootte is not None else max_bytes
     h = hashlib.sha256()
@@ -310,6 +392,7 @@ def haal(url: str, doel: Path, *, max_bytes: int, grootte=None, sha256=None) -> 
             with _open(url, timeout=120) as antwoord, part.open("xb") as f:
                 while stuk := antwoord.read(1 << 20):
                     n += len(stuk)
+                    _opgehaald += len(stuk)
                     if n > grens:
                         raise Fout(f"{doel.name}: groter dan {grens} bytes")
                     h.update(stuk)
@@ -605,6 +688,9 @@ def lees_set(tekst: str, combis: list[tuple[str, ...]] | None = None) -> list[Fo
             raise Fout(f"beeld.tsv regel {nr}: groter dan {MAX_FOTO} bytes")
         if not url.startswith(UPLOAD) or not re.fullmatch(r"[!-~]+", url):
             raise Fout(f"beeld.tsv regel {nr}: url hoort bij {UPLOAD}")
+        # Een thumbnail alleen van de vaste maat: een andere maat weigert Wikimedia of remt hij af
+        if "thumb" in urllib.parse.urlsplit(url).path.split("/") and not _is_duim(url):
+            raise Fout(f"beeld.tsv regel {nr}: url is een thumbnail, maar niet {DUIM_BREEDTE} px")
         if not bron_.startswith("https://commons.wikimedia.org/wiki/File:"):
             raise Fout(f"beeld.tsv regel {nr}: bron hoort een bestandspagina van Commons")
         _past(sleutel, categorieen, nr)
@@ -662,7 +748,8 @@ def zoek(srsearch: str, offset: int) -> tuple[list[int], int | None]:
 
 
 def details(pageids: list[int]) -> dict[int, dict]:
-    """Per pageid: url, bytes, maten, mime en de bestandspagina, plus wat de gestructureerde
+    """Per pageid: url, bytes, maten, mime en de bestandspagina van het origineel, de url en de
+    maten van de thumbnail van DUIM_BREEDTE breed (iiurlwidth), plus wat de gestructureerde
     gegevens zeggen (P180, P275, P6216)."""
     if not pageids:
         return {}
@@ -672,6 +759,7 @@ def details(pageids: list[int]) -> dict[int, dict]:
         "formatversion": "2",
         "prop": "imageinfo",
         "iiprop": "url|size|mime",
+        "iiurlwidth": str(DUIM_BREEDTE),
         "pageids": "|".join(map(str, pageids)),
     }
     doc = json_van(f"{COMMONS}?{urllib.parse.urlencode(q)}")
@@ -686,6 +774,9 @@ def details(pageids: list[int]) -> dict[int, dict]:
                 "hoogte": info.get("height"),
                 "mime": info.get("mime"),
                 "bron": info.get("descriptionurl"),
+                "duim": info.get("thumburl"),
+                "duim_breedte": info.get("thumbwidth"),
+                "duim_hoogte": info.get("thumbheight"),
             }
     q = {"action": "wbgetentities", "format": "json", "ids": "|".join(f"M{i}" for i in uit)}
     ent = json_van(f"{COMMONS}?{urllib.parse.urlencode(q)}").get("entities") or {}
@@ -718,6 +809,39 @@ def _licentie(d: dict) -> str | None:
     return None
 
 
+def _is_duim(url: str) -> bool:
+    """Een thumbnail van DUIM_BREEDTE breed op upload: .../thumb/<pad>/<naam>/1280px-<naam>."""
+    deel = urllib.parse.urlsplit(url).path.split("/")
+    return "thumb" in deel[:-2] and deel[-1].startswith(f"{DUIM_BREEDTE}px-")
+
+
+def _genoeg(breedte: int, hoogte: int) -> bool:
+    """Is de korte kant van de 1024.webp die app.render.image van een foto van deze maat maakt
+    (lange kant hooguit PREVIEW, nooit vergroot), minstens INVOER? Zie INVOER."""
+    return min(breedte, hoogte) * PREVIEW >= INVOER * max(breedte, hoogte, PREVIEW)
+
+
+def _duim(d: dict) -> tuple[str, int | None] | None:
+    """Wat set van een foto ophaalt: (url, bytes als die vooraf bekend zijn), of None als dat niet
+    kan. Meestal de thumbnail van DUIM_BREEDTE breed (bytes onbekend; haal stopt bij MAX_FOTO).
+    Is het origineel niet breder, dan geeft MediaWiki het origineel zelf als thumburl: ook goed
+    als het niet groter is dan MAX_FOTO (de grens van elke download; de bytes zijn dan vooraf
+    bekend). Hoe breed MediaWiki dan in thumbwidth zegt, telt niet: de maten van het origineel
+    gelden. Een groot origineel met een thumbnail mag: set haalt alleen die thumbnail."""
+    url = d.get("duim")
+    if not isinstance(url, str) or not url.startswith(UPLOAD) or not re.fullmatch(r"[!-~]+", url):
+        return None
+    if url == d["url"]:
+        breedte, hoogte, n = int(d["breedte"]), int(d["hoogte"]), int(d["bytes"])
+        if breedte > DUIM_BREEDTE or not 0 < n <= MAX_FOTO:
+            return None
+    else:
+        if not _is_duim(url) or int(d.get("duim_breedte")) != DUIM_BREEDTE:
+            return None
+        breedte, hoogte, n = DUIM_BREEDTE, int(d.get("duim_hoogte")), None
+    return (url, n) if _genoeg(breedte, hoogte) else None
+
+
 def _bruikbaar(d: dict) -> bool:
     try:
         return (
@@ -726,11 +850,12 @@ def _bruikbaar(d: dict) -> bool:
             and d["url"].startswith(UPLOAD)
             and isinstance(d["bron"], str)
             and d["bron"].startswith("https://commons.wikimedia.org/wiki/File:")
-            and 0 < int(d["bytes"]) <= MAX_FOTO
+            and int(d["bytes"]) > 0
             and min(int(d["breedte"]), int(d["hoogte"])) >= MIN_ZIJDE
             and int(d["breedte"]) * int(d["hoogte"]) <= MAX_PIXELS
             and MENS not in d["P180"]
             and _licentie(d) is not None
+            and _duim(d) is not None
         )
     except (TypeError, ValueError):
         return False
@@ -752,12 +877,42 @@ def _kandidaten(qids: tuple[str, ...], *, max_pagina: int = 4):
             yield from sorted(details(ids).items())
 
 
-def stel_voor(werk: Werk, *, combis=None) -> list[Foto]:
-    """120 foto's volgens Keuze 83, en ze meteen ophalen (de sha256 komt van de download).
+class Voortgang:
+    """Hoe ver set kwam: in de fout ("bij foto 37 van 120, 12,3 MB opgehaald"; CI op 9ebf298 zei
+    niet hoe ver de stap was) en, als het goed ging, in de regel van het blok (bytes en tijd)."""
+
+    def __init__(self, totaal: int) -> None:
+        self.totaal = totaal
+        self.klaar = 0  # foto's die al goed op hun plek staan
+        self.gekozen = False  # het voorstel koos alles wat Commons had (en kwam te kort)
+        self._bytes = _opgehaald
+        self._begin = time.monotonic()
+
+    def bytes(self) -> int:
+        return _opgehaald - self._bytes
+
+    def waar(self) -> str:
+        if self.gekozen:
+            return f"{self.klaar} van {self.totaal} foto's opgehaald, {_mb(self.bytes())}"
+        n = min(self.klaar + 1, self.totaal)
+        return f"bij foto {n} van {self.totaal}, {_mb(self.bytes())} opgehaald"
+
+    def samen(self) -> str:
+        return f"{_mb(self.bytes())} in {time.monotonic() - self._begin:.0f} s"
+
+
+def _mb(n: int) -> str:
+    return f"{n / 1e6:.1f} MB".replace(".", ",")
+
+
+def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) -> list[Foto]:
+    """120 foto's volgens Keuze 83, en ze meteen ophalen (de sha256 komt van de download): van
+    elke foto de thumbnail van DUIM_BREEDTE breed (_duim), nooit een groot origineel.
 
     Een tekort stopt de keuze niet: elk tekort komt met het aantal bekeken kandidaten in het
     blok, en pas daarna volgt de fout. Zo laat één run alles zien wat Commons niet heeft."""
     combis = combis if combis is not None else combinaties()
+    voortgang = voortgang or Voortgang(len(CATEGORIEEN) * PER_CATEGORIE + len(ANDERE) * PER_ANDER)
     werk.set.mkdir(exist_ok=True)
     gekozen: list[Foto] = []
     gebruikt: set[int] = set()
@@ -766,9 +921,11 @@ def stel_voor(werk: Werk, *, combis=None) -> list[Foto]:
 
     def neem(pageid: int, d: dict, sleutel: str, cats: tuple[str, ...]) -> None:
         doel = werk.set / f"{sleutel}.jpg"
-        sha, n = haal(d["url"], doel, max_bytes=MAX_FOTO, grootte=int(d["bytes"]))
-        gekozen.append(Foto(sleutel, cats, _licentie(d), sha, n, d["url"], d["bron"]))
+        url, grootte = _duim(d)
+        sha, n = haal(url, doel, max_bytes=MAX_FOTO, grootte=grootte)
+        gekozen.append(Foto(sleutel, cats, _licentie(d), sha, n, url, d["bron"]))
         gebruikt.add(pageid)
+        voortgang.klaar = len(gekozen)
 
     def cats_van(d: dict, hoofd: tuple[str, ...]) -> tuple[str, ...]:
         rest = [c for c, q in CATEGORIEEN.items() if q in d["P180"] and c not in hoofd]
@@ -828,6 +985,7 @@ def stel_voor(werk: Werk, *, combis=None) -> list[Foto]:
                 }
             )
             werk.meld(f"BZ4 reserve {a}+{b}: {n} bruikbare foto's (eerste pagina per licentie)")
+    voortgang.gekozen = True  # de fout zegt dan hoeveel er zijn, niet "bij foto ..."
     raise Fout(f"Commons: {len(tekort)} tekort(en) voor de set; zie de regels BZ4 set hierboven")
 
 
@@ -836,36 +994,55 @@ def set_tsv(fotos: list[Foto]) -> str:
         "# De kwaliteitsset van zoeken op beeld (fase 6, Keuze 83; voorgesteld door de job\n"
         "# beeld-model uit de gestructureerde gegevens van Wikimedia Commons). Alleen CC0 of\n"
         "# publiek domein, zonder P180 = mens. De foto's staan nooit in de repository.\n"
+        f"# Per foto de thumbnail van {DUIM_BREEDTE} px breed: url, bytes en sha256 van precies\n"
+        "# dat bestand (het origineel als dat niet breder is). bron is de pagina van het\n"
+        "# origineel.\n"
     )
     return kop + "\t".join(KOLOMMEN) + "\n" + "".join(f.regel() + "\n" for f in fotos)
 
 
 def set_(werk: Werk, set_pad: Path, *, combis=None) -> int:
+    """Gaat het ophalen mis, dan zegt de fout ook hoe ver set kwam (Voortgang); in een voorstel
+    is het totaal het doel van Keuze 83 (120)."""
     combis = combis if combis is not None else combinaties()
     if set_pad.is_file():
         fotos = lees_set(set_pad.read_text(encoding="utf-8"), combis)
         werk.set.mkdir(exist_ok=True)
+        voortgang = Voortgang(len(fotos))
         uit_cache = 0
-        for f in fotos:
-            doel = werk.set / f"{f.sleutel}.jpg"
-            # Wat er al staat (in CI uit de cache op de sha256 van beeld.tsv) en klopt, haalt hij
-            # niet opnieuw: de robotregels van Wikimedia vragen zo min mogelijk downloads. Een
-            # bestand dat niet klopt, haalt hij opnieuw, via .part eroverheen
-            if _klopt(doel, f.bytes, f.sha256):
-                uit_cache += 1
-                continue
-            haal(f.url, doel, max_bytes=f.bytes, grootte=f.bytes, sha256=f.sha256)
+        try:
+            for f in fotos:
+                doel = werk.set / f"{f.sleutel}.jpg"
+                # Wat er al staat (in CI uit de cache op de sha256 van beeld.tsv) en klopt, haalt
+                # hij niet opnieuw: de robotregels van Wikimedia vragen zo min mogelijk downloads.
+                # Een bestand dat niet klopt, haalt hij opnieuw, via .part eroverheen. Heeft
+                # Wikimedia de thumbnail intussen opnieuw gemaakt met andere bytes, dan is dit rood
+                # op de sha256 (zie DUIM_BREEDTE), nooit stil
+                if _klopt(doel, f.bytes, f.sha256):
+                    uit_cache += 1
+                else:
+                    haal(f.url, doel, max_bytes=f.bytes, grootte=f.bytes, sha256=f.sha256)
+                voortgang.klaar += 1
+        except Fout as e:
+            raise Fout(f"{e} ({voortgang.waar()})") from None
         gehaald = len(fotos) - uit_cache
         werk.meld(
             f"BZ4 set: {len(fotos)} foto's kloppen met beeld.tsv "
-            f"({uit_cache} uit de cache, {gehaald} van Commons)"
+            f"({uit_cache} uit de cache, {gehaald} van Commons; {voortgang.samen()})"
         )
         return 0
-    fotos = stel_voor(werk, combis=combis)
+    voortgang = Voortgang(len(CATEGORIEEN) * PER_CATEGORIE + len(ANDERE) * PER_ANDER)
+    try:
+        fotos = stel_voor(werk, combis=combis, voortgang=voortgang)
+    except Fout as e:
+        raise Fout(f"{e} ({voortgang.waar()})") from None
     tekst = set_tsv(fotos)
     lees_set(tekst, combis)  # het voorstel moet zelf door de controle komen
     werk.voorstel_set.write_text(tekst, encoding="utf-8")
-    werk.meld(f"BZ4 set: beeld.tsv ontbreekt; voorstel met {len(fotos)} foto's in het verslag")
+    werk.meld(
+        f"BZ4 set: beeld.tsv ontbreekt; voorstel met {len(fotos)} foto's in het verslag "
+        f"({voortgang.samen()})"
+    )
     # Ook in het log (het blok aan het eind): het verslag van upload-artifact is niet overal te
     # halen, en een mens zet de set er pas na het lezen in (zoals de regels van models.lock)
     werk.meld("BZ4 voorstel voor beeld.tsv:")

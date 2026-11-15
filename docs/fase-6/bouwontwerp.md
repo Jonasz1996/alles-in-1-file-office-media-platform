@@ -2112,6 +2112,17 @@ Keuze 70–84 van X3.
       [gemeten, B3]; X3 stelt de lijst samen via de job, die van kandidaten de sha256 en de
       licentie afdrukt, compact in het blok `=== kort ===` en in het verslag via `upload-artifact`
       (K2-20).
+      *Noot (CI op `9ebf298`, 2026-11-15):* per foto staat er de URL van een thumbnail van 1280 px
+      breed, met de grootte en de sha256 van precies dat bestand (van een origineel dat niet
+      breder is: het origineel zelf); de kolom `bron` blijft de bestandspagina van het origineel.
+      Waarom: upload.wikimedia.org gaf op de originelen een 429 met Retry-After 600, ook op 20
+      Mbps, en de robotregels van Wikimedia vragen liever thumbnails van de vaste maten. 1280 is de
+      kleinste vaste maat ≥ 1024: de app geeft het model 256.webp en 1024.webp, nooit het
+      origineel, en die worden van de thumbnail even groot. Een thumbnail moet groot genoeg zijn
+      voor een 1024.webp met een korte kant ≥ 256. Het risico: Wikimedia kan een thumbnail opnieuw
+      maken met andere bytes. Dan is streng rood op de sha256 van die foto, nooit stil, en zet een
+      mens die regel opnieuw; de cache in CI houdt de eerste goede kopie. Uitleg in
+      [x3a.md](x3a.md), "CI op 9ebf298".
     - **De poorten.** Vastgelegd vóór de eerste echte run. Lager alleen met een nieuwe keuze in dit
       ontwerp, nooit stil in de test.
 

@@ -755,8 +755,9 @@ vier (R2 deels, zie daar). Per bevinding met code een test die zonder de reparat
   na `set`, van dezelfde action en tag.]
 - **`timeout-minutes: 60` is niet veranderd.** Met de grens duurt het ophalen langer (zie boven);
   of het past, zegt de volgende run.
-- **Of de bandbreedte de oorzaak was**, zegt de volgende run: komt er weer een 429, dan staat er nu
-  wat Wikimedia zei.
+- ~~**Of de bandbreedte de oorzaak was**, zegt de volgende run: komt er weer een 429, dan staat er
+  nu wat Wikimedia zei.~~ [CI op `9ebf298`: nee. Ook op `BANDBREEDTE` kwam na ±30 minuten een 429
+  (Retry-After 600); de set haalt nu thumbnails, zie "CI op 9ebf298".]
 
 ## CI op 7569d48
 
@@ -834,3 +835,134 @@ draaide `beeld-model` niet (geen pad van de job veranderd). Die regels staan nog
 repo. Neem de pins pas uit de eerste run van `beeld-model` op een commit met `Q_MAX = 64` (die
 draait vanzelf: `bouw.py` is een pad van de job). Een oude regel in `models.lock` zou
 `beeld_model.py vergelijk` rood maken (een andere sha256), maar kost dan een ronde CI.
+
+## CI op 9ebf298
+
+`beeld-model` op `9ebf298` (run 43762807071), de eerste run met `Q_MAX = 64` (zie "CI op
+7569d48") en met de reparaties van `f16ed5a`:
+
+| Stap | Uitkomst |
+|---|---|
+| BZ2 | twee omzettingen met dezelfde sha256 voor alle vijf bestanden. Drie pins zijn nieuw (`Q_MAX = 64` geeft andere int8-bytes, en `meta.json` noemt hun sha256 en `omzetter` 2); de andere regels van het voorstel zijn dezelfde als in de runs ervoor. **Goed** |
+| BZ3 en BZ7 | **goed** |
+| BZ6 | beeld int8 op één core 1.470 foto's per minuut (poort ≥ 500); een vraag p95 36,6 ms (≤ 250 ms). **Goed** |
+| BZ4 | niet gerekend: de stap `set` (een voorstel, zonder `beeld.tsv`) liep van 21:18:18 tot 21:48:47 en stopte na ±30 minuten op "kat-1.jpg: HTTP 429" van upload.wikimedia.org, met Retry-After 600. **Rood** |
+
+De nieuwe pins (BZ2):
+
+| sha256 | bytes | naam |
+|---|---|---|
+| `96c602da850a77869c26ac77889f52bfd60ad298eed94f1ad5b97c821a73e6f0` | 102672680 | `siglip2-b32-256/beeld.int8.onnx` |
+| `afc9dd55d41c59d10c9e2aa3c275f6f6a8a144e4c24c7c652ba20406c0b1003f` | 284307578 | `siglip2-b32-256/tekst.int8.onnx` |
+| `cc84a88be5c2dfb27a8bca85389ba6baaa5cf152f43dceef13a3ecd2a51830e6` | 2135 | `siglip2-b32-256/meta.json` |
+
+Ze gaan, zoals de andere regels van SigLIP, pas met X3b in `models.lock` (uitrol F3).
+
+**De bandbreedte was niet de oorzaak.** Van upload.wikimedia.org kwam gemiddeld hooguit
+`BANDBREEDTE` (20 Mbps, onder de 25 Mbps van de robotregels), één vraag tegelijk, met `PAUZE_S`
+ertussen; toch kwam de 429, nu na ±30 minuten in plaats van ±9. Wat wel past bij de run: begin
+2026 trof een 429 met een lange Retry-After juist originelen voor clients zonder browser, terwijl
+thumbnails bleven laden (phabricator T413570), en de robotregels van Wikimedia voor media vragen
+liever thumbnails, en dan alleen de vaste maten. Twee dingen deed de tool zelf verkeerd: `_open`
+wachtte na "Retry-After 600" hooguit 120 s (`MAX_WACHT_S`) en vroeg dus vijf keer te vroeg
+opnieuw, en de fout nam als uitleg de eerste regel van het antwoord, "<!DOCTYPE html>", die niets
+zei. Hoe ver de stap na 30 minuten was, stond nergens.
+
+Hersteld na de run (`tools/beeld/beeld_model.py`; de tests in
+`api/tests/analyse/test_beeld_tools.py`):
+
+1. **Een thumbnail in plaats van het origineel.** `details` vraagt imageinfo met `iiurlwidth` =
+   `DUIM_BREEDTE` = 1280 en neemt `thumburl`, `thumbwidth` en `thumbheight` mee. 1280 is de
+   kleinste vaste maat ≥ 1024 (`$wgThumbnailSteps`: 20, 40, 60, 120, 250, 330, 500, 960, 1280,
+   1920 en 3840 px; mediawiki.org, "Common thumbnail sizes", en phabricator T402792). De app geeft
+   het model nooit het origineel, maar 256.webp (of 1024.webp als BZ4 dat zegt, Keuze 77; de
+   gezichten uit 1024.webp, Keuze 60), en een thumbnail met een lange kant ≥ 1280 geeft in
+   `app.render.image` dezelfde maten van 1024.webp en 256.webp als het origineel. Dat geldt in
+   een voorstel en streng: `beeld.tsv` heeft nu de URL, de grootte en de sha256 van precies het
+   bestand dat `set` ophaalt. De kolom `bron` blijft de bestandspagina van het origineel (de
+   naamsvermelding). De controles op het origineel blijven: CC0 of publiek domein, JPEG, geen
+   mens, korte kant ≥ `MIN_ZIJDE` (640) en niet meer dan `MAX_PIXELS`. Erbij:
+   - de thumbnail komt van upload (`UPLOAD`), alleen afdrukbare ASCII, met `/thumb/` in het pad,
+     een naam die met `1280px-` begint en `thumbwidth` 1280; `lees_set` weigert een thumbnail
+     van een andere maat;
+   - **een grens op de korte kant van de thumbnail.** De kwaliteitstest maakt er met
+     `app.render.image` 1024.webp en 256.webp van (lange kant 1024 en 256, nooit vergroot), en
+     de voorbewerking van `meta.json` maakt daar 256 × 256 van, zonder bijsnijden. Is de korte
+     kant van 1024.webp kleiner dan 256, dan rekt die voorbewerking ook 1024.webp op die kant op,
+     en meet "256 tegen 1024" daar niets. Dus eist `_genoeg` een korte kant van 1024.webp ≥ 256:
+     voor een liggende thumbnail van 1280 breed een hoogte ≥ 320; een staande mag tot 4 × 1280 =
+     5120 hoog zijn;
+   - is het origineel niet breder dan 1280, dan geeft MediaWiki het origineel zelf als
+     `thumburl`. Dat mag, met de maten van het origineel (niet `thumbwidth`, die dan de gevraagde
+     breedte kan zeggen), en alleen als het niet groter is dan `MAX_FOTO`;
+   - `MAX_FOTO` (25 MiB) begrenst nu elke download van de set, niet meer het origineel: een groot
+     origineel met een goede thumbnail mag, want `set` haalt het nooit.
+
+   **Het risico van een nieuwe thumbnail.** Wikimedia maakt thumbnails zelf en kan er later een
+   opnieuw maken, met andere bytes (andere software). Streng is dan rood op de sha256, met de
+   sleutel erbij ("kat-2.jpg: sha256 …, verwacht …"), nooit stil. De cache in CI op de sha256 van
+   `beeld.tsv` houdt de eerste goede kopie, dus de job merkt het pas als die cache weg is. Dan
+   zet een mens de regel van die foto opnieuw (het runbook zegt hoe). Een origineel heeft dat
+   risico niet, maar juist dat gaf de 429.
+
+   Tests: `test_set_zonder_beeld_tsv_stelt_120_fotos_voor` (elke vraag om imageinfo met
+   `iiurlwidth` 1280; van upload alleen thumbnails van 1280 en één smal origineel; een groot
+   origineel komt als thumbnail; een panorama met een thumbnail van 1280 × 213 valt af; url,
+   bytes en sha256 van de thumbnail, `bron` van het origineel),
+   `test_de_thumbnail_van_een_goede_foto` (6 gevallen),
+   `test_een_foto_zonder_goede_thumbnail_valt_af` (16 gevallen, waaronder 1280 × 319, 1280 ×
+   5121, een thumbnail elders of van 1024 breed), `test_de_maat_van_de_thumbnail` (1280 is de
+   kleinste vaste maat ≥ 1024; `PREVIEW` en `INVOER` zijn `render.SIZES`) en
+   `test_een_set_die_niet_klopt[thumbnail van 1024]`.
+2. **Retry-After altijd gevolgd.** Na een 429 of 503 vraagt `_open` nooit eerder opnieuw dan
+   Retry-After zegt (seconden of een HTTP-datum). `MAX_WACHT_S` is nu 600 s: zegt Retry-After
+   meer, dan stopt `_open` meteen, zonder nog een vraag. Daarnaast een budget `WACHT_TOTAAL_S` =
+   900 s per proces (dus per stap), waarin ook de eigen 2 tot 32 s na een 5xx zonder Retry-After
+   tellen: past de volgende wachttijd er niet meer in, dan ook meteen stoppen. De fout zegt de
+   code, de Retry-After en waarom, bijvoorbeeld "kat-1.jpg: HTTP 429 (Retry-After 601; langer dan
+   MAX_WACHT_S (600 s), dus meteen gestopt; antwoord: Too many requests)". Tests:
+   `test_na_een_429_wacht_hij_zo_lang_als_retry_after_zegt` (nu met Retry-After 600, helemaal
+   gewacht), `test_retry_after_600_wacht_hij_helemaal_nooit_eerder` (op een nepklok: de volgende
+   vraag ≥ 600 s later, ook met een HTTP-datum) en `test_te_lang_of_buiten_het_budget_stopt_meteen`.
+3. **Wat Wikimedia zei.** De uitleg van een opgegeven 429 of 5xx is nu de tekst van `<title>`,
+   anders de eerste regel met tekst zonder de tags van HTML (zonder script, style en commentaar);
+   nog steeds alleen afdrukbare ASCII en hooguit `MAX_REGEL` (160) tekens. Andere fouten houden
+   hun korte vorm. Test: `test_de_uitleg_is_de_titel_of_de_eerste_regel_met_tekst` (5 gevallen,
+   waaronder de pagina van Wikimedia: "Too many requests - please contact noc@wikimedia.org");
+   `test_een_opgegeven_429_zegt_wat_wikimedia_zei` is ongewijzigd groen.
+4. **Hoe ver de stap kwam.** Gaat `set` mis, dan zegt de fout bij welke foto en hoeveel er al
+   binnen was, bijvoorbeeld "(bij foto 37 van 120, 12,3 MB opgehaald)"; in een voorstel is het
+   totaal het doel van Keuze 83 (120). Komt het voorstel te kort, dan zegt de fout hoeveel er wel
+   kwamen, bijvoorbeeld "(113 van 120 foto's opgehaald, 1,1 MB)", niet "bij foto". Gaat het goed, dan eindigt
+   de regel van het blok op de bytes en de tijd ("…, 120 van Commons; <MB> in <s> s)"). Het blok
+   `=== kort ===` krijgt er geen regels bij. Tests: `test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam`
+   (een 404 bij foto 37 in een voorstel, en streng een thumbnail die Wikimedia opnieuw maakte, bij
+   foto 50), `test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld` (nu ook het
+   aantal in de fout), `test_set_met_beeld_tsv_is_streng` en
+   `test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt` (met de nieuwe regel).
+
+De User-Agent is niet veranderd (algemeen, zonder persoon, e-mail of repository).
+
+Teruggedraaid getest (de `beeld_model.py` van `9ebf298` terug, de nieuwe tests ongewijzigd; daarna
+de nieuwe weer terug en `git status` nagekeken): in `tests/analyse` 26 rood, 5 met een fout en
+336 groen. Rood: de drie tests van Retry-After (de oude wachtte 120 s na "Retry-After 600" en
+kende `WACHT_TOTAAL_S` niet), alle 5 van de uitleg ("<!DOCTYPE html>" in plaats van de titel),
+`test_een_set_die_niet_klopt[thumbnail van 1024]`, alle 6 goede foto's en 10 van de 16 slechte
+(`_duim` bestond niet, en de oude `_bruikbaar` nam ze), en `test_de_maat_van_de_thumbnail`. De 5
+fouten zijn de tests met de nep van Commons (die vraagt `DUIM_BREEDTE`). Met alleen
+`DUIM_BREEDTE = 1280` erbij in de oude tool zijn alle 5 rood om de goede reden (31 rood, 336
+groen): het voorstel haalde de originelen, de regel van het blok zonder bytes en tijd, en geen
+voortgang in de fout (ook niet bij een tekort). Groen op de oude tool, zoals bedoeld: de 6 slechte foto's die al op het origineel afvielen
+(`MIN_ZIJDE`, `MAX_PIXELS`, geen JPEG, een mens, CC BY, een smal origineel groter dan
+`MAX_FOTO`). Met de nieuwe tool: `tests/analyse` 367 groen (op `9ebf298` 335).
+
+### Open na 9ebf298
+
+- **Of thumbnails de 429 voorkomen**, zegt de volgende run van `beeld-model` (`tools/beeld` is
+  een pad van de job). Komt er toch een 429, dan staat er nu wat Wikimedia zei, hoe lang hij
+  wilde dat we wachtten, en hoe ver de stap was.
+- **Helpt het niet**, dan is de volgende stap een User-Agent met contactgegevens, zoals de
+  richtlijn van Wikimedia voor de User-Agent vraagt. Dat zijn gegevens van de eigenaar: dat kan
+  alleen met zijn toestemming, en is niet gedaan. De User-Agent blijft algemeen.
+- **`timeout-minutes: 60` is niet veranderd.** `set` wacht nu hooguit `WACHT_TOTAAL_S` (900 s)
+  na 429 en 5xx, bovenop het ophalen van 120 thumbnails op `BANDBREEDTE`.

@@ -188,7 +188,12 @@ kijkt elke foto uit de cache na (grootte en sha256) en haalt alleen wat ontbreek
 De cache wordt bewaard direct na een goede `set`, ook als de job daarna rood eindigt (zolang
 `models.lock` de regels van SigLIP mist, is hij dat altijd); nooit een halve set, want een sleutel
 bewaart maar één keer. Van upload.wikimedia.org haalt de job gemiddeld hooguit 2,5 MB/s (20 Mbps;
-de robotregels staan 25 Mbps toe). Draait hij niet, dan zegt het blok `=== kort ===` aan het eind
+de robotregels staan 25 Mbps toe), en elke foto als thumbnail van 1280 px breed, niet als origineel
+(op de originelen gaf upload.wikimedia.org een 429 met Retry-After 600; x3a.md, "CI op 9ebf298").
+Is het origineel niet breder dan 1280, dan is het origineel zelf de thumbnail. Na een 429 of 503
+vraagt de job nooit eerder opnieuw dan Retry-After zegt. Zegt die meer dan 600 s, of past het
+wachten niet meer in 900 s per stap (ook de eigen 2 tot 32 s na een 5xx tellen), dan stopt hij
+meteen, met een fout die dat zegt. Draait hij niet, dan zegt het blok `=== kort ===` aan het eind
 van het log "beeld-model: draaien nee" met de reden.
 
 Het blok `=== kort ===` staat aan het eind van het log, met per regel:
@@ -199,9 +204,13 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
   of die twee dezelfde sha256 geven en of ze kloppen met `models.lock`; en van de derde omzetting
   met `--fp32` (alleen voor BZ4) de tijd en maxrss zonder grens, en of hij dezelfde vijf bestanden
   geeft;
-- `BZ4 set: 120 foto's kloppen met beeld.tsv (… uit de cache, … van Commons)`, of het voorstel;
-- `FOUT <stap>: … HTTP 429 (…)` of `HTTP 5xx (…)`: de host gaf ook na zes pogingen nee; tussen
-  haakjes de laatste Retry-After en de eerste regel van zijn antwoord;
+- `BZ4 set: 120 foto's kloppen met beeld.tsv (… uit de cache, … van Commons; … MB in … s)`, of
+  het voorstel (`… (… MB in … s)`): wat er van Commons kwam, en hoe lang dat duurde;
+- `FOUT <stap>: … HTTP 429 (…)` of `HTTP 5xx (…)`: de host gaf ook na zes pogingen nee, of vroeg
+  langer te wachten dan mag; tussen haakjes de laatste Retry-After, waarom de job meteen stopte
+  (als dat zo was) en de titel van zijn antwoord (zonder titel de eerste regel tekst), alleen
+  afdrukbare ASCII en hooguit 160 tekens. Bij `set` staat erachter hoe ver hij kwam, bijvoorbeeld
+  `(bij foto 37 van 120, 12,3 MB opgehaald)`;
 - `BZ3`, `BZ4`, `BZ6`, `BZ7`: de uitkomsten van de tests, met `goed` of `FOUT`;
 - `UITSLAG …`: waarom de job rood is, als er een voorstel ligt;
 - per pytest-stap de laatste regel.
@@ -227,10 +236,16 @@ zelf nooit iets in het repo; een mens doet dat, zo:
    blok, `model.safetensors` is ±1,51 GB en `tokenizer.json` ±34,4 MB.
 4. Kijk `voorstel-beeld.tsv` door: 120 foto's (12 categorieën × 5, de 6 vaste foto's van de
    combinaties, 60 andere), elk met sleutel, categorieën, licentie (CC0 of publiek domein),
-   sha256, bytes, URL op upload.wikimedia.org en de bestandspagina op Commons. Staat er toch een
-   herkenbaar persoon op een foto, vervang die regel door een andere foto van Commons met dezelfde
-   sleutel-soort, categorie en licentie, met zijn eigen sha256 en grootte. Weglaten kan niet: de
-   controle van de set eist die aantallen (`beeld_model.py`, `lees_set`; `test_beeld_sets.py`).
+   sha256, bytes, de URL van de thumbnail van 1280 px breed op upload.wikimedia.org
+   (`…/thumb/…/1280px-…`; van een origineel dat niet breder is: het origineel zelf) en de
+   bestandspagina van het origineel op Commons. Staat er toch een herkenbaar persoon op een foto,
+   vervang die regel door een andere foto van Commons met dezelfde sleutel-soort, categorie en
+   licentie. De URL is die van zijn thumbnail van 1280 breed: `thumburl` uit
+   `https://commons.wikimedia.org/w/api.php?action=query&prop=imageinfo&iiprop=url|size|mime&iiurlwidth=1280&titles=File:<naam>`
+   (een liggende foto moet dan ten minste 320 px hoog zijn). sha256 en bytes zijn die van precies
+   dat bestand: haal het één keer op en reken ze uit. Een thumbnail van een andere breedte weigert
+   de controle. Weglaten kan niet: de controle van de set eist die aantallen (`beeld_model.py`,
+   `lees_set`; `test_beeld_sets.py`).
 5. Zet in één commit:
    - de tien regels onder de regels van de gezichten in `app/analyse/models.lock`, met een
      opmerking erboven (de commit, Apache-2.0, de licentie in `licenties/`);
@@ -239,6 +254,13 @@ zelf nooit iets in het repo; een mens doet dat, zo:
      (`test_de_twee_modellen_van_gezichten` kent nu alleen de twee regels van de gezichten).
 6. Push. De job draait dan weer (de lock is veranderd), nu streng: een andere sha256 of grootte
    is rood. Groen is BZ2 en BZ4 gehaald: dan kan de go/no-go van X3 (Keuze 73) beslist worden.
+
+**Klopt een foto van `beeld.tsv` later niet meer** ("FOUT set: kat-2.jpg: sha256 …, verwacht …
+(bij foto … van 120, …)"), dan heeft Wikimedia die thumbnail waarschijnlijk opnieuw gemaakt, met
+andere bytes. Zolang de cache in CI de eerste goede kopie heeft, merkt de job het niet; pas als
+die cache weg is. Haal de thumbnail (de URL in die regel) één keer op, kijk of het dezelfde foto
+is, en zet de nieuwe sha256 en grootte in die regel van `beeld.tsv`, in een eigen commit. Is het
+een andere foto, vervang de regel zoals in stap 4.
 
 Let op bij stap 5: zet de regels pas samen met X3b (de stap `BEELD` van `install.sh`) in
 `models.lock`. `install.sh` haalt de regels onder `siglip2-b32-256/` niet (de 1,51 GB van
