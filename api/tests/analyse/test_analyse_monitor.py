@@ -605,8 +605,8 @@ async def test_echt_ok_met_modellen_grenzen_en_opdrachten(tmp_path):
         found = await monitor.check(_echt(worker, tmp_path))
         assert (found.state, found.reason, found.missing) == ("ok", None, ())
         assert found.caps is not None
-        assert found.caps.built == ["cancel", "caps", "faces"]
-        assert found.built(Op.FACES) and not found.built(Op.GROUP)
+        assert found.caps.built == ["cancel", "caps", "faces", "group"]
+        assert found.built(Op.FACES) and found.built(Op.GROUP) and not found.built(Op.RANK)
         shown = state.view(found, lock_path=worker.config.lock)
         versions = {m.name: m.sha256[:12] for m in lock.load(worker.config.lock)}
         assert [(m.name, m.version, m.sha_ok) for m in shown.models] == [

@@ -590,9 +590,9 @@ def _stop_reader(flag: StopFlag) -> None:
 def handlers(child: Child) -> dict[str, Handler]:
     """Wat dit kind doet. werk decodeert previews; zoeken nooit (Keuze 75)."""
     if child is Child.WERK:
-        from app.analyse.worker.ops import faces
+        from app.analyse.worker.ops import faces, group
 
-        return {wire.Op.FACES.value: faces.run}
+        return {wire.Op.FACES.value: faces.run, wire.Op.GROUP.value: group.run}
     return {}
 
 

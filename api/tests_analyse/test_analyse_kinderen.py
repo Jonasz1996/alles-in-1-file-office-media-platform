@@ -198,9 +198,10 @@ def test_built_en_de_handlers_van_de_kinderen_zijn_gelijk():
     for kind in Child:
         verwacht = {op.value for op in server.BUILT if wire.CHILD[op] is kind}
         assert set(kids.handlers(kind)) == verwacht, kind
-    assert server.BUILT == frozenset({Op.CAPS, Op.CANCEL, Op.FACES})  # X2a; golf 6 zet hier bij
+    # X2a faces; X2b (golf 6) group
+    assert server.BUILT == frozenset({Op.CAPS, Op.CANCEL, Op.FACES, Op.GROUP})
     assert {kind: sorted(kids.handlers(kind)) for kind in Child} == {
-        Child.WERK: ["faces"],
+        Child.WERK: ["faces", "group"],
         Child.ZOEKEN: [],
     }
 
