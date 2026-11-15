@@ -155,8 +155,8 @@ voor wat een mens na een run doet.
    `before` naar de commit, bij een PR van de basis naar de kop, bij `synchronize` van `before`
    naar `after`. Een regel `beeld-model: ja` in de PR zet hem ook aan. De tekst van de PR komt via
    `env` binnen, nooit als expressie in het script, en komt niet in het log. Geen
-   `workflow_dispatch`, geen cache (sinds [CI op `f16ed5a`](#ci-op-f16ed5a): de bron nooit, de
-   foto's van `beeld.tsv` wel).
+   `workflow_dispatch`. De bron komt nooit uit een cache, de foto's van `beeld.tsv` wel (sinds
+   [CI op `f16ed5a`](#ci-op-f16ed5a)).
 2. `uv sync --frozen --extra analyse`.
 3. BZ1 `bereik`, dan `bron` (de vijf bestanden, of het voorstel), dan twee keer omzetten met
    precies de opdrachtregel van de dienst (`uit1`, `uit2`) en een derde keer met `--fp32`
@@ -170,10 +170,11 @@ voor wat een mens na een run doet.
    "beeld.tsv ontbreekt"). Dan het verslag via `actions/upload-artifact@v4` en als laatste stap
    het blok `=== kort ===`.
 
-`tests/analyse/test_beeld_ci.py` (6 tests) houdt die vorm vast: alleen `push` en `pull_request`,
-geen cache (sinds `f16ed5a`: alleen die van de foto's van `beeld.tsv`), de paden, geen `${{` in het script van de poort, dezelfde opdrachtregel als
-`OMZET_BOOT` (na de samenvoeging ook tegen `app/analyse/runtime.py` van X2a), elke BZ een stap, en
-`beeld_echt` in geen andere job.
+`tests/analyse/test_beeld_ci.py` (6 tests bij X3a, nu 8) houdt die vorm vast: alleen `push` en
+`pull_request`, de bron nooit in een cache (sinds `f16ed5a` alleen de foto's van `beeld.tsv`), de
+paden, geen `${{` in het script van de poort, dezelfde opdrachtregel als `OMZET_BOOT` (na de
+samenvoeging ook tegen `app/analyse/runtime.py` van X2a), elke BZ een stap, en `beeld_echt` in geen
+andere job.
 
 ## De go/no-go van X3
 
@@ -355,7 +356,7 @@ Elke regel van "Bouwt", "Tests" en "Klaar als" van X3 die X3a raakt (bouwontwerp
 | **Bouwt:** de omzetter `siglip.py`, `meta.json` (Keuze 73) | `test_beeld_omzetten.py` (86; 71 bij X3a): `test_fp32_beeld_gelijk_aan_numpy`, `test_fp32_tekst_gelijk_aan_numpy`, `test_int8_cosinus_minstens_0_99`, `test_twee_omzettingen_dezelfde_sha256`, `test_meta_json`, `test_een_kop_die_liegt*` | groen |
 | **Bouwt:** de dienst `analyse-omzetten` | in `compose.analyse.yaml` van X2a (`25ac3e7`); de opdrachtregel is dezelfde: `test_de_omzetter_start_zoals_de_dienst_analyse_omzetten` en `test_beeld_omzetten.py` (`_start_meet`) | de dienst is van X2a; de vergelijking met `OMZET_BOOT` na de samenvoeging |
 | **Bouwt:** trust-on-first-use | — | niet in X3a: hoort bij `install.sh` (X3b) |
-| **Bouwt:** de CI-job `beeld-model` (§4.6) | `test_beeld_ci.py` (7; 6 bij X3a), yamllint | groen; de job zelf **in CI na de push** |
+| **Bouwt:** de CI-job `beeld-model` (§4.6) | `test_beeld_ci.py` (8; 6 bij X3a), yamllint | groen; de job zelf **in CI na de push** |
 | **Tests:** `api/tests/beeld/test_tokenizer.py` (de tabelrij) | zie Bouwt | groen |
 | **Tests:** `api/tests_analyse/test_beeld_omzetten.py` (de tabelrij: fp32 ≤ 1·10⁻⁵, int8 ≥ 0,99, twee keer dezelfde sha256, maxrss, een liegende kop) | `test_maxrss_en_tijd_gemeten`, `test_een_kop_die_liegt_als_proces` en de rest | groen (86; 71 bij X3a) |
 | **Tests:** `api/tests_analyse/test_beeld_kwaliteit.py` (marker `beeld_echt`) | de poorten van Keuze 83: `test_nl_precisie_at_5`, `test_combinaties_in_de_top_10`, `test_int8_tegen_fp32`, `test_meer_zoals_deze`, `test_zelftest_met_drie_kleuren`; de rekenstukken in `test_beeld_echt_hulp.py` | hulp groen; de poorten **in CI na de push**, groen pas na de pins |
@@ -716,12 +717,14 @@ Hersteld na de run (`tools/beeld/beeld_model.py` en `ci.yml`):
   beeld.tsv (116 uit de cache, 4 van Commons)". Test:
   `test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt`; `test_set_met_beeld_tsv_is_streng`
   verwacht nu "(0 uit de cache, 120 van Commons)".
-- **Een cache voor de foto's, nooit voor de bron.** Een stap `actions/cache@v4` (dezelfde action en
-  versie als in `api-analyse` en `analyse-image`) direct vóór BZ4 `set` bewaart
-  `$RUNNER_TEMP/beeld/set` onder de sha256 van `api/tests/analyse/sets/beeld.tsv`, alleen als die
-  er is (`hashFiles(...) != ''`). Een voorstel krijgt geen cache; de bron komt elke keer van
-  huggingface.co. `test_beeld_ci.py` houdt de stap vast: het pad, de sleutel, geen restore-keys,
-  de voorwaarde, de plek vóór `set`, en maar één `actions/cache` in de job.
+- **Een cache voor de foto's, nooit voor de bron.** `$RUNNER_TEMP/beeld/set` staat in een cache
+  onder de sha256 van `api/tests/analyse/sets/beeld.tsv`, alleen als die er is
+  (`hashFiles(...) != ''`). Een voorstel krijgt geen cache; de bron komt elke keer van
+  huggingface.co. Eerst was dat één stap `actions/cache@v4` direct vóór BZ4 `set`; sinds de review
+  hieronder (R1) zijn het twee stappen van dezelfde action en versie: `actions/cache/restore@v4`
+  direct vóór `set` en `actions/cache/save@v4` direct erna. `test_beeld_ci.py` houdt ze vast: het
+  pad, de sleutel, geen restore-keys, de voorwaarden, de plek rond `set`, en geen andere
+  `actions/cache` in de job.
 
 Teruggedraaid getest (de oude `beeld_model.py` terug, de nieuwe tests ongewijzigd): de drie nieuwe
 tests en `test_set_met_beeld_tsv_is_streng` zijn rood. 3.658.073 bytes van upload in 1,0 s (alleen
@@ -729,13 +732,27 @@ tests en `test_set_met_beeld_tsv_is_streng` zijn rood. 3.658.073 bytes van uploa
 aan upload in plaats van 4. Twee mutaties apart, ook rood: tegoed opsparen na een pauze, en een
 symlink als foto uit de cache tellen.
 
+### De review van de reparatie
+
+Eén review van `61c2139`, vier bevindingen. Elke bevinding eerst zelf nagekeken; ze klopten alle
+vier (R2 deels, zie daar). Per bevinding met code een test die zonder de reparatie faalt (de
+`beeld_model.py` en `ci.yml` van `61c2139` in een kopie terug: 3 rood, 57 groen).
+
+| Bevinding | Wat er was | Wat er gedaan is | Test (rood zonder de reparatie) |
+|---|---|---|---|
+| R1 (should) | `actions/cache@v4` bewaart in zijn post-stap, en alleen na een groene job (`post-if: "success()"` in zijn `action.yml`). De job blijft rood zolang `models.lock` de regels van SigLIP mist (tot X3b), ook met `beeld.tsv` en een goede `set`: dan haalde elke strenge run de 120 originelen opnieuw, en deed de cache niets | Twee stappen van dezelfde action en tag (de submappen `restore` en `save` van `actions/cache`, `v4`; dezelfde repository en `dist/`, geen nieuwe action): ophalen met `id: set-cache` vóór `set`, bewaren direct na `set`, ook als de job daarna rood eindigt. Bewaren alleen als `set` goed was (nooit een halve set: een sleutel bewaart maar één keer) en de cache ze nog niet had (`cache-hit != 'true'`) | `test_beeld_ci.py::test_de_foto_s_gaan_direct_na_set_in_de_cache_ook_als_de_job_rood_eindigt` (nieuw) en `::test_alleen_push_en_pull_request_en_alleen_de_set_in_de_cache` (nu: in `beeld-model` alleen `restore@v4` en `save@v4`, in elke andere job alleen `actions/cache@v4`) |
+| R2 (nit) | Twee zinnen over "geen cache" lazen krom, en "(6 tests)" in "De job `beeld-model`" stond naast feiten van na `f16ed5a`. Die 6 klopte voor `3184131` (6 bij X3a), dus niet fout, wel verwarrend | Herschreven: "de bron nooit uit een cache, de foto's van `beeld.tsv` wel"; "(6 tests bij X3a, nu 8)" en in Klaar als "(8; 6 bij X3a)" | geen (tekst) |
+| R3 (nit) | `set/` kan uit de cache komen en tar houdt symlinks. `_klopt` weigert een `<sleutel>.jpg` die een symlink is, maar `haal` opende `<sleutel>.jpg.part` met `"wb"`: door een link heen, en `os.replace` zette de link daarna op de plek van de foto | `haal` haalt een `.part` die er al staat eerst weg (ook een symlink, niet zijn doel) en opent met `"xb"`: nooit door een link | `test_beeld_tools.py::test_haal_schrijft_nooit_door_een_part_die_er_al_staat`: op de oude code schreef `haal` "de echte foto" in het bestand buiten `set/` |
+| R4 (nit) | De fixture `nep` zette `time.sleep` stil maar niet `_klaar` en `_vorige` terug; zonder slapen loopt `_klaar` voor elke download van `/upload/` verder voor op de klok, en een latere test die slapen telt, kon een rem van een eerdere test zien | `nep` begint elke test met lege `_vorige` en `_klaar` | geen nieuwe: vandaag hangt geen test ervan af (alle 60 groen in de volgorde van het bestand) |
+
 ### Open na f16ed5a
 
-- **De cache bewaart alleen na een groene job.** `actions/cache` bewaart in zijn post-stap alleen
+- ~~**De cache bewaart alleen na een groene job.** `actions/cache` bewaart in zijn post-stap alleen
   als de job geslaagd is. Zolang de job rood eindigt (de kwaliteitspoort, of `uitslag` omdat
   `models.lock` de regels van SigLIP nog mist terwijl `beeld.tsv` er al is), haalt elke strenge run
   de 120 originelen opnieuw, wel binnen de grens. Altijd bewaren vraagt `actions/cache/save`, een
-  andere action; niet gedaan.
+  andere action; niet gedaan.~~ [De review van de reparatie, R1: `actions/cache/save@v4` direct
+  na `set`, van dezelfde action en tag.]
 - **`timeout-minutes: 60` is niet veranderd.** Met de grens duurt het ophalen langer (zie boven);
   of het past, zegt de volgende run.
 - **Of de bandbreedte de oorzaak was**, zegt de volgende run: komt er weer een 429, dan staat er nu

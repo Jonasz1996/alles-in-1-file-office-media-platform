@@ -5,8 +5,9 @@ Leest ci.yml als tekst, zoals test_media_ci.py en test_zoek_ci.py:
 - de job draait alleen als git diff een wijziging ziet in de omzetter, tokenizer.py, onnxw.py,
   models.lock of wat de job zelf meet (tools/beeld, de tests beeld_echt en hun lijsten), of als de
   PR een regel "beeld-model: ja" heeft; geen workflow_dispatch; de bron nooit in een cache, de
-  foto's van beeld.tsv wel (één stap actions/cache@v4 vóór BZ4 set, op de sha256 van beeld.tsv,
-  alleen als die er is; sinds CI op f16ed5a);
+  foto's van beeld.tsv wel (sinds CI op f16ed5a: actions/cache/restore@v4 vóór BZ4 set en
+  actions/cache/save@v4 direct erna, op de sha256 van beeld.tsv, alleen als die er is; bewaren
+  ook als de job daarna rood eindigt, maar alleen na een goede set);
 - de tekst van de PR komt via env binnen, nooit als expressie in een script;
 - de omzetter start zoals de dienst analyse-omzetten (compose van X2a);
 - BZ1, BZ2, BZ3, BZ4, BZ6 en BZ7 hebben elk een stap; de tests met marker beeld_echt draaien
@@ -57,6 +58,15 @@ def _blokken() -> list[str]:
 
 
 TSV_HASH = "hashFiles('api/tests/analyse/sets/beeld.tsv')"
+# alleen set/ (nooit bron/ of uit*/), op de sha256 van beeld.tsv, zonder restore-keys
+SET_CACHE = {"path": "${{ runner.temp }}/beeld/set", "key": f"beeld-set-${{{{ {TSV_HASH} }}}}"}
+
+
+def _cache_stappen() -> tuple[dict, dict]:
+    """De twee stappen van actions/cache in beeld-model: ophalen en bewaren, in die volgorde."""
+    cache = [s for s in _stappen() if "cache" in str(s.get("uses", ""))]
+    assert [s["uses"] for s in cache] == ["actions/cache/restore@v4", "actions/cache/save@v4"]
+    return cache[0], cache[1]
 
 
 def test_alleen_push_en_pull_request_en_alleen_de_set_in_de_cache():
@@ -64,30 +74,54 @@ def test_alleen_push_en_pull_request_en_alleen_de_set_in_de_cache():
     # PyYAML leest de sleutel on als True; dus ook geen workflow_dispatch
     assert set(doc[True]) == {"push", "pull_request"}
     regels = "\n".join(job("beeld-model"))
-    # De bron komt nooit uit een cache (geen cache van uv, geen tweede stap); alleen de foto's van
+    # De bron komt nooit uit een cache (geen cache van uv, geen derde stap); alleen de foto's van
     # beeld.tsv (CI op f16ed5a: de robotregels van Wikimedia, zo weinig mogelijk downloads)
-    assert regels.count("actions/cache") == 1 and "cache:" not in regels
-    assert "enable-cache" not in regels
+    assert len(re.findall(r"^\s+(?:- )?uses: actions/cache", regels, re.M)) == 2
+    assert "cache:" not in regels and "enable-cache" not in regels
     stappen = _stappen()
-    cache = [s for s in stappen if "cache" in str(s.get("uses", ""))]
-    assert len(cache) == 1
-    stap = cache[0]
-    # dezelfde action en versie als elders in ci.yml
-    assert stap["uses"] == "actions/cache@v4"
-    assert set(re.findall(r"uses: (actions/cache\S*)", CI.read_text())) == {"actions/cache@v4"}
-    # alleen set/ (nooit bron/ of uit*/), op de sha256 van beeld.tsv, zonder restore-keys
-    assert stap["with"] == {
-        "path": "${{ runner.temp }}/beeld/set",
-        "key": f"beeld-set-${{{{ {TSV_HASH} }}}}",
+    ophalen, _ = _cache_stappen()
+    # Dezelfde action en versie als elders in ci.yml (actions/cache, v4). Hier ophalen en bewaren
+    # apart (de review van de reparatie, R1); elke andere job houdt actions/cache@v4
+    for naam, j in doc["jobs"].items():
+        gebruikt = {s["uses"] for s in j.get("steps", []) if "actions/cache" in s.get("uses", "")}
+        if naam == "beeld-model":
+            assert gebruikt == {"actions/cache/restore@v4", "actions/cache/save@v4"}
+        else:
+            assert gebruikt <= {"actions/cache@v4"}, naam
+    assert set(re.findall(r"uses: (actions/cache\S*)", CI.read_text())) == {
+        "actions/cache@v4",
+        "actions/cache/restore@v4",
+        "actions/cache/save@v4",
     }
+    assert ophalen["with"] == SET_CACHE
     # alleen als beeld.tsv er is (een voorstel krijgt geen cache), en als de job draait
-    assert stap["if"] == (
+    assert ophalen["if"] == (
         "${{ !cancelled() && steps.poort.outputs.draaien == 'ja' && " + TSV_HASH + " != '' }}"
     )
     # direct vóór de stap set, die de foto's nakijkt
-    i = stappen.index(stap)
+    i = stappen.index(ophalen)
+    assert ophalen["id"] == "set-cache"
     assert stappen[i + 1].get("id") == "set"
     assert "beeld_model.py set " in stappen[i + 1]["run"]
+
+
+def test_de_foto_s_gaan_direct_na_set_in_de_cache_ook_als_de_job_rood_eindigt():
+    """De review van de reparatie op f16ed5a (R1): actions/cache@v4 bewaart in zijn post-stap,
+    en alleen na een groene job (post-if: success()). De job is rood zolang models.lock de regels
+    van SigLIP mist (tot X3b), ook met beeld.tsv en een goede set; dan haalde elke strenge run de
+    120 originelen opnieuw. Nu bewaart een eigen stap direct na set: alleen als set goed was
+    (nooit een halve set, want een sleutel bewaart maar één keer) en de cache ze nog niet had."""
+    stappen = _stappen()
+    ophalen, bewaren = _cache_stappen()
+    i = stappen.index(bewaren)
+    assert stappen[i - 1].get("id") == "set" and stappen.index(ophalen) == i - 2
+    assert bewaren["with"] == ophalen["with"] == SET_CACHE
+    assert bewaren["if"] == (
+        "${{ !cancelled() && steps.poort.outputs.draaien == 'ja' && steps.set.outcome == 'success'"
+        " && steps.set-cache.outputs.cache-hit != 'true' && " + TSV_HASH + " != '' }}"
+    )
+    # geen post-stap die op een groene job wacht, in deze job
+    assert not any(s.get("uses") == "actions/cache@v4" for s in stappen)
 
 
 def test_de_poort_kijkt_naar_git_diff_en_de_tekst_van_de_pr():

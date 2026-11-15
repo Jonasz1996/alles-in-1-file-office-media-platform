@@ -184,10 +184,12 @@ kwaliteitsset, zet het model twee keer om en draait de poorten van Keuze 83. Hij
 Er is geen knop om hem met de hand te starten. Het model komt nooit uit een cache: elke run haalt
 de bron van huggingface.co. De 120 foto's wel, zodra `beeld.tsv` er is: een cache op de sha256
 van `beeld.tsv`, omdat de robotregels van Wikimedia zo weinig mogelijk downloads vragen. `set`
-kijkt elke foto uit de cache na (grootte en sha256) en haalt alleen wat ontbreekt of niet klopt;
-de cache wordt alleen bewaard als de job groen eindigt. Van upload.wikimedia.org haalt de job
-gemiddeld hooguit 2,5 MB/s (20 Mbps; de robotregels staan 25 Mbps toe). Draait hij niet, dan zegt
-het blok `=== kort ===` aan het eind van het log "beeld-model: draaien nee" met de reden.
+kijkt elke foto uit de cache na (grootte en sha256) en haalt alleen wat ontbreekt of niet klopt.
+De cache wordt bewaard direct na een goede `set`, ook als de job daarna rood eindigt (zolang
+`models.lock` de regels van SigLIP mist, is hij dat altijd); nooit een halve set, want een sleutel
+bewaart maar één keer. Van upload.wikimedia.org haalt de job gemiddeld hooguit 2,5 MB/s (20 Mbps;
+de robotregels staan 25 Mbps toe). Draait hij niet, dan zegt het blok `=== kort ===` aan het eind
+van het log "beeld-model: draaien nee" met de reden.
 
 Het blok `=== kort ===` staat aan het eind van het log, met per regel:
 

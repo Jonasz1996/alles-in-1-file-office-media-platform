@@ -112,6 +112,10 @@ def nep(monkeypatch):
     monkeypatch.setattr(bm, "UPLOAD", f"{n.url}/upload/")
     monkeypatch.setattr(bm, "NASA", f"{n.url}/nasa/")
     monkeypatch.setattr(bm.time, "sleep", lambda s: None)
+    # Elke test begint zonder pauze en zonder rem van een vorige test: hier slaapt niets, dus
+    # _klaar loopt anders steeds verder voor op de klok (de review van de reparatie, R4)
+    monkeypatch.setattr(bm, "_vorige", {})
+    monkeypatch.setattr(bm, "_klaar", {})
     yield n
     n.sluit()
 
@@ -329,6 +333,29 @@ def test_haal_controleert_grootte_en_sha256(nep, tmp_path):
     with pytest.raises(bm.Fout, match="leeg"):
         bm.haal(f"{nep.url}/leeg", doel, max_bytes=9)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_haal_schrijft_nooit_door_een_part_die_er_al_staat(nep, tmp_path):
+    """De review van de reparatie op f16ed5a (R3): set/ kan uit een cache komen, en tar houdt
+    symlinks. Een <sleutel>.jpg.part die er al staat (een symlink naar elders, of een oud stuk)
+    gaat eerst weg; haal schrijft nooit door de link, en op de plek komt een gewoon bestand."""
+    data = b"de echte foto"
+    nep.zet("/upload/kat-1.jpg", data)
+    set_ = tmp_path / "set"
+    set_.mkdir()
+    elders = tmp_path / "elders.txt"
+    elders.write_bytes(b"niet van haal")
+    doel = set_ / "kat-1.jpg"
+    (set_ / "kat-1.jpg.part").symlink_to(elders)
+    assert bm.haal(f"{bm.UPLOAD}kat-1.jpg", doel, max_bytes=99, sha256=_sha(data))[1] == len(data)
+    assert elders.read_bytes() == b"niet van haal"
+    assert not doel.is_symlink() and doel.read_bytes() == data
+    # een oud stuk als gewoon bestand: weg, en niet vooraan in de nieuwe download
+    doel.unlink()
+    (set_ / "kat-1.jpg.part").write_bytes(b"half")
+    bm.haal(f"{bm.UPLOAD}kat-1.jpg", doel, max_bytes=99, sha256=_sha(data))
+    assert doel.read_bytes() == data
+    assert sorted(p.name for p in set_.iterdir()) == ["kat-1.jpg"]
 
 
 def test_haal_probeert_opnieuw_bij_503_maar_niet_bij_404(nep, tmp_path):

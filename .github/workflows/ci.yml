@@ -1399,13 +1399,13 @@ jobs:
   # of als de PR een regel "beeld-model: ja" heeft (K2-03). Geen
   # workflow_dispatch. De bron komt nooit uit een cache: elke keer van huggingface.co, met de
   # sha256 uit models.lock. De foto's van beeld.tsv wel (sinds CI op f16ed5a; actions/cache op de
-  # sha256 van beeld.tsv): de robotregels van Wikimedia vragen zo weinig mogelijk downloads, en
-  # set haalt alleen wat ontbreekt of niet klopt. Een voorstel (geen beeld.tsv) heeft geen
-  # cache. tools/beeld/beeld_model.py (alleen de standaardbibliotheek) haalt en vergelijkt;
-  # zolang models.lock geen regels van SigLIP heeft of beeld.tsv ontbreekt, schrijft hij een
-  # voorstel (verslag via upload-artifact) en maakt de laatste stap de job rood. Een mens zet de
-  # regels erin, nooit de job. De tests met marker beeld_echt draaien alleen hier. Aan het eind van
-  # het log het blok "=== kort ===".
+  # sha256 van beeld.tsv, ophalen vóór set en bewaren direct erna): de robotregels van Wikimedia
+  # vragen zo weinig mogelijk downloads, en set haalt alleen wat ontbreekt of niet klopt. Een
+  # voorstel (geen beeld.tsv) heeft geen cache. tools/beeld/beeld_model.py (alleen de
+  # standaardbibliotheek) haalt en vergelijkt; zolang models.lock geen regels van SigLIP heeft of
+  # beeld.tsv ontbreekt, schrijft hij een voorstel (verslag via upload-artifact) en maakt de
+  # laatste stap de job rood. Een mens zet de regels erin, nooit de job. De tests met marker
+  # beeld_echt draaien alleen hier. Aan het eind van het log het blok "=== kort ===".
   beeld-model:
     name: Beeld-model (SigLIP 2 omzetten, tokenizer en de kwaliteitspoort)
     runs-on: ubuntu-24.04
@@ -1505,11 +1505,14 @@ jobs:
             --uit-fp32 "$WERK/uitfp32" --log-fp32 "$WERK/omzettenfp32.log" \
             || [ $? -eq 3 ]
       # Alleen met beeld.tsv, en alleen de foto's (nooit de bron): set kijkt elke foto na
-      # (grootte en sha256) en haalt alleen wat ontbreekt of niet klopt. De cache bewaart pas aan
-      # het eind van een groene job (en alleen als de sleutel nog niet bestaat)
+      # (grootte en sha256) en haalt alleen wat ontbreekt of niet klopt. Ophalen en bewaren zijn
+      # twee stappen van dezelfde action en versie (actions/cache, v4): actions/cache@v4 zelf
+      # bewaart pas aan het eind van een groene job (post-if: success()), en de job is rood zolang
+      # models.lock de regels van SigLIP mist (tot X3b), ook als set goed was
       - name: BZ4 de foto's van beeld.tsv uit de cache (op de sha256 van beeld.tsv)
+        id: set-cache
         if: ${{ !cancelled() && steps.poort.outputs.draaien == 'ja' && hashFiles('api/tests/analyse/sets/beeld.tsv') != '' }}
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/beeld/set
           key: beeld-set-${{ hashFiles('api/tests/analyse/sets/beeld.tsv') }}
@@ -1517,6 +1520,17 @@ jobs:
         id: set
         if: ${{ !cancelled() && steps.poort.outputs.draaien == 'ja' }}
         run: python3 -I ../tools/beeld/beeld_model.py set --werk "$WERK" || [ $? -eq 3 ]
+      # Direct na set, ook als de job daarna rood eindigt: alleen als set alle foto's van
+      # beeld.tsv goed heeft (nooit een halve set: een sleutel bewaart maar één keer) en de cache
+      # ze nog niet had
+      - name: BZ4 de foto's van beeld.tsv in de cache (op de sha256 van beeld.tsv)
+        if: >-
+          ${{ !cancelled() && steps.poort.outputs.draaien == 'ja' && steps.set.outcome == 'success'
+          && steps.set-cache.outputs.cache-hit != 'true' && hashFiles('api/tests/analyse/sets/beeld.tsv') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/beeld/set
+          key: beeld-set-${{ hashFiles('api/tests/analyse/sets/beeld.tsv') }}
       - name: BZ3 en BZ7 de tokenizer met het tokenizer.json van SigLIP 2 (pytest -m beeld_echt)
         if: ${{ !cancelled() && steps.omzetten.outcome == 'success' }}
         run: |

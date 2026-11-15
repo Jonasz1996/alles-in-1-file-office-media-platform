@@ -304,7 +304,10 @@ def haal(url: str, doel: Path, *, max_bytes: int, grootte=None, sha256=None) -> 
     n = 0
     try:
         try:
-            with _open(url, timeout=120) as antwoord, part.open("wb") as f:
+            # set/ kan uit een cache komen (CI op f16ed5a): een .part die er al staat, ook een
+            # symlink, gaat eerst weg, en "xb" schrijft nooit door een link naar elders
+            part.unlink(missing_ok=True)
+            with _open(url, timeout=120) as antwoord, part.open("xb") as f:
                 while stuk := antwoord.read(1 << 20):
                     n += len(stuk)
                     if n > grens:
