@@ -54,7 +54,8 @@ class Nep:
     van Commons. vragen: (pad met query, User-Agent) van elke vraag."""
 
     def __init__(self) -> None:
-        self.paden: dict[str, list[tuple[int, bytes]]] = {}
+        # (status, body) of (status, body, extra kopregels)
+        self.paden: dict[str, list[tuple]] = {}
         self.vragen: list[tuple[str, str]] = []
         self.commons = None
         nep = self
@@ -63,6 +64,7 @@ class Nep:
             def do_GET(self):  # noqa: N802
                 nep.vragen.append((self.path, self.headers.get("User-Agent", "")))
                 pad = urllib.parse.urlsplit(self.path).path
+                extra: list[tuple[str, str]] = []
                 if pad == "/w/api.php" and nep.commons is not None:
                     q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query))
                     status, body = 200, json.dumps(nep.commons.antwoord(q)).encode()
@@ -71,8 +73,12 @@ class Nep:
                     if not rij:
                         status, body = 404, b"niet hier"
                     else:
-                        status, body = rij[0] if len(rij) == 1 else rij.pop(0)
+                        status, body, *kop = rij[0] if len(rij) == 1 else rij.pop(0)
+                        for naam, waarde in kop[0].items() if kop else ():
+                            extra.append((naam, waarde))
                 self.send_response(status)
+                for naam, waarde in extra:
+                    self.send_header(naam, waarde)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -325,10 +331,57 @@ def test_haal_probeert_opnieuw_bij_503_maar_niet_bij_404(nep, tmp_path):
     nep.paden["/kapot"] = [(500, b"")] * 9
     with pytest.raises(bm.Fout, match="HTTP 500"):
         bm.haal(f"{nep.url}/kapot", tmp_path / "k", max_bytes=99)
-    assert [p for p, _ in nep.vragen].count("/kapot") == 4
+    assert [p for p, _ in nep.vragen].count("/kapot") == 6
     with pytest.raises(bm.Fout, match="HTTP 404"):
         bm.haal(f"{nep.url}/niet", tmp_path / "n", max_bytes=99)
     assert [p for p, _ in nep.vragen].count("/niet") == 1
+
+
+def test_na_een_429_wacht_hij_zo_lang_als_retry_after_zegt(nep, tmp_path, monkeypatch):
+    """CI-run op 26c49ca: Commons gaf na ±10 s HTTP 429 en drie snelle pogingen hielpen niet.
+    Retry-After (seconden of een HTTP-datum) telt als hij langer is dan de eigen wachttijd, met
+    MAX_WACHT_S als grens."""
+    slapen: list[float] = []
+    monkeypatch.setattr(bm.time, "sleep", slapen.append)
+    nep.paden["/vol"] = [
+        (429, b"", {"Retry-After": "30"}),
+        (429, b"", {"Retry-After": "1"}),
+        (503, b"", {"Retry-After": "9999"}),
+        (429, b"", {"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"}),  # voorbij: telt als 0
+        (200, b"klaar"),
+    ]
+    assert bm.haal(f"{nep.url}/vol", tmp_path / "v", max_bytes=99)[1] == 5
+    assert slapen == [30.0, 4.0, bm.MAX_WACHT_S, 16.0]
+    assert bm.MAX_WACHT_S <= 300
+    nep.paden["/dicht"] = [(429, b"")] * 9
+    with pytest.raises(bm.Fout, match="HTTP 429"):
+        bm.haal(f"{nep.url}/dicht", tmp_path / "d", max_bytes=99)
+    assert [p for p, _ in nep.vragen].count("/dicht") == 6
+
+
+def test_tussen_twee_vragen_aan_commons_zit_een_pauze(nep, monkeypatch):
+    """Naar de API en upload van Commons nooit twee vragen binnen PAUZE_S; andere hosts (Hugging
+    Face) wachten niet."""
+    klok = [1000.0]
+    slapen: list[float] = []
+
+    def slaap(s: float) -> None:
+        slapen.append(s)
+        klok[0] += s
+
+    monkeypatch.setattr(bm.time, "monotonic", lambda: klok[0])
+    monkeypatch.setattr(bm.time, "sleep", slaap)
+    monkeypatch.setattr(bm, "_vorige", {})
+    monkeypatch.setattr(bm, "COMMONS", "https://commons.example/w/api.php")
+    monkeypatch.setattr(bm, "UPLOAD", "https://upload.example/")
+    bm._pauze("https://commons.example/w/api.php?a=1")
+    bm._pauze("https://commons.example/w/api.php?a=2")
+    klok[0] += 0.25
+    bm._pauze("https://commons.example/w/api.php?a=3")
+    bm._pauze("https://upload.example/x.jpg")  # een andere host: eigen beurt
+    bm._pauze("https://huggingface.co/x")
+    assert slapen == [bm.PAUZE_S, bm.PAUZE_S - 0.25]
+    assert bm.PAUZE_S >= 1.0
 
 
 # --- vergelijk ---------------------------------------------------------------------------------

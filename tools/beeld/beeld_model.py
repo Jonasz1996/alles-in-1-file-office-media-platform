@@ -38,6 +38,7 @@ Codes: 0 goed, 1 fout, 3 voorstel geschreven (de job gaat door, `uitslag` maakt 
 from __future__ import annotations
 
 import argparse
+import email.utils
 import hashlib
 import importlib.util
 import json
@@ -143,19 +144,54 @@ def _vraag(url: str, *, methode: str = "GET") -> urllib.request.Request:
     return urllib.request.Request(url, method=methode, headers={"User-Agent": UA})
 
 
-def _open(url: str, *, pogingen: int = 4, timeout: float = 60):
-    """urlopen met een paar pogingen bij 429, 5xx of een netwerkfout (2, 4, 8 s)."""
+# Wikimedia vraagt om vragen na elkaar en om Retry-After te volgen (API:Etiquette). Zonder pauze
+# gaf commons.wikimedia.org na ±10 s HTTP 429, ook na drie pogingen (CI-run op 26c49ca)
+PAUZE_S = 1.0  # tussen twee vragen aan Commons (de API of upload.wikimedia.org)
+MAX_WACHT_S = 120.0  # hooguit zo lang wachten na een 429 of 503, ook als Retry-After meer zegt
+_vorige: dict[str, float] = {}
+
+
+def _pauze(url: str) -> None:
+    """PAUZE_S tussen twee vragen aan dezelfde host van Commons; andere hosts wachten niet."""
+    if not url.startswith((COMMONS, UPLOAD)):
+        return
+    host = _host(url)
+    rest = _vorige.get(host, float("-inf")) + PAUZE_S - time.monotonic()
+    if rest > 0:
+        time.sleep(rest)
+    _vorige[host] = time.monotonic()
+
+
+def _retry_after(e: urllib.error.HTTPError) -> float:
+    """Retry-After in seconden (een getal of een HTTP-datum); 0 als hij ontbreekt of niet leest."""
+    waarde = (e.headers.get("Retry-After") if e.headers is not None else None) or ""
+    waarde = waarde.strip()
+    if waarde.isdigit():
+        return float(waarde)
+    try:
+        return max(0.0, email.utils.parsedate_to_datetime(waarde).timestamp() - time.time())
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return 0.0
+
+
+def _open(url: str, *, pogingen: int = 6, timeout: float = 60):
+    """urlopen met pogingen bij 429, 5xx of een netwerkfout: wachten 2, 4, 8, 16, 32 s, of zo
+    lang als Retry-After zegt als dat langer is (hooguit MAX_WACHT_S)."""
     wacht = 2.0
     for poging in range(pogingen):
+        _pauze(url)
+        na = 0.0
         try:
             return urllib.request.urlopen(_vraag(url), timeout=timeout)
         except urllib.error.HTTPError as e:
             if e.code != 429 and e.code < 500 or poging == pogingen - 1:
                 raise
+            na = _retry_after(e)
+            e.close()
         except (urllib.error.URLError, TimeoutError, ConnectionError):
             if poging == pogingen - 1:
                 raise
-        time.sleep(wacht)
+        time.sleep(min(max(wacht, na), MAX_WACHT_S))
         wacht *= 2
     raise AssertionError("onbereikbaar")
 
