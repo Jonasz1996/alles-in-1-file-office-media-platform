@@ -120,12 +120,16 @@ en niet pas na zijn eigen prctl (review golf 5, veilig F6; zie De review).
   `analyse-status`, `state.view`), `api/tests/test_compose_analyse.py` (nieuw: 10 tests, 11 met de
   parameters).
 - `infra/single/tests/test_install_analyse.sh` (120 controles) en `test_analyse_container.sh`.
+- [Nacontrole golf 5: dit zijn de getallen van X2a. Nu `test_worker_faces.py` 23,
+  `test_analyse_kinderen.py` 15, `test_models_real.py` 6; in `api-analyse` met X3a samen 211 (11
+  niet gekozen); `test_install_analyse.sh` 128 controles. Zie De nacontrole.]
 
 ### CI (`.github/workflows/ci.yml`)
 
 - **`api-analyse`**: `uv sync --frozen --extra analyse` in `.venv-analyse`; `pytest -q
   tests_analyse -m "not beeld_echt" -rs` onder `taskset`, en de laatste regel moet precies
-  `107 passed` zijn (`ANALYSE_TESTS`, en `ANALYSE_DESELECTED` 0); de modellen in een cache op de
+  `107 passed` zijn (`ANALYSE_TESTS`, en `ANALYSE_DESELECTED` 0; na de nacontrole 211 en 11); de
+  modellen in een cache op de
   sha256 van `models.lock`; daarna de twee licenties byte voor byte tegen die van opencv_zoo op
   de commit uit `models.lock`; `laag3.json` als artefact (tijden en maxrss, geen beelden).
 - **`analyse-image`**: het platform-image zoals `media-image`, dezelfde cache van modellen, dan
@@ -309,28 +313,28 @@ Alleen de regels van X2 (en de tests per bestand) die bij X2a horen.
 
 | Regel uit het ontwerp | Bewijs | Uitkomst |
 |---|---|---|
-| Bouwt: de container `analyse` in `compose.analyse.yaml`, met de grenzen | `test_compose_analyse.py` (11 met de parameters); `test_analyse_container.sh` (docker inspect) | groen (lokaal, stand-in); `analyse-image` in CI na de push |
+| Bouwt: de container `analyse` in `compose.analyse.yaml`, met de grenzen | `test_compose_analyse.py` (11 met de parameters); `test_analyse_container.sh` (docker inspect) | groen (lokaal, stand-in, op `63e7b56`; de kop van de nacontrole: zie De nacontrole); `analyse-image` in CI na de push |
 | Bouwt: YuNet en SFace met sha256 in `models.lock`, buiten `$DATA_ROOT` | `test_models_real.py::test_de_modellen_kloppen_met_models_lock`, `…verkeerde_sha256…`; `test_install_analyse.sh` ("analyse_dirs", "modellen_ophalen") | groen |
-| Bouwt: de stap `faces` op de preview van 1024, opgevuld tot een veelvoud van 32 | het opvullen: `test_models_real.py::test_laden_met_alleen_de_cpu_en_de_vormen` (de echte YuNet op `yunet_input()` van 1024 × 683, 704 hoog; zonder opvullen rood); de stap: `test_worker_faces.py` (21, met `test_elke_maat_ook_geen_veelvoud_van_32`; review golf 5, G5-C5) | groen |
+| Bouwt: de stap `faces` op de preview van 1024, opgevuld tot een veelvoud van 32 | het opvullen: `test_models_real.py::test_laden_met_alleen_de_cpu_en_de_vormen` (de echte YuNet op `yunet_input()` van 1024 × 683, 704 hoog; zonder opvullen rood); de stap: `test_worker_faces.py` (23, met `test_elke_maat_ook_geen_veelvoud_van_32`; review golf 5, G5-C5) | groen |
 | Tests: `test_analyse_monitor.py` (de standen en redenen, Defer, `analyse_problem`, off) | `tests/analyse/test_analyse_monitor.py` (31 tests, 36 met de parameters) | groen |
 | Tests: `test_compose_analyse.py` (BOOT, geen sleutel in command, user, netwerk, read_only, cap_drop, pids_limit, `:ro`, grenzen apart) | `tests/test_compose_analyse.py` (11 met de parameters, ook `docker compose config` met en zonder profiel) | groen |
-| Tests: `test_worker_faces.py` (laag 2) | 21 tests: maten, kaders, NMS, min_px, score, 40, kleurvolgorde, normalisatie en memfd, 16 previews, unreadable/image_bad, pixels, model_missing, anders, deadline met terminate, SIGKILL en een nieuw kind; sinds de review van golf 5 (G5-C2) ook het decoderen van YuNet tegen een rekensom en gedraaide, verschoven punten op een patroon tegen een eigen uitlijning | groen |
+| Tests: `test_worker_faces.py` (laag 2) | 23 tests: maten, kaders, NMS, min_px, score, 40, kleurvolgorde, normalisatie en memfd, 16 previews, unreadable/image_bad, pixels, model_missing, anders, deadline met terminate, SIGKILL en een nieuw kind; sinds de review van golf 5 (G5-C2) ook het decoderen van YuNet tegen een rekensom en gedraaide, verschoven punten op een patroon tegen een eigen uitlijning; sinds de nacontrole ook de richting: het uitgelijnde gezicht pixel voor pixel en de invoer van SFace in NCHW (`fc82be8`) | groen |
 | Tests: `test_worker_sandbox.py` (sleutel weg, dumpable 0, EACCES op `/proc/<kind>/fd`, geen sleutel in het kind, `RefusingWorker` ook bij CapEff/NoNewPrivs, 6 MP `too_big`, te veel geheugen, K1-16 `geheimwoord7`) | 16 tests; ook als nobody | groen |
-| Tests: `test_analyse_kinderen.py` (geen `busy` voor een beeldvraag tijdens werk, `cancel`, werk na 8) | 12 tests (ook na 10 minuten, deadline, de verbinding sluiten, PDEATHSIG, grenzen en nice, `/opt/analyse` alleen in het kind) | groen; in `api-analyse`, niet in `analyse-image` (Afwijkingen 12) |
+| Tests: `test_analyse_kinderen.py` (geen `busy` voor een beeldvraag tijdens werk, `cancel`, werk na 8) | 15 tests (ook na 10 minuten, deadline, de verbinding sluiten, PDEATHSIG, grenzen en nice, `/opt/analyse` alleen in het kind; sinds de review een stop vóór `begin` en `BUILT` gelijk aan de handlers) | groen; in `api-analyse`, niet in `analyse-image` (Afwijkingen 12) |
 | Tests: `test_analyse_contract_real.py` | 13 tests | groen |
-| Tests: `test_models_real.py` (laag 3: download met sha256, CPU, 0 gezichten, vormen, tijd) | 5 tests, met de echte modellen | groen |
-| Tests: `test_analyse_container.sh` (uid 10003, alleen `lo`, `touch /x`, CapEff 0, NoNewPrivs, pids_limit, `/models` ro, `/data` leeg, zonder sleutel exit 2, handdruk goed en fout, `/proc/1/environ` dicht, grenzen, `healthy`) | 25 regels goed tegen de stand-in | groen (lokaal); in CI na de push |
-| Tests: `test_install_analyse.sh` (symlink, `MODELLEN_ROOT`, sleutel één keer, lokale server, verkeerde sha256, `--max-filesize`, tweede run, uit, `--force-recreate`, `analyse-status`, terug naar 0.8.0 en vooruit) | 120 controles | groen |
+| Tests: `test_models_real.py` (laag 3: download met sha256, CPU, 0 gezichten, vormen, tijd) | 6 tests, met de echte modellen (sinds de review ook `test_alleen_de_modellen_van_gezichten`) | groen |
+| Tests: `test_analyse_container.sh` (uid 10003, alleen `lo`, `touch /x`, CapEff 0, NoNewPrivs, pids_limit, `/models` ro, `/data` leeg, zonder sleutel exit 2, handdruk goed en fout, `/proc/1/environ` dicht, grenzen, `healthy`) | 25 regels goed tegen de stand-in op `63e7b56`; in de nacontrole 27 regels goed en 0 FOUT tegen een stand-in op `e609341`, met de nieuwe controles van veilig F6 (zie De nacontrole) | groen (lokaal, een stand-in op `e609341`); de echte image in `analyse-image` na de push |
+| Tests: `test_install_analyse.sh` (symlink, `MODELLEN_ROOT`, sleutel één keer, lokale server, verkeerde sha256, `--max-filesize`, tweede run, uit, `--force-recreate`, `analyse-status`, terug naar 0.8.0 en vooruit) | 128 controles (120 bij X2a) | groen |
 | Klaar als: `test_analyse_container.sh` groen (… elk kind niet-dumpbaar, `docker logs` zonder merkteken) | zie hierboven | lokaal groen; in CI na de push |
 | Klaar als: `install.sh` (sha256, niet fataal, symlink, `ANALYSE=uit`) | `test_install_analyse.sh` | groen |
 | Klaar als: `/beheer` toont de juiste stand bij ok, down, models_missing, off | `test_analyse_monitor.py` en `state.view`; de web en de e2e zijn van X2b | het deel van X2a groen |
-| Klaar als: `uv sync --frozen` zonder extra geen numpy (`test_no_numpy_in_app.py`) | in de volle suite van de job `api` (lokaal op `63e7b56`: 6268 groen) | groen (geen pakket erbij; `uv.lock` niet veranderd) |
+| Klaar als: `uv sync --frozen` zonder extra geen numpy (`test_no_numpy_in_app.py`) | in de volle suite van de job `api` (lokaal op `63e7b56`: 6268 groen; de kop van de nacontrole: zie De nacontrole) | groen (geen pakket erbij; `uv.lock` niet veranderd) |
 | Klaar als: in het image vinden 10001/10002 numpy niet, 10003 wel; ≤ 160 MB | A0 (`test_analyse_image.py`, `images`); in de container: pid 1 zonder numpy, `werk` met onnxruntime | stand-in groen; in CI na de push |
 | Klaar als: de lagen 1 en 2 groen | laag 2 voor `faces` (X2a); de rest van X2b | het deel van X2a groen |
-| Harde poort: ≥ 250 foto's per minuut per core met één gezicht | 1248 (sandbox; als nobody 1231) | gehaald; op de runner na de push |
-| Klaar als: `e2e/slim.sh` groen | `SLIM_CPUS=0-2 e2e/slim.sh`, alleen, op `63e7b56` | groen in 1048 s (1306 en 101 groen) |
+| Harde poort: ≥ 250 foto's per minuut per core met één gezicht | 1248 op `63e7b56` (sandbox; als nobody 1231); opnieuw gemeten in de nacontrole | gehaald; op de runner na de push |
+| Klaar als: `e2e/slim.sh` groen | `SLIM_CPUS=0-2 e2e/slim.sh`, alleen, op `63e7b56`; opnieuw in de nacontrole | groen in 1048 s (1306 en 101 groen) |
 | Docs: het runbook en de README (het deel van X2a) | `docs/runbooks/analyse.md`, `infra/single/README.md` | er |
-| Licenties gelijk aan opencv_zoo (a0.md, Open 6) | de stap in `api-analyse`; lokaal `cmp` met de bytes van raw.githubusercontent.com | gelijk; in CI na de push |
+| Licenties gelijk aan opencv_zoo (a0.md, Open 6) | de stap in `api-analyse`; lokaal `cmp` met de bytes van raw.githubusercontent.com (opnieuw in de nacontrole: de bytes van opencv_zoo op `48b10fa`, gelijk) | gelijk; in CI na de push |
 
 ## Gedraaid
 
@@ -484,10 +488,10 @@ deed.
 |---|---|---|---|---|
 | veilig F1, contract G5-C1 (should) | De stop (fd 4) en de vraag (fd 3) komen over twee kanalen. Kwam de stop van pid 1 binnen voordat het kind `begin(n)` deed, dan viel hij weg: de opdracht liep door, pid 1 wachtte `KILL_GRACE_S` en het warme kind kreeg SIGKILL | `StopFlag` onthoudt het hoogste nummer dat moet stoppen (onder een lock); `begin(n)` kijkt daarnaar, en een stop voor een ouder nummer telt niet. De proef `VROEG` (`proef.py`) laat het kind pas beginnen als de stop er is | `test_analyse_kinderen.py`: `test_een_cancel_die_er_is_voor_het_kind_begint_stopt_de_opdracht` (het echte paar, met `VROEG`) en `test_een_stop_voor_begin_telt_en_een_oude_stop_niet`; op de oude `child.py` 2 rood; met twee drukke lussen ernaast drie keer groen | `55c38bd` |
 | veilig F5 (nit) | `set_key` zette een waarde met `sed -i "s\|…\|KEY=<waarde>\|"`. Bij een `.env` met een lege regel `ANALYSE_WORKER_KEY=` (zoals `.env.example`) kwam de nieuwe sleutel zo in de argv van sed, voor iedereen op de host te lezen in `/proc/<pid>/cmdline`; zo ook `MEDIA_WORKER_KEY` en de twee sleutels van office | `set_key` leest en schrijft de regels met builtins van bash (`read`, `printf`); `mktemp`, `chmod`/`chown --reference` en `mv` krijgen alleen paden. Zoals `sed -i`: een nieuw bestand met de rechten en de eigenaar van het oude, dan `mv`; een laatste regel zonder regeleinde blijft zonder; de waarde letterlijk (`\|`, `&` en `\` braken sed) | `test_install_analyse.sh`: een PATH met nep-`sed`, -`awk`, -`mv`, … die hun argv opschrijven: "de sleutel staat in de argv van geen enkel proces" en "set_key: letterlijk …"; op de oude `set_key` 3 controles rood (123 goed). `test_install_env.sh`, `_media` en `_search` blijven groen | `1177605` |
-| veilig F6 (nit) | compose startte pid 1 met `python`: dumpbaar van de exec tot zijn eigen `prctl` in `__main__`, met de sleutel in `/proc/1/environ` | `command` start uit `/opt/venv/bin/python-tekst` (0711 van root, uit de Dockerfile): een proces uit een programma dat zijn gebruiker niet mag lezen, is vanaf de exec niet dumpbaar. De healthcheck heeft de sleutel niet (`env -i`) en blijft `python`. `__main__`, Start hierboven en bouwontwerp §3.11 zeggen het | `test_compose_analyse.py`: de nieuwe exacte `command`, gelijk aan `runtime.serve_argv(python=python-tekst)`, de regel 0711 in de Dockerfile en `COPY_NAME` van `child.py`; op de oude compose 1 rood. De kernel: `test_analyse_container.sh` eist dat een proces uit `python-tekst` `PR_GET_DUMPABLE` 0 geeft vanaf de exec (uit `python` 1) en dat argv[0] van pid 1 `python-tekst` is; alleen in `analyse-image`, want de kernel van deze sandbox (6.18.44, `suid_dumpable` 0) houdt een programma dat alleen uitgevoerd mag worden dumpbaar | `9a9722b` |
+| veilig F6 (nit) | compose startte pid 1 met `python`: dumpbaar van de exec tot zijn eigen `prctl` in `__main__`, met de sleutel in `/proc/1/environ` | `command` start uit `/opt/venv/bin/python-tekst` (0711 van root, uit de Dockerfile): een proces uit een programma dat zijn gebruiker niet mag lezen, is vanaf de exec niet dumpbaar. De healthcheck heeft de sleutel niet (`env -i`) en blijft `python`. `__main__`, Start hierboven en bouwontwerp §3.11 zeggen het | `test_compose_analyse.py`: de nieuwe exacte `command`, gelijk aan `runtime.serve_argv(python=python-tekst)`, de regel 0711 in de Dockerfile en `COPY_NAME` van `child.py`; op de oude compose 1 rood. De kernel: `test_analyse_container.sh` eist dat een proces uit `python-tekst` `PR_GET_DUMPABLE` 0 geeft vanaf de exec (uit `python` 1) en dat argv[0] van pid 1 `python-tekst` is; alleen in `analyse-image`, want de kernel van deze sandbox (6.18.44, `suid_dumpable` 0) houdt een programma dat alleen uitgevoerd mag worden dumpbaar [Nacontrole: dat klopt niet voor de container. In een stand-in op `e609341`, met dezelfde kernel, gaf een proces uit `python-tekst` 0 en een uit `python` 1, en pid 1 en werk waren niet-dumpbaar. Alleen buiten docker, als nobody via `setpriv`, blijft een 0711-kopie dumpbaar; zie De nacontrole.] | `9a9722b` |
 | uitrol F3 (should) | Na de eerste run van `beeld-model` krijgt `models.lock` tien regels van SigLIP. Dan haalde `modellen_ophalen` met `ANALYSE=aan` ook de vijf bronnen (1,51 GB), terwijl Keuze 84 ze aan de stap `BEELD` van X3b geeft (met `BEELD=aan` en een eigen controle op de ruimte). Laag 3 (`test_models_real.py`) en `test_analyse_container.sh` haalden elke regel met een url | `modellen_ophalen` slaat de regels onder `siglip2-b32-256/` over; ze blijven in de lijst die niet weg mag (een omzetting die er staat, blijft). `test_models_real.py` haalt met `gezichten()` alleen YuNet en SFace; `test_analyse_container.sh` slaat ze over; `beeld_model.py uitslag` (X3a) zegt de regels pas samen met X3b te zetten. Wat met de pins zonder X3b blijft (`models_missing`), staat onder Open na de samenvoeging (doorgestreept wat niet meer klopt), x3a.md Open 1 en het runbook | `test_install_analyse.sh` ("de bron van SigLIP: geen curl, …", "de omzetting die er al staat, blijft staan"): op de oude `install.sh` 1 controle rood (121 goed); `test_models_real.py::test_alleen_de_modellen_van_gezichten`: op de oude code rood; de container in `analyse-image` | `03908c9` |
 | uitrol F4 (nit) | `decide_analyse` zei "ANALYSE=uit in .env" ook als de uit alleen van de aanroep kwam: bij een `.env` zonder regel `ANALYSE` schrijft `merge_analyse_env` de uit niet | Met een regel in `.env` blijft de oude tekst; zonder zegt de reden "ANALYSE=uit bij de aanroep; <.env> heeft geen regel ANALYSE" | `test_install_analyse.sh`: `main` met `ANALYSE=uit` op een verse `.env` eist die reden letterlijk (de vergelijking met 0.8.0 filtert nu precies die regel, niet meer een patroon), en "ANALYSE=uit na aan" eist "ANALYSE=uit in <.env>"; op de oude `install.sh` 2 rood (126 goed) | `b137c6a` |
-| contract G5-C2 (should) | Het nepmodel zette de vijf punten altijd precies in het kader, op een effen vlak. Een kolom voor een rij in de punten, een draai de verkeerde kant op, fx en fy verwisseld of een rand die niet zwart is: dezelfde vector, en de oude tests van `test_worker_faces.py` bleven groen | Twee tests; de code klopte. Het decoderen van YuNet op 64 × 96, elk anker van elke stride, tegen een rekensom zoals `FaceDetectorYN`; en een nep-YuNet met de punten 20° gedraaid en (5, −3) px verschoven (`fake_models`: `draai`, `verschuif`) op een preview met een patroon in rood en groen, een gezicht in het midden en een aan de rand, tegen een eigen bilineaire uitlijning met een rand van nullen | `test_worker_faces.py::test_de_uitvoer_van_yunet_gedecodeerd_zoals_opencv` en `::test_gedraaide_punten_op_een_patroon_zoals_de_rekensom`. Zeven mutaties van `ops/faces.py`: M1 (de x van de punten uit de rij), M3 (de draai getransponeerd), M5 (fx en fy verwisseld) en M6 (de rand herhaald in plaats van zwart) lieten alle oude tests groen; alle zeven (ook M2 de y verkeerd opgeteld, M4 de matrix niet omgekeerd, M7 rij en kolom van het kader verwisseld) maken een nieuwe test rood | `ee33704` |
+| contract G5-C2 (should) | Het nepmodel zette de vijf punten altijd precies in het kader, op een effen vlak. Een kolom voor een rij in de punten, een draai de verkeerde kant op, fx en fy verwisseld of een rand die niet zwart is: dezelfde vector, en de oude tests van `test_worker_faces.py` bleven groen | Twee tests; de code klopte. Het decoderen van YuNet op 64 × 96, elk anker van elke stride, tegen een rekensom zoals `FaceDetectorYN`; en een nep-YuNet met de punten 20° gedraaid en (5, −3) px verschoven (`fake_models`: `draai`, `verschuif`) op een preview met een patroon in rood en groen, een gezicht in het midden en een aan de rand, tegen een eigen bilineaire uitlijning met een rand van nullen | `test_worker_faces.py::test_de_uitvoer_van_yunet_gedecodeerd_zoals_opencv` en `::test_gedraaide_punten_op_een_patroon_zoals_de_rekensom`. [Nacontrole: de tweede ziet alleen het gemiddelde rood en groen; een getransponeerde of gespiegelde uitlijning en een invoer van SFace met hoogte en breedte verwisseld bleven groen. Twee tests erbij, `fc82be8`.] Zeven mutaties van `ops/faces.py`: M1 (de x van de punten uit de rij), M3 (de draai getransponeerd), M5 (fx en fy verwisseld) en M6 (de rand herhaald in plaats van zwart) lieten alle oude tests groen; alle zeven (ook M2 de y verkeerd opgeteld, M4 de matrix niet omgekeerd, M7 rij en kolom van het kader verwisseld) maken een nieuwe test rood | `ee33704` |
 | contract G5-C4 (should) | X2b (`group`) en X3b (`embed_image`, `embed_text`, `rank`, `forget`) moeten in golf 6 allebei een regel zetten in `server.BUILT` en in `child.handlers()`, bestanden van X2a: twee pakketten in hetzelfde bestand | Nagekeken of een tabel ze uit elkaar kan halen: elke vorm daarvan (een dict per op) is weer één plek waar beide een regel bijzetten, en pid 1 mag de modules onder `ops/` niet laden (numpy). Dus vastgelegd als hotspots: bouwontwerp §2.0 ("De hotspots van golf 6") en §3.5 (een tabel: wie wat in welk bestand zet; de handler in een eigen bestand onder `ops/`; samenvoegen X3b, dan X2b, en de tweede houdt beide regels), en Vormen 3 hierboven. Een test houdt `BUILT` en de handlers gelijk | `test_analyse_kinderen.py::test_built_en_de_handlers_van_de_kinderen_zijn_gelijk`: precies gelijk, elke op in het kind van `wire.CHILD`, en de exacte lijsten van nu (golf 6 zet ze bij). Een `BUILT` met `group` zonder handler, of `embed_text` in `werk`: elk 1 rood | `913c318` |
 | contract G5-C5 (nit) | `test_elke_maat_werkt_dankzij_het_opvullen` bewaakte het opvullen tot een veelvoud van 32 niet: het nepmodel geeft met en zonder opvullen dezelfde cellen | Hernoemd naar `test_elke_maat_ook_geen_veelvoud_van_32`, met een eerlijke docstring; Klaar als noemt voor het opvullen `test_models_real.py::test_laden_met_alleen_de_cpu_en_de_vormen` (de echte YuNet op 1024 × 683, 704 hoog) | Met `padded()` die `n` teruggeeft: de hernoemde test groen (zoals hij nu zegt), `test_laden_met_alleen_de_cpu_en_de_vormen` rood (683 tegen 704) | `ee33704` |
 
@@ -496,12 +500,12 @@ deed.
 | Regel | Bewijs | Uitkomst |
 |---|---|---|
 | Een `cancel` die er is voordat het kind begint, stopt de opdracht; geen SIGKILL voor een warm kind | `test_analyse_kinderen.py` (de twee hierboven; het bestand nu 15) | groen, als root en als nobody |
-| Het decoderen van YuNet en het uitlijnen liggen vast in een test; het opvullen tot een veelvoud van 32 met de echte YuNet | `test_worker_faces.py` (nu 21), `test_models_real.py::test_laden_met_alleen_de_cpu_en_de_vormen` | groen |
+| Het decoderen van YuNet en het uitlijnen liggen vast in een test; het opvullen tot een veelvoud van 32 met de echte YuNet | `test_worker_faces.py` (21; na de nacontrole 23), `test_models_real.py::test_laden_met_alleen_de_cpu_en_de_vormen` | groen; de richting van het uitgelijnde gezicht lag pas vast na de nacontrole (`fc82be8`) |
 | `install.sh` haalt alleen de modellen van gezichten; een sleutel komt in geen argv; de reden van uit klopt | `test_install_analyse.sh` | groen: 128 controles |
 | Laag 3 haalt alleen de modellen van gezichten | `test_models_real.py::test_alleen_de_modellen_van_gezichten` (het bestand nu 6) | groen |
-| pid 1 is vanaf de exec niet dumpbaar | `test_compose_analyse.py` (11 met de parameters); `test_analyse_container.sh` | compose groen; de kernel in `analyse-image` na de push |
+| pid 1 is vanaf de exec niet dumpbaar | `test_compose_analyse.py` (11 met de parameters); `test_analyse_container.sh` | compose groen; `test_analyse_container.sh` groen tegen een stand-in op `e609341` (`python-tekst` 0, `python` 1, pid 1 en werk niet-dumpbaar); de echte image in `analyse-image` na de push |
 | `BUILT` en de handlers gelijk; golf 6 weet waar het samenkomt | `test_built_en_de_handlers_van_de_kinderen_zijn_gelijk`; bouwontwerp §2.0 en §3.5 | groen |
-| De telling van `api-analyse` | `ci.yml`: `ANALYSE_TESTS` 209 (188, en 21 van de review: 2 + 12 + 1 + 1 + 2 + 2 + 1, zie de uitleg erboven), `ANALYSE_DESELECTED` 11 | 209 groen, 11 niet gekozen (root 47,3 s, nobody 66,3 s) |
+| De telling van `api-analyse` | `ci.yml`: `ANALYSE_TESTS` 209 (188, en 21 van de review: 2 + 12 + 1 + 1 + 2 + 2 + 1, zie de uitleg erboven), `ANALYSE_DESELECTED` 11 | 209 groen, 11 niet gekozen (root 47,3 s, nobody 66,3 s); na de nacontrole 211, zie De nacontrole |
 
 ### Open na de review
 
@@ -510,12 +514,12 @@ deed.
 - **Golf 6: `server.py` en `child.py` zijn hotspots** (G5-C4). X3b en X2b zetten er allebei
   regels in; samenvoegen X3b, dan X2b. `test_built_en_de_handlers_van_de_kinderen_zijn_gelijk`
   krijgt dan de nieuwe exacte lijsten.
-- **Alleen in CI, na de push:** `api-analyse` (209 en 11), `analyse-image` (met de nieuwe
-  controles: pid 1 uit `python-tekst`, `PR_GET_DUMPABLE` 0 vanaf de exec, de regels van SigLIP
+- **Alleen in CI, na de push:** `api-analyse` (209 en 11; na de nacontrole 211 en 11),
+  `analyse-image` (met de nieuwe controles: pid 1 uit `python-tekst`, `PR_GET_DUMPABLE` 0 vanaf de exec, de regels van SigLIP
   overgeslagen) en `beeld-model`.
 - **`actionlint` niet gedraaid**: het staat niet in de sandbox, en het ophalen (`uvx --from
   actionlint-py`) werd hier geweigerd. De job `infra` draait het ook niet; `yamllint -s .` wel
-  (groen).
+  (groen). [Nacontrole: `actionlint` 1.7.12 is nu gedraaid op `ci.yml`: 0 fouten.]
 
 ### Gedraaid na de review
 
@@ -537,5 +541,116 @@ Nog niet gedraaid na de review (de stap moest eerder eindigen): de hele API-suit
 `test_fuzz_10000_namen_met_vaste_seed`), `SLIM_CPUS=0-2 e2e/slim.sh` alleen (met
 `test_een_stuk_vol_lange_teksten_houdt_de_schrijver_kort`), de e2e-set van CI en `-m office`, en
 `test_analyse_container.sh` tegen een stand-in (verwacht daar één FOUT: de kernel van de sandbox
-houdt een programma dat alleen uitgevoerd mag worden dumpbaar). Golf 5 raakt `web/` en `e2e/`
-niet (`git diff deccbee` leeg).
+houdt een programma dat alleen uitgevoerd mag worden dumpbaar; in de nacontrole kwam die FOUT er
+niet). Golf 5 raakt `web/` en `e2e/`
+niet (`git diff deccbee` leeg). [Nacontrole: dit is nu gedraaid; zie De nacontrole.]
+
+## De nacontrole (golf 5)
+
+Op de kop van de review (`90305da`), op 15 november 2026. Drie dingen: elke reparatie van de
+review weer weghalen en kijken of haar test het ziet; de tabellen van Klaar als nalopen (elke test
+bestaat en is groen, of staat als "in CI na de push", en elk getal komt uit een meting die echt
+gedraaid is); en draaien wat de review liet liggen. Niets gepusht, geen tag; de versie blijft
+0.8.0, en zonder `ANALYSE` doet `install.sh` wat 0.8.0 deed. Hier wat X2a raakt; wat X3a raakt
+(`4a6cbb2`, `0313774`, `e0cce6e`, het deel van `03908c9` in `beeld_model.py`, en de go/no-go),
+staat in "De nacontrole (golf 5)" in [x3a.md](x3a.md).
+
+### De reparaties weggehaald
+
+In een losse worktree (detached op `90305da`), per commit één regel van de reparatie tegelijk
+terug naar de oude code; dan de tests van die bevinding, en daarna de reparatie terug en weer
+groen. Twee gaten in heel golf 5: tests die een fout niet zagen (hier `ee33704`, het andere in
+x3a.md). Beide zijn gedicht met een test die zonder de code rood is.
+
+| Commit (bevinding) | Wat weggehaald | Rood | Oordeel |
+|---|---|---|---|
+| `55c38bd` (veilig F1) | `begin(n)` kijkt niet meer naar `asked` | 2: `test_een_cancel_die_er_is_voor_het_kind_begint_stopt_de_opdracht` (het echte paar stopt pas na 5,02 s, door de SIGKILL) en `test_een_stop_voor_begin_telt_en_een_oude_stop_niet` | gezien |
+| | `begin` zonder `bool(n)` (een `begin(0)` telt dan als gestopt) | 1: `test_een_stop_voor_begin_telt_en_een_oude_stop_niet` | gezien |
+| | `asked = n` in plaats van `max(asked, n)` | 0 | geen fout: de stops komen over één FIFO (fd 4) in de volgorde van pid 1, en de nummers lopen op, dus `n` is altijd het hoogste |
+| | de lock om `begin` en `stop` | — | een race zonder lock is niet vast te zetten in een test; nagelezen: beide lezen en schrijven `n`, `asked`, `set` en `run_options` onder dezelfde lock |
+| `ee33704` (G5-C2) | de mutaties van de review nagedaan: M1, M3, M6 | 2, 1 en 1 (alleen de nieuwe tests) | gezien |
+| | eigen mutaties: M14, de `mgrid` van `warp` verwisseld (het gezicht getransponeerd); M15, de uitvoer van `warp` gespiegeld; M16, `sface_input` met hoogte en breedte verwisseld (`transpose(2, 1, 0)`) | 0, in heel `tests_analyse` (209 groen) | **gat**: het nep-SFace is `GlobalAveragePool` met `Gemm` en ziet alleen de gemiddelde kleur, en de test op het patroon vergelijkt alleen die vector. Gedicht in `fc82be8`: `test_het_uitgelijnde_gezicht_pixel_voor_pixel_zoals_de_rekensom` (de uitvoer van `warp` tegen de eigen uitlijning, op een gezicht in het midden en een aan de rand; M14 en M15 rood) en `test_sface_krijgt_rgb_in_nchw_zonder_draai` (elke pixel van elk kanaal op zijn plek; M16 rood, en BGR in plaats van RGB ook). `ANALYSE_TESTS` 211 |
+| `03908c9` (uitrol F3) | `modellen_ophalen` zonder het `case` voor `siglip2-b32-256/` | 1 controle van `test_install_analyse.sh` (127 goed) | gezien |
+| | `gezichten()` in laag 3 geeft elke regel | 1: `test_models_real.py::test_alleen_de_modellen_van_gezichten` | gezien |
+| | het overslaan in `test_analyse_container.sh` | — | niet te toetsen zolang `models.lock` geen regels van SigLIP heeft (dan is `analyse-image` toch rood, zie Open na de samenvoeging) |
+| `1177605` (veilig F5) | de oude `set_key` met `sed -i` | 3 controles (125 goed) | gezien |
+| | zonder `chmod --reference` | 1 controle | gezien |
+| | de laatste regel altijd met een regeleinde | 1 controle | gezien |
+| | zonder `chown --reference` | — | als root doet het niets; niet te toetsen |
+| `9a9722b` (veilig F6) | `command` in compose weer met `python` | 1: `test_compose_analyse.py::test_de_worker_start_met_boot` | gezien |
+| | de kopie in de Dockerfile 0755 in plaats van 0711 | 1: dezelfde test | gezien |
+| | de kernel | — | geen mutatie, wel gemeten. In een stand-in op `e609341` (de Dockerfile met alleen `uv` en de CA van de proxy van de sandbox erbij) gaf `test_analyse_container.sh` 27 keer goed en 0 FOUT, ook "een proces uit python-tekst is vanaf de exec niet dumpbaar (0), uit python wel (1)" en "pid 1 en werk niet-dumpbaar": dezelfde kernel als de sandbox (6.18.44, `suid_dumpable` 0) doet het dus in de container. Buiten docker, als nobody via `setpriv`, blijft een 0711-kopie van `python` dumpbaar (1), terwijl `cat` op hetzelfde bestand EACCES geeft en nobody hem zelfs uitvoert door een map van 0700 heen; daar klopt de controle op rechten bij een exec niet, dus dat is geen meting van F6. De echte image ziet het in `analyse-image` na de push |
+| `b137c6a` (uitrol F4) | de oude reden (altijd "in .env") | 2 controles (126 goed) | gezien |
+| | altijd "bij de aanroep" | 1 controle (127 goed) | gezien |
+| `913c318` (G5-C4) | `BUILT` met `group` zonder handler | 1 | gezien |
+| | `embed_text` in de handlers van `zoeken` | 1 | gezien |
+| | `faces` in `zoeken` in plaats van in `werk` | 1 | gezien |
+
+`90305da` is alleen documentatie; die is hieronder nagelopen.
+
+### Klaar als, nagelopen
+
+Elke test die Klaar als hierboven noemt, bestaat (nagekeken met `pytest --collect-only` en
+`grep`). Verbeterd, in de tekst zelf:
+
+- de getallen van de tests waren die van X2a, terwijl de review er tests bij zette: nu
+  `test_worker_faces.py` 23, `test_analyse_kinderen.py` 15, `test_models_real.py` 6,
+  `test_install_analyse.sh` 128 controles, en `api-analyse` 211 en 11 (met 120 en 209 erbij als
+  het getal van toen);
+- de rijen met de stand-in, de volle suite, de harde poort en `slim.sh` noemen nu de kop
+  waarop ze gemeten zijn (`63e7b56`) en wijzen naar de metingen hieronder;
+- "pid 1 is vanaf de exec niet dumpbaar" zei "de kernel in `analyse-image` na de push", en de
+  review zei dat de kernel van deze sandbox het niet doet; nu staat er dat het groen is tegen een
+  stand-in (in de container doet dezelfde kernel het wel), en de echte image na de push;
+- de rij van G5-C2 zegt nu dat de richting van het gezicht pas na de nacontrole vastligt;
+- "Nog niet gedraaid na de review" wijst naar hieronder.
+
+### Klaar als, na de nacontrole
+
+| Regel | Bewijs | Uitkomst |
+|---|---|---|
+| De richting van het uitgelijnde gezicht en de invoer van SFace liggen vast | `test_worker_faces.py` (23), de twee tests van `fc82be8` | groen; zonder de code rood (M14, M15, M16, BGR) |
+| Elke reparatie van de review heeft een test die haar ziet | De reparaties weggehaald, hierboven | ja, op drie na die niet te toetsen zijn (de lock, `chown --reference` als root, het overslaan in de container zonder regels van SigLIP) en één die geen fout is (`max`) |
+| De telling van `api-analyse` | `ci.yml`: `ANALYSE_TESTS` 211, `ANALYSE_DESELECTED` 11 | klopt: 211 groen en 11 niet gekozen, als root en als nobody, op `e609341` |
+| De harde poort: ≥ 250 foto's per minuut per core met één gezicht | `test_models_real.py::test_de_tijd_per_foto_en_de_maxrss_van_het_kind` met `ANALYSE_RAPPORT` | gehaald op `e609341`: 1070 foto's per minuut per core als root en 1310 als nobody (26,5 en 22,6 ms per foto zonder gezicht, 29,5 en 23,2 ms per gezicht; maxrss van werk 240 MB) |
+| pid 1 is vanaf de exec niet dumpbaar | `test_compose_analyse.py` (11); `test_analyse_container.sh` | compose groen; de container groen tegen een stand-in op `e609341` (`python-tekst` 0, `python` 1, pid 1 en werk niet-dumpbaar); de echte image in `analyse-image` na de push |
+| `test_analyse_container.sh` | tegen een stand-in van deze kop | 27 keer goed en 0 FOUT, in 65 s, tegen een stand-in op `e609341`; de echte image in `analyse-image` na de push |
+| Klaar als: `e2e/slim.sh` groen, en alle bestaande jobs blijven groen | Gedraaid in de nacontrole | groen op `e609341`: `slim.sh` in 1049 s, en de API-suite, `tests_analyse`, de e2e-set van CI en `-m office` (hieronder); de jobs zelf in CI na de push |
+
+### Gedraaid in de nacontrole
+
+Lokaal in de sandbox, als root en als nobody (zoals CI). Elke zware run alleen, onder `taskset -c
+0-2`. De code op `e609341`; daarna kwam alleen deze documentatie erbij.
+
+| Wat | Hoe | Uitkomst |
+|---|---|---|
+| ruff | `ruff check` en `ruff format --check` in `api/` | schoon, 717 bestanden |
+| de API-suite | `taskset -c 0-2 uv run pytest -q -rs` | 6434 groen, 2 overgeslagen (Pebble draait niet; geen `provider-shapes.json`), 240 niet gekozen, in 2595,7 s; ook `test_fuzz_10000_namen_met_vaste_seed` |
+| `tests_analyse` als root | `.venv-analyse`, `-m "not beeld_echt"`, `ANALYSE_MODELLEN` met de echte YuNet en SFace, `ANALYSE_RAPPORT` | 211 groen, 11 niet gekozen, in 46,0 s; 1070 foto's per minuut per core met één gezicht |
+| `tests_analyse` als nobody | `setpriv` naar 65534, een venv en de modellen in `/tmp/ci-nobody` (daarna weg) | 211 groen, 11 niet gekozen, in 46,4 s; 1310 foto's per minuut per core |
+| API als gewone gebruiker | `/tmp/ci-nobody/run.sh` met `tests/analyse`, `tests/beeld`, `tests/test_compose_analyse.py` en `tests/test_cli_db.py` | 452 groen in 134,5 s (één meer dan na de review: de test van het vangnet) |
+| infra, statisch | `shellcheck` met de regel van CI, `bash -n` (14 bestanden), `yamllint -s .`, `docker compose config -q` in zeven varianten (het voorbeeld, zonder office, met office, met office en de grenzen, met analyse, met het profiel `omzetten`, office met analyse) | schoon |
+| `actionlint` | 1.7.12, op de workflows | 0 fouten |
+| infra, de installatie | `test_install_analyse.sh`, `test_install_env.sh`, `test_install_media.sh`, `test_install_search.sh` | groen: 128, 137, 127 en 209 controles |
+| de container | `test_analyse_container.sh` tegen een stand-in: de Dockerfile met alleen `uv` en de CA van de proxy van de sandbox erbij, met de echte YuNet en SFace | 27 keer goed, 0 FOUT, in 65 s; ook `python-tekst` 0 en `python` 1, pid 1 en werk niet-dumpbaar |
+| `slim.sh` alleen | `SLIM_CPUS=0-2 e2e/slim.sh`, niets anders tegelijk | groen in 1049 s: zoeken en triggers in `python:3.12-slim` (SQLite 3.46.1) 1306 groen in 825 s, met `test_een_stuk_vol_lange_teksten_houdt_de_schrijver_kort`; de e2e met de marker `zoek` 101 groen in 211 s |
+| de web-app | `npm run build` in `web/` | gebouwd |
+| de e2e-set van CI | `taskset -c 0-2 uv run --with playwright python -m pytest ../e2e -q -m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr" -p no:cacheprovider` | 238 groen, 135 niet gekozen, in 854 s |
+| office | dezelfde, met `-m office` (ook `-p no:cacheprovider`) | 30 groen, 343 niet gekozen, in 131 s |
+| de links | relatieve links en ankers in alle `.md` (een eigen script, GitHub-ankers) | 1120 links in 119 bestanden, 0 fout |
+
+### Open na de nacontrole
+
+- De punten onder "Open na de review" blijven staan.
+- **Alleen in CI, na de push:** `api-analyse` (211 en 11, en de licenties tegen opencv_zoo),
+  `analyse-image` (met de controles van de review: pid 1 uit `python-tekst`, `PR_GET_DUMPABLE` 0
+  vanaf de exec, de regels van SigLIP overgeslagen) en `beeld-model`.
+- **De controle van veilig F6 zag nog geen echte image.** Ze is groen tegen een stand-in in deze
+  sandbox, en spike S11 (CI-run 82) zag het mechanisme op een runner van GitHub. Is
+  `analyse-image` op die regel rood, dan klopt de aanname van F6 op die runner niet, en moet
+  pid 1 een andere weg krijgen. Dat is dan een nieuwe bevinding, niet iets om losser te maken.
+- Buiten docker, als nobody via `setpriv`, voert deze sandbox een 0711-kopie uit door een map van
+  0700 heen en houdt hem dumpbaar. Waarom, is niet uitgezocht; het raakt de container niet (daar
+  is dezelfde kernel streng), wel wie F6 op de host van deze sandbox wil nameten.
+- Niet gedraaid: `test_install_update.sh` (Open 8: hij weigert zolang `python:3.12-slim` er is,
+  en dat image blijft) en `test_install_search.sh --stappen` (alleen in de job `infra`).

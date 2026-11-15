@@ -51,10 +51,11 @@ narekenen tegen numpy (grootste verschil 6,4·10⁻⁷).
   tellen, en een vraag staat nooit in een fout of op stderr. Een kapot bestand geeft
   `TokenizerFout` bij het laden.
 
-`api/tests/beeld/test_tokenizer.py` (job `api`, 89 tests, ±3 s): de tabel van het ontwerp,
-"hond op het strand", "ΣΟΦΙΑ ΟΔΟΣ", byte fallback, afkappen, `tokenizer.bin` gelijk aan de JSON
-(ook met fuzz op een vaste seed), geen kwadratische tijd op lange of vreemde invoer, geen tekst in
-een fout, kapotte en te grote bestanden, en BZ7 op een bestand met 256.000 stukken.
+`api/tests/beeld/test_tokenizer.py` (job `api`, 89 tests; na de review 94, na de nacontrole 95;
+±3 s): de tabel van het ontwerp, "hond op het strand", "ΣΟΦΙΑ ΟΔΟΣ", byte fallback, afkappen,
+`tokenizer.bin` gelijk aan de JSON (ook met fuzz op een vaste seed), geen kwadratische tijd op lange
+of vreemde invoer, geen tekst in een fout, kapotte en te grote bestanden, en BZ7 op een bestand met
+256.000 stukken.
 
 ### De omzetter (`5d8adeb`, `e4c8c99`)
 
@@ -95,14 +96,14 @@ een fout, kapotte en te grote bestanden, en BZ7 op een bestand met 256.000 stukk
   gebruikte (`test_models_lock.py::test_de_licenties` heeft de nieuwe exacte lijst).
 
 `api/tests_analyse/siglip_klein.py` maakt de kleine vorm (2 lagen, breedte 64, dezelfde namen als
-het echte bestand) met de standaardbibliotheek. `test_beeld_omzetten.py` (71 tests): de
-voorwaartse stap van een eigen numpy-versie in de test, fp32 ≤ 1·10⁻⁵, int8 cosinus ≥ 0,99, twee
-omzettingen in twee processen met dezelfde sha256, maxrss en tijd per proces (`wait4`), `meta.json`,
-F16 en BF16, 18 liegende koppen (een kop langer dan het bestand of van 2⁶³ bytes, offset buiten
-het bestand of negatief, overlap, een gat, afgekapt, een onbekend dtype, een lengte die niet bij
-de vorm past, geen JSON…; ook als proces: code 2 en geen traceback), een bron die niet klopt
-(`model_type` clip, een laag te veel of te weinig, een tensor die ontbreekt of te veel is, NaN,
-een andere voorbewerking…), een uitvoermap die niet leeg is, een fout halverwege die niets
+het echte bestand) met de standaardbibliotheek. `test_beeld_omzetten.py` (71 tests; na de review
+86): de voorwaartse stap van een eigen numpy-versie in de test, fp32 ≤ 1·10⁻⁵, int8 cosinus ≥ 0,99,
+twee omzettingen in twee processen met dezelfde sha256, maxrss en tijd per proces (`wait4`),
+`meta.json`, F16 en BF16, 18 liegende koppen (een kop langer dan het bestand of van 2⁶³ bytes,
+offset buiten het bestand of negatief, overlap, een gat, afgekapt, een onbekend dtype, een lengte
+die niet bij de vorm past, geen JSON…; ook als proces: code 2 en geen traceback), een bron die niet
+klopt (`model_type` clip, een laag te veel of te weinig, een tensor die ontbreekt of te veel is,
+NaN, een andere voorbewerking…), een uitvoermap die niet leeg is, een fout halverwege die niets
 achterlaat, en dat de app numpy niet laadt.
 
 ### De vragen, de lijst van BZ3 en het hulpmiddel (`b820fdd`, `a2fb1de`)
@@ -118,8 +119,8 @@ achterlaat, en dat de app numpy niet laadt.
   het image), met de stappen `bereik` (BZ1: huggingface.co, commons.wikimedia.org,
   upload.wikimedia.org en images-assets.nasa.gov), `bron`, `vergelijk`, `set` en `uitslag`. Alles
   wat hij haalt gaat eerst naar een `.part` en dan pas, na grootte en sha256, op zijn plek. De
-  User-Agent noemt geen persoon, e-mail of repository. `test_beeld_tools.py` (42 tests) draait hem
-  tegen een eigen HTTP-server met een nep-API van Hugging Face en van Commons.
+  User-Agent noemt geen persoon, e-mail of repository. `test_beeld_tools.py` (42 tests; na de
+  review 45) draait hem tegen een eigen HTTP-server met een nep-API van Hugging Face en van Commons.
 
 ### De tests met het echte model (`147ca76`)
 
@@ -188,6 +189,15 @@ set. De job is dan rood met "models.lock mist de regels van SigLIP" en "beeld.ts
 is het bedoeld. BZ3 en BZ7 draaien in die eerste run al op het echte tokenizer.json. BZ4 en BZ6
 draaien ook, op de voorgestelde set, en hun getallen staan in het verslag, maar de uitslag is pas
 geldig met de vastgezette set.
+
+[Nacontrole golf 5: deel 1 is op de kop van de nacontrole opnieuw gemeten, met dezelfde getallen
+(zie De nacontrole). Deel 2 is met het echte model nergens gedaan; de review deed het op ware
+grootte met willekeurige gewichten (hieronder, "BZ2 op ware grootte"). Deel 3 is nergens gedaan:
+de job is pas streng met de pins in `models.lock` en `beeld.tsv`, en het runbook zegt de pins pas
+samen met X3b te zetten (uitrol F3). Een groene, strenge BZ4 komt dus op zijn vroegst met X3b; de
+eerste run geeft alleen de getallen op de voorgestelde set. §5 van het ontwerp vraagt voor de
+go/no-go deel 1 en BZ1, Keuze 73 en K2-12 alle drie. Wat geldt, beslist een mens; hier is niets
+beslist.]
 
 ## Metingen
 
@@ -338,20 +348,20 @@ Elke regel van "Bouwt", "Tests" en "Klaar als" van X3 die X3a raakt (bouwontwerp
 
 | Regel | Test | Uitkomst |
 |---|---|---|
-| **Bouwt:** `app/analyse/tokenizer.py` met `tokenizer.bin` (Keuze 74) | `tests/beeld/test_tokenizer.py` (89) | groen |
+| **Bouwt:** `app/analyse/tokenizer.py` met `tokenizer.bin` (Keuze 74) | `tests/beeld/test_tokenizer.py` (95; 89 bij X3a) | groen |
 | **Bouwt:** `app/analyse/onnxw.py` (gedeeld met de nepmodellen van X2) | `test_onnxw.py` (64), `test_onnxw_ort.py` (42) | groen |
-| **Bouwt:** de omzetter `siglip.py`, `meta.json` (Keuze 73) | `test_beeld_omzetten.py` (71): `test_fp32_beeld_gelijk_aan_numpy`, `test_fp32_tekst_gelijk_aan_numpy`, `test_int8_cosinus_minstens_0_99`, `test_twee_omzettingen_dezelfde_sha256`, `test_meta_json`, `test_een_kop_die_liegt*` | groen |
+| **Bouwt:** de omzetter `siglip.py`, `meta.json` (Keuze 73) | `test_beeld_omzetten.py` (86; 71 bij X3a): `test_fp32_beeld_gelijk_aan_numpy`, `test_fp32_tekst_gelijk_aan_numpy`, `test_int8_cosinus_minstens_0_99`, `test_twee_omzettingen_dezelfde_sha256`, `test_meta_json`, `test_een_kop_die_liegt*` | groen |
 | **Bouwt:** de dienst `analyse-omzetten` | in `compose.analyse.yaml` van X2a (`25ac3e7`); de opdrachtregel is dezelfde: `test_de_omzetter_start_zoals_de_dienst_analyse_omzetten` en `test_beeld_omzetten.py` (`_start_meet`) | de dienst is van X2a; de vergelijking met `OMZET_BOOT` na de samenvoeging |
 | **Bouwt:** trust-on-first-use | — | niet in X3a: hoort bij `install.sh` (X3b) |
-| **Bouwt:** de CI-job `beeld-model` (§4.6) | `test_beeld_ci.py` (6), yamllint | groen; de job zelf **in CI na de push** |
+| **Bouwt:** de CI-job `beeld-model` (§4.6) | `test_beeld_ci.py` (7; 6 bij X3a), yamllint | groen; de job zelf **in CI na de push** |
 | **Tests:** `api/tests/beeld/test_tokenizer.py` (de tabelrij) | zie Bouwt | groen |
-| **Tests:** `api/tests_analyse/test_beeld_omzetten.py` (de tabelrij: fp32 ≤ 1·10⁻⁵, int8 ≥ 0,99, twee keer dezelfde sha256, maxrss, een liegende kop) | `test_maxrss_en_tijd_gemeten`, `test_een_kop_die_liegt_als_proces` en de rest | groen (71) |
+| **Tests:** `api/tests_analyse/test_beeld_omzetten.py` (de tabelrij: fp32 ≤ 1·10⁻⁵, int8 ≥ 0,99, twee keer dezelfde sha256, maxrss, een liegende kop) | `test_maxrss_en_tijd_gemeten`, `test_een_kop_die_liegt_als_proces` en de rest | groen (86; 71 bij X3a) |
 | **Tests:** `api/tests_analyse/test_beeld_kwaliteit.py` (marker `beeld_echt`) | de poorten van Keuze 83: `test_nl_precisie_at_5`, `test_combinaties_in_de_top_10`, `test_int8_tegen_fp32`, `test_meer_zoals_deze`, `test_zelftest_met_drie_kleuren`; de rekenstukken in `test_beeld_echt_hulp.py` | hulp groen; de poorten **in CI na de push**, groen pas na de pins |
 | **Tests:** `api/tests_analyse/test_beeld_echt_perf.py` | het model-deel van BZ6 (≥ 500 per minuut, vraag p95 ≤ 250 ms) | **in CI na de push**; de rest van BZ6 is X3b |
-| **Tests:** `api/tests/test_analyse_grens.py` (van X2) dekt de omzetter | X2a; hier `test_zonder_numpy_in_de_app` en `test_no_numpy_in_app.py` | groen hier |
+| **Tests:** `api/tests/test_analyse_grens.py` (van X2) dekt de omzetter | dat bestand bestaat niet (nagekeken in de nacontrole); de grens staat in `tests/analyse/test_no_numpy_in_app.py::test_geen_import_buiten_de_worker` en `test_beeld_omzetten.py::test_zonder_numpy_in_de_app` | groen hier |
 | **Klaar als:** `test_tokenizer.py` is groen, en BZ3 (met het bestand van SigLIP 2 zelf, zonder Gemma) is groen | `test_tokenizer.py`; BZ3: `test_bz3_de_lijst_met_het_echte_bestand`, `test_bz3_een_eigen_bpe_op_2000_zinnen`, `test_bz3_tokenizer_bin_is_from_json` | `test_tokenizer.py` groen; BZ3 **in CI na de push** |
 | **Klaar als:** de omzetter is gelijk aan de eigen numpy-versie op de kleine vorm, en geeft twee keer dezelfde sha256 | `test_beeld_omzetten.py` | groen |
-| **Klaar als:** de go/no-go na X3a is gehaald (Keuze 73, K2-12) | deel 1 hier; deel 2 (BZ2) en 3 (BZ4) in `beeld-model` | **open**: de beslissing valt na CI |
+| **Klaar als:** de go/no-go na X3a is gehaald (Keuze 73, K2-12) | deel 1 hier; deel 2 (BZ2) en 3 (BZ4) in `beeld-model` | **open**: deel 1 gehaald (opnieuw gemeten in de nacontrole); deel 2 en 3 nergens gedaan; een strenge BZ4 pas met de pins, die met X3b komen (zie De nacontrole). Niet beslist |
 | **Klaar als:** de echte omzetting is gedaan (BZ2) in `beeld-model`, en de sha256's staan in `models.lock` | `beeld_model.py vergelijk`; `test_vergelijk_*` in `test_beeld_tools.py` | **in CI na de push**; de regels zet een mens erin na de eerste run |
 | **Klaar als:** de kwaliteitspoort van Keuze 83 (BZ4) is groen | `test_beeld_kwaliteit.py` | **in CI na de push**, na de pins |
 | **Klaar als:** ≥ 500 foto's per minuut per core met het echte model (BZ6, Vraag 14) | `test_bz6_fotos_per_minuut_en_een_vraag` | **in CI na de push** |
@@ -479,7 +489,7 @@ tag.
 |---|---|---|---|---|
 | veilig F2 (should) | `safetensors.py` keek niet of `dtype` tekst is en of de vorm redelijke getallen heeft. Een dtype als lijst of object gaf `TypeError` (`unhashable type`), een vorm met reuzen van getallen `ValueError` (een getal van meer dan 4300 cijfers in de f-string van de melding): een traceback (code 1) in plaats van code 2 met één regel | `OmzetFout` voor een dtype dat geen tekst is, een as boven 2^40, en een vorm groter dan het bestand (ook als product van redelijke assen) | `test_beeld_omzetten.py::test_een_kop_die_liegt[dtype lijst, dtype object, vorm met reuzen, vorm van 1000 assen, vorm groter dan het bestand]` en `::test_wat_eerst_een_traceback_gaf_is_nu_code_2[dtype lijst, vorm met reuzen]` (als proces, zoals compose: code 2, één regel `omzetten: …`, geen traceback, niets in `/uit`) | `4a6cbb2` |
 | veilig F3 (should) | `bouw.py` keek met `act not in GELU` naar `hidden_act` uit `config.json`; een lijst of object gaf `TypeError` | `OmzetFout` als `hidden_act` geen tekst is ("hidden_act = list") | `::test_een_bron_die_niet_klopt[hidden_act lijst, hidden_act object]`, `::test_wat_eerst_een_traceback_gaf_is_nu_code_2[hidden_act lijst]` | `4a6cbb2` |
-| veilig F4 (should) | De tokenizer las een normalizer van het soort `Sequence` recursief zonder grens: 1200 diep (geldige JSON) gaf `RecursionError`; `added_tokens` als getal gaf `TypeError` | `MAX_NESTING` (4; SigLIP 2 heeft er één): dieper is `TokenizerFout`; `added_tokens` die geen lijst is ook; en een vangnet voor `RecursionError` in `from_json` | `tests/beeld/test_tokenizer.py::test_json_die_niet_kan` (diep genest, 5 en 1200; `added_tokens` 5 en `true`) en `test_een_sequence_in_een_sequence_tot_de_grens_kan` (de grens laat de normalizer van SigLIP 2 in nog drie Sequences toe); `test_beeld_omzetten.py::…[tokenizer.json diep genest]` (twee keer, ook als proces) | `4a6cbb2` |
+| veilig F4 (should) | De tokenizer las een normalizer van het soort `Sequence` recursief zonder grens: 1200 diep (geldige JSON) gaf `RecursionError`; `added_tokens` als getal gaf `TypeError` | `MAX_NESTING` (4; SigLIP 2 heeft er één): dieper is `TokenizerFout`; `added_tokens` die geen lijst is ook; en een vangnet voor `RecursionError` in `from_json` | `tests/beeld/test_tokenizer.py::test_json_die_niet_kan` (diep genest, 5 en 1200; `added_tokens` 5 en `true`) en `test_een_sequence_in_een_sequence_tot_de_grens_kan` (de grens laat de normalizer van SigLIP 2 in nog drie Sequences toe); [nacontrole: het vangnet zelf had geen test, zonder bleef alles groen; nu `test_het_vangnet_als_een_grens_mist`, `e609341`] `test_beeld_omzetten.py::…[tokenizer.json diep genest]` (twee keer, ook als proces) | `4a6cbb2` |
 | uitrol F1 (blocking) | `meta.json` noemde de fp32-grafen als de omzetting `--fp32` kreeg. De job deed de eerste van de twee omzettingen met `--fp32`, dus gaf die een ander `meta.json` dan de tweede: BZ2 altijd FOUT, en nooit een voorstel voor `models.lock` | `meta.json` noemt alleen de vaste uitvoer (`UITVOER`); met of zonder `--fp32` zijn de vijf bestanden byte voor byte gelijk. `ci.yml` zet twee keer om precies zoals de dienst (`uit1`, `uit2`), dan een derde keer met `--fp32` (`uitfp32`), alleen voor BZ4 | `test_beeld_omzetten.py::test_met_en_zonder_fp32_dezelfde_vijf_bestanden`: op de oude `bouw.py` rood. Op ware grootte (zie hieronder) gaf de oude code "BZ2 FOUT meta.json: twee omzettingen geven 2f48409f… en 344211ae…" | `0313774` |
 | uitrol F2 (blocking) | De grens van 1,5 GB voor maxrss gold ook voor de omzetting met `--fp32`; op ware grootte is die 1582 MiB (de fp32-embedding van 256.000 × 768 is 786 MB) | De grens geldt voor de omzettingen zoals de dienst. `beeld_model.py vergelijk` kreeg `--uit-fp32` en `--log-fp32`: tijd en maxrss van die omzetting staan in het log zonder grens, maar de vijf bestanden moeten dezelfde zijn als zonder `--fp32`. BZ4 rekent met `uitfp32`, BZ3 en BZ6 met `uit1`. "De job `beeld-model`" hierboven en het runbook zeggen het | `test_beeld_ci.py::test_bz2_begrenst_alleen_de_omzettingen_zoals_de_dienst` (op de oude `ci.yml` rood); `test_beeld_tools.py::test_vergelijk_met_fp32_heeft_geen_grens_op_maxrss`, `::test_vergelijk_met_fp32_andere_uitvoer_is_rood`, `::test_vergelijk_met_fp32_wil_de_fp32_grafen_en_beide_opties` (op de oude `beeld_model.py` 3 rood) | `0313774` |
 | uitrol F3 (should), het deel van X3a | De uitslag van `beeld-model` zei alleen dat er een voorstel ligt; niets over wat de pins zonder X3b doen | `beeld_model.py uitslag` zegt ook: "zet die regels pas samen met X3b in models.lock: zonder de stap BEELD van install.sh maakt niemand de omzetting, en meldt de container ze als ontbrekend (models_missing)". De rest (`install.sh`, laag 3, de container) staat in x2a.md | `test_beeld_tools.py::test_uitslag_is_rood_zolang_er_een_voorstel_ligt` (de nieuwe exacte lijst): op de oude `beeld_model.py` rood | `03908c9` |
@@ -511,7 +521,7 @@ en de stappen van BZ2 uit `ci.yml` na, onder `taskset -c 0-2`. De bron is daarna
 | BZ2 kan groen worden: twee omzettingen zoals de dienst met dezelfde sha256 en ≤ 1,5 GB; de fp32 apart | `test_met_en_zonder_fp32_dezelfde_vijf_bestanden`, `test_beeld_ci.py`, `test_beeld_tools.py`; BZ2 op ware grootte (hierboven) | groen; 293 MiB tegen de grens van 1536; met het echte model in `beeld-model` na de push |
 | De schalen van int8 liggen vast in een test | de twee tests van G5-C3 | groen |
 | De uitslag zegt de pins pas samen met X3b te zetten | `test_uitslag_is_rood_zolang_er_een_voorstel_ligt` | groen |
-| De telling van `api-analyse` | `ci.yml` (209 en 11) | zie Gedraaid na de review in [x2a.md](x2a.md) |
+| De telling van `api-analyse` | `ci.yml` (209 en 11; na de nacontrole 211 en 11) | zie Gedraaid na de review in [x2a.md](x2a.md) en De nacontrole |
 
 ### Open na de review
 
@@ -523,3 +533,82 @@ en de stappen van BZ2 uit `ci.yml` na, onder `taskset -c 0-2`. De bron is daarna
 ### Gedraaid na de review
 
 Zie "Gedraaid na de review" in [x2a.md](x2a.md): één run voor beide delen.
+
+## De nacontrole (golf 5)
+
+Op de kop van de review (`90305da`), op 15 november 2026. Hoe er gewerkt is, wat X2a raakt en wat
+er gedraaid is, staat in "De nacontrole (golf 5)" in [x2a.md](x2a.md); hier wat X3a raakt. Niets
+gepusht, geen tag.
+
+### De reparaties weggehaald
+
+Per commit één regel van de reparatie tegelijk terug naar de oude code, in een losse worktree;
+dan de tests van die bevinding, daarna de reparatie terug en weer groen.
+
+| Commit (bevinding) | Wat weggehaald | Rood | Oordeel |
+|---|---|---|---|
+| `4a6cbb2` (veilig F2) | geen controle of `dtype` tekst is | 3 | gezien |
+| | geen grens van 2^40 op een as | 1 (in het proces; als proces vangt de grens op de grootte van het bestand het ook) | gezien |
+| | geen controle of de vorm in het bestand past | 1 | gezien |
+| `4a6cbb2` (veilig F3) | geen controle of `hidden_act` tekst is | 3 | gezien |
+| `4a6cbb2` (veilig F4) | geen `MAX_NESTING` | 1 (5 diep; 1200 diep vangt dan het vangnet) | gezien |
+| | geen controle of `added_tokens` een lijst is | 2 | gezien |
+| | geen vangnet voor `RecursionError` in `from_json` | 0 | **gat**: `MAX_NESTING` weigert elke diepte voordat de recursie diep wordt, dus geen test kwam bij het vangnet. Gedicht in `e609341`: `tests/beeld/test_tokenizer.py::test_het_vangnet_als_een_grens_mist` zet `MAX_NESTING` op 10^9 en eist bij 1200 diep precies `TokenizerFout("tokenizer.json: te diep genest")`; zonder het vangnet `RecursionError`. `test_tokenizer.py` nu 95 |
+| `0313774` (uitrol F1) | `meta.json` noemt weer de fp32-grafen | 1: `test_met_en_zonder_fp32_dezelfde_vijf_bestanden` | gezien |
+| | de lus in `ci.yml` weer met `--fp32` op de eerste omzetting | 1 (`test_beeld_ci.py`) | gezien |
+| `0313774` (uitrol F2) | BZ4 rekent weer met `uit1` in plaats van `uitfp32` | 1 (`test_beeld_ci.py`) | gezien |
+| | `vergelijk` in `ci.yml` zonder `--uit-fp32` en `--log-fp32` | 1 (`test_beeld_ci.py`) | gezien |
+| | in `beeld_model.py vergelijk`: de sha256 van de fp32-omzetting niet vergeleken, het bestaan niet nagekeken, de twee opties niet als paar, de grens van maxrss ook op fp32, de vergelijking niet aangeroepen, `main` zonder de opties | 1, 1, 1, 3, 3 en 1 (`test_beeld_tools.py`) | gezien |
+| `03908c9` (uitrol F3, het deel van X3a) | `uitslag` zonder de zin over X3b | 1: `test_uitslag_is_rood_zolang_er_een_voorstel_ligt` | gezien |
+| `e0cce6e` (G5-C3) | de mutaties van de review nagedaan: MQ1 (een schaal per tensor), MQ3 (een vaste schaal voor de embedding), MQ5 (de kop van tekst fp32) | 2, 2 en 1 (alleen de twee nieuwe tests; de 84 oude bleven groen) | gezien |
+
+### Klaar als, nagelopen
+
+Elke test die Klaar als hierboven noemt, bestaat, op één na: **`api/tests/test_analyse_grens.py`
+bestaat niet**. Het ontwerp noemt dat bestand; de grens (geen numpy en geen onnxruntime buiten de
+worker, ook niet via de omzetter) staat in `tests/analyse/test_no_numpy_in_app.py::test_geen_import_buiten_de_worker`
+en `test_beeld_omzetten.py::test_zonder_numpy_in_de_app`; de rij zegt dat nu. Verder verbeterd, in de
+tekst zelf:
+
+- de getallen van de tests waren die van X3a: nu `test_tokenizer.py` 95 (89 bij X3a, 94 na de
+  review), `test_beeld_omzetten.py` 86 (71), `test_beeld_tools.py` 45 (42), `test_beeld_ci.py` 7 (6);
+- de go/no-go: zie hieronder; de rij in Klaar als zei alleen "de beslissing valt na CI";
+- de rij van veilig F4 zegt nu dat het vangnet tot `e609341` geen test had;
+- de telling van `api-analyse`: 211 en 11.
+
+### De go/no-go, eerlijk geplaatst
+
+Keuze 73 en K2-12 noemen drie delen; §5 van het ontwerp vraagt voor de go/no-go op dag 33 deel 1
+en of BZ1 bij de bron kan. Wat er nu van elk deel bewezen is:
+
+| Deel | Waar | Stand na de nacontrole |
+|---|---|---|
+| 1. De kleine vorm rekent als een eigen numpy-versie | `test_beeld_omzetten.py` (86) in `api-analyse`; opnieuw gemeten op `e609341` met een eigen script dat de rekensom van die tests gebruikt, drie omzettingen met `--fp32` zoals `_start_meet` | **gehaald hier**: fp32 grootste verschil 2,47·10⁻⁷ (beeld) en 1,1·10⁻⁷ (tekst), grens 1·10⁻⁵; int8 kleinste cosinus 0,99969 en 0,99985, grens 0,99; de drie omzettingen byte voor byte gelijk (zeven bestanden); 0,20, 0,14 en 0,17 s, maxrss 72,8 MiB; `beeld.int8.onnx` 981.742 en `tekst.int8.onnx` 161.642 bytes (fp32 1.412.840 en 517.284). Dezelfde getallen als bij X3a. In CI (`api-analyse`) na de push |
+| 2. Twee keer omzetten geeft dezelfde sha256 (BZ2) | de stap `vergelijk` in `beeld-model` | **met het echte model nergens gedaan**: huggingface.co is vanuit de sandbox dicht. Wel: de review deed BZ2 op ware grootte met willekeurige gewichten (hierboven, `uit1`, `uit2` en `uitfp32` gelijk, 293 MiB). In CI na de push |
+| 3. De kwaliteitspoort is groen (BZ4) | `test_beeld_kwaliteit.py` in `beeld-model` | **nergens gedaan**. De eerste run van `beeld-model` rekent BZ4 op de voorgestelde set en is rood (geen pins, geen `beeld.tsv`); die getallen zijn een eerste beeld, geen uitslag. Streng wordt BZ4 pas in de run na de commit met de pins en `beeld.tsv`, en het runbook en `beeld_model.py uitslag` zeggen de pins pas samen met X3b te zetten (uitrol F3). Een strenge, groene BZ4 komt dus op zijn vroegst met X3b |
+
+De beslissing is niet hier genomen en niet als genomen gemarkeerd. Of de go/no-go valt op deel 1
+en BZ1 (§5), of op alle drie (Keuze 73), en wat dan met het volgorde-probleem van deel 3 gebeurt,
+is aan een mens; zie Open na de nacontrole.
+
+### Klaar als, na de nacontrole
+
+| Regel | Bewijs | Uitkomst |
+|---|---|---|
+| Het vangnet van de tokenizer heeft een test | `test_het_vangnet_als_een_grens_mist` (`e609341`) | groen; zonder het vangnet rood (`RecursionError`) |
+| Elke reparatie van de review aan X3a heeft een test die haar ziet | De reparaties weggehaald, hierboven | ja |
+| De go/no-go na X3a (Keuze 73, K2-12) | de tabel hierboven | **open**: deel 1 gehaald (opnieuw gemeten), deel 2 en 3 nergens gedaan; niet beslist |
+| De grens van de omzetter in de app | `test_no_numpy_in_app.py::test_geen_import_buiten_de_worker`, `test_beeld_omzetten.py::test_zonder_numpy_in_de_app` (niet `test_analyse_grens.py`, dat er niet is) | groen op `e609341`: de eerste in de API-suite en als gewone gebruiker, de tweede in `tests_analyse` als root en als nobody |
+| `tests/beeld`, `test_beeld_ci.py`, `test_beeld_tools.py`, `test_lock_siglip.py` als gewone gebruiker | `/tmp/ci-nobody/run.sh` | 452 groen in 134,5 s, op `e609341` |
+| `tests_analyse` met de tests van X3a | `ci.yml` (211 en 11) | klopt: 211 groen en 11 niet gekozen, als root en als nobody (zie Gedraaid in de nacontrole in [x2a.md](x2a.md)) |
+
+### Open na de nacontrole
+
+- De punten onder "Open na de review" blijven staan.
+- **De volgorde van de go/no-go en de pins.** Deel 3 (BZ4) is pas streng met de pins, en de pins
+  horen bij X3b; de go/no-go hoort vóór X3b te vallen. Dat botst. Twee wegen zonder iets losser
+  te maken: de go/no-go op deel 1 en BZ1 (zoals §5), met BZ4 als poort van X3b; of de pins en
+  `beeld.tsv` vastzetten op een eigen tak zonder `install.sh` te raken, alleen om `beeld-model`
+  streng te laten draaien. Niet beslist; dat is aan Jonas.
+- Alleen in CI, na de push: `beeld-model` (BZ1–BZ4, BZ6, BZ7) met het echte model, en de tests
+  van X3a in `api-analyse` (211 en 11).
