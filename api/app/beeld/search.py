@@ -32,6 +32,8 @@ from typing import Any, Literal
 import anyio
 from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.selectable import Join
 
 from app import errors
 from app.analyse import client, monitor, wire
@@ -194,13 +196,27 @@ async def _call(settings: Settings, args: wire.RankArgs, fd: int) -> Any:
         raise Fallback("slow") from None
 
 
+class _CrossJoin(Join):
+    """JOIN als CROSS JOIN: dan houdt SQLite de volgorde aan (de top van json_each buiten, elke
+    node erbinnen met ix_node_num; Keuze 14). Zonder dit koos SQLite bij weinig statistiek soms
+    alle foto's van de eigenaar (ix_node_owner_blob) en zocht daarin de top."""
+
+    inherit_cache = True
+
+
+@compiles(_CrossJoin)
+def _cross_join(element: _CrossJoin, compiler: Any, **kw: Any) -> str:
+    joined = compiler.visit_join(element, **kw)
+    return joined.replace(" JOIN ", " CROSS JOIN ", 1)
+
+
 def _select(p: SearchParams, user: User) -> Any:
     """Stap 5: de top als één JSON-parameter, eigen en levend, ftype image, de filters."""
     r = func.json_each(bindparam("nums")).table_valued("key", "value").alias("r")
     n = engines.alias()
     sel = (
         select(n.c.id, n.c.owner_id, n.c.num, n.c.blob_id)
-        .select_from(r.join(n, n.c.num == r.c.value))
+        .select_from(_CrossJoin(r, n, n.c.num == r.c.value))
         .where(own_live(n, user.id), n.c.ftype == "image", text(vecfile.origin_ok("n")))
         .order_by(r.c.key)
     )
