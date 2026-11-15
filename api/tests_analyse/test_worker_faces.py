@@ -8,6 +8,7 @@ uitgelijnde gezicht (expected_vector).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -493,12 +494,39 @@ async def test_een_ander_model_of_een_symlink_is_anders(tmp_path):
 # --- de grens per opdracht ------------------------------------------------------------------
 
 
+TRAAG_DEADLINE_MS = 1500
+# Eén run van de trage YuNet duurt hier minstens twee keer de deadline: dan valt de deadline
+# zeker midden in de run, en moet terminate hem stoppen.
+TRAAG_MIN_S = 2 * TRAAG_DEADLINE_MS / 1000
+
+
+async def _een_trage_run(w) -> float:
+    await zoek(w, beeld(64, 64))  # het kind start en laadt de modellen
+    started = time.monotonic()
+    await zoek(w, beeld(1024, 683))
+    return time.monotonic() - started
+
+
 @pytest.fixture(scope="module")
 def trage_worker(tmp_path_factory):
-    """YuNet met 400 extra nodes: één run op 1024 × 683 duurt ±3 s; terminate stopt ertussen."""
-    models = fake_models.install(tmp_path_factory.mktemp("traag") / "modellen", slow=400)
-    with echt.EchteWorker(tmp_path_factory.mktemp("traag-w"), models) as w:
-        yield w
+    """YuNet met extra nodes, zo veel dat één run op 1024 × 683 op deze machine minstens
+    TRAAG_MIN_S duurt; terminate stopt ertussen.
+
+    De duur van een node hangt af van de cpu: 400 nodes duren in de sandbox ±2,7 s, en op een
+    runner van GitHub soms minder dan 1,5 s (CI op f16ed5a). Daarom meten we één run en zetten we
+    er zo nodig meer nodes voor, met 20 % marge; lukt het na drie keer niet, dan faalt de fixture.
+    """
+    slow, gemeten = 400, []
+    for _ in range(3):
+        models = fake_models.install(tmp_path_factory.mktemp("traag") / "modellen", slow=slow)
+        with echt.EchteWorker(tmp_path_factory.mktemp("traag-w"), models) as w:
+            run_s = asyncio.run(_een_trage_run(w))
+            gemeten.append((slow, round(run_s, 2)))
+            if run_s >= TRAAG_MIN_S:
+                yield w
+                return
+        slow = math.ceil(slow * TRAAG_MIN_S * 1.2 / run_s)
+    pytest.fail(f"de trage YuNet blijft korter dan {TRAAG_MIN_S} s: (nodes, s) = {gemeten}")
 
 
 def _werk(worker) -> int:
@@ -514,11 +542,11 @@ async def test_de_deadline_stopt_de_opdracht_met_terminate(trage_worker):
     eerste = _werk(w)
     started = time.monotonic()
     with pytest.raises(client.AnalyseFailed) as exc:
-        await zoek(w, img, deadline_ms=1500)
+        await zoek(w, img, deadline_ms=TRAAG_DEADLINE_MS)
     took = time.monotonic() - started
     assert exc.value.code == Code.TIMEOUT.value
     # terminate tussen twee nodes: ruim binnen de deadline plus KILL_GRACE_S
-    assert took < 1.5 + wire.KILL_GRACE_S - 1, took
+    assert took < TRAAG_DEADLINE_MS / 1000 + wire.KILL_GRACE_S - 1, took
     # Na een timeout altijd een nieuw kind (bij de volgende opdracht); pid 1 blijft
     assert eerste not in w.children() or _zombie_of_weg(eerste)
     data, _ = await zoek(w, beeld(64, 64))

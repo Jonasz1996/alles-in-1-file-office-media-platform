@@ -676,3 +676,19 @@ alleen in CI).
 
 De andere jobs van X2a op `26c49ca`: `api-analyse` groen (211 en 11, en de licenties). [CI op `625e946`: `analyse-image` groen met de nieuwe controle, en `api-analyse` weer groen.]
 `beeld-model` staat in [x3a.md](x3a.md#ci-op-26c49ca).
+
+## CI op f16ed5a
+
+`api-analyse` (run 43757977938) gaf 1 rood en 210 goed: `test_de_deadline_stopt_de_opdracht_met_terminate`
+kreeg geen `timeout` ("DID NOT RAISE AnalyseFailed"). De oorzaak is de test, niet de worker:
+`trage_worker` zette 400 extra nodes voor YuNet en ging uit van "één run duurt ±3 s". Hier duurt
+die run 2,7 s, maar `intra_op_num_threads` is 1, dus de duur hangt aan de snelheid van één kern,
+en die runner deed de hele run binnen de deadline van 1500 ms. Op `26c49ca` en `625e946` was de
+runner trager en de test groen. f16ed5a raakte geen code van de worker.
+
+De fixture meet nu één run op 1024 × 683 en zet er zo nodig meer nodes voor (met 20 % marge) tot
+één run minstens twee keer de deadline duurt (`TRAAG_MIN_S` = 3 s); lukt dat na drie keer niet,
+dan faalt de fixture. De test zelf is gelijk gebleven: deadline 1500 ms, `took` < 1,5 s +
+`KILL_GRACE_S` − 1, een nieuw kind. Nagedaan met een "snelle runner" (150 nodes, één run ±1 s):
+de oude fixture faalt op precies die regel, de nieuwe is groen. Lokaal: `tests_analyse -m "not
+beeld_echt"` 211 en 11, zoals in CI.
