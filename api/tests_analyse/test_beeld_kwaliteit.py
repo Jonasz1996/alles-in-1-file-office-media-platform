@@ -105,7 +105,9 @@ def uitkomst() -> dict:
             out = Path(tmp) / f.sleutel
             out.mkdir()
             render.image(set_map / f"{f.sleutel}.jpg", out, MAX_PIXELS)
-            # 1024.webp ontbreekt alleen bij een foto van ≤ 256 px (de set heeft ≥ 640)
+            # 1024.webp ontbreekt alleen bij een foto met een lange kant ≤ 256 px; de lange kant
+            # van elke foto in de set is ≥ 640 (1280 voor een thumbnail, ≥ MIN_ZIJDE voor een
+            # smal origineel)
             if not (out / "1024.webp").is_file():
                 pytest.fail(f"{f.sleutel}: render.image gaf geen 1024.webp")
             klein.append(voorbewerk(out / "256.webp", vb))

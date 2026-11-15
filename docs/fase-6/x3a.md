@@ -756,8 +756,8 @@ vier (R2 deels, zie daar). Per bevinding met code een test die zonder de reparat
 - **`timeout-minutes: 60` is niet veranderd.** Met de grens duurt het ophalen langer (zie boven);
   of het past, zegt de volgende run.
 - ~~**Of de bandbreedte de oorzaak was**, zegt de volgende run: komt er weer een 429, dan staat er
-  nu wat Wikimedia zei.~~ [CI op `9ebf298`: nee. Ook op `BANDBREEDTE` kwam na ±30 minuten een 429
-  (Retry-After 600); de set haalt nu thumbnails, zie "CI op 9ebf298".]
+  nu wat Wikimedia zei.~~ [CI op `9ebf298`: nee. Ook op `BANDBREEDTE` stopte de stap op een 429
+  (Retry-After 600), na ±30 minuten; de set haalt nu thumbnails, zie "CI op 9ebf298".]
 
 ## CI op 7569d48
 
@@ -844,9 +844,9 @@ draait vanzelf: `bouw.py` is een pad van de job). Een oude regel in `models.lock
 | Stap | Uitkomst |
 |---|---|
 | BZ2 | twee omzettingen met dezelfde sha256 voor alle vijf bestanden. Drie pins zijn nieuw (`Q_MAX = 64` geeft andere int8-bytes, en `meta.json` noemt hun sha256 en `omzetter` 2); de andere regels van het voorstel zijn dezelfde als in de runs ervoor. **Goed** |
-| BZ3 en BZ7 | **goed** |
+| BZ1, BZ3 en BZ7 | **goed** |
 | BZ6 | beeld int8 op één core 1.470 foto's per minuut (poort ≥ 500); een vraag p95 36,6 ms (≤ 250 ms). **Goed** |
-| BZ4 | niet gerekend: de stap `set` (een voorstel, zonder `beeld.tsv`) liep van 21:18:18 tot 21:48:47 en stopte na ±30 minuten op "kat-1.jpg: HTTP 429" van upload.wikimedia.org, met Retry-After 600. **Rood** |
+| BZ4 | niet gerekend: de stap `set` (een voorstel, zonder `beeld.tsv`) liep van 21:18:18 tot 21:48:47 en stopte na ±30 minuten op "kat-1.jpg: HTTP 429" van upload.wikimedia.org, met Retry-After 600 (de eerste 429 kwam ±10 minuten eerder; daarna wachtte de tool vijf keer 120 s). **Rood** |
 
 De nieuwe pins (BZ2):
 
@@ -860,13 +860,14 @@ Ze gaan, zoals de andere regels van SigLIP, pas met X3b in `models.lock` (uitrol
 
 **De bandbreedte was niet de oorzaak.** Van upload.wikimedia.org kwam gemiddeld hooguit
 `BANDBREEDTE` (20 Mbps, onder de 25 Mbps van de robotregels), één vraag tegelijk, met `PAUZE_S`
-ertussen; toch kwam de 429, nu na ±30 minuten in plaats van ±9. Wat wel past bij de run: begin
+ertussen; toch stopte de stap weer op een 429, nu na ±30 minuten in plaats van ±9 (de eerste
+429 van `kat-1.jpg` kwam ±10 minuten voor het stoppen). Wat wel past bij de run: begin
 2026 trof een 429 met een lange Retry-After juist originelen voor clients zonder browser, terwijl
 thumbnails bleven laden (phabricator T413570), en de robotregels van Wikimedia voor media vragen
 liever thumbnails, en dan alleen de vaste maten. Twee dingen deed de tool zelf verkeerd: `_open`
 wachtte na "Retry-After 600" hooguit 120 s (`MAX_WACHT_S`) en vroeg dus vijf keer te vroeg
 opnieuw, en de fout nam als uitleg de eerste regel van het antwoord, "<!DOCTYPE html>", die niets
-zei. Hoe ver de stap na 30 minuten was, stond nergens.
+zei. Hoe ver de stap was toen hij stopte, stond nergens.
 
 Hersteld na de run (`tools/beeld/beeld_model.py`; de tests in
 `api/tests/analyse/test_beeld_tools.py`):
@@ -893,8 +894,12 @@ Hersteld na de run (`tools/beeld/beeld_model.py`; de tests in
      voor een liggende thumbnail van 1280 breed een hoogte ≥ 320; een staande mag tot 4 × 1280 =
      5120 hoog zijn;
    - is het origineel niet breder dan 1280, dan geeft MediaWiki het origineel zelf als
-     `thumburl`. Dat mag, met de maten van het origineel (niet `thumbwidth`, die dan de gevraagde
-     breedte kan zeggen), en alleen als het niet groter is dan `MAX_FOTO`;
+     `thumburl`. Dat mag, met de maten van het origineel, en alleen als het niet groter is dan
+     `MAX_FOTO`. MediaWiki geeft dan ook als `thumbwidth` en `thumbheight` de maten van het
+     origineel (`ApiQueryImageInfo`, "T25834"); `_duim` neemt ze toch van het origineel, en
+     een thumbwidth die de gevraagde breedte zegt, is een geval dat de test alleen voor de
+     zekerheid kent (de review van de reparatie, R4). Zo'n smal origineel blijft een vraag om
+     een origineel (zie "Open na 9ebf298");
    - `MAX_FOTO` (25 MiB) begrenst nu elke download van de set, niet meer het origineel: een groot
      origineel met een goede thumbnail mag, want `set` haalt het nooit.
 
@@ -924,12 +929,18 @@ Hersteld na de run (`tools/beeld/beeld_model.py`; de tests in
    `test_na_een_429_wacht_hij_zo_lang_als_retry_after_zegt` (nu met Retry-After 600, helemaal
    gewacht), `test_retry_after_600_wacht_hij_helemaal_nooit_eerder` (op een nepklok: de volgende
    vraag ≥ 600 s later, ook met een HTTP-datum) en `test_te_lang_of_buiten_het_budget_stopt_meteen`.
+   [De review van de reparatie, R2: ook een getal met decimalen telt, zoals "11.000"; een
+   Retry-After die er is maar niet te lezen is, stopt `_open` meteen ("niet te lezen, dus meteen
+   gestopt").]
 3. **Wat Wikimedia zei.** De uitleg van een opgegeven 429 of 5xx is nu de tekst van `<title>`,
    anders de eerste regel met tekst zonder de tags van HTML (zonder script, style en commentaar);
    nog steeds alleen afdrukbare ASCII en hooguit `MAX_REGEL` (160) tekens. Andere fouten houden
    hun korte vorm. Test: `test_de_uitleg_is_de_titel_of_de_eerste_regel_met_tekst` (5 gevallen,
    waaronder de pagina van Wikimedia: "Too many requests - please contact noc@wikimedia.org");
-   `test_een_opgegeven_429_zegt_wat_wikimedia_zei` is ongewijzigd groen.
+   `test_een_opgegeven_429_zegt_wat_wikimedia_zei` is ongewijzigd groen. [De review van de
+   reparatie, R1: de titel van de echte foutpagina van Wikimedia is altijd "Wikimedia Error";
+   nu telt een titel die alleen dat of "Error" zegt niet, en komt daarna de eerste `<p>`, waar
+   Wikimedia de reden zet. De test heeft nu 8 gevallen.]
 4. **Hoe ver de stap kwam.** Gaat `set` mis, dan zegt de fout bij welke foto en hoeveel er al
    binnen was, bijvoorbeeld "(bij foto 37 van 120, 12,3 MB opgehaald)"; in een voorstel is het
    totaal het doel van Keuze 83 (120). Komt het voorstel te kort, dan zegt de fout hoeveel er wel
@@ -939,7 +950,11 @@ Hersteld na de run (`tools/beeld/beeld_model.py`; de tests in
    (een 404 bij foto 37 in een voorstel, en streng een thumbnail die Wikimedia opnieuw maakte, bij
    foto 50), `test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld` (nu ook het
    aantal in de fout), `test_set_met_beeld_tsv_is_streng` en
-   `test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt` (met de nieuwe regel).
+   `test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt` (met de nieuwe regel). [De review van
+   de reparatie, R3 en R6: de fout zegt ook of set een thumbnail of een origineel ophaalde, de
+   regel van een goede set hoeveel er als origineel kwamen ("…, 120 van Commons, 1 als
+   origineel; <MB> in <s> s)"), en een fout terwijl set de reserves telt, zegt hoeveel foto's
+   er kwamen.]
 
 De User-Agent is niet veranderd (algemeen, zonder persoon, e-mail of repository).
 
@@ -954,13 +969,52 @@ fouten zijn de tests met de nep van Commons (die vraagt `DUIM_BREEDTE`). Met all
 groen): het voorstel haalde de originelen, de regel van het blok zonder bytes en tijd, en geen
 voortgang in de fout (ook niet bij een tekort). Groen op de oude tool, zoals bedoeld: de 6 slechte foto's die al op het origineel afvielen
 (`MIN_ZIJDE`, `MAX_PIXELS`, geen JPEG, een mens, CC BY, een smal origineel groter dan
-`MAX_FOTO`). Met de nieuwe tool: `tests/analyse` 367 groen (op `9ebf298` 335).
+`MAX_FOTO`). Ook groen op de oude tool, zoals bedoeld: `test_een_geldige_set_komt_door_de_controle`.
+Die eist nu dat een thumbnail van 1280 op upload goed is, en de oude `lees_set` nam elke URL op
+upload; het is de goede kant van `test_een_set_die_niet_klopt[thumbnail van 1024]`, en die is
+rood (de review van de reparatie, R8). Met de nieuwe tool: `tests/analyse` 367 groen (op
+`9ebf298` 335).
+
+### De review van de reparatie
+
+Eén review van `077d986`, acht bevindingen. Elke bevinding eerst zelf nagekeken; ze klopten alle
+acht. Per bevinding met code een test die zonder de reparatie faalt (de `beeld_model.py` van
+`077d986` in een kopie terug: in `tests/analyse` 9 rood, 363 groen; daarna de nieuwe terug, met
+`cmp` en `git status` nagekeken).
+
+| Bevinding | Wat er was | Wat er gedaan is | Test (rood zonder de reparatie) |
+|---|---|---|---|
+| R1 (should) | De uitleg nam eerst `<title>`. Op de echte foutpagina van Wikimedia is die altijd "Wikimedia Error", met de kop `<h1>Error</h1>`; de reden staat in de eerste `<p>` eronder, bij een 5xx een vaste zin (wikimedia/operations-puppet: `modules/mediawiki/templates/errorpage.html.erb`, `modules/varnish/manifests/common/errorpage.pp` en `modules/varnish/templates/errorpage.inc.vcl.erb`; phabricator T413570). Een echte 429 had dus "antwoord: Wikimedia Error" gegeven. De nep `WIKIMEDIA_429` had de reden in de titel, en de tests waren groen | De titel blijft eerst (de beslissing), maar wat alleen "Error" of "Wikimedia Error" zegt, telt niet: dan de eerste `<p>`, dan de eerste regel met tekst. `<details>` (daar zet Wikimedia het IP-adres van de client) komt nooit mee. `MAX_ANTWOORD` (4096) is genoeg: de pagina is ±2,8 kB, de `<p>` begint na ±2,2 kB. De reden uit de statusregel (het voorstel van de review) niet: bij een 429 is dat dezelfde tekst als de `<p>`, en de beslissing zegt: niets anders van het antwoord | `test_de_uitleg_is_de_titel_of_de_eerste_regel_met_tekst`: `WIKIMEDIA_429` en `WIKIMEDIA_503` in de vorm en de maat van de echte pagina, en een algemene titel en kop met `<details>` (3 gevallen rood: "Wikimedia Error"); nergens "Wikimedia Error" in de fout |
+| R2 (should) | `_retry_after` las alleen hele getallen. "11.000" (zo stuurde Wikimedia het in januari 2026, phabricator T414173) werd 0, en dan vroeg `_open` na zijn eigen 2 s opnieuw, eerder dan gevraagd. Een onleesbare waarde werd ook 0 | Een getal met decimalen telt. Een Retry-After die er is maar niet te lezen is (ook "-5" of "11,5"), stopt `_open` meteen, zonder nog een vraag: "HTTP 429 (Retry-After straks; niet te lezen, dus meteen gestopt; …)" | `test_retry_after_met_decimalen_telt_en_onleesbaar_stopt_meteen` (nieuw; op de nepklok ≥ 11 en ≥ 12,5 s tussen de vragen; de oude vroeg na 2 s) |
+| R3 (should) | Een origineel dat niet breder is dan 1280, haalt set als origineel: het soort vraag waarop begin 2026 de 429 kwam. De fout zei niet of hij een thumbnail of een origineel ophaalde, en zonder `beeld.tsv` is de sleutel achteraf niet aan een URL te koppelen. Zo kon de volgende run "Of thumbnails de 429 voorkomen" niet beantwoorden | De fout zegt wat set ophaalde: "(bij foto 37 van 120, een thumbnail van 1280 px, 12,3 MB opgehaald)" of "…, een origineel, …". De regel van een goede set zegt hoeveel er als origineel kwamen ("…, 1 als origineel; <MB> in <s> s)"). Een punt erbij in Open | `test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam` (nu ook een 429 met de pagina van Wikimedia op het smalle origineel), `test_set_zonder_beeld_tsv_stelt_120_fotos_voor`, `test_set_met_beeld_tsv_is_streng` en `test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt` |
+| R4 (nit) | Hier en in de nep van Commons stond dat MediaWiki bij een origineel als `thumburl` als `thumbwidth` de gevraagde breedte kan geven. MediaWiki geeft dan de maten van het origineel (`ApiQueryImageInfo`, "T25834") | Tekst verbeterd; de nep geeft nu ook de maten van het origineel. Het geval "smal, thumbwidth van de vraag" blijft in de test, als geval voor de zekerheid | geen (de code hing er niet van af; `_duim` neemt de maten van het origineel) |
+| R5 (nit) | "kwam de 429 na ±30 minuten": na ±30 minuten stopte de stap; de eerste 429 kwam ±10 minuten eerder (daarna wachtte de oude tool vijf keer 120 s) | Herschreven, hier, in de opmerkingen in `beeld_model.py` en in de tests. De boodschap van `077d986` blijft zoals hij is | geen (tekst) |
+| R6 (nit) | Een fout van de API van Commons terwijl set de reserves telt (de keuze is dan klaar, er wordt niets meer opgehaald), zei "bij foto 117 van 120" | `voortgang.gekozen` staat aan zodra de keuze klaar is en er een tekort is, vóór de reserves | `test_een_fout_bij_het_tellen_van_de_reserves_zegt_hoeveel_er_kwamen` (nieuw: "116 van 120 foto's opgehaald") |
+| R7 (nit) | "(de set heeft ≥ 640)" in `test_beeld_kwaliteit.py` gold alleen nog voor de lange kant: een thumbnail mag 1280 × 320 zijn | Herschreven: de lange kant van elke foto is ≥ 640 (1280 voor een thumbnail, ≥ `MIN_ZIJDE` voor een smal origineel). Geen grens veranderd | geen (opmerking) |
+| R8 (nit) | De tabel van de run miste BZ1, en het teruggedraaide testen noemde niet dat `test_een_geldige_set_komt_door_de_controle` op de oude tool groen is | BZ1 in de tabel; een zin erbij | geen (tekst) |
+
+Rood op de oude tool: de nieuwe test van Retry-After (de tweede vraag 2 s na "11.000"), 3
+gevallen van de uitleg ("antwoord: Wikimedia Error"), de drie regels van een goede set (zonder
+"als origineel"), de nieuwe test van de reserves ("bij foto 117 van 120") en
+`test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam` (ook rood met alleen de soort uit de fout
+weggehaald, in een kopie van de nieuwe tool). Groen op de oude tool, zoals bedoeld: de 5
+gevallen van de uitleg die `077d986` al goed deed (een titel met tags, een lege titel en dan de
+eerste regel, nu met `<span>` in plaats van `<p>` zodat hij de eerste regel blijft toetsen,
+geen tekst, te lang, en het nieuwe geval dat een titel die iets zegt voor de `<p>` gaat),
+`test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld` (alleen de opzet naar
+`_tekort`) en `test_de_thumbnail_van_een_goede_foto[smal, thumbwidth van de vraag]` (R4).
+Met de nieuwe tool: `tests/analyse` 372 groen.
 
 ### Open na 9ebf298
 
 - **Of thumbnails de 429 voorkomen**, zegt de volgende run van `beeld-model` (`tools/beeld` is
   een pad van de job). Komt er toch een 429, dan staat er nu wat Wikimedia zei, hoe lang hij
-  wilde dat we wachtten, en hoe ver de stap was.
+  wilde dat we wachtten, hoe ver de stap was, en of het een thumbnail of een origineel was.
+- **Een smal origineel blijft een vraag om een origineel.** Is het origineel niet breder dan
+  1280, dan haalt `set` het origineel zelf: het soort vraag waarop begin 2026 de 429 kwam. Hoeveel
+  dat er in de echte set zijn, zegt de regel van een goede set ("… als origineel"). Komt de 429
+  alleen nog op originelen, dan kan `details` zo'n foto weigeren; niet gedaan, want dan kiest
+  de set andere foto's (de review van de reparatie, R3).
 - **Helpt het niet**, dan is de volgende stap een User-Agent met contactgegevens, zoals de
   richtlijn van Wikimedia voor de User-Agent vraagt. Dat zijn gegevens van de eigenaar: dat kan
   alleen met zijn toestemming, en is niet gedaan. De User-Agent blijft algemeen.

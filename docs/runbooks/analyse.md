@@ -191,10 +191,11 @@ bewaart maar één keer. Van upload.wikimedia.org haalt de job gemiddeld hooguit
 de robotregels staan 25 Mbps toe), en elke foto als thumbnail van 1280 px breed, niet als origineel
 (op de originelen gaf upload.wikimedia.org een 429 met Retry-After 600; x3a.md, "CI op 9ebf298").
 Is het origineel niet breder dan 1280, dan is het origineel zelf de thumbnail. Na een 429 of 503
-vraagt de job nooit eerder opnieuw dan Retry-After zegt. Zegt die meer dan 600 s, of past het
-wachten niet meer in 900 s per stap (ook de eigen 2 tot 32 s na een 5xx tellen), dan stopt hij
-meteen, met een fout die dat zegt. Draait hij niet, dan zegt het blok `=== kort ===` aan het eind
-van het log "beeld-model: draaien nee" met de reden.
+vraagt de job nooit eerder opnieuw dan Retry-After zegt (seconden, ook met decimalen, of een
+HTTP-datum). Zegt die meer dan 600 s, is hij niet te lezen, of past het wachten niet meer in
+900 s per stap (ook de eigen 2 tot 32 s na een 5xx tellen), dan stopt hij meteen, met een fout
+die dat zegt. Draait hij niet, dan zegt het blok `=== kort ===` aan het eind van het log
+"beeld-model: draaien nee" met de reden.
 
 Het blok `=== kort ===` staat aan het eind van het log, met per regel:
 
@@ -204,13 +205,16 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
   of die twee dezelfde sha256 geven en of ze kloppen met `models.lock`; en van de derde omzetting
   met `--fp32` (alleen voor BZ4) de tijd en maxrss zonder grens, en of hij dezelfde vijf bestanden
   geeft;
-- `BZ4 set: 120 foto's kloppen met beeld.tsv (… uit de cache, … van Commons; … MB in … s)`, of
-  het voorstel (`… (… MB in … s)`): wat er van Commons kwam, en hoe lang dat duurde;
+- `BZ4 set: 120 foto's kloppen met beeld.tsv (… uit de cache, … van Commons, … als origineel;
+  … MB in … s)`, of het voorstel (`… (… als origineel; … MB in … s)`): wat er van Commons kwam,
+  hoeveel daarvan als origineel in plaats van als thumbnail, en hoe lang dat duurde;
 - `FOUT <stap>: … HTTP 429 (…)` of `HTTP 5xx (…)`: de host gaf ook na zes pogingen nee, of vroeg
   langer te wachten dan mag; tussen haakjes de laatste Retry-After, waarom de job meteen stopte
-  (als dat zo was) en de titel van zijn antwoord (zonder titel de eerste regel tekst), alleen
-  afdrukbare ASCII en hooguit 160 tekens. Bij `set` staat erachter hoe ver hij kwam, bijvoorbeeld
-  `(bij foto 37 van 120, 12,3 MB opgehaald)`;
+  (als dat zo was) en de reden uit zijn antwoord: de titel, of als die alleen "Wikimedia Error"
+  zegt (de foutpagina van Wikimedia) de eerste alinea, anders de eerste regel tekst; alleen
+  afdrukbare ASCII en hooguit 160 tekens. Bij `set` staat erachter hoe ver hij kwam en wat hij
+  ophaalde, bijvoorbeeld `(bij foto 37 van 120, een thumbnail van 1280 px, 12,3 MB opgehaald)`
+  of `(…, een origineel, …)`;
 - `BZ3`, `BZ4`, `BZ6`, `BZ7`: de uitkomsten van de tests, met `goed` of `FOUT`;
 - `UITSLAG …`: waarom de job rood is, als er een voorstel ligt;
 - per pytest-stap de laatste regel.
@@ -256,11 +260,11 @@ zelf nooit iets in het repo; een mens doet dat, zo:
    is rood. Groen is BZ2 en BZ4 gehaald: dan kan de go/no-go van X3 (Keuze 73) beslist worden.
 
 **Klopt een foto van `beeld.tsv` later niet meer** ("FOUT set: kat-2.jpg: sha256 …, verwacht …
-(bij foto … van 120, …)"), dan heeft Wikimedia die thumbnail waarschijnlijk opnieuw gemaakt, met
-andere bytes. Zolang de cache in CI de eerste goede kopie heeft, merkt de job het niet; pas als
-die cache weg is. Haal de thumbnail (de URL in die regel) één keer op, kijk of het dezelfde foto
-is, en zet de nieuwe sha256 en grootte in die regel van `beeld.tsv`, in een eigen commit. Is het
-een andere foto, vervang de regel zoals in stap 4.
+(bij foto … van 120, een thumbnail van 1280 px, …)"), dan heeft Wikimedia die thumbnail
+waarschijnlijk opnieuw gemaakt, met andere bytes. Zolang de cache in CI de eerste goede kopie
+heeft, merkt de job het niet; pas als die cache weg is. Haal de thumbnail (de URL in die regel)
+één keer op, kijk of het dezelfde foto is, en zet de nieuwe sha256 en grootte in die regel van
+`beeld.tsv`, in een eigen commit. Is het een andere foto, vervang de regel zoals in stap 4.
 
 Let op bij stap 5: zet de regels pas samen met X3b (de stap `BEELD` van `install.sh`) in
 `models.lock`. `install.sh` haalt de regels onder `siglip2-b32-256/` niet (de 1,51 GB van

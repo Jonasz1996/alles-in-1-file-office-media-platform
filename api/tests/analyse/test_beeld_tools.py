@@ -13,10 +13,12 @@ alsof hij Hugging Face, de API van Commons en upload.wikimedia.org is:
 - set: 120 foto's volgens Keuze 83 uit de gestructureerde gegevens, zonder mens, alleen CC0 of
   publiek domein, alleen JPEG, elk als thumbnail van DUIM_BREEDTE (1280 px) die groot genoeg is
   voor de kwaliteitstest; beeld.tsv streng nagekeken, en met beeld.tsv alleen halen wat in set/
-  ontbreekt of niet klopt; een fout zegt hoe ver set kwam;
-- het netwerk: een pauze per host van Commons, Retry-After altijd gevolgd (te lang of buiten het
-  budget: meteen stoppen), van upload gemiddeld hooguit BANDBREEDTE, en bij een opgegeven 429 of
-  5xx de laatste Retry-After en de titel (of de eerste regel tekst) van het antwoord in de fout;
+  ontbreekt of niet klopt; een fout zegt hoe ver set kwam en of hij een thumbnail of een
+  origineel ophaalde;
+- het netwerk: een pauze per host van Commons, Retry-After altijd gevolgd (te lang, niet te
+  lezen of buiten het budget: meteen stoppen), van upload gemiddeld hooguit BANDBREEDTE, en bij
+  een opgegeven 429 of 5xx de laatste Retry-After en de reden uit het antwoord in de fout (de
+  titel, de eerste <p> of de eerste regel tekst; nooit "Wikimedia Error");
 - elke vraag heeft een algemene User-Agent, zonder persoon, e-mail of repository.
 """
 
@@ -78,7 +80,8 @@ class Nep:
                 extra: list[tuple[str, str]] = []
                 if pad == "/w/api.php" and nep.commons is not None:
                     q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query))
-                    status, body = 200, json.dumps(nep.commons.antwoord(q)).encode()
+                    doc = nep.commons.antwoord(q)
+                    status, body = (404, b"weg") if doc is None else (200, json.dumps(doc).encode())
                 else:
                     rij = nep.paden.get(pad)
                     if not rij:
@@ -435,6 +438,47 @@ def test_retry_after_600_wacht_hij_helemaal_nooit_eerder(nep, tmp_path, monkeypa
     assert slapen[:2] == [600.0, 70.0] and bm._gewacht == 670.0
 
 
+def test_retry_after_met_decimalen_telt_en_onleesbaar_stopt_meteen(nep, tmp_path, monkeypatch):
+    """Phabricator T414173: Wikimedia stuurde in januari 2026 ook "Retry-After: 11.000". Dat las
+    _retry_after als 0, en dan vroeg _open na zijn eigen 2 s opnieuw: eerder dan gevraagd. Nu
+    telt een getal met decimalen helemaal (op de nepklok: de volgende vraag ≥ 11 s later), en
+    stopt een Retry-After die er is maar niet te lezen is, _open meteen: geen tweede vraag, en
+    de fout zegt waarom."""
+    klok = [1000.0]
+    slapen: list[float] = []
+
+    def slaap(s: float) -> None:
+        slapen.append(s)
+        klok[0] += s
+
+    monkeypatch.setattr(bm.time, "monotonic", lambda: klok[0])
+    monkeypatch.setattr(bm.time, "sleep", slaap)
+    nep.paden["/upload/kat-1.jpg"] = [
+        (429, b"", {"Retry-After": "11.000"}),
+        (503, b"", {"Retry-After": "12.5"}),  # meer dan de eigen 4 s
+        (200, b"de foto"),
+    ]
+    assert bm.haal(f"{bm.UPLOAD}kat-1.jpg", tmp_path / "k", max_bytes=99)[1] == 7
+    assert len(nep.tijden) == 3
+    assert nep.tijden[1] - nep.tijden[0] >= 11.0
+    assert nep.tijden[2] - nep.tijden[1] >= 12.5
+    assert slapen[:2] == [11.0, 12.5] and bm._gewacht == 23.5
+    # niet te lezen: meteen stoppen, niets gewacht
+    for waarde in ("straks", "-5", "11,5"):
+        nep.paden["/upload/hond-1.jpg"] = [
+            (429, b"<title>Too many requests</title>", {"Retry-After": waarde})
+        ] * 9
+        voor = len(nep.tijden)
+        with pytest.raises(bm.Fout) as fout:
+            bm.haal(f"{bm.UPLOAD}hond-1.jpg", tmp_path / "hond-1.jpg", max_bytes=99)
+        assert str(fout.value) == (
+            f"hond-1.jpg: HTTP 429 (Retry-After {waarde}; niet te lezen, dus meteen gestopt; "
+            "antwoord: Too many requests)"
+        )
+        assert len(nep.tijden) == voor + 1
+    assert bm._gewacht == 23.5
+
+
 def test_te_lang_of_buiten_het_budget_stopt_meteen(nep, tmp_path, monkeypatch):
     """Zegt Retry-After meer dan MAX_WACHT_S, of past het wachten niet meer in WACHT_TOTAAL_S
     (ook 2 tot 32 s zonder Retry-After tellen mee), dan stopt _open meteen: geen tweede vraag,
@@ -593,28 +637,82 @@ def test_een_opgegeven_429_zegt_wat_wikimedia_zei(nep, tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-WIKIMEDIA_429 = (
-    b'<!DOCTYPE html>\n<html lang="en">\n<meta charset="utf-8">\n'
-    b"<title>Too many requests - please contact noc@wikimedia.org</title>\n"
-    b"<style>\nhtml, body { margin: 0; }\n</style>\n"
-    b"<p>X-Client-IP: 10.0.0.1</p>\n"
+# De foutpagina van Wikimedia bij een 429, in de vorm van wikimedia/operations-puppet
+# (modules/mediawiki/templates/errorpage.html.erb met de content "<p>%error_body_content%</p>" van
+# modules/varnish/manifests/common/errorpage.pp, de footer van
+# modules/varnish/templates/errorpage.footer.html.erb en de details van errorpage.inc.vcl.erb) en
+# van phabricator T413570: de titel is altijd "Wikimedia Error" en de kop "Error"; de reden staat
+# in de eerste <p>, het IP-adres in <details> in de footer. Ook de maten zijn die van de echte
+# pagina (de template ingevuld: 2.845 bytes, de <p> op byte 2.226): hier 2.862 bytes, de <p> op
+# byte 2.236, dus ruim binnen MAX_ANTWOORD
+WIKIMEDIA_REDEN = (
+    "Too many requests - please contact noc@wikimedia.org to discuss a less disruptive approach "
+    "(3bfa1aa)"
+)
+
+
+def _wikimedia_fout(code: int, reden: str, inhoud: str) -> bytes:
+    css = "".join(f".r{i} {{ margin: 0; padding: 0; color: #202122; }}\n" for i in range(34))
+    return (
+        '<!DOCTYPE html>\n<html lang="en">\n<meta charset="utf-8">\n'
+        "<title>Wikimedia Error</title>\n"
+        f"<style>\n{css}</style>\n"
+        '<meta name="color-scheme" content="light dark">\n<div class="content" role="main">\n'
+        '<a href="https://www.wikimedia.org"><img id="logo" '
+        'src="https://www.wikimedia.org/static/images/footer/wikimedia.svg" alt="Wikimedia" '
+        'width="120" height="120">\n</a>\n'
+        "<script>\nif ( /(^|\\.)wikipedia\\.org$/.test( location.hostname ) ) {\n"
+        "\tdocument.getElementById( 'logo' ).outerHTML = '<picture>' +\n"
+        '\t\t\'<img id="logo" alt="Wikipedia" width="120" height="120">\' +\n'
+        "\t\t'</picture>';\n}\n</script>\n"
+        '<div class="content-text">\n<h1>Error</h1>\n\n'
+        f"<p>{inhoud}</p>\n</div>\n</div>\n"
+        '<div class="footer"><p>If you report this error to the Wikimedia System Administrators, '
+        'please include the details below.</p><p class="text-muted"><code>Request served via '
+        "cp3067 cp3067, Varnish XID 123456789<br>Upstream caches: cp3067 int<br>"
+        f"Error: {code}, {reden} at Mon, 05 Jan 2026 10:00:00 GMT<br>"
+        "<details><summary>Sensitive client information</summary>IP address: 10.0.0.1"
+        "</details></code></p></div>\n</html>\n"
+    ).encode()
+
+
+WIKIMEDIA_429 = _wikimedia_fout(429, WIKIMEDIA_REDEN, WIKIMEDIA_REDEN)
+# bij een 5xx zet Wikimedia een vaste zin in de <p> (errorpage.inc.vcl.erb)
+WIKIMEDIA_503 = _wikimedia_fout(
+    503,
+    "Service Unavailable",
+    "Our servers are currently under maintenance or experiencing a technical issue",
 )
 
 
 @pytest.mark.parametrize(
     "body, regel",
     [
-        # CI op 9ebf298: de eerste regel was "<!DOCTYPE html>"; nu de titel
-        (WIKIMEDIA_429, "Too many requests - please contact noc@wikimedia.org"),
+        # CI op 9ebf298: de eerste regel was "<!DOCTYPE html>". De titel van Wikimedia zegt ook
+        # niets ("Wikimedia Error"), de kop ook niet ("Error"): de reden staat in de eerste <p>
+        (WIKIMEDIA_429, WIKIMEDIA_REDEN),
+        (
+            WIKIMEDIA_503,
+            "Our servers are currently under maintenance or experiencing a technical issue",
+        ),
+        # een titel die wel iets zegt, gaat voor de <p>
+        (b"<title>429 Too Many Requests</title><p>Te veel</p>", "429 Too Many Requests"),
+        # zonder <p>: de eerste regel die meer zegt dan "Error"; nooit iets uit <details>
+        (
+            b"<title>Wikimedia Error</title>\n<h1>Error</h1>\n<details>IP 10.0.0.1</details>\n"
+            b"<div>Too many requests</div>\n",
+            "Too many requests",
+        ),
         # een titel met tags, regels, stuurtekens en niet-ASCII: alleen afdrukbare ASCII
         (
             b"<TITLE lang=x>\n Te <b>veel</b>\x1b[31m\n vragen \xc3\xa9 </TITLE>",
             "Te veel ?[31m vragen ??",
         ),
-        # een lege titel telt niet: dan de eerste regel met tekst zonder tags, zonder style
+        # een lege titel telt niet, en zonder <p> de eerste regel met tekst zonder tags, zonder
+        # style en commentaar
         (
             b"<!DOCTYPE html>\n<title> </title><style>\nbody { x: 1 }\n</style>\n<!-- a\nb -->\n"
-            b"<div>\n  <h1>Fout</h1> <p>Te veel vragen</p>\n</div>\n",
+            b"<div>\n  <h1>Fout</h1> <span>Te veel vragen</span>\n</div>\n",
             "Fout Te veel vragen",
         ),
         # een style die niet sluit (het antwoord houdt op na MAX_ANTWOORD): geen css
@@ -624,16 +722,19 @@ WIKIMEDIA_429 = (
     ],
 )
 def test_de_uitleg_is_de_titel_of_de_eerste_regel_met_tekst(nep, tmp_path, body, regel):
-    """Wat het log van een opgegeven 429 of 5xx overneemt: de tekst van <title>, anders de eerste
-    regel met tekst zonder de tags van HTML; alleen afdrukbare ASCII (de rest wordt ?), hooguit
-    MAX_REGEL tekens, en niets anders van het antwoord (CI op 9ebf298: "antwoord: <!DOCTYPE
-    html>")."""
+    """Wat het log van een opgegeven 429 of 5xx overneemt: de tekst van <title>, anders van de
+    eerste <p>, anders de eerste regel met tekst, zonder de tags van HTML; wat alleen "Error" of
+    "Wikimedia Error" zegt, telt niet (de foutpagina van Wikimedia). Alleen afdrukbare ASCII (de
+    rest wordt ?), hooguit MAX_REGEL tekens, en niets anders van het antwoord (CI op 9ebf298:
+    "antwoord: <!DOCTYPE html>"; de review van de reparatie, R1: "antwoord: Wikimedia
+    Error")."""
     nep.paden["/upload/kat-1.jpg"] = [(429, body, {"Retry-After": "1"})] * 9
     with pytest.raises(bm.Fout) as fout:
         bm.haal(f"{bm.UPLOAD}kat-1.jpg", tmp_path / "kat-1.jpg", max_bytes=99)
     antwoord = f"antwoord: {regel}" if regel else "antwoord zonder tekst"
     assert str(fout.value) == f"kat-1.jpg: HTTP 429 (Retry-After 1; {antwoord})"
     assert "10.0.0.1" not in str(fout.value) and "{" not in str(fout.value)
+    assert "Wikimedia Error" not in str(fout.value)
 
 
 # --- vergelijk ---------------------------------------------------------------------------------
@@ -792,14 +893,16 @@ class NepCommons:
     de positieve P180's: wat er verder niet mag (een mens, geen JPEG, een andere licentie, te
     klein), moet de tool zelf weggooien. Met iiurlwidth geeft imageinfo ook een thumbnail, zoals
     MediaWiki: van een breder origineel een eigen bestand onder /upload/thumb/ (duim), van een
-    smaller origineel het origineel zelf als thumburl (en dan zegt thumbwidth de gevraagde
-    breedte, niet die van het origineel)."""
+    origineel dat niet breder is het origineel zelf als thumburl, en dan zijn thumbwidth en
+    thumbheight de maten van het origineel (MediaWiki, ApiQueryImageInfo: "T25834 - If the URLs
+    are the same, we haven't resized it"). weg: vragen aan de API waarop de nep 404 zegt."""
 
     def __init__(self, url: str, seed: int = 83) -> None:
         self.url = url
         self.bestanden: dict[int, dict] = {}
         self.inhoud: dict[int, bytes] = {}  # de originelen
         self.duim: dict[int, bytes] = {}  # de thumbnails van DUIM_BREEDTE breed
+        self.weg = lambda q: False
         rnd = random.Random(seed)
         pid = 1000
 
@@ -858,7 +961,9 @@ class NepCommons:
             doc["continue"] = {"sroffset": offset + 50, "continue": "-||"}
         return doc
 
-    def antwoord(self, q: dict) -> dict:
+    def antwoord(self, q: dict) -> dict | None:
+        if self.weg(q):
+            return None
         if q.get("list") == "search":
             return self._zoek(q)
         if q.get("prop") == "imageinfo":
@@ -875,10 +980,13 @@ class NepCommons:
                 }
                 if "iiurlwidth" in q:
                     w = int(q["iiurlwidth"])
-                    breder = d["breedte"] > w
-                    info["thumburl"] = self.duim_url(i, w) if breder else info["url"]
-                    info["thumbwidth"] = w
-                    info["thumbheight"] = round(d["hoogte"] * w / d["breedte"])
+                    if d["breedte"] > w:
+                        info["thumburl"] = self.duim_url(i, w)
+                        info["thumbwidth"] = w
+                        info["thumbheight"] = round(d["hoogte"] * w / d["breedte"])
+                    else:
+                        info["thumburl"] = info["url"]
+                        info["thumbwidth"], info["thumbheight"] = d["breedte"], d["hoogte"]
                 pages.append({"pageid": i, "imageinfo": [info]})
             return {"query": {"pages": pages}}
         if q.get("action") == "wbgetentities":
@@ -922,10 +1030,11 @@ def _mb(n: int) -> str:
 
 
 def test_set_zonder_beeld_tsv_stelt_120_fotos_voor(nep, commons, werk, tmp_path, monkeypatch):
-    """CI op 9ebf298: upload.wikimedia.org gaf ook met BANDBREEDTE na ±30 minuten HTTP 429 op
-    de originelen. Nu vraagt details de thumbnail van DUIM_BREEDTE (iiurlwidth), en haalt set van
-    elke foto die thumbnail (url, bytes en sha256 in beeld.tsv), of het origineel als dat niet
-    breder is; nooit een groot origineel. De bron blijft de pagina van het origineel."""
+    """CI op 9ebf298: upload.wikimedia.org gaf ook met BANDBREEDTE HTTP 429 op een origineel (de
+    stap stopte na ±30 minuten). Nu vraagt details de thumbnail van DUIM_BREEDTE (iiurlwidth), en
+    haalt set van elke foto die thumbnail (url, bytes en sha256 in beeld.tsv), of het origineel
+    als dat niet breder is; nooit een groot origineel. De bron blijft de pagina van het
+    origineel."""
     monkeypatch.setattr(bm.time, "monotonic", lambda: 1000.0)
     assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
     fotos = bm.lees_set(werk.voorstel_set.read_text())
@@ -980,7 +1089,7 @@ def test_set_zonder_beeld_tsv_stelt_120_fotos_voor(nep, commons, werk, tmp_path,
     assert bm._opgehaald == samen
     assert _kort(werk) == [
         f"BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's in het verslag "
-        f"({_mb(samen)} in 0 s)",
+        f"(1 als origineel; {_mb(samen)} in 0 s)",
         "BZ4 voorstel voor beeld.tsv:",
         *(f"  {r}" for r in werk.voorstel_set.read_text().splitlines()),
     ]
@@ -997,8 +1106,8 @@ def test_set_met_beeld_tsv_is_streng(nep, commons, werk, tmp_path, monkeypatch):
     assert bm.set_(werk2, set_pad) == 0
     assert len(list(werk2.set.iterdir())) == 120
     assert _kort(werk2) == [
-        "BZ4 set: 120 foto's kloppen met beeld.tsv (0 uit de cache, 120 van Commons; "
-        f"{_mb(samen)} in 0 s)"
+        "BZ4 set: 120 foto's kloppen met beeld.tsv (0 uit de cache, 120 van Commons, "
+        f"1 als origineel; {_mb(samen)} in 0 s)"
     ]
     regels = set_pad.read_text().splitlines()
     i = next(n for n, r in enumerate(regels) if r.startswith("kat-2\t"))
@@ -1050,14 +1159,13 @@ def test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt(nep, commons, werk, tmp
     assert sorted(p.name for p in werk2.set.iterdir()) == sorted(f"{s}.jpg" for s in fotos)
     samen = sum(fotos[s].bytes for s in opnieuw)
     assert _kort(werk2) == [
-        "BZ4 set: 120 foto's kloppen met beeld.tsv (116 uit de cache, 4 van Commons; "
-        f"{_mb(samen)} in 0 s)"
+        "BZ4 set: 120 foto's kloppen met beeld.tsv (116 uit de cache, 4 van Commons, "
+        f"0 als origineel; {_mb(samen)} in 0 s)"
     ]
 
 
-def test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld(nep, commons, werk, tmp_path):
-    """CI op 625e946 stopte op de eerste combinatie zonder foto; nu staat elk tekort in het blok,
-    met wat er bekeken is, en de reserveparen met hun aantal, en pas dan de fout."""
+def _tekort(commons) -> None:
+    """Haal uit de nep: alle foto's van kat+sneeuw, 4 van eten en 2 van gitaar (3 tekorten)."""
     cat = bm.CATEGORIEEN
 
     def goed(d, q, lic):
@@ -1076,6 +1184,12 @@ def test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld(nep, common
     assert len(weg) == 7
     for i in weg:
         del commons.bestanden[i]
+
+
+def test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld(nep, commons, werk, tmp_path):
+    """CI op 625e946 stopte op de eerste combinatie zonder foto; nu staat elk tekort in het blok,
+    met wat er bekeken is, en de reserveparen met hun aantal, en pas dan de fout."""
+    _tekort(commons)
     with pytest.raises(bm.Fout, match=r"^Commons: 3 tekort\(en\) voor de set") as fout:
         bm.set_(werk, tmp_path / "beeld.tsv")
     assert not werk.voorstel_set.exists()
@@ -1101,10 +1215,37 @@ def test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld(nep, common
     ]
 
 
+def test_een_fout_bij_het_tellen_van_de_reserves_zegt_hoeveel_er_kwamen(
+    nep, commons, werk, tmp_path
+):
+    """De review van de reparatie, R6: een fout van de API van Commons terwijl set de reserves
+    telt (de keuze is dan klaar, er wordt niets meer opgehaald), zei "bij foto 117 van 120". Nu
+    zegt hij hoeveel foto's er kwamen."""
+    _tekort(commons)
+    cat = bm.CATEGORIEEN
+    # bos+sneeuw is het eerste reservepaar (berg+sneeuw staat al in de vragen); het zoeken naar
+    # dat paar gebeurt alleen bij de reserves
+    paar = (f"haswbstatement:P180={cat['bos']}", f"haswbstatement:P180={cat['sneeuw']}")
+    commons.weg = lambda q: q.get("list") == "search" and all(p in q["srsearch"] for p in paar)
+    with pytest.raises(bm.Fout) as fout:
+        bm.set_(werk, tmp_path / "beeld.tsv")
+    gehaald = sorted(werk.set.iterdir())
+    mb = _mb(sum(p.stat().st_size for p in gehaald))
+    assert len(gehaald) == 116  # 120, min 3 van eten en 1 van gitaar
+    assert str(fout.value) == f"127.0.0.1: HTTP 404 ({len(gehaald)} van 120 foto's opgehaald, {mb})"
+    assert [r.split(" (")[0] for r in _kort(werk)] == [
+        "BZ4 set: Commons: geen bruikbare foto voor kat+sneeuw",
+        "BZ4 set: Commons: maar 2 bruikbare foto's voor eten",
+        "BZ4 set: Commons: maar 4 bruikbare foto's voor gitaar",
+    ]
+
+
 def test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam(nep, commons, werk, tmp_path, monkeypatch):
-    """CI op 9ebf298: "FOUT set: kat-1.jpg: HTTP 429" zei niet hoe ver de stap na ±30 minuten
-    was. Nu zegt de fout bij welke foto set was en hoeveel bytes er al binnen waren (in een
-    voorstel van het doel van 120), en de regel van een goede set de bytes en de tijd."""
+    """CI op 9ebf298: "FOUT set: kat-1.jpg: HTTP 429" zei niet hoe ver de stap was toen hij na
+    ±30 minuten stopte. Nu zegt de fout bij welke foto set was, of hij een thumbnail of een
+    origineel ophaalde (de review van de reparatie, R3: zo zegt de volgende run of thumbnails de
+    429 voorkomen) en hoeveel bytes er al binnen waren (in een voorstel van het doel van 120), en
+    de regel van een goede set hoeveel er als origineel kwamen, de bytes en de tijd."""
     klok = [1000.0]
     slapen: list[float] = []
 
@@ -1121,10 +1262,11 @@ def test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam(nep, commons, werk, tmp_path,
     assert bm._opgehaald == samen
     assert _kort(werk)[0] == (
         "BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's in het verslag "
-        f"({_mb(samen)} in {sum(slapen):.0f} s)"
+        f"(1 als origineel; {_mb(samen)} in {sum(slapen):.0f} s)"
     )
     assert sum(slapen) >= samen / bm.BANDBREEDTE
-    # een voorstel dat bij de 37e foto een 404 krijgt (de 36 ervoor staan er al)
+    # een voorstel dat bij de 37e foto (een thumbnail) een 404 krijgt (de 36 ervoor staan er al)
+    assert bm._is_duim(fotos[36].url) and bm._is_duim(fotos[49].url)
     pad = urllib.parse.urlsplit(fotos[36].url).path
     nep.paden[pad] = [(404, b"weg")]
     werk2 = bm.Werk(tmp_path / "werk2")
@@ -1132,11 +1274,27 @@ def test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam(nep, commons, werk, tmp_path,
         bm.set_(werk2, tmp_path / "geen.tsv")
     voor = sum(f.bytes for f in fotos[:36])
     assert str(fout.value) == (
-        f"{fotos[36].sleutel}.jpg: HTTP 404 (bij foto 37 van 120, {_mb(voor)} opgehaald)"
+        f"{fotos[36].sleutel}.jpg: HTTP 404 "
+        f"(bij foto 37 van 120, een thumbnail van 1280 px, {_mb(voor)} opgehaald)"
     )
     assert len(list(werk2.set.iterdir())) == 36
-    # streng: Wikimedia maakte de 50e thumbnail opnieuw, met andere bytes van dezelfde lengte
     nep.zet(pad, (werk.set / f"{fotos[36].sleutel}.jpg").read_bytes())  # de 37e is er weer
+    # een voorstel dat op het ene smalle origineel (fiets-1) de 429 van Wikimedia krijgt, met een
+    # Retry-After boven MAX_WACHT_S: zo ziet het log het, ook in een echte run
+    k = next(i for i, f in enumerate(fotos) if not bm._is_duim(f.url))
+    assert fotos[k].sleutel == "fiets-1"
+    origineel = urllib.parse.urlsplit(fotos[k].url).path
+    nep.paden[origineel] = [(429, WIKIMEDIA_429, {"Retry-After": "1000"})]
+    with pytest.raises(bm.Fout) as fout:
+        bm.set_(bm.Werk(tmp_path / "werk4"), tmp_path / "geen.tsv")
+    voor = sum(f.bytes for f in fotos[:k])
+    assert str(fout.value) == (
+        "fiets-1.jpg: HTTP 429 (Retry-After 1000; langer dan MAX_WACHT_S (600 s), dus meteen "
+        f"gestopt; antwoord: {WIKIMEDIA_REDEN}) "
+        f"(bij foto {k + 1} van 120, een origineel, {_mb(voor)} opgehaald)"
+    )
+    nep.zet(origineel, (werk.set / "fiets-1.jpg").read_bytes())
+    # streng: Wikimedia maakte de 50e thumbnail opnieuw, met andere bytes van dezelfde lengte
     set_pad = tmp_path / "beeld.tsv"
     set_pad.write_text(werk.voorstel_set.read_text())
     pad = urllib.parse.urlsplit(fotos[49].url).path
@@ -1146,7 +1304,9 @@ def test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam(nep, commons, werk, tmp_path,
         bm.set_(bm.Werk(tmp_path / "werk3"), set_pad)
     voor = sum(f.bytes for f in fotos[:50])
     assert str(fout.value).startswith(f"{fotos[49].sleutel}.jpg: sha256 ")
-    assert str(fout.value).endswith(f" (bij foto 50 van 120, {_mb(voor)} opgehaald)")
+    assert str(fout.value).endswith(
+        f" (bij foto 50 van 120, een thumbnail van 1280 px, {_mb(voor)} opgehaald)"
+    )
     assert fotos[49].sha256 in str(fout.value)
 
 
@@ -1291,6 +1451,9 @@ GOEDE_FOTOS = {
         {"breedte": 1280, "hoogte": 853, "bytes": 900_000, "duim": SMAL, "duim_hoogte": 853},
         (SMAL, 900_000),
     ),
+    # MediaWiki geeft bij een origineel dat niet breder is de maten van het origineel als
+    # thumbwidth en thumbheight (ApiQueryImageInfo, T25834); _duim neemt die van het origineel
+    # zelf, dus ook een thumbwidth die iets anders zegt, valt niet verkeerd uit (verdediging)
     "smal, thumbwidth van de vraag": (
         {"breedte": 1000, "hoogte": 800, "duim": SMAL, "duim_breedte": 1280, "duim_hoogte": 1024},
         (SMAL, 2_000_000),
