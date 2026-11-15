@@ -3,7 +3,9 @@
 De job beeld-model (X3a) stelt tien regels voor: vijf bronnen van huggingface.co op een vaste
 commit (url https://…) en vijf uitkomsten van de omzetter (url -). Hier maakt de tool zelf dat
 voorstel (beeld_model.vergelijk, met de bronregels zoals beeld_model.bron ze schrijft), en dan
-staat vast dat de code van X2a die regels leest zoals bedoeld, achter de echte models.lock:
+staat vast dat de code van X2a die regels leest zoals bedoeld, achter de regels van de
+gezichten uit de echte models.lock (alleen die twee: na de pins staan de regels van SigLIP er
+ook in, en een naam mag er maar één keer in staan):
 
 - lock.parse leest ze, line() geeft precies de regel terug, en bash leest ze zoals install.sh
   (met model_name_ok uit install.sh zelf);
@@ -61,6 +63,13 @@ def _sha(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
+def _echt() -> str:
+    """De regels van YuNet en SFace uit de echte models.lock, in hun volgorde."""
+    regels = [r for r in lock.load() if r.name in (YUNET, SFACE)]
+    assert [r.name for r in regels] == [YUNET, SFACE]
+    return "".join(r.line() + "\n" for r in regels)
+
+
 @pytest.fixture
 def voorstel(tmp_path) -> str:
     """voorstel-models.lock zoals de job beeld-model hem schrijft (BZ2): de bronregels van
@@ -88,7 +97,7 @@ def voorstel(tmp_path) -> str:
 
 
 def test_het_voorstel_achter_de_echte_lock(voorstel):
-    tekst = lock.LOCK_PATH.read_text() + voorstel
+    tekst = _echt() + voorstel
     regels = lock.parse(tekst)
     assert [r.name for r in regels] == [YUNET, SFACE, *SIGLIP_BRON, *SIGLIP_UIT]
     hf = f"https://huggingface.co/google/siglip2-base-patch32-256/resolve/{COMMIT}/"
@@ -103,7 +112,7 @@ def test_het_voorstel_achter_de_echte_lock(voorstel):
 
 
 def test_de_vingerafdruk_van_gezichten_blijft(voorstel):
-    echt = lock.LOCK_PATH.read_text()
+    echt = _echt()
 
     def gezichten(tekst: str) -> str:
         return lock.digest([r for r in lock.parse(tekst) if r.name in (YUNET, SFACE)])
@@ -118,7 +127,7 @@ def test_bash_leest_ze_zoals_install_sh(voorstel, tmp_path):
     """De lus van modellen_ophalen: read -r, de vormen van sha256 en bytes, model_name_ok uit
     install.sh zelf, url niet leeg."""
     pad = tmp_path / "models.lock"
-    pad.write_text(lock.LOCK_PATH.read_text() + voorstel)
+    pad.write_text(_echt() + voorstel)
     script = r"""
 eval "$(sed -n '/^model_name_ok() {/,/^}/p' "$1")"
 declare -F model_name_ok >/dev/null || { echo "model_name_ok niet gevonden"; exit 1; }
