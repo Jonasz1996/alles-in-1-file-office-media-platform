@@ -633,14 +633,20 @@ modellen_ophalen() {
 # compose.analyse.yaml) en ANALYSE_REASON (waarom uit, of wat er niet goed ging). Bij aan eerst de
 # mappen en dan de modellen. Breekt nooit af: weigert het script een map, dan draait het platform
 # deze keer zonder analyse; mist er een model, dan start de container en zegt hij models_missing.
-# Een andere waarde dan aan of uit in .env (met de hand bewerkt): uit, met uitleg.
+# Een andere waarde dan aan of uit in .env (met de hand bewerkt): uit, met uitleg. Uit zegt waar
+# het vandaan komt: .env, of alleen de aanroep (ANALYSE=uit bij een .env zonder regel ANALYSE:
+# merge_analyse_env schrijft die niet; review golf 5, uitrol F4).
 decide_analyse() {
   ANALYSE_ON=0 ANALYSE_REASON="" MODELS_CHANGED=0 MODELS_FAILED=""
   analyse_shown || return 0
   case "${ANALYSE:-$ANALYSE_STANDAARD}" in
     aan) ;;
     uit)
-      ANALYSE_REASON="ANALYSE=uit in $ENV_FILE"
+      if grep -q '^ANALYSE=' "$ENV_FILE" 2>/dev/null; then
+        ANALYSE_REASON="ANALYSE=uit in $ENV_FILE"
+      else
+        ANALYSE_REASON="ANALYSE=uit bij de aanroep; $ENV_FILE heeft geen regel ANALYSE"
+      fi
       return 0
       ;;
     *)

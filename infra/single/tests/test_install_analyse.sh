@@ -16,7 +16,7 @@
 #   set_key neemt de waarde letterlijk;
 # - main zonder ANALYSE doet precies wat install.sh van 0.8.0 doet (dezelfde uitvoer, dezelfde
 #   aanroepen van Docker, dezelfde .env, geen nieuwe map), en met ANALYSE=uit dezelfde aanroepen,
-#   .env en mappen;
+#   .env en mappen, en de reden zegt dat de uit van de aanroep komt (.env heeft geen regel);
 # - de mappen (K1-06): MODELLEN_ROOT 0755 van root, SLEUTELS_ROOT 0700 van 10001; weigert een pad
 #   in DATA_ROOT (of DATA_ROOT erin), een symlink, een map die niet van root is of die anderen
 #   mogen beschrijven, een relatief pad, . of .., en de ene map in de andere; dan niets
@@ -32,8 +32,9 @@
 # - main met aan: de stap, compose.analyse.yaml (en de grenzen) bij elke compose-aanroep, de
 #   container met --no-deps, daarna analyse-status --wait 20, en de eindtekst; een start die
 #   faalt of een stand die niet ok is, alleen een waarschuwing;
-# - ANALYSE=uit na aan: geen download, geen container, --remove-orphans haalt hem weg, de
-#   modellen en de sleutels blijven, en het script zegt waar de modellen staan;
+# - ANALYSE=uit na aan: ANALYSE=uit in .env (en de reden zegt dat), geen download, geen
+#   container, --remove-orphans haalt hem weg, de modellen en de sleutels blijven, en het script
+#   zegt waar de modellen staan;
 # - terug naar 0.8.0 (het script van 59e0250) en weer vooruit: de sleutels, de modellen en .env
 #   blijven, en vooruit wordt er niets opnieuw gehaald. Wat db-downgrade 0010 in de database doet
 #   (de tabellen van 0011 en 0012 weg), bewijst api/tests/search/test_migration_0012.py.
@@ -552,7 +553,9 @@ check "dezelfde aanroepen van Docker als 0.8.0" cmp -s "$LOG" "$work/docker.080"
 check "dezelfde .env (geen nieuwe regel)" cmp -s "$ENV_FILE" "$work/env.080"
 check "dezelfde mappen en bestanden" eval 'tree | cmp -s - "$work/tree.080"'
 check "geen curl" test ! -s "$work/curl.log"
-check "de uitvoer: alleen de regels over de analyse erbij" eval 'grep -vE "^(== Analyse \(gezichten\)|Analyse: uit \(ANALYSE=uit in .*\)|Gezichten \(de container analyse\): uit \(ANALYSE=uit\)\.|  Aan: .*ANALYSE=aan bash)$" "$work/main.out" | sed "/^$/N;/^\n$/D" | cmp -s - <(sed "/^$/N;/^\n$/D" "$work/main.080")'
+# Review golf 5, uitrol F4: .env heeft geen regel ANALYSE, dus de uit komt van de aanroep
+check "de reden: uit bij de aanroep, niet in .env" said "Analyse: uit (ANALYSE=uit bij de aanroep; $ENV_FILE heeft geen regel ANALYSE)"
+check "de uitvoer: alleen de regels over de analyse erbij" eval 'grep -vxF -e "== Analyse (gezichten)" -e "Analyse: uit (ANALYSE=uit bij de aanroep; $ENV_FILE heeft geen regel ANALYSE)" -e "Gezichten (de container analyse): uit (ANALYSE=uit)." "$work/main.out" | grep -vE "^  Aan: .*ANALYSE=aan bash$" | sed "/^$/N;/^\n$/D" | cmp -s - <(sed "/^$/N;/^\n$/D" "$work/main.080")'
 
 # ============================================================================================
 echo "== main met ANALYSE=aan: de eerste keer"
@@ -618,6 +621,7 @@ sed -i "s|^ANALYSE=.*|ANALYSE=aan|" "$ENV_FILE"
 echo "== ANALYSE=uit na aan: geen download, geen container, de modellen en sleutels blijven"
 run_main "$install_sh" ANALYSE=uit
 check "exit 0; ANALYSE=uit in .env, dezelfde sleutel" eval '[ "$MAIN_RC" = 0 ] && has_line ANALYSE=uit && [ "$(value ANALYSE_WORKER_KEY)" = "$key" ]'
+check "de reden: ANALYSE=uit in .env (daar staat hij nu)" said "Analyse: uit (ANALYSE=uit in $ENV_FILE)"
 check "geen curl, geen bestand van de analyse; de app met --remove-orphans (haalt de container weg)" eval '[ ! -s "$work/curl.log" ] && ! logged analyse && logged "up -d --build --remove-orphans platform"'
 check "de modellen en de sleutel per eigenaar blijven" eval 'models_sum "$PLATFORM_ROOT/modellen" | cmp -s - "$work/modellen.voor" && [ "$(cat "$PLATFORM_ROOT/sleutels/gezichten/eigenaar-1.key")" = geheim ]'
 check "de eindtekst zegt waar de modellen staan, en hoe het weer aan gaat" eval 'said "Gezichten (de container analyse): uit (ANALYSE=uit)." && said "  De modellen blijven in $PLATFORM_ROOT/modellen tot je die map weggooit." && said_part "| ANALYSE=aan bash"'
