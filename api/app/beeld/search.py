@@ -30,7 +30,7 @@ from collections import deque
 from typing import Any, Literal
 
 import anyio
-from sqlalchemy import bindparam, func, select
+from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import errors
@@ -133,7 +133,7 @@ def _min_for(text: str | None) -> float:
     return MIN_TEKST if text is not None else MIN_FOTO
 
 
-def _keep(hits: list[tuple[int, int]], text: str | None) -> list[tuple[int, int]]:
+def _keep(hits: list[bcache.Ranked], text: str | None) -> list[bcache.Ranked]:
     """De drempel op sigmoid(scale · cos + bias); met 0 telt alles."""
     floor = _min_for(text)
     found = monitor.status()
@@ -141,29 +141,44 @@ def _keep(hits: list[tuple[int, int]], text: str | None) -> list[tuple[int, int]
     if floor <= 0 or beeld is None:
         return hits
     out = []
-    for num, s in hits:
-        z = beeld.scale * (s / 10_000) + beeld.bias
+    for hit in hits:
+        z = beeld.scale * (hit[1] / 10_000) + beeld.bias
         if 1 / (1 + math.exp(-max(-60.0, min(60.0, z)))) >= floor:
-            out.append((num, s))
+            out.append(hit)
     return out
 
 
 async def _rank(
     settings: Settings, user: User, gen: int, text: str | None, num: int | None
-) -> list[tuple[int, int]]:
-    """Stap 3 en 4: de fd van het bestand en rank, binnen de klok."""
+) -> list[bcache.Ranked]:
+    """Stap 3 en 4: de fd van het bestand en rank, binnen de klok. Bij elke treffer het begin
+    van de sha van de inhoud waarmee hij in het bestand staat (uit dezelfde fd, §3.9)."""
     found = monitor.status()
     if found.state in ("off", "down"):
         raise Fallback("down")
     if not bjobs.ready(found):
         raise Fallback("no_model")
+    if not vecfile.is_current(settings.beeld_dir, user.id):
+        raise Fallback("slow")  # nog geen bestand, of van een oude versie: het komt zo
     fd = vecfile.open_for_worker(settings.beeld_dir, user.id)
     if fd is None:
         raise Fallback("slow")
     try:
         args = wire.RankArgs(owner=user.id.hex, gen=gen, text=text, num=num, k=settings.beeld_top_k)
+        data = await _call(settings, args, fd)
+        hits = [(int(a), int(b)) for a, b in wire.RankData.model_validate(data).hits]
+        prefix = vecfile.prefixes(fd, [h[0] for h in hits])
+    except (OSError, ValueError):
+        raise Fallback("slow") from None
+    finally:
+        os.close(fd)
+    return [(n, s, prefix[n].hex()) for n, s in hits if n in prefix]
+
+
+async def _call(settings: Settings, args: wire.RankArgs, fd: int) -> Any:
+    try:
         with anyio.fail_after(settings.beeld_deadline_ms / 1000):
-            data = await client.call(settings, Op.RANK, args, fds=[fd])
+            return await client.call(settings, Op.RANK, args, fds=[fd])
     except TimeoutError:
         raise Fallback("slow") from None
     except (client.AnalyseDown, client.AnalyseBusy):
@@ -171,16 +186,12 @@ async def _rank(
     except client.AnalyseFailed as exc:
         if exc.code == Code.MODEL_MISSING:
             raise Fallback("no_model") from None
-        if num is not None and exc.code == Code.BAD_REQUEST and exc.detail == vt.NO_NUM:
+        if args.num is not None and exc.code == Code.BAD_REQUEST and exc.detail == vt.NO_NUM:
             raise errors.fail(
                 409, "beeld_no_vector", "Van deze foto is nog geen beeld bekend"
             ) from None
         log.warning("beeld: rank mislukt (%s)", exc.code)
         raise Fallback("slow") from None
-    finally:
-        os.close(fd)
-    hits = wire.RankData.model_validate(data).hits
-    return [(int(a), int(b)) for a, b in hits]
 
 
 def _select(p: SearchParams, user: User) -> Any:
@@ -188,9 +199,9 @@ def _select(p: SearchParams, user: User) -> Any:
     r = func.json_each(bindparam("nums")).table_valued("key", "value").alias("r")
     n = engines.alias()
     sel = (
-        select(n.c.id, n.c.owner_id)
+        select(n.c.id, n.c.owner_id, n.c.num, n.c.blob_id)
         .select_from(r.join(n, n.c.num == r.c.value))
-        .where(own_live(n, user.id), n.c.ftype == "image")
+        .where(own_live(n, user.id), n.c.ftype == "image", text(vecfile.origin_ok("n")))
         .order_by(r.c.key)
     )
     return filters.apply_all(sel, n, p, user)
@@ -219,7 +230,8 @@ async def search(
     bjobs.searched(user.id)
     owner = await db.get(BeeldOwner, user.id, populate_existing=True)
     gen = owner.built_gen if owner is not None else 0
-    if owner is not None and owner.gen > owner.built_gen:
+    current = vecfile.is_current(settings.beeld_dir, user.id)
+    if owner is not None and (owner.gen > owner.built_gen or not current):
         await bjobs.queue_vec(db, user.id, settings, soon=True)
         await db.commit()
     key = bcache.key(user.id, text, num, gen)
@@ -246,6 +258,9 @@ async def search(
             "beeld",
         )
     ).rows
+    # §3.9: een node die sinds het bestand andere inhoud kreeg, nooit met de oude vector
+    same = {h[0]: h[2] for h in hits}
+    rows = [r for r in rows if str(r.blob_id or "")[: vt.SHA_BYTES * 2] == same.get(r.num)]
     page_rows = rows[p.offset : p.offset + p.limit]
     results = await engines.hits(db, user, page_rows, None)
     for hit in results:

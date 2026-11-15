@@ -287,7 +287,8 @@ def vec_bytes(
     head = vt.pack_head(vt.Head(model, 1, DIM, len(nums), gen))
     body = struct.pack(f"<{len(nums)}q", *nums)
     f16 = b"".join(struct.pack(f"<{DIM}e", *row) for row in rows)
-    return head + body + f16
+    shas = b"".join(struct.pack("<q", num) for num in nums)  # het begin van een sha per rij
+    return head + body + f16 + shas
 
 
 def vec_fd(data: bytes) -> int:

@@ -12,6 +12,9 @@ inhoud altijd een nieuwe inode (zijn cache onthoudt de sha256 per inode, K2-23).
   eigenaar zelf geüpload (Vraag 9).
 - **Eén momentopname**: het aantal, gen uit beeld_owner en de rijen komen uit één leestransactie;
   de kop klopt dus altijd met de inhoud. Per CHUNK rijen gelezen (op num), nooit alles tegelijk.
+- **Per rij ook het begin van de sha256 van de inhoud** (types.py): prefixes() geeft dat voor de
+  treffers van rank, zodat een node met andere inhoud dan in het bestand nooit met de oude
+  vector gevonden wordt (§3.9), ook niet voordat het bestand opnieuw is gemaakt.
 - **Daarna** beeld_owner: built_gen (de gen van de momentopname), built_rows en built_at.
 
 Geen vector in een log of een fout (K1-16); het log noemt alleen aantallen.
@@ -19,10 +22,13 @@ Geen vector in een log of een fout (K1-16); het log noemt alleen aantallen.
 
 from __future__ import annotations
 
+import array
+import bisect
 import contextlib
 import logging
 import os
 import secrets
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -129,13 +135,13 @@ async def build(
             )
             head = vt.Head(vt.MODEL, version, vt.DIM, count, gen)
             _write_all(fd, vt.pack_head(head))
-            nums_at, vecs_at = head.nums_at(), head.vectors_at()
+            nums_at, vecs_at, shas_at = head.nums_at(), head.vectors_at(), head.shas_at()
             seen, last = 0, -1
             while seen < count:
                 rows = (
                     await db.execute(
                         text(
-                            f"SELECT n.num, e.vec {_base()} AND n.num > :last "
+                            f"SELECT n.num, e.vec, n.blob_id {_base()} AND n.num > :last "
                             "ORDER BY n.num LIMIT :chunk"
                         ),
                         {**params, "last": last, "chunk": CHUNK},
@@ -146,8 +152,10 @@ async def build(
                 rows = rows[: count - seen]
                 nums = b"".join(vt.NUM.pack(int(r[0])) for r in rows)
                 vecs = b"".join(bytes(r[1]) for r in rows)
+                shas = b"".join(vt.sha_prefix(str(r[2])) for r in rows)
                 os.pwrite(fd, nums, nums_at + seen * vt.NUM.size)
                 os.pwrite(fd, vecs, vecs_at + seen * vt.DIM * 2)
+                os.pwrite(fd, shas, shas_at + seen * vt.SHA_BYTES)
                 seen += len(rows)
                 last = int(rows[-1][0])
             if seen != count:
@@ -193,3 +201,45 @@ def open_for_worker(directory: Path, user_id: uuid.UUID) -> int | None:
 
 def read_head_of(fd: int) -> vt.Head:
     return vt.read_head(os.pread(fd, vt.HEAD.size, 0))
+
+
+def _pread_exact(fd: int, size: int, offset: int) -> bytes:
+    data = os.pread(fd, size, offset)
+    if len(data) != size:
+        raise vt.VecFileError(vt.BAD_FILE)
+    return data
+
+
+def prefixes(fd: int, nums: list[int]) -> dict[int, bytes]:
+    """Voor deze num's het begin van de sha256 van de inhoud waarmee ze in het bestand staan
+    (§3.9: nieuwe inhoud). Een num die er niet in staat, ontbreekt in de uitkomst."""
+    head = read_head_of(fd)
+    if head.size() != os.fstat(fd).st_size:
+        raise vt.VecFileError(vt.BAD_FILE)
+    if not nums or not head.count:
+        return {}
+    every = array.array("q", _pread_exact(fd, head.count * vt.NUM.size, head.nums_at()))
+    if sys.byteorder != "little":
+        every.byteswap()  # het bestand is little endian
+    shas = _pread_exact(fd, head.count * vt.SHA_BYTES, head.shas_at())
+    out: dict[int, bytes] = {}
+    for num in nums:
+        i = bisect.bisect_left(every, num)
+        if i < head.count and every[i] == num:
+            out[num] = shas[i * vt.SHA_BYTES : (i + 1) * vt.SHA_BYTES]
+    return out
+
+
+def is_current(directory: Path, user_id: uuid.UUID) -> bool:
+    """Het bestand is er en is van het model en de versie van nu (een nieuwe versie van de stap
+    embed: dan opnieuw, met alleen de nieuwe vectoren)."""
+    fd = open_for_worker(directory, user_id)
+    if fd is None:
+        return False
+    try:
+        head = read_head_of(fd)
+    except (OSError, vt.VecFileError):
+        return False
+    finally:
+        os.close(fd)
+    return (head.model, head.version, head.dim) == (vt.MODEL, VERSIONS[Step.EMBED], vt.DIM)

@@ -9,7 +9,10 @@ eigenaar met dezelfde kop, en de app laadt numpy nooit (test_no_numpy_in_app.py)
   aangevuld met NUL), de versie van de stap embed (VERSIONS[Step.EMBED]), dim, het aantal n en
   gen (beeld_owner.gen toen het bestand gemaakt werd);
 - n × int64: de num's, strikt oplopend (ORDER BY n.num);
-- n × dim × float16: de vectoren als één matrix; rij i hoort bij num i.
+- n × dim × float16: de vectoren als één matrix; rij i hoort bij num i;
+- n × SHA_BYTES: de eerste 8 bytes van de sha256 van de inhoud waar rij i van is. De worker leest
+  ze niet; de app houdt er een node mee buiten die sinds het bestand andere inhoud kreeg (§3.9:
+  "de oude inhoud nooit meer bij deze node", ook voordat het bestand opnieuw is gemaakt).
 
 De worker krijgt het bestand als fd (alleen lezen), nooit het pad (P8), en houdt het in zijn
 cache onder (eigenaar, gen, sha256 van het bestand) (K2-23). Een vector gaat nooit in een bericht
@@ -26,6 +29,7 @@ DIM = 768  # wire.BEELD_DIM; de echte dim staat in caps.beeld
 MAGIC = b"PBV1"
 HEAD = struct.Struct("<4s32sIIQQ4x")
 NUM = struct.Struct("<q")
+SHA_BYTES = 8  # het begin van de sha256 van de inhoud, per rij (16 hex-tekens van blob_id)
 MODEL_BYTES = 32
 MAX_COUNT = 10_000_000  # meer foto's per eigenaar is geen bestand van ons
 
@@ -33,6 +37,11 @@ MAX_COUNT = 10_000_000  # meer foto's per eigenaar is geen bestand van ons
 # dan de vector): de app geeft dan 409 beeld_no_vector. Een vaste zin, zonder waarde.
 NO_NUM = "de num staat niet in het bestand"
 BAD_FILE = "het vectorbestand klopt niet"
+
+
+def sha_prefix(sha: str) -> bytes:
+    """De SHA_BYTES van een blob_id (64 hex-tekens) voor het bestand."""
+    return bytes.fromhex(sha[: SHA_BYTES * 2])
 
 
 class VecFileError(ValueError):
@@ -49,13 +58,16 @@ class Head:
 
     def size(self) -> int:
         """Zoveel bytes hoort het hele bestand te hebben."""
-        return HEAD.size + self.count * NUM.size + self.count * self.dim * 2
+        return self.shas_at() + self.count * SHA_BYTES
 
     def nums_at(self) -> int:
         return HEAD.size
 
     def vectors_at(self) -> int:
         return HEAD.size + self.count * NUM.size
+
+    def shas_at(self) -> int:
+        return self.vectors_at() + self.count * self.dim * 2
 
 
 def pack_head(head: Head) -> bytes:

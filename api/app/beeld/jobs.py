@@ -382,8 +382,8 @@ async def vec_job(settings: Settings, payload: dict[str, Any]) -> None:
         on = await admin_on(db) and await user_on(db, user_id)
     if row is None or not on:
         return
-    path = vecfile.path_for(settings.beeld_dir, user_id)
-    if row.gen <= row.built_gen and row.built_at is not None and path.exists():
+    current = vecfile.is_current(settings.beeld_dir, user_id)
+    if row.gen <= row.built_gen and row.built_at is not None and current:
         return
     delay = wait_s(row, settings)
     if delay > 0:
@@ -446,14 +446,45 @@ async def forget(settings: Settings, user_id: uuid.UUID) -> None:
 
 
 def _mine_sql() -> str:
+    """De inhoud van de beeldbestanden van :me, en van de beeldbestanden die :me in de map van
+    een ander zette (Keuze 69: die horen bij zijn keuze)."""
     return (
-        "SELECT n.blob_id FROM node AS n WHERE n.owner_id = :me AND n.kind = 'file' "
-        "AND n.ftype = 'image' AND n.blob_id IS NOT NULL"
+        "SELECT n.blob_id FROM node AS n WHERE n.kind = 'file' AND n.ftype = 'image' "
+        "AND n.blob_id IS NOT NULL AND (n.owner_id = :me OR EXISTS (SELECT 1 FROM node_origin "
+        "AS o WHERE o.node_id = n.id AND o.created_by = :me AND o.via_link = 0))"
     )
 
 
+def _wanted_exists(sha: str) -> str:
+    """Een eigenaar met beeld aan wil deze inhoud nog (Keuze 69), ook in de prullenbak."""
+    return (
+        f"EXISTS (SELECT 1 FROM node AS n WHERE n.blob_id = {sha} AND n.kind = 'file' "
+        f"AND n.ftype = 'image' AND n.owner_id IN ({vecfile.on_users_sql()}) "
+        f"AND {vecfile.origin_ok()})"
+    )
+
+
+_OTHERS = (
+    "SELECT DISTINCT n.owner_id FROM node AS n JOIN node_origin AS o ON o.node_id = n.id "
+    "WHERE o.created_by = :me AND o.via_link = 0 AND n.owner_id != :me "
+    "AND n.kind = 'file' AND n.ftype = 'image'"
+)
+
+
+async def _bump_others(db: AsyncSession, user_id: uuid.UUID, settings: Settings) -> None:
+    """De eigenaren in wier map deze gebruiker foto's zette: hun bestand opnieuw (Keuze 69: of
+    die foto's meetellen, hangt van zijn keuze af)."""
+    await db.execute(
+        text(f"UPDATE beeld_owner SET gen = gen + 1 WHERE user_id IN ({_OTHERS})"),
+        {"me": user_id.hex},
+    )
+    for owner in (await db.execute(text(_OTHERS), {"me": user_id.hex})).scalars().all():
+        await queue_vec(db, _uuid(owner), settings)
+
+
 async def on_job(settings: Settings, payload: dict[str, Any]) -> None:
-    """Beeld weer aan: de foto's van die eigenaar terug op wait, en de backfill voor de rest."""
+    """Beeld weer aan: de eigen foto's en die hij bij een ander neerzette terug op wait, de
+    bestanden van die anderen opnieuw, en de backfill voor de rest."""
     user_id = uuid.UUID(hex=str(payload["user"]))
     maker = _maker(settings)
     async with maker() as db:
@@ -462,7 +493,7 @@ async def on_job(settings: Settings, payload: dict[str, Any]) -> None:
         at = now()
         await db.execute(
             text(
-                "UPDATE analysis SET state = 'wait', tries = 0, code = NULL, owner_id = :me, "
+                "UPDATE analysis SET state = 'wait', tries = 0, code = NULL, "
                 "queued_at = :at, updated_at = :at WHERE step = :step "
                 "AND state IN ('skip', 'none', 'failed') "
                 f"AND blob_sha IN ({_mine_sql()} AND n.dead = 0)"
@@ -470,31 +501,28 @@ async def on_job(settings: Settings, payload: dict[str, Any]) -> None:
             {"me": user_id.hex, "at": at, "step": Step.EMBED.value},
         )
         await queue_vec(db, user_id, settings)
+        await _bump_others(db, user_id, settings)
         await db.commit()
     await analysis.recover(settings)
     await analysis.start_backfill(settings)
 
 
 async def off_job(settings: Settings, payload: dict[str, Any]) -> None:
-    """Beeld uit voor één eigenaar (K1-08): bestand weg, rijen weg die niemand met beeld aan nog
-    heeft, die stappen op skip, en forget naar de container."""
+    """Beeld uit voor één gebruiker (K1-08): zijn bestand weg, de rijen van blob_embed van zijn
+    foto's (ook die hij bij een ander neerzette) die niemand met beeld aan nog wil, die stappen
+    op skip, de bestanden van die anderen opnieuw, en forget naar de container."""
     user_id = uuid.UUID(hex=str(payload["user"]))
     maker = _maker(settings)
     vecfile.remove(settings.beeld_dir, user_id)
     async with maker() as db:
         if await user_on(db, user_id):
             return  # intussen weer aan
-        others = (
-            "SELECT 1 FROM node AS m WHERE m.blob_id = e.blob_sha AND m.kind = 'file' "
-            "AND m.ftype = 'image' AND m.owner_id != :me "
-            f"AND m.owner_id IN ({vecfile.on_users_sql()})"
-        )
         shas = (
             (
                 await db.execute(
                     text(
                         f"SELECT e.blob_sha FROM blob_embed AS e WHERE e.blob_sha IN "
-                        f"({_mine_sql()}) AND NOT EXISTS ({others})"
+                        f"({_mine_sql()}) AND NOT {_wanted_exists('e.blob_sha')}"
                     ),
                     {"me": user_id.hex},
                 )
@@ -514,6 +542,7 @@ async def off_job(settings: Settings, payload: dict[str, Any]) -> None:
             .where(BeeldOwner.user_id == user_id)
             .values(built_gen=0, built_rows=0, built_at=None)
         )
+        await _bump_others(db, user_id, settings)
         await db.commit()
     _searched.pop(user_id, None)
     await forget(settings, user_id)
@@ -556,6 +585,17 @@ def remove_all(directory: Path) -> set[uuid.UUID]:
     return found
 
 
+async def _behind(db: AsyncSession, user_id: uuid.UUID, settings: Settings) -> bool:
+    """Het bestand van deze eigenaar loopt achter: een hogere gen, of een ander model of een
+    andere versie in de kop."""
+    row = await db.get(BeeldOwner, user_id, populate_existing=True)
+    if row is None:
+        return False
+    if row.gen > row.built_gen:
+        return True
+    return row.built_at is not None and not vecfile.is_current(settings.beeld_dir, user_id)
+
+
 async def sweep(settings: Settings) -> None:
     """Het opruimwerk (eens per SWEEP_S): bestanden die achterlopen klaarzetten, en bestanden
     weghalen van wie er niet meer is of beeld uit heeft (met forget)."""
@@ -564,12 +604,13 @@ async def sweep(settings: Settings) -> None:
     maker = _maker(settings)
     on = f"SELECT b.user_id FROM beeld_owner AS b WHERE b.user_id IN ({vecfile.on_users_sql()})"
     async with maker() as db:
-        stale = (await db.execute(text(f"{on} AND b.gen > b.built_gen"))).scalars().all()
+        owners = [_uuid(owner) for owner in (await db.execute(text(on))).scalars().all()]
+        stale = [owner for owner in owners if await _behind(db, owner, settings)]
         if stale and await admin_on(db):
             for owner in stale:
-                await queue_vec(db, _uuid(owner), settings)
+                await queue_vec(db, owner, settings)
             await db.commit()
-        keep = {_uuid(owner) for owner in (await db.execute(text(on))).scalars().all()}
+    keep = set(owners)
     directory = settings.beeld_dir
     if not directory.is_dir() or directory.is_symlink():
         return
